@@ -1,4 +1,4 @@
-# zenithjoy-core
+# zenithjoy-engine
 
 AI 开发工作流核心组件。提供 Hooks、Skills 和 CI 模板，实现强制的开发流程保护。
 
@@ -8,25 +8,42 @@ AI 开发工作流核心组件。提供 Hooks、Skills 和 CI 模板，实现强
 - **CI 自动合并**: PR 通过 CI 后自动合并
 - **统一开发 Skill**: `/dev` 一个对话完成整个开发流程
 
+## Prerequisites
+
+- **gh CLI**: GitHub CLI (`gh auth login` 已完成)
+- **jq**: JSON 处理工具 (`apt install jq`)
+- **Node.js**: 18+ (CI 使用 20)
+
+## Environment Variables
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `ZENITHJOY_ENGINE` | `/home/xx/dev/zenithjoy-engine` | Engine 根目录 |
+
+设置方式：
+```bash
+export ZENITHJOY_ENGINE="/path/to/zenithjoy-engine"
+```
+
 ## Installation
 
 ### 1. 链接 Hooks
 
 ```bash
-ln -sf /path/to/zenithjoy-core/hooks/branch-protect.sh ~/.claude/hooks/
-ln -sf /path/to/zenithjoy-core/hooks/project-detect.sh ~/.claude/hooks/
+ln -sf $ZENITHJOY_ENGINE/hooks/branch-protect.sh ~/.claude/hooks/
+ln -sf $ZENITHJOY_ENGINE/hooks/project-detect.sh ~/.claude/hooks/
 ```
 
 ### 2. 链接 Skills
 
 ```bash
-ln -sf /path/to/zenithjoy-core/skills/dev ~/.claude/skills/
+ln -sf $ZENITHJOY_ENGINE/skills/dev ~/.claude/skills/
 ```
 
 ### 3. 复制 CI 模板
 
 ```bash
-cp /path/to/zenithjoy-core/.github/workflows/ci.yml your-project/.github/workflows/
+cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
 ```
 
 ## Hooks 配置
@@ -54,7 +71,7 @@ cp /path/to/zenithjoy-core/.github/workflows/ci.yml your-project/.github/workflo
 
 | Hook | 触发时机 | 用途 |
 |------|----------|------|
-| branch-protect.sh | PreToolUse (Write/Edit) | 强制在 cp-* 分支写代码 |
+| branch-protect.sh | PreToolUse (Write/Edit) | 强制在 cp-* 分支修改代码及重要目录 (skills/, hooks/, .github/) |
 | project-detect.sh | PostToolUse (Bash) | 检测项目初始化状态 |
 
 ## Usage
@@ -87,4 +104,4 @@ GitHub 层面的强制保护：
 
 ## License
 
-MIT
+ISC

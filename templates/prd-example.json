@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "project": "zenithjoy-autopilot",
+    "feature_branch": "feature/user-auth",
+    "created_at": "2026-01-16T20:00:00Z",
+    "status": "approved",
+    "notion_page_id": "abc123..."
+  },
+  "background": "需要为应用添加用户认证功能，支持登录、注册、登出",
+  "goals": [
+    "用户可以注册新账户",
+    "用户可以登录/登出",
+    "支持 JWT token 认证"
+  ],
+  "non_goals": [
+    "不做 OAuth 第三方登录",
+    "不做密码找回"
+  ],
+  "checkpoints": [
+    {
+      "id": "CP-001",
+      "name": "初始化认证模块",
+      "type": "code",
+      "depends_on": null,
+      "size": "small",
+      "description": "创建 auth 模块目录结构和基础类型定义",
+      "dod": [
+        "创建 src/auth/ 目录",
+        "定义 User 和 AuthToken 类型",
+        "类型检查通过"
+      ],
+      "verify_commands": [
+        "npm run typecheck"
+      ],
+      "status": "pending",
+      "branch_name": null,
+      "pr_url": null,
+      "error": null,
+      "retry_count": 0
+    },
+    {
+      "id": "CP-002",
+      "name": "实现注册功能",
+      "type": "code",
+      "depends_on": "CP-001",
+      "size": "medium",
+      "description": "实现用户注册 API 和密码哈希",
+      "dod": [
+        "POST /api/auth/register 接口",
+        "密码使用 bcrypt 哈希",
+        "输入验证（邮箱格式、密码强度）",
+        "单元测试覆盖"
+      ],
+      "verify_commands": [
+        "npm run test -- --grep 'register'",
+        "npm run typecheck"
+      ],
+      "status": "pending",
+      "branch_name": null,
+      "pr_url": null,
+      "error": null,
+      "retry_count": 0
+    },
+    {
+      "id": "CP-003",
+      "name": "实现登录功能",
+      "type": "code",
+      "depends_on": "CP-002",
+      "size": "medium",
+      "description": "实现用户登录和 JWT 生成",
+      "dod": [
+        "POST /api/auth/login 接口",
+        "验证密码后返回 JWT",
+        "JWT 包含用户 ID 和过期时间",
+        "单元测试覆盖"
+      ],
+      "verify_commands": [
+        "npm run test -- --grep 'login'",
+        "npm run typecheck"
+      ],
+      "status": "pending",
+      "branch_name": null,
+      "pr_url": null,
+      "error": null,
+      "retry_count": 0
+    },
+    {
+      "id": "CP-004",
+      "name": "集成测试",
+      "type": "test",
+      "depends_on": "CP-003",
+      "size": "small",
+      "description": "完整的认证流程集成测试",
+      "dod": [
+        "注册 → 登录 → 访问受保护资源 → 登出 完整流程",
+        "测试 token 过期场景",
+        "测试无效 token 场景"
+      ],
+      "verify_commands": [
+        "npm run test:integration"
+      ],
+      "status": "pending",
+      "branch_name": null,
+      "pr_url": null,
+      "error": null,
+      "retry_count": 0
+    }
+  ]
+}

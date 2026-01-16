@@ -1,8 +1,10 @@
-# DoD: [Checkpoint 名称]
+# DoD - <功能名>
 
 > Definition of Done - 机器可判定的完成标准
 >
 > 与 PRD 配合使用，确保 AI Agent 和人工验收使用一致的标准
+>
+> **注意**: 这是通用模板，请根据项目实际配置调整验证命令
 
 ## 完成标准
 
@@ -30,7 +32,7 @@ npm run lint
 npm run format:check
 
 # 类型检查
-npm run type-check
+npm run typecheck
 # 或: tsc --noEmit
 ```
 
@@ -41,24 +43,23 @@ npm run type-check
 - [ ] 错误处理完善
 - [ ] 性能符合预期
 
-### 验证步骤
+### 验证步骤（根据项目类型选择）
 
 ```bash
-# 1. 启动服务
-npm run dev
+# 服务类项目
+npm run dev  # 启动后手动验证
 
-# 2. 执行功能测试
-# [具体测试步骤]
+# 库/工具类项目
+npm run test  # 运行测试即可
 
-# 3. 验证输出
-# [预期结果描述]
+# [根据实际需求调整]
 ```
 
 ## 范围限制
 
 ### 允许修改
 
-- 本次 Checkpoint 涉及的模块/文件
+- 本次 cp-* 分支涉及的模块/文件
 - 相关的测试文件
 - 必要的类型定义文件
 - 相关的配置文件（如需要）
@@ -87,14 +88,14 @@ npm run dev
 
 ## 依赖检查
 
-- [ ] package.json 版本正确
+- [ ] package.json 版本已按 semver 规则更新（fix:→patch, feat:→minor, feat!:→major）
 - [ ] 无冲突的依赖版本
 - [ ] lockfile 已提交
 
 ## Git 规范
 
 - [ ] Commit 信息清晰
-- [ ] 分支命名符合规范（cp-{YYYYMMDD}-{HHMM}-{任务名}）
+- [ ] 分支命名符合规范（cp-YYYYMMDD-HHMM-任务名）
 - [ ] 无敏感信息（.env, credentials 等）
 
 ## 备注

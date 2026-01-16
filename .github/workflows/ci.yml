@@ -4,11 +4,60 @@ on:
   pull_request:
     branches: [main, 'feature/*']
   push:
-    branches: [main]
+    branches: [main, 'feature/*']
+
+# 工作流级并发控制：同一 ref 的多次 push 只保留最新
+# 注意：auto-merge job 有自己的并发组（merge-*），不受此影响
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  version-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package.json version updated
+        run: |
+          set -e
+          if [ ! -f package.json ]; then
+            echo "ℹ️ No package.json found, skipping version check"
+            exit 0
+          fi
+
+          echo "🔍 Checking if package.json version was updated..."
+
+          # Get base branch version (fetch-depth: 0 已包含所有历史，无需额外 fetch)
+          # 支持 "version": "x.y.z" 和 "version":"x.y.z" 两种格式
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:package.json 2>/dev/null | grep '"version"' | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "")
+
+          if [ -z "$BASE_VERSION" ]; then
+            echo "⚠️ Could not read base branch version, skipping check"
+            exit 0
+          fi
+
+          # Get current version
+          CURRENT_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+          echo "Base branch version: $BASE_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+
+          if [ "$BASE_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "❌ Version not updated in package.json"
+            echo "Please update the version according to semver rules"
+            exit 1
+          else
+            echo "✅ Version updated: $BASE_VERSION → $CURRENT_VERSION"
+          fi
+
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -19,8 +68,17 @@ jobs:
             echo "type=npm" >> $GITHUB_OUTPUT
           elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
             echo "type=python" >> $GITHUB_OUTPUT
+            # 检测 Python 版本要求
+            if [ -f .python-version ]; then
+              echo "python_version=$(cat .python-version)" >> $GITHUB_OUTPUT
+            else
+              echo "python_version=3.11" >> $GITHUB_OUTPUT
+            fi
           elif [ -f go.mod ]; then
             echo "type=go" >> $GITHUB_OUTPUT
+            # 从 go.mod 读取 Go 版本
+            GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}' || echo "1.21")
+            echo "go_version=$GO_VERSION" >> $GITHUB_OUTPUT
           else
             echo "type=shell" >> $GITHUB_OUTPUT
           fi
@@ -32,10 +90,12 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install & Test (npm)
         if: steps.detect.outputs.type == 'npm'
         run: |
+          set -e
           npm ci
           npm run test --if-present
           npm run build --if-present
@@ -45,20 +105,29 @@ jobs:
         if: steps.detect.outputs.type == 'python'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ steps.detect.outputs.python_version }}
 
       - name: Install & Test (python)
         if: steps.detect.outputs.type == 'python'
         run: |
-          pip install -r requirements.txt 2>/dev/null || pip install -e . 2>/dev/null || true
-          pytest -v 2>/dev/null || echo "No tests"
+          set -e
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt || { echo "❌ pip install failed"; exit 1; }
+          elif [ -f pyproject.toml ]; then
+            pip install -e . || { echo "❌ pip install failed"; exit 1; }
+          fi
+          if [ -f pytest.ini ] || [ -d tests ] || [ -d test ]; then
+            pytest -v
+          else
+            echo "ℹ️ No pytest config or tests directory found, skipping tests"
+          fi
 
       # Go
       - name: Setup Go
         if: steps.detect.outputs.type == 'go'
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ steps.detect.outputs.go_version }}
 
       - name: Test (go)
         if: steps.detect.outputs.type == 'go'
@@ -67,29 +136,34 @@ jobs:
       # Shell scripts - always syntax check (hooks exist in all project types)
       - name: Check shell scripts
         run: |
-          shopt -s nullglob
-          files=$(find . -name "*.sh" -type f)
-          if [ -z "$files" ]; then
-            echo "ℹ️ No .sh files found"
-            exit 0
-          fi
           echo "🔍 Checking shell scripts..."
           FAILED=0
-          for f in $files; do
-            if bash -n "$f" 2>/dev/null; then
+          FOUND=0
+          while IFS= read -r -d '' f; do
+            FOUND=1
+            # 捕获 stderr 以便显示具体错误
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
               echo "  ✅ $f"
             else
               echo "  ❌ $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
               FAILED=1
             fi
-          done
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+          if [ "$FOUND" -eq 0 ]; then
+            echo "ℹ️ No .sh files found"
+          fi
           exit $FAILED
 
   # 自动合并 PR（CI 通过后）
+  # 注意：version-check 只在 PR 时运行，push 时为 skipped
   auto-merge:
-    needs: [test]
-    if: github.event_name == 'pull_request'
+    needs: [version-check, test]
+    # 必须：test 成功 + (version-check 成功或跳过)
+    if: github.event_name == 'pull_request' && needs.test.result == 'success' && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # 并发保护：同一个 base 分支的 PR 排队合并，避免冲突
     concurrency:
       group: merge-${{ github.base_ref }}
@@ -112,23 +186,47 @@ jobs:
             echo "🎉 PR merged successfully"
           else
             echo "⚠️ Auto-merge failed (might need manual merge due to conflicts)"
-            exit 0  # Don't fail CI, just notify
+            echo "::warning::Auto-merge failed, manual intervention may be required"
+            # 不失败 CI，但通过 warning 通知用户
+            exit 0
           fi
 
-  # CI 失败时通知 Notion
+  # CI 失败时通知 Notion（version-check 或 test 失败都通知）
   notify-failure:
-    needs: [test]
-    if: failure()
+    needs: [version-check, test]
+    if: always() && (needs.version-check.result == 'failure' || needs.test.result == 'failure')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Notify Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_CI_DATABASE_ID }}
+          VERSION_CHECK_RESULT: ${{ needs.version-check.result }}
+          TEST_RESULT: ${{ needs.test.result }}
         run: |
           if [ -z "$NOTION_TOKEN" ] || [ -z "$NOTION_DATABASE_ID" ]; then
             echo "⚠️ Notion secrets not configured, skipping notification"
             exit 0
+          fi
+
+          # 确定失败原因
+          FAILURE_REASON=""
+          if [ "$VERSION_CHECK_RESULT" = "failure" ]; then
+            FAILURE_REASON="version-check"
+          fi
+          if [ "$TEST_RESULT" = "failure" ]; then
+            if [ -n "$FAILURE_REASON" ]; then
+              FAILURE_REASON="$FAILURE_REASON + test"
+            else
+              FAILURE_REASON="test"
+            fi
+          fi
+
+          # 确定 PR URL 或 Action URL
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          if [ -z "$PR_URL" ]; then
+            PR_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
 
           curl -s -X POST "https://api.notion.com/v1/pages" \
@@ -138,11 +236,11 @@ jobs:
             -d '{
               "parent": {"database_id": "'"$NOTION_DATABASE_ID"'"},
               "properties": {
-                "Name": {"title": [{"text": {"content": "❌ CI Failed: ${{ github.repository }}"}}]},
+                "Name": {"title": [{"text": {"content": "❌ CI Failed ('"$FAILURE_REASON"'): ${{ github.repository }}"}}]},
                 "Status": {"select": {"name": "Failed"}},
                 "Branch": {"rich_text": [{"text": {"content": "${{ github.head_ref || github.ref_name }}"}}]},
-                "PR": {"url": "${{ github.event.pull_request.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}"},
+                "PR": {"url": "'"$PR_URL"'"},
                 "Time": {"date": {"start": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}}
               }
             }'
-          echo "📨 Notification sent to Notion"
+          echo "📨 Notification sent to Notion (failed: $FAILURE_REASON)"

@@ -1,10 +1,17 @@
 #!/bin/bash
-# ZenithJoy Core - 分支保护 Hook（版本见 package.json）
+# ZenithJoy Engine - 分支保护 Hook（版本见 package.json）
 # 检查：必须在 cp-* 分支
 # 保护：代码文件 + 重要目录（skills/, hooks/, .github/）
 # 不需要状态文件 — 纯 git 检测
 
 set -e
+
+# 检查 jq 是否存在
+if ! command -v jq &>/dev/null; then
+  echo "⚠️ jq 未安装，分支保护 Hook 无法正常工作" >&2
+  echo "   请安装: apt install jq 或 brew install jq" >&2
+  exit 0  # 不阻止操作，但警告用户
+fi
 
 # Read JSON input from stdin
 INPUT=$(cat)
@@ -37,7 +44,7 @@ fi
 # 2. 代码文件：根据扩展名判断
 EXT="${FILE_PATH##*.}"
 case "$EXT" in
-    ts|tsx|js|jsx|py|go|rs|java|c|cpp|h|hpp|rb|php|swift|kt)
+    ts|tsx|js|jsx|py|go|rs|java|c|cpp|h|hpp|rb|php|swift|kt|sh)
         NEEDS_PROTECTION=true
         ;;
 esac
@@ -57,11 +64,11 @@ if [[ -z "$CURRENT_BRANCH" ]]; then
     exit 0
 fi
 
-# ===== 唯一检查: 必须在 cp-* 分支 =====
-if [[ ! "$CURRENT_BRANCH" =~ ^cp- ]]; then
+# ===== 唯一检查: 必须在 cp-* 分支（格式：cp-<name>，name 必须存在）=====
+if [[ ! "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9] ]]; then
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  ❌ 只能在 checkpoint 分支修改代码" >&2
+    echo "  ❌ 只能在 cp-* 分支修改代码" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
     echo "当前分支: $CURRENT_BRANCH" >&2

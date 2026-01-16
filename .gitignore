@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env*
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage
+coverage/
+
+# Skill validation (temporary)
+skills/dev/SKILL.md.backup
+skills/dev/VALIDATION.md

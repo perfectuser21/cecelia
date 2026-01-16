@@ -8,7 +8,6 @@ set -euo pipefail
 cat > /dev/null
 
 # 颜色定义
-RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
@@ -19,25 +18,25 @@ PROJECT_ROOT=$(pwd)
 # 检测标志
 MISSING_ITEMS=()
 
-# 1. 检测 .git 目录
-if [[ ! -d ".git" ]]; then
+# 1. 检测 git 仓库
+if ! git rev-parse --git-dir &>/dev/null; then
     MISSING_ITEMS+=("⚠️  缺少 .git 目录 - 项目未初始化为 git 仓库")
 fi
 
 # 2. 检测 remote
-if [[ -d ".git" ]]; then
-    if ! git remote -v &>/dev/null || [[ -z $(git remote) ]]; then
+if git rev-parse --git-dir &>/dev/null; then
+    if [[ -z $(git remote 2>/dev/null) ]]; then
         MISSING_ITEMS+=("⚠️  缺少 git remote - 没有配置远程仓库")
     fi
 fi
 
-# 3. 检测 .github/workflows/ci.yml
-if [[ ! -f ".github/workflows/ci.yml" ]]; then
+# 3. 检测 .github/workflows/ci.yml（使用绝对路径）
+if [[ ! -f "$PROJECT_ROOT/.github/workflows/ci.yml" ]]; then
     MISSING_ITEMS+=("⚠️  缺少 .github/workflows/ci.yml - 没有配置 CI/CD")
 fi
 
-# 4. 检测 CLAUDE.md
-if [[ ! -f "CLAUDE.md" ]]; then
+# 4. 检测 CLAUDE.md（使用绝对路径）
+if [[ ! -f "$PROJECT_ROOT/CLAUDE.md" ]]; then
     MISSING_ITEMS+=("⚠️  缺少 CLAUDE.md - 没有项目说明文档")
 fi
 

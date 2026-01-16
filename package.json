@@ -1,6 +1,6 @@
 {
-  "name": "zenithjoy-core",
-  "version": "7.3.7",
+  "name": "zenithjoy-engine",
+  "version": "7.11.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,7 +13,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Calculator module with chainable operations",
+  "description": "AI development workflow engine",
   "devDependencies": {
     "@types/node": "^25.0.9",
     "typescript": "^5.9.3",
