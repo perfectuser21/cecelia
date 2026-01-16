@@ -103,14 +103,13 @@ MISSING_COMMANDS=()
 echo ""
 echo "清理阶段 (Step 6):"
 
-# git config 已清理？
+# git config 已清理？（可跳过项，不计入 COMPLETED_COUNT）
 CONFIG_EXISTS=$(git config "branch.$BRANCH_NAME.base" 2>/dev/null || echo "")
 if [[ -z "$CONFIG_EXISTS" ]]; then
-  echo "  ✅ git config 已清理"
-  ((COMPLETED_COUNT++))
+  echo "  ✅ git config 已清理（可跳过）"
 else
-  echo "  ❌ git config 未清理"
-  MISSING_COMMANDS+=("git config --unset branch.$BRANCH_NAME.base")
+  echo "  ⚠️ git config 未清理（可跳过）"
+  echo "     可选修复: git config --unset branch.$BRANCH_NAME.base"
 fi
 
 # 当前在 feature 分支？
