@@ -13,7 +13,8 @@ export default function FeishuLogin() {
 
   // 飞书应用配置（从环境变量读取）
   const APP_ID = import.meta.env.VITE_FEISHU_APP_ID;
-  const REDIRECT_URI = import.meta.env.VITE_FEISHU_REDIRECT_URI;
+  // 动态 redirect_uri：使用当前域名，确保登录后回到原域名
+  const REDIRECT_URI = `${window.location.origin}/login`;
 
   useEffect(() => {
     // 检查是否有 code 参数（飞书回调）
