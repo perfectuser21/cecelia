@@ -34,6 +34,12 @@ get_ahead_count() {
   git rev-list --count origin/main.."$branch" 2>/dev/null || echo "?"
 }
 
+# 获取领先的 commits 列表
+get_ahead_commits() {
+  local branch=$1
+  git log origin/main.."$branch" --oneline 2>/dev/null || true
+}
+
 case $ACTION in
   detect)
     echo ""
@@ -70,11 +76,31 @@ case $ACTION in
       fi
 
       if [ "$BEHIND" = "0" ] || [ "$BEHIND" = "?" ]; then
+        # 已同步 main
         echo -e "  ${GREEN}✅${NC} $branch${MARKER}"
-        echo "     已同步 main (+$AHEAD commits)"
+        if [ "$AHEAD" = "0" ]; then
+          echo "     与 main 完全一致"
+        else
+          echo "     已同步 main，领先 $AHEAD commits:"
+          get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
+          if [ "$AHEAD" -gt 5 ] 2>/dev/null; then
+            echo "       ... 还有 $((AHEAD - 5)) 个"
+          fi
+        fi
+      elif [ "$AHEAD" = "0" ]; then
+        # 落后 main 但没有自己的改动，建议删除
+        echo -e "  ${RED}🗑️${NC}  $branch${MARKER}"
+        echo "     落后 main $BEHIND commits，无自己的改动"
+        echo "     建议删除: git branch -D $branch"
+        NEED_SYNC=$((NEED_SYNC + 1))
       else
+        # 落后 main 且有自己的改动，需要同步
         echo -e "  ${YELLOW}⚠️${NC}  $branch${MARKER}"
-        echo "     落后 main $BEHIND commits, 领先 $AHEAD commits"
+        echo "     落后 main $BEHIND commits，领先 $AHEAD commits:"
+        get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
+        if [ "$AHEAD" -gt 5 ] 2>/dev/null; then
+          echo "       ... 还有 $((AHEAD - 5)) 个"
+        fi
         NEED_SYNC=$((NEED_SYNC + 1))
       fi
       echo ""

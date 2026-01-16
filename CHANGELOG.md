@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.12.1] - 2026-01-16
+
+### Improved
+- multi-feature.sh: 显示具体的领先 commits 内容
+- multi-feature.sh: 领先 0 commits 且落后的分支建议删除
+
 ## [7.12.0] - 2026-01-16
 
 ### Added
@@ -315,7 +321,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Previous iterations were experimental development versions leading up to the 7.0.0 stable release.
 
-[Unreleased]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.12.0...HEAD
+[Unreleased]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.12.1...HEAD
+[7.12.1]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.12.0...v7.12.1
 [7.12.0]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.11.1...v7.12.0
 [7.11.1]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.11.0...v7.11.1
 [7.11.0]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.10.0...v7.11.0
