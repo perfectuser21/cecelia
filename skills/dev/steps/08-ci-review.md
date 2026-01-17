@@ -1,6 +1,6 @@
-# Step 8: CI + Codex Review
+# Step 8: CI 通过
 
-> 质检闭环：CI 通过 + Codex review 通过
+> 等待 CI 通过，失败则回退修复
 
 **前置条件**：step >= 7（PR 已创建）
 **完成后设置状态**：
@@ -10,23 +10,22 @@ git config branch."$BRANCH_NAME".step 8
 
 ---
 
-## 质检循环
+## 质检流程
 
 ```
-PR 创建
+PR 创建（Step 7 已完成本地 Claude review）
     │
     ▼
 ┌─────────────────────────────────────┐
-│  轮询检查（每 30 秒）：              │
-│    1. CI 状态                       │
-│    2. Codex review 评论             │
+│  等待 CI：                          │
+│    • version-check                  │
+│    • test                           │
+│    • shell scripts check            │
 └─────────────────────────────────────┘
     │
-    ├── CI 失败 → 修复 → 重新 push
+    ├── CI 失败 → 回退 step 4 → 修复 → 重新循环
     │
-    ├── Codex 有问题 → 修复 → 重新 push
-    │
-    └── 都通过 → 等待合并
+    └── CI 通过 → step 8 → 等待合并
 ```
 
 ---
@@ -50,27 +49,19 @@ bash skills/dev/scripts/wait-for-merge.sh "$PR_URL"
 # 1. 读取 CI 错误
 gh run view --log-failed
 
-# 2. 修复代码
+# 2. 回退到 step 4
+git config branch."$BRANCH_NAME".step 4
 
-# 3. 重新提交
-git add -A
-git commit -m "fix: 修复 CI 错误"
-git push
+# 3. 修复代码
+
+# 4. 重新走流程
+# step 4 → 5 → 6 → 7（自动 review）→ 8
 ```
 
 ---
 
-## Codex 问题修复
+## 注意
 
-```bash
-# 1. 读取 Codex 评论
-gh api repos/:owner/:repo/issues/$PR_NUMBER/comments \
-  --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body'
-
-# 2. 根据反馈修复代码
-
-# 3. 重新提交
-git add -A
-git commit -m "fix: 根据 Codex review 修复"
-git push
-```
+- **Claude review 在 Step 7 之前本地完成**（pre-pr-check.sh）
+- CI 只检查 test/typecheck/shell scripts
+- 失败后回退到 step 4，重新循环

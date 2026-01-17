@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [7.22.0] - 2026-01-17
+## [7.23.0] - 2026-01-17
 
 ### Added
-- Claude Code Review GitHub Action：替代 Codex 做 PR review
-- 支持 @claude 触发和 PR 自动触发
+- 步骤回退支持：失败后可回退到 step 4 重试
+- 本地 Claude review：在 `gh pr create` 前自动运行
+
+### Changed
+- 去掉 Codex：改用本地 Claude review（Max 订阅直接用）
+- 更新文档：流程图、状态机、08-ci-review.md
+
+### Fixed
+- 步骤守卫允许回退到 step 4（之前只能递增）
+
+## [7.22.0] - 2026-01-17
+
+### Changed
+- 改用本地 Claude Code review（删除 GitHub Action）
 
 ## [7.21.0] - 2026-01-17
 

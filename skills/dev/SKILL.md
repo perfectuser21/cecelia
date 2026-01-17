@@ -22,7 +22,7 @@ description: |
 | 5 | 写测试 | → [05-test.md](steps/05-test.md) |
 | 6 | 本地测试 | → [06-local-test.md](steps/06-local-test.md) |
 | 7 | 提交 PR | → [07-pr.md](steps/07-pr.md) |
-| 8 | CI + Codex | → [08-ci-review.md](steps/08-ci-review.md) |
+| 8 | CI 通过 | → [08-ci-review.md](steps/08-ci-review.md) |
 | 9 | 合并 | → [09-merge.md](steps/09-merge.md) |
 | 10 | Cleanup | → [10-cleanup.md](steps/10-cleanup.md) |
 
@@ -49,7 +49,7 @@ Step 4-6: 写代码 → 写测试 → 本地测试
 Step 7: 提交 PR
     │
     ▼
-Step 8-9: CI + Codex → 合并
+Step 8-9: CI 通过 → 合并
     │
     ▼
 Step 10: Cleanup
@@ -83,7 +83,7 @@ Step 10: Cleanup
 | 5 | 测试完成 | 测试代码写完 |
 | 6 | 本地测试通过 | npm test 绿，**可以提交** |
 | 7 | PR 已创建 | 等待 CI |
-| 8 | CI + Codex 通过 | 质检完成 |
+| 8 | CI 通过 | 质检完成 |
 | 9 | 已合并 | PR merged |
 | 10 | 已清理 | 分支删除 |
 
@@ -98,10 +98,19 @@ Step 10: Cleanup
 2. **Bash Hook** (`pre-pr-check.sh`) - 步骤守卫
    - 拦截 `git config branch.*.step N` 命令
    - 强制顺序递增：N 必须 = current_step + 1
+   - **允许回退到 step 4**（失败后重试）
    - step 5→6 验证：npm test 必须通过
-   - step 6→7 验证：typecheck + test 必须通过
+   - step 6→7 验证：typecheck + test + Claude review
 
-**不能跳步，不能作弊。**
+### 失败回退
+
+```
+Step 6 失败 → 回到 4 → 4→5→6 循环
+Step 7 失败 → 回到 4 → 4→5→6→7 循环
+Step 8 失败 → 回到 4 → 4→5→6→7→8 循环
+```
+
+**不能跳步，但可以回退重试。**
 
 ---
 
