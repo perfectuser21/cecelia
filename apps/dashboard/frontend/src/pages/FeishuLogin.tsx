@@ -118,6 +118,16 @@ export default function FeishuLogin() {
     }, 300);
   }, [initQRCode]);
 
+  // 备选：点击按钮跳转飞书登录
+  const handleLogin = () => {
+    if (!APP_ID) {
+      setError('飞书应用未配置');
+      return;
+    }
+    const feishuAuthUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=STATE`;
+    window.location.href = feishuAuthUrl;
+  };
+
   // 检查是否有 code 参数（飞书回调）
   useEffect(() => {
     const code = searchParams.get('code');
@@ -332,12 +342,21 @@ export default function FeishuLogin() {
             {/* 分隔线 */}
             <div className="flex items-center gap-4 my-6">
               <div className="flex-1 h-px bg-white/10" />
-              <span className="text-white/30 text-sm">团队专属</span>
+              <span className="text-white/30 text-sm">或</span>
               <div className="flex-1 h-px bg-white/10" />
             </div>
 
+            {/* 备选：点击按钮跳转飞书登录 */}
+            <button
+              onClick={handleLogin}
+              className="w-full py-3 px-4 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-white font-medium transition-all duration-200 flex items-center justify-center gap-2"
+            >
+              <img src="/logo-color.png" alt="飞书" className="w-5 h-5" />
+              使用飞书登录
+            </button>
+
             {/* 说明文字 */}
-            <p className="text-center text-white/40 text-sm leading-relaxed">
+            <p className="text-center text-white/40 text-sm leading-relaxed mt-6">
               遇到问题？随时找我们
             </p>
           </div>
