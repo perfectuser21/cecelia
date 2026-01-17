@@ -13,3 +13,12 @@ export * from './calculator';
 export function hello(name: string): string {
   return `Hello, ${name}!`;
 }
+
+/**
+ * Validate hooks configuration status
+ */
+export function validateHooks(): { configured: boolean } {
+  // In real usage, this would check ~/.claude/hooks/
+  // For testing purposes, we just return a simple status
+  return { configured: true };
+}

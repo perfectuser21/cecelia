@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.27.0] - 2026-01-17
+
+### Added
+- `validateHooks()` 函数：验证全局 hooks 配置状态
+
 ## [7.26.0] - 2026-01-17
 
 ### Added

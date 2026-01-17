@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { hello } from './index';
+import { hello, validateHooks } from './index';
 
 describe('hello', () => {
   it('returns greeting with name', () => {
@@ -12,5 +12,17 @@ describe('hello', () => {
 
   it('handles empty string', () => {
     expect(hello('')).toBe('Hello, !');
+  });
+});
+
+describe('validateHooks', () => {
+  it('returns configured status', () => {
+    const result = validateHooks();
+    expect(result).toHaveProperty('configured');
+    expect(typeof result.configured).toBe('boolean');
+  });
+
+  it('returns true when hooks are configured', () => {
+    expect(validateHooks().configured).toBe(true);
   });
 });
