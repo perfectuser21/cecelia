@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.25.0] - 2026-01-17
+
+### Fixed
+- 修复 symlink: `~/.claude/skills/dev` 指向正确位置
+- 移除 audit SKILL.md 过时版本号引用
+
+### Changed
+- README.md 添加 bash-guard.sh 文档
+- CLAUDE.md 目录结构更新（添加 hooks 详情、n8n、INTERFACE-SPEC.md）
+
 ## [7.24.0] - 2026-01-17
 
 ### Fixed

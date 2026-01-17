@@ -31,6 +31,7 @@ export ZENITHJOY_ENGINE="/path/to/zenithjoy-engine"
 
 ```bash
 ln -sf $ZENITHJOY_ENGINE/hooks/branch-protect.sh ~/.claude/hooks/
+ln -sf $ZENITHJOY_ENGINE/hooks/bash-guard.sh ~/.claude/hooks/
 ln -sf $ZENITHJOY_ENGINE/hooks/project-detect.sh ~/.claude/hooks/
 ```
 
@@ -57,6 +58,10 @@ cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
       {
         "matcher": "Write|Edit",
         "hooks": [{"type": "command", "command": "~/.claude/hooks/branch-protect.sh"}]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "~/.claude/hooks/bash-guard.sh"}]
       }
     ],
     "PostToolUse": [
@@ -71,7 +76,8 @@ cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
 
 | Hook | 触发时机 | 用途 |
 |------|----------|------|
-| branch-protect.sh | PreToolUse (Write/Edit) | 强制在 cp-* 或 feature/* 分支修改代码及重要目录 (skills/, hooks/, .github/) |
+| branch-protect.sh | PreToolUse (Write/Edit) | 强制在 cp-* 或 feature/* 分支修改代码 |
+| bash-guard.sh | PreToolUse (Bash) | 步骤状态机守卫 + PR 前检查 |
 | project-detect.sh | PostToolUse (Bash) | 检测项目初始化状态 |
 
 ## Usage

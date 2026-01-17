@@ -38,15 +38,20 @@ AI 开发工作流引擎。
 
 ```
 zenithjoy-engine/
-├── hooks/           # Claude Code Hooks
+├── hooks/           # Claude Code Hooks (3 个)
+│   ├── bash-guard.sh      # 步骤守卫 + PR 前检查
+│   ├── branch-protect.sh  # 分支保护
+│   └── project-detect.sh  # 项目检测
 ├── skills/
 │   ├── dev/         # /dev 开发工作流
 │   └── audit/       # /audit 代码审计
 ├── docs/            # 详细文档
-│   ├── ARCHITECTURE.md  # 知识分层架构
-│   └── LEARNINGS.md     # 开发经验
+│   ├── ARCHITECTURE.md    # 知识分层架构
+│   ├── LEARNINGS.md       # 开发经验
+│   └── INTERFACE-SPEC.md  # 接口规范
 ├── templates/       # 文档模板
 ├── .github/         # CI 配置
+├── n8n/             # n8n 工作流
 └── src/             # 代码
 ```
 
