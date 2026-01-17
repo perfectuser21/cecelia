@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.24.0] - 2026-01-17
+
+### Fixed
+- 修复并行 subagents 竞态条件：从命令解析分支名，不再依赖 HEAD
+- 修复负数步骤未拦截：正则匹配 `-?[0-9]+`
+
+### Changed
+- Hook 重命名：`pre-pr-check.sh` → `bash-guard.sh`（更准确反映双功能）
+- 统一管理：bash-guard.sh 移入项目 hooks/ 目录并 symlink
+
 ## [7.23.0] - 2026-01-17
 
 ### Added

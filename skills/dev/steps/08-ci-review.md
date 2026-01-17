@@ -62,6 +62,6 @@ git config branch."$BRANCH_NAME".step 4
 
 ## 注意
 
-- **Claude review 在 Step 7 之前本地完成**（pre-pr-check.sh）
+- **Claude review 在 Step 7 之前本地完成**（bash-guard.sh）
 - CI 只检查 test/typecheck/shell scripts
 - 失败后回退到 step 4，重新循环

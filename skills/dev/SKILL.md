@@ -95,7 +95,7 @@ Step 10: Cleanup
    - step >= 3 才能写代码
    - 只允许 cp-* 或 feature/* 分支
 
-2. **Bash Hook** (`pre-pr-check.sh`) - 步骤守卫
+2. **Bash Hook** (`bash-guard.sh`) - 步骤守卫
    - 拦截 `git config branch.*.step N` 命令
    - 强制顺序递增：N 必须 = current_step + 1
    - **允许回退到 step 4**（失败后重试）
