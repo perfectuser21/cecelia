@@ -55,9 +55,12 @@ const ceciliaConfig: InstanceConfig = {
     sidebarGradient: 'linear-gradient(180deg, rgba(0,10,20,0.95) 0%, rgba(0,20,40,0.9) 50%, rgba(0,30,50,0.85) 100%)',
   },
   features: {
+    // 共用功能
+    'workbench': true,
     // Engine 功能
     'engine-capabilities': true,
     'task-monitor': true,
+    'dev-tasks': true,
     // Cecilia 功能
     'cecilia-tasks': true,
     'cecilia-history': true,

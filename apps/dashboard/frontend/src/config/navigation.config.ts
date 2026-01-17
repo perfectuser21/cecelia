@@ -100,6 +100,18 @@ export function getPageComponent(name: string) {
 
 export const coreNavGroups: NavGroup[] = [
   {
+    title: '概览',
+    items: [
+      {
+        path: '/',
+        icon: LayoutDashboard,
+        label: '工作台',
+        featureKey: 'workbench',
+        component: 'Dashboard'
+      },
+    ]
+  },
+  {
     title: 'Engine',
     items: [
       {
