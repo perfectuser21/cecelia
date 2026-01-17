@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.14.1] - 2026-01-17
+
+### Fixed
+- CI: 添加 develop 分支支持（之前只有 main 和 feature/*）
+- CI: 用 jq 替换 sed 解析 JSON（更可靠）
+- check.sh: 添加 UTF-8 locale 支持多字节字符
+- check.sh: 支持 develop 作为合法的 base 分支
+- STEPS.md: 更新过期版本号
+
 ## [7.14.0] - 2026-01-17
 
 ### Improved

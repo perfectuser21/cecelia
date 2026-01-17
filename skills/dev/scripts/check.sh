@@ -89,6 +89,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # 从 SKILL.md 动态计算必要项和可选项数量
 # □ = 必要（后跟空格，不跟⏭）, □⏭ = 可跳过, ○ = 可选
 # 注意：使用正则排除 □⏭
+# 显式设置 UTF-8 locale 以正确处理多字节字符（如 ⏭）
+export LC_ALL=en_US.UTF-8
+
 SKIPPABLE_COUNT=$(grep -c '^  □⏭' "$SKILL_FILE" 2>/dev/null || echo 0)
 REQUIRED_COUNT=$(grep -E '^  □[^⏭]' "$SKILL_FILE" 2>/dev/null | wc -l || echo 0)
 OPTIONAL_COUNT=$(grep -c '^  ○' "$SKILL_FILE" 2>/dev/null || echo 0)

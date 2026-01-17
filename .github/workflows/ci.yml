@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, 'feature/*']
+    branches: [main, develop, 'feature/*']
   push:
-    branches: [main, 'feature/*']
+    branches: [main, develop, 'feature/*']
 
 # 工作流级并发控制：同一 ref 的多次 push 只保留最新
 # 注意：auto-merge job 有自己的并发组（merge-*），不受此影响
@@ -32,17 +32,16 @@ jobs:
 
           echo "🔍 Checking if package.json version was updated..."
 
-          # Get base branch version (fetch-depth: 0 已包含所有历史，无需额外 fetch)
-          # 支持 "version": "x.y.z" 和 "version":"x.y.z" 两种格式
-          BASE_VERSION=$(git show origin/${{ github.base_ref }}:package.json 2>/dev/null | grep '"version"' | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "")
+          # Get base branch version using jq (more reliable than sed)
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:package.json 2>/dev/null | jq -r '.version' || echo "")
 
-          if [ -z "$BASE_VERSION" ]; then
+          if [ -z "$BASE_VERSION" ] || [ "$BASE_VERSION" = "null" ]; then
             echo "⚠️ Could not read base branch version, skipping check"
             exit 0
           fi
 
           # Get current version
-          CURRENT_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+          CURRENT_VERSION=$(jq -r '.version' package.json)
 
           echo "Base branch version: $BASE_VERSION"
           echo "Current version: $CURRENT_VERSION"
