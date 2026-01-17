@@ -1,0 +1,314 @@
+import { useEffect, useState } from 'react';
+import { Activity, CheckCircle2, XCircle, Clock, RefreshCw, Terminal, GitBranch, Server, Cpu } from 'lucide-react';
+
+interface Task {
+  id: string;
+  name: string;
+  project: string;
+  branch: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  currentStep: string;
+  startedAt: string;
+  duration: string;
+  logs: string[];
+}
+
+interface ServerStats {
+  cpu: number;
+  memory: number;
+  activeTasks: number;
+  queuedTasks: number;
+}
+
+// API 和前端同域
+const TASK_API = '';
+
+export default function TaskMonitor() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [serverStats, setServerStats] = useState<ServerStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+
+  const fetchTasks = async () => {
+    try {
+      const res = await fetch(`${TASK_API}/api/tasks/monitor`);
+      const data = await res.json();
+      if (data.success) {
+        setTasks(data.tasks);
+        setServerStats(data.server);
+      } else {
+        // 使用模拟数据
+        setTasks(getMockTasks());
+        setServerStats(getMockServerStats());
+      }
+    } catch (e) {
+      // 使用模拟数据
+      setTasks(getMockTasks());
+      setServerStats(getMockServerStats());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getMockTasks = (): Task[] => [
+    {
+      id: '1',
+      name: 'cp-feature-auth',
+      project: 'zenithjoy-autopilot',
+      branch: 'cp-feature-auth',
+      status: 'running',
+      progress: 65,
+      currentStep: 'Step 4: 代码编写',
+      startedAt: new Date(Date.now() - 1800000).toISOString(),
+      duration: '30m',
+      logs: [
+        '[10:00:15] 开始执行任务',
+        '[10:05:23] Step 1: 创建分支完成',
+        '[10:10:45] Step 2: PRD 确认完成',
+        '[10:25:30] Step 3: 环境检查完成',
+        '[10:30:00] Step 4: 开始编写代码...',
+      ],
+    },
+    {
+      id: '2',
+      name: 'cp-fix-login-bug',
+      project: 'zenithjoy-core',
+      branch: 'cp-fix-login-bug',
+      status: 'running',
+      progress: 40,
+      currentStep: 'Step 3: 环境检查',
+      startedAt: new Date(Date.now() - 900000).toISOString(),
+      duration: '15m',
+      logs: [
+        '[10:15:00] 开始执行任务',
+        '[10:18:30] Step 1: 创建分支完成',
+        '[10:22:15] Step 2: PRD 确认完成',
+        '[10:30:00] Step 3: 环境检查中...',
+      ],
+    },
+    {
+      id: '3',
+      name: 'cp-add-dashboard',
+      project: 'zenithjoy-engine',
+      branch: 'cp-add-dashboard',
+      status: 'completed',
+      progress: 100,
+      currentStep: '已完成',
+      startedAt: new Date(Date.now() - 7200000).toISOString(),
+      duration: '1h 20m',
+      logs: [
+        '[08:00:00] 开始执行任务',
+        '[08:45:00] 代码编写完成',
+        '[09:00:00] 测试通过',
+        '[09:15:00] PR 已合并',
+        '[09:20:00] 任务完成',
+      ],
+    },
+    {
+      id: '4',
+      name: 'cp-refactor-api',
+      project: 'zenithjoy-autopilot',
+      branch: 'cp-refactor-api',
+      status: 'failed',
+      progress: 75,
+      currentStep: 'Step 5: CI 失败',
+      startedAt: new Date(Date.now() - 3600000).toISOString(),
+      duration: '45m',
+      logs: [
+        '[09:00:00] 开始执行任务',
+        '[09:30:00] 代码编写完成',
+        '[09:35:00] 测试运行中',
+        '[09:45:00] ❌ CI 检查失败：类型错误',
+      ],
+    },
+  ];
+
+  const getMockServerStats = (): ServerStats => ({
+    cpu: 45,
+    memory: 62,
+    activeTasks: 2,
+    queuedTasks: 0,
+  });
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle2 className="w-5 h-5 text-emerald-500" />;
+      case 'running':
+        return <RefreshCw className="w-5 h-5 text-cyan-500 animate-spin" />;
+      case 'failed':
+        return <XCircle className="w-5 h-5 text-red-500" />;
+      default:
+        return <Clock className="w-5 h-5 text-gray-400" />;
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'bg-emerald-500';
+      case 'running':
+        return 'bg-cyan-500';
+      case 'failed':
+        return 'bg-red-500';
+      default:
+        return 'bg-gray-400';
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    const styles: Record<string, string> = {
+      completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+      running: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
+      failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+      pending: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+    };
+    const labels: Record<string, string> = {
+      completed: '已完成',
+      running: '运行中',
+      failed: '失败',
+      pending: '等待中',
+    };
+    return (
+      <span className={`px-2 py-1 text-xs font-medium rounded-full ${styles[status] || styles.pending}`}>
+        {labels[status] || status}
+      </span>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 text-cyan-500 animate-spin" />
+      </div>
+    );
+  }
+
+  const runningTasks = tasks.filter((t) => t.status === 'running');
+  const completedTasks = tasks.filter((t) => t.status === 'completed');
+  const failedTasks = tasks.filter((t) => t.status === 'failed');
+
+  return (
+    <div className="space-y-6">
+      {/* 服务器状态 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl p-5 text-white">
+          <div className="flex items-center gap-3">
+            <Activity className="w-8 h-8 opacity-80" />
+            <div>
+              <p className="text-sm opacity-80">运行中</p>
+              <p className="text-3xl font-bold">{runningTasks.length}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-500 to-green-600 rounded-xl p-5 text-white">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-8 h-8 opacity-80" />
+            <div>
+              <p className="text-sm opacity-80">已完成</p>
+              <p className="text-3xl font-bold">{completedTasks.length}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-red-500 to-rose-600 rounded-xl p-5 text-white">
+          <div className="flex items-center gap-3">
+            <XCircle className="w-8 h-8 opacity-80" />
+            <div>
+              <p className="text-sm opacity-80">失败</p>
+              <p className="text-3xl font-bold">{failedTasks.length}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-slate-700 to-slate-800 rounded-xl p-5 text-white">
+          <div className="flex items-center gap-3">
+            <Server className="w-8 h-8 opacity-80" />
+            <div>
+              <p className="text-sm opacity-80">服务器</p>
+              <div className="flex items-center gap-2 text-sm">
+                <Cpu className="w-4 h-4" />
+                <span>{serverStats?.cpu}%</span>
+                <span className="opacity-50">|</span>
+                <span>{serverStats?.memory}% RAM</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 任务列表 */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+            <Terminal className="w-5 h-5 text-cyan-500" />
+            任务列表
+          </h2>
+        </div>
+        <div className="divide-y divide-slate-200 dark:divide-slate-700">
+          {tasks.map((task) => (
+            <div
+              key={task.id}
+              className="p-4 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors"
+              onClick={() => setSelectedTask(selectedTask?.id === task.id ? null : task)}
+            >
+              <div className="flex items-center gap-4">
+                {getStatusIcon(task.status)}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3 mb-1">
+                    <span className="font-mono text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {task.name}
+                    </span>
+                    {getStatusBadge(task.status)}
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
+                    <span className="flex items-center gap-1">
+                      <GitBranch className="w-4 h-4" />
+                      {task.project}
+                    </span>
+                    <span>{task.currentStep}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{task.duration}</p>
+                  {task.status === 'running' && (
+                    <div className="w-24 h-2 bg-slate-200 dark:bg-slate-700 rounded-full mt-2 overflow-hidden">
+                      <div
+                        className={`h-full ${getStatusColor(task.status)} transition-all`}
+                        style={{ width: `${task.progress}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 展开详情 */}
+              {selectedTask?.id === task.id && (
+                <div className="mt-4 p-4 bg-slate-900 rounded-lg">
+                  <p className="text-xs text-slate-400 mb-2 font-mono">执行日志</p>
+                  <div className="space-y-1 font-mono text-sm">
+                    {task.logs.map((log, i) => (
+                      <p
+                        key={i}
+                        className={`${
+                          log.includes('❌') ? 'text-red-400' : log.includes('完成') ? 'text-emerald-400' : 'text-slate-300'
+                        }`}
+                      >
+                        {log}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

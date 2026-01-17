@@ -25,6 +25,7 @@ import {
   Radio,
   Palette,
   Bot,
+  Cpu,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -50,6 +51,8 @@ import PublishStats from './pages/PublishStats';
 import PlatformStatus from './pages/PlatformStatus';
 import ExecutionStatus from './pages/ExecutionStatus';
 import CeciliaRuns from './pages/CeciliaRuns';
+import EngineCapabilities from './pages/EngineCapabilities';
+import TaskMonitor from './pages/TaskMonitor';
 import './App.css';
 
 function AppContent() {
@@ -78,20 +81,27 @@ function AppContent() {
   };
 
   // 定义所有导航组，带 featureKey 用于动态过滤
-  // Cecilia 导航组
+  // Core 导航组
   const ceciliaNavGroups = [
     {
-      title: '概览',
+      title: 'Engine',
+      items: [
+        { path: '/engine', icon: Cpu, label: '能力概览', featureKey: 'engine-capabilities' },
+        { path: '/engine/tasks', icon: Activity, label: '任务监控', featureKey: 'task-monitor' },
+      ]
+    },
+    {
+      title: 'Cecilia',
       items: [
         { path: '/cecilia', icon: Bot, label: '任务总览', featureKey: 'cecilia-tasks' },
         { path: '/cecilia/history', icon: ListTodo, label: '历史记录', featureKey: 'cecilia-history' },
         { path: '/cecilia/stats', icon: BarChart3, label: '统计分析', featureKey: 'cecilia-stats' },
+        { path: '/cecilia/logs', icon: Activity, label: '执行日志', featureKey: 'cecilia-logs' },
       ]
     },
     {
       title: '系统',
       items: [
-        { path: '/cecilia/logs', icon: Activity, label: '执行日志', featureKey: 'cecilia-logs' },
         ...(isSuperAdmin ? [
           { path: '/settings', icon: Settings, label: '配置', featureKey: 'settings' },
         ] : []),
@@ -382,7 +392,25 @@ function AppContent() {
               path="/"
               element={
                 <PrivateRoute>
-                  {isCecilia ? <Navigate to="/cecilia" replace /> : <Dashboard />}
+                  {isCecilia ? <Navigate to="/engine" replace /> : <Dashboard />}
+                </PrivateRoute>
+              }
+            />
+
+            {/* Engine 路由 */}
+            <Route
+              path="/engine"
+              element={
+                <PrivateRoute>
+                  <EngineCapabilities />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/engine/tasks"
+              element={
+                <PrivateRoute>
+                  <TaskMonitor />
                 </PrivateRoute>
               }
             />

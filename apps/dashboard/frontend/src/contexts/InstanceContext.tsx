@@ -43,10 +43,10 @@ const dashboardConfig: InstanceConfig = {
   },
 };
 
-// Cecilia 配置（AI黑客透明风格）
+// Core 配置（AI黑客透明风格）
 const ceciliaConfig: InstanceConfig = {
   instance: 'cecilia',
-  name: 'Cecilia',
+  name: 'Core',
   theme: {
     logo: '/logo-white.png',
     logoCollapsed: 'C',
@@ -55,10 +55,15 @@ const ceciliaConfig: InstanceConfig = {
     sidebarGradient: 'linear-gradient(180deg, rgba(0,10,20,0.95) 0%, rgba(0,20,40,0.9) 50%, rgba(0,30,50,0.85) 100%)',
   },
   features: {
+    // Engine 功能
+    'engine-capabilities': true,
+    'task-monitor': true,
+    // Cecilia 功能
     'cecilia-tasks': true,
     'cecilia-history': true,
     'cecilia-stats': true,
     'cecilia-logs': true,
+    // 通用
     'settings': true,
   },
 };
