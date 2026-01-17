@@ -1,7 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { BarChart3, Shield, Zap } from 'lucide-react';
+import { BarChart3, Shield, Zap, RefreshCw, Smartphone } from 'lucide-react';
+
+// 声明全局 QRLogin 函数类型
+declare global {
+  interface Window {
+    QRLogin: (config: {
+      id: string;
+      goto: string;
+      width: number;
+      height: number;
+      style?: string;
+    }) => {
+      matchOrigin: (origin: string) => boolean;
+      matchData: (data: { tmp_code?: string }) => boolean;
+    };
+  }
+}
 
 // 飞书登录页面
 export default function FeishuLogin() {
@@ -10,19 +26,15 @@ export default function FeishuLogin() {
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [qrReady, setQrReady] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [qrKey, setQrKey] = useState(0);
+  const qrLoginRef = useRef<ReturnType<typeof window.QRLogin> | null>(null);
+  const scriptLoadedRef = useRef(false);
 
   // 飞书应用配置（从环境变量读取）
   const APP_ID = import.meta.env.VITE_FEISHU_APP_ID;
-  // 动态 redirect_uri：使用当前域名，确保登录后回到原域名
-  const REDIRECT_URI = `${window.location.origin}/login`;
-
-  useEffect(() => {
-    // 检查是否有 code 参数（飞书回调）
-    const code = searchParams.get('code');
-    if (code) {
-      handleFeishuCallback(code);
-    }
-  }, [searchParams]);
+  const REDIRECT_URI = import.meta.env.VITE_FEISHU_REDIRECT_URI;
 
   // 处理飞书登录回调
   const handleFeishuCallback = async (code: string) => {
@@ -46,7 +58,7 @@ export default function FeishuLogin() {
 
       if (data.success && data.user) {
         console.log('Login successful, user data:', data.user);
-        console.log('🔑 你的飞书 ID:', data.user.feishu_user_id);
+        console.log('Your Feishu ID:', data.user.feishu_user_id);
         login(data.user, data.user.access_token);
         navigate('/');
       } else {
@@ -59,19 +71,126 @@ export default function FeishuLogin() {
     }
   };
 
-  // 发起飞书登录
-  const handleLogin = () => {
-    if (!APP_ID) {
-      setError('飞书应用未配置，请联系管理员');
+  // 初始化二维码
+  const initQRCode = useCallback(() => {
+    if (typeof window.QRLogin !== 'function') {
+      setError('飞书登录组件未加载');
       return;
     }
 
-    // 构造飞书登录 URL
-    const feishuAuthUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=STATE`;
+    // 检查容器是否已有内容（避免重复初始化）
+    const container = document.getElementById('feishu-qr-container');
+    if (!container) return;
+    if (container.querySelector('iframe')) {
+      // 已经有二维码了，不重复初始化
+      setQrReady(true);
+      return;
+    }
 
-    // 跳转到飞书登录页面
-    window.location.href = feishuAuthUrl;
-  };
+    // 构造授权地址
+    const goto = `https://passport.feishu.cn/suite/passport/oauth/authorize?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&state=STATE`;
+
+    try {
+      qrLoginRef.current = window.QRLogin({
+        id: 'feishu-qr-container',
+        goto: goto,
+        width: 200,
+        height: 200,
+        style: 'border:none;background:transparent;',
+      });
+      setQrReady(true);
+      setError('');
+    } catch (err) {
+      console.error('QRLogin init error:', err);
+      setError('初始化登录二维码失败');
+    }
+  }, [APP_ID, REDIRECT_URI]);
+
+  // 刷新二维码 - 通过改变 key 让 React 重建容器
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setQrReady(false);
+    qrLoginRef.current = null;
+    setQrKey(k => k + 1);
+    setTimeout(() => {
+      initQRCode();
+      setRefreshing(false);
+    }, 300);
+  }, [initQRCode]);
+
+  // 检查是否有 code 参数（飞书回调）
+  useEffect(() => {
+    const code = searchParams.get('code');
+    if (code) {
+      handleFeishuCallback(code);
+    }
+  }, [searchParams]);
+
+  // 加载飞书扫码 SDK 并初始化二维码
+  useEffect(() => {
+    // 如果已经有 code，不需要显示二维码
+    if (searchParams.get('code')) return;
+    if (!APP_ID) return;
+    // 防止 StrictMode 重复加载
+    if (scriptLoadedRef.current) {
+      // 如果脚本已加载，直接初始化二维码
+      if (typeof window.QRLogin === 'function') {
+        initQRCode();
+      }
+      return;
+    }
+
+    scriptLoadedRef.current = true;
+
+    // 检查是否已存在脚本
+    const existingScript = document.querySelector('script[src*="LarkSSOSDKWebQRCode"]');
+    if (existingScript && typeof window.QRLogin === 'function') {
+      initQRCode();
+      return;
+    }
+
+    // 动态加载飞书 SDK
+    const script = document.createElement('script');
+    script.src = 'https://lf-package-cn.feishucdn.com/obj/feishu-static/lark/passport/qrcode/LarkSSOSDKWebQRCode-1.0.3.js';
+    script.async = true;
+    script.onload = () => {
+      initQRCode();
+    };
+    script.onerror = () => {
+      setError('加载飞书登录组件失败');
+      scriptLoadedRef.current = false;
+    };
+    document.body.appendChild(script);
+
+    // 不在 cleanup 中移除脚本，避免 StrictMode 问题
+  }, [APP_ID, searchParams, initQRCode]);
+
+  // 监听扫码成功事件
+  useEffect(() => {
+    if (!qrReady || !qrLoginRef.current) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const qrLogin = qrLoginRef.current;
+        if (qrLogin && qrLogin.matchOrigin(event.origin) && qrLogin.matchData(event.data)) {
+          const tmpCode = event.data.tmp_code;
+          if (tmpCode) {
+            console.log('Received tmp_code:', tmpCode);
+            // 使用 tmp_code 跳转完成授权
+            const goto = `https://passport.feishu.cn/suite/passport/oauth/authorize?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&state=STATE`;
+            window.location.href = `${goto}&tmp_code=${tmpCode}`;
+          }
+        }
+      } catch (err) {
+        console.error('Message handling error:', err);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [qrReady, APP_ID, REDIRECT_URI]);
 
   if (loading) {
     return (
@@ -155,9 +274,9 @@ export default function FeishuLogin() {
 
           {/* 登录卡片 */}
           <div className="bg-white/5 backdrop-blur-xl rounded-3xl p-8 border border-white/10 shadow-2xl">
-            <div className="text-center mb-8">
+            <div className="text-center mb-6">
               <h3 className="text-2xl font-bold text-white mb-2">欢迎回家</h3>
-              <p className="text-white/50">用飞书账号，一键进入</p>
+              <p className="text-white/50">用飞书扫码，一键进入</p>
             </div>
 
             {error && (
@@ -166,20 +285,49 @@ export default function FeishuLogin() {
               </div>
             )}
 
-            {/* 飞书登录按钮 */}
-            <button
-              onClick={handleLogin}
-              className="group w-full flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-medium text-white transition-all duration-300 hover:scale-[1.02] hover:shadow-lg bg-gradient-to-r from-blue-600 to-blue-700 shadow-blue-500/30"
-            >
-              {/* 飞书 Logo */}
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-4-4 1.41-1.41L11 14.17l6.59-6.59L19 9l-8 8z" opacity="0"/>
-                <path d="M6.265 6.264l11.47 11.471L12 22l-5.735-5.736L6.265 6.264z" fillOpacity="0.9"/>
-                <path d="M17.736 6.264L6.265 17.736 12 22l5.736-5.736v-10z" fillOpacity="0.6"/>
-                <path d="M12 2L6.265 6.264l5.735 5.735 5.736-5.735L12 2z" fillOpacity="0.8"/>
-              </svg>
-              <span>飞书登录</span>
-            </button>
+            {/* 飞书扫码二维码容器 */}
+            <div className="flex flex-col items-center mb-6">
+              {/* 二维码外框 - 渐变边框效果 */}
+              <div className="relative p-1 rounded-2xl bg-gradient-to-br from-sky-400 via-blue-500 to-indigo-600">
+                <div className="relative bg-white rounded-xl p-4">
+                  <div
+                    key={qrKey}
+                    id="feishu-qr-container"
+                    className="overflow-hidden"
+                    style={{ width: 200, height: 200 }}
+                  >
+                    {(!qrReady || refreshing) && !error && (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
+                        <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent mb-3"></div>
+                        <p className="text-gray-400 text-sm">{refreshing ? '刷新中...' : '加载中...'}</p>
+                      </div>
+                    )}
+                  </div>
+                  {/* 扫码图标装饰 */}
+                  <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-sky-500 to-blue-600 rounded-full p-2 shadow-lg">
+                    <Smartphone className="w-4 h-4 text-white" />
+                  </div>
+                </div>
+              </div>
+
+              {/* 刷新按钮 */}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="mt-6 flex items-center gap-2 px-4 py-2 text-sm text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-all duration-200 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <span>刷新二维码</span>
+              </button>
+            </div>
+
+            {/* 提示文字 */}
+            <div className="text-center mb-4">
+              <p className="text-white/70 text-sm flex items-center justify-center gap-2">
+                <Smartphone className="w-4 h-4" />
+                打开飞书 App 扫描二维码
+              </p>
+            </div>
 
             {/* 分隔线 */}
             <div className="flex items-center gap-4 my-6">
