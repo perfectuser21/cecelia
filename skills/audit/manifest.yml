@@ -1,0 +1,4 @@
+# /audit skill manifest
+name: audit
+description: 有边界的代码审计与修复，避免无限深挖
+trigger: /audit

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.15.0] - 2026-01-17
+
+### Added
+- 新增 `/audit` skill：有边界的代码审计与修复
+  - 分层标准：L1 阻塞性 / L2 功能性 / L3 最佳实践 / L4 过度优化
+  - 明确的完成条件：L1+L2 清零即宣布完成
+  - 防止无限深挖的反模式警告
+
 ## [7.14.8] - 2026-01-17
 
 ### Fixed

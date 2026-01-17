@@ -30,6 +30,7 @@ AI 开发工作流引擎。
 | 命令 | 说明 |
 |------|------|
 | `/dev` | 开始开发流程 |
+| `/audit` | 代码审计与修复（有边界） |
 
 ---
 
@@ -38,7 +39,9 @@ AI 开发工作流引擎。
 ```
 zenithjoy-engine/
 ├── hooks/           # Claude Code Hooks
-├── skills/dev/      # /dev 工作流
+├── skills/
+│   ├── dev/         # /dev 开发工作流
+│   └── audit/       # /audit 代码审计
 ├── docs/            # 详细文档
 │   ├── ARCHITECTURE.md  # 知识分层架构
 │   └── LEARNINGS.md     # 开发经验
