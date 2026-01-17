@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.14.0] - 2026-01-17
+
+### Improved
+- multi-feature.sh: 过滤 auto-backup 提交，显示更有意义的改动
+- multi-feature.sh: 添加分支最后更新时间显示
+
 ## [7.13.0] - 2026-01-16
 
 ### Added

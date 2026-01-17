@@ -34,10 +34,22 @@ get_ahead_count() {
   git rev-list --count origin/main.."$branch" 2>/dev/null || echo "?"
 }
 
-# 获取领先的 commits 列表
+# 获取领先的 commits 列表（过滤 auto-backup）
 get_ahead_commits() {
   local branch=$1
-  git log origin/main.."$branch" --oneline 2>/dev/null || true
+  git log origin/main.."$branch" --oneline 2>/dev/null | grep -v "^[a-f0-9]* auto-backup:" || true
+}
+
+# 获取领先的 commits 数量（过滤 auto-backup）
+get_ahead_count_filtered() {
+  local branch=$1
+  git log origin/main.."$branch" --oneline 2>/dev/null | grep -v "^[a-f0-9]* auto-backup:" | wc -l | tr -d ' '
+}
+
+# 获取分支最后更新时间
+get_last_update() {
+  local branch=$1
+  git log -1 --format="%ar" "$branch" 2>/dev/null || echo "unknown"
 }
 
 case $ACTION in
@@ -75,31 +87,38 @@ case $ACTION in
         MARKER=" (当前)"
       fi
 
+      # 获取过滤后的提交数和最后更新时间
+      AHEAD_FILTERED=$(get_ahead_count_filtered "$branch")
+      LAST_UPDATE=$(get_last_update "$branch")
+
       if [ "$BEHIND" = "0" ] || [ "$BEHIND" = "?" ]; then
         # 已同步 main
         echo -e "  ${GREEN}✅${NC} $branch${MARKER}"
-        if [ "$AHEAD" = "0" ]; then
-          echo "     与 main 完全一致"
+        echo "     最后更新: $LAST_UPDATE"
+        if [ "$AHEAD_FILTERED" = "0" ]; then
+          echo "     与 main 完全一致（或仅有 auto-backup）"
         else
-          echo "     已同步 main，领先 $AHEAD commits:"
+          echo "     已同步 main，领先 $AHEAD_FILTERED commits:"
           get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
-          if [[ "$AHEAD" =~ ^[0-9]+$ ]] && [ "$AHEAD" -gt 5 ]; then
-            echo "       ... 还有 $((AHEAD - 5)) 个"
+          if [[ "$AHEAD_FILTERED" =~ ^[0-9]+$ ]] && [ "$AHEAD_FILTERED" -gt 5 ]; then
+            echo "       ... 还有 $((AHEAD_FILTERED - 5)) 个"
           fi
         fi
-      elif [ "$AHEAD" = "0" ]; then
-        # 落后 main 但没有自己的改动，建议删除
+      elif [ "$AHEAD_FILTERED" = "0" ]; then
+        # 落后 main 但没有自己的改动（或仅有 auto-backup），建议删除
         echo -e "  ${RED}🗑️${NC}  $branch${MARKER}"
-        echo "     落后 main $BEHIND commits，无自己的改动"
+        echo "     最后更新: $LAST_UPDATE"
+        echo "     落后 main $BEHIND commits，无实际改动"
         echo "     建议删除: git branch -D $branch"
         NEED_SYNC=$((NEED_SYNC + 1))
       else
         # 落后 main 且有自己的改动，需要同步
         echo -e "  ${YELLOW}⚠️${NC}  $branch${MARKER}"
-        echo "     落后 main $BEHIND commits，领先 $AHEAD commits:"
+        echo "     最后更新: $LAST_UPDATE"
+        echo "     落后 main $BEHIND commits，领先 $AHEAD_FILTERED commits:"
         get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
-        if [[ "$AHEAD" =~ ^[0-9]+$ ]] && [ "$AHEAD" -gt 5 ]; then
-          echo "       ... 还有 $((AHEAD - 5)) 个"
+        if [[ "$AHEAD_FILTERED" =~ ^[0-9]+$ ]] && [ "$AHEAD_FILTERED" -gt 5 ]; then
+          echo "       ... 还有 $((AHEAD_FILTERED - 5)) 个"
         fi
         NEED_SYNC=$((NEED_SYNC + 1))
       fi
