@@ -70,15 +70,25 @@ fi
 
 # ===== 以下是需要保护的文件 =====
 
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# 从文件路径找到所属的 git 仓库
+FILE_DIR=$(dirname "$FILE_PATH")
+if [[ ! -d "$FILE_DIR" ]]; then
+    # 文件目录不存在，可能是新文件，向上查找
+    FILE_DIR=$(dirname "$FILE_DIR")
+fi
 
-if [[ -z "$CURRENT_BRANCH" ]]; then
+# 切换到文件所在目录，获取该仓库的信息
+if ! cd "$FILE_DIR" 2>/dev/null; then
     exit 0
 fi
 
-# 验证文件是否属于当前 git 仓库
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-if [[ -n "$PROJECT_ROOT" && "$FILE_PATH" != "$PROJECT_ROOT"* ]]; then
+if [[ -z "$PROJECT_ROOT" ]]; then
+    exit 0  # 不在 git 仓库中
+fi
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [[ -z "$CURRENT_BRANCH" ]]; then
     exit 0
 fi
 

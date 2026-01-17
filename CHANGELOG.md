@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.27.1] - 2026-01-17
+
+### Fixed
+- 修复跨仓库文件写入时 branch-protect hook 检查错误仓库的 bug
+
 ## [7.27.0] - 2026-01-17
 
 ### Added
