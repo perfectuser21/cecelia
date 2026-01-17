@@ -94,8 +94,8 @@ export default function FeishuLogin() {
       qrLoginRef.current = window.QRLogin({
         id: 'feishu-qr-container',
         goto: goto,
-        width: 200,
-        height: 200,
+        width: 300,
+        height: 300,
         style: 'border:none;background:white;',
       });
       setQrReady(true);
@@ -287,17 +287,19 @@ export default function FeishuLogin() {
 
             {/* 飞书扫码二维码容器 */}
             <div className="flex flex-col items-center mb-6">
-              {/* 二维码外框 */}
-              <div className="relative rounded-2xl border-2 border-sky-400/50 p-1">
-                <div className="relative bg-white rounded-xl p-2">
+              {/* 二维码外框 - 210px 显示区域 */}
+              <div className="rounded-2xl border-2 border-sky-400/50 bg-white p-2">
+                {/* 裁剪容器 */}
+                <div style={{ width: 210, height: 210, overflow: 'hidden', borderRadius: 8 }}>
+                  {/* SDK 生成 300x300，缩放到 70% = 210px */}
                   <div
                     key={qrKey}
                     id="feishu-qr-container"
-                    className="rounded-lg [&_iframe]:!border-0 [&_iframe]:!outline-none [&_iframe]:block"
-                    style={{ width: 200, height: 200 }}
+                    className="[&_iframe]:!border-0 [&_iframe]:!outline-none [&_iframe]:block"
+                    style={{ width: 300, height: 300, transform: 'scale(0.7)', transformOrigin: 'top left' }}
                   >
                     {(!qrReady || refreshing) && !error && (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50">
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 rounded-lg">
                         <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-600 border-t-transparent mb-3"></div>
                         <p className="text-gray-400 text-sm">{refreshing ? '刷新中...' : '加载中...'}</p>
                       </div>
