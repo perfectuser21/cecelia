@@ -138,26 +138,10 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
     return <Route key={route.path} path={route.path} element={element} />;
   };
 
-  // Core 实例的首页重定向
-  const homeRoute = isCecilia ? (
-    <Route
-      key="home"
-      path="/"
-      element={
-        <PrivateRoute>
-          <Navigate to="/engine" replace />
-        </PrivateRoute>
-      }
-    />
-  ) : null;
-
   return (
     <Routes>
       {/* 额外的静态路由（登录页等） */}
       {children}
-
-      {/* 首页重定向（Core 实例） */}
-      {homeRoute}
 
       {/* 动态生成的路由 */}
       {allRoutes.map(renderRoute)}

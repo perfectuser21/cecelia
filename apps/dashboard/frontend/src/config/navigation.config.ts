@@ -81,6 +81,7 @@ export const pageComponents: Record<string, () => Promise<{ default: ComponentTy
   'LoginPage': () => import('../pages/LoginPage'),
   'PlatformStatusDashboard': () => import('../pages/PlatformStatusDashboard'),
   'DevTasks': () => import('../pages/DevTasks'),
+  'EngineDashboard': () => import('../pages/EngineDashboard'),
   'ToolsPage': () => import('../pages/ToolsPage'),
   'ScrapingPage': () => import('../pages/ScrapingPage'),
   'AdminSettingsPage': () => import('../pages/AdminSettingsPage'),
@@ -107,7 +108,7 @@ export const coreNavGroups: NavGroup[] = [
         icon: LayoutDashboard,
         label: '工作台',
         featureKey: 'workbench',
-        component: 'Dashboard'
+        component: 'EngineDashboard'
       },
     ]
   },
