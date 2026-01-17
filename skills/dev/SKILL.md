@@ -87,7 +87,21 @@ Step 10: Cleanup
 | 9 | 已合并 | PR merged |
 | 10 | 已清理 | 分支删除 |
 
-**Hook 检查**：step >= 3 才能写代码（Write/Edit）
+### Hook 强制执行
+
+**两层 Hook 保护**：
+
+1. **Write/Edit Hook** (`branch-protect.sh`)
+   - step >= 3 才能写代码
+   - 只允许 cp-* 或 feature/* 分支
+
+2. **Bash Hook** (`pre-pr-check.sh`) - 步骤守卫
+   - 拦截 `git config branch.*.step N` 命令
+   - 强制顺序递增：N 必须 = current_step + 1
+   - step 5→6 验证：npm test 必须通过
+   - step 6→7 验证：typecheck + test 必须通过
+
+**不能跳步，不能作弊。**
 
 ---
 

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.21.0] - 2026-01-17
+
+### Added
+- 步骤守卫 Hook：拦截 `git config branch.*.step N` 命令
+- 强制顺序递增：N 必须 = current_step + 1，不能跳步
+- 凭据验证：step 5→6 需要 npm test 通过
+
+### Changed
+- pre-pr-check.sh 扩展为 Bash 命令守卫（步骤守卫 + PR 前检查）
+- SKILL.md 更新 Hook 强制执行文档
+
 ## [7.20.0] - 2026-01-17
 
 ### Added
