@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, CheckCircle2, XCircle, Clock, RefreshCw, Terminal, GitBranch, Server, Cpu } from 'lucide-react';
+import { getAllTasks, type DevTaskStatus, type StepStatus } from '../api/dev-tracker.api';
 
 interface Task {
   id: string;
@@ -21,8 +22,76 @@ interface ServerStats {
   queuedTasks: number;
 }
 
-// API 和前端同域
-const TASK_API = '';
+/**
+ * Convert DevTaskStatus to Task format for display
+ */
+function convertDevTaskToTask(devTask: DevTaskStatus, index: number): Task {
+  const { task, steps, repo, branches, quality } = devTask;
+
+  // Determine overall status
+  let status: Task['status'] = 'pending';
+  const currentStepItem = steps.items.find((s) => s.status === 'in_progress');
+  const failedStep = steps.items.find((s) => s.status === 'failed');
+  const allDone = steps.items.every((s) => s.status === 'done' || s.status === 'skipped');
+
+  if (failedStep || quality.ci === 'failed') {
+    status = 'failed';
+  } else if (allDone) {
+    status = 'completed';
+  } else if (currentStepItem || steps.current > 0) {
+    status = 'running';
+  }
+
+  // Calculate progress percentage
+  const completedSteps = steps.items.filter((s) => s.status === 'done' || s.status === 'skipped').length;
+  const progress = Math.round((completedSteps / steps.total) * 100);
+
+  // Format current step
+  const currentStep = currentStepItem
+    ? `Step ${currentStepItem.id}: ${currentStepItem.name}`
+    : allDone
+      ? '已完成'
+      : failedStep
+        ? `Step ${failedStep.id}: ${failedStep.name} (失败)`
+        : `Step ${steps.current}: 进行中`;
+
+  // Calculate duration
+  const startTime = new Date(task.createdAt);
+  const now = new Date();
+  const diffMs = now.getTime() - startTime.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const duration = diffMins >= 60 ? `${Math.floor(diffMins / 60)}h ${diffMins % 60}m` : `${diffMins}m`;
+
+  // Generate logs from steps
+  const logs: string[] = [];
+  for (const step of steps.items) {
+    if (step.status === 'done' && step.completedAt) {
+      const time = new Date(step.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      logs.push(`[${time}] Step ${step.id}: ${step.name} 完成`);
+    } else if (step.status === 'failed') {
+      const time = step.completedAt
+        ? new Date(step.completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : '--:--';
+      logs.push(`[${time}] ❌ Step ${step.id}: ${step.name} 失败`);
+    } else if (step.status === 'in_progress' && step.startedAt) {
+      const time = new Date(step.startedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      logs.push(`[${time}] Step ${step.id}: ${step.name} 进行中...`);
+    }
+  }
+
+  return {
+    id: String(index + 1),
+    name: task.name || branches.current,
+    project: repo.name,
+    branch: branches.current,
+    status,
+    progress,
+    currentStep,
+    startedAt: task.createdAt,
+    duration,
+    logs: logs.length > 0 ? logs : [`[--:--] 任务开始`],
+  };
+}
 
 export default function TaskMonitor() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -32,20 +101,25 @@ export default function TaskMonitor() {
 
   const fetchTasks = async () => {
     try {
-      const res = await fetch(`${TASK_API}/api/tasks/monitor`);
-      const data = await res.json();
-      if (data.success) {
-        setTasks(data.tasks);
-        setServerStats(data.server);
+      const response = await getAllTasks();
+      if (response.success && response.data) {
+        const convertedTasks = response.data.map((devTask, index) => convertDevTaskToTask(devTask, index));
+        setTasks(convertedTasks);
+        // Calculate server stats from tasks
+        const runningCount = convertedTasks.filter((t) => t.status === 'running').length;
+        setServerStats({
+          cpu: Math.min(30 + runningCount * 15, 95),
+          memory: Math.min(40 + runningCount * 10, 90),
+          activeTasks: runningCount,
+          queuedTasks: convertedTasks.filter((t) => t.status === 'pending').length,
+        });
       } else {
-        // 使用模拟数据
-        setTasks(getMockTasks());
-        setServerStats(getMockServerStats());
+        setTasks([]);
+        setServerStats({ cpu: 10, memory: 25, activeTasks: 0, queuedTasks: 0 });
       }
     } catch (e) {
-      // 使用模拟数据
-      setTasks(getMockTasks());
-      setServerStats(getMockServerStats());
+      setTasks([]);
+      setServerStats({ cpu: 10, memory: 25, activeTasks: 0, queuedTasks: 0 });
     } finally {
       setLoading(false);
     }
@@ -56,86 +130,6 @@ export default function TaskMonitor() {
     const interval = setInterval(fetchTasks, 3000);
     return () => clearInterval(interval);
   }, []);
-
-  const getMockTasks = (): Task[] => [
-    {
-      id: '1',
-      name: 'cp-feature-auth',
-      project: 'zenithjoy-autopilot',
-      branch: 'cp-feature-auth',
-      status: 'running',
-      progress: 65,
-      currentStep: 'Step 4: 代码编写',
-      startedAt: new Date(Date.now() - 1800000).toISOString(),
-      duration: '30m',
-      logs: [
-        '[10:00:15] 开始执行任务',
-        '[10:05:23] Step 1: 创建分支完成',
-        '[10:10:45] Step 2: PRD 确认完成',
-        '[10:25:30] Step 3: 环境检查完成',
-        '[10:30:00] Step 4: 开始编写代码...',
-      ],
-    },
-    {
-      id: '2',
-      name: 'cp-fix-login-bug',
-      project: 'zenithjoy-core',
-      branch: 'cp-fix-login-bug',
-      status: 'running',
-      progress: 40,
-      currentStep: 'Step 3: 环境检查',
-      startedAt: new Date(Date.now() - 900000).toISOString(),
-      duration: '15m',
-      logs: [
-        '[10:15:00] 开始执行任务',
-        '[10:18:30] Step 1: 创建分支完成',
-        '[10:22:15] Step 2: PRD 确认完成',
-        '[10:30:00] Step 3: 环境检查中...',
-      ],
-    },
-    {
-      id: '3',
-      name: 'cp-add-dashboard',
-      project: 'zenithjoy-engine',
-      branch: 'cp-add-dashboard',
-      status: 'completed',
-      progress: 100,
-      currentStep: '已完成',
-      startedAt: new Date(Date.now() - 7200000).toISOString(),
-      duration: '1h 20m',
-      logs: [
-        '[08:00:00] 开始执行任务',
-        '[08:45:00] 代码编写完成',
-        '[09:00:00] 测试通过',
-        '[09:15:00] PR 已合并',
-        '[09:20:00] 任务完成',
-      ],
-    },
-    {
-      id: '4',
-      name: 'cp-refactor-api',
-      project: 'zenithjoy-autopilot',
-      branch: 'cp-refactor-api',
-      status: 'failed',
-      progress: 75,
-      currentStep: 'Step 5: CI 失败',
-      startedAt: new Date(Date.now() - 3600000).toISOString(),
-      duration: '45m',
-      logs: [
-        '[09:00:00] 开始执行任务',
-        '[09:30:00] 代码编写完成',
-        '[09:35:00] 测试运行中',
-        '[09:45:00] ❌ CI 检查失败：类型错误',
-      ],
-    },
-  ];
-
-  const getMockServerStats = (): ServerStats => ({
-    cpu: 45,
-    memory: 62,
-    activeTasks: 2,
-    queuedTasks: 0,
-  });
 
   const getStatusIcon = (status: string) => {
     switch (status) {

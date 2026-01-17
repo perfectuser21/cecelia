@@ -1,38 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Cpu, GitBranch, Shield, Workflow, History, RefreshCw, CheckCircle2, Zap, Terminal } from 'lucide-react';
-
-interface Skill {
-  name: string;
-  description: string;
-  trigger: string;
-  status: 'active' | 'inactive';
-}
-
-interface Hook {
-  name: string;
-  trigger: string;
-  description: string;
-  protectedPaths: string[];
-}
-
-interface ChangelogEntry {
-  version: string;
-  date: string;
-  changes: string[];
-  type: 'major' | 'minor' | 'patch';
-}
-
-interface EngineInfo {
-  version: string;
-  name: string;
-  description: string;
-  skills: Skill[];
-  hooks: Hook[];
-  changelog: ChangelogEntry[];
-}
-
-// API 和前端同域
-const ENGINE_API = '';
+import { getEngineInfo, type EngineInfo } from '../api/engine.api';
 
 export default function EngineCapabilities() {
   const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
@@ -42,18 +10,16 @@ export default function EngineCapabilities() {
 
   const fetchEngineInfo = async () => {
     try {
-      const res = await fetch(`${ENGINE_API}/api/engine/info`);
-      const data = await res.json();
-      if (data.success) {
+      const data = await getEngineInfo();
+      if (data.success && data.engine) {
         setEngineInfo(data.engine);
         setError(null);
       } else {
-        // 使用模拟数据（API 未实现时）
-        setEngineInfo(getMockData());
+        setError(data.error || 'Failed to load engine info');
       }
-    } catch (e: any) {
-      // 使用模拟数据
-      setEngineInfo(getMockData());
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -62,66 +28,6 @@ export default function EngineCapabilities() {
   useEffect(() => {
     fetchEngineInfo();
   }, []);
-
-  const getMockData = (): EngineInfo => ({
-    version: '7.14.0',
-    name: 'ZenithJoy Engine',
-    description: 'AI 开发工作流核心引擎，为 Claude Code 提供自动化开发流程保护',
-    skills: [
-      {
-        name: '/dev',
-        description: '统一开发工作流：从 PRD 到 PR 合并全自动化',
-        trigger: '用户输入 /dev 或 Hook 输出 [SKILL_REQUIRED: dev]',
-        status: 'active',
-      },
-      {
-        name: '/semver',
-        description: '语义化版本控制，自动管理版本号和 CHANGELOG',
-        trigger: '代码修改后自动触发',
-        status: 'active',
-      },
-    ],
-    hooks: [
-      {
-        name: 'branch-protect',
-        trigger: 'PreToolUse (Write/Edit)',
-        description: '强制在 cp-* 分支修改代码，保护 main 分支',
-        protectedPaths: ['*.ts', '*.tsx', '*.js', 'skills/', 'hooks/', '.github/'],
-      },
-      {
-        name: 'project-detect',
-        trigger: 'PostToolUse (Bash)',
-        description: '检测项目初始化状态（git/remote/CI/CLAUDE.md）',
-        protectedPaths: [],
-      },
-      {
-        name: 'pre-pr-check',
-        trigger: '提交前',
-        description: 'PR 前检查，确保代码质量',
-        protectedPaths: [],
-      },
-    ],
-    changelog: [
-      {
-        version: '7.14.0',
-        date: '2026-01-17',
-        changes: ['新增 Engine 能力展示页面', '优化分支保护机制'],
-        type: 'minor',
-      },
-      {
-        version: '7.13.0',
-        date: '2026-01-16',
-        changes: ['添加 Calculator 示例模块', '完善类型定义'],
-        type: 'minor',
-      },
-      {
-        version: '7.12.0',
-        date: '2026-01-15',
-        changes: ['CI/CD 自动合并功能', '修复 Hook 执行顺序'],
-        type: 'minor',
-      },
-    ],
-  });
 
   const getVersionBadge = (type: string) => {
     const styles: Record<string, string> = {
