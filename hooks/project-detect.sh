@@ -120,7 +120,7 @@ if [[ "$IS_MONOREPO" == "true" ]]; then
         fi
 
         if [[ -n "$pkg_path" && -f "$pkg_path" ]]; then
-            deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' "$pkg_path" 2>/dev/null | grep -E "^@" | tr '\n' ',' | sed 's/,$//')
+            deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' "$pkg_path" 2>/dev/null | grep -E "^@" | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')
             if [[ -n "$deps" ]]; then
                 [[ "$first" != "true" ]] && DEPENDENCY_GRAPH+=","
                 DEPENDENCY_GRAPH+="\"$pkg\":[$deps]"
@@ -182,10 +182,10 @@ MAX_LEVEL=0
 
 # ===== 5. 生成 JSON =====
 array_to_json() {
-    local arr=("$@")
-    if [[ ${#arr[@]} -eq 0 ]]; then
+    if [[ $# -eq 0 ]]; then
         echo "[]"
     else
+        local arr=("$@")
         printf '["%s"' "${arr[0]}"
         for ((i=1; i<${#arr[@]}; i++)); do
             printf ',"%s"' "${arr[$i]}"

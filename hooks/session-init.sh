@@ -101,7 +101,7 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # 检查 gh 登录
-if ! gh auth status &>/dev/null 2>&1; then
+if ! gh auth status &>/dev/null; then
     MISSING+=("gh 未登录")
 fi
 

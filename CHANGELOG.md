@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.37.3] - 2026-01-18
+
+### Fixed
+- `project-detect.sh`: 修复 JSON 格式 bug
+  - 依赖图数组元素现在正确用引号包裹
+  - `array_to_json` 空数组现在返回 `[]` 而非 `[""]`
+- `check.sh`: 修复对已删除 checkbox 格式的无效引用
+  - 移除对 SKILL.md 中 `□`/`○` 字符的动态解析
+  - 更新步骤名称 "清理阶段 (Step 6)" → "Step 10: Cleanup"
+- 语法最佳实践修复：
+  - `stop-gate.sh`, `pr-gate.sh`: shebang 改为 `#!/usr/bin/env bash`
+  - `stop-gate.sh`: 未使用的 INPUT 变量改为 `cat > /dev/null`
+  - `session-init.sh`: 移除冗余重定向 `2>&1`
+
 ## [7.37.2] - 2026-01-18
 
 ### Fixed

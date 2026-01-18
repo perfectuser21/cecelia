@@ -108,25 +108,19 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  📋 关键节点完成度检查"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# 从 SKILL.md 动态计算必要项和可选项数量
-# □ = 必要（后跟空格，不跟⏭）, □⏭ = 可跳过, ○ = 可选
-# 注意：使用正则排除 □⏭
-# 显式设置 UTF-8 locale 以正确处理多字节字符（如 ⏭）
-export LC_ALL=en_US.UTF-8
-
-SKIPPABLE_COUNT=$(grep -c '^  □⏭' "$SKILL_FILE" 2>/dev/null || echo 0)
-REQUIRED_COUNT=$(grep -E '^  □[^⏭]' "$SKILL_FILE" 2>/dev/null | wc -l || echo 0)
-OPTIONAL_COUNT=$(grep -c '^  ○' "$SKILL_FILE" 2>/dev/null || echo 0)
-
-# 动态计算清理阶段的检查项数量（Step 6 下的 □ 项）
-# 查找 "清理阶段 (Step 6)" 到 "总结阶段 (Step 7)" 之间的 □ 数量
-CLEANUP_ITEM_COUNT=$(awk '/清理阶段 \(Step 6\)/,/总结阶段 \(Step 7\)/ { if (/^  □[^⏭]/) count++ } END { print count+0 }' "$SKILL_FILE")
+# 检查项固定值（SKILL.md 已改为表格格式，不再有 checkbox）
+# Step 10 Cleanup 检查项：6 个（git config, 切回分支, git pull, 删本地分支, 删远程分支, 清理引用）
+CLEANUP_ITEM_COUNT=6
+# 总必要项 = cleanup 检查项（其他阶段通过流程验证）
+REQUIRED_COUNT=$CLEANUP_ITEM_COUNT
+SKIPPABLE_COUNT=0
+OPTIONAL_COUNT=0
 
 COMPLETED_COUNT=0
 MISSING_COMMANDS=()
 
 echo ""
-echo "清理阶段 (Step 6):"
+echo "Step 10: Cleanup"
 
 # git config 已清理？（必须清理）
 CONFIG_EXISTS=false
@@ -224,14 +218,8 @@ else
   echo "  ✅ 无未提交文件"
 fi
 
-# 前面的阶段（假设已完成，因为能走到 cleanup）
-# 动态计算：总必要项 - 清理阶段已验证的项数 = 其他阶段的项数
-OTHER_STAGES_COUNT=$((REQUIRED_COUNT - CLEANUP_ITEM_COUNT))
-if [[ $OTHER_STAGES_COUNT -gt 0 ]]; then
-  echo ""
-  echo "其他阶段: ✅ $OTHER_STAGES_COUNT/$OTHER_STAGES_COUNT（已通过流程验证）"
-  COMPLETED_COUNT=$((COMPLETED_COUNT + OTHER_STAGES_COUNT))
-fi
+# 其他阶段已通过流程验证（step 状态机保证）
+# check.sh 只验证 Step 10 Cleanup 的检查项
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
