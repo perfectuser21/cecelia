@@ -86,7 +86,14 @@ while [ $WAITED -lt $MAX_WAIT ]; do
         CI_INFO=$(gh run list --repo "$REPO" --branch "$HEAD_BRANCH" --limit 1 --json status,conclusion 2>/dev/null || echo "")
         if [ -n "$CI_INFO" ] && [ "$CI_INFO" != "[]" ]; then
             CI_STATUS=$(echo "$CI_INFO" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
-            CI_CONCLUSION=$(echo "$CI_INFO" | jq -r '.[0].conclusion // "pending"' 2>/dev/null || echo "pending")
+            # jq -r 输出 null 时会得到字符串 "null"，需要额外处理
+            CI_CONCLUSION_RAW=$(echo "$CI_INFO" | jq -r '.[0].conclusion' 2>/dev/null || echo "pending")
+            # 处理 null 值：jq -r 会将 JSON null 输出为字符串 "null"
+            if [ "$CI_CONCLUSION_RAW" = "null" ] || [ -z "$CI_CONCLUSION_RAW" ]; then
+                CI_CONCLUSION="pending"
+            else
+                CI_CONCLUSION="$CI_CONCLUSION_RAW"
+            fi
             # 如果 status 是 in_progress/queued，conclusion 会是 null
             if [ "$CI_STATUS" = "in_progress" ] || [ "$CI_STATUS" = "queued" ]; then
                 CI_CONCLUSION="pending"

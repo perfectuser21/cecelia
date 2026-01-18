@@ -96,6 +96,7 @@ Step 11: Cleanup
 - 失败返回逻辑：
   - Step 6 写测试失败 → 继续 Step 6
   - Step 7 质检失败 → 返回 Step 4（从 Step 5 重新开始，5→6→7 循环）
+  - Step 8 PR 被 Hook 拦截 → 返回 Step 4（Hook 会检查质检报告和流程状态）
   - Step 9 CI 红 → 返回 Step 4（从 Step 5 重新开始，5→6→7 循环）
 - Step 10 Learning 是必须的
 - 整个流程在一个对话中完成，失败时自动循环，不断开

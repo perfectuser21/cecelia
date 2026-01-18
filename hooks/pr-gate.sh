@@ -75,9 +75,9 @@ else
     FAILED=1
 fi
 
-# 2. 检查分支步骤
+# 2. 检查分支步骤（cp-* 和 feature/* 都需要检查）
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [[ "${CURRENT_BRANCH:-}" =~ ^cp-[a-zA-Z0-9] ]]; then
+if [[ "${CURRENT_BRANCH:-}" =~ ^(cp-[a-zA-Z0-9]|feature/) ]]; then
     echo -n "  分支步骤... " >&2
     CHECKED=$((CHECKED + 1))
     CURRENT_STEP=$(git config --get branch."$CURRENT_BRANCH".step 2>/dev/null || echo "0")
@@ -277,11 +277,14 @@ fi
 # 使用 -print0 和 read -d '' 安全处理含空格的文件名
 SHELL_FAILED=0
 SHELL_COUNT=0
+SHELL_ERRORS=""
 while IFS= read -r -d '' f; do
     SHELL_COUNT=$((SHELL_COUNT + 1))
-    if ! bash -n "$f" 2>/dev/null; then
+    # 捕获语法错误信息
+    ERROR_OUTPUT=$(bash -n "$f" 2>&1) || {
         SHELL_FAILED=1
-    fi
+        SHELL_ERRORS+="    $f: $ERROR_OUTPUT"$'\n'
+    }
 done < <(find "$PROJECT_ROOT" -name "*.sh" -type f -not -path "*/node_modules/*" -print0 2>/dev/null)
 
 if [[ $SHELL_COUNT -gt 0 ]]; then
@@ -291,6 +294,10 @@ if [[ $SHELL_COUNT -gt 0 ]]; then
         echo "✅" >&2
     else
         echo "❌" >&2
+        # 显示具体哪些文件有语法错误
+        if [[ -n "$SHELL_ERRORS" ]]; then
+            echo "$SHELL_ERRORS" >&2
+        fi
         FAILED=1
     fi
 fi
@@ -309,7 +316,8 @@ if [[ $FAILED -eq 1 ]]; then
 
     # 回退到 step 4（DoD 完成），允许从 Step 5 重新开始
     # 只有 step >= 4 时才回退，否则说明 DoD 还没完成
-    if [[ -n "${CURRENT_BRANCH:-}" && "${CURRENT_BRANCH:-}" =~ ^cp-[a-zA-Z0-9] ]]; then
+    # 支持 cp-* 和 feature/* 分支
+    if [[ -n "${CURRENT_BRANCH:-}" && "${CURRENT_BRANCH:-}" =~ ^(cp-[a-zA-Z0-9]|feature/) ]]; then
         CURRENT_STEP=$(git config --get branch."$CURRENT_BRANCH".step 2>/dev/null || echo "0")
         if [[ "$CURRENT_STEP" -ge 4 ]]; then
             git config branch."$CURRENT_BRANCH".step 4

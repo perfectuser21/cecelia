@@ -223,9 +223,9 @@ array_to_json() {
 
 packages_json="[]"
 if [[ ${#PACKAGES[@]} -gt 0 ]]; then
-    packages_json=$(printf '["%s"' "${PACKAGES[0]}")
+    packages_json=$(printf '["%s"' "$(json_escape "${PACKAGES[0]}")")
     for ((i=1; i<${#PACKAGES[@]}; i++)); do
-        packages_json+=",\"${PACKAGES[$i]}\""
+        packages_json+=",\"$(json_escape "${PACKAGES[$i]}")\""
     done
     packages_json+="]"
 fi

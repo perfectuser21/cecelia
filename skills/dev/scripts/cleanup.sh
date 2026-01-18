@@ -61,11 +61,19 @@ fi
 # ========================================
 echo ""
 echo "2️⃣  拉取最新代码..."
-if git pull origin "$BASE_BRANCH" 2>/dev/null; then
+if [[ $CHECKOUT_FAILED -eq 1 ]]; then
+    echo -e "   ${YELLOW}⚠️  跳过（checkout 失败，不在目标分支）${NC}"
+elif git pull origin "$BASE_BRANCH" 2>/dev/null; then
     echo -e "   ${GREEN}✅ 已同步最新代码${NC}"
 else
     echo -e "   ${YELLOW}⚠️  拉取失败，可能有冲突${NC}"
     WARNINGS=$((WARNINGS + 1))
+    # 检查是否处于 MERGING 状态
+    if [[ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]]; then
+        echo -e "   ${RED}❌ 检测到未完成的合并，需要手动解决${NC}"
+        echo -e "   → 运行 'git merge --abort' 取消合并，或手动解决冲突"
+        FAILED=1
+    fi
 fi
 
 # ========================================
