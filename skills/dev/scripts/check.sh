@@ -109,7 +109,7 @@ echo "  📋 关键节点完成度检查"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # 检查项固定值（SKILL.md 已改为表格格式，不再有 checkbox）
-# Step 10 Cleanup 检查项：6 个（git config, 切回分支, git pull, 删本地分支, 删远程分支, 清理引用）
+# Step 11 Cleanup 检查项：6 个（git config, 切回分支, git pull, 删本地分支, 删远程分支, 清理引用）
 CLEANUP_ITEM_COUNT=6
 # 总必要项 = cleanup 检查项（其他阶段通过流程验证）
 REQUIRED_COUNT=$CLEANUP_ITEM_COUNT
@@ -120,7 +120,7 @@ COMPLETED_COUNT=0
 MISSING_COMMANDS=()
 
 echo ""
-echo "Step 10: Cleanup"
+echo "Step 11: Cleanup"
 
 # git config 已清理？（必须清理）
 CONFIG_EXISTS=false
@@ -219,7 +219,7 @@ else
 fi
 
 # 其他阶段已通过流程验证（step 状态机保证）
-# check.sh 只验证 Step 10 Cleanup 的检查项
+# check.sh 只验证 Step 11 Cleanup 的检查项
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

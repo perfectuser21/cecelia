@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.39.2] - 2026-01-18
+
+### Fixed
+- 修复失败返回逻辑描述：统一为"返回 Step 4"（而非 Step 5）
+  - `skills/dev/steps/07-quality.md`: 所有失败场景改为"返回 Step 4 重新开始"，循环描述为"5→6→7"
+  - `skills/dev/steps/09-ci.md`: CI 失败回退改为"回退 step 4"，循环描述为"5→6→7"
+  - `skills/dev/SKILL.md`: 失败返回逻辑改为"返回 Step 4（从 Step 5 重新开始，5→6→7 循环）"
+- 逻辑说明：失败时 pr-gate.sh 设置 step=4（DoD 完成），然后从 Step 5（写代码）重新开始，循环为 5→6→7
+
 ## [7.39.1] - 2026-01-18
 
 ### Fixed

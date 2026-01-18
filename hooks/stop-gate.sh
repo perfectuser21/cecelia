@@ -7,8 +7,8 @@
 # 作用：验证任务是否真的完成了
 #
 # 检查项（cp-* 分支）：
-#   - step >= 9（已合并）或不在 cp-* 分支
-#   - 如果 step < 9，提示还有工作没完成
+#   - step >= 10（Learning 完成）或不在 cp-* 分支
+#   - 如果 step < 10，提示还有工作没完成
 #
 # ============================================================================
 
@@ -42,61 +42,67 @@ echo "  分支: $CURRENT_BRANCH" >&2
 echo "  步骤: $CURRENT_STEP" >&2
 echo "" >&2
 
-# 步骤含义：
-# 1-2: PRD/DoD 阶段
-# 3-5: 写代码/写测试
-# 6: 本地测试通过
-# 7: PR 已创建
-# 8: CI 通过
-# 9: 已合并
-# 10: 已清理
+# 步骤含义（11 步流程）：
+# 1: PRD 确定
+# 2: 项目环境检测完成
+# 3: 分支已创建
+# 4: DoD 完成（可以写代码）
+# 5: 代码完成
+# 6: 测试完成
+# 7: 质检通过（可以提交）
+# 8: PR 已创建
+# 9: CI 通过
+# 10: Learning 完成
+# 11: 已清理
 
-if [[ "$CURRENT_STEP" -lt 7 ]]; then
+if [[ "$CURRENT_STEP" -lt 8 ]]; then
     echo "  ⚠️  还没创建 PR (step=$CURRENT_STEP)" >&2
     echo "" >&2
     echo "  当前进度:" >&2
     case $CURRENT_STEP in
-        0|1) echo "    → 准备阶段" >&2 ;;
-        2) echo "    → PRD 完成" >&2 ;;
-        3) echo "    → DoD 完成，可以写代码" >&2 ;;
-        4) echo "    → 代码完成" >&2 ;;
-        5) echo "    → 测试完成" >&2 ;;
-        6) echo "    → 本地测试通过，可以提 PR" >&2 ;;
+        0) echo "    → 准备阶段" >&2 ;;
+        1) echo "    → PRD 确定" >&2 ;;
+        2) echo "    → 项目环境检测完成" >&2 ;;
+        3) echo "    → 分支已创建" >&2 ;;
+        4) echo "    → DoD 完成，可以写代码" >&2 ;;
+        5) echo "    → 代码完成" >&2 ;;
+        6) echo "    → 测试完成" >&2 ;;
+        7) echo "    → 质检通过，可以提交" >&2 ;;
     esac
     echo "" >&2
     echo "  建议: 继续完成任务或运行 /dev" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    # 警告但不阻止（step < 7 可能是正常中断）
-    exit 0
-fi
-
-if [[ "$CURRENT_STEP" -eq 7 ]]; then
-    echo "  ⚠️  PR 已创建但还没合并 (step=7)" >&2
-    echo "" >&2
-    echo "  建议: 等 CI 通过后合并 PR" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    # 警告但不阻止
+    # 警告但不阻止（step < 8 可能是正常中断）
     exit 0
 fi
 
 if [[ "$CURRENT_STEP" -eq 8 ]]; then
-    echo "  ⚠️  CI 通过但还没合并 (step=8)" >&2
+    echo "  ⚠️  PR 已创建但 CI 还未通过 (step=8)" >&2
     echo "" >&2
-    echo "  建议: 合并 PR" >&2
+    echo "  建议: 等 CI 通过" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     # 警告但不阻止
     exit 0
 fi
 
 if [[ "$CURRENT_STEP" -eq 9 ]]; then
-    echo "  ✅ PR 已合并 (step=9)" >&2
+    echo "  ⚠️  CI 通过但还没完成 Learning (step=9)" >&2
+    echo "" >&2
+    echo "  建议: 完成 Learning 总结" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    # 警告但不阻止
+    exit 0
+fi
+
+if [[ "$CURRENT_STEP" -eq 10 ]]; then
+    echo "  ✅ Learning 完成 (step=10)" >&2
     echo "" >&2
     echo "  建议: 运行 cleanup 清理分支" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     exit 0
 fi
 
-if [[ "$CURRENT_STEP" -ge 10 ]]; then
+if [[ "$CURRENT_STEP" -ge 11 ]]; then
     echo "  ✅ 任务已完成 (step=$CURRENT_STEP)" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     exit 0
