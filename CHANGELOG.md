@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.39.3] - 2026-01-18
+
+### Fixed
+- `stop-gate.sh`: 重写步骤定义为 11 步流程
+- `wait-for-merge.sh`: 修复回退逻辑（step 3→4，循环 4→5→6 改为 5→6→7）
+- `check.sh`: 修复 Step 10→11（Cleanup 是 Step 11）
+- `session-init.sh`: 添加 step 11 处理（任务完成）
+- `cleanup.sh`: 修正步骤序号注释（9→10）
+- `VALIDATION.md`: 更新为 11 步流程
+- `ARCHITECTURE.md`: 修正 Step 10 描述（Learning 必须，Cleanup 是 Step 11）
+
 ## [7.39.2] - 2026-01-18
 
 ### Fixed

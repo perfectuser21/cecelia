@@ -108,24 +108,24 @@ while [ $WAITED -lt $MAX_WAIT ]; do
         gh run list --repo "$REPO" --limit 1 --json databaseId,conclusion -q '.[0].databaseId' | xargs -I {} gh run view {} --repo "$REPO" --log-failed 2>/dev/null | tail -50 || echo "(无法获取日志)"
         echo ""
 
-        # 回退到 step 3（DoD 完成），允许从 Step 4 重新开始
-        # 只有 step >= 3 时才回退，否则说明 DoD 还没完成
+        # 回退到 step 4（DoD 完成），允许从 Step 5 重新开始
+        # 只有 step >= 4 时才回退，否则说明 DoD 还没完成
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
         if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9] ]]; then
             CURRENT_STEP=$(git config --get branch."$CURRENT_BRANCH".step 2>/dev/null || echo "0")
-            if [[ "$CURRENT_STEP" -ge 3 ]]; then
-                git config branch."$CURRENT_BRANCH".step 3
-                echo -e "${YELLOW}  ⟲ step 回退到 3，从 Step 4 重新循环 4→5→6${NC}"
+            if [[ "$CURRENT_STEP" -ge 4 ]]; then
+                git config branch."$CURRENT_BRANCH".step 4
+                echo -e "${YELLOW}  ⟲ step 回退到 4，从 Step 5 重新循环 5→6→7${NC}"
                 echo ""
                 echo -e "${YELLOW}  请继续：${NC}"
-                echo -e "${YELLOW}    Step 4: 修复代码${NC}"
-                echo -e "${YELLOW}    Step 5: 更新测试${NC}"
-                echo -e "${YELLOW}    Step 6: 跑测试通过${NC}"
+                echo -e "${YELLOW}    Step 5: 修复代码${NC}"
+                echo -e "${YELLOW}    Step 6: 更新测试${NC}"
+                echo -e "${YELLOW}    Step 7: 跑质检通过${NC}"
                 echo -e "${YELLOW}    然后 push 触发 CI${NC}"
                 echo ""
                 echo -e "${YELLOW}  注意：DoD 不变，只改代码。${NC}"
             else
-                echo -e "${YELLOW}  请先运行 /dev 完成 PRD 和 DoD（Step 1-3）${NC}"
+                echo -e "${YELLOW}  请先运行 /dev 完成 PRD 和 DoD（Step 1-4）${NC}"
             fi
         fi
 

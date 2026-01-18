@@ -70,6 +70,7 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9] ]]; then
         8) echo "   → 下一步: 等 CI" ;;
         9) echo "   → 下一步: Learning" ;;
         10) echo "   → 下一步: Cleanup" ;;
+        11) echo "   → 任务完成" ;;
     esac
 fi
 
