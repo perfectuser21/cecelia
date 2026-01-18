@@ -61,17 +61,25 @@ function AppContent() {
   // 配置加载中时显示加载状态
   if (instanceLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800">
+      <div className={`min-h-screen flex items-center justify-center ${
+        isCecilia
+          ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900'
+          : 'bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800'
+      }`}>
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-500 dark:text-gray-400">加载中...</p>
+          <div className={`w-12 h-12 border-4 ${isCecilia ? 'border-slate-400' : 'border-blue-500'} border-t-transparent rounded-full animate-spin mx-auto mb-4`} />
+          <p className={isCecilia ? 'text-slate-400' : 'text-gray-500 dark:text-gray-400'}>加载中...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800 transition-colors">
+    <div className={`min-h-screen transition-colors ${
+      isCecilia
+        ? 'bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900'
+        : 'bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800'
+    }`}>
       {/* 退出登录确认框 - 毛玻璃效果 */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -140,7 +148,11 @@ function AppContent() {
             {/* 收缩按钮 */}
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className="absolute -right-3 top-20 w-6 h-6 rounded-full flex items-center justify-center text-sky-200 hover:text-white transition-all shadow-lg border border-sky-400/30 bg-blue-900 hover:bg-blue-800"
+              className={`absolute -right-3 top-20 w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                isCecilia
+                  ? 'text-slate-300 hover:text-white border border-slate-500/30 bg-slate-800 hover:bg-slate-700'
+                  : 'text-sky-200 hover:text-white border border-sky-400/30 bg-blue-900 hover:bg-blue-800'
+              }`}
               title={collapsed ? '展开侧边栏' : '收起侧边栏'}
             >
               {collapsed ? <PanelLeft className="w-3 h-3" /> : <PanelLeftClose className="w-3 h-3" />}
@@ -151,7 +163,9 @@ function AppContent() {
               {navGroups.map((group, groupIndex) => (
                 <div key={group.title} className={groupIndex > 0 ? 'mt-6' : ''}>
                   {!collapsed && (
-                    <p className="px-3 mb-2 text-[10px] font-semibold text-sky-400/60 uppercase tracking-wider">
+                    <p className={`px-3 mb-2 text-[10px] font-semibold uppercase tracking-wider ${
+                      isCecilia ? 'text-slate-500' : 'text-sky-400/60'
+                    }`}>
                       {group.title}
                     </p>
                   )}
@@ -169,14 +183,26 @@ function AppContent() {
                           title={collapsed ? item.label : undefined}
                           className={`group relative flex items-center ${collapsed ? 'justify-center px-2' : 'px-3'} py-2.5 text-sm font-medium rounded-xl transition-all duration-200 ${
                             isActive
-                              ? 'bg-sky-500/20 text-white'
-                              : 'text-blue-200/70 hover:bg-white/5 hover:text-white'
+                              ? isCecilia
+                                ? 'bg-slate-600/30 text-white'
+                                : 'bg-sky-500/20 text-white'
+                              : isCecilia
+                                ? 'text-slate-400 hover:bg-white/5 hover:text-white'
+                                : 'text-blue-200/70 hover:bg-white/5 hover:text-white'
                           }`}
                         >
                           {isActive && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-sky-400" />
+                            <span className={`absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full ${
+                              isCecilia ? 'bg-slate-400' : 'bg-sky-400'
+                            }`} />
                           )}
-                          <Icon className={`w-5 h-5 ${collapsed ? '' : 'mr-3'} transition-transform duration-200 ${isActive ? 'text-sky-300' : 'text-blue-300/60 group-hover:text-white group-hover:scale-110'}`} />
+                          <Icon className={`w-5 h-5 ${collapsed ? '' : 'mr-3'} transition-transform duration-200 ${
+                            isActive
+                              ? isCecilia ? 'text-slate-300' : 'text-sky-300'
+                              : isCecilia
+                                ? 'text-slate-500 group-hover:text-white group-hover:scale-110'
+                                : 'text-blue-300/60 group-hover:text-white group-hover:scale-110'
+                          }`} />
                           {!collapsed && item.label}
                         </Link>
                       );

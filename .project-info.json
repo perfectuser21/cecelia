@@ -1,0 +1,28 @@
+{
+  "hash": "68b329da9893e34099c7d8ad5cb9c940",
+  "detected_at": "2026-01-18T10:11:05Z",
+  "project": {
+    "name": "zenithjoy-autopilot",
+    "type": "unknown",
+    "is_monorepo": false,
+    "packages": [],
+    "dependency_graph": {}
+  },
+  "test_levels": {
+    "max_level": 1,
+    "L1": true,
+    "L2": false,
+    "L3": false,
+    "L4": false,
+    "L5": false,
+    "L6": false,
+    "details": {
+      "L1": ["shellcheck"],
+      "L2": [],
+      "L3": [],
+      "L4": [],
+      "L5": [],
+      "L6": []
+    }
+  }
+}

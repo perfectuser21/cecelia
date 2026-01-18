@@ -58,33 +58,50 @@ export interface RouteConfig {
 // ============ 页面组件懒加载映射 ============
 
 // 懒加载所有页面组件
+// 从 zenithjoy-core/features 加载的组件使用 @features/core 别名
 export const pageComponents: Record<string, () => Promise<{ default: ComponentType }>> = {
+  // --- 本地页面（autopilot 专用） ---
   'Dashboard': () => import('../pages/Dashboard'),
-  'Canvas': () => import('../pages/Canvas'),
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
   'Tasks': () => import('../pages/Tasks'),
   'PlatformStatus': () => import('../pages/PlatformStatus'),
   'PublishStats': () => import('../pages/PublishStats'),
-  'CeciliaRuns': () => import('../pages/CeciliaRuns'),
-  'EngineCapabilities': () => import('../pages/EngineCapabilities'),
-  'TaskMonitor': () => import('../pages/TaskMonitor'),
-  'SessionMonitor': () => import('../pages/SessionMonitor'),
-  'ClaudeMonitor': () => import('../pages/ClaudeMonitor'),
-  'ClaudeStats': () => import('../pages/ClaudeStats'),
-  'VpsMonitor': () => import('../pages/VpsMonitor'),
-  'N8nWorkflows': () => import('../pages/N8nWorkflows'),
-  'N8nWorkflowDetail': () => import('../pages/N8nWorkflowDetail'),
-  'N8nLiveStatus': () => import('../pages/N8nLiveStatus'),
-  'N8nLiveStatusDetail': () => import('../pages/N8nLiveStatusDetail'),
   'LoginPage': () => import('../pages/LoginPage'),
   'PlatformStatusDashboard': () => import('../pages/PlatformStatusDashboard'),
-  'DevTasks': () => import('../pages/DevTasks'),
-  'EngineDashboard': () => import('../pages/EngineDashboard'),
   'ToolsPage': () => import('../pages/ToolsPage'),
   'ScrapingPage': () => import('../pages/ScrapingPage'),
   'AdminSettingsPage': () => import('../pages/AdminSettingsPage'),
+
+  // --- 从 zenithjoy-core/features 加载（个人功能） ---
+  // claude-monitor feature
+  'ClaudeMonitor': () => import('@features/core/claude-monitor/pages/ClaudeMonitor'),
+  'ClaudeStats': () => import('@features/core/claude-monitor/pages/ClaudeStats'),
+
+  // vps-monitor feature
+  'VpsMonitor': () => import('@features/core/vps-monitor/pages/VpsMonitor'),
+
+  // engine feature
+  'EngineDashboard': () => import('@features/core/engine/pages/EngineDashboard'),
+  'EngineCapabilities': () => import('@features/core/engine/pages/EngineCapabilities'),
+  'DevTasks': () => import('@features/core/engine/pages/DevTasks'),
+  'TaskMonitor': () => import('@features/core/engine/pages/TaskMonitor'),
+  'SessionMonitor': () => import('@features/core/engine/pages/SessionMonitor'),
+
+  // n8n feature
+  'N8nWorkflows': () => import('@features/core/n8n/pages/N8nWorkflows'),
+  'N8nWorkflowDetail': () => import('@features/core/n8n/pages/N8nWorkflowDetail'),
+  'N8nLiveStatus': () => import('@features/core/n8n/pages/N8nLiveStatus'),
+  'N8nLiveStatusDetail': () => import('@features/core/n8n/pages/N8nLiveStatusDetail'),
+
+  // cecilia feature
+  'CeciliaRuns': () => import('@features/core/cecilia/pages/CeciliaRuns'),
+
+  // canvas feature
+  'Canvas': () => import('@features/core/canvas/pages/Canvas'),
+  'Whiteboard': () => import('@features/core/canvas/pages/Whiteboard'),
+  'ProjectPanorama': () => import('@features/core/canvas/pages/ProjectPanorama'),
 };
 
 // 获取懒加载组件

@@ -43,16 +43,16 @@ const dashboardConfig: InstanceConfig = {
   },
 };
 
-// Core 配置（AI黑客透明风格）
+// Core 配置（冷灰玻璃风格）
 const ceciliaConfig: InstanceConfig = {
   instance: 'cecilia',
   name: 'Core',
   theme: {
     logo: '/logo-white.png',
     logoCollapsed: 'C',
-    primaryColor: '#00d4ff',  // 电光青色
-    secondaryColor: '#00ff88', // 霓虹绿
-    sidebarGradient: 'linear-gradient(180deg, rgba(0,10,20,0.95) 0%, rgba(0,20,40,0.9) 50%, rgba(0,30,50,0.85) 100%)',
+    primaryColor: '#94a3b8',  // slate-400 冷灰
+    secondaryColor: '#cbd5e1', // slate-300
+    sidebarGradient: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.9) 50%, rgba(51,65,85,0.85) 100%)',
   },
   features: {
     // 共用功能
@@ -101,7 +101,7 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
     // 根据域名自动选择配置
     const selectedConfig = getConfigByHostname();
     setConfig(selectedConfig);
-    applyTheme(selectedConfig.theme);
+    applyTheme(selectedConfig.theme, selectedConfig.instance);
 
     // 更新页面标题
     document.title = selectedConfig.instance === 'cecilia'
@@ -112,7 +112,7 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // 应用主题到 CSS 变量
-  const applyTheme = (theme: ThemeConfig) => {
+  const applyTheme = (theme: ThemeConfig, instance: string) => {
     const root = document.documentElement;
     root.style.setProperty('--primary-color', theme.primaryColor);
     root.style.setProperty('--sidebar-gradient', theme.sidebarGradient || 'linear-gradient(180deg, #1e3a8a 0%, #1e2a5e 100%)');
@@ -122,6 +122,10 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
     root.style.setProperty('--primary-color-light', `${primaryHex}20`);
     root.style.setProperty('--primary-color-medium', `${primaryHex}40`);
     root.style.setProperty('--primary-color-dark', adjustColor(primaryHex, -20));
+
+    // 为 body 添加实例类名，用于 CSS 区分
+    document.body.classList.remove('instance-dashboard', 'instance-cecilia');
+    document.body.classList.add(`instance-${instance}`);
 
     // 更新 favicon
     if (theme.favicon) {
