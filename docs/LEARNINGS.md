@@ -136,3 +136,45 @@
 ### 影响程度
 
 **High** - 可能导致代码丢失、分支混乱、重复工作
+
+## 2026-01-18: pr-gate 旧报告绕过漏洞
+
+### 问题描述
+
+pr-gate.sh 只检查 `.quality-report.json` 的 `overall: "pass"` 字段，不检查 `branch` 字段。
+
+```
+场景：
+1. cp-old-branch 完成质检，生成 .quality-report.json (branch: "cp-old-branch")
+2. 切换到新分支 cp-new-branch
+3. 不按流程直接尝试创建 PR
+4. pr-gate.sh 发现 overall: "pass" → 放行
+5. 新分支跳过了质检流程
+```
+
+### 根因分析
+
+1. `.quality-report.json` 是按项目存储的，不是按分支
+2. pr-gate.sh 检查文件存在+overall 状态，但忽略了 branch 字段
+3. cleanup.sh 没有删除 `.quality-report.json`
+4. 分支切换时没有清理旧报告
+
+### 解决方案
+
+**三道防线**：
+
+1. **pr-gate.sh** - 新增 branch 字段检查
+   - 报告的 branch 必须匹配当前分支
+   - 不匹配则拒绝，提示重新运行质检
+
+2. **cleanup.sh** - 新增删除 `.quality-report.json`
+   - 第 9 步：删除质检报告
+   - 防止残留影响下次开发
+
+3. **branch-protect.sh** - 新分支首次写代码时清理旧报告
+   - 检查报告的 branch 是否匹配当前分支
+   - 不匹配则删除，提示已清理
+
+### 影响程度
+
+**High** - 可能导致未经质检的代码进入代码库
