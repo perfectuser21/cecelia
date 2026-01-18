@@ -18,9 +18,9 @@ export interface InstanceConfig {
   features: Record<string, boolean>;
 }
 
-// Dashboard 配置（蓝色主题）
-const dashboardConfig: InstanceConfig = {
-  instance: 'dashboard',
+// Autopilot 配置（蓝色主题）- 团队运营
+const autopilotConfig: InstanceConfig = {
+  instance: 'autopilot',
   name: '悦升云端',
   theme: {
     logo: '/logo-white.png',
@@ -43,9 +43,9 @@ const dashboardConfig: InstanceConfig = {
   },
 };
 
-// Core 配置（冷灰玻璃风格）
-const ceciliaConfig: InstanceConfig = {
-  instance: 'cecilia',
+// Core 配置（冷灰玻璃风格）- 个人工具
+const coreConfig: InstanceConfig = {
+  instance: 'core',
   name: 'Core',
   theme: {
     logo: '/logo-white.png',
@@ -76,10 +76,10 @@ function getConfigByHostname(): InstanceConfig {
   const hostname = window.location.hostname;
 
   if (hostname.startsWith('core.') || hostname.includes('core')) {
-    return ceciliaConfig;
+    return coreConfig;
   }
 
-  return dashboardConfig;
+  return autopilotConfig;
 }
 
 interface InstanceContextType {
@@ -87,7 +87,7 @@ interface InstanceContextType {
   loading: boolean;
   error: string | null;
   isFeatureEnabled: (featureKey: string) => boolean;
-  isCecilia: boolean;
+  isCore: boolean;
 }
 
 const InstanceContext = createContext<InstanceContextType | undefined>(undefined);
@@ -104,9 +104,9 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
     applyTheme(selectedConfig.theme, selectedConfig.instance);
 
     // 更新页面标题
-    document.title = selectedConfig.instance === 'cecilia'
-      ? 'Cecilia - AI Code Executor'
-      : '悦升云端 - 运营中台';
+    document.title = selectedConfig.instance === 'core'
+      ? 'Core - 个人工具'
+      : '悦升云端 - Autopilot';
 
     setLoading(false);
   }, []);
@@ -124,7 +124,7 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
     root.style.setProperty('--primary-color-dark', adjustColor(primaryHex, -20));
 
     // 为 body 添加实例类名，用于 CSS 区分
-    document.body.classList.remove('instance-dashboard', 'instance-cecilia');
+    document.body.classList.remove('instance-autopilot', 'instance-core');
     document.body.classList.add(`instance-${instance}`);
 
     // 更新 favicon
@@ -142,11 +142,11 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
     return config.features[featureKey] === true;
   };
 
-  // 是否为 Cecilia 实例
-  const isCecilia = config?.instance === 'cecilia';
+  // 是否为 Core 实例
+  const isCore = config?.instance === 'core';
 
   return (
-    <InstanceContext.Provider value={{ config, loading, error, isFeatureEnabled, isCecilia }}>
+    <InstanceContext.Provider value={{ config, loading, error, isFeatureEnabled, isCore }}>
       {children}
     </InstanceContext.Provider>
   );

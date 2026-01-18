@@ -62,10 +62,10 @@ interface DynamicRouterProps {
 
 export default function DynamicRouter({ children }: DynamicRouterProps) {
   const { isSuperAdmin } = useAuth();
-  const { isCecilia, isFeatureEnabled } = useInstance();
+  const { isCore, isFeatureEnabled } = useInstance();
 
   // 获取当前实例的导航配置
-  const navGroups = getNavGroups(isCecilia);
+  const navGroups = getNavGroups(isCore);
 
   // 收集所有需要的路由
   const allRoutes: RouteConfig[] = [];

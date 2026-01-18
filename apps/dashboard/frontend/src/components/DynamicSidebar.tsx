@@ -28,10 +28,10 @@ export default function DynamicSidebar({
 }: DynamicSidebarProps) {
   const location = useLocation();
   const { user, isSuperAdmin } = useAuth();
-  const { config, isCecilia, isFeatureEnabled } = useInstance();
+  const { config, isCore, isFeatureEnabled } = useInstance();
 
   // 获取并过滤导航配置
-  const baseNavGroups = getNavGroups(isCecilia);
+  const baseNavGroups = getNavGroups(isCore);
   const navGroups = filterNavGroups(baseNavGroups, isFeatureEnabled, isSuperAdmin);
 
   return (

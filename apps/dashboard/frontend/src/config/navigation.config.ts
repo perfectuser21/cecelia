@@ -203,9 +203,9 @@ export const coreNavGroups: NavGroup[] = [
   }
 ];
 
-// ============ Dashboard 实例导航配置 ============
+// ============ Autopilot 实例导航配置 ============
 
-export const dashboardNavGroups: NavGroup[] = [
+export const autopilotNavGroups: NavGroup[] = [
   {
     title: '概览',
     items: [
@@ -334,8 +334,8 @@ export const additionalRoutes: RouteConfig[] = [
 /**
  * 根据实例类型获取导航配置
  */
-export function getNavGroups(isCecilia: boolean): NavGroup[] {
-  return isCecilia ? coreNavGroups : dashboardNavGroups;
+export function getNavGroups(isCore: boolean): NavGroup[] {
+  return isCore ? coreNavGroups : autopilotNavGroups;
 }
 
 /**
