@@ -112,48 +112,39 @@ head -30 docs/LEARNINGS.md 2>/dev/null || echo "（无踩坑记录）"
 
 ---
 
-## 1.5 测试层级检测
+## 1.5 读取项目信息
 
-检测项目当前的测试能力上限，并保存到 `.test-level.json`。
+项目信息由 `project-detect.sh` (PostToolUse) 自动检测并缓存到 `.project-info.json`。
+
+**Step 1 只读取，不重复扫描**：
 
 ```bash
-echo "🔍 检测测试层级..."
+echo "📋 读取项目信息..."
 
-# 运行检测脚本并保存结果
-bash "$ZENITHJOY_ENGINE/skills/dev/scripts/detect-test-level.sh" --save "$(pwd)"
+if [[ -f ".project-info.json" ]]; then
+    PROJECT_TYPE=$(jq -r '.project.type' .project-info.json)
+    IS_MONOREPO=$(jq -r '.project.is_monorepo' .project-info.json)
+    MAX_LEVEL=$(jq -r '.test_levels.max_level' .project-info.json)
 
-# 显示保存的结果
-if [[ -f ".test-level.json" ]]; then
-    echo ""
-    echo "📋 已保存到 .test-level.json"
-    echo "   最高层级: L$(jq -r '.max_level' .test-level.json)"
+    echo "  项目类型: $PROJECT_TYPE"
+    [[ "$IS_MONOREPO" == "true" ]] && echo "  Monorepo: $(jq -r '.project.packages | length' .project-info.json) 个包"
+    echo "  测试能力: L$MAX_LEVEL"
+else
+    echo "  ⚠️ 未检测到 .project-info.json"
+    echo "  执行任意 Bash 命令触发自动检测"
 fi
 ```
 
-**重要**：`--save` 会创建 `.test-level.json`，pr-gate 会检查这个文件是否存在。
+**自动检测触发**：
+- `project-detect.sh` 在每次 Bash 命令后自动运行
+- 基于文件哈希判断是否需要重新扫描（避免重复）
+- 检测结果缓存到 `.project-info.json`
 
-**测试层级定义**：
-
-| 层级 | 名称 | 检测内容 |
-|------|------|----------|
-| L1 | 静态分析 | typecheck, lint, format |
-| L2 | 单元测试 | vitest, jest, pytest |
-| L3 | 集成测试 | API 测试, docker-compose |
-| L4 | E2E 测试 | playwright, cypress |
-| L5 | 性能测试 | benchmark, k6 |
-| L6 | 安全测试 | audit, snyk |
-
-**输出示例**：
-```
-项目: zenithjoy-core
-最高层级: L4
-
-L1 静态分析: ✅ (typecheck, lint)
-L2 单元测试: ✅ (vitest)
-L3 集成测试: ✅ (api routes)
-L4 E2E测试:  ✅ (playwright)
-L5 性能测试: ❌
-L6 安全测试: ❌
-```
-
-这个上限会在 DoD 阶段用到。
+**检测内容**：
+| 内容 | 说明 |
+|------|------|
+| 项目类型 | node/python/go/rust |
+| Monorepo | 是否多包结构 |
+| 包列表 | packages/apps 下的包 |
+| 依赖图 | 包之间的依赖关系 |
+| 测试能力 | L1-L6 层级 |

@@ -31,22 +31,33 @@ description: |
 ## 流程图
 
 ```
+进入项目目录
+    │
+    ▼
+project-detect.sh (PostToolUse)  ← 自动检测
+    → 项目类型、Monorepo、依赖图、测试能力
+    → 缓存到 .project-info.json
+    │
+    ▼
 /dev 开始
     │
     ▼
 Step 1: 准备
     ├─ 依赖检查
     ├─ 分支检查/创建
-    └─ 上下文回顾
+    └─ 读取 .project-info.json（不重复扫描）
     │
     ▼
-Step 2-3: PRD + DoD → 用户确认
+Step 2-3: PRD + DoD
+    └─ scan-change-level.sh --desc  ← 自动推断层级
     │
     ▼
 Step 4-6: 写代码 → 写测试 → 本地测试
+    └─ scan-change-level.sh  ← 验证实际改动
     │
     ▼
 Step 7: 提交 PR
+    └─ pr-gate.sh  ← 流程+质检
     │
     ▼
 Step 8-9: CI 通过 → 合并
@@ -55,7 +66,7 @@ Step 8-9: CI 通过 → 合并
 Step 10: Cleanup
     │
     ▼
-完成 🎉
+完成
 ```
 
 ---

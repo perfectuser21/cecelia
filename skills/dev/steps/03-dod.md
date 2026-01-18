@@ -44,8 +44,8 @@ bash "$ZENITHJOY_ENGINE/skills/dev/scripts/scan-change-level.sh" --desc "用户�
 ### 检查是否超出项目能力
 
 ```bash
-# 获取项目能力上限
-PROJECT_MAX=$(jq -r '.max_level // 0' .test-level.json 2>/dev/null || echo "0")
+# 获取项目能力上限（从 .project-info.json）
+PROJECT_MAX=$(jq -r '.test_levels.max_level // 0' .project-info.json 2>/dev/null || echo "0")
 
 # 扫描得到的建议层级
 TASK_MIN=<扫描结果>

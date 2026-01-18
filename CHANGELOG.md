@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.34.0] - 2026-01-18
+
+### Changed
+- 重构 `project-detect.sh`：统一项目检测入口
+  - 自动检测项目类型、Monorepo 结构、包依赖图
+  - 检测测试能力 L1-L6
+  - 基于文件哈希缓存，避免重复扫描
+  - 输出到 `.project-info.json`
+- Step 1 改为只读取 `.project-info.json`，不重复扫描
+- `pr-gate.sh` 改为检查 `.project-info.json`
+
+### 自洽的质检体系
+
+```
+进入项目 → project-detect.sh 自动扫描 → .project-info.json
+    ↓
+Step 1: 读取项目信息（不重复扫描）
+    ↓
+Step 3: scan-change-level.sh --desc 推断层级
+    ↓
+Step 6: scan-change-level.sh 验证改动
+    ↓
+Step 7: pr-gate.sh 检查流程+质检
+    ↓
+CI: 最终验证
+```
+
 ## [7.33.0] - 2026-01-18
 
 ### Added

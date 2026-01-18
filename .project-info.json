@@ -1,0 +1,28 @@
+{
+  "hash": "aca841bed1cf39669485ec0a896d2c26",
+  "detected_at": "2026-01-18T04:15:51Z",
+  "project": {
+    "name": "zenithjoy-engine",
+    "type": "node",
+    "is_monorepo": false,
+    "packages": [],
+    "dependency_graph": {}
+  },
+  "test_levels": {
+    "max_level": 2,
+    "L1": true,
+    "L2": true,
+    "L3": false,
+    "L4": false,
+    "L5": false,
+    "L6": false,
+    "details": {
+      "L1": ["typecheck","shellcheck"],
+      "L2": ["vitest"],
+      "L3": [],
+      "L4": [],
+      "L5": [],
+      "L6": []
+    }
+  }
+}

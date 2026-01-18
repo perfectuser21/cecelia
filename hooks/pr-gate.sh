@@ -8,7 +8,7 @@
 #
 # 检查项：
 #   Part 1 - 流程检查：
-#     - .test-level.json 存在（跑过测试层级检测）
+#     - .project-info.json 存在（项目已检测）
 #     - step >= 6（本地测试通过）
 #
 #   Part 2 - DoD 检查：
@@ -51,15 +51,20 @@ CHECKED=0
 # ===== Part 1: 流程检查 =====
 echo "  [流程检查]" >&2
 
-# 1. 检查 .test-level.json 是否存在
-echo -n "  测试层级检测... " >&2
+# 1. 检查 .project-info.json 是否存在
+echo -n "  项目检测... " >&2
 CHECKED=$((CHECKED + 1))
-if [[ -f "$PROJECT_ROOT/.test-level.json" ]]; then
-    LEVEL=$(jq -r '.max_level // 0' "$PROJECT_ROOT/.test-level.json" 2>/dev/null || echo "0")
-    echo "✅ (L$LEVEL)" >&2
+if [[ -f "$PROJECT_ROOT/.project-info.json" ]]; then
+    LEVEL=$(jq -r '.test_levels.max_level // 0' "$PROJECT_ROOT/.project-info.json" 2>/dev/null || echo "0")
+    IS_MONO=$(jq -r '.project.is_monorepo // false' "$PROJECT_ROOT/.project-info.json" 2>/dev/null || echo "false")
+    if [[ "$IS_MONO" == "true" ]]; then
+        echo "✅ (L$LEVEL, Monorepo)" >&2
+    else
+        echo "✅ (L$LEVEL)" >&2
+    fi
 else
     echo "❌ (未检测)" >&2
-    echo "    → 请先运行 detect-test-level.sh --save" >&2
+    echo "    → 执行任意 Bash 命令触发自动检测" >&2
     FAILED=1
 fi
 

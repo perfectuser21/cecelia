@@ -39,10 +39,10 @@ AI 开发工作流引擎。
 ```
 zenithjoy-engine/
 ├── hooks/           # Claude Code Hooks (4 个)
-│   ├── pr-gate.sh         # PR 前检查（流程+质检）
+│   ├── project-detect.sh  # 自动检测项目信息（→ .project-info.json）
 │   ├── branch-protect.sh  # 分支保护（只允许 cp-*/feature/*）
-│   ├── project-detect.sh  # 项目检测（信息性提示）
-│   └── stop-gate.sh       # Stop Hook（任务完成检查）
+│   ├── pr-gate.sh         # PR 前检查（流程+质检）
+│   └── stop-gate.sh       # 退出时检查任务完成度
 ├── skills/
 │   ├── dev/         # /dev 开发工作流
 │   └── audit/       # /audit 代码审计
