@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.37.5] - 2026-01-18
+
+### Fixed
+- `wait-for-merge.sh`: CI 失败回退时增加 step >= 3 检查
+  - step < 3 时不执行回退，提示先完成 PRD 和 DoD
+  - 与 pr-gate.sh 保持一致的回退逻辑
+
 ## [7.37.4] - 2026-01-18
 
 ### Fixed
@@ -769,7 +776,8 @@ CI: 最终验证
 
 Previous iterations were experimental development versions leading up to the 7.0.0 stable release.
 
-[Unreleased]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.37.4...HEAD
+[Unreleased]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.37.5...HEAD
+[7.37.5]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.37.4...v7.37.5
 [7.12.1]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.12.0...v7.12.1
 [7.12.0]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.11.1...v7.12.0
 [7.11.1]: https://github.com/perfectuser21/zenithjoy-engine/compare/v7.11.0...v7.11.1
