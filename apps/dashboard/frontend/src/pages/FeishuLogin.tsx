@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
-import { BarChart3, Shield, Zap, RefreshCw, Smartphone } from 'lucide-react';
+import { BarChart3, Shield, Zap, RefreshCw, Smartphone, ExternalLink } from 'lucide-react';
 
 // 声明全局 QRLogin 函数类型
 declare global {
@@ -109,6 +109,12 @@ export default function FeishuLogin() {
       console.error('QRLogin init error:', err);
       setError('初始化登录二维码失败');
     }
+  }, [APP_ID, REDIRECT_URI]);
+
+  // 飞书一键登录 - 直接跳转授权页面
+  const handleClickLogin = useCallback(() => {
+    const goto = `https://passport.feishu.cn/suite/passport/oauth/authorize?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&state=STATE`;
+    window.location.href = goto;
   }, [APP_ID, REDIRECT_URI]);
 
   // 刷新二维码 - 通过改变 key 让 React 重建容器
@@ -330,11 +336,31 @@ export default function FeishuLogin() {
               </button>
             </div>
 
+            {/* 一键登录按钮 */}
+            <button
+              onClick={handleClickLogin}
+              className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-medium transition-all duration-200 ${
+                isCore
+                  ? 'bg-slate-600 hover:bg-slate-500 text-white'
+                  : 'bg-sky-500 hover:bg-sky-400 text-white'
+              }`}
+            >
+              <ExternalLink className="w-5 h-5" />
+              飞书一键登录
+            </button>
+
+            {/* 分隔线 */}
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px bg-white/10" />
+              <span className="text-white/30 text-xs">或</span>
+              <div className="flex-1 h-px bg-white/10" />
+            </div>
+
             {/* 提示文字 */}
-            <div className="text-center mb-4">
-              <p className="text-white/70 text-sm flex items-center justify-center gap-2">
+            <div className="text-center">
+              <p className="text-white/50 text-sm flex items-center justify-center gap-2">
                 <Smartphone className="w-4 h-4" />
-                打开飞书 App 扫描二维码
+                扫描上方二维码
               </p>
             </div>
 
