@@ -96,9 +96,7 @@ class Server {
             await connection_1.db.connect();
             logger_1.default.info('Database connected successfully');
             await this.initialize();
-            // Start VPS metrics collection
-            const { vpsMonitorService } = await Promise.resolve().then(() => __importStar(require('./modules/vps-monitor')));
-            vpsMonitorService.startMetricsCollection();
+            // VPS metrics collection disabled (moved to zenithjoy-core)
             const port = config_1.default.port;
             this.app.listen(port, '0.0.0.0', () => {
                 logger_1.default.info(`Server started on port ${port}`, {
@@ -117,9 +115,7 @@ class Server {
     }
     async stop() {
         try {
-            // Stop VPS metrics collection
-            const { vpsMonitorService } = await Promise.resolve().then(() => __importStar(require('./modules/vps-monitor')));
-            vpsMonitorService.stopMetricsCollection();
+            // VPS metrics collection disabled (moved to zenithjoy-core)
             await connection_1.db.close();
             logger_1.default.info('Server stopped');
         }
