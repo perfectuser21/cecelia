@@ -99,3 +99,40 @@
 3. **质检人话解释**
    - typecheck（类型检查）→ 检查代码有没有写错类型
    - 新人更容易理解
+
+## 2026-01-18: Subagent 分支混乱问题
+
+### 问题描述
+
+主 agent 在 `cp-fix-bugs` 分支上启动多个 subagents 并行修复 bug，但 subagents 各自运行 `/dev` 流程，导致：
+
+```
+主 agent 在 cp-fix-bugs 分支
+    │
+    ├─→ subagent A 运行 /dev → 创建 cp-subagent-a 分支
+    ├─→ subagent B 运行 /dev → 创建 cp-subagent-b 分支
+    └─→ subagent C 运行 /dev → 卡在 PRD 确认
+
+主 agent 看到 subagents 卡住，又创建 cp-manual-fix 分支
+
+结果：5 个分支，一片混乱
+```
+
+### 根因分析
+
+1. Subagent 被当作"独立开发者"而非"干活的手"
+2. Subagent 任务是"修复 bug X"而非"修改文件 Y 第 Z 行"
+3. `/dev` 流程会创建新分支，subagent 不应该运行 `/dev`
+
+### 解决方案
+
+在 CLAUDE.md 中明确规则：
+
+1. **Subagent 任务必须是具体的文件操作**，如"修改 X 文件的 Y 行"
+2. **Subagent 禁止运行 /dev、创建分支、提交 PR**
+3. **主 agent 负责**：创建分支、/dev 流程、提交、PR
+4. **Subagent 负责**：并行修改多个文件（在主 agent 的分支内）
+
+### 影响程度
+
+**High** - 可能导致代码丢失、分支混乱、重复工作

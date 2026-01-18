@@ -22,6 +22,38 @@ AI 开发工作流引擎。
 2. **每个 PR 更新版本号** - semver
 3. **完成度检查必须跑** - □ 必要项全部完成
 4. **CI 绿是唯一完成标准**
+5. **Subagents 禁止运行 /dev** - 见下方规则
+
+---
+
+## Subagent 使用规则
+
+**核心原则**：Subagents 是"干活的手"，不是"独立的开发者"。
+
+### ✅ 正确用法
+```
+主 agent 在 cp-fix-bugs 分支
+    │
+    ├─→ subagent A: "修改 file1.ts 第 50 行..."
+    ├─→ subagent B: "修改 file2.ts 第 80 行..."
+    └─→ subagent C: "修改 file3.ts 第 20 行..."
+
+所有 subagent 在同一个分支内修改文件，主 agent 统一提交
+```
+
+### ❌ 错误用法
+```
+主 agent 调用 subagent 运行 /dev
+    → subagent 创建新分支
+    → 主 agent 又创建新分支
+    → 混乱
+```
+
+### 规则
+1. **Subagent 任务必须是具体的文件操作**，如"修改 X 文件的 Y 行"
+2. **Subagent 禁止运行 /dev、创建分支、提交 PR**
+3. **主 agent 负责**：创建分支、运行 /dev 流程、提交、PR
+4. **Subagent 负责**：并行修改多个文件（在主 agent 的分支内）
 
 ---
 
