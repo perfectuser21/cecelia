@@ -133,6 +133,35 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9] ]]; then
         exit 2
     fi
 
+    # ===== Step 5-7 强制通过 Subagent 执行 =====
+    # step=4-6 期间，必须有 .subagent-lock 文件才能写代码
+    # 这强制主 Agent 必须调用 Task tool 启动 subagent
+    if [[ "$CURRENT_STEP" -ge 4 && "$CURRENT_STEP" -lt 7 ]]; then
+        if [[ ! -f "$PROJECT_ROOT/.subagent-lock" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  Step 5-7 必须通过 Subagent 执行" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "当前步骤: $CURRENT_STEP (DoD 完成)" >&2
+            echo "" >&2
+            echo "请使用 Task tool 启动 subagent:" >&2
+            echo "" >&2
+            echo "  Task(" >&2
+            echo "    subagent_type='general-purpose'," >&2
+            echo "    prompt='执行 Step 5-7: " >&2
+            echo "      1. 创建 .subagent-lock 文件" >&2
+            echo "      2. 写代码 (Step 5)" >&2
+            echo "      3. 写测试 (Step 6)" >&2
+            echo "      4. 质检 (Step 7)" >&2
+            echo "      5. 生成 .quality-report.json'" >&2
+            echo "  )" >&2
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            exit 2
+        fi
+    fi
+
     # 步骤检查通过，放行
     exit 0
 fi
