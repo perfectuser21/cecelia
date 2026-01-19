@@ -879,3 +879,67 @@ sha256(branch | timestamp | quality_hash | loop_count | secret)
 #### 影响程度
 - Medium - 修复了 T6 绕过漏洞，完善了多层防御机制
 
+### [2026-01-19] pr-gate-v2 证据链质检
+
+#### 开发内容
+用证据链（.dod.md + .layer2-evidence.md）替代 Subagent 强制机制。
+
+#### 设计变更
+
+**旧机制（Subagent）**:
+```
+主 Agent → Subagent 写代码 → SubagentStop 检查 → PR
+```
+
+**新机制（证据链）**:
+```
+主 Agent 写代码 → 创建证据文件 → pr-gate-v2.sh 验证 → PR
+```
+
+#### 证据链设计
+
+| 文件 | 作用 | 检查 |
+|------|------|------|
+| `.layer2-evidence.md` | L2 效果验证 | S* 截图存在，C* 有 HTTP_STATUS |
+| `.dod.md` | L3 需求验收 | 全部 [x]，Evidence 引用有效 |
+
+#### 踩的坑
+
+1. **Bootstrap 问题**
+   - 问题：修改 pr-gate.sh 时，旧 Hook 会阻止提交修改
+   - 解决：创建旧格式证明文件（.subagent-proof.json + .quality-report.json）通过旧 Hook
+   - 经验：修改强制机制时要考虑自举问题
+   - 影响程度：Medium
+
+2. **Hook 会话级缓存**
+   - 问题：修改 .claude/settings.json 后 Hook 不立即生效
+   - 原因：Claude Code 在会话启动时加载 Hook 配置
+   - 解决：需要新会话才能使用新 Hook 配置
+   - 影响程度：Low
+
+3. **全局 vs 项目 Hook 优先级**
+   - 问题：项目 .claude/settings.json 的 Hook 被全局 ~/.claude/settings.json 覆盖
+   - 解决：同时更新全局配置或用 deploy.sh 部署
+   - 影响程度：Medium
+
+#### 关键决策
+
+**为什么用证据链替代 Subagent**:
+1. Subagent 可以启动空任务绕过检查
+2. 证据文件（截图、curl）更难伪造
+3. 主 Agent 直接工作更简单
+4. 仍有 CI 作为最终防线
+
+**证据链的局限**:
+- 仍然可以伪造（复制旧截图）
+- 需要夜间审计验证内容质量
+- 本地 Hook 是"提高作弊成本"不是"绝对防止"
+
+#### 经验
+1. **多层防御思想**：本地 Hook 提高成本 → CI 强制 L1 → 审计验证 L2/L3
+2. **Bootstrap 意识**：修改强制机制时先想好如何自举
+3. **证据驱动**：从"Agent 说完成"变成"截图证明完成"
+
+#### 影响程度
+- High - 简化了强制机制，保持了多层防御
+
