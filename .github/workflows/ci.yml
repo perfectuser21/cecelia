@@ -13,28 +13,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Checkout zenithjoy-core (public repo, no token needed)
-      - name: Checkout zenithjoy-core
-        uses: actions/checkout@v4
-        with:
-          repository: perfectuser21/zenithjoy-core
-          ref: develop
-          path: zenithjoy-core
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 8
+          cache: 'npm'
+          cache-dependency-path: apps/dashboard/frontend/package-lock.json
 
       - name: Install dependencies
-        run: pnpm install
         working-directory: apps/dashboard/frontend
+        run: npm ci
 
-      - name: Build frontend
-        run: pnpm run build
+      - name: Build
         working-directory: apps/dashboard/frontend
+        run: npm run build
+
+  # Deploy job - requires manual trigger or webhook
+  # Uncomment when ready
+  # deploy:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push'
+  #   steps:
+  #     - name: Trigger VPS Deploy
+  #       run: |
+  #         curl -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+  #           -H "Content-Type: application/json" \
+  #           -d '{"repo": "zenithjoy-autopilot", "branch": "${{ github.ref_name }}"}'
