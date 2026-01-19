@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.44.0] - 2026-01-19
+
+### Added
+- **Step 5-7 Subagent Loop 强制机制**
+  - `branch-protect.sh`: step=4-6 期间必须有 .subagent-lock 才能写代码
+  - `subagent-quality-gate.sh`: SubagentStop hook，检查 .quality-report.json
+  - `settings.json`: 新增 SubagentStop hook 配置
+  - `SKILL.md`: 更新流程图和文档，说明 Subagent 执行机制
+  - 主 Agent 在 Step 4 后尝试写代码会被阻止，必须调用 Task tool 启动 Subagent
+
 ## [7.43.1] - 2026-01-19
 
 ### Fixed

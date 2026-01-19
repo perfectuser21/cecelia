@@ -49,21 +49,26 @@ description: |
                                 │
                                 ▼
 ┌───────────────────────────────────────────────────┐
-│  Loop: Step 5-7                                   │
+│  Loop: Step 5-7 (Subagent 执行)                   │
 │                                                   │
-│  Step 5: 写代码                                   │
-│      ↓                                            │
-│  Step 6: 写测试                                   │
+│  主 Agent 调用 Task tool 启动 Subagent            │
 │      │                                            │
-│      ├── 失败 → 继续 Step 6                       │
+│      ▼                                            │
+│  Subagent:                                        │
 │      │                                            │
-│      └── 通过 ↓                                   │
-│                                                   │
-│  Step 7: 质检（三层）                             │
+│      ├── 创建 .subagent-lock                      │
 │      │                                            │
-│      ├── 失败 → 返回 Step 4（从 Step 5 重新开始）│
-│      │                                            │
-│      └── 通过 ↓                                   │
+│      ├── Step 5: 写代码                           │
+│      │      ↓                                     │
+│      ├── Step 6: 写测试                           │
+│      │      ↓                                     │
+│      └── Step 7: 质检（三层）                     │
+│             │                                     │
+│             ├── 失败 → SubagentStop Hook 阻止退出 │
+│             │         继续修复，loop_count++      │
+│             │                                     │
+│             └── 通过 → 删除 .subagent-lock        │
+│                        SubagentStop Hook 放行     │
 └───────────────────────────────────────────────────┘
     │
     ▼
@@ -107,9 +112,49 @@ Step 11: Cleanup
 
 1. **只在 cp-* 或 feature/* 分支写代码** - Hook 引导
 2. **步骤状态机** - Hook 检查 `git config branch.*.step`，step >= 4 才能写代码
-3. **develop 是主开发线** - PR 合并回 develop
-4. **main 始终稳定** - 只在里程碑时从 develop 合并
-5. **CI 是唯一强制检查** - 其他都是引导
+3. **Step 5-7 必须通过 Subagent 执行** - Hook 强制（见下方说明）
+4. **develop 是主开发线** - PR 合并回 develop
+5. **main 始终稳定** - 只在里程碑时从 develop 合并
+6. **CI 是唯一强制检查** - 其他都是引导
+
+---
+
+## Step 5-7 Subagent 执行机制
+
+**强制机制**：主 Agent 在 step=4-6 期间尝试写代码会被 `branch-protect.sh` 阻止，必须通过 Task tool 启动 Subagent。
+
+### 调用方式
+
+```
+Task(
+  subagent_type="general-purpose",
+  prompt="执行 Step 5-7:
+    1. 创建 .subagent-lock 文件
+    2. 写代码 (Step 5)
+    3. 写测试 (Step 6)
+    4. 质检 (Step 7)
+    5. 生成 .quality-report.json
+    质检通过后删除 .subagent-lock"
+)
+```
+
+### Hook 机制
+
+| Hook | 触发时机 | 作用 |
+|------|----------|------|
+| branch-protect.sh | 主 Agent 写代码 | step=4-6 且无 .subagent-lock → 阻止 |
+| subagent-quality-gate.sh | Subagent 退出 | 检查 .quality-report.json，未通过 → 阻止退出 |
+
+### 状态追踪
+
+```bash
+# Subagent 启动时
+touch .subagent-lock
+
+# 质检通过后
+rm .subagent-lock
+git config branch.$BRANCH.loop_count <N>  # 记录循环次数
+```
 
 ---
 
@@ -136,6 +181,12 @@ Step 11: Cleanup
 **branch-protect.sh** (PreToolUse - Write/Edit):
 - 引导 step >= 4 才能写代码
 - 引导只在 cp-* 或 feature/* 分支写代码
+- **强制** step=4-6 必须有 .subagent-lock 才能写代码
+
+**subagent-quality-gate.sh** (SubagentStop):
+- Subagent 退出时检查 .quality-report.json
+- 质检未通过 → exit 2 阻止退出，loop_count++
+- 质检通过 → 删除 .subagent-lock，设置 step=7
 
 **pr-gate.sh** (PreToolUse - Bash):
 - 拦截 `gh pr create`，运行质检

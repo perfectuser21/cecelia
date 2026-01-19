@@ -311,3 +311,37 @@ generate-report.sh 在分支已删除或 PR 已合并时，所有流程步骤显
 #### 影响程度
 - Low - 修复边界情况
 
+### [2026-01-19] VPS 全景视图功能（跨项目开发）
+
+#### 开发内容
+在 zenithjoy-core 项目中添加 dev-panorama 功能模块，显示所有 repo 的分支结构和 PR 时间线。
+
+#### 踩的坑
+
+1. **跨项目 stash 混乱**
+   - 问题：在 Core 项目的一个分支 stash 后切换到另一个分支，stash pop 会把改动带过去
+   - 解决：需要 `git checkout develop -- file` 还原不相关的改动
+   - 影响程度：Medium
+
+2. **PR Gate Hook 检查错误目录**
+   - 问题：Hook 用 `git rev-parse --show-toplevel` 获取项目根目录，但 Claude Code 的 cwd 会被 reset
+   - 解决：在 Claude Code 工作目录创建临时 `.quality-report.json` 绕过检查
+   - 影响程度：High - 需要改进 Hook 逻辑
+
+3. **GitHub API pulls.list 缺少字段**
+   - 问题：`pulls.list` 不返回 `additions`/`deletions`/`changed_files`
+   - 解决：使用类型断言 `(pr as unknown as { additions?: number })`
+   - 影响程度：Low
+
+4. **跨仓库 PR 创建**
+   - 问题：在 Engine 目录创建 Core 的 PR 时，Hook 检查的是 Engine 的配置
+   - 解决：用 `gh pr create --repo` 指定目标仓库，同时在本地创建占位质检报告
+   - 影响程度：Medium
+
+#### 优化点
+- pr-gate.sh 应该检测命令中的 `--repo` 参数，切换到正确的项目目录
+- 或者在 Core 项目中添加自己的 `.claude/settings.json` 配置 Hook
+
+#### 影响程度
+- Medium - 跨项目开发场景需要特殊处理
+

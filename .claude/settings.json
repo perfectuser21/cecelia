@@ -30,6 +30,12 @@
         "matcher": "",
         "hooks": [{"type": "command", "command": "./hooks/stop-gate.sh"}]
       }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": "./hooks/subagent-quality-gate.sh"}]
+      }
     ]
   }
 }
