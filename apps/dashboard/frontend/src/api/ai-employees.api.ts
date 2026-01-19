@@ -159,64 +159,50 @@ function aggregateEmployeeStats(
 }
 
 /**
- * 获取所有员工的任务统计（带缓存）
+ * 创建默认的员工统计数据（无 API 数据时使用）
+ */
+function createDefaultStats(): EmployeeTaskStats {
+  return {
+    todayTotal: 0,
+    todaySuccess: 0,
+    todayError: 0,
+    todayRunning: 0,
+    successRate: 0,
+    recentTasks: [],
+  };
+}
+
+/**
+ * 创建带默认统计的部门数据
+ */
+function createDefaultDepartments(): DepartmentWithStats[] {
+  return AI_DEPARTMENTS.map(dept => ({
+    ...dept,
+    employees: dept.employees.map(emp => ({
+      ...emp,
+      stats: createDefaultStats(),
+    })),
+    todayTotal: 0,
+  }));
+}
+
+/**
+ * 获取所有员工的任务统计
+ *
+ * 注意：n8n-live-status API 尚未在 autopilot 后端实现，
+ * 目前返回静态配置数据。等后端 API 就绪后再接入实时数据。
  */
 export async function fetchAiEmployeesWithStats(): Promise<DepartmentWithStats[]> {
-  try {
-    // 获取 n8n 数据
-    const liveStatus = await fetchLiveStatus('local');
+  // TODO: 等 n8n-live-status API 在 autopilot 后端实现后取消注释
+  // try {
+  //   const liveStatus = await fetchLiveStatus('local');
+  //   // ... 处理实时数据
+  // } catch (error) {
+  //   console.error('Failed to fetch AI employees stats:', error);
+  // }
 
-    // 合并所有执行记录
-    const allExecutions: N8nExecution[] = [
-      ...liveStatus.runningExecutions.map(r => ({
-        id: r.id,
-        workflowId: r.workflowId,
-        workflowName: r.workflowName,
-        status: 'running' as const,
-        startedAt: r.startedAt,
-      })),
-      ...liveStatus.recentCompleted,
-    ];
-
-    // 按部门和员工聚合
-    const departmentsWithStats: DepartmentWithStats[] = AI_DEPARTMENTS.map(dept => {
-      const employeesWithStats: AiEmployeeWithStats[] = dept.employees.map(emp => ({
-        ...emp,
-        stats: aggregateEmployeeStats(emp, allExecutions),
-      }));
-
-      const todayTotal = employeesWithStats.reduce(
-        (sum, emp) => sum + emp.stats.todayTotal,
-        0
-      );
-
-      return {
-        ...dept,
-        employees: employeesWithStats,
-        todayTotal,
-      };
-    });
-
-    return departmentsWithStats;
-  } catch (error) {
-    console.error('Failed to fetch AI employees stats:', error);
-    // 返回空统计
-    return AI_DEPARTMENTS.map(dept => ({
-      ...dept,
-      employees: dept.employees.map(emp => ({
-        ...emp,
-        stats: {
-          todayTotal: 0,
-          todaySuccess: 0,
-          todayError: 0,
-          todayRunning: 0,
-          successRate: 0,
-          recentTasks: [],
-        },
-      })),
-      todayTotal: 0,
-    }));
-  }
+  // 目前直接返回静态配置数据
+  return createDefaultDepartments();
 }
 
 /**
