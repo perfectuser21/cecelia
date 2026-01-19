@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.44.4] - 2026-01-19
+
+### Added
+- **LEARNINGS**: 记录 Step 5-7 压力测试完整验证结果 (T1/T2/T3 三场景)
+
 ## [7.44.3] - 2026-01-19
 
 ### Added
