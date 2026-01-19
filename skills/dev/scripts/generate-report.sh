@@ -63,14 +63,25 @@ else
     fi
 fi
 
-# 获取变更文件
-FILES_CHANGED=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null | head -20 || echo "")
+# 获取步骤状态（默认 11，因为报告在 cleanup 阶段生成）
+STEP=$(git config "branch.$CP_BRANCH.step" 2>/dev/null || echo "")
+if [[ -z "$STEP" || "$STEP" == "unknown" ]]; then
+    STEP="11"  # cleanup 阶段默认为 11
+fi
+
+# 获取变更文件（先尝试 git diff，如果为空则从 PR API 获取）
+FILES_CHANGED=""
+if git rev-parse --verify "$CP_BRANCH" &>/dev/null; then
+    FILES_CHANGED=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null | head -20 || echo "")
+fi
+
+# 如果 git diff 为空（PR 已合并或分支不存在），从 PR API 获取
+if [[ -z "$FILES_CHANGED" ]]; then
+    FILES_CHANGED=$(gh pr list --head "$CP_BRANCH" --state all --json files -q '.[0].files[].path' 2>/dev/null | head -20 || echo "")
+fi
 
 # 获取版本变更（从 package.json）
 CURRENT_VERSION=$(jq -r '.version // "unknown"' "$PROJECT_ROOT/package.json" 2>/dev/null || echo "unknown")
-
-# 获取步骤状态
-STEP=$(git config "branch.$CP_BRANCH.step" 2>/dev/null || echo "unknown")
 
 # 生成 TXT 报告
 TXT_REPORT="$PROJECT_ROOT/.dev-runs/${TASK_ID}-report.txt"

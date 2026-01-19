@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.43.1] - 2026-01-19
+
+### Fixed
+- **generate-report.sh**: 修复分支已删除或 PR 已合并时报告显示"未完成"的问题
+  - STEP 为空时默认设为 11（因为报告在 cleanup 阶段生成）
+  - git diff 为空时从 PR API 获取变更文件列表
+
 ## [7.43.0] - 2026-01-19
 
 ### Added
