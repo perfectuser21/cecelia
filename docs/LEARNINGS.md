@@ -35,3 +35,25 @@
 3. 前端页面需要登录才能验证效果，Layer 2 验证受限
 
 **影响程度**: Low
+
+---
+
+### [2026-01-19] AI 员工页面加载问题修复
+
+**任务**: 修复 AI 员工页面无限转圈问题
+
+**Bug**: 前端 `fetchAiEmployeesWithStats()` 调用 `/api/v1/n8n-live-status/instances/local/overview` API，但该 API 在 autopilot 后端不存在，导致页面一直显示 loading 状态。
+
+**解决方案**: 修改 API 层，在后端 API 未实现前直接返回静态配置数据（员工卡片显示，统计为 0）。
+
+**技术要点**:
+1. 新功能开发时，应先确认依赖的后端 API 是否存在
+2. 前端应实现 graceful degradation - API 失败时显示默认数据而非无限加载
+3. 使用 `try-catch` 包裹 API 调用，catch 中返回默认值
+
+**优化点**:
+1. 开发流程应包含"API 可用性检查"步骤
+2. 前端组件应有 error boundary 或 fallback UI
+3. 可以考虑在 config 文件中标记"依赖的后端 API"，方便追踪
+
+**影响程度**: Medium - 页面完全无法使用
