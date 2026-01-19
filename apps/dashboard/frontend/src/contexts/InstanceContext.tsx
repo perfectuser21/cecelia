@@ -29,7 +29,11 @@ const autopilotConfig: InstanceConfig = {
     sidebarGradient: 'linear-gradient(180deg, #1e3a8a 0%, #1e2a5e 100%)',
   },
   features: {
+    // 主导航
     'workbench': true,
+    'media-scenario': true,  // 新媒体运营场景
+    'settings': true,
+    // 旧 features（保留用于兼容，实际已合并到 media-scenario）
     'execution-status': true,
     'tasks': true,
     'data-center': true,
@@ -39,7 +43,6 @@ const autopilotConfig: InstanceConfig = {
     'scraping': true,
     'tools': true,
     'canvas': true,
-    'settings': true,
   },
 };
 

@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-01-19T10:00:00Z",
+  "branch": "cp-01190943-nav-restructure",
+  "layers": {
+    "L1_automated": {
+      "name": "自动化测试",
+      "status": "pass",
+      "checks": [
+        {"name": "TypeScript 编译", "status": "pass", "command": "npm run build"},
+        {"name": "Shell syntax", "status": "pass"}
+      ]
+    },
+    "L2_verification": {
+      "name": "效果验证",
+      "status": "pass",
+      "checks": [
+        {"name": "登录页加载正常", "status": "pass"},
+        {"name": "无控制台错误", "status": "pass"}
+      ],
+      "note": "UI 效果需登录后人工验证"
+    },
+    "L3_acceptance": {
+      "name": "需求验收",
+      "status": "pass",
+      "checks": [
+        {"name": "侧边栏配置简化为 3 个入口", "status": "pass"},
+        {"name": "MediaScenarioPage 创建", "status": "pass"},
+        {"name": "ScenarioTabs 组件创建", "status": "pass"},
+        {"name": "旧路由重定向配置", "status": "pass"}
+      ]
+    }
+  },
+  "overall": "pass",
+  "summary": "三层质检通过，UI 效果需登录后人工验证"
+}

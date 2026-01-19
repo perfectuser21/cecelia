@@ -26,6 +26,7 @@ import {
   Bot,
   Cpu,
   Code,
+  Video,  // 新媒体运营图标
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -73,6 +74,7 @@ export const pageComponents: Record<string, () => Promise<{ default: ComponentTy
   'ToolsPage': () => import('../pages/ToolsPage'),
   'ScrapingPage': () => import('../pages/ScrapingPage'),
   'AdminSettingsPage': () => import('../pages/AdminSettingsPage'),
+  'MediaScenarioPage': () => import('../pages/MediaScenarioPage'),
 
   // --- 从 zenithjoy-core/features 加载（个人功能） ---
   // claude-monitor feature
@@ -207,7 +209,7 @@ export const coreNavGroups: NavGroup[] = [
 
 export const autopilotNavGroups: NavGroup[] = [
   {
-    title: '概览',
+    title: '',  // 无分组标题，扁平展示
     items: [
       {
         path: '/',
@@ -217,83 +219,16 @@ export const autopilotNavGroups: NavGroup[] = [
         component: 'Dashboard'
       },
       {
-        path: '/execution-status',
-        icon: Activity,
-        label: '工作记录',
-        featureKey: 'execution-status',
-        component: 'ExecutionStatus'
-      },
-      {
-        path: '/tasks',
-        icon: ListTodo,
-        label: '任务',
-        featureKey: 'tasks',
-        component: 'Tasks'
-      },
-      {
-        path: '/data-center',
-        icon: BarChart3,
-        label: '数据中心',
-        featureKey: 'data-center',
-        component: 'ContentData'
-      },
-    ]
-  },
-  {
-    title: '管理',
-    items: [
-      {
-        path: '/content',
-        icon: FileText,
-        label: '内容管理',
-        featureKey: 'content',
-        component: 'ContentPublish'
-      },
-      {
-        path: '/platform-status',
-        icon: Radio,
-        label: '平台状态',
-        featureKey: 'platform-status',
-        component: 'PlatformStatus'
-      },
-      {
-        path: '/publish-stats',
-        icon: TrendingUp,
-        label: '发布统计',
-        featureKey: 'publish-stats',
-        component: 'PublishStats'
-      },
-      {
-        path: '/scraping',
-        icon: Database,
-        label: '数据采集',
-        featureKey: 'scraping',
-        component: 'ScrapingPage'
-      },
-    ]
-  },
-  {
-    title: '系统',
-    items: [
-      {
-        path: '/tools',
-        icon: Sparkles,
-        label: '工具箱',
-        featureKey: 'tools',
-        component: 'ToolsPage'
-      },
-      {
-        path: '/canvas',
-        icon: Palette,
-        label: '画布',
-        featureKey: 'canvas',
-        requireSuperAdmin: true,
-        component: 'Canvas'
+        path: '/media',
+        icon: Video,
+        label: '新媒体运营',
+        featureKey: 'media-scenario',
+        component: 'MediaScenarioPage'
       },
       {
         path: '/settings',
         icon: Settings,
-        label: '管理员',
+        label: '设置',
         featureKey: 'settings',
         requireSuperAdmin: true,
         component: 'AdminSettingsPage'
@@ -305,15 +240,28 @@ export const autopilotNavGroups: NavGroup[] = [
 // ============ 额外路由配置（不在菜单显示） ============
 
 export const additionalRoutes: RouteConfig[] = [
-  // 任务详情
-  { path: '/tasks/:name', component: 'Tasks', requireAuth: true },
+  // === 新媒体运营场景子路由 ===
+  // 这些路由由 MediaScenarioPage 内部处理嵌套路由
+  { path: '/media/*', component: 'MediaScenarioPage', requireAuth: true },
+
+  // === 旧路由重定向（兼容） ===
+  { path: '/content', redirect: '/media/content' },
+  { path: '/scraping', redirect: '/media/content/scraping' },
+  { path: '/tasks', redirect: '/media/publish' },
+  { path: '/tasks/:name', redirect: '/media/publish' },
+  { path: '/execution-status', redirect: '/media/publish/history' },
+  { path: '/platform-status', redirect: '/media/publish/platforms' },
+  { path: '/publish-stats', redirect: '/media/data' },
+  { path: '/data-center', redirect: '/media/data/analytics' },
+  { path: '/tools', redirect: '/settings' },
+  { path: '/canvas', redirect: '/settings' },
 
   // 登录相关
   { path: '/login/:platform/:accountId', component: 'LoginPage', requireAuth: true },
   { path: '/platform-login', component: 'PlatformStatusDashboard', requireAuth: true },
 
-  // 工具子页面
-  { path: '/tools/session-monitor', component: 'SessionMonitor', requireAuth: true },
+  // 工具子页面（移入设置）
+  { path: '/tools/session-monitor', redirect: '/settings' },
 
   // 管理员子页面
   { path: '/settings/claude-monitor', component: 'ClaudeMonitor', requireAuth: true, requireSuperAdmin: true },
@@ -323,10 +271,11 @@ export const additionalRoutes: RouteConfig[] = [
   { path: '/settings/n8n-workflows/:instance/:id', component: 'N8nWorkflowDetail', requireAuth: true, requireSuperAdmin: true },
   { path: '/settings/n8n-status', component: 'N8nLiveStatus', requireAuth: true, requireSuperAdmin: true },
   { path: '/settings/n8n-status/:executionId', component: 'N8nLiveStatusDetail', requireAuth: true, requireSuperAdmin: true },
+  { path: '/settings/canvas', component: 'Canvas', requireAuth: true, requireSuperAdmin: true },
 
-  // 重定向
-  { path: '/panorama', redirect: '/canvas' },
-  { path: '/whiteboard', redirect: '/canvas' },
+  // 旧重定向
+  { path: '/panorama', redirect: '/settings/canvas' },
+  { path: '/whiteboard', redirect: '/settings/canvas' },
 ];
 
 // ============ 辅助函数 ============
