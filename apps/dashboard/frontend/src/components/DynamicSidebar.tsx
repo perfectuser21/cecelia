@@ -4,16 +4,33 @@
  * 根据配置文件动态生成菜单，无需手动添加菜单项
  */
 
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LogOut, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { LogOut, PanelLeftClose, PanelLeft, Circle } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
 import {
-  getNavGroups,
+  getAutopilotNavGroups,
   filterNavGroups,
   type NavGroup,
 } from '../config/navigation.config';
+
+// 将 Core 的 NavGroup 格式转换为带 LucideIcon 的格式
+function convertCoreNavGroups(
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+): NavGroup[] {
+  return coreNavGroups.map(group => ({
+    title: group.title,
+    items: group.items.map(item => ({
+      path: item.path,
+      icon: (LucideIcons as any)[item.icon] || Circle,
+      label: item.label,
+      featureKey: item.featureKey,
+      component: item.component,
+    })),
+  }));
+}
 
 interface DynamicSidebarProps {
   collapsed: boolean;
@@ -28,10 +45,15 @@ export default function DynamicSidebar({
 }: DynamicSidebarProps) {
   const location = useLocation();
   const { user, isSuperAdmin } = useAuth();
-  const { config, isCore, isFeatureEnabled } = useInstance();
+  const { config, isCore, isFeatureEnabled, coreConfig } = useInstance();
 
   // 获取并过滤导航配置
-  const baseNavGroups = getNavGroups(isCore);
+  const baseNavGroups = useMemo(() => {
+    if (isCore && coreConfig) {
+      return convertCoreNavGroups(coreConfig.navGroups);
+    }
+    return getAutopilotNavGroups();
+  }, [isCore, coreConfig]);
   const navGroups = filterNavGroups(baseNavGroups, isFeatureEnabled, isSuperAdmin);
 
   return (

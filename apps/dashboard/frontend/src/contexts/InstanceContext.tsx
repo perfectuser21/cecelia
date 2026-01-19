@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import type { NavGroup } from '../config/navigation.config';
 
 // 主题配置
 interface ThemeConfig {
@@ -15,7 +16,14 @@ export interface InstanceConfig {
   instance: string;
   name: string;
   theme: ThemeConfig;
-  features: Record<string, boolean>;
+  features?: Record<string, boolean>;
+}
+
+// Core 动态配置类型
+export interface CoreDynamicConfig {
+  instanceConfig: InstanceConfig;
+  navGroups: NavGroup[];
+  pageComponents: Record<string, () => Promise<{ default: any }>>;
 }
 
 // Autopilot 配置（蓝色主题）- 团队运营
@@ -47,43 +55,22 @@ const autopilotConfig: InstanceConfig = {
   },
 };
 
-// Core 配置（冷灰玻璃风格）- 个人工具
-const coreConfig: InstanceConfig = {
-  instance: 'core',
-  name: 'Core',
-  theme: {
-    logo: '/logo-white.png',
-    logoCollapsed: 'C',
-    primaryColor: '#94a3b8',  // slate-400 冷灰
-    secondaryColor: '#cbd5e1', // slate-300
-    sidebarGradient: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.9) 50%, rgba(51,65,85,0.85) 100%)',
-  },
-  features: {
-    // 共用功能
-    'workbench': true,
-    // Engine 功能
-    'engine-capabilities': true,
-    'task-monitor': true,
-    'dev-tasks': true,
-    // Cecilia 功能
-    'cecilia-tasks': true,
-    'cecilia-history': true,
-    'cecilia-stats': true,
-    'cecilia-logs': true,
-    // 通用
-    'settings': true,
-  },
-};
+// 缓存 Core 配置
+let cachedCoreConfig: CoreDynamicConfig | null = null;
 
-// 根据域名获取配置
-function getConfigByHostname(): InstanceConfig {
+// 异步加载 Core 配置
+export async function loadCoreConfig(): Promise<CoreDynamicConfig> {
+  if (cachedCoreConfig) return cachedCoreConfig;
+
+  const { buildCoreConfig } = await import('@features/core');
+  cachedCoreConfig = await buildCoreConfig();
+  return cachedCoreConfig;
+}
+
+// 检测是否为 Core 实例
+function isCoreInstance(): boolean {
   const hostname = window.location.hostname;
-
-  if (hostname.startsWith('core.') || hostname.includes('core')) {
-    return coreConfig;
-  }
-
-  return autopilotConfig;
+  return hostname.startsWith('core.') || hostname.includes('core');
 }
 
 interface InstanceContextType {
@@ -92,27 +79,44 @@ interface InstanceContextType {
   error: string | null;
   isFeatureEnabled: (featureKey: string) => boolean;
   isCore: boolean;
+  coreConfig: CoreDynamicConfig | null;
 }
 
 const InstanceContext = createContext<InstanceContextType | undefined>(undefined);
 
 export function InstanceProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<InstanceConfig | null>(null);
+  const [coreConfig, setCoreConfig] = useState<CoreDynamicConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // 根据域名自动选择配置
-    const selectedConfig = getConfigByHostname();
-    setConfig(selectedConfig);
-    applyTheme(selectedConfig.theme, selectedConfig.instance);
+    async function initializeConfig() {
+      const isCore = isCoreInstance();
 
-    // 更新页面标题
-    document.title = selectedConfig.instance === 'core'
-      ? 'Core - 个人工具'
-      : '悦升云端 - Autopilot';
+      if (isCore) {
+        // Core: 动态加载配置
+        try {
+          const dynamicConfig = await loadCoreConfig();
+          setCoreConfig(dynamicConfig);
+          setConfig(dynamicConfig.instanceConfig);
+          applyTheme(dynamicConfig.instanceConfig.theme, dynamicConfig.instanceConfig.instance);
+          document.title = 'Core - 个人工具';
+        } catch (err) {
+          console.error('Failed to load Core config:', err);
+          setError('Failed to load Core configuration');
+        }
+      } else {
+        // Autopilot: 使用静态配置
+        setConfig(autopilotConfig);
+        applyTheme(autopilotConfig.theme, autopilotConfig.instance);
+        document.title = '悦升云端 - Autopilot';
+      }
 
-    setLoading(false);
+      setLoading(false);
+    }
+
+    initializeConfig();
   }, []);
 
   // 应用主题到 CSS 变量
@@ -143,14 +147,17 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
   // 检查 feature 是否启用
   const isFeatureEnabled = (featureKey: string): boolean => {
     if (!config) return false;
-    return config.features[featureKey] === true;
+    // Core 实例: 所有 feature 默认启用（由 manifest 控制）
+    if (config.instance === 'core') return true;
+    // Autopilot: 使用 features 配置
+    return config.features?.[featureKey] === true;
   };
 
   // 是否为 Core 实例
   const isCore = config?.instance === 'core';
 
   return (
-    <InstanceContext.Provider value={{ config, loading, error, isFeatureEnabled, isCore }}>
+    <InstanceContext.Provider value={{ config, loading, error, isFeatureEnabled, isCore, coreConfig }}>
       {children}
     </InstanceContext.Provider>
   );

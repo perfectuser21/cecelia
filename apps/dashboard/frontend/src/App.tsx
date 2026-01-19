@@ -5,11 +5,12 @@
  * 添加新页面只需修改配置文件，无需改动这里
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Route, Link, useLocation } from 'react-router-dom';
-import { LogOut, PanelLeftClose, PanelLeft, Sun, Moon, Monitor } from 'lucide-react';
+import { LogOut, PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 // 配置驱动
-import { getNavGroups, filterNavGroups } from './config/navigation.config';
+import { getAutopilotNavGroups, filterNavGroups, type NavGroup } from './config/navigation.config';
 import DynamicRouter from './components/DynamicRouter';
 // Context
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -19,11 +20,27 @@ import { InstanceProvider, useInstance } from './contexts/InstanceContext';
 import FeishuLogin from './pages/FeishuLogin';
 import './App.css';
 
+// 将 Core 的 NavGroup 格式转换为带 LucideIcon 的格式
+function convertCoreNavGroups(
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+): NavGroup[] {
+  return coreNavGroups.map(group => ({
+    title: group.title,
+    items: group.items.map(item => ({
+      path: item.path,
+      icon: (LucideIcons as any)[item.icon] || Circle,
+      label: item.label,
+      featureKey: item.featureKey,
+      component: item.component,
+    })),
+  }));
+}
+
 function AppContent() {
   const location = useLocation();
   const { user, logout, isAuthenticated, isSuperAdmin } = useAuth();
   const { theme, actualTheme, setTheme } = useTheme();
-  const { config, loading: instanceLoading, isFeatureEnabled, isCore } = useInstance();
+  const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
@@ -45,9 +62,13 @@ function AppContent() {
   };
 
   // ============ 配置驱动菜单 ============
-  // 菜单配置从 config/navigation.config.ts 读取
-  // 添加新菜单只需修改配置文件，无需改动这里
-  const baseNavGroups = getNavGroups(isCore);
+  // Autopilot 使用静态配置，Core 使用动态加载的 manifest
+  const baseNavGroups = useMemo(() => {
+    if (isCore && coreConfig) {
+      return convertCoreNavGroups(coreConfig.navGroups);
+    }
+    return getAutopilotNavGroups();
+  }, [isCore, coreConfig]);
   const navGroups = filterNavGroups(baseNavGroups, isFeatureEnabled, isSuperAdmin);
 
   // 兼容旧代码

@@ -4,18 +4,19 @@
  * 根据配置文件动态生成路由，无需手动添加 Route
  */
 
-import { Suspense, lazy, ComponentType } from 'react';
+import { Suspense, lazy, ComponentType, useMemo } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
 import PrivateRoute from './PrivateRoute';
 import {
-  getNavGroups,
+  getAutopilotNavGroups,
   additionalRoutes,
-  pageComponents,
+  autopilotPageComponents,
   type RouteConfig,
   type NavGroup,
 } from '../config/navigation.config';
+import * as LucideIcons from 'lucide-react';
 
 // 加载状态组件
 function LoadingFallback() {
@@ -29,13 +30,23 @@ function LoadingFallback() {
 // 懒加载组件缓存
 const componentCache: Record<string, ComponentType> = {};
 
-function getLazyComponent(name: string): ComponentType | null {
+function getLazyComponent(
+  name: string,
+  corePageComponents?: Record<string, () => Promise<{ default: any }>>
+): ComponentType | null {
   // 检查缓存
   if (componentCache[name]) {
     return componentCache[name];
   }
 
-  const loader = pageComponents[name];
+  // 先从 Autopilot 组件查找
+  let loader = autopilotPageComponents[name];
+
+  // 如果没有，从 Core 组件查找
+  if (!loader && corePageComponents) {
+    loader = corePageComponents[name];
+  }
+
   if (!loader) {
     console.warn(`Page component not found: ${name}`);
     return null;
@@ -44,6 +55,22 @@ function getLazyComponent(name: string): ComponentType | null {
   const LazyComponent = lazy(loader);
   componentCache[name] = LazyComponent;
   return LazyComponent;
+}
+
+// 将 Core 的 NavGroup 格式转换为 Autopilot 的 NavGroup 格式
+function convertCoreNavGroups(
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+): NavGroup[] {
+  return coreNavGroups.map(group => ({
+    title: group.title,
+    items: group.items.map(item => ({
+      path: item.path,
+      icon: (LucideIcons as any)[item.icon] || LucideIcons.Circle,
+      label: item.label,
+      featureKey: item.featureKey,
+      component: item.component,
+    })),
+  }));
 }
 
 // 占位页面组件
@@ -62,29 +89,43 @@ interface DynamicRouterProps {
 
 export default function DynamicRouter({ children }: DynamicRouterProps) {
   const { isSuperAdmin } = useAuth();
-  const { isCore, isFeatureEnabled } = useInstance();
+  const { isCore, isFeatureEnabled, coreConfig } = useInstance();
 
   // 获取当前实例的导航配置
-  const navGroups = getNavGroups(isCore);
+  const navGroups = useMemo(() => {
+    if (isCore && coreConfig) {
+      return convertCoreNavGroups(coreConfig.navGroups);
+    }
+    return getAutopilotNavGroups();
+  }, [isCore, coreConfig]);
+
+  // 获取页面组件映射
+  const corePageComponents = coreConfig?.pageComponents;
 
   // 收集所有需要的路由
-  const allRoutes: RouteConfig[] = [];
+  const allRoutes: RouteConfig[] = useMemo(() => {
+    const routes: RouteConfig[] = [];
 
-  // 从导航配置中提取路由
-  for (const group of navGroups) {
-    for (const item of group.items) {
-      allRoutes.push({
-        path: item.path,
-        component: item.component,
-        redirect: item.redirect,
-        requireAuth: true,
-        requireSuperAdmin: item.requireSuperAdmin,
-      });
+    // 从导航配置中提取路由
+    for (const group of navGroups) {
+      for (const item of group.items) {
+        routes.push({
+          path: item.path,
+          component: item.component,
+          redirect: item.redirect,
+          requireAuth: true,
+          requireSuperAdmin: item.requireSuperAdmin,
+        });
+      }
     }
-  }
 
-  // 添加额外路由
-  allRoutes.push(...additionalRoutes);
+    // 添加额外路由（仅对 Autopilot 或所有实例）
+    if (!isCore) {
+      routes.push(...additionalRoutes);
+    }
+
+    return routes;
+  }, [navGroups, isCore]);
 
   // 渲染单个路由
   const renderRoute = (route: RouteConfig) => {
@@ -104,8 +145,8 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
       return null;
     }
 
-    // 获取组件
-    const Component = getLazyComponent(route.component);
+    // 获取组件（支持 Core 动态组件）
+    const Component = getLazyComponent(route.component, corePageComponents);
 
     // 占位页面
     if (!Component) {

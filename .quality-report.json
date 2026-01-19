@@ -1,58 +1,29 @@
 {
-  "branch": "cp-01191430-ai-employees-ui-improve",
-  "timestamp": "2026-01-19T14:30:00Z",
+  "timestamp": "2026-01-19T16:00:00Z",
+  "branch": "cp-frontend-config-refactor",
   "layers": {
     "L1_automated": {
       "status": "pass",
-      "tests": {
-        "build": {
-          "command": "npm run build",
-          "passed": true
-        }
+      "checks": {
+        "typecheck": "pass",
+        "lint": "pass",
+        "build": "pass"
       }
     },
     "L2_verification": {
       "status": "pass",
-      "checks": [
-        {
-          "item": "emoji 替换为 lucide 图标",
-          "passed": true
-        },
-        {
-          "item": "部门折叠面板组件创建",
-          "passed": true
-        },
-        {
-          "item": "员工详情页路由配置",
-          "passed": true
-        },
-        {
-          "item": "职能详情页路由配置",
-          "passed": true
-        }
-      ]
+      "checks": {
+        "core_navigation_loads": "pass",
+        "autopilot_navigation_unchanged": "pass"
+      }
     },
     "L3_acceptance": {
       "status": "pass",
-      "dod_items": [
-        {
-          "item": "所有 emoji 替换为统一颜色的图标",
-          "passed": true
-        },
-        {
-          "item": "部门以折叠面板形式展示",
-          "passed": true
-        },
-        {
-          "item": "点击员工进入详情页",
-          "passed": true
-        },
-        {
-          "item": "点击职能进入职能详情页",
-          "passed": true
-        }
-      ]
+      "checks": {
+        "prd_requirements_met": "pass"
+      }
     }
   },
-  "overall": "pass"
+  "overall": "pass",
+  "summary": "Frontend - dynamic Core config loading"
 }

@@ -9,25 +9,9 @@ import { lazy, ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   LayoutDashboard,
-  BarChart3,
-  Database,
-  FileText,
-  Sparkles,
   Settings,
-  Activity,
-  MonitorDot,
-  Server,
-  DollarSign,
-  Workflow,
-  ListTodo,
-  TrendingUp,
-  Radio,
-  Palette,
-  Bot,
-  Cpu,
-  Code,
-  Video,  // 新媒体运营图标
-  Users,  // AI 员工图标
+  Video,
+  Users,
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -59,10 +43,8 @@ export interface RouteConfig {
 
 // ============ 页面组件懒加载映射 ============
 
-// 懒加载所有页面组件
-// 从 zenithjoy-core/features 加载的组件使用 @features/core 别名
-export const pageComponents: Record<string, () => Promise<{ default: ComponentType }>> = {
-  // --- 本地页面（autopilot 专用） ---
+// Autopilot 本地页面组件
+export const autopilotPageComponents: Record<string, () => Promise<{ default: ComponentType }>> = {
   'Dashboard': () => import('../pages/Dashboard'),
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
@@ -79,36 +61,11 @@ export const pageComponents: Record<string, () => Promise<{ default: ComponentTy
   'AiEmployeesPage': () => import('../pages/AiEmployeesPage'),
   'AiEmployeeDetailPage': () => import('../pages/AiEmployeeDetailPage'),
   'AiAbilityDetailPage': () => import('../pages/AiAbilityDetailPage'),
-
-  // --- 从 zenithjoy-core/features 加载（个人功能） ---
-  // claude-monitor feature
-  'ClaudeMonitor': () => import('@features/core/claude-monitor/pages/ClaudeMonitor'),
-  'ClaudeStats': () => import('@features/core/claude-monitor/pages/ClaudeStats'),
-
-  // vps-monitor feature
-  'VpsMonitor': () => import('@features/core/vps-monitor/pages/VpsMonitor'),
-
-  // engine feature
-  'EngineDashboard': () => import('@features/core/engine/pages/EngineDashboard'),
-  'EngineCapabilities': () => import('@features/core/engine/pages/EngineCapabilities'),
-  'DevTasks': () => import('@features/core/engine/pages/DevTasks'),
-  'TaskMonitor': () => import('@features/core/engine/pages/TaskMonitor'),
-  'SessionMonitor': () => import('@features/core/engine/pages/SessionMonitor'),
-
-  // n8n feature
-  'N8nWorkflows': () => import('@features/core/n8n/pages/N8nWorkflows'),
-  'N8nWorkflowDetail': () => import('@features/core/n8n/pages/N8nWorkflowDetail'),
-  'N8nLiveStatus': () => import('@features/core/n8n/pages/N8nLiveStatus'),
-  'N8nLiveStatusDetail': () => import('@features/core/n8n/pages/N8nLiveStatusDetail'),
-
-  // cecilia feature
-  'CeciliaRuns': () => import('@features/core/cecilia/pages/CeciliaRuns'),
-
-  // canvas feature
-  'Canvas': () => import('@features/core/canvas/pages/Canvas'),
-  'Whiteboard': () => import('@features/core/canvas/pages/Whiteboard'),
-  'ProjectPanorama': () => import('@features/core/canvas/pages/ProjectPanorama'),
 };
+
+// 向后兼容：保留 pageComponents 导出（仅 Autopilot 组件）
+// Core 组件现在从 coreConfig.pageComponents 动态加载
+export const pageComponents = autopilotPageComponents;
 
 // 获取懒加载组件
 export function getPageComponent(name: string) {
@@ -120,96 +77,8 @@ export function getPageComponent(name: string) {
   return lazy(loader);
 }
 
-// ============ Core 实例导航配置 ============
-
-export const coreNavGroups: NavGroup[] = [
-  {
-    title: '概览',
-    items: [
-      {
-        path: '/',
-        icon: LayoutDashboard,
-        label: '工作台',
-        featureKey: 'workbench',
-        component: 'EngineDashboard'
-      },
-    ]
-  },
-  {
-    title: 'Engine',
-    items: [
-      {
-        path: '/engine',
-        icon: Cpu,
-        label: '能力概览',
-        featureKey: 'engine-capabilities',
-        component: 'EngineCapabilities'
-      },
-      {
-        path: '/engine/tasks',
-        icon: Activity,
-        label: '任务监控',
-        featureKey: 'task-monitor',
-        component: 'TaskMonitor'
-      },
-      {
-        path: '/engine/dev',
-        icon: Code,
-        label: '开发任务',
-        featureKey: 'dev-tasks',
-        component: 'DevTasks'
-      },
-    ]
-  },
-  {
-    title: 'Cecilia',
-    items: [
-      {
-        path: '/cecilia',
-        icon: Bot,
-        label: '任务总览',
-        featureKey: 'cecilia-tasks',
-        component: 'CeciliaRuns'
-      },
-      {
-        path: '/cecilia/history',
-        icon: ListTodo,
-        label: '历史记录',
-        featureKey: 'cecilia-history',
-        component: 'CeciliaRuns'
-      },
-      {
-        path: '/cecilia/stats',
-        icon: BarChart3,
-        label: '统计分析',
-        featureKey: 'cecilia-stats',
-        component: 'CeciliaRuns'
-      },
-      {
-        path: '/cecilia/logs',
-        icon: Activity,
-        label: '执行日志',
-        featureKey: 'cecilia-logs',
-        component: 'CeciliaRuns'
-      },
-    ]
-  },
-  {
-    title: '系统',
-    items: [
-      {
-        path: '/settings',
-        icon: Settings,
-        label: '配置',
-        featureKey: 'settings',
-        requireSuperAdmin: true,
-        component: 'AdminSettingsPage'
-      },
-    ]
-  }
-];
-
 // ============ Autopilot 实例导航配置 ============
+// Core 导航现在从 InstanceContext.coreConfig.navGroups 动态加载
 
 export const autopilotNavGroups: NavGroup[] = [
   {
@@ -296,10 +165,11 @@ export const additionalRoutes: RouteConfig[] = [
 // ============ 辅助函数 ============
 
 /**
- * 根据实例类型获取导航配置
+ * 获取 Autopilot 导航配置
+ * Core 导航现在通过 InstanceContext.coreConfig.navGroups 获取
  */
-export function getNavGroups(isCore: boolean): NavGroup[] {
-  return isCore ? coreNavGroups : autopilotNavGroups;
+export function getAutopilotNavGroups(): NavGroup[] {
+  return autopilotNavGroups;
 }
 
 /**
