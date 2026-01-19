@@ -289,3 +289,25 @@ pr-gate.sh 只检查 `.quality-report.json` 的 `overall: "pass"` 字段，不�
 #### 影响程度
 - Low - 这是新功能，不影响现有流程
 
+### [2026-01-19] 任务报告分支检测修复
+
+#### 问题描述
+generate-report.sh 在分支已删除或 PR 已合并时，所有流程步骤显示"未完成"。
+
+#### 根因
+1. `git config` 返回空时，Shell 数字比较 `[ "unknown" -ge 1 ]` 失败
+2. `git diff` 在 PR 已合并后返回空（因为分支内容已合入 base）
+
+#### 解决方案
+1. STEP 为空时默认设为 "11"（因为报告在 cleanup 阶段生成，此时流程已完成）
+2. 先用 `git rev-parse --verify` 检查分支是否存在
+3. git diff 为空时从 PR API (`gh pr list --json files`) 获取变更文件
+
+#### 经验
+- Shell 脚本中的数字比较需要确保变量是数字，否则会报错
+- 需要考虑"报告生成时机"与"数据获取来源"的关系
+- 备选数据源（如 PR API）可以提高健壮性
+
+#### 影响程度
+- Low - 修复边界情况
+
