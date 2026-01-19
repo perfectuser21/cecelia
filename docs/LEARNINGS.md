@@ -529,3 +529,65 @@ fi
 #### 影响程度
 - Medium - 关闭了一个安全漏洞，加强了 Subagent 强制机制
 
+#### 压力测试验证
+
+在新会话中执行绕过测试：
+
+| 绕过手段 | 结果 |
+|---------|------|
+| 手动设 `step=7` | ✅ 骗过 step 检查 |
+| 假 `.quality-report.json` | ✅ 骗过质检报告检查 |
+| 无 `loop-count` | ❌ 被 PR Gate 拦截 |
+
+```
+Subagent 执行... ❌ (未记录)
+  → 必须通过 Subagent 执行 Step 5-7（代码、测试、质检）
+```
+
+**结论**：loop-count 检查有效关闭了绕过漏洞。
+
+### [2026-01-19] /dev 流程安全审计
+
+#### 发现的问题
+
+| 级别 | 问题 | 风险 | 状态 |
+|------|------|------|------|
+| P0.1 | 全局 branch-protect.sh 缺少 .subagent-lock 强制机制 | 🔴 极高 | ✅ 已修复 |
+| P0.2 | PR 创建可通过 git push + Web PR 绕过 | 🔴 高 | GitHub Protection 兜底 |
+| P1.1 | SubagentStop 项目检测复杂且脆弱 | 🟡 中 | 待优化 |
+| P1.2 | .quality-report.json 格式未标准化 | 🟡 中 | 待优化 |
+| P1.3 | loop-count 可被 git config 手动伪造 | 🟡 中 | 已知风险 |
+| P1.4 | step 状态可被手动修改 | 🟡 中 | 已知风险 |
+
+#### 核心洞察
+
+**最大漏洞是组合攻击**：
+```
+全局环境写代码(P0.1) + 伪造 step=7(P1.4) + 伪造 loop-count(P1.3) + 假报告(P1.2)
+= 完全绕过质检
+```
+
+**防御层次**：
+1. **第一层**: Hook 机制（本地检查，可被绕过）
+2. **第二层**: GitHub Branch Protection（远程强制）
+3. **第三层**: CI 检查（最终防线）
+
+单一检查机制不可靠，必须多层防护。
+
+#### 已执行的修复
+
+1. **P0.1 修复**：同步 branch-protect.sh 到全局
+   ```bash
+   cp hooks/branch-protect.sh ~/.claude/hooks/
+   ```
+   现在全局环境也强制 Subagent 执行 Step 5-7。
+
+#### 待优化项
+
+1. **状态存储重设计**：将 step/loop-count 从 git config 移到签名文件
+2. **质检报告 Schema**：添加格式验证和时间戳检查
+3. **项目检测简化**：统一使用简单的 `git rev-parse` 逻辑
+
+#### 影响程度
+- High - 发现并修复了核心强制机制的全局缺失问题
+
