@@ -242,3 +242,23 @@ pr-gate.sh 只检查 `.quality-report.json` 的 `overall: "pass"` 字段，不�
 - **Bug**: PR gate hook requires quality report with specific layer keys (`L1_automated`, `L2_verification`, `L3_acceptance`) instead of generic layer names
 - **优化点**: Quality report format should be documented in hook or step documentation for clarity
 - **影响程度**: Medium - Required manual correction during first test, but workflow validation successful
+
+### [2026-01-19] 添加 ping 工具函数
+
+#### 开发过程
+- 简单的工具函数实现，流程顺畅
+- 质检报告格式要求：L1_automated, L2_verification, L3_acceptance
+- Hook 会自动回退 step，需要正确生成质检报告后才能继续
+
+#### 发现
+- **PR Gate Hook 要求质检报告**：必须生成 `.quality-report.json` 且格式正确
+- **字段命名规范**：layers 使用 L1_automated/L2_verification/L3_acceptance，不是 layer1/layer2/layer3
+- **step 状态自动管理**：Hook 会在质检失败时自动回退 step 到 4
+
+#### 优化点
+- 质检报告生成可以自动化（Step 7 完成时自动生成）
+- 当前需要手动创建 .quality-report.json，容易出错
+
+#### 影响程度
+- Medium - 质检报告格式错误会导致 PR 被拦截，需要文档化说明
+
