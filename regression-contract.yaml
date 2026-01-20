@@ -1,0 +1,327 @@
+# ============================================================================
+# Regression Contract - ZenithJoy Engine
+# ============================================================================
+#
+# 全量回归的唯一合法定义来源
+#
+# 规则：
+#   - 只有这里的条目才算"全量"
+#   - PR Gate 跑 trigger 包含 PR 的条目
+#   - Release Gate 跑 trigger 包含 Release 的条目
+#   - Nightly 跑全部
+#
+# ============================================================================
+
+version: "1.0.0"
+updated: "2026-01-20"
+
+# ============================================================================
+# Hooks 回归契约
+# ============================================================================
+hooks:
+  # --------------------------------------------------------------------------
+  # H1: branch-protect
+  # --------------------------------------------------------------------------
+  - id: H1-001
+    feature: H1
+    name: "分支保护拦截 main/develop 写入"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "当前在 main 或 develop 分支"
+      when: "尝试写入代码文件（Write/Edit 工具）"
+      then: "Hook 阻止并提示切换到 cp-* 或 feature/* 分支"
+    evidence: "Hook stderr 输出包含 '请先创建工作分支'"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-002
+    feature: H1
+    name: "cp-* 分支允许写入"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "当前在 cp-* 分支"
+      when: "尝试写入代码文件"
+      then: "Hook 放行（exit 0）"
+    evidence: "Hook exit code = 0"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-003
+    feature: H1
+    name: "feature/* 分支允许写入"
+    priority: P1
+    trigger: [Release]
+    steps:
+      given: "当前在 feature/* 分支"
+      when: "尝试写入代码文件"
+      then: "Hook 放行（exit 0）"
+    evidence: "Hook exit code = 0"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2: pr-gate-v2
+  # --------------------------------------------------------------------------
+  - id: H2-001
+    feature: H2
+    name: "PR Gate 拦截 gh pr create"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "在任意分支"
+      when: "执行包含 'gh pr create' 的 Bash 命令"
+      then: "Hook 运行 L1 质检"
+    evidence: "Hook stderr 输出质检结果"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-002
+    feature: H2
+    name: "L1 失败阻止 PR 创建"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "typecheck 或 test 或 build 失败"
+      when: "执行 gh pr create"
+      then: "Hook 阻止并返回 exit 2"
+    evidence: "Hook exit code = 2"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-003
+    feature: H2
+    name: "L1 通过允许 PR 创建"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "npm run qa 全绿"
+      when: "执行 gh pr create"
+      then: "Hook 放行（exit 0）"
+    evidence: "Hook exit code = 0, stderr 显示 '✅ PR Gate 通过'"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-004
+    feature: H2
+    name: "双模式：--base main 触发 Release 模式"
+    priority: P1
+    trigger: [Release]
+    steps:
+      given: "执行 gh pr create --base main"
+      when: "Hook 解析命令"
+      then: "自动切换到 Release 模式，检查 L2B + L3"
+    evidence: "Hook stderr 显示 'Release 模式 (L1 + L2B + L3)'"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-005
+    feature: H2
+    name: "双模式：默认 PR 模式只检查 L1"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "执行 gh pr create（无 --base main）"
+      when: "Hook 解析命令"
+      then: "使用 PR 模式，只检查 L1"
+    evidence: "Hook stderr 显示 'PR 模式 (L1 only)'"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-006
+    feature: H2
+    name: "DoD 文件检查（PR 模式）"
+    priority: P1
+    trigger: [PR, Release]
+    steps:
+      given: "PR 模式下"
+      when: ".dod.md 不存在或未更新"
+      then: "Hook 警告但不阻止（v8+ 简化）"
+    evidence: "Hook stderr 显示 DoD 检查结果"
+    test: "tests/hooks/pr-gate.test.ts"
+
+# ============================================================================
+# Workflow 回归契约
+# ============================================================================
+workflow:
+  # --------------------------------------------------------------------------
+  # W1: /dev 11 步流程
+  # --------------------------------------------------------------------------
+  - id: W1-001
+    feature: W1
+    name: "/dev 流程可启动"
+    priority: P0
+    trigger: [Release, Nightly]
+    steps:
+      given: "用户在项目根目录"
+      when: "运行 /dev 或说开发需求"
+      then: "Skill 加载，显示 PRD 确认步骤"
+    evidence: "截图 / 手动验证"
+    test: null  # 手动验证
+
+  - id: W1-002
+    feature: W1
+    name: "分支自动创建"
+    priority: P0
+    trigger: [Release]
+    steps:
+      given: "PRD 确认后进入 Step 3"
+      when: "Claude 执行分支创建"
+      then: "创建 cp-MMDDHHNN-task 格式分支"
+    evidence: "git branch 输出"
+    test: null
+
+  - id: W1-003
+    feature: W1
+    name: "DoD 自动生成"
+    priority: P0
+    trigger: [Release]
+    steps:
+      given: "分支创建后进入 Step 4"
+      when: "Claude 推演 DoD"
+      then: "生成 .dod.md 文件，包含验收标准"
+    evidence: ".dod.md 文件内容"
+    test: null
+
+  - id: W1-004
+    feature: W1
+    name: "Loop 1 循环（5→6→7）"
+    priority: P1
+    trigger: [Release]
+    steps:
+      given: "Step 7 质检失败"
+      when: "发现问题"
+      then: "返回 Step 5 继续修复，而非结束"
+    evidence: "手动验证 / 对话记录"
+    test: null
+
+  - id: W1-005
+    feature: W1
+    name: "CI 失败后循环"
+    priority: P1
+    trigger: [Release]
+    steps:
+      given: "Step 9 CI 红"
+      when: "wait-for-merge.sh 检测到失败"
+      then: "返回 Step 5 重新循环"
+    evidence: "wait-for-merge.sh 输出"
+    test: null
+
+  # --------------------------------------------------------------------------
+  # W4: 测试任务模式
+  # --------------------------------------------------------------------------
+  - id: W4-001
+    feature: W4
+    name: "[TEST] 前缀检测"
+    priority: P2
+    trigger: [Release]
+    steps:
+      given: "PRD 标题包含 [TEST]"
+      when: "进入 Step 3"
+      then: "设置 git config branch.*.is-test true"
+    evidence: "git config 输出"
+    test: null
+
+  - id: W4-002
+    feature: W4
+    name: "测试任务跳过版本更新"
+    priority: P2
+    trigger: [Release]
+    steps:
+      given: "is-test = true"
+      when: "进入 Step 8 PR"
+      then: "跳过 CHANGELOG 和版本号更新"
+    evidence: "PR 内容不含版本变更"
+    test: null
+
+# ============================================================================
+# CI/Release 回归契约
+# ============================================================================
+ci:
+  # --------------------------------------------------------------------------
+  # C1: version-check
+  # --------------------------------------------------------------------------
+  - id: C1-001
+    feature: C1
+    name: "PR 版本号必须递增"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "PR 包含代码改动"
+      when: "CI 运行 version-check job"
+      then: "package.json 版本号 > develop 分支版本"
+    evidence: "CI job 日志"
+    test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # C2: test job
+  # --------------------------------------------------------------------------
+  - id: C2-001
+    feature: C2
+    name: "CI 运行 npm run qa"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "PR 提交"
+      when: "CI 运行 test job"
+      then: "typecheck + test + build 全绿"
+    evidence: "CI job 状态 = success"
+    test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # C3: shell syntax check
+  # --------------------------------------------------------------------------
+  - id: C3-001
+    feature: C3
+    name: "Shell 脚本语法检查"
+    priority: P1
+    trigger: [PR, Release]
+    steps:
+      given: "仓库包含 .sh 文件"
+      when: "CI 运行 shell-check"
+      then: "所有 .sh 文件 bash -n 通过"
+    evidence: "CI job 日志无语法错误"
+    test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # C4: notify-failure
+  # --------------------------------------------------------------------------
+  - id: C4-001
+    feature: C4
+    name: "CI 失败发送 Notion 通知"
+    priority: P2
+    trigger: [Release, Nightly]
+    steps:
+      given: "CI 任何 job 失败"
+      when: "CI workflow 完成"
+      then: "发送 Notion 通知，包含失败链接"
+    evidence: "Notion 页面收到通知"
+    test: ".github/workflows/ci.yml"
+
+# ============================================================================
+# 业务代码回归契约
+# ============================================================================
+business:
+  # --------------------------------------------------------------------------
+  # B1: calculator
+  # --------------------------------------------------------------------------
+  - id: B1-001
+    feature: B1
+    name: "Calculator 单元测试"
+    priority: P0
+    trigger: [PR, Release]
+    steps:
+      given: "calculator 模块存在"
+      when: "运行 npm test"
+      then: "80 个测试用例全绿"
+    evidence: "vitest 输出 '80 passed'"
+    test: "tests/calculator.test.ts"
+
+# ============================================================================
+# 统计 & 触发器映射
+# ============================================================================
+#
+# Priority 分布:
+#   P0: 12 条（核心，必须永远通过）
+#   P1: 6 条（重要，PR/Release 必跑）
+#   P2: 3 条（辅助，Release/Nightly 跑）
+#
+# Trigger 映射:
+#   PR Gate:      跑所有 trigger 包含 PR 的条目 (15 条)
+#   Release Gate: 跑所有 trigger 包含 Release 的条目 (21 条)
+#   Nightly:      跑全部 (21 条)
+#
+# ============================================================================

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.12] - 2026-01-20
+
+### Added
+- **regression-contract.yaml**: 新增回归契约文件，定义"全量测试"的唯一合法来源
+  - 21 条 RCI（Regression Contract Item）
+  - 按 Priority 分级：P0 (12) / P1 (6) / P2 (3)
+  - 按 Trigger 分组：PR / Release / Nightly
+  - Given/When/Then 格式的可验证断言
+
+### Changed
+- **FEATURES.md**: 升级为 Feature Registry，明确与 Regression Contract 的关系
+  - Feature Registry 回答"系统有什么能力"（What）
+  - Regression Contract 回答"哪些必须永远不坏"（How）
+  - W2（步骤状态机）标记为 Deprecated
+
 ## [8.0.11] - 2026-01-20
 
 ### Fixed
