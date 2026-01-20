@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.11] - 2026-01-20
+
+### Fixed
+- **wait-for-merge.sh**: 删除步骤回退逻辑（与删除步骤状态机保持一致）
+- **generate-report.sh**: 删除步骤状态机依赖（step 字段和流程步骤显示）
+
 ## [8.0.10] - 2026-01-20
 
 ### Fixed

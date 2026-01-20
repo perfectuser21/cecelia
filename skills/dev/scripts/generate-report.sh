@@ -60,11 +60,7 @@ else
     fi
 fi
 
-# 获取步骤状态（默认 11，因为报告在 cleanup 阶段生成）
-STEP=$(git config "branch.$CP_BRANCH.step" 2>/dev/null || echo "")
-if [[ -z "$STEP" || "$STEP" == "unknown" ]]; then
-    STEP="11"  # cleanup 阶段默认为 11
-fi
+# v8: 不再使用步骤状态机，报告在 cleanup 阶段生成表示流程已完成
 
 # 获取变更文件（先尝试 git diff，如果为空则从 PR API 获取）
 FILES_CHANGED=""
@@ -91,21 +87,6 @@ cat > "$TXT_REPORT" << EOF
 项目:       $PROJECT_NAME
 分支:       $CP_BRANCH -> $BASE_BRANCH
 时间:       $TIMESTAMP
-
---------------------------------------------------------------------------------
-流程步骤
---------------------------------------------------------------------------------
- [1] PRD 确定          $([ "$STEP" -ge 1 ] 2>/dev/null && echo "完成" || echo "未完成")
- [2] 项目环境确认      $([ "$STEP" -ge 2 ] 2>/dev/null && echo "完成" || echo "未完成")
- [3] 创建分支          $([ "$STEP" -ge 3 ] 2>/dev/null && echo "完成" || echo "未完成")
- [4] DoD 推演          $([ "$STEP" -ge 4 ] 2>/dev/null && echo "完成" || echo "未完成")
- [5] 写代码            $([ "$STEP" -ge 5 ] 2>/dev/null && echo "完成" || echo "未完成")
- [6] 写测试            $([ "$STEP" -ge 6 ] 2>/dev/null && echo "完成" || echo "未完成")
- [7] 三层质检          $([ "$STEP" -ge 7 ] 2>/dev/null && echo "完成" || echo "未完成")
- [8] 提交 PR           $([ "$STEP" -ge 8 ] 2>/dev/null && echo "完成" || echo "未完成")
- [9] CI 通过           $([ "$STEP" -ge 9 ] 2>/dev/null && echo "完成" || echo "未完成")
-[10] Learning          $([ "$STEP" -ge 10 ] 2>/dev/null && echo "完成" || echo "未完成")
-[11] Cleanup           $([ "$STEP" -ge 11 ] 2>/dev/null && echo "完成" || echo "进行中")
 
 --------------------------------------------------------------------------------
 质检详情 (重点)
@@ -153,7 +134,6 @@ cat > "$JSON_REPORT" << EOF
   "base_branch": "$BASE_BRANCH",
   "timestamp": "$TIMESTAMP",
   "date": "$DATE_ONLY",
-  "step": "$STEP",
   "quality_report": {
     "L1_automated": "$L1_STATUS",
     "L2_verification": "$L2_STATUS",
