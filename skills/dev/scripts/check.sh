@@ -124,7 +124,7 @@ echo "Step 11: Cleanup"
 
 # git config 已清理？（必须清理）
 CONFIG_EXISTS=false
-for KEY in "base-branch" "prd-confirmed" "step"; do
+for KEY in "base-branch" "prd-confirmed" "step" "is-test"; do
   if git config "branch.$BRANCH_NAME.$KEY" &>/dev/null; then
     CONFIG_EXISTS=true
     break
@@ -135,7 +135,7 @@ if [[ "$CONFIG_EXISTS" == "false" ]]; then
   ((COMPLETED_COUNT++))
 else
   echo "  ❌ git config 未清理"
-  for KEY in "base-branch" "prd-confirmed" "step"; do
+  for KEY in "base-branch" "prd-confirmed" "step" "is-test"; do
     if git config "branch.$BRANCH_NAME.$KEY" &>/dev/null; then
       MISSING_COMMANDS+=("git config --unset branch.$BRANCH_NAME.$KEY")
     fi

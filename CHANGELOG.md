@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.10] - 2026-01-20
+
+### Fixed
+- **SKILL.md 流程图**: `continue` 模式现在正确显示直接进入 Loop 1
+- **cleanup.sh**: 删除 step=11 设置逻辑（与删除步骤状态机保持一致）
+- **cleanup.sh/check.sh**: 添加 `is-test` 配置的清理和检查
+
 ## [8.0.9] - 2026-01-20
 
 ### Changed

@@ -134,8 +134,8 @@ fi
 echo ""
 echo "5️⃣  清理 git config..."
 CLEANED=false
-# 清理所有可能的配置项（只清理实际使用的 key）
-for CONFIG_KEY in "base-branch" "prd-confirmed" "step"; do
+# 清理所有可能的配置项（包括遗留的和当前使用的）
+for CONFIG_KEY in "base-branch" "prd-confirmed" "step" "is-test"; do
     if git config --get "branch.$CP_BRANCH.$CONFIG_KEY" &>/dev/null; then
         git config --unset "branch.$CP_BRANCH.$CONFIG_KEY" 2>/dev/null || true
         CLEANED=true
@@ -204,19 +204,11 @@ else
 fi
 
 # ========================================
-# 10. 设置 step=11（标记 cleanup 完成）
+# 10. Cleanup 完成（v8: 不再使用步骤状态机）
 # ========================================
 echo ""
-echo "🔟 设置 step=11..."
-# 注意：此时 git config 可能已被清理，所以这里是为外部调用者记录状态
-# 如果分支已删除，则不再需要设置（分支和 config 都已清理）
-if git rev-parse --abbrev-ref HEAD 2>/dev/null | grep -q "^$CP_BRANCH$"; then
-    # 如果仍在 cp 分支（不应该发生），尝试设置
-    git config "branch.$CP_BRANCH.step" 11 2>/dev/null || true
-    echo -e "   ${YELLOW}⚠️  仍在 cp 分支，已设置 step=11${NC}"
-else
-    echo -e "   ${GREEN}✅ step=11（cleanup 完成）${NC}"
-fi
+echo "🔟 Cleanup 完成..."
+echo -e "   ${GREEN}✅ 所有清理步骤完成${NC}"
 
 # ========================================
 # 总结
