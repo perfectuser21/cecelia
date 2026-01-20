@@ -1,36 +1,21 @@
 #!/usr/bin/env bash
 # ============================================================================
-# PreToolUse Hook: PR Gate v2（证据链质检门）
+# PreToolUse Hook: PR Gate v2 (硬门禁版)
 # ============================================================================
 #
-# 触发：拦截 gh pr create
-# 作用：提交 PR 前质检，支持双模式
+# v8+ 硬门禁规则：
+#   PR → develop：必须 L1 全自动绿
+#   develop → main：必须 L1 绿 + L2B/L3 证据链齐全
 #
-# 双模式设计：
-#   --mode=pr (默认)：
-#     - 只检查 L1 自动化测试
-#     - .dod.md 存在即可（允许未全勾）
-#     - 适用于日常 PR → develop
-#
-#   --mode=release：
-#     - 完整检查 L1 + L2 + L3
-#     - 要求证据链完整
-#     - 适用于 develop → main 发版
-#
-# 使用方式：
-#   PR_GATE_MODE=pr gh pr create ...     # 默认，轻量检查
-#   PR_GATE_MODE=release gh pr create ... # 发版，完整检查
+# 模式检测：
+#   1. 解析 gh pr create --base 参数
+#   2. 如果 --base main → release 模式
+#   3. 否则 → pr 模式（默认）
+#   4. 可用 PR_GATE_MODE=release 强制 release 模式
 #
 # ============================================================================
 
 set -euo pipefail
-
-# ===== 模式解析 =====
-MODE="${PR_GATE_MODE:-pr}"
-if [[ "$MODE" != "pr" && "$MODE" != "release" ]]; then
-    echo "⚠️ 未知模式: $MODE，使用默认模式 pr" >&2
-    MODE="pr"
-fi
 
 INPUT=$(cat)
 
@@ -52,44 +37,68 @@ fi
 
 # 获取项目根目录
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-
 cd "$PROJECT_ROOT"
+
+# ===== 模式检测 =====
+# 1. 检查环境变量
+MODE="${PR_GATE_MODE:-}"
+
+# 2. 解析 --base 参数
+if [[ -z "$MODE" ]]; then
+    # 提取 --base 参数值
+    BASE_BRANCH=$(echo "$COMMAND" | grep -oP '(?<=--base\s)[^\s]+' || echo "")
+
+    if [[ "$BASE_BRANCH" == "main" ]]; then
+        MODE="release"
+    else
+        MODE="pr"
+    fi
+fi
+
+# 3. 确保 MODE 有效
+if [[ "$MODE" != "pr" && "$MODE" != "release" ]]; then
+    MODE="pr"
+fi
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 if [[ "$MODE" == "release" ]]; then
-    echo "  PR GATE v2: 发版检查 (L1+L2+L3)" >&2
+    echo "  PR GATE: Release 模式 (L1 + L2B + L3)" >&2
 else
-    echo "  PR GATE v2: 快速检查 (L1 only)" >&2
+    echo "  PR GATE: PR 模式 (L1 only)" >&2
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 echo "" >&2
 
 FAILED=0
 CHECKED=0
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 # ============================================================================
 # Part 0: 基础检查
 # ============================================================================
 echo "  [基础检查]" >&2
 
-# 检查分支（必须是 cp-* 或 feature/*）
+# 检查分支
 echo -n "  分支... " >&2
 CHECKED=$((CHECKED + 1))
 if [[ "${CURRENT_BRANCH:-}" =~ ^(cp-[a-zA-Z0-9]|feature/) ]]; then
     echo "✅ ($CURRENT_BRANCH)" >&2
+elif [[ "$MODE" == "release" && "$CURRENT_BRANCH" == "develop" ]]; then
+    echo "✅ ($CURRENT_BRANCH → main)" >&2
 else
     echo "❌ ($CURRENT_BRANCH)" >&2
-    echo "    → 必须在 cp-* 或 feature/* 分支提交 PR" >&2
+    echo "    → PR 模式：必须在 cp-* 或 feature/* 分支" >&2
+    echo "    → Release 模式：允许 develop 分支" >&2
     FAILED=1
 fi
 
 # ============================================================================
-# Part 1: Layer 1 - 自动化测试（Hook 自己跑，不信任 Agent）
+# Part 1: L1 - 自动化测试
 # ============================================================================
 echo "" >&2
-echo "  [Layer 1: 自动化测试]" >&2
+echo "  [L1: 自动化测试]" >&2
 
 # 检测项目类型
 HAS_PACKAGE_JSON=false
@@ -204,195 +213,96 @@ if [[ $SHELL_COUNT -gt 0 ]]; then
 fi
 
 # ============================================================================
-# Part 2: Layer 2 - 效果验证（检查证据文件）
+# Part 2: PR 模式 - 简化检查
 # ============================================================================
-
-# pr 模式跳过 L2
 if [[ "$MODE" == "pr" ]]; then
     echo "" >&2
-    echo "  [Layer 2: 效果验证] ⏭️  跳过 (pr 模式)" >&2
-else
-    echo "" >&2
-    echo "  [Layer 2: 效果验证]" >&2
-
-L2_EVIDENCE_FILE="$PROJECT_ROOT/.layer2-evidence.md"
-
-# 检查 .layer2-evidence.md 是否存在
-echo -n "  证据文件... " >&2
-CHECKED=$((CHECKED + 1))
-if [[ -f "$L2_EVIDENCE_FILE" ]]; then
-    echo "✅" >&2
-else
-    echo "❌ (.layer2-evidence.md 不存在)" >&2
-    echo "    → 请创建 .layer2-evidence.md 记录截图和 curl 验证" >&2
-    FAILED=1
-fi
-
-# 如果证据文件存在，检查内容
-if [[ -f "$L2_EVIDENCE_FILE" ]]; then
-    # 提取所有截图 ID（S1, S2, ...）和对应文件路径
-    # 格式：### S1: 描述 ... 文件: `./artifacts/screenshots/S1-xxx.png`
-    SCREENSHOT_IDS=$(grep -oP '###\s+S\d+' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP 'S\d+' || echo "")
-
-    if [[ -n "$SCREENSHOT_IDS" ]]; then
-        SCREENSHOT_MISSING=0
-        for SID in $SCREENSHOT_IDS; do
-            # 查找对应的文件路径
-            FILE_PATH=$(grep -A5 "### $SID:" "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP '文件:\s*`\K[^`]+' || echo "")
-
-            if [[ -n "$FILE_PATH" ]]; then
-                # 转换相对路径为绝对路径
-                if [[ "$FILE_PATH" == ./* ]]; then
-                    FULL_PATH="$PROJECT_ROOT/${FILE_PATH#./}"
-                else
-                    FULL_PATH="$PROJECT_ROOT/$FILE_PATH"
-                fi
-
-                echo -n "  截图 $SID... " >&2
-                CHECKED=$((CHECKED + 1))
-                if [[ -f "$FULL_PATH" ]]; then
-                    echo "✅" >&2
-                else
-                    echo "❌ (文件不存在: $FILE_PATH)" >&2
-                    SCREENSHOT_MISSING=1
-                    FAILED=1
-                fi
-            fi
-        done
-    fi
-
-    # 检查 curl 证据（必须包含 HTTP_STATUS）
-    CURL_IDS=$(grep -oP '###\s+C\d+' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP 'C\d+' || echo "")
-
-    if [[ -n "$CURL_IDS" ]]; then
-        for CID in $CURL_IDS; do
-            # 检查该 curl 块是否包含 HTTP_STATUS
-            # 查找 ### C1: 到下一个 ### 或文件结尾之间的内容
-            CURL_BLOCK=$(sed -n "/### $CID:/,/^###/p" "$L2_EVIDENCE_FILE" 2>/dev/null | head -n -1)
-
-            echo -n "  curl $CID... " >&2
-            CHECKED=$((CHECKED + 1))
-            # 匹配 "HTTP_STATUS: 数字" 格式，避免匹配标题中的单词
-            if echo "$CURL_BLOCK" | grep -qE "HTTP_STATUS:\s*[0-9]+" 2>/dev/null; then
-                echo "✅" >&2
-            else
-                echo "❌ (缺少 HTTP_STATUS: xxx)" >&2
-                echo "    → curl 输出必须包含 HTTP_STATUS: 200 格式" >&2
-                FAILED=1
-            fi
-        done
-    fi
-
-    # 如果没有任何截图和 curl 证据
-    if [[ -z "$SCREENSHOT_IDS" && -z "$CURL_IDS" ]]; then
-        echo "  ⚠️  证据文件为空（没有 S* 或 C* 条目）" >&2
-        echo "    → 请添加截图或 curl 验证证据" >&2
-        FAILED=1
-    fi
-fi
-fi  # 结束 MODE == release 条件
-
-# ============================================================================
-# Part 3: Layer 3 - 需求验收（检查 DoD）
-# ============================================================================
-
-# pr 模式只检查 .dod.md 存在，不要求全勾
-if [[ "$MODE" == "pr" ]]; then
-    echo "" >&2
-    echo "  [Layer 3: 需求验收] (简化)" >&2
+    echo "  [DoD 检查] (简化)" >&2
 
     DOD_FILE="$PROJECT_ROOT/.dod.md"
     echo -n "  DoD 文件... " >&2
     CHECKED=$((CHECKED + 1))
     if [[ -f "$DOD_FILE" ]]; then
-        echo "✅ (存在即可)" >&2
+        # 检查 .dod.md 是否在当前分支有修改（防止复用旧的 DoD）
+        DOD_MODIFIED=$(git diff develop --name-only 2>/dev/null | grep -c "^\.dod\.md$" || echo "0")
+        DOD_NEW=$(git status --porcelain 2>/dev/null | grep -c "\.dod\.md" || echo "0")
+
+        if [[ "$DOD_MODIFIED" -gt 0 || "$DOD_NEW" -gt 0 ]]; then
+            echo "✅" >&2
+        else
+            # 检查是否是新分支首次创建（.dod.md 已提交但未推送）
+            DOD_IN_BRANCH=$(git log develop..HEAD --name-only 2>/dev/null | grep -c "^\.dod\.md$" || echo "0")
+            if [[ "$DOD_IN_BRANCH" -gt 0 ]]; then
+                echo "✅ (本分支已提交)" >&2
+            else
+                echo "❌ (.dod.md 未更新)" >&2
+                echo "    → 当前 .dod.md 是旧任务的，请为本次任务更新 DoD" >&2
+                FAILED=1
+            fi
+        fi
     else
         echo "❌ (.dod.md 不存在)" >&2
         echo "    → 请创建 .dod.md 记录 DoD 清单" >&2
         FAILED=1
     fi
-else
-    echo "" >&2
-    echo "  [Layer 3: 需求验收]" >&2
-
-DOD_FILE="$PROJECT_ROOT/.dod.md"
-
-# 检查 .dod.md 是否存在
-echo -n "  DoD 文件... " >&2
-CHECKED=$((CHECKED + 1))
-if [[ -f "$DOD_FILE" ]]; then
-    echo "✅" >&2
-else
-    echo "❌ (.dod.md 不存在)" >&2
-    echo "    → 请创建 .dod.md 记录 DoD 清单" >&2
-    FAILED=1
 fi
 
-# 如果 DoD 文件存在，检查内容
-if [[ -f "$DOD_FILE" ]]; then
-    # 检查是否所有 checkbox 都打勾
-    # 注意：grep -c 无匹配时输出 0 但退出码是 1，不能用 || echo "0"
-    UNCHECKED=$(grep -c '\- \[ \]' "$DOD_FILE" 2>/dev/null) || true
-    CHECKED_BOXES=$(grep -c '\- \[x\]' "$DOD_FILE" 2>/dev/null) || true
+# ============================================================================
+# Part 3: Release 模式 - L2B + L3 完整检查
+# ============================================================================
+if [[ "$MODE" == "release" ]]; then
+    RELEASE_CHECK="$PROJECT_ROOT/scripts/release-check.sh"
 
-    echo -n "  验收项... " >&2
-    CHECKED=$((CHECKED + 1))
-    if [[ "$UNCHECKED" -eq 0 && "$CHECKED_BOXES" -gt 0 ]]; then
-        echo "✅ ($CHECKED_BOXES 项全部完成)" >&2
-    elif [[ "$CHECKED_BOXES" -eq 0 ]]; then
-        echo "❌ (没有验收项)" >&2
-        echo "    → 请在 .dod.md 添加 - [x] 验收项" >&2
-        FAILED=1
-    else
-        echo "❌ ($UNCHECKED 项未完成)" >&2
-        echo "    → 请完成所有验收项后再提交 PR" >&2
-        FAILED=1
-    fi
-
-    # 检查每个验收项是否有 Evidence 引用
-    # 格式：Evidence: `S1` 或 Evidence: `C1`
-    echo -n "  Evidence 引用... " >&2
-    CHECKED=$((CHECKED + 1))
-
-    # 获取所有验收项（- [x] 行）
-    MISSING_EVIDENCE=0
-    INVALID_EVIDENCE=0
-
-    while IFS= read -r line; do
-        # 检查这一项是否有 Evidence 引用（可能在同一行或下一行）
-        # 简化检查：只要 DoD 文件中存在 Evidence 引用就行
-        :
-    done < <(grep '\- \[x\]' "$DOD_FILE" 2>/dev/null)
-
-    # 提取所有 Evidence 引用
-    EVIDENCE_REFS=$(grep -oP 'Evidence:\s*`\K[^`]+' "$DOD_FILE" 2>/dev/null || echo "")
-
-    if [[ -z "$EVIDENCE_REFS" ]]; then
-        echo "❌ (没有 Evidence 引用)" >&2
-        echo "    → 每个 DoD 项必须有 Evidence: \`S1\` 或 \`C1\` 引用" >&2
-        FAILED=1
-    else
-        # 验证每个引用在 .layer2-evidence.md 中存在
-        if [[ -f "$L2_EVIDENCE_FILE" ]]; then
-            for REF in $EVIDENCE_REFS; do
-                if ! grep -q "### $REF:" "$L2_EVIDENCE_FILE" 2>/dev/null; then
-                    echo "❌ (引用 $REF 在证据文件中不存在)" >&2
-                    INVALID_EVIDENCE=1
-                    FAILED=1
-                fi
-            done
-
-            if [[ $INVALID_EVIDENCE -eq 0 ]]; then
-                REF_COUNT=$(echo "$EVIDENCE_REFS" | wc -w)
-                echo "✅ ($REF_COUNT 个引用有效)" >&2
-            fi
-        else
-            echo "❌ (无法验证，.layer2-evidence.md 不存在)" >&2
+    if [[ -f "$RELEASE_CHECK" ]]; then
+        echo "" >&2
+        if ! bash "$RELEASE_CHECK" >&2; then
             FAILED=1
+        fi
+    else
+        # 内联检查（兼容没有 release-check.sh 的项目）
+        echo "" >&2
+        echo "  [L2B: Evidence 校验]" >&2
+
+        L2_EVIDENCE_FILE="$PROJECT_ROOT/.layer2-evidence.md"
+
+        echo -n "  证据文件... " >&2
+        CHECKED=$((CHECKED + 1))
+        if [[ -f "$L2_EVIDENCE_FILE" ]]; then
+            echo "✅" >&2
+        else
+            echo "❌ (.layer2-evidence.md 不存在)" >&2
+            FAILED=1
+        fi
+
+        echo "" >&2
+        echo "  [L3: Acceptance 校验]" >&2
+
+        DOD_FILE="$PROJECT_ROOT/.dod.md"
+
+        echo -n "  DoD 文件... " >&2
+        CHECKED=$((CHECKED + 1))
+        if [[ -f "$DOD_FILE" ]]; then
+            echo "✅" >&2
+        else
+            echo "❌ (.dod.md 不存在)" >&2
+            FAILED=1
+        fi
+
+        if [[ -f "$DOD_FILE" ]]; then
+            UNCHECKED=$(grep -c '\- \[ \]' "$DOD_FILE" 2>/dev/null) || true
+            CHECKED_BOXES=$(grep -c '\- \[x\]' "$DOD_FILE" 2>/dev/null) || true
+
+            echo -n "  验收项... " >&2
+            CHECKED=$((CHECKED + 1))
+            if [[ "$UNCHECKED" -eq 0 && "$CHECKED_BOXES" -gt 0 ]]; then
+                echo "✅ ($CHECKED_BOXES 项全部完成)" >&2
+            else
+                echo "❌ ($UNCHECKED 项未完成)" >&2
+                FAILED=1
+            fi
         fi
     fi
 fi
-fi  # 结束 MODE == release 的 L3 完整检查
 
 # ============================================================================
 # 结果输出
@@ -401,7 +311,7 @@ echo "" >&2
 
 if [[ $FAILED -eq 1 ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  ❌ 证据链质检未通过，不能提交 PR" >&2
+    echo "  ❌ PR Gate 检查失败" >&2
     echo "" >&2
 
     # 回退到 step 4
@@ -409,15 +319,9 @@ if [[ $FAILED -eq 1 ]]; then
         CURRENT_STEP=$(git config --get branch."$CURRENT_BRANCH".step 2>/dev/null || echo "0")
         if [[ "$CURRENT_STEP" -ge 4 ]]; then
             git config branch."$CURRENT_BRANCH".step 4
-            echo "  ⟲ step 回退到 4，从 Step 5 重新循环" >&2
-            echo "" >&2
-            echo "  请补充证据：" >&2
-            echo "    1. 修复 L1 测试（如有失败）" >&2
-            echo "    2. 补充 .layer2-evidence.md 截图/curl 证据" >&2
-            echo "    3. 更新 .dod.md 添加 Evidence 引用" >&2
-            echo "    4. 确保所有 DoD 项都勾选" >&2
+            echo "  ⟲ step 回退到 4，请修复后重试" >&2
         else
-            echo "  请先运行 /dev 完成 PRD 和 DoD（Step 1-4）" >&2
+            echo "  请先运行 /dev 完成前置步骤" >&2
             echo "" >&2
             echo "  [SKILL_REQUIRED: dev]" >&2
         fi
@@ -428,7 +332,11 @@ if [[ $FAILED -eq 1 ]]; then
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-echo "  ✅ 证据链质检通过 ($CHECKED 项)，允许提交 PR" >&2
+if [[ "$MODE" == "release" ]]; then
+    echo "  ✅ Release Gate 通过" >&2
+else
+    echo "  ✅ PR Gate 通过 ($CHECKED 项)" >&2
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 
 exit 0

@@ -105,8 +105,10 @@ Step 11: Cleanup
 2. **步骤状态机** - Hook 检查 `git config branch.*.step`，step >= 4 才能写代码
 3. **develop 是主开发线** - PR 合并回 develop
 4. **main 始终稳定** - 只在里程碑时从 develop 合并
-5. **CI 是唯一强制检查** - 其他都是引导
-6. **PR 只检查 L1** - 证据链检查移到 Release 阶段
+5. **CI 是唯一强制裁决** - Hook 是本地门禁，CI 是最终裁决
+6. **v8+ 硬门禁规则**：
+   - PR → develop：L1 + L2A 必须通过（自动化测试）
+   - develop → main：L1 + L2A + L2B + L3 必须通过（本地产出，CI 裁决）
 
 ---
 
@@ -135,10 +137,19 @@ Step 11: Cleanup
 - 引导只在 cp-* 或 feature/* 分支写代码
 
 **pr-gate-v2.sh** (PreToolUse - Bash):
-- 拦截 `gh pr create`，运行 L1 质检
-- 支持双模式：
-  - `PR_GATE_MODE=pr`（默认）：只检查 L1，.dod.md 存在即可
-  - `PR_GATE_MODE=release`：完整检查 L1+L2+L3，要求证据链
+- 拦截 `gh pr create`，根据目标分支自动检测模式
+- **自动模式检测**：
+  - 解析 `--base` 参数，`--base main` → release 模式
+  - 否则 → pr 模式（默认）
+  - 可用 `PR_GATE_MODE=release` 强制 release 模式
+- **PR 模式** (→ develop)：
+  - L1 + L2A 自动化测试必须通过
+  - .dod.md 存在即可
+- **Release 模式** (→ main)：
+  - L1 + L2A 自动化测试必须通过
+  - L2B 证据文件 (.layer2-evidence.md) 必须存在且有效
+  - L3 验收项 (.dod.md) 全部打勾，Evidence 引用有效
+  - 允许从 develop 分支提交
 - 失败时回退到 step 4，引导修复后重试
 
 **注意**：所有 Hook 都是引导性的，CI 是唯一强制检查。

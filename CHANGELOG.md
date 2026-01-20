@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.4] - 2026-01-20
+
+### Added
+- **v8+ 硬门禁规则实现**:
+  - `npm run pr:check`: 日常 PR 检查 (L1 + L2A)
+  - `npm run release:check`: 发版检查 (L1 + L2A + L2B + L3)
+  - `scripts/release-check.sh`: L2B + L3 证据链校验脚本
+- **pr-gate-v2.sh 自动模式检测**:
+  - 解析 `--base` 参数自动切换模式
+  - `--base main` → release 模式 (完整 L2B+L3 检查)
+  - 其他 → pr 模式 (L1 only)
+  - release 模式允许 develop 分支
+- **CI release-check job**:
+  - 仅在 PR 到 main 时触发
+  - 校验 .layer2-evidence.md 和 .dod.md 证据链
+
+### Changed
+- **docs/QUALITY-STRATEGY.md**: 添加 v8+ 硬门禁规则和命令说明
+- **skills/dev/SKILL.md**: 更新核心规则和 pr-gate-v2.sh 说明
+
 ## [8.0.3] - 2026-01-20
 
 ### Fixed

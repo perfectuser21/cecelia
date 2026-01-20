@@ -171,6 +171,68 @@ jobs:
           fi
           exit $FAILED
 
+  # Release 检查（仅 develop → main 的 PR）
+  release-check:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: L2B + L3 Evidence Check
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Release Check: L2B + L3 校验"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=0
+
+          # L2B: 检查 .layer2-evidence.md
+          echo "  [L2B: Evidence 校验]"
+          if [ -f ".layer2-evidence.md" ]; then
+            echo "  证据文件... ✅"
+          else
+            echo "  证据文件... ❌ (.layer2-evidence.md 不存在)"
+            FAILED=1
+          fi
+
+          # L3: 检查 .dod.md
+          echo ""
+          echo "  [L3: Acceptance 校验]"
+          if [ -f ".dod.md" ]; then
+            echo "  DoD 文件... ✅"
+
+            # 检查是否全勾
+            UNCHECKED=$(grep -c '\- \[ \]' .dod.md 2>/dev/null || echo "0")
+            CHECKED=$(grep -c '\- \[x\]' .dod.md 2>/dev/null || echo "0")
+
+            if [ "$UNCHECKED" -eq 0 ] && [ "$CHECKED" -gt 0 ]; then
+              echo "  验收项... ✅ ($CHECKED 项全部完成)"
+            else
+              echo "  验收项... ❌ ($UNCHECKED 项未完成)"
+              FAILED=1
+            fi
+          else
+            echo "  DoD 文件... ❌ (.dod.md 不存在)"
+            FAILED=1
+          fi
+
+          echo ""
+          if [ "$FAILED" -eq 1 ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ Release Check 失败"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Release Check 通过"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          fi
+
   # CI 通过后通知（不自动合并，需要手动确认）
   ci-passed:
     needs: [version-check, test]

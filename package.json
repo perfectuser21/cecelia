@@ -1,6 +1,6 @@
 {
   "name": "zenithjoy-engine",
-  "version": "8.0.3",
+  "version": "8.0.4",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,7 +10,9 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "qa": "npm run typecheck && npm run test && npm run build"
+    "qa": "npm run typecheck && npm run test && npm run build",
+    "pr:check": "npm run qa",
+    "release:check": "npm run qa && bash scripts/release-check.sh"
   },
   "keywords": [],
   "author": "",
