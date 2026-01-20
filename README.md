@@ -72,6 +72,25 @@ cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
 | branch-protect.sh | PreToolUse (Write/Edit) | 分支保护 + 步骤状态机 |
 | pr-gate-v2.sh | PreToolUse (Bash) | PR 前质检（双模式：pr/release） |
 
+### Hook 与 CI 职责划分
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  本地 Hook（pr-gate-v2.sh）                                 │
+│  → 开发者提交 PR 前的门禁                                   │
+│  → PR 模式：L1 + L2A（自动检测 --base develop）             │
+│  → Release 模式：L1 + L2A + L2B + L3（自动检测 --base main）│
+│  → 可被绕过，但有引导作用                                   │
+├─────────────────────────────────────────────────────────────┤
+│  CI（GitHub Actions）                                       │
+│  → PR 到 develop：只跑 L1 + L2A 测试                        │
+│  → PR 到 main：L1 + L2A + L2B/L3 证据链裁决                 │
+│  → 独立环境，无法伪造，真正的强制防线                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心原则**：Hook 是引导，CI 是裁决。
+
 ## Usage
 
 ### 开发流程

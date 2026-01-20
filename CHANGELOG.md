@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.6] - 2026-01-20
+
+### Fixed
+- **全局 hooks 同步**: deploy pr-gate-v2.sh 到全局，支持 v8+ 自动模式检测
+- **清理遗留配置**: 删除 ~/.claude/settings.local.json（80天前的过时文件）
+
+### Added
+- **README.md**: 添加 Hook 与 CI 职责划分说明
+
 ## [8.0.5] - 2026-01-20
 
 ### Fixed
