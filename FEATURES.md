@@ -1,9 +1,10 @@
 ---
 id: features-registry
-version: 1.4.0
+version: 1.5.0
 created: 2026-01-20
-updated: 2026-01-20
+updated: 2026-01-21
 changelog:
+  - 1.5.0: 新增 Export 分类，E1 QA Reporting
   - 1.4.0: 更新 Trigger 规则说明，统计改用 rc-filter.sh 脚本
   - 1.3.0: 引入 Regression Contract 体系，清理步骤状态机描述
   - 1.2.0: 删除 project-detect hook（死代码）
@@ -90,6 +91,14 @@ Full Regression（全量测试）
 
 ---
 
+## Export (数据导出)
+
+| ID | Feature | 状态 | 最小验收 | 说明 |
+|----|---------|------|----------|------|
+| E1 | QA Reporting | **Committed** | `scripts/qa-report.sh` | 生成 QA 审计 JSON，供 Dashboard 使用 |
+
+---
+
 ## 全量回归定义
 
 > **全量的唯一合法定义来源是 `regression-contract.yaml`**
@@ -118,7 +127,7 @@ Trigger 规则:
 
 > 使用 `bash scripts/rc-filter.sh stats` 获取实时统计
 
-- **Committed Features**: 8（W2 已废弃）
+- **Committed Features**: 9（新增 E1，W2 已废弃）
 
 ---
 

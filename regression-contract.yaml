@@ -15,7 +15,7 @@
 #
 # ============================================================================
 
-version: "1.2.0"
+version: "1.3.0"
 updated: "2026-01-21"
 
 # ============================================================================
@@ -438,6 +438,70 @@ business:
       type: test_output
       contains: "80 passed"
     test: "tests/calculator.test.ts"
+
+# ============================================================================
+# Export 回归契约
+# ============================================================================
+export:
+  # --------------------------------------------------------------------------
+  # E1: QA Reporting
+  # --------------------------------------------------------------------------
+  - id: E1-001
+    feature: E1
+    name: "QA 审计脚本输出合法 JSON"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, json]
+    owner: infra
+    steps:
+      given: "项目包含 regression-contract.yaml 和 FEATURES.md"
+      when: "运行 bash scripts/qa-report.sh"
+      then: "输出合法的 JSON 格式"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh | jq . > /dev/null && echo valid"
+      contains: "valid"
+    test: "scripts/qa-report.sh"
+
+  - id: E1-002
+    feature: E1
+    name: "QA JSON 包含完整结构"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, json, schema]
+    owner: infra
+    steps:
+      given: "运行 qa-report.sh"
+      when: "解析 JSON 输出"
+      then: "包含 repo, version, timestamp, summary, features, rcis, golden_paths, gates 字段"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh | jq 'keys'"
+      contains: "repo"
+    test: "scripts/qa-report.sh"
+
+  - id: E1-003
+    feature: E1
+    name: "QA 审计 summary 计算正确"
+    scope: export
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, summary]
+    owner: infra
+    steps:
+      given: "项目包含完整的 QA 基础设施"
+      when: "解析 summary 字段"
+      then: "meta, unit, e2e 百分比在 0-100 范围内"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh | jq '.summary.overall'"
+      description: "返回 0-100 的数字"
+    test: "scripts/qa-report.sh"
 
 # ============================================================================
 # Golden Paths (E2E 关键链路)

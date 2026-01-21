@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.15] - 2026-01-21
+
+### Added
+- **scripts/qa-report.sh**: QA 审计报告生成器
+  - 输出 JSON 格式报告，供 Dashboard 使用
+  - 包含 features、rcis、golden_paths、gates 信息
+  - 支持 `--output` 和 `--post URL` 模式
+
+- **FEATURES.md**: 新增 Export 分类和 E1 QA Reporting 功能
+
+- **regression-contract.yaml**: 升级到 v1.3.0
+  - 新增 `export` 部分包含 E1 RCIs
+  - E1-001: QA 审计脚本输出合法 JSON
+  - E1-002: JSON 包含完整结构
+  - E1-003: summary 计算正确
+
 ## [8.0.14] - 2026-01-21
 
 ### Added
