@@ -96,15 +96,15 @@ filter_by_trigger() {
     echo ""
 
     if [[ "$trigger" == "Nightly" ]]; then
-        # Nightly 跑全部
-        grep -B1 "^\s*- id:" "$RC_FILE" | grep "id:" | sed 's/.*id: /  /'
+        # Nightly 跑全部（排除 GP-*）
+        grep -B1 "^\s*- id:" "$RC_FILE" | grep "id:" | grep -v "GP-" | sed 's/.*id: /  /'
     else
         # PR/Release 按 trigger 过滤
         # 简化实现：找包含该 trigger 的条目
         awk -v trigger="$trigger" '
-            /- id:/ { id = $3 }
+            /\- id:/ { id = $3 }
             /trigger:/ && $0 ~ trigger { print "  " id }
-        ' "$RC_FILE"
+        ' "$RC_FILE" | grep -v "^  GP-"  # 排除 Golden Paths
     fi
 
     echo ""

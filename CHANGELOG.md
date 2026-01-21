@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.20] - 2026-01-21
+
+### Fixed
+- **scripts/rc-filter.sh**: 修复 awk 正则表达式 bug（`/- id:/` → `/\- id:/`）
+  - Release 模式之前不输出任何 RCI
+  - 同时排除 GP-* 条目
+
 ## [8.0.19] - 2026-01-21
 
 ### Fixed
