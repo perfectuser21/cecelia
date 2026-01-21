@@ -57,13 +57,18 @@ show_stats() {
     AUTO=$(grep -c "method: auto" "$RC_FILE" || echo 0)
     MANUAL=$(grep -c "method: manual" "$RC_FILE" || echo 0)
 
-    # 统计 trigger（简化版）
-    # Golden Paths 也有 trigger，需要排除
-    PR_COUNT=$(grep -E "trigger:.*PR" "$RC_FILE" | wc -l || echo 0)
-    RELEASE_COUNT=$(grep -E "trigger:.*Release" "$RC_FILE" | wc -l || echo 0)
-    # 减去 GP 的 trigger（GP 都是 Release 触发）
-    PR_COUNT=$((PR_COUNT > GP_COUNT ? PR_COUNT - 0 : PR_COUNT))
-    RELEASE_COUNT=$((RELEASE_COUNT - GP_COUNT))
+    # 统计 trigger（排除 Golden Paths）
+    # 使用 awk 精确统计：只统计非 GP 条目的 trigger
+    PR_COUNT=$(awk '
+        /- id:/ { id = $3; is_gp = (id ~ /^GP-/) }
+        /trigger:/ && !is_gp && /PR/ { count++ }
+        END { print count+0 }
+    ' "$RC_FILE")
+    RELEASE_COUNT=$(awk '
+        /- id:/ { id = $3; is_gp = (id ~ /^GP-/) }
+        /trigger:/ && !is_gp && /Release/ { count++ }
+        END { print count+0 }
+    ' "$RC_FILE")
 
     echo "  总 RCI 数量:    $TOTAL"
     echo "  Golden Paths:   $GP_COUNT"

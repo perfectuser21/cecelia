@@ -1,3 +1,12 @@
+---
+id: quality-strategy
+version: 1.0.0
+created: 2026-01-18
+updated: 2026-01-21
+changelog:
+  - 1.0.0: 初始版本
+---
+
 # 质检策略全图
 
 ## 质检体系概览

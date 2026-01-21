@@ -1,0 +1,37 @@
+{
+  "meta": {
+    "project": "zenithjoy-engine",
+    "feature_branch": "feature/test-headless",
+    "created_at": "2026-01-21T22:00:00Z",
+    "status": "approved"
+  },
+  "background": "测试无头模式是否正常工作",
+  "goals": [
+    "验证 cecilia CLI 能正确解析 PRD",
+    "验证 claude -p 能被正确调用",
+    "验证 JSON 输出格式正确"
+  ],
+  "non_goals": [
+    "不需要实际创建代码",
+    "不需要创建 PR"
+  ],
+  "checkpoints": [
+    {
+      "id": "CP-001",
+      "name": "健康检查测试",
+      "type": "test",
+      "depends_on": null,
+      "size": "small",
+      "description": "简单的健康检查任务：列出当前目录的文件，确认环境正常",
+      "dod": [
+        "执行 ls -la 命令",
+        "输出当前工作目录",
+        "返回成功状态"
+      ],
+      "verify_commands": [
+        "echo 'verification passed'"
+      ],
+      "status": "pending"
+    }
+  ]
+}

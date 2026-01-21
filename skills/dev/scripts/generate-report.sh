@@ -11,6 +11,7 @@ set -euo pipefail
 CP_BRANCH="${1:-}"
 BASE_BRANCH="${2:-develop}"
 PROJECT_ROOT="${3:-$(pwd)}"
+MODE="${CLAUDE_MODE:-interactive}"  # interactive(有头) 或 headless(无头/Cecilia)
 
 if [[ -z "$CP_BRANCH" ]]; then
     echo "错误: 请提供 cp-* 分支名"
@@ -86,6 +87,7 @@ cat > "$TXT_REPORT" << EOF
 任务ID:     $TASK_ID
 项目:       $PROJECT_NAME
 分支:       $CP_BRANCH -> $BASE_BRANCH
+模式:       $MODE
 时间:       $TIMESTAMP
 
 --------------------------------------------------------------------------------
@@ -132,6 +134,7 @@ cat > "$JSON_REPORT" << EOF
   "project": "$PROJECT_NAME",
   "branch": "$CP_BRANCH",
   "base_branch": "$BASE_BRANCH",
+  "mode": "$MODE",
   "timestamp": "$TIMESTAMP",
   "date": "$DATE_ONLY",
   "quality_report": {

@@ -1,3 +1,12 @@
+---
+id: knowledge-architecture
+version: 1.0.0
+created: 2026-01-16
+updated: 2026-01-21
+changelog:
+  - 1.0.0: 初始版本
+---
+
 # 知识分层架构
 
 > 唯一真实源：本文件定义经验和知识应该记录在哪里

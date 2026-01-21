@@ -45,8 +45,8 @@ MODE="${PR_GATE_MODE:-}"
 
 # 2. 解析 --base 参数
 if [[ -z "$MODE" ]]; then
-    # 提取 --base 参数值（兼容不支持 -P 的 grep）
-    BASE_BRANCH=$(echo "$COMMAND" | sed -n 's/.*--base[[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1)
+    # 提取 --base 参数值（兼容 --base value 和 --base=value 两种格式，并去除引号）
+    BASE_BRANCH=$(echo "$COMMAND" | sed -n 's/.*--base[=[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1 | tr -d "'\"")
 
     if [[ "$BASE_BRANCH" == "main" ]]; then
         MODE="release"

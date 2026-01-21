@@ -15,7 +15,7 @@
 #
 # ============================================================================
 
-version: "1.5.0"
+version: "1.10.0"
 updated: "2026-01-21"
 
 # ============================================================================
@@ -322,43 +322,75 @@ workflow:
       contains: "CI 失败"
 
   # --------------------------------------------------------------------------
-  # W4: 测试任务模式
+  # W5: 模式自动检测
   # --------------------------------------------------------------------------
-  - id: W4-001
-    feature: W4
-    name: "[TEST] 前缀检测"
+  - id: W5-001
+    feature: W5
+    name: "new 模式：在 develop/main 检测为新任务"
     scope: workflow
-    priority: P2
-    trigger: [Release]
+    priority: P0
+    trigger: [PR, Release]
     method: manual
-    tags: [dev, test-mode]
+    tags: [dev, mode, detect]
     owner: workflow
     steps:
-      given: "PRD 标题包含 [TEST]"
-      when: "进入 Step 3"
-      then: "设置 git config branch.*.is-test true"
+      given: "当前在 develop 或 main 分支"
+      when: "运行 /dev"
+      then: "检测为 new 模式，开始完整流程"
     evidence:
-      type: command
-      run: "git config branch.*.is-test"
-      contains: "true"
+      type: log
+      contains: "检测到模式: new"
 
-  - id: W4-002
-    feature: W4
-    name: "测试任务跳过版本更新"
+  - id: W5-002
+    feature: W5
+    name: "continue 模式：cp-* 无 PR 检测为继续开发"
     scope: workflow
-    priority: P2
-    trigger: [Release]
+    priority: P0
+    trigger: [PR, Release]
     method: manual
-    tags: [dev, test-mode, version]
+    tags: [dev, mode, detect]
     owner: workflow
     steps:
-      given: "is-test = true"
-      when: "进入 Step 8 PR"
-      then: "跳过 CHANGELOG 和版本号更新"
+      given: "当前在 cp-* 分支且没有打开的 PR"
+      when: "运行 /dev"
+      then: "检测为 continue 模式，直接进入 Loop 1"
     evidence:
-      type: file
-      path: "CHANGELOG.md"
-      description: "PR 内容不含版本变更"
+      type: log
+      contains: "检测到模式: continue"
+
+  - id: W5-003
+    feature: W5
+    name: "fix 模式：有 PR + CI 红检测为修复"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前分支有打开的 PR 且 CI 失败"
+      when: "运行 /dev"
+      then: "检测为 fix 模式，直接进入 Loop 2"
+    evidence:
+      type: log
+      contains: "检测到模式: fix"
+
+  - id: W5-004
+    feature: W5
+    name: "merge 模式：有 PR + CI 绿检测为合并"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前分支有打开的 PR 且 CI 通过"
+      when: "运行 /dev"
+      then: "检测为 merge 模式，进入清理和合并"
+    evidence:
+      type: log
+      contains: "检测到模式: merge"
 
 # ============================================================================
 # CI/Release 回归契约
@@ -431,50 +463,26 @@ ci:
     test: ".github/workflows/ci.yml"
 
   # --------------------------------------------------------------------------
-  # C4: notify-failure
+  # C5: release-check
   # --------------------------------------------------------------------------
-  - id: C4-001
-    feature: C4
-    name: "CI 失败发送 Notion 通知"
+  - id: C5-001
+    feature: C5
+    name: "Release 前 DoD 完成度检查"
     scope: ci
-    priority: P2
+    priority: P1
     trigger: [Release]
-    method: manual
-    tags: [ci, notify]
+    method: auto
+    tags: [ci, release, dod]
     owner: infra
     steps:
-      given: "CI 任何 job 失败"
-      when: "CI workflow 完成"
-      then: "发送 Notion 通知，包含失败链接"
+      given: "PR 到 main 分支"
+      when: "运行 npm run release:check"
+      then: "DoD 所有必要项完成，Evidence 引用正确"
     evidence:
-      type: external
-      platform: notion
-      description: "Notion 页面收到通知"
-
-# ============================================================================
-# 业务代码回归契约
-# ============================================================================
-business:
-  # --------------------------------------------------------------------------
-  # B1: calculator
-  # --------------------------------------------------------------------------
-  - id: B1-001
-    feature: B1
-    name: "Calculator 单元测试"
-    scope: business
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [business, calculator, unit-test]
-    owner: business
-    steps:
-      given: "calculator 模块存在"
-      when: "运行 npm test"
-      then: "80 个测试用例全绿"
-    evidence:
-      type: test_output
-      contains: "80 passed"
-    test: "tests/calculator.test.ts"
+      type: command
+      run: "bash scripts/release-check.sh"
+      contains: "Release 检查通过"
+    test: "scripts/release-check.sh"
 
 # ============================================================================
 # Export 回归契约
@@ -536,9 +544,72 @@ export:
       then: "meta, unit, e2e 百分比在 0-100 范围内"
     evidence:
       type: command
-      run: "bash scripts/qa-report.sh | jq '.summary.overall'"
+      run: "bash scripts/qa-report.sh --fast | jq '.summary.overall'"
+      contains: "[0-9]+"
       description: "返回 0-100 的数字"
     test: "scripts/qa-report.sh"
+
+  # --------------------------------------------------------------------------
+  # E2: Dev Session Reporting
+  # --------------------------------------------------------------------------
+  - id: E2-001
+    feature: E2
+    name: "开发任务报告生成 JSON"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, json]
+    owner: workflow
+    steps:
+      given: "完成一次 /dev 流程"
+      when: "cleanup 阶段调用 generate-report.sh"
+      then: "在 .dev-runs/ 生成 JSON 报告"
+    evidence:
+      type: file
+      path: ".dev-runs/*-report.json"
+      exists: true
+    test: "skills/dev/scripts/generate-report.sh"
+
+  - id: E2-002
+    feature: E2
+    name: "报告包含 mode 字段"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, mode]
+    owner: workflow
+    steps:
+      given: "生成开发任务报告"
+      when: "解析 JSON"
+      then: "包含 mode 字段（interactive 或 headless）"
+    evidence:
+      type: command
+      run: "jq '.mode' .dev-runs/*-report.json"
+      contains: "interactive|headless"
+      description: "返回 interactive 或 headless"
+    test: "skills/dev/scripts/generate-report.sh"
+
+  - id: E2-003
+    feature: E2
+    name: "报告包含质检结果"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, quality]
+    owner: workflow
+    steps:
+      given: "生成开发任务报告"
+      when: "解析 JSON"
+      then: "包含 quality_report 字段（L1/L2/L3 状态）"
+    evidence:
+      type: command
+      run: "jq '.quality_report' .dev-runs/*-report.json"
+      contains: "L1_automated|L2_verification|L3_acceptance"
+      description: "返回 L1/L2/L3 状态对象"
+    test: "skills/dev/scripts/generate-report.sh"
 
 # ============================================================================
 # Golden Paths (E2E 关键链路)
@@ -555,10 +626,12 @@ golden_paths:
   # --------------------------------------------------------------------------
   - id: GP-001
     name: "完整开发流程"
-    description: "/dev → 分支 → DoD → 循环修复 → PR Gate → CI → 合并"
+    description: "/dev → 模式检测 → 分支 → DoD → 循环修复 → PR Gate → CI → 合并"
     trigger: [Release]
     method: manual
     rcis:
+      - W5-001  # new 模式检测
+      - W5-002  # continue 模式检测
       - W1-001  # /dev 流程可启动
       - W1-002  # 分支自动创建
       - W1-003  # DoD 自动生成
@@ -570,7 +643,7 @@ golden_paths:
     verification:
       type: end-to-end
       steps:
-        - "运行 /dev，确认流程启动"
+        - "运行 /dev，确认模式检测（new/continue）"
         - "确认 cp-* 分支自动创建"
         - "确认 .dod.md 生成"
         - "运行 npm run qa，确认通过"
@@ -625,13 +698,14 @@ golden_paths:
   # --------------------------------------------------------------------------
   - id: GP-004
     name: "CI 链路"
-    description: "PR → 版本检查 → 测试 → Shell 检查"
+    description: "PR → 版本检查 → 测试 → Shell 检查 → Release 检查"
     trigger: [Release]
     method: auto
     rcis:
       - C1-001  # PR 版本号必须递增
       - C2-001  # CI 运行 npm run qa
       - C3-001  # Shell 脚本语法检查
+      - C5-001  # Release 前 DoD 完成度检查
     verification:
       type: ci
       steps:
@@ -640,3 +714,25 @@ golden_paths:
         - "确认 test job 执行 typecheck + test + build"
         - "确认 shell-check job 检查所有 .sh 文件"
     test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # GP-005: Export 链路
+  # --------------------------------------------------------------------------
+  - id: GP-005
+    name: "Export 链路"
+    description: "QA 审计 + Dev Session 报告输出"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - E1-001  # QA 审计脚本输出合法 JSON
+      - E1-002  # QA JSON 包含完整结构
+      - E2-001  # 开发任务报告生成 JSON
+      - E2-002  # 报告包含 mode 字段
+      - E2-003  # 报告包含质检结果
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 bash scripts/qa-report.sh，确认输出合法 JSON"
+        - "完成一次 /dev 流程，确认 .dev-runs/ 生成报告"
+        - "检查报告包含 mode 字段（interactive/headless）"
+    test: "scripts/qa-report.sh"

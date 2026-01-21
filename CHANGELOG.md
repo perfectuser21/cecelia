@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.26] - 2026-01-21
+
+### Fixed
+- **pr-gate-v2.sh**: 修复带引号的 `--base 'main'` 参数解析
+- **release-check.sh**: 添加路径遍历防护（安全修复）
+- **RCI Evidence**: 为 E1-003, E2-002, E2-003 添加 `contains` 字段
+- **GP-005**: 补充缺失的 E2-003 RCI 引用
+
+### Changed
+- **QA Skill**: 添加缺失的 frontmatter 元数据
+- **criteria.md**: 更新示例，移除已废弃的 B1, C4, W4 引用
+- **regression-contract.yaml**: 升级到 v1.10.0
+- **FEATURES.md**: 同步版本到 v1.10.0
+- **docs/**: 为 4 个文档添加 frontmatter（ARCHITECTURE, LEARNINGS, QUALITY-STRATEGY, INTERFACE-SPEC）
+- **CLAUDE.md**: 目录结构新增 qa/ skill 记录
+
+### Removed
+- **dist/**: 清理 8 个孤立构建文件（t5-test, t8-test, test-v2, utils/）
+
+## [8.0.25] - 2026-01-21
+
+### Fixed
+- **pr-gate-v2.sh**: 修复 `--base=value` 格式解析 bug（之前只支持 `--base value`）
+- **rc-filter.sh**: 修复 stats 计算时错误包含 Golden Paths 的问题
+
+### Removed
+- **W4 [TEST] 模式残留**: 从 skills/dev/steps/01-prd.md 移除已废弃的测试任务检测代码
+- **孤儿测试文件**: 删除 test-automation.txt 和 test-automation.test.ts
+
+### Changed
+- **FEATURES.md**: 升级到 v1.9.0
+
+## [8.0.24] - 2026-01-21
+
+### Added
+- **C5 (release-check)**: 注册为 Committed Feature
+  - Release 前 DoD 完成度检查
+  - 新增 1 个 RCI (C5-001)
+- **GP-005 (Export 链路)**: 覆盖 E1 + E2 的端到端验证
+
+### Changed
+- **GP-001**: 新增 W5-001, W5-002（模式检测）
+- **regression-contract.yaml**: 升级到 v1.9.0
+- **FEATURES.md**: 更新为 11 个 Committed Features
+
+## [8.0.23] - 2026-01-21
+
+### Added
+- **E2 (Dev Session Reporting)**: 注册为 Committed Feature
+  - 开发任务报告输出（JSON+TXT）
+  - 新增 mode 字段区分有头(interactive)/无头(headless)模式
+  - 新增 3 个 RCIs (E2-001 ~ E2-003)
+
+### Changed
+- **regression-contract.yaml**: 升级到 v1.8.0
+- **FEATURES.md**: 更新为 10 个 Committed Features
+
+## [8.0.22] - 2026-01-21
+
+### Added
+- **W5 (模式自动检测)**: 注册为 Committed Feature
+  - /dev 入口自动识别四种模式：new/continue/fix/merge
+  - 新增 4 个 RCIs (W5-001 ~ W5-004)
+
+### Changed
+- **regression-contract.yaml**: 升级到 v1.7.0
+- **FEATURES.md**: 更新为 9 个 Committed Features
+
+## [8.0.21] - 2026-01-21
+
+### Removed
+- **B1 (calculator)**: 删除示例代码，业务代码不属于 Engine
+- **C4 (notify-failure)**: 删除 Notion 通知，改用 n8n/飞书
+- **W4 (测试任务模式)**: 删除此功能，不再需要
+
+### Changed
+- **regression-contract.yaml**: 升级到 v1.6.0，移除 B1/C4 相关 RCIs
+- **FEATURES.md**: 更新为 8 个 Committed Features
+- **scripts/qa-report.sh**: 移除已删除 Feature 的描述
+
 ## [8.0.20] - 2026-01-21
 
 ### Fixed

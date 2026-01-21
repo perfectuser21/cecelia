@@ -126,7 +126,7 @@ Scope:
   C = CI/Release
   B = Business
 
-例：H1-001, H2-003, W1-002, C1-001, B1-001
+例：H1-001, H2-003, W1-002, C1-001, E1-001
 ```
 
 ### Golden Path ID
@@ -254,7 +254,7 @@ Artifacts:
     "score": 100,
     "gp_count": 4,
     "gp_coverage": ["H1", "H2", "W1", "C1", "C2", "C3"],
-    "uncovered_features": ["W3", "W4", "B1", "C4", "E1"]
+    "uncovered_features": []
   },
   "overall": 97
 }

@@ -1,3 +1,9 @@
+---
+name: qa
+description: |
+  跨仓库 QA 总控。统一管理测试决策、回归契约、Golden Paths 和 Feature 归类。
+---
+
 # /qa - ZenithJoy QA Controller
 
 你是 ZenithJoy 的 QA 总控 Skill（唯一入口）。你的职责是：跨仓库（Engine + 各业务 repo）统一管理"测试决策 + 回归契约 + Golden Paths + Feature 归类"。

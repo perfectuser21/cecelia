@@ -1,3 +1,12 @@
+---
+id: engine-learnings
+version: 1.0.0
+created: 2026-01-16
+updated: 2026-01-21
+changelog:
+  - 1.0.0: 初始版本
+---
+
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑

@@ -1,3 +1,12 @@
+---
+id: interface-spec
+version: 1.0.0
+created: 2026-01-19
+updated: 2026-01-21
+changelog:
+  - 1.0.0: 初始版本
+---
+
 # Interface Specification
 
 > N8N ↔ Cecilia ↔ Dashboard 接口规范
