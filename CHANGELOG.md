@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.14] - 2026-01-21
+
+### Added
+- **skills/qa/**: 新增 /qa Skill（QA 总控）
+  - 动态决策：测试计划 / Golden Path 判定 / RCI 判定 / Feature 归类 / QA 审计
+  - `knowledge/testing-matrix.md` - 测试矩阵（什么场景跑什么）
+  - `knowledge/criteria.md` - RCI + Golden Path 判定标准
+
+- **regression-contract.yaml**: 新增 Golden Paths 部分（v1.2.0）
+  - GP-001: 完整开发流程（/dev → PR → CI）
+  - GP-002: 分支保护链路
+  - GP-003: PR Gate 链路
+  - GP-004: CI 链路
+
 ## [8.0.13] - 2026-01-20
 
 ### Changed

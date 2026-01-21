@@ -15,8 +15,8 @@
 #
 # ============================================================================
 
-version: "1.1.0"
-updated: "2026-01-20"
+version: "1.2.0"
+updated: "2026-01-21"
 
 # ============================================================================
 # Hooks 回归契约
@@ -438,3 +438,101 @@ business:
       type: test_output
       contains: "80 passed"
     test: "tests/calculator.test.ts"
+
+# ============================================================================
+# Golden Paths (E2E 关键链路)
+# ============================================================================
+#
+# Golden Path = 端到端链路验证，跨多个 RCI 的组合断言
+# Engine 的 GP = 流程链路（/dev → PR → CI）
+# 业务 repo 的 GP = 用户链路（登录 → 操作 → 结果）
+#
+# ============================================================================
+golden_paths:
+  # --------------------------------------------------------------------------
+  # GP-001: 完整开发流程
+  # --------------------------------------------------------------------------
+  - id: GP-001
+    name: "完整开发流程"
+    description: "/dev → 分支 → DoD → PR Gate → CI → 合并"
+    trigger: [Release]
+    method: manual
+    rcis:
+      - W1-001  # /dev 流程可启动
+      - W1-002  # 分支自动创建
+      - W1-003  # DoD 自动生成
+      - H2-003  # L1 通过允许 PR 创建
+      - C1-001  # PR 版本号必须递增
+      - C2-001  # CI 运行 npm run qa
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 /dev，确认流程启动"
+        - "确认 cp-* 分支自动创建"
+        - "确认 .dod.md 生成"
+        - "运行 npm run qa，确认通过"
+        - "创建 PR，确认 PR Gate 放行"
+        - "等待 CI 通过，确认可合并"
+
+  # --------------------------------------------------------------------------
+  # GP-002: 分支保护链路
+  # --------------------------------------------------------------------------
+  - id: GP-002
+    name: "分支保护链路"
+    description: "main 写 → 拦截 → cp-* 写 → 通过"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - H1-001  # 分支保护拦截 main/develop 写入
+      - H1-002  # cp-* 分支允许写入
+    verification:
+      type: end-to-end
+      steps:
+        - "切换到 main 分支"
+        - "尝试写入代码文件，确认被 Hook 拦截"
+        - "创建 cp-test 分支"
+        - "尝试写入代码文件，确认 Hook 放行"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  # --------------------------------------------------------------------------
+  # GP-003: PR Gate 链路
+  # --------------------------------------------------------------------------
+  - id: GP-003
+    name: "PR Gate 链路"
+    description: "L1 失败 → 阻止 / L1 通过 → 放行"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - H2-001  # PR Gate 拦截 gh pr create
+      - H2-002  # L1 失败阻止 PR 创建
+      - H2-003  # L1 通过允许 PR 创建
+      - H2-005  # 默认 PR 模式只检查 L1
+    verification:
+      type: end-to-end
+      steps:
+        - "引入一个 typecheck 错误"
+        - "运行 gh pr create，确认被 Hook 阻止"
+        - "修复错误，npm run qa 通过"
+        - "运行 gh pr create，确认 Hook 放行"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  # --------------------------------------------------------------------------
+  # GP-004: CI 链路
+  # --------------------------------------------------------------------------
+  - id: GP-004
+    name: "CI 链路"
+    description: "PR → 版本检查 → 测试 → Shell 检查"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - C1-001  # PR 版本号必须递增
+      - C2-001  # CI 运行 npm run qa
+      - C3-001  # Shell 脚本语法检查
+    verification:
+      type: ci
+      steps:
+        - "创建 PR（不更新版本号）→ 确认 version-check 失败"
+        - "更新版本号，推送 → 确认 version-check 通过"
+        - "确认 test job 执行 typecheck + test + build"
+        - "确认 shell-check job 检查所有 .sh 文件"
+    test: ".github/workflows/ci.yml"
