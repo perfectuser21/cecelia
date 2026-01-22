@@ -3,6 +3,11 @@
     "paths": ["./skills"]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [{"type": "command", "command": "./hooks/session-start.sh"}]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit",

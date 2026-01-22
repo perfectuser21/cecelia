@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.32] - 2026-01-22
+
+### Added
+- **hooks/session-start.sh**: SessionStart hook，会话开始时强制引导 /dev
+  - 检测当前项目、分支、DoD、PR 状态
+  - 输出 `[SKILL_REQUIRED: dev]` 引导 Claude 运行 /dev skill
+  - 确保所有开发流程都通过 /dev 启动
+
 ## [8.0.31] - 2026-01-22
 
 ### Changed
