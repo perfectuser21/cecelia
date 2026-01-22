@@ -40,6 +40,29 @@ jobs:
           MODE="${{ github.event.inputs.mode || 'nightly' }}"
           bash scripts/run-regression.sh "$MODE"
 
+      - name: DevGate Metrics
+        id: metrics
+        run: |
+          # 收集本月 DevGate 指标
+          MONTH=$(date +%Y-%m)
+          echo "📊 Collecting DevGate Metrics for $MONTH"
+
+          # 生成 JSON 报告
+          bash scripts/devgate/metrics.sh --month "$MONTH" --format json > devgate-metrics.json || true
+
+          # 输出人类可读格式
+          bash scripts/devgate/metrics.sh --month "$MONTH" || true
+
+          # 上传为 artifact
+          echo "metrics_month=$MONTH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: devgate-metrics-${{ steps.metrics.outputs.metrics_month }}
+          path: devgate-metrics.json
+          retention-days: 90
+
   notify:
     needs: [regression]
     if: always()

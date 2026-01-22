@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.9.0] - 2026-01-22
+
+### Added (Phase 4: DevGate Metrics 指标面板)
+- **scripts/devgate/metrics.sh**: DevGate 指标面板入口
+  - 支持 `--month YYYY-MM` 指定月份
+  - 支持 `--since/--until` 指定时间范围
+  - 支持 `--format json` 输出 JSON
+  - 支持 `--verbose` 详细输出
+- **scripts/devgate/metrics.cjs**: 核心逻辑（Node.js）
+  - P0/P1 PR 数统计
+  - P0/P1 RCI 覆盖率计算（目标 100%）
+  - 新增 RCI 数统计
+  - DoD 条目数 / Manual test 数统计
+- **tests/hooks/metrics.test.ts**: 指标测试 (28 个用例)
+
+### Changed
+- **scripts/devgate/snapshot-prd-dod.sh**: Meta 格式增强
+  - 添加 `priority:P0|P1|NONE` 字段
+  - 添加 `title:"..."` 字段
+  - 添加 `head:<sha>` 和 `merged:<sha>` 字段
+  - 添加 `created:<ISO8601>` 时间戳
+- **.github/workflows/nightly.yml**: 接入 DevGate Metrics
+  - 每日收集指标并上传 artifact
+- **regression-contract.yaml v1.15.0**: 新增 H4-001, H4-002
+
 ## [8.8.0] - 2026-01-22
 
 ### Added (Phase 3: Hook Core 多仓库治理)

@@ -15,7 +15,7 @@
 #
 # ============================================================================
 
-version: "1.14.0"
+version: "1.16.0"
 updated: "2026-01-22"
 
 # ============================================================================
@@ -272,6 +272,47 @@ hooks:
       run: "bash scripts/install-hooks.sh --version"
       contains: "hook-core version: 1.0.0"
     test: "tests/hooks/install-hooks.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H4: Phase 4 - DevGate Metrics 指标面板
+  # --------------------------------------------------------------------------
+  - id: H4-001
+    feature: H4
+    name: "DevGate Metrics 指标计算"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [metrics, devgate, phase4]
+    owner: infra
+    steps:
+      given: ".history/ 目录包含带 meta 的快照文件"
+      when: "运行 bash scripts/devgate/metrics.sh"
+      then: "输出 P0/P1 PR 数、RCI 覆盖率、新增 RCI 数、DoD 条目数"
+    evidence:
+      type: command
+      run: "bash scripts/devgate/metrics.sh --format json"
+      contains: "rci_coverage"
+    test: "tests/hooks/metrics.test.ts"
+
+  - id: H4-002
+    feature: H4
+    name: "快照 Meta 格式增强"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [snapshot, meta, phase4]
+    owner: infra
+    steps:
+      given: "存在 .prd.md 和 .dod.md"
+      when: "运行 snapshot-prd-dod.sh 创建快照"
+      then: "快照顶部包含完整 meta: pr, base, priority, head, merged, created"
+    evidence:
+      type: file
+      path: ".history/PR-*.dod.md"
+      contains: "<!-- pr:"
+    test: "tests/hooks/metrics.test.ts"
 
 # ============================================================================
 # Workflow 回归契约
@@ -566,6 +607,28 @@ ci:
       name: "DevGate checks"
       status: success
     test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # C7: Nightly DevGate Metrics
+  # --------------------------------------------------------------------------
+  - id: C7-001
+    feature: C7
+    name: "Nightly DevGate Metrics 收集"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, metrics, phase4]
+    owner: infra
+    steps:
+      given: "Nightly workflow 运行"
+      when: "执行 DevGate Metrics step"
+      then: "生成 JSON 报告并上传为 artifact"
+    evidence:
+      type: ci_job
+      name: "DevGate Metrics"
+      status: success
+    test: ".github/workflows/nightly.yml"
 
   # --------------------------------------------------------------------------
   # C5: release-check
