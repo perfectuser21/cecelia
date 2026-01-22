@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +129,47 @@ jobs:
           name: devgate-metrics-${{ steps.metrics.outputs.metrics_month }}
           path: devgate-metrics.json
           retention-days: 90
+
+      - name: Append to LEARNINGS
+        if: github.event_name == 'schedule'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Append DevGate Report to LEARNINGS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # 检查指标文件
+          if [ ! -f devgate-metrics.json ]; then
+            echo "⚠️ No metrics file found, skipping"
+            exit 0
+          fi
+
+          # 追加到 LEARNINGS
+          node scripts/devgate/append-learnings.cjs \
+            --metrics devgate-metrics.json \
+            --learnings docs/LEARNINGS.md \
+            --contract regression-contract.yaml
+
+          # 检查是否有变更
+          if git diff --quiet docs/LEARNINGS.md; then
+            echo "ℹ️ No changes to LEARNINGS.md"
+            exit 0
+          fi
+
+          # 配置 git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 提交并推送
+          MONTH=$(date +%Y-%m)
+          git add docs/LEARNINGS.md
+          git commit -m "docs: DevGate 月度报告 $MONTH
+
+自动生成的 DevGate 指标报告
+
+Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          git push
+
+          echo "✅ LEARNINGS.md updated and pushed"
 
   notify:
     needs: [regression]

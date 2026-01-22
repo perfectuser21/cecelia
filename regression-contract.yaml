@@ -15,7 +15,7 @@
 #
 # ============================================================================
 
-version: "1.17.0"
+version: "1.18.0"
 updated: "2026-01-22"
 
 # ============================================================================
@@ -646,6 +646,25 @@ ci:
     evidence:
       type: ci_job
       name: "DevGate Threshold Check (L2)"
+      status: success
+    test: ".github/workflows/nightly.yml"
+
+  - id: C7-003
+    feature: C7
+    name: "LEARNINGS 自动写回"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, learnings, phase5]
+    owner: infra
+    steps:
+      given: "devgate-metrics.json 已生成"
+      when: "执行 Append to LEARNINGS step"
+      then: "月度报告追加到 docs/LEARNINGS.md 并 commit/push"
+    evidence:
+      type: ci_job
+      name: "Append to LEARNINGS"
       status: success
     test: ".github/workflows/nightly.yml"
 

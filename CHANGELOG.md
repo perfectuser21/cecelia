@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.11.0] - 2026-01-22
+
+### Added (Phase 5: LEARNINGS 自动写回)
+- **scripts/devgate/append-learnings.cjs**: 月度报告生成器
+  - 读取 devgate-metrics.json
+  - 解析 regression-contract.yaml 获取 RCI 名称
+  - 生成结构化 markdown 报告
+  - 幂等：同月不重复追加
+  - 支持 `--dry-run` 预览
+- **tests/hooks/append-learnings.test.ts**: 测试 (12 个用例)
+- **nightly.yml**: 添加 "Append to LEARNINGS" 步骤
+  - 仅在定时任务时运行
+  - 自动 commit + push 到 develop
+
+### Changed
+- **regression-contract.yaml v1.18.0**: 新增 C7-003 (LEARNINGS 自动写回)
+- **nightly.yml**: permissions 升级为 `contents: write`
+
 ## [8.10.0] - 2026-01-22
 
 ### Added (Phase 4.1: DevGate L2 阈值检查)
