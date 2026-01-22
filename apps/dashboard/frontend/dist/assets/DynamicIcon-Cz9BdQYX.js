@@ -1,0 +1,1 @@
+import{j as t,z as a,as as r,B as c,V as e,at as i,au as m,av as p}from"./index-B5duVCzi.js";const u={Monitor:p,Code:m,Wallet:i,Video:e,BarChart3:c,Wrench:r,User:a};function j({name:s,...o}){const n=u[s]||a;return t.jsx(n,{...o})}export{j as D};

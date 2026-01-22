@@ -54,8 +54,6 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'PlatformStatus': () => import('../pages/PlatformStatus'),
   'PublishStats': () => import('../pages/PublishStats'),
   'LoginPage': () => import('../pages/LoginPage'),
-  'PlatformStatusDashboard': () => import('../pages/PlatformStatusDashboard'),
-  'ToolsPage': () => import('../pages/ToolsPage'),
   'ScrapingPage': () => import('../pages/ScrapingPage'),
   'AdminSettingsPage': () => import('../pages/AdminSettingsPage'),
   'MediaScenarioPage': () => import('../pages/MediaScenarioPage'),
@@ -138,15 +136,8 @@ export const additionalRoutes: RouteConfig[] = [
   { path: '/platform-status', redirect: '/media/publish/platforms' },
   { path: '/publish-stats', redirect: '/media/data' },
   { path: '/data-center', redirect: '/media/data/analytics' },
-  { path: '/tools', redirect: '/settings' },
-  { path: '/canvas', redirect: '/settings' },
-
   // 登录相关
   { path: '/login/:platform/:accountId', component: 'LoginPage', requireAuth: true },
-  { path: '/platform-login', component: 'PlatformStatusDashboard', requireAuth: true },
-
-  // 工具子页面（移入设置）
-  { path: '/tools/session-monitor', redirect: '/settings' },
 
   // 管理员子页面
   { path: '/settings/claude-monitor', component: 'ClaudeMonitor', requireAuth: true, requireSuperAdmin: true },
