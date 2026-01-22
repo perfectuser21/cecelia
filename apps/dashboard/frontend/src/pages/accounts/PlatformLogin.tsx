@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Check, X, Clock } from 'lucide-react';
 import QRCode from 'qrcode.react';
-import { accountsApi, LoginSession } from '../../api/accounts.api';
+import type { LoginSession } from '../../api/accounts.api';
+import { accountsApi } from '../../api/accounts.api';
 
 export default function PlatformLogin() {
   const { id } = useParams<{ id: string }>();

@@ -4,11 +4,11 @@
  * 复用 zenithjoy-core 的 n8n API，按员工聚合数据
  */
 
+import type {
+  AiEmployee,
+  Department} from '../config/ai-employees.config';
 import {
   AI_DEPARTMENTS,
-  AiEmployee,
-  AiAbility,
-  Department,
   matchAbilityByWorkflow,
 } from '../config/ai-employees.config';
 
@@ -116,45 +116,6 @@ function mapExecutionToTask(execution: N8nExecution): EmployeeTask | null {
     status: execution.status === 'crashed' ? 'error' : execution.status,
     startedAt: execution.startedAt,
     stoppedAt: execution.stoppedAt,
-  };
-}
-
-/**
- * 聚合员工统计数据
- */
-function aggregateEmployeeStats(
-  employee: AiEmployee,
-  executions: N8nExecution[]
-): EmployeeTaskStats {
-  const tasks: EmployeeTask[] = [];
-  let success = 0;
-  let error = 0;
-  let running = 0;
-
-  for (const execution of executions) {
-    const task = mapExecutionToTask(execution);
-    if (task) {
-      // 检查是否属于这个员工的职能
-      const isThisEmployee = employee.abilities.some(a => a.id === task.abilityId);
-      if (isThisEmployee) {
-        tasks.push(task);
-        if (task.status === 'success') success++;
-        else if (task.status === 'error') error++;
-        else if (task.status === 'running' || task.status === 'waiting') running++;
-      }
-    }
-  }
-
-  const total = tasks.length;
-  const successRate = total > 0 ? Math.round((success / total) * 100) : 0;
-
-  return {
-    todayTotal: total,
-    todaySuccess: success,
-    todayError: error,
-    todayRunning: running,
-    successRate,
-    recentTasks: tasks.slice(0, 5),
   };
 }
 

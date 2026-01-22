@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Check, Image as ImageIcon } from 'lucide-react';
-import { PlatformSpec, publishApi } from '../api/publish.api';
+import type { PlatformSpec} from '../api/publish.api';
+import { publishApi } from '../api/publish.api';
 
 interface ImageCropperProps {
   imageUrl: string;

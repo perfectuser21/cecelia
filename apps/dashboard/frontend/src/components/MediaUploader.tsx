@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { Upload, X, Film, Loader2, ZoomIn } from 'lucide-react';
-import { publishApi, UploadedFile } from '../api/publish.api';
+import type { UploadedFile } from '../api/publish.api';
+import { publishApi } from '../api/publish.api';
 
 interface MediaUploaderProps {
   onFilesUploaded: (files: UploadedFile[]) => void;

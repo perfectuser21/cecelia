@@ -39,7 +39,7 @@ function convertCoreNavGroups(
 function AppContent() {
   const location = useLocation();
   const { user, logout, isAuthenticated, isSuperAdmin } = useAuth();
-  const { theme, actualTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);

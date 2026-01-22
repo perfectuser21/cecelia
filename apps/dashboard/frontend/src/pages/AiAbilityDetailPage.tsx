@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Play, CheckCircle, XCircle, Loader2, Clock } from 'lucide-react';
 import { getEmployeeById } from '../config/ai-employees.config';
-import { fetchEmployeeTasks, EmployeeTask } from '../api/ai-employees.api';
+import type { EmployeeTask } from '../api/ai-employees.api';
+import { fetchEmployeeTasks } from '../api/ai-employees.api';
 import type { AiAbility } from '../config/ai-employees.config';
 
 export default function AiAbilityDetailPage() {

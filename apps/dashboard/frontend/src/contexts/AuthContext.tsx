@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 
 // Cookie 工具函数 - 跨子域名共享
 const COOKIE_DOMAIN = '.zenjoymedia.media';

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Plus, RefreshCw, Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { AccountCard } from '../../components/AccountCard';
-import { accountsApi, Account } from '../../api/accounts.api';
+import type { Account } from '../../api/accounts.api';
+import { accountsApi } from '../../api/accounts.api';
 
 type PlatformFilter = 'all' | 'xiaohongshu' | 'douyin' | 'bilibili' | 'weibo';
 

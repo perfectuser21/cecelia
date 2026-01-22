@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Calendar, TrendingUp, Eye, Heart } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { MetricCard } from '../../components/MetricCard';
-import { accountsApi, AccountMetrics as AccountMetricsType } from '../../api/accounts.api';
+import type { AccountMetrics as AccountMetricsType } from '../../api/accounts.api';
+import { accountsApi } from '../../api/accounts.api';
 
 export default function AccountMetrics() {
   const { id } = useParams<{ id: string }>();

@@ -1,7 +1,7 @@
 import React from 'react';
 import { MoreVertical, RefreshCw, BarChart3, Trash2 } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
-import { Account } from '../api/accounts.api';
+import type { Account } from '../api/accounts.api';
 
 interface AccountCardProps {
   account: Account;

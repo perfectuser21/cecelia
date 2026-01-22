@@ -8,12 +8,13 @@ services:
     ports:
       - "5679:5678"
     environment:
-      - N8N_HOST=dashboard.zenjoymedia.media:3000
+      - N8N_HOST=core.zenjoymedia.media
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
       - N8N_PATH=/n8n/
-      - N8N_EDITOR_BASE_URL=https://dashboard.zenjoymedia.media:3000/n8n/
-      - WEBHOOK_URL=https://dashboard.zenjoymedia.media:3000/n8n/
+      - N8N_EDITOR_BASE_URL=https://core.zenjoymedia.media/n8n/
+      - WEBHOOK_URL=https://core.zenjoymedia.media/n8n/
+      - N8N_WEBHOOK_BASE_URL=https://core.zenjoymedia.media/n8n
       - N8N_SECURE_COOKIE=false
       - N8N_PROXY_HOPS=1
       - N8N_PUSH_BACKEND=sse
@@ -29,6 +30,8 @@ services:
       - N8N_API_KEY=n8n-local-api-key-2025-dashboard
       # Notion API key for workflows using $env.NOTION_API_KEY
       - NOTION_API_KEY=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
+      # Cecilia webhook token for secure callback
+      - CECILIA_WEBHOOK_TOKEN=c8f8c1787ebf14920d442d71729c83b5
     volumes:
       - n8n_data:/home/node/.n8n
     networks:

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { CheckSquare, Plus, RefreshCw, AlertCircle, Loader2, GripVertical, Star, ChevronLeft, ChevronRight, Sparkles, ExternalLink } from 'lucide-react';
-import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import type { DropResult } from '@hello-pangea/dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { useAuth } from '../contexts/AuthContext';
-import { Task, fetchTasks, updateTaskStatus, createTask } from '../api/tasks.api';
+import type { Task} from '../api/tasks.api';
+import { fetchTasks, updateTaskStatus, createTask } from '../api/tasks.api';
 
 type ViewType = 'day' | 'week';
 

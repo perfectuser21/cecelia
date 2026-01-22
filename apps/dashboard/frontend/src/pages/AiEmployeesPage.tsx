@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Users, RefreshCw } from 'lucide-react';
 import { DepartmentAccordion } from '../components/DepartmentAccordion';
+import type {
+  DepartmentWithStats} from '../api/ai-employees.api';
 import {
-  fetchAiEmployeesWithStats,
-  DepartmentWithStats,
+  fetchAiEmployeesWithStats
 } from '../api/ai-employees.api';
 
 export default function AiEmployeesPage() {

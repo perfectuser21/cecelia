@@ -5,7 +5,8 @@
  * 修改这里就能添加/删除/修改页面，无需改动其他代码
  */
 
-import { lazy, ComponentType } from 'react';
+import type { ComponentType } from 'react';
+import { lazy } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   LayoutDashboard,

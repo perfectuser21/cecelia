@@ -27,7 +27,8 @@ import {
   Edit,
 } from 'lucide-react';
 import MediaUploader from '../components/MediaUploader';
-import { publishApi, PlatformSpec, PublishTask, UploadedFile } from '../api/publish.api';
+import type { PlatformSpec, PublishTask, UploadedFile } from '../api/publish.api';
+import { publishApi } from '../api/publish.api';
 
 type MediaType = 'image' | 'video' | 'text';
 type ViewMode = 'list' | 'create' | 'detail';

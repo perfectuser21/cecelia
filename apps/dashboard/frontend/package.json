@@ -3,10 +3,15 @@
   "version": "1.0.0",
   "description": "Frontend dashboard for social media metrics collection",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\""
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
@@ -22,11 +27,17 @@
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
+    "@zenithjoy/eslint-config": "file:../../../../zenithjoy-core/packages/shared-config/eslint-config",
+    "@zenithjoy/prettier-config": "file:../../../../zenithjoy-core/packages/shared-config/prettier-config",
+    "@zenithjoy/tsconfig": "file:../../../../zenithjoy-core/packages/shared-config/tsconfig",
     "autoprefixer": "^10.4.16",
+    "eslint": "^9.0.0",
     "postcss": "^8.4.32",
+    "prettier": "^3.2.0",
     "tailwindcss": "^3.3.6",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
     "vite-plugin-pwa": "^1.2.0"
-  }
+  },
+  "prettier": "@zenithjoy/prettier-config"
 }

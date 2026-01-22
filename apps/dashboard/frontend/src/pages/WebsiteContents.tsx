@@ -14,7 +14,8 @@ import {
   Globe,
   X,
 } from 'lucide-react';
-import { contentsApi, WebsiteContent, CreateContentInput } from '../api/contents.api';
+import type { WebsiteContent, CreateContentInput } from '../api/contents.api';
+import { contentsApi } from '../api/contents.api';
 
 type ViewMode = 'list' | 'create' | 'edit';
 type ContentType = 'article' | 'video' | 'post';
