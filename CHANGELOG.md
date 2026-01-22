@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.1.1] - 2026-01-22
+
+### Fixed
+- **hooks/pr-gate-v2.sh v2.3**: 修复目标仓库检测
+  - 解析 `--repo owner/repo` 参数
+  - 在 `~/dev/` 等常见位置搜索本地仓库
+  - 在正确的仓库目录执行 PR Gate 检查
+  - 解决在其他项目目录运行 `gh pr create --repo X` 时检查错误仓库的问题
+
 ## [8.1.0] - 2026-01-22
 
 ### Added

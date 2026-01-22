@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-# PreToolUse Hook: PR Gate v2.2 (硬门禁版)
+# PreToolUse Hook: PR Gate v2.3 (硬门禁版)
 # ============================================================================
 #
+# v2.3: 修复目标仓库检测 - 解析 --repo 参数，检查正确的仓库
 # v2.2: 增加 PRD/DoD 内容有效性检查（不能是空文件）
 # v2.1: 增加 PRD 检查（与 DoD 检查并列）
 # v8+ 硬门禁规则：
@@ -37,8 +38,35 @@ if [[ "$COMMAND" != *"gh pr create"* ]]; then
     exit 0
 fi
 
-# 获取项目根目录
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# ===== v2.3: 解析 --repo 参数，找到目标仓库 =====
+# 提取 --repo 参数值（兼容 --repo value 和 --repo=value 两种格式）
+TARGET_REPO=$(echo "$COMMAND" | sed -n 's/.*--repo[=[:space:]]\+\([^[:space:]]\+\).*/\1/p' | head -1 | tr -d "'\"")
+
+PROJECT_ROOT=""
+
+if [[ -n "$TARGET_REPO" ]]; then
+    # 有 --repo 参数，尝试找到本地仓库
+    # 从 owner/repo 提取 repo 名称
+    REPO_NAME=$(echo "$TARGET_REPO" | sed 's|.*/||')
+
+    # 在常见位置搜索仓库
+    for SEARCH_PATH in "$HOME/dev" "$HOME/projects" "$HOME/code" "$HOME"; do
+        if [[ -d "$SEARCH_PATH/$REPO_NAME/.git" ]]; then
+            PROJECT_ROOT="$SEARCH_PATH/$REPO_NAME"
+            break
+        fi
+    done
+
+    if [[ -z "$PROJECT_ROOT" ]]; then
+        # 找不到本地仓库，跳过检查（让 gh 自己报错）
+        echo "⚠️ 找不到本地仓库: $TARGET_REPO，跳过 PR Gate 检查" >&2
+        exit 0
+    fi
+else
+    # 没有 --repo 参数，使用当前目录
+    PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+fi
+
 cd "$PROJECT_ROOT"
 
 # ===== 模式检测 =====
