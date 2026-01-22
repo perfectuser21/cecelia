@@ -1,0 +1,23 @@
+{
+  "task_id": "sample-test",
+  "project": "zenithjoy-engine",
+  "branch": "cp-sample",
+  "base_branch": "develop",
+  "mode": "test",
+  "timestamp": "2026-01-22T00:00:00Z",
+  "date": "2026-01-22",
+  "quality_report": {
+    "L1_automated": "pass",
+    "L2_verification": "pass",
+    "L3_acceptance": "pass",
+    "overall": "pass"
+  },
+  "ci_cd": {
+    "pr_url": "https://github.com/example/repo/pull/1",
+    "pr_merged": true
+  },
+  "version": "8.4.0",
+  "files_changed": [
+    "sample.ts"
+  ]
+}
