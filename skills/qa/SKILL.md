@@ -166,7 +166,50 @@ Recommendations:
 
 ---
 
-## 统一输出格式（所有模式）
+## QA Decision 产物（/dev 流程必须产出）
+
+当 /dev 流程调用 QA Decision Node 时，必须输出 `docs/QA-DECISION.md`。
+
+### 输出 Schema（固定格式）
+
+```yaml
+# QA Decision
+Decision: NO_RCI | MUST_ADD_RCI | UPDATE_RCI
+Priority: P0 | P1 | P2
+RepoType: Engine | Business
+
+Tests:
+  - dod_item: "功能描述"
+    method: auto | manual
+    location: tests/xxx.test.ts | manual:描述
+
+RCI:
+  new: []      # 需要新增的 RCI ID
+  update: []   # 需要更新的 RCI ID
+
+Reason: 一句话说明决策理由
+```
+
+### 字段说明
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| Decision | ✅ | NO_RCI=无需回归 / MUST_ADD_RCI=新增 / UPDATE_RCI=更新 |
+| Priority | ✅ | P0=核心路径 / P1=重要 / P2=边缘 |
+| RepoType | ✅ | Engine=引擎仓库 / Business=业务仓库 |
+| Tests | ✅ | 每个 DoD 条目对应的测试方式和位置 |
+| RCI | ✅ | 涉及的回归契约 ID |
+| Reason | ✅ | 一句话决策理由 |
+
+### Gate 检查
+
+PR Gate 会检查：
+1. `docs/QA-DECISION.md` 存在
+2. 包含有效的 Decision 字段
+
+---
+
+## 统一输出格式（独立调用时）
 
 ```
 Decision: 结论（是/否/建议/必须）

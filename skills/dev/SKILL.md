@@ -1,7 +1,7 @@
 ---
 name: dev
 description: |
-  统一开发工作流入口。集成 Ralph Loop 插件。
+  统一开发工作流入口。流程编排者，不做判断。
 
   触发条件：
   - 用户说任何开发相关的需求
@@ -10,6 +10,17 @@ description: |
 ---
 
 # /dev - 统一开发工作流
+
+## 核心定位
+
+**流程编排者**：只负责编排流程顺序，不做测试/审计判断。
+
+判断由专门的规范负责：
+- 测试决策 → 参考 `skills/qa/SKILL.md`
+- 代码审计 → 参考 `skills/audit/SKILL.md`
+- 放行判断 → 由 pr-gate Hook 执行
+
+---
 
 ## 入口：四种模式自动检测
 
@@ -42,154 +53,49 @@ echo "检测到模式: $MODE"
 
 | 模式 | 条件 | 动作 |
 |------|------|------|
-| `new` | 在 develop/main | PRD → 创建分支 → DoD → **Loop 1** → PR → **Loop 2** → Merge |
-| `continue` | 在 cp-*/feature/* + 无 PR | 直接进入 **Loop 1** |
-| `fix` | 有 PR + CI 红 | 直接进入 **Loop 2** |
+| `new` | 在 develop/main | PRD → 分支 → QA Node → DoD → 代码 → Audit Node → 测试 → PR → CI → Merge |
+| `continue` | 在 cp-*/feature/* + 无 PR | 直接进入代码/测试阶段 |
+| `fix` | 有 PR + CI 红 | 直接进入 CI 修复 |
 | `merge` | 有 PR + CI 绿 | Learning → Cleanup → Merge |
 
 ---
 
-## Loop 1: 本地 QA（使用 Ralph Loop）
-
-**目标**：`npm run qa` 通过
-
-**调用方式**：
-```
-/ralph-loop "
-## 任务
-完成 DoD 中的验收标准，确保本地 QA 通过。
-
-## DoD 内容
-$(cat .dod.md)
-
-## 执行步骤
-1. 写代码实现 DoD 中的功能
-2. 运行 npm run qa
-3. 如果失败，读取错误信息并修复
-4. 重复 2-3 直到通过
-5. 通过后输出：LOCAL_QA_PASSED
-
-## 告警
-如果已经修复了 20 次还没通过，停下来输出：NEED_HUMAN_HELP
-" --max-iterations 25 --completion-keyword "LOCAL_QA_PASSED"
-```
-
-**Loop 1 完成后**：
-- 输出 `LOCAL_QA_PASSED` → 继续创建 PR
-- 输出 `NEED_HUMAN_HELP` → 停止，等待用户介入
-
----
-
-## Loop 2: CI 修复（使用 Ralph Loop）
-
-**目标**：CI 全绿
-
-**调用方式**：
-```
-/ralph-loop "
-## 任务
-PR #$PR_NUMBER 的 CI 失败，需要修复。
-
-## 执行步骤
-1. 运行 gh pr checks $PR_NUMBER 获取失败的检查
-2. 运行 gh run view --log-failed 读取错误日志
-3. 分析错误原因，修复代码
-4. git add -A && git commit -m 'fix: CI 修复' && git push
-5. 运行 gh pr checks $PR_NUMBER --watch 等待 CI
-6. 如果还是红，重复 1-5
-7. CI 全绿后输出：CI_ALL_GREEN
-
-## 告警
-如果已经修复了 20 次还没通过，停下来输出：NEED_HUMAN_HELP
-" --max-iterations 25 --completion-keyword "CI_ALL_GREEN"
-```
-
-**Loop 2 完成后**：
-- 输出 `CI_ALL_GREEN` → 继续 Learning + Cleanup + Merge
-- 输出 `NEED_HUMAN_HELP` → 停止，等待用户介入
-
----
-
-## 完整流程图
+## 流程节点
 
 ```
-/dev 入口
-    │
-    ▼
-┌─────────────────────────────────────┐
-│  模式检测（bash 脚本）              │
-│  → new / continue / fix / merge     │
-└─────────────────────────────────────┘
-    │
-    ├── new ────────────────────────────┐
-    │                                   ▼
-    │                           ┌──────────────┐
-    │                           │  PRD + DoD   │
-    │                           │  (新任务)    │
-    │                           └──────┬───────┘
-    │                                  │
-    │                                  ▼
-    │                           ┌──────────────┐
-    │                           │  创建 cp-*   │
-    │                           │  分支        │
-    │                           └──────┬───────┘
-    │                                  │
-    ├── continue ──────────────────────┤
-    │   (已在 cp-* 分支，直接进入)     │
-    │   ┌──────────────────────────────┘
-    │   │
-    │   ▼
-    │  ┌─────────────────────────────────────┐
-    │  │  /ralph-loop (Loop 1: 本地 QA)      │
-    │  │  → npm run qa 直到通过              │
-    │  │  → 20 轮告警                        │
-    │  └─────────────────────────────────────┘
-    │       │
-    │       ├── NEED_HUMAN_HELP → 停止
-    │       │
-    │       ▼ LOCAL_QA_PASSED
-    │  ┌─────────────────────────────────────┐
-    │  │  gh pr create                       │
-    │  └─────────────────────────────────────┘
-    │       │
-    │       ▼
-    ├── fix ────────────────────────────┐
-    │                                   │
-    │   ┌───────────────────────────────┘
-    │   │
-    │   ▼
-    │  ┌─────────────────────────────────────┐
-    │  │  /ralph-loop (Loop 2: CI 修复)      │
-    │  │  → 修复 + push 直到 CI 绿           │
-    │  │  → 20 轮告警                        │
-    │  └─────────────────────────────────────┘
-    │       │
-    │       ├── NEED_HUMAN_HELP → 停止
-    │       │
-    │       ▼ CI_ALL_GREEN
-    └── merge ──────────────────────────┐
-                                        │
-        ┌───────────────────────────────┘
-        │
-        ▼
-   ┌─────────────────────────────────────┐
-   │  Learning + Cleanup + Merge         │
-   └─────────────────────────────────────┘
-        │
-        ▼
-      完成
+┌─────────────────────────────────────────────────────────┐
+│                    /dev 流程编排                         │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  Step 1: PRD                                            │
+│      ↓                                                  │
+│  Step 2: 分支创建                                        │
+│      ↓                                                  │
+│  Step 3: QA Decision Node                               │
+│      │   规范来源: skills/qa/SKILL.md                   │
+│      │   产物: docs/QA-DECISION.md                      │
+│      ↓                                                  │
+│  Step 4: DoD 定稿                                        │
+│      ↓                                                  │
+│  Step 5: 写代码                                          │
+│      ↓                                                  │
+│  Step 6: Audit Node                                     │
+│      │   规范来源: skills/audit/SKILL.md                │
+│      │   产物: docs/AUDIT-REPORT.md                     │
+│      │   Gate: Decision 必须是 PASS                     │
+│      ↓                                                  │
+│  Step 7: 跑测试 (npm run qa)                            │
+│      ↓                                                  │
+│  Step 8: PR Gate                                        │
+│      │   执行者: hooks/pr-gate-v2.sh                    │
+│      │   检查: 产物存在 + L1 测试通过                    │
+│      ↓                                                  │
+│  Step 9: CI                                             │
+│      ↓                                                  │
+│  Step 10: Merge                                         │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 ```
-
----
-
-## 有头 vs 无头
-
-| | 有头 | 无头 (Cecelia) |
-|---|---|---|
-| PRD 来源 | 用户说 | prompt 传入 |
-| 告警处理 | Claude 问用户 | 输出 NEED_HUMAN_HELP，N8N 发通知 |
-| 超时 | 无 | N8N 设 1 小时告警 |
-| 流程 | **完全一样** | **完全一样** |
 
 ---
 
@@ -198,8 +104,8 @@ PR #$PR_NUMBER 的 CI 失败，需要修复。
 1. **只在 cp-* 或 feature/* 分支写代码** - Hook 强制
 2. **develop 是主开发线** - PR 合并回 develop
 3. **main 始终稳定** - 只在里程碑时从 develop 合并
-4. **PRD + DoD + CI 是强制检查** - Hook 在写代码前检查 PRD/DoD，PR Gate 检查 CI
-5. **Loop 自动处理失败** - Ralph Loop 自动重试
+4. **产物门控** - QA-DECISION.md 和 AUDIT-REPORT.md 必须存在
+5. **Gate 放行** - pr-gate Hook 检查所有产物和测试
 
 ---
 
@@ -217,16 +123,15 @@ PR #$PR_NUMBER 的 CI 失败，需要修复。
 
 ```
 skills/dev/
-├── SKILL.md        ← 你在这里（入口）
-├── VALIDATION.md   ← 质检规则
+├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每步详情（按需加载）
 │   ├── 01-prd.md
 │   ├── 02-detect.md
 │   ├── 03-branch.md
-│   ├── 04-dod.md
+│   ├── 04-dod.md       ← QA Decision Node
 │   ├── 05-code.md
 │   ├── 06-test.md
-│   ├── 07-quality.md
+│   ├── 07-quality.md   ← Audit Node
 │   ├── 08-pr.md
 │   ├── 09-ci.md
 │   ├── 10-learning.md
@@ -239,18 +144,14 @@ skills/dev/
 
 ---
 
-## 快速修复模式
+## 产物检查清单
 
-**注意**：快速修复模式只适用于 **PR 创建后 CI 失败** 的情况。
-
-**适用条件**：
-- 已有 PR
-- CI 红了
-- 需要修复代码让 CI 通过
-
-**流程**：修复代码 → push → 等 CI → CI 绿 → 合并
-
-**不适用**：新任务不能用快速修复模式跳过 PRD/DoD。Hook 会强制要求 PRD/DoD。
+| 产物 | 位置 | 规范来源 | Gate 检查 |
+|------|------|----------|-----------|
+| PRD | .prd.md | - | ✅ 存在 + 内容有效 |
+| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | ✅ 存在 |
+| DoD | .dod.md | - | ✅ 存在 + 引用 QA 决策 |
+| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | ✅ 存在 + PASS |
 
 ---
 

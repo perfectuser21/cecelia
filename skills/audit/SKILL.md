@@ -112,18 +112,81 @@ description: |
 
 ---
 
+## Audit Report 产物（/dev 流程必须产出）
+
+当 /dev 流程调用 Audit Node 时，**必须**输出 `docs/AUDIT-REPORT.md`。
+
+### 输出 Schema（固定格式）
+
+```yaml
+# Audit Report
+Branch: cp-xxx
+Date: YYYY-MM-DD
+Scope: file1, file2, ...
+Target Level: L2
+
+Summary:
+  L1: 0
+  L2: 0
+  L3: 0
+  L4: 0
+
+Decision: PASS | FAIL
+
+Findings:
+  - id: A1-001
+    layer: L1 | L2 | L3 | L4
+    file: path/to/file
+    line: 123
+    issue: 问题描述
+    fix: 修复建议
+    status: fixed | pending
+
+Blockers: []  # L1 + L2 问题列表
+```
+
+### 字段说明
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| Branch | ✅ | 当前分支名 |
+| Date | ✅ | 审计日期 |
+| Scope | ✅ | 审计范围（改动的文件） |
+| Target Level | ✅ | 目标层级（默认 L2） |
+| Summary | ✅ | 各层级问题数量 |
+| Decision | ✅ | PASS=可继续 / FAIL=需修复 |
+| Findings | ✅ | 发现的问题列表 |
+| Blockers | ✅ | L1+L2 问题的 ID 列表 |
+
+### Decision 判定规则
+
+```
+L1 > 0 OR L2 > 0  →  Decision: FAIL
+L1 = 0 AND L2 = 0 →  Decision: PASS
+```
+
+### Gate 检查
+
+PR Gate 会检查：
+1. `docs/AUDIT-REPORT.md` 存在
+2. `Decision: PASS`（FAIL 则 Gate 失败）
+
+---
+
 ## 与 /dev 的关系
 
 ```
-/dev 流程中的使用：
+/dev 流程中的使用（必须）：
 
-Step 4（写代码）完成后：
-  - 可选调用 /audit 对新代码做 L1+L2 检查
-  - 不阻塞 PR 创建
+Step 5（写代码）完成后：
+  - Audit Node 对新代码做 L1+L2 检查
+  - 输出 docs/AUDIT-REPORT.md
+  - Decision: FAIL 时必须修复后重新审计
+  - Decision: PASS 后才能继续 PR 创建
 
-独立使用：
-  - 用户主动调用 /audit
-  - 按本 skill 流程执行
+Gate 强制检查：
+  - PR Gate 检查 AUDIT-REPORT.md 存在
+  - PR Gate 检查 Decision: PASS
 ```
 
 ---

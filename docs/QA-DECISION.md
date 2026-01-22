@@ -1,45 +1,34 @@
 # QA Decision
 
-> 全链路流程验证
+Decision: NO_RCI
+Priority: P2
+RepoType: Engine
 
-## 基本信息
+Tests:
+  - dod_item: "SKILL.md 不含'调用 /qa'或'调用 /audit'"
+    method: manual
+    location: manual:grep-verify
+  - dod_item: "steps/04-dod.md 改为 QA Decision Node"
+    method: manual
+    location: manual:file-check
+  - dod_item: "steps/07-quality.md 改为 Audit Node"
+    method: manual
+    location: manual:file-check
+  - dod_item: "/qa SKILL.md 包含固定输出 schema"
+    method: manual
+    location: manual:file-check
+  - dod_item: "/audit SKILL.md 包含固定输出 schema"
+    method: manual
+    location: manual:file-check
+  - dod_item: "/audit 删除'可选调用'，改为'必须'"
+    method: manual
+    location: manual:file-check
+  - dod_item: "npm run qa 通过"
+    method: auto
+    location: contract:C2-001
 
-| 字段 | 值 |
-|------|-----|
-| Branch | `cp-test-full-flow` |
-| Date | 2026-01-22 |
-| PRD | .prd.md |
-| 改动类型 | feature（小功能增强） |
+RCI:
+  new: []
+  update: []
 
-## 测试策略
-
-### 必须跑的测试
-
-| 层级 | 命令 | 说明 |
-|------|------|------|
-| Unit | `npm run test` | 单元测试 |
-| Regression | `npm run qa` | typecheck + test + build |
-
-### RCI 决策
-
-| 决策 | 内容 |
-|------|------|
-| 新增 RCI | 否 |
-| 理由 | 小功能增强，不影响核心逻辑，无需纳入回归契约 |
-
-### DoD 条目测试方式
-
-| DoD 条目 | 测试方式 | 说明 |
-|----------|----------|------|
-| metrics.cjs 增加 generated_at | auto | tests/hooks/metrics.test.ts |
-| 测试验证字段存在 | auto | tests/hooks/metrics.test.ts |
-| npm run qa 通过 | auto | CI |
-
-## 约束
-
-- P2 优先级：小功能，全部 auto 测试
-- 不需要 manual 测试
-
-## 结论
-
-Decision: **READY**
+Reason: 文档/措辞重构，不涉及核心逻辑改动，无需纳入回归契约

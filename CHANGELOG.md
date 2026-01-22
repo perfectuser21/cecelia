@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.14.0] - 2026-01-22
+
+### Changed (Skills 架构重构)
+- **skills/dev/SKILL.md**: 重构为"流程编排者"角色
+  - 从"调用 /qa /audit"改为"QA Decision Node / Audit Node"
+  - 明确"规范来源"引用，不做测试/审计判断
+  - 产物门控由 pr-gate Hook 执行
+- **skills/dev/steps/04-dod.md**: 改为 QA Decision Node
+  - 规范来源: skills/qa/SKILL.md
+  - 产物: docs/QA-DECISION.md
+- **skills/dev/steps/07-quality.md**: 改为 Audit Node
+  - 规范来源: skills/audit/SKILL.md
+  - 产物: docs/AUDIT-REPORT.md
+- **skills/qa/SKILL.md**: 添加固定输出 schema
+  - QA-DECISION.md 格式规范
+  - Gate 检查要求
+- **skills/audit/SKILL.md**: 添加固定输出 schema + 强制执行
+  - AUDIT-REPORT.md 格式规范
+  - 从"可选调用"改为"必须"
+  - Decision: FAIL 时阻止 PR
+
 ## [8.13.0] - 2026-01-22
 
 ### Added (全链路流程验证)

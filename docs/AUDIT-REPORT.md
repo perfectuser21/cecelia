@@ -1,54 +1,40 @@
 # Audit Report
 
-> 全链路流程验证
+Branch: cp-skill-refactor
+Date: 2026-01-22
+Scope: skills/dev/SKILL.md, skills/dev/steps/04-dod.md, skills/dev/steps/07-quality.md, skills/qa/SKILL.md, skills/audit/SKILL.md
+Target Level: L2
 
-## 基本信息
+Summary:
+  L1: 0
+  L2: 0
+  L3: 0
+  L4: 0
 
-| 字段 | 值 |
-|------|-----|
-| Branch | `cp-test-full-flow` |
-| Date | 2026-01-22 |
-| Scope | scripts/devgate/metrics.cjs, tests/hooks/metrics.test.ts |
-| Target Level | L2 |
+Decision: PASS
 
-## 审计结果
+Findings: []
 
-### 改动分析
+Blockers: []
 
-| 文件 | 改动 | 分析 |
-|------|------|------|
-| metrics.cjs | +1 行：`generated_at: new Date().toISOString()` | 简单的时间戳字段，无风险 |
-| metrics.test.ts | +10 行：新增测试用例 | 标准测试，无问题 |
+---
 
-### 统计
+## 审计说明
 
-| 层级 | 数量 | 状态 |
-|------|------|------|
-| L1 (阻塞性) | 0 | - |
-| L2 (功能性) | 0 | - |
-| L3 (最佳实践) | 0 | - |
-| L4 (过度优化) | 0 | - |
+本次改动为文档/措辞重构：
+1. 将"调用 /qa /audit"改为"QA Decision Node / Audit Node（参考规范）"
+2. 添加 QA-DECISION.md 和 AUDIT-REPORT.md 的固定输出 schema
+3. 将 /audit 从"可选调用"改为"必须"
 
-### Blockers (L1 + L2)
+改动范围仅限于 Skill 文档的措辞和结构，不涉及任何代码逻辑：
+- 无语法错误风险（纯 Markdown）
+- 无功能影响（文档性质）
+- 无边界条件问题
 
-| ID | 层级 | 文件 | 问题 | 状态 |
-|----|------|------|------|------|
-| (无) | - | - | - | - |
-
-### L3 建议 (可选修复)
-
-| ID | 文件 | 建议 |
-|----|------|------|
-| (无) | - | - |
-
-## 结论
-
-Decision: **PASS**
-
-### PASS 条件
+## PASS 条件
 - [x] L1 问题：0 个
 - [x] L2 问题：0 个
 
 ---
 
-**审计完成时间**: 2026-01-22 22:20
+**审计完成时间**: 2026-01-22 23:40

@@ -7,7 +7,7 @@
 ## 流程
 
 ```
-DoD 草稿 → 调用 /qa → QA 决策产物 → DoD 定稿
+DoD 草稿 → QA Decision Node → QA 决策产物 → DoD 定稿
 ```
 
 ---
@@ -28,32 +28,53 @@ DoD 草稿:
 
 ---
 
-## Step 4.2: 调用 /qa（必须）
+## Step 4.2: QA Decision Node（必须）
 
-**在 DoD 定稿前，必须调用 /qa skill 输出测试决策**：
+**在 DoD 定稿前，必须输出 QA 决策产物**。
 
-```
-/qa
-```
+### 规范来源
 
-**输入**：
+参考 `skills/qa/SKILL.md` 中的规则：
+- 测试大类：Regression / Unit / E2E
+- RCI 判定标准
+- Golden Path 判定标准
+- 测试方式决策（auto/manual）
+
+### 输入
+
 - PRD (.prd.md)
 - DoD 草稿
 - 改动类型（feature/bugfix/refactor）
 
-**输出**：
+### 输出
+
 - `docs/QA-DECISION.md`（必须创建）
 
-**QA 决策内容**：
-- 要不要新增/更新 RCI
-- 每个 DoD 条目用 auto 还是 manual 测试
-- P0 功能必须 auto，不允许 manual
+### 输出 Schema（固定格式）
+
+```yaml
+# QA Decision
+Decision: NO_RCI | MUST_ADD_RCI | UPDATE_RCI
+Priority: P0 | P1 | P2
+RepoType: Engine | Business
+
+Tests:
+  - dod_item: "功能描述"
+    method: auto | manual
+    location: tests/xxx.test.ts | manual:描述
+
+RCI:
+  new: []      # 需要新增的 RCI ID
+  update: []   # 需要更新的 RCI ID
+
+Reason: 一句话说明决策理由
+```
 
 ---
 
 ## Step 4.3: DoD 定稿
 
-根据 QA 决策，补全每个 DoD 条目的 Test 字段：
+根据 QA 决策产物，补全每个 DoD 条目的 Test 字段：
 
 ```markdown
 # DoD - <功能名>
@@ -64,12 +85,13 @@ QA: docs/QA-DECISION.md   ← 必须引用
 
 ### 功能验收
 - [ ] 用户输入正确密码能登录成功
-      Test: auto (tests/auth.test.ts)
+      Test: tests/auth.test.ts
 - [ ] 用户输入错误密码显示错误提示
-      Test: auto (tests/auth.test.ts)
+      Test: tests/auth.test.ts
 
 ### 测试验收
 - [ ] npm run qa 通过
+      Test: contract:C2-001
 ```
 
 ---
@@ -85,12 +107,13 @@ QA: docs/QA-DECISION.md
 
 ### 功能验收
 - [ ] <功能点 1>
-      Test: auto/manual (位置/说明)
+      Test: tests/... | contract:... | manual:...
 - [ ] <功能点 2>
-      Test: auto/manual (位置/说明)
+      Test: tests/... | contract:... | manual:...
 
 ### 测试验收
 - [ ] npm run qa 通过
+      Test: contract:C2-001
 ```
 
 ---
