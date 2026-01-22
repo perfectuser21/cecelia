@@ -13,6 +13,7 @@ import {
   Settings,
   Video,
   Users,
+  KeyRound,
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -59,6 +60,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'AiEmployeesPage': () => import('../pages/AiEmployeesPage'),
   'AiEmployeeDetailPage': () => import('../pages/AiEmployeeDetailPage'),
   'AiAbilityDetailPage': () => import('../pages/AiAbilityDetailPage'),
+  'AccountsList': () => import('../pages/accounts/AccountsList'),
 };
 
 // 向后兼容：保留 pageComponents 导出（仅 Autopilot 组件）
@@ -102,6 +104,13 @@ export const autopilotNavGroups: NavGroup[] = [
         label: 'AI 员工',
         featureKey: 'ai-employees',
         component: 'AiEmployeesPage'
+      },
+      {
+        path: '/accounts',
+        icon: KeyRound,
+        label: '账号管理',
+        featureKey: 'accounts',
+        component: 'AccountsList'
       },
       {
         path: '/settings',
