@@ -187,7 +187,7 @@ describe('metrics.sh 基础功能', () => {
   })
 
   it('--format json 输出合法 JSON', () => {
-    const output = execSync(`bash ${METRICS_SCRIPT} --format json`, {
+    const output = execSync(`bash ${METRICS_SCRIPT} --format json --month 2026-01`, {
       encoding: 'utf-8',
       cwd: ROOT,
     })

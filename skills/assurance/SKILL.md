@@ -96,12 +96,18 @@ contracts/regression-contract.yaml
 ### 2. 更新对应 Contract（GCI / RCI）
 
 **如果是 Gate 改动**:
-- 在 `contracts/gate-contract.yaml` 中新增或更新一个契约条目
+- 运行 `node scripts/devgate/draft-gci.cjs --output artifacts/gci-draft.yaml`
+- 审核草稿，确认后合并到 `contracts/gate-contract.yaml`
 - 标识格式：`G1-xxx`, `G2-xxx`, ...
 
 **如果是业务改动**:
 - 在 `contracts/regression-contract.yaml` 中新增或更新一个契约条目
 - 标识格式：`C1-xxx`, `C2-xxx`, ...
+
+**自动化工具** (v9.1+):
+- `scripts/devgate/draft-gci.cjs` - 自动生成 GCI 草稿
+- 用法: `node scripts/devgate/draft-gci.cjs [--base <branch>] [--output <file>]`
+- 输出: YAML 格式的契约草稿
 
 **禁止行为**（/assurance 自动阻止）:
 - Gate 改动不能写 RCI
@@ -249,11 +255,14 @@ zenithjoy-engine/
 │   ├── gate-contract.yaml       # L1 GCI
 │   └── regression-contract.yaml # L1 RCI
 ├── scripts/
-│   ├── run-gate-tests.sh        # L2
-│   └── run-regression.sh        # L2
+│   ├── run-gate-tests.sh        # L2 Executor
+│   ├── run-regression.sh        # L2 Executor
+│   └── devgate/
+│       └── draft-gci.cjs        # GCI 草稿自动生成 (v9.1)
 ├── artifacts/                   # L3 Evidence
 │   ├── QA-DECISION.md
-│   └── AUDIT-REPORT.md
+│   ├── AUDIT-REPORT.md
+│   └── gci-draft.yaml           # GCI 草稿（临时）
 └── skills/
     └── assurance/SKILL.md       # 本文件
 ```

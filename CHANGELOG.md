@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.1.0] - 2026-01-23
+
+### Added
+
+- **scripts/devgate/draft-gci.cjs**: GCI 草稿自动生成
+  - 分析 git diff，检测 Gate 相关文件改动
+  - 自动生成契约草稿（YAML 格式）
+  - 用法: `node scripts/devgate/draft-gci.cjs [--base <branch>] [--output <file>]`
+
+- **tests/gate/draft-gci.test.ts**: 19 个单元测试
+  - isGateFile: Gate 文件模式匹配
+  - getCategory: GCI 分类映射
+  - generateDraft: 草稿生成逻辑
+
+### Changed
+
+- **/assurance Skill**: 集成 draft-gci 自动化工具
+- 体系从"手写契约"升级为"审核契约草稿"
+
+---
+
 ## [9.0.0] - 2026-01-23
 
 ### 里程碑版本：RADNA 体系 + 全量审计 + Gate Test Suite
