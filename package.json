@@ -1,6 +1,6 @@
 {
   "name": "zenithjoy-engine",
-  "version": "9.1.0",
+  "version": "9.1.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "qa": "npm run typecheck && npm run test && npm run build",
     "pr:check": "npm run qa",
-    "release:check": "npm run qa && bash scripts/release-check.sh"
+    "release:check": "npm run qa && bash scripts/release-check.sh",
+    "coverage:rci": "node scripts/devgate/scan-rci-coverage.cjs"
   },
   "keywords": [],
   "author": "",

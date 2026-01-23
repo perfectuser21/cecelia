@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.1.1] - 2026-01-23
+
+### Added
+
+- **scripts/devgate/scan-rci-coverage.cjs**: RCI 覆盖率扫描器
+  - 枚举业务入口（Skills, Hooks, Scripts）
+  - 解析 RCI 并计算覆盖率
+  - 生成 baseline-coverage.json 和 BASELINE-SNAPSHOT.md
+
+- **tests/gate/scan-rci-coverage.test.ts**: 17 个单元测试
+
+- **npm run coverage:rci**: 检查 RCI 覆盖率命令
+
+### Baseline Snapshot
+
+当前 RCI 覆盖率: 25% (2/8 业务入口)
+
+未覆盖入口（需后续添加 RCI）：
+- /qa, /audit, /assurance Skills
+- run-regression.sh, qa-report.sh, release-check.sh
+
+---
+
 ## [9.1.0] - 2026-01-23
 
 ### Added
