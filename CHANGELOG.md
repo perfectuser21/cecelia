@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.18.0] - 2026-01-23
+
+### Improved (P2 文档易用性改进)
+- **skills/qa/SKILL.md**: 添加概念速查表，明确三组分层系统区别
+- **skills/qa/SKILL.md**: 快速调用部分添加 ID 命名规范链接
+- **skills/dev/steps/04-dod.md**: 添加 Test 字段格式说明表格
+- **skills/dev/steps/08-pr.md**: 添加版本号变化示例表
+
 ## [8.17.0] - 2026-01-23
 
 ### Fixed (P1 文档一致性修复)

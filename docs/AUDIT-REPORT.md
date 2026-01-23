@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-fix-p1-issues
+Branch: cp-fix-p2-issues
 Date: 2026-01-23
-Scope: skills/qa/SKILL.md, skills/dev/SKILL.md, skills/audit/SKILL.md, skills/qa/knowledge/criteria.md
+Scope: skills/qa/SKILL.md, skills/dev/steps/04-dod.md, skills/dev/steps/08-pr.md
 Target Level: L2
 
 Summary:
@@ -21,22 +21,18 @@ Blockers: []
 
 ## 审计说明
 
-本次改动修复 P1 级文档问题：
+本次改动修复 P2 级文档易用性问题：
 
-1. **Decision 值定义清晰化**
-   - 统一输出格式按模式分别说明 Decision 值
-   - 补充 GP/Feature 模式的 Decision 枚举
+1. **概念速查表**
+   - 在 qa/SKILL.md 开头添加三组分层系统速查表
+   - 帮助用户快速理解不同分层概念的用途
 
-2. **L2B Evidence 定义**
-   - 在 qa/SKILL.md 添加 L2B Evidence 文件格式说明
+2. **示例规范化**
+   - 在 04-dod.md 添加 Test 字段格式说明表格
+   - 在 08-pr.md 添加版本号变化示例表
 
-3. **元数据统一**
-   - 所有 SKILL.md 添加 version/updated frontmatter
-   - 移除 audit/SKILL.md 底部的旧格式更新时间
-
-4. **概念澄清**
-   - 在 criteria.md 标注 GP/RCI ID 来源
-   - 在 qa/SKILL.md 澄清三组概念的区别
+3. **导航优化**
+   - 在快速调用部分添加 ID 命名规范链接
 
 改动范围仅限于文档：
 - 无语法错误风险（Markdown）
@@ -49,4 +45,4 @@ Blockers: []
 
 ---
 
-**审计完成时间**: 2026-01-23 09:43
+**审计完成时间**: 2026-01-23 09:58

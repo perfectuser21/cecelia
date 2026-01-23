@@ -116,6 +116,16 @@ QA: docs/QA-DECISION.md
       Test: contract:C2-001
 ```
 
+### Test 字段格式说明
+
+| 格式 | 场景 | 优先级 | 示例 |
+|------|------|--------|------|
+| `tests/xxx.test.ts` | 自动化单元测试 | ⭐⭐⭐ 最优 | `tests/auth.test.ts` |
+| `contract:RCI-ID` | 回归契约验证 | ⭐⭐ 次优 | `contract:C2-001` |
+| `manual:描述` | 手动验证步骤 | ⭐ 最后 | `manual:截图验证UI` |
+
+**选择原则**：能自动化测试的优先自动化，其次引用回归契约，最后才用手动验证。
+
 ---
 
 ## Gate 检查

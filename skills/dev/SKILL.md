@@ -156,6 +156,35 @@ skills/dev/
 
 ---
 
+## 状态追踪（Core/Notion 同步）
+
+有头和无头模式共用同一套追踪机制，在关键点调用 `track.sh`：
+
+```bash
+# 新任务开始时
+bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse --abbrev-ref HEAD)" ".prd.md"
+
+# 每个步骤
+bash skills/dev/scripts/track.sh step 1 "PRD"
+bash skills/dev/scripts/track.sh step 3 "Branch"
+bash skills/dev/scripts/track.sh step 4 "DoD"
+bash skills/dev/scripts/track.sh step 5 "Code"
+bash skills/dev/scripts/track.sh step 6 "Test"
+bash skills/dev/scripts/track.sh step 7 "PR"
+bash skills/dev/scripts/track.sh step 8 "CI"
+bash skills/dev/scripts/track.sh step 9 "Merge"
+
+# 完成时
+bash skills/dev/scripts/track.sh done "$PR_URL"
+
+# 失败时
+bash skills/dev/scripts/track.sh fail "Error message"
+```
+
+追踪文件 `.cecelia-run-id` 自动管理，Core 是主数据源，Notion 是镜像。
+
+---
+
 ## 完成度检查
 
 **Cleanup 后运行**：
