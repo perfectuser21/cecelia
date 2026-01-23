@@ -30,6 +30,12 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --desc)
+            # L1 fix: 检查 --desc 是否带参数，防止越界
+            if [[ -z "${2:-}" ]]; then
+                echo "错误: --desc 需要提供描述参数"
+                echo "用法: $0 --desc \"需求描述\""
+                exit 1
+            fi
             MODE="desc"
             DESC="$2"
             shift 2

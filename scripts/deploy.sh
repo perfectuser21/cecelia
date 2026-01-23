@@ -3,10 +3,12 @@
 # deploy.sh - 部署稳定版本到 ~/.claude/
 # ============================================================================
 #
-# 用法: bash scripts/deploy.sh [--from-main]
+# 用法: bash scripts/deploy.sh [OPTIONS]
 #
-# 默认：部署当前目录的文件
-# --from-main：从 main 分支部署（推荐用于生产环境）
+# OPTIONS:
+#   --from-main   从 main 分支部署（推荐用于生产环境）
+#   --dry-run     显示将要执行的操作，但不实际执行
+#   -h, --help    显示帮助
 #
 # 同步内容:
 #   - hooks/    → ~/.claude/hooks/
@@ -31,16 +33,43 @@ ENGINE_ROOT="$(dirname "$SCRIPT_DIR")"
 # 目标目录
 TARGET_DIR="$HOME/.claude"
 
-# 检查参数
+# L3 fix: 添加 --dry-run 选项
 FROM_MAIN=false
-if [[ "${1:-}" == "--from-main" ]]; then
-    FROM_MAIN=true
-fi
+DRY_RUN=false
 
+# 解析参数
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --from-main)
+            FROM_MAIN=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -h|--help)
+            echo "用法: $0 [OPTIONS]"
+            echo ""
+            echo "OPTIONS:"
+            echo "  --from-main   从 main 分支部署"
+            echo "  --dry-run     显示将要执行的操作"
+            echo "  -h, --help    显示帮助"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}未知选项: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+# L3 fix: 用文字替代 emoji，避免终端兼容问题
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  🚀 部署 ZenithJoy Engine"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "========================================"
+echo "  Deploy ZenithJoy Engine"
+[[ "$DRY_RUN" == "true" ]] && echo "  (DRY RUN - no changes will be made)"
+echo "========================================"
 echo ""
 
 # ========================================
@@ -54,19 +83,27 @@ if [[ "$FROM_MAIN" == "true" ]]; then
     echo -e "${BLUE}从 main 分支部署...${NC}"
     echo ""
 
-    # 检查是否有未提交的改动
-    if ! git diff --quiet 2>/dev/null; then
+    # L2 fix: 检查工作区和暂存区的改动
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
         echo -e "${RED}错误: 有未提交的改动，请先提交或 stash${NC}"
         exit 1
     fi
 
-    # 切换到 main
-    git fetch origin main 2>/dev/null || true
+    # L2 fix: 不吞 git fetch/pull 错误
+    echo "  Fetching main branch..."
+    if ! git fetch origin main 2>&1; then
+        echo -e "${YELLOW}警告: git fetch 失败，继续使用本地版本${NC}"
+    fi
+
     git checkout main 2>/dev/null || {
         echo -e "${RED}错误: 无法切换到 main 分支${NC}"
         exit 1
     }
-    git pull origin main 2>/dev/null || true
+
+    echo "  Pulling latest changes..."
+    if ! git pull origin main 2>&1; then
+        echo -e "${YELLOW}警告: git pull 失败，继续使用本地版本${NC}"
+    fi
 
     echo "  当前: main 分支"
     echo "  版本: $(grep '"version"' package.json | head -1 | cut -d'"' -f4)"
@@ -80,34 +117,35 @@ echo ""
 # ========================================
 # 1. 同步 hooks/
 # ========================================
-echo -e "${BLUE}1️⃣  同步 hooks/${NC}"
+echo -e "${BLUE}[1] 同步 hooks/${NC}"
 
 if [[ -d "$ENGINE_ROOT/hooks" ]]; then
-    mkdir -p "$TARGET_DIR/hooks"
+    [[ "$DRY_RUN" != "true" ]] && mkdir -p "$TARGET_DIR/hooks"
 
-    # P1 修复: glob 无匹配时跳过循环
     for f in "$ENGINE_ROOT/hooks/"*.sh; do
         [[ -e "$f" ]] || continue
         if [[ -f "$f" ]]; then
             filename=$(basename "$f")
 
-            if [[ -f "$TARGET_DIR/hooks/$filename" ]]; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "   [DRY-RUN] Would sync: $filename"
+            elif [[ -f "$TARGET_DIR/hooks/$filename" ]]; then
                 if diff -q "$f" "$TARGET_DIR/hooks/$filename" > /dev/null 2>&1; then
-                    echo -e "   ${GREEN}✓${NC} $filename (无变化)"
+                    echo -e "   ${GREEN}[OK]${NC} $filename (no change)"
                 else
                     cp "$f" "$TARGET_DIR/hooks/$filename"
                     chmod +x "$TARGET_DIR/hooks/$filename"
-                    echo -e "   ${YELLOW}↑${NC} $filename (已更新)"
+                    echo -e "   ${YELLOW}[UP]${NC} $filename (updated)"
                 fi
             else
                 cp "$f" "$TARGET_DIR/hooks/$filename"
                 chmod +x "$TARGET_DIR/hooks/$filename"
-                echo -e "   ${GREEN}+${NC} $filename (新增)"
+                echo -e "   ${GREEN}[+]${NC} $filename (new)"
             fi
         fi
     done
 else
-    echo "   ⚠️  hooks/ 目录不存在"
+    echo "   [WARN] hooks/ directory not found"
 fi
 
 echo ""
@@ -115,30 +153,31 @@ echo ""
 # ========================================
 # 2. 同步 skills/
 # ========================================
-echo -e "${BLUE}2️⃣  同步 skills/${NC}"
+echo -e "${BLUE}[2] 同步 skills/${NC}"
 
 if [[ -d "$ENGINE_ROOT/skills" ]]; then
-    mkdir -p "$TARGET_DIR/skills"
+    [[ "$DRY_RUN" != "true" ]] && mkdir -p "$TARGET_DIR/skills"
 
-    # P1 修复: glob 无匹配时跳过循环
     for skill_dir in "$ENGINE_ROOT/skills/"*/; do
         [[ -e "$skill_dir" ]] || continue
         if [[ -d "$skill_dir" ]]; then
             skill_name=$(basename "$skill_dir")
             target_skill="$TARGET_DIR/skills/$skill_name"
 
-            if command -v rsync &> /dev/null; then
+            if [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "   [DRY-RUN] Would sync: $skill_name/"
+            elif command -v rsync &> /dev/null; then
                 rsync -a --delete "$skill_dir" "$target_skill/" 2>/dev/null
-                echo -e "   ${GREEN}✓${NC} $skill_name/"
+                echo -e "   ${GREEN}[OK]${NC} $skill_name/"
             else
                 rm -rf "$target_skill"
                 cp -r "$skill_dir" "$target_skill"
-                echo -e "   ${GREEN}✓${NC} $skill_name/ (cp)"
+                echo -e "   ${GREEN}[OK]${NC} $skill_name/ (cp)"
             fi
         fi
     done
 else
-    echo "   ⚠️  skills/ 目录不存在"
+    echo "   [WARN] skills/ directory not found"
 fi
 
 echo ""
@@ -146,29 +185,50 @@ echo ""
 # ========================================
 # 3. 验证
 # ========================================
-echo -e "${BLUE}3️⃣  验证部署${NC}"
+echo -e "${BLUE}[3] 验证部署${NC}"
 
-HOOKS_COUNT=$(ls -1 "$TARGET_DIR/hooks/"*.sh 2>/dev/null | wc -l)
-SKILLS_COUNT=$(ls -1d "$TARGET_DIR/skills/"*/ 2>/dev/null | wc -l)
+# L2 fix: 使用数组计数避免 ls | wc -l 的错误输出问题
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo "   [DRY-RUN] Skipping verification"
+else
+    HOOKS_COUNT=0
+    SKILLS_COUNT=0
 
-echo "   Hooks:  $HOOKS_COUNT 个"
-echo "   Skills: $SKILLS_COUNT 个"
+    if [[ -d "$TARGET_DIR/hooks" ]]; then
+        for f in "$TARGET_DIR/hooks/"*.sh; do
+            [[ -e "$f" ]] && HOOKS_COUNT=$((HOOKS_COUNT + 1))
+        done
+    fi
+
+    if [[ -d "$TARGET_DIR/skills" ]]; then
+        for d in "$TARGET_DIR/skills/"*/; do
+            [[ -d "$d" ]] && SKILLS_COUNT=$((SKILLS_COUNT + 1))
+        done
+    fi
+
+    echo "   Hooks:  $HOOKS_COUNT"
+    echo "   Skills: $SKILLS_COUNT"
+fi
 
 # ========================================
 # 4. 如果之前切换了分支，切回去
 # ========================================
 if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "main" ]]; then
     echo ""
-    echo -e "${BLUE}4️⃣  切回原分支${NC}"
+    echo -e "${BLUE}[4] 切回原分支${NC}"
     git checkout "$CURRENT_BRANCH" 2>/dev/null
-    echo "   已切回 $CURRENT_BRANCH"
+    echo "   Switched back to $CURRENT_BRANCH"
 fi
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "  ${GREEN}✅ 部署完成${NC}"
-if [[ "$FROM_MAIN" == "true" ]]; then
-    echo -e "  ${GREEN}   (从 main 分支部署)${NC}"
+echo "========================================"
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "  ${GREEN}[DRY RUN] Complete${NC}"
+else
+    echo -e "  ${GREEN}[OK] Deploy Complete${NC}"
 fi
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [[ "$FROM_MAIN" == "true" ]]; then
+    echo "  (deployed from main branch)"
+fi
+echo "========================================"
 echo ""

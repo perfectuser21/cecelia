@@ -42,25 +42,27 @@ echo "  [L2B: Evidence 校验]"
 L2_EVIDENCE_FILE="$PROJECT_ROOT/.layer2-evidence.md"
 
 # 检查 .layer2-evidence.md 是否存在
-echo -n "  证据文件... "
+# L3 fix: 使用 printf 替代 echo -n 提高兼容性
+printf "  证据文件... "
 CHECKED=$((CHECKED + 1))
 if [[ -f "$L2_EVIDENCE_FILE" ]]; then
-    echo "✅"
+    echo "[OK]"
 else
-    echo "❌ (.layer2-evidence.md 不存在)"
-    echo "    → 请创建 .layer2-evidence.md 记录截图和 curl 验证"
+    echo "[FAIL] (.layer2-evidence.md 不存在)"
+    echo "    -> 请创建 .layer2-evidence.md 记录截图和 curl 验证"
     FAILED=1
 fi
 
 # 如果证据文件存在，检查内容
 if [[ -f "$L2_EVIDENCE_FILE" ]]; then
+    # L2 fix: 使用兼容 macOS 的正则 (替换 grep -P)
     # 提取所有截图 ID（S1, S2, ...）
-    SCREENSHOT_IDS=$(grep -oP '###\s+S\d+' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP 'S\d+' || echo "")
+    SCREENSHOT_IDS=$(grep -o '###[[:space:]]*S[0-9]*' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -o 'S[0-9]*' || echo "")
 
     if [[ -n "$SCREENSHOT_IDS" ]]; then
         for SID in $SCREENSHOT_IDS; do
-            # 查找对应的文件路径
-            FILE_PATH=$(grep -A5 "### $SID:" "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP '文件:\s*`\K[^`]+' || echo "")
+            # 查找对应的文件路径 (兼容 macOS)
+            FILE_PATH=$(grep -A5 "### $SID:" "$L2_EVIDENCE_FILE" 2>/dev/null | sed -n 's/.*文件:[[:space:]]*`\([^`]*\)`.*/\1/p' | head -1 || echo "")
 
             if [[ -n "$FILE_PATH" ]]; then
                 # 转换相对路径为绝对路径
@@ -70,39 +72,56 @@ if [[ -f "$L2_EVIDENCE_FILE" ]]; then
                     FULL_PATH="$PROJECT_ROOT/$FILE_PATH"
                 fi
 
+                # L2 fix: 兼容 macOS 的路径规范化 (替换 realpath -m)
+                # 使用 cd + pwd 组合来规范化路径
+                normalize_path() {
+                    local path="$1"
+                    local dir
+                    dir=$(dirname "$path")
+                    local base
+                    base=$(basename "$path")
+                    if [[ -d "$dir" ]]; then
+                        echo "$(cd "$dir" && pwd)/$base"
+                    else
+                        # 目录不存在时，手动处理 ..
+                        echo "$path" | sed 's|/\./|/|g; s|[^/]*/\.\./||g'
+                    fi
+                }
+                REAL_PATH=$(normalize_path "$FULL_PATH")
+
                 # 安全检查：防止路径遍历
-                REAL_PATH=$(realpath -m "$FULL_PATH" 2>/dev/null || echo "")
                 if [[ -z "$REAL_PATH" || ! "$REAL_PATH" =~ ^"$PROJECT_ROOT" ]]; then
-                    echo "  截图 $SID... ❌ (路径超出项目范围: $FILE_PATH)" >&2
+                    echo "  截图 $SID... [FAIL] (路径超出项目范围: $FILE_PATH)" >&2
                     FAILED=1
                     continue
                 fi
 
-                echo -n "  截图 $SID... "
+                printf "  截图 $SID... "
                 CHECKED=$((CHECKED + 1))
                 if [[ -f "$FULL_PATH" ]]; then
-                    echo "✅"
+                    echo "[OK]"
                 else
-                    echo "❌ (文件不存在: $FILE_PATH)"
+                    echo "[FAIL] (文件不存在: $FILE_PATH)"
                     FAILED=1
                 fi
             fi
         done
     fi
 
-    # 检查 curl 证据
-    CURL_IDS=$(grep -oP '###\s+C\d+' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -oP 'C\d+' || echo "")
+    # 检查 curl 证据 (L2 fix: 兼容 macOS)
+    CURL_IDS=$(grep -o '###[[:space:]]*C[0-9]*' "$L2_EVIDENCE_FILE" 2>/dev/null | grep -o 'C[0-9]*' || echo "")
 
     if [[ -n "$CURL_IDS" ]]; then
         for CID in $CURL_IDS; do
-            CURL_BLOCK=$(sed -n "/### $CID:/,/^###/p" "$L2_EVIDENCE_FILE" 2>/dev/null | head -n -1)
+            # L2 fix: 使用 awk 替代 sed head -n -1 (更可移植)
+            CURL_BLOCK=$(awk "/### $CID:/,/^###/{if(/^###/ && !/### $CID:/) exit; print}" "$L2_EVIDENCE_FILE" 2>/dev/null)
 
-            echo -n "  curl $CID... "
+            printf "  curl $CID... "
             CHECKED=$((CHECKED + 1))
-            if echo "$CURL_BLOCK" | grep -qE "HTTP_STATUS:\s*[0-9]+" 2>/dev/null; then
-                echo "✅"
+            if echo "$CURL_BLOCK" | grep -qE "HTTP_STATUS:[[:space:]]*[0-9]+" 2>/dev/null; then
+                echo "[OK]"
             else
-                echo "❌ (缺少 HTTP_STATUS: xxx)"
+                echo "[FAIL] (缺少 HTTP_STATUS: xxx)"
                 FAILED=1
             fi
         done
@@ -110,8 +129,8 @@ if [[ -f "$L2_EVIDENCE_FILE" ]]; then
 
     # 如果没有任何截图和 curl 证据
     if [[ -z "$SCREENSHOT_IDS" && -z "$CURL_IDS" ]]; then
-        echo "  ⚠️  证据文件为空（没有 S* 或 C* 条目）"
-        echo "    → 请添加截图或 curl 验证证据"
+        echo "  [WARN] 证据文件为空（没有 S* 或 C* 条目）"
+        echo "    -> 请添加截图或 curl 验证证据"
         FAILED=1
     fi
 fi
@@ -125,13 +144,13 @@ echo "  [L3: Acceptance 校验]"
 DOD_FILE="$PROJECT_ROOT/.dod.md"
 
 # 检查 .dod.md 是否存在
-echo -n "  DoD 文件... "
+printf "  DoD 文件... "
 CHECKED=$((CHECKED + 1))
 if [[ -f "$DOD_FILE" ]]; then
-    echo "✅"
+    echo "[OK]"
 else
-    echo "❌ (.dod.md 不存在)"
-    echo "    → 请创建 .dod.md 记录 DoD 清单"
+    echo "[FAIL] (.dod.md 不存在)"
+    echo "    -> 请创建 .dod.md 记录 DoD 清单"
     FAILED=1
 fi
 

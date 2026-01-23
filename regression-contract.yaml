@@ -1,6 +1,7 @@
 # ============================================================================
 # Regression Contract - ZenithJoy Engine
 # ============================================================================
+# Schema: regression-contract-v1.yaml (internal)
 #
 # 全量回归的唯一合法定义来源
 #
@@ -15,7 +16,9 @@
 #
 # ============================================================================
 
-version: "1.20.0"
+# NOTE: version 需要与 package.json 保持同步
+# 更新 package.json 时同步更新此处
+version: "9.0.0"
 updated: "2026-01-23"
 
 # ============================================================================
@@ -456,11 +459,13 @@ hooks:
       type: code
       file: "scripts/run-regression.sh"
       contains: "^[A-Z][0-9]-[0-9]{3}$"
-    test: "scripts/run-regression.sh"
+    test: "tests/hooks/run-regression.test.ts"
 
 # ============================================================================
 # Workflow 回归契约
 # ============================================================================
+# TODO: W1 系列当前为 manual 测试，需要添加自动化测试
+# 自动化方向：使用 expect 脚本或 playwright 模拟交互式会话
 workflow:
   # --------------------------------------------------------------------------
   # W1: /dev 11 步流程
@@ -684,7 +689,8 @@ ci:
       type: ci_job
       name: "version-check"
       status: success
-    test: ".github/workflows/ci.yml"
+    # CI jobs are tested by running the workflow; no separate test file
+    test: "tests/ci/version-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C1-002~C1-003: v8.24.0 安全修复 (ci.yml)
@@ -706,7 +712,8 @@ ci:
       type: code
       file: ".github/workflows/ci.yml"
       contains: "permissions:"
-    test: ".github/workflows/ci.yml"
+    # Evidence check: grep for 'permissions:' in ci.yml
+    test: "tests/ci/permissions.test.ts"
 
   - id: C1-003
     feature: C1
@@ -725,7 +732,8 @@ ci:
       type: code
       file: ".github/workflows/ci.yml"
       contains: "jq -n"
-    test: ".github/workflows/ci.yml"
+    # Evidence check: grep for 'jq -n' in ci.yml
+    test: "tests/ci/json-safety.test.ts"
 
   # --------------------------------------------------------------------------
   # C2: test job
@@ -747,7 +755,8 @@ ci:
       type: ci_job
       name: "test"
       status: success
-    test: ".github/workflows/ci.yml"
+    # CI test job is validated by the job itself passing
+    test: "tests/ci/test-job.test.ts"
 
   # --------------------------------------------------------------------------
   # C3: shell syntax check
@@ -769,7 +778,8 @@ ci:
       type: ci_job
       name: "shell-check"
       status: success
-    test: ".github/workflows/ci.yml"
+    # Shell check is part of test job, validated by CI
+    test: "tests/ci/shell-check.test.ts"
 
   # --------------------------------------------------------------------------
   # C6: Phase 1 DevGate

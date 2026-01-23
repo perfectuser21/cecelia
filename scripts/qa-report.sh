@@ -57,6 +57,13 @@ get_timestamp() {
 # ============================================================================
 # Python 生成完整报告（v3 核心）
 # ============================================================================
+# L3 note: This embedded Python is intentionally kept inline to avoid external
+# dependencies and simplify deployment. The Python code parses YAML/Markdown
+# and generates JSON. If modifications are needed, consider:
+# 1. Keep changes minimal and well-tested
+# 2. Ensure PyYAML is installed (pip install pyyaml)
+# 3. Test with: python3 -c "import yaml; import json; print('ok')"
+# ============================================================================
 
 generate_full_data() {
     python3 << 'PYTHON'
@@ -317,12 +324,20 @@ EOF
     local duration=$((end_time - start_time))
 
     # 提取测试数量
-    # P2 修复: 确保 test_count 始终有有效值
-    local test_count=$(echo "$output" | grep -oE "Tests\s+[0-9]+ passed" | grep -oE "[0-9]+" | head -1 || echo "0")
-    if [[ -z "$test_count" || "$test_count" == "0" ]]; then
-        test_count=$(echo "$output" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+" | sort -rn | head -1 || echo "0")
+    # L2 fix: 更健壮的 test_count 提取逻辑
+    local test_count="0"
+    # 尝试多种格式: "Tests 123 passed", "123 passed", "123 tests"
+    if echo "$output" | grep -qE "Tests\s+[0-9]+ passed"; then
+        test_count=$(echo "$output" | grep -oE "Tests\s+[0-9]+ passed" | grep -oE "[0-9]+" | head -1)
+    elif echo "$output" | grep -qE "[0-9]+ passed"; then
+        test_count=$(echo "$output" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+" | sort -rn | head -1)
+    elif echo "$output" | grep -qE "[0-9]+ tests"; then
+        test_count=$(echo "$output" | grep -oE "[0-9]+ tests" | grep -oE "[0-9]+" | head -1)
     fi
-    test_count=${test_count:-0}
+    # 确保 test_count 是有效数字
+    if ! [[ "$test_count" =~ ^[0-9]+$ ]]; then
+        test_count="0"
+    fi
 
     # 判断是否通过
     local passed="false"
@@ -333,11 +348,11 @@ EOF
         passed="true"
         score=100
     else
-        # CRITICAL 修复: 提取错误摘要，确保正确的 JSON 转义
-        # 使用 printf 避免 echo 的特殊字符问题，jq -Rs 确保正确转义
-        error_summary=$(printf '%s' "$output" | tail -10 | jq -Rs . 2>/dev/null)
+        # L2 fix: 提取错误摘要，处理非法 UTF-8 字符
+        # 先用 tr 清理非 UTF-8 字符，再用 jq 转义
+        error_summary=$(printf '%s' "$output" | tail -10 | tr -cd '\11\12\15\40-\176' | jq -Rs . 2>/dev/null)
         # 如果 jq 失败，使用 null
-        if [[ -z "$error_summary" ]]; then
+        if [[ -z "$error_summary" || "$error_summary" == '""' ]]; then
             error_summary="null"
         fi
     fi
@@ -363,15 +378,24 @@ generate_report() {
     local timestamp=$(get_timestamp)
 
     # 获取完整数据
-    local full_data=$(generate_full_data)
+    local full_data
+    full_data=$(generate_full_data)
+
+    # L2 fix: 验证 full_data 是有效 JSON
+    if ! echo "$full_data" | jq empty 2>/dev/null; then
+        echo -e "${RED}错误: Python 生成的数据不是有效 JSON${NC}" >&2
+        echo '{"error": "invalid json from python"}' >&2
+        return 1
+    fi
 
     # 提取各部分
-    local features=$(echo "$full_data" | jq '.features')
-    local rcis=$(echo "$full_data" | jq '.rcis')
-    local golden_paths=$(echo "$full_data" | jq '.golden_paths')
-    local gates=$(echo "$full_data" | jq '.gates')
-    local meta=$(echo "$full_data" | jq '.meta')
-    local e2e=$(echo "$full_data" | jq '.e2e')
+    local features rcis golden_paths gates meta e2e
+    features=$(echo "$full_data" | jq '.features // []')
+    rcis=$(echo "$full_data" | jq '.rcis // {}')
+    golden_paths=$(echo "$full_data" | jq '.golden_paths // []')
+    gates=$(echo "$full_data" | jq '.gates // {}')
+    meta=$(echo "$full_data" | jq '.meta // {"score": 0}')
+    e2e=$(echo "$full_data" | jq '.e2e // {"score": 0}')
 
     # 计算 Unit
     local unit=$(calculate_unit)
@@ -441,6 +465,8 @@ main() {
                 exit 0
                 ;;
             *)
+                # L3 fix: 警告未知参数而不是静默忽略
+                echo -e "${YELLOW}警告: 未知参数 '$1'，已忽略${NC}" >&2
                 shift
                 ;;
         esac
@@ -461,10 +487,14 @@ main() {
                 echo -e "${RED}错误: 缺少 URL${NC}"
                 exit 1
             fi
-            echo "$report" | curl -s -X POST "$url" \
+            # L1 fix: 添加 curl 超时参数
+            if ! echo "$report" | curl -s --max-time 30 --connect-timeout 10 -X POST "$url" \
                 -H "Content-Type: application/json" \
-                -d @-
-            echo -e "${GREEN}✅ 报告已 POST 到 $url${NC}"
+                -d @-; then
+                echo -e "${RED}错误: POST 请求失败${NC}" >&2
+                exit 1
+            fi
+            echo -e "${GREEN}报告已 POST 到 $url${NC}"
             ;;
     esac
 }

@@ -14,14 +14,18 @@ NC='\033[0m' # No Color
 # Get script directory (zenithjoy-engine root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_ROOT="$(dirname "$SCRIPT_DIR")"
-HOOK_CORE_DIR="$ENGINE_ROOT/hook-core"
 
-# Version
-VERSION_FILE="$HOOK_CORE_DIR/VERSION"
+# L1 fix: Use hooks/ and skills/ directories directly (hook-core directory was removed)
+# Source directories for installation
+HOOKS_SRC_DIR="$ENGINE_ROOT/hooks"
+SKILLS_SRC_DIR="$ENGINE_ROOT/skills"
+
+# Version from package.json
+VERSION_FILE="$ENGINE_ROOT/package.json"
 if [[ -f "$VERSION_FILE" ]]; then
-    HOOK_CORE_VERSION=$(cat "$VERSION_FILE" | tr -d '\n')
+    HOOK_CORE_VERSION=$(grep '"version"' "$VERSION_FILE" | head -1 | sed 's/.*"version".*"\([^"]*\)".*/\1/')
 else
-    echo -e "${RED}ERROR: VERSION file not found at $VERSION_FILE${NC}"
+    echo -e "${RED}ERROR: package.json not found at $VERSION_FILE${NC}"
     exit 1
 fi
 
@@ -101,7 +105,7 @@ echo -e "${BLUE}======================================${NC}"
 echo -e "${BLUE}  hook-core Installer v$HOOK_CORE_VERSION${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
-echo -e "Source:  ${GREEN}$HOOK_CORE_DIR${NC}"
+echo -e "Source:  ${GREEN}$ENGINE_ROOT${NC}"
 echo -e "Target:  ${GREEN}$TARGET_DIR${NC}"
 echo ""
 
@@ -111,10 +115,12 @@ TARGET_SCRIPTS_DIR="$TARGET_DIR/scripts/devgate"
 TARGET_CLAUDE_DIR="$TARGET_DIR/.claude"
 
 # Function to install file
+# L3 fix: Avoid hiding errors in local command substitution
 install_file() {
     local src="$1"
     local dst="$2"
-    local dst_dir="$(dirname "$dst")"
+    local dst_dir
+    dst_dir="$(dirname "$dst")"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo -e "  [DRY-RUN] Would copy: $(basename "$src") -> $dst"
@@ -137,21 +143,43 @@ install_file() {
 }
 
 # Install hooks
+# L1 fix: Check directory exists before iterating
 echo -e "${BLUE}Installing hooks...${NC}"
-for hook in "$HOOK_CORE_DIR/hooks/"*; do
-    if [[ -f "$hook" || -L "$hook" ]]; then
-        install_file "$hook" "$TARGET_HOOKS_DIR/$(basename "$hook")"
-    fi
-done
+if [[ -d "$HOOKS_SRC_DIR" ]]; then
+    for hook in "$HOOKS_SRC_DIR/"*.sh; do
+        # L1 fix: Handle glob no-match case
+        [[ -e "$hook" ]] || continue
+        if [[ -f "$hook" || -L "$hook" ]]; then
+            install_file "$hook" "$TARGET_HOOKS_DIR/$(basename "$hook")"
+        fi
+    done
+else
+    echo -e "  ${YELLOW}[WARN]${NC} hooks/ directory not found at $HOOKS_SRC_DIR"
+fi
 
-# Install devgate scripts
+# Install skills (formerly devgate scripts)
+# L1 fix: Check directory exists before iterating
 echo ""
-echo -e "${BLUE}Installing devgate scripts...${NC}"
-for script in "$HOOK_CORE_DIR/scripts/devgate/"*; do
-    if [[ -f "$script" || -L "$script" ]]; then
-        install_file "$script" "$TARGET_SCRIPTS_DIR/$(basename "$script")"
-    fi
-done
+echo -e "${BLUE}Installing skills...${NC}"
+if [[ -d "$SKILLS_SRC_DIR" ]]; then
+    # Copy entire skills directory structure
+    for skill_dir in "$SKILLS_SRC_DIR/"*/; do
+        [[ -e "$skill_dir" ]] || continue
+        if [[ -d "$skill_dir" ]]; then
+            skill_name=$(basename "$skill_dir")
+            target_skill="$TARGET_DIR/skills/$skill_name"
+            if [[ "$DRY_RUN" == "true" ]]; then
+                echo -e "  [DRY-RUN] Would copy: $skill_name/"
+            else
+                mkdir -p "$target_skill"
+                cp -r "$skill_dir"* "$target_skill/" 2>/dev/null || true
+                echo -e "  ${GREEN}[OK]${NC} $skill_name/"
+            fi
+        fi
+    done
+else
+    echo -e "  ${YELLOW}[WARN]${NC} skills/ directory not found at $SKILLS_SRC_DIR"
+fi
 
 # Create/update .claude/settings.json
 echo ""
@@ -220,5 +248,5 @@ echo -e "${GREEN}======================================${NC}"
 echo ""
 echo "Next steps:"
 echo "  1. Review the installed files"
-echo "  2. Commit the changes: git add -A && git commit -m 'chore: install hook-core v$HOOK_CORE_VERSION'"
+echo "  2. Commit the changes: git add -A && git commit -m 'chore: install zenithjoy-engine v$HOOK_CORE_VERSION'"
 echo "  3. Start developing with /dev"

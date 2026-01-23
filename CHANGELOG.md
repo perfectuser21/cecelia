@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.0.0] - 2026-01-23
+
+### Changed (Clear Version - 全量代码审计)
+
+**里程碑版本**：全仓库 152 个问题清零。
+
+#### hooks/ (24 个问题)
+- **branch-protect.sh v16**: 非 git 仓库/空分支名改为 exit 2、realpath 兼容性、统一分支正则
+- **pr-gate-v2.sh v3.0**: 添加 jq 检查、修复 BASE_BRANCH 覆盖、原生 bash 参数解析、测试输出捕获
+- **session-start.sh**: 条件化输出
+
+#### scripts/devgate/ (25 个问题)
+- **metrics.cjs/append-learnings.cjs**: 修复参数解析双重递增 bug
+- **detect-priority.cjs**: 添加 CRITICAL/HIGH/security 映射
+- **所有 .sh**: 添加 set -euo pipefail、跨平台兼容性、统一输出格式
+
+#### scripts/ 根目录 (30 个问题)
+- **run-regression.sh**: 命令注入防护增强、timeout 保护
+- **qa-report.sh**: curl 超时、jq 数组处理
+- **install-hooks.sh**: 移除 hook-core 依赖，直接使用主仓库文件
+- **所有脚本**: 统一错误处理、数值清理函数
+
+#### skills/dev/scripts/ (29 个问题)
+- **所有脚本**: 添加 jq/yq 检查、API 调用超时、错误处理增强
+
+#### CI/YAML (22 个问题)
+- **ci.yml**: fetch-depth: 0、BASE_REF 设置、DevGate 跳过说明
+- **nightly.yml**: jq 空值处理、metrics.sh 优化
+- **regression-contract.yaml**: 版本同步注释、test 路径修正
+
+#### TypeScript (22 个问题)
+- **src/index.ts**: validateHooks 占位实现说明
+- **tests/**: 测试污染修复、输出格式更新、类型断言改进
+
+### Fixed
+- 152 个 L1/L2/L3 问题全部修复
+- 测试用例同步更新（134 个测试全绿）
+
 ## [8.25.0] - 2026-01-23
 
 ### Fixed (P0 优先级检测 Bug 修复)

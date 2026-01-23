@@ -32,7 +32,8 @@
 
 set -euo pipefail
 
-# 颜色
+# L3 fix: 添加完整的颜色定义
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
@@ -157,8 +158,9 @@ DOD_SNAPSHOT="$HISTORY_DIR/PR-${PR_NUMBER}-${TIMESTAMP}.dod.md"
 # 格式: <!-- pr:N base:X priority:Y head:Z merged:W created:T title:"..." -->
 META_LINE="<!-- pr:${PR_NUMBER} base:${BASE_BRANCH} priority:${PRIORITY} head:${HEAD_SHA_SHORT} merged:${MERGED_SHA:-} created:${CREATED_ISO}"
 if [[ -n "$TITLE" ]]; then
-    # 转义双引号
-    ESCAPED_TITLE="${TITLE//\"/\\\"}"
+    # L2 fix: 先转义反斜杠，再转义双引号
+    ESCAPED_TITLE="${TITLE//\\/\\\\}"
+    ESCAPED_TITLE="${ESCAPED_TITLE//\"/\\\"}"
     META_LINE="$META_LINE title:\"${ESCAPED_TITLE}\""
 fi
 META_LINE="$META_LINE -->"

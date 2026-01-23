@@ -28,14 +28,21 @@ const { execSync } = require("child_process");
 /**
  * 从字符串中提取优先级
  *
- * 优先级映射：
- *   - CRITICAL → P0（最高严重性）
- *   - HIGH → P1
- *   - security 前缀 → P0（安全修复）
- *   - P0/P1/P2/P3 → 对应优先级
+ * L3 fix: 完整文档化隐式行为
  *
- * @param {string} text
- * @returns {string|null}
+ * 优先级映射（按检查顺序）：
+ *   1. CRITICAL (any case) → P0 (来自审计严重性分类)
+ *   2. HIGH (any case) → P1 (来自审计严重性分类)
+ *   3. security: 或 security( 前缀 → P0 (安全修复类型)
+ *   4. P0/P1/P2/P3 (不区分大小写，词边界匹配) → 对应优先级
+ *
+ * 注意：
+ *   - 检查顺序影响结果：CRITICAL 优先于 P1 标签
+ *   - 使用词边界匹配，避免误匹配 "P0wer" 等
+ *   - 返回 null 表示未检测到优先级
+ *
+ * @param {string} text - 要分析的文本
+ * @returns {string|null} - P0/P1/P2/P3 或 null
  */
 function extractPriority(text) {
   if (!text) return null;
@@ -56,7 +63,7 @@ function extractPriority(text) {
     return "P0";
   }
 
-  // 匹配 P0, P1, P2, P3（不区分大小写）
+  // 匹配 P0, P1, P2, P3（不区分大小写，词边界）
   const match = text.match(/\b[Pp]([0-3])\b/);
   if (match) {
     return `P${match[1]}`;
@@ -70,12 +77,31 @@ function extractPriority(text) {
  */
 function detectFromCommits() {
   try {
-    // 获取当前分支相对于 base 分支的 commit 消息
-    const baseBranch =
-      process.env.BASE_REF ||
-      execSync("git config branch.$(git rev-parse --abbrev-ref HEAD).base-branch 2>/dev/null || echo develop", {
-        encoding: "utf-8",
-      }).trim();
+    // L2 fix: 避免 shell 命令注入，分步获取分支名
+    let baseBranch = process.env.BASE_REF;
+
+    if (!baseBranch) {
+      try {
+        const currentBranch = execSync("git rev-parse --abbrev-ref HEAD 2>/dev/null", {
+          encoding: "utf-8",
+        }).trim();
+        // 验证分支名只包含安全字符
+        if (/^[a-zA-Z0-9._\/-]+$/.test(currentBranch)) {
+          baseBranch = execSync(`git config branch.${currentBranch}.base-branch 2>/dev/null`, {
+            encoding: "utf-8",
+          }).trim() || "develop";
+        } else {
+          baseBranch = "develop";
+        }
+      } catch {
+        baseBranch = "develop";
+      }
+    }
+
+    // 验证 baseBranch 只包含安全字符
+    if (!/^[a-zA-Z0-9._\/-]+$/.test(baseBranch)) {
+      baseBranch = "develop";
+    }
 
     const commits = execSync(
       `git log ${baseBranch}..HEAD --pretty=format:"%s" 2>/dev/null || echo ""`,

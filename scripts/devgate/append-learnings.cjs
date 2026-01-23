@@ -31,25 +31,28 @@ const options = {
   force: false,
 };
 
-// P1 修复: 参数解析添加越界检查
+// L1 fix: 参数解析添加越界检查，不在内部修改 i
 function requireArg(args, i, flag) {
   if (i + 1 >= args.length) {
     console.error(`错误: ${flag} 需要一个参数值`);
     process.exit(1);
   }
-  return args[++i];
+  return args[i + 1];
 }
 
 for (let i = 0; i < args.length; i++) {
   switch (args[i]) {
     case '--metrics':
-      options.metrics = requireArg(args, i++, '--metrics');
+      options.metrics = requireArg(args, i, '--metrics');
+      i++;  // L1 fix: 只在这里递增一次
       break;
     case '--learnings':
-      options.learnings = requireArg(args, i++, '--learnings');
+      options.learnings = requireArg(args, i, '--learnings');
+      i++;
       break;
     case '--contract':
-      options.contract = requireArg(args, i++, '--contract');
+      options.contract = requireArg(args, i, '--contract');
+      i++;
       break;
     case '--dry-run':
       options.dryRun = true;
@@ -82,6 +85,7 @@ LEARNINGS 自动写回 - 生成 DevGate 月度报告
 
 /**
  * 从 regression-contract.yaml 读取 RCI id → name 映射
+ * L2 fix: 改进 YAML 解析，支持多行和各种引号格式
  */
 function loadRciNames(contractPath) {
   const rciMap = {};
@@ -91,29 +95,63 @@ function loadRciNames(contractPath) {
   }
 
   const content = fs.readFileSync(contractPath, 'utf-8');
-
-  // 简单解析 YAML 中的 id 和 name 字段
-  // 格式: - id: H4-001
-  //         name: "DevGate Metrics 指标计算"
-  const idMatches = content.matchAll(/^\s*-\s*id:\s*([A-Z]\d+-\d+)\s*$/gm);
   const lines = content.split('\n');
 
-  for (const match of idMatches) {
-    const id = match[1];
-    const lineIndex = content.substring(0, match.index).split('\n').length - 1;
+  let currentId = null;
+  let inMultilineName = false;
+  let multilineBuffer = '';
 
-    // 向下找 name 字段（通常在接下来几行内）
-    for (let i = lineIndex + 1; i < Math.min(lineIndex + 10, lines.length); i++) {
-      const nameMatch = lines[i].match(/^\s*name:\s*["']?(.+?)["']?\s*$/);
-      if (nameMatch) {
-        rciMap[id] = nameMatch[1];
-        break;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // 匹配 id 字段
+    const idMatch = line.match(/^\s*-?\s*id:\s*([A-Z]\d+-\d+)\s*$/);
+    if (idMatch) {
+      currentId = idMatch[1];
+      inMultilineName = false;
+      continue;
+    }
+
+    // 如果有当前 id，查找 name 字段
+    if (currentId) {
+      // 单行 name（带引号或不带）
+      const nameMatch = line.match(/^\s*name:\s*["']?(.+?)["']?\s*$/);
+      if (nameMatch && !line.includes('|') && !line.includes('>')) {
+        rciMap[currentId] = nameMatch[1].replace(/["']$/, '');
+        currentId = null;
+        continue;
       }
-      // 遇到下一个 id 或 section 就停止
-      if (lines[i].match(/^\s*-\s*id:|^[a-z_]+:/)) {
-        break;
+
+      // 多行 name 开始（| 或 >）
+      if (line.match(/^\s*name:\s*[|>]/)) {
+        inMultilineName = true;
+        multilineBuffer = '';
+        continue;
+      }
+
+      // 多行内容收集
+      if (inMultilineName) {
+        if (line.match(/^\s{4,}/) || line.trim() === '') {
+          multilineBuffer += (multilineBuffer ? ' ' : '') + line.trim();
+        } else {
+          rciMap[currentId] = multilineBuffer.trim();
+          currentId = null;
+          inMultilineName = false;
+          i--; // 重新处理当前行
+        }
+        continue;
+      }
+
+      // 遇到下一个 id 或新 section 就重置
+      if (line.match(/^\s*-\s*id:|^[a-z_]+:/)) {
+        currentId = null;
       }
     }
+  }
+
+  // 处理文件末尾的多行
+  if (currentId && multilineBuffer) {
+    rciMap[currentId] = multilineBuffer.trim();
   }
 
   return rciMap;
@@ -125,15 +163,17 @@ function loadRciNames(contractPath) {
 
 /**
  * 生成月度报告 markdown
+ * L3 fix: 确保 markdown 表格前后有空行
  */
 function generateReport(metrics, rciMap) {
   const month = metrics.window.since.substring(0, 7); // YYYY-MM
   const timestamp = new Date().toISOString();
 
-  // 指标概览
+  // 指标概览（表格前后必须有空行）
   let report = `## [${month}] DevGate 月度报告
 
 ### 指标概览
+
 | 指标 | 值 |
 |------|-----|
 | P0 PRs | ${metrics.prs.p0} |
@@ -145,7 +185,7 @@ function generateReport(metrics, rciMap) {
 `;
 
   // Top Offenders
-  report += '### Top Offenders\n';
+  report += '### Top Offenders\n\n';
   if (metrics.rci_coverage.offenders && metrics.rci_coverage.offenders.length > 0) {
     for (const o of metrics.rci_coverage.offenders) {
       report += `- PR #${o.pr} (${o.priority}) - 未更新 RCI\n`;

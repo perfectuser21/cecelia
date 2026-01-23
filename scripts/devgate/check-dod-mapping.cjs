@@ -22,7 +22,15 @@
 
 const fs = require("fs");
 const path = require("path");
-const yaml = require("js-yaml");
+
+// L1 fix: Handle missing js-yaml gracefully
+let yaml;
+try {
+  yaml = require("js-yaml");
+} catch {
+  console.error("错误: js-yaml 未安装，请运行 npm install js-yaml");
+  process.exit(2);
+}
 
 // 颜色输出
 const RED = "\x1b[31m";
@@ -129,28 +137,11 @@ function validateTestRef(testRef, projectRoot) {
   }
 
   if (testRef.startsWith("manual:")) {
-    // 检查手动证据文件是否存在
-    const evidenceId = testRef.substring("manual:".length);
-    const evidencePath = path.join(
-      projectRoot,
-      "evidence",
-      "manual",
-      evidenceId
-    );
-
+    // L2 fix: 移除未使用的 possiblePaths 死代码
     // manual 证据可以是目录或文件（带扩展名）
     // 允许：manual:template-review, manual:rci-review
     // 这些是标识符，不要求实际文件存在（因为可能是人工审核项）
-    // 但如果有 .md/.png/.jpg 文件存在则更好
-    const possiblePaths = [
-      evidencePath,
-      `${evidencePath}.md`,
-      `${evidencePath}.png`,
-      `${evidencePath}.jpg`,
-    ];
-
     // manual 类型不强制要求文件存在，只要格式正确即可
-    // 因为有些是人工审核项
     return { valid: true };
   }
 
@@ -161,12 +152,13 @@ function main() {
   const args = process.argv.slice(2);
   const dodFile = args[0] || ".dod.md";
 
-  // 找项目根目录
+  // L3 fix: 找项目根目录（兼容 Windows）
   let projectRoot = process.cwd();
-  while (projectRoot !== "/" && !fs.existsSync(path.join(projectRoot, ".git"))) {
+  const rootPath = path.parse(projectRoot).root; // "/" on Unix, "C:\\" on Windows
+  while (projectRoot !== rootPath && !fs.existsSync(path.join(projectRoot, ".git"))) {
     projectRoot = path.dirname(projectRoot);
   }
-  if (projectRoot === "/") {
+  if (projectRoot === rootPath) {
     projectRoot = process.cwd();
   }
 

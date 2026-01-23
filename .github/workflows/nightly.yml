@@ -31,6 +31,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies
         run: npm ci
@@ -45,13 +46,19 @@ jobs:
         run: |
           # 收集本月 DevGate 指标
           MONTH=$(date +%Y-%m)
-          echo "📊 Collecting DevGate Metrics for $MONTH"
+          echo "Collecting DevGate Metrics for $MONTH"
 
-          # 生成 JSON 报告
-          bash scripts/devgate/metrics.sh --month "$MONTH" --format json > devgate-metrics.json || true
-
-          # 输出人类可读格式
-          bash scripts/devgate/metrics.sh --month "$MONTH" || true
+          # 生成 JSON 报告（只调用一次，同时生成 JSON 和人类可读输出）
+          if bash scripts/devgate/metrics.sh --month "$MONTH" --format json > devgate-metrics.json 2>&1; then
+            echo "JSON report generated"
+            # 显示人类可读摘要（从 JSON 解析，避免重复调用）
+            if [ -f devgate-metrics.json ]; then
+              jq -r '"RCI Coverage: \(.rci_coverage.pct // 0)%, P0/P1 PRs: \(.prs.total_p0p1 // 0)"' devgate-metrics.json 2>/dev/null || true
+            fi
+          else
+            echo "Warning: metrics.sh failed, creating empty report"
+            echo '{}' > devgate-metrics.json
+          fi
 
           # 上传为 artifact
           echo "metrics_month=$MONTH" >> "$GITHUB_OUTPUT"
@@ -71,12 +78,12 @@ jobs:
 
           json=$(cat devgate-metrics.json)
 
-          # 提取指标
-          pct=$(echo "$json" | jq '.rci_coverage.pct')
-          p0p1=$(echo "$json" | jq '.prs.total_p0p1')
-          p0_manual=$(echo "$json" | jq '.dod.p0_manual_tests')
-          offenders=$(echo "$json" | jq -r '.rci_coverage.offenders[]? | "  - PR #\(.pr) (\(.priority)) sha:\(.sha)"')
-          rci_growth=$(echo "$json" | jq '.rci_growth.new_ids_count')
+          # 提取指标（使用 // 提供默认值防止 null）
+          pct=$(echo "$json" | jq '.rci_coverage.pct // 0')
+          p0p1=$(echo "$json" | jq '.prs.total_p0p1 // 0')
+          p0_manual=$(echo "$json" | jq '.dod.p0_manual_tests // 0')
+          offenders=$(echo "$json" | jq -r '.rci_coverage.offenders[]? | "  - PR #\(.pr) (\(.priority)) sha:\(.sha)"' 2>/dev/null || true)
+          rci_growth=$(echo "$json" | jq '.rci_growth.new_ids_count // 0')
 
           fail=0
 
@@ -162,14 +169,18 @@ jobs:
           # 提交并推送
           MONTH=$(date +%Y-%m)
           git add docs/LEARNINGS.md
-          git commit -m "docs: DevGate 月度报告 $MONTH
+          # 使用 HEREDOC 确保 commit message 格式正确
+          git commit -m "$(cat <<EOF
+docs: DevGate monthly report $MONTH
 
-自动生成的 DevGate 指标报告
+Auto-generated DevGate metrics report
 
-Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+EOF
+          )"
           # CRITICAL 修复: git push 添加错误检查
           if ! git push; then
-            echo "❌ git push 失败"
+            echo "git push failed"
             exit 1
           fi
 

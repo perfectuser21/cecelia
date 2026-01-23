@@ -9,10 +9,11 @@
  * - JSON 输出格式
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execSync, spawnSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
+import { tmpdir } from 'os'
 
 const ROOT = path.resolve(__dirname, '../..')
 const METRICS_SCRIPT = path.join(ROOT, 'scripts/devgate/metrics.sh')
@@ -29,11 +30,15 @@ function runMetrics(args: string, cwd: string): string {
     cwd,
     encoding: 'utf-8',
   })
+  // Log stderr for debugging if present (but don't fail)
+  if (result.stderr && process.env.DEBUG) {
+    console.log('metrics stderr:', result.stderr)
+  }
   return result.stdout
 }
 
 describe('snapshot-prd-dod.sh meta 增强', () => {
-  const testDir = '/tmp/test-snapshot-meta'
+  const testDir = path.join(tmpdir(), 'test-snapshot-meta')
 
   beforeAll(() => {
     execSync(`rm -rf ${testDir} && mkdir -p ${testDir}`)
@@ -269,7 +274,7 @@ describe('metrics.sh 基础功能', () => {
 })
 
 describe('metrics.sh 指标计算', () => {
-  const testDir = '/tmp/test-metrics-calc'
+  const testDir = path.join(tmpdir(), 'test-metrics-calc')
 
   beforeAll(() => {
     // 创建测试目录和 git repo
@@ -393,7 +398,7 @@ describe('metrics.sh 指标计算', () => {
 })
 
 describe('metrics.sh 时间窗口', () => {
-  const testDir = '/tmp/test-metrics-window'
+  const testDir = path.join(tmpdir(), 'test-metrics-window')
 
   beforeAll(() => {
     execSync(`rm -rf ${testDir} && mkdir -p ${testDir}/.history`)

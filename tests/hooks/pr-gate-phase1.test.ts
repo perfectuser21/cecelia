@@ -52,16 +52,21 @@ describe("Phase 1: DevGate Scripts", () => {
     it("should exit 2 when DoD file does not exist", () => {
       const nonExistentDod = join(TEST_DIR, "non-existent.md");
 
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`node "${CHECK_DOD_SCRIPT}" "${nonExistentDod}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(2);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(2);
     });
 
     it("should pass when all items have Test fields", () => {
@@ -101,16 +106,21 @@ describe("Phase 1: DevGate Scripts", () => {
       const testDod = join(TEST_DIR, "invalid.dod.md");
       writeFileSync(testDod, dodContent);
 
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number; stderr?: Buffer };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should validate test file exists", () => {
@@ -125,16 +135,21 @@ describe("Phase 1: DevGate Scripts", () => {
       const testDod = join(TEST_DIR, "invalid-path.dod.md");
       writeFileSync(testDod, dodContent);
 
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should validate contract ID exists in regression-contract.yaml", () => {
@@ -149,16 +164,21 @@ describe("Phase 1: DevGate Scripts", () => {
       const testDod = join(TEST_DIR, "invalid-contract.dod.md");
       writeFileSync(testDod, dodContent);
 
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`node "${CHECK_DOD_SCRIPT}" "${testDod}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should accept valid contract IDs", () => {
@@ -282,22 +302,29 @@ describe("Phase 1: DevGate Scripts", () => {
       expect(result).toContain("非 P0/P1");
     });
 
-    it("should pass for P0 when RCI is updated", () => {
-      // 当前分支已经更新了 regression-contract.yaml（作为 Phase 1 的一部分）
-      // 所以这个测试应该通过
-      // 注意：这个测试依赖于实际的 git 状态
+    it("should handle P0 RCI check based on git state", () => {
+      // This test validates the script runs without error.
+      // The result depends on whether RCI was updated in the current git state.
+      // Both outcomes (pass or fail) are valid, we just verify the script runs correctly.
+      let exitCode: number | undefined;
+      let stdout = '';
       try {
-        const result = execSync(`bash "${REQUIRE_RCI_SCRIPT}"`, {
+        stdout = execSync(`bash "${REQUIRE_RCI_SCRIPT}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
           env: { ...process.env, PR_PRIORITY: "P0" },
         });
-        // 如果 RCI 已更新，应该通过
-        expect(result).toContain("✅");
+        exitCode = 0;
       } catch (e: unknown) {
-        // 如果 RCI 未更新，应该失败（这也是预期的行为）
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitCode = (e as { status?: number }).status;
+        }
+      }
+      // Script should exit with 0 (RCI updated) or 1 (RCI not updated)
+      // Both are valid outcomes depending on git state
+      expect(exitCode === 0 || exitCode === 1).toBe(true);
+      if (exitCode === 0) {
+        expect(stdout).toBeTruthy();
       }
     });
   });

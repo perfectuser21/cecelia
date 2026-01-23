@@ -38,34 +38,39 @@ const options = {
   base: 'develop',
 };
 
-// P1 修复: 参数解析添加越界检查
+// L1 fix: 参数解析添加越界检查，不在内部修改 i
 function requireArg(args, i, flag) {
   if (i + 1 >= args.length) {
     console.error(`错误: ${flag} 需要一个参数值`);
     process.exit(1);
   }
-  return args[++i];
+  return args[i + 1];
 }
 
 for (let i = 0; i < args.length; i++) {
   switch (args[i]) {
     case '--since':
-      options.since = requireArg(args, i++, '--since');
+      options.since = requireArg(args, i, '--since');
+      i++;  // L1 fix: 只在这里递增一次
       break;
     case '--until':
-      options.until = requireArg(args, i++, '--until');
+      options.until = requireArg(args, i, '--until');
+      i++;
       break;
     case '--month':
-      options.month = requireArg(args, i++, '--month');
+      options.month = requireArg(args, i, '--month');
+      i++;
       break;
     case '--format':
-      options.format = requireArg(args, i++, '--format');
+      options.format = requireArg(args, i, '--format');
+      i++;
       break;
     case '--verbose':
       options.verbose = true;
       break;
     case '--base':
-      options.base = requireArg(args, i++, '--base');
+      options.base = requireArg(args, i, '--base');
+      i++;
       break;
     case '--help':
       console.log(`
@@ -154,6 +159,9 @@ function parseMeta(content) {
 // 快照收集
 // ============================================================================
 
+// L3 fix: 将文件名格式抽取为常量，便于维护
+const SNAPSHOT_FILENAME_PATTERN = /^PR-\d+-\d{8}-\d{4}\.dod\.md$/;
+
 function collectSnapshots(historyDir, timeWindow) {
   const snapshots = [];
 
@@ -162,7 +170,7 @@ function collectSnapshots(historyDir, timeWindow) {
   }
 
   const files = fs.readdirSync(historyDir);
-  const dodFiles = files.filter(f => f.match(/^PR-\d+-\d{8}-\d{4}\.dod\.md$/));
+  const dodFiles = files.filter(f => SNAPSHOT_FILENAME_PATTERN.test(f));
 
   for (const file of dodFiles) {
     const filePath = path.join(historyDir, file);
@@ -197,16 +205,28 @@ function collectSnapshots(historyDir, timeWindow) {
 
 /**
  * 检查某个 commit 是否修改了 regression-contract.yaml
+ * L2 fix: 改进错误处理，不完全吞掉 stderr
  */
 function checkRciUpdated(sha) {
+  // 验证 SHA 格式，避免命令注入
+  if (!/^[a-f0-9]+$/i.test(sha)) {
+    if (options.verbose) {
+      console.error(`Warning: Invalid SHA format: ${sha}`);
+    }
+    return false;
+  }
+
   try {
     // 使用 git show 获取这个 commit 修改的文件列表
-    const result = execSync(`git show --name-only --pretty=format: ${sha} 2>/dev/null`, {
+    const result = execSync(`git show --name-only --pretty=format: ${sha}`, {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return result.includes('regression-contract.yaml');
-  } catch {
+  } catch (err) {
+    if (options.verbose) {
+      console.error(`Warning: Failed to check commit ${sha}: ${err.message}`);
+    }
     return false;
   }
 }
@@ -248,9 +268,11 @@ function calculateRciCoverage(snapshots) {
 
 /**
  * 统计时间窗口内新增的 RCI ID
+ * L2 fix: 使用 UTC 时间确保跨时区一致性
  */
 function countNewRciIds(timeWindow, baseBranch) {
   try {
+    // toISOString() 返回 UTC 时间，确保一致性
     const sinceStr = timeWindow.since.toISOString().split('T')[0];
     const untilStr = timeWindow.until.toISOString().split('T')[0];
 

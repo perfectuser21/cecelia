@@ -31,6 +31,12 @@ fi
 PR_NUMBER="$1"
 VIEW_TYPE="${2:-all}"  # all, --prd, --dod
 
+# L3 fix: 验证 VIEW_TYPE 有效值
+if [[ "$VIEW_TYPE" != "all" && "$VIEW_TYPE" != "--prd" && "$VIEW_TYPE" != "--dod" ]]; then
+    echo "Error: Invalid view type '$VIEW_TYPE'. Use --prd or --dod" >&2
+    exit 1
+fi
+
 # 处理 PR 号（支持带 # 或不带）
 PR_NUMBER="${PR_NUMBER#\#}"
 PR_NUMBER="${PR_NUMBER#PR-}"
@@ -71,6 +77,12 @@ fi
 # 取最新的
 PRD_FILE=$(echo "$PRD_FILES" | head -1)
 DOD_FILE="${PRD_FILE%.prd.md}.dod.md"
+
+# L2 fix: 如果有多个快照，告知用户
+SNAPSHOT_COUNT=$(echo "$PRD_FILES" | wc -l)
+if [[ "$SNAPSHOT_COUNT" -gt 1 ]]; then
+    echo -e "${YELLOW}Note: PR #${PR_NUMBER} has $SNAPSHOT_COUNT snapshots, showing the latest one${NC}" >&2
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

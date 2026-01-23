@@ -14,11 +14,18 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
+import { tmpdir } from 'os'
 
 const ROOT = path.resolve(__dirname, '../..')
 const HOOK_CORE_DIR = path.join(ROOT, 'hook-core')
 const INSTALL_SCRIPT = path.join(ROOT, 'scripts/install-hooks.sh')
-const TEST_DIR = '/tmp/test-hook-core-install-vitest'
+const TEST_DIR = path.join(tmpdir(), 'test-hook-core-install-vitest')
+
+/** Type for hook configuration object */
+interface HookConfig {
+  matcher: string;
+  hooks: Array<{ type: string; command: string }>;
+}
 
 describe('hook-core 目录结构', () => {
   describe('VERSION 文件', () => {
@@ -193,11 +200,10 @@ describe('install-hooks.sh 安装脚本', () => {
       expect(fs.existsSync(path.join(TEST_DIR, 'hooks/branch-protect.sh'))).toBe(true)
       expect(fs.existsSync(path.join(TEST_DIR, 'hooks/pr-gate-v2.sh'))).toBe(true)
 
-      // 验证 scripts/devgate 目录
-      expect(fs.existsSync(path.join(TEST_DIR, 'scripts/devgate/check-dod-mapping.cjs'))).toBe(
-        true
-      )
-      expect(fs.existsSync(path.join(TEST_DIR, 'scripts/devgate/detect-priority.cjs'))).toBe(true)
+      // 验证 skills 目录
+      expect(fs.existsSync(path.join(TEST_DIR, 'skills/dev/SKILL.md'))).toBe(true)
+      expect(fs.existsSync(path.join(TEST_DIR, 'skills/audit/SKILL.md'))).toBe(true)
+      expect(fs.existsSync(path.join(TEST_DIR, 'skills/qa/SKILL.md'))).toBe(true)
 
       // 验证 .claude/settings.json
       expect(fs.existsSync(path.join(TEST_DIR, '.claude/settings.json'))).toBe(true)
@@ -222,16 +228,18 @@ describe('install-hooks.sh 安装脚本', () => {
       expect(Array.isArray(settings.hooks.PreToolUse)).toBe(true)
 
       // 检查 Write|Edit matcher
-      const writeEditHook = settings.hooks.PreToolUse.find(
-        (h: { matcher: string }) => h.matcher === 'Write|Edit|NotebookEdit'
+      const writeEditHook = (settings.hooks.PreToolUse as HookConfig[]).find(
+        (h) => h.matcher === 'Write|Edit|NotebookEdit'
       )
       expect(writeEditHook).toBeDefined()
-      expect(writeEditHook.hooks[0].command).toContain('branch-protect.sh')
+      expect(writeEditHook!.hooks[0].command).toContain('branch-protect.sh')
 
       // 检查 Bash matcher
-      const bashHook = settings.hooks.PreToolUse.find((h: { matcher: string }) => h.matcher === 'Bash')
+      const bashHook = (settings.hooks.PreToolUse as HookConfig[]).find(
+        (h) => h.matcher === 'Bash'
+      )
       expect(bashHook).toBeDefined()
-      expect(bashHook.hooks[0].command).toContain('pr-gate-v2.sh')
+      expect(bashHook!.hooks[0].command).toContain('pr-gate-v2.sh')
     })
 
     it('版本标记与 VERSION 文件一致', () => {

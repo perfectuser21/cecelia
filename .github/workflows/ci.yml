@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, develop, 'feature/*']
+    branches: [main, develop, 'feature/*', 'cp-*']
   push:
-    branches: [main, develop, 'feature/*']
+    branches: [main, develop, 'feature/*', 'cp-*']
 
 # 工作流级并发控制：同一 ref 的多次 push 只保留最新
 # 注意：auto-merge job 有自己的并发组（merge-*），不受此影响
@@ -66,7 +66,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -76,6 +76,8 @@ jobs:
 
       - name: Detect project type
         id: detect
+        # 注意：Python/Go 检测是为多语言仓库预留的
+        # 当前 zenithjoy-engine 是 npm 项目，但此检测可复用于其他仓库
         run: |
           if [ -f package.json ]; then
             echo "type=npm" >> $GITHUB_OUTPUT
@@ -151,27 +153,31 @@ jobs:
       # Shell scripts - always syntax check (hooks exist in all project types)
       - name: Check shell scripts
         run: |
-          echo "🔍 Checking shell scripts..."
+          echo "Checking shell scripts..."
           FAILED=0
           FOUND=0
+          # 使用 find + while read 遍历所有 .sh 文件
+          # -print0 + read -d '' 处理文件名中的特殊字符
           while IFS= read -r -d '' f; do
             FOUND=1
             # 捕获 stderr 以便显示具体错误
             ERROR_OUTPUT=$(bash -n "$f" 2>&1)
             if [ $? -eq 0 ]; then
-              echo "  ✅ $f"
+              echo "  [OK] $f"
             else
-              echo "  ❌ $f"
+              echo "  [FAIL] $f"
               echo "$ERROR_OUTPUT" | sed 's/^/     /'
               FAILED=1
             fi
           done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
           if [ "$FOUND" -eq 0 ]; then
-            echo "ℹ️ No .sh files found"
+            echo "No .sh files found"
           fi
           exit $FAILED
 
       # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新）
+      # 注意：当前只对 npm 项目启用，非 npm 项目跳过此检查
+      # TODO: 未来可扩展到其他项目类型
       - name: DevGate checks
         if: steps.detect.outputs.type == 'npm'
         run: |
@@ -222,6 +228,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies
         run: npm ci
@@ -289,9 +296,13 @@ jobs:
           fi
 
   # CI 通过后通知（不自动合并，需要手动确认）
+  # 注意：此 job 只在 pull_request 事件时运行，push 事件时跳过
   ci-passed:
     needs: [version-check, test]
-    if: github.event_name == 'pull_request' && needs.test.result == 'success' && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.test.result == 'success' &&
+      (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
