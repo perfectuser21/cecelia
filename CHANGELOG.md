@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.17.0] - 2026-01-23
+
+### Fixed (P1 文档一致性修复)
+- **skills/qa/SKILL.md**: 重构统一输出格式
+  - 按模式分别说明 Decision 枚举值
+  - 添加 L2B Evidence 文件格式定义
+  - 添加 version/updated frontmatter
+  - 澄清 Meta/Unit/E2E 与 L1-L4 概念区别
+- **skills/dev/SKILL.md**: 添加 version/updated frontmatter
+- **skills/audit/SKILL.md**: 统一 frontmatter 格式，移除底部旧格式更新时间
+- **skills/qa/knowledge/criteria.md**: 标注 GP/RCI ID 来源于 regression-contract.yaml
+
 ## [8.16.0] - 2026-01-23
 
 ### Fixed (P0 矛盾修复)

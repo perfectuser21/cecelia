@@ -1,5 +1,7 @@
 ---
 name: dev
+version: 1.1.0
+updated: 2026-01-23
 description: |
   统一开发工作流入口。流程编排者，不做判断。
 

@@ -61,6 +61,9 @@
 
 ### Engine Repo 的 Golden Paths（流程链路）
 
+> **注意**：以下 GP ID 和 RCI ID 是 `regression-contract.yaml` 中的实际定义。
+> 新增 GP/RCI 时请参照此格式，并确保 ID 唯一。
+
 | GP ID | 名称 | 验证的链路 | 涉及 RCI |
 |-------|------|-----------|----------|
 | GP-001 | 完整开发流程 | /dev → 分支 → DoD → PR → CI → 合并 | W1-001, W1-002, W1-003, H2-003, C1-001, C2-001 |

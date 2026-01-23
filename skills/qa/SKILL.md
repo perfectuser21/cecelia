@@ -1,5 +1,7 @@
 ---
 name: qa
+version: 1.1.0
+updated: 2026-01-23
 description: |
   跨仓库 QA 总控。统一管理测试决策、回归契约、Golden Paths 和 Feature 归类。
 ---
@@ -179,6 +181,13 @@ Recommendations:
   2. ...
 ```
 
+**概念澄清**：
+- **Meta/Unit/E2E**：测试覆盖度三层（本模式使用）
+- **L1/L2/L3/L4**：问题严重性四层（/audit 使用）
+- **L1/L2A/L2B/L3**：质检流程四层（/dev 使用）
+
+这三组概念各有用途，互不冲突。
+
 ---
 
 ## QA Decision 产物（/dev 流程必须产出）
@@ -224,16 +233,63 @@ PR Gate 会检查：
 
 ---
 
+## L2B Evidence 产物（Release 模式）
+
+Release 模式需要额外的 Evidence 证据文件：`.layer2-evidence.md`
+
+### 文件格式
+
+```markdown
+# L2B Evidence
+
+## 截图证据
+
+| ID | 描述 | 文件 |
+|----|------|------|
+| E1 | 功能 A 正常工作 | docs/evidence/e1-feature-a.png |
+| E2 | API 返回正确 | docs/evidence/e2-api-response.png |
+
+## 命令验证
+
+| ID | 命令 | 预期结果 | 实际结果 |
+|----|------|----------|----------|
+| C1 | curl localhost:3000/health | 200 OK | 200 OK |
+```
+
+### 适用场景
+
+- **PR 模式**：不需要 L2B（只需 L1 + L2A）
+- **Release 模式**：必须提供 L2B + L3
+
+### Gate 检查
+
+Release Check 会检查：
+1. `.layer2-evidence.md` 存在
+2. 包含有效的证据条目
+3. 引用的截图文件存在
+
+---
+
 ## 统一输出格式（独立调用时）
 
 ```
-Decision: NO_RCI | MUST_ADD_RCI | UPDATE_RCI | PASS | FAIL
+Decision: <模式对应的枚举值>
 Reason: 一句话理由
 Next Actions: 下一步动作（命令或文件修改）
 Artifacts: 涉及的文件列表
 ```
 
-**说明**：不同模式使用不同的 Decision 值，但都是英文枚举值，便于 Gate 检查。
+### 各模式 Decision 值
+
+| 模式 | Decision 枚举值 |
+|------|-----------------|
+| 模式 1 (测试计划) | 无 Decision，输出测试命令清单 |
+| 模式 2 (Golden Path) | `NO_GP` \| `MUST_ADD_GP` \| `MERGE_GP` |
+| 模式 3 (RCI) | `NO_RCI` \| `MUST_ADD_RCI` \| `UPDATE_RCI` |
+| 模式 4 (Feature) | `NOT_FEATURE` \| `NEW_FEATURE` \| `EXTEND_FEATURE` |
+| 模式 5 (QA 审计) | `PASS` \| `FAIL` |
+
+**说明**：所有 Decision 值均为英文枚举，便于 Gate 自动检查。
 
 ---
 

@@ -5,13 +5,22 @@ Priority: P1
 RepoType: Engine
 
 Tests:
-  - dod_item: "/qa 模式2/3/4 输出改为英文枚举值"
+  - dod_item: "统一输出格式按模式分别说明 Decision 值"
     method: manual
     location: manual:file-check
-  - dod_item: "移除是|否|建议格式"
+  - dod_item: "补充 GP/Feature 模式的 Decision 定义"
     method: manual
-    location: manual:grep-verify
-  - dod_item: "audit/SKILL.md 添加 L2A/L2B 关系说明"
+    location: manual:file-check
+  - dod_item: "qa/SKILL.md 添加 L2B Evidence 文件说明"
+    method: manual
+    location: manual:file-check
+  - dod_item: "SKILL.md 添加 frontmatter"
+    method: manual
+    location: manual:file-check
+  - dod_item: "criteria.md GP 示例 ID 标注说明"
+    method: manual
+    location: manual:file-check
+  - dod_item: "qa/SKILL.md 澄清概念关系"
     method: manual
     location: manual:file-check
   - dod_item: "npm run qa 通过"
@@ -22,4 +31,4 @@ RCI:
   new: []
   update: []
 
-Reason: P0 级矛盾修复，统一 QA Decision 值格式和分层定义说明
+Reason: 文档一致性修复，无需纳入回归契约
