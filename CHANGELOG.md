@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.19.0] - 2026-01-23
+
+### Fixed (深度审计 HIGH 级问题修复)
+- **ci.yml**: 删除不存在的 npm scripts
+  - 移除 `npm run lint --if-present`
+  - 移除 `npm run format:check --if-present`
+- **hooks/pr-gate-v2.sh**: cd 失败时安全退出
+  - 添加 `|| { echo "❌ 无法进入项目目录"; exit 2; }` 处理
+- **scripts/run-regression.sh**: 命令注入防护
+  - 添加 shell 元字符检查 (`; | & $ \``)
+  - bash/sh -c 命令豁免
+
 ## [8.18.0] - 2026-01-23
 
 ### Improved (P2 文档易用性改进)

@@ -110,8 +110,6 @@ jobs:
           npm ci
           # DoD 检查项（按顺序）
           npm run typecheck --if-present   # 类型检查
-          npm run lint --if-present        # 代码规范
-          npm run format:check --if-present # 格式检查
           npm run test --if-present        # 单元测试
           npm run build --if-present       # 构建验证
 

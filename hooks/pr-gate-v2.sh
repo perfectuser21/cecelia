@@ -96,7 +96,7 @@ else
     PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 fi
 
-cd "$PROJECT_ROOT"
+cd "$PROJECT_ROOT" || { echo "❌ 无法进入项目目录: $PROJECT_ROOT" >&2; exit 2; }
 
 # ===== 模式检测 =====
 # 1. 检查环境变量

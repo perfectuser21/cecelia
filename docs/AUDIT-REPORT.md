@@ -1,48 +1,60 @@
 # Audit Report
 
-Branch: cp-fix-p2-issues
-Date: 2026-01-23
-Scope: skills/qa/SKILL.md, skills/dev/steps/04-dod.md, skills/dev/steps/08-pr.md
-Target Level: L2
+> 深度审计 HIGH 级问题修复
 
-Summary:
-  L1: 0
-  L2: 0
-  L3: 0
-  L4: 0
+## 基本信息
 
-Decision: PASS
+| 字段 | 值 |
+|------|-----|
+| Branch | `cp-fix-high-audit-issues` |
+| Date | 2026-01-23 |
+| Scope | CI 配置、Hooks、Scripts |
+| Target Level | L2 |
 
-Findings: []
+## 审计结果
 
-Blockers: []
+### 统计
 
----
+| 层级 | 数量 | 状态 |
+|------|------|------|
+| L1 (阻塞性) | 0 | - |
+| L2 (功能性) | 3 | 全部 FIXED |
+| L3 (最佳实践) | 0 | - |
+| L4 (过度优化) | 0 | - |
 
-## 审计说明
+### Blockers (L1 + L2)
 
-本次改动修复 P2 级文档易用性问题：
+| ID | 层级 | 文件 | 问题 | 状态 |
+|----|------|------|------|------|
+| B1 | L2 | .github/workflows/ci.yml:113-114 | CI 调用不存在的 npm scripts (lint, format:check) | FIXED |
+| B2 | L2 | hooks/pr-gate-v2.sh:99 | cd 失败时未安全退出 | FIXED |
+| B3 | L2 | scripts/run-regression.sh:203 | 命令注入风险（shell 元字符） | FIXED |
 
-1. **概念速查表**
-   - 在 qa/SKILL.md 开头添加三组分层系统速查表
-   - 帮助用户快速理解不同分层概念的用途
+### 修复详情
 
-2. **示例规范化**
-   - 在 04-dod.md 添加 Test 字段格式说明表格
-   - 在 08-pr.md 添加版本号变化示例表
+#### B1: CI 配置修复
+- **文件**: `.github/workflows/ci.yml`
+- **问题**: 调用 `npm run lint --if-present` 和 `npm run format:check --if-present`，但 package.json 中无此 scripts
+- **修复**: 删除这两行，保留有效的 typecheck/test/build
 
-3. **导航优化**
-   - 在快速调用部分添加 ID 命名规范链接
+#### B2: Hooks 安全加固
+- **文件**: `hooks/pr-gate-v2.sh`
+- **问题**: `cd "$PROJECT_ROOT"` 失败时继续执行
+- **修复**: 添加 `|| { echo "错误信息"; exit 2; }` 处理
 
-改动范围仅限于文档：
-- 无语法错误风险（Markdown）
-- 无功能影响（文档性质）
-- 无边界条件问题
+#### B3: 脚本安全加固
+- **文件**: `scripts/run-regression.sh`
+- **问题**: `evidence_run` 可能包含危险 shell 元字符
+- **修复**: 添加 `[; | & $ \`]` 检查，拒绝执行（bash/sh -c 豁免）
 
-## PASS 条件
+## 结论
+
+Decision: **PASS**
+
+### PASS 条件
 - [x] L1 问题：0 个
-- [x] L2 问题：0 个
+- [x] L2 问题：3 个，全部 FIXED
 
 ---
 
-**审计完成时间**: 2026-01-23 09:58
+**审计完成时间**: 2026-01-23 12:00

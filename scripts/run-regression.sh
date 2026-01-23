@@ -199,6 +199,12 @@ run_evidence() {
             set +e
             # P0-1 修复: 移除 eval，使用 bash -c 执行（更安全，防止命令注入）
             # 注意：evidence_run 来自 regression-contract.yaml（受版本控制），但仍需防范
+            # P1 加固: 检查并拒绝危险的 shell 元字符
+            if [[ "$evidence_run" =~ [\;\|\&\$\`] ]] && [[ ! "$evidence_run" =~ ^(bash|sh)\ -c ]]; then
+                echo -e "${YELLOW}⏭️ (shell metachar rejected)${NC}"
+                L3_SKIPPED=$((L3_SKIPPED + 1))
+                return
+            fi
             output=$(cd "$PROJECT_ROOT" && bash -c "$evidence_run" 2>&1)
             local exit_code=$?
             set -e
