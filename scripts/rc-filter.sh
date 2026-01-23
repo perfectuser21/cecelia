@@ -49,6 +49,7 @@ show_stats() {
     echo ""
 
     # 排除 GP-* 条目（Golden Paths 不是 RCI）
+    # P2 修复: 确保变量有默认值，避免算术比较失败
     TOTAL=$(grep "^\s*- id:" "$RC_FILE" | grep -cv "GP-" || echo 0)
     GP_COUNT=$(grep -c "id: GP-" "$RC_FILE" || echo 0)
     P0=$(grep -c "priority: P0" "$RC_FILE" || echo 0)
@@ -56,6 +57,10 @@ show_stats() {
     P2=$(grep -c "priority: P2" "$RC_FILE" || echo 0)
     AUTO=$(grep -c "method: auto" "$RC_FILE" || echo 0)
     MANUAL=$(grep -c "method: manual" "$RC_FILE" || echo 0)
+    # 确保所有变量非空
+    TOTAL=${TOTAL:-0}; GP_COUNT=${GP_COUNT:-0}
+    P0=${P0:-0}; P1=${P1:-0}; P2=${P2:-0}
+    AUTO=${AUTO:-0}; MANUAL=${MANUAL:-0}
 
     # 统计 trigger（排除 Golden Paths）
     # 使用 awk 精确统计：只统计非 GP 条目的 trigger

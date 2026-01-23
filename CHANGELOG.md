@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.21.0] - 2026-01-23
+
+### Fixed (MEDIUM P2 级边界条件修复)
+- **hooks/pr-gate-v2.sh**: CURRENT_BRANCH 为空时错误退出
+- **hooks/pr-gate-v2.sh**: find 前验证 PROJECT_ROOT 存在
+- **scripts/release-check.sh**: UNCHECKED/CHECKED_BOXES 变量空值处理
+- **scripts/rc-filter.sh**: grep 统计变量添加默认值
+- **scripts/qa-report.sh**: test_count 空值处理
+
 ## [8.20.0] - 2026-01-23
 
 ### Fixed (MEDIUM P1 级问题修复)

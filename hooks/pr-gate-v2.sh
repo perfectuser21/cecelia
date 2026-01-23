@@ -120,6 +120,11 @@ if [[ "$MODE" != "pr" && "$MODE" != "release" ]]; then
 fi
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# P2 修复: CURRENT_BRANCH 为空时错误退出
+if [[ -z "$CURRENT_BRANCH" ]]; then
+    echo "❌ 无法获取当前分支名" >&2
+    exit 2
+fi
 # v2.4: 读取配置的 base 分支，而非硬编码 develop
 BASE_BRANCH=$(git config "branch.$CURRENT_BRANCH.base-branch" 2>/dev/null || echo "develop")
 
@@ -253,13 +258,16 @@ fi
 SHELL_FAILED=0
 SHELL_COUNT=0
 SHELL_ERRORS=""
-while IFS= read -r -d '' f; do
-    SHELL_COUNT=$((SHELL_COUNT + 1))
-    ERROR_OUTPUT=$(bash -n "$f" 2>&1) || {
-        SHELL_FAILED=1
-        SHELL_ERRORS+="    $f: $ERROR_OUTPUT"$'\n'
-    }
-done < <(find "$PROJECT_ROOT" -name "*.sh" -type f -not -path "*/node_modules/*" -print0 2>/dev/null)
+# P2 修复: 验证 PROJECT_ROOT 存在后再执行 find
+if [[ -d "$PROJECT_ROOT" ]]; then
+    while IFS= read -r -d '' f; do
+        SHELL_COUNT=$((SHELL_COUNT + 1))
+        ERROR_OUTPUT=$(bash -n "$f" 2>&1) || {
+            SHELL_FAILED=1
+            SHELL_ERRORS+="    $f: $ERROR_OUTPUT"$'\n'
+        }
+    done < <(find "$PROJECT_ROOT" -name "*.sh" -type f -not -path "*/node_modules/*" -print0 2>/dev/null)
+fi
 
 if [[ $SHELL_COUNT -gt 0 ]]; then
     echo -n "  shell syntax... " >&2

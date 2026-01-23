@@ -138,8 +138,11 @@ fi
 # 如果 DoD 文件存在，检查内容
 if [[ -f "$DOD_FILE" ]]; then
     # 检查是否所有 checkbox 都打勾
+    # P2 修复: 确保变量有默认值，避免算术比较失败
     UNCHECKED=$(grep -c '\- \[ \]' "$DOD_FILE" 2>/dev/null) || true
     CHECKED_BOXES=$(grep -c '\- \[x\]' "$DOD_FILE" 2>/dev/null) || true
+    UNCHECKED=${UNCHECKED:-0}
+    CHECKED_BOXES=${CHECKED_BOXES:-0}
 
     echo -n "  验收项... "
     CHECKED=$((CHECKED + 1))

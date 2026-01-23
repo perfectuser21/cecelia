@@ -317,10 +317,12 @@ EOF
     local duration=$((end_time - start_time))
 
     # 提取测试数量
+    # P2 修复: 确保 test_count 始终有有效值
     local test_count=$(echo "$output" | grep -oE "Tests\s+[0-9]+ passed" | grep -oE "[0-9]+" | head -1 || echo "0")
     if [[ -z "$test_count" || "$test_count" == "0" ]]; then
         test_count=$(echo "$output" | grep -oE "[0-9]+ passed" | grep -oE "[0-9]+" | sort -rn | head -1 || echo "0")
     fi
+    test_count=${test_count:-0}
 
     # 判断是否通过
     local passed="false"
