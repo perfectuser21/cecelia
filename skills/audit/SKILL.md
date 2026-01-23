@@ -1,6 +1,6 @@
 ---
 name: audit
-version: 1.1.0
+version: 1.2.0
 updated: 2026-01-23
 description: |
   有边界的代码审计与修复。分层标准：L1阻塞性/L2功能性/L3最佳实践/L4过度优化。
@@ -21,6 +21,29 @@ description: |
 | **L2** | 功能性 | 边界条件、错误处理、已知 edge case | **建议修** |
 | **L3** | 最佳实践 | 代码风格、一致性、可读性 | 可选 |
 | **L4** | 过度优化 | 理论边界、极端情况、性能微调 | **不修** |
+
+---
+
+## 严重性 → 优先级映射（v8.25.0+）
+
+当审计发现问题时，**严重性关键字会自动映射为业务优先级**：
+
+| 审计严重性 | 业务优先级 | 对应 Layer | RCI 要求 |
+|-----------|-----------|-----------|----------|
+| **CRITICAL** | **P0** | L1 阻塞性 | ✅ 必须更新 RCI |
+| **HIGH** | **P1** | L2 功能性 | ✅ 必须更新 RCI |
+| MEDIUM | P2 | L2/L3 | 可选 |
+| LOW | P3 | L3/L4 | 可选 |
+
+**触发规则**：
+- PR title/commit 包含 `CRITICAL` → 触发 P0 检查
+- PR title/commit 包含 `HIGH` → 触发 P1 检查
+- PR title 以 `security:` 开头 → 触发 P0 检查
+
+**影响**：
+- P0/P1 修复必须在 `regression-contract.yaml` 添加 RCI 条目
+- 检测由 `scripts/devgate/detect-priority.cjs` 执行
+- 强制由 `scripts/devgate/require-rci-update-if-p0p1.sh` 检查
 
 ---
 

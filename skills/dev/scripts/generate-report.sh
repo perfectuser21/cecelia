@@ -11,7 +11,11 @@ set -euo pipefail
 CP_BRANCH="${1:-}"
 BASE_BRANCH="${2:-develop}"
 PROJECT_ROOT="${3:-$(pwd)}"
-MODE="${CLAUDE_MODE:-interactive}"  # interactive(有头) 或 headless(无头/Cecilia)
+# L3 fix: 环境变量文档化
+# CLAUDE_MODE: 运行模式，可选值:
+#   - interactive: 有头模式（默认），用户交互
+#   - headless: 无头模式（Cecelia），自动执行
+MODE="${CLAUDE_MODE:-interactive}"
 
 if [[ -z "$CP_BRANCH" ]]; then
     echo "错误: 请提供 cp-* 分支名"
@@ -48,30 +52,71 @@ else
     PROJECT_NAME=$(basename "$PROJECT_ROOT")
 fi
 
-# 获取 git 信息
-PR_URL=$(gh pr list --head "$CP_BRANCH" --state merged --json url -q '.[0].url' 2>/dev/null || echo "")
+# L2 fix: 获取 git 信息，区分无 PR 和 API 错误
+PR_URL=""
 PR_MERGED="false"
-if [[ -n "$PR_URL" ]]; then
+PR_API_ERROR=""
+
+# 尝试获取已合并的 PR
+PR_RESULT=$(gh pr list --head "$CP_BRANCH" --state merged --json url -q '.[0].url' 2>&1)
+PR_EXIT=$?
+if [[ $PR_EXIT -eq 0 && -n "$PR_RESULT" && "$PR_RESULT" != "null" ]]; then
+    PR_URL="$PR_RESULT"
     PR_MERGED="true"
-else
-    # 如果没有已合并的 PR，检查是否有任何 PR
-    PR_URL=$(gh pr list --head "$CP_BRANCH" --state all --json url -q '.[0].url' 2>/dev/null || echo "")
-    if [[ -z "$PR_URL" ]]; then
+elif [[ $PR_EXIT -ne 0 ]]; then
+    PR_API_ERROR="$PR_RESULT"
+fi
+
+# 如果没有已合并的 PR，检查是否有任何 PR
+if [[ -z "$PR_URL" && -z "$PR_API_ERROR" ]]; then
+    PR_RESULT=$(gh pr list --head "$CP_BRANCH" --state all --json url -q '.[0].url' 2>&1)
+    PR_EXIT=$?
+    if [[ $PR_EXIT -eq 0 && -n "$PR_RESULT" && "$PR_RESULT" != "null" ]]; then
+        PR_URL="$PR_RESULT"
+    elif [[ $PR_EXIT -ne 0 ]]; then
+        PR_API_ERROR="$PR_RESULT"
+    fi
+fi
+
+# 设置默认值
+if [[ -z "$PR_URL" ]]; then
+    if [[ -n "$PR_API_ERROR" ]]; then
+        PR_URL="API Error: $PR_API_ERROR"
+    else
         PR_URL="N/A"
     fi
 fi
 
 # v8: 不再使用步骤状态机，报告在 cleanup 阶段生成表示流程已完成
 
-# 获取变更文件（先尝试 git diff，如果为空则从 PR API 获取）
+# L2 fix: 获取变更文件，处理 git diff 失败
 FILES_CHANGED=""
+GIT_DIFF_ERROR=""
+
 if git rev-parse --verify "$CP_BRANCH" &>/dev/null; then
-    FILES_CHANGED=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null | head -20 || echo "")
+    # 检查 BASE_BRANCH 是否存在
+    if git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
+        DIFF_RESULT=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>&1)
+        DIFF_EXIT=$?
+        if [[ $DIFF_EXIT -eq 0 ]]; then
+            FILES_CHANGED=$(echo "$DIFF_RESULT" | head -20)
+        else
+            GIT_DIFF_ERROR="$DIFF_RESULT"
+        fi
+    else
+        GIT_DIFF_ERROR="Base branch $BASE_BRANCH not found"
+    fi
 fi
 
-# 如果 git diff 为空（PR 已合并或分支不存在），从 PR API 获取
+# 如果 git diff 为空或失败，从 PR API 获取
 if [[ -z "$FILES_CHANGED" ]]; then
-    FILES_CHANGED=$(gh pr list --head "$CP_BRANCH" --state all --json files -q '.[0].files[].path' 2>/dev/null | head -20 || echo "")
+    PR_FILES=$(gh pr list --head "$CP_BRANCH" --state all --json files -q '.[0].files[].path' 2>/dev/null | head -20 || echo "")
+    if [[ -n "$PR_FILES" ]]; then
+        FILES_CHANGED="$PR_FILES"
+    elif [[ -n "$GIT_DIFF_ERROR" ]]; then
+        # 如果 git diff 失败且 PR API 也没数据，记录错误
+        FILES_CHANGED="(Error: $GIT_DIFF_ERROR)"
+    fi
 fi
 
 # 获取版本变更（从 package.json）
@@ -148,9 +193,14 @@ cat > "$JSON_REPORT" << EOF
     "pr_merged": $PR_MERGED
   },
   "version": "$CURRENT_VERSION",
-  "files_changed": [
-$(if [[ -n "$FILES_CHANGED" ]]; then echo "$FILES_CHANGED" | while IFS= read -r f; do printf '    %s,\n' "$(echo "$f" | jq -R .)"; done | sed '$ s/,$//'; fi)
-  ]
+  "files_changed": $(
+    if [[ -n "$FILES_CHANGED" ]]; then
+      # L1 fix: 安全处理空行和特殊字符，使用 jq 构建数组
+      echo "$FILES_CHANGED" | jq -R -s 'split("\n") | map(select(length > 0))'
+    else
+      echo "[]"
+    fi
+  )
 }
 EOF
 

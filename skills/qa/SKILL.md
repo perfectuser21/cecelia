@@ -1,6 +1,6 @@
 ---
 name: qa
-version: 1.1.0
+version: 1.2.0
 updated: 2026-01-23
 description: |
   跨仓库 QA 总控。统一管理测试决策、回归契约、Golden Paths 和 Feature 归类。
@@ -21,6 +21,26 @@ description: |
 | **测试覆盖度** | QA 审计 | Meta / Unit / E2E | 本文件 模式 5 |
 | **问题严重性** | 代码审计 | L1 阻塞 / L2 功能 / L3 最佳实践 / L4 过度优化 | /audit SKILL.md |
 | **质检流程** | PR/Release 检查 | L1 自动测试 / L2A 审计 / L2B 证据 / L3 验收 | /dev 07-quality.md |
+
+---
+
+## 严重性 → 优先级映射
+
+**审计严重性与业务优先级的自动映射规则**（v8.25.0+）：
+
+| 审计严重性 | 业务优先级 | 说明 |
+|-----------|-----------|------|
+| **CRITICAL** | **P0** | 最高严重性，必须立即处理 |
+| **HIGH** | **P1** | 高严重性，尽快处理 |
+| MEDIUM | P2 | 中等严重性，计划修复 |
+| LOW | P3 | 低严重性，有空再修 |
+
+**特殊映射**：
+- PR title 以 `security:` 或 `security(scope):` 开头 → **P0**
+
+**RCI 影响**：
+- P0/P1 的修复必须更新 `regression-contract.yaml`（由 `require-rci-update-if-p0p1.sh` 强制检查）
+- 检测由 `detect-priority.cjs` 执行
 
 ---
 

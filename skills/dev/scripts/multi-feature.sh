@@ -51,6 +51,15 @@ get_last_update() {
   git log -1 --format="%ar" "$branch" 2>/dev/null || echo "unknown"
 }
 
+# L2 fix: 提取重复的 "还有 N 个" 显示逻辑
+show_more_commits() {
+  local count=$1
+  local limit=${2:-5}
+  if [[ "$count" =~ ^[0-9]+$ ]] && [[ "$count" -gt "$limit" ]]; then
+    echo "       ... 还有 $((count - limit)) 个"
+  fi
+}
+
 case $ACTION in
   detect)
     echo ""
@@ -101,26 +110,22 @@ case $ACTION in
         else
           echo "     已同步 develop，领先 $AHEAD_FILTERED commits:"
           get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
-          if [[ "$AHEAD_FILTERED" =~ ^[0-9]+$ ]] && [ "$AHEAD_FILTERED" -gt 5 ]; then
-            echo "       ... 还有 $((AHEAD_FILTERED - 5)) 个"
-          fi
+          show_more_commits "$AHEAD_FILTERED" 5
         fi
       elif [ "$AHEAD_FILTERED" = "0" ]; then
         # 落后 develop 但没有自己的改动（或仅有 auto-backup），建议删除
-        echo -e "  ${RED}🗑️${NC}  $branch${MARKER}"
+        echo -e "  ${RED}[DEL]${NC}  $branch${MARKER}"
         echo "     最后更新: $LAST_UPDATE"
         echo "     落后 develop $BEHIND commits，无实际改动"
         echo "     建议删除: git branch -D $branch"
         NEED_SYNC=$((NEED_SYNC + 1))
       else
         # 落后 develop 且有自己的改动，需要同步
-        echo -e "  ${YELLOW}⚠️${NC}  $branch${MARKER}"
+        echo -e "  ${YELLOW}[WARN]${NC}  $branch${MARKER}"
         echo "     最后更新: $LAST_UPDATE"
         echo "     落后 develop $BEHIND commits，领先 $AHEAD_FILTERED commits:"
         get_ahead_commits "$branch" | head -5 | sed 's/^/       /'
-        if [[ "$AHEAD_FILTERED" =~ ^[0-9]+$ ]] && [ "$AHEAD_FILTERED" -gt 5 ]; then
-          echo "       ... 还有 $((AHEAD_FILTERED - 5)) 个"
-        fi
+        show_more_commits "$AHEAD_FILTERED" 5
         NEED_SYNC=$((NEED_SYNC + 1))
       fi
       echo ""
@@ -196,9 +201,14 @@ case $ACTION in
       fi
     done <<< "$BRANCHES"
 
-    # 切回原分支
+    # L3 fix: 切回原分支，添加警告
     if [ -n "$ORIGINAL_BRANCH" ]; then
-      git checkout "$ORIGINAL_BRANCH" --quiet 2>/dev/null || git checkout develop --quiet 2>/dev/null || true
+      if ! git checkout "$ORIGINAL_BRANCH" --quiet 2>/dev/null; then
+        echo -e "  ${YELLOW}[WARN]${NC} 无法切回 $ORIGINAL_BRANCH，尝试 develop"
+        if ! git checkout develop --quiet 2>/dev/null; then
+          echo -e "  ${RED}[FAIL]${NC} 无法切回任何分支，请手动检查"
+        fi
+      fi
     fi
 
     echo ""

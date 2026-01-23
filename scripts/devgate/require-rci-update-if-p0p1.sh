@@ -71,6 +71,12 @@ BASE_BRANCH="${BASE_REF:-$(git config "branch.$CURRENT_BRANCH.base-branch" 2>/de
 # 检查 regression-contract.yaml 是否有变更
 RCI_FILE="regression-contract.yaml"
 
+# L2 fix: 检查 BASE_BRANCH 是否存在
+if ! git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+    echo -e "  ${YELLOW}Warning: Base branch '$BASE_BRANCH' not found, using HEAD~10${NC}"
+    BASE_BRANCH="HEAD~10"
+fi
+
 # 方法 1: git diff（未提交的变更）
 RCI_MODIFIED=$(git diff --name-only 2>/dev/null | grep -c "^$RCI_FILE$" 2>/dev/null || echo 0)
 
@@ -80,13 +86,14 @@ RCI_IN_BRANCH=$(git diff "$BASE_BRANCH" --name-only 2>/dev/null | grep -c "^$RCI
 # 方法 3: git log（本分支的提交记录）
 RCI_IN_COMMITS=$(git log "$BASE_BRANCH"..HEAD --name-only 2>/dev/null | grep -c "^$RCI_FILE$" 2>/dev/null || echo 0)
 
-# 清理数字
-RCI_MODIFIED=${RCI_MODIFIED//[^0-9]/}
-RCI_IN_BRANCH=${RCI_IN_BRANCH//[^0-9]/}
-RCI_IN_COMMITS=${RCI_IN_COMMITS//[^0-9]/}
-[[ -z "$RCI_MODIFIED" ]] && RCI_MODIFIED=0
-[[ -z "$RCI_IN_BRANCH" ]] && RCI_IN_BRANCH=0
-[[ -z "$RCI_IN_COMMITS" ]] && RCI_IN_COMMITS=0
+# L3 fix: 安全清理数字，保证非空
+clean_number() {
+    local val="${1//[^0-9]/}"
+    echo "${val:-0}"
+}
+RCI_MODIFIED=$(clean_number "$RCI_MODIFIED")
+RCI_IN_BRANCH=$(clean_number "$RCI_IN_BRANCH")
+RCI_IN_COMMITS=$(clean_number "$RCI_IN_COMMITS")
 
 echo -n "  regression-contract.yaml... "
 

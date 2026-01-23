@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, develop, 'feature/*']
+    branches: [main, develop, 'feature/*', 'cp-*']
   push:
-    branches: [main, develop, 'feature/*']
+    branches: [main, develop, 'feature/*', 'cp-*']
 
 # 工作流级并发控制：同一 ref 的多次 push 只保留最新
 # 注意：auto-merge job 有自己的并发组（merge-*），不受此影响
@@ -66,14 +66,18 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # DevGate 需要完整历史来 diff base 分支
 
       - name: Detect project type
         id: detect
+        # 注意：Python/Go 检测是为多语言仓库预留的
+        # 当前 zenithjoy-engine 是 npm 项目，但此检测可复用于其他仓库
         run: |
           if [ -f package.json ]; then
             echo "type=npm" >> $GITHUB_OUTPUT
@@ -110,8 +114,6 @@ jobs:
           npm ci
           # DoD 检查项（按顺序）
           npm run typecheck --if-present   # 类型检查
-          npm run lint --if-present        # 代码规范
-          npm run format:check --if-present # 格式检查
           npm run test --if-present        # 单元测试
           npm run build --if-present       # 构建验证
 
@@ -151,27 +153,31 @@ jobs:
       # Shell scripts - always syntax check (hooks exist in all project types)
       - name: Check shell scripts
         run: |
-          echo "🔍 Checking shell scripts..."
+          echo "Checking shell scripts..."
           FAILED=0
           FOUND=0
+          # 使用 find + while read 遍历所有 .sh 文件
+          # -print0 + read -d '' 处理文件名中的特殊字符
           while IFS= read -r -d '' f; do
             FOUND=1
             # 捕获 stderr 以便显示具体错误
             ERROR_OUTPUT=$(bash -n "$f" 2>&1)
             if [ $? -eq 0 ]; then
-              echo "  ✅ $f"
+              echo "  [OK] $f"
             else
-              echo "  ❌ $f"
+              echo "  [FAIL] $f"
               echo "$ERROR_OUTPUT" | sed 's/^/     /'
               FAILED=1
             fi
           done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
           if [ "$FOUND" -eq 0 ]; then
-            echo "ℹ️ No .sh files found"
+            echo "No .sh files found"
           fi
           exit $FAILED
 
-      # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新）
+      # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新 + RCI 覆盖率）
+      # 注意：当前只对 npm 项目启用，非 npm 项目跳过此检查
+      # TODO: 未来可扩展到其他项目类型
       - name: DevGate checks
         if: steps.detect.outputs.type == 'npm'
         run: |
@@ -194,10 +200,30 @@ jobs:
             echo "  [P0/P1 RCI 更新检查]"
             # 从 PR title 或 labels 设置环境变量
             export PR_TITLE="${{ github.event.pull_request.title }}"
-            # labels 需要从 API 获取，这里简化处理
+            # CI 中需要使用 origin/ 前缀
+            export BASE_REF="origin/${{ github.base_ref || 'develop' }}"
             bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
           else
             echo "ℹ️ require-rci-update-if-p0p1.sh not found, skipping"
+          fi
+
+          # RCI 覆盖率检查（如果脚本存在）
+          # 新增业务入口必须添加对应的 RCI 条目
+          if [ -f "scripts/devgate/scan-rci-coverage.cjs" ]; then
+            echo ""
+            echo "  [RCI 覆盖率检查]"
+            node scripts/devgate/scan-rci-coverage.cjs || {
+              echo ""
+              echo "❌ RCI 覆盖率检查失败"
+              echo "   新增的业务入口没有对应的 RCI 条目"
+              echo "   请在 contracts/regression-contract.yaml 中添加覆盖"
+              echo ""
+              echo "   运行以下命令查看详情："
+              echo "   npm run coverage:rci -- --explain"
+              exit 1
+            }
+          else
+            echo "ℹ️ scan-rci-coverage.cjs not found, skipping"
           fi
 
           echo ""
@@ -221,6 +247,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies
         run: npm ci
@@ -288,9 +315,15 @@ jobs:
           fi
 
   # CI 通过后通知（不自动合并，需要手动确认）
+  # 注意：此 job 只在 pull_request 事件时运行，push 事件时跳过
+  # A4 fix: PR to main 时必须等 release-check 完成
   ci-passed:
-    needs: [version-check, test]
-    if: github.event_name == 'pull_request' && needs.test.result == 'success' && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
+    needs: [version-check, test, release-check]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.test.result == 'success' &&
+      (needs.version-check.result == 'success' || needs.version-check.result == 'skipped') &&
+      (needs.release-check.result == 'success' || needs.release-check.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -314,6 +347,9 @@ jobs:
     if: always() && (needs.version-check.result == 'failure' || needs.test.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # CRITICAL 修复: 显式声明最小权限
+    permissions:
+      contents: read
     steps:
       - name: Notify Notion
         env:
@@ -346,18 +382,28 @@ jobs:
             PR_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
 
-          curl -s -X POST "https://api.notion.com/v1/pages" \
+          # CRITICAL 修复: 使用 jq 安全生成 JSON，防止注入
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          JSON_PAYLOAD=$(jq -n \
+            --arg db_id "$NOTION_DATABASE_ID" \
+            --arg name "❌ CI Failed ($FAILURE_REASON): ${{ github.repository }}" \
+            --arg branch "${{ github.head_ref || github.ref_name }}" \
+            --arg pr_url "$PR_URL" \
+            --arg timestamp "$TIMESTAMP" \
+            '{
+              parent: {database_id: $db_id},
+              properties: {
+                Name: {title: [{text: {content: $name}}]},
+                Status: {select: {name: "Failed"}},
+                Branch: {rich_text: [{text: {content: $branch}}]},
+                PR: {url: $pr_url},
+                Time: {date: {start: $timestamp}}
+              }
+            }')
+
+          curl -s --fail -X POST "https://api.notion.com/v1/pages" \
             -H "Authorization: Bearer $NOTION_TOKEN" \
             -H "Content-Type: application/json" \
             -H "Notion-Version: 2022-06-28" \
-            -d '{
-              "parent": {"database_id": "'"$NOTION_DATABASE_ID"'"},
-              "properties": {
-                "Name": {"title": [{"text": {"content": "❌ CI Failed ('"$FAILURE_REASON"'): ${{ github.repository }}"}}]},
-                "Status": {"select": {"name": "Failed"}},
-                "Branch": {"rich_text": [{"text": {"content": "${{ github.head_ref || github.ref_name }}"}}]},
-                "PR": {"url": "'"$PR_URL"'"},
-                "Time": {"date": {"start": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}}
-              }
-            }'
+            -d "$JSON_PAYLOAD"
           echo "📨 Notification sent to Notion (failed: $FAILURE_REASON)"

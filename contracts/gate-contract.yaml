@@ -1,0 +1,211 @@
+# ============================================================================
+# Gate Contract (GCI) - ZenithJoy Engine
+# ============================================================================
+#
+# 职责：确保"不发生灾难级误放行"
+#
+# 红线范围：
+#   - 空 DoD 不得通过
+#   - 空 QA-DECISION 不得通过
+#   - P0/P1 识别必须准确
+#   - PR to main 必须走 release-check
+#   - 白名单不可穿透
+#   - cleanup 不可误删
+#
+# 标识规则：G{category}-{number}
+#   G1: DoD 验证
+#   G2: QA 验证
+#   G3: 优先级检测
+#   G4: CI 依赖
+#   G5: 命令安全
+#   G6: 数据保护
+#
+# ============================================================================
+
+version: "9.0.0"
+updated: "2026-01-23"
+
+# ============================================================================
+# G1: DoD 验证
+# ============================================================================
+dod_validation:
+  - id: G1-001
+    name: "空 DoD 必须被拒绝"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "DoD 文件只有标题，没有验收项（checkbox）"
+      when: "PR Gate 检查 DoD 完成度"
+      then: "检查失败，提示 'DoD 无验收项'"
+    test: "tests/gate/gate.test.ts"
+    evidence:
+      type: test
+      run: "npm test -- tests/gate/gate.test.ts -t 'A1'"
+
+  - id: G1-002
+    name: "未完成的 DoD 必须被拒绝"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "DoD 文件有未勾选的 checkbox"
+      when: "PR Gate 检查 DoD 完成度"
+      then: "检查失败，提示未完成项数量"
+    test: "tests/hooks/pr-gate.test.ts"
+
+# ============================================================================
+# G2: QA 验证
+# ============================================================================
+qa_validation:
+  - id: G2-001
+    name: "空 QA-DECISION 必须被拒绝"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "QA-DECISION.md 文件为空或缺少 Decision 字段"
+      when: "PR Gate 检查 QA 决策"
+      then: "检查失败，提示内容无效"
+    test: "tests/gate/gate.test.ts"
+    evidence:
+      type: test
+      run: "npm test -- tests/gate/gate.test.ts -t 'A2'"
+
+  - id: G2-002
+    name: "QA-DECISION 必须包含 Decision 字段"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "QA-DECISION.md 存在但缺少 Decision 字段"
+      when: "PR Gate 检查 QA 决策"
+      then: "检查失败"
+    test: "tests/gate/gate.test.ts"
+
+# ============================================================================
+# G3: 优先级检测
+# ============================================================================
+priority_detection:
+  - id: G3-001
+    name: "P0wer 不应触发 P0 流程"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "PR 标题包含 'P0wer' 或类似字符串"
+      when: "detect-priority.cjs 检测优先级"
+      then: "不应返回 P0，应返回 unknown"
+    test: "tests/gate/gate.test.ts"
+    evidence:
+      type: test
+      run: "npm test -- tests/gate/gate.test.ts -t 'A3'"
+
+  - id: G3-002
+    name: "CRITICAL 关键字必须映射到 P0"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "PR 标题包含 CRITICAL"
+      when: "detect-priority.cjs 检测优先级"
+      then: "返回 P0"
+    test: "tests/hooks/detect-priority.test.ts"
+
+  - id: G3-003
+    name: "HIGH 关键字必须映射到 P1"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "PR 标题包含 HIGH"
+      when: "detect-priority.cjs 检测优先级"
+      then: "返回 P1"
+    test: "tests/hooks/detect-priority.test.ts"
+
+  - id: G3-004
+    name: "security 前缀必须映射到 P0"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "PR 标题以 security: 开头"
+      when: "detect-priority.cjs 检测优先级"
+      then: "返回 P0"
+    test: "tests/hooks/detect-priority.test.ts"
+
+# ============================================================================
+# G4: CI 依赖
+# ============================================================================
+ci_dependency:
+  - id: G4-001
+    name: "PR to main 时 ci-passed 依赖 release-check"
+    priority: P0
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "PR 目标是 main 分支"
+      when: "CI 运行 ci-passed job"
+      then: "必须等待 release-check 完成"
+    evidence:
+      type: review
+      file: ".github/workflows/ci.yml"
+      contains: "needs: [version-check, test, release-check]"
+
+# ============================================================================
+# G5: 命令安全
+# ============================================================================
+command_safety:
+  - id: G5-001
+    name: "npm 命令只允许特定脚本"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "RCI evidence 包含 npm 命令"
+      when: "run-regression.sh 执行 RCI"
+      then: "只允许 npm run test/qa/build/ci/install"
+    test: "tests/gate/gate.test.ts"
+    evidence:
+      type: test
+      run: "npm test -- tests/gate/gate.test.ts -t 'A6'"
+
+  - id: G5-002
+    name: "危险命令必须被拒绝"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "RCI evidence 包含 rm/dd/mkfs 等危险命令"
+      when: "run-regression.sh 执行 RCI"
+      then: "拒绝执行"
+    test: "tests/gate/gate.test.ts"
+
+# ============================================================================
+# G6: 数据保护
+# ============================================================================
+data_protection:
+  - id: G6-001
+    name: "checkout 失败后不删除远程分支"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "cleanup.sh 执行时 checkout 失败"
+      when: "到达步骤 4（删除远程分支）"
+      then: "跳过删除，输出警告"
+    test: "tests/gate/gate.test.ts"
+    evidence:
+      type: test
+      run: "npm test -- tests/gate/gate.test.ts -t 'A7'"
+
+  - id: G6-002
+    name: "分支保护拦截 main/develop 写入"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "当前在 main 或 develop 分支"
+      when: "尝试写入代码文件"
+      then: "Hook 阻止并提示切换分支"
+    test: "tests/hooks/branch-protect.test.ts"

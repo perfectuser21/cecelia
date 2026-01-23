@@ -76,16 +76,16 @@ if [[ -z "${DEVGATE_API_TOKEN:-}" && "$DRY_RUN" == "false" ]]; then
     exit 1
 fi
 
-# 构建 metrics 命令参数
-METRICS_ARGS="--format json"
+# L1 fix: 使用数组避免空格拆分问题
+METRICS_ARGS=("--format" "json")
 if [[ -n "$MONTH" ]]; then
-    METRICS_ARGS="$METRICS_ARGS --month $MONTH"
+    METRICS_ARGS+=("--month" "$MONTH")
 fi
 
 # 收集 metrics
 cd "$ENGINE_ROOT"
-echo "📊 收集 DevGate metrics..."
-RAW_METRICS=$(node scripts/devgate/metrics.cjs $METRICS_ARGS 2>/dev/null)
+echo "[INFO] 收集 DevGate metrics..."
+RAW_METRICS=$(node scripts/devgate/metrics.cjs "${METRICS_ARGS[@]}" 2>/dev/null)
 
 if [[ -z "$RAW_METRICS" ]]; then
     echo "错误: metrics 收集失败" >&2
@@ -133,15 +133,25 @@ if [[ "$VERBOSE" == "true" ]]; then
     echo ""
 fi
 
+# L2 fix: 检查 jq 是否安装
+check_jq() {
+    if ! command -v jq &>/dev/null; then
+        echo "[WARN] jq not installed, showing raw JSON" >&2
+        cat
+    else
+        jq .
+    fi
+}
+
 # Dry run 模式
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo "🔍 Dry run 模式，数据不会推送"
-    echo "$PAYLOAD" | jq .
+    echo "[INFO] Dry run mode, data will not be pushed"
+    echo "$PAYLOAD" | check_jq
     exit 0
 fi
 
 # 推送到 Core
-echo "🚀 推送到 $CORE_API_URL/api/devgate/metrics..."
+echo "[INFO] Pushing to $CORE_API_URL/api/devgate/metrics..."
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$CORE_API_URL/api/devgate/metrics" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $DEVGATE_API_TOKEN" \
@@ -151,10 +161,10 @@ HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 
 if [[ "$HTTP_CODE" == "200" ]]; then
-    echo "✅ 推送成功!"
-    echo "$BODY" | jq .
+    echo "[OK] Push successful!"
+    echo "$BODY" | check_jq
 else
-    echo "❌ 推送失败 (HTTP $HTTP_CODE)" >&2
+    echo "[ERROR] Push failed (HTTP $HTTP_CODE)" >&2
     echo "$BODY" >&2
     exit 1
 fi

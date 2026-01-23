@@ -1,0 +1,331 @@
+# ============================================================================
+# Regression Contract (RCI) - ZenithJoy Engine
+# ============================================================================
+#
+# 职责：确保"业务功能不回归"
+#
+# 业务范围：
+#   - 工作流定义（/dev 流程）
+#   - 核心脚本功能
+#   - API 行为
+#   - 用户路径
+#   - 重要体验流
+#
+# 标识规则：C{category}-{number}
+#   C1: 工作流（/dev 流程）
+#   C2: CI/Release
+#   C3: 脚本功能
+#   C4: API
+#   C5: 用户路径
+#   C6: Golden Paths
+#
+# 注意：Gate 相关内容请查看 contracts/gate-contract.yaml
+#
+# ============================================================================
+
+version: "9.2.0"
+updated: "2026-01-23"
+
+# ============================================================================
+# C1: 工作流（/dev 流程）
+# ============================================================================
+workflow:
+  - id: C1-001
+    name: "/dev 流程可启动"
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    steps:
+      given: "用户在项目根目录"
+      when: "运行 /dev 或说开发需求"
+      then: "Skill 加载，显示 PRD 确认步骤"
+    evidence:
+      type: screenshot
+      description: "Skill 加载截图"
+
+  - id: C1-002
+    name: "分支自动创建"
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    steps:
+      given: "PRD 确认后进入 Step 3"
+      when: "Claude 执行分支创建"
+      then: "创建 cp-MMDDHHNN-task 格式分支"
+    evidence:
+      type: command
+      run: "git branch --show-current"
+      contains: "cp-"
+
+  - id: C1-003
+    name: "DoD 自动生成"
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    steps:
+      given: "分支创建后进入 Step 4"
+      when: "Claude 推演 DoD"
+      then: "生成 .dod.md 文件，包含验收标准"
+    evidence:
+      type: file
+      path: ".dod.md"
+      exists: true
+
+  - id: C1-004
+    name: "Loop 1 循环（质检失败后回退）"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "Step 7 质检失败"
+      when: "发现问题"
+      then: "返回 Step 5 继续修复"
+    evidence:
+      type: log
+      description: "对话记录显示循环"
+
+  - id: C1-005
+    name: "CI 失败后循环"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "Step 9 CI 红"
+      when: "wait-for-merge.sh 检测到失败"
+      then: "返回 Step 5 重新循环"
+    evidence:
+      type: log
+      contains: "CI 失败"
+
+  - id: C1-006
+    name: "模式检测 - new"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "不在 cp-* 分支"
+      when: "/dev 启动"
+      then: "检测为 new 模式"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: C1-007
+    name: "模式检测 - continue"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "已在 cp-* 分支"
+      when: "/dev 启动"
+      then: "检测为 continue 模式"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: C1-008
+    name: "/qa Skill 加载"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "用户在项目目录"
+      when: "运行 /qa"
+      then: "Skill 加载，显示 QA 总控面板"
+    evidence:
+      type: file
+      path: "skills/qa/SKILL.md"
+      exists: true
+
+  - id: C1-009
+    name: "/audit Skill 加载"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "用户在项目目录"
+      when: "运行 /audit"
+      then: "Skill 加载，显示审计面板"
+    evidence:
+      type: file
+      path: "skills/audit/SKILL.md"
+      exists: true
+
+  - id: C1-010
+    name: "/assurance Skill 加载"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "用户在项目目录"
+      when: "运行 /assurance"
+      then: "Skill 加载，判断 Gate/Business 并更新契约"
+    evidence:
+      type: file
+      path: "skills/assurance/SKILL.md"
+      exists: true
+
+# ============================================================================
+# C2: CI/Release
+# ============================================================================
+ci_release:
+  - id: C2-001
+    name: "CI 运行 npm run qa"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    steps:
+      given: "PR 触发 CI"
+      when: "test job 执行"
+      then: "运行 npm run qa，包含 typecheck + test + build"
+    test: ".github/workflows/ci.yml"
+    evidence:
+      type: command
+      run: "npm run qa"
+
+  - id: C2-002
+    name: "版本号必须递增（PR to develop）"
+    priority: P1
+    trigger: [PR]
+    method: auto
+    steps:
+      given: "PR 目标是 develop"
+      when: "version-check job 执行"
+      then: "检查 package.json 版本号是否递增"
+    test: ".github/workflows/ci.yml"
+
+  - id: C2-003
+    name: "CHANGELOG 必须更新（PR to main）"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "PR 目标是 main"
+      when: "release-check job 执行"
+      then: "检查 CHANGELOG.md 包含当前版本"
+    test: ".github/workflows/ci.yml"
+
+# ============================================================================
+# C3: 脚本功能
+# ============================================================================
+scripts:
+  - id: C3-001
+    name: "metrics.sh 输出指标"
+    priority: P2
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "有 PR 历史"
+      when: "运行 metrics.sh"
+      then: "输出当前月 PR 统计"
+    test: "tests/hooks/metrics.test.ts"
+    evidence:
+      type: command
+      run: "bash scripts/devgate/metrics.sh"
+
+  - id: C3-002
+    name: "snapshot-prd-dod.sh 保存快照"
+    priority: P2
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "有 .prd.md 和 .dod.md"
+      when: "运行 snapshot-prd-dod.sh"
+      then: "保存到 .history/ 目录"
+    test: "tests/hooks/metrics.test.ts"
+    evidence:
+      type: command
+      run: "bash scripts/devgate/snapshot-prd-dod.sh 999"
+
+  - id: C3-003
+    name: "install-hooks.sh 安装成功"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "目标目录存在"
+      when: "运行 install-hooks.sh"
+      then: "安装 hooks 和 skills 到 ~/.claude/"
+    test: "tests/hooks/install-hooks.test.ts"
+
+  - id: C3-004
+    name: "run-regression.sh 执行回归测试"
+    priority: P1
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "RCI 文件存在"
+      when: "运行 run-regression.sh"
+      then: "执行回归测试并输出结果"
+    evidence:
+      type: command
+      run: "bash scripts/run-regression.sh --dry-run"
+
+  - id: C3-005
+    name: "qa-report.sh 生成报告"
+    priority: P2
+    trigger: [Release]
+    method: manual
+    steps:
+      given: "有测试结果"
+      when: "运行 qa-report.sh"
+      then: "生成 QA 报告"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh --help"
+
+  - id: C3-006
+    name: "release-check.sh 发布检查"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    steps:
+      given: "PR 目标是 main"
+      when: "CI 执行 release-check"
+      then: "检查 CHANGELOG 和版本号"
+    evidence:
+      type: command
+      run: "bash scripts/release-check.sh"
+
+# ============================================================================
+# C4: API（预留）
+# ============================================================================
+# api:
+#   # 未来添加 API 相关契约
+
+# ============================================================================
+# C5: 用户路径（预留）
+# ============================================================================
+# user_paths:
+#   # 未来添加用户路径契约
+
+# ============================================================================
+# C6: Golden Paths (E2E 关键链路)
+# ============================================================================
+golden_paths:
+  - id: C6-001
+    name: "完整开发流程"
+    description: "/dev → 模式检测 → 分支 → DoD → 循环修复 → PR Gate → CI → 合并"
+    priority: P0
+    trigger: [Release]
+    method: manual
+    rcis:
+      - C1-001  # /dev 流程可启动
+      - C1-002  # 分支自动创建
+      - C1-003  # DoD 自动生成
+      - C1-004  # 质检失败后回退
+      - C2-001  # CI 运行 npm run qa
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 /dev，确认模式检测"
+        - "确认 cp-* 分支自动创建"
+        - "确认 .dod.md 生成"
+        - "运行 npm run qa，确认通过"
+        - "创建 PR，确认 CI 通过"
+
+  - id: C6-002
+    name: "安装与部署链路"
+    description: "install-hooks.sh → ~/.claude/ 配置完整"
+    priority: P1
+    trigger: [Release]
+    method: auto
+    rcis:
+      - C3-003  # install-hooks.sh 安装成功
+    test: "tests/hooks/install-hooks.test.ts"

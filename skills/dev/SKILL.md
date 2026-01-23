@@ -166,13 +166,16 @@ bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse -
 
 # 每个步骤
 bash skills/dev/scripts/track.sh step 1 "PRD"
+bash skills/dev/scripts/track.sh step 2 "Detect"
 bash skills/dev/scripts/track.sh step 3 "Branch"
 bash skills/dev/scripts/track.sh step 4 "DoD"
 bash skills/dev/scripts/track.sh step 5 "Code"
 bash skills/dev/scripts/track.sh step 6 "Test"
-bash skills/dev/scripts/track.sh step 7 "PR"
-bash skills/dev/scripts/track.sh step 8 "CI"
-bash skills/dev/scripts/track.sh step 9 "Merge"
+bash skills/dev/scripts/track.sh step 7 "Quality"
+bash skills/dev/scripts/track.sh step 8 "PR"
+bash skills/dev/scripts/track.sh step 9 "CI"
+bash skills/dev/scripts/track.sh step 10 "Learning"
+bash skills/dev/scripts/track.sh step 11 "Cleanup"
 
 # 完成时
 bash skills/dev/scripts/track.sh done "$PR_URL"

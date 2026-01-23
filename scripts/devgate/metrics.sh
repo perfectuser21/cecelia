@@ -53,5 +53,6 @@ if [[ ! -f "$METRICS_CJS" ]]; then
     exit 2
 fi
 
-# 透传所有参数给 Node.js 脚本
-exec node "$METRICS_CJS" "$@"
+# L3 fix: 不使用 exec，以便可以捕获退出码（如需要）
+node "$METRICS_CJS" "$@"
+exit $?

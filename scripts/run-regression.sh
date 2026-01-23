@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # =============================================================================
@@ -183,10 +183,17 @@ run_evidence() {
             # 执行命令
             # 安全注意：evidence_run 来自 regression-contract.yaml（受版本控制）
             # 只允许执行白名单中的命令前缀
-            local first_cmd
-            first_cmd=$(echo "$evidence_run" | awk '{print $1}')
+            # P3 修复: 删除重复的 first_cmd 定义（已在上面定义）
             case "$first_cmd" in
-                npm|node|bash|sh|cat|grep|ls|curl|gh|git|jq|yq)
+                npm)
+                    # A6 fix: npm 命令只允许特定脚本（防止 npm run evil-script）
+                    if [[ ! "$evidence_run" =~ ^npm\ (run\ )?(test|qa|build|ci|install)(\s|$) ]]; then
+                        echo -e "${YELLOW}⏭️ (npm only allows: test, qa, build, ci, install)${NC}"
+                        L3_SKIPPED=$((L3_SKIPPED + 1))
+                        return
+                    fi
+                    ;;
+                node|bash|sh|cat|grep|ls|curl|gh|git|jq|yq)
                     # 允许的命令
                     ;;
                 *)
@@ -199,6 +206,27 @@ run_evidence() {
             set +e
             # P0-1 修复: 移除 eval，使用 bash -c 执行（更安全，防止命令注入）
             # 注意：evidence_run 来自 regression-contract.yaml（受版本控制），但仍需防范
+            # L1 fix: 严格的命令注入检查
+            # bash -c 本身可能被滥用来绕过检查，需要验证整个命令
+            # 只允许以下模式:
+            # 1. 简单命令（无 shell 元字符）
+            # 2. 明确的 bash -c '...' 结构（内容已被引号保护）
+            local cmd_safe=false
+            if [[ ! "$evidence_run" =~ [\;\|\&\`\$\(] ]]; then
+                # 无危险元字符，安全
+                cmd_safe=true
+            elif [[ "$evidence_run" =~ ^(bash|sh)\ -c\ \'[^\']*\'$ ]]; then
+                # bash -c 'command' 格式，引号内无危险
+                cmd_safe=true
+            fi
+
+            if [[ "$cmd_safe" != "true" ]]; then
+                echo -e "${YELLOW}[SKIP]${NC} (unsafe command pattern)"
+                L3_SKIPPED=$((L3_SKIPPED + 1))
+                return
+            fi
+
+            # 执行命令（已通过安全检查）
             output=$(cd "$PROJECT_ROOT" && bash -c "$evidence_run" 2>&1)
             local exit_code=$?
             set -e
@@ -231,7 +259,13 @@ run_evidence() {
         file)
             # 检查文件是否存在
             local file_path
-            # 安全：转义 id 中的特殊字符防止 yq 注入
+            # CRITICAL 修复: 严格验证 id 格式，只允许安全字符 [A-Za-z0-9_-]
+            if [[ ! "$id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+                echo -e "${YELLOW}⏭️ (invalid id format: $id)${NC}"
+                L3_SKIPPED=$((L3_SKIPPED + 1))
+                return
+            fi
+            # 安全：转义 id 中的特殊字符防止 yq 注入（双重保护）
             local safe_id
             safe_id=$(printf '%s' "$id" | sed 's/["\\]/\\&/g')
             file_path=$(yq eval ".. | select(has(\"evidence\")) | select(.id == \"$safe_id\") | .evidence.path" "$RC_FILE" 2>/dev/null | head -1)
@@ -249,8 +283,19 @@ run_evidence() {
                 L3_FAILED=$((L3_FAILED + 1))
                 return
             fi
-            # 使用 find 检查文件是否存在（支持通配符模式）
-            if find "$PROJECT_ROOT" -path "$PROJECT_ROOT/$file_path" -print -quit 2>/dev/null | grep -q .; then
+            # L2 fix: 使用 ls 配合 nullglob 检查通配符文件
+            # find -path 对复杂通配符支持有限，改用更可靠的方法
+            local file_found=false
+            if [[ "$file_path" == *"*"* ]]; then
+                # 包含通配符，使用 bash glob
+                local matches
+                matches=$(cd "$PROJECT_ROOT" && ls -d $file_path 2>/dev/null | head -1) || true
+                [[ -n "$matches" ]] && file_found=true
+            elif [[ -e "$PROJECT_ROOT/$file_path" ]]; then
+                # 精确路径
+                file_found=true
+            fi
+            if [[ "$file_found" == "true" ]]; then
                 echo -e "${GREEN}✅${NC}"
                 L3_PASSED=$((L3_PASSED + 1))
             else
@@ -301,26 +346,44 @@ fi
 # =============================================================================
 echo -e "${BLUE}[L1: 基础检查]${NC}"
 
+# L3 fix: L1 失败时输出详细总结
+L1_FAILED=false
+L1_ERRORS=()
+
 echo -n "  typecheck... "
 if npm run typecheck --silent 2>/dev/null; then
-    echo -e "${GREEN}✅${NC}"
+    echo -e "${GREEN}[OK]${NC}"
 else
-    echo -e "${RED}❌${NC}"
-    exit 1
+    echo -e "${RED}[FAIL]${NC}"
+    L1_FAILED=true
+    L1_ERRORS+=("typecheck failed")
 fi
 
 echo -n "  shell syntax... "
 SHELL_FAILED=0
+SHELL_FAILED_FILE=""
 while IFS= read -r -d '' f; do
     if ! bash -n "$f" 2>/dev/null; then
         SHELL_FAILED=1
+        SHELL_FAILED_FILE="$f"
         break
     fi
 done < <(find "$PROJECT_ROOT" -name "*.sh" -type f -not -path "*/node_modules/*" -print0)
 if [[ $SHELL_FAILED -eq 0 ]]; then
-    echo -e "${GREEN}✅${NC}"
+    echo -e "${GREEN}[OK]${NC}"
 else
-    echo -e "${RED}❌${NC}"
+    echo -e "${RED}[FAIL]${NC}"
+    L1_FAILED=true
+    L1_ERRORS+=("shell syntax failed: $SHELL_FAILED_FILE")
+fi
+
+# L3 fix: L1 失败时输出总结
+if [[ "$L1_FAILED" == "true" ]]; then
+    echo ""
+    echo -e "${RED}[L1 SUMMARY] Basic checks failed:${NC}"
+    for err in "${L1_ERRORS[@]}"; do
+        echo -e "  ${RED}- $err${NC}"
+    done
     exit 1
 fi
 
@@ -359,7 +422,8 @@ else
     # 使用临时文件存储 RCI 列表（避免子 shell 问题）
     RCI_RAW_FILE=$(mktemp)
     RCI_LIST_FILE=$(mktemp)
-    trap "rm -f \"$RCI_RAW_FILE\" \"$RCI_LIST_FILE\"" EXIT
+    # P1 修复: trap 覆盖 INT TERM 信号，确保 Ctrl+C 时临时文件被清理
+    trap "rm -f \"$RCI_RAW_FILE\" \"$RCI_LIST_FILE\"" EXIT INT TERM
 
     # 分两步写入：先解析，再过滤
     parse_rcis > "$RCI_RAW_FILE"

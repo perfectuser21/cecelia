@@ -31,19 +31,21 @@ if [[ ! -d "$HISTORY_DIR" ]]; then
     if [[ "$JSON_OUTPUT" == "true" ]]; then
         echo "[]"
     else
-        echo "暂无快照"
+        # L3 fix: 统一使用英文
+        echo "No snapshots found"
     fi
     exit 0
 fi
 
-# 获取所有快照（按时间倒序）
-SNAPSHOTS=$(find "$HISTORY_DIR" -name "PR-*.prd.md" -type f 2>/dev/null | sort -r)
+# L2 fix: 获取所有快照（按时间戳排序，正确处理 PR 号）
+# 文件名格式: PR-204-20260122-1048.prd.md，按时间戳部分倒序
+SNAPSHOTS=$(find "$HISTORY_DIR" -name "PR-*.prd.md" -type f 2>/dev/null | sort -t'-' -k3,3r -k4,4r)
 
 if [[ -z "$SNAPSHOTS" ]]; then
     if [[ "$JSON_OUTPUT" == "true" ]]; then
         echo "[]"
     else
-        echo "暂无快照"
+        echo "No snapshots found"
     fi
     exit 0
 fi
@@ -76,13 +78,13 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
     echo ""
     echo "]"
 else
-    # 表格输出
+    # 表格输出 (L3 fix: 统一使用英文)
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  PRD/DoD 快照列表"
+    echo "  PRD/DoD Snapshot List"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    printf "  %-8s %-15s %-35s\n" "PR" "时间" "文件"
+    printf "  %-8s %-15s %-35s\n" "PR" "Time" "File"
     printf "  %-8s %-15s %-35s\n" "--------" "---------------" "-----------------------------------"
 
     while IFS= read -r prd_file; do
@@ -98,7 +100,7 @@ else
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "  查看快照: bash scripts/devgate/view-snapshot.sh <PR号>"
+    echo "  View snapshot: bash scripts/devgate/view-snapshot.sh <PR_NUMBER>"
     echo ""
 fi
 

@@ -19,6 +19,7 @@ import {
   readdirSync,
 } from "fs";
 import { resolve, join } from "path";
+import { tmpdir } from "os";
 
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const SCRIPTS_DIR = join(PROJECT_ROOT, "scripts/devgate");
@@ -26,8 +27,8 @@ const SNAPSHOT_SCRIPT = join(SCRIPTS_DIR, "snapshot-prd-dod.sh");
 const LIST_SCRIPT = join(SCRIPTS_DIR, "list-snapshots.sh");
 const VIEW_SCRIPT = join(SCRIPTS_DIR, "view-snapshot.sh");
 
-// 临时测试目录
-const TEST_DIR = join(PROJECT_ROOT, ".test-phase2");
+// 临时测试目录 - use os.tmpdir() to avoid polluting the project
+const TEST_DIR = join(tmpdir(), "zenithjoy-test-phase2");
 const TEST_HISTORY_DIR = join(TEST_DIR, ".history");
 
 describe("Phase 2: PRD/DoD Snapshot", () => {
@@ -43,8 +44,12 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
     // 初始化 git（脚本需要）
     try {
       execSync("git init", { cwd: TEST_DIR, stdio: "pipe" });
-    } catch {
-      // 忽略已存在的情况
+    } catch (e: unknown) {
+      // git init may fail if directory already exists as a repo - this is expected
+      // Log for debugging but don't fail the test setup
+      if (process.env.DEBUG) {
+        console.log("git init skipped (may already exist):", e);
+      }
     }
   });
 
@@ -72,16 +77,21 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
     });
 
     it("should require PR number argument", () => {
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`bash "${SNAPSHOT_SCRIPT}"`, {
           encoding: "utf-8",
           cwd: TEST_DIR,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should create snapshot with correct filename", () => {
@@ -92,7 +102,7 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
         cwd: PROJECT_ROOT,
       });
 
-      // 检查文件是否创建
+      // Check files were created in project's .history dir
       const historyDir = join(PROJECT_ROOT, ".history");
       const files = readdirSync(historyDir);
 
@@ -106,7 +116,7 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
       expect(prdSnapshot).toBeDefined();
       expect(dodSnapshot).toBeDefined();
 
-      // 清理测试快照
+      // Clean up test snapshots from project directory
       if (prdSnapshot) {
         rmSync(join(historyDir, prdSnapshot), { force: true });
       }
@@ -116,16 +126,21 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
     });
 
     it("should validate PR number is numeric", () => {
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`bash "${SNAPSHOT_SCRIPT}" "abc"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
   });
 
@@ -162,7 +177,7 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
         cwd: TEST_DIR,
       });
 
-      expect(result).toContain("暂无快照");
+      expect(result).toContain("No snapshots found");
     });
   });
 
@@ -183,29 +198,39 @@ describe("Phase 2: PRD/DoD Snapshot", () => {
     });
 
     it("should require PR number argument", () => {
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`bash "${VIEW_SCRIPT}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should handle non-existent PR gracefully", () => {
+      let didThrow = false;
+      let exitStatus: number | undefined;
       try {
         execSync(`bash "${VIEW_SCRIPT}" 99999`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
         });
-        expect.fail("Should have thrown");
       } catch (e: unknown) {
-        const error = e as { status?: number; stderr?: Buffer };
-        expect(error.status).toBe(1);
+        didThrow = true;
+        if (e && typeof e === 'object' && 'status' in e) {
+          exitStatus = (e as { status?: number }).status;
+        }
       }
+      expect(didThrow).toBe(true);
+      expect(exitStatus).toBe(1);
     });
 
     it("should support PR number with # prefix", () => {
