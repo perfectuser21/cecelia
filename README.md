@@ -58,11 +58,11 @@ cecelia-workflows/
 ./scripts/deploy-to-n8n.sh
 ```
 
-### 使用 cecelia-manage skill
+### 使用 n8n-manage skill
 
 ```bash
 # 在 Claude Desktop 中
-"帮我同步 cecelia workflows 到 N8N"
+"帮我从 N8N 备份所有 workflows"
 ```
 
 ## 数据流
