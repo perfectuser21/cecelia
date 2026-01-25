@@ -1,0 +1,19 @@
+{
+  "name": "cecelia-quality",
+  "version": "1.0.0",
+  "description": "> 企业级质量保障基础设施 - 为 AI 驱动的开发工作流提供质量控制",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}
