@@ -53,7 +53,28 @@ Cecelia Quality Platform 是从 ZenithJoy Engine 提取的独立质量保障体�
 
 ## 快速开始
 
-### 方式 1: 全局安装到 ~/.claude
+### 方式 1: 使用 Profile 系统（推荐）
+
+Cecelia Quality 支持不同项目类型的质量配置：
+
+```bash
+# 检查质量（指定 profile）
+./run.sh check --profile=web
+
+# 导出质量状态（用于 Dashboard）
+./run.sh export --profile=engine --export-path=./quality-status.json
+
+# 初始化新项目
+./run.sh init --profile=web
+```
+
+**可用 Profiles**:
+- `engine` - 重度工作流（需要 PRD/DoD/QA/Audit，完整 RADNA 4 层）
+- `web` - 轻量级工作流（Build + Type Check，无需 PRD/DoD）
+- `api` - 中度工作流（测试覆盖 + API 契约）
+- `minimal` - 最小化（仅 Lint + Build）
+
+### 方式 2: 全局安装到 ~/.claude
 
 ```bash
 cd /path/to/cecelia-quality
@@ -62,7 +83,7 @@ bash scripts/install.sh
 
 安装后，所有 Claude Code 项目自动启用质量检查。
 
-### 方式 2: Git Submodule（项目级）
+### 方式 3: Git Submodule（项目级）
 
 ```bash
 cd your-project
@@ -70,7 +91,7 @@ git submodule add git@github.com:zenjoymedia/cecelia-quality.git infra/quality
 bash infra/quality/scripts/install-local.sh
 ```
 
-### 方式 3: NPM Package（未来）
+### 方式 4: NPM Package（未来）
 
 ```bash
 npm install -D @cecelia/quality-platform
@@ -80,6 +101,68 @@ npx cecelia-quality install
 ---
 
 ## 使用
+
+### Profile 系统
+
+不同项目类型使用不同的质量配置：
+
+#### Web Profile（轻量级）
+
+适用于前端项目（如 zenithjoy-autopilot）：
+
+```bash
+# 运行质量检查
+./run.sh check --profile=web
+
+# 集成到 GitHub Actions
+# 使用 adapters/github-actions/web-profile.yml
+```
+
+**Web Profile 特点**:
+- ✅ 无需 PRD/DoD（快速迭代）
+- ✅ 必要门控：Build 成功 + 无 TS 错误
+- ✅ 可选证据：截图、Lighthouse 报告、Bundle 分析
+
+#### Engine Profile（重度）
+
+适用于核心引擎项目（如 zenithjoy-engine）：
+
+```bash
+./run.sh check --profile=engine
+```
+
+**Engine Profile 特点**:
+- ✅ 需要 PRD/DoD/QA/Audit
+- ✅ 完整 RADNA 4 层检查
+- ✅ RCI 回归契约
+- ✅ 分层代码审计（L1-L4）
+
+#### 自定义 Profile
+
+创建 `profiles/custom.yml`:
+
+```yaml
+profile:
+  name: custom
+  type: backend
+  strictness: medium
+
+gates:
+  - id: G1
+    name: "Tests pass"
+    check: auto
+    blocking: true
+
+workflow:
+  require_prd: true
+  require_dod: true
+  require_qa: false
+
+ci:
+  required_checks:
+    - test
+    - lint
+```
 
 ### Hooks 自动运行
 
@@ -292,6 +375,23 @@ cecelia-quality/
 ├── VERSION                    # 版本号
 ├── README.md
 ├── CHANGELOG.md
+├── run.sh                     # 统一入口（NEW）
+│
+├── profiles/                  # 项目配置（NEW）
+│   ├── web.yml               # 轻量级（前端）
+│   ├── engine.yml            # 重度（核心引擎）
+│   └── api.yml               # 中度（API 服务）
+│
+├── adapters/                  # 集成方式（NEW）
+│   ├── github-actions/
+│   │   └── web-profile.yml   # GitHub Actions 示例
+│   └── claude-hooks/
+│
+├── dashboard/                 # 可视化（NEW）
+│   ├── schema.json           # quality-status.json 格式定义
+│   ├── collectors/
+│   └── exporters/
+│       └── export-status.sh  # 导出质量状态
 │
 ├── hooks/                     # Claude Code Hooks
 │   ├── branch-protect.sh

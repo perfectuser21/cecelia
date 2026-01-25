@@ -1,0 +1,471 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Cecelia Quality Status Schema",
+  "description": "Real-time quality status export for RADNA 4-layer visualization",
+  "type": "object",
+  "required": ["meta", "overview", "radna"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["version", "timestamp", "profile", "project"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Schema version",
+          "example": "1.0.0"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp"
+        },
+        "profile": {
+          "type": "string",
+          "enum": ["engine", "web", "api", "minimal"],
+          "description": "Quality profile used"
+        },
+        "project": {
+          "type": "object",
+          "required": ["name", "repo"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "example": "zenithjoy-autopilot"
+            },
+            "repo": {
+              "type": "string",
+              "example": "ZenithJoycloud/zenithjoy-autopilot"
+            },
+            "branch": {
+              "type": "string",
+              "example": "develop"
+            }
+          }
+        }
+      }
+    },
+    "overview": {
+      "type": "object",
+      "required": ["qualityScore", "status"],
+      "properties": {
+        "qualityScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Overall quality score (0-100)"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "warning", "fail", "unknown"],
+          "description": "Overall status"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Profile-specific metrics",
+          "properties": {
+            "rciCoverage": {
+              "type": "number",
+              "description": "RCI coverage % (engine only)"
+            },
+            "ciPassRate": {
+              "type": "number",
+              "description": "CI pass rate %"
+            },
+            "buildTime": {
+              "type": "number",
+              "description": "Average build time (ms)"
+            },
+            "bundleSize": {
+              "type": "number",
+              "description": "Bundle size (KB, web only)"
+            }
+          }
+        },
+        "activePRs": {
+          "type": "number",
+          "description": "Number of active PRs"
+        }
+      }
+    },
+    "radna": {
+      "type": "object",
+      "required": ["l0", "l1", "l2", "l3"],
+      "properties": {
+        "l0": {
+          "type": "object",
+          "description": "L0: Rules Layer",
+          "required": ["total", "status"],
+          "properties": {
+            "total": {
+              "type": "number",
+              "description": "Total rule documents"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["pass", "warning", "fail"]
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "name", "status"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "example": "R-001"
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "DoD Required"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["active", "deprecated"]
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "l1": {
+          "type": "object",
+          "description": "L1: Contracts Layer",
+          "required": ["gate", "regression"],
+          "properties": {
+            "gate": {
+              "type": "object",
+              "required": ["total", "passed", "status"],
+              "properties": {
+                "total": {
+                  "type": "number",
+                  "description": "Total gate contracts"
+                },
+                "passed": {
+                  "type": "number",
+                  "description": "Passed gate contracts"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pass", "fail"]
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "rule", "status"],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "example": "G1-001"
+                      },
+                      "rule": {
+                        "type": "string",
+                        "example": "DoD 不为空"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "warning"]
+                      },
+                      "lastCheck": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "regression": {
+              "type": "object",
+              "required": ["total", "covered", "status"],
+              "properties": {
+                "total": {
+                  "type": "number",
+                  "description": "Total RCI contracts"
+                },
+                "covered": {
+                  "type": "number",
+                  "description": "Covered RCI contracts"
+                },
+                "coverage": {
+                  "type": "number",
+                  "description": "Coverage % (covered/total * 100)"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pass", "warning", "fail"]
+                },
+                "categories": {
+                  "type": "object",
+                  "description": "RCI breakdown by category",
+                  "properties": {
+                    "hooks": {
+                      "$ref": "#/definitions/rciCategory"
+                    },
+                    "workflow": {
+                      "$ref": "#/definitions/rciCategory"
+                    },
+                    "core": {
+                      "$ref": "#/definitions/rciCategory"
+                    },
+                    "business": {
+                      "$ref": "#/definitions/rciCategory"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "l2": {
+          "type": "object",
+          "description": "L2: Executors Layer",
+          "required": ["hooks", "devgate", "ci"],
+          "properties": {
+            "hooks": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": ["pass", "fail", "disabled"]
+                },
+                "active": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "example": "PreToolUse"
+                  }
+                }
+              }
+            },
+            "devgate": {
+              "type": "object",
+              "required": ["total", "passed", "status"],
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "passed": {
+                  "type": "number"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pass", "warning", "fail"]
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "status"],
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "example": "check-dod-mapping"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": ["pass", "fail", "skip"]
+                      },
+                      "lastRun": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "error": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "ci": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": ["pass", "fail", "running", "unknown"]
+                },
+                "workflow": {
+                  "type": "string",
+                  "example": "quality-check"
+                },
+                "lastRun": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "duration": {
+                  "type": "number",
+                  "description": "Duration in seconds"
+                },
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          }
+        },
+        "l3": {
+          "type": "object",
+          "description": "L3: Evidence Layer",
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pass", "warning", "fail", "na"]
+            },
+            "qaDecision": {
+              "type": "object",
+              "properties": {
+                "exists": {
+                  "type": "boolean"
+                },
+                "decision": {
+                  "type": "string",
+                  "enum": ["NEW_RCI", "UPDATE_RCI", "NO_RCI"]
+                },
+                "priority": {
+                  "type": "string",
+                  "example": "P2"
+                },
+                "path": {
+                  "type": "string",
+                  "example": "docs/QA-DECISION.md"
+                }
+              }
+            },
+            "auditReport": {
+              "type": "object",
+              "properties": {
+                "exists": {
+                  "type": "boolean"
+                },
+                "targetLevel": {
+                  "type": "string",
+                  "enum": ["L1", "L2", "L3", "L4"]
+                },
+                "summary": {
+                  "type": "object",
+                  "properties": {
+                    "L1": { "type": "number" },
+                    "L2": { "type": "number" },
+                    "L3": { "type": "number" },
+                    "L4": { "type": "number" }
+                  }
+                },
+                "decision": {
+                  "type": "string",
+                  "enum": ["PASS", "FAIL"]
+                },
+                "path": {
+                  "type": "string",
+                  "example": "docs/AUDIT-REPORT.md"
+                }
+              }
+            },
+            "testCoverage": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Test coverage %"
+            },
+            "screenshots": {
+              "type": "array",
+              "description": "Visual evidence (web only)",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "description": "30-day trend data",
+      "properties": {
+        "qualityTrend": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["date", "score"],
+            "properties": {
+              "date": {
+                "type": "string",
+                "format": "date"
+              },
+              "score": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "rciGrowth": {
+          "type": "array",
+          "description": "Weekly RCI additions",
+          "items": {
+            "type": "object",
+            "properties": {
+              "week": {
+                "type": "string",
+                "example": "2026-W04"
+              },
+              "added": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "rciCategory": {
+      "type": "object",
+      "required": ["total", "covered"],
+      "properties": {
+        "total": {
+          "type": "number"
+        },
+        "covered": {
+          "type": "number"
+        },
+        "coverage": {
+          "type": "number"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["covered", "uncovered"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
