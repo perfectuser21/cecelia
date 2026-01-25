@@ -1,0 +1,134 @@
+{
+  "name": "template-claude-file-processor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-file-process",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "claude-file-processor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 从 webhook body 提取参数\nconst body = $json.body || $json;\nconst filePath = body.file_path || '/tmp/input.txt';\nconst task = body.task || 'Analyze this file';\nconst outputPath = body.output_path || '/tmp/output.json';\n\n// 生成唯一的 prompt 文件路径\nconst promptPath = `/tmp/claude-prompt-${Date.now()}.txt`;\n\n// 构建 prompt 内容\nconst promptContent = `\n读取文件: ${filePath}\n\n任务: ${task}\n\n输出要求:\n1. 返回 JSON 格式\n2. 保存结果到: ${outputPath}\n3. 包含执行摘要\n`;\n\nreturn {\n  file_path: filePath,\n  output_path: outputPath,\n  prompt_path: promptPath,\n  prompt_content: promptContent.trim(),\n  task_id: body.task_id || 'file-task-' + Date.now()\n};"
+      },
+      "id": "prepare-params",
+      "name": "Prepare Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'echo \"{{ $json.prompt_content }}\" > {{ $json.prompt_path }} && cat {{ $json.prompt_path }}'",
+        "options": {}
+      },
+      "id": "create-prompt-file",
+      "name": "Create Prompt File",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'claude -p \"$(cat {{ $('Prepare Parameters').item.json.prompt_path }})\" --output-format json'",
+        "options": {}
+      },
+      "id": "call-claude",
+      "name": "Call Claude",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'rm -f {{ $('Prepare Parameters').item.json.prompt_path }} && cat {{ $('Prepare Parameters').item.json.output_path }} 2>/dev/null || echo \"{\\\"status\\\":\\\"no output file\\\"}\"'",
+        "options": {}
+      },
+      "id": "cleanup-and-read",
+      "name": "Cleanup & Read Output",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '{}';\nlet result;\n\ntry {\n  result = JSON.parse(stdout);\n} catch (e) {\n  result = { raw_output: stdout };\n}\n\nreturn {\n  success: true,\n  task_id: $('Prepare Parameters').item.json.task_id,\n  file_processed: $('Prepare Parameters').item.json.file_path,\n  output_saved: $('Prepare Parameters').item.json.output_path,\n  result: result\n};"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Prepare Parameters", "type": "main", "index": 0}]]
+    },
+    "Prepare Parameters": {
+      "main": [[{"node": "Create Prompt File", "type": "main", "index": 0}]]
+    },
+    "Create Prompt File": {
+      "main": [[{"node": "Call Claude", "type": "main", "index": 0}]]
+    },
+    "Call Claude": {
+      "main": [[{"node": "Cleanup & Read Output", "type": "main", "index": 0}]]
+    },
+    "Cleanup & Read Output": {
+      "main": [[{"node": "Format Response", "type": "main", "index": 0}]]
+    },
+    "Format Response": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "description": "文件处理型 Claude 调用模板 - 读取文件、处理、输出结果",
+    "usage": "POST /webhook/claude-file-process with: {\"file_path\": \"/path/to/file\", \"task\": \"analyze this\", \"output_path\": \"/path/to/output.json\"}",
+    "author": "Cecelia Workflows"
+  }
+}
