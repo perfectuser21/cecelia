@@ -44,6 +44,10 @@ skills/dev/VALIDATION.md
 .layer2-evidence.md
 artifacts/screenshots/*.png
 
+# P0-2: Quality Evidence (MUST be tracked)
+# .quality-evidence.json 不能被忽略，这是 CI Evidence Gate 的验证依据
+!.quality-evidence.json
+
 # Old Subagent files (deprecated)
 .subagent-lock
 .subagent-proof.json

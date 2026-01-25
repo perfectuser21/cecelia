@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "10.0.0"
-updated: "2026-01-24"
+version: "10.3.0"
+updated: "2026-01-25"
 
 # ============================================================================
 # Hooks 回归契约
@@ -631,11 +631,11 @@ workflow:
     owner: workflow
     steps:
       given: "进入 p0 阶段（本地开发）"
-      when: "执行 PRD → DoD → Code → Audit (PASS) → Test (L1) → PR"
+      when: "执行 PRD → DoD → Code → Audit (PASS) → Test (L1) → PR（Step 8 不调用 Step 9）"
       then: "创建 PR 后结束，不等待 CI（Stop Hook 检查 phase=p0，直接 exit 0）"
     evidence:
       type: log
-      description: "PR 创建后 Stop Hook 输出 'p0 阶段: PR 已创建 → exit 0'"
+      description: "PR 创建后 Stop Hook 输出 'p0 阶段: PR 已创建 → exit 0'；Step 8 结尾不包含 Step 9 调用"
 
   - id: W1-005
     feature: W1
@@ -670,6 +670,23 @@ workflow:
     evidence:
       type: log
       contains: "p2 阶段.*CI pass.*merge.*learning.*cleanup"
+
+  - id: W1-008
+    feature: W1
+    name: "p1 阶段轮询循环"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, p1, v2.0.0, polling-loop]
+    owner: workflow
+    steps:
+      given: "PR 已创建，CI 检测到失败（phase=p1）"
+      when: "用户问'怎么样了'触发 P1 阶段"
+      then: "进入轮询循环：检查 CI → 运行中则 sleep 30s → 失败则修复并 continue → 成功则 merge 并 break"
+    evidence:
+      type: code
+      description: "skills/dev/steps/09-ci.md 包含 while true 循环；失败后 continue 继续循环（不退出）；超时保护 1 小时"
 
   # --------------------------------------------------------------------------
   # W3: 循环回退
@@ -1209,7 +1226,7 @@ n8n:
 
   - id: N1-002
     feature: N1
-    name: "Cecilia 执行 PRD Checkpoint"
+    name: "Cecilia 执行 PRD Task"
     scope: n8n
     priority: P0
     trigger: [Release]
@@ -1218,11 +1235,11 @@ n8n:
     owner: infra
     steps:
       given: "存在合法的 PRD JSON 文件"
-      when: "运行 cecilia -p prd.json -c CP-001"
+      when: "运行 cecilia -p prd.json -t T-001"
       then: "返回包含 success 字段的 JSON 结果"
     evidence:
       type: command
-      run: "cecilia -p n8n/test-prd.json -c CP-001 --output /tmp/test.json && cat /tmp/test.json"
+      run: "cecilia -p n8n/test-prd.json -t T-001 --output /tmp/test.json && cat /tmp/test.json"
       contains: "success"
     test: "n8n/test-prd.json"
 
@@ -1300,7 +1317,7 @@ n8n:
     evidence:
       type: command
       run: "bash scripts/run-regression.sh --dry-run"
-      contains: "Dry Run"
+      contains: "RCI 列表"
     test: "bash scripts/run-regression.sh --dry-run"
 
   - id: P1-003
@@ -1518,14 +1535,191 @@ golden_paths:
     method: auto
     rcis:
       - N1-001  # Cecilia CLI 健康检查
-      - N1-002  # Cecilia 执行 PRD Checkpoint
+      - N1-002  # Cecilia 执行 PRD Task
       - N1-003  # N8N Workflow 定义存在
       - E2-002  # 报告包含 mode 字段 (headless)
     verification:
       type: end-to-end
       steps:
         - "运行 cecilia --health，确认返回 healthy: true"
-        - "运行 cecilia -p test-prd.json -c CP-001，确认执行成功"
+        - "运行 cecelia -p test-prd.json -t T-001，确认执行成功"
         - "检查输出 JSON 包含 success 字段"
         - "确认 N8N workflow JSON 文件存在"
     test: "cecilia --health"
+
+# ============================================================================
+# P0 质检强制三件套（Q1/Q2/Q3）
+# ============================================================================
+quality_enforcement:
+  # --------------------------------------------------------------------------
+  # Q1: Impact Check - 能力变更强制登记
+  # --------------------------------------------------------------------------
+  - id: Q1-001
+    feature: Q1
+    name: "Impact Check 检测核心文件改动"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [devgate, feature-registry, capability]
+    owner: infra
+    steps:
+      given: "PR 改动了 hooks/, skills/, scripts/detect-phase.sh, scripts/qa-with-gate.sh"
+      when: "CI 运行 impact-check job"
+      then: "检测到核心文件改动，验证 feature-registry.yml 同时更新"
+    evidence:
+      type: ci-log
+      contains: "检测到核心能力文件改动"
+    verification:
+      type: manual
+      description: "创建 PR 改动 hooks/，观察 CI impact-check job 是否检测到"
+
+  - id: Q1-002
+    feature: Q1
+    name: "Impact Check 验证 registry 同时更新"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [devgate, feature-registry]
+    owner: infra
+    steps:
+      given: "核心文件已改动"
+      when: "impact-check.sh 检查 feature-registry.yml"
+      then: "如果 registry 未更新，CI 失败；如果已更新，CI 通过"
+    evidence:
+      type: ci-status
+      expected: "改动核心文件不改 registry → FAIL；同时改动 → PASS"
+    verification:
+      type: manual
+      description: "本 PR 会验证（改了 scripts/qa-with-gate.sh + registry）"
+
+  - id: Q1-003
+    feature: Q1
+    name: "Impact Check 前向一致性"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [devgate, forward-consistency]
+    owner: infra
+    steps:
+      given: "PR 只改动 feature-registry.yml（未改核心文件）"
+      when: "impact-check.sh 检查"
+      then: "允许通过（文档更新场景）"
+    evidence:
+      type: ci-status
+      expected: "只改 registry → PASS（不要求改能力）"
+    verification:
+      type: manual
+      description: "创建只改 registry 的 PR，确认 CI 通过"
+
+  # --------------------------------------------------------------------------
+  # Q2: Evidence Gate - 质检证据门控
+  # --------------------------------------------------------------------------
+  - id: Q2-001
+    feature: Q2
+    name: "Evidence 文件自动生成"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [qa-gate, evidence, json]
+    owner: infra
+    steps:
+      given: "npm run qa:gate 成功"
+      when: "qa-with-gate.sh 执行完成"
+      then: "自动生成 .quality-evidence.json，包含 SHA/Decision/timestamp"
+    evidence:
+      type: file
+      path: ".quality-evidence.json"
+      schema: '{"sha": "string", "audit_decision": "PASS", "qa_gate_passed": true}'
+    verification:
+      type: manual
+      description: "本 PR 已验证（.quality-evidence.json 已提交）"
+
+  - id: Q2-002
+    feature: Q2
+    name: "Evidence SHA 验证防冒用"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [evidence-gate, sha-validation, security]
+    owner: infra
+    steps:
+      given: "PR 包含 .quality-evidence.json"
+      when: "CI evidence-gate job 验证"
+      then: "检查 json.sha == HEAD，如果不匹配则 CI 失败"
+    evidence:
+      type: ci-log
+      contains: "SHA 验证通过"
+    verification:
+      type: manual
+      description: "本 PR 会验证（CI 检查 SHA 匹配 HEAD）"
+
+  - id: Q2-003
+    feature: Q2
+    name: "Evidence 字段完整性验证"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [evidence-gate, validation]
+    owner: infra
+    steps:
+      given: ".quality-evidence.json 存在"
+      when: "evidence-gate job 验证"
+      then: "检查所有必需字段存在且格式正确"
+    evidence:
+      type: ci-log
+      contains: "必需字段齐全"
+    verification:
+      type: manual
+      description: "本 PR 会验证（CI 检查字段完整性）"
+
+  # --------------------------------------------------------------------------
+  # Q3: Anti-Bypass Contract - 远端强制兜底
+  # --------------------------------------------------------------------------
+  - id: Q3-001
+    feature: Q3
+    name: "Quality Contract 文档完整性"
+    scope: doc
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [documentation, contract]
+    owner: infra
+    steps:
+      given: "docs/contracts/QUALITY-CONTRACT.md 存在"
+      when: "人工审查文档"
+      then: "包含本地 vs 远端职责映射表、P0 三件套说明、Branch Protection 要求"
+    evidence:
+      type: doc-review
+      checklist:
+        - "本地 vs 远端职责映射表清晰"
+        - "P0-1/P0-2/P0-3 说明完整"
+        - "Branch Protection 配置要求明确"
+    verification:
+      type: manual
+      description: "本 PR 已验证（文档已审查）"
+
+  - id: Q3-002
+    feature: Q3
+    name: "职责边界清晰定义"
+    scope: doc
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [contract, boundary]
+    owner: infra
+    steps:
+      given: "QUALITY-CONTRACT.md 定义职责边界"
+      when: "团队成员阅读文档"
+      then: "理解本地=加速失败，远端=最终强制"
+    evidence:
+      type: doc-content
+      contains: "本地 Hooks = 加速失败 / 远端 CI + Branch Protection = 最终强制"
+    verification:
+      type: manual
+      description: "文档审查确认原则清晰"

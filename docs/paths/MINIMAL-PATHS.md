@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 2.0.0
-created: 2026-01-24
-updated: 2026-01-24
+version: 2.3.0
+created: 2026-01-25
+updated: 2026-01-25
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.0.0: 从 feature-registry.yml 自动生成
+  - 2.3.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -53,7 +53,7 @@ changelog:
 2. ✅ **p1: CI fail → 修复 → push → 退出（不等 CI）**
 3. ✅ **p2: CI pass → 自动 merge → Learning → Cleanup**
 
-**RCI 覆盖**: W1-001,W1-002,W1-003,W1-004,W1-005,W1-006
+**RCI 覆盖**: W1-001,W1-002,W1-003,W1-004,W1-005,W1-006,W1-008
 
 ---
 
@@ -63,6 +63,35 @@ changelog:
 2. ✅ **CI fail → PHASE_OVERRIDE=p1 → cecelia-run → 修复 → push → 退出**
 
 **RCI 覆盖**: N1-001,N1-002,N1-003,N1-004
+
+---
+
+### Q1: Impact Check
+
+1. ✅ **改 hooks/ 不改 registry → CI FAIL**
+2. ✅ **改 hooks/ 同时改 registry → CI PASS**
+3. ✅ **只改 registry → CI PASS（允许文档更新）**
+
+**RCI 覆盖**: Q1-001,Q1-002,Q1-003
+
+---
+
+### Q2: Evidence Gate
+
+1. ✅ **无证据文件 → CI FAIL**
+2. ✅ **SHA 不匹配 HEAD → CI FAIL**
+3. ✅ **证据完整 → CI PASS**
+
+**RCI 覆盖**: Q2-001,Q2-002,Q2-003
+
+---
+
+### Q3: Anti-Bypass Contract
+
+1. ✅ **文档说明本地 vs 远端职责**
+2. ✅ **文档说明为何不用脚本验证 Branch Protection**
+
+**RCI 覆盖**: Q3-001,Q3-002
 
 ---
 
@@ -109,11 +138,10 @@ changelog:
 
 ### P5: Worktree Parallel Development
 
-1. ✅ **检测活跃分支: 列出 cp-*, feature/* 分支**
-2. ✅ **创建 worktree: 在独立目录开发**
-3. ✅ **清理 worktree: cleanup.sh 自动移除**
+1. ✅ **worktree 脚本存在但不默认使用**
+2. ✅ **用户可手动调用 worktree-manage.sh**
 
-**RCI 覆盖**: W6-001,W6-002,W6-003
+**RCI 覆盖**: W6-001
 
 ---
 
@@ -129,5 +157,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.0.0
-**生成时间**: 2026-01-24
+**版本**: 2.3.0
+**生成时间**: 2026-01-25

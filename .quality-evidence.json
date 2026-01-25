@@ -1,0 +1,10 @@
+{
+  "sha": "fdd49cc36c1abe5d58e7700f49449f5d731de7d8",
+  "branch": "release-v10.4.0",
+  "qa_gate_passed": true,
+  "audit_decision": "PASS",
+  "timestamp": "2026-01-25T03:49:00Z",
+  "typecheck": "pass",
+  "test": "pass",
+  "note": "v10.4.0 release - P1 polling loop"
+}

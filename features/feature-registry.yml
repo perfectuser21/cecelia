@@ -15,8 +15,12 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.0.0"
-updated: "2026-01-24"
+version: "2.3.0"
+updated: "2026-01-25"
+changelog:
+  - 2.3.0: 术语更新 Checkpoint → Task（避免与官方 Checkpoint 混淆）
+  - 2.2.0: /dev Skills 清理 + 多 Feature 支持文档
+  - 2.1.0: 新增 P0 质检强制三件套 (Q1/Q2/Q3)
 
 # ============================================================================
 # Platform Core 5 - 平台基础设施（按"断了就全死"排序）
@@ -186,9 +190,10 @@ platform_features:
       - W1-001  # /dev 入口可调用
       - W1-002  # PRD/DoD 生成
       - W1-003  # 阶段检测正确
-      - W1-004  # p0 阶段完整流程
+      - W1-004  # p0 阶段完整流程（Step 8 不调用 Step 9）
       - W1-005  # p1 阶段事件驱动修复
       - W1-006  # p2 阶段自动 merge
+      - W1-008  # p1 阶段轮询循环
 
   # --------------------------------------------------------------------------
   # N1: Cecelia Headless Mode - 无头自动化
@@ -231,6 +236,112 @@ platform_features:
       - N1-002  # 状态同步 (Core + Notion)
       - N1-003  # N8N Workflow 定义存在
       - N1-004  # p1 阶段无头修复语义
+
+  # --------------------------------------------------------------------------
+  # Q1: Impact Check - 能力变更强制登记（P0-1）
+  # --------------------------------------------------------------------------
+  - id: Q1
+    name: Impact Check
+    status: Committed
+    priority: P0
+    description: |
+      防止能力变更不登记：改了核心能力文件必须同时更新 feature-registry.yml
+      - 前向一致：改能力→必须登记 | 改登记→允许（不要求改能力）
+      - CI 远端强制执行
+
+    entrypoints:
+      - type: ci
+        job: impact-check
+        file: scripts/devgate/impact-check.sh
+
+    golden_path: |
+      PR 改动核心文件 → impact-check.sh 检测 → 验证 registry 同时更新 → 通过/失败
+
+    minimal_paths:
+      - "改 hooks/ 不改 registry → CI FAIL"
+      - "改 hooks/ 同时改 registry → CI PASS"
+      - "只改 registry → CI PASS（允许文档更新）"
+
+    tests:
+      - type: manual
+        description: 手动验证 impact-check 逻辑
+        coverage: manual:p0-1-trigger, manual:p0-1-pass, manual:p0-1-fail, manual:p0-1-doc-only
+
+    rcis:
+      - Q1-001  # 检测核心文件改动
+      - Q1-002  # 验证 registry 更新
+      - Q1-003  # 前向一致性验证
+
+  # --------------------------------------------------------------------------
+  # Q2: Evidence Gate - 质检证据门控（P0-2）
+  # --------------------------------------------------------------------------
+  - id: Q2
+    name: Evidence Gate
+    status: Committed
+    priority: P0
+    description: |
+      防止口头通过无证据：质检通过要有机器可验的 JSON 证据
+      - 生成: qa-with-gate.sh 自动生成 .quality-evidence.json
+      - 验证: CI 检查 SHA 匹配、字段齐全、Decision PASS
+      - SHA 验证是关键（防老文件冒用）
+
+    entrypoints:
+      - type: script
+        file: scripts/qa-with-gate.sh
+        output: .quality-evidence.json
+      - type: ci
+        job: evidence-gate
+
+    golden_path: |
+      npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → 通过/失败
+
+    minimal_paths:
+      - "无证据文件 → CI FAIL"
+      - "SHA 不匹配 HEAD → CI FAIL"
+      - "证据完整 → CI PASS"
+
+    tests:
+      - type: manual
+        description: 手动验证 evidence-gate 逻辑
+        coverage: manual:p0-2-generate, manual:p0-2-sha, manual:p0-2-missing
+
+    rcis:
+      - Q2-001  # 证据文件生成
+      - Q2-002  # SHA 验证
+      - Q2-003  # 字段验证
+
+  # --------------------------------------------------------------------------
+  # Q3: Anti-Bypass Contract - 远端强制兜底（P0-3）
+  # --------------------------------------------------------------------------
+  - id: Q3
+    name: Anti-Bypass Contract
+    status: Committed
+    priority: P0
+    description: |
+      承认本地可绕过，用远端 CI + Branch Protection 强制
+      - 本地 Hooks = 加速失败
+      - 远端 CI + Branch Protection = 最终强制
+      - 文档清晰说明职责边界
+
+    entrypoints:
+      - type: doc
+        file: docs/contracts/QUALITY-CONTRACT.md
+
+    golden_path: |
+      开发者理解质量契约 → 本地 Hook 提前反馈 → 远端 CI 最终强制 → Branch Protection 物理阻止
+
+    minimal_paths:
+      - "文档说明本地 vs 远端职责"
+      - "文档说明为何不用脚本验证 Branch Protection"
+
+    tests:
+      - type: manual
+        description: 文档审查
+        coverage: manual:p0-3-doc
+
+    rcis:
+      - Q3-001  # 文档完整性
+      - Q3-002  # 职责映射表清晰
 
 # ============================================================================
 # Product Core 5 - 引擎核心能力
@@ -404,38 +515,35 @@ product_features:
   # --------------------------------------------------------------------------
   - id: P5
     name: Worktree Parallel Development
-    status: Committed
+    status: Deprecated
     priority: P2
     description: |
-      支持多分支并行开发：
-      - 检测活跃分支 (cp-*, feature/*)
-      - 提供 worktree 隔离选项
-      - 自动清理 worktree
+      支持多分支并行开发（已简化）：
+      - worktree-manage.sh 脚本保留但非默认流程
+      - 移除交互式并行检测步骤（02.5-parallel-detect.md）
+      - 一次只做一个任务，自动检测即可
 
     entrypoints:
       - type: script
         file: skills/dev/scripts/worktree-manage.sh
-      - type: workflow
-        step: skills/dev/steps/02.5-parallel-detect.md
 
     golden_path: |
-      /dev 启动 → 检测活跃分支 → 提示用户选择 (继续/worktree/新分支) →
-      创建 worktree (可选) → 开发 → cleanup 清理 worktree
+      /dev 启动 → 自动检测环境 → 开发（单任务）
 
     minimal_paths:
-      - "检测活跃分支: 列出 cp-*, feature/* 分支"
-      - "创建 worktree: 在独立目录开发"
-      - "清理 worktree: cleanup.sh 自动移除"
+      - "worktree 脚本存在但不默认使用"
+      - "用户可手动调用 worktree-manage.sh"
 
     tests:
       - type: manual
-        description: 手动验证 worktree 流程
-        coverage: W6-001, W6-002, W6-003
+        description: 手动验证 worktree 脚本可用性
+        coverage: W6-001
 
     rcis:
-      - W6-001  # 活跃分支检测
-      - W6-002  # worktree 创建
-      - W6-003  # worktree 清理
+      - W6-001  # worktree 脚本可执行
+
+    deprecated_since: "10.2.0"
+    deprecated_reason: "用户一次只做一个任务，不需要交互式并行检测"
 
 # ============================================================================
 # 视图生成规则

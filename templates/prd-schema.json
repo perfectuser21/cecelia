@@ -3,7 +3,7 @@
   "title": "PRD Schema",
   "description": "N8N 可解析的 PRD 结构，用于自动化调度 Cecilia",
   "type": "object",
-  "required": ["meta", "checkpoints"],
+  "required": ["meta", "tasks"],
   "properties": {
     "meta": {
       "type": "object",
@@ -46,7 +46,7 @@
       "items": { "type": "string" },
       "description": "非目标列表"
     },
-    "checkpoints": {
+    "tasks": {
       "type": "array",
       "items": {
         "type": "object",
@@ -54,12 +54,12 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^CP-[0-9]{3}$",
-            "description": "Checkpoint ID，如 CP-001"
+            "pattern": "^T-[0-9]{3}$",
+            "description": "Task ID，如 T-001"
           },
           "name": {
             "type": "string",
-            "description": "Checkpoint 名称"
+            "description": "Task 名称"
           },
           "type": {
             "type": "string",
@@ -68,7 +68,7 @@
           },
           "depends_on": {
             "type": ["string", "null"],
-            "description": "依赖的 checkpoint ID，无依赖为 null"
+            "description": "依赖的 task ID，无依赖为 null"
           },
           "size": {
             "type": "string",

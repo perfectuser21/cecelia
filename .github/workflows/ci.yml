@@ -288,6 +288,115 @@ jobs:
           echo ""
           echo "feature-registry.yml 和派生视图已同步"
 
+  # Impact Check - 能力变更强制登记（P0-1）
+  impact-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来 diff base 分支
+
+      - name: Run Impact Check
+        run: |
+          # CI 中需要使用 origin/ 前缀
+          export BASE_REF="origin/${{ github.base_ref || 'develop' }}"
+          bash scripts/devgate/impact-check.sh
+
+  # Evidence Gate - 质检证据门控（P0-2）
+  evidence-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2  # 需要父提交来验证证据 SHA
+
+      - name: Verify Quality Evidence
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence Gate: 质检证据验证"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          EVIDENCE_FILE=".quality-evidence.json"
+
+          # 1. 检查文件存在
+          if [[ ! -f "$EVIDENCE_FILE" ]]; then
+            echo "❌ 证据文件不存在: $EVIDENCE_FILE"
+            echo ""
+            echo "请在本地运行 'npm run qa:gate' 生成证据文件"
+            exit 1
+          fi
+
+          echo "✓ 证据文件存在"
+
+          # 2. 检查 JSON 格式有效
+          if ! jq empty "$EVIDENCE_FILE" 2>/dev/null; then
+            echo "❌ 证据文件格式无效（非 JSON）"
+            exit 1
+          fi
+
+          echo "✓ JSON 格式有效"
+
+          # 3. 检查必需字段
+          REQUIRED_FIELDS=("sha" "branch" "qa_gate_passed" "audit_decision" "timestamp")
+          for field in "${REQUIRED_FIELDS[@]}"; do
+            if ! jq -e ".$field" "$EVIDENCE_FILE" > /dev/null 2>&1; then
+              echo "❌ 缺少必需字段: $field"
+              exit 1
+            fi
+          done
+
+          echo "✓ 必需字段齐全"
+
+          # 4. 验证 SHA 匹配 HEAD~1（防老文件冒用）⚠️ 关键
+          # 两阶段提交：commit 1 = 代码变更, commit 2 = 证据文件
+          # checkout 使用 PR head (非 merge commit)，所以 HEAD~1 就是父提交
+          PARENT_SHA=$(git rev-parse HEAD~1)
+          EVIDENCE_SHA=$(jq -r '.sha' "$EVIDENCE_FILE")
+
+          if [[ "$EVIDENCE_SHA" != "$PARENT_SHA" ]]; then
+            echo "❌ SHA 不匹配！"
+            echo "   证据 SHA: $EVIDENCE_SHA"
+            echo "   HEAD~1: $PARENT_SHA (期望)"
+            echo ""
+            echo "证据文件应该引用代码变更的 commit (HEAD~1)"
+            exit 1
+          fi
+
+          echo "✓ SHA 验证通过: $EVIDENCE_SHA"
+
+          # 5. 验证 qa_gate_passed == true
+          QA_GATE_PASSED=$(jq -r '.qa_gate_passed' "$EVIDENCE_FILE")
+          if [[ "$QA_GATE_PASSED" != "true" ]]; then
+            echo "❌ qa_gate_passed != true"
+            exit 1
+          fi
+
+          echo "✓ QA Gate 已通过"
+
+          # 6. 验证 audit_decision == "PASS"
+          AUDIT_DECISION=$(jq -r '.audit_decision' "$EVIDENCE_FILE")
+          if [[ "$AUDIT_DECISION" != "PASS" ]]; then
+            echo "❌ Audit Decision: $AUDIT_DECISION (期望 PASS)"
+            exit 1
+          fi
+
+          echo "✓ Audit Decision: PASS"
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Evidence Gate 通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   # Release 检查（仅 develop → main 的 PR）
   release-check:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
@@ -375,11 +484,13 @@ jobs:
   # 注意：此 job 只在 pull_request 事件时运行，push 事件时跳过
   # A4 fix: PR to main 时必须等 release-check 完成
   ci-passed:
-    needs: [version-check, test, release-check]
+    needs: [version-check, test, impact-check, evidence-gate, release-check]
     if: |
       github.event_name == 'pull_request' &&
       needs.test.result == 'success' &&
       (needs.version-check.result == 'success' || needs.version-check.result == 'skipped') &&
+      (needs.impact-check.result == 'success' || needs.impact-check.result == 'skipped') &&
+      (needs.evidence-gate.result == 'success' || needs.evidence-gate.result == 'skipped') &&
       (needs.release-check.result == 'success' || needs.release-check.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -15,9 +15,9 @@
     "不需要实际创建代码",
     "不需要创建 PR"
   ],
-  "checkpoints": [
+  "tasks": [
     {
-      "id": "CP-001",
+      "id": "T-001",
       "name": "健康检查测试",
       "type": "test",
       "depends_on": null,

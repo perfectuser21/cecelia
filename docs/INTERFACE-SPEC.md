@@ -23,7 +23,7 @@ changelog:
 │                      (本地 VPS 部署)                             │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
 │  │ Webhook     │───▶│ Loop        │───▶│ Notify      │         │
-│  │ Trigger     │    │ Checkpoints │    │ Result      │         │
+│  │ Trigger     │    │ Tasks       │    │ Result      │         │
 │  └─────────────┘    └──────┬──────┘    └─────────────┘         │
 └────────────────────────────┼────────────────────────────────────┘
                              │ SSH
@@ -69,14 +69,14 @@ cecilia [options]
 | 参数 | 短参数 | 类型 | 必需 | 说明 |
 |------|--------|------|------|------|
 | `--prd` | `-p` | string | ✓ | PRD 文件路径或 Notion ID (`notion:xxx`) |
-| `--checkpoint` | `-c` | string | * | 执行指定 Checkpoint ID |
-| `--all` | - | boolean | * | 执行所有 pending checkpoints |
+| `--task` | `-t` | string | * | 执行指定 Task ID |
+| `--all` | - | boolean | * | 执行所有 pending tasks |
 | `--model` | `-m` | string | - | 强制使用指定模型 |
 | `--workdir` | `-w` | string | - | 工作目录（默认当前目录）|
 | `--callback` | - | string | - | Dashboard 回调 URL |
 | `--health` | - | boolean | - | 检查适配器健康状态 |
 
-*`--checkpoint` 和 `--all` 二选一
+*`--task` 和 `--all` 二选一
 
 ### 1.3 输入：PRD JSON
 
@@ -89,9 +89,9 @@ PRD 格式遵循 `templates/prd-schema.json`，核心字段：
     "feature_branch": "feature/user-auth",
     "status": "approved"
   },
-  "checkpoints": [
+  "tasks": [
     {
-      "id": "CP-001",
+      "id": "T-001",
       "name": "初始化模块",
       "type": "code",
       "depends_on": null,
@@ -111,8 +111,8 @@ PRD 格式遵循 `templates/prd-schema.json`，核心字段：
 ```json
 {
   "success": true,
-  "checkpoint_id": "CP-001",
-  "output": "Checkpoint completed successfully...",
+  "task_id": "T-001",
+  "output": "Task completed successfully...",
   "duration": 45000,
   "tokens_used": 12500,
   "cost": 0.15,
@@ -124,7 +124,7 @@ PRD 格式遵循 `templates/prd-schema.json`，核心字段：
 ```json
 {
   "success": false,
-  "checkpoint_id": "CP-001",
+  "task_id": "T-001",
   "output": "...",
   "error": "Verification failed: npm run typecheck returned exit code 1",
   "duration": 30000
@@ -138,10 +138,10 @@ PRD 格式遵循 `templates/prd-schema.json`，核心字段：
   "success": 3,
   "failed": 1,
   "results": {
-    "CP-001": { "success": true, ... },
-    "CP-002": { "success": true, ... },
-    "CP-003": { "success": true, ... },
-    "CP-004": { "success": false, "error": "..." }
+    "T-001": { "success": true, ... },
+    "T-002": { "success": true, ... },
+    "T-003": { "success": true, ... },
+    "T-004": { "success": false, "error": "..." }
   }
 }
 ```
@@ -160,10 +160,10 @@ PRD 格式遵循 `templates/prd-schema.json`，核心字段：
 
 ```bash
 # N8N SSH 节点调用
-ssh vps "cd /path/to/project && cecilia -p ./prd.json -c CP-001"
+ssh vps "cd /path/to/project && cecilia -p ./prd.json -t T-001"
 
 # 带回调
-ssh vps "cecilia -p ./prd.json -c CP-001 --callback http://dashboard:3000/api"
+ssh vps "cecilia -p ./prd.json -t T-001 --callback http://dashboard:3000/api"
 
 # 健康检查
 ssh vps "cecilia --health"
@@ -192,9 +192,9 @@ POST /runs
   "prd_id": "notion:abc123",
   "repo": "zenithjoy-core",
   "feature_branch": "feature/user-auth",
-  "checkpoints": [
-    { "id": "CP-001", "name": "初始化模块", "type": "code" },
-    { "id": "CP-002", "name": "实现功能", "type": "code" }
+  "tasks": [
+    { "id": "T-001", "name": "初始化模块", "type": "code" },
+    { "id": "T-002", "name": "实现功能", "type": "code" }
   ],
   "model": "claude-code"
 }
@@ -223,22 +223,22 @@ GET /runs/:runId
   "repo": "zenithjoy-core",
   "feature_branch": "feature/user-auth",
   "status": "running",
-  "current_checkpoint": "CP-002",
+  "current_task": "T-002",
   "started_at": "2026-01-16T21:00:00Z",
   "ended_at": null,
   "total_cost": 0.15,
   "total_tokens": 12500,
   "progress_percent": 50,
-  "checkpoints": [
+  "tasks": [
     {
-      "id": "CP-001",
+      "id": "T-001",
       "name": "初始化模块",
       "status": "done",
       "duration_ms": 45000,
       "pr_url": "https://github.com/xxx/yyy/pull/123"
     },
     {
-      "id": "CP-002",
+      "id": "T-002",
       "name": "实现功能",
       "status": "in_progress",
       "started_at": "2026-01-16T21:01:00Z"
@@ -247,10 +247,10 @@ GET /runs/:runId
 }
 ```
 
-#### 2.2.3 更新 Checkpoint 状态
+#### 2.2.3 更新 Task 状态
 
 ```
-PATCH /checkpoints/:checkpointId
+PATCH /tasks/:taskId
 ```
 
 **Request Body**:
@@ -328,12 +328,12 @@ Notion Webhook / Manual Trigger / Schedule
 ### 3.2 循环执行
 
 ```
-For each checkpoint in PRD:
+For each task in PRD:
     │
     ├─ Check depends_on status
     │   └─ Skip if dependency not done
     │
-    ├─ SSH: cecilia -p ./prd.json -c CP-XXX --callback $DASHBOARD_URL
+    ├─ SSH: cecilia -p ./prd.json -t T-XXX --callback $DASHBOARD_URL
     │
     ├─ Parse JSON output
     │
@@ -345,7 +345,7 @@ For each checkpoint in PRD:
 ### 3.3 完成
 
 ```
-All checkpoints done?
+All tasks done?
     │
     ├─ Yes → PATCH /runs/:id { status: "success" }
     │        → Send success notification
@@ -358,17 +358,17 @@ All checkpoints done?
 
 ## 4. 模型选择策略
 
-Cecilia 根据 checkpoint 类型自动选择模型：
+Cecilia 根据 task 类型自动选择模型：
 
-| Checkpoint Type | 默认模型 | 原因 |
-|-----------------|----------|------|
+| Task Type | 默认模型 | 原因 |
+|-----------|----------|------|
 | `code` | claude-code | 代码能力最强 |
 | `test` | claude-code | 测试也需要代码能力 |
 | `config` | claude-code | 配置文件修改 |
 | `docs` | gemini | 文档可用便宜模型 |
 | `review` | gemini | Review 可用便宜模型 |
 
-可通过 `--model` 参数或 checkpoint 中的 `model` 字段覆盖。
+可通过 `--model` 参数或 task 中的 `model` 字段覆盖。
 
 ---
 
@@ -413,9 +413,9 @@ DASHBOARD_API_URL=http://localhost:3000/api/cecilia
 
 # 默认设置
 DEFAULT_MODEL=claude-code
-CHECKPOINT_TIMEOUT_SMALL=300000    # 5 分钟
-CHECKPOINT_TIMEOUT_MEDIUM=600000   # 10 分钟
-CHECKPOINT_TIMEOUT_LARGE=1200000   # 20 分钟
+TASK_TIMEOUT_SMALL=300000    # 5 分钟
+TASK_TIMEOUT_MEDIUM=600000   # 10 分钟
+TASK_TIMEOUT_LARGE=1200000   # 20 分钟
 ```
 
 ### N8N

@@ -60,7 +60,7 @@ cmd_start() {
   local project="${1:-$(basename "$(pwd)")}"
   local feature_branch="${2:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")}"
   local prd_path="${3:-.prd.md}"
-  local total_checkpoints="${4:-1}"
+  local total_tasks="${4:-1}"
 
   # 检查 API
   if ! check_api; then
@@ -85,7 +85,7 @@ cmd_start() {
 
   # 调用 cecelia-api 创建 run
   local response
-  response=$("$CECELIA_API" create-run "$project" "$feature_branch" "$prd_path" "$total_checkpoints" "$prd_title" "$prd_summary" "$mode" 2>/dev/null || echo "{}")
+  response=$("$CECELIA_API" create-run "$project" "$feature_branch" "$prd_path" "$total_tasks" "$prd_title" "$prd_summary" "$mode" 2>/dev/null || echo "{}")
 
   # 提取 run_id
   local run_id
@@ -151,8 +151,8 @@ cmd_done() {
   # 更新状态
   if [[ -n "$pr_url" ]]; then
     "$CECELIA_API" update-run "$run_id" "completed" "Done" "" &>/dev/null || true
-    # 如果有 PR URL，也更新 checkpoint
-    "$CECELIA_API" update-checkpoint "$run_id" "CP-001" "done" "Completed" "$pr_url" &>/dev/null || true
+    # 如果有 PR URL，也更新 task
+    "$CECELIA_API" update-task "$run_id" "T-001" "done" "Completed" "$pr_url" &>/dev/null || true
   else
     "$CECELIA_API" update-run "$run_id" "completed" "Done" &>/dev/null || true
   fi

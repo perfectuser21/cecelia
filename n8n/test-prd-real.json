@@ -11,9 +11,9 @@
     "验证文件能被正确创建"
   ],
   "non_goals": [],
-  "checkpoints": [
+  "tasks": [
     {
-      "id": "CP-001",
+      "id": "T-001",
       "name": "创建测试文件",
       "type": "code",
       "depends_on": null,

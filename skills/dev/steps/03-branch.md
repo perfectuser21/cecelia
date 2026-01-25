@@ -73,10 +73,10 @@ echo "   Base: $BASE_BRANCH"
 
 | Feature | 任务描述 | 分支名 |
 |---------|----------|--------|
-| W6 (Worktree) | 并行检测 | `W6-parallel-detect` |
 | W6 (Worktree) | 脚本管理 | `W6-worktree-manage` |
 | H1 (branch-protect) | 修复 bug | `H1-fix-checkout` |
 | C1 (version-check) | 添加验证 | `C1-add-validation` |
+| D1 (dev-workflow) | 清理提示词 | `D1-cleanup-prompts` |
 
 **规则**：
 - Feature ID 必须在 FEATURES.md 中已注册
@@ -86,15 +86,19 @@ echo "   Base: $BASE_BRANCH"
 
 ---
 
-## Checkpoint 命名规则
+## Task 命名规则
 
-PRD 中的子任务使用 `CP-{序号}-{任务名}` 格式：
+PRD 中的子任务使用 `T-{序号}-{任务名}` 格式：
 
 ```markdown
-- [ ] CP-001-parallel-detect | code | none
-- [ ] CP-002-worktree-manage | code | CP-001
-- [ ] CP-003-cleanup-extend | code | CP-002
+- [ ] T-001-worktree-manage | code | none
+- [ ] T-002-cleanup-extend | code | T-001
+- [ ] T-003-multi-feature-support | code | T-002
 ```
+
+**概念说明**：
+- **官方 Checkpoint**: Claude Code 自动撤销功能（Esc+Esc 打开 rewind）- 文件级别，自动保存
+- **我们的 Task**: 开发单元（1 个 PR）- 功能级别，手动规划
 
 ---
 
@@ -151,4 +155,4 @@ echo "📝 下一步: Step 4 (DoD)"
 - **分支名格式**：`{Feature ID}-{任务名}`
 - **Feature ID 必须已注册** - 在 FEATURES.md 中
 - **base-branch 必须保存** - PR 时使用
-- **不要用 `cp-` 前缀** - `cp-` 只用于 Checkpoint 编号
+- **不要用 `cp-` 前缀** - `cp-` 只用于 Task 编号（历史遗留，建议用 t- 但不强制）

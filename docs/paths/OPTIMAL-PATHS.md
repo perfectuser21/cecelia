@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 2.0.0
-created: 2026-01-24
-updated: 2026-01-24
+version: 2.3.0
+created: 2026-01-25
+updated: 2026-01-25
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.0.0: 从 feature-registry.yml 自动生成
+  - 2.3.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -71,6 +71,30 @@ n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." 
 
 ---
 
+### Q1: Impact Check
+
+```
+PR 改动核心文件 → impact-check.sh 检测 → 验证 registry 同时更新 → 通过/失败
+```
+
+---
+
+### Q2: Evidence Gate
+
+```
+npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → 通过/失败
+```
+
+---
+
+### Q3: Anti-Bypass Contract
+
+```
+开发者理解质量契约 → 本地 Hook 提前反馈 → 远端 CI 最终强制 → Branch Protection 物理阻止
+```
+
+---
+
 ## Product Core 5 - 引擎核心能力
 
 ### P1: Regression Testing Framework
@@ -109,8 +133,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ### P5: Worktree Parallel Development
 
 ```
-/dev 启动 → 检测活跃分支 → 提示用户选择 (继续/worktree/新分支) →
-创建 worktree (可选) → 开发 → cleanup 清理 worktree
+/dev 启动 → 自动检测环境 → 开发（单任务）
 ```
 
 ---
@@ -127,5 +150,5 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.0.0
-**生成时间**: 2026-01-24
+**版本**: 2.3.0
+**生成时间**: 2026-01-25

@@ -3,7 +3,7 @@
 > Product Requirements Document - 功能需求文档
 >
 > 此模板用于 Claude Code / Claude Desktop 与人类对齐需求
-> N8N 可解析 `## Checkpoints` 部分自动调度 Cecilia 执行
+> N8N 可解析 `## Tasks` 部分自动调度 Cecilia 执行
 
 ---
 
@@ -46,26 +46,26 @@
 
 ---
 
-## Checkpoints
+## Tasks
 
-> **N8N 解析区域** - 每个 checkpoint 对应一个 cp-* 分支
+> **N8N 解析区域** - 每个 task 对应一个 cp-* 分支
 >
-> 格式：`- [ ] CP-<序号>: <名称> | <类型> | <依赖>`
+> 格式：`- [ ] T-<序号>: <名称> | <类型> | <依赖>`
 
-- [ ] CP-001: <checkpoint 名称> | code | none
-- [ ] CP-002: <checkpoint 名称> | code | CP-001
-- [ ] CP-003: <checkpoint 名称> | test | CP-002
+- [ ] T-001: <task 名称> | code | none
+- [ ] T-002: <task 名称> | code | T-001
+- [ ] T-003: <task 名称> | test | T-002
 
-### Checkpoint 详情
+### Task 详情
 
-#### CP-001: <名称>
+#### T-001: <名称>
 
 **类型**: `code` / `test` / `config` / `docs`
-**依赖**: `none` / `CP-XXX`
+**依赖**: `none` / `T-XXX`
 **预计工作量**: `small` / `medium` / `large`
 
 **任务描述**:
-<!-- 这个 checkpoint 具体要做什么 -->
+<!-- 这个 task 具体要做什么 -->
 
 **完成标准**:
 - [ ] 标准 1
@@ -73,12 +73,12 @@
 
 **验证命令**:
 ```bash
-# 如何验证这个 checkpoint 完成
+# 如何验证这个 task 完成
 ```
 
 ---
 
-#### CP-002: <名称>
+#### T-002: <名称>
 
 <!-- 同上格式 -->
 

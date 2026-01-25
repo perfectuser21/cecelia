@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 2.0.0
-created: 2026-01-24
-updated: 2026-01-24
+version: 2.3.0
+created: 2026-01-25
+updated: 2026-01-25
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.0.0: 从 feature-registry.yml 自动生成
+  - 2.3.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -74,7 +74,7 @@ StopHook 触发 → 阶段检测 (detect-phase.sh) → p0: 检查质检+PR | p1:
 PR (p0 结束) → CI fail (p1 唤醒) → Fix → Push → CI pass (p2 自动 merge)
 ```
 
-**RCI 覆盖**: W1-001,W1-002,W1-003,W1-004,W1-005,W1-006
+**RCI 覆盖**: W1-001,W1-002,W1-003,W1-004,W1-005,W1-006,W1-008
 
 ---
 
@@ -94,7 +94,52 @@ n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." 
 
 ---
 
-## GP-006: Regression Testing Framework (P1)
+## GP-006: Impact Check (Q1)
+
+**Feature**: Q1 - Impact Check
+**Priority**: P0
+
+### Golden Path
+
+```
+PR 改动核心文件 → impact-check.sh 检测 → 验证 registry 同时更新 → 通过/失败
+```
+
+**RCI 覆盖**: Q1-001,Q1-002,Q1-003
+
+---
+
+## GP-007: Evidence Gate (Q2)
+
+**Feature**: Q2 - Evidence Gate
+**Priority**: P0
+
+### Golden Path
+
+```
+npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → 通过/失败
+```
+
+**RCI 覆盖**: Q2-001,Q2-002,Q2-003
+
+---
+
+## GP-008: Anti-Bypass Contract (Q3)
+
+**Feature**: Q3 - Anti-Bypass Contract
+**Priority**: P0
+
+### Golden Path
+
+```
+开发者理解质量契约 → 本地 Hook 提前反馈 → 远端 CI 最终强制 → Branch Protection 物理阻止
+```
+
+**RCI 覆盖**: Q3-001,Q3-002
+
+---
+
+## GP-009: Regression Testing Framework (P1)
 
 **Feature**: P1 - Regression Testing Framework
 **Priority**: P0
@@ -110,7 +155,7 @@ run-regression.sh 执行 → 验证契约不被破坏
 
 ---
 
-## GP-007: DevGate (P2)
+## GP-010: DevGate (P2)
 
 **Feature**: P2 - DevGate
 **Priority**: P0
@@ -125,7 +170,7 @@ CI test job → DevGate checks → 三个检查全部通过 → CI 继续
 
 ---
 
-## GP-008: Quality Reporting (P3)
+## GP-011: Quality Reporting (P3)
 
 **Feature**: P3 - Quality Reporting
 **Priority**: P1
@@ -140,7 +185,7 @@ CI test job → DevGate checks → 三个检查全部通过 → CI 继续
 
 ---
 
-## GP-009: CI Quality Gates (P4)
+## GP-012: CI Quality Gates (P4)
 
 **Feature**: P4 - CI Quality Gates
 **Priority**: P0
@@ -155,7 +200,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 
 ---
 
-## GP-010: Worktree Parallel Development (P5)
+## GP-013: Worktree Parallel Development (P5)
 
 **Feature**: P5 - Worktree Parallel Development
 **Priority**: P2
@@ -163,11 +208,10 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ### Golden Path
 
 ```
-/dev 启动 → 检测活跃分支 → 提示用户选择 (继续/worktree/新分支) →
-创建 worktree (可选) → 开发 → cleanup 清理 worktree
+/dev 启动 → 自动检测环境 → 开发（单任务）
 ```
 
-**RCI 覆盖**: W6-001,W6-002,W6-003
+**RCI 覆盖**: W6-001
 
 ---
 
@@ -183,5 +227,5 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.0.0
-**生成时间**: 2026-01-24
+**版本**: 2.3.0
+**生成时间**: 2026-01-25

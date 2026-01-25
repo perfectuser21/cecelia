@@ -16,9 +16,9 @@
     "不做 OAuth 第三方登录",
     "不做密码找回"
   ],
-  "checkpoints": [
+  "tasks": [
     {
-      "id": "CP-001",
+      "id": "T-001",
       "name": "初始化认证模块",
       "type": "code",
       "depends_on": null,
@@ -39,10 +39,10 @@
       "retry_count": 0
     },
     {
-      "id": "CP-002",
+      "id": "T-002",
       "name": "实现注册功能",
       "type": "code",
-      "depends_on": "CP-001",
+      "depends_on": "T-001",
       "size": "medium",
       "description": "实现用户注册 API 和密码哈希",
       "dod": [
@@ -62,10 +62,10 @@
       "retry_count": 0
     },
     {
-      "id": "CP-003",
+      "id": "T-003",
       "name": "实现登录功能",
       "type": "code",
-      "depends_on": "CP-002",
+      "depends_on": "T-002",
       "size": "medium",
       "description": "实现用户登录和 JWT 生成",
       "dod": [
@@ -85,10 +85,10 @@
       "retry_count": 0
     },
     {
-      "id": "CP-004",
+      "id": "T-004",
       "name": "集成测试",
       "type": "test",
-      "depends_on": "CP-003",
+      "depends_on": "T-003",
       "size": "small",
       "description": "完整的认证流程集成测试",
       "dod": [

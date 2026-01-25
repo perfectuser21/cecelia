@@ -11,6 +11,139 @@ changelog:
 
 **质量真源** - 定义术语表、强制项、本地 vs CI 检查边界。
 
+> **核心原则（P0 Anti-Bypass）**：
+> - 本地 Hooks = 加速失败（提前发现问题）
+> - 远端 CI + Branch Protection = 最终强制（物理阻止合并）
+
+---
+
+## P0 质检强制三件套（v10.1.0+）
+
+### P0-1: Impact Check（能力变更强制登记）
+
+**目标**：改了核心能力文件，必须同时更新能力注册表
+
+**触发条件**：PR 改动以下任意路径时
+- `hooks/`
+- `skills/`
+- `scripts/detect-phase.sh`
+- `scripts/qa-with-gate.sh`
+- `features/`
+
+**强制要求**：必须同时改动 `features/feature-registry.yml`
+
+**实现**：
+- CI job: `impact-check`
+- 脚本: `scripts/devgate/impact-check.sh`
+
+**前向一致性**：
+- 改能力 → 必须登记 ✅
+- 改登记 → 允许（不要求改能力）✅（允许文档更新）
+
+---
+
+### P0-2: Evidence Gate（质检证据门控）
+
+**目标**：质检通过不靠口头，要有机器可验的证据文件
+
+**证据文件**：`.quality-evidence.json`
+
+**生成时机**：`npm run qa:gate` 成功后自动生成
+
+**格式**：
+```json
+{
+  "sha": "<current HEAD>",
+  "branch": "<branch>",
+  "qa_gate_passed": true,
+  "audit_decision": "PASS",
+  "timestamp": "2026-01-24T21:03:56+08:00",
+  "evidence": {
+    "typecheck": "passed",
+    "tests": "186/186 passed",
+    "build": "success",
+    "audit_l1": 0,
+    "audit_l2": 0
+  }
+}
+```
+
+**CI 验证**：
+- CI job: `evidence-gate`
+- 检查项：
+  - [ ] 文件必须存在
+  - [ ] JSON 字段齐全
+  - [ ] `sha == HEAD`（防老文件冒用）⚠️ 关键
+  - [ ] `qa_gate_passed == true`
+  - [ ] `audit_decision == "PASS"`
+
+**实现**：
+- 生成: `scripts/qa-with-gate.sh` 末尾自动生成
+- 验证: CI job `evidence-gate`
+- Git: `.gitignore` 不忽略此文件（`!.quality-evidence.json`）
+
+---
+
+### P0-3: Anti-Bypass 口径（远端强制兜底）
+
+**核心原则**：
+```
+本地 Hooks = 加速失败（提前发现问题）
+远端 CI + Branch Protection = 最终强制（物理阻止合并）
+```
+
+**承认现实**：
+- 本地 Hook 可以被绕过（手动创建文件、skip hooks、删除配置）
+- 不追求"本地 100% 封堵"
+- 用远端 CI + Branch Protection 作为最终防线
+
+**职责映射**：
+
+| 质检要求 | 本地检查 | 远端强制 | 绕过后果 |
+|---------|---------|----------|----------|
+| **PRD/DoD 存在** | ✅ `hooks/branch-protect.sh` | ❌ 无 | 可绕过，但 PR Gate 会检查 |
+| **质检通过 (L1)** | ✅ `hooks/stop.sh` | ✅ **CI: test job** | 远端兜底，必须通过 |
+| **Audit PASS (L2A)** | ✅ `hooks/stop.sh` | ✅ **CI: evidence-gate** | 远端兜底，验证证据 |
+| **能力登记** | ❌ 无 | ✅ **CI: impact-check** | 只能靠远端检测 |
+| **质检证据有效** | ❌ 无 | ✅ **CI: evidence-gate** | 远端验证 SHA 匹配 |
+| **测试通过** | ✅ `npm run qa:gate` | ✅ **CI: test job** | 远端强制执行 |
+| **版本号更新** | ❌ 无 | ✅ **CI: version-check** | 远端强制检查 |
+| **合并权限** | ❌ 无 | ✅ **Branch Protection** | GitHub 物理阻止 |
+
+**Branch Protection 要求**：
+
+必须配置以下 Required Status Checks：
+```yaml
+required_status_checks:
+  strict: true
+  checks:
+    - context: test              # L1 + DevGate
+    - context: impact-check      # P0-1: 能力变更登记
+    - context: evidence-gate     # P0-2: 质检证据验证
+    - context: version-check     # 版本号检查
+```
+
+**Admin Enforcement（关键）**：
+```yaml
+enforce_admins: true  # ⚠️ 必须开启，否则 Admin 可绕过 CI
+```
+
+**为什么不用脚本验证 Branch Protection？**
+- ~~`scripts/verify-branch-protection.sh`~~ ❌ **已删除**
+- **理由**：
+  1. GitHub 后端强制：Branch Protection 是 GitHub 服务端执行的
+  2. CI 无法验证：CI 运行在 PR 中，无法修改 GitHub 设置
+  3. 脚本无意义：只能读取配置，无法强制执行
+  4. 配置会漂移：脚本验证通过 ≠ GitHub 实际配置正确
+
+**正确做法**：
+- 手动检查 GitHub 设置（Settings → Branches → Branch protection rules）
+- 使用 `gh api` 一次性验证：
+  ```bash
+  gh api repos/:owner/:repo/branches/main/protection --jq '.enforce_admins.enabled'
+  # 应输出: true
+  ```
+
 ---
 
 ## 三套分层系统（互不冲突）

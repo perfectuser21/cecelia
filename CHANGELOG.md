@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.4.0] - 2026-01-25
+
+### Changed
+
+- **P1 轮询循环 - 正确的两阶段分离**
+  - Step 8 (08-pr.md): PR 创建后不调用 Step 9，由 Stop Hook 触发会话结束
+  - Step 9 (09-ci.md): 改为完整的 while 轮询循环（在 P1 阶段执行）
+    - 运行中/等待中：sleep 30s 后继续
+    - 失败：修复代码 → push → continue（继续循环，不退出）
+    - 成功：自动合并 PR → break（退出循环）
+  - skills/dev/SKILL.md: 更新流程图和核心规则
+  - 两阶段分离：
+    - P0 (会话 1): 质检 → PR 创建 → 结束（不等 CI）
+    - P1 (会话 2): 轮询循环 → 持续修复直到成功
+
+### Added
+
+- **regression-contract.yaml**: W1-008 - P1 阶段轮询循环（新增 RCI）
+- **超时保护**: P1 轮询循环 1 小时超时自动退出
+
+### Updated
+
+- **regression-contract.yaml**: W1-004 - P0 阶段完整流程（Step 8 不调用 Step 9）
+- **features/feature-registry.yml**: W1 feature 描述更新
+
+## [10.3.0] - 2026-01-25
+
+### Changed
+
+- **术语更新**: Checkpoint → Task
+  - 避免与官方 Claude Code Checkpoint（自动撤销功能）混淆
+  - 官方 Checkpoint: 文件级别自动保存（Esc+Esc rewind）
+  - 我们的 Task: 开发单元（1 个 PR）
+
+- **文件更新**:
+  - skills/dev/steps/03-branch.md - 添加概念说明
+  - docs/INTERFACE-SPEC.md - API 完整更新（checkpoints → tasks）
+  - templates/prd-schema.json - Schema 字段更新
+  - templates/PRD-TEMPLATE.md - 模板更新
+  - templates/prd-example.json - 示例更新
+  - n8n/test-prd*.json - 测试文件更新
+  - regression-contract.yaml - RCI 引用更新
+  - skills/dev/scripts/track.sh - 脚本变量更新
+
+## [10.2.0] - 2026-01-24
+
+### Changed
+
+- **skills/dev/steps/01-prd.md**: 清理垃圾提示词
+  - 删除"等用户确认"、"用户确认后才能继续"
+  - 改为"生成 PRD 后直接继续 Step 2"
+
+- **skills/dev/steps/05-code.md**: 清理垃圾提示词
+  - 删除"停下来，和用户确认"
+  - 改为"更新 PRD，调整实现方案，继续"
+
+### Removed
+
+- **skills/dev/steps/02.5-parallel-detect.md**: 删除并行检测步骤
+  - 不需要询问用户选择 worktree
+  - 一次只做一个任务，自动检测即可
+
+### Added
+
+- **skills/dev/SKILL.md**: 多 Feature 支持文档
+  - 简单任务：单 PR 流程（向后兼容）
+  - 复杂任务：拆分 Features → 多个 PR
+  - 状态文件格式：`.local.md` + YAML frontmatter（官方标准）
+  - `/dev continue` 命令支持
+
+### Fixed
+
+- **skills/dev/steps/03-branch.md**: 清理过时示例
+  - 移除 parallel-detect 分支命名示例
+  - 更新 Checkpoint 示例，删除 CP-001-parallel-detect
+
 ## [10.0.2] - 2026-01-24
 
 ### Added
