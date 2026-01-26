@@ -1,18 +1,20 @@
-# QA Decision: 将 Feature Dashboard 加入侧边栏菜单
+# QA Decision: 回滚登录重定向相关改动
 
 ## Decision: L1 ✅
 
 ## 问题分类
-- **类型**: Feature Enhancement
-- **影响范围**: 导航菜单
-- **风险等级**: Low
+- **类型**: Rollback / Emergency Fix
+- **影响范围**: 登录流程 + 导航菜单
+- **风险等级**: Low（仅回滚代码）
 
 ## 测试策略
 
 ### L1: Critical (阻塞性) ✅
 **决策**: 需要
-**测试内容**: TypeScript 编译通过
+**测试内容**:
+- TypeScript 编译通过
+- Git revert 操作正确（4个提交）
 
 ### L2-L4: ❌
 **决策**: 不需要
-**原因**: 简单的菜单配置修改，风险极低
+**原因**: 仅回滚代码，恢复到之前的稳定状态，无需额外测试

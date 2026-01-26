@@ -40,14 +40,6 @@ export default function FeishuLogin() {
   const origin = window.location.origin.replace(/^http:/, 'https:');
   const REDIRECT_URI = `${origin}/login`;
 
-  // 保存 redirect 参数到 localStorage（因为飞书回调会覆盖 URL 参数）
-  useEffect(() => {
-    const redirect = searchParams.get('redirect');
-    if (redirect) {
-      localStorage.setItem('feishu_login_redirect', redirect);
-    }
-  }, [searchParams]);
-
   // 处理飞书登录回调
   const handleFeishuCallback = async (code: string) => {
     setLoading(true);
@@ -72,15 +64,7 @@ export default function FeishuLogin() {
         console.log('Login successful, user data:', data.user);
         console.log('Your Feishu ID:', data.user.feishu_user_id);
         login(data.user, data.user.access_token);
-
-        // 登录成功后跳转回原来想访问的页面
-        // 优先从 localStorage 读取（因为飞书回调会覆盖 URL 参数）
-        const redirect = localStorage.getItem('feishu_login_redirect') || searchParams.get('redirect') || '/';
-        localStorage.removeItem('feishu_login_redirect');
-
-        // 使用 window.location.href 强制刷新页面，确保登录状态被重新加载
-        // 不能用 navigate() 因为 login() 是异步的，状态还没更新完就跳转会导致循环
-        window.location.href = redirect;
+        navigate('/');
       } else {
         throw new Error(data.error || '登录失败');
       }

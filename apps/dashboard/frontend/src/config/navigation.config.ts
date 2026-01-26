@@ -112,13 +112,6 @@ export const autopilotNavGroups: NavGroup[] = [
         featureKey: 'accounts',
         component: 'AccountsList'
       },
-      {
-        path: '/features',
-        icon: LayoutGrid,
-        label: 'Feature 总览',
-        featureKey: 'feature-dashboard',
-        component: 'FeatureDashboard'
-      },
       // 管理员设置已迁移到 Core: core.zenjoymedia.media
     ]
   }
