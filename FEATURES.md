@@ -408,7 +408,7 @@ GP-ACCOUNTS-002: 查看账号数据 → 分析趋势
 
 ## Platform Features（平台功能层）
 
-> 所有 Platform Features 属于 Core 实例（zenithjoy-core）
+> 所有 Platform Features 属于 Core 实例（Cecelia Workspace (Core)）
 
 ---
 
@@ -755,7 +755,7 @@ Business Features (4)           Platform Features (5)
 ## 项目架构
 
 ```
-zenithjoy-core (Core 实例 - Platform Features)
+Cecelia Workspace (Core) (Core 实例 - Platform Features)
      ↑ 引用
      │
 cecelia-workspace (本仓库 - Workspace)
@@ -810,7 +810,7 @@ cecelia-workspace (本仓库 - Workspace)
 |------|------|------|
 | 2026-01-26 | 2.0.0 | 重构为专业三层分类（Foundation/Business/Platform），支持 RCI |
 | 2026-01-26 | 1.0.0 | 初始版本（技术组件混合） |
-| 2026-01-22 | - | N8N 迁移到 zenithjoy-core |
+| 2026-01-22 | - | N8N 迁移到 Cecelia Workspace (Core) |
 | 2026-01-21 | - | 系统监控功能迁移到 Core |
 
 ---
