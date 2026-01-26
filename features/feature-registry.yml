@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.6.0"
-updated: "2026-01-25"
+version: "2.7.0"
+updated: "2026-01-26"
 changelog:
+  - 2.7.0: W1 v10.8.0 - 修复阶段检测（detect-phase.sh 脚本新增）
   - 2.6.0: Q4 v10.6.0 - CI 分层完善（L2B + L3-fast + Preflight + AI Review）
   - 2.5.0: W1 v10.5.1 - Ralph Loop 文档 + 运行时文件清理 + 测试修复
   - 2.4.0: H2 v10.4.4 - 真正移除 FAST_MODE（修复 PR #273 假修复）
@@ -151,15 +152,16 @@ platform_features:
     name: Two-Phase Dev Workflow
     status: Committed
     priority: P0
-    version: "10.5.1"
-    updated: "2026-01-25"
+    version: "10.8.0"
+    updated: "2026-01-26"
     description: |
-      v2.0.0 两阶段开发工作流 + Ralph Loop 文档：
+      v2.0.0 两阶段开发工作流 + Ralph Loop 文档 + 阶段检测脚本：
       - p0 (Published): 本地质检 → 创建 PR → 结束（不等 CI）
       - p1 (CI fail): 事件驱动修复 → push → 退出 → 等唤醒
       - p2 (CI pass): 自动合并
       - pending/unknown: 退出（不误判）
       - Ralph Loop: P0/P1 两阶段自动循环机制文档
+      - detect-phase.sh: 阶段检测脚本（Stop Hook 依赖）
 
     entrypoints:
       - type: cli

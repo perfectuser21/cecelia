@@ -1,48 +1,44 @@
 # QA Decision
 
-Decision: PASS
+Decision: MUST_ADD_RCI
 Priority: P0
 RepoType: Engine
 
 Tests:
-  - dod_item: "版本号已更新到 10.7.0"
+  - dod_item: "detect-phase.sh 脚本创建完成"
     method: manual
-    location: manual:version-updated
-  
-  - dod_item: "VERSION 文件已更新"
+    location: "manual: 验证文件存在且可执行"
+
+  - dod_item: "脚本能正确检测 p0 阶段（无 PR）"
     method: manual
-    location: manual:version-file-updated
-  
-  - dod_item: "CHANGELOG.md 已更新"
+    location: "manual: 在无 PR 分支执行脚本，验证输出 PHASE: p0"
+
+  - dod_item: "脚本能正确检测 p1 阶段（PR + CI fail）"
     method: manual
-    location: manual:changelog-updated
-  
-  - dod_item: "所有自动化测试通过（191/191）"
+    location: "manual: 模拟 CI fail 场景，验证输出 PHASE: p1"
+
+  - dod_item: "脚本能正确检测 p2 阶段（PR + CI pass）"
     method: manual
-    location: manual:tests-passed
-  
-  - dod_item: "CI 完整验证通过"
+    location: "manual: 模拟 CI pass 场景，验证输出 PHASE: p2"
+
+  - dod_item: "脚本能正确检测 pending 阶段（PR + CI pending）"
     method: manual
-    location: manual:ci-passed
-  
-  - dod_item: "回归测试通过"
+    location: "manual: 模拟 CI pending 场景，验证输出 PHASE: pending"
+
+  - dod_item: "脚本能正确处理 gh API 错误返回 unknown"
     method: manual
-    location: manual:regression-passed
-  
-  - dod_item: "Preflight 智能跳过工作正常"
+    location: "manual: 模拟 gh 命令失败场景，验证输出 PHASE: unknown"
+
+  - dod_item: "Stop Hook 能成功调用脚本不再报错"
     method: manual
-    location: manual:preflight-smart-skip
-  
-  - dod_item: "L3-fast 已删除，无遗留"
+    location: "manual: 在功能分支执行，验证 Stop Hook 不再报 detect-phase.sh 缺失错误"
+
+  - dod_item: "输出格式符合规范（PHASE: xxx / DESCRIPTION: xxx / ACTION: xxx）"
     method: manual
-    location: manual:l3-fast-deleted
-  
-  - dod_item: "AI Review 状态正确标注"
-    method: manual
-    location: manual:ai-review-disabled
+    location: "manual: 验证所有输出格式符合规范"
 
 RCI:
-  new: []
+  new: ["W1-004"]
   update: []
 
-Reason: Release PR，合并 develop 到 main，不涉及新的回归契约。所有功能已在 develop 验证通过。
+Reason: detect-phase.sh 是质检系统核心组件，Stop Hook 依赖它判断阶段。缺失导致质检门控失效（P0 blocker）。必须纳入回归契约确保该脚本存在且功能正确。

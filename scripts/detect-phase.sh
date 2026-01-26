@@ -1,192 +1,95 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 阶段检测脚本
+# detect-phase.sh - 阶段检测脚本
 # ============================================================================
-# 每次启动只问三个问题，决定进入哪个阶段
+# 检测当前开发阶段，用于 Stop Hook 和 /dev 流程判断
 #
-# 错误处理：
-# - gh 临时错误（rate limit / 网络错误）→ PHASE: unknown → exit 0
-# - 不允许因为 API 波动误判阶段
+# 阶段定义:
+#   p0:      无 PR（Published 阶段 - 发 PR 前）
+#   p1:      PR + CI fail（修复阶段 - 轮询修复）
+#   p2:      PR + CI pass（已完成 - GitHub 自动合并）
+#   pending: PR + CI pending（等待中 - 不介入）
+#   unknown: gh API 错误或无法检测（安全退出 - 不误判）
+#
+# 输出格式:
+#   PHASE: <p0|p1|p2|pending|unknown>
+#   DESCRIPTION: <阶段描述>
+#   ACTION: <下一步动作>
 # ============================================================================
 
 set -euo pipefail
 
-# ===== PHASE_OVERRIDE 支持 =====
-# 允许强制指定阶段（仅用于 p1，CI fail 通知触发时）
-if [[ -n "${PHASE_OVERRIDE:-}" ]]; then
-    if [[ "$PHASE_OVERRIDE" == "p1" ]]; then
-        echo "PHASE: p1"
-        echo "DESCRIPTION: CI fail 修复阶段（强制模式）"
-        echo "ACTION: 修复 CI → push → 退出"
-        echo ""
-        echo "说明: PHASE_OVERRIDE=p1 强制进入 p1 阶段"
-        exit 0
-    fi
-fi
-
-# 获取当前分支
+# ===== 获取当前分支 =====
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 if [[ -z "$CURRENT_BRANCH" ]]; then
-    echo "ERROR: 无法获取当前分支"
-    exit 1
+    echo "PHASE: unknown"
+    echo "DESCRIPTION: 无法获取当前分支"
+    echo "ACTION: 确保在 git 仓库中运行"
+    exit 0
 fi
 
-# ===== 问题 1: 有没有 PR？=====
-PR_NUMBER=""
-GH_ERROR=false
-
+# ===== 检查 gh 命令 =====
 if ! command -v gh &>/dev/null; then
-    # gh 命令不可用 → unknown（安全退出）
     echo "PHASE: unknown"
     echo "DESCRIPTION: gh 命令不可用"
-    echo "ACTION: 直接退出（无法检测阶段）"
-    echo ""
-    echo "说明: 请安装 gh CLI 或手动检查 PR/CI 状态"
+    echo "ACTION: 安装 GitHub CLI: https://cli.github.com"
     exit 0
 fi
 
-# 尝试获取 PR，捕获错误
+# ===== 检查是否有 PR =====
 PR_NUMBER=$(gh pr list --head "$CURRENT_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
-GH_EXIT_CODE=$?
-
-# 检查 gh 命令是否失败（rate limit / 网络错误）
-if [[ $GH_EXIT_CODE -ne 0 ]] && [[ -z "$PR_NUMBER" ]]; then
-    # gh 命令失败，可能是 API 错误
-    GH_ERROR_MSG=$(gh pr list --head "$CURRENT_BRANCH" --state open 2>&1 || echo "")
-
-    if echo "$GH_ERROR_MSG" | grep -qi "rate limit\|API rate limit\|network\|timeout"; then
-        # API 临时错误 → unknown（安全退出，不误判）
-        echo "PHASE: unknown"
-        echo "DESCRIPTION: gh API 临时错误"
-        echo "ACTION: 直接退出（不误判阶段）"
-        echo ""
-        echo "错误信息: $GH_ERROR_MSG"
-        echo ""
-        echo "说明: API 波动，稍后重试"
-        exit 0
-    fi
-fi
 
 if [[ -z "$PR_NUMBER" ]]; then
-    # 没有 PR → p0 (Published 阶段)
+    # 无 PR -> p0 阶段
     echo "PHASE: p0"
-    echo "DESCRIPTION: Published 阶段（发 PR 之前）"
-    echo "ACTION: 质检循环 → 创建 PR → 结束"
-    echo ""
-    echo "执行流程:"
-    echo "  1. 写代码 + 写测试"
-    echo "  2. 调用 /audit（Decision: PASS）"
-    echo "  3. 运行 npm run qa:gate（全部通过）"
-    echo "  4. 创建 PR"
-    echo "  5. 结束对话（不等待 CI）"
+    echo "DESCRIPTION: Published 阶段（无 PR）"
+    echo "ACTION: 质检通过后创建 PR，创建后立即结束（不等 CI）"
     exit 0
 fi
 
-# 有 PR，继续判断
-echo "PR: #$PR_NUMBER"
-echo ""
-
-# ===== 问题 2: CI 有结果吗？=====
-CI_STATUS=""
-
-# 尝试获取 CI 状态，捕获错误
+# ===== 有 PR，检查 CI 状态 =====
+# 使用 gh pr checks 获取 CI 状态
+# 可能的状态: SUCCESS, FAILURE, PENDING, QUEUED, IN_PROGRESS, ERROR 等
 CI_STATUS=$(gh pr checks "$PR_NUMBER" --json state -q '.[].state' 2>/dev/null | head -1 || echo "")
-GH_EXIT_CODE=$?
 
-# 检查 gh 命令是否失败
-if [[ $GH_EXIT_CODE -ne 0 ]] && [[ -z "$CI_STATUS" ]]; then
-    # gh 命令失败，可能是 API 错误
-    GH_ERROR_MSG=$(gh pr checks "$PR_NUMBER" 2>&1 || echo "")
+if [[ -z "$CI_STATUS" ]]; then
+    # gh API 错误或无法获取状态 -> unknown
+    echo "PHASE: unknown"
+    echo "DESCRIPTION: 无法获取 CI 状态（gh API 错误）"
+    echo "ACTION: 稍后重试或检查 gh 认证状态"
+    exit 0
+fi
 
-    if echo "$GH_ERROR_MSG" | grep -qi "rate limit\|API rate limit\|network\|timeout"; then
-        # API 临时错误 → unknown（安全退出）
+# ===== 判断阶段 =====
+case "$CI_STATUS" in
+    SUCCESS|PASS)
+        # CI 通过 -> p2 阶段
+        echo "PHASE: p2"
+        echo "DESCRIPTION: CI pass（已完成）"
+        echo "ACTION: GitHub 自动合并，直接退出"
+        ;;
+
+    FAILURE|ERROR)
+        # CI 失败 -> p1 阶段
+        echo "PHASE: p1"
+        echo "DESCRIPTION: CI fail（修复阶段）"
+        echo "ACTION: 轮询循环 - 检查 CI → 失败则修复并继续 → 成功则合并"
+        ;;
+
+    PENDING|QUEUED|IN_PROGRESS|WAITING)
+        # CI 运行中 -> pending 阶段
+        echo "PHASE: pending"
+        echo "DESCRIPTION: CI pending（等待中）"
+        echo "ACTION: 等待 CI 结果，不介入"
+        ;;
+
+    *)
+        # 未知状态 -> unknown
         echo "PHASE: unknown"
-        echo "DESCRIPTION: gh API 临时错误（CI 检查失败）"
-        echo "ACTION: 直接退出（不误判阶段）"
-        echo ""
-        echo "错误信息: $GH_ERROR_MSG"
-        echo ""
-        echo "说明: API 波动，稍后重试"
-        exit 0
-    fi
-fi
+        echo "DESCRIPTION: CI 状态未知: $CI_STATUS"
+        echo "ACTION: 手动检查 PR #$PR_NUMBER 的 CI 状态"
+        ;;
+esac
 
-if [[ -z "$CI_STATUS" ]] || [[ "$CI_STATUS" == "PENDING" ]] || [[ "$CI_STATUS" == "QUEUED" ]]; then
-    # pending/queued → 等待 CI 结果
-    echo "PHASE: pending"
-    echo "DESCRIPTION: 等待 CI 结果"
-    echo "ACTION: 等待循环（挂着等 CI 出结果）"
-    echo ""
-    echo "CI 状态: $CI_STATUS"
-    echo ""
-    echo "说明:"
-    echo "  - CI 正在运行中"
-    echo "  - 应该挂着等待 CI 结果"
-    echo "  - 进入等待循环直到 CI 有结果（fail/pass）"
-    echo ""
-    echo "执行流程:"
-    echo "  1. 进入等待循环"
-    echo "  2. 每 30 秒检查一次 CI 状态"
-    echo "  3. pending → 继续等待"
-    echo "  4. failure → 转入 p1 修复流程"
-    echo "  5. success → 转入 p2 结束流程"
-    exit 0
-fi
-
-# CI 有结果，继续判断
-
-# ===== 问题 3: 结果是啥？=====
-if echo "$CI_STATUS" | grep -qi "FAILURE\|ERROR"; then
-    # fail → p1 (CI 阶段 - fail)
-    echo "PHASE: p1"
-    echo "DESCRIPTION: CI 阶段 - fail（修到绿）"
-    echo "ACTION: 无限循环修到绿（拉失败 → 修 → push → 查 CI）"
-    echo ""
-    echo "CI 状态: $CI_STATUS"
-    echo ""
-    echo "执行流程:"
-    echo "  1. 拉取 CI 失败信息"
-    echo "     gh pr checks $PR_NUMBER --json name,conclusion,detailsUrl"
-    echo ""
-    echo "  2. 分析失败原因并修复"
-    echo "     - typecheck 失败 → 修复类型错误"
-    echo "     - test 失败 → 修复测试"
-    echo "     - build 失败 → 修复构建"
-    echo ""
-    echo "  3. 修复 + push"
-    echo "     git add . && git commit -m 'fix: CI 失败修复' && git push"
-    echo ""
-    echo "  4. 查询下一轮 CI"
-    echo "     bash scripts/detect-phase.sh"
-    echo ""
-    echo "  5. 如果还是 fail → 回到步骤 2"
-    echo "     如果 pass → 结束"
-    exit 0
-fi
-
-if echo "$CI_STATUS" | grep -qi "SUCCESS\|PASS"; then
-    # pass → p2 (CI 阶段 - pass)
-    echo "PHASE: p2"
-    echo "DESCRIPTION: CI 阶段 - pass（已完成）"
-    echo "ACTION: Done（直接退出，GitHub 自动 merge）"
-    echo ""
-    echo "CI 状态: $CI_STATUS"
-    echo ""
-    echo "说明:"
-    echo "  ✅ CI 全绿"
-    echo "  ✅ GitHub Actions 将自动 merge（CI 绿 + 审核通过）"
-    echo "  ✅ 无需 AI 介入"
-    echo ""
-    echo "直接退出 ✅"
-    exit 0
-fi
-
-# 未知状态
-echo "PHASE: unknown"
-echo "DESCRIPTION: 未知状态"
-echo "CI_STATUS: $CI_STATUS"
-echo ""
-echo "请检查 CI 状态："
-echo "  gh pr checks $PR_NUMBER"
-exit 1
+exit 0

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.8.0] - 2026-01-26
+
+### Fixed
+
+- **质量检查系统修复：添加 detect-phase.sh 脚本**
+  - 新增 `scripts/detect-phase.sh`（阶段检测脚本）
+  - Stop Hook 现在可以正确检测开发阶段（p0/p1/p2/pending/unknown）
+  - 修复 Stop Hook line 74 调用 detect-phase.sh 失败问题
+  - 新增 `docs/PHASE-DETECTION.md` 阶段检测文档
+
+### Added
+
+- **RCI 更新**
+  - W1-004: detect-phase.sh 存在性检查
+
 ## [10.7.0] - 2026-01-25
 
 ### Changed

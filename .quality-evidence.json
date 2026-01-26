@@ -1,9 +1,9 @@
 {
-  "sha": "8bb004463b30523416f7cc2544226f247cbb6b75",
-  "branch": "release-v10.7.0-force-merge",
+  "sha": "d9cd778dc0f832db4f52941983b46cdf8213bb23",
+  "branch": "cp-quality-fix-detect-phase",
   "qa_gate_passed": true,
   "audit_decision": "PASS",
-  "timestamp": "2026-01-25T20:53:58+08:00",
+  "timestamp": "2026-01-26T08:07:24+08:00",
   "evidence": {
     "typecheck": "passed",
     "tests": "passed",

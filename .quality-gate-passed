@@ -1,7 +1,7 @@
 # Quality Gate Passed
-# Generated: 2026-01-25T20:53:58+08:00
-# Branch: release-v10.7.0-force-merge
-# Commit: 8bb0044
+# Generated: 2026-01-26T08:07:24+08:00
+# Branch: cp-quality-fix-detect-phase
+# Commit: d9cd778
 
 typecheck: PASS
 test: PASS
