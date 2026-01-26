@@ -13,6 +13,7 @@ import {
   Video,
   Users,
   KeyRound,
+  LayoutGrid,
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -59,6 +60,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'AiEmployeeDetailPage': () => import('../pages/AiEmployeeDetailPage'),
   'AiAbilityDetailPage': () => import('../pages/AiAbilityDetailPage'),
   'AccountsList': () => import('../pages/accounts/AccountsList'),
+  'FeatureDashboard': () => import('../pages/FeatureDashboard'),
 };
 
 // 向后兼容：保留 pageComponents 导出（仅 Autopilot 组件）
@@ -137,6 +139,9 @@ export const additionalRoutes: RouteConfig[] = [
   { path: '/data-center', redirect: '/media/data/analytics' },
   // 登录相关
   { path: '/login/:platform/:accountId', component: 'LoginPage', requireAuth: true },
+
+  // === Features Dashboard (Core 实例) ===
+  { path: '/features', component: 'FeatureDashboard', requireAuth: true },
 
   // 管理员子页面已迁移到 Core
   // ClaudeMonitor, VpsMonitor, ClaudeStats, N8n*, Canvas 等

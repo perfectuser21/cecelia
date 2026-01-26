@@ -10,7 +10,7 @@ import { Route, Link, useLocation } from 'react-router-dom';
 import { LogOut, PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 // 配置驱动
-import { getAutopilotNavGroups, filterNavGroups, type NavGroup } from './config/navigation.config';
+import { getAutopilotNavGroups, filterNavGroups, additionalRoutes, type NavGroup } from './config/navigation.config';
 import DynamicRouter from './components/DynamicRouter';
 // Context
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -74,8 +74,13 @@ function AppContent() {
   // 兼容旧代码
   const navItems = navGroups.flatMap(g => g.items);
 
-  // 如果未登录且不在登录页，显示登录页
-  if (!isAuthenticated && !location.pathname.startsWith('/login')) {
+  // 检查当前路由是否允许未认证访问
+  const currentRouteAllowsUnauthenticated = additionalRoutes.some(
+    route => location.pathname === route.path && route.requireAuth === false
+  );
+
+  // 如果未登录且不在登录页，且当前路由需要认证，显示登录页
+  if (!isAuthenticated && !location.pathname.startsWith('/login') && !currentRouteAllowsUnauthenticated) {
     return <FeishuLogin />;
   }
 
