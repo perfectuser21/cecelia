@@ -1,7 +1,7 @@
 # Quality Gate Passed
-# Generated: 2026-01-26T09:08:31+08:00
-# Branch: cp-fix-dod-evidence
-# Commit: 035e3fd
+# Generated: 2026-01-26T10:16:56+08:00
+# Branch: cp-fix-qa-decision
+# Commit: 6b61fb3
 
 typecheck: PASS
 test: PASS

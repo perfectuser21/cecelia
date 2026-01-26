@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.8.3] - 2026-01-26
+
+### Fixed
+
+- **修复 QA Decision：更新为 PASS**
+  - QA-DECISION.md Decision 从 MUST_ADD_RCI 更新为 PASS
+  - RCI W1-004 已添加到回归契约
+
 ## [10.8.2] - 2026-01-26
 
 ### Fixed

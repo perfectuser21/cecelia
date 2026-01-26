@@ -1,6 +1,6 @@
 # QA Decision
 
-Decision: MUST_ADD_RCI
+Decision: PASS
 Priority: P0
 RepoType: Engine
 
