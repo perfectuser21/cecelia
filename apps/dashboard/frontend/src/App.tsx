@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Route, Link, useLocation } from 'react-router-dom';
+import { Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { LogOut, PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 // 配置驱动
@@ -79,9 +79,10 @@ function AppContent() {
     route => location.pathname === route.path && route.requireAuth === false
   );
 
-  // 如果未登录且不在登录页，且当前路由需要认证，显示登录页
+  // 如果未登录且不在登录页，且当前路由需要认证，跳转到登录页并传递 redirect 参数
   if (!isAuthenticated && !location.pathname.startsWith('/login') && !currentRouteAllowsUnauthenticated) {
-    return <FeishuLogin />;
+    const redirectPath = `/login?redirect=${encodeURIComponent(location.pathname)}`;
+    return <Navigate to={redirectPath} replace />;
   }
 
   // 配置加载中时显示加载状态
