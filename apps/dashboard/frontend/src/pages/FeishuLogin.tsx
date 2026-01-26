@@ -40,6 +40,14 @@ export default function FeishuLogin() {
   const origin = window.location.origin.replace(/^http:/, 'https:');
   const REDIRECT_URI = `${origin}/login`;
 
+  // 保存 redirect 参数到 localStorage（因为飞书回调会覆盖 URL 参数）
+  useEffect(() => {
+    const redirect = searchParams.get('redirect');
+    if (redirect) {
+      localStorage.setItem('feishu_login_redirect', redirect);
+    }
+  }, [searchParams]);
+
   // 处理飞书登录回调
   const handleFeishuCallback = async (code: string) => {
     setLoading(true);
@@ -66,7 +74,9 @@ export default function FeishuLogin() {
         login(data.user, data.user.access_token);
 
         // 登录成功后跳转回原来想访问的页面
-        const redirect = searchParams.get('redirect') || '/';
+        // 优先从 localStorage 读取（因为飞书回调会覆盖 URL 参数）
+        const redirect = localStorage.getItem('feishu_login_redirect') || searchParams.get('redirect') || '/';
+        localStorage.removeItem('feishu_login_redirect');
         navigate(redirect);
       } else {
         throw new Error(data.error || '登录失败');

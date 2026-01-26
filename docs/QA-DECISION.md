@@ -1,48 +1,33 @@
-# QA Decision
+# QA Decision: 修复登录后跳转问题
 
-Decision: NO_RCI
-Priority: P2
-RepoType: Business
+## Decision: L1 + L2 ✅
 
-Tests:
-  - dod_item: "总览统计卡片显示正确（4个指标）"
-    method: manual
-    location: "manual:访问 /features 页面，验证统计卡片显示 Total Features、Sub-features、RCI Coverage、GP Coverage"
+## 问题分类
+- **类型**: Bug Fix
+- **影响范围**: 登录流程
+- **风险等级**: Low
 
-  - dod_item: "多维度分类统计完整（4个维度，支持切换）"
-    method: manual
-    location: "manual:切换 Category/Instance/Priority/Status 四个 tabs，验证图表数据正确"
+## 测试策略
 
-  - dod_item: "Feature 列表表格功能完整"
-    method: manual
-    location: "manual:测试搜索、筛选、排序、分页功能"
+### L1: Critical (阻塞性) ✅
+**决策**: 需要
+**原因**: 登录跳转是核心功能
 
-  - dod_item: "Feature 详情抽屉显示完整信息"
-    method: manual
-    location: "manual:点击任一 Feature 的'查看详情'，验证所有字段显示正确"
+**测试内容**:
+1. TypeScript 编译通过
 
-  - dod_item: "依赖关系正确展示"
-    method: manual
-    location: "manual:在详情抽屉中验证 Dependencies 和 Dependents 列表"
+### L2: Feature Validation (功能性) ✅
+**决策**: 需要手动测试
+**原因**: 涉及 OAuth 回调流程
 
-  - dod_item: "实例过滤正常工作"
-    method: manual
-    location: "manual:Core 实例默认只显示 Core + Both 的 features"
+**手动测试**:
+1. 访问 `/features` → 登录 → 验证跳转回 `/features`
+2. 直接访问 `/login` → 登录 → 验证跳转到首页 `/`
 
-  - dod_item: "响应式设计适配"
-    method: manual
-    location: "manual:在不同屏幕尺寸下测试布局"
+### L3: Best Practices (最佳实践) ❌
+**决策**: 不需要
+**原因**: 简单的 localStorage 操作
 
-  - dod_item: "数据层正确实现"
-    method: auto
-    location: "apps/dashboard/frontend/src/data/features-data.ts 的统计函数"
-
-  - dod_item: "TypeScript 类型定义完整"
-    method: auto
-    location: "apps/dashboard/frontend/src/data/features-data.ts 类型定义"
-
-RCI:
-  new: []
-  update: []
-
-Reason: 这是一个纯展示型 UI 页面（Platform Feature），数据硬编码自 FEATURES.md，无核心业务逻辑变更，不涉及系统稳定性契约。此功能为辅助性工具（Priority: P2），不满足 RCI 的"Must-never-break"标准。测试以手动验证为主（UI/UX），辅以数据层的单元测试。
+### L4: Optimization (性能优化) ❌
+**决策**: 不需要
+**原因**: localStorage 操作性能影响可忽略
