@@ -1,0 +1,209 @@
+{
+  "name": "[Unit] Workflow变更同步",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "定时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * *"
+            }
+          ]
+        },
+        "triggerTimes": {
+          "mode": "everyX"
+        }
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "id": "ssh-sync",
+      "name": "执行Claude同步",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        520,
+        400
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "vvJsQOZ95sqzemla",
+          "name": "VPS SSH Key"
+        }
+      },
+      "parameters": {
+        "authentication": "privateKey",
+        "host": "146.190.52.84",
+        "port": 22,
+        "user": "xx",
+        "command": "cd /home/xx/dev/n8n-workflows && claude -p \"读取 workflows-snapshot.json，用 MCP 查询当前 n8n workflows，对比差异写入 CHANGELOG.md，更新 snapshot，git commit\" --allowedTools \"Edit,Write,Read,Bash,Glob,Grep,mcp__n8n__search_workflows\" 2>&1"
+      }
+    },
+    {
+      "id": "parse-result",
+      "name": "解析结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst stderr = $input.first().json.stderr || '';\nconst code = $input.first().json.code || 0;\n\nreturn [{\n  json: {\n    success: code === 0,\n    stdout: stdout,\n    stderr: stderr,\n    exitCode: code,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "check-success",
+      "name": "执行成功?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "success-output",
+      "name": "同步成功",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        300
+      ]
+    },
+    {
+      "id": "feishu-notify",
+      "name": "飞书通知失败",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1240,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"msg_type\":\"text\",\"content\":{\"text\":\"⚠️ Workflow 同步失败\\n\\n时间: {{ $json.timestamp }}\\n错误: {{ $json.stderr }}\"}}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "定时触发": {
+      "main": [
+        [
+          {
+            "node": "执行Claude同步",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "执行Claude同步",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "执行Claude同步": {
+      "main": [
+        [
+          {
+            "node": "解析结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析结果": {
+      "main": [
+        [
+          {
+            "node": "执行成功?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "执行成功?": {
+      "main": [
+        [
+          {
+            "node": "同步成功",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "飞书通知失败",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:定时触发": {
+      "recurrenceRules": []
+    }
+  },
+  "active": true
+}

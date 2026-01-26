@@ -1,0 +1,108 @@
+{
+  "name": "[Unit] 夜间备份",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "host": "146.190.52.84",
+        "port": 22,
+        "user": "xx",
+        "command": "#!/bin/bash\nset -e\n\nDATE=$(date +%Y%m%d)\nBACKUP_BASE=~/backups\nBACKUP_DIR=$BACKUP_BASE/$DATE\nN8N_DIR=$BACKUP_BASE/n8n/$DATE\nCONFIG_DIR=$BACKUP_BASE/config/$DATE\n\nmkdir -p $BACKUP_DIR $N8N_DIR $CONFIG_DIR\n\nBACKED_UP=0\nERRORS=0\n\n# ========== 1. Session 和状态文件 ==========\necho \"Backing up session files...\"\ncp ~/session_status.json $BACKUP_DIR/ 2>/dev/null && BACKED_UP=$((BACKED_UP + 1)) || true\n\n# ========== 2. 爬虫脚本 ==========\necho \"Backing up scraper scripts...\"\nfor f in ~/platform_*.sh ~/session_monitor.py; do\n  if [ -f \"$f\" ]; then\n    cp \"$f\" $BACKUP_DIR/\n    BACKED_UP=$((BACKED_UP + 1))\n  fi\ndone\n\n# ========== 3. VNC 配置 ==========\necho \"Backing up VNC configs...\"\nfor platform in douyin kuaishou xiaohongshu toutiao weibo channels; do\n  CONFIG_FILE=~/.$platform/vnc_scrape.sh\n  if [ -f \"$CONFIG_FILE\" ]; then\n    mkdir -p $CONFIG_DIR/vnc\n    cp \"$CONFIG_FILE\" \"$CONFIG_DIR/vnc/${platform}_vnc_scrape.sh\"\n    BACKED_UP=$((BACKED_UP + 1))\n  fi\ndone\n\n# ========== 4. Docker Compose 文件 ==========\necho \"Backing up docker-compose files...\"\nfor project in n8n-social-media-scraper claude-monitor; do\n  COMPOSE_FILE=~/dev/$project/docker-compose.yml\n  if [ -f \"$COMPOSE_FILE\" ]; then\n    cp \"$COMPOSE_FILE\" \"$CONFIG_DIR/${project}-docker-compose.yml\"\n    BACKED_UP=$((BACKED_UP + 1))\n  fi\ndone\n\n# ========== 5. Nginx 配置 ==========\necho \"Backing up nginx config...\"\ndocker exec nginx-proxy-manager cat /data/nginx/proxy_host/1.conf > $CONFIG_DIR/npm-proxy-host-1.conf 2>/dev/null && BACKED_UP=$((BACKED_UP + 1)) || true\n\n# ========== 6. n8n Workflow 备份 ==========\necho \"Backing up n8n workflows...\"\n# 使用 API 获取所有 workflow\nN8N_API_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI1N2ZhNjM5MC1hNDBjLTQ2MDUtOTdlZC02Y2ExM2YwYjgwYTciLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzY2Mjg2NzU5LCJleHAiOjE4MDE0MTEyMDB9.9691--OtQhS52TVvQ9fYCzkiicWT-j6TnlLO9B95VmE\"\nWORKFLOW_LIST=$(curl -s \"https://zenithjoy21xx.app.n8n.cloud/api/v1/workflows\" -H \"X-N8N-API-KEY: $N8N_API_KEY\" 2>/dev/null)\necho \"$WORKFLOW_LIST\" > $N8N_DIR/workflows-list.json && BACKED_UP=$((BACKED_UP + 1))\n\n# 备份每个 workflow 的详情\nWORKFLOW_IDS=$(echo \"$WORKFLOW_LIST\" | python3 -c \"import sys,json; [print(w['id']) for w in json.load(sys.stdin).get('data',[])]\" 2>/dev/null)\nfor wf_id in $WORKFLOW_IDS; do\n  curl -s \"https://zenithjoy21xx.app.n8n.cloud/api/v1/workflows/$wf_id\"     -H \"X-N8N-API-KEY: $N8N_API_KEY\" > \"$N8N_DIR/workflow-$wf_id.json\" 2>/dev/null\n  BACKED_UP=$((BACKED_UP + 1))\ndone\n\n# ========== 7. 维护报告 ==========\necho \"Backing up maintenance reports...\"\nif [ -d ~/maintenance-reports ]; then\n  tar -czf $BACKUP_DIR/maintenance-reports.tar.gz ~/maintenance-reports 2>/dev/null && BACKED_UP=$((BACKED_UP + 1)) || true\nfi\n\n# ========== 8. 清理旧备份 ==========\necho \"Cleaning old backups...\"\nfind $BACKUP_BASE -maxdepth 2 -type d -mtime +7 -exec rm -rf {} \\; 2>/dev/null || true\n\n# ========== 统计 ==========\nBACKUP_SIZE=$(du -sh $BACKUP_DIR | cut -f1)\nN8N_SIZE=$(du -sh $N8N_DIR | cut -f1)\nCONFIG_SIZE=$(du -sh $CONFIG_DIR | cut -f1)\nFILE_COUNT=$(find $BACKUP_DIR $N8N_DIR $CONFIG_DIR -type f | wc -l)\n\necho \"{\"\necho \"  \\\"success\\\": true,\"\necho \"  \\\"backup_dir\\\": \\\"$BACKUP_DIR\\\",\"\necho \"  \\\"n8n_dir\\\": \\\"$N8N_DIR\\\",\"\necho \"  \\\"config_dir\\\": \\\"$CONFIG_DIR\\\",\"\necho \"  \\\"files_backed_up\\\": $FILE_COUNT,\"\necho \"  \\\"backup_size\\\": \\\"$BACKUP_SIZE\\\",\"\necho \"  \\\"n8n_size\\\": \\\"$N8N_SIZE\\\",\"\necho \"  \\\"config_size\\\": \\\"$CONFIG_SIZE\\\",\"\necho \"  \\\"errors\\\": $ERRORS,\"\necho \"  \\\"timestamp\\\": \\\"$(date -Iseconds)\\\"}\"\n"
+      },
+      "id": "ssh",
+      "name": "执行备份",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "vvJsQOZ95sqzemla",
+          "name": "VPS SSH Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.first().json.stdout || '';\ntry {\n  const jsonMatch = output.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    return [{ json: JSON.parse(jsonMatch[0]) }];\n  }\n} catch (e) {}\nreturn [{ json: { success: false, error: 'Failed to parse output', raw: output } }];"
+      },
+      "id": "parse",
+      "name": "解析结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 1 1 *"
+            }
+          ]
+        }
+      },
+      "id": "placeholder_schedule",
+      "name": "占位触发器",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "执行备份",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "执行备份": {
+      "main": [
+        [
+          {
+            "node": "解析结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:占位触发器": {
+      "recurrenceRules": []
+    }
+  },
+  "active": true
+}

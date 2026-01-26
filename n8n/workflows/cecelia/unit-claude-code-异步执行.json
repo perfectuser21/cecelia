@@ -1,0 +1,240 @@
+{
+  "name": "[Unit] Claude Code 异步执行",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "每小时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt-assignment",
+              "name": "prompt",
+              "value": "列出当前目录的所有文件，并统计文件数量",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "set-prompt",
+      "name": "设置任务提示词",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://146.190.52.84:9876/execute",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"prompt\": $json.prompt } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "submit-task",
+      "name": "提交任务到 Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        690,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "minutes"
+      },
+      "id": "wait-3min",
+      "name": "等待 3 分钟",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        910,
+        300
+      ],
+      "webhookId": "wait-claude-execution"
+    },
+    {
+      "parameters": {
+        "url": "=http://146.190.52.84:9876/result/{{ $json.taskId }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-result",
+      "name": "查询执行结果",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1130,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "value2": "processing"
+            }
+          ]
+        }
+      },
+      "id": "check-status",
+      "name": "检查是否还在执行",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "minutes"
+      },
+      "id": "wait-more",
+      "name": "再等 2 分钟",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1570,
+        200
+      ],
+      "webhookId": "wait-claude-more"
+    },
+    {
+      "parameters": {
+        "url": "=http://146.190.52.84:9876/result/{{ $('提交任务到 Claude').item.json.taskId }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-result-final",
+      "name": "最终查询结果",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1790,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "每小时触发": {
+      "main": [
+        [
+          {
+            "node": "设置任务提示词",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "设置任务提示词": {
+      "main": [
+        [
+          {
+            "node": "提交任务到 Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提交任务到 Claude": {
+      "main": [
+        [
+          {
+            "node": "等待 3 分钟",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "等待 3 分钟": {
+      "main": [
+        [
+          {
+            "node": "查询执行结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询执行结果": {
+      "main": [
+        [
+          {
+            "node": "检查是否还在执行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查是否还在执行": {
+      "main": [
+        [
+          {
+            "node": "再等 2 分钟",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "再等 2 分钟": {
+      "main": [
+        [
+          {
+            "node": "最终查询结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:每小时触发": {
+      "recurrenceRules": []
+    }
+  },
+  "active": true
+}

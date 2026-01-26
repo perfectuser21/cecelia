@@ -1,0 +1,97 @@
+{
+  "name": "[Flow] Cecelia 任务启动器",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cecelia-start",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-start",
+      "name": "Webhook Start",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "cecelia-start-f57ffed6"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\nconst project = body.project || 'cecelia-task';\nconst prd = body.prd || '';\nconst extra_context = body.extra_context || {};\nconst checkpoint_id = body.checkpoint_id || 'CP-001';\n\nconst d = new Date();\nconst y = d.getFullYear();\nconst m = String(d.getMonth()+1).padStart(2,'0');\nconst day = String(d.getDate()).padStart(2,'0');\nconst task_id = `${project}-${y}${m}${day}-${Math.random().toString(16).slice(2,6)}`;\n\nconst prompt = [\n  '/dev',\n  '',\n  `TASK_ID: ${task_id}`,\n  `CHECKPOINT: ${checkpoint_id}`,\n  '',\n  '=== PRD ===',\n  prd,\n  '',\n  '=== EXTRA_CONTEXT ===',\n  JSON.stringify(extra_context, null, 2),\n  '',\n  '=== INSTRUCTION ===',\n  checkpoint_id === 'CP-001' \n    ? 'Execute p0 phase: PRD → DoD → Code → Test → Quality → PR'\n    : 'Continue development'\n].join('\\n');\n\nreturn {\n  task_id,\n  checkpoint_id,\n  prompt\n};"
+      },
+      "id": "build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://172.17.0.1:3457/trigger-cecelia",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "task_id",
+              "value": "={{ $json.task_id }}"
+            },
+            {
+              "name": "checkpoint_id",
+              "value": "={{ $json.checkpoint_id }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-bridge",
+      "name": "Call Bridge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Start": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Bridge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {},
+  "active": true
+}
