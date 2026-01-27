@@ -1,9 +1,9 @@
 {
-  "sha": "5c38de0f15512259191d984439febadd5e0ebd0f",
-  "branch": "cp-fix-ci-rules-and-cleanup",
+  "sha": "986dd8ddd41e2db557aabb7fb89f04b8f5c1df59",
+  "branch": "cp-fix-ci-detection-logic",
   "qa_gate_passed": true,
   "audit_decision": "PASS",
-  "timestamp": "2026-01-27T11:45:52+08:00",
+  "timestamp": "2026-01-27T11:58:59+08:00",
   "evidence": {
     "typecheck": "passed",
     "tests": "passed",

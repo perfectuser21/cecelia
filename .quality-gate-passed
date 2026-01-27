@@ -1,7 +1,7 @@
 # Quality Gate Passed
-# Generated: 2026-01-27T11:45:52+08:00
-# Branch: cp-fix-ci-rules-and-cleanup
-# Commit: 5c38de0
+# Generated: 2026-01-27T11:58:59+08:00
+# Branch: cp-fix-ci-detection-logic
+# Commit: 986dd8d
 
 typecheck: PASS
 test: PASS

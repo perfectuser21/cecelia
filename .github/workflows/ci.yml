@@ -26,9 +26,9 @@ jobs:
 
       - name: Check package.json version updated
         if: |
-          !startsWith(github.event.head_commit.message, 'chore:') &&
-          !startsWith(github.event.head_commit.message, 'docs:') &&
-          !startsWith(github.event.head_commit.message, 'test:')
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:')
         run: |
           set -e
           if [ ! -f package.json ]; then
@@ -174,7 +174,7 @@ jobs:
         if: |
           steps.detect.outputs.type == 'npm' &&
           github.base_ref != 'main' &&
-          !startsWith(github.event.head_commit.message, 'chore:')
+          !startsWith(github.event.pull_request.title, 'chore:')
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  L2A: PRD/DoD/QA/Audit 检查"

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.9.4] - 2026-01-27
+
+### Fixed
+
+- **CI 规则检测逻辑修复**
+  - Version Check 和 L2A Check 改用 `github.event.pull_request.title` 检测 PR 标题类型
+  - 修复 PR #300 使用的 `github.event.head_commit.message` 在 PR context 中无效的问题
+  - chore:/docs:/test: 类型的 PR 现在能正确跳过 L2A/Version 检查
+
 ## [10.9.3] - 2026-01-27
 
 ### Fixed
