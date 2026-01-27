@@ -51,7 +51,7 @@ export default function QualityMonitorPage() {
   const HealthIcon = healthIcons[health as keyof typeof healthIcons];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
+    <div className="min-h-screen -m-8 -mt-8 p-8 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold text-white flex items-center gap-3 mb-8">
           <Activity className="w-8 h-8 text-slate-400" />
