@@ -17,7 +17,7 @@ const octokit = new Octokit({
 const OWNER = 'perfectuser21';
 
 // Repos to track
-const TRACKED_REPOS = ['zenithjoy-engine', 'zenithjoy-core', 'zenithjoy-autopilot'];
+const TRACKED_REPOS = ['zenithjoy-engine', 'cecelia-workspace'];
 
 interface RepoInfo {
   name: string;

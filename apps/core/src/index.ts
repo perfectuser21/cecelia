@@ -1,5 +1,5 @@
 /**
- * zenithjoy-core
+ * @cecelia/core
  * Cecelia multi-model AI executor + Dashboard task visualization API
  */
 

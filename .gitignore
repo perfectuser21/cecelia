@@ -33,6 +33,10 @@ apps/dashboard/data/uploads/
 # Core backend data
 apps/core/data/
 
+# Cecelia frontend data (local only)
+apps/cecelia-frontend/data/
+apps/cecelia-frontend/database/
+
 # Temporary files
 .quality-gate-passed
 .cecelia-run-id

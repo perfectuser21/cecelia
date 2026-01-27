@@ -22,8 +22,7 @@ import type { CreateRunRequest, UpdateCheckpointRequest } from '../types.js';
 const CODE_BASE = process.env.CODE_BASE_PATH || '/home/xx/dev';
 const PROJECT_DIRS = [
   `${CODE_BASE}/zenithjoy-engine`,
-  `${CODE_BASE}/zenithjoy-core`,
-  `${CODE_BASE}/zenithjoy-autopilot`,
+  `${CODE_BASE}/cecelia-workspace`,
 ];
 
 interface DevRunReport {

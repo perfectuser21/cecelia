@@ -31,8 +31,7 @@
     "baseUrl": ".",
     "paths": {
       "@features/core/*": [
-        "../../../../zenithjoy-core/features/*",
-        "../../../zenithjoy-core/features/*"
+        "../../core/features/*"
       ],
       "@/*": ["src/*"]
     }

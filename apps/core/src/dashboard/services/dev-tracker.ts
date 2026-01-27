@@ -27,8 +27,7 @@ const __dirname = dirname(__filename);
 const CODE_BASE = process.env.CODE_BASE_PATH || '/home/xx/dev';
 const REPO_PATHS: Record<string, string> = {
   'zenithjoy-engine': `${CODE_BASE}/zenithjoy-engine`,
-  'zenithjoy-core': `${CODE_BASE}/zenithjoy-core`,
-  'zenithjoy-autopilot': `${CODE_BASE}/zenithjoy-autopilot`,
+  'cecelia-workspace': `${CODE_BASE}/cecelia-workspace`,
 };
 
 // Data directory for persisted status

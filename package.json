@@ -1,0 +1,40 @@
+{
+  "name": "cecelia-workspace",
+  "version": "1.0.0",
+  "description": "Cecelia Workspace - AI-powered automation platform monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "workflows/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:core": "npm run build --workspace=apps/core",
+    "build:frontend": "npm run build --workspace=apps/dashboard/frontend",
+    "dev:core": "npm run dev --workspace=apps/core",
+    "dev:frontend": "npm run dev --workspace=apps/dashboard/frontend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
+    "clean:dist": "find . -name 'dist' -type d -prune -exec rm -rf '{}' +"
+  },
+  "keywords": [
+    "monorepo",
+    "cecelia",
+    "ai",
+    "automation",
+    "social-media",
+    "n8n"
+  ],
+  "author": "Cecelia Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ZenithJoycloud/cecelia-workspace.git"
+  }
+}

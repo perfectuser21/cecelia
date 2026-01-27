@@ -16,7 +16,7 @@ import type { StepStatus } from '../shared/types.js';
 const router = Router();
 
 // Whitelist of allowed repositories
-const ALLOWED_REPOS = ['zenithjoy-engine', 'zenithjoy-core', 'zenithjoy-autopilot'];
+const ALLOWED_REPOS = ['zenithjoy-engine', 'cecelia-workspace'];
 
 // Step validation bounds
 const MIN_STEP = 1;

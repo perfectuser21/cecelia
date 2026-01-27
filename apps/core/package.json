@@ -1,7 +1,7 @@
 {
-  "name": "zenithjoy-core",
-  "version": "0.1.0",
-  "description": "Cecilia multi-model AI executor + Dashboard task visualization API",
+  "name": "@cecelia/core",
+  "version": "1.0.0",
+  "description": "Cecelia Core: Multi-model AI executor + Dashboard task visualization API",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
