@@ -6,9 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-QUEUE_FILE="$PROJECT_ROOT/queue/queue.jsonl"
-STATE_FILE="$PROJECT_ROOT/state/state.json"
-RUNS_DIR="$PROJECT_ROOT/runs"
+QUEUE_FILE="${QUEUE_FILE:-$PROJECT_ROOT/queue/queue.jsonl}"
+STATE_FILE="${STATE_FILE:-$PROJECT_ROOT/state/state.json}"
+RUNS_DIR="${RUNS_DIR:-$PROJECT_ROOT/runs}"
 
 # Ensure directories exist
 mkdir -p "$RUNS_DIR"
@@ -98,15 +98,41 @@ execute_task() {
       ;;
   esac
 
-  # Update state with last run
-  jq --arg id "$taskId" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.lastRun = {taskId: $id, completedAt: $ts}' \
-    "$STATE_FILE" > "$STATE_FILE.tmp"
+  # Generate summary.json
+  local result_status
+  result_status=$(jq -r '.status // "unknown"' "$run_dir/result.json" 2>/dev/null || echo "unknown")
+
+  jq -n \
+    --arg taskId "$taskId" \
+    --arg intent "$intent" \
+    --arg status "$result_status" \
+    --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg runDir "$run_dir" \
+    '{
+      taskId: $taskId,
+      intent: $intent,
+      status: $status,
+      completedAt: $completedAt,
+      runDir: $runDir,
+      files: ["task.json", "result.json"]
+    }' > "$run_dir/summary.json"
+
+  # Update state with last run and stats
+  jq --arg id "$taskId" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg status "$result_status" '
+    .lastRun = {taskId: $id, completedAt: $ts} |
+    .stats.total = (.stats.total // 0) + 1 |
+    if $status == "completed" then
+      .stats.succeeded = (.stats.succeeded // 0) + 1
+    else
+      .stats.failed = (.stats.failed // 0) + 1
+    end
+  ' "$STATE_FILE" > "$STATE_FILE.tmp"
   mv "$STATE_FILE.tmp" "$STATE_FILE"
 
   echo ""
   echo "✅ Task completed: $taskId"
   echo "   Results: $run_dir/result.json"
+  echo "   Summary: $run_dir/summary.json"
 
   return 0
 }

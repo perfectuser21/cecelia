@@ -6,8 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-QUEUE_FILE="$PROJECT_ROOT/queue/queue.jsonl"
-STATE_FILE="$PROJECT_ROOT/state/state.json"
+QUEUE_FILE="${QUEUE_FILE:-$PROJECT_ROOT/queue/queue.jsonl}"
+STATE_FILE="${STATE_FILE:-$PROJECT_ROOT/state/state.json}"
 
 # Ensure queue directory exists
 mkdir -p "$(dirname "$QUEUE_FILE")"
@@ -49,10 +49,13 @@ enqueue() {
   local timestamp
   timestamp=$(echo "$task_json" | jq -r '.createdAt // empty')
   if [[ -z "$timestamp" ]]; then
-    task_json=$(echo "$task_json" | jq --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '. + {createdAt: $ts}')
+    task_json=$(echo "$task_json" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '. + {createdAt: $ts}')
+  else
+    # Ensure compact format
+    task_json=$(echo "$task_json" | jq -c .)
   fi
 
-  # Append to queue
+  # Append to queue (JSONL format - one line per task)
   echo "$task_json" >> "$QUEUE_FILE"
 
   # Update state
@@ -122,9 +125,9 @@ cli_enqueue() {
     payload_json="{}"
   fi
 
-  # Build task JSON
+  # Build task JSON (compact format for JSONL)
   local task_json
-  task_json=$(jq -n \
+  task_json=$(jq -nc \
     --arg id "$taskId" \
     --arg src "$source" \
     --arg int "$intent" \

@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_FILE="$PROJECT_ROOT/state/state.json"
+STATE_FILE="${STATE_FILE:-$PROJECT_ROOT/state/state.json}"
 GATEWAY="$PROJECT_ROOT/gateway/gateway.sh"
 WORKER="$PROJECT_ROOT/worker/worker.sh"
 
@@ -42,12 +42,31 @@ check_health() {
   return 0
 }
 
-# Function: Check for anomalies (placeholder for future logic)
+# Function: Check for anomalies
 check_anomalies() {
   echo "🔍 Checking for anomalies..."
 
-  # Placeholder: Check for drift, outdated contracts, etc.
-  # For MVP, just return no anomalies
+  # Check 1: High failure rate (>50%)
+  local total succeeded failed
+  total=$(jq -r '.stats.total // 0' "$STATE_FILE")
+  succeeded=$(jq -r '.stats.succeeded // 0' "$STATE_FILE")
+  failed=$(jq -r '.stats.failed // 0' "$STATE_FILE")
+
+  if [[ "$total" -gt 0 ]]; then
+    local failure_rate
+    failure_rate=$(awk "BEGIN {printf \"%.2f\", ($failed/$total)*100}")
+
+    # Check if failure rate > 50%
+    local is_high
+    is_high=$(awk "BEGIN {if ($failed/$total > 0.5) print \"1\"; else print \"0\"}")
+
+    if [[ "$is_high" == "1" ]]; then
+      echo "  ⚠️  High failure rate detected: ${failure_rate}% ($failed/$total failed)"
+      # Auto-enqueue self-optimization task
+      bash "$GATEWAY" add heartbeat optimizeSelf P1 "{\"reason\":\"high_failure_rate\",\"rate\":$failure_rate}" > /dev/null 2>&1 || true
+      return 1
+    fi
+  fi
 
   echo "  ✅ No anomalies detected"
   return 0
