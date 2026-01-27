@@ -25,6 +25,7 @@ export const coreFeatures = {
   'workers': () => import('./workers'),
   'tasks': () => import('./tasks'),
   'devgate': () => import('./devgate'),
+  'quality': () => import('./quality'),
 };
 
 // Load all features and register them

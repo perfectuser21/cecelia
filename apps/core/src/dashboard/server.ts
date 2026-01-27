@@ -29,6 +29,9 @@ const FEISHU_AUTH_BACKEND = process.env.FEISHU_AUTH_BACKEND || 'http://localhost
 // N8N backend (for workflow automation)
 const N8N_BACKEND = process.env.N8N_BACKEND || 'http://localhost:5678';
 
+// Cecelia Quality API (quality monitoring)
+const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5220';
+
 // CORS
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -41,6 +44,15 @@ app.use((_req, res, next) => {
 });
 
 // Proxy routes BEFORE body parser (so request body is not consumed)
+// Proxy /api/quality to cecelia-quality API
+// Note: Express strips the mount path, so /api/quality/state becomes /state in the middleware
+// We need to prepend /api to make it /api/state for the target server
+app.use('/api/quality', createProxyMiddleware({
+  target: QUALITY_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api${path}`  // /state → /api/state
+}));
+
 // Proxy /api/v1/* to autopilot backend
 app.use('/api/v1', createProxyMiddleware({
   target: AUTOPILOT_BACKEND,

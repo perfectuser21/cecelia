@@ -132,7 +132,7 @@ export function detectInstance(): InstanceType {
 
   const hostname = window.location.hostname;
   if (hostname.startsWith('dashboard.')) return 'dashboard';
-  if (hostname.startsWith('core.')) return 'core';
+  if (hostname.includes('core.')) return 'core';  // Matches both 'core.' and 'dev-core.'
 
   // Default based on port for development
   const port = window.location.port;
