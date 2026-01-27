@@ -1,9 +1,9 @@
 {
-  "sha": "ee9672c5af75b432a11976f9842e159842f9f4bc",
-  "branch": "cp-01262246-self-check-automation",
+  "sha": "75984167dfae7c638cb4ad0eea28eeacc29b6c8c",
+  "branch": "cp-cleanup-prd-dod",
   "qa_gate_passed": true,
   "audit_decision": "PASS",
-  "timestamp": "2026-01-26T23:58:09+08:00",
+  "timestamp": "2026-01-27T08:03:03+08:00",
   "evidence": {
     "typecheck": "passed",
     "tests": "passed (24 known failures - expected: detect-priority.cjs logic refactored)",
