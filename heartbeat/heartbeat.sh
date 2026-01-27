@@ -74,6 +74,12 @@ check_anomalies() {
 
 # Function: Trigger worker if queue not empty
 trigger_worker() {
+  # Skip if worker is already running (prevent recursion)
+  if [[ -n "${WORKER_RUNNING:-}" ]]; then
+    echo "⏭️  Worker already running, skipping trigger"
+    return 0
+  fi
+
   local queue_length
   queue_length=$(jq -r '.queueLength // 0' "$STATE_FILE")
 

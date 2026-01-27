@@ -31,3 +31,9 @@ build/
 # Environment
 .env
 .env.local
+
+# Runtime data
+queue/
+runs/
+state/
+db/

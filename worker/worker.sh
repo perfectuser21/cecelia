@@ -64,6 +64,12 @@ execute_task() {
   echo "   Priority: $priority"
   echo ""
 
+  # Record start time
+  local started_at
+  started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local start_timestamp
+  start_timestamp=$(date +%s)
+
   # Create run directory
   local run_dir="$RUNS_DIR/$taskId"
   mkdir -p "$run_dir"
@@ -102,25 +108,47 @@ execute_task() {
   local result_status
   result_status=$(jq -r '.status // "unknown"' "$run_dir/result.json" 2>/dev/null || echo "unknown")
 
+  # Calculate duration
+  local end_timestamp completed_at duration
+  end_timestamp=$(date +%s)
+  completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  duration=$((end_timestamp - start_timestamp))
+
+  # Extract error if failed
+  local error_msg
+  error_msg=$(jq -r '.error // null' "$run_dir/result.json" 2>/dev/null || echo "null")
+
+  # List evidence files
+  local evidence_files
+  evidence_files=$(cd "$run_dir" && ls -1 | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
   jq -n \
     --arg taskId "$taskId" \
     --arg intent "$intent" \
     --arg status "$result_status" \
-    --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg startedAt "$started_at" \
+    --arg completedAt "$completed_at" \
+    --argjson duration "$duration" \
     --arg runDir "$run_dir" \
+    --argjson evidence "$evidence_files" \
+    --argjson error "$error_msg" \
     '{
       taskId: $taskId,
       intent: $intent,
       status: $status,
+      startedAt: $startedAt,
       completedAt: $completedAt,
+      duration: $duration,
       runDir: $runDir,
-      files: ["task.json", "result.json"]
+      evidence: $evidence,
+      error: $error
     }' > "$run_dir/summary.json"
 
-  # Update state with last run and stats
-  jq --arg id "$taskId" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg status "$result_status" '
+  # Update state with last run, stats, and updatedAt
+  jq --arg id "$taskId" --arg ts "$completed_at" --arg status "$result_status" '
     .lastRun = {taskId: $id, completedAt: $ts} |
     .stats.total = (.stats.total // 0) + 1 |
+    .updatedAt = $ts |
     if $status == "completed" then
       .stats.succeeded = (.stats.succeeded // 0) + 1
     else
@@ -150,15 +178,73 @@ execute_qa() {
   branch=$(echo "$task_json" | jq -r '.payload.branch // "develop"')
   scope=$(echo "$task_json" | jq -r '.payload.scope // "pr"')
 
+  # Run RCI tests and collect results
+  local total=0 passed=0 failed=0 skipped=0
+  local skipped_details="[]"
+
+  # Set flag to prevent recursive worker execution in tests
+  export WORKER_RUNNING=1
+
+  # Check if tests directory exists
+  if [[ -d "$PROJECT_ROOT/tests" ]]; then
+    # Run each RCI test
+    for test_script in "$PROJECT_ROOT"/tests/test-*.sh; do
+      if [[ -f "$test_script" ]]; then
+        total=$((total + 1))
+        test_name=$(basename "$test_script" .sh)
+
+        # Run test and capture output
+        set +e
+        bash "$test_script" > "$run_dir/${test_name}.log" 2>&1
+        test_exit=$?
+        set -e
+
+        # Check if skipped (check output first, regardless of exit code)
+        if grep -qi "SKIP" "$run_dir/${test_name}.log" 2>/dev/null; then
+          echo "⚠️  $test_name skipped"
+          skipped=$((skipped + 1))
+
+          # Extract skip reason (simplified)
+          skip_reason=$(grep -i "SKIP" "$run_dir/${test_name}.log" 2>/dev/null | head -1 | cut -d: -f2- | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//' || echo "dependency missing")
+
+          # Add to skipped_details
+          skipped_details=$(echo "$skipped_details" | jq --arg id "$test_name" --arg reason "$skip_reason" '. += [{"id": $id, "reason": $reason}]')
+        elif [[ $test_exit -eq 0 ]]; then
+          echo "✅ $test_name passed"
+          passed=$((passed + 1))
+        else
+          echo "❌ $test_name failed"
+          failed=$((failed + 1))
+        fi
+      fi
+    done
+  fi
+
   # Call orchestrator (if implemented)
   if [[ -f "$PROJECT_ROOT/orchestrator/qa-run.sh" ]]; then
     bash "$PROJECT_ROOT/orchestrator/qa-run.sh" "$project" "$branch" "$scope" > "$run_dir/qa-output.log" 2>&1 || true
-  else
-    echo "WARNING: orchestrator/qa-run.sh not found, skipping QA run" >&2
   fi
 
-  # Generate result
-  echo '{"status":"completed","intent":"runQA"}' > "$run_dir/result.json"
+  # Generate detailed result
+  jq -n \
+    --arg status "completed" \
+    --arg intent "runQA" \
+    --argjson total "$total" \
+    --argjson passed "$passed" \
+    --argjson failed "$failed" \
+    --argjson skipped "$skipped" \
+    --argjson skipped_details "$skipped_details" \
+    '{
+      status: $status,
+      intent: $intent,
+      tests: {
+        total: $total,
+        passed: $passed,
+        failed: $failed,
+        skipped: $skipped,
+        skipped_details: $skipped_details
+      }
+    }' > "$run_dir/result.json"
 }
 
 # Executor: fixBug (call CloudCode headless)
