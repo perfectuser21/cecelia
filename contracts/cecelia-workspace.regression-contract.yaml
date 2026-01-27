@@ -1,0 +1,140 @@
+# ============================================================================
+# Regression Contract - Cecelia Workspace
+# ============================================================================
+# Repo: cecelia-workspace (Monorepo)
+# Path: /home/xx/dev/cecelia-workspace
+#
+# 这是 cecelia-workspace 的回归契约实例
+# 基于 regression-contract.template.yaml
+# ============================================================================
+
+version: "1.0.0"
+repo_id: cecelia-workspace
+updated: "2026-01-27"
+
+# ============================================================================
+# Foundation Features
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# F-AUTH: 飞书认证
+# --------------------------------------------------------------------------
+foundation:
+  - id: RCI-F-001
+    feature: F-AUTH
+    name: "飞书登录必须可用"
+    scope: auth
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [auth, feishu, login]
+    owner: Core Team
+    steps:
+      given: "用户点击飞书登录按钮"
+      when: "完成飞书授权流程"
+      then: "成功获取 Token 并跳转到系统"
+    evidence:
+      type: api
+      status: 200
+    test: "npm run test -- tests/auth/feishu-login.test.ts"
+
+  - id: RCI-F-002
+    feature: F-AUTH
+    name: "Token 刷新机制不能失效"
+    scope: auth
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [auth, token, refresh]
+    owner: Core Team
+    steps:
+      given: "用户 Token 即将过期"
+      when: "系统自动刷新 Token"
+      then: "获取新 Token 且不中断用户操作"
+    evidence:
+      type: api
+      status: 200
+    test: "npm run test -- tests/auth/token-refresh.test.ts"
+
+# ============================================================================
+# Business Features
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# F-MEDIA-COLLECT: 新媒体采集
+# --------------------------------------------------------------------------
+business:
+  - id: RCI-B-001
+    feature: F-MEDIA-COLLECT
+    name: "小红书采集功能不能中断"
+    scope: media
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [media, xiaohongshu, scraping]
+    owner: Content Team
+    steps:
+      given: "用户输入小红书链接"
+      when: "触发采集任务"
+      then: "成功抓取内容并保存"
+    evidence:
+      type: db
+      table: media_items
+    test: "npm run test -- tests/media/xiaohongshu-scraping.test.ts"
+
+  - id: RCI-B-002
+    feature: F-MEDIA-COLLECT
+    name: "采集数据格式必须保持一致"
+    scope: media
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [media, data-format, validation]
+    owner: Content Team
+    steps:
+      given: "采集到媒体数据"
+      when: "保存到数据库"
+      then: "数据格式符合 Schema 定义"
+    evidence:
+      type: schema
+      validates: true
+    test: "npm run test -- tests/media/data-format.test.ts"
+
+# ============================================================================
+# Golden Paths (E2E)
+# ============================================================================
+golden_paths:
+  - id: GP-AUTH-001
+    name: "用户扫码 → 授权 → 获取 Token → 进入系统"
+    scope: e2e
+    priority: P0
+    feature: F-AUTH
+    trigger: [Release, Nightly]
+    method: auto
+    tags: [e2e, auth-flow, critical-path]
+    owner: Core Team
+    rcis: [RCI-F-001, RCI-F-002]
+    steps:
+      - "打开登录页"
+      - "扫描飞书二维码"
+      - "授权成功"
+      - "跳转到首页"
+    test: "npm run test:e2e -- tests/e2e/auth-flow.test.ts"
+
+  - id: GP-MEDIA-001
+    name: "采集 → 保存 → 发布完整流程"
+    scope: e2e
+    priority: P0
+    feature: F-MEDIA
+    trigger: [Release, Nightly]
+    method: auto
+    tags: [e2e, media-workflow, critical-path]
+    owner: Content Team
+    rcis: [RCI-B-001, RCI-B-002]
+    steps:
+      - "输入媒体链接"
+      - "触发采集"
+      - "验证数据格式"
+      - "保存到数据库"
+      - "发布到平台"
+    test: "npm run test:e2e -- tests/e2e/media-workflow.test.ts"

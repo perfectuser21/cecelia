@@ -1,0 +1,100 @@
+# QA Policy - Decision Rules (Single Source of Truth)
+# 这是所有 QA 决策规则的唯一定义
+version: 1.0.0
+updated: 2026-01-27
+
+# Commit 类型 → TestStrategy 映射
+test_strategy_rules:
+  fix:
+    version_bump: patch
+    required_tests:
+      - L1  # npm run qa
+    rci_priority: [P0, P1]
+    trigger_gp: false
+
+  feat:
+    version_bump: minor
+    required_tests:
+      - L1  # npm run qa
+      - L2A # Audit Node
+    rci_priority: [P0, P1, P2]
+    trigger_gp: true  # 触发相关 GP
+
+  "feat!":
+    version_bump: major
+    required_tests:
+      - L1   # npm run qa
+      - L2A  # Audit Node
+      - L2B  # Evidence
+      - L3   # Acceptance
+    rci_priority: [P0, P1, P2]
+    trigger_gp: true  # 触发全部 GP
+
+  BREAKING:
+    version_bump: major
+    required_tests:
+      - L1
+      - L2A
+      - L2B
+      - L3
+    rci_priority: [P0, P1, P2]
+    trigger_gp: true
+
+  # 其他类型不触发测试
+  docs:
+    version_bump: none
+    required_tests: []
+    rci_priority: []
+    trigger_gp: false
+
+  style:
+    version_bump: none
+    required_tests: []
+    rci_priority: []
+    trigger_gp: false
+
+  refactor:
+    version_bump: none
+    required_tests: []
+    rci_priority: []
+    trigger_gp: false
+
+  test:
+    version_bump: none
+    required_tests: []
+    rci_priority: []
+    trigger_gp: false
+
+  chore:
+    version_bump: none
+    required_tests: []
+    rci_priority: []
+    trigger_gp: false
+
+# Scope → RCI 过滤规则
+rci_filter_rules:
+  pr:
+    priority: [P0, P1]
+    trigger: [PR, Release]
+
+  release:
+    priority: [P0, P1, P2]
+    trigger: [Release]
+
+  nightly:
+    priority: [P0, P1, P2]
+    trigger: [Nightly]
+
+# P0/P1 强制 RCI 更新规则
+rci_update_rules:
+  P0:
+    must_update_contract: true
+    must_pass_before_merge: true
+
+  P1:
+    must_update_contract: true
+    must_pass_before_merge: true
+
+  P2:
+    must_update_contract: false
+    must_pass_before_merge: false

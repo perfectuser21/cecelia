@@ -1,0 +1,40 @@
+# Repo Registry - Single Source of Truth
+# 这是所有 Repos 的唯一注册表
+version: 1.0.0
+updated: 2026-01-27
+
+repos:
+  - id: cecelia-workspace
+    name: "Cecelia Workspace"
+    type: Workspace
+    path: /home/xx/dev/cecelia-workspace
+    git_url: https://github.com/ZenithJoycloud/cecelia-workspace
+    main_branch: develop
+    owner: Core Team
+    priority: P0
+    enabled: true
+
+    # 这个 repo 提供的执行入口
+    runners:
+      qa: "npm run qa"  # L1 自动化测试
+      rci: "bash scripts/qa-run-rci.sh"  # RCI 执行器
+      gp: "bash scripts/qa-run-gp.sh"   # GP 执行器
+
+    # 产出的证据文件位置
+    evidence_path: ".qa-evidence.json"
+
+  # 示例：其他 repo（如果存在）
+  # - id: other-business-repo
+  #   name: "Other Business Repo"
+  #   type: Business
+  #   path: /home/xx/dev/other-business-repo
+  #   git_url: https://github.com/ZenithJoycloud/other-business-repo
+  #   main_branch: main
+  #   owner: Business Team
+  #   priority: P1
+  #   enabled: true
+  #   runners:
+  #     qa: "npm run qa"
+  #     rci: "bash scripts/qa-run-rci.sh"
+  #     gp: "bash scripts/qa-run-gp.sh"
+  #   evidence_path: ".qa-evidence.json"
