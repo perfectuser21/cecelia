@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.2.1] - 2026-01-28
+
+### Fixed
+
+- **CI DevGate 检查跳过 chore/docs/test PR**
+  - 与 L2A check 保持一致，chore/docs/test PR 不需要 DoD 文件
+  - 修复清理 PR 无法通过 CI 的问题
+
 ## [11.2.0] - 2026-01-28
 
 ### Added

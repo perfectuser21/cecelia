@@ -264,9 +264,13 @@ jobs:
 
       # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新 + RCI 覆盖率）
       # 注意：当前只对 npm 项目启用，非 npm 项目跳过此检查
-      # TODO: 未来可扩展到其他项目类型
+      # chore/docs/test PR 跳过（这些不需要 DoD）
       - name: DevGate checks
-        if: steps.detect.outputs.type == 'npm'
+        if: |
+          steps.detect.outputs.type == 'npm' &&
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:')
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Phase 1: DevGate 检查"
