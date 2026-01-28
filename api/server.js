@@ -127,6 +127,91 @@ app.get('/api/runs/:runId/result', (req, res) => {
   res.json(result);
 });
 
+// Get queue status
+app.get('/api/queue', (req, res) => {
+  const queueFile = join(PROJECT_ROOT, 'queue', 'queue.jsonl');
+
+  if (!existsSync(queueFile)) {
+    return res.json([]);
+  }
+
+  try {
+    const content = readFileSync(queueFile, 'utf-8');
+    const tasks = content
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+      .map(task => ({
+        ...task,
+        age: Math.floor((Date.now() - new Date(task.createdAt).getTime()) / 1000),
+      }));
+
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read queue', details: err.message });
+  }
+});
+
+// Get worker status
+app.get('/api/worker', (req, res) => {
+  const workerStateFile = join(PROJECT_ROOT, 'worker', 'worker-state.json');
+
+  if (!existsSync(workerStateFile)) {
+    return res.json({
+      status: 'idle',
+      currentTask: null,
+      uptime: 0,
+      lastCrash: null,
+    });
+  }
+
+  const state = readJSON(workerStateFile);
+  res.json(state || {
+    status: 'idle',
+    currentTask: null,
+    uptime: 0,
+    lastCrash: null,
+  });
+});
+
+// Get run evidence files
+app.get('/api/runs/:runId/evidence', (req, res) => {
+  const { runId } = req.params;
+  const runPath = join(PROJECT_ROOT, 'runs', runId);
+
+  if (!existsSync(runPath)) {
+    return res.status(404).json({ error: 'Run not found' });
+  }
+
+  try {
+    const files = readdirSync(runPath).filter(name => {
+      const fullPath = join(runPath, name);
+      return statSync(fullPath).isFile();
+    });
+
+    res.json(files);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list evidence files', details: err.message });
+  }
+});
+
+// Get run log file
+app.get('/api/runs/:runId/logs/:filename', (req, res) => {
+  const { runId, filename } = req.params;
+  const filePath = join(PROJECT_ROOT, 'runs', runId, filename);
+
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    res.type('text/plain').send(content);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read file', details: err.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
