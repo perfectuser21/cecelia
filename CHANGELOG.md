@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.2.2] - 2026-01-28
+
+### Fixed
+
+- **CI L2A Check 只在 PR 事件运行**
+  - 添加 `github.event_name == 'pull_request'` 条件
+  - 修复 push 事件时 L2A Check 失败的问题
+
 ## [11.2.1] - 2026-01-28
 
 ### Fixed

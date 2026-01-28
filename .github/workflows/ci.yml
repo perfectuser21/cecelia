@@ -189,6 +189,7 @@ jobs:
 
       - name: L2A Check
         if: |
+          github.event_name == 'pull_request' &&
           steps.detect.outputs.type == 'npm' &&
           github.base_ref != 'main' &&
           !startsWith(github.event.pull_request.title, 'chore:')
