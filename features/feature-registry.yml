@@ -224,48 +224,6 @@ platform_features:
       - W1-008  # p1 阶段轮询循环
 
   # --------------------------------------------------------------------------
-  # N1: Cecelia Headless Mode - 无头自动化
-  # --------------------------------------------------------------------------
-  - id: N1
-    name: Cecelia Headless Mode
-    status: Committed
-    priority: P1
-    description: |
-      无头 Claude Code，供 n8n 调度执行开发任务
-      - 触发: Notion 任务 / GitHub CI fail 通知
-      - 执行: cecelia-run → claude -p "/dev ..." → 输出 JSON
-      - 状态同步: Core API + Notion 镜像
-
-    entrypoints:
-      - type: cli
-        command: cecelia-run
-        file: /home/xx/bin/cecelia-run
-      - type: cli
-        command: cecelia-api
-        file: /home/xx/bin/cecelia-api
-      - type: n8n
-        workflow: Task Dispatcher v2.0
-
-    golden_path: |
-      n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." →
-      执行流程 → 输出 JSON → cecelia-api 更新 Core + 同步 Notion
-
-    minimal_paths:
-      - "Notion 任务 → n8n 轮询 (5分钟) → cecelia-run → 执行 → 更新状态"
-      - "CI fail → PHASE_OVERRIDE=p1 → cecelia-run → 修复 → push → 退出"
-
-    tests:
-      - type: manual
-        description: Notion 任务执行验证
-        coverage: N1-001, N1-002
-
-    rcis:
-      - N1-001  # cecelia-run 基本执行
-      - N1-002  # 状态同步 (Core + Notion)
-      - N1-003  # N8N Workflow 定义存在
-      - N1-004  # p1 阶段无头修复语义
-
-  # --------------------------------------------------------------------------
   # Q1: Impact Check - 能力变更强制登记（P0-1）
   # --------------------------------------------------------------------------
   - id: Q1
@@ -623,7 +581,7 @@ product_features:
         output: dev-session-report.json + .txt
 
     golden_path: |
-      执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard/Cecelia 使用
+      执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard 使用
 
     minimal_paths:
       - "QA Report: bash scripts/qa-report.sh → qa-report.json"

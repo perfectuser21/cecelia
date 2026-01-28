@@ -57,15 +57,6 @@ changelog:
 
 ---
 
-### N1: Cecelia Headless Mode
-
-1. ✅ **Notion 任务 → n8n 轮询 (5分钟) → cecelia-run → 执行 → 更新状态**
-2. ✅ **CI fail → PHASE_OVERRIDE=p1 → cecelia-run → 修复 → push → 退出**
-
-**RCI 覆盖**: N1-001,N1-002,N1-003,N1-004
-
----
-
 ### Q1: Impact Check
 
 1. ✅ **改 hooks/ 不改 registry → CI FAIL**

@@ -78,23 +78,7 @@ PR (p0 结束) → CI fail (p1 唤醒) → Fix → Push → CI pass (p2 自动 m
 
 ---
 
-## GP-005: Cecelia Headless Mode (N1)
-
-**Feature**: N1 - Cecelia Headless Mode
-**Priority**: P1
-
-### Golden Path
-
-```
-n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." →
-执行流程 → 输出 JSON → cecelia-api 更新 Core + 同步 Notion
-```
-
-**RCI 覆盖**: N1-001,N1-002,N1-003,N1-004
-
----
-
-## GP-006: Impact Check (Q1)
+## GP-005: Impact Check (Q1)
 
 **Feature**: Q1 - Impact Check
 **Priority**: P0
@@ -109,7 +93,7 @@ PR 改动核心文件 → impact-check.sh 检测 → 验证 registry 同时更�
 
 ---
 
-## GP-007: Evidence Gate (Q2)
+## GP-006: Evidence Gate (Q2)
 
 **Feature**: Q2 - Evidence Gate
 **Priority**: P0
@@ -124,7 +108,7 @@ npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → �
 
 ---
 
-## GP-008: Anti-Bypass Contract (Q3)
+## GP-007: Anti-Bypass Contract (Q3)
 
 **Feature**: Q3 - Anti-Bypass Contract
 **Priority**: P0
@@ -139,7 +123,7 @@ npm run qa:gate → 生成 .quality-evidence.json → CI 验证 SHA/字段 → �
 
 ---
 
-## GP-009: CI Layering (L2B + L3-fast + Preflight + AI Review) (Q4)
+## GP-008: CI Layering (L2B + L3-fast + Preflight + AI Review) (Q4)
 
 **Feature**: Q4 - CI Layering (L2B + L3-fast + Preflight + AI Review)
 **Priority**: P1
@@ -155,7 +139,7 @@ CI → l2b-check job → ai-review job → 通过/失败
 
 ---
 
-## GP-010: RISK SCORE Trigger (Q5)
+## GP-009: RISK SCORE Trigger (Q5)
 
 **Feature**: Q5 - RISK SCORE Trigger
 **Priority**: P1
@@ -171,7 +155,7 @@ CI → l2b-check job → ai-review job → 通过/失败
 
 ---
 
-## GP-011: Structured Audit (Q6)
+## GP-010: Structured Audit (Q6)
 
 **Feature**: Q6 - Structured Audit
 **Priority**: P1
@@ -188,7 +172,7 @@ AUDIT-REPORT.md (Decision: PASS/FAIL)
 
 ---
 
-## GP-012: Regression Testing Framework (P1)
+## GP-011: Regression Testing Framework (P1)
 
 **Feature**: P1 - Regression Testing Framework
 **Priority**: P0
@@ -204,7 +188,7 @@ run-regression.sh 执行 → 验证契约不被破坏
 
 ---
 
-## GP-013: DevGate (P2)
+## GP-012: DevGate (P2)
 
 **Feature**: P2 - DevGate
 **Priority**: P0
@@ -219,7 +203,7 @@ CI test job → DevGate checks → 三个检查全部通过 → CI 继续
 
 ---
 
-## GP-014: Quality Reporting (P3)
+## GP-013: Quality Reporting (P3)
 
 **Feature**: P3 - Quality Reporting
 **Priority**: P1
@@ -227,14 +211,14 @@ CI test job → DevGate checks → 三个检查全部通过 → CI 继续
 ### Golden Path
 
 ```
-执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard/Cecelia 使用
+执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard 使用
 ```
 
 **RCI 覆盖**: E1-001,E1-002,E1-003,E2-001,E2-002,E2-003
 
 ---
 
-## GP-015: CI Quality Gates (P4)
+## GP-014: CI Quality Gates (P4)
 
 **Feature**: P4 - CI Quality Gates
 **Priority**: P0
@@ -249,7 +233,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 
 ---
 
-## GP-016: Worktree Parallel Development (P5)
+## GP-015: Worktree Parallel Development (P5)
 
 **Feature**: P5 - Worktree Parallel Development
 **Priority**: P2
@@ -264,7 +248,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 
 ---
 
-## GP-017: Self-Evolution Automation (P6)
+## GP-016: Self-Evolution Automation (P6)
 
 **Feature**: P6 - Self-Evolution Automation
 **Priority**: P2

@@ -62,15 +62,6 @@ StopHook 触发 → 阶段检测 (detect-phase.sh) → p0: 检查质检+PR | p1:
 
 ---
 
-### N1: Cecelia Headless Mode
-
-```
-n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." →
-执行流程 → 输出 JSON → cecelia-api 更新 Core + 同步 Notion
-```
-
----
-
 ### Q1: Impact Check
 
 ```
@@ -145,7 +136,7 @@ CI test job → DevGate checks → 三个检查全部通过 → CI 继续
 ### P3: Quality Reporting
 
 ```
-执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard/Cecelia 使用
+执行脚本 → 扫描 repo 结构 → 生成 JSON/TXT 报告 → 供 Dashboard 使用
 ```
 
 ---

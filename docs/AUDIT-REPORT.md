@@ -1,45 +1,29 @@
 # Audit Report
 
-Branch: cp-qa-audit-refactor
-Date: 2026-01-27
-Scope: .dod.md, .prd-qa-audit-refactor.md, .prd.md, CHANGELOG.md, FEATURES.md, docs/AUDIT-REPORT.md, docs/QA-DECISION.md, hook-core/VERSION, package.json, scripts/audit/check-forbidden.cjs, scripts/audit/check-proof.cjs, scripts/audit/compare-scope.cjs, scripts/audit/generate-report.cjs, scripts/qa/detect-forbidden.cjs, scripts/qa/detect-scope.cjs, scripts/qa/risk-score.cjs, skills/audit/SKILL.md, skills/qa/SKILL.md, templates/AUDIT-REPORT.md, templates/QA-DECISION.md
+Branch: cp-cleanup-configs-01280828
+Date: 2026-01-28
+Scope: .claude/settings.json, features/feature-registry.yml, docs/paths/*.md, regression-contract.yaml
 Target Level: L2
 
-## Summary
-
-- L1 (Blocking): 0
-- L2 (Functional): 0
-- L3 (Best Practice): 0
-- L4 (Over-optimization): 0
-
-## Decision
+Summary:
+  L1: 0
+  L2: 0
+  L3: 0
+  L4: 0
 
 Decision: PASS
 
-All checks passed. Safe to proceed.
+Findings: []
 
-## Checks
+Blockers: []
 
-### Scope Check
-- Status: ✅ PASS
-- Details: 0 file(s) outside scope
+## Notes
 
-### Forbidden Check
-- Status: ✅ PASS
-- Details: 0 forbidden file(s) touched
+This is a cleanup task:
+- Removed deprecated SessionStart hook
+- Removed N1 (Cecelia) feature from Engine (moved to cecelia-workspace)
+- Deleted AI Thinking restriction from global CLAUDE.md
+- Removed git-push-and-wait mandatory rule from global CLAUDE.md
 
-### Proof Check
-- Status: ✅ PASS
-- Details: 11/11 tests verified
-
-## Findings
-
-No issues found.
-
-## Blockers
-
-None
-
----
-
-Generated: 2026-01-27T23:53:40.634Z
+No code logic changes, only configuration and documentation updates.
+All changes are file removals and moves, which are inherently safe.
