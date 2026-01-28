@@ -14,6 +14,7 @@ from src.core.embedder import Embedder
 from src.core.search import SearchEngine
 from src.core.store import VectorStore
 from src.intelligence.parser.parser_service import ParserService
+from src.intelligence.scheduler.scheduler_service import SchedulerService
 
 load_dotenv()
 
@@ -24,12 +25,13 @@ embedder: Optional[Embedder] = None
 store: Optional[VectorStore] = None
 search_engine: Optional[SearchEngine] = None
 parser_service: Optional[ParserService] = None
+scheduler_service: Optional[SchedulerService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global embedder, store, search_engine, parser_service
+    global embedder, store, search_engine, parser_service, scheduler_service
 
     app_config = load_app_config()
     sor_config = load_sor_config()
@@ -52,6 +54,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Intelligence Layer
     parser_service = ParserService(semantic_client=None)  # TODO: Add semantic client
+    scheduler_service = SchedulerService(max_concurrent=3)
     logger.info("Intelligence Layer initialized")
 
     logger.info("Semantic Brain initialized")
@@ -269,4 +272,85 @@ async def parse(request: ParseRequest):
             HistoricalContextResponse(**h) for h in result.historical_context
         ],
         parse_time_ms=result.parse_time_ms,
+    )
+
+
+# Intelligence Layer - Schedule endpoint
+class ScheduleTaskInput(BaseModel):
+    """A task input for scheduling."""
+    id: str
+    priority: str = "P1"
+    dependencies: List[str] = []
+    title: str = ""
+    estimated_time: str = "30min"
+
+
+class ScheduleConstraints(BaseModel):
+    """Constraints for scheduling."""
+    max_concurrent: int = 3
+    must_finish_first: List[str] = []
+
+
+class ScheduleRequest(BaseModel):
+    """Request for schedule endpoint."""
+    tasks: List[ScheduleTaskInput]
+    constraints: Optional[ScheduleConstraints] = None
+
+
+class ExecutionPhaseResponse(BaseModel):
+    """A phase in the execution plan."""
+    phase: int
+    tasks: List[str]
+    concurrent: bool
+    reason: str
+
+
+class ExecutionPlanResponse(BaseModel):
+    """The execution plan."""
+    phases: List[ExecutionPhaseResponse]
+    estimated_total_time: str
+    critical_path: List[str]
+
+
+class ScheduleResponse(BaseModel):
+    """Response from schedule endpoint."""
+    execution_plan: ExecutionPlanResponse
+    visualization: str
+    schedule_time_ms: float
+    has_cycle: bool
+    cycle_tasks: List[str]
+
+
+@app.post("/schedule", response_model=ScheduleResponse)
+async def schedule(request: ScheduleRequest):
+    """Schedule tasks and generate execution plan.
+
+    This endpoint takes a list of tasks with dependencies and generates
+    an optimal execution plan with parallel phases.
+    """
+    if scheduler_service is None:
+        raise HTTPException(status_code=503, detail="Scheduler service not initialized")
+
+    if not request.tasks:
+        raise HTTPException(status_code=400, detail="Tasks list cannot be empty")
+
+    # Convert Pydantic models to dicts
+    tasks = [t.model_dump() for t in request.tasks]
+    constraints = request.constraints.model_dump() if request.constraints else None
+
+    result = scheduler_service.schedule(tasks=tasks, constraints=constraints)
+
+    return ScheduleResponse(
+        execution_plan=ExecutionPlanResponse(
+            phases=[
+                ExecutionPhaseResponse(**p)
+                for p in result.execution_plan.get("phases", [])
+            ],
+            estimated_total_time=result.execution_plan.get("estimated_total_time", "N/A"),
+            critical_path=result.execution_plan.get("critical_path", []),
+        ),
+        visualization=result.visualization,
+        schedule_time_ms=result.schedule_time_ms,
+        has_cycle=result.has_cycle,
+        cycle_tasks=result.cycle_tasks,
     )
