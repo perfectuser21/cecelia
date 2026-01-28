@@ -212,6 +212,19 @@ app.get('/api/runs/:runId/logs/:filename', (req, res) => {
   }
 });
 
+// Task System API routes
+import projectsRouter from './src/task-system/projects.js';
+import goalsRouter from './src/task-system/goals.js';
+import tasksRouter from './src/task-system/tasks.js';
+import linksRouter from './src/task-system/links.js';
+import runsRouter from './src/task-system/runs.js';
+
+app.use('/api/projects', projectsRouter);
+app.use('/api/goals', goalsRouter);
+app.use('/api/tasks', tasksRouter);
+app.use('/api/tasks', linksRouter);
+app.use('/api/runs', runsRouter);
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });

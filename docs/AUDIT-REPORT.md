@@ -1,8 +1,17 @@
+---
+id: audit-report-task-system-api
+version: 1.0.0
+created: 2026-01-28
+updated: 2026-01-28
+changelog:
+  - 1.0.0: Initial audit report
+---
+
 # Audit Report
 
-Branch: cp-gateway-mvp
-Date: 2026-01-27
-Scope: gateway/gateway.sh, worker/worker.sh, heartbeat/heartbeat.sh, state/state.json, tests/*.test.ts
+Branch: cp-task-system-api
+Date: 2026-01-28
+Scope: api/src/task-system/db.js, api/src/task-system/projects.js, api/src/task-system/goals.js, api/src/task-system/tasks.js, api/src/task-system/links.js, api/src/task-system/runs.js, api/server.js, tests/api/integration.test.js
 Target Level: L2
 
 Summary:
@@ -13,71 +22,29 @@ Summary:
 
 Decision: PASS
 
-Findings: []
+Findings:
+  - id: A1-001
+    layer: L1
+    file: api/src/task-system/db.js
+    line: 9
+    issue: 硬编码数据库密码存在安全风险
+    fix: 使用环境变量存储敏感信息（process.env.DB_PASSWORD）
+    status: fixed
+
+  - id: A2-001
+    layer: L2
+    file: api/src/task-system/projects.js
+    line: 45-117
+    issue: PATCH/UPDATE 路由缺少输入验证，空 body 可能导致错误 SQL
+    fix: 添加 if (updates.length === 0) return 400 检查
+    status: fixed
+
+  - id: A2-002
+    layer: L2
+    file: api/src/task-system/runs.js
+    line: 46
+    issue: POST /tasks/:id/runs 路由路径不一致（应该在 tasks router）
+    fix: 将路由修正为 POST /api/runs，task_id 在 body 中传递
+    status: fixed
 
 Blockers: []
-
-## Audit Details
-
-### Scope
-
-Audited files:
-- `gateway/gateway.sh` - Unified input gateway (200 lines)
-- `worker/worker.sh` - Queue consumer and task executor (212 lines)
-- `heartbeat/heartbeat.sh` - Self-monitoring system (106 lines)
-- `state/state.json` - Initial state file
-- `tests/gateway.test.ts` - Gateway unit tests
-- `tests/queue.test.ts` - Queue unit tests
-- `tests/worker.test.ts` - Worker unit tests
-- `tests/state.test.ts` - State unit tests
-- `tests/heartbeat.test.ts` - Heartbeat unit tests
-- `tests/e2e-gateway.test.ts` - End-to-end tests
-
-### L1 Analysis (Blocking Issues)
-
-**Result**: No L1 issues found.
-
-All scripts follow proper bash practices:
-- ✅ Proper shebang (`#!/bin/bash`)
-- ✅ `set -euo pipefail` for error handling
-- ✅ Proper variable quoting
-- ✅ Error messages to stderr
-- ✅ Proper return codes
-
-### L2 Analysis (Functional Issues)
-
-**Result**: No L2 issues found.
-
-Checked for:
-- ✅ Edge cases handled (empty queue, missing files)
-- ✅ JSON validation (jq checks)
-- ✅ File existence checks before operations
-- ✅ Atomic operations (temp files with mv)
-- ✅ Proper error propagation
-
-### L3 Analysis (Best Practices)
-
-**Result**: No L3 issues found.
-
-Code quality:
-- ✅ Consistent function naming
-- ✅ Clear comments
-- ✅ Help text provided (gateway.sh)
-- ✅ Logging with emojis for readability
-- ✅ Test coverage complete (6 test files)
-
-### L4 Analysis (Over-optimization)
-
-Not evaluated (out of scope for L2 target).
-
-## Conclusion
-
-**Gateway System MVP is production-ready.**
-
-All three core components (Gateway, Worker, Heartbeat) are:
-- Functionally correct
-- Properly error-handled
-- Well-tested (6 test files with comprehensive coverage)
-- Ready for integration
-
-No blockers found. System can proceed to PR creation.
