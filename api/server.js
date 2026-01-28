@@ -10,7 +10,7 @@ const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
 
 const app = express();
-const PORT = process.env.PORT || 5220;
+const PORT = process.env.CECELIA_API_PORT || process.env.PORT || 5681;
 
 app.use(cors());
 app.use(express.json());
@@ -98,6 +98,51 @@ app.get('/api/runs', (req, res) => {
     res.json(runs);
   } catch (err) {
     res.status(500).json({ error: 'Failed to list runs', details: err.message });
+  }
+});
+
+app.get('/api/failures', (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const runsDir = join(PROJECT_ROOT, 'runs');
+
+  if (!existsSync(runsDir)) {
+    return res.json([]);
+  }
+
+  try {
+    const runIds = readdirSync(runsDir).filter(name => {
+      const fullPath = join(runsDir, name);
+      return statSync(fullPath).isDirectory();
+    });
+
+    const failures = runIds
+      .map(runId => {
+        const runPath = join(runsDir, runId);
+        const summaryFile = join(runPath, 'summary.json');
+        const summary = readJSON(summaryFile);
+
+        if (!summary || summary.status !== 'failed') return null;
+
+        return {
+          runId,
+          taskId: summary.taskId,
+          intent: summary.intent,
+          status: summary.status,
+          startedAt: summary.startedAt,
+          completedAt: summary.completedAt,
+          duration: summary.duration,
+          error: summary.error,
+          mtime: statSync(runPath).mtime.getTime(),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit)
+      .map(({ mtime, ...rest }) => rest);
+
+    res.json(failures);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list failures', details: err.message });
   }
 });
 
@@ -195,6 +240,22 @@ app.get('/api/runs/:runId/evidence', (req, res) => {
   }
 });
 
+// Get run evidence file (download)
+app.get('/api/runs/:runId/evidence/:filename', (req, res) => {
+  const { runId, filename } = req.params;
+  const filePath = join(PROJECT_ROOT, 'runs', runId, filename);
+
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'Evidence file not found' });
+  }
+
+  try {
+    res.download(filePath);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to download file', details: err.message });
+  }
+});
+
 // Get run log file
 app.get('/api/runs/:runId/logs/:filename', (req, res) => {
   const { runId, filename } = req.params;
@@ -212,6 +273,49 @@ app.get('/api/runs/:runId/logs/:filename', (req, res) => {
   }
 });
 
+// P1 endpoint: Enqueue task (requires authentication)
+app.post('/api/enqueue', async (req, res) => {
+  const token = req.headers['x-cecelia-token'];
+  const expectedToken = process.env.CECELIA_API_TOKEN || 'default-dev-token';
+
+  if (!token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing token' });
+  }
+
+  try {
+    const { source, intent, priority, payload } = req.body;
+
+    if (!intent || !priority) {
+      return res.status(400).json({ error: 'Missing required fields: intent, priority' });
+    }
+
+    const taskSource = source || 'api';
+    const taskPayload = JSON.stringify(payload || {});
+
+    // Call gateway.sh to add task
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execPromise = promisify(exec);
+
+    const gatewayScript = join(PROJECT_ROOT, 'gateway', 'gateway.sh');
+    const command = `bash "${gatewayScript}" add "${taskSource}" "${intent}" "${priority}" '${taskPayload}'`;
+
+    const { stdout, stderr } = await execPromise(command);
+
+    if (stderr && !stderr.includes('Task added')) {
+      return res.status(500).json({ error: 'Failed to enqueue task', details: stderr });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Task enqueued successfully',
+      output: stdout.trim(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to enqueue task', details: err.message });
+  }
+});
+
 // Task System API routes
 import projectsRouter from './src/task-system/projects.js';
 import goalsRouter from './src/task-system/goals.js';
@@ -225,6 +329,11 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/tasks', linksRouter);
 app.use('/api/runs', runsRouter);
 
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Legacy endpoint for backward compatibility
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
