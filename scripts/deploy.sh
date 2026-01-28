@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # deploy.sh - 部署稳定版本到 ~/.claude/
+# v1.1.0: rm -rf 安全验证
 # ============================================================================
 #
 # 用法: bash scripts/deploy.sh [OPTIONS]
@@ -25,6 +26,42 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m'
+
+# v1.1.0: 安全删除目录 - 验证路径有效性
+safe_rm_rf() {
+    local path="$1"
+    local allowed_parent="$2"
+
+    # 验证 1: 路径非空
+    if [[ -z "$path" ]]; then
+        echo -e "${RED}错误: rm -rf 路径为空，拒绝执行${NC}" >&2
+        return 1
+    fi
+
+    # 验证 2: 路径存在
+    if [[ ! -e "$path" ]]; then
+        return 0
+    fi
+
+    # 验证 3: 路径在允许的父目录内
+    local real_path
+    real_path=$(realpath "$path" 2>/dev/null) || real_path="$path"
+    local real_parent
+    real_parent=$(realpath "$allowed_parent" 2>/dev/null) || real_parent="$allowed_parent"
+
+    if [[ "$real_path" != "$real_parent"* ]]; then
+        echo -e "${RED}错误: 路径 $path 不在允许范围 $allowed_parent 内，拒绝删除${NC}" >&2
+        return 1
+    fi
+
+    # 验证 4: 禁止删除根目录或 home 目录
+    if [[ "$real_path" == "/" || "$real_path" == "$HOME" || "$real_path" == "/home" ]]; then
+        echo -e "${RED}错误: 禁止删除系统关键目录: $real_path${NC}" >&2
+        return 1
+    fi
+
+    rm -rf "$path"
+}
 
 # 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -170,9 +207,13 @@ if [[ -d "$ENGINE_ROOT/skills" ]]; then
                 rsync -a --delete "$skill_dir" "$target_skill/" 2>/dev/null
                 echo -e "   ${GREEN}[OK]${NC} $skill_name/"
             else
-                rm -rf "$target_skill"
-                cp -r "$skill_dir" "$target_skill"
-                echo -e "   ${GREEN}[OK]${NC} $skill_name/ (cp)"
+                # v1.1.0: 使用安全删除，限制在 ~/.claude 目录内
+                if safe_rm_rf "$target_skill" "$TARGET_DIR"; then
+                    cp -r "$skill_dir" "$target_skill"
+                    echo -e "   ${GREEN}[OK]${NC} $skill_name/ (cp)"
+                else
+                    echo -e "   ${RED}[FAIL]${NC} $skill_name/ (安全检查失败)"
+                fi
             fi
         fi
     done

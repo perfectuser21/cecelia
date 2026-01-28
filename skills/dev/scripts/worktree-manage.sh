@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Worktree 管理脚本
+# v1.1.0: rm -rf 安全验证
 # v1.0.0: 初始版本 - 创建、列表、清理 worktree
 #
 # 用法:
@@ -16,6 +17,45 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+
+# 安全删除目录 - 验证路径有效性
+# 用法: safe_rm_rf <path> <allowed_parent>
+safe_rm_rf() {
+    local path="$1"
+    local allowed_parent="$2"
+
+    # 验证 1: 路径非空
+    if [[ -z "$path" ]]; then
+        echo -e "${RED}错误: rm -rf 路径为空，拒绝执行${NC}" >&2
+        return 1
+    fi
+
+    # 验证 2: 路径存在
+    if [[ ! -e "$path" ]]; then
+        echo -e "${YELLOW}警告: 路径不存在: $path${NC}" >&2
+        return 0
+    fi
+
+    # 验证 3: 路径在允许的父目录内
+    local real_path
+    real_path=$(realpath "$path" 2>/dev/null) || real_path="$path"
+    local real_parent
+    real_parent=$(realpath "$allowed_parent" 2>/dev/null) || real_parent="$allowed_parent"
+
+    if [[ "$real_path" != "$real_parent"* ]]; then
+        echo -e "${RED}错误: 路径 $path 不在允许范围 $allowed_parent 内，拒绝删除${NC}" >&2
+        return 1
+    fi
+
+    # 验证 4: 禁止删除根目录或 home 目录
+    if [[ "$real_path" == "/" || "$real_path" == "$HOME" || "$real_path" == "/home" ]]; then
+        echo -e "${RED}错误: 禁止删除系统关键目录: $real_path${NC}" >&2
+        return 1
+    fi
+
+    # 安全删除
+    rm -rf "$path"
+}
 
 # 获取项目根目录（主工作区）
 get_main_worktree() {
@@ -195,9 +235,15 @@ cmd_remove() {
         echo -e "${GREEN}✅ Worktree 已移除${NC}"
     else
         echo -e "${RED}❌ Worktree 移除失败，尝试强制移除...${NC}"
-        rm -rf "$worktree_path"
-        git worktree prune
-        echo -e "${GREEN}✅ 已强制移除${NC}"
+        # v1.1.0: 使用安全删除，限制在主 worktree 的父目录内
+        local main_wt_parent
+        main_wt_parent=$(dirname "$(get_main_worktree)")
+        if safe_rm_rf "$worktree_path" "$main_wt_parent"; then
+            git worktree prune
+            echo -e "${GREEN}✅ 已强制移除${NC}"
+        else
+            echo -e "${RED}❌ 安全检查失败，请手动删除: $worktree_path${NC}"
+        fi
     fi
 }
 

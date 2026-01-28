@@ -1,6 +1,6 @@
 {
   "name": "zenithjoy-engine",
-  "version": "11.2.9",
+  "version": "11.2.10",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

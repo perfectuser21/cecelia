@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.2.10] - 2026-01-28
+
+### Security
+
+- **rm -rf 安全验证**
+  - 新增 `safe_rm_rf()` 函数，验证路径非空、存在、在允许范围内
+  - `worktree-manage.sh` v1.1.0: 使用安全删除
+  - `cleanup.sh` v1.7: 使用安全删除
+  - `deploy.sh` v1.1.0: 使用安全删除
+  - 禁止删除根目录、home 目录等系统关键路径
+
 ## [11.2.9] - 2026-01-28
 
 ### Changed
