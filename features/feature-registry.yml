@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.20.0"
+version: "2.21.0"
 updated: "2026-01-28"
 changelog:
+  - 2.21.0: v11.2.7 - Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）
   - 2.20.0: v11.2.6 - 跨仓库兼容性 + Worktree 支持（-e .git、develop/main fallback）
   - 2.19.0: v11.2.5 - 并发安全修复 Phase 1（原子写入、分支级别状态文件、trap 修复）
   - 2.18.0: v11.2.0 - 分支级别 PRD/DoD 文件命名（H1/H2 向后兼容扩展）
@@ -174,7 +175,7 @@ platform_features:
     name: Unified Dev Workflow
     status: Committed
     priority: P0
-    version: "10.13.1"
+    version: "11.2.7"
     updated: "2026-01-28"
     description: |
       v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
@@ -182,7 +183,7 @@ platform_features:
       - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
       - 从头到尾一直执行，不在 PR 创建后停止
       - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
-      - 删除 detect-phase.sh 和 dev-with-loop（v10.14.0 清理）
+      - v11.2.7: Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）
       - v10.14.0: 清理 Ralph Loop 架构（删除 dev-with-loop、detect-phase.sh、RALPH_LOOP_WRAPPER.md）
       - v10.13.1: 修复 Skill 调用返回后行为的矛盾描述（澄清 Ralph Loop 作用，删除"立即返回"误导）
       - v10.13.0: /dev Skill v2.2.0（删除阶段检测，统一完成条件，强制 Task Checkpoint）
