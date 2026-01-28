@@ -19,6 +19,7 @@ from src.intelligence.detector.detector_service import DetectorService
 from src.intelligence.detector.ci_monitor import CIMonitor
 from src.intelligence.detector.code_monitor import CodeMonitor
 from src.intelligence.detector.security_monitor import SecurityMonitor
+from src.intelligence.planner.execution_planner import ExecutionPlanner
 
 load_dotenv()
 
@@ -31,12 +32,13 @@ search_engine: Optional[SearchEngine] = None
 parser_service: Optional[ParserService] = None
 scheduler_service: Optional[SchedulerService] = None
 detector_service: Optional[DetectorService] = None
+execution_planner: Optional[ExecutionPlanner] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global embedder, store, search_engine, parser_service, scheduler_service, detector_service
+    global embedder, store, search_engine, parser_service, scheduler_service, detector_service, execution_planner
 
     app_config = load_app_config()
     sor_config = load_sor_config()
@@ -71,6 +73,9 @@ async def lifespan(app: FastAPI):
         security_monitor=security_monitor,
         check_interval=300,  # 5 minutes
     )
+
+    # Initialize Execution Planner
+    execution_planner = ExecutionPlanner(max_concurrent=3)
     logger.info("Intelligence Layer initialized")
 
     logger.info("Semantic Brain initialized")
@@ -496,3 +501,114 @@ async def detector_events(
         ],
         total=len(events),
     )
+
+
+# Intelligence Layer - Planner endpoints
+class TaskStatsResponse(BaseModel):
+    """Task statistics."""
+    total: int
+    by_priority: Dict[str, int]
+    by_status: Dict[str, int]
+
+
+class ExecutionPlanStateResponse(BaseModel):
+    """Current execution plan state."""
+    next_up: List[str]
+    in_progress: List[str]
+    waiting: List[str]
+    blocked: List[str]
+
+
+class BottleneckResponse(BaseModel):
+    """A bottleneck in the plan."""
+    task: str
+    reason: str
+    suggestion: str
+
+
+class PlanResponse(BaseModel):
+    """Response from plan endpoint."""
+    current_tasks: TaskStatsResponse
+    execution_plan: ExecutionPlanStateResponse
+    estimated_completion: str
+    bottlenecks: List[BottleneckResponse]
+    risks: List[Dict[str, Any]]
+
+
+class PlanTaskInput(BaseModel):
+    """A task input for planning."""
+    id: str
+    priority: str = "P1"
+    status: str = "queued"
+    dependencies: List[str] = []
+    estimated_time: str = "30min"
+    blocked_by: List[str] = []
+
+
+class PlanRequest(BaseModel):
+    """Request for plan endpoint."""
+    tasks: List[PlanTaskInput]
+
+
+@app.post("/plan", response_model=PlanResponse)
+async def plan(request: PlanRequest):
+    """Generate execution plan for tasks.
+
+    This endpoint takes a list of tasks and generates an execution plan
+    with statistics, bottleneck analysis, and time estimation.
+    """
+    if execution_planner is None:
+        raise HTTPException(status_code=503, detail="Execution planner not initialized")
+
+    if not request.tasks:
+        raise HTTPException(status_code=400, detail="Tasks list cannot be empty")
+
+    # Convert Pydantic models to dicts
+    tasks = [t.model_dump() for t in request.tasks]
+
+    result = execution_planner.plan(tasks)
+
+    return PlanResponse(
+        current_tasks=TaskStatsResponse(
+            total=result.current_tasks.total,
+            by_priority=result.current_tasks.by_priority,
+            by_status=result.current_tasks.by_status,
+        ),
+        execution_plan=ExecutionPlanStateResponse(
+            next_up=result.execution_plan.next_up,
+            in_progress=result.execution_plan.in_progress,
+            waiting=result.execution_plan.waiting,
+            blocked=result.execution_plan.blocked,
+        ),
+        estimated_completion=result.estimated_completion,
+        bottlenecks=[
+            BottleneckResponse(
+                task=b.task_id,
+                reason=b.reason,
+                suggestion=b.suggestion,
+            )
+            for b in result.bottlenecks
+        ],
+        risks=result.risks,
+    )
+
+
+@app.get("/plan/summary")
+async def plan_summary():
+    """Get a summary of the execution planner capabilities.
+
+    Returns information about the planner and its configuration.
+    """
+    if execution_planner is None:
+        raise HTTPException(status_code=503, detail="Execution planner not initialized")
+
+    return {
+        "planner": "ExecutionPlanner",
+        "max_concurrent": execution_planner.max_concurrent,
+        "capabilities": [
+            "task_statistics",
+            "execution_planning",
+            "bottleneck_detection",
+            "time_estimation",
+        ],
+    }
