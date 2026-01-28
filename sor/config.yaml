@@ -1,0 +1,62 @@
+# Cecelia Semantic Brain - Source of Record Configuration
+# Defines which directories and files to index
+
+sources:
+  - name: cecelia-workspace
+    path: /home/xx/dev/cecelia-workspace
+    include:
+      - "**/*.md"
+      - "**/*.ts"
+      - "**/CLAUDE.md"
+      - "**/README.md"
+      - "**/.prd*.md"
+      - "**/.dod*.md"
+    exclude:
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/.git/**"
+      - "**/coverage/**"
+    priority: high
+
+  - name: cecelia-quality
+    path: /home/xx/dev/cecelia-quality
+    include:
+      - "**/*.md"
+      - "**/*.sh"
+      - "**/*.yaml"
+    exclude:
+      - "**/node_modules/**"
+      - "**/.git/**"
+    priority: high
+
+  - name: zenithjoy-engine
+    path: /home/xx/dev/zenithjoy-engine
+    include:
+      - "**/*.md"
+      - "hooks/**/*"
+      - "skills/**/*"
+    exclude:
+      - "**/node_modules/**"
+      - "**/.git/**"
+    priority: medium
+
+  - name: zenithjoyai
+    path: /home/xx/dev/zenithjoyai
+    include:
+      - "**/*.md"
+      - "**/*.ts"
+      - "**/*.tsx"
+    exclude:
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/.git/**"
+      - "**/coverage/**"
+    priority: medium
+
+# Chunking settings
+chunk_size: 500  # tokens
+chunk_overlap: 50  # tokens
+
+# Embedding settings
+embedding_model: text-embedding-3-small
+embedding_dimensions: 1536

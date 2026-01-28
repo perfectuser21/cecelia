@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  semantic-brain:
+    build: .
+    container_name: cecelia-semantic-brain
+    network_mode: host
+    volumes:
+      # Mount data sources (read-only)
+      - /home/xx/dev:/mnt/dev:ro
+      # Persist vector data
+      - ./data/chroma:/data/chroma
+      # Logs
+      - ./logs:/app/logs
+      # Config (for live reload)
+      - ./sor:/app/sor:ro
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHROMA_DB_PATH=/data/chroma
+      - SOR_CONFIG_PATH=/app/sor/config.yaml
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEV_ROOT=/mnt/dev
+    restart: unless-stopped
