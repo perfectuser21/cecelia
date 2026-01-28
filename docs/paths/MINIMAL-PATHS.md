@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 2.24.0
+version: 2.25.0
 created: 2026-01-28
 updated: 2026-01-28
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.24.0: 从 feature-registry.yml 自动生成
+  - 2.25.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -176,6 +176,16 @@ changelog:
 
 ---
 
+### H8: Credential Guard
+
+1. ✅ **代码中写真实 token → 被阻止**
+2. ✅ **代码中写占位符 YOUR_XXX → 放行**
+3. ✅ **写入 ~/.credentials/ → 放行**
+
+**RCI 覆盖**: H8-001,H8-002,H8-003
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -188,5 +198,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.24.0
+**版本**: 2.25.0
 **生成时间**: 2026-01-28

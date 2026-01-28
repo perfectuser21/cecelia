@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.24.0"
+version: "2.25.0"
 updated: "2026-01-28"
 changelog:
+  - 2.25.0: v11.2.12 - Credential Guard Hook（凭据保护，防止代码泄露）
   - 2.24.0: v11.2.10 - rm -rf 安全验证（safe_rm_rf 函数，路径验证防误删）
   - 2.23.0: v11.2.9 - 关键清理（删除 contracts/、H7/W5 废弃、移除未实现脚本引用）
   - 2.22.0: v11.2.8 - 文档矛盾清理（归档过时文档、修正 Step 编号、删除不存在引用）
@@ -736,3 +737,41 @@ product_features:
 #
 # 生成脚本: scripts/generate-path-views.sh (TODO)
 # ============================================================================
+
+  # --------------------------------------------------------------------------
+  # H8: Credential Guard - 凭据保护 Hook
+  # --------------------------------------------------------------------------
+  - id: H8
+    name: Credential Guard
+    status: Committed
+    priority: P0
+    version: "11.2.12"
+    updated: "2026-01-28"
+    description: |
+      防止将真实凭据写入代码文件：
+      - 检测 Notion、GitHub、OpenAI、JWT、DigitalOcean、Feishu 等 token 模式
+      - 允许占位符（YOUR_XXX）和 ~/.credentials/ 目录
+      - 全局生效，保护所有开源仓库
+
+    entrypoints:
+      - type: hook
+        event: PreToolUse:Write, PreToolUse:Edit
+        file: hooks/credential-guard.sh
+
+    golden_path: |
+      写入代码 → credential-guard.sh 检测 → 真实凭据 → exit 2 (阻止) | 占位符/credentials目录 → exit 0 (放行)
+
+    minimal_paths:
+      - "代码中写真实 token → 被阻止"
+      - "代码中写占位符 YOUR_XXX → 放行"
+      - "写入 ~/.credentials/ → 放行"
+
+    tests:
+      - type: manual
+        description: 手动验证检测模式
+        coverage: H8-001, H8-002, H8-003
+
+    rcis:
+      - H8-001  # 检测真实凭据
+      - H8-002  # 放行占位符
+      - H8-003  # 放行 credentials 目录
