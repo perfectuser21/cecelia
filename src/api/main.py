@@ -15,6 +15,10 @@ from src.core.search import SearchEngine
 from src.core.store import VectorStore
 from src.intelligence.parser.parser_service import ParserService
 from src.intelligence.scheduler.scheduler_service import SchedulerService
+from src.intelligence.detector.detector_service import DetectorService
+from src.intelligence.detector.ci_monitor import CIMonitor
+from src.intelligence.detector.code_monitor import CodeMonitor
+from src.intelligence.detector.security_monitor import SecurityMonitor
 
 load_dotenv()
 
@@ -26,12 +30,13 @@ store: Optional[VectorStore] = None
 search_engine: Optional[SearchEngine] = None
 parser_service: Optional[ParserService] = None
 scheduler_service: Optional[SchedulerService] = None
+detector_service: Optional[DetectorService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global embedder, store, search_engine, parser_service, scheduler_service
+    global embedder, store, search_engine, parser_service, scheduler_service, detector_service
 
     app_config = load_app_config()
     sor_config = load_sor_config()
@@ -55,6 +60,17 @@ async def lifespan(app: FastAPI):
     # Initialize Intelligence Layer
     parser_service = ParserService(semantic_client=None)  # TODO: Add semantic client
     scheduler_service = SchedulerService(max_concurrent=3)
+
+    # Initialize Detector Service
+    ci_monitor = CIMonitor(enabled=True)
+    code_monitor = CodeMonitor(enabled=True)
+    security_monitor = SecurityMonitor(enabled=True)
+    detector_service = DetectorService(
+        ci_monitor=ci_monitor,
+        code_monitor=code_monitor,
+        security_monitor=security_monitor,
+        check_interval=300,  # 5 minutes
+    )
     logger.info("Intelligence Layer initialized")
 
     logger.info("Semantic Brain initialized")
@@ -353,4 +369,130 @@ async def schedule(request: ScheduleRequest):
         schedule_time_ms=result.schedule_time_ms,
         has_cycle=result.has_cycle,
         cycle_tasks=result.cycle_tasks,
+    )
+
+
+# Intelligence Layer - Detector endpoints
+class MonitorStatusResponse(BaseModel):
+    """Status of a single monitor."""
+    name: str
+    enabled: bool
+    last_check: Optional[str]
+    events_detected: int
+    processed_ids_count: int
+
+
+class DetectorStatusResponse(BaseModel):
+    """Response from detector status endpoint."""
+    running: bool
+    monitors: Dict[str, MonitorStatusResponse]
+    total_events: int
+    last_check: Optional[str]
+    check_interval_seconds: int
+
+
+class EventMetadataResponse(BaseModel):
+    """Event metadata."""
+    repository: Optional[str] = None
+    branch: Optional[str] = None
+    workflow: Optional[str] = None
+    run_id: Optional[int] = None
+    html_url: Optional[str] = None
+    error_message: Optional[str] = None
+    sha: Optional[str] = None
+    author: Optional[str] = None
+    package_name: Optional[str] = None
+    severity: Optional[str] = None
+    cve_id: Optional[str] = None
+
+
+class EventResponse(BaseModel):
+    """A single event."""
+    event_id: str
+    event_type: str
+    severity: str
+    title: str
+    description: str
+    source: str
+    timestamp: str
+    metadata: Dict[str, Any]
+
+
+class DetectorEventsResponse(BaseModel):
+    """Response from detector events endpoint."""
+    events: List[EventResponse]
+    total: int
+
+
+@app.get("/detector/status", response_model=DetectorStatusResponse)
+async def detector_status():
+    """Get detector service status.
+
+    Returns the status of all monitors and overall detector service.
+    """
+    if detector_service is None:
+        raise HTTPException(status_code=503, detail="Detector service not initialized")
+
+    status = detector_service.get_status()
+
+    monitors_response = {}
+    for name, monitor_status in status.monitors.items():
+        monitors_response[name] = MonitorStatusResponse(
+            name=monitor_status["name"],
+            enabled=monitor_status["enabled"],
+            last_check=monitor_status["last_check"],
+            events_detected=monitor_status["events_detected"],
+            processed_ids_count=monitor_status["processed_ids_count"],
+        )
+
+    return DetectorStatusResponse(
+        running=status.running,
+        monitors=monitors_response,
+        total_events=status.total_events,
+        last_check=status.last_check.isoformat() if status.last_check else None,
+        check_interval_seconds=status.check_interval_seconds,
+    )
+
+
+@app.get("/detector/events", response_model=DetectorEventsResponse)
+async def detector_events(
+    limit: int = 50,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+):
+    """Get recent events from detector.
+
+    Args:
+        limit: Maximum number of events to return
+        event_type: Filter by event type (ci_failure, code_push, security_vulnerability)
+        severity: Filter by severity (critical, high, medium, low, info)
+
+    Returns:
+        List of recent events
+    """
+    if detector_service is None:
+        raise HTTPException(status_code=503, detail="Detector service not initialized")
+
+    if event_type:
+        events = detector_service.get_events_by_type(event_type)
+    elif severity:
+        events = detector_service.get_events_by_severity(severity)
+    else:
+        events = detector_service.get_recent_events(limit=limit)
+
+    return DetectorEventsResponse(
+        events=[
+            EventResponse(
+                event_id=e.event_id,
+                event_type=e.event_type.value,
+                severity=e.severity.value,
+                title=e.title,
+                description=e.description,
+                source=e.source,
+                timestamp=e.timestamp.isoformat(),
+                metadata=e.metadata,
+            )
+            for e in events[:limit]
+        ],
+        total=len(events),
     )
