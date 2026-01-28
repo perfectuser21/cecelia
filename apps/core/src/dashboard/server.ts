@@ -128,7 +128,9 @@ app.use('/api/tasks', taskSystemRoutes);
 app.use('/api/brain', brainRoutes);
 
 // Static frontend files (single frontend, theme switches by hostname in JS)
-const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../frontend/dist');
+// Compiled server is at apps/core/dist/dashboard/server.js
+// Frontend is at apps/dashboard/frontend/dist
+const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../../dashboard/frontend/dist');
 app.use(express.static(frontendPath));
 
 // SPA fallback

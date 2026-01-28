@@ -8,7 +8,8 @@
     "cecilia": "./bin/cecilia"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-js",
+    "copy-js": "cp -r src/task-system dist/ && cp -r src/brain dist/",
     "dev": "tsx watch src/dashboard/server.ts",
     "start": "node dist/dashboard/server.js",
     "cecilia": "tsx src/cecilia/cli.ts",
