@@ -13,6 +13,7 @@ from src.core.config import load_app_config, load_sor_config
 from src.core.embedder import Embedder
 from src.core.search import SearchEngine
 from src.core.store import VectorStore
+from src.intelligence.parser.parser_service import ParserService
 
 load_dotenv()
 
@@ -22,12 +23,13 @@ logger = logging.getLogger(__name__)
 embedder: Optional[Embedder] = None
 store: Optional[VectorStore] = None
 search_engine: Optional[SearchEngine] = None
+parser_service: Optional[ParserService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global embedder, store, search_engine
+    global embedder, store, search_engine, parser_service
 
     app_config = load_app_config()
     sor_config = load_sor_config()
@@ -47,6 +49,10 @@ async def lifespan(app: FastAPI):
 
     store = VectorStore(app_config.chroma_db_path)
     search_engine = SearchEngine(embedder, store)
+
+    # Initialize Intelligence Layer
+    parser_service = ParserService(semantic_client=None)  # TODO: Add semantic client
+    logger.info("Intelligence Layer initialized")
 
     logger.info("Semantic Brain initialized")
 
@@ -182,4 +188,85 @@ async def fusion(request: FusionRequest):
         results=results,
         total=response.total,
         query_time_ms=response.query_time_ms,
+    )
+
+
+# Intelligence Layer - Parse endpoint
+class ParseRequest(BaseModel):
+    """Request for parse endpoint."""
+    intent: str
+    context: Optional[Dict[str, Any]] = None
+    use_history: bool = True
+
+
+class TaskResponse(BaseModel):
+    """A single task in parse response."""
+    id: str
+    title: str
+    description: str
+    priority: str
+    estimated_time: str
+    dependencies: List[str]
+    tags: List[str]
+
+
+class UnderstandingResponse(BaseModel):
+    """Understanding section of parse response."""
+    type: str
+    scope: str
+    description: str
+    keywords: List[str]
+    estimated_complexity: str
+
+
+class DependencyGraphResponse(BaseModel):
+    """Dependency graph in parse response."""
+    graph: Dict[str, List[str]]
+    execution_order: List[str]
+    parallel_groups: List[List[str]]
+
+
+class HistoricalContextResponse(BaseModel):
+    """Historical context item."""
+    file: str
+    summary: str
+    similarity: float = 0.0
+
+
+class ParseResponse(BaseModel):
+    """Response from parse endpoint."""
+    understanding: UnderstandingResponse
+    tasks: List[TaskResponse]
+    dependency_graph: DependencyGraphResponse
+    historical_context: List[HistoricalContextResponse]
+    parse_time_ms: float
+
+
+@app.post("/parse", response_model=ParseResponse)
+async def parse(request: ParseRequest):
+    """Parse user intent into executable tasks.
+
+    This endpoint analyzes a natural language description and breaks it down
+    into a structured list of tasks with dependencies.
+    """
+    if parser_service is None:
+        raise HTTPException(status_code=503, detail="Parser service not initialized")
+
+    if not request.intent.strip():
+        raise HTTPException(status_code=400, detail="Intent cannot be empty")
+
+    result = await parser_service.parse(
+        intent=request.intent,
+        context=request.context,
+        use_history=request.use_history,
+    )
+
+    return ParseResponse(
+        understanding=UnderstandingResponse(**result.understanding),
+        tasks=[TaskResponse(**t) for t in result.tasks],
+        dependency_graph=DependencyGraphResponse(**result.dependency_graph),
+        historical_context=[
+            HistoricalContextResponse(**h) for h in result.historical_context
+        ],
+        parse_time_ms=result.parse_time_ms,
     )
