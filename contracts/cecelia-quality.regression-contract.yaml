@@ -1,0 +1,76 @@
+---
+repo: cecelia-quality
+version: 1.0.0
+last_updated: 2026-01-27
+
+rcis:
+  - id: C-DB-INIT-001
+    name: Database 初始化
+    scope: SQLite schema 创建成功，所有表和视图正确初始化
+    priority: P0
+    triggers:
+      - PR
+      - Release
+    test_command: bash tests/test-db-init.sh
+    test_file: tests/test-db-init.sh
+    feature_type: core
+    must_never_break: true
+
+  - id: C-GATEWAY-HTTP-001
+    name: Gateway HTTP 服务器能接收和验证任务
+    scope: POST /enqueue 接收任务，GET /status 返回状态，GET /health 返回健康
+    priority: P0
+    triggers:
+      - PR
+      - Release
+    test_command: bash tests/test-gateway-http.sh
+    test_file: tests/test-gateway-http.sh
+    feature_type: core
+    must_never_break: true
+
+  - id: C-GATEWAY-CLI-001
+    name: Gateway CLI 命令正常工作
+    scope: add/enqueue/status 命令正常工作
+    priority: P0
+    triggers:
+      - PR
+      - Release
+    test_command: bash tests/test-gateway-cli.sh
+    test_file: tests/test-gateway-cli.sh
+    feature_type: core
+    must_never_break: true
+
+  - id: C-WORKER-EXECUTION-001
+    name: Worker 任务执行
+    scope: Worker 能 dequeue、创建 runs 目录、根据 intent 路由、生成 summary
+    priority: P0
+    triggers:
+      - PR
+      - Release
+    test_command: bash tests/test-worker-execution.sh
+    test_file: tests/test-worker-execution.sh
+    feature_type: core
+    must_never_break: true
+
+  - id: C-HEARTBEAT-AUTO-001
+    name: Heartbeat 自主监控
+    scope: 检查状态、检测异常、自动入队、触发 worker
+    priority: P1
+    triggers:
+      - PR
+      - Release
+    test_command: bash tests/test-heartbeat.sh
+    test_file: tests/test-heartbeat.sh
+    feature_type: core
+    must_never_break: true
+
+  - id: C-NOTION-SYNC-001
+    name: Notion 单向同步
+    scope: 连接 API、更新 System State、更新 System Runs
+    priority: P1
+    triggers:
+      - Release
+    test_command: bash tests/test-notion-sync.sh
+    test_file: tests/test-notion-sync.sh
+    feature_type: integration
+    must_never_break: false

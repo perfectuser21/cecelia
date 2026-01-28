@@ -27,12 +27,13 @@ if [[ -f ".quality-gate-passed" ]]; then
   if [ $AGE -lt 300 ]; then
     echo "✅ .quality-gate-passed 是新鲜的（${AGE}s 前）"
 
-    # 验证 SHA 是否匹配当前 HEAD
+    # 验证 SHA 是否匹配当前 HEAD 或 HEAD~1（允许 quality gate 在自己的 commit 中）
     GATE_SHA=$(grep "^# Commit:" .quality-gate-passed | awk '{print $3}' 2>/dev/null || echo "")
     CURRENT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "")
+    PARENT_SHA=$(git rev-parse --short HEAD~1 2>/dev/null || echo "")
 
-    if [[ -n "$GATE_SHA" && "$GATE_SHA" == "$CURRENT_SHA" ]]; then
-      echo "✅ SHA 匹配当前 HEAD ($CURRENT_SHA)"
+    if [[ -n "$GATE_SHA" && ("$GATE_SHA" == "$CURRENT_SHA" || "$GATE_SHA" == "$PARENT_SHA") ]]; then
+      echo "✅ SHA 匹配 (证据: $GATE_SHA, HEAD: $CURRENT_SHA)"
       echo ""
       echo "======================================"
       echo "✅ Preflight 通过（证据新鲜且 SHA 匹配）"
@@ -40,7 +41,7 @@ if [[ -f ".quality-gate-passed" ]]; then
       echo "======================================"
       exit 0
     else
-      echo "⚠️ SHA 不匹配（证据: $GATE_SHA, HEAD: $CURRENT_SHA）"
+      echo "⚠️ SHA 不匹配（证据: $GATE_SHA, HEAD: $CURRENT_SHA, HEAD~1: $PARENT_SHA）"
       echo "   需要重新运行 qa:gate"
     fi
   else

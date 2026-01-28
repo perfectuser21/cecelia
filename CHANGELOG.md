@@ -5,6 +5,39 @@ All notable changes to Cecelia Quality Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-01-27
+
+### Added
+
+- **Gateway System MVP** - Unified input gateway (the "thalamus" of Cecelia)
+  - `gateway/gateway.sh` - Unified input endpoint for all sources
+  - `gateway/task-schema.json` - Standardized task format
+  - `worker/worker.sh` - Queue consumer and task executor
+  - `heartbeat/heartbeat.sh` - Self-monitoring and auto-triggering system
+  - `state/state.json` - System state tracking
+  - `queue/queue.jsonl` - Task queue with priority support (P0 > P1 > P2)
+- Gateway supports multiple input sources:
+  - CloudCode (CLI mode)
+  - Notion CRD (via n8n)
+  - n8n workflows
+  - Webhooks
+  - Heartbeat (self-triggered)
+- Worker routing for 6 intent types:
+  - runQA, fixBug, refactor, review, summarize, optimizeSelf
+- Comprehensive test suite (6 test files):
+  - `tests/gateway.test.ts`
+  - `tests/queue.test.ts`
+  - `tests/worker.test.ts`
+  - `tests/state.test.ts`
+  - `tests/heartbeat.test.ts`
+  - `tests/e2e-gateway.test.ts`
+- Manual integration test script: `tests/manual-integration-test.sh`
+
+### Changed
+
+- `package.json` - Added vitest and @types/node as dev dependencies
+- Test script now runs vitest instead of placeholder
+
 ## [1.0.0] - 2026-01-25
 
 ### Added
