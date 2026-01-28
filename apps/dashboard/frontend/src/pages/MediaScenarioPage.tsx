@@ -9,17 +9,17 @@
 
 import { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
-import { FileText, Send, BarChart3, Database, Activity, Radio, TrendingUp, PieChart } from 'lucide-react';
+import { FileText, Send, BarChart3, Database, Activity, Radio, TrendingUp, PieChart, Table, Eye } from 'lucide-react';
 import ScenarioTabs, { type TabItem } from '../components/ScenarioTabs';
 
 // 懒加载页面组件
 const ContentPublish = lazy(() => import('./ContentPublish'));
 const ScrapingPage = lazy(() => import('./ScrapingPage'));
-// Tasks 已移到 zenithjoy-core
 const ExecutionStatus = lazy(() => import('./ExecutionStatus'));
-// PlatformStatus 已合并到 PublishStats
 const PublishStats = lazy(() => import('./PublishStats'));
 const ContentData = lazy(() => import('./ContentData'));
+const RawDataTable = lazy(() => import('./RawDataTable'));
+const RawScrapingData = lazy(() => import('./RawScrapingData'));
 
 // 加载状态
 function LoadingFallback() {
@@ -51,8 +51,10 @@ const PUBLISH_SUB_TABS: TabItem[] = [
 
 // 数据子 Tab 配置
 const DATA_SUB_TABS: TabItem[] = [
-  { path: '/media/data', label: '发布统计', icon: TrendingUp },
+  { path: '/media/data/scraping', label: '抓取原始', icon: Eye },
+  { path: '/media/data/raw', label: '内容数据', icon: Table },
   { path: '/media/data/analytics', label: '数据分析', icon: PieChart },
+  { path: '/media/data', label: '发布统计', icon: TrendingUp },
 ];
 
 // 子 Tab 导航组件
@@ -60,7 +62,6 @@ function SubTabs({ tabs }: { tabs: TabItem[] }) {
   const location = useLocation();
 
   const isActive = (path: string) => {
-    // 精确匹配（子 tab 不需要前缀匹配）
     return location.pathname === path;
   };
 
@@ -125,13 +126,15 @@ function PublishTab() {
 // 数据 Tab 页面
 function DataTab() {
   const location = useLocation();
+  const isScrapingPage = location.pathname === '/media/data/scraping';
+  const isRawPage = location.pathname === '/media/data/raw';
   const isAnalyticsPage = location.pathname === '/media/data/analytics';
 
   return (
     <>
       <SubTabs tabs={DATA_SUB_TABS} />
       <Suspense fallback={<LoadingFallback />}>
-        {isAnalyticsPage ? <ContentData /> : <PublishStats />}
+        {isScrapingPage ? <RawScrapingData /> : isRawPage ? <RawDataTable /> : isAnalyticsPage ? <ContentData /> : <PublishStats />}
       </Suspense>
     </>
   );
@@ -161,11 +164,12 @@ export default function MediaScenarioPage() {
         {/* 发布 Tab */}
         <Route path="publish" element={<PublishTab />} />
         <Route path="publish/platforms" element={<PublishTab />} />
-        {/* /publish/history 重定向到 /publish（向后兼容） */}
         <Route path="publish/history" element={<Navigate to="/media/publish" replace />} />
 
         {/* 数据 Tab */}
         <Route path="data" element={<DataTab />} />
+        <Route path="data/scraping" element={<DataTab />} />
+        <Route path="data/raw" element={<DataTab />} />
         <Route path="data/analytics" element={<DataTab />} />
 
         {/* 兜底：未匹配的子路由重定向到内容 */}

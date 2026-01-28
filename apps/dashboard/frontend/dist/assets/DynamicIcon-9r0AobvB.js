@@ -1,1 +1,0 @@
-import{j as r,J as a,al as t,h as c,V as e,am as i,an as m,ao as p}from"./index-DqaiMzcA.js";const x={Monitor:p,Code:m,Wallet:i,Video:e,BarChart3:c,Wrench:t,User:a};function j({name:o,...s}){const n=x[o]||a;return r.jsx(n,{...s})}export{j as D};

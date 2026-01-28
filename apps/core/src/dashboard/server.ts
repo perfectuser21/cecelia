@@ -15,6 +15,7 @@ import githubRoutes from '../github/routes.js';
 import workersRoutes from '../workers/routes.js';
 import panoramaRoutes from '../panorama/routes.js';
 import devgateRoutes from '../devgate/routes.js';
+import mediaRoutes from '../media/routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,6 +113,11 @@ app.use('/api/panorama', panoramaRoutes);
 
 // DevGate API routes (metrics from engine)
 app.use('/api/devgate', devgateRoutes);
+
+// Claude Accounts API routes (account switcher + usage stats)
+
+// Media Data API routes (social metrics proxy)
+app.use('/api/media', mediaRoutes);
 
 // Static frontend files (single frontend, theme switches by hostname in JS)
 const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../frontend/dist');
