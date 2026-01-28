@@ -309,7 +309,7 @@ jobs:
               echo ""
               echo "❌ RCI 覆盖率检查失败"
               echo "   新增的业务入口没有对应的 RCI 条目"
-              echo "   请在 contracts/regression-contract.yaml 中添加覆盖"
+              echo "   请在 regression-contract.yaml 中添加覆盖"
               echo ""
               echo "   运行以下命令查看详情："
               echo "   npm run coverage:rci -- --explain"
