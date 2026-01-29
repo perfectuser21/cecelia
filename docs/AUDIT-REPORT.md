@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-20260129-brain-service-deployment
+Branch: cp-20260129-fix-lint-unused-import
 Date: 2026-01-29
-Scope: brain.service, scripts/start.sh
+Scope: tests/test_orchestrator_api.py
 Target Level: L2
 
 ## Summary
@@ -18,51 +18,29 @@ Target Level: L2
 
 ## Scope Analysis
 
-### New Files
-- `brain.service` - systemd unit file for Docker-based service
-- `scripts/start.sh` - startup script with Docker/uvicorn modes
+### Modified Files
+- `tests/test_orchestrator_api.py` - removed unused `MagicMock` import
 
-### Existing Files (no changes needed)
-- `Dockerfile` - already configured for port 5220
-- `docker-compose.yml` - already configured with volumes and env
-- `.env.example` - already has necessary variables
-- `src/api/main.py` - /health endpoint already exists
+## Change Details
 
-## Code Review
+```diff
+- from unittest.mock import patch, MagicMock
++ from unittest.mock import patch
+```
 
-### brain.service
+## Verification
 
-**Quality Assessment**: Good
-
-- Proper systemd unit structure
-- Dependencies on network.target and docker.service
-- Automatic restart with 10s delay
-- Journal logging configured
-- Correct working directory and user
-
-### scripts/start.sh
-
-**Quality Assessment**: Good
-
-- Proper shebang and set -e for safety
-- Environment variable loading from .env
-- Default port fallback (5220)
-- Dual mode support (Docker vs uvicorn)
-- Proper PYTHONPATH configuration
+- `ruff check src/ tests/ --ignore E501` → All checks passed
+- `pytest tests/test_orchestrator_api.py -v` → 7 tests passed
 
 ## Findings
 
-(None - all code meets L2 standards)
+None - trivial lint fix
 
 ## Blockers
 
 None
 
-## Test Results
-
-- API tests: 5 passed
-- /health endpoint verified
-
 ## Conclusion
 
-Deployment configuration complete. systemd service and startup script ready for use.
+Simple unused import removal. CI will now pass.
