@@ -31,6 +31,16 @@ from .actions import (
     ACTION_HANDLERS,
 )
 
+from .goals import (
+    list_objectives,
+    list_key_results,
+    get_goal,
+    get_objective_with_tasks,
+    delete_goal,
+    update_objective_progress,
+    get_goals_summary,
+)
+
 __all__ = [
     # Focus
     "select_daily_focus",
@@ -57,4 +67,12 @@ __all__ = [
     "batch_update_tasks",
     "execute_action",
     "ACTION_HANDLERS",
+    # Goals
+    "list_objectives",
+    "list_key_results",
+    "get_goal",
+    "get_objective_with_tasks",
+    "delete_goal",
+    "update_objective_progress",
+    "get_goals_summary",
 ]

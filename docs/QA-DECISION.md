@@ -1,4 +1,4 @@
-# QA Decision - M2 Tick + Actions Migration
+# QA Decision - M3 OKR CRUD Migration
 
 Decision: NO_RCI
 Priority: P1
@@ -8,28 +8,25 @@ RepoType: Engine
 
 ### Change Type
 - **Type**: Feature (新功能)
-- **Scope**: 迁移 Tick 和 Actions 逻辑到 Python
+- **Scope**: 迁移 OKR CRUD 逻辑到 Python
 
 ### Impact Assessment
-- **Risk Level**: Medium
-- **Affected Areas**: 新增 state/tick.py, state/actions.py, API 路由
+- **Risk Level**: Low
+- **Affected Areas**: 新增 state/goals.py, API 路由
 - **Breaking Changes**: None (纯新增)
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| get_tick_status() 正常工作 | auto | tests/test_tick.py |
-| enable/disable_tick() 正常工作 | auto | tests/test_tick.py |
-| execute_tick() 正常工作 | auto | tests/test_tick.py |
-| create_task() 正常工作 | auto | tests/test_actions.py |
-| update_task() 正常工作 | auto | tests/test_actions.py |
-| create_goal() 正常工作 | auto | tests/test_actions.py |
-| update_goal() 正常工作 | auto | tests/test_actions.py |
-| set_memory() 正常工作 | auto | tests/test_actions.py |
-| batch_update_tasks() 正常工作 | auto | tests/test_actions.py |
-| Tick API 端点正常 | auto | tests/test_tick_api.py |
-| Action API 端点正常 | auto | tests/test_actions_api.py |
+| list_objectives() 正常工作 | auto | tests/test_goals.py |
+| list_key_results() 正常工作 | auto | tests/test_goals.py |
+| get_goal() 正常工作 | auto | tests/test_goals.py |
+| get_objective_with_tasks() 正常工作 | auto | tests/test_goals.py |
+| delete_goal() 正常工作 | auto | tests/test_goals.py |
+| update_objective_progress() 正常工作 | auto | tests/test_goals.py |
+| get_goals_summary() 正常工作 | auto | tests/test_goals.py |
+| Goals API 端点正常 | auto | tests/test_goals_api.py |
 
 ## RCI
 
@@ -40,4 +37,4 @@ update: []
 
 ## Reason
 
-M2 是新功能模块（Tick + Actions 迁移），不涉及现有功能修改。需要单元测试覆盖新增代码，但无需回归契约更新。
+M3 是新功能模块（OKR CRUD 迁移），不涉及现有功能修改。需要单元测试覆盖新增代码，但无需回归契约更新。
