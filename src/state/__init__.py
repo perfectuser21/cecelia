@@ -54,6 +54,30 @@ from .queue import (
     PRD_QUEUE_KEY,
 )
 
+from .patrol import (
+    get_stale_tasks,
+    get_task_by_id,
+    record_diagnosis,
+    record_action,
+    get_patrol_logs,
+    get_patrol_summary,
+    ensure_patrol_table,
+    DIAGNOSIS_STUCK_AFTER_SKILL,
+    DIAGNOSIS_CI_TIMEOUT,
+    DIAGNOSIS_PROCESS_DEAD,
+    DIAGNOSIS_NORMAL,
+    DIAGNOSIS_NEEDS_HUMAN,
+    ACTION_RESTART,
+    ACTION_CONTINUE,
+    ACTION_MARK_HUMAN,
+    ACTION_NONE,
+    RESULT_SUCCESS,
+    RESULT_FAILED,
+    RESULT_SKIPPED,
+    STALE_THRESHOLD_MINUTES,
+    CI_TIMEOUT_MINUTES,
+)
+
 __all__ = [
     # Focus
     "select_daily_focus",
@@ -99,4 +123,26 @@ __all__ = [
     "clear_queue",
     "get_queue_summary",
     "PRD_QUEUE_KEY",
+    # Patrol
+    "get_stale_tasks",
+    "get_task_by_id",
+    "record_diagnosis",
+    "record_action",
+    "get_patrol_logs",
+    "get_patrol_summary",
+    "ensure_patrol_table",
+    "DIAGNOSIS_STUCK_AFTER_SKILL",
+    "DIAGNOSIS_CI_TIMEOUT",
+    "DIAGNOSIS_PROCESS_DEAD",
+    "DIAGNOSIS_NORMAL",
+    "DIAGNOSIS_NEEDS_HUMAN",
+    "ACTION_RESTART",
+    "ACTION_CONTINUE",
+    "ACTION_MARK_HUMAN",
+    "ACTION_NONE",
+    "RESULT_SUCCESS",
+    "RESULT_FAILED",
+    "RESULT_SKIPPED",
+    "STALE_THRESHOLD_MINUTES",
+    "CI_TIMEOUT_MINUTES",
 ]
