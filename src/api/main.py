@@ -24,6 +24,8 @@ from src.db.pool import Database, init_database, close_database
 from src.api.state_routes import router as state_router, set_database
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
+from src.state.patrol import ensure_patrol_table
+from src.state.agent_monitor import ensure_agent_tables
 
 load_dotenv()
 
@@ -89,6 +91,9 @@ async def lifespan(app: FastAPI):
         set_database(database)
         set_patrol_database(database)
         set_agent_database(database)
+        # Ensure required tables exist
+        await ensure_patrol_table(database)
+        await ensure_agent_tables(database)
         logger.info("Database connection initialized")
     except Exception as e:
         logger.warning(f"Database connection failed (State Layer disabled): {e}")
