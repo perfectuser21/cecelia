@@ -1,7 +1,17 @@
-"""API routes for Orchestrator state machine with PostgreSQL persistence."""
+"""API routes for Orchestrator state machine with PostgreSQL persistence.
 
+护栏功能:
+1. 幂等与去重 - idempotency_key
+2. 状态回流 - /status, /latest 端点
+3. Tick 锁 - 文件锁防止并发
+4. 失败策略 - retry_count + max_retries (已有)
+"""
+
+import fcntl
 import json
-from datetime import datetime
+import os
+import tempfile
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -46,7 +56,7 @@ def get_db() -> Database:
 
 async def ensure_tables(db: Database) -> None:
     """Create orchestrator tables if they don't exist."""
-    # TRDs table
+    # TRDs table (护栏 1: idempotency_key)
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS trds (
@@ -57,6 +67,7 @@ async def ensure_tables(db: Database) -> None:
             status TEXT DEFAULT 'draft',
             projects JSONB DEFAULT '[]',
             acceptance_criteria JSONB DEFAULT '[]',
+            idempotency_key TEXT UNIQUE,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
             planned_at TIMESTAMPTZ,
@@ -66,6 +77,9 @@ async def ensure_tables(db: Database) -> None:
     )
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_trds_status ON trds(status)"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trds_idempotency ON trds(idempotency_key)"
     )
 
     # Tasks table
@@ -155,6 +169,7 @@ class CreateTRDRequest(BaseModel):
     kr_id: Optional[str] = None
     projects: List[str] = []
     acceptance_criteria: List[str] = []
+    idempotency_key: Optional[str] = None  # 护栏 1
 
 
 class TRDResponse(BaseModel):
@@ -232,10 +247,12 @@ class CompleteRunRequest(BaseModel):
 
 class TickResponse(BaseModel):
     """Response from tick operation."""
-    updated_trds: List[str]
-    updated_tasks: List[str]
-    retried_tasks: List[str]
-    unblocked_tasks: List[str]
+    updated_trds: List[str] = []
+    updated_tasks: List[str] = []
+    retried_tasks: List[str] = []
+    unblocked_tasks: List[str] = []
+    skipped: Optional[str] = None  # 护栏 3
+    progress_summary: Optional[str] = None  # 护栏 2
 
 
 class RegisterWorkerRequest(BaseModel):
@@ -323,12 +340,12 @@ def _row_to_run(row) -> Run:
     )
 
 
-async def _save_trd(db: Database, trd: TRD) -> None:
+async def _save_trd(db: Database, trd: TRD, idempotency_key: Optional[str] = None) -> None:
     """Save TRD to database."""
     await db.execute(
         """
-        INSERT INTO trds (id, title, description, kr_id, status, projects, acceptance_criteria, created_at, updated_at, planned_at, completed_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO trds (id, title, description, kr_id, status, projects, acceptance_criteria, idempotency_key, created_at, updated_at, planned_at, completed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
             description = EXCLUDED.description,
@@ -342,7 +359,7 @@ async def _save_trd(db: Database, trd: TRD) -> None:
         """,
         trd.id, trd.title, trd.description, trd.kr_id, trd.status.value,
         json.dumps(trd.projects), json.dumps(trd.acceptance_criteria),
-        trd.created_at, trd.updated_at, trd.planned_at, trd.completed_at
+        idempotency_key, trd.created_at, trd.updated_at, trd.planned_at, trd.completed_at
     )
 
 
@@ -404,8 +421,18 @@ async def _save_run(db: Database, run: Run) -> None:
 
 @router.post("/trd", response_model=TRDResponse)
 async def create_trd(request: CreateTRDRequest):
-    """Create a new TRD."""
+    """Create a new TRD. 护栏 1: 如果 idempotency_key 已存在，返回已有 TRD。"""
     db = get_db()
+
+    # 护栏 1: 幂等检查
+    if request.idempotency_key:
+        existing = await db.fetchrow(
+            "SELECT * FROM trds WHERE idempotency_key = $1",
+            request.idempotency_key
+        )
+        if existing:
+            return _trd_to_response(_row_to_trd(existing))
+
     trd = TRD(
         title=request.title,
         description=request.description,
@@ -413,7 +440,7 @@ async def create_trd(request: CreateTRDRequest):
         projects=request.projects,
         acceptance_criteria=request.acceptance_criteria,
     )
-    await _save_trd(db, trd)
+    await _save_trd(db, trd, idempotency_key=request.idempotency_key)
     return _trd_to_response(trd)
 
 
@@ -653,40 +680,125 @@ async def complete_run(run_id: str, request: CompleteRunRequest):
     return _run_to_response(run)
 
 
-# ==================== Tick Endpoint ====================
+# ==================== Tick Endpoint (护栏 3: 文件锁) ====================
+
+TICK_LOCK_FILE = os.path.join(tempfile.gettempdir(), "orchestrator_tick.lock")
+
+
+def _try_acquire_tick_lock() -> Optional[int]:
+    """Try to acquire tick lock."""
+    try:
+        fd = os.open(TICK_LOCK_FILE, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except (IOError, OSError):
+        return None
+
+
+def _release_tick_lock(fd: int) -> None:
+    """Release tick lock."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    except (IOError, OSError):
+        pass
+
 
 @router.post("/tick", response_model=TickResponse)
 async def tick():
-    """Advance the state machine - process retries, dependencies, etc."""
+    """Advance the state machine. 护栏 3: 文件锁防止并发。"""
+    lock_fd = _try_acquire_tick_lock()
+    if lock_fd is None:
+        return TickResponse(skipped="locked - another tick is running")
+
+    try:
+        db = get_db()
+        trd_rows = await db.fetch("SELECT * FROM trds")
+        task_rows = await db.fetch("SELECT * FROM orchestrator_tasks")
+        run_rows = await db.fetch("SELECT * FROM orchestrator_runs")
+
+        trds = [_row_to_trd(r) for r in trd_rows]
+        tasks = [_row_to_task(r) for r in task_rows]
+        runs = [_row_to_run(r) for r in run_rows]
+
+        result = _state_machine.tick(trds, tasks, runs)
+
+        for trd in result["updated_trds"]:
+            await _save_trd(db, trd)
+        for task in result["updated_tasks"]:
+            await _save_task(db, task)
+        for task in result["retried_tasks"]:
+            await _save_task(db, task)
+        for task in result["unblocked_tasks"]:
+            await _save_task(db, task)
+
+        # 护栏 2: 进度摘要
+        queued = len([t for t in tasks if t.status == TaskStatus.QUEUED])
+        running = len([t for t in tasks if t.status == TaskStatus.RUNNING])
+        done = len([t for t in tasks if t.status == TaskStatus.DONE])
+        failed = len([t for t in tasks if t.status == TaskStatus.FAILED])
+        blocked = len([t for t in tasks if t.status == TaskStatus.BLOCKED])
+        summary = f"Tasks: {queued} queued, {running} running, {done} done, {failed} failed, {blocked} blocked"
+
+        return TickResponse(
+            updated_trds=[t.id for t in result["updated_trds"]],
+            updated_tasks=[t.id for t in result["updated_tasks"]],
+            retried_tasks=[t.id for t in result["retried_tasks"]],
+            unblocked_tasks=[t.id for t in result["unblocked_tasks"]],
+            progress_summary=summary,
+        )
+    finally:
+        _release_tick_lock(lock_fd)
+
+
+# ==================== Status Endpoints (护栏 2) ====================
+
+@router.get("/status")
+async def get_status():
+    """Get current status. 护栏 2: 状态回流。"""
     db = get_db()
-
-    # Load all from DB
-    trd_rows = await db.fetch("SELECT * FROM trds")
-    task_rows = await db.fetch("SELECT * FROM orchestrator_tasks")
-    run_rows = await db.fetch("SELECT * FROM orchestrator_runs")
-
-    trds = [_row_to_trd(r) for r in trd_rows]
-    tasks = [_row_to_task(r) for r in task_rows]
-    runs = [_row_to_run(r) for r in run_rows]
-
-    result = _state_machine.tick(trds, tasks, runs)
-
-    # Save updated objects
-    for trd in result["updated_trds"]:
-        await _save_trd(db, trd)
-    for task in result["updated_tasks"]:
-        await _save_task(db, task)
-    for task in result["retried_tasks"]:
-        await _save_task(db, task)
-    for task in result["unblocked_tasks"]:
-        await _save_task(db, task)
-
-    return TickResponse(
-        updated_trds=[t.id for t in result["updated_trds"]],
-        updated_tasks=[t.id for t in result["updated_tasks"]],
-        retried_tasks=[t.id for t in result["retried_tasks"]],
-        unblocked_tasks=[t.id for t in result["unblocked_tasks"]],
+    active_rows = await db.fetch(
+        "SELECT id, title, status FROM trds WHERE status IN ('in_progress', 'planned') ORDER BY updated_at DESC LIMIT 10"
     )
+    active_trds = [{"id": r["id"], "title": r["title"], "status": r["status"]} for r in active_rows]
+    queued = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'queued'") or 0
+    running = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'running'") or 0
+    blocked = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'blocked'") or 0
+    error_rows = await db.fetch(
+        "SELECT id, blocked_reason FROM orchestrator_tasks WHERE status IN ('failed', 'blocked') AND blocked_reason IS NOT NULL ORDER BY updated_at DESC LIMIT 5"
+    )
+    recent_errors = [f"{r['id']}: {r['blocked_reason']}" for r in error_rows]
+    return {
+        "active_trds": active_trds,
+        "queued_tasks": queued,
+        "running_tasks": running,
+        "blocked_tasks": blocked,
+        "recent_errors": recent_errors,
+        "summary": f"{len(active_trds)} active TRDs, {queued} queued, {running} running, {blocked} blocked",
+    }
+
+
+@router.get("/latest")
+async def get_latest():
+    """Get recent activity. 护栏 2: 昨晚跑了什么。"""
+    db = get_db()
+    yesterday = datetime.now() - timedelta(hours=24)
+    completed_rows = await db.fetch(
+        "SELECT id, title, completed_at FROM trds WHERE status = 'done' AND completed_at > $1 ORDER BY completed_at DESC",
+        yesterday
+    )
+    completed_trds = [{"id": r["id"], "title": r["title"], "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None} for r in completed_rows]
+    completed_tasks = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'done' AND completed_at > $1", yesterday) or 0
+    failed_tasks = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'failed' AND updated_at > $1", yesterday) or 0
+    pr_rows = await db.fetch("SELECT pr_url FROM orchestrator_tasks WHERE pr_url IS NOT NULL AND updated_at > $1", yesterday)
+    prs = [r["pr_url"] for r in pr_rows if r["pr_url"]]
+    return {
+        "completed_trds_24h": completed_trds,
+        "completed_tasks_24h": completed_tasks,
+        "failed_tasks_24h": failed_tasks,
+        "prs_created_24h": prs,
+        "summary": f"Last 24h: {len(completed_trds)} TRDs done, {completed_tasks} tasks completed, {failed_tasks} failed, {len(prs)} PRs",
+    }
 
 
 # ==================== Worker Endpoints ====================
