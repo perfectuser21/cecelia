@@ -157,3 +157,73 @@ class TestOrchestratorFull:
                 assert data["success"] is True
                 assert "state" in data
                 assert "warmup" in data
+
+
+class TestOrchestratorChat:
+    """Tests for POST /orchestrator/chat endpoint."""
+
+    def test_chat_success(self, client):
+        """Should return chat response when claude CLI succeeds."""
+        mock_response = '{"message": "Hello!", "highlights": [], "actions": []}'
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value.stdout = mock_response
+            mock_run.return_value.returncode = 0
+            response = client.post(
+                "/orchestrator/chat",
+                json={"message": "hi"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["response"]["message"] == "Hello!"
+
+    def test_chat_plain_text_response(self, client):
+        """Should wrap plain text response in JSON format."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value.stdout = "Plain text response"
+            mock_run.return_value.returncode = 0
+            response = client.post(
+                "/orchestrator/chat",
+                json={"message": "hi"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["response"]["message"] == "Plain text response"
+            assert data["response"]["highlights"] == []
+
+
+class TestOrchestratorVoiceTTS:
+    """Tests for POST /orchestrator/voice/tts endpoint."""
+
+    def test_tts_missing_credentials(self, client, tmp_path):
+        """Should return 500 when credentials file missing."""
+        with patch(
+            'src.api.orchestrator_routes.MINIMAX_CREDENTIALS_PATH',
+            tmp_path / "nonexistent.json"
+        ):
+            response = client.post(
+                "/orchestrator/voice/tts",
+                json={"text": "hello"}
+            )
+            assert response.status_code == 500
+            assert "credentials" in response.json()["detail"].lower()
+
+
+class TestOrchestratorVoiceSTT:
+    """Tests for POST /orchestrator/voice/stt endpoint."""
+
+    def test_stt_invalid_base64(self, client, tmp_path):
+        """Should return 400 for invalid base64 audio."""
+        creds_file = tmp_path / "minimax.json"
+        creds_file.write_text('{"api_key": "test-key"}')
+        with patch(
+            'src.api.orchestrator_routes.MINIMAX_CREDENTIALS_PATH',
+            creds_file
+        ):
+            response = client.post(
+                "/orchestrator/voice/stt",
+                json={"audio": "not-valid-base64!!!"}
+            )
+            assert response.status_code == 400
+            assert "base64" in response.json()["detail"].lower()
