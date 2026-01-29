@@ -28,6 +28,7 @@ from src.orchestrator.models import (
 from src.orchestrator.state_machine import StateMachine, StateTransitionError
 from src.orchestrator.planner import Planner
 from src.orchestrator.dispatcher import Dispatcher, Worker
+from src.orchestrator.executor import get_executor
 from src.db.pool import Database
 
 router = APIRouter(prefix="/orchestrator/v2", tags=["orchestrator-v2"])
@@ -913,6 +914,139 @@ async def get_summary():
         "runs": {
             "total": total_runs or 0,
         },
+    }
+
+
+# ==================== Resource & Execution Endpoints ====================
+
+
+class ExecuteRequest(BaseModel):
+    """Request to execute tasks."""
+    max_concurrent: Optional[int] = None  # None = auto based on resources
+    task_ids: Optional[List[str]] = None  # None = execute all ready tasks
+
+
+@router.get("/resources")
+async def get_resources():
+    """Get system resource status for worker pool management."""
+    executor = get_executor()
+    resources = executor.get_resources()
+    return resources.to_dict()
+
+
+@router.post("/execute")
+async def execute_tasks(request: ExecuteRequest = None):
+    """Execute queued tasks. Use this for manual execution or N8N trigger.
+
+    This endpoint:
+    1. Checks system resources
+    2. Selects ready tasks (up to max_concurrent)
+    3. Executes them via Claude
+    4. Updates task/run status in DB
+    """
+    db = get_db()
+    executor = get_executor()
+
+    # Check resources
+    resources = executor.get_resources()
+    if not resources.can_spawn_more:
+        return {
+            "success": False,
+            "error": "Insufficient resources",
+            "resources": resources.to_dict(),
+        }
+
+    # Get ready tasks
+    if request and request.task_ids:
+        # Execute specific tasks
+        task_rows = await db.fetch(
+            "SELECT * FROM orchestrator_tasks WHERE id = ANY($1) AND status = 'queued'",
+            request.task_ids
+        )
+    else:
+        # Execute all ready tasks
+        task_rows = await db.fetch(
+            "SELECT * FROM orchestrator_tasks WHERE status = 'queued' ORDER BY priority, created_at"
+        )
+
+    if not task_rows:
+        return {
+            "success": True,
+            "message": "No ready tasks to execute",
+            "executed": 0,
+        }
+
+    tasks = [_row_to_task(row) for row in task_rows]
+
+    # Limit by resources
+    max_concurrent = request.max_concurrent if request else None
+    if max_concurrent is None:
+        max_concurrent = resources.max_workers
+    max_concurrent = min(max_concurrent, len(tasks))
+
+    tasks_to_execute = tasks[:max_concurrent]
+
+    # Update tasks to running status
+    for task in tasks_to_execute:
+        task.status = TaskStatus.RUNNING
+        task.started_at = datetime.now()
+        await _save_task(db, task)
+
+    # Execute tasks (this runs them in parallel with semaphore)
+    results = await executor.execute_batch(tasks_to_execute, max_concurrent)
+
+    # Process results
+    executed = []
+    for result in results:
+        task = next((t for t in tasks_to_execute if t.id == result.task_id), None)
+        if not task:
+            continue
+
+        # Update task status
+        if result.success:
+            task.status = TaskStatus.DONE
+            task.completed_at = datetime.now()
+            task.pr_url = result.pr_url
+        else:
+            task.retry_count += 1
+            if task.retry_count >= task.max_retries:
+                task.status = TaskStatus.FAILED
+                task.blocked_reason = result.error
+            else:
+                task.status = TaskStatus.QUEUED  # Will retry on next tick
+
+        task.updated_at = datetime.now()
+        await _save_task(db, task)
+
+        # Create run record
+        run = Run(
+            id=result.run_id,
+            task_id=task.id,
+            attempt=task.retry_count,
+            status=RunStatus.SUCCESS if result.success else RunStatus.FAILED,
+            worker_id="executor",
+            pr_url=result.pr_url,
+            error=result.error if not result.success else None,
+            started_at=task.started_at,
+            ended_at=datetime.now(),
+            duration_seconds=result.duration_seconds,
+        )
+        await _save_run(db, run)
+
+        executed.append({
+            "task_id": task.id,
+            "run_id": result.run_id,
+            "success": result.success,
+            "status": result.status,
+            "pr_url": result.pr_url,
+            "error": result.error if not result.success else None,
+        })
+
+    return {
+        "success": True,
+        "executed": len(executed),
+        "results": executed,
+        "resources": resources.to_dict(),
     }
 
 
