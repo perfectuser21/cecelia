@@ -24,7 +24,7 @@ from src.db.pool import Database, init_database, close_database
 from src.api.state_routes import router as state_router, set_database
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
-from src.api.orchestrator_routes import router as orchestrator_router
+from src.api.orchestrator_routes import router as orchestrator_router, set_database as set_orchestrator_database
 from src.state.patrol import ensure_patrol_table
 from src.state.agent_monitor import ensure_agent_tables
 
@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
         set_database(database)
         set_patrol_database(database)
         set_agent_database(database)
+        set_orchestrator_database(database)
         # Ensure required tables exist
         await ensure_patrol_table(database)
         await ensure_agent_tables(database)
@@ -128,7 +129,7 @@ app.include_router(patrol_router)
 # Include agent monitor routes (Real-time Agent Monitoring)
 app.include_router(agent_router)
 
-# Include orchestrator routes (Layer 2 state management)
+# Include orchestrator routes (Layer 2 state management + Realtime API)
 app.include_router(orchestrator_router)
 
 

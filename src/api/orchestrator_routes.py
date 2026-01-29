@@ -1,8 +1,9 @@
 """Orchestrator API routes for Cecelia Semantic Brain.
 
-Exposes ~/runtime/state.json, chat API, and voice API to the frontend.
+Exposes ~/runtime/state.json, chat API, voice API, and realtime WebSocket to the frontend.
 """
 
+import asyncio
 import base64
 import json
 import subprocess
@@ -12,8 +13,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+import websockets
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+from src.db.pool import Database
+
+# Database dependency - will be set by main.py
+_db: Optional[Database] = None
+
+
+def set_database(db: Database) -> None:
+    """Set the database instance for routes."""
+    global _db
+    _db = db
+
+
+def get_db() -> Database:
+    """Get the database instance."""
+    if _db is None:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    return _db
+
 
 router = APIRouter(prefix="/orchestrator", tags=["orchestrator"])
 
@@ -59,10 +80,20 @@ class STTRequest(BaseModel):
     audio: str  # base64 encoded audio
 
 
+class ToolCallRequest(BaseModel):
+    """Request for tool execution."""
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+
+
 # MiniMax API configuration
 MINIMAX_CREDENTIALS_PATH = HOME / ".credentials" / "minimax.json"
 MINIMAX_TTS_URL = "https://api.minimax.chat/v1/t2a_v2"
 MINIMAX_STT_URL = "https://api.minimax.chat/v1/audio/transcriptions"
+
+# OpenAI API configuration (Realtime Voice)
+OPENAI_CREDENTIALS_PATH = HOME / ".credentials" / "openai.json"
+OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime"
 
 
 def get_minimax_api_key() -> str:
@@ -79,6 +110,23 @@ def get_minimax_api_key() -> str:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to read MiniMax API key: {e}"
+        )
+
+
+def get_openai_api_key() -> str:
+    """Read OpenAI API key from credentials file."""
+    if not OPENAI_CREDENTIALS_PATH.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="OpenAI credentials not found at ~/.credentials/openai.json"
+        )
+    try:
+        creds = json.loads(OPENAI_CREDENTIALS_PATH.read_text())
+        return creds["api_key"]
+    except (json.JSONDecodeError, KeyError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read OpenAI API key: {e}"
         )
 
 
@@ -415,3 +463,467 @@ async def speech_to_text(request: STTRequest):
 
     finally:
         Path(audio_file).unlink(missing_ok=True)
+
+
+# ============================================================================
+# OpenAI Realtime API (WebSocket)
+# ============================================================================
+
+@router.get("/realtime/config")
+async def get_realtime_config():
+    """Get OpenAI Realtime API configuration for frontend WebSocket connection."""
+    api_key = get_openai_api_key()
+    return {
+        "success": True,
+        "provider": "openai",
+        "config": {
+            "url": OPENAI_REALTIME_URL,
+            "api_key": api_key,
+            "model": "gpt-4o-mini-realtime-preview",
+            "voice": "alloy",
+            "instructions": """You are Cylia, voice assistant for Cecelia system.
+
+CRITICAL RULE - When to call run_orchestrator:
+- User says "启动 orchestrator" or any variation (autostrator, ultrastrator, 指挥官)
+- User says "帮我做/创建/实现 XXX功能"
+- User says "让大脑去做/执行 XXX"
+- User says "查一下服务器/VPS信息"
+- User asks you to DO something (not just query)
+
+CRITICAL RULE - When to use query tools:
+- User asks "有哪些任务/OKR/项目" → use get_tasks/get_okrs/get_projects
+- User asks "打开/显示/看看 XXX" → use open_detail
+
+Examples:
+- "启动orchestrator查VPS" → run_orchestrator(task="查询VPS服务器信息")
+- "帮我做登录功能" → run_orchestrator(task="做一个登录功能")
+- "查一下服务器" → run_orchestrator(task="查询VPS服务器信息")
+- "看看Brain MVP" → open_detail(type="okr", name="Brain MVP")
+
+ALWAYS call run_orchestrator when user wants you to EXECUTE or DO something.
+Respond in Chinese, be concise.""",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "get_okrs",
+                    "description": "获取用户的 OKR 目标列表",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "description": "筛选状态",
+                                "enum": ["pending", "in_progress", "completed"]
+                            }
+                        },
+                        "required": []
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "get_projects",
+                    "description": "获取项目列表",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "get_tasks",
+                    "description": "获取任务列表",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"]
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": ["P0", "P1", "P2", "P3"]
+                            }
+                        },
+                        "required": []
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "open_detail",
+                    "description": "打开 OKR/项目/任务的详情面板",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["okr", "project", "task"]
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "要查找的名称"
+                            },
+                            "id": {
+                                "type": "string",
+                                "description": "精确的 ID"
+                            }
+                        },
+                        "required": ["type"]
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "run_orchestrator",
+                    "description": "Execute a task using the Orchestrator brain. MUST call this when user says: 启动orchestrator, 启动指挥官, autostrator, ultrastrator, 帮我做XXX, 创建XXX, 查服务器, 查VPS, or any request to DO/EXECUTE something.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task": {
+                                "type": "string",
+                                "description": "用户要完成的任务描述"
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": ["P0", "P1", "P2"],
+                                "default": "P1"
+                            },
+                            "project": {
+                                "type": "string",
+                                "description": "指定项目名称"
+                            }
+                        },
+                        "required": ["task"]
+                    }
+                }
+            ]
+        }
+    }
+
+
+@router.websocket("/realtime/ws")
+async def realtime_websocket_proxy(websocket: WebSocket):
+    """WebSocket proxy for OpenAI Realtime API."""
+    await websocket.accept()
+
+    try:
+        api_key = get_openai_api_key()
+    except HTTPException as e:
+        await websocket.send_json({"type": "error", "error": {"message": e.detail}})
+        await websocket.close()
+        return
+
+    openai_url = f"{OPENAI_REALTIME_URL}?model=gpt-4o-mini-realtime-preview"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "OpenAI-Beta": "realtime=v1",
+    }
+
+    try:
+        print(f"[Realtime Proxy] Connecting to OpenAI: {openai_url}")
+        async with websockets.connect(
+            openai_url,
+            additional_headers=headers,
+            ping_interval=20,
+            ping_timeout=10,
+        ) as openai_ws:
+            print("[Realtime Proxy] Connected to OpenAI successfully")
+
+            async def browser_to_openai():
+                """Forward messages from browser to OpenAI."""
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await openai_ws.send(data)
+                except WebSocketDisconnect:
+                    print("[Realtime Proxy] Browser disconnected")
+                except Exception as e:
+                    print(f"[Realtime Proxy] Browser->OpenAI error: {e}")
+
+            async def openai_to_browser():
+                """Forward messages from OpenAI to browser."""
+                try:
+                    async for message in openai_ws:
+                        await websocket.send_text(message)
+                except Exception as e:
+                    print(f"[Realtime Proxy] OpenAI->Browser error: {e}")
+
+            await asyncio.gather(
+                browser_to_openai(),
+                openai_to_browser(),
+                return_exceptions=True
+            )
+
+    except websockets.exceptions.InvalidStatusCode as e:
+        error_msg = f"OpenAI connection failed: HTTP {e.status_code}"
+        print(f"[Realtime Proxy] {error_msg}")
+        try:
+            await websocket.send_json({"type": "error", "error": {"message": error_msg}})
+        except Exception:
+            pass
+    except Exception as e:
+        error_msg = f"Connection error: {str(e)}"
+        print(f"[Realtime Proxy] {error_msg}")
+        try:
+            await websocket.send_json({"type": "error", "error": {"message": error_msg}})
+        except Exception:
+            pass
+    finally:
+        print("[Realtime Proxy] Cleaning up connection")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.post("/realtime/tool")
+async def execute_tool(request: ToolCallRequest):
+    """Execute a tool call and return the result."""
+    tool_name = request.tool_name
+    args = request.arguments
+    db = get_db()
+
+    print(f"[Tool] Executing: {tool_name} with args: {args}")
+
+    try:
+        if tool_name == "get_okrs":
+            status_filter = args.get("status")
+            query = "SELECT id, title, status, priority, progress FROM goals"
+            params = []
+            if status_filter:
+                query += " WHERE status = $1"
+                params.append(status_filter)
+            query += " ORDER BY priority, created_at DESC LIMIT 20"
+
+            rows = await db.pool.fetch(query, *params)
+            result = [
+                {
+                    "id": str(row["id"]),
+                    "title": row["title"],
+                    "status": row["status"],
+                    "priority": row["priority"],
+                    "progress": row["progress"]
+                }
+                for row in rows
+            ]
+            return {"success": True, "result": result}
+
+        elif tool_name == "get_projects":
+            query = """
+                SELECT id, name, repo_path
+                FROM projects
+                WHERE parent_id IS NULL
+                ORDER BY name LIMIT 20
+            """
+            rows = await db.pool.fetch(query)
+            result = [
+                {
+                    "id": str(row["id"]),
+                    "name": row["name"],
+                    "repo_path": row["repo_path"]
+                }
+                for row in rows
+            ]
+            return {"success": True, "result": result}
+
+        elif tool_name == "get_tasks":
+            status_filter = args.get("status")
+            priority_filter = args.get("priority")
+
+            query = "SELECT id, title, status, priority, goal_id FROM tasks WHERE 1=1"
+            params = []
+            param_idx = 1
+
+            if status_filter:
+                query += f" AND status = ${param_idx}"
+                params.append(status_filter)
+                param_idx += 1
+
+            if priority_filter:
+                query += f" AND priority = ${param_idx}"
+                params.append(priority_filter)
+                param_idx += 1
+
+            query += " ORDER BY priority, created_at DESC LIMIT 20"
+
+            rows = await db.pool.fetch(query, *params)
+            result = [
+                {
+                    "id": str(row["id"]),
+                    "title": row["title"],
+                    "status": row["status"],
+                    "priority": row["priority"],
+                    "goal_id": str(row["goal_id"]) if row["goal_id"] else None
+                }
+                for row in rows
+            ]
+            return {"success": True, "result": result}
+
+        elif tool_name == "open_detail":
+            item_type = args.get("type")
+            item_name = args.get("name")
+            item_id = args.get("id")
+
+            if not item_type:
+                return {"success": False, "error": "type is required"}
+
+            row = None
+
+            if item_type == "okr":
+                if item_id:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, title, status, priority, progress, description, content FROM goals WHERE id = $1",
+                        item_id
+                    )
+                elif item_name:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, title, status, priority, progress, description, content FROM goals WHERE title ILIKE $1 LIMIT 1",
+                        f"%{item_name}%"
+                    )
+
+                if row:
+                    content = row["content"]
+                    if isinstance(content, str):
+                        content = json.loads(content) if content else []
+                    result = {
+                        "action": "open_detail",
+                        "type": "okr",
+                        "data": {
+                            "id": str(row["id"]),
+                            "title": row["title"],
+                            "status": row["status"],
+                            "priority": row["priority"],
+                            "progress": row["progress"],
+                            "description": row["description"],
+                            "content": content or []
+                        }
+                    }
+                    return {"success": True, "result": result}
+
+            elif item_type == "project":
+                if item_id:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, name, repo_path, description, content FROM projects WHERE id = $1",
+                        item_id
+                    )
+                elif item_name:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, name, repo_path, description, content FROM projects WHERE name ILIKE $1 LIMIT 1",
+                        f"%{item_name}%"
+                    )
+
+                if row:
+                    content = row["content"]
+                    if isinstance(content, str):
+                        content = json.loads(content) if content else []
+                    result = {
+                        "action": "open_detail",
+                        "type": "project",
+                        "data": {
+                            "id": str(row["id"]),
+                            "name": row["name"],
+                            "repo_path": row["repo_path"],
+                            "description": row["description"],
+                            "content": content or []
+                        }
+                    }
+                    return {"success": True, "result": result}
+
+            elif item_type == "task":
+                if item_id:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, title, status, priority, goal_id, description, content FROM tasks WHERE id = $1",
+                        item_id
+                    )
+                elif item_name:
+                    row = await db.pool.fetchrow(
+                        "SELECT id, title, status, priority, goal_id, description, content FROM tasks WHERE title ILIKE $1 LIMIT 1",
+                        f"%{item_name}%"
+                    )
+
+                if row:
+                    content = row["content"]
+                    if isinstance(content, str):
+                        content = json.loads(content) if content else []
+                    result = {
+                        "action": "open_detail",
+                        "type": "task",
+                        "data": {
+                            "id": str(row["id"]),
+                            "title": row["title"],
+                            "status": row["status"],
+                            "priority": row["priority"],
+                            "goal_id": str(row["goal_id"]) if row["goal_id"] else None,
+                            "description": row["description"],
+                            "content": content or []
+                        }
+                    }
+                    return {"success": True, "result": result}
+
+            return {"success": False, "error": f"找不到匹配的{item_type}: {item_name or item_id}"}
+
+        elif tool_name == "run_orchestrator":
+            # Run orchestrator skill via headless Claude Code
+            task_desc = args.get("task", "")
+            priority = args.get("priority", "P1")
+            project = args.get("project")
+
+            if not task_desc:
+                return {"success": False, "error": "task is required"}
+
+            # Build the orchestrator prompt
+            prompt = f"/orchestrator {task_desc}"
+            if priority:
+                prompt += f" --priority {priority}"
+            if project:
+                prompt += f" --project {project}"
+
+            # Run headless Claude Code with orchestrator skill
+            claude_path = HOME / ".local" / "bin" / "claude"
+            try:
+                result = subprocess.run(
+                    [str(claude_path), "-p", prompt, "--output-format", "json"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(HOME / "dev" / "cecelia-semantic-brain")
+                )
+
+                if result.returncode == 0:
+                    try:
+                        output = json.loads(result.stdout)
+                        return {
+                            "success": True,
+                            "result": {
+                                "action": "orchestrator_executed",
+                                "task": task_desc,
+                                "output": output
+                            }
+                        }
+                    except json.JSONDecodeError:
+                        return {
+                            "success": True,
+                            "result": {
+                                "action": "orchestrator_executed",
+                                "task": task_desc,
+                                "output": result.stdout[:500]
+                            }
+                        }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Orchestrator failed: {result.stderr[:200]}"
+                    }
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "error": "Orchestrator timeout (120s)"
+                }
+            except Exception as e:
+                return {"success": False, "error": f"Orchestrator error: {e}"}
+
+        else:
+            return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+    except Exception as e:
+        print(f"[Tool] Error executing {tool_name}: {e}")
+        return {"success": False, "error": str(e)}

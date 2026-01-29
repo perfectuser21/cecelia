@@ -57,3 +57,17 @@ Cecelia Semantic Brain 是核心语义服务，提供：
 - name: Run tests
   run: PYTHONPATH=. pytest tests/ -v --tb=short
 ```
+
+## Feature: Cylia Realtime + Orchestrator Tool
+
+Decision: NO_RCI
+Priority: P1
+Reason: 新增 WebSocket 代理和工具函数，属于 API 扩展，测试通过手动验证
+
+Tests:
+  - dod_item: "WebSocket 连接正常"
+    method: manual
+    location: manual:浏览器测试 Cylia 语音对话
+  - dod_item: "run_orchestrator tool 可调用"
+    method: manual
+    location: manual:语音说"帮我做XXX"验证
