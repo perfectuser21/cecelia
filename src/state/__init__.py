@@ -78,6 +78,30 @@ from .patrol import (
     CI_TIMEOUT_MINUTES,
 )
 
+from .agent_monitor import (
+    ensure_agent_tables,
+    parse_output_line,
+    create_or_update_run,
+    record_event,
+    update_run_from_event,
+    get_runs,
+    get_run,
+    get_run_by_agent_id,
+    get_events,
+    complete_run,
+    get_active_runs,
+    get_runs_summary,
+    EVENT_USER_MESSAGE,
+    EVENT_TOOL_USE,
+    EVENT_TOOL_RESULT,
+    EVENT_TEXT,
+    EVENT_HOOK_PROGRESS,
+    STATUS_RUNNING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_STALE,
+)
+
 __all__ = [
     # Focus
     "select_daily_focus",
@@ -145,4 +169,26 @@ __all__ = [
     "RESULT_SKIPPED",
     "STALE_THRESHOLD_MINUTES",
     "CI_TIMEOUT_MINUTES",
+    # Agent Monitor
+    "ensure_agent_tables",
+    "parse_output_line",
+    "create_or_update_run",
+    "record_event",
+    "update_run_from_event",
+    "get_runs",
+    "get_run",
+    "get_run_by_agent_id",
+    "get_events",
+    "complete_run",
+    "get_active_runs",
+    "get_runs_summary",
+    "EVENT_USER_MESSAGE",
+    "EVENT_TOOL_USE",
+    "EVENT_TOOL_RESULT",
+    "EVENT_TEXT",
+    "EVENT_HOOK_PROGRESS",
+    "STATUS_RUNNING",
+    "STATUS_COMPLETED",
+    "STATUS_FAILED",
+    "STATUS_STALE",
 ]

@@ -23,6 +23,7 @@ from src.intelligence.planner.execution_planner import ExecutionPlanner
 from src.db.pool import Database, init_database, close_database
 from src.api.state_routes import router as state_router, set_database
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
+from src.api.agent_routes import router as agent_router, set_database as set_agent_database
 
 load_dotenv()
 
@@ -87,6 +88,7 @@ async def lifespan(app: FastAPI):
         database = await init_database()
         set_database(database)
         set_patrol_database(database)
+        set_agent_database(database)
         logger.info("Database connection initialized")
     except Exception as e:
         logger.warning(f"Database connection failed (State Layer disabled): {e}")
@@ -116,6 +118,9 @@ app.include_router(state_router)
 
 # Include patrol routes (Patrol Agent API)
 app.include_router(patrol_router)
+
+# Include agent monitor routes (Real-time Agent Monitoring)
+app.include_router(agent_router)
 
 
 # Request/Response models
