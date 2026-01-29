@@ -623,10 +623,9 @@ export default function OrchestratorPage() {
               )}
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[90%] px-2 py-1 rounded-lg text-xs ${
+                  <div className={`max-w-[90%] px-2 py-1 rounded-lg text-xs break-words ${
                     msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white'
                   } ${msg.isStreaming ? 'animate-pulse' : ''}`}>
-                    {msg.isVoice && <span className="mr-1">{msg.role === 'user' ? '🎤' : '🔊'}</span>}
                     {msg.content}
                   </div>
                 </div>
