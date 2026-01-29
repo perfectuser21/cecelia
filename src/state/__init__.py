@@ -41,6 +41,19 @@ from .goals import (
     get_goals_summary,
 )
 
+from .queue import (
+    get_queue,
+    init_queue,
+    get_next_prd,
+    start_current_prd,
+    complete_prd,
+    fail_prd,
+    retry_failed,
+    clear_queue,
+    get_queue_summary,
+    PRD_QUEUE_KEY,
+)
+
 __all__ = [
     # Focus
     "select_daily_focus",
@@ -75,4 +88,15 @@ __all__ = [
     "delete_goal",
     "update_objective_progress",
     "get_goals_summary",
+    # Queue
+    "get_queue",
+    "init_queue",
+    "get_next_prd",
+    "start_current_prd",
+    "complete_prd",
+    "fail_prd",
+    "retry_failed",
+    "clear_queue",
+    "get_queue_summary",
+    "PRD_QUEUE_KEY",
 ]

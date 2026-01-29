@@ -32,6 +32,17 @@ from src.state.goals import (
     update_objective_progress,
     get_goals_summary,
 )
+from src.state.queue import (
+    get_queue,
+    init_queue,
+    get_next_prd,
+    start_current_prd,
+    complete_prd,
+    fail_prd,
+    retry_failed,
+    clear_queue,
+    get_queue_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -609,3 +620,335 @@ async def recalculate_goal_progress_endpoint(goal_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
     return GoalProgressResponse(**result)
+
+
+# Queue Models
+class QueueItemResponse(BaseModel):
+    """Queue item response."""
+
+    id: int
+    path: str
+    status: str
+    pr_url: Optional[str] = None
+    branch: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class QueueResponse(BaseModel):
+    """Full queue state response."""
+
+    items: List[QueueItemResponse]
+    current_index: int
+    status: str
+    project_path: Optional[str] = None
+    started_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class QueueInitRequest(BaseModel):
+    """Request to initialize queue."""
+
+    prd_paths: List[str]
+    project_path: Optional[str] = None
+
+
+class QueueInitResponse(BaseModel):
+    """Response after initializing queue."""
+
+    items: List[QueueItemResponse]
+    current_index: int
+    status: str
+    project_path: Optional[str] = None
+    started_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class NextPrdResponse(BaseModel):
+    """Next PRD response with context."""
+
+    id: int
+    path: str
+    status: str
+    pr_url: Optional[str] = None
+    branch: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+    project_path: Optional[str] = None
+    total: int
+    completed: int
+
+
+class StartPrdResponse(BaseModel):
+    """Response after starting PRD."""
+
+    success: bool
+    prd: Optional[QueueItemResponse] = None
+    error: Optional[str] = None
+
+
+class CompletePrdRequest(BaseModel):
+    """Request to complete PRD."""
+
+    prd_id: int
+    pr_url: Optional[str] = None
+    branch: Optional[str] = None
+
+
+class CompletePrdResponse(BaseModel):
+    """Response after completing PRD."""
+
+    success: bool
+    all_done: bool
+    next: Optional[QueueItemResponse] = None
+    error: Optional[str] = None
+
+
+class FailPrdRequest(BaseModel):
+    """Request to fail PRD."""
+
+    prd_id: int
+    error: str
+
+
+class FailPrdResponse(BaseModel):
+    """Response after failing PRD."""
+
+    success: bool
+    paused: bool
+    error: Optional[str] = None
+
+
+class RetryResponse(BaseModel):
+    """Response after retrying failed PRDs."""
+
+    success: bool
+
+
+class ClearQueueResponse(BaseModel):
+    """Response after clearing queue."""
+
+    success: bool
+
+
+class QueueSummaryResponse(BaseModel):
+    """Queue summary for status endpoint."""
+
+    status: str
+    total: int
+    pending: int
+    in_progress: int
+    done: int
+    failed: int
+    current: Optional[QueueItemResponse] = None
+    project_path: Optional[str] = None
+    started_at: Optional[str] = None
+
+
+# Queue Endpoints
+@router.get("/queue", response_model=QueueResponse)
+async def get_queue_endpoint():
+    """Get current queue state.
+
+    Returns the full queue state including all items
+    and their statuses.
+    """
+    db = get_db()
+
+    try:
+        result = await get_queue(db)
+    except Exception as e:
+        logger.error(f"Error getting queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return QueueResponse(
+        items=[QueueItemResponse(**item) for item in result.get("items", [])],
+        current_index=result.get("current_index", -1),
+        status=result.get("status", "idle"),
+        project_path=result.get("project_path"),
+        started_at=result.get("started_at"),
+        updated_at=result.get("updated_at"),
+    )
+
+
+@router.post("/queue/init", response_model=QueueInitResponse)
+async def init_queue_endpoint(request: QueueInitRequest):
+    """Initialize queue from PRD file list.
+
+    Args:
+        request: Contains prd_paths and optional project_path
+    """
+    db = get_db()
+
+    try:
+        result = await init_queue(db, request.prd_paths, request.project_path)
+    except Exception as e:
+        logger.error(f"Error initializing queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return QueueInitResponse(
+        items=[QueueItemResponse(**item) for item in result.get("items", [])],
+        current_index=result.get("current_index", 0),
+        status=result.get("status", "ready"),
+        project_path=result.get("project_path"),
+        started_at=result.get("started_at"),
+        updated_at=result.get("updated_at"),
+    )
+
+
+@router.get("/queue/next")
+async def get_next_prd_endpoint():
+    """Get next pending PRD to execute.
+
+    Returns the next PRD with context, or null if none pending.
+    """
+    db = get_db()
+
+    try:
+        result = await get_next_prd(db)
+    except Exception as e:
+        logger.error(f"Error getting next PRD: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if result is None:
+        return None
+
+    return NextPrdResponse(**result)
+
+
+@router.post("/queue/start", response_model=StartPrdResponse)
+async def start_prd_endpoint():
+    """Start executing current PRD.
+
+    Marks the first pending PRD as in_progress.
+    """
+    db = get_db()
+
+    try:
+        result = await start_current_prd(db)
+    except Exception as e:
+        logger.error(f"Error starting PRD: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not result["success"]:
+        return StartPrdResponse(success=False, error=result.get("error"))
+
+    return StartPrdResponse(
+        success=True,
+        prd=QueueItemResponse(**result["prd"]) if result.get("prd") else None,
+    )
+
+
+@router.post("/queue/complete", response_model=CompletePrdResponse)
+async def complete_prd_endpoint(request: CompletePrdRequest):
+    """Mark PRD as completed.
+
+    Args:
+        request: Contains prd_id and optional pr_url/branch
+    """
+    db = get_db()
+
+    try:
+        result = await complete_prd(db, request.prd_id, request.pr_url, request.branch)
+    except Exception as e:
+        logger.error(f"Error completing PRD: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not result["success"]:
+        return CompletePrdResponse(
+            success=False, all_done=False, error=result.get("error")
+        )
+
+    return CompletePrdResponse(
+        success=True,
+        all_done=result.get("all_done", False),
+        next=QueueItemResponse(**result["next"]) if result.get("next") else None,
+    )
+
+
+@router.post("/queue/fail", response_model=FailPrdResponse)
+async def fail_prd_endpoint(request: FailPrdRequest):
+    """Mark PRD as failed.
+
+    Args:
+        request: Contains prd_id and error message
+    """
+    db = get_db()
+
+    try:
+        result = await fail_prd(db, request.prd_id, request.error)
+    except Exception as e:
+        logger.error(f"Error failing PRD: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if not result["success"]:
+        return FailPrdResponse(success=False, paused=False, error=result.get("error"))
+
+    return FailPrdResponse(success=True, paused=result.get("paused", True))
+
+
+@router.post("/queue/retry", response_model=RetryResponse)
+async def retry_failed_endpoint():
+    """Retry all failed PRDs.
+
+    Resets failed PRDs back to pending status.
+    """
+    db = get_db()
+
+    try:
+        result = await retry_failed(db)
+    except Exception as e:
+        logger.error(f"Error retrying failed PRDs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return RetryResponse(**result)
+
+
+@router.delete("/queue", response_model=ClearQueueResponse)
+async def clear_queue_endpoint():
+    """Clear the queue.
+
+    Removes all queue data from working memory.
+    """
+    db = get_db()
+
+    try:
+        result = await clear_queue(db)
+    except Exception as e:
+        logger.error(f"Error clearing queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ClearQueueResponse(**result)
+
+
+@router.get("/queue/summary")
+async def get_queue_summary_endpoint():
+    """Get queue summary for status endpoint.
+
+    Returns a lightweight summary of the queue state,
+    or null if queue is idle/empty.
+    """
+    db = get_db()
+
+    try:
+        result = await get_queue_summary(db)
+    except Exception as e:
+        logger.error(f"Error getting queue summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if result is None:
+        return None
+
+    return QueueSummaryResponse(
+        status=result["status"],
+        total=result["total"],
+        pending=result["pending"],
+        in_progress=result["in_progress"],
+        done=result["done"],
+        failed=result["failed"],
+        current=QueueItemResponse(**result["current"]) if result.get("current") else None,
+        project_path=result.get("project_path"),
+        started_at=result.get("started_at"),
+    )
