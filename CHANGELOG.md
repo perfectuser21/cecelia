@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.4.1] - 2026-01-30
+
+### Fixed
+
+- **Stop Hook 跳过 Cleanup bug 修复**
+  - `hooks/stop.sh`: 添加 `cleanup_done` 检测，PR 合并后不再直接删除 `.dev-mode`
+  - `hooks/stop.sh`: PR 合并时改为 exit 2，触发 Step 11 (Cleanup) 执行
+  - `skills/dev/scripts/cleanup.sh`: 在完成时写入 `cleanup_done: true` 标记
+  - 新增测试: `tests/hooks/stop-hook.test.ts` (6 tests)
+
 ## [11.4.0] - 2026-01-29
 
 ### Added

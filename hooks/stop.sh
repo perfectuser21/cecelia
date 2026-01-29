@@ -49,6 +49,12 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
     exit 0
 fi
 
+# ===== 检查 cleanup 是否已完成 =====
+if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    rm -f "$DEV_MODE_FILE"
+    exit 0
+fi
+
 # ===== 读取 .dev-mode 内容 =====
 DEV_MODE=$(head -1 "$DEV_MODE_FILE" 2>/dev/null || echo "")
 BRANCH_NAME=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
@@ -107,12 +113,9 @@ if [[ "$PR_STATE" == "merged" ]]; then
     echo "  ✅ 条件 3: PR 已合并" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  ✅ 所有条件满足！清理 .dev-mode" >&2
+    echo "  ➡️  下一步: 执行 Step 11 (Cleanup)" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-
-    # 清理 .dev-mode 文件
-    rm -f "$DEV_MODE_FILE"
-    exit 0
+    exit 2  # 继续执行 cleanup，不要直接退出
 fi
 
 # ===== 条件 2: CI 状态？（PR 未合并时检查） =====

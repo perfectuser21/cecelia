@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.29.0"
-updated: "2026-01-29"
+version: "2.30.0"
+updated: "2026-01-30"
 changelog:
+  - 2.30.0: v11.4.1 - 修复 Stop Hook 跳过 Cleanup bug（cleanup_done 检测 + PR 合并时 exit 2）
   - 2.29.0: v11.4.0 - Task Checkpoint 强制执行（branch-protect v18 检查 tasks_created 字段）
   - 2.28.0: v11.3.2 - 移除 Ralph Loop（统一用 Stop Hook，.dev-mode 移到 Step 3 创建）
   - 2.27.0: v11.3.1 - Worktree 强制检查（Step 3 阻止主仓库有活跃任务时创建分支，P5 重新激活）
@@ -98,15 +99,16 @@ platform_features:
     name: Stop Hook Loop Controller
     status: Committed
     priority: P0
-    version: "11.3.0"
-    updated: "2026-01-29"
+    version: "11.4.1"
+    updated: "2026-01-30"
     description: |
       Stop Hook 作为 /dev 工作流的循环控制器，替代 Ralph Loop 插件：
       - 检测 .dev-mode 文件决定是否为 /dev 会话
       - 检查完成条件：PR 创建 + CI 通过 + PR 合并
       - 未完成时 exit 2 阻止会话结束，Claude 继续执行
-      - 完成时删除 .dev-mode 并 exit 0
+      - 完成时（cleanup_done: true）删除 .dev-mode 并 exit 0
       - 无头模式 (CECELIA_HEADLESS=true) 直接 exit 0，由外部循环控制
+      v11.4.1: 修复跳过 Cleanup bug（cleanup_done 检测 + PR 合并时 exit 2）
       v11.3.0: 首次实现，替代 Ralph Loop 插件
 
     entrypoints:

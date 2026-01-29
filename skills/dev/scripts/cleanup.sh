@@ -346,6 +346,14 @@ echo ""
 echo "[10] Cleanup 完成..."
 echo -e "   ${GREEN}[OK] 所有清理步骤完成${NC}"
 
+# 标记 cleanup 完成（让 Stop Hook 知道可以退出了）
+PROJECT_ROOT_FOR_DEVMODE=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+if [[ -f "$DEV_MODE_FILE" ]]; then
+    echo "cleanup_done: true" >> "$DEV_MODE_FILE"
+    echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+fi
+
 # ========================================
 # 总结
 # ========================================

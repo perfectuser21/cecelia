@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-H7-task-checkpoint
-Date: 2026-01-29
-Scope: hooks/branch-protect.sh, skills/dev/steps/*.md
+Branch: cp-01300026-fix-stop-hook-cleanup
+Date: 2026-01-30
+Scope: hooks/stop.sh, skills/dev/scripts/cleanup.sh
 Target Level: L2
 
 Summary:
@@ -18,7 +18,8 @@ Findings: []
 Blockers: []
 
 Notes:
-  - branch-protect.sh v18: 添加 tasks_created 字段检查
-  - 03-branch.md: 添加 Task Checkpoint 创建指令
-  - 04-11 step 文件: 添加 TaskUpdate 指令（开始/完成）
-  - 所有改动均为文档和 shell 脚本，无安全风险
+  - hooks/stop.sh: 添加 cleanup_done 检测逻辑
+  - hooks/stop.sh: PR 合并时改为 exit 2 触发 cleanup
+  - skills/dev/scripts/cleanup.sh: 添加 cleanup_done 标记
+  - 测试覆盖: tests/hooks/stop-hook.test.ts (6 tests passing)
+  - 所有改动均为 shell 脚本，逻辑简单，无安全风险
