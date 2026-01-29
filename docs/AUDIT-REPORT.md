@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-M1-db-connection-focus
+Branch: cp-20260129-brain-service-deployment
 Date: 2026-01-29
-Scope: src/db/pool.py, src/db/__init__.py, src/state/focus.py, src/state/__init__.py, src/api/state_routes.py, src/api/main.py, tests/test_db.py, tests/test_focus.py, tests/test_state_api.py
+Scope: brain.service, scripts/start.sh
 Target Level: L2
 
 ## Summary
@@ -19,61 +19,36 @@ Target Level: L2
 ## Scope Analysis
 
 ### New Files
-- `src/db/__init__.py` - Database module exports
-- `src/db/pool.py` - PostgreSQL async connection pool using asyncpg
-- `src/state/__init__.py` - State module exports
-- `src/state/focus.py` - Focus selection logic migrated from Node.js
-- `src/api/state_routes.py` - Brain API routes for focus management
-- `tests/test_db.py` - Database pool tests (17 tests)
-- `tests/test_focus.py` - Focus logic tests (19 tests)
-- `tests/test_state_api.py` - API route tests (7 tests)
+- `brain.service` - systemd unit file for Docker-based service
+- `scripts/start.sh` - startup script with Docker/uvicorn modes
 
-### Modified Files
-- `requirements.txt` - Added asyncpg>=0.29.0
-- `src/api/main.py` - Integrated database lifecycle and state routes
-- `.prd.md` - Updated for M1 scope
-- `.dod.md` - Updated DoD for M1
-- `docs/QA-DECISION.md` - Updated QA decision for M1
+### Existing Files (no changes needed)
+- `Dockerfile` - already configured for port 5220
+- `docker-compose.yml` - already configured with volumes and env
+- `.env.example` - already has necessary variables
+- `src/api/main.py` - /health endpoint already exists
 
 ## Code Review
 
-### src/db/pool.py
+### brain.service
 
 **Quality Assessment**: Good
 
-- Clean async connection pool implementation
-- Proper resource cleanup in lifespan
-- Environment variable support for configuration
-- Context manager for safe connection handling
-- Comprehensive helper methods (execute, fetch, fetchrow, fetchval)
+- Proper systemd unit structure
+- Dependencies on network.target and docker.service
+- Automatic restart with 10s delay
+- Journal logging configured
+- Correct working directory and user
 
-### src/state/focus.py
-
-**Quality Assessment**: Good
-
-- Faithful migration from Node.js focus.js
-- Proper priority algorithm implementation
-- Handles both manual override and auto-selection
-- JSON parsing resilience for metadata
-- Clear separation of concerns
-
-### src/api/state_routes.py
+### scripts/start.sh
 
 **Quality Assessment**: Good
 
-- RESTful API design
-- Proper Pydantic models for request/response
-- Appropriate error handling with HTTPException
-- Logging for errors
-
-### Tests
-
-**Quality Assessment**: Good
-
-- 43 tests total, all passing
-- Good coverage of core functionality
-- Proper mocking of database operations
-- Edge cases covered (no data, errors)
+- Proper shebang and set -e for safety
+- Environment variable loading from .env
+- Default port fallback (5220)
+- Dual mode support (Docker vs uvicorn)
+- Proper PYTHONPATH configuration
 
 ## Findings
 
@@ -85,10 +60,9 @@ None
 
 ## Test Results
 
-- 43 tests passed
-- 0 tests failed
-- Coverage: Database pool (17), Focus logic (19), API routes (7)
+- API tests: 5 passed
+- /health endpoint verified
 
 ## Conclusion
 
-M1 implementation complete. Database connection layer and Focus functionality successfully migrated from Node.js to Python. All tests passing.
+Deployment configuration complete. systemd service and startup script ready for use.

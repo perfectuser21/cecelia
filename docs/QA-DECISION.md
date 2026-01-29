@@ -1,28 +1,42 @@
-# QA Decision - M5 Integration Tests
+# QA Decision - Brain Service Deployment
 
 Decision: NO_RCI
-Priority: P1
-RepoType: Engine
+Priority: P2
+RepoType: Business
 
 ## Analysis
 
 ### Change Type
-- **Type**: Test (测试)
-- **Scope**: 集成测试覆盖
+- **Type**: DevOps (运维配置)
+- **Scope**: 部署配置
 
 ### Impact Assessment
 - **Risk Level**: Low
-- **Affected Areas**: 仅新增测试文件
-- **Breaking Changes**: None (纯测试)
+- **Affected Areas**: 新增部署文件，无业务逻辑变更
+- **Breaking Changes**: None
+
+### Risk Score
+
+| Rule | Triggered | Reason |
+|------|-----------|--------|
+| R1 Public API | ❌ | No API changes |
+| R2 Data Model | ❌ | No data model changes |
+| R3 Cross-Module | ❌ | Only adding deployment files |
+| R4 New Dependencies | ❌ | No new dependencies |
+| R5 Security | ❌ | No sensitive operations |
+| R6 Core Workflow | ❌ | No core workflow changes |
+
+**RISK SCORE: 0** (No RCI required)
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| Focus + Tick 联动测试 | auto | tests/test_integration.py |
-| Actions + Goals 联动测试 | auto | tests/test_integration.py |
-| Queue 工作流测试 | auto | tests/test_integration.py |
-| 全模块端到端测试 | auto | tests/test_integration.py |
+| Docker 容器可构建 | auto | `docker build -t brain .` |
+| docker-compose up 正常启动 | auto | `docker-compose up -d` |
+| GET /health 返回 200 | auto | tests/test_api.py::TestAPI::test_health_endpoint |
+| Brain API 可通过 5220 端口访问 | manual | `curl localhost:5220/health` |
+| 服务重启后自动恢复 | manual | systemd restart test |
 
 ## RCI
 
@@ -33,4 +47,4 @@ update: []
 
 ## Reason
 
-M5 是测试模块，不涉及功能修改。验证所有迁移模块协同工作。
+运维配置变更，不涉及核心业务逻辑。现有测试套件已覆盖 /health 端点，无需新增 RCI。
