@@ -998,9 +998,10 @@ async def execute_tool(request: ToolCallRequest):
 
                 # Call planner to decompose into tasks
                 planner = Planner()
-                context = f"Priority: {priority}"
-                if project:
-                    context += f"\nProject: {project}"
+                context = {
+                    "priority": priority,
+                    "projects": [project] if project else [],
+                }
                 plan_result = planner.plan(trd, context)
 
                 if not plan_result.success:
