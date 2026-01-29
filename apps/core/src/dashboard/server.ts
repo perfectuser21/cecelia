@@ -20,6 +20,8 @@ import mediaRoutes from '../media/routes.js';
 import taskSystemRoutes from '../task-system/routes.js';
 import brainRoutes from '../brain/routes.js';
 import okrRoutes from '../okr/routes.js';
+import watchdogRoutes from '../watchdog/routes.js';
+import { startMonitor as startWatchdogMonitor } from '../watchdog/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -132,6 +134,9 @@ app.use('/api/brain', brainRoutes);
 // OKR Tree API routes (tree-based OKR management)
 app.use('/api/okr', okrRoutes);
 
+// Watchdog API routes (agent activity monitoring)
+app.use('/api/watchdog', watchdogRoutes);
+
 // Static frontend files (single frontend, theme switches by hostname in JS)
 // Compiled server is at apps/core/dist/dashboard/server.js
 // Frontend is at apps/dashboard/frontend/dist
@@ -155,6 +160,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+
+  // Start watchdog monitor automatically
+  startWatchdogMonitor();
 });
 
 export default app;
