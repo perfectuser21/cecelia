@@ -326,10 +326,10 @@ async def chat(request: ChatRequest):
             prompt_file = f.name
 
         try:
-            # Call claude CLI
+            # Call claude CLI with Haiku model (Cecelia = lightweight entry point)
             claude_path = HOME / ".local" / "bin" / "claude"
             result = subprocess.run(
-                f'cat "{prompt_file}" | {claude_path} -p - --output-format text',
+                f'cat "{prompt_file}" | {claude_path} -p - --model haiku --output-format text',
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -481,10 +481,16 @@ async def get_realtime_config():
             "api_key": api_key,
             "model": "gpt-4o-mini-realtime-preview",
             "voice": "alloy",
-            "instructions": """You are Cecelia, the voice interface for the Cecelia system.
+            "instructions": """You are Cecelia (塞西莉亚), the voice/text entry point for the system.
 
-CRITICAL RULE - When to call run_orchestrator:
-- User says "启动 orchestrator" or any variation (autostrator, ultrastrator, 指挥官)
+AGENT TEAM:
+- Cecelia (你) = 入口，理解用户意图，分发任务
+- Autumnrice (秋米) = 管家/调度，用 call_autumnrice 调用
+- Caramel (焦糖) = 编程肌肉（未来）
+- Nobel (诺贝) = 自动化肌肉（N8N）
+
+CRITICAL RULE - When to call call_autumnrice:
+- User says "启动秋米/orchestrator/指挥官" or any variation
 - User says "帮我做/创建/实现 XXX功能"
 - User says "让大脑去做/执行 XXX"
 - User says "查一下服务器/VPS信息"
@@ -495,12 +501,12 @@ CRITICAL RULE - When to use query tools:
 - User asks "打开/显示/看看 XXX" → use open_detail
 
 Examples:
-- "启动orchestrator查VPS" → run_orchestrator(task="查询VPS服务器信息")
-- "帮我做登录功能" → run_orchestrator(task="做一个登录功能")
-- "查一下服务器" → run_orchestrator(task="查询VPS服务器信息")
+- "启动秋米查VPS" → call_autumnrice(task="查询VPS服务器信息")
+- "帮我做登录功能" → call_autumnrice(task="做一个登录功能")
+- "查一下服务器" → call_autumnrice(task="查询VPS服务器信息")
 - "看看Brain MVP" → open_detail(type="okr", name="Brain MVP")
 
-ALWAYS call run_orchestrator when user wants you to EXECUTE or DO something.
+ALWAYS call call_autumnrice when user wants you to EXECUTE or DO something.
 Respond in Chinese, be concise.""",
             "tools": [
                 {
@@ -573,8 +579,8 @@ Respond in Chinese, be concise.""",
                 },
                 {
                     "type": "function",
-                    "name": "run_orchestrator",
-                    "description": "Execute a task using the Orchestrator brain. MUST call this when user says: 启动orchestrator, 启动指挥官, autostrator, ultrastrator, 帮我做XXX, 创建XXX, 查服务器, 查VPS, or any request to DO/EXECUTE something.",
+                    "name": "call_autumnrice",
+                    "description": "Call Autumnrice (秋米) - the orchestrator/manager agent using Opus model. MUST call this when user says: 启动秋米, 启动orchestrator, 启动指挥官, autostrator, ultrastrator, 帮我做XXX, 创建XXX, 查服务器, 查VPS, or any request to DO/EXECUTE something.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -861,8 +867,8 @@ async def execute_tool(request: ToolCallRequest):
 
             return {"success": False, "error": f"找不到匹配的{item_type}: {item_name or item_id}"}
 
-        elif tool_name == "run_orchestrator":
-            # Run orchestrator skill via headless Claude Code
+        elif tool_name == "call_autumnrice":
+            # Call Autumnrice (秋米) - orchestrator agent with Opus model
             task_desc = args.get("task", "")
             priority = args.get("priority", "P1")
             project = args.get("project")
@@ -877,14 +883,14 @@ async def execute_tool(request: ToolCallRequest):
             if project:
                 prompt += f" --project {project}"
 
-            # Run headless Claude Code with orchestrator skill
+            # Run Autumnrice (headless Claude Code with Opus model)
             claude_path = HOME / ".local" / "bin" / "claude"
             try:
                 result = subprocess.run(
-                    [str(claude_path), "-p", prompt, "--output-format", "json"],
+                    [str(claude_path), "-p", prompt, "--model", "opus", "--output-format", "json"],
                     capture_output=True,
                     text=True,
-                    timeout=120,
+                    timeout=180,  # Opus needs more time
                     cwd=str(HOME / "dev" / "cecelia-semantic-brain")
                 )
 
@@ -894,7 +900,7 @@ async def execute_tool(request: ToolCallRequest):
                         return {
                             "success": True,
                             "result": {
-                                "action": "orchestrator_executed",
+                                "action": "autumnrice_executed",
                                 "task": task_desc,
                                 "output": output
                             }
