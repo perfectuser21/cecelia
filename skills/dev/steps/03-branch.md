@@ -40,6 +40,47 @@ fi
 
 ---
 
+## Worktree 强制检查（CRITICAL）
+
+**在主仓库创建分支前，必须检查是否有活跃的 /dev 任务**：
+
+```bash
+# 只在主仓库（非 worktree）时检查
+if [[ "$IS_WORKTREE" == "false" ]]; then
+    PROJECT_ROOT=$(git rev-parse --show-toplevel)
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+
+    if [[ -f "$DEV_MODE_FILE" ]]; then
+        ACTIVE_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "unknown")
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  ⛔ 主仓库有活跃 /dev 任务"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  活跃分支: $ACTIVE_BRANCH"
+        echo ""
+        echo "  必须使用 worktree 并行开发："
+        echo ""
+        echo "    bash skills/dev/scripts/worktree-manage.sh create <feature-name>"
+        echo ""
+        echo "  或者先完成当前任务再开始新任务。"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # 阻止继续，必须用 worktree
+        exit 1
+    fi
+fi
+```
+
+**逻辑**：
+- 在 worktree 中 → 跳过检查（已隔离）
+- 在主仓库且有 `.dev-mode` → **阻止创建分支**，必须用 worktree
+- 在主仓库且无 `.dev-mode` → 继续创建分支
+
+---
+
 ## 创建功能分支
 
 ```bash

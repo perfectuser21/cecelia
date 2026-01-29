@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.26.0"
+version: "2.27.0"
 updated: "2026-01-29"
 changelog:
+  - 2.27.0: v11.3.1 - Worktree 强制检查（Step 3 阻止主仓库有活跃任务时创建分支，P5 重新激活）
   - 2.26.0: v11.3.0 - Stop Hook 循环控制器（替代 Ralph Loop，H7 重新激活）
   - 2.25.0: v11.2.12 - Credential Guard Hook（凭据保护，防止代码泄露）
   - 2.24.0: v11.2.10 - rm -rf 安全验证（safe_rm_rf 函数，路径验证防误删）
@@ -662,20 +663,25 @@ product_features:
   # --------------------------------------------------------------------------
   - id: P5
     name: Worktree Parallel Development
-    status: Deprecated
-    priority: P2
+    status: Committed
+    priority: P1
+    version: "11.3.1"
+    updated: "2026-01-29"
     description: |
-      支持多分支并行开发（已简化）：
-      - worktree-manage.sh 脚本保留但非默认流程
-      - 移除交互式并行检测步骤（02.5-parallel-detect.md）
-      - 一次只做一个任务，自动检测即可
+      支持多分支并行开发，Step 3 强制检查：
+      - 主仓库有活跃 .dev-mode 时阻止创建分支
+      - 必须使用 worktree 进行并行开发
+      - 避免主仓库产生冲突
+      v11.3.1: Step 3 强制检查 worktree（主仓库有活跃任务时阻止创建分支）
 
     entrypoints:
       - type: script
         file: skills/dev/scripts/worktree-manage.sh
+      - type: step
+        file: skills/dev/steps/03-branch.md
 
     golden_path: |
-      /dev 启动 → 自动检测环境 → 开发（单任务）
+      /dev Step 3 → 检测主仓库 .dev-mode → 有则阻止创建分支，必须用 worktree
 
     minimal_paths:
       - "worktree 脚本存在但不默认使用"
