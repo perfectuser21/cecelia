@@ -50,6 +50,14 @@ class TestAPI:
         with TestClient(app) as client:
             yield client
 
+    def test_ping_endpoint(self, client):
+        """Test ping endpoint."""
+        response = client.get("/ping")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["message"] == "pong"
+
     def test_health_endpoint(self, client):
         """Test health check endpoint."""
         response = client.get("/health")

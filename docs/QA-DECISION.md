@@ -1,35 +1,22 @@
----
-id: qa-decision-fix-cylia-to-cecelia
-version: 1.0.0
-created: 2026-01-29
-updated: 2026-01-29
-changelog:
-  - 1.0.0: 初始版本
----
-
 # QA Decision
 
 Decision: NO_RCI
-Priority: P2
+Priority: P0
 RepoType: Engine
 
-## Feature: 修复命名错误 (Cylia → Cecelia)
+Tests:
+  - dod_item: "GET /ping 返回 200 状态码"
+    method: auto
+    location: tests/test_api.py
+  - dod_item: "响应体为 { \"message\": \"pong\" }"
+    method: auto
+    location: tests/test_api.py
+  - dod_item: "端点无需认证，无需服务初始化即可响应"
+    method: auto
+    location: tests/test_api.py
 
-### Tests
+RCI:
+  new: []
+  update: []
 
-| DoD Item | Method | Location |
-|----------|--------|----------|
-| 代码中不再有 Cylia | manual | grep -r "Cylia" 返回空 |
-| 语音助手改为 Cecelia | manual | 检查 orchestrator_routes.py |
-| 架构文档已提交 | manual | git log 查看 |
-| 现有测试通过 | auto | pytest tests/ |
-| lint 检查通过 | auto | ruff check . |
-
-### RCI
-
-- new: []
-- update: []
-
-### Reason
-
-纯重命名任务，不涉及功能变更，无需新增/更新 RCI。只需确保现有测试和 lint 通过。
+Reason: 简单健康检查端点，无业务逻辑，仅需基础单元测试验证HTTP响应

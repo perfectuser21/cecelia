@@ -658,3 +658,12 @@ async def plan_summary():
             "time_estimation",
         ],
     }
+
+
+@app.get("/ping")
+async def ping():
+    """Lightweight health check endpoint.
+
+    Returns a simple pong response without requiring service initialization.
+    """
+    return {"message": "pong"}
