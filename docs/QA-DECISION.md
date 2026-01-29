@@ -1,56 +1,37 @@
-# QA Decision - Task Intelligence
+# QA Decision - M1 Database Connection + Focus Migration
 
 Decision: NO_RCI
 Priority: P1
-RepoType: Business
+RepoType: Engine
 
-Tests:
-  - dod_item: "Parser - Intent Analyzer 识别意图类型"
-    method: auto
-    location: tests/test_intelligence/test_intent_analyzer.py
+## Analysis
 
-  - dod_item: "Parser - Task Decomposer 拆解任务"
-    method: auto
-    location: tests/test_intelligence/test_task_decomposer.py
+### Change Type
+- **Type**: Feature (新功能)
+- **Scope**: 添加 PostgreSQL 数据库连接层 + Focus 逻辑迁移
 
-  - dod_item: "Parser - Dependency Builder 构建依赖图"
-    method: auto
-    location: tests/test_intelligence/test_dependency_builder.py
+### Impact Assessment
+- **Risk Level**: Medium
+- **Affected Areas**: 新增 db/pool.py, state/focus.py, API 路由
+- **Breaking Changes**: None (纯新增)
 
-  - dod_item: "Scheduler - Priority Calculator 计算优先级"
-    method: auto
-    location: tests/test_intelligence/test_scheduler.py
+## Tests
 
-  - dod_item: "Scheduler - Dependency Solver 拓扑排序"
-    method: auto
-    location: tests/test_intelligence/test_scheduler.py
+| DoD Item | Method | Location |
+|----------|--------|----------|
+| Python 能连接 PostgreSQL | auto | tests/test_db.py |
+| 所有表可读写 | auto | tests/test_db.py |
+| /api/brain/focus 返回 OKR 焦点 | auto | tests/test_state_api.py |
+| 手动覆盖焦点正常工作 | auto | tests/test_state_api.py |
+| 自动选择焦点逻辑正确 | auto | tests/test_focus.py |
 
-  - dod_item: "Detector - 监控 CI/Code/Security"
-    method: auto
-    location: tests/test_intelligence/test_detector.py
+## RCI
 
-  - dod_item: "Planner - ExecutionPlanner 生成执行图"
-    method: auto
-    location: tests/test_intelligence/test_planner.py
+```yaml
+new: []
+update: []
+```
 
-  - dod_item: "API - /parse 端点"
-    method: auto
-    location: tests/test_intelligence/test_parse_api.py
+## Reason
 
-  - dod_item: "API - /schedule 端点"
-    method: auto
-    location: tests/test_intelligence/test_schedule_api.py
-
-  - dod_item: "API - /detector 端点"
-    method: auto
-    location: tests/test_intelligence/test_detector_api.py
-
-  - dod_item: "API - /plan 端点"
-    method: auto
-    location: tests/test_intelligence/test_planner_api.py
-
-RCI:
-  new: []
-  update: []
-
-Reason: Business repo 新增 Intelligence 功能层，P1 优先级（重要但非核心路径），无需纳入回归契约。通过单元测试覆盖核心逻辑。
+M1 是新功能模块（数据库连接 + Focus 迁移），不涉及现有功能修改。需要单元测试覆盖新增代码，但无需回归契约更新。

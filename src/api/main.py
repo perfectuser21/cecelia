@@ -20,6 +20,8 @@ from src.intelligence.detector.ci_monitor import CIMonitor
 from src.intelligence.detector.code_monitor import CodeMonitor
 from src.intelligence.detector.security_monitor import SecurityMonitor
 from src.intelligence.planner.execution_planner import ExecutionPlanner
+from src.db.pool import Database, init_database, close_database
+from src.api.state_routes import router as state_router, set_database
 
 load_dotenv()
 
@@ -33,12 +35,13 @@ parser_service: Optional[ParserService] = None
 scheduler_service: Optional[SchedulerService] = None
 detector_service: Optional[DetectorService] = None
 execution_planner: Optional[ExecutionPlanner] = None
+database: Optional[Database] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global embedder, store, search_engine, parser_service, scheduler_service, detector_service, execution_planner
+    global embedder, store, search_engine, parser_service, scheduler_service, detector_service, execution_planner, database
 
     app_config = load_app_config()
     sor_config = load_sor_config()
@@ -78,9 +81,23 @@ async def lifespan(app: FastAPI):
     execution_planner = ExecutionPlanner(max_concurrent=3)
     logger.info("Intelligence Layer initialized")
 
+    # Initialize Database (State Layer)
+    try:
+        database = await init_database()
+        set_database(database)
+        logger.info("Database connection initialized")
+    except Exception as e:
+        logger.warning(f"Database connection failed (State Layer disabled): {e}")
+        database = None
+
     logger.info("Semantic Brain initialized")
 
     yield
+
+    # Cleanup
+    if database is not None:
+        await close_database()
+        logger.info("Database connection closed")
 
     logger.info("Shutting down Semantic Brain...")
 
@@ -88,9 +105,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Cecelia Semantic Brain",
     description="Private knowledge retrieval API",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
+
+# Include state routes (Brain API)
+app.include_router(state_router)
 
 
 # Request/Response models
