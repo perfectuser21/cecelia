@@ -2,11 +2,20 @@
 
 Decision: RCI_REQUIRED
 Priority: P1
-RepoType: Business
+RepoType: Service
+CentralManaged: true
 
-## Analysis
+## Central Quality Service
 
-### Service Overview
+RCI 由中央质检服务 `cecelia-quality` 统一管理：
+
+| 配置 | 位置 |
+|------|------|
+| 契约定义 | `cecelia-quality/contracts/cecelia-semantic-brain.regression-contract.yaml` |
+| 仓库注册 | `cecelia-quality/control-plane/repo-registry.yaml` |
+| API 端点 | `http://localhost:5681/api/contracts/cecelia-semantic-brain` |
+
+## Service Overview
 
 Cecelia Semantic Brain 是核心语义服务，提供：
 - 语义搜索 (ChromaDB + OpenAI Embeddings)
@@ -18,13 +27,7 @@ Cecelia Semantic Brain 是核心语义服务，提供：
 - 任务巡逻 (Patrol)
 - 状态管理 (Focus, Tick, Goals, Queue)
 
-### Impact Assessment
-
-- **Risk Level**: High (核心服务)
-- **Affected Areas**: 所有依赖 Brain API 的系统
-- **Breaking Changes**: API 变更会影响前端和其他服务
-
-### Risk Score
+## Risk Score
 
 | Rule | Triggered | Reason |
 |------|-----------|--------|
@@ -37,47 +40,13 @@ Cecelia Semantic Brain 是核心语义服务，提供：
 
 **RISK SCORE: 4** (RCI Required)
 
-## RCI Reference
+## RCI Summary
 
-详见 `docs/regression-contract.yaml`
-
-### P0 - 核心功能 (必须通过)
-
-| ID | Name | Method |
-|----|------|--------|
-| B1-001 | Brain API 健康检查 | auto |
-| B1-002 | 语义搜索 /fusion | auto |
-
-### P1 - 智能层 + 监控层
-
-| ID | Name | Method |
-|----|------|--------|
-| B1-003 | Parser API /parse | auto |
-| B1-004 | Scheduler API /schedule | auto |
-| B1-005 | Execution Planner /plan | auto |
-| B1-006 | Detector API /detector/* | auto |
-| B1-007 | Agent Monitor API /api/agents/* | auto |
-| B1-008 | Patrol API /api/patrol/* | auto |
-
-### P2 - 状态管理
-
-| ID | Name | Method |
-|----|------|--------|
-| B1-009 | Brain State API /api/brain/* | auto |
-
-## Tests
-
-| RCI | Test Location |
-|-----|---------------|
-| B1-001 | tests/test_api.py::TestAPI::test_health_endpoint |
-| B1-002 | tests/test_api.py::TestAPI::test_fusion_endpoint_success |
-| B1-003 | tests/test_intelligence/test_parse_api.py |
-| B1-004 | tests/test_intelligence/test_schedule_api.py |
-| B1-005 | tests/test_intelligence/test_planner_api.py |
-| B1-006 | tests/test_intelligence/test_detector_api.py |
-| B1-007 | tests/test_agent_monitor.py |
-| B1-008 | tests/test_patrol_api.py |
-| B1-009 | tests/test_tick_api.py |
+| Priority | IDs | Coverage |
+|----------|-----|----------|
+| P0 | B1-001, B1-002 | Health, Fusion (core) |
+| P1 | B1-003 ~ B1-008 | Parser, Scheduler, Planner, Detector, Agent Monitor, Patrol |
+| P2 | B1-009 | Brain State API |
 
 ## CI Integration
 
