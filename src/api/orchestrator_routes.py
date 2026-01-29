@@ -490,7 +490,7 @@ AGENT TEAM:
 - Nobel (诺贝) = 自动化肌肉（N8N）
 
 CRITICAL RULE - When to call call_autumnrice:
-- User says "启动秋米/orchestrator/指挥官" or any variation
+- User says "启动秋米/autumnrice/指挥官" or any variation
 - User says "帮我做/创建/实现 XXX功能"
 - User says "让大脑去做/执行 XXX"
 - User says "查一下服务器/VPS信息"
@@ -876,8 +876,8 @@ async def execute_tool(request: ToolCallRequest):
             if not task_desc:
                 return {"success": False, "error": "task is required"}
 
-            # Build the orchestrator prompt
-            prompt = f"/orchestrator {task_desc}"
+            # Build the autumnrice prompt
+            prompt = f"/autumnrice {task_desc}"
             if priority:
                 prompt += f" --priority {priority}"
             if project:
