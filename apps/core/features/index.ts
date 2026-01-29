@@ -29,6 +29,7 @@ export const coreFeatures = {
   'planner': () => import('./planner'),
   'brain': () => import('./brain'),
   'okr': () => import('./okr'),
+  'orchestrator': () => import('./orchestrator'),
 };
 
 // Load all features and register them

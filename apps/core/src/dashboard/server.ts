@@ -21,6 +21,7 @@ import taskSystemRoutes from '../task-system/routes.js';
 import brainRoutes from '../brain/routes.js';
 import okrRoutes from '../okr/routes.js';
 import watchdogRoutes from '../watchdog/routes.js';
+import orchestratorRoutes from '../orchestrator/routes.js';
 import { startMonitor as startWatchdogMonitor } from '../watchdog/service.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -147,6 +148,9 @@ app.use('/api/okr', okrRoutes);
 
 // Watchdog API routes (agent activity monitoring)
 app.use('/api/watchdog', watchdogRoutes);
+
+// Orchestrator API routes (chat + actions)
+app.use('/api/orchestrator', orchestratorRoutes);
 
 // Static frontend files (single frontend, theme switches by hostname in JS)
 // Compiled server is at apps/core/dist/dashboard/server.js
