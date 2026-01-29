@@ -9,11 +9,52 @@ from .focus import (
     FOCUS_OVERRIDE_KEY,
 )
 
+from .tick import (
+    get_tick_status,
+    enable_tick,
+    disable_tick,
+    execute_tick,
+    is_stale,
+    TICK_INTERVAL_MINUTES,
+    STALE_THRESHOLD_HOURS,
+)
+
+from .actions import (
+    create_task,
+    update_task,
+    create_goal,
+    update_goal,
+    set_memory,
+    log_decision,
+    batch_update_tasks,
+    execute_action,
+    ACTION_HANDLERS,
+)
+
 __all__ = [
+    # Focus
     "select_daily_focus",
     "get_daily_focus",
     "set_daily_focus",
     "clear_daily_focus",
     "get_focus_summary",
     "FOCUS_OVERRIDE_KEY",
+    # Tick
+    "get_tick_status",
+    "enable_tick",
+    "disable_tick",
+    "execute_tick",
+    "is_stale",
+    "TICK_INTERVAL_MINUTES",
+    "STALE_THRESHOLD_HOURS",
+    # Actions
+    "create_task",
+    "update_task",
+    "create_goal",
+    "update_goal",
+    "set_memory",
+    "log_decision",
+    "batch_update_tasks",
+    "execute_action",
+    "ACTION_HANDLERS",
 ]
