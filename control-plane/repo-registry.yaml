@@ -1,11 +1,8 @@
-# Repo Registry - Single Source of Truth
-# 这是所有 Repos 的唯一注册表
 version: 1.1.0
-updated: 2026-01-29
-
+updated: '2026-01-29'
 repos:
   - id: cecelia-workspace
-    name: "Cecelia Workspace"
+    name: Cecelia Workspace
     type: Workspace
     path: /home/xx/dev/cecelia-workspace
     git_url: https://github.com/ZenithJoycloud/cecelia-workspace
@@ -14,14 +11,13 @@ repos:
     priority: P0
     enabled: true
     runners:
-      qa: "npm run qa"
-      rci: "bash scripts/qa-run-rci.sh"
-      gp: "bash scripts/qa-run-gp.sh"
-    evidence_path: ".qa-evidence.json"
-    contract: "contracts/cecelia-workspace.regression-contract.yaml"
-
+      qa: npm run qa
+      rci: bash scripts/qa-run-rci.sh
+      gp: bash scripts/qa-run-gp.sh
+    evidence_path: .qa-evidence.json
+    contract: contracts/cecelia-workspace.regression-contract.yaml
   - id: cecelia-semantic-brain
-    name: "Cecelia Semantic Brain"
+    name: Cecelia Semantic Brain
     type: Service
     path: /home/xx/dev/cecelia-semantic-brain
     git_url: https://github.com/perfectuser21/cecelia-semantic-brain
@@ -31,13 +27,12 @@ repos:
     enabled: true
     port: 5220
     runners:
-      qa: "PYTHONPATH=. pytest tests/ -v"
-      lint: "ruff check src/ tests/"
-    evidence_path: ".qa-evidence.json"
-    contract: "contracts/cecelia-semantic-brain.regression-contract.yaml"
-
+      qa: PYTHONPATH=. pytest tests/ -v
+      lint: ruff check src/ tests/
+    evidence_path: .qa-evidence.json
+    contract: contracts/cecelia-semantic-brain.regression-contract.yaml
   - id: cecelia-quality
-    name: "Cecelia Quality"
+    name: Cecelia Quality
     type: Infrastructure
     path: /home/xx/dev/cecelia-quality
     git_url: https://github.com/ZenithJoycloud/cecelia-quality
@@ -47,6 +42,71 @@ repos:
     enabled: true
     port: 5681
     runners:
-      qa: "npm test"
-    evidence_path: ".qa-evidence.json"
-    contract: "contracts/cecelia-quality.regression-contract.yaml"
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: contracts/cecelia-quality.regression-contract.yaml
+  - id: cecelia-semantic-brain-agent-monitor
+    name: cecelia-semantic-brain-agent-monitor
+    type: Service
+    path: /home/xx/dev/cecelia-semantic-brain-agent-monitor
+    git_url: ''
+    main_branch: main
+    owner: Unknown
+    priority: P2
+    enabled: true
+    runners:
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: null
+  - id: cecelia-workflows
+    name: cecelia-workflows
+    type: Business
+    path: /home/xx/dev/cecelia-workflows
+    git_url: https://github.com/perfectuser21/cecelia-workflows.git
+    main_branch: main
+    owner: Unknown
+    priority: P2
+    enabled: true
+    runners:
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: null
+  - id: zenithjoy-creator
+    name: zenithjoy-creator
+    type: Engine
+    path: /home/xx/dev/zenithjoy-creator
+    git_url: https://github.com/perfectuser21/zenithjoy-creator.git
+    main_branch: main
+    owner: Unknown
+    priority: P2
+    enabled: true
+    runners:
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: null
+  - id: zenithjoy-engine
+    name: zenithjoy-engine
+    type: Engine
+    path: /home/xx/dev/zenithjoy-engine
+    git_url: https://github.com/perfectuser21/zenithjoy-engine.git
+    main_branch: main
+    owner: Unknown
+    priority: P2
+    enabled: true
+    runners:
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: null
+  - id: zenithjoyai
+    name: zenithjoyai
+    type: Business
+    path: /home/xx/dev/zenithjoyai
+    git_url: https://github.com/perfectuser21/zenithjoyai.git
+    main_branch: main
+    owner: Unknown
+    priority: P2
+    enabled: true
+    runners:
+      qa: npm test
+    evidence_path: .qa-evidence.json
+    contract: null
