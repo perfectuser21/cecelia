@@ -481,7 +481,7 @@ async def get_realtime_config():
             "api_key": api_key,
             "model": "gpt-4o-mini-realtime-preview",
             "voice": "alloy",
-            "instructions": """You are Cylia, voice assistant for Cecelia system.
+            "instructions": """You are Cecelia, the voice interface for the Cecelia system.
 
 CRITICAL RULE - When to call run_orchestrator:
 - User says "启动 orchestrator" or any variation (autostrator, ultrastrator, 指挥官)

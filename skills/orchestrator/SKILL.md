@@ -13,13 +13,13 @@ changelog:
 
 ## 触发方式
 
-1. **Cylia 语音调用**：用户通过语音说需求，Cylia 调用 `run_orchestrator` tool
+1. **Cecelia 语音调用**：用户通过语音说需求，Cecelia 调用 `run_orchestrator` tool
 2. **手动调用**：`/orchestrator <需求描述>`
 
 ## 架构
 
 ```
-Cylia (语音) → run_orchestrator tool → claude -p "/orchestrator ..."
+Cecelia (语音) → run_orchestrator tool → claude -p "/orchestrator ..."
                                               │
                                               ▼
                                        Orchestrator (本 skill)

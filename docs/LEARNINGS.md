@@ -1,6 +1,6 @@
 # Learnings
 
-## [2026-01-29] Cylia Realtime Voice + Orchestrator Tool
+## [2026-01-29] Cecelia Realtime Voice + Orchestrator Tool
 
 ### Bug: Import of non-existent module broke CI
 - **Problem**: `src/api/main.py` had an import `from src.orchestrator.routes import router as orchestrator_v2_router` that referenced a module from another branch/feature that was never committed
@@ -15,7 +15,7 @@
 ### Learning: OpenAI Realtime API WebSocket proxy
 - **Architecture**: FastAPI WebSocket endpoint acts as proxy between browser and OpenAI Realtime API
 - **Key insight**: Must handle binary frames for audio data, JSON frames for messages
-- **Tools approach**: Define tools in config, execute via `/realtime/tool` endpoint when Cylia calls them
+- **Tools approach**: Define tools in config, execute via `/realtime/tool` endpoint when Cecelia calls them
 
 ### Impact Assessment
 - **Severity**: Low - smooth implementation once import issue was fixed
