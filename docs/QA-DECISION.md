@@ -2,15 +2,17 @@
 
 Decision: NO_RCI
 Priority: P1
-RepoType: Business
+RepoType: Engine
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| 算法能自动选择合理的焦点 | auto | apps/core/src/brain/__tests__/focus.test.js |
-| 支持手动覆盖 | auto | apps/core/src/brain/__tests__/focus.test.js |
-| Decision Pack 包含焦点信息 | auto | apps/core/src/brain/__tests__/focus.test.js |
+| 可以手动触发 tick | auto | apps/core/src/brain/__tests__/tick.test.js |
+| tick 能自动选择并推进任务 | auto | apps/core/src/brain/__tests__/tick.test.js |
+| 决策日志记录完整 | auto | apps/core/src/brain/__tests__/tick.test.js |
+| tick 状态 API 工作正常 | auto | apps/core/src/brain/__tests__/tick.test.js |
+| 启用/禁用 tick 工作正常 | auto | apps/core/src/brain/__tests__/tick.test.js |
 
 ## RCI
 
@@ -19,4 +21,4 @@ RepoType: Business
 
 ## Reason
 
-新增 Brain Focus API，属于内部工具功能增强，不涉及已有核心路径。优先级 P1，无需纳入回归契约。测试通过单元测试验证算法正确性和 API 行为即可。
+Action Loop 是 Brain 系统的内部功能，用于定时自动推进任务。这是引擎层功能，不直接影响用户业务流程，不需要新建 RCI 契约。通过单元测试验证核心逻辑即可。

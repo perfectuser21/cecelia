@@ -3,6 +3,7 @@ import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy,
 import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
+import { getTickStatus, enableTick, disableTick, executeTick } from './tick.js';
 import pool from '../task-system/db.js';
 import crypto from 'crypto';
 
@@ -364,6 +365,60 @@ router.post('/focus/clear', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to clear focus', details: err.message });
+  }
+});
+
+// ==================== Tick API（Action Loop）====================
+
+/**
+ * POST /api/brain/tick
+ * 手动触发一次 tick
+ */
+router.post('/tick', async (req, res) => {
+  try {
+    const result = await executeTick();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to execute tick', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tick/status
+ * 获取 tick 状态
+ */
+router.get('/tick/status', async (req, res) => {
+  try {
+    const status = await getTickStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get tick status', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tick/enable
+ * 启用自动 tick
+ */
+router.post('/tick/enable', async (req, res) => {
+  try {
+    const result = await enableTick();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to enable tick', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tick/disable
+ * 禁用自动 tick
+ */
+router.post('/tick/disable', async (req, res) => {
+  try {
+    const result = await disableTick();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to disable tick', details: err.message });
   }
 });
 
