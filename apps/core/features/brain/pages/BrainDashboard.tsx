@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Brain, Activity, Target, ListTodo, RefreshCw, CheckCircle2, XCircle, Clock, Zap } from 'lucide-react';
+import { Brain, Activity, Target, ListTodo, RefreshCw, CheckCircle2, XCircle, Clock, Zap, Database } from 'lucide-react';
+
+interface OrchestratorStatus {
+  status: 'healthy' | 'unhealthy';
+  indexed_chunks: number;
+  layer2_state?: {
+    current_focus?: string;
+    active_tasks?: number;
+    last_decision?: string;
+  };
+}
 
 interface BrainStatus {
   policy_version: number;
@@ -38,16 +48,27 @@ interface BrainStatus {
 
 export default function BrainDashboard() {
   const [status, setStatus] = useState<BrainStatus | null>(null);
+  const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/brain/status');
-      if (!res.ok) throw new Error('Failed to fetch brain status');
-      const data = await res.json();
-      setStatus(data);
+      const [brainRes, orchestratorRes] = await Promise.all([
+        fetch('/api/brain/status'),
+        fetch('/api/orchestrator/health'),
+      ]);
+
+      if (!brainRes.ok) throw new Error('Failed to fetch brain status');
+      const brainData = await brainRes.json();
+      setStatus(brainData);
+
+      if (orchestratorRes.ok) {
+        const orchestratorData = await orchestratorRes.json();
+        setOrchestratorStatus(orchestratorData);
+      }
+
       setLastRefresh(new Date());
       setError(null);
     } catch (err) {
@@ -116,7 +137,40 @@ export default function BrainDashboard() {
       </div>
 
       {/* Status Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Orchestrator Status */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-3 mb-4">
+            <Database className="w-5 h-5 text-cyan-500" />
+            <h3 className="font-semibold text-slate-900 dark:text-white">Orchestrator</h3>
+          </div>
+          {orchestratorStatus ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-600 dark:text-slate-400">Status</span>
+                <span className={`flex items-center gap-1.5 text-sm ${orchestratorStatus.status === 'healthy' ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {orchestratorStatus.status === 'healthy' ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                  {orchestratorStatus.status}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-600 dark:text-slate-400">Indexed Chunks</span>
+                <span className="text-sm font-medium text-slate-900 dark:text-white">
+                  {orchestratorStatus.indexed_chunks}
+                </span>
+              </div>
+              {orchestratorStatus.layer2_state?.current_focus && (
+                <div className="mt-3 p-2 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg">
+                  <p className="text-xs text-cyan-600 dark:text-cyan-400">
+                    Focus: {orchestratorStatus.layer2_state.current_focus}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400">Not connected</p>
+          )}
+        </div>
         {/* System Health */}
         <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-3 mb-4">
