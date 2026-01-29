@@ -1,4 +1,4 @@
-# QA Decision - M4 Queue Layer Migration
+# QA Decision - M5 Integration Tests
 
 Decision: NO_RCI
 Priority: P1
@@ -7,27 +7,22 @@ RepoType: Engine
 ## Analysis
 
 ### Change Type
-- **Type**: Feature (新功能)
-- **Scope**: 迁移 PRD Queue 逻辑到 Python
+- **Type**: Test (测试)
+- **Scope**: 集成测试覆盖
 
 ### Impact Assessment
 - **Risk Level**: Low
-- **Affected Areas**: 新增 state/queue.py, API 路由
-- **Breaking Changes**: None (纯新增)
+- **Affected Areas**: 仅新增测试文件
+- **Breaking Changes**: None (纯测试)
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| get_queue() 正常工作 | auto | tests/test_queue.py |
-| init_queue() 正常工作 | auto | tests/test_queue.py |
-| get_next_prd() 正常工作 | auto | tests/test_queue.py |
-| start_current_prd() 正常工作 | auto | tests/test_queue.py |
-| complete_prd() 正常工作 | auto | tests/test_queue.py |
-| fail_prd() 正常工作 | auto | tests/test_queue.py |
-| retry_failed() 正常工作 | auto | tests/test_queue.py |
-| clear_queue() 正常工作 | auto | tests/test_queue.py |
-| Queue API 端点正常 | auto | tests/test_queue_api.py |
+| Focus + Tick 联动测试 | auto | tests/test_integration.py |
+| Actions + Goals 联动测试 | auto | tests/test_integration.py |
+| Queue 工作流测试 | auto | tests/test_integration.py |
+| 全模块端到端测试 | auto | tests/test_integration.py |
 
 ## RCI
 
@@ -38,4 +33,4 @@ update: []
 
 ## Reason
 
-M4 是新功能模块（Queue Layer 迁移），不涉及现有功能修改。需要单元测试覆盖新增代码，但无需回归契约更新。
+M5 是测试模块，不涉及功能修改。验证所有迁移模块协同工作。
