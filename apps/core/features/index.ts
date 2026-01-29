@@ -28,6 +28,7 @@ export const coreFeatures = {
   'quality': () => import('./quality'),
   'planner': () => import('./planner'),
   'brain': () => import('./brain'),
+  'okr': () => import('./okr'),
 };
 
 // Load all features and register them

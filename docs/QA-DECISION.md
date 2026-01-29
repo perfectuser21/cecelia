@@ -1,18 +1,18 @@
 # QA Decision
 
 Decision: NO_RCI
-Priority: P1
-RepoType: Engine
+Priority: P2
+RepoType: Business
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| 可以手动触发 tick | auto | apps/core/src/brain/__tests__/tick.test.js |
-| tick 能自动选择并推进任务 | auto | apps/core/src/brain/__tests__/tick.test.js |
-| 决策日志记录完整 | auto | apps/core/src/brain/__tests__/tick.test.js |
-| tick 状态 API 工作正常 | auto | apps/core/src/brain/__tests__/tick.test.js |
-| 启用/禁用 tick 工作正常 | auto | apps/core/src/brain/__tests__/tick.test.js |
+| /okr 页面可访问 | manual | 浏览器访问 /okr 路由验证页面加载 |
+| 显示所有 OKR 树 | manual | 验证 OKR 树组件显示正确数据 |
+| 显示今日焦点 | manual | 验证 FocusPanel 组件显示焦点数据 |
+| 进度条正确显示 | manual | 验证进度条百分比与数据一致 |
+| 响应式布局 | manual | 验证移动端和桌面端布局正确 |
 
 ## RCI
 
@@ -21,4 +21,4 @@ RepoType: Engine
 
 ## Reason
 
-Action Loop 是 Brain 系统的内部功能，用于定时自动推进任务。这是引擎层功能，不直接影响用户业务流程，不需要新建 RCI 契约。通过单元测试验证核心逻辑即可。
+OKR Dashboard 是纯前端展示页面，不涉及核心业务流程，无需纳入回归契约。手动验证 UI 显示即可。
