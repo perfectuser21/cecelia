@@ -5,6 +5,7 @@ Exposes ~/runtime/state.json, chat API, voice API, and realtime WebSocket to the
 
 import asyncio
 import base64
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -18,6 +19,10 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from src.db.pool import Database
+from src.orchestrator.models import TRD
+from src.orchestrator.planner import Planner
+from src.orchestrator.state_machine import StateMachine, StateTransitionError
+from src.orchestrator import routes as orchestrator_v2
 
 # Database dependency - will be set by main.py
 _db: Optional[Database] = None
@@ -868,7 +873,7 @@ async def execute_tool(request: ToolCallRequest):
             return {"success": False, "error": f"找不到匹配的{item_type}: {item_name or item_id}"}
 
         elif tool_name == "call_autumnrice":
-            # Call Autumnrice (秋米) - orchestrator agent with Opus model
+            # Call Autumnrice (秋米) - directly use Orchestrator v2 API
             task_desc = args.get("task", "")
             priority = args.get("priority", "P1")
             project = args.get("project")
@@ -876,54 +881,120 @@ async def execute_tool(request: ToolCallRequest):
             if not task_desc:
                 return {"success": False, "error": "task is required"}
 
-            # Build the autumnrice prompt
-            prompt = f"/autumnrice {task_desc}"
-            if priority:
-                prompt += f" --priority {priority}"
-            if project:
-                prompt += f" --project {project}"
-
-            # Run Autumnrice (headless Claude Code with Opus model)
-            claude_path = HOME / ".local" / "bin" / "claude"
             try:
-                result = subprocess.run(
-                    [str(claude_path), "-p", prompt, "--model", "opus", "--output-format", "json"],
-                    capture_output=True,
-                    text=True,
-                    timeout=180,  # Opus needs more time
-                    cwd=str(HOME / "dev" / "cecelia-semantic-brain")
-                )
+                # Get database from v2 routes
+                db = orchestrator_v2.get_db()
 
-                if result.returncode == 0:
-                    try:
-                        output = json.loads(result.stdout)
-                        return {
-                            "success": True,
-                            "result": {
-                                "action": "autumnrice_executed",
-                                "task": task_desc,
-                                "output": output
-                            }
-                        }
-                    except json.JSONDecodeError:
-                        return {
-                            "success": True,
-                            "result": {
-                                "action": "orchestrator_executed",
-                                "task": task_desc,
-                                "output": result.stdout[:500]
-                            }
-                        }
-                else:
+                # Generate idempotency_key from task description hash
+                idempotency_key = hashlib.sha256(task_desc.encode()).hexdigest()[:16]
+
+                # Check for existing TRD with same idempotency_key
+                existing = await db.fetchrow(
+                    "SELECT * FROM trds WHERE idempotency_key = $1",
+                    idempotency_key
+                )
+                if existing:
+                    # Return existing TRD
+                    trd = orchestrator_v2._row_to_trd(existing)
+                    tasks_rows = await db.fetch(
+                        "SELECT * FROM orchestrator_tasks WHERE trd_id = $1",
+                        trd.id
+                    )
+                    tasks = [orchestrator_v2._row_to_task(row) for row in tasks_rows]
                     return {
-                        "success": False,
-                        "error": f"Orchestrator failed: {result.stderr[:200]}"
+                        "success": True,
+                        "result": {
+                            "action": "trd_exists",
+                            "message": "TRD already exists with same task description",
+                            "trd_id": trd.id,
+                            "trd_title": trd.title,
+                            "trd_status": trd.status.value,
+                            "tasks_count": len(tasks),
+                            "tasks": [{"id": t.id, "title": t.title, "status": t.status.value} for t in tasks]
+                        }
                     }
-            except subprocess.TimeoutExpired:
+
+                # Create new TRD
+                trd = TRD(
+                    title=task_desc[:100],  # Truncate title
+                    description=task_desc,
+                    projects=[project] if project else [],
+                    acceptance_criteria=[],
+                )
+                await orchestrator_v2._save_trd(db, trd, idempotency_key=idempotency_key)
+
+                # Call planner to decompose into tasks
+                planner = Planner()
+                context = f"Priority: {priority}"
+                if project:
+                    context += f"\nProject: {project}"
+                plan_result = planner.plan(trd, context)
+
+                if not plan_result.success:
+                    return {
+                        "success": True,
+                        "result": {
+                            "action": "trd_created",
+                            "trd_id": trd.id,
+                            "trd_title": trd.title,
+                            "trd_status": trd.status.value,
+                            "planning_error": plan_result.error,
+                            "tasks_count": 0,
+                            "tasks": []
+                        }
+                    }
+
+                # Validate and save tasks
+                errors = planner.validate_tasks(plan_result.tasks)
+                if errors:
+                    return {
+                        "success": True,
+                        "result": {
+                            "action": "trd_created",
+                            "trd_id": trd.id,
+                            "trd_title": trd.title,
+                            "trd_status": trd.status.value,
+                            "validation_errors": errors,
+                            "tasks_count": 0,
+                            "tasks": []
+                        }
+                    }
+
+                # Update TRD and tasks via state machine
+                state_machine = StateMachine()
+                try:
+                    trd, tasks = state_machine.plan_trd(trd, plan_result.tasks)
+                except StateTransitionError as e:
+                    return {
+                        "success": True,
+                        "result": {
+                            "action": "trd_created",
+                            "trd_id": trd.id,
+                            "trd_title": trd.title,
+                            "trd_status": trd.status.value,
+                            "state_error": str(e),
+                            "tasks_count": 0,
+                            "tasks": []
+                        }
+                    }
+
+                # Save to DB
+                await orchestrator_v2._save_trd(db, trd)
+                for task in tasks:
+                    await orchestrator_v2._save_task(db, task)
+
                 return {
-                    "success": False,
-                    "error": "Orchestrator timeout (120s)"
+                    "success": True,
+                    "result": {
+                        "action": "trd_created_and_planned",
+                        "trd_id": trd.id,
+                        "trd_title": trd.title,
+                        "trd_status": trd.status.value,
+                        "tasks_count": len(tasks),
+                        "tasks": [{"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority} for t in tasks]
+                    }
                 }
+
             except Exception as e:
                 return {"success": False, "error": f"Orchestrator error: {e}"}
 
