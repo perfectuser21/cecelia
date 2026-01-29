@@ -1,50 +1,48 @@
 ---
-id: audit-report-task-system-api
+id: audit-report-quality-activation
 version: 1.0.0
-created: 2026-01-28
-updated: 2026-01-28
+created: 2026-01-29
+updated: 2026-01-29
 changelog:
-  - 1.0.0: Initial audit report
+  - 1.0.0: Quality Activation audit report
 ---
 
 # Audit Report
 
-Branch: cp-task-system-api
-Date: 2026-01-28
-Scope: api/src/task-system/db.js, api/src/task-system/projects.js, api/src/task-system/goals.js, api/src/task-system/tasks.js, api/src/task-system/links.js, api/src/task-system/runs.js, api/server.js, tests/api/integration.test.js
+Branch: cp-quality-activation
+Date: 2026-01-29
+Scope: api/lib/registry.js, api/lib/contracts.js, api/lib/executor.js, api/lib/dashboard.js, api/server.js
 Target Level: L2
 
 Summary:
   L1: 0
   L2: 0
-  L3: 0
+  L3: 2
   L4: 0
 
 Decision: PASS
 
 Findings:
-  - id: A1-001
-    layer: L1
-    file: api/src/task-system/db.js
-    line: 9
-    issue: 硬编码数据库密码存在安全风险
-    fix: 使用环境变量存储敏感信息（process.env.DB_PASSWORD）
-    status: fixed
+  - id: A3-001
+    layer: L3
+    file: api/lib/executor.js
+    line: 170-171
+    issue: executeAll 函数中重复导入 registry 模块（已在顶部导入）
+    fix: 移除动态 import，使用顶部已导入的模块
+    status: pending
 
-  - id: A2-001
-    layer: L2
-    file: api/src/task-system/projects.js
-    line: 45-117
-    issue: PATCH/UPDATE 路由缺少输入验证，空 body 可能导致错误 SQL
-    fix: 添加 if (updates.length === 0) return 400 检查
-    status: fixed
-
-  - id: A2-002
-    layer: L2
-    file: api/src/task-system/runs.js
-    line: 46
-    issue: POST /tasks/:id/runs 路由路径不一致（应该在 tasks router）
-    fix: 将路由修正为 POST /api/runs，task_id 在 body 中传递
-    status: fixed
+  - id: A3-002
+    layer: L3
+    file: api/lib/dashboard.js
+    line: 105
+    issue: lastFullScan 字段始终为 null，TODO 未实现
+    fix: 实现 trend tracking 或移除字段
+    status: pending
 
 Blockers: []
+
+Notes:
+- 所有模块正确处理错误情况
+- API 端点有适当的输入验证
+- 文件操作有 try-catch 保护
+- 无安全漏洞（无 SQL 注入、命令注入风险）

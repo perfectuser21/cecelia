@@ -1,61 +1,43 @@
 ---
-id: qa-decision-task-system-api
+id: qa-decision-quality-activation
 version: 1.0.0
-created: 2026-01-28
-updated: 2026-01-28
+created: 2026-01-29
+updated: 2026-01-29
 changelog:
-  - 1.0.0: Initial QA Decision
+  - 1.0.0: Quality Activation QA Decision
 ---
 
 # QA Decision
 
-Decision: NO_RCI
-Priority: P1
-RepoType: Business
+Decision: MUST_ADD_RCI
+Priority: P0
+RepoType: Engine
 
-Tests:
-  - dod_item: "Projects CRUD API"
-    method: auto
-    location: tests/api/projects.test.ts
+## Tests
 
-  - dod_item: "Goals CRUD API"
-    method: auto
-    location: tests/api/goals.test.ts
+| DoD Item | Method | Location |
+|----------|--------|----------|
+| GET /api/repos 返回所有注册仓库 | auto | tests/api/registry.test.ts |
+| POST /api/repos/discover 发现未注册仓库 | auto | tests/api/registry.test.ts |
+| GET /api/contracts/:repoId 返回 RCI 列表 | auto | tests/api/contracts.test.ts |
+| POST /api/execute 触发仓库质检 | auto | tests/api/executor.test.ts |
+| GET /api/dashboard/overview 返回健康概览 | auto | tests/api/dashboard.test.ts |
 
-  - dod_item: "Tasks CRUD API"
-    method: auto
-    location: tests/api/tasks.test.ts
+## RCI
 
-  - dod_item: "POST /api/tasks/:id/links（创建链接）"
-    method: auto
-    location: tests/api/links.test.ts
+### New RCIs
 
-  - dod_item: "GET /api/tasks/:id/backlinks（查询反向链接）"
-    method: auto
-    location: tests/api/links.test.ts
+| ID | Name | Scope | Priority | Triggers |
+|----|------|-------|----------|----------|
+| C-REGISTRY-API-001 | Registry API CRUD | /api/repos 端点正常工作，支持列表、详情、注册、删除、发现 | P0 | PR, Release |
+| C-CONTRACT-API-001 | Contract API 查询 | /api/contracts 端点正常工作，支持列表、仓库契约、单个 RCI 详情 | P0 | PR, Release |
+| C-EXECUTE-ENGINE-001 | 执行引擎 | /api/execute 能触发远程仓库质检并返回 RCI 结果 | P0 | PR, Release |
+| C-DASHBOARD-API-001 | Dashboard 数据聚合 | /api/dashboard/overview 返回所有仓库健康状态聚合 | P1 | PR, Release |
 
-  - dod_item: "DELETE /api/tasks/:id/links/:linkId（删除链接）"
-    method: auto
-    location: tests/api/links.test.ts
+### Update RCIs
 
-  - dod_item: "GET /api/projects/:id/stats（项目统计）"
-    method: auto
-    location: tests/api/projects.test.ts
+None
 
-  - dod_item: "GET /api/tasks?status=queued&priority=P0（筛选）"
-    method: auto
-    location: tests/api/tasks.test.ts
+## Reason
 
-  - dod_item: "连接到 PostgreSQL"
-    method: auto
-    location: tests/api/db.test.ts
-
-  - dod_item: "错误处理"
-    method: auto
-    location: tests/api/error-handling.test.ts
-
-RCI:
-  new: []
-  update: []
-
-Reason: 新增 REST API 基础设施，无需纳入回归契约（全新功能），采用自动化测试覆盖所有端点
+Quality 激活是核心功能，将静态配置文件变为可用 API。所有主要端点（Registry、Contract、Execute、Dashboard）都是 Must-never-break 的稳定接口，必须纳入回归契约。

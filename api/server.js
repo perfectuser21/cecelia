@@ -5,6 +5,12 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+// Quality Activation modules
+import * as registry from './lib/registry.js';
+import * as contracts from './lib/contracts.js';
+import * as executor from './lib/executor.js';
+import * as dashboard from './lib/dashboard.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
@@ -328,6 +334,213 @@ app.use('/api/goals', goalsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/tasks', linksRouter);
 app.use('/api/runs', runsRouter);
+
+// ==========================================
+// M1: Registry API
+// ==========================================
+
+// GET /api/repos - List all repos
+app.get('/api/repos', (req, res) => {
+  try {
+    const repos = registry.getAllRepos();
+    res.json(repos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/repos/:id - Get single repo
+app.get('/api/repos/:id', (req, res) => {
+  try {
+    const repo = registry.getRepoById(req.params.id);
+    if (!repo) {
+      return res.status(404).json({ error: 'Repo not found' });
+    }
+    res.json(repo);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/repos - Register new repo
+app.post('/api/repos', (req, res) => {
+  try {
+    const { id, name, path, type, git_url, main_branch, priority, runners } = req.body;
+
+    if (!id || !path) {
+      return res.status(400).json({ error: 'Missing required fields: id, path' });
+    }
+
+    const repo = registry.registerRepo({
+      id, name, path, type, git_url, main_branch, priority, runners,
+    });
+
+    res.status(201).json(repo);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/repos/:id - Remove repo
+app.delete('/api/repos/:id', (req, res) => {
+  try {
+    const success = registry.removeRepo(req.params.id);
+    if (!success) {
+      return res.status(404).json({ error: 'Repo not found' });
+    }
+    res.json({ success: true, message: `Repo '${req.params.id}' removed` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/repos/discover - Discover unregistered repos
+app.post('/api/repos/discover', (req, res) => {
+  try {
+    const { register } = req.body;
+
+    const discovered = registry.discoverRepos();
+
+    // If register array provided, register those repos
+    if (Array.isArray(register) && register.length > 0) {
+      const registered = registry.registerDiscovered(register);
+      return res.json({
+        discovered,
+        registered,
+      });
+    }
+
+    res.json({ discovered });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// M2: Contract API
+// ==========================================
+
+// GET /api/contracts - List all contracts
+app.get('/api/contracts', (req, res) => {
+  try {
+    const contractList = contracts.getAllContracts();
+    res.json(contractList);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/contracts/:repoId - Get repo's RCI list
+app.get('/api/contracts/:repoId', (req, res) => {
+  try {
+    const contract = contracts.getContractByRepoId(req.params.repoId);
+    if (!contract) {
+      return res.status(404).json({ error: 'Contract not found for repo' });
+    }
+    res.json(contract);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/contracts/:repoId/rci/:rciId - Get single RCI
+app.get('/api/contracts/:repoId/rci/:rciId', (req, res) => {
+  try {
+    const rci = contracts.getRciById(req.params.repoId, req.params.rciId);
+    if (!rci) {
+      return res.status(404).json({ error: 'RCI not found' });
+    }
+    res.json(rci);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// M3: Execution Engine
+// ==========================================
+
+// POST /api/execute - Execute QA for a repo
+app.post('/api/execute', async (req, res) => {
+  try {
+    const { repoId, options } = req.body;
+
+    if (!repoId) {
+      return res.status(400).json({ error: 'Missing required field: repoId' });
+    }
+
+    const result = await executor.executeQA(repoId, options || {});
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/execute/all - Execute QA for all repos
+app.post('/api/execute/all', async (req, res) => {
+  try {
+    const { options } = req.body;
+    const results = await executor.executeAll(options || {});
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/execute/:runId - Get execution status
+app.get('/api/execute/:runId', (req, res) => {
+  try {
+    const run = executor.getRunById(req.params.runId);
+    if (!run) {
+      return res.status(404).json({ error: 'Run not found' });
+    }
+    res.json(run);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// M5: Dashboard Data
+// ==========================================
+
+// GET /api/dashboard/overview - All repos health overview
+app.get('/api/dashboard/overview', (req, res) => {
+  try {
+    const overview = dashboard.getDashboardOverview();
+    res.json(overview);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/dashboard/repo/:id - Single repo dashboard
+app.get('/api/dashboard/repo/:id', (req, res) => {
+  try {
+    const data = dashboard.getRepoDashboard(req.params.id);
+    if (!data) {
+      return res.status(404).json({ error: 'Repo not found' });
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/dashboard/history - History/trend data
+app.get('/api/dashboard/history', (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const history = dashboard.getDashboardHistory(days);
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// Health & Legacy endpoints
+// ==========================================
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

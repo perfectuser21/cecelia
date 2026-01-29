@@ -1,6 +1,6 @@
 {
   "name": "cecelia-quality",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "> 企业级质量保障基础设施 - 为 AI 驱动的开发工作流提供质量控制",
   "main": "index.js",
   "directories": {
