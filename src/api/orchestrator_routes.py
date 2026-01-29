@@ -873,14 +873,83 @@ async def execute_tool(request: ToolCallRequest):
             return {"success": False, "error": f"找不到匹配的{item_type}: {item_name or item_id}"}
 
         elif tool_name == "call_autumnrice":
-            # Call Autumnrice (秋米) - directly use Orchestrator v2 API
+            # Call Autumnrice (秋米) - dual mode: chain or queue
+            # - chain: 即时执行，同步返回（适合 NOW 场景）
+            # - queue: 任务入库，异步执行（适合 TONIGHT 场景，默认）
             task_desc = args.get("task", "")
+            mode = args.get("mode", "queue")  # "chain" or "queue"
             priority = args.get("priority", "P1")
             project = args.get("project")
 
             if not task_desc:
                 return {"success": False, "error": "task is required"}
 
+            if mode not in ("chain", "queue"):
+                return {"success": False, "error": "mode must be 'chain' or 'queue'"}
+
+            # ============== MODE: CHAIN ==============
+            # Agent Chain - 即时执行，同步返回
+            if mode == "chain":
+                # Build the autumnrice prompt
+                prompt = f"/autumnrice {task_desc}"
+                if priority:
+                    prompt += f" --priority {priority}"
+                if project:
+                    prompt += f" --project {project}"
+
+                # Run Autumnrice (headless Claude Code with Opus model)
+                claude_path = HOME / ".local" / "bin" / "claude"
+                try:
+                    result = subprocess.run(
+                        [
+                            str(claude_path), "-p", prompt,
+                            "--model", "opus",
+                            "--output-format", "json",
+                            "--allowed-tools", "Bash"
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,  # 5 minutes for chain mode
+                        cwd=str(HOME / "dev" / "cecelia-semantic-brain")
+                    )
+
+                    if result.returncode == 0:
+                        try:
+                            output = json.loads(result.stdout)
+                            return {
+                                "success": True,
+                                "result": {
+                                    "action": "chain_executed",
+                                    "mode": "chain",
+                                    "task": task_desc,
+                                    "output": output
+                                }
+                            }
+                        except json.JSONDecodeError:
+                            return {
+                                "success": True,
+                                "result": {
+                                    "action": "chain_executed",
+                                    "mode": "chain",
+                                    "task": task_desc,
+                                    "output": result.stdout[:2000]
+                                }
+                            }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Chain mode failed: {result.stderr[:500]}"
+                        }
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "error": "Chain mode timeout (300s)"
+                    }
+                except Exception as e:
+                    return {"success": False, "error": f"Chain mode error: {e}"}
+
+            # ============== MODE: QUEUE ==============
+            # Task Queue - 任务入库，异步执行
             try:
                 # Get database from v2 routes
                 db = orchestrator_v2.get_db()
@@ -905,12 +974,16 @@ async def execute_tool(request: ToolCallRequest):
                         "success": True,
                         "result": {
                             "action": "trd_exists",
-                            "message": "TRD already exists with same task description",
+                            "mode": "queue",
+                            "message": "TRD already exists with same task",
                             "trd_id": trd.id,
                             "trd_title": trd.title,
                             "trd_status": trd.status.value,
                             "tasks_count": len(tasks),
-                            "tasks": [{"id": t.id, "title": t.title, "status": t.status.value} for t in tasks]
+                            "tasks": [
+                                {"id": t.id, "title": t.title, "status": t.status.value}
+                                for t in tasks
+                            ]
                         }
                     }
 
@@ -935,6 +1008,7 @@ async def execute_tool(request: ToolCallRequest):
                         "success": True,
                         "result": {
                             "action": "trd_created",
+                            "mode": "queue",
                             "trd_id": trd.id,
                             "trd_title": trd.title,
                             "trd_status": trd.status.value,
@@ -951,6 +1025,7 @@ async def execute_tool(request: ToolCallRequest):
                         "success": True,
                         "result": {
                             "action": "trd_created",
+                            "mode": "queue",
                             "trd_id": trd.id,
                             "trd_title": trd.title,
                             "trd_status": trd.status.value,
@@ -969,6 +1044,7 @@ async def execute_tool(request: ToolCallRequest):
                         "success": True,
                         "result": {
                             "action": "trd_created",
+                            "mode": "queue",
                             "trd_id": trd.id,
                             "trd_title": trd.title,
                             "trd_status": trd.status.value,
@@ -987,16 +1063,26 @@ async def execute_tool(request: ToolCallRequest):
                     "success": True,
                     "result": {
                         "action": "trd_created_and_planned",
+                        "mode": "queue",
                         "trd_id": trd.id,
                         "trd_title": trd.title,
                         "trd_status": trd.status.value,
                         "tasks_count": len(tasks),
-                        "tasks": [{"id": t.id, "title": t.title, "status": t.status.value, "priority": t.priority} for t in tasks]
+                        "tasks": [
+                            {
+                                "id": t.id,
+                                "title": t.title,
+                                "status": t.status.value,
+                                "priority": t.priority
+                            }
+                            for t in tasks
+                        ],
+                        "next_step": "Tasks queued. Call /tick or wait for N8N."
                     }
                 }
 
             except Exception as e:
-                return {"success": False, "error": f"Orchestrator error: {e}"}
+                return {"success": False, "error": f"Queue mode error: {e}"}
 
         else:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
