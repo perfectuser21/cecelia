@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.8.0] - 2026-01-30
+
+### Added
+
+- **Gate 文件防误用字段（方案 A）**
+  - `head_sha`: 当前 commit SHA，防止旧文件跨 commit 复用
+  - `generated_at`: ISO8601 时间戳，替代 `timestamp`
+  - `task_id`: 从分支名提取（cp-xxx → xxx）
+  - `tool_version`: 工具版本号 (2.0.0)
+
+- **Verify 脚本 Exit Code 分层**
+  - `exit 0`: 验证通过
+  - `exit 3`: 验证器缺失/配置错误（secret 不存在）
+  - `exit 4`: 输入格式错误/JSON 解析失败
+  - `exit 5`: 签名/校验失败
+  - `exit 6`: 分支/任务不匹配
+
+- **PR Gate 硬失败机制**
+  - `verify-gate-signature.sh` 不存在时直接 `exit 2`（不再跳过）
+  - 根据不同 exit code 给出具体错误提示
+
+### Changed
+
+- **设计哲学（方案 A）**
+  - Gate 文件是本地工作流的"自我约束"
+  - CI 是"真正裁判"，运行自己的测试
+  - Gate 文件留在 `.gitignore`，不进仓库
+
 ## [11.7.1] - 2026-01-30
 
 ### Fixed

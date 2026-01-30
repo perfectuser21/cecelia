@@ -1,8 +1,15 @@
-# Audit Report
+---
+id: audit-report-gate-v2
+version: 1.0.0
+created: 2026-01-30
+updated: 2026-01-30
+---
 
-Branch: cp-0130-gate-bugfix
+# Audit Report: Gate 机制方案 A 改造
+
+Branch: cp-0130-gate-v2
 Date: 2026-01-30
-Scope: scripts/gate/, hooks/pr-gate-v2.sh, .github/workflows/ci.yml
+Scope: scripts/gate/, hooks/pr-gate-v2.sh
 Target Level: L2
 
 ## Summary
@@ -16,38 +23,61 @@ Target Level: L2
 
 Decision: PASS
 
-## Bug 修复验证
+## 审计范围
 
-### 1. Secret 读取换行符问题
+| 文件 | 变更类型 |
+|------|----------|
+| scripts/gate/generate-gate-file.sh | 增强（新字段） |
+| scripts/gate/verify-gate-signature.sh | 重写（exit code 分层） |
+| hooks/pr-gate-v2.sh | 增强（硬失败 + 分层错误） |
 
-| 文件 | 修复 | 验证 |
+## L1 检查（阻塞性）
+
+| 项目 | 状态 | 说明 |
 |------|------|------|
-| generate-gate-file.sh | `tr -d '\n\r'` | PASS |
-| verify-gate-signature.sh | `tr -d '\n\r'` | PASS |
+| 语法错误 | PASS | bash -n 通过 |
+| 命令注入 | PASS | 使用 jq 安全生成 JSON |
+| 路径遍历 | PASS | 无用户输入路径 |
 
-### 2. jq JSON 生成
+## L2 检查（功能性）
 
-| 文件 | 修复 | 验证 |
+| 项目 | 状态 | 说明 |
 |------|------|------|
-| generate-gate-file.sh | 使用 `jq -n --arg` 生成 | PASS |
+| 新字段生成 | PASS | head_sha, generated_at, task_id, tool_version |
+| Exit code 分层 | PASS | 0/3/4/5/6 正确区分 |
+| 硬失败机制 | PASS | 脚本缺失时 exit 2 |
+| 向后兼容 | PASS | 支持旧版 timestamp 字段 |
 
-### 3. null 字符串处理
+## L3 检查（最佳实践）
 
-| 文件 | 修复 | 验证 |
+| 项目 | 状态 | 说明 |
 |------|------|------|
-| verify-gate-signature.sh | 添加 `== "null"` 检查 | PASS |
+| 错误消息清晰 | PASS | 每个 exit code 有具体提示 |
+| 注释完整 | PASS | 版本历史记录 |
 
-### 4. Gate 阻止型设计
+## 测试验证
 
-| 文件 | 修复 | 验证 |
-|------|------|------|
-| pr-gate-v2.sh | GATE_FAILED=1 → exit 2 | PASS |
+```bash
+# 生成 gate 文件
+bash scripts/gate/generate-gate-file.sh prd
+# 输出包含所有新字段
 
-### 5. CI Gate 检查
+# 验证正常文件
+bash scripts/gate/verify-gate-signature.sh .gate-prd-passed
+# exit 0
 
-| 文件 | 修复 | 验证 |
-|------|------|------|
-| ci.yml | DevGate checks 添加 gate 验证 | PASS |
+# 验证无效 JSON
+echo '{}' > /tmp/test.json && bash scripts/gate/verify-gate-signature.sh /tmp/test.json
+# exit 4
+
+# 验证伪造签名
+jq '.signature = "fake"' .gate-prd-passed > /tmp/test.json && bash scripts/gate/verify-gate-signature.sh /tmp/test.json
+# exit 5
+
+# 验证分支不匹配
+jq '.branch = "other"' .gate-prd-passed > /tmp/test.json && bash scripts/gate/verify-gate-signature.sh /tmp/test.json
+# exit 6
+```
 
 ## Blockers
 
@@ -55,4 +85,4 @@ None
 
 ## Conclusion
 
-所有 5 个 bug 已修复，Gate 签名机制现在是完整且安全的。
+所有 L1/L2 项目通过，符合方案 A 设计目标：Gate 文件是本地工作流的"自我约束"，CI 是"真正裁判"。

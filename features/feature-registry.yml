@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.34.0"
+version: "2.35.0"
 updated: "2026-01-30"
 changelog:
+  - 2.35.0: v11.8.0 - Gate v2 方案 A 改造（防误用字段 + exit code 分层 + 硬失败）
   - 2.33.0: v11.7.0 - Gate 强制执行机制（签名防伪 + pr-gate-v2 检查）
   - 2.32.0: v11.6.0 - Gate Skill 家族（独立质量审核：prd, dod, test, audit）
   - 2.31.0: v11.5.0 - 放宽 skills 保护（只保护 Engine skills：dev, qa, audit, semver）
@@ -144,12 +145,13 @@ platform_features:
     name: PR Gate (Dual Mode)
     status: Committed
     priority: P0
-    version: "11.2.6"
-    updated: "2026-01-28"
+    version: "11.8.0"
+    updated: "2026-01-30"
     description: |
       PR 创建前的质检门禁，支持双模式：
       - PR 模式: L1 (测试) + L2A (审计) + L2B-min (证据)
       - Release 模式: L1 + L2A + L2B-full (证据) + L3 (验收)
+      - v11.8.0: Gate 验证器硬失败（脚本缺失时 exit 2）+ 分层 exit code 错误提示
       - v11.2.6: .git 检测使用 -e 替代 -d（兼容 worktree）+ develop/main fallback
       - v11.2.5: 并发安全修复（TEMP_FILES 数组管理、分支级别质检文件）
       - v11.2.0: 支持分支级别 PRD/DoD 文件（.prd-{branch}.md，向后兼容 .prd.md）
@@ -821,7 +823,7 @@ product_features:
     name: Gate Skill Family
     status: Committed
     priority: P1
-    version: "11.7.1"
+    version: "11.8.0"
     updated: "2026-01-30"
     description: |
       独立质量审核 Skill 家族，每个 gate 是"守门 Subagent"：
@@ -829,6 +831,12 @@ product_features:
       - gate:dod - PRD↔DoD 覆盖率、Test 映射有效性审核
       - gate:test - 测试↔DoD 覆盖率、边界用例审核
       - gate:audit - 审计证据真实性、风险点识别审核
+
+      v11.8.0 方案 A 改造：
+      - Gate 文件增加防误用字段：head_sha, generated_at, task_id, tool_version
+      - Verify 脚本 exit code 分层：0/3/4/5/6
+      - PR Gate 硬失败：脚本缺失时 exit 2
+      - 设计哲学：Gate 是本地"自我约束"，CI 是"真正裁判"
 
       v11.7.0 强制执行机制：
       - 创建 PR 时检查所有 4 个 gate 文件（.gate-*-passed）

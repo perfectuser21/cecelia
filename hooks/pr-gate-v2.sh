@@ -9,6 +9,7 @@
 # v4.0: 快速模式 - 只检查产物，不运行测试（交给 CI + SessionEnd Hook）
 # v4.1: 提示型 Gate - 检查失败仅警告，exit 0（不阻断），CI 是唯一门槛
 # v4.2: 支持分支级别 PRD/DoD 文件 (.prd-{branch}.md, .dod-{branch}.md)
+# v4.3: Gate 验证器硬失败 + 分层 exit code 错误提示
 # ============================================================================
 
 set -euo pipefail
@@ -717,7 +718,7 @@ if [[ "$MODE" == "pr" ]]; then
         echo "  ⚠️  l2b-check.sh 不存在，跳过证据检查" >&2
     fi
 
-    # ===== Gate 文件检查（v19: 强制 gate 审核通过，v20: 阻止型）=====
+    # ===== Gate 文件检查（v19: 强制 gate 审核通过，v20: 阻止型，v21: 硬失败+分层错误）=====
     echo "" >&2
     echo "  [Gate 审核文件检查]" >&2
 
@@ -726,34 +727,80 @@ if [[ "$MODE" == "pr" ]]; then
     GATE_NAMES=("gate:prd" "gate:dod" "gate:test" "gate:audit")
     GATE_FAILED=0  # v20: Gate 检查失败是阻止型（exit 2）
 
-    # 检查 verify 脚本是否存在
-    if [[ -f "$GATE_VERIFY_SCRIPT" ]]; then
-        for i in "${!GATE_FILES[@]}"; do
-            GATE_FILE="$PROJECT_ROOT/${GATE_FILES[$i]}"
-            GATE_NAME="${GATE_NAMES[$i]}"
-
-            echo -n "  $GATE_NAME... " >&2
-            CHECK_COUNT=$((CHECK_COUNT + 1))
-
-            if [[ ! -f "$GATE_FILE" ]]; then
-                echo "[FAIL] (文件不存在)" >&2
-                echo "    -> 必须先通过 $GATE_NAME 审核" >&2
-                FAILED=1
-                GATE_FAILED=1
-            elif bash "$GATE_VERIFY_SCRIPT" "$GATE_FILE" >/dev/null 2>&1; then
-                echo "[OK]" >&2
-            else
-                # 获取具体错误
-                GATE_ERROR=$(bash "$GATE_VERIFY_SCRIPT" "$GATE_FILE" 2>&1 || true)
-                echo "[FAIL]" >&2
-                echo "    -> $GATE_ERROR" >&2
-                FAILED=1
-                GATE_FAILED=1
-            fi
-        done
-    else
-        echo "  ⚠️  verify-gate-signature.sh 不存在，跳过 gate 检查" >&2
+    # v21: 检查 verify 脚本是否存在 - 硬失败（exit 2）
+    if [[ ! -f "$GATE_VERIFY_SCRIPT" ]]; then
+        echo "  [ERROR] verify-gate-signature.sh 不存在" >&2
+        echo "    -> 脚本路径: $GATE_VERIFY_SCRIPT" >&2
+        echo "    -> 这是配置错误，Gate 机制无法工作" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [ERROR] Gate 验证器缺失（阻止型）" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        exit 2
     fi
+
+    for i in "${!GATE_FILES[@]}"; do
+        GATE_FILE="$PROJECT_ROOT/${GATE_FILES[$i]}"
+        GATE_NAME="${GATE_NAMES[$i]}"
+
+        echo -n "  $GATE_NAME... " >&2
+        CHECK_COUNT=$((CHECK_COUNT + 1))
+
+        if [[ ! -f "$GATE_FILE" ]]; then
+            echo "[FAIL] (文件不存在)" >&2
+            echo "    -> 必须先通过 $GATE_NAME 审核" >&2
+            FAILED=1
+            GATE_FAILED=1
+        else
+            # v21: 运行 verify 脚本并根据 exit code 给出具体错误
+            GATE_OUTPUT=$(bash "$GATE_VERIFY_SCRIPT" "$GATE_FILE" 2>&1)
+            GATE_EXIT_CODE=$?
+
+            case $GATE_EXIT_CODE in
+                0)
+                    echo "[OK]" >&2
+                    ;;
+                3)
+                    # 验证器缺失/配置错误（secret 不存在）
+                    echo "[FAIL] (配置错误)" >&2
+                    echo "    -> Secret 文件不存在，请先运行 generate-gate-file.sh" >&2
+                    FAILED=1
+                    GATE_FAILED=1
+                    ;;
+                4)
+                    # 输入格式错误/JSON 解析失败
+                    echo "[FAIL] (格式错误)" >&2
+                    echo "    -> Gate 文件格式无效或 JSON 解析失败" >&2
+                    echo "    -> $GATE_OUTPUT" >&2
+                    FAILED=1
+                    GATE_FAILED=1
+                    ;;
+                5)
+                    # 签名/校验失败
+                    echo "[FAIL] (签名无效)" >&2
+                    echo "    -> 文件可能被篡改或 secret 不匹配" >&2
+                    echo "    -> 请重新运行对应的 gate skill 生成新文件" >&2
+                    FAILED=1
+                    GATE_FAILED=1
+                    ;;
+                6)
+                    # 分支/任务不匹配
+                    echo "[FAIL] (分支不匹配)" >&2
+                    echo "    -> Gate 文件是在其他分支生成的" >&2
+                    echo "    -> $GATE_OUTPUT" >&2
+                    FAILED=1
+                    GATE_FAILED=1
+                    ;;
+                *)
+                    # 其他错误
+                    echo "[FAIL] (未知错误: exit $GATE_EXIT_CODE)" >&2
+                    echo "    -> $GATE_OUTPUT" >&2
+                    FAILED=1
+                    GATE_FAILED=1
+                    ;;
+            esac
+        fi
+    done
 fi
 
 # ============================================================================
