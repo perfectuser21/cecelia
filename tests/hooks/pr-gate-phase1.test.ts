@@ -224,27 +224,9 @@ describe("Phase 1: DevGate Scripts", () => {
       }).not.toThrow();
     });
 
-    it.skip("should detect P0 from env variable", () => {
-      // SKIP: QA-DECISION.md priority takes precedence in PROJECT_ROOT
-      const result = execSync(`node "${DETECT_PRIORITY_SCRIPT}"`, {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, PR_PRIORITY: "P0" },
-      });
-
-      expect(result.trim()).toBe("P0");
-    });
-
-    it.skip("should detect P1 from PR title", () => {
-      // SKIP: PR_TITLE detection was removed from detect-priority.cjs
-      const result = execSync(`node "${DETECT_PRIORITY_SCRIPT}"`, {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, PR_TITLE: "fix(P1): security bug" },
-      });
-
-      expect(result.trim()).toBe("P1");
-    });
+    // NOTE: 以下测试被删除：
+    // - "should detect P0 from env variable" - 在 PROJECT_ROOT 中 QA-DECISION.md 优先
+    // - "should detect P1 from PR title" - PR_TITLE 检测已从 detect-priority.cjs 移除
 
     it("should detect P2 from labels", () => {
       const result = execSync(`node "${DETECT_PRIORITY_SCRIPT}"`, {
@@ -276,18 +258,8 @@ describe("Phase 1: DevGate Scripts", () => {
       expect(result.trim()).toBe("unknown");
     });
 
-    it.skip("should output JSON with --json flag", () => {
-      // SKIP: QA-DECISION.md priority takes precedence in PROJECT_ROOT
-      const result = execSync(`node "${DETECT_PRIORITY_SCRIPT}" --json`, {
-        encoding: "utf-8",
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, PR_PRIORITY: "P0" },
-      });
-
-      const json = JSON.parse(result.trim());
-      expect(json.priority).toBe("P0");
-      expect(json.source).toBe("env");
-    });
+    // NOTE: "should output JSON with --json flag" 测试被删除
+    // 原因：在 PROJECT_ROOT 中 QA-DECISION.md 优先，与 env 变量优先级冲突
   });
 
   describe("require-rci-update-if-p0p1.sh", () => {

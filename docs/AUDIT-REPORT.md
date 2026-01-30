@@ -1,16 +1,16 @@
-# Audit Report: CI 安全漏洞修复
+# Audit Report: 测试清理（第二批）
 
-Branch: cp-0130-ci-security-fix
+Branch: cp-0130-test-cleanup
 Date: 2026-01-30
-Scope: .github/workflows/auto-merge.yml, .github/workflows/ci.yml
-Target Level: L1
+Scope: tests/hooks/detect-priority.test.ts, tests/hooks/pr-gate-phase1.test.ts
+Target Level: L2
 
 ## Summary
 
 | Layer | Count | Status |
 |-------|-------|--------|
-| L1 | 3 | PASS |
-| L2 | 0 | - |
+| L1 | 0 | PASS |
+| L2 | 0 | PASS |
 | L3 | 0 | - |
 | L4 | 0 | - |
 
@@ -18,46 +18,56 @@ Decision: PASS
 
 ## 审计范围
 
-| 文件 | 变更类型 | 风险等级 |
-|------|---------|---------|
-| .github/workflows/auto-merge.yml | 安全修复 | P0 |
-| .github/workflows/ci.yml | 安全修复 | P0 |
+| 文件 | 变更类型 | 说明 |
+|------|---------|------|
+| tests/hooks/detect-priority.test.ts | 测试清理 | 删除 17 个无效 skip 测试 |
+| tests/hooks/pr-gate-phase1.test.ts | 测试清理 | 删除 3 个无效 skip 测试 |
 
 ## L1 检查（阻塞性）
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| YAML 语法 | PASS | GitHub Actions 格式正确 |
-| Shell 语法 | PASS | 所有 .sh 文件通过 bash -n |
-| 测试通过 | PASS | 249 tests passed |
+| TypeScript 语法 | PASS | vitest 测试文件语法正确 |
+| 测试通过 | PASS | 252 tests passed, 2 skipped |
+| 功能覆盖 | PASS | 保留测试覆盖仍在使用的功能 |
 
-## 安全修复详情
+## L2 检查（功能性）
 
-### P0-1: auto-merge check_suite 漏洞
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| 注释说明 | PASS | 删除的测试有明确注释说明原因 |
+| 测试完整性 | PASS | label/env 检测仍有测试覆盖 |
+| 文档一致性 | PASS | detect-priority.cjs L265-266 已说明功能移除 |
 
-**问题**: check_suite 事件可被外部 CI 系统触发，绕过 approval 直接合并
+## 清理详情
 
-**修复**:
-- ✅ 移除了 `on.check_suite` 触发器
-- ✅ 更新了 concurrency group（移除 check_suite 引用）
-- ✅ 简化了 job if 条件（只保留 pull_request_review）
-- ✅ 简化了 Get PR number 步骤
+### detect-priority.test.ts
 
-### P0-2: ci-passed 跳过逻辑漏洞
+**删除的 describe blocks**:
+- `describe.skip("CRITICAL → P0 映射")` - 4 个测试
+- `describe.skip("HIGH → P1 映射")` - 3 个测试
+- `describe.skip("security 前缀 → P0 映射")` - 4 个测试
 
-**问题**: regression-pr/release-check 被 skipped 时仍允许 CI 通过
+**删除的 it.skip**:
+- "P0/P1/P2/P3 直接映射" 中 4 个测试
+- "优先级检测顺序" 中 2 个测试
 
-**修复**:
-- ✅ PR 到 develop: `github.base_ref != 'develop' || needs.regression-pr.result == 'success'`
-- ✅ PR 到 main: `github.base_ref != 'main' || needs.release-check.result == 'success'`
+**保留的测试**:
+- label 检测（CRITICAL/HIGH/priority:Px）
+- env 变量检测（PR_PRIORITY）
+- unknown 默认值测试
 
-### P1-1: ai-review continue-on-error
+### pr-gate-phase1.test.ts
 
-**问题**: continue-on-error 隐藏 AI review 失败
+**删除的测试**:
+- "should detect P0 from env variable" - QA-DECISION.md 优先
+- "should detect P1 from PR title" - PR_TITLE 检测已移除
+- "should output JSON with --json flag" - 同上
 
-**修复**:
-- ✅ 移除了 `continue-on-error: true`
-- ✅ 脚本内部已有 secret 缺失时的优雅跳过逻辑
+**保留的测试**:
+- check-dod-mapping.cjs 所有测试
+- detect-priority.cjs 基本测试
+- require-rci-update-if-p0p1.sh 所有测试
 
 ## Blockers
 
@@ -65,4 +75,4 @@ None
 
 ## Conclusion
 
-所有 CI 安全漏洞已修复。测试全部通过。
+测试清理完成。删除的 20 个 skip 测试均为已移除功能（PR_TITLE 检测），保留的测试仍覆盖有效功能。

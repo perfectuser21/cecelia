@@ -38,21 +38,11 @@ describe("detect-priority.cjs", () => {
       fs.renameSync(QA_DECISION_BACKUP, QA_DECISION);
     }
   });
-  describe.skip("CRITICAL → P0 映射", () => {
-    // SKIP: PR_TITLE detection was removed in detect-priority.cjs line 245-246
-    // These tests need to be rewritten to use other detection methods
-    it("PR title 包含 CRITICAL 应返回 P0", () => {
-      const result = runDetect({ PR_TITLE: "fix: CRITICAL 级安全修复" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
+  // NOTE: PR_TITLE 检测功能已在 detect-priority.cjs 中移除（L265-266）
+  // 原因："移除：从 PR title 和 commit messages 检测（容易误识别）"
+  // 相关测试已删除，保留以下使用其他检测方式的测试
 
-    it("PR title 包含小写 critical 应返回 P0", () => {
-      const result = runDetect({ PR_TITLE: "fix: critical security issue" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
-
+  describe("CRITICAL/HIGH 标签映射", () => {
     it("PR label 包含 CRITICAL 应返回 P0", () => {
       const result = runDetect({ PR_LABELS: "bug,CRITICAL,security" });
       expect(result.priority).toBe("P0");
@@ -64,21 +54,6 @@ describe("detect-priority.cjs", () => {
       expect(result.priority).toBe("P0");
       expect(result.source).toBe("env");
     });
-  });
-
-  describe.skip("HIGH → P1 映射", () => {
-    // SKIP: PR_TITLE detection was removed
-    it("PR title 包含 HIGH 应返回 P1", () => {
-      const result = runDetect({ PR_TITLE: "fix: HIGH 级问题修复" });
-      expect(result.priority).toBe("P1");
-      expect(result.source).toBe("title");
-    });
-
-    it("PR title 包含小写 high 应返回 P1", () => {
-      const result = runDetect({ PR_TITLE: "fix: high priority bug" });
-      expect(result.priority).toBe("P1");
-      expect(result.source).toBe("title");
-    });
 
     it("PR label 包含 HIGH 应返回 P1", () => {
       const result = runDetect({ PR_LABELS: "bug,HIGH" });
@@ -87,63 +62,7 @@ describe("detect-priority.cjs", () => {
     });
   });
 
-  describe.skip("security 前缀 → P0 映射", () => {
-    // SKIP: PR_TITLE detection was removed
-    it("PR title 以 security: 开头应返回 P0", () => {
-      const result = runDetect({ PR_TITLE: "security: fix XSS vulnerability" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
-
-    it("PR title 以 security(scope): 开头应返回 P0", () => {
-      const result = runDetect({ PR_TITLE: "security(hooks): fix injection" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
-
-    it("PR title 以 Security: 开头（大写）应返回 P0", () => {
-      const result = runDetect({ PR_TITLE: "Security: patch CVE-2024-1234" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
-
-    it("PR title 中间包含 security 不应触发（只匹配前缀）", () => {
-      // BASE_REF=HEAD 阻止检测 git commit 历史
-      const result = runDetect({ PR_TITLE: "fix: improve security checks", BASE_REF: "HEAD" });
-      // 不是 security 前缀，应返回 unknown
-      expect(result.priority).toBe("unknown");
-    });
-  });
-
   describe("P0/P1/P2/P3 直接映射", () => {
-    it.skip("PR title 包含 P0 应返回 P0", () => {
-      // SKIP: PR_TITLE detection was removed
-      const result = runDetect({ PR_TITLE: "P0: critical bug fix" });
-      expect(result.priority).toBe("P0");
-      expect(result.source).toBe("title");
-    });
-
-    it.skip("PR title 包含 P1 应返回 P1", () => {
-      // SKIP: PR_TITLE detection was removed
-      const result = runDetect({ PR_TITLE: "fix(P1): important feature" });
-      expect(result.priority).toBe("P1");
-      expect(result.source).toBe("title");
-    });
-
-    it.skip("PR title 包含 P2 应返回 P2", () => {
-      // SKIP: PR_TITLE detection was removed
-      const result = runDetect({ PR_TITLE: "feat: new feature (P2)" });
-      expect(result.priority).toBe("P2");
-      expect(result.source).toBe("title");
-    });
-
-    it.skip("PR title 包含 P3 应返回 P3", () => {
-      // SKIP: PR_TITLE detection was removed
-      const result = runDetect({ PR_TITLE: "chore: cleanup (P3)" });
-      expect(result.priority).toBe("P3");
-      expect(result.source).toBe("title");
-    });
-
     it("PR label 包含 priority:P0 应返回 P0", () => {
       const result = runDetect({ PR_LABELS: "bug,priority:P0" });
       expect(result.priority).toBe("P0");
@@ -159,24 +78,6 @@ describe("detect-priority.cjs", () => {
       });
       expect(result.priority).toBe("P0");
       expect(result.source).toBe("env");
-    });
-
-    it.skip("PR title 优先于 labels", () => {
-      // SKIP: PR_TITLE detection was removed
-      const result = runDetect({
-        PR_TITLE: "P1: medium priority",
-        PR_LABELS: "P3",
-      });
-      expect(result.priority).toBe("P1");
-      expect(result.source).toBe("title");
-    });
-
-    it.skip("CRITICAL 优先于 P1 在同一文本中", () => {
-      // SKIP: PR_TITLE detection was removed
-      // CRITICAL 在检测逻辑中先于 P1 检查
-      const result = runDetect({ PR_TITLE: "fix(P1): CRITICAL security issue" });
-      expect(result.priority).toBe("P0"); // CRITICAL 映射到 P0
-      expect(result.source).toBe("title");
     });
   });
 
