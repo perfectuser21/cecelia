@@ -18,4 +18,4 @@ RepoType: Business
 
 ## Reason
 
-纯文档更新，无代码改动，无需测试。
+纯文档更新，补充 System API 中缺失的 `getHealth` 函数和 `ServiceHealth` 类型说明，无代码改动，无需测试。

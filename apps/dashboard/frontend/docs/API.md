@@ -720,9 +720,36 @@ interface DepartmentWithStats extends Department {
 
 **文件**: `src/api/system.api.ts`
 
-系统性能监控指标。
+系统性能监控指标和健康检查。
 
 ### 类型定义
+
+#### ServiceHealth
+
+```typescript
+interface ServiceHealth {
+  status: 'healthy' | 'unhealthy';
+  latency_ms: number | null;
+  last_check: string | null;
+  error: string | null;
+}
+```
+
+#### SystemHealthResponse
+
+```typescript
+interface SystemHealthResponse {
+  success: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  service: string;
+  services: Record<string, ServiceHealth>;
+  degraded: boolean;
+  degraded_reason: string | null;
+  timestamp: string;
+}
+```
+
+聚合的服务包括：brain、workspace、quality、n8n 等。每个服务返回状态、延迟（毫秒）、最后检查时间和错误信息。
 
 #### SystemMetrics
 
@@ -764,8 +791,10 @@ interface SystemMetricsResponse {
 | 函数 | 说明 | 参数 | 返回值 |
 |-----|------|------|--------|
 | `getMetrics()` | 获取系统性能指标 | 无 | `SystemMetricsResponse` |
+| `getHealth()` | 获取系统健康状态 | 无 | `SystemHealthResponse` |
 
-返回当前系统的 CPU 使用率、内存使用率、平均响应时间、错误率、活跃连接数和运行时间，以及历史趋势数据。
+- `getMetrics()`: 返回当前系统的 CPU 使用率、内存使用率、平均响应时间、错误率、活跃连接数和运行时间，以及历史趋势数据。
+- `getHealth()`: 返回多服务聚合的健康状态，包括各服务的健康状态、延迟和错误信息。
 
 ---
 
