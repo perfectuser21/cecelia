@@ -52,5 +52,17 @@
     "actor": "claude",
     "timestamp": "2026-01-30T13:30:00Z",
     "evidence": "QA-DECISION.md 已更新为 PASS"
+  },
+  {
+    "id": "ci-evidence-step",
+    "actor": "claude",
+    "timestamp": "2026-01-30T13:45:00Z",
+    "evidence": "ci.yml release-check job 添加 Generate Evidence 步骤"
+  },
+  {
+    "id": "ci-step-order",
+    "actor": "claude",
+    "timestamp": "2026-01-30T13:45:00Z",
+    "evidence": "代码审查确认 Generate Evidence 在 L3 Regression Tests 之前"
   }
 ]

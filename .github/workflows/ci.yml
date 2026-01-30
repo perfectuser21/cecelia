@@ -582,6 +582,18 @@ jobs:
             echo "⚠️ l2a-check.sh not found, skipping"
           fi
 
+      # Generate evidence for release-check (needed for C8-001 RCI check)
+      - name: Generate Evidence (release mode)
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence 生成（release-check）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [ -f "ci/scripts/generate-evidence.sh" ]; then
+            bash ci/scripts/generate-evidence.sh
+          else
+            echo "⚠️ generate-evidence.sh not found, skipping"
+          fi
+
       - name: L3 Regression Tests
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
