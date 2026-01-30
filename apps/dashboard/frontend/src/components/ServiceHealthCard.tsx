@@ -75,6 +75,7 @@ export function ServiceHealthCard({ name, label, service, onRefresh }: ServiceHe
   };
 
   const isHealthy = service.status === 'healthy';
+
   const serviceInfo = SERVICE_INFO[name];
 
   return (

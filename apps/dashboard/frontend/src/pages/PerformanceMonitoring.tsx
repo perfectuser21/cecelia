@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, CheckCircle2, TrendingUp } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse } from '@/api';
+import { ServiceHealthCard } from '@/components';
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
@@ -10,23 +11,6 @@ function formatUptime(seconds: number): string {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
-}
-
-function formatRelativeTime(isoString: string | null): string {
-  if (!isoString) return '未知';
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-
-  if (diffSec < 0) return '刚刚';
-  if (diffSec < 60) return `${diffSec}秒前`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}分钟前`;
-  const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour}小时前`;
-  const diffDay = Math.floor(diffHour / 24);
-  return `${diffDay}天前`;
 }
 
 function formatMemory(bytes: number): string {
@@ -77,12 +61,26 @@ const SERVICE_LABELS: Record<string, string> = {
   n8n: 'N8N',
 };
 
+// Refresh interval options
+const REFRESH_INTERVALS = [
+  { value: 10000, label: '10s' },
+  { value: 30000, label: '30s' },
+  { value: 60000, label: '60s' },
+  { value: 0, label: '暂停' },
+] as const;
+
+type RefreshInterval = typeof REFRESH_INTERVALS[number]['value'];
+
 export default function PerformanceMonitoring() {
   const [data, setData] = useState<SystemMetricsResponse | null>(null);
   const [healthData, setHealthData] = useState<SystemHealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState('');
+  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(30000);
+  const [showIntervalDropdown, setShowIntervalDropdown] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const fetchData = async () => {
     try {
@@ -115,11 +113,47 @@ export default function PerformanceMonitoring() {
     }
   };
 
+  // Fetch data on mount and when interval changes
   useEffect(() => {
     fetchData();
-    const t = setInterval(fetchData, 30000);
-    return () => clearInterval(t);
   }, []);
+
+  // Manage refresh interval
+  useEffect(() => {
+    // Clear existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    // Set new interval if not paused
+    if (refreshInterval > 0) {
+      intervalRef.current = setInterval(fetchData, refreshInterval);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [refreshInterval]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowIntervalDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const getCurrentIntervalLabel = () => {
+    const interval = REFRESH_INTERVALS.find(i => i.value === refreshInterval);
+    return interval?.label || '30s';
+  };
 
   const metrics: SystemMetrics = data?.current || {
     cpuUsage: 0,
@@ -157,6 +191,48 @@ export default function PerformanceMonitoring() {
           <p className="text-sm text-gray-500 mt-1">系统资源和性能指标概览</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Refresh Interval Selector */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setShowIntervalDropdown(!showIntervalDropdown)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            >
+              {refreshInterval === 0 ? (
+                <Pause className="w-3 h-3" />
+              ) : (
+                <Timer className="w-3 h-3" />
+              )}
+              <span>{getCurrentIntervalLabel()}</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${showIntervalDropdown ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showIntervalDropdown && (
+              <div className="absolute right-0 mt-1 w-32 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
+                {REFRESH_INTERVALS.map((interval) => (
+                  <button
+                    key={interval.value}
+                    onClick={() => {
+                      setRefreshInterval(interval.value);
+                      setShowIntervalDropdown(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${
+                      refreshInterval === interval.value
+                        ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                        : 'text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    {interval.value === 0 ? (
+                      <Pause className="w-3 h-3" />
+                    ) : (
+                      <Timer className="w-3 h-3" />
+                    )}
+                    <span>{interval.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <span className="text-xs text-gray-400">{lastUpdate} 更新</span>
           <button
             onClick={fetchData}
@@ -262,33 +338,13 @@ export default function PerformanceMonitoring() {
           <div className="px-5 py-4">
             <div className="grid grid-cols-4 gap-4">
               {Object.entries(healthData.services).map(([name, service]) => (
-                <div
+                <ServiceHealthCard
                   key={name}
-                  className={`p-3 rounded-lg border ${
-                    service.status === 'healthy'
-                      ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20'
-                      : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      {SERVICE_LABELS[name] || name}
-                    </span>
-                    {service.status === 'healthy' ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-red-500" />
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-                    {service.latency_ms !== null ? (
-                      <div>延迟: {service.latency_ms}ms</div>
-                    ) : (
-                      <div className="text-red-500">{service.error || '不可用'}</div>
-                    )}
-                    <div className="text-gray-400">检查: {formatRelativeTime(service.last_check)}</div>
-                  </div>
-                </div>
+                  name={name}
+                  label={SERVICE_LABELS[name] || name}
+                  service={service}
+                  onRefresh={fetchData}
+                />
               ))}
             </div>
             {healthData.degraded && healthData.degraded_reason && (
