@@ -75,6 +75,13 @@ const orchestratorProxy = createProxyMiddleware({
 });
 app.use('/api/orchestrator', orchestratorProxy);
 
+// Proxy /api/autumnrice/* to cecelia-brain API (R-cell one-click execution)
+app.use('/api/autumnrice', createProxyMiddleware({
+  target: BRAIN_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/autumnrice${path}`,  // /run → /autumnrice/run
+}));
+
 // Proxy /api/v1/* to autopilot backend
 app.use('/api/v1', createProxyMiddleware({
   target: AUTOPILOT_BACKEND,

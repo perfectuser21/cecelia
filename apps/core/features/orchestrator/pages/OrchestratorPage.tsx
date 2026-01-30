@@ -75,6 +75,22 @@ interface Worker {
   started_at?: string;
 }
 
+// Autumnrice Seat interface (from Brain API)
+interface AutumnriceSeat {
+  id: number;
+  status: 'running' | 'idle';
+  task_id?: string;
+  started_at?: string;
+}
+
+interface AutumnriceSeatsResponse {
+  max_seats: number;
+  active_seats: number;
+  available_seats: number;
+  can_spawn_more: boolean;
+  seats: AutumnriceSeat[];
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -122,6 +138,7 @@ export default function OrchestratorPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [seatsData, setSeatsData] = useState<AutumnriceSeatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedOKRs, setExpandedOKRs] = useState<Set<string>>(new Set());
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -137,19 +154,22 @@ export default function OrchestratorPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [goalsRes, projectsRes, tasksRes, watchdogRes] = await Promise.all([
+      const [goalsRes, projectsRes, tasksRes, seatsRes] = await Promise.all([
         fetch('/api/tasks/goals'),
         fetch('/api/tasks/projects'),
         fetch('/api/tasks/tasks?limit=50'),
-        fetch('/api/watchdog/status')
+        fetch('/api/autumnrice/seats')  // Use Autumnrice API instead of watchdog
       ]);
 
-      const [goals, projectsData, tasksData, watchdog] = await Promise.all([
+      const [goals, projectsData, tasksData, seats] = await Promise.all([
         goalsRes.json(),
         projectsRes.json(),
         tasksRes.json(),
-        watchdogRes.json()
+        seatsRes.json()
       ]);
+
+      // Store Autumnrice seats data
+      setSeatsData(seats);
 
       // Build OKR tree: Objectives with their Key Results
       const objectivesMap = new Map<string, Objective>();
@@ -201,15 +221,14 @@ export default function OrchestratorPage() {
       setProjects(projectsData);
       setTasks(tasksData);
 
-      // Workers from watchdog
-      if (watchdog.success && watchdog.data?.agents) {
-        setWorkers(watchdog.data.agents.map((a: any) => ({
-          id: a.id,
-          name: a.name || `Worker ${a.id.slice(0, 8)}`,
-          status: a.status === 'healthy' ? 'running' : a.status === 'stale' ? 'idle' : 'error',
-          project: a.project,
-          task: a.task,
-          started_at: a.started_at
+      // Convert Autumnrice seats to workers for display
+      if (seats && seats.seats) {
+        setWorkers(seats.seats.map((s: AutumnriceSeat) => ({
+          id: String(s.id),
+          name: `Seat ${s.id}`,
+          status: s.status === 'running' ? 'running' : 'idle',
+          task: s.task_id,
+          started_at: s.started_at
         })));
       }
     } catch (error) {
@@ -334,8 +353,9 @@ export default function OrchestratorPage() {
     return <div className="flex items-center justify-center h-64"><RefreshCw className="w-8 h-8 animate-spin text-slate-400" /></div>;
   }
 
-  const runningWorkers = workers.filter(w => w.status === 'running').length;
-  const totalCapacity = 3; // Max concurrent workers
+  // Use real Autumnrice seat data
+  const runningWorkers = seatsData?.active_seats ?? workers.filter(w => w.status === 'running').length;
+  const totalCapacity = seatsData?.max_seats ?? 3;
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] gap-3 p-4">
