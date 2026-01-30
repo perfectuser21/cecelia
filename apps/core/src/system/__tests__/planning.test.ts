@@ -1,5 +1,5 @@
 /**
- * Planning Engine Tests - Phase 5.2
+ * Planning Engine Tests - Phase 5.2 + 5.3
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -218,6 +218,122 @@ describe('Planning Engine API', () => {
       }
       // If only 0 or 1 task, ordering is trivially correct
       expect(true).toBe(true);
+    });
+  });
+
+  // Phase 5.3: Task structure with why/expected_evidence/source_refs
+  describe('Plan tasks have why/expected_evidence/source_refs (Phase 5.3)', () => {
+    it('should include why field in each task', async () => {
+      const response = await fetch(`${API_BASE}/plan/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'daily' }),
+      });
+
+      const data = (await response.json()) as ApiResponse;
+      const plan = data.plan as { tasks: Array<{ why: string }> };
+
+      // Each task should have a why field
+      for (const task of plan.tasks) {
+        expect(task.why).toBeDefined();
+        expect(typeof task.why).toBe('string');
+        expect(task.why.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('should include expected_evidence field in each task', async () => {
+      const response = await fetch(`${API_BASE}/plan/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'daily' }),
+      });
+
+      const data = (await response.json()) as ApiResponse;
+      const plan = data.plan as { tasks: Array<{ expected_evidence: string }> };
+
+      for (const task of plan.tasks) {
+        expect(task.expected_evidence).toBeDefined();
+        expect(typeof task.expected_evidence).toBe('string');
+      }
+    });
+
+    it('should include source_refs array in each task', async () => {
+      const response = await fetch(`${API_BASE}/plan/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'daily' }),
+      });
+
+      const data = (await response.json()) as ApiResponse;
+      const plan = data.plan as { tasks: Array<{ source_refs: Array<{ type: string; id: string }> }> };
+
+      for (const task of plan.tasks) {
+        expect(task.source_refs).toBeDefined();
+        expect(Array.isArray(task.source_refs)).toBe(true);
+      }
+    });
+  });
+
+  // Phase 5.3: Plan commit endpoint
+  describe('POST /api/system/plan/:planId/commit (Phase 5.3)', () => {
+    let planId: string;
+
+    beforeAll(async () => {
+      // Generate a plan first
+      const response = await fetch(`${API_BASE}/plan/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'daily' }),
+      });
+      const data = (await response.json()) as ApiResponse;
+      planId = (data.plan as { plan_id: string }).plan_id;
+    });
+
+    it('should commit plan tasks to database', async () => {
+      const response = await fetch(`${API_BASE}/plan/${planId}/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 3 }),
+      });
+
+      const data = (await response.json()) as ApiResponse;
+
+      // Even if no tasks, the response structure should be correct
+      expect(data.plan_id).toBe(planId);
+      expect(Array.isArray(data.committed_tasks)).toBe(true);
+    });
+
+    it('should return 404 for non-existent plan', async () => {
+      const response = await fetch(`${API_BASE}/plan/plan_nonexistent_99999999/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 3 }),
+      });
+
+      expect(response.status).toBe(404);
+    });
+
+    it('should respect limit parameter', async () => {
+      // Generate fresh plan
+      const genResponse = await fetch(`${API_BASE}/plan/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: 'daily' }),
+      });
+      const genData = (await genResponse.json()) as ApiResponse;
+      const newPlanId = (genData.plan as { plan_id: string }).plan_id;
+
+      const response = await fetch(`${API_BASE}/plan/${newPlanId}/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 1 }),
+      });
+
+      const data = (await response.json()) as ApiResponse;
+      const committed = data.committed_tasks as Array<{ task_id: string }>;
+
+      // Should commit at most 1 task
+      expect(committed.length).toBeLessThanOrEqual(1);
     });
   });
 });

@@ -1,4 +1,4 @@
-# QA Decision - Phase 5.2 Planning Engine
+# QA Decision - Phase 5.3 Plan Commit
 
 Decision: NO_RCI
 Priority: P1
@@ -8,9 +8,9 @@ RepoType: Business
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| POST /api/brain/plan/generate | auto | tests/planning.test.ts |
-| GET /api/brain/plan/status | auto | tests/planning.test.ts |
-| 计划存储到 Memory | auto | tests/planning.test.ts |
+| PlanTask 结构升级 | auto | tests/planning.test.ts |
+| POST /api/system/plan/:planId/commit | auto | tests/planning.test.ts |
+| verify-plan-loop.sh | auto | scripts/verify-plan-loop.sh |
 
 ## RCI
 
@@ -19,4 +19,4 @@ update: []
 
 ## Reason
 
-Planning Engine 是新功能，基于已有的 Memory Schema 和 Tasks API。不涉及现有核心路径的回归。优先级 P1。
+Plan Commit 是 Phase 5.2 的扩展，基于已有的 Planning Engine 和 Memory Schema。不涉及现有核心路径的回归。

@@ -44,6 +44,7 @@ import {
   generatePlan,
   getPlanStatus,
   getPlan,
+  commitPlan,
   type PlanScope,
 } from './planning.js';
 
@@ -773,6 +774,43 @@ router.get('/plan/:planId', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       plan,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+/**
+ * Commit plan tasks to the database
+ * POST /api/system/plan/:planId/commit
+ */
+router.post('/plan/:planId/commit', async (req: Request, res: Response) => {
+  try {
+    const { planId } = req.params;
+    const { limit = 3 } = req.body;
+
+    // Validate limit
+    const limitNum = Math.min(Math.max(1, Number(limit) || 3), 10);
+
+    const result = await commitPlan(planId, limitNum);
+
+    if (!result.success) {
+      return res.status(404).json({
+        success: false,
+        error: 'Plan not found or no tasks to commit',
+        plan_id: planId,
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      committed_tasks: result.committed_tasks,
+      plan_id: result.plan_id,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

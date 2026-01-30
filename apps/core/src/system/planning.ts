@@ -1,11 +1,13 @@
 /**
- * Planning Engine - Phase 5.2
+ * Planning Engine - Phase 5.2 + 5.3
  *
  * Generates daily/weekly plans based on:
  * - Current OKR/Goals
  * - Task priorities (P0, P1, P2)
  * - Task status (pending, in_progress)
  * - Memory context (working + longterm)
+ *
+ * Phase 5.3: Added why/expected_evidence/source_refs + commit endpoint
  */
 
 import pool from '../task-system/db.js';
@@ -14,7 +16,14 @@ import { writeMemory, readMemory, queryMemory } from './memory.js';
 // Plan scope types
 export type PlanScope = 'daily' | 'weekly';
 
-// Plan task interface
+// Source reference for traceability
+export interface SourceRef {
+  type: 'goal' | 'memory' | 'task';
+  id: string;
+  title?: string;
+}
+
+// Plan task interface (upgraded in Phase 5.3)
 export interface PlanTask {
   id: string;
   title: string;
@@ -24,6 +33,24 @@ export interface PlanTask {
   goal_id?: string;
   goal_title?: string;
   depends_on: string[];
+  // Phase 5.3 additions
+  why: string;
+  expected_evidence: string;
+  source_refs: SourceRef[];
+}
+
+// Committed task result
+export interface CommittedTask {
+  plan_task_id: string;
+  task_id: string;
+  title: string;
+}
+
+// Commit result
+export interface CommitResult {
+  success: boolean;
+  committed_tasks: CommittedTask[];
+  plan_id: string;
 }
 
 // Generated plan interface
@@ -93,9 +120,18 @@ async function fetchGoals(): Promise<Array<{ id: string; title: string; priority
 }
 
 /**
- * Fetch tasks for planning
+ * Fetch tasks for planning (returns partial PlanTask without why/evidence)
  */
-async function fetchTasks(): Promise<PlanTask[]> {
+interface RawTask {
+  id: string;
+  title: string;
+  priority: string;
+  status: string;
+  goal_id?: string;
+  goal_title?: string;
+}
+
+async function fetchTasks(): Promise<RawTask[]> {
   try {
     const result = await pool.query(`
       SELECT t.id, t.title, t.priority, t.status, t.goal_id, g.title as goal_title
@@ -118,11 +154,55 @@ async function fetchTasks(): Promise<PlanTask[]> {
       status: row.status,
       goal_id: row.goal_id ? String(row.goal_id) : undefined,
       goal_title: row.goal_title || undefined,
-      depends_on: [],
     }));
   } catch {
     return [];
   }
+}
+
+/**
+ * Generate why/expected_evidence for a task based on context
+ */
+function generateTaskReasoning(
+  task: RawTask,
+  goals: Array<{ id: string; title: string; priority: string; progress: number }>,
+  context: { focus: string | null }
+): { why: string; expected_evidence: string; source_refs: SourceRef[] } {
+  const source_refs: SourceRef[] = [];
+  const whyParts: string[] = [];
+
+  // Link to goal if exists
+  if (task.goal_id && task.goal_title) {
+    source_refs.push({ type: 'goal', id: task.goal_id, title: task.goal_title });
+    whyParts.push(`支撑目标「${task.goal_title}」`);
+  }
+
+  // Add priority reasoning
+  if (task.priority === 'P0') {
+    whyParts.push('最高优先级任务');
+  } else if (task.priority === 'P1') {
+    whyParts.push('重要任务');
+  }
+
+  // Add context if matches focus
+  if (context.focus && task.title.toLowerCase().includes(context.focus.toLowerCase())) {
+    whyParts.push(`与当前焦点「${context.focus}」相关`);
+  }
+
+  // Default why if empty
+  const why = whyParts.length > 0 ? whyParts.join('，') : `${task.priority} 任务，按优先级选入计划`;
+
+  // Generate expected evidence based on task title
+  let expected_evidence = '任务完成状态更新为 completed';
+  if (task.title.includes('实现') || task.title.includes('开发')) {
+    expected_evidence = '代码提交 + PR 合并';
+  } else if (task.title.includes('测试')) {
+    expected_evidence = '测试通过 + 覆盖率报告';
+  } else if (task.title.includes('文档')) {
+    expected_evidence = '文档更新 + 版本号变更';
+  }
+
+  return { why, expected_evidence, source_refs };
 }
 
 /**
@@ -160,7 +240,7 @@ export async function generatePlan(scope: PlanScope = 'daily'): Promise<Generate
   // Filter tasks based on scope
   // Daily: P0 + top P1 tasks (max 8)
   // Weekly: All P0, P1 + some P2 (max 20)
-  let filteredTasks: PlanTask[];
+  let filteredRawTasks: RawTask[];
   let maxTasks: number;
 
   if (scope === 'daily') {
@@ -168,14 +248,24 @@ export async function generatePlan(scope: PlanScope = 'daily'): Promise<Generate
     // Prioritize P0, then P1
     const p0Tasks = tasks.filter(t => t.priority === 'P0');
     const p1Tasks = tasks.filter(t => t.priority === 'P1');
-    filteredTasks = [...p0Tasks, ...p1Tasks].slice(0, maxTasks);
+    filteredRawTasks = [...p0Tasks, ...p1Tasks].slice(0, maxTasks);
   } else {
     maxTasks = 20;
     const p0Tasks = tasks.filter(t => t.priority === 'P0');
     const p1Tasks = tasks.filter(t => t.priority === 'P1');
     const p2Tasks = tasks.filter(t => t.priority === 'P2');
-    filteredTasks = [...p0Tasks, ...p1Tasks, ...p2Tasks].slice(0, maxTasks);
+    filteredRawTasks = [...p0Tasks, ...p1Tasks, ...p2Tasks].slice(0, maxTasks);
   }
+
+  // Enrich tasks with why/expected_evidence/source_refs
+  const filteredTasks: PlanTask[] = filteredRawTasks.map(task => {
+    const reasoning = generateTaskReasoning(task, goals, context);
+    return {
+      ...task,
+      depends_on: [],
+      ...reasoning,
+    };
+  });
 
   // Count by priority
   const byPriority: Record<string, number> = {};
@@ -319,4 +409,99 @@ export async function getPlan(planId: string): Promise<GeneratedPlan | null> {
   const planEntry = await readMemory(planId);
   if (!planEntry) return null;
   return planEntry.value as unknown as GeneratedPlan;
+}
+
+/**
+ * Commit plan tasks to the tasks table
+ * Only commits P0 tasks (or top N tasks if limit specified)
+ */
+export async function commitPlan(planId: string, limit: number = 3): Promise<CommitResult> {
+  // Get the plan
+  const plan = await getPlan(planId);
+  if (!plan) {
+    return {
+      success: false,
+      committed_tasks: [],
+      plan_id: planId,
+    };
+  }
+
+  // Filter P0 tasks first, then take up to limit
+  const p0Tasks = plan.tasks.filter(t => t.priority === 'P0');
+  const tasksToCommit = p0Tasks.slice(0, limit);
+
+  // If no P0 tasks, take top tasks by priority
+  if (tasksToCommit.length === 0 && plan.tasks.length > 0) {
+    tasksToCommit.push(...plan.tasks.slice(0, limit));
+  }
+
+  const committedTasks: CommittedTask[] = [];
+
+  for (const planTask of tasksToCommit) {
+    try {
+      // Check if task already exists (by original id)
+      const existing = await pool.query(
+        'SELECT id FROM tasks WHERE id = $1',
+        [planTask.id]
+      );
+
+      if (existing.rows.length > 0) {
+        // Task already exists, just record it as committed
+        committedTasks.push({
+          plan_task_id: planTask.id,
+          task_id: planTask.id,
+          title: planTask.title,
+        });
+        continue;
+      }
+
+      // Insert new task with plan reference in metadata
+      const result = await pool.query(
+        `INSERT INTO tasks (title, priority, status, goal_id, metadata)
+         VALUES ($1, $2, 'pending', $3, $4)
+         RETURNING id`,
+        [
+          planTask.title,
+          planTask.priority,
+          planTask.goal_id || null,
+          JSON.stringify({
+            source_plan_id: planId,
+            why: planTask.why,
+            expected_evidence: planTask.expected_evidence,
+            source_refs: planTask.source_refs,
+          }),
+        ]
+      );
+
+      const newTaskId = String(result.rows[0].id);
+      committedTasks.push({
+        plan_task_id: planTask.id,
+        task_id: newTaskId,
+        title: planTask.title,
+      });
+    } catch (err) {
+      console.error(`Failed to commit task ${planTask.id}:`, err);
+    }
+  }
+
+  // Record commit event in memory
+  await writeMemory({
+    layer: 'episodic',
+    category: 'event',
+    key: `commit_${planId}_${Date.now()}`,
+    value: {
+      type: 'plan_commit',
+      plan_id: planId,
+      committed_count: committedTasks.length,
+      committed_tasks: committedTasks,
+      timestamp: new Date().toISOString(),
+    },
+    source: 'system',
+  });
+
+  return {
+    success: committedTasks.length > 0,
+    committed_tasks: committedTasks,
+    plan_id: planId,
+  };
 }
