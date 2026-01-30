@@ -103,6 +103,8 @@ async def ensure_tables(db: Database) -> None:
         ("acceptance", "JSONB DEFAULT '[]'"),
         ("depends_on", "JSONB DEFAULT '[]'"),
         ("repo", "TEXT DEFAULT ''"),
+        ("duration", "INT"),  # Execution duration in seconds
+        ("error", "TEXT"),  # Error message if failed
     ]
     for col_name, col_type in task_columns:
         await db.execute(
@@ -137,110 +139,8 @@ async def ensure_tables(db: Database) -> None:
         "CREATE INDEX IF NOT EXISTS idx_feature_prds_feature ON feature_prds(feature_id)"
     )
 
-    # ==================== Legacy Tables (backwards compatibility) ====================
-
-    # TRDs table (护栏 1: idempotency_key) - kept for migration period
-    await db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trds (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            kr_id TEXT,
-            status TEXT DEFAULT 'draft',
-            projects JSONB DEFAULT '[]',
-            acceptance_criteria JSONB DEFAULT '[]',
-            idempotency_key TEXT UNIQUE,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            planned_at TIMESTAMPTZ,
-            completed_at TIMESTAMPTZ
-        )
-        """
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trds_status ON trds(status)"
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_trds_idempotency ON trds(idempotency_key)"
-    )
-
-    # Tasks table
-    await db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS orchestrator_tasks (
-            id TEXT PRIMARY KEY,
-            trd_id TEXT REFERENCES trds(id),
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            repo TEXT DEFAULT '',
-            branch TEXT DEFAULT '',
-            status TEXT DEFAULT 'queued',
-            priority TEXT DEFAULT 'P1',
-            depends_on JSONB DEFAULT '[]',
-            acceptance JSONB DEFAULT '[]',
-            prd_content TEXT DEFAULT '',
-            pr_url TEXT,
-            worker_id TEXT,
-            retry_count INT DEFAULT 0,
-            max_retries INT DEFAULT 3,
-            blocked_reason TEXT,
-            blocked_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            started_at TIMESTAMPTZ,
-            completed_at TIMESTAMPTZ
-        )
-        """
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_trd ON orchestrator_tasks(trd_id)"
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_orchestrator_tasks_status ON orchestrator_tasks(status)"
-    )
-
-    # Runs table
-    await db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS orchestrator_runs (
-            id TEXT PRIMARY KEY,
-            task_id TEXT REFERENCES orchestrator_tasks(id),
-            attempt INT DEFAULT 1,
-            status TEXT DEFAULT 'running',
-            worker_id TEXT DEFAULT '',
-            log_file TEXT,
-            pr_url TEXT,
-            ci_status TEXT,
-            ci_run_id TEXT,
-            error TEXT,
-            started_at TIMESTAMPTZ DEFAULT NOW(),
-            ended_at TIMESTAMPTZ,
-            duration_seconds INT
-        )
-        """
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_orchestrator_runs_task ON orchestrator_runs(task_id)"
-    )
-    await db.execute(
-        "CREATE INDEX IF NOT EXISTS idx_orchestrator_runs_status ON orchestrator_runs(status)"
-    )
-
-    # Workers table
-    await db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS orchestrator_workers (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            status TEXT DEFAULT 'idle',
-            current_task_id TEXT,
-            capabilities JSONB DEFAULT '[]',
-            last_heartbeat TIMESTAMPTZ DEFAULT NOW(),
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )
-        """
-    )
+    # Note: Legacy tables (trds, tasks, orchestrator_runs, orchestrator_workers)
+    # have been removed. All data now uses unified projects/tasks tables.
 
 
 # ==================== Request/Response Models ====================
@@ -450,7 +350,7 @@ async def _save_task(db: Database, task: Task) -> None:
     """Save Task to database."""
     await db.execute(
         """
-        INSERT INTO orchestrator_tasks (id, trd_id, title, description, repo, branch, status, priority, depends_on, acceptance, prd_content, pr_url, worker_id, retry_count, max_retries, blocked_reason, blocked_at, created_at, updated_at, started_at, completed_at)
+        INSERT INTO tasks (id, trd_id, title, description, repo, branch, status, priority, depends_on, acceptance, prd_content, pr_url, worker_id, retry_count, max_retries, blocked_reason, blocked_at, created_at, updated_at, started_at, completed_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
@@ -480,23 +380,24 @@ async def _save_task(db: Database, task: Task) -> None:
 
 
 async def _save_run(db: Database, run: Run) -> None:
-    """Save Run to database."""
+    """Save Run execution info to tasks table (task = run in unified model)."""
     await db.execute(
         """
-        INSERT INTO orchestrator_runs (id, task_id, attempt, status, worker_id, log_file, pr_url, ci_status, ci_run_id, error, started_at, ended_at, duration_seconds)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (id) DO UPDATE SET
-            status = EXCLUDED.status,
-            pr_url = EXCLUDED.pr_url,
-            ci_status = EXCLUDED.ci_status,
-            ci_run_id = EXCLUDED.ci_run_id,
-            error = EXCLUDED.error,
-            ended_at = EXCLUDED.ended_at,
-            duration_seconds = EXCLUDED.duration_seconds
+        UPDATE tasks SET
+            run_id = $1,
+            attempt = $2,
+            worker_id = $3,
+            pr_url = COALESCE($4, pr_url),
+            ci_status = COALESCE($5, ci_status),
+            ci_run_id = COALESCE($6, ci_run_id),
+            error = $7,
+            duration = $8,
+            updated_at = NOW()
+        WHERE id = $9
         """,
-        run.id, run.task_id, run.attempt, run.status.value, run.worker_id,
-        run.log_file, run.pr_url, run.ci_status, run.ci_run_id, run.error,
-        run.started_at, run.ended_at, run.duration_seconds
+        run.id, run.attempt, run.worker_id,
+        run.pr_url, run.ci_status, run.ci_run_id, run.error,
+        run.duration_seconds, run.task_id
     )
 
 
@@ -600,7 +501,7 @@ async def list_tasks(
 ):
     """List tasks, optionally filtered."""
     db = get_db()
-    query = "SELECT * FROM orchestrator_tasks WHERE 1=1"
+    query = "SELECT * FROM tasks WHERE 1=1"
     params = []
     idx = 1
     if trd_id:
@@ -620,7 +521,7 @@ async def list_tasks(
 async def get_task(task_id: str):
     """Get a task by ID."""
     db = get_db()
-    row = await db.fetchrow("SELECT * FROM orchestrator_tasks WHERE id = $1", task_id)
+    row = await db.fetchrow("SELECT * FROM tasks WHERE id = $1", task_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return _task_to_response(_row_to_task(row))
@@ -630,7 +531,7 @@ async def get_task(task_id: str):
 async def get_next_task():
     """Get the next task ready for execution."""
     db = get_db()
-    rows = await db.fetch("SELECT * FROM orchestrator_tasks WHERE status = 'queued' ORDER BY priority, created_at")
+    rows = await db.fetch("SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority, created_at")
     tasks = [_row_to_task(row) for row in rows]
     task = _dispatcher.get_next_task(tasks)
 
@@ -647,7 +548,7 @@ async def get_next_task():
 async def start_task(task_id: str, request: StartTaskRequest):
     """Start executing a task - creates a Run."""
     db = get_db()
-    row = await db.fetchrow("SELECT * FROM orchestrator_tasks WHERE id = $1", task_id)
+    row = await db.fetchrow("SELECT * FROM tasks WHERE id = $1", task_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
@@ -687,40 +588,46 @@ async def start_task(task_id: str, request: StartTaskRequest):
     return _run_to_response(run)
 
 
-# ==================== Run Endpoints ====================
+# ==================== Run Endpoints (Unified: task = run) ====================
 
 @router.get("/runs", response_model=List[RunResponse])
 async def list_runs(task_id: Optional[str] = None):
-    """List runs, optionally filtered by task."""
+    """List runs (tasks with execution info), optionally filtered by task.
+
+    In unified model: task = run. This endpoint returns tasks that have run_id.
+    """
     db = get_db()
     if task_id:
-        rows = await db.fetch("SELECT * FROM orchestrator_runs WHERE task_id = $1 ORDER BY started_at DESC", task_id)
+        rows = await db.fetch(
+            "SELECT * FROM tasks WHERE id = $1 AND run_id IS NOT NULL ORDER BY started_at DESC",
+            task_id
+        )
     else:
-        rows = await db.fetch("SELECT * FROM orchestrator_runs ORDER BY started_at DESC")
-    return [_run_to_response(_row_to_run(row)) for row in rows]
+        rows = await db.fetch(
+            "SELECT * FROM tasks WHERE run_id IS NOT NULL ORDER BY started_at DESC"
+        )
+    return [_task_to_run_response(row) for row in rows]
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str):
-    """Get a run by ID."""
+    """Get a run by ID (from tasks table in unified model)."""
     db = get_db()
-    row = await db.fetchrow("SELECT * FROM orchestrator_runs WHERE id = $1", run_id)
+    row = await db.fetchrow("SELECT * FROM tasks WHERE run_id = $1", run_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    return _run_to_response(_row_to_run(row))
+    return _task_to_run_response(row)
 
 
 @router.post("/runs/{run_id}/complete", response_model=RunResponse)
 async def complete_run(run_id: str, request: CompleteRunRequest):
-    """Complete a run and update task status."""
+    """Complete a run and update task status (unified model: task = run)."""
     db = get_db()
-    row = await db.fetchrow("SELECT * FROM orchestrator_runs WHERE id = $1", run_id)
+    row = await db.fetchrow("SELECT * FROM tasks WHERE run_id = $1", run_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    run = _row_to_run(row)
-    task_row = await db.fetchrow("SELECT * FROM orchestrator_tasks WHERE id = $1", run.task_id)
-    task = _row_to_task(task_row) if task_row else None
+    task = _row_to_task(row)
 
     # Map status string to enum
     status_map = {
@@ -733,34 +640,40 @@ async def complete_run(run_id: str, request: CompleteRunRequest):
     if not run_status:
         raise HTTPException(status_code=400, detail=f"Invalid status: {request.status}")
 
-    # Update run
+    # Update task with run completion info
     try:
-        _state_machine.transition_run(run, run_status, request.error)
+        if run_status == RunStatus.SUCCESS:
+            _state_machine.complete_task(task, request.pr_url)
+        elif run_status in [RunStatus.FAILED, RunStatus.TIMEOUT]:
+            _state_machine.fail_task(task, request.error)
     except StateTransitionError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    run.pr_url = request.pr_url
-    run.ci_status = request.ci_status
-    run.ci_run_id = request.ci_run_id
+    # Update execution fields
+    task.pr_url = request.pr_url or task.pr_url
+    await db.execute(
+        """
+        UPDATE tasks SET
+            status = $1,
+            pr_url = COALESCE($2, pr_url),
+            ci_status = $3,
+            ci_run_id = $4,
+            error = $5,
+            updated_at = NOW(),
+            completed_at = CASE WHEN $1 IN ('done', 'failed') THEN NOW() ELSE completed_at END
+        WHERE run_id = $6
+        """,
+        task.status.value, request.pr_url, request.ci_status,
+        request.ci_run_id, request.error, run_id
+    )
 
-    await _save_run(db, run)
+    # Release worker from dispatcher (in-memory)
+    if task.worker_id:
+        _dispatcher.release_worker(task.worker_id)
 
-    # Update task
-    if task:
-        try:
-            if run_status == RunStatus.SUCCESS:
-                _state_machine.complete_task(task, request.pr_url)
-            elif run_status in [RunStatus.FAILED, RunStatus.TIMEOUT]:
-                _state_machine.fail_task(task, request.error)
-            await _save_task(db, task)
-        except StateTransitionError:
-            pass  # Task may already be in final state
-
-        # Release worker
-        if task.worker_id:
-            _dispatcher.release_worker(task.worker_id)
-
-    return _run_to_response(run)
+    # Return updated run response
+    updated_row = await db.fetchrow("SELECT * FROM tasks WHERE run_id = $1", run_id)
+    return _task_to_run_response(updated_row)
 
 
 # ==================== Tick Endpoint (护栏 3: 文件锁) ====================
@@ -789,7 +702,10 @@ def _release_tick_lock(fd: int) -> None:
 
 @router.post("/tick", response_model=TickResponse)
 async def tick():
-    """Advance the state machine. 护栏 3: 文件锁防止并发。"""
+    """Advance the state machine. 护栏 3: 文件锁防止并发。
+
+    In unified model: task = run. Runs are derived from tasks with run_id.
+    """
     lock_fd = _try_acquire_tick_lock()
     if lock_fd is None:
         return TickResponse(skipped="locked - another tick is running")
@@ -797,12 +713,29 @@ async def tick():
     try:
         db = get_db()
         trd_rows = await db.fetch("SELECT * FROM trds")
-        task_rows = await db.fetch("SELECT * FROM orchestrator_tasks")
-        run_rows = await db.fetch("SELECT * FROM orchestrator_runs")
+        task_rows = await db.fetch("SELECT * FROM tasks")
 
         trds = [_row_to_trd(r) for r in trd_rows]
         tasks = [_row_to_task(r) for r in task_rows]
-        runs = [_row_to_run(r) for r in run_rows]
+
+        # Derive runs from tasks with run_id (unified model: task = run)
+        runs = []
+        for row in task_rows:
+            if row["run_id"]:
+                runs.append(Run(
+                    id=row["run_id"],
+                    task_id=row["id"],
+                    attempt=row["attempt"] or 1,
+                    status=RunStatus(row["status"]) if row["status"] in ["running", "success", "failed", "timeout", "cancelled"] else RunStatus.RUNNING,
+                    worker_id=row["worker_id"] or "",
+                    pr_url=row["pr_url"],
+                    ci_status=row["ci_status"],
+                    ci_run_id=row["ci_run_id"],
+                    error=row.get("blocked_reason"),
+                    started_at=row["started_at"],
+                    ended_at=row["completed_at"],
+                    duration_seconds=row.get("duration"),
+                ))
 
         result = _state_machine.tick(trds, tasks, runs)
 
@@ -844,11 +777,11 @@ async def get_status():
         "SELECT id, title, status FROM trds WHERE status IN ('in_progress', 'planned') ORDER BY updated_at DESC LIMIT 10"
     )
     active_trds = [{"id": r["id"], "title": r["title"], "status": r["status"]} for r in active_rows]
-    queued = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'queued'") or 0
-    running = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'running'") or 0
-    blocked = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'blocked'") or 0
+    queued = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'queued'") or 0
+    running = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'running'") or 0
+    blocked = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'blocked'") or 0
     error_rows = await db.fetch(
-        "SELECT id, blocked_reason FROM orchestrator_tasks WHERE status IN ('failed', 'blocked') AND blocked_reason IS NOT NULL ORDER BY updated_at DESC LIMIT 5"
+        "SELECT id, blocked_reason FROM tasks WHERE status IN ('failed', 'blocked') AND blocked_reason IS NOT NULL ORDER BY updated_at DESC LIMIT 5"
     )
     recent_errors = [f"{r['id']}: {r['blocked_reason']}" for r in error_rows]
     return {
@@ -871,9 +804,9 @@ async def get_latest():
         yesterday
     )
     completed_trds = [{"id": r["id"], "title": r["title"], "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None} for r in completed_rows]
-    completed_tasks = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'done' AND completed_at > $1", yesterday) or 0
-    failed_tasks = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'failed' AND updated_at > $1", yesterday) or 0
-    pr_rows = await db.fetch("SELECT pr_url FROM orchestrator_tasks WHERE pr_url IS NOT NULL AND updated_at > $1", yesterday)
+    completed_tasks = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'done' AND completed_at > $1", yesterday) or 0
+    failed_tasks = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND updated_at > $1", yesterday) or 0
+    pr_rows = await db.fetch("SELECT pr_url FROM tasks WHERE pr_url IS NOT NULL AND updated_at > $1", yesterday)
     prs = [r["pr_url"] for r in pr_rows if r["pr_url"]]
     return {
         "completed_trds_24h": completed_trds,
@@ -884,72 +817,79 @@ async def get_latest():
     }
 
 
-# ==================== Worker Endpoints ====================
+# ==================== Worker Endpoints (Unified: workers = seats) ====================
+#
+# In unified model, "workers" are replaced by dynamic "seats" managed by the executor.
+# These endpoints provide backwards-compatible views of seats as workers.
 
 @router.post("/workers", response_model=WorkerResponse)
 async def register_worker(request: RegisterWorkerRequest):
-    """Register a new worker."""
-    db = get_db()
+    """Register a new worker (deprecated - use seats).
+
+    In unified model, workers are dynamic seats. This endpoint registers
+    a worker in the in-memory dispatcher for backwards compatibility.
+    """
     worker_id = f"W-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    now = datetime.now()
 
-    await db.execute(
-        """
-        INSERT INTO orchestrator_workers (id, name, capabilities, last_heartbeat)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (id) DO UPDATE SET
-            name = EXCLUDED.name,
-            capabilities = EXCLUDED.capabilities,
-            last_heartbeat = EXCLUDED.last_heartbeat
-        """,
-        worker_id, request.name, json.dumps(request.capabilities), now
-    )
-
-    # Also register in dispatcher (for in-memory dispatch logic)
+    # Register in dispatcher (in-memory only, no DB)
     worker = _dispatcher.register_worker(worker_id, request.name, request.capabilities)
     return _worker_to_response(worker)
 
 
 @router.get("/workers", response_model=List[WorkerResponse])
 async def list_workers():
-    """List all workers."""
-    db = get_db()
-    rows = await db.fetch("SELECT * FROM orchestrator_workers ORDER BY last_heartbeat DESC")
+    """List all workers (shows active seats as workers).
+
+    In unified model, workers = seats. Returns seats as WorkerResponse format.
+    """
+    executor = get_executor()
+    seats = executor.get_seats()
+
     workers = []
-    for row in rows:
-        capabilities = row["capabilities"] if isinstance(row["capabilities"], list) else json.loads(row["capabilities"] or "[]")
+    for seat in seats.get("seats", []):
         workers.append(WorkerResponse(
-            id=row["id"],
-            name=row["name"],
-            status=row["status"],
-            current_task_id=row["current_task_id"],
-            last_heartbeat=row["last_heartbeat"].isoformat() if row["last_heartbeat"] else datetime.now().isoformat(),
-            capabilities=capabilities,
+            id=f"seat-{seat['seat_id']}",
+            name=f"Seat {seat['seat_id']}",
+            status=seat["status"],
+            current_task_id=seat.get("task_id"),
+            last_heartbeat=seat.get("started_at") or datetime.now().isoformat(),
+            capabilities=["claude", "headless"],
         ))
     return workers
 
 
 @router.post("/workers/{worker_id}/heartbeat", response_model=WorkerResponse)
 async def worker_heartbeat(worker_id: str):
-    """Update worker heartbeat."""
-    db = get_db()
-    now = datetime.now()
-    await db.execute(
-        "UPDATE orchestrator_workers SET last_heartbeat = $1 WHERE id = $2",
-        now, worker_id
-    )
-    row = await db.fetchrow("SELECT * FROM orchestrator_workers WHERE id = $1", worker_id)
-    if not row:
-        raise HTTPException(status_code=404, detail=f"Worker {worker_id} not found")
+    """Update worker heartbeat (no-op in seats model).
 
-    capabilities = row["capabilities"] if isinstance(row["capabilities"], list) else json.loads(row["capabilities"] or "[]")
+    In unified model, seats are managed dynamically by the executor.
+    Heartbeat is not needed - seat status is real-time.
+    """
+    executor = get_executor()
+    seats = executor.get_seats()
+
+    # Find seat by ID
+    seat_id = int(worker_id.replace("seat-", "").replace("W-", "")) if worker_id.startswith(("seat-", "W-")) else 1
+    seat = next((s for s in seats.get("seats", []) if s["seat_id"] == seat_id), None)
+
+    if not seat:
+        # Return a default response for backwards compatibility
+        return WorkerResponse(
+            id=worker_id,
+            name=f"Worker {worker_id}",
+            status="idle",
+            current_task_id=None,
+            last_heartbeat=datetime.now().isoformat(),
+            capabilities=["claude", "headless"],
+        )
+
     return WorkerResponse(
-        id=row["id"],
-        name=row["name"],
-        status=row["status"],
-        current_task_id=row["current_task_id"],
-        last_heartbeat=now.isoformat(),
-        capabilities=capabilities,
+        id=f"seat-{seat['seat_id']}",
+        name=f"Seat {seat['seat_id']}",
+        status=seat["status"],
+        current_task_id=seat.get("task_id"),
+        last_heartbeat=seat.get("started_at") or datetime.now().isoformat(),
+        capabilities=["claude", "headless"],
     )
 
 
@@ -957,8 +897,12 @@ async def worker_heartbeat(worker_id: str):
 
 @router.get("/summary")
 async def get_summary():
-    """Get overall orchestrator summary."""
+    """Get overall orchestrator summary.
+
+    In unified model: workers = seats, runs = tasks with run_id.
+    """
     db = get_db()
+    executor = get_executor()
 
     # Count TRDs by status
     trd_counts = await db.fetch("SELECT status, COUNT(*) as count FROM trds GROUP BY status")
@@ -966,19 +910,20 @@ async def get_summary():
     total_trds = sum(trds_by_status.values())
 
     # Count tasks by status
-    task_counts = await db.fetch("SELECT status, COUNT(*) as count FROM orchestrator_tasks GROUP BY status")
+    task_counts = await db.fetch("SELECT status, COUNT(*) as count FROM tasks GROUP BY status")
     tasks_by_status = {r["status"]: r["count"] for r in task_counts}
     total_tasks = sum(tasks_by_status.values())
 
     # Count ready tasks
-    ready_count = await db.fetchval("SELECT COUNT(*) FROM orchestrator_tasks WHERE status = 'queued'")
+    ready_count = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE status = 'queued'")
 
-    # Count workers
-    total_workers = await db.fetchval("SELECT COUNT(*) FROM orchestrator_workers")
-    idle_workers = await db.fetchval("SELECT COUNT(*) FROM orchestrator_workers WHERE status = 'idle'")
+    # Get seats info (replaces workers)
+    seats = executor.get_seats()
+    total_seats = seats.get("max_seats", 0)
+    available_seats = seats.get("available_seats", 0)
 
-    # Count runs
-    total_runs = await db.fetchval("SELECT COUNT(*) FROM orchestrator_runs")
+    # Count runs (tasks with run_id in unified model)
+    total_runs = await db.fetchval("SELECT COUNT(*) FROM tasks WHERE run_id IS NOT NULL")
 
     return {
         "trds": {
@@ -988,14 +933,15 @@ async def get_summary():
         "tasks": {
             "total_tasks": total_tasks,
             "ready_tasks": ready_count or 0,
-            "idle_workers": idle_workers or 0,
-            "total_workers": total_workers or 0,
+            "available_seats": available_seats,
+            "total_seats": total_seats,
             "tasks_by_status": tasks_by_status,
-            "can_dispatch": (ready_count or 0) > 0 and (idle_workers or 0) > 0,
+            "can_dispatch": (ready_count or 0) > 0 and seats.get("can_spawn_more", False),
         },
         "runs": {
             "total": total_runs or 0,
         },
+        "seats": seats,
     }
 
 
@@ -1064,13 +1010,13 @@ async def execute_tasks(request: ExecuteRequest = None):
     if request and request.task_ids:
         # Execute specific tasks
         task_rows = await db.fetch(
-            "SELECT * FROM orchestrator_tasks WHERE id = ANY($1) AND status = 'queued'",
+            "SELECT * FROM tasks WHERE id = ANY($1) AND status = 'queued'",
             request.task_ids
         )
     else:
         # Execute all ready tasks
         task_rows = await db.fetch(
-            "SELECT * FROM orchestrator_tasks WHERE status = 'queued' ORDER BY priority, created_at"
+            "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority, created_at"
         )
 
     if not task_rows:
@@ -1212,6 +1158,25 @@ def _run_to_response(run: Run) -> RunResponse:
         started_at=run.started_at.isoformat() if run.started_at else "",
         ended_at=run.ended_at.isoformat() if run.ended_at else None,
         duration_seconds=run.duration_seconds,
+    )
+
+
+def _task_to_run_response(row) -> RunResponse:
+    """Convert task row to RunResponse (unified model: task = run)."""
+    return RunResponse(
+        id=row["run_id"] or row["id"],
+        task_id=row["id"],
+        attempt=row["attempt"] or 1,
+        status=row["status"],
+        worker_id=row["worker_id"] or "",
+        log_file=None,  # No separate log file in unified model
+        pr_url=row["pr_url"],
+        ci_status=row["ci_status"],
+        ci_run_id=row["ci_run_id"],
+        error=row.get("error") or row.get("blocked_reason"),
+        started_at=row["started_at"].isoformat() if row["started_at"] else "",
+        ended_at=row["completed_at"].isoformat() if row["completed_at"] else None,
+        duration_seconds=row.get("duration"),
     )
 
 
