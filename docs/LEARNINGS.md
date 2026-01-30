@@ -141,3 +141,27 @@
 2. L3 建议：可以提取 fetchWithTimeout 为公共模块（当前各文件各自实现）
 
 **影响程度**: Low - 新增功能，无破坏性变更
+
+---
+
+### [2026-01-30] KR1: Headless /dev Session with Memory Summary
+
+**任务**: 实现无头模式的 /dev 会话管理，自动记录到 Memory 并生成结构化 Summary
+
+**Bug**:
+1. track.sh 被 Hook 保护，无法直接修改 - 该文件属于 zenithjoy-engine 仓库
+2. .quality-gate-passed 被 .gitignore 忽略，不会被提交
+
+**技术要点**:
+1. Session ID 格式 `dev_YYYYMMDD_HHMMSS_xxxxxx` 使用 crypto random suffix 保证唯一性
+2. Episodic memory 层存储 session 数据，key 格式 `dev_session_{sessionId}` 和 `summary_{sessionId}`
+3. Quality gate 验证三要素：QA-DECISION.md 存在、AUDIT-REPORT.md 有 Decision: PASS、.quality-gate-passed 存在
+4. Panorama command-center 需要改为 async 以支持 queryDevSessions 异步调用
+5. API 端点设计：遵循 RESTful 规范，使用 POST 创建、PATCH 更新、GET 查询
+
+**优化点**:
+1. routes.ts 文件较大（添加了约 230 行），L3 建议拆分为独立路由文件
+2. Session tracking 可以通过 API 实现，不必修改 track.sh
+3. 测试使用集成测试（调用实际 API）而非 mock，验证更真实
+
+**影响程度**: Low - 新增功能模块，无破坏性变更
