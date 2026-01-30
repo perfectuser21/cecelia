@@ -353,7 +353,7 @@ export function CeceliaChat() {
     return (
       <div className="fixed bottom-20 right-6 w-80 h-[480px] flex flex-col bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xl z-50">
         <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
-          <div className="p-1.5 bg-gradient-to-br from-violet-500 to-purple-600 rounded">
+          <div className="p-1.5 bg-gradient-to-br from-slate-600 to-slate-800 rounded">
             <Brain className="w-4 h-4 text-white" />
           </div>
           <span className="font-medium text-sm text-slate-900 dark:text-white">Cecelia</span>
@@ -453,7 +453,7 @@ export function CeceliaChat() {
   return (
     <button
       onClick={() => setChatOpen(true)}
-      className="fixed bottom-6 right-6 p-4 bg-gradient-to-br from-violet-500 to-purple-600 text-white rounded-full shadow-lg hover:shadow-xl transition-shadow z-50"
+      className="fixed bottom-6 right-6 p-4 bg-gradient-to-br from-slate-700 to-slate-900 text-white rounded-full shadow-lg hover:shadow-xl hover:from-slate-600 hover:to-slate-800 transition-all z-50 border border-slate-600/50"
     >
       <MessageCircle className="w-6 h-6" />
       {realtime.isConnected && (

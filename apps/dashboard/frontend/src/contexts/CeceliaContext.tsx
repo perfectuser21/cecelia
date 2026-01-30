@@ -448,46 +448,56 @@ export function CeceliaProvider({ children, onNavigate }: CeceliaProviderProps) 
     <CeceliaContext.Provider value={value}>
       {children}
 
-      {/* Navigation Toast - Full width banner at top */}
+      {/* Navigation Toast - Sci-fi slate themed, bottom-right */}
       <div
-        className={`fixed top-0 left-0 right-0 z-[100] transition-all duration-500 ease-out ${
+        className={`fixed bottom-24 right-6 z-[100] transition-all duration-500 ease-out ${
           navToast.visible
-            ? 'opacity-100 translate-y-0'
-            : 'opacity-0 -translate-y-full pointer-events-none'
+            ? 'opacity-100 scale-100 translate-x-0'
+            : 'opacity-0 scale-95 translate-x-4 pointer-events-none'
         }`}
       >
-        {/* Background glow */}
-        <div className="absolute inset-0 bg-gradient-to-r from-violet-600/90 via-purple-600/90 to-indigo-600/90 backdrop-blur-lg" />
+        <div className="relative">
+          {/* Outer glow */}
+          <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 via-slate-400/20 to-cyan-500/20 rounded-2xl blur-lg" />
 
-        {/* Animated glow overlay */}
-        <div className="absolute inset-0 bg-gradient-to-r from-violet-400/0 via-white/20 to-violet-400/0 animate-pulse" />
+          {/* Main card */}
+          <div className="relative bg-slate-900/95 backdrop-blur-xl rounded-xl border border-slate-600/50 overflow-hidden min-w-[240px]">
+            {/* Scanning line effect */}
+            <div
+              className="absolute inset-0 bg-gradient-to-b from-cyan-400/10 via-transparent to-transparent"
+              style={{ animation: 'scanLine 2s ease-in-out infinite' }}
+            />
 
-        {/* Content */}
-        <div className="relative flex items-center justify-center gap-4 px-6 py-4">
-          {/* Animated icon */}
-          <div className="relative">
-            <div className="absolute inset-0 bg-white/30 rounded-full blur-md animate-ping" />
-            <div className="relative p-2.5 bg-white/20 backdrop-blur rounded-full border border-white/30">
-              <Navigation className="w-5 h-5 text-white" />
+            {/* Top border glow */}
+            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-400/60 to-transparent" />
+
+            {/* Content */}
+            <div className="relative px-5 py-4">
+              <div className="flex items-center gap-4">
+                {/* Icon with glow */}
+                <div className="relative">
+                  <div className="absolute inset-0 bg-cyan-400/30 rounded-lg blur-md" />
+                  <div className="relative p-2.5 bg-slate-800 rounded-lg border border-slate-600/50">
+                    <Navigation className="w-5 h-5 text-cyan-400" />
+                  </div>
+                </div>
+
+                {/* Text */}
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">NAVIGATING</span>
+                  <span className="text-base font-semibold text-slate-100 tracking-wide">{navToast.destination}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom progress bar */}
+            <div className="h-0.5 bg-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 via-cyan-400 to-cyan-500"
+                style={{ animation: 'progress 2.5s ease-out forwards' }}
+              />
             </div>
           </div>
-
-          {/* Text content */}
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-white/80 font-medium">正在前往</span>
-            <span className="text-lg font-bold text-white tracking-wide">{navToast.destination}</span>
-            <Sparkles className="w-5 h-5 text-white/80 animate-pulse" />
-          </div>
-        </div>
-
-        {/* Progress bar at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
-          <div
-            className="h-full bg-white/80"
-            style={{
-              animation: 'progress 2.5s ease-out forwards',
-            }}
-          />
         </div>
       </div>
 
@@ -497,10 +507,14 @@ export function CeceliaProvider({ children, onNavigate }: CeceliaProviderProps) 
           0% { width: 0%; }
           100% { width: 100%; }
         }
-        @keyframes ping {
-          75%, 100% {
-            transform: scale(2);
+        @keyframes scanLine {
+          0%, 100% {
+            transform: translateY(-100%);
             opacity: 0;
+          }
+          50% {
+            transform: translateY(100%);
+            opacity: 1;
           }
         }
       `}</style>
