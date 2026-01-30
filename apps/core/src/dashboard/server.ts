@@ -22,7 +22,9 @@ import taskSystemRoutes from '../task-system/routes.js';
 import brainRoutes from '../brain/routes.js';
 import okrRoutes from '../okr/routes.js';
 import watchdogRoutes from '../watchdog/routes.js';
+import systemRoutes from '../system/routes.js';
 import { startMonitor as startWatchdogMonitor } from '../watchdog/service.js';
+import { auditMiddleware, initAuditTable } from '../middleware/audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,6 +103,9 @@ app.use('/n8n', createProxyMiddleware({
 // Middleware
 app.use(express.json({ limit: '256kb' }));
 
+// Audit middleware (logs all /api/* requests)
+app.use(auditMiddleware);
+
 // Forward /api/feishu-login to feishu-auth-backend
 app.post('/api/feishu-login', async (req, res) => {
   try {
@@ -159,6 +164,9 @@ app.use('/api/okr', okrRoutes);
 // Watchdog API routes (agent activity monitoring)
 app.use('/api/watchdog', watchdogRoutes);
 
+// System status API routes (aggregated status from all subsystems)
+app.use('/api/system', systemRoutes);
+
 // Static frontend files (single frontend, theme switches by hostname in JS)
 // Compiled server is at apps/core/dist/dashboard/server.js
 // Frontend is at apps/dashboard/frontend/dist
@@ -193,8 +201,11 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
+
+  // Initialize audit table
+  await initAuditTable();
 
   // Start watchdog monitor automatically
   startWatchdogMonitor();

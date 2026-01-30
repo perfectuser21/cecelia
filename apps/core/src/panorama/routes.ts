@@ -826,6 +826,117 @@ router.post('/execute', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/panorama/full
+ * Full system panorama - aggregates all subsystems into one view
+ */
+router.get('/full', async (_req: Request, res: Response) => {
+  try {
+    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
+    const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
+    const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5678';
+
+    // Fetch VPS data
+    const vpsData = getHostMonitorData() || {
+      vps: getSystemVitals(),
+      timestamp: new Date().toISOString(),
+    };
+
+    // Fetch brain status (with timeout)
+    let brainData: any = { health: 'unavailable' };
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(`${BRAIN_API}/api/brain/status`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (response.ok) {
+        brainData = await response.json();
+        brainData.health = 'ok';
+      }
+    } catch {
+      brainData = { health: 'unavailable', error: 'Service not responding' };
+    }
+
+    // Fetch quality status (with timeout)
+    let qualityData: any = { health: 'unavailable' };
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(`${QUALITY_API}/api/state`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (response.ok) {
+        qualityData = await response.json();
+        qualityData.health = qualityData.health || 'ok';
+      }
+    } catch {
+      qualityData = { health: 'unavailable', error: 'Service not responding' };
+    }
+
+    // Fetch GitHub panorama (local endpoint)
+    let githubData: any = { health: 'unavailable' };
+    try {
+      const response = await fetch('http://localhost:5212/api/github/panorama');
+      if (response.ok) {
+        const result = await response.json() as { data?: any };
+        githubData = { health: 'ok', ...result.data };
+      }
+    } catch {
+      githubData = { health: 'unavailable', error: 'Service not responding' };
+    }
+
+    // Check services health
+    const services = [
+      {
+        name: 'semantic-brain',
+        port: 5220,
+        status: brainData.health === 'ok' ? 'up' : 'down',
+        endpoint: BRAIN_API,
+      },
+      {
+        name: 'quality',
+        port: 5681,
+        status: qualityData.health === 'ok' || qualityData.health === 'degraded' ? 'up' : 'down',
+        endpoint: QUALITY_API,
+      },
+      {
+        name: 'n8n',
+        port: 5678,
+        status: 'unknown', // Would need health check
+        endpoint: N8N_API,
+      },
+    ];
+
+    // Check N8N health
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const response = await fetch(`${N8N_API}/healthz`, { signal: controller.signal });
+      clearTimeout(timeout);
+      services[2].status = response.ok ? 'up' : 'down';
+    } catch {
+      services[2].status = 'down';
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        timestamp: new Date().toISOString(),
+        vps: vpsData.vps || vpsData,
+        brain: brainData,
+        quality: qualityData,
+        github: githubData,
+        services,
+      },
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+/**
  * GET /api/panorama/execution/:taskId
  * 获取执行状态
  */

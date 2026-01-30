@@ -7,7 +7,7 @@ import { Navigation, Sparkles } from 'lucide-react';
 const PAGE_DISPLAY_NAMES: Record<string, string> = {
   '/okr': 'OKR 目标',
   '/projects': '项目列表',
-  '/orchestrator': '任务调度',
+  '/orchestrator': 'Command Center',
   '/tasks': '任务列表',
   '/planner': '工作规划',
   '/brain': '大脑',
@@ -437,41 +437,40 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
     <CeceliaContext.Provider value={value}>
       {children}
 
-      {/* Navigation Toast - Futuristic glassmorphism style */}
+      {/* Navigation Toast - Bottom right, near Cecelia button */}
       <div
-        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] transition-all duration-500 ease-out ${
+        className={`fixed bottom-24 right-6 z-[100] transition-all duration-400 ease-out ${
           navToast.visible
-            ? 'opacity-100 translate-y-0'
-            : 'opacity-0 -translate-y-8 pointer-events-none'
+            ? 'opacity-100 translate-x-0'
+            : 'opacity-0 translate-x-8 pointer-events-none'
         }`}
       >
         <div className="relative">
           {/* Glow effect */}
-          <div className="absolute inset-0 bg-gradient-to-r from-violet-500/30 via-purple-500/30 to-indigo-500/30 blur-xl rounded-full scale-150" />
+          <div className="absolute inset-0 bg-gradient-to-r from-violet-500/40 via-purple-500/40 to-indigo-500/40 blur-lg rounded-2xl scale-110" />
 
           {/* Main toast */}
-          <div className="relative flex items-center gap-3 px-6 py-3 bg-slate-900/80 dark:bg-slate-800/90 backdrop-blur-xl rounded-full border border-violet-500/30 shadow-2xl shadow-violet-500/20">
+          <div className="relative flex items-center gap-3 px-5 py-3 bg-slate-900/90 backdrop-blur-xl rounded-2xl border border-violet-500/40 shadow-2xl shadow-violet-500/30">
             {/* Animated icon */}
             <div className="relative">
-              <div className="absolute inset-0 bg-violet-500/50 rounded-full blur animate-pulse" />
+              <div className="absolute inset-0 bg-violet-500/60 rounded-full blur animate-pulse" />
               <div className="relative p-2 bg-gradient-to-br from-violet-500 to-purple-600 rounded-full">
-                <Navigation className="w-4 h-4 text-white animate-pulse" />
+                <Navigation className="w-4 h-4 text-white" />
               </div>
             </div>
 
             {/* Text content */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-400">正在前往</span>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-slate-500 uppercase tracking-wider">Navigating</span>
               <span className="text-sm font-semibold text-white">{navToast.destination}</span>
-              <Sparkles className="w-4 h-4 text-violet-400 animate-pulse" />
             </div>
 
-            {/* Scanning line animation */}
-            <div className="absolute inset-0 overflow-hidden rounded-full">
+            {/* Progress bar animation */}
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-800 rounded-b-2xl overflow-hidden">
               <div
-                className="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent via-violet-400/20 to-transparent animate-scan"
+                className="h-full bg-gradient-to-r from-violet-500 via-purple-500 to-indigo-500"
                 style={{
-                  animation: 'scan 1.5s ease-in-out infinite',
+                  animation: 'progress 2s ease-out forwards',
                 }}
               />
             </div>
@@ -479,11 +478,11 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      {/* CSS for scan animation */}
+      {/* CSS for progress animation */}
       <style>{`
-        @keyframes scan {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
+        @keyframes progress {
+          0% { width: 0%; }
+          100% { width: 100%; }
         }
       `}</style>
     </CeceliaContext.Provider>

@@ -44,14 +44,24 @@ const ROUTE_ALIASES: Record<string, string> = {
   'project': '/projects',
   '项目': '/projects',
   '项目列表': '/projects',
-  // Orchestrator
+  // Orchestrator / Command Center
   'orchestrator': '/orchestrator',
+  'command center': '/orchestrator',
+  'commandcenter': '/orchestrator',
+  'command': '/orchestrator',
+  'opcenter': '/orchestrator',
+  'op center': '/orchestrator',
+  'control center': '/orchestrator',
+  'controlcenter': '/orchestrator',
   '调度': '/orchestrator',
   '任务调度': '/orchestrator',
   '调度器': '/orchestrator',
   '编排': '/orchestrator',
+  '指挥中心': '/orchestrator',
+  '控制中心': '/orchestrator',
   // Tasks
   'tasks': '/tasks',
+  'task': '/tasks',
   '任务': '/tasks',
   '任务列表': '/tasks',
   // Planner / 工作规划
@@ -62,17 +72,19 @@ const ROUTE_ALIASES: Record<string, string> = {
   // Brain
   'brain': '/brain',
   '大脑': '/brain',
-  // Home
+  // Home / Dashboard
   'home': '/',
+  'dashboard': '/',
   '首页': '/',
   '主页': '/',
+  '仪表盘': '/',
 };
 
 // Friendly page names for display
 const PAGE_DISPLAY_NAMES: Record<string, string> = {
   '/okr': 'OKR 目标',
   '/projects': '项目列表',
-  '/orchestrator': '任务调度',
+  '/orchestrator': 'Command Center',
   '/tasks': '任务列表',
   '/planner': '工作规划',
   '/brain': '大脑',

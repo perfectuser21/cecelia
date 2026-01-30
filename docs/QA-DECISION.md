@@ -1,27 +1,23 @@
-# QA Decision
+# QA Decision - Organ Unification Phase 1
 
-## Feature: Cecelia 前端连接 Orchestrator
+Decision: NO_RCI
+Priority: P1
+RepoType: Business
 
-## Decision: Manual Testing Only
+## Tests
 
-### Rationale
-- 这是前端 UI + WebSocket 集成
-- 涉及浏览器 API（MediaRecorder, AudioContext）
-- 需要真实 OpenAI Realtime API 连接
-- 自动化测试成本高，收益低
+| DoD Item | Method | Location |
+|----------|--------|----------|
+| `/api/system/status` 聚合 brain + quality + workflows | auto | tests/system-status.test.ts |
+| `/api/panorama/full` 返回完整系统全景 | auto | tests/panorama-full.test.ts |
+| 请求日志记录到 decision_log 表 | manual | manual:curl + psql 验证 |
+| 服务降级时返回 unavailable 状态 | auto | tests/system-status.test.ts |
 
-### Test Strategy
-1. **构建验证**: `npm run build` 通过
-2. **手动测试**:
-   - 访问 /orchestrator 页面
-   - 点击麦克风按钮
-   - 验证 WebSocket 连接
-   - 语音对话测试
-   - 触发 run_orchestrator tool
+## RCI
 
-### Acceptance Criteria
-- [ ] TypeScript 编译通过
-- [ ] 页面正常加载
-- [ ] WebSocket 连接成功
-- [ ] 语音输入/输出正常
-- [ ] Tool 调用正常
+new: []
+update: []
+
+## Reason
+
+Phase 1 是聚合层强化，新增 2 个聚合端点 + 1 个中间件。无回归风险（新增功能），不需要 RCI。测试覆盖新端点响应格式和服务降级逻辑。
