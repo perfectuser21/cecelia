@@ -448,71 +448,103 @@ export function CeceliaProvider({ children, onNavigate }: CeceliaProviderProps) 
     <CeceliaContext.Provider value={value}>
       {children}
 
-      {/* Navigation Toast - Sci-fi purple-slate themed, bottom-right */}
+      {/* Full-screen navigation overlay - sci-fi warp effect */}
       <div
-        className={`fixed bottom-24 right-6 z-[100] transition-all duration-500 ease-out ${
+        className={`fixed inset-0 z-[90] pointer-events-none transition-opacity duration-300 ${
+          navToast.visible ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        {/* Edge glow effect */}
+        <div className="absolute inset-0 border-2 border-purple-500/0" style={{
+          animation: navToast.visible ? 'borderFlash 0.6s ease-out' : 'none',
+          boxShadow: 'inset 0 0 100px rgba(139, 92, 246, 0.1)'
+        }} />
+
+        {/* Horizontal scan line */}
+        <div
+          className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-purple-400/40 to-transparent"
+          style={{
+            animation: navToast.visible ? 'scanHorizontal 0.5s ease-out' : 'none',
+            boxShadow: '0 0 20px rgba(139, 92, 246, 0.5)'
+          }}
+        />
+
+        {/* Corner accents */}
+        <div className="absolute top-4 left-4 w-8 h-8 border-l-2 border-t-2 border-purple-500/50" style={{
+          animation: navToast.visible ? 'cornerPulse 0.4s ease-out' : 'none'
+        }} />
+        <div className="absolute top-4 right-4 w-8 h-8 border-r-2 border-t-2 border-purple-500/50" style={{
+          animation: navToast.visible ? 'cornerPulse 0.4s ease-out' : 'none'
+        }} />
+        <div className="absolute bottom-4 left-4 w-8 h-8 border-l-2 border-b-2 border-purple-500/50" style={{
+          animation: navToast.visible ? 'cornerPulse 0.4s ease-out' : 'none'
+        }} />
+        <div className="absolute bottom-4 right-4 w-8 h-8 border-r-2 border-b-2 border-purple-500/50" style={{
+          animation: navToast.visible ? 'cornerPulse 0.4s ease-out' : 'none'
+        }} />
+      </div>
+
+      {/* Navigation indicator - center top */}
+      <div
+        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] transition-all duration-400 ease-out ${
           navToast.visible
-            ? 'opacity-100 scale-100 translate-x-0'
-            : 'opacity-0 scale-95 translate-x-4 pointer-events-none'
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 -translate-y-4 pointer-events-none'
         }`}
       >
         <div className="relative">
-          {/* Outer glow - purple accent */}
-          <div className="absolute -inset-2 bg-gradient-to-r from-purple-500/30 via-slate-500/20 to-purple-500/30 rounded-2xl blur-xl animate-pulse" />
+          {/* Glow backdrop */}
+          <div className="absolute -inset-3 bg-purple-500/20 rounded-2xl blur-xl" />
 
-          {/* Main card */}
-          <div className="relative bg-slate-900/95 backdrop-blur-xl rounded-xl border border-slate-600/50 overflow-hidden min-w-[260px]">
-            {/* Scanning line effect - purple tint */}
-            <div
-              className="absolute inset-0 bg-gradient-to-b from-purple-400/15 via-transparent to-transparent"
-              style={{ animation: 'scanLine 2s ease-in-out infinite' }}
-            />
-
-            {/* Top border glow - purple */}
-            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-purple-400/70 to-transparent" />
-
-            {/* Side accent lines */}
-            <div className="absolute left-0 top-0 bottom-0 w-px bg-gradient-to-b from-purple-500/50 via-slate-600/30 to-transparent" />
-            <div className="absolute right-0 top-0 bottom-0 w-px bg-gradient-to-b from-purple-500/50 via-slate-600/30 to-transparent" />
-
-            {/* Content */}
-            <div className="relative px-5 py-4">
-              <div className="flex items-center gap-4">
-                {/* Icon with enhanced glow */}
-                <div className="relative">
-                  <div className="absolute inset-0 bg-purple-500/40 rounded-lg blur-lg" />
-                  <div className="absolute inset-0 bg-purple-400/20 rounded-lg blur-sm animate-pulse" />
-                  <div className="relative p-2.5 bg-gradient-to-br from-slate-700 via-purple-900/30 to-slate-800 rounded-lg border border-purple-500/30">
-                    <Navigation className="w-5 h-5 text-purple-300" />
-                  </div>
-                </div>
-
-                {/* Text */}
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-purple-400/70 uppercase tracking-widest font-medium">NAVIGATING</span>
-                  <span className="text-base font-semibold text-slate-100 tracking-wide">{navToast.destination}</span>
-                </div>
-
-                {/* Sparkle indicator */}
-                <div className="ml-auto">
-                  <Sparkles className="w-4 h-4 text-purple-400/60 animate-pulse" />
-                </div>
-              </div>
+          {/* Main pill */}
+          <div className="relative flex items-center gap-3 px-5 py-2.5 bg-slate-900/90 backdrop-blur-xl rounded-full border border-purple-500/30 shadow-lg shadow-purple-500/20">
+            {/* Icon */}
+            <div className="relative">
+              <div className="absolute inset-0 bg-purple-500/30 rounded-full blur-sm animate-pulse" />
+              <Navigation className="w-4 h-4 text-purple-400 relative" />
             </div>
 
-            {/* Bottom progress bar - purple gradient */}
-            <div className="h-1 bg-slate-800/80">
-              <div
-                className="h-full bg-gradient-to-r from-purple-600 via-purple-400 to-purple-600 shadow-lg shadow-purple-500/50"
-                style={{ animation: 'progress 2.5s ease-out forwards' }}
-              />
-            </div>
+            {/* Text */}
+            <span className="text-sm font-medium text-slate-200">{navToast.destination}</span>
+
+            {/* Progress dot */}
+            <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
           </div>
         </div>
       </div>
 
       {/* CSS for animations */}
       <style>{`
+        @keyframes scanHorizontal {
+          0% {
+            top: 0;
+            opacity: 1;
+          }
+          100% {
+            top: 100%;
+            opacity: 0;
+          }
+        }
+        @keyframes borderFlash {
+          0% {
+            border-color: rgba(139, 92, 246, 0.5);
+            box-shadow: inset 0 0 100px rgba(139, 92, 246, 0.2);
+          }
+          100% {
+            border-color: transparent;
+            box-shadow: inset 0 0 0px transparent;
+          }
+        }
+        @keyframes cornerPulse {
+          0% {
+            opacity: 1;
+            transform: scale(1.2);
+          }
+          100% {
+            opacity: 0.5;
+            transform: scale(1);
+          }
+        }
         @keyframes progress {
           0% { width: 0%; }
           100% { width: 100%; }

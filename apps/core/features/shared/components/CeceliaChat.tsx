@@ -351,7 +351,10 @@ export function CeceliaChat() {
 
   if (chatOpen) {
     return (
-      <div className="fixed bottom-20 right-6 w-80 h-[480px] flex flex-col bg-slate-900/95 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl shadow-purple-500/10 z-50 overflow-hidden">
+      <div
+        className="fixed bottom-6 right-6 w-80 flex flex-col bg-slate-900/95 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl shadow-purple-500/10 z-50 overflow-hidden"
+        style={{ height: '480px', maxHeight: '480px', minHeight: '480px' }}
+      >
         {/* Top glow line */}
         <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-purple-400/50 to-transparent" />
 
@@ -372,9 +375,9 @@ export function CeceliaChat() {
           )}
           <button
             onClick={() => setChatOpen(false)}
-            className="ml-auto p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+            className="ml-auto p-1.5 hover:bg-slate-700/50 rounded-lg transition-colors"
           >
-            <Minimize2 className="w-4 h-4 text-slate-400" />
+            <ChevronDown className="w-4 h-4 text-slate-400" />
           </button>
         </div>
 

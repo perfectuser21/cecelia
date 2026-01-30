@@ -244,20 +244,35 @@
    WOW EFFECTS - ZenithJoy Dashboard
    ============================================ */
 
-/* 页面切换淡入动画 */
-@keyframes fadeIn {
-  from {
+/* 页面切换淡入动画 - 更明显的科幻效果 */
+@keyframes pageFadeIn {
+  0% {
     opacity: 0;
-    transform: translateY(15px);
+    transform: translateY(20px) scale(0.98);
+    filter: blur(4px);
   }
-  to {
+  60% {
     opacity: 1;
-    transform: translateY(0);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0px);
+  }
+}
+
+@keyframes pageGlowIn {
+  0% {
+    box-shadow: inset 0 0 60px rgba(139, 92, 246, 0.15);
+  }
+  100% {
+    box-shadow: inset 0 0 0px transparent;
   }
 }
 
 .page-fade-in {
-  animation: fadeIn 0.4s ease-out;
+  animation: pageFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1), pageGlowIn 0.8s ease-out;
 }
 
 /* ============================================
