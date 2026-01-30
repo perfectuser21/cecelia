@@ -139,17 +139,24 @@ def get_resource_status(active_seats: int = 0, seat_info: List[SeatStatus] = Non
     except Exception:
         load_average = 0.0
 
-    # Count Claude processes
+    # Count Claude main processes (interactive sessions, not subprocesses)
+    # Use pgrep -x to match exact process name "claude"
     try:
         result = subprocess.run(
-            ["pgrep", "-c", "-f", "claude"],
+            ["pgrep", "-x", "claude"],
             capture_output=True,
             text=True,
             timeout=5
         )
-        claude_processes = int(result.stdout.strip()) if result.returncode == 0 else 0
+        # Count lines = number of main claude processes
+        claude_processes = len(result.stdout.strip().split('\n')) if result.returncode == 0 and result.stdout.strip() else 0
     except Exception:
         claude_processes = 0
+
+    # Use detected claude processes as active_seats if not explicitly provided
+    # This ensures we account for manually started Claude Code sessions
+    if active_seats == 0:
+        active_seats = claude_processes
 
     # Dynamic seat calculation
     # 1. Based on available memory: (available - 2GB reserve) / 1.5GB per seat
