@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.orchestrator.models import (
+from src.autumnrice.models import (
     TRD,
     TRDStatus,
     Task,

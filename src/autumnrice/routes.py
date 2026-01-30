@@ -1,10 +1,15 @@
-"""API routes for Orchestrator state machine with PostgreSQL persistence.
+"""API routes for Autumnrice (秋米) - Task execution engine.
+
+秋米是 Cecelia 的管家/调度 Agent，负责：
+1. 接收 PRD，分解成 Tasks
+2. 调度执行（/dev 或 N8N workflow）
+3. 状态回流和护栏保护
 
 护栏功能:
 1. 幂等与去重 - idempotency_key
 2. 状态回流 - /status, /latest 端点
 3. Tick 锁 - 文件锁防止并发
-4. 失败策略 - retry_count + max_retries (已有)
+4. 失败策略 - retry_count + max_retries
 """
 
 import fcntl
@@ -17,7 +22,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.orchestrator.models import (
+from src.autumnrice.models import (
     TRD,
     TRDStatus,
     Task,
@@ -25,13 +30,13 @@ from src.orchestrator.models import (
     Run,
     RunStatus,
 )
-from src.orchestrator.state_machine import StateMachine, StateTransitionError
-from src.orchestrator.planner import Planner
-from src.orchestrator.dispatcher import Dispatcher, Worker
-from src.orchestrator.executor import get_executor
+from src.autumnrice.state_machine import StateMachine, StateTransitionError
+from src.autumnrice.planner import Planner
+from src.autumnrice.dispatcher import Dispatcher, Worker
+from src.autumnrice.executor import get_executor
 from src.db.pool import Database
 
-router = APIRouter(prefix="/orchestrator/v2", tags=["orchestrator-v2"])
+router = APIRouter(prefix="/autumnrice", tags=["autumnrice"])
 
 # Database dependency - will be set by main.py
 _db: Optional[Database] = None
@@ -683,7 +688,7 @@ async def complete_run(run_id: str, request: CompleteRunRequest):
 
 # ==================== Tick Endpoint (护栏 3: 文件锁) ====================
 
-TICK_LOCK_FILE = os.path.join(tempfile.gettempdir(), "orchestrator_tick.lock")
+TICK_LOCK_FILE = os.path.join(tempfile.gettempdir(), "autumnrice_tick.lock")
 
 
 def _try_acquire_tick_lock() -> Optional[int]:

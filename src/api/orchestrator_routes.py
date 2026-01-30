@@ -19,10 +19,10 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from src.db.pool import Database
-from src.orchestrator.models import TRD
-from src.orchestrator.planner import Planner
-from src.orchestrator.state_machine import StateMachine, StateTransitionError
-from src.orchestrator import routes as orchestrator_v2
+from src.autumnrice.models import TRD
+from src.autumnrice.planner import Planner
+from src.autumnrice.state_machine import StateMachine, StateTransitionError
+from src.autumnrice import routes as autumnrice
 
 # Database dependency - will be set by main.py
 _db: Optional[Database] = None
@@ -952,7 +952,7 @@ async def execute_tool(request: ToolCallRequest):
             # Task Queue - 任务入库，异步执行
             try:
                 # Get database from v2 routes
-                db = orchestrator_v2.get_db()
+                db = autumnrice.get_db()
 
                 # Generate idempotency_key from task description hash
                 idempotency_key = hashlib.sha256(task_desc.encode()).hexdigest()[:16]
@@ -964,12 +964,12 @@ async def execute_tool(request: ToolCallRequest):
                 )
                 if existing:
                     # Return existing TRD
-                    trd = orchestrator_v2._row_to_trd(existing)
+                    trd = autumnrice._row_to_trd(existing)
                     tasks_rows = await db.fetch(
                         "SELECT * FROM orchestrator_tasks WHERE trd_id = $1",
                         trd.id
                     )
-                    tasks = [orchestrator_v2._row_to_task(row) for row in tasks_rows]
+                    tasks = [autumnrice._row_to_task(row) for row in tasks_rows]
                     return {
                         "success": True,
                         "result": {
@@ -994,7 +994,7 @@ async def execute_tool(request: ToolCallRequest):
                     projects=[project] if project else [],
                     acceptance_criteria=[],
                 )
-                await orchestrator_v2._save_trd(db, trd, idempotency_key=idempotency_key)
+                await autumnrice._save_trd(db, trd, idempotency_key=idempotency_key)
 
                 # Call planner to decompose into tasks
                 planner = Planner()
@@ -1056,9 +1056,9 @@ async def execute_tool(request: ToolCallRequest):
                     }
 
                 # Save to DB
-                await orchestrator_v2._save_trd(db, trd)
+                await autumnrice._save_trd(db, trd)
                 for task in tasks:
-                    await orchestrator_v2._save_task(db, task)
+                    await autumnrice._save_task(db, task)
 
                 return {
                     "success": True,

@@ -1,6 +1,6 @@
 """Orchestrator module - State machine, Planner, and Dispatcher for Cecelia."""
 
-from src.orchestrator.models import (
+from src.autumnrice.models import (
     TRD,
     TRDStatus,
     Task,
@@ -8,9 +8,9 @@ from src.orchestrator.models import (
     Run,
     RunStatus,
 )
-from src.orchestrator.state_machine import StateMachine
-from src.orchestrator.planner import Planner
-from src.orchestrator.dispatcher import Dispatcher
+from src.autumnrice.state_machine import StateMachine
+from src.autumnrice.planner import Planner
+from src.autumnrice.dispatcher import Dispatcher
 
 __all__ = [
     "TRD",

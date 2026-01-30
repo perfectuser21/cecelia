@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.orchestrator.models import Task, generate_run_id
+from src.autumnrice.models import Task, generate_run_id
 
 
 # Constants
@@ -181,7 +181,7 @@ class Executor:
         prompt = self._build_prompt(task)
 
         # Create temporary PRD file for the task
-        prd_file = Path(f"/tmp/orchestrator_task_{task.id}.md")
+        prd_file = Path(f"/tmp/autumnrice_task_{task.id}.md")
         try:
             prd_file.write_text(prompt)
         except Exception as e:

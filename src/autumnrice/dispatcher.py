@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from src.orchestrator.models import Task, Run, generate_run_id
-from src.orchestrator.state_machine import StateMachine
+from src.autumnrice.models import Task, Run, generate_run_id
+from src.autumnrice.state_machine import StateMachine
 
 
 @dataclass

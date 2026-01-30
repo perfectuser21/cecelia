@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from src.orchestrator.models import (
+from src.autumnrice.models import (
     TRD,
     TRDStatus,
     Task,
@@ -11,7 +11,7 @@ from src.orchestrator.models import (
     Run,
     RunStatus,
 )
-from src.orchestrator.state_machine import StateMachine, StateTransitionError
+from src.autumnrice.state_machine import StateMachine, StateTransitionError
 
 
 class TestTRDTransitions:

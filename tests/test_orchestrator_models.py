@@ -1,7 +1,7 @@
 """Tests for Orchestrator models."""
 
 
-from src.orchestrator.models import (
+from src.autumnrice.models import (
     TRD,
     TRDStatus,
     Task,

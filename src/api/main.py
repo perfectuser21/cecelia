@@ -25,7 +25,7 @@ from src.api.state_routes import router as state_router, set_database
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
 from src.api.orchestrator_routes import router as orchestrator_router, set_database as set_orchestrator_database
-from src.orchestrator.routes import router as orchestrator_v2_router, set_database as set_orchestrator_v2_database, ensure_tables as ensure_orchestrator_tables
+from src.autumnrice.routes import router as autumnrice_router, set_database as set_autumnrice_database, ensure_tables as ensure_autumnrice_tables
 from src.state.patrol import ensure_patrol_table
 from src.state.agent_monitor import ensure_agent_tables
 
@@ -94,11 +94,11 @@ async def lifespan(app: FastAPI):
         set_patrol_database(database)
         set_agent_database(database)
         set_orchestrator_database(database)
-        set_orchestrator_v2_database(database)
+        set_autumnrice_database(database)
         # Ensure required tables exist
         await ensure_patrol_table(database)
         await ensure_agent_tables(database)
-        await ensure_orchestrator_tables(database)
+        await ensure_autumnrice_tables(database)
         logger.info("Database connection initialized")
     except Exception as e:
         logger.warning(f"Database connection failed (State Layer disabled): {e}")
@@ -135,8 +135,8 @@ app.include_router(agent_router)
 # Include orchestrator routes (Layer 2 state management + Realtime API)
 app.include_router(orchestrator_router)
 
-# Include orchestrator v2 routes (TRD/Task/Run state machine)
-app.include_router(orchestrator_v2_router)
+# Include autumnrice routes (秋米 - TRD/Task/Run state machine)
+app.include_router(autumnrice_router)
 
 
 # Request/Response models

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.orchestrator.models import TRD, Task, generate_task_id
+from src.autumnrice.models import TRD, Task, generate_task_id
 
 
 @dataclass
@@ -259,7 +259,7 @@ class Planner:
                     errors.append(f"Task {task.id}: invalid dependency {dep}")
 
         # Check for cycles
-        from src.orchestrator.state_machine import StateMachine
+        from src.autumnrice.state_machine import StateMachine
         sm = StateMachine()
         is_valid, cycle_nodes = sm.validate_no_cycles(tasks)
         if not is_valid:

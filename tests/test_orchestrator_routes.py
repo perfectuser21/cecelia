@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.orchestrator.routes import router, set_database
+from src.autumnrice.routes import router, set_database
 
 
 # Mock database class
@@ -174,7 +174,7 @@ class TestTRDRoutes:
 
     def test_create_trd(self):
         """Test creating a TRD."""
-        response = client.post("/orchestrator/v2/trd", json={
+        response = client.post("/autumnrice/trd", json={
             "title": "Test TRD",
             "description": "Test description",
             "projects": ["proj1"],
@@ -188,32 +188,32 @@ class TestTRDRoutes:
 
     def test_get_trd(self):
         """Test getting a TRD."""
-        create_response = client.post("/orchestrator/v2/trd", json={
+        create_response = client.post("/autumnrice/trd", json={
             "title": "Test TRD",
         })
         trd_id = create_response.json()["id"]
-        response = client.get(f"/orchestrator/v2/trd/{trd_id}")
+        response = client.get(f"/autumnrice/trd/{trd_id}")
         assert response.status_code == 200
         assert response.json()["id"] == trd_id
 
     def test_get_trd_not_found(self):
         """Test getting non-existent TRD."""
-        response = client.get("/orchestrator/v2/trd/TRD-NONEXISTENT")
+        response = client.get("/autumnrice/trd/TRD-NONEXISTENT")
         assert response.status_code == 404
 
     def test_list_trds(self):
         """Test listing TRDs."""
-        client.post("/orchestrator/v2/trd", json={"title": "TRD 1"})
-        client.post("/orchestrator/v2/trd", json={"title": "TRD 2"})
-        response = client.get("/orchestrator/v2/trds")
+        client.post("/autumnrice/trd", json={"title": "TRD 1"})
+        client.post("/autumnrice/trd", json={"title": "TRD 2"})
+        response = client.get("/autumnrice/trds")
         assert response.status_code == 200
         data = response.json()
         assert len(data) >= 2
 
     def test_list_trds_filter_by_status(self):
         """Test listing TRDs filtered by status."""
-        client.post("/orchestrator/v2/trd", json={"title": "Test TRD"})
-        response = client.get("/orchestrator/v2/trds?status=draft")
+        client.post("/autumnrice/trd", json={"title": "Test TRD"})
+        response = client.get("/autumnrice/trds?status=draft")
         assert response.status_code == 200
         for trd in response.json():
             assert trd["status"] == "draft"
@@ -224,13 +224,13 @@ class TestTaskRoutes:
 
     def test_list_tasks(self):
         """Test listing tasks."""
-        response = client.get("/orchestrator/v2/tasks")
+        response = client.get("/autumnrice/tasks")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
     def test_get_next_task_no_ready(self):
         """Test getting next task when none ready."""
-        response = client.get("/orchestrator/v2/next")
+        response = client.get("/autumnrice/next")
         assert response.status_code == 200
         _ = response.json()
 
@@ -240,7 +240,7 @@ class TestWorkerRoutes:
 
     def test_register_worker(self):
         """Test registering a worker."""
-        response = client.post("/orchestrator/v2/workers", json={
+        response = client.post("/autumnrice/workers", json={
             "name": "Test Worker",
             "capabilities": ["python", "node"],
         })
@@ -252,16 +252,16 @@ class TestWorkerRoutes:
 
     def test_list_workers(self):
         """Test listing workers."""
-        client.post("/orchestrator/v2/workers", json={"name": "Worker 1"})
-        response = client.get("/orchestrator/v2/workers")
+        client.post("/autumnrice/workers", json={"name": "Worker 1"})
+        response = client.get("/autumnrice/workers")
         assert response.status_code == 200
         assert len(response.json()) >= 1
 
     def test_worker_heartbeat(self):
         """Test worker heartbeat."""
-        create_response = client.post("/orchestrator/v2/workers", json={"name": "Worker"})
+        create_response = client.post("/autumnrice/workers", json={"name": "Worker"})
         worker_id = create_response.json()["id"]
-        response = client.post(f"/orchestrator/v2/workers/{worker_id}/heartbeat")
+        response = client.post(f"/autumnrice/workers/{worker_id}/heartbeat")
         assert response.status_code == 200
 
 
@@ -270,7 +270,7 @@ class TestTickRoute:
 
     def test_tick(self):
         """Test tick endpoint."""
-        response = client.post("/orchestrator/v2/tick")
+        response = client.post("/autumnrice/tick")
         assert response.status_code == 200
         data = response.json()
         assert "updated_trds" in data
@@ -284,7 +284,7 @@ class TestSummaryRoute:
 
     def test_summary(self):
         """Test summary endpoint."""
-        response = client.get("/orchestrator/v2/summary")
+        response = client.get("/autumnrice/summary")
         assert response.status_code == 200
         data = response.json()
         assert "trds" in data
@@ -297,7 +297,7 @@ class TestIntegration:
 
     def test_full_workflow(self):
         """Test full workflow: create TRD -> register worker."""
-        trd_response = client.post("/orchestrator/v2/trd", json={
+        trd_response = client.post("/autumnrice/trd", json={
             "title": "Integration Test TRD",
             "description": "Test full workflow",
             "acceptance_criteria": ["AC1", "AC2"],
@@ -306,14 +306,14 @@ class TestIntegration:
         trd = trd_response.json()
         assert trd["status"] == "draft"
 
-        worker_response = client.post("/orchestrator/v2/workers", json={
+        worker_response = client.post("/autumnrice/workers", json={
             "name": "Integration Worker",
         })
         assert worker_response.status_code == 200
         worker = worker_response.json()
         assert worker["status"] == "idle"
 
-        summary_response = client.get("/orchestrator/v2/summary")
+        summary_response = client.get("/autumnrice/summary")
         assert summary_response.status_code == 200
         summary = summary_response.json()
         assert summary["trds"]["total"] >= 1

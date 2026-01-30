@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from src.orchestrator.models import TRD, Task
-from src.orchestrator.planner import Planner
+from src.autumnrice.models import TRD, Task
+from src.autumnrice.planner import Planner
 
 
 class TestPlanner:
