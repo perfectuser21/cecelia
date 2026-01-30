@@ -1,4 +1,4 @@
-# QA Decision - Tick + cecelia-run 集成
+# QA Decision - TRD 分解器
 
 Decision: NO_RCI
 Priority: P1
@@ -8,9 +8,9 @@ RepoType: Engine
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| Tick 触发执行 | manual | manual:调用 tick API 观察 cecelia-run 启动 |
-| 回调更新状态 | manual | manual:检查 task 状态变化 |
-| 连续执行 | manual | manual:创建多个 task 验证连续执行 |
+| TRD 分解 API | manual | manual:调用 decompose API 验证返回 |
+| 任务依赖关系 | manual | manual:检查 depends_on 字段 |
+| 进度追踪 API | manual | manual:调用 progress API 验证 |
 
 ## RCI
 
@@ -19,31 +19,38 @@ RepoType: Engine
 
 ## Reason
 
-1. **Engine 类型项目**：Brain API 是核心基础设施
-2. **集成测试为主**：功能涉及外部进程调用（cecelia-run），单元测试难以覆盖
-3. **手动验证**：首次集成，需要人工观察执行流程
-4. **后续迭代**：功能稳定后再补充自动化测试
+1. **Engine 类型项目**：Brain API 核心功能
+2. **API 测试为主**：验证分解逻辑和数据存储
+3. **手动验证**：首次实现，需观察分解结果质量
 
 ## 测试计划
 
 ### 手动验证步骤
 
-1. **AC1 验证**：
+1. **AC1 验证 - TRD 分解**：
    ```bash
-   # 1. 创建测试 task
-   curl -X POST http://localhost:5212/api/brain/action/create-task \
+   # 调用分解 API
+   curl -X POST http://localhost:5212/api/brain/trd/decompose \
      -H "Content-Type: application/json" \
-     -d '{"title":"Test tick execution","priority":"P1","prd_content":"/dev test"}'
+     -d '{
+       "trd_content": "# 测试 TRD\n\n## 阶段1\n- 任务A\n- 任务B\n\n## 阶段2\n- 任务C"
+     }'
 
-   # 2. 触发 tick
-   curl -X POST http://localhost:5212/api/brain/tick
-
-   # 3. 检查 task 状态
-   curl http://localhost:5212/api/brain/tasks
-
-   # 4. 检查进程
-   ps aux | grep cecelia-run
+   # 验证返回包含 milestones 和 tasks
    ```
 
-2. **AC2 验证**：等待 cecelia-run 完成，检查状态更新
-3. **AC3 验证**：创建多个 tasks，观察连续执行
+2. **AC2 验证 - 依赖关系**：
+   ```bash
+   # 检查创建的 tasks
+   curl http://localhost:5212/api/brain/tasks
+
+   # 验证 depends_on 字段正确设置
+   ```
+
+3. **AC3 验证 - 进度追踪**：
+   ```bash
+   # 调用进度 API
+   curl http://localhost:5212/api/brain/trd/<trd_id>/progress
+
+   # 验证返回正确的进度百分比
+   ```

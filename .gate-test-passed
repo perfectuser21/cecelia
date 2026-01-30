@@ -1,0 +1,7 @@
+{
+  "gate": "test",
+  "decision": "PASS",
+  "branch": "cp-trd-decomposer",
+  "timestamp": "2026-01-30T17:02:05Z",
+  "evidence": "DoD测试映射有效，手动测试方法清晰"
+}

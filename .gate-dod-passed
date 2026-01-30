@@ -1,0 +1,7 @@
+{
+  "gate": "dod",
+  "decision": "PASS",
+  "branch": "cp-trd-decomposer",
+  "timestamp": "2026-01-30T17:02:05Z",
+  "evidence": "PRD覆盖率100%，8/8验收项具体，QA引用正确"
+}

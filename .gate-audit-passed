@@ -1,0 +1,7 @@
+{
+  "gate": "audit",
+  "decision": "PASS",
+  "branch": "cp-trd-decomposer",
+  "timestamp": "2026-01-30T17:02:05Z",
+  "evidence": "审计报告存在且Decision=PASS"
+}

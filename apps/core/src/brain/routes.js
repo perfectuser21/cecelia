@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 import { Router } from 'express';
 import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy, getTopTasks } from './orchestrator.js';
 import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
@@ -6,6 +7,7 @@ import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '
 import { getTickStatus, enableTick, disableTick, executeTick } from './tick.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
 import pool from '../task-system/db.js';
+import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
 import crypto from 'crypto';
 
 const router = Router();
@@ -731,8 +733,7 @@ router.post('/execution-callback', async (req, res) => {
       result,
       pr_url,
       duration_ms,
-      iterations,
-      stderr
+      iterations
     } = req.body;
 
     if (!task_id) {
@@ -824,6 +825,90 @@ router.get('/executor/status', async (req, res) => {
     res.status(500).json({
       available: false,
       error: err.message
+    });
+  }
+});
+
+// ==================== TRD API ====================
+
+/**
+ * POST /api/brain/trd/decompose
+ * Decompose a TRD into milestones, PRDs, and tasks
+ */
+router.post('/trd/decompose', async (req, res) => {
+  try {
+    const { trd_content, project_id, goal_id } = req.body;
+
+    if (!trd_content) {
+      return res.status(400).json({
+        success: false,
+        error: 'trd_content is required'
+      });
+    }
+
+    const result = await decomposeTRD(trd_content, project_id, goal_id);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to decompose TRD',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/trd/:id/progress
+ * Get progress for a specific TRD
+ */
+router.get('/trd/:id/progress', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const progress = await getTRDProgress(id);
+
+    res.json({
+      success: true,
+      ...progress
+    });
+  } catch (err) {
+    if (err.message === 'TRD not found') {
+      res.status(404).json({
+        success: false,
+        error: err.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get TRD progress',
+        details: err.message
+      });
+    }
+  }
+});
+
+/**
+ * GET /api/brain/trds
+ * List all TRDs with progress
+ */
+router.get('/trds', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const trds = await listTRDs(limit);
+
+    res.json({
+      success: true,
+      trds
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list TRDs',
+      details: err.message
     });
   }
 });

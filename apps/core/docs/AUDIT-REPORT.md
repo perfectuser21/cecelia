@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-tick-cecelia-integration
+Branch: cp-trd-decomposer
 Date: 2026-01-31
-Scope: src/brain/executor.js, src/brain/tick.js, src/brain/routes.js
+Scope: src/brain/decomposer.js, src/brain/routes.js, migrations/002_trd_tables.sql
 Target Level: L2
 
 ## Summary
@@ -18,26 +18,28 @@ Target Level: L2
 
 ## Changes Reviewed
 
-### executor.js (New)
-- Cecelia executor module for triggering headless execution
-- `triggerCeceliaRun()`: Prepares prompt, generates run ID, launches cecelia-run
-- `checkCeceliaRunAvailable()`: Verifies cecelia-run binary exists
-- `getTaskExecutionStatus()`: Queries task execution state
-- Uses environment variables for configuration (CECELIA_RUN_PATH, WORK_DIR)
-- Sets WEBHOOK_URL to Brain API callback endpoint
-
-### tick.js (Modified)
-- Imported executor functions
-- Modified `executeTick()` to trigger cecelia-run after updating task status
-- Added availability check before triggering execution
-- Logs execution trigger to decision_log
+### decomposer.js (New)
+- TRD decomposition module with parsing and task generation
+- `parseTRDSections()`: Parses markdown headers and list items
+- `extractMilestones()`: Groups sections into milestones by level-2 headers
+- `generatePRD()`: Creates PRD content from milestone
+- `createTasksFromPRD()`: Generates tasks with dependencies
+- `establishDependencies()`: Links tasks across milestones
+- `decomposeTRD()`: Main function - stores TRD and creates tasks in DB
+- `getTRDProgress()`: Queries task completion status
+- `listTRDs()`: Lists all TRD decompositions with progress
 
 ### routes.js (Modified)
-- Added POST `/api/brain/execution-callback` endpoint
-- Handles cecelia-run completion webhooks
-- Updates task status (completed/failed) based on execution result
-- Stores last_run_result in task payload
-- Added GET `/api/brain/executor/status` endpoint
+- Added import for decomposer functions
+- Added `POST /api/brain/trd/decompose` endpoint
+- Added `GET /api/brain/trd/:id/progress` endpoint
+- Added `GET /api/brain/trds` endpoint
+- All endpoints have proper error handling and validation
+
+### migrations/002_trd_tables.sql (New)
+- Creates `trd_decompositions` table (avoids conflict with existing `trds`)
+- Creates `trd_decomposition_tasks` relation table
+- Adds indexes for trd_id, task_id, project_id, goal_id
 
 ## Findings
 
@@ -50,6 +52,7 @@ Target Level: L2
 ## Notes
 
 - Build passes successfully
-- Async execution model: tick triggers, webhook reports completion
-- Error handling: graceful fallback if cecelia-run unavailable
-- Integration points documented in PRD
+- Database migration executed without errors
+- Uses new table names to avoid conflict with existing schema
+- Proper error handling in all API endpoints
+- Input validation for required fields
