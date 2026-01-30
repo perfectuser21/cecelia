@@ -649,7 +649,7 @@ async def realtime_websocket_proxy(websocket: WebSocket):
         print(f"[Realtime Proxy] Connecting to OpenAI: {openai_url}")
         async with websockets.connect(
             openai_url,
-            additional_headers=headers,
+            extra_headers=headers,
             ping_interval=20,
             ping_timeout=10,
         ) as openai_ws:
