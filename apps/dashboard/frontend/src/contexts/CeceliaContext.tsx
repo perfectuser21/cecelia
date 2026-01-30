@@ -1,6 +1,18 @@
 import type { ReactNode } from 'react';
-import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigation, Sparkles } from 'lucide-react';
+
+// Page display names for navigation toast
+const PAGE_DISPLAY_NAMES: Record<string, string> = {
+  '/okr': 'OKR 目标',
+  '/projects': '项目列表',
+  '/orchestrator': '任务调度',
+  '/tasks': '任务列表',
+  '/planner': '工作规划',
+  '/brain': '大脑',
+  '/': '首页',
+};
 
 // ============ Types ============
 
@@ -51,6 +63,13 @@ export interface FrontendTool {
   execute: (args: Record<string, any>, context: CeceliaContextType) => Promise<string>;
 }
 
+// Navigation toast state
+interface NavigationToast {
+  visible: boolean;
+  destination: string;
+  path: string;
+}
+
 interface CeceliaContextType {
   // Chat state
   messages: ChatMessage[];
@@ -76,6 +95,7 @@ interface CeceliaContextType {
 
   // Navigation
   navigateTo: (path: string) => void;
+  showNavigationToast: (path: string) => void;
 
   // Frontend Tools
   frontendTools: FrontendTool[];
@@ -89,7 +109,7 @@ const CeceliaContext = createContext<CeceliaContextType | undefined>(undefined);
 
 // ============ Frontend Tools ============
 
-const createFrontendTools = (navigate: (path: string) => void): FrontendTool[] => [
+const createFrontendTools = (navigate: (path: string) => void, showToast: (path: string) => void): FrontendTool[] => [
   {
     name: 'get_current_page',
     description: 'Get information about what page the user is currently viewing',
@@ -110,10 +130,13 @@ const createFrontendTools = (navigate: (path: string) => void): FrontendTool[] =
     execute: async (args) => {
       const { path } = args;
       console.log('[Cecelia] Executing navigate_to:', path);
+      // Show navigation toast
+      showToast(path);
       // Use the navigate function directly (passed to createFrontendTools)
       navigate(path);
       console.log('[Cecelia] Navigation executed');
-      return `已跳转到 ${path}`;
+      const displayName = PAGE_DISPLAY_NAMES[path] || path;
+      return `🧭 正在前往「${displayName}」`;
     }
   },
   {
@@ -205,6 +228,19 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
   const [pageState, setPageState] = useState<PageState | null>(null);
   const [pageActions, setPageActions] = useState<PageActions>({});
 
+  // Navigation toast state
+  const [navToast, setNavToast] = useState<NavigationToast>({ visible: false, destination: '', path: '' });
+
+  // Show navigation toast
+  const showNavigationToast = useCallback((path: string) => {
+    const displayName = PAGE_DISPLAY_NAMES[path] || path;
+    setNavToast({ visible: true, destination: displayName, path });
+    // Auto-hide after 2 seconds
+    setTimeout(() => {
+      setNavToast(prev => ({ ...prev, visible: false }));
+    }, 2000);
+  }, []);
+
   const generateId = useCallback(() => {
     return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   }, []);
@@ -245,7 +281,7 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   // Frontend tools
-  const frontendTools = useMemo(() => createFrontendTools(navigate), [navigate]);
+  const frontendTools = useMemo(() => createFrontendTools(navigate, showNavigationToast), [navigate, showNavigationToast]);
 
   // Execute frontend tool
   const executeFrontendTool = useCallback(async (toolName: string, args: Record<string, any>): Promise<string> => {
@@ -390,6 +426,7 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
     unregisterPage,
     // Navigation
     navigateTo,
+    showNavigationToast,
     // Frontend Tools
     frontendTools,
     executeFrontendTool,
@@ -399,6 +436,56 @@ export function CeceliaProvider({ children }: { children: ReactNode }) {
   return (
     <CeceliaContext.Provider value={value}>
       {children}
+
+      {/* Navigation Toast - Futuristic glassmorphism style */}
+      <div
+        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] transition-all duration-500 ease-out ${
+          navToast.visible
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 -translate-y-8 pointer-events-none'
+        }`}
+      >
+        <div className="relative">
+          {/* Glow effect */}
+          <div className="absolute inset-0 bg-gradient-to-r from-violet-500/30 via-purple-500/30 to-indigo-500/30 blur-xl rounded-full scale-150" />
+
+          {/* Main toast */}
+          <div className="relative flex items-center gap-3 px-6 py-3 bg-slate-900/80 dark:bg-slate-800/90 backdrop-blur-xl rounded-full border border-violet-500/30 shadow-2xl shadow-violet-500/20">
+            {/* Animated icon */}
+            <div className="relative">
+              <div className="absolute inset-0 bg-violet-500/50 rounded-full blur animate-pulse" />
+              <div className="relative p-2 bg-gradient-to-br from-violet-500 to-purple-600 rounded-full">
+                <Navigation className="w-4 h-4 text-white animate-pulse" />
+              </div>
+            </div>
+
+            {/* Text content */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">正在前往</span>
+              <span className="text-sm font-semibold text-white">{navToast.destination}</span>
+              <Sparkles className="w-4 h-4 text-violet-400 animate-pulse" />
+            </div>
+
+            {/* Scanning line animation */}
+            <div className="absolute inset-0 overflow-hidden rounded-full">
+              <div
+                className="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent via-violet-400/20 to-transparent animate-scan"
+                style={{
+                  animation: 'scan 1.5s ease-in-out infinite',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* CSS for scan animation */}
+      <style>{`
+        @keyframes scan {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
     </CeceliaContext.Provider>
   );
 }

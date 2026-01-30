@@ -98,6 +98,7 @@ export function CeceliaChat() {
     frontendTools,
     executeFrontendTool,
     getPageContext,
+    showNavigationToast,
   } = useCecelia();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
