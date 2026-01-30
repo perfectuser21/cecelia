@@ -61,8 +61,85 @@ def get_db() -> Database:
 
 
 async def ensure_tables(db: Database) -> None:
-    """Create orchestrator tables if they don't exist."""
-    # TRDs table (护栏 1: idempotency_key)
+    """Create/migrate tables for unified Autumnrice data model.
+
+    This function:
+    1. Extends existing projects table with trd_content
+    2. Extends existing tasks table with execution fields
+    3. Creates feature_prds table for PRD version management
+    4. Creates legacy orchestrator tables for backwards compatibility
+    """
+    # ==================== Unified Model Extensions ====================
+
+    # Extend projects table with TRD content field
+    await db.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'projects' AND column_name = 'trd_content'
+            ) THEN
+                ALTER TABLE projects ADD COLUMN trd_content TEXT DEFAULT '';
+            END IF;
+        END $$;
+        """
+    )
+
+    # Extend tasks table with execution fields for Autumnrice
+    task_columns = [
+        ("branch", "TEXT DEFAULT ''"),
+        ("pr_url", "TEXT"),
+        ("checkpoints", "JSONB DEFAULT '[]'"),
+        ("run_id", "TEXT"),
+        ("attempt", "INT DEFAULT 1"),
+        ("max_retries", "INT DEFAULT 3"),
+        ("retry_count", "INT DEFAULT 0"),
+        ("blocked_reason", "TEXT"),
+        ("blocked_at", "TIMESTAMPTZ"),
+        ("ci_status", "TEXT"),
+        ("ci_run_id", "TEXT"),
+        ("prd_content", "TEXT DEFAULT ''"),
+        ("acceptance", "JSONB DEFAULT '[]'"),
+        ("depends_on", "JSONB DEFAULT '[]'"),
+        ("repo", "TEXT DEFAULT ''"),
+    ]
+    for col_name, col_type in task_columns:
+        await db.execute(
+            f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'tasks' AND column_name = '{col_name}'
+                ) THEN
+                    ALTER TABLE tasks ADD COLUMN {col_name} {col_type};
+                END IF;
+            END $$;
+            """
+        )
+
+    # Create feature_prds table for PRD version management
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS feature_prds (
+            id TEXT PRIMARY KEY,
+            feature_id UUID REFERENCES projects(id),
+            version TEXT NOT NULL,
+            content TEXT NOT NULL,
+            status TEXT DEFAULT 'draft',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feature_prds_feature ON feature_prds(feature_id)"
+    )
+
+    # ==================== Legacy Tables (backwards compatibility) ====================
+
+    # TRDs table (护栏 1: idempotency_key) - kept for migration period
     await db.execute(
         """
         CREATE TABLE IF NOT EXISTS trds (
