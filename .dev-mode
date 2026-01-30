@@ -1,5 +1,5 @@
 dev
-branch: cp-0130-concurrency-safety
-prd: .prd-cp-0130-concurrency-safety.md
-started: 2026-01-30T17:55:00+08:00
+branch: cp-0130-ci-hardening
+prd: .prd-cp-0130-ci-hardening.md
+started: $(date -Iseconds)
 tasks_created: true

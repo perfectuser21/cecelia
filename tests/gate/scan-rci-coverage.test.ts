@@ -100,13 +100,58 @@ describe("scan-rci-coverage.cjs", () => {
       expect(result.by).toHaveLength(0);
     });
 
-    it("通过 name 匹配也应该覆盖", () => {
+    // P1-2: 测试 name.includes 误判已被移除
+    it("P1-2: 不应通过 name.includes 误判覆盖", () => {
       const entry = { type: "script", path: "scripts/install-hooks.sh", name: "install-hooks" };
       const contracts = [
+        // name 包含 entry.name，但 paths 不匹配
         { id: "C3-003", name: "install-hooks.sh 安装成功", paths: [] },
       ];
       const result = checkCoverage(entry, contracts);
+      // P1-2 修复后：name.includes 不再触发匹配
+      expect(result.covered).toBe(false);
+    });
+
+    // P1-2: 测试精确路径匹配
+    it("P1-2: 只有精确路径匹配才覆盖", () => {
+      const entry = { type: "script", path: "scripts/install-hooks.sh", name: "install-hooks" };
+      const contracts = [
+        { id: "C3-003", name: "安装 hooks", paths: ["scripts/install-hooks.sh"] },  // 精确匹配
+      ];
+      const result = checkCoverage(entry, contracts);
       expect(result.covered).toBe(true);
+    });
+
+    // P1-2: 测试目录前缀匹配
+    it("P1-2: 目录前缀匹配（以 / 结尾）", () => {
+      const entry = { type: "skill", path: "skills/dev/SKILL.md", name: "/dev" };
+      const contracts = [
+        { id: "W1-001", name: "/dev 流程", paths: ["skills/dev/"] },  // 目录前缀
+      ];
+      const result = checkCoverage(entry, contracts);
+      expect(result.covered).toBe(true);
+    });
+
+    // P1-2: 测试 glob 匹配
+    it("P1-2: glob 通配符匹配", () => {
+      const entry = { type: "skill", path: "skills/dev/SKILL.md", name: "/dev" };
+      const contracts = [
+        { id: "W1-001", name: "所有 Skills", paths: ["skills/*/SKILL.md"] },  // glob
+      ];
+      const result = checkCoverage(entry, contracts);
+      expect(result.covered).toBe(true);
+    });
+
+    // P1-2: 测试路径包含不触发误判
+    it("P1-2: 路径包含不触发误判", () => {
+      const entry = { type: "script", path: "scripts/hooks.sh", name: "hooks" };
+      const contracts = [
+        // paths 包含 entry.path 的子串，但不是精确匹配
+        { id: "C1-001", name: "安装", paths: ["scripts/install-hooks.sh"] },
+      ];
+      const result = checkCoverage(entry, contracts);
+      // hooks.sh 不应被 install-hooks.sh 误判覆盖
+      expect(result.covered).toBe(false);
     });
   });
 

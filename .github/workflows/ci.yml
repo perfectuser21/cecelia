@@ -111,17 +111,36 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      - name: Install & Test (npm)
+      - name: Install dependencies (npm)
         if: steps.detect.outputs.type == 'npm'
+        run: npm ci
+
+      # L1-1: TypeCheck
+      - name: TypeCheck
+        if: steps.detect.outputs.type == 'npm'
+        id: typecheck
         run: |
           set -e
-          npm ci
-          # L1: 自动化测试（按顺序）
-          npm run typecheck --if-present   # 类型检查
+          if npm run typecheck --if-present; then
+            echo "✅ TypeCheck 通过"
+            bash ci/scripts/write-check-result.sh typecheck true 0 "npm run typecheck"
+          else
+            EXIT_CODE=$?
+            echo "❌ TypeCheck 失败"
+            bash ci/scripts/write-check-result.sh typecheck false $EXIT_CODE "npm run typecheck" "TypeCheck failed"
+            exit $EXIT_CODE
+          fi
 
+      # L1-2: Unit Tests
+      - name: Unit Tests
+        if: steps.detect.outputs.type == 'npm'
+        id: test
+        run: |
+          set -e
           # 单元测试 - P0-4 修复：严格的已知失败白名单校验
           if npm run test --if-present; then
             echo "✅ 测试通过"
+            bash ci/scripts/write-check-result.sh test true 0 "npm run test"
           else
             TEST_EXIT_CODE=$?
             echo "⚠️ 测试失败（退出码: $TEST_EXIT_CODE）"
@@ -131,6 +150,7 @@ jobs:
               # 必须包含 known_failure_keys 数组字段
               if ! jq -e '.known_failure_keys | type == "array"' .quality-evidence.json >/dev/null 2>&1; then
                 echo "❌ 测试失败：.quality-evidence.json 缺少有效的 known_failure_keys 数组"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "缺少有效的 known_failure_keys 数组"
                 exit $TEST_EXIT_CODE
               fi
 
@@ -138,6 +158,7 @@ jobs:
               REQUESTED_KEYS=$(jq -r '.known_failure_keys[]' .quality-evidence.json 2>/dev/null || echo "")
               if [ -z "$REQUESTED_KEYS" ]; then
                 echo "❌ 测试失败：known_failure_keys 为空"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys 为空"
                 exit $TEST_EXIT_CODE
               fi
 
@@ -146,6 +167,7 @@ jobs:
               MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
               if [ "$KEY_COUNT" -gt "$MAX_SKIP" ]; then
                 echo "❌ 测试失败：请求跳过 $KEY_COUNT 项，超过最大限制 $MAX_SKIP"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "请求跳过 $KEY_COUNT 项，超过最大限制 $MAX_SKIP"
                 exit $TEST_EXIT_CODE
               fi
 
@@ -161,36 +183,36 @@ jobs:
               if [ -n "$INVALID_KEYS" ]; then
                 echo "❌ 测试失败：以下 known_failure_keys 不在白名单中：$INVALID_KEYS"
                 echo "   允许的 keys: $ALLOWED_KEYS"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys 不在白名单中：$INVALID_KEYS"
                 exit $TEST_EXIT_CODE
               fi
 
               echo "✅ 已知失败校验通过（$KEY_COUNT 项已登记）"
               echo "   跳过的测试："
               echo "$REQUESTED_KEYS" | sed 's/^/     - /'
+              bash ci/scripts/write-check-result.sh test true 0 "npm run test" "已知失败校验通过（$KEY_COUNT 项已登记）"
             else
               echo "❌ 测试失败且无有效的 known-failures 配置"
+              bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "测试失败且无有效的 known-failures 配置"
               exit $TEST_EXIT_CODE
             fi
           fi
 
-          npm run build --if-present       # 构建验证
-
-      # Evidence 生成（CI-only，SSOT）
-      - name: Generate Evidence
+      # L1-3: Build
+      - name: Build
         if: steps.detect.outputs.type == 'npm'
+        id: build
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Evidence 生成（CI-only）"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          bash ci/scripts/generate-evidence.sh
-
-      - name: Evidence Gate
-        if: steps.detect.outputs.type == 'npm'
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Evidence Gate 校验"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          bash ci/scripts/evidence-gate.sh
+          set -e
+          if npm run build --if-present; then
+            echo "✅ Build 通过"
+            bash ci/scripts/write-check-result.sh build true 0 "npm run build"
+          else
+            EXIT_CODE=$?
+            echo "❌ Build 失败"
+            bash ci/scripts/write-check-result.sh build false $EXIT_CODE "npm run build" "Build failed"
+            exit $EXIT_CODE
+          fi
 
       # L2A: PRD/DoD/QA/Audit 远端检查
       # PRD/DoD Residue Check (develop/main only)
@@ -269,10 +291,12 @@ jobs:
 
       # Shell scripts - always syntax check (hooks exist in all project types)
       - name: Check shell scripts
+        id: shell_check
         run: |
           echo "Checking shell scripts..."
           FAILED=0
           FOUND=0
+          FAIL_LIST=""
           # 使用 find + while read 遍历所有 .sh 文件
           # -print0 + read -d '' 处理文件名中的特殊字符
           while IFS= read -r -d '' f; do
@@ -285,12 +309,37 @@ jobs:
               echo "  [FAIL] $f"
               echo "$ERROR_OUTPUT" | sed 's/^/     /'
               FAILED=1
+              FAIL_LIST="$FAIL_LIST $f"
             fi
           done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
           if [ "$FOUND" -eq 0 ]; then
             echo "No .sh files found"
           fi
-          exit $FAILED
+
+          # 写入 check 结果
+          if [ "$FAILED" -eq 0 ]; then
+            bash ci/scripts/write-check-result.sh shell-check true 0 "bash -n *.sh"
+          else
+            bash ci/scripts/write-check-result.sh shell-check false 1 "bash -n *.sh" "Failed:$FAIL_LIST"
+            exit 1
+          fi
+
+      # Evidence 生成（CI-only，SSOT）- 必须在所有 check 步骤之后
+      - name: Generate Evidence
+        if: steps.detect.outputs.type == 'npm'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence 生成（CI-only）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash ci/scripts/generate-evidence.sh
+
+      - name: Evidence Gate
+        if: steps.detect.outputs.type == 'npm'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence Gate 校验"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash ci/scripts/evidence-gate.sh
 
       # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新 + RCI 覆盖率）
       # 注意：当前只对 npm 项目启用，非 npm 项目跳过此检查

@@ -78,6 +78,7 @@ describe("Phase 1: DevGate Scripts", () => {
     });
 
     it("should pass when all items have Test fields", () => {
+      // P0-2: manual: 现在需要 evidence 文件，改用 contract: 和 tests/
       const dodContent = `# Test DoD
 
 ## 验收标准
@@ -87,7 +88,7 @@ describe("Phase 1: DevGate Scripts", () => {
 - [ ] Item 2
   Test: contract:H2-001
 - [x] Item 3
-  Test: manual:test-evidence
+  Test: contract:H1-001
 `;
 
       const testDod = join(TEST_DIR, "valid.dod.md");

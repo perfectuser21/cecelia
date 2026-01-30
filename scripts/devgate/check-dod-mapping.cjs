@@ -39,6 +39,67 @@ const YELLOW = "\x1b[33m";
 const RESET = "\x1b[0m";
 
 /**
+ * 获取 HEAD SHA
+ */
+function getHeadSha() {
+  try {
+    const { execSync } = require("child_process");
+    return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * 验证 manual 证据是否存在于 evidence 文件中
+ * @param {string} evidenceFile - evidence 文件路径
+ * @param {string} evidenceId - manual 证据 ID
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function validateManualEvidence(evidenceFile, evidenceId) {
+  try {
+    const content = fs.readFileSync(evidenceFile, "utf-8");
+    const evidence = JSON.parse(content);
+
+    // 检查 manual_verifications 数组
+    if (!evidence.manual_verifications || !Array.isArray(evidence.manual_verifications)) {
+      return {
+        valid: false,
+        reason: `manual: 需要 evidence 中有 manual_verifications 数组`
+      };
+    }
+
+    // 查找匹配的验证记录
+    const verification = evidence.manual_verifications.find(v => v.id === evidenceId);
+    if (!verification) {
+      return {
+        valid: false,
+        reason: `manual:${evidenceId} 在 evidence.manual_verifications 中不存在`
+      };
+    }
+
+    // 验证必需字段：actor, timestamp, evidence
+    if (!verification.actor || !verification.timestamp || !verification.evidence) {
+      const missing = [];
+      if (!verification.actor) missing.push("actor");
+      if (!verification.timestamp) missing.push("timestamp");
+      if (!verification.evidence) missing.push("evidence");
+      return {
+        valid: false,
+        reason: `manual:${evidenceId} 缺少必需字段: ${missing.join(", ")}`
+      };
+    }
+
+    return { valid: true };
+  } catch (e) {
+    return {
+      valid: false,
+      reason: `解析 evidence 文件失败: ${e.message}`
+    };
+  }
+}
+
+/**
  * 解析 DoD 文件，提取验收项和对应的 Test 字段
  * @param {string} content - DoD 文件内容
  * @returns {Array<{item: string, test: string|null, line: number}>}
@@ -137,12 +198,29 @@ function validateTestRef(testRef, projectRoot) {
   }
 
   if (testRef.startsWith("manual:")) {
-    // L2 fix: 移除未使用的 possiblePaths 死代码
-    // manual 证据可以是目录或文件（带扩展名）
-    // 允许：manual:template-review, manual:rci-review
-    // 这些是标识符，不要求实际文件存在（因为可能是人工审核项）
-    // manual 类型不强制要求文件存在，只要格式正确即可
-    return { valid: true };
+    // P0-2 修复：manual 必须有对应的 manual_verifications 记录
+    // 不再直接返回 valid: true，必须验证证据存在
+    const evidenceId = testRef.substring("manual:".length);
+
+    // 查找 evidence 文件
+    const HEAD_SHA = getHeadSha();
+    const evidenceFile = path.join(projectRoot, `.quality-evidence.${HEAD_SHA}.json`);
+
+    if (!fs.existsSync(evidenceFile)) {
+      // 尝试找任意 evidence 文件（本地开发时可能 SHA 不匹配）
+      const files = fs.readdirSync(projectRoot).filter(f => f.startsWith('.quality-evidence.') && f.endsWith('.json'));
+      if (files.length === 0) {
+        return {
+          valid: false,
+          reason: `manual: 需要 evidence 文件，但未找到 .quality-evidence.*.json`
+        };
+      }
+      // 使用最新的 evidence 文件
+      const latestEvidence = path.join(projectRoot, files.sort().pop());
+      return validateManualEvidence(latestEvidence, evidenceId);
+    }
+
+    return validateManualEvidence(evidenceFile, evidenceId);
   }
 
   return { valid: false, reason: `无效的 Test 格式: ${testRef}` };

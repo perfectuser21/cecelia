@@ -96,7 +96,42 @@ check_prd() {
     return
   fi
 
-  log_pass "$PRD_FILE"
+  # P1-1: 检查 PRD 结构（>=3 sections，每 section >=2 行）
+  local section_count=0
+  local current_section_lines=0
+  local short_sections=()
+
+  while IFS= read -r line; do
+    # 检测 section 标题（## 开头）
+    if [[ "$line" =~ ^##[[:space:]] ]]; then
+      # 检查前一个 section 是否够长
+      if [[ $section_count -gt 0 && $current_section_lines -lt 2 ]]; then
+        short_sections+=("section $section_count has $current_section_lines lines")
+      fi
+      section_count=$((section_count + 1))
+      current_section_lines=0
+    elif [[ -n "$line" && ! "$line" =~ ^[[:space:]]*$ ]]; then
+      # 非空行计入当前 section
+      current_section_lines=$((current_section_lines + 1))
+    fi
+  done < "$PRD_FILE"
+
+  # 检查最后一个 section
+  if [[ $section_count -gt 0 && $current_section_lines -lt 2 ]]; then
+    short_sections+=("section $section_count has $current_section_lines lines")
+  fi
+
+  if [[ $section_count -lt 3 ]]; then
+    log_fail "PRD structure: need >= 3 sections (##), got $section_count"
+    return
+  fi
+
+  if [[ ${#short_sections[@]} -gt 0 ]]; then
+    log_fail "PRD density: some sections too short (need >= 2 lines each): ${short_sections[*]}"
+    return
+  fi
+
+  log_pass "$PRD_FILE (sections=$section_count)"
 }
 
 check_dod() {
@@ -120,6 +155,41 @@ check_dod() {
     return
   fi
 
+  # P1-1: 检查验收项数量和 Test 映射
+  local checkbox_count=0
+  local test_count=0
+  local missing_test_lines=()
+
+  while IFS= read -r -d '' line_with_num; do
+    local line_num="${line_with_num%%:*}"
+    local line_content="${line_with_num#*:}"
+
+    # 检测验收项（- [ ] 或 - [x] 格式）
+    if [[ "$line_content" =~ ^[[:space:]]*-[[:space:]]*\[[[:space:]xX]\] ]]; then
+      checkbox_count=$((checkbox_count + 1))
+
+      # 检查下一行是否有 Test: 字段（简单检测）
+      local next_line_num=$((line_num + 1))
+      local next_line
+      next_line=$(sed -n "${next_line_num}p" "$DOD_FILE" 2>/dev/null || echo "")
+      if [[ "$next_line" =~ ^[[:space:]]*Test: ]]; then
+        test_count=$((test_count + 1))
+      else
+        missing_test_lines+=("L$line_num")
+      fi
+    fi
+  done < <(grep -n '' "$DOD_FILE" | tr '\n' '\0')
+
+  if [[ $checkbox_count -lt 1 ]]; then
+    log_fail "DoD has no acceptance items (need >= 1 checkbox)"
+    return
+  fi
+
+  if [[ ${#missing_test_lines[@]} -gt 0 ]]; then
+    log_fail "DoD items missing Test: mapping at ${missing_test_lines[*]}"
+    return
+  fi
+
   # Release 模式：检查全勾选
   if [[ "$MODE" == "release" ]]; then
     if grep -qE '^\s*-\s*\[\s*\]' "$DOD_FILE" 2>/dev/null; then
@@ -128,7 +198,7 @@ check_dod() {
     fi
   fi
 
-  log_pass "$DOD_FILE"
+  log_pass "$DOD_FILE (items=$checkbox_count, tests=$test_count)"
 }
 
 check_qa_decision() {

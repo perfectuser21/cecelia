@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.12.0] - 2026-01-30
+
+### Security
+
+- **P0-1: Evidence 真实结果**
+  - `generate-evidence.sh` 重写：从 `ci/out/checks/*.json` 汇总真实 CI 结果
+  - `evidence-gate.sh` 重写：验证 required checks 全存在、ok=true、hash 防篡改
+  - 新增 `write-check-result.sh`：CI 每步输出 check JSON
+  - CI workflow 拆分为独立步骤（TypeCheck/Test/Build/ShellCheck）
+
+- **P0-2: manual: 后门封堵**
+  - `check-dod-mapping.cjs` 修复：`manual:` 不再直接返回 valid=true
+  - 必须在 evidence 中有 `manual_verifications` 记录
+  - 新增 `add-manual-verification.sh`：添加手动验证证据
+
+### Changed
+
+- **P1-1: L2A/L2B 内容验证**
+  - `l2a-check.sh`：PRD 必须 >=3 sections，每 section >=2 行
+  - `l2a-check.sh`：DoD 每个验收项必须有 Test 映射
+  - `l2b-check.sh`：Evidence 必须有可复现命令或机器引用
+
+- **P1-2: RCI coverage 精确匹配**
+  - `scan-rci-coverage.cjs`：移除 `name.includes()` 误判逻辑
+  - 只允许精确路径匹配、目录前缀匹配、glob 通配符匹配
+
+### Added
+
+- `tests/ci/evidence.test.ts`：Evidence 生成和验证测试
+
 ## [11.11.0] - 2026-01-30
 
 ### Security

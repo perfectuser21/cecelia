@@ -192,49 +192,57 @@ function parseRCI() {
 
 /**
  * 从 name 中提取路径线索
+ * P1-2: 只提取精确路径，不再使用模糊匹配
  */
 function extractPathsFromName(contract, name) {
-  // /dev 流程 -> /dev
+  // /dev 流程 -> skills/dev/SKILL.md（精确）
   const skillMatch = name.match(/\/(\w+)\s+流程/);
   if (skillMatch) {
     contract.paths.push(`skills/${skillMatch[1]}/SKILL.md`);
   }
 
-  // metrics.sh -> scripts/devgate/metrics.sh
-  const scriptMatch = name.match(/(\w+)\.sh/);
+  // 精确脚本名匹配（必须是完整文件名）
+  // metrics.sh -> scripts/devgate/metrics.sh 或 scripts/metrics.sh
+  const scriptMatch = name.match(/\b([\w-]+)\.sh\b/);
   if (scriptMatch) {
-    contract.paths.push(`scripts/devgate/${scriptMatch[1]}.sh`);
-    contract.paths.push(`scripts/${scriptMatch[1]}.sh`);
+    // 只在有明确上下文时添加路径
+    const scriptName = scriptMatch[1];
+    if (name.toLowerCase().includes("devgate") || name.toLowerCase().includes("gate")) {
+      contract.paths.push(`scripts/devgate/${scriptName}.sh`);
+    }
+    // scripts/ 目录下的脚本
+    contract.paths.push(`scripts/${scriptName}.sh`);
   }
 
-  // install-hooks -> scripts/install-hooks.sh
-  if (name.includes("install-hooks")) {
+  // 精确匹配 install-hooks（必须是完整词）
+  if (/\binstall-hooks\b/.test(name)) {
     contract.paths.push("scripts/install-hooks.sh");
   }
 }
 
 /**
  * 从 test 路径推断覆盖
+ * P1-2: 精确匹配，基于测试文件名推断被测文件
  */
 function extractPathsFromTest(contract, testPath) {
-  // tests/hooks/metrics.test.ts -> scripts/devgate/metrics.sh
-  const metricsMatch = testPath.match(/metrics/i);
-  if (metricsMatch) {
-    contract.paths.push("scripts/devgate/metrics.sh");
-    contract.paths.push("scripts/devgate/metrics.cjs");
-    contract.paths.push("scripts/devgate/snapshot-prd-dod.sh");
-  }
+  // 从测试文件名精确推断被测文件
+  // tests/xxx/foo.test.ts -> 测试 foo 相关文件
 
-  // tests/hooks/install-hooks.test.ts -> scripts/install-hooks.sh
-  const installMatch = testPath.match(/install-hooks/i);
-  if (installMatch) {
-    contract.paths.push("scripts/install-hooks.sh");
-  }
+  // 提取测试文件名（不含扩展名）
+  const testBasename = path.basename(testPath).replace(/\.test\.(ts|js)$/, "");
 
-  // tests/hooks/branch-protect.test.ts -> hooks/branch-protect.sh
-  const branchMatch = testPath.match(/branch-protect/i);
-  if (branchMatch) {
-    contract.paths.push("hooks/branch-protect.sh");
+  // 根据测试目录确定被测文件位置
+  if (testPath.includes("tests/hooks/")) {
+    // tests/hooks/xxx.test.ts -> hooks/xxx.sh
+    contract.paths.push(`hooks/${testBasename}.sh`);
+  } else if (testPath.includes("tests/scripts/") || testPath.includes("tests/devgate/")) {
+    // tests/scripts/xxx.test.ts -> scripts/xxx.sh
+    contract.paths.push(`scripts/${testBasename}.sh`);
+    contract.paths.push(`scripts/devgate/${testBasename}.sh`);
+    contract.paths.push(`scripts/devgate/${testBasename}.cjs`);
+  } else if (testPath.includes("tests/skills/")) {
+    // tests/skills/xxx.test.ts -> skills/xxx/SKILL.md
+    contract.paths.push(`skills/${testBasename}/SKILL.md`);
   }
 }
 
@@ -256,38 +264,56 @@ function extractPathsFromRun(contract, runCmd) {
 
 /**
  * 检查入口是否被 RCI 覆盖
+ * P1-2 修复：只允许精确路径匹配，禁止 name/includes 误判
  * @param {{type: string, path: string, name: string}} entry
  * @param {{id: string, name: string, paths: string[]}[]} contracts
- * @returns {{covered: boolean, by: string[]}}
+ * @returns {{covered: boolean, by: string[], matchReason: string}}
  */
 function checkCoverage(entry, contracts) {
   const coveredBy = [];
+  let matchReason = "";
 
   for (const contract of contracts) {
-    // 检查路径是否匹配
+    // P1-2: 只允许精确路径匹配
     for (const contractPath of contract.paths) {
-      if (
-        entry.path === contractPath ||
-        entry.path.includes(contractPath) ||
-        contractPath.includes(entry.path) ||
-        contractPath.includes(entry.name)
-      ) {
+      // 精确匹配：完全相等
+      if (entry.path === contractPath) {
         coveredBy.push(contract.id);
+        matchReason = `exact_path: ${contractPath}`;
         break;
+      }
+
+      // 目录匹配：entry.path 在 contractPath 目录下
+      // 例如：contractPath = "skills/dev" 匹配 entry.path = "skills/dev/SKILL.md"
+      if (contractPath.endsWith("/") && entry.path.startsWith(contractPath)) {
+        coveredBy.push(contract.id);
+        matchReason = `dir_prefix: ${contractPath}`;
+        break;
+      }
+
+      // glob 匹配（简化版）：contractPath 包含 * 通配符
+      if (contractPath.includes("*")) {
+        const regexStr = contractPath
+          .replace(/\./g, "\\.")
+          .replace(/\*/g, "[^/]*")
+          .replace(/\*\*/g, ".*");
+        const regex = new RegExp(`^${regexStr}$`);
+        if (regex.test(entry.path)) {
+          coveredBy.push(contract.id);
+          matchReason = `glob: ${contractPath}`;
+          break;
+        }
       }
     }
 
-    // 检查 name 是否包含入口名
-    if (contract.name.includes(entry.name)) {
-      if (!coveredBy.includes(contract.id)) {
-        coveredBy.push(contract.id);
-      }
-    }
+    // P1-2: 移除了 name.includes 误判逻辑
+    // 不再使用：if (contract.name.includes(entry.name))
   }
 
   return {
     covered: coveredBy.length > 0,
     by: coveredBy,
+    matchReason,
   };
 }
 
