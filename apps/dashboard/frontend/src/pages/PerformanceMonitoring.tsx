@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
-import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown, ArrowUpCircle, ArrowDownCircle, Database, Wifi } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown, ArrowUpCircle, ArrowDownCircle, Database, Wifi, Shield, HeartPulse } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } from 'recharts';
 import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse, HealthCheckRecord } from '@/api';
 import { ServiceHealthCard } from '@/components';
 
@@ -198,6 +198,59 @@ export default function PerformanceMonitoring() {
     const interval = REFRESH_INTERVALS.find(i => i.value === refreshInterval);
     return interval?.label || '30s';
   };
+
+  // Calculate SLA (uptime percentage) for each service based on health history
+  const serviceSLA = useMemo(() => {
+    const slaData: Record<string, { uptime: number; total: number; percentage: number }> = {};
+    Object.entries(healthHistory).forEach(([serviceName, records]) => {
+      const total = records.length;
+      const healthy = records.filter(r => r.status === 'healthy').length;
+      slaData[serviceName] = {
+        uptime: healthy,
+        total,
+        percentage: total > 0 ? (healthy / total) * 100 : 100,
+      };
+    });
+    return slaData;
+  }, [healthHistory]);
+
+  // Prepare health history trend data for the chart
+  const healthTrendData = useMemo(() => {
+    // Get all unique timestamps from all services
+    const timestampSet = new Set<string>();
+    Object.values(healthHistory).forEach(records => {
+      records.forEach(r => timestampSet.add(r.timestamp));
+    });
+
+    // Sort timestamps
+    const timestamps = Array.from(timestampSet).sort();
+
+    // Create chart data with latency for each service at each timestamp
+    return timestamps.map(timestamp => {
+      const dataPoint: Record<string, string | number | null> = {
+        time: new Date(timestamp).toLocaleTimeString('zh-CN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }),
+      };
+
+      Object.entries(healthHistory).forEach(([serviceName, records]) => {
+        const record = records.find(r => r.timestamp === timestamp);
+        dataPoint[serviceName] = record?.latency_ms ?? null;
+      });
+
+      return dataPoint;
+    });
+  }, [healthHistory]);
+
+  // Calculate overall health score
+  const overallHealthScore = useMemo(() => {
+    const services = Object.values(serviceSLA);
+    if (services.length === 0) return 100;
+    const avgPercentage = services.reduce((sum, s) => sum + s.percentage, 0) / services.length;
+    return avgPercentage;
+  }, [serviceSLA]);
 
   const metrics: SystemMetrics = data?.current || {
     cpuUsage: 0,
@@ -459,6 +512,185 @@ export default function PerformanceMonitoring() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Service SLA Statistics */}
+      {Object.keys(serviceSLA).length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-4">
+          <div className="px-5 py-4 border-b border-gray-50 dark:border-gray-700/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-indigo-50 dark:bg-indigo-900/20">
+                  <Shield className="w-5 h-5 text-indigo-500" />
+                </div>
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">服务可用性 (SLA)</div>
+                  <div className="text-xs text-gray-500 mt-0.5">基于健康检查历史的可用性统计</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-lg font-bold ${
+                  overallHealthScore >= 99 ? 'text-green-500' :
+                  overallHealthScore >= 95 ? 'text-amber-500' : 'text-red-500'
+                }`}>
+                  {overallHealthScore.toFixed(1)}%
+                </span>
+                <span className="text-xs text-gray-400">整体可用率</span>
+              </div>
+            </div>
+          </div>
+          <div className="px-5 py-4">
+            <div className="grid grid-cols-4 gap-4">
+              {Object.entries(serviceSLA).map(([serviceName, sla]) => (
+                <div
+                  key={serviceName}
+                  className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700/30"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {SERVICE_LABELS[serviceName] || serviceName}
+                    </span>
+                    <span className={`text-sm font-bold ${
+                      sla.percentage >= 99 ? 'text-green-500' :
+                      sla.percentage >= 95 ? 'text-amber-500' : 'text-red-500'
+                    }`}>
+                      {sla.percentage.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        sla.percentage >= 99 ? 'bg-green-500' :
+                        sla.percentage >= 95 ? 'bg-amber-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${sla.percentage}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 text-xs text-gray-400">
+                    {sla.uptime}/{sla.total} 次检查正常
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Health Check Latency Trend Chart */}
+      {healthTrendData.length > 1 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-4">
+          <div className="px-5 py-4 border-b border-gray-50 dark:border-gray-700/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-rose-50 dark:bg-rose-900/20">
+                <HeartPulse className="w-5 h-5 text-rose-500" />
+              </div>
+              <div>
+                <div className="font-medium text-gray-900 dark:text-white">健康检查延迟趋势</div>
+                <div className="text-xs text-gray-500 mt-0.5">各服务响应延迟历史变化</div>
+              </div>
+            </div>
+          </div>
+          <div className="px-5 py-4">
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={healthTrendData}
+                  margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
+                >
+                  <defs>
+                    <linearGradient id="gradientBrain" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="gradientWorkspace" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="gradientQuality" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="gradientN8n" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                    tickLine={{ stroke: '#9CA3AF' }}
+                  />
+                  <YAxis
+                    domain={[0, 'auto']}
+                    tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                    tickLine={{ stroke: '#9CA3AF' }}
+                    tickFormatter={(value) => `${value}ms`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'rgba(31, 41, 55, 0.95)',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '12px',
+                    }}
+                    labelStyle={{ color: '#9CA3AF' }}
+                    formatter={(value: number | null) => value !== null ? [`${value}ms`, ''] : ['N/A', '']}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: '12px' }}
+                    formatter={(value) => SERVICE_LABELS[value] || value}
+                  />
+                  {Object.keys(healthHistory).includes('brain') && (
+                    <Area
+                      type="monotone"
+                      dataKey="brain"
+                      stroke="#8B5CF6"
+                      fill="url(#gradientBrain)"
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      connectNulls
+                    />
+                  )}
+                  {Object.keys(healthHistory).includes('workspace') && (
+                    <Area
+                      type="monotone"
+                      dataKey="workspace"
+                      stroke="#3B82F6"
+                      fill="url(#gradientWorkspace)"
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      connectNulls
+                    />
+                  )}
+                  {Object.keys(healthHistory).includes('quality') && (
+                    <Area
+                      type="monotone"
+                      dataKey="quality"
+                      stroke="#10B981"
+                      fill="url(#gradientQuality)"
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      connectNulls
+                    />
+                  )}
+                  {Object.keys(healthHistory).includes('n8n') && (
+                    <Area
+                      type="monotone"
+                      dataKey="n8n"
+                      stroke="#F59E0B"
+                      fill="url(#gradientN8n)"
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      connectNulls
+                    />
+                  )}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
       )}

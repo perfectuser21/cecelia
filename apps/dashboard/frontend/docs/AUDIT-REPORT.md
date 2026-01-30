@@ -1,35 +1,25 @@
----
-id: audit-report-perf-stats
-version: 1.0.0
-created: 2026-01-31
----
-
 # Audit Report
 
-Branch: cp-01310013-perf-stats
+Branch: cp-01310013-health-enhance
 Date: 2026-01-31
-Scope: apps/dashboard/frontend/src/components/ServiceHealthCard.tsx
+Scope: src/components/ServiceHealthCard.tsx
 Target Level: L2
 
-## Summary
+Summary:
+  L1: 0
+  L2: 0
+  L3: 0
+  L4: 0
 
-| Level | Count |
-|-------|-------|
-| L1 | 0 |
-| L2 | 0 |
-| L3 | 0 |
-| L4 | 0 |
+Decision: PASS
 
-## Decision: PASS
+Findings: []
 
-## Findings
+Blockers: []
 
-None. 代码改动简洁，功能明确：
-- 添加 HealthCheckStats 组件显示可用率和平均延迟
-- 使用 useMemo 优化计算性能
-- 遵循现有组件风格和设计规范
-- 正确处理边界情况（数据不足时显示提示）
+## Notes
 
-## Blockers
-
-None.
+- 添加健康率（uptime percentage）显示在健康检查历史区域
+- 计算逻辑：健康记录数 / 总记录数 * 100
+- 颜色编码：>=99% 绿色, >=95% 琥珀色, <95% 红色
+- 代码遵循项目现有模式，无安全问题

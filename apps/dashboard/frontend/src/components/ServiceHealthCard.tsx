@@ -311,9 +311,25 @@ export function ServiceHealthCard({ name, label, service, history, onRefresh }: 
             {/* Health Check History */}
             {history && history.length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-200/50 dark:border-gray-700/50">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <History className="w-3 h-3 text-gray-400" />
-                  <span className="text-gray-500 font-medium">健康检查历史</span>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <History className="w-3 h-3 text-gray-400" />
+                    <span className="text-gray-500 font-medium">健康检查历史</span>
+                  </div>
+                  {/* Uptime Percentage */}
+                  {(() => {
+                    const healthyCount = history.filter(r => r.status === 'healthy').length;
+                    const uptimePercent = (healthyCount / history.length) * 100;
+                    return (
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        uptimePercent >= 99 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                        uptimePercent >= 95 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                        'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                      }`}>
+                        {uptimePercent.toFixed(0)}% 可用
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="space-y-1.5">
                   {history.slice(0, 5).map((record, index) => (
