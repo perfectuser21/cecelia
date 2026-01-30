@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, CheckCircle2 } from 'lucide-react';
-import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse, ServiceHealth } from '@/api';
+import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, CheckCircle2, TrendingUp } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse } from '@/api';
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
@@ -330,21 +331,103 @@ export default function PerformanceMonitoring() {
         </div>
       </div>
 
-      {/* History (placeholder for future chart) */}
+      {/* History Trend Chart */}
       {data?.history && data.history.length > 0 && (
         <div className="mt-4 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50 dark:border-gray-700/50">
-            <div className="font-medium text-gray-900 dark:text-white">历史趋势</div>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-emerald-50 dark:bg-emerald-900/20">
+                <TrendingUp className="w-5 h-5 text-emerald-500" />
+              </div>
+              <div>
+                <div className="font-medium text-gray-900 dark:text-white">历史趋势</div>
+                <div className="text-xs text-gray-500 mt-0.5">最近 5 分钟的性能变化</div>
+              </div>
+            </div>
           </div>
           <div className="px-5 py-4">
-            <div className="flex flex-wrap gap-2">
-              {data.history.slice(-10).map((h, i) => (
-                <div key={i} className="text-xs bg-gray-50 dark:bg-gray-700 px-2 py-1 rounded">
-                  <span className="text-gray-400">{new Date(h.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="mx-2 text-gray-300">|</span>
-                  <span className={getStatusColor(h.cpuUsage, { warn: 70, danger: 90 })}>CPU {h.cpuUsage.toFixed(0)}%</span>
-                </div>
-              ))}
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={data.history.slice(-10).map(h => ({
+                    time: new Date(h.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                    cpu: Math.round(h.cpuUsage),
+                    memory: Math.round(h.memoryUsage),
+                    response: Math.round(h.responseTime),
+                  }))}
+                  margin={{ top: 5, right: 30, left: 0, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                    tickLine={{ stroke: '#9CA3AF' }}
+                  />
+                  <YAxis
+                    yAxisId="percent"
+                    domain={[0, 100]}
+                    tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                    tickLine={{ stroke: '#9CA3AF' }}
+                    tickFormatter={(value) => `${value}%`}
+                  />
+                  <YAxis
+                    yAxisId="ms"
+                    orientation="right"
+                    domain={[0, 'auto']}
+                    tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                    tickLine={{ stroke: '#9CA3AF' }}
+                    tickFormatter={(value) => `${value}ms`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'rgba(31, 41, 55, 0.95)',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '12px',
+                    }}
+                    labelStyle={{ color: '#9CA3AF' }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: '12px' }}
+                    formatter={(value) => {
+                      const labels: Record<string, string> = {
+                        cpu: 'CPU 使用率',
+                        memory: '内存使用率',
+                        response: '响应时间',
+                      };
+                      return labels[value] || value;
+                    }}
+                  />
+                  <Line
+                    yAxisId="percent"
+                    type="monotone"
+                    dataKey="cpu"
+                    stroke="#3B82F6"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    yAxisId="percent"
+                    type="monotone"
+                    dataKey="memory"
+                    stroke="#10B981"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    yAxisId="ms"
+                    type="monotone"
+                    dataKey="response"
+                    stroke="#F59E0B"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
