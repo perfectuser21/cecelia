@@ -1,4 +1,4 @@
-# QA Decision - Phase 5.3 Plan Commit
+# QA Decision - Phase 5.4 Nightly Planner
 
 Decision: NO_RCI
 Priority: P1
@@ -8,9 +8,9 @@ RepoType: Business
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| PlanTask 结构升级 | auto | tests/planning.test.ts |
-| POST /api/system/plan/:planId/commit | auto | tests/planning.test.ts |
-| verify-plan-loop.sh | auto | scripts/verify-plan-loop.sh |
+| POST /api/system/plan/nightly | auto | tests/planning.test.ts |
+| N8N workflow | manual | n8n UI verification |
+| Dashboard TodayPlan | manual | visual verification |
 
 ## RCI
 
@@ -19,4 +19,4 @@ update: []
 
 ## Reason
 
-Plan Commit 是 Phase 5.2 的扩展，基于已有的 Planning Engine 和 Memory Schema。不涉及现有核心路径的回归。
+Nightly Planner 是 Phase 5.3 的扩展，调用已有的 generatePlan 和 commitPlan。不涉及现有核心路径的回归。Dashboard 组件为新增UI。

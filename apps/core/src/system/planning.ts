@@ -505,3 +505,62 @@ export async function commitPlan(planId: string, limit: number = 3): Promise<Com
     plan_id: planId,
   };
 }
+
+// Nightly planner result interface
+export interface NightlyPlanResult {
+  success: boolean;
+  plan_id: string;
+  committed_count: number;
+  summary: string;
+  next_review: string;
+  plan?: GeneratedPlan;
+}
+
+/**
+ * Nightly planner - generates daily plan and auto-commits P0 tasks
+ * Called by N8N schedule trigger at 6:00 AM
+ */
+export async function runNightlyPlanner(): Promise<NightlyPlanResult> {
+  const now = new Date();
+
+  // Generate daily plan
+  const plan = await generatePlan('daily');
+
+  // Auto-commit P0 tasks (top 3)
+  const commitResult = await commitPlan(plan.plan_id, 3);
+
+  // Generate summary
+  const summary = `生成 ${plan.tasks.length} 个任务，已落库 ${commitResult.committed_tasks.length} 个任务`;
+
+  // Calculate next review time (tomorrow 6:00 AM UTC+8)
+  const nextReview = new Date(now);
+  nextReview.setDate(nextReview.getDate() + 1);
+  nextReview.setHours(6, 0, 0, 0);
+
+  // Record nightly plan event in episodic memory
+  await writeMemory({
+    layer: 'episodic',
+    category: 'event',
+    key: `nightly_plan_${plan.plan_id}`,
+    value: {
+      type: 'nightly_plan',
+      plan_id: plan.plan_id,
+      task_count: plan.tasks.length,
+      committed_count: commitResult.committed_tasks.length,
+      committed_tasks: commitResult.committed_tasks,
+      summary,
+      executed_at: now.toISOString(),
+      next_review: nextReview.toISOString(),
+    },
+    source: 'system',
+  });
+
+  return {
+    success: true,
+    plan_id: plan.plan_id,
+    committed_count: commitResult.committed_tasks.length,
+    summary,
+    next_review: nextReview.toISOString(),
+    plan,
+  };
+}

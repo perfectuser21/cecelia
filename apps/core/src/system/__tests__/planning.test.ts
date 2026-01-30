@@ -336,4 +336,43 @@ describe('Planning Engine API', () => {
       expect(committed.length).toBeLessThanOrEqual(1);
     });
   });
+
+  // Phase 5.4: Nightly Planner
+  describe('POST /api/system/plan/nightly (Phase 5.4)', () => {
+    it('should generate plan and auto-commit tasks', async () => {
+      const response = await fetch(`${API_BASE}/plan/nightly`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = (await response.json()) as ApiResponse;
+      expect(response.status).toBe(201);
+      expect(data.success).toBe(true);
+      expect(data.plan_id).toMatch(/^plan_daily_\d{8}$/);
+      expect(typeof data.committed_count).toBe('number');
+      expect(typeof data.summary).toBe('string');
+      expect(data.next_review).toBeDefined();
+    });
+
+    it('should record nightly plan event in memory', async () => {
+      // Run nightly planner
+      const nightlyResponse = await fetch(`${API_BASE}/plan/nightly`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const nightlyData = (await nightlyResponse.json()) as ApiResponse;
+      const planId = nightlyData.plan_id as string;
+
+      // Check memory for nightly_plan event
+      const memoryResponse = await fetch(`${API_BASE}/memory?layer=episodic&category=event`);
+      const memoryData = (await memoryResponse.json()) as ApiResponse;
+
+      expect(memoryData.success).toBe(true);
+      const entries = memoryData.entries as Array<{ key: string; value: { type: string; plan_id: string } }>;
+      const nightlyEntry = entries.find(e => e.key === `nightly_plan_${planId}`);
+      expect(nightlyEntry).toBeDefined();
+      expect(nightlyEntry?.value.type).toBe('nightly_plan');
+      expect(nightlyEntry?.value.plan_id).toBe(planId);
+    });
+  });
 });

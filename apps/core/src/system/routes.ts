@@ -45,6 +45,7 @@ import {
   getPlanStatus,
   getPlan,
   commitPlan,
+  runNightlyPlanner,
   type PlanScope,
 } from './planning.js';
 
@@ -811,6 +812,33 @@ router.post('/plan/:planId/commit', async (req: Request, res: Response) => {
       success: true,
       committed_tasks: result.committed_tasks,
       plan_id: result.plan_id,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+/**
+ * Nightly planner - auto-generate daily plan and commit P0 tasks
+ * POST /api/system/plan/nightly
+ *
+ * Called by N8N schedule trigger at 6:00 AM
+ */
+router.post('/plan/nightly', async (_req: Request, res: Response) => {
+  try {
+    const result = await runNightlyPlanner();
+
+    return res.status(201).json({
+      success: result.success,
+      plan_id: result.plan_id,
+      committed_count: result.committed_count,
+      summary: result.summary,
+      next_review: result.next_review,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
