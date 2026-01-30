@@ -1,5 +1,5 @@
 dev
-branch: cp-0130-main-branch-protection
-prd: .prd-cp-0130-main-branch-protection.md
-started: 2026-01-30T09:00:00+00:00
+branch: cp-0130-gate-security
+prd: .prd-cp-0130-gate-security.md
+started: 2026-01-30T17:45:00+08:00
 tasks_created: true

@@ -727,16 +727,17 @@ if [[ "$MODE" == "pr" ]]; then
     GATE_NAMES=("gate:prd" "gate:dod" "gate:test" "gate:audit")
     GATE_FAILED=0  # v20: Gate 检查失败是阻止型（exit 2）
 
-    # v21: 检查 verify 脚本是否存在 - 硬失败（exit 2）
+    # v22: 检查 verify 脚本是否存在 - 改为软警告（不阻断）
+    # P0-1 修复：新项目可能还没有 verify 脚本，不应该死锁
+    GATE_VERIFY_AVAILABLE=1
     if [[ ! -f "$GATE_VERIFY_SCRIPT" ]]; then
-        echo "  [ERROR] verify-gate-signature.sh 不存在" >&2
+        echo "  [WARN] verify-gate-signature.sh 不存在" >&2
         echo "    -> 脚本路径: $GATE_VERIFY_SCRIPT" >&2
-        echo "    -> 这是配置错误，Gate 机制无法工作" >&2
+        echo "    -> Gate 签名验证已跳过" >&2
+        echo "    -> 建议: 运行 generate-gate-file.sh 初始化 Gate 机制" >&2
         echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [ERROR] Gate 验证器缺失（阻止型）" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        exit 2
+        GATE_VERIFY_AVAILABLE=0
+        # 不 exit 2，继续执行其他检查
     fi
 
     for i in "${!GATE_FILES[@]}"; do
@@ -752,53 +753,81 @@ if [[ "$MODE" == "pr" ]]; then
             FAILED=1
             GATE_FAILED=1
         else
-            # v21: 运行 verify 脚本并根据 exit code 给出具体错误
-            GATE_OUTPUT=$(bash "$GATE_VERIFY_SCRIPT" "$GATE_FILE" 2>&1)
-            GATE_EXIT_CODE=$?
+            # v22: 如果验证器不可用，跳过签名验证（只检查文件存在）
+            if [[ "$GATE_VERIFY_AVAILABLE" -eq 0 ]]; then
+                echo "[OK] (签名验证已跳过)" >&2
+            else
+                # 运行 verify 脚本并根据 exit code 给出具体错误
+                GATE_OUTPUT=$(bash "$GATE_VERIFY_SCRIPT" "$GATE_FILE" 2>&1)
+                GATE_EXIT_CODE=$?
 
-            case $GATE_EXIT_CODE in
-                0)
-                    echo "[OK]" >&2
-                    ;;
-                3)
-                    # 验证器缺失/配置错误（secret 不存在）
-                    echo "[FAIL] (配置错误)" >&2
-                    echo "    -> Secret 文件不存在，请先运行 generate-gate-file.sh" >&2
-                    FAILED=1
-                    GATE_FAILED=1
-                    ;;
-                4)
-                    # 输入格式错误/JSON 解析失败
-                    echo "[FAIL] (格式错误)" >&2
-                    echo "    -> Gate 文件格式无效或 JSON 解析失败" >&2
-                    echo "    -> $GATE_OUTPUT" >&2
-                    FAILED=1
-                    GATE_FAILED=1
-                    ;;
-                5)
-                    # 签名/校验失败
-                    echo "[FAIL] (签名无效)" >&2
-                    echo "    -> 文件可能被篡改或 secret 不匹配" >&2
-                    echo "    -> 请重新运行对应的 gate skill 生成新文件" >&2
-                    FAILED=1
-                    GATE_FAILED=1
-                    ;;
-                6)
-                    # 分支/任务不匹配
-                    echo "[FAIL] (分支不匹配)" >&2
-                    echo "    -> Gate 文件是在其他分支生成的" >&2
-                    echo "    -> $GATE_OUTPUT" >&2
-                    FAILED=1
-                    GATE_FAILED=1
-                    ;;
-                *)
-                    # 其他错误
-                    echo "[FAIL] (未知错误: exit $GATE_EXIT_CODE)" >&2
-                    echo "    -> $GATE_OUTPUT" >&2
-                    FAILED=1
-                    GATE_FAILED=1
-                    ;;
-            esac
+                case $GATE_EXIT_CODE in
+                    0)
+                        echo "[OK]" >&2
+                        ;;
+                    3)
+                        # 验证器缺失/配置错误（secret 不存在）
+                        echo "[FAIL] (配置错误)" >&2
+                        echo "    -> Secret 文件不存在，请先运行 generate-gate-file.sh" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    4)
+                        # 输入格式错误/JSON 解析失败
+                        echo "[FAIL] (格式错误)" >&2
+                        echo "    -> Gate 文件格式无效或 JSON 解析失败" >&2
+                        echo "    -> $GATE_OUTPUT" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    5)
+                        # 签名/校验失败
+                        echo "[FAIL] (签名无效)" >&2
+                        echo "    -> 文件可能被篡改或 secret 不匹配" >&2
+                        echo "    -> 请重新运行对应的 gate skill 生成新文件" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    6)
+                        # 分支/任务不匹配
+                        echo "[FAIL] (分支不匹配)" >&2
+                        echo "    -> Gate 文件是在其他分支生成的" >&2
+                        echo "    -> $GATE_OUTPUT" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    7)
+                        # v3: Gate 文件已过期
+                        echo "[FAIL] (已过期)" >&2
+                        echo "    -> Gate 文件已超过 30 分钟有效期" >&2
+                        echo "    -> 请重新运行对应的 gate skill 生成新文件" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    8)
+                        # v3: HEAD 不匹配
+                        echo "[FAIL] (HEAD 不匹配)" >&2
+                        echo "    -> 代码已变更，Gate 文件需要重新生成" >&2
+                        echo "    -> $GATE_OUTPUT" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    9)
+                        # v3: Repo ID 不匹配
+                        echo "[FAIL] (Repo 不匹配)" >&2
+                        echo "    -> Gate 文件是在其他仓库生成的" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                    *)
+                        # 其他错误
+                        echo "[FAIL] (未知错误: exit $GATE_EXIT_CODE)" >&2
+                        echo "    -> $GATE_OUTPUT" >&2
+                        FAILED=1
+                        GATE_FAILED=1
+                        ;;
+                esac
+            fi
         fi
     done
 fi

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.10.0] - 2026-01-30
+
+### Security
+
+- **Gate 签名机制 v3：防止复用绕过**
+  - 新增 `expires_at` + `expires_at_epoch` 字段，默认 30 分钟过期
+  - 新增 `tree_sha` 字段，绑定代码树防止 amend 后复用
+  - 新增 `repo_id` 字段，防止跨仓库复用 gate 文件
+  - Secret 读取优先级：env → keychain → new path → old path → auto-generate
+  - 向后兼容 v2 格式（带警告）
+
+- **Verify 脚本 Exit Code 扩展 (v3)**
+  - `exit 7`: Gate 文件已过期
+  - `exit 8`: HEAD 不匹配（commit 或 tree 变化）
+  - `exit 9`: Repo ID 不匹配
+
+### Fixed
+
+- **P0-1: 验证器缺失时的死锁问题**
+  - 从硬阻止 `exit 2` 改为软警告，允许继续执行
+  - 新项目不再因缺少 verify 脚本而无法创建 PR
+
+- **P0-2: Stop Hook PR 合并后悬空问题**
+  - PR 合并后自动执行 cleanup（删除 .dev-mode、切换分支、删除本地分支）
+  - 不再只提示 "合并 PR" 然后卡住
+
+### Added
+
+- **Gate Signature v3 测试套件**
+  - 测试过期检查、HEAD 绑定、Repo 绑定、签名验证
+  - 测试 v2 向后兼容性
+
 ## [11.9.1] - 2026-01-30
 
 ### Security
