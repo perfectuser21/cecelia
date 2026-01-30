@@ -8,6 +8,19 @@ export interface ServiceHealth {
   error: string | null;
 }
 
+// Health check history record for a single check
+export interface HealthCheckRecord {
+  timestamp: string;
+  status: 'healthy' | 'unhealthy';
+  latency_ms: number | null;
+  error: string | null;
+}
+
+// Extended service health with history (used by frontend)
+export interface ServiceHealthWithHistory extends ServiceHealth {
+  history?: HealthCheckRecord[];
+}
+
 export interface SystemHealthResponse {
   success: boolean;
   status: 'healthy' | 'degraded' | 'unhealthy';
@@ -16,6 +29,16 @@ export interface SystemHealthResponse {
   degraded: boolean;
   degraded_reason: string | null;
   timestamp: string;
+}
+
+export interface DiskIO {
+  readSpeed: number;   // bytes per second
+  writeSpeed: number;  // bytes per second
+}
+
+export interface NetworkIO {
+  uploadSpeed: number;   // bytes per second
+  downloadSpeed: number; // bytes per second
 }
 
 export interface SystemMetrics {
@@ -27,6 +50,8 @@ export interface SystemMetrics {
   errorRate: number;
   activeConnections: number;
   uptime: number;
+  diskIO?: DiskIO;
+  networkIO?: NetworkIO;
 }
 
 export interface MetricHistory {

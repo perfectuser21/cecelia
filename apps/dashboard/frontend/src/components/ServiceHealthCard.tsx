@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { CheckCircle2, XCircle, RefreshCw, ChevronDown, ChevronUp, Clock, Globe, Info } from 'lucide-react';
-import type { ServiceHealth } from '@/api';
+import { CheckCircle2, XCircle, RefreshCw, ChevronDown, ChevronUp, Clock, Globe, Info, History } from 'lucide-react';
+import type { ServiceHealth, HealthCheckRecord } from '@/api';
 
 // Service metadata - description and endpoint info
 const SERVICE_INFO: Record<string, { description: string; endpoint: string }> = {
@@ -26,6 +26,7 @@ interface ServiceHealthCardProps {
   name: string;
   label: string;
   service: ServiceHealth;
+  history?: HealthCheckRecord[];
   onRefresh?: () => Promise<void>;
 }
 
@@ -58,7 +59,7 @@ function formatAbsoluteTime(isoString: string | null): string {
   });
 }
 
-export function ServiceHealthCard({ name, label, service, onRefresh }: ServiceHealthCardProps) {
+export function ServiceHealthCard({ name, label, service, history, onRefresh }: ServiceHealthCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -224,6 +225,62 @@ export function ServiceHealthCard({ name, label, service, onRefresh }: ServiceHe
               <div className="mt-2 p-2 bg-red-100 dark:bg-red-900/30 rounded text-red-700 dark:text-red-300">
                 <div className="font-medium mb-1">错误详情:</div>
                 <div className="font-mono text-xs break-all">{service.error}</div>
+              </div>
+            )}
+
+            {/* Health Check History */}
+            {history && history.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-200/50 dark:border-gray-700/50">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <History className="w-3 h-3 text-gray-400" />
+                  <span className="text-gray-500 font-medium">健康检查历史</span>
+                </div>
+                <div className="space-y-1.5">
+                  {history.slice(0, 5).map((record, index) => (
+                    <div
+                      key={index}
+                      className={`flex items-center justify-between p-2 rounded ${
+                        record.status === 'healthy'
+                          ? 'bg-green-50 dark:bg-green-900/20'
+                          : 'bg-red-50 dark:bg-red-900/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {record.status === 'healthy' ? (
+                          <CheckCircle2 className="w-3 h-3 text-green-500" />
+                        ) : (
+                          <XCircle className="w-3 h-3 text-red-500" />
+                        )}
+                        <span className={`text-xs font-medium ${
+                          record.status === 'healthy' ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'
+                        }`}>
+                          {record.status === 'healthy' ? '健康' : '异常'}
+                        </span>
+                        {record.latency_ms !== null && (
+                          <span className={`text-xs ${
+                            record.latency_ms < 100 ? 'text-green-600 dark:text-green-400' :
+                            record.latency_ms < 500 ? 'text-amber-600 dark:text-amber-400' :
+                            'text-red-600 dark:text-red-400'
+                          }`}>
+                            {record.latency_ms}ms
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-gray-400">
+                        {new Date(record.timestamp).toLocaleTimeString('zh-CN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {history.length > 5 && (
+                  <div className="mt-1.5 text-xs text-gray-400 text-center">
+                    显示最近 5 条，共 {history.length} 条记录
+                  </div>
+                )}
               </div>
             )}
           </div>

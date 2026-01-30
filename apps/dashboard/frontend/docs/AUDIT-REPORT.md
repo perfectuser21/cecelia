@@ -1,45 +1,36 @@
-# Audit Report
+# Audit Report - 性能监控健康检查历史增强
 
-Branch: cp-01303-perf-refresh-interval
-Date: 2026-01-30
-Scope: src/pages/PerformanceMonitoring.tsx
-Target Level: L2
+## 审计信息
 
-## Summary
+- **审计日期**: 2026-01-31
+- **审计范围**: ServiceHealthCard 组件历史记录功能
+- **Decision**: PASS
 
-| Level | Count |
-|-------|-------|
-| L1 (Blocker) | 0 |
-| L2 (Functional) | 0 |
-| L3 (Best Practice) | 0 |
-| L4 (Over-optimization) | 0 |
+## 变更摘要
 
-## Decision
+### 新增类型
+- `HealthCheckRecord`: 单次健康检查记录类型
+- `ServiceHealthWithHistory`: 带历史记录的服务健康扩展类型
 
-**PASS**
+### 修改文件
+1. `src/api/system.api.ts` - 添加历史记录类型
+2. `src/components/ServiceHealthCard.tsx` - 展示历史记录 UI
+3. `src/pages/PerformanceMonitoring.tsx` - 维护历史记录 state
 
-## Changes Made
+## 安全审计
 
-1. 更新 `PerformanceMonitoring.tsx`
-   - 添加刷新间隔选择器（10s / 30s / 60s / 暂停）
-   - 新增 `REFRESH_INTERVALS` 常量和 `RefreshInterval` 类型
-   - 新增状态：`refreshInterval`、`showIntervalDropdown`
-   - 新增 refs：`intervalRef`（管理定时器）、`dropdownRef`（点击外部关闭）
-   - 重构 `useEffect` 以支持动态刷新间隔
-   - 添加下拉菜单 UI（Timer/Pause 图标，当前选择高亮）
-   - 新增 `getCurrentIntervalLabel` 辅助函数
+- [x] 无硬编码凭据
+- [x] 无 XSS 风险
+- [x] 无 SQL 注入风险
+- [x] 类型安全
 
-2. 导入更新
-   - 新增 `useRef` from react
-   - 新增 `Timer`, `Pause`, `ChevronDown` from lucide-react
+## 功能验证
 
-## Risk Assessment
+- [x] npm run build 通过
+- [x] 历史记录在组件展开时正确显示
+- [x] 健康/异常状态有视觉区分
+- [x] 历史记录包含时间戳、状态、延迟
 
-- 改动范围：修改 1 个文件
-- 影响范围：仅 UI 交互增强，不影响数据逻辑
-- 风险等级：低
-- 构建验证：通过
+## 结论
 
-## Blockers
-
-无
+代码质量良好，无安全问题，符合 DoD 要求。

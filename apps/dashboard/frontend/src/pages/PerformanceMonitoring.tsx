@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown } from 'lucide-react';
+import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown, ArrowUpCircle, ArrowDownCircle, Database, Wifi } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse } from '@/api';
+import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse, HealthCheckRecord } from '@/api';
 import { ServiceHealthCard } from '@/components';
 
 function formatUptime(seconds: number): string {
@@ -16,6 +16,19 @@ function formatUptime(seconds: number): string {
 function formatMemory(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
   return `${gb.toFixed(1)} GB`;
+}
+
+function formatSpeed(bytesPerSecond: number): string {
+  if (bytesPerSecond >= 1024 * 1024 * 1024) {
+    return `${(bytesPerSecond / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
+  }
+  if (bytesPerSecond >= 1024 * 1024) {
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+  }
+  if (bytesPerSecond >= 1024) {
+    return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  }
+  return `${bytesPerSecond.toFixed(0)} B/s`;
 }
 
 function getStatusColor(value: number, thresholds: { warn: number; danger: number }): string {
@@ -43,6 +56,14 @@ function getMockData(): SystemMetricsResponse {
       errorRate: 0.1 + Math.random() * 0.5,
       activeConnections: 12 + Math.floor(Math.random() * 8),
       uptime: 86400 * 3 + 3600 * 7,
+      diskIO: {
+        readSpeed: (50 + Math.random() * 100) * 1024 * 1024,  // 50-150 MB/s
+        writeSpeed: (30 + Math.random() * 80) * 1024 * 1024,  // 30-110 MB/s
+      },
+      networkIO: {
+        downloadSpeed: (10 + Math.random() * 50) * 1024 * 1024,  // 10-60 MB/s
+        uploadSpeed: (5 + Math.random() * 20) * 1024 * 1024,     // 5-25 MB/s
+      },
     },
     history: Array.from({ length: 10 }, (_, i) => ({
       timestamp: new Date(now - (9 - i) * 30000).toISOString(),
@@ -71,9 +92,13 @@ const REFRESH_INTERVALS = [
 
 type RefreshInterval = typeof REFRESH_INTERVALS[number]['value'];
 
+// Maximum number of health check history records to keep per service
+const MAX_HEALTH_HISTORY = 20;
+
 export default function PerformanceMonitoring() {
   const [data, setData] = useState<SystemMetricsResponse | null>(null);
   const [healthData, setHealthData] = useState<SystemHealthResponse | null>(null);
+  const [healthHistory, setHealthHistory] = useState<Record<string, HealthCheckRecord[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState('');
@@ -98,7 +123,26 @@ export default function PerformanceMonitoring() {
       }
 
       if (healthResponse.status === 'fulfilled') {
-        setHealthData(healthResponse.value);
+        const newHealthData = healthResponse.value;
+        setHealthData(newHealthData);
+
+        // Update health history for each service
+        const timestamp = new Date().toISOString();
+        setHealthHistory(prevHistory => {
+          const newHistory = { ...prevHistory };
+          Object.entries(newHealthData.services).forEach(([serviceName, service]) => {
+            const record: HealthCheckRecord = {
+              timestamp,
+              status: service.status,
+              latency_ms: service.latency_ms,
+              error: service.error,
+            };
+            const serviceHistory = [...(newHistory[serviceName] || []), record];
+            // Keep only the last MAX_HEALTH_HISTORY records
+            newHistory[serviceName] = serviceHistory.slice(-MAX_HEALTH_HISTORY);
+          });
+          return newHistory;
+        });
       }
 
       setError('');
@@ -306,6 +350,65 @@ export default function PerformanceMonitoring() {
         </div>
       </div>
 
+      {/* I/O Stats Cards */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        {/* Disk I/O */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+            <Database className="w-3.5 h-3.5" />
+            <span>磁盘 I/O</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <ArrowDownCircle className="w-3 h-3 text-blue-500" />
+                <span>读取</span>
+              </div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                {formatSpeed(metrics.diskIO?.readSpeed || 0)}
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <ArrowUpCircle className="w-3 h-3 text-green-500" />
+                <span>写入</span>
+              </div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                {formatSpeed(metrics.diskIO?.writeSpeed || 0)}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Network I/O */}
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+            <Wifi className="w-3.5 h-3.5" />
+            <span>网络吞吐</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <ArrowDownCircle className="w-3 h-3 text-blue-500" />
+                <span>下载</span>
+              </div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                {formatSpeed(metrics.networkIO?.downloadSpeed || 0)}
+              </div>
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <ArrowUpCircle className="w-3 h-3 text-green-500" />
+                <span>上传</span>
+              </div>
+              <div className="text-lg font-semibold text-gray-900 dark:text-white">
+                {formatSpeed(metrics.networkIO?.uploadSpeed || 0)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Service Health Status */}
       {healthData && (
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-4">
@@ -343,6 +446,7 @@ export default function PerformanceMonitoring() {
                   name={name}
                   label={SERVICE_LABELS[name] || name}
                   service={service}
+                  history={healthHistory[name]}
                   onRefresh={fetchData}
                 />
               ))}

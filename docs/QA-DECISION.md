@@ -4,13 +4,18 @@ Decision: NO_RCI
 Priority: P2
 RepoType: Business
 
+## Summary
+
+KR2 测试任务 3 - 性能监控增强。为现有的性能监控页面添加磁盘 I/O 和网络吞吐量指标。
+
 ## Tests
 
 | dod_item | method | location |
 |----------|--------|----------|
-| 服务卡片显示最后检查时间 | manual | manual:目视检查页面显示 |
-| 延迟显示正确 | manual | manual:目视检查延迟数值 |
-| 代码通过 lint 和类型检查 | auto | npm run lint && npm run typecheck |
+| 磁盘 I/O 指标显示 | manual | manual:检查页面显示磁盘读写速度 |
+| 网络吞吐量指标显示 | manual | manual:检查页面显示网络流量 |
+| 构建成功 | auto | npm run build |
+| 类型检查通过 | auto | npx tsc --noEmit |
 
 ## RCI
 
@@ -19,4 +24,4 @@ RepoType: Business
 
 ## Reason
 
-低风险 UI 改动（单文件、无 API 变更、无数据模型变更），RISK SCORE = 0，无需纳入回归契约。
+业务类型项目的 UI 增强，使用 Mock 数据展示新指标，无需添加回归契约。手动验证 UI 效果即可。
