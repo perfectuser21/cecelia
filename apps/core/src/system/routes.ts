@@ -841,10 +841,12 @@ router.post('/plan/:planId/commit', async (req: Request, res: Response) => {
 });
 
 /**
- * Nightly planner - auto-generate daily plan and commit P0 tasks
+ * Nightly planner - auto-generate daily plan, commit P0 tasks, and trigger execution
  * POST /api/system/plan/nightly
  *
  * Called by N8N schedule trigger at 6:00 AM
+ *
+ * Phase 5.4: Added auto-trigger for committed tasks
  */
 router.post('/plan/nightly', async (_req: Request, res: Response) => {
   try {
@@ -854,6 +856,8 @@ router.post('/plan/nightly', async (_req: Request, res: Response) => {
       success: result.success,
       plan_id: result.plan_id,
       committed_count: result.committed_count,
+      triggered_count: result.triggered_count,
+      triggered_tasks: result.triggered_tasks,
       summary: result.summary,
       next_review: result.next_review,
       timestamp: new Date().toISOString(),

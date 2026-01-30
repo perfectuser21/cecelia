@@ -12,6 +12,8 @@
 
 import pool from '../task-system/db.js';
 import { writeMemory, readMemory, queryMemory } from './memory.js';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
 
 // Plan scope types
 export type PlanScope = 'daily' | 'weekly';
@@ -506,19 +508,188 @@ export async function commitPlan(planId: string, limit: number = 3): Promise<Com
   };
 }
 
+/**
+ * Generate a temporary PRD file for a committed task
+ */
+const PRD_TEMP_DIR = process.env.PRD_TEMP_DIR || '/tmp/cecelia-prds';
+
+function generateTaskPRD(task: CommittedTask, planId: string): string {
+  // Ensure temp directory exists
+  if (!existsSync(PRD_TEMP_DIR)) {
+    mkdirSync(PRD_TEMP_DIR, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const prdPath = join(PRD_TEMP_DIR, `prd-${task.task_id}-${timestamp}.md`);
+
+  const prdContent = `---
+id: prd-task-${task.task_id}
+version: 1.0.0
+created: ${new Date().toISOString().split('T')[0]}
+source_plan: ${planId}
+auto_generated: true
+---
+
+# PRD - ${task.title}
+
+## 来源
+
+- Plan ID: ${planId}
+- Task ID: ${task.task_id}
+- 自动生成于 Nightly Planner
+
+## 目标
+
+${task.title}
+
+## 成功标准
+
+- [ ] 任务完成并标记为 completed
+- [ ] 代码提交并通过 CI
+- [ ] 无回归问题
+
+## 备注
+
+此 PRD 由 Nightly Planner 自动生成，用于触发 Cecelia 执行。
+`;
+
+  writeFileSync(prdPath, prdContent, 'utf-8');
+  return prdPath;
+}
+
+/**
+ * Trigger execution for committed tasks
+ * Calls Cecelia executor for each task
+ */
+const EXECUTOR_URL = process.env.CECELIA_EXECUTOR_URL || 'http://localhost:5230';
+
+export async function triggerCommittedTasks(
+  committedTasks: CommittedTask[],
+  planId: string,
+  limit: number = 3
+): Promise<TriggerResult> {
+  const tasksToTrigger = committedTasks.slice(0, limit);
+  const triggeredTasks: TriggeredTask[] = [];
+  let triggeredCount = 0;
+  let failedCount = 0;
+
+  for (const task of tasksToTrigger) {
+    try {
+      // Generate PRD for this task
+      const prdPath = generateTaskPRD(task, planId);
+
+      // Call Cecelia executor
+      const response = await fetch(`${EXECUTOR_URL}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prd_path: prdPath,
+          priority: 'P0',
+          source: 'system',
+          task_id: task.task_id,
+        }),
+      });
+
+      const result = await response.json() as { success: boolean; data?: { execution_id?: string }; error?: string };
+
+      if (result.success) {
+        triggeredTasks.push({
+          task_id: task.task_id,
+          title: task.title,
+          prd_path: prdPath,
+          execution_id: result.data?.execution_id,
+          status: 'triggered',
+        });
+        triggeredCount++;
+
+        // Record trigger event in episodic memory (non-blocking)
+        try {
+          await writeMemory({
+            layer: 'episodic',
+            category: 'event',
+            key: `task_triggered_${task.task_id}_${Date.now()}`,
+            value: {
+              type: 'task_triggered',
+              task_id: task.task_id,
+              task_title: task.title,
+              prd_path: prdPath,
+              execution_id: result.data?.execution_id,
+              plan_id: planId,
+              timestamp: new Date().toISOString(),
+            },
+            source: 'system',
+          });
+        } catch (memErr) {
+          // Memory write failure is non-critical, just log
+          console.error(`Failed to record trigger event for task ${task.task_id}:`, memErr);
+        }
+      } else {
+        triggeredTasks.push({
+          task_id: task.task_id,
+          title: task.title,
+          prd_path: prdPath,
+          status: 'failed',
+          error: result.error || 'Unknown error',
+        });
+        failedCount++;
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      triggeredTasks.push({
+        task_id: task.task_id,
+        title: task.title,
+        prd_path: '',
+        status: 'failed',
+        error: errorMessage,
+      });
+      failedCount++;
+      console.error(`Failed to trigger task ${task.task_id}:`, err);
+    }
+  }
+
+  return {
+    success: triggeredCount > 0,
+    triggered_count: triggeredCount,
+    failed_count: failedCount,
+    tasks: triggeredTasks,
+  };
+}
+
+// Triggered task result
+export interface TriggeredTask {
+  task_id: string;
+  title: string;
+  prd_path: string;
+  execution_id?: string;
+  status: 'triggered' | 'failed';
+  error?: string;
+}
+
+// Trigger result
+export interface TriggerResult {
+  success: boolean;
+  triggered_count: number;
+  failed_count: number;
+  tasks: TriggeredTask[];
+}
+
 // Nightly planner result interface
 export interface NightlyPlanResult {
   success: boolean;
   plan_id: string;
   committed_count: number;
+  triggered_count: number;
   summary: string;
   next_review: string;
   plan?: GeneratedPlan;
+  triggered_tasks?: TriggeredTask[];
 }
 
 /**
- * Nightly planner - generates daily plan and auto-commits P0 tasks
+ * Nightly planner - generates daily plan, auto-commits P0 tasks, and triggers execution
  * Called by N8N schedule trigger at 6:00 AM
+ *
+ * Phase 5.4: Added auto-trigger for committed tasks
  */
 export async function runNightlyPlanner(): Promise<NightlyPlanResult> {
   const now = new Date();
@@ -529,8 +700,29 @@ export async function runNightlyPlanner(): Promise<NightlyPlanResult> {
   // Auto-commit P0 tasks (top 3)
   const commitResult = await commitPlan(plan.plan_id, 3);
 
+  // Auto-trigger committed tasks for execution
+  let triggerResult: TriggerResult = {
+    success: false,
+    triggered_count: 0,
+    failed_count: 0,
+    tasks: [],
+  };
+
+  if (commitResult.committed_tasks.length > 0) {
+    try {
+      triggerResult = await triggerCommittedTasks(
+        commitResult.committed_tasks,
+        plan.plan_id,
+        3 // Max 3 concurrent executions
+      );
+    } catch (err) {
+      console.error('Failed to trigger committed tasks:', err);
+      // Continue even if trigger fails - plan and commit are still valid
+    }
+  }
+
   // Generate summary
-  const summary = `生成 ${plan.tasks.length} 个任务，已落库 ${commitResult.committed_tasks.length} 个任务`;
+  const summary = `生成 ${plan.tasks.length} 个任务，落库 ${commitResult.committed_tasks.length} 个，触发执行 ${triggerResult.triggered_count} 个`;
 
   // Calculate next review time (tomorrow 6:00 AM UTC+8)
   const nextReview = new Date(now);
@@ -548,6 +740,8 @@ export async function runNightlyPlanner(): Promise<NightlyPlanResult> {
       task_count: plan.tasks.length,
       committed_count: commitResult.committed_tasks.length,
       committed_tasks: commitResult.committed_tasks,
+      triggered_count: triggerResult.triggered_count,
+      triggered_tasks: triggerResult.tasks,
       summary,
       executed_at: now.toISOString(),
       next_review: nextReview.toISOString(),
@@ -559,8 +753,10 @@ export async function runNightlyPlanner(): Promise<NightlyPlanResult> {
     success: true,
     plan_id: plan.plan_id,
     committed_count: commitResult.committed_tasks.length,
+    triggered_count: triggerResult.triggered_count,
     summary,
     next_review: nextReview.toISOString(),
     plan,
+    triggered_tasks: triggerResult.tasks,
   };
 }

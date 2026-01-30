@@ -337,9 +337,9 @@ describe('Planning Engine API', () => {
     });
   });
 
-  // Phase 5.4: Nightly Planner
+  // Phase 5.4: Nightly Planner with Auto-Trigger
   describe('POST /api/system/plan/nightly (Phase 5.4)', () => {
-    it('should generate plan and auto-commit tasks', async () => {
+    it('should generate plan, auto-commit tasks, and return triggered_count', async () => {
       const response = await fetch(`${API_BASE}/plan/nightly`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -350,6 +350,7 @@ describe('Planning Engine API', () => {
       expect(data.success).toBe(true);
       expect(data.plan_id).toMatch(/^plan_daily_\d{8}$/);
       expect(typeof data.committed_count).toBe('number');
+      expect(typeof data.triggered_count).toBe('number');
       expect(typeof data.summary).toBe('string');
       expect(data.next_review).toBeDefined();
     });
