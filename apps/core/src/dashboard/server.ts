@@ -39,8 +39,8 @@ const FEISHU_AUTH_BACKEND = process.env.FEISHU_AUTH_BACKEND || 'http://localhost
 // N8N backend (for workflow automation)
 const N8N_BACKEND = process.env.N8N_BACKEND || 'http://localhost:5678';
 
-// Cecelia Quality API (quality monitoring)
-const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5220';
+// Cecelia Quality API (quality monitoring) - port 5681
+const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
 
 // Cecelia Brain API (semantic brain + orchestrator)
 const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
