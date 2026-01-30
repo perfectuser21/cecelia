@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-20260130-performance-monitor
+Branch: cp-01302325-api-exports
 Date: 2026-01-30
-Scope: src/pages/PerformanceMonitoring.tsx
+Scope: src/api/index.ts
 Target Level: L2
 
 ## Summary
@@ -21,11 +21,10 @@ Target Level: L2
 ## Findings
 
 无问题发现。代码变更简洁，功能明确：
-1. 添加 recharts 图表库导入
-2. 替换历史趋势文本展示为折线图
-3. 支持 CPU、内存、响应时间三条数据线
-4. 使用 ResponsiveContainer 实现响应式布局
-5. Tooltip 使用深色背景支持暗色模式
+1. 添加 contents.api 模块导出
+2. 添加 ai-employees.api 模块导出
+3. 保持与现有导出风格一致
+4. Build 成功验证无编译错误
 
 ## Blockers
 

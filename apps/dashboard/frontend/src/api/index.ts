@@ -11,3 +11,5 @@ export * from './instance.api';
 export * from './scraping.api';
 export * from './dashboard.api';
 export * from './system.api';
+export * from './contents.api';
+export * from './ai-employees.api';
