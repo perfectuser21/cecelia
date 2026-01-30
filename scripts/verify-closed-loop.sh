@@ -21,6 +21,16 @@ TEST_TASK_TITLE="[ClosedLoop Test] $(date +%Y%m%d-%H%M%S)"
 POLL_INTERVAL=3
 MAX_POLLS=20
 
+# Generate Trace ID: trc_YYYYMMDD_HHMMSS_<6-char-random>
+generate_trace_id() {
+  local date_str=$(date +%Y%m%d)
+  local time_str=$(date +%H%M%S)
+  local random=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+  echo "trc_${date_str}_${time_str}_${random}"
+}
+
+TRACE_ID=$(generate_trace_id)
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,6 +47,7 @@ TASK_ID=""
 RUN_ID=""
 EVIDENCE_COUNT=0
 MEMORY_KEY=""
+# TRACE_ID is generated above
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_pass() { echo -e "${GREEN}[PASS]${NC} $1"; PASS=$((PASS+1)); }
@@ -110,11 +121,12 @@ assert_task_creation() {
   local payload=$(cat <<EOF
 {
   "title": "${TEST_TASK_TITLE}",
-  "description": "Automated closed-loop verification test",
+  "description": "Automated closed-loop verification test (trace: ${TRACE_ID})",
   "intent": "test",
   "priority": "P2",
   "status": "in_progress",
-  "tags": ["closed-loop-test", "automated"]
+  "tags": ["closed-loop-test", "automated"],
+  "metadata": {"trace_id": "${TRACE_ID}"}
 }
 EOF
 )
@@ -128,7 +140,7 @@ EOF
   TASK_ID=$(echo "$response" | jq -r '.id // .task_id // empty' 2>/dev/null)
 
   if [[ -n "$TASK_ID" && "$TASK_ID" != "null" ]]; then
-    log_pass "Task created: ${TASK_ID}"
+    log_pass "Task created: ${TASK_ID} (trace: ${TRACE_ID})"
     return 0
   else
     log_fail "Task creation failed"
@@ -242,13 +254,14 @@ assert_memory_written() {
   echo "Assertion 4: Memory Write"
   echo "============================================"
 
-  MEMORY_KEY="closed_loop_test_${TASK_ID}"
+  MEMORY_KEY="closed_loop_${TRACE_ID}"
 
   local memory_payload=$(cat <<EOF
 {
   "key": "${MEMORY_KEY}",
   "value": {
     "task_id": "${TASK_ID}",
+    "trace_id": "${TRACE_ID}",
     "verified_at": "$(date -Iseconds)",
     "test_type": "closed-loop"
   }
@@ -375,6 +388,7 @@ print_summary() {
   echo "============================================"
   echo ""
   echo "Test Artifacts:"
+  echo "  Trace ID:     ${TRACE_ID}"
   echo "  Task ID:      ${TASK_ID:-N/A}"
   echo "  Run ID:       ${RUN_ID:-N/A}"
   echo "  Evidence:     ${EVIDENCE_COUNT} item(s)"
@@ -408,6 +422,7 @@ main() {
   echo "Cecelia Closed-Loop Verification"
   echo "============================================"
   echo "Time: $(date)"
+  echo "Trace ID: ${TRACE_ID}"
   echo ""
 
   # Run pre-flight checks
