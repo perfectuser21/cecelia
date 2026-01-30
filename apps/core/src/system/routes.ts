@@ -9,8 +9,20 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const execAsync = promisify(exec);
 const router = Router();
+
+// ES module compatibility for __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// DLQ script path
+const DLQ_SCRIPT = path.resolve(__dirname, '../../../../scripts/dlq-utils.sh');
 
 // Service endpoints
 const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
@@ -225,6 +237,87 @@ router.get('/health', (_req: Request, res: Response) => {
     service: 'cecelia-workspace',
     timestamp: new Date().toISOString(),
   });
+});
+
+/**
+ * GET /api/system/dlq
+ * Get DLQ status and entries
+ */
+router.get('/dlq', async (req: Request, res: Response) => {
+  try {
+    const type = req.query.type as string || 'all';
+    const limit = req.query.limit as string || '10';
+
+    // Get status
+    const { stdout: statusOutput } = await execAsync(`bash ${DLQ_SCRIPT} status`);
+    const status = JSON.parse(statusOutput);
+
+    // Get entries if requested
+    let entries = null;
+    if (req.query.entries === 'true') {
+      const { stdout: listOutput } = await execAsync(`bash ${DLQ_SCRIPT} list ${type} ${limit}`);
+      entries = JSON.parse(listOutput);
+    }
+
+    return res.json({
+      success: true,
+      status,
+      entries,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+/**
+ * POST /api/system/dlq/replay
+ * Replay failed DLQ entries
+ */
+router.post('/dlq/replay', async (req: Request, res: Response) => {
+  try {
+    const type = req.body.type || 'all';
+
+    if (!['memory', 'evidence', 'all'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid type. Must be "memory", "evidence", or "all"',
+      });
+    }
+
+    const results: any = {};
+
+    if (type === 'all' || type === 'memory') {
+      const { stdout: memoryOutput } = await execAsync(`bash ${DLQ_SCRIPT} replay memory`);
+      results.memory = JSON.parse(memoryOutput);
+    }
+
+    if (type === 'all' || type === 'evidence') {
+      const { stdout: evidenceOutput } = await execAsync(`bash ${DLQ_SCRIPT} replay evidence`);
+      results.evidence = JSON.parse(evidenceOutput);
+    }
+
+    // Get final status
+    const { stdout: statusOutput } = await execAsync(`bash ${DLQ_SCRIPT} status`);
+    const finalStatus = JSON.parse(statusOutput);
+
+    return res.json({
+      success: true,
+      results,
+      finalStatus,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({
+      success: false,
+      error: message,
+    });
+  }
 });
 
 export default router;
