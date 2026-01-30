@@ -605,6 +605,22 @@ Respond in Chinese, be concise.""",
                         },
                         "required": ["task"]
                     }
+                },
+                {
+                    "type": "function",
+                    "name": "navigate_to_page",
+                    "description": "导航到指定页面。当用户说 '去/打开/跳转到 XXX页面' 时使用此工具，而不是 open_detail。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "page": {
+                                "type": "string",
+                                "enum": ["okr", "projects", "tasks", "orchestrator", "planner", "brain", "home"],
+                                "description": "目标页面名称"
+                            }
+                        },
+                        "required": ["page"]
+                    }
                 }
             ]
         }
@@ -1084,6 +1100,34 @@ async def execute_tool(request: ToolCallRequest):
 
             except Exception as e:
                 return {"success": False, "error": f"Queue mode error: {e}"}
+
+        elif tool_name == "navigate_to_page":
+            # Navigate to a page - return action for frontend to handle
+            page = args.get("page")
+            if not page:
+                return {"success": False, "error": "page is required"}
+
+            page_routes = {
+                "okr": "/okr",
+                "projects": "/projects",
+                "tasks": "/tasks",
+                "orchestrator": "/orchestrator",
+                "planner": "/planner",
+                "brain": "/brain",
+                "home": "/",
+            }
+
+            if page not in page_routes:
+                return {"success": False, "error": f"Unknown page: {page}"}
+
+            return {
+                "success": True,
+                "result": {
+                    "action": "navigate",
+                    "page": page,
+                    "path": page_routes[page]
+                }
+            }
 
         else:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}
