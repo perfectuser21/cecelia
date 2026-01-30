@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-kr2-health-check-enhance
+Branch: cp-kr2-api-doc-update
 Date: 2026-01-30
-Scope: src/api/settings.api.ts
+Scope: docs/API.md
 Target Level: L2
 
 ## Summary
@@ -15,22 +15,16 @@ Target Level: L2
 
 ## Findings
 
-### 变更分析
+无代码变更，仅文档更新：
+- 新增 Contents API 文档章节
+- 新增 Video Editor API 文档章节
+- 新增 Scraping API 文档章节
+- 新增 AI Employees API 文档章节
+- 更新 Settings API getSystemHealth 返回值文档（多服务聚合格式）
+- 更新目录索引
 
-**文件**: `src/api/settings.api.ts`
-**变更类型**: API 类型定义更新
+## Blockers: []
 
-变更内容：
-1. 更新 `getSystemHealth` 返回类型以匹配后端 PR #102 的新格式
-2. 端点从 `/v1/health` 改为 `/system/health`
-3. 新增字段：`services`（多服务状态聚合）、`degraded`、`degraded_reason`、`timestamp`
+## Notes
 
-### 审计结果
-
-- **类型安全**: 所有类型定义明确，无 any 类型滥用
-- **API 兼容性**: 与后端 `apps/core/src/system/routes.ts` 定义一致
-- **构建验证**: `npm run build` 通过，无类型错误
-
-## Blockers
-
-无
+此变更为纯文档更新，无代码变更，无需回归测试。文档内容与现有代码实现一致。

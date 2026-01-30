@@ -11,6 +11,10 @@
 - [Publish API](#publish-api)
 - [Dashboard API](#dashboard-api)
 - [Instance API](#instance-api)
+- [Contents API](#contents-api)
+- [Video Editor API](#video-editor-api)
+- [Scraping API](#scraping-api)
+- [AI Employees API](#ai-employees-api)
 
 ---
 
@@ -214,7 +218,30 @@ interface SystemSettings {
 | `markAllNotificationsRead()` | 全部标记已读 | 无 | void |
 | `deleteNotification(id)` | 删除通知 | id | void |
 | `getUnreadCount()` | 获取未读数 | 无 | number |
-| `getSystemHealth()` | 获取系统健康状态 | 无 | `{status, components, uptime, version}` |
+| `getSystemHealth()` | 获取系统健康状态（多服务聚合） | 无 | `SystemHealthResponse` |
+
+#### SystemHealthResponse
+
+```typescript
+interface SystemHealthResponse {
+  success: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  service: string;
+  services: {
+    [key: string]: {
+      status: 'healthy' | 'unhealthy';
+      latency_ms: number | null;
+      last_check: string | null;
+      error: string | null;
+    };
+  };
+  degraded: boolean;
+  degraded_reason: string | null;
+  timestamp: string;
+}
+```
+
+聚合的服务包括：brain、workspace、quality、n8n 等。每个服务返回状态、延迟（毫秒）、最后检查时间和错误信息。
 
 ---
 
@@ -320,6 +347,309 @@ interface DashboardStats {
 - `config`: 实例配置（主题、功能开关等）
 - `matched_domain`: 匹配的域名
 - `error`: 错误信息（如有）
+
+---
+
+## Contents API
+
+**文件**: `src/api/contents.api.ts`
+
+网站内容管理（文章、视频、帖子）。
+
+### 类型定义
+
+#### WebsiteContent
+
+```typescript
+interface WebsiteContent {
+  id: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  body: string | null;
+  content_type: 'article' | 'video' | 'post';
+  lang: 'zh' | 'en';
+  tags: string[];
+  reading_time: string | null;
+  faq: { question: string; answer: string }[];
+  key_takeaways: string[];
+  quotable_insights: string[];
+  video_url: string | null;
+  thumbnail_url: string | null;
+  status: 'draft' | 'published';
+  published_at: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+#### CreateContentInput
+
+```typescript
+interface CreateContentInput {
+  slug: string;
+  title: string;
+  description?: string;
+  body?: string;
+  content_type: 'article' | 'video' | 'post';
+  lang?: 'zh' | 'en';
+  tags?: string[];
+  reading_time?: string;
+  faq?: { question: string; answer: string }[];
+  key_takeaways?: string[];
+  quotable_insights?: string[];
+  video_url?: string;
+  thumbnail_url?: string;
+  status?: 'draft' | 'published';
+}
+```
+
+### API 函数
+
+| 函数 | 说明 | 参数 | 返回值 |
+|-----|------|------|--------|
+| `getAll(options?)` | 获取内容列表 | lang?, type?, status?, limit?, offset? | `{ data: WebsiteContent[], total: number }` |
+| `getById(id)` | 获取单个内容 | id | `WebsiteContent` |
+| `create(data)` | 创建内容 | CreateContentInput | `WebsiteContent` |
+| `update(id, data)` | 更新内容 | id, Partial\<CreateContentInput\> | `WebsiteContent` |
+| `delete(id)` | 删除内容 | id | void |
+| `publish(id)` | 发布内容 | id | `WebsiteContent` |
+| `unpublish(id)` | 取消发布 | id | `WebsiteContent` |
+
+---
+
+## Video Editor API
+
+**文件**: `src/api/video-editor.api.ts`
+
+视频编辑功能，支持 AI 智能剪辑。
+
+### 类型定义
+
+#### UploadedVideo
+
+```typescript
+interface UploadedVideo {
+  id: string;
+  originalName: string;
+  filePath: string;
+  fileSize: number;
+  mimeType: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+}
+```
+
+#### ProcessOptions
+
+```typescript
+interface ProcessOptions {
+  trim?: { start: string; end: string };
+  resize?: { width: number; height: number; fit: 'cover' | 'contain' | 'fill' };
+  preset?: '9:16' | '16:9' | '1:1' | '4:3' | '3:4';
+  subtitle?: {
+    text: string;
+    style: 'bottom' | 'top' | 'center';
+    fontSize?: number;
+    fontColor?: string;
+    backgroundColor?: string;
+  };
+}
+```
+
+#### VideoJob
+
+```typescript
+interface VideoJob {
+  id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  outputPath?: string;
+  error?: string;
+  options: ProcessOptions;
+  originalVideo: UploadedVideo;
+  userPrompt?: string;
+  aiAnalysis?: string;
+  transcript?: string;
+  steps?: StepInfo[];
+  currentStep?: ProcessingStep;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+#### AiAnalysisResult
+
+```typescript
+interface AiAnalysisResult {
+  summary: string;
+  transcript?: string;
+  transcriptSegments?: TranscriptSegment[];
+  params: ProcessOptions;
+  operations?: AiEditOperation[];
+  estimatedDuration?: number;
+  silenceRanges?: { start: number; end: number }[];
+}
+```
+
+### API 函数
+
+| 函数 | 说明 | 参数 | 返回值 |
+|-----|------|------|--------|
+| `uploadVideo(file, onProgress?)` | 上传视频 | File, 进度回调 | `UploadedVideo` |
+| `getVideos()` | 获取视频列表 | 无 | `UploadedVideo[]` |
+| `getVideo(id)` | 获取视频信息 | id | `UploadedVideo` |
+| `deleteVideo(id)` | 删除视频 | id | void |
+| `processVideo(videoId, options)` | 创建处理任务 | videoId, ProcessOptions | `VideoJob` |
+| `getJobs()` | 获取任务列表 | 无 | `VideoJob[]` |
+| `getJobStatus(jobId)` | 获取任务状态 | jobId | `VideoJob` |
+| `deleteJob(jobId)` | 删除任务 | jobId | void |
+| `getDownloadUrl(jobId)` | 获取下载 URL | jobId | string |
+| `getPreviewUrl(filePath)` | 获取预览 URL | filePath | string |
+| `aiAnalyze(videoId, userPrompt)` | AI 分析（不处理） | videoId, userPrompt | `AiAnalysisResult` |
+| `aiProcess(videoId, userPrompt)` | AI 智能处理 | videoId, userPrompt | `{ id, status, message }` |
+
+### 预设尺寸
+
+| 预设 | 名称 | 分辨率 | 适用平台 |
+|------|------|--------|----------|
+| 9:16 | 竖屏 | 1080×1920 | 抖音、TikTok、快手 |
+| 16:9 | 横屏 | 1920×1080 | YouTube、B站 |
+| 1:1 | 方形 | 1080×1080 | Instagram、微博 |
+| 4:3 | 传统 | 1440×1080 | 传统视频 |
+| 3:4 | 竖屏4:3 | 1080×1440 | 小红书 |
+
+---
+
+## Scraping API
+
+**文件**: `src/api/scraping.api.ts`
+
+数据采集任务管理，通过 N8N webhook 触发。
+
+### 类型定义
+
+#### ScrapingTask
+
+```typescript
+interface ScrapingTask {
+  id: string;
+  platform: 'xiaohongshu' | 'douyin' | 'weibo' | 'bilibili';
+  name: string;
+  description: string;
+  webhookPath: string;
+  status: 'idle' | 'running' | 'success' | 'error';
+  lastExecutedAt?: string;
+  lastResult?: {
+    success: boolean;
+    dataCount?: number;
+    error?: string;
+  };
+  stats: {
+    totalRuns: number;
+    successRuns: number;
+    dataCollected: number;
+  };
+}
+```
+
+#### TriggerResult
+
+```typescript
+interface TriggerResult {
+  success: boolean;
+  executionId?: string;
+  message?: string;
+  error?: string;
+}
+```
+
+### API 函数
+
+| 函数 | 说明 | 参数 | 返回值 |
+|-----|------|------|--------|
+| `fetchScrapingTasks()` | 获取任务列表 | 无 | `ScrapingTask[]` |
+| `fetchScrapingTask(taskId)` | 获取单个任务 | taskId | `ScrapingTask \| null` |
+| `triggerScrapingTask(taskId)` | 触发采集任务 | taskId | `TriggerResult` |
+| `resetTaskCache()` | 重置状态缓存 | 无 | void |
+
+### 预定义采集任务
+
+| 任务 ID | 平台 | 说明 |
+|---------|------|------|
+| xiaohongshu-scraper | 小红书 | 采集热门笔记和用户数据 |
+| douyin-scraper | 抖音 | 采集热门视频和创作者数据 |
+| weibo-scraper | 微博 | 采集热搜和用户动态 |
+| bilibili-scraper | B站 | 采集热门视频和UP主数据 |
+
+---
+
+## AI Employees API
+
+**文件**: `src/api/ai-employees.api.ts`
+
+AI 员工管理，聚合 N8N 执行数据按员工视角展示。
+
+### 类型定义
+
+#### EmployeeTaskStats
+
+```typescript
+interface EmployeeTaskStats {
+  todayTotal: number;
+  todaySuccess: number;
+  todayError: number;
+  todayRunning: number;
+  successRate: number;
+  recentTasks: EmployeeTask[];
+}
+```
+
+#### EmployeeTask
+
+```typescript
+interface EmployeeTask {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  abilityId: string;
+  abilityName: string;
+  status: 'success' | 'error' | 'running' | 'waiting';
+  startedAt: string;
+  stoppedAt?: string;
+}
+```
+
+#### AiEmployeeWithStats
+
+```typescript
+interface AiEmployeeWithStats extends AiEmployee {
+  stats: EmployeeTaskStats;
+}
+```
+
+#### DepartmentWithStats
+
+```typescript
+interface DepartmentWithStats extends Department {
+  employees: AiEmployeeWithStats[];
+  todayTotal: number;
+}
+```
+
+### API 函数
+
+| 函数 | 说明 | 参数 | 返回值 |
+|-----|------|------|--------|
+| `fetchAiEmployeesWithStats()` | 获取所有员工及统计 | 无 | `DepartmentWithStats[]` |
+| `fetchEmployeeTasks(employeeId)` | 获取员工任务列表 | employeeId | `EmployeeTask[]` |
+
+### 数据来源
+
+此 API 从 `n8n-live-status` API 获取实时执行数据，然后按员工配置（`ai-employees.config.ts`）聚合统计。每个员工关联多个 N8N workflow 能力。
 
 ---
 

@@ -1,5 +1,5 @@
 dev
-branch: cp-fix-session-complete
+branch: cp-kr2-performance-monitor
 prd: .prd.md
-started: 2026-01-30T21:30:55+08:00
+started: 2026-01-30T22:20:13+08:00
 tasks_created: true
