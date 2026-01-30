@@ -941,6 +941,20 @@ router.get('/dev-session', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/system/dev-session/generate-id
+ * Generate a new session ID (utility endpoint)
+ * NOTE: This route must be defined BEFORE /:sessionId to avoid parameter capture
+ */
+router.get('/dev-session/generate-id', (_req: Request, res: Response) => {
+  const sessionId = generateSessionId();
+  return res.json({
+    success: true,
+    session_id: sessionId,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
  * GET /api/system/dev-session/:sessionId
  * Get a specific dev session by ID
  */
@@ -1228,19 +1242,6 @@ router.post('/dev-session/:sessionId/complete', async (req: Request, res: Respon
       error: message,
     });
   }
-});
-
-/**
- * GET /api/system/dev-session/generate-id
- * Generate a new session ID (utility endpoint)
- */
-router.get('/dev-session/generate-id', (_req: Request, res: Response) => {
-  const sessionId = generateSessionId();
-  return res.json({
-    success: true,
-    session_id: sessionId,
-    timestamp: new Date().toISOString(),
-  });
 });
 
 export default router;

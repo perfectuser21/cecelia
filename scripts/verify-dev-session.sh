@@ -30,9 +30,9 @@ PASSED=0
 FAILED=0
 WARNINGS=0
 
-log_pass() { echo -e "${GREEN}✅ PASS${NC}: $*"; ((PASSED++)); }
-log_fail() { echo -e "${RED}❌ FAIL${NC}: $*"; ((FAILED++)); }
-log_warn() { echo -e "${YELLOW}⚠️  WARN${NC}: $*"; ((WARNINGS++)); }
+log_pass() { echo -e "${GREEN}✅ PASS${NC}: $*"; ((++PASSED)) || true; }
+log_fail() { echo -e "${RED}❌ FAIL${NC}: $*"; ((++FAILED)) || true; }
+log_warn() { echo -e "${YELLOW}⚠️  WARN${NC}: $*"; ((++WARNINGS)) || true; }
 log_info() { echo -e "ℹ️  INFO: $*"; }
 
 echo ""
@@ -144,10 +144,10 @@ if [[ -n "$CREATED_SESSION_ID" ]]; then
         log_pass "Summary 生成成功"
 
         # Check summary structure
-        HAS_FILES=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.files_modified != null' 2>/dev/null && echo "true" || echo "false")
-        HAS_SCRIPTS=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.scripts_executed != null' 2>/dev/null && echo "true" || echo "false")
-        HAS_NEXT_STEPS=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.next_steps != null' 2>/dev/null && echo "true" || echo "false")
-        HAS_DURATION=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.duration_ms != null' 2>/dev/null && echo "true" || echo "false")
+        HAS_FILES=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.files_modified' >/dev/null 2>&1 && echo "true" || echo "false")
+        HAS_SCRIPTS=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.scripts_executed' >/dev/null 2>&1 && echo "true" || echo "false")
+        HAS_NEXT_STEPS=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.next_steps' >/dev/null 2>&1 && echo "true" || echo "false")
+        HAS_DURATION=$(echo "$SUMMARY_RESPONSE" | jq -e '.summary.duration_ms' >/dev/null 2>&1 && echo "true" || echo "false")
 
         if [[ "$HAS_FILES" == "true" && "$HAS_SCRIPTS" == "true" && "$HAS_NEXT_STEPS" == "true" && "$HAS_DURATION" == "true" ]]; then
             log_pass "Summary 结构完整 (files_modified, scripts_executed, next_steps, duration_ms)"
@@ -195,7 +195,7 @@ echo "------------------------------------------------------------"
 
 PANORAMA_RESPONSE=$(curl -s "${CORE_API}/api/panorama/command-center" 2>/dev/null || echo '{"success":false}')
 if echo "$PANORAMA_RESPONSE" | jq -e '.success == true' >/dev/null 2>&1; then
-    HAS_DEV_SESSIONS=$(echo "$PANORAMA_RESPONSE" | jq -e '.data.dev_sessions != null' 2>/dev/null && echo "true" || echo "false")
+    HAS_DEV_SESSIONS=$(echo "$PANORAMA_RESPONSE" | jq -e '.data.dev_sessions' >/dev/null 2>&1 && echo "true" || echo "false")
     if [[ "$HAS_DEV_SESSIONS" == "true" ]]; then
         ACTIVE_COUNT=$(echo "$PANORAMA_RESPONSE" | jq -r '.data.dev_sessions.active | length // 0')
         RECENT_COUNT=$(echo "$PANORAMA_RESPONSE" | jq -r '.data.dev_sessions.recent | length // 0')
