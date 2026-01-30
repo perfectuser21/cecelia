@@ -20,33 +20,69 @@ from src.autumnrice.models import Task, generate_run_id
 # Constants
 HOME = Path.home()
 CLAUDE_PATH = HOME / ".local" / "bin" / "claude"
-MEMORY_PER_WORKER_GB = 2.0  # Reserve 2GB per worker
-MAX_WORKERS_HARD_LIMIT = 5  # Never exceed this
+MEMORY_PER_SEAT_GB = 1.5  # Reserve 1.5GB per seat (reduced from 2.0)
+MEMORY_SYSTEM_RESERVE_GB = 2.0  # Reserve 2GB for system
+MAX_SEATS_HARD_LIMIT = 6  # Never exceed 6 concurrent seats
+MIN_MEMORY_TO_SPAWN_GB = 2.0  # Need at least 2GB free to spawn
+LOAD_AVERAGE_THRESHOLD = 6.0  # Pause spawning if load > this
 DEFAULT_TASK_TIMEOUT = 1800  # 30 minutes
 
 
 @dataclass
+class SeatStatus:
+    """Status of a single seat (execution slot)."""
+    seat_id: int
+    status: str  # idle, running, paused
+    task_id: Optional[str] = None
+    task_title: Optional[str] = None
+    project: Optional[str] = None
+    started_at: Optional[str] = None
+
+
+@dataclass
 class ResourceStatus:
-    """Current system resource status."""
+    """Current system resource status with dynamic seat calculation."""
     memory_total_gb: float
     memory_available_gb: float
-    memory_per_worker_gb: float = MEMORY_PER_WORKER_GB
+    memory_per_seat_gb: float = MEMORY_PER_SEAT_GB
     cpu_count: int = 1
+    load_average: float = 0.0
     claude_processes: int = 0
-    max_workers: int = 3
-    current_workers: int = 0
+    max_seats: int = 6
+    active_seats: int = 0
+    available_seats: int = 6
     can_spawn_more: bool = True
+    throttle_reason: Optional[str] = None
+    seats: List[SeatStatus] = None
+
+    def __post_init__(self):
+        if self.seats is None:
+            self.seats = []
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "memory_total_gb": round(self.memory_total_gb, 2),
             "memory_available_gb": round(self.memory_available_gb, 2),
-            "memory_per_worker_gb": self.memory_per_worker_gb,
+            "memory_per_seat_gb": self.memory_per_seat_gb,
             "cpu_count": self.cpu_count,
+            "load_average": round(self.load_average, 2),
             "claude_processes": self.claude_processes,
-            "max_workers": self.max_workers,
-            "current_workers": self.current_workers,
+            "max_seats": self.max_seats,
+            "active_seats": self.active_seats,
+            "available_seats": self.available_seats,
             "can_spawn_more": self.can_spawn_more,
+            "throttle_reason": self.throttle_reason,
+            "seats": [
+                {
+                    "seat_id": s.seat_id,
+                    "status": s.status,
+                    "task_id": s.task_id,
+                    "task_title": s.task_title,
+                    "project": s.project,
+                    "started_at": s.started_at,
+                }
+                for s in self.seats
+            ],
         }
 
 
@@ -63,14 +99,15 @@ class ExecutionResult:
     pr_url: Optional[str] = None
 
 
-def get_resource_status(current_workers: int = 0) -> ResourceStatus:
-    """Get current system resource status.
+def get_resource_status(active_seats: int = 0, seat_info: List[SeatStatus] = None) -> ResourceStatus:
+    """Get current system resource status with dynamic seat calculation.
 
     Args:
-        current_workers: Number of workers currently running
+        active_seats: Number of seats currently in use
+        seat_info: Optional list of current seat statuses
 
     Returns:
-        ResourceStatus with system info
+        ResourceStatus with system info and seat calculations
     """
     # Get memory info
     try:
@@ -94,6 +131,14 @@ def get_resource_status(current_workers: int = 0) -> ResourceStatus:
     except Exception:
         cpu_count = 1
 
+    # Get load average
+    try:
+        with open("/proc/loadavg", "r") as f:
+            load_info = f.read()
+        load_average = float(load_info.split()[0])  # 1-minute load average
+    except Exception:
+        load_average = 0.0
+
     # Count Claude processes
     try:
         result = subprocess.run(
@@ -106,58 +151,105 @@ def get_resource_status(current_workers: int = 0) -> ResourceStatus:
     except Exception:
         claude_processes = 0
 
-    # Calculate max workers based on available memory
-    # Leave 2GB for system, rest for workers
-    available_for_workers = max(0, mem_available - 2.0)
-    max_by_memory = int(available_for_workers / MEMORY_PER_WORKER_GB)
+    # Dynamic seat calculation
+    # 1. Based on available memory: (available - 2GB reserve) / 1.5GB per seat
+    available_for_seats = max(0, mem_available - MEMORY_SYSTEM_RESERVE_GB)
+    max_by_memory = int(available_for_seats / MEMORY_PER_SEAT_GB)
 
-    # Also limit by CPU (1 worker per 2 CPUs)
-    max_by_cpu = cpu_count // 2
+    # 2. Based on CPU: 1 seat per 1.5 CPUs
+    max_by_cpu = int(cpu_count / 1.5)
 
-    # Take minimum, but at least 1 if we have resources
-    max_workers = min(max_by_memory, max_by_cpu, MAX_WORKERS_HARD_LIMIT)
-    max_workers = max(1, max_workers) if mem_available > MEMORY_PER_WORKER_GB else 0
+    # 3. Take minimum, capped at hard limit
+    max_seats = min(max_by_memory, max_by_cpu, MAX_SEATS_HARD_LIMIT)
+    max_seats = max(1, max_seats) if mem_available > MIN_MEMORY_TO_SPAWN_GB else 0
 
-    can_spawn = current_workers < max_workers and mem_available > MEMORY_PER_WORKER_GB
+    # Determine if we can spawn more and why not
+    can_spawn = True
+    throttle_reason = None
+
+    if active_seats >= max_seats:
+        can_spawn = False
+        throttle_reason = f"All {max_seats} seats occupied"
+    elif mem_available < MIN_MEMORY_TO_SPAWN_GB:
+        can_spawn = False
+        throttle_reason = f"Low memory: {mem_available:.1f}GB available (need {MIN_MEMORY_TO_SPAWN_GB}GB)"
+    elif load_average > LOAD_AVERAGE_THRESHOLD:
+        can_spawn = False
+        throttle_reason = f"High load: {load_average:.2f} (threshold: {LOAD_AVERAGE_THRESHOLD})"
+
+    # Build seat status list
+    seats = seat_info or []
+    # Fill in idle seats up to max_seats
+    existing_seat_ids = {s.seat_id for s in seats}
+    for i in range(1, max_seats + 1):
+        if i not in existing_seat_ids:
+            seats.append(SeatStatus(seat_id=i, status="idle"))
+    seats = sorted(seats, key=lambda s: s.seat_id)[:max_seats]
+
+    available_seats = max_seats - active_seats
 
     return ResourceStatus(
         memory_total_gb=mem_total,
         memory_available_gb=mem_available,
         cpu_count=cpu_count,
+        load_average=load_average,
         claude_processes=claude_processes,
-        max_workers=max_workers,
-        current_workers=current_workers,
+        max_seats=max_seats,
+        active_seats=active_seats,
+        available_seats=available_seats,
         can_spawn_more=can_spawn,
+        throttle_reason=throttle_reason,
+        seats=seats,
     )
 
 
 class Executor:
-    """Executor that actually runs tasks via Claude."""
+    """Executor that manages seats and runs tasks via Claude."""
 
-    def __init__(self, max_concurrent: Optional[int] = None):
+    def __init__(self, max_seats: Optional[int] = None):
         """Initialize executor.
 
         Args:
-            max_concurrent: Max concurrent workers (None = auto based on resources)
+            max_seats: Max concurrent seats (None = auto based on resources)
         """
-        self.max_concurrent = max_concurrent
+        self.max_seats_override = max_seats
         self._running_tasks: Dict[str, asyncio.subprocess.Process] = {}
+        self._task_info: Dict[str, Dict[str, Any]] = {}  # task_id -> {title, project, started_at}
         self._results: Dict[str, ExecutionResult] = {}
 
     @property
-    def current_workers(self) -> int:
-        """Get number of currently running workers."""
+    def active_seats(self) -> int:
+        """Get number of currently active seats."""
         return len(self._running_tasks)
 
+    def _get_seat_info(self) -> List[SeatStatus]:
+        """Get current seat statuses for running tasks."""
+        seats = []
+        for i, (task_id, _) in enumerate(self._running_tasks.items(), start=1):
+            info = self._task_info.get(task_id, {})
+            seats.append(SeatStatus(
+                seat_id=i,
+                status="running",
+                task_id=task_id,
+                task_title=info.get("title"),
+                project=info.get("project"),
+                started_at=info.get("started_at"),
+            ))
+        return seats
+
     def get_resources(self) -> ResourceStatus:
-        """Get current resource status."""
-        return get_resource_status(self.current_workers)
+        """Get current resource status with seat information."""
+        return get_resource_status(self.active_seats, self._get_seat_info())
+
+    def get_seats(self) -> Dict[str, Any]:
+        """Get seats status as a dict for API response."""
+        return self.get_resources().to_dict()
 
     def can_execute(self) -> bool:
-        """Check if we can execute more tasks."""
+        """Check if we can execute more tasks (have available seats)."""
         resources = self.get_resources()
-        if self.max_concurrent:
-            return self.current_workers < self.max_concurrent and resources.can_spawn_more
+        if self.max_seats_override:
+            return self.active_seats < self.max_seats_override and resources.can_spawn_more
         return resources.can_spawn_more
 
     async def execute_task(
@@ -207,6 +299,11 @@ class Executor:
             )
 
             self._running_tasks[task.id] = process
+            self._task_info[task.id] = {
+                "title": task.title,
+                "project": task.repo,
+                "started_at": start_time.isoformat(),
+            }
 
             try:
                 stdout, stderr = await asyncio.wait_for(
@@ -264,6 +361,7 @@ class Executor:
         finally:
             # Cleanup
             self._running_tasks.pop(task.id, None)
+            self._task_info.pop(task.id, None)
             try:
                 prd_file.unlink()
             except Exception:
@@ -324,11 +422,11 @@ created: {datetime.now().strftime('%Y-%m-%d')}
         tasks: List[Task],
         max_concurrent: Optional[int] = None,
     ) -> List[ExecutionResult]:
-        """Execute multiple tasks with concurrency control.
+        """Execute multiple tasks with dynamic seat-based concurrency control.
 
         Args:
             tasks: Tasks to execute
-            max_concurrent: Max concurrent executions (None = auto)
+            max_concurrent: Max concurrent executions (None = auto based on seats)
 
         Returns:
             List of ExecutionResults
@@ -336,10 +434,10 @@ created: {datetime.now().strftime('%Y-%m-%d')}
         if not tasks:
             return []
 
-        # Determine concurrency
+        # Determine concurrency based on available seats
         resources = self.get_resources()
-        concurrent = max_concurrent or self.max_concurrent or resources.max_workers
-        concurrent = max(1, min(concurrent, len(tasks), MAX_WORKERS_HARD_LIMIT))
+        concurrent = max_concurrent or self.max_seats_override or resources.max_seats
+        concurrent = max(1, min(concurrent, len(tasks), MAX_SEATS_HARD_LIMIT))
 
         results = []
         semaphore = asyncio.Semaphore(concurrent)

@@ -939,6 +939,28 @@ async def get_resources():
     return resources.to_dict()
 
 
+@router.get("/seats")
+async def get_seats():
+    """Get seats (execution slots) status.
+
+    Returns dynamic seat information:
+    - max_seats: Maximum concurrent seats based on resources
+    - active_seats: Currently occupied seats
+    - available_seats: Free seats for new tasks
+    - can_spawn_more: Whether new tasks can be started
+    - throttle_reason: Why spawning is blocked (if applicable)
+    - seats: List of individual seat statuses
+
+    Seat calculation considers:
+    - Available memory (1.5GB per seat, 2GB system reserve)
+    - CPU count (1 seat per 1.5 CPUs)
+    - Load average (throttle if > 6.0)
+    - Hard limit of 6 concurrent seats
+    """
+    executor = get_executor()
+    return executor.get_seats()
+
+
 @router.post("/execute")
 async def execute_tasks(request: ExecuteRequest = None):
     """Execute queued tasks. Use this for manual execution or N8N trigger.
