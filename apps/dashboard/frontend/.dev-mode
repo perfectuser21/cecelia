@@ -1,5 +1,4 @@
 dev
-branch: cp-01302331-health-enhance
-prd: .prd-cp-01302331-health-enhance.md
-started: 2026-01-30T23:31:00+08:00
-tasks_created: true
+branch: cp-01304-health-card-details
+prd: .prd.md
+started: 2026-01-30T22:10:00+08:00
