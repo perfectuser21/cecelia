@@ -36,7 +36,7 @@ class MockDatabase:
                 "planned_at": args[9],
                 "completed_at": args[10],
             }
-        elif "insert into orchestrator_tasks" in query_lower:
+        elif "insert into tasks" in query_lower:
             self.tasks[args[0]] = {
                 "id": args[0],
                 "trd_id": args[1],
@@ -59,7 +59,20 @@ class MockDatabase:
                 "updated_at": args[18] or datetime.now(),
                 "started_at": args[19],
                 "completed_at": args[20],
+                "run_id": None,
+                "attempt": 1,
+                "ci_status": None,
+                "ci_run_id": None,
+                "duration": None,
+                "error": None,
             }
+        elif "update tasks set" in query_lower:
+            # Handle run update (task = run)
+            task_id = args[-1]  # Last arg is task_id
+            if task_id in self.tasks:
+                self.tasks[task_id]["run_id"] = args[0]
+                self.tasks[task_id]["attempt"] = args[1]
+                self.tasks[task_id]["worker_id"] = args[2]
         elif "insert into orchestrator_runs" in query_lower:
             self.runs[args[0]] = {
                 "id": args[0],
@@ -101,7 +114,7 @@ class MockDatabase:
                     status = trd["status"]
                     counts[status] = counts.get(status, 0) + 1
                 return [{"status": s, "count": c} for s, c in counts.items()]
-            elif "from orchestrator_tasks" in query_lower:
+            elif "from tasks" in query_lower:
                 counts = {}
                 for task in self.tasks.values():
                     status = task["status"]
@@ -113,8 +126,10 @@ class MockDatabase:
             if "where status" in query_lower and args:
                 results = [r for r in results if r["status"] == args[0]]
             return results
-        elif "from orchestrator_tasks" in query_lower:
+        elif "from tasks" in query_lower:
             results = list(self.tasks.values())
+            if args and "trd_id" in query_lower:
+                results = [r for r in results if r.get("trd_id") == args[0]]
             return results
         elif "from orchestrator_runs" in query_lower:
             results = list(self.runs.values())
@@ -128,7 +143,7 @@ class MockDatabase:
         query_lower = query.lower()
         if "from trds" in query_lower and args:
             return self.trds.get(args[0])
-        elif "from orchestrator_tasks" in query_lower and args:
+        elif "from tasks" in query_lower and args:
             return self.tasks.get(args[0])
         elif "from orchestrator_runs" in query_lower and args:
             return self.runs.get(args[0])
@@ -142,9 +157,11 @@ class MockDatabase:
         if "count" in query_lower:
             if "trds" in query_lower:
                 return len(self.trds)
-            elif "orchestrator_tasks" in query_lower:
+            elif "tasks" in query_lower and "trds" not in query_lower:
                 if "queued" in query_lower:
                     return len([t for t in self.tasks.values() if t["status"] == "queued"])
+                if "run_id" in query_lower:
+                    return len([t for t in self.tasks.values() if t.get("run_id")])
                 return len(self.tasks)
             elif "orchestrator_workers" in query_lower:
                 if "idle" in query_lower:
@@ -290,6 +307,68 @@ class TestSummaryRoute:
         assert "trds" in data
         assert "tasks" in data
         assert "runs" in data
+
+
+class TestRunEndpoint:
+    """Tests for /run one-click execution endpoint."""
+
+    def test_run_creates_trd(self):
+        """Test POST /run creates a TRD."""
+        response = client.post("/autumnrice/run", json={
+            "prompt": "添加用户登录功能",
+            "repo": "test-repo",
+            "priority": "P1",
+            "async_mode": True,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        # Even if planning fails (no real LLM), TRD should be created
+        assert "trd_id" in data
+        assert data["trd_id"].startswith("TRD-")
+
+    def test_run_returns_resources(self):
+        """Test POST /run returns resource info."""
+        response = client.post("/autumnrice/run", json={
+            "prompt": "Test prompt",
+        })
+        assert response.status_code == 200
+        data = response.json()
+        # Should always have resources info
+        if "resources" in data:
+            assert "max_seats" in data["resources"]
+
+    def test_get_run_progress_not_found(self):
+        """Test GET /run/{id} returns 404 for non-existent TRD."""
+        response = client.get("/autumnrice/run/TRD-NONEXISTENT")
+        assert response.status_code == 404
+
+
+class TestSeatsEndpoint:
+    """Tests for /seats endpoint."""
+
+    def test_get_seats(self):
+        """Test GET /seats returns seat info."""
+        response = client.get("/autumnrice/seats")
+        assert response.status_code == 200
+        data = response.json()
+        assert "max_seats" in data
+        assert "active_seats" in data
+        assert "available_seats" in data
+        assert "can_spawn_more" in data
+        assert "seats" in data
+
+
+class TestResourcesEndpoint:
+    """Tests for /resources endpoint."""
+
+    def test_get_resources(self):
+        """Test GET /resources returns system info."""
+        response = client.get("/autumnrice/resources")
+        assert response.status_code == 200
+        data = response.json()
+        assert "memory_total_gb" in data
+        assert "cpu_count" in data
+        assert "load_average" in data
 
 
 class TestIntegration:

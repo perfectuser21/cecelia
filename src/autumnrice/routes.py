@@ -954,6 +954,241 @@ class ExecuteRequest(BaseModel):
     task_ids: Optional[List[str]] = None  # None = execute all ready tasks
 
 
+class RunRequest(BaseModel):
+    """Request to run a new task (one-click R-cell start)."""
+    prompt: str  # User requirement in natural language
+    repo: Optional[str] = None  # Target repository
+    priority: str = "P1"  # P0/P1/P2
+    async_mode: bool = True  # Non-blocking execution
+
+
+class RunProgressResponse(BaseModel):
+    """Response for run progress query."""
+    trd_id: str
+    status: str
+    tasks: List[Dict[str, Any]]
+    progress: str
+    can_continue: bool
+
+
+# ==================== One-Click Run API (R-cell Entry) ====================
+
+@router.post("/run")
+async def run_task(request: RunRequest):
+    """One-click task execution - the R-cell entry point.
+
+    This endpoint:
+    1. Creates a TRD from the prompt
+    2. Calls Planner to decompose into Tasks
+    3. Starts execution on available Seats
+    4. Returns immediately (async) or waits (sync)
+
+    The R-cell loop continues automatically via /tick or background task.
+    """
+    import asyncio
+    db = get_db()
+    executor = get_executor()
+
+    # Step 1: Create TRD from prompt
+    trd = TRD(
+        title=request.prompt[:100],  # Truncate for title
+        description=request.prompt,
+        projects=[request.repo] if request.repo else [],
+        acceptance_criteria=[
+            "功能按需求实现",
+            "测试通过",
+            "代码审计通过",
+        ],
+    )
+    await _save_trd(db, trd)
+
+    # Step 2: Plan TRD into Tasks
+    plan_result = _planner.plan(trd, context={"projects": [request.repo] if request.repo else []})
+    if not plan_result.success:
+        return {
+            "success": False,
+            "error": f"Planning failed: {plan_result.error}",
+            "trd_id": trd.id,
+        }
+
+    # Validate tasks
+    errors = _planner.validate_tasks(plan_result.tasks)
+    if errors:
+        return {
+            "success": False,
+            "error": f"Invalid tasks: {errors}",
+            "trd_id": trd.id,
+        }
+
+    # Step 3: Update TRD status and save tasks
+    try:
+        trd, tasks = _state_machine.plan_trd(trd, plan_result.tasks)
+    except StateTransitionError as e:
+        return {
+            "success": False,
+            "error": f"State transition failed: {e}",
+            "trd_id": trd.id,
+        }
+
+    await _save_trd(db, trd)
+    for task in tasks:
+        task.priority = request.priority
+        await _save_task(db, task)
+
+    # Step 4: Check if we can start execution
+    resources = executor.get_resources()
+    execution_info = {
+        "started": False,
+        "first_task_id": None,
+        "seat_id": None,
+        "reason": None,
+    }
+
+    if resources.can_spawn_more and tasks:
+        # Find first ready task (no dependencies)
+        ready_task = next((t for t in tasks if not t.depends_on), None)
+        if ready_task:
+            if request.async_mode:
+                # Start execution in background
+                asyncio.create_task(_execute_task_background(ready_task))
+                execution_info = {
+                    "started": True,
+                    "first_task_id": ready_task.id,
+                    "seat_id": resources.active_seats + 1,
+                    "reason": None,
+                }
+            else:
+                # Synchronous execution (blocks until done)
+                result = await executor.execute_task(ready_task)
+                execution_info = {
+                    "started": True,
+                    "first_task_id": ready_task.id,
+                    "seat_id": 1,
+                    "completed": result.success,
+                    "pr_url": result.pr_url,
+                }
+    else:
+        execution_info["reason"] = resources.throttle_reason or "No ready tasks"
+
+    return {
+        "success": True,
+        "trd_id": trd.id,
+        "tasks": [_task_to_response(t) for t in tasks],
+        "execution": execution_info,
+        "resources": resources.to_dict(),
+    }
+
+
+async def _execute_task_background(task: Task):
+    """Execute a task in the background and update status."""
+    db = get_db()
+    executor = get_executor()
+
+    # Update task to running
+    task.status = TaskStatus.RUNNING
+    task.started_at = datetime.now()
+    await _save_task(db, task)
+
+    # Execute
+    result = await executor.execute_task(task)
+
+    # Update task status
+    if result.success:
+        task.status = TaskStatus.DONE
+        task.completed_at = datetime.now()
+        task.pr_url = result.pr_url
+    else:
+        task.retry_count += 1
+        if task.retry_count >= task.max_retries:
+            task.status = TaskStatus.FAILED
+            task.blocked_reason = result.error
+        else:
+            task.status = TaskStatus.QUEUED
+
+    task.updated_at = datetime.now()
+    await _save_task(db, task)
+
+    # Create run record
+    run = Run(
+        id=result.run_id,
+        task_id=task.id,
+        attempt=task.retry_count,
+        status=RunStatus.SUCCESS if result.success else RunStatus.FAILED,
+        worker_id="executor",
+        pr_url=result.pr_url,
+        error=result.error if not result.success else None,
+        started_at=task.started_at,
+        ended_at=datetime.now(),
+        duration_seconds=result.duration_seconds,
+    )
+    await _save_run(db, run)
+
+
+@router.get("/run/{trd_id}")
+async def get_run_progress(trd_id: str):
+    """Get execution progress for a TRD.
+
+    Returns task status and overall progress for monitoring R-cell execution.
+    """
+    db = get_db()
+
+    # Get TRD
+    trd_row = await db.fetchrow("SELECT * FROM trds WHERE id = $1", trd_id)
+    if not trd_row:
+        raise HTTPException(status_code=404, detail=f"TRD {trd_id} not found")
+
+    trd = _row_to_trd(trd_row)
+
+    # Get tasks for this TRD
+    task_rows = await db.fetch(
+        "SELECT * FROM tasks WHERE trd_id = $1 ORDER BY created_at",
+        trd_id
+    )
+
+    tasks_info = []
+    done_count = 0
+    running_count = 0
+
+    for row in task_rows:
+        task = _row_to_task(row)
+        task_info = {
+            "id": task.id,
+            "title": task.title,
+            "status": task.status.value,
+            "pr_url": task.pr_url,
+            "retry_count": task.retry_count,
+        }
+        if task.status == TaskStatus.RUNNING:
+            task_info["started_at"] = task.started_at.isoformat() if task.started_at else None
+            running_count += 1
+        elif task.status == TaskStatus.DONE:
+            done_count += 1
+
+        tasks_info.append(task_info)
+
+    total = len(tasks_info)
+    progress = f"{done_count}/{total} tasks completed"
+    if running_count > 0:
+        progress += f", {running_count} running"
+
+    # Determine if we can continue (more tasks to execute)
+    can_continue = any(
+        row["status"] in ["queued", "running"]
+        for row in task_rows
+    )
+
+    return {
+        "trd_id": trd_id,
+        "trd_title": trd.title,
+        "status": trd.status.value,
+        "tasks": tasks_info,
+        "progress": progress,
+        "can_continue": can_continue,
+    }
+
+
+# ==================== Resource & Execution Endpoints ====================
+
 @router.get("/resources")
 async def get_resources():
     """Get system resource status for worker pool management."""
