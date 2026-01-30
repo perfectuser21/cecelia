@@ -1,4 +1,4 @@
-# QA Decision - Phase 5.4 Nightly Planner
+# QA Decision - KR2 Verification
 
 Decision: NO_RCI
 Priority: P1
@@ -8,9 +8,8 @@ RepoType: Business
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| POST /api/system/plan/nightly | auto | tests/planning.test.ts |
-| N8N workflow | manual | n8n UI verification |
-| Dashboard TodayPlan | manual | visual verification |
+| verify-nightly-loop.sh | script | scripts/verify-nightly-loop.sh |
+| KR2 验收 PASS | manual | 脚本运行结果 |
 
 ## RCI
 
@@ -19,4 +18,4 @@ update: []
 
 ## Reason
 
-Nightly Planner 是 Phase 5.3 的扩展，调用已有的 generatePlan 和 commitPlan。不涉及现有核心路径的回归。Dashboard 组件为新增UI。
+本次任务是创建验收脚本，验证 Nightly Loop 全链路。脚本本身是质量保障工具，通过脚本的 PASS 结果来验收。

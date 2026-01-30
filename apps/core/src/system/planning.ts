@@ -137,7 +137,7 @@ async function fetchTasks(): Promise<RawTask[]> {
       SELECT t.id, t.title, t.priority, t.status, t.goal_id, g.title as goal_title
       FROM tasks t
       LEFT JOIN goals g ON t.goal_id = g.id
-      WHERE t.status IN ('pending', 'in_progress')
+      WHERE t.status IN ('pending', 'in_progress', 'queued')
       ORDER BY
         CASE t.priority
           WHEN 'P0' THEN 1

@@ -1,4 +1,4 @@
-# Audit Report - Phase 5.4 Nightly Planner
+# Audit Report - KR2 Verification
 
 Decision: PASS
 Date: 2026-01-30
@@ -7,11 +7,16 @@ Date: 2026-01-30
 None
 
 ## L2 (Functional Issues)
-None - Fixed unused variable lint errors
+None
 
 ## Summary
-- POST /api/system/plan/nightly generates and auto-commits tasks
-- Nightly plan events recorded in episodic memory
-- TodayPlan React component with progress bar and commit button
-- N8N workflow configuration file created
-- 19/19 tests pass
+- scripts/verify-nightly-loop.sh created for KR2 verification
+- Fixed fetchTasks() to include 'queued' status for proper task selection
+- All 7 verification checks pass:
+  - API Accessible
+  - Nightly Plan Generated
+  - Plan Structure (why/evidence)
+  - Committed Tasks >= 3
+  - Memory Event Recorded
+  - System Health (DLQ/Degrade)
+- 38/38 tests pass (19 source + 19 dist)
