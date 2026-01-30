@@ -106,5 +106,29 @@
     "actor": "claude",
     "timestamp": "2026-01-30T14:20:00Z",
     "evidence": "manual-verifications.json 已添加相关条目"
+  },
+  {
+    "id": "ci-pipeline",
+    "actor": "claude",
+    "timestamp": "2026-01-30T14:40:00Z",
+    "evidence": "CI Pipeline 通过（test job success）"
+  },
+  {
+    "id": "unit-tests",
+    "actor": "claude",
+    "timestamp": "2026-01-30T14:40:00Z",
+    "evidence": "252 tests passed, 2 skipped"
+  },
+  {
+    "id": "audit-report",
+    "actor": "claude",
+    "timestamp": "2026-01-30T14:40:00Z",
+    "evidence": "docs/AUDIT-REPORT.md Decision: PASS"
+  },
+  {
+    "id": "version-check",
+    "actor": "claude",
+    "timestamp": "2026-01-30T14:40:00Z",
+    "evidence": "package.json version: 11.12.5"
   }
 ]
