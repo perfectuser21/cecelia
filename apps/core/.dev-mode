@@ -1,4 +1,5 @@
 dev
-branch: cp-tick-optimization
-prd: .prd-tick-optimization.md
-started: 2026-01-31T02:00:00+00:00
+branch: cp-01311033-command-center-v2
+prd: .prd.md
+started: 2026-01-31T10:33:00+08:00
+tasks_created: true

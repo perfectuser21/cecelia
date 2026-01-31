@@ -55,7 +55,7 @@ export default function CommandCenter() {
   const [tickStatus, setTickStatus] = useState<TickStatus | null>(null);
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set());
   const [runningTasks, setRunningTasks] = useState<Task[]>([]);
-  const [vpsSlots, setVpsSlots] = useState({ used: 0, total: 8 });
+  const [vpsSlots, setVpsSlots] = useState<{ used: number; total: number; slots?: Array<{ pid: number; cpu: string; memory: string; startTime: string; taskId: string | null; command: string }> }>({ used: 0, total: 8 });
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -84,8 +84,17 @@ export default function CommandCenter() {
       const running = (tasksData || []).filter((t: Task) => t.status === 'in_progress');
       setRunningTasks(running);
 
-      // Calculate VPS slots used (count running claude processes)
-      setVpsSlots({ used: running.length, total: 8 });
+      // Fetch real VPS slots from API
+      try {
+        const vpsRes = await fetch('/api/brain/vps-slots');
+        const vpsData = await vpsRes.json();
+        if (vpsData.success) {
+          setVpsSlots({ used: vpsData.used, total: vpsData.total, slots: vpsData.slots });
+        }
+      } catch {
+        // Fallback to running tasks count
+        setVpsSlots({ used: running.length, total: 8 });
+      }
 
     } catch (err) {
       console.error('Failed to fetch data:', err);
@@ -170,21 +179,28 @@ export default function CommandCenter() {
 
             {/* Slots visualization */}
             <div className="flex gap-2 mb-3">
-              {Array.from({ length: vpsSlots.total }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`flex-1 h-8 rounded-lg flex items-center justify-center text-xs font-medium transition-all ${
-                    i < vpsSlots.used
-                      ? 'bg-blue-500 text-white animate-pulse'
-                      : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
-                  }`}
-                >
-                  {i < vpsSlots.used ? <Cpu className="w-4 h-4" /> : ''}
-                </div>
-              ))}
+              {Array.from({ length: vpsSlots.total }).map((_, i) => {
+                const slot = vpsSlots.slots?.[i];
+                return (
+                  <div
+                    key={i}
+                    className={`flex-1 h-8 rounded-lg flex items-center justify-center text-xs font-medium transition-all cursor-pointer ${
+                      slot
+                        ? 'bg-blue-500 text-white animate-pulse hover:bg-blue-600'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
+                    }`}
+                    title={slot ? `PID: ${slot.pid}\nCPU: ${slot.cpu}\nMem: ${slot.memory}\n启动: ${slot.startTime}` : '空闲'}
+                  >
+                    {slot ? <Cpu className="w-4 h-4" /> : ''}
+                  </div>
+                );
+              })}
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               <span className="font-bold text-blue-500">{vpsSlots.used}</span> / {vpsSlots.total} 槽位使用中
+              {vpsSlots.slots && vpsSlots.slots.length > 0 && (
+                <span className="ml-2 text-xs text-slate-400">(真实进程)</span>
+              )}
             </p>
           </div>
 

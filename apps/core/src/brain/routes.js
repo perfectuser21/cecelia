@@ -1038,4 +1038,127 @@ router.get('/decisions', async (req, res) => {
   }
 });
 
+// ==================== VPS Slots API ====================
+
+import { exec } from 'child_process';
+import { promisify } from 'util';
+const execAsync = promisify(exec);
+
+/**
+ * GET /api/brain/vps-slots
+ * Get real Claude process information using pgrep/ps
+ */
+router.get('/vps-slots', async (req, res) => {
+  try {
+    const MAX_SLOTS = 8;
+
+    // Get Claude processes with details
+    let slots = [];
+    try {
+      // Get all claude process PIDs and their details
+      const { stdout } = await execAsync('ps aux | grep -E "^[^ ]+ +[0-9]+ .* claude" | grep -v grep');
+      const lines = stdout.trim().split('\n').filter(Boolean);
+
+      for (const line of lines) {
+        const parts = line.split(/\s+/);
+        if (parts.length >= 11) {
+          const pid = parseInt(parts[1]);
+          const cpu = parts[2];
+          const mem = parts[3];
+          const startTime = parts[8];
+          const command = parts.slice(10).join(' ');
+
+          // Try to determine if this is a cecelia-run task
+          let taskId = null;
+          if (command.includes('cecelia-prds')) {
+            const match = command.match(/prd-([a-f0-9-]+)/);
+            taskId = match ? match[1] : null;
+          }
+
+          slots.push({
+            pid,
+            cpu: `${cpu}%`,
+            memory: `${mem}%`,
+            startTime,
+            taskId,
+            command: command.slice(0, 100) + (command.length > 100 ? '...' : '')
+          });
+        }
+      }
+    } catch {
+      // No claude processes found
+      slots = [];
+    }
+
+    res.json({
+      success: true,
+      total: MAX_SLOTS,
+      used: slots.length,
+      available: MAX_SLOTS - slots.length,
+      slots
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get VPS slots',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/execution-history
+ * Get cecelia execution history from decision_log
+ */
+router.get('/execution-history', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+
+    // Get execution records from decision_log where trigger = 'cecelia-executor' or 'tick'
+    const result = await pool.query(`
+      SELECT
+        id,
+        trigger,
+        input_summary,
+        action_result_json,
+        status,
+        created_at
+      FROM decision_log
+      WHERE trigger IN ('cecelia-executor', 'tick', 'execution-callback')
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    const executions = result.rows.map(row => ({
+      id: row.id,
+      trigger: row.trigger,
+      summary: row.input_summary,
+      result: row.action_result_json,
+      status: row.status,
+      timestamp: row.created_at
+    }));
+
+    // Count today's executions
+    const todayResult = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM decision_log
+      WHERE trigger IN ('cecelia-executor', 'tick', 'execution-callback')
+        AND created_at >= CURRENT_DATE
+    `);
+
+    res.json({
+      success: true,
+      total: executions.length,
+      today: parseInt(todayResult.rows[0].count),
+      executions
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get execution history',
+      details: err.message
+    });
+  }
+});
+
 export default router;

@@ -1,0 +1,24 @@
+{
+  "branch": "cp-01311033-command-center-v2",
+  "head_sha": "fbd98db58",
+  "timestamp": "2026-01-31T10:50:00+08:00",
+  "commands": {
+    "lint": { "status": "pass", "duration": "2s", "note": "0 errors, 10 warnings" },
+    "api-test": { "status": "pass", "note": "vps-slots and execution-history verified" }
+  },
+  "gates": {
+    "prd": { "status": "pass", "file": ".gate-prd-passed" },
+    "dod": { "status": "pass", "file": ".gate-dod-passed" },
+    "audit": { "status": "pass", "file": ".gate-audit-passed" },
+    "test": { "status": "pass", "file": ".gate-test-passed" }
+  },
+  "qa_decision": {
+    "decision": "NO_RCI",
+    "tests": "manual",
+    "priority": "P1"
+  },
+  "env": {
+    "node": "20.20.0",
+    "platform": "linux"
+  }
+}
