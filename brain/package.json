@@ -1,0 +1,21 @@
+{
+  "name": "cecelia-brain",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Cecelia Node.js Brain - decision engine, tick loop, and action system",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "express": "^4.18.2",
+    "pg": "^8.12.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}

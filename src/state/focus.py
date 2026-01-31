@@ -285,11 +285,11 @@ async def get_focus_summary(db: Database) -> Optional[Dict[str, Any]]:
     )
 
     return {
-        "objective_id": objective["id"],
+        "objective_id": str(objective["id"]),
         "objective_title": objective.get("title"),
         "priority": objective.get("priority"),
         "progress": objective.get("progress"),
-        "key_results": [dict(kr) for kr in krs_rows],
+        "key_results": [{"id": str(kr["id"]), "title": kr["title"], "progress": kr["progress"]} for kr in krs_rows],
         "reason": reason,
         "is_manual": is_manual,
     }

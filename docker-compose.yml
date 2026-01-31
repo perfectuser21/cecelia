@@ -21,3 +21,23 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEV_ROOT=/mnt/dev
     restart: unless-stopped
+
+  node-brain:
+    image: node:20-alpine
+    container_name: cecelia-node-brain
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./brain:/app
+    environment:
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-cecelia_tasks}
+      - DB_USER=${DB_USER:-n8n_user}
+      - DB_PASSWORD=${DB_PASSWORD:-n8n_password_2025}
+      - BRAIN_PORT=5221
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-false}
+      - CECELIA_MAX_CONCURRENT=${CECELIA_MAX_CONCURRENT:-3}
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+    command: sh -c "npm install --production && node server.js"
+    restart: unless-stopped
