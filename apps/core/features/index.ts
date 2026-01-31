@@ -6,31 +6,13 @@ export { coreInstanceConfig, coreTheme } from './config';
 import type { CoreConfig, CoreRoute, NavGroup, NavGroupItem, FeatureManifest } from './types';
 import { coreInstanceConfig } from './config';
 
-// Feature manifests - lazy loaded
-// Top-level navigation features (these appear in sidebar)
+// Feature manifests - 5 domains
 export const coreFeatures = {
-  // Primary navigation - 3 top-level entries
-  'ops': () => import('./ops'),
-  'company': () => import('./company'),
-  'portfolio': () => import('./portfolio'),
-  // Sub-features (imported by primary features, no direct nav)
-  'claude-monitor': () => import('./claude-monitor'),
-  'vps-monitor': () => import('./vps-monitor'),
-  'engine': () => import('./engine'),
-  'n8n': () => import('./n8n'),
-  'cecelia': () => import('./cecelia'),
-  'canvas': () => import('./canvas'),
-  'dev-panorama': () => import('./dev-panorama'),
-  'panorama': () => import('./panorama'),
-  'workers': () => import('./workers'),
-  'tasks': () => import('./tasks'),
-  'devgate': () => import('./devgate'),
-  'quality': () => import('./quality'),
-  'planner': () => import('./planner'),
-  'brain': () => import('./brain'),
-  'okr': () => import('./okr'),
-  'orchestrator': () => import('./orchestrator'),
-  'projects': () => import('./projects'),
+  'planning': () => import('./planning'),
+  'execution': () => import('./execution'),
+  'business': () => import('./business'),
+  'system': () => import('./system'),
+  'knowledge': () => import('./knowledge'),
 };
 
 // Load all features and register them

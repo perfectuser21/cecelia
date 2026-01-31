@@ -60,8 +60,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'AiEmployeeDetailPage': () => import('../pages/AiEmployeeDetailPage'),
   'AiAbilityDetailPage': () => import('../pages/AiAbilityDetailPage'),
   'AccountsList': () => import('../pages/accounts/AccountsList'),
-  'FeatureDashboard': () => import('../pages/FeatureDashboard'),
-  'CommandCenter': () => import('../pages/CommandCenter'),
+  // FeatureDashboard and CommandCenter moved to Core features/business
 };
 
 // 向后兼容：保留 pageComponents 导出（仅 Autopilot 组件）

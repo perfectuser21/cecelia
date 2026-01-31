@@ -1,7 +1,1 @@
-{
-  "gate": "prd",
-  "decision": "PASS",
-  "branch": "cp-trd-decomposer",
-  "timestamp": "2026-01-30T17:02:05Z",
-  "evidence": "PRD完整清晰，5/5需求可验收"
-}
+PASSED 2026-01-31T14:11:24+08:00
