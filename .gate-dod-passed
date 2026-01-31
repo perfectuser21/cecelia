@@ -1,1 +1,10 @@
-{"gate":"dod","decision":"PASS","timestamp":"2026-01-31T14:59:53Z"}
+Gate: dod
+Decision: PASS
+Timestamp: 2026-02-01T05:30:00Z
+Agent ID: a92e53e
+
+DoD 审核通过。所有标准满足：
+- PRD↔DoD 覆盖率：5/5 需求完全覆盖
+- 验收项具体性：17/17 项合格
+- Test 字段有效性：17/17 项有效
+- QA 引用正确性：QA文件正确，分支对齐
