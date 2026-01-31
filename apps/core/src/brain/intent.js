@@ -346,12 +346,49 @@ function classifyIntent(input) {
   // Categorize confidence into high/medium/low
   const confidenceLevel = confidence >= 0.7 ? 'high' : confidence >= 0.4 ? 'medium' : 'low';
 
+  // Generate follow-up questions for low confidence (< 0.6)
+  let suggestedQuestions = [];
+  if (confidence < 0.6) {
+    if (bestIntent === INTENT_TYPES.UNKNOWN) {
+      suggestedQuestions = [
+        '您想要创建一个新项目、功能还是任务？',
+        '您是想解决问题还是探索/学习某些内容？',
+        '能否提供更多关于您需求的细节？'
+      ];
+    } else if (bestIntent === INTENT_TYPES.CREATE_PROJECT || bestIntent === INTENT_TYPES.CREATE_FEATURE) {
+      suggestedQuestions = [
+        '这个项目/功能的主要目标是什么？',
+        '需要涉及哪些技术栈或模块？',
+        '预期的交付时间是？'
+      ];
+    } else if (bestIntent === INTENT_TYPES.FIX_BUG) {
+      suggestedQuestions = [
+        '这个问题在什么情况下出现？',
+        '是否有错误信息或日志？',
+        '影响范围有多大（多少用户受影响）？'
+      ];
+    } else if (bestIntent === INTENT_TYPES.CREATE_TASK) {
+      suggestedQuestions = [
+        '这个任务属于哪个项目或目标？',
+        '优先级是多少（P0/P1/P2）？',
+        '预期完成时间？'
+      ];
+    } else {
+      suggestedQuestions = [
+        '能否提供更详细的描述？',
+        '这个需求的优先级是？',
+        '是否有相关的依赖或前置条件？'
+      ];
+    }
+  }
+
   return {
     type: bestIntent,
     confidence,
     confidenceLevel,
     keywords: bestKeywords,
-    matchedPhrases: bestPhrasePatterns
+    matchedPhrases: bestPhrasePatterns,
+    suggestedQuestions
   };
 }
 
@@ -772,6 +809,7 @@ async function parseIntent(input) {
     confidenceLevel: classification.confidenceLevel,
     keywords: classification.keywords,
     matchedPhrases: classification.matchedPhrases || [],
+    suggestedQuestions: classification.suggestedQuestions || [],
     entities,
     projectName,
     tasks,
@@ -779,7 +817,7 @@ async function parseIntent(input) {
     prdDraft: null
   };
 
-  // Step 6: Generate PRD draft
+  // Step 7: Generate PRD draft
   parsedIntent.prdDraft = generatePrdDraft(parsedIntent);
 
   return parsedIntent;

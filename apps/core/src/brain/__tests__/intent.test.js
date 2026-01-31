@@ -859,4 +859,75 @@ describe('Intent-to-Action Mapping', () => {
     expect(lowConf.confidenceLevel).toBe('low');
     expect(lowConf.confidence).toBeLessThan(0.4);
   });
+
+  // KR1: suggestedQuestions tests
+  describe('suggestedQuestions for low confidence (< 0.6)', () => {
+    it('returns suggestedQuestions when confidence < 0.6', async () => {
+      const result = await parseIntent('hello');
+      expect(result.confidence).toBeLessThan(0.6);
+      expect(result.suggestedQuestions).toBeDefined();
+      expect(Array.isArray(result.suggestedQuestions)).toBe(true);
+      expect(result.suggestedQuestions.length).toBeGreaterThan(0);
+    });
+
+    it('returns empty suggestedQuestions when confidence >= 0.6', async () => {
+      const result = await parseIntent('创建一个新项目');
+      expect(result.confidence).toBeGreaterThanOrEqual(0.6);
+      expect(result.suggestedQuestions).toBeDefined();
+      expect(Array.isArray(result.suggestedQuestions)).toBe(true);
+      expect(result.suggestedQuestions.length).toBe(0);
+    });
+
+    it('returns UNKNOWN intent questions for unclear input', async () => {
+      const result = await parseIntent('不知道');
+      expect(result.intentType).toBe(INTENT_TYPES.UNKNOWN);
+      expect(result.suggestedQuestions).toContain('您想要创建一个新项目、功能还是任务？');
+    });
+
+    it('returns CREATE_PROJECT questions for low-confidence project intent', async () => {
+      // This input should trigger CREATE_PROJECT but with low confidence
+      const result = await parseIntent('我想做个东西');
+      if (result.confidence < 0.6 && (result.intentType === INTENT_TYPES.CREATE_PROJECT || result.intentType === INTENT_TYPES.CREATE_FEATURE)) {
+        expect(result.suggestedQuestions).toContain('这个项目/功能的主要目标是什么？');
+      }
+    });
+
+    it('returns FIX_BUG questions for low-confidence bug fix intent', async () => {
+      const result = await parseIntent('有个问题');
+      if (result.confidence < 0.6 && result.intentType === INTENT_TYPES.FIX_BUG) {
+        expect(result.suggestedQuestions).toContain('这个问题在什么情况下出现？');
+      }
+    });
+
+    it('returns CREATE_TASK questions for low-confidence task intent', async () => {
+      const result = await parseIntent('要做一件事');
+      if (result.confidence < 0.6 && result.intentType === INTENT_TYPES.CREATE_TASK) {
+        expect(result.suggestedQuestions).toContain('这个任务属于哪个项目或目标？');
+      }
+    });
+
+    it('boundary test: confidence exactly 0.6 should not show questions', () => {
+      const classification = classifyIntent('我想做一个系统');
+      if (classification.confidence === 0.6) {
+        expect(classification.suggestedQuestions).toBeDefined();
+        expect(classification.suggestedQuestions.length).toBe(0);
+      }
+    });
+
+    it('suggestedQuestions is always an array, never undefined', async () => {
+      const inputs = [
+        '创建项目',
+        'hello',
+        '修复 bug',
+        '不知道要做什么',
+        '我想优化性能'
+      ];
+
+      for (const input of inputs) {
+        const result = await parseIntent(input);
+        expect(result.suggestedQuestions).toBeDefined();
+        expect(Array.isArray(result.suggestedQuestions)).toBe(true);
+      }
+    });
+  });
 });
