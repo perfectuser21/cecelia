@@ -211,3 +211,13 @@
 **影响程度**: Low - 功能增强，无破坏性变更
 
 ---
+
+### [2026-01-31] Core 前端重构：5 域 → 6 线 + PARA Areas
+
+- **Bug**: `/home/xx/bin/git` wrapper script 的 force-push 检测在非交互环境（Claude Code Bash tool）中，`read -p` 无法获取用户输入导致直接取消。即使不含 `-f` 参数也会触发。解决方案：使用 `/usr/bin/git` 直接调用。
+- **Bug**: 后端 `areas.js` 需要配套 `areas.d.ts` 声明文件，否则 `tsc --noEmit` 报 TS7016。参考已有 `routes.d.ts` 模式快速修复。
+- **优化点**: FeatureManifest 系统允许通过新建 manifest 文件重组导航，无需移动页面组件。43 个文件变更中大部分是删除死代码，核心改动仅 6 个新 manifest + 5 个新页面。
+- **优化点**: gate:dod 和 gate:qa 的首次 FAIL 反馈质量高，明确指出遗漏项，修复成本低。
+- **影响程度**: Medium - git wrapper 问题影响所有 Claude Code push 操作
+
+---

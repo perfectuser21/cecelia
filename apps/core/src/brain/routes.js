@@ -16,6 +16,7 @@ import { getState as getCBState, reset as resetCB, getAllStates as getAllCBState
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
+import { runDiagnosis } from './self-diagnosis.js';
 import crypto from 'crypto';
 
 const router = Router();
@@ -1716,6 +1717,71 @@ router.get('/circuit-breaker', (req, res) => {
 router.post('/circuit-breaker/:key/reset', (req, res) => {
   resetCB(req.params.key);
   res.json({ success: true, key: req.params.key, state: getCBState(req.params.key) });
+});
+
+// ==================== Health Check API ====================
+
+/**
+ * GET /api/brain/health
+ * One-stop health check for all Cecelia organs
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const [tickStatus, cbStates] = await Promise.all([
+      getTickStatus(),
+      Promise.resolve(getAllCBStates())
+    ]);
+
+    const openBreakers = Object.entries(cbStates)
+      .filter(([, v]) => v.state === 'OPEN')
+      .map(([k]) => k);
+
+    const healthy = tickStatus.loop_running && openBreakers.length === 0;
+
+    res.json({
+      status: healthy ? 'healthy' : 'degraded',
+      organs: {
+        scheduler: {
+          status: tickStatus.loop_running ? 'running' : 'stopped',
+          enabled: tickStatus.enabled,
+          last_tick: tickStatus.last_tick,
+          max_concurrent: tickStatus.max_concurrent
+        },
+        circuit_breaker: {
+          status: openBreakers.length === 0 ? 'all_closed' : 'has_open',
+          open: openBreakers,
+          states: cbStates
+        },
+        event_bus: { status: 'active' },
+        notifier: { status: process.env.FEISHU_BOT_WEBHOOK ? 'configured' : 'unconfigured' },
+        planner: { status: 'v2' }
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
+// ==================== Self-Diagnosis API ====================
+
+/**
+ * POST /api/brain/self-diagnosis
+ * Run self-diagnosis and return report
+ */
+router.post('/self-diagnosis', async (req, res) => {
+  try {
+    const { since, create_tasks = false, project_id, goal_id } = req.body || {};
+    const report = await runDiagnosis({
+      since,
+      createTasks: create_tasks,
+      projectId: project_id,
+      goalId: goal_id
+    });
+    res.json({ success: true, report });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Self-diagnosis failed', details: err.message });
+  }
 });
 
 export default router;

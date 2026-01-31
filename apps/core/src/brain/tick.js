@@ -166,6 +166,14 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
+    // Auto-enable tick from env var if set
+    const envEnabled = process.env.CECELIA_TICK_ENABLED;
+    if (envEnabled === 'true') {
+      console.log('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
+      await enableTick();
+      return;
+    }
+
     const status = await getTickStatus();
     if (status.enabled) {
       console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
