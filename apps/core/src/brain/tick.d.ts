@@ -26,6 +26,8 @@ export interface DispatchResult {
   task_id?: string;
   run_id?: string;
   active?: number;
+  db_active?: number;
+  process_active?: number;
   actions: Array<Record<string, unknown>>;
 }
 
