@@ -8,7 +8,7 @@ import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe } from
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from '../task-system/db.js';
 import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
-import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
+import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
@@ -1299,7 +1299,7 @@ router.post('/generate/prd', async (req, res) => {
  */
 router.post('/generate/trd', async (req, res) => {
   try {
-    const { title, description, milestones = [] } = req.body;
+    const { title, description, milestones = [], kr, project } = req.body;
 
     if (!title) {
       return res.status(400).json({
@@ -1308,7 +1308,9 @@ router.post('/generate/trd', async (req, res) => {
       });
     }
 
-    const trd = generateTrdFromGoal({ title, description, milestones });
+    const trd = kr
+      ? generateTrdFromGoalKR({ title, description, milestones, kr, project })
+      : generateTrdFromGoal({ title, description, milestones });
 
     if (req.body.format === 'json') {
       return res.json({ success: true, data: trdToJson(trd), metadata: { title, milestones_count: milestones.length, generated_at: new Date().toISOString() } });

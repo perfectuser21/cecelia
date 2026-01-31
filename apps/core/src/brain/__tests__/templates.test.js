@@ -14,6 +14,7 @@ import {
   generatePrdFromTask,
   generatePrdFromGoalKR,
   generateTrdFromGoal,
+  generateTrdFromGoalKR,
   validatePrd,
   validateTrd,
   getTemplate,
@@ -925,6 +926,102 @@ vitest
       expect(result.sections.technical_background).toContain('JWT');
       expect(result.sections.architecture_design).toContain('微服务');
       expect(result.sections.test_strategy).toContain('vitest');
+    });
+  });
+
+  describe('generateTrdFromGoalKR', () => {
+    it('generates TRD with full KR + project context', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'TRD Template Engine',
+        description: 'Build TRD generator with KR context',
+        kr: { title: 'TRD 模板完整性', progress: 45, priority: 'P0' },
+        project: { name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' }
+      });
+
+      expect(trd).toContain('---');
+      expect(trd).toContain('id: trd-auto-');
+      expect(trd).toContain('version: 1.0.0');
+      expect(trd).toContain('# TRD - TRD Template Engine');
+      expect(trd).toContain('KR: TRD 模板完整性 (progress: 45%, priority: P0)');
+      expect(trd).toContain('Project: cecelia-workspace');
+      expect(trd).toContain('/home/xx/dev/cecelia-workspace');
+      expect(trd).toContain('cecelia-workspace 核心模块');
+    });
+
+    it('generates valid TRD that passes validateTrd', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'Test TRD',
+        kr: { title: 'KR1', progress: 50, priority: 'P0' },
+        project: { name: 'proj', repo_path: '/repo' }
+      });
+      const result = validateTrd(trd);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('generates TRD without KR params', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'Simple TRD',
+        description: 'No KR context'
+      });
+
+      expect(trd).toContain('# TRD - Simple TRD');
+      expect(trd).toContain('No KR context');
+      expect(trd).not.toContain('KR:');
+      expect(trd).toContain('## 技术背景');
+      expect(trd).toContain('## 架构设计');
+      expect(trd).toContain('## API 设计');
+      expect(trd).toContain('## 数据模型');
+      expect(trd).toContain('## 测试策略');
+
+      const result = validateTrd(trd);
+      expect(result.valid).toBe(true);
+    });
+
+    it('generates TRD without project params', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'No Project TRD',
+        kr: { title: 'Some KR' }
+      });
+
+      expect(trd).toContain('KR: Some KR (progress: 0%, priority: P1)');
+      expect(trd).not.toContain('Project:');
+      expect(trd).toContain('No Project TRD 核心模块');
+    });
+
+    it('maps milestones to implementation plan', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'Milestone TRD',
+        milestones: [
+          { title: 'Phase 1: Setup', description: 'Initial setup' },
+          { title: 'Phase 2: Core', description: 'Core features' },
+          { title: 'Phase 3: Polish' }
+        ]
+      });
+
+      expect(trd).toContain('1. **Phase 1: Setup**');
+      expect(trd).toContain('   - Initial setup');
+      expect(trd).toContain('2. **Phase 2: Core**');
+      expect(trd).toContain('3. **Phase 3: Polish**');
+      expect(trd).toContain('- [ ] Phase 1: Setup 测试');
+      expect(trd).toContain('- [ ] Phase 2: Core 测试');
+    });
+
+    it('handles empty milestones', () => {
+      const trd = generateTrdFromGoalKR({ title: 'Empty Milestones', milestones: [] });
+
+      expect(trd).toContain('- [ ] 核心功能测试');
+      expect(trd).toContain('1. 需求分析');
+    });
+
+    it('handles kr with missing fields gracefully', () => {
+      const trd = generateTrdFromGoalKR({
+        title: 'Partial KR',
+        kr: { title: 'Some KR' }
+      });
+
+      expect(trd).toContain('KR: Some KR (progress: 0%, priority: P1)');
+      expect(trd).not.toContain('undefined');
     });
   });
 });
