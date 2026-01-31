@@ -67,7 +67,10 @@ const INTENT_PHRASES = {
     { pattern: /开发一个(.+)系统/, weight: 0.3 },
     { pattern: /搭建(.+)平台/, weight: 0.3 },
     { pattern: /build\s+a\s+(.+)/i, weight: 0.3 },
-    { pattern: /create\s+(.+)\s+project/i, weight: 0.3 }
+    { pattern: /create\s+(.+)\s+project/i, weight: 0.3 },
+    { pattern: /需要一个(.+)/, weight: 0.25 },
+    { pattern: /启动(.+)项目/, weight: 0.3 },
+    { pattern: /set\s+up\s+(.+)/i, weight: 0.3 }
   ],
   [INTENT_TYPES.CREATE_FEATURE]: [
     { pattern: /给(.+)加一个(.+)功能/, weight: 0.4 },
@@ -75,7 +78,9 @@ const INTENT_PHRASES = {
     { pattern: /在(.+)中增加(.+)/, weight: 0.3 },
     { pattern: /为(.+)实现(.+)/, weight: 0.3 },
     { pattern: /add\s+(.+)\s+to\s+(.+)/i, weight: 0.3 },
-    { pattern: /implement\s+(.+)\s+feature/i, weight: 0.3 }
+    { pattern: /implement\s+(.+)\s+feature/i, weight: 0.3 },
+    { pattern: /(.+)需要支持(.+)/, weight: 0.3 },
+    { pattern: /能不能(.+)加上(.+)/, weight: 0.3 }
   ],
   [INTENT_TYPES.FIX_BUG]: [
     { pattern: /修复(.+)的(.+)问题/, weight: 0.4 },
@@ -83,7 +88,9 @@ const INTENT_PHRASES = {
     { pattern: /(.+)报错/, weight: 0.3 },
     { pattern: /(.+)不工作/, weight: 0.3 },
     { pattern: /fix\s+(.+)\s+bug/i, weight: 0.4 },
-    { pattern: /resolve\s+(.+)\s+issue/i, weight: 0.3 }
+    { pattern: /resolve\s+(.+)\s+issue/i, weight: 0.3 },
+    { pattern: /(.+)有问题/, weight: 0.25 },
+    { pattern: /(.+)出错了/, weight: 0.3 }
   ],
   [INTENT_TYPES.REFACTOR]: [
     { pattern: /重构(.+)代码/, weight: 0.4 },
@@ -132,20 +139,48 @@ const ENTITY_PATTERNS = {
   ],
   // File path patterns
   filePath: [
-    /(src\/[\w\/.-]+)/,
-    /(apps\/[\w\/.-]+)/,
+    new RegExp('(src/[\\w/.-]+)'),
+    new RegExp('(apps/[\\w/.-]+)'),
     /([\w-]+\.(js|ts|tsx|jsx|py|go|rs))/
   ],
   // API endpoint patterns
   apiEndpoint: [
-    /\/api\/[\w\/-]+/,
-    /POST\s+(\/[\w\/-]+)/i,
-    /GET\s+(\/[\w\/-]+)/i
+    new RegExp('/api/[\\w/-]+'),
+    new RegExp('POST\\s+(/[\\w/-]+)', 'i'),
+    new RegExp('GET\\s+(/[\\w/-]+)', 'i')
   ],
   // Component name patterns
   component: [
     /([A-Z][a-zA-Z]+)(组件|Component)/,
     /<([A-Z][a-zA-Z]+)/
+  ],
+  // Priority patterns
+  priority: [
+    /(P0|P1|P2)/,
+    /(高优先级|高优|紧急)/,
+    /(中优先级|中优|普通)/,
+    /(低优先级|低优)/,
+    /(high\s+priority|urgent|critical)/i,
+    /(medium\s+priority|normal)/i,
+    /(low\s+priority)/i
+  ],
+  // Timeframe patterns
+  timeframe: [
+    /(今天|today)/i,
+    /(明天|tomorrow)/i,
+    /(本周|this\s+week)/i,
+    /(下周|next\s+week)/i,
+    /(本月|this\s+month)/i,
+    /(尽快|ASAP)/i
+  ],
+  // Dependency patterns
+  dependency: [
+    /依赖(.+)/,
+    /前置[：:]?\s*(.+)/,
+    /阻塞于(.+)/,
+    /blocked\s+by\s+(.+)/i,
+    /depends\s+on\s+(.+)/i,
+    /after\s+(.+)/i
   ]
 };
 
@@ -212,9 +247,13 @@ function classifyIntent(input) {
   // Calculate confidence (0-1), capped at 1.0
   const confidence = Math.min(bestScore, 1);
 
+  // Categorize confidence into high/medium/low
+  const confidenceLevel = confidence >= 0.7 ? 'high' : confidence >= 0.4 ? 'medium' : 'low';
+
   return {
     type: bestIntent,
     confidence,
+    confidenceLevel,
     keywords: bestKeywords,
     matchedPhrases: bestPhrasePatterns
   };
@@ -225,13 +264,31 @@ function classifyIntent(input) {
  * @param {string} input - Natural language input
  * @returns {Object} - Extracted entities
  */
+// Map Chinese priority keywords to standard values
+const PRIORITY_MAP = {
+  'P0': 'P0', 'P1': 'P1', 'P2': 'P2',
+  '高优先级': 'P0', '高优': 'P0', '紧急': 'P0',
+  '中优先级': 'P1', '中优': 'P1', '普通': 'P1',
+  '低优先级': 'P2', '低优': 'P2'
+};
+
+// Map English priority keywords to standard values
+const PRIORITY_MAP_EN = {
+  'high priority': 'P0', 'urgent': 'P0', 'critical': 'P0',
+  'medium priority': 'P1', 'normal': 'P1',
+  'low priority': 'P2'
+};
+
 function extractEntities(input) {
   const entities = {
     module: null,
     feature: null,
     filePath: null,
     apiEndpoint: null,
-    component: null
+    component: null,
+    priority: null,
+    timeframe: null,
+    dependency: null
   };
 
   for (const [entityType, patterns] of Object.entries(ENTITY_PATTERNS)) {
@@ -247,6 +304,10 @@ function extractEntities(input) {
         }
         if (entityType === 'feature') {
           value = value.replace(/(功能|特性)$/, '').trim();
+        }
+        // Normalize priority to P0/P1/P2
+        if (entityType === 'priority') {
+          value = PRIORITY_MAP[value] || PRIORITY_MAP_EN[value.toLowerCase()] || value;
         }
 
         if (value && !entities[entityType]) {
@@ -510,6 +571,7 @@ async function parseIntent(input) {
     originalInput: trimmedInput,
     intentType: classification.type,
     confidence: classification.confidence,
+    confidenceLevel: classification.confidenceLevel,
     keywords: classification.keywords,
     matchedPhrases: classification.matchedPhrases || [],
     entities,

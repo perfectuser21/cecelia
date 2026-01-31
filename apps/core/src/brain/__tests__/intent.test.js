@@ -494,21 +494,144 @@ describe('Intent Recognition Module', () => {
     });
   });
 
+  describe('classifyIntent - new phrase patterns', () => {
+    it('matches "需要一个" for create project', () => {
+      const result = classifyIntent('需要一个用户管理后台');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_PROJECT);
+      expect(result.matchedPhrases.length).toBeGreaterThan(0);
+    });
+
+    it('matches "启动...项目" for create project', () => {
+      const result = classifyIntent('启动用户增长项目');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_PROJECT);
+    });
+
+    it('matches "set up" for create project', () => {
+      const result = classifyIntent('set up a monitoring dashboard');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_PROJECT);
+    });
+
+    it('matches "需要支持" for create feature', () => {
+      const result = classifyIntent('系统需要支持批量导出功能');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_FEATURE);
+    });
+
+    it('matches "有问题" for fix bug', () => {
+      const result = classifyIntent('登录页面有问题');
+      expect(result.type).toBe(INTENT_TYPES.FIX_BUG);
+    });
+
+    it('matches "出错了" for fix bug', () => {
+      const result = classifyIntent('支付接口出错了');
+      expect(result.type).toBe(INTENT_TYPES.FIX_BUG);
+    });
+  });
+
+  describe('classifyIntent - confidenceLevel', () => {
+    it('returns confidenceLevel field', () => {
+      const result = classifyIntent('我想做一个 GMV Dashboard');
+      expect(result.confidenceLevel).toBeDefined();
+      expect(['high', 'medium', 'low']).toContain(result.confidenceLevel);
+    });
+
+    it('returns low for ambiguous input', () => {
+      const result = classifyIntent('hello world');
+      expect(result.confidenceLevel).toBe('low');
+    });
+
+    it('is consistent with numeric confidence', () => {
+      const result = classifyIntent('修复购物车页面的价格显示问题');
+      if (result.confidence >= 0.7) expect(result.confidenceLevel).toBe('high');
+      else if (result.confidence >= 0.4) expect(result.confidenceLevel).toBe('medium');
+      else expect(result.confidenceLevel).toBe('low');
+    });
+  });
+
+  describe('extractEntities - priority', () => {
+    it('extracts P0', () => {
+      const entities = extractEntities('创建一个 P0 紧急任务');
+      expect(entities.priority).toBe('P0');
+    });
+
+    it('normalizes "紧急" to P0', () => {
+      const entities = extractEntities('这是一个紧急的修复');
+      expect(entities.priority).toBe('P0');
+    });
+
+    it('normalizes "低优" to P2', () => {
+      const entities = extractEntities('这是一个低优任务');
+      expect(entities.priority).toBe('P2');
+    });
+
+    it('normalizes English "high priority" to P0', () => {
+      const entities = extractEntities('This is a high priority task');
+      expect(entities.priority).toBe('P0');
+    });
+  });
+
+  describe('extractEntities - timeframe', () => {
+    it('extracts "今天"', () => {
+      const entities = extractEntities('今天需要完成这个任务');
+      expect(entities.timeframe).toBe('今天');
+    });
+
+    it('extracts "下周"', () => {
+      const entities = extractEntities('下周前完成用户模块重构');
+      expect(entities.timeframe).toBe('下周');
+    });
+
+    it('extracts "尽快"', () => {
+      const entities = extractEntities('需要尽快修复这个 bug');
+      expect(entities.timeframe).toBe('尽快');
+    });
+
+    it('extracts English "next week"', () => {
+      const entities = extractEntities('finish this by next week');
+      expect(entities.timeframe).toBeTruthy();
+    });
+  });
+
+  describe('extractEntities - dependency', () => {
+    it('extracts "依赖" dependency', () => {
+      const entities = extractEntities('这个任务依赖用户认证模块');
+      expect(entities.dependency).toBeTruthy();
+      expect(entities.dependency).toContain('用户认证');
+    });
+
+    it('extracts "depends on"', () => {
+      const entities = extractEntities('this task depends on auth module');
+      expect(entities.dependency).toBeTruthy();
+    });
+
+    it('extracts "blocked by"', () => {
+      const entities = extractEntities('blocked by database migration');
+      expect(entities.dependency).toBeTruthy();
+    });
+  });
+
+  describe('parseIntent - enhanced fields', () => {
+    it('includes confidenceLevel', async () => {
+      const result = await parseIntent('我想做一个 GMV Dashboard');
+      expect(result.confidenceLevel).toBeDefined();
+      expect(['high', 'medium', 'low']).toContain(result.confidenceLevel);
+    });
+
+    it('extracts new entity types', async () => {
+      const result = await parseIntent('紧急修复用户模块的登录 bug，今天完成');
+      expect(result.entities).toBeDefined();
+      const hasNewEntity = result.entities.priority || result.entities.timeframe || result.entities.dependency;
+      expect(hasNewEntity).toBeTruthy();
+    });
+  });
+
   describe('Integration: End-to-end intent parsing', () => {
     it('processes "我想做一个 GMV Dashboard" correctly', async () => {
       const result = await parseIntent('我想做一个 GMV Dashboard');
 
-      // Verify intent type
       expect(result.intentType).toBe('create_project');
-
-      // Verify project name extraction
       expect(result.projectName).toBe('gmv-dashboard');
-
-      // Verify tasks generated (3-6 as per PRD)
       expect(result.tasks.length).toBeGreaterThanOrEqual(3);
       expect(result.tasks.length).toBeLessThanOrEqual(6);
-
-      // Verify PRD draft generated with standard template sections
       expect(result.prdDraft).toContain('GMV Dashboard');
       expect(result.prdDraft).toContain('验收标准');
       expect(result.prdDraft).toContain('功能需求');
