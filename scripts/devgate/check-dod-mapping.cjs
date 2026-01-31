@@ -289,6 +289,13 @@ function main() {
   console.log("");
 
   if (!fs.existsSync(dodPath)) {
+    // CI 环境中 DoD 不提交到仓库（在 .gitignore 中），跳过检查
+    if (process.env.GITHUB_ACTIONS) {
+      console.log(`${YELLOW}⚠️ [CI 模式] DoD 文件不存在，跳过检查${RESET}`);
+      console.log(`   DoD 是本地工作文档，不提交到 develop/main`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      process.exit(0);
+    }
     console.error(`${RED}❌ DoD 文件不存在: ${dodPath}${RESET}`);
     process.exit(2);
   }

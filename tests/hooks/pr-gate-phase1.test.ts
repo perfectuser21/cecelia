@@ -23,6 +23,10 @@ const REQUIRE_RCI_SCRIPT = join(SCRIPTS_DIR, "require-rci-update-if-p0p1.sh");
 // 临时测试目录
 const TEST_DIR = join(PROJECT_ROOT, ".test-phase1");
 
+// 运行脚本时清除 GITHUB_ACTIONS 环境变量，以便测试本地行为
+// CI 中 GITHUB_ACTIONS=true 会跳过某些检查，但测试需要验证这些检查
+const localEnv = { ...process.env, GITHUB_ACTIONS: "" };
+
 describe("Phase 1: DevGate Scripts", () => {
   beforeAll(() => {
     // 创建临时测试目录
@@ -57,7 +61,7 @@ describe("Phase 1: DevGate Scripts", () => {
       }).not.toThrow();
     });
 
-    it("should exit 2 when DoD file does not exist", () => {
+    it("should exit 2 when DoD file does not exist (local mode)", () => {
       const nonExistentDod = join(TEST_DIR, "non-existent.md");
 
       let didThrow = false;
@@ -66,6 +70,7 @@ describe("Phase 1: DevGate Scripts", () => {
         execSync(`node "${CHECK_DOD_SCRIPT}" "${nonExistentDod}"`, {
           encoding: "utf-8",
           cwd: PROJECT_ROOT,
+          env: localEnv,  // 清除 GITHUB_ACTIONS 以测试本地行为
         });
       } catch (e: unknown) {
         didThrow = true;

@@ -13,6 +13,10 @@ const PROJECT_ROOT = resolve(__dirname, "../..");
 const L2A_SCRIPT = join(PROJECT_ROOT, "scripts/devgate/l2a-check.sh");
 const TEST_DIR = join(PROJECT_ROOT, ".test-l2a");
 
+// 运行脚本时清除 GITHUB_ACTIONS 环境变量，以便测试本地 PRD/DoD 检查行为
+// CI 中 GITHUB_ACTIONS=true 会跳过 PRD/DoD 检查，但测试需要验证这些检查
+const localEnv = { ...process.env, GITHUB_ACTIONS: "" };
+
 describe("l2a-check.sh", () => {
   beforeAll(() => {
     if (!existsSync(TEST_DIR)) {
@@ -77,6 +81,7 @@ QA: docs/QA-DECISION.md
     const output = execSync(`bash "${L2A_SCRIPT}" pr`, {
       cwd: TEST_DIR,
       encoding: "utf-8",
+      env: localEnv,
     });
     expect(output).toContain("L2A_SUMMARY: passed=4 failed=0");
   });
@@ -95,7 +100,7 @@ QA: docs/QA-DECISION.md
     writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
     try {
-      execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8" });
+      execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8", env: localEnv });
       expect.fail("Should have failed");
     } catch (error: any) {
       expect(error.status).toBe(2);
@@ -150,7 +155,7 @@ Content line 2
       writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
       try {
-        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR });
+        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, env: localEnv });
         expect.fail("Should have failed");
       } catch (error: any) {
         expect(error.status).toBe(2);
@@ -179,7 +184,7 @@ Content line 2
       writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
       try {
-        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR });
+        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, env: localEnv });
         expect.fail("Should have failed");
       } catch (error: any) {
         expect(error.status).toBe(2);
@@ -207,7 +212,7 @@ Content line 2
       writeFileSync(join(TEST_DIR, "docs/QA-DECISION.md"), "Decision: NO_RCI");
       writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
-      const output = execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8" });
+      const output = execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8", env: localEnv });
       expect(output).toContain("L2A_SUMMARY: passed=4 failed=0");
     });
   });
@@ -244,7 +249,7 @@ QA: docs/QA-DECISION.md
       writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
       try {
-        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR });
+        execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, env: localEnv });
         expect.fail("Should have failed");
       } catch (error: any) {
         expect(error.status).toBe(2);
@@ -283,7 +288,7 @@ QA: docs/QA-DECISION.md
       writeFileSync(join(TEST_DIR, "docs/QA-DECISION.md"), "Decision: NO_RCI");
       writeFileSync(join(TEST_DIR, "docs/AUDIT-REPORT.md"), "Decision: PASS");
 
-      const output = execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8" });
+      const output = execSync(`bash "${L2A_SCRIPT}" pr`, { cwd: TEST_DIR, encoding: "utf-8", env: localEnv });
       expect(output).toContain("L2A_SUMMARY: passed=4 failed=0");
     });
   });

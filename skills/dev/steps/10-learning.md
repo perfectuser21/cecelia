@@ -72,45 +72,89 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 ---
 
-## 实际操作（Subagent 模式）
+## gate:learning 审核（必须）
 
-Learning 使用 Subagent 执行，**写好才能回来**：
+Learning 使用 Subagent 执行，**写好才能继续**。
 
-```javascript
-// Learning Subagent（循环型：写好才能继续）
-while (true) {
-  const result = await Task({
-    subagent_type: "general-purpose",
-    prompt: `你是经验记录员。回顾本次开发，记录到 docs/LEARNINGS.md：
+### 循环逻辑
 
-      本次任务：${task_summary}
-      改动文件：${changed_files}
-      遇到的问题：${issues_encountered}
+```
+主 Agent 回顾开发过程
+    ↓
+启动 gate:learning Subagent
+    ↓
+Subagent 返回 Decision
+    ↓
+├─ FAIL → 内容不足，补充后再次启动 Subagent
+└─ PASS → 追加到 LEARNINGS.md → 继续 Step 11
+```
 
-      记录内容：
-      1. Bug：遇到的问题和解决方案
-      2. 优化点：可改进的地方和具体建议
-      3. 影响程度：Low/Medium/High
+### gate:learning Subagent 调用
 
-      格式：
-      ### [YYYY-MM-DD] <任务简述>
-      - **Bug**: <遇到的问题和解决方案>
-      - **优化点**: <可改进的地方和具体建议>
-      - **影响程度**: Low/Medium/High
+```
+Task({
+  subagent_type: "general-purpose",
+  prompt: `你是经验记录员。回顾本次开发，记录开发经验。
 
-      输出：
-      Decision: PASS | FAIL
-      Content: [记录内容]`,
-    description: "Learning: 经验记录"
-  });
+## 输入信息
+- 本次任务：{task_summary}
+- 改动文件：{changed_files}
+- 遇到的问题：{issues_encountered}
 
-  if (result.decision === "PASS") {
-    // 追加到 LEARNINGS.md 并提交
-    break;
-  }
+## 记录位置
 
-  // FAIL: 重新总结
-}
+### Engine 层面
+工作流本身有什么可以改进的？
+- /dev 流程哪里不顺畅？
+- 缺少什么检查步骤？
+- 脚本有什么 bug？
+→ 记录到：zenithjoy-engine/docs/LEARNINGS.md
+
+### 项目层面
+目标项目开发中的发现：
+- 踩了什么坑？
+- 学到了什么技术点？
+- 有什么架构优化建议？
+→ 记录到：项目的 docs/LEARNINGS.md
+
+## 输出格式（必须严格遵守）
+
+### [YYYY-MM-DD] <任务简述>
+- **Bug**: <遇到的问题和解决方案>
+- **优化点**: <可改进的地方和具体建议>
+- **影响程度**: Low/Medium/High
+
+## 影响程度说明
+- Low: 体验小问题，不影响功能
+- Medium: 功能性问题，需要尽快修复
+- High: 阻塞性问题，必须立即处理
+
+## 如果没有特别的 Learning
+即使本次开发很顺利，也至少记录：
+
+### [YYYY-MM-DD] <任务简述>
+- **Bug**: 无
+- **优化点**: 流程顺畅，无明显优化点
+- **影响程度**: N/A
+
+## 输出
+
+Decision: PASS | FAIL
+Content: [记录内容，将追加到 LEARNINGS.md]
+
+PASS 条件：至少有一条有效的 Learning 记录
+FAIL 条件：记录为空或内容无意义`,
+  description: "gate:learning"
+})
+```
+
+### PASS 后操作
+
+追加到 LEARNINGS.md 并提交：
+```bash
+git add docs/LEARNINGS.md
+git commit -m "docs: 记录开发经验"
+git push
 ```
 
 ### 手动模式（备选）

@@ -1,36 +1,37 @@
-# QA Decision: H1 Monorepo Path Support
+# QA Decision: 统一 Subagent Gate 机制
 
-Decision: UPDATE_RCI
-Priority: P1
+Decision: NO_RCI
+Priority: P2
 RepoType: Engine
 
 ## 变更范围
 
 | 文件 | 类型 | 影响 |
 |------|------|------|
-| hooks/branch-protect.sh | Hook | PRD/DoD 路径匹配正则修复 |
+| skills/dev/steps/*.md | 文档 | Subagent 调用规则统一 |
+| skills/dev/SKILL.md | 文档 | 命名更新 |
 
 ## 分析
 
 ### 问题描述
-- 当前正则 `^$PRD_BASENAME$` 只匹配根目录的 `.prd.md`
-- Monorepo 项目的 PRD 可能在子目录（如 `apps/core/.prd.md`）
-- 导致 Hook 误报"PRD 文件未更新"
+- Subagent 调用使用 general-purpose 类型
+- 审核规则未嵌入 prompt，Subagent 拿不到完整规则
+- 命名不统一（QA Decision、Audit Loop 等）
 
 ### 修复方案
-- 将 `^$PRD_BASENAME$` 改为 `(^|/)$PRD_BASENAME$`
-- 共 8 处正则需修复（293-296 行 PRD + 312-315 行 DoD）
+- 统一命名为 gate:prd, gate:dod, gate:qa, gate:audit, gate:test, gate:learning
+- 把 gates/*.md 中的 Subagent Prompt 模板完整嵌入 steps 文件
+- 明确循环逻辑：FAIL → 修改 → 再审核
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| PRD 支持子目录路径 | auto | tests/hooks/branch-protect.test.ts |
-| DoD 支持子目录路径 | auto | tests/hooks/branch-protect.test.ts |
-| 根目录 PRD/DoD 仍正常 | auto | tests/hooks/branch-protect.test.ts |
+| steps 文件使用统一命名 | manual | 检查文件内容 |
+| prompt 包含完整规则 | manual | 检查文件内容 |
 
 RCI:
   new: []
-  update: [H1-001]
+  update: []
 
-Reason: H1 Branch Protection 核心功能的 bug 修复，影响 monorepo 项目的开发体验。需要更新现有 RCI H1-001 的测试用例以覆盖子目录场景。
+Reason: 文档改进，不影响核心功能执行，无需 RCI。

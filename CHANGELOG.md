@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.14.1] - 2026-01-31
+
+### Changed
+
+- **Subagent Gate 统一命名**
+  - 统一所有 Gate 命名：gate:prd, gate:dod, gate:qa, gate:audit, gate:test, gate:learning
+  - 在 steps 文件中嵌入完整审核规则（从 gates/*.md 复制）
+  - 明确循环逻辑：FAIL → 修改 → 再审核 → 直到 PASS
+
+### Fixed
+
+- **Subagent 规则挂载问题**
+  - 之前：Subagent prompt 只写"参考 skills/xxx"，但 Subagent 拿不到文件
+  - 现在：完整规则直接嵌入 prompt，Subagent 可正确执行审核
+
 ## [11.14.0] - 2026-01-31
 
 ### Added

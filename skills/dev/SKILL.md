@@ -251,13 +251,13 @@ skills/dev/
 │   ├── 01-prd.md       ← gate:prd (Subagent)
 │   ├── 02-detect.md    ← Worktree 检测
 │   ├── 03-branch.md    ← 创建 .dev-mode
-│   ├── 04-dod.md       ← gate:dod + QA (并行 Subagents)
-│   ├── 05-code.md      ← Audit Loop (Subagent)
+│   ├── 04-dod.md       ← gate:dod + gate:qa (并行 Subagents)
+│   ├── 05-code.md      ← gate:audit (Subagent)
 │   ├── 06-test.md      ← gate:test (Subagent)
 │   ├── 07-quality.md   ← 只汇总，不判定
 │   ├── 08-pr.md
 │   ├── 09-ci.md
-│   ├── 10-learning.md  ← Subagent
+│   ├── 10-learning.md  ← gate:learning (Subagent)
 │   └── 11-cleanup.md   ← 删除 .dev-mode
 └── scripts/        ← 辅助脚本
     ├── cleanup.sh
@@ -265,25 +265,36 @@ skills/dev/
     └── ...
 ```
 
-### 流程图 (v3)
+### 流程图 (v3.1 - 统一命名)
 
 ```
-1-PRD ────→ gate:prd (Subagent)
+1-PRD ────→ gate:prd (Subagent, 循环直到 PASS)
     ↓
 2-Detect → 3-Branch
     ↓
 4-DoD ────→ ┌─ gate:dod (Subagent) ─┐
-            │                        │ 并行
-            └─ QA (Subagent) ────────┘
+            │                        │ 并行，两个都 PASS 才继续
+            └─ gate:qa (Subagent) ──┘
     ↓
-5-Code ───→ Audit Loop (Subagent, 循环直到 PASS)
+5-Code ───→ gate:audit (Subagent, 循环直到 L1/L2 清零)
     ↓
-6-Test ───→ gate:test (Subagent)
+6-Test ───→ gate:test (Subagent, 循环直到 PASS)
     ↓
 7-Quality → 只汇总 (quality-summary.json)
     ↓
-8-PR → 9-CI → 10-Learning (Subagent) → 11-Cleanup
+8-PR → 9-CI → 10-Learning → gate:learning (Subagent) → 11-Cleanup
 ```
+
+### Subagent 统一命名
+
+| 步骤 | Gate 名称 | 规则文件 | 循环条件 |
+|------|-----------|----------|----------|
+| Step 1 | gate:prd | skills/gate/gates/prd.md | FAIL → 修改 → 重审 |
+| Step 4 | gate:dod | skills/gate/gates/dod.md | 两个都 PASS |
+| Step 4 | gate:qa | skills/qa/SKILL.md | 同上 |
+| Step 5 | gate:audit | skills/audit/SKILL.md | L1+L2=0 |
+| Step 6 | gate:test | skills/gate/gates/test.md | FAIL → 补测试 → 重审 |
+| Step 10 | gate:learning | 无特定规则 | 有有效记录 |
 
 ### 三层职责分离
 

@@ -259,10 +259,17 @@ main() {
   fi
 
   # 执行检查
-  # Release 模式：跳过 PRD/DoD 检查（release 只是发布，不是新功能）
+  # PRD/DoD 检查策略:
+  # - Release 模式: 跳过 PRD/DoD（release 只是发布，不是新功能）
+  # - CI 环境 + PR 模式（GITHUB_ACTIONS=true）: 跳过 PRD/DoD（它们是本地工作文档，不会提交到 develop/main）
+  # - 本地 PR 模式: 检查 PRD/DoD（本地开发验证）
   if [[ "$MODE" == "release" ]]; then
     echo ""
     echo "  [Release 模式] 跳过 PRD/DoD 检查"
+    PASSED=$((PASSED + 2))
+  elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo ""
+    echo "  [CI 模式] 跳过 PRD/DoD 检查（本地工作文档不提交）"
     PASSED=$((PASSED + 2))
   else
     check_prd
