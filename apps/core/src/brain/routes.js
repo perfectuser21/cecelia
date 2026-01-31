@@ -587,6 +587,55 @@ router.post('/action/trigger-n8n', async (req, res) => {
 
 // 注意：log-decision 不再对外暴露，由 handleAction 内部自动记录
 
+// ==================== Query Status Handler ====================
+
+/**
+ * Execute a query_status intent by fetching relevant data
+ */
+async function executeQueryStatus(parsedIntent) {
+  const entities = parsedIntent.entities || {};
+  const result = { handler: 'queryStatus', data: {} };
+
+  if (entities.module || entities.feature) {
+    const searchTerm = entities.module || entities.feature;
+    const tasks = await pool.query(`
+      SELECT id, title, status, priority, updated_at
+      FROM tasks
+      WHERE title ILIKE $1 OR description ILIKE $1
+      ORDER BY priority ASC, updated_at DESC
+      LIMIT 20
+    `, [`%${searchTerm}%`]);
+    result.data.tasks = tasks.rows;
+    result.data.query = `Tasks matching "${searchTerm}"`;
+  } else {
+    const [tasks, goals] = await Promise.all([
+      pool.query(`
+        SELECT id, title, status, priority, updated_at
+        FROM tasks
+        WHERE status NOT IN ('completed', 'cancelled')
+        ORDER BY priority ASC, updated_at DESC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT id, title, status, priority, progress
+        FROM goals
+        WHERE status NOT IN ('completed', 'cancelled')
+        ORDER BY priority ASC
+        LIMIT 10
+      `)
+    ]);
+    result.data.tasks = tasks.rows;
+    result.data.goals = goals.rows;
+    result.data.summary = {
+      open_tasks: tasks.rows.length,
+      active_goals: goals.rows.length
+    };
+    result.data.query = 'General status overview';
+  }
+
+  return result;
+}
+
 // ==================== Intent API（KR1 意图识别）====================
 
 /**
@@ -728,7 +777,7 @@ router.get('/intent/types', (req, res) => {
  */
 router.post('/intent/execute', async (req, res) => {
   try {
-    const { input, dry_run = false } = req.body;
+    const { input, dry_run = false, confidence_threshold } = req.body;
 
     if (!input || typeof input !== 'string') {
       return res.status(400).json({
@@ -738,58 +787,84 @@ router.post('/intent/execute', async (req, res) => {
     }
 
     const parsed = await parseIntent(input);
+    const actionMapping = INTENT_ACTION_MAP[parsed.intentType] || { action: null, handler: null };
 
-    if (dry_run || !parsed.suggestedAction) {
+    // Dry run: return parsed intent without executing
+    if (dry_run) {
       return res.json({
         success: true,
         parsed,
+        actionMapping,
         executed: null,
-        message: dry_run ? 'Dry run - no action executed' : 'No action mapped for this intent type'
+        message: 'Dry run - no action executed'
       });
     }
 
-    // Execute the mapped action
-    const { action, params } = parsed.suggestedAction;
-    let result;
-
-    const ACTION_HANDLERS = {
-      'create-goal': () => createGoal(params),
-      'create-task': () => createTask(params)
-    };
-
-    const handler = ACTION_HANDLERS[action];
-    if (!handler) {
+    // Confidence threshold check (default 0.4, configurable)
+    const threshold = confidence_threshold ?? 0.4;
+    if (parsed.confidence < threshold) {
       return res.json({
         success: true,
         parsed,
+        actionMapping,
         executed: null,
-        message: `Action "${action}" has no direct handler`
+        message: `Confidence ${parsed.confidence.toFixed(2)} below threshold ${threshold} - no action executed`
       });
     }
 
-    result = await handler();
-    console.log(`[Intent] Executed action: ${action}`, result);
+    // Path 1: Direct brain action (via handleAction for whitelist + idempotency + logging)
+    if (parsed.suggestedAction) {
+      const { action, params } = parsed.suggestedAction;
+      const idempotencyKey = `intent-${action}-${crypto.randomUUID()}`;
+      const result = await handleAction(action, params, idempotencyKey, 'intent-execute');
 
-    // Log the decision
-    try {
-      await pool.query(`
-        INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-        VALUES ($1, $2, $3, $4, $5)
-      `, [
-        'intent-execute',
-        input.slice(0, 200),
-        { action, params, intentType: parsed.intentType },
-        result || {},
-        result?.id ? 'success' : 'failed'
-      ]);
-    } catch (logErr) {
-      console.error('[Intent] Failed to log decision:', logErr.message);
+      return res.json({
+        success: true,
+        parsed,
+        actionMapping,
+        executed: { type: 'action', action, params, result }
+      });
     }
 
+    // Path 2: Handler-based execution
+    if (actionMapping.handler) {
+      let handlerResult;
+
+      if (actionMapping.handler === 'queryStatus') {
+        handlerResult = await executeQueryStatus(parsed);
+      } else if (actionMapping.handler === 'parseAndCreate') {
+        const createResult = await parseAndCreate(input);
+        handlerResult = {
+          handler: 'parseAndCreate',
+          project: createResult.created.project,
+          tasks: createResult.created.tasks
+        };
+      }
+
+      if (handlerResult) {
+        await internalLogDecision(
+          'intent-execute',
+          input.slice(0, 200),
+          { handler: actionMapping.handler, intentType: parsed.intentType },
+          handlerResult
+        );
+
+        return res.json({
+          success: true,
+          parsed,
+          actionMapping,
+          executed: { type: 'handler', handler: actionMapping.handler, result: handlerResult }
+        });
+      }
+    }
+
+    // No action or handler matched
     res.json({
       success: true,
       parsed,
-      executed: { action, result }
+      actionMapping,
+      executed: null,
+      message: 'No action or handler mapped for this intent type'
     });
   } catch (err) {
     res.status(500).json({

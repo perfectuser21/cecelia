@@ -805,3 +805,58 @@ describe('Intent Recognition Module', () => {
     });
   });
 });
+
+// ==================== Intent-to-Action Mapping Tests ====================
+
+describe('Intent-to-Action Mapping', () => {
+  it('maps create_goal to create-goal action', () => {
+    const mapping = INTENT_ACTION_MAP[INTENT_TYPES.CREATE_GOAL];
+    expect(mapping.action).toBe('create-goal');
+    expect(mapping.requiredParams).toContain('title');
+  });
+
+  it('maps create_task to create-task action', () => {
+    const mapping = INTENT_ACTION_MAP[INTENT_TYPES.CREATE_TASK];
+    expect(mapping.action).toBe('create-task');
+    expect(mapping.requiredParams).toContain('title');
+  });
+
+  it('maps query_status to queryStatus handler', () => {
+    const mapping = INTENT_ACTION_MAP[INTENT_TYPES.QUERY_STATUS];
+    expect(mapping.action).toBeNull();
+    expect(mapping.handler).toBe('queryStatus');
+  });
+
+  it('maps create_project to parseAndCreate handler', () => {
+    const mapping = INTENT_ACTION_MAP[INTENT_TYPES.CREATE_PROJECT];
+    expect(mapping.action).toBeNull();
+    expect(mapping.handler).toBe('parseAndCreate');
+  });
+
+  it('maps unknown to null action and handler', () => {
+    const mapping = INTENT_ACTION_MAP[INTENT_TYPES.UNKNOWN];
+    expect(mapping.action).toBeNull();
+    expect(mapping.handler).toBeNull();
+  });
+
+  it('parseIntent returns suggestedAction for create_goal', async () => {
+    const result = await parseIntent('创建一个 P0 目标：提升系统稳定性');
+    expect(result.suggestedAction).toBeTruthy();
+    expect(result.suggestedAction.action).toBe('create-goal');
+    expect(result.suggestedAction.params.title).toBeTruthy();
+  });
+
+  it('parseIntent returns null suggestedAction for query_status', async () => {
+    const result = await parseIntent('当前有哪些任务？');
+    expect(result.suggestedAction).toBeNull();
+  });
+
+  it('confidence level correctly categorized', async () => {
+    const highConf = await parseIntent('创建一个 P0 目标：提升系统稳定性');
+    expect(['high', 'medium']).toContain(highConf.confidenceLevel);
+
+    const lowConf = await parseIntent('hello');
+    expect(lowConf.confidenceLevel).toBe('low');
+    expect(lowConf.confidence).toBeLessThan(0.4);
+  });
+});
