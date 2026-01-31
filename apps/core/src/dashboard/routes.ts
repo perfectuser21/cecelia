@@ -5,6 +5,8 @@
 
 import { Router, Request, Response } from 'express';
 import { taskTracker } from './services/task-tracker.js';
+// @ts-expect-error - intent.js is untyped
+import { parseIntent, parseAndCreate, INTENT_TYPES } from '../brain/intent.js';
 
 /**
  * Extract error message from unknown error type
@@ -325,6 +327,114 @@ router.get('/health', (_req: Request, res: Response) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
   });
+});
+
+/**
+ * POST /api/cecelia/chat
+ * Front-desk dialogue API: receive natural language → parse intent → execute/reply
+ */
+router.post('/chat', async (req: Request, res: Response) => {
+  try {
+    const { message } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'message is required and must be a string',
+      });
+    }
+
+    if (message.length > 10000) {
+      return res.status(400).json({
+        success: false,
+        error: 'message too long, maximum 10000 characters',
+      });
+    }
+
+    // Parse intent
+    const parsed = await parseIntent(message);
+    const intentType = parsed.intentType;
+
+    const intent = {
+      type: intentType,
+      confidence: parsed.confidence,
+      entities: parsed.entities || {},
+    };
+
+    // Execute based on intent type
+    const createIntents = [
+      INTENT_TYPES.CREATE_TASK,
+      INTENT_TYPES.CREATE_GOAL,
+      INTENT_TYPES.CREATE_PROJECT,
+      INTENT_TYPES.CREATE_FEATURE,
+      INTENT_TYPES.FIX_BUG,
+      INTENT_TYPES.REFACTOR,
+    ];
+
+    if (createIntents.includes(intentType)) {
+      // Creation intents: parse and create in database
+      const result = await parseAndCreate(message, {
+        createProject: intentType === INTENT_TYPES.CREATE_PROJECT || intentType === INTENT_TYPES.CREATE_FEATURE,
+        createTasks: true,
+      });
+
+      const createdItems = result.created.tasks;
+      const itemNames = createdItems.map((t: { title: string }) => t.title).join('、');
+      const reply = createdItems.length === 1
+        ? `已创建任务「${itemNames}」`
+        : `已创建 ${createdItems.length} 个任务：${itemNames}`;
+
+      return res.json({
+        success: true,
+        reply,
+        intent,
+        action_result: {
+          type: 'created',
+          data: createdItems.length === 1 ? createdItems[0] : createdItems,
+        },
+      });
+    }
+
+    if (intentType === INTENT_TYPES.QUERY_STATUS) {
+      // Query intent: fetch tasks and goals from database
+      const pool = (await import('../task-system/db.js')).default;
+      const tasksResult = await pool.query(
+        `SELECT id, title, status, priority FROM tasks ORDER BY created_at DESC LIMIT 20`
+      );
+      const tasks = tasksResult.rows;
+      const inProgress = tasks.filter((t: { status: string }) => t.status === 'in_progress').length;
+      const queued = tasks.filter((t: { status: string }) => t.status === 'queued').length;
+
+      return res.json({
+        success: true,
+        reply: `当前有 ${inProgress} 个进行中的任务，${queued} 个排队中`,
+        intent,
+        action_result: {
+          type: 'query',
+          data: tasks,
+        },
+      });
+    }
+
+    // Other intents (explore, question, unknown): return parsed intent only
+    const reply = intentType === INTENT_TYPES.UNKNOWN
+      ? '我不太理解你的意思，可以换个方式描述吗？'
+      : `已识别意图：${intentType}（置信度 ${Math.round(parsed.confidence * 100)}%）`;
+
+    return res.json({
+      success: true,
+      reply,
+      intent,
+      action_result: null,
+    });
+  } catch (error: unknown) {
+    console.error('[Cecelia Chat] Error:', getErrorMessage(error));
+    const errorResponse: ErrorResponse = {
+      success: false,
+      error: 'Internal error processing message',
+    };
+    return res.status(500).json(errorResponse);
+  }
 });
 
 export default router;
