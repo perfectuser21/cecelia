@@ -32,8 +32,12 @@ interface Task {
   status: string;
   priority: string;
   goal_id: string;
+  project_id?: string;
   description?: string;
   created_at?: string;
+  updated_at?: string;
+  completed_at?: string;
+  started_at?: string;
 }
 
 interface Project {
@@ -188,6 +192,22 @@ function OverviewPage({
     return { total, completed, percent: total > 0 ? Math.round((completed / total) * 100) : 0 };
   };
 
+  // 计算今日统计
+  const getTodayStats = () => {
+    const today = new Date().toDateString();
+    const todayCompleted = tasks.filter((t: Task) => {
+      if (t.status !== 'completed' || !t.completed_at) return false;
+      return new Date(t.completed_at).toDateString() === today;
+    }).length;
+    const todayStarted = tasks.filter((t: Task) => {
+      if (!t.started_at) return false;
+      return new Date(t.started_at).toDateString() === today;
+    }).length;
+    return { todayCompleted, todayStarted };
+  };
+
+  const todayStats = getTodayStats();
+
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -230,33 +250,43 @@ function OverviewPage({
           </p>
         </SummaryCard>
 
-        {/* Current Execution */}
+        {/* Today Stats + Current Execution */}
         <SummaryCard
           icon={Play}
-          title="当前执行"
+          title="今日执行"
           subtitle={`Tick: ${tickStatus?.enabled ? '已启用' : '已禁用'}`}
           color="blue"
           onClick={() => navigate('/command/execution')}
         >
+          {/* Today Stats */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{todayStats.todayCompleted}</p>
+              <p className="text-xs text-slate-500">今日完成</p>
+            </div>
+            <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{todayStats.todayStarted}</p>
+              <p className="text-xs text-slate-500">今日启动</p>
+            </div>
+          </div>
+          {/* Running Tasks */}
           {runningTasks.length > 0 ? (
             <div className="space-y-2">
+              <p className="text-xs text-slate-500 font-medium">执行中:</p>
               {runningTasks.slice(0, 2).map((task: Task) => (
-                <div key={task.id} className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+                <div key={task.id} className="p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
                   <div className="flex items-center gap-2">
-                    <Play className="w-4 h-4 text-blue-500 animate-pulse" />
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
-                      {task.title.slice(0, 40)}...
+                    <Play className="w-3 h-3 text-blue-500 animate-pulse" />
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
+                      {task.title.slice(0, 35)}...
                     </span>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-slate-500 dark:text-slate-400 text-sm">暂无执行中的任务</p>
+            <p className="text-slate-500 dark:text-slate-400 text-xs">暂无执行中的任务</p>
           )}
-          <div className="mt-3 text-xs text-slate-500">
-            今日执行: {tickStatus?.actions_today || 0} 次
-          </div>
         </SummaryCard>
       </div>
 
@@ -446,13 +476,20 @@ function OKRListPage({ goals, tasks, navigate }: any) {
           const completedTasks = krs.reduce((sum: number, kr: Goal) =>
             sum + getTasksForGoal(kr.id).filter((t: Task) => t.status === 'completed').length, 0);
 
+          // Calculate O progress = average of KR progresses
+          const krProgresses = krs.map((kr: Goal) => {
+            const krTasks = getTasksForGoal(kr.id);
+            return krTasks.length > 0 ? (krTasks.filter((t: Task) => t.status === 'completed').length / krTasks.length) * 100 : 0;
+          });
+          const oProgress = krProgresses.length > 0 ? Math.round(krProgresses.reduce((a, b) => a + b, 0) / krProgresses.length) : 0;
+
           return (
             <div key={obj.id} className="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <button
                 onClick={() => toggleGoal(obj.id)}
                 className="w-full p-6 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     {expandedGoals.has(obj.id) ? <ChevronDown className="w-5 h-5 text-purple-500" /> : <ChevronRight className="w-5 h-5 text-purple-500" />}
                     <Target className="w-5 h-5 text-purple-500" />
@@ -466,6 +503,16 @@ function OKRListPage({ goals, tasks, navigate }: any) {
                       {obj.priority || 'P1'}
                     </span>
                   </div>
+                </div>
+                {/* Objective Progress Bar */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-3 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500 transition-all"
+                      style={{ width: `${oProgress}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium text-purple-600 dark:text-purple-400 w-12 text-right">{oProgress}%</span>
                 </div>
               </button>
 
@@ -539,8 +586,16 @@ function OKRListPage({ goals, tasks, navigate }: any) {
 }
 
 // ==================== Projects List Page ====================
-function ProjectsListPage({ projects, navigate }: any) {
+function ProjectsListPage({ projects, tasks, navigate }: any) {
   const topLevelProjects = projects.filter((p: Project) => !p.parent_id);
+
+  const getProjectStats = (projectId: string) => {
+    const projectTasks = tasks.filter((t: Task) => t.project_id === projectId);
+    const total = projectTasks.length;
+    const completed = projectTasks.filter((t: Task) => t.status === 'completed').length;
+    const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, completionRate };
+  };
 
   return (
     <div>
@@ -549,28 +604,49 @@ function ProjectsListPage({ projects, navigate }: any) {
       <h1 className="text-2xl font-bold text-slate-800 dark:text-white mb-6">Projects</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {topLevelProjects.map((project: Project) => (
-          <button
-            key={project.id}
-            onClick={() => navigate(`/command/projects/${project.id}`)}
-            className="p-6 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-left hover:border-emerald-300 hover:shadow-lg transition-all"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                <Folder className="w-5 h-5 text-emerald-500" />
+        {topLevelProjects.map((project: Project) => {
+          const stats = getProjectStats(project.id);
+          return (
+            <button
+              key={project.id}
+              onClick={() => navigate(`/command/projects/${project.id}`)}
+              className="p-6 rounded-2xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-left hover:border-emerald-300 hover:shadow-lg transition-all"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                  <Folder className="w-5 h-5 text-emerald-500" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-slate-800 dark:text-white">{project.name}</h3>
+                  {project.repo_path && (
+                    <p className="text-xs text-slate-500 truncate">{project.repo_path}</p>
+                  )}
+                </div>
               </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-slate-800 dark:text-white">{project.name}</h3>
-                {project.repo_path && (
-                  <p className="text-xs text-slate-500 truncate">{project.repo_path}</p>
-                )}
+              {project.description && (
+                <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-2 mb-3">{project.description}</p>
+              )}
+              {/* Task Stats */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-2">
+                  <ListTodo className="w-4 h-4 text-slate-400" />
+                  <span className="text-sm text-slate-600 dark:text-slate-300">
+                    {stats.completed}/{stats.total} tasks
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-16 h-2 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all"
+                      style={{ width: `${stats.completionRate}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-slate-500">{stats.completionRate}%</span>
+                </div>
               </div>
-            </div>
-            {project.description && (
-              <p className="text-sm text-slate-600 dark:text-slate-300 line-clamp-2">{project.description}</p>
-            )}
-          </button>
-        ))}
+            </button>
+          );
+        })}
 
         {topLevelProjects.length === 0 && (
           <div className="col-span-full text-center py-12 text-slate-500">
@@ -583,13 +659,38 @@ function ProjectsListPage({ projects, navigate }: any) {
 }
 
 // ==================== Tasks List Page ====================
-function TasksListPage({ tasks, navigate }: any) {
-  const [filter, setFilter] = useState<string>('all');
+function TasksListPage({ tasks, projects, navigate }: any) {
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [projectFilter, setProjectFilter] = useState<string>('all');
+  const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [groupByProject, setGroupByProject] = useState<boolean>(true);
 
+  // Apply filters
   const filteredTasks = tasks.filter((t: Task) => {
-    if (filter === 'all') return true;
-    return t.status === filter;
+    if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+    // Handle unassigned project filter correctly
+    if (projectFilter === 'unassigned') {
+      if (t.project_id) return false;
+    } else if (projectFilter !== 'all' && t.project_id !== projectFilter) {
+      return false;
+    }
+    if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
+    return true;
   });
+
+  // Group by project
+  const tasksByProject = filteredTasks.reduce((acc: Record<string, Task[]>, task: Task) => {
+    const projectId = task.project_id || 'unassigned';
+    if (!acc[projectId]) acc[projectId] = [];
+    acc[projectId].push(task);
+    return acc;
+  }, {});
+
+  const getProjectName = (projectId: string) => {
+    if (projectId === 'unassigned') return '未分配';
+    const project = projects.find((p: Project) => p.id === projectId);
+    return project?.name || projectId.slice(0, 8);
+  };
 
   const statusCounts = {
     all: tasks.length,
@@ -598,65 +699,147 @@ function TasksListPage({ tasks, navigate }: any) {
     completed: tasks.filter((t: Task) => t.status === 'completed').length,
   };
 
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
+      case 'in_progress': return <Play className="w-4 h-4 text-blue-500 animate-pulse" />;
+      default: return <Clock className="w-4 h-4 text-amber-500" />;
+    }
+  };
+
+  const TaskItem = ({ task }: { task: Task }) => (
+    <button
+      onClick={() => navigate(`/command/tasks/${task.id}`)}
+      className="w-full p-3 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-left hover:border-blue-300 transition-all"
+    >
+      <div className="flex items-center gap-3">
+        {getStatusIcon(task.status)}
+        <span className={`flex-1 text-sm ${task.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-200'}`}>
+          {task.title}
+        </span>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${
+          task.priority === 'P0' ? 'bg-red-200 text-red-700' :
+          task.priority === 'P1' ? 'bg-orange-100 text-orange-600' :
+          'bg-slate-100 text-slate-500'
+        }`}>
+          {task.priority}
+        </span>
+      </div>
+    </button>
+  );
+
   return (
     <div>
       <Breadcrumb items={[{ label: 'Tasks' }]} />
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Tasks</h1>
-        <div className="flex gap-2">
-          {(['all', 'queued', 'in_progress', 'completed'] as const).map(status => (
-            <button
-              key={status}
-              onClick={() => setFilter(status)}
-              className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                filter === status
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              {status === 'all' ? 'All' : status === 'in_progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)} ({statusCounts[status]})
-            </button>
-          ))}
+        <button
+          onClick={() => setGroupByProject(!groupByProject)}
+          className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+            groupByProject ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600'
+          }`}
+        >
+          {groupByProject ? 'Grouped' : 'Flat'}
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4 mb-6 p-4 rounded-xl bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+        {/* Status Filter */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Status:</span>
+          <div className="flex gap-1">
+            {(['all', 'queued', 'in_progress', 'completed'] as const).map(status => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-2 py-1 rounded text-xs transition-all ${
+                  statusFilter === status
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                {status === 'all' ? 'All' : status === 'in_progress' ? 'Running' : status.charAt(0).toUpperCase() + status.slice(1)}
+                {status !== 'all' && <span className="ml-1">({statusCounts[status]})</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Project Filter */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Project:</span>
+          <select
+            value={projectFilter}
+            onChange={(e) => setProjectFilter(e.target.value)}
+            className="px-2 py-1 rounded text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-0"
+          >
+            <option value="all">All Projects</option>
+            {projects.map((p: Project) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+            <option value="unassigned">Unassigned</option>
+          </select>
+        </div>
+
+        {/* Priority Filter */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Priority:</span>
+          <div className="flex gap-1">
+            {['all', 'P0', 'P1', 'P2'].map(priority => (
+              <button
+                key={priority}
+                onClick={() => setPriorityFilter(priority)}
+                className={`px-2 py-1 rounded text-xs transition-all ${
+                  priorityFilter === priority
+                    ? priority === 'P0' ? 'bg-red-500 text-white' :
+                      priority === 'P1' ? 'bg-orange-500 text-white' :
+                      priority === 'P2' ? 'bg-slate-500 text-white' :
+                      'bg-blue-500 text-white'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                {priority === 'all' ? 'All' : priority}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {filteredTasks.map((task: Task) => (
-          <button
-            key={task.id}
-            onClick={() => navigate(`/command/tasks/${task.id}`)}
-            className="w-full p-4 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-left hover:border-blue-300 transition-all"
-          >
-            <div className="flex items-center gap-3">
-              {task.status === 'completed' ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-              ) : task.status === 'in_progress' ? (
-                <Play className="w-5 h-5 text-blue-500 animate-pulse" />
-              ) : (
-                <Clock className="w-5 h-5 text-amber-500" />
-              )}
-              <span className={`flex-1 ${task.status === 'completed' ? 'line-through text-slate-400' : 'text-slate-700 dark:text-slate-200'}`}>
-                {task.title}
-              </span>
-              <span className={`text-xs px-2 py-1 rounded ${
-                task.priority === 'P0' ? 'bg-red-200 text-red-700' :
-                task.priority === 'P1' ? 'bg-orange-100 text-orange-600' :
-                'bg-slate-100 text-slate-500'
-              }`}>
-                {task.priority}
-              </span>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
+      {/* Tasks List */}
+      {groupByProject ? (
+        <div className="space-y-6">
+          {Object.entries(tasksByProject).map(([projectId, projectTasks]) => (
+            <div key={projectId} className="bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                <div className="flex items-center gap-3">
+                  <Folder className="w-5 h-5 text-emerald-500" />
+                  <span className="font-semibold text-slate-800 dark:text-white">{getProjectName(projectId)}</span>
+                  <span className="text-xs text-slate-500">({(projectTasks as Task[]).length} tasks)</span>
+                </div>
+              </div>
+              <div className="p-3 space-y-2">
+                {(projectTasks as Task[]).map((task: Task) => (
+                  <TaskItem key={task.id} task={task} />
+                ))}
+              </div>
             </div>
-          </button>
-        ))}
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredTasks.map((task: Task) => (
+            <TaskItem key={task.id} task={task} />
+          ))}
+        </div>
+      )}
 
-        {filteredTasks.length === 0 && (
-          <div className="text-center py-12 text-slate-500">
-            暂无任务
-          </div>
-        )}
-      </div>
+      {filteredTasks.length === 0 && (
+        <div className="text-center py-12 text-slate-500">
+          暂无任务
+        </div>
+      )}
     </div>
   );
 }
@@ -812,8 +995,8 @@ export default function CommandCenter() {
             />
           } />
           <Route path="/okr" element={<OKRListPage goals={goals} tasks={tasks} navigate={navigate} />} />
-          <Route path="/projects" element={<ProjectsListPage projects={projects} navigate={navigate} />} />
-          <Route path="/tasks" element={<TasksListPage tasks={tasks} navigate={navigate} />} />
+          <Route path="/projects" element={<ProjectsListPage projects={projects} tasks={tasks} navigate={navigate} />} />
+          <Route path="/tasks" element={<TasksListPage tasks={tasks} projects={projects} navigate={navigate} />} />
           <Route path="/vps" element={<VPSDetailPage vpsSlots={vpsSlots} />} />
           <Route path="/execution" element={
             <div>

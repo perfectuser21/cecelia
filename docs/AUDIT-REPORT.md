@@ -1,22 +1,42 @@
-# Audit Report
+---
+id: audit-report-command-center-v3
+version: 1.0.0
+created: 2026-01-31
+---
 
-Branch: cp-01310035-projects-list
+# Audit Report - Command Center 数据展示优化
+
+Branch: cp-command-center-v3
 Date: 2026-01-31
-Scope: No code changes (verification task)
 Target Level: L2
-
-## Summary
-
-L1: 0
-L2: 0
-L3: 0
-L4: 0
 
 ## Decision: PASS
 
-## Findings
+## Summary
 
-No code changes in this PR. This is a verification task to confirm existing Projects List functionality works correctly.
+| Level | Count | Description |
+|-------|-------|-------------|
+| L1 (Blocker) | 0 | No blocking issues |
+| L2 (Functional) | 0 | All fixed |
+| L3 (Best Practice) | 4 | Non-blocking |
+| L4 (Over-optimization) | 1 | Theoretical |
+
+## Fixed Issues
+
+### L2-01: Today statistics (FIXED)
+- Added `getTodayStats()` using `completed_at` and `started_at`
+- Now correctly shows today's completed/started tasks
+
+### L2-02: Unassigned project filter (FIXED)
+- Fixed filter logic for `undefined` project_id
+- `unassigned` option now works correctly
+
+## Remaining L3 Issues (Non-blocking)
+
+- Unused imports (Share2, Briefcase)
+- Unused `location` variable
+- Loose typing with `any`
+- Duplicate files (dashboard mirrors core)
 
 ## Blockers
 
