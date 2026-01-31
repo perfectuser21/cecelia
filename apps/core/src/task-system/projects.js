@@ -187,4 +187,112 @@ router.get('/:id/stats', async (req, res) => {
   }
 });
 
+// GET /api/projects/:id/health - Get project health score
+router.get('/:id/health', async (req, res) => {
+  try {
+    const projectCheck = await pool.query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
+    if (projectCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const projectId = req.params.id;
+
+    const taskResult = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'in_progress' AND updated_at < NOW() - INTERVAL '7 days') as stale,
+        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days') as recently_active
+      FROM tasks WHERE project_id = $1
+    `, [projectId]);
+
+    const goalResult = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COALESCE(AVG(progress), 0) as avg_progress
+      FROM goals WHERE project_id = $1
+    `, [projectId]);
+
+    const tasks = taskResult.rows[0];
+    const goals = goalResult.rows[0];
+    const totalTasks = parseInt(tasks.total);
+    const totalGoals = parseInt(goals.total);
+
+    if (totalTasks === 0 && totalGoals === 0) {
+      return res.json({
+        health_score: 0,
+        health_status: 'critical',
+        message: 'No tasks or goals found for this project',
+        breakdown: {
+          task_completion: { score: 0, weight: 0.4, completed: 0, total: 0 },
+          goal_progress: { score: 0, weight: 0.3, avg_progress: 0, total: 0 },
+          stale_tasks: { score: 0, weight: 0.2, stale_count: 0, total: 0 },
+          activity: { score: 0, weight: 0.1, recently_active: 0, total: 0 }
+        }
+      });
+    }
+
+    const taskCompletionScore = totalTasks > 0
+      ? (parseInt(tasks.completed) / totalTasks) * 100
+      : 0;
+
+    const goalProgressScore = parseFloat(goals.avg_progress);
+
+    const staleScore = totalTasks > 0
+      ? (1 - parseInt(tasks.stale) / totalTasks) * 100
+      : 100;
+
+    const activityScore = totalTasks > 0
+      ? (parseInt(tasks.recently_active) / totalTasks) * 100
+      : 0;
+
+    const healthScore = Math.round(
+      taskCompletionScore * 0.4 +
+      goalProgressScore * 0.3 +
+      staleScore * 0.2 +
+      activityScore * 0.1
+    );
+
+    const clampedScore = Math.max(0, Math.min(100, healthScore));
+
+    let healthStatus;
+    if (clampedScore >= 70) healthStatus = 'healthy';
+    else if (clampedScore >= 40) healthStatus = 'at_risk';
+    else healthStatus = 'critical';
+
+    res.json({
+      health_score: clampedScore,
+      health_status: healthStatus,
+      breakdown: {
+        task_completion: {
+          score: Math.round(taskCompletionScore),
+          weight: 0.4,
+          completed: parseInt(tasks.completed),
+          total: totalTasks
+        },
+        goal_progress: {
+          score: Math.round(goalProgressScore),
+          weight: 0.3,
+          avg_progress: Math.round(parseFloat(goals.avg_progress)),
+          total: totalGoals
+        },
+        stale_tasks: {
+          score: Math.round(staleScore),
+          weight: 0.2,
+          stale_count: parseInt(tasks.stale),
+          total: totalTasks
+        },
+        activity: {
+          score: Math.round(activityScore),
+          weight: 0.1,
+          recently_active: parseInt(tasks.recently_active),
+          total: totalTasks
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get project health', details: err.message });
+  }
+});
+
 export default router;
