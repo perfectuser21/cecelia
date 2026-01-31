@@ -1,5 +1,5 @@
 ---
-id: qa-decision-seats-api-steps-align
+id: qa-decision-prd-template-engine
 version: 1.0.0
 created: 2026-01-31
 updated: 2026-01-31
@@ -11,24 +11,21 @@ changelog:
 
 Decision: NO_RCI
 Priority: P1
-RepoType: Platform
+RepoType: Engine
 
 Tests:
-  - dod_item: "GET /api/cecelia/seats 返回正确结构"
-    method: manual
-    location: manual:curl localhost:5212/api/cecelia/seats
-  - dod_item: "DEV_WORKFLOW_STEPS 包含 11 步"
-    method: manual
-    location: manual:检查 types.ts 常量
-  - dod_item: "TypeScript 编译通过"
-    method: manual
-    location: manual:npx tsc --noEmit
-  - dod_item: "现有测试不被破坏"
-    method: manual
-    location: manual:运行现有测试
+  - dod_item: "generatePrdFromGoalKR 输出包含完整字段"
+    method: auto
+    location: apps/core/src/brain/__tests__/templates.test.js
+  - dod_item: "planner.js 调用 generatePrdFromGoalKR"
+    method: auto
+    location: apps/core/src/brain/__tests__/templates.test.js
+  - dod_item: "现有测试全部通过"
+    method: auto
+    location: apps/core/src/brain/__tests__/templates.test.js
 
 RCI:
   new: []
   update: []
 
-Reason: 新增只读 seats 查询端点和步骤常量更新，属于 Platform 层。不修改现有 Cecelia runs/checkpoints 逻辑，不影响 RCI-P-030~032 契约（只读查询不改变状态追踪链路），无需新增或更新 RCI。由 CI 编译检查覆盖。
+Reason: 模板引擎增强，不涉及核心 Hook/Gate/CI 流程，通过单元测试覆盖。

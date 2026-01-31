@@ -12,6 +12,7 @@ import {
   renderPrd,
   renderTrd,
   generatePrdFromTask,
+  generatePrdFromGoalKR,
   generateTrdFromGoal,
   getTemplate,
   listTemplates,
@@ -448,6 +449,60 @@ describe('Templates Module', () => {
     it('returns date in YYYY-MM-DD format', () => {
       const date = getCurrentDate();
       expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+
+  describe('generatePrdFromGoalKR', () => {
+    it('generates full PRD with all Goal+KR+Project params', () => {
+      const prd = generatePrdFromGoalKR({
+        title: 'Implement TRD engine',
+        description: 'Build TRD markdown generator from KR context',
+        kr: { title: 'TRD 模板完整性', progress: 45, priority: 'P0' },
+        project: { name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' }
+      });
+
+      expect(prd).toContain('---');
+      expect(prd).toContain('id: prd-auto-');
+      expect(prd).toContain('version: 1.0.0');
+      expect(prd).toContain('# PRD - Implement TRD engine');
+      expect(prd).toContain('KR: TRD 模板完整性 (progress: 45%, priority: P0)');
+      expect(prd).toContain('Project: cecelia-workspace');
+      expect(prd).toContain('Build TRD markdown generator from KR context');
+      expect(prd).toContain('/home/xx/dev/cecelia-workspace');
+      expect(prd).toContain('## 非目标');
+    });
+
+    it('generates generic PRD without kr/project params', () => {
+      const prd = generatePrdFromGoalKR({
+        title: 'Simple task',
+        description: 'A simple task description'
+      });
+
+      expect(prd).toContain('# PRD - Simple task');
+      expect(prd).toContain('Auto-generated task');
+      expect(prd).not.toContain('KR:');
+      expect(prd).toContain('A simple task description');
+      expect(prd).toContain('TBD');
+      expect(prd).toContain('## 非目标');
+    });
+
+    it('handles kr with missing fields gracefully', () => {
+      const prd = generatePrdFromGoalKR({
+        title: 'Partial KR task',
+        description: 'Test partial KR',
+        kr: { title: 'Some KR' }
+      });
+
+      expect(prd).toContain('KR: Some KR (progress: 0%, priority: P1)');
+      expect(prd).toContain('## 非目标');
+      expect(prd).not.toContain('undefined');
+    });
+
+    it('uses title as description fallback', () => {
+      const prd = generatePrdFromGoalKR({ title: 'Fallback test' });
+
+      expect(prd).toContain('## 功能描述');
+      expect(prd).toContain('Fallback test');
     });
   });
 
