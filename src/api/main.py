@@ -25,6 +25,7 @@ from src.api.state_routes_frozen import router as state_router
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
 from src.api.orchestrator_routes import router as orchestrator_router, set_database as set_orchestrator_database
+from src.api.semantic_routes import router as semantic_router, set_dependencies as set_semantic_dependencies
 from src.autumnrice.routes import router as autumnrice_router, set_database as set_autumnrice_database, ensure_tables as ensure_autumnrice_tables
 from src.state.patrol import ensure_patrol_table
 from src.state.agent_monitor import ensure_agent_tables
@@ -104,6 +105,9 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Database connection failed (State Layer disabled): {e}")
         database = None
 
+    # Set semantic route dependencies
+    set_semantic_dependencies(embedder, store, search_engine)
+
     logger.info("Semantic Brain initialized")
 
     yield
@@ -137,6 +141,9 @@ app.include_router(orchestrator_router)
 
 # Include autumnrice routes (秋米 - TRD/Task/Run state machine)
 app.include_router(autumnrice_router)
+
+# Include semantic routes (/v1/semantic/* for Node.js Brain integration)
+app.include_router(semantic_router)
 
 
 # Request/Response models
