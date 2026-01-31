@@ -221,3 +221,19 @@
 - **影响程度**: Medium - git wrapper 问题影响所有 Claude Code push 操作
 
 ---
+### [2026-02-01] Cecelia 前台对话 API - 补充测试用例
+
+- **Bug**: 
+  - Hook 检查需要 `.prd.md` 和 `.dod.md` 文件，但实际文件名为 `.prd-cecelia-conversation-api.md` 和 `.dod-cecelia-conversation-api.md`。解决方案：创建软链接 `ln -s .prd-cecelia-conversation-api.md .prd.md`
+  - 第一次 DoD Gate 审核失败，因为 PRD 要求调用 Brain API 的幂等性机制（idempotency_key），但实际实现直接操作数据库，不需要幂等性。解决方案：调整 PRD 移除 Brain API 调用要求，改为"直接操作数据库"以匹配实际实现
+
+- **优化点**: 
+  - **PRD/实现匹配性检查**：在 DoD Gate 阶段发现 PRD 描述与实际实现不符是好的，但应该在更早阶段（如 QA Gate）就发现这类不一致。建议：QA Gate 除了审查 PRD 合理性，也应检查与现有代码库的一致性
+  - **文件命名约定**：Hook 强制要求 `.prd.md` 和 `.dod.md`，但项目中习惯使用带任务名的文件名（如 `.prd-<task-name>.md`）。建议：要么修改 Hook 支持正则匹配（`.prd*.md`），要么统一项目文件命名约定
+  - **预实现场景处理**：当 API 和测试已经存在时，任务变成"补充测试用例"，但 /dev 流程仍按完整开发流程走。建议：增加"增量开发"模式，识别预实现场景并简化流程（跳过某些 checkpoint）
+
+- **影响程度**: Medium
+  - PRD/实现不匹配会导致审核失败，需要返工（影响效率）
+  - 文件命名问题需要手动创建软链接，增加额外操作
+  - 预实现场景下流程冗余，但不影响最终结果
+
