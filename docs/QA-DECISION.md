@@ -1,5 +1,5 @@
 ---
-id: qa-decision-planner-v3
+id: qa-decision-seats-api-steps-align
 version: 1.0.0
 created: 2026-01-31
 updated: 2026-01-31
@@ -11,30 +11,24 @@ changelog:
 
 Decision: NO_RCI
 Priority: P1
-RepoType: Business
+RepoType: Platform
 
 Tests:
-  - dod_item: "autoGenerateTask 生成具体 title"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
-  - dod_item: "每个任务有 payload.prd_path"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
-  - dod_item: "PRD 文件包含标准字段"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
-  - dod_item: "3 种 KR 分解策略"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
-  - dod_item: "语义去重"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
-  - dod_item: "现有测试通过"
-    method: auto
-    location: apps/core/dist/brain/__tests__/planner.test.js
+  - dod_item: "GET /api/cecelia/seats 返回正确结构"
+    method: manual
+    location: manual:curl localhost:5212/api/cecelia/seats
+  - dod_item: "DEV_WORKFLOW_STEPS 包含 11 步"
+    method: manual
+    location: manual:检查 types.ts 常量
+  - dod_item: "TypeScript 编译通过"
+    method: manual
+    location: manual:npx tsc --noEmit
+  - dod_item: "现有测试不被破坏"
+    method: manual
+    location: manual:运行现有测试
 
 RCI:
   new: []
   update: []
 
-Reason: Brain planner 升级属于 Business 逻辑改动，不涉及 Hook/Gate/CI 核心基础设施，无需 RCI。通过单元测试覆盖所有验收项。
+Reason: 新增只读 seats 查询端点和步骤常量更新，属于 Platform 层。不修改现有 Cecelia runs/checkpoints 逻辑，不影响 RCI-P-030~032 契约（只读查询不改变状态追踪链路），无需新增或更新 RCI。由 CI 编译检查覆盖。

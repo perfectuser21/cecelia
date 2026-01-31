@@ -199,6 +199,60 @@ router.patch('/checkpoints/:checkpointId', (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/cecelia/seats
+ * Get server seat (concurrency slot) status
+ */
+router.get('/seats', async (_req: Request, res: Response) => {
+  try {
+    const fs = await import('fs');
+    const MAX_SEATS = parseInt(process.env.MAX_CONCURRENT || '8', 10);
+    const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
+    const slots: { slot: number; mode: string; task_id?: string; title?: string; started?: string; duration?: string }[] = [];
+    for (let i = 1; i <= MAX_SEATS; i++) {
+      const slotDir = `${LOCK_DIR}/slot-${i}`;
+      if (fs.existsSync(slotDir)) {
+        try {
+          const infoPath = `${slotDir}/info.json`;
+          if (!fs.existsSync(infoPath)) { slots.push({ slot: i, mode: 'headless' }); continue; }
+          const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
+          let duration: string | undefined;
+          if (info.started) {
+            const mins = Math.floor((Date.now() - new Date(info.started).getTime()) / 60000);
+            duration = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60}m`;
+          }
+          slots.push({
+            slot: i,
+            mode: info.mode || 'headless',
+            task_id: info.task_id,
+            title: info.title,
+            started: info.started,
+            duration,
+          });
+        } catch {
+          slots.push({ slot: i, mode: 'headless' });
+        }
+      }
+    }
+    // Enrich slots with task title from DB
+    try {
+      const dbModule = await import('../task-system/db.js');
+      const pool = dbModule.default;
+      for (const slot of slots) {
+        if (!slot.title && slot.task_id) {
+          try {
+            const r = await pool.query('SELECT title FROM tasks WHERE id = $1', [slot.task_id]);
+            if (r.rows.length > 0) slot.title = r.rows[0].title;
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { /* DB not available */ }
+    return res.json({ total: MAX_SEATS, active: slots.length, slots });
+  } catch (err) {
+    return res.json({ total: 8, active: 0, slots: [], error: String(err) });
+  }
+});
+
+/**
  * GET /api/cecelia/overview
  * Get dashboard overview
  */

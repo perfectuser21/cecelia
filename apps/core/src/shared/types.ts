@@ -207,12 +207,14 @@ export interface DevTaskStatus {
 
 export const DEV_WORKFLOW_STEPS = [
   { id: 1, name: 'PRD' },
-  { id: 2, name: 'DoD' },
+  { id: 2, name: 'Detect' },
   { id: 3, name: 'Branch' },
-  { id: 4, name: 'Code' },
-  { id: 5, name: 'Test' },
-  { id: 6, name: 'Local Test' },
-  { id: 7, name: 'PR' },
-  { id: 8, name: 'QA' },
-  { id: 9, name: 'Merge' },
+  { id: 4, name: 'DoD' },
+  { id: 5, name: 'Code' },
+  { id: 6, name: 'Test' },
+  { id: 7, name: 'Quality' },
+  { id: 8, name: 'PR' },
+  { id: 9, name: 'CI' },
+  { id: 10, name: 'Learning' },
+  { id: 11, name: 'Cleanup' },
 ] as const;
