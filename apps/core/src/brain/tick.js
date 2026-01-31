@@ -9,6 +9,8 @@ import { updateTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
+import { emit } from './event-bus.js';
+import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -72,7 +74,8 @@ async function getTickStatus() {
     tick_running: _tickRunning,
     last_dispatch: lastDispatch,
     max_concurrent: MAX_CONCURRENT_TASKS,
-    dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES
+    dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
+    circuit_breakers: getAllStates()
   };
 }
 
@@ -159,6 +162,10 @@ function stopTickLoop() {
  */
 async function initTickLoop() {
   try {
+    // Ensure EventBus table exists
+    const { ensureEventsTable } = await import('./event-bus.js');
+    await ensureEventsTable();
+
     const status = await getTickStatus();
     if (status.enabled) {
       console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
@@ -312,7 +319,12 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, actions };
   }
 
-  // 2. Check cooldown
+  // 2. Circuit breaker check
+  if (!isAllowed('cecelia-run')) {
+    return { dispatched: false, reason: 'circuit_breaker_open', actions };
+  }
+
+  // 3. Check cooldown
   if ((Date.now() - _lastDispatchTime) <= DISPATCH_COOLDOWN_MS) {
     return { dispatched: false, reason: 'cooldown_active', actions };
   }
@@ -361,6 +373,13 @@ async function dispatchNextTask(goalIds) {
 
   _lastDispatchTime = Date.now();
 
+  await emit('task_dispatched', 'tick', {
+    task_id: nextTask.id,
+    title: nextTask.title,
+    run_id: execResult.runId,
+    success: execResult.success
+  });
+
   // Record dispatch info in working_memory
   await pool.query(`
     INSERT INTO working_memory (key, value_json, updated_at)
@@ -407,6 +426,12 @@ async function autoFailTimedOutTasks(inProgressTasks) {
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
     if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
       await updateTask({ task_id: task.id, status: 'failed' });
+      await recordFailure('cecelia-run');
+      await emit('patrol_cleanup', 'patrol', {
+        task_id: task.id,
+        title: task.title,
+        elapsed_minutes: Math.round(elapsed)
+      });
       await logTickDecision(
         'tick',
         `Auto-failed timed-out task: ${task.title} (${Math.round(elapsed)}min)`,

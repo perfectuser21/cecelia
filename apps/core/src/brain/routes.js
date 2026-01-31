@@ -11,6 +11,10 @@ import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
 import { generatePrdFromTask, generateTrdFromGoal, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
+import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
+import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
+import { emit as emitEvent } from './event-bus.js';
+import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import crypto from 'crypto';
 
 const router = Router();
@@ -1091,6 +1095,15 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus}`);
 
+    // Record to EventBus and Circuit Breaker
+    if (newStatus === 'completed') {
+      await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
+      await cbSuccess('cecelia-run');
+    } else if (newStatus === 'failed') {
+      await emitEvent('task_failed', 'executor', { task_id, run_id, status });
+      await cbFailure('cecelia-run');
+    }
+
     // 5. Rollup progress to KR and O
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
@@ -1644,6 +1657,62 @@ router.post('/plan/next', async (req, res) => {
       details: err.message
     });
   }
+});
+
+// ==================== Events API (EventBus) ====================
+
+/**
+ * GET /api/brain/events
+ * Query event stream with optional filters
+ */
+router.get('/events', async (req, res) => {
+  try {
+    await ensureEventsTable();
+    const { event_type, source, limit, since } = req.query;
+    const events = await queryEvents({
+      eventType: event_type,
+      source,
+      limit: limit ? parseInt(limit) : 50,
+      since
+    });
+    res.json({ success: true, events });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to query events', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/events/counts
+ * Get event counts by type since a given time
+ */
+router.get('/events/counts', async (req, res) => {
+  try {
+    await ensureEventsTable();
+    const since = req.query.since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const counts = await getEventCounts(since);
+    res.json({ success: true, since, counts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get event counts', details: err.message });
+  }
+});
+
+// ==================== Circuit Breaker API ====================
+
+/**
+ * GET /api/brain/circuit-breaker
+ * Get all circuit breaker states
+ */
+router.get('/circuit-breaker', (req, res) => {
+  res.json({ success: true, breakers: getAllCBStates() });
+});
+
+/**
+ * POST /api/brain/circuit-breaker/:key/reset
+ * Force reset a circuit breaker
+ */
+router.post('/circuit-breaker/:key/reset', (req, res) => {
+  resetCB(req.params.key);
+  res.json({ success: true, key: req.params.key, state: getCBState(req.params.key) });
 });
 
 export default router;
