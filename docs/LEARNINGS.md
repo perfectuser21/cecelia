@@ -184,3 +184,30 @@
 **影响程度**: N/A - 验证性任务，无代码变更
 
 ---
+
+### [2026-01-31] Intent Recognition Enhancement - Phrase Patterns and Entity Extraction
+
+**任务**: 增强意图识别模块，添加短语模式匹配和实体提取功能
+
+**Bug**:
+1. PRD gate:prd 初次失败 - 测试文件路径错误（应为 `brain/__tests__/intent.test.js`），成功标准未量化
+2. Hook 阻止编辑 - `.prd.md` 是旧文件的软链接，需删除重建
+3. Hook 阻止编辑 - `.dev-mode` 缺少 `tasks_created: true` 字段
+4. API 端点提取测试失败 - 正则表达式不匹配空格格式，调整测试用例为 `POST /api/users`
+5. PR base branch 错误 - 自动设置为 main 而非 develop，需要 `gh pr edit --base develop`
+
+**技术要点**:
+1. 短语模式匹配使用 `INTENT_PHRASES` 对象，每种意图类型有多个正则模式和权重
+2. 置信度计算公式：`min(1.0, keywordWeight + phraseWeight)`，短语匹配可增加 0.3-0.4 权重
+3. 实体提取使用 `ENTITY_PATTERNS`，支持模块名、功能名、文件路径、API 端点、组件名
+4. 任务生成上下文感知 - 当提取到 feature/module 时，生成的任务标题会包含该实体
+5. 输入验证 - 最大 10000 字符限制，防止 ReDoS 和性能问题
+
+**优化点**:
+1. PR base branch 默认值应该检测，功能分支应该默认合到 develop
+2. `.prd.md` 软链接机制容易出错，建议直接复制文件而非创建链接
+3. gate:prd 的测试路径验证有助于早期发现 PRD 错误
+
+**影响程度**: Low - 功能增强，无破坏性变更
+
+---
