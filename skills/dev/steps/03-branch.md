@@ -40,9 +40,9 @@ fi
 
 ---
 
-## Worktree 强制检查（CRITICAL）
+## Worktree 冲突兜底（FALLBACK）
 
-**在主仓库创建分支前，必须检查是否有活跃的 /dev 任务**：
+**正常情况下 Step 0 已处理 worktree 冲突。此处作为兜底**：
 
 ```bash
 # 只在主仓库（非 worktree）时检查
@@ -54,29 +54,32 @@ if [[ "$IS_WORKTREE" == "false" ]]; then
         ACTIVE_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "unknown")
 
         echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  ⛔ 主仓库有活跃 /dev 任务"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "  活跃分支: $ACTIVE_BRANCH"
-        echo ""
-        echo "  必须使用 worktree 并行开发："
-        echo ""
-        echo "    bash skills/dev/scripts/worktree-manage.sh create <feature-name>"
-        echo ""
-        echo "  或者先完成当前任务再开始新任务。"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️  Step 0 未处理 worktree 冲突，兜底自动创建..."
+        echo "   活跃分支: $ACTIVE_BRANCH"
 
-        # 阻止继续，必须用 worktree
-        exit 1
+        # 自动创建 worktree（与 Step 0 相同逻辑）
+        TASK_NAME="<从用户输入提取的简短英文任务名>"
+        WORKTREE_PATH=$(bash skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
+
+        if [[ -n "$WORKTREE_PATH" && -d "$WORKTREE_PATH" ]]; then
+            echo "✅ Worktree 创建成功: $WORKTREE_PATH"
+            cd "$WORKTREE_PATH"
+
+            # 安装依赖
+            if [[ -f "package.json" ]]; then
+                npm install --prefer-offline 2>/dev/null || npm install
+            fi
+        else
+            echo "❌ Worktree 创建失败，无法继续"
+            exit 1
+        fi
     fi
 fi
 ```
 
 **逻辑**：
 - 在 worktree 中 → 跳过检查（已隔离）
-- 在主仓库且有 `.dev-mode` → **阻止创建分支**，必须用 worktree
+- 在主仓库且有 `.dev-mode` → **自动创建 worktree + cd**（兜底）
 - 在主仓库且无 `.dev-mode` → 继续创建分支
 
 ---
@@ -113,21 +116,31 @@ echo "   Base: $BASE_BRANCH"
 **分支创建后，必须创建 .dev-mode 文件**，这是 Stop Hook 循环控制的信号：
 
 ```bash
+# 生成 session_id（会话隔离，防止多会话串线）
+# 优先使用 CLAUDE_SESSION_ID 环境变量，fallback 到随机 ID
+if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+    SESSION_ID="$CLAUDE_SESSION_ID"
+else
+    SESSION_ID=$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')
+fi
+
 # 在项目根目录创建 .dev-mode（分支已创建，分支名正确）
 cat > .dev-mode << EOF
 dev
 branch: $BRANCH_NAME
+session_id: $SESSION_ID
 prd: .prd.md
 started: $(date -Iseconds)
 EOF
 
-echo "✅ .dev-mode 已创建（Stop Hook 循环控制已启用）"
+echo "✅ .dev-mode 已创建（session_id: $SESSION_ID）"
 ```
 
 **文件格式**：
 ```
 dev
 branch: H7-remove-ralph-loop
+session_id: a1b2c3d4e5f6
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 ```
@@ -171,6 +184,7 @@ echo "✅ Task Checkpoint 已创建（11 个步骤）"
 ```
 dev
 branch: H7-task-checkpoint
+session_id: a1b2c3d4e5f6
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 tasks_created: true

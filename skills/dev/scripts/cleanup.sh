@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Cleanup 脚本
+# v1.9: 使用 lib/lock-utils.sh 原子操作 + 协调信号
 # v1.8: PRD/DoD 归档到 .history/ 目录（而非直接删除）
 # v1.7: rm -rf 安全验证
 # v1.6: 跨仓库兼容（develop/main fallback）+ worktree 安全检查
@@ -402,9 +403,36 @@ echo -e "   ${GREEN}[OK] 所有清理步骤完成${NC}"
 # 标记 cleanup 完成（让 Stop Hook 知道可以退出了）
 PROJECT_ROOT_FOR_DEVMODE=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+
+# v1.9: 加载 lock-utils 并使用原子追加 + 协调信号
+LOCK_UTILS=""
+for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
+    if [[ -f "$candidate" ]]; then
+        # shellcheck disable=SC1090
+        source "$candidate"
+        LOCK_UTILS="$candidate"
+        break
+    fi
+done
+
 if [[ -f "$DEV_MODE_FILE" ]]; then
-    echo "cleanup_done: true" >> "$DEV_MODE_FILE"
-    echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+    if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then
+        # 使用原子操作：获取锁 → 追加 → 释放锁
+        if acquire_dev_mode_lock 2; then
+            atomic_append_dev_mode "cleanup_done: true"
+            create_cleanup_signal "$CP_BRANCH"
+            release_dev_mode_lock
+            echo -e "   ${GREEN}[OK] 已标记 cleanup_done（原子写入）${NC}"
+        else
+            # Fallback: 直接追加
+            echo "cleanup_done: true" >> "$DEV_MODE_FILE"
+            echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+        fi
+    else
+        # Fallback: 无共享库时直接追加
+        echo "cleanup_done: true" >> "$DEV_MODE_FILE"
+        echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+    fi
 fi
 
 # ========================================

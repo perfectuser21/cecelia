@@ -248,8 +248,9 @@ TaskList()
 skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每步详情（按需加载）
+│   ├── 00-worktree-auto.md ← Worktree 自动检测（前置，Step 1 之前）
 │   ├── 01-prd.md       ← gate:prd (Subagent)
-│   ├── 02-detect.md    ← Worktree 检测
+│   ├── 02-detect.md    ← 环境检测
 │   ├── 03-branch.md    ← 创建 .dev-mode
 │   ├── 04-dod.md       ← gate:dod + gate:qa (并行 Subagents)
 │   ├── 05-code.md      ← gate:audit (Subagent)
@@ -268,6 +269,8 @@ skills/dev/
 ### 流程图 (v3.1 - 统一命名)
 
 ```
+0-Worktree → 检测 .dev-mode 冲突 → 自动 worktree + cd（如需要）
+    ↓
 1-PRD ────→ gate:prd (Subagent, 循环直到 PASS)
     ↓
 2-Detect → 3-Branch

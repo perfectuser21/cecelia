@@ -199,6 +199,44 @@ hooks:
       contains: "BRANCH_IN_FILE"
     test: "tests/hooks/stop-hook.test.ts"
 
+  - id: H7-006
+    feature: H7
+    name: "Stop Hook session_id 验证（同分支多会话隔离）"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop, session, isolation, concurrency]
+    owner: infra
+    steps:
+      given: ".dev-mode 有 session_id 且当前会话有 CLAUDE_SESSION_ID，两者不匹配"
+      when: "Stop Hook 执行 session_id 验证"
+      then: "exit 0 忽略该 .dev-mode（不属于当前会话）"
+    evidence:
+      type: code
+      file: "hooks/stop.sh"
+      contains: "SESSION_ID_IN_FILE"
+    test: "tests/hooks/concurrency.test.ts"
+
+  - id: H7-007
+    feature: H7
+    name: "共享锁工具库原子操作（.dev-mode 并发安全）"
+    scope: lib
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [lock, atomic, concurrency]
+    owner: infra
+    steps:
+      given: "多个进程同时操作 .dev-mode 文件"
+      when: "使用 lib/lock-utils.sh 的原子操作函数"
+      then: "mktemp + mv 保证写入原子性，flock 保证互斥"
+    evidence:
+      type: code
+      file: "lib/lock-utils.sh"
+      contains: "atomic_write_dev_mode"
+    test: "tests/hooks/concurrency.test.ts"
+
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
   # --------------------------------------------------------------------------
@@ -811,7 +849,7 @@ workflow:
   # --------------------------------------------------------------------------
   - id: W6-001
     feature: W6
-    name: "检测活跃的功能分支"
+    name: "Worktree 自动检测与创建（Step 0 前置 + 僵尸清理 + flock 锁）"
     scope: workflow
     priority: P1
     trigger: [Release]

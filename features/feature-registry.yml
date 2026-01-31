@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.43.0"
+version: "2.44.0"
 updated: "2026-01-31"
 changelog:
+  - 2.44.0: v11.16.0 - W6 Worktree 自动检测与创建（Step 0 前置 + 僵尸清理 + flock 锁 + Step 3 兜底）
   - 2.43.0: v11.14.2 - P0-3 Stop Hook 会话隔离（检查 .dev-mode 中的 branch 是否与当前分支匹配，防止多会话"串线"）
   - 2.42.0: v11.14.1 - 统一 Subagent Gate 命名和规则挂载（gate:prd/dod/qa/audit/test/learning 规则嵌入 prompt）
   - 2.41.0: v11.14.0 - P3 cleanup.sh v1.8 PRD/DoD 归档到 .history/ 目录
@@ -114,7 +115,7 @@ platform_features:
     name: Stop Hook Loop Controller
     status: Committed
     priority: P0
-    version: "11.14.2"
+    version: "11.15.0"
     updated: "2026-01-31"
     description: |
       Stop Hook 作为 /dev 工作流的循环控制器，替代 Ralph Loop 插件：
@@ -123,6 +124,7 @@ platform_features:
       - 未完成时 exit 2 阻止会话结束，Claude 继续执行
       - 完成时（cleanup_done: true）删除 .dev-mode 并 exit 0
       - 无头模式 (CECELIA_HEADLESS=true) 直接 exit 0，由外部循环控制
+      v11.15.0: P0-4 修复 - session_id 验证 + 共享锁工具库(lib/lock-utils.sh) + 统一 CI 查询(lib/ci-status.sh)
       v11.14.2: P0-3 修复 - 会话隔离，检查 .dev-mode 中的 branch 是否与当前分支匹配，防止多会话"串线"
       v11.11.0: P0-2 修复 - 添加 flock 并发锁防止多个会话同时操作 .dev-mode 文件
       v11.10.0: PR 合并后自动执行 cleanup（删除 .dev-mode、切换分支、删除本地分支），不再悬空
@@ -150,6 +152,8 @@ platform_features:
       - H7-001  # .dev-mode 检测
       - H7-002  # 完成条件检查
       - H7-003  # exit 2 阻止会话结束
+      - H7-006  # session_id 验证
+      - H7-007  # 共享锁工具库原子操作
 
   # --------------------------------------------------------------------------
   # H2: PR Gate (Dual Mode) - 提交门禁
@@ -694,38 +698,36 @@ product_features:
     name: Worktree Parallel Development
     status: Committed
     priority: P1
-    version: "11.3.1"
-    updated: "2026-01-29"
+    version: "11.16.0"
+    updated: "2026-01-31"
     description: |
-      支持多分支并行开发，Step 3 强制检查：
-      - 主仓库有活跃 .dev-mode 时阻止创建分支
-      - 必须使用 worktree 进行并行开发
-      - 避免主仓库产生冲突
+      自动检测 .dev-mode 冲突，自动创建 worktree 并 cd，支持并行开发：
+      v11.16.0: Step 0 前置自动检测 + 僵尸 .dev-mode 清理 + flock 并发锁 + Step 3 兜底
       v11.3.1: Step 3 强制检查 worktree（主仓库有活跃任务时阻止创建分支）
 
     entrypoints:
+      - type: step
+        file: skills/dev/steps/00-worktree-auto.md
       - type: script
         file: skills/dev/scripts/worktree-manage.sh
       - type: step
         file: skills/dev/steps/03-branch.md
 
     golden_path: |
-      /dev Step 3 → 检测主仓库 .dev-mode → 有则阻止创建分支，必须用 worktree
+      /dev 启动 → Step 0 检测 .dev-mode → 僵尸则清理 → 活跃则自动创建 worktree + cd → 继续正常流程
 
     minimal_paths:
-      - "worktree 脚本存在但不默认使用"
-      - "用户可手动调用 worktree-manage.sh"
+      - "主仓库无冲突 → 跳过，正常流程"
+      - "主仓库有活跃 .dev-mode → 自动创建 worktree + cd"
+      - "僵尸 .dev-mode（>2h 或分支不存在）→ 自动清理"
 
     tests:
       - type: manual
-        description: 手动验证 worktree 脚本可用性
+        description: 手动验证 worktree 自动创建
         coverage: W6-001
 
     rcis:
       - W6-001  # worktree 脚本可执行
-
-    deprecated_since: "10.2.0"
-    deprecated_reason: "用户一次只做一个任务，不需要交互式并行检测"
 
   # --------------------------------------------------------------------------
   # P6: 自动化质检脚本 - Self-Evolution Automation

@@ -80,7 +80,7 @@ Full Regression（全量测试）
 | ~~W3~~ | ~~循环回退~~ | **Deprecated** | - | v2.0.0 废弃，被 p1 事件驱动循环替代 |
 | ~~W5~~ | ~~Phase Detection~~ | **Deprecated** | - | v11.2.9 废弃 - 脚本从未实现，已被 Ralph Loop 替代 |
 | ~~W4~~ | ~~测试任务模式~~ | **Deprecated** | - | v8.0.21 删除，功能不需要 |
-| W6 | Worktree 并行开发 | **Committed** | `skills/dev/scripts/worktree-manage.sh` | 检测活跃分支，支持 worktree 隔离 |
+| W6 | Worktree 并行开发 | **Committed** | `skills/dev/scripts/worktree-manage.sh` | 自动检测 .dev-mode 冲突，自动创建 worktree + cd，僵尸清理，flock 并发锁 |
 | W7 | Ralph Loop 自动化 | **Experiment** | 手动验证 | Ralph Loop 自动启用 + SHA 一次性提交 + 版本号自动更新 |
 
 ---

@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 2.43.0
+version: 2.44.0
 created: 2026-01-31
 updated: 2026-01-31
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.43.0: 从 feature-registry.yml 自动生成
+  - 2.44.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -152,7 +152,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ### P5: Worktree Parallel Development
 
 ```
-/dev Step 3 → 检测主仓库 .dev-mode → 有则阻止创建分支，必须用 worktree
+/dev 启动 → Step 0 检测 .dev-mode → 僵尸则清理 → 活跃则自动创建 worktree + cd → 继续正常流程
 ```
 
 ---
@@ -193,5 +193,5 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.43.0
+**版本**: 2.44.0
 **生成时间**: 2026-01-31

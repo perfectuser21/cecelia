@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.16.0] - 2026-01-31
+
+### Added
+
+- **Worktree 自动检测与创建** (`skills/dev/steps/00-worktree-auto.md`)
+  - Step 0 前置步骤：/dev 启动时自动检测主仓库 .dev-mode 冲突
+  - 僵尸 .dev-mode 检测：超过 2 小时或分支不存在 → 自动清理
+  - 活跃冲突时自动创建 worktree + cd + 安装依赖
+  - PRD 文件直接在 worktree 中创建，避免 copy 问题
+
+### Changed
+
+- **worktree-manage.sh**: `cmd_create` 加 flock 锁防止并发竞争
+- **Step 3 (03-branch.md)**: 冲突检测从 exit 1 改为自动 worktree 兜底
+- **Step 2 (02-detect.md)**: 移除重复的 worktree 检测段（职责移到 Step 0）
+- **SKILL.md**: 加载策略和流程图增加 Step 0
+- **FEATURES.md**: W6 更新说明
+
+## [11.15.0] - 2026-01-31
+
+### Added
+
+- **共享工具库 `lib/lock-utils.sh`**
+  - `.dev-mode` 文件并发锁（flock）：`acquire_dev_mode_lock` / `release_dev_mode_lock`
+  - 原子写入/追加：`atomic_write_dev_mode` / `atomic_append_dev_mode`（mktemp + mv）
+  - 会话隔离：`get_session_id` / `check_session_match`
+  - 协调信号：`create_cleanup_signal` / `check_cleanup_signal` / `remove_cleanup_signal`
+
+- **共享工具库 `lib/ci-status.sh`**
+  - 统一 CI 状态查询：`get_ci_status`（带重试，默认 3 次）
+  - 便捷判断：`is_ci_passed` / `is_ci_running` / `is_ci_failed`
+  - 失败日志：`get_failed_run_id`
+
+- **session_id 机制**（.dev-mode 新字段）
+  - 分支创建时生成 session_id（优先 CLAUDE_SESSION_ID 环境变量）
+  - stop.sh 验证 session_id 匹配，不匹配则允许结束（同分支多会话隔离）
+  - 向后兼容：无 session_id 字段时回退到仅分支匹配
+
+- **并发安全测试** `tests/hooks/concurrency.test.ts`（22 个测试）
+  - 锁获取/释放、session_id 验证、原子操作、协调信号、CI 状态查询
+
+### Changed
+
+- **hooks/stop.sh v11.16.0**: 使用共享库 + session_id 验证
+- **skills/dev/scripts/cleanup.sh v1.9**: 使用原子操作追加 cleanup_done
+- **skills/dev/steps/03-branch.md**: 生成 session_id 写入 .dev-mode
+
 ## [11.14.2] - 2026-01-31
 
 ### Fixed

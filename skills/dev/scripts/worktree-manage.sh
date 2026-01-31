@@ -94,13 +94,23 @@ generate_worktree_path() {
     echo "$final_path"
 }
 
-# 创建 worktree
+# 创建 worktree（带 flock 防并发竞争）
 cmd_create() {
     local task_name="${1:-}"
 
     if [[ -z "$task_name" ]]; then
         echo -e "${RED}错误: 请提供任务名${NC}" >&2
         echo "用法: worktree-manage.sh create <task-name>" >&2
+        exit 1
+    fi
+
+    # flock 防止多个 Cecelia 并发创建 worktree 竞争
+    local lock_dir
+    lock_dir="$(git rev-parse --git-dir 2>/dev/null || echo '/tmp')"
+    local lock_file="$lock_dir/worktree-create.lock"
+    exec 201>"$lock_file"
+    if ! flock -w 5 201; then
+        echo -e "${RED}错误: 另一个进程正在创建 worktree，请稍后重试${NC}" >&2
         exit 1
     fi
 

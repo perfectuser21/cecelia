@@ -14,6 +14,7 @@
 #
 # v11.11.0: P0-2 修复 - 添加 flock 并发锁 + 原子写入防止竞态条件
 # v11.15.0: P0-3 修复 - 会话隔离，检查 .dev-mode 中的分支是否与当前分支匹配
+# v11.16.0: P0-4 修复 - session_id 验证 + 共享锁工具库 + 统一 CI 查询
 # ============================================================================
 
 set -euo pipefail
@@ -23,23 +24,56 @@ if [[ "${CECELIA_HEADLESS:-false}" == "true" ]]; then
     exit 0
 fi
 
-# ===== P0-2 修复：获取并发锁，防止多个会话同时操作 =====
-# 锁文件放在 .git 目录，确保同一仓库同一时间只有一个 stop hook 在运行
-LOCK_DIR="$(git rev-parse --show-toplevel 2>/dev/null)/.git" || LOCK_DIR="/tmp"
-LOCK_FILE="$LOCK_DIR/cecelia-stop.lock"
+# ===== 加载共享库 =====
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT_EARLY="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# 获取锁：等待最多 2 秒，拿不到就退出
-exec 200>"$LOCK_FILE"
-if ! flock -w 2 200; then
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 并发锁获取失败]" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "" >&2
-    echo "  另一个会话正在执行 Stop Hook，请稍后重试" >&2
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    exit 2
+# 尝试加载 lock-utils（项目内 > 全局）
+LOCK_UTILS=""
+for candidate in "$PROJECT_ROOT_EARLY/lib/lock-utils.sh" "$SCRIPT_DIR/../lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
+    if [[ -f "$candidate" ]]; then
+        LOCK_UTILS="$candidate"
+        break
+    fi
+done
+
+# 尝试加载 ci-status（项目内 > 全局）
+CI_STATUS_LIB=""
+for candidate in "$PROJECT_ROOT_EARLY/lib/ci-status.sh" "$SCRIPT_DIR/../lib/ci-status.sh" "$HOME/.claude/lib/ci-status.sh"; do
+    if [[ -f "$candidate" ]]; then
+        CI_STATUS_LIB="$candidate"
+        break
+    fi
+done
+
+# shellcheck disable=SC1090
+[[ -n "$LOCK_UTILS" ]] && source "$LOCK_UTILS"
+# shellcheck disable=SC1090
+[[ -n "$CI_STATUS_LIB" ]] && source "$CI_STATUS_LIB"
+
+# ===== P0-2 修复：获取并发锁，防止多个会话同时操作 =====
+if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
+    if ! acquire_dev_mode_lock 2; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [Stop Hook: 并发锁获取失败]" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  另一个会话正在执行 Stop Hook，请稍后重试" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        exit 2
+    fi
+else
+    # Fallback: 内联锁
+    LOCK_DIR="$(git rev-parse --show-toplevel 2>/dev/null)/.git" || LOCK_DIR="/tmp"
+    LOCK_FILE="$LOCK_DIR/cecelia-stop.lock"
+    exec 200>"$LOCK_FILE"
+    if ! flock -w 2 200; then
+        echo "" >&2
+        echo "  [Stop Hook: 并发锁获取失败]" >&2
+        exit 2
+    fi
 fi
 
 # ===== 读取 Hook 输入（JSON） =====
@@ -94,6 +128,16 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # 这防止多个 Claude 会话"串线"（一个会话被迫接手另一个会话的任务）
 if [[ -n "$BRANCH_IN_FILE" && "$BRANCH_IN_FILE" != "$CURRENT_BRANCH" ]]; then
     # 不是当前会话的任务，直接允许结束
+    exit 0
+fi
+
+# ===== P0-4 修复：session_id 验证 - 同分支多会话隔离 =====
+SESSION_ID_IN_FILE=$(grep "^session_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
+CURRENT_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+
+# 如果 .dev-mode 有 session_id 且当前会话有 session_id，检查是否匹配
+if [[ -n "$SESSION_ID_IN_FILE" && -n "$CURRENT_SESSION_ID" && "$SESSION_ID_IN_FILE" != "$CURRENT_SESSION_ID" ]]; then
+    # 不是当前会话创建的任务，允许结束
     exit 0
 fi
 
@@ -180,13 +224,22 @@ fi
 # ===== 条件 2: CI 状态？（PR 未合并时检查） =====
 CI_STATUS="unknown"
 CI_CONCLUSION=""
+CI_RUN_ID=""
 
-# 获取最新的 workflow run
-RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
-
-if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
-    CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
-    CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
+# P0-4: 使用统一 CI 查询库（带重试），fallback 到内联查询
+if [[ -n "$CI_STATUS_LIB" ]] && type get_ci_status &>/dev/null; then
+    CI_RESULT=$(CI_MAX_RETRIES=2 CI_RETRY_DELAY=3 get_ci_status "$BRANCH_NAME") || true
+    CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status // "unknown"')
+    CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion // ""')
+    CI_RUN_ID=$(echo "$CI_RESULT" | jq -r '.run_id // ""')
+else
+    # Fallback: 内联查询
+    RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+    if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
+        CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
+        CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
+        CI_RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
+    fi
 fi
 
 case "$CI_STATUS" in
@@ -197,9 +250,8 @@ case "$CI_STATUS" in
             echo "  ❌ 条件 2: CI 失败 ($CI_CONCLUSION)" >&2
             echo "" >&2
             echo "  下一步: 查看 CI 日志并修复" >&2
-            RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
-            if [[ -n "$RUN_ID" ]]; then
-                echo "    gh run view $RUN_ID --log-failed" >&2
+            if [[ -n "$CI_RUN_ID" ]]; then
+                echo "    gh run view $CI_RUN_ID --log-failed" >&2
             fi
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
