@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.18.0] - 2026-01-31
+
+### Added
+
+- **Stop Hook TTY 会话隔离 (H7-008)** - 有头模式下使用 TTY (`/dev/pts/N`) 作为会话标识
+  - `.dev-mode` 文件新增 `tty:` 字段
+  - Stop hook 检查当前 TTY 与文件中 TTY 是否匹配，不匹配则 exit 0
+  - 防止多 terminal 窗口同时使用 Claude Code 时 stop hook 串线
+  - 向后兼容：无 `tty:` 字段时跳过 TTY 检查，继续 session_id 检查
+- **H7-008 回归契约** - 新增 TTY 隔离 RCI
+- **TTY 隔离测试** (`tests/hooks/stop-hook.test.ts`) - 6 个新测试用例
+
 ## [11.17.0] - 2026-01-31
 
 ### Added

@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "11.14.2"
+version: "11.18.0"
 updated: "2026-01-31"
 
 # ============================================================================
@@ -236,6 +236,25 @@ hooks:
       file: "lib/lock-utils.sh"
       contains: "atomic_write_dev_mode"
     test: "tests/hooks/concurrency.test.ts"
+
+  - id: H7-008
+    feature: H7
+    name: "Stop Hook TTY 隔离（有头模式按 terminal 隔离）"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop, session, isolation, tty]
+    owner: infra
+    steps:
+      given: ".dev-mode 中的 tty 字段与当前 terminal TTY 不匹配"
+      when: "Stop Hook 执行 TTY 检查"
+      then: "exit 0 忽略该 .dev-mode（不属于当前 terminal）"
+    evidence:
+      type: code
+      file: "hooks/stop.sh"
+      contains: "TTY_IN_FILE"
+    test: "tests/hooks/stop-hook.test.ts"
 
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2

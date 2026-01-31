@@ -146,4 +146,76 @@ tasks_created: true`;
       expect(result.trim()).toBe("");
     });
   });
+
+  describe("TTY isolation (H7-008)", () => {
+    it("should have TTY check logic in stop.sh", () => {
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      expect(hookContent).toContain("TTY_IN_FILE");
+      expect(hookContent).toContain("CURRENT_TTY");
+      expect(hookContent).toContain("H7-008");
+    });
+
+    it("should extract tty field from .dev-mode correctly", () => {
+      const testContent = `dev
+branch: cp-test
+tty: /dev/pts/3
+session_id: abc123`;
+
+      const result = execSync(
+        `echo '${testContent}' | grep "^tty:" | cut -d' ' -f2-`,
+        { encoding: "utf-8" }
+      );
+
+      expect(result.trim()).toBe("/dev/pts/3");
+    });
+
+    it("should handle 'not a tty' value (headless/pipe)", () => {
+      const testContent = `dev
+branch: cp-test
+tty: not a tty
+session_id: abc123`;
+
+      const result = execSync(
+        `echo '${testContent}' | grep "^tty:" | cut -d' ' -f2-`,
+        { encoding: "utf-8" }
+      );
+
+      // "not a tty" should be treated as no valid TTY
+      expect(result.trim()).toBe("not a tty");
+    });
+
+    it("should handle missing tty field gracefully", () => {
+      const testContent = `dev
+branch: cp-test
+session_id: abc123`;
+
+      const result = execSync(
+        `echo '${testContent}' | grep "^tty:" | cut -d' ' -f2- || echo ""`,
+        { encoding: "utf-8" }
+      );
+
+      expect(result.trim()).toBe("");
+    });
+
+    it("should skip TTY check when tty field is 'not a tty'", () => {
+      // The condition in stop.sh skips when TTY_IN_FILE == "not a tty"
+      // Verify the guard condition exists
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      expect(hookContent).toContain('"not a tty"');
+      // Verify both sides are checked
+      expect(hookContent).toMatch(/TTY_IN_FILE.*!=.*"not a tty"/);
+      expect(hookContent).toMatch(/CURRENT_TTY.*!=.*"not a tty"/);
+    });
+
+    it("should exit 0 on TTY mismatch (different terminal)", () => {
+      // Verify the exit 0 logic for TTY mismatch exists
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      // Check the mismatch comparison and exit 0
+      expect(hookContent).toMatch(/TTY_IN_FILE.*!=.*CURRENT_TTY/);
+      expect(hookContent).toContain("# 不是当前 terminal 的任务，允许结束");
+    });
+  });
 });

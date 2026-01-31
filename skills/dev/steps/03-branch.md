@@ -124,11 +124,15 @@ else
     SESSION_ID=$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')
 fi
 
+# 获取当前 TTY（有头模式下为 /dev/pts/N，无头模式下为 "not a tty"）
+CURRENT_TTY=$(tty 2>/dev/null || echo "not a tty")
+
 # 在项目根目录创建 .dev-mode（分支已创建，分支名正确）
 cat > .dev-mode << EOF
 dev
 branch: $BRANCH_NAME
 session_id: $SESSION_ID
+tty: $CURRENT_TTY
 prd: .prd.md
 started: $(date -Iseconds)
 EOF
@@ -141,6 +145,7 @@ echo "✅ .dev-mode 已创建（session_id: $SESSION_ID）"
 dev
 branch: H7-remove-ralph-loop
 session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 ```
@@ -185,6 +190,7 @@ echo "✅ Task Checkpoint 已创建（11 个步骤）"
 dev
 branch: H7-task-checkpoint
 session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 tasks_created: true

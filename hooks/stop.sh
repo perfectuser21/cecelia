@@ -15,6 +15,7 @@
 # v11.11.0: P0-2 修复 - 添加 flock 并发锁 + 原子写入防止竞态条件
 # v11.15.0: P0-3 修复 - 会话隔离，检查 .dev-mode 中的分支是否与当前分支匹配
 # v11.16.0: P0-4 修复 - session_id 验证 + 共享锁工具库 + 统一 CI 查询
+# v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal 隔离
 # ============================================================================
 
 set -euo pipefail
@@ -128,6 +129,16 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 # 这防止多个 Claude 会话"串线"（一个会话被迫接手另一个会话的任务）
 if [[ -n "$BRANCH_IN_FILE" && "$BRANCH_IN_FILE" != "$CURRENT_BRANCH" ]]; then
     # 不是当前会话的任务，直接允许结束
+    exit 0
+fi
+
+# ===== H7-008：TTY 隔离 - 有头模式下按 terminal 隔离 =====
+TTY_IN_FILE=$(grep "^tty:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- || echo "")
+CURRENT_TTY=$(tty 2>/dev/null || echo "")
+
+# 如果 .dev-mode 有有效 tty 字段且当前 TTY 可获取，检查是否匹配
+if [[ -n "$TTY_IN_FILE" && "$TTY_IN_FILE" != "not a tty" && -n "$CURRENT_TTY" && "$CURRENT_TTY" != "not a tty" && "$TTY_IN_FILE" != "$CURRENT_TTY" ]]; then
+    # 不是当前 terminal 的任务，允许结束
     exit 0
 fi
 

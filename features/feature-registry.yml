@@ -115,7 +115,7 @@ platform_features:
     name: Stop Hook Loop Controller
     status: Committed
     priority: P0
-    version: "11.15.0"
+    version: "11.18.0"
     updated: "2026-01-31"
     description: |
       Stop Hook 作为 /dev 工作流的循环控制器，替代 Ralph Loop 插件：
@@ -124,6 +124,7 @@ platform_features:
       - 未完成时 exit 2 阻止会话结束，Claude 继续执行
       - 完成时（cleanup_done: true）删除 .dev-mode 并 exit 0
       - 无头模式 (CECELIA_HEADLESS=true) 直接 exit 0，由外部循环控制
+      v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal (/dev/pts/N) 隔离
       v11.15.0: P0-4 修复 - session_id 验证 + 共享锁工具库(lib/lock-utils.sh) + 统一 CI 查询(lib/ci-status.sh)
       v11.14.2: P0-3 修复 - 会话隔离，检查 .dev-mode 中的 branch 是否与当前分支匹配，防止多会话"串线"
       v11.11.0: P0-2 修复 - 添加 flock 并发锁防止多个会话同时操作 .dev-mode 文件
@@ -154,6 +155,7 @@ platform_features:
       - H7-003  # exit 2 阻止会话结束
       - H7-006  # session_id 验证
       - H7-007  # 共享锁工具库原子操作
+      - H7-008  # TTY 会话隔离
 
   # --------------------------------------------------------------------------
   # H2: PR Gate (Dual Mode) - 提交门禁
