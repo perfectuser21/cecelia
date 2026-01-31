@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
 import {
   INTENT_TYPES,
+  INTENT_ACTION_MAP,
   classifyIntent,
   extractEntities,
   extractProjectName,
@@ -14,6 +15,8 @@ import {
   generatePrdDraft,
   generateStandardPrd,
   generateTrdDraft,
+  buildActionParams,
+  getSuggestedAction,
   parseIntent,
   parseAndCreate
 } from '../intent.js';
@@ -621,6 +624,170 @@ describe('Intent Recognition Module', () => {
       expect(result.entities).toBeDefined();
       const hasNewEntity = result.entities.priority || result.entities.timeframe || result.entities.dependency;
       expect(hasNewEntity).toBeTruthy();
+    });
+  });
+
+  describe('classifyIntent - CREATE_GOAL', () => {
+    it('classifies "创建一个 P0 目标" as CREATE_GOAL', () => {
+      const result = classifyIntent('创建一个 P0 目标：提升系统稳定性');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_GOAL);
+    });
+
+    it('classifies "设定目标" as CREATE_GOAL', () => {
+      const result = classifyIntent('设定一个目标：每周发布一次');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_GOAL);
+    });
+
+    it('classifies "create goal" as CREATE_GOAL', () => {
+      const result = classifyIntent('create a new goal for Q1');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_GOAL);
+    });
+  });
+
+  describe('classifyIntent - CREATE_TASK', () => {
+    it('classifies "添加一个任务" as CREATE_TASK', () => {
+      const result = classifyIntent('添加一个任务：修复登录超时');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_TASK);
+    });
+
+    it('classifies "创建任务" as CREATE_TASK', () => {
+      const result = classifyIntent('创建一个紧急任务处理用户反馈');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_TASK);
+    });
+
+    it('classifies "create task" as CREATE_TASK', () => {
+      const result = classifyIntent('create a task to update the docs');
+      expect(result.type).toBe(INTENT_TYPES.CREATE_TASK);
+    });
+  });
+
+  describe('classifyIntent - QUERY_STATUS', () => {
+    it('classifies "当前有哪些任务" as QUERY_STATUS', () => {
+      const result = classifyIntent('当前有哪些任务？');
+      expect(result.type).toBe(INTENT_TYPES.QUERY_STATUS);
+    });
+
+    it('classifies "查看进度" as QUERY_STATUS', () => {
+      const result = classifyIntent('查看项目进度');
+      expect(result.type).toBe(INTENT_TYPES.QUERY_STATUS);
+    });
+
+    it('classifies "list tasks" as QUERY_STATUS', () => {
+      const result = classifyIntent('list all open tasks');
+      expect(result.type).toBe(INTENT_TYPES.QUERY_STATUS);
+    });
+  });
+
+  describe('INTENT_ACTION_MAP', () => {
+    it('maps CREATE_GOAL to create-goal action', () => {
+      const mapping = INTENT_ACTION_MAP[INTENT_TYPES.CREATE_GOAL];
+      expect(mapping.action).toBe('create-goal');
+      expect(mapping.requiredParams).toContain('title');
+    });
+
+    it('maps CREATE_TASK to create-task action', () => {
+      const mapping = INTENT_ACTION_MAP[INTENT_TYPES.CREATE_TASK];
+      expect(mapping.action).toBe('create-task');
+    });
+
+    it('maps QUERY_STATUS to queryStatus handler', () => {
+      const mapping = INTENT_ACTION_MAP[INTENT_TYPES.QUERY_STATUS];
+      expect(mapping.action).toBeNull();
+      expect(mapping.handler).toBe('queryStatus');
+    });
+
+    it('maps QUESTION to no action', () => {
+      const mapping = INTENT_ACTION_MAP[INTENT_TYPES.QUESTION];
+      expect(mapping.action).toBeNull();
+      expect(mapping.handler).toBeNull();
+    });
+  });
+
+  describe('buildActionParams', () => {
+    it('builds params for CREATE_GOAL', () => {
+      const params = buildActionParams(
+        INTENT_TYPES.CREATE_GOAL,
+        '创建一个目标：提升系统稳定性',
+        { priority: 'P0' },
+        'default-project'
+      );
+      expect(params.title).toBeTruthy();
+      expect(params.priority).toBe('P0');
+    });
+
+    it('builds params for CREATE_TASK', () => {
+      const params = buildActionParams(
+        INTENT_TYPES.CREATE_TASK,
+        '添加一个任务：修复登录超时',
+        {},
+        'default-project'
+      );
+      expect(params.title).toBeTruthy();
+      expect(params.priority).toBe('P1');
+    });
+
+    it('builds params for FIX_BUG with P0 priority', () => {
+      const params = buildActionParams(
+        INTENT_TYPES.FIX_BUG,
+        '修复支付接口报错',
+        {},
+        'default-project'
+      );
+      expect(params.priority).toBe('P0');
+    });
+  });
+
+  describe('getSuggestedAction', () => {
+    it('returns action mapping for known type', () => {
+      const result = getSuggestedAction(INTENT_TYPES.CREATE_GOAL);
+      expect(result.action).toBe('create-goal');
+    });
+
+    it('returns null action for unknown type', () => {
+      const result = getSuggestedAction(INTENT_TYPES.UNKNOWN);
+      expect(result.action).toBeNull();
+    });
+  });
+
+  describe('parseIntent - suggestedAction', () => {
+    it('includes suggestedAction for CREATE_GOAL', async () => {
+      const result = await parseIntent('创建一个 P0 目标：提升稳定性');
+      expect(result.suggestedAction).toBeTruthy();
+      expect(result.suggestedAction.action).toBe('create-goal');
+      expect(result.suggestedAction.params.title).toBeTruthy();
+    });
+
+    it('includes suggestedAction for CREATE_TASK', async () => {
+      const result = await parseIntent('创建一个任务：更新文档');
+      expect(result.suggestedAction).toBeTruthy();
+      expect(result.suggestedAction.action).toBe('create-task');
+    });
+
+    it('has null suggestedAction for QUERY_STATUS', async () => {
+      const result = await parseIntent('当前有哪些任务？');
+      expect(result.suggestedAction).toBeNull();
+    });
+
+    it('has null suggestedAction for QUESTION', async () => {
+      const result = await parseIntent('为什么这里会报错？');
+      expect(result.suggestedAction).toBeNull();
+    });
+  });
+
+  describe('generateTasks - new intent types', () => {
+    it('generates tasks for CREATE_GOAL', () => {
+      const tasks = generateTasks('test', INTENT_TYPES.CREATE_GOAL, '创建目标', {});
+      expect(tasks.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('generates single task for CREATE_TASK', () => {
+      const tasks = generateTasks('test', INTENT_TYPES.CREATE_TASK, '创建任务', {});
+      expect(tasks.length).toBe(1);
+    });
+
+    it('generates no tasks for QUERY_STATUS', () => {
+      const tasks = generateTasks('test', INTENT_TYPES.QUERY_STATUS, '查看状态', {});
+      expect(tasks.length).toBe(0);
     });
   });
 

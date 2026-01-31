@@ -19,6 +19,9 @@ import { renderPrd, renderTrd } from './templates.js';
 const INTENT_TYPES = {
   CREATE_PROJECT: 'create_project',      // "我想做一个 GMV Dashboard"
   CREATE_FEATURE: 'create_feature',      // "给登录页面加一个忘记密码功能"
+  CREATE_GOAL: 'create_goal',            // "创建一个 P0 目标：提升系统稳定性"
+  CREATE_TASK: 'create_task',            // "添加一个任务：修复登录超时"
+  QUERY_STATUS: 'query_status',          // "当前有哪些任务？"
   FIX_BUG: 'fix_bug',                    // "修复购物车页面的价格显示问题"
   REFACTOR: 'refactor',                  // "重构用户模块的代码结构"
   EXPLORE: 'explore',                    // "帮我看看这个 API 怎么用"
@@ -33,6 +36,18 @@ const INTENT_KEYWORDS = {
   [INTENT_TYPES.CREATE_PROJECT]: [
     '做一个', '创建', '开发', '搭建', '新建', '构建', '实现',
     'create', 'build', 'develop', 'make'
+  ],
+  [INTENT_TYPES.CREATE_GOAL]: [
+    '目标', '愿景', 'OKR', 'objective', 'goal',
+    '设定目标', '创建目标', 'set goal', 'create goal'
+  ],
+  [INTENT_TYPES.CREATE_TASK]: [
+    '任务', 'task', '待办', 'todo',
+    '添加任务', '创建任务', 'create task', 'add task'
+  ],
+  [INTENT_TYPES.QUERY_STATUS]: [
+    '状态', '进度', '有哪些', '查看', '列出', '多少',
+    'status', 'progress', 'list', 'show', 'how many'
   ],
   [INTENT_TYPES.CREATE_FEATURE]: [
     '添加', '加一个', '新增', '增加', '支持', '功能',
@@ -106,6 +121,30 @@ const INTENT_PHRASES = {
     { pattern: /investigate\s+(.+)/i, weight: 0.3 },
     { pattern: /analyze\s+(.+)/i, weight: 0.3 }
   ],
+  [INTENT_TYPES.CREATE_GOAL]: [
+    { pattern: /创建(.+)目标/, weight: 0.4 },
+    { pattern: /设定(.+)目标/, weight: 0.4 },
+    { pattern: /新建(.+)OKR/i, weight: 0.4 },
+    { pattern: /目标[：:]\s*(.+)/, weight: 0.3 },
+    { pattern: /create\s+(.+)\s+goal/i, weight: 0.4 },
+    { pattern: /set\s+(.+)\s+objective/i, weight: 0.4 }
+  ],
+  [INTENT_TYPES.CREATE_TASK]: [
+    { pattern: /添加(.+)任务/, weight: 0.4 },
+    { pattern: /创建(.+)任务/, weight: 0.4 },
+    { pattern: /新建(.+)待办/, weight: 0.4 },
+    { pattern: /任务[：:]\s*(.+)/, weight: 0.3 },
+    { pattern: /create\s+(.+)\s+task/i, weight: 0.4 },
+    { pattern: /add\s+task[：:]\s*(.+)/i, weight: 0.4 }
+  ],
+  [INTENT_TYPES.QUERY_STATUS]: [
+    { pattern: /当前有哪些(.+)/, weight: 0.4 },
+    { pattern: /查看(.+)状态/, weight: 0.4 },
+    { pattern: /(.+)进度如何/, weight: 0.4 },
+    { pattern: /列出所有(.+)/, weight: 0.3 },
+    { pattern: /show\s+(.+)\s+status/i, weight: 0.4 },
+    { pattern: /list\s+all\s+(.+)/i, weight: 0.3 }
+  ],
   [INTENT_TYPES.QUESTION]: [
     { pattern: /为什么(.+)[?？]/, weight: 0.4 },
     { pattern: /怎么(.+)[?？]/, weight: 0.4 },
@@ -114,6 +153,23 @@ const INTENT_PHRASES = {
     { pattern: /why\s+(.+)\?/i, weight: 0.4 },
     { pattern: /how\s+(.+)\?/i, weight: 0.4 }
   ]
+};
+
+/**
+ * Intent to Brain Action mapping
+ * Maps each intent type to the corresponding brain action
+ */
+const INTENT_ACTION_MAP = {
+  [INTENT_TYPES.CREATE_GOAL]: { action: 'create-goal', requiredParams: ['title'] },
+  [INTENT_TYPES.CREATE_PROJECT]: { action: null, handler: 'parseAndCreate' },
+  [INTENT_TYPES.CREATE_FEATURE]: { action: null, handler: 'parseAndCreate' },
+  [INTENT_TYPES.CREATE_TASK]: { action: 'create-task', requiredParams: ['title'] },
+  [INTENT_TYPES.FIX_BUG]: { action: 'create-task', requiredParams: ['title'] },
+  [INTENT_TYPES.REFACTOR]: { action: 'create-task', requiredParams: ['title'] },
+  [INTENT_TYPES.QUERY_STATUS]: { action: null, handler: 'queryStatus' },
+  [INTENT_TYPES.EXPLORE]: { action: null, handler: 'parseAndCreate' },
+  [INTENT_TYPES.QUESTION]: { action: null, handler: null },
+  [INTENT_TYPES.UNKNOWN]: { action: null, handler: null }
 };
 
 /**
@@ -367,7 +423,34 @@ function generateTasks(projectName, intentType, _input, entities = {}) {
   const featureName = entities.feature || projectName;
   const moduleName = entities.module || projectName;
 
-  if (intentType === INTENT_TYPES.CREATE_PROJECT) {
+  if (intentType === INTENT_TYPES.CREATE_GOAL) {
+    const goalTitle = entities.module || projectName;
+    const priority = entities.priority || 'P1';
+    tasks.push(
+      {
+        title: `定义 ${goalTitle} 目标的 Key Results`,
+        description: `为目标 "${goalTitle}" 定义可衡量的关键结果`,
+        priority
+      },
+      {
+        title: `拆解 ${goalTitle} 目标的执行任务`,
+        description: `将 Key Results 拆解为可执行的具体任务`,
+        priority
+      }
+    );
+  } else if (intentType === INTENT_TYPES.CREATE_TASK) {
+    const taskTitle = entities.feature || entities.module || projectName;
+    const priority = entities.priority || 'P1';
+    tasks.push(
+      {
+        title: taskTitle,
+        description: `从意图识别自动创建的任务`,
+        priority
+      }
+    );
+  } else if (intentType === INTENT_TYPES.QUERY_STATUS) {
+    // No tasks to generate for query intents
+  } else if (intentType === INTENT_TYPES.CREATE_PROJECT) {
     // Full project creation tasks
     tasks.push(
       {
@@ -537,6 +620,44 @@ function generateTrdDraft(parsedIntent, options = {}) {
 }
 
 /**
+ * Build action parameters from parsed intent data
+ */
+function buildActionParams(intentType, input, entities, projectName) {
+  if (intentType === INTENT_TYPES.CREATE_GOAL) {
+    // Extract goal title from input
+    const titleMatch = input.match(/目标[：:]\s*(.+)/) || input.match(/创建(.+)目标/) || input.match(/设定(.+)目标/);
+    const title = titleMatch ? titleMatch[1].trim() : projectName;
+    return {
+      title,
+      priority: entities.priority || 'P1',
+      ...(entities.timeframe && { target_date: entities.timeframe })
+    };
+  }
+  if (intentType === INTENT_TYPES.CREATE_TASK) {
+    const titleMatch = input.match(/任务[：:]\s*(.+)/) || input.match(/添加(.+)任务/) || input.match(/创建(.+)任务/);
+    const title = titleMatch ? titleMatch[1].trim() : projectName;
+    return {
+      title,
+      priority: entities.priority || 'P1'
+    };
+  }
+  if (intentType === INTENT_TYPES.FIX_BUG || intentType === INTENT_TYPES.REFACTOR) {
+    return {
+      title: input.slice(0, 100),
+      priority: entities.priority || 'P0'
+    };
+  }
+  return {};
+}
+
+/**
+ * Get the action mapping for an intent type
+ */
+function getSuggestedAction(intentType) {
+  return INTENT_ACTION_MAP[intentType] || { action: null, handler: null };
+}
+
+/**
  * Parse natural language input and generate structured output
  * Enhanced with entity extraction
  * @param {string} input - Natural language input
@@ -566,7 +687,14 @@ async function parseIntent(input) {
   // Step 4: Generate tasks (context-aware)
   const tasks = generateTasks(projectName, classification.type, trimmedInput, entities);
 
-  // Step 5: Build parsed intent object
+  // Step 5: Map intent to brain action
+  const actionMapping = INTENT_ACTION_MAP[classification.type] || { action: null, handler: null };
+  const suggestedAction = actionMapping.action ? {
+    action: actionMapping.action,
+    params: buildActionParams(classification.type, trimmedInput, entities, projectName)
+  } : null;
+
+  // Step 6: Build parsed intent object
   const parsedIntent = {
     originalInput: trimmedInput,
     intentType: classification.type,
@@ -577,6 +705,7 @@ async function parseIntent(input) {
     entities,
     projectName,
     tasks,
+    suggestedAction,
     prdDraft: null
   };
 
@@ -668,6 +797,7 @@ async function parseAndCreate(input, options = {}) {
 export {
   INTENT_TYPES,
   INTENT_PHRASES,
+  INTENT_ACTION_MAP,
   ENTITY_PATTERNS,
   classifyIntent,
   extractEntities,
@@ -676,6 +806,8 @@ export {
   generatePrdDraft,
   generateStandardPrd,
   generateTrdDraft,
+  buildActionParams,
+  getSuggestedAction,
   parseIntent,
   parseAndCreate
 };

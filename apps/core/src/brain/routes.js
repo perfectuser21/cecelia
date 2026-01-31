@@ -1,11 +1,11 @@
-/* eslint-disable no-undef */
+ 
 import { Router } from 'express';
 import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy, getTopTasks } from './orchestrator.js';
 import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe } from './tick.js';
-import { parseIntent, parseAndCreate, INTENT_TYPES, extractEntities, classifyIntent } from './intent.js';
+import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from '../task-system/db.js';
 import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
 import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
@@ -697,13 +697,105 @@ router.get('/intent/types', (req, res) => {
     description: {
       create_project: '创建新项目（如：我想做一个 GMV Dashboard）',
       create_feature: '添加新功能（如：给登录页面加一个忘记密码功能）',
+      create_goal: '创建目标（如：创建一个 P0 目标：提升系统稳定性）',
+      create_task: '创建任务（如：添加一个任务：修复登录超时）',
+      query_status: '查询状态（如：当前有哪些任务？）',
       fix_bug: '修复 Bug（如：修复购物车页面的价格显示问题）',
       refactor: '重构代码（如：重构用户模块的代码结构）',
       explore: '探索/调研（如：帮我看看这个 API 怎么用）',
       question: '提问（如：为什么这里会报错？）',
       unknown: '无法识别的意图'
-    }
+    },
+    action_map: INTENT_ACTION_MAP
   });
+});
+
+/**
+ * POST /api/brain/intent/execute
+ * Parse intent and automatically execute the mapped brain action
+ *
+ * Request body:
+ *   { input: "创建一个 P0 目标：提升系统稳定性", dry_run: false }
+ *
+ * Response:
+ *   {
+ *     success: true,
+ *     parsed: { intentType, confidence, suggestedAction, ... },
+ *     executed: { action: "create-goal", result: {...} }
+ *   }
+ */
+router.post('/intent/execute', async (req, res) => {
+  try {
+    const { input, dry_run = false } = req.body;
+
+    if (!input || typeof input !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'input is required and must be a string'
+      });
+    }
+
+    const parsed = await parseIntent(input);
+
+    if (dry_run || !parsed.suggestedAction) {
+      return res.json({
+        success: true,
+        parsed,
+        executed: null,
+        message: dry_run ? 'Dry run - no action executed' : 'No action mapped for this intent type'
+      });
+    }
+
+    // Execute the mapped action
+    const { action, params } = parsed.suggestedAction;
+    let result;
+
+    const ACTION_HANDLERS = {
+      'create-goal': () => createGoal(params),
+      'create-task': () => createTask(params)
+    };
+
+    const handler = ACTION_HANDLERS[action];
+    if (!handler) {
+      return res.json({
+        success: true,
+        parsed,
+        executed: null,
+        message: `Action "${action}" has no direct handler`
+      });
+    }
+
+    result = await handler();
+    console.log(`[Intent] Executed action: ${action}`, result);
+
+    // Log the decision
+    try {
+      await pool.query(`
+        INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [
+        'intent-execute',
+        input.slice(0, 200),
+        { action, params, intentType: parsed.intentType },
+        result || {},
+        result?.id ? 'success' : 'failed'
+      ]);
+    } catch (logErr) {
+      console.error('[Intent] Failed to log decision:', logErr.message);
+    }
+
+    res.json({
+      success: true,
+      parsed,
+      executed: { action, result }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to execute intent',
+      details: err.message
+    });
+  }
 });
 
 // ==================== Enhanced Intent API (PRD: Intent Enhancement) ====================
