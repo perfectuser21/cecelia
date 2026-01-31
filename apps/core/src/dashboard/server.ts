@@ -20,12 +20,12 @@ import devgateRoutes from '../devgate/routes.js';
 import mediaRoutes from '../media/routes.js';
 import taskSystemRoutes from '../task-system/routes.js';
 import areasRoutes from '../task-system/areas.js';
-import brainRoutes from '../brain/routes.js';
+// Brain routes migrated to cecelia-semantic-brain (port 5221)
 import okrRoutes from '../okr/routes.js';
 import watchdogRoutes from '../watchdog/routes.js';
 import systemRoutes from '../system/routes.js';
 import { startMonitor as startWatchdogMonitor } from '../watchdog/service.js';
-import { initTickLoop } from '../brain/tick.js';
+// Tick loop migrated to cecelia-semantic-brain
 import { auditMiddleware, initAuditTable } from '../middleware/audit.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -160,8 +160,13 @@ app.use('/api/tasks', taskSystemRoutes);
 // Areas API routes (PARA alignment)
 app.use('/api/areas', areasRoutes);
 
-// Brain API routes (decision pack, actions, memory)
-app.use('/api/brain', brainRoutes);
+// Brain API routes → proxy to cecelia-semantic-brain Node.js service
+const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
+app.use('/api/brain', createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api/brain${path}`,
+}));
 
 // OKR Tree API routes (tree-based OKR management)
 app.use('/api/okr', okrRoutes);
@@ -215,8 +220,7 @@ server.listen(PORT, async () => {
   // Start watchdog monitor automatically
   startWatchdogMonitor();
 
-  // Initialize tick loop if enabled in DB
-  await initTickLoop();
+  // Tick loop now runs in cecelia-semantic-brain Node.js service (port 5221)
 });
 
 export default app;

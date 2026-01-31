@@ -6,14 +6,13 @@ export { coreInstanceConfig, coreTheme } from './config';
 import type { CoreConfig, CoreRoute, NavGroup, NavGroupItem, FeatureManifest } from './types';
 import { coreInstanceConfig } from './config';
 
-// Feature manifests - 6 lines
+// Feature manifests - 5 entries
 export const coreFeatures = {
   'dashboard': () => import('./dashboard'),
-  'daily': () => import('./daily'),
-  'gtd': () => import('./gtd'),
-  'content': () => import('./content'),
-  'aidev': () => import('./aidev'),
-  'brain': () => import('./brain'),
+  'today': () => import('./today'),
+  'work': () => import('./work'),
+  'knowledge': () => import('./knowledge'),
+  'system-hub': () => import('./system-hub'),
 };
 
 // Load all features and register them

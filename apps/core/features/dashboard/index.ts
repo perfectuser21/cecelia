@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'dashboard',
   name: 'Dashboard',
-  version: '1.0.0',
+  version: '2.0.0',
   source: 'core',
   instances: ['core'],
 
@@ -15,20 +15,21 @@ const manifest: FeatureManifest = {
     {
       path: '/dashboard',
       component: 'DashboardHome',
-      navItem: { label: 'Dashboard', icon: 'LayoutDashboard', group: 'dashboard', order: 1 },
+      navItem: { label: 'Dashboard', icon: 'LayoutDashboard', group: 'dashboard' },
     },
-    {
-      path: '/features',
-      component: 'FeatureDashboard',
-      navItem: { label: 'Features', icon: 'Layers', group: 'dashboard', order: 2 },
-    },
+    { path: '/dashboard/command', component: 'CommandCenter' },
+    { path: '/dashboard/command/*', component: 'CommandCenter' },
     // Default route
     { path: '/', redirect: '/dashboard' },
+    // Legacy redirects
+    { path: '/command', redirect: '/dashboard/command' },
+    { path: '/command/*', redirect: '/dashboard/command' },
+    { path: '/features', redirect: '/work/features' },
   ],
 
   components: {
     DashboardHome: () => import('./pages/DashboardHome'),
-    FeatureDashboard: () => import('../shared/pages/FeatureDashboard'),
+    CommandCenter: () => import('../business/pages/CommandCenter'),
   },
 };
 
