@@ -21,7 +21,7 @@ from src.intelligence.detector.code_monitor import CodeMonitor
 from src.intelligence.detector.security_monitor import SecurityMonitor
 from src.intelligence.planner.execution_planner import ExecutionPlanner
 from src.db.pool import Database, init_database, close_database
-from src.api.state_routes import router as state_router, set_database
+from src.api.state_routes_frozen import router as state_router
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
 from src.api.orchestrator_routes import router as orchestrator_router, set_database as set_orchestrator_database
@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
     # Initialize Database (State Layer)
     try:
         database = await init_database()
-        set_database(database)
+        # state_routes frozen (410) - no DB needed
         set_patrol_database(database)
         set_agent_database(database)
         set_orchestrator_database(database)
@@ -123,7 +123,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Include state routes (Brain API)
+# Include frozen state routes (Brain API moved to Node.js Brain on port 5221)
 app.include_router(state_router)
 
 # Include patrol routes (Patrol Agent API)
