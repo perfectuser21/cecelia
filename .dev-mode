@@ -1,5 +1,5 @@
 dev
-branch: cp-autumnrice-one-click-run
-prd: .prd.md
-started: 2026-01-30T15:00:00+00:00
+branch: cp-docker-24x7-deployment
+prd: .prd-docker-deployment.md
+started: 2026-02-01T06:34:16+00:00
 tasks_created: true

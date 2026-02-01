@@ -14,13 +14,26 @@ services:
       - ./logs:/app/logs
       # Config (for live reload)
       - ./sor:/app/sor:ro
+    env_file:
+      - .env.docker
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHROMA_DB_PATH=/data/chroma
       - SOR_CONFIG_PATH=/app/sor/config.yaml
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - DEV_ROOT=/mnt/dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5220/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   node-brain:
     image: node:20-alpine
@@ -29,15 +42,36 @@ services:
     working_dir: /app
     volumes:
       - ./brain:/app
+      # Mount claudehome for cecelia-run access
+      - /home/xx/.claude:/home/xx/.claude:ro
+      - /home/xx/bin:/home/xx/bin:ro
+    env_file:
+      - .env.docker
     environment:
       - DB_HOST=${DB_HOST:-localhost}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-cecelia_tasks}
       - DB_USER=${DB_USER:-n8n_user}
-      - DB_PASSWORD=${DB_PASSWORD:-n8n_password_2025}
+      - DB_PASSWORD=${DB_PASSWORD}
       - BRAIN_PORT=5221
-      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-false}
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
       - CECELIA_MAX_CONCURRENT=${CECELIA_MAX_CONCURRENT:-3}
+      - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-120000}
+      - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-    command: sh -c "npm install --production && node server.js"
+    command: sh -c "apk add --no-cache curl && (test -d node_modules || npm install --production) && node server.js"
+    depends_on:
+      semantic-brain:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -6,6 +6,33 @@ import { initTickLoop } from './src/tick.js';
 const app = express();
 const PORT = process.env.BRAIN_PORT || 5221;
 
+// ============== Process-level Exception Handlers ==============
+// Prevent uncaught exceptions from crashing the entire service
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  console.error('Stack:', err.stack);
+  // Log to file/monitoring service here
+  // For now, keep running (don't exit)
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Promise Rejection at:', promise);
+  console.error('Reason:', reason);
+  // Log to file/monitoring service here
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully...');
+  process.exit(0);
+});
+// ============================================================
+
 // CORS
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');

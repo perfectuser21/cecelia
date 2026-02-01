@@ -1,5 +1,5 @@
 [Unit]
-Description=Cecelia Semantic Brain API Service
+Description=Cecelia Intelligence Service (Semantic Search + Code Monitoring + Orchestration)
 After=network.target docker.service
 Requires=docker.service
 
@@ -18,7 +18,7 @@ Environment=COMPOSE_PROJECT_NAME=cecelia-semantic-brain
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=brain
+SyslogIdentifier=cecelia-intelligence
 
 [Install]
 WantedBy=multi-user.target

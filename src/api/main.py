@@ -1,4 +1,8 @@
-"""FastAPI application for Cecelia Semantic Brain."""
+"""Cecelia Intelligence Service - Semantic Search, Code Monitoring, and Orchestration.
+
+Note: Brain API (/api/brain/*) has been migrated to Node.js Brain (port 5221).
+This service provides supporting intelligence capabilities.
+"""
 
 import logging
 from contextlib import asynccontextmanager
@@ -21,12 +25,10 @@ from src.intelligence.detector.code_monitor import CodeMonitor
 from src.intelligence.detector.security_monitor import SecurityMonitor
 from src.intelligence.planner.execution_planner import ExecutionPlanner
 from src.db.pool import Database, init_database, close_database
-from src.api.state_routes_frozen import router as state_router
 from src.api.patrol_routes import router as patrol_router, set_database as set_patrol_database
 from src.api.agent_routes import router as agent_router, set_database as set_agent_database
 from src.api.orchestrator_routes import router as orchestrator_router, set_database as set_orchestrator_database
 from src.api.semantic_routes import router as semantic_router, set_dependencies as set_semantic_dependencies
-from src.autumnrice.routes import router as autumnrice_router, set_database as set_autumnrice_database, ensure_tables as ensure_autumnrice_tables
 from src.state.patrol import ensure_patrol_table
 from src.state.agent_monitor import ensure_agent_tables
 
@@ -95,11 +97,9 @@ async def lifespan(app: FastAPI):
         set_patrol_database(database)
         set_agent_database(database)
         set_orchestrator_database(database)
-        set_autumnrice_database(database)
         # Ensure required tables exist
         await ensure_patrol_table(database)
         await ensure_agent_tables(database)
-        await ensure_autumnrice_tables(database)
         logger.info("Database connection initialized")
     except Exception as e:
         logger.warning(f"Database connection failed (State Layer disabled): {e}")
@@ -121,14 +121,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Cecelia Semantic Brain",
-    description="Private knowledge retrieval API",
-    version="1.1.0",
+    title="Cecelia Intelligence Service",
+    description="Semantic Search, Code Monitoring, and Orchestration APIs",
+    version="2.0.0",
     lifespan=lifespan,
 )
-
-# Include frozen state routes (Brain API moved to Node.js Brain on port 5221)
-app.include_router(state_router)
 
 # Include patrol routes (Patrol Agent API)
 app.include_router(patrol_router)
@@ -139,11 +136,30 @@ app.include_router(agent_router)
 # Include orchestrator routes (Layer 2 state management + Realtime API)
 app.include_router(orchestrator_router)
 
-# Include autumnrice routes (秋米 - TRD/Task/Run state machine)
-app.include_router(autumnrice_router)
-
 # Include semantic routes (/v1/semantic/* for Node.js Brain integration)
 app.include_router(semantic_router)
+
+
+@app.get("/")
+async def root():
+    """Service information."""
+    return {
+        "service": "Cecelia Intelligence Service",
+        "version": "2.0.0",
+        "description": "Semantic Search, Code Monitoring, and Orchestration APIs",
+        "brain_api": {
+            "status": "migrated",
+            "message": "Brain API has been migrated to Node.js Brain (port 5221)",
+            "url": "http://localhost:5221/api/brain"
+        },
+        "active_apis": [
+            "/v1/semantic/* - Semantic Search",
+            "/api/patrol/* - Code Patrol & Monitoring",
+            "/api/agent/* - Agent Activity Monitoring",
+            "/api/orchestrator/* - Task Orchestration & Realtime API"
+        ],
+        "docs": "/docs"
+    }
 
 
 # Request/Response models

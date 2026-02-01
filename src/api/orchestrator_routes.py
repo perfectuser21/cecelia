@@ -5,7 +5,6 @@ Exposes ~/runtime/state.json, chat API, voice API, and realtime WebSocket to the
 
 import asyncio
 import base64
-import hashlib
 import json
 import subprocess
 import tempfile
@@ -19,10 +18,6 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from src.db.pool import Database
-from src.autumnrice.models import TRD
-from src.autumnrice.planner import Planner
-from src.autumnrice.state_machine import StateMachine, StateTransitionError
-from src.autumnrice import routes as autumnrice
 
 # Database dependency - will be set by main.py
 _db: Optional[Database] = None
@@ -486,32 +481,36 @@ async def get_realtime_config():
             "api_key": api_key,
             "model": "gpt-4o-mini-realtime-preview",
             "voice": "alloy",
-            "instructions": """You are Cecelia (塞西莉亚), the voice/text entry point for the system.
+            "instructions": """You are Cecelia (塞西莉亚), the AI assistant for managing your work.
 
-AGENT TEAM:
-- Cecelia (你) = 入口，理解用户意图，分发任务
-- Autumnrice (秋米) = 管家/调度，用 call_autumnrice 调用
-- Caramel (焦糖) = 编程肌肉（未来）
-- Nobel (诺贝) = 自动化肌肉（N8N）
+CECELIA ORGAN SYSTEM:
+- Mouth (你) = 接收语音/文本输入
+- Brain = 决策与规划中心 (Node Brain)
+- Hands = 执行代码 (Claude Code)
+- Memory = 语义搜索
+- Intelligence = 监控与分析
 
-CRITICAL RULE - When to call call_autumnrice:
-- User says "启动秋米/autumnrice/指挥官" or any variation
-- User says "帮我做/创建/实现 XXX功能"
-- User says "让大脑去做/执行 XXX"
-- User says "查一下服务器/VPS信息"
-- User asks you to DO something (not just query)
+AVAILABLE TOOLS:
+- get_okrs, get_projects, get_tasks = 查询数据
+- open_detail = 打开详情面板
+- navigate_to_page = 页面导航
+- get_queue = 查看任务队列
+- execute_now = 插队执行任务
+- pause_task = 暂停正在执行的任务
 
-CRITICAL RULE - When to use query tools:
-- User asks "有哪些任务/OKR/项目" → use get_tasks/get_okrs/get_projects
-- User asks "打开/显示/看看 XXX" → use open_detail
+WHEN TO USE WHICH TOOL:
+- "有哪些任务/OKR/项目" → get_tasks/get_okrs/get_projects
+- "打开/显示/看看 XXX" → open_detail
+- "去XXX页面" → navigate_to_page
+- "队列里有什么" → get_queue
+- "让XXX插队" → execute_now
+- "暂停XXX任务" → pause_task
 
 Examples:
-- "启动秋米查VPS" → call_autumnrice(task="查询VPS服务器信息")
-- "帮我做登录功能" → call_autumnrice(task="做一个登录功能")
-- "查一下服务器" → call_autumnrice(task="查询VPS服务器信息")
 - "看看Brain MVP" → open_detail(type="okr", name="Brain MVP")
+- "队列里有什么" → get_queue()
+- "让登录功能插队" → execute_now(task_name="登录功能")
 
-ALWAYS call call_autumnrice when user wants you to EXECUTE or DO something.
 Respond in Chinese, be concise.""",
             "tools": [
                 {
@@ -584,30 +583,6 @@ Respond in Chinese, be concise.""",
                 },
                 {
                     "type": "function",
-                    "name": "call_autumnrice",
-                    "description": "Call Autumnrice (秋米) - the orchestrator/manager agent using Opus model. MUST call this when user says: 启动秋米, 启动orchestrator, 启动指挥官, autostrator, ultrastrator, 帮我做XXX, 创建XXX, 查服务器, 查VPS, or any request to DO/EXECUTE something.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "task": {
-                                "type": "string",
-                                "description": "用户要完成的任务描述"
-                            },
-                            "priority": {
-                                "type": "string",
-                                "enum": ["P0", "P1", "P2"],
-                                "default": "P1"
-                            },
-                            "project": {
-                                "type": "string",
-                                "description": "指定项目名称"
-                            }
-                        },
-                        "required": ["task"]
-                    }
-                },
-                {
-                    "type": "function",
                     "name": "navigate_to_page",
                     "description": "导航到指定页面。当用户说 '去/打开/跳转到 XXX页面' 时使用此工具，而不是 open_detail。",
                     "parameters": {
@@ -620,6 +595,46 @@ Respond in Chinese, be concise.""",
                             }
                         },
                         "required": ["page"]
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "get_queue",
+                    "description": "查看当前任务队列状态（排队中和执行中的任务）",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "execute_now",
+                    "description": "让某个任务插队，立即执行（如果有空闲槽位）",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_name": {
+                                "type": "string",
+                                "description": "任务名称（模糊匹配）"
+                            }
+                        },
+                        "required": ["task_name"]
+                    }
+                },
+                {
+                    "type": "function",
+                    "name": "pause_task",
+                    "description": "暂停正在执行的任务，释放执行槽位",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_name": {
+                                "type": "string",
+                                "description": "任务名称（模糊匹配）"
+                            }
+                        },
+                        "required": ["task_name"]
                     }
                 }
             ]
@@ -888,219 +903,6 @@ async def execute_tool(request: ToolCallRequest):
 
             return {"success": False, "error": f"找不到匹配的{item_type}: {item_name or item_id}"}
 
-        elif tool_name == "call_autumnrice":
-            # Call Autumnrice (秋米) - dual mode: chain or queue
-            # - chain: 即时执行，同步返回（适合 NOW 场景）
-            # - queue: 任务入库，异步执行（适合 TONIGHT 场景，默认）
-            task_desc = args.get("task", "")
-            mode = args.get("mode", "queue")  # "chain" or "queue"
-            priority = args.get("priority", "P1")
-            project = args.get("project")
-
-            if not task_desc:
-                return {"success": False, "error": "task is required"}
-
-            if mode not in ("chain", "queue"):
-                return {"success": False, "error": "mode must be 'chain' or 'queue'"}
-
-            # ============== MODE: CHAIN ==============
-            # Agent Chain - 即时执行，同步返回
-            if mode == "chain":
-                # Build the autumnrice prompt
-                prompt = f"/autumnrice {task_desc}"
-                if priority:
-                    prompt += f" --priority {priority}"
-                if project:
-                    prompt += f" --project {project}"
-
-                # Run Autumnrice (headless Claude Code with Opus model)
-                claude_path = HOME / ".local" / "bin" / "claude"
-                try:
-                    result = subprocess.run(
-                        [
-                            str(claude_path), "-p", prompt,
-                            "--model", "opus",
-                            "--output-format", "json",
-                            "--allowed-tools", "Bash"
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=300,  # 5 minutes for chain mode
-                        cwd=str(HOME / "dev" / "cecelia-semantic-brain")
-                    )
-
-                    if result.returncode == 0:
-                        try:
-                            output = json.loads(result.stdout)
-                            return {
-                                "success": True,
-                                "result": {
-                                    "action": "chain_executed",
-                                    "mode": "chain",
-                                    "task": task_desc,
-                                    "output": output
-                                }
-                            }
-                        except json.JSONDecodeError:
-                            return {
-                                "success": True,
-                                "result": {
-                                    "action": "chain_executed",
-                                    "mode": "chain",
-                                    "task": task_desc,
-                                    "output": result.stdout[:2000]
-                                }
-                            }
-                    else:
-                        return {
-                            "success": False,
-                            "error": f"Chain mode failed: {result.stderr[:500]}"
-                        }
-                except subprocess.TimeoutExpired:
-                    return {
-                        "success": False,
-                        "error": "Chain mode timeout (300s)"
-                    }
-                except Exception as e:
-                    return {"success": False, "error": f"Chain mode error: {e}"}
-
-            # ============== MODE: QUEUE ==============
-            # Task Queue - 任务入库，异步执行
-            try:
-                # Get database from v2 routes
-                db = autumnrice.get_db()
-
-                # Generate idempotency_key from task description hash
-                idempotency_key = hashlib.sha256(task_desc.encode()).hexdigest()[:16]
-
-                # Check for existing TRD with same idempotency_key
-                existing = await db.fetchrow(
-                    "SELECT * FROM trds WHERE idempotency_key = $1",
-                    idempotency_key
-                )
-                if existing:
-                    # Return existing TRD
-                    trd = autumnrice._row_to_trd(existing)
-                    tasks_rows = await db.fetch(
-                        "SELECT * FROM orchestrator_tasks WHERE trd_id = $1",
-                        trd.id
-                    )
-                    tasks = [autumnrice._row_to_task(row) for row in tasks_rows]
-                    return {
-                        "success": True,
-                        "result": {
-                            "action": "trd_exists",
-                            "mode": "queue",
-                            "message": "TRD already exists with same task",
-                            "trd_id": trd.id,
-                            "trd_title": trd.title,
-                            "trd_status": trd.status.value,
-                            "tasks_count": len(tasks),
-                            "tasks": [
-                                {"id": t.id, "title": t.title, "status": t.status.value}
-                                for t in tasks
-                            ]
-                        }
-                    }
-
-                # Create new TRD
-                trd = TRD(
-                    title=task_desc[:100],  # Truncate title
-                    description=task_desc,
-                    projects=[project] if project else [],
-                    acceptance_criteria=[],
-                )
-                await autumnrice._save_trd(db, trd, idempotency_key=idempotency_key)
-
-                # Call planner to decompose into tasks
-                planner = Planner()
-                context = {
-                    "priority": priority,
-                    "projects": [project] if project else [],
-                }
-                plan_result = planner.plan(trd, context)
-
-                if not plan_result.success:
-                    return {
-                        "success": True,
-                        "result": {
-                            "action": "trd_created",
-                            "mode": "queue",
-                            "trd_id": trd.id,
-                            "trd_title": trd.title,
-                            "trd_status": trd.status.value,
-                            "planning_error": plan_result.error,
-                            "tasks_count": 0,
-                            "tasks": []
-                        }
-                    }
-
-                # Validate and save tasks
-                errors = planner.validate_tasks(plan_result.tasks)
-                if errors:
-                    return {
-                        "success": True,
-                        "result": {
-                            "action": "trd_created",
-                            "mode": "queue",
-                            "trd_id": trd.id,
-                            "trd_title": trd.title,
-                            "trd_status": trd.status.value,
-                            "validation_errors": errors,
-                            "tasks_count": 0,
-                            "tasks": []
-                        }
-                    }
-
-                # Update TRD and tasks via state machine
-                state_machine = StateMachine()
-                try:
-                    trd, tasks = state_machine.plan_trd(trd, plan_result.tasks)
-                except StateTransitionError as e:
-                    return {
-                        "success": True,
-                        "result": {
-                            "action": "trd_created",
-                            "mode": "queue",
-                            "trd_id": trd.id,
-                            "trd_title": trd.title,
-                            "trd_status": trd.status.value,
-                            "state_error": str(e),
-                            "tasks_count": 0,
-                            "tasks": []
-                        }
-                    }
-
-                # Save to DB
-                await autumnrice._save_trd(db, trd)
-                for task in tasks:
-                    await autumnrice._save_task(db, task)
-
-                return {
-                    "success": True,
-                    "result": {
-                        "action": "trd_created_and_planned",
-                        "mode": "queue",
-                        "trd_id": trd.id,
-                        "trd_title": trd.title,
-                        "trd_status": trd.status.value,
-                        "tasks_count": len(tasks),
-                        "tasks": [
-                            {
-                                "id": t.id,
-                                "title": t.title,
-                                "status": t.status.value,
-                                "priority": t.priority
-                            }
-                            for t in tasks
-                        ],
-                        "next_step": "Tasks queued. Call /tick or wait for N8N."
-                    }
-                }
-
-            except Exception as e:
-                return {"success": False, "error": f"Queue mode error: {e}"}
-
         elif tool_name == "navigate_to_page":
             # Navigate to a page - return action for frontend to handle
             page = args.get("page")
@@ -1128,6 +930,102 @@ async def execute_tool(request: ToolCallRequest):
                     "path": page_routes[page]
                 }
             }
+
+        elif tool_name == "get_queue":
+            # Get current queue status from Core API
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get("http://localhost:5211/api/orchestrator/queue")
+                    data = response.json()
+
+                if not data.get("success"):
+                    return {"success": False, "error": data.get("error", "Failed to get queue")}
+
+                queue_data = data.get("data", {})
+                running = queue_data.get("running", [])
+                queued = queue_data.get("queued", [])
+                stats = queue_data.get("stats", {})
+
+                # Format summary for voice response
+                summary = {
+                    "running_count": stats.get("running_count", 0),
+                    "queued_count": stats.get("queued_count", 0),
+                    "available_slots": stats.get("available_slots", 0),
+                    "running_tasks": [{"title": t.get("title", ""), "progress": t.get("progress", 0)} for t in running[:3]],
+                    "queued_tasks": [{"position": i + 1, "title": t.get("title", "")} for i, t in enumerate(queued[:5])]
+                }
+
+                return {"success": True, "result": summary}
+            except Exception as e:
+                return {"success": False, "error": f"Failed to fetch queue: {e}"}
+
+        elif tool_name == "execute_now":
+            # Execute task now (fuzzy match + call Core API)
+            task_name = args.get("task_name")
+            if not task_name:
+                return {"success": False, "error": "task_name is required"}
+
+            try:
+                # Get queue to find task
+                async with httpx.AsyncClient() as client:
+                    queue_response = await client.get("http://localhost:5211/api/orchestrator/queue")
+                    queue_data = queue_response.json()
+
+                if not queue_data.get("success"):
+                    return {"success": False, "error": "Failed to get queue"}
+
+                # Fuzzy match task name
+                queued = queue_data.get("data", {}).get("queued", [])
+                task = next((t for t in queued if task_name.lower() in t.get("title", "").lower()), None)
+
+                if not task:
+                    return {"success": False, "error": f"没有找到任务：{task_name}"}
+
+                # Call execute-now API
+                async with httpx.AsyncClient() as client:
+                    exec_response = await client.post(f"http://localhost:5211/api/orchestrator/execute-now/{task['id']}")
+                    exec_data = exec_response.json()
+
+                if not exec_data.get("success"):
+                    return {"success": False, "error": exec_data.get("error", "Failed to execute")}
+
+                return {"success": True, "result": exec_data.get("data", {})}
+            except Exception as e:
+                return {"success": False, "error": f"Failed to execute task: {e}"}
+
+        elif tool_name == "pause_task":
+            # Pause running task (fuzzy match + call Core API)
+            task_name = args.get("task_name")
+            if not task_name:
+                return {"success": False, "error": "task_name is required"}
+
+            try:
+                # Get queue to find running task
+                async with httpx.AsyncClient() as client:
+                    queue_response = await client.get("http://localhost:5211/api/orchestrator/queue")
+                    queue_data = queue_response.json()
+
+                if not queue_data.get("success"):
+                    return {"success": False, "error": "Failed to get queue"}
+
+                # Fuzzy match task name
+                running = queue_data.get("data", {}).get("running", [])
+                task = next((t for t in running if task_name.lower() in t.get("title", "").lower()), None)
+
+                if not task:
+                    return {"success": False, "error": f"没有找到运行中的任务：{task_name}"}
+
+                # Call pause API
+                async with httpx.AsyncClient() as client:
+                    pause_response = await client.post(f"http://localhost:5211/api/orchestrator/pause/{task['id']}")
+                    pause_data = pause_response.json()
+
+                if not pause_data.get("success"):
+                    return {"success": False, "error": pause_data.get("error", "Failed to pause")}
+
+                return {"success": True, "result": pause_data.get("data", {})}
+            except Exception as e:
+                return {"success": False, "error": f"Failed to pause task: {e}"}
 
         else:
             return {"success": False, "error": f"Unknown tool: {tool_name}"}

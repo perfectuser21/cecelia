@@ -1,58 +1,8 @@
-"""State management module for Cecelia Semantic Brain."""
+"""State Layer - Intelligence service state management.
 
-from .focus import (
-    select_daily_focus,
-    get_daily_focus,
-    set_daily_focus,
-    clear_daily_focus,
-    get_focus_summary,
-    FOCUS_OVERRIDE_KEY,
-)
-
-from .tick import (
-    get_tick_status,
-    enable_tick,
-    disable_tick,
-    execute_tick,
-    is_stale,
-    TICK_INTERVAL_MINUTES,
-    STALE_THRESHOLD_HOURS,
-)
-
-from .actions import (
-    create_task,
-    update_task,
-    create_goal,
-    update_goal,
-    set_memory,
-    log_decision,
-    batch_update_tasks,
-    execute_action,
-    ACTION_HANDLERS,
-)
-
-from .goals import (
-    list_objectives,
-    list_key_results,
-    get_goal,
-    get_objective_with_tasks,
-    delete_goal,
-    update_objective_progress,
-    get_goals_summary,
-)
-
-from .queue import (
-    get_queue,
-    init_queue,
-    get_next_prd,
-    start_current_prd,
-    complete_prd,
-    fail_prd,
-    retry_failed,
-    clear_queue,
-    get_queue_summary,
-    PRD_QUEUE_KEY,
-)
+Note: Brain state (focus, tick, goals, queue, actions) has been migrated to Node.js Brain.
+This module only exports patrol and agent_monitor functionality.
+"""
 
 from .patrol import (
     get_stale_tasks,
@@ -103,50 +53,6 @@ from .agent_monitor import (
 )
 
 __all__ = [
-    # Focus
-    "select_daily_focus",
-    "get_daily_focus",
-    "set_daily_focus",
-    "clear_daily_focus",
-    "get_focus_summary",
-    "FOCUS_OVERRIDE_KEY",
-    # Tick
-    "get_tick_status",
-    "enable_tick",
-    "disable_tick",
-    "execute_tick",
-    "is_stale",
-    "TICK_INTERVAL_MINUTES",
-    "STALE_THRESHOLD_HOURS",
-    # Actions
-    "create_task",
-    "update_task",
-    "create_goal",
-    "update_goal",
-    "set_memory",
-    "log_decision",
-    "batch_update_tasks",
-    "execute_action",
-    "ACTION_HANDLERS",
-    # Goals
-    "list_objectives",
-    "list_key_results",
-    "get_goal",
-    "get_objective_with_tasks",
-    "delete_goal",
-    "update_objective_progress",
-    "get_goals_summary",
-    # Queue
-    "get_queue",
-    "init_queue",
-    "get_next_prd",
-    "start_current_prd",
-    "complete_prd",
-    "fail_prd",
-    "retry_failed",
-    "clear_queue",
-    "get_queue_summary",
-    "PRD_QUEUE_KEY",
     # Patrol
     "get_stale_tasks",
     "get_task_by_id",

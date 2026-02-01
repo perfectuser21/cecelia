@@ -11,6 +11,7 @@ import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
+import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
 import { emit as emitEvent } from './event-bus.js';
@@ -1721,6 +1722,94 @@ router.post('/plan', async (req, res) => {
     res.status(status).json({
       success: false,
       error: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/plan/llm
+ * Use LLM (Claude) to intelligently plan tasks for a goal
+ *
+ * Body:
+ * - goal_id: UUID of the goal/KR to plan for
+ * - use_opus: boolean (default: false, use Sonnet)
+ * - save: boolean (default: true, save tasks to DB)
+ * - context: object with additional context (projects, existing_tasks, etc.)
+ */
+router.post('/plan/llm', async (req, res) => {
+  try {
+    const { goal_id, use_opus = false, save = true, context = {} } = req.body;
+
+    if (!goal_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'goal_id is required'
+      });
+    }
+
+    // Fetch goal from database
+    const goalResult = await pool.query(
+      'SELECT * FROM goals WHERE id = $1',
+      [goal_id]
+    );
+
+    if (goalResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Goal not found'
+      });
+    }
+
+    const goal = goalResult.rows[0];
+
+    // Check if already has queued tasks
+    const existingTasks = await pool.query(
+      'SELECT * FROM tasks WHERE goal_id = $1 AND status IN ($2, $3)',
+      [goal_id, 'queued', 'in_progress']
+    );
+
+    if (existingTasks.rows.length > 0 && !context.force) {
+      return res.status(400).json({
+        success: false,
+        error: 'Goal already has queued/in-progress tasks. Use force=true to override.',
+        existing_tasks: existingTasks.rows.length
+      });
+    }
+
+    // Plan with LLM
+    const enhancedContext = {
+      ...context,
+      useOpus: use_opus,
+      existingTasks: existingTasks.rows
+    };
+
+    const tasks = await planWithLLM(goal, enhancedContext);
+
+    // Save to database if requested
+    let savedTasks = [];
+    if (save) {
+      savedTasks = await savePlannedTasks(tasks, goal);
+    }
+
+    res.json({
+      success: true,
+      goal: {
+        id: goal.id,
+        title: goal.title,
+        priority: goal.priority
+      },
+      tasks: save ? savedTasks : tasks,
+      count: tasks.length,
+      model: use_opus ? 'claude-opus-4' : 'claude-sonnet-4',
+      saved: save
+    });
+
+  } catch (err) {
+    console.error('LLM Planning error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to plan with LLM',
+      details: err.message
     });
   }
 });
