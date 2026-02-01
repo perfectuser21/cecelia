@@ -1,6 +1,33 @@
-import { useState, useEffect } from 'react';
-import { CheckCircle2, XCircle, Loader2, RefreshCw, TrendingUp, Clock, Zap } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { CheckCircle2, XCircle, Loader2, RefreshCw, TrendingUp, Clock, Zap, Activity, Play, Pause, AlertTriangle } from 'lucide-react';
 
+// Brain API 类型定义
+interface BrainStatus {
+  enabled: boolean;
+  loop_running: boolean;
+  loop_interval_ms: number;
+  last_tick: string | null;
+  next_tick: string | null;
+  actions_today: number;
+  max_concurrent: number;
+  circuit_breakers: {
+    [key: string]: {
+      state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+      failure_count: number;
+      last_failure_time: string | null;
+    };
+  };
+}
+
+interface Task {
+  id: string;
+  title: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  started_at?: string;
+  created_at: string;
+}
+
+// N8N API 类型定义
 interface TodayStats {
   running: number;
   success: number;
@@ -24,6 +51,11 @@ interface ApiResponse {
   recentCompleted: Execution[];
   runningExecutions: Execution[];
 }
+
+// 环境感知的 Brain API URL
+const BRAIN_API_URL = typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+  ? `${window.location.protocol}//${window.location.hostname}:5221`
+  : 'http://localhost:5221';
 
 const FEATURES = [
   { id: 'data-collection', name: '数据采集', color: '#3b82f6', bg: 'bg-blue-50 dark:bg-blue-900/20', keywords: ['采集', 'scrape', 'collect', 'fetch-data'] },
@@ -54,31 +86,60 @@ function formatDuration(seconds?: number) {
 
 export default function ExecutionStatus() {
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState('');
 
-  const fetchData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/v1/n8n-live-status/instances/local/overview');
-      if (!res.ok) throw new Error('API error');
-      const json = await res.json();
-      setData(json);
+
+      // N8N API (primary - must succeed)
+      const n8nRes = await fetch('/api/v1/n8n-live-status/instances/local/overview');
+      if (!n8nRes.ok) throw new Error('N8N API error');
+      const n8nData = await n8nRes.json();
+      setData(n8nData);
+
+      // Brain API (optional - non-blocking)
+      try {
+        const brainRes = await fetch(`${BRAIN_API_URL}/api/brain/tick/status`);
+        if (brainRes.ok) {
+          const brainData = await brainRes.json();
+          setBrainStatus(brainData);
+        }
+      } catch (err) {
+        console.warn('Brain API failed:', err);
+        setBrainStatus(null);
+      }
+
+      // Tasks API (optional - non-blocking)
+      try {
+        const tasksRes = await fetch('/api/tasks/tasks');
+        if (tasksRes.ok) {
+          const tasksData = await tasksRes.json();
+          setTasks(tasksData);
+        }
+      } catch (err) {
+        console.warn('Tasks API failed:', err);
+        setTasks([]);
+      }
+
       setError('');
       setLastUpdate(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
-    } catch {
-      setError('加载失败');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载失败');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchData();
-    const t = setInterval(fetchData, 30000);
+    loadData();
+    const t = setInterval(loadData, 30000);
     return () => clearInterval(t);
-  }, []);
+  }, [loadData]);
 
   // 合并所有执行记录
   const allExecs = [...(data?.runningExecutions || []), ...(data?.recentCompleted || [])];
@@ -133,7 +194,7 @@ export default function ExecutionStatus() {
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">{lastUpdate} 更新</span>
           <button
-            onClick={fetchData}
+            onClick={loadData}
             disabled={loading}
             className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           >
@@ -141,6 +202,203 @@ export default function ExecutionStatus() {
           </button>
         </div>
       </div>
+
+      {/* Cecelia 运行时监控 */}
+      {brainStatus && (
+        <>
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+              <Activity className="w-5 h-5" />
+              Cecelia 运行时监控
+            </h2>
+          </div>
+
+          {/* Seats + Tick Loop + Circuit Breaker + Task Queue */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {/* 1. Seats 配置 */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+              <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+                <Zap className="w-3.5 h-3.5" />
+                <span>Seats 配置</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">最大并发</span>
+                  <span className="font-semibold text-gray-900 dark:text-white">{brainStatus.max_concurrent}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">使用中</span>
+                  <span className="font-semibold text-blue-600">{tasks.filter(t => t.status === 'in_progress').length}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600 dark:text-gray-400">可用</span>
+                  <span className="font-semibold text-green-600">
+                    {brainStatus.max_concurrent - tasks.filter(t => t.status === 'in_progress').length}
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
+                      style={{
+                        width: `${brainStatus.max_concurrent > 0
+                          ? (tasks.filter(t => t.status === 'in_progress').length / brainStatus.max_concurrent) * 100
+                          : 0}%`
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Tick Loop 状态 */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+              <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+                {brainStatus.enabled && brainStatus.loop_running ? (
+                  <Play className="w-3.5 h-3.5 text-green-500" />
+                ) : (
+                  <Pause className="w-3.5 h-3.5 text-gray-400" />
+                )}
+                <span>Tick Loop</span>
+                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${
+                  brainStatus.enabled && brainStatus.loop_running
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                }`}>
+                  {brainStatus.enabled && brainStatus.loop_running ? '运行中' : '已停止'}
+                </span>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">间隔</span>
+                  <span className="font-semibold text-gray-900 dark:text-white">
+                    {brainStatus.loop_interval_ms / 60000}min
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">今日动作</span>
+                  <span className="font-semibold text-gray-900 dark:text-white">{brainStatus.actions_today}</span>
+                </div>
+                {brainStatus.last_tick && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">上次</span>
+                    <span className="text-xs text-gray-500">{formatTime(brainStatus.last_tick)}</span>
+                  </div>
+                )}
+                {brainStatus.next_tick && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">下次</span>
+                    <span className="text-xs text-gray-500">{formatTime(brainStatus.next_tick)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 3. 熔断器状态 */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+              <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>熔断器状态</span>
+              </div>
+              <div className="space-y-2">
+                {Object.entries(brainStatus.circuit_breakers).map(([name, breaker]) => (
+                  <div key={name} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 dark:text-gray-300 truncate">{name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        breaker.state === 'CLOSED'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                          : breaker.state === 'OPEN'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                          : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                      }`}>
+                        {breaker.state}
+                      </span>
+                      {breaker.failure_count > 0 && (
+                        <span className="text-xs text-gray-500">({breaker.failure_count})</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(brainStatus.circuit_breakers).length === 0 && (
+                  <div className="text-xs text-gray-400 text-center py-2">无熔断器</div>
+                )}
+              </div>
+            </div>
+
+            {/* 4. 任务队列统计 */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+              <div className="flex items-center gap-2 text-gray-500 text-xs mb-3">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>任务队列</span>
+              </div>
+              <div className="space-y-2">
+                {(['queued', 'in_progress', 'completed', 'failed', 'cancelled'] as const).map(status => {
+                  const count = tasks.filter(t => t.status === status).length;
+                  const percentage = tasks.length > 0 ? Math.round((count / tasks.length) * 100) : 0;
+                  const colors = {
+                    queued: 'text-gray-600',
+                    in_progress: 'text-blue-600',
+                    completed: 'text-green-600',
+                    failed: 'text-red-600',
+                    cancelled: 'text-gray-400'
+                  };
+                  const labels = {
+                    queued: '队列中',
+                    in_progress: '进行中',
+                    completed: '已完成',
+                    failed: '失败',
+                    cancelled: '已取消'
+                  };
+
+                  return (
+                    <div key={status} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600 dark:text-gray-400">{labels[status]}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-semibold ${colors[status]}`}>{count}</span>
+                        <span className="text-xs text-gray-400 w-10 text-right">{percentage}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 5. 当前活动 */}
+          {tasks.filter(t => t.status === 'in_progress').length > 0 && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-100 dark:border-gray-700 mb-6">
+              <div className="flex items-center gap-2 text-gray-500 text-sm mb-4">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                <span className="font-medium text-gray-900 dark:text-white">当前活动</span>
+                <span className="text-xs text-gray-400">
+                  ({tasks.filter(t => t.status === 'in_progress').length} 个任务运行中)
+                </span>
+              </div>
+              <div className="space-y-2">
+                {tasks
+                  .filter(t => t.status === 'in_progress')
+                  .map(task => (
+                    <div
+                      key={task.id}
+                      className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">{task.title}</span>
+                      </div>
+                      {task.started_at && (
+                        <span className="text-xs text-gray-500">
+                          开始于 {formatTime(task.started_at)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* 顶部统计卡片 */}
       <div className="grid grid-cols-4 gap-4 mb-6">

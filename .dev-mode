@@ -1,8 +1,5 @@
 dev
-branch: cp-02011934-cecelia-overview-enhancement
-session_id: 16db52d74e72
-tty: not a tty
-not a tty
-prd: .prd.md
-started: 2026-02-01T19:34:59+08:00
+branch: cp-02012035-fix-cecelia-overview-frontend
+prd: .prd-fix-cecelia-overview-frontend.md
+started: 2026-02-01T12:35:23+00:00
 tasks_created: true
