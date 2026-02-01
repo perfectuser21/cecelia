@@ -59,7 +59,8 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-120000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-    command: sh -c "apk add --no-cache curl && (test -d node_modules || npm install --production) && node server.js"
+      - CECELIA_RUN_PATH=/usr/local/bin/cecelia-run
+    command: sh -c "apk add --no-cache curl bash && (test -d node_modules || npm install --production) && node server.js"
     depends_on:
       semantic-brain:
         condition: service_healthy

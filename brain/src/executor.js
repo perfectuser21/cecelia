@@ -317,7 +317,7 @@ async function triggerCeceliaRun(task) {
     const logFile = `/tmp/cecelia-${task.id}.log`;
     const webhookUrl = process.env.BRAIN_CALLBACK_URL || 'http://localhost:5212/api/brain/execution-callback';
 
-    const child = spawn(CECELIA_RUN_PATH, [task.id, runId, promptFile], {
+    const child = spawn('bash', [CECELIA_RUN_PATH, task.id, runId, promptFile], {
       cwd: WORK_DIR,
       env: {
         ...process.env,
