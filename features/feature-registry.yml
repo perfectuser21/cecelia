@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.49.0"
+version: "2.50.0"
 updated: "2026-02-01"
 changelog:
+  - 2.50.0: v11.24.0 - H2 硬拦截 --admin 参数（移除引号内容后检测，防止绕过 Branch Protection）
   - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
   - 2.48.0: v11.22.0 - Gate MAX_GATE_ATTEMPTS 调整（从 3 次到 20 次，提供充足修复机会）
   - 2.47.0: v11.21.0 - Gate 循环模式 B 优化（主 Agent 改 + 外部循环，职责分离架构，新建 qa.md/learning.md，统一循环控制模板）
@@ -169,12 +170,13 @@ platform_features:
     name: PR Gate (Dual Mode)
     status: Committed
     priority: P0
-    version: "11.11.0"
-    updated: "2026-01-30"
+    version: "11.24.0"
+    updated: "2026-02-01"
     description: |
       PR 创建前的质检门禁，支持双模式：
       - PR 模式: L1 (测试) + L2A (审计) + L2B-min (证据)
       - Release 模式: L1 + L2A + L2B-full (证据) + L3 (验收)
+      - v11.24.0: 硬拦截 gh pr --admin 参数（移除引号/heredoc 后检测，防止绕过 Branch Protection 和 CI）
       - v11.11.0: P0-3 修复 - verify-gate-signature.sh 调用添加 10 秒超时保护（防止卡死）
       - v11.10.0: P0-1 修复 - 验证器缺失时改为软警告（不再阻止），支持 v3 exit code (7/8/9)
       - v11.8.0: Gate 验证器硬失败（脚本缺失时 exit 2）+ 分层 exit code 错误提示
