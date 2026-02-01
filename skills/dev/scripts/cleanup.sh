@@ -340,12 +340,65 @@ else
 fi
 
 # ========================================
+# 7.6 验证所有步骤完成（W8: 删除前检查）
+# ========================================
+echo ""
+echo "[7.6] 验证所有步骤完成..."
+
+PROJECT_ROOT_FOR_VALIDATION=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode"
+
+if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
+    INCOMPLETE_STEPS=""
+    for step in {1..11}; do
+        STEP_STATUS=$(grep "^step_${step}_" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
+        if [[ "$STEP_STATUS" != "done" ]]; then
+            INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"
+        fi
+    done
+
+    if [[ -n "$INCOMPLETE_STEPS" ]]; then
+        echo -e "   ${RED}[FAIL] 不能删除 .dev-mode，以下步骤未完成: $INCOMPLETE_STEPS${NC}"
+        echo -e "   ${YELLOW}提示: 确保所有步骤都已标记为 done${NC}"
+        FAILED=$((FAILED + 1))
+    else
+        echo -e "   ${GREEN}[OK] 所有 11 步已完成${NC}"
+    fi
+else
+    echo -e "   ${GREEN}[OK] 无 .dev-mode 文件需要验证${NC}"
+fi
+
+# ========================================
+# 7.7 验证 gate 文件存在（W8: 可选检查）
+# ========================================
+echo ""
+echo "[7.7] 验证 gate 文件..."
+
+REQUIRED_GATES=(".gate-prd-passed" ".gate-dod-passed" ".gate-audit-passed" ".gate-test-passed")
+MISSING_GATES=""
+for GATE_FILE in "${REQUIRED_GATES[@]}"; do
+    if [[ ! -f "$GATE_FILE" ]]; then
+        MISSING_GATES="$MISSING_GATES $GATE_FILE"
+    fi
+done
+
+if [[ -n "$MISSING_GATES" ]]; then
+    echo -e "   ${YELLOW}[WARN]  缺失 gate 文件: $MISSING_GATES${NC}"
+    echo -e "   ${YELLOW}提示: 测试任务可能不需要所有 gate${NC}"
+    WARNINGS=$((WARNINGS + 1))
+else
+    echo -e "   ${GREEN}[OK] 所有必需的 gate 文件存在${NC}"
+fi
+
+# ========================================
 # 8. 删除运行时文件（防止残留影响下次）
 # ========================================
 echo ""
 echo "[8]  删除运行时文件..."
 
 # v1.5: 支持分支级别 PRD/DoD/状态文件
+# v1.10: 添加 gate 文件（prd, dod, qa, audit, test）
+# W8: .dev-mode 需要特殊处理（删除后验证）
 RUNTIME_FILES=(
     ".quality-report.json"
     ".prd.md"
@@ -359,16 +412,39 @@ RUNTIME_FILES=(
     ".layer2-evidence.md"
     ".l3-analysis.md"
     ".quality-evidence.json"
+    ".gate-prd-passed"
+    ".gate-dod-passed"
+    ".gate-qa-passed"
+    ".gate-audit-passed"
+    ".gate-test-passed"
+    ".dev-mode"
 )
 
 DELETED_COUNT=0
 for FILE in "${RUNTIME_FILES[@]}"; do
     if [[ -f "$FILE" ]]; then
-        if rm -f "$FILE" 2>/dev/null; then
-            DELETED_COUNT=$((DELETED_COUNT + 1))
+        # W8: .dev-mode 特殊处理（删除后验证）
+        if [[ "$FILE" == ".dev-mode" ]]; then
+            if rm -f "$FILE" 2>/dev/null; then
+                # 验证删除成功
+                if [[ -f "$FILE" ]]; then
+                    echo -e "   ${RED}[FAIL] .dev-mode 删除失败，文件仍存在${NC}"
+                    FAILED=$((FAILED + 1))
+                else
+                    DELETED_COUNT=$((DELETED_COUNT + 1))
+                fi
+            else
+                echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
+                WARNINGS=$((WARNINGS + 1))
+            fi
         else
-            echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
-            WARNINGS=$((WARNINGS + 1))
+            # 其他文件正常删除
+            if rm -f "$FILE" 2>/dev/null; then
+                DELETED_COUNT=$((DELETED_COUNT + 1))
+            else
+                echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
+                WARNINGS=$((WARNINGS + 1))
+            fi
         fi
     fi
 done
@@ -416,22 +492,23 @@ for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/li
 done
 
 if [[ -f "$DEV_MODE_FILE" ]]; then
+    # W8: 统一标记方式（使用 step_11_cleanup: done）
     if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then
-        # 使用原子操作：获取锁 → 追加 → 释放锁
+        # 使用原子操作：获取锁 → 更新 → 释放锁
         if acquire_dev_mode_lock 2; then
-            atomic_append_dev_mode "cleanup_done: true"
+            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
             create_cleanup_signal "$CP_BRANCH"
             release_dev_mode_lock
-            echo -e "   ${GREEN}[OK] 已标记 cleanup_done（原子写入）${NC}"
+            echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done（原子写入）${NC}"
         else
-            # Fallback: 直接追加
-            echo "cleanup_done: true" >> "$DEV_MODE_FILE"
-            echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+            # Fallback: 直接修改
+            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+            echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
         fi
     else
-        # Fallback: 无共享库时直接追加
-        echo "cleanup_done: true" >> "$DEV_MODE_FILE"
-        echo -e "   ${GREEN}[OK] 已标记 cleanup_done${NC}"
+        # Fallback: 无共享库时直接修改
+        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+        echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
     fi
 fi
 

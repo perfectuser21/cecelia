@@ -128,6 +128,7 @@ fi
 CURRENT_TTY=$(tty 2>/dev/null || echo "not a tty")
 
 # 在项目根目录创建 .dev-mode（分支已创建，分支名正确）
+# 包含 11 步 checklist 状态追踪
 cat > .dev-mode << EOF
 dev
 branch: $BRANCH_NAME
@@ -135,12 +136,23 @@ session_id: $SESSION_ID
 tty: $CURRENT_TTY
 prd: .prd.md
 started: $(date -Iseconds)
+step_1_prd: done
+step_2_detect: done
+step_3_branch: done
+step_4_dod: pending
+step_5_code: pending
+step_6_test: pending
+step_7_quality: pending
+step_8_pr: pending
+step_9_ci: pending
+step_10_learning: pending
+step_11_cleanup: pending
 EOF
 
-echo "✅ .dev-mode 已创建（session_id: $SESSION_ID）"
+echo "✅ .dev-mode 已创建（session_id: $SESSION_ID，含 11 步 checklist）"
 ```
 
-**文件格式**：
+**文件格式**（含 11 步 checklist）：
 ```
 dev
 branch: H7-remove-ralph-loop
@@ -148,6 +160,17 @@ session_id: a1b2c3d4e5f6
 tty: /dev/pts/3
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
+step_1_prd: done
+step_2_detect: done
+step_3_branch: done
+step_4_dod: pending
+step_5_code: pending
+step_6_test: pending
+step_7_quality: pending
+step_8_pr: pending
+step_9_ci: pending
+step_10_learning: pending
+step_11_cleanup: pending
 ```
 
 **生命周期**：

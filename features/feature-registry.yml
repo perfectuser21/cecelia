@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.50.0"
+version: "2.51.0"
 updated: "2026-02-01"
 changelog:
+  - 2.51.0: v11.24.1 - H1 Stop Hook 循环机制修复（20次重试计数器 + 删除PR合并提前退出 + 11步Checklist追踪 + 分支不匹配泄漏修复）
   - 2.50.0: v11.24.0 - H2 硬拦截 --admin 参数（移除引号内容后检测，防止绕过 Branch Protection）
   - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
   - 2.48.0: v11.22.0 - Gate MAX_GATE_ATTEMPTS 调整（从 3 次到 20 次，提供充足修复机会）
@@ -623,12 +624,13 @@ product_features:
     name: Quality Reporting
     status: Committed
     priority: P1
-    version: "11.14.0"
-    updated: "2026-01-31"
+    version: "11.24.2"
+    updated: "2026-02-01"
     description: |
       导出质量审计和开发会话报告（JSON + TXT）：
       - E1: QA Reporting - 生成 QA 审计 JSON
       - E2: Dev Session Reporting - 生成开发任务报告
+      v11.24.2: cleanup.sh 验证机制 - 添加 3 项验证（11 步完成 + .dev-mode 删除成功 + gate 文件存在）
       v11.14.0: cleanup.sh v1.8 - PRD/DoD 归档到 .history/ 目录（而非直接删除）
 
     entrypoints:

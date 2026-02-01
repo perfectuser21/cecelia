@@ -97,8 +97,23 @@ bash scripts/gate/generate-gate-file.sh audit
 - gate:audit 在 gate:test 之前执行
 - 改完代码再跑 Test，避免测试白跑
 
+**标记步骤完成**：
+
+```bash
+# 更新 .dev-mode 中的 Step 5 状态
+sed -i 's/^step_5_code: pending/step_5_code: done/' .dev-mode
+echo "✅ Step 5 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "completed" })`
+
+**立即执行下一步**：
+
+1. 读取 `skills/dev/steps/06-test.md`
+2. 立即开始写测试
+3. **不要**输出总结或等待确认
+4. **不要**停顿
 
 ---
 
-继续 → Step 6
+**Step 6：写测试**

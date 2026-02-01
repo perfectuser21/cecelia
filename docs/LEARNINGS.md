@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.7.0
+version: 1.8.0
 created: 2026-01-16
 updated: 2026-02-01
 changelog:
+  - 1.8.0: 添加 cleanup.sh 验证机制开发经验（版本号同步、Impact Check、PRD/DoD 清理、临时文件残留）
   - 1.7.0: 添加 AI 流程停顿根因分析和 Stop Hook .dev-mode 泄漏问题
   - 1.6.0: 添加 TTY 会话隔离开发经验
   - 1.5.0: 添加 Gate 硬执行 Token 机制开发经验
@@ -1475,4 +1476,115 @@ ShellCheck→ write-check-result.sh → ci/out/checks/shell-check.json
 
 #### 影响程度
 - High - 多个关键 Bug 导致 Gate 机制失效或 Hook 行为异常
+
+
+## 2026-02-01: cleanup.sh 验证机制开发 (W8/P1)
+
+### Bug 1: 多处版本号不同步
+
+**现象**: CI 失败，提示 VERSION (11.24.2) 与 .hook-core-version (11.24.1) 不匹配。
+
+**根本原因**:
+1. 项目有 3 个版本号文件：`VERSION`、`.hook-core-version`、`hook-core/VERSION`
+2. 更新 `package.json` 版本号时，其他 3 个文件没有同步更新
+3. 测试 `tests/hooks/install-hooks.test.ts:245-248` 检查版本一致性
+
+**解决方案**:
+```bash
+# 更新版本号时必须同步 4 个文件
+VERSION="11.24.2"
+echo "$VERSION" > VERSION
+echo "$VERSION" > .hook-core-version
+echo "$VERSION" > hook-core/VERSION
+npm version "$VERSION" --no-git-tag-version
+```
+
+**影响程度**: High（CI 阻塞，必须修复才能合并）
+
+---
+
+### Bug 2: Impact Check 检测 skills/ 改动
+
+**现象**: CI 失败，提示 `skills/dev/scripts/cleanup.sh` 改动但 `feature-registry.yml` 未更新。
+
+**根本原因**:
+- Impact Check (Q1 feature) 强制要求：改动核心能力文件必须同时更新 `feature-registry.yml`
+- 改动了 `cleanup.sh` 但忘记更新对应的 feature 版本
+
+**解决方案**:
+```yaml
+# 找到对应的 feature（P3: Quality Reporting）
+# 更新 version 和 updated 字段
+version: "11.24.2"
+updated: "2026-02-01"
+# 添加 changelog 描述
+```
+
+**影响程度**: High（CI 阻塞，强制执行）
+
+---
+
+### Bug 3: PRD/DoD 文件残留
+
+**现象**: CI 失败，提示 `.prd.md` 和 `.dod.md` 不应出现在 PR to develop 中。
+
+**根本原因**:
+- PRD/DoD 是功能分支的工作文档，应该在 Cleanup (Step 11) 时删除
+- 但在 Step 9 (CI 监控) 阶段，这些文件还没被删除
+- CI 有专门的检查阻止这些文件进入 develop/main
+
+**解决方案**:
+```bash
+# 在 PR 创建后、合并前删除 PRD/DoD
+git rm .prd.md .dod.md
+git commit -m "chore: 移除 PRD/DoD 工作文档"
+git push
+```
+
+**影响程度**: High（CI 硬阻止）
+
+---
+
+### Bug 4: .dev-mode 残留问题
+
+**现象**: PR 合并后，`.dev-mode`、`.hook-core-version`、`.quality-summary.json` 等临时文件被合并到 develop。
+
+**根本原因**:
+1. 这些文件应该在 Step 11 Cleanup 时删除
+2. 但 PR 在 Step 9 (CI 通过) 后就被合并了
+3. Step 10 (Learning) 和 Step 11 (Cleanup) 还没执行
+
+**当前状态**: 临时文件已进入 develop，需要后续 PR 清理
+
+**解决方案** (TODO):
+- 修改 /dev 流程，确保 Cleanup 在 PR 合并前执行
+- 或者在 PR Gate 中添加检查，阻止临时文件进入 PR
+
+**影响程度**: Medium（影响 develop 分支清洁度，需要额外的清理 PR）
+
+---
+
+### 优化点: CI 循环修复流程
+
+**现象**: CI 失败 → 修复 → push → CI 再次失败 → 再修复...，经历了 5 次循环。
+
+**原因**: 
+- 多个独立的 CI 检查项（版本号、Impact Check、PRD/DoD、测试）
+- 每次只修复一个问题，导致多次循环
+
+**建议**: 
+- 在本地运行 `npm run ci:preflight` 预检查（如果存在）
+- 或者添加本地脚本一次性检查所有 CI 项
+- Stop Hook 会自动循环，所以多次失败是正常的，但可以优化
+
+**影响程度**: Low（不影响功能，但影响开发效率）
+
+---
+
+### 学到的经验
+
+1. **版本号管理**：zenithjoy-engine 有 4 处版本号，必须同步更新
+2. **Impact Check 强制执行**：改核心能力必须登记，没有例外
+3. **临时文件清理时机**：需要在 PR 合并前完成，不能依赖 PR 合并后的 Cleanup
+4. **Stop Hook 循环机制**：遇到 CI 失败会自动循环修复，是正常流程
 

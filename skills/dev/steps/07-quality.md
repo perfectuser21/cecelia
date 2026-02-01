@@ -130,6 +130,14 @@ Quality 只是让你在 PR 前"一眼确认没漏跑"。
 
 ## 完成后
 
+**标记步骤完成**：
+
+```bash
+# 更新 .dev-mode 中的 Step 7 状态
+sed -i 's/^step_7_quality: pending/step_7_quality: done/' .dev-mode
+echo "✅ Step 7 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "7", status: "completed" })`
 
 **立即执行下一步**：

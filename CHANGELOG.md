@@ -7,31 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [11.24.0] - 2026-02-01
+## [11.24.2] - 2026-02-01
 
 ### Added
 
-- **硬拦截 --admin 参数** - 技术手段强制阻止绕过分支保护
-  - 修改 `hooks/pr-gate-v2.sh` (v4.5) - 检测 gh pr 命令中的 --admin 参数并 exit 2 阻止
-  - 避免误报：移除引号和 heredoc 内容后再检测
-  - 清晰的错误提示：说明禁止原因 + 正确做法指引
-
-## [11.23.0] - 2026-02-01
+- **cleanup.sh 验证机制** - 添加 3 个关键验证确保清理流程完整性
+  - 验证所有 11 步完成后才删除 .dev-mode（防止过早删除循环控制文件）
+  - 验证 .dev-mode 删除成功（防止文件残留导致 Stop Hook 干扰）
+  - 验证 gate 文件存在（警告模式，提示缺失的 gate 文件）
+  - 新增 7 个自动化测试：`tests/scripts/cleanup-validation.test.ts`
+  - 更新 feature-registry.yml (P3: Quality Reporting v11.24.2)
 
 ### Fixed
 
-- **Release 死循环修复** - 解决 develop → main 合并冲突无法通过 CI 的结构性问题
-  - 新增 `.github/workflows/back-merge-main-to-develop.yml` - main 推送后自动创建 PR 到 develop
-  - 修改 `.github/workflows/ci.yml` release-check - 允许 release/* 分支（需 merge-base 验证包含 develop）
-  - 更新 `CLAUDE.md` - 明确禁止使用 --admin 参数绕过规则
+- **版本号同步** - 修复多处版本号不一致问题
+  - 同步更新 VERSION、.hook-core-version、hook-core/VERSION 三处版本号
+  - 修复 CI 测试失败（版本号不匹配）
 
-## [11.22.0] - 2026-02-01
+### Documentation
 
-### Changed
+- **开发经验记录** - LEARNINGS.md 更新到 v1.8.0
+  - 记录版本号同步问题（4 处版本号必须同步）
+  - 记录 Impact Check 强制执行机制
+  - 记录 PRD/DoD 文件清理时机
+  - 记录临时文件残留问题和解决方案
 
-- **Gate MAX_GATE_ATTEMPTS 调整** - 从 3 次提升到 20 次，提供充足修复机会
-  - 修改所有步骤文件的循环控制代码（01-prd.md, 04-dod.md, 05-code.md, 06-test.md, 10-learning.md）
-  - 更新 `skills/gate/SKILL.md` 和 `docs/GATE-LOOP-MODE-ANALYSIS.md` 中的示例代码
+## [11.24.1] - 2026-02-01
+
+### Fixed
+
+- **Stop Hook 循环机制修复** - 修复 3 个 Critical 问题确保 /dev 流程自动执行
+  - 删除 `stop_hook_active` 1 次重试限制，改为 20 次计数器（`retry_count` 字段）
+  - 删除 PR 合并后的提前退出逻辑（Line 217-253），统一退出条件为 `cleanup_done: true` 或 11 步全部完成
+  - 修复分支不匹配时的 .dev-mode 泄漏，检测到不匹配时删除文件而非仅跳过
+  - 实现 11 步 Checklist 追踪机制（`step_1_prd` ~ `step_11_cleanup` 状态字段）
+  - 扩展 Cleanup 脚本清理列表，添加所有 gate 文件（`.gate-prd-passed` 等）
+  - 更新所有 steps/*.md 文件，添加步骤完成标记和"立即执行下一步"提示
+  - 新增 4 个自动化测试：`tests/hooks/stop-hook-retry.test.ts`, `tests/hooks/stop-hook-exit.test.ts`, `tests/dev/checklist.test.ts`, `tests/scripts/cleanup.test.ts`
 
 ## [11.21.0] - 2026-02-01
 

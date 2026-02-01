@@ -128,8 +128,17 @@ Skill({
 bash scripts/gate/generate-gate-file.sh test
 ```
 
+**标记步骤完成**：
+
+```bash
+sed -i 's/^step_6_test: pending/step_6_test: done/' .dev-mode
+echo "✅ Step 6 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "6", status: "completed" })`
+
+**立即执行下一步**：读取 `skills/dev/steps/07-quality.md` 并继续
 
 ---
 
-继续 → Step 7
+**Step 7：质检**

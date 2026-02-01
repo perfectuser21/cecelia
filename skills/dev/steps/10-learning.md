@@ -169,6 +169,15 @@ git push
 - [ ] 至少有一条 Learning 记录（Engine 或项目层面）
 - [ ] Learning 已提交并推送
 
+**标记步骤完成**：
+
+```bash
+sed -i 's/^step_10_learning: pending/step_10_learning: done/' .dev-mode
+echo "✅ Step 10 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "10", status: "completed" })`
+
+**立即执行下一步**：读取 `skills/dev/steps/11-cleanup.md` 并继续
 
 **完成后进入 Step 11: Cleanup**

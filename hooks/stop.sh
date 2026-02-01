@@ -80,20 +80,9 @@ fi
 # ===== 读取 Hook 输入（JSON） =====
 HOOK_INPUT=$(cat)
 
-# ===== 防止无限循环 =====
-STOP_HOOK_ACTIVE=$(echo "$HOOK_INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null || echo "false")
-
-if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 防止无限循环]" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "" >&2
-    echo "  已重试过一次，允许会话结束" >&2
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    exit 0
-fi
+# ===== 20 次重试计数器（替代旧的 stop_hook_active 检查）=====
+# 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
+# 具体检查逻辑在后面的完成条件中处理
 
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -107,10 +96,67 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
 fi
 
 # ===== 检查 cleanup 是否已完成 =====
+# 优先检查 cleanup_done: true（向后兼容旧版本）
 if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
     rm -f "$DEV_MODE_FILE"
     exit 0
 fi
+
+# 新版本：检查 11 步 checklist 是否全部完成
+STEPS_COMPLETE=true
+for step in {1..11}; do
+    STEP_STATUS=$(grep "^step_${step}_" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "pending")
+    if [[ "$STEP_STATUS" != "done" ]]; then
+        STEPS_COMPLETE=false
+        break
+    fi
+done
+
+if [[ "$STEPS_COMPLETE" == "true" ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: 11 步流程完成]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  ✅ Step 1-11 全部完成" >&2
+    echo "  🧹 删除 .dev-mode 文件" >&2
+    echo "" >&2
+    rm -f "$DEV_MODE_FILE"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    exit 0
+fi
+
+# ===== 检查重试次数（20 次上限）=====
+RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "0")
+RETRY_COUNT=${RETRY_COUNT//[^0-9]/}  # 清理非数字字符
+RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
+
+if [[ $RETRY_COUNT -ge 20 ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: 20 次重试上限]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  已重试 20 次，任务失败" >&2
+    echo "  原因：20 次重试后仍未完成 11 步流程" >&2
+    echo "" >&2
+
+    # 上报失败
+    TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
+    if [[ -f "$TRACK_SCRIPT" ]]; then
+        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 20 次后仍未完成" 2>/dev/null || true
+    fi
+
+    # 删除 .dev-mode 文件
+    rm -f "$DEV_MODE_FILE"
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    exit 0  # 允许会话结束（失败退出）
+fi
+
+# 更新重试次数
+sed -i "/^retry_count:/d" "$DEV_MODE_FILE" 2>/dev/null || true
+echo "retry_count: $((RETRY_COUNT + 1))" >> "$DEV_MODE_FILE"
 
 # ===== 读取 .dev-mode 内容 =====
 DEV_MODE=$(head -1 "$DEV_MODE_FILE" 2>/dev/null || echo "")
@@ -125,10 +171,13 @@ fi
 # 获取当前分支
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# 如果 .dev-mode 中的分支与当前分支不匹配，忽略这个 .dev-mode
+# 如果 .dev-mode 中的分支与当前分支不匹配，删除泄漏的 .dev-mode 文件
 # 这防止多个 Claude 会话"串线"（一个会话被迫接手另一个会话的任务）
 if [[ -n "$BRANCH_IN_FILE" && "$BRANCH_IN_FILE" != "$CURRENT_BRANCH" ]]; then
-    # 不是当前会话的任务，直接允许结束
+    # 分支不匹配，说明 .dev-mode 泄漏了，删除它
+    echo "  ⚠️  检测到泄漏的 .dev-mode 文件（分支 $BRANCH_IN_FILE，当前 $CURRENT_BRANCH）" >&2
+    echo "  🧹 删除泄漏文件..." >&2
+    rm -f "$DEV_MODE_FILE"
     exit 0
 fi
 
@@ -193,44 +242,9 @@ fi
 
 echo "  ✅ 条件 1: PR 已创建 (#$PR_NUMBER)" >&2
 
-# ===== 条件 2 & 3: 检查 PR 是否已合并 =====
-if [[ "$PR_STATE" == "merged" ]]; then
-    echo "  ✅ 条件 2: CI 通过（PR 已合并）" >&2
-    echo "  ✅ 条件 3: PR 已合并" >&2
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  🧹 自动执行 Cleanup..." >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-
-    # P0-2 修复：PR 合并后自动执行 cleanup，不要只提示然后悬空
-    # 删除 .dev-mode 文件（循环控制信号）
-    if [[ -f "$DEV_MODE_FILE" ]]; then
-        rm -f "$DEV_MODE_FILE"
-        echo "  ✅ .dev-mode 已删除" >&2
-    fi
-
-    # 切换到 develop 分支
-    BASE_BRANCH=$(git config --get branch."$BRANCH_NAME".base-branch 2>/dev/null || echo "develop")
-    echo "  ✅ 切换到 $BASE_BRANCH 分支..." >&2
-    git checkout "$BASE_BRANCH" 2>/dev/null || true
-    git pull origin "$BASE_BRANCH" 2>/dev/null || true
-
-    # 删除本地功能分支
-    if git branch --list "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
-        git branch -D "$BRANCH_NAME" 2>/dev/null || true
-        echo "  ✅ 本地分支 $BRANCH_NAME 已删除" >&2
-    fi
-
-    # 清理 git config
-    git config --unset branch."$BRANCH_NAME".base-branch 2>/dev/null || true
-
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  🎉 /dev 流程完成！" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-
-    exit 0  # 完成，允许会话结束
-fi
+# ===== 不再提前退出，即使 PR 已合并也继续检查 cleanup_done =====
+# 删除了原来的 PR 合并提前退出逻辑（Line 217-253）
+# 现在即使 PR 合并，也必须等待 Step 11 Cleanup 完成并设置 cleanup_done: true
 
 # ===== 条件 2: CI 状态？（PR 未合并时检查） =====
 CI_STATUS="unknown"

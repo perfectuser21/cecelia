@@ -229,6 +229,15 @@ bash scripts/gate/generate-gate-file.sh dod
 
 ## 完成后
 
+**标记步骤完成**：
+
+```bash
+# 更新 .dev-mode 中的 Step 4 状态
+sed -i 's/^step_4_dod: pending/step_4_dod: done/' .dev-mode
+
+echo "✅ Step 4 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "completed" })`
 
 **立即执行下一步**：

@@ -176,8 +176,16 @@ git remote prune origin 2>/dev/null || true
 
 ## 完成
 
+**标记步骤完成**：
+
+```bash
+# 标记 Step 11 完成（最后一步）
+sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' .dev-mode
+echo "✅ Step 11 完成标记已写入 .dev-mode"
+```
+
 **Task Checkpoint**: `TaskUpdate({ taskId: "11", status: "completed" })`
 
 ```bash
-echo "🎉 本轮开发完成！"
+echo "🎉 本轮开发完成！Stop Hook 将检测到 11 步全部完成，允许会话结束。"
 ```

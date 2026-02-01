@@ -46,23 +46,9 @@ describe("stop.sh", () => {
     expect(result).toBe("");
   });
 
-  it("should exit 0 when stop_hook_active=true (prevent infinite loop)", () => {
-    const input = JSON.stringify({ stop_hook_active: true });
-
-    // Should exit 0 to prevent infinite loop
-    let exitCode = 0;
-    try {
-      execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-    } catch (e: unknown) {
-      const error = e as { status?: number };
-      exitCode = error.status || 0;
-    }
-
-    expect(exitCode).toBe(0);
-  });
+  // REMOVED: stop_hook_active 检查已删除（改用 20 次 retry_count 机制）
+  // 详见 .prd-fix-stop-hook-loop.md
+  it.todo("stop_hook_active is removed - now uses retry_count (max 20)");
 
   describe("cleanup_done detection", () => {
     let tempDir: string;
