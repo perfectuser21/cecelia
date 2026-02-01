@@ -89,6 +89,37 @@ fi
 # 提取 command
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || echo "")
 
+# ===== 硬拦截 --admin 参数 =====
+# v4.5: 禁止在 gh pr 命令中使用 --admin 参数绕过分支保护和 CI
+# 检测策略：在 gh pr 命令行部分查找 --admin（排除在引号/heredoc 内的文本）
+# 通过先移除引号和 heredoc 内容，再检测 --admin
+if [[ "$COMMAND" == *"gh pr"* ]]; then
+    # 移除所有引号内的内容和 heredoc，只保留命令行参数部分
+    # 1. 移除单引号字符串
+    # 2. 移除双引号字符串
+    # 3. 移除 heredoc (<<'EOF' ... EOF)
+    COMMAND_NO_STRINGS=$(echo "$COMMAND" | sed "s/'[^']*'//g" | sed 's/"[^"]*"//g' | sed '/<<.*EOF/,/^EOF/d')
+
+    # 在清理后的命令中检测 --admin
+    if [[ "$COMMAND_NO_STRINGS" =~ (^|[[:space:]])--admin([[:space:]]|$) ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [ERROR] 禁止使用 --admin 参数" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "为什么禁止：" >&2
+        echo "  --admin 会绕过分支保护和 CI 检查，违反工程规范" >&2
+        echo "" >&2
+        echo "正确做法：" >&2
+        echo "  1. 等待 CI 通过" >&2
+        echo "  2. 如果 CI 失败，修复问题后重新提交" >&2
+        echo "  3. 如果确实需要合并，请先联系团队讨论" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        exit 2
+    fi
+fi
+
 # 拦截所有可能创建 PR 的命令
 # 1. gh pr create
 # 2. gh api -X POST .../pulls

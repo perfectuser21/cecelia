@@ -550,25 +550,78 @@ jobs:
           echo "来源分支: ${{ github.head_ref }}"
           echo ""
 
-          if [[ "${{ github.head_ref }}" != "develop" ]]; then
+          HEAD_BRANCH="${{ github.head_ref }}"
+
+          # 允许 develop 或 release/* 分支
+          if [[ "$HEAD_BRANCH" == "develop" ]]; then
+            echo "✅ 来源分支: develop → main (标准 release)"
+          elif [[ "$HEAD_BRANCH" =~ ^release/ ]]; then
+            echo "ℹ️  来源分支: $HEAD_BRANCH (release 分支)"
+            echo "   需要验证: 该分支必须包含 develop 的所有提交"
+            echo ""
+            # 标记需要后续步骤验证（在 checkout 后）
+            echo "NEED_ANCESTOR_CHECK=true" >> $GITHUB_ENV
+          else
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ❌ PR to main 只能来自 develop 分支"
+            echo "  ❌ PR to main 只能来自 develop 或 release/* 分支"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "当前来源: ${{ github.head_ref }}"
+            echo "当前来源: $HEAD_BRANCH"
             echo ""
             echo "正确流程:"
             echo "  1. 功能分支 (cp-*/feature/*) → develop"
-            echo "  2. develop → main (release)"
+            echo "  2. develop → main (标准 release)"
+            echo "  3. release/* → main (解冲突专用，需包含 develop)"
             echo ""
-            echo "请先将代码合并到 develop，再从 develop 创建 PR 到 main"
+            echo "如果遇到 develop → main 冲突，请："
+            echo "  1. 基于 develop 创建 release/* 分支"
+            echo "  2. 合并 main 到 release/* 并解决冲突"
+            echo "  3. 从 release/* 创建 PR 到 main"
             exit 1
           fi
 
-          echo "✅ 来源分支正确: develop → main"
           echo ""
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来检查祖先关系
+
+      - name: Verify release/* branch contains develop
+        if: env.NEED_ANCESTOR_CHECK == 'true'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  验证 release/* 分支包含 develop"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 检查 merge-base: 如果 HEAD 包含 develop 的所有提交，
+          # 则 merge-base(HEAD, origin/develop) == origin/develop
+          MERGE_BASE=$(git merge-base HEAD origin/develop)
+          DEVELOP_SHA=$(git rev-parse origin/develop)
+
+          echo "Merge base:  $MERGE_BASE"
+          echo "develop SHA: $DEVELOP_SHA"
+          echo ""
+
+          if [[ "$MERGE_BASE" != "$DEVELOP_SHA" ]]; then
+            echo "❌ release/* 分支不包含 develop 的所有提交"
+            echo ""
+            echo "这意味着你的 release 分支不是从 develop 切出来的，"
+            echo "或者缺少了 develop 的某些提交。"
+            echo ""
+            echo "正确做法："
+            echo "  1. 确保从最新的 develop 创建 release 分支："
+            echo "     git checkout -b release/xxx origin/develop"
+            echo "  2. 如需合并 main 解冲突："
+            echo "     git merge origin/main"
+            echo "  3. 解决冲突后推送"
+            echo ""
+            exit 1
+          fi
+
+          echo "✅ 验证通过: release/* 分支包含 develop 的所有提交"
+          echo "   这是一个合法的 release 分支"
+          echo ""
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

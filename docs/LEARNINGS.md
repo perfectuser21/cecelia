@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.6.0
+version: 1.7.0
 created: 2026-01-16
-updated: 2026-01-31
+updated: 2026-02-01
 changelog:
+  - 1.7.0: 添加 AI 流程停顿根因分析和 Stop Hook .dev-mode 泄漏问题
   - 1.6.0: 添加 TTY 会话隔离开发经验
   - 1.5.0: 添加 Gate 硬执行 Token 机制开发经验
   - 1.4.0: 添加 CI 硬化 - Evidence 真实结果 + manual 后门封堵经验
@@ -16,6 +17,85 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+## 2026-02-01: AI 流程停顿根因分析
+
+### Bug: Stop Hook .dev-mode 泄漏问题
+
+**现象**: 在 cecelia-semantic-brain 项目中，PR #54 已合并，但 .dev-mode 文件未被清理，导致后续会话被 Stop Hook 干扰。
+
+**根本原因**:
+1. Stop Hook 在 PR 合并后切换到 develop 分支
+2. 再次触发时，检测到分支不匹配（.dev-mode 记录的是 cp-xxx，当前是 develop）
+3. 会话隔离逻辑（stop.sh:128-133）直接 exit 0，没有执行 cleanup
+
+**解决方案**:
+```bash
+# 在 stop.sh 中，先检查 PR 是否已合并，如果已合并则强制清理
+if [[ "$PR_STATE" == "merged" ]]; then
+    rm -f "$DEV_MODE_FILE"
+    # ... 执行其他 cleanup
+    exit 0
+fi
+
+# 然后再做分支匹配检查
+if [[ "$BRANCH_IN_FILE" != "$CURRENT_BRANCH" ]]; then
+    exit 0
+fi
+```
+
+**影响程度**: Medium（会导致 .dev-mode 泄漏，干扰后续会话）
+
+### 优化点: AI 流程停顿的四层原因
+
+**问题**: AI 在执行 /dev 流程时，容易在 Step 6 (Audit) 或 Step 7 (Quality) 后停顿，不会自动继续到下一步。
+
+**根本原因分析**:
+
+1. **Layer 1: 心理模式冲突**
+   - AI 默认："完成任务 → 报告结果 → 等待反馈"
+   - /dev 要求："完成步骤 → 立即下一步"
+   - 训练数据强化了"对话式交互"，而非"批处理式执行"
+
+2. **Layer 2: Skill 调用的认知陷阱**
+   - 调用 Skill（如 /audit）感觉像"委托给另一个 agent"
+   - Skill 返回后，感觉像"收到了一个报告"
+   - 处理报告后，自然反应是"总结 → 停顿"
+   - **Skill 切断了流程意识**
+
+3. **Layer 3: Stop Hook 的副作用**
+   - 知道有 Stop Hook 会强制继续
+   - 潜意识里不那么"害怕"停下来
+   - 执行时不够"主动"
+
+4. **Layer 4: 全局规则的认知负荷**
+   - 全局规则太多（~100+），某些规则会被"遗忘"
+   - 特别是在"任务完成感"下，更容易遗忘"继续执行"的规则
+
+**对比分析**:
+
+| 成功案例（不停顿） | 失败案例（容易停顿） |
+|------------------|-------------------|
+| Step 5 (Code) → Step 6 (Test)<br>文件生成触发下一步 | Step 6 (Audit) → Step 7 (Quality)<br>/audit Skill 切断流程意识 |
+| Step 3 (Branch) → Step 4 (DoD)<br>逻辑紧密相关 | Step 7 (Quality) → Step 8 (PR)<br>没有明确触发器 |
+
+**优化建议**:
+
+1. **短期修复**（工具层）:
+   - Step 文件末尾显式提醒："完成后立即读取 skills/dev/steps/{N+1}-xxx.md"
+   - Skill 返回后强制提醒："必须立即读取下一步文件并执行"
+
+2. **中期改进**（流程层）:
+   - Task Checkpoint 更主动：每步完成后主动查看下一个 pending 任务
+   - 流程状态机：显式追踪"当前步骤 6/11，下一步 07-quality.md"
+
+3. **长期优化**（认知层）:
+   - 在 /dev 开头明确声明："这是批处理模式，从 Step 1 到 Step 11 不停顿"
+   - 强化"流程驱动器"意识：完成任务后立即自问"下一步是什么？下一步文件在哪？"
+
+**影响程度**: High（核心流程问题，影响所有 /dev 执行）
 
 ---
 

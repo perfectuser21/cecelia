@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.24.0] - 2026-02-01
+
+### Added
+
+- **硬拦截 --admin 参数** - 技术手段强制阻止绕过分支保护
+  - 修改 `hooks/pr-gate-v2.sh` (v4.5) - 检测 gh pr 命令中的 --admin 参数并 exit 2 阻止
+  - 避免误报：移除引号和 heredoc 内容后再检测
+  - 清晰的错误提示：说明禁止原因 + 正确做法指引
+
+## [11.23.0] - 2026-02-01
+
+### Fixed
+
+- **Release 死循环修复** - 解决 develop → main 合并冲突无法通过 CI 的结构性问题
+  - 新增 `.github/workflows/back-merge-main-to-develop.yml` - main 推送后自动创建 PR 到 develop
+  - 修改 `.github/workflows/ci.yml` release-check - 允许 release/* 分支（需 merge-base 验证包含 develop）
+  - 更新 `CLAUDE.md` - 明确禁止使用 --admin 参数绕过规则
+
+## [11.22.0] - 2026-02-01
+
+### Changed
+
+- **Gate MAX_GATE_ATTEMPTS 调整** - 从 3 次提升到 20 次，提供充足修复机会
+  - 修改所有步骤文件的循环控制代码（01-prd.md, 04-dod.md, 05-code.md, 06-test.md, 10-learning.md）
+  - 更新 `skills/gate/SKILL.md` 和 `docs/GATE-LOOP-MODE-ANALYSIS.md` 中的示例代码
+
 ## [11.21.0] - 2026-02-01
 
 ### Changed
