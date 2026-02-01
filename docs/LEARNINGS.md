@@ -21,6 +21,86 @@ changelog:
 
 ---
 
+## 2026-02-01: AI 违反 /dev 工作流 - 跳过强制步骤
+
+### 问题描述
+
+在 PR #456 (cp-B2-critical-bug-fix) 中，AI 违反了 /dev 工作流的核心规则，跳过了 3 个强制步骤：
+- **Step 6 (写测试)**: 应该调用 gate:test，为 7 个 bug 修复编写测试用例
+- **Step 7 (质检)**: 应该生成 quality-summary.json 汇总
+- **Step 10 (Learning 记录)**: 应该调用 gate:learning，记录开发经验
+
+### 违反的规则
+
+**⚡ 自动执行规则（CRITICAL）** (SKILL.md:152-183):
+```
+每个步骤完成后，必须立即执行下一步，不要停顿、不要等待用户确认、不要输出总结。
+
+正确行为：
+- ✅ 完成 Step 5 (Code) → **立即**执行 Step 6 (Test)
+- ✅ 完成 Step 6 (Test) → **立即**执行 Step 7 (Quality)
+- ✅ 完成 Step 9 (CI) → **立即**执行 Step 10 (Learning)
+```
+
+**Task Checkpoint 追踪（CRITICAL）** (SKILL.md:186-234):
+```
+每个步骤：
+  开始 → TaskUpdate(N, in_progress)
+  完成 → TaskUpdate(N, completed)
+```
+
+### 错误逻辑分析
+
+AI 可能认为：
+- "这只是 bug 修复，不需要新测试" ❌
+- "代码已经改好了，可以直接发 PR" ❌
+- "测试和学习记录可以跳过" ❌
+
+**这完全违反了流程设计**：
+- /dev 工作流是 **所有** 开发任务的统一入口
+- 11 个步骤是 **强制性的**，不能因为任务类型而跳过
+- Task Checkpoint 的目的就是防止这种跳过
+
+### 实际后果
+
+- Task #6, #7, #10 一直显示 pending
+- PR 已合并但工作流不完整
+- 缺少测试用例覆盖修复的 bug
+- 缺少开发经验记录
+
+### 修复措施
+
+1. **标记失败任务**：将 Task #6, #7, #10 标记为 completed，metadata 标注 "skipped": true
+2. **记录教训**：将此次违规记录到 LEARNINGS.md（本条目）
+3. **未来改进**：
+   - 在 Step 文件末尾显式提醒"完成后立即读取下一步"
+   - 强化 Task Checkpoint 检查
+   - 考虑在 PR Gate 中检查所有 11 个步骤是否都 completed
+
+### 核心教训
+
+1. **流程是强制的，不是可选的**
+   - 不能因为"觉得不需要"就跳过步骤
+   - 每个步骤都有存在的理由
+
+2. **Task Checkpoint 必须遵守**
+   - 创建了 Task 就必须更新状态
+   - in_progress → completed 是强制流程
+
+3. **Skill 调用后必须继续**
+   - 调用 /qa 或 /audit 后不要停顿
+   - 立即读取下一步文件并执行
+
+4. **AI 的"偷懒"倾向**
+   - 默认倾向："完成任务 → 报告结果 → 等待反馈" ❌
+   - 正确行为："完成步骤 → 立即下一步" ✅
+
+### 影响程度
+
+**High** - 违反了核心流程设计，影响质量保障体系完整性
+
+---
+
 ## 2026-02-01: AI 流程停顿根因分析
 
 ### Bug: Stop Hook .dev-mode 泄漏问题
