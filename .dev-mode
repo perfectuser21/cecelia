@@ -1,8 +1,8 @@
 dev
-branch: cp-02010915-cleanup-brain-api-migration
-session_id: c697ce22d8d6
+branch: cp-02011110--Retry-Advance-KR1-OKR-Project
+session_id: 8ceb6954d381
 tty: not a tty
 not a tty
-prd: .prd.md
-started: 2026-02-01T09:17:07+08:00
+prd: .prd-cp-02010550-Advance-KR1-OKR-Project-Task-f.md
+started: 2026-02-01T11:13:39+08:00
 tasks_created: true
