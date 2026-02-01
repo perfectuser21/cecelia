@@ -1,0 +1,62 @@
+name: Back-merge main into develop
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  back-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Create PR main -> develop (if needed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER_REPO="${{ github.repository }}"
+          BASE="develop"
+          HEAD="main"
+
+          echo "Repository: $OWNER_REPO"
+          echo "Creating PR: $HEAD -> $BASE"
+
+          # 1) 如果已经存在同样 head/base 的 PR，则不重复创建
+          existing=$(gh pr list --repo "$OWNER_REPO" --head "$HEAD" --base "$BASE" --state open --json number --jq '.[0].number // empty' || true)
+          if [[ -n "${existing:-}" ]]; then
+            echo "✅ 已存在 open PR #$existing ($HEAD -> $BASE)，跳过创建"
+            exit 0
+          fi
+
+          # 2) 如果 main 已经完全包含 develop（或 develop 已经追上），则无需 PR
+          # 用 compare 判断：如果 main 相对 develop 没有 ahead commits，则没必要 back-merge
+          ahead=$(gh api "repos/$OWNER_REPO/compare/$BASE...$HEAD" --jq '.ahead_by' || echo "0")
+          if [[ "$ahead" == "0" ]]; then
+            echo "✅ $HEAD 相对 $BASE 没有新提交（ahead_by=0），无需 back-merge PR"
+            exit 0
+          fi
+
+          title="chore: back-merge main → develop"
+          body='自动回合并：main → develop
+
+- 触发条件：main 分支有新提交
+- 目的：避免 main/develop 长期分叉导致 release 冲突
+
+> 由 GitHub Actions 自动创建'
+
+          pr_url=$(gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$HEAD" --title "$title" --body "$body")
+          echo "✅ 已创建 back-merge PR: $pr_url"
+
+          # 3) 可选：尝试开启 auto-merge（需要仓库允许 auto-merge，且分支保护允许）
+          # 如果你不想自动合并，删掉下面这段即可
+          pr_number=$(echo "$pr_url" | sed -n 's#.*/pull/\([0-9]\+\)$#\1#p')
+          if [[ -n "${pr_number:-}" ]]; then
+            echo "尝试启用 auto-merge（如果仓库未启用会失败但不中断）"
+            gh pr merge "$pr_number" --repo "$OWNER_REPO" --auto --merge || true
+          fi

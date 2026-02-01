@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.48.0"
+version: "2.49.0"
 updated: "2026-02-01"
 changelog:
+  - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
   - 2.48.0: v11.22.0 - Gate MAX_GATE_ATTEMPTS 调整（从 3 次到 20 次，提供充足修复机会）
   - 2.47.0: v11.21.0 - Gate 循环模式 B 优化（主 Agent 改 + 外部循环，职责分离架构，新建 qa.md/learning.md，统一循环控制模板）
   - 2.46.0: v11.20.0 - AI 自我检测硬规则（skills/dev + CLAUDE.md 添加禁止话术和关键词自检机制）
