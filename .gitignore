@@ -53,11 +53,15 @@ skills/dev/VALIDATION.md
 !.prd-cp-G3-fix-gate-skill-calls.md
 !.prd-cp-add-ai-self-check-rules.md
 !.prd-cp-02011917-stop-hook-json-api.md
+!.prd-pressure-test-*.md
+!.prd-cp-quality-gate-fix.md
 .dod.md
 .dod-*.md
 !.dod-cp-G3-fix-gate-skill-calls.md
 !.dod-cp-add-ai-self-check-rules.md
 !.dod-cp-02011917-stop-hook-json-api.md
+!.dod-pressure-test-*.md
+!.dod-cp-quality-gate-fix.md
 .quality-gate-passed
 .layer2-evidence.md
 .l3-analysis.md

@@ -1,8 +1,8 @@
 # Audit Report
 
-Branch: cp-pressure-test-3
+Branch: cp-quality-gate-fix
 Date: 2026-02-01
-Scope: tests/workflow-guard-3.txt
+Scope: skills/gate/gates/quality.md, skills/dev/steps/07-quality.md, .gitignore
 Target Level: L2
 
 Summary:

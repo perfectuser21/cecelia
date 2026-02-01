@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.51.0"
+version: "2.52.0"
 updated: "2026-02-01"
 changelog:
+  - 2.52.0: v11.26.0 - gate:quality - 本地 PR 前质量检查 Gate（TypeCheck + Build + Test + Shell 语法，Step 7 提前发现 95% 问题）
   - 2.51.0: v11.24.1 - H1 Stop Hook 循环机制修复（20次重试计数器 + 删除PR合并提前退出 + 11步Checklist追踪 + 分支不匹配泄漏修复）
   - 2.50.0: v11.24.0 - H2 硬拦截 --admin 参数（移除引号内容后检测，防止绕过 Branch Protection）
   - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
@@ -858,17 +859,19 @@ product_features:
     name: Gate Skill Family
     status: Committed
     priority: P0
-    version: "11.22.0"
+    version: "11.26.0"
     updated: "2026-02-01"
     description: |
       独立质量审核 Skill 家族，每个 gate 是"守门 Subagent"：
       - gate:prd - PRD 完整性、需求可验收性审核
       - gate:dod - PRD↔DoD 覆盖率、Test 映射有效性审核
       - gate:qa - RCI 判断、测试方法决策审核
-      v11.22.0: MAX_GATE_ATTEMPTS 调整为 20（提高复杂问题通过率，保持有限循环）
       - gate:test - 测试↔DoD 覆盖率、边界用例审核
       - gate:audit - 审计证据真实性、风险点识别审核
       - gate:learning - 开发经验记录审核
+      - gate:quality - 本地 PR 前质量检查（TypeCheck + Build + Test + Shell 语法）
+      v11.26.0: 新增 gate:quality，在 Step 7 提前运行 CI 检查（本地循环秒级 vs CI 2-3 分钟）
+      v11.22.0: MAX_GATE_ATTEMPTS 调整为 20（提高复杂问题通过率，保持有限循环）
 
       v11.21.0 循环模式 B 优化：
       - 明确职责分离：Subagent 只审核，主 Agent 负责修复

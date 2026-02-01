@@ -1,15 +1,15 @@
 {
-  "branch": "cp-pressure-test-3",
-  "head_sha": "a61accd09c1b28d2180c99e955349bde2e6c4cf9",
-  "timestamp": "2026-02-01T21:05:54+08:00",
-  "commands": {
-    "test": { "status": "pass", "duration": "465ms" }
+  "branch": "cp-quality-gate-fix",
+  "head_sha": "1d4460314019611cbdfae0929baff53467b1fa05",
+  "timestamp": "2026-02-01T21:30:58+08:00",
+  "checks": {
+    "test": {"status": "pass", "duration": "manual"}
   },
   "gates": {
-    "prd": { "status": "pass", "file": ".gate-prd-passed" },
-    "dod": { "status": "pass", "file": ".gate-dod-passed" },
-    "audit": { "status": "pass", "file": "docs/AUDIT-REPORT.md" },
-    "test": { "status": "pass", "file": ".gate-test-passed" }
+    "prd": {"status": "pass", "file": ".gate-prd-passed"},
+    "dod": {"status": "pass", "file": ".gate-dod-passed"},
+    "audit": {"status": "pass", "file": "docs/AUDIT-REPORT.md"},
+    "test": {"status": "pass", "file": ".gate-test-passed"}
   },
   "env": {
     "node": "v20.20.0",

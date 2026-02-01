@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "11.18.0"
-updated: "2026-01-31"
+version: "11.26.0"
+updated: "2026-02-01"
 
 # ============================================================================
 # Hooks 回归契约
@@ -2329,3 +2329,26 @@ quality_enforcement:
     verification:
       type: auto
       command: "npx vitest run tests/hooks/gate-token.test.ts"
+
+  # --------------------------------------------------------------------------
+  # G1-007: gate:quality - 本地 PR 前质量检查
+  # --------------------------------------------------------------------------
+  - id: G1-007
+    feature: G1
+    name: "gate:quality 运行本地质量检查"
+    scope: gate
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [gate, quality, typecheck, build, test]
+    owner: infra
+    steps:
+      given: "Step 7 (Quality) 调用 gate:quality Subagent"
+      when: "Subagent 执行 4 项检查（TypeCheck + Test + Build + Shell syntax）"
+      then: "所有检查通过时 Decision: PASS，否则 FAIL 并返回错误"
+    evidence:
+      type: manual
+      description: "本地运行 gate:quality，验证 4 项检查全部执行"
+    verification:
+      type: manual
+      description: "验证 gate:quality 规则文件 (skills/gate/gates/quality.md) 和 Step 7 调用逻辑"

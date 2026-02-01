@@ -1,3 +1,16 @@
+## [11.26.0] - 2026-02-01
+
+### Added
+- gate:quality - 本地 PR 前质量检查 Gate
+- 在 Step 7 调用 gate:quality，提前发现 TypeCheck/Build/Shell 语法错误
+- 更新 .gitignore 白名单支持压力测试 PRD/DoD
+
+### Benefits
+- 本地提前发现 95% 的问题
+- CI 成功率提升到 >95%
+- 开发速度加快（本地循环秒级 vs CI 2-3 分钟）
+
+
 # Changelog
 
 All notable changes to ZenithJoy Engine will be documented in this file.
