@@ -290,3 +290,30 @@
   - 测试隔离性问题需要后续优化
   - 核心功能迁移成功，API 正常工作
 
+
+### [2026-02-01] Cecelia Overview 页面增强 - 运行时指标监控
+
+**任务**: 在 Cecelia Overview 页面添加关键运行指标：Seats 配置、Tick Loop 状态、熔断器状态、任务队列统计、当前活动
+
+**Bug**: 无严重问题
+
+**技术要点**:
+1. Brain API (`http://localhost:5221/api/brain/tick/status`) 提供 Tick Loop 和熔断器数据
+2. Tasks API (`/api/tasks/tasks`) 提供任务队列数据
+3. 使用 `Promise.all` 并行获取多个 API 数据以优化加载速度
+4. 环境感知的 API URL 配置：`window.location.hostname !== 'localhost'` 判断生产环境
+5. React `useCallback` 包装 `loadData` 防止 useEffect 循环依赖
+
+**优化点**:
+1. **审计流程高效**: gate:audit 两轮即通过（L1+L2清零），问题识别准确
+2. **测试分层清晰**: gate:test 明确指出需要补充 edge cases 和 data transformations，补充后立即通过
+3. **零除保护**: 任务队列百分比计算需要显式检查 `tasks.length > 0 ? ... : 0` 避免 NaN
+4. **环境变量处理**: Brain API URL 需要根据 hostname 动态配置，不能硬编码 localhost
+
+**影响程度**: Low
+
+**流程亮点**:
+- /dev workflow 自动化程度高，从 PRD 到 PR 合并全程自动化
+- gate:audit 和 gate:test 的 subagent 审核有效防止质量问题
+- Stop Hook 循环机制确保 CI 通过和 PR 合并才结束
+
