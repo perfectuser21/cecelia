@@ -256,6 +256,25 @@ hooks:
       contains: "TTY_IN_FILE"
     test: "tests/hooks/stop-hook.test.ts"
 
+  - id: H7-009
+    feature: H7
+    name: "SubagentStop Hook - 子 agent 循环控制"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop, subagent, loop, explore, plan]
+    owner: infra
+    steps:
+      given: "Subagent (Explore/Plan) 正在执行任务"
+      when: "SubagentStop Hook 检测到任务未完成"
+      then: "返回 JSON API 格式阻止并继续循环，超过 5 次上限则退出"
+    evidence:
+      type: code
+      file: "hooks/subagent-stop.sh"
+      contains: "decision.*block"
+    test: "tests/hooks/subagent-stop.test.ts"
+
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
   # --------------------------------------------------------------------------

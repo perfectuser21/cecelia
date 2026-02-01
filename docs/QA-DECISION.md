@@ -1,44 +1,56 @@
 # QA Decision
 
-Decision: NO_RCI
-Priority: P1
+Decision: UPDATE_RCI
+Priority: P0
 RepoType: Engine
 
-Tests:
-  - dod_item: "back-merge-main-to-develop.yml 添加 check-trigger guard job"
-    method: manual
-    location: "manual:查看 .github/workflows/back-merge-main-to-develop.yml 包含 check-trigger job"
+## Tests
 
-  - dod_item: "back-merge guard job 检查 event_name == push && ref_name == main"
-    method: manual
-    location: "manual:验证 guard job 的 bash 脚本逻辑"
+- dod_item: "Stop Hook 使用 JSON API 格式（{\"decision\": \"block\", \"reason\": \"...\"}）"
+  method: auto
+  location: tests/hooks/stop-hook.test.ts
 
-  - dod_item: "back-merge 其他 jobs 依赖 guard job 且使用 if 条件"
-    method: manual
-    location: "manual:验证 back-merge job 的 needs 和 if 字段"
+- dod_item: "Stop Hook 重试上限为 15 次"
+  method: auto
+  location: tests/hooks/stop-hook-retry.test.ts
 
-  - dod_item: "nightly.yml 添加 check-trigger guard job"
-    method: manual
-    location: "manual:查看 .github/workflows/nightly.yml 包含 check-trigger job"
+- dod_item: "Stop Hook 超限后调用 track.sh 上报失败"
+  method: auto
+  location: tests/hooks/stop-hook-retry.test.ts
 
-  - dod_item: "nightly guard job 检查 event_name != push"
-    method: manual
-    location: "manual:验证 guard job 的 bash 脚本逻辑"
+- dod_item: "SubagentStop Hook 已创建并支持 Explore/Plan agent 类型"
+  method: auto
+  location: tests/hooks/subagent-stop.test.ts
 
-  - dod_item: "nightly 其他 jobs 依赖 guard job 且使用 if 条件"
-    method: manual
-    location: "manual:验证 regression job 的 needs 和 if 字段"
+- dod_item: "SubagentStop Hook 重试上限为 5 次"
+  method: auto
+  location: tests/hooks/subagent-stop.test.ts
 
-  - dod_item: "Push 到非 main 分支后，back-merge workflow 跳过（不失败）"
-    method: manual
-    location: "manual:查看 CI runs，验证 develop/feature 分支 push 后 back-merge 跳过"
+- dod_item: "SubagentStop Hook 超限后正确退出"
+  method: auto
+  location: tests/hooks/subagent-stop.test.ts
 
-  - dod_item: "Push 任何分支后，nightly workflow 跳过（不失败）"
-    method: manual
-    location: "manual:查看 CI runs，验证 push 事件后 nightly 跳过"
+- dod_item: "所有 exit 2 改为 jq -n 输出 JSON + exit 0"
+  method: auto
+  location: tests/hooks/stop-hook-exit.test.ts
 
-RCI:
-  new: []
-  update: []
+- dod_item: ".claude/settings.json 已更新 SubagentStop Hook 配置"
+  method: manual
+  location: manual:检查 settings.json 包含 SubagentStop Hook 配置
 
-Reason: CI infrastructure bugfix，通过 workflow 文件审查和 CI 实际运行验证即可，无需回归契约
+- dod_item: "强制循环机制生效：AI 不会'停下来等用户输入'"
+  method: manual
+  location: manual:运行完整 /dev 流程，验证 JSON API reason 作为 prompt 注入后自动继续执行
+
+## RCI
+
+new:
+  - H7-009  # SubagentStop Hook - 新增子 agent 循环控制
+update:
+  - H7-001  # Stop Hook 检测 .dev-mode - 更新为支持 JSON API
+  - H7-002  # Stop Hook 检查完成条件 - 更新为支持 JSON API
+  - H7-003  # Stop Hook exit 机制 - 从 exit 2 改为 JSON API + exit 0
+
+## Reason
+
+Stop Hook 是核心循环控制机制（P0），改用 JSON API 直接影响 /dev 工作流的自动化能力。需要更新现有 H7 系列 RCI 并新增 SubagentStop 测试覆盖。
