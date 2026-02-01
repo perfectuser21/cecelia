@@ -1,4 +1,7 @@
-# Cecelia Docker 运维手册
+# Cecelia Docker 运维手册（可选部署方式）
+
+> **注意**：Docker Compose 是**可选的**部署方式，主要用于生产环境提供自动重启、健康检查和日志轮转功能。
+> 开发环境推荐使用手动启动方式（参考 [README.md](./README.md)）。
 
 ## 快速开始
 

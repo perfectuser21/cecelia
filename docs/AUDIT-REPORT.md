@@ -1,8 +1,15 @@
+---
+id: audit-report-concurrency-optimization
+version: 1.0.0
+created: 2026-02-01
+branch: cp-concurrency-optimization
+---
+
 # Audit Report
 
-**Branch**: cp-docker-24x7-deployment
+**Branch**: cp-concurrency-optimization
 **Date**: 2026-02-01
-**Scope**: docker-compose.yml, .dockerignore, .env.docker, scripts/verify-deployment.sh, DOCKER.md, README.md
+**Scope**: .env, .env.docker, .env.example, README.md, DOCKER.md, brain/.env.example (deleted)
 **Target Level**: L2
 
 ## Summary
@@ -18,35 +25,37 @@
 
 ## Findings
 
-### Fixed Issues
+无问题发现。所有配置修改符合规范：
 
-#### L1-001: .env.docker 缺少 DB_NAME 变量
-- **File**: .env.docker
-- **Line**: 5-8
-- **Issue**: 缺少 DB_NAME 环境变量，导致 docker-compose.yml 中的默认值无法被正确覆盖
-- **Fix**: 添加 `DB_NAME=cecelia_tasks`
-- **Status**: ✅ fixed
+1. ✅ 并发配置统一为 5（CECELIA_MAX_CONCURRENT=5, MAX_CONCURRENT=5）
+2. ✅ 移除废弃变量 MAX_CONCURRENT_TASKS
+3. ✅ .env.example 成功合并 Brain + Intelligence 配置
+4. ✅ 删除冗余的 brain/.env.example
+5. ✅ 文档准确更新（手动启动为默认，Docker 为可选）
+6. ✅ 所有环境变量引用一致
 
-#### L2-001: 验证脚本缺少严格模式
-- **File**: scripts/verify-deployment.sh
-- **Line**: 4
-- **Issue**: 只有 `set -e`，缺少 `set -u` 和 `set -o pipefail`，可能导致未定义变量或管道错误被忽略
-- **Fix**: 改为 `set -euo pipefail`
-- **Status**: ✅ fixed
+## Scope Validation
 
-#### L2-002: docker-compose.yml 包含硬编码密码默认值
-- **File**: docker-compose.yml
-- **Line**: 55
-- **Issue**: `DB_PASSWORD` 默认值是硬编码的旧密码，不应该有默认值
-- **Fix**: 移除默认值，改为 `DB_PASSWORD=${DB_PASSWORD}`，强制从 .env.docker 读取
-- **Status**: ✅ fixed
+**Allowed Scope** (from QA-DECISION.md):
+- `.env` - 添加/更新并发配置 ✅
+- `.env.docker` - 统一并发配置 ✅
+- `.env.example` - 合并完整配置模板 ✅
+- `brain/.env.example` - 删除（合并到根目录）✅
+- `README.md` - 更新启动说明 ✅
+- `DOCKER.md` - 标记为可选方式 ✅
 
-#### L2-003: npm install 每次容器启动都执行
-- **File**: docker-compose.yml
-- **Line**: 62
-- **Issue**: 每次容器启动都执行 `npm install`，导致启动缓慢
-- **Fix**: 改为条件安装：`test -d node_modules || npm install --production`
-- **Status**: ✅ fixed
+**Forbidden Areas**:
+- `brain/src/` - 未触碰 ✅
+- `src/api/` - 未触碰 ✅
+- `data/` - 未触碰 ✅
+- `.git/` - 未触碰 ✅
+- `node_modules/` - 未触碰 ✅
+
+**Extra Changes** (outside allowed scope):
+- `.dev-mode` - /dev 工作流文件（正常）
+- `.dod.md` - DoD 文件（正常）
+- `docs/QA-DECISION.md` - QA 决策文件（正常）
+- 其他 .gate-* 和 .prd-* 文件 - 工作流产物（正常）
 
 ## Blockers
 
@@ -54,22 +63,22 @@
 
 ## Validation
 
-所有 L1/L2 问题已修复：
+配置优化变更通过审计：
 - ✅ L1 问题：0 个
 - ✅ L2 问题：0 个
-- ✅ 配置文件语法正确
-- ✅ 脚本可执行且包含正确的 shebang
-- ✅ 敏感信息正确处理（从 .env.docker 读取）
-- ✅ Docker Compose 健康检查配置完整
-- ✅ 日志轮转配置正确（10MB × 3 文件）
-- ✅ 重启策略配置正确（unless-stopped）
+- ✅ 环境变量命名一致
+- ✅ 配置文件格式正确
+- ✅ 文档准确反映实际部署方式
+- ✅ 所有修改在允许的 Scope 内
+- ✅ 未触碰禁止修改的区域
 
 ## Notes
 
-此次变更为纯部署配置，属于 L0 测试等级（基础设施）。审计重点在于：
-1. 配置文件语法正确性
-2. 敏感信息处理（密码、API Key）
-3. 脚本健壮性（错误处理）
-4. Docker 最佳实践（健康检查、日志管理、重启策略）
+此次变更为配置优化，属于运维调优。审计重点在于：
+1. 配置一致性（Brain 和 cecelia-run 并发数统一）
+2. 环境变量清理（合并重复配置）
+3. 文档准确性（与实际部署方式一致）
 
-无需单元测试或集成测试，部署后通过 `scripts/verify-deployment.sh` 验证功能。
+无代码逻辑变更，无需单元测试。部署后通过手动验证：
+- `curl http://localhost:5221/api/brain/tick/status | jq .max_concurrent` 应返回 5
+- 服务健康检查正常

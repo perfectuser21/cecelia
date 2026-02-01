@@ -4,11 +4,32 @@ Cecelia 的智能决策系统，包含语义搜索、代码监控、任务规划
 
 ## 快速开始
 
-### Docker 部署（推荐）
+### 手动启动（默认方式）
 
 ```bash
-# 1. 确保 .env.docker 文件存在
-test -f .env.docker || echo "请先配置 .env.docker"
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入真实凭据
+
+# 2. 启动 Python Intelligence Service (5220)
+python -m uvicorn src.api.main:app --host 0.0.0.0 --port 5220 &
+
+# 3. 启动 Node Brain (5221)
+cd brain && nohup node server.js > /tmp/brain.log 2>&1 &
+
+# 4. 验证服务状态
+curl http://localhost:5220/health
+curl http://localhost:5221/api/brain/tick/status
+```
+
+### Docker 部署（可选方式）
+
+Docker Compose 提供自动重启、健康检查、日志轮转等特性，适合生产环境。
+
+```bash
+# 1. 配置环境变量
+cp .env.example .env.docker
+# 编辑 .env.docker 填入真实凭据
 
 # 2. 启动服务
 docker compose up -d
@@ -21,16 +42,6 @@ docker compose logs -f --tail=50
 ```
 
 详细运维文档请参考 [DOCKER.md](./DOCKER.md)
-
-### 手动启动（开发）
-
-```bash
-# Python Intelligence Service (5220)
-python -m uvicorn src.api.main:app --host 0.0.0.0 --port 5220
-
-# Node Brain (5221)
-cd brain && node server.js
-```
 
 ## 服务架构
 
@@ -71,7 +82,7 @@ cd brain && node server.js
 
 ### 3. 自主执行
 - 每 2 分钟自动检查任务队列
-- 并发控制：最多 3 个任务
+- 并发控制：最多 5 个任务
 - 熔断保护：3 次失败 → 30 分钟冷却
 - 超时控制：60 分钟自动 fail
 
