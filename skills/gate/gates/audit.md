@@ -59,6 +59,8 @@ Step 7 (质检 + Audit) 完成后
 
 ## Subagent Prompt 模板
 
+**重要**: 只审核，不修改文件。返回 PASS 或 FAIL + 详细反馈。
+
 ```
 你是独立的审计审核员。审核以下文件：
 - PRD: {prd_file}（查看影响范围）
@@ -104,6 +106,8 @@ Decision: PASS | FAIL
 ### Evidence
 - 审计报告引用验证：...
 - PRD 影响范围 vs 审计覆盖：...
+
+**记住**: 不要调用 Edit/Write 工具修改文件，只返回审核结果。
 ```
 
 ## PASS 条件

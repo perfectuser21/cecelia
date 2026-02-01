@@ -76,17 +76,43 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 Learning 使用 Subagent 执行，**写好才能继续**。
 
-### 循环逻辑
+### 循环逻辑（模式 B：主 Agent 改）
 
-```
-主 Agent 回顾开发过程
-    ↓
-启动 gate:learning Subagent
-    ↓
-Subagent 返回 Decision
-    ↓
-├─ FAIL → 内容不足，补充后再次启动 Subagent
-└─ PASS → 追加到 LEARNINGS.md → 继续 Step 11
+**主 Agent 负责循环控制，最大 3 轮**：
+
+```javascript
+const MAX_GATE_ATTEMPTS = 20;
+let attempts = 0;
+
+while (attempts < MAX_GATE_ATTEMPTS) {
+  // 启动独立的 gate:learning Subagent（只审核）
+  const result = await Skill({
+    skill: "gate:learning"
+  });
+
+  if (result.decision === "PASS") {
+    // 审核通过，追加到 LEARNINGS.md
+    await Bash({
+      command: "git add docs/LEARNINGS.md && git commit -m 'docs: 记录开发经验' && git push"
+    });
+    break;
+  }
+
+  // FAIL: 主 Agent 根据 Required Fixes 补充内容
+  for (const fix of result.requiredFixes) {
+    await Edit({
+      file_path: fix.location,
+      old_string: "...",
+      new_string: "..."
+    });
+  }
+
+  attempts++;
+}
+
+if (attempts >= MAX_GATE_ATTEMPTS) {
+  throw new Error("gate:learning 审核失败，已重试 20 次");
+}
 ```
 
 ### gate:learning Subagent 调用

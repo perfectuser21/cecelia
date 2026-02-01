@@ -103,20 +103,40 @@ Subagent 返回 PASS/FAIL，主 agent 根据结果决定：
 - PASS → 继续下一步
 - FAIL → 根据 Required Fixes 修改，再次调用 Gate
 
-### 审核循环
+### 审核循环（模式 B）
+
+**主 Agent 负责循环控制，最大 20 轮**：
 
 ```javascript
-while (true) {
-  const result = await Task({ prompt: gatePrompt });
+const MAX_GATE_ATTEMPTS = 20;
+let attempts = 0;
+
+while (attempts < MAX_GATE_ATTEMPTS) {
+  // 启动独立的 Gate Subagent（只审核）
+  const result = await Skill({
+    skill: "gate:xxx"
+  });
 
   if (result.decision === "PASS") {
-    break;  // 继续下一步
+    // 审核通过，生成 gate 文件
+    await Bash({ command: "bash scripts/gate/generate-gate-file.sh xxx" });
+    break;
   }
 
-  // FAIL: 根据反馈修改
-  await fixIssues(result.requiredFixes);
+  // FAIL: 主 Agent 根据反馈修改
+  for (const fix of result.requiredFixes) {
+    await Edit({
+      file_path: fix.location,
+      old_string: "...",  // 根据 fix.issue 定位
+      new_string: "..."   // 根据 fix.suggestion 修复
+    });
+  }
 
-  // 再次审核
+  attempts++;
+}
+
+if (attempts >= MAX_GATE_ATTEMPTS) {
+  throw new Error(`gate:xxx 审核失败，已重试 ${MAX_GATE_ATTEMPTS} 次`);
 }
 ```
 

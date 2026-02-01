@@ -42,17 +42,41 @@ A: 调整方案，重新实现。
 
 代码写完后，**必须**启动 gate:audit Subagent 审计。
 
-### 循环逻辑
+### 循环逻辑（模式 B：主 Agent 改）
 
-```
-主 Agent 写代码
-    ↓
-启动 gate:audit Subagent
-    ↓
-Subagent 返回 Decision
-    ↓
-├─ FAIL → 主 Agent 根据 Findings 修复 L1/L2 问题 → 再次启动 Subagent
-└─ PASS → 生成 gate 文件 → 继续 Step 6
+**主 Agent 负责循环控制，最大 3 轮**：
+
+```javascript
+const MAX_GATE_ATTEMPTS = 20;
+let attempts = 0;
+
+while (attempts < MAX_GATE_ATTEMPTS) {
+  // 启动独立的 gate:audit Subagent（只审核）
+  const result = await Skill({
+    skill: "gate:audit"
+  });
+
+  if (result.decision === "PASS") {
+    // 审核通过，生成 gate 文件
+    await Bash({ command: "bash scripts/gate/generate-gate-file.sh audit" });
+    break;
+  }
+
+  // FAIL: 主 Agent 根据 Findings 修复 L1/L2 问题
+  for (const fix of result.requiredFixes) {
+    await Edit({
+      file_path: fix.location,
+      old_string: "...",
+      new_string: "..."
+    });
+  }
+
+  attempts++;
+}
+
+if (attempts >= MAX_GATE_ATTEMPTS) {
+  throw new Error("gate:audit 审核失败，已重试 20 次");
+}
 ```
 
 ### gate:audit Subagent 调用

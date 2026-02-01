@@ -67,6 +67,8 @@ it("should handle path without skills/", ...)
 
 ## Subagent Prompt 模板
 
+**重要**: 只审核，不修改文件。返回 PASS 或 FAIL + 详细反馈。
+
 ```
 你是独立的测试审核员。审核以下文件：
 - DoD: {dod_file}
@@ -116,6 +118,8 @@ Decision: PASS | FAIL
 - DoD 验收项列表：...
 - 测试文件内容摘要：...
 - 测试用例统计：X 个正例，Y 个反例，Z 个边界
+
+**记住**: 不要调用 Edit/Write 工具修改文件，只返回审核结果。
 ```
 
 ## PASS 条件

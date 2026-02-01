@@ -153,17 +153,54 @@ PR Gate 会检查：
 
 DoD 定稿后，**并行**启动两个 Subagent：gate:dod + gate:qa
 
-### 循环逻辑
+### 循环逻辑（模式 B：主 Agent 改）
 
-```
-主 Agent 写 DoD + QA-DECISION.md
-    ↓
-并行启动 gate:dod + gate:qa Subagent（用一条消息发送两个 Task 调用）
-    ↓
-等待两个都返回
-    ↓
-├─ 任一 FAIL → 主 Agent 根据 Required Fixes 修改 → 再次并行启动
-└─ 两个都 PASS → 生成 gate 文件 → 继续 Step 5
+**主 Agent 负责循环控制，最大 3 轮**：
+
+```javascript
+const MAX_GATE_ATTEMPTS = 20;
+let attempts = 0;
+
+while (attempts < MAX_GATE_ATTEMPTS) {
+  // 并行启动两个 Subagent（只审核）
+  const [dodResult, qaResult] = await Promise.all([
+    Skill({ skill: "gate:dod" }),
+    Skill({ skill: "gate:qa" })
+  ]);
+
+  if (dodResult.decision === "PASS" && qaResult.decision === "PASS") {
+    // 两个都通过，生成 gate 文件
+    await Bash({ command: "bash scripts/gate/generate-gate-file.sh dod" });
+    break;
+  }
+
+  // FAIL: 主 Agent 根据反馈修改
+  if (dodResult.decision === "FAIL") {
+    for (const fix of dodResult.requiredFixes) {
+      await Edit({
+        file_path: fix.location,
+        old_string: "...",
+        new_string: "..."
+      });
+    }
+  }
+
+  if (qaResult.decision === "FAIL") {
+    for (const fix of qaResult.requiredFixes) {
+      await Edit({
+        file_path: fix.location,
+        old_string: "...",
+        new_string: "..."
+      });
+    }
+  }
+
+  attempts++;
+}
+
+if (attempts >= MAX_GATE_ATTEMPTS) {
+  throw new Error("gate:dod/qa 审核失败，已重试 20 次");
+}
 ```
 
 ### gate:dod Subagent 调用

@@ -22,13 +22,13 @@ TTL_SECONDS="${GATE_TTL_SECONDS:-1800}"
 # 验证参数
 if [[ -z "$GATE_TYPE" ]]; then
     echo "❌ 用法: bash scripts/gate/generate-gate-file.sh <gate_type>" >&2
-    echo "   gate_type: prd | dod | test | audit" >&2
+    echo "   gate_type: prd | dod | test | audit | qa | learning" >&2
     exit 1
 fi
 
-if [[ ! "$GATE_TYPE" =~ ^(prd|dod|test|audit)$ ]]; then
+if [[ ! "$GATE_TYPE" =~ ^(prd|dod|test|audit|qa|learning)$ ]]; then
     echo "❌ 无效的 gate 类型: $GATE_TYPE" >&2
-    echo "   有效类型: prd | dod | test | audit" >&2
+    echo "   有效类型: prd | dod | test | audit | qa | learning" >&2
     exit 1
 fi
 
