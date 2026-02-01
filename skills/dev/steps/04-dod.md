@@ -169,118 +169,16 @@ DoD 定稿后，**并行**启动两个 Subagent：gate:dod + gate:qa
 ### gate:dod Subagent 调用
 
 ```
-Task({
-  subagent_type: "general-purpose",
-  prompt: `你是独立的 DoD 审核员。审核以下文件：
-- PRD: {prd_file}
-- DoD: {dod_file}
-- QA: docs/QA-DECISION.md
-- 测试文件: {test_files}
-
-## 审核标准
-
-### 1. PRD ↔ DoD 覆盖率
-对照 PRD 的每个成功标准，检查 DoD 是否有对应验收项。
-- 列出 PRD 需求 → DoD 验收项的映射
-- 标记缺失的需求
-- 标记凭空出现的验收项
-
-### 2. 验收项具体性
-检查每条验收项：
-- [ ] 具体可测？（不是"改进"、"优化"等模糊词）
-- [ ] 有预期结果？
-- [ ] 有验证方法？
-
-反例（不可接受）：
-- "修改代码" - 改什么？
-- "测试一下" - 测什么？
-- "部署" - 部署到哪？怎么验证？
-
-正例（可接受）：
-- "修改 hooks/xxx.sh，将正则改为 skills/(dev|qa)/"
-- "Write ~/.claude/skills/dev/xxx → 被阻止 (exit 2)"
-- "部署到 ~/.claude/hooks/，验证版本为 v18"
-
-### 3. Test 字段有效性
-- 检查 tests/xxx 文件是否存在
-- 检查 contract:xxx ID 是否有效
-- 检查 manual:xxx 是否说明验证方法（不能只写 "manual:done"）
-
-### 4. QA 引用正确性
-- QA 文件是否存在？
-- QA 任务名是否与当前分支匹配？
-- QA 变更范围是否准确？
-
-## 输出格式（必须严格遵守）
-
-## Gate Result
-
-Decision: PASS | FAIL
-
-### Findings
-- [PASS/FAIL] PRD↔DoD 覆盖率：X/Y 需求已覆盖
-- [PASS/FAIL] 验收项具体性：X/Y 项合格
-- [PASS/FAIL] Test 字段有效性：X/Y 项有效
-- [PASS/FAIL] QA 引用正确性：...
-
-### Required Fixes (if FAIL)
-1. 缺失的 PRD 需求：...
-2. 模糊的验收项：...
-3. 无效的 Test 字段：...
-4. QA 引用问题：...
-
-### Evidence
-- PRD 需求列表：...
-- DoD 验收项列表：...
-- 测试文件检查结果：...`,
-  description: "gate:dod"
+Skill({
+  skill: "gate:dod"
 })
 ```
 
 ### gate:qa Subagent 调用
 
 ```
-Task({
-  subagent_type: "general-purpose",
-  prompt: `你是 QA 决策员。根据 PRD 和 DoD 做测试决策。
-- PRD: {prd_file}
-- DoD: {dod_file}
-
-## 规则
-
-### Repo 类型判断
-- 仓库包含 regression-contract.yaml、hooks/、skills/ → RepoType = Engine
-- 否则 → RepoType = Business
-
-### RCI 判定标准
-- 涉及核心功能（Hook、Gate、CI）→ MUST_ADD_RCI 或 UPDATE_RCI
-- 只是文档或配置 → NO_RCI
-- P0/P1 修复必须更新 RCI
-
-### 测试方式决策
-- 能自动化 → auto + tests/xxx.test.ts
-- 回归契约覆盖 → auto + contract:xxx
-- 无法自动化 → manual + 描述
-
-## 输出格式（必须严格遵守，输出到 docs/QA-DECISION.md）
-
-# QA Decision
-
-Decision: NO_RCI | MUST_ADD_RCI | UPDATE_RCI
-Priority: P0 | P1 | P2
-RepoType: Engine | Business
-
-Tests:
-  - dod_item: "功能描述"
-    method: auto | manual
-    location: tests/xxx.test.ts | manual:描述
-
-RCI:
-  new: []
-  update: []
-
-Reason: 一句话说明决策理由`,
-  description: "gate:qa"
+Skill({
+  skill: "gate:qa"
 })
 ```
 

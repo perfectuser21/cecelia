@@ -1,0 +1,60 @@
+{
+  "manual_verifications": [
+    {
+      "id": "AI-RULE-01",
+      "dod_item": "skills/dev/SKILL.md 在前 100 行内包含\"⛔ 绝对禁止行为\"章节",
+      "status": "PASS",
+      "evidence": "第 63 行：## ⛔ 绝对禁止行为（CRITICAL）",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-02",
+      "dod_item": "skills/dev/SKILL.md 列出 11 条禁止话术（手动创建 PR、暂时禁用 Hook等）",
+      "status": "PASS",
+      "evidence": "第 67-77 行：列出完整的 11 条禁止话术，包括原始 6 条和新增 5 条变体",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-03",
+      "dod_item": "/home/xx/.claude/CLAUDE.md 在前 50 行内包含\"⛔ AI 自我检测\"章节",
+      "status": "PASS",
+      "evidence": "第 3 行：## ⛔ AI 自我检测（CRITICAL - 优先级最高）",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-04",
+      "dod_item": "/home/xx/.claude/CLAUDE.md 包含 11 个关键词触发自检机制（手动、您可以等）",
+      "status": "PASS",
+      "evidence": "关键词列表包含 11 个触发词：手动、您可以、暂时禁用、等待用户、需要确认、绕过、临时、跳过、忽略、先不管、稍后",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-05",
+      "dod_item": "两处都包含对比表：左列\"AI 默认倾向\"，右列\"正确行为\"",
+      "status": "PASS",
+      "evidence": "skills/dev/SKILL.md 第 87-91 行和 /home/xx/.claude/CLAUDE.md 都包含对比表，格式为 | AI 默认倾向 | 正确行为 |",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-06",
+      "dod_item": "两处都使用⛔表情符号和\"CRITICAL\"标记优先级",
+      "status": "PASS",
+      "evidence": "skills/dev/SKILL.md 第 63 行使用 ⛔ 和（CRITICAL），/home/xx/.claude/CLAUDE.md 第 3 行使用 ⛔ 和（CRITICAL - 优先级最高）",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T11:54:00Z"
+    },
+    {
+      "id": "AI-RULE-07",
+      "dod_item": "/home/xx/.claude/CLAUDE.md 包含自检流程说明（紧跟关键词列表之后）",
+      "status": "PASS",
+      "evidence": "自检流程说明包含：1) 遇到关键词时的自检问题（3个问题），2) 核心原则对比表",
+      "verified_by": "claude",
+      "verified_at": "2026-02-01T12:00:00Z"
+    }
+  ]
+}

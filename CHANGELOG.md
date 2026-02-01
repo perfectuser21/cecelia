@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.20.0] - 2026-02-01
+
+### Added
+
+- **AI 自我检测硬规则** - 防止 AI 建议手动操作绕过自动化流程
+  - `skills/dev/SKILL.md` 新增"⛔ 绝对禁止行为"章节（前 100 行内）
+  - `/home/xx/.claude/CLAUDE.md` 新增"⛔ AI 自我检测"章节（前 50 行内）
+  - 11 条禁止话术清单：手动创建 PR、手动运行、暂时禁用 Hook、需要用户确认、让用户手动做、绕过等
+  - 11 个关键词触发自检：手动、您可以、暂时禁用、等待用户、需要确认、绕过、临时、跳过、忽略、先不管、稍后
+  - 对比表格：AI 默认倾向 vs 正确行为
+  - 说明 Stop Hook 循环机制确保自动重试
+
+## [11.19.0] - 2026-02-01
+
+### Changed
+
+- **Gate Skill 调用方式优化 (G3)** - 将所有 dev 工作流中的 gate subagent 调用从 Task(general-purpose) 改为 Skill()
+  - 修改 `skills/dev/steps/01-prd.md` - gate:prd 使用 Skill 调用
+  - 修改 `skills/dev/steps/04-dod.md` - gate:dod 和 gate:qa 使用 Skill 调用
+  - 修改 `skills/dev/steps/05-code.md` - gate:audit 使用 Skill 调用
+  - 修改 `skills/dev/steps/06-test.md` - gate:test 使用 Skill 调用
+  - 修改 `skills/dev/steps/10-learning.md` - gate:learning 使用 Skill 调用
+  - 删除所有冗长的内联 prompt，简化为简洁的 Skill 调用
+  - 配合全局 gate skill 的 checklist 机制，提高代码可维护性
+
 ## [11.18.0] - 2026-01-31
 
 ### Added

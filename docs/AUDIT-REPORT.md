@@ -1,42 +1,76 @@
----
-id: audit-report-gate-enforce
-version: 1.0.0
-created: 2026-01-31
-updated: 2026-01-31
-changelog:
-  - 1.0.0: 初始版本
----
-
 # Audit Report
 
-Branch: cp-G1-gate-enforce
-Date: 2026-01-31
-Scope: hooks/mark-subagent-done.sh, hooks/require-subagent-token.sh, hooks/pr-gate-v2.sh, scripts/setup-branch-protection.sh, .claude/settings.json, FEATURES.md, features/feature-registry.yml
+Branch: cp-add-ai-self-check-rules
+Date: 2026-02-01
+Scope: skills/dev/SKILL.md, ~/.claude/CLAUDE.md
 Target Level: L2
 
 Summary:
   L1: 0
   L2: 0
-  L3: 2
+  L3: 0
   L4: 0
 
 Decision: PASS
 
-Findings:
-  - id: A1-005
-    layer: L3
-    file: hooks/mark-subagent-done.sh
-    line: 51
-    issue: nonce 字段写入令牌但未被 require-subagent-token.sh 验证
-    fix: 保留用于未来扩展，或删除简化
-    status: accepted
-
-  - id: A1-006
-    layer: L3
-    file: FEATURES.md
-    line: 186
-    issue: 统计区域的 Committed Features 计数可能需要更新
-    fix: 可选更新
-    status: accepted
+Findings: []
 
 Blockers: []
+
+## 审计结果
+
+本次修改为纯文档规则添加，在两个文件中添加了 AI 自我检测规则。
+
+### skills/dev/SKILL.md 审计
+
+**检查内容**：
+- 第 63 行：添加了"⛔ 绝对禁止行为（CRITICAL）"章节
+- 列出了 11 条明确的禁止话术（包括原始 6 条 + 5 条变体）
+- 包含对比表说明为什么需要这些规则（3 行示例对比）
+- 使用⛔表情符号和 CRITICAL 标记优先级
+
+**审计结论**：
+- 位置：在"核心定位"章节前（第 63 行），符合"前 100 行"要求
+- 内容完整：11 条禁止话术 + 正确做法（4 步） + 对比表（3 行） + 说明
+- 格式正确：Markdown 表格格式，emoji 表情使用正确
+
+**潜在风险**：
+- 依赖 AI 自觉遵守，无强制执行机制
+- 文档规则有效性取决于 AI 是否真正阅读并遵守
+
+### ~/.claude/CLAUDE.md 审计
+
+**检查内容**：
+- 第 3 行：添加了"⛔ AI 自我检测（CRITICAL - 优先级最高）"章节
+- 列出了 11 个关键词触发自检机制（包括原始 6 个 + 5 个补充）
+- 包含 3 个自检问题（能否自动解决、是否偷懒、Stop Hook 循环）
+- 包含对比表说明核心原则
+- 使用⛔表情符号和 CRITICAL 标记
+
+**审计结论**：
+- 位置：在"全局规则"开头（第 3 行），符合"前 50 行"要求
+- 内容完整：11 个关键词 + 3 个自检问题 + 对比表 + 核心原则
+- 逻辑清晰：触发词 → 自检问题 → 核心原则
+- 自检流程说明完整：包含触发条件和调整回复的指导
+
+**潜在风险**：
+- 两个文件（SKILL.md 和 CLAUDE.md）需要手动同步，可能不一致
+- 关键词列表需要定期更新以覆盖新的绕过话术
+
+### 与 PRD 对比
+
+所有 PRD 要求均已实现：
+- ✅ skills/dev/SKILL.md 前 100 行内包含章节（第 63 行）
+- ✅ 列出完整的 11 条禁止话术（含 5 条手动操作变体）
+- ✅ /home/xx/.claude/CLAUDE.md 前 50 行内包含章节（第 3 行）
+- ✅ 包含 11 个关键词触发机制（含 5 个补充关键词）
+- ✅ 两处都有对比表（至少 3 行示例对比）
+- ✅ 两处都使用⛔和 CRITICAL
+- ✅ CLAUDE.md 包含自检流程说明（3 个自检问题 + 核心原则）
+
+未发现 L1/L2 级别问题。
+
+**已识别的限制**：
+- 文档规则依赖 AI 自觉遵守，无强制执行
+- 两个文件需要手动同步维护
+- 关键词列表可能需要迭代更新

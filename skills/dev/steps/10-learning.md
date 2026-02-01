@@ -92,59 +92,8 @@ Subagent 返回 Decision
 ### gate:learning Subagent 调用
 
 ```
-Task({
-  subagent_type: "general-purpose",
-  prompt: `你是经验记录员。回顾本次开发，记录开发经验。
-
-## 输入信息
-- 本次任务：{task_summary}
-- 改动文件：{changed_files}
-- 遇到的问题：{issues_encountered}
-
-## 记录位置
-
-### Engine 层面
-工作流本身有什么可以改进的？
-- /dev 流程哪里不顺畅？
-- 缺少什么检查步骤？
-- 脚本有什么 bug？
-→ 记录到：zenithjoy-engine/docs/LEARNINGS.md
-
-### 项目层面
-目标项目开发中的发现：
-- 踩了什么坑？
-- 学到了什么技术点？
-- 有什么架构优化建议？
-→ 记录到：项目的 docs/LEARNINGS.md
-
-## 输出格式（必须严格遵守）
-
-### [YYYY-MM-DD] <任务简述>
-- **Bug**: <遇到的问题和解决方案>
-- **优化点**: <可改进的地方和具体建议>
-- **影响程度**: Low/Medium/High
-
-## 影响程度说明
-- Low: 体验小问题，不影响功能
-- Medium: 功能性问题，需要尽快修复
-- High: 阻塞性问题，必须立即处理
-
-## 如果没有特别的 Learning
-即使本次开发很顺利，也至少记录：
-
-### [YYYY-MM-DD] <任务简述>
-- **Bug**: 无
-- **优化点**: 流程顺畅，无明显优化点
-- **影响程度**: N/A
-
-## 输出
-
-Decision: PASS | FAIL
-Content: [记录内容，将追加到 LEARNINGS.md]
-
-PASS 条件：至少有一条有效的 Learning 记录
-FAIL 条件：记录为空或内容无意义`,
-  description: "gate:learning"
+Skill({
+  skill: "gate:learning"
 })
 ```
 

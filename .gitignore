@@ -50,8 +50,12 @@ skills/dev/VALIDATION.md
 # v1.1: 支持分支级别 PRD/DoD 文件
 .prd.md
 .prd-*.md
+!.prd-cp-G3-fix-gate-skill-calls.md
+!.prd-cp-add-ai-self-check-rules.md
 .dod.md
 .dod-*.md
+!.dod-cp-G3-fix-gate-skill-calls.md
+!.dod-cp-add-ai-self-check-rules.md
 .quality-gate-passed
 .layer2-evidence.md
 .l3-analysis.md

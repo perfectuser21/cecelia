@@ -58,79 +58,8 @@ Subagent 返回 Decision
 ### gate:audit Subagent 调用
 
 ```
-Task({
-  subagent_type: "general-purpose",
-  prompt: `你是代码审计员。审计以下改动文件：
-- 改动文件：{changed_files}
-- 目标层级：L2（默认）
-
-## 分层标准
-
-| Layer | 名称 | 描述 | 完成标准 |
-|-------|------|------|----------|
-| L1 | 阻塞性 | 功能不工作、崩溃、数据丢失 | **必须修** |
-| L2 | 功能性 | 边界条件、错误处理、已知 edge case | **建议修** |
-| L3 | 最佳实践 | 代码风格、一致性、可读性 | 可选 |
-| L4 | 过度优化 | 理论边界、极端情况、性能微调 | **不修** |
-
-## 审计标准
-
-### L1 阻塞性（必须修）
-- 脚本语法错误，无法执行
-- 命令不存在，功能完全失效
-- 条件判断错误，导致错误分支
-- 文件路径错误，找不到依赖
-
-### L2 功能性（建议修）
-- 网络超时无保护，可能挂起
-- 空字符串未处理，边界出错
-- 错误码未正确返回
-- 分支/路径引用不一致
-
-### L3 最佳实践（可选）
-- shebang 不统一
-- set options 风格不同
-- 变量命名不规范
-- 注释不够清晰
-
-### L4 过度优化（不修）
-- 理论上可能的 word splitting（实际不会发生）
-- 极端边界条件（需要刻意构造）
-- 性能微优化（毫秒级差异）
-
-## 输出格式（必须严格遵守，输出到 docs/AUDIT-REPORT.md）
-
-# Audit Report
-
-Branch: {branch_name}
-Date: YYYY-MM-DD
-Scope: {changed_files}
-Target Level: L2
-
-Summary:
-  L1: 0
-  L2: 0
-  L3: 0
-  L4: 0
-
-Decision: PASS | FAIL
-
-Findings:
-  - id: A1-001
-    layer: L1 | L2 | L3 | L4
-    file: path/to/file
-    line: 123
-    issue: 问题描述
-    fix: 修复建议
-    status: fixed | pending
-
-Blockers: []  # L1 + L2 问题列表
-
-## 判定规则
-
-L1 > 0 OR L2 > 0 → Decision: FAIL
-L1 = 0 AND L2 = 0 → Decision: PASS`,
-  description: "gate:audit"
+Skill({
+  skill: "gate:audit"
 })
 ```
 

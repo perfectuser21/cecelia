@@ -93,76 +93,8 @@ Subagent 返回 Decision
 ### gate:test Subagent 调用
 
 ```
-Task({
-  subagent_type: "general-purpose",
-  prompt: `你是独立的测试审核员。审核以下文件：
-- DoD: {dod_file}
-- 测试文件: {test_files}
-
-## 审核标准
-
-### 1. DoD ↔ 测试覆盖率
-- 列出 DoD 中 Test: tests/xxx 的验收项
-- 检查对应测试文件是否存在
-- 检查是否有对应的测试用例
-
-### 2. 边界用例
-检查测试是否覆盖：
-- [ ] 正常路径：预期输入 → 预期输出
-- [ ] 边界值：最小值、最大值、空值、临界值
-- [ ] 异常路径：无效输入、错误状态
-
-示例（正则匹配测试）：
-// 正常路径
-it("should match ~/.claude/skills/dev/xxx", ...)
-
-// 边界用例
-it("should NOT match ~/.claude/skills/dev-tools/xxx", ...)  // 相似但不同
-it("should match ~/.claude/skills/qa/", ...)                 // 多个受保护 skill
-it("should NOT match ~/.claude/skills/my-skill/", ...)       // 非保护 skill
-
-// 异常路径
-it("should handle empty path", ...)
-it("should handle path without skills/", ...)
-
-### 3. 反例测试
-- [ ] 是否测试失败情况？
-- [ ] 是否测试错误输入？
-
-测试不应该只验证"正确时通过"，还要验证"错误时失败"：
-❌ 只测 "valid input → success"
-✅ 测 "valid input → success"
-✅ 测 "invalid input → error message"
-✅ 测 "edge case → expected behavior"
-
-### 4. 测试质量
-- [ ] 每个测试有断言（expect/assert）？
-- [ ] 断言具体明确（不是 toBeTruthy()）？
-- [ ] 测试独立（不相互依赖）？
-
-## 输出格式（必须严格遵守）
-
-## Gate Result
-
-Decision: PASS | FAIL
-
-### Findings
-- [PASS/FAIL] DoD↔测试覆盖率：X/Y 验收项有测试
-- [PASS/FAIL] 边界用例：覆盖/缺失
-- [PASS/FAIL] 反例测试：有/无
-- [PASS/FAIL] 测试质量：...
-
-### Required Fixes (if FAIL)
-1. 缺失测试的验收项：...
-2. 缺失的边界用例：...
-3. 缺失的反例测试：...
-4. 测试质量问题：...
-
-### Evidence
-- DoD 验收项列表：...
-- 测试文件内容摘要：...
-- 测试用例统计：X 个正例，Y 个反例，Z 个边界`,
-  description: "gate:test"
+Skill({
+  skill: "gate:test"
 })
 ```
 
