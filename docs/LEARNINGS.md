@@ -253,3 +253,40 @@
   - 文件名不匹配问题只在首次写代码时阻塞，重命名后即可继续
   - 发现现有实现反而节省了开发时间（避免重复造轮子）
   - 流程顺畅，无阻塞性问题
+
+---
+
+### [2026-02-01] cecelia-workspace 清理旧 Brain 代码，改用 semantic-brain API
+
+- **Bug**: 
+  - **TypeScript 类型推断问题**：`response.json()` 在 TypeScript 中返回 `unknown` 类型，导致 CI 编译失败 - `parsed` 和 `result` 类型为 'unknown'。
+    - **解决方案**：添加 `ParseIntentResponse` 和 `ParseAndCreateResponse` 接口定义，显式声明 API 响应类型。
+    - **影响程度**：Medium - 阻塞 CI，需要额外 commit 修复（commit bfd438c6e）
+
+- **技术要点**:
+  1. **API 迁移策略**：从本地 Brain 模块（17 源文件 + 13 测试）切换到远程 semantic-brain API（localhost:5000）
+     - 删除 `apps/core/src/brain/` 整个目录
+     - 修改 `apps/core/src/dashboard/routes.ts` 使用 fetch 调用 `/v1/semantic/parse-intent`
+     - 保留原有路由路径（`/api/brain/*`）确保前端无感知
+  2. **TypeScript fetch API 类型处理**：
+     - `response.json()` 返回 `Promise<unknown>`，必须显式定义接口
+     - 使用 `as ParseIntentResponse` 类型断言，或定义 `const parsed: ParseIntentResponse = await response.json()`
+  3. **测试覆盖**：新增 `routes.test.ts` 包含 4 个测试用例覆盖 Brain API 路由（全部通过）
+  4. **版本管理**：版本号从 1.5.0 → 1.6.0，CHANGELOG 记录 breaking change
+
+- **优化点**:
+  1. **TypeScript 严格模式的好处**：编译阶段发现类型问题，避免运行时错误。建议在开发时就定义 API 响应接口，而不是等 CI 失败
+  2. **测试套件隔离性问题**：21 个其他模块测试失败（尝试连接 localhost:5211 但服务未运行），暴露了测试依赖外部服务的问题。建议：
+     - 单元测试应该 mock 外部依赖
+     - 集成测试单独运行，不阻塞 CI
+     - CI 只运行受影响文件的测试
+  3. **大规模删除操作的验证**：删除 30 个文件时，应该：
+     - 确认删除的文件没有被其他模块引用（通过 grep 或 IDE 搜索）
+     - 检查 import 语句是否有残留
+     - 运行完整 typecheck 和 build 确保无遗漏
+
+- **影响程度**: Medium
+  - TypeScript 类型问题阻塞 CI，需要额外 commit 修复
+  - 测试隔离性问题需要后续优化
+  - 核心功能迁移成功，API 正常工作
+
