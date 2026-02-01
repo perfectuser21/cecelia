@@ -6,7 +6,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -17,7 +17,7 @@ const TICK_INTERVAL_MINUTES = 5;
 const TICK_LOOP_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
-const DISPATCH_TIMEOUT_MINUTES = 30; // Auto-fail dispatched tasks after 30 min
+const DISPATCH_TIMEOUT_MINUTES = 60; // Auto-fail dispatched tasks after 60 min (claude -p needs time)
 const DISPATCH_COOLDOWN_MS = 60 * 1000; // 1 minute cooldown after dispatch
 const MAX_CONCURRENT_TASKS = parseInt(process.env.CECELIA_MAX_CONCURRENT || '3', 10); // Max concurrent cecelia-run executions
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
@@ -162,6 +162,12 @@ function stopTickLoop() {
  */
 async function initTickLoop() {
   try {
+    // Clean up orphan processes from previous server runs
+    const orphansKilled = cleanupOrphanProcesses();
+    if (orphansKilled > 0) {
+      console.log(`[tick-loop] Cleaned up ${orphansKilled} orphan processes on startup`);
+    }
+
     // Ensure EventBus table exists
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
@@ -317,14 +323,22 @@ async function selectNextDispatchableTask(goalIds) {
 async function dispatchNextTask(goalIds) {
   const actions = [];
 
-  // 1. Check concurrency
+  // 0. Server resource check — refuse to dispatch if overloaded
+  const resources = checkServerResources();
+  if (!resources.ok) {
+    return { dispatched: false, reason: 'server_overloaded', detail: resources.reason, metrics: resources.metrics, actions };
+  }
+
+  // 1. Check concurrency — dual check: DB status AND real process count
   const activeResult = await pool.query(
     "SELECT COUNT(*) FROM tasks WHERE goal_id = ANY($1) AND status = 'in_progress'",
     [goalIds]
   );
-  const activeCount = parseInt(activeResult.rows[0].count);
+  const dbActiveCount = parseInt(activeResult.rows[0].count);
+  const processActiveCount = getActiveProcessCount();
+  const activeCount = Math.max(dbActiveCount, processActiveCount);
   if (activeCount >= MAX_CONCURRENT_TASKS) {
-    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, actions };
+    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, db_active: dbActiveCount, process_active: processActiveCount, actions };
   }
 
   // 2. Circuit breaker check
@@ -433,6 +447,19 @@ async function autoFailTimedOutTasks(inProgressTasks) {
 
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
     if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
+      // Kill the actual process before marking failed to prevent orphans
+      killProcess(task.id);
+      // Write structured error details for retry-analyzer
+      const errorDetails = {
+        type: 'timeout',
+        message: `Task timed out after ${Math.round(elapsed)} minutes (limit: ${DISPATCH_TIMEOUT_MINUTES}min)`,
+        elapsed_minutes: Math.round(elapsed),
+        timeout_limit: DISPATCH_TIMEOUT_MINUTES,
+      };
+      await pool.query(
+        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+        [task.id, JSON.stringify({ error_details: errorDetails })]
+      );
       await updateTask({ task_id: task.id, status: 'failed' });
       await recordFailure('cecelia-run');
       await emit('patrol_cleanup', 'patrol', {

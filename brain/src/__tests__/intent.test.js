@@ -860,3 +860,159 @@ describe('Intent-to-Action Mapping', () => {
     expect(lowConf.confidence).toBeLessThan(0.4);
   });
 });
+
+// ==================== Enhanced Patterns Tests ====================
+
+describe('Enhanced phrase patterns', () => {
+  it('matches "整理...代码" for refactor', () => {
+    const result = classifyIntent('整理用户模块代码');
+    expect(result.type).toBe(INTENT_TYPES.REFACTOR);
+  });
+
+  it('matches "简化...逻辑" for refactor', () => {
+    const result = classifyIntent('简化支付逻辑');
+    expect(result.type).toBe(INTENT_TYPES.REFACTOR);
+  });
+
+  it('matches "研究一下" for explore', () => {
+    const result = classifyIntent('研究一下 Redis 缓存策略');
+    expect(result.type).toBe(INTENT_TYPES.EXPLORE);
+  });
+
+  it('matches "look into" for explore', () => {
+    const result = classifyIntent('look into the caching strategy');
+    expect(result.type).toBe(INTENT_TYPES.EXPLORE);
+  });
+
+  it('matches "挂了" for fix bug', () => {
+    const result = classifyIntent('服务器挂了');
+    expect(result.type).toBe(INTENT_TYPES.FIX_BUG);
+  });
+
+  it('matches "崩溃了" for fix bug', () => {
+    const result = classifyIntent('应用崩溃了');
+    expect(result.type).toBe(INTENT_TYPES.FIX_BUG);
+  });
+
+  it('matches "做到哪了" for query status', () => {
+    const result = classifyIntent('项目做到哪了');
+    expect(result.type).toBe(INTENT_TYPES.QUERY_STATUS);
+  });
+
+  it('matches "what is the status of" for query status', () => {
+    const result = classifyIntent("what's the status of the deployment?");
+    expect(result.type).toBe(INTENT_TYPES.QUERY_STATUS);
+  });
+
+  it('matches "什么是" for question', () => {
+    const result = classifyIntent('什么是微服务架构');
+    expect(result.type).toBe(INTENT_TYPES.QUESTION);
+  });
+});
+
+describe('extractEntities - status', () => {
+  it('extracts "已完成" and normalizes to completed', () => {
+    const entities = extractEntities('这个任务已完成');
+    expect(entities.status).toBe('completed');
+  });
+
+  it('extracts "进行中" and normalizes to in_progress', () => {
+    const entities = extractEntities('任务进行中');
+    expect(entities.status).toBe('in_progress');
+  });
+
+  it('extracts "pending" and normalizes', () => {
+    const entities = extractEntities('status is pending');
+    expect(entities.status).toBe('pending');
+  });
+
+  it('extracts "done" and normalizes to completed', () => {
+    const entities = extractEntities('this task is done');
+    expect(entities.status).toBe('completed');
+  });
+});
+
+describe('extractEntities - assignee', () => {
+  it('extracts "分配给张三"', () => {
+    const entities = extractEntities('分配给张三处理');
+    expect(entities.assignee).toBeTruthy();
+    expect(entities.assignee).toContain('张三');
+  });
+
+  it('extracts "assign to John"', () => {
+    const entities = extractEntities('assign to John');
+    expect(entities.assignee).toBeTruthy();
+    expect(entities.assignee).toContain('John');
+  });
+
+  it('extracts "负责人: 李四"', () => {
+    const entities = extractEntities('负责人: 李四');
+    expect(entities.assignee).toBeTruthy();
+    expect(entities.assignee).toContain('李四');
+  });
+});
+
+describe('extractEntities - tag', () => {
+  it('extracts "标签: 紧急"', () => {
+    const entities = extractEntities('标签: 紧急');
+    expect(entities.tag).toBeTruthy();
+    expect(entities.tag).toContain('紧急');
+  });
+
+  it('extracts "tag: frontend"', () => {
+    const entities = extractEntities('tag: frontend');
+    expect(entities.tag).toBeTruthy();
+    expect(entities.tag).toContain('frontend');
+  });
+
+  it('extracts "分类: 后端"', () => {
+    const entities = extractEntities('分类: 后端');
+    expect(entities.tag).toBeTruthy();
+    expect(entities.tag).toContain('后端');
+  });
+});
+
+describe('extractEntities - expanded timeframe', () => {
+  it('extracts "下个月"', () => {
+    const entities = extractEntities('下个月完成这个功能');
+    expect(entities.timeframe).toBe('下个月');
+  });
+
+  it('extracts "本季度"', () => {
+    const entities = extractEntities('本季度要完成重构');
+    expect(entities.timeframe).toBe('本季度');
+  });
+
+  it('extracts "年底前"', () => {
+    const entities = extractEntities('年底前上线');
+    expect(entities.timeframe).toBe('年底前');
+  });
+
+  it('extracts "next month"', () => {
+    const entities = extractEntities('finish by next month');
+    expect(entities.timeframe).toBeTruthy();
+  });
+
+  it('extracts "this quarter"', () => {
+    const entities = extractEntities('complete this quarter');
+    expect(entities.timeframe).toBeTruthy();
+  });
+});
+
+describe('extractEntities - expanded dependency', () => {
+  it('extracts "前置条件"', () => {
+    const entities = extractEntities('前置条件: 完成数据库迁移');
+    expect(entities.dependency).toBeTruthy();
+  });
+
+  it('extracts "等...完成"', () => {
+    const entities = extractEntities('等认证模块完成');
+    expect(entities.dependency).toBeTruthy();
+    expect(entities.dependency).toContain('认证模块');
+  });
+
+  it('extracts "requires...first"', () => {
+    const entities = extractEntities('requires database setup first');
+    expect(entities.dependency).toBeTruthy();
+  });
+});

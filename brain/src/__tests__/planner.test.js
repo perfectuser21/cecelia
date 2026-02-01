@@ -282,4 +282,212 @@ describe('Planner Agent', () => {
       )).rejects.toThrow();
     });
   });
+
+  describe('V3: generateTaskFromKR', () => {
+    it('should generate concrete task for intent recognition KR', async () => {
+      const { generateTaskFromKR } = await import('../planner.js');
+      const kr = { id: 'kr-1', title: 'KR1: 意图识别 - 自然语言→OKR', priority: 'P0', progress: 0 };
+      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' };
+      const result = generateTaskFromKR(kr, project, [], 100);
+
+      expect(result).not.toBeNull();
+      expect(result.title).not.toContain('Advance');
+      expect(result.title).toBeTruthy();
+      expect(result.description).toBeTruthy();
+    });
+
+    it('should generate concrete task for PRD/TRD generation KR', async () => {
+      const { generateTaskFromKR } = await import('../planner.js');
+      const kr = { id: 'kr-2', title: 'KR2: PRD/TRD 自动生成（标准化）', priority: 'P0', progress: 0 };
+      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/tmp/test' };
+      const result = generateTaskFromKR(kr, project, [], 100);
+
+      expect(result).not.toBeNull();
+      expect(result.title).not.toContain('Advance');
+    });
+
+    it('should generate fallback task for unknown KR type', async () => {
+      const { generateTaskFromKR } = await import('../planner.js');
+      const kr = { id: 'kr-x', title: '提升系统可靠性', priority: 'P1', progress: 20 };
+      const project = { id: 'p-1', name: 'test-project', repo_path: '/tmp/test' };
+      const result = generateTaskFromKR(kr, project, [], 80);
+
+      expect(result).not.toBeNull();
+      expect(result.title).not.toContain('Advance');
+      // Fallback tasks contain the KR title
+      expect(result.title).toContain('提升系统可靠性');
+    });
+
+    it('should have at least 3 different KR strategies', async () => {
+      const { KR_STRATEGIES } = await import('../planner.js');
+      expect(KR_STRATEGIES.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('should skip completed tasks (dedup)', async () => {
+      const { generateTaskFromKR } = await import('../planner.js');
+      const kr = { id: 'kr-1', title: 'KR1: 意图识别', priority: 'P0', progress: 0 };
+      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
+
+      // First call gets first candidate
+      const first = generateTaskFromKR(kr, project, [], 100);
+      expect(first).not.toBeNull();
+
+      // Second call with first title in completed list skips it
+      const second = generateTaskFromKR(kr, project, [first.title], 100);
+      expect(second).not.toBeNull();
+      expect(second.title).not.toBe(first.title);
+    });
+
+    it('should return null when all candidates exhausted', async () => {
+      const { generateTaskFromKR, KR_STRATEGIES } = await import('../planner.js');
+      const kr = { id: 'kr-1', title: 'KR1: 意图识别', priority: 'P0', progress: 0 };
+      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
+
+      // Find the matching strategy and get all task titles
+      const strategy = KR_STRATEGIES.find(s => s.match(kr.title));
+      const allTitles = strategy.tasks.map(t => t.title);
+
+      const result = generateTaskFromKR(kr, project, allTitles, 100);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('V3: KR_STRATEGIES progressWeight', () => {
+    it('should have progressWeight === tasks.length for every strategy', async () => {
+      const { KR_STRATEGIES } = await import('../planner.js');
+      for (const strategy of KR_STRATEGIES) {
+        expect(strategy.progressWeight).toBe(strategy.tasks.length);
+      }
+    });
+
+    it('prd_trd_generation should have updated task titles', async () => {
+      const { KR_STRATEGIES } = await import('../planner.js');
+      const strategy = KR_STRATEGIES.find(s => s.name === 'prd_trd_generation');
+      expect(strategy).toBeDefined();
+      const titles = strategy.tasks.map(t => t.title);
+      expect(titles).toContain('PRD 生成端到端冒烟测试');
+      expect(titles).toContain('PRD 验证 API 集成测试');
+      expect(titles).toContain('TRD 分解结果持久化验证');
+      expect(titles).toContain('Planner 自动 PRD 质量达标');
+      // Old tasks should not be present
+      expect(titles).not.toContain('实现 TRD 模板引擎');
+      expect(titles).not.toContain('添加 PRD 验证逻辑');
+    });
+
+    it('strategy exhaustion should return null from generateTaskFromKR', async () => {
+      const { generateTaskFromKR, KR_STRATEGIES } = await import('../planner.js');
+      const kr = { id: 'kr-2', title: 'KR2: PRD/TRD 自动生成（标准化）', priority: 'P0', progress: 0 };
+      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
+      const strategy = KR_STRATEGIES.find(s => s.name === 'prd_trd_generation');
+      const allTitles = strategy.tasks.map(t => t.title);
+
+      const result = generateTaskFromKR(kr, project, allTitles, 100);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('V3: autoGenerateTask progress update on exhaustion', () => {
+    it('should update KR progress when strategy tasks are exhausted', async () => {
+      const { autoGenerateTask } = await import('../planner.js');
+
+      // Create test KR with progress 0
+      const krResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR2: PRD/TRD 自动生成（标准化）', 'key_result', 'P0', 'pending', 0) RETURNING *"
+      );
+      testKRIds.push(krResult.rows[0].id);
+
+      const projResult = await pool.query(
+        "INSERT INTO projects (name, repo_path, status) VALUES ('progress-test', '/tmp/progress-test', 'active') RETURNING id"
+      );
+      testProjectIds.push(projResult.rows[0].id);
+
+      // Create completed tasks matching all 4 strategy titles
+      const strategyTitles = [
+        'PRD 生成端到端冒烟测试',
+        'PRD 验证 API 集成测试',
+        'TRD 分解结果持久化验证',
+        'Planner 自动 PRD 质量达标'
+      ];
+      for (const title of strategyTitles) {
+        const tResult = await pool.query(
+          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
+          [title, projResult.rows[0].id, krResult.rows[0].id]
+        );
+        testTaskIds.push(tResult.rows[0].id);
+      }
+
+      const kr = krResult.rows[0];
+      const project = { id: projResult.rows[0].id, name: 'progress-test', repo_path: '/tmp/progress-test' };
+      const state = { recentCompleted: [] };
+
+      // autoGenerateTask should return null (exhausted) and update KR progress
+      const result = await autoGenerateTask(kr, project, state);
+      expect(result).toBeNull();
+
+      // Verify KR progress was updated
+      const updated = await pool.query('SELECT progress FROM goals WHERE id = $1', [kr.id]);
+      expect(updated.rows[0].progress).toBe(100);
+    });
+  });
+
+  describe('V3: generateTaskPRD', () => {
+    it('should generate a PRD file with standard fields', async () => {
+      const { generateTaskPRD } = await import('../planner.js');
+      const { readFileSync, unlinkSync } = await import('fs');
+
+      const kr = { title: 'Test KR', progress: 50, priority: 'P1' };
+      const project = { name: 'test-project', repo_path: '/tmp/test' };
+
+      const result = generateTaskPRD('Test Task', 'Test description', kr, project);
+
+      expect(result.path).toBeTruthy();
+      expect(result.validation).toBeDefined();
+      expect(result.validation.valid).toBe(true);
+
+      const content = readFileSync(result.path, 'utf-8');
+      expect(content).toContain('## 需求来源');
+      expect(content).toContain('## 功能描述');
+      expect(content).toContain('## 成功标准');
+      expect(content).toContain('Test KR');
+      expect(content).toContain('Test description');
+
+      // Cleanup
+      unlinkSync(result.path);
+    });
+  });
+
+  describe('V3: autoGenerateTask with PRD', () => {
+    it('should generate task with prd_path in payload (dryRun)', async () => {
+      const { autoGenerateTask } = await import('../planner.js');
+      const { unlinkSync } = await import('fs');
+
+      // Create test data
+      const projResult = await pool.query(
+        "INSERT INTO projects (name, repo_path, status) VALUES ('v3-test', '/tmp/v3-test', 'active') RETURNING id"
+      );
+      testProjectIds.push(projResult.rows[0].id);
+
+      const krResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR1: 意图识别 - 测试', 'key_result', 'P0', 'pending', 0) RETURNING *"
+      );
+      testKRIds.push(krResult.rows[0].id);
+
+      const kr = krResult.rows[0];
+      const project = { id: projResult.rows[0].id, name: 'v3-test', repo_path: '/tmp/v3-test' };
+      const state = { recentCompleted: [] };
+
+      const result = await autoGenerateTask(kr, project, state, { dryRun: true });
+
+      expect(result).not.toBeNull();
+      expect(result.title).not.toContain('Advance');
+      expect(result._strategy).toBe('v3_decompose');
+      expect(result.payload.prd_path).toBeTruthy();
+      expect(result.payload.auto_generated).toBe(true);
+
+      // Cleanup PRD file
+      if (result.payload.prd_path) {
+        try { unlinkSync(result.payload.prd_path); } catch {}
+      }
+    });
+  });
 });

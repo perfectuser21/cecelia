@@ -85,7 +85,10 @@ const INTENT_PHRASES = {
     { pattern: /create\s+(.+)\s+project/i, weight: 0.3 },
     { pattern: /需要一个(.+)/, weight: 0.25 },
     { pattern: /启动(.+)项目/, weight: 0.3 },
-    { pattern: /set\s+up\s+(.+)/i, weight: 0.3 }
+    { pattern: /set\s+up\s+(.+)/i, weight: 0.3 },
+    { pattern: /新建一个(.+)/, weight: 0.3 },
+    { pattern: /start\s+(.+)\s+project/i, weight: 0.3 },
+    { pattern: /init(?:ialize)?\s+(.+)/i, weight: 0.3 }
   ],
   [INTENT_TYPES.CREATE_FEATURE]: [
     { pattern: /给(.+)加一个(.+)功能/, weight: 0.4 },
@@ -95,7 +98,10 @@ const INTENT_PHRASES = {
     { pattern: /add\s+(.+)\s+to\s+(.+)/i, weight: 0.3 },
     { pattern: /implement\s+(.+)\s+feature/i, weight: 0.3 },
     { pattern: /(.+)需要支持(.+)/, weight: 0.3 },
-    { pattern: /能不能(.+)加上(.+)/, weight: 0.3 }
+    { pattern: /能不能(.+)加上(.+)/, weight: 0.3 },
+    { pattern: /扩展(.+)支持(.+)/, weight: 0.3 },
+    { pattern: /(.+)增加(.+)能力/, weight: 0.3 },
+    { pattern: /enable\s+(.+)\s+for\s+(.+)/i, weight: 0.3 }
   ],
   [INTENT_TYPES.FIX_BUG]: [
     { pattern: /修复(.+)的(.+)问题/, weight: 0.4 },
@@ -105,21 +111,37 @@ const INTENT_PHRASES = {
     { pattern: /fix\s+(.+)\s+bug/i, weight: 0.4 },
     { pattern: /resolve\s+(.+)\s+issue/i, weight: 0.3 },
     { pattern: /(.+)有问题/, weight: 0.25 },
-    { pattern: /(.+)出错了/, weight: 0.3 }
+    { pattern: /(.+)出错了/, weight: 0.3 },
+    { pattern: /(.+)挂了/, weight: 0.3 },
+    { pattern: /(.+)崩溃了/, weight: 0.3 },
+    { pattern: /debug\s+(.+)/i, weight: 0.3 },
+    { pattern: /troubleshoot\s+(.+)/i, weight: 0.3 }
   ],
   [INTENT_TYPES.REFACTOR]: [
     { pattern: /重构(.+)代码/, weight: 0.4 },
     { pattern: /优化(.+)性能/, weight: 0.4 },
     { pattern: /改进(.+)结构/, weight: 0.3 },
     { pattern: /refactor\s+(.+)/i, weight: 0.4 },
-    { pattern: /optimize\s+(.+)/i, weight: 0.3 }
+    { pattern: /optimize\s+(.+)/i, weight: 0.3 },
+    { pattern: /整理(.+)代码/, weight: 0.3 },
+    { pattern: /清理(.+)/, weight: 0.25 },
+    { pattern: /简化(.+)逻辑/, weight: 0.3 },
+    { pattern: /cleanup\s+(.+)/i, weight: 0.3 },
+    { pattern: /restructure\s+(.+)/i, weight: 0.3 },
+    { pattern: /improve\s+(.+)\s+performance/i, weight: 0.3 }
   ],
   [INTENT_TYPES.EXPLORE]: [
     { pattern: /帮我看看(.+)/, weight: 0.3 },
     { pattern: /了解一下(.+)/, weight: 0.3 },
     { pattern: /分析(.+)怎么/, weight: 0.3 },
     { pattern: /investigate\s+(.+)/i, weight: 0.3 },
-    { pattern: /analyze\s+(.+)/i, weight: 0.3 }
+    { pattern: /analyze\s+(.+)/i, weight: 0.3 },
+    { pattern: /研究一下(.+)/, weight: 0.3 },
+    { pattern: /调研(.+)/, weight: 0.3 },
+    { pattern: /看一下(.+)/, weight: 0.25 },
+    { pattern: /explore\s+(.+)/i, weight: 0.3 },
+    { pattern: /look\s+into\s+(.+)/i, weight: 0.3 },
+    { pattern: /check\s+out\s+(.+)/i, weight: 0.25 }
   ],
   [INTENT_TYPES.CREATE_GOAL]: [
     { pattern: /创建(.+)目标/, weight: 0.4 },
@@ -127,7 +149,11 @@ const INTENT_PHRASES = {
     { pattern: /新建(.+)OKR/i, weight: 0.4 },
     { pattern: /目标[：:]\s*(.+)/, weight: 0.3 },
     { pattern: /create\s+(.+)\s+goal/i, weight: 0.4 },
-    { pattern: /set\s+(.+)\s+objective/i, weight: 0.4 }
+    { pattern: /set\s+(.+)\s+objective/i, weight: 0.4 },
+    { pattern: /制定(.+)目标/, weight: 0.4 },
+    { pattern: /定义(.+)OKR/i, weight: 0.4 },
+    { pattern: /establish\s+(.+)\s+goal/i, weight: 0.3 },
+    { pattern: /define\s+(.+)\s+objective/i, weight: 0.3 }
   ],
   [INTENT_TYPES.CREATE_TASK]: [
     { pattern: /添加(.+)任务/, weight: 0.4 },
@@ -135,7 +161,11 @@ const INTENT_PHRASES = {
     { pattern: /新建(.+)待办/, weight: 0.4 },
     { pattern: /任务[：:]\s*(.+)/, weight: 0.3 },
     { pattern: /create\s+(.+)\s+task/i, weight: 0.4 },
-    { pattern: /add\s+task[：:]\s*(.+)/i, weight: 0.4 }
+    { pattern: /add\s+task[：:]\s*(.+)/i, weight: 0.4 },
+    { pattern: /安排(.+)任务/, weight: 0.3 },
+    { pattern: /记录(.+)待办/, weight: 0.3 },
+    { pattern: /schedule\s+(.+)\s+task/i, weight: 0.3 },
+    { pattern: /assign\s+task[：:]\s*(.+)/i, weight: 0.3 }
   ],
   [INTENT_TYPES.QUERY_STATUS]: [
     { pattern: /当前有哪些(.+)/, weight: 0.4 },
@@ -143,7 +173,11 @@ const INTENT_PHRASES = {
     { pattern: /(.+)进度如何/, weight: 0.4 },
     { pattern: /列出所有(.+)/, weight: 0.3 },
     { pattern: /show\s+(.+)\s+status/i, weight: 0.4 },
-    { pattern: /list\s+all\s+(.+)/i, weight: 0.3 }
+    { pattern: /list\s+all\s+(.+)/i, weight: 0.3 },
+    { pattern: /(.+)完成了吗/, weight: 0.3 },
+    { pattern: /(.+)做到哪了/, weight: 0.3 },
+    { pattern: /what(?:'s| is)\s+the\s+status\s+of\s+(.+)/i, weight: 0.4 },
+    { pattern: /how\s+is\s+(.+)\s+going/i, weight: 0.3 }
   ],
   [INTENT_TYPES.QUESTION]: [
     { pattern: /为什么(.+)[?？]/, weight: 0.4 },
@@ -151,7 +185,11 @@ const INTENT_PHRASES = {
     { pattern: /如何(.+)[?？]/, weight: 0.4 },
     { pattern: /(.+)是什么/, weight: 0.3 },
     { pattern: /why\s+(.+)\?/i, weight: 0.4 },
-    { pattern: /how\s+(.+)\?/i, weight: 0.4 }
+    { pattern: /how\s+(.+)\?/i, weight: 0.4 },
+    { pattern: /什么是(.+)/, weight: 0.3 },
+    { pattern: /(.+)怎么回事/, weight: 0.3 },
+    { pattern: /what\s+is\s+(.+)\?/i, weight: 0.4 },
+    { pattern: /can\s+you\s+explain\s+(.+)/i, weight: 0.3 }
   ]
 };
 
@@ -227,7 +265,13 @@ const ENTITY_PATTERNS = {
     /(本周|this\s+week)/i,
     /(下周|next\s+week)/i,
     /(本月|this\s+month)/i,
-    /(尽快|ASAP)/i
+    /(尽快|ASAP)/i,
+    /(下个月|next\s+month)/i,
+    /(本季度|this\s+quarter)/i,
+    /(下季度|next\s+quarter)/i,
+    /(年底前|by\s+end\s+of\s+year)/i,
+    /(后天|day\s+after\s+tomorrow)/i,
+    /(这周末|this\s+weekend)/i
   ],
   // Dependency patterns
   dependency: [
@@ -236,7 +280,38 @@ const ENTITY_PATTERNS = {
     /阻塞于(.+)/,
     /blocked\s+by\s+(.+)/i,
     /depends\s+on\s+(.+)/i,
-    /after\s+(.+)/i
+    /after\s+(.+)/i,
+    /前置条件[：:]?\s*(.+)/,
+    /等(.+)完成/,
+    /prerequisite[：:]\s*(.+)/i,
+    /requires\s+(.+)\s+first/i
+  ],
+  // Status patterns
+  status: [
+    /(已完成|完成了|done)/i,
+    /(进行中|doing|in\s+progress)/i,
+    /(待处理|pending|todo)/i,
+    /(已取消|cancelled|canceled)/i,
+    /(已暂停|暂停|paused|on\s+hold)/i,
+    /(已关闭|closed)/i
+  ],
+  // Assignee patterns
+  assignee: [
+    /分配给(.+)/,
+    /指派给(.+)/,
+    /交给(.+)处理/,
+    /assign\s+to\s+(.+)/i,
+    /assigned\s+to\s+(.+)/i,
+    /负责人[：:]\s*(.+)/
+  ],
+  // Tag/label patterns
+  tag: [
+    /标签[：:]\s*(.+)/,
+    /分类[：:]\s*(.+)/,
+    /类型[：:]\s*(.+)/,
+    /tag[：:]\s*(.+)/i,
+    /label[：:]\s*(.+)/i,
+    /category[：:]\s*(.+)/i
   ]
 };
 
@@ -335,6 +410,26 @@ const PRIORITY_MAP_EN = {
   'low priority': 'P2'
 };
 
+// Map Chinese status keywords to standard values
+const STATUS_MAP = {
+  '已完成': 'completed', '完成了': 'completed',
+  '进行中': 'in_progress',
+  '待处理': 'pending',
+  '已取消': 'cancelled',
+  '已暂停': 'paused', '暂停': 'paused',
+  '已关闭': 'closed'
+};
+
+// Map English status keywords to standard values
+const STATUS_MAP_EN = {
+  'done': 'completed',
+  'doing': 'in_progress', 'in progress': 'in_progress',
+  'pending': 'pending', 'todo': 'pending',
+  'cancelled': 'cancelled', 'canceled': 'cancelled',
+  'paused': 'paused', 'on hold': 'paused',
+  'closed': 'closed'
+};
+
 function extractEntities(input) {
   const entities = {
     module: null,
@@ -344,7 +439,10 @@ function extractEntities(input) {
     component: null,
     priority: null,
     timeframe: null,
-    dependency: null
+    dependency: null,
+    status: null,
+    assignee: null,
+    tag: null
   };
 
   for (const [entityType, patterns] of Object.entries(ENTITY_PATTERNS)) {
@@ -364,6 +462,10 @@ function extractEntities(input) {
         // Normalize priority to P0/P1/P2
         if (entityType === 'priority') {
           value = PRIORITY_MAP[value] || PRIORITY_MAP_EN[value.toLowerCase()] || value;
+        }
+        // Normalize status to standard values
+        if (entityType === 'status') {
+          value = STATUS_MAP[value] || STATUS_MAP_EN[value.toLowerCase()] || value;
         }
 
         if (value && !entities[entityType]) {
