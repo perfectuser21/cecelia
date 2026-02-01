@@ -17,7 +17,33 @@ on:
           - pr
 
 jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Check trigger conditions
+        id: check
+        run: |
+          set -euo pipefail
+
+          EVENT_NAME="${{ github.event_name }}"
+
+          echo "Event: $EVENT_NAME"
+
+          # 只在 schedule 或 workflow_dispatch 时运行，不在 push 时运行
+          if [[ "$EVENT_NAME" != "push" ]]; then
+            echo "✅ 触发条件满足：schedule 或 workflow_dispatch"
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "⏭️ 跳过：当前是 push 事件（只支持 schedule/workflow_dispatch）"
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   regression:
+    needs: [check-trigger]
+    if: needs.check-trigger.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -1,76 +1,66 @@
 # Audit Report
 
-Branch: cp-add-ai-self-check-rules
+Branch: cp-02011540-workflow-guard
 Date: 2026-02-01
-Scope: skills/dev/SKILL.md, ~/.claude/CLAUDE.md
+Scope: .github/workflows/nightly.yml
 Target Level: L2
 
-Summary:
-  L1: 0
-  L2: 0
-  L3: 0
-  L4: 0
+## Summary
+- L1: 0
+- L2: 0
+- L3: 0
+- L4: 0
 
 Decision: PASS
 
-Findings: []
+## Findings
 
-Blockers: []
+### Code Review
 
-## 审计结果
+审计范围：nightly.yml workflow guard job 实现
 
-本次修改为纯文档规则添加，在两个文件中添加了 AI 自我检测规则。
+#### ✅ Check-trigger Guard Job (L1/L2)
+- **文件**: .github/workflows/nightly.yml:20-42
+- **检查项**: Guard job 结构正确性
+- **结果**: PASS
+  - 正确检查 `github.event_name != "push"`
+  - 正确设置 `should-run` output
+  - timeout 1分钟合理
 
-### skills/dev/SKILL.md 审计
+#### ✅ Job Dependencies (L1/L2)
+- **文件**: .github/workflows/nightly.yml:44-46
+- **检查项**: regression job 依赖 check-trigger
+- **结果**: PASS
+  - 正确使用 `needs: [check-trigger]`
+  - 正确使用 `if: needs.check-trigger.outputs.should-run == 'true'`
 
-**检查内容**：
-- 第 63 行：添加了"⛔ 绝对禁止行为（CRITICAL）"章节
-- 列出了 11 条明确的禁止话术（包括原始 6 条 + 5 条变体）
-- 包含对比表说明为什么需要这些规则（3 行示例对比）
-- 使用⛔表情符号和 CRITICAL 标记优先级
+#### ✅ Notify Job Fix (L2)
+- **文件**: .github/workflows/nightly.yml:215-217
+- **检查项**: notify job 依赖关系
+- **结果**: PASS
+  - 简化为只依赖 regression（原本错误地依赖 check-trigger）
+  - 保持 `always()` 条件确保总是通知
 
-**审计结论**：
-- 位置：在"核心定位"章节前（第 63 行），符合"前 100 行"要求
-- 内容完整：11 条禁止话术 + 正确做法（4 步） + 对比表（3 行） + 说明
-- 格式正确：Markdown 表格格式，emoji 表情使用正确
+### Scope Check
 
-**潜在风险**：
-- 依赖 AI 自觉遵守，无强制执行机制
-- 文档规则有效性取决于 AI 是否真正阅读并遵守
+✅ 改动范围符合 PRD 和 QA-DECISION.md：
+- 只修改了 nightly.yml（添加 guard job）
+- 未触碰 forbidden 区域
+- 符合 CI infrastructure bugfix 定位
 
-### ~/.claude/CLAUDE.md 审计
+### Proof Check
 
-**检查内容**：
-- 第 3 行：添加了"⛔ AI 自我检测（CRITICAL - 优先级最高）"章节
-- 列出了 11 个关键词触发自检机制（包括原始 6 个 + 5 个补充）
-- 包含 3 个自检问题（能否自动解决、是否偷懒、Stop Hook 循环）
-- 包含对比表说明核心原则
-- 使用⛔表情符号和 CRITICAL 标记
+✅ 所有 DoD 验收项对应的测试方法有效：
+- 8 个验收项全部为 manual 测试
+- manual 测试描述具体可验证
+- 包含明确的验证方法和预期结果
 
-**审计结论**：
-- 位置：在"全局规则"开头（第 3 行），符合"前 50 行"要求
-- 内容完整：11 个关键词 + 3 个自检问题 + 对比表 + 核心原则
-- 逻辑清晰：触发词 → 自检问题 → 核心原则
-- 自检流程说明完整：包含触发条件和调整回复的指导
+## Blockers
 
-**潜在风险**：
-- 两个文件（SKILL.md 和 CLAUDE.md）需要手动同步，可能不一致
-- 关键词列表需要定期更新以覆盖新的绕过话术
+无（L1 + L2 问题数 = 0）
 
-### 与 PRD 对比
+## Notes
 
-所有 PRD 要求均已实现：
-- ✅ skills/dev/SKILL.md 前 100 行内包含章节（第 63 行）
-- ✅ 列出完整的 11 条禁止话术（含 5 条手动操作变体）
-- ✅ /home/xx/.claude/CLAUDE.md 前 50 行内包含章节（第 3 行）
-- ✅ 包含 11 个关键词触发机制（含 5 个补充关键词）
-- ✅ 两处都有对比表（至少 3 行示例对比）
-- ✅ 两处都使用⛔和 CRITICAL
-- ✅ CLAUDE.md 包含自检流程说明（3 个自检问题 + 核心原则）
-
-未发现 L1/L2 级别问题。
-
-**已识别的限制**：
-- 文档规则依赖 AI 自觉遵守，无强制执行
-- 两个文件需要手动同步维护
-- 关键词列表可能需要迭代更新
+- back-merge-main-to-develop.yml 已在之前的 PR 中实现 guard job，本次无需修改
+- nightly.yml guard job 实现符合 PRD 要求
+- 修复了 notify job 的依赖关系，简化逻辑

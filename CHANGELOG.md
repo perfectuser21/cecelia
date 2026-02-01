@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.24.3] - 2026-02-01
+
+### Fixed
+
+- **Workflow 误触发问题** - 添加 guard jobs 防止 CI workflows 在错误事件/分支触发
+  - back-merge-main-to-develop.yml: 添加 check-trigger guard job，只在 push 到 main 时运行
+  - nightly.yml: 添加 check-trigger guard job，只在 schedule/workflow_dispatch 时运行，禁止 push 触发
+  - 修复 nightly 的 notify job 依赖关系（简化为只依赖 regression）
+  - 解决"狼来了"效应：100% 失败率导致真实失败被掩盖的问题
+
 ## [11.24.2] - 2026-02-01
 
 ### Added

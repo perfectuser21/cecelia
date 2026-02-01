@@ -792,6 +792,24 @@ workflow:
       type: log
       contains: "CI 失败"
 
+  - id: W3-003
+    feature: W3
+    name: "Nightly workflow 防止 push 触发"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, workflow, guard, trigger]
+    owner: infra
+    steps:
+      given: "nightly.yml workflow 配置为只在 schedule/workflow_dispatch 时运行"
+      when: "发生 push 事件"
+      then: "guard job 检查 event_name，skip nightly regression"
+    evidence:
+      type: workflow_output
+      contains: "should-run=false"
+    test: "tests/workflows/nightly-guard.test.ts"
+
   # --------------------------------------------------------------------------
   # W5: 模式自动检测
   # --------------------------------------------------------------------------
