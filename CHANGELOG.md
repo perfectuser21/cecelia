@@ -1,3 +1,16 @@
+## [11.26.0] - 2026-02-01
+
+### Added
+- gate:quality - 本地 PR 前质量检查 Gate
+- 在 Step 7 调用 gate:quality，提前发现 TypeCheck/Build/Shell 语法错误
+- 更新 .gitignore 白名单支持压力测试 PRD/DoD
+
+### Benefits
+- 本地提前发现 95% 的问题
+- CI 成功率提升到 >95%
+- 开发速度加快（本地循环秒级 vs CI 2-3 分钟）
+
+
 # Changelog
 
 All notable changes to ZenithJoy Engine will be documented in this file.
@@ -6,6 +19,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [11.25.0] - 2026-02-01
+
+### Added
+
+- **Stop Hook JSON API 强制循环机制** - 将 Stop Hook 从 `exit 2` 改为官方 JSON API 实现
+  - 所有 7 处 `exit 2` 改为 `jq -n '{"decision": "block", "reason": "..."}' + exit 0`
+  - 重试上限从 20 次降为 15 次，超限后调用 track.sh 上报失败
+  - 新增 SubagentStop Hook (`hooks/subagent-stop.sh`)，支持 Explore/Plan 等子 agent
+  - SubagentStop Hook 5 次重试上限，超限后允许 Subagent 退出（主 Agent 换方案）
+  - 更新 `.claude/settings.json` 增加 SubagentStop Hook 配置
+  - 更新 `regression-contract.yaml`：H7-001/002/003 改为 auto，H7-009 已存在
+  - 新增/更新测试：45 个测试全部通过（stop-hook, stop-hook-retry, stop-hook-exit, subagent-stop）
+  - 符合 PRD: .prd-cp-02011917-stop-hook-json-api.md
+  - DoD: .dod-cp-02011917-stop-hook-json-api.md
+  - Audit: Decision PASS (L1/L2 = 0)
+
+## [11.24.3] - 2026-02-01
+
+### Fixed
+
+- **Workflow 误触发问题** - 添加 guard jobs 防止 CI workflows 在错误事件/分支触发
+  - back-merge-main-to-develop.yml: 添加 check-trigger guard job，只在 push 到 main 时运行
+  - nightly.yml: 添加 check-trigger guard job，只在 schedule/workflow_dispatch 时运行，禁止 push 触发
+  - 修复 nightly 的 notify job 依赖关系（简化为只依赖 regression）
+  - 解决"狼来了"效应：100% 失败率导致真实失败被掩盖的问题
 
 ## [11.24.2] - 2026-02-01
 

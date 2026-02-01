@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: 循环控制器（替代 Ralph Loop）
+# Stop Hook: 循环控制器（官方 JSON API 实现）
 # ============================================================================
 # 检测 .dev-mode 文件，根据完成条件决定是否允许会话结束：
 #
@@ -10,12 +10,13 @@
 #   - CI 通过？
 #   - PR 合并？
 #   全部满足 → 删除 .dev-mode → exit 0
-#   未满足 → 输出提示 → exit 2（阻止结束，继续执行）
+#   未满足 → JSON API + exit 0（强制循环，reason 作为 prompt 继续执行）
 #
 # v11.11.0: P0-2 修复 - 添加 flock 并发锁 + 原子写入防止竞态条件
 # v11.15.0: P0-3 修复 - 会话隔离，检查 .dev-mode 中的分支是否与当前分支匹配
 # v11.16.0: P0-4 修复 - session_id 验证 + 共享锁工具库 + 统一 CI 查询
 # v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal 隔离
+# v11.25.0: H7-009 - JSON API 实现（{"decision": "block", "reason": "..."}），15 次重试上限
 # ============================================================================
 
 set -euo pipefail
@@ -63,7 +64,8 @@ if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
         echo "  另一个会话正在执行 Stop Hook，请稍后重试" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        exit 2
+        jq -n --arg reason "另一个会话正在执行 Stop Hook，等待锁释放后继续检查完成条件" '{"decision": "block", "reason": $reason}'
+        exit 0
     fi
 else
     # Fallback: 内联锁
@@ -73,7 +75,8 @@ else
     if ! flock -w 2 200; then
         echo "" >&2
         echo "  [Stop Hook: 并发锁获取失败]" >&2
-        exit 2
+        jq -n --arg reason "并发锁获取失败，等待锁释放后继续" '{"decision": "block", "reason": $reason}'
+        exit 0
     fi
 fi
 
@@ -131,20 +134,20 @@ RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 
 RETRY_COUNT=${RETRY_COUNT//[^0-9]/}  # 清理非数字字符
 RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
 
-if [[ $RETRY_COUNT -ge 20 ]]; then
+if [[ $RETRY_COUNT -ge 15 ]]; then
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 20 次重试上限]" >&2
+    echo "  [Stop Hook: 15 次重试上限]" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
-    echo "  已重试 20 次，任务失败" >&2
-    echo "  原因：20 次重试后仍未完成 11 步流程" >&2
+    echo "  已重试 15 次，任务失败" >&2
+    echo "  原因：15 次重试后仍未完成 11 步流程" >&2
     echo "" >&2
 
     # 上报失败
     TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
     if [[ -f "$TRACK_SCRIPT" ]]; then
-        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 20 次后仍未完成" 2>/dev/null || true
+        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 15 次后仍未完成" 2>/dev/null || true
     fi
 
     # 删除 .dev-mode 文件
@@ -237,7 +240,8 @@ if [[ -z "$PR_NUMBER" ]]; then
     echo "  下一步: 创建 PR" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    exit 2
+    jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'
+    exit 0
 fi
 
 echo "  ✅ 条件 1: PR 已创建 (#$PR_NUMBER)" >&2
@@ -280,7 +284,8 @@ case "$CI_STATUS" in
             fi
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            exit 2
+            jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
+            exit 0
         fi
         ;;
     "in_progress"|"queued"|"waiting"|"pending")
@@ -289,7 +294,8 @@ case "$CI_STATUS" in
         echo "  下一步: 等待 CI 完成" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        exit 2
+        jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
+        exit 0
         ;;
     *)
         echo "  ⚠️  条件 2: CI 状态未知 ($CI_STATUS)" >&2
@@ -298,7 +304,8 @@ case "$CI_STATUS" in
         echo "    gh run list --branch $BRANCH_NAME --limit 1" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        exit 2
+        jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
+        exit 0
         ;;
 esac
 
@@ -309,4 +316,5 @@ echo "  下一步: 合并 PR" >&2
 echo "    gh pr merge $PR_NUMBER --squash --delete-branch" >&2
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-exit 2
+jq -n --arg reason "PR #$PR_NUMBER CI 已通过但未合并，执行合并操作" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
+exit 0

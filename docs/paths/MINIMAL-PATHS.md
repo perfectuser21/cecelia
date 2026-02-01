@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 2.51.0
+version: 2.52.0
 created: 2026-02-01
 updated: 2026-02-01
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.51.0: 从 feature-registry.yml 自动生成
+  - 2.52.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -28,7 +28,7 @@ changelog:
 
 ---
 
-### H7: Stop Hook Loop Controller
+### H7: Stop Hook Loop Controller (JSON API)
 
 1. ✅ **无 .dev-mode → exit 0 (普通会话)**
 2. ✅ **有 .dev-mode + PR 未创建 → exit 2 (继续)**
@@ -212,5 +212,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.51.0
+**版本**: 2.52.0
 **生成时间**: 2026-02-01

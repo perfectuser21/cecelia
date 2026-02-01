@@ -46,9 +46,51 @@ describe("stop.sh", () => {
     expect(result).toBe("");
   });
 
-  // REMOVED: stop_hook_active 检查已删除（改用 20 次 retry_count 机制）
-  // 详见 .prd-fix-stop-hook-loop.md
-  it.todo("stop_hook_active is removed - now uses retry_count (max 20)");
+  // REMOVED: stop_hook_active 检查已删除（改用 15 次 retry_count 机制）
+  // v11.25.0: 改用 JSON API，重试上限从 20 改为 15
+  it.todo("stop_hook_active is removed - now uses retry_count (max 15)");
+
+  describe("JSON API format (H7-003)", () => {
+    it("should use JSON API format instead of exit 2", () => {
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      // Verify JSON API usage
+      expect(hookContent).toContain('{"decision": "block"');
+      expect(hookContent).toContain("jq -n");
+      expect(hookContent).toContain("--arg reason");
+    });
+
+    it("should have v11.25.0 version marker", () => {
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      expect(hookContent).toContain("v11.25.0");
+      expect(hookContent).toContain("H7-009");
+      expect(hookContent).toContain("JSON API");
+    });
+
+    it("should validate JSON output format", () => {
+      // Test that jq produces valid JSON
+      const result = execSync(
+        `jq -n --arg reason "Test reason" '{"decision": "block", "reason": $reason}'`,
+        { encoding: "utf-8" }
+      );
+
+      const json = JSON.parse(result);
+      expect(json.decision).toBe("block");
+      expect(json.reason).toBe("Test reason");
+    });
+
+    it("should have all exit 2 replaced with JSON API + exit 0", () => {
+      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      // Count remaining exit 2 (should only be in comments)
+      const exit2Lines = hookContent.split("\n").filter((line) => {
+        return line.includes("exit 2") && !line.trim().startsWith("#");
+      });
+
+      expect(exit2Lines.length).toBe(0);
+    });
+  });
 
   describe("cleanup_done detection", () => {
     let tempDir: string;

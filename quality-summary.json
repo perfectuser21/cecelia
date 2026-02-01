@@ -1,0 +1,18 @@
+{
+  "branch": "cp-quality-gate-fix",
+  "head_sha": "1d4460314019611cbdfae0929baff53467b1fa05",
+  "timestamp": "2026-02-01T21:30:58+08:00",
+  "checks": {
+    "test": {"status": "pass", "duration": "manual"}
+  },
+  "gates": {
+    "prd": {"status": "pass", "file": ".gate-prd-passed"},
+    "dod": {"status": "pass", "file": ".gate-dod-passed"},
+    "audit": {"status": "pass", "file": "docs/AUDIT-REPORT.md"},
+    "test": {"status": "pass", "file": ".gate-test-passed"}
+  },
+  "env": {
+    "node": "v20.20.0",
+    "platform": "Linux"
+  }
+}

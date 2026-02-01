@@ -5,6 +5,7 @@
  * - 删除 PR 合并后的提前退出
  * - 修复分支不匹配时的 .dev-mode 泄漏
  * - 统一退出条件：只有 cleanup_done: true 或 11 步全部完成
+ * - v11.25.0: 所有 exit 2 改为 jq -n 输出 JSON + exit 0
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -125,7 +126,70 @@ step_11_cleanup: pending
     }
 
     expect(hasPending).toBe(true);
-    // Stop Hook 应该阻止退出（exit 2）
+    // Stop Hook 应该阻止退出（JSON API + exit 0）
+  });
+
+  describe('JSON API exit behavior', () => {
+    it('should use jq -n to output JSON instead of exit 2', () => {
+      const hookContent = execSync(
+        `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+        { encoding: 'utf-8' }
+      );
+
+      // 验证所有阻止退出的地方都使用 JSON API
+      expect(hookContent).toContain('jq -n');
+      expect(hookContent).toContain('{"decision": "block"');
+
+      // 确认没有未替换的 exit 2（除了注释）
+      const lines = hookContent.split('\n');
+      const uncommentedExit2 = lines.filter(
+        (line) =>
+          line.includes('exit 2') &&
+          !line.trim().startsWith('#') &&
+          !line.includes('exit 2（阻止结束')
+      );
+
+      expect(uncommentedExit2.length).toBe(0);
+    });
+
+    it('should validate JSON output format for different scenarios', () => {
+      // Test PR not created
+      const prNotCreated = execSync(
+        `jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'`,
+        { encoding: 'utf-8' }
+      );
+      const json1 = JSON.parse(prNotCreated);
+      expect(json1.decision).toBe('block');
+      expect(json1.reason).toContain('PR 未创建');
+
+      // Test CI in progress
+      const ciInProgress = execSync(
+        `jq -n --arg reason "CI 进行中（in_progress），等待 CI 完成" '{"decision": "block", "reason": $reason}'`,
+        { encoding: 'utf-8' }
+      );
+      const json2 = JSON.parse(ciInProgress);
+      expect(json2.decision).toBe('block');
+      expect(json2.reason).toContain('CI 进行中');
+
+      // Test PR not merged
+      const prNotMerged = execSync(
+        `jq -n --arg reason "PR #123 CI 已通过但未合并，执行合并操作" --arg pr "123" '{"decision": "block", "reason": $reason, "pr_number": $pr}'`,
+        { encoding: 'utf-8' }
+      );
+      const json3 = JSON.parse(prNotMerged);
+      expect(json3.decision).toBe('block');
+      expect(json3.pr_number).toBe('123');
+    });
+
+    it('should exit 0 after JSON output', () => {
+      const hookContent = execSync(
+        `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+        { encoding: 'utf-8' }
+      );
+
+      // 验证 jq 输出后紧跟 exit 0
+      expect(hookContent).toMatch(/jq -n.*\n\s*exit 0/);
+    });
   });
 
   it('应该在分支不匹配时删除泄漏的 .dev-mode', () => {

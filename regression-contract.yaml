@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "11.18.0"
-updated: "2026-01-31"
+version: "11.26.0"
+updated: "2026-02-01"
 
 # ============================================================================
 # Hooks 回归契约
@@ -132,17 +132,18 @@ hooks:
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: manual
-    tags: [stop, loop, dev-mode]
+    method: auto
+    tags: [stop, loop, dev-mode, json-api]
     owner: infra
     steps:
       given: "会话尝试结束"
       when: "Stop Hook 触发"
-      then: "检测 .dev-mode 文件，存在则检查完成条件"
+      then: "检测 .dev-mode 文件，存在则检查完成条件，使用 JSON API 强制循环"
     evidence:
       type: code
       file: "hooks/stop.sh"
       contains: ".dev-mode"
+    test: "tests/hooks/stop-hook.test.ts"
 
   - id: H7-002
     feature: H7
@@ -150,35 +151,37 @@ hooks:
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: manual
-    tags: [stop, loop, completion]
+    method: auto
+    tags: [stop, loop, completion, retry-limit]
     owner: infra
     steps:
       given: ".dev-mode 文件存在"
       when: "Stop Hook 检查完成条件"
-      then: "检查 PR 创建 + CI 通过 + PR 合并"
+      then: "检查 PR 创建 + CI 通过 + PR 合并，15 次上限后上报失败"
     evidence:
       type: code
       file: "hooks/stop.sh"
       contains: "gh pr list"
+    test: "tests/hooks/stop-hook-retry.test.ts"
 
   - id: H7-003
     feature: H7
-    name: "Stop Hook exit 2 阻止会话结束"
+    name: "Stop Hook JSON API 强制循环"
     scope: hook
     priority: P0
     trigger: [PR, Release]
-    method: manual
-    tags: [stop, loop, continue]
+    method: auto
+    tags: [stop, loop, continue, json-api]
     owner: infra
     steps:
       given: ".dev-mode 存在且完成条件未满足"
       when: "Stop Hook 检查结果"
-      then: "返回 exit 2 阻止会话结束"
+      then: "返回 JSON API (decision: block, reason: ...) + exit 0 强制循环"
     evidence:
       type: code
       file: "hooks/stop.sh"
-      contains: "exit 2"
+      contains: "decision.*block"
+    test: "tests/hooks/stop-hook-exit.test.ts"
 
   - id: H7-005
     feature: H7
@@ -255,6 +258,25 @@ hooks:
       file: "hooks/stop.sh"
       contains: "TTY_IN_FILE"
     test: "tests/hooks/stop-hook.test.ts"
+
+  - id: H7-009
+    feature: H7
+    name: "SubagentStop Hook - 子 agent 循环控制"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop, subagent, loop, explore, plan]
+    owner: infra
+    steps:
+      given: "Subagent (Explore/Plan) 正在执行任务"
+      when: "SubagentStop Hook 检测到任务未完成"
+      then: "返回 JSON API 格式阻止并继续循环，超过 5 次上限则退出"
+    evidence:
+      type: code
+      file: "hooks/subagent-stop.sh"
+      contains: "decision.*block"
+    test: "tests/hooks/subagent-stop.test.ts"
 
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
@@ -791,6 +813,24 @@ workflow:
     evidence:
       type: log
       contains: "CI 失败"
+
+  - id: W3-003
+    feature: W3
+    name: "Nightly workflow 防止 push 触发"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, workflow, guard, trigger]
+    owner: infra
+    steps:
+      given: "nightly.yml workflow 配置为只在 schedule/workflow_dispatch 时运行"
+      when: "发生 push 事件"
+      then: "guard job 检查 event_name，skip nightly regression"
+    evidence:
+      type: workflow_output
+      contains: "should-run=false"
+    test: "tests/workflows/nightly-guard.test.ts"
 
   # --------------------------------------------------------------------------
   # W5: 模式自动检测
@@ -2289,3 +2329,26 @@ quality_enforcement:
     verification:
       type: auto
       command: "npx vitest run tests/hooks/gate-token.test.ts"
+
+  # --------------------------------------------------------------------------
+  # G1-007: gate:quality - 本地 PR 前质量检查
+  # --------------------------------------------------------------------------
+  - id: G1-007
+    feature: G1
+    name: "gate:quality 运行本地质量检查"
+    scope: gate
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [gate, quality, typecheck, build, test]
+    owner: infra
+    steps:
+      given: "Step 7 (Quality) 调用 gate:quality Subagent"
+      when: "Subagent 执行 4 项检查（TypeCheck + Test + Build + Shell syntax）"
+      then: "所有检查通过时 Decision: PASS，否则 FAIL 并返回错误"
+    evidence:
+      type: manual
+      description: "本地运行 gate:quality，验证 4 项检查全部执行"
+    verification:
+      type: manual
+      description: "验证 gate:quality 规则文件 (skills/gate/gates/quality.md) 和 Step 7 调用逻辑"

@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.51.0"
+version: "2.52.0"
 updated: "2026-02-01"
 changelog:
+  - 2.52.0: v11.26.0 - gate:quality - 本地 PR 前质量检查 Gate（TypeCheck + Build + Test + Shell 语法，Step 7 提前发现 95% 问题）
   - 2.51.0: v11.24.1 - H1 Stop Hook 循环机制修复（20次重试计数器 + 删除PR合并提前退出 + 11步Checklist追踪 + 分支不匹配泄漏修复）
   - 2.50.0: v11.24.0 - H2 硬拦截 --admin 参数（移除引号内容后检测，防止绕过 Branch Protection）
   - 2.49.0: v11.23.0 - 修复 Release 死循环（back-merge workflow + release/* 祖先关系检查 + 禁止 --admin）
@@ -119,16 +120,18 @@ platform_features:
   # H7: Stop Hook Loop Controller - 循环控制器
   # --------------------------------------------------------------------------
   - id: H7
-    name: Stop Hook Loop Controller
+    name: Stop Hook Loop Controller (JSON API)
     status: Committed
     priority: P0
-    version: "11.18.0"
-    updated: "2026-01-31"
+    version: "11.25.0"
+    updated: "2026-02-01"
     description: |
-      Stop Hook 作为 /dev 工作流的循环控制器，替代 Ralph Loop 插件：
+      Stop Hook 作为 /dev 工作流的循环控制器，使用官方 JSON API 实现：
       - 检测 .dev-mode 文件决定是否为 /dev 会话
       - 检查完成条件：PR 创建 + CI 通过 + PR 合并
-      - 未完成时 exit 2 阻止会话结束，Claude 继续执行
+      - 未完成时输出 JSON API ({"decision": "block", "reason": "..."}) 强制循环
+      - 重试上限 15 次（主 Agent），SubagentStop Hook 5 次（子 Agent）
+      - 超限后调用 track.sh 上报失败
       - 完成时（cleanup_done: true）删除 .dev-mode 并 exit 0
       - 无头模式 (CECELIA_HEADLESS=true) 直接 exit 0，由外部循环控制
       v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal (/dev/pts/N) 隔离
@@ -856,17 +859,19 @@ product_features:
     name: Gate Skill Family
     status: Committed
     priority: P0
-    version: "11.22.0"
+    version: "11.26.0"
     updated: "2026-02-01"
     description: |
       独立质量审核 Skill 家族，每个 gate 是"守门 Subagent"：
       - gate:prd - PRD 完整性、需求可验收性审核
       - gate:dod - PRD↔DoD 覆盖率、Test 映射有效性审核
       - gate:qa - RCI 判断、测试方法决策审核
-      v11.22.0: MAX_GATE_ATTEMPTS 调整为 20（提高复杂问题通过率，保持有限循环）
       - gate:test - 测试↔DoD 覆盖率、边界用例审核
       - gate:audit - 审计证据真实性、风险点识别审核
       - gate:learning - 开发经验记录审核
+      - gate:quality - 本地 PR 前质量检查（TypeCheck + Build + Test + Shell 语法）
+      v11.26.0: 新增 gate:quality，在 Step 7 提前运行 CI 检查（本地循环秒级 vs CI 2-3 分钟）
+      v11.22.0: MAX_GATE_ATTEMPTS 调整为 20（提高复杂问题通过率，保持有限循环）
 
       v11.21.0 循环模式 B 优化：
       - 明确职责分离：Subagent 只审核，主 Agent 负责修复

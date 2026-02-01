@@ -3,8 +3,9 @@
  *
  * 测试 Stop Hook 重试机制：
  * - 删除 stop_hook_active 检查
- * - 实现 20 次计数器（retry_count 字段）
- * - 20 次后上报失败并退出
+ * - 实现 15 次计数器（retry_count 字段）
+ * - 15 次后上报失败并退出
+ * - v11.25.0: 重试上限从 20 改为 15
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -95,15 +96,15 @@ retry_count: 5
     expect(finalContent).toContain('retry_count: 2');
   });
 
-  it('应该在 retry_count >= 20 时退出', () => {
-    // 模拟 20 次重试
+  it('应该在 retry_count >= 15 时退出', () => {
+    // 模拟 15 次重试
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-retry_count: 20
+retry_count: 15
 `,
     );
 
@@ -111,10 +112,22 @@ retry_count: 20
     const match = content.match(/^retry_count:\s*(\d+)$/m);
     const retryCount = match ? parseInt(match[1], 10) : 0;
 
-    expect(retryCount).toBeGreaterThanOrEqual(20);
+    expect(retryCount).toBeGreaterThanOrEqual(15);
 
     // 此时 Stop Hook 应该删除 .dev-mode 并退出
     // （这部分由 Stop Hook 脚本处理，这里只验证逻辑）
+  });
+
+  it('应该调用 track.sh 上报失败（超限时）', () => {
+    const hookContent = execSync(
+      `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+      { encoding: 'utf-8' }
+    );
+
+    // 验证超限后调用 track.sh fail
+    expect(hookContent).toContain('track.sh');
+    expect(hookContent).toContain('fail');
+    expect(hookContent).toContain('15 次');
   });
 
   it('应该正确处理空或无效的 retry_count', () => {

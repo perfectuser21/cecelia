@@ -9,7 +9,35 @@ permissions:
   pull-requests: write
 
 jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Check trigger conditions
+        id: check
+        run: |
+          set -euo pipefail
+
+          EVENT_NAME="${{ github.event_name }}"
+          REF_NAME="${{ github.ref_name }}"
+
+          echo "Event: $EVENT_NAME"
+          echo "Branch: $REF_NAME"
+
+          # 只在 push 到 main 分支时运行
+          if [[ "$EVENT_NAME" == "push" && "$REF_NAME" == "main" ]]; then
+            echo "✅ 触发条件满足：push 到 main 分支"
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "⏭️ 跳过：当前触发条件不符合（需要 push to main）"
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   back-merge:
+    needs: [check-trigger]
+    if: needs.check-trigger.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

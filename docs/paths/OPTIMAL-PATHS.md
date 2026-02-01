@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 2.51.0
+version: 2.52.0
 created: 2026-02-01
 updated: 2026-02-01
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.51.0: 从 feature-registry.yml 自动生成
+  - 2.52.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -27,7 +27,7 @@ changelog:
 
 ---
 
-### H7: Stop Hook Loop Controller
+### H7: Stop Hook Loop Controller (JSON API)
 
 ```
 会话结束 → 检测 .dev-mode → 检查完成条件 → exit 2 (继续) | exit 0 (结束)
@@ -193,5 +193,5 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.51.0
+**版本**: 2.52.0
 **生成时间**: 2026-02-01

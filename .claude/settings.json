@@ -21,6 +21,11 @@
           {"type": "command", "command": "./hooks/pr-gate-v2.sh"}
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [{"type": "command", "command": "./hooks/subagent-stop.sh"}]
+      }
     ]
   }
 }
