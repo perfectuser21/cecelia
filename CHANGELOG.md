@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.21.0] - 2026-02-01
+
+### Changed
+
+- **Gate 循环模式 B 优化** - 完整实现主 Agent 改 + 外部循环的职责分离架构
+  - 修改 `skills/gate/SKILL.md` - 明确定义模式 B（Subagent 只审核，主 Agent 负责修复）
+  - 修改 `skills/gate/gates/dod.md` - 添加"只审核，不修改"警告
+  - 修改 `skills/gate/gates/test.md` - 添加"只审核，不修改"警告
+  - 修改 `skills/gate/gates/audit.md` - 添加"只审核，不修改"警告
+  - 新建 `skills/gate/gates/qa.md` - 完整的 QA 决策审核标准
+  - 新建 `skills/gate/gates/learning.md` - 完整的 Learning 记录审核标准
+  - 修改 `skills/dev/steps/01-prd.md` - 添加完整的循环控制代码（MAX_GATE_ATTEMPTS=3）
+  - 修改 `skills/dev/steps/04-dod.md` - 添加 gate:dod 和 gate:qa 并行执行的循环控制
+  - 修改 `skills/dev/steps/05-code.md` - 添加 gate:audit 循环控制
+  - 修改 `skills/dev/steps/06-test.md` - 添加 gate:test 循环控制
+  - 修改 `skills/dev/steps/10-learning.md` - 添加 gate:learning 循环控制
+  - 修改 `scripts/gate/generate-gate-file.sh` - 支持所有 6 种 gate（prd|dod|test|audit|qa|learning）
+  - 新建 `docs/GATE-LOOP-MODE-ANALYSIS.md` - 10 维度对比分析和决策矩阵（4.85 vs 2.05）
+  - 新建 `tests/gate/generate-gate-file.test.ts` - 验证所有 6 种 gate 类型支持
+  - 删除 `docs/RALPH-LOOP-INTERCEPTION.md` 等 5 个 Ralph Loop 相关文档（消除冲突信息）
+
 ## [11.20.0] - 2026-02-01
 
 ### Added

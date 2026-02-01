@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.46.0"
+version: "2.47.0"
 updated: "2026-02-01"
 changelog:
+  - 2.47.0: v11.21.0 - Gate 循环模式 B 优化（主 Agent 改 + 外部循环，职责分离架构，新建 qa.md/learning.md，统一循环控制模板）
   - 2.46.0: v11.20.0 - AI 自我检测硬规则（skills/dev + CLAUDE.md 添加禁止话术和关键词自检机制）
   - 2.45.0: v11.19.0 - G3 修复 dev 工作流 gate skill 调用方式（Task → Skill 调用，删除冗长内联 prompt）
   - 2.44.0: v11.16.0 - W6 Worktree 自动检测与创建（Step 0 前置 + 僵尸清理 + flock 锁 + Step 3 兜底）
@@ -213,7 +214,7 @@ platform_features:
     name: Unified Dev Workflow
     status: Committed
     priority: P0
-    version: "11.19.0"
+    version: "11.21.0"
     updated: "2026-02-01"
     description: |
       v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
@@ -221,6 +222,7 @@ platform_features:
       - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
       - 从头到尾一直执行，不在 PR 创建后停止
       - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
+      - v11.21.0: 循环模式 B 优化（所有步骤文件使用统一循环控制模板，MAX_GATE_ATTEMPTS=3 硬编码上限）
       - v11.19.0: G3 修复 gate skill 调用方式（6 个 gates 从 Task(general-purpose) 改为 Skill() 调用，删除冗长内联 prompt）
       - v11.2.7: Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）
       - v10.14.0: 清理 Ralph Loop 架构（删除 dev-with-loop、detect-phase.sh、RALPH_LOOP_WRAPPER.md）
@@ -848,8 +850,8 @@ product_features:
     name: Gate Skill Family
     status: Committed
     priority: P0
-    version: "11.17.0"
-    updated: "2026-01-31"
+    version: "11.21.0"
+    updated: "2026-02-01"
     description: |
       独立质量审核 Skill 家族，每个 gate 是"守门 Subagent"：
       - gate:prd - PRD 完整性、需求可验收性审核
@@ -858,6 +860,15 @@ product_features:
       - gate:test - 测试↔DoD 覆盖率、边界用例审核
       - gate:audit - 审计证据真实性、风险点识别审核
       - gate:learning - 开发经验记录审核
+
+      v11.21.0 循环模式 B 优化：
+      - 明确职责分离：Subagent 只审核，主 Agent 负责修复
+      - 所有 gate 规则文件添加"只审核，不修改"警告（dod.md, test.md, audit.md）
+      - 新建 skills/gate/gates/qa.md - 完整的 QA 决策审核标准
+      - 新建 skills/gate/gates/learning.md - 完整的 Learning 记录审核标准
+      - 所有步骤文件使用统一的循环控制模板（MAX_GATE_ATTEMPTS=3 硬编码上限）
+      - generate-gate-file.sh 支持所有 6 种 gate 类型（prd|dod|test|audit|qa|learning）
+      - 创建 GATE-LOOP-MODE-ANALYSIS.md 记录决策过程（10 维度对比分析，4.85 vs 2.05）
 
       v11.17.0 硬门禁令牌机制：
       - PostToolUse[Task] hook (mark-subagent-done.sh) 在 gate subagent PASS 后写令牌

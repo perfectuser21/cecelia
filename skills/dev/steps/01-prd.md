@@ -49,17 +49,41 @@ Claude: 生成 PRD → gate:prd 审核 → PASS → 继续 Step 2
 
 PRD 生成后，**必须**启动 gate:prd Subagent 审核。
 
-### 循环逻辑
+### 循环逻辑（模式 B：主 Agent 改）
 
-```
-主 Agent 写 PRD
-    ↓
-启动 gate:prd Subagent
-    ↓
-Subagent 返回 Decision
-    ↓
-├─ FAIL → 主 Agent 根据 Required Fixes 修改 PRD → 再次启动 Subagent
-└─ PASS → 生成 gate 文件 → 继续 Step 2
+**主 Agent 负责循环控制，最大 3 轮**：
+
+```javascript
+const MAX_GATE_ATTEMPTS = 3;
+let attempts = 0;
+
+while (attempts < MAX_GATE_ATTEMPTS) {
+  // 启动独立的 gate:prd Subagent（只审核）
+  const result = await Skill({
+    skill: "gate:prd"
+  });
+
+  if (result.decision === "PASS") {
+    // 审核通过，生成 gate 文件
+    await Bash({ command: "bash scripts/gate/generate-gate-file.sh prd" });
+    break;
+  }
+
+  // FAIL: 主 Agent 根据反馈修改 PRD
+  for (const fix of result.requiredFixes) {
+    await Edit({
+      file_path: fix.location,
+      old_string: "...",  // 根据 fix.issue 定位
+      new_string: "..."   // 根据 fix.suggestion 修复
+    });
+  }
+
+  attempts++;
+}
+
+if (attempts >= MAX_GATE_ATTEMPTS) {
+  throw new Error("gate:prd 审核失败，已重试 3 次");
+}
 ```
 
 ### Subagent 调用

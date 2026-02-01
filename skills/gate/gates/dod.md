@@ -57,6 +57,8 @@ Step 4 (DoD 定稿 + QA 决策) 完成后
 
 ## Subagent Prompt 模板
 
+**重要**: 只审核，不修改文件。返回 PASS 或 FAIL + 详细反馈。
+
 ```
 你是独立的 DoD 审核员。审核以下文件：
 - PRD: {prd_file}
@@ -110,6 +112,8 @@ Decision: PASS | FAIL
 - PRD 需求列表：...
 - DoD 验收项列表：...
 - 测试文件检查结果：...
+
+**记住**: 不要调用 Edit/Write 工具修改文件，只返回审核结果。
 ```
 
 ## PASS 条件
