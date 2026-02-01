@@ -1,0 +1,41 @@
+# PRD - KR1: 意图识别 API 集成
+
+## 需求来源
+Brain 自动调度任务 - 推进 KR1 (意图识别 - 自然语言→OKR/Project/Task)
+
+## 功能描述
+将已实现的 Intent Recognition Service 集成到 Core API，提供 HTTP 端点供前端和其他服务调用。
+
+现状：
+- ✅ Intent Recognition Service 已实现 (`apps/core/src/services/intent-recognition.service.ts`)
+- ✅ Controller 已实现 (`apps/core/src/controllers/intent.controller.ts`)
+- ✅ Types 已定义 (`apps/core/src/types/intent.types.ts`)
+- ✅ NLP Parser 已实现 (`apps/core/src/utils/nlp-parser.ts`)
+- ❌ **未集成到 API 路由** - 需要在 `apps/core/src/index.ts` 注册路由
+
+目标：
+将 Intent API 注册到 Express app，使其可通过 HTTP 访问。
+
+## 涉及文件
+- `apps/core/src/index.ts` - 注册 Intent 路由
+- `apps/core/src/intent/routes.ts` - 创建路由文件（如果不存在）
+- `apps/core/src/__tests__/intent-recognition.test.ts` - 验证测试通过
+
+## 成功标准
+1. Intent API 端点可访问：
+   - `POST /api/intent/recognize` 返回 200 状态码
+   - `GET /api/intent/health` 返回 healthy 状态
+2. 端点验证：
+   - curl 测试成功返回 JSON 响应
+   - 响应时间 < 500ms
+3. 现有测试通过：
+   - `npm run test -- intent-recognition.test.ts` 全部通过
+4. 集成测试验证：
+   - 能识别 "创建目标：完成 KR1" 并返回 create-goal action
+   - 能识别 "查看所有待办任务" 并返回 query-tasks action
+
+## 非目标
+- 不修改 Intent Recognition Service 核心逻辑
+- 不添加新的 Intent 类型
+- 不改动 NLP Parser 规则
+- 不创建前端 UI（仅 API 集成）

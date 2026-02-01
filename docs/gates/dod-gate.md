@@ -1,19 +1,22 @@
-# DoD Gate Result
+# Gate:DoD - Evidence File
 
-**Date**: 2026-01-31
-**Decision**: PASS
-**Reviewer**: gate:dod Subagent
+## Gate Result
+
+Decision: **PASS**
+
+## Timestamp
+2026-02-01T12:52:00+08:00
+
+## Reviewed Files
+- `.prd-kr1-intent-recognition.md`
+- `.dod.md`
+- `docs/QA-DECISION.md`
 
 ## Findings
-- [PASS] PRD↔DoD 覆盖率：7/7 需求已覆盖
-- [PASS] 验收项具体性：8/8 项合格
-- [PASS] Test 字段有效性：8/8 项有效
-- [PASS] QA 引用正确性：完全正确
 
-## Evidence
-- PRD: .prd-cecelia-conversation-api.md
-- DoD: .dod-cecelia-conversation-api.md
-- QA: docs/QA-DECISION.md
-- Test: tests/api/cecelia-chat.test.ts
+- **[PASS] PRD↔DoD 覆盖率**：DoD 完整覆盖了 PRD 的所有成功标准
+- **[PASS] Test 映射有效性**：每条 DoD 都有正确的 Test 字段（apps/core/tests/ 路径）
+- **[PASS] QA 关联性**：QA Decision 引用正确且完整
 
-✅ DoD 审核通过，可以继续开发
+## Conclusion
+DoD 文件质量优秀，完全符合审核标准，可以进入代码实现阶段。
