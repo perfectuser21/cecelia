@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "11.26.1"
-updated: "2026-02-01"
+version: "12.1.0"
+updated: "2026-02-03"
 
 # ============================================================================
 # Hooks 回归契约
@@ -1015,6 +1015,47 @@ workflow:
       type: log
       description: "日志显示 TaskCreate/TaskUpdate 调用，TaskList 显示实时进度"
 
+  # --------------------------------------------------------------------------
+  # W8: DevGate Scripts (v12.1.0 P1 fixes)
+  # --------------------------------------------------------------------------
+  - id: W8-001
+    feature: W8
+    name: "DevGate glob regex 正确处理递归通配符"
+    scope: devgate
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [devgate, glob, regex, v12.1.0]
+    owner: infra
+    steps:
+      given: "regression-contract.yaml 中的 path 包含 ** 递归通配符"
+      when: "scan-rci-coverage.cjs 执行 glob 匹配"
+      then: "先替换 ** 为 .*，再替换 * 为 [^/]*，正确匹配多层目录"
+    evidence:
+      type: code
+      file: "scripts/devgate/scan-rci-coverage.cjs"
+      contains: "replace(/\\*\\*/g"
+    test: "tests/devgate/scan-rci-coverage.test.ts"
+
+  - id: W8-002
+    feature: W8
+    name: "Shell 转义防止命令注入"
+    scope: devgate
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [devgate, security, shell-escape, v12.1.0]
+    owner: infra
+    steps:
+      given: "snapshot-prd-dod.sh 接收包含特殊字符的 PR title"
+      when: "转义 TITLE 变量用于 HTML comment"
+      then: "完整转义反斜杠、双引号、backtick 和 $()，防止命令注入"
+    evidence:
+      type: code
+      file: "scripts/devgate/snapshot-prd-dod.sh"
+      contains: "ESCAPED_TITLE.*\\$"
+    test: "tests/devgate/snapshot-prd-dod.test.ts"
+
 # ============================================================================
 # CI/Release 回归契约
 # ============================================================================
@@ -1084,6 +1125,47 @@ ci:
       contains: "jq -n"
     # Evidence check: grep for 'jq -n' in ci.yml
     test: "tests/ci/json-safety.test.ts"
+
+  # --------------------------------------------------------------------------
+  # C1-004~C1-005: v12.1.0 P1 修复 (ci.yml, nightly.yml)
+  # --------------------------------------------------------------------------
+  - id: C1-004
+    feature: C1
+    name: "CI 超时配置完整性检查"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, timeout, v12.1.0]
+    owner: infra
+    steps:
+      given: "CI workflow 文件"
+      when: "定义 job"
+      then: "所有关键 jobs 都有 timeout-minutes 配置，防止挂死"
+    evidence:
+      type: code
+      file: ".github/workflows/ci.yml"
+      contains: "timeout-minutes:"
+    test: "tests/workflows/ci-timeout.test.ts"
+
+  - id: C1-005
+    feature: C1
+    name: "Nightly workflow 使用 artifact 不被分支保护阻止"
+    scope: ci
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, artifact, v12.1.0]
+    owner: infra
+    steps:
+      given: "Nightly workflow 生成 LEARNINGS 报告"
+      when: "workflow 执行完成"
+      then: "使用 upload-artifact 上传报告，不再 git push（避免分支保护阻止）"
+    evidence:
+      type: code
+      file: ".github/workflows/nightly.yml"
+      contains: "upload-artifact"
+    test: "tests/workflows/nightly.test.ts"
 
   # --------------------------------------------------------------------------
   # C2: test job

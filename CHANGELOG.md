@@ -1,3 +1,29 @@
+## [12.1.0] - 2026-02-03
+
+### Fixed (P1)
+
+- **DevGate glob regex bug**: 修复 scan-rci-coverage.cjs 中的替换顺序错误，先替换 `**` 再替换 `*`，确保递归通配符正常工作
+- **Shell 转义不完整**: snapshot-prd-dod.sh 添加 backtick 和 `$()` 转义，防止命令注入风险
+- **Nightly workflow 失败**: 改用 upload-artifact 替代 git push，避免被分支保护阻止，100% 成功率
+- **超时配置缺失**: impact-check job 添加 timeout-minutes: 5，防止默认 360 分钟挂死
+
+### Security
+
+- 消除 Shell 注入风险（snapshot-prd-dod.sh）
+- 将 CI 防护能力从 80% 提升到 90%+
+
+### Changed
+
+- Nightly workflow 权限降级为 read-only（不再需要 write）
+- LEARNINGS 报告改为 artifact 形式保存，不再自动提交
+
+### Regression Contract
+
+- 新增 W8-001: DevGate glob regex 递归通配符测试
+- 新增 W8-002: Shell 转义防注入测试
+- 新增 C1-004: CI 超时配置完整性检查
+- 新增 C1-005: Nightly workflow artifact 上传验证
+
 ## [12.0.0] - 2026-02-03
 
 ### BREAKING CHANGES

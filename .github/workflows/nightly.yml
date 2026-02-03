@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read  # P1 fix: 不再 push，只读权限即可
 
     steps:
       - uses: actions/checkout@v4
@@ -163,11 +163,11 @@ jobs:
           path: devgate-metrics.json
           retention-days: 90
 
-      - name: Append to LEARNINGS
+      - name: Generate LEARNINGS Report
         if: github.event_name == 'schedule'
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Append DevGate Report to LEARNINGS"
+          echo "  Generate DevGate Report for LEARNINGS"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # 检查指标文件
@@ -176,7 +176,7 @@ jobs:
             exit 0
           fi
 
-          # 追加到 LEARNINGS
+          # 追加到 LEARNINGS (本地生成)
           node scripts/devgate/append-learnings.cjs \
             --metrics devgate-metrics.json \
             --learnings docs/LEARNINGS.md \
@@ -185,32 +185,17 @@ jobs:
           # 检查是否有变更
           if git diff --quiet docs/LEARNINGS.md; then
             echo "ℹ️ No changes to LEARNINGS.md"
-            exit 0
+          else
+            echo "✅ LEARNINGS.md updated (will be uploaded as artifact)"
           fi
 
-          # 配置 git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 提交并推送
-          MONTH=$(date +%Y-%m)
-          git add docs/LEARNINGS.md
-          # 使用 HEREDOC 确保 commit message 格式正确
-          git commit -m "$(cat <<EOF
-docs: DevGate monthly report $MONTH
-
-Auto-generated DevGate metrics report
-
-Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-EOF
-          )"
-          # CRITICAL 修复: git push 添加错误检查
-          if ! git push; then
-            echo "git push failed"
-            exit 1
-          fi
-
-          echo "✅ LEARNINGS.md updated and pushed"
+      - name: Upload LEARNINGS Report
+        if: github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: learnings-report-${{ steps.metrics.outputs.metrics_month }}
+          path: docs/LEARNINGS.md
+          retention-days: 90
 
   notify:
     needs: [regression]

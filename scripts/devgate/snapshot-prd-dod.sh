@@ -164,9 +164,11 @@ DOD_SNAPSHOT="$HISTORY_DIR/PR-${PR_NUMBER}-${TIMESTAMP}.dod.md"
 # 格式: <!-- pr:N base:X priority:Y head:Z merged:W created:T title:"..." -->
 META_LINE="<!-- pr:${PR_NUMBER} base:${BASE_BRANCH} priority:${PRIORITY} head:${HEAD_SHA_SHORT} merged:${MERGED_SHA:-} created:${CREATED_ISO}"
 if [[ -n "$TITLE" ]]; then
-    # L2 fix: 先转义反斜杠，再转义双引号
-    ESCAPED_TITLE="${TITLE//\\/\\\\}"
-    ESCAPED_TITLE="${ESCAPED_TITLE//\"/\\\"}"
+    # P1 fix: 完整转义（反斜杠、双引号、backtick、$()）
+    ESCAPED_TITLE="${TITLE//\\/\\\\}"       # 转义反斜杠
+    ESCAPED_TITLE="${ESCAPED_TITLE//\"/\\\"}"   # 转义双引号
+    ESCAPED_TITLE="${ESCAPED_TITLE//\`/\\\`}"   # 转义 backtick
+    ESCAPED_TITLE="${ESCAPED_TITLE//\$/\\\$}"   # 转义 $ (防止 $() 命令替换)
     META_LINE="$META_LINE title:\"${ESCAPED_TITLE}\""
 fi
 META_LINE="$META_LINE -->"

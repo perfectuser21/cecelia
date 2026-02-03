@@ -301,8 +301,8 @@ function checkCoverage(entry, contracts) {
       if (contractPath.includes("*")) {
         const regexStr = contractPath
           .replace(/\./g, "\\.")
-          .replace(/\*/g, "[^/]*")
-          .replace(/\*\*/g, ".*");
+          .replace(/\*\*/g, ".*")      // 先替换 ** (递归通配符)
+          .replace(/\*/g, "[^/]*");    // 再替换 * (单层通配符)
         const regex = new RegExp(`^${regexStr}$`);
         if (regex.test(entry.path)) {
           coveredBy.push(contract.id);
