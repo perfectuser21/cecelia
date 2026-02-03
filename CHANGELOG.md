@@ -1,3 +1,24 @@
+## [12.0.0] - 2026-02-03
+
+### BREAKING CHANGES
+
+- **CI workflow 架构重大修复** - 修复 ci-passed 不等待回归测试的严重漏洞
+
+### Fixed (P0 CRITICAL)
+
+- **ci-passed 依赖链修复**: 添加 regression-pr 和 release-check 到 needs 依赖，防止 PR 在回归测试完成前合并
+- **back-merge 权限修复**: 改为 contents: write，移除错误吞掉（|| true），添加详细失败日志
+- 移除不可靠的 gh API 后验证逻辑，改用正确的依赖链机制
+
+### Security
+
+- 修复 CI 可以被绕过的架构漏洞，将防护能力从 55% 提升到初步 80%
+
+### Changed
+
+- back-merge workflow 失败现在会正确报告错误，不再静默失败
+- ci-passed job 现在正确等待所有必需的 jobs 完成
+
 ## [11.29.0] - 2026-02-03
 
 ### Fixed

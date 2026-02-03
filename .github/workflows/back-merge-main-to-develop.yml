@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write  # CRITICAL FIX: 需要 write 权限才能创建 merge commit
   pull-requests: write
 
 jobs:
@@ -81,10 +81,20 @@ jobs:
           pr_url=$(gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$HEAD" --title "$title" --body "$body")
           echo "✅ 已创建 back-merge PR: $pr_url"
 
-          # 3) 可选：尝试开启 auto-merge（需要仓库允许 auto-merge，且分支保护允许）
-          # 如果你不想自动合并，删掉下面这段即可
+          # 3) 尝试开启 auto-merge
+          # CRITICAL FIX: 移除 || true，让失败被正确报告
           pr_number=$(echo "$pr_url" | sed -n 's#.*/pull/\([0-9]\+\)$#\1#p')
           if [[ -n "${pr_number:-}" ]]; then
-            echo "尝试启用 auto-merge（如果仓库未启用会失败但不中断）"
-            gh pr merge "$pr_number" --repo "$OWNER_REPO" --auto --merge || true
+            echo "尝试启用 auto-merge..."
+            if gh pr merge "$pr_number" --repo "$OWNER_REPO" --auto --merge; then
+              echo "✅ Auto-merge 已启用"
+            else
+              echo "⚠️  Auto-merge 失败（可能需要手动合并）"
+              echo "PR URL: $pr_url"
+              echo "可能原因："
+              echo "  - 分支保护规则要求 CI 通过"
+              echo "  - 需要 code review"
+              echo "  - 存在合并冲突"
+              exit 1
+            fi
           fi

@@ -873,11 +873,12 @@ jobs:
   # PRD/DoD 现在通过 PR Gate 阻止进入 develop/main，不再需要 push 后清理
 
   ci-passed:
-    # C1 FIX: 移除条件性 jobs (regression-pr, release-check) 的依赖
-    # 这两个 jobs 只在特定 base_ref 时运行，作为依赖会导致其他分支的 PR 失败
-    needs: [version-check, test, contract-drift-check, impact-check, l2b-check, known-failures-protection, config-audit]
+    # CRITICAL FIX: 添加 regression-pr 和 release-check 到依赖链
+    # 确保 ci-passed 等待这些 jobs 完成，防止 PR 在回归测试完成前合并
+    needs: [version-check, test, contract-drift-check, impact-check, l2b-check, known-failures-protection, config-audit, regression-pr, release-check]
     # SECURITY FIX v3: 全面加强检查，禁止关键 jobs 被 skipped 绕过
     # H4 FIX: 关键安全检查（known-failures-protection, config-audit, impact-check）必须 success，不允许 skipped
+    # CRITICAL FIX: regression-pr/release-check 条件性检查
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -887,60 +888,16 @@ jobs:
       needs.config-audit.result == 'success' &&
       needs.impact-check.result == 'success' &&
       (needs.version-check.result == 'success' || needs.version-check.result == 'skipped') &&
-      (needs.l2b-check.result == 'success' || needs.l2b-check.result == 'skipped')
+      (needs.l2b-check.result == 'success' || needs.l2b-check.result == 'skipped') &&
+      (github.base_ref != 'develop' || needs.regression-pr.result == 'success') &&
+      (github.base_ref != 'main' || needs.release-check.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      # C1 FIX: 验证条件性 jobs 的结果（通过 gh CLI 查询而非依赖）
-      # C1 FIX v2: 验证条件性 jobs 的结果（处理job不存在或未完成的情况）
-      - name: Verify regression-pr and release-check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-          
-          # 检查 regression-pr (PR to develop 时必须 success)
-          if [[ "${{ github.base_ref }}" == "develop" ]]; then
-            echo "[$(date -u +%H:%M:%S)] 验证 regression-pr 状态..."
-            
-            # 查询 job 状态，允许不存在（返回 null）
-            STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-              --jq '.jobs[] | select(.name == "regression-pr") | .conclusion' || echo "null")
-            
-            if [[ -z "$STATUS" || "$STATUS" == "null" ]]; then
-              echo "⚠️  regression-pr job 不存在或未完成"
-              echo "   这可能是因为 job 还在队列中或被跳过"
-              echo "   允许通过（依赖链已移除，不强制等待）"
-            elif [[ "$STATUS" != "success" ]]; then
-              echo "❌ regression-pr 未通过: $STATUS"
-              echo "PR to develop 必须通过 L3 回归测试"
-              exit 1
-            else
-              echo "✅ regression-pr: success"
-            fi
-          fi
-          
-          # 检查 release-check (PR to main 时必须 success)
-          if [[ "${{ github.base_ref }}" == "main" ]]; then
-            echo "[$(date -u +%H:%M:%S)] 验证 release-check 状态..."
-            
-            STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-              --jq '.jobs[] | select(.name == "release-check") | .conclusion' || echo "null")
-            
-            if [[ -z "$STATUS" || "$STATUS" == "null" ]]; then
-              echo "⚠️  release-check job 不存在或未完成"
-              echo "   这可能是因为 job 还在队列中或被跳过"
-              echo "   允许通过（依赖链已移除，不强制等待）"
-            elif [[ "$STATUS" != "success" ]]; then
-              echo "❌ release-check 未通过: $STATUS"
-              echo "PR to main 必须通过 Release 检查"
-              exit 1
-            else
-              echo "✅ release-check: success"
-            fi
-          fi
+      # CRITICAL FIX: 不再需要 gh API 后验证，因为已添加到 needs 依赖链
+      # 依赖链确保 ci-passed 只有在 regression-pr/release-check 成功后才运行
 
       - name: CI Passed
         run: |
