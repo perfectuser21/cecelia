@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "gate": "prd",
+  "decision": "PASS",
+  "created_at": "2026-02-03T12:12:55Z",
+  "expires_at": "2026-02-03T12:42:55Z",
+  "expires_at_epoch": 1770122575,
+  "branch": "develop",
+  "head_sha": "1917f57623d0f23daebe7ed0b0a4ce984cdd20b2",
+  "tree_sha": "a3a3b7497519e8dd7070537be87e533376a6130b",
+  "repo_id": "056850e49c9f6e2ef4af447ffbd40f83ac7a0e9c5155352d72a366ab863d537a",
+  "task_id": "develop",
+  "tool_version": "3.0.0",
+  "signature": "ae2f12510c3fa592c138e430ece08fba4737c98617584a0b59d7c81740dff60b"
+}
