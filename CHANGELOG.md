@@ -1,3 +1,11 @@
+## [12.3.1] - 2026-02-03
+
+### Fixed (P2)
+
+- **back-merge workflow 误触发**: 添加 job 级别的 `if: github.ref == 'refs/heads/main'` 条件，防止在非 main 分支运行并失败
+  - 修改文件: .github/workflows/back-merge-main-to-develop.yml
+  - 影响: 减少 CI 噪音，避免在 develop/cp-* 分支产生无意义的失败记录
+
 ## [12.3.0] - 2026-02-03
 
 ### Fixed (P1)

@@ -1,69 +1,40 @@
 # QA Decision
 
-Decision: MUST_ADD_RCI
-Priority: P1
+Decision: NO_RCI
+Priority: P2
 RepoType: Engine
 
 ## Tests
 
-- dod_item: "PRD 检查：最少 3 个 section (##)"
-  method: auto
-  location: tests/devgate/l2a-check.test.ts
+- dod_item: "workflow 文件添加了 if 条件到 check-trigger job"
+  method: manual
+  location: manual:检查 .github/workflows/back-merge-main-to-develop.yml 第 13 行
 
-- dod_item: "PRD 检查：每个 section 至少 2 行非空内容"
-  method: auto
-  location: tests/devgate/l2a-check.test.ts
+- dod_item: "在非 main 分支 push 时，workflow 完全不运行"
+  method: manual
+  location: manual:push 到 develop 分支后检查 GitHub Actions 页面
 
-- dod_item: "DoD 检查：最少 3 个验收项"
-  method: auto
-  location: tests/devgate/l2a-check.test.ts
+- dod_item: "在 main 分支 push 时，workflow 正常运行"
+  method: manual
+  location: manual:将来合并到 main 后验证
 
-- dod_item: "DoD 检查：每个验收项必须有 Test 映射"
-  method: auto
-  location: tests/devgate/l2a-check.test.ts
+- dod_item: "workflow 其他逻辑未被修改"
+  method: manual
+  location: manual:代码审查确认只修改了 if 条件
 
-- dod_item: "Evidence 检查：必须有可复现命令或机器引用"
+- dod_item: "npm run qa 通过"
   method: auto
-  location: tests/devgate/l2b-check.test.ts
+  location: contract:C2-001
 
-- dod_item: "Evidence 检查：拒绝纯文字描述"
-  method: auto
-  location: tests/devgate/l2b-check.test.ts
-
-- dod_item: "Evidence 检查：截图必须存在且非空"
-  method: auto
-  location: tests/devgate/l2b-check.test.ts
-
-- dod_item: "移除 name.includes() 误判逻辑"
-  method: auto
-  location: tests/ci/scan-rci-coverage.test.ts
-
-- dod_item: "实现路径精确匹配"
-  method: auto
-  location: tests/ci/scan-rci-coverage.test.ts
-
-- dod_item: "实现目录匹配"
-  method: auto
-  location: tests/ci/scan-rci-coverage.test.ts
-
-- dod_item: "实现 glob 匹配"
-  method: auto
-  location: tests/ci/scan-rci-coverage.test.ts
-
-- dod_item: "假覆盖被正确检测"
-  method: auto
-  location: tests/ci/scan-rci-coverage.test.ts
+- dod_item: "CI 通过，无新增失败"
+  method: manual
+  location: manual:等待 CI 运行完成
 
 ## RCI
 
-new:
-  - C12-001  # L2A PRD 结构验证（≥3 sections, ≥2 lines each）
-  - C12-002  # L2A DoD 结构验证（≥3 items, Test 映射）
-  - C12-003  # L2B Evidence 可复现性验证（命令/机器引用）
-  - C13-001  # RCI 覆盖率精确匹配（路径/目录/glob）
-
+new: []
 update: []
 
 ## Reason
 
-P1-1 和 P1-2 是 CI 质量检查的结构性漏洞，允许低质量产物和假覆盖率通过检查。增强结构验证可防止空内容绕过，收紧匹配逻辑可消除误报。这些是核心质量保障机制，必须纳入回归契约确保不退化。
+这是一个 CI 配置优化（修复 GitHub Actions 误触发），不涉及核心功能变更或回归风险。修改范围极小（单文件单行），影响仅限于减少 CI 噪音。无需新增回归契约，现有 CI 测试（C2-001）足够覆盖。
