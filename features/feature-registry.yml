@@ -223,14 +223,15 @@ platform_features:
     name: Unified Dev Workflow
     status: Committed
     priority: P0
-    version: "11.21.0"
-    updated: "2026-02-01"
+    version: "12.4.2"
+    updated: "2026-02-03"
     description: |
       v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
       - 统一完成条件：PR 创建 + CI 通过 + PR 合并 = DONE
       - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
       - 从头到尾一直执行，不在 PR 创建后停止
       - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
+      - v12.4.2: 添加 Step 11 任务列表清理逻辑（防止任务残留）
       - v11.21.0: 循环模式 B 优化（所有步骤文件使用统一循环控制模板，MAX_GATE_ATTEMPTS=3 硬编码上限）
       - v11.19.0: G3 修复 gate skill 调用方式（6 个 gates 从 Task(general-purpose) 改为 Skill() 调用，删除冗长内联 prompt）
       - v11.2.7: Promise 信号统一（DONE 替代 QUALITY_GATE_PASSED/CI_PASSED）

@@ -174,7 +174,36 @@ git remote prune origin 2>/dev/null || true
 
 ---
 
+## 清理任务列表（CRITICAL）
+
+**在完成前，必须清理 Task Checkpoint 创建的任务**：
+
+```javascript
+// 获取所有任务
+const tasks = await TaskList()
+
+// 将所有 pending 和 in_progress 的任务标记为 completed
+tasks.forEach(task => {
+  if (task.status !== 'completed') {
+    TaskUpdate({ taskId: task.id, status: 'completed' })
+  }
+})
+```
+
+**为什么要清理**：
+- 任务列表是临时的进度追踪工具
+- 不清理会导致任务列表残留，影响下次 /dev 流程
+- 用户界面会显示已完成的旧任务
+
+**清理时机**：Step 11 Cleanup 结束前（在标记步骤完成之前）
+
+---
+
 ## 完成
+
+**Task Checkpoint**: `TaskUpdate({ taskId: "11", status: "in_progress" })`
+
+**清理任务列表**（见上方"清理任务列表"部分）
 
 **标记步骤完成**：
 
