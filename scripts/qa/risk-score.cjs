@@ -21,11 +21,12 @@
  */
 
 const { execSync } = require('child_process');
+const { DEFAULT_BASE_BRANCH, DEFAULT_HEAD_REF } = require('../lib/constants.cjs');
 
 // 解析命令行参数
 const args = process.argv.slice(2);
-let base = 'develop';
-let head = 'HEAD';
+let base = DEFAULT_BASE_BRANCH;
+let head = DEFAULT_HEAD_REF;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--base' && args[i + 1]) {

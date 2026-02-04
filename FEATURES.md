@@ -1,9 +1,10 @@
 ---
 id: features-registry
-version: 1.15.0
+version: 1.16.0
 created: 2026-01-20
-updated: 2026-01-27
+updated: 2026-02-04
 changelog:
+  - 1.16.0: 审计清理 - session-end.sh 归档、pr-gate-v2.sh 标记废弃
   - 1.15.0: 新增 Q5 RISK SCORE + Q6 Structured Audit（三层架构）
   - 1.14.0: 新增 C6 Evidence CI (SSOT)
   - 1.13.0: 新增 W7 Ralph Loop 自动化

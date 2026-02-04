@@ -8,11 +8,12 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { DEFAULT_BASE_BRANCH, DEFAULT_HEAD_REF, QA_DECISION_PATH, debugLog } = require('../lib/constants.cjs');
 
 const args = process.argv.slice(2);
-let base = 'develop';
-let head = 'HEAD';
-let qaDecisionPath = 'docs/QA-DECISION.md';
+let base = DEFAULT_BASE_BRANCH;
+let head = DEFAULT_HEAD_REF;
+let qaDecisionPath = QA_DECISION_PATH;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--base' && args[i + 1]) {
@@ -32,6 +33,7 @@ function getChangedFiles() {
     const diff = execSync(`git diff --name-only ${base}...${head}`, { encoding: 'utf-8' });
     return diff.split('\n').filter(Boolean);
   } catch (error) {
+    debugLog('getChangedFiles failed:', error.message);
     return [];
   }
 }

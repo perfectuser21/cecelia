@@ -13,10 +13,11 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const { DEFAULT_BASE_BRANCH, DEFAULT_HEAD_REF } = require('../lib/constants.cjs');
 
 const args = process.argv.slice(2);
-let base = 'develop';
-let head = 'HEAD';
+let base = DEFAULT_BASE_BRANCH;
+let head = DEFAULT_HEAD_REF;
 let outputPath = 'docs/AUDIT-REPORT.md';
 
 for (let i = 0; i < args.length; i++) {

@@ -40,12 +40,31 @@ get_ci_status() {
             --json status,conclusion,databaseId $repo_flag 2>/dev/null) || true
 
         if [[ -n "$run_info" && "$run_info" != "[]" ]]; then
+            # Bug fix: 验证 jq 输出，确保不是 null 或无效值
             local status conclusion run_id
+
+            # 使用 jq 直接输出 JSON，避免 shell 变量插值问题
+            if ! echo "$run_info" | jq -e '.[0]' >/dev/null 2>&1; then
+                # 无效的 JSON 结构
+                retries=$((retries + 1))
+                if [[ $retries -lt $CI_MAX_RETRIES ]]; then
+                    sleep "$CI_RETRY_DELAY"
+                fi
+                continue
+            fi
+
             status=$(echo "$run_info" | jq -r '.[0].status // "unknown"')
             conclusion=$(echo "$run_info" | jq -r '.[0].conclusion // ""')
             run_id=$(echo "$run_info" | jq -r '.[0].databaseId // ""')
 
-            echo "{\"status\":\"$status\",\"conclusion\":\"$conclusion\",\"run_id\":\"$run_id\"}"
+            # 验证 status 不是 "null" 字符串
+            if [[ "$status" == "null" ]]; then
+                status="unknown"
+            fi
+
+            # 使用 jq 生成 JSON，确保格式正确
+            jq -n --arg s "$status" --arg c "$conclusion" --arg r "$run_id" \
+                '{"status": $s, "conclusion": $c, "run_id": $r}'
             return 0
         fi
 

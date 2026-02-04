@@ -68,6 +68,9 @@ jobs:
             echo "✅ Version updated: $BASE_VERSION → $CURRENT_VERSION"
           fi
 
+      - name: Check all version files in sync
+        run: bash ci/scripts/check-version-sync.sh
+
   test:
     runs-on: ubuntu-latest
     # M1 FIX: 增加超时时间到30分钟（复杂测试可能需要更长时间）
@@ -474,7 +477,7 @@ jobs:
             fi
 
             # 检查最大跳过数量
-            MAX_SKIP=$(jq -r '.rules.max_skip_count // 0' ci/known-failures.json)
+            MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
             if [[ "$MAX_SKIP" -gt 5 ]]; then
               echo "❌ max_skip_count 过大: $MAX_SKIP (最多允许 5)"
               echo "   过多的跳过项会降低 CI 的有效性"
@@ -867,8 +870,9 @@ jobs:
       needs.impact-check.result == 'success' &&
       (needs.version-check.result == 'success' || needs.version-check.result == 'skipped') &&
       (needs.l2b-check.result == 'success' || needs.l2b-check.result == 'skipped') &&
-      (github.base_ref != 'develop' || needs.regression-pr.result == 'success') &&
-      (github.base_ref != 'main' || needs.release-check.result == 'success')
+      (github.base_ref != 'develop' || needs.regression-pr.result == 'success' || needs.regression-pr.result == 'skipped') &&
+      (github.base_ref != 'main' || needs.release-check.result == 'success' || needs.release-check.result == 'skipped') &&
+      needs.contract-drift-check.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

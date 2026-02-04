@@ -58,7 +58,15 @@ NONCE=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 # 写令牌
 TOKEN_DIR=".git/.gate_tokens"
-mkdir -p "$TOKEN_DIR"
+# Bug fix: mkdir 错误处理，确保目录创建成功
+if ! mkdir -p "$TOKEN_DIR" 2>/dev/null; then
+    echo "[ERROR] 无法创建令牌目录: $TOKEN_DIR" >&2
+    # 检查是否是因为存在同名文件
+    if [[ -f "$TOKEN_DIR" ]]; then
+        echo "[ERROR] $TOKEN_DIR 是一个文件，不是目录" >&2
+    fi
+    exit 1
+fi
 TOKEN_FILE="$TOKEN_DIR/subagent-${GATE_TYPE}-${SESSION_ID}.token"
 
 cat > "$TOKEN_FILE" << EOF

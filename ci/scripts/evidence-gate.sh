@@ -96,19 +96,25 @@ for check_name in "${REQUIRED_CHECKS[@]}"; do
     continue
   fi
 
-  # 验证文件 hash（如果 checks 目录存在）
-  if [[ -d "$CHECKS_DIR" ]]; then
-    check_file="$CHECKS_DIR/${check_name}.json"
-    if [[ -f "$check_file" ]]; then
-      EXPECTED_HASH=$(jq -r --arg name "$check_name" '.checks[] | select(.name == $name) | .file_hash' "$FILE")
-      ACTUAL_HASH=$(sha256sum "$check_file" | cut -d' ' -f1)
-      if [[ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]]; then
-        echo "  ❌ check 文件被篡改: $check_name"
-        echo "     期望 hash: $EXPECTED_HASH"
-        echo "     实际 hash: $ACTUAL_HASH"
-        FAILED=1
-        continue
-      fi
+  # 验证文件 hash（checks 目录必须存在）
+  # Bug fix: 如果 checks 目录不存在，hash 验证被绕过，可能导致篡改
+  if [[ ! -d "$CHECKS_DIR" ]]; then
+    echo "  ❌ checks 目录不存在: $CHECKS_DIR"
+    echo "     无法验证 check 文件 hash，可能是篡改或配置错误"
+    FAILED=1
+    continue
+  fi
+
+  check_file="$CHECKS_DIR/${check_name}.json"
+  if [[ -f "$check_file" ]]; then
+    EXPECTED_HASH=$(jq -r --arg name "$check_name" '.checks[] | select(.name == $name) | .file_hash' "$FILE")
+    ACTUAL_HASH=$(sha256sum "$check_file" | cut -d' ' -f1)
+    if [[ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]]; then
+      echo "  ❌ check 文件被篡改: $check_name"
+      echo "     期望 hash: $EXPECTED_HASH"
+      echo "     实际 hash: $ACTUAL_HASH"
+      FAILED=1
+      continue
     fi
   fi
 

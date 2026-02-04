@@ -1,3 +1,109 @@
+
+## [12.5.2] - 2026-02-04
+
+### Fixed
+
+- **back-merge workflow 跳过处理修复**:
+  - 添加无条件 entry job，解决 GitHub Actions "所有 jobs 跳过 = failure" 的问题
+  - 非 main 分支触发时 workflow 正确标记为 success（而非 failure）
+  - check-trigger 和 back-merge jobs 保持条件执行逻辑不变
+
+## [12.5.1] - 2026-02-04
+
+### Fixed
+
+- **剩余 Bug 修复**:
+  - `auto-merge.yml`: 修复 skip output 未使用问题，Merge PR 步骤添加 `skip!=true` 检查
+  - `generate-evidence.sh`: 清晰化 branch name fallback 逻辑，提取为 `get_branch_name` 函数并添加注释
+  - `branch-protect.sh`: TOCTOU 缓解，立即解析 BASE_BRANCH 为 commit SHA，防止分支变动
+  - `branch-protect.sh`: 完善 Monorepo 支持，添加 `find_prd_dod_dir` 函数从文件路径向上查找 PRD/DoD 目录
+
+## [12.5.0] - 2026-02-04
+
+### Fixed
+
+- **CI/CD Bug 修复**:
+  - `ci.yml`: contract-drift-check 跳过状态处理 + cancelled 状态检测
+  - `ci.yml`: regression-pr/release-check 允许 skipped 状态
+  - `ci.yml`: MAX_SKIP 默认值统一为 3（原 163 行和 480 行不一致）
+  - `back-merge.yml`: PR 号提取失败时报错退出（原静默继续）
+  - `evidence-gate.sh`: checks 目录不存在时报错（原跳过 hash 验证）
+  - `impact-check.sh`: BASE_REF 不存在时报错（原静默空结果）
+  - `l2b-check.sh`: 时间戳检查逻辑修正（evidence 必须在 commit 后生成）
+  - `auto-merge.yml`: 改用 check-runs API 替代过时的 commit status API
+
+- **Branch Protection Bug 修复**:
+  - `setup-branch-protection.sh`: jq 过滤器逻辑统一（null 处理一致）
+  - `setup-branch-protection.sh`: API 返回 JSON 验证
+  - `branch-protect.sh`: 使用 grep -F 避免 regex 注入风险（分支名含特殊字符）
+  - `branch-protect.sh`: Step 3 超时检查（防止卡在 in_progress 绕过）
+  - `branch-protect.sh`: 使用 awk 替代 cut 处理多空格
+
+- **Stop Hook Bug 修复**:
+  - `stop.sh`: step 状态检测逻辑修正（使用正确的字段名模式）
+  - `stop.sh`: 重试计数 off-by-one 修复（先递增后检查）
+  - `stop.sh`: sed 跨平台兼容（macOS vs Linux）
+  - `stop.sh`: Step 11 状态检测使用 awk 替代 grep -q
+  - `mark-subagent-done.sh`: mkdir 错误处理
+  - `ci-status.sh`: jq 输出验证 + 使用 jq 生成 JSON
+
+### Removed
+
+- `hooks/subagent-stop.sh` - 不再需要（无 subagents）
+- `.claude/settings.json` 中的 SubagentStop hook 配置
+
+## [12.4.8] - 2026-02-04
+
+### Changed
+
+- **低优先级审计清理**:
+  - `hooks/session-end.sh` 归档到 `hooks/.archive/`（未使用）
+  - `docs/STOP-HOOK-SPEC.md` 归档到 `docs/.archive/`（已废弃）
+  - `src/index.ts` 更新注释（移除 pr-gate-v2.sh 引用）
+  - `FEATURES.md` 版本更新到 1.16.0
+
+## [12.4.7] - 2026-02-04
+
+### Fixed
+
+- **深度审计问题修复**:
+  - `skills/dev/steps/` 错误消息重试次数修复（20→15 次）
+  - `README.md` 移除 pr-gate-v2.sh 安装说明，更新 hooks 配置示例
+  - `README.md` 删除末尾多余的 "# test" 文本
+
+## [12.4.6] - 2026-02-04
+
+### Fixed
+
+- **审计问题修复**:
+  - `regression-contract.yaml` 版本号更新（12.3.0 → 12.4.6）
+  - `CLAUDE.md` hooks 列表更新（标注项目/全局、废弃状态）
+  - `CLAUDE.md` hooks 配置示例更新（移除 pr-gate-v2.sh）
+
+## [12.4.5] - 2026-02-04
+
+### Changed
+
+- **移除本地 pr-gate hook**: `pr-gate-v2.sh` 存在循环依赖问题（gate 文件 SHA 检查导致无限循环）。本地只保留 `branch-protect.sh`（检查 branch/PRD/DoD），质量检查完全交给 CI。
+
+## [12.4.4] - 2026-02-04
+
+### Fixed
+
+- **代码库清理 - 修复重复内容和矛盾信息**:
+  - C1: `skills/dev/SKILL.md` 清理重复粘贴的表格（615→515 行）
+  - C2: `skills/dev/steps/07-quality.md` 修复矛盾（改为"只汇总，不判定"），删除 backup 文件
+  - C4: `hooks/stop.sh` 注释修复（20→15 次重试上限）
+  - C5: `.gitignore` 删除 PRD/DoD 历史例外规则
+  - W1: `CLAUDE.md` 更新 hooks 数量描述（2→8）
+  - W8/W12: 删除空文件和乱码文件残留
+
+### Removed
+
+- `skills/dev/steps/07-quality.md.backup` - 矛盾的备份文件
+- `.prd-cp-stop-hook-pressure.md`, `.dod-cp-stop-hook-pressure.md` - 历史遗留 PRD/DoD 文件
+- `cp-0130-sync-main` - 空文件残留
+
 ## [12.4.3] - 2026-02-04
 
 ### Changed
@@ -5,6 +111,7 @@
 - **/dev 核心目标强调**: 在 SKILL.md 开头添加「核心目标」章节，明确唯一目标是成功合并 PR，遇到任何问题自动修复，不停止
 - **移除 QA/Audit Subagent 调用**: Step 4 (DoD) 不再调用 gate:qa 和 gate:audit Subagent，简化流程
 - **Step 11 任务列表清理**: 添加清理逻辑防止任务残留
+
 
 ## [12.4.1] - 2026-02-03
 

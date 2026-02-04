@@ -181,13 +181,20 @@ if [[ -f "$EVIDENCE_FILE" ]]; then
   COMMIT_TIME=$(git show -s --format=%ct HEAD 2>/dev/null || echo "0")
 
   if [[ "$EVIDENCE_MTIME" -gt 0 && "$COMMIT_TIME" -gt 0 ]]; then
-    # Evidence 必须在 commit 之后生成（允许5分钟=300秒误差）
-    if [[ $EVIDENCE_MTIME -lt $((COMMIT_TIME - 300)) ]]; then
-      echo "  ❌ Evidence 时间戳过旧，可能是伪造"
-      echo "     Evidence mtime: $(date -d @$EVIDENCE_MTIME 2>/dev/null || date -r $EVIDENCE_MTIME 2>/dev/null)"
-      echo "     Commit time:    $(date -d @$COMMIT_TIME 2>/dev/null || date -r $COMMIT_TIME 2>/dev/null)"
-      echo "     这可能是复用旧 commit 的证据"
-      exit 1
+    # Bug fix: Evidence 时间戳检查逻辑修正
+    # Evidence 必须在 commit 同时或之后生成（允许5分钟=300秒误差用于 CI 延迟）
+    # 原逻辑错误：允许 evidence 比 commit 早 5 分钟，应该是晚 5 分钟
+    if [[ $EVIDENCE_MTIME -lt $COMMIT_TIME ]]; then
+      # Evidence 比 commit 更早，可能是伪造（复用旧 evidence）
+      TIME_DIFF=$((COMMIT_TIME - EVIDENCE_MTIME))
+      if [[ $TIME_DIFF -gt 300 ]]; then
+        echo "  ❌ Evidence 时间戳过旧，可能是伪造"
+        echo "     Evidence mtime: $(date -d @$EVIDENCE_MTIME 2>/dev/null || date -r $EVIDENCE_MTIME 2>/dev/null)"
+        echo "     Commit time:    $(date -d @$COMMIT_TIME 2>/dev/null || date -r $COMMIT_TIME 2>/dev/null)"
+        echo "     差值: ${TIME_DIFF}秒（超过允许的300秒误差）"
+        echo "     这可能是复用旧 commit 的证据"
+        exit 1
+      fi
     fi
     echo "  ✅ Evidence 时间戳有效"
   else

@@ -83,7 +83,7 @@ fi
 # ===== 读取 Hook 输入（JSON） =====
 HOOK_INPUT=$(cat)
 
-# ===== 20 次重试计数器（替代旧的 stop_hook_active 检查）=====
+# ===== 15 次重试计数器（替代旧的 stop_hook_active 检查）=====
 # 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
 # 具体检查逻辑在后面的完成条件中处理
 
@@ -106,9 +106,15 @@ if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
 fi
 
 # 新版本：检查 11 步 checklist 是否全部完成
+# Bug fix: step 状态检测逻辑修正
+# 原逻辑: grep "^step_${step}_" 匹配 step_1_ 开头的任意行，但 .dev-mode 格式是 step_1_prd: done
+# 修正: 使用更精确的模式匹配每个步骤的状态字段
+STEP_NAMES=("prd" "detect" "branch" "dod" "code" "test" "quality" "pr" "ci" "learning" "cleanup")
 STEPS_COMPLETE=true
-for step in {1..11}; do
-    STEP_STATUS=$(grep "^step_${step}_" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "pending")
+for i in {1..11}; do
+    step_name="${STEP_NAMES[$((i-1))]}"
+    # Bug fix: 使用 awk 替代 cut，避免多空格问题
+    STEP_STATUS=$(grep "^step_${i}_${step_name}:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
     if [[ "$STEP_STATUS" != "done" ]]; then
         STEPS_COMPLETE=false
         break
@@ -129,12 +135,17 @@ if [[ "$STEPS_COMPLETE" == "true" ]]; then
     exit 0
 fi
 
-# ===== 检查重试次数（20 次上限）=====
-RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "0")
+# ===== 检查重试次数（15 次上限）=====
+# Bug fix: 使用 awk 替代 cut，避免多空格问题
+RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "0")
 RETRY_COUNT=${RETRY_COUNT//[^0-9]/}  # 清理非数字字符
 RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
 
-if [[ $RETRY_COUNT -ge 15 ]]; then
+# Bug fix: 先递增计数器，再检查上限（修复 off-by-one 错误）
+# 原逻辑：检查 >= 15 后才递增，导致实际第 16 次才失败
+RETRY_COUNT=$((RETRY_COUNT + 1))
+
+if [[ $RETRY_COUNT -gt 15 ]]; then
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "  [Stop Hook: 15 次重试上限]" >&2
@@ -157,16 +168,23 @@ if [[ $RETRY_COUNT -ge 15 ]]; then
     exit 0  # 允许会话结束（失败退出）
 fi
 
-# 更新重试次数（Bug #3 修复: 使用 flock 原子更新）
+# 更新重试次数（Bug fix: 原子更新 + 跨平台 sed 兼容）
+# 注意: RETRY_COUNT 已在上面递增，这里直接写入当前值
 {
     flock -x 200
     grep -v "^retry_count:" "$DEV_MODE_FILE" > "$DEV_MODE_FILE.tmp" 2>/dev/null || true
-    echo "retry_count: $((RETRY_COUNT + 1))" >> "$DEV_MODE_FILE.tmp"
+    echo "retry_count: $RETRY_COUNT" >> "$DEV_MODE_FILE.tmp"
     mv "$DEV_MODE_FILE.tmp" "$DEV_MODE_FILE"
 } 200>"$DEV_MODE_FILE.lock" 2>/dev/null || {
     # flock 失败时的 fallback（不中断流程）
-    sed -i "/^retry_count:/d" "$DEV_MODE_FILE" 2>/dev/null || true
-    echo "retry_count: $((RETRY_COUNT + 1))" >> "$DEV_MODE_FILE"
+    # Bug fix: 使用跨平台兼容的 sed 语法（macOS 和 Linux）
+    # macOS sed -i 需要 '' 参数，Linux 不需要
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "/^retry_count:/d" "$DEV_MODE_FILE" 2>/dev/null || true
+    else
+        sed -i "/^retry_count:/d" "$DEV_MODE_FILE" 2>/dev/null || true
+    fi
+    echo "retry_count: $RETRY_COUNT" >> "$DEV_MODE_FILE"
 }
 
 # ===== 读取 .dev-mode 内容 =====
@@ -322,7 +340,9 @@ if [[ "$PR_STATE" == "merged" ]]; then
     echo "  ✅ 条件 3: PR 已合并" >&2
 
     # 检查是否完成 Step 11 Cleanup
-    if grep -q "^step_11_cleanup: done" "$DEV_MODE_FILE" 2>/dev/null; then
+    # Bug fix: 使用 awk 提取状态值，避免匹配其他内容
+    STEP_11_STATUS=$(grep "^step_11_cleanup:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+    if [[ "$STEP_11_STATUS" == "done" ]]; then
         echo "  ✅ Step 11 Cleanup 已完成" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2

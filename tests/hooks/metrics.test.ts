@@ -397,20 +397,35 @@ describe('metrics.sh 指标计算', () => {
   })
 })
 
-// TODO: 修复时间窗口测试的不稳定性（临时目录残留导致）
-describe.skip('metrics.sh 时间窗口', () => {
-  const testDir = path.join(tmpdir(), 'test-metrics-window')
+describe('metrics.sh 时间窗口', () => {
+  // 使用唯一目录名避免残留问题
+  const testId = `test-metrics-window-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const testDir = path.join(tmpdir(), testId)
+
+  // 预计算日期（避免测试中途时间变化）
+  const now = new Date()
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 15, 12, 0, 0) // 本月 15 号
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15, 12, 0, 0) // 上月 15 号
+
+  // 生成文件名用的日期字符串 YYYYMMDD
+  const thisMonthStr = `${thisMonth.getFullYear()}${String(thisMonth.getMonth() + 1).padStart(2, '0')}15`
+  const lastMonthStr = `${lastMonth.getFullYear()}${String(lastMonth.getMonth() + 1).padStart(2, '0')}15`
 
   beforeAll(() => {
-    execSync(`rm -rf ${testDir} && mkdir -p ${testDir}/.history`)
+    // 确保清理干净再创建
+    try {
+      execSync(`rm -rf ${testDir}`, { stdio: 'pipe' })
+    } catch {
+      // 忽略不存在的情况
+    }
+    execSync(`mkdir -p ${testDir}/.history`)
     execSync(`cd ${testDir} && git init --quiet`)
     // 配置 git user（CI 环境需要）
     execSync(`cd ${testDir} && git config user.email "test@example.com" && git config user.name "Test"`)
 
-    // 本月的 PR
-    const thisMonth = new Date()
+    // 本月的 PR - 文件名日期和 created 日期一致
     fs.writeFileSync(
-      path.join(testDir, '.history', 'PR-200-20260122-1000.dod.md'),
+      path.join(testDir, '.history', `PR-200-${thisMonthStr}-1000.dod.md`),
       `<!-- pr:200 base:develop priority:P1 head:aaa1111 merged: created:${thisMonth.toISOString()} -->
 
 # DoD
@@ -419,11 +434,9 @@ describe.skip('metrics.sh 时间窗口', () => {
 `
     )
 
-    // 上个月的 PR
-    const lastMonth = new Date()
-    lastMonth.setMonth(lastMonth.getMonth() - 1)
+    // 上个月的 PR - 文件名日期和 created 日期一致
     fs.writeFileSync(
-      path.join(testDir, '.history', 'PR-199-20251222-1000.dod.md'),
+      path.join(testDir, '.history', `PR-199-${lastMonthStr}-1000.dod.md`),
       `<!-- pr:199 base:develop priority:P0 head:bbb2222 merged: created:${lastMonth.toISOString()} -->
 
 # DoD
@@ -434,7 +447,12 @@ describe.skip('metrics.sh 时间窗口', () => {
   })
 
   afterAll(() => {
-    execSync(`rm -rf ${testDir}`)
+    // 确保清理
+    try {
+      execSync(`rm -rf ${testDir}`, { stdio: 'pipe' })
+    } catch {
+      // 忽略清理失败
+    }
   })
 
   it('默认只统计当前月', () => {
@@ -447,8 +465,6 @@ describe.skip('metrics.sh 时间窗口', () => {
   })
 
   it('--month 可以指定其他月份', () => {
-    const lastMonth = new Date()
-    lastMonth.setMonth(lastMonth.getMonth() - 1)
     const monthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
 
     const output = runMetrics(`--format json --month ${monthStr}`, testDir)

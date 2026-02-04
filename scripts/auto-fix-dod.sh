@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # 自动修复 DoD 格式错误
 
 set -e

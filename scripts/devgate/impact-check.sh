@@ -16,6 +16,13 @@ echo ""
 # 获取基础分支（CI 中使用 BASE_REF 环境变量）
 BASE_REF="${BASE_REF:-origin/develop}"
 
+# Bug fix: 验证 BASE_REF 是否存在
+if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+    echo "❌ Base ref 不存在: $BASE_REF"
+    echo "   请确保目标分支存在，或设置正确的 BASE_REF 环境变量"
+    exit 1
+fi
+
 # 核心能力文件路径
 # 注意：features/ 不包含在内，因为 feature-registry.yml 是被检查的目标，不是源
 # v11.2.9: 移除 scripts/detect-phase.sh（从未实现，已废弃）

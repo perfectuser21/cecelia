@@ -65,14 +65,21 @@ check_branch() {
         return 1
     }
 
+    # Bug fix: 验证 API 返回的是有效 JSON（避免错误消息被当作 JSON 解析）
+    if ! echo "$result" | jq empty 2>/dev/null; then
+        echo -e "  ${RED}✗${NC} $branch: API 返回错误: $result"
+        return 1
+    fi
+
+    # Bug fix: 统一使用相同的 jq 逻辑处理所有字段
     local enforce_admins
-    enforce_admins=$(echo "$result" | jq -r '.enforce_admins.enabled // false')
+    enforce_admins=$(echo "$result" | jq -r 'if .enforce_admins.enabled == true then "true" else "false" end')
 
     local allow_force_pushes
-    allow_force_pushes=$(echo "$result" | jq -r 'if .allow_force_pushes.enabled == false then "false" else "true" end')
+    allow_force_pushes=$(echo "$result" | jq -r 'if .allow_force_pushes.enabled == true then "true" else "false" end')
 
     local allow_deletions
-    allow_deletions=$(echo "$result" | jq -r 'if .allow_deletions.enabled == false then "false" else "true" end')
+    allow_deletions=$(echo "$result" | jq -r 'if .allow_deletions.enabled == true then "true" else "false" end')
 
     local issues=()
 

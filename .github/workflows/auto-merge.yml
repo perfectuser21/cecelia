@@ -68,8 +68,24 @@ jobs:
             exit 0
           fi
 
-          # 检查 CI 状态
-          CI_STATUS=$(gh api repos/${{ github.repository }}/commits/$(echo "$PR_DATA" | jq -r '.head.sha')/status --jq '.state')
+          # 检查 CI 状态（使用 check-runs API 替代已过时的 commit status API）
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r '.head.sha')
+          # 获取 check-runs 的综合状态
+          CHECK_RUNS=$(gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs" --jq '.check_runs')
+          TOTAL_CHECKS=$(echo "$CHECK_RUNS" | jq 'length')
+          COMPLETED_CHECKS=$(echo "$CHECK_RUNS" | jq '[.[] | select(.status == "completed")] | length')
+          SUCCESS_CHECKS=$(echo "$CHECK_RUNS" | jq '[.[] | select(.conclusion == "success")] | length')
+
+          # 判断 CI 状态
+          if [[ "$TOTAL_CHECKS" -eq 0 ]]; then
+            CI_STATUS="pending"
+          elif [[ "$COMPLETED_CHECKS" -lt "$TOTAL_CHECKS" ]]; then
+            CI_STATUS="pending"
+          elif [[ "$SUCCESS_CHECKS" -eq "$TOTAL_CHECKS" ]]; then
+            CI_STATUS="success"
+          else
+            CI_STATUS="failure"
+          fi
 
           echo "  Reviews: $REVIEWS"
           echo "  CI Status: $CI_STATUS"
@@ -83,7 +99,8 @@ jobs:
           fi
 
       - name: Merge PR
-        if: steps.check.outputs.ready == 'true'
+        # Bug fix: 同时检查 ready=true 且 skip!=true，确保 skip 状态被正确处理
+        if: steps.check.outputs.ready == 'true' && steps.check.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

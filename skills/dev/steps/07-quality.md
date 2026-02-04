@@ -1,67 +1,94 @@
-# Step 7: Quality Gate
+# Step 7: Quality 汇总
 
-> **检查 + 汇总** - 在 PR 前跑所有本地检查，提前发现问题
+> **只汇总，不判定** - 本地打包结账单，不是门禁
+>
+> Audit 已在 Step 5 完成，Test 已在 Step 6 完成，这里只汇总结果
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "7", status: "in_progress" })`
 
 ---
 
-## gate:quality 检查（必须）
+## 职责定义
 
-Quality 使用 Subagent 执行，**所有检查通过才能继续**。
+| 层 | 位置 | 类型 | 职责 |
+|---|------|------|------|
+| **Gate** | 本地 | 阻止型 | 过程卡口，FAIL 就停 |
+| **Quality** | 本地 | **汇总型** | 打包结账单，不做判定 |
+| **CI** | 远端 | 复核型 | 最终裁判，硬门禁 |
 
-### 循环逻辑
+**Quality 不做**：
+- ❌ 新一轮审计
+- ❌ 重复 Gate 的检查
+- ❌ 阻止流程
 
-```
-主 Agent 写完代码/测试
-    ↓
-调用 gate:quality Subagent
-    ↓
-Subagent 跑 4 项检查：
-  1. npm run typecheck
-  2. npm run test
-  3. npm run build
-  4. bash -n *.sh
-    ↓
-├─ FAIL → 返回错误 → 主 Agent 回 Step 5 修代码 → 重新执行
-└─ PASS → 生成 .gate-quality-passed → 继续 Step 8 (PR)
-```
+**Quality 只做**：
+- ✅ 汇总本地已跑过的硬结果
+- ✅ 生成结账单让你一眼确认
 
-### gate:quality Subagent 调用
+---
 
-```
-Skill({
-  skill: "gate:quality"
-})
-```
-
-### PASS 后操作
+## 执行流程
 
 ```bash
-# 1. 生成 gate 文件
-bash scripts/gate/generate-gate-file.sh quality
+# 1. 汇总 Gate 状态
+echo "检查 Gate 文件..."
+GATES_PASSED=true
+for gate in prd dod test; do
+  if [[ -f ".gate-${gate}-passed" ]]; then
+    echo "  gate:${gate} ✅"
+  else
+    echo "  gate:${gate} ⏭️ 跳过或不适用"
+  fi
+done
 
-# 2. 汇总结果
+# 2. 获取分支和 SHA
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+HEAD_SHA=$(git rev-parse --short HEAD)
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# 3. 生成 quality-summary.json
 cat > quality-summary.json << EOF
 {
   "branch": "$BRANCH_NAME",
-  "checks": {
-    "typecheck": {"status": "pass"},
-    "test": {"status": "pass"},
-    "build": {"status": "pass"},
-    "shell": {"status": "pass"}
-  },
+  "head_sha": "$HEAD_SHA",
+  "timestamp": "$TIMESTAMP",
   "gates": {
-    "quality": {"status": "pass", "file": ".gate-quality-passed"}
-  }
+    "prd": "$([ -f .gate-prd-passed ] && echo pass || echo skipped)",
+    "dod": "$([ -f .gate-dod-passed ] && echo pass || echo skipped)",
+    "test": "$([ -f .gate-test-passed ] && echo pass || echo skipped)"
+  },
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
 EOF
 
-# 3. 提交代码
+echo "✅ quality-summary.json 已生成"
+
+# 4. 生成 .quality-gate-passed 标记文件
+touch .quality-gate-passed
+
+# 5. 一次性提交
 git add -A
-git commit -m "chore: quality gate passed"
+git commit -m "chore: quality summary
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+
 git push origin HEAD
 ```
+
+---
+
+## 与 CI 的关系
+
+| 检查点 | Quality (本地) | CI (远端) |
+|--------|---------------|-----------|
+| 职责 | 汇总已跑结果 | 独立复跑验证 |
+| 信任度 | 参考 | 权威 |
+| 硬门禁 | 否 | 是 |
+
+**CI 不信 Quality 报告**，CI 自己跑：
+- test / typecheck / build / lint / contract
+
+Quality 只是让你在 PR 前"一眼确认没漏跑"。
 
 ---
 

@@ -32,8 +32,11 @@ export ZENITHJOY_ENGINE="/path/to/zenithjoy-engine"
 
 ```bash
 ln -sf $ZENITHJOY_ENGINE/hooks/branch-protect.sh ~/.claude/hooks/
-ln -sf $ZENITHJOY_ENGINE/hooks/pr-gate-v2.sh ~/.claude/hooks/
+ln -sf $ZENITHJOY_ENGINE/hooks/stop.sh ~/.claude/hooks/
+ln -sf $ZENITHJOY_ENGINE/hooks/credential-guard.sh ~/.claude/hooks/
 ```
+
+> **注意**: `pr-gate-v2.sh` 已在 v12.4.5 废弃，质量检查完全交给 CI。
 
 ### 2. 链接 Skills
 
@@ -57,11 +60,15 @@ cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
     "PreToolUse": [
       {
         "matcher": "Write|Edit",
-        "hooks": [{"type": "command", "command": "~/.claude/hooks/branch-protect.sh"}]
-      },
+        "hooks": [
+          {"type": "command", "command": "~/.claude/hooks/branch-protect.sh"},
+          {"type": "command", "command": "~/.claude/hooks/credential-guard.sh"}
+        ]
+      }
+    ],
+    "Stop": [
       {
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "~/.claude/hooks/pr-gate-v2.sh"}]
+        "hooks": [{"type": "command", "command": "~/.claude/hooks/stop.sh"}]
       }
     ]
   }
@@ -71,26 +78,27 @@ cp $ZENITHJOY_ENGINE/.github/workflows/ci.yml your-project/.github/workflows/
 | Hook | 触发时机 | 用途 |
 |------|----------|------|
 | branch-protect.sh | PreToolUse (Write/Edit) | 分支保护 + 步骤状态机 |
-| pr-gate-v2.sh | PreToolUse (Bash) | PR 前质检（双模式：pr/release） |
+| credential-guard.sh | PreToolUse (Write/Edit) | 凭据保护 |
+| stop.sh | Stop | 循环控制（15 次重试上限） |
 
 ### Hook 与 CI 职责划分
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  本地 Hook（pr-gate-v2.sh）                                 │
-│  → 开发者提交 PR 前的门禁                                   │
-│  → PR 模式：L1 + L2A（自动检测 --base develop）             │
-│  → Release 模式：L1 + L2A + L2B + L3（自动检测 --base main）│
-│  → 可被绕过，但有引导作用                                   │
+│  本地 Hook（branch-protect.sh）                             │
+│  → 确保在 cp-* 或 feature/* 分支开发                        │
+│  → 确保有 PRD/DoD 文件                                      │
+│  → 引导作用，可被绕过                                       │
 ├─────────────────────────────────────────────────────────────┤
 │  CI（GitHub Actions）                                       │
-│  → PR 到 develop：只跑 L1 + L2A 测试                        │
+│  → 质量检查的唯一门槛                                       │
+│  → PR 到 develop：L1 测试 + L2A 检查                        │
 │  → PR 到 main：L1 + L2A + L2B/L3 证据链裁决                 │
 │  → 独立环境，无法伪造，真正的强制防线                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**核心原则**：Hook 是引导，CI 是裁决。
+**核心原则**：Hook 是引导，CI 是裁决。质量检查完全交给 CI（v12.4.5+）。
 
 ## Usage
 
@@ -123,4 +131,3 @@ GitHub 层面的保护：
 ## License
 
 ISC
-# test

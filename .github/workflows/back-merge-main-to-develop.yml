@@ -9,8 +9,25 @@ permissions:
   pull-requests: write
 
 jobs:
+  # 无条件 entry job：确保即使其他 jobs 跳过，workflow 也能成功
+  # 解决 GitHub Actions 的问题：所有 jobs 跳过 = workflow failure
+  entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      is-main: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Check branch
+        run: |
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Is main: ${{ github.ref == 'refs/heads/main' }}"
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "⏭️ 非 main 分支，跳过 back-merge"
+          fi
+
   check-trigger:
-    if: github.ref == 'refs/heads/main'
+    needs: [entry]
+    if: needs.entry.outputs.is-main == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 1
     outputs:
@@ -85,6 +102,10 @@ jobs:
           # 3) 尝试开启 auto-merge
           # CRITICAL FIX: 移除 || true，让失败被正确报告
           pr_number=$(echo "$pr_url" | sed -n 's#.*/pull/\([0-9]\+\)$#\1#p')
+          if [[ -z "${pr_number:-}" ]]; then
+            echo "❌ 无法从 PR URL 提取 PR 号: $pr_url"
+            exit 1
+          fi
           if [[ -n "${pr_number:-}" ]]; then
             echo "尝试启用 auto-merge..."
             if gh pr merge "$pr_number" --repo "$OWNER_REPO" --auto --merge; then

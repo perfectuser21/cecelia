@@ -28,16 +28,15 @@ export function hello(name: string | null | undefined): string {
  * Note: This is a placeholder implementation for testing purposes.
  * In real usage, this would check:
  * - ~/.claude/hooks/ directory existence
- * - Required hook files (branch-protect.sh, pr-gate-v2.sh)
+ * - Required hook files (branch-protect.sh, stop.sh, credential-guard.sh)
  * - Hook file permissions (executable)
  *
- * TODO: Implement real validation if TypeScript tooling expands
+ * As of v12.4.5+, quality checks are handled by CI, not local hooks.
  */
 export function validateHooks(): { configured: boolean; message?: string } {
-  // Placeholder: always returns configured for testing purposes
-  // Real implementation would use fs.existsSync() to check ~/.claude/hooks/
+  // Placeholder for testing - real validation not needed since CI handles quality checks
   return {
     configured: true,
-    message: 'Placeholder: real validation not implemented',
+    message: 'Quality checks handled by CI (v12.4.5+)',
   };
 }

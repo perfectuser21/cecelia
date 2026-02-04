@@ -14,9 +14,14 @@
 
 set -euo pipefail
 
+# ===== 共享工具函数 =====
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/hook-utils.sh
+source "$SCRIPT_DIR/../lib/hook-utils.sh"
+
 # ===== 配置 =====
 # 测试命令超时时间（秒）
-COMMAND_TIMEOUT=120
+COMMAND_TIMEOUT="${COMMAND_TIMEOUT:-120}"
 
 # ===== 临时文件管理（v4.3: 修复 trap 覆盖问题）=====
 TEMP_FILES=()
@@ -26,33 +31,6 @@ cleanup_temp_files() {
   done
 }
 trap cleanup_temp_files EXIT
-
-# ===== 工具函数 =====
-
-# 清理数值：移除非数字字符，空值默认为 0
-clean_number() {
-    local val="${1:-0}"
-    val="${val//[^0-9]/}"
-    echo "${val:-0}"
-}
-
-# 带 timeout 的命令执行
-# 用法: run_with_timeout <timeout_seconds> <command...>
-# 返回值: 0=成功, 1=失败, 124=超时
-run_with_timeout() {
-    local timeout_sec="$1"
-    shift
-
-    # 检查 timeout 命令是否可用
-    if command -v timeout &>/dev/null; then
-        timeout "$timeout_sec" "$@"
-        return $?
-    else
-        # 降级：没有 timeout 命令，直接运行（有风险）
-        "$@"
-        return $?
-    fi
-}
 
 # ===== jq 检查 =====
 # L1 修复: 添加 jq 可用性检查

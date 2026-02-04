@@ -62,9 +62,15 @@ AI 开发工作流引擎。
 
 ```
 zenithjoy-engine/
-├── hooks/           # Claude Code Hooks (2 个)
-│   ├── branch-protect.sh  # 分支保护 + 步骤状态机
-│   └── pr-gate-v2.sh      # PR 前质检（双模式：pr/release）
+├── hooks/           # Claude Code Hooks
+│   ├── branch-protect.sh      # 分支保护 + 步骤状态机 (项目+全局)
+│   ├── stop.sh                # 循环控制（15 次重试上限）(全局)
+│   ├── subagent-stop.sh       # Subagent 循环控制 (项目)
+│   ├── credential-guard.sh    # 凭据保护 (全局)
+│   ├── mark-subagent-done.sh  # 标记 Subagent 完成 (项目)
+│   ├── require-subagent-token.sh  # Subagent Token 验证 (项目)
+│   ├── session-start.sh       # 会话开始 (全局)
+│   └── pr-gate-v2.sh          # [已废弃] v12.4.5 移除
 ├── skills/
 │   ├── dev/         # /dev 开发工作流
 │   ├── audit/       # /audit 代码审计
@@ -106,11 +112,16 @@ zenithjoy-engine/
   "hooks": {
     "PreToolUse": [
       {"matcher": "Write|Edit", "hooks": [{"type": "command", "command": "./hooks/branch-protect.sh"}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "./hooks/pr-gate-v2.sh"}]}
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "./hooks/require-subagent-token.sh"}]}
+    ],
+    "SubagentStop": [
+      {"hooks": [{"type": "command", "command": "./hooks/subagent-stop.sh"}]}
     ]
   }
 }
 ```
+
+**注意**：质量检查（原 pr-gate-v2.sh）已在 v12.4.5 移除，完全交给 CI 处理。
 
 **开发流程**：
 - 项目内 `./hooks/` 和 `./skills/` → develop 分支开发版

@@ -110,7 +110,7 @@ while (attempts < MAX_GATE_ATTEMPTS) {
 }
 
 if (attempts >= MAX_GATE_ATTEMPTS) {
-  throw new Error("gate:test 审核失败，已重试 20 次");
+  throw new Error("gate:test 审核失败，已重试 15 次");
 }
 ```
 

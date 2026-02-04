@@ -17,14 +17,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {"type": "command", "command": "./hooks/require-subagent-token.sh"},
-          {"type": "command", "command": "./hooks/pr-gate-v2.sh"}
+          {"type": "command", "command": "./hooks/require-subagent-token.sh"}
         ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [{"type": "command", "command": "./hooks/subagent-stop.sh"}]
       }
     ]
   }

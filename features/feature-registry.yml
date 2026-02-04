@@ -15,9 +15,21 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.54.0"
+version: "2.66.0"
 updated: "2026-02-04"
 changelog:
+  - 2.66.0: v12.5.1 - 剩余 4 个 bug 修复（auto-merge skip + evidence branch + TOCTOU + Monorepo）
+  - 2.65.0: v12.5.0 - CI/CD + Branch Protection + Stop Hook bug 修复（21 个 bug）
+  - 2.64.0: v12.4.14 - Hook gitignored 文件检测修复 + 时间窗口测试修复
+  - 2.63.0: v12.4.13 - Hook 共享工具库
+  - 2.62.0: v12.4.12 - CI 版本同步检查
+  - 2.61.0: v12.4.11 - DEBUG 日志工具支持
+  - 2.60.0: v12.4.10 - CJS 脚本共享常量提取
+  - 2.59.0: v12.4.9 - 版本同步修复（package-lock.json 同步 + SKILL.md 版本更新流程文档）
+  - 2.58.0: v12.4.8 - 低优先级清理（session-end.sh/STOP-HOOK-SPEC.md 归档 + src/index.ts 注释更新）
+  - 2.57.0: v12.4.7 - 深度审计修复（skills 重试次数 20→15 + README.md 更新）
+  - 2.56.0: v12.4.6 - 审计问题修复（regression-contract.yaml 版本同步 + CLAUDE.md hooks 列表更新）
+  - 2.55.0: v12.4.4 - 代码库清理（SKILL.md 重复内容修复 + 07-quality.md 矛盾修复 + stop.sh 注释修正 + .gitignore 例外规则清理）
   - 2.54.0: v12.4.3 - 强调 /dev 核心目标（成功合并 PR，不停止，自动修复一切问题）
   - 2.53.0: v11.26.1 - 修复 7 个 CRITICAL bug（Stop Hook PR合并退出 + branch-protect 新仓库fallback + retry_count竞态 + Step 3竞态 + PR Gate硬阻塞 + 命令注入防护）
   - 2.52.0: v11.26.0 - gate:quality - 本地 PR 前质量检查 Gate（TypeCheck + Build + Test + Shell 语法，Step 7 提前发现 95% 问题）
@@ -83,10 +95,11 @@ platform_features:
     name: Branch Protection
     status: Committed
     priority: P0
-    version: "11.13.1"
-    updated: "2026-01-31"
+    version: "12.4.14"
+    updated: "2026-02-04"
     description: |
       防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
+      v12.4.14: 修复 gitignored PRD/DoD 文件检测（跳过 git 追踪检查，只验证存在性和内容）
       v11.13.1: 支持 monorepo 子目录 PRD/DoD 文件检测（如 apps/core/.prd.md）
       v11.11.0: P1-6 修复 - 使用 grep -Eq 替代 bash regex 进行 skills 路径匹配（修复分组失败问题）
       v11.5.0: 放宽 skills 保护（只保护 Engine skills：dev, qa, audit, semver，其他 skills 可从任何 repo 部署）
@@ -224,7 +237,7 @@ platform_features:
     name: Unified Dev Workflow
     status: Committed
     priority: P0
-    version: "12.4.3"
+    version: "12.4.9"
     updated: "2026-02-04"
     description: |
       v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
@@ -232,6 +245,7 @@ platform_features:
       - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
       - 从头到尾一直执行，不在 PR 创建后停止
       - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
+      - v12.4.9: 添加版本更新流程文档（防止 package-lock.json 再次不同步）
       - v12.4.3: 强调核心目标 - 成功合并 PR，不停止，遇到问题自动修复
       - v12.4.2: 添加 Step 11 任务列表清理逻辑（防止任务残留）
       - v11.21.0: 循环模式 B 优化（所有步骤文件使用统一循环控制模板，MAX_GATE_ATTEMPTS=3 硬编码上限）

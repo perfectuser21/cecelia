@@ -23,6 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { DEFAULT_BASE_BRANCH } = require('../lib/constants.cjs');
 
 // ============================================================================
 // 参数解析
@@ -35,7 +36,7 @@ const options = {
   month: null,
   format: 'human',
   verbose: false,
-  base: 'develop',
+  base: DEFAULT_BASE_BRANCH,
 };
 
 // L1 fix: 参数解析添加越界检查，不在内部修改 i

@@ -2,14 +2,14 @@
   "version": 3,
   "gate": "audit",
   "decision": "PASS",
-  "created_at": "2026-02-04T02:47:18Z",
-  "expires_at": "2026-02-04T03:17:18Z",
-  "expires_at_epoch": 1770175038,
-  "branch": "release/v12.4.3",
-  "head_sha": "7681e056e5eaa23207ee8e6c9dac1f322827ee50",
-  "tree_sha": "d6ce3f9ba386375ea5b8d4338c10aabeca3f636b",
+  "created_at": "2026-02-04T07:25:19Z",
+  "expires_at": "2026-02-04T07:55:19Z",
+  "expires_at_epoch": 1770191719,
+  "branch": "cp-fix-cicd-hook-bugs",
+  "head_sha": "ae9459140ab9b64a4510be6a3175fb88daf2e0f0",
+  "tree_sha": "ff2bc43fdf28209be58914b4b4fa26f5c6104ce3",
   "repo_id": "056850e49c9f6e2ef4af447ffbd40f83ac7a0e9c5155352d72a366ab863d537a",
-  "task_id": "release/v12.4.3",
+  "task_id": "fix-cicd-hook-bugs",
   "tool_version": "3.0.0",
-  "signature": "9397672b35fbc5a3b4ec994a3b995ca2013f200f5ccde765c55b8a365ce731f2"
+  "signature": "00b20570f212e4086a00a0c09276361992f59c65228a31ed47340a84346a25f2"
 }

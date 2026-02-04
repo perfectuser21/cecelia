@@ -97,6 +97,22 @@ done
 
 echo ""
 
+# Bug fix: 分支名计算逻辑清晰化
+# - PR 上下文: GITHUB_HEAD_REF (PR 源分支名)
+# - Push 上下文: GITHUB_REF_NAME (分支名，如 main)
+# - 本地执行: git rev-parse (当前分支)
+# 注意: GITHUB_REF_NAME 在 PR 上下文可能是 "123/merge" 格式，所以必须优先使用 GITHUB_HEAD_REF
+get_branch_name() {
+    if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+        echo "$GITHUB_HEAD_REF"
+    elif [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+        echo "$GITHUB_REF_NAME"
+    else
+        git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+    fi
+}
+BRANCH_NAME=$(get_branch_name)
+
 # 检查是否有缺失的 checks
 if [[ ${#MISSING_CHECKS[@]} -gt 0 ]]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -132,7 +148,7 @@ fi
 # 生成 Evidence JSON
 jq -n \
   --arg sha "$HEAD_SHA" \
-  --arg branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}}" \
+  --arg branch "$BRANCH_NAME" \
   --arg ci_run_id "${GITHUB_RUN_ID:-local}" \
   --arg timestamp "$(date -Iseconds)" \
   --argjson qa_gate_passed "$QA_GATE_PASSED" \

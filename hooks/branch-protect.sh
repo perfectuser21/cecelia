@@ -7,14 +7,10 @@
 
 set -euo pipefail
 
-# ===== 工具函数 =====
-
-# 清理数值：移除非数字字符，空值默认为 0
-clean_number() {
-    local val="${1:-0}"
-    val="${val//[^0-9]/}"
-    echo "${val:-0}"
-}
+# ===== 共享工具函数 =====
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/hook-utils.sh
+source "$SCRIPT_DIR/../lib/hook-utils.sh"
 
 # ===== jq 检查 =====
 if ! command -v jq &>/dev/null; then
@@ -183,11 +179,40 @@ fi
 if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9][-a-zA-Z0-9_]*$ ]] || \
    [[ "$CURRENT_BRANCH" =~ ^feature/[a-zA-Z0-9][-a-zA-Z0-9_/]*$ ]]; then
 
+    # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
+    # 优先级: 子目录 PRD/DoD > 根目录 PRD/DoD
+    find_prd_dod_dir() {
+        local file_path="$1"
+        local project_root="$2"
+        local branch="$3"
+        local current_dir
+        current_dir=$(dirname "$file_path")
+
+        # 处理文件路径（可能不存在）
+        if [[ ! -d "$current_dir" ]]; then
+            current_dir=$(dirname "$current_dir")
+        fi
+
+        while [[ "$current_dir" != "$project_root" && "$current_dir" != "/" && "$current_dir" != "." ]]; do
+            # 检查当前目录是否有 PRD/DoD 文件（新格式或旧格式）
+            if [[ -f "$current_dir/.prd-${branch}.md" ]] || [[ -f "$current_dir/.prd.md" ]]; then
+                echo "$current_dir"
+                return 0
+            fi
+            current_dir=$(dirname "$current_dir")
+        done
+
+        # 没找到则返回项目根目录
+        echo "$project_root"
+    }
+
+    PRD_DOD_DIR=$(find_prd_dod_dir "$FILE_PATH" "$PROJECT_ROOT" "$CURRENT_BRANCH")
+
     # v17: 分支级别 PRD/DoD 文件（优先新格式，fallback 旧格式）
-    PRD_FILE_NEW="$PROJECT_ROOT/.prd-${CURRENT_BRANCH}.md"
-    PRD_FILE_OLD="$PROJECT_ROOT/.prd.md"
-    DOD_FILE_NEW="$PROJECT_ROOT/.dod-${CURRENT_BRANCH}.md"
-    DOD_FILE_OLD="$PROJECT_ROOT/.dod.md"
+    PRD_FILE_NEW="$PRD_DOD_DIR/.prd-${CURRENT_BRANCH}.md"
+    PRD_FILE_OLD="$PRD_DOD_DIR/.prd.md"
+    DOD_FILE_NEW="$PRD_DOD_DIR/.dod-${CURRENT_BRANCH}.md"
+    DOD_FILE_OLD="$PRD_DOD_DIR/.dod.md"
 
     # 选择 PRD 文件（优先新格式）
     if [[ -f "$PRD_FILE_NEW" ]]; then
@@ -299,56 +324,108 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9][-a-zA-Z0-9_]*$ ]] || \
         fi
     fi
 
-    # v17: 检查新旧两种格式的 PRD 文件
-    PRD_IN_BRANCH=$(clean_number "$(git log "$BASE_BRANCH"..HEAD --name-only 2>/dev/null | grep -cE "(^|/)$PRD_BASENAME$" || echo 0)")
-    PRD_STAGED=$(clean_number "$(git diff --cached --name-only 2>/dev/null | grep -cE "(^|/)$PRD_BASENAME$" || echo 0)")
-    PRD_MODIFIED=$(clean_number "$(git diff --name-only 2>/dev/null | grep -cE "(^|/)$PRD_BASENAME$" || echo 0)")
-    PRD_UNTRACKED=$(clean_number "$(git status --porcelain 2>/dev/null | grep -cE "^\?\? (.*\/)?$PRD_BASENAME$" || echo 0)")
-
-    if [[ "$PRD_IN_BRANCH" -eq 0 && "$PRD_STAGED" -eq 0 && "$PRD_MODIFIED" -eq 0 && "$PRD_UNTRACKED" -eq 0 ]]; then
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [ERROR] PRD 文件未更新 ($PRD_BASENAME)" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "当前分支: $CURRENT_BRANCH" >&2
-        echo "当前 PRD 是旧任务的，请为本次任务更新 PRD" >&2
-        echo "" >&2
-        echo "[SKILL_REQUIRED: dev]" >&2
-        exit 2
+    # Bug fix: TOCTOU 缓解 - 立即解析 BASE_BRANCH 为 commit SHA
+    # 这样即使分支在检测后被删除或移动，后续的 git log 仍能正确引用
+    BASE_REF=$(git rev-parse "$BASE_BRANCH" 2>/dev/null || echo "")
+    if [[ -z "$BASE_REF" ]]; then
+        # BASE_BRANCH 无法解析，使用 HEAD 作为 fallback（会导致 PRD 检查失败，但不会崩溃）
+        BASE_REF="HEAD"
     fi
 
-    # v17: 检查新旧两种格式的 DoD 文件
-    DOD_IN_BRANCH=$(clean_number "$(git log "$BASE_BRANCH"..HEAD --name-only 2>/dev/null | grep -cE "(^|/)$DOD_BASENAME$" || echo 0)")
-    DOD_STAGED=$(clean_number "$(git diff --cached --name-only 2>/dev/null | grep -cE "(^|/)$DOD_BASENAME$" || echo 0)")
-    DOD_MODIFIED=$(clean_number "$(git diff --name-only 2>/dev/null | grep -cE "(^|/)$DOD_BASENAME$" || echo 0)")
-    DOD_UNTRACKED=$(clean_number "$(git status --porcelain 2>/dev/null | grep -cE "^\?\? (.*\/)?$DOD_BASENAME$" || echo 0)")
-
-    if [[ "$DOD_IN_BRANCH" -eq 0 && "$DOD_STAGED" -eq 0 && "$DOD_MODIFIED" -eq 0 && "$DOD_UNTRACKED" -eq 0 ]]; then
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [ERROR] DoD 文件未更新 ($DOD_BASENAME)" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "当前分支: $CURRENT_BRANCH" >&2
-        echo "当前 DoD 是旧任务的，请为本次任务更新 DoD" >&2
-        echo "" >&2
-        echo "[SKILL_REQUIRED: dev]" >&2
-        exit 2
+    # v19: 检查 PRD/DoD 是否 gitignored（gitignored 文件无法通过 git 跟踪，跳过更新检查）
+    PRD_GITIGNORED=0
+    if git check-ignore -q "$PRD_FILE" 2>/dev/null; then
+        PRD_GITIGNORED=1
     fi
+
+    # v17: 检查新旧两种格式的 PRD 文件（仅对非 gitignored 文件有效）
+    # Bug fix: 使用 grep -F (fixed string) 避免 regex 注入风险
+    # 如果分支名包含 [、] 等特殊字符，-E 模式会错误解析
+    if [[ "$PRD_GITIGNORED" -eq 0 ]]; then
+        PRD_IN_BRANCH=$(clean_number "$(git log "$BASE_REF"..HEAD --name-only 2>/dev/null | grep -cF "$PRD_BASENAME" || echo 0)")
+        PRD_STAGED=$(clean_number "$(git diff --cached --name-only 2>/dev/null | grep -cF "$PRD_BASENAME" || echo 0)")
+        PRD_MODIFIED=$(clean_number "$(git diff --name-only 2>/dev/null | grep -cF "$PRD_BASENAME" || echo 0)")
+        PRD_UNTRACKED=$(clean_number "$(git status --porcelain 2>/dev/null | grep -cF "$PRD_BASENAME" || echo 0)")
+
+        if [[ "$PRD_IN_BRANCH" -eq 0 && "$PRD_STAGED" -eq 0 && "$PRD_MODIFIED" -eq 0 && "$PRD_UNTRACKED" -eq 0 ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [ERROR] PRD 文件未更新 ($PRD_BASENAME)" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "当前分支: $CURRENT_BRANCH" >&2
+            echo "当前 PRD 是旧任务的，请为本次任务更新 PRD" >&2
+            echo "" >&2
+            echo "[SKILL_REQUIRED: dev]" >&2
+            exit 2
+        fi
+    fi
+    # gitignored PRD 文件只需存在且内容有效（前面已检查），跳过更新检查
+
+    # v19: 检查 DoD 是否 gitignored
+    DOD_GITIGNORED=0
+    if git check-ignore -q "$DOD_FILE" 2>/dev/null; then
+        DOD_GITIGNORED=1
+    fi
+
+    # v17: 检查新旧两种格式的 DoD 文件（仅对非 gitignored 文件有效）
+    # Bug fix: 使用 grep -F (fixed string) 避免 regex 注入风险
+    if [[ "$DOD_GITIGNORED" -eq 0 ]]; then
+        DOD_IN_BRANCH=$(clean_number "$(git log "$BASE_REF"..HEAD --name-only 2>/dev/null | grep -cF "$DOD_BASENAME" || echo 0)")
+        DOD_STAGED=$(clean_number "$(git diff --cached --name-only 2>/dev/null | grep -cF "$DOD_BASENAME" || echo 0)")
+        DOD_MODIFIED=$(clean_number "$(git diff --name-only 2>/dev/null | grep -cF "$DOD_BASENAME" || echo 0)")
+        DOD_UNTRACKED=$(clean_number "$(git status --porcelain 2>/dev/null | grep -cF "$DOD_BASENAME" || echo 0)")
+
+        if [[ "$DOD_IN_BRANCH" -eq 0 && "$DOD_STAGED" -eq 0 && "$DOD_MODIFIED" -eq 0 && "$DOD_UNTRACKED" -eq 0 ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [ERROR] DoD 文件未更新 ($DOD_BASENAME)" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "当前分支: $CURRENT_BRANCH" >&2
+            echo "当前 DoD 是旧任务的，请为本次任务更新 DoD" >&2
+            echo "" >&2
+            echo "[SKILL_REQUIRED: dev]" >&2
+            exit 2
+        fi
+    fi
+    # gitignored DoD 文件只需存在且内容有效（前面已检查），跳过更新检查
 
     # v18: 检查 Task Checkpoint 是否已创建
     DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
     if [[ -f "$DEV_MODE_FILE" ]]; then
         # Bug #6 修复: 检查 Step 3 状态，如果正在执行则允许通过
+        # Bug fix: 增加 Step 3 超时检查（防止卡在 in_progress 绕过检查）
         STEP_3_STATUS=$(grep "^step_3_branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-        if [[ "$STEP_3_STATUS" == "in_progress" || "$STEP_3_STATUS" == "done" ]]; then
-            # Step 3 正在执行或已完成，允许通过（避免竞态条件）
+        STEP_3_TIME=$(grep "^step_3_time:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "0")
+        CURRENT_TIME=$(date +%s)
+
+        if [[ "$STEP_3_STATUS" == "in_progress" ]]; then
+            # 检查是否超时（10 分钟 = 600 秒）
+            if [[ "$STEP_3_TIME" -gt 0 ]] && [[ $((CURRENT_TIME - STEP_3_TIME)) -gt 600 ]]; then
+                echo "" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "  [ERROR] Step 3 超时（卡在 in_progress 超过 10 分钟）" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "" >&2
+                echo "可能原因: 上次 /dev 执行中断" >&2
+                echo "请删除 .dev-mode 并重新运行 /dev" >&2
+                echo "" >&2
+                echo "[SKILL_REQUIRED: dev]" >&2
+                exit 2
+            fi
+            # Step 3 正在执行，允许通过
+            exit 0
+        fi
+
+        if [[ "$STEP_3_STATUS" == "done" ]]; then
+            # Step 3 已完成，允许通过
             exit 0
         fi
 
         # 否则检查 tasks_created
-        TASKS_CREATED=$(grep "^tasks_created:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
+        # Bug fix: 使用 awk 替代 cut，避免多空格边界问题
+        TASKS_CREATED=$(grep "^tasks_created:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
         if [[ "$TASKS_CREATED" != "true" ]]; then
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
