@@ -11,9 +11,11 @@ import {
   Clock,
   AlertCircle,
   ExternalLink,
-  GitBranch
+  GitBranch,
+  FileText
 } from 'lucide-react';
 import { useCeceliaPage } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import { BlockEditor } from '../../shared/components/blocks';
 
 interface Project {
   id: string;
@@ -348,6 +350,15 @@ export default function ProjectDetail() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Project Content (Blocks) */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText className="w-5 h-5 text-slate-500" />
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Project Notes</h2>
+        </div>
+        <BlockEditor parentType="project" parentId={projectId || ''} />
       </div>
 
       {/* Tasks Section */}
