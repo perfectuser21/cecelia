@@ -4,13 +4,6 @@
  */
 
 import type { CoreDynamicConfig } from '../../contexts/InstanceContext';
-import {
-  LayoutDashboard,
-  Monitor,
-  Settings,
-  Target,
-  ListTodo,
-} from 'lucide-react';
 
 // Core Instance 配置
 const instanceConfig = {
@@ -30,21 +23,21 @@ const instanceConfig = {
   }
 };
 
-// Core 导航配置
+// Core 导航配置 - icon 使用字符串名称，DynamicRouter 会转换为 LucideIcon
 const navGroups = [
   {
     title: '总览',
     items: [
       {
         path: '/',
-        icon: LayoutDashboard,
+        icon: 'LayoutDashboard',
         label: '工作台',
         featureKey: 'dashboard',
         component: 'Dashboard'
       },
       {
         path: '/seats',
-        icon: Monitor,
+        icon: 'Monitor',
         label: 'Seats 状态',
         featureKey: 'seats',
         component: 'SeatsStatus'
@@ -56,17 +49,17 @@ const navGroups = [
     items: [
       {
         path: '/goals',
-        icon: Target,
+        icon: 'Target',
         label: 'OKR 目标',
         featureKey: 'goals',
-        component: 'GoalsPage'  // TODO: create this page
+        component: 'GoalsPage'
       },
       {
         path: '/tasks',
-        icon: ListTodo,
+        icon: 'ListTodo',
         label: '任务队列',
         featureKey: 'tasks',
-        component: 'TasksPage'  // TODO: create this page
+        component: 'TasksPage'
       },
     ]
   },
@@ -76,16 +69,25 @@ const navGroups = [
 const pageComponents: Record<string, () => Promise<{ default: any }>> = {
   'Dashboard': () => import('../../pages/Dashboard'),
   'SeatsStatus': () => import('../../pages/SeatsStatus'),
-  // TODO: Add Goals and Tasks pages
   'GoalsPage': () => import('../../pages/Dashboard'),  // placeholder
   'TasksPage': () => import('../../pages/Dashboard'),  // placeholder
 };
+
+// 从 navGroups 生成 allRoutes
+const allRoutes = navGroups.flatMap(group =>
+  group.items.map(item => ({
+    path: item.path,
+    component: item.component,
+    requireAuth: true,
+  }))
+);
 
 export async function buildCoreConfig(): Promise<CoreDynamicConfig> {
   return {
     instanceConfig,
     navGroups,
     pageComponents,
+    allRoutes,
   };
 }
 

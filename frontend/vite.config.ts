@@ -119,6 +119,12 @@ export default defineConfig({
   server: {
     port: 3001,
     proxy: {
+      // Brain API (Seats, Tick, etc.)
+      '/api/brain': {
+        target: 'http://localhost:5221',
+        changeOrigin: true,
+      },
+      // Other APIs
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,

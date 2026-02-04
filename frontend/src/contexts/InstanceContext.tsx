@@ -25,6 +25,7 @@ export interface CoreDynamicConfig {
   instanceConfig: InstanceConfig;
   navGroups: NavGroup[];
   pageComponents: Record<string, () => Promise<{ default: any }>>;
+  allRoutes?: Array<{ path: string; component: string; requireAuth?: boolean }>;
 }
 
 // 缓存 Core 配置
