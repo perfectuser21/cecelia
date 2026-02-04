@@ -1,5 +1,15 @@
 dev
-branch: cp-docker-24x7-deployment
-prd: .prd-docker-deployment.md
-started: 2026-02-01T06:34:16+00:00
-tasks_created: true
+branch: cp-02041123-blocks-api
+prd: .prd-blocks-api.md
+started: 2026-02-04T11:23:00+08:00
+step_1_prd: done
+step_2_detect: pending
+step_3_branch: done
+step_4_dod: pending
+step_5_code: pending
+step_6_test: pending
+step_7_quality: pending
+step_8_pr: pending
+step_9_ci: pending
+step_10_learning: pending
+step_11_cleanup: pending

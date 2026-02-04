@@ -1,28 +1,26 @@
 ---
-id: qa-decision-concurrency-optimization
+id: qa-decision-blocks-api
 version: 1.0.0
-created: 2026-02-01
-prd: .prd-concurrency-optimization.md
+created: 2026-02-04
+prd: .prd-blocks-api.md
 ---
 
 # QA Decision
 
 **Decision**: NO_RCI
-**Priority**: P2
-**RepoType**: Business
+**Priority**: P1
+**RepoType**: Engine
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| 并发配置统一 (.env, .env.docker) | manual | manual: 检查文件内容包含 CECELIA_MAX_CONCURRENT=5 和 MAX_CONCURRENT=5 |
-| 环境变量清理 (.env.example 合并) | manual | manual: 验证 .env.example 包含完整配置，brain/.env.example 已删除 |
-| 文档更新 (README.md, DOCKER.md) | manual | manual: 检查文档准确描述启动方式 |
-| 配置生效验证 (Brain 读取配置) | manual | manual: `curl http://localhost:5221/api/brain/tick/status \| jq .max_concurrent` 返回 5 |
-| 服务健康检查 | manual | manual: 验证 5220, 5221 端口服务正常运行，Tick 循环启用 |
-| 资源监控 (可选) | manual | manual: 检查 CPU Load < 6.4, 可用内存 > 3GB |
-| 现有功能回归 | manual | manual: Tick 循环、任务派发、数据库连接正常 |
-| 文件清理 | manual | manual: Git 状态干净，无临时文件遗留 |
+| GET /api/blocks/:parentType/:parentId 返回正确数据 | auto | brain/src/__tests__/blocks.test.js |
+| POST /api/blocks 创建 block 成功 | auto | brain/src/__tests__/blocks.test.js |
+| PUT /api/blocks/:id 更新 block 成功 | auto | brain/src/__tests__/blocks.test.js |
+| DELETE /api/blocks/:id 删除 block 成功 | auto | brain/src/__tests__/blocks.test.js |
+| PUT /api/blocks/reorder 批量重排序成功 | auto | brain/src/__tests__/blocks.test.js |
+| 参数校验（缺少必填字段返回 400） | auto | brain/src/__tests__/blocks.test.js |
 
 ## RCI
 
@@ -31,21 +29,17 @@ prd: .prd-concurrency-optimization.md
 
 ## Reason
 
-配置优化，无需回归契约。此变更仅调整内部运行时参数（并发数、环境变量），不影响外部 API、数据模型或核心工作流。所有验证通过手动检查配置生效和服务健康即可。
+这是新增的 API 功能，不涉及现有功能回归。使用单元测试覆盖所有 CRUD 操作即可。
 
 ## Scope
 
 **允许修改的范围**：
-- `.env` - 添加/更新并发配置
-- `.env.docker` - 统一并发配置
-- `.env.example` - 合并完整配置模板
-- `brain/.env.example` - 删除（合并到根目录）
-- `README.md` - 更新启动说明
-- `DOCKER.md` - 标记为可选方式
+- `brain/src/routes.js` - 添加 blocks API 路由
+- `brain/src/__tests__/blocks.test.js` - 新增测试文件
+- `docs/` - 文档更新
 
 **禁止修改的区域**：
-- `brain/src/` - 核心业务逻辑
-- `src/api/` - API 端点
-- `data/` - 数据文件
-- `.git/` - Git 元数据
-- `node_modules/` - 依赖
+- `brain/src/tick.js` - Tick 循环逻辑
+- `brain/src/executor.js` - 任务执行器
+- `brain/src/decision.js` - 决策逻辑
+- 其他现有 API 端点

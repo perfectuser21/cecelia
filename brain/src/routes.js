@@ -1969,4 +1969,233 @@ router.post('/self-diagnosis', async (req, res) => {
   }
 });
 
+// ==================== Blocks API (Notion-like Page Content) ====================
+
+/**
+ * GET /api/brain/blocks/:parentType/:parentId
+ * Get all blocks for a parent entity (goal, task, project, or block)
+ */
+router.get('/blocks/:parentType/:parentId', async (req, res) => {
+  try {
+    const { parentType, parentId } = req.params;
+
+    // Validate parent type
+    const validTypes = ['goal', 'task', 'project', 'block'];
+    if (!validTypes.includes(parentType)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid parent_type. Must be one of: ${validTypes.join(', ')}`
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT id, parent_id, parent_type, type, content, order_index, created_at, updated_at
+      FROM blocks
+      WHERE parent_id = $1 AND parent_type = $2
+      ORDER BY order_index ASC
+    `, [parentId, parentType]);
+
+    res.json({ success: true, blocks: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get blocks', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/blocks
+ * Create a new block
+ */
+router.post('/blocks', async (req, res) => {
+  try {
+    const { parent_id, parent_type, type, content, order_index } = req.body;
+
+    // Validate required fields
+    if (!parent_id || !parent_type || !type) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: parent_id, parent_type, type'
+      });
+    }
+
+    // Validate parent type
+    const validParentTypes = ['goal', 'task', 'project', 'block'];
+    if (!validParentTypes.includes(parent_type)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid parent_type. Must be one of: ${validParentTypes.join(', ')}`
+      });
+    }
+
+    // Validate block type
+    const validBlockTypes = [
+      'paragraph', 'heading_1', 'heading_2', 'heading_3',
+      'bulleted_list', 'numbered_list', 'to_do',
+      'code', 'quote', 'callout', 'divider', 'image', 'toggle'
+    ];
+    if (!validBlockTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid block type. Must be one of: ${validBlockTypes.join(', ')}`
+      });
+    }
+
+    // Get max order_index if not provided
+    let finalOrderIndex = order_index;
+    if (finalOrderIndex === undefined || finalOrderIndex === null) {
+      const maxResult = await pool.query(`
+        SELECT COALESCE(MAX(order_index), -1) + 1 as next_index
+        FROM blocks
+        WHERE parent_id = $1 AND parent_type = $2
+      `, [parent_id, parent_type]);
+      finalOrderIndex = maxResult.rows[0].next_index;
+    }
+
+    const result = await pool.query(`
+      INSERT INTO blocks (parent_id, parent_type, type, content, order_index)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [parent_id, parent_type, type, content || {}, finalOrderIndex]);
+
+    res.json({ success: true, block: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to create block', details: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/blocks/reorder
+ * Batch reorder blocks (must be before :id route)
+ * Body: { blocks: [{ id, order_index }, ...] }
+ */
+router.put('/blocks/reorder', async (req, res) => {
+  try {
+    const { blocks } = req.body;
+
+    if (!Array.isArray(blocks) || blocks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'blocks must be a non-empty array of { id, order_index }'
+      });
+    }
+
+    // Validate each item
+    for (const block of blocks) {
+      if (!block.id || block.order_index === undefined) {
+        return res.status(400).json({
+          success: false,
+          error: 'Each block must have id and order_index'
+        });
+      }
+    }
+
+    // Use transaction for batch update
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (const block of blocks) {
+        await client.query(`
+          UPDATE blocks SET order_index = $1, updated_at = NOW() WHERE id = $2
+        `, [block.order_index, block.id]);
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true, updated: blocks.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to reorder blocks', details: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/blocks/:id
+ * Update a block
+ */
+router.put('/blocks/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { type, content, order_index } = req.body;
+
+    // Build dynamic update query
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (type !== undefined) {
+      const validBlockTypes = [
+        'paragraph', 'heading_1', 'heading_2', 'heading_3',
+        'bulleted_list', 'numbered_list', 'to_do',
+        'code', 'quote', 'callout', 'divider', 'image', 'toggle'
+      ];
+      if (!validBlockTypes.includes(type)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid block type. Must be one of: ${validBlockTypes.join(', ')}`
+        });
+      }
+      updates.push(`type = $${paramIndex++}`);
+      values.push(type);
+    }
+
+    if (content !== undefined) {
+      updates.push(`content = $${paramIndex++}`);
+      values.push(content);
+    }
+
+    if (order_index !== undefined) {
+      updates.push(`order_index = $${paramIndex++}`);
+      values.push(order_index);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, error: 'No fields to update' });
+    }
+
+    updates.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const result = await pool.query(`
+      UPDATE blocks
+      SET ${updates.join(', ')}
+      WHERE id = $${paramIndex}
+      RETURNING *
+    `, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Block not found' });
+    }
+
+    res.json({ success: true, block: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to update block', details: err.message });
+  }
+});
+
+/**
+ * DELETE /api/brain/blocks/:id
+ * Delete a block
+ */
+router.delete('/blocks/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(`
+      DELETE FROM blocks WHERE id = $1 RETURNING *
+    `, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Block not found' });
+    }
+
+    res.json({ success: true, deleted: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to delete block', details: err.message });
+  }
+});
+
 export default router;
