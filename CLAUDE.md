@@ -84,7 +84,6 @@ git worktree add ../task-b cp-task-b
 | 命令 | 说明 |
 |------|------|
 | `/dev` | 开始开发流程（自动创建 PRD/DoD） |
-| `/audit` | 代码审计与修复 |
 
 ---
 
@@ -137,7 +136,7 @@ bash scripts/setup-branch-protection.sh --fix
 ```
 zenithjoy-engine/
 ├── hooks/           # Claude Code Hooks
-├── skills/          # /dev, /audit, /qa
+├── skills/          # /dev
 ├── docs/            # 架构、经验文档
 ├── scripts/         # 部署、检查脚本
 ├── .github/         # CI 配置
