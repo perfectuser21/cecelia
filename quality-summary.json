@@ -1,47 +1,11 @@
 {
-  "branch": "cp-02011934-cecelia-overview-enhancement",
-  "head_sha": "61bb5cc50",
-  "timestamp": "2026-02-01T20:13:00Z",
-  "commands": {
-    "typecheck": {
-      "status": "pass",
-      "note": "npm run typecheck completed successfully"
-    },
-    "test": {
-      "status": "pass",
-      "note": "cecelia-overview.test.tsx: 18/18 tests passed"
-    }
+  "branch": "cp-02042336-f2a212ae-daac-45fe-9c48-355371",
+  "type": "qa",
+  "checks": {
+    "verification": {"status": "pass", "tests": 4, "passed": 4}
   },
   "gates": {
-    "prd": {
-      "status": "pass",
-      "note": "PRD reviewed and validated in Step 1"
-    },
-    "dod": {
-      "status": "pass",
-      "note": "DoD + QA Decision reviewed in Step 4"
-    },
-    "audit": {
-      "status": "pass",
-      "file": "docs/AUDIT-REPORT.md",
-      "decision": "PASS",
-      "summary": "L1: 0, L2: 0, L3: 0, L4: 0"
-    },
-    "test": {
-      "status": "pass",
-      "note": "18 tests covering API integration, edge cases, and data transformations"
-    }
+    "quality": {"status": "pass"}
   },
-  "artifacts": {
-    "prd": ".prd-cecelia-overview-enhancement.md",
-    "dod": ".dod-cp-02011934-cecelia-overview-enhancement.md",
-    "qa_decision": "docs/QA-DECISION.md",
-    "audit_report": "docs/AUDIT-REPORT.md",
-    "test_file": "apps/core/tests/cecelia-overview.test.tsx",
-    "implementation": "apps/core/features/execution/pages/CeceliaOverview.tsx"
-  },
-  "env": {
-    "node": "20.x",
-    "platform": "linux"
-  }
+  "timestamp": "2026-02-04T23:41:36+08:00"
 }
