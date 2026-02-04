@@ -1,3 +1,11 @@
+## [12.5.8] - 2026-02-04
+
+### Restored
+
+- **skills/audit/**: 恢复 audit skill（保留但不强制使用）
+  - 用户反馈："不要删除 skills 不要用就好了啊"
+  - 保留完整功能，可选使用
+
 ## [12.5.7] - 2026-02-04
 
 ### Changed
@@ -8,7 +16,7 @@
 
 ### Removed
 
-- **skills/audit/**: 删除 audit skill（只保留 /dev）
+- **skills/audit/**: 删除 audit skill（只保留 /dev）→ v12.5.8 已恢复
 
 ## [12.5.6] - 2026-02-04
 

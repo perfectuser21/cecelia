@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.69.0"
+version: "2.70.0"
 updated: "2026-02-04"
 changelog:
+  - 2.70.0: v12.5.8 - 恢复 audit skill（保留但不强制使用）
   - 2.67.0: v12.5.3 - 清理 Subagent hooks（mark-subagent-done.sh, require-subagent-token.sh 已删除）
   - 2.66.0: v12.5.1 - 剩余 4 个 bug 修复（auto-merge skip + evidence branch + TOCTOU + Monorepo）
   - 2.65.0: v12.5.0 - CI/CD + Branch Protection + Stop Hook bug 修复（21 个 bug）
