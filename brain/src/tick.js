@@ -14,12 +14,14 @@ import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
-const TICK_LOOP_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes between loop ticks
+const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
-const DISPATCH_TIMEOUT_MINUTES = 60; // Auto-fail dispatched tasks after 60 min (claude -p needs time)
-const DISPATCH_COOLDOWN_MS = 60 * 1000; // 1 minute cooldown after dispatch
-const MAX_CONCURRENT_TASKS = parseInt(process.env.CECELIA_MAX_CONCURRENT || '3', 10); // Max concurrent cecelia-run executions
+const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
+const DISPATCH_COOLDOWN_MS = parseInt(process.env.CECELIA_DISPATCH_COOLDOWN_MS || '5000', 10); // 5 seconds cooldown after dispatch
+const MAX_CONCURRENT_TASKS = parseInt(process.env.CECELIA_MAX_CONCURRENT || '6', 10); // Total seats
+const RESERVED_SLOTS = parseInt(process.env.CECELIA_RESERVED_SLOTS || '1', 10); // Reserved for manual intervention
+const AUTO_DISPATCH_MAX = MAX_CONCURRENT_TASKS - RESERVED_SLOTS; // Auto dispatch limit (6 - 1 = 5)
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
 // Working memory keys
@@ -74,6 +76,9 @@ async function getTickStatus() {
     tick_running: _tickRunning,
     last_dispatch: lastDispatch,
     max_concurrent: MAX_CONCURRENT_TASKS,
+    reserved_slots: RESERVED_SLOTS,
+    auto_dispatch_max: AUTO_DISPATCH_MAX,
+    dispatch_cooldown_ms: DISPATCH_COOLDOWN_MS,
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
     circuit_breakers: getAllStates()
   };
@@ -337,8 +342,9 @@ async function dispatchNextTask(goalIds) {
   const dbActiveCount = parseInt(activeResult.rows[0].count);
   const processActiveCount = getActiveProcessCount();
   const activeCount = Math.max(dbActiveCount, processActiveCount);
-  if (activeCount >= MAX_CONCURRENT_TASKS) {
-    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, db_active: dbActiveCount, process_active: processActiveCount, actions };
+  // Reserve slots for manual intervention
+  if (activeCount >= AUTO_DISPATCH_MAX) {
+    return { dispatched: false, reason: 'reserved_slot_kept', active: activeCount, limit: AUTO_DISPATCH_MAX, db_active: dbActiveCount, process_active: processActiveCount, actions };
   }
 
   // 2. Circuit breaker check
@@ -706,5 +712,7 @@ export {
   TICK_TIMEOUT_MS,
   DISPATCH_TIMEOUT_MINUTES,
   DISPATCH_COOLDOWN_MS,
-  MAX_CONCURRENT_TASKS
+  MAX_CONCURRENT_TASKS,
+  RESERVED_SLOTS,
+  AUTO_DISPATCH_MAX
 };
