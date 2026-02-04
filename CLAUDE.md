@@ -62,9 +62,15 @@ AI 开发工作流引擎。
 
 ```
 zenithjoy-engine/
-├── hooks/           # Claude Code Hooks (2 个)
-│   ├── branch-protect.sh  # 分支保护 + 步骤状态机
-│   └── pr-gate-v2.sh      # PR 前质检（双模式：pr/release）
+├── hooks/           # Claude Code Hooks (8 个)
+│   ├── branch-protect.sh      # 分支保护 + 步骤状态机
+│   ├── pr-gate-v2.sh          # PR 前质检（双模式：pr/release）
+│   ├── stop.sh                # 循环控制（15 次重试上限）
+│   ├── subagent-stop.sh       # Subagent 循环控制
+│   ├── session-end.sh         # 会话结束清理
+│   ├── credential-guard.sh    # 凭据保护
+│   ├── mark-subagent-done.sh  # 标记 Subagent 完成
+│   └── require-subagent-token.sh  # Subagent Token 验证
 ├── skills/
 │   ├── dev/         # /dev 开发工作流
 │   ├── audit/       # /audit 代码审计

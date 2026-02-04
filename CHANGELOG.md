@@ -1,3 +1,21 @@
+## [12.4.4] - 2026-02-04
+
+### Fixed
+
+- **代码库清理 - 修复重复内容和矛盾信息**:
+  - C1: `skills/dev/SKILL.md` 清理重复粘贴的表格（615→515 行）
+  - C2: `skills/dev/steps/07-quality.md` 修复矛盾（改为"只汇总，不判定"），删除 backup 文件
+  - C4: `hooks/stop.sh` 注释修复（20→15 次重试上限）
+  - C5: `.gitignore` 删除 PRD/DoD 历史例外规则
+  - W1: `CLAUDE.md` 更新 hooks 数量描述（2→8）
+  - W8/W12: 删除空文件和乱码文件残留
+
+### Removed
+
+- `skills/dev/steps/07-quality.md.backup` - 矛盾的备份文件
+- `.prd-cp-stop-hook-pressure.md`, `.dod-cp-stop-hook-pressure.md` - 历史遗留 PRD/DoD 文件
+- `cp-0130-sync-main` - 空文件残留
+
 ## [12.4.1] - 2026-02-03
 
 ### Fixed (P2)

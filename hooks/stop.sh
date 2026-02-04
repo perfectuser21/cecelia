@@ -83,7 +83,7 @@ fi
 # ===== 读取 Hook 输入（JSON） =====
 HOOK_INPUT=$(cat)
 
-# ===== 20 次重试计数器（替代旧的 stop_hook_active 检查）=====
+# ===== 15 次重试计数器（替代旧的 stop_hook_active 检查）=====
 # 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
 # 具体检查逻辑在后面的完成条件中处理
 
@@ -129,7 +129,7 @@ if [[ "$STEPS_COMPLETE" == "true" ]]; then
     exit 0
 fi
 
-# ===== 检查重试次数（20 次上限）=====
+# ===== 检查重试次数（15 次上限）=====
 RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "0")
 RETRY_COUNT=${RETRY_COUNT//[^0-9]/}  # 清理非数字字符
 RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0

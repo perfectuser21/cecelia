@@ -1,30 +1,10 @@
 ---
 name: dev
-version: 3.0.0
-updated: 2026-01-30
+version: 3.1.0
+updated: 2026-02-04
 description: |
   统一开发工作流入口。
 
-  v3.1.0 变更（简化）：
-  - 删除本地 QA/Audit Subagent 调用
-  - 所有检查交给 CI DevGate
-  - DoD/RCI 检查由 CI 强制执行
-  - Quality 只跑自动化测试
-  v3.1.0 变更（简化）：
-  - 删除本地 QA/Audit Subagent 调用
-  - 所有检查交给 CI DevGate
-  - DoD/RCI 检查由 CI 强制执行
-  - Quality 只跑自动化测试
-  v3.1.0 变更（简化）：
-  - 删除本地 QA/Audit Subagent 调用
-  - 所有检查交给 CI DevGate
-  - DoD/RCI 检查由 CI 强制执行
-  - Quality 只跑自动化测试
-  v3.1.0 变更（简化）：
-  - 删除本地 QA/Audit Subagent 调用
-  - 所有检查交给 CI DevGate
-  - DoD/RCI 检查由 CI 强制执行
-  - Quality 只跑自动化测试
   v3.1.0 变更（简化）：
   - 删除本地 QA/Audit Subagent 调用
   - 所有检查交给 CI DevGate
@@ -37,7 +17,7 @@ description: |
   - 无头模式: CECELIA_HEADLESS=true 时 Stop Hook 直接 exit 0，外部循环控制
 ---
 
-# /dev - 统一开发工作流（v3.0）
+# /dev - 统一开发工作流（v3.1）
 
 ## ⚡ 核心目标（CRITICAL）
 
@@ -91,19 +71,7 @@ description: |
 /dev 的循环控制由 **Stop Hook** 实现：
 
 | 模式 | 循环实现 | 工作方式 |
-|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |---|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |---|
+|------|----------|----------|
 | **有头模式** | Stop Hook | 检测 `.dev-mode` 文件，未完成时 exit 2 阻止会话结束 |
 | **无头模式** | 外部 while 循环 | `CECELIA_HEADLESS=true` 时 Stop Hook exit 0，由 cecelia-run 控制 |
 
@@ -130,6 +98,7 @@ dev
 branch: cp-xxx
 prd: .prd-cp-xxx.md
 started: 2026-01-29T10:00:00+00:00
+tasks_created: true
 ```
 
 **生命周期**：
@@ -169,19 +138,7 @@ started: 2026-01-29T10:00:00+00:00
 ### 为什么有这个规则
 
 | AI 默认倾向 | 正确行为 |
-|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 || 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |---|
+|------------|---------|
 | 困难 → 不确定 → 让用户决定 ❌ | 困难 → 分析 → 自动解决 → 继续 ✅ |
 | "遇到问题，建议用户手动..." | "分析 Hook 需要什么，自动生成" |
 | "暂时禁用 Hook 绕过检查" | "修复格式/文件，通过检查" |
@@ -256,7 +213,6 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 - ❌ 完成一步后输出"已完成，等待用户确认"
 - ❌ 完成一步后停下来总结
 - ❌ 询问用户"是否继续下一步"
-
 
 ### 正确行为
 
@@ -358,19 +314,7 @@ TaskList()
 ## 版本号规则 (semver)
 
 | commit 类型 | 版本变化 |
-|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 || 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |-|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |----|
+|-------------|----------|
 | fix: | patch (+0.0.1) |
 | feat: | minor (+0.1.0) |
 | feat!: / BREAKING: | major (+1.0.0) |
@@ -424,23 +368,7 @@ skills/dev/
 ### Subagent 统一命名
 
 | 步骤 | Gate 名称 | 规则文件 | 循环条件 |
-|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |-----|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |----|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |----|
+|------|-----------|----------|----------|
 | Step 1 | gate:prd | skills/gate/gates/prd.md | FAIL → 修改 → 重审 |
 | Step 4 | gate:dod | skills/gate/gates/dod.md | 两个都 PASS |
 | Step 4 | gate:qa | skills/qa/SKILL.md | 同上 |
@@ -451,19 +379,7 @@ skills/dev/
 ### 三层职责分离
 
 | 层 | 位置 | 类型 | 职责 |
-|---|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||
+|----|------|------|------|
 | **Gate** | 本地 | 阻止型 | 过程卡口，FAIL 就停 |
 | **Quality** | 本地 | 汇总型 | 打包结账单，不做判定 |
 | **CI** | 远端 | 复核型 | 最终裁判，硬门禁 |
@@ -476,24 +392,9 @@ skills/dev/
 |------|------|----------|----------|
 | PRD | .prd.md | Hook 检查存在 | 写代码前 |
 | DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 ||| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |----|| 产物 | 位置 | 检查方式 | 检查时机 |
-|------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |-----|
-| PRD | .prd.md | - | ✅ 存在 + 内容有效 |
-| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | ✅ 存在 |
-| DoD | .dod.md | - | ✅ 存在 + 引用 QA 决策 |
-| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | ✅ 存在 + PASS |
-| .dev-mode | .dev-mode | - | Step 3 创建，Step 11 删除 |
+| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | Step 4 |
+| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | Step 5 后 |
+| .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
 
 ---
 

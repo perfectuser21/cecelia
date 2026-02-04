@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.54.0"
+version: "2.55.0"
 updated: "2026-02-04"
 changelog:
+  - 2.55.0: v12.4.4 - 代码库清理（SKILL.md 重复内容修复 + 07-quality.md 矛盾修复 + stop.sh 注释修正 + .gitignore 例外规则清理）
   - 2.54.0: v12.4.3 - 强调 /dev 核心目标（成功合并 PR，不停止，自动修复一切问题）
   - 2.53.0: v11.26.1 - 修复 7 个 CRITICAL bug（Stop Hook PR合并退出 + branch-protect 新仓库fallback + retry_count竞态 + Step 3竞态 + PR Gate硬阻塞 + 命令注入防护）
   - 2.52.0: v11.26.0 - gate:quality - 本地 PR 前质量检查 Gate（TypeCheck + Build + Test + Shell 语法，Step 7 提前发现 95% 问题）

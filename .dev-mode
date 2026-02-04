@@ -1,18 +1,6 @@
 dev
-branch: cp-ci-stress-test-fixes
-session_id: 1d8d3d06c342
-tty: not a tty
-not a tty
-prd: .prd-cp-ci-stress-test-fixes.md
-started: 2026-02-03T20:14:06+08:00
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
+branch: cp-fix-skill-md-duplicates
+prd: .prd-cp-fix-skill-md-duplicates.md
+started: 2026-02-04T10:00:00+00:00
+tasks_created: true
+retry_count: 3
