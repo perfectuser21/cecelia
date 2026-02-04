@@ -61,6 +61,13 @@ const navGroups = [
         featureKey: 'tasks',
         component: 'TasksPage'
       },
+      {
+        path: '/daily-reports',
+        icon: 'FileText',
+        label: '日报',
+        featureKey: 'dashboard',
+        component: 'DailyReports'
+      },
     ]
   },
 ];
@@ -71,16 +78,22 @@ const pageComponents: Record<string, () => Promise<{ default: any }>> = {
   'SeatsStatus': () => import('../../pages/SeatsStatus'),
   'GoalsPage': () => import('../../pages/Dashboard'),  // placeholder
   'TasksPage': () => import('../../pages/Dashboard'),  // placeholder
+  'GoalDetail': () => import('../../pages/GoalDetail'),
+  'DailyReports': () => import('../../pages/DailyReports'),
 };
 
 // 从 navGroups 生成 allRoutes
-const allRoutes = navGroups.flatMap(group =>
-  group.items.map(item => ({
-    path: item.path,
-    component: item.component,
-    requireAuth: true,
-  }))
-);
+const allRoutes = [
+  ...navGroups.flatMap(group =>
+    group.items.map(item => ({
+      path: item.path,
+      component: item.component,
+      requireAuth: true,
+    }))
+  ),
+  // 额外路由（不在菜单显示）
+  { path: '/goals/:id', component: 'GoalDetail', requireAuth: true },
+];
 
 export async function buildCoreConfig(): Promise<CoreDynamicConfig> {
   return {
