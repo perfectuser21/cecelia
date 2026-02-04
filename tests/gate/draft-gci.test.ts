@@ -7,7 +7,7 @@ describe("draft-gci.cjs", () => {
   describe("isGateFile", () => {
     it("应该识别 hooks/ 下的文件", () => {
       expect(isGateFile("hooks/branch-protect.sh")).toBe(true);
-      expect(isGateFile("hooks/pr-gate-v2.sh")).toBe(true);
+      expect(isGateFile("hooks/stop.sh")).toBe(true);
     });
 
     it("应该识别 scripts/devgate/ 下的文件", () => {
@@ -44,11 +44,6 @@ describe("draft-gci.cjs", () => {
   });
 
   describe("getCategory", () => {
-    it("pr-gate 应该映射到 G1", () => {
-      const result = getCategory("hooks/pr-gate-v2.sh");
-      expect(result.category).toBe("G1");
-    });
-
     it("branch-protect 应该映射到 G6", () => {
       const result = getCategory("hooks/branch-protect.sh");
       expect(result.category).toBe("G6");

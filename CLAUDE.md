@@ -65,8 +65,7 @@ zenithjoy-engine/
 ├── hooks/           # Claude Code Hooks
 │   ├── branch-protect.sh      # 分支保护（检查 branch/PRD/DoD）
 │   ├── stop.sh                # 循环控制（15 次重试上限）
-│   ├── credential-guard.sh    # 凭据保护
-│   └── pr-gate-v2.sh          # [已废弃] 质量检查交给 CI
+│   └── credential-guard.sh    # 凭据保护
 ├── skills/
 │   ├── dev/         # /dev 开发工作流
 │   ├── audit/       # /audit 代码审计
@@ -114,7 +113,7 @@ zenithjoy-engine/
 ```
 
 **注意**：
-- 质量检查（原 pr-gate-v2.sh）已在 v12.4.5 移除，完全交给 CI 处理
+- 质量检查已交给 CI 处理（pr-gate-v2.sh 在 v12.5.4 删除）
 - Subagent 相关 hooks 已在 v12.5.3 移除（不再使用 Subagent）
 
 **开发流程**：

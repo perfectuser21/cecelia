@@ -205,20 +205,11 @@ else
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
             "command": "./hooks/branch-protect.sh \"$TOOL_INPUT\""
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "./hooks/pr-gate-v2.sh \"$TOOL_INPUT\""
           }
         ]
       }

@@ -2,15 +2,11 @@
 
 这些问题已知但不阻塞发布。每个问题都记录了触发条件和临时解决方案。
 
-## B1: git diff/status 不一致
+## B1: [已关闭] git diff/status 不一致
 
-**文件**: hooks/pr-gate-v2.sh:373-374
+~~**文件**: hooks/pr-gate-v2.sh:373-374~~
 
-**问题**: `git diff` 和 `git status` 检查的状态不同，可能导致文件被删除时匹配异常。
-
-**触发条件**: 文件在分支中被删除时
-
-**Workaround**: 手动检查 `git status` 确认文件状态
+**状态**: 已关闭 - pr-gate-v2.sh 在 v12.5.4 删除
 
 ---
 

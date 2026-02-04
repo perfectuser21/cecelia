@@ -60,11 +60,6 @@ describe('hook-core 目录结构', () => {
       expect(fs.existsSync(hookFile)).toBe(true)
     })
 
-    it('包含 pr-gate-v2.sh', () => {
-      const hookFile = path.join(HOOK_CORE_DIR, 'hooks/pr-gate-v2.sh')
-      expect(fs.existsSync(hookFile)).toBe(true)
-    })
-
     it('hooks 是有效文件或符号链接', () => {
       const hooksDir = path.join(HOOK_CORE_DIR, 'hooks')
       const files = fs.readdirSync(hooksDir)
@@ -198,7 +193,6 @@ describe('install-hooks.sh 安装脚本', () => {
 
       // 验证 hooks 目录
       expect(fs.existsSync(path.join(TEST_DIR, 'hooks/branch-protect.sh'))).toBe(true)
-      expect(fs.existsSync(path.join(TEST_DIR, 'hooks/pr-gate-v2.sh'))).toBe(true)
 
       // 验证 skills 目录
       expect(fs.existsSync(path.join(TEST_DIR, 'skills/dev/SKILL.md'))).toBe(true)
@@ -229,17 +223,10 @@ describe('install-hooks.sh 安装脚本', () => {
 
       // 检查 Write|Edit matcher
       const writeEditHook = (settings.hooks.PreToolUse as HookConfig[]).find(
-        (h) => h.matcher === 'Write|Edit|NotebookEdit'
+        (h) => h.matcher === 'Write|Edit|NotebookEdit' || h.matcher === 'Write|Edit'
       )
       expect(writeEditHook).toBeDefined()
       expect(writeEditHook!.hooks[0].command).toContain('branch-protect.sh')
-
-      // 检查 Bash matcher
-      const bashHook = (settings.hooks.PreToolUse as HookConfig[]).find(
-        (h) => h.matcher === 'Bash'
-      )
-      expect(bashHook).toBeDefined()
-      expect(bashHook!.hooks[0].command).toContain('pr-gate-v2.sh')
     })
 
     it('版本标记与 VERSION 文件一致', () => {

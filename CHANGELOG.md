@@ -1,3 +1,19 @@
+## [12.5.4] - 2026-02-04
+
+### Removed
+
+- **废弃文件清理**:
+  - 删除 `hooks/pr-gate-v2.sh`（质量检查完全交给 CI）
+  - 删除所有已完成的 `.prd-*.md` 和 `.dod-*.md` 文件
+
+### Changed
+
+- **文档更新**:
+  - `CLAUDE.md`: 移除 pr-gate-v2.sh 目录条目
+  - `docs/KNOWN-ISSUES.md`: 标记 B1 为已关闭
+  - `docs/HOOK-DEFENSE-ANALYSIS.md`: 更新 pr-gate-v2 状态
+  - `docs/HOOK-ENFORCEMENT-STRATEGY.md`: 更新 pr-gate-v2 状态
+
 ## [12.5.3] - 2026-02-04
 
 ### Removed

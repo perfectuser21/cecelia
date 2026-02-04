@@ -15,7 +15,7 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.67.0"
+version: "2.68.0"
 updated: "2026-02-04"
 changelog:
   - 2.67.0: v12.5.3 - 清理 Subagent hooks（mark-subagent-done.sh, require-subagent-token.sh 已删除）
