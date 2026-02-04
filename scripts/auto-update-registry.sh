@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # 自动更新 Feature Registry（检测核心文件变更）
 
 set -e
