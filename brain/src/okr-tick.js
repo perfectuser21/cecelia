@@ -124,41 +124,42 @@ curl -X POST http://localhost:5221/api/brain/action/create-task \\
   }'
 `;
 
-  // Spawn Autumnrice as headless claude process
-  const { spawn } = await import('child_process');
-  const logFile = `/tmp/autumnrice-${goal.id}.log`;
+  // Call Autumnrice Bridge (runs on host, port 5225)
+  const bridgeUrl = process.env.AUTUMNRICE_BRIDGE_URL || 'http://localhost:5225/trigger';
 
-  const child = spawn('claude', [
-    '-p', prompt,
-    '--model', 'opus',
-    '--allowedTools', 'Bash,Read,Write,Glob,Grep'
-  ], {
-    cwd: process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace',
-    env: {
-      ...process.env,
-      CECELIA_HEADLESS: 'true'
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true
-  });
+  try {
+    const response = await fetch(bridgeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal_id: goal.id,
+        title: goal.title,
+        description: goal.description,
+        priority: goal.priority,
+        project_id: goal.project_id,
+        prompt
+      })
+    });
 
-  child.unref();
+    const result = await response.json();
+    console.log(`[okr-tick] Autumnrice triggered for goal ${goal.id}: ${JSON.stringify(result)}`);
 
-  // Log output
-  const fs = await import('fs');
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-  child.stdout.pipe(logStream);
-  child.stderr.pipe(logStream);
-
-  console.log(`[okr-tick] Autumnrice spawned for goal ${goal.id}, pid=${child.pid}, log=${logFile}`);
-
-  return {
-    triggered: true,
-    goal_id: goal.id,
-    title: goal.title,
-    pid: child.pid,
-    log_file: logFile
-  };
+    return {
+      triggered: result.success,
+      goal_id: goal.id,
+      title: goal.title,
+      pid: result.pid,
+      log_file: result.log_file
+    };
+  } catch (err) {
+    console.error(`[okr-tick] Failed to trigger Autumnrice: ${err.message}`);
+    return {
+      triggered: false,
+      goal_id: goal.id,
+      title: goal.title,
+      error: err.message
+    };
+  }
 }
 
 /**
