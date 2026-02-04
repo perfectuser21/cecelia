@@ -252,10 +252,10 @@ async function addQuestionToGoal(goalId, question) {
           'pending_questions',
           COALESCE(metadata->'pending_questions', '[]'::jsonb) ||
             jsonb_build_array(jsonb_build_object(
-              'id', $2,
-              'question', $3,
+              'id', $2::text,
+              'question', $3::text,
               'answered', false,
-              'answer', null
+              'answer', NULL::text
             ))
         ),
       status = $4,
