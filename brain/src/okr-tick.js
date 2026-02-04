@@ -81,13 +81,13 @@ async function getGoalsWithAnsweredQuestions() {
 
 /**
  * Trigger planner for goal decomposition
- * This would call Autumnrice to decompose the goal into tasks
+ * Calls Autumnrice to decompose the goal into tasks
  * @param {Object} goal - Goal to decompose
  */
 async function triggerPlannerForGoal(goal) {
-  console.log(`[okr-tick] Triggering planner for goal: ${goal.title} (${goal.id})`);
+  console.log(`[okr-tick] Triggering Autumnrice for goal: ${goal.title} (${goal.id})`);
 
-  // Emit event for planner to pick up
+  // Emit event for monitoring
   await emit('goal_ready_for_decomposition', 'okr-tick', {
     goal_id: goal.id,
     title: goal.title,
@@ -95,15 +95,69 @@ async function triggerPlannerForGoal(goal) {
     description: goal.description
   });
 
-  // In a full implementation, this would:
-  // 1. Call Autumnrice with the goal details
-  // 2. Autumnrice would classify and create tasks
-  // 3. Update goal status to in_progress when tasks are created
+  // Build the prompt for Autumnrice
+  const prompt = `/autumnrice 拆解目标
+
+## Goal 信息
+- ID: ${goal.id}
+- 标题: ${goal.title}
+- 描述: ${goal.description || '无'}
+- 优先级: ${goal.priority}
+- 项目ID: ${goal.project_id || '未指定'}
+
+## 要求
+1. 分析这个目标，拆解成具体可执行的 Tasks
+2. 每个 Task 必须指定 task_type (dev/automation/qa/audit/research)
+3. 每个 Task 必须关联 goal_id = ${goal.id}
+4. 通过 Brain API 创建 Tasks: POST http://localhost:5221/api/brain/action/create-task
+5. 完成后更新 Goal 状态为 in_progress
+
+## Brain API 创建 Task 格式
+curl -X POST http://localhost:5221/api/brain/action/create-task \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "title": "任务标题",
+    "task_type": "dev",
+    "goal_id": "${goal.id}",
+    "priority": "${goal.priority}",
+    "context": "任务描述"
+  }'
+`;
+
+  // Spawn Autumnrice as headless claude process
+  const { spawn } = await import('child_process');
+  const logFile = `/tmp/autumnrice-${goal.id}.log`;
+
+  const child = spawn('claude', [
+    '-p', prompt,
+    '--model', 'opus',
+    '--allowedTools', 'Bash,Read,Write,Glob,Grep'
+  ], {
+    cwd: process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace',
+    env: {
+      ...process.env,
+      CECELIA_HEADLESS: 'true'
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true
+  });
+
+  child.unref();
+
+  // Log output
+  const fs = await import('fs');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  child.stdout.pipe(logStream);
+  child.stderr.pipe(logStream);
+
+  console.log(`[okr-tick] Autumnrice spawned for goal ${goal.id}, pid=${child.pid}, log=${logFile}`);
 
   return {
     triggered: true,
     goal_id: goal.id,
-    title: goal.title
+    title: goal.title,
+    pid: child.pid,
+    log_file: logFile
   };
 }
 

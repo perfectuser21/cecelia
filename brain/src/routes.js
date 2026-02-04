@@ -35,7 +35,7 @@ const router = Router();
 const ALLOWED_ACTIONS = {
   'create-task': {
     required: ['title'],
-    optional: ['description', 'priority', 'project_id', 'goal_id', 'tags']
+    optional: ['description', 'priority', 'project_id', 'goal_id', 'tags', 'task_type', 'context']
   },
   'update-task': {
     required: ['task_id'],

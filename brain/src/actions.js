@@ -7,21 +7,22 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
 /**
  * Create a new task
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context }) {
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, status)
-    VALUES ($1, $2, $3, $4, $5, $6, 'queued')
+    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued')
     RETURNING *
   `, [
     title,
-    description || '',
+    description || context || '',
     priority || 'P1',
     project_id || null,
     goal_id || null,
-    tags || []
+    tags || [],
+    task_type || 'dev'
   ]);
 
-  console.log(`[Action] Created task: ${result.rows[0].id} - ${title}`);
+  console.log(`[Action] Created task: ${result.rows[0].id} - ${title} (type: ${task_type || 'dev'})`);
   return { success: true, task: result.rows[0] };
 }
 
