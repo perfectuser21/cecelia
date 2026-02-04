@@ -1,3 +1,4 @@
+
 ## [12.5.2] - 2026-02-04
 
 ### Fixed
@@ -102,6 +103,15 @@
 - `skills/dev/steps/07-quality.md.backup` - 矛盾的备份文件
 - `.prd-cp-stop-hook-pressure.md`, `.dod-cp-stop-hook-pressure.md` - 历史遗留 PRD/DoD 文件
 - `cp-0130-sync-main` - 空文件残留
+
+## [12.4.3] - 2026-02-04
+
+### Changed
+
+- **/dev 核心目标强调**: 在 SKILL.md 开头添加「核心目标」章节，明确唯一目标是成功合并 PR，遇到任何问题自动修复，不停止
+- **移除 QA/Audit Subagent 调用**: Step 4 (DoD) 不再调用 gate:qa 和 gate:audit Subagent，简化流程
+- **Step 11 任务列表清理**: 添加清理逻辑防止任务残留
+
 
 ## [12.4.1] - 2026-02-03
 
