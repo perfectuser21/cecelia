@@ -1,5 +1,41 @@
 # Learnings
 
+## [2026-02-04] Task Classification and OKR Tick System
+
+### Feature: Implemented task routing and OKR state machine
+
+- **What**: Added task_type field with routing logic, OKR tick system with state transitions, nightly alignment tick for daily reports
+- **Pattern**: TASK_TYPE_AGENT_MAP for centralized routing decisions
+  ```javascript
+  const TASK_TYPE_AGENT_MAP = {
+    'dev': '/dev',
+    'automation': '/nobel',
+    'qa': '/qa',
+    'audit': '/audit',
+    'research': null  // requires manual handling
+  };
+  ```
+- **Impact**: High - enables automatic task dispatch to correct agents
+
+### Type Conflict Resolution
+
+- **Problem**: Created `DailyReport` type in `brain.api.ts` that conflicted with existing `DailyReport` in `client.ts`
+- **Solution**: Renamed to `BrainDailyReport` to disambiguate
+- **Learning**: Always search for existing type names before defining new ones
+- **Impact**: Low - caught during TypeScript check
+
+### OKR State Machine Design
+
+- **States**: pending → needs_info → ready → decomposing → in_progress → completed/cancelled
+- **Key insight**: `needs_info` state with pending_questions in metadata allows interactive clarification before task decomposition
+- **Pattern**: Question/Answer flow stored in `goals.metadata.pending_questions[]`
+
+### Pre-existing Test Failures
+
+- **Observation**: Some existing tests (planner.test.js, intent.test.js, blocks.test.js) have timeouts and DB auth issues
+- **Action**: Did not break what wasn't working; new tests (17/17) pass cleanly
+- **Impact**: Low - unrelated to this feature
+
 ## [2026-02-01] Architecture Unification: Delete Autumnrice, Keep Node Brain
 
 ### Decision: Unified Cecelia Organ-Based Architecture
