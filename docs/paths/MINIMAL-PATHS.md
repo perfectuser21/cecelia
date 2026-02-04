@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 2.66.0
+version: 2.68.0
 created: 2026-02-04
 updated: 2026-02-04
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.66.0: 从 feature-registry.yml 自动生成
+  - 2.68.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -193,10 +193,10 @@ changelog:
 
 ### G1: Gate Skill Family
 
-1. ✅ **写完 DoD → gate:dod 审核 → FAIL → 修改 → 再审核 → PASS**
-2. ✅ **写完测试 → gate:test 审核 → PASS → 继续质检**
+1. ✅ **写完 DoD → CI 验证 → PASS**
+2. ✅ **写完测试 → CI 验证 → PASS**
 
-**RCI 覆盖**: G1-001,G1-002,G1-003,G1-004,G1-005,G1-006
+**RCI 覆盖**: G1-001,G1-002,G1-003,G1-004
 
 ---
 
@@ -212,5 +212,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.66.0
+**版本**: 2.68.0
 **生成时间**: 2026-02-04

@@ -54,7 +54,7 @@ describe("Gate Test Suite - 灾难级误放行防护", () => {
       expect(checkboxCount).toBe(0);
 
       // 验证：我们的检查逻辑应该拒绝 0 验收项的 DoD
-      // 这是对 pr-gate-v2.sh 第 544 行的测试
+      // 此检查现在由 CI (DevGate) 执行
     });
 
     it("无验收项时 CHECKED_COUNT 应为 0", () => {

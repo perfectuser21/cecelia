@@ -92,21 +92,11 @@ AI 选择方式 4/5/6
 AI 写代码 → 必须用 Write/Edit → Hook 拦截 → 无其他方式
 ```
 
-### pr-gate-v2.sh（可被绕过）
+### pr-gate-v2.sh（已删除 v12.5.4）
 
-| 检查项 | Hook 配置 | 拦截方式 | 能否绕过 | 原因 |
-|--------|----------|---------|---------|------|
-| npm run qa 通过 | PreToolUse: Bash | 检查命令 | ✅ **能** | **多路径** |
-| 创建 PR | PreToolUse: Bash | 检查命令 | ✅ **能** | **多路径** |
-| CI 必须绿 | PreToolUse: Bash | 检查命令 | ✅ **能** | **多路径** |
-
-**为什么可被绕过？**
-```
-AI 创建 PR:
-- gh pr create       ← Hook 拦截
-- gh api POST        ← Hook 拦截（修复后）
-- Python/Node.js     ← Hook 无法拦截！
-```
+> **状态**: 此 Hook 已在 v12.5.4 删除。质量检查完全交给 CI（Layer 2）处理。
+>
+> **原因**: 本地 Hook 无法 100% 防住 PR 创建（多路径），而 CI 是服务端强制检查，100% 有效。
 
 ---
 

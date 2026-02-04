@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.66.0"
+version: "2.68.0"
 updated: "2026-02-04"
 changelog:
+  - 2.67.0: v12.5.3 - 清理 Subagent hooks（mark-subagent-done.sh, require-subagent-token.sh 已删除）
   - 2.66.0: v12.5.1 - 剩余 4 个 bug 修复（auto-merge skip + evidence branch + TOCTOU + Monorepo）
   - 2.65.0: v12.5.0 - CI/CD + Branch Protection + Stop Hook bug 修复（21 个 bug）
   - 2.64.0: v12.4.14 - Hook gitignored 文件检测修复 + 时间窗口测试修复
@@ -947,23 +948,17 @@ product_features:
         file: skills/gate/gates/test.md
       - type: skill
         file: skills/gate/gates/audit.md
-      - type: hook
-        file: hooks/mark-subagent-done.sh
-      - type: hook
-        file: hooks/require-subagent-token.sh
+      # v12.5.3: 移除 subagent hooks（mark-subagent-done.sh, require-subagent-token.sh）
 
     golden_path: |
-      主 Agent 产出 → Gate Subagent 审核 → PASS → PostToolUse 写令牌 → PreToolUse 校验令牌 → generate-gate-file.sh → 继续
+      主 Agent 产出 → CI Gate 检查 → PASS → 继续
 
     minimal_paths:
-      - "写完 DoD → gate:dod 审核 → FAIL → 修改 → 再审核 → PASS"
-      - "写完测试 → gate:test 审核 → PASS → 继续质检"
+      - "写完 DoD → CI 验证 → PASS"
+      - "写完测试 → CI 验证 → PASS"
 
     tests:
-      - type: auto
-        description: Gate 令牌机制测试
-        file: tests/hooks/gate-token.test.ts
-        coverage: G1-005, G1-006
+      # v12.5.3: 移除 gate-token.test.ts（subagent hooks 已删除）
       - type: manual
         description: 手动验证审核循环
         coverage: G1-001, G1-002, G1-003, G1-004
@@ -973,5 +968,4 @@ product_features:
       - G1-002  # gate:dod 审核 DoD 覆盖率
       - G1-003  # gate:test 审核测试覆盖率
       - G1-004  # gate:audit 审核证据真实性
-      - G1-005  # gate 令牌生成（PostToolUse hook）
-      - G1-006  # gate 令牌校验 + 一次性消费（PreToolUse hook）
+      # v12.5.3: 移除 G1-005, G1-006（subagent hooks 已删除）

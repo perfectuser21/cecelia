@@ -18,7 +18,7 @@ describe("scan-rci-coverage.cjs", () => {
 
     it("hook 类型提取脚本名", () => {
       expect(extractEntryName("hooks/branch-protect.sh", "hook")).toBe("branch-protect");
-      expect(extractEntryName("hooks/pr-gate-v2.sh", "hook")).toBe("pr-gate-v2");
+      expect(extractEntryName("hooks/stop.sh", "hook")).toBe("stop");
     });
 
     it("script 类型提取脚本名", () => {

@@ -2,14 +2,14 @@
   "version": 3,
   "gate": "dod",
   "decision": "PASS",
-  "created_at": "2026-02-04T07:25:19Z",
-  "expires_at": "2026-02-04T07:55:19Z",
-  "expires_at_epoch": 1770191719,
-  "branch": "cp-fix-cicd-hook-bugs",
-  "head_sha": "ae9459140ab9b64a4510be6a3175fb88daf2e0f0",
-  "tree_sha": "ff2bc43fdf28209be58914b4b4fa26f5c6104ce3",
+  "created_at": "2026-02-04T09:10:48Z",
+  "expires_at": "2026-02-04T09:40:48Z",
+  "expires_at_epoch": 1770198048,
+  "branch": "cp-0204-cleanup-subagent-and-docs",
+  "head_sha": "710ed5366b064e779755b205d1f8da9eacf54a5a",
+  "tree_sha": "22ac03c82828728cc9fdd092abee93f0b38aa20d",
   "repo_id": "056850e49c9f6e2ef4af447ffbd40f83ac7a0e9c5155352d72a366ab863d537a",
-  "task_id": "fix-cicd-hook-bugs",
+  "task_id": "0204-cleanup-subagent-and-docs",
   "tool_version": "3.0.0",
-  "signature": "ac1a7edb8e8d59d4a8becd59210b437cbadb79dfdf383baaad01b1d3f32da2a1"
+  "signature": "7838d84cc8bf34c6678596a00aa1fcbcf565bdbc46185bdb6606fe495e30dd6c"
 }

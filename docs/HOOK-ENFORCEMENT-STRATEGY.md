@@ -245,7 +245,7 @@ AI 无法绕过（在 GitHub 服务器端）
 
 **调整点**:
 - 保持 branch-protect.sh 当前逻辑（分支 + PRD/DoD）
-- 保持 pr-gate-v2.sh 当前逻辑（拦截明显 PR 创建）
+- pr-gate-v2.sh 已在 v12.5.4 删除（质检交给 CI）
 - **不添加新的 Hook** - 承认局限性
 - 依赖 CI 作为真正的质检门控
 
@@ -404,12 +404,9 @@ fi
    - ✅ PRD/DoD 内容有效性检查
    - ✅ 不添加质检门控
 
-2. **pr-gate-v2.sh**:
-   - ✅ 拦截 gh pr create
-   - ✅ 拦截 gh api (已修复)
-   - ✅ 拦截 curl (已修复)
-   - ✅ 运行 npm run qa 检查
-   - ❌ 不追求 100% 拦截（承认多路径）
+2. **pr-gate-v2.sh** (已删除 v12.5.4):
+   - 质检完全交给 CI 处理
+   - 本地 Hook 无法 100% 拦截 PR 创建（多路径）
 
 #### ✅ 强化 CI（已完成）
 

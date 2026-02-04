@@ -3,22 +3,10 @@
     "paths": ["./skills"]
   },
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Task",
-        "hooks": [{"type": "command", "command": "./hooks/mark-subagent-done.sh"}]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit",
         "hooks": [{"type": "command", "command": "./hooks/branch-protect.sh"}]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {"type": "command", "command": "./hooks/require-subagent-token.sh"}
-        ]
       }
     ]
   }
