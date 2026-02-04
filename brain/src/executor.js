@@ -80,6 +80,7 @@ const activeProcesses = new Map();
 
 /**
  * Get the number of actively tracked processes (with liveness check)
+ * Now also counts ALL claude processes on the system (headed + headless)
  */
 function getActiveProcessCount() {
   // Prune dead processes first
@@ -89,7 +90,31 @@ function getActiveProcessCount() {
       activeProcesses.delete(taskId);
     }
   }
-  return activeProcesses.size;
+
+  // Count ALL claude processes on the system (headed + headless)
+  let systemClaudeCount = 0;
+  try {
+    const result = execSync('pgrep -c "^claude$" 2>/dev/null || echo 0', { encoding: 'utf-8' });
+    systemClaudeCount = parseInt(result.trim(), 10) || 0;
+  } catch {
+    // pgrep failed, fall back to ps
+    try {
+      const result = execSync('ps aux | grep -E "^[^ ]+[ ]+[0-9]+.*claude$" | grep -v grep | wc -l', { encoding: 'utf-8' });
+      systemClaudeCount = parseInt(result.trim(), 10) || 0;
+    } catch {
+      systemClaudeCount = 0;
+    }
+  }
+
+  // Return the higher of: tracked processes vs system claude count
+  const trackedCount = activeProcesses.size;
+  const effectiveCount = Math.max(trackedCount, systemClaudeCount);
+
+  if (systemClaudeCount > trackedCount) {
+    console.log(`[executor] System has ${systemClaudeCount} claude processes (tracked: ${trackedCount})`);
+  }
+
+  return effectiveCount;
 }
 
 /**
