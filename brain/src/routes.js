@@ -4,7 +4,15 @@ import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy,
 import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, TASK_TYPE_AGENT_MAP } from './tick.js';
+import {
+  executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
+  addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS
+} from './okr-tick.js';
+import {
+  executeNightlyAlignment, runNightlyAlignmentSafe, startNightlyScheduler, stopNightlyScheduler,
+  getNightlyTickStatus, getDailyReports
+} from './nightly-tick.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from './db.js';
 import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
@@ -1582,7 +1590,9 @@ const execAsync = promisify(exec);
  */
 router.get('/vps-slots', async (req, res) => {
   try {
-    const MAX_SLOTS = 8;
+    // Get max slots from tick config
+    const tickStatus = await getTickStatus();
+    const MAX_SLOTS = tickStatus.max_concurrent || 6;
 
     // Get Claude processes with details
     let slots = [];
@@ -2195,6 +2205,327 @@ router.delete('/blocks/:id', async (req, res) => {
     res.json({ success: true, deleted: result.rows[0] });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to delete block', details: err.message });
+  }
+});
+
+// ==================== OKR Tick API ====================
+
+/**
+ * GET /api/brain/okr-tick/status
+ * Get OKR tick loop status
+ */
+router.get('/okr-tick/status', (req, res) => {
+  res.json({ success: true, ...getOkrTickStatus() });
+});
+
+/**
+ * POST /api/brain/okr-tick
+ * Manually trigger OKR tick
+ */
+router.post('/okr-tick', async (req, res) => {
+  try {
+    const result = await runOkrTickSafe();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'OKR tick failed', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/okr-tick/enable
+ * Enable OKR tick loop
+ */
+router.post('/okr-tick/enable', (req, res) => {
+  const started = startOkrTickLoop();
+  res.json({ success: true, started, ...getOkrTickStatus() });
+});
+
+/**
+ * POST /api/brain/okr-tick/disable
+ * Disable OKR tick loop
+ */
+router.post('/okr-tick/disable', (req, res) => {
+  const stopped = stopOkrTickLoop();
+  res.json({ success: true, stopped, ...getOkrTickStatus() });
+});
+
+// ==================== OKR Question API ====================
+
+/**
+ * GET /api/brain/okr/:id/questions
+ * Get pending questions for a goal
+ */
+router.get('/okr/:id/questions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const questions = await getPendingQuestions(id);
+    res.json({ success: true, goal_id: id, questions });
+  } catch (err) {
+    const status = err.message === 'Goal not found' ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/okr/:id/question
+ * Add a question to a goal
+ */
+router.post('/okr/:id/question', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { question } = req.body;
+
+    if (!question) {
+      return res.status(400).json({ success: false, error: 'question is required' });
+    }
+
+    const result = await addQuestionToGoal(id, question);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to add question', details: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/okr/:id/answer
+ * Answer a question for a goal
+ */
+router.put('/okr/:id/answer', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { question_id, answer } = req.body;
+
+    if (!question_id || !answer) {
+      return res.status(400).json({ success: false, error: 'question_id and answer are required' });
+    }
+
+    const result = await answerQuestionForGoal(id, question_id, answer);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/okr/statuses
+ * Get available OKR status values
+ */
+router.get('/okr/statuses', (req, res) => {
+  res.json({ success: true, statuses: OKR_STATUS });
+});
+
+// ==================== Nightly Tick API ====================
+
+/**
+ * GET /api/brain/nightly/status
+ * Get nightly tick scheduler status
+ */
+router.get('/nightly/status', (req, res) => {
+  res.json({ success: true, ...getNightlyTickStatus() });
+});
+
+/**
+ * POST /api/brain/nightly/trigger
+ * Manually trigger nightly alignment
+ */
+router.post('/nightly/trigger', async (req, res) => {
+  try {
+    const result = await runNightlyAlignmentSafe();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Nightly alignment failed', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/nightly/enable
+ * Enable nightly scheduler
+ */
+router.post('/nightly/enable', (req, res) => {
+  const started = startNightlyScheduler();
+  res.json({ success: true, started, ...getNightlyTickStatus() });
+});
+
+/**
+ * POST /api/brain/nightly/disable
+ * Disable nightly scheduler
+ */
+router.post('/nightly/disable', (req, res) => {
+  const stopped = stopNightlyScheduler();
+  res.json({ success: true, stopped, ...getNightlyTickStatus() });
+});
+
+// ==================== Daily Reports API ====================
+
+/**
+ * GET /api/brain/daily-reports
+ * Get daily reports
+ */
+router.get('/daily-reports', async (req, res) => {
+  try {
+    const { date = 'today', type = 'all' } = req.query;
+    const reports = await getDailyReports(date, type);
+    res.json({ success: true, date, type, reports });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get daily reports', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/daily-reports/:date
+ * Get daily reports for a specific date
+ */
+router.get('/daily-reports/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { type = 'all' } = req.query;
+    const reports = await getDailyReports(date, type);
+    res.json({ success: true, date, type, reports });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get daily reports', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/daily-reports/:date/summary
+ * Get summary report for a specific date
+ */
+router.get('/daily-reports/:date/summary', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const reports = await getDailyReports(date, 'summary');
+    const summary = reports.find(r => r.type === 'summary');
+
+    if (!summary) {
+      return res.status(404).json({ success: false, error: 'Summary not found for this date' });
+    }
+
+    res.json({ success: true, date, summary: summary.content });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get summary', details: err.message });
+  }
+});
+
+// ==================== Task Routing API ====================
+
+/**
+ * GET /api/brain/task-types
+ * Get available task types and their agent mappings
+ */
+router.get('/task-types', (req, res) => {
+  res.json({
+    success: true,
+    task_types: TASK_TYPE_AGENT_MAP,
+    description: {
+      dev: '开发任务 - 交给 Caramel (/dev)',
+      automation: '自动化任务 - 交给 Nobel (/nobel)',
+      qa: 'QA 任务 - 交给 小检 (/qa)',
+      audit: '审计任务 - 交给 小审 (/audit)',
+      research: '调研任务 - 需要人工或 Opus 处理'
+    }
+  });
+});
+
+/**
+ * POST /api/brain/route-task
+ * Get agent routing for a task
+ */
+router.post('/route-task', async (req, res) => {
+  try {
+    const { task_id, task_type } = req.body;
+
+    let task;
+    if (task_id) {
+      const result = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Task not found' });
+      }
+      task = result.rows[0];
+    } else if (task_type) {
+      task = { task_type };
+    } else {
+      return res.status(400).json({ success: false, error: 'task_id or task_type is required' });
+    }
+
+    const agent = routeTask(task);
+
+    res.json({
+      success: true,
+      task_type: task.task_type || 'dev',
+      agent,
+      requires_manual: agent === null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to route task', details: err.message });
+  }
+});
+
+// ==================== Reflections API ====================
+
+/**
+ * GET /api/brain/reflections
+ * Get reflections (issues, learnings, improvements)
+ */
+router.get('/reflections', async (req, res) => {
+  try {
+    const { type, project_id, limit = 50 } = req.query;
+
+    let query = `
+      SELECT r.*, p.name as project_name
+      FROM reflections r
+      LEFT JOIN projects p ON r.project_id = p.id
+      WHERE 1=1
+    `;
+    const params = [];
+    let paramIndex = 1;
+
+    if (type) {
+      query += ` AND r.type = $${paramIndex++}`;
+      params.push(type);
+    }
+
+    if (project_id) {
+      query += ` AND r.project_id = $${paramIndex++}`;
+      params.push(project_id);
+    }
+
+    query += ` ORDER BY r.created_at DESC LIMIT $${paramIndex}`;
+    params.push(parseInt(limit));
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, reflections: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get reflections', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/reflections
+ * Create a new reflection
+ */
+router.post('/reflections', async (req, res) => {
+  try {
+    const { type, title, content, project_id, source_task_id, source_goal_id, tags } = req.body;
+
+    if (!type || !title) {
+      return res.status(400).json({ success: false, error: 'type and title are required' });
+    }
+
+    const validTypes = ['issue', 'learning', 'improvement'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ success: false, error: `type must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const result = await pool.query(`
+      INSERT INTO reflections (type, title, content, project_id, source_task_id, source_goal_id, tags)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+    `, [type, title, content, project_id, source_task_id, source_goal_id, tags]);
+
+    res.json({ success: true, reflection: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to create reflection', details: err.message });
   }
 });
 

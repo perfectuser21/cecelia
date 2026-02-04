@@ -24,6 +24,32 @@ const RESERVED_SLOTS = parseInt(process.env.CECELIA_RESERVED_SLOTS || '1', 10); 
 const AUTO_DISPATCH_MAX = MAX_CONCURRENT_TASKS - RESERVED_SLOTS; // Auto dispatch limit (6 - 1 = 5)
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
+// Task type to agent skill mapping
+const TASK_TYPE_AGENT_MAP = {
+  'dev': '/dev',           // Caramel - 编程
+  'automation': '/nobel',  // Nobel - N8N 自动化
+  'qa': '/qa',             // 小检 - QA
+  'audit': '/audit',       // 小审 - 审计
+  'research': null         // 需要人工/Opus 处理
+};
+
+/**
+ * Route a task to the appropriate agent based on task_type
+ * @param {Object} task - Task object with task_type field
+ * @returns {string|null} - Agent skill path or null if requires manual handling
+ */
+function routeTask(task) {
+  const taskType = task.task_type || 'dev';
+  const agent = TASK_TYPE_AGENT_MAP[taskType];
+
+  if (agent === undefined) {
+    console.warn(`[routeTask] Unknown task_type: ${taskType}, defaulting to /dev`);
+    return '/dev';
+  }
+
+  return agent;
+}
+
 // Working memory keys
 const TICK_ENABLED_KEY = 'tick_enabled';
 const TICK_LAST_KEY = 'tick_last';
@@ -707,6 +733,8 @@ export {
   dispatchNextTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
+  routeTask,
+  TASK_TYPE_AGENT_MAP,
   TICK_INTERVAL_MINUTES,
   TICK_LOOP_INTERVAL_MS,
   TICK_TIMEOUT_MS,
