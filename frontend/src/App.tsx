@@ -19,7 +19,7 @@ import { InstanceProvider, useInstance } from './contexts/InstanceContext';
 import { CeceliaProvider } from './contexts/CeceliaContext';
 
 // Lazy load CeceliaChat for Core instance only
-const CeceliaChat = lazy(() => import('../../../core/features/shared/components/CeceliaChat'));
+const CeceliaChat = lazy(() => import('./features/shared/components/CeceliaChat'));
 // 只有登录页需要静态导入
 import FeishuLogin from './pages/FeishuLogin';
 import './App.css';

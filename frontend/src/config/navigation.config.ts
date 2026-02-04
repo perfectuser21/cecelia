@@ -51,6 +51,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
+  'SeatsStatus': () => import('../pages/SeatsStatus'),
   // Tasks moved to zenithjoy-core
   'PublishStats': () => import('../pages/PublishStats'),
   'LoginPage': () => import('../pages/LoginPage'),
