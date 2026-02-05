@@ -28,7 +28,7 @@ export default defineConfig({
     include: [
       'react', 'react-dom', 'react-router-dom',
       'lucide-react', 'axios', 'recharts', '@hello-pangea/dnd',
-      '@tldraw/tldraw', 'd3', 'echarts', 'mermaid', 'react-grid-layout', 'reactflow',
+      '@tldraw/tldraw',
     ],
   },
   build: {
