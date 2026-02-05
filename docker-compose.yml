@@ -19,7 +19,6 @@ services:
     env_file:
       - .env.docker
     environment:
-      - ENV_REGION=${ENV_REGION:-us}
       - DB_HOST=${DB_HOST:-localhost}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-cecelia}
