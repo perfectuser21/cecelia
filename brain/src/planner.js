@@ -449,8 +449,14 @@ function generateTaskPRD(taskTitle, taskDescription, kr, project) {
 /**
  * Main entry point - called each tick.
  */
-async function planNextTask() {
+async function planNextTask(scopeKRIds = null) {
   const state = await getGlobalState();
+
+  // If scoped to specific KRs (from tick focus), filter keyResults before selecting
+  if (scopeKRIds && scopeKRIds.length > 0) {
+    const scopeSet = new Set(scopeKRIds);
+    state.keyResults = state.keyResults.filter(kr => scopeSet.has(kr.id));
+  }
 
   const targetKR = selectTargetKR(state);
   if (!targetKR) {
