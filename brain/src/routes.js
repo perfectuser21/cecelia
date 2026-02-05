@@ -32,6 +32,7 @@ import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import { runDiagnosis } from './self-diagnosis.js';
+import websocketService from './websocket.js';
 import crypto from 'crypto';
 
 const router = Router();
@@ -241,6 +242,21 @@ router.get('/status', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to get status', details: err.message });
   }
+});
+
+/**
+ * GET /api/brain/status/ws
+ * WebSocket 服务状态
+ */
+router.get('/status/ws', (req, res) => {
+  res.json({
+    success: true,
+    websocket: {
+      active: websocketService.wss !== null,
+      connected_clients: websocketService.getClientCount(),
+      endpoint: '/ws'
+    }
+  });
 });
 
 /**

@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import pool from './db.js';
 import { getTaskLocation } from './task-router.js';
+import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -524,19 +525,14 @@ async function triggerMiniMaxExecutor(task) {
     if (result.success) {
       console.log(`[executor] MiniMax completed task=${task.id}`);
 
-      // Update task with result
-      await pool.query(`
-        UPDATE tasks
-        SET
-          status = 'completed',
-          completed_at = NOW(),
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-            'minimax_result', $2::text,
-            'minimax_usage', $3::jsonb,
-            'run_id', $4::text
-          )
-        WHERE id = $1
-      `, [task.id, result.result, JSON.stringify(result.usage || {}), runId]);
+      // Update task with result (with WebSocket broadcast)
+      await updateTaskStatus(task.id, 'completed', {
+        payload: {
+          minimax_result: result.result,
+          minimax_usage: result.usage || {},
+          run_id: runId
+        }
+      });
 
       return {
         success: true,
@@ -863,13 +859,10 @@ async function probeTaskLiveness() {
       probe_ticks: suspect.tickCount + 1,
     };
 
-    await pool.query(
-      `UPDATE tasks SET
-        status = 'failed',
-        payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-      WHERE id = $1`,
-      [task.id, JSON.stringify({ error_details: errorDetails })]
-    );
+    // Update task status with WebSocket broadcast
+    await updateTaskStatus(task.id, 'failed', {
+      payload: { error_details: errorDetails }
+    });
 
     actions.push({
       action: 'liveness_auto_fail',

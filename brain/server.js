@@ -1,11 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
+import { createServer } from 'http';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
+import websocketService from './src/websocket.js';
 
 const app = express();
 const PORT = process.env.BRAIN_PORT || 5221;
@@ -28,11 +30,13 @@ process.on('unhandledRejection', (reason, promise) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully...');
+  websocketService.shutdown();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully...');
+  websocketService.shutdown();
   process.exit(0);
 });
 // ============================================================
@@ -82,8 +86,15 @@ if (!selfCheckOk) {
   process.exit(1);
 }
 
-app.listen(PORT, async () => {
+// Create HTTP server and attach WebSocket
+const server = createServer(app);
+
+// Initialize WebSocket service
+websocketService.init(server);
+
+server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
+  console.log(`WebSocket endpoint: ws://localhost:${PORT}/ws`);
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
