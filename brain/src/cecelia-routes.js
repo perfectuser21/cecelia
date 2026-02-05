@@ -6,6 +6,8 @@
  */
 import { Router } from 'express';
 import pool from './db.js';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 
 const router = Router();
 
@@ -194,6 +196,59 @@ router.get('/overview', async (req, res) => {
   }
 });
 
+// GET /runs - List all runs with optional filters
+router.get('/runs', async (req, res) => {
+  try {
+    const { status, limit = 50 } = req.query;
+    const maxLimit = Math.min(parseInt(limit) || 50, 100);
+
+    let query = `
+      SELECT id, title, status, payload, created_at, started_at, completed_at
+      FROM tasks
+      WHERE status != 'cancelled'
+    `;
+    const params = [];
+
+    if (status) {
+      // Map frontend status to DB status
+      const statusMap = {
+        'queued': ['queued'],
+        'running': ['in_progress', 'running'],
+        'completed': ['completed'],
+        'failed': ['failed', 'cancelled']
+      };
+      const dbStatuses = statusMap[status] || [status];
+      query += ` AND status = ANY($1)`;
+      params.push(dbStatuses);
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
+    params.push(maxLimit);
+
+    const result = await pool.query(query, params);
+
+    const runs = result.rows.map(task => ({
+      id: task.id,
+      task_id: task.title || 'Unknown',
+      status: mapStatus(task.status),
+      created_at: task.created_at ? task.created_at.toISOString() : null,
+      started_at: task.started_at ? task.started_at.toISOString() : null,
+      completed_at: task.completed_at ? task.completed_at.toISOString() : null,
+      agent: task.payload?.agent || null,
+      log_file: task.payload?.log_file || `/tmp/cecelia-${task.id}.log`
+    }));
+
+    res.json({
+      success: true,
+      runs,
+      total: runs.length
+    });
+  } catch (err) {
+    console.error('Error fetching runs:', err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // GET /runs/:runId
 router.get('/runs/:runId', async (req, res) => {
   try {
@@ -220,6 +275,56 @@ router.get('/runs/:runId', async (req, res) => {
     });
   } catch (err) {
     console.error(`Error fetching run ${req.params.runId}:`, err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// GET /runs/:runId/logs - Get execution logs for a specific run
+router.get('/runs/:runId/logs', async (req, res) => {
+  try {
+    const { runId } = req.params;
+
+    // Get run info from DB
+    const result = await pool.query(`
+      SELECT id, title, status, payload
+      FROM tasks
+      WHERE id = $1
+    `, [runId]);
+
+    if (result.rows.length === 0) {
+      return res.json({ success: false, error: '任务不存在' });
+    }
+
+    const task = result.rows[0];
+    const logFile = task.payload?.log_file || `/tmp/cecelia-${runId}.log`;
+
+    // Read log file
+    let logs = [];
+    if (existsSync(logFile)) {
+      try {
+        const content = await readFile(logFile, 'utf-8');
+        logs = content.split('\n').filter(line => line.trim().length > 0);
+      } catch (err) {
+        console.error(`Failed to read log file ${logFile}:`, err.message);
+        logs = [`Error reading log file: ${err.message}`];
+      }
+    } else {
+      logs = ['Log file not found'];
+    }
+
+    res.json({
+      success: true,
+      run: {
+        id: task.id,
+        task_id: task.title || 'Unknown',
+        status: mapStatus(task.status),
+        log_file: logFile
+      },
+      logs,
+      totalLines: logs.length
+    });
+  } catch (err) {
+    console.error(`Error fetching logs for run ${req.params.runId}:`, err.message);
     res.json({ success: false, error: err.message });
   }
 });

@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { RunsListResponse, LogsResponse } from '../types/execution-logs';
 
 // Types
 export interface Goal {
@@ -126,6 +127,13 @@ export const brainApi = {
 
   getExecutionHistory: (limit: number = 20) =>
     apiClient.get<ExecutionHistoryResponse>('/brain/execution-history', { params: { limit } }),
+
+  // Cecelia Execution Logs
+  getCeceliaRuns: (filters?: { status?: string; limit?: number }) =>
+    apiClient.get<RunsListResponse>('/cecelia/runs', { params: filters }),
+
+  getCeceliaRunLogs: (runId: string) =>
+    apiClient.get<LogsResponse>(`/cecelia/runs/${runId}/logs`),
 };
 
 // Execution Status Types
