@@ -280,6 +280,19 @@ function getSkillForTaskType(taskType) {
 }
 
 /**
+ * Get model for a task based on task properties
+ * Returns model name or null (use default Sonnet)
+ */
+function getModelForTask(task) {
+  // OKR decomposition → Opus (strategic thinking)
+  if (task.payload?.decomposition === 'true') return 'opus';
+  // Review/QA tasks → Sonnet (good enough for code review)
+  if (['review', 'qa', 'audit'].includes(task.task_type)) return null;
+  // Default: null (cecelia-run default = Sonnet)
+  return null;
+}
+
+/**
  * Get permission mode based on task_type
  * plan = 只读/Plan Mode，不能修改文件
  * bypassPermissions = 完全自动化，跳过权限检查
@@ -306,6 +319,15 @@ function getPermissionModeForTaskType(taskType) {
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = getSkillForTaskType(taskType);
+
+  // OKR 拆解任务：用 /autumnrice skill（专业 OKR 拆解）
+  if (task.payload?.decomposition === 'true') {
+    return `/autumnrice
+
+# OKR 拆解: ${task.title}
+
+${task.description || ''}`;
+  }
 
   // Talk 类型：可以写文档（日报、总结等），但不能改代码
   if (taskType === 'talk') {
@@ -548,10 +570,11 @@ async function triggerCeceliaRun(task) {
     const runId = generateRunId(task.id);
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
-    // Prepare prompt content and permission mode based on task_type
+    // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
     const promptContent = preparePrompt(task);
     const permissionMode = getPermissionModeForTaskType(taskType);
+    const model = getModelForTask(task);
 
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
@@ -566,7 +589,7 @@ async function triggerCeceliaRun(task) {
     }
 
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${repoPath ? ` repo=${repoPath}` : ''}`);
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
 
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
@@ -577,7 +600,8 @@ async function triggerCeceliaRun(task) {
         prompt: promptContent,
         task_type: taskType,
         permission_mode: permissionMode,
-        repo_path: repoPath
+        repo_path: repoPath,
+        model: model
       })
     });
 

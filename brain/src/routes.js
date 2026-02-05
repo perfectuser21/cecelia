@@ -53,7 +53,7 @@ const ALLOWED_ACTIONS = {
   },
   'create-goal': {
     required: ['title'],
-    optional: ['description', 'priority', 'project_id', 'target_date']
+    optional: ['description', 'priority', 'project_id', 'target_date', 'parent_id']
   },
   'update-goal': {
     required: ['goal_id'],

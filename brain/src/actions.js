@@ -72,17 +72,18 @@ async function updateTask({ task_id, status, priority }) {
 /**
  * Create a new goal
  */
-async function createGoal({ title, description, priority, project_id, target_date }) {
+async function createGoal({ title, description, priority, project_id, target_date, parent_id }) {
   const result = await pool.query(`
-    INSERT INTO goals (title, description, priority, project_id, target_date, status, progress)
-    VALUES ($1, $2, $3, $4, $5, 'pending', 0)
+    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, status, progress)
+    VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0)
     RETURNING *
   `, [
     title,
     description || '',
     priority || 'P1',
     project_id || null,
-    target_date || null
+    target_date || null,
+    parent_id || null
   ]);
 
   console.log(`[Action] Created goal: ${result.rows[0].id} - ${title}`);

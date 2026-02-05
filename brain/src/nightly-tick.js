@@ -129,21 +129,23 @@ async function saveDailyLog(projectId, report, type = 'repo', agent = 'nightly-t
     WHERE date = $1 AND project_id IS NOT DISTINCT FROM $2 AND type = $3
   `, [today, projectId, type]);
 
+  const reportJson = typeof report === 'string' ? report : JSON.stringify(report);
+
   if (existing.rows.length > 0) {
     // Update existing
     await pool.query(`
       UPDATE daily_logs
-      SET content = $3, agent = $4, updated_at = NOW()
+      SET summary = $2, agent = $3
       WHERE id = $1
-    `, [existing.rows[0].id, projectId, report, agent]);
+    `, [existing.rows[0].id, reportJson, agent]);
     return { updated: true, id: existing.rows[0].id };
   } else {
     // Insert new
     const result = await pool.query(`
-      INSERT INTO daily_logs (date, project_id, content, type, agent)
+      INSERT INTO daily_logs (date, project_id, summary, type, agent)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id
-    `, [today, projectId, report, type, agent]);
+    `, [today, projectId, reportJson, type, agent]);
     return { created: true, id: result.rows[0].id };
   }
 }
@@ -226,14 +228,55 @@ async function executeNightlyAlignment() {
     ...summaryResult
   });
 
-  // 6. Emit event
+  // 6. Quality check: create review tasks for projects with completed work today
+  const reviewsCreated = [];
+  for (const report of projectReports) {
+    if (report.summary.completed_today === 0) continue;
+
+    // Dedup: skip if a nightly review task already exists for this project today
+    const existingReview = await pool.query(`
+      SELECT id FROM tasks
+      WHERE project_id = $1
+        AND task_type = 'review'
+        AND (payload->>'nightly_review' = 'true')
+        AND created_at >= CURRENT_DATE
+    `, [report.project_id]);
+
+    if (existingReview.rows.length > 0) continue;
+
+    // Create review task — dispatched by normal tick loop
+    const reviewResult = await pool.query(`
+      INSERT INTO tasks (title, description, status, priority, project_id, task_type, payload)
+      VALUES ($1, $2, 'queued', 'P1', $3, 'review', $4)
+      RETURNING id
+    `, [
+      `每日质检: ${report.project_name} (${today})`,
+      `每日质检任务，审查项目 ${report.project_name} 今日完成的 ${report.summary.completed_today} 个任务。\n\n检查要点：\n1. 代码质量：有无明显 bug、安全漏洞、性能问题\n2. 测试覆盖：新代码是否有对应测试\n3. 架构一致性：是否符合项目架构规范\n4. 回归风险：改动是否可能影响其他功能\n\n输出 REVIEW-REPORT.md 报告。`,
+      report.project_id,
+      JSON.stringify({ nightly_review: 'true', date: today, completed_count: report.summary.completed_today })
+    ]);
+
+    reviewsCreated.push({ project: report.project_name, task_id: reviewResult.rows[0].id });
+    actionsTaken.push({
+      action: 'create_review_task',
+      project_name: report.project_name,
+      task_id: reviewResult.rows[0].id
+    });
+  }
+
+  if (reviewsCreated.length > 0) {
+    console.log(`[nightly-tick] Created ${reviewsCreated.length} review tasks: ${reviewsCreated.map(r => r.project).join(', ')}`);
+  }
+
+  // 7. Emit event
   await emit('nightly_alignment_completed', 'nightly-tick', {
     date: today,
     projects_count: projects.length,
-    summary: summaryReport.tasks_summary
+    summary: summaryReport.tasks_summary,
+    reviews_created: reviewsCreated.length
   });
 
-  console.log(`[nightly-tick] Completed: ${projects.length} projects, ${actionsTaken.length} actions`);
+  console.log(`[nightly-tick] Completed: ${projects.length} projects, ${actionsTaken.length} actions, ${reviewsCreated.length} reviews`);
 
   return {
     success: true,
