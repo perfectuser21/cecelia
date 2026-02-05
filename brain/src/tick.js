@@ -390,11 +390,6 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
-  // 3. Check cooldown
-  if ((Date.now() - _lastDispatchTime) <= DISPATCH_COOLDOWN_MS) {
-    return { dispatched: false, reason: 'cooldown_active', actions };
-  }
-
   // 3. Select next task (with dependency check)
   const nextTask = await selectNextDispatchableTask(goalIds);
   if (!nextTask) {
@@ -782,33 +777,52 @@ async function executeTick() {
     console.error('[tick-loop] OKR decomposition error:', decompErr.message);
   }
 
-  // 7. Dispatch next task (scoped to focused objective)
-  const dispatchResult = await dispatchNextTask(allGoalIds);
-  actionsTaken.push(...dispatchResult.actions);
+  // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
+  let dispatched = 0;
+  let lastDispatchResult = null;
 
-  if (!dispatchResult.dispatched && dispatchResult.reason !== 'no_dispatchable_task') {
-    await logTickDecision(
-      'tick',
-      `Dispatch skipped: ${dispatchResult.reason}`,
-      { action: 'dispatch_skip', reason: dispatchResult.reason },
-      { success: true }
-    );
+  // 7a. Fill slots from focused objective's tasks
+  for (let i = 0; i < AUTO_DISPATCH_MAX; i++) {
+    const dispatchResult = await dispatchNextTask(allGoalIds);
+    actionsTaken.push(...dispatchResult.actions);
+    lastDispatchResult = dispatchResult;
+
+    if (!dispatchResult.dispatched) {
+      if (dispatchResult.reason !== 'no_dispatchable_task' && dispatchResult.reason !== 'cooldown_active') {
+        await logTickDecision(
+          'tick',
+          `Dispatch stopped: ${dispatchResult.reason}`,
+          { action: 'dispatch_skip', reason: dispatchResult.reason },
+          { success: true }
+        );
+      }
+      break;
+    }
+    dispatched++;
   }
 
-  // 7b. Global dispatch: decomposition tasks (regardless of focus)
-  if (!dispatchResult.dispatched || dispatchResult.reason === 'no_dispatchable_task') {
+  // 7b. If focus objective has no more tasks, fill remaining slots from ALL objectives
+  if (dispatched < AUTO_DISPATCH_MAX && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
         SELECT id FROM goals WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {
-        const globalDispatch = await dispatchNextTask(globalGoalIds);
-        actionsTaken.push(...globalDispatch.actions);
+        for (let i = dispatched; i < AUTO_DISPATCH_MAX; i++) {
+          const globalDispatch = await dispatchNextTask(globalGoalIds);
+          actionsTaken.push(...globalDispatch.actions);
+          if (!globalDispatch.dispatched) break;
+          dispatched++;
+        }
       }
     } catch (globalErr) {
       console.error('[tick-loop] Global dispatch error:', globalErr.message);
     }
+  }
+
+  if (dispatched > 0) {
+    console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick`);
   }
 
   // 8. Update tick state
@@ -830,7 +844,7 @@ async function executeTick() {
       objective_id: objectiveId,
       objective_title: focus.objective.title
     },
-    dispatch: dispatchResult,
+    dispatch: { dispatched: dispatched, last: lastDispatchResult },
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
