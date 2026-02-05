@@ -16,6 +16,7 @@ const mockExecutor = {
   getActiveProcesses: vi.fn(() => []),
   getActiveProcessCount: vi.fn(() => 0),
   checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
+  MAX_SEATS: 12,
 };
 vi.mock('../executor.js', () => mockExecutor);
 

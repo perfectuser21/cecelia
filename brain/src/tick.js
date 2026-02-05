@@ -6,14 +6,13 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, MAX_SEATS } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
 import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
-import os from 'os';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -21,11 +20,9 @@ const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
-// Dynamic seat calculation: derive from CPU cores
-// Reserve 2 cores for system (Brain + OS + interactive session)
-const CPU_CORES = os.cpus().length;
-const MAX_CONCURRENT_TASKS = parseInt(process.env.CECELIA_MAX_CONCURRENT || String(Math.max(CPU_CORES - 2, 2)), 10);
-const AUTO_DISPATCH_MAX = MAX_CONCURRENT_TASKS; // Use all seats for auto dispatch
+// MAX_SEATS imported from executor.js — calculated from actual resource capacity
+const MAX_CONCURRENT_TASKS = MAX_SEATS;
+const AUTO_DISPATCH_MAX = MAX_SEATS; // Effective limit is dynamic (from checkServerResources)
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
 // Task type to agent skill mapping

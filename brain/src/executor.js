@@ -33,9 +33,16 @@ const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-const MAX_SEATS = Math.max(CPU_CORES - 2, 2);   // Theoretical max (e.g. 6 for 8-core)
-const LOAD_THRESHOLD = CPU_CORES * 0.8;          // Hard stop: 80% of cores
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.2; // Hard stop: must have 20% free
+const MEM_PER_TASK_MB = 500;                      // ~500MB avg per claude process (200-850MB observed)
+const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude process (20-30% bursts, often idle waiting API)
+const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
+const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
+// Max seats = min(memory capacity, CPU capacity), floor of 2
+const MAX_SEATS = parseInt(process.env.CECELIA_MAX_CONCURRENT || String(
+  Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2)
+), 10);
+const LOAD_THRESHOLD = CPU_CORES * 0.85;          // Hard stop: 85% of cores
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15; // Hard stop: must have 15% free
 const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
@@ -994,4 +1001,5 @@ export {
   recordHeartbeat,
   isRunIdProcessAlive,
   suspectProcesses,
+  MAX_SEATS,
 };
