@@ -133,11 +133,12 @@ async function selectTargetProject(kr, state) {
  * @returns {Object|null} - Task or null
  */
 async function generateNextTask(kr, project, state, options = {}) {
-  // V1: check existing queued tasks first
+  // V1: check existing queued or in_progress tasks first — don't generate if work exists
   const result = await pool.query(`
     SELECT * FROM tasks
-    WHERE project_id = $1 AND goal_id = $2 AND status = 'queued'
+    WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
     ORDER BY
+      CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
     LIMIT 1
@@ -145,7 +146,7 @@ async function generateNextTask(kr, project, state, options = {}) {
 
   if (result.rows[0]) return result.rows[0];
 
-  // V2: Auto-generate when queue is empty
+  // V2: Auto-generate when no active work exists
   const generated = await autoGenerateTask(kr, project, state, options);
   return generated;
 }
@@ -164,13 +165,13 @@ async function autoGenerateTask(kr, project, state, options = {}) {
   const gap = 100 - (kr.progress || 0);
   if (gap <= 0) return null; // KR already complete
 
-  // Get completed task titles for this KR to avoid duplication
-  const completedResult = await pool.query(`
+  // Get all existing task titles for this KR to avoid duplication (completed + queued + in_progress)
+  const existingResult = await pool.query(`
     SELECT title FROM tasks
-    WHERE goal_id = $1 AND status = 'completed'
-    ORDER BY completed_at DESC LIMIT 20
+    WHERE goal_id = $1 AND status IN ('completed', 'queued', 'in_progress')
+    ORDER BY created_at DESC LIMIT 50
   `, [kr.id]);
-  const completedTitles = completedResult.rows.map(r => r.title);
+  const completedTitles = existingResult.rows.map(r => r.title);
 
   // Get failed tasks to potentially retry
   const failedResult = await pool.query(`

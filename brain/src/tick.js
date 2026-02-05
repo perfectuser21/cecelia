@@ -697,8 +697,8 @@ async function executeTick() {
     });
   }
 
-  // 6. Planning: if no queued tasks, invoke planner
-  if (queued.length === 0) {
+  // 6. Planning: if no queued AND no in_progress tasks, invoke planner
+  if (queued.length === 0 && inProgress.length === 0) {
     try {
       const planned = await planNextTask();
       if (planned.planned) {
