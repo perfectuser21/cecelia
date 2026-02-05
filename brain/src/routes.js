@@ -1754,19 +1754,25 @@ const execAsync = promisify(exec);
 
 /**
  * GET /api/brain/vps-slots
- * Get real Claude process information using pgrep/ps
+ * Get real Claude process information with task details
  */
 router.get('/vps-slots', async (req, res) => {
   try {
-    // Get max slots from tick config
     const tickStatus = await getTickStatus();
     const MAX_SLOTS = tickStatus.max_concurrent || 6;
 
-    // Get Claude processes with details
+    // Get tracked processes from executor
+    let trackedProcesses = [];
+    try {
+      const { getActiveProcesses } = await import('./executor.js');
+      trackedProcesses = getActiveProcesses();
+    } catch {
+      // executor not available
+    }
+
+    // Get Claude processes from OS
     let slots = [];
     try {
-      // Get all ACTUAL claude binary processes (not bash shell snapshots that mention "claude")
-      // Only match processes where the command is exactly "claude" (binary) or "claude -p" etc
       const { stdout } = await execAsync('ps aux | grep -E " claude( |$)" | grep -v "grep" | grep -v "/bin/bash"');
       const lines = stdout.trim().split('\n').filter(Boolean);
 
@@ -1779,34 +1785,58 @@ router.get('/vps-slots', async (req, res) => {
           const startTime = parts[8];
           const command = parts.slice(10).join(' ');
 
-          // Try to determine if this is a cecelia-run task
-          let taskId = null;
-          if (command.includes('cecelia-prds')) {
-            const match = command.match(/prd-([a-f0-9-]+)/);
-            taskId = match ? match[1] : null;
-          }
+          // Match PID to tracked process for task details
+          const tracked = trackedProcesses.find(p => p.pid === pid);
 
           slots.push({
             pid,
             cpu: `${cpu}%`,
             memory: `${mem}%`,
             startTime,
-            taskId,
+            taskId: tracked?.taskId || null,
+            runId: tracked?.runId || null,
+            startedAt: tracked?.startedAt || null,
             command: command.slice(0, 100) + (command.length > 100 ? '...' : '')
           });
         }
       }
     } catch {
-      // No claude processes found
       slots = [];
     }
+
+    // Enrich with task details from DB
+    const taskIds = slots.map(s => s.taskId).filter(Boolean);
+    let taskMap = {};
+    if (taskIds.length > 0) {
+      try {
+        const result = await pool.query(
+          `SELECT id, title, priority, status, task_type FROM tasks WHERE id = ANY($1)`,
+          [taskIds]
+        );
+        for (const row of result.rows) {
+          taskMap[row.id] = row;
+        }
+      } catch {
+        // continue without task details
+      }
+    }
+
+    const enrichedSlots = slots.map(s => {
+      const task = s.taskId ? taskMap[s.taskId] : null;
+      return {
+        ...s,
+        taskTitle: task?.title || null,
+        taskPriority: task?.priority || null,
+        taskType: task?.task_type || null,
+      };
+    });
 
     res.json({
       success: true,
       total: MAX_SLOTS,
-      used: slots.length,
-      available: MAX_SLOTS - slots.length,
-      slots
+      used: enrichedSlots.length,
+      available: MAX_SLOTS - enrichedSlots.length,
+      slots: enrichedSlots
     });
   } catch (err) {
     res.status(500).json({

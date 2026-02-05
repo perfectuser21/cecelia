@@ -119,4 +119,50 @@ export const brainApi = {
   // Nightly Tick
   getNightlyStatus: () =>
     apiClient.get('/brain/nightly/status'),
+
+  // Execution Status
+  getVpsSlots: () =>
+    apiClient.get<VpsSlotsResponse>('/brain/vps-slots'),
+
+  getExecutionHistory: (limit: number = 20) =>
+    apiClient.get<ExecutionHistoryResponse>('/brain/execution-history', { params: { limit } }),
 };
+
+// Execution Status Types
+export interface VpsSlot {
+  pid: number;
+  cpu: string;
+  memory: string;
+  startTime: string;
+  taskId: string | null;
+  runId: string | null;
+  startedAt: string | null;
+  command: string;
+  taskTitle: string | null;
+  taskPriority: string | null;
+  taskType: string | null;
+}
+
+export interface VpsSlotsResponse {
+  success: boolean;
+  total: number;
+  used: number;
+  available: number;
+  slots: VpsSlot[];
+}
+
+export interface ExecutionRecord {
+  id: string;
+  trigger: string;
+  summary: string;
+  result: any;
+  status: string;
+  timestamp: string;
+}
+
+export interface ExecutionHistoryResponse {
+  success: boolean;
+  total: number;
+  today: number;
+  executions: ExecutionRecord[];
+}
