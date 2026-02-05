@@ -1,27 +1,26 @@
-# QA Decision
-Decision: NO_RCI
-Priority: P1
-RepoType: Business
+# QA Decision: 实现执行状态实时展示组件
 
-Tests:
-  - dod_item: "tsconfig @features/core/* 路径与 vite.config.ts 一致"
-    method: manual
-    location: manual:检查 tsconfig.json paths 配置指向 src/features/core/*
-  - dod_item: "workers.config.json 存在于 git 管理路径"
-    method: manual
-    location: manual:git ls-files 确认文件已跟踪
-  - dod_item: "workers.config.ts import 路径正确"
-    method: manual
-    location: manual:检查 import 语句解析到正确文件
-  - dod_item: "JSON 结构与 TypeScript 类型匹配"
-    method: manual
-    location: manual:检查 JSON 键名与 WorkersConfig 接口一致
-  - dod_item: "npm run build 不报错"
-    method: auto
-    location: manual:npm run build 在 frontend 目录执行
+**Decision**: NO_RCI
+**Priority**: P1
+**RepoType**: Business
 
-RCI:
-  new: []
-  update: []
+## Tests
 
-Reason: 配置修复任务，改动范围小且确定，无回归风险，不需要 RCI。
+| DoD Item | Method | Location |
+|----------|--------|----------|
+| TaskMonitor 展示运行中任务实时状态 | manual | manual:导航到 TaskMonitor 确认数据刷新 |
+| 显示任务列表含项目名、分支、状态、进度 | manual | manual:检查渲染完整性 |
+| 运行中任务突出显示当前步骤 | manual | manual:检查 running 任务高亮 |
+| 点击跳转到 RunDetail | manual | manual:点击任务卡片验证跳转 |
+| 显示统计摘要 | manual | manual:检查统计卡片 |
+| TypeScript 编译通过 | auto | npx tsc --noEmit |
+| 复用 shared 组件 | manual | manual:代码审查 |
+
+## RCI
+
+**new**: []
+**update**: []
+
+## Reason
+
+前端 UI 组件变更，从占位升级为真实组件。无后端改动，不需要回归契约。TypeScript 编译是唯一自动化验证点。
