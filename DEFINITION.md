@@ -87,7 +87,7 @@ Cecelia = Control Plane (Deterministic, 控制层)
 
 | Agent | Skill | 模型 | 角色 | 关系 | 是否必需 |
 |-------|-------|------|------|------|---------|
-| **External Planner** | /planner (/autumnrice) | Opus | 副管家（Assistant Butler） | 外部承包商，可选委托 | ❌ 可选 |
+| **External Planner** | /planner (已废弃) | Opus | 副管家（Assistant Butler） | 外部承包商，可选委托 | ❌ 可选 |
 | **Caramel** | /dev | Sonnet | 编程专家（Coding Specialist） | 外部承包商 | ✅ 必需（执行编程任务） |
 | **Nobel** | /nobel | Sonnet | 自动化专家（Automation Specialist） | 外部承包商 | ✅ 必需（执行自动化任务） |
 | **小检** | /qa | Sonnet | QA 专家（QA Specialist） | 外部承包商 | ✅ 必需（质量验收） |

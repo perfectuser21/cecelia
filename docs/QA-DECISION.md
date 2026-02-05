@@ -1,53 +1,65 @@
 ---
-id: qa-decision-cecelia-architecture
-version: 1.0.0
+id: qa-decision-feature-tick-system
+version: 2.0.0
 created: 2026-02-04
-prd: .prd-cecelia-architecture-upgrade.md
+updated: 2026-02-05
+prd: .prd-feature-tick-system.md
+changelog:
+  - 2.0.0: Feature Tick 系统实现
+  - 1.0.0: 初始架构改动
 ---
 
-# QA Decision
+# QA Decision: Feature Tick System
 
 **Decision**: MUST_ADD_RCI
-**Priority**: P1
+**Priority**: P0
 **RepoType**: Engine
 
 ## Tests
 
 | DoD Item | Method | Location |
 |----------|--------|----------|
-| task_type 字段存在且 routeTask 正确路由 | auto | brain/src/__tests__/tick.test.js |
-| goals 状态流转正常 | auto | brain/src/__tests__/okr-tick.test.js |
-| Autumnrice 能自动分类任务 | manual | manual:调用 /autumnrice 验证分类结果 |
-| 前端显示 OKR 详情 | manual | manual:访问 /goals/:id 验证页面 |
-| 前端显示日报 | manual | manual:访问 /daily-reports 验证页面 |
-| 端到端测试 | manual | manual:创建需求 → 验证 OKR → Tasks → 路由 |
+| features 表创建成功 | auto | brain/src/__tests__/feature-tick.test.js |
+| tasks 表新增字段正确 | auto | brain/src/__tests__/feature-tick.test.js |
+| Feature Tick 检测 planning 状态 | auto | brain/src/__tests__/feature-tick.test.js |
+| Feature Tick 检测 task_completed 状态 | auto | brain/src/__tests__/feature-tick.test.js |
+| 调用秋米规划第一个 Task | auto | brain/src/__tests__/feature-tick.test.js |
+| 防串线：feature_id 强绑定 | auto | brain/src/__tests__/anti-crossing.test.js |
+| 防串线：active_task_id 状态锁 | auto | brain/src/__tests__/anti-crossing.test.js |
+| 任务分流：按 task_type 分配 location | auto | brain/src/__tests__/task-router.test.js |
+| Feature Tick 集成到主 Tick | auto | brain/src/__tests__/tick.test.js |
+| 端到端：Single Task 直接执行 | manual | manual:创建 Single Task，验证执行完成 |
+| 端到端：Feature 边做边拆 | manual | manual:创建 Feature，验证循环拆解 |
 
 ## RCI
 
 **new**:
-- C1-001: routeTask 根据 task_type 路由到对应 agent
-- C2-001: OKR 状态从 ready → decomposing 触发规划师
+- C1-001: featureTick 检测 planning 状态的 Features 并调用 planFirstTask
+- C1-002: featureTick 检测 task_completed 状态并调用 evaluateAndPlanNext
+- C2-001: createTask 检查 Feature 无其他活跃 Task（防串线）
+- C2-002: completeTask 校验 feature_id 一致性
+- C3-001: identifyWorkType 正确识别 Single Task vs Feature
+- C3-002: getTaskLocation 按 task_type 正确分配 location
 
-**update**: []
+**update**:
+- tick.js: 集成 featureTick 调用
 
 ## Reason
 
-这是核心架构改动，涉及任务分类和路由逻辑。routeTask 是调度核心，必须有回归测试确保不同 task_type 能正确路由。OKR 状态机是新增功能，需要测试状态流转。前端页面是新增，首次用手动验证，后续可补充 E2E。
+Feature Tick 是核心调度机制，实现"边做边拆"的 Feature 执行模式。防串线机制保证同一 Feature 同时只有一个活跃 Task，避免并发冲突。任务分流确保 dev/review 任务在 US 执行，automation/data 任务在 HK 执行。
 
 ## Scope
 
 **允许修改的范围**：
-- `brain/src/tick.js` - 添加 routeTask 路由逻辑
+- `brain/migrations/003_feature_tick_system.sql` - 数据库迁移
+- `brain/src/feature-tick.js` - Feature Tick 逻辑（新增）
+- `brain/src/task-router.js` - 任务分流逻辑（新增）
+- `brain/src/anti-crossing.js` - 防串线检查（新增）
+- `brain/src/tick.js` - 集成 Feature Tick
 - `brain/src/routes.js` - 添加新 API 端点
-- `brain/src/okr-tick.js` - 新增 OKR Tick 模块
-- `brain/src/nightly-tick.js` - 新增 Nightly Tick 模块
 - `brain/src/__tests__/*.test.js` - 新增/更新测试
-- `frontend/src/pages/GoalDetail.tsx` - 新增页面
-- `frontend/src/pages/DailyReports.tsx` - 新增页面
-- `~/.claude/skills/autumnrice/SKILL.md` - 更新 Skill
-- `~/.claude/skills/repo-lead/SKILL.md` - 新增 Skill
-- `docs/` - 文档更新
 
 **禁止修改的区域**：
 - `brain/src/executor.js` - 任务执行器（除非必要）
-- 其他现有 API 端点逻辑（除非 task_type 相关）
+- `brain/src/decision.js` - 决策引擎
+- 前端代码（本次不涉及）

@@ -232,23 +232,150 @@ function generateRunId(taskId) {
 }
 
 /**
+ * Task Type 权限模型（v2 - 合并 QA + Audit → Review）：
+ *
+ * | 类型       | Skill    | 权限模式           | 说明                     |
+ * |------------|----------|-------------------|--------------------------|
+ * | dev        | /dev     | bypassPermissions | 完整代码读写              |
+ * | review     | /review  | plan              | 只读代码，输出报告/PRD    |
+ * | talk       | /talk    | plan              | 只写文档，不改代码        |
+ * | automation | /nobel   | bypassPermissions | 调 N8N API               |
+ * | research   | -        | plan              | 完全只读                 |
+ *
+ * 注意：qa 和 audit 已合并为 review，保留兼容映射
+ */
+
+/**
+ * Get skill command based on task_type
+ */
+function getSkillForTaskType(taskType) {
+  const skillMap = {
+    'dev': '/dev',           // 开发：完整代码读写
+    'review': '/review',     // 审查：Plan Mode，只读代码，输出报告
+    'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
+    'automation': '/nobel',  // N8N：调 API
+    'talk': '/talk',         // 对话：写文档，不改代码
+    'research': null,        // 研究：完全只读
+    // 兼容旧类型（映射到 review）
+    'qa': '/review',
+    'audit': '/review',
+  };
+  return skillMap[taskType] || '/dev';
+}
+
+/**
+ * Get permission mode based on task_type
+ * plan = 只读/Plan Mode，不能修改文件
+ * bypassPermissions = 完全自动化，跳过权限检查
+ */
+function getPermissionModeForTaskType(taskType) {
+  const modeMap = {
+    'dev': 'bypassPermissions',        // 完整代码读写
+    'automation': 'bypassPermissions', // 调 N8N API
+    'qa_init': 'bypassPermissions',    // QA 初始化需要写文件和调 gh API
+    'review': 'plan',                  // 只读代码，输出报告
+    'talk': 'plan',                    // 只写文档，不改代码
+    'research': 'plan',                // 只读，不改文件
+    // 兼容旧类型（都用 plan mode）
+    'qa': 'plan',
+    'audit': 'plan',
+  };
+  return modeMap[taskType] || 'bypassPermissions';
+}
+
+/**
  * Prepare prompt content from task
+ * Routes to different skills based on task.task_type
  */
 function preparePrompt(task) {
-  if (task.prd_content) {
-    return `/dev\n\n${task.prd_content}`;
-  }
-  if (task.payload?.prd_content) {
-    return `/dev\n\n${task.payload.prd_content}`;
-  }
-  if (task.payload?.prd_path) {
-    return `/dev ${task.payload.prd_path}`;
+  const taskType = task.task_type || 'dev';
+  const skill = getSkillForTaskType(taskType);
+
+  // Talk 类型：可以写文档（日报、总结等），但不能改代码
+  if (taskType === 'talk') {
+    return `请完成以下任务，你可以创建/编辑 markdown 文档，但不能修改任何代码文件：
+
+# ${task.title}
+
+${task.description || ''}
+
+权限约束：
+- ✅ 可以创建/编辑 .md 文件（日报、总结、文档）
+- ✅ 可以读取代码和日志
+- ❌ 不能修改 .js/.ts/.py/.go 等代码文件
+- ❌ 不能修改配置文件
+
+输出要求：
+- 将结果写入适当的 markdown 文件`;
   }
 
+  // Review 类型：Plan Mode，统一代码审查（合并 QA + Audit）
+  if (taskType === 'review' || taskType === 'qa' || taskType === 'audit') {
+    return `/review
+
+# 代码审查任务 - ${task.title}
+
+${task.description || ''}
+
+你是代码审查员，请以 Plan Mode 运行：
+1. 只读取和分析代码，不要修改任何文件
+2. 从 QA 视角检查测试覆盖、回归契约、风险评估
+3. 从 Audit 视角检查代码问题（L1阻塞/L2功能/L3最佳实践）
+4. 输出 REVIEW-REPORT.md 报告
+5. 如果发现需要修复的 L1/L2 问题，在报告中附带 PRD
+
+权限约束：
+- ✅ 可以读取所有代码和文档
+- ✅ 输出 REVIEW-REPORT.md
+- ❌ 不能修改任何代码文件
+- ❌ 不能直接修复问题（输出 PRD 让 /dev 去修）`;
+  }
+
+  // Automation 类型：调用 N8N，不写代码
+  if (taskType === 'automation') {
+    return `/nobel
+
+# 自动化任务 - ${task.title}
+
+${task.description || ''}
+
+权限约束：
+- ✅ 可以调用 N8N workflow API
+- ✅ 可以查看 workflow 状态
+- ❌ 不能修改代码文件`;
+  }
+
+  // Research 类型：完全只读
+  if (taskType === 'research') {
+    return `请调研以下内容，只读取和分析，不要修改任何文件：
+
+# ${task.title}
+
+${task.description || ''}
+
+权限约束：
+- ✅ 可以读取代码/文档/日志
+- ✅ 输出调研结果和建议
+- ❌ 不能创建、修改或删除任何文件`;
+  }
+
+  // 有明确 PRD 内容的任务
+  if (task.prd_content) {
+    return `${skill}\n\n${task.prd_content}`;
+  }
+  if (task.payload?.prd_content) {
+    return `${skill}\n\n${task.payload.prd_content}`;
+  }
+  if (task.payload?.prd_path) {
+    return `${skill} ${task.payload.prd_path}`;
+  }
+
+  // 自动生成 PRD
   const prd = `# PRD - ${task.title}
 
 ## 背景
 任务来自 Brain 自动调度。
+任务类型：${taskType}
 
 ## 功能描述
 ${task.description || task.title}
@@ -257,7 +384,7 @@ ${task.description || task.title}
 - [ ] 任务完成
 `;
 
-  return `/dev\n\n${prd}`;
+  return `${skill}\n\n${prd}`;
 }
 
 /**
@@ -269,8 +396,8 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
       UPDATE tasks
       SET
         payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-          'current_run_id', $2,
-          'run_status', $3,
+          'current_run_id', $2::text,
+          'run_status', $3::text,
           'run_triggered_at', NOW()
         )
       WHERE id = $1
@@ -292,6 +419,9 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
 async function triggerCeceliaRun(task) {
+  // Use original cecelia-bridge on port 3457
+  const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
+
   try {
     // === DEDUP CHECK ===
     const existing = activeProcesses.get(task.id);
@@ -323,79 +453,66 @@ async function triggerCeceliaRun(task) {
       };
     }
 
-    await ensurePromptDir();
-
     const runId = generateRunId(task.id);
-    const promptFile = path.join(PROMPT_DIR, `${task.id}-${runId}.txt`);
+    const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
-    // 1. Prepare prompt content
+    // Prepare prompt content and permission mode based on task_type
+    const taskType = task.task_type || 'dev';
     const promptContent = preparePrompt(task);
+    const permissionMode = getPermissionModeForTaskType(taskType);
 
-    // 2. Write prompt to file
-    await writeFile(promptFile, promptContent, 'utf-8');
-    console.log(`[executor] Prompt written to ${promptFile}`);
-
-    // 3. Update task with run info before execution
+    // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
 
-    // 4. Launch cecelia-run with spawn() for PID tracking
-    const logFile = `/tmp/cecelia-${task.id}.log`;
-    const webhookUrl = process.env.BRAIN_CALLBACK_URL || 'http://localhost:5212/api/brain/execution-callback';
+    // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}`);
 
-    const child = spawn('bash', [CECELIA_RUN_PATH, task.id, runId, promptFile], {
-      cwd: WORK_DIR,
-      env: {
-        ...process.env,
-        WEBHOOK_URL: webhookUrl,
-        CLAUDE_MODEL: 'sonnet', // Force headless to use sonnet (cheaper, fast enough)
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true, // Run in own process group for clean kill
+    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: task.id,
+        checkpoint_id: checkpointId,
+        prompt: promptContent,
+        task_type: taskType,
+        permission_mode: permissionMode
+      })
     });
 
-    // Don't let child keep parent alive
-    child.unref();
+    const result = await response.json();
 
-    // Redirect stdout/stderr to log file (non-blocking)
-    const fs = await import('fs');
-    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
-    child.stdout.pipe(logStream);
-    child.stderr.pipe(logStream);
+    if (!result.ok) {
+      console.log(`[executor] Bridge rejected: ${result.error}`);
+      return {
+        success: false,
+        taskId: task.id,
+        reason: 'bridge_error',
+        error: result.error
+      };
+    }
 
-    // Track the process
+    // Original bridge doesn't return PID, but we track by task_id
     activeProcesses.set(task.id, {
-      pid: child.pid,
+      pid: null, // Bridge doesn't return PID
       startedAt: new Date().toISOString(),
       runId,
-      process: child,
+      checkpointId,
+      bridge: true
     });
 
-    console.log(`[executor] Spawned pid=${child.pid} for task=${task.id} run=${runId}`);
-
-    // Auto-remove from registry when process exits
-    child.on('exit', (code, signal) => {
-      console.log(`[executor] Process exited: task=${task.id} pid=${child.pid} code=${code} signal=${signal}`);
-      activeProcesses.delete(task.id);
-      logStream.end();
-    });
-
-    child.on('error', (err) => {
-      console.error(`[executor] Process error: task=${task.id} pid=${child.pid} err=${err.message}`);
-      activeProcesses.delete(task.id);
-      logStream.end();
-    });
+    console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
     return {
       success: true,
       runId,
       taskId: task.id,
-      pid: child.pid,
-      promptFile,
-      logFile,
+      checkpointId,
+      logFile: result.log_file,
+      bridge: true
     };
 
   } catch (err) {
-    console.error(`[executor] Error triggering cecelia-run: ${err.message}`);
+    console.error(`[executor] Error triggering via bridge: ${err.message}`);
     return {
       success: false,
       taskId: task.id,
@@ -405,14 +522,25 @@ async function triggerCeceliaRun(task) {
 }
 
 /**
- * Check if cecelia-run is available
+ * Check if cecelia-run is available (via cecelia-bridge on port 3457)
  */
 async function checkCeceliaRunAvailable() {
+  const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
   try {
-    execSync(`test -x "${CECELIA_RUN_PATH}"`, { timeout: 5000 });
-    return { available: true, path: CECELIA_RUN_PATH };
-  } catch {
-    return { available: false, path: CECELIA_RUN_PATH, error: 'Not found or not executable' };
+    // Original bridge doesn't have /health, just check if it responds
+    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/`, { method: 'GET', signal: AbortSignal.timeout(3000) });
+    // 404 means bridge is running (no GET handler)
+    return { available: true, path: EXECUTOR_BRIDGE_URL, bridge: true };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { available: false, path: EXECUTOR_BRIDGE_URL, error: 'Timeout' };
+    }
+    // Connection refused means not running
+    if (err.cause?.code === 'ECONNREFUSED') {
+      return { available: false, path: EXECUTOR_BRIDGE_URL, error: 'Bridge not running' };
+    }
+    // Other errors might mean it's running but returned error
+    return { available: true, path: EXECUTOR_BRIDGE_URL, bridge: true };
   }
 }
 

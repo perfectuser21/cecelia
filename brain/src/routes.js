@@ -4,7 +4,13 @@ import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy,
 import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, TASK_TYPE_AGENT_MAP } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus, TASK_TYPE_AGENT_MAP } from './tick.js';
+import {
+  createFeature, getFeature, getFeaturesByStatus, updateFeature,
+  createFeatureTask, handleFeatureTaskComplete, FEATURE_STATUS
+} from './feature-tick.js';
+import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP } from './task-router.js';
+import { checkAntiCrossing, validateTaskCompletion, getActiveFeaturesWithTasks } from './anti-crossing.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
   addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS
@@ -1597,8 +1603,9 @@ router.get('/vps-slots', async (req, res) => {
     // Get Claude processes with details
     let slots = [];
     try {
-      // Get all claude process PIDs and their details
-      const { stdout } = await execAsync('ps aux | grep -E "^[^ ]+ +[0-9]+ .* claude" | grep -v grep');
+      // Get all ACTUAL claude binary processes (not bash shell snapshots that mention "claude")
+      // Only match processes where the command is exactly "claude" (binary) or "claude -p" etc
+      const { stdout } = await execAsync('ps aux | grep -E " claude( |$)" | grep -v "grep" | grep -v "/bin/bash"');
       const lines = stdout.trim().split('\n').filter(Boolean);
 
       for (const line of lines) {
@@ -2458,6 +2465,266 @@ router.post('/route-task', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to route task', details: err.message });
+  }
+});
+
+// ==================== Feature Tick API ====================
+
+/**
+ * GET /api/brain/feature-tick/status
+ * Get Feature tick loop status
+ */
+router.get('/feature-tick/status', (req, res) => {
+  res.json({ success: true, ...getFeatureTickStatus() });
+});
+
+/**
+ * POST /api/brain/feature-tick/enable
+ * Enable Feature tick loop
+ */
+router.post('/feature-tick/enable', (req, res) => {
+  const started = startFeatureTickLoop();
+  res.json({ success: true, started, ...getFeatureTickStatus() });
+});
+
+/**
+ * POST /api/brain/feature-tick/disable
+ * Disable Feature tick loop
+ */
+router.post('/feature-tick/disable', (req, res) => {
+  const stopped = stopFeatureTickLoop();
+  res.json({ success: true, stopped, ...getFeatureTickStatus() });
+});
+
+// ==================== Features API ====================
+
+/**
+ * GET /api/brain/features
+ * List features with optional status filter
+ */
+router.get('/features', async (req, res) => {
+  try {
+    const { status, limit = 50 } = req.query;
+
+    let query = `
+      SELECT f.*, p.name as project_name, g.title as goal_title
+      FROM features f
+      LEFT JOIN projects p ON f.project_id = p.id
+      LEFT JOIN goals g ON f.goal_id = g.id
+    `;
+    const params = [];
+    let paramIndex = 1;
+
+    if (status) {
+      query += ` WHERE f.status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY f.created_at DESC LIMIT $${paramIndex}`;
+    params.push(parseInt(limit));
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, features: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get features', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/features/:id
+ * Get a single feature with its tasks
+ */
+router.get('/features/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const feature = await getFeature(id);
+
+    if (!feature) {
+      return res.status(404).json({ success: false, error: 'Feature not found' });
+    }
+
+    // Get associated tasks
+    const tasks = await pool.query(
+      'SELECT * FROM tasks WHERE feature_id = $1 ORDER BY created_at ASC',
+      [id]
+    );
+
+    res.json({ success: true, feature, tasks: tasks.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get feature', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/features
+ * Create a new feature
+ */
+router.post('/features', async (req, res) => {
+  try {
+    const { title, description, prd, goal_id, project_id } = req.body;
+
+    if (!title) {
+      return res.status(400).json({ success: false, error: 'title is required' });
+    }
+
+    const feature = await createFeature({ title, description, prd, goal_id, project_id });
+    res.json({ success: true, feature });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to create feature', details: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/features/:id
+ * Update a feature
+ */
+router.put('/features/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, active_task_id, current_pr_number } = req.body;
+
+    const updates = {};
+    if (status) updates.status = status;
+    if (active_task_id !== undefined) updates.active_task_id = active_task_id;
+    if (current_pr_number !== undefined) updates.current_pr_number = current_pr_number;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, error: 'No fields to update' });
+    }
+
+    await updateFeature(id, updates);
+    const feature = await getFeature(id);
+
+    res.json({ success: true, feature });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to update feature', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/features/:id/check-anti-crossing
+ * Check if a feature allows creating a new task
+ */
+router.get('/features/:id/check-anti-crossing', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const check = await checkAntiCrossing(id);
+    res.json({ success: true, feature_id: id, ...check });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Anti-crossing check failed', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/feature-statuses
+ * Get available feature status values
+ */
+router.get('/feature-statuses', (req, res) => {
+  res.json({
+    success: true,
+    statuses: FEATURE_STATUS,
+    description: {
+      planning: '初始状态，等待规划第一个 Task',
+      task_created: 'Task 已创建，等待执行',
+      task_running: 'Task 正在执行',
+      task_completed: 'Task 完成，等待评估',
+      evaluating: '正在评估是否需要下一个 Task',
+      completed: 'Feature 完成',
+      cancelled: '已取消'
+    }
+  });
+});
+
+// ==================== Task Router API ====================
+
+/**
+ * POST /api/brain/identify-work-type
+ * Identify if input is a single task or feature
+ */
+router.post('/identify-work-type', (req, res) => {
+  try {
+    const { input } = req.body;
+
+    if (!input) {
+      return res.status(400).json({ success: false, error: 'input is required' });
+    }
+
+    const workType = identifyWorkType(input);
+    res.json({ success: true, input, work_type: workType });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to identify work type', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/task-locations
+ * Get location mapping for all task types
+ */
+router.get('/task-locations', (req, res) => {
+  res.json({
+    success: true,
+    locations: LOCATION_MAP,
+    valid_task_types: getValidTaskTypes(),
+    description: {
+      us: '美国 VPS - Claude (开发、审查)',
+      hk: '香港 VPS - MiniMax (自动化、数据处理)'
+    }
+  });
+});
+
+/**
+ * POST /api/brain/route-task-create
+ * Get routing decision for creating a task
+ */
+router.post('/route-task-create', (req, res) => {
+  try {
+    const { title, task_type, feature_id, is_recurring } = req.body;
+
+    if (!title && !task_type) {
+      return res.status(400).json({ success: false, error: 'title or task_type is required' });
+    }
+
+    const routing = routeTaskCreate({ title, task_type, feature_id, is_recurring });
+    res.json({ success: true, ...routing });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to route task create', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/active-features
+ * Get all active features with their current task status (for monitoring)
+ */
+router.get('/active-features', async (req, res) => {
+  try {
+    const features = await getActiveFeaturesWithTasks();
+    res.json({ success: true, features });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get active features', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/feature-task-complete
+ * Handle feature task completion (called by executor)
+ */
+router.post('/feature-task-complete', async (req, res) => {
+  try {
+    const { task_id, summary, artifact_ref, quality_gate } = req.body;
+
+    if (!task_id) {
+      return res.status(400).json({ success: false, error: 'task_id is required' });
+    }
+
+    const result = await handleFeatureTaskComplete(task_id, {
+      summary,
+      artifact_ref,
+      quality_gate
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to complete feature task', details: err.message });
   }
 });
 

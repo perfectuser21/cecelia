@@ -4,38 +4,37 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 import fs from 'fs'
 
-// Support monorepo structure (cecelia-workspace)
-// Core features are now in apps/core/features
-const monorepoCorePath = path.resolve(__dirname, '../../core/features')
-const monorepoDataPath = path.resolve(__dirname, '../../core/data')
-const coreAvailable = fs.existsSync(monorepoCorePath)
-const coreFeaturesPath = coreAvailable
-  ? monorepoCorePath
-  : path.resolve(__dirname, './src/stubs/core-features') // fallback stub
+// Core features (Dashboard, Today, Work, Knowledge, System, Brain)
+const coreFeaturesPath = path.resolve(__dirname, './src/features/core')
+const coreAvailable = fs.existsSync(coreFeaturesPath)
 
 export default defineConfig({
   resolve: {
     alias: [
       { find: '@features/core', replacement: coreFeaturesPath },
       { find: '@', replacement: path.resolve(__dirname, './src') },
-      // Support Core data imports - match the relative path pattern from Core features
-      ...(coreAvailable ? [{
-        find: /^\.\.\/\.\.\/data/,
-        replacement: monorepoDataPath
-      }] : [])
     ],
     // Dedupe to ensure single instances of dependencies
     dedupe: [
       'react', 'react-dom', 'react-router-dom',
       'lucide-react', 'axios', 'recharts', '@hello-pangea/dnd',
+      '@tldraw/tldraw',
     ],
+    // Ensure external features can resolve dependencies from this project's node_modules
+    preserveSymlinks: false,
   },
   // Optimize deps to pre-bundle external feature dependencies
   optimizeDeps: {
     include: [
       'react', 'react-dom', 'react-router-dom',
       'lucide-react', 'axios', 'recharts', '@hello-pangea/dnd',
+      '@tldraw/tldraw', 'd3', 'echarts', 'mermaid', 'react-grid-layout', 'reactflow',
     ],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+    },
   },
   plugins: [
     react(),
@@ -118,6 +117,13 @@ export default defineConfig({
   ],
   server: {
     port: 3001,
+    allowedHosts: [
+      'localhost',
+      'dev-core.zenjoymedia.media',
+      'dev-autopilot.zenjoymedia.media',
+      'core.zenjoymedia.media',
+      'autopilot.zenjoymedia.media',
+    ],
     proxy: {
       // Brain API (Seats, Tick, etc.)
       '/api/brain': {

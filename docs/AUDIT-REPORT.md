@@ -1,15 +1,18 @@
 ---
-id: audit-report-concurrency-optimization
-version: 1.0.0
-created: 2026-02-01
-branch: cp-concurrency-optimization
+id: audit-report-feature-tick-system
+version: 2.0.0
+created: 2026-02-05
+branch: cp-feature-tick-system
+changelog:
+  - 2.0.0: Feature Tick 系统实现
+  - 1.0.0: 并发优化配置
 ---
 
 # Audit Report
 
-**Branch**: cp-concurrency-optimization
-**Date**: 2026-02-01
-**Scope**: .env, .env.docker, .env.example, README.md, DOCKER.md, brain/.env.example (deleted)
+**Branch**: cp-feature-tick-system
+**Date**: 2026-02-05
+**Scope**: Feature Tick 系统实现
 **Target Level**: L2
 
 ## Summary
@@ -25,37 +28,31 @@ branch: cp-concurrency-optimization
 
 ## Findings
 
-无问题发现。所有配置修改符合规范：
+无问题发现。Feature Tick 系统实现符合规范：
 
-1. ✅ 并发配置统一为 5（CECELIA_MAX_CONCURRENT=5, MAX_CONCURRENT=5）
-2. ✅ 移除废弃变量 MAX_CONCURRENT_TASKS
-3. ✅ .env.example 成功合并 Brain + Intelligence 配置
-4. ✅ 删除冗余的 brain/.env.example
-5. ✅ 文档准确更新（手动启动为默认，Docker 为可选）
-6. ✅ 所有环境变量引用一致
+1. ✅ 数据库迁移正确执行（features 表、tasks 新字段、recurring_tasks 表）
+2. ✅ feature-tick.js 实现 Feature 状态机循环
+3. ✅ task-router.js 实现任务分流（US/HK）
+4. ✅ anti-crossing.js 实现防串线机制
+5. ✅ tick.js 正确集成 Feature Tick
+6. ✅ routes.js 添加 API 端点
+7. ✅ 36 个新测试全部通过
 
 ## Scope Validation
 
 **Allowed Scope** (from QA-DECISION.md):
-- `.env` - 添加/更新并发配置 ✅
-- `.env.docker` - 统一并发配置 ✅
-- `.env.example` - 合并完整配置模板 ✅
-- `brain/.env.example` - 删除（合并到根目录）✅
-- `README.md` - 更新启动说明 ✅
-- `DOCKER.md` - 标记为可选方式 ✅
+- `brain/migrations/003_feature_tick_system.sql` - 数据库迁移 ✅
+- `brain/src/feature-tick.js` - Feature Tick 逻辑（新增）✅
+- `brain/src/task-router.js` - 任务分流逻辑（新增）✅
+- `brain/src/anti-crossing.js` - 防串线检查（新增）✅
+- `brain/src/tick.js` - 集成 Feature Tick ✅
+- `brain/src/routes.js` - 添加新 API 端点 ✅
+- `brain/src/__tests__/*.test.js` - 新增/更新测试 ✅
 
 **Forbidden Areas**:
-- `brain/src/` - 未触碰 ✅
-- `src/api/` - 未触碰 ✅
-- `data/` - 未触碰 ✅
-- `.git/` - 未触碰 ✅
-- `node_modules/` - 未触碰 ✅
-
-**Extra Changes** (outside allowed scope):
-- `.dev-mode` - /dev 工作流文件（正常）
-- `.dod.md` - DoD 文件（正常）
-- `docs/QA-DECISION.md` - QA 决策文件（正常）
-- 其他 .gate-* 和 .prd-* 文件 - 工作流产物（正常）
+- `brain/src/executor.js` - 未修改 ✅
+- `brain/src/decision.js` - 未修改 ✅
+- 前端代码 - 未修改 ✅
 
 ## Blockers
 
@@ -63,22 +60,30 @@ branch: cp-concurrency-optimization
 
 ## Validation
 
-配置优化变更通过审计：
+Feature Tick 系统实现通过审计：
 - ✅ L1 问题：0 个
 - ✅ L2 问题：0 个
-- ✅ 环境变量命名一致
-- ✅ 配置文件格式正确
-- ✅ 文档准确反映实际部署方式
-- ✅ 所有修改在允许的 Scope 内
-- ✅ 未触碰禁止修改的区域
+- ✅ 状态机逻辑正确
+- ✅ 防串线机制完整
+- ✅ 任务分流正确（dev/review→US, automation/data→HK）
+- ✅ 所有模块可正常加载
+- ✅ 新增测试全部通过（feature-tick: 30, anti-crossing: 6）
 
 ## Notes
 
-此次变更为配置优化，属于运维调优。审计重点在于：
-1. 配置一致性（Brain 和 cecelia-run 并发数统一）
-2. 环境变量清理（合并重复配置）
-3. 文档准确性（与实际部署方式一致）
+Feature Tick 系统实现要点：
+1. Feature 状态机：planning → task_created → task_running → task_completed → evaluating → (loop or completed)
+2. 防串线：feature_id 绑定 + active_task_id 状态锁 + 完成时校验
+3. 任务分流：根据 task_type 自动分配 location（US/HK）
+4. 集成：主 Tick 循环中调用 Feature Tick
 
-无代码逻辑变更，无需单元测试。部署后通过手动验证：
-- `curl http://localhost:5221/api/brain/tick/status | jq .max_concurrent` 应返回 5
-- 服务健康检查正常
+验证命令：
+```bash
+# 检查 Feature Tick 状态
+curl http://localhost:5221/api/brain/feature-tick/status | jq
+
+# 检查任务分流
+curl -X POST http://localhost:5221/api/brain/route-task-create \
+  -H "Content-Type: application/json" \
+  -d '{"title":"test","task_type":"automation"}' | jq
+```

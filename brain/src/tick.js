@@ -11,6 +11,8 @@ import { compareGoalProgress, generateDecision, executeDecision } from './decisi
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
+import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
+import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -595,6 +597,45 @@ async function executeTick() {
     );
   }
 
+  // 2.5 Feature Tick: process Features with planning/task_completed status
+  let featureTickResult = null;
+  try {
+    featureTickResult = await runFeatureTickSafe();
+    if (featureTickResult.actions_taken?.length > 0) {
+      actionsTaken.push({
+        action: 'feature_tick',
+        planning_processed: featureTickResult.planning_processed,
+        completed_processed: featureTickResult.completed_processed,
+        feature_actions: featureTickResult.actions_taken
+      });
+
+      await logTickDecision(
+        'tick',
+        `Feature Tick: ${featureTickResult.actions_taken.length} actions`,
+        { action: 'feature_tick', ...featureTickResult },
+        { success: true }
+      );
+    }
+  } catch (err) {
+    console.error('[tick-loop] Feature Tick error:', err.message);
+    await logTickDecision(
+      'tick',
+      `Feature Tick error: ${err.message}`,
+      { action: 'feature_tick_error', error: err.message },
+      { success: false }
+    );
+  }
+
+  // 2.6 Anti-crossing cleanup: clear orphaned task references
+  try {
+    const orphansCleaned = await cleanupOrphanedTaskRefs();
+    if (orphansCleaned > 0) {
+      console.log(`[tick-loop] Cleaned up ${orphansCleaned} orphaned task references`);
+    }
+  } catch (err) {
+    console.error('[tick-loop] Anti-crossing cleanup error:', err.message);
+  }
+
   // 3. Get daily focus
   const focusResult = await getDailyFocus();
 
@@ -705,6 +746,7 @@ async function executeTick() {
   return {
     success: true,
     decision_engine: decisionEngineResult,
+    feature_tick: featureTickResult,
     focus: {
       objective_id: objectiveId,
       objective_title: focus.objective.title
@@ -734,6 +776,10 @@ export {
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
   routeTask,
+  // Feature Tick re-exports
+  startFeatureTickLoop,
+  stopFeatureTickLoop,
+  getFeatureTickStatus,
   TASK_TYPE_AGENT_MAP,
   TICK_INTERVAL_MINUTES,
   TICK_LOOP_INTERVAL_MS,

@@ -27,6 +27,20 @@ interface TickStatus {
   };
 }
 
+interface VPSSlots {
+  total: number;
+  used: number;
+  available: number;
+  slots: Array<{
+    pid: number;
+    cpu: string;
+    memory: string;
+    startTime: string;
+    taskId: string | null;
+    command: string;
+  }>;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -53,7 +67,7 @@ interface BrainStatus {
 export default function SeatsStatus() {
   const [tickStatus, setTickStatus] = useState<TickStatus | null>(null);
   const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
-  const [claudeCount, setClaudeCount] = useState(0);
+  const [vpsSlots, setVpsSlots] = useState<VPSSlots | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
@@ -73,8 +87,12 @@ export default function SeatsStatus() {
       if (brainRes.ok) {
         const data = await brainRes.json();
         setBrainStatus(data);
-        // Extract claude count from logs or estimate from in_progress
-        setClaudeCount(data.task_digest?.stats?.in_progress || 0);
+      }
+
+      // Fetch actual VPS slots (real claude processes)
+      const slotsRes = await fetch('/api/brain/vps-slots');
+      if (slotsRes.ok) {
+        setVpsSlots(await slotsRes.json());
       }
 
       setError('');
@@ -116,10 +134,12 @@ export default function SeatsStatus() {
   const autoMax = tickStatus?.auto_dispatch_max || 5;
   const inProgress = brainStatus?.task_digest?.stats?.in_progress || 0;
   const queued = brainStatus?.task_digest?.stats?.queued || 0;
+  // Actual running claude processes from VPS
+  const actualClaudeProcesses = vpsSlots?.used || 0;
 
-  // Build seats visualization
+  // Build seats visualization using actual VPS data
   const seats = Array.from({ length: maxSeats }, (_, i) => {
-    if (i < inProgress) return 'occupied';
+    if (i < actualClaudeProcesses) return 'occupied';
     if (i >= autoMax) return 'reserved';
     return 'empty';
   });
@@ -169,7 +189,7 @@ export default function SeatsStatus() {
       {/* Seats Visualization */}
       <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
         <h2 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">
-          席位状态 ({inProgress}/{autoMax} 自动派发，{reservedSlots} 预留人工)
+          席位状态 (实际进程: {actualClaudeProcesses}/{maxSeats}，任务 in_progress: {inProgress})
         </h2>
 
         <div className="flex gap-3 flex-wrap">
@@ -198,7 +218,7 @@ export default function SeatsStatus() {
         <div className="flex gap-6 mt-4 text-sm">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded bg-blue-500" />
-            <span className="text-gray-600 dark:text-gray-400">运行中 ({inProgress})</span>
+            <span className="text-gray-600 dark:text-gray-400">Claude 进程 ({actualClaudeProcesses})</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded bg-gray-200 dark:bg-gray-600" />
@@ -209,6 +229,27 @@ export default function SeatsStatus() {
             <span className="text-gray-600 dark:text-gray-400">预留人工 ({reservedSlots})</span>
           </div>
         </div>
+
+        {/* Running Claude Processes Details */}
+        {vpsSlots && vpsSlots.slots.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">运行中的 Claude 进程</h3>
+            <div className="space-y-2">
+              {vpsSlots.slots.map((slot, i) => (
+                <div key={i} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-gray-500">PID {slot.pid}</span>
+                    <span className="text-gray-400">|</span>
+                    <span>CPU: {slot.cpu}</span>
+                    <span className="text-gray-400">|</span>
+                    <span>内存: {slot.memory}</span>
+                  </div>
+                  <span className="text-gray-500">启动: {slot.startTime}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stats Grid */}
