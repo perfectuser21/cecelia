@@ -1213,6 +1213,168 @@ router.get('/executor/status', async (req, res) => {
   }
 });
 
+// ==================== Cluster Status API ====================
+
+/**
+ * GET /api/brain/cluster/status
+ * Get status of all servers in the cluster (US + HK)
+ */
+router.get('/cluster/status', async (req, res) => {
+  try {
+    const os = await import('os');
+
+    // Get US VPS slots using same logic as /vps-slots
+    let usProcesses = [];
+    try {
+      const { stdout } = await execAsync('ps aux | grep -E " claude( |$)" | grep -v "grep" | grep -v "/bin/bash"');
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      for (const line of lines) {
+        const parts = line.split(/\s+/);
+        if (parts.length >= 11) {
+          usProcesses.push({
+            pid: parseInt(parts[1]),
+            cpu: `${parts[2]}%`,
+            memory: `${parts[3]}%`,
+            startTime: parts[8],
+            command: parts.slice(10).join(' ').slice(0, 80)
+          });
+        }
+      }
+    } catch { /* no processes */ }
+
+    const usUsed = usProcesses.length;
+    const usCpuLoad = os.loadavg()[0];
+    const usCpuCores = os.cpus().length;
+    const usMemTotal = Math.round(os.totalmem() / (1024 * 1024 * 1024) * 10) / 10;
+    const usMemFree = Math.round(os.freemem() / (1024 * 1024 * 1024) * 10) / 10;
+    const usMemUsedPct = Math.round((1 - os.freemem() / os.totalmem()) * 100);
+
+    // 动态计算可用席位 (85% 安全阈值)
+    const CPU_PER_CLAUDE = 0.5;
+    const MEM_PER_CLAUDE_GB = 1.0;
+    const SAFETY_MARGIN = 0.85;
+
+    const usCpuTarget = usCpuCores * SAFETY_MARGIN;
+    const usCpuHeadroom = Math.max(0, usCpuTarget - usCpuLoad);
+    const usCpuAllowed = Math.floor(usCpuHeadroom / CPU_PER_CLAUDE);
+    const usMemAvailable = Math.max(0, usMemFree - 2); // 保留 2GB
+    const usMemAllowed = Math.floor(usMemAvailable / MEM_PER_CLAUDE_GB);
+    const usDynamicMax = Math.min(usCpuAllowed, usMemAllowed, 12); // 硬上限 12
+
+    const usServer = {
+      id: 'us',
+      name: 'US VPS',
+      location: '🇺🇸 美国',
+      ip: '146.190.52.84',
+      status: 'online',
+      resources: {
+        cpu_cores: usCpuCores,
+        cpu_load: Math.round(usCpuLoad * 10) / 10,
+        cpu_pct: Math.round((usCpuLoad / usCpuCores) * 100),
+        mem_total_gb: usMemTotal,
+        mem_free_gb: usMemFree,
+        mem_used_pct: usMemUsedPct
+      },
+      slots: {
+        max: 12,              // 理论最大
+        dynamic_max: usDynamicMax, // 当前资源可支持的最大
+        used: usUsed,
+        available: Math.max(0, usDynamicMax - usUsed - 1), // 减 1 预留
+        reserved: 1,
+        processes: usProcesses
+      },
+      task_types: ['dev', 'review', 'qa', 'audit']
+    };
+
+    // HK server status (via bridge)
+    let hkServer = {
+      id: 'hk',
+      name: 'HK VPS',
+      location: '🇭🇰 香港',
+      ip: '43.154.85.217',
+      status: 'offline',
+      resources: null,
+      slots: {
+        max: 5,               // 理论最大
+        dynamic_max: 0,       // 当前资源可支持的最大
+        used: 0,
+        available: 0,
+        reserved: 0,
+        processes: []
+      },
+      task_types: ['talk', 'research', 'automation']
+    };
+
+    // Try to fetch HK status from bridge
+    try {
+      const hkBridgeUrl = process.env.HK_BRIDGE_URL || 'http://100.86.118.99:5225';
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+
+      const hkRes = await fetch(`${hkBridgeUrl}/status`, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (hkRes.ok) {
+        const hkData = await hkRes.json();
+        const hkResources = hkData.resources || {
+          cpu_cores: 4,
+          cpu_load: 0,
+          cpu_pct: 0,
+          mem_total_gb: 7.6,
+          mem_free_gb: 5,
+          mem_used_pct: 30
+        };
+
+        // 计算 HK 动态可用席位
+        const hkCpuTarget = hkResources.cpu_cores * SAFETY_MARGIN;
+        const hkCpuHeadroom = Math.max(0, hkCpuTarget - hkResources.cpu_load);
+        const hkCpuAllowed = Math.floor(hkCpuHeadroom / CPU_PER_CLAUDE);
+        const hkMemAvailable = Math.max(0, hkResources.mem_free_gb - 1.5); // HK 保留 1.5GB
+        const hkMemAllowed = Math.floor(hkMemAvailable / MEM_PER_CLAUDE_GB);
+        const hkDynamicMax = Math.min(hkCpuAllowed, hkMemAllowed, 5); // 硬上限 5
+        const hkUsed = hkData.slots?.used || 0;
+
+        hkServer = {
+          ...hkServer,
+          status: 'online',
+          resources: hkResources,
+          slots: {
+            max: 5,
+            dynamic_max: hkDynamicMax,
+            used: hkUsed,
+            available: Math.max(0, hkDynamicMax - hkUsed),
+            reserved: 0,
+            processes: hkData.slots?.processes || []
+          }
+        };
+      }
+    } catch {
+      // HK bridge not available, keep offline status
+    }
+
+    // Calculate cluster totals
+    const totalSlots = usServer.slots.max + hkServer.slots.max;
+    const totalUsed = usServer.slots.used + hkServer.slots.used;
+    const totalAvailable = usServer.slots.available + hkServer.slots.available;
+
+    res.json({
+      success: true,
+      cluster: {
+        total_slots: totalSlots,
+        total_used: totalUsed,
+        total_available: totalAvailable,
+        servers: [usServer, hkServer]
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get cluster status',
+      details: err.message
+    });
+  }
+});
+
 // ==================== Generate API ====================
 
 /**
