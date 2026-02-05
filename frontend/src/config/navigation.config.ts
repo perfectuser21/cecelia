@@ -51,6 +51,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
+  'ExecutionLogs': () => import('../pages/ExecutionLogs'),
   'SeatsStatus': () => import('../pages/SeatsStatus'),
   // Tasks moved to zenithjoy-core
   'PublishStats': () => import('../pages/PublishStats'),
@@ -145,6 +146,9 @@ export const additionalRoutes: RouteConfig[] = [
   { path: '/features', component: 'FeatureDashboard', requireAuth: true },
   { path: '/command', component: 'CommandCenter', requireAuth: true },
   { path: '/command/*', component: 'CommandCenter', requireAuth: true },
+
+  // === Execution Logs ===
+  { path: '/execution-logs', component: 'ExecutionLogs', requireAuth: true },
 
   // 管理员子页面已迁移到 Core
   // ClaudeMonitor, VpsMonitor, ClaudeStats, N8n*, Canvas 等

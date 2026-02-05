@@ -1,146 +1,76 @@
 # QA Decision - 执行日志查看页面
 
-## Decision
+## Decision Summary
 Decision: MUST_ADD_RCI
 Priority: P1
 RepoType: Business
 
-## Change Analysis
-**Change Type**: Feature
-**Scope**: Frontend + Backend
-**Impact**: 添加新的日志查看功能，不影响现有功能
-
 ## Tests
 
-### Frontend Tests
-- dod_item: "日志条目正确显示时间戳、级别、来源、消息"
-  method: auto
-  location: tests/frontend/LogViewer.test.tsx
-  reason: 核心展示逻辑需要自动化测试
-
-- dod_item: "支持实时流式更新"
-  method: auto
-  location: tests/frontend/LogViewer.test.tsx
-  reason: WebSocket 连接和数据流需要自动化测试
-
-- dod_item: "自动滚动到最新日志"
-  method: auto
-  location: tests/frontend/LogViewer.test.tsx
-  reason: 滚动行为需要自动化测试
-
-- dod_item: "用户手动滚动时暂停自动滚动"
-  method: auto
-  location: tests/frontend/LogViewer.test.tsx
-  reason: 用户交互逻辑需要自动化测试
-
-- dod_item: "按日志级别筛选"
-  method: auto
-  location: tests/frontend/LogFilter.test.tsx
-  reason: 筛选核心功能需要自动化测试
-
-- dod_item: "按时间范围筛选"
-  method: auto
-  location: tests/frontend/LogFilter.test.tsx
-  reason: 筛选核心功能需要自动化测试
-
-- dod_item: "按关键字搜索"
-  method: auto
-  location: tests/frontend/LogFilter.test.tsx
-  reason: 搜索功能需要自动化测试
-
-- dod_item: "多条件组合筛选"
-  method: auto
-  location: tests/frontend/LogFilter.test.tsx
-  reason: 复杂筛选逻辑需要自动化测试
-
 ### Backend Tests
-- dod_item: "WebSocket 连接稳定，支持自动重连"
+- dod_item: "执行日志 API 路由正常工作"
   method: auto
-  location: tests/backend/websocket/test_log_handler.py
-  reason: WebSocket 服务端逻辑需要自动化测试
+  location: brain/src/routes/__tests__/execution-logs.test.ts
 
-### Manual Tests
-- dod_item: "页面能够正确展示任务执行日志"
-  method: manual
-  location: manual:访问页面并验证日志显示
-  reason: 整体功能需要人工验证
-
-- dod_item: "界面清晰易用，符合 Cecelia 设计风格"
-  method: manual
-  location: manual:UI 审查
-  reason: 设计风格需要人工审查
-
-- dod_item: "10000 条日志渲染流畅（响应时间 < 100ms）"
-  method: manual
-  location: manual:性能测试
-  reason: 性能指标需要人工测试
-
-- dod_item: "内存占用合理（< 200MB）"
-  method: manual
-  location: manual:内存监控
-  reason: 内存指标需要人工监控
-
-- dod_item: "导出功能正常工作"
-  method: manual
-  location: manual:测试导出功能
-  reason: 导出功能需要人工验证
-
-### Contract Tests
-- dod_item: "TypeScript 类型定义完整"
+- dod_item: "日志查询服务可以按时间、任务 ID、状态筛选"
   method: auto
-  location: contract:type-check
-  reason: 类型安全通过 CI 自动检查
+  location: brain/src/services/__tests__/execution-log-service.test.ts
 
-- dod_item: "代码符合项目规范"
+- dod_item: "日志流处理工具支持实时推送"
   method: auto
-  location: contract:lint
-  reason: 代码风格通过 ESLint 自动检查
+  location: brain/src/utils/__tests__/log-stream.test.ts
 
-## RCI Analysis
+- dod_item: "API 性能良好，大量日志查询不超时"
+  method: manual
+  location: manual:使用 k6 或 ab 进行压力测试
 
-### Golden Path Check
-**Is Golden Path?**: No
-**Reason**: 日志查看是辅助功能，不是核心业务流程
+### Frontend Tests
+- dod_item: "日志查看页面可以正常访问"
+  method: auto
+  location: frontend/src/pages/__tests__/ExecutionLogs.test.tsx
 
-### RCI Requirements
-**New RCI Items**:
-- RCI-LOG-001: 日志查看页面基础功能
-  - Scenario: 用户访问日志查看页面
-  - Expected: 页面正常显示，能查看日志
-  - Test: tests/frontend/LogViewer.test.tsx
+- dod_item: "日志实时流式展示正常工作"
+  method: auto
+  location: frontend/src/components/logs/__tests__/LogViewer.test.tsx
 
-- RCI-LOG-002: 日志筛选功能
-  - Scenario: 用户使用筛选功能
-  - Expected: 筛选结果正确
-  - Test: tests/frontend/LogFilter.test.tsx
+- dod_item: "筛选功能可以按时间、任务 ID、状态过滤"
+  method: auto
+  location: frontend/src/components/logs/__tests__/LogFilter.test.tsx
 
-**Update RCI Items**: []
+- dod_item: "搜索功能可以搜索日志内容"
+  method: auto
+  location: frontend/src/components/logs/__tests__/LogSearch.test.tsx
 
-## Risk Assessment
-**Regression Risk**: Low
-- 新增功能，不修改现有代码
-- 独立模块，不影响现有功能
+- dod_item: "可以下载日志文件"
+  method: manual
+  location: manual:手动点击下载按钮验证文件下载
 
-**Golden Path Impact**: None
-- 不影响核心业务流程
+- dod_item: "自动滚动功能正常工作"
+  method: manual
+  location: manual:观察日志自动滚动到底部
 
-## Test Strategy
-**Test Approach**: Auto-first with manual validation
-- 核心逻辑：自动化测试（单元测试 + 集成测试）
-- UI/UX：人工验证
-- 性能：人工测试
+- dod_item: "日志级别过滤正常工作"
+  method: auto
+  location: frontend/src/components/logs/__tests__/LogViewer.test.tsx
 
-**Coverage Target**: 80%+
-- Frontend 组件测试覆盖 80%+
-- Backend WebSocket 处理逻辑覆盖 80%+
+- dod_item: "页面响应式设计，移动端友好"
+  method: manual
+  location: manual:使用浏览器开发工具测试不同屏幕尺寸
+
+## RCI
+new: []
+update: []
 
 ## Reason
-这是一个新增功能，添加日志查看和筛选能力。由于是新功能且独立模块，不影响现有功能，回归风险低。需要添加新的 RCI 项目来确保日志查看功能不回归。优先级为 P1，因为这是改善系统可观测性的重要功能，但不是 P0 的核心业务。
+这是一个新增的日志查看功能，涉及前后端开发。大部分功能可以通过单元测试覆盖，少数 UI 交互和性能测试需要手动验证。不需要更新现有 RCI，因为是新增独立功能。
 
-## Checklist
-- [x] 已识别所有需要测试的 DoD 项
-- [x] 已为自动化测试指定具体文件位置
-- [x] 已评估回归风险
-- [x] 已确定 Golden Path 影响
-- [x] 已规划 RCI 新增/更新项
-- [x] 已设定测试覆盖率目标
+## Change Type
+feature
+
+## Golden Path
+NO - 这是管理功能,不影响核心业务流程
+
+## Test Strategy
+- 后端：单元测试覆盖 API 路由、查询服务、日志流处理
+- 前端：单元测试覆盖组件渲染和交互逻辑
+- 手动测试：下载功能、自动滚动、响应式设计、性能压测

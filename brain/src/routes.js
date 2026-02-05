@@ -3310,4 +3310,244 @@ router.post('/reflections', async (req, res) => {
   }
 });
 
+// ==================== Execution Logs API ====================
+
+/**
+ * GET /api/brain/execution-logs
+ * Get task execution logs with filtering
+ */
+router.get('/execution-logs', async (req, res) => {
+  try {
+    const {
+      task_id,
+      status,
+      task_type,
+      limit = 100,
+      offset = 0,
+      start_date,
+      end_date,
+      search
+    } = req.query;
+
+    let query = `
+      SELECT
+        t.id,
+        t.title,
+        t.status,
+        t.task_type,
+        t.priority,
+        t.created_at,
+        t.updated_at,
+        t.completed_at,
+        t.payload,
+        p.name as project_name
+      FROM tasks t
+      LEFT JOIN projects p ON t.project_id = p.id
+      WHERE 1=1
+    `;
+    const params = [];
+    let paramIndex = 1;
+
+    if (task_id) {
+      query += ` AND t.id = $${paramIndex++}`;
+      params.push(task_id);
+    }
+
+    if (status) {
+      query += ` AND t.status = $${paramIndex++}`;
+      params.push(status);
+    }
+
+    if (task_type) {
+      query += ` AND t.task_type = $${paramIndex++}`;
+      params.push(task_type);
+    }
+
+    if (start_date) {
+      query += ` AND t.created_at >= $${paramIndex++}`;
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      query += ` AND t.created_at <= $${paramIndex++}`;
+      params.push(end_date);
+    }
+
+    if (search) {
+      query += ` AND (t.title ILIKE $${paramIndex++} OR t.payload::text ILIKE $${paramIndex})`;
+      params.push(`%${search}%`);
+      params.push(`%${search}%`);
+      paramIndex += 2;
+    }
+
+    query += ` ORDER BY t.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    params.push(parseInt(limit));
+    params.push(parseInt(offset));
+
+    const result = await pool.query(query, params);
+
+    // Get total count for pagination
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM tasks t
+      WHERE 1=1
+    `;
+    const countParams = [];
+    let countIndex = 1;
+
+    if (task_id) {
+      countQuery += ` AND t.id = $${countIndex++}`;
+      countParams.push(task_id);
+    }
+    if (status) {
+      countQuery += ` AND t.status = $${countIndex++}`;
+      countParams.push(status);
+    }
+    if (task_type) {
+      countQuery += ` AND t.task_type = $${countIndex++}`;
+      countParams.push(task_type);
+    }
+    if (start_date) {
+      countQuery += ` AND t.created_at >= $${countIndex++}`;
+      countParams.push(start_date);
+    }
+    if (end_date) {
+      countQuery += ` AND t.created_at <= $${countIndex++}`;
+      countParams.push(end_date);
+    }
+    if (search) {
+      countQuery += ` AND (t.title ILIKE $${countIndex++} OR t.payload::text ILIKE $${countIndex++})`;
+      countParams.push(`%${search}%`);
+      countParams.push(`%${search}%`);
+    }
+
+    const countResult = await pool.query(countQuery, countParams);
+    const total = parseInt(countResult.rows[0].total);
+
+    res.json({
+      success: true,
+      logs: result.rows,
+      pagination: {
+        total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        has_more: (parseInt(offset) + result.rows.length) < total
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get execution logs', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/execution-logs/:id
+ * Get detailed execution log for a specific task
+ */
+router.get('/execution-logs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(`
+      SELECT
+        t.*,
+        p.name as project_name,
+        g.title as goal_title,
+        f.title as feature_title
+      FROM tasks t
+      LEFT JOIN projects p ON t.project_id = p.id
+      LEFT JOIN goals g ON t.goal_id = g.id
+      LEFT JOIN features f ON t.feature_id = f.id
+      WHERE t.id = $1
+    `, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    const task = result.rows[0];
+
+    // Try to get log file content if available
+    let logContent = null;
+    if (task.payload && task.payload.log_file) {
+      try {
+        const { readFile } = await import('fs/promises');
+        logContent = await readFile(task.payload.log_file, 'utf-8');
+      } catch {
+        // Log file not accessible
+        logContent = null;
+      }
+    }
+
+    res.json({
+      success: true,
+      task,
+      log_content: logContent
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get execution log', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/execution-logs/:id/stream
+ * Stream execution log for a running task (SSE)
+ */
+router.get('/execution-logs/:id/stream', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if task exists
+    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    const task = taskResult.rows[0];
+
+    // Set up SSE
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+
+    // Send initial data
+    res.write(`data: ${JSON.stringify({ type: 'init', task })}\n\n`);
+
+    // If task has log file, stream it
+    if (task.payload && task.payload.log_file) {
+      try {
+        const { createReadStream } = await import('fs');
+        const { createInterface } = await import('readline');
+
+        const fileStream = createReadStream(task.payload.log_file);
+        const rl = createInterface({
+          input: fileStream,
+          crlfDelay: Infinity
+        });
+
+        for await (const line of rl) {
+          res.write(`data: ${JSON.stringify({ type: 'log', line, timestamp: new Date().toISOString() })}\n\n`);
+        }
+      } catch (err) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Log file not accessible' })}\n\n`);
+      }
+    }
+
+    // Keep connection alive for 60 seconds
+    const keepAliveInterval = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 30000);
+
+    setTimeout(() => {
+      clearInterval(keepAliveInterval);
+      res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
+      res.end();
+    }, 60000);
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to stream execution log', details: err.message });
+  }
+});
+
 export default router;
