@@ -37,5 +37,5 @@ export const TICK_INTERVAL_MINUTES: number;
 export const TICK_LOOP_INTERVAL_MS: number;
 export const TICK_TIMEOUT_MS: number;
 export const DISPATCH_TIMEOUT_MINUTES: number;
-export const DISPATCH_COOLDOWN_MS: number;
 export const MAX_CONCURRENT_TASKS: number;
+export const AUTO_DISPATCH_MAX: number;
