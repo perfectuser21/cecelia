@@ -349,7 +349,35 @@ router.get('/decisions', async (req, res) => {
  */
 router.get('/tasks', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = parseInt(req.query.limit) || 100;
+    const { status, task_type } = req.query;
+
+    // If filters provided, use custom query instead of getTopTasks
+    if (status || task_type) {
+      let query = 'SELECT * FROM tasks WHERE 1=1';
+      const params = [];
+      let paramIndex = 1;
+
+      if (status) {
+        query += ` AND status = $${paramIndex}`;
+        params.push(status);
+        paramIndex++;
+      }
+
+      if (task_type) {
+        query += ` AND task_type = $${paramIndex}`;
+        params.push(task_type);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY created_at DESC LIMIT $${paramIndex}`;
+      params.push(limit);
+
+      const result = await pool.query(query, params);
+      return res.json(result.rows);
+    }
+
+    // Default behavior: use getTopTasks
     const tasks = await getTopTasks(limit);
     res.json(tasks);
   } catch (err) {
@@ -3313,240 +3341,141 @@ router.post('/reflections', async (req, res) => {
 // ==================== Execution Logs API ====================
 
 /**
- * GET /api/brain/execution-logs
- * Get task execution logs with filtering
+ * GET /tasks/:taskId/logs
+ * 获取任务执行日志
  */
-router.get('/execution-logs', async (req, res) => {
+router.get('/tasks/:taskId/logs', async (req, res) => {
   try {
-    const {
-      task_id,
-      status,
-      task_type,
-      limit = 100,
-      offset = 0,
-      start_date,
-      end_date,
-      search
-    } = req.query;
+    const { taskId } = req.params;
+    const { offset = 0, limit = 1000 } = req.query;
 
-    let query = `
-      SELECT
-        t.id,
-        t.title,
-        t.status,
-        t.task_type,
-        t.priority,
-        t.created_at,
-        t.updated_at,
-        t.completed_at,
-        t.payload,
-        p.name as project_name
-      FROM tasks t
-      LEFT JOIN projects p ON t.project_id = p.id
-      WHERE 1=1
-    `;
-    const params = [];
-    let paramIndex = 1;
+    // 1. Get task metadata to find log file path
+    const taskResult = await pool.query(
+      'SELECT id, title, metadata FROM tasks WHERE id = $1',
+      [taskId]
+    );
 
-    if (task_id) {
-      query += ` AND t.id = $${paramIndex++}`;
-      params.push(task_id);
-    }
-
-    if (status) {
-      query += ` AND t.status = $${paramIndex++}`;
-      params.push(status);
-    }
-
-    if (task_type) {
-      query += ` AND t.task_type = $${paramIndex++}`;
-      params.push(task_type);
-    }
-
-    if (start_date) {
-      query += ` AND t.created_at >= $${paramIndex++}`;
-      params.push(start_date);
-    }
-
-    if (end_date) {
-      query += ` AND t.created_at <= $${paramIndex++}`;
-      params.push(end_date);
-    }
-
-    if (search) {
-      query += ` AND (t.title ILIKE $${paramIndex++} OR t.payload::text ILIKE $${paramIndex})`;
-      params.push(`%${search}%`);
-      params.push(`%${search}%`);
-      paramIndex += 2;
-    }
-
-    query += ` ORDER BY t.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    params.push(parseInt(limit));
-    params.push(parseInt(offset));
-
-    const result = await pool.query(query, params);
-
-    // Get total count for pagination
-    let countQuery = `
-      SELECT COUNT(*) as total
-      FROM tasks t
-      WHERE 1=1
-    `;
-    const countParams = [];
-    let countIndex = 1;
-
-    if (task_id) {
-      countQuery += ` AND t.id = $${countIndex++}`;
-      countParams.push(task_id);
-    }
-    if (status) {
-      countQuery += ` AND t.status = $${countIndex++}`;
-      countParams.push(status);
-    }
-    if (task_type) {
-      countQuery += ` AND t.task_type = $${countIndex++}`;
-      countParams.push(task_type);
-    }
-    if (start_date) {
-      countQuery += ` AND t.created_at >= $${countIndex++}`;
-      countParams.push(start_date);
-    }
-    if (end_date) {
-      countQuery += ` AND t.created_at <= $${countIndex++}`;
-      countParams.push(end_date);
-    }
-    if (search) {
-      countQuery += ` AND (t.title ILIKE $${countIndex++} OR t.payload::text ILIKE $${countIndex++})`;
-      countParams.push(`%${search}%`);
-      countParams.push(`%${search}%`);
-    }
-
-    const countResult = await pool.query(countQuery, countParams);
-    const total = parseInt(countResult.rows[0].total);
-
-    res.json({
-      success: true,
-      logs: result.rows,
-      pagination: {
-        total,
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        has_more: (parseInt(offset) + result.rows.length) < total
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Failed to get execution logs', details: err.message });
-  }
-});
-
-/**
- * GET /api/brain/execution-logs/:id
- * Get detailed execution log for a specific task
- */
-router.get('/execution-logs/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(`
-      SELECT
-        t.*,
-        p.name as project_name,
-        g.title as goal_title,
-        f.title as feature_title
-      FROM tasks t
-      LEFT JOIN projects p ON t.project_id = p.id
-      LEFT JOIN goals g ON t.goal_id = g.id
-      LEFT JOIN features f ON t.feature_id = f.id
-      WHERE t.id = $1
-    `, [id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Task not found' });
-    }
-
-    const task = result.rows[0];
-
-    // Try to get log file content if available
-    let logContent = null;
-    if (task.payload && task.payload.log_file) {
-      try {
-        const { readFile } = await import('fs/promises');
-        logContent = await readFile(task.payload.log_file, 'utf-8');
-      } catch {
-        // Log file not accessible
-        logContent = null;
-      }
-    }
-
-    res.json({
-      success: true,
-      task,
-      log_content: logContent
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Failed to get execution log', details: err.message });
-  }
-});
-
-/**
- * GET /api/brain/execution-logs/:id/stream
- * Stream execution log for a running task (SSE)
- */
-router.get('/execution-logs/:id/stream', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Check if task exists
-    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
     if (taskResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Task not found' });
+      return res.status(404).json({ error: 'Task not found' });
     }
 
     const task = taskResult.rows[0];
+    const metadata = task.metadata || {};
+    const logFile = metadata.log_file;
 
-    // Set up SSE
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
-    });
-
-    // Send initial data
-    res.write(`data: ${JSON.stringify({ type: 'init', task })}\n\n`);
-
-    // If task has log file, stream it
-    if (task.payload && task.payload.log_file) {
-      try {
-        const { createReadStream } = await import('fs');
-        const { createInterface } = await import('readline');
-
-        const fileStream = createReadStream(task.payload.log_file);
-        const rl = createInterface({
-          input: fileStream,
-          crlfDelay: Infinity
-        });
-
-        for await (const line of rl) {
-          res.write(`data: ${JSON.stringify({ type: 'log', line, timestamp: new Date().toISOString() })}\n\n`);
-        }
-      } catch (err) {
-        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Log file not accessible' })}\n\n`);
-      }
+    if (!logFile) {
+      return res.json({
+        task_id: taskId,
+        task_title: task.title,
+        logs: [],
+        message: 'No log file associated with this task'
+      });
     }
 
-    // Keep connection alive for 60 seconds
-    const keepAliveInterval = setInterval(() => {
-      res.write(': keepalive\n\n');
-    }, 30000);
+    // 2. Read log file
+    const fs = await import('fs/promises');
+    const path = await import('path');
 
-    setTimeout(() => {
-      clearInterval(keepAliveInterval);
-      res.write(`data: ${JSON.stringify({ type: 'end' })}\n\n`);
-      res.end();
-    }, 60000);
+    try {
+      const logContent = await fs.readFile(logFile, 'utf-8');
+      const lines = logContent.split('\n');
 
+      // Apply pagination
+      const start = parseInt(offset);
+      const end = start + parseInt(limit);
+      const paginatedLines = lines.slice(start, end);
+
+      res.json({
+        task_id: taskId,
+        task_title: task.title,
+        log_file: logFile,
+        total_lines: lines.length,
+        offset: start,
+        limit: parseInt(limit),
+        logs: paginatedLines
+      });
+    } catch (fileErr) {
+      if (fileErr.code === 'ENOENT') {
+        return res.json({
+          task_id: taskId,
+          task_title: task.title,
+          log_file: logFile,
+          logs: [],
+          message: 'Log file not found on disk'
+        });
+      }
+      throw fileErr;
+    }
   } catch (err) {
-    res.status(500).json({ success: false, error: 'Failed to stream execution log', details: err.message });
+    res.status(500).json({ error: 'Failed to get task logs', details: err.message });
+  }
+});
+
+/**
+ * GET /tasks/:taskId/checkpoints
+ * 获取任务的 checkpoint 信息
+ */
+router.get('/tasks/:taskId/checkpoints', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+
+    // Get task with metadata
+    const taskResult = await pool.query(
+      'SELECT id, title, status, metadata, created_at, started_at, completed_at FROM tasks WHERE id = $1',
+      [taskId]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const task = taskResult.rows[0];
+    const metadata = task.metadata || {};
+
+    // Extract checkpoint-related information
+    const checkpoints = [];
+
+    // Add task lifecycle checkpoints
+    if (task.created_at) {
+      checkpoints.push({
+        timestamp: task.created_at,
+        event: 'task_created',
+        status: 'queued'
+      });
+    }
+
+    if (task.started_at) {
+      checkpoints.push({
+        timestamp: task.started_at,
+        event: 'task_started',
+        status: 'running'
+      });
+    }
+
+    if (task.completed_at) {
+      checkpoints.push({
+        timestamp: task.completed_at,
+        event: 'task_completed',
+        status: task.status
+      });
+    }
+
+    // Add any additional checkpoints from metadata
+    if (metadata.checkpoints && Array.isArray(metadata.checkpoints)) {
+      checkpoints.push(...metadata.checkpoints);
+    }
+
+    // Sort by timestamp
+    checkpoints.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    res.json({
+      task_id: taskId,
+      task_title: task.title,
+      current_status: task.status,
+      checkpoints
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get task checkpoints', details: err.message });
   }
 });
 
