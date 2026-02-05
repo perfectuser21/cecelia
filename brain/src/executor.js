@@ -36,14 +36,19 @@ const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
 const MEM_PER_TASK_MB = 500;                      // ~500MB avg per claude process (200-850MB observed)
 const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude process (20-30% bursts, often idle waiting API)
+const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
 const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
-// Max seats = min(memory capacity, CPU capacity), floor of 2
+// Max seats (total capacity including interactive reserve)
 const MAX_SEATS = parseInt(process.env.CECELIA_MAX_CONCURRENT || String(
   Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2)
 ), 10);
-const LOAD_THRESHOLD = CPU_CORES * 0.85;          // Hard stop: 85% of cores
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15; // Hard stop: must have 15% free
+// Auto-dispatch thresholds: subtract interactive reserve from budget
+// so when auto-dispatch hits the ceiling, user still has room for headed sessions
+const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
+const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
+const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
 const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
@@ -995,4 +1000,5 @@ export {
   isRunIdProcessAlive,
   suspectProcesses,
   MAX_SEATS,
+  INTERACTIVE_RESERVE,
 };

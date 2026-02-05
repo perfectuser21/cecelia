@@ -6,7 +6,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, MAX_SEATS } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -22,7 +22,7 @@ const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are sta
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
-const INTERACTIVE_RESERVE = 2;  // Reserve 2 seats for user's headed Claude sessions
+// INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
