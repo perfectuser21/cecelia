@@ -107,6 +107,7 @@ async function getTickStatus() {
     last_dispatch: lastDispatch,
     max_concurrent: MAX_CONCURRENT_TASKS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
+    resources: checkServerResources(),
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
     circuit_breakers: getAllStates()
   };
@@ -366,13 +367,14 @@ async function selectNextDispatchableTask(goalIds) {
 async function dispatchNextTask(goalIds) {
   const actions = [];
 
-  // 0. Server resource check — refuse to dispatch if overloaded
+  // 0. Server resource check — dynamic slot scaling based on actual load
   const resources = checkServerResources();
   if (!resources.ok) {
     return { dispatched: false, reason: 'server_overloaded', detail: resources.reason, metrics: resources.metrics, actions };
   }
 
-  // 1. Check concurrency — dual check: DB status AND real process count
+  // 1. Check concurrency — use dynamic effectiveSlots from resource check
+  const effectiveLimit = Math.min(AUTO_DISPATCH_MAX, resources.effectiveSlots);
   const activeResult = await pool.query(
     "SELECT COUNT(*) FROM tasks WHERE goal_id = ANY($1) AND status = 'in_progress'",
     [goalIds]
@@ -380,8 +382,8 @@ async function dispatchNextTask(goalIds) {
   const dbActiveCount = parseInt(activeResult.rows[0].count);
   const processActiveCount = getActiveProcessCount();
   const activeCount = Math.max(dbActiveCount, processActiveCount);
-  if (activeCount >= AUTO_DISPATCH_MAX) {
-    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, limit: AUTO_DISPATCH_MAX, db_active: dbActiveCount, process_active: processActiveCount, actions };
+  if (activeCount >= effectiveLimit) {
+    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, limit: effectiveLimit, effective_slots: resources.effectiveSlots, pressure: resources.metrics.max_pressure, db_active: dbActiveCount, process_active: processActiveCount, actions };
   }
 
   // 2. Circuit breaker check

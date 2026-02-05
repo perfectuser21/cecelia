@@ -30,12 +30,13 @@ const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-r
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace';
 
-// Resource thresholds — don't spawn if server is overloaded
+// Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-const LOAD_THRESHOLD = CPU_CORES * 0.8;        // 80% of cores (e.g. 6.4 for 8-core)
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.2; // Must have 20% free (e.g. ~3GB for 15GB)
-const SWAP_USED_MAX_PCT = 50;                    // Don't spawn if swap > 50% used
+const MAX_SEATS = Math.max(CPU_CORES - 2, 2);   // Theoretical max (e.g. 6 for 8-core)
+const LOAD_THRESHOLD = CPU_CORES * 0.8;          // Hard stop: 80% of cores
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.2; // Hard stop: must have 20% free
+const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
  * Check server resource availability before spawning.
@@ -58,6 +59,29 @@ function checkServerResources() {
     // Not Linux or no /proc — skip swap check
   }
 
+  // Calculate resource pressure (0.0 = idle, 1.0 = at threshold)
+  const cpuPressure = loadAvg1 / LOAD_THRESHOLD;                      // e.g. 4.0/6.4 = 0.625
+  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));           // invert: more free = less pressure
+  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;               // e.g. 20/50 = 0.4
+  const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
+
+  // Dynamic seat scaling based on highest pressure
+  //   pressure < 0.5  → full seats (MAX_SEATS)
+  //   pressure 0.5-0.7 → 2/3 of seats
+  //   pressure 0.7-0.9 → 1/3 of seats
+  //   pressure >= 0.9  → 1 seat (minimum)
+  //   pressure >= 1.0  → 0 (hard stop, ok=false)
+  let effectiveSlots = MAX_SEATS;
+  if (maxPressure >= 1.0) {
+    effectiveSlots = 0;
+  } else if (maxPressure >= 0.9) {
+    effectiveSlots = 1;
+  } else if (maxPressure >= 0.7) {
+    effectiveSlots = Math.max(Math.round(MAX_SEATS / 3), 1);
+  } else if (maxPressure >= 0.5) {
+    effectiveSlots = Math.max(Math.round(MAX_SEATS * 2 / 3), 1);
+  }
+
   const metrics = {
     load_avg_1m: loadAvg1,
     load_threshold: LOAD_THRESHOLD,
@@ -67,19 +91,23 @@ function checkServerResources() {
     swap_max_pct: SWAP_USED_MAX_PCT,
     cpu_cores: CPU_CORES,
     total_mem_mb: TOTAL_MEM_MB,
+    cpu_pressure: Math.round(cpuPressure * 100) / 100,
+    mem_pressure: Math.round(memPressure * 100) / 100,
+    swap_pressure: Math.round(swapPressure * 100) / 100,
+    max_pressure: Math.round(maxPressure * 100) / 100,
+    max_seats: MAX_SEATS,
+    effective_slots: effectiveSlots,
   };
 
-  if (loadAvg1 > LOAD_THRESHOLD) {
-    return { ok: false, reason: `CPU overloaded: load ${loadAvg1.toFixed(1)} > threshold ${LOAD_THRESHOLD}`, metrics };
-  }
-  if (freeMem < MEM_AVAILABLE_MIN_MB) {
-    return { ok: false, reason: `Low memory: ${freeMem}MB free < ${MEM_AVAILABLE_MIN_MB}MB min`, metrics };
-  }
-  if (swapUsedPct > SWAP_USED_MAX_PCT) {
-    return { ok: false, reason: `Swap overused: ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}% max`, metrics };
+  if (effectiveSlots === 0) {
+    const reasons = [];
+    if (cpuPressure >= 1.0) reasons.push(`CPU load ${loadAvg1.toFixed(1)} > ${LOAD_THRESHOLD}`);
+    if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
+    if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
+    return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
   }
 
-  return { ok: true, reason: null, metrics };
+  return { ok: true, reason: null, effectiveSlots, metrics };
 }
 
 /**
