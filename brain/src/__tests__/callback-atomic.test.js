@@ -1,0 +1,268 @@
+/**
+ * Callback Atomic Tests
+ * Tests that execution-callback uses DB transactions for atomic updates
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock client for transactions
+const mockClient = {
+  query: vi.fn(),
+  release: vi.fn(),
+};
+
+// Mock pool
+const mockPool = {
+  query: vi.fn(),
+  connect: vi.fn(() => mockClient),
+};
+vi.mock('../db.js', () => ({ default: mockPool }));
+
+// Mock executor
+vi.mock('../executor.js', () => ({
+  getActiveProcesses: vi.fn(() => []),
+  getActiveProcessCount: vi.fn(() => 0),
+  checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
+  removeActiveProcess: vi.fn(),
+  probeTaskLiveness: vi.fn(async () => []),
+  syncOrphanTasksOnStartup: vi.fn(async () => ({ orphans_found: 0, orphans_fixed: 0, rebuilt: 0 })),
+  recordHeartbeat: vi.fn(async () => ({ success: true })),
+}));
+
+// Mock other imports that routes.js needs
+vi.mock('../orchestrator.js', () => ({
+  getSystemStatus: vi.fn(),
+  getRecentDecisions: vi.fn(),
+  getWorkingMemory: vi.fn(),
+  getActivePolicy: vi.fn(),
+  getTopTasks: vi.fn(),
+}));
+vi.mock('../perception.js', () => ({
+  createSnapshot: vi.fn(),
+  getRecentSnapshots: vi.fn(),
+  getLatestSnapshot: vi.fn(),
+}));
+vi.mock('../actions.js', () => ({
+  createTask: vi.fn(),
+  updateTask: vi.fn(),
+  createGoal: vi.fn(),
+  updateGoal: vi.fn(),
+  triggerN8n: vi.fn(),
+  setMemory: vi.fn(),
+  batchUpdateTasks: vi.fn(),
+}));
+vi.mock('../focus.js', () => ({
+  getDailyFocus: vi.fn(),
+  setDailyFocus: vi.fn(),
+  clearDailyFocus: vi.fn(),
+  getFocusSummary: vi.fn(),
+}));
+vi.mock('../tick.js', () => ({
+  getTickStatus: vi.fn(),
+  enableTick: vi.fn(),
+  disableTick: vi.fn(),
+  executeTick: vi.fn(),
+  runTickSafe: vi.fn(async () => ({ actions_taken: [] })),
+  routeTask: vi.fn(),
+  startFeatureTickLoop: vi.fn(),
+  stopFeatureTickLoop: vi.fn(),
+  getFeatureTickStatus: vi.fn(),
+  TASK_TYPE_AGENT_MAP: {},
+}));
+vi.mock('../feature-tick.js', () => ({
+  createFeature: vi.fn(),
+  getFeature: vi.fn(),
+  getFeaturesByStatus: vi.fn(),
+  updateFeature: vi.fn(),
+  createFeatureTask: vi.fn(),
+  handleFeatureTaskComplete: vi.fn(),
+  FEATURE_STATUS: {},
+}));
+vi.mock('../task-router.js', () => ({
+  identifyWorkType: vi.fn(),
+  getTaskLocation: vi.fn(),
+  routeTaskCreate: vi.fn(),
+  getValidTaskTypes: vi.fn(),
+  LOCATION_MAP: {},
+}));
+vi.mock('../anti-crossing.js', () => ({
+  checkAntiCrossing: vi.fn(),
+  validateTaskCompletion: vi.fn(),
+  getActiveFeaturesWithTasks: vi.fn(),
+}));
+vi.mock('../okr-tick.js', () => ({
+  executeOkrTick: vi.fn(),
+  runOkrTickSafe: vi.fn(),
+  startOkrTickLoop: vi.fn(),
+  stopOkrTickLoop: vi.fn(),
+  getOkrTickStatus: vi.fn(),
+  addQuestionToGoal: vi.fn(),
+  answerQuestionForGoal: vi.fn(),
+  getPendingQuestions: vi.fn(),
+  OKR_STATUS: {},
+}));
+vi.mock('../nightly-tick.js', () => ({
+  executeNightlyAlignment: vi.fn(),
+  runNightlyAlignmentSafe: vi.fn(),
+  startNightlyScheduler: vi.fn(),
+  stopNightlyScheduler: vi.fn(),
+  getNightlyTickStatus: vi.fn(),
+  getDailyReports: vi.fn(),
+}));
+vi.mock('../intent.js', () => ({
+  parseIntent: vi.fn(),
+  parseAndCreate: vi.fn(),
+  INTENT_TYPES: {},
+  INTENT_ACTION_MAP: {},
+  extractEntities: vi.fn(),
+  classifyIntent: vi.fn(),
+  getSuggestedAction: vi.fn(),
+}));
+vi.mock('../decomposer.js', () => ({
+  decomposeTRD: vi.fn(),
+  getTRDProgress: vi.fn(),
+  listTRDs: vi.fn(),
+}));
+vi.mock('../templates.js', () => ({
+  generatePrdFromTask: vi.fn(),
+  generatePrdFromGoalKR: vi.fn(),
+  generateTrdFromGoal: vi.fn(),
+  generateTrdFromGoalKR: vi.fn(),
+  validatePrd: vi.fn(),
+  validateTrd: vi.fn(),
+  prdToJson: vi.fn(),
+  trdToJson: vi.fn(),
+  PRD_TYPE_MAP: {},
+}));
+vi.mock('../decision.js', () => ({
+  compareGoalProgress: vi.fn(),
+  generateDecision: vi.fn(),
+  executeDecision: vi.fn(),
+  getDecisionHistory: vi.fn(),
+  rollbackDecision: vi.fn(),
+}));
+vi.mock('../planner.js', () => ({
+  planNextTask: vi.fn(),
+  getPlanStatus: vi.fn(),
+  handlePlanInput: vi.fn(),
+}));
+vi.mock('../planner-llm.js', () => ({
+  planWithLLM: vi.fn(),
+  shouldUseLLMPlanner: vi.fn(),
+  savePlannedTasks: vi.fn(),
+}));
+vi.mock('../event-bus.js', () => ({
+  ensureEventsTable: vi.fn(),
+  queryEvents: vi.fn(),
+  getEventCounts: vi.fn(),
+  emit: vi.fn(),
+}));
+vi.mock('../circuit-breaker.js', () => ({
+  getState: vi.fn(),
+  reset: vi.fn(),
+  getAllStates: vi.fn(),
+  recordSuccess: vi.fn(),
+  recordFailure: vi.fn(),
+}));
+vi.mock('../notifier.js', () => ({
+  notifyTaskCompleted: vi.fn(async () => {}),
+  notifyTaskFailed: vi.fn(async () => {}),
+}));
+vi.mock('../self-diagnosis.js', () => ({
+  runDiagnosis: vi.fn(),
+}));
+
+// Import router after mocks
+const { default: router } = await import('../routes.js');
+
+// Helper to simulate express request/response
+function mockReqRes(method, path, body = {}) {
+  return new Promise((resolve) => {
+    const req = { method, path, body, query: {}, params: {} };
+    const resData = { statusCode: 200, body: null };
+    const res = {
+      status: (code) => { resData.statusCode = code; return res; },
+      json: (data) => { resData.body = data; resolve(resData); },
+    };
+
+    const layers = router.stack.filter(layer => {
+      if (!layer.route) return false;
+      const routePath = layer.route.path;
+      const routeMethod = Object.keys(layer.route.methods)[0];
+      return routePath === path && routeMethod === method.toLowerCase();
+    });
+
+    if (layers.length === 0) {
+      resolve({ statusCode: 404, body: { error: 'Not found' } });
+      return;
+    }
+
+    const handler = layers[0].route.stack[0].handle;
+    handler(req, res).catch(err => {
+      resData.statusCode = 500;
+      resData.body = { error: err.message };
+      resolve(resData);
+    });
+  });
+}
+
+describe('execution-callback atomicity', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  it('should use BEGIN/COMMIT transaction for callback processing', async () => {
+    // Mock the pool.query for progress rollup (after transaction)
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+
+    const result = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-tx-1',
+      run_id: 'run-tx-1',
+      status: 'AI Done',
+      result: { result: 'success' },
+      duration_ms: 5000,
+      iterations: 1,
+    });
+
+    expect(result.statusCode).toBe(200);
+
+    // Verify transaction pattern: BEGIN → UPDATE → INSERT → COMMIT
+    const clientCalls = mockClient.query.mock.calls;
+    expect(clientCalls[0][0]).toBe('BEGIN');
+    expect(clientCalls[clientCalls.length - 1][0]).toBe('COMMIT');
+  });
+
+  it('should ROLLBACK on transaction error', async () => {
+    // Make the UPDATE inside transaction fail
+    mockClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockRejectedValueOnce(new Error('DB write error')); // UPDATE fails
+
+    const result = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-tx-fail',
+      run_id: 'run-tx-fail',
+      status: 'AI Done',
+    });
+
+    expect(result.statusCode).toBe(500);
+
+    // Verify ROLLBACK was called
+    const rollbackCalls = mockClient.query.mock.calls.filter(c => c[0] === 'ROLLBACK');
+    expect(rollbackCalls.length).toBe(1);
+  });
+
+  it('should always release client even on error', async () => {
+    mockClient.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockRejectedValueOnce(new Error('fail'));
+
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-release',
+      status: 'AI Done',
+    });
+
+    expect(mockClient.release).toHaveBeenCalled();
+  });
+});
