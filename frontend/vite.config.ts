@@ -116,7 +116,8 @@ export default defineConfig({
     })
   ],
   server: {
-    port: 3001,
+    port: 5212,
+    host: '0.0.0.0',
     allowedHosts: [
       'localhost',
       'dev-core.zenjoymedia.media',

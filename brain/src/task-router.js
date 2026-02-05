@@ -41,13 +41,14 @@ const FEATURE_PATTERNS = [
 
 // Location mapping based on task_type
 const LOCATION_MAP = {
-  'dev': 'us',       // 开发 → 美国 VPS (Claude)
-  'review': 'us',    // 代码审查 → 美国 VPS (Claude)
+  'dev': 'us',        // 开发 → 美国 VPS (Claude Code)
+  'review': 'us',     // 代码审查 → 美国 VPS (Claude Code)
+  'qa': 'us',         // QA → 美国 VPS (Claude Code)
+  'audit': 'us',      // 审计 → 美国 VPS (Claude Code)
+  'talk': 'hk',       // 对话 → 香港 VPS (MiniMax)
+  'research': 'hk',   // 调研 → 香港 VPS (MiniMax)
   'automation': 'hk', // 自动化 → 香港 VPS (MiniMax)
-  'data': 'hk',      // 数据处理 → 香港 VPS (MiniMax)
-  'qa': 'us',        // QA → 美国 VPS
-  'audit': 'us',     // 审计 → 美国 VPS
-  'research': 'us'   // 调研 → 美国 VPS (需要人工)
+  'data': 'hk',       // 数据处理 → 香港 VPS (MiniMax)
 };
 
 // Default location

@@ -15,6 +15,10 @@ import { readFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import pool from './db.js';
+import { getTaskLocation } from './task-router.js';
+
+// HK MiniMax Executor URL (via Tailscale)
+const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
@@ -411,14 +415,90 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
 }
 
 /**
+ * Trigger HK MiniMax executor for a task
+ * @param {Object} task - The task object from database
+ * @returns {Object} - { success, taskId, result?, error? }
+ */
+async function triggerMiniMaxExecutor(task) {
+  const runId = generateRunId(task.id);
+
+  try {
+    console.log(`[executor] Calling HK MiniMax for task=${task.id} type=${task.task_type}`);
+
+    const response = await fetch(`${HK_MINIMAX_URL}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        task_type: task.task_type,
+      }),
+      signal: AbortSignal.timeout(120000), // 2 minute timeout
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      console.log(`[executor] MiniMax completed task=${task.id}`);
+
+      // Update task with result
+      await pool.query(`
+        UPDATE tasks
+        SET
+          status = 'completed',
+          completed_at = NOW(),
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+            'minimax_result', $2::text,
+            'minimax_usage', $3::jsonb,
+            'run_id', $4::text
+          )
+        WHERE id = $1
+      `, [task.id, result.result, JSON.stringify(result.usage || {}), runId]);
+
+      return {
+        success: true,
+        taskId: task.id,
+        runId,
+        result: result.result,
+        usage: result.usage,
+        executor: 'minimax',
+      };
+    } else {
+      console.log(`[executor] MiniMax failed task=${task.id}: ${result.error}`);
+      return {
+        success: false,
+        taskId: task.id,
+        error: result.error,
+        executor: 'minimax',
+      };
+    }
+  } catch (err) {
+    console.error(`[executor] MiniMax error: ${err.message}`);
+    return {
+      success: false,
+      taskId: task.id,
+      error: err.message,
+      executor: 'minimax',
+    };
+  }
+}
+
+/**
  * Trigger cecelia-run for a task.
  *
  * v2: Uses spawn() for PID tracking + task-level dedup.
+ * v3: Routes to HK MiniMax for talk/research/automation tasks.
  *
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
 async function triggerCeceliaRun(task) {
+  // Check if task should go to HK MiniMax
+  const location = getTaskLocation(task.task_type);
+  if (location === 'hk') {
+    return triggerMiniMaxExecutor(task);
+  }
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -578,6 +658,7 @@ async function getTaskExecutionStatus(taskId) {
 
 export {
   triggerCeceliaRun,
+  triggerMiniMaxExecutor,
   checkCeceliaRunAvailable,
   getTaskExecutionStatus,
   updateTaskRunInfo,
@@ -590,4 +671,6 @@ export {
   cleanupOrphanProcesses,
   isProcessAlive,
   checkServerResources,
+  // v3 additions
+  HK_MINIMAX_URL,
 };
