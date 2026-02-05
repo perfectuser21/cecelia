@@ -175,3 +175,46 @@ export function shutdownWebSocketServer() {
     });
   });
 }
+
+/**
+ * Broadcast run update with automatic type determination
+ * @param {object} update - Run update data
+ */
+export function broadcastRunUpdate(update) {
+  let type;
+  switch (update.status) {
+    case 'running':
+      type = 'run_update';
+      break;
+    case 'completed':
+      type = 'run_complete';
+      break;
+    case 'failed':
+      type = 'run_failed';
+      break;
+    default:
+      type = 'run_update';
+  }
+
+  broadcast(type, update);
+}
+
+/**
+ * Default export for testing compatibility
+ */
+export default {
+  init: initWebSocketServer,
+  shutdown: shutdownWebSocketServer,
+  broadcast: (message) => {
+    if (!message.type) {
+      console.error('[WS] Invalid message format: missing type field');
+      return;
+    }
+    broadcast(message.type, message.data || {});
+  },
+  broadcastRunUpdate,
+  getClientCount: getConnectedClientsCount,
+  get wss() {
+    return wss;
+  }
+};

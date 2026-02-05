@@ -5,7 +5,11 @@
  */
 
 import pool from './db.js';
-import websocketService from './websocket.js';
+import { broadcastRunUpdate } from './websocket.js';
+
+// Security: Whitelist of allowed columns for dynamic updates
+const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id'];
+const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed'];
 
 /**
  * Update task status and broadcast to WebSocket clients
@@ -16,6 +20,11 @@ import websocketService from './websocket.js';
  */
 export async function updateTaskStatus(taskId, status, additionalFields = {}) {
   try {
+    // Input validation
+    if (!VALID_STATUSES.includes(status)) {
+      throw new Error(`Invalid status: ${status}`);
+    }
+
     // Build UPDATE query dynamically
     const updates = ['status = $2'];
     const params = [taskId, status];
@@ -28,17 +37,25 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
       updates.push('completed_at = NOW()');
     }
 
-    // Add additional fields
+    // Add additional fields with whitelist validation
     for (const [key, value] of Object.entries(additionalFields)) {
       if (key === 'payload') {
-        // Merge JSON payload
-        updates.push(`payload = COALESCE(payload, '{}'::jsonb) || $${paramIndex}::jsonb`);
-        params.push(JSON.stringify(value));
-      } else {
+        // Merge JSON payload safely
+        try {
+          updates.push(`payload = COALESCE(payload, '{}'::jsonb) || $${paramIndex}::jsonb`);
+          params.push(JSON.stringify(value));
+          paramIndex++;
+        } catch (err) {
+          throw new Error(`Invalid JSON payload: ${err.message}`);
+        }
+      } else if (ALLOWED_COLUMNS.includes(key)) {
+        // Only allow whitelisted columns to prevent SQL injection
         updates.push(`${key} = $${paramIndex}`);
         params.push(value);
+        paramIndex++;
+      } else {
+        console.warn(`[task-updater] Ignoring non-whitelisted column: ${key}`);
       }
-      paramIndex++;
     }
 
     // Execute update
@@ -63,6 +80,7 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
     return { success: true, task: updatedTask };
   } catch (err) {
     console.error(`[task-updater] Failed to update task ${taskId}:`, err.message);
+    console.error('[task-updater] Stack:', err.stack);
     return { success: false, error: err.message };
   }
 }
@@ -96,6 +114,7 @@ export async function updateTaskProgress(taskId, progressData) {
     return { success: true, task: updatedTask };
   } catch (err) {
     console.error(`[task-updater] Failed to update task progress ${taskId}:`, err.message);
+    console.error('[task-updater] Stack:', err.stack);
     return { success: false, error: err.message };
   }
 }
@@ -107,10 +126,18 @@ export async function updateTaskProgress(taskId, progressData) {
 function broadcastTaskUpdate(task) {
   const payload = task.payload || {};
 
-  websocketService.broadcastRunUpdate({
+  // Safe progress calculation with validation
+  let progress = 0;
+  if (payload.current_step) {
+    const parsed = parseInt(payload.current_step, 10);
+    progress = isNaN(parsed) ? 0 : Math.max(0, Math.min(100, parsed));
+  }
+
+  // Use broadcastRunUpdate which handles type determination automatically
+  broadcastRunUpdate({
     id: task.id,
     status: task.status,
-    progress: payload.current_step ? parseInt(payload.current_step, 10) : 0,
+    progress,
     task_id: task.id,
     agent: payload.agent || 'unknown',
     started_at: task.started_at ? task.started_at.toISOString() : null,
