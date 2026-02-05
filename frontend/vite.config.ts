@@ -131,6 +131,11 @@ export default defineConfig({
         target: 'http://localhost:5221',
         changeOrigin: true,
       },
+      // Cecelia task execution API
+      '/api/cecelia': {
+        target: 'http://localhost:5221',
+        changeOrigin: true,
+      },
       // Other APIs
       '/api': {
         target: 'http://localhost:3000',

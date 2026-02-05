@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import brainRoutes from './src/routes.js';
+import ceceliaRoutes from './src/cecelia-routes.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -52,6 +53,9 @@ app.use(express.json({ limit: '256kb' }));
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
+
+// Mount cecelia task execution routes
+app.use('/api/cecelia', ceceliaRoutes);
 
 // Health check at root
 app.get('/', (_req, res) => {
