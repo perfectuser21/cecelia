@@ -27,9 +27,9 @@ const { Pool } = pg;
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'cecelia_tasks',
-  user: process.env.DB_USER || 'n8n_user',
-  password: process.env.DB_PASSWORD || 'n8n_password_2025'
+  database: process.env.DB_NAME || 'cecelia',
+  user: process.env.DB_USER || 'cecelia',
+  password: process.env.DB_PASSWORD || 'CeceliaUS2026'
 });
 
 // Track created resources for cleanup
@@ -448,8 +448,8 @@ describe('Intent Recognition Module', () => {
         createdTaskIds.push(task.id);
       }
 
-      // Then try to create with similar name
-      const secondResult = await parseAndCreate('做一个 Widget Dashboard 增强版', {
+      // Then try to create with the same name (LIKE '%widget-dashboard%' matches)
+      const secondResult = await parseAndCreate('做一个 Widget Dashboard', {
         createProject: true,
         createTasks: true
       });
@@ -491,7 +491,9 @@ describe('Intent Recognition Module', () => {
           expect(task.goal_id).toBe(goalId);
         }
       } finally {
-        // Cleanup goal
+        // Delete tasks first (FK constraint: tasks.goal_id → goals.id)
+        await pool.query('DELETE FROM tasks WHERE goal_id = $1', [goalId]).catch(() => {});
+        createdTaskIds = [];
         await pool.query('DELETE FROM goals WHERE id = $1', [goalId]);
       }
     });

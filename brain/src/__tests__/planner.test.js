@@ -10,16 +10,16 @@ const { Pool } = pg;
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'cecelia_tasks',
-  user: process.env.DB_USER || 'n8n_user',
-  password: process.env.DB_PASSWORD || 'n8n_password_2025'
+  database: process.env.DB_NAME || 'cecelia',
+  user: process.env.DB_USER || 'cecelia',
+  password: process.env.DB_PASSWORD || 'CeceliaUS2026'
 });
 
 let testObjectiveIds = [];
 let testKRIds = [];
 let testProjectIds = [];
 let testTaskIds = [];
-let testLinkIds = [];
+let testLinks = [];
 
 describe('Planner Agent', () => {
   beforeAll(async () => {
@@ -41,10 +41,10 @@ describe('Planner Agent', () => {
 
   afterEach(async () => {
     // Cleanup test data
-    if (testLinkIds.length > 0) {
-      await pool.query('DELETE FROM project_kr_links WHERE id = ANY($1)', [testLinkIds]);
-      testLinkIds = [];
+    for (const link of testLinks) {
+      await pool.query('DELETE FROM project_kr_links WHERE project_id = $1 AND kr_id = $2', [link.project_id, link.kr_id]).catch(() => {});
     }
+    testLinks = [];
     if (testTaskIds.length > 0) {
       await pool.query('DELETE FROM tasks WHERE id = ANY($1)', [testTaskIds]);
       testTaskIds = [];
@@ -207,7 +207,7 @@ describe('Planner Agent', () => {
         [result.created.projects[0].id, krResult.rows[0].id]
       );
       expect(linkCheck.rows).toHaveLength(1);
-      testLinkIds.push(linkCheck.rows[0].id);
+      testLinks.push({ project_id: linkCheck.rows[0].project_id, kr_id: linkCheck.rows[0].kr_id });
     });
 
     it('should create task linked to project with repo_path', async () => {
@@ -270,10 +270,10 @@ describe('Planner Agent', () => {
 
       // First insert should succeed
       const link1 = await pool.query(
-        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) RETURNING id',
+        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) RETURNING project_id, kr_id',
         [projResult.rows[0].id, krResult.rows[0].id]
       );
-      testLinkIds.push(link1.rows[0].id);
+      testLinks.push({ project_id: link1.rows[0].project_id, kr_id: link1.rows[0].kr_id });
 
       // Duplicate should fail (ON CONFLICT DO NOTHING in production code)
       await expect(pool.query(

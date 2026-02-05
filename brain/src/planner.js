@@ -577,9 +577,9 @@ async function handlePlanInput(input, dryRun = false) {
     }
     if (!dryRun) {
       const pResult = await pool.query(`
-        INSERT INTO projects (name, description, repo_path, prd_content, scope, status)
-        VALUES ($1, $2, $3, $4, $5, 'active') RETURNING *
-      `, [input.project.title, input.project.description || '', input.project.repo_path, input.project.prd_content || null, input.project.scope || null]);
+        INSERT INTO projects (name, description, repo_path, status)
+        VALUES ($1, $2, $3, 'active') RETURNING *
+      `, [input.project.title, input.project.description || '', input.project.repo_path]);
       result.created.projects.push(pResult.rows[0]);
       result.linked_to.project = pResult.rows[0];
 

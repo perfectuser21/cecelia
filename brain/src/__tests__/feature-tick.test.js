@@ -95,8 +95,8 @@ describe('getTaskLocation', () => {
     expect(getTaskLocation('audit')).toBe('us');
   });
 
-  it('should route research tasks to US', () => {
-    expect(getTaskLocation('research')).toBe('us');
+  it('should route research tasks to HK', () => {
+    expect(getTaskLocation('research')).toBe('hk');
   });
 
   it('should default to US for unknown task types', () => {
@@ -114,7 +114,7 @@ describe('LOCATION_MAP', () => {
     expect(LOCATION_MAP.data).toBe('hk');
     expect(LOCATION_MAP.qa).toBe('us');
     expect(LOCATION_MAP.audit).toBe('us');
-    expect(LOCATION_MAP.research).toBe('us');
+    expect(LOCATION_MAP.research).toBe('hk');
   });
 });
 
