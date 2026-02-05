@@ -1,19 +1,21 @@
-# == Development Environment ==
-# Uses source-code mount for hot-reload.
-# Production: use docker-compose.prod.yml
+# == Production Environment ==
+# Uses pre-built immutable image (brain/Dockerfile).
+# Build first: bash scripts/brain-build.sh
+# Deploy:      bash scripts/brain-deploy.sh
 
 version: '3.8'
 
 services:
   node-brain:
-    image: node:20-alpine
+    image: cecelia-brain:${BRAIN_VERSION:-latest}
     container_name: cecelia-node-brain
     network_mode: host
     pid: host
-    working_dir: /app
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
     volumes:
-      - ./brain:/app
-      # Mount claudehome for cecelia-run access
+      # Skills + cecelia-run (read-only)
       - /home/xx/.claude:/home/xx/.claude:ro
       - /home/xx/bin:/home/xx/bin:ro
     env_file:
@@ -34,14 +36,13 @@ services:
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
       - CECELIA_RUN_PATH=/usr/local/bin/cecelia-run
-    command: sh -c "apk add --no-cache curl bash procps && (test -d node_modules || npm install --production) && node server.js"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
