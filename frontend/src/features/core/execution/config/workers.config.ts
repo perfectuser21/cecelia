@@ -1,10 +1,10 @@
 // Workers 配置加载
 
 import { WorkersConfig, Department, Worker, WorkerAbility } from './workers.types';
-import workersConfigJson from '../../../data/workers/workers.config.json';
+import workersConfigJson from './workers.config.json';
 
 // 加载配置
-const workersConfig = workersConfigJson as WorkersConfig;
+const workersConfig = workersConfigJson as unknown as WorkersConfig;
 
 // 获取所有部门
 export function getDepartments(): Department[] {
