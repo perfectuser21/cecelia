@@ -52,6 +52,11 @@ const manifest: FeatureManifest = {
       path: '/orchestrator',
       component: 'OrchestratorPage',
     },
+    // Execution Logs
+    {
+      path: '/execution-logs',
+      component: 'ExecutionLogsPage',
+    },
     // Redirects from old /ops/* paths
     { path: '/ops/cecelia', redirect: '/cecelia' },
     { path: '/ops/cecelia/runs', redirect: '/cecelia/runs' },
@@ -80,6 +85,7 @@ const manifest: FeatureManifest = {
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
     OrchestratorPage: () => import('./pages/OrchestratorPage'),
+    ExecutionLogsPage: () => import('./pages/ExecutionLogsPage'),
   },
 };
 
