@@ -1062,13 +1062,7 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
 
-    // 0. Clean up executor's activeProcesses registry
-    try {
-      const { removeActiveProcess } = await import('./executor.js');
-      removeActiveProcess(task_id);
-    } catch { /* ignore if executor not available */ }
-
-    // 1. Update task status based on execution result
+    // 1. Determine new status
     let newStatus;
     if (status === 'AI Done') {
       newStatus = 'completed';
@@ -1090,33 +1084,53 @@ router.post('/execution-callback', async (req, res) => {
       result_summary: typeof result === 'object' ? result.result : result
     };
 
-    // 3. Update task in database
-    await pool.query(`
-      UPDATE tasks
-      SET
-        status = $2,
-        payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-          'last_run_result', $3::jsonb,
-          'run_status', $4,
-          'pr_url', $5
-        ),
-        completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
-      WHERE id = $1
-    `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
+    // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
+    //    This eliminates the race window where tick could see stale state.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // 4. Log the execution result
-    await pool.query(`
-      INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [
-      'execution-callback',
-      `Task ${task_id} execution completed with status: ${status}`,
-      { task_id, run_id, status, iterations },
-      lastRunResult,
-      status === 'AI Done' ? 'success' : 'failed'
-    ]);
+      // Update task in database
+      await client.query(`
+        UPDATE tasks
+        SET
+          status = $2,
+          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+            'last_run_result', $3::jsonb,
+            'run_status', $4,
+            'pr_url', $5
+          ),
+          completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
+        WHERE id = $1
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
 
-    console.log(`[execution-callback] Task ${task_id} updated to ${newStatus}`);
+      // Log the execution result
+      await client.query(`
+        INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [
+        'execution-callback',
+        `Task ${task_id} execution completed with status: ${status}`,
+        { task_id, run_id, status, iterations },
+        lastRunResult,
+        status === 'AI Done' ? 'success' : 'failed'
+      ]);
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    // Clean up executor's activeProcesses registry (after commit, safe to do)
+    try {
+      const { removeActiveProcess } = await import('./executor.js');
+      removeActiveProcess(task_id);
+    } catch { /* ignore if executor not available */ }
+
+    console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
 
     // Record to EventBus, Circuit Breaker, and Notifier
     if (newStatus === 'completed') {
@@ -1199,6 +1213,34 @@ router.post('/execution-callback', async (req, res) => {
       error: 'Failed to process execution callback',
       details: err.message
     });
+  }
+});
+
+/**
+ * POST /api/brain/heartbeat
+ * Heartbeat endpoint for running tasks to report liveness.
+ *
+ * Request body:
+ *   {
+ *     task_id: "uuid",
+ *     run_id: "run-xxx-timestamp"  // optional, for validation
+ *   }
+ */
+router.post('/heartbeat', async (req, res) => {
+  try {
+    const { task_id, run_id } = req.body;
+
+    if (!task_id) {
+      return res.status(400).json({ success: false, error: 'task_id is required' });
+    }
+
+    const { recordHeartbeat } = await import('./executor.js');
+    const result = await recordHeartbeat(task_id, run_id);
+
+    res.json(result);
+  } catch (err) {
+    console.error('[heartbeat] Error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

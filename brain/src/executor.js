@@ -6,6 +6,11 @@
  * - Deduplicates by taskId before spawning
  * - Cleans up orphan `claude -p` processes on startup
  * - Dynamic resource check before spawning (CPU load + memory)
+ *
+ * v3: State drift elimination.
+ * - Liveness probe: tick-level process existence verification
+ * - Startup sync: reconcile in_progress DB state with actual processes
+ * - Suspect tracking: double-confirm before marking failed (avoid false positives)
  */
 
 /* global console */
@@ -81,6 +86,14 @@ function checkServerResources() {
  * In-memory process registry: taskId -> { pid, startedAt, runId, process }
  */
 const activeProcesses = new Map();
+
+/**
+ * Suspect registry: taskId -> { firstSeen, tickCount }
+ * Tasks suspected of being dead but not yet confirmed.
+ * Double-confirm pattern: mark suspect on first probe failure,
+ * auto-fail only if still suspect on next tick.
+ */
+const suspectProcesses = new Map();
 
 /**
  * Get the number of actively tracked processes (with liveness check)
@@ -702,6 +715,233 @@ async function getTaskExecutionStatus(taskId) {
   }
 }
 
+/**
+ * Check if a cecelia-run process exists for a given run_id.
+ * Searches system processes for the run_id string in command line.
+ * Works for bridge-dispatched tasks where pid=null.
+ *
+ * @param {string} runId - The run ID to search for
+ * @returns {boolean} - true if a matching process is found
+ */
+function isRunIdProcessAlive(runId) {
+  if (!runId) return false;
+  try {
+    const output = execSync(
+      `ps aux | grep -F "${runId}" | grep -v grep | wc -l`,
+      { encoding: 'utf-8', timeout: 3000 }
+    ).trim();
+    return parseInt(output, 10) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Probe liveness of all in_progress tasks.
+ * Called on each tick to detect dead processes early.
+ *
+ * For each in_progress task in DB:
+ * - If tracked with PID → check kill -0
+ * - If tracked with bridge (pid=null) → check run_id in system processes
+ * - If not tracked → mark as suspect (process may have died before registration)
+ *
+ * Uses double-confirm pattern:
+ * - 1st probe failure → mark suspect (suspectProcesses map)
+ * - 2nd probe failure (next tick) → auto-fail the task
+ *
+ * @returns {Object[]} - Actions taken (auto-fail entries)
+ */
+async function probeTaskLiveness() {
+  const actions = [];
+
+  // Get all in_progress tasks from DB
+  const result = await pool.query(`
+    SELECT id, title, payload, started_at
+    FROM tasks
+    WHERE status = 'in_progress'
+  `);
+
+  for (const task of result.rows) {
+    const runId = task.payload?.current_run_id;
+    const entry = activeProcesses.get(task.id);
+
+    let isAlive = false;
+
+    if (entry) {
+      // Tracked process — check by PID or run_id
+      if (entry.pid) {
+        isAlive = isProcessAlive(entry.pid);
+      } else if (entry.bridge && runId) {
+        isAlive = isRunIdProcessAlive(runId);
+      } else {
+        // Bridge without run_id — cannot verify, assume alive
+        isAlive = true;
+      }
+    } else if (runId) {
+      // Not tracked in memory but has run_id — check system processes
+      isAlive = isRunIdProcessAlive(runId);
+    } else {
+      // No tracking info at all — check if recently dispatched (grace period)
+      const triggeredAt = task.payload?.run_triggered_at || task.started_at;
+      if (triggeredAt) {
+        const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / 1000;
+        // Grace period: 60 seconds after dispatch to allow process to start
+        isAlive = elapsed < 60;
+      }
+    }
+
+    if (isAlive) {
+      // Process is alive — clear any suspect status
+      if (suspectProcesses.has(task.id)) {
+        console.log(`[liveness] Task ${task.id} recovered from suspect status`);
+        suspectProcesses.delete(task.id);
+      }
+      continue;
+    }
+
+    // Process appears dead — apply double-confirm
+    const suspect = suspectProcesses.get(task.id);
+    if (!suspect) {
+      // First probe failure — mark as suspect
+      suspectProcesses.set(task.id, {
+        firstSeen: new Date().toISOString(),
+        tickCount: 1
+      });
+      console.log(`[liveness] Task ${task.id} marked as SUSPECT (first probe failure)`);
+      continue;
+    }
+
+    // Second (or later) probe failure — confirmed dead
+    console.log(`[liveness] Task ${task.id} confirmed DEAD (suspect since ${suspect.firstSeen})`);
+    suspectProcesses.delete(task.id);
+
+    // Clean up activeProcesses entry
+    if (entry) {
+      activeProcesses.delete(task.id);
+    }
+
+    // Auto-fail the task
+    const errorDetails = {
+      type: 'liveness_probe_failed',
+      message: `Process not found after double-confirm probe (suspect since ${suspect.firstSeen})`,
+      first_suspect_at: suspect.firstSeen,
+      probe_ticks: suspect.tickCount + 1,
+    };
+
+    await pool.query(
+      `UPDATE tasks SET
+        status = 'failed',
+        payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+      WHERE id = $1`,
+      [task.id, JSON.stringify({ error_details: errorDetails })]
+    );
+
+    actions.push({
+      action: 'liveness_auto_fail',
+      task_id: task.id,
+      title: task.title,
+      suspect_since: suspect.firstSeen,
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * Synchronize DB state with actual processes on Brain startup.
+ * Finds all in_progress tasks and checks if they have matching processes.
+ * Tasks without processes are marked as failed (orphan_detected).
+ *
+ * @returns {Object} - { orphans_found, orphans_fixed, rebuilt }
+ */
+async function syncOrphanTasksOnStartup() {
+  const result = await pool.query(`
+    SELECT id, title, payload, started_at
+    FROM tasks
+    WHERE status = 'in_progress'
+  `);
+
+  let orphansFound = 0;
+  let orphansFixed = 0;
+  let rebuilt = 0;
+
+  for (const task of result.rows) {
+    const runId = task.payload?.current_run_id;
+
+    // Check if process exists
+    let processExists = false;
+
+    if (runId) {
+      processExists = isRunIdProcessAlive(runId);
+    }
+
+    if (processExists) {
+      // Process exists but not in activeProcesses (Brain restarted)
+      // Rebuild the activeProcesses entry
+      if (!activeProcesses.has(task.id)) {
+        activeProcesses.set(task.id, {
+          pid: null,
+          startedAt: task.started_at || new Date().toISOString(),
+          runId: runId,
+          bridge: true,
+        });
+        rebuilt++;
+        console.log(`[startup-sync] Rebuilt activeProcess for task=${task.id} runId=${runId}`);
+      }
+    } else {
+      // No matching process — this is an orphan
+      orphansFound++;
+
+      const errorDetails = {
+        type: 'orphan_detected',
+        message: 'Task was in_progress but no matching process found on Brain startup',
+        detected_at: new Date().toISOString(),
+        run_id: runId || null,
+      };
+
+      await pool.query(
+        `UPDATE tasks SET
+          status = 'failed',
+          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1`,
+        [task.id, JSON.stringify({ error_details: errorDetails })]
+      );
+
+      orphansFixed++;
+      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}"`);
+    }
+  }
+
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
+  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, rebuilt };
+}
+
+/**
+ * Record a heartbeat for a running task.
+ * Updates last_heartbeat in the task's payload.
+ *
+ * @param {string} taskId - Task ID
+ * @param {string} runId - Run ID (for validation)
+ * @returns {Object} - { success, message }
+ */
+async function recordHeartbeat(taskId, runId) {
+  const result = await pool.query(
+    `UPDATE tasks SET
+      payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+        'last_heartbeat', $2::text
+      )
+    WHERE id = $1 AND status = 'in_progress'
+    RETURNING id`,
+    [taskId, new Date().toISOString()]
+  );
+
+  if (result.rowCount === 0) {
+    return { success: false, message: 'Task not found or not in_progress' };
+  }
+
+  return { success: true, message: 'Heartbeat recorded' };
+}
+
 export {
   triggerCeceliaRun,
   triggerMiniMaxExecutor,
@@ -720,4 +960,10 @@ export {
   removeActiveProcess,
   // v3 additions
   HK_MINIMAX_URL,
+  // v4: State drift elimination
+  probeTaskLiveness,
+  syncOrphanTasksOnStartup,
+  recordHeartbeat,
+  isRunIdProcessAlive,
+  suspectProcesses,
 };

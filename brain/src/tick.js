@@ -6,7 +6,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -199,6 +199,16 @@ async function initTickLoop() {
     const orphansKilled = cleanupOrphanProcesses();
     if (orphansKilled > 0) {
       console.log(`[tick-loop] Cleaned up ${orphansKilled} orphan processes on startup`);
+    }
+
+    // Sync DB state with actual processes (fix orphan in_progress tasks)
+    try {
+      const syncResult = await syncOrphanTasksOnStartup();
+      if (syncResult.orphans_fixed > 0 || syncResult.rebuilt > 0) {
+        console.log(`[tick-loop] Startup sync: ${syncResult.orphans_fixed} orphans fixed, ${syncResult.rebuilt} processes rebuilt`);
+      }
+    } catch (syncErr) {
+      console.error('[tick-loop] Startup sync failed:', syncErr.message);
     }
 
     // Ensure EventBus table exists
@@ -679,6 +689,17 @@ async function executeTick() {
   // 5. Auto-fail timed-out dispatched tasks
   const timeoutActions = await autoFailTimedOutTasks(inProgress);
   actionsTaken.push(...timeoutActions);
+
+  // 5b. Liveness probe: verify all in_progress tasks have alive processes
+  try {
+    const livenessActions = await probeTaskLiveness();
+    actionsTaken.push(...livenessActions);
+    if (livenessActions.length > 0) {
+      console.log(`[tick-loop] Liveness probe: ${livenessActions.length} tasks auto-failed`);
+    }
+  } catch (livenessErr) {
+    console.error('[tick-loop] Liveness probe error:', livenessErr.message);
+  }
 
   // Check for stale tasks (long-running, not dispatched)
   const staleTasks = tasks.filter(t => isStale(t));

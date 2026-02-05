@@ -1,10 +1,7 @@
 dev
-branch: cp-02060015-a742d0cc-8319-4951-a45e-5786c1
-session_id: d4086067b12a
-tty: not a tty
-not a tty
+branch: cp-02060042-c37f1a5b-e42d-4d22-ab28-845e51
 prd: .prd.md
-started: 2026-02-06T00:18:59+08:00
+started: 2026-02-06T00:46:00+08:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done

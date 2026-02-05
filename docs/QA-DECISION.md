@@ -1,23 +1,27 @@
-# QA Decision: 执行状态实时展示 API 端点
+# QA Decision
+Decision: MUST_ADD_RCI
+Priority: P0
+RepoType: Engine
 
-**Decision**: NO_RCI
-**Priority**: P1
-**RepoType**: Engine
+Tests:
+  - dod_item: "进程存活探测 — 每次 tick 验证 in_progress 任务进程存活"
+    method: auto
+    location: brain/tests/liveness-probe.test.js
+  - dod_item: "启动时状态同步 — Brain 重启后修复孤儿任务"
+    method: auto
+    location: brain/tests/startup-sync.test.js
+  - dod_item: "回调原子化 — 回调处理事务内完成"
+    method: auto
+    location: brain/tests/callback-atomic.test.js
+  - dod_item: "心跳端点 — POST /api/brain/heartbeat 可用"
+    method: auto
+    location: brain/tests/heartbeat.test.js
 
-## Tests
+RCI:
+  new:
+    - "LIVENESS-001: tick 存活探测覆盖所有 in_progress 任务"
+    - "SYNC-001: Brain 重启后零孤儿残留"
+    - "CALLBACK-001: 回调处理原子性"
+  update: []
 
-| DoD Item | Method | Location |
-|----------|--------|----------|
-| GET /cecelia/overview 返回有效数据 | auto | tests/test_cecelia_routes.py |
-| GET /cecelia/runs/{id} 返回任务详情 | auto | tests/test_cecelia_routes.py |
-| 前端 CeceliaRuns 页面正常显示 | manual | manual:访问 /cecelia/runs 验证 |
-| 5 秒轮询不造成过大压力 | manual | manual:观察响应时间 |
-
-## RCI
-
-**new**: []
-**update**: []
-
-## Reason
-
-新增 API 端点，无已有回归契约需要更新。自动化测试覆盖 API 端点，手动验证前端集成。
+Reason: 核心调度引擎的状态一致性改动，直接影响任务可靠性，必须有回归契约覆盖。
