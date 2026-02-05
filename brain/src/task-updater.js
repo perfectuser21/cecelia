@@ -5,7 +5,7 @@
  */
 
 import pool from './db.js';
-import { broadcastRunUpdate } from './websocket.js';
+import { publishTaskStarted, publishTaskCompleted, publishTaskFailed, publishTaskProgress } from './events/taskEvents.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id'];
@@ -125,25 +125,41 @@ export async function updateTaskProgress(taskId, progressData) {
  */
 function broadcastTaskUpdate(task) {
   const payload = task.payload || {};
+  const runId = payload.current_run_id || payload.run_id || null;
 
-  // Safe progress calculation with validation
-  let progress = 0;
-  if (payload.current_step) {
-    const parsed = parseInt(payload.current_step, 10);
-    progress = isNaN(parsed) ? 0 : Math.max(0, Math.min(100, parsed));
+  // Publish appropriate event based on status using event publishers
+  switch (task.status) {
+    case 'in_progress':
+      publishTaskStarted({
+        id: task.id,
+        run_id: runId,
+        title: task.title
+      });
+      break;
+    case 'completed':
+      publishTaskCompleted(task.id, runId, payload);
+      break;
+    case 'failed':
+      publishTaskFailed(task.id, runId, payload.error || 'Unknown error');
+      break;
+    case 'queued':
+      // Progress update for queued tasks
+      if (payload.progress !== undefined) {
+        publishTaskProgress(task.id, runId, payload.progress);
+      }
+      break;
+    default:
+      // For other statuses, broadcast progress if available
+      if (payload.progress !== undefined) {
+        // Safe progress calculation with validation
+        let progress = 0;
+        if (payload.current_step) {
+          const parsed = parseInt(payload.current_step, 10);
+          progress = isNaN(parsed) ? 0 : Math.max(0, Math.min(100, parsed));
+        }
+        publishTaskProgress(task.id, runId, progress);
+      }
   }
-
-  // Use broadcastRunUpdate which handles type determination automatically
-  broadcastRunUpdate({
-    id: task.id,
-    status: task.status,
-    progress,
-    task_id: task.id,
-    agent: payload.agent || 'unknown',
-    started_at: task.started_at ? task.started_at.toISOString() : null,
-    completed_at: task.completed_at ? task.completed_at.toISOString() : null,
-    error: payload.error || null
-  });
 }
 
 /**

@@ -1,5 +1,6 @@
 /* global console */
 import pool from './db.js';
+import { publishTaskCreated } from './events/taskEvents.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -23,6 +24,10 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   ]);
 
   console.log(`[Action] Created task: ${result.rows[0].id} - ${title} (type: ${task_type || 'dev'})`);
+
+  // Publish WebSocket event
+  publishTaskCreated(result.rows[0]);
+
   return { success: true, task: result.rows[0] };
 }
 
