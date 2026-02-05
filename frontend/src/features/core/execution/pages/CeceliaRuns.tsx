@@ -28,9 +28,6 @@ interface Overview {
   recent_runs: TaskRun[];
 }
 
-// API 和前端同域，使用相对路径
-const CECELIA_API = '';
-
 export default function CeceliaRuns() {
   const navigate = useNavigate();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -39,7 +36,7 @@ export default function CeceliaRuns() {
 
   const fetchOverview = async () => {
     try {
-      const res = await fetch(`${CECELIA_API}/api/cecelia/overview`);
+      const res = await fetch('/api/brain/cecelia/overview');
       const data = await res.json();
       if (data.success) {
         setOverview(data);

@@ -1872,6 +1872,257 @@ router.get('/execution-history', async (req, res) => {
   }
 });
 
+// ==================== Execution Status API ====================
+
+/**
+ * GET /api/brain/cecelia/overview
+ * Overview of Cecelia execution: running/completed/failed counts + recent runs
+ */
+router.get('/cecelia/overview', async (req, res) => {
+  try {
+    const { getActiveProcesses, getActiveProcessCount } = await import('./executor.js');
+
+    // Get task counts from database
+    const countsResult = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'in_progress') as running,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+        COUNT(*) as total
+      FROM tasks
+      WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+    `);
+
+    const counts = countsResult.rows[0];
+
+    // Get recent runs (tasks with execution info)
+    const recentResult = await pool.query(`
+      SELECT
+        t.id,
+        t.title as project,
+        t.status,
+        t.priority,
+        t.task_type,
+        t.created_at as started_at,
+        t.completed_at,
+        t.payload->>'current_run_id' as run_id,
+        t.payload->>'run_status' as run_status,
+        t.payload->'last_run_result' as last_result,
+        COALESCE(t.payload->>'feature_branch', '') as feature_branch
+      FROM tasks t
+      WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'
+      ORDER BY t.created_at DESC
+      LIMIT 20
+    `);
+
+    // Map to expected format
+    const recentRuns = recentResult.rows.map(row => ({
+      id: row.id,
+      project: row.project || 'Unknown',
+      feature_branch: row.feature_branch || '',
+      status: row.status || 'pending',
+      total_checkpoints: 11,
+      completed_checkpoints: row.status === 'completed' ? 11 : row.status === 'in_progress' ? 5 : 0,
+      failed_checkpoints: row.status === 'failed' ? 1 : 0,
+      current_checkpoint: row.run_status || null,
+      started_at: row.started_at,
+      updated_at: row.completed_at || row.started_at,
+    }));
+
+    // Get live process info
+    const activeProcs = getActiveProcesses();
+    const activeCount = getActiveProcessCount();
+
+    res.json({
+      success: true,
+      total_runs: parseInt(counts.total),
+      running: parseInt(counts.running),
+      completed: parseInt(counts.completed),
+      failed: parseInt(counts.failed),
+      active_processes: activeCount,
+      recent_runs: recentRuns,
+      live_processes: activeProcs,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get cecelia overview',
+      details: err.message,
+    });
+  }
+});
+
+/**
+ * GET /api/brain/dev/health
+ * Health check for dev task tracking
+ */
+router.get('/dev/health', async (req, res) => {
+  try {
+    const { checkCeceliaRunAvailable, getActiveProcessCount } = await import('./executor.js');
+
+    const executorAvailable = await checkCeceliaRunAvailable();
+    const activeCount = getActiveProcessCount();
+
+    // Check DB connectivity
+    const dbResult = await pool.query('SELECT 1 as ok');
+    const dbOk = dbResult.rows.length > 0;
+
+    res.json({
+      success: true,
+      data: {
+        status: dbOk && executorAvailable.available ? 'healthy' : 'degraded',
+        trackedRepos: [],
+        executor: {
+          available: executorAvailable.available,
+          activeProcesses: activeCount,
+        },
+        database: {
+          connected: dbOk,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Health check failed',
+      details: err.message,
+    });
+  }
+});
+
+/**
+ * GET /api/brain/dev/tasks
+ * Get all active dev tasks with step status
+ */
+router.get('/dev/tasks', async (req, res) => {
+  try {
+    const { getActiveProcesses } = await import('./executor.js');
+
+    // Get active tasks (in_progress or recently completed dev tasks)
+    const result = await pool.query(`
+      SELECT
+        t.id,
+        t.title,
+        t.status,
+        t.priority,
+        t.task_type,
+        t.created_at,
+        t.completed_at,
+        t.payload,
+        g.title as goal_title,
+        p.name as project_name,
+        p.repo_path
+      FROM tasks t
+      LEFT JOIN goals g ON t.goal_id = g.id
+      LEFT JOIN projects p ON g.project_id = p.id
+      WHERE t.task_type IN ('dev', 'review')
+        AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
+      ORDER BY
+        CASE t.status WHEN 'in_progress' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+        t.created_at DESC
+      LIMIT 20
+    `);
+
+    // Get live process info
+    const activeProcs = getActiveProcesses();
+    const procMap = new Map(activeProcs.map(p => [p.taskId, p]));
+
+    // Map to DevTaskStatus format
+    const tasks = result.rows.map(row => {
+      const payload = row.payload || {};
+      const proc = procMap.get(row.id);
+
+      // Build step items from payload or defaults
+      const stepNames = ['PRD', 'Detect', 'Branch', 'DoD', 'Code', 'Test', 'Quality', 'PR', 'CI', 'Learning', 'Cleanup'];
+      const steps = stepNames.map((name, idx) => {
+        const stepKey = `step_${idx + 1}`;
+        const stepStatus = payload[stepKey] || 'pending';
+        return {
+          id: idx + 1,
+          name,
+          status: stepStatus === 'done' ? 'done' : stepStatus,
+        };
+      });
+
+      // Determine current step
+      const currentStep = steps.find(s => s.status === 'in_progress');
+      const completedSteps = steps.filter(s => s.status === 'done').length;
+
+      return {
+        repo: {
+          name: row.project_name || row.title,
+          path: row.repo_path || '',
+          remoteUrl: '',
+        },
+        branches: {
+          main: 'main',
+          develop: 'develop',
+          feature: payload.feature_branch || null,
+          current: payload.feature_branch || 'develop',
+          type: payload.feature_branch?.startsWith('cp-') ? 'cp' : payload.feature_branch?.startsWith('feature/') ? 'feature' : 'unknown',
+        },
+        task: {
+          name: row.title,
+          createdAt: row.created_at,
+          prNumber: payload.pr_number || null,
+          prUrl: payload.pr_url || null,
+          prState: payload.pr_state || null,
+        },
+        steps: {
+          current: currentStep ? currentStep.id : completedSteps + 1,
+          total: 11,
+          items: steps,
+        },
+        quality: {
+          ci: payload.ci_status || 'unknown',
+          codex: 'unknown',
+          lastCheck: row.completed_at || row.created_at,
+        },
+        updatedAt: row.completed_at || row.created_at,
+        processAlive: proc ? proc.alive : false,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: tasks,
+      count: tasks.length,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get dev tasks',
+      details: err.message,
+    });
+  }
+});
+
+/**
+ * GET /api/brain/dev/repos
+ * Get list of tracked repositories
+ */
+router.get('/dev/repos', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT DISTINCT p.name, p.repo_path
+      FROM projects p
+      WHERE p.repo_path IS NOT NULL
+      ORDER BY p.name
+    `);
+
+    res.json({
+      success: true,
+      data: result.rows.map(r => r.repo_path || r.name),
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get repos',
+      details: err.message,
+    });
+  }
+});
+
 // ==================== Planner API ====================
 
 /**

@@ -3,7 +3,7 @@
  * 实时显示 VPS 上的开发进度
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   GitBranch,
   Check,
@@ -16,7 +16,8 @@ import {
   GitPullRequest,
   Loader2,
   FolderGit2,
-  ChevronRight,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { getAllTasks, type DevTaskStatus, type StepStatus, type CIStatus } from '../api/dev-tracker.api';
 
@@ -214,12 +215,32 @@ const TaskCard = ({ task }: { task: DevTaskStatus }) => {
   );
 };
 
+// 连接状态指示器
+const ConnectionStatus = ({ connected, loading }: { connected: boolean; loading: boolean }) => {
+  if (loading) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-slate-400">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        同步中
+      </span>
+    );
+  }
+  return (
+    <span className={`flex items-center gap-1.5 text-xs ${connected ? 'text-emerald-500' : 'text-red-400'}`}>
+      {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+      {connected ? '已连接' : '离线'}
+    </span>
+  );
+};
+
 // 主页面
 export default function DevTasks() {
   const [tasks, setTasks] = useState<DevTaskStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [connected, setConnected] = useState(true);
+  const failCountRef = useRef(0);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -227,10 +248,16 @@ export default function DevTasks() {
       if (response.success && response.data) {
         setTasks(response.data);
         setError(null);
+        setConnected(true);
+        failCountRef.current = 0;
       } else {
         setError(response.error || '获取任务失败');
       }
-    } catch (err) {
+    } catch {
+      failCountRef.current++;
+      if (failCountRef.current >= 3) {
+        setConnected(false);
+      }
       setError('无法连接到服务器');
     } finally {
       setLoading(false);
@@ -240,8 +267,7 @@ export default function DevTasks() {
 
   useEffect(() => {
     fetchTasks();
-    // 每 30 秒自动刷新
-    const interval = setInterval(fetchTasks, 30000);
+    const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
   }, [fetchTasks]);
 
@@ -259,8 +285,9 @@ export default function DevTasks() {
           <p className="text-[#86868b] dark:text-slate-300 mt-1">实时追踪 VPS 上的开发进度</p>
         </div>
         <div className="flex items-center gap-4">
+          <ConnectionStatus connected={connected} loading={loading && tasks.length > 0} />
           <span className="text-sm text-[#86868b] dark:text-slate-300">
-            最后更新: {lastRefresh.toLocaleTimeString('zh-CN')}
+            {lastRefresh.toLocaleTimeString('zh-CN')}
           </span>
           <button
             onClick={handleRefresh}
