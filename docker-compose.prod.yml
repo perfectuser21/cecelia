@@ -33,7 +33,7 @@ services:
       - CECELIA_DISPATCH_COOLDOWN_MS=${CECELIA_DISPATCH_COOLDOWN_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-      - CECELIA_RUN_PATH=/usr/local/bin/cecelia-run
+      - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
