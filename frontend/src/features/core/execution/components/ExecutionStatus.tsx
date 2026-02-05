@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Activity, RefreshCw, AlertCircle } from 'lucide-react';
+import { Activity, RefreshCw, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 import { brainApi, type VpsSlot } from '../../../../api/brain.api';
 import { TaskCard } from './TaskCard';
+import { useWebSocket, useTaskStatus } from '../../../../hooks/useWebSocket';
 
 export interface ExecutionStatusProps {
   autoRefresh?: boolean;
@@ -10,13 +11,16 @@ export interface ExecutionStatusProps {
 
 export function ExecutionStatus({
   autoRefresh = true,
-  refreshInterval = 5000,
+  refreshInterval = 30000, // Reduced to 30s as WebSocket handles real-time updates
 }: ExecutionStatusProps) {
   const [slots, setSlots] = useState<VpsSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // WebSocket connection
+  const { isConnected } = useWebSocket(true);
 
   const loadData = useCallback(async () => {
     try {
@@ -39,10 +43,18 @@ export function ExecutionStatus({
     }
   }, []);
 
+  // Listen for task status updates via WebSocket
+  useTaskStatus((data) => {
+    console.log('[ExecutionStatus] Task update received:', data);
+    // Refresh data when task status changes
+    loadData();
+  });
+
   useEffect(() => {
     loadData();
   }, [loadData]);
 
+  // Fallback polling (less frequent now that we have WebSocket)
   useEffect(() => {
     if (!autoRefresh) return;
 
@@ -101,6 +113,23 @@ export function ExecutionStatus({
         </div>
 
         <div className="flex items-center gap-4">
+          {/* WebSocket Status Indicator */}
+          <div
+            className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${
+              isConnected
+                ? 'bg-green-100 text-green-700'
+                : 'bg-gray-100 text-gray-500'
+            }`}
+            title={isConnected ? 'WebSocket connected' : 'WebSocket disconnected'}
+          >
+            {isConnected ? (
+              <Wifi className="w-3 h-3" />
+            ) : (
+              <WifiOff className="w-3 h-3" />
+            )}
+            <span>{isConnected ? 'Live' : 'Offline'}</span>
+          </div>
+
           {lastUpdate && (
             <span className="text-sm text-gray-500">
               Updated {lastUpdate.toLocaleTimeString()}

@@ -8,11 +8,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createServer } from 'http';
-import websocketService from '../websocket.js';
+import { initWebSocketServer, shutdownWebSocketServer, broadcast, broadcastRunUpdate, getConnectedClientsCount } from '../websocket.js';
 
 describe('WebSocket Service', () => {
   let server;
   let wsUrl;
+  let wss;
 
   beforeEach(async () => {
     // Create HTTP server for testing
@@ -26,17 +27,17 @@ describe('WebSocket Service', () => {
     });
 
     // Initialize WebSocket service
-    websocketService.init(server);
+    wss = initWebSocketServer(server);
   });
 
-  afterEach(() => {
-    websocketService.shutdown();
+  afterEach(async () => {
+    await shutdownWebSocketServer();
     server.close();
   });
 
   it('WebSocket 服务在端口正常启动', () => {
-    expect(websocketService.wss).toBeDefined();
-    expect(websocketService.wss).toBeInstanceOf(WebSocketServer);
+    expect(wss).toBeDefined();
+    expect(wss).toBeInstanceOf(WebSocketServer);
   });
 
   it('客户端可以连接到 /ws 端点', async () => {
@@ -49,7 +50,7 @@ describe('WebSocket Service', () => {
     });
 
     expect(ws.readyState).toBe(WebSocket.OPEN);
-    expect(websocketService.getClientCount()).toBe(1);
+    expect(getConnectedClientsCount()).toBe(1);
 
     ws.close();
   });
@@ -65,9 +66,9 @@ describe('WebSocket Service', () => {
       setTimeout(() => reject(new Error('No message received')), 5000);
     });
 
-    expect(message.type).toBe('connected');
-    expect(message.data.message).toBe('Connected to Cecelia Brain');
-    expect(message.timestamp).toBeDefined();
+    expect(message.event).toBe('connected');
+    expect(message.data.message).toBe('Welcome to Cecelia Brain WebSocket');
+    expect(message.data.timestamp).toBeDefined();
 
     ws.close();
   });
@@ -84,7 +85,7 @@ describe('WebSocket Service', () => {
       clients.push(ws);
     }
 
-    expect(websocketService.getClientCount()).toBe(3);
+    expect(getConnectedClientsCount()).toBe(3);
 
     // Close all
     clients.forEach(ws => ws.close());
@@ -136,7 +137,7 @@ describe('WebSocket Service', () => {
     // Broadcast a run update
     const testUpdate = {
       id: 'test-run-123',
-      status: 'running',
+      status: 'in_progress',
       progress: 5,
       task_id: 'task-456',
       agent: 'dev',
@@ -145,16 +146,16 @@ describe('WebSocket Service', () => {
       error: null
     };
 
-    websocketService.broadcastRunUpdate(testUpdate);
+    broadcastRunUpdate(testUpdate);
 
     const messages = await messagePromise;
 
     // Both clients should receive the message
-    expect(messages).toHaveLength(2);
-    expect(messages[0].type).toBe('run_update');
+    expect(messagesReceived).toHaveLength(2);
+    expect(messages[0].event).toBe('task:started');
     expect(messages[0].data.id).toBe('test-run-123');
-    expect(messages[0].data.status).toBe('running');
-    expect(messages[1].type).toBe('run_update');
+    expect(messages[0].data.status).toBe('in_progress');
+    expect(messages[1].event).toBe('task:started');
     expect(messages[1].data.id).toBe('test-run-123');
 
     client1.close();
@@ -192,16 +193,16 @@ describe('WebSocket Service', () => {
       error: null
     };
 
-    websocketService.broadcastRunUpdate(testUpdate);
+    broadcastRunUpdate(testUpdate);
 
     const message = await messagePromise;
 
     // Verify message structure
-    expect(message).toHaveProperty('type');
+    expect(message).toHaveProperty('event');
     expect(message).toHaveProperty('data');
     expect(message).toHaveProperty('timestamp');
 
-    expect(message.type).toBe('run_complete');
+    expect(message.event).toBe('task:completed');
     expect(message.data.id).toBe('test-run-999');
     expect(message.data.status).toBe('completed');
     expect(message.data.progress).toBe(11);
@@ -214,9 +215,10 @@ describe('WebSocket Service', () => {
 
   it('根据状态自动设置正确的消息类型', async () => {
     const testCases = [
-      { status: 'running', expectedType: 'run_update' },
-      { status: 'completed', expectedType: 'run_complete' },
-      { status: 'failed', expectedType: 'run_failed' }
+      { status: 'queued', expectedEvent: 'task:created' },
+      { status: 'in_progress', expectedEvent: 'task:started' },
+      { status: 'completed', expectedEvent: 'task:completed' },
+      { status: 'failed', expectedEvent: 'task:failed' }
     ];
 
     for (const testCase of testCases) {
@@ -239,7 +241,7 @@ describe('WebSocket Service', () => {
       // Wait a bit for welcome message to be processed
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      websocketService.broadcastRunUpdate({
+      broadcastRunUpdate({
         id: 'test-run',
         status: testCase.status,
         progress: 0,
@@ -251,7 +253,7 @@ describe('WebSocket Service', () => {
       });
 
       const message = await messagePromise;
-      expect(message.type).toBe(testCase.expectedType);
+      expect(message.event).toBe(testCase.expectedEvent);
 
       ws.close();
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -263,14 +265,14 @@ describe('WebSocket Service', () => {
 
     await new Promise(resolve => ws.on('open', resolve));
 
-    expect(websocketService.getClientCount()).toBe(1);
+    expect(getConnectedClientsCount()).toBe(1);
 
     ws.close();
 
     // Wait for close event to be processed
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    expect(websocketService.getClientCount()).toBe(0);
+    expect(getConnectedClientsCount()).toBe(0);
   });
 
   it('向已关闭的客户端发送消息不会崩溃', async () => {
@@ -283,24 +285,7 @@ describe('WebSocket Service', () => {
 
     // This should not throw
     expect(() => {
-      websocketService.broadcast({
-        type: 'test',
-        data: { test: true },
-        timestamp: new Date().toISOString()
-      });
+      broadcast('task:progress', { test: true });
     }).not.toThrow();
-  });
-
-  it('广播时忽略无效消息格式', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    // Invalid: missing type
-    websocketService.broadcast({ data: { test: true } });
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[WS] Invalid message format')
-    );
-
-    consoleSpy.mockRestore();
   });
 });

@@ -139,6 +139,27 @@ export function broadcast(event, data) {
 }
 
 /**
+ * Broadcast run update (task status update)
+ * @param {Object} runData - Run data object
+ */
+export function broadcastRunUpdate(runData) {
+  // Map task status to appropriate WebSocket event
+  let event = WS_EVENTS.TASK_PROGRESS;
+
+  if (runData.status === 'queued') {
+    event = WS_EVENTS.TASK_CREATED;
+  } else if (runData.status === 'in_progress') {
+    event = WS_EVENTS.TASK_STARTED;
+  } else if (runData.status === 'completed') {
+    event = WS_EVENTS.TASK_COMPLETED;
+  } else if (runData.status === 'failed') {
+    event = WS_EVENTS.TASK_FAILED;
+  }
+
+  broadcast(event, runData);
+}
+
+/**
  * Get connected clients count
  * @returns {number}
  */
