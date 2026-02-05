@@ -1062,6 +1062,12 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
 
+    // 0. Clean up executor's activeProcesses registry
+    try {
+      const { removeActiveProcess } = await import('./executor.js');
+      removeActiveProcess(task_id);
+    } catch { /* ignore if executor not available */ }
+
     // 1. Update task status based on execution result
     let newStatus;
     if (status === 'AI Done') {

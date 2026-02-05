@@ -720,7 +720,48 @@ async function executeTick() {
     }
   }
 
-  // 7. Dispatch next task
+  // 6b. Auto OKR decomposition: check ALL objectives with 0 KRs (independent of focus)
+  try {
+    const noKrObjectives = await pool.query(`
+      SELECT o.id, o.title FROM goals o
+      WHERE o.type = 'objective'
+        AND o.status NOT IN ('completed', 'cancelled')
+        AND NOT EXISTS (
+          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id AND kr.type = 'key_result'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.goal_id = o.id
+            AND (t.payload->>'decomposition' = 'true' OR t.title LIKE '%OKR%拆解%')
+            AND (t.status IN ('queued', 'in_progress') OR (t.status = 'completed' AND t.completed_at > NOW() - INTERVAL '24 hours'))
+        )
+    `);
+
+    for (const obj of noKrObjectives.rows) {
+      const decompResult = await pool.query(`
+        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload)
+        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4)
+        RETURNING id, title
+      `, [
+        `OKR 拆解: ${obj.title}`,
+        `请为目标「${obj.title}」拆解 Key Results (KR)。\n\n要求：\n1. 分析目标，拆解为 3-5 个可量化的 KR\n2. 每个 KR 需要有明确的衡量标准和目标值\n3. 调用 Brain API 创建 KR:\n   POST http://localhost:5221/api/brain/action/create-goal\n   Body: { "title": "KR: ...", "description": "...", "priority": "P0", "parent_id": "${obj.id}" }\n4. 为每个 KR 关联合适的 Project\n\n目标 ID: ${obj.id}\n目标标题: ${obj.title}`,
+        obj.id,
+        JSON.stringify({ decomposition: 'true', objective_id: obj.id })
+      ]);
+
+      console.log(`[tick-loop] Created OKR decomposition task for objective: ${obj.title}`);
+      actionsTaken.push({
+        action: 'create_decomposition',
+        task_id: decompResult.rows[0].id,
+        title: decompResult.rows[0].title,
+        objective: obj.title
+      });
+    }
+  } catch (decompErr) {
+    console.error('[tick-loop] OKR decomposition error:', decompErr.message);
+  }
+
+  // 7. Dispatch next task (scoped to focused objective)
   const dispatchResult = await dispatchNextTask(allGoalIds);
   actionsTaken.push(...dispatchResult.actions);
 
@@ -731,6 +772,22 @@ async function executeTick() {
       { action: 'dispatch_skip', reason: dispatchResult.reason },
       { success: true }
     );
+  }
+
+  // 7b. Global dispatch: decomposition tasks (regardless of focus)
+  if (!dispatchResult.dispatched || dispatchResult.reason === 'no_dispatchable_task') {
+    try {
+      const allObjectiveIds = await pool.query(`
+        SELECT id FROM goals WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
+      `);
+      const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
+      if (globalGoalIds.length > 0) {
+        const globalDispatch = await dispatchNextTask(globalGoalIds);
+        actionsTaken.push(...globalDispatch.actions);
+      }
+    } catch (globalErr) {
+      console.error('[tick-loop] Global dispatch error:', globalErr.message);
+    }
   }
 
   // 8. Update tick state

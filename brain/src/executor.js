@@ -158,6 +158,18 @@ function killProcess(taskId) {
 }
 
 /**
+ * Remove a task from activeProcesses (called when execution-callback received)
+ */
+function removeActiveProcess(taskId) {
+  if (activeProcesses.has(taskId)) {
+    activeProcesses.delete(taskId);
+    console.log(`[executor] Cleaned up activeProcess for task=${taskId}`);
+    return true;
+  }
+  return false;
+}
+
+/**
  * Get snapshot of all active processes (for diagnostics)
  */
 function getActiveProcesses() {
@@ -544,8 +556,17 @@ async function triggerCeceliaRun(task) {
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
 
+    // Resolve repo_path from task's project
+    let repoPath = null;
+    if (task.project_id) {
+      try {
+        const projResult = await pool.query('SELECT repo_path FROM projects WHERE id = $1', [task.project_id]);
+        repoPath = projResult.rows[0]?.repo_path || null;
+      } catch { /* ignore */ }
+    }
+
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}`);
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${repoPath ? ` repo=${repoPath}` : ''}`);
 
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
@@ -555,7 +576,8 @@ async function triggerCeceliaRun(task) {
         checkpoint_id: checkpointId,
         prompt: promptContent,
         task_type: taskType,
-        permission_mode: permissionMode
+        permission_mode: permissionMode,
+        repo_path: repoPath
       })
     });
 
@@ -671,6 +693,7 @@ export {
   cleanupOrphanProcesses,
   isProcessAlive,
   checkServerResources,
+  removeActiveProcess,
   // v3 additions
   HK_MINIMAX_URL,
 };
