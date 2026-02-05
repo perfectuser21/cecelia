@@ -13,6 +13,7 @@ import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
 import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
+import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -432,6 +433,20 @@ async function dispatchNextTask(goalIds) {
   const execResult = await triggerCeceliaRun(fullTaskResult.rows[0]);
 
   _lastDispatchTime = Date.now();
+
+  // Publish WebSocket event: task started (non-blocking, errors don't break dispatch)
+  try {
+    publishTaskStarted({
+      id: nextTask.id,
+      run_id: execResult.runId,
+      title: nextTask.title
+    });
+
+    // Publish executor status update
+    publishExecutorStatus(activeCount + 1, effectiveLimit - activeCount - 1, MAX_CONCURRENT_TASKS);
+  } catch (wsErr) {
+    console.error(`[tick] WebSocket broadcast failed: ${wsErr.message}`);
+  }
 
   await emit('task_dispatched', 'tick', {
     task_id: nextTask.id,

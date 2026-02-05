@@ -28,6 +28,7 @@ import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
+import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
@@ -1153,10 +1154,16 @@ router.post('/execution-callback', async (req, res) => {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
       await cbSuccess('cecelia-run');
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
+
+      // Publish WebSocket event: task completed
+      publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
       notifyTaskFailed({ task_id, title: `Task ${task_id}`, reason: status }).catch(() => {});
+
+      // Publish WebSocket event: task failed
+      publishTaskFailed(task_id, run_id, status);
     }
 
     // 5. Rollup progress to KR and O

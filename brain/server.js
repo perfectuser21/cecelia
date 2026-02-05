@@ -7,9 +7,10 @@ import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
-import websocketService from './src/websocket.js';
+import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 
 const app = express();
+const server = createServer(app);
 const PORT = process.env.BRAIN_PORT || 5221;
 
 // ============== Process-level Exception Handlers ==============
@@ -28,15 +29,15 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully...');
-  websocketService.shutdown();
+  await shutdownWebSocketServer();
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
-  websocketService.shutdown();
+  await shutdownWebSocketServer();
   process.exit(0);
 });
 // ============================================================
@@ -86,15 +87,12 @@ if (!selfCheckOk) {
   process.exit(1);
 }
 
-// Create HTTP server and attach WebSocket
-const server = createServer(app);
-
-// Initialize WebSocket service
-websocketService.init(server);
-
 server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
-  console.log(`WebSocket endpoint: ws://localhost:${PORT}/ws`);
+
+  // Initialize WebSocket server
+  initWebSocketServer(server);
+  console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
