@@ -3,8 +3,6 @@
 # Build first: bash scripts/brain-build.sh
 # Deploy:      bash scripts/brain-deploy.sh
 
-version: '3.8'
-
 services:
   node-brain:
     image: cecelia-brain:${BRAIN_VERSION:-latest}

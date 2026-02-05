@@ -2,8 +2,6 @@
 # Uses source-code mount for hot-reload.
 # Production: use docker-compose.prod.yml
 
-version: '3.8'
-
 services:
   node-brain:
     image: node:20-alpine
