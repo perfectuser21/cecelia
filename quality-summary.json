@@ -1,0 +1,13 @@
+{
+  "branch": "cp-02060133-4f8163a9-a7a7-42fa-8cb4-089467",
+  "checks": {
+    "typecheck": {"status": "skipped"},
+    "test": {"status": "pass"},
+    "build": {"status": "skipped"},
+    "shell": {"status": "pass"},
+    "syntax": {"status": "pass"}
+  },
+  "gates": {
+    "quality": {"status": "pass", "file": ".gate-quality-passed"}
+  }
+}
