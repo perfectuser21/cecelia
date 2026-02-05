@@ -97,3 +97,39 @@
 - **Bug**: None
 - **优化点**: The workflow executed smoothly. Adding a simple GET endpoint with no dependencies was straightforward. Test coverage was adequate.
 - **影响程度**: Low - Simple feature implementation
+
+## [2026-02-06] Real-time Execution Status Display Component
+
+### Feature: Added ExecutionStatus and TaskCard components to Core frontend
+
+- **What**: Implemented real-time display of Cecelia execution status with auto-refresh
+- **Pattern**: Created reusable components (ExecutionStatus + TaskCard) integrated into CeceliaOverview page
+  ```typescript
+  // ExecutionStatus component with auto-refresh
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => loadData(), refreshInterval);
+    return () => clearInterval(interval);
+  }, [autoRefresh, refreshInterval, loadData]);
+  
+  // Filter active tasks (taskId !== null)
+  const activeTasks = slots.filter(slot => slot.taskId !== null);
+  ```
+- **Integration**: Leveraged existing brainApi.getVpsSlots() endpoint, no backend changes needed
+- **Testing**: Comprehensive test coverage using vitest + testing-library
+- **Impact**: Medium - improves visibility into Cecelia execution without backend changes
+
+### Implementation Notes
+
+- Used existing VPS slots API from brain.api.ts
+- Component structure follows existing patterns (MetricCard, StatusBadge)
+- Auto-refresh defaults to 5 seconds, configurable via props
+- Empty state handling for no active tasks
+- Error state with retry capability
+
+### Development Flow
+
+- **Bug**: None - development was smooth
+- **Optimization**: Frontend-only implementation, no API changes required
+- **Impact**: Low - self-contained feature addition
+
