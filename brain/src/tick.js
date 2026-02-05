@@ -22,7 +22,8 @@ const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are sta
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
-const AUTO_DISPATCH_MAX = MAX_SEATS; // Effective limit is dynamic (from checkServerResources)
+const INTERACTIVE_RESERVE = 2;  // Reserve 2 seats for user's headed Claude sessions
+const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
 // Task type to agent skill mapping
