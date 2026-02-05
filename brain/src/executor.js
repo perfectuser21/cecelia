@@ -320,9 +320,9 @@ function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = getSkillForTaskType(taskType);
 
-  // OKR 拆解任务：用 /autumnrice skill（专业 OKR 拆解）
+  // OKR 拆解任务：秋米用 /okr skill + Opus
   if (task.payload?.decomposition === 'true') {
-    return `/autumnrice
+    return `/okr
 
 # OKR 拆解: ${task.title}
 
