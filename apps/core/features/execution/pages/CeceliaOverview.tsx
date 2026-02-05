@@ -16,12 +16,15 @@ import {
 import {
   fetchCeceliaOverview,
   fetchTimelineData,
+  fetchClusterStatus,
   CeceliaOverview,
   TimeRange,
   TimelineData,
+  ClusterStatus as ClusterStatusType,
 } from '../api/agents.api';
 import TimeRangeSelector from '../components/TimeRangeSelector';
 import TimelineView from '../components/TimelineView';
+import ClusterStatus from '../components/ClusterStatus';
 
 // Brain API 数据类型
 interface BrainStatus {
@@ -65,6 +68,7 @@ export default function CeceliaOverviewPage() {
   const [overview, setOverview] = useState<CeceliaOverview | null>(null);
   const [timeline, setTimeline] = useState<TimelineData | null>(null);
   const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
+  const [clusterStatus, setClusterStatus] = useState<ClusterStatusType | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +77,7 @@ export default function CeceliaOverviewPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [overviewData, timelineData, brainData, tasksData] = await Promise.all([
+      const [overviewData, timelineData, brainData, clusterData, tasksData] = await Promise.all([
         fetchCeceliaOverview(timeRange),
         fetchTimelineData(),
         fetch(`${BRAIN_API_URL}/tick/status`).then(r => {
@@ -81,6 +85,10 @@ export default function CeceliaOverviewPage() {
           return r.json();
         }).catch(err => {
           console.warn('Brain API error:', err);
+          return null;
+        }),
+        fetchClusterStatus().catch(err => {
+          console.warn('Cluster status error:', err);
           return null;
         }),
         fetch('/api/tasks/tasks').then(r => {
@@ -94,6 +102,7 @@ export default function CeceliaOverviewPage() {
       setOverview(overviewData);
       setTimeline(timelineData);
       setBrainStatus(brainData);
+      setClusterStatus(clusterData);
       setTasks(Array.isArray(tasksData) ? tasksData : []);
       setError(null);
       setLastUpdate(new Date());
@@ -231,7 +240,10 @@ export default function CeceliaOverviewPage() {
         />
       </div>
 
-      {/* 新增：Cecelia 实时状态面板 */}
+      {/* 集群状态 */}
+      <ClusterStatus data={clusterStatus} loading={loading} />
+
+      {/* Cecelia 实时状态面板 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* 1. Seats 配置 */}
         <InfoCard title="Seats 配置" icon={<Users className="w-5 h-5" />}>

@@ -3,6 +3,46 @@
 import { CECELIA_AGENTS, CeceliaAgent, matchAgentByWorkflow } from '../config/agents.config';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+const BRAIN_API_URL = '/api/brain';
+
+// ============ Cluster Status Types ============
+
+export interface ServerStatus {
+  online: boolean;
+  cpu_cores: number;
+  cpu_load: number;
+  mem_total_gb: number;
+  mem_free_gb: number;
+  slots_max: number;
+  slots_available: number;
+  slots_in_use: number;
+  tasks_running: string[];
+  danger_level?: 'normal' | 'warning' | 'danger' | 'critical';
+}
+
+export interface ClusterStatus {
+  servers: {
+    us: ServerStatus;
+    hk: ServerStatus;
+  };
+  cluster_status: 'healthy' | 'partial' | 'degraded';
+  total_slots: number;
+  available_slots: number;
+  recommendation: string;
+}
+
+// 获取集群状态
+export async function fetchClusterStatus(): Promise<ClusterStatus | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/cluster/status`);
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
 
 export type TimeRange = '24h' | '72h' | '7d';
 
