@@ -172,8 +172,163 @@ async function handleReviewComplete(taskId) {
 
 ---
 
+## ZenithJoy Publish Engine 集成 (KR2.2)
+
+### 概述
+
+Cecelia Brain 负责调度 ZenithJoy Publish Engine 的发布任务。Publish Engine 作为独立服务运行在 zenithjoy-autopilot 项目中。
+
+### 架构
+
+```
+Cecelia Brain (5221)
+    │
+    ▼
+POST /api/publish/jobs ──► ZenithJoy Publish Engine (5300)
+    │                           │
+    │                           ├─ BullMQ Queue
+    │                           ├─ Platform Adapters
+    │                           └─ PostgreSQL State
+    │
+    ▼
+Polling: GET /api/publish/jobs/:id
+    │
+    ▼
+Status: success/failed ──► Update Cecelia Tasks DB
+```
+
+### 触发发布任务
+
+**Brain → Publish Engine**:
+
+```javascript
+// Cecelia Brain 代码示例
+async function triggerPublishJob(contentId, platforms) {
+  const response = await axios.post('http://localhost:5300/api/publish/jobs', {
+    content_id: contentId,
+    platforms: platforms, // ['douyin', 'xiaohongshu', 'weibo']
+    priority: 1, // 0=normal, 1=high, 2=urgent
+    scheduled_at: null // null = publish immediately
+  });
+
+  return response.data.job_id; // UUID
+}
+```
+
+### 查询发布状态
+
+**Brain 轮询机制**:
+
+```javascript
+async function checkPublishStatus(jobId) {
+  const response = await axios.get(`http://localhost:5300/api/publish/jobs/${jobId}`);
+
+  return {
+    job_id: response.data.id,
+    status: response.data.status, // pending/running/success/failed/partial
+    platforms: response.data.records.map(r => ({
+      platform: r.platform,
+      status: r.status,
+      post_id: r.platform_post_id,
+      url: r.platform_url,
+      error: r.error_message
+    }))
+  };
+}
+```
+
+### 任务闭环流程
+
+```
+1. Cecelia Brain 收到发布请求（用户或自动化）
+    ↓
+2. Brain 创建 task_type=publish 任务记录
+    ↓
+3. Brain 调用 Publish Engine API (POST /api/publish/jobs)
+    ↓
+4. Publish Engine 返回 job_id
+    ↓
+5. Brain 定时轮询状态 (GET /api/publish/jobs/:id)
+    ↓
+6. Publish Engine Worker 完成发布
+    ↓
+7. Brain 检测到 status=success → 更新 Cecelia Tasks DB
+    ↓
+8. Brain 通知用户（可选）
+```
+
+### 失败处理
+
+**重试策略**：由 Publish Engine 内部处理（Retry Engine + BullMQ）
+**Brain 职责**：只负责查询最终状态和记录结果
+
+```javascript
+async function handlePublishResult(taskId, jobId) {
+  const status = await checkPublishStatus(jobId);
+
+  if (status.status === 'success') {
+    await updateTask(taskId, { status: 'completed', result: status });
+  } else if (status.status === 'failed') {
+    await updateTask(taskId, {
+      status: 'failed',
+      error: status.platforms.filter(p => p.status === 'failed').map(p => p.error).join(', ')
+    });
+  } else if (status.status === 'partial') {
+    // 部分平台成功，部分失败
+    await updateTask(taskId, { status: 'completed', result: status, warning: 'partial_success' });
+  }
+}
+```
+
+### 监控与告警
+
+**Publish Engine 指标** (Prometheus):
+- `publish_success_rate`: 发布成功率（目标 ≥ 95%）
+- `publish_duration_seconds`: 发布耗时
+
+**Brain 集成**:
+- Brain 可查询 Prometheus API 获取实时成功率
+- 如果成功率 < 95%，Brain 触发告警任务（通知管理员）
+
+```javascript
+async function monitorPublishHealth() {
+  const successRate = await axios.get('http://localhost:9090/api/v1/query?query=publish_success_rate');
+
+  if (successRate.data.value < 0.95) {
+    await createTask({
+      task_type: 'alert',
+      title: '发布成功率低于 95%',
+      priority: 'urgent',
+      description: `当前成功率: ${successRate.data.value}`
+    });
+  }
+}
+```
+
+### API 端点规范
+
+| 端点 | 方法 | 请求体 | 响应 |
+|------|------|--------|------|
+| /api/publish/jobs | POST | `{content_id, platforms, priority?, scheduled_at?}` | `{job_id, status}` |
+| /api/publish/jobs/:id | GET | - | `{id, status, platforms, records[]}` |
+| /api/publish/jobs/:id/records | GET | - | `[{platform, status, post_id, url, error}]` |
+
+### 数据库关联
+
+**Cecelia Tasks 表**:
+- `task_type = 'publish'`
+- `metadata.job_id` 存储 Publish Engine 返回的 job_id
+- `metadata.platforms` 存储目标平台列表
+
+**Publish Engine 表**:
+- `publish_jobs.metadata.cecelia_task_id` 可选：反向引用（用于 debug）
+
+---
+
 ## 下一步
 
 1. [ ] 实现 Brain 读取 REVIEW-REPORT.md 并自动创建 dev 任务
 2. [ ] 完善 /talk skill 的日报模板
 3. [ ] 添加 /review → dev 的闭环测试
+4. [ ] 实现 Publish Engine 调度逻辑（KR2.2）
+5. [ ] 添加 Publish Engine 成功率监控和告警
