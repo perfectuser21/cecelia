@@ -1,32 +1,42 @@
-# QA Decision - KR2.2 Unified Publish Engine Research
+# QA Decision - Cecelia 丘脑 (Thalamus) 事件路由器
 
-Decision: NO_RCI
-Priority: P1
+Decision: MUST_ADD_RCI
+Priority: P0
 RepoType: Engine
 
 Tests:
-  - dod_item: "分析 zenithjoy-workspace 项目并理解现有发布流程"
-    method: manual
-    location: manual:阅读代码并总结现有发布流程架构
+  - dod_item: "thalamus.js 实现事件分析"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js
 
-  - dod_item: "理解 KR2.2 目标（一键发布 API 成功率 ≥95%）的具体含义"
-    method: manual
-    location: manual:通过查阅 OKR 文档和相关代码确认指标定义
+  - dod_item: "decision-executor.js 实现决策执行"
+    method: auto
+    location: brain/src/__tests__/decision-executor.test.js
 
-  - dod_item: "输出技术设计文档（包含现状分析、问题识别、解决方案等）"
-    method: manual
-    location: manual:人工审阅文档完整性和技术可行性
+  - dod_item: "Validator 验证 Decision 合法性"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js
 
-  - dod_item: "文档包含架构设计、实现步骤、技术选型建议"
-    method: manual
-    location: manual:Checklist验证文档必需章节存在
+  - dod_item: "快速路由处理简单事件（不调 LLM）"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js
 
-  - dod_item: "文档包含实现路线图和风险评估"
+  - dod_item: "降级机制：Sonnet 失败时回退到代码"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js
+
+  - dod_item: "单元测试覆盖核心逻辑"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js, brain/src/__tests__/decision-executor.test.js
+
+  - dod_item: "接入 Tick 事件流"
     method: manual
-    location: manual:专家评审路线图的可执行性
+    location: manual:验证 Tick 事件能触发 Thalamus 处理
 
 RCI:
-  new: []
+  new:
+    - RCI-THAL-001  # 丘脑事件分析
+    - RCI-THAL-002  # 决策执行器
   update: []
 
-Reason: 研究调研任务，产出为技术文档，无需自动化测试或 RCI，采用人工审核方式验证文档质量和完整性。
+Reason: 丘脑是 Cecelia 的核心决策层，负责事件路由和决策生成。必须有完整的单元测试覆盖 Decision 验证、Action 白名单、快速路由和降级机制。

@@ -14,6 +14,8 @@ import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit
 import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
 import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
+import { executeDecision as executeThalamusDecision } from './decision-executor.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -552,6 +554,50 @@ async function executeTick() {
   const actionsTaken = [];
   const now = new Date();
   let decisionEngineResult = null;
+  let thalamusResult = null;
+
+  // 0. Thalamus: Analyze tick event (quick route for simple ticks)
+  try {
+    const tickEvent = {
+      type: EVENT_TYPES.TICK,
+      timestamp: now.toISOString(),
+      has_anomaly: false  // Will be set to true if issues detected later
+    };
+
+    thalamusResult = await thalamusProcessEvent(tickEvent);
+
+    // If thalamus returns fallback_to_tick or no_action, continue with normal tick
+    // Otherwise, execute the thalamus decision
+    const thalamusAction = thalamusResult.actions?.[0]?.type;
+    if (thalamusAction && thalamusAction !== 'fallback_to_tick' && thalamusAction !== 'no_action') {
+      console.log(`[tick] Thalamus decision: ${thalamusAction}`);
+
+      // Execute thalamus decision
+      const execReport = await executeThalamusDecision(thalamusResult);
+      actionsTaken.push({
+        action: 'thalamus',
+        level: thalamusResult.level,
+        thalamus_actions: thalamusResult.actions.map(a => a.type),
+        executed: execReport.actions_executed.length,
+        failed: execReport.actions_failed.length
+      });
+
+      // If thalamus handled the event, may still continue with normal tick
+      // unless it explicitly requests to skip
+      if (thalamusAction === 'dispatch_task') {
+        // Thalamus already dispatched, skip normal dispatch logic
+        return {
+          success: true,
+          thalamus: thalamusResult,
+          actions_taken: actionsTaken,
+          next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+        };
+      }
+    }
+  } catch (thalamusErr) {
+    console.error('[tick] Thalamus error, falling back to code-based tick:', thalamusErr.message);
+    // Continue with normal tick if thalamus fails
+  }
 
   // 1. Decision Engine: Compare goal progress
   try {
@@ -750,14 +796,16 @@ async function executeTick() {
     }
   }
 
-  // 6b. Auto OKR decomposition: check ALL objectives with 0 KRs (independent of focus)
+  // 6b. Auto OKR decomposition: ONLY for TRUE top-level objectives (parent_id IS NULL)
+  // Do NOT decompose nested goals that were incorrectly typed as 'objective'
   try {
     const noKrObjectives = await pool.query(`
       SELECT o.id, o.title FROM goals o
       WHERE o.type = 'objective'
-        AND o.status NOT IN ('completed', 'cancelled')
+        AND o.parent_id IS NULL  -- CRITICAL: Only top-level objectives
+        AND o.status NOT IN ('completed', 'cancelled', 'decomposing')
         AND NOT EXISTS (
-          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id AND kr.type = 'key_result'
+          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
         )
         AND NOT EXISTS (
           SELECT 1 FROM tasks t

@@ -35,6 +35,8 @@ import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import { runDiagnosis } from './self-diagnosis.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
+import { executeDecision as executeThalamusDecision } from './decision-executor.js';
 
 const router = Router();
 
@@ -607,6 +609,41 @@ router.post('/action/create-task', async (req, res) => {
   const key = idempotency_key || `create-task-${params.title}-${Date.now()}`;
   const result = await handleAction('create-task', params, key, trigger);
   res.status(result.success ? 200 : 400).json(result);
+});
+
+/**
+ * POST /api/brain/action/create-feature
+ * Create a Feature (写入 projects 表，parent_id 指向 Project)
+ * 秋米专用：拆解 KR 时创建 Feature
+ */
+router.post('/action/create-feature', async (req, res) => {
+  try {
+    const { name, parent_id, kr_id, decomposition_mode, description } = req.body;
+
+    if (!name || !parent_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'name and parent_id are required'
+      });
+    }
+
+    const { createFeature: createFeatureAction } = await import('./actions.js');
+    const result = await createFeatureAction({
+      name,
+      parent_id,
+      kr_id,
+      decomposition_mode: decomposition_mode || 'known',
+      description
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create feature',
+      details: err.message
+    });
+  }
 });
 
 router.post('/action/update-task', async (req, res) => {
@@ -1185,6 +1222,27 @@ router.post('/execution-callback', async (req, res) => {
 
       // Publish WebSocket event: task completed
       publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+
+      // Thalamus: Analyze task completion event
+      try {
+        const thalamusEvent = {
+          type: EVENT_TYPES.TASK_COMPLETED,
+          task_id,
+          run_id,
+          duration_ms,
+          has_issues: false
+        };
+        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+        console.log(`[execution-callback] Thalamus decision: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+
+        // Execute thalamus decision if not fallback
+        if (thalamusDecision.actions?.[0]?.type !== 'fallback_to_tick') {
+          await executeThalamusDecision(thalamusDecision);
+        }
+      } catch (thalamusErr) {
+        console.error(`[execution-callback] Thalamus error: ${thalamusErr.message}`);
+        // Continue with normal flow if thalamus fails
+      }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -1192,6 +1250,24 @@ router.post('/execution-callback', async (req, res) => {
 
       // Publish WebSocket event: task failed
       publishTaskFailed(task_id, run_id, status);
+
+      // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
+      try {
+        const thalamusEvent = {
+          type: EVENT_TYPES.TASK_FAILED,
+          task_id,
+          run_id,
+          error: status,
+          retry_count: iterations || 0
+        };
+        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+        console.log(`[execution-callback] Thalamus decision for failure: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+
+        // Execute thalamus decision
+        await executeThalamusDecision(thalamusDecision);
+      } catch (thalamusErr) {
+        console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
+      }
     }
 
     // 5. Rollup progress to KR and O
@@ -1234,6 +1310,116 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (rollupErr) {
         console.error(`[execution-callback] Progress rollup error: ${rollupErr.message}`);
+      }
+    }
+
+    // 5b. 探索型任务闭环：Task 完成后回调秋米继续拆解
+    if (newStatus === 'completed') {
+      try {
+        // 获取 Task 的 payload 检查是否是探索型
+        const taskResult = await pool.query('SELECT payload, project_id, goal_id FROM tasks WHERE id = $1', [task_id]);
+        const taskPayload = taskResult.rows[0]?.payload;
+        const featureId = taskResult.rows[0]?.project_id;
+        const krId = taskResult.rows[0]?.goal_id;
+
+        if (taskPayload?.exploratory === true && featureId) {
+          console.log(`[execution-callback] Exploratory task completed, triggering continue decomposition...`);
+
+          // 获取 Feature 信息
+          const featureResult = await pool.query('SELECT name, kr_id, decomposition_mode FROM projects WHERE id = $1', [featureId]);
+          const feature = featureResult.rows[0];
+
+          if (feature?.decomposition_mode === 'exploratory') {
+            // 获取 KR 目标
+            const krResult = await pool.query('SELECT title FROM goals WHERE id = $1', [krId || feature.kr_id]);
+            const krGoal = krResult.rows[0]?.title || 'Unknown KR';
+
+            // 创建"继续拆解"任务给秋米
+            const { createTask: createDecompTask } = await import('./actions.js');
+            await createDecompTask({
+              title: `继续拆解: ${feature.name}`,
+              description: `探索型 Task 完成，请根据结果继续拆解下一步。\n\nFeature: ${feature.name}\nKR 目标: ${krGoal}\n\n上一步结果将在执行时传入。`,
+              task_type: 'dev',
+              priority: 'P0',
+              goal_id: krId || feature.kr_id,
+              project_id: featureId,
+              payload: {
+                decomposition: 'continue',
+                feature_id: featureId,
+                previous_task_id: task_id,
+                previous_result: result?.result || result,
+                kr_goal: krGoal
+              }
+            });
+
+            console.log(`[execution-callback] Created continue decomposition task for feature: ${feature.name}`);
+          }
+        }
+      } catch (exploratoryErr) {
+        console.error(`[execution-callback] Exploratory handling error: ${exploratoryErr.message}`);
+      }
+
+      // 5c. Review 闭环：发现问题 → 自动创建修复 Task
+      try {
+        const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
+        const taskRow = taskResult.rows[0];
+
+        if (taskRow?.task_type === 'review') {
+          console.log(`[execution-callback] Review task completed, checking for issues...`);
+
+          // 解析结果，查找 L1/L2 问题
+          const resultStr = typeof result === 'string' ? result : JSON.stringify(result || {});
+          const hasL1 = /L1[：:]/i.test(resultStr) || /\bL1\b.*问题/i.test(resultStr);
+          const hasL2 = /L2[：:]/i.test(resultStr) || /\bL2\b.*问题/i.test(resultStr);
+
+          if (hasL1 || hasL2) {
+            console.log(`[execution-callback] Review found issues (L1: ${hasL1}, L2: ${hasL2}), creating fix task...`);
+
+            // 提取问题描述作为 PRD
+            const issueLevel = hasL1 ? 'L1 (阻塞级)' : 'L2 (功能级)';
+            const prdContent = `# PRD - 修复 Review 发现的问题
+
+## 背景
+Review 任务 "${taskRow.title}" 发现了 ${issueLevel} 问题需要修复。
+
+## 问题描述
+${resultStr.substring(0, 2000)}
+
+## 目标
+修复 Review 发现的所有 ${issueLevel} 问题。
+
+## 验收标准
+- [ ] 所有 L1 问题已修复
+- [ ] 所有 L2 问题已修复
+- [ ] 修复后代码通过测试
+- [ ] 再次 Review 无新问题
+
+## 技术要点
+根据 Review 报告中的具体建议进行修复。`;
+
+            const { createTask: createFixTask } = await import('./actions.js');
+            await createFixTask({
+              title: `修复: ${taskRow.title.replace(/^(每日质检|Review)[：:]\s*/i, '')}`,
+              description: `Review 发现 ${issueLevel} 问题，需要修复`,
+              task_type: 'dev',
+              priority: hasL1 ? 'P0' : 'P1',
+              project_id: taskRow.project_id,
+              goal_id: taskRow.goal_id,
+              prd_content: prdContent,
+              payload: {
+                triggered_by: 'review',
+                review_task_id: task_id,
+                issue_level: hasL1 ? 'L1' : 'L2'
+              }
+            });
+
+            console.log(`[execution-callback] Created fix task for review issues`);
+          } else {
+            console.log(`[execution-callback] Review passed, no L1/L2 issues found`);
+          }
+        }
+      } catch (reviewErr) {
+        console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
       }
     }
 
