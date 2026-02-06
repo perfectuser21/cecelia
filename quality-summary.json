@@ -1,29 +1,17 @@
 {
-  "branch": "cp-02061343-f8b40851-ec8a-4834-9ee4-55124a",
-  "task": "KR2.2 Phase 5 Planning Documentation",
-  "type": "documentation",
+  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
+  "task_type": "documentation",
   "checks": {
-    "prd_gate": {"status": "pass", "file": ".gates/prd.gate"},
-    "dod_gate": {"status": "pass", "file": ".gates/dod.gate"},
-    "qa_gate": {"status": "pass", "file": ".gates/qa.gate"},
-    "audit_gate": {"status": "pass", "file": ".gates/audit.gate"},
-    "test_gate": {"status": "pass", "file": ".gates/test.gate"},
-    "validation_tests": {"status": "pass", "tests_passed": 10, "tests_failed": 0}
+    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
+    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
+    "structure_complete": {"status": "pass", "verified": "all required sections present"},
+    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
   },
-  "deliverables": {
-    "prd": ".prd-kr22-phase5.md",
-    "dod": ".dod-kr22-phase5.md",
-    "qa_decision": "docs/QA-DECISION-kr22-phase5.md",
-    "implementation_plan": "docs/planning/KR22_PHASE5_IMPLEMENTATION_PLAN.md",
-    "validation_tests": "tests/validate-kr22-phase5-docs.sh"
+  "gates": {
+    "prd": {"status": "pass", "file": ".gate-prd-passed"},
+    "dod": {"status": "pass", "file": ".gate-dod-passed"},
+    "test": {"status": "pass", "file": ".gate-test-passed"},
+    "quality": {"status": "pass"}
   },
-  "quality_metrics": {
-    "documents_created": 5,
-    "gate_files": 5,
-    "tests_passed": 10,
-    "frontmatter_compliance": true,
-    "L1_issues": 0,
-    "L2_issues": 0,
-    "L3_issues": 0
-  }
+  "timestamp": "2026-02-06T14:10:35+08:00"
 }
