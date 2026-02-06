@@ -231,6 +231,75 @@ const actionHandlers = {
     // 不做任何事，让 Tick 的代码逻辑接管
     return { success: true, fallback: true };
   },
+
+  // ============================================================
+  // Cortex (皮层) Actions
+  // ============================================================
+
+  /**
+   * 调整系统策略参数
+   */
+  async adjust_strategy(params, context) {
+    const { key, new_value, reason } = params;
+    console.log(`[executor] Adjusting strategy: ${key} = ${new_value} (${reason})`);
+
+    // 写入 brain_config 表
+    await pool.query(`
+      INSERT INTO brain_config (key, value, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+    `, [`strategy_${key}`, String(new_value)]);
+
+    // 记录变更事件
+    await pool.query(`
+      INSERT INTO cecelia_events (type, source, data)
+      VALUES ('strategy_change', 'cortex', $1)
+    `, [JSON.stringify({ key, new_value, reason, changed_at: new Date().toISOString() })]);
+
+    return { success: true, key, new_value };
+  },
+
+  /**
+   * 记录学习到的经验
+   */
+  async record_learning(params, context) {
+    const { learning, category, event_context } = params;
+    console.log(`[executor] Recording learning: ${learning}`);
+
+    await pool.query(`
+      INSERT INTO cecelia_events (type, source, data)
+      VALUES ('learning', 'cortex', $1)
+    `, [JSON.stringify({
+      learning,
+      category: category || 'general',
+      context: event_context,
+      recorded_at: new Date().toISOString()
+    })]);
+
+    return { success: true };
+  },
+
+  /**
+   * 创建根因分析报告
+   */
+  async create_rca_report(params, context) {
+    const { task_id, root_cause, contributing_factors, recommended_actions } = params;
+    console.log(`[executor] Creating RCA report for task: ${task_id}`);
+
+    // 存入 decision_log 作为 RCA 记录
+    await pool.query(`
+      INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [
+      'rca',
+      `Root Cause Analysis for task ${task_id}`,
+      { root_cause, contributing_factors, recommended_actions },
+      { task_id, created_at: new Date().toISOString() },
+      'completed'
+    ]);
+
+    return { success: true, task_id };
+  },
 };
 
 // ============================================================

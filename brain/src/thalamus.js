@@ -4,8 +4,15 @@
  * 仿人脑设计：
  * - 接收所有事件
  * - 用 Sonnet 判断复杂度
+ * - Level 0/1: 自己处理
+ * - Level 2: 唤醒皮层 (Cortex/Opus)
  * - 输出结构化 Decision
  * - 代码验证后执行
+ *
+ * 三层架构：
+ * - 脑干 (Level 0): 纯代码，自动反应
+ * - 丘脑 (Level 1): Sonnet，快速判断
+ * - 皮层 (Level 2): Opus，深度思考
  *
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
@@ -357,24 +364,46 @@ function quickRoute(event) {
 
 /**
  * 丘脑主入口：处理事件，返回 Decision
+ *
+ * 处理流程：
+ * 1. 尝试快速路由 (Level 0，纯代码)
+ * 2. 调用 Sonnet 分析 (Level 1)
+ * 3. 如果 Level 2，唤醒皮层 (Opus)
+ *
  * @param {Object} event
  * @returns {Promise<Decision>}
  */
 async function processEvent(event) {
   console.log(`[thalamus] Processing event: ${event.type}`);
 
-  // 1. 尝试快速路由
+  // 1. 尝试快速路由 (Level 0)
   const quickDecision = quickRoute(event);
   if (quickDecision) {
-    console.log(`[thalamus] Quick route: ${quickDecision.rationale}`);
+    console.log(`[thalamus] Quick route (L0): ${quickDecision.rationale}`);
     return quickDecision;
   }
 
-  // 2. 调用 Sonnet 分析
-  console.log('[thalamus] Calling Sonnet for analysis...');
+  // 2. 调用 Sonnet 分析 (Level 1)
+  console.log('[thalamus] Calling Sonnet for analysis (L1)...');
   const decision = await analyzeEvent(event);
 
-  console.log(`[thalamus] Decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
+  console.log(`[thalamus] Sonnet decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
+
+  // 3. 如果 Level 2，唤醒皮层 (Opus)
+  if (decision.level === 2) {
+    console.log('[thalamus] Escalating to Cortex (L2)...');
+    try {
+      // 动态导入皮层模块（避免循环依赖）
+      const { analyzeDeep } = await import('./cortex.js');
+      const cortexDecision = await analyzeDeep(event, decision);
+      console.log(`[thalamus] Cortex decision: actions=${cortexDecision.actions.map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+      return cortexDecision;
+    } catch (err) {
+      console.error('[thalamus] Cortex failed, using Sonnet decision:', err.message);
+      // 皮层失败时，回退到丘脑决策
+      return decision;
+    }
+  }
 
   return decision;
 }

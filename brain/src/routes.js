@@ -28,6 +28,8 @@ import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
+import { getAlertness, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from './quarantine.js';
 import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
@@ -493,6 +495,216 @@ router.post('/tick/disable', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to disable tick', details: err.message });
+  }
+});
+
+// ==================== Alertness API ====================
+
+/**
+ * GET /api/brain/alertness
+ * 获取当前警觉级别和状态
+ */
+router.get('/alertness', async (req, res) => {
+  try {
+    const alertness = getAlertness();
+    res.json({
+      success: true,
+      ...alertness,
+      levels: ALERTNESS_LEVELS,
+      level_names: LEVEL_NAMES
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get alertness', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/evaluate
+ * 重新评估警觉级别
+ */
+router.post('/alertness/evaluate', async (req, res) => {
+  try {
+    const result = await evaluateAlertness();
+    res.json({
+      success: true,
+      ...result,
+      level_name: LEVEL_NAMES[result.level]
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to evaluate alertness', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/override
+ * 手动覆盖警觉级别
+ * Body: { level: 0-3, reason: "string", duration_minutes?: 30 }
+ */
+router.post('/alertness/override', async (req, res) => {
+  try {
+    const { level, reason, duration_minutes = 30 } = req.body;
+
+    if (level === undefined || level < 0 || level > 3) {
+      return res.status(400).json({ error: 'level must be 0-3' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+
+    const durationMs = duration_minutes * 60 * 1000;
+    const result = await setManualOverride(level, reason, durationMs);
+
+    res.json({
+      success: true,
+      level,
+      level_name: LEVEL_NAMES[level],
+      reason,
+      duration_minutes,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set override', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/clear-override
+ * 清除手动覆盖
+ */
+router.post('/alertness/clear-override', async (req, res) => {
+  try {
+    const result = await clearManualOverride();
+    const alertness = getAlertness();
+    res.json({
+      success: result.success,
+      current_level: alertness.level,
+      current_level_name: LEVEL_NAMES[alertness.level],
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear override', details: err.message });
+  }
+});
+
+// ==================== Quarantine API ====================
+
+/**
+ * GET /api/brain/quarantine
+ * 获取隔离区中的任务列表
+ */
+router.get('/quarantine', async (req, res) => {
+  try {
+    const tasks = await getQuarantinedTasks();
+    const stats = await getQuarantineStats();
+    res.json({
+      success: true,
+      stats,
+      tasks,
+      reasons: QUARANTINE_REASONS,
+      actions: REVIEW_ACTIONS
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get quarantine', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/quarantine/stats
+ * 获取隔离区统计
+ */
+router.get('/quarantine/stats', async (req, res) => {
+  try {
+    const stats = await getQuarantineStats();
+    res.json({ success: true, ...stats });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get stats', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/:taskId/release
+ * 释放任务从隔离区
+ * Body: { action: "release"|"retry_once"|"cancel"|"modify", reason?: string, new_prd?: string }
+ */
+router.post('/quarantine/:taskId/release', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { action, reason, new_prd, reviewer } = req.body;
+
+    if (!action || !REVIEW_ACTIONS[action.toUpperCase()]) {
+      return res.status(400).json({
+        error: 'Invalid action',
+        valid_actions: Object.keys(REVIEW_ACTIONS)
+      });
+    }
+
+    const result = await releaseTask(taskId, action, {
+      reason,
+      new_prd,
+      reviewer: reviewer || 'api'
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to release task', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/:taskId
+ * 手动隔离任务
+ * Body: { reason?: string, details?: object }
+ */
+router.post('/quarantine/:taskId', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { reason, details } = req.body;
+
+    const result = await quarantineTask(
+      taskId,
+      reason || QUARANTINE_REASONS.MANUAL,
+      details || { manual: true, reviewer: 'api' }
+    );
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to quarantine task', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/release-all
+ * 批量释放所有隔离任务（谨慎使用）
+ * Body: { action: "release"|"cancel", confirm: true }
+ */
+router.post('/quarantine/release-all', async (req, res) => {
+  try {
+    const { action, confirm } = req.body;
+
+    if (!confirm) {
+      return res.status(400).json({ error: 'Must set confirm: true to release all' });
+    }
+
+    if (!action || !['release', 'cancel'].includes(action)) {
+      return res.status(400).json({ error: 'action must be "release" or "cancel"' });
+    }
+
+    const tasks = await getQuarantinedTasks();
+    const results = [];
+
+    for (const task of tasks) {
+      const result = await releaseTask(task.id, action, { reviewer: 'batch-api' });
+      results.push({ task_id: task.id, ...result });
+    }
+
+    res.json({
+      success: true,
+      action,
+      processed: results.length,
+      results
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to release all', details: err.message });
   }
 });
 
@@ -1251,22 +1463,42 @@ router.post('/execution-callback', async (req, res) => {
       // Publish WebSocket event: task failed
       publishTaskFailed(task_id, run_id, status);
 
-      // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
+      // Check if task should be quarantined
+      let quarantined = false;
       try {
-        const thalamusEvent = {
-          type: EVENT_TYPES.TASK_FAILED,
-          task_id,
-          run_id,
-          error: status,
-          retry_count: iterations || 0
-        };
-        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
-        console.log(`[execution-callback] Thalamus decision for failure: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+        const quarantineResult = await handleTaskFailure(task_id);
+        if (quarantineResult.quarantined) {
+          quarantined = true;
+          console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
+          // Notify about quarantine
+          notifyTaskFailed({
+            task_id,
+            title: `Task ${task_id} QUARANTINED`,
+            reason: `Quarantined: ${quarantineResult.result?.reason}`
+          }).catch(() => {});
+        }
+      } catch (quarantineErr) {
+        console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+      }
 
-        // Execute thalamus decision
-        await executeThalamusDecision(thalamusDecision);
-      } catch (thalamusErr) {
-        console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
+      // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
+      if (!quarantined) {
+        try {
+          const thalamusEvent = {
+            type: EVENT_TYPES.TASK_FAILED,
+            task_id,
+            run_id,
+            error: status,
+            retry_count: iterations || 0
+          };
+          const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+          console.log(`[execution-callback] Thalamus decision for failure: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+
+          // Execute thalamus decision
+          await executeThalamusDecision(thalamusDecision);
+        } catch (thalamusErr) {
+          console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
+        }
       }
     }
 
