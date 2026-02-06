@@ -34,7 +34,7 @@
 ```
 Cecelia = Brain (Node.js, port 5221)
         + PostgreSQL (cecelia 数据库)
-        + Tick Loop (每 5 秒心跳)
+        + Tick Loop (每 5s 循环检查，每 5min 执行一次 tick)
         + 外部 Agent 群（Claude Code 无头进程）
 ```
 
@@ -45,7 +45,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 | 器官 | 实现 | 职责 |
 |------|------|------|
 | 🧠 大脑 | Brain (Node.js) | 决策、调度、监控 |
-| ❤️ 心脏 | Tick Loop (5s) | 持续运作，驱动一切 |
+| ❤️ 心脏 | Tick Loop (5s 循环 / 5min 执行) | 持续运作，驱动一切 |
 | 📊 记忆 | PostgreSQL | 存储所有状态和历史 |
 | 💬 嘴巴 | /cecelia skill | 对外对话接口 |
 
@@ -114,7 +114,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 
 ### 3.1 L0 脑干 — 纯代码
 
-心跳驱动，每 5 秒执行一次 `executeTick()`：
+循环每 5 秒检查一次，正式 tick 每 5 分钟执行一次 `executeTick()`：
 
 ```
 executeTick() 流程：
@@ -160,7 +160,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**17 个白名单 action**：
+**16 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
