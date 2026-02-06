@@ -73,60 +73,7 @@ describe('login', () => {
 
 ---
 
-## gate:test 审核（必须）
-
-测试写完后，**必须**启动 gate:test Subagent 审核。
-
-### 循环逻辑（模式 B：主 Agent 改）
-
-**主 Agent 负责循环控制，最大 3 轮**：
-
-```javascript
-const MAX_GATE_ATTEMPTS = 20;
-let attempts = 0;
-
-while (attempts < MAX_GATE_ATTEMPTS) {
-  // 启动独立的 gate:test Subagent（只审核）
-  const result = await Skill({
-    skill: "gate:test"
-  });
-
-  if (result.decision === "PASS") {
-    // 审核通过，生成 gate 文件
-    await Bash({ command: "bash scripts/gate/generate-gate-file.sh test" });
-    break;
-  }
-
-  // FAIL: 主 Agent 根据 Required Fixes 补充测试
-  for (const fix of result.requiredFixes) {
-    await Edit({
-      file_path: fix.location,
-      old_string: "...",
-      new_string: "..."
-    });
-  }
-
-  attempts++;
-}
-
-if (attempts >= MAX_GATE_ATTEMPTS) {
-  throw new Error("gate:test 审核失败，已重试 20 次");
-}
-```
-
-### gate:test Subagent 调用
-
-```
-Skill({
-  skill: "gate:test"
-})
-```
-
-### PASS 后操作
-
-```bash
-bash scripts/gate/generate-gate-file.sh test
-```
+## 完成后
 
 **标记步骤完成**：
 

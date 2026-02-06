@@ -369,35 +369,12 @@ else
 fi
 
 # ========================================
-# 7.7 验证 gate 文件存在（W8: 可选检查）
-# ========================================
-echo ""
-echo "[7.7] 验证 gate 文件..."
-
-REQUIRED_GATES=(".gate-prd-passed" ".gate-dod-passed" ".gate-audit-passed" ".gate-test-passed")
-MISSING_GATES=""
-for GATE_FILE in "${REQUIRED_GATES[@]}"; do
-    if [[ ! -f "$GATE_FILE" ]]; then
-        MISSING_GATES="$MISSING_GATES $GATE_FILE"
-    fi
-done
-
-if [[ -n "$MISSING_GATES" ]]; then
-    echo -e "   ${YELLOW}[WARN]  缺失 gate 文件: $MISSING_GATES${NC}"
-    echo -e "   ${YELLOW}提示: 测试任务可能不需要所有 gate${NC}"
-    WARNINGS=$((WARNINGS + 1))
-else
-    echo -e "   ${GREEN}[OK] 所有必需的 gate 文件存在${NC}"
-fi
-
-# ========================================
 # 8. 删除运行时文件（防止残留影响下次）
 # ========================================
 echo ""
 echo "[8]  删除运行时文件..."
 
 # v1.5: 支持分支级别 PRD/DoD/状态文件
-# v1.10: 添加 gate 文件（prd, dod, qa, audit, test）
 # W8: .dev-mode 需要特殊处理（删除后验证）
 RUNTIME_FILES=(
     ".quality-report.json"
@@ -412,11 +389,6 @@ RUNTIME_FILES=(
     ".layer2-evidence.md"
     ".l3-analysis.md"
     ".quality-evidence.json"
-    ".gate-prd-passed"
-    ".gate-dod-passed"
-    ".gate-qa-passed"
-    ".gate-audit-passed"
-    ".gate-test-passed"
     ".dev-mode"
 )
 

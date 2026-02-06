@@ -38,69 +38,11 @@ A: 调整方案，重新实现。
 
 ---
 
-## 完成后：gate:audit 审核（必须）
-
-代码写完后，**必须**启动 gate:audit Subagent 审计。
-
-### 循环逻辑（模式 B：主 Agent 改）
-
-**主 Agent 负责循环控制，最大 3 轮**：
-
-```javascript
-const MAX_GATE_ATTEMPTS = 20;
-let attempts = 0;
-
-while (attempts < MAX_GATE_ATTEMPTS) {
-  // 启动独立的 gate:audit Subagent（只审核）
-  const result = await Skill({
-    skill: "gate:audit"
-  });
-
-  if (result.decision === "PASS") {
-    // 审核通过，生成 gate 文件
-    await Bash({ command: "bash scripts/gate/generate-gate-file.sh audit" });
-    break;
-  }
-
-  // FAIL: 主 Agent 根据 Findings 修复 L1/L2 问题
-  for (const fix of result.requiredFixes) {
-    await Edit({
-      file_path: fix.location,
-      old_string: "...",
-      new_string: "..."
-    });
-  }
-
-  attempts++;
-}
-
-if (attempts >= MAX_GATE_ATTEMPTS) {
-  throw new Error("gate:audit 审核失败，已重试 20 次");
-}
-```
-
-### gate:audit Subagent 调用
-
-```
-Skill({
-  skill: "gate:audit"
-})
-```
-
-### PASS 后操作
-
-```bash
-bash scripts/gate/generate-gate-file.sh audit
-```
-
-**关键原则**：
-- gate:audit 在 gate:test 之前执行
-- 改完代码再跑 Test，避免测试白跑
+## 完成后
 
 **标记步骤完成**：
 
 ```bash
-# 更新 .dev-mode 中的 Step 5 状态
 sed -i 's/^step_5_code: pending/step_5_code: done/' .dev-mode
 echo "✅ Step 5 完成标记已写入 .dev-mode"
 ```

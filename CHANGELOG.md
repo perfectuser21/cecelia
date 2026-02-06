@@ -1,3 +1,32 @@
+## [12.7.0] - 2026-02-06
+
+### Removed
+
+- **skills/gate/**: 完全删除 Gate Skill 家族（gate:prd, gate:dod, gate:test, gate:audit, gate:qa, gate:learning）
+- **scripts/gate/**: 删除 gate 签名生成/验证脚本
+- **tests/gate/**: 删除 gate 相关测试
+- **scripts/run-gate-tests.sh**: 删除
+- **scripts/qa-with-gate.sh**: 删除
+- **.gate-*-passed**: 删除所有 gate 通过标记文件
+
+### Changed
+
+- **skills/dev/steps/01-prd.md**: 移除 gate:prd Subagent 调用
+- **skills/dev/steps/05-code.md**: 移除 gate:audit Subagent 调用
+- **skills/dev/steps/06-test.md**: 移除 gate:test Subagent 调用
+- **skills/dev/steps/07-quality.md**: 移除 gate 汇总逻辑，简化为纯汇总
+- **skills/dev/steps/10-learning.md**: 移除 gate:learning Subagent 调用
+- **skills/dev/SKILL.md**: 更新流程图为 v3.2（无 Gate），两层职责分离
+- **regression-contract.yaml**: 移除 G1-001 ~ G1-007
+- **features/feature-registry.yml**: 标记 G1 为已删除
+- **skills/dev/scripts/cleanup.sh**: 移除 gate 文件验证和清理
+
+### 设计决策
+
+Gate 机制会让 AI 停下来征求意见，破坏 Stop Hook 的自动循环。
+质量检查完全交给 CI，本地只保留 branch-protect.sh 检查文件存在性。
+唯一的流程控制 = Stop Hook。
+
 ## [12.5.8] - 2026-02-04
 
 ### Restored

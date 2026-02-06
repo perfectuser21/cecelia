@@ -294,21 +294,6 @@ Bash 命令 → token 扫描 (~1ms) → rsync/scp + HK 检测 (~1ms) →
 
 ---
 
-## GP-019: Gate Skill Family (G1)
-
-**Feature**: G1 - Gate Skill Family
-**Priority**: P0
-
-### Golden Path
-
-```
-主 Agent 产出 → CI Gate 检查 → PASS → 继续
-```
-
-**RCI 覆盖**: G1-001,G1-002,G1-003,G1-004
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

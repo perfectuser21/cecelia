@@ -1,8 +1,6 @@
 # Step 7: Quality 汇总
 
-> **只汇总，不判定** - 本地打包结账单，不是门禁
->
-> Audit 已在 Step 5 完成，Test 已在 Step 6 完成，这里只汇总结果
+> **只汇总，不判定** - 本地打包结账单，CI 是最终裁判
 
 **Task Checkpoint**: `TaskUpdate({ taskId: "7", status: "in_progress" })`
 
@@ -12,13 +10,12 @@
 
 | 层 | 位置 | 类型 | 职责 |
 |---|------|------|------|
-| **Gate** | 本地 | 阻止型 | 过程卡口，FAIL 就停 |
+| **branch-protect** | 本地 | 阻止型 | PRD/DoD 文件存在检查 |
 | **Quality** | 本地 | **汇总型** | 打包结账单，不做判定 |
 | **CI** | 远端 | 复核型 | 最终裁判，硬门禁 |
 
 **Quality 不做**：
 - ❌ 新一轮审计
-- ❌ 重复 Gate 的检查
 - ❌ 阻止流程
 
 **Quality 只做**：
@@ -30,47 +27,28 @@
 ## 执行流程
 
 ```bash
-# 1. 汇总 Gate 状态
-echo "检查 Gate 文件..."
-GATES_PASSED=true
-for gate in prd dod test; do
-  if [[ -f ".gate-${gate}-passed" ]]; then
-    echo "  gate:${gate} ✅"
-  else
-    echo "  gate:${gate} ⏭️ 跳过或不适用"
-  fi
-done
-
-# 2. 获取分支和 SHA
+# 1. 获取分支和 SHA
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 HEAD_SHA=$(git rev-parse --short HEAD)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# 3. 生成 quality-summary.json
+# 2. 生成 quality-summary.json
 cat > quality-summary.json << EOF
 {
   "branch": "$BRANCH_NAME",
   "head_sha": "$HEAD_SHA",
   "timestamp": "$TIMESTAMP",
-  "gates": {
-    "prd": "$([ -f .gate-prd-passed ] && echo pass || echo skipped)",
-    "dod": "$([ -f .gate-dod-passed ] && echo pass || echo skipped)",
-    "test": "$([ -f .gate-test-passed ] && echo pass || echo skipped)"
-  },
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
 EOF
 
 echo "✅ quality-summary.json 已生成"
 
-# 4. 生成 .quality-gate-passed 标记文件
-touch .quality-gate-passed
-
-# 5. 一次性提交
+# 3. 一次性提交
 git add -A
 git commit -m "chore: quality summary
 
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 git push origin HEAD
 ```

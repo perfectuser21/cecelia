@@ -150,7 +150,7 @@ tasks_created: true
 ## 核心定位
 
 **流程编排者**：
-- 放行判断 → `hooks/pr-gate-v2.sh` (PreToolUse:Bash)
+- 分支保护 → `hooks/branch-protect.sh` (PreToolUse:Write|Edit)
 - 循环驱动 → Stop Hook (hooks/stop.sh)
 - 进度追踪 → Task Checkpoint（TaskCreate/TaskUpdate）
 
@@ -306,7 +306,7 @@ TaskList()
 
 ### 4. 质量保证
 
-- 本地：.quality-gate-passed（Step 7 生成，测试通过）
+- 本地：branch-protect.sh（PRD/DoD 文件存在检查）
 - CI DevGate：DoD 映射、RCI 覆盖率、P0/P1 RCI 更新
 
 ---
@@ -341,7 +341,7 @@ skills/dev/
 ├── SKILL.md        ← 你在这里（入口 + 流程总览）
 ├── steps/          ← 每步详情（按需加载）
 │   ├── 00-worktree-auto.md ← Worktree 自动检测（前置，Step 1 之前）
-│   ├── 01-prd.md       ← gate:prd (Subagent)
+│   ├── 01-prd.md       ← PRD 确认
 │   ├── 02-detect.md    ← 环境检测
 │   ├── 03-branch.md    ← 创建 .dev-mode
 │   ├── 04-dod.md       ← DoD 定稿（CI 检查映射）
@@ -350,7 +350,7 @@ skills/dev/
 │   ├── 07-quality.md   ← 只汇总，不判定
 │   ├── 08-pr.md
 │   ├── 09-ci.md
-│   ├── 10-learning.md  ← gate:learning (Subagent)
+│   ├── 10-learning.md  ← 记录经验
 │   └── 11-cleanup.md   ← 删除 .dev-mode
 └── scripts/        ← 辅助脚本
     ├── cleanup.sh
@@ -358,12 +358,12 @@ skills/dev/
     └── ...
 ```
 
-### 流程图 (v3.1 - 统一命名)
+### 流程图 (v3.2 - 无 Gate)
 
 ```
 0-Worktree → 检测 .dev-mode 冲突 → 自动 worktree + cd（如需要）
     ↓
-1-PRD ────→ gate:prd (Subagent, 循环直到 PASS)
+1-PRD ────→ 生成 PRD（branch-protect 检查文件存在）
     ↓
 2-Detect → 3-Branch
     ↓
@@ -375,25 +375,14 @@ skills/dev/
     ↓
 7-Quality → 只汇总 (quality-summary.json)
     ↓
-8-PR → 9-CI → 10-Learning → gate:learning (Subagent) → 11-Cleanup
+8-PR → 9-CI → 10-Learning → 11-Cleanup
 ```
 
-### Subagent 统一命名
-
-| 步骤 | Gate 名称 | 规则文件 | 循环条件 |
-|------|-----------|----------|----------|
-| Step 1 | gate:prd | skills/gate/gates/prd.md | FAIL → 修改 → 重审 |
-| Step 4 | gate:dod | skills/gate/gates/dod.md | 两个都 PASS |
-| Step 4 | gate:qa | skills/qa/SKILL.md | 同上 |
-| Step 5 | gate:audit | skills/audit/SKILL.md | L1+L2=0 |
-| Step 6 | gate:test | skills/gate/gates/test.md | FAIL → 补测试 → 重审 |
-| Step 10 | gate:learning | 无特定规则 | 有有效记录 |
-
-### 三层职责分离
+### 两层职责分离
 
 | 层 | 位置 | 类型 | 职责 |
 |----|------|------|------|
-| **Gate** | 本地 | 阻止型 | 过程卡口，FAIL 就停 |
+| **branch-protect** | 本地 | 阻止型 | PRD/DoD 文件存在检查 |
 | **Quality** | 本地 | 汇总型 | 打包结账单，不做判定 |
 | **CI** | 远端 | 复核型 | 最终裁判，硬门禁 |
 

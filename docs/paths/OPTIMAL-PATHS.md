@@ -182,14 +182,6 @@ Bash 命令 → token 扫描 (~1ms) → rsync/scp + HK 检测 (~1ms) →
 
 ---
 
-### G1: Gate Skill Family
-
-```
-主 Agent 产出 → CI Gate 检查 → PASS → 继续
-```
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
