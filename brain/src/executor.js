@@ -29,7 +29,7 @@ const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226'
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
-const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace';
+const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/workspace';
 
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
@@ -475,7 +475,7 @@ function generateRunId(taskId) {
  * | dev        | /dev     | bypassPermissions | 完整代码读写              |
  * | review     | /review  | plan              | 只读代码，输出报告/PRD    |
  * | talk       | /talk    | plan              | 只写文档，不改代码        |
- * | automation | /nobel   | bypassPermissions | 调 N8N API               |
+ * | talk       | /talk    | plan              | 对话任务 → HK MiniMax    |
  * | research   | -        | plan              | 完全只读                 |
  *
  * 注意：qa 和 audit 已合并为 review，保留兼容映射
@@ -833,7 +833,7 @@ async function triggerMiniMaxExecutor(task) {
  * Trigger cecelia-run for a task.
  *
  * v2: Uses spawn() for PID tracking + task-level dedup.
- * v3: Routes to HK MiniMax for talk/research/automation tasks.
+ * v3: Routes to HK MiniMax for talk/research/data tasks.
  *
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }

@@ -86,7 +86,7 @@ function identifyWorkType(input) {
 
 /**
  * Get task location based on task_type
- * @param {string} taskType - Task type (dev, review, automation, data, etc.)
+ * @param {string} taskType - Task type (dev, review, talk, data, etc.)
  * @returns {'us' | 'hk'} - Location
  */
 function getTaskLocation(taskType) {

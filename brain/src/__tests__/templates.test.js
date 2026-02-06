@@ -466,7 +466,7 @@ describe('Templates Module', () => {
         title: 'Implement TRD engine',
         description: 'Build TRD markdown generator from KR context',
         kr: { title: 'TRD 模板完整性', progress: 45, priority: 'P0' },
-        project: { name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' }
+        project: { name: 'cecelia-workspace', repo_path: '/home/xx/perfect21/cecelia/workspace' }
       });
 
       expect(prd).toContain('---');
@@ -476,7 +476,7 @@ describe('Templates Module', () => {
       expect(prd).toContain('KR: TRD 模板完整性 (progress: 45%, priority: P0)');
       expect(prd).toContain('Project: cecelia-workspace');
       expect(prd).toContain('Build TRD markdown generator from KR context');
-      expect(prd).toContain('/home/xx/dev/cecelia-workspace');
+      expect(prd).toContain('/home/xx/perfect21/cecelia/workspace');
       expect(prd).toContain('## 非目标');
     });
 
@@ -935,7 +935,7 @@ vitest
         title: 'TRD Template Engine',
         description: 'Build TRD generator with KR context',
         kr: { title: 'TRD 模板完整性', progress: 45, priority: 'P0' },
-        project: { name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' }
+        project: { name: 'cecelia-workspace', repo_path: '/home/xx/perfect21/cecelia/workspace' }
       });
 
       expect(trd).toContain('---');
@@ -944,7 +944,7 @@ vitest
       expect(trd).toContain('# TRD - TRD Template Engine');
       expect(trd).toContain('KR: TRD 模板完整性 (progress: 45%, priority: P0)');
       expect(trd).toContain('Project: cecelia-workspace');
-      expect(trd).toContain('/home/xx/dev/cecelia-workspace');
+      expect(trd).toContain('/home/xx/perfect21/cecelia/workspace');
       expect(trd).toContain('cecelia-workspace 核心模块');
     });
 
