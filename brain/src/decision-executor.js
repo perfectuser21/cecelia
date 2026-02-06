@@ -14,7 +14,8 @@
 /* global console */
 import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
-import { validateDecision, hasDangerousActions } from './thalamus.js';
+import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
+import { CORTEX_ACTION_WHITELIST } from './cortex.js';
 
 // ============================================================
 // Action Handlers
@@ -390,11 +391,167 @@ const actionHandlers = {
 };
 
 // ============================================================
-// Executor
+// Dangerous Action Detection
 // ============================================================
 
 /**
- * 执行 Decision
+ * 检查单个 action 是否危险
+ * @param {Object} action
+ * @returns {boolean}
+ */
+function isActionDangerous(action) {
+  const config = ACTION_WHITELIST[action.type] || CORTEX_ACTION_WHITELIST?.[action.type];
+  return config?.dangerous === true;
+}
+
+/**
+ * 将危险动作入队待审批
+ * @param {Object} action
+ * @param {Object} context
+ * @param {Object} client - DB 事务客户端
+ * @returns {Promise<Object>}
+ */
+async function enqueueDangerousAction(action, context, client) {
+  const result = await client.query(`
+    INSERT INTO pending_actions (action_type, params, context, decision_id, status, expires_at)
+    VALUES ($1, $2, $3, $4, 'pending_approval', NOW() + INTERVAL '24 hours')
+    RETURNING id
+  `, [
+    action.type,
+    JSON.stringify(action.params || {}),
+    JSON.stringify(context),
+    context.decision_id || null
+  ]);
+
+  console.log(`[executor] Dangerous action queued for approval: ${action.type} (id: ${result.rows[0].id})`);
+
+  return {
+    success: true,
+    pending_approval: true,
+    pending_action_id: result.rows[0].id
+  };
+}
+
+// ============================================================
+// Pending Actions Management
+// ============================================================
+
+/**
+ * 获取待审批动作列表
+ */
+async function getPendingActions() {
+  const result = await pool.query(`
+    SELECT id, action_type, params, context, decision_id, created_at, status, expires_at
+    FROM pending_actions
+    WHERE status = 'pending_approval'
+      AND (expires_at IS NULL OR expires_at > NOW())
+    ORDER BY created_at ASC
+  `);
+  return result.rows;
+}
+
+/**
+ * 批准并执行待审批动作
+ * @param {string} actionId
+ * @param {string} reviewer
+ */
+async function approvePendingAction(actionId, reviewer = 'unknown') {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 获取待审批动作
+    const actionResult = await client.query(
+      'SELECT * FROM pending_actions WHERE id = $1 FOR UPDATE',
+      [actionId]
+    );
+
+    if (actionResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'Action not found' };
+    }
+
+    const action = actionResult.rows[0];
+
+    if (action.status !== 'pending_approval') {
+      await client.query('ROLLBACK');
+      return { success: false, error: `Action is ${action.status}, not pending_approval` };
+    }
+
+    // 检查是否过期
+    if (action.expires_at && new Date(action.expires_at) < new Date()) {
+      await client.query(
+        'UPDATE pending_actions SET status = $1, reviewed_at = NOW() WHERE id = $2',
+        ['expired', actionId]
+      );
+      await client.query('COMMIT');
+      return { success: false, error: 'Action has expired' };
+    }
+
+    // 执行动作
+    const handler = actionHandlers[action.action_type];
+    if (!handler) {
+      await client.query('ROLLBACK');
+      return { success: false, error: `No handler for action type: ${action.action_type}` };
+    }
+
+    const params = typeof action.params === 'string' ? JSON.parse(action.params) : action.params;
+    const context = typeof action.context === 'string' ? JSON.parse(action.context) : action.context;
+
+    const executionResult = await handler(params, { ...context, approved_by: reviewer });
+
+    // 更新状态
+    await client.query(`
+      UPDATE pending_actions
+      SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), execution_result = $2
+      WHERE id = $3
+    `, [reviewer, JSON.stringify(executionResult), actionId]);
+
+    await client.query('COMMIT');
+
+    console.log(`[executor] Pending action ${actionId} approved and executed by ${reviewer}`);
+
+    return { success: true, execution_result: executionResult };
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[executor] Failed to approve action:', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 拒绝待审批动作
+ * @param {string} actionId
+ * @param {string} reviewer
+ * @param {string} reason
+ */
+async function rejectPendingAction(actionId, reviewer = 'unknown', reason = '') {
+  const result = await pool.query(`
+    UPDATE pending_actions
+    SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(),
+        execution_result = $2
+    WHERE id = $3 AND status = 'pending_approval'
+    RETURNING id
+  `, [reviewer, JSON.stringify({ rejected: true, reason }), actionId]);
+
+  if (result.rowCount === 0) {
+    return { success: false, error: 'Action not found or already processed' };
+  }
+
+  console.log(`[executor] Pending action ${actionId} rejected by ${reviewer}: ${reason}`);
+  return { success: true };
+}
+
+// ============================================================
+// Executor (Transactional)
+// ============================================================
+
+/**
+ * 执行 Decision（事务化）
  * @param {Decision} decision
  * @param {Object} context - 执行上下文
  * @returns {Promise<ExecutionReport>}
@@ -405,9 +562,11 @@ async function executeDecision(decision, context = {}) {
     decision_level: decision.level,
     actions_executed: [],
     actions_failed: [],
+    actions_pending_approval: [],
     started_at: new Date().toISOString(),
     completed_at: null,
-    requires_human: false
+    requires_human: false,
+    rolled_back: false
   };
 
   // 1. 验证 Decision
@@ -419,7 +578,7 @@ async function executeDecision(decision, context = {}) {
     return report;
   }
 
-  // 2. 检查危险操作
+  // 2. 检查危险操作是否有 safety 标记
   if (hasDangerousActions(decision)) {
     if (!decision.safety) {
       report.success = false;
@@ -430,44 +589,93 @@ async function executeDecision(decision, context = {}) {
     report.requires_human = true;
   }
 
-  // 3. 执行 actions
-  for (const action of decision.actions) {
-    const handler = actionHandlers[action.type];
+  // 3. 事务化执行 actions
+  const client = await pool.connect();
 
-    if (!handler) {
-      report.actions_failed.push({
-        type: action.type,
-        error: 'No handler found'
-      });
-      continue;
-    }
+  try {
+    await client.query('BEGIN');
 
-    try {
-      console.log(`[executor] Executing action: ${action.type}`);
-      const result = await handler(action.params || {}, context);
+    for (const action of decision.actions) {
+      // 3a. 危险动作入队待审批，不直接执行
+      if (isActionDangerous(action)) {
+        const pendingResult = await enqueueDangerousAction(action, {
+          ...context,
+          decision_id: decision.id || null
+        }, client);
 
-      report.actions_executed.push({
-        type: action.type,
-        result
-      });
-
-      if (result.requires_human) {
-        report.requires_human = true;
+        report.actions_pending_approval.push({
+          type: action.type,
+          pending_action_id: pendingResult.pending_action_id
+        });
+        continue;
       }
 
-    } catch (err) {
-      console.error(`[executor] Action failed: ${action.type}`, err.message);
-      report.actions_failed.push({
-        type: action.type,
-        error: err.message
-      });
+      // 3b. 非危险动作正常执行
+      const handler = actionHandlers[action.type];
+
+      if (!handler) {
+        report.actions_failed.push({
+          type: action.type,
+          error: 'No handler found'
+        });
+        continue;
+      }
+
+      try {
+        console.log(`[executor] Executing action: ${action.type}`);
+        const result = await handler(action.params || {}, context);
+
+        report.actions_executed.push({
+          type: action.type,
+          result
+        });
+
+        if (result.requires_human) {
+          report.requires_human = true;
+        }
+
+      } catch (err) {
+        console.error(`[executor] Action failed: ${action.type}`, err.message);
+        report.actions_failed.push({
+          type: action.type,
+          error: err.message
+        });
+        // 有失败则抛出，触发回滚
+        throw err;
+      }
     }
+
+    await client.query('COMMIT');
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    report.rolled_back = true;
+    report.success = false;
+    report.error = `Transaction rolled back: ${err.message}`;
+    console.error('[executor] Decision execution rolled back:', err.message);
+
+    // 记录回滚事件
+    try {
+      await pool.query(`
+        INSERT INTO cecelia_events (event_type, source, payload)
+        VALUES ('decision_rollback', 'executor', $1)
+      `, [JSON.stringify({
+        decision_level: decision.level,
+        rationale: decision.rationale,
+        error: err.message,
+        actions_attempted: decision.actions.map(a => a.type),
+        rolled_back_at: new Date().toISOString()
+      })]);
+    } catch { /* best effort */ }
+
+  } finally {
+    client.release();
   }
 
   // 4. 记录执行日志
   await logExecution(decision, report);
 
-  report.success = report.actions_failed.length === 0;
+  report.success = report.actions_failed.length === 0 && !report.rolled_back;
   report.completed_at = new Date().toISOString();
 
   return report;
@@ -500,4 +708,10 @@ async function logExecution(decision, report) {
 export {
   executeDecision,
   actionHandlers,
+
+  // Pending Actions API
+  getPendingActions,
+  approvePendingAction,
+  rejectPendingAction,
+  isActionDangerous,
 };

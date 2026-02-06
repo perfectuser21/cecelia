@@ -229,9 +229,13 @@ describe('execution-callback atomicity', () => {
     expect(result.statusCode).toBe(200);
 
     // Verify transaction pattern: BEGIN → UPDATE → INSERT → COMMIT
+    // Note: after the callback's transaction, thalamus/decision-executor may run
+    // additional transactions on the same mockClient, so we check that COMMIT
+    // appears after BEGIN (not necessarily as the very last call).
     const clientCalls = mockClient.query.mock.calls;
     expect(clientCalls[0][0]).toBe('BEGIN');
-    expect(clientCalls[clientCalls.length - 1][0]).toBe('COMMIT');
+    const commitCalls = clientCalls.filter(c => typeof c[0] === 'string' && c[0] === 'COMMIT');
+    expect(commitCalls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('should ROLLBACK on transaction error', async () => {

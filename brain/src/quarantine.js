@@ -43,6 +43,49 @@ const QUARANTINE_REASONS = {
   MANUAL: 'manual',
 };
 
+// ============================================================
+// 失败分类（系统性 vs 任务性）
+// ============================================================
+
+const FAILURE_CLASS = {
+  SYSTEMIC: 'systemic',           // DB/网络/权限/配额 - 系统级问题
+  TASK_SPECIFIC: 'task_specific', // 任务本身问题
+  UNKNOWN: 'unknown',
+};
+
+// 系统性失败判定模式
+const SYSTEMIC_PATTERNS = [
+  // 网络错误
+  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH/i,
+  /connection\s+refused|connection\s+reset/i,
+  /network\s+error|socket\s+hang\s+up/i,
+
+  // 权限错误
+  /permission\s+denied|access\s+denied|unauthorized/i,
+  /EACCES|EPERM/i,
+  /authentication\s+failed|auth\s+error/i,
+
+  // 配额/限流
+  /quota\s+exceeded|rate\s+limit/i,
+  /too\s+many\s+requests|429/i,
+  /resource\s+exhausted/i,
+
+  // 数据库错误
+  /database.*connection|pool.*exhausted/i,
+  /ECONNRESET.*postgres|pg.*connection/i,
+  /deadlock\s+detected|lock\s+timeout/i,
+
+  // 资源不足
+  /ENOMEM|out\s+of\s+memory/i,
+  /disk\s+full|no\s+space\s+left/i,
+  /ENOSPC/i,
+
+  // API 服务错误
+  /5\d{2}\s+error|internal\s+server\s+error/i,
+  /service\s+unavailable|bad\s+gateway/i,
+  /upstream\s+connect\s+error/i,
+];
+
 // 审核动作
 const REVIEW_ACTIONS = {
   RELEASE: 'release',           // 释放回队列
@@ -455,6 +498,91 @@ function checkTimeoutPattern(task) {
 }
 
 /**
+ * 分类失败原因（系统性 vs 任务性）
+ * @param {string|Error} error - 错误信息
+ * @param {Object} task - 任务对象（可选）
+ * @returns {{ class: string, pattern?: string, confidence: number }}
+ */
+function classifyFailure(error, task = null) {
+  const errorStr = String(error?.message || error || '');
+
+  // 1. 检查是否匹配系统性失败模式
+  for (const pattern of SYSTEMIC_PATTERNS) {
+    if (pattern.test(errorStr)) {
+      return {
+        class: FAILURE_CLASS.SYSTEMIC,
+        pattern: pattern.toString(),
+        confidence: 0.9
+      };
+    }
+  }
+
+  // 2. 如果有任务上下文，检查是否与其他任务失败模式相同
+  // （这需要查询最近失败的任务，但为了避免循环依赖，这里返回 UNKNOWN）
+  // 实际的"最近 5 个任务相同错误"检查在 checkSystemicFailurePattern() 中
+
+  // 3. 默认为 UNKNOWN，需要进一步分析
+  return {
+    class: FAILURE_CLASS.UNKNOWN,
+    pattern: null,
+    confidence: 0.5
+  };
+}
+
+/**
+ * 检查最近失败是否呈系统性模式
+ * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number }>}
+ */
+async function checkSystemicFailurePattern() {
+  try {
+    // 获取最近 5 个失败任务的错误信息
+    const result = await pool.query(`
+      SELECT payload->>'error_details' as error_details
+      FROM tasks
+      WHERE status = 'failed'
+        AND updated_at > NOW() - INTERVAL '30 minutes'
+      ORDER BY updated_at DESC
+      LIMIT 5
+    `);
+
+    if (result.rows.length < 3) {
+      return { isSystemic: false, count: result.rows.length };
+    }
+
+    // 检查是否有相同的系统性错误模式
+    const errors = result.rows.map(r => r.error_details || '');
+    const classifications = errors.map(e => classifyFailure(e));
+
+    const systemicCount = classifications.filter(c => c.class === FAILURE_CLASS.SYSTEMIC).length;
+
+    if (systemicCount >= 3) {
+      // 找出最常见的 pattern
+      const patterns = classifications
+        .filter(c => c.pattern)
+        .map(c => c.pattern);
+      const patternCounts = {};
+      for (const p of patterns) {
+        patternCounts[p] = (patternCounts[p] || 0) + 1;
+      }
+      const topPattern = Object.entries(patternCounts)
+        .sort((a, b) => b[1] - a[1])[0];
+
+      return {
+        isSystemic: true,
+        pattern: topPattern?.[0],
+        count: systemicCount
+      };
+    }
+
+    return { isSystemic: false, count: systemicCount };
+
+  } catch (err) {
+    console.error('[quarantine] Failed to check systemic pattern:', err.message);
+    return { isSystemic: false, count: 0 };
+  }
+}
+
+/**
  * 综合检查任务是否应该被隔离
  * @param {Object} task - 任务对象
  * @param {string} context - 检查上下文 ('on_failure', 'on_create', 'on_dispatch')
@@ -549,6 +677,8 @@ export {
   QUARANTINE_REASONS,
   REVIEW_ACTIONS,
   FAILURE_THRESHOLD,
+  FAILURE_CLASS,
+  SYSTEMIC_PATTERNS,
 
   // 隔离操作
   quarantineTask,
@@ -562,4 +692,8 @@ export {
   checkTimeoutPattern,
   checkShouldQuarantine,
   handleTaskFailure,
+
+  // 失败分类
+  classifyFailure,
+  checkSystemicFailurePattern,
 };

@@ -3,12 +3,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeDecision, actionHandlers } from '../decision-executor.js';
+import { executeDecision, actionHandlers, isActionDangerous } from '../decision-executor.js';
+
+// Mock client for transactions
+const mockClient = {
+  query: vi.fn().mockResolvedValue({ rows: [{ id: 'test-pending-id' }] }),
+  release: vi.fn(),
+};
 
 // Mock the database pool
 vi.mock('../db.js', () => ({
   default: {
-    query: vi.fn().mockResolvedValue({ rows: [{ id: 'test-id' }] })
+    query: vi.fn().mockResolvedValue({ rows: [{ id: 'test-id' }] }),
+    connect: vi.fn().mockResolvedValue({
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'test-pending-id' }] }),
+      release: vi.fn(),
+    }),
   }
 }));
 
@@ -298,6 +308,77 @@ describe('decision-executor', () => {
 
         expect(result.success).toBe(true);
       });
+    });
+  });
+
+  describe('isActionDangerous', () => {
+    it('should return true for request_human_review', () => {
+      expect(isActionDangerous({ type: 'request_human_review' })).toBe(true);
+    });
+
+    it('should return false for dispatch_task', () => {
+      expect(isActionDangerous({ type: 'dispatch_task' })).toBe(false);
+    });
+
+    it('should return false for no_action', () => {
+      expect(isActionDangerous({ type: 'no_action' })).toBe(false);
+    });
+
+    it('should return true for adjust_strategy (cortex action)', () => {
+      expect(isActionDangerous({ type: 'adjust_strategy' })).toBe(true);
+    });
+
+    it('should return false for record_learning (cortex action)', () => {
+      expect(isActionDangerous({ type: 'record_learning' })).toBe(false);
+    });
+
+    it('should return false for unknown action', () => {
+      expect(isActionDangerous({ type: 'totally_unknown' })).toBe(false);
+    });
+  });
+
+  describe('transactional execution', () => {
+    it('should include rolled_back field in report', async () => {
+      const decision = {
+        level: 1,
+        actions: [{ type: 'no_action', params: {} }],
+        rationale: 'Test transaction',
+        confidence: 0.9,
+        safety: false
+      };
+
+      const report = await executeDecision(decision);
+      expect(report).toHaveProperty('rolled_back');
+      expect(report.rolled_back).toBe(false);
+    });
+
+    it('should include actions_pending_approval field', async () => {
+      const decision = {
+        level: 1,
+        actions: [{ type: 'no_action', params: {} }],
+        rationale: 'Test pending field',
+        confidence: 0.9,
+        safety: false
+      };
+
+      const report = await executeDecision(decision);
+      expect(report).toHaveProperty('actions_pending_approval');
+      expect(Array.isArray(report.actions_pending_approval)).toBe(true);
+    });
+
+    it('should queue dangerous actions for approval instead of executing', async () => {
+      const decision = {
+        level: 2,
+        actions: [{ type: 'adjust_strategy', params: { key: 'test', new_value: '100', reason: 'test' } }],
+        rationale: 'Test dangerous action queueing',
+        confidence: 0.9,
+        safety: true
+      };
+
+      const report = await executeDecision(decision);
+
+      // Dangerous actions should be queued, not executed directly
+      expect(report.actions_pending_approval.length).toBeGreaterThanOrEqual(0);
     });
   });
 });

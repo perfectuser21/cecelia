@@ -28,8 +28,8 @@ import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
-import { getAlertness, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
-import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS } from './quarantine.js';
+import { getAlertness, getDecayStatus, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES, EVENT_BACKLOG_THRESHOLD, RECOVERY_THRESHOLDS } from './alertness.js';
+import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure, FAILURE_CLASS } from './quarantine.js';
 import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
@@ -37,8 +37,8 @@ import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import { runDiagnosis } from './self-diagnosis.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
-import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision } from './decision-executor.js';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES, LLM_ERROR_TYPE } from './thalamus.js';
+import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
 
 const router = Router();
 
@@ -705,6 +705,65 @@ router.post('/quarantine/release-all', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to release all', details: err.message });
+  }
+});
+
+// ==================== Pending Actions API（危险动作审批） ====================
+
+/**
+ * GET /api/brain/pending-actions
+ * 获取待审批动作列表
+ */
+router.get('/pending-actions', async (req, res) => {
+  try {
+    const actions = await getPendingActions();
+    res.json({ success: true, count: actions.length, actions });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending actions', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/approve
+ * 批准并执行待审批动作
+ * Body: { reviewer?: string }
+ */
+router.post('/pending-actions/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reviewer } = req.body || {};
+
+    const result = await approvePendingAction(id, reviewer || 'api-user');
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to approve action', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/reject
+ * 拒绝待审批动作
+ * Body: { reviewer?: string, reason?: string }
+ */
+router.post('/pending-actions/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reviewer, reason } = req.body || {};
+
+    const result = await rejectPendingAction(id, reviewer || 'api-user', reason || '');
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reject action', details: err.message });
   }
 });
 
@@ -3894,6 +3953,193 @@ router.get('/tasks/:taskId/checkpoints', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get task checkpoints', details: err.message });
+  }
+});
+
+// ==================== Hardening Status Dashboard ====================
+
+/**
+ * GET /api/brain/hardening/status
+ * One-eye dashboard: aggregates all 6 stability hardening features
+ */
+router.get('/hardening/status', async (req, res) => {
+  try {
+    const version = '1.7.0';
+    const checked_at = new Date().toISOString();
+
+    const [
+      decisionStats,
+      lastRollback,
+      failureStats,
+      backlogCurrent,
+      backlogPeak,
+      alertness,
+      decay,
+      pendingStats,
+      llmErrorStats,
+    ] = await Promise.all([
+      // 1. Transactional decisions: recent 10
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'success') AS committed,
+          COUNT(*) FILTER (WHERE status = 'failed') AS rolled_back
+        FROM (
+          SELECT status FROM decision_log ORDER BY created_at DESC LIMIT 10
+        ) t
+      `).catch(() => ({ rows: [{ committed: 0, rolled_back: 0 }] })),
+
+      // 2. Last rollback event
+      pool.query(`
+        SELECT payload, created_at FROM cecelia_events
+        WHERE event_type = 'decision_rollback'
+        ORDER BY created_at DESC LIMIT 1
+      `).catch(() => ({ rows: [] })),
+
+      // 3. Failure classification: last 1h
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'systemic') AS systemic,
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'task_specific') AS task_specific,
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'unknown' OR payload->>'failure_class' IS NULL) AS unknown
+        FROM cecelia_events
+        WHERE event_type = 'task_failure'
+          AND created_at > NOW() - INTERVAL '1 hour'
+      `).catch(() => ({ rows: [{ systemic: 0, task_specific: 0, unknown: 0 }] })),
+
+      // 4. Event backlog: current 10min
+      pool.query(`
+        SELECT COUNT(*) AS count FROM cecelia_events
+        WHERE created_at > NOW() - INTERVAL '10 minutes'
+      `).catch(() => ({ rows: [{ count: 0 }] })),
+
+      // 5. Event backlog: peak 24h (max events in any 10-min window)
+      pool.query(`
+        SELECT COALESCE(MAX(cnt), 0) AS peak FROM (
+          SELECT COUNT(*) AS cnt
+          FROM cecelia_events
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+          GROUP BY date_trunc('hour', created_at), (EXTRACT(EPOCH FROM created_at)::int / 600)
+        ) t
+      `).catch(() => ({ rows: [{ peak: 0 }] })),
+
+      // 6. Alertness state (sync)
+      Promise.resolve(getAlertness()),
+
+      // 7. Decay status (sync)
+      Promise.resolve(getDecayStatus()),
+
+      // 8. Pending actions stats
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'pending_approval' AND (expires_at IS NULL OR expires_at > NOW())) AS pending,
+          COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at > NOW() - INTERVAL '24 hours') AS approved_24h,
+          COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at > NOW() - INTERVAL '24 hours') AS rejected_24h,
+          COUNT(*) FILTER (WHERE status = 'expired' AND reviewed_at > NOW() - INTERVAL '24 hours') AS expired_24h
+        FROM pending_actions
+      `).catch(() => ({ rows: [{ pending: 0, approved_24h: 0, rejected_24h: 0, expired_24h: 0 }] })),
+
+      // 9. LLM errors: last 1h by type
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE event_type = 'llm_api_error') AS api_error,
+          COUNT(*) FILTER (WHERE event_type = 'llm_bad_output') AS bad_output,
+          COUNT(*) FILTER (WHERE event_type = 'llm_timeout') AS timeout
+        FROM cecelia_events
+        WHERE event_type IN ('llm_api_error', 'llm_bad_output', 'llm_timeout')
+          AND created_at > NOW() - INTERVAL '1 hour'
+      `).catch(() => ({ rows: [{ api_error: 0, bad_output: 0, timeout: 0 }] })),
+    ]);
+
+    const dRow = decisionStats.rows[0];
+    const fRow = failureStats.rows[0];
+    const pRow = pendingStats.rows[0];
+    const lRow = llmErrorStats.rows[0];
+    const lastRb = lastRollback.rows[0] || null;
+
+    // Recovery gate calculation
+    const currentLevel = alertness.level;
+    let recoveryGate = null;
+    if (currentLevel > 0) {
+      const threshold = RECOVERY_THRESHOLDS[currentLevel];
+      if (threshold) {
+        const elapsed = Date.now() - new Date(alertness.last_change_at).getTime();
+        const remaining = Math.max(0, threshold - elapsed);
+        const targetLevel = currentLevel - 1;
+        recoveryGate = {
+          target: LEVEL_NAMES[targetLevel],
+          remaining_ms: remaining,
+        };
+      }
+    }
+
+    // Compute overall_status: critical > warn > ok
+    const systemicCount = parseInt(fRow.systemic);
+    const backlogCount = parseInt(backlogCurrent.rows[0].count);
+    let overall_status = 'ok';
+    if (currentLevel >= 3 || systemicCount >= 5 || backlogCount >= EVENT_BACKLOG_THRESHOLD * 2) {
+      overall_status = 'critical';
+    } else if (currentLevel >= 1 || systemicCount >= 2 || backlogCount >= EVENT_BACKLOG_THRESHOLD || parseInt(pRow.pending) >= 3) {
+      overall_status = 'warn';
+    }
+
+    res.json({
+      version,
+      checked_at,
+      overall_status,
+      features: {
+        transactional_decisions: {
+          enabled: true,
+          recent_10: {
+            committed: parseInt(dRow.committed),
+            rolled_back: parseInt(dRow.rolled_back),
+          },
+          last_rollback: lastRb ? {
+            at: lastRb.created_at,
+            error: lastRb.payload?.error || null,
+          } : null,
+        },
+        failure_classification: {
+          enabled: true,
+          last_1h: {
+            systemic: parseInt(fRow.systemic),
+            task_specific: parseInt(fRow.task_specific),
+            unknown: parseInt(fRow.unknown),
+          },
+        },
+        event_backlog: {
+          enabled: true,
+          current_10min: parseInt(backlogCurrent.rows[0].count),
+          threshold: EVENT_BACKLOG_THRESHOLD,
+          peak_24h: parseInt(backlogPeak.rows[0].peak),
+        },
+        alertness_decay: {
+          enabled: true,
+          current_score: {
+            raw: decay.accumulated_score,
+            decayed: decay.accumulated_score,
+          },
+          level: LEVEL_NAMES[currentLevel],
+          recovery_gate: recoveryGate,
+        },
+        pending_actions: {
+          enabled: true,
+          pending: parseInt(pRow.pending),
+          approved_24h: parseInt(pRow.approved_24h),
+          rejected_24h: parseInt(pRow.rejected_24h),
+          expired_24h: parseInt(pRow.expired_24h),
+        },
+        llm_errors: {
+          enabled: true,
+          last_1h: {
+            api_error: parseInt(lRow.api_error),
+            bad_output: parseInt(lRow.bad_output),
+            timeout: parseInt(lRow.timeout),
+          },
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get hardening status', details: err.message });
   }
 });
 

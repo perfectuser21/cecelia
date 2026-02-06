@@ -1,42 +1,40 @@
-# QA Decision - Cecelia 丘脑 (Thalamus) 事件路由器
+# QA Decision - 最后 20% 稳定性硬护栏
 
-Decision: MUST_ADD_RCI
+Decision: NO_RCI
 Priority: P0
 RepoType: Engine
 
 Tests:
-  - dod_item: "thalamus.js 实现事件分析"
-    method: auto
-    location: brain/src/__tests__/thalamus.test.js
-
-  - dod_item: "decision-executor.js 实现决策执行"
+  - dod_item: "决策执行事务化 - 失败时回滚"
     method: auto
     location: brain/src/__tests__/decision-executor.test.js
 
-  - dod_item: "Validator 验证 Decision 合法性"
+  - dod_item: "系统性失败分类"
+    method: auto
+    location: brain/src/__tests__/quarantine.test.js
+
+  - dod_item: "事件积压检测"
+    method: auto
+    location: brain/src/__tests__/alertness.test.js
+
+  - dod_item: "Alertness 衰减规则"
+    method: auto
+    location: brain/src/__tests__/alertness.test.js
+
+  - dod_item: "危险动作入队待审批"
+    method: auto
+    location: brain/src/__tests__/decision-executor.test.js
+
+  - dod_item: "pending-actions API"
+    method: auto
+    location: brain/src/__tests__/routes.test.js
+
+  - dod_item: "LLM 错误类型分类"
     method: auto
     location: brain/src/__tests__/thalamus.test.js
-
-  - dod_item: "快速路由处理简单事件（不调 LLM）"
-    method: auto
-    location: brain/src/__tests__/thalamus.test.js
-
-  - dod_item: "降级机制：Sonnet 失败时回退到代码"
-    method: auto
-    location: brain/src/__tests__/thalamus.test.js
-
-  - dod_item: "单元测试覆盖核心逻辑"
-    method: auto
-    location: brain/src/__tests__/thalamus.test.js, brain/src/__tests__/decision-executor.test.js
-
-  - dod_item: "接入 Tick 事件流"
-    method: manual
-    location: manual:验证 Tick 事件能触发 Thalamus 处理
 
 RCI:
-  new:
-    - RCI-THAL-001  # 丘脑事件分析
-    - RCI-THAL-002  # 决策执行器
+  new: []
   update: []
 
-Reason: 丘脑是 Cecelia 的核心决策层，负责事件路由和决策生成。必须有完整的单元测试覆盖 Decision 验证、Action 白名单、快速路由和降级机制。
+Reason: 内部稳定性增强，属于引擎层改动，通过单元测试验证各模块功能即可，无需新增回归契约。

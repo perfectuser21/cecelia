@@ -18,7 +18,7 @@
 /* global console */
 
 import pool from './db.js';
-import { ACTION_WHITELIST, validateDecision } from './thalamus.js';
+import { ACTION_WHITELIST, validateDecision, recordLLMError } from './thalamus.js';
 
 // ============================================================
 // Cortex Prompt
@@ -289,6 +289,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
 
   } catch (err) {
     console.error('[cortex] Deep analysis failed:', err.message);
+    await recordLLMError('cortex', err, { event_type: event.type });
     return createCortexFallback(event, err.message);
   }
 }

@@ -160,7 +160,7 @@ function routeTaskCreate(taskData) {
  * @returns {boolean} - Whether task type is valid
  */
 function isValidTaskType(taskType) {
-  const validTypes = ['dev', 'review', 'automation', 'data', 'qa', 'audit', 'research'];
+  const validTypes = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research'];
   return validTypes.includes(taskType?.toLowerCase());
 }
 

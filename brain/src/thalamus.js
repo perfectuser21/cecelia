@@ -19,6 +19,70 @@
 
 /* global console */
 
+import pool from './db.js';
+
+// ============================================================
+// LLM Error Type Classification
+// ============================================================
+
+const LLM_ERROR_TYPE = {
+  API_ERROR: 'llm_api_error',      // API 层错误（网络/配额/服务）
+  BAD_OUTPUT: 'llm_bad_output',    // 输出解析失败（格式/验证）
+  TIMEOUT: 'llm_timeout',          // 超时
+};
+
+/**
+ * 分类 LLM 错误类型
+ * @param {Error} error
+ * @returns {string} - LLM_ERROR_TYPE value
+ */
+function classifyLLMError(error) {
+  const msg = String(error?.message || error || '');
+
+  // API 错误
+  if (/API error|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|5\d{2}/i.test(msg)) {
+    return LLM_ERROR_TYPE.API_ERROR;
+  }
+  if (/rate.limit|429|quota|too many requests/i.test(msg)) {
+    return LLM_ERROR_TYPE.API_ERROR;
+  }
+  if (/ANTHROPIC_API_KEY|not set|unauthorized|authentication/i.test(msg)) {
+    return LLM_ERROR_TYPE.API_ERROR;
+  }
+
+  // 超时
+  if (/timeout|timed out|aborted/i.test(msg)) {
+    return LLM_ERROR_TYPE.TIMEOUT;
+  }
+
+  // 默认：输出解析错误
+  return LLM_ERROR_TYPE.BAD_OUTPUT;
+}
+
+/**
+ * 记录 LLM 错误（分类型）
+ * @param {string} source - 'thalamus' or 'cortex'
+ * @param {Error} error
+ * @param {Object} context - 额外上下文
+ */
+async function recordLLMError(source, error, context = {}) {
+  const errorType = classifyLLMError(error);
+
+  try {
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ($1, $2, $3)
+    `, [errorType, source, JSON.stringify({
+      error_message: error?.message || String(error),
+      error_type: errorType,
+      ...context,
+      timestamp: new Date().toISOString()
+    })]);
+  } catch (err) {
+    console.error(`[${source}] Failed to record LLM error:`, err.message);
+  }
+}
+
 // ============================================================
 // Decision Schema
 // ============================================================
@@ -229,8 +293,11 @@ async function analyzeEvent(event) {
     const validation = validateDecision(decision);
     if (!validation.valid) {
       console.error('[thalamus] Invalid decision:', validation.errors);
-      // 记录 LLM 输出解析失败事件（触发 Alertness 升级）
-      await recordBadOutput(event, 'validation_failed', validation.errors);
+      // 记录 LLM 输出解析失败（BAD_OUTPUT 类型）
+      await recordLLMError('thalamus', new Error(validation.errors.join('; ')), {
+        event_type: event.type,
+        error_subtype: 'validation_failed'
+      });
       return createFallbackDecision(event, validation.errors.join('; '));
     }
 
@@ -238,28 +305,9 @@ async function analyzeEvent(event) {
 
   } catch (err) {
     console.error('[thalamus] Error analyzing event:', err.message);
-    // 记录 LLM 输出解析失败事件（触发 Alertness 升级）
-    await recordBadOutput(event, 'parse_error', [err.message]);
+    // 分类错误类型并记录
+    await recordLLMError('thalamus', err, { event_type: event.type });
     return createFallbackDecision(event, err.message);
-  }
-}
-
-/**
- * 记录 LLM 输出解析失败（触发 Alertness）
- */
-async function recordBadOutput(event, errorType, errors) {
-  try {
-    await pool.query(`
-      INSERT INTO cecelia_events (event_type, source, payload)
-      VALUES ('llm_bad_output', 'thalamus', $1)
-    `, [JSON.stringify({
-      event_type: event.type,
-      error_type: errorType,
-      errors,
-      timestamp: new Date().toISOString()
-    })]);
-  } catch (err) {
-    console.error('[thalamus] Failed to record bad output:', err.message);
   }
 }
 
@@ -447,6 +495,11 @@ export {
   quickRoute,
   analyzeEvent,
   createFallbackDecision,
+
+  // LLM 错误分类
+  classifyLLMError,
+  recordLLMError,
+  LLM_ERROR_TYPE,
 
   // 常量
   EVENT_TYPES,

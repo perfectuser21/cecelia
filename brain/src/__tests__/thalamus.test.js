@@ -8,6 +8,8 @@ import {
   hasDangerousActions,
   quickRoute,
   createFallbackDecision,
+  classifyLLMError,
+  LLM_ERROR_TYPE,
   EVENT_TYPES,
   ACTION_WHITELIST
 } from '../thalamus.js';
@@ -249,6 +251,47 @@ describe('thalamus', () => {
 
     it('should not mark dispatch_task as dangerous', () => {
       expect(ACTION_WHITELIST['dispatch_task'].dangerous).toBe(false);
+    });
+  });
+
+  describe('LLM_ERROR_TYPE', () => {
+    it('should have three error types', () => {
+      expect(LLM_ERROR_TYPE.API_ERROR).toBe('llm_api_error');
+      expect(LLM_ERROR_TYPE.BAD_OUTPUT).toBe('llm_bad_output');
+      expect(LLM_ERROR_TYPE.TIMEOUT).toBe('llm_timeout');
+    });
+  });
+
+  describe('classifyLLMError', () => {
+    it('should classify API errors', () => {
+      expect(classifyLLMError(new Error('Sonnet API error: 500'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('ECONNREFUSED 127.0.0.1:443'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('rate limit exceeded'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('HTTP 429 Too Many Requests'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('ANTHROPIC_API_KEY not set'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+    });
+
+    it('should classify timeout errors', () => {
+      expect(classifyLLMError(new Error('timeout waiting for response'))).toBe(LLM_ERROR_TYPE.TIMEOUT);
+      expect(classifyLLMError(new Error('request timed out'))).toBe(LLM_ERROR_TYPE.TIMEOUT);
+      expect(classifyLLMError(new Error('operation aborted'))).toBe(LLM_ERROR_TYPE.TIMEOUT);
+    });
+
+    it('should classify bad output errors', () => {
+      expect(classifyLLMError(new Error('No JSON found in response'))).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
+      expect(classifyLLMError(new Error('Unexpected token in JSON'))).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
+      expect(classifyLLMError(new Error('level must be 0, 1, or 2'))).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
+    });
+
+    it('should handle string errors', () => {
+      expect(classifyLLMError('ECONNREFUSED')).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError('timeout')).toBe(LLM_ERROR_TYPE.TIMEOUT);
+      expect(classifyLLMError('parse error')).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
+    });
+
+    it('should handle null/undefined', () => {
+      expect(classifyLLMError(null)).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
+      expect(classifyLLMError(undefined)).toBe(LLM_ERROR_TYPE.BAD_OUTPUT);
     });
   });
 });

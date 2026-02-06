@@ -92,6 +92,8 @@ const SIGNAL_WEIGHTS = {
   db_connection_issues: 25,       // 数据库问题 → +25
   llm_api_errors: 15,             // LLM API 错误 → +15
   llm_bad_output: 20,             // LLM 输出解析失败 → +20
+  event_backlog: 20,              // 事件积压 → +20 (max)
+  systemic_failure: 25,           // 系统性失败 → +25
 };
 
 // 信号封顶（防止叠加爆炸）
@@ -99,6 +101,27 @@ const SIGNAL_CAPS = {
   consecutive_failures: 40,       // 最多 +40（即 4 次连续失败后封顶）
   high_failure_rate: 20,          // 最多 +20
   resource_pressure: 15,          // 最多 +15
+  event_backlog: 20,              // 最多 +20
+};
+
+// ============================================================
+// 事件积压 & 衰减 配置
+// ============================================================
+
+// 事件积压阈值
+const EVENT_BACKLOG_THRESHOLD = 50;
+
+// 分数衰减配置
+const DECAY_INTERVAL_MS = 10 * 60 * 1000; // 每 10 分钟
+const DECAY_FACTOR = 0.8;                  // 衰减到 80%
+let _lastDecayAt = Date.now();
+let _accumulatedScore = 0;  // 衰减用的累积分数
+
+// 恢复门槛（从高级到低级的稳定时间要求）
+const RECOVERY_THRESHOLDS = {
+  [ALERTNESS_LEVELS.COMA]: 30 * 60 * 1000,       // COMA→EMERGENCY: 30 分钟稳定
+  [ALERTNESS_LEVELS.EMERGENCY]: 15 * 60 * 1000,   // EMERGENCY→ALERT: 15 分钟稳定
+  [ALERTNESS_LEVELS.ALERT]: 10 * 60 * 1000,       // ALERT→NORMAL: 10 分钟稳定
 };
 
 // 级别阈值
@@ -304,6 +327,38 @@ async function collectSignals() {
     totalScore += 10;
   }
 
+  // 8. 事件积压检测
+  try {
+    const backlogResult = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM cecelia_events
+      WHERE created_at > NOW() - INTERVAL '10 minutes'
+    `);
+    const eventCount = parseInt(backlogResult.rows[0].count);
+    if (eventCount >= EVENT_BACKLOG_THRESHOLD) {
+      signals.event_backlog = eventCount;
+      const rawScore = Math.round(SIGNAL_WEIGHTS.event_backlog * (eventCount / EVENT_BACKLOG_THRESHOLD));
+      totalScore += Math.min(rawScore, SIGNAL_CAPS.event_backlog);
+    }
+  } catch {
+    // ignore
+  }
+
+  // 9. 系统性失败检测
+  try {
+    const { checkSystemicFailurePattern } = await import('./quarantine.js');
+    const systemicCheck = await checkSystemicFailurePattern();
+    if (systemicCheck.isSystemic) {
+      signals.systemic_failure = {
+        count: systemicCheck.count,
+        pattern: systemicCheck.pattern
+      };
+      totalScore += SIGNAL_WEIGHTS.systemic_failure;
+    }
+  } catch {
+    // ignore - quarantine module may not be available
+  }
+
   _signals = signals;
   return { signals, totalScore };
 }
@@ -448,6 +503,63 @@ async function clearManualOverride() {
 }
 
 /**
+ * 应用分数衰减
+ * 每 10 分钟分数衰减到 80%，确保系统在异常解除后可以自动恢复
+ * @param {number} rawScore - 当前原始信号分数
+ * @returns {number} - 衰减后的分数
+ */
+function applyDecay(rawScore) {
+  const now = Date.now();
+  const elapsed = now - _lastDecayAt;
+
+  // 计算经过了多少个衰减周期
+  const decayCycles = Math.floor(elapsed / DECAY_INTERVAL_MS);
+
+  if (decayCycles > 0) {
+    // 累积分数衰减
+    _accumulatedScore = _accumulatedScore * Math.pow(DECAY_FACTOR, decayCycles);
+    _lastDecayAt = now;
+  }
+
+  // 最终分数 = max(当前信号分数, 衰减后的累积分数)
+  // 如果当前信号分数高于累积分数，更新累积分数
+  if (rawScore > _accumulatedScore) {
+    _accumulatedScore = rawScore;
+  }
+
+  return Math.round(_accumulatedScore);
+}
+
+/**
+ * 获取衰减状态（测试/审计用）
+ */
+function getDecayStatus() {
+  return {
+    accumulated_score: Math.round(_accumulatedScore),
+    last_decay_at: _lastDecayAt,
+    decay_factor: DECAY_FACTOR,
+    decay_interval_ms: DECAY_INTERVAL_MS,
+  };
+}
+
+/**
+ * 检查恢复门槛（降级前检查是否满足稳定时间要求）
+ * @param {number} currentLevel
+ * @param {number} targetLevel
+ * @returns {boolean} - 是否允许降级
+ */
+function checkRecoveryThreshold(currentLevel, targetLevel) {
+  if (targetLevel >= currentLevel) return true; // 升级不限制
+
+  // 降级需要满足稳定时间要求
+  const requiredStable = RECOVERY_THRESHOLDS[currentLevel];
+  if (!requiredStable) return true;
+
+  const elapsed = Date.now() - _lastLevelChangeAt;
+  return elapsed >= requiredStable;
+}
+
+/**
  * 评估当前状态并更新级别
  */
 async function evaluateAndUpdate() {
@@ -463,20 +575,40 @@ async function evaluateAndUpdate() {
   }
 
   // 收集信号
-  const { signals, totalScore } = await collectSignals();
+  const { signals, totalScore: rawScore } = await collectSignals();
 
-  // 计算目标级别
-  const targetLevel = scoreToLevel(totalScore);
+  // 应用衰减
+  const decayedScore = applyDecay(rawScore);
+
+  // 计算目标级别（使用衰减后的分数）
+  const targetLevel = scoreToLevel(decayedScore);
 
   // 更新级别
   if (targetLevel !== _currentLevel) {
+    // 降级时检查恢复门槛
+    if (targetLevel < _currentLevel) {
+      if (!checkRecoveryThreshold(_currentLevel, targetLevel)) {
+        const remaining = RECOVERY_THRESHOLDS[_currentLevel] - (Date.now() - _lastLevelChangeAt);
+        console.log(`[alertness] Recovery threshold not met, staying at ${LEVEL_NAMES[_currentLevel]} (${Math.round(remaining / 1000)}s remaining)`);
+        return {
+          level: _currentLevel,
+          score: decayedScore,
+          raw_score: rawScore,
+          signals,
+          source: 'auto',
+          recovery_blocked: true,
+        };
+      }
+    }
+
     const direction = targetLevel > _currentLevel ? 'escalate' : 'de-escalate';
-    await setLevel(targetLevel, `Auto ${direction}: score=${totalScore}`);
+    await setLevel(targetLevel, `Auto ${direction}: score=${decayedScore} (raw=${rawScore})`);
   }
 
   return {
     level: _currentLevel,
-    score: totalScore,
+    score: decayedScore,
+    raw_score: rawScore,
     signals,
     source: 'auto',
   };
@@ -578,6 +710,10 @@ export {
   LEVEL_NAMES,
   LEVEL_BEHAVIORS,
   SIGNAL_CAPS,
+  EVENT_BACKLOG_THRESHOLD,
+  RECOVERY_THRESHOLDS,
+  DECAY_FACTOR,
+  DECAY_INTERVAL_MS,
 
   // 状态查询
   getAlertness,
@@ -600,6 +736,11 @@ export {
   setManualOverride,
   clearManualOverride,
   evaluateAndUpdate,
+
+  // 衰减 & 恢复
+  applyDecay,
+  getDecayStatus,
+  checkRecoveryThreshold,
 
   // 初始化
   initAlertness,
