@@ -1,13 +1,18 @@
 {
   "gate": "prd",
-  "status": "PASS",
-  "timestamp": "2026-02-06T10:08:00Z",
-  "prd_file": ".prd-kr22-unified-publish-research.md",
-  "validation": {
-    "has_source": true,
-    "has_description": true,
-    "has_files": true,
-    "has_success_criteria": true,
-    "has_non_goals": true
-  }
+  "decision": "PASS",
+  "timestamp": "2026-02-06T12:42:00Z",
+  "summary": "PRD validation passed with minor suggestions",
+  "issues": [
+    {
+      "severity": "minor",
+      "location": "Section: 功能描述 - Item 4",
+      "suggestion": "在文档中补充具体的 API 调用示例"
+    },
+    {
+      "severity": "minor",
+      "location": "Section: 成功标准 - 任务创建验收",
+      "suggestion": "明确是 5 个 Phase 级任务还是具体子任务数量"
+    }
+  ]
 }

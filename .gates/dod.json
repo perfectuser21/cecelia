@@ -1,12 +1,10 @@
 {
   "gate": "dod",
-  "status": "PASS",
-  "timestamp": "2026-02-06T10:11:00Z",
-  "dod_file": ".dod-kr22-unified-publish-research.md",
-  "validation": {
-    "has_qa_reference": true,
-    "has_acceptance_criteria": true,
-    "has_test_methods": true,
-    "all_tests_specified": true
+  "decision": "PASS",
+  "timestamp": "2026-02-06T12:45:00Z",
+  "summary": "DoD and QA Decision validation passed",
+  "validations": {
+    "dod": "PASS",
+    "qa": "PASS"
   }
 }
