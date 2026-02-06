@@ -142,6 +142,56 @@ function checkServerResources() {
   return { ok: true, reason: null, effectiveSlots, metrics };
 }
 
+// ============================================================
+// Billing Pause (全局暂停派发)
+// ============================================================
+
+let _billingPause = null; // { resetTime: ISO string, setAt: ISO string, reason: string }
+
+/**
+ * 设置 billing pause（全局暂停派发直到 reset 时间）
+ * @param {string} resetTimeISO - reset 时间 (ISO 8601)
+ * @param {string} reason - 原因描述
+ */
+function setBillingPause(resetTimeISO, reason = 'billing_cap') {
+  _billingPause = {
+    resetTime: resetTimeISO,
+    setAt: new Date().toISOString(),
+    reason,
+  };
+  console.log(`[executor] Billing pause SET: until ${resetTimeISO} (${reason})`);
+}
+
+/**
+ * 获取当前 billing pause 状态
+ * 如果 pause 已过期（reset 时间已到），自动清除
+ * @returns {{ active: boolean, resetTime?: string, setAt?: string, reason?: string }}
+ */
+function getBillingPause() {
+  if (!_billingPause) return { active: false };
+
+  // 自动清除过期的 pause
+  if (new Date(_billingPause.resetTime) <= new Date()) {
+    console.log(`[executor] Billing pause auto-cleared (reset time reached)`);
+    _billingPause = null;
+    return { active: false };
+  }
+
+  return { active: true, ..._billingPause };
+}
+
+/**
+ * 手动清除 billing pause
+ */
+function clearBillingPause() {
+  const was = _billingPause;
+  _billingPause = null;
+  if (was) {
+    console.log(`[executor] Billing pause CLEARED manually`);
+  }
+  return { cleared: !!was, previous: was };
+}
+
 /**
  * In-memory process registry: taskId -> { pid, startedAt, runId, process }
  */
@@ -1285,4 +1335,8 @@ export {
   requeueTask,
   // v6: Feature repo_path resolution
   resolveRepoPath,
+  // v7: Billing pause
+  setBillingPause,
+  getBillingPause,
+  clearBillingPause,
 };
