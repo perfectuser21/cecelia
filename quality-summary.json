@@ -1,10 +1,9 @@
 {
-  "branch": "cp-02062024-planner-kr-rotation",
-  "head_sha": "c56094c",
-  "timestamp": "2026-02-06T12:32:44Z",
-  "tests_passed": 665,
+  "branch": "cp-02062040-db-config-unify",
+  "timestamp": "2026-02-06T12:44:33Z",
+  "tests_passed": 668,
   "tests_failed": 5,
-  "tests_total": 670,
+  "tests_total": 673,
   "pre_existing_failures": [
     "DouyinAdapter (5 tests - untracked WIP)"
   ],

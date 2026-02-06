@@ -5,19 +5,14 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import { DB_DEFAULTS } from '../db-config.js';
 
 const { Pool } = pg;
 
 const API_BASE = process.env.API_BASE || 'http://localhost:5221/api/brain';
 
 // Test database connection
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'cecelia',
-  user: process.env.DB_USER || 'cecelia',
-  password: process.env.DB_PASSWORD || 'CeceliaUS2026'
-});
+const pool = new Pool(DB_DEFAULTS);
 
 // Test data
 const TEST_PARENT_ID = '99999999-9999-9999-9999-999999999999';
