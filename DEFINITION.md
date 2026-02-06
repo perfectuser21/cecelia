@@ -1,1053 +1,798 @@
 # Cecelia 定义文档
 
-**版本**: 1.3.2
+**版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-02-01
-**状态**: 正式生产版本（无死角审计级）
+**最后更新**: 2026-02-07
+**Brain 版本**: 1.9.2
+**Schema 版本**: 008
+**状态**: 生产运行中
 
 ---
 
 ## 目录
 
-1. [核心定位与边界](#1-核心定位与边界)
-2. [LLM 使用边界与模型策略](#2-llm-使用边界与模型策略)
-3. [生命体架构](#3-生命体架构)
-4. [数据模型与层级](#4-数据模型与层级)
-5. [任务执行与调度](#5-任务执行与调度)
-6. [资源管理与节点调度](#6-资源管理与节点调度)
-7. [容错与熔断](#7-容错与熔断)
-8. [进化系统](#8-进化系统)
-9. [通信协议](#9-通信协议)
-10. [部署架构](#10-部署架构)
-11. [FAQ 与最佳实践](#11-faq-与最佳实践)
-12. [故障排查](#12-故障排查)
-13. [运维手册](#13-运维手册)
+1. [核心定位](#1-核心定位)
+2. [架构总览](#2-架构总览)
+3. [三层大脑](#3-三层大脑)
+4. [数据模型](#4-数据模型)
+5. [任务生命周期](#5-任务生命周期)
+6. [保护系统](#6-保护系统)
+7. [并发与资源管理](#7-并发与资源管理)
+8. [部署架构](#8-部署架构)
+9. [API 接口](#9-api-接口)
+10. [文件地图](#10-文件地图)
+11. [运维手册](#11-运维手册)
 
 ---
 
-## 1. 核心定位与边界
+## 1. 核心定位
 
-### 1.1 Cecelia 是什么？
+### 1.1 Cecelia 是什么
 
-**Cecelia = 24/7 自主运行的生命体级管家系统（Life-Form Chief Butler System）**
-
-Cecelia 是一个完整的自主生命体，具备：
-- **自我感知**：通过 Health Manager 监控自身状态
-- **自我决策**：通过 Cognitive Plane 进行深度推理
-- **自我调节**：通过 Resource Manager 和 Circuit Breaker 保护自身
-- **自我进化**：通过 Evolution System 持续优化
-
-**核心公式**：
+**Cecelia = 24/7 自主运行的管家系统**
 
 ```
-Cecelia = Control Plane (Deterministic, 控制层)
-        + Cognitive Plane (LLM-Powered, 认知层)
-        + PostgreSQL (Single Source of Truth, 唯一真相源)
-        + External Experts (外部专家，可选委托)
+Cecelia = Brain (Node.js, port 5221)
+        + PostgreSQL (cecelia 数据库)
+        + Tick Loop (每 5 秒心跳)
+        + 外部 Agent 群（Claude Code 无头进程）
 ```
 
-**术语定义**：
+Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目标，自动拆解为可执行任务，派发给无头 Claude Code Agent 执行，监控执行状态，处理失败和异常，并从经验中学习。
 
-| 术语 | 定义 |
-|------|------|
-| **Control Plane** | 中枢控制层，完全 deterministic，禁止 LLM 直接参与状态推进、资源分配、DB 操作。职责：执行、调度、资源管理、熔断。 |
-| **Cognitive Plane** | 中枢认知层，使用 Opus LLM 进行深度推理。职责：意图理解、任务规划、决策推荐、诊断分析、进化提案。 |
-| **Interface/Perception Layer** | 接口层，负责意图分类、结构化输入、路由到 Planner。使用 Haiku 做轻量级认知（不做深度推理），属于 Perception 层而非 Cognitive Plane。 |
-| **Planner（内层）** | Brain 内部的认知模块，属于 Cognitive Plane，使用 Opus 做任务拆解、优先级推理、agent 推荐。**必须存在，不可替代**。 |
-| **Dispatch（调度器）** | Brain 内部的控制模块，属于 Control Plane，负责确定性执行派发、资源分配、命令生成。**严格 deterministic，禁止 LLM 直接决策**。 |
-| **External Planner Agent** | 外层专家（/planner skill, Autumnrice），可选委托的副管家，用于极复杂任务拆解。**可替换、可迁移，不是 Cecelia 器官**。 |
+### 1.2 核心器官
 
-### 1.2 核心器官（Internal Organs）
-
-**这些是 Cecelia 的身体组成部分，全部在 `cecelia-core` 仓库内**：
-
-| 器官 | 实现 | 端口 | 职责 | 类型 | 说明 |
-|------|------|------|------|------|------|
-| **💬 嘴巴** | /cecelia skill | - | 对外对话接口，意图分类 | Interface/Perception | 使用 Haiku，轻认知 |
-| **🧠 大脑 - Cognitive** | Brain Cognitive Modules | 5221 | 深度推理、规划、诊断 | Cognitive | **包含 Planner 模块** |
-| **🧠 大脑 - Control** | Brain Control Modules | 5221 | 确定性执行、调度、资源管理 | Control | **包含 Dispatch 模块** |
-| **❤️ 心脏** | Tick Loop | - | 持续运作（每 2 分钟） | Control | 定时唤醒，完全 deterministic |
-| **👀 感知** | Perception (Node.js) | 5221 | 系统监控、N8N 状态、任务状态 | Control | 集成在 Brain 中 |
-| **📊 记忆** | PostgreSQL | 5432 | 存储所有状态和历史 | Control | 唯一真相源 |
-| **🛡️ 免疫** | Circuit Breaker | - | 熔断保护、故障隔离 | Control | 硬编码规则 |
-| **🔧 队列** | Queue Manager | - | 队列管理、任务分发 | Control | 确定性算法 |
-| **⚡ 资源** | Resource Manager | - | 资源分配、节点调度 | Control | 确定性分配 |
-
-**关键架构原则**：
-
-> **大脑分为两层：Cognitive Plane（认知层，LLM）+ Control Plane（控制层，Deterministic）**
->
-> - **Cognitive Plane 包含 Planner**：负责"思考、建议、推理"（意图理解、任务拆解、优先级推荐、agent 推荐、诊断分析、进化提案）
-> - **Control Plane 包含 Dispatch**：负责"执行、调度、分配"（状态推进、资源分配、DB 写入、命令生成、熔断判断）
-> - **Dispatch 通过 Advice API 获取建议**：但必须经过 schema 校验、whitelist 映射、deterministic fallback，最终落地动作由 Dispatch 的确定性逻辑执行
-
-### 1.3 外部专家（External Experts）
-
-**这些是独立的 Agents，不是 Cecelia 的器官**：
-
-| Agent | Skill | 模型 | 角色 | 关系 | 是否必需 |
-|-------|-------|------|------|------|---------|
-| **External Planner** | /planner (已废弃) | Opus | 副管家（Assistant Butler） | 外部承包商，可选委托 | ❌ 可选 |
-| **Caramel** | /dev | Sonnet | 编程专家（Coding Specialist） | 外部承包商 | ✅ 必需（执行编程任务） |
-| **Nobel** | /nobel | Sonnet | 自动化专家（Automation Specialist） | 外部承包商 | ✅ 必需（执行自动化任务） |
-| **小检** | /qa | Sonnet | QA 专家（QA Specialist） | 外部承包商 | ✅ 必需（质量验收） |
-| **小审** | /audit | Sonnet | 审计专家（Audit Specialist） | 外部承包商 | ✅ 必需（代码审计） |
-
-**关键区别**：
-
-| 维度 | Internal Planner（内层） | External Planner Agent（外层） |
-|------|------------------------|------------------------------|
-| **位置** | Brain 内部 Cognitive Plane | 独立进程（/planner skill） |
-| **实现** | brain/src/cognitive/planner.js | ~/.claude/skills/planner/ |
-| **模型** | Opus | Opus |
-| **职责** | 简单任务拆解（1-5 步） | 复杂任务拆解（5+ 步） |
-| **是否必需** | ✅ 必需（Cecelia 核心能力） | ❌ 可选（可委托给外部） |
-| **可替换性** | ❌ 不可替换（Cecelia 器官） | ✅ 可替换（可能去其他公司） |
-| **调用方式** | Brain 内部函数调用 | Bash 启动外部进程 |
-| **状态共享** | 直接访问 PostgreSQL | 通过 PostgreSQL 读写 |
-
-**何时使用 External Planner？**
-
-- 任务复杂度 > 5 步
-- 需要多个 agents 协同
-- 用户显式要求"详细规划"
-
-**何时不用 External Planner？**
-
-- 简单任务（1-3 步）
-- Internal Planner 可以规划（Brain 的 Cognitive Planner）
-- 只涉及单个 agent
-
----
-
-## 2. LLM 使用边界与模型策略
-
-### 2.1 核心原则
-
-**三条不可违反的硬规则（MUST NOT）**：
-
-1. **🔴 MUST NOT: Control Plane 禁止 LLM 直接决策**
-   - 状态机、DB 操作、资源分配、命令生成必须 100% deterministic
-   - 违反后果：状态不可预测、幂等性丧失、系统不稳定
-
-2. **🔴 MUST NOT: Dispatch 禁止 LLM 直接参与落地执行**
-   - Dispatch 可以"接收 Planner 的 LLM 建议"，但最终决策必须由硬编码逻辑执行
-   - 必须经过：schema 校验 → whitelist 映射 → deterministic fallback
-   - 违反后果：相同输入产生不同结果、资源分配不公平、审计困难
-
-3. **🔴 MUST NOT: DB 写入禁止由 LLM 生成 SQL**
-   - 所有 INSERT/UPDATE 必须使用预定义 SQL 模板
-   - 违反后果：SQL 注入风险、数据完整性破坏、事务不一致
-
-4. **🟠 SHOULD NOT: Cognitive Plane 输出不得包含可执行动作**
-   - Planner 输出只能是 Advice JSON（建议、候选、理由、置信度）
-   - 禁止输出：shell 命令、SQL、直接可执行 patch
-   - 原因：避免 Cognitive 输出绕过 Control 的审计与幂等性边界
-
-### 2.2 Planner vs Dispatch 决策责任矩阵
-
-**关键原则**：
-
-> **Planner 负责"思考、建议"（What to do?）**
-> **Dispatch 负责"执行、落地"（How to do it?）**
-
-| 决策点 | 层级 | 负责模块 | 允许 LLM | 实现方式 | 输出类型 | 说明 |
-|--------|------|---------|---------|---------|---------|------|
-| **意图粗分类（路由）** | Interface/Perception | Mouth | 🟩 允许 (Haiku) | 自然语言 → 粗粒度分类 | 枚举 (routing key) | "帮我爬数据" → `automation` |
-| **意图最终结构化** | Cognitive | Planner | 🟩 允许 (Opus) | 自然语言 → Canonical JSON | JSON (schema 验证) | `automation` + 上下文 → `{type: "automation", target: "...", ...}` |
-| **任务拆解** | Cognitive | Planner | 🟩 允许 (Opus) | Feature 描述 → Task 列表 | JSON 数组 (schema 验证) | "实现登录" → [Task1, Task2, Task3] |
-| **优先级建议** | Cognitive | Planner | 🟩 允许 (Opus) | 多因素推理 → P0/P1/P2 | 枚举 (whitelist 映射) | LLM 推荐 P0 → 映射到枚举 |
-| **Agent 推荐** | Cognitive | Planner | 🟩 允许 (Opus) | 任务特征 → agent 名称 | 字符串 (whitelist 验证) | LLM 推荐 "caramel" → 验证在候选集 |
-| **节点候选推荐** | Cognitive | Planner | 🟩 允许 (Opus) | 任务 + 资源 → 候选节点列表 | 节点 ID 数组 (存在性验证) | LLM 推荐 ["vps-main", "mac-mini"] |
-| **PRD 生成** | Cognitive | Planner | 🟩 允许 (Opus) | 任务上下文 → Markdown PRD | Markdown 文件 | 写入 /tmp/prd-*.md |
-| **诊断分析** | Cognitive | Planner | 🟩 允许 (Opus) | 失败历史 → 根因报告 | JSON 报告 | Immune Diagnoser |
-| **进化提案** | Cognitive | Planner | 🟩 允许 (Opus) | 系统 signals → Change Proposal | JSON (严格 schema) | Evolution Engine |
-| | | | | | | |
-| **状态机推进** | Control | Dispatch | 🟥 禁止 | 硬编码纯函数 | 枚举状态 | `QUEUED → RUNNING` |
-| **资源座位分配** | Control | Dispatch | 🟥 禁止 | CAS 原子操作 | DB UPDATE | `UPDATE tasks SET assigned_node_id=...` |
-| **DB 写入/更新** | Control | Dispatch | 🟥 禁止 | 预定义 SQL 模板 | SQL 语句 | `UPDATE tasks SET status=...` |
-| **命令模板生成** | Control | Dispatch | 🟥 禁止 | 字符串模板 | Bash 命令 | `nohup claude -p "/dev ..."` |
-| **熔断判断** | Control | Dispatch | 🟥 禁止 | 阈值硬规则 | Boolean | `failures >= 3 → OPEN` |
-| **重试策略** | Control | Dispatch | 🟥 禁止 | 计数器 + 硬规则 | 重试次数 | `retry_count < max_retries` |
-| **节点最终选择** | Control | Dispatch | 🟥 禁止 | 确定性算法 | 单个节点 ID | 从候选列表按规则选第一个 |
-| **Seat 可用性检查** | Control | Dispatch | 🟥 禁止 | SQL COUNT 查询 | Integer | `max - reserved - COUNT(running)` |
-| **Idempotency Key 生成** | Control | Dispatch | 🟥 禁止 | 字符串拼接 | 字符串 | `feature-${id}-task-${title}` |
-
-### 2.3 Dispatch 通过 Advice API 获取建议的正确模式
-
-**❌ 错误模式：LLM 直接决策**
-
-```javascript
-// ❌ 禁止：Dispatch 直接用 LLM 做资源分配
-async function dispatch(task) {
-  const node = await llm.selectNode(task, resources);  // ❌ 不可预测
-  await allocateSeat(task.id, node.id);  // ❌ 每次可能不同
-}
-```
-
-**✅ 正确模式：Advice API 建议 + Deterministic 落地**
-
-```javascript
-// ✅ 正确：Dispatch 通过 Advice API 获取建议，然后用硬规则落地
-async function dispatch(task, resources) {
-  // Step 1: 调用 Advice API 获取建议（Cognitive Plane, Opus）
-  const suggestion = await advice.recommendNode(task, resources);
-  // suggestion = { candidates: ["vps-main", "mac-mini"], reason: "..." }
-
-  // Step 2: Dispatch 验证建议（Control Plane, Deterministic）
-  const validCandidates = resources.nodes.filter(node => {
-    // 硬规则 1: 候选节点必须在可用列表中
-    if (!suggestion.candidates.includes(node.id)) return false;
-
-    // 硬规则 2: 节点必须有可用座位
-    if (node.available_seats <= 0) return false;
-
-    // 硬规则 3: 节点必须匹配 labels
-    const requiredLabels = task.required_labels || [];
-    if (!requiredLabels.every(label => node.labels.includes(label))) return false;
-
-    return true;
-  });
-
-  // Step 3: Deterministic fallback（如果 LLM 建议无效）
-  if (validCandidates.length === 0) {
-    logger.warn('Planner suggestion invalid, falling back to default algorithm');
-    validCandidates = resources.nodes.filter(node =>
-      node.available_seats > 0 &&
-      (task.required_labels || []).every(label => node.labels.includes(label))
-    );
-  }
-
-  // Step 4: 确定性选择（按可用座位数降序排序，选第一个）
-  validCandidates.sort((a, b) => b.available_seats - a.available_seats);
-  const selectedNode = validCandidates[0];
-
-  if (!selectedNode) {
-    throw new Error('No available node for task');
-  }
-
-  // Step 5: 原子性分配（CAS）
-  await resourceManager.allocateSeat(task.id, selectedNode.id);
-
-  // Step 6: 生成命令（硬编码模板）
-  const command = generateCommand(task, selectedNode);  // deterministic
-
-  // Step 7: 执行
-  await execute(command, task, selectedNode);
-}
-```
-
-**模式总结**：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Planner (Cognitive Plane, LLM)                             │
-│  - 输入: task, resources, context                           │
-│  - 输出: 建议 JSON (candidates, priorities, reasons)        │
-│  - 特点: 可能不稳定、需要验证                               │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼ (建议传递)
-┌─────────────────────────────────────────────────────────────┐
-│  Dispatch (Control Plane, Deterministic)                    │
-│  1. Schema 校验: 验证 JSON 格式                             │
-│  2. Whitelist 映射: 候选项必须在预定义集合中                │
-│  3. 硬规则过滤: 应用确定性约束（available_seats, labels）  │
-│  4. Deterministic fallback: LLM 无效时按硬规则              │
-│  5. 确定性选择: 按硬编码算法（如排序取第一个）              │
-│  6. 原子性执行: CAS、事务、幂等性保证                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Advice Interface 约束（防渗透接口）**：
-
-Control Plane 只能调用 Cognitive Plane 的 **Advice API**（窄接口），**禁止直接依赖 Planner 的内部实现**。
-
-Cognitive Plane 通过 `advice-api` 模块暴露以下接口：
-- `advice.recommendAgent(task)` → 返回建议 JSON
-- `advice.recommendNode(task, resources)` → 返回候选节点列表
-- `advice.decomposeFeature(description)` → 返回子任务列表
-
-所有输出必须走：**schema 校验 + whitelist 映射 + deterministic fallback**
-
-**关键**：Control Plane 不能 `require('../cognitive/planner')`，只能 `require('../cognitive/advice-api')`，防止耦合/渗透。
-
-### 2.4 LLM 使用矩阵（完整版）
-
-| 模块 | 允许 LLM | 模型要求 | 原因 | 示例 |
-|------|---------|---------|------|------|
-| **Control Plane** | | | | |
-| 状态机（Task/Feature/Project） | 🟥 禁止 | - | 状态推进必须 deterministic | `QUEUED → RUNNING → COMPLETED` |
-| DB 写入/更新 | 🟥 禁止 | - | 数据完整性、幂等性 | `UPDATE tasks SET status=...` |
-| Tick Loop 逻辑 | 🟥 禁止 | - | 定时触发必须稳定 | `setInterval(tick, 120000)` |
-| Queue Manager | 🟥 禁止 | - | 队列管理必须可预测 | `getNext(resources)` |
-| Resource Manager | 🟥 禁止 | - | 资源分配必须公平 | `allocateSeat(nodeId)` |
-| Circuit Breaker | 🟥 禁止 | - | 熔断规则必须硬编码 | `failures >= 3 → OPEN` |
-| Dispatch Executor | 🟥 禁止 | - | Bash 命令生成必须模板化 | `nohup claude -p "..."` |
-| Health Manager | 🟥 禁止 | - | 健康检查必须确定性 | `checkHeartbeat()` |
-| **Interface/Perception Layer** | | | | |
-| 意图粗分类（路由） | 🟩 允许 | Haiku | 自然语言 → 粗粒度分类 | `"帮我爬数据" → automation` |
-| **Cognitive Plane** | | | | |
-| 意图最终结构化 | 🟩 允许 | Opus | 自然语言 → Canonical JSON | `"爬取数据" → {type: "automation", target: "...", ...}` |
-| 任务分解 | 🟩 允许 | Opus | 复杂需求 → 子任务列表 | `"重构登录" → [task1, task2]` |
-| 决策推理 | 🟩 允许 | Opus | 多因素决策（优先级/依赖/资源） | 选择哪个节点执行 |
-| 部门沟通 | 🟩 允许 | Opus | 生成派发指令的 context | 给 Caramel 的 PRD |
-| 记忆编排 | 🟩 允许 | Opus | 历史数据 → 决策参考 | 查询类似失败案例 |
-| 免疫诊断 | 🟩 允许 | Opus | 异常模式识别 → 诊断报告 | 分析为什么频繁超时 |
-| 进化引擎 | 🟩 允许 | Opus | Signal → Change Proposal | 生成优化建议 |
-
-### 2.5 模型选择策略
-
-| 场景 | 模型 | 原因 | Latency | Cost |
-|------|------|------|---------|------|
-| 嘴巴（用户对话） | Haiku | 快速响应，简单分类 | <2s | $$ |
-| Planner（任务拆解） | Opus | 复杂推理，深度规划 | 10-30s | $$$$$ |
-| Planner（优先级推理） | Opus | 多因素权衡 | 10-30s | $$$$$ |
-| Planner（Agent 推荐） | Opus | 理解任务特征 | 5-10s | $$$$$ |
-| Planner（诊断分析） | Opus | 根因分析 | 30s+ | $$$$$ |
-| 进化引擎 | Opus | 长时间推理，非实时 | 60s+ | $$$$$ |
-| Dispatch（任何决策） | ❌ 禁止 LLM | 必须 deterministic | - | - |
-
----
-
-## 3. 生命体架构
-
-### 3.1 四层架构（修正版）
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│                      Cecelia 生命体架构                         │
-└────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────────┐
-│  Layer 1: Cognitive Plane (中枢认知层) - LLM-Powered (Opus)   │
-├────────────────────────────────────────────────────────────────┤
-│  Planner (Internal)     │ 任务拆解、优先级推理、agent 推荐     │
-│  Memory Orchestrator    │ 历史数据检索，上下文构建             │
-│  Executive Reasoning    │ 多因素决策推理                       │
-│  Department Comm        │ 生成派发指令，外部协作               │
-│  Immune Diagnoser       │ 异常诊断，根因分析                   │
-│  Evolution Engine       │ 生成变更提案，系统优化               │
-│                                                                │
-│  职责：思考、建议、推理、诊断、提案                            │
-│  输出：JSON 建议（经过 schema 验证）                           │
-└────────────────────────────────────────────────────────────────┘
-                            ↓
-                    建议传递（JSON）
-                            ↓
-┌────────────────────────────────────────────────────────────────┐
-│  Layer 2: Control Plane (中枢控制层) - Deterministic          │
-├────────────────────────────────────────────────────────────────┤
-│  Tick Loop          │ 定时心跳，唤醒系统                       │
-│  Queue Manager      │ 队列管理，获取 next task                 │
-│  Resource Manager   │ 资源分配，节点调度                       │
-│  Health Manager     │ 健康检查，心跳监控                       │
-│  Circuit Breaker    │ 熔断保护，故障隔离                       │
-│  Dispatch Executor  │ 任务派发，生成 Bash 命令                 │
-│  State Machine      │ 状态推进，确定性转换                     │
-│                                                                │
-│  职责：执行、调度、分配、保护、落地                            │
-│  输入：Planner 的建议（验证后使用）                            │
-│  输出：DB 更新、Bash 命令、状态变更                            │
-└────────────────────────────────────────────────────────────────┘
-                            ↓ ↑
-                    读取状态 / 写入决策
-                            ↓ ↑
-┌────────────────────────────────────────────────────────────────┐
-│  Single Source of Truth: PostgreSQL                           │
-│  - goals, projects, features, tasks 表                        │
-│  - execution_nodes, execution_runs 表                         │
-│  - circuit_breaker_state, health_status 表                    │
-└────────────────────────────────────────────────────────────────┘
-                            ↑ ↓
-                    读取历史 / 写入结果
-                            ↑ ↓
-┌────────────────────────────────────────────────────────────────┐
-│  Layer 3: External Experts (外部专家层)                        │
-├────────────────────────────────────────────────────────────────┤
-│  External Planner       │ 复杂任务拆解（可选委托）             │
-│  Caramel                │ 编程任务执行（/dev workflow）        │
-│  Nobel                  │ 自动化任务执行（N8N）                │
-│  QA                     │ 测试决策（/qa）                      │
-│  Audit                  │ 代码审计（/audit）                   │
-└────────────────────────────────────────────────────────────────┘
-                            ↓
-                    调度到具体节点
-                            ↓
-┌────────────────────────────────────────────────────────────────┐
-│  Layer 4: Execution Nodes (执行节点层)                         │
-├────────────────────────────────────────────────────────────────┤
-│  VPS (8c16g)            │ 6 seats total                        │
-│    - immune: 1 seat     │ Cecelia 自我诊断/进化                │
-│    - gatekeeper: 1 seat │ Cecelia 流量控制/保护                │
-│    - work: 4 seats      │ 外部 agents 执行                     │
-│                                                                │
-│  Mac mini               │ 未来扩展（本地开发/测试）            │
-│  GPU PC                 │ 未来扩展（AI 推理/训练）             │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 Control Plane 模块详解
-
-#### 3.2.1 Dispatch Executor（派发执行器，修正版）
-
-**职责**：生成并执行 Bash 命令，启动外部 Agents
-
-**关键**：Dispatch 通过 Advice API 获取建议（Cognitive 内部封装 Planner），但最终落地必须 deterministic
-
-```javascript
-// brain/src/control/executor.js
-const advice = require('../cognitive/advice-api');  // ✅ 通过 Advice API（窄接口）
-
-class DispatchExecutor {
-  async dispatch(task, resources) {
-    // ==========================================
-    // Part 1: Cognitive Plane（LLM 建议）
-    // ==========================================
-
-    // 1.1 调用 Advice API 获取 agent 推荐（Cognitive, Opus）
-    const agentSuggestion = await advice.recommendAgent(task);
-    // agentSuggestion = { agent: "caramel", reason: "..." }
-
-    // 1.2 调用 Advice API 获取节点候选（Cognitive, Opus）
-    const nodeSuggestion = await advice.recommendNode(task, resources);
-    // nodeSuggestion = { candidates: ["vps-main", "mac-mini"], reason: "..." }
-
-    // ==========================================
-    // Part 2: Control Plane（Deterministic 落地）
-    // ==========================================
-
-    // 2.1 验证 agent 建议（Whitelist 映射）
-    const validAgents = ['caramel', 'nobel', 'planner', 'qa', 'audit'];
-    const agent = validAgents.includes(agentSuggestion.agent)
-      ? agentSuggestion.agent
-      : 'caramel';  // Deterministic fallback
-
-    // 2.2 选择节点（Deterministic 逻辑）
-    const node = await this.selectNode(task, resources, nodeSuggestion.candidates);
-
-    // 2.3 分配资源（Atomic CAS）
-    await resourceManager.allocateSeat(task.id, node.id);
-
-    // 2.4 生成命令（Hardcoded Template）
-    const command = this.generateCommand(task, agent, node);
-
-    // 2.5 执行（Deterministic）
-    await this.execute(command, task, node);
-  }
-
-  async selectNode(task, resources, suggestedCandidates) {
-    // Deterministic 节点选择逻辑
-
-    // Step 1: 过滤候选节点（使用 Planner 的建议）
-    let candidateNodes = resources.nodes.filter(node => {
-      // 必须在 Planner 推荐的候选列表中
-      if (!suggestedCandidates.includes(node.id)) return false;
-
-      // 必须有可用座位
-      if (node.available_seats <= 0) return false;
-
-      // 必须匹配 labels
-      const requiredLabels = task.required_labels || [];
-      if (!requiredLabels.every(label => node.labels.includes(label))) return false;
-
-      return true;
-    });
-
-    // Step 2: Deterministic fallback（如果 Planner 建议无效）
-    if (candidateNodes.length === 0) {
-      logger.warn('Planner node suggestion invalid, falling back to default');
-      candidateNodes = resources.nodes.filter(node => {
-        return node.available_seats > 0 &&
-          (task.required_labels || []).every(label => node.labels.includes(label));
-      });
-    }
-
-    // Step 3: 确定性选择（按可用座位数降序排序，选第一个）
-    candidateNodes.sort((a, b) => b.available_seats - a.available_seats);
-
-    const selectedNode = candidateNodes[0];
-
-    if (!selectedNode) {
-      throw new Error('No available node for task');
-    }
-
-    return selectedNode;
-  }
-
-  generateCommand(task, agent, node) {
-    // 硬编码模板（Deterministic）
-    const skillMap = {
-      caramel: '/dev',
-      nobel: '/nobel',
-      planner: '/planner',
-      qa: '/qa',
-      audit: '/audit'
-    };
-
-    // Deterministic model map（不是 LLM 决策，是硬编码映射）
-    const modelMap = {
-      caramel: 'sonnet',
-      nobel: 'sonnet',
-      planner: 'opus',   // External Planner 需要深度推理
-      qa: 'sonnet',
-      audit: 'sonnet'
-    };
-
-    const skill = skillMap[agent];
-    const model = modelMap[agent];
-    const prd = task.prd_path || '/tmp/prd-default.md';
-
-    // 模板化命令（Deterministic）
-    return `
-      nohup claude -p "${skill} ${prd}" \\
-        --model ${model} \\
-        --allowed-tools "Bash,Edit,Write,Read" \\
-        > /tmp/${agent}-${task.id}.log 2>&1 &
-      echo $!
-    `.trim();
-  }
-
-  async execute(command, task, node) {
-    // 1. SSH 到目标节点（如果是远程节点）
-    const execCommand = node.is_local
-      ? command
-      : `ssh ${node.ssh_user}@${node.ssh_host} '${command}'`;
-
-    // 2. 执行（Deterministic）
-    const { stdout, stderr } = await exec(execCommand);
-
-    // 3. 记录 PID（Deterministic）
-    const pid = parseInt(stdout.trim());
-    await db.query(`
-      UPDATE tasks SET pid = $1 WHERE id = $2
-    `, [pid, task.id]);
-
-    logger.info(`Task ${task.id} dispatched to ${node.id}, PID: ${pid}`);
-  }
-}
-```
-
-**关键设计**：
-
-| 步骤 | 层级 | 说明 |
+| 器官 | 实现 | 职责 |
 |------|------|------|
-| 1. 调用 Advice API 获取建议 | Cognitive | Advice API 封装 Planner（Opus），推荐 agent 和候选节点 |
-| 2. Schema 校验 | Control | 验证 JSON 格式 |
-| 3. Whitelist 映射 | Control | agent 必须在候选集合中 |
-| 4. 硬规则过滤 | Control | 验证座位、labels、心跳 |
-| 5. Deterministic fallback | Control | Advice API 无效时按硬规则 |
-| 6. 确定性选择 | Control | 排序 + 取第一个 |
-| 7. 原子性分配 | Control | CAS 防止竞态 |
-| 8. 命令生成 | Control | 硬编码模板 |
-| 9. 执行 | Control | Bash/SSH |
+| 🧠 大脑 | Brain (Node.js) | 决策、调度、监控 |
+| ❤️ 心脏 | Tick Loop (5s) | 持续运作，驱动一切 |
+| 📊 记忆 | PostgreSQL | 存储所有状态和历史 |
+| 💬 嘴巴 | /cecelia skill | 对外对话接口 |
 
-### 3.3 Cognitive Plane 模块详解
+### 1.3 外部 Agent（员工）
 
-#### 3.3.1 Planner (Internal)
+这些是独立的无头 Claude Code 进程，由 Cecelia 召唤执行任务：
 
-**职责**：任务拆解、优先级推理、agent 推荐、节点候选推荐
+| Agent | Skill | 模型 | 职责 |
+|-------|-------|------|------|
+| 秋米 | /okr | Opus | OKR 拆解（边做边拆） |
+| Caramel | /dev | Opus | 编程（写代码、PR、CI） |
+| 审查员 | /review | Sonnet | 代码审查（只读模式） |
+| 小检 | /qa | Sonnet | 质量验收 |
+| 小审 | /audit | Sonnet | 代码审计 |
 
-**定位**：Brain 内部的认知模块，使用 Opus LLM
+**调用链**：Brain → cecelia-bridge → cecelia-run → claude -p "/skill ..."
+
+---
+
+## 2. 架构总览
+
+### 2.1 三层大脑架构
+
+```
+┌─────────────────────────────────────────────┐
+│  L2 皮层 (Cortex)  — Opus                   │
+│  深度分析、RCA、战略调整、记录经验           │
+│  cortex.js                                   │
+├─────────────────────────────────────────────┤
+│  L1 丘脑 (Thalamus)  — Sonnet               │
+│  事件路由、快速判断、异常检测                │
+│  thalamus.js                                 │
+├─────────────────────────────────────────────┤
+│  L0 脑干 (Brainstem)  — 纯代码              │
+│  tick、dispatch、executor、watchdog           │
+│  alertness、circuit-breaker、quarantine       │
+│  tick.js, executor.js, planner.js, ...       │
+└─────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────┐
+│  PostgreSQL — 唯一真相源                     │
+│  cecelia 数据库, schema v008                 │
+│  19 张核心表                                │
+└─────────────────────────────────────────────┘
+```
+
+### 2.2 LLM 使用边界
+
+**硬规则**：L0（代码层）禁止 LLM 直接决策。所有状态推进、DB 写入、资源分配必须由确定性代码执行。
+
+| 层 | 允许 LLM | 职责 |
+|----|---------|------|
+| L0 脑干 | 禁止 | 调度、执行、保护（纯代码） |
+| L1 丘脑 | Sonnet | 事件分类、快速判断（<1s） |
+| L2 皮层 | Opus | 深度分析、战略调整（>5s） |
+
+**LLM 只提建议，代码做执行**：
+- L1/L2 输出 Decision JSON（actions + rationale + confidence）
+- decision-executor.js 验证 action 在白名单内，然后在事务中执行
+- 危险 action（如 adjust_strategy）进入 pending_actions 表等人工审批
+
+---
+
+## 3. 三层大脑
+
+### 3.1 L0 脑干 — 纯代码
+
+心跳驱动，每 5 秒执行一次 `executeTick()`：
+
+```
+executeTick() 流程：
+  0. 评估警觉等级 → 调整行为
+  1. L1 丘脑事件处理（如有事件）
+     └─ level=2 → 升级到 L2 皮层
+  2. 决策引擎（对比目标进度 → 生成决策 → 执行决策）
+  3. Feature Tick（处理 Feature 状态机）
+  4. 反串清理（清理孤儿任务引用）
+  5. 获取每日焦点（selectDailyFocus）
+  6. 自动超时（in_progress > 60min → failed）
+  7. 存活探针（验证 in_progress 任务进程还活着）
+  8. 看门狗（/proc 采样，三级响应）
+  9. 规划（queued=0 且有 KR → planNextTask）
+  10. OKR 自动拆解（Objective 有 0 个 KR → 创建拆解任务）
+  11. 派发循环（填满所有可用 slot）
+```
+
+**关键模块**：
+
+| 文件 | 职责 |
+|------|------|
+| `tick.js` | 心跳循环、派发调度、焦点选择 |
+| `executor.js` | 进程管理、资源检测、命令生成 |
+| `planner.js` | KR 轮转、任务自动生成、PRD 生成 |
+| `watchdog.js` | /proc 采样、动态阈值、两段式 kill |
+| `alertness.js` | 4 级警觉、信号收集、衰减恢复 |
+| `circuit-breaker.js` | 三态熔断（CLOSED/OPEN/HALF_OPEN） |
+| `quarantine.js` | 失败隔离、可疑输入检测 |
+| `decision-executor.js` | 决策执行（事务化、白名单、危险审批） |
+
+### 3.2 L1 丘脑 — Sonnet 快速判断
+
+`thalamus.js` 处理系统事件，快速路由：
+
+```
+事件 → quickRoute()（L0 硬编码规则）
+  ├─ HEARTBEAT → no_action
+  ├─ TICK(无异常) → fallback_to_tick
+  ├─ TASK_COMPLETED(无问题) → dispatch_task
+  └─ 其他 → callSonnet()（L1 判断）
+               ├─ level=0/1 → 返回决策
+               └─ level=2 → 升级到皮层
+```
+
+**17 个白名单 action**：
+- 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task
+- OKR：create_okr, update_okr_progress, assign_to_autumnrice
+- 系统：notify_user, log_event, escalate_to_brain, request_human_review
+- 分析：analyze_failure, predict_progress
+- 控制：no_action, fallback_to_tick
+
+### 3.3 L2 皮层 — Opus 深度分析
+
+`cortex.js` 在 L1 判断 level=2 时介入：
+
+- **根因分析 (RCA)**：分析反复失败的任务
+- **战略调整**：adjust_strategy（修改 brain_config，需审批）
+- **经验记录**：record_learning（存入 reflections 表）
+- **RCA 报告**：create_rca_report（存入 decision_log 表）
+
+**皮层额外 3 个 action**：adjust_strategy、record_learning、create_rca_report
+
+---
+
+## 4. 数据模型
+
+### 4.1 三层结构
+
+```
+goals (OKR 目标)
+├── Objective (parent_id=NULL)
+│   └── Key Result (parent_id=Objective.id)
+│
+projects (项目/Feature)
+├── Project (repo_path≠NULL, parent_id=NULL)
+│   └── Feature (parent_id=Project.id, repo_path=NULL)
+│
+tasks (具体任务)
+└── Task (project_id→Feature.id, goal_id→KR.id)
+```
+
+**关键关系**：
+- Task.project_id → **Feature** ID（不是 Project）
+- Task.goal_id → **KR** ID（不是 Objective）
+- Feature→Project 通过 parent_id 找到 repo_path（`resolveRepoPath()` 向上遍历）
+- project_kr_links 表：Project ↔ KR 多对多关联
+
+### 4.2 核心表
+
+| 表 | 用途 | 关键字段 |
+|----|------|---------|
+| **tasks** | 任务队列 | status, task_type, priority, payload, prd_content |
+| **goals** | OKR 目标 | type(objective/key_result), parent_id, progress |
+| **projects** | 项目/Feature | repo_path, parent_id, decomposition_mode |
+| **features** | Feature 状态机 | status, active_task_id, prd |
+| **areas** | PARA 领域 | name, group_name |
+| **project_kr_links** | 项目↔KR 关联 | project_id, kr_id |
+
+### 4.3 系统表
+
+| 表 | 用途 |
+|----|------|
+| **cecelia_events** | 全局事件日志（token 使用、状态变更、学习等） |
+| **decision_log** | LLM 决策记录（L1/L2 输出、执行结果） |
+| **working_memory** | 短期记忆（key-value，如 last_dispatch） |
+| **brain_config** | 配置（region、fingerprint） |
+| **pending_actions** | 危险操作审批队列（24h 过期） |
+| **reflections** | 经验/问题/改进（issue/learning/improvement） |
+| **daily_logs** | 每日汇总（summary、highlights、challenges） |
+| **recurring_tasks** | 定时任务模板（cron 表达式） |
+| **schema_version** | 迁移版本追踪 |
+| **blocks** | 通用 block 存储 |
+
+### 4.4 发布系统表（Schema v008）
+
+| 表 | 用途 |
+|----|------|
+| **publishing_tasks** | 发布任务队列（platform、content、scheduled_at） |
+| **publishing_records** | 发布历史（success、error_message、platform_response） |
+| **publishing_credentials** | 平台凭据（platform、account_name、credentials） |
+
+### 4.5 任务状态
+
+```
+queued → in_progress → completed
+                    → failed → (retry) → queued
+                    → quarantined → (release) → queued
+                                 → (cancel) → cancelled
+```
+
+### 4.6 任务类型与路由
+
+| 类型 | 位置 | Agent | 模型 |
+|------|------|-------|------|
+| dev | US | Caramel (/dev) | Opus |
+| review | US | 审查员 (/review) | Sonnet |
+| qa | US | 小检 (/qa) | Sonnet |
+| audit | US | 小审 (/audit) | Sonnet |
+| talk | HK | MiniMax | MiniMax |
+| research | HK | MiniMax | MiniMax |
+| data | HK | N8N | - |
+
+---
+
+## 5. 任务生命周期
+
+### 5.1 从 OKR 到任务
+
+```
+Objective (目标)
+  │
+  ├─ 有 0 个 KR？ → 自动创建拆解任务 → 秋米 /okr → 生成 KR
+  │
+  └─ KR (关键结果)
+       │
+       ├─ selectDailyFocus() → 选择今日焦点 Objective
+       │
+       ├─ planNextTask(krIds) → KR 轮转评分
+       │   ├─ 焦点 KR +100
+       │   ├─ 优先级 P0/P1/P2 → +30/+20/+10
+       │   ├─ 进度差距 → +0~20
+       │   └─ 截止日期紧迫 → +20~40
+       │
+       └─ autoGenerateTask() → 生成任务
+           ├─ 重试失败任务（retry_count < 2）
+           ├─ 匹配 KR_STRATEGIES（7 种策略模式）
+           └─ Fallback：research → implement → test
+```
+
+### 5.2 派发流程
+
+```
+dispatchNextTask():
+  1. checkServerResources() → CPU/内存/SWAP 压力
+  2. 检查并发（active < AUTO_DISPATCH_MAX）
+  3. 检查熔断（circuit-breaker isAllowed）
+  4. selectNextDispatchableTask() → 选下一个任务
+     └─ WHERE status='queued'
+        AND (next_run_at IS NULL OR next_run_at <= NOW())
+  5. UPDATE status='in_progress'
+  6. triggerCeceliaRun(task)
+     ├─ preparePrompt() → 生成 skill + 参数
+     ├─ getModelForTask() → 选模型
+     ├─ resolveRepoPath() → Feature→Project→repo_path
+     └─ HTTP → cecelia-bridge → cecelia-run → claude
+  7. WebSocket 广播事件
+  8. 记录到 working_memory
+```
+
+### 5.3 执行回调
+
+```
+任务完成 → POST /api/brain/execution-callback
+  ├─ status=completed → 更新任务状态、清理进程
+  ├─ status=failed → handleTaskFailure()
+  │   ├─ failure_count < 3 → 标记失败
+  │   ├─ failure_count >= 3 → 自动隔离
+  │   └─ 检测系统性故障 → alertness +25
+  └─ payload.exploratory=true？
+      └─ 创建"继续拆解"任务 → 秋米继续
+```
+
+### 5.4 探索式拆解闭环
+
+```
+KR → 首次拆解 (decomposition='true', /okr, Opus)
+  └─ 秋米分析 → 创建 Feature + 第一个 Task
+       └─ Task 完成 → 回调触发"继续拆解"
+            └─ (decomposition='continue', /okr, Opus)
+                 └─ 秋米分析上次结果 → 创建下一个 Task
+                      └─ 循环直到 KR 目标达成
+```
+
+---
+
+## 6. 保护系统
+
+### 6.1 警觉等级（alertness.js）
+
+4 级自我保护，根据信号自动升降级：
+
+| 级别 | 名称 | 派发率 | 行为 |
+|------|------|--------|------|
+| 0 | Normal | 100% | 全速运行 |
+| 1 | Alert | 50% | 停止自动重试 |
+| 2 | Emergency | 25% | 停止规划 |
+| 3 | Coma | 0% | 只保留心跳 |
+
+**信号源（9 种）**：
+
+| 信号 | 分值 |
+|------|------|
+| circuit_breaker_open | +30 |
+| db_connection_issues | +25 |
+| systemic_failure | +25 |
+| high_failure_rate | +20 |
+| llm_bad_output | +20 |
+| event_backlog | +20 |
+| resource_pressure | +15 |
+| llm_api_errors | +15 |
+| consecutive_failures | +10/次（最高 +40） |
+
+**阈值**：≥80→Coma, ≥50→Emergency, ≥20→Alert, <20→Normal
+
+**衰减**：每 10 分钟 score × 0.8，问题解决后自动恢复
+
+**恢复等待**：Coma→Emergency 30min, Emergency→Alert 15min, Alert→Normal 10min
+
+### 6.2 熔断器（circuit-breaker.js）
+
+Per-service 三态熔断：
+
+```
+CLOSED ──(3次失败)──► OPEN ──(30分钟)──► HALF_OPEN
+   ▲                                        │
+   └────────(成功)──────────────────────────┘
+                     (失败) → 回到 OPEN
+```
+
+### 6.3 隔离区（quarantine.js）
+
+| 隔离原因 | 条件 |
+|---------|------|
+| repeated_failure | 连续失败 ≥3 次 |
+| suspicious_input | 检测到危险模式（rm -rf、DROP TABLE 等） |
+| resource_hog | 看门狗连续 kill ≥2 次 |
+| timeout_pattern | 连续超时 ≥2 次 |
+| manual | 人工隔离 |
+
+**审查操作**：release（释放）、retry_once（试一次）、cancel（取消）、modify（修改后释放）
+
+**故障分类**：classifyFailure() 区分 SYSTEMIC（系统性，23 种模式）vs TASK_SPECIFIC（任务自身），系统性故障触发 alertness 信号。
+
+### 6.4 看门狗（watchdog.js）
+
+每 5s 通过 /proc 采样，动态阈值保护：
+
+**阈值（动态计算）**：
+
+| 参数 | 公式 | 16GB 机器 |
+|------|------|-----------|
+| RSS 硬杀线 | min(总内存×35%, 2400MB) | 2400MB |
+| RSS 警告线 | 硬杀线×75% | 1800MB |
+| CPU 持续阈值 | 95%（单核=100%） | 95% |
+| CPU 持续时长 | 6 个 tick（30s） | 30s |
+| 启动宽限期 | 60s | 60s |
+
+**三级响应**：
+
+| 系统压力 | 行为 |
+|---------|------|
+| < 0.7（正常） | RSS 超警告线 → 仅警告 |
+| 0.7~1.0（紧张） | RSS 超警告 + CPU 持续高 → kill |
+| ≥ 1.0（崩溃） | 只杀 RSS 最大的 1 个，下个 tick 再评估 |
+| 任何时候 | RSS 超硬杀线 → 无条件 kill（即使宽限期） |
+
+**两段式 kill**：SIGTERM → 等 10s → SIGKILL → 等 2s 确认死透
+
+**自动重排**：kill 后 requeue + 指数退避（2min, 4min），2 次 kill → 隔离
+
+---
+
+## 7. 并发与资源管理
+
+### 7.1 自动计算
 
 ```javascript
-// brain/src/cognitive/planner.js
-class InternalPlanner {
-  async decomposeFeature(featureDescription) {
-    // 使用 Opus 分解任务
-    const prompt = `
-      Feature 描述:
-      ${featureDescription}
+CPU_CORES = os.cpus().length
+TOTAL_MEM_MB = os.totalmem() / 1024 / 1024
+MEM_PER_TASK = 500MB
+CPU_PER_TASK = 0.5 core
+INTERACTIVE_RESERVE = 2 seats  // 留给有头会话
 
-      请将其分解为 3-5 个子任务（tasks），每个任务必须：
-      1. 有明确的验收标准
-      2. 可独立执行（或明确依赖关系）
-      3. 预估工作量（S/M/L）
-
-      返回 JSON 格式：
-      {
-        "tasks": [
-          {
-            "title": "...",
-            "acceptance_criteria": "...",
-            "dependencies": [],
-            "estimated_size": "M",
-            "required_labels": ["code", "backend"]
-          }
-        ]
-      }
-    `;
-
-    const response = await llm.complete(prompt, {
-      model: 'opus',
-      response_format: { type: 'json_object' }
-    });
-
-    // 验证 schema（Control Plane 强制）
-    const validated = taskListSchema.validate(JSON.parse(response));
-    if (!validated.success) {
-      throw new Error('LLM output invalid schema');
-    }
-
-    return validated.data.tasks;
-  }
-
-  async recommendAgent(task) {
-    // Opus 推荐 agent（返回建议，不直接派发）
-    const prompt = `
-      任务: ${task.title}
-      验收标准: ${task.acceptance_criteria}
-      所需技能: ${task.required_labels.join(', ')}
-
-      可选 agents:
-      - caramel: 编程专家，擅长写代码、测试、PR
-      - nobel: 自动化专家，擅长数据采集、N8N
-      - planner: 副管家，擅长复杂任务拆解
-      - qa: QA 专家，擅长测试决策
-      - audit: 审计专家，擅长代码审计
-
-      请选择最合适的 agent，只返回 agent 名称（小写）。
-    `;
-
-    const agent = (await llm.complete(prompt, { model: 'opus' })).trim().toLowerCase();
-
-    // 返回建议（Dispatch 会验证）
-    return {
-      agent: agent,
-      reason: 'LLM recommendation based on task characteristics'
-    };
-  }
-
-  async recommendNode(task, resources) {
-    // Opus 推荐候选节点（返回建议列表，不直接分配）
-    const prompt = `
-      任务: ${task.title}
-      所需标签: ${(task.required_labels || []).join(', ')}
-
-      可用节点:
-      ${resources.nodes.map(n => `- ${n.id}: ${n.available_seats} seats, labels: ${n.labels.join(',')}`).join('\n')}
-
-      请推荐 1-3 个最合适的候选节点，考虑：
-      - 标签匹配度
-      - 可用资源
-      - 节点负载均衡
-
-      返回 JSON：
-      {
-        "candidates": ["node-id-1", "node-id-2"],
-        "reason": "..."
-      }
-    `;
-
-    const response = await llm.complete(prompt, {
-      model: 'opus',
-      response_format: { type: 'json_object' }
-    });
-
-    const parsed = JSON.parse(response);
-
-    // 返回建议（Dispatch 会验证并过滤）
-    return {
-      candidates: parsed.candidates || [],
-      reason: parsed.reason || 'LLM recommendation'
-    };
-  }
-}
-
-module.exports = new InternalPlanner();
+MAX_SEATS = floor(min(USABLE_MEM / 500, USABLE_CPU / 0.5))
+AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ```
 
-#### 3.3.2 Advice API（防渗透接口实现）
+**8 核 16GB**：MAX_SEATS=12, AUTO_DISPATCH=10
 
-**职责**：为 Control Plane 提供窄接口，封装 Planner 的 LLM 调用
+### 7.2 动态限流
 
-**实现要求**：
+`checkServerResources()` 实时计算压力值（0.0~1.0+）：
 
-```javascript
-// brain/src/cognitive/advice-api.js
-const planner = require('./planner');  // 内部依赖 Planner
+| 压力 | 有效 Slots |
+|------|-----------|
+| < 0.5 | 满额（12） |
+| 0.5~0.7 | 2/3（8） |
+| 0.7~0.9 | 1/3（4） |
+| ≥ 0.9 | 1 |
+| ≥ 1.0 | 0（停止派发） |
 
-class AdviceAPI {
-  async recommendAgent(task) {
-    // 1. Prompt 固定化
-    // 2. response_format=json
-    // 3. Schema 校验
-    // 4. 超时与 fallback（返回空候选）
+### 7.3 进程跟踪
 
-    try {
-      const suggestion = await planner.recommendAgent(task);
-
-      // Schema 校验
-      if (!suggestion.agent || typeof suggestion.agent !== 'string') {
-        throw new Error('Invalid agent suggestion schema');
-      }
-
-      return suggestion;
-    } catch (error) {
-      logger.warn('Advice API failed, returning fallback', error);
-      return { agent: null, reason: 'fallback due to error' };
-    }
-  }
-
-  async recommendNode(task, resources) {
-    try {
-      const suggestion = await planner.recommendNode(task, resources);
-
-      // Schema 校验
-      if (!Array.isArray(suggestion.candidates)) {
-        throw new Error('Invalid node suggestion schema');
-      }
-
-      return suggestion;
-    } catch (error) {
-      logger.warn('Advice API failed, returning empty candidates', error);
-      return { candidates: [], reason: 'fallback due to error' };
-    }
-  }
-
-  async decomposeFeature(description) {
-    try {
-      const tasks = await planner.decomposeFeature(description);
-
-      // Schema 校验
-      if (!Array.isArray(tasks)) {
-        throw new Error('Invalid task list schema');
-      }
-
-      return tasks;
-    } catch (error) {
-      logger.warn('Advice API failed, returning empty task list', error);
-      return [];
-    }
-  }
-}
-
-module.exports = new AdviceAPI();
-```
-
-**关键设计**：
-- ✅ Control Plane 只能 `require('./advice-api')`，不能 `require('./planner')`
-- ✅ Advice API 内部封装：schema 校验、超时处理、fallback
-- ✅ **异常处理策略**：Advice API 只吞 LLM/解析错误（返回空值 `null`、`[]`），不向 Control 抛出；Control Plane 仍可基于资源不足等**确定性条件**抛错或转入 `WAITING`/`BLOCKED` 状态
+- `activeProcesses Map<taskId, {pid, startedAt, runId}>`
+- 存活探针：每个 tick 检查 in_progress 任务的进程是否还在
+- 桥接任务（pid=null）：通过 `ps aux` 搜索 task_id
+- 孤儿清理：启动时同步 DB 状态与实际进程
 
 ---
 
-## 4. 数据模型与层级
+## 8. 部署架构
 
-### 4.1 PARA 层级（无 TRD）
-
-```
-OKR (goals 表)
-    ↓
-Project (projects 表)
-    ↓
-Feature (projects 表，parent_id 非空，包含 PRD)
-    ↓
-Task (tasks 表)
-    ↓
-Run (execution_runs 表)
-```
-
-### 4.2 核心表结构
-
-#### goals 表（OKR）
-
-```sql
-CREATE TABLE goals (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  type TEXT NOT NULL CHECK (type IN ('O', 'KR')),
-  parent_id UUID REFERENCES goals(id),
-  title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'ACTIVE', 'COMPLETED', 'ABANDONED')),
-  progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-#### projects 表（Project + Feature）
-
-```sql
-CREATE TABLE projects (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  parent_id UUID REFERENCES projects(id),  -- NULL = Project, non-NULL = Feature
-  goal_id UUID REFERENCES goals(id),
-  name TEXT NOT NULL,
-  prd_path TEXT,  -- Feature 级别的 PRD 路径
-  status TEXT NOT NULL DEFAULT 'PLANNED',
-  priority TEXT DEFAULT 'P2' CHECK (priority IN ('P0', 'P1', 'P2')),
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-#### tasks 表
-
-```sql
-CREATE TABLE tasks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  feature_id UUID NOT NULL REFERENCES projects(id),
-  title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'QUEUED',
-  assigned_to TEXT,
-  assigned_node_id TEXT REFERENCES execution_nodes(id),
-  required_labels TEXT[],
-  priority TEXT DEFAULT 'P2' CHECK (priority IN ('P0', 'P1', 'P2')),
-  started_at TIMESTAMPTZ,
-  last_heartbeat_at TIMESTAMPTZ,
-  result_json JSONB,
-  artifacts JSONB,
-  idempotency_key TEXT UNIQUE,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
----
-
-## 5. 任务执行与调度
-
-### 5.1 完整执行流程
+### 8.1 双服务器
 
 ```
-1. 用户输入 → 2. 嘴巴分类 → 3. Planner 规划（Cognitive）
-   → 4. State Machine 写入（Control）→ 5. Tick Loop 触发
-   → 6. Planner 建议 + Dispatch 执行 → 7. Caramel 执行
-   → 8. 回写结果 → 9. 完成
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│  🇺🇸 美国 VPS (研发+执行)     │     │  🇭🇰 香港 VPS (生产)          │
+│  146.190.52.84              │     │  43.154.85.217              │
+│                             │     │                             │
+│  Docker 容器：              │◄───►│  Docker 容器：              │
+│  ├ cecelia-node-brain:5221  │Tail-│  ├ PostgreSQL:5432          │
+│  ├ PostgreSQL:5432          │scale│  ├ 生产前端:5211            │
+│  ├ 开发前端:5212            │     │  └ MiniMax executor         │
+│  └ Claude Code (headed)     │     │                             │
+│                             │     │  任务类型：                 │
+│  任务类型：                 │     │  talk, research, data       │
+│  dev, review, qa, audit     │     │                             │
+│  ENV_REGION=us              │     │  ENV_REGION=hk              │
+└─────────────────────────────┘     └─────────────────────────────┘
 ```
 
----
+### 8.2 容器化
 
-## 6. 资源管理与节点调度
+**Brain 容器**：
+- 镜像：`cecelia-brain:1.9.2`（多阶段构建，163MB）
+- 基础：node:20-alpine + tini
+- 用户：非 root `cecelia` 用户
+- 文件系统：read-only rootfs（生产模式）
+- 健康检查：`curl -f http://localhost:5221/api/brain/health`
 
-### 6.1 多节点架构
-
-```
-VPS (8c16g): 6 seats (reserved 2)
-Mac mini: 4 seats (future)
-GPU PC: 2 seats (future)
-```
-
----
-
-## 7. 容错与熔断
-
-### 7.1 失败分类
-
-| 类型 | 说明 | 熔断策略 |
-|------|------|---------|
-| AGENT_EXEC_FAIL | 进程启动失败 | Agent 级（3 次 → 30 分钟） |
-| AGENT_TIMEOUT | 超时未回写 | Agent 级 |
-| DEPENDENCY_DOWN | 依赖服务不可用 | 全局（暂停所有派发） |
-
----
-
-## 8. 进化系统
-
-### 8.1 三层架构
-
-```
-Signal Layer (Deterministic) → Cognitive Layer (Opus) → Governance Layer (Deterministic)
-```
-
----
-
-## 9. 通信协议
-
-### 9.1 Cecelia 对外（与用户）
-
-**入口**：/cecelia skill（Haiku）
-
-### 9.2 Cecelia 对外部 Agents
-
-**协议**：Bash 启动 + PostgreSQL 状态共享
-
----
-
-## 10. 部署架构
-
-### 10.1 服务拓扑
-
-```
-Brain (5221) ← → PostgreSQL (5432)
-```
-
----
-
-## 11. FAQ 与最佳实践
-
-### 11.1 常见问题
-
-#### Q1: Planner 和 Dispatch 的区别？
-
-**A**:
-
-| 维度 | Planner（内层认知模块） | Dispatch（调度执行器） |
-|------|----------------------|---------------------|
-| **层级** | Cognitive Plane | Control Plane |
-| **允许 LLM** | 🟩 允许（Opus） | 🟥 禁止 |
-| **职责** | 思考、建议、推理 | 执行、调度、落地 |
-| **输入** | 任务描述、上下文 | Planner 的建议 + 资源状态 |
-| **输出** | JSON 建议（需验证） | DB 更新、Bash 命令 |
-| **示例** | 推荐 agent="caramel" | 验证 + 生成命令 + 执行 |
-| **可预测性** | ❌ 不可预测（LLM） | ✅ 完全可预测（Deterministic） |
-
-**关键原则**：
-
-> **Planner 负责"What to do?"（做什么？）**
-> **Dispatch 负责"How to do it?"（怎么做？）**
-
-#### Q2: Dispatch 需不需要 LLM？
-
-**A**: **不需要。LLM 只能给建议，Dispatch 只做确定性落地。**
-
-**详细说明**：
-
-| 场景 | Dispatch 的做法 | 说明 |
-|------|----------------|------|
-| **Agent 选择** | ✅ 调用 advice.recommendAgent() 获取建议<br>✅ 必须验证建议在 whitelist 中<br>✅ 无效时按硬规则 fallback | Advice API 推荐，Dispatch 验证 + 落地 |
-| **节点选择** | ✅ 调用 advice.recommendNode() 获取候选<br>✅ 必须过滤候选（座位、labels）<br>✅ 按确定性算法选择（排序 + 取第一个） | Advice API 推荐候选，Dispatch 确定性选择 |
-| **命令生成** | 🟥 禁止 LLM 生成命令<br>✅ 必须使用硬编码模板 | 模板化、可审计 |
-| **DB 写入** | 🟥 禁止 LLM 生成 SQL<br>✅ 必须使用预定义 SQL 模板 | 防止 SQL 注入、保证幂等性 |
-| **状态推进** | 🟥 禁止 LLM 决策状态转换<br>✅ 必须使用硬编码状态机 | 可预测、可审计 |
-
-#### Q3: Internal Planner vs External Planner Agent？
-
-**A**:
-
-| 维度 | Internal Planner（内层） | External Planner Agent（外层） |
-|------|------------------------|------------------------------|
-| **位置** | Brain 内部 Cognitive Plane | 独立进程（/planner skill） |
-| **实现** | brain/src/cognitive/planner.js | ~/.claude/skills/planner/ |
-| **调用方式** | Brain 内部函数调用 | Bash 启动外部进程 |
-| **模型** | Opus | Opus |
-| **职责** | 简单任务拆解（1-5 步）<br>优先级推理<br>Agent 推荐<br>节点候选推荐<br>PRD 生成 | 复杂任务拆解（5+ 步）<br>多任务编排<br>依赖分析<br>风险评估 |
-| **是否必需** | ✅ 必需（Cecelia 核心能力） | ❌ 可选（可委托给外部） |
-| **可替换性** | ❌ 不可替换（Cecelia 器官） | ✅ 可替换（可能去其他公司） |
-| **状态共享** | 直接访问 PostgreSQL | 通过 PostgreSQL 读写 |
-| **输出** | JSON 建议（给 Dispatch） | 子任务列表（写入 DB） |
-
----
-
-## 12. 故障排查
-
-### 12.1 常见问题
-
-#### 问题 1: Tick Loop 停止
-
-**排查**：检查 Health Manager、DB 连接、Circuit Breaker 状态
-
-#### 问题 2: 任务派发失败
-
-**排查**：检查 Dispatch 日志、验证 Planner 建议、检查资源可用性
-
----
-
-## 13. 运维手册
-
-### 13.1 日常检查
+### 8.3 构建与部署
 
 ```bash
-# Brain 状态
-curl http://localhost:5221/api/brain/status
-curl http://localhost:5221/api/brain/tick/status
+# 构建
+bash scripts/brain-build.sh          # → cecelia-brain:<version>
 
-# 队列状态
-psql -U cecelia -d cecelia -c "SELECT COUNT(*) FROM tasks WHERE status = 'queued';"
+# 部署（完整流程）
+bash scripts/brain-deploy.sh          # build → migrate → selfcheck → test → tag → start
+# 自动回滚：健康检查失败 → 回滚到上一版本
+
+# 手动部署（跳过测试）
+docker compose up -d cecelia-node-brain
+```
+
+### 8.4 启动检查（selfcheck.js）
+
+6 项检查，任一失败 → process.exit(1)：
+
+1. **ENV_REGION** — 必须是 'us' 或 'hk'
+2. **DB 连接** — SELECT 1 AS ok
+3. **区域匹配** — brain_config.region = ENV_REGION
+4. **核心表存在** — tasks, goals, projects, features, working_memory, cecelia_events, decision_log, daily_logs
+5. **Schema 版本** — 必须 = '008'
+6. **配置指纹** — SHA-256(host:port:db:region) 一致性
+
+### 8.5 数据库配置
+
+**单一来源**：`brain/src/db-config.js`
+
+```javascript
+DB_DEFAULTS = {
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432', 10),
+  database: process.env.DB_NAME || 'cecelia',
+  user: process.env.DB_USER || 'cecelia',
+  password: process.env.DB_PASSWORD || 'CeceliaUS2026',
+}
+```
+
+所有 DB 连接（db.js、migrate.js、selfcheck.js、测试）统一导入此配置。
+
+---
+
+## 9. API 接口
+
+Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
+
+### 9.1 状态监控
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/status` | GET | 决策数据包（给 LLM 用） |
+| `/status/full` | GET | 完整系统状态 |
+| `/health` | GET | 健康检查 |
+| `/hardening/status` | GET | 硬化状态（CI 用） |
+| `/executor/status` | GET | 执行器进程状态 |
+| `/watchdog` | GET | 看门狗实时 RSS/CPU |
+| `/token-usage` | GET | LLM Token 消耗统计 |
+| `/memory` | GET | 工作记忆 |
+
+### 9.2 Tick 循环
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/tick/status` | GET | Tick 状态 |
+| `/tick` | POST | 手动触发 tick |
+| `/tick/enable` | POST | 启用自动 tick |
+| `/tick/disable` | POST | 禁用自动 tick |
+
+### 9.3 任务管理
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/tasks` | GET | 查询任务（支持 status/type 过滤） |
+| `/action/create-task` | POST | 创建任务 |
+| `/action/update-task` | POST | 更新任务 |
+| `/action/batch-update-tasks` | POST | 批量更新 |
+| `/task-types` | GET | 有效任务类型 |
+| `/route-task` | POST | 任务路由（US/HK） |
+| `/execution-callback` | POST | 执行完成回调 |
+| `/heartbeat` | POST | 任务心跳 |
+
+### 9.4 OKR 目标
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/action/create-goal` | POST | 创建目标 |
+| `/action/update-goal` | POST | 更新目标 |
+| `/goal/compare` | POST | 对比目标进度 |
+| `/okr/statuses` | GET | OKR 状态枚举 |
+
+### 9.5 Feature 管理
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/features` | GET | 查询 Feature |
+| `/features/:id` | GET | Feature 详情 |
+| `/features` | POST | 创建 Feature |
+| `/active-features` | GET | 活跃 Feature |
+| `/feature-task-complete` | POST | Feature 任务完成处理 |
+
+### 9.6 焦点系统
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/focus` | GET | 获取每日焦点 |
+| `/focus/set` | POST | 手动设定焦点 |
+| `/focus/clear` | POST | 清除手动焦点 |
+
+### 9.7 保护系统
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/alertness` | GET | 警觉等级 |
+| `/alertness/evaluate` | POST | 重新评估 |
+| `/alertness/override` | POST | 手动覆盖 |
+| `/alertness/clear-override` | POST | 清除覆盖 |
+| `/quarantine` | GET | 隔离区任务 |
+| `/quarantine/stats` | GET | 隔离统计 |
+| `/quarantine/:taskId` | POST | 手动隔离 |
+| `/quarantine/:taskId/release` | POST | 释放任务 |
+| `/circuit-breaker` | GET | 熔断器状态 |
+| `/circuit-breaker/:key/reset` | POST | 重置熔断器 |
+| `/pending-actions` | GET | 待审批危险操作 |
+| `/pending-actions/:id/approve` | POST | 批准 |
+| `/pending-actions/:id/reject` | POST | 拒绝 |
+
+### 9.8 规划与决策
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/plan/next` | POST | 规划下一个任务 |
+| `/plan/status` | GET | 规划状态 |
+| `/decide` | POST | 生成决策 |
+| `/decisions` | GET | 决策历史 |
+| `/intent/parse` | POST | 意图识别 |
+
+### 9.9 每日对齐
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/nightly/status` | GET | 每晚对齐状态 |
+| `/nightly/trigger` | POST | 手动触发 |
+| `/nightly/enable` | POST | 启用 |
+| `/daily-reports` | GET | 每日报告列表 |
+| `/daily-reports/:date` | GET | 指定日期报告 |
+
+---
+
+## 10. 文件地图
+
+### 10.1 Brain 核心
+
+```
+brain/
+├── server.js                  # 入口：迁移 → 自检 → 启动
+├── Dockerfile                 # 多阶段构建, tini, non-root
+├── package.json               # 版本号（当前 1.9.2）
+│
+├── src/
+│   ├── db-config.js           # DB 连接配置（唯一来源）
+│   ├── db.js                  # PostgreSQL Pool 单例
+│   ├── migrate.js             # 迁移运行器
+│   ├── selfcheck.js           # 6 项启动检查
+│   │
+│   ├── tick.js                # ❤️ 心跳循环 + 派发调度
+│   ├── executor.js            # 进程管理 + 资源检测
+│   ├── planner.js             # KR 轮转 + 任务生成
+│   ├── focus.js               # 每日焦点选择
+│   │
+│   ├── thalamus.js            # L1 丘脑 (Sonnet)
+│   ├── cortex.js              # L2 皮层 (Opus)
+│   ├── decision-executor.js   # 决策执行器
+│   │
+│   ├── watchdog.js            # 资源看门狗 (/proc)
+│   ├── alertness.js           # 4 级警觉
+│   ├── circuit-breaker.js     # 三态熔断
+│   ├── quarantine.js          # 隔离区
+│   │
+│   ├── routes.js              # ~100 个 API 端点
+│   ├── task-router.js         # 任务类型 + 区域路由
+│   ├── intent.js              # 意图识别
+│   ├── templates.js           # PRD/TRD 模板
+│   ├── notifier.js            # 通知
+│   └── websocket.js           # WebSocket 推送
+│
+├── migrations/                # SQL 迁移 (000-008)
+│   ├── 000_base_schema.sql
+│   ├── 001_cecelia_architecture_upgrade.sql
+│   ├── 002_task_type_review_merge.sql
+│   ├── 003_feature_tick_system.sql
+│   ├── 004_trigger_source.sql
+│   ├── 005_schema_version_and_config.sql
+│   ├── 006_exploratory_support.sql
+│   ├── 007_pending_actions.sql
+│   └── 008_publishing_system.sql
+│
+└── src/__tests__/             # Vitest 测试 (668/673 pass)
+```
+
+### 10.2 基础设施
+
+```
+scripts/
+├── brain-build.sh             # Docker 构建
+├── brain-deploy.sh            # 构建→迁移→自检→测试→部署
+└── brain-rollback.sh          # 回滚到上一版本
+
+docker-compose.yml             # 生产模式（不挂载源码）
+docker-compose.dev.yml         # 开发模式（挂载 brain/ 热重载）
+.env.docker                    # 环境变量
+.brain-versions                # 版本历史
+```
+
+### 10.3 外部依赖
+
+```
+/home/xx/bin/cecelia-run       # 任务执行器（setsid + slot 管理）
+/home/xx/bin/cecelia-bridge.js # HTTP→cecelia-run 桥接
 ```
 
 ---
 
-## 更新日志
+## 11. 运维手册
 
-### v1.3.2 (2026-02-01)
+### 11.1 日常检查
 
-**无死角审计级修订（消除最后 2 个实现矛盾）**：
+```bash
+# 系统状态
+curl -s localhost:5221/api/brain/status/full | jq '.tick, .alertness, .circuit_breaker'
 
-1. **Advice Interface 描述精准化**：
-   - ✅ "禁止直接调用 Planner 任意业务函数" → "禁止直接依赖 Planner 内部实现"
-   - ✅ 接口名从 `planner.xxx()` 改为 `advice.xxx()`，强调窄接口
-   - ✅ 明确 Control Plane 只能 `require('./advice-api')`，不能 `require('./planner')`
-   - ✅ 新增 3.3.2 Advice API 实现示例（schema 校验、超时、fallback）
+# 任务队列
+curl -s localhost:5221/api/brain/tasks?status=queued | jq '.[].title'
 
-2. **意图结构化二段式定义**：
-   - ✅ 拆分为两阶段：
-     - Phase A：Mouth（Haiku）做意图粗分类/路由（粗粒度）
-     - Phase B：Planner（Opus）做意图最终结构化（细粒度、Canonical JSON）
-   - ✅ 消除"嘴巴用 Haiku 做结构化"与"Planner 用 Opus 做结构化"的矛盾
-   - ✅ 更新 2.2 决策责任矩阵和 2.4 LLM 使用矩阵
+# 看门狗
+curl -s localhost:5221/api/brain/watchdog | jq
 
-3. **代码示例防渗透修正**：
-   - ✅ executor 示例：`const planner = require('./planner')` → `const advice = require('./advice-api')`
-   - ✅ 所有注释：`调用 Planner` → `调用 Advice API`
-   - ✅ 防止抄代码时直接依赖 Planner 内部实现
+# 隔离区
+curl -s localhost:5221/api/brain/quarantine | jq '.[].title'
 
-**终审修订（微瑕疵修复）**：
-- ✅ 术语统一："调用 Planner" → "调用 Advice API"（全文一致）
-- ✅ 异常处理精准化：Advice API 只吞 LLM/解析错误；Control 可因资源不足等确定性条件抛错/转状态
-- ✅ 术语一致性：Plane 只用于 Cognitive/Control；Interface/Perception 统一用 Layer
+# 容器健康
+docker ps --filter name=cecelia-node-brain
+```
 
-**文档状态**：
-- ✅ 概念闭环：所有术语定义无歧义
-- ✅ 工程约束闭环：Advice API + 二段式意图处理 + 防渗透示例
-- ✅ 未来扩展不跑偏：窄接口 + 明确边界 + fallback 机制
-- ✅ 用词审计级：术语一致、异常处理精准、抄了也不会抄错
+### 11.2 常见操作
 
-### v1.3.1 (2026-02-01)
+```bash
+# 手动触发 tick
+curl -X POST localhost:5221/api/brain/tick
 
-**审计级修订（生产可审计版本）**：
+# 手动设定焦点
+curl -X POST localhost:5221/api/brain/focus/set \
+  -H 'Content-Type: application/json' \
+  -d '{"goal_id": "<objective-uuid>"}'
 
-1. **嘴巴层定义修正**：
-   - ✅ 将嘴巴从 "Cognitive" 改为 "Interface/Perception 层"
-   - ✅ 新增术语定义：Interface/Perception Layer（使用 Haiku，轻认知）
-   - ✅ 消除与 Cognitive Plane = Opus 的矛盾
+# 释放隔离任务
+curl -X POST localhost:5221/api/brain/quarantine/<taskId>/release \
+  -H 'Content-Type: application/json' \
+  -d '{"action": "release"}'
 
-2. **Intelligence 边界声明**：
-   - ✅ 明确 Intelligence 只做检索/指标计算（deterministic / statistical）
-   - ✅ 任何解释/诊断/总结/建议必须回到 Planner（Opus）
-   - ✅ 防止未来 Intelligence 变成"隐形 Cognitive"
+# 重置熔断器
+curl -X POST localhost:5221/api/brain/circuit-breaker/cecelia-run/reset
 
-3. **Advice Interface 防渗透约束**：
-   - ✅ 新增第四条硬规则（SHOULD NOT）：Cognitive 输出不得包含可执行动作
-   - ✅ Control Plane 只能调用 Cognitive 的 Advice Interface（只读建议）
-   - ✅ 禁止 Dispatch 直接调用 Planner 的任意业务函数
-   - ✅ 所有输出必须：schema 校验 + whitelist 映射 + deterministic fallback
+# 手动覆盖警觉等级
+curl -X POST localhost:5221/api/brain/alertness/override \
+  -H 'Content-Type: application/json' \
+  -d '{"level": 0, "duration_minutes": 60}'
+```
 
-4. **命令模板 model 映射修正**：
-   - ✅ generateCommand 新增 deterministic modelMap
-   - ✅ External Planner 使用 opus（深度推理）
-   - ✅ 其他 agents 使用 sonnet
-   - ✅ 消除"planner skill 用 sonnet"的矛盾
+### 11.3 部署新版本
 
-**文档状态**：
-- ✅ 可生产审计级：所有边界清晰、无歧义
-- ✅ 可落地实现：工程约束明确（防渗透、防越界）
-- ✅ 可扩展：未来扩展不会跑偏（Intelligence 边界、Advice Interface）
+```bash
+# 1. 在 cp-* 分支开发，通过 PR 合并到 develop
+# 2. 构建 + 部署
+bash scripts/brain-build.sh
+bash scripts/brain-deploy.sh
 
-### v1.3.0 (2026-02-01)
+# 3. 如果健康检查失败，自动回滚
+# 手动回滚：
+bash scripts/brain-rollback.sh
+```
 
-**重大变更**：
+### 11.4 故障排查
 
-1. **架构重构**：
-   - ✅ **新增 Planner vs Dispatch 决策责任矩阵**
-   - ✅ **明确 Planner 是 Internal 模块（Cognitive Plane）**
-   - ✅ **明确 Dispatch 是 Control 模块（禁止 LLM 直接决策）**
-   - ✅ **区分 Internal Planner vs External Planner Agent**
+| 症状 | 检查 | 处理 |
+|------|------|------|
+| 不派发任务 | alertness/circuit-breaker | 检查是否 Coma/OPEN |
+| 任务卡 in_progress | executor/status | 检查进程是否存活 |
+| 内存高 | watchdog | 看门狗自动处理 |
+| DB 连接失败 | selfcheck 日志 | 检查 PostgreSQL 状态 |
+| LLM 错误多 | token-usage | 检查 API Key / 网络 |
 
-2. **三条不可违反的硬规则（MUST NOT）**：
-   - 🔴 Control Plane 禁止 LLM 直接决策
-   - 🔴 Dispatch 禁止 LLM 直接参与落地执行
-   - 🔴 DB 写入禁止由 LLM 生成 SQL
+### 11.5 GoldenPath 验证
 
-3. **文档**：
-   - ✅ 11,500+ 字
-   - ✅ 3+ ASCII 架构图
-   - ✅ **新增 FAQ: "Dispatch 需不需要 LLM?"**
+```bash
+# 启动 → 健康 → 状态 → tick → tick 状态
+bash brain/scripts/goldenpath-check.sh
+```
 
 ---
 
-**文档结束**
+## 附录：Token 成本
 
-**版本**: 1.3.2
-**字数**: 12,500+
-**最后更新**: 2026-02-01
-**状态**: 无死角审计级（生产就绪）
-**维护者**: Cecelia Team
+| 模型 | 输入 | 输出 | 用途 |
+|------|------|------|------|
+| Opus | $15/M | $75/M | L2 皮层、OKR 拆解、dev 任务 |
+| Sonnet | $3/M | $15/M | L1 丘脑、review/qa/audit |
+| Haiku | $0.8/M | $4/M | 嘴巴（轻认知） |
+
+每次 L1/L2 调用记录 token 使用到 cecelia_events 表。
