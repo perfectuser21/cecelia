@@ -1,17 +1,17 @@
 {
-  "branch": "cp-02061007-49684eea-b878-4ee6-a27a-9e8874",
+  "branch": "cp-02061042-d60bfe1d-4c77-4a84-9470-52f97e",
   "task_type": "research",
   "checks": {
-    "documentation": {"status": "pass", "note": "KR22-UNIFIED-PUBLISH-ENGINE.md is comprehensive"},
-    "prd": {"status": "pass", "note": "PRD defines research objectives clearly"},
-    "dod": {"status": "pass", "note": "DoD has clear acceptance criteria"},
-    "qa_decision": {"status": "pass", "note": "QA Decision properly specifies manual validation"}
+    "document_completeness": {"status": "pass", "evidence": "836 lines in KR22-UNIFIED-PUBLISH-ENGINE.md"},
+    "audit": {"status": "pass", "evidence": "AUDIT-REPORT-KR22-RESEARCH.md Decision: PASS"},
+    "dod_validation": {"status": "pass", "evidence": "All DoD items checked"},
+    "qa_decision": {"status": "pass", "evidence": "QA-DECISION.md exists with NO_RCI decision"}
   },
   "gates": {
-    "prd": {"status": "pass", "file": ".gates/prd.json"},
-    "dod": {"status": "pass", "file": ".gates/dod.json"},
-    "qa": {"status": "pass", "file": ".gates/qa.json"},
-    "test": {"status": "pass", "file": ".gates/test.json"},
-    "quality": {"status": "pass", "file": ".gates/quality.json"}
+    "prd": {"status": "pass"},
+    "dod": {"status": "pass"},
+    "audit": {"status": "pass"},
+    "test": {"status": "pass"},
+    "quality": {"status": "pass"}
   }
 }
