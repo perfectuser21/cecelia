@@ -32,11 +32,8 @@ const manifest: FeatureManifest = {
       path: '/workers',
       component: 'WorkersOverview',
     },
-    // Orchestrator
-    {
-      path: '/orchestrator',
-      component: 'OrchestratorPage',
-    },
+    // Orchestrator removed — use BrainDashboard
+    { path: '/orchestrator', redirect: '/brain' },
     // Redirects from old /ops/* paths
     { path: '/ops/cecelia', redirect: '/cecelia' },
     { path: '/ops/cecelia/runs', redirect: '/cecelia/runs' },
@@ -60,7 +57,6 @@ const manifest: FeatureManifest = {
     N8nLiveStatus: () => import('./pages/N8nLiveStatus'),
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
-    OrchestratorPage: () => import('./pages/OrchestratorPage'),
   },
 };
 

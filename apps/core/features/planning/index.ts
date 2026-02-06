@@ -33,13 +33,13 @@ const manifest: FeatureManifest = {
       navItem: { label: 'Projects', icon: 'FolderKanban', group: 'planning', order: 3 },
     },
     { path: '/projects/:projectId', component: 'ProjectDetail' },
-    // Planner
-    { path: '/planner', component: 'PlannerOverview' },
+    // Planner (PlannerOverview removed — use CommandCenter)
+    { path: '/planner', redirect: '/dashboard/command' },
     { path: '/scheduler', component: 'Scheduler' },
     { path: '/today', component: 'TodayPlan' },
     { path: '/roadmap', component: 'RoadmapView' },
-    // Canvas
-    { path: '/canvas', component: 'Canvas' },
+    // Canvas removed — use ProjectPanorama
+    { path: '/canvas', redirect: '/work/project-panorama' },
     { path: '/whiteboard', component: 'Whiteboard' },
     { path: '/project-panorama', component: 'ProjectPanorama' },
     // Dev Panorama
@@ -53,11 +53,11 @@ const manifest: FeatureManifest = {
     { path: '/company/ai-team/live-status', component: 'CompanyLiveStatus' },
     { path: '/company/ai-team/live-status/:instance/:executionId', component: 'CompanyLiveStatusDetail' },
     // Redirects from old /ops/* paths
-    { path: '/ops/planner', redirect: '/planner' },
+    { path: '/ops/planner', redirect: '/dashboard/command' },
     { path: '/ops/scheduler', redirect: '/scheduler' },
     { path: '/ops/roadmap', redirect: '/roadmap' },
     { path: '/ops/panorama', redirect: '/panorama' },
-    { path: '/ops/panorama/canvas', redirect: '/canvas' },
+    { path: '/ops/panorama/canvas', redirect: '/work/project-panorama' },
     { path: '/ops/panorama/whiteboard', redirect: '/whiteboard' },
     { path: '/ops/panorama/project', redirect: '/project-panorama' },
   ],
@@ -69,11 +69,9 @@ const manifest: FeatureManifest = {
     CompanyTasks: () => import('./pages/Tasks'),
     ProjectsDashboard: () => import('./pages/ProjectsDashboard'),
     ProjectDetail: () => import('./pages/ProjectDetail'),
-    PlannerOverview: () => import('./pages/PlannerOverview'),
     Scheduler: () => import('./pages/Scheduler'),
     TodayPlan: () => import('./components/TodayPlan'),
     RoadmapView: () => import('./pages/RoadmapView'),
-    Canvas: () => import('./pages/Canvas'),
     Whiteboard: () => import('./pages/Whiteboard'),
     ProjectPanorama: () => import('./pages/ProjectPanorama'),
     DevPanorama: () => import('./pages/DevPanorama'),
