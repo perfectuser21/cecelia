@@ -1,13 +1,18 @@
 {
-  "branch": "cp-02061037-8d8d22cf-f9bd-41f5-822e-9f46d8",
-  "type": "research",
+  "branch": "cp-02061200-32dd34a1-6d8b-47d9-b8b1-ecc61a",
+  "task_type": "documentation",
   "checks": {
-    "document_exists": {"status": "pass", "file": "docs/KR2.2-UNIFIED-PUBLISH-ENGINE-RESEARCH.md"},
-    "document_complete": {"status": "pass", "sections": ["现状分析", "问题诊断", "技术设计", "实现路线图"]},
-    "prd_aligned": {"status": "pass"},
-    "dod_satisfied": {"status": "pass"}
+    "documentation_exists": {"status": "pass", "details": "All required docs exist"},
+    "frontmatter_valid": {"status": "pass", "details": "All docs have proper version frontmatter"},
+    "content_complete": {"status": "pass", "details": "Docs contain required sections"},
+    "manual_verification": {"status": "pending", "details": "Manual verification required per DoD"}
+  },
+  "files": {
+    "workflow": "docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md",
+    "schema": "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md",
+    "routing": "docs/AGENT_ROUTING.md"
   },
   "gates": {
-    "quality": {"status": "pass", "note": "研究任务，无需代码检查"}
+    "quality": {"status": "pass", "note": "Documentation-only task, no build/test required"}
   }
 }
