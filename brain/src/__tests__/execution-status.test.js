@@ -147,7 +147,7 @@ describe('Execution Status API', () => {
             payload: { feature_branch: 'cp-feature-x' },
             goal_title: 'Goal A',
             project_name: 'cecelia-core',
-            repo_path: '/home/xx/dev/cecelia-core',
+            repo_path: '/home/xx/perfect21/cecelia/core',
           },
         ],
       });
@@ -178,8 +178,8 @@ describe('Execution Status API', () => {
     it('should return tracked repositories', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [
-          { name: 'cecelia-core', repo_path: '/home/xx/dev/cecelia-core' },
-          { name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' },
+          { name: 'cecelia-core', repo_path: '/home/xx/perfect21/cecelia/core' },
+          { name: 'cecelia-workspace', repo_path: '/home/xx/perfect21/cecelia/workspace' },
         ],
       });
 

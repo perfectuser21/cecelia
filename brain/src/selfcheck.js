@@ -186,14 +186,9 @@ if (isMain) {
   const { default: dotenv } = await import('dotenv');
   dotenv.config();
 
+  const { DB_DEFAULTS } = await import('./db-config.js');
   const pg = await import('pg');
-  const pool = new pg.default.Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    database: process.env.DB_NAME || 'cecelia',
-    user: process.env.DB_USER || 'cecelia',
-    password: process.env.DB_PASSWORD || 'CeceliaUS2026',
-  });
+  const pool = new pg.default.Pool(DB_DEFAULTS);
 
   const ok = await runSelfCheck(pool);
   await pool.end();

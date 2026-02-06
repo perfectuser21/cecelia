@@ -64,7 +64,7 @@ echo ""
 # 7. Stop old container + start new one
 echo "[7/7] Starting container..."
 BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-  docker compose -f "$ROOT_DIR/docker-compose.prod.yml" up -d
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
 
 # Wait for healthy (max 60s)
 echo ""
@@ -91,11 +91,11 @@ if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
   PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
   echo "  Rolling back to v${PREV_VERSION}..."
   BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-    docker compose -f "$ROOT_DIR/docker-compose.prod.yml" up -d
+    docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
   echo "  Rolled back to v${PREV_VERSION}"
 else
   echo "  No previous version found. Stopping container."
-  docker compose -f "$ROOT_DIR/docker-compose.prod.yml" down
+  docker compose -f "$ROOT_DIR/docker-compose.yml" down
 fi
 
 exit 1

@@ -29,7 +29,7 @@ const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226'
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
-const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace';
+const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/workspace';
 
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
@@ -50,6 +50,25 @@ const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000M
 const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
 const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
+
+/**
+ * Resolve repo_path from a project, traversing parent chain for Features.
+ * Features (sub-projects) have parent_id but no repo_path — walk up to find it.
+ * Max 5 levels to prevent infinite loops.
+ */
+async function resolveRepoPath(projectId) {
+  let currentId = projectId;
+  for (let depth = 0; depth < 5 && currentId; depth++) {
+    const result = await pool.query(
+      'SELECT repo_path, parent_id FROM projects WHERE id = $1',
+      [currentId]
+    );
+    if (result.rows.length === 0) return null;
+    if (result.rows[0].repo_path) return result.rows[0].repo_path;
+    currentId = result.rows[0].parent_id;
+  }
+  return null;
+}
 
 /**
  * Check server resource availability before spawning.
@@ -456,7 +475,7 @@ function generateRunId(taskId) {
  * | dev        | /dev     | bypassPermissions | 完整代码读写              |
  * | review     | /review  | plan              | 只读代码，输出报告/PRD    |
  * | talk       | /talk    | plan              | 只写文档，不改代码        |
- * | automation | /nobel   | bypassPermissions | 调 N8N API               |
+ * | talk       | /talk    | plan              | 对话任务 → HK MiniMax    |
  * | research   | -        | plan              | 完全只读                 |
  *
  * 注意：qa 和 audit 已合并为 review，保留兼容映射
@@ -814,7 +833,7 @@ async function triggerMiniMaxExecutor(task) {
  * Trigger cecelia-run for a task.
  *
  * v2: Uses spawn() for PID tracking + task-level dedup.
- * v3: Routes to HK MiniMax for talk/research/automation tasks.
+ * v3: Routes to HK MiniMax for talk/research/data tasks.
  *
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, runId, taskId, error?, reason? }
@@ -871,12 +890,11 @@ async function triggerCeceliaRun(task) {
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
 
-    // Resolve repo_path from task's project
+    // Resolve repo_path from task's project (traverse parent chain for Features)
     let repoPath = null;
     if (task.project_id) {
       try {
-        const projResult = await pool.query('SELECT repo_path FROM projects WHERE id = $1', [task.project_id]);
-        repoPath = projResult.rows[0]?.repo_path || null;
+        repoPath = await resolveRepoPath(task.project_id);
       } catch { /* ignore */ }
     }
 
@@ -1265,4 +1283,6 @@ export {
   // v5: Watchdog integration
   killProcessTwoStage,
   requeueTask,
+  // v6: Feature repo_path resolution
+  resolveRepoPath,
 };

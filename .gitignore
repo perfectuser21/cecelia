@@ -39,3 +39,14 @@ Thumbs.db
 
 # Brain deployment
 .brain-versions
+
+# Build artifacts
+frontend/dist/
+
+# Images (screenshots, temp assets)
+*.png
+*.jpg
+*.jpeg
+
+# Archive (old PRDs, DODs, etc.)
+.archive/

@@ -107,7 +107,7 @@ async function triggerPlannerForGoal(goal) {
 
 ## 要求
 1. 分析这个目标，拆解成具体可执行的 Tasks
-2. 每个 Task 必须指定 task_type (dev/automation/qa/audit/research)
+2. 每个 Task 必须指定 task_type (dev/talk/qa/audit/research)
 3. 每个 Task 必须关联 goal_id = ${goal.id}
 4. 通过 Brain API 创建 Tasks: POST http://localhost:5221/api/brain/action/create-task
 5. 完成后更新 Goal 状态为 in_progress

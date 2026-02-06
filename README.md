@@ -185,7 +185,8 @@ cecelia-semantic-brain/
 │   │   ├── tick.js         # Tick 循环
 │   │   └── executor.js     # 任务执行
 │   └── server.js     # Express 服务器
-├── docker-compose.yml  # Docker Compose 配置
+├── docker-compose.yml      # 生产环境（默认）
+├── docker-compose.dev.yml  # 开发环境（需 -f 指定）
 ├── Dockerfile          # Python 服务镜像
 ├── .env.docker         # 环境变量（包含凭据）
 └── DOCKER.md           # Docker 运维手册

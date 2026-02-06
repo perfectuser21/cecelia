@@ -1,17 +1,17 @@
 {
-  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
-  "task_type": "documentation",
-  "checks": {
-    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
-    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
-    "structure_complete": {"status": "pass", "verified": "all required sections present"},
-    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
-  },
+  "branch": "cp-0206-facts-check-cleanup",
+  "timestamp": "2026-02-06T21:41:00Z",
+  "tests_passed": 668,
+  "tests_failed": 5,
+  "tests_total": 673,
+  "pre_existing_failures": [
+    "DouyinAdapter (5 tests - untracked WIP)"
+  ],
+  "regressions": 0,
   "gates": {
-    "prd": {"status": "pass", "file": ".gate-prd-passed"},
-    "dod": {"status": "pass", "file": ".gate-dod-passed"},
-    "test": {"status": "pass", "file": ".gate-test-passed"},
-    "quality": {"status": "pass"}
+    "prd": "pass",
+    "dod": "pass",
+    "test": "pass"
   },
-  "timestamp": "2026-02-06T14:10:35+08:00"
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

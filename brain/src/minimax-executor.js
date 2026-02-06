@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MiniMax Executor - 调用 MiniMax API 执行任务
- * 部署在 HK VPS，处理 talk/research/automation 类型任务
+ * 部署在 HK VPS，处理 talk/research/data 类型任务
  *
  * v2: 支持加载 Skills（从 ~/.claude/skills/ 目录）
  */
@@ -137,7 +137,7 @@ async function callMiniMax(messages, tools = null) {
 const TASK_TYPE_SKILL_MAP = {
   'talk': 'talk',
   'research': null,  // 纯研究不需要特定 skill
-  'automation': 'nobel',
+  'data': 'nobel',
   'repo-lead': 'repo-lead',
 };
 
@@ -228,11 +228,11 @@ function getSystemPrompt(taskType) {
 - 列出关键发现
 - 给出可行建议`;
 
-    case 'automation':
-      return `你是 Cecelia 的自动化助手，负责设计和规划自动化流程。
+    case 'data':
+      return `你是 Cecelia 的数据处理助手，负责数据分析和处理任务。
 你的特点：
-- 分析自动化需求
-- 设计工作流步骤
+- 分析数据需求
+- 设计处理流程
 - 识别所需工具和 API
 - 提供实施方案`;
 

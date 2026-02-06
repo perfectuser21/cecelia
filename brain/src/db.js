@@ -1,23 +1,18 @@
 /* global process, console */
 import 'dotenv/config';
 import pg from 'pg';
+import { DB_DEFAULTS } from './db-config.js';
+
 const { Pool } = pg;
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'cecelia_tasks',
-  user: process.env.DB_USER || 'n8n_user',
-  password: process.env.DB_PASSWORD || 'n8n_password_2025'
-});
+const pool = new Pool(DB_DEFAULTS);
 
-// Lazy connection - will connect on first query
-// Log connection info for debugging
+// Log connection info for debugging (no password)
 console.log('PostgreSQL pool configured:', {
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'cecelia_tasks',
-  user: process.env.DB_USER || 'n8n_user'
+  host: DB_DEFAULTS.host,
+  port: DB_DEFAULTS.port,
+  database: DB_DEFAULTS.database,
+  user: DB_DEFAULTS.user
 });
 
 export default pool;

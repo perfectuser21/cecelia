@@ -1,1 +1,0 @@
-import{j as t}from"./index-BhHU9tw7.js";import{P as o}from"./PlaceholderPage-BBd3uhZR.js";function n(){return t.jsx(o,{title:"Content Studio",description:"选题、创作、分析 — 即将上线",icon:"✏️"})}export{n as default};

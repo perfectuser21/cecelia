@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
+import { DB_DEFAULTS } from '../db-config.js';
 import {
   INTENT_TYPES,
   INTENT_ACTION_MAP,
@@ -24,13 +25,7 @@ import {
 const { Pool } = pg;
 
 // Use test database configuration
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'cecelia',
-  user: process.env.DB_USER || 'cecelia',
-  password: process.env.DB_PASSWORD || 'CeceliaUS2026'
-});
+const pool = new Pool(DB_DEFAULTS);
 
 // Track created resources for cleanup
 let createdProjectIds = [];
