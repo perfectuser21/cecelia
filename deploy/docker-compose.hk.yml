@@ -1,0 +1,15 @@
+services:
+  cecelia-frontend:
+    image: nginx:alpine
+    container_name: cecelia-frontend-hk
+    restart: unless-stopped
+    ports:
+      - "5212:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
