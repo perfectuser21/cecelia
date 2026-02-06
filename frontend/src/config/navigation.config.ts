@@ -48,6 +48,7 @@ export interface RouteConfig {
 // Autopilot 本地页面组件
 export const autopilotPageComponents: Record<string, () => Promise<{ default: ComponentType }>> = {
   'Dashboard': () => import('../pages/Dashboard'),
+  'StatsDashboard': () => import('../pages/StatsDashboard'),
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
@@ -73,7 +74,7 @@ export const pageComponents = autopilotPageComponents;
 export function getPageComponent(name: string) {
   const loader = pageComponents[name];
   if (!loader) {
-    console.warn(`Page component not found: ${name}`);
+    // Component not found, return null
     return null;
   }
   return lazy(loader);
@@ -149,6 +150,9 @@ export const additionalRoutes: RouteConfig[] = [
 
   // === Execution Logs ===
   { path: '/execution-logs', component: 'ExecutionLogs', requireAuth: true },
+
+  // === Stats Dashboard ===
+  { path: '/stats', component: 'StatsDashboard', requireAuth: true },
 
   // 管理员子页面已迁移到 Core
   // ClaudeMonitor, VpsMonitor, ClaudeStats, N8n*, Canvas 等

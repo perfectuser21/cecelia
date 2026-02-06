@@ -1,2 +1,6 @@
-PASS
-gate:prd validation passed at 2026-02-06T02:56:40+08:00
+gate: prd
+status: PASS
+timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+file: .prd-dashboard-ui-ux.md
+decision: PASS
+issues: 0

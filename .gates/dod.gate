@@ -1,2 +1,7 @@
-PASS
-gate:dod validation passed at 2026-02-06T02:59:35+08:00
+gate: dod
+status: PASS
+timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+file: .dod-dashboard-ui-ux.md
+qa_decision: docs/QA-DECISION-dashboard-ui-ux.md
+decision: PASS
+issues: 0
