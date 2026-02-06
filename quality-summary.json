@@ -1,17 +1,21 @@
 {
-  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
+  "branch": "cp-02061423-9ede8256-03ee-4e47-b0df-469aed",
   "task_type": "documentation",
   "checks": {
-    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
-    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
-    "structure_complete": {"status": "pass", "verified": "all required sections present"},
-    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
+    "documentation_completeness": {"status": "pass", "details": "All 3 deliverables exist"},
+    "frontmatter_validation": {"status": "pass", "details": "version, created, updated, changelog present"},
+    "integration_spec": {"status": "pass", "details": "AGENT_ROUTING.md updated with Publish Engine integration"},
+    "manual_verification": {"status": "pending", "details": "To be verified during PR review"}
   },
   "gates": {
-    "prd": {"status": "pass", "file": ".gate-prd-passed"},
-    "dod": {"status": "pass", "file": ".gate-dod-passed"},
-    "test": {"status": "pass", "file": ".gate-test-passed"},
-    "quality": {"status": "pass"}
+    "prd": {"status": "pass", "file": ".gates/prd.gate"},
+    "dod": {"status": "pass", "file": ".gates/dod-impl.gate"},
+    "qa": {"status": "pass", "file": ".gates/qa-impl.gate"},
+    "quality": {"status": "pass", "note": "Documentation task - no code checks needed"}
   },
-  "timestamp": "2026-02-06T14:10:35+08:00"
+  "deliverables": [
+    "docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md",
+    "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md",
+    "docs/AGENT_ROUTING.md (updated)"
+  ]
 }
