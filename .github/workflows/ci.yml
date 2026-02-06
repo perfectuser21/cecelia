@@ -114,6 +114,11 @@ jobs:
         working-directory: brain
         run: npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
 
+      # L4: GoldenPath — Brain minimal life loop E2E
+      - name: GoldenPath E2E
+        working-directory: brain
+        run: bash scripts/goldenpath-check.sh
+
       # L2: Shell 脚本语法检查
       - name: Check shell scripts
         run: |
