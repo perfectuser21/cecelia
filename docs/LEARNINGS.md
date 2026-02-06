@@ -1,5 +1,85 @@
 # Learnings
 
+## [2026-02-07] 失败分类与智能重试 (v1.10.0)
+
+### Feature: 6 类失败细分 + 按类型自动应对
+
+- **What**: "Spending cap reached resets 11pm" 触发 7 次无效重试导致 ALERT 升级
+- **Root Cause**: classifyFailure() 只有 3 类（systemic/task_specific/unknown），无法区分账单上限 vs 429 限流 vs 网络错误
+- **Fix**: 扩展为 6 类（billing_cap/rate_limit/auth/network/resource/task_error），每类独立重试策略
+- **Pattern**: L0 脑干 = 确定性分类（pattern matching），L1/L2 只处理模糊情况
+- **Key Design**:
+  - BILLING_CAP: 解析 reset 时间 → next_run_at + 全局 billing pause
+  - RATE_LIMIT: 指数退避（2/4/8min），3 次后放弃
+  - AUTH/RESOURCE: 不重试，标记 needs_human_review
+  - alertness.js: billing_cap + rate_limit 不计入失败率和连续失败
+- **Gotcha**: 旧测试期望 `SYSTEMIC`/`UNKNOWN`，需同步更新 quarantine.test.js 和 chaos-hardening.test.js
+- **Testing**: 47 new tests, 658 total pass
+
+## [2026-02-06] DevGate 统一（Core ↔ Engine 同模式）
+
+### Feature: 从 Engine 适配 version-sync + dod-mapping 脚本，建立 CORE_DEV_PROMPT
+
+- **What**: Engine 已有完整 DevGate（19 个脚本），Core 只有 facts-check.mjs 一个
+- **Pattern**: 两个仓库用同一套 DevGate 模式，脚本按仓库特点适配
+  - Engine: YAML registry → 派生生成 → diff 漂移检测
+  - Core: 代码常量 → 正则提取 → 文档对照
+- **Shared**: version-sync（多文件版本同步）和 dod-mapping（DoD↔Test 映射）两个模式完全可以跨仓库复用
+- **CORE_DEV_PROMPT**: 6 条强制规则（SSOT、DevGate、文档、架构、提交、禁止），存在 `.claude/CLAUDE.md` 让每个 Claude Code 会话自动加载
+- **Gotcha**: `.brain-versions` 被 .gitignore 忽略，需要 `git add -f`
+
+## [2026-02-06] Facts 一致性检查 + 代码清理
+
+### Feature: 自动化文档-代码一致性校验，清除历史残留
+
+- **What**: DEFINITION.md 的数字（action 数量、版本号）与代码不一致，11 处生产代码仍引用已废弃的 `automation` 任务类型
+- **Root Cause**: 文档手动维护，代码改了文档忘了改；`automation` 重命名为 `talk` 时只改了核心路由，注释和映射表漏了
+- **Fix**:
+  1. `scripts/facts-check.mjs` 从代码提取 8 项关键事实，与 DEFINITION.md 对照
+  2. CI 新增 `Facts Consistency` job，不一致就失败
+  3. 清除全部 15 处 `automation` 残留（7 生产文件 + 1 测试文件）
+  4. 修正 9 处旧路径 `/home/xx/dev/` → `/home/xx/perfect21/`
+- **Learning**: "能自动校验的，不允许靠自觉" — 人工审查发现不了已习惯的错误，CI 每次都检查
+
+## [2026-02-06] 数据库连接配置统一化
+
+### Feature: 消除 6 处重复的 DB 连接配置，建立单一来源
+
+- **What**: `db.js` 的兜底默认值是 n8n 时代遗留的错误值（`cecelia_tasks`/`n8n_user`），与实际数据库不一致
+- **Before**: db.js、migrate.js、selfcheck.js、4 个测试文件各自硬编码默认值，其中 db.js 的还是错的
+- **After**: 新建 `db-config.js` 作为唯一来源，所有文件 import 它
+- **行业标准**: 配置值只写一次，其他地方全部引用。即使有 env var 覆盖，默认值也必须正确
+- **教训**: 重构改名时要全局搜索所有硬编码的旧值，不能只改主文件
+
+---
+
+## [2026-02-06] Planner KR 轮转 + Executor repo_path 解析
+
+### Feature: 让 planner 遍历所有 KR，不在第一个 exhausted 时放弃
+
+- **What**: 修复两个阻止任务自动生成的 bug
+- **Bug 1 — Planner 只试一个 KR**: `planNextTask()` 只尝试得分最高的 KR，如果该 KR 所有候选任务已完成就直接返回 `needs_planning`，不尝试其他 KR
+- **Bug 2 — Feature 无 repo_path**: Feature（子项目）没有 `repo_path`，executor 查询 `project.repo_path` 得到 null，无法派发任务
+- **Fix 1**: 提取 `scoreKRs()` 共享评分逻辑，`planNextTask()` 遍历所有排序后的 KR
+- **Fix 2**: 新增 `resolveRepoPath(projectId)` 遍历 parent_id 链（最多 5 层）找到 repo_path
+
+### 测试经验
+
+- **KR_STRATEGIES 正则陷阱**: 测试中用 "调度系统" 作为 KR 标题，意外匹配了 `planning_engine` 策略的 `/调度/` 正则，导致策略任务被选中而非 fallback 任务，使"耗尽"逻辑失效。解决：用完全不匹配的虚构名称（"奇异星球建设"）
+- **FK 清理顺序**: afterEach 必须先删 tasks 再删 projects（FK 约束），且要兜底清理 `planNextTask` 自动生成的 tasks
+
+---
+
+## [2026-02-06] Docker Compose 生产默认化
+
+### Feature: 让 `docker compose up -d` 默认启动生产环境
+
+- **What**: 消除 dev compose 意外覆盖 prod 容器的风险
+- **Before**: `docker-compose.yml` 是 dev 版本（bind mount），误执行 `docker compose up` 会破坏生产
+- **After**: `docker-compose.yml` = prod（不可变镜像），`docker-compose.dev.yml` 需显式 `-f` 指定
+- **关键改动**: 文件重命名 + 脚本引用更新（brain-deploy.sh, brain-rollback.sh）
+- **教训**: 生产环境的默认路径必须是最安全的选择。「方便」不能优先于「安全」
+
 ## [2026-02-06] Watchdog 进程保护系统 (v5)
 
 ### Feature: 三层进程保护 — 进程组隔离 + 资源看门狗 + 自动重排
