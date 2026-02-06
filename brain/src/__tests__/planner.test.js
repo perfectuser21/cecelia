@@ -284,7 +284,7 @@ describe('Planner Agent', () => {
     it('should generate concrete task for intent recognition KR', async () => {
       const { generateTaskFromKR } = await import('../planner.js');
       const kr = { id: 'kr-1', title: 'KR1: 意图识别 - 自然语言→OKR', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/home/xx/dev/cecelia-workspace' };
+      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/home/xx/perfect21/cecelia/workspace' };
       const result = generateTaskFromKR(kr, project, [], 100);
 
       expect(result).not.toBeNull();

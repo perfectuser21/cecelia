@@ -1931,7 +1931,7 @@ router.get('/cluster/status', async (req, res) => {
         reserved: 0,
         processes: []
       },
-      task_types: ['talk', 'research', 'automation']
+      task_types: ['talk', 'research', 'data']
     };
 
     // Try to fetch HK status from bridge
@@ -3498,7 +3498,7 @@ router.get('/task-types', (req, res) => {
     task_types: TASK_TYPE_AGENT_MAP,
     description: {
       dev: '开发任务 - 交给 Caramel (/dev)',
-      automation: '自动化任务 - 交给 Nobel (/nobel)',
+      talk: '对话任务 - HK MiniMax',
       qa: 'QA 任务 - 交给 小检 (/qa)',
       audit: '审计任务 - 交给 小审 (/audit)',
       research: '调研任务 - 需要人工或 Opus 处理'

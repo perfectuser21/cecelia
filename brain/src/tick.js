@@ -34,7 +34,7 @@ const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >
 // Task type to agent skill mapping
 const TASK_TYPE_AGENT_MAP = {
   'dev': '/dev',           // Caramel - 编程
-  'automation': '/nobel',  // Nobel - N8N 自动化
+  'talk': '/talk',         // 对话任务 → HK MiniMax
   'qa': '/qa',             // 小检 - QA
   'audit': '/audit',       // 小审 - 审计
   'research': null         // 需要人工/Opus 处理

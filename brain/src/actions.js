@@ -14,7 +14,7 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @param {string} params.project_id - Feature ID (not Project!)
  * @param {string} params.goal_id - KR ID
  * @param {string[]} params.tags - Tags
- * @param {string} params.task_type - dev/automation/review
+ * @param {string} params.task_type - dev/talk/review
  * @param {string} params.context - Legacy description field
  * @param {string} params.prd_content - PRD content (秋米写的)
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc

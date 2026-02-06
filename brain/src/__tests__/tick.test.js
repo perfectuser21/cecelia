@@ -12,9 +12,9 @@ describe('routeTask', () => {
     expect(routeTask(task)).toBe('/dev');
   });
 
-  it('should route automation tasks to /nobel', () => {
-    const task = { task_type: 'automation' };
-    expect(routeTask(task)).toBe('/nobel');
+  it('should route talk tasks to /talk', () => {
+    const task = { task_type: 'talk' };
+    expect(routeTask(task)).toBe('/talk');
   });
 
   it('should route qa tasks to /qa', () => {
@@ -46,7 +46,7 @@ describe('routeTask', () => {
 describe('TASK_TYPE_AGENT_MAP', () => {
   it('should have all expected task types', () => {
     expect(TASK_TYPE_AGENT_MAP).toHaveProperty('dev');
-    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('automation');
+    expect(TASK_TYPE_AGENT_MAP).toHaveProperty('talk');
     expect(TASK_TYPE_AGENT_MAP).toHaveProperty('qa');
     expect(TASK_TYPE_AGENT_MAP).toHaveProperty('audit');
     expect(TASK_TYPE_AGENT_MAP).toHaveProperty('research');
@@ -54,7 +54,7 @@ describe('TASK_TYPE_AGENT_MAP', () => {
 
   it('should map to correct agent skills', () => {
     expect(TASK_TYPE_AGENT_MAP.dev).toBe('/dev');
-    expect(TASK_TYPE_AGENT_MAP.automation).toBe('/nobel');
+    expect(TASK_TYPE_AGENT_MAP.talk).toBe('/talk');
     expect(TASK_TYPE_AGENT_MAP.qa).toBe('/qa');
     expect(TASK_TYPE_AGENT_MAP.audit).toBe('/audit');
     expect(TASK_TYPE_AGENT_MAP.research).toBeNull();
