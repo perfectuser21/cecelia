@@ -7,7 +7,55 @@ on:
     branches: [main, develop]
 
 jobs:
-  test:
+  brain-test:
+    name: Brain (Node.js)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: cecelia
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: cecelia
+      DB_USER: cecelia
+      DB_PASSWORD: cecelia_ci
+      ENV_REGION: us
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: brain
+        run: npm ci
+
+      - name: Run migrations
+        working-directory: brain
+        run: node src/migrate.js
+
+      - name: Run Brain tests
+        working-directory: brain
+        run: npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
+
+  semantic-test:
+    name: Semantic Brain (Python)
     runs-on: ubuntu-latest
 
     steps:
