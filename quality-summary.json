@@ -1,17 +1,13 @@
 {
-  "branch": "cp-02061042-d60bfe1d-4c77-4a84-9470-52f97e",
-  "task_type": "research",
+  "branch": "cp-02061037-8d8d22cf-f9bd-41f5-822e-9f46d8",
+  "type": "research",
   "checks": {
-    "document_completeness": {"status": "pass", "evidence": "836 lines in KR22-UNIFIED-PUBLISH-ENGINE.md"},
-    "audit": {"status": "pass", "evidence": "AUDIT-REPORT-KR22-RESEARCH.md Decision: PASS"},
-    "dod_validation": {"status": "pass", "evidence": "All DoD items checked"},
-    "qa_decision": {"status": "pass", "evidence": "QA-DECISION.md exists with NO_RCI decision"}
+    "document_exists": {"status": "pass", "file": "docs/KR2.2-UNIFIED-PUBLISH-ENGINE-RESEARCH.md"},
+    "document_complete": {"status": "pass", "sections": ["现状分析", "问题诊断", "技术设计", "实现路线图"]},
+    "prd_aligned": {"status": "pass"},
+    "dod_satisfied": {"status": "pass"}
   },
   "gates": {
-    "prd": {"status": "pass"},
-    "dod": {"status": "pass"},
-    "audit": {"status": "pass"},
-    "test": {"status": "pass"},
-    "quality": {"status": "pass"}
+    "quality": {"status": "pass", "note": "研究任务，无需代码检查"}
   }
 }
