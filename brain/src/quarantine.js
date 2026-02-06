@@ -275,11 +275,11 @@ async function getQuarantineStats() {
     const result = await pool.query(`
       SELECT
         COUNT(*) as total,
-        COUNT(*) FILTER (WHERE payload->>'quarantine_info'->>'reason' = 'repeated_failure') as repeated_failure,
-        COUNT(*) FILTER (WHERE payload->>'quarantine_info'->>'reason' = 'suspicious_input') as suspicious_input,
-        COUNT(*) FILTER (WHERE payload->>'quarantine_info'->>'reason' = 'resource_hog') as resource_hog,
-        COUNT(*) FILTER (WHERE payload->>'quarantine_info'->>'reason' = 'timeout_pattern') as timeout_pattern,
-        COUNT(*) FILTER (WHERE payload->>'quarantine_info'->>'reason' = 'manual') as manual
+        COUNT(*) FILTER (WHERE payload->'quarantine_info'->>'reason' = 'repeated_failure') as repeated_failure,
+        COUNT(*) FILTER (WHERE payload->'quarantine_info'->>'reason' = 'suspicious_input') as suspicious_input,
+        COUNT(*) FILTER (WHERE payload->'quarantine_info'->>'reason' = 'resource_hog') as resource_hog,
+        COUNT(*) FILTER (WHERE payload->'quarantine_info'->>'reason' = 'timeout_pattern') as timeout_pattern,
+        COUNT(*) FILTER (WHERE payload->'quarantine_info'->>'reason' = 'manual') as manual
       FROM tasks
       WHERE status = 'quarantined'
     `);

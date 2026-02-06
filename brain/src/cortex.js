@@ -324,7 +324,7 @@ async function recordLearnings(learnings, event) {
   try {
     for (const learning of learnings) {
       await pool.query(`
-        INSERT INTO cecelia_events (type, source, data)
+        INSERT INTO cecelia_events (event_type, source, payload)
         VALUES ('learning', 'cortex', $1)
       `, [JSON.stringify({
         learning,

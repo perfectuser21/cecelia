@@ -186,7 +186,7 @@ async function collectSignals() {
     const llmErrorResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM cecelia_events
-      WHERE type IN ('cortex_error', 'thalamus_error', 'llm_api_error')
+      WHERE event_type IN ('cortex_error', 'thalamus_error', 'llm_api_error')
         AND created_at > NOW() - INTERVAL '1 hour'
     `);
     const llmErrors = parseInt(llmErrorResult.rows[0].count);
@@ -288,7 +288,7 @@ async function setLevel(newLevel, reason, isManual = false) {
   // 记录到数据库
   try {
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data)
+      INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ('alertness_change', 'alertness', $1)
     `, [JSON.stringify({
       from: { level: oldLevel, name: LEVEL_NAMES[oldLevel] },
@@ -448,14 +448,14 @@ async function initAlertness() {
   // 从数据库恢复上次状态
   try {
     const result = await pool.query(`
-      SELECT data FROM cecelia_events
-      WHERE type = 'alertness_change'
+      SELECT payload FROM cecelia_events
+      WHERE event_type = 'alertness_change'
       ORDER BY created_at DESC
       LIMIT 1
     `);
 
     if (result.rows.length > 0) {
-      const lastChange = result.rows[0].data;
+      const lastChange = result.rows[0].payload;
       _currentLevel = lastChange.to?.level ?? ALERTNESS_LEVELS.NORMAL;
       console.log(`[alertness] Restored level from DB: ${LEVEL_NAMES[_currentLevel]}`);
     }
