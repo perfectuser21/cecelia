@@ -21,7 +21,6 @@ const manifest: FeatureManifest = {
     { path: '/engine', component: 'EngineDashboard' },
     { path: '/engine/capabilities', component: 'EngineCapabilities' },
     { path: '/engine/dev-tasks', component: 'DevTasks' },
-    { path: '/engine/task-monitor', component: 'TaskMonitor' },
     { path: '/engine/session-monitor', component: 'SessionMonitor' },
     // N8N
     { path: '/n8n/workflows', component: 'N8nWorkflows' },
@@ -44,7 +43,6 @@ const manifest: FeatureManifest = {
     { path: '/ops/system/engine', redirect: '/engine' },
     { path: '/ops/system/capabilities', redirect: '/engine/capabilities' },
     { path: '/ops/system/dev-tasks', redirect: '/engine/dev-tasks' },
-    { path: '/ops/system/task-monitor', redirect: '/engine/task-monitor' },
     { path: '/ops/system/session-monitor', redirect: '/engine/session-monitor' },
   ],
 
@@ -56,7 +54,6 @@ const manifest: FeatureManifest = {
     EngineDashboard: () => import('./pages/EngineDashboard'),
     EngineCapabilities: () => import('./pages/EngineCapabilities'),
     DevTasks: () => import('./pages/DevTasks'),
-    TaskMonitor: () => import('./pages/TaskMonitor'),
     SessionMonitor: () => import('./pages/SessionMonitor'),
     N8nWorkflows: () => import('./pages/N8nWorkflows'),
     N8nWorkflowDetail: () => import('./pages/N8nWorkflowDetail'),

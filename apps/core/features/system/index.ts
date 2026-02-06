@@ -13,18 +13,11 @@ const manifest: FeatureManifest = {
 
   routes: [
     // Ops Center
-    { path: '/', redirect: '/ops' },
-    {
-      path: '/ops',
-      component: 'OpsOverview',
-      navItem: { label: 'Ops Center', icon: 'Activity', order: 1 },
-    },
     {
       path: '/ops/live',
       component: 'LiveDashboard',
       navItem: { label: 'Live', icon: 'Activity', group: 'system', order: 1 },
     },
-    { path: '/ops/system', component: 'SystemOverview' },
     // VPS Monitor
     {
       path: '/vps-monitor',
@@ -59,9 +52,7 @@ const manifest: FeatureManifest = {
   ],
 
   components: {
-    OpsOverview: () => import('./pages/OpsOverview'),
     LiveDashboard: () => import('./pages/LiveDashboard'),
-    SystemOverview: () => import('./pages/SystemOverview'),
     VpsMonitor: () => import('./pages/VpsMonitor'),
     ClaudeMonitor: () => import('./pages/ClaudeMonitor'),
     ClaudeStats: () => import('./pages/ClaudeStats'),

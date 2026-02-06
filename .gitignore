@@ -50,7 +50,11 @@ workflows/.secrets
 .archived/
 workflows/.claude/
 
-# Build outputs
-dist/
+# Build outputs (duplicated for clarity)
 dist-dev/
 *.dist/
+
+# Stray symlinks & generated files
+apps/core/features/node_modules
+apps/dashboard/frontend/pnpm-lock.yaml
+apps/dashboard/frontend/server.js
