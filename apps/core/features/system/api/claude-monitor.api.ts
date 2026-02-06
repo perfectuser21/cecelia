@@ -72,27 +72,37 @@ export interface AIFactoryState {
 // API functions
 export const claudeMonitorApi = {
   // Get all runs
-  getRuns: async () => {
-    const response = await apiClient.get<RunsResponse>('/v1/claude-monitor/runs');
-    return response.data;
+  getRuns: async (): Promise<RunsResponse> => {
+    try {
+      const response = await apiClient.get<RunsResponse>('/v1/claude-monitor/runs', {
+        timeout: 8000,
+      });
+      return response.data;
+    } catch {
+      return { runs: [], running_count: 0, total_count: 0 };
+    }
   },
 
   // Get events for a specific run
-  getEvents: async (runId: string, limit: number = 100) => {
-    const response = await apiClient.get<EventsResponse>(
-      `/v1/claude-monitor/runs/${runId}/events`,
-      { params: { limit } }
-    );
-    return response.data;
+  getEvents: async (runId: string, limit: number = 100): Promise<EventsResponse> => {
+    try {
+      const response = await apiClient.get<EventsResponse>(
+        `/v1/claude-monitor/runs/${runId}/events`,
+        { params: { limit }, timeout: 8000 }
+      );
+      return response.data;
+    } catch {
+      return { events: [] };
+    }
   },
 
   // Kill a running session
   killRun: async (runId: string) => {
-    await apiClient.post(`/v1/claude-monitor/runs/${runId}/kill`);
+    await apiClient.post(`/v1/claude-monitor/runs/${runId}/kill`, null, { timeout: 8000 });
   },
 
   // Delete a run
   deleteRun: async (runId: string) => {
-    await apiClient.delete(`/v1/claude-monitor/runs/${runId}`);
+    await apiClient.delete(`/v1/claude-monitor/runs/${runId}`, { timeout: 8000 });
   },
 };

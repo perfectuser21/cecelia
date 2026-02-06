@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import {
   Activity,
   Clock,
@@ -292,7 +292,49 @@ function AIFactoryProgress({ state }: { state: AIFactoryState }) {
   );
 }
 
+const LazyClaudeStats = lazy(() => import('./ClaudeStats'));
+
 export default function ClaudeMonitor() {
+  const [activeTab, setActiveTab] = useState<'live' | 'analytics'>('live');
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 border-b border-slate-700 pb-2">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors ${
+            activeTab === 'live'
+              ? 'bg-slate-800 text-white border border-slate-700 border-b-0'
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          Live
+        </button>
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition-colors ${
+            activeTab === 'analytics'
+              ? 'bg-slate-800 text-white border border-slate-700 border-b-0'
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          <Sparkles className="w-4 h-4" />
+          Analytics
+        </button>
+      </div>
+      {activeTab === 'live' ? (
+        <ClaudeMonitorLive />
+      ) : (
+        <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /></div>}>
+          <LazyClaudeStats />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+function ClaudeMonitorLive() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [events, setEvents] = useState<Event[]>([]);

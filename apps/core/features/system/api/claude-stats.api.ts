@@ -49,11 +49,26 @@ export interface StatsResponse {
   recent_sessions: SessionStats[];
 }
 
+const emptyStats: StatsResponse = {
+  overview: {
+    total_cost: 0, total_sessions: 0, total_messages: 0,
+    total_input_tokens: 0, total_output_tokens: 0,
+    average_cost_per_session: 0, by_model: [],
+  },
+  daily: [],
+  recent_sessions: [],
+};
+
 export const claudeStatsApi = {
   getStats: async (days: number = 30): Promise<StatsResponse> => {
-    const response = await apiClient.get<StatsResponse>('/v1/claude-stats', {
-      params: { days },
-    });
-    return response.data;
+    try {
+      const response = await apiClient.get<StatsResponse>('/v1/claude-stats', {
+        params: { days },
+        timeout: 8000,
+      });
+      return response.data;
+    } catch {
+      return emptyStats;
+    }
   },
 };

@@ -40,7 +40,8 @@ export interface Department {
 export interface WorkersConfig {
   $schema?: string;
   version: string;
-  departments: Department[];
+  departments?: Department[];
+  teams?: Department[];
 }
 
 // 加载配置文件
@@ -58,17 +59,17 @@ try {
   workersConfig = { version: '0.0.0', departments: [] };
 }
 
-// 获取所有部门
+// 获取所有部门 (supports both v2 "departments" and v3 "teams" format)
 export function getDepartments(): Department[] {
-  return workersConfig.departments;
+  return workersConfig.teams || workersConfig.departments || [];
 }
 
 // 获取所有员工（扁平化）
 export function getAllWorkers(): (Worker & { departmentId: string; departmentName: string })[] {
   const workers: (Worker & { departmentId: string; departmentName: string })[] = [];
 
-  for (const dept of workersConfig.departments) {
-    for (const worker of dept.workers) {
+  for (const dept of getDepartments()) {
+    for (const worker of (dept.workers || [])) {
       workers.push({
         ...worker,
         departmentId: dept.id,
@@ -84,8 +85,8 @@ export function getAllWorkers(): (Worker & { departmentId: string; departmentNam
 export function getWorkerById(
   workerId: string
 ): (Worker & { departmentId: string; departmentName: string }) | null {
-  for (const dept of workersConfig.departments) {
-    const worker = dept.workers.find((w) => w.id === workerId);
+  for (const dept of getDepartments()) {
+    const worker = (dept.workers || []).find((w) => w.id === workerId);
     if (worker) {
       return {
         ...worker,
@@ -103,8 +104,8 @@ export function getWorkerKeywords(workerId: string): string[] {
   if (!worker) return [];
 
   const keywords: string[] = [];
-  for (const ability of worker.abilities) {
-    keywords.push(...ability.n8nKeywords);
+  for (const ability of (worker.abilities || [])) {
+    keywords.push(...(ability.n8nKeywords || []));
   }
   return keywords;
 }
@@ -115,10 +116,10 @@ export function matchWorkerByWorkflowName(
 ): { worker: Worker; ability: WorkerAbility; departmentId: string } | null {
   const lowerName = workflowName.toLowerCase();
 
-  for (const dept of workersConfig.departments) {
-    for (const worker of dept.workers) {
-      for (const ability of worker.abilities) {
-        for (const keyword of ability.n8nKeywords) {
+  for (const dept of getDepartments()) {
+    for (const worker of (dept.workers || [])) {
+      for (const ability of (worker.abilities || [])) {
+        for (const keyword of (ability.n8nKeywords || [])) {
           if (lowerName.includes(keyword.toLowerCase())) {
             return {
               worker,
@@ -144,15 +145,15 @@ export function getStats(): { totalDepartments: number; totalWorkers: number; to
   let totalWorkers = 0;
   let totalAbilities = 0;
 
-  for (const dept of workersConfig.departments) {
-    totalWorkers += dept.workers.length;
-    for (const worker of dept.workers) {
-      totalAbilities += worker.abilities.length;
+  for (const dept of getDepartments()) {
+    totalWorkers += (dept.workers || []).length;
+    for (const worker of (dept.workers || [])) {
+      totalAbilities += (worker.abilities || []).length;
     }
   }
 
   return {
-    totalDepartments: workersConfig.departments.length,
+    totalDepartments: getDepartments().length,
     totalWorkers,
     totalAbilities,
   };

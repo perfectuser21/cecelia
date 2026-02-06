@@ -14,7 +14,7 @@ import {
   GitBranch,
   FileText
 } from 'lucide-react';
-import { useCeceliaPage } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import { useCeceliaPage } from '@/contexts/CeceliaContext';
 import { BlockEditor } from '../../shared/components/blocks';
 
 interface Project {

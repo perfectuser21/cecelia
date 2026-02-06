@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Target, RefreshCw, ChevronDown, ChevronRight, FolderKanban } from 'lucide-react';
-import { useCeceliaPage } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import { useCeceliaPage } from '@/contexts/CeceliaContext';
 import ProgressBar from '../../shared/components/ProgressBar';
 import StatusIcon from '../../shared/components/StatusIcon';
 import PriorityBadge from '../../shared/components/PriorityBadge';

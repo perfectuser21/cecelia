@@ -38,7 +38,46 @@ export async function fetchClusterStatus(): Promise<ClusterStatus | null> {
     if (!response.ok) {
       return null;
     }
-    return await response.json();
+    const raw = await response.json();
+
+    // API returns { cluster: { servers: [...] } } — transform array to expected object shape
+    const clusterData = raw.cluster || raw;
+    const serversArray: any[] = clusterData.servers || [];
+
+    const usServer = serversArray.find((s: any) => s.id === 'us');
+    const hkServer = serversArray.find((s: any) => s.id === 'hk');
+
+    if (!usServer && !hkServer) return null;
+
+    const mapServer = (s: any): ServerStatus => ({
+      online: s.status === 'online',
+      cpu_cores: s.resources?.cpu_cores ?? 0,
+      cpu_load: s.resources?.cpu_load ?? 0,
+      mem_total_gb: s.resources?.mem_total_gb ?? 0,
+      mem_free_gb: s.resources?.mem_free_gb ?? 0,
+      slots_max: s.slots?.max ?? 0,
+      slots_available: s.slots?.available ?? 0,
+      slots_in_use: s.slots?.used ?? 0,
+      tasks_running: (s.slots?.processes || []).map((p: any) => p.command || 'unknown'),
+      danger_level: undefined,
+    });
+
+    const offlineServer: ServerStatus = {
+      online: false, cpu_cores: 0, cpu_load: 0,
+      mem_total_gb: 0, mem_free_gb: 0, slots_max: 0,
+      slots_available: 0, slots_in_use: 0, tasks_running: [],
+    };
+
+    return {
+      servers: {
+        us: usServer ? mapServer(usServer) : offlineServer,
+        hk: hkServer ? mapServer(hkServer) : offlineServer,
+      },
+      cluster_status: clusterData.total_available > 0 ? 'healthy' : 'degraded',
+      total_slots: clusterData.total_slots ?? 0,
+      available_slots: clusterData.total_available ?? 0,
+      recommendation: '',
+    };
   } catch {
     return null;
   }

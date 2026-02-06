@@ -98,9 +98,19 @@ app.use('/api/autumnrice', createProxyMiddleware({
 app.use('/api/v1', createProxyMiddleware({
   target: AUTOPILOT_BACKEND,
   changeOrigin: true,
+  timeout: 8000,
+  proxyTimeout: 8000,
   pathRewrite: {
     '^/api/v1': '/v1'
-  }
+  },
+  on: {
+    error: (_err, _req, res) => {
+      if ('writeHead' in res) {
+        (res as any).writeHead(502, { 'Content-Type': 'application/json' });
+        (res as any).end(JSON.stringify({ error: 'Autopilot backend unavailable' }));
+      }
+    },
+  },
 }));
 
 // Proxy /n8n/* to N8N container (workflow automation)
@@ -191,7 +201,7 @@ app.use('/api/system', systemRoutes);
 // Static frontend files (single frontend, theme switches by hostname in JS)
 // Frontend has been migrated to zenithjoy-workspace
 // Set DASHBOARD_FRONTEND_PATH env var to point to the built frontend dist
-const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../../../../zenithjoy/workspace/apps/dashboard/dist');
+const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../../../../../zenithjoy/workspace/apps/dashboard/dist');
 app.use(express.static(frontendPath));
 
 // SPA fallback

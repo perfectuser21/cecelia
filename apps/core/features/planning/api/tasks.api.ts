@@ -50,23 +50,28 @@ export interface CreateTaskData {
  * 查询任务列表
  */
 export async function fetchTasks(params: QueryTasksParams = {}): Promise<Task[]> {
-  const { data } = await apiClient.get<{ success: boolean; tasks: Task[]; error?: string }>(
-    '/tasks',
-    {
-      params: {
-        name: params.name,
-        range: params.range,
-        includeDone: params.includeDone ? 'true' : undefined,
-        includeNoDue: params.includeNoDue ? 'true' : undefined,
-      },
+  try {
+    const { data } = await apiClient.get<{ success: boolean; tasks: Task[]; error?: string }>(
+      '/tasks/personal',
+      {
+        params: {
+          name: params.name,
+          range: params.range,
+          includeDone: params.includeDone ? 'true' : undefined,
+          includeNoDue: params.includeNoDue ? 'true' : undefined,
+        },
+        timeout: 8000,
+      }
+    );
+
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to fetch tasks');
     }
-  );
 
-  if (!data.success) {
-    throw new Error(data.error || 'Failed to fetch tasks');
+    return data.tasks;
+  } catch {
+    return [];
   }
-
-  return data.tasks;
 }
 
 /**

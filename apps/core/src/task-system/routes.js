@@ -19,4 +19,9 @@ router.use('/tasks', tasksRouter);
 router.use('/tasks', linksRouter);  // Task links routes
 router.use('/runs', runsRouter);
 
+// Personal tasks stub (Notion-backed, not yet implemented)
+router.get('/personal', (_req, res) => {
+  res.json({ success: true, tasks: [], message: 'Personal tasks API not yet connected' });
+});
+
 export default router;

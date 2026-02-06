@@ -15,7 +15,7 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
-import { useCecelia } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import { useCecelia } from '@/contexts/CeceliaContext';
 import { useRealtimeVoice } from '../hooks/useRealtimeVoice';
 
 // Frontend command patterns for local execution (more flexible matching)

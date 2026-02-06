@@ -19,6 +19,7 @@ const manifest: FeatureManifest = {
     },
     { path: '/dashboard/command', component: 'CommandCenter' },
     { path: '/dashboard/command/*', component: 'CommandCenter' },
+    { path: '/dashboard/panorama', component: 'PanoramaV3' },
     // Default route
     { path: '/', redirect: '/dashboard' },
     // Legacy redirects
@@ -30,6 +31,7 @@ const manifest: FeatureManifest = {
   components: {
     DashboardHome: () => import('./pages/DashboardHome'),
     CommandCenter: () => import('../business/pages/CommandCenter'),
+    PanoramaV3: () => import('../business/pages/PanoramaV3'),
   },
 };
 

@@ -11,7 +11,7 @@ import {
   AlertCircle,
   Plus
 } from 'lucide-react';
-import { useCeceliaPage } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import { useCeceliaPage } from '@/contexts/CeceliaContext';
 
 interface Project {
   id: string;
