@@ -1,5 +1,45 @@
 # Learnings
 
+## [2026-02-06] Thalamus Event Router Implementation
+
+### Feature: Brain-inspired architecture with Thalamus
+
+- **What**: Implemented Thalamus (丘脑) as event router with Decision schema, validation, and execution
+- **Pattern**: Three-layer processing mimicking human brain
+  - Level 0 (Brainstem): Pure code, automatic reactions (heartbeat, simple dispatch)
+  - Level 1 (Thalamus): Quick judgment with Sonnet LLM
+  - Level 2 (Cortex): Deep thinking with Opus for complex decisions
+
+### Core Design Principle
+
+- **LLM as Instructor**: LLM can only give "instructions" (Decision), cannot directly modify the world
+- **Code as Executor**: Action handlers execute validated decisions
+- **Action Whitelist**: All actions must be pre-defined in whitelist
+
+### Quick Route Optimization
+
+- **Problem**: Simple events (heartbeat, normal tick) don't need LLM analysis
+- **Solution**: `quickRoute()` function returns immediate Decision for simple patterns
+- **Impact**: High - reduces Sonnet API calls, faster response time
+
+### Fallback Mechanism
+
+- **Problem**: Sonnet API calls can fail (timeout, rate limit, invalid response)
+- **Solution**: `createFallbackDecision()` returns `fallback_to_tick` action
+- **Impact**: Medium - ensures graceful degradation to code-based tick
+
+### Dangerous Action Flagging
+
+- **Pattern**: Actions marked as `dangerous: true` require `safety: true` in Decision
+- **Example**: `request_human_review` is dangerous, executor blocks without safety flag
+- **Impact**: High - prevents accidental execution of sensitive actions
+
+### Test Coverage
+
+- **Approach**: 45 unit tests covering validator, action handlers, quick route, and fallback
+- **Mocking**: Database and external dependencies mocked for fast test execution
+- **Impact**: High - ensures reliability of core decision flow
+
 ## [2026-02-04] Task Classification and OKR Tick System
 
 ### Feature: Implemented task routing and OKR state machine
