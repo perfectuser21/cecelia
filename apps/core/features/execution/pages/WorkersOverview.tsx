@@ -261,7 +261,7 @@ function WorkerCard({
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">
-            {worker.abilities.length} 个能力
+            {(worker.abilities || []).length} 个能力
           </span>
           {expanded ? (
             <ChevronDown className="w-4 h-4 text-gray-400" />
@@ -275,7 +275,7 @@ function WorkerCard({
         <div className="px-4 pb-3 pl-16">
           <p className="text-sm text-gray-400 mb-2">{worker.description}</p>
           <div className="space-y-2">
-            {worker.abilities.map((ability) => (
+            {(worker.abilities || []).map((ability) => (
               <div
                 key={ability.id}
                 className="bg-white/5 rounded-lg p-2 text-sm"
@@ -288,7 +288,7 @@ function WorkerCard({
                   {ability.description}
                 </p>
                 <div className="flex flex-wrap gap-1 mt-1 ml-5">
-                  {ability.n8nKeywords.slice(0, 3).map((kw) => (
+                  {(ability.n8nKeywords || []).slice(0, 3).map((kw) => (
                     <span
                       key={kw}
                       className="text-xs bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded"
@@ -296,9 +296,9 @@ function WorkerCard({
                       {kw}
                     </span>
                   ))}
-                  {ability.n8nKeywords.length > 3 && (
+                  {(ability.n8nKeywords || []).length > 3 && (
                     <span className="text-xs text-gray-500">
-                      +{ability.n8nKeywords.length - 3}
+                      +{(ability.n8nKeywords || []).length - 3}
                     </span>
                   )}
                 </div>
