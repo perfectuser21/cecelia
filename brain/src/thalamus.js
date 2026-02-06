@@ -236,6 +236,62 @@ function hasDangerousActions(decision) {
 }
 
 // ============================================================
+// Token Cost Tracking
+// ============================================================
+
+const MODEL_PRICING = {
+  'claude-sonnet-4-20250514': { in: 3.0 / 1_000_000, out: 15.0 / 1_000_000 },
+  'claude-opus-4-20250514': { in: 15.0 / 1_000_000, out: 75.0 / 1_000_000 },
+  'claude-haiku-4-20250514': { in: 0.8 / 1_000_000, out: 4.0 / 1_000_000 },
+};
+
+function calculateCost(usage, model) {
+  if (!usage) return 0;
+  const p = MODEL_PRICING[model];
+  if (!p) return 0;
+  return (usage.input_tokens || 0) * p.in + (usage.output_tokens || 0) * p.out;
+}
+
+async function recordTokenUsage(source, model, usage, context = {}) {
+  if (!usage) return;
+  const cost = calculateCost(usage, model);
+  try {
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('token_usage', $1, $2)
+    `, [source, JSON.stringify({
+      model,
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+      cost_usd: cost,
+      ...context,
+      timestamp: new Date().toISOString()
+    })]);
+  } catch (err) {
+    console.error(`[${source}] Failed to record token usage:`, err.message);
+  }
+}
+
+// ============================================================
+// Learnings Injection
+// ============================================================
+
+async function getRecentLearnings(limit = 20) {
+  try {
+    const result = await pool.query(`
+      SELECT title, content FROM reflections
+      WHERE type = 'learning'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    return result.rows;
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================
 // Thalamus (Sonnet 调用)
 // ============================================================
 
@@ -280,11 +336,25 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
  */
 async function analyzeEvent(event) {
   const eventJson = JSON.stringify(event, null, 2);
-  const prompt = `${THALAMUS_PROMPT}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+
+  // Build #1: 注入历史经验
+  const learnings = await getRecentLearnings();
+  let learningBlock = '';
+  if (learnings.length > 0) {
+    learningBlock = `\n\n## 系统历史经验（参考）\n${learnings.map(l => `- **${l.title}**: ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
+  }
+
+  const prompt = `${THALAMUS_PROMPT}${learningBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
     // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
-    const response = await callSonnet(prompt);
+    const { text: response, usage } = await callSonnet(prompt);
+
+    // Build #4: 记录 token 消耗
+    await recordTokenUsage('thalamus', 'claude-sonnet-4-20250514', usage, {
+      event_type: event.type,
+      learnings_injected: learnings.length,
+    });
 
     // 解析 JSON
     const decision = parseDecisionFromResponse(response);
@@ -314,10 +384,9 @@ async function analyzeEvent(event) {
 /**
  * 调用 Sonnet API
  * @param {string} prompt
- * @returns {Promise<string>}
+ * @returns {Promise<{text: string, usage: Object}>}
  */
 async function callSonnet(prompt) {
-  // 方案 1: 通过 Anthropic API 直接调用
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
@@ -346,7 +415,7 @@ async function callSonnet(prompt) {
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  return { text: data.content[0].text, usage: data.usage || null };
 }
 
 /**
@@ -500,6 +569,14 @@ export {
   classifyLLMError,
   recordLLMError,
   LLM_ERROR_TYPE,
+
+  // Token 成本
+  calculateCost,
+  recordTokenUsage,
+  MODEL_PRICING,
+
+  // Learnings
+  getRecentLearnings,
 
   // 常量
   EVENT_TYPES,

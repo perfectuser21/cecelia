@@ -18,7 +18,7 @@
 /* global console */
 
 import pool from './db.js';
-import { ACTION_WHITELIST, validateDecision, recordLLMError } from './thalamus.js';
+import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage, getRecentLearnings } from './thalamus.js';
 
 // ============================================================
 // Cortex Prompt
@@ -133,6 +133,11 @@ async function callOpus(prompt) {
   const data = await response.json();
   const elapsed = Date.now() - startTime;
   console.log(`[cortex] Opus responded in ${elapsed}ms`);
+
+  // Build #4: 记录 token 消耗
+  await recordTokenUsage('cortex', 'claude-opus-4-20250514', data.usage, {
+    elapsed_ms: elapsed,
+  });
 
   return data.content[0].text;
 }
@@ -261,6 +266,15 @@ async function analyzeDeep(event, thalamusDecision = null) {
     context.system_status = statusResult.rows[0];
   } catch (err) {
     console.error('[cortex] Failed to fetch system status:', err.message);
+  }
+
+  // Build #1: 注入历史经验到皮层
+  const learnings = await getRecentLearnings();
+  if (learnings.length > 0) {
+    context.historical_learnings = learnings.map(l => ({
+      title: l.title,
+      insight: (l.content || '').slice(0, 300)
+    }));
   }
 
   const contextJson = JSON.stringify(context, null, 2);
