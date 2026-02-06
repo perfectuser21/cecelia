@@ -280,211 +280,54 @@ describe('Planner Agent', () => {
     });
   });
 
-  describe('V3: generateTaskFromKR', () => {
-    it('should generate concrete task for intent recognition KR', async () => {
-      const { generateTaskFromKR } = await import('../planner.js');
-      const kr = { id: 'kr-1', title: 'KR1: 意图识别 - 自然语言→OKR', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/home/xx/perfect21/cecelia/workspace' };
-      const result = generateTaskFromKR(kr, project, [], 100);
-
-      expect(result).not.toBeNull();
-      expect(result.title).not.toContain('Advance');
-      expect(result.title).toBeTruthy();
-      expect(result.description).toBeTruthy();
-    });
-
-    it('should generate concrete task for PRD/TRD generation KR', async () => {
-      const { generateTaskFromKR } = await import('../planner.js');
-      const kr = { id: 'kr-2', title: 'KR2: PRD/TRD 自动生成（标准化）', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'cecelia-workspace', repo_path: '/tmp/test' };
-      const result = generateTaskFromKR(kr, project, [], 100);
-
-      expect(result).not.toBeNull();
-      expect(result.title).not.toContain('Advance');
-    });
-
-    it('should generate fallback task for unknown KR type', async () => {
-      const { generateTaskFromKR } = await import('../planner.js');
-      const kr = { id: 'kr-x', title: '提升系统可靠性', priority: 'P1', progress: 20 };
-      const project = { id: 'p-1', name: 'test-project', repo_path: '/tmp/test' };
-      const result = generateTaskFromKR(kr, project, [], 80);
-
-      expect(result).not.toBeNull();
-      expect(result.title).not.toContain('Advance');
-      // Fallback tasks contain the KR title
-      expect(result.title).toContain('提升系统可靠性');
-    });
-
-    it('should have at least 3 different KR strategies', async () => {
-      const { KR_STRATEGIES } = await import('../planner.js');
-      expect(KR_STRATEGIES.length).toBeGreaterThanOrEqual(3);
-    });
-
-    it('should skip completed tasks (dedup)', async () => {
-      const { generateTaskFromKR } = await import('../planner.js');
-      const kr = { id: 'kr-1', title: 'KR1: 意图识别', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
-
-      // First call gets first candidate
-      const first = generateTaskFromKR(kr, project, [], 100);
-      expect(first).not.toBeNull();
-
-      // Second call with first title in completed list skips it
-      const second = generateTaskFromKR(kr, project, [first.title], 100);
-      expect(second).not.toBeNull();
-      expect(second.title).not.toBe(first.title);
-    });
-
-    it('should return null when all candidates exhausted', async () => {
-      const { generateTaskFromKR, KR_STRATEGIES } = await import('../planner.js');
-      const kr = { id: 'kr-1', title: 'KR1: 意图识别', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
-
-      // Find the matching strategy and get all task titles
-      const strategy = KR_STRATEGIES.find(s => s.match(kr.title));
-      const allTitles = strategy.tasks.map(t => t.title);
-
-      const result = generateTaskFromKR(kr, project, allTitles, 100);
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('V3: KR_STRATEGIES progressWeight', () => {
-    it('should have progressWeight === tasks.length for every strategy', async () => {
-      const { KR_STRATEGIES } = await import('../planner.js');
-      for (const strategy of KR_STRATEGIES) {
-        expect(strategy.progressWeight).toBe(strategy.tasks.length);
-      }
-    });
-
-    it('prd_trd_generation should have updated task titles', async () => {
-      const { KR_STRATEGIES } = await import('../planner.js');
-      const strategy = KR_STRATEGIES.find(s => s.name === 'prd_trd_generation');
-      expect(strategy).toBeDefined();
-      const titles = strategy.tasks.map(t => t.title);
-      expect(titles).toContain('PRD 生成端到端冒烟测试');
-      expect(titles).toContain('PRD 验证 API 集成测试');
-      expect(titles).toContain('TRD 分解结果持久化验证');
-      expect(titles).toContain('Planner 自动 PRD 质量达标');
-      // Old tasks should not be present
-      expect(titles).not.toContain('实现 TRD 模板引擎');
-      expect(titles).not.toContain('添加 PRD 验证逻辑');
-    });
-
-    it('strategy exhaustion should return null from generateTaskFromKR', async () => {
-      const { generateTaskFromKR, KR_STRATEGIES } = await import('../planner.js');
-      const kr = { id: 'kr-2', title: 'KR2: PRD/TRD 自动生成（标准化）', priority: 'P0', progress: 0 };
-      const project = { id: 'p-1', name: 'test', repo_path: '/tmp/test' };
-      const strategy = KR_STRATEGIES.find(s => s.name === 'prd_trd_generation');
-      const allTitles = strategy.tasks.map(t => t.title);
-
-      const result = generateTaskFromKR(kr, project, allTitles, 100);
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('V3: autoGenerateTask progress update on exhaustion', () => {
-    it('should update KR progress when strategy tasks are exhausted', async () => {
-      const { autoGenerateTask } = await import('../planner.js');
-
-      // Create test KR with progress 0
-      const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR2: PRD/TRD 自动生成（标准化）', 'key_result', 'P0', 'pending', 0) RETURNING *"
-      );
-      testKRIds.push(krResult.rows[0].id);
+  describe('generateNextTask (V2: no auto-generation)', () => {
+    it('should return null when no queued tasks exist for KR+Project', async () => {
+      const { generateNextTask } = await import('../planner.js');
 
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('progress-test', '/tmp/progress-test', 'active') RETURNING id"
-      );
-      testProjectIds.push(projResult.rows[0].id);
-
-      // Create completed tasks matching all 4 strategy titles
-      const strategyTitles = [
-        'PRD 生成端到端冒烟测试',
-        'PRD 验证 API 集成测试',
-        'TRD 分解结果持久化验证',
-        'Planner 自动 PRD 质量达标'
-      ];
-      for (const title of strategyTitles) {
-        const tResult = await pool.query(
-          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
-          [title, projResult.rows[0].id, krResult.rows[0].id]
-        );
-        testTaskIds.push(tResult.rows[0].id);
-      }
-
-      const kr = krResult.rows[0];
-      const project = { id: projResult.rows[0].id, name: 'progress-test', repo_path: '/tmp/progress-test' };
-      const state = { recentCompleted: [] };
-
-      // autoGenerateTask should return null (exhausted) and update KR progress
-      const result = await autoGenerateTask(kr, project, state);
-      expect(result).toBeNull();
-
-      // Verify KR progress was updated
-      const updated = await pool.query('SELECT progress FROM goals WHERE id = $1', [kr.id]);
-      expect(updated.rows[0].progress).toBe(100);
-    });
-  });
-
-  describe('V3: generateTaskPRD', () => {
-    it('should generate a PRD file with standard fields', async () => {
-      const { generateTaskPRD } = await import('../planner.js');
-      const { readFileSync, unlinkSync } = await import('fs');
-
-      const kr = { title: 'Test KR', progress: 50, priority: 'P1' };
-      const project = { name: 'test-project', repo_path: '/tmp/test' };
-
-      const result = generateTaskPRD('Test Task', 'Test description', kr, project);
-
-      expect(result.path).toBeTruthy();
-      expect(result.validation).toBeDefined();
-      expect(result.validation.valid).toBe(true);
-
-      const content = readFileSync(result.path, 'utf-8');
-      expect(content).toContain('## 需求来源');
-      expect(content).toContain('## 功能描述');
-      expect(content).toContain('## 成功标准');
-      expect(content).toContain('Test KR');
-      expect(content).toContain('Test description');
-
-      // Cleanup
-      unlinkSync(result.path);
-    });
-  });
-
-  describe('V3: autoGenerateTask with PRD', () => {
-    it('should generate task with prd_path in payload (dryRun)', async () => {
-      const { autoGenerateTask } = await import('../planner.js');
-      const { unlinkSync } = await import('fs');
-
-      // Create test data
-      const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('v3-test', '/tmp/v3-test', 'active') RETURNING id"
+        "INSERT INTO projects (name, repo_path, status) VALUES ('empty-test', '/tmp/empty', 'active') RETURNING id"
       );
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR1: 意图识别 - 测试', 'key_result', 'P0', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Empty KR', 'key_result', 'P0', 'pending', 0) RETURNING *"
       );
       testKRIds.push(krResult.rows[0].id);
 
-      const kr = krResult.rows[0];
-      const project = { id: projResult.rows[0].id, name: 'v3-test', repo_path: '/tmp/v3-test' };
-      const state = { recentCompleted: [] };
+      const result = await generateNextTask(
+        krResult.rows[0],
+        { id: projResult.rows[0].id },
+        { recentCompleted: [] }
+      );
+      expect(result).toBeNull();
+    });
 
-      const result = await autoGenerateTask(kr, project, state, { dryRun: true });
+    it('should return existing queued task', async () => {
+      const { generateNextTask } = await import('../planner.js');
 
+      const projResult = await pool.query(
+        "INSERT INTO projects (name, repo_path, status) VALUES ('queued-test', '/tmp/queued', 'active') RETURNING id"
+      );
+      testProjectIds.push(projResult.rows[0].id);
+
+      const krResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Queued KR', 'key_result', 'P0', 'pending', 0) RETURNING *"
+      );
+      testKRIds.push(krResult.rows[0].id);
+
+      const tResult = await pool.query(
+        "INSERT INTO tasks (title, priority, project_id, goal_id, status) VALUES ('Existing Task', 'P0', $1, $2, 'queued') RETURNING id",
+        [projResult.rows[0].id, krResult.rows[0].id]
+      );
+      testTaskIds.push(tResult.rows[0].id);
+
+      const result = await generateNextTask(
+        krResult.rows[0],
+        { id: projResult.rows[0].id },
+        { recentCompleted: [] }
+      );
       expect(result).not.toBeNull();
-      expect(result.title).not.toContain('Advance');
-      expect(result._strategy).toBe('v3_decompose');
-      expect(result.payload.prd_path).toBeTruthy();
-      expect(result.payload.auto_generated).toBe(true);
-
-      // Cleanup PRD file
-      if (result.payload.prd_path) {
-        try { unlinkSync(result.payload.prd_path); } catch {}
-      }
+      expect(result.title).toBe('Existing Task');
     });
   });
 
@@ -507,9 +350,8 @@ describe('Planner Agent', () => {
   });
 
   describe('planNextTask KR rotation', () => {
-    it('rotates to next KR when top is exhausted', async () => {
+    it('rotates to next KR when top has no queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
-      const { unlinkSync, existsSync } = await import('fs');
 
       // Create 2 KRs under one objective
       const objResult = await pool.query(
@@ -517,16 +359,16 @@ describe('Planner Agent', () => {
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
-      // KR1: will be exhausted (use title that won't match any KR_STRATEGY)
+      // KR1: no queued tasks
       const kr1Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Exhausted KR - 奇异星球建设', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr1Result.rows[0].id);
 
-      // KR2: fresh (also use title that won't match any strategy, falls through to fallback)
+      // KR2: has a queued task
       const kr2Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Fresh KR - 银河探测器部署', 'key_result', 'P1', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'key_result', 'P1', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr2Result.rows[0].id);
@@ -544,55 +386,36 @@ describe('Planner Agent', () => {
       testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr1Result.rows[0].id });
       testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr2Result.rows[0].id });
 
-      // Exhaust KR1's fallback tasks by creating "completed" versions of all 3
-      const fallbackTitles = [
-        `调研 Exhausted KR - 奇异星球建设 实现方案`,
-        `实现 Exhausted KR - 奇异星球建设 核心逻辑`,
-        `为 Exhausted KR - 奇异星球建设 编写测试`
-      ];
-      for (const title of fallbackTitles) {
-        const tResult = await pool.query(
-          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
-          [title, projResult.rows[0].id, kr1Result.rows[0].id]
-        );
-        testTaskIds.push(tResult.rows[0].id);
-      }
+      // Add a queued task only for KR2
+      const tResult = await pool.query(
+        "INSERT INTO tasks (title, priority, project_id, goal_id, status) VALUES ('KR2 Task', 'P0', $1, $2, 'queued') RETURNING id",
+        [projResult.rows[0].id, kr2Result.rows[0].id]
+      );
+      testTaskIds.push(tResult.rows[0].id);
 
-      // Call planNextTask with just these 2 KR IDs
       const result = await planNextTask([kr1Result.rows[0].id, kr2Result.rows[0].id]);
 
-      // Should plan successfully using KR2 (not KR1 which is exhausted)
       expect(result.planned).toBe(true);
       expect(result.kr.id).toBe(kr2Result.rows[0].id);
-      expect(result.task).toBeDefined();
-
-      // Cleanup generated task and PRD
-      if (result.task?.id) testTaskIds.push(result.task.id);
-      try {
-        const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [result.task.id]);
-        const prdPath = taskRow.rows[0]?.payload?.prd_path;
-        if (prdPath && existsSync(prdPath)) unlinkSync(prdPath);
-      } catch {}
+      expect(result.task.title).toBe('KR2 Task');
     });
 
-    it('returns needs_planning when all KRs exhausted', async () => {
+    it('returns needs_planning when no KRs have queued tasks', async () => {
       const { planNextTask } = await import('../planner.js');
 
-      // Create objective + 1 KR
       const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Exhausted Obj', 'objective', 'P0', 'in_progress', 0) RETURNING id"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Empty Obj', 'objective', 'P0', 'in_progress', 0) RETURNING id"
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Exhausted KR - 奇异星球建设', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(krResult.rows[0].id);
 
-      // Create project + link
       const projResult = await pool.query(
-        "INSERT INTO projects (name, repo_path, status) VALUES ('exhaust-test', '/tmp/exhaust', 'active') RETURNING id"
+        "INSERT INTO projects (name, repo_path, status) VALUES ('empty-plan-test', '/tmp/empty-plan', 'active') RETURNING id"
       );
       testProjectIds.push(projResult.rows[0].id);
 
@@ -601,20 +424,6 @@ describe('Planner Agent', () => {
         [projResult.rows[0].id, krResult.rows[0].id]
       );
       testLinks.push({ project_id: projResult.rows[0].id, kr_id: krResult.rows[0].id });
-
-      // Exhaust all fallback tasks
-      const fallbackTitles = [
-        `调研 Solo Exhausted KR - 奇异星球建设 实现方案`,
-        `实现 Solo Exhausted KR - 奇异星球建设 核心逻辑`,
-        `为 Solo Exhausted KR - 奇异星球建设 编写测试`
-      ];
-      for (const title of fallbackTitles) {
-        const tResult = await pool.query(
-          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
-          [title, projResult.rows[0].id, krResult.rows[0].id]
-        );
-        testTaskIds.push(tResult.rows[0].id);
-      }
 
       const result = await planNextTask([krResult.rows[0].id]);
 
