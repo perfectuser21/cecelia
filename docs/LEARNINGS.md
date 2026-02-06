@@ -612,3 +612,24 @@ Created comprehensive implementation planning for KR2.2 Phase 5, covering platfo
 After this planning is complete, the actual implementation will be in zenithjoy-autopilot repository with separate PRs for each of the 5 subtasks.
 
 ---
+
+## [2026-02-07] Brain 旧模块清理（v1.11.0）
+
+### Feature: 消除三层架构设计前的遗留代码，整合到 L0/L1/L2
+
+- **What**: Brain 有 8 个旧模块（orchestrator, perception, decomposer, planner-llm, self-diagnosis, hk-bridge, minimax-executor, prd-queue）被三层大脑架构（L0 脑干, L1 丘脑, L2 皮层）取代，导致职责重叠和代码混乱
+- **Root Cause**: 2026-01-31 三层架构重构后，旧代码未及时删除，保持了"兼容性"，但造成了概念污染
+- **Fix**:
+  1. 删除 8 个完全被替代的模块文件
+  2. 清理 routes.js 中 14 个对应的路由处理器（/status/full, /snapshots, /memory, /policy, /decisions, /tasks, /trd/decompose, /trd/:id/progress, /trds, /plan/llm, /self-diagnosis 等）
+  3. 更新 Brain 版本号 1.10.0 → 1.11.0（minor bump）
+  4. 同步 DEFINITION.md 中的版本号和架构描述
+- **Key Design**:
+  - L0 脑干 (tick.js, executor.js): 调度、执行、保护（决定性操作）
+  - L1 丘脑 (thalamus.js): 事件路由、快速判断（实时反应）
+  - L2 皮层 (cortex.js): 深度分析、RCA、战略调整（慢思考）
+  - 不再需要"并行旧系统"的冗余设计
+- **Gotcha**: facts-check CI 要求文档版本号与代码严格一致，DEFINITION.md 未更新导致第一次 CI 失败
+- **Testing**: All 658 existing tests pass, Brain selfcheck passes
+- **Pattern**: 旧代码债务必须主动清理，即使"还能用"也要删，避免新人困惑和代码审查负担
+
