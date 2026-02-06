@@ -1575,22 +1575,83 @@ router.post('/execution-callback', async (req, res) => {
       // Publish WebSocket event: task failed
       publishTaskFailed(task_id, run_id, status);
 
-      // Check if task should be quarantined
+      // === Failure Classification & Smart Retry ===
+      let failureHandled = false;
       let quarantined = false;
       try {
-        const quarantineResult = await handleTaskFailure(task_id);
-        if (quarantineResult.quarantined) {
-          quarantined = true;
-          console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
-          // Notify about quarantine
-          notifyTaskFailed({
-            task_id,
-            title: `Task ${task_id} QUARANTINED`,
-            reason: `Quarantined: ${quarantineResult.result?.reason}`
-          }).catch(() => {});
+        // Extract error message from result
+        const errorMsg = typeof result === 'object'
+          ? (result.result || result.error || result.stderr || JSON.stringify(result))
+          : String(result || status);
+
+        // Classify the failure
+        const { classifyFailure } = await import('./quarantine.js');
+        const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]);
+        const taskPayload = taskRow.rows[0]?.payload || {};
+        const classification = classifyFailure(errorMsg, { payload: taskPayload });
+
+        console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
+
+        // Store classification in task payload
+        await pool.query(
+          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [task_id, JSON.stringify({
+            failure_class: classification.class,
+            failure_detail: { pattern: classification.pattern, error_excerpt: errorMsg.slice(0, 500) },
+          })]
+        );
+
+        const strategy = classification.retry_strategy;
+
+        if (strategy && strategy.should_retry) {
+          // Smart retry: requeue with next_run_at
+          const retryCount = (taskPayload.failure_count || 0) + 1;
+          await pool.query(
+            `UPDATE tasks SET status = 'queued', started_at = NULL,
+             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+             WHERE id = $1 AND status = 'failed'`,
+            [task_id, JSON.stringify({
+              next_run_at: strategy.next_run_at,
+              failure_count: retryCount,
+              smart_retry: { class: classification.class, attempt: retryCount, scheduled_at: strategy.next_run_at },
+            })]
+          );
+          console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
+          failureHandled = true;
+
+          // Billing pause: stop all dispatch until reset
+          if (strategy.billing_pause) {
+            const { setBillingPause } = await import('./executor.js');
+            setBillingPause(strategy.next_run_at, `billing_cap (task ${task_id})`);
+          }
+        } else if (strategy && strategy.needs_human_review) {
+          // No retry, mark for human review
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [task_id, JSON.stringify({ needs_human_review: true })]
+          );
+          console.log(`[execution-callback] Needs human review: task=${task_id} class=${classification.class}`);
         }
-      } catch (quarantineErr) {
-        console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+      } catch (classifyErr) {
+        console.error(`[execution-callback] Classification error: ${classifyErr.message}`);
+      }
+
+      // Check if task should be quarantined (only if not already handled by smart retry)
+      if (!failureHandled) {
+        try {
+          const quarantineResult = await handleTaskFailure(task_id);
+          if (quarantineResult.quarantined) {
+            quarantined = true;
+            console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
+            notifyTaskFailed({
+              task_id,
+              title: `Task ${task_id} QUARANTINED`,
+              reason: `Quarantined: ${quarantineResult.result?.reason}`
+            }).catch(() => {});
+          }
+        } catch (quarantineErr) {
+          console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+        }
       }
 
       // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
