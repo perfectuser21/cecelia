@@ -1,12 +1,12 @@
 {
   "gate": "dod",
   "status": "PASS",
-  "timestamp": "2026-02-06T03:55:00Z",
-  "dod_file": ".dod-execution-logs-view.md",
-  "qa_decision": "docs/QA-DECISION.md",
+  "timestamp": "2026-02-06T10:11:00Z",
+  "dod_file": ".dod-kr22-unified-publish-research.md",
   "validation": {
     "has_qa_reference": true,
-    "has_test_fields": true,
-    "all_tests_defined": true
+    "has_acceptance_criteria": true,
+    "has_test_methods": true,
+    "all_tests_specified": true
   }
 }

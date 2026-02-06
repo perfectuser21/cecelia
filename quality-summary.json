@@ -1,13 +1,17 @@
 {
-  "branch": "cp-02060949-35fc93e2-62c1-4416-875e-769d33",
+  "branch": "cp-02061007-49684eea-b878-4ee6-a27a-9e8874",
   "task_type": "research",
   "checks": {
-    "markdown_structure": {"status": "pass"},
-    "required_sections": {"status": "pass"},
-    "completeness": {"status": "pass", "lines": 836},
-    "shell": {"status": "pass"}
+    "documentation": {"status": "pass", "note": "KR22-UNIFIED-PUBLISH-ENGINE.md is comprehensive"},
+    "prd": {"status": "pass", "note": "PRD defines research objectives clearly"},
+    "dod": {"status": "pass", "note": "DoD has clear acceptance criteria"},
+    "qa_decision": {"status": "pass", "note": "QA Decision properly specifies manual validation"}
   },
   "gates": {
-    "quality": {"status": "pass", "timestamp": "2026-02-06T01:57:40Z"}
+    "prd": {"status": "pass", "file": ".gates/prd.json"},
+    "dod": {"status": "pass", "file": ".gates/dod.json"},
+    "qa": {"status": "pass", "file": ".gates/qa.json"},
+    "test": {"status": "pass", "file": ".gates/test.json"},
+    "quality": {"status": "pass", "file": ".gates/quality.json"}
   }
 }

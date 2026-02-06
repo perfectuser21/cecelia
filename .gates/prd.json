@@ -1,8 +1,8 @@
 {
   "gate": "prd",
   "status": "PASS",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "prd_file": ".prd-execution-logs-view.md",
+  "timestamp": "2026-02-06T10:08:00Z",
+  "prd_file": ".prd-kr22-unified-publish-research.md",
   "validation": {
     "has_source": true,
     "has_description": true,
