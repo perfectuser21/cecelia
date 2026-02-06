@@ -1,20 +1,17 @@
 {
-  "branch": "cp-02061242-d7432c13-6d08-499f-ab6b-6e50a6",
+  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
   "task_type": "documentation",
   "checks": {
-    "documents_created": {"status": "pass", "details": "All 3 required documents exist"},
-    "frontmatter": {"status": "pass", "details": "All documents have version and changelog"},
-    "structure": {"status": "pass", "details": "Documents have proper structure and sections"}
+    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
+    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
+    "structure_complete": {"status": "pass", "verified": "all required sections present"},
+    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
   },
   "gates": {
-    "prd": {"status": "pass", "file": ".gates/prd.json"},
-    "dod": {"status": "pass", "file": ".gates/dod.json"},
-    "test": {"status": "pass", "file": ".gates/test.json"},
+    "prd": {"status": "pass", "file": ".gate-prd-passed"},
+    "dod": {"status": "pass", "file": ".gate-dod-passed"},
+    "test": {"status": "pass", "file": ".gate-test-passed"},
     "quality": {"status": "pass"}
   },
-  "documents": [
-    "docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md",
-    "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md",
-    "docs/AGENT_ROUTING.md (updated)"
-  ]
+  "timestamp": "2026-02-06T14:10:35+08:00"
 }

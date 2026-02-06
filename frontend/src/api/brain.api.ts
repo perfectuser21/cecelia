@@ -134,7 +134,59 @@ export const brainApi = {
 
   getCeceliaRunLogs: (runId: string) =>
     apiClient.get<LogsResponse>(`/cecelia/runs/${runId}/logs`),
+
+  // Hardening Status
+  getHardeningStatus: () =>
+    apiClient.get<HardeningStatusResponse>('/brain/hardening/status'),
+
+  // Alertness Override
+  overrideAlertness: (level: number, reason: string) =>
+    apiClient.post('/brain/alertness/override', { level, reason }),
+
+  clearAlertnessOverride: () =>
+    apiClient.post('/brain/alertness/clear-override'),
 };
+
+// Hardening Status Types
+export interface HardeningStatusResponse {
+  version: string;
+  checked_at: string;
+  overall_status: 'ok' | 'warn' | 'critical';
+  features: {
+    transactional_decisions: {
+      enabled: boolean;
+      recent_10: { committed: number; rolled_back: number };
+      last_rollback: { at: string; error: string } | null;
+    };
+    failure_classification: {
+      enabled: boolean;
+      last_1h: { systemic: number; task_specific: number; unknown: number };
+    };
+    event_backlog: {
+      enabled: boolean;
+      current_10min: number;
+      threshold: number;
+      peak_24h: number;
+    };
+    alertness_decay: {
+      enabled: boolean;
+      current_score: { raw: number; decayed: number };
+      level: string;
+      recovery_gate: { target: string; remaining_ms: number } | null;
+    };
+    pending_actions: {
+      enabled: boolean;
+      pending: number;
+      approved_24h: number;
+      rejected_24h: number;
+      expired_24h: number;
+    };
+    llm_errors: {
+      enabled: boolean;
+      last_1h: { api_error: number; bad_output: number; timeout: number };
+    };
+  };
+}
 
 // Execution Status Types
 export interface VpsSlot {

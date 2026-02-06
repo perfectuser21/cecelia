@@ -708,6 +708,22 @@ router.post('/quarantine/release-all', async (req, res) => {
   }
 });
 
+// ==================== Watchdog API ====================
+
+/**
+ * GET /api/brain/watchdog
+ * 资源看门狗诊断 - 每个任务的实时 RSS/CPU/采样数/阈值
+ */
+router.get('/watchdog', async (req, res) => {
+  try {
+    const { getWatchdogStatus } = await import('./watchdog.js');
+    const status = getWatchdogStatus();
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get watchdog status', details: err.message });
+  }
+});
+
 // ==================== Pending Actions API（危险动作审批） ====================
 
 /**
