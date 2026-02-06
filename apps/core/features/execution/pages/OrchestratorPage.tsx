@@ -6,13 +6,13 @@ import {
   ListTodo,
   ChevronRight,
   ChevronDown,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
   X,
   Cpu,
   Server
 } from 'lucide-react';
+import ProgressBar from '../../shared/components/ProgressBar';
+import StatusIcon from '../../shared/components/StatusIcon';
+import PriorityBadge from '../../shared/components/PriorityBadge';
 
 // Types
 interface KeyResult {
@@ -243,17 +243,6 @@ export default function OrchestratorPage() {
 
   const closeDetail = () => setDetail({ type: null, data: null });
 
-  const getPriorityColor = (p: string) => {
-    if (p === 'P0') return 'text-red-500 bg-red-50 dark:bg-red-900/20';
-    if (p === 'P1') return 'text-amber-500 bg-amber-50 dark:bg-amber-900/20';
-    return 'text-slate-500 bg-slate-50 dark:bg-slate-700/50';
-  };
-
-  const getStatusIcon = (s: string) => {
-    if (s === 'completed') return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />;
-    if (s === 'in_progress') return <Clock className="w-3.5 h-3.5 text-amber-500" />;
-    return <AlertCircle className="w-3.5 h-3.5 text-slate-400" />;
-  };
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><RefreshCw className="w-8 h-8 animate-spin text-slate-400" /></div>;
@@ -345,7 +334,7 @@ export default function OrchestratorPage() {
                   }
                   <Target className="w-3.5 h-3.5 text-emerald-500" />
                   <span className="text-sm text-slate-900 dark:text-white flex-1 truncate">{obj.title}</span>
-                  <span className={`px-1.5 py-0.5 text-[10px] rounded ${getPriorityColor(obj.priority)}`}>{obj.priority}</span>
+                  <PriorityBadge priority={obj.priority} size="sm" />
                 </div>
 
                 {expandedOKRs.has(obj.id) && (
@@ -356,7 +345,7 @@ export default function OrchestratorPage() {
                         onClick={() => openDetail('okr', kr)}
                         className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer rounded"
                       >
-                        {getStatusIcon(kr.status)}
+                        <StatusIcon status={kr.status} size="sm" />
                         <span className="text-xs text-slate-700 dark:text-slate-300 flex-1 truncate">{kr.title}</span>
                         <div className="flex items-center gap-1">
                           <div className="w-10 h-1 bg-slate-100 dark:bg-slate-600 rounded-full">
@@ -426,8 +415,8 @@ export default function OrchestratorPage() {
                             onClick={() => openDetail('task', t)}
                             className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer rounded"
                           >
-                            {getStatusIcon(t.status)}
-                            <span className={`px-1 py-0.5 text-[10px] rounded ${getPriorityColor(t.priority)}`}>{t.priority}</span>
+                            <StatusIcon status={t.status} size="sm" />
+                            <PriorityBadge priority={t.priority} size="sm" />
                             <span className="text-xs text-slate-700 dark:text-slate-300 truncate">{t.title}</span>
                           </div>
                         ))}
@@ -452,8 +441,8 @@ export default function OrchestratorPage() {
                   onClick={() => openDetail('task', t)}
                   className="flex items-center gap-2 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer rounded"
                 >
-                  {getStatusIcon(t.status)}
-                  <span className={`px-1 py-0.5 text-[10px] rounded ${getPriorityColor(t.priority)}`}>{t.priority}</span>
+                  <StatusIcon status={t.status} size="sm" />
+                  <PriorityBadge priority={t.priority} size="sm" />
                   <span className="text-xs text-slate-900 dark:text-white truncate flex-1">{t.title}</span>
                 </div>
               ))}
@@ -489,7 +478,7 @@ export default function OrchestratorPage() {
               {detail.data.priority && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-500 w-16">Priority</span>
-                  <span className={`px-2 py-0.5 text-xs rounded ${getPriorityColor(detail.data.priority)}`}>{detail.data.priority}</span>
+                  <PriorityBadge priority={detail.data.priority} />
                 </div>
               )}
               {detail.data.progress !== undefined && (

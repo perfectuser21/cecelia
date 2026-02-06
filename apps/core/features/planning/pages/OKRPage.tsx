@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Target, RefreshCw, ChevronDown, ChevronRight, CheckCircle2, Clock, AlertCircle, FolderKanban } from 'lucide-react';
+import { Target, RefreshCw, ChevronDown, ChevronRight, FolderKanban } from 'lucide-react';
 import { useCeceliaPage } from '../../../../dashboard/frontend/src/contexts/CeceliaContext';
+import ProgressBar from '../../shared/components/ProgressBar';
+import StatusIcon from '../../shared/components/StatusIcon';
+import PriorityBadge from '../../shared/components/PriorityBadge';
 
 interface KeyResult {
   id: string;
@@ -56,52 +59,6 @@ interface FocusData {
   is_manual: boolean;
 }
 
-function ProgressBar({ progress, size = 'md' }: { progress: number; size?: 'sm' | 'md' }) {
-  const heightClass = size === 'sm' ? 'h-1.5' : 'h-2';
-  const colorClass = progress >= 80
-    ? 'bg-emerald-500'
-    : progress >= 50
-    ? 'bg-blue-500'
-    : progress > 0
-    ? 'bg-amber-500'
-    : 'bg-slate-300 dark:bg-slate-600';
-
-  return (
-    <div className={`w-full ${heightClass} bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden`}>
-      <div
-        className={`${heightClass} ${colorClass} rounded-full transition-all duration-500`}
-        style={{ width: `${progress}%` }}
-      />
-    </div>
-  );
-}
-
-function StatusIcon({ status }: { status: string }) {
-  switch (status) {
-    case 'completed':
-      return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
-    case 'in_progress':
-      return <Clock className="w-4 h-4 text-blue-500" />;
-    case 'cancelled':
-      return <AlertCircle className="w-4 h-4 text-red-500" />;
-    default:
-      return <Clock className="w-4 h-4 text-slate-400" />;
-  }
-}
-
-function PriorityBadge({ priority }: { priority: string }) {
-  const colorClass = priority === 'P0'
-    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-    : priority === 'P1'
-    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-    : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-400';
-
-  return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}>
-      {priority}
-    </span>
-  );
-}
 
 function FocusPanel({ focus, loading }: { focus: FocusData | null; loading: boolean }) {
   if (loading) {
