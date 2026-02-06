@@ -1,6 +1,6 @@
 gate: prd
 status: PASS
 timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
-file: .prd-dashboard-ui-ux.md
+file: .prd-kr22-unified-publish-research.md
 decision: PASS
 issues: 0

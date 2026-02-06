@@ -1,12 +1,13 @@
 {
-  "branch": "cp-02060937-90553a3e-a159-4886-944c-dc80e4",
+  "branch": "cp-02060949-35fc93e2-62c1-4416-875e-769d33",
+  "task_type": "research",
   "checks": {
-    "documentation": {"status": "pass", "message": "Research document created"},
-    "markdown_format": {"status": "pass", "message": "Valid Markdown syntax"},
-    "completeness": {"status": "pass", "message": "All DoD items addressed"}
+    "markdown_structure": {"status": "pass"},
+    "required_sections": {"status": "pass"},
+    "completeness": {"status": "pass", "lines": 836},
+    "shell": {"status": "pass"}
   },
   "gates": {
-    "quality": {"status": "pass", "type": "research"}
-  },
-  "timestamp": "2026-02-06T09:40:00+08:00"
+    "quality": {"status": "pass", "timestamp": "2026-02-06T01:57:40Z"}
+  }
 }
