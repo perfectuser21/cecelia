@@ -1,6 +1,6 @@
 {
   "name": "cecelia-brain",
-  "version": "1.7.0",
+  "version": "1.8.1",
   "type": "module",
   "description": "Cecelia Node.js Brain - decision engine, tick loop, and action system",
   "main": "server.js",
@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "bullmq": "^5.28.2",
     "dotenv": "^16.4.0",
     "express": "^4.18.2",
+    "ioredis": "^5.4.1",
     "pg": "^8.12.0",
     "uuid": "^9.0.0",
     "ws": "^8.19.0"
