@@ -14,21 +14,21 @@ const manifest: FeatureManifest = {
   routes: [
     {
       path: '/today',
-      component: 'TodayHome',
+      component: 'TodayTabbed',
       navItem: { label: 'Today', icon: 'CalendarDays', group: 'today' },
     },
-    { path: '/today/view', component: 'TodayView' },
-    { path: '/today/scheduler', component: 'Scheduler' },
-    { path: '/today/tasks', component: 'TasksPage' },
+    { path: '/today/schedule', component: 'TodayTabbed' },
+    { path: '/today/queue', component: 'TodayTabbed' },
+    // Redirects from old paths
+    { path: '/today/view', redirect: '/today' },
+    { path: '/today/tasks', redirect: '/today/schedule' },
+    { path: '/today/scheduler', redirect: '/today/queue' },
     // Legacy redirects
-    { path: '/scheduler', redirect: '/today/scheduler' },
+    { path: '/scheduler', redirect: '/today/queue' },
   ],
 
   components: {
-    TodayHome: () => import('./pages/TodayHome'),
-    TodayView: () => import('../daily/pages/TodayView'),
-    Scheduler: () => import('../planning/pages/Scheduler'),
-    TasksPage: () => import('../planning/pages/Tasks'),
+    TodayTabbed: () => import('./pages/TodayTabbed'),
   },
 };
 
