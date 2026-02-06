@@ -1,34 +1,12 @@
 {
-  "branch": "cp-02060219-47086861-3af0-412f-9aa2-9cb0a6",
+  "branch": "cp-02060937-90553a3e-a159-4886-944c-dc80e4",
   "checks": {
-    "code_review": {"status": "pass", "note": "Code follows project patterns"},
-    "test_coverage": {"status": "pass", "note": "Tests created for backend and frontend"},
-    "api_design": {"status": "pass", "note": "RESTful API with proper error handling"},
-    "frontend_ux": {"status": "pass", "note": "Responsive design with filtering and pagination"}
+    "documentation": {"status": "pass", "message": "Research document created"},
+    "markdown_format": {"status": "pass", "message": "Valid Markdown syntax"},
+    "completeness": {"status": "pass", "message": "All DoD items addressed"}
   },
   "gates": {
-    "prd": {"status": "pass", "file": "docs/gates/prd.pass"},
-    "dod": {"status": "pass", "file": "docs/gates/dod.pass"},
-    "test": {"status": "pass", "file": "docs/gates/test.pass"},
-    "quality": {"status": "pass"}
+    "quality": {"status": "pass", "type": "research"}
   },
-  "implementation_summary": {
-    "backend": [
-      "Added 3 API endpoints for execution logs",
-      "GET /api/brain/execution-logs - List with filtering",
-      "GET /api/brain/execution-logs/:id - Detail view",
-      "GET /api/brain/execution-logs/:id/stream - SSE streaming"
-    ],
-    "frontend": [
-      "Created ExecutionLogs page component",
-      "Implemented filtering (status, type, date, search)",
-      "Added pagination support",
-      "Log detail modal with download",
-      "Real-time updates every 30s"
-    ],
-    "testing": [
-      "Backend route tests",
-      "Frontend component tests"
-    ]
-  }
+  "timestamp": "2026-02-06T09:40:00+08:00"
 }

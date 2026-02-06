@@ -1,34 +1,42 @@
-# QA Decision - 执行日志查看页面
+# QA Decision - KR2.2 调研任务
 
-## Decision
+## Decision Summary
+
+```yaml
 Decision: NO_RCI
 Priority: P1
-RepoType: Business
+RepoType: Engine
+ChangeType: Research
+```
 
 ## Tests
-- dod_item: "页面可以成功获取并展示日志"
-  method: manual
-  location: manual:启动前端,访问日志页面,验证日志正常显示
 
-- dod_item: "支持按行数参数查询"
-  method: manual
-  location: manual:切换行数选项(50/100/200),验证日志数量变化
+| DoD Item | Method | Location | Reason |
+|----------|--------|----------|--------|
+| 定位并了解项目结构 | manual | manual:确认项目路径和README | 调研任务,需人工确认 |
+| 分析 KR2.2 要求 | manual | manual:文档包含需求解读 | 文档审查,需人工判断 |
+| 识别当前流程和问题 | manual | manual:现状分析章节完整 | 分析型任务,需人工评估 |
+| 设计统一发布引擎架构 | manual | manual:架构设计图和说明 | 设计文档,需人工审查 |
+| 提出技术方案 | manual | manual:方案设计完整性 | 方案设计,需人工评估 |
 
-- dod_item: "支持关键词搜索筛选"
-  method: manual
-  location: manual:输入关键词,验证日志过滤功能
+## RCI (Regression Contract Item)
 
-- dod_item: "支持自动刷新功能"
-  method: manual
-  location: manual:启用自动刷新,验证日志定期更新
-
-- dod_item: "UI展示符合深色模式要求"
-  method: manual
-  location: manual:切换深色/浅色模式,验证样式正常
-
-## RCI
-new: []
-update: []
+```yaml
+new: []      # 调研任务不产生新的回归契约
+update: []   # 不更新现有契约
+```
 
 ## Reason
-这是一个前端展示页面的新增功能,主要涉及UI层和API调用,不涉及核心引擎逻辑或关键业务流程。采用手动验证方式更高效,因为主要验证点是UI交互和视觉效果。后续如果页面稳定且需要回归测试,可以考虑添加E2E测试。
+
+**为什么选择 NO_RCI？**
+
+这是一个纯调研分析任务,产出物是技术设计文档,不涉及代码实现、API变更、功能开发、业务逻辑修改。
+
+因此:
+1. **无需 RCI**: 没有代码变更,无需回归测试契约
+2. **测试方式全部为 manual**: 文档质量需要人工审查
+3. **唯一自动化检查**: 通过 AUDIT-REPORT 验证文档格式和逻辑一致性
+
+## Golden Path
+
+研究型任务的 Golden Path: 读取 PRD → 定位项目 → 分析现状 → 设计方案 → 输出文档 → 审查通过
