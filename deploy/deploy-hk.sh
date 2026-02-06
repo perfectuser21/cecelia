@@ -77,8 +77,9 @@ ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
 # 同步 dist
 rsync -avz --delete "$DIST_DIR/" "$REMOTE:$REMOTE_DIR/dist/"
 
-# 同步 nginx.conf 和 docker-compose
+# 同步 nginx 配置和 docker-compose
 rsync -avz "$DEPLOY_DIR/nginx.conf" "$REMOTE:$REMOTE_DIR/nginx.conf"
+rsync -avz "$DEPLOY_DIR/nginx-core.conf" "$REMOTE:$REMOTE_DIR/nginx-core.conf"
 rsync -avz "$DEPLOY_DIR/docker-compose.hk.yml" "$REMOTE:$REMOTE_DIR/docker-compose.yml"
 
 echo "✅ 文件同步完成"
@@ -86,7 +87,18 @@ echo "✅ 文件同步完成"
 # ── 4. 重启服务 ──────────────────────────────────────
 
 echo ""
-echo "🔄 重启 HK 容器..."
+echo "🔄 检查端口冲突..."
+
+# 停止占用 5211/5212 的旧容器（如 autopilot-dashboard）
+for PORT in 5211 5212; do
+    EXISTING=$(ssh "$REMOTE" "docker ps --format '{{.Names}}' --filter publish=$PORT" 2>/dev/null || echo "")
+    if [[ -n "$EXISTING" && "$EXISTING" != "cecelia-frontend-hk" && "$EXISTING" != "cecelia-core-hk" ]]; then
+        echo "⚠️  端口 $PORT 被 $EXISTING 占用，停止旧容器..."
+        ssh "$REMOTE" "docker stop $EXISTING"
+    fi
+done
+
+echo "🔄 启动 HK 容器..."
 
 ssh "$REMOTE" "cd $REMOTE_DIR && docker compose up -d --force-recreate"
 
@@ -96,10 +108,20 @@ echo ""
 echo "🏥 健康检查..."
 sleep 3
 
+HEALTH_OK=true
+
 if ssh "$REMOTE" "curl -sf http://localhost:5212 > /dev/null 2>&1"; then
-    echo "✅ 健康检查通过"
+    echo "✅ dev-core (5212) 健康检查通过"
 else
-    echo "⚠️  健康检查失败，容器可能还在启动"
+    echo "⚠️  dev-core (5212) 健康检查失败，容器可能还在启动"
+    HEALTH_OK=false
+fi
+
+if ssh "$REMOTE" "curl -sf http://localhost:5211 > /dev/null 2>&1"; then
+    echo "✅ core (5211) 健康检查通过"
+else
+    echo "⚠️  core (5211) 健康检查失败，容器可能还在启动"
+    HEALTH_OK=false
 fi
 
 # ── 6. 完成 ──────────────────────────────────────────
@@ -109,4 +131,6 @@ echo "=== 部署完成 ==="
 echo "  分支: $BRANCH"
 echo "  Commit: ${LOCAL_SHA:0:8}"
 echo "  目标: $REMOTE:$REMOTE_DIR"
-echo "  访问: https://dev-core.zenjoymedia.media"
+echo ""
+echo "  dev-core: https://dev-core.zenjoymedia.media (HK:5212)"
+echo "  core:     https://core.zenjoymedia.media (HK:5211)"

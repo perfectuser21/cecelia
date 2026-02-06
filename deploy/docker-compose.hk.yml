@@ -13,3 +13,18 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  cecelia-core-frontend:
+    image: nginx:alpine
+    container_name: cecelia-core-hk
+    restart: unless-stopped
+    ports:
+      - "5211:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx-core.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
