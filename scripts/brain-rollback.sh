@@ -31,7 +31,7 @@ fi
 
 # Stop current + start target
 BRAIN_VERSION="${TARGET}" ENV_REGION="${ENV_REGION}" \
-  docker compose -f "$ROOT_DIR/docker-compose.prod.yml" up -d
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
 
 # Wait for healthy (max 60s)
 echo ""

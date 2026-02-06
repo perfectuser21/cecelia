@@ -1,17 +1,15 @@
 {
-  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
-  "task_type": "documentation",
-  "checks": {
-    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
-    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
-    "structure_complete": {"status": "pass", "verified": "all required sections present"},
-    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
-  },
-  "gates": {
-    "prd": {"status": "pass", "file": ".gate-prd-passed"},
-    "dod": {"status": "pass", "file": ".gate-dod-passed"},
-    "test": {"status": "pass", "file": ".gate-test-passed"},
-    "quality": {"status": "pass"}
-  },
-  "timestamp": "2026-02-06T14:10:35+08:00"
+  "tests_passed": 640,
+  "tests_failed": 5,
+  "tests_total": 645,
+  "pre_existing_failures": [
+    "DouyinAdapter (5 tests - untracked WIP)"
+  ],
+  "regressions": 0,
+  "dod_checks": {
+    "compose_yml_read_only": true,
+    "compose_dev_bind_mount": true,
+    "no_prod_refs_in_scripts": true,
+    "container_healthy": true
+  }
 }
