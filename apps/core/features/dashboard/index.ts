@@ -17,6 +17,7 @@ const manifest: FeatureManifest = {
       component: 'CommandCenter',
       navItem: { label: 'Dashboard', icon: 'LayoutDashboard', group: 'dashboard' },
     },
+    { path: '/dashboard/*', component: 'CommandCenter' },
     { path: '/dashboard/command', component: 'CommandCenter' },
     { path: '/dashboard/command/*', component: 'CommandCenter' },
     { path: '/dashboard/panorama', component: 'PanoramaV3' },

@@ -2,11 +2,11 @@
  * CommandCenter - 统一控制中心（层级导航版）
  *
  * 支持下钻导航：
- * /command - 总览
- * /command/okr - OKR 列表
- * /command/projects - Projects 列表
- * /command/tasks - Tasks 列表
- * /command/vps - VPS 详情
+ * /dashboard/command - 总览
+ * /dashboard/command/okr - OKR 列表
+ * /dashboard/command/projects - Projects 列表
+ * /dashboard/command/tasks - Tasks 列表
+ * /dashboard/command/vps - VPS 详情
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -77,7 +77,7 @@ interface VpsSlot {
 function Breadcrumb({ items }: { items: Array<{ label: string; path?: string }> }) {
   return (
     <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-6">
-      <Link to="/command" className="hover:text-blue-500 flex items-center gap-1">
+      <Link to="/dashboard/command" className="hover:text-blue-500 flex items-center gap-1">
         <Home className="w-4 h-4" />
         <span>Command Center</span>
       </Link>
@@ -224,7 +224,7 @@ function OverviewPage({
           title="VPS 状态"
           subtitle="Claude 并发槽位"
           color="cyan"
-          onClick={() => navigate('/command/vps')}
+          onClick={() => navigate('/dashboard/command/vps')}
         >
           <div className="flex gap-2 mb-3">
             {Array.from({ length: vpsSlots.total }).map((_: any, i: number) => {
@@ -256,7 +256,7 @@ function OverviewPage({
           title="今日执行"
           subtitle={`Tick: ${tickStatus?.enabled ? '已启用' : '已禁用'}`}
           color="blue"
-          onClick={() => navigate('/command/execution')}
+          onClick={() => navigate('/dashboard/command/execution')}
         >
           {/* Today Stats */}
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -296,7 +296,7 @@ function OverviewPage({
         title="OKR 目标"
         subtitle="点击展开查看详情"
         color="purple"
-        onClick={() => navigate('/command/okr')}
+        onClick={() => navigate('/dashboard/command/okr')}
       >
         {brainStatus?.daily_focus && (
           <div className="space-y-3">
@@ -406,7 +406,7 @@ function OverviewPage({
       {/* Quick Actions */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <button
-          onClick={() => navigate('/command/tasks')}
+          onClick={() => navigate('/dashboard/command/tasks')}
           className="p-4 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:border-blue-300 hover:shadow-lg transition-all text-left"
         >
           <ListTodo className="w-6 h-6 text-blue-500 mb-2" />
@@ -415,7 +415,7 @@ function OverviewPage({
         </button>
 
         <button
-          onClick={() => navigate('/command/projects')}
+          onClick={() => navigate('/dashboard/command/projects')}
           className="p-4 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:border-emerald-300 hover:shadow-lg transition-all text-left"
         >
           <Folder className="w-6 h-6 text-emerald-500 mb-2" />
@@ -424,7 +424,7 @@ function OverviewPage({
         </button>
 
         <button
-          onClick={() => navigate('/command/execution')}
+          onClick={() => navigate('/dashboard/command/execution')}
           className="p-4 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:border-purple-300 hover:shadow-lg transition-all text-left"
         >
           <Activity className="w-6 h-6 text-purple-500 mb-2" />
