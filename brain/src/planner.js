@@ -43,11 +43,11 @@ async function getGlobalState() {
 }
 
 /**
- * Select the KR most in need of advancement.
+ * Score and sort KRs by priority/progress/focus.
  */
-function selectTargetKR(state) {
+function scoreKRs(state) {
   const { keyResults, activeTasks, focus } = state;
-  if (keyResults.length === 0) return null;
+  if (keyResults.length === 0) return [];
 
   const focusKRIds = new Set(
     focus?.focus?.key_results?.map(kr => kr.id) || []
@@ -77,6 +77,14 @@ function selectTargetKR(state) {
   });
 
   scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+/**
+ * Select the KR most in need of advancement.
+ */
+function selectTargetKR(state) {
+  const scored = scoreKRs(state);
   return scored[0]?.kr || null;
 }
 
@@ -448,6 +456,7 @@ function generateTaskPRD(taskTitle, taskDescription, kr, project) {
 
 /**
  * Main entry point - called each tick.
+ * Iterates through all scored KRs until one produces a task.
  */
 async function planNextTask(scopeKRIds = null) {
   const state = await getGlobalState();
@@ -458,36 +467,40 @@ async function planNextTask(scopeKRIds = null) {
     state.keyResults = state.keyResults.filter(kr => scopeSet.has(kr.id));
   }
 
-  const targetKR = selectTargetKR(state);
-  if (!targetKR) {
+  if (state.keyResults.length === 0) {
     return { planned: false, reason: 'no_active_kr' };
   }
 
-  const targetProject = await selectTargetProject(targetKR, state);
-  if (!targetProject) {
-    return {
-      planned: false,
-      reason: 'no_project_for_kr',
-      kr: { id: targetKR.id, title: targetKR.title }
-    };
+  // Score and sort all KRs, then try each in order
+  const scored = scoreKRs(state);
+
+  let lastKR = null;
+  let lastProject = null;
+
+  for (const { kr } of scored) {
+    lastKR = kr;
+
+    const targetProject = await selectTargetProject(kr, state);
+    if (!targetProject) continue;
+    lastProject = targetProject;
+
+    const task = await generateNextTask(kr, targetProject, state);
+    if (task) {
+      return {
+        planned: true,
+        task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id, goal_id: task.goal_id },
+        kr: { id: kr.id, title: kr.title },
+        project: { id: targetProject.id, title: targetProject.name, repo_path: targetProject.repo_path }
+      };
+    }
   }
 
-  const task = await generateNextTask(targetKR, targetProject, state);
-
-  if (task) {
-    return {
-      planned: true,
-      task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id, goal_id: task.goal_id },
-      kr: { id: targetKR.id, title: targetKR.title },
-      project: { id: targetProject.id, title: targetProject.name, repo_path: targetProject.repo_path }
-    };
-  }
-
+  // All KRs exhausted
   return {
     planned: false,
-    reason: 'needs_planning',
-    kr: { id: targetKR.id, title: targetKR.title },
-    project: { id: targetProject.id, title: targetProject.name, repo_path: targetProject.repo_path }
+    reason: lastProject ? 'needs_planning' : 'no_project_for_kr',
+    kr: lastKR ? { id: lastKR.id, title: lastKR.title } : null,
+    project: lastProject ? { id: lastProject.id, title: lastProject.name, repo_path: lastProject.repo_path } : null
   };
 }
 
@@ -631,6 +644,7 @@ export {
   getPlanStatus,
   handlePlanInput,
   getGlobalState,
+  scoreKRs,
   selectTargetKR,
   selectTargetProject,
   generateNextTask,

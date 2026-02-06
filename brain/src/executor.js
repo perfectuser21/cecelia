@@ -52,6 +52,25 @@ const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 
 const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
+ * Resolve repo_path from a project, traversing parent chain for Features.
+ * Features (sub-projects) have parent_id but no repo_path — walk up to find it.
+ * Max 5 levels to prevent infinite loops.
+ */
+async function resolveRepoPath(projectId) {
+  let currentId = projectId;
+  for (let depth = 0; depth < 5 && currentId; depth++) {
+    const result = await pool.query(
+      'SELECT repo_path, parent_id FROM projects WHERE id = $1',
+      [currentId]
+    );
+    if (result.rows.length === 0) return null;
+    if (result.rows[0].repo_path) return result.rows[0].repo_path;
+    currentId = result.rows[0].parent_id;
+  }
+  return null;
+}
+
+/**
  * Check server resource availability before spawning.
  * Returns { ok, reason, metrics } — ok=false means don't spawn.
  */
@@ -871,12 +890,11 @@ async function triggerCeceliaRun(task) {
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
 
-    // Resolve repo_path from task's project
+    // Resolve repo_path from task's project (traverse parent chain for Features)
     let repoPath = null;
     if (task.project_id) {
       try {
-        const projResult = await pool.query('SELECT repo_path FROM projects WHERE id = $1', [task.project_id]);
-        repoPath = projResult.rows[0]?.repo_path || null;
+        repoPath = await resolveRepoPath(task.project_id);
       } catch { /* ignore */ }
     }
 
@@ -1265,4 +1283,6 @@ export {
   // v5: Watchdog integration
   killProcessTwoStage,
   requeueTask,
+  // v6: Feature repo_path resolution
+  resolveRepoPath,
 };

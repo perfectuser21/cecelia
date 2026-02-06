@@ -50,6 +50,8 @@ describe('Planner Agent', () => {
       testTaskIds = [];
     }
     if (testProjectIds.length > 0) {
+      // Also delete any auto-generated tasks linked to test projects (FK safety)
+      await pool.query('DELETE FROM tasks WHERE project_id = ANY($1)', [testProjectIds]).catch(() => {});
       await pool.query('DELETE FROM projects WHERE id = ANY($1)', [testProjectIds]);
       testProjectIds = [];
     }
@@ -488,6 +490,141 @@ describe('Planner Agent', () => {
       if (result.payload.prd_path) {
         try { unlinkSync(result.payload.prd_path); } catch {}
       }
+    });
+  });
+
+  describe('scoreKRs', () => {
+    it('should return scored and sorted KRs', async () => {
+      const { scoreKRs } = await import('../planner.js');
+      const state = {
+        keyResults: [
+          { id: 'kr-p1', priority: 'P1', progress: 0 },
+          { id: 'kr-p0', priority: 'P0', progress: 0 }
+        ],
+        activeTasks: [],
+        focus: null
+      };
+      const scored = scoreKRs(state);
+      expect(scored).toHaveLength(2);
+      expect(scored[0].kr.id).toBe('kr-p0');
+      expect(scored[0].score).toBeGreaterThan(scored[1].score);
+    });
+  });
+
+  describe('planNextTask KR rotation', () => {
+    it('rotates to next KR when top is exhausted', async () => {
+      const { planNextTask } = await import('../planner.js');
+      const { unlinkSync, existsSync } = await import('fs');
+
+      // Create 2 KRs under one objective
+      const objResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Rotation Test Obj', 'objective', 'P0', 'in_progress', 0) RETURNING id"
+      );
+      testObjectiveIds.push(objResult.rows[0].id);
+
+      // KR1: will be exhausted (use title that won't match any KR_STRATEGY)
+      const kr1Result = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Exhausted KR - 奇异星球建设', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
+        [objResult.rows[0].id]
+      );
+      testKRIds.push(kr1Result.rows[0].id);
+
+      // KR2: fresh (also use title that won't match any strategy, falls through to fallback)
+      const kr2Result = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Fresh KR - 银河探测器部署', 'key_result', 'P1', 'pending', 0, $1) RETURNING id",
+        [objResult.rows[0].id]
+      );
+      testKRIds.push(kr2Result.rows[0].id);
+
+      // Create project with repo_path + link both KRs
+      const projResult = await pool.query(
+        "INSERT INTO projects (name, repo_path, status) VALUES ('rotation-test', '/tmp/rotation-test', 'active') RETURNING id"
+      );
+      testProjectIds.push(projResult.rows[0].id);
+
+      await pool.query(
+        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2), ($1, $3) ON CONFLICT DO NOTHING',
+        [projResult.rows[0].id, kr1Result.rows[0].id, kr2Result.rows[0].id]
+      );
+      testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr1Result.rows[0].id });
+      testLinks.push({ project_id: projResult.rows[0].id, kr_id: kr2Result.rows[0].id });
+
+      // Exhaust KR1's fallback tasks by creating "completed" versions of all 3
+      const fallbackTitles = [
+        `调研 Exhausted KR - 奇异星球建设 实现方案`,
+        `实现 Exhausted KR - 奇异星球建设 核心逻辑`,
+        `为 Exhausted KR - 奇异星球建设 编写测试`
+      ];
+      for (const title of fallbackTitles) {
+        const tResult = await pool.query(
+          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
+          [title, projResult.rows[0].id, kr1Result.rows[0].id]
+        );
+        testTaskIds.push(tResult.rows[0].id);
+      }
+
+      // Call planNextTask with just these 2 KR IDs
+      const result = await planNextTask([kr1Result.rows[0].id, kr2Result.rows[0].id]);
+
+      // Should plan successfully using KR2 (not KR1 which is exhausted)
+      expect(result.planned).toBe(true);
+      expect(result.kr.id).toBe(kr2Result.rows[0].id);
+      expect(result.task).toBeDefined();
+
+      // Cleanup generated task and PRD
+      if (result.task?.id) testTaskIds.push(result.task.id);
+      try {
+        const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [result.task.id]);
+        const prdPath = taskRow.rows[0]?.payload?.prd_path;
+        if (prdPath && existsSync(prdPath)) unlinkSync(prdPath);
+      } catch {}
+    });
+
+    it('returns needs_planning when all KRs exhausted', async () => {
+      const { planNextTask } = await import('../planner.js');
+
+      // Create objective + 1 KR
+      const objResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Exhausted Obj', 'objective', 'P0', 'in_progress', 0) RETURNING id"
+      );
+      testObjectiveIds.push(objResult.rows[0].id);
+
+      const krResult = await pool.query(
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Exhausted KR - 奇异星球建设', 'key_result', 'P0', 'pending', 0, $1) RETURNING id",
+        [objResult.rows[0].id]
+      );
+      testKRIds.push(krResult.rows[0].id);
+
+      // Create project + link
+      const projResult = await pool.query(
+        "INSERT INTO projects (name, repo_path, status) VALUES ('exhaust-test', '/tmp/exhaust', 'active') RETURNING id"
+      );
+      testProjectIds.push(projResult.rows[0].id);
+
+      await pool.query(
+        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [projResult.rows[0].id, krResult.rows[0].id]
+      );
+      testLinks.push({ project_id: projResult.rows[0].id, kr_id: krResult.rows[0].id });
+
+      // Exhaust all fallback tasks
+      const fallbackTitles = [
+        `调研 Solo Exhausted KR - 奇异星球建设 实现方案`,
+        `实现 Solo Exhausted KR - 奇异星球建设 核心逻辑`,
+        `为 Solo Exhausted KR - 奇异星球建设 编写测试`
+      ];
+      for (const title of fallbackTitles) {
+        const tResult = await pool.query(
+          "INSERT INTO tasks (title, priority, project_id, goal_id, status, completed_at) VALUES ($1, 'P0', $2, $3, 'completed', NOW()) RETURNING id",
+          [title, projResult.rows[0].id, krResult.rows[0].id]
+        );
+        testTaskIds.push(tResult.rows[0].id);
+      }
+
+      const result = await planNextTask([krResult.rows[0].id]);
+
+      expect(result.planned).toBe(false);
+      expect(result.reason).toBe('needs_planning');
     });
   });
 });

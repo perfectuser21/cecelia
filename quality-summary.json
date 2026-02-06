@@ -1,15 +1,18 @@
 {
-  "tests_passed": 640,
+  "branch": "cp-02062024-planner-kr-rotation",
+  "head_sha": "c56094c",
+  "timestamp": "2026-02-06T12:32:44Z",
+  "tests_passed": 665,
   "tests_failed": 5,
-  "tests_total": 645,
+  "tests_total": 670,
   "pre_existing_failures": [
     "DouyinAdapter (5 tests - untracked WIP)"
   ],
   "regressions": 0,
-  "dod_checks": {
-    "compose_yml_read_only": true,
-    "compose_dev_bind_mount": true,
-    "no_prod_refs_in_scripts": true,
-    "container_healthy": true
-  }
+  "gates": {
+    "prd": "pass",
+    "dod": "pass",
+    "test": "pass"
+  },
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
