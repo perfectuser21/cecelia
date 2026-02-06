@@ -229,6 +229,8 @@ async function analyzeEvent(event) {
     const validation = validateDecision(decision);
     if (!validation.valid) {
       console.error('[thalamus] Invalid decision:', validation.errors);
+      // 记录 LLM 输出解析失败事件（触发 Alertness 升级）
+      await recordBadOutput(event, 'validation_failed', validation.errors);
       return createFallbackDecision(event, validation.errors.join('; '));
     }
 
@@ -236,7 +238,28 @@ async function analyzeEvent(event) {
 
   } catch (err) {
     console.error('[thalamus] Error analyzing event:', err.message);
+    // 记录 LLM 输出解析失败事件（触发 Alertness 升级）
+    await recordBadOutput(event, 'parse_error', [err.message]);
     return createFallbackDecision(event, err.message);
+  }
+}
+
+/**
+ * 记录 LLM 输出解析失败（触发 Alertness）
+ */
+async function recordBadOutput(event, errorType, errors) {
+  try {
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('llm_bad_output', 'thalamus', $1)
+    `, [JSON.stringify({
+      event_type: event.type,
+      error_type: errorType,
+      errors,
+      timestamp: new Date().toISOString()
+    })]);
+  } catch (err) {
+    console.error('[thalamus] Failed to record bad output:', err.message);
   }
 }
 

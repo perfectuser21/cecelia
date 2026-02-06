@@ -137,7 +137,7 @@ const actionHandlers = {
 
     // 写入事件表
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data)
+      INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ('user_notification', 'thalamus', $1)
     `, [JSON.stringify(params)]);
 
@@ -149,7 +149,7 @@ const actionHandlers = {
    */
   async log_event(params, context) {
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data)
+      INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ($1, 'thalamus', $2)
     `, [params.event_type || 'log', JSON.stringify(params.data || {})]);
     return { success: true };
@@ -181,9 +181,9 @@ const actionHandlers = {
     console.log(`[executor] Human review requested: ${params.reason}`);
 
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data, status)
-      VALUES ('human_review_request', 'thalamus', $1, 'pending')
-    `, [JSON.stringify(params)]);
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('human_review_request', 'thalamus', $1)
+    `, [JSON.stringify({ ...params, status: 'pending' })]);
 
     return { success: true, requires_human: true };
   },
@@ -237,26 +237,113 @@ const actionHandlers = {
   // ============================================================
 
   /**
-   * 调整系统策略参数
+   * 调整系统策略参数（受限）
+   *
+   * 安全限制：
+   * 1. 只允许调整白名单内的参数
+   * 2. 只能是 numeric 参数
+   * 3. 调整幅度限制 ±20%
+   * 4. 禁止调整安全相关参数
    */
   async adjust_strategy(params, context) {
     const { key, new_value, reason } = params;
-    console.log(`[executor] Adjusting strategy: ${key} = ${new_value} (${reason})`);
+
+    // 白名单：只允许调整这些参数
+    const ADJUSTABLE_PARAMS = {
+      // 派发相关（允许调整）
+      'dispatch_interval_ms': { min: 3000, max: 60000, default: 5000 },
+      'max_concurrent_tasks': { min: 1, max: 10, default: 3 },
+      'task_timeout_ms': { min: 60000, max: 1800000, default: 600000 },
+
+      // 阈值相关（允许调整）
+      'failure_rate_threshold': { min: 0.2, max: 0.5, default: 0.3 },
+      'retry_delay_ms': { min: 5000, max: 120000, default: 30000 },
+    };
+
+    // 禁止列表：绝对不能调整的参数
+    const FORBIDDEN_PARAMS = [
+      'quarantine_threshold',
+      'alertness_thresholds',
+      'dangerous_action_list',
+      'action_whitelist',
+      'security_level',
+    ];
+
+    // 检查是否在禁止列表
+    if (FORBIDDEN_PARAMS.includes(key)) {
+      console.error(`[executor] BLOCKED: Cannot adjust forbidden parameter: ${key}`);
+      return { success: false, error: 'forbidden_parameter', key };
+    }
+
+    // 检查是否在白名单
+    const paramConfig = ADJUSTABLE_PARAMS[key];
+    if (!paramConfig) {
+      console.error(`[executor] BLOCKED: Parameter not in whitelist: ${key}`);
+      return { success: false, error: 'not_in_whitelist', key };
+    }
+
+    // 验证新值是数字
+    const numValue = parseFloat(new_value);
+    if (isNaN(numValue)) {
+      return { success: false, error: 'must_be_numeric', key };
+    }
+
+    // 验证范围
+    if (numValue < paramConfig.min || numValue > paramConfig.max) {
+      return {
+        success: false,
+        error: 'out_of_range',
+        key,
+        allowed_range: { min: paramConfig.min, max: paramConfig.max }
+      };
+    }
+
+    // 获取当前值
+    const currentResult = await pool.query(
+      `SELECT value FROM brain_config WHERE key = $1`,
+      [`strategy_${key}`]
+    );
+    const currentValue = currentResult.rows[0]?.value
+      ? parseFloat(currentResult.rows[0].value)
+      : paramConfig.default;
+
+    // 检查调整幅度（最多 ±20%）
+    const MAX_CHANGE_RATIO = 0.2;
+    const changeRatio = Math.abs(numValue - currentValue) / currentValue;
+    if (changeRatio > MAX_CHANGE_RATIO) {
+      return {
+        success: false,
+        error: 'change_too_large',
+        key,
+        max_change: `±${MAX_CHANGE_RATIO * 100}%`,
+        actual_change: `${(changeRatio * 100).toFixed(1)}%`
+      };
+    }
+
+    console.log(`[executor] Adjusting strategy: ${key} = ${currentValue} → ${numValue} (${reason})`);
 
     // 写入 brain_config 表
     await pool.query(`
       INSERT INTO brain_config (key, value, updated_at)
       VALUES ($1, $2, NOW())
       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-    `, [`strategy_${key}`, String(new_value)]);
+    `, [`strategy_${key}`, String(numValue)]);
 
-    // 记录变更事件
+    // 记录变更事件（包含 previous_value 用于回滚）
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data)
+      INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ('strategy_change', 'cortex', $1)
-    `, [JSON.stringify({ key, new_value, reason, changed_at: new Date().toISOString() })]);
+    `, [JSON.stringify({
+      key,
+      previous_value: currentValue,
+      new_value: numValue,
+      change_ratio: changeRatio,
+      reason,
+      changed_at: new Date().toISOString(),
+      can_rollback: true
+    })]);
 
-    return { success: true, key, new_value };
+    return { success: true, key, previous_value: currentValue, new_value: numValue };
   },
 
   /**
@@ -267,7 +354,7 @@ const actionHandlers = {
     console.log(`[executor] Recording learning: ${learning}`);
 
     await pool.query(`
-      INSERT INTO cecelia_events (type, source, data)
+      INSERT INTO cecelia_events (event_type, source, payload)
       VALUES ('learning', 'cortex', $1)
     `, [JSON.stringify({
       learning,

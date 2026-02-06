@@ -86,11 +86,19 @@ let _signals = {};            // 当前信号值
 // 信号权重配置
 const SIGNAL_WEIGHTS = {
   circuit_breaker_open: 30,       // 熔断器打开 → +30
-  high_failure_rate: 20,          // 高失败率 → +20
-  resource_pressure: 15,          // 资源压力 → +15
+  high_failure_rate: 20,          // 高失败率 → +20 (max)
+  resource_pressure: 15,          // 资源压力 → +15 (max)
   consecutive_failures: 10,       // 连续失败 → +10 per failure
   db_connection_issues: 25,       // 数据库问题 → +25
   llm_api_errors: 15,             // LLM API 错误 → +15
+  llm_bad_output: 20,             // LLM 输出解析失败 → +20
+};
+
+// 信号封顶（防止叠加爆炸）
+const SIGNAL_CAPS = {
+  consecutive_failures: 40,       // 最多 +40（即 4 次连续失败后封顶）
+  high_failure_rate: 20,          // 最多 +20
+  resource_pressure: 15,          // 最多 +15
 };
 
 // 级别阈值
@@ -108,6 +116,77 @@ const COOLDOWN_MS = {
 };
 
 let _lastLevelChangeAt = Date.now();
+
+// ============================================================
+// 令牌桶限速（可审计，替代 Math.random）
+// ============================================================
+
+// 令牌桶状态
+const _tokenBucket = {
+  dispatch: { tokens: 10, maxTokens: 10, refillRate: 10, lastRefill: Date.now() },
+  l1_calls: { tokens: 20, maxTokens: 20, refillRate: 20, lastRefill: Date.now() },
+  l2_calls: { tokens: 5, maxTokens: 5, refillRate: 5, lastRefill: Date.now() },
+};
+
+// 每个级别的令牌消耗速率（每分钟生成的 token 数）
+const LEVEL_TOKEN_RATES = {
+  [ALERTNESS_LEVELS.NORMAL]: { dispatch: 10, l1: 20, l2: 5 },
+  [ALERTNESS_LEVELS.ALERT]: { dispatch: 5, l1: 10, l2: 3 },
+  [ALERTNESS_LEVELS.EMERGENCY]: { dispatch: 2, l1: 5, l2: 1 },
+  [ALERTNESS_LEVELS.COMA]: { dispatch: 0, l1: 0, l2: 0 },
+};
+
+/**
+ * 补充令牌（每分钟调用）
+ */
+function refillTokens() {
+  const now = Date.now();
+  const rates = LEVEL_TOKEN_RATES[_currentLevel];
+
+  for (const [bucketName, bucket] of Object.entries(_tokenBucket)) {
+    const elapsed = (now - bucket.lastRefill) / 60000; // 分钟
+    const rateKey = bucketName === 'dispatch' ? 'dispatch' : bucketName === 'l1_calls' ? 'l1' : 'l2';
+    const refillAmount = Math.floor(elapsed * rates[rateKey]);
+
+    if (refillAmount > 0) {
+      bucket.tokens = Math.min(bucket.maxTokens, bucket.tokens + refillAmount);
+      bucket.lastRefill = now;
+    }
+  }
+}
+
+/**
+ * 尝试消耗令牌
+ * @param {string} bucketName - 'dispatch' | 'l1_calls' | 'l2_calls'
+ * @returns {{ allowed: boolean, remaining: number, reason?: string }}
+ */
+function tryConsumeToken(bucketName) {
+  refillTokens();
+
+  const bucket = _tokenBucket[bucketName];
+  if (!bucket) {
+    return { allowed: false, remaining: 0, reason: 'unknown_bucket' };
+  }
+
+  if (bucket.tokens > 0) {
+    bucket.tokens--;
+    return { allowed: true, remaining: bucket.tokens };
+  }
+
+  return { allowed: false, remaining: 0, reason: 'rate_limited' };
+}
+
+/**
+ * 获取令牌桶状态（用于审计）
+ */
+function getTokenBucketStatus() {
+  refillTokens();
+  return {
+    dispatch: { ...(_tokenBucket.dispatch) },
+    l1_calls: { ...(_tokenBucket.l1_calls) },
+    l2_calls: { ...(_tokenBucket.l2_calls) },
+  };
+}
 
 // ============================================================
 // 信号收集
@@ -128,14 +207,15 @@ async function collectSignals() {
     totalScore += SIGNAL_WEIGHTS.circuit_breaker_open;
   }
 
-  // 2. 资源压力
+  // 2. 资源压力（带封顶）
   const resources = checkServerResources();
   if (resources.metrics?.max_pressure >= 0.7) {
     signals.resource_pressure = resources.metrics.max_pressure;
-    totalScore += Math.round(SIGNAL_WEIGHTS.resource_pressure * resources.metrics.max_pressure);
+    const rawScore = Math.round(SIGNAL_WEIGHTS.resource_pressure * resources.metrics.max_pressure);
+    totalScore += Math.min(rawScore, SIGNAL_CAPS.resource_pressure);
   }
 
-  // 3. 最近失败率（24 小时内）
+  // 3. 最近失败率（24 小时内，带封顶）
   try {
     const failureResult = await pool.query(`
       SELECT
@@ -150,7 +230,8 @@ async function collectSignals() {
       const failureRate = parseInt(failed) / parseInt(total);
       if (failureRate > 0.3) {  // 失败率 > 30%
         signals.high_failure_rate = failureRate;
-        totalScore += Math.round(SIGNAL_WEIGHTS.high_failure_rate * failureRate);
+        const rawScore = Math.round(SIGNAL_WEIGHTS.high_failure_rate * failureRate);
+        totalScore += Math.min(rawScore, SIGNAL_CAPS.high_failure_rate);
       }
     }
   } catch (err) {
@@ -159,7 +240,7 @@ async function collectSignals() {
     totalScore += SIGNAL_WEIGHTS.db_connection_issues;
   }
 
-  // 4. 连续失败次数
+  // 4. 连续失败次数（带封顶：最多 +40）
   try {
     const consecutiveResult = await pool.query(`
       SELECT COUNT(*) as count
@@ -175,7 +256,8 @@ async function collectSignals() {
     const consecutiveFailures = parseInt(consecutiveResult.rows[0].count);
     if (consecutiveFailures >= 3) {
       signals.consecutive_failures = consecutiveFailures;
-      totalScore += SIGNAL_WEIGHTS.consecutive_failures * consecutiveFailures;
+      const rawScore = SIGNAL_WEIGHTS.consecutive_failures * consecutiveFailures;
+      totalScore += Math.min(rawScore, SIGNAL_CAPS.consecutive_failures);
     }
   } catch {
     // ignore
@@ -198,7 +280,24 @@ async function collectSignals() {
     // ignore
   }
 
-  // 6. 检查活跃进程数是否超载
+  // 6. 检查 LLM 输出解析失败
+  try {
+    const badOutputResult = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM cecelia_events
+      WHERE event_type = 'llm_bad_output'
+        AND created_at > NOW() - INTERVAL '1 hour'
+    `);
+    const badOutputs = parseInt(badOutputResult.rows[0].count);
+    if (badOutputs >= 2) {
+      signals.llm_bad_output = badOutputs;
+      totalScore += SIGNAL_WEIGHTS.llm_bad_output;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 7. 检查活跃进程数是否超载
   const activeCount = getActiveProcessCount();
   if (activeCount >= MAX_SEATS) {
     signals.seats_full = activeCount;
@@ -478,6 +577,7 @@ export {
   ALERTNESS_LEVELS,
   LEVEL_NAMES,
   LEVEL_BEHAVIORS,
+  SIGNAL_CAPS,
 
   // 状态查询
   getAlertness,
@@ -489,6 +589,11 @@ export {
   canPlan,
   canUseCortex,
   canAutoRetry,
+
+  // 令牌桶限速（可审计）
+  tryConsumeToken,
+  getTokenBucketStatus,
+  refillTokens,
 
   // 级别管理
   setLevel,

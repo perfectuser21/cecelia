@@ -357,20 +357,58 @@ function checkSuspiciousInput(task) {
     });
   }
 
-  // 检查是否包含可疑模式
+  // 检查是否包含可疑模式（分三类）
   const content = (task.prd_content || '') + (task.description || '');
-  const suspiciousPatterns = [
-    /rm\s+-rf\s+\//i,
-    /DROP\s+TABLE/i,
-    /DELETE\s+FROM\s+\w+\s+WHERE\s+1\s*=\s*1/i,
-    /;\s*--/,  // SQL 注入模式
+
+  // 1. Destructive（破坏性）：强制隔离
+  const destructivePatterns = [
+    { pattern: /rm\s+-rf\s+\//i, name: 'rm -rf /' },
+    { pattern: /DROP\s+TABLE/i, name: 'DROP TABLE' },
+    { pattern: /DROP\s+DATABASE/i, name: 'DROP DATABASE' },
+    { pattern: /TRUNCATE\s+TABLE/i, name: 'TRUNCATE TABLE' },
+    { pattern: /DELETE\s+FROM\s+\w+\s+WHERE\s+1\s*=\s*1/i, name: 'DELETE all rows' },
+    { pattern: /mkfs\./i, name: 'mkfs (format disk)' },
+    { pattern: /dd\s+if=.*of=\/dev\//i, name: 'dd to device' },
+    { pattern: />\s*\/dev\/sd[a-z]/i, name: 'overwrite disk' },
   ];
 
-  for (const pattern of suspiciousPatterns) {
+  // 2. Privilege Escalation（提权/持久化）：强制隔离
+  const privilegePatterns = [
+    { pattern: /chmod\s+[0-7]*777/i, name: 'chmod 777' },
+    { pattern: /chown\s+root/i, name: 'chown root' },
+    { pattern: /visudo|\/etc\/sudoers/i, name: 'sudoers modification' },
+    { pattern: /\/etc\/ssh\/sshd_config/i, name: 'SSH config modification' },
+    { pattern: /authorized_keys/i, name: 'SSH keys modification' },
+    { pattern: /crontab\s+-e|\/etc\/cron/i, name: 'crontab modification' },
+    { pattern: /systemctl\s+(enable|disable)/i, name: 'systemd modification' },
+    { pattern: /\/etc\/passwd|\/etc\/shadow/i, name: 'passwd/shadow access' },
+  ];
+
+  // 3. Data Exfiltration / Remote Execution（数据外传/远程执行）：强制隔离
+  const exfiltrationPatterns = [
+    { pattern: /curl\s+.*\|\s*bash/i, name: 'curl pipe to bash' },
+    { pattern: /wget\s+.*\|\s*bash/i, name: 'wget pipe to bash' },
+    { pattern: /base64\s+-d.*\|\s*(bash|sh)/i, name: 'base64 decode to shell' },
+    { pattern: /nc\s+-e|ncat\s+-e/i, name: 'netcat reverse shell' },
+    { pattern: /;\s*--/, name: 'SQL injection' },
+    { pattern: /eval\s*\(\s*\$_/i, name: 'PHP eval injection' },
+    { pattern: /xp_cmdshell/i, name: 'SQL Server cmdshell' },
+  ];
+
+  const allPatterns = [
+    ...destructivePatterns.map(p => ({ ...p, category: 'destructive' })),
+    ...privilegePatterns.map(p => ({ ...p, category: 'privilege_escalation' })),
+    ...exfiltrationPatterns.map(p => ({ ...p, category: 'data_exfiltration' })),
+  ];
+
+  for (const { pattern, name, category } of allPatterns) {
     if (pattern.test(content)) {
       issues.push({
         type: 'suspicious_pattern',
         pattern: pattern.toString(),
+        name,
+        category,
+        severity: 'critical',
       });
     }
   }
