@@ -1,20 +1,17 @@
 {
-  "branch": "cp-02061518-0070d743-369a-4ecb-ac49-39c108",
-  "task_type": "planning_document",
-  "timestamp": "2026-02-06T15:20:00Z",
+  "branch": "cp-02061405-1e0ca170-b430-4275-8f89-95bda4",
+  "task_type": "documentation",
   "checks": {
-    "documents_created": {"status": "pass", "files": ["docs/planning/KR22_PHASE3_IMPLEMENTATION_PLAN.md", ".prd-kr22-phase3.md", ".dod-kr22-phase3.md", "docs/QA-DECISION-KR22-PHASE3.md"]},
-    "markdown_valid": {"status": "pass"},
-    "frontmatter_valid": {"status": "pass"}
+    "documents_exist": {"status": "pass", "files": ["docs/workflows/KR22_IMPLEMENTATION_WORKFLOW.md", "docs/database/KR22_PUBLISH_ENGINE_SCHEMA.md", "docs/AGENT_ROUTING.md"]},
+    "frontmatter_valid": {"status": "pass", "verified": "all documents have version, created, updated, changelog"},
+    "structure_complete": {"status": "pass", "verified": "all required sections present"},
+    "qa_decision": {"status": "pass", "file": "docs/QA-DECISION-kr22-impl.md"}
   },
   "gates": {
-    "quality": {"status": "pass", "note": "Document-only task, no code to test"}
+    "prd": {"status": "pass", "file": ".gate-prd-passed"},
+    "dod": {"status": "pass", "file": ".gate-dod-passed"},
+    "test": {"status": "pass", "file": ".gate-test-passed"},
+    "quality": {"status": "pass"}
   },
-  "files_modified": [
-    "docs/planning/KR22_PHASE3_IMPLEMENTATION_PLAN.md",
-    ".prd-kr22-phase3.md",
-    ".dod-kr22-phase3.md",
-    "docs/QA-DECISION-KR22-PHASE3.md"
-  ],
-  "ready_for_pr": true
+  "timestamp": "2026-02-06T14:10:35+08:00"
 }

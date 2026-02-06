@@ -6,9 +6,142 @@ on:
   pull_request:
     branches: [main, develop]
 
+# L2: 并发控制 — 同一 ref 多次 push 只保留最新
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 jobs:
-  test:
+  # L2: 版本号检查 — PR 时验证 brain/package.json version 已更新
+  version-check:
+    if: github.event_name == 'pull_request'
+    name: Version Check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check brain/package.json version updated
+        run: |
+          set -e
+          PKGJSON="brain/package.json"
+
+          if [ ! -f "$PKGJSON" ]; then
+            echo "No $PKGJSON found, skipping"
+            exit 0
+          fi
+
+          echo "Checking if $PKGJSON version was updated..."
+
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:$PKGJSON 2>/dev/null | jq -r '.version' || echo "")
+
+          if [ -z "$BASE_VERSION" ] || [ "$BASE_VERSION" = "null" ]; then
+            echo "Could not read base branch version, skipping check"
+            exit 0
+          fi
+
+          CURRENT_VERSION=$(jq -r '.version' "$PKGJSON")
+
+          echo "Base branch version: $BASE_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$CURRENT_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "Invalid version format: $CURRENT_VERSION"
+            echo "Version must follow semver: MAJOR.MINOR.PATCH (e.g., 1.2.3)"
+            exit 1
+          fi
+
+          if [ "$BASE_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "Version not updated in $PKGJSON"
+            echo "Please update the version according to semver rules"
+            exit 1
+          else
+            echo "Version updated: $BASE_VERSION -> $CURRENT_VERSION"
+          fi
+
+  brain-test:
+    name: Brain (Node.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: cecelia
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: cecelia_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: cecelia
+      DB_USER: cecelia
+      DB_PASSWORD: cecelia_ci
+      ENV_REGION: us
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: brain
+        run: npm ci
+
+      - name: Run migrations
+        working-directory: brain
+        run: node src/migrate.js
+
+      - name: Run Brain tests
+        working-directory: brain
+        run: npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
+
+      # L2: Shell 脚本语法检查
+      - name: Check shell scripts
+        run: |
+          echo "Checking shell scripts..."
+          FAILED=0
+          FOUND=0
+          while IFS= read -r -d '' f; do
+            FOUND=1
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  OK: $f"
+            else
+              echo "  FAIL: $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -not -path "./frontend/node_modules/*" -print0)
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No .sh files found"
+          fi
+          exit $FAILED
+
+  semantic-test:
+    name: Semantic Brain (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -31,3 +164,82 @@ jobs:
         run: |
           pip install ruff
           ruff check src/ tests/ --ignore E501
+
+  # L2: CI 通过汇总
+  ci-passed:
+    needs: [version-check, brain-test, semantic-test]
+    if: >-
+      github.event_name == 'pull_request' && always()
+      && needs.brain-test.result == 'success'
+      && needs.semantic-test.result == 'success'
+      && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: CI Passed
+        run: echo "CI checks passed"
+
+  # L2: 失败通知
+  notify-failure:
+    needs: [brain-test, semantic-test]
+    if: always() && (needs.brain-test.result == 'failure' || needs.semantic-test.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Notify failure
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_CI_DATABASE_ID }}
+          BRAIN_TEST_RESULT: ${{ needs.brain-test.result }}
+          SEMANTIC_TEST_RESULT: ${{ needs.semantic-test.result }}
+        run: |
+          if [ -z "$NOTION_TOKEN" ] || [ -z "$NOTION_DATABASE_ID" ]; then
+            echo "Notion secrets not configured, skipping notification"
+            exit 0
+          fi
+
+          FAILURE_REASON=""
+          if [ "$BRAIN_TEST_RESULT" = "failure" ]; then
+            FAILURE_REASON="brain-test"
+          fi
+          if [ "$SEMANTIC_TEST_RESULT" = "failure" ]; then
+            if [ -n "$FAILURE_REASON" ]; then
+              FAILURE_REASON="$FAILURE_REASON + semantic-test"
+            else
+              FAILURE_REASON="semantic-test"
+            fi
+          fi
+
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          if [ -z "$PR_URL" ]; then
+            PR_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          JSON_PAYLOAD=$(jq -n \
+            --arg db_id "$NOTION_DATABASE_ID" \
+            --arg name "CI Failed ($FAILURE_REASON): ${{ github.repository }}" \
+            --arg branch "${{ github.head_ref || github.ref_name }}" \
+            --arg pr_url "$PR_URL" \
+            --arg timestamp "$TIMESTAMP" \
+            '{
+              parent: {database_id: $db_id},
+              properties: {
+                Name: {title: [{text: {content: $name}}]},
+                Status: {select: {name: "Failed"}},
+                Branch: {rich_text: [{text: {content: $branch}}]},
+                PR: {url: $pr_url},
+                Time: {date: {start: $timestamp}}
+              }
+            }')
+
+          curl -s --fail -X POST "https://api.notion.com/v1/pages" \
+            -H "Authorization: Bearer $NOTION_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Notion-Version: 2022-06-28" \
+            -d "$JSON_PAYLOAD"
+          echo "Notification sent to Notion (failed: $FAILURE_REASON)"

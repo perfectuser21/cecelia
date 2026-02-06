@@ -708,6 +708,59 @@ router.post('/quarantine/release-all', async (req, res) => {
   }
 });
 
+// ==================== Watchdog API ====================
+
+/**
+ * GET /api/brain/watchdog
+ * 资源看门狗诊断 - 每个任务的实时 RSS/CPU/采样数/阈值
+ */
+router.get('/watchdog', async (req, res) => {
+  try {
+    const { getWatchdogStatus } = await import('./watchdog.js');
+    const status = getWatchdogStatus();
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get watchdog status', details: err.message });
+  }
+});
+
+// ==================== Token Usage API ====================
+
+/**
+ * GET /api/brain/token-usage
+ * Token 消耗统计（今日 / 本周 / 本月 / 按 source 分组）
+ */
+router.get('/token-usage', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        source,
+        payload->>'model' as model,
+        COUNT(*) as calls,
+        SUM((payload->>'input_tokens')::int) as input_tokens,
+        SUM((payload->>'output_tokens')::int) as output_tokens,
+        SUM((payload->>'total_tokens')::int) as total_tokens,
+        ROUND(SUM((payload->>'cost_usd')::numeric)::numeric, 4) as cost_usd
+      FROM cecelia_events
+      WHERE event_type = 'token_usage'
+        AND created_at >= CURRENT_DATE
+      GROUP BY source, payload->>'model'
+      ORDER BY cost_usd DESC
+    `);
+
+    const totalToday = result.rows.reduce((s, r) => s + parseFloat(r.cost_usd || 0), 0);
+
+    res.json({
+      success: true,
+      date: new Date().toISOString().split('T')[0],
+      total_cost_usd: Math.round(totalToday * 10000) / 10000,
+      breakdown: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get token usage', details: err.message });
+  }
+});
+
 // ==================== Pending Actions API（危险动作审批） ====================
 
 /**

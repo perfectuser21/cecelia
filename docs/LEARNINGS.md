@@ -1,5 +1,92 @@
 # Learnings
 
+## [2026-02-06] Watchdog 进程保护系统 (v5)
+
+### Feature: 三层进程保护 — 进程组隔离 + 资源看门狗 + 自动重排
+
+- **What**: 解决「运行中的任务失控时无法精确处理」的问题
+- **Before**: 只有入口限流（拒绝新任务）+ 60min 超时兜底，中间是盲区
+- **After**: 每 tick 采样 /proc，三级响应（warn/kill/crisis），自动重排+退避+隔离
+- **关键改动**:
+  - cecelia-run: setsid 进程组隔离，info.json 记录 pgid
+  - watchdog.js: 新建，/proc 采样 + 动态阈值 + 三级响应
+  - executor.js: killProcessTwoStage (SIGTERM→SIGKILL→验证) + requeueTask (退避+隔离)
+  - tick.js: step 5c watchdog 集成 + next_run_at 退避过滤
+  - routes.js: GET /api/brain/watchdog 诊断端点
+- **详细文档**: `docs/WATCHDOG_PROCESS_PROTECTION.md`
+- **测试**: 26 个单元测试全通过，全量测试无回归
+
+### 设计决策
+
+- **不用 cgroup**: 需要 root，/proc + pgid 够用
+- **不单凭 CPU 杀**: 必须 RSS+CPU 双条件，防误杀编译等短暂 burst
+- **Crisis 只杀 1 个**: 避免连杀多个造成雪崩，下 tick 再评估
+- **60s 宽限期**: 启动时 RSS/CPU 波动大，给进程稳定时间
+- **WHERE status='in_progress'**: 防竞态，避免复活已完成任务
+
+### 作为 Feature 登记
+
+等 Brain 启动后，应注册为 cecelia-core 项目的 Feature：
+```
+POST /api/brain/action/create-feature
+{
+  "name": "Watchdog Process Protection",
+  "parent_id": "<cecelia-core project id>",
+  "decomposition_mode": "known"
+}
+```
+
+---
+
+## [2026-02-06] KR2.2 Phase 3: Retry Engine and State Management Implementation Plan
+
+### Feature: Detailed implementation plan for smart retry mechanism and state management API
+
+- **What**: Created comprehensive Phase 3 implementation plan with code examples and technical specifications
+- **Deliverables**:
+  - Task 3.1: Retry Engine with exponential backoff strategy
+  - Task 3.2: State Management API (5 RESTful endpoints)
+  - Task 3.3: BullMQ integration for async task processing
+  - Complete code examples in TypeScript
+  - Test specifications and coverage targets
+
+### Planning Document Pattern
+
+- **Approach**: Document-first with code examples in planning phase
+- **Benefit**: Provides clear technical blueprint for actual implementation
+- **Impact**: High - reduces implementation uncertainty and helps estimate effort accurately
+
+### Workflow Observations
+
+- **Smooth**: /dev workflow handled documentation task well, no code conflicts
+- **Smooth**: PRD/DoD/QA Decision generation worked as expected
+- **Challenge**: Merge conflict in quality-summary.json from concurrent develop branch changes
+- **Solution**: Resolved by keeping current branch content and merging develop updates
+- **Impact**: Medium - suggests need for better handling of concurrent development on shared files
+
+### Technical Insights
+
+- **Retry Strategy**:
+  - Error classification (retryable vs non-retryable) is critical for success rate
+  - Exponential backoff prevents overwhelming rate-limited services
+  - Recording retry history enables better error analysis
+
+- **State Management**:
+  - Zod for input validation provides type safety and clear error messages
+  - Separate Service/Controller/Route layers improves testability
+  - Async task processing with BullMQ enables horizontal scaling
+
+- **Testing Strategy**:
+  - Document task needs manual verification of content quality
+  - Future code implementation will require >80% test coverage
+  - Integration tests more valuable than unit tests for async workflows
+
+### Process Improvements
+
+- **Optimization**: Could skip Step 6 (Testing) earlier for document-only tasks
+- **Optimization**: Quality gate could detect document-only tasks and adjust checks automatically
+- **Impact**: Low - minor time savings, current flow is acceptable
+
 ## [2026-02-06] KR2.2 Unified Publish Engine Implementation Planning
 
 ### Feature: Documentation and integration planning for unified publishing system

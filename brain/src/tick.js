@@ -6,7 +6,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -349,11 +349,19 @@ async function incrementActionsToday(count = 1) {
  */
 async function selectNextDispatchableTask(goalIds) {
   // Query queued tasks with payload for dependency checking
+  // Watchdog backoff: skip tasks with next_run_at in the future
+  // next_run_at is always written as UTC ISO-8601 by requeueTask().
+  // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
   const result = await pool.query(`
     SELECT t.id, t.title, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
     WHERE t.goal_id = ANY($1)
       AND t.status = 'queued'
+      AND (
+        t.payload->>'next_run_at' IS NULL
+        OR t.payload->>'next_run_at' = ''
+        OR (t.payload->>'next_run_at')::timestamptz <= NOW()
+      )
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       t.created_at ASC
@@ -820,6 +828,43 @@ async function executeTick() {
     }
   } catch (livenessErr) {
     console.error('[tick-loop] Liveness probe error:', livenessErr.message);
+  }
+
+  // 5c. Watchdog: resource monitoring — detect and kill runaway processes
+  try {
+    const { checkRunaways, cleanupMetrics } = await import('./watchdog.js');
+    const resources = checkServerResources();
+    const watchdogResult = checkRunaways(resources.metrics.max_pressure);
+
+    for (const action of watchdogResult.actions) {
+      if (action.action === 'kill') {
+        console.log(`[tick] Watchdog kill: task=${action.taskId} reason=${action.reason}`);
+        const killResult = await killProcessTwoStage(action.taskId, action.pgid);
+        if (killResult.killed) {
+          const requeueResult = await requeueTask(action.taskId, action.reason, action.evidence);
+          cleanupMetrics(action.taskId);
+          await emit('watchdog_kill', 'watchdog', {
+            task_id: action.taskId, pgid: action.pgid,
+            reason: action.reason, kill_stage: killResult.stage,
+            requeued: requeueResult.requeued, quarantined: requeueResult.quarantined || false,
+          });
+          actionsTaken.push({
+            action: 'watchdog_kill',
+            task_id: action.taskId,
+            reason: action.reason,
+            kill_stage: killResult.stage,
+            requeued: requeueResult.requeued,
+            quarantined: requeueResult.quarantined || false,
+          });
+        } else {
+          console.error(`[tick] Watchdog kill FAILED: task=${action.taskId} stage=${killResult.stage}`);
+        }
+      } else if (action.action === 'warn') {
+        console.log(`[tick] Watchdog warn: task=${action.taskId} reason=${action.reason}`);
+      }
+    }
+  } catch (watchdogErr) {
+    console.error('[tick] Watchdog error:', watchdogErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)

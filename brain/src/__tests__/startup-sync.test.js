@@ -26,7 +26,7 @@ const { syncOrphanTasksOnStartup } = await import('../executor.js');
 
 describe('syncOrphanTasksOnStartup', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('should do nothing when no in_progress tasks exist', async () => {

@@ -143,6 +143,8 @@ const suspectProcesses = new Map();
 function getActiveProcessCount() {
   // Prune dead processes first
   for (const [taskId, entry] of activeProcesses) {
+    // Bridge entries without PID — skip pruning (liveness probe handles them)
+    if (entry.bridge && !entry.pid) continue;
     if (!isProcessAlive(entry.pid)) {
       console.log(`[executor] Pruning dead process: task=${taskId} pid=${entry.pid}`);
       activeProcesses.delete(taskId);
@@ -152,16 +154,10 @@ function getActiveProcessCount() {
   // Count ALL claude processes on the system (headed + headless)
   let systemClaudeCount = 0;
   try {
-    const result = execSync('pgrep -c "^claude$" 2>/dev/null || echo 0', { encoding: 'utf-8' });
+    const result = execSync('pgrep -xc claude 2>/dev/null || echo 0', { encoding: 'utf-8' });
     systemClaudeCount = parseInt(result.trim(), 10) || 0;
   } catch {
-    // pgrep failed, fall back to ps
-    try {
-      const result = execSync('ps aux | grep -E "^[^ ]+[ ]+[0-9]+.*claude$" | grep -v grep | wc -l', { encoding: 'utf-8' });
-      systemClaudeCount = parseInt(result.trim(), 10) || 0;
-    } catch {
-      systemClaudeCount = 0;
-    }
+    systemClaudeCount = 0;
   }
 
   // Return the higher of: tracked processes vs system claude count
@@ -212,6 +208,133 @@ function killProcess(taskId) {
 }
 
 /**
+ * Two-stage kill: SIGTERM → wait → SIGKILL → verify death.
+ * Uses process group (negative pgid) to kill all children.
+ * P2 #8: Verify process is actually dead after SIGKILL.
+ *
+ * @param {string} taskId - Task ID (for cleanup)
+ * @param {number} pgid - Process group ID to kill
+ * @param {number} waitMs - Time to wait between SIGTERM and SIGKILL (default 10s)
+ * @returns {Promise<{killed: boolean, stage: string}>}
+ */
+async function killProcessTwoStage(taskId, pgid, waitMs = 10000) {
+  if (!pgid) return { killed: false, stage: 'no_pgid' };
+
+  // Stage 1: SIGTERM to process group
+  try {
+    process.kill(-pgid, 'SIGTERM');
+  } catch (err) {
+    if (err.code === 'ESRCH') {
+      activeProcesses.delete(taskId);
+      return { killed: true, stage: 'already_dead' };
+    }
+    // Negative pgid failed, try direct pid
+    try { process.kill(pgid, 'SIGTERM'); } catch { /* ignore */ }
+  }
+
+  await new Promise(r => setTimeout(r, waitMs));
+
+  // Stage 2: Check if group leader (pgid as PID) is still alive.
+  // process.kill(pgid, 0) sends signal 0 to the single PID = existence check.
+  // If leader is dead, the whole group is effectively gone.
+  try {
+    process.kill(pgid, 0); // throws ESRCH if dead → catch = sigterm was enough
+    // Still alive → escalate to SIGKILL on the whole group
+    try { process.kill(-pgid, 'SIGKILL'); } catch { try { process.kill(pgid, 'SIGKILL'); } catch { /* */ } }
+
+    // P2 #8: Wait 2s and verify /proc/<pgid> is gone
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      process.kill(pgid, 0);
+      // Still alive after SIGKILL — something is very wrong
+      console.error(`[executor] KILL FAILED: pgid=${pgid} task=${taskId} still alive after SIGKILL`);
+      return { killed: false, stage: 'kill_failed' };
+    } catch {
+      activeProcesses.delete(taskId);
+      return { killed: true, stage: 'sigkill' };
+    }
+  } catch {
+    // SIGTERM was enough — leader is gone
+    activeProcesses.delete(taskId);
+    return { killed: true, stage: 'sigterm' };
+  }
+}
+
+/**
+ * Requeue a killed task with exponential backoff.
+ * P0 #2: Prevents race conditions with WHERE status='in_progress'.
+ * After MAX_WATCHDOG_RETRIES, quarantines the task instead.
+ *
+ * @param {string} taskId
+ * @param {string} reason - Why the task was killed
+ * @param {Object} evidence - Watchdog sample data
+ * @returns {Promise<{requeued: boolean, quarantined?: boolean, retry_count?: number, next_run_at?: string}>}
+ */
+async function requeueTask(taskId, reason, evidence = {}) {
+  // Kill 1 → retry with backoff; Kill 2 → quarantine
+  const QUARANTINE_AFTER_KILLS = 2;
+
+  // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
+  const result = await pool.query(
+    'SELECT payload FROM tasks WHERE id = $1 AND status = $2',
+    [taskId, 'in_progress']
+  );
+  if (result.rows.length === 0) {
+    return { requeued: false, reason: 'not_in_progress' };
+  }
+
+  const payload = result.rows[0].payload || {};
+  const retryCount = (payload.watchdog_retry_count || 0) + 1;
+
+  // P2 #9: Complete evidence chain
+  const watchdogInfo = {
+    watchdog_retry_count: retryCount,
+    watchdog_kill: { reason, ts: new Date().toISOString(), ...evidence },
+    watchdog_last_sample: evidence,
+  };
+
+  if (retryCount >= QUARANTINE_AFTER_KILLS) {
+    // Exceeded retry limit → quarantine
+    const updateResult = await pool.query(
+      `UPDATE tasks SET status = 'quarantined',
+       payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+       WHERE id = $1 AND status = 'in_progress'`,
+      [taskId, JSON.stringify({
+        ...watchdogInfo,
+        quarantine_info: {
+          quarantined_at: new Date().toISOString(),
+          reason: 'resource_hog',
+          details: { watchdog_retries: retryCount, kill_reason: reason },
+          previous_status: 'in_progress',
+        }
+      })]
+    );
+    if (updateResult.rowCount === 0) {
+      return { requeued: false, reason: 'status_changed' };
+    }
+    return { requeued: false, quarantined: true };
+  }
+
+  // Exponential backoff: 2min for retry 1 (kill 2 → quarantine, never reaches higher)
+  const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
+  const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+
+  // P0 #2: WHERE status='in_progress' prevents reviving already-completed tasks
+  const updateResult = await pool.query(
+    `UPDATE tasks SET status = 'queued', started_at = NULL,
+     payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+     WHERE id = $1 AND status = 'in_progress'`,
+    [taskId, JSON.stringify({ ...watchdogInfo, next_run_at: nextRunAt })]
+  );
+
+  if (updateResult.rowCount === 0) {
+    return { requeued: false, reason: 'status_changed' };
+  }
+
+  return { requeued: true, retry_count: retryCount, next_run_at: nextRunAt };
+}
+
+/**
  * Remove a task from activeProcesses (called when execution-callback received)
  */
 function removeActiveProcess(taskId) {
@@ -246,8 +369,9 @@ function getActiveProcesses() {
  */
 function cleanupOrphanProcesses() {
   try {
+    // Find all 'claude -p' processes (headless executions)
     const output = execSync(
-      "ps aux | grep 'claude -p /dev' | grep -v grep | awk '{print $2}'",
+      "ps -eo pid,ppid,args | grep 'claude -p' | grep -v grep",
       { encoding: 'utf-8', timeout: 5000 }
     ).trim();
 
@@ -256,23 +380,46 @@ function cleanupOrphanProcesses() {
       return 0;
     }
 
-    const pids = output.split('\n').map(p => parseInt(p, 10)).filter(p => !isNaN(p));
-    const trackedPids = new Set([...activeProcesses.values()].map(e => e.pid));
+    const lines = output.split('\n');
+    const trackedPids = new Set([...activeProcesses.values()].map(e => e.pid).filter(Boolean));
+    // Also build set of tracked task IDs for bridge entries
+    const trackedTaskIds = new Set(activeProcesses.keys());
 
     let killed = 0;
-    for (const pid of pids) {
-      if (!trackedPids.has(pid)) {
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parseInt(parts[0], 10);
+      const ppid = parseInt(parts[1], 10);
+      if (isNaN(pid)) continue;
+
+      // Skip if PID is tracked
+      if (trackedPids.has(pid)) continue;
+
+      // Check if parent is a cecelia-run process (has a task_id we're tracking)
+      let parentIsTracked = false;
+      try {
+        const ppidArgs = execSync(`ps -o args= -p ${ppid} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+        if (ppidArgs.includes('cecelia-run')) {
+          // Extract task_id from parent cecelia-run args
+          const taskMatch = ppidArgs.match(/cecelia-run\s+([0-9a-f-]+)/);
+          if (taskMatch && trackedTaskIds.has(taskMatch[1])) {
+            parentIsTracked = true;
+          }
+        }
+      } catch { /* parent already dead */ }
+
+      if (!parentIsTracked) {
         try {
           process.kill(pid, 'SIGTERM');
           killed++;
-          console.log(`[executor] Killed orphan process: pid=${pid}`);
+          console.log(`[executor] Killed orphan claude: pid=${pid} ppid=${ppid}`);
         } catch {
           // already dead
         }
       }
     }
 
-    console.log(`[executor] Orphan cleanup: found=${pids.length} killed=${killed} tracked=${trackedPids.size}`);
+    console.log(`[executor] Orphan cleanup: found=${lines.length} killed=${killed} tracked=${trackedPids.size}`);
     return killed;
   } catch (err) {
     console.error('[executor] Orphan cleanup failed:', err.message);
@@ -869,6 +1016,24 @@ function isRunIdProcessAlive(runId) {
 }
 
 /**
+ * Check if a cecelia-run process exists for a given task_id.
+ * More reliable than isRunIdProcessAlive because task_id IS in the
+ * cecelia-run command line (as 1st argument), while runId is NOT.
+ */
+function isTaskProcessAlive(taskId) {
+  if (!taskId) return false;
+  try {
+    const output = execSync(
+      `ps aux | grep -F "${taskId}" | grep -v grep | wc -l`,
+      { encoding: 'utf-8', timeout: 3000 }
+    ).trim();
+    return parseInt(output, 10) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Probe liveness of all in_progress tasks.
  * Called on each tick to detect dead processes early.
  *
@@ -900,18 +1065,18 @@ async function probeTaskLiveness() {
     let isAlive = false;
 
     if (entry) {
-      // Tracked process — check by PID or run_id
+      // Tracked process — check by PID or task_id in system processes
       if (entry.pid) {
         isAlive = isProcessAlive(entry.pid);
-      } else if (entry.bridge && runId) {
-        isAlive = isRunIdProcessAlive(runId);
+      } else if (entry.bridge) {
+        // Bridge tasks: check by task_id in system processes (cecelia-run <task_id> ...)
+        isAlive = isTaskProcessAlive(task.id);
       } else {
-        // Bridge without run_id — cannot verify, assume alive
         isAlive = true;
       }
     } else if (runId) {
-      // Not tracked in memory but has run_id — check system processes
-      isAlive = isRunIdProcessAlive(runId);
+      // Not tracked in memory — check by task_id first, then run_id
+      isAlive = isTaskProcessAlive(task.id) || isRunIdProcessAlive(runId);
     } else {
       // No tracking info at all — check if recently dispatched (grace period)
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
@@ -997,10 +1162,9 @@ async function syncOrphanTasksOnStartup() {
   for (const task of result.rows) {
     const runId = task.payload?.current_run_id;
 
-    // Check if process exists
-    let processExists = false;
-
-    if (runId) {
+    // Check if process exists (task_id is in cecelia-run command line)
+    let processExists = isTaskProcessAlive(task.id);
+    if (!processExists && runId) {
       processExists = isRunIdProcessAlive(runId);
     }
 
@@ -1094,7 +1258,11 @@ export {
   syncOrphanTasksOnStartup,
   recordHeartbeat,
   isRunIdProcessAlive,
+  isTaskProcessAlive,
   suspectProcesses,
   MAX_SEATS,
   INTERACTIVE_RESERVE,
+  // v5: Watchdog integration
+  killProcessTwoStage,
+  requeueTask,
 };
