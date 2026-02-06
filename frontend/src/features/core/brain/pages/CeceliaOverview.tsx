@@ -21,8 +21,14 @@ import {
   Cpu,
   HardDrive,
   Wifi,
-  WifiOff
+  WifiOff,
+  Shield,
+  AlertTriangle,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX
 } from 'lucide-react';
+import type { HardeningStatusResponse } from '../../../../api/brain.api';
 
 interface TickStatus {
   enabled: boolean;
@@ -283,6 +289,7 @@ export default function CeceliaOverview() {
   const [tickStatus, setTickStatus] = useState<TickStatus | null>(null);
   const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
   const [cluster, setCluster] = useState<ClusterStatus | null>(null);
+  const [hardening, setHardening] = useState<HardeningStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -307,10 +314,19 @@ export default function CeceliaOverview() {
     }
   };
 
+  const fetchHardening = async () => {
+    try {
+      const res = await fetch('/api/brain/hardening/status');
+      if (res.ok) setHardening(await res.json());
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    fetchHardening();
+    const fast = setInterval(fetchData, 5000);
+    const slow = setInterval(fetchHardening, 30000);
+    return () => { clearInterval(fast); clearInterval(slow); };
   }, []);
 
   const toggleTick = async () => {
@@ -379,6 +395,102 @@ export default function CeceliaOverview() {
           </button>
         </div>
       </div>
+
+      {/* Hardening Status Panel */}
+      {hardening && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl p-5 shadow-sm border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <Shield className="w-5 h-5 text-blue-500" />
+              <h2 className="font-semibold">稳定性护栏</h2>
+              <span className="text-xs text-slate-400">v{hardening.version}</span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium
+              ${hardening.overall_status === 'ok'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                : hardening.overall_status === 'warn'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+              }`}
+            >
+              {hardening.overall_status === 'ok' ? (
+                <ShieldCheck className="w-4 h-4" />
+              ) : hardening.overall_status === 'warn' ? (
+                <ShieldAlert className="w-4 h-4" />
+              ) : (
+                <ShieldX className="w-4 h-4" />
+              )}
+              {hardening.overall_status === 'ok' ? '健康' : hardening.overall_status === 'warn' ? '警告' : '危险'}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {/* Alertness */}
+            <div className={`rounded-lg p-3 ${
+              hardening.features.alertness_decay.level === 'NORMAL' ? 'bg-emerald-50 dark:bg-emerald-900/20' :
+              hardening.features.alertness_decay.level === 'ALERT' ? 'bg-amber-50 dark:bg-amber-900/20' :
+              hardening.features.alertness_decay.level === 'EMERGENCY' ? 'bg-orange-50 dark:bg-orange-900/20' :
+              'bg-red-50 dark:bg-red-900/20'
+            }`}>
+              <div className="text-xs text-slate-500 mb-1">警觉等级</div>
+              <div className={`text-lg font-bold ${
+                hardening.features.alertness_decay.level === 'NORMAL' ? 'text-emerald-600' :
+                hardening.features.alertness_decay.level === 'ALERT' ? 'text-amber-600' :
+                hardening.features.alertness_decay.level === 'EMERGENCY' ? 'text-orange-600' :
+                'text-red-600'
+              }`}>
+                {hardening.features.alertness_decay.level}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                分数 {hardening.features.alertness_decay.current_score.raw}
+              </div>
+            </div>
+
+            {/* Quarantine */}
+            <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-3">
+              <div className="text-xs text-slate-500 mb-1">隔离区</div>
+              <div className="text-lg font-bold">
+                {hardening.features.failure_classification.last_1h.systemic +
+                 hardening.features.failure_classification.last_1h.task_specific}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                系统 {hardening.features.failure_classification.last_1h.systemic} / 任务 {hardening.features.failure_classification.last_1h.task_specific}
+              </div>
+            </div>
+
+            {/* Pending Actions */}
+            <div className={`rounded-lg p-3 ${
+              hardening.features.pending_actions.pending > 0
+                ? 'bg-amber-50 dark:bg-amber-900/20'
+                : 'bg-slate-50 dark:bg-slate-700/50'
+            }`}>
+              <div className="text-xs text-slate-500 mb-1">待审批</div>
+              <div className={`text-lg font-bold ${hardening.features.pending_actions.pending > 0 ? 'text-amber-600' : ''}`}>
+                {hardening.features.pending_actions.pending}
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                已批 {hardening.features.pending_actions.approved_24h} / 拒绝 {hardening.features.pending_actions.rejected_24h}
+              </div>
+            </div>
+
+            {/* Event Backlog */}
+            <div className={`rounded-lg p-3 ${
+              hardening.features.event_backlog.current_10min >= hardening.features.event_backlog.threshold
+                ? 'bg-red-50 dark:bg-red-900/20'
+                : 'bg-slate-50 dark:bg-slate-700/50'
+            }`}>
+              <div className="text-xs text-slate-500 mb-1">事件积压</div>
+              <div className="text-lg font-bold">
+                {hardening.features.event_backlog.current_10min}
+                <span className="text-xs text-slate-400 font-normal">/{hardening.features.event_backlog.threshold}</span>
+              </div>
+              <div className="text-xs text-slate-400 mt-1">
+                24h 峰值 {hardening.features.event_backlog.peak_24h}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dual Server View */}
       {cluster && (
