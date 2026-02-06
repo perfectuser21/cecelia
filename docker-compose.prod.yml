@@ -44,3 +44,22 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  frontend:
+    image: node:20-alpine
+    container_name: cecelia-frontend
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - /home/xx/perfect21/zenithjoy/workspace/apps/dashboard/dist:/app
+      - ./frontend-proxy.js:/frontend-proxy.js:ro
+    command: node /frontend-proxy.js
+    depends_on:
+      node-brain:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

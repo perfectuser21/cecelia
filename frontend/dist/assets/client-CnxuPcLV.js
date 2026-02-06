@@ -1,1 +1,0 @@
-import{a as t}from"./index-B9ygI19o.js";const n="/api";function a(){const e=document.cookie.match(/(?:^| )token=([^;]+)/);return e?decodeURIComponent(e[1]):null}const r=t.create({baseURL:n,headers:{"Content-Type":"application/json"}});r.interceptors.request.use(e=>{const o=a();return o&&(e.headers.Authorization=`Bearer ${o}`),e});export{r as a};

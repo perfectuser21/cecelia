@@ -49,8 +49,9 @@ services:
     network_mode: host
     working_dir: /app
     volumes:
-      - ./frontend:/app
-    command: sh -c "test -d node_modules || npm install && npx vite preview --port 5212 --host 0.0.0.0"
+      - /home/xx/perfect21/zenithjoy/workspace/apps/dashboard/dist:/app
+      - ./frontend-proxy.js:/frontend-proxy.js:ro
+    command: node /frontend-proxy.js
     depends_on:
       node-brain:
         condition: service_healthy

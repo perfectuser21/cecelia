@@ -1,1 +1,0 @@
-import{j as r}from"./index-BhHU9tw7.js";import{P as e}from"./PlaceholderPage-BBd3uhZR.js";function o(){return r.jsx(e,{title:"Super Brain",description:"知识库、学习跟踪 — 即将上线",icon:"🧠"})}export{o as default};
