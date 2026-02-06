@@ -1,6 +1,6 @@
 /* global console */
 import pool from './db.js';
-import { publishTaskCreated } from './events/taskEvents.js';
+import { broadcastTaskState } from './task-updater.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -23,12 +23,13 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     task_type || 'dev'
   ]);
 
-  console.log(`[Action] Created task: ${result.rows[0].id} - ${title} (type: ${task_type || 'dev'})`);
+  const task = result.rows[0];
+  console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);
 
-  // Publish WebSocket event
-  publishTaskCreated(result.rows[0]);
+  // Broadcast task creation to WebSocket clients
+  await broadcastTaskState(task.id);
 
-  return { success: true, task: result.rows[0] };
+  return { success: true, task };
 }
 
 /**
@@ -70,8 +71,13 @@ async function updateTask({ task_id, status, priority }) {
     return { success: false, error: 'Task not found' };
   }
 
+  const task = result.rows[0];
   console.log(`[Action] Updated task: ${task_id}`);
-  return { success: true, task: result.rows[0] };
+
+  // Broadcast task update to WebSocket clients
+  await broadcastTaskState(task_id);
+
+  return { success: true, task };
 }
 
 /**

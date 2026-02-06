@@ -139,27 +139,6 @@ export function broadcast(event, data) {
 }
 
 /**
- * Broadcast run update (task status update)
- * @param {Object} runData - Run data object
- */
-export function broadcastRunUpdate(runData) {
-  // Map task status to appropriate WebSocket event
-  let event = WS_EVENTS.TASK_PROGRESS;
-
-  if (runData.status === 'queued') {
-    event = WS_EVENTS.TASK_CREATED;
-  } else if (runData.status === 'in_progress') {
-    event = WS_EVENTS.TASK_STARTED;
-  } else if (runData.status === 'completed') {
-    event = WS_EVENTS.TASK_COMPLETED;
-  } else if (runData.status === 'failed') {
-    event = WS_EVENTS.TASK_FAILED;
-  }
-
-  broadcast(event, runData);
-}
-
-/**
  * Get connected clients count
  * @returns {number}
  */
@@ -198,44 +177,48 @@ export function shutdownWebSocketServer() {
 }
 
 /**
- * Broadcast run update with automatic type determination
- * @param {object} update - Run update data
+ * Broadcast run/task update to all connected clients
+ * Maps run data to WebSocket event format
+ * @param {Object} update - Run update data
+ * @param {string} update.id - Run/Task ID
+ * @param {string} update.status - Status (queued, in_progress, completed, failed)
+ * @param {number} update.progress - Progress percentage (0-100)
+ * @param {string} update.task_id - Task ID
+ * @param {string} update.agent - Agent name
+ * @param {string} update.started_at - ISO timestamp
+ * @param {string} update.completed_at - ISO timestamp
+ * @param {string} update.error - Error message (if any)
  */
 export function broadcastRunUpdate(update) {
-  let type;
-  switch (update.status) {
-    case 'running':
-      type = 'run_update';
-      break;
-    case 'completed':
-      type = 'run_complete';
-      break;
-    case 'failed':
-      type = 'run_failed';
-      break;
-    default:
-      type = 'run_update';
-  }
+  // Map status to WebSocket event type
+  const statusToEvent = {
+    'queued': WS_EVENTS.TASK_CREATED,
+    'in_progress': WS_EVENTS.TASK_STARTED,
+    'completed': WS_EVENTS.TASK_COMPLETED,
+    'failed': WS_EVENTS.TASK_FAILED
+  };
 
-  broadcast(type, update);
+  const event = statusToEvent[update.status] || WS_EVENTS.TASK_PROGRESS;
+
+  // Broadcast with standardized data format
+  broadcast(event, {
+    id: update.id,
+    task_id: update.task_id,
+    status: update.status,
+    progress: update.progress || 0,
+    agent: update.agent,
+    started_at: update.started_at,
+    completed_at: update.completed_at,
+    error: update.error
+  });
 }
 
-/**
- * Default export for testing compatibility
- */
+// Default export for convenience
 export default {
-  init: initWebSocketServer,
-  shutdown: shutdownWebSocketServer,
-  broadcast: (message) => {
-    if (!message.type) {
-      console.error('[WS] Invalid message format: missing type field');
-      return;
-    }
-    broadcast(message.type, message.data || {});
-  },
+  initWebSocketServer,
+  broadcast,
   broadcastRunUpdate,
-  getClientCount: getConnectedClientsCount,
-  get wss() {
-    return wss;
-  }
+  getConnectedClientsCount,
+  shutdownWebSocketServer,
+  WS_EVENTS
 };
