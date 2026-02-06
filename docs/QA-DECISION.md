@@ -1,27 +1,40 @@
-# QA Decision
-Decision: MUST_ADD_RCI
+# QA Decision - 最后 20% 稳定性硬护栏
+
+Decision: NO_RCI
 Priority: P0
 RepoType: Engine
 
 Tests:
-  - dod_item: "进程存活探测 — 每次 tick 验证 in_progress 任务进程存活"
+  - dod_item: "决策执行事务化 - 失败时回滚"
     method: auto
-    location: brain/tests/liveness-probe.test.js
-  - dod_item: "启动时状态同步 — Brain 重启后修复孤儿任务"
+    location: brain/src/__tests__/decision-executor.test.js
+
+  - dod_item: "系统性失败分类"
     method: auto
-    location: brain/tests/startup-sync.test.js
-  - dod_item: "回调原子化 — 回调处理事务内完成"
+    location: brain/src/__tests__/quarantine.test.js
+
+  - dod_item: "事件积压检测"
     method: auto
-    location: brain/tests/callback-atomic.test.js
-  - dod_item: "心跳端点 — POST /api/brain/heartbeat 可用"
+    location: brain/src/__tests__/alertness.test.js
+
+  - dod_item: "Alertness 衰减规则"
     method: auto
-    location: brain/tests/heartbeat.test.js
+    location: brain/src/__tests__/alertness.test.js
+
+  - dod_item: "危险动作入队待审批"
+    method: auto
+    location: brain/src/__tests__/decision-executor.test.js
+
+  - dod_item: "pending-actions API"
+    method: auto
+    location: brain/src/__tests__/routes.test.js
+
+  - dod_item: "LLM 错误类型分类"
+    method: auto
+    location: brain/src/__tests__/thalamus.test.js
 
 RCI:
-  new:
-    - "LIVENESS-001: tick 存活探测覆盖所有 in_progress 任务"
-    - "SYNC-001: Brain 重启后零孤儿残留"
-    - "CALLBACK-001: 回调处理原子性"
+  new: []
   update: []
 
-Reason: 核心调度引擎的状态一致性改动，直接影响任务可靠性，必须有回归契约覆盖。
+Reason: 内部稳定性增强，属于引擎层改动，通过单元测试验证各模块功能即可，无需新增回归契约。

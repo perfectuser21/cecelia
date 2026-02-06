@@ -28,11 +28,17 @@ import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
+import { getAlertness, getDecayStatus, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES, EVENT_BACKLOG_THRESHOLD, RECOVERY_THRESHOLDS } from './alertness.js';
+import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure, FAILURE_CLASS } from './quarantine.js';
+import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import { runDiagnosis } from './self-diagnosis.js';
+import websocketService from './websocket.js';
 import crypto from 'crypto';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES, LLM_ERROR_TYPE } from './thalamus.js';
+import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
 
 const router = Router();
 
@@ -244,6 +250,21 @@ router.get('/status', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/status/ws
+ * WebSocket 服务状态
+ */
+router.get('/status/ws', (req, res) => {
+  res.json({
+    success: true,
+    websocket: {
+      active: websocketService.wss !== null,
+      connected_clients: websocketService.getClientCount(),
+      endpoint: '/ws'
+    }
+  });
+});
+
+/**
  * GET /api/brain/status/full
  * 完整状态（给人 debug 用）
  */
@@ -332,7 +353,35 @@ router.get('/decisions', async (req, res) => {
  */
 router.get('/tasks', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = parseInt(req.query.limit) || 100;
+    const { status, task_type } = req.query;
+
+    // If filters provided, use custom query instead of getTopTasks
+    if (status || task_type) {
+      let query = 'SELECT * FROM tasks WHERE 1=1';
+      const params = [];
+      let paramIndex = 1;
+
+      if (status) {
+        query += ` AND status = $${paramIndex}`;
+        params.push(status);
+        paramIndex++;
+      }
+
+      if (task_type) {
+        query += ` AND task_type = $${paramIndex}`;
+        params.push(task_type);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY created_at DESC LIMIT $${paramIndex}`;
+      params.push(limit);
+
+      const result = await pool.query(query, params);
+      return res.json(result.rows);
+    }
+
+    // Default behavior: use getTopTasks
     const tasks = await getTopTasks(limit);
     res.json(tasks);
   } catch (err) {
@@ -449,6 +498,275 @@ router.post('/tick/disable', async (req, res) => {
   }
 });
 
+// ==================== Alertness API ====================
+
+/**
+ * GET /api/brain/alertness
+ * 获取当前警觉级别和状态
+ */
+router.get('/alertness', async (req, res) => {
+  try {
+    const alertness = getAlertness();
+    res.json({
+      success: true,
+      ...alertness,
+      levels: ALERTNESS_LEVELS,
+      level_names: LEVEL_NAMES
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get alertness', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/evaluate
+ * 重新评估警觉级别
+ */
+router.post('/alertness/evaluate', async (req, res) => {
+  try {
+    const result = await evaluateAlertness();
+    res.json({
+      success: true,
+      ...result,
+      level_name: LEVEL_NAMES[result.level]
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to evaluate alertness', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/override
+ * 手动覆盖警觉级别
+ * Body: { level: 0-3, reason: "string", duration_minutes?: 30 }
+ */
+router.post('/alertness/override', async (req, res) => {
+  try {
+    const { level, reason, duration_minutes = 30 } = req.body;
+
+    if (level === undefined || level < 0 || level > 3) {
+      return res.status(400).json({ error: 'level must be 0-3' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+
+    const durationMs = duration_minutes * 60 * 1000;
+    const result = await setManualOverride(level, reason, durationMs);
+
+    res.json({
+      success: true,
+      level,
+      level_name: LEVEL_NAMES[level],
+      reason,
+      duration_minutes,
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to set override', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/alertness/clear-override
+ * 清除手动覆盖
+ */
+router.post('/alertness/clear-override', async (req, res) => {
+  try {
+    const result = await clearManualOverride();
+    const alertness = getAlertness();
+    res.json({
+      success: result.success,
+      current_level: alertness.level,
+      current_level_name: LEVEL_NAMES[alertness.level],
+      ...result
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear override', details: err.message });
+  }
+});
+
+// ==================== Quarantine API ====================
+
+/**
+ * GET /api/brain/quarantine
+ * 获取隔离区中的任务列表
+ */
+router.get('/quarantine', async (req, res) => {
+  try {
+    const tasks = await getQuarantinedTasks();
+    const stats = await getQuarantineStats();
+    res.json({
+      success: true,
+      stats,
+      tasks,
+      reasons: QUARANTINE_REASONS,
+      actions: REVIEW_ACTIONS
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get quarantine', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/quarantine/stats
+ * 获取隔离区统计
+ */
+router.get('/quarantine/stats', async (req, res) => {
+  try {
+    const stats = await getQuarantineStats();
+    res.json({ success: true, ...stats });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get stats', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/:taskId/release
+ * 释放任务从隔离区
+ * Body: { action: "release"|"retry_once"|"cancel"|"modify", reason?: string, new_prd?: string }
+ */
+router.post('/quarantine/:taskId/release', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { action, reason, new_prd, reviewer } = req.body;
+
+    if (!action || !REVIEW_ACTIONS[action.toUpperCase()]) {
+      return res.status(400).json({
+        error: 'Invalid action',
+        valid_actions: Object.keys(REVIEW_ACTIONS)
+      });
+    }
+
+    const result = await releaseTask(taskId, action, {
+      reason,
+      new_prd,
+      reviewer: reviewer || 'api'
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to release task', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/:taskId
+ * 手动隔离任务
+ * Body: { reason?: string, details?: object }
+ */
+router.post('/quarantine/:taskId', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { reason, details } = req.body;
+
+    const result = await quarantineTask(
+      taskId,
+      reason || QUARANTINE_REASONS.MANUAL,
+      details || { manual: true, reviewer: 'api' }
+    );
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to quarantine task', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/quarantine/release-all
+ * 批量释放所有隔离任务（谨慎使用）
+ * Body: { action: "release"|"cancel", confirm: true }
+ */
+router.post('/quarantine/release-all', async (req, res) => {
+  try {
+    const { action, confirm } = req.body;
+
+    if (!confirm) {
+      return res.status(400).json({ error: 'Must set confirm: true to release all' });
+    }
+
+    if (!action || !['release', 'cancel'].includes(action)) {
+      return res.status(400).json({ error: 'action must be "release" or "cancel"' });
+    }
+
+    const tasks = await getQuarantinedTasks();
+    const results = [];
+
+    for (const task of tasks) {
+      const result = await releaseTask(task.id, action, { reviewer: 'batch-api' });
+      results.push({ task_id: task.id, ...result });
+    }
+
+    res.json({
+      success: true,
+      action,
+      processed: results.length,
+      results
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to release all', details: err.message });
+  }
+});
+
+// ==================== Pending Actions API（危险动作审批） ====================
+
+/**
+ * GET /api/brain/pending-actions
+ * 获取待审批动作列表
+ */
+router.get('/pending-actions', async (req, res) => {
+  try {
+    const actions = await getPendingActions();
+    res.json({ success: true, count: actions.length, actions });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending actions', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/approve
+ * 批准并执行待审批动作
+ * Body: { reviewer?: string }
+ */
+router.post('/pending-actions/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reviewer } = req.body || {};
+
+    const result = await approvePendingAction(id, reviewer || 'api-user');
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to approve action', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/reject
+ * 拒绝待审批动作
+ * Body: { reviewer?: string, reason?: string }
+ */
+router.post('/pending-actions/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reviewer, reason } = req.body || {};
+
+    const result = await rejectPendingAction(id, reviewer || 'api-user', reason || '');
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reject action', details: err.message });
+  }
+});
+
 // ==================== 动作执行 API（白名单 + 幂等） ====================
 
 /**
@@ -562,6 +880,41 @@ router.post('/action/create-task', async (req, res) => {
   const key = idempotency_key || `create-task-${params.title}-${Date.now()}`;
   const result = await handleAction('create-task', params, key, trigger);
   res.status(result.success ? 200 : 400).json(result);
+});
+
+/**
+ * POST /api/brain/action/create-feature
+ * Create a Feature (写入 projects 表，parent_id 指向 Project)
+ * 秋米专用：拆解 KR 时创建 Feature
+ */
+router.post('/action/create-feature', async (req, res) => {
+  try {
+    const { name, parent_id, kr_id, decomposition_mode, description } = req.body;
+
+    if (!name || !parent_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'name and parent_id are required'
+      });
+    }
+
+    const { createFeature: createFeatureAction } = await import('./actions.js');
+    const result = await createFeatureAction({
+      name,
+      parent_id,
+      kr_id,
+      decomposition_mode: decomposition_mode || 'known',
+      description
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create feature',
+      details: err.message
+    });
+  }
 });
 
 router.post('/action/update-task', async (req, res) => {
@@ -1137,10 +1490,75 @@ router.post('/execution-callback', async (req, res) => {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
       await cbSuccess('cecelia-run');
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
+
+      // Publish WebSocket event: task completed
+      publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
+
+      // Thalamus: Analyze task completion event
+      try {
+        const thalamusEvent = {
+          type: EVENT_TYPES.TASK_COMPLETED,
+          task_id,
+          run_id,
+          duration_ms,
+          has_issues: false
+        };
+        const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+        console.log(`[execution-callback] Thalamus decision: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+
+        // Execute thalamus decision if not fallback
+        if (thalamusDecision.actions?.[0]?.type !== 'fallback_to_tick') {
+          await executeThalamusDecision(thalamusDecision);
+        }
+      } catch (thalamusErr) {
+        console.error(`[execution-callback] Thalamus error: ${thalamusErr.message}`);
+        // Continue with normal flow if thalamus fails
+      }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
       notifyTaskFailed({ task_id, title: `Task ${task_id}`, reason: status }).catch(() => {});
+
+      // Publish WebSocket event: task failed
+      publishTaskFailed(task_id, run_id, status);
+
+      // Check if task should be quarantined
+      let quarantined = false;
+      try {
+        const quarantineResult = await handleTaskFailure(task_id);
+        if (quarantineResult.quarantined) {
+          quarantined = true;
+          console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
+          // Notify about quarantine
+          notifyTaskFailed({
+            task_id,
+            title: `Task ${task_id} QUARANTINED`,
+            reason: `Quarantined: ${quarantineResult.result?.reason}`
+          }).catch(() => {});
+        }
+      } catch (quarantineErr) {
+        console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+      }
+
+      // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
+      if (!quarantined) {
+        try {
+          const thalamusEvent = {
+            type: EVENT_TYPES.TASK_FAILED,
+            task_id,
+            run_id,
+            error: status,
+            retry_count: iterations || 0
+          };
+          const thalamusDecision = await thalamusProcessEvent(thalamusEvent);
+          console.log(`[execution-callback] Thalamus decision for failure: level=${thalamusDecision.level}, actions=${thalamusDecision.actions.map(a => a.type).join(',')}`);
+
+          // Execute thalamus decision
+          await executeThalamusDecision(thalamusDecision);
+        } catch (thalamusErr) {
+          console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
+        }
+      }
     }
 
     // 5. Rollup progress to KR and O
@@ -1183,6 +1601,116 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (rollupErr) {
         console.error(`[execution-callback] Progress rollup error: ${rollupErr.message}`);
+      }
+    }
+
+    // 5b. 探索型任务闭环：Task 完成后回调秋米继续拆解
+    if (newStatus === 'completed') {
+      try {
+        // 获取 Task 的 payload 检查是否是探索型
+        const taskResult = await pool.query('SELECT payload, project_id, goal_id FROM tasks WHERE id = $1', [task_id]);
+        const taskPayload = taskResult.rows[0]?.payload;
+        const featureId = taskResult.rows[0]?.project_id;
+        const krId = taskResult.rows[0]?.goal_id;
+
+        if (taskPayload?.exploratory === true && featureId) {
+          console.log(`[execution-callback] Exploratory task completed, triggering continue decomposition...`);
+
+          // 获取 Feature 信息
+          const featureResult = await pool.query('SELECT name, kr_id, decomposition_mode FROM projects WHERE id = $1', [featureId]);
+          const feature = featureResult.rows[0];
+
+          if (feature?.decomposition_mode === 'exploratory') {
+            // 获取 KR 目标
+            const krResult = await pool.query('SELECT title FROM goals WHERE id = $1', [krId || feature.kr_id]);
+            const krGoal = krResult.rows[0]?.title || 'Unknown KR';
+
+            // 创建"继续拆解"任务给秋米
+            const { createTask: createDecompTask } = await import('./actions.js');
+            await createDecompTask({
+              title: `继续拆解: ${feature.name}`,
+              description: `探索型 Task 完成，请根据结果继续拆解下一步。\n\nFeature: ${feature.name}\nKR 目标: ${krGoal}\n\n上一步结果将在执行时传入。`,
+              task_type: 'dev',
+              priority: 'P0',
+              goal_id: krId || feature.kr_id,
+              project_id: featureId,
+              payload: {
+                decomposition: 'continue',
+                feature_id: featureId,
+                previous_task_id: task_id,
+                previous_result: result?.result || result,
+                kr_goal: krGoal
+              }
+            });
+
+            console.log(`[execution-callback] Created continue decomposition task for feature: ${feature.name}`);
+          }
+        }
+      } catch (exploratoryErr) {
+        console.error(`[execution-callback] Exploratory handling error: ${exploratoryErr.message}`);
+      }
+
+      // 5c. Review 闭环：发现问题 → 自动创建修复 Task
+      try {
+        const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
+        const taskRow = taskResult.rows[0];
+
+        if (taskRow?.task_type === 'review') {
+          console.log(`[execution-callback] Review task completed, checking for issues...`);
+
+          // 解析结果，查找 L1/L2 问题
+          const resultStr = typeof result === 'string' ? result : JSON.stringify(result || {});
+          const hasL1 = /L1[：:]/i.test(resultStr) || /\bL1\b.*问题/i.test(resultStr);
+          const hasL2 = /L2[：:]/i.test(resultStr) || /\bL2\b.*问题/i.test(resultStr);
+
+          if (hasL1 || hasL2) {
+            console.log(`[execution-callback] Review found issues (L1: ${hasL1}, L2: ${hasL2}), creating fix task...`);
+
+            // 提取问题描述作为 PRD
+            const issueLevel = hasL1 ? 'L1 (阻塞级)' : 'L2 (功能级)';
+            const prdContent = `# PRD - 修复 Review 发现的问题
+
+## 背景
+Review 任务 "${taskRow.title}" 发现了 ${issueLevel} 问题需要修复。
+
+## 问题描述
+${resultStr.substring(0, 2000)}
+
+## 目标
+修复 Review 发现的所有 ${issueLevel} 问题。
+
+## 验收标准
+- [ ] 所有 L1 问题已修复
+- [ ] 所有 L2 问题已修复
+- [ ] 修复后代码通过测试
+- [ ] 再次 Review 无新问题
+
+## 技术要点
+根据 Review 报告中的具体建议进行修复。`;
+
+            const { createTask: createFixTask } = await import('./actions.js');
+            await createFixTask({
+              title: `修复: ${taskRow.title.replace(/^(每日质检|Review)[：:]\s*/i, '')}`,
+              description: `Review 发现 ${issueLevel} 问题，需要修复`,
+              task_type: 'dev',
+              priority: hasL1 ? 'P0' : 'P1',
+              project_id: taskRow.project_id,
+              goal_id: taskRow.goal_id,
+              prd_content: prdContent,
+              payload: {
+                triggered_by: 'review',
+                review_task_id: task_id,
+                issue_level: hasL1 ? 'L1' : 'L2'
+              }
+            });
+
+            console.log(`[execution-callback] Created fix task for review issues`);
+          } else {
+            console.log(`[execution-callback] Review passed, no L1/L2 issues found`);
+          }
+        }
+      } catch (reviewErr) {
+        console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
       }
     }
 
@@ -3284,6 +3812,334 @@ router.post('/reflections', async (req, res) => {
     res.json({ success: true, reflection: result.rows[0] });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to create reflection', details: err.message });
+  }
+});
+
+// ==================== Execution Logs API ====================
+
+/**
+ * GET /tasks/:taskId/logs
+ * 获取任务执行日志
+ */
+router.get('/tasks/:taskId/logs', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { offset = 0, limit = 1000 } = req.query;
+
+    // 1. Get task metadata to find log file path
+    const taskResult = await pool.query(
+      'SELECT id, title, metadata FROM tasks WHERE id = $1',
+      [taskId]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const task = taskResult.rows[0];
+    const metadata = task.metadata || {};
+    const logFile = metadata.log_file;
+
+    if (!logFile) {
+      return res.json({
+        task_id: taskId,
+        task_title: task.title,
+        logs: [],
+        message: 'No log file associated with this task'
+      });
+    }
+
+    // 2. Read log file
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    try {
+      const logContent = await fs.readFile(logFile, 'utf-8');
+      const lines = logContent.split('\n');
+
+      // Apply pagination
+      const start = parseInt(offset);
+      const end = start + parseInt(limit);
+      const paginatedLines = lines.slice(start, end);
+
+      res.json({
+        task_id: taskId,
+        task_title: task.title,
+        log_file: logFile,
+        total_lines: lines.length,
+        offset: start,
+        limit: parseInt(limit),
+        logs: paginatedLines
+      });
+    } catch (fileErr) {
+      if (fileErr.code === 'ENOENT') {
+        return res.json({
+          task_id: taskId,
+          task_title: task.title,
+          log_file: logFile,
+          logs: [],
+          message: 'Log file not found on disk'
+        });
+      }
+      throw fileErr;
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get task logs', details: err.message });
+  }
+});
+
+/**
+ * GET /tasks/:taskId/checkpoints
+ * 获取任务的 checkpoint 信息
+ */
+router.get('/tasks/:taskId/checkpoints', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+
+    // Get task with metadata
+    const taskResult = await pool.query(
+      'SELECT id, title, status, metadata, created_at, started_at, completed_at FROM tasks WHERE id = $1',
+      [taskId]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    const task = taskResult.rows[0];
+    const metadata = task.metadata || {};
+
+    // Extract checkpoint-related information
+    const checkpoints = [];
+
+    // Add task lifecycle checkpoints
+    if (task.created_at) {
+      checkpoints.push({
+        timestamp: task.created_at,
+        event: 'task_created',
+        status: 'queued'
+      });
+    }
+
+    if (task.started_at) {
+      checkpoints.push({
+        timestamp: task.started_at,
+        event: 'task_started',
+        status: 'running'
+      });
+    }
+
+    if (task.completed_at) {
+      checkpoints.push({
+        timestamp: task.completed_at,
+        event: 'task_completed',
+        status: task.status
+      });
+    }
+
+    // Add any additional checkpoints from metadata
+    if (metadata.checkpoints && Array.isArray(metadata.checkpoints)) {
+      checkpoints.push(...metadata.checkpoints);
+    }
+
+    // Sort by timestamp
+    checkpoints.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    res.json({
+      task_id: taskId,
+      task_title: task.title,
+      current_status: task.status,
+      checkpoints
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get task checkpoints', details: err.message });
+  }
+});
+
+// ==================== Hardening Status Dashboard ====================
+
+/**
+ * GET /api/brain/hardening/status
+ * One-eye dashboard: aggregates all 6 stability hardening features
+ */
+router.get('/hardening/status', async (req, res) => {
+  try {
+    const version = '1.7.0';
+    const checked_at = new Date().toISOString();
+
+    const [
+      decisionStats,
+      lastRollback,
+      failureStats,
+      backlogCurrent,
+      backlogPeak,
+      alertness,
+      decay,
+      pendingStats,
+      llmErrorStats,
+    ] = await Promise.all([
+      // 1. Transactional decisions: recent 10
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'success') AS committed,
+          COUNT(*) FILTER (WHERE status = 'failed') AS rolled_back
+        FROM (
+          SELECT status FROM decision_log ORDER BY created_at DESC LIMIT 10
+        ) t
+      `).catch(() => ({ rows: [{ committed: 0, rolled_back: 0 }] })),
+
+      // 2. Last rollback event
+      pool.query(`
+        SELECT payload, created_at FROM cecelia_events
+        WHERE event_type = 'decision_rollback'
+        ORDER BY created_at DESC LIMIT 1
+      `).catch(() => ({ rows: [] })),
+
+      // 3. Failure classification: last 1h
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'systemic') AS systemic,
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'task_specific') AS task_specific,
+          COUNT(*) FILTER (WHERE payload->>'failure_class' = 'unknown' OR payload->>'failure_class' IS NULL) AS unknown
+        FROM cecelia_events
+        WHERE event_type = 'task_failure'
+          AND created_at > NOW() - INTERVAL '1 hour'
+      `).catch(() => ({ rows: [{ systemic: 0, task_specific: 0, unknown: 0 }] })),
+
+      // 4. Event backlog: current 10min
+      pool.query(`
+        SELECT COUNT(*) AS count FROM cecelia_events
+        WHERE created_at > NOW() - INTERVAL '10 minutes'
+      `).catch(() => ({ rows: [{ count: 0 }] })),
+
+      // 5. Event backlog: peak 24h (max events in any 10-min window)
+      pool.query(`
+        SELECT COALESCE(MAX(cnt), 0) AS peak FROM (
+          SELECT COUNT(*) AS cnt
+          FROM cecelia_events
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+          GROUP BY date_trunc('hour', created_at), (EXTRACT(EPOCH FROM created_at)::int / 600)
+        ) t
+      `).catch(() => ({ rows: [{ peak: 0 }] })),
+
+      // 6. Alertness state (sync)
+      Promise.resolve(getAlertness()),
+
+      // 7. Decay status (sync)
+      Promise.resolve(getDecayStatus()),
+
+      // 8. Pending actions stats
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'pending_approval' AND (expires_at IS NULL OR expires_at > NOW())) AS pending,
+          COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at > NOW() - INTERVAL '24 hours') AS approved_24h,
+          COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at > NOW() - INTERVAL '24 hours') AS rejected_24h,
+          COUNT(*) FILTER (WHERE status = 'expired' AND reviewed_at > NOW() - INTERVAL '24 hours') AS expired_24h
+        FROM pending_actions
+      `).catch(() => ({ rows: [{ pending: 0, approved_24h: 0, rejected_24h: 0, expired_24h: 0 }] })),
+
+      // 9. LLM errors: last 1h by type
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE event_type = 'llm_api_error') AS api_error,
+          COUNT(*) FILTER (WHERE event_type = 'llm_bad_output') AS bad_output,
+          COUNT(*) FILTER (WHERE event_type = 'llm_timeout') AS timeout
+        FROM cecelia_events
+        WHERE event_type IN ('llm_api_error', 'llm_bad_output', 'llm_timeout')
+          AND created_at > NOW() - INTERVAL '1 hour'
+      `).catch(() => ({ rows: [{ api_error: 0, bad_output: 0, timeout: 0 }] })),
+    ]);
+
+    const dRow = decisionStats.rows[0];
+    const fRow = failureStats.rows[0];
+    const pRow = pendingStats.rows[0];
+    const lRow = llmErrorStats.rows[0];
+    const lastRb = lastRollback.rows[0] || null;
+
+    // Recovery gate calculation
+    const currentLevel = alertness.level;
+    let recoveryGate = null;
+    if (currentLevel > 0) {
+      const threshold = RECOVERY_THRESHOLDS[currentLevel];
+      if (threshold) {
+        const elapsed = Date.now() - new Date(alertness.last_change_at).getTime();
+        const remaining = Math.max(0, threshold - elapsed);
+        const targetLevel = currentLevel - 1;
+        recoveryGate = {
+          target: LEVEL_NAMES[targetLevel],
+          remaining_ms: remaining,
+        };
+      }
+    }
+
+    // Compute overall_status: critical > warn > ok
+    const systemicCount = parseInt(fRow.systemic);
+    const backlogCount = parseInt(backlogCurrent.rows[0].count);
+    let overall_status = 'ok';
+    if (currentLevel >= 3 || systemicCount >= 5 || backlogCount >= EVENT_BACKLOG_THRESHOLD * 2) {
+      overall_status = 'critical';
+    } else if (currentLevel >= 1 || systemicCount >= 2 || backlogCount >= EVENT_BACKLOG_THRESHOLD || parseInt(pRow.pending) >= 3) {
+      overall_status = 'warn';
+    }
+
+    res.json({
+      version,
+      checked_at,
+      overall_status,
+      features: {
+        transactional_decisions: {
+          enabled: true,
+          recent_10: {
+            committed: parseInt(dRow.committed),
+            rolled_back: parseInt(dRow.rolled_back),
+          },
+          last_rollback: lastRb ? {
+            at: lastRb.created_at,
+            error: lastRb.payload?.error || null,
+          } : null,
+        },
+        failure_classification: {
+          enabled: true,
+          last_1h: {
+            systemic: parseInt(fRow.systemic),
+            task_specific: parseInt(fRow.task_specific),
+            unknown: parseInt(fRow.unknown),
+          },
+        },
+        event_backlog: {
+          enabled: true,
+          current_10min: parseInt(backlogCurrent.rows[0].count),
+          threshold: EVENT_BACKLOG_THRESHOLD,
+          peak_24h: parseInt(backlogPeak.rows[0].peak),
+        },
+        alertness_decay: {
+          enabled: true,
+          current_score: {
+            raw: decay.accumulated_score,
+            decayed: decay.accumulated_score,
+          },
+          level: LEVEL_NAMES[currentLevel],
+          recovery_gate: recoveryGate,
+        },
+        pending_actions: {
+          enabled: true,
+          pending: parseInt(pRow.pending),
+          approved_24h: parseInt(pRow.approved_24h),
+          rejected_24h: parseInt(pRow.rejected_24h),
+          expired_24h: parseInt(pRow.expired_24h),
+        },
+        llm_errors: {
+          enabled: true,
+          last_1h: {
+            api_error: parseInt(lRow.api_error),
+            bad_output: parseInt(lRow.bad_output),
+            timeout: parseInt(lRow.timeout),
+          },
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get hardening status', details: err.message });
   }
 });
 

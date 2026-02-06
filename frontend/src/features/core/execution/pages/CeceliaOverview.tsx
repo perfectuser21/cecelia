@@ -22,6 +22,7 @@ import {
 } from '../api/agents.api';
 import TimeRangeSelector from '../components/TimeRangeSelector';
 import TimelineView from '../components/TimelineView';
+import { ExecutionStatus } from '../components/ExecutionStatus';
 
 // Brain API 数据类型
 interface BrainStatus {
@@ -229,6 +230,11 @@ export default function CeceliaOverviewPage() {
           value={`${periodStats?.successRate || 0}%`}
           color="from-emerald-500 to-teal-600"
         />
+      </div>
+
+      {/* Execution Status - Real-time task display */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+        <ExecutionStatus autoRefresh={true} refreshInterval={5000} />
       </div>
 
       {/* 新增：Cecelia 实时状态面板 */}

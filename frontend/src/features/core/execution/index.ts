@@ -17,6 +17,20 @@ const manifest: FeatureManifest = {
     { path: '/cecelia/agents/:agentId', component: 'AgentDetail' },
     { path: '/cecelia/runs', component: 'CeceliaRuns' },
     { path: '/cecelia/runs/:runId', component: 'RunDetail' },
+    // Execution Monitor
+    {
+      path: '/execution-monitor',
+      component: 'ExecutionMonitor',
+      navItem: {
+        label: '执行监控',
+        icon: 'Activity',
+        group: 'execution',
+        order: 1,
+      }
+    },
+    // Logs
+    { path: '/logs', component: 'ExecutionLogs', navItem: { label: '系统日志', icon: 'ScrollText', group: 'execution', order: 50 } },
+    { path: '/logs/:runId', component: 'ExecutionLogs' },
     // Engine
     { path: '/engine', component: 'EngineDashboard' },
     { path: '/engine/capabilities', component: 'EngineCapabilities' },
@@ -38,6 +52,11 @@ const manifest: FeatureManifest = {
       path: '/orchestrator',
       component: 'OrchestratorPage',
     },
+    // Execution Logs
+    {
+      path: '/execution-logs',
+      component: 'ExecutionLogsPage',
+    },
     // Redirects from old /ops/* paths
     { path: '/ops/cecelia', redirect: '/cecelia' },
     { path: '/ops/cecelia/runs', redirect: '/cecelia/runs' },
@@ -53,6 +72,8 @@ const manifest: FeatureManifest = {
     AgentDetail: () => import('./pages/AgentDetail'),
     CeceliaRuns: () => import('./pages/CeceliaRuns'),
     RunDetail: () => import('./pages/RunDetail'),
+    ExecutionMonitor: () => import('../../../pages/ExecutionMonitor'),
+    ExecutionLogs: () => import('./pages/ExecutionLogs'),
     EngineDashboard: () => import('./pages/EngineDashboard'),
     EngineCapabilities: () => import('./pages/EngineCapabilities'),
     DevTasks: () => import('./pages/DevTasks'),
@@ -64,6 +85,7 @@ const manifest: FeatureManifest = {
     N8nLiveStatusDetail: () => import('./pages/N8nLiveStatusDetail'),
     WorkersOverview: () => import('./pages/WorkersOverview'),
     OrchestratorPage: () => import('./pages/OrchestratorPage'),
+    ExecutionLogsPage: () => import('./pages/ExecutionLogsPage'),
   },
 };
 

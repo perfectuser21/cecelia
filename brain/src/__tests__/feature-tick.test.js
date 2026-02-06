@@ -79,8 +79,8 @@ describe('getTaskLocation', () => {
     expect(getTaskLocation('review')).toBe('us');
   });
 
-  it('should route automation tasks to HK', () => {
-    expect(getTaskLocation('automation')).toBe('hk');
+  it('should route talk tasks to HK', () => {
+    expect(getTaskLocation('talk')).toBe('hk');
   });
 
   it('should route data tasks to HK', () => {
@@ -110,7 +110,7 @@ describe('LOCATION_MAP', () => {
   it('should have correct mappings', () => {
     expect(LOCATION_MAP.dev).toBe('us');
     expect(LOCATION_MAP.review).toBe('us');
-    expect(LOCATION_MAP.automation).toBe('hk');
+    expect(LOCATION_MAP.talk).toBe('hk');
     expect(LOCATION_MAP.data).toBe('hk');
     expect(LOCATION_MAP.qa).toBe('us');
     expect(LOCATION_MAP.audit).toBe('us');
@@ -148,8 +148,8 @@ describe('routeTaskCreate', () => {
     expect(result.task_type).toBe('dev');
   });
 
-  it('should return correct routing for automation task', () => {
-    const result = routeTaskCreate({ title: 'test', task_type: 'automation' });
+  it('should return correct routing for talk task', () => {
+    const result = routeTaskCreate({ title: 'test', task_type: 'talk' });
     expect(result.location).toBe('hk');
     expect(result.execution_mode).toBe('single');
   });
@@ -177,7 +177,7 @@ describe('isValidTaskType', () => {
   it('should return true for valid task types', () => {
     expect(isValidTaskType('dev')).toBe(true);
     expect(isValidTaskType('review')).toBe(true);
-    expect(isValidTaskType('automation')).toBe(true);
+    expect(isValidTaskType('talk')).toBe(true);
     expect(isValidTaskType('data')).toBe(true);
     expect(isValidTaskType('qa')).toBe(true);
     expect(isValidTaskType('audit')).toBe(true);
@@ -209,7 +209,7 @@ describe('getValidTaskTypes', () => {
     const types = getValidTaskTypes();
     expect(types).toContain('dev');
     expect(types).toContain('review');
-    expect(types).toContain('automation');
+    expect(types).toContain('talk');
     expect(types).toContain('data');
     expect(types).toContain('qa');
     expect(types).toContain('audit');

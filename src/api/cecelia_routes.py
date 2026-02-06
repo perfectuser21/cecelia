@@ -278,3 +278,48 @@ async def get_run_detail(run_id: str):
     except Exception as e:
         logger.error(f"Error fetching run {run_id}: {e}")
         return {"success": False, "error": str(e)}
+
+@router.get("/runs/{run_id}/logs")
+async def get_run_logs(run_id: str, lines: int = Query(default=1000, ge=1, le=10000)):
+    """Get logs for a specific task run."""
+    from pathlib import Path
+    
+    # Log file location: /tmp/cecelia-{run_id}.log
+    log_file = Path(f"/tmp/cecelia-{run_id}.log")
+    
+    if not log_file.exists():
+        # Fallback: try runtime logs directory
+        runtime_logs = Path.home() / "runtime" / "logs"
+        if runtime_logs.exists():
+            # Find matching log file
+            matching_logs = list(runtime_logs.glob(f"*{run_id}*.log"))
+            if matching_logs:
+                log_file = matching_logs[0]
+            else:
+                return {
+                    "success": False,
+                    "error": f"Log file not found for run {run_id}",
+                    "logs": {}
+                }
+        else:
+            return {
+                "success": False,
+                "error": f"Log file not found for run {run_id}",
+                "logs": {}
+            }
+    
+    try:
+        content = log_file.read_text()
+        log_lines = content.strip().split("\n")
+        # Return last N lines
+        recent_lines = log_lines[-lines:] if len(log_lines) > lines else log_lines
+        
+        return {
+            "success": True,
+            "logs": {
+                run_id: "\n".join(recent_lines)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error reading log file for run {run_id}: {e}")
+        return {"success": False, "error": str(e), "logs": {}}

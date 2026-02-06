@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import pool from './db.js';
 import { getTaskLocation } from './task-router.js';
+import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -30,12 +31,25 @@ const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-r
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/dev/cecelia-workspace';
 
-// Resource thresholds — don't spawn if server is overloaded
+// Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-const LOAD_THRESHOLD = CPU_CORES * 0.8;        // 80% of cores (e.g. 6.4 for 8-core)
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.2; // Must have 20% free (e.g. ~3GB for 15GB)
-const SWAP_USED_MAX_PCT = 50;                    // Don't spawn if swap > 50% used
+const MEM_PER_TASK_MB = 500;                      // ~500MB avg per claude process (200-850MB observed)
+const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude process (20-30% bursts, often idle waiting API)
+const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
+const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
+const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
+// Max seats (total capacity including interactive reserve)
+const MAX_SEATS = parseInt(process.env.CECELIA_MAX_CONCURRENT || String(
+  Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2)
+), 10);
+// Auto-dispatch thresholds: subtract interactive reserve from budget
+// so when auto-dispatch hits the ceiling, user still has room for headed sessions
+const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
+const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
+const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
+const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
  * Check server resource availability before spawning.
@@ -58,6 +72,29 @@ function checkServerResources() {
     // Not Linux or no /proc — skip swap check
   }
 
+  // Calculate resource pressure (0.0 = idle, 1.0 = at threshold)
+  const cpuPressure = loadAvg1 / LOAD_THRESHOLD;                      // e.g. 4.0/6.4 = 0.625
+  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));           // invert: more free = less pressure
+  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;               // e.g. 20/50 = 0.4
+  const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
+
+  // Dynamic seat scaling based on highest pressure
+  //   pressure < 0.5  → full seats (MAX_SEATS)
+  //   pressure 0.5-0.7 → 2/3 of seats
+  //   pressure 0.7-0.9 → 1/3 of seats
+  //   pressure >= 0.9  → 1 seat (minimum)
+  //   pressure >= 1.0  → 0 (hard stop, ok=false)
+  let effectiveSlots = MAX_SEATS;
+  if (maxPressure >= 1.0) {
+    effectiveSlots = 0;
+  } else if (maxPressure >= 0.9) {
+    effectiveSlots = 1;
+  } else if (maxPressure >= 0.7) {
+    effectiveSlots = Math.max(Math.round(MAX_SEATS / 3), 1);
+  } else if (maxPressure >= 0.5) {
+    effectiveSlots = Math.max(Math.round(MAX_SEATS * 2 / 3), 1);
+  }
+
   const metrics = {
     load_avg_1m: loadAvg1,
     load_threshold: LOAD_THRESHOLD,
@@ -67,19 +104,23 @@ function checkServerResources() {
     swap_max_pct: SWAP_USED_MAX_PCT,
     cpu_cores: CPU_CORES,
     total_mem_mb: TOTAL_MEM_MB,
+    cpu_pressure: Math.round(cpuPressure * 100) / 100,
+    mem_pressure: Math.round(memPressure * 100) / 100,
+    swap_pressure: Math.round(swapPressure * 100) / 100,
+    max_pressure: Math.round(maxPressure * 100) / 100,
+    max_seats: MAX_SEATS,
+    effective_slots: effectiveSlots,
   };
 
-  if (loadAvg1 > LOAD_THRESHOLD) {
-    return { ok: false, reason: `CPU overloaded: load ${loadAvg1.toFixed(1)} > threshold ${LOAD_THRESHOLD}`, metrics };
-  }
-  if (freeMem < MEM_AVAILABLE_MIN_MB) {
-    return { ok: false, reason: `Low memory: ${freeMem}MB free < ${MEM_AVAILABLE_MIN_MB}MB min`, metrics };
-  }
-  if (swapUsedPct > SWAP_USED_MAX_PCT) {
-    return { ok: false, reason: `Swap overused: ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}% max`, metrics };
+  if (effectiveSlots === 0) {
+    const reasons = [];
+    if (cpuPressure >= 1.0) reasons.push(`CPU load ${loadAvg1.toFixed(1)} > ${LOAD_THRESHOLD}`);
+    if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
+    if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
+    return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
   }
 
-  return { ok: true, reason: null, metrics };
+  return { ok: true, reason: null, effectiveSlots, metrics };
 }
 
 /**
@@ -276,16 +317,16 @@ function generateRunId(taskId) {
 
 /**
  * Get skill command based on task_type
+ * 简化版：只有 dev 和 review 两类
  */
 function getSkillForTaskType(taskType) {
   const skillMap = {
-    'dev': '/dev',           // 开发：完整代码读写
-    'review': '/review',     // 审查：Plan Mode，只读代码，输出报告
+    'dev': '/dev',           // 写代码：Opus
+    'review': '/review',     // 审查：Sonnet，Plan Mode
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
-    'automation': '/nobel',  // N8N：调 API
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
-    // 兼容旧类型（映射到 review）
+    // 兼容旧类型
     'qa': '/review',
     'audit': '/review',
   };
@@ -295,11 +336,21 @@ function getSkillForTaskType(taskType) {
 /**
  * Get model for a task based on task properties
  * Returns model name or null (use default Sonnet)
+ *
+ * 固定配置（简化版）：
+ * - 秋米（OKR 拆解）: /okr + Opus
+ * - 写代码（dev）: /dev + Opus（全部用 Opus）
+ * - Review: /review + Sonnet
+ * - HK 任务: MiniMax
  */
 function getModelForTask(task) {
-  // OKR decomposition → Opus (strategic thinking)
-  if (task.payload?.decomposition === 'true') return 'opus';
-  // Review/QA tasks → Sonnet (good enough for code review)
+  // OKR decomposition → Opus (秋米拆解)
+  // 'true' = 首次拆解, 'continue' = 继续拆解
+  const decomposition = task.payload?.decomposition;
+  if (decomposition === 'true' || decomposition === 'continue') return 'opus';
+  // 写代码 → 全部用 Opus
+  if (task.task_type === 'dev') return 'opus';
+  // Review/QA tasks → Sonnet
   if (['review', 'qa', 'audit'].includes(task.task_type)) return null;
   // Default: null (cecelia-run default = Sonnet)
   return null;
@@ -311,14 +362,14 @@ function getModelForTask(task) {
  * bypassPermissions = 完全自动化，跳过权限检查
  */
 function getPermissionModeForTaskType(taskType) {
+  // Plan Mode: 只能读文件，不能执行 Bash，不能写文件
+  // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
   const modeMap = {
-    'dev': 'bypassPermissions',        // 完整代码读写
-    'automation': 'bypassPermissions', // 调 N8N API
-    'qa_init': 'bypassPermissions',    // QA 初始化需要写文件和调 gh API
-    'review': 'plan',                  // 只读代码，输出报告
-    'talk': 'plan',                    // 只写文档，不改代码
-    'research': 'plan',                // 只读，不改文件
-    // 兼容旧类型（都用 plan mode）
+    'dev': 'bypassPermissions',        // 写代码
+    'review': 'plan',                  // 只读分析（唯一用 plan 的）
+    'talk': 'bypassPermissions',       // 要调 API 写数据库
+    'research': 'bypassPermissions',   // 要调 API
+    // 兼容旧类型
     'qa': 'plan',
     'audit': 'plan',
   };
@@ -334,12 +385,112 @@ function preparePrompt(task) {
   const skill = getSkillForTaskType(taskType);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
-  if (task.payload?.decomposition === 'true') {
+  // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
+  const decomposition = task.payload?.decomposition;
+  if (decomposition === 'true' || decomposition === 'continue') {
+    const krId = task.goal_id || task.payload?.kr_id || '';
+    const krTitle = task.title?.replace(/^(OKR 拆解|拆解|继续拆解)[：:]\s*/, '') || '';
+    const projectId = task.project_id || task.payload?.project_id || '';
+    const isContinue = decomposition === 'continue';
+    const previousResult = task.payload?.previous_result || '';
+    const featureId = task.payload?.feature_id || '';
+
+    // 继续拆解：秋米收到前一个 Task 的执行结果，决定下一步
+    if (isContinue && featureId) {
+      return `/okr
+
+# 继续拆解: ${krTitle}
+
+## 任务类型
+探索型任务继续拆解
+
+## Feature ID
+${featureId}
+
+## 前一个 Task 执行结果
+${previousResult}
+
+## KR 目标
+${task.payload?.kr_goal || task.description || ''}
+
+## 你的任务
+1. 分析前一个 Task 的执行结果
+2. 判断 Feature 是否已完成 KR 目标
+   - 如果已完成 → 更新 Feature 状态，不创建新 Task
+   - 如果未完成 → 创建下一个 Task，继续推进
+
+## 创建下一个 Task（如需要）
+POST /api/brain/action/create-task
+{
+  "title": "下一步任务标题",
+  "project_id": "${featureId}",  // Feature ID
+  "goal_id": "${krId}",
+  "task_type": "dev",
+  "prd_content": "完整 PRD...",
+  "payload": {
+    "exploratory": true,
+    "feature_id": "${featureId}",
+    "kr_goal": "${task.payload?.kr_goal || ''}"
+  }
+}`;
+    }
+
+    // 首次拆解：秋米需要创建 Feature + Task
     return `/okr
 
-# OKR 拆解: ${task.title}
+# OKR 拆解: ${krTitle}
 
-${task.description || ''}`;
+## KR 信息
+- KR ID: ${krId}
+- 目标: ${task.description || krTitle}
+
+## 关联项目
+- Project ID: ${projectId}
+
+## 你的任务
+1. **确定 Repository**: 查询 projects 表找到 repo_path 不为空的 Project
+2. **判断拆解模式**:
+   - 已知型 (known): 知道怎么做，一次拆完所有 Tasks
+   - 探索型 (exploratory): 不确定，需要边做边看
+3. **创建 Feature**: 写入 projects 表（不是 goals 表！）
+4. **创建 Task + PRD**: 为每个 Task 写完整 PRD
+
+## API 调用
+
+### 查询 Projects（找 repo_path）
+curl -s http://localhost:5221/api/tasks/projects | jq '.[] | select(.repo_path != null)'
+
+### 创建 Feature
+POST /api/brain/action/create-feature
+{
+  "name": "Feature 名称",
+  "parent_id": "<Project ID (有 repo_path 的)>",
+  "kr_id": "${krId}",
+  "decomposition_mode": "known" 或 "exploratory"
+}
+
+### 创建 Task（注意 project_id 是 Feature ID！）
+POST /api/brain/action/create-task
+{
+  "title": "Task 标题",
+  "project_id": "<Feature ID>",  // 注意是 Feature，不是 Project！
+  "goal_id": "${krId}",
+  "task_type": "dev",
+  "prd_content": "完整 PRD（背景、目标、功能、验收标准、技术要点）",
+  "payload": {
+    "exploratory": true,  // 探索型必须设为 true
+    "feature_id": "<Feature ID>",
+    "kr_goal": "${task.description || ''}"
+  }
+}
+
+### 更新 KR 状态
+PUT /api/tasks/goals/${krId}
+{"status": "in_progress"}
+
+## ⛔ 绝对禁止
+- 不能在 goals 表创建任何记录！OKR 只有 2 层（Objective + KR）
+- 不能把 Task.project_id 指向 Project，必须指向 Feature！`;
   }
 
   // Talk 类型：可以写文档（日报、总结等），但不能改代码
@@ -380,20 +531,6 @@ ${task.description || ''}
 - ✅ 输出 REVIEW-REPORT.md
 - ❌ 不能修改任何代码文件
 - ❌ 不能直接修复问题（输出 PRD 让 /dev 去修）`;
-  }
-
-  // Automation 类型：调用 N8N，不写代码
-  if (taskType === 'automation') {
-    return `/nobel
-
-# 自动化任务 - ${task.title}
-
-${task.description || ''}
-
-权限约束：
-- ✅ 可以调用 N8N workflow API
-- ✅ 可以查看 workflow 状态
-- ❌ 不能修改代码文件`;
   }
 
   // Research 类型：完全只读
@@ -489,19 +626,14 @@ async function triggerMiniMaxExecutor(task) {
     if (result.success) {
       console.log(`[executor] MiniMax completed task=${task.id}`);
 
-      // Update task with result
-      await pool.query(`
-        UPDATE tasks
-        SET
-          status = 'completed',
-          completed_at = NOW(),
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
-            'minimax_result', $2::text,
-            'minimax_usage', $3::jsonb,
-            'run_id', $4::text
-          )
-        WHERE id = $1
-      `, [task.id, result.result, JSON.stringify(result.usage || {}), runId]);
+      // Update task with result (with WebSocket broadcast)
+      await updateTaskStatus(task.id, 'completed', {
+        payload: {
+          minimax_result: result.result,
+          minimax_usage: result.usage || {},
+          run_id: runId
+        }
+      });
 
       return {
         success: true,
@@ -828,13 +960,10 @@ async function probeTaskLiveness() {
       probe_ticks: suspect.tickCount + 1,
     };
 
-    await pool.query(
-      `UPDATE tasks SET
-        status = 'failed',
-        payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-      WHERE id = $1`,
-      [task.id, JSON.stringify({ error_details: errorDetails })]
-    );
+    // Update task status with WebSocket broadcast
+    await updateTaskStatus(task.id, 'failed', {
+      payload: { error_details: errorDetails }
+    });
 
     actions.push({
       action: 'liveness_auto_fail',
@@ -966,4 +1095,6 @@ export {
   recordHeartbeat,
   isRunIdProcessAlive,
   suspectProcesses,
+  MAX_SEATS,
+  INTERACTIVE_RESERVE,
 };

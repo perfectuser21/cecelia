@@ -24,10 +24,8 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - BRAIN_PORT=5221
       - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
-      - CECELIA_MAX_CONCURRENT=${CECELIA_MAX_CONCURRENT:-6}
-      - CECELIA_RESERVED_SLOTS=${CECELIA_RESERVED_SLOTS:-1}
+      # CECELIA_MAX_CONCURRENT: auto-calculated from CPU cores (cores - 2) if not set
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
-      - CECELIA_DISPATCH_COOLDOWN_MS=${CECELIA_DISPATCH_COOLDOWN_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
       - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
@@ -44,3 +42,21 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  frontend:
+    image: node:20-alpine
+    container_name: cecelia-frontend
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "test -d node_modules || npm install && npx vite preview --port 5212 --host 0.0.0.0"
+    depends_on:
+      node-brain:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

@@ -116,13 +116,21 @@ async function getDailyFocus() {
 
   const { objective, reason, is_manual } = focusResult;
 
-  // Get Key Results for this Objective
-  const krsResult = await pool.query(
-    'SELECT * FROM goals WHERE parent_id = $1 ORDER BY weight DESC, created_at ASC',
-    [objective.id]
-  );
+  // Get ALL Key Results recursively (including nested KRs)
+  // Using recursive CTE to get full hierarchy
+  const krsResult = await pool.query(`
+    WITH RECURSIVE kr_tree AS (
+      -- Base: direct children of objective
+      SELECT * FROM goals WHERE parent_id = $1
+      UNION ALL
+      -- Recursive: children of KRs
+      SELECT g.* FROM goals g
+      INNER JOIN kr_tree kt ON g.parent_id = kt.id
+    )
+    SELECT * FROM kr_tree ORDER BY created_at ASC
+  `, [objective.id]);
 
-  // Get suggested tasks (tasks linked to this objective or its KRs)
+  // Get suggested tasks (tasks linked to this objective or ANY level KRs)
   const krIds = krsResult.rows.map(kr => kr.id);
   const allGoalIds = [objective.id, ...krIds];
 
@@ -213,11 +221,16 @@ async function getFocusSummary() {
 
   const { objective, reason, is_manual } = focusResult;
 
-  // Get Key Results for this Objective
-  const krsResult = await pool.query(
-    'SELECT id, title, progress FROM goals WHERE parent_id = $1 ORDER BY weight DESC LIMIT 3',
-    [objective.id]
-  );
+  // Get Key Results for this Objective (top 3, any level)
+  const krsResult = await pool.query(`
+    WITH RECURSIVE kr_tree AS (
+      SELECT * FROM goals WHERE parent_id = $1
+      UNION ALL
+      SELECT g.* FROM goals g
+      INNER JOIN kr_tree kt ON g.parent_id = kt.id
+    )
+    SELECT id, title, progress FROM kr_tree ORDER BY weight DESC NULLS LAST LIMIT 3
+  `, [objective.id]);
 
   return {
     objective_id: objective.id,

@@ -6,13 +6,18 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
 import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
+import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
+import { executeDecision as executeThalamusDecision } from './decision-executor.js';
+import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { handleTaskFailure, getQuarantineStats } from './quarantine.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -20,10 +25,10 @@ const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
 const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
-const DISPATCH_COOLDOWN_MS = parseInt(process.env.CECELIA_DISPATCH_COOLDOWN_MS || '5000', 10); // 5 seconds cooldown after dispatch
-const MAX_CONCURRENT_TASKS = parseInt(process.env.CECELIA_MAX_CONCURRENT || '6', 10); // Total seats
-const RESERVED_SLOTS = parseInt(process.env.CECELIA_RESERVED_SLOTS || '1', 10); // Reserved for manual intervention
-const AUTO_DISPATCH_MAX = MAX_CONCURRENT_TASKS - RESERVED_SLOTS; // Auto dispatch limit (6 - 1 = 5)
+// MAX_SEATS imported from executor.js — calculated from actual resource capacity
+const MAX_CONCURRENT_TASKS = MAX_SEATS;
+// INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
+const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
 // Task type to agent skill mapping
@@ -62,7 +67,7 @@ const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
 let _loopTimer = null;
 let _tickRunning = false;
 let _tickLockTime = null;
-let _lastDispatchTime = 0; // in-memory cooldown tracker
+let _lastDispatchTime = 0; // track last dispatch time for logging
 
 /**
  * Get tick status
@@ -93,6 +98,12 @@ async function getTickStatus() {
 
   const lastDispatch = memory[TICK_LAST_DISPATCH_KEY] || null;
 
+  // Get quarantine stats
+  let quarantineStats = { total: 0 };
+  try {
+    quarantineStats = await getQuarantineStats();
+  } catch { /* ignore */ }
+
   return {
     enabled,
     loop_running: _loopTimer !== null,
@@ -104,11 +115,12 @@ async function getTickStatus() {
     tick_running: _tickRunning,
     last_dispatch: lastDispatch,
     max_concurrent: MAX_CONCURRENT_TASKS,
-    reserved_slots: RESERVED_SLOTS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
-    dispatch_cooldown_ms: DISPATCH_COOLDOWN_MS,
+    resources: checkServerResources(),
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
-    circuit_breakers: getAllStates()
+    circuit_breakers: getAllStates(),
+    alertness: getAlertness(),
+    quarantine: quarantineStats
   };
 }
 
@@ -195,6 +207,14 @@ function stopTickLoop() {
  */
 async function initTickLoop() {
   try {
+    // Initialize alertness system
+    try {
+      await initAlertness();
+      console.log(`[tick-loop] Alertness system initialized`);
+    } catch (alertErr) {
+      console.error('[tick-loop] Alertness init failed:', alertErr.message);
+    }
+
     // Clean up orphan processes from previous server runs
     const orphansKilled = cleanupOrphanProcesses();
     if (orphansKilled > 0) {
@@ -358,7 +378,7 @@ async function selectNextDispatchableTask(goalIds) {
 
 /**
  * Dispatch the next queued task for execution.
- * Checks concurrency limit, cooldown, executor availability, and dependencies.
+ * Checks concurrency limit, executor availability, and dependencies.
  *
  * @param {string[]} goalIds - Goal IDs to scope the dispatch
  * @returns {Object} - Dispatch result with actions taken
@@ -366,13 +386,14 @@ async function selectNextDispatchableTask(goalIds) {
 async function dispatchNextTask(goalIds) {
   const actions = [];
 
-  // 0. Server resource check — refuse to dispatch if overloaded
+  // 0. Server resource check — dynamic slot scaling based on actual load
   const resources = checkServerResources();
   if (!resources.ok) {
     return { dispatched: false, reason: 'server_overloaded', detail: resources.reason, metrics: resources.metrics, actions };
   }
 
-  // 1. Check concurrency — dual check: DB status AND real process count
+  // 1. Check concurrency — use dynamic effectiveSlots from resource check
+  const effectiveLimit = Math.min(AUTO_DISPATCH_MAX, resources.effectiveSlots);
   const activeResult = await pool.query(
     "SELECT COUNT(*) FROM tasks WHERE goal_id = ANY($1) AND status = 'in_progress'",
     [goalIds]
@@ -380,19 +401,13 @@ async function dispatchNextTask(goalIds) {
   const dbActiveCount = parseInt(activeResult.rows[0].count);
   const processActiveCount = getActiveProcessCount();
   const activeCount = Math.max(dbActiveCount, processActiveCount);
-  // Reserve slots for manual intervention
-  if (activeCount >= AUTO_DISPATCH_MAX) {
-    return { dispatched: false, reason: 'reserved_slot_kept', active: activeCount, limit: AUTO_DISPATCH_MAX, db_active: dbActiveCount, process_active: processActiveCount, actions };
+  if (activeCount >= effectiveLimit) {
+    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, limit: effectiveLimit, effective_slots: resources.effectiveSlots, pressure: resources.metrics.max_pressure, db_active: dbActiveCount, process_active: processActiveCount, actions };
   }
 
   // 2. Circuit breaker check
   if (!isAllowed('cecelia-run')) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
-  }
-
-  // 3. Check cooldown
-  if ((Date.now() - _lastDispatchTime) <= DISPATCH_COOLDOWN_MS) {
-    return { dispatched: false, reason: 'cooldown_active', actions };
   }
 
   // 3. Select next task (with dependency check)
@@ -439,6 +454,20 @@ async function dispatchNextTask(goalIds) {
 
   _lastDispatchTime = Date.now();
 
+  // Publish WebSocket event: task started (non-blocking, errors don't break dispatch)
+  try {
+    publishTaskStarted({
+      id: nextTask.id,
+      run_id: execResult.runId,
+      title: nextTask.title
+    });
+
+    // Publish executor status update
+    publishExecutorStatus(activeCount + 1, effectiveLimit - activeCount - 1, MAX_CONCURRENT_TASKS);
+  } catch (wsErr) {
+    console.error(`[tick] WebSocket broadcast failed: ${wsErr.message}`);
+  }
+
   await emit('task_dispatched', 'tick', {
     task_id: nextTask.id,
     title: nextTask.title,
@@ -479,6 +508,7 @@ async function dispatchNextTask(goalIds) {
 
 /**
  * Auto-fail tasks that have been in_progress longer than DISPATCH_TIMEOUT_MINUTES.
+ * Checks if task should be quarantined after failure.
  *
  * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
  * @returns {Object[]} - Actions taken
@@ -504,7 +534,30 @@ async function autoFailTimedOutTasks(inProgressTasks) {
         `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
         [task.id, JSON.stringify({ error_details: errorDetails })]
       );
-      await updateTask({ task_id: task.id, status: 'failed' });
+
+      // Check if task should be quarantined
+      const quarantineResult = await handleTaskFailure(task.id);
+      if (quarantineResult.quarantined) {
+        console.log(`[tick] Task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+        actions.push({
+          action: 'quarantine',
+          task_id: task.id,
+          title: task.title,
+          reason: quarantineResult.result?.reason,
+          elapsed_minutes: Math.round(elapsed)
+        });
+      } else {
+        // Not quarantined, mark as failed normally
+        await updateTask({ task_id: task.id, status: 'failed' });
+        actions.push({
+          action: 'auto-fail-timeout',
+          task_id: task.id,
+          title: task.title,
+          elapsed_minutes: Math.round(elapsed),
+          failure_count: quarantineResult.failure_count
+        });
+      }
+
       await recordFailure('cecelia-run');
       await emit('patrol_cleanup', 'patrol', {
         task_id: task.id,
@@ -514,15 +567,9 @@ async function autoFailTimedOutTasks(inProgressTasks) {
       await logTickDecision(
         'tick',
         `Auto-failed timed-out task: ${task.title} (${Math.round(elapsed)}min)`,
-        { action: 'auto-fail-timeout', task_id: task.id },
+        { action: 'auto-fail-timeout', task_id: task.id, quarantined: quarantineResult.quarantined },
         { success: true, elapsed_minutes: Math.round(elapsed) }
       );
-      actions.push({
-        action: 'auto-fail-timeout',
-        task_id: task.id,
-        title: task.title,
-        elapsed_minutes: Math.round(elapsed)
-      });
     }
   }
   return actions;
@@ -531,6 +578,7 @@ async function autoFailTimedOutTasks(inProgressTasks) {
 /**
  * Execute a tick - the core self-driving loop
  *
+ * 0. Evaluate alertness level
  * 1. Compare goal progress (Decision Engine)
  * 2. Generate and execute high-confidence decisions
  * 3. Get daily focus OKR
@@ -543,6 +591,79 @@ async function executeTick() {
   const actionsTaken = [];
   const now = new Date();
   let decisionEngineResult = null;
+  let thalamusResult = null;
+
+  // 0. Evaluate alertness level
+  let alertnessResult = null;
+  try {
+    alertnessResult = await evaluateAlertness();
+    if (alertnessResult.level >= ALERTNESS_LEVELS.ALERT) {
+      console.log(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
+      actionsTaken.push({
+        action: 'alertness_check',
+        level: alertnessResult.level,
+        level_name: LEVEL_NAMES[alertnessResult.level],
+        score: alertnessResult.score
+      });
+    }
+
+    // In COMA mode, skip everything except basic health checks
+    if (alertnessResult.level === ALERTNESS_LEVELS.COMA) {
+      console.log('[tick] COMA mode: skipping all operations, only heartbeat');
+      return {
+        success: true,
+        alertness: alertnessResult,
+        actions_taken: actionsTaken,
+        reason: 'COMA mode - only heartbeat',
+        next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+      };
+    }
+  } catch (alertErr) {
+    console.error('[tick] Alertness evaluation failed:', alertErr.message);
+  }
+
+  // 0. Thalamus: Analyze tick event (quick route for simple ticks)
+  try {
+    const tickEvent = {
+      type: EVENT_TYPES.TICK,
+      timestamp: now.toISOString(),
+      has_anomaly: false  // Will be set to true if issues detected later
+    };
+
+    thalamusResult = await thalamusProcessEvent(tickEvent);
+
+    // If thalamus returns fallback_to_tick or no_action, continue with normal tick
+    // Otherwise, execute the thalamus decision
+    const thalamusAction = thalamusResult.actions?.[0]?.type;
+    if (thalamusAction && thalamusAction !== 'fallback_to_tick' && thalamusAction !== 'no_action') {
+      console.log(`[tick] Thalamus decision: ${thalamusAction}`);
+
+      // Execute thalamus decision
+      const execReport = await executeThalamusDecision(thalamusResult);
+      actionsTaken.push({
+        action: 'thalamus',
+        level: thalamusResult.level,
+        thalamus_actions: thalamusResult.actions.map(a => a.type),
+        executed: execReport.actions_executed.length,
+        failed: execReport.actions_failed.length
+      });
+
+      // If thalamus handled the event, may still continue with normal tick
+      // unless it explicitly requests to skip
+      if (thalamusAction === 'dispatch_task') {
+        // Thalamus already dispatched, skip normal dispatch logic
+        return {
+          success: true,
+          thalamus: thalamusResult,
+          actions_taken: actionsTaken,
+          next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+        };
+      }
+    }
+  } catch (thalamusErr) {
+    console.error('[tick] Thalamus error, falling back to code-based tick:', thalamusErr.message);
+    // Continue with normal tick if thalamus fails
+  }
 
   // 1. Decision Engine: Compare goal progress
   try {
@@ -720,7 +841,8 @@ async function executeTick() {
 
   // 6. Planning: if no queued AND no in_progress tasks, invoke planner
   //    Skip if focused objective has no KRs — nothing to plan for
-  if (queued.length === 0 && inProgress.length === 0 && krIds.length > 0) {
+  //    Skip if alertness level disables planning
+  if (queued.length === 0 && inProgress.length === 0 && krIds.length > 0 && canPlan()) {
     try {
       const planned = await planNextTask(krIds);
       if (planned.planned) {
@@ -739,16 +861,20 @@ async function executeTick() {
     } catch (planErr) {
       console.error('[tick-loop] Planner error:', planErr.message);
     }
+  } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
+    console.log(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
 
-  // 6b. Auto OKR decomposition: check ALL objectives with 0 KRs (independent of focus)
+  // 6b. Auto OKR decomposition: ONLY for TRUE top-level objectives (parent_id IS NULL)
+  // Do NOT decompose nested goals that were incorrectly typed as 'objective'
   try {
     const noKrObjectives = await pool.query(`
       SELECT o.id, o.title FROM goals o
       WHERE o.type = 'objective'
-        AND o.status NOT IN ('completed', 'cancelled')
+        AND o.parent_id IS NULL  -- CRITICAL: Only top-level objectives
+        AND o.status NOT IN ('completed', 'cancelled', 'decomposing')
         AND NOT EXISTS (
-          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id AND kr.type = 'key_result'
+          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
         )
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
@@ -782,33 +908,76 @@ async function executeTick() {
     console.error('[tick-loop] OKR decomposition error:', decompErr.message);
   }
 
-  // 7. Dispatch next task (scoped to focused objective)
-  const dispatchResult = await dispatchNextTask(allGoalIds);
-  actionsTaken.push(...dispatchResult.actions);
+  // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
+  //    Respect alertness level dispatch settings
+  let dispatched = 0;
+  let lastDispatchResult = null;
 
-  if (!dispatchResult.dispatched && dispatchResult.reason !== 'no_dispatchable_task') {
-    await logTickDecision(
-      'tick',
-      `Dispatch skipped: ${dispatchResult.reason}`,
-      { action: 'dispatch_skip', reason: dispatchResult.reason },
-      { success: true }
-    );
+  // Check if dispatch is allowed
+  if (!canDispatch()) {
+    console.log(`[tick] Dispatch disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
+    return {
+      success: true,
+      alertness: alertnessResult,
+      decision_engine: decisionEngineResult,
+      feature_tick: featureTickResult,
+      focus: { objective_id: objectiveId, objective_title: focus.objective.title },
+      dispatch: { dispatched: 0, reason: 'alertness_disabled' },
+      actions_taken: actionsTaken,
+      summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
+      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+    };
   }
 
-  // 7b. Global dispatch: decomposition tasks (regardless of focus)
-  if (!dispatchResult.dispatched || dispatchResult.reason === 'no_dispatchable_task') {
+  // Apply dispatch rate limit based on alertness level
+  const dispatchRate = getDispatchRate();
+  const effectiveDispatchMax = Math.max(1, Math.floor(AUTO_DISPATCH_MAX * dispatchRate));
+  if (dispatchRate < 1.0) {
+    console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
+  }
+
+  // 7a. Fill slots from focused objective's tasks
+  for (let i = 0; i < effectiveDispatchMax; i++) {
+    const dispatchResult = await dispatchNextTask(allGoalIds);
+    actionsTaken.push(...dispatchResult.actions);
+    lastDispatchResult = dispatchResult;
+
+    if (!dispatchResult.dispatched) {
+      if (dispatchResult.reason !== 'no_dispatchable_task') {
+        await logTickDecision(
+          'tick',
+          `Dispatch stopped: ${dispatchResult.reason}`,
+          { action: 'dispatch_skip', reason: dispatchResult.reason },
+          { success: true }
+        );
+      }
+      break;
+    }
+    dispatched++;
+  }
+
+  // 7b. If focus objective has no more tasks, fill remaining slots from ALL objectives
+  if (dispatched < effectiveDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
         SELECT id FROM goals WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {
-        const globalDispatch = await dispatchNextTask(globalGoalIds);
-        actionsTaken.push(...globalDispatch.actions);
+        for (let i = dispatched; i < effectiveDispatchMax; i++) {
+          const globalDispatch = await dispatchNextTask(globalGoalIds);
+          actionsTaken.push(...globalDispatch.actions);
+          if (!globalDispatch.dispatched) break;
+          dispatched++;
+        }
       }
     } catch (globalErr) {
       console.error('[tick-loop] Global dispatch error:', globalErr.message);
     }
+  }
+
+  if (dispatched > 0) {
+    console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick`);
   }
 
   // 8. Update tick state
@@ -824,13 +993,14 @@ async function executeTick() {
 
   return {
     success: true,
+    alertness: alertnessResult,
     decision_engine: decisionEngineResult,
     feature_tick: featureTickResult,
     focus: {
       objective_id: objectiveId,
       objective_title: focus.objective.title
     },
-    dispatch: dispatchResult,
+    dispatch: { dispatched: dispatched, last: lastDispatchResult },
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
@@ -864,8 +1034,6 @@ export {
   TICK_LOOP_INTERVAL_MS,
   TICK_TIMEOUT_MS,
   DISPATCH_TIMEOUT_MINUTES,
-  DISPATCH_COOLDOWN_MS,
   MAX_CONCURRENT_TASKS,
-  RESERVED_SLOTS,
   AUTO_DISPATCH_MAX
 };

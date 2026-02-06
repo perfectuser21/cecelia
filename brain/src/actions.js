@@ -1,16 +1,29 @@
 /* global console */
 import pool from './db.js';
+import { broadcastTaskState } from './task-updater.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 
 /**
  * Create a new task
+ * @param {Object} params
+ * @param {string} params.title - Task title
+ * @param {string} params.description - Task description
+ * @param {string} params.priority - P0/P1/P2
+ * @param {string} params.project_id - Feature ID (not Project!)
+ * @param {string} params.goal_id - KR ID
+ * @param {string[]} params.tags - Tags
+ * @param {string} params.task_type - dev/automation/review
+ * @param {string} params.context - Legacy description field
+ * @param {string} params.prd_content - PRD content (秋米写的)
+ * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
+ * @param {Object} params.payload - Additional payload (exploratory, feature_id, kr_goal)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload }) {
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued')
+    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10)
     RETURNING *
   `, [
     title,
@@ -19,11 +32,52 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     project_id || null,
     goal_id || null,
     tags || [],
-    task_type || 'dev'
+    task_type || 'dev',
+    prd_content || null,
+    execution_profile || null,
+    payload ? JSON.stringify(payload) : null
   ]);
 
-  console.log(`[Action] Created task: ${result.rows[0].id} - ${title} (type: ${task_type || 'dev'})`);
-  return { success: true, task: result.rows[0] };
+  const task = result.rows[0];
+  const isExploratory = payload?.exploratory ? ' [exploratory]' : '';
+  console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})${isExploratory}`);
+
+  // Broadcast task creation to WebSocket clients
+  await broadcastTaskState(task.id);
+
+  return { success: true, task };
+}
+
+/**
+ * Create a new Feature (写入 projects 表)
+ * @param {Object} params
+ * @param {string} params.name - Feature name
+ * @param {string} params.parent_id - Project ID (repo_path≠NULL 的那个)
+ * @param {string} params.kr_id - 关联的 KR ID
+ * @param {string} params.decomposition_mode - 'known' | 'exploratory'
+ * @param {string} params.description - Feature description
+ */
+async function createFeature({ name, parent_id, kr_id, decomposition_mode, description }) {
+  if (!name || !parent_id) {
+    return { success: false, error: 'name and parent_id are required' };
+  }
+
+  const result = await pool.query(`
+    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, status)
+    VALUES ($1, $2, $3, $4, $5, 'active')
+    RETURNING *
+  `, [
+    name,
+    parent_id,
+    kr_id || null,
+    decomposition_mode || 'known',
+    description || ''
+  ]);
+
+  const feature = result.rows[0];
+  console.log(`[Action] Created feature: ${feature.id} - ${name} (mode: ${decomposition_mode || 'known'})`);
+
+  return { success: true, feature };
 }
 
 /**
@@ -65,8 +119,13 @@ async function updateTask({ task_id, status, priority }) {
     return { success: false, error: 'Task not found' };
   }
 
+  const task = result.rows[0];
   console.log(`[Action] Updated task: ${task_id}`);
-  return { success: true, task: result.rows[0] };
+
+  // Broadcast task update to WebSocket clients
+  await broadcastTaskState(task_id);
+
+  return { success: true, task };
 }
 
 /**
@@ -241,6 +300,7 @@ async function batchUpdateTasks({ filter, update }) {
 
 export {
   createTask,
+  createFeature,
   updateTask,
   createGoal,
   updateGoal,

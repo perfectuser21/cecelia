@@ -40,15 +40,15 @@ const FEATURE_PATTERNS = [
 ];
 
 // Location mapping based on task_type
+// US = Claude Code (Opus/Sonnet), HK = MiniMax + N8N
 const LOCATION_MAP = {
-  'dev': 'us',        // 开发 → 美国 VPS (Claude Code)
-  'review': 'us',     // 代码审查 → 美国 VPS (Claude Code)
-  'qa': 'us',         // QA → 美国 VPS (Claude Code)
-  'audit': 'us',      // 审计 → 美国 VPS (Claude Code)
-  'talk': 'hk',       // 对话 → 香港 VPS (MiniMax)
-  'research': 'hk',   // 调研 → 香港 VPS (MiniMax)
-  'automation': 'hk', // 自动化 → 香港 VPS (MiniMax)
-  'data': 'hk',       // 数据处理 → 香港 VPS (MiniMax)
+  'dev': 'us',        // 写代码 → US (Nobel + Opus + /dev)
+  'review': 'us',     // 代码审查 → US (Sonnet + /review)
+  'qa': 'us',         // QA → US (Sonnet)
+  'audit': 'us',      // 审计 → US (Sonnet)
+  'talk': 'hk',       // 对话 → HK (MiniMax)
+  'research': 'hk',   // 调研 → HK (MiniMax)
+  'data': 'hk',       // 数据处理 → HK (N8N)
 };
 
 // Default location
@@ -160,7 +160,7 @@ function routeTaskCreate(taskData) {
  * @returns {boolean} - Whether task type is valid
  */
 function isValidTaskType(taskType) {
-  const validTypes = ['dev', 'review', 'automation', 'data', 'qa', 'audit', 'research'];
+  const validTypes = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research'];
   return validTypes.includes(taskType?.toLowerCase());
 }
 

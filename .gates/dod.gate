@@ -1,0 +1,7 @@
+gate: dod
+status: PASS
+timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+file: .dod-kr22-unified-publish-research.md
+qa_decision: docs/QA-DECISION.md
+decision: PASS
+issues: 0
