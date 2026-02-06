@@ -81,6 +81,12 @@ jobs:
       - name: Check facts consistency
         run: node scripts/facts-check.mjs
 
+      - name: Check version sync
+        run: bash scripts/check-version-sync.sh
+
+      - name: Check DoD mapping
+        run: node scripts/devgate/check-dod-mapping.cjs
+
   brain-test:
     name: Brain (Node.js)
     runs-on: ubuntu-latest
