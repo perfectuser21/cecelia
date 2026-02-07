@@ -1,17 +1,8 @@
 {
-  "branch": "cp-0206-facts-check-cleanup",
-  "timestamp": "2026-02-06T21:41:00Z",
-  "tests_passed": 668,
-  "tests_failed": 5,
-  "tests_total": 673,
-  "pre_existing_failures": [
-    "DouyinAdapter (5 tests - untracked WIP)"
-  ],
-  "regressions": 0,
-  "gates": {
-    "prd": "pass",
-    "dod": "pass",
-    "test": "pass"
-  },
+  "branch": "cp-0207-cortex-rca",
+  "head_sha": "b4b2f79",
+  "timestamp": "2026-02-07T07:05:55Z",
+  "tests_passed": 733,
+  "tests_added": 3,
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

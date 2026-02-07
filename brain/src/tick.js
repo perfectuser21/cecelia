@@ -401,6 +401,110 @@ async function selectNextDispatchableTask(goalIds) {
 }
 
 /**
+ * Process Cortex task (Brain-internal RCA analysis)
+ * @param {Object} task - Task requiring Cortex processing
+ * @param {Array} actions - Actions array to append to
+ * @returns {Promise<Object>} - Dispatch result
+ */
+async function processCortexTask(task, actions) {
+  try {
+    console.log(`[tick] Processing Cortex task: ${task.title} (id=${task.id})`);
+
+    // Update status to in_progress
+    await updateTask({ task_id: task.id, status: 'in_progress' });
+    actions.push({ action: 'cortex-start', task_id: task.id, title: task.title });
+
+    // Import Cortex module
+    const { performRCA } = await import('./cortex.js');
+
+    // Extract signals from payload
+    const signals = task.payload.signals || {};
+    const trigger = task.payload.trigger || 'unknown';
+
+    // Execute RCA analysis
+    const rcaResult = await performRCA(
+      { id: task.id, title: task.title, description: task.description, payload: task.payload },
+      [] // history - can be enhanced later
+    );
+
+    // Save analysis results to cecelia_events
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ($1, $2, $3)
+    `, ['cortex_rca_complete', 'cortex', JSON.stringify({
+      task_id: task.id,
+      trigger,
+      analysis: rcaResult.analysis,
+      recommended_actions: rcaResult.recommended_actions,
+      learnings: rcaResult.learnings,
+      confidence: rcaResult.confidence,
+      completed_at: new Date().toISOString()
+    })]);
+
+    // Update task to completed with result in payload
+    const updatedPayload = {
+      ...task.payload,
+      rca_result: {
+        root_cause: rcaResult.analysis.root_cause,
+        mitigations: rcaResult.recommended_actions?.slice(0, 3),
+        confidence: rcaResult.confidence,
+        completed_at: new Date().toISOString()
+      }
+    };
+    await pool.query(`
+      UPDATE tasks SET status = $1, payload = $2, completed_at = NOW(), updated_at = NOW()
+      WHERE id = $3
+    `, ['completed', JSON.stringify(updatedPayload), task.id]);
+
+    console.log(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
+
+    actions.push({
+      action: 'cortex-complete',
+      task_id: task.id,
+      confidence: rcaResult.confidence,
+      learnings_count: rcaResult.learnings?.length || 0
+    });
+
+    return {
+      dispatched: true,
+      reason: 'cortex_processed',
+      task_id: task.id,
+      actions
+    };
+
+  } catch (err) {
+    console.error(`[tick] Cortex task failed: ${err.message}`);
+
+    // Update task to failed with error in payload
+    const updatedPayload = {
+      ...task.payload,
+      rca_error: {
+        error: err.message,
+        failed_at: new Date().toISOString()
+      }
+    };
+    await pool.query(`
+      UPDATE tasks SET status = $1, payload = $2, updated_at = NOW()
+      WHERE id = $3
+    `, ['failed', JSON.stringify(updatedPayload), task.id]);
+
+    actions.push({
+      action: 'cortex-failed',
+      task_id: task.id,
+      error: err.message
+    });
+
+    return {
+      dispatched: false,
+      reason: 'cortex_error',
+      task_id: task.id,
+      error: err.message,
+      actions
+    };
+  }
+}
+
+/**
  * Dispatch the next queued task for execution.
  * Checks concurrency limit, executor availability, and dependencies.
  *
@@ -470,6 +574,11 @@ async function dispatchNextTask(goalIds) {
   const nextTask = await selectNextDispatchableTask(goalIds);
   if (!nextTask) {
     return { dispatched: false, reason: 'no_dispatchable_task', actions };
+  }
+
+  // 3a. Check if task requires Cortex processing (Brain-internal RCA)
+  if (nextTask.payload && nextTask.payload.requires_cortex === true) {
+    return await processCortexTask(nextTask, actions);
   }
 
   // 4. Update task status to in_progress
@@ -1275,6 +1384,7 @@ export {
   stopTickLoop,
   initTickLoop,
   dispatchNextTask,
+  processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
   routeTask,
