@@ -354,6 +354,10 @@ async function incrementActionsToday(count = 1) {
  * @returns {Object|null} - The next task to dispatch, or null
  */
 async function selectNextDispatchableTask(goalIds) {
+  // Check if P2 tasks should be paused (alertness mitigation)
+  const { getMitigationState } = await import('./alertness-actions.js');
+  const mitigationState = getMitigationState();
+
   // Query queued tasks with payload for dependency checking
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
@@ -374,6 +378,12 @@ async function selectNextDispatchableTask(goalIds) {
   `, [goalIds]);
 
   for (const task of result.rows) {
+    // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
+    if (mitigationState.p2_paused && task.priority === 'P2') {
+      console.log(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
+      continue;
+    }
+
     const dependsOn = task.payload?.depends_on;
     if (Array.isArray(dependsOn) && dependsOn.length > 0) {
       // Check if all dependencies are completed
@@ -401,8 +411,17 @@ async function dispatchNextTask(goalIds) {
   const actions = [];
 
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
-  if (_draining) {
-    return { dispatched: false, reason: 'draining', detail: `Drain mode active since ${_drainStartedAt}`, actions };
+  // Also check alertness-requested drain mode
+  const { getMitigationState } = await import('./alertness-actions.js');
+  const mitigationState = getMitigationState();
+
+  if (_draining || mitigationState.drain_mode_requested) {
+    return {
+      dispatched: false,
+      reason: 'draining',
+      detail: _draining ? `Drain mode active since ${_drainStartedAt}` : 'Alertness COMA drain mode',
+      actions
+    };
   }
 
   // 0a. Billing pause check — skip dispatch if API billing cap is active

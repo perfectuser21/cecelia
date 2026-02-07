@@ -1,0 +1,6 @@
+{
+  "branch": "cp-0207-alertness-actions",
+  "head_sha": "d233a63",
+  "timestamp": "2026-02-07T06:36:24Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
+}
