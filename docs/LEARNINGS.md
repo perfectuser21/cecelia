@@ -419,3 +419,18 @@
 **影响程度**: Low（配置调整，不影响功能）
 
 ---
+
+### [2026-02-07] Brain Status Dashboard 实现
+
+- **Bug**: Hook 检查要求 PRD/DoD 文件名必须是 .prd.md 和 .dod.md，不能使用带功能名的文件名（如 .prd-brain-status-dashboard.md）
+  - **解决**: 创建标准文件名的副本，满足 Hook 检查要求
+  - **影响程度**: Medium
+  
+- **优化点**: 使用 shared/hooks/useApi.ts 实现 SWR 模式的数据获取和自动刷新
+  - **具体**: useApi hook 支持 pollInterval 和 staleTime 参数，非常适合实时监控页面
+  - **建议**: 所有需要轮询的页面都应使用 useApi 而不是手动 setInterval
+  - **影响程度**: Low
+
+- **开发环境**: 记住开发环境 (perfect21:5212) 和正式环境 (perfect21:5211) 的区别
+  - **具体**: 所有开发中的功能先部署到 5212，测试通过后部署到 5211
+  - **影响程度**: Low
