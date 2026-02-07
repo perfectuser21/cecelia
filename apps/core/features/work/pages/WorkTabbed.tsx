@@ -1,4 +1,4 @@
-import { FolderKanban, Target, Map, Layers, ListTodo } from 'lucide-react';
+import { FolderKanban, Target, Map, Layers, ListTodo, Building2, Users, GitBranch } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
 
@@ -11,11 +11,25 @@ const tabs: TabConfig[] = [
     component: () => import('../../planning/pages/ProjectsDashboard'),
   },
   {
-    id: 'okr',
-    label: 'OKR',
-    icon: Target,
+    id: 'okr-hierarchy',
+    label: 'OKR Hierarchy',
+    icon: GitBranch,
     path: '/work/okr',
-    component: () => import('../../planning/pages/OKRPage'),
+    component: () => import('../../planning/pages/OKRHierarchyView'),
+  },
+  {
+    id: 'businesses',
+    label: 'Businesses',
+    icon: Building2,
+    path: '/work/businesses',
+    component: () => import('../../planning/pages/BusinessManagement'),
+  },
+  {
+    id: 'departments',
+    label: 'Departments',
+    icon: Users,
+    path: '/work/departments',
+    component: () => import('../../planning/pages/DepartmentManagement'),
   },
   {
     id: 'tasks',
