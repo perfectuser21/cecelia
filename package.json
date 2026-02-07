@@ -1,6 +1,6 @@
 {
   "name": "cecelia-workspace",
-  "version": "1.19.1",
+  "version": "1.19.2",
   "description": "Cecelia Workspace - AI-powered automation platform monorepo",
   "private": true,
   "type": "module",
