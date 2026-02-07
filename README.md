@@ -14,10 +14,7 @@ cp .env.example .env.docker
 # 2. 启动 Node Brain (5221)
 cd brain && nohup node server.js > /tmp/brain.log 2>&1 &
 
-# 3. 启动 Python Support Service（可选，巡检/Agent 监控/Orchestration）
-cd .. && PYTHONPATH=. python -m uvicorn src.api.main:app --host 0.0.0.0 --port 5220 &
-
-# 4. 验证服务状态
+# 3. 验证服务状态
 curl http://localhost:5221/api/brain/tick/status
 ```
 
@@ -53,13 +50,6 @@ docker compose ps
 │  - 数据库: cecelia                 │
 └────────────────────────────────────┘
 
-┌────────────────────────────────────┐
-│  Python Support Service (5220)     │
-│  - 巡检 (patrol)                   │
-│  - Agent 监控 (agent_monitor)      │
-│  - OpenAI Realtime Proxy           │
-│  (可选，不影响 Brain 核心功能)      │
-└────────────────────────────────────┘
 ```
 
 ## 核心功能
@@ -127,9 +117,7 @@ cecelia-core/
 │   │   └── circuit-breaker.js # 熔断器
 │   ├── server.js       # Express 服务器
 │   └── __tests__/      # Vitest 测试
-├── src/                # Python Support Service (port 5220)
-│   ├── api/            # FastAPI 路由
-│   └── state/          # patrol, agent_monitor
+├── tests/             # 集成测试 (database, frontend)
 ├── docker-compose.yml        # 生产环境
 ├── docker-compose.dev.yml    # 开发环境
 ├── brain/Dockerfile          # Brain 容器镜像
@@ -142,9 +130,6 @@ cecelia-core/
 ```bash
 # Brain 测试
 cd brain && npx vitest run
-
-# Python 测试
-cd /path/to/core && PYTHONPATH=. pytest tests/
 
 # DevGate 检查
 node scripts/facts-check.mjs
