@@ -69,6 +69,10 @@ let _tickRunning = false;
 let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 
+// Drain state (in-memory)
+let _draining = false;
+let _drainStartedAt = null;
+
 /**
  * Get tick status
  */
@@ -107,6 +111,8 @@ async function getTickStatus() {
   return {
     enabled,
     loop_running: _loopTimer !== null,
+    draining: _draining,
+    drain_started_at: _drainStartedAt,
     interval_minutes: TICK_INTERVAL_MINUTES,
     loop_interval_ms: TICK_LOOP_INTERVAL_MS,
     last_tick: lastTick,
@@ -393,6 +399,11 @@ async function selectNextDispatchableTask(goalIds) {
  */
 async function dispatchNextTask(goalIds) {
   const actions = [];
+
+  // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
+  if (_draining) {
+    return { dispatched: false, reason: 'draining', detail: `Drain mode active since ${_drainStartedAt}`, actions };
+  }
 
   // 0a. Billing pause check — skip dispatch if API billing cap is active
   const billingPause = getBillingPause();
@@ -902,12 +913,58 @@ async function executeTick() {
           task_id: planned.task.id,
           title: planned.task.title
         });
-      } else if (planned.reason === 'needs_planning') {
-        actionsTaken.push({
-          action: 'needs_planning',
-          kr: planned.kr,
-          project: planned.project
-        });
+      } else if (planned.reason === 'needs_planning' && planned.kr) {
+        // 6c. Auto KR decomposition: create a task for 秋米 to decompose this KR into Feature + Tasks
+        try {
+          const krId = planned.kr.id;
+          const krTitle = planned.kr.title;
+          const projectId = planned.project?.id || null;
+
+          // Dedup: skip if a decomposition task already exists for this KR
+          const existingDecomp = await pool.query(`
+            SELECT id FROM tasks
+            WHERE goal_id = $1
+              AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+              AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
+          `, [krId]);
+
+          if (existingDecomp.rows.length === 0) {
+            const decompResult = await pool.query(`
+              INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
+              VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
+              RETURNING id, title
+            `, [
+              `KR 拆解: ${krTitle}`,
+              `请为 KR「${krTitle}」创建具体执行任务。\n\n要求：\n1. 分析 KR，确定需要哪些 Feature 和 Task\n2. 为每个 Task 写完整 PRD\n3. 调用 Brain API 创建 Task:\n   POST http://localhost:5221/api/brain/action/create-task\n   Body: { "title": "...", "project_id": "${projectId}", "goal_id": "${krId}", "task_type": "dev", "prd_content": "..." }\n\nKR ID: ${krId}\nKR 标题: ${krTitle}`,
+              krId,
+              projectId,
+              JSON.stringify({ decomposition: 'continue', kr_id: krId })
+            ]);
+
+            console.log(`[tick-loop] Created KR decomposition task for: ${krTitle}`);
+            actionsTaken.push({
+              action: 'create_kr_decomposition',
+              task_id: decompResult.rows[0].id,
+              title: decompResult.rows[0].title,
+              kr: planned.kr,
+              project: planned.project
+            });
+          } else {
+            actionsTaken.push({
+              action: 'needs_planning',
+              kr: planned.kr,
+              project: planned.project,
+              note: 'decomposition_task_exists'
+            });
+          }
+        } catch (krDecompErr) {
+          console.error('[tick-loop] KR decomposition error:', krDecompErr.message);
+          actionsTaken.push({
+            action: 'needs_planning',
+            kr: planned.kr,
+            project: planned.project
+          });
+        }
       }
     } catch (planErr) {
       console.error('[tick-loop] Planner error:', planErr.message);
@@ -1062,6 +1119,105 @@ async function executeTick() {
   };
 }
 
+/**
+ * Start graceful drain — stop dispatching new tasks, let in_progress finish
+ * When all in_progress tasks complete (checked via getDrainStatus), auto-disable tick.
+ */
+async function drainTick() {
+  if (_draining) {
+    return { success: true, already_draining: true, draining: true, drain_started_at: _drainStartedAt };
+  }
+
+  _draining = true;
+  _drainStartedAt = new Date().toISOString();
+  console.log(`[tick] Drain mode activated at ${_drainStartedAt}`);
+
+  // Count in_progress tasks for initial status (no auto-complete on activation)
+  const inProgressResult = await pool.query(
+    "SELECT id, title, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
+  );
+
+  return {
+    success: true,
+    draining: true,
+    drain_started_at: _drainStartedAt,
+    in_progress_tasks: inProgressResult.rows.map(t => ({
+      id: t.id,
+      title: t.title,
+      started_at: t.started_at
+    })),
+    remaining: inProgressResult.rows.length
+  };
+}
+
+/**
+ * Get drain status — shows draining flag + in_progress tasks
+ * Auto-completes drain when no in_progress tasks remain.
+ */
+async function getDrainStatus() {
+  if (!_draining) {
+    return { draining: false, in_progress_tasks: [], remaining: 0 };
+  }
+
+  const inProgressResult = await pool.query(
+    "SELECT id, title, status, started_at FROM tasks WHERE status = 'in_progress' ORDER BY started_at"
+  );
+
+  const tasks = inProgressResult.rows;
+
+  // Auto-complete drain: if no in_progress tasks remain, disable tick
+  if (tasks.length === 0) {
+    console.log('[tick] Drain complete — no in_progress tasks remain, disabling tick');
+    const drainEnd = new Date().toISOString();
+    const startedAt = _drainStartedAt;
+    _draining = false;
+    _drainStartedAt = null;
+    await disableTick();
+    return {
+      draining: false,
+      drain_completed: true,
+      drain_started_at: startedAt,
+      drain_ended_at: drainEnd,
+      in_progress_tasks: [],
+      remaining: 0
+    };
+  }
+
+  return {
+    draining: true,
+    drain_started_at: _drainStartedAt,
+    in_progress_tasks: tasks.map(t => ({
+      id: t.id,
+      title: t.title,
+      started_at: t.started_at
+    })),
+    remaining: tasks.length
+  };
+}
+
+/**
+ * Cancel drain mode — resume normal dispatching
+ */
+function cancelDrain() {
+  if (!_draining) {
+    return { success: true, was_draining: false };
+  }
+
+  console.log('[tick] Drain mode cancelled, resuming normal dispatch');
+  _draining = false;
+  _drainStartedAt = null;
+  return { success: true, was_draining: true };
+}
+
+// Expose drain state for testing
+function _getDrainState() {
+  return { draining: _draining, drainStartedAt: _drainStartedAt };
+}
+function _resetDrainState() {
+  _draining = false;
+  _drainStartedAt = null;
+}
+
 export {
   getTickStatus,
   enableTick,
@@ -1076,6 +1232,12 @@ export {
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
   routeTask,
+  // Drain mode
+  drainTick,
+  getDrainStatus,
+  cancelDrain,
+  _getDrainState,
+  _resetDrainState,
   // Feature Tick re-exports
   startFeatureTickLoop,
   stopFeatureTickLoop,

@@ -21,6 +21,23 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @param {Object} params.payload - Additional payload (exploratory, feature_id, kr_goal)
  */
 async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
+  // Dedup: check for existing task with same title + goal_id + project_id
+  // Skip if queued/in_progress, or completed within 24h
+  const dedupResult = await pool.query(`
+    SELECT * FROM tasks
+    WHERE title = $1
+      AND (goal_id IS NOT DISTINCT FROM $2)
+      AND (project_id IS NOT DISTINCT FROM $3)
+      AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
+    LIMIT 1
+  `, [title, goal_id || null, project_id || null]);
+
+  if (dedupResult.rows.length > 0) {
+    const existing = dedupResult.rows[0];
+    console.log(`[Action] Dedup: task "${title}" already exists (id: ${existing.id}, status: ${existing.status})`);
+    return { success: true, task: existing, deduplicated: true };
+  }
+
   const result = await pool.query(`
     INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source)
     VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11)
