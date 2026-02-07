@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Target,
   RefreshCw,
@@ -70,6 +70,22 @@ async function fetchJson<T>(url: string): Promise<T> {
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
+
+async function patchEntity(type: 'tasks' | 'goals', id: string, data: Record<string, string>): Promise<void> {
+  const r = await fetch(`/api/tasks/${type}/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    throw new Error(err.error || err.details || `Failed to update`);
+  }
+}
+
+const PRIORITIES = ['P0', 'P1', 'P2'] as const;
+const TASK_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled'] as const;
+const GOAL_STATUSES = ['pending', 'in_progress', 'completed'] as const;
 
 type PriorityFilter = 'all' | 'P0' | 'P1' | 'P2';
 type StatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'queued';
@@ -199,6 +215,43 @@ export default function OKRTaskTree() {
     }
   };
 
+  // ── Inline edit handlers ─────────────────────────────
+
+  const [toast, setToast] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
+
+  const showToast = useCallback((msg: string, type: 'error' | 'success' = 'error') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const updateGoalField = useCallback(async (id: string, field: 'priority' | 'status', value: string) => {
+    const prev = goals.find(g => g.id === id);
+    if (!prev) return;
+    // Optimistic update
+    setGoals(gs => gs.map(g => g.id === id ? { ...g, [field]: value } : g));
+    try {
+      await patchEntity('goals', id, { [field]: value });
+      showToast(`Updated ${field}`, 'success');
+    } catch (e: any) {
+      // Rollback
+      setGoals(gs => gs.map(g => g.id === id ? { ...g, [field]: prev[field] } : g));
+      showToast(e.message);
+    }
+  }, [goals, showToast]);
+
+  const updateTaskField = useCallback(async (id: string, field: 'priority' | 'status', value: string) => {
+    const prev = tasks.find(t => t.id === id);
+    if (!prev) return;
+    setTasks(ts => ts.map(t => t.id === id ? { ...t, [field]: value } : t));
+    try {
+      await patchEntity('tasks', id, { [field]: value });
+      showToast(`Updated ${field}`, 'success');
+    } catch (e: any) {
+      setTasks(ts => ts.map(t => t.id === id ? { ...t, [field]: prev[field] } : t));
+      showToast(e.message);
+    }
+  }, [tasks, showToast]);
+
   // ── Loading / Error ────────────────────────────────────
 
   if (loading && goals.length === 0) {
@@ -310,10 +363,21 @@ export default function OKRTaskTree() {
                 onToggleKR={toggleKR}
                 passesFilter={passesFilter}
                 isFocused={focus?.focus?.objective?.id === obj.id}
+                onGoalUpdate={updateGoalField}
+                onTaskUpdate={updateTaskField}
               />
             ))
         )}
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg transition-all ${
+          toast.type === 'error' ? 'bg-red-500/90 text-white' : 'bg-emerald-500/90 text-white'
+        }`}>
+          {toast.msg}
+        </div>
+      )}
 
       {/* Quarantine Section */}
       {quarantine.length > 0 && (
@@ -369,7 +433,7 @@ function StatBadge({ label, count, color, bg }: { label: string; count: number; 
   );
 }
 
-function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedKRs, onToggle, onToggleKR, passesFilter, isFocused }: {
+function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedKRs, onToggle, onToggleKR, passesFilter, isFocused, onGoalUpdate, onTaskUpdate }: {
   objective: Goal;
   keyResults: Goal[];
   tasksByGoal: Map<string, Task[]>;
@@ -379,6 +443,8 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
   onToggleKR: (id: string) => void;
   passesFilter: (priority: string, status: string) => boolean;
   isFocused: boolean;
+  onGoalUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
+  onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
 }) {
   // Count tasks under this objective (including KR tasks)
   const allKrIds = keyResults.map(kr => kr.id);
@@ -402,7 +468,10 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
         {isFocused && (
           <Crosshair className="w-4 h-4 text-blue-400 flex-shrink-0" />
         )}
-        <PriorityBadge priority={objective.priority} />
+        <EditablePriority
+          priority={objective.priority}
+          onChange={v => onGoalUpdate(objective.id, 'priority', v)}
+        />
         <ProgressBar progress={objective.progress} />
         <span className="text-xs text-gray-500 flex-shrink-0">{totalTasks} tasks</span>
       </button>
@@ -431,7 +500,7 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
                         <ChevronRight className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
                       )}
                       <span className="text-sm text-gray-300 flex-1 truncate">{kr.title}</span>
-                      <PriorityBadge priority={kr.priority} small />
+                      <EditablePriority priority={kr.priority} small onChange={v => onGoalUpdate(kr.id, 'priority', v)} />
                       <ProgressBar progress={kr.progress} small />
                       <span className="text-xs text-gray-500 flex-shrink-0">{krTasks.length}</span>
                     </button>
@@ -442,7 +511,7 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
                         {krTasks
                           .filter(t => passesFilter(t.priority, t.status))
                           .map(task => (
-                            <TaskRow key={task.id} task={task} />
+                            <TaskRow key={task.id} task={task} onUpdate={onTaskUpdate} />
                           ))}
                       </div>
                     )}
@@ -459,7 +528,7 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
             .filter(t => passesFilter(t.priority, t.status))
             .map(task => (
               <div key={task.id} className="border-t border-slate-700/30 bg-slate-900/20">
-                <TaskRow task={task} indent />
+                <TaskRow task={task} indent onUpdate={onTaskUpdate} />
               </div>
             ))}
         </div>
@@ -468,7 +537,7 @@ function ObjectiveNode({ objective, keyResults, tasksByGoal, expanded, expandedK
   );
 }
 
-function TaskRow({ task, indent }: { task: Task; indent?: boolean }) {
+function TaskRow({ task, indent, onUpdate }: { task: Task; indent?: boolean; onUpdate: (id: string, field: 'priority' | 'status', value: string) => void }) {
   return (
     <div className={`flex items-center gap-3 p-3 ${indent ? 'pl-12' : 'pl-20'} hover:bg-slate-700/10 transition-colors`}>
       <ListTodo className="w-3.5 h-3.5 text-gray-600 flex-shrink-0" />
@@ -476,8 +545,8 @@ function TaskRow({ task, indent }: { task: Task; indent?: boolean }) {
       {task.task_type && (
         <span className="px-1.5 py-0.5 text-xs rounded bg-slate-700 text-gray-400">{task.task_type}</span>
       )}
-      <PriorityBadge priority={task.priority} small />
-      <StatusBadge status={task.status} />
+      <EditablePriority priority={task.priority} small onChange={v => onUpdate(task.id, 'priority', v)} />
+      <EditableStatus status={task.status} options={TASK_STATUSES} onChange={v => onUpdate(task.id, 'status', v)} />
     </div>
   );
 }
@@ -509,6 +578,98 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`px-2 py-0.5 text-xs rounded flex-shrink-0 ${cls}`}>
       {status}
     </span>
+  );
+}
+
+// ── Inline editable components ──────────────────────────
+
+function priorityColor(p: string) {
+  return p === 'P0' ? 'bg-red-500/20 text-red-400 border-red-500/30'
+    : p === 'P1' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+    : 'bg-slate-700 text-gray-400 border-slate-600';
+}
+
+function statusColor(s: string) {
+  return s === 'completed' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+    : s === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+    : s === 'queued' ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+    : s === 'cancelled' ? 'bg-red-500/10 text-red-300 border-red-500/20'
+    : 'bg-slate-700 text-gray-400 border-slate-600';
+}
+
+function EditablePriority({ priority, small, onChange }: { priority: string; small?: boolean; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(!open); }}
+        className={`${small ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs'} rounded cursor-pointer hover:ring-1 hover:ring-white/20 transition-all ${priorityColor(priority)}`}
+      >
+        {priority}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[60px]">
+          {PRIORITIES.map(p => (
+            <button
+              key={p}
+              onClick={e => { e.stopPropagation(); onChange(p); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 transition-colors ${p === priority ? 'font-bold' : ''} ${priorityColor(p)}`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditableStatus({ status, options, onChange }: { status: string; options: readonly string[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(!open); }}
+        className={`px-2 py-0.5 text-xs rounded cursor-pointer hover:ring-1 hover:ring-white/20 transition-all ${statusColor(status)}`}
+      >
+        {status}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[100px]">
+          {options.map(s => (
+            <button
+              key={s}
+              onClick={e => { e.stopPropagation(); onChange(s); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 transition-colors ${s === status ? 'font-bold' : ''} ${statusColor(s)}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
