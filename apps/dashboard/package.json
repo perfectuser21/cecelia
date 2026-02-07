@@ -1,6 +1,6 @@
 {
   "name": "@cecelia/dashboard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cecelia Dashboard Frontend",
   "private": true,
   "type": "module",
