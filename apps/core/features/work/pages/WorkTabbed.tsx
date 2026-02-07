@@ -15,7 +15,7 @@ const tabs: TabConfig[] = [
     label: 'OKR',
     icon: GitBranch,
     path: '/work/okr',
-    component: () => import('../../planning/pages/OKRHierarchyView'),
+    component: () => import('../../planning/pages/OKRDashboard'),
   },
   {
     id: 'tasks',
