@@ -234,24 +234,6 @@ async function setMemory({ key, value }) {
 }
 
 /**
- * Log a decision (for audit trail)
- */
-async function logDecision({ trigger, input_summary, decision, result }) {
-  await pool.query(`
-    INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-    VALUES ($1, $2, $3, $4, $5)
-  `, [
-    trigger || 'claude_code',
-    input_summary || '',
-    decision || {},
-    result || {},
-    result?.success ? 'success' : 'failed'
-  ]);
-
-  return { success: true };
-}
-
-/**
  * Batch update tasks (pause all, resume all, etc.)
  */
 async function batchUpdateTasks({ filter, update }) {
@@ -306,6 +288,5 @@ export {
   updateGoal,
   triggerN8n,
   setMemory,
-  logDecision,
   batchUpdateTasks
 };

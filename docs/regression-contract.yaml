@@ -1,23 +1,23 @@
-# Cecelia Semantic Brain - Regression Contract Reference
+# Cecelia Core - Regression Contract Reference
 #
 # RCI 已迁移到中央质检服务，本文件仅作为引用。
 #
 # 中央契约位置：
-#   cecelia-quality/contracts/cecelia-semantic-brain.regression-contract.yaml
+#   cecelia-quality/contracts/cecelia-core.regression-contract.yaml
 #
 # 查看完整契约：
-#   cat /home/xx/dev/cecelia-quality/contracts/cecelia-semantic-brain.regression-contract.yaml
+#   cat /home/xx/dev/cecelia-quality/contracts/cecelia-core.regression-contract.yaml
 #
 # 通过 API 查询：
-#   curl http://localhost:5681/api/contracts/cecelia-semantic-brain
+#   curl http://localhost:5681/api/contracts/cecelia-core
 #
 # RCI 摘要：
-#   P0: B1-001 (health), B1-002 (fusion)
-#   P1: B1-003 ~ B1-008 (parser, scheduler, planner, detector, agent-monitor, patrol)
-#   P2: B1-009 (brain-state)
+#   P0: B1-001 (health), B1-002 (brain-status)
+#   P1: B1-003 ~ B1-006 (tick, executor, alertness, circuit-breaker)
+#   P2: B1-007 (agent-monitor), B1-008 (patrol)
 #
 # 注册信息：
 #   repo-registry: cecelia-quality/control-plane/repo-registry.yaml
-#   repo-id: cecelia-semantic-brain
+#   repo-id: cecelia-core
 
-$ref: "cecelia-quality://contracts/cecelia-semantic-brain.regression-contract.yaml"
+$ref: "cecelia-quality://contracts/cecelia-core.regression-contract.yaml"
