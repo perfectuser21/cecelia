@@ -119,3 +119,66 @@
 - 实践了 CI 失败 5 次的完整调试流程（约束→依赖→数据→表名→时间→函数名）
 - 理解了 Feature Tick Loop 与主 Tick Loop 的独立性
 - 验证了 DoD → Test mapping 的 DevGate 检查机制
+
+---
+
+### [2026-02-07] 免疫系统最后一公里连接
+
+**功能**：修复免疫系统3个断链 - 策略调整读取、重试策略使用、Token bucket 调用。
+
+**发现**：
+1. **95%已实现，只差5%连接** - 所有功能都已开发完成，只是写入和读取之间缺少桥梁
+   - Cortex 写 brain_config → 但没人读
+   - classifyFailure 算 retry_strategy → 但 requeueTask 不用
+   - tryConsumeToken 已实现 → 发现已经在用了（第597行）
+
+2. **Token bucket 已经连接** - 深度搜索发现 tick.js 第597行已经调用了
+   - 本来以为需要添加，实际上已经存在
+   - 这说明之前有人已经做过这个连接，但文档没更新
+
+3. **测试数据污染的根本原因** - 多个测试文件共享同一个数据库
+   - tick-drain.test.js 期望 0 个 in_progress 任务
+   - 但其他测试创建的任务没清理
+   - 解决：在测试开始时清理全局状态
+
+**Bug**：
+1. **重复添加 token bucket 检查** - 导致 `tokenResult` 重复声明
+   - 问题：在 dispatchNextTask() 函数开头添加了检查，但第597行已经有了
+   - 解决：删除我添加的重复代码，保留原有的
+   - 影响程度：High（语法错误，测试无法运行）
+
+2. **测试数据隔离问题** - tick-drain.test.js 失败
+   - 问题：测试期望 0 个 in_progress 任务，但其他测试遗留了1个
+   - 解决：在测试开始时 `UPDATE tasks SET status = 'completed' WHERE status = 'in_progress'`
+   - 影响程度：High（CI 失败）
+
+3. **Config loader 测试数据污染** - loadAllAdjustableParams 测试失败
+   - 问题：前一个测试写入了 alertness.emergency_threshold，后续测试期望默认值
+   - 解决：在 describe 的 beforeEach 清理所有 adjustable params
+   - 影响程度：Medium（本地测试失败）
+
+**优化点**：
+1. **Config loader 设计** - 创建通用的配置读取模块
+   - 单个读取：`readBrainConfig(key, defaultValue)`
+   - 批量读取：`readBrainConfigBatch(keyDefaults)`
+   - 全量读取：`loadAllAdjustableParams()`
+   - 影响程度：High（可扩展的设计）
+
+2. **Retry strategy fallback** - 优雅降级设计
+   - 优先使用 `retry_strategy.next_run_at`
+   - 没有时 fallback 到指数退避
+   - 保持向后兼容
+   - 影响程度：High（稳定性）
+
+3. **深度搜索的重要性** - 使用 Explore agent 搜索整个代码库
+   - 发现了 token bucket 已连接（第597行）
+   - 避免了重复实现
+   - 理解了现有代码的完整图景
+   - 影响程度：Critical（节省大量时间）
+
+**收获**：
+- 学习了如何诊断"功能已实现但不工作"的问题（找连接而非功能）
+- 理解了 brain_config 表作为动态配置源的设计模式
+- 掌握了测试数据隔离的最佳实践（beforeEach 清理全局状态）
+- 实践了"95%完成，5%连接"的软件工程常见问题
+- 验证了深度搜索在理解复杂代码库中的价值
