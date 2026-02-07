@@ -517,3 +517,180 @@ export async function fetchTimelineData(): Promise<TimelineData> {
     totalRuns: allRuns.length,
   };
 }
+
+// ============ Brain Status Dashboard Types ============
+
+// Brain 健康状态
+export interface BrainHealth {
+  enabled: boolean;
+  loop_running: boolean;
+  loop_interval_ms: number;
+  last_tick: string;
+  next_tick: string;
+  actions_today: number;
+  max_concurrent: number;
+}
+
+// Brain Tick 状态
+export interface BrainTickStatus {
+  enabled: boolean;
+  loop_running: boolean;
+  loop_interval_ms: number;
+  last_tick: string;
+  next_tick: string;
+  actions_today: number;
+}
+
+// Brain 警觉等级
+export interface BrainAlertness {
+  level: string;
+  score: number;
+  signals: {
+    cpu: number;
+    memory: number;
+    api_errors: number;
+  };
+}
+
+// 熔断器状态
+export interface CircuitBreaker {
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  failures: number;
+  last_failure_time?: string;
+}
+
+// 看门狗状态
+export interface WatchdogStatus {
+  rss_mb: number;
+  cpu_percent: number;
+  threshold_rss_mb: number;
+  threshold_cpu_percent: number;
+}
+
+// OKR Objective
+export interface Objective {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  progress: number;
+}
+
+// OKR Key Result
+export interface KeyResult {
+  id: string;
+  title: string;
+  status: string;
+  progress: number;
+  tasks_total: number;
+  tasks_completed: number;
+}
+
+// Brain 焦点（当前聚焦的 OKR）
+export interface BrainFocus {
+  objective: Objective | null;
+  key_results: KeyResult[];
+}
+
+// Brain 任务
+export interface BrainTask {
+  id: string;
+  title: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'quarantined';
+  priority: string;
+  created_at: string;
+  started_at?: string;
+  run_id?: string;
+}
+
+// 任务队列统计
+export interface TaskQueueStats {
+  queued: number;
+  in_progress: number;
+  completed: number;
+  failed: number;
+  quarantined: number;
+}
+
+// ============ Brain Status Dashboard API ============
+
+// 获取 Brain 健康状态
+export async function fetchBrainHealth(): Promise<BrainHealth | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/health`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// 获取 Brain Tick 状态
+export async function fetchBrainTickStatus(): Promise<BrainTickStatus | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/tick/status`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// 获取 Brain 警觉状态
+export async function fetchBrainAlertness(): Promise<BrainAlertness | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/alertness`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// 获取看门狗状态
+export async function fetchWatchdogStatus(): Promise<WatchdogStatus | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/watchdog`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// 获取当前焦点 OKR
+export async function fetchBrainFocus(): Promise<BrainFocus | null> {
+  try {
+    const response = await fetch(`${BRAIN_API_URL}/focus`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+// 获取任务列表
+export async function fetchBrainTasks(status?: string): Promise<BrainTask[]> {
+  try {
+    const url = status ? `${BRAIN_API_URL}/tasks?status=${status}` : `${BRAIN_API_URL}/tasks`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.tasks || [];
+  } catch {
+    return [];
+  }
+}
+
+// 计算任务队列统计
+export async function fetchTaskQueueStats(): Promise<TaskQueueStats> {
+  const allTasks = await fetchBrainTasks();
+
+  return {
+    queued: allTasks.filter(t => t.status === 'queued').length,
+    in_progress: allTasks.filter(t => t.status === 'in_progress').length,
+    completed: allTasks.filter(t => t.status === 'completed').length,
+    failed: allTasks.filter(t => t.status === 'failed').length,
+    quarantined: allTasks.filter(t => t.status === 'quarantined').length,
+  };
+}

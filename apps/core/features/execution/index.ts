@@ -12,6 +12,8 @@ const manifest: FeatureManifest = {
   ],
 
   routes: [
+    // Brain Status Dashboard
+    { path: '/brain-status', component: 'BrainStatusDashboard' },
     // Cecelia
     { path: '/cecelia', component: 'CeceliaOverview' },
     { path: '/cecelia/agents/:agentId', component: 'AgentDetail' },
@@ -44,6 +46,7 @@ const manifest: FeatureManifest = {
   ],
 
   components: {
+    BrainStatusDashboard: () => import('./pages/BrainStatusDashboard'),
     CeceliaOverview: () => import('./pages/CeceliaOverview'),
     AgentDetail: () => import('./pages/AgentDetail'),
     CeceliaRuns: () => import('./pages/CeceliaRuns'),
