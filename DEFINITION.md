@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-07
-**Brain 版本**: 1.11.6
-**Schema 版本**: 009
+**Brain 版本**: 1.12.0
+**Schema 版本**: 010
 **状态**: 生产运行中
 
 ---
@@ -88,7 +88,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
           ▼
 ┌─────────────────────────────────────────────┐
 │  PostgreSQL — 唯一真相源                     │
-│  cecelia 数据库, schema v009                 │
+│  cecelia 数据库, schema v010                 │
 │  19 张核心表                                │
 └─────────────────────────────────────────────┘
 ```
@@ -160,11 +160,12 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**16 个白名单 action**：
+**17 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
+- 规划：create_proposal
 - 控制：no_action, fallback_to_tick
 
 ### 3.3 L2 皮层 — Opus 深度分析
@@ -508,7 +509,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, features, working_memory, cecelia_events, decision_log, daily_logs
-5. **Schema 版本** — 必须 = '009'
+5. **Schema 版本** — 必须 = '010'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -672,7 +673,7 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-009)
+├── migrations/                # SQL 迁移 (000-010)
 │   ├── 000_base_schema.sql
 │   ├── 001_cecelia_architecture_upgrade.sql
 │   ├── 002_task_type_review_merge.sql
@@ -682,7 +683,8 @@ brain/
 │   ├── 006_exploratory_support.sql
 │   ├── 007_pending_actions.sql
 │   ├── 008_publishing_system.sql
-│   └── 009_fix_decisions_schema.sql
+│   ├── 009_fix_decisions_schema.sql
+│   └── 010_proposals.sql
 │
 └── src/__tests__/             # Vitest 测试 (668/673 pass)
 ```

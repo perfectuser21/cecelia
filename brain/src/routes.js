@@ -57,6 +57,7 @@ import websocketService from './websocket.js';
 import crypto from 'crypto';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES, LLM_ERROR_TYPE } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
+import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 
 const router = Router();
 
@@ -4064,6 +4065,83 @@ router.get('/hardening/status', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get hardening status', details: err.message });
+  }
+});
+
+// ==================== Plan Proposal 系统 ====================
+
+/**
+ * POST /api/brain/plan — Unified proposal entry point
+ * Accepts both LLM proposals and user UI operations.
+ */
+router.post('/plan', async (req, res) => {
+  try {
+    const proposal = await createProposal(req.body);
+    res.json(proposal);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/proposals — List proposals
+ */
+router.get('/proposals', async (req, res) => {
+  try {
+    const { status, limit } = req.query;
+    const proposals = await listProposals({ status, limit: parseInt(limit) || 20 });
+    res.json(proposals);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/proposals/:id — Get single proposal
+ */
+router.get('/proposals/:id', async (req, res) => {
+  try {
+    const proposal = await getProposal(req.params.id);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    res.json(proposal);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/approve — Approve and apply a proposal
+ */
+router.post('/proposals/:id/approve', async (req, res) => {
+  try {
+    const result = await approveProposal(req.params.id, req.body.approved_by || 'user');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/reject — Reject a proposal
+ */
+router.post('/proposals/:id/reject', async (req, res) => {
+  try {
+    const result = await rejectProposal(req.params.id, req.body.reason || '');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/rollback — Rollback an applied proposal
+ */
+router.post('/proposals/:id/rollback', async (req, res) => {
+  try {
+    const result = await rollbackProposal(req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
