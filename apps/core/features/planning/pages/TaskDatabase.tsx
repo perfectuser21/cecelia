@@ -638,16 +638,16 @@ function TaskTableView({
                         <div
                           ref={provided.innerRef}
                           {...provided.draggableProps}
-                          className={`flex items-center border-b border-slate-700/30 hover:bg-slate-700/20 transition-colors ${
-                            snapshot.isDragging ? 'bg-slate-700/40 shadow-lg rounded-lg' : ''
+                          className={`group flex items-center border-b border-slate-700/30 hover:bg-slate-700/20 transition-all duration-200 ${
+                            snapshot.isDragging ? 'bg-slate-700/40 shadow-xl scale-[1.02] rounded-lg' : ''
                           }`}
                         >
                           {/* Drag handle */}
                           <div {...provided.dragHandleProps} className="w-8 flex items-center justify-center flex-shrink-0 cursor-grab active:cursor-grabbing">
-                            <GripVertical className="w-3.5 h-3.5 text-gray-600 hover:text-gray-400" />
+                            <GripVertical className="w-3.5 h-3.5 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                           </div>
                           {/* Title */}
-                          <div className="flex-1 min-w-0 px-3 py-2.5">
+                          <div className="flex-1 min-w-0 px-3 py-3">
                             <span className="text-sm text-gray-200 truncate block">{task.title}</span>
                           </div>
                           {/* Status */}
@@ -791,8 +791,8 @@ function BoardCard({
   onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
 }) {
   return (
-    <div className={`p-3 rounded-lg border bg-slate-800 transition-all ${
-      isDragging ? 'border-blue-500/50 shadow-xl shadow-blue-500/10' : 'border-slate-700 hover:border-slate-600'
+    <div className={`p-3 rounded-lg border bg-slate-800 transition-all duration-200 ${
+      isDragging ? 'border-blue-500/50 shadow-xl shadow-blue-500/10 scale-[1.02]' : 'border-slate-700 hover:border-slate-600'
     }`}>
       <div className="text-sm text-gray-200 mb-2 leading-relaxed">{task.title}</div>
       <div className="flex items-center gap-2 flex-wrap">
@@ -881,7 +881,7 @@ function EditablePriority({ priority, small, onChange }: { priority: string; sma
         {priority}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[60px]">
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[60px] animate-in fade-in slide-in-from-top-2 duration-200">
           {PRIORITIES.map(p => (
             <button
               key={p}
@@ -921,7 +921,7 @@ function EditableStatus({ status, options, onChange }: { status: string; options
         {status}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[100px]">
+        <div className="absolute right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden min-w-[100px] animate-in fade-in slide-in-from-top-2 duration-200">
           {options.map(s => (
             <button
               key={s}
