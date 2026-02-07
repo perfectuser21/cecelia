@@ -48,7 +48,7 @@ function convertCoreNavGroups(
 
 function AppContent() {
   const location = useLocation();
-  const { user, isAuthenticated, isSuperAdmin, authLoading } = useAuth();
+  const { isAuthenticated, isSuperAdmin, authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(false);
@@ -105,21 +105,21 @@ function AppContent() {
         <>
           {/* 左侧导航栏 - 使用配置的渐变色 */}
           <aside className={`fixed inset-y-0 left-0 ${collapsed ? 'w-16' : 'w-64'} flex flex-col shadow-2xl transition-all duration-300 z-20`} style={{ background: config?.theme.sidebarGradient || 'var(--sidebar-gradient)' }}>
-            {/* Logo 区域 - 从配置读取 */}
+            {/* Logo 区域 */}
             <div className={`h-16 flex items-center ${collapsed ? 'justify-center' : 'justify-start'} px-4 border-b border-white/10`}>
               {collapsed ? (
                 <div className="relative w-10 h-10 flex items-center justify-center">
-                  {/* 外圈光晕 */}
                   <div className="absolute inset-0 rounded-full bg-white/10 blur-sm" />
-                  {/* 主圆 */}
                   <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/5 border border-white/30 flex items-center justify-center backdrop-blur-sm">
-                    <span className="text-white font-semibold text-lg" style={{ fontFamily: 'system-ui', letterSpacing: '-0.02em' }}>
-                      {config?.theme.logoCollapsed || 'P'}
+                    <span className="text-white font-bold text-xs" style={{ fontFamily: 'system-ui' }}>
+                      {config?.theme.logoCollapsed || 'XX'}
                     </span>
                   </div>
                 </div>
               ) : (
-                <img src={config?.theme.logo || '/logo-white.png'} alt={config?.name || 'Perfect21'} className="h-9 drop-shadow-lg" />
+                <span className="text-white font-bold text-xl tracking-tight drop-shadow-lg" style={{ fontFamily: 'system-ui' }}>
+                  {config?.name || 'Perfect21'}
+                </span>
               )}
             </div>
 
@@ -201,35 +201,6 @@ function AppContent() {
               ))}
             </nav>
 
-            {/* 底部用户信息 */}
-            <div className={`border-t border-white/5 ${collapsed ? 'p-2' : 'p-4'}`}>
-              {collapsed ? (
-                <div className="relative mx-auto w-10 h-10">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-600">
-                    <span className="text-white font-semibold text-sm">{user?.name?.charAt(0) || 'A'}</span>
-                  </div>
-                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full" />
-                </div>
-              ) : (
-                <div className="p-3 rounded-xl bg-white/5 backdrop-blur">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                        <span className="text-white font-semibold text-sm">{user?.name?.charAt(0) || 'A'}</span>
-                      </div>
-                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-800 rounded-full" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white truncate">
-                        {user?.name || 'Admin'}
-                        <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-amber-500 text-white rounded">超级管理员</span>
-                      </p>
-                      <p className="text-xs text-slate-500 truncate">{user?.department || 'System'}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
           </aside>
 
           {/* 顶部栏 - Canvas 页面使用深色主题 */}

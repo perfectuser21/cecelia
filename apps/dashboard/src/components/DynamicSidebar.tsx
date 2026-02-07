@@ -6,11 +6,12 @@
 
 import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LogOut, PanelLeftClose, PanelLeft, Circle } from 'lucide-react';
+import { PanelLeftClose, PanelLeft, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './CollapsibleNavItem';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
+
 import {
   getAutopilotNavGroups,
   filterNavGroups,
@@ -42,16 +43,14 @@ function convertCoreNavGroups(
 interface DynamicSidebarProps {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
-  onLogout: () => void;
 }
 
 export default function DynamicSidebar({
   collapsed,
   onCollapsedChange,
-  onLogout,
 }: DynamicSidebarProps) {
   const location = useLocation();
-  const { user, isSuperAdmin } = useAuth();
+  const { isSuperAdmin } = useAuth();
   const { config, isCore, isFeatureEnabled, coreConfig } = useInstance();
 
   // 获取并过滤导航配置
@@ -81,19 +80,17 @@ export default function DynamicSidebar({
             <div className="absolute inset-0 rounded-full bg-white/10 blur-sm" />
             <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/5 border border-white/30 flex items-center justify-center backdrop-blur-sm">
               <span
-                className="text-white font-semibold text-lg"
-                style={{ fontFamily: 'system-ui', letterSpacing: '-0.02em' }}
+                className="text-white font-bold text-xs"
+                style={{ fontFamily: 'system-ui' }}
               >
-                {config?.theme.logoCollapsed || 'P'}
+                {config?.theme.logoCollapsed || 'XX'}
               </span>
             </div>
           </div>
         ) : (
-          <img
-            src={config?.theme.logo || '/logo-white.png'}
-            alt={config?.name || 'Perfect21'}
-            className="h-9 drop-shadow-lg"
-          />
+          <span className="text-white font-bold text-xl tracking-tight drop-shadow-lg" style={{ fontFamily: 'system-ui' }}>
+            {config?.name || 'Perfect21'}
+          </span>
         )}
       </div>
 
@@ -171,77 +168,6 @@ export default function DynamicSidebar({
         ))}
       </nav>
 
-      {/* 底部用户信息 */}
-      <div className={`border-t border-white/5 ${collapsed ? 'p-2' : 'p-4'}`}>
-        {collapsed ? (
-          <div className="space-y-2">
-            <div className="relative mx-auto w-10 h-10">
-              {user?.avatar ? (
-                <img
-                  src={user.avatar}
-                  alt={user.name}
-                  className="w-10 h-10 rounded-full ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-600">
-                  <span className="text-white font-semibold text-sm">
-                    {user?.name?.charAt(0) || 'U'}
-                  </span>
-                </div>
-              )}
-              <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-900 rounded-full" />
-            </div>
-            <button
-              onClick={onLogout}
-              title="退出登录"
-              className="w-full flex items-center justify-center p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        ) : (
-          <div className="p-3 rounded-xl bg-white/5 backdrop-blur">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                {user?.avatar ? (
-                  <img
-                    src={user.avatar}
-                    alt={user.name}
-                    className="w-10 h-10 rounded-full ring-2 ring-blue-500 ring-offset-2 ring-offset-slate-900"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                    <span className="text-white font-semibold text-sm">
-                      {user?.name?.charAt(0) || 'U'}
-                    </span>
-                  </div>
-                )}
-                <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-slate-800 rounded-full" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">
-                  {user?.name || '用户'}
-                  {isSuperAdmin && (
-                    <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-amber-500 text-white rounded">
-                      超级管理员
-                    </span>
-                  )}
-                </p>
-                <p className="text-xs text-slate-500 truncate">
-                  {user?.department || '在线'}
-                </p>
-              </div>
-              <button
-                onClick={onLogout}
-                title="退出登录"
-                className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
     </aside>
   );
 }
