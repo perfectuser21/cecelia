@@ -1013,3 +1013,45 @@ After this planning is complete, the actual implementation will be in zenithjoy-
   - Added Alertness check in `checkExpiredQuarantineTasks()` to prevent releases during EMERGENCY/COMA states
   - Improved logging in auto-release logic to track failure_class and reason separately
 - **影响程度**: Medium - Auto-release mechanism is critical for system self-healing, but was previously missing
+
+## [2026-02-07] Brain Status CLI Tool — 版本号同步与文件命名 (v1.23.0)
+
+### Feature: 实现 Brain 状态可视化 CLI 工具（PR #201）
+
+- **What**: 创建 `brain-status.sh` CLI 工具，显示 Brain 健康状态、Tick 信息、警觉等级、OKR 聚焦、任务队列
+- **Problem**: 缺少直观的 Brain 状态查看方式，需要手动执行多个 API 命令
+- **Solution**:
+  1. 实现 `scripts/brain-status.sh` - 完整状态展示（健康、Tick、警觉、OKR、任务）
+  2. 支持 `--okr`、`--tasks`、`--watch` 参数
+  3. 北京时间显示（Asia/Shanghai）+ 彩色输出 + 表情符号
+  4. 创建 `scripts/test-brain-status.sh` 功能测试脚本
+- **Tests**: 手动验证（DoD 中所有验收条件）
+
+### Gotchas（关键教训）
+
+1. **版本号同步 - 4 个文件必须一致**
+   - **Bug**: CI "Facts Consistency" 失败，因为更新 brain/package.json 版本号后，忘记同步更新 DEFINITION.md 和 .brain-versions
+   - **Fix**: 版本号更新必须同时更新 4 个文件：
+     1. `brain/package.json` (npm version)
+     2. `brain/package-lock.json` (npm install --package-lock-only)
+     3. `VERSION` (jq -r .version brain/package.json > VERSION)
+     4. `.brain-versions` (jq -r .version brain/package.json > .brain-versions)
+     5. `DEFINITION.md` ("Brain 版本" 字段)
+   - **影响程度**: High - 阻塞 CI "Check version sync" 和 "Facts Consistency"
+   - **预防**: 在 /dev Step 8 (PR) 中添加自动化脚本统一更新所有版本号文件
+
+2. **PRD/DoD 文件命名规范**
+   - **Bug**: branch-protect.sh Hook 报错 "PRD 文件未更新"，因为使用了 `.prd-brain-status-dashboard.md` 而不是 `.prd.md`
+   - **Fix**: 在功能分支中，PRD 和 DoD 文件必须命名为 `.prd.md` 和 `.dod.md`（不带任务名后缀）
+   - **影响程度**: High - 阻塞 Write 和 Edit 工具执行
+   - **原因**: Hook 通过固定文件名检查 PRD/DoD 存在性，不支持自定义命名
+
+3. **Worktree 文件同步**
+   - **Gotcha**: Worktree 创建时基于 develop 分支，不包含主仓库未提交的文件（如 PRD）
+   - **Fix**: 创建 worktree 后需要手动复制 PRD 文件：`cp /path/to/main/.prd.md /path/to/worktree/`
+   - **影响程度**: Low - 容易发现和修复，但需要额外步骤
+
+### 优化建议
+
+- **自动化版本号同步**: 在 /dev Step 8 中添加脚本 `scripts/sync-version.sh`，一键更新所有 5 个版本号文件
+- **PRD/DoD 文件检测**: 改进 Step 1/4，自动检测并重命名 PRD/DoD 文件为标准名称
