@@ -355,9 +355,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
   const payload = result.rows[0].payload || {};
   const retryCount = (payload.watchdog_retry_count || 0) + 1;
 
+  // P0 FIX #3: Watchdog kill 也应增加 failure_count，防止无限循环
+  // 原问题：watchdog_retry_count 和 failure_count 分离，交替失败时永远不会隔离
+  const failureCount = (payload.failure_count || 0) + 1;
+
   // P2 #9: Complete evidence chain
   const watchdogInfo = {
     watchdog_retry_count: retryCount,
+    failure_count: failureCount,  // P0 FIX: 同时追踪总失败次数
     watchdog_kill: { reason, ts: new Date().toISOString(), ...evidence },
     watchdog_last_sample: evidence,
   };
@@ -373,7 +378,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
         quarantine_info: {
           quarantined_at: new Date().toISOString(),
           reason: 'resource_hog',
-          details: { watchdog_retries: retryCount, kill_reason: reason },
+          details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
           previous_status: 'in_progress',
         }
       })]

@@ -689,7 +689,10 @@ function classifyFailure(error, task = null) {
 
 /**
  * 检查最近失败是否呈系统性模式
- * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number }>}
+ *
+ * P0 FIX: 检测同类失败（NETWORK/RATE_LIMIT/等）达到阈值，而不是检测永远不会出现的 SYSTEMIC 类别
+ *
+ * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number, failureClass?: string }>}
  */
 async function checkSystemicFailurePattern() {
   try {
@@ -711,28 +714,30 @@ async function checkSystemicFailurePattern() {
     const errors = result.rows.map(r => r.error_details || '');
     const classifications = errors.map(e => classifyFailure(e));
 
-    const systemicCount = classifications.filter(c => c.class === FAILURE_CLASS.SYSTEMIC).length;
-
-    if (systemicCount >= 3) {
-      // 找出最常见的 pattern
-      const patterns = classifications
-        .filter(c => c.pattern)
-        .map(c => c.pattern);
-      const patternCounts = {};
-      for (const p of patterns) {
-        patternCounts[p] = (patternCounts[p] || 0) + 1;
+    // P0 FIX: 统计同类失败（NETWORK/RATE_LIMIT/BILLING_CAP/RESOURCE），而不是统计永远为 0 的 SYSTEMIC
+    const classCounts = {};
+    for (const c of classifications) {
+      // 只统计系统性失败类型（不包括 TASK_ERROR/AUTH/UNKNOWN）
+      if ([FAILURE_CLASS.NETWORK, FAILURE_CLASS.RATE_LIMIT, FAILURE_CLASS.BILLING_CAP, FAILURE_CLASS.RESOURCE].includes(c.class)) {
+        classCounts[c.class] = (classCounts[c.class] || 0) + 1;
       }
-      const topPattern = Object.entries(patternCounts)
-        .sort((a, b) => b[1] - a[1])[0];
+    }
 
+    // 找出出现最多的失败类型
+    const topClass = Object.entries(classCounts)
+      .sort((a, b) => b[1] - a[1])[0];
+
+    if (topClass && topClass[1] >= 3) {
+      // 同类失败达到 3 次，判定为系统性故障
       return {
         isSystemic: true,
-        pattern: topPattern?.[0],
-        count: systemicCount
+        failureClass: topClass[0],
+        count: topClass[1],
+        pattern: `${topClass[0]} (${topClass[1]} occurrences in 30min)`
       };
     }
 
-    return { isSystemic: false, count: systemicCount };
+    return { isSystemic: false, count: Object.values(classCounts).reduce((a, b) => Math.max(a, b), 0) };
 
   } catch (err) {
     console.error('[quarantine] Failed to check systemic pattern:', err.message);

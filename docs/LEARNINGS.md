@@ -1,5 +1,25 @@
 # Learnings
 
+## [2026-02-07] 修复免疫系统 P0 断链 — Systemic failure 检测 + Circuit breaker 成功恢复 + Watchdog kill 隔离 (v1.13.1)
+
+### Feature: 免疫系统核心断链修复（PR #174）
+
+- **What**: 修复免疫系统的 3 个 P0 级别断链，让失败处理、熔断恢复、资源隔离形成完整闭环
+- **Root causes**:
+  1. **Systemic failure 检测 BUG**: `checkSystemicFailurePattern()` 检查 `FAILURE_CLASS.SYSTEMIC` 但 `classifyFailure()` 永远不返回该值，导致 alertness 检测不到系统性故障
+  2. **Circuit breaker 成功不恢复**: `recordSuccess()` 虽然在 execution-callback 中被调用，但在免疫系统审计时被误报为"从未调用"
+  3. **Watchdog kill 不隔离**: `watchdog_retry_count` 和 `failure_count` 分离追踪，交替失败时永远不会隔离，导致无限循环
+- **Fixes**:
+  1. 修改 `checkSystemicFailurePattern()`: 统计同类失败（NETWORK/RATE_LIMIT/BILLING_CAP/RESOURCE）达到阈值（3 次），而不是统计永远为 0 的 SYSTEMIC 类别
+  2. 确认 `recordSuccess()` 已在 execution-callback (routes.js:1583) 调用，无需修复
+  3. 修改 `requeueTask()`: Watchdog kill 时同时增加 `failure_count`，确保总失败次数被正确追踪，防止无限循环
+- **Tests**: 新增 15 个测试（3 个测试文件），全部通过：
+  - `quarantine-systemic.test.js`: 5 tests — 检测同类系统性失败
+  - `circuit-breaker-success.test.js`: 5 tests — 验证成功恢复机制
+  - `tick-watchdog-quarantine.test.js`: 5 tests — Watchdog kill 继承 failure_count 并最终隔离
+- **Pattern**: 免疫系统断链修复的核心是**统一失败追踪**和**完整闭环**，避免多个计数器分离导致的漏洞
+- **Gotcha**: 审计报告需要深入代码验证，不能仅依赖 grep 结果（如 `recordSuccess` 通过别名 `cbSuccess` 调用，grep 搜索不到）
+
 ## [2026-02-07] Auto KR decomposition — 填补 tick 管道缺口 (v1.12.3)
 
 ### Feature: tick.js Step 6c — KR 自动拆解任务创建（PR #171）
