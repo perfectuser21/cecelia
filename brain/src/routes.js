@@ -4071,10 +4071,10 @@ router.get('/hardening/status', async (req, res) => {
 // ==================== Plan Proposal 系统 ====================
 
 /**
- * POST /api/brain/plan — Unified proposal entry point
+ * POST /api/brain/proposals — Create a new proposal
  * Accepts both LLM proposals and user UI operations.
  */
-router.post('/plan', async (req, res) => {
+router.post('/proposals', async (req, res) => {
   try {
     const proposal = await createProposal(req.body);
     res.json(proposal);
