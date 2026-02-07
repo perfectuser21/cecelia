@@ -118,18 +118,33 @@ async function patchEntity(type: 'tasks' | 'goals', id: string, data: Record<str
   }
 }
 
+// Notion-style color system with inline styles
+function getPriorityStyle(p: string): React.CSSProperties {
+  const colors = {
+    P0: { backgroundColor: 'rgba(212, 76, 71, 0.1)', color: 'rgb(212, 76, 71)' },
+    P1: { backgroundColor: 'rgba(233, 168, 0, 0.1)', color: 'rgb(233, 168, 0)' },
+    P2: { backgroundColor: 'rgba(0, 135, 107, 0.1)', color: 'rgb(0, 135, 107)' },
+  };
+  return colors[p as keyof typeof colors] || { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' };
+}
+
+function getStatusStyle(s: string): React.CSSProperties {
+  const colors = {
+    completed: { backgroundColor: 'rgba(0, 135, 107, 0.1)', color: 'rgb(0, 135, 107)' },
+    in_progress: { backgroundColor: 'rgba(35, 131, 226, 0.1)', color: 'rgb(35, 131, 226)' },
+    queued: { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' },
+    cancelled: { backgroundColor: 'rgba(212, 76, 71, 0.05)', color: 'rgba(212, 76, 71, 0.6)' },
+  };
+  return colors[s as keyof typeof colors] || { backgroundColor: 'rgba(206, 205, 202, 0.5)', color: 'rgba(55, 53, 47, 0.6)' };
+}
+
+// Keep old functions for backward compatibility (now just return empty string)
 function priorityColor(p: string) {
-  return p === 'P0' ? 'bg-red-500/20 text-red-400 border-red-500/30'
-    : p === 'P1' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-    : 'bg-slate-700 text-gray-400 border-slate-600';
+  return '';
 }
 
 function statusColor(s: string) {
-  return s === 'completed' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-    : s === 'in_progress' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-    : s === 'queued' ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
-    : s === 'cancelled' ? 'bg-red-500/10 text-red-300 border-red-500/20'
-    : 'bg-slate-700 text-gray-400 border-slate-600';
+  return '';
 }
 
 function getMonthKey(dateStr: string): string {
@@ -181,8 +196,8 @@ export default function TaskDatabase() {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // Collapsed groups
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // Expanded groups (Notion style - default all expanded)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
   // ── Data fetching ───────────────────────────────────
 
@@ -358,6 +373,14 @@ export default function TaskDatabase() {
     }));
   }, [sortedTasks, groupBy, getProjectName]);
 
+  // Auto-expand all groups when groupBy changes (Notion behavior)
+  useEffect(() => {
+    if (groupBy !== 'none') {
+      const allKeys = groupedTasks.map(g => g.key);
+      setExpandedGroups(new Set(allKeys));
+    }
+  }, [groupBy, groupedTasks]);
+
   // ── Pagination ──────────────────────────────────────
 
   const paginatedGroups = useMemo(() => {
@@ -431,7 +454,7 @@ export default function TaskDatabase() {
   // ── Group collapse ──────────────────────────────────
 
   const toggleGroup = useCallback((key: string) => {
-    setCollapsedGroups(prev => {
+    setExpandedGroups(prev => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -520,7 +543,12 @@ export default function TaskDatabase() {
             value={groupBy}
             onChange={e => setGroupBy(e.target.value as GroupBy)}
             disabled={viewMode === 'board'}
-            className="bg-slate-700 text-sm text-gray-300 rounded-lg px-3 py-1.5 border border-slate-600 focus:outline-none focus:border-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="bg-slate-700 text-sm text-gray-300 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{
+              padding: '6px 12px',
+              fontWeight: 500,
+              transition: 'background 0.02s ease-in'
+            }}
           >
             <option value="none">No Grouping</option>
             <option value="status">By Status</option>
@@ -560,7 +588,7 @@ export default function TaskDatabase() {
             sortField={sortField}
             sortDir={sortDir}
             onSort={handleSort}
-            collapsedGroups={collapsedGroups}
+            expandedGroups={expandedGroups}
             onToggleGroup={toggleGroup}
             getProjectName={getProjectName}
             onTaskUpdate={updateTaskField}
@@ -666,7 +694,7 @@ function TaskTableView({
   sortField,
   sortDir,
   onSort,
-  collapsedGroups,
+  expandedGroups,
   onToggleGroup,
   getProjectName,
   onTaskUpdate,
@@ -676,7 +704,7 @@ function TaskTableView({
   sortField: SortField;
   sortDir: SortDir;
   onSort: (field: SortField) => void;
-  collapsedGroups: Set<string>;
+  expandedGroups: Set<string>;
   onToggleGroup: (key: string) => void;
   getProjectName: (t: Task) => string;
   onTaskUpdate: (id: string, field: 'priority' | 'status', value: string) => void;
@@ -701,12 +729,15 @@ function TaskTableView({
           {groupBy !== 'none' && (
             <button
               onClick={() => onToggleGroup(group.key)}
-              className="w-full flex items-center gap-2 px-4 py-2 bg-slate-750 border-b border-slate-700/50 hover:bg-slate-700/50 transition-colors text-left"
+              className="w-full flex items-center gap-2 px-4 py-2 bg-slate-750 border-b border-slate-700/50 text-left cursor-pointer"
+              style={{ transition: 'background 0.02s ease-in' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(51, 65, 85, 0.5)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = ''}
             >
-              {collapsedGroups.has(group.key) ? (
-                <ChevronRight className="w-3.5 h-3.5 text-gray-500" />
+              {expandedGroups.has(group.key) ? (
+                <ChevronDown className="w-3.5 h-3.5 text-gray-500 transition-transform duration-200" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+                <ChevronRight className="w-3.5 h-3.5 text-gray-500 transition-transform duration-200" />
               )}
               <span className="text-sm font-medium text-gray-300">{group.label}</span>
               <span className="text-xs text-gray-500">{group.tasks.length}</span>
@@ -714,7 +745,7 @@ function TaskTableView({
           )}
 
           {/* Task rows */}
-          {!collapsedGroups.has(group.key) && (
+          {expandedGroups.has(group.key) && (
             <Droppable droppableId={`table-${group.key}`}>
               {(provided) => (
                 <div ref={provided.innerRef} {...provided.droppableProps}>
@@ -724,9 +755,16 @@ function TaskTableView({
                         <div
                           ref={provided.innerRef}
                           {...provided.draggableProps}
-                          className={`group flex items-center border-b border-slate-700/30 hover:bg-slate-700/20 transition-all duration-200 ${
+                          className={`group flex items-center border-b border-slate-700/30 cursor-pointer ${
                             snapshot.isDragging ? 'bg-slate-700/40 shadow-xl scale-[1.02] rounded-lg' : ''
                           }`}
+                          style={{
+                            ...provided.draggableProps.style,
+                            transition: 'background 0.02s ease-in',
+                            backgroundColor: snapshot.isDragging ? '' : 'transparent'
+                          }}
+                          onMouseEnter={(e) => !snapshot.isDragging && (e.currentTarget.style.backgroundColor = 'rgba(0, 0, 0, 0.03)')}
+                          onMouseLeave={(e) => !snapshot.isDragging && (e.currentTarget.style.backgroundColor = 'transparent')}
                         >
                           {/* Drag handle */}
                           <div {...provided.dragHandleProps} className="w-8 flex items-center justify-center flex-shrink-0 cursor-grab active:cursor-grabbing">
@@ -958,11 +996,21 @@ function EditablePriority({ priority, small, onChange }: { priority: string; sma
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  const style = getPriorityStyle(priority);
+
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button
         onClick={e => { e.stopPropagation(); setOpen(!open); }}
-        className={`${small ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs'} rounded cursor-pointer hover:ring-1 hover:ring-white/20 transition-all ${priorityColor(priority)}`}
+        className={`${small ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-0.5 text-xs'} rounded cursor-pointer inline-flex items-center`}
+        style={{
+          ...style,
+          borderRadius: '3px',
+          fontSize: '14px',
+          fontWeight: 400,
+          transition: 'background 0.02s ease-in',
+          padding: small ? '2px 4px' : '2px 6px'
+        }}
       >
         {priority}
       </button>
@@ -972,7 +1020,8 @@ function EditablePriority({ priority, small, onChange }: { priority: string; sma
             <button
               key={p}
               onClick={e => { e.stopPropagation(); onChange(p); setOpen(false); }}
-              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 transition-colors ${p === priority ? 'font-bold' : ''} ${priorityColor(p)}`}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 ${p === priority ? 'font-bold' : ''}`}
+              style={{ transition: 'background 0.02s ease-in', ...getPriorityStyle(p) }}
             >
               {p}
             </button>
@@ -998,11 +1047,21 @@ function EditableStatus({ status, options, onChange }: { status: string; options
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
+  const style = getStatusStyle(status);
+
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button
         onClick={e => { e.stopPropagation(); setOpen(!open); }}
-        className={`px-2 py-0.5 text-xs rounded cursor-pointer hover:ring-1 hover:ring-white/20 transition-all ${statusColor(status)}`}
+        className="px-2 py-0.5 text-xs rounded cursor-pointer inline-flex items-center"
+        style={{
+          ...style,
+          borderRadius: '3px',
+          fontSize: '14px',
+          fontWeight: 400,
+          transition: 'background 0.02s ease-in',
+          padding: '2px 6px'
+        }}
       >
         {status}
       </button>
@@ -1012,7 +1071,8 @@ function EditableStatus({ status, options, onChange }: { status: string; options
             <button
               key={s}
               onClick={e => { e.stopPropagation(); onChange(s); setOpen(false); }}
-              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 transition-colors ${s === status ? 'font-bold' : ''} ${statusColor(s)}`}
+              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-slate-700 ${s === status ? 'font-bold' : ''}`}
+              style={{ transition: 'background 0.02s ease-in', ...getStatusStyle(s) }}
             >
               {s}
             </button>
