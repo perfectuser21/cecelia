@@ -110,16 +110,17 @@ function AppContent() {
               {collapsed ? (
                 <div className="relative w-10 h-10 flex items-center justify-center">
                   <div className="absolute inset-0 rounded-full bg-white/10 blur-sm" />
-                  <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/5 border border-white/30 flex items-center justify-center backdrop-blur-sm">
-                    <span className="text-white font-bold text-xs" style={{ fontFamily: 'system-ui' }}>
-                      {config?.theme.logoCollapsed || 'XX'}
+                  <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-white/15 to-white/5 border border-white/20 flex items-center justify-center backdrop-blur-sm">
+                    <span className="font-black text-[11px] bg-gradient-to-br from-slate-300 to-blue-400 bg-clip-text text-transparent" style={{ fontFamily: 'system-ui' }}>
+                      XX
                     </span>
                   </div>
                 </div>
               ) : (
-                <span className="text-white font-bold text-xl tracking-tight drop-shadow-lg" style={{ fontFamily: 'system-ui' }}>
-                  {config?.name || 'Perfect21'}
-                </span>
+                <div className="flex items-baseline gap-0" style={{ fontFamily: 'system-ui' }}>
+                  <span className="text-slate-400 font-semibold text-xl tracking-tight">Perfect</span>
+                  <span className="text-blue-400 font-black text-xl tracking-tight">21</span>
+                </div>
               )}
             </div>
 
