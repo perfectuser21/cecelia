@@ -902,12 +902,58 @@ async function executeTick() {
           task_id: planned.task.id,
           title: planned.task.title
         });
-      } else if (planned.reason === 'needs_planning') {
-        actionsTaken.push({
-          action: 'needs_planning',
-          kr: planned.kr,
-          project: planned.project
-        });
+      } else if (planned.reason === 'needs_planning' && planned.kr) {
+        // 6c. Auto KR decomposition: create a task for 秋米 to decompose this KR into Feature + Tasks
+        try {
+          const krId = planned.kr.id;
+          const krTitle = planned.kr.title;
+          const projectId = planned.project?.id || null;
+
+          // Dedup: skip if a decomposition task already exists for this KR
+          const existingDecomp = await pool.query(`
+            SELECT id FROM tasks
+            WHERE goal_id = $1
+              AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+              AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
+          `, [krId]);
+
+          if (existingDecomp.rows.length === 0) {
+            const decompResult = await pool.query(`
+              INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
+              VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
+              RETURNING id, title
+            `, [
+              `KR 拆解: ${krTitle}`,
+              `请为 KR「${krTitle}」创建具体执行任务。\n\n要求：\n1. 分析 KR，确定需要哪些 Feature 和 Task\n2. 为每个 Task 写完整 PRD\n3. 调用 Brain API 创建 Task:\n   POST http://localhost:5221/api/brain/action/create-task\n   Body: { "title": "...", "project_id": "${projectId}", "goal_id": "${krId}", "task_type": "dev", "prd_content": "..." }\n\nKR ID: ${krId}\nKR 标题: ${krTitle}`,
+              krId,
+              projectId,
+              JSON.stringify({ decomposition: 'continue', kr_id: krId })
+            ]);
+
+            console.log(`[tick-loop] Created KR decomposition task for: ${krTitle}`);
+            actionsTaken.push({
+              action: 'create_kr_decomposition',
+              task_id: decompResult.rows[0].id,
+              title: decompResult.rows[0].title,
+              kr: planned.kr,
+              project: planned.project
+            });
+          } else {
+            actionsTaken.push({
+              action: 'needs_planning',
+              kr: planned.kr,
+              project: planned.project,
+              note: 'decomposition_task_exists'
+            });
+          }
+        } catch (krDecompErr) {
+          console.error('[tick-loop] KR decomposition error:', krDecompErr.message);
+          actionsTaken.push({
+            action: 'needs_planning',
+            kr: planned.kr,
+            project: planned.project
+          });
+        }
       }
     } catch (planErr) {
       console.error('[tick-loop] Planner error:', planErr.message);
