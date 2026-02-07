@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Calendar, Loader2 } from 'lucide-react';
+import { Calendar } from 'lucide-react';
+import { useApi } from '../../shared/hooks/useApi';
+import { SkeletonRow } from '../../shared/components/LoadingState';
 
 interface Task {
   id: string;
@@ -9,18 +10,10 @@ interface Task {
 }
 
 export default function TodayView() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch('/api/tasks/tasks?status=in_progress')
-      .then(res => res.json())
-      .then(data => {
-        setTasks(Array.isArray(data) ? data : []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+  const { data: tasks, loading } = useApi<Task[]>('/api/tasks/tasks?status=in_progress', {
+    initialData: [],
+    staleTime: 30_000,
+  });
 
   const today = new Date().toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -39,11 +32,13 @@ export default function TodayView() {
 
       <h2 style={{ fontSize: '16px', fontWeight: 500, marginBottom: '12px' }}>进行中的任务</h2>
 
-      {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '48px' }}>
-          <Loader2 size={24} className="animate-spin" />
+      {loading && !tasks?.length ? (
+        <div>
+          <SkeletonRow />
+          <SkeletonRow />
+          <SkeletonRow />
         </div>
-      ) : tasks.length === 0 ? (
+      ) : !tasks?.length ? (
         <p style={{ color: '#64748b', fontSize: '14px' }}>暂无进行中的任务</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

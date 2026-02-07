@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import {
   Bot,
   RefreshCw,
@@ -22,6 +22,8 @@ import {
   TimelineData,
   ClusterStatus as ClusterStatusType,
 } from '../api/agents.api';
+import { useApi, useApiFn } from '../../shared/hooks/useApi';
+import { SkeletonCard } from '../../shared/components/LoadingState';
 import TimeRangeSelector from '../components/TimeRangeSelector';
 import TimelineView from '../components/TimelineView';
 import ClusterStatus from '../components/ClusterStatus';
@@ -65,60 +67,24 @@ interface TaskStats {
 const BRAIN_API_URL = '/api/brain';
 
 export default function CeceliaOverviewPage() {
-  const [overview, setOverview] = useState<CeceliaOverview | null>(null);
-  const [timeline, setTimeline] = useState<TimelineData | null>(null);
-  const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
-  const [clusterStatus, setClusterStatus] = useState<ClusterStatusType | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
 
-  const loadData = useCallback(async () => {
-    try {
-      const [overviewData, timelineData, brainData, clusterData, tasksData] = await Promise.all([
-        fetchCeceliaOverview(timeRange),
-        fetchTimelineData(),
-        fetch(`${BRAIN_API_URL}/tick/status`).then(r => {
-          if (!r.ok) throw new Error(`Brain API failed: ${r.status}`);
-          return r.json();
-        }).catch(err => {
-          console.warn('Brain API error:', err);
-          return null;
-        }),
-        fetchClusterStatus().catch(err => {
-          console.warn('Cluster status error:', err);
-          return null;
-        }),
-        fetch('/api/tasks/tasks').then(r => {
-          if (!r.ok) throw new Error(`Tasks API failed: ${r.status}`);
-          return r.json();
-        }).catch(err => {
-          console.warn('Tasks API error:', err);
-          return [];
-        }),
-      ]);
-      setOverview(overviewData);
-      setTimeline(timelineData);
-      setBrainStatus(brainData);
-      setClusterStatus(clusterData);
-      setTasks(Array.isArray(tasksData) ? tasksData : []);
-      setError(null);
-      setLastUpdate(new Date());
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [timeRange]);
+  const pollOpts = { pollInterval: 30_000, staleTime: 30_000 };
+  const { data: overview, loading: overviewLoading, error, refresh: refreshOverview } = useApiFn<CeceliaOverview>(
+    `cecelia-overview-${timeRange}`,
+    () => fetchCeceliaOverview(timeRange),
+    pollOpts
+  );
+  const { data: timeline } = useApiFn<TimelineData>('cecelia-timeline', fetchTimelineData, pollOpts);
+  const { data: brainStatus } = useApi<BrainStatus>(`${BRAIN_API_URL}/tick/status`, pollOpts);
+  const { data: clusterStatus, loading: clusterLoading } = useApiFn<ClusterStatusType | null>(
+    'cluster-status', () => fetchClusterStatus().catch(() => null), pollOpts
+  );
+  const { data: tasks } = useApi<Task[]>('/api/tasks/tasks', { ...pollOpts, initialData: [] });
 
-  useEffect(() => {
-    setLoading(true);
-    loadData();
-    const interval = setInterval(loadData, 30000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+  const loading = overviewLoading && !overview;
+  const lastUpdate = overview ? new Date() : null;
+  const loadData = refreshOverview;
 
   const getTimeRangeLabel = (range: TimeRange): string => {
     switch (range) {
@@ -132,7 +98,8 @@ export default function CeceliaOverviewPage() {
   };
 
   // 计算任务统计
-  const taskStats: TaskStats = tasks.reduce(
+  const tasksList = Array.isArray(tasks) ? tasks : [];
+  const taskStats: TaskStats = tasksList.reduce(
     (acc, task) => {
       acc[task.status] = (acc[task.status] || 0) + 1;
       return acc;
@@ -146,12 +113,24 @@ export default function CeceliaOverviewPage() {
   const availableSeats = maxSeats - usedSeats;
 
   // 获取当前正在执行的任务
-  const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
+  const inProgressTasks = tasksList.filter(t => t.status === 'in_progress');
 
   if (loading && !overview) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl">
+            <Bot className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Cecelia</h1>
+            <p className="text-gray-400">加载中...</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {[1,2,3,4,5].map(i => <SkeletonCard key={i} />)}
+        </div>
+        <SkeletonCard />
       </div>
     );
   }
@@ -241,7 +220,7 @@ export default function CeceliaOverviewPage() {
       </div>
 
       {/* 集群状态 */}
-      <ClusterStatus data={clusterStatus} loading={loading} />
+      <ClusterStatus data={clusterStatus} loading={clusterLoading} />
 
       {/* Cecelia 实时状态面板 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

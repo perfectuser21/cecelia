@@ -9,7 +9,7 @@
  * /dashboard/command/vps - VPS 详情
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate, useLocation, Routes, Route, Link } from 'react-router-dom';
 import {
   Share2, Briefcase, TrendingUp, ChevronRight, ChevronDown,
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import ClusterStatusComponent from '../../execution/components/ClusterStatus';
 import { fetchClusterStatus, ClusterStatus as ClusterStatusType } from '../../execution/api/agents.api';
+import { useApi, useApiFn } from '../../shared/hooks/useApi';
+import { SkeletonCard } from '../../shared/components/LoadingState';
 
 interface Goal {
   id: string;
@@ -917,96 +919,76 @@ function VPSDetailPage({ vpsSlots }: { vpsSlots: { used: number; total: number; 
   );
 }
 
+// ==================== Skeleton for Overview ====================
+function OverviewSkeleton() {
+  return (
+    <div className="space-y-8">
+      <div className="text-center">
+        <h1 className="text-3xl font-bold text-slate-800 dark:text-white">Command Center</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-2">统一控制中心</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+      <SkeletonCard />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+    </div>
+  );
+}
+
 // ==================== Main CommandCenter ====================
 export default function CommandCenter() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
-  const [tickStatus, setTickStatus] = useState<TickStatus | null>(null);
-  const [runningTasks, setRunningTasks] = useState<Task[]>([]);
-  const [vpsSlots, setVpsSlots] = useState<{ used: number; total: number; slots?: VpsSlot[] }>({ used: 0, total: 8 });
-  const [clusterStatus, setClusterStatus] = useState<ClusterStatusType | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [brainRes, tickRes, goalsRes, tasksRes, projectsRes, vpsRes, clusterData] = await Promise.all([
-        fetch('/api/brain/status'),
-        fetch('/api/brain/tick/status'),
-        fetch('/api/tasks/goals'),
-        fetch('/api/tasks/tasks'),
-        fetch('/api/tasks/projects'),
-        fetch('/api/brain/vps-slots'),
-        fetchClusterStatus(),
-      ]);
+  // Individual SWR-cached API calls — each resolves independently
+  const pollOpts = { pollInterval: 10_000, staleTime: 30_000 };
+  const { data: brainStatus } = useApi<BrainStatus>('/api/brain/status', pollOpts);
+  const { data: tickStatus } = useApi<TickStatus>('/api/brain/tick/status', pollOpts);
+  const { data: goals, loading: goalsLoading } = useApi<Goal[]>('/api/tasks/goals', { ...pollOpts, initialData: [] });
+  const { data: tasks, loading: tasksLoading } = useApi<Task[]>('/api/tasks/tasks', { ...pollOpts, initialData: [] });
+  const { data: projects } = useApi<Project[]>('/api/tasks/projects', { ...pollOpts, initialData: [] });
+  const { data: vpsData } = useApi<{ success?: boolean; used: number; total: number; slots?: VpsSlot[] }>(
+    '/api/brain/vps-slots', { ...pollOpts, initialData: { used: 0, total: 8 } }
+  );
+  const { data: clusterStatus, loading: clusterLoading } = useApiFn<ClusterStatusType | null>(
+    'cluster-status', fetchClusterStatus, pollOpts
+  );
 
-      const [brainData, tickData, goalsData, tasksData, projectsData, vpsData] = await Promise.all([
-        brainRes.json(),
-        tickRes.json(),
-        goalsRes.json(),
-        tasksRes.json(),
-        projectsRes.json(),
-        vpsRes.json(),
-      ]);
+  const vpsSlots = vpsData?.success ? vpsData : { used: 0, total: 8, slots: vpsData?.slots };
+  const runningTasks = useMemo(
+    () => (tasks || []).filter((t: Task) => t.status === 'in_progress'),
+    [tasks]
+  );
 
-      setBrainStatus(brainData);
-      setTickStatus(tickData);
-      setGoals(goalsData || []);
-      setTasks(tasksData || []);
-      setProjects(projectsData || []);
-      setClusterStatus(clusterData);
-
-      const running = (tasksData || []).filter((t: Task) => t.status === 'in_progress');
-      setRunningTasks(running);
-
-      if (vpsData.success) {
-        setVpsSlots({ used: vpsData.used, total: vpsData.total, slots: vpsData.slots });
-      }
-    } catch (err) {
-      console.error('Failed to fetch data:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-        <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
-      </div>
-    );
-  }
+  // Show skeleton only on very first load (no cached data at all)
+  const firstLoad = goalsLoading && tasksLoading && !goals?.length && !tasks?.length;
 
   return (
     <div className="min-h-screen -m-8 -mt-8 p-8 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <div className="max-w-6xl mx-auto">
         <Routes>
           <Route path="/" element={
+            firstLoad ? <OverviewSkeleton /> :
             <OverviewPage
               brainStatus={brainStatus}
               tickStatus={tickStatus}
-              goals={goals}
-              tasks={tasks}
-              projects={projects}
+              goals={goals || []}
+              tasks={tasks || []}
+              projects={projects || []}
               vpsSlots={vpsSlots}
               clusterStatus={clusterStatus}
               runningTasks={runningTasks}
-              loading={loading}
+              loading={clusterLoading}
               navigate={navigate}
             />
           } />
-          <Route path="/okr" element={<OKRListPage goals={goals} tasks={tasks} navigate={navigate} />} />
-          <Route path="/projects" element={<ProjectsListPage projects={projects} tasks={tasks} navigate={navigate} />} />
-          <Route path="/tasks" element={<TasksListPage tasks={tasks} projects={projects} navigate={navigate} />} />
+          <Route path="/okr" element={<OKRListPage goals={goals || []} tasks={tasks || []} navigate={navigate} />} />
+          <Route path="/projects" element={<ProjectsListPage projects={projects || []} tasks={tasks || []} navigate={navigate} />} />
+          <Route path="/tasks" element={<TasksListPage tasks={tasks || []} projects={projects || []} navigate={navigate} />} />
           <Route path="/vps" element={<VPSDetailPage vpsSlots={vpsSlots} />} />
           <Route path="/execution" element={
             <div>
@@ -1016,16 +998,17 @@ export default function CommandCenter() {
             </div>
           } />
           <Route path="/*" element={
+            firstLoad ? <OverviewSkeleton /> :
             <OverviewPage
               brainStatus={brainStatus}
               tickStatus={tickStatus}
-              goals={goals}
-              tasks={tasks}
-              projects={projects}
+              goals={goals || []}
+              tasks={tasks || []}
+              projects={projects || []}
               vpsSlots={vpsSlots}
               clusterStatus={clusterStatus}
               runningTasks={runningTasks}
-              loading={loading}
+              loading={clusterLoading}
               navigate={navigate}
             />
           } />
