@@ -733,3 +733,33 @@ After this planning is complete, the actual implementation will be in zenithjoy-
 - **Testing**: All 658 existing tests pass, Brain selfcheck passes
 - **Pattern**: 旧代码债务必须主动清理，即使"还能用"也要删，避免新人困惑和代码审查负担
 
+
+## [2026-02-07] Alertness Response Actions — 完成免疫系统最后一环 (v1.14.0)
+
+### Feature: Alertness 响应动作系统（PR #182）
+
+- **What**: 实现 Alertness 等级变化时的 5 类自动响应动作，完成免疫系统实现
+- **Response Actions**:
+  1. **Notification** (ALERT+): 控制台警告 + 事件日志
+  2. **Escalation** (EMERGENCY+): 自动创建 Cortex RCA 任务
+  3. **Auto-Mitigation** (EMERGENCY+): 暂停 P2 任务 + 清理僵尸进程
+  4. **Shutdown Safety** (COMA): 启用 drain mode + 保存状态检查点
+  5. **Recovery** (降级): 清理限制状态，恢复正常操作
+- **Integration**:
+  - `alertness.js/setLevel()`: Fire-and-forget 调用 executeResponseActions()
+  - `tick.js/selectNextDispatchableTask()`: 检查 p2_paused，跳过 P2 任务
+  - `tick.js/dispatchNextTask()`: 检查 drain_mode_requested，阻止派发
+- **Gotcha 1 - Schema mismatch**: 测试用 `type` 字段创建任务，但实际表用 `task_type`
+  - **Fix**: 搜索现有测试找到正确字段名（`tick-kr-decomp.test.js` 使用 `task_type`）
+  - **Pattern**: 新测试参考现有测试的 SQL，不要凭记忆猜字段名
+- **Gotcha 2 - Recovery logic**: 多级跳跃降级（COMA→NORMAL）不会触发单步条件
+  - **Fix**: 添加 catch-all 条件 `toLevel === NORMAL && fromLevel > NORMAL` 清理所有限制
+  - **Pattern**: 恢复逻辑要覆盖所有降级路径，不能只处理相邻等级
+- **Gotcha 3 - Version sync**: 更新 package.json 但漏了 DEFINITION.md 和 .brain-versions
+  - **Fix**: CI facts-check 失败提示，依次更新 DEFINITION.md (`Brain 版本`) 和 .brain-versions
+  - **Pattern**: 版本号三处同步 — brain/package.json（基准）、DEFINITION.md（文档）、.brain-versions（CI 检查）
+- **Tests**: 17 个测试全部通过，覆盖所有响应动作和集成点
+- **Immune System Status**: 随着 PR #182 合并，免疫系统完整闭环实现完成
+  - ✅ 6 断链 fixed (PR #175, #176)
+  - ✅ Alertness Response Actions (PR #182)
+  - 🎯 下一步: 5 大脑器官缺口（Cortex空壳、Planner不自动生成、Feature Tick断裂、学习闭环、Alertness评估）
