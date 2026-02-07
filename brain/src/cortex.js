@@ -18,7 +18,8 @@
 /* global console */
 
 import pool from './db.js';
-import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage, getRecentLearnings } from './thalamus.js';
+import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
+import { searchRelevantLearnings } from './learning.js';
 
 // ============================================================
 // Cortex Prompt
@@ -300,10 +301,17 @@ async function analyzeDeep(event, thalamusDecision = null) {
     console.error('[cortex] Failed to fetch system status:', err.message);
   }
 
-  // Build #1: 注入历史经验到皮层
-  const learnings = await getRecentLearnings();
+  // Build #1: 注入历史经验到皮层（使用语义检索）
+  const learnings = await searchRelevantLearnings({
+    task_type: event.failed_task?.task_type || event.task?.task_type,
+    failure_class: event.failure_history?.[0]?.failure_classification?.class,
+    event_type: event.type
+  }, 20);
+
   if (learnings.length > 0) {
-    context.historical_learnings = learnings.map(l => ({
+    context.historical_learnings = learnings.map((l, i) => ({
+      rank: i + 1,
+      relevance_score: l.relevance_score || 0,
       title: l.title,
       insight: (l.content || '').slice(0, 300)
     }));

@@ -162,7 +162,87 @@ export async function applyStrategyAdjustments(adjustments, learningId) {
 }
 
 /**
- * Get recent learnings
+ * Search relevant learnings based on semantic context
+ * @param {Object} context - Search context
+ * @param {string} context.task_type - Task type (dev/review/qa/audit/research/talk/data)
+ * @param {string} context.failure_class - Failure class (NETWORK/BILLING_CAP/RATE_LIMIT/RESOURCE/etc)
+ * @param {string} context.event_type - Event type (systemic_failure/rca_request/etc)
+ * @param {number} limit - Maximum number of results
+ * @returns {Promise<Array>} - Learning records sorted by relevance
+ */
+export async function searchRelevantLearnings(context = {}, limit = 10) {
+  try {
+    // Fetch all learnings (we'll score them in memory)
+    const result = await pool.query(`
+      SELECT id, title, category, trigger_event, content, strategy_adjustments, applied, created_at, metadata
+      FROM learnings
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
+
+    if (result.rows.length === 0) {
+      return [];
+    }
+
+    // Score each learning based on relevance
+    const scoredLearnings = result.rows.map(learning => {
+      let score = 0;
+
+      // Parse metadata and content for matching
+      const metadata = learning.metadata || {};
+      const content = learning.content || '';
+      const contentLower = content.toLowerCase();
+
+      // 1. Task type exact match (weight: 10)
+      if (context.task_type && metadata.task_type === context.task_type) {
+        score += 10;
+      }
+
+      // 2. Failure class match in content (weight: 8)
+      if (context.failure_class) {
+        const failureClassLower = context.failure_class.toLowerCase();
+        if (contentLower.includes(failureClassLower)) {
+          score += 8;
+        }
+      }
+
+      // 3. Event type match (weight: 6)
+      if (context.event_type && learning.trigger_event === context.event_type) {
+        score += 6;
+      }
+
+      // 4. Category match (weight: 4)
+      if (learning.category === 'failure_pattern') {
+        score += 4;
+      }
+
+      // 5. Freshness (weight: 1-3)
+      const ageInDays = (Date.now() - new Date(learning.created_at).getTime()) / (1000 * 60 * 60 * 24);
+      if (ageInDays <= 7) {
+        score += 3; // Within 7 days
+      } else if (ageInDays <= 30) {
+        score += 2; // Within 30 days
+      } else {
+        score += 1; // Older than 30 days
+      }
+
+      return { ...learning, relevance_score: score };
+    });
+
+    // Sort by relevance score (descending)
+    scoredLearnings.sort((a, b) => b.relevance_score - a.relevance_score);
+
+    // Return top N results
+    return scoredLearnings.slice(0, limit);
+  } catch (err) {
+    console.error(`[learning] Failed to search relevant learnings: ${err.message}`);
+    // Fallback to getRecentLearnings
+    return getRecentLearnings(null, limit);
+  }
+}
+
+/**
+ * Get recent learnings (fallback / backward compatibility)
  * @param {string} category - Learning category filter (optional)
  * @param {number} limit - Maximum number of results
  * @returns {Promise<Array>} - Learning records

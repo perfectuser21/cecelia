@@ -1,6 +1,6 @@
 {
-  "branch": "cp-cortex-strategy",
-  "head_sha": "4a6c2d2",
-  "timestamp": "2026-02-07T08:59:42Z",
+  "branch": "cp-learning-search",
+  "head_sha": "90104ca",
+  "timestamp": "2026-02-07T09:23:01Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
