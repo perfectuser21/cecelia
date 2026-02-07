@@ -165,6 +165,15 @@ export default function TaskDatabase() {
     } catch { return []; }
   });
 
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('taskdb_page_size');
+      return saved ? Number(saved) : 50;
+    } catch { return 50; }
+  });
+
   // Toast
   const [toast, setToast] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
   const showToast = useCallback((msg: string, type: 'error' | 'success' = 'error') => {
@@ -226,6 +235,16 @@ export default function TaskDatabase() {
       localStorage.setItem('taskdb_row_order', JSON.stringify(rowOrder));
     }
   }, [rowOrder]);
+
+  // Persist pageSize
+  useEffect(() => {
+    localStorage.setItem('taskdb_page_size', String(pageSize));
+  }, [pageSize]);
+
+  // Reset to page 1 when groupBy changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [groupBy]);
 
   // ── Lookup maps ─────────────────────────────────────
 
@@ -339,6 +358,22 @@ export default function TaskDatabase() {
     }));
   }, [sortedTasks, groupBy, getProjectName]);
 
+  // ── Pagination ──────────────────────────────────────
+
+  const paginatedGroups = useMemo(() => {
+    if (groupBy === 'none') {
+      const start = (currentPage - 1) * pageSize;
+      const end = start + pageSize;
+      return [{ key: 'all', label: 'All Tasks', tasks: sortedTasks.slice(start, end) }];
+    }
+    // 对分组后的结果分页
+    return groupedTasks;
+  }, [groupedTasks, sortedTasks, groupBy, currentPage, pageSize]);
+
+  const totalPages = Math.ceil(sortedTasks.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(currentPage * pageSize, sortedTasks.length);
+
   // ── Inline edit ─────────────────────────────────────
 
   const updateTaskField = useCallback(async (id: string, field: 'priority' | 'status', value: string) => {
@@ -435,7 +470,7 @@ export default function TaskDatabase() {
   }
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4 p-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -520,7 +555,7 @@ export default function TaskDatabase() {
       <DragDropContext onDragEnd={handleDragEnd}>
         {viewMode === 'table' ? (
           <TaskTableView
-            groupedTasks={groupedTasks}
+            groupedTasks={paginatedGroups}
             groupBy={groupBy}
             sortField={sortField}
             sortDir={sortDir}
@@ -532,12 +567,49 @@ export default function TaskDatabase() {
           />
         ) : (
           <TaskBoardView
-            tasks={sortedTasks}
+            tasks={paginatedGroups[0]?.tasks || []}
             getProjectName={getProjectName}
             onTaskUpdate={updateTaskField}
           />
         )}
       </DragDropContext>
+
+      {/* Pagination */}
+      {groupBy === 'none' && totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 bg-slate-800/50 rounded-lg border border-slate-700">
+          <div className="text-sm text-gray-400">
+            显示 {startIndex}-{endIndex} / 共 {sortedTasks.length} 个任务
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              上一页
+            </button>
+            <span className="text-sm text-gray-400">
+              第 {currentPage} / {totalPages} 页
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              下一页
+            </button>
+            <select
+              value={pageSize}
+              onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-gray-300 rounded-lg border border-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
+            >
+              <option value={20}>20/页</option>
+              <option value={50}>50/页</option>
+              <option value={100}>100/页</option>
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* Quarantine */}
       {quarantine.length > 0 && (
