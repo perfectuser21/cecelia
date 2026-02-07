@@ -1,5 +1,42 @@
 # Learnings
 
+## [2026-02-07] 删除全部 Python 代码 + 死迁移 (v1.11.5)
+
+### Feature: Python Support Service 完全移除（PR #165）
+
+- **What**: 用户确认所有 Python 代码都是旧架构遗留，全部删除
+- **Scope**: 删除 src/ 整目录（12 文件）、3 个 Python 测试、requirements.txt、1 个死迁移文件，净减 ~3987 行
+- **验证过程**: 用 Explore agent 确认 Python 服务完全未使用：无 Docker 容器、端口 5220 未监听、Brain 无调用、CI 只测不部署
+- **CI 清理**: 删除 semantic-test job，更新 ci-passed/notify-failure 依赖，移除 branch protection 中的 "Semantic Brain (Python)" check
+- **死迁移**: `003_trigger_source.sql` 与 `004_trigger_source.sql` 完全相同（md5 一致），因 migrate.js 按 version prefix 去重，003 被 003_feature_tick_system 抢占，永远不会执行
+- **Gotcha**: Branch protection 的 required checks 必须在 PR 创建前更新，否则 CI 会因为缺少 Python job 而卡住
+- **Pattern**: 分阶段清理比一次性全删更安全 — PR #161(deprecated modules) → #162(dead code) → #163(infrastructure) → #164(stale refs) → #165(全部 Python)
+
+## [2026-02-07] 审计修复 — stale DB defaults + 版本号 + 路径 (v1.11.4)
+
+### Feature: 第二轮审计遗留修复（PR #164）
+
+- **What**: 第二轮 5-agent 并行审计发现 3 处遗留问题：pool.py 旧 DB 默认值、DEFINITION.md 正文版本号、路径引用
+- **pool.py**: 默认值仍为 n8n 时代 (cecelia_tasks/n8n_user/n8n_password_2025)，已同步为 db-config.js SSOT (cecelia/cecelia/CeceliaUS2026)
+- **DEFINITION.md**: 第 483 行和第 646 行仍引用 1.9.5（比当前版本落后 ~20 个 patch），facts-check 只校验头部 Brain 版本行
+- **regression-contract.yaml**: 旧路径 `/home/xx/dev/` 残留（仓库已从 dev/ 搬到 perfect21/）
+- **Gotcha**: facts-check.mjs 只校验 DEFINITION.md 第 6 行的 Brain 版本，不扫正文中的版本引用 — 手动/审计才能发现
+- **Pattern**: 多轮审计有效 — 第一轮清理大量文件，第二轮才暴露深层数据不一致
+
+## [2026-02-07] 深度审计清理 — 旧 Python 基础设施 + 过时文档 (v1.11.3)
+
+### Feature: 仓库级审计清理（PR #163）
+
+- **What**: PR #162 删除了 Python 死代码，但 5 个并行审计 Agent 发现仍有旧基础设施和过时文档残留
+- **Scope**: 删除 3 文件，重写 2 文档，修复 5 配置，净减 ~500 行
+- **删除**: 根 Dockerfile（旧 Python 服务）、scripts/start.sh、brain.service（错误路径）
+- **文档重写**: README.md 和 DOCKER.md 完全移除 semantic-brain/5220 引用，反映当前 Node.js Brain 架构
+- **配置修复**: verify-deployment.sh（移除旧容器检查）、.gitignore（加 `__pycache__`）、regression-contract.yaml（移除 parser/scheduler 引用）
+- **代码清理**: actions.js 移除孤立 `logDecision` 导出（decision_log 表仍通过直接 SQL 使用）、requirements.txt 移除未实际 import 的 `openai`、conftest.py 移除未使用 fixture
+- **Gotcha**: `logDecision` 函数未被导入但 `decision_log` 表被 6+ 文件直接 SQL 查询 — 函数删除安全，表保留
+- **Pattern**: 多 Agent 并行审计高效但需交叉验证 — 本次确认 frontend-proxy.js 是活跃组件（docker-compose.yml 在用）
+- **Testing**: 639 Node.js + 40 Python tests pass, DevGate 8 facts + 4 versions all green
+
 ## [2026-02-07] 深度清理 — Python 死代码 + Node.js 残留 (v1.11.2)
 
 ### Feature: 仓库级死代码清理

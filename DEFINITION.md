@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-07
-**Brain 版本**: 1.11.5
-**Schema 版本**: 008
+**Brain 版本**: 1.11.6
+**Schema 版本**: 009
 **状态**: 生产运行中
 
 ---
@@ -88,7 +88,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
           ▼
 ┌─────────────────────────────────────────────┐
 │  PostgreSQL — 唯一真相源                     │
-│  cecelia 数据库, schema v008                 │
+│  cecelia 数据库, schema v009                 │
 │  19 张核心表                                │
 └─────────────────────────────────────────────┘
 ```
@@ -508,7 +508,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, features, working_memory, cecelia_events, decision_log, daily_logs
-5. **Schema 版本** — 必须 = '008'
+5. **Schema 版本** — 必须 = '009'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -672,7 +672,7 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-008)
+├── migrations/                # SQL 迁移 (000-009)
 │   ├── 000_base_schema.sql
 │   ├── 001_cecelia_architecture_upgrade.sql
 │   ├── 002_task_type_review_merge.sql
@@ -681,7 +681,8 @@ brain/
 │   ├── 005_schema_version_and_config.sql
 │   ├── 006_exploratory_support.sql
 │   ├── 007_pending_actions.sql
-│   └── 008_publishing_system.sql
+│   ├── 008_publishing_system.sql
+│   └── 009_fix_decisions_schema.sql
 │
 └── src/__tests__/             # Vitest 测试 (668/673 pass)
 ```
