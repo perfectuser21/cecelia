@@ -4318,4 +4318,61 @@ router.get('/cortex/quality-stats', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/cortex/feedback
+ * Record user feedback for an RCA analysis
+ *
+ * Body: { analysis_id: UUID, rating: number (1-5), comment?: string }
+ */
+router.post('/cortex/feedback', async (req, res) => {
+  try {
+    const { analysis_id, rating, comment } = req.body;
+
+    if (!analysis_id) {
+      return res.status(400).json({ error: 'analysis_id required' });
+    }
+
+    if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'rating must be a number between 1 and 5' });
+    }
+
+    const { recordQualityFeedback, updateEffectivenessScore } = await import('./cortex-quality.js');
+
+    // Record feedback
+    await recordQualityFeedback(analysis_id, rating, comment);
+
+    // Update effectiveness score
+    const result = await updateEffectivenessScore(analysis_id);
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to record feedback:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/learning/evaluate-strategy
+ * Evaluate strategy adjustment effectiveness
+ *
+ * Body: { strategy_key: string, days?: number }
+ */
+router.post('/learning/evaluate-strategy', async (req, res) => {
+  try {
+    const { strategy_key, days = 7 } = req.body;
+
+    if (!strategy_key) {
+      return res.status(400).json({ error: 'strategy_key required' });
+    }
+
+    const { evaluateStrategyEffectiveness } = await import('./learning.js');
+    const result = await evaluateStrategyEffectiveness(strategy_key, days);
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to evaluate strategy:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

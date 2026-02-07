@@ -338,6 +338,160 @@ Required analysis:
   }
 }
 
+/**
+ * Evaluate strategy adjustment effectiveness
+ * Compares task success rates before and after strategy adjustment
+ * @param {string} strategyKey - Strategy parameter name (e.g., 'retry.max_attempts')
+ * @param {number} days - Evaluation period in days (default: 7)
+ * @returns {Promise<Object>} - Effectiveness evaluation result
+ */
+export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
+  try {
+    // 1. Find strategy adoption record
+    const adoptionResult = await pool.query(`
+      SELECT id, adopted_at, strategy_key, old_value, new_value
+      FROM strategy_adoptions
+      WHERE strategy_key = $1
+      ORDER BY adopted_at DESC
+      LIMIT 1
+    `, [strategyKey]);
+
+    if (adoptionResult.rows.length === 0) {
+      return {
+        strategy_key: strategyKey,
+        found: false,
+        message: 'No adoption record found for this strategy',
+      };
+    }
+
+    const adoption = adoptionResult.rows[0];
+    const adoptedAt = new Date(adoption.adopted_at);
+    const now = new Date();
+    const daysSinceAdoption = Math.floor((now - adoptedAt) / (1000 * 60 * 60 * 24));
+
+    // Need at least 'days' period after adoption to evaluate
+    if (daysSinceAdoption < days) {
+      return {
+        strategy_key: strategyKey,
+        adoption_id: adoption.id,
+        evaluation_possible: false,
+        message: `Not enough time passed (${daysSinceAdoption} days < ${days} days required)`,
+        days_since_adoption: daysSinceAdoption,
+      };
+    }
+
+    // 2. Calculate baseline success rate (period BEFORE adoption)
+    const baselineStart = new Date(adoptedAt.getTime() - days * 24 * 60 * 60 * 1000);
+    const baselineEnd = adoptedAt;
+
+    const baselineResult = await pool.query(`
+      SELECT
+        COUNT(*) AS total_tasks,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_tasks
+      FROM tasks
+      WHERE created_at >= $1 AND created_at < $2
+        AND task_type IN ('dev', 'review', 'qa', 'audit')
+    `, [baselineStart, baselineEnd]);
+
+    const baselineTotal = parseInt(baselineResult.rows[0].total_tasks);
+    const baselineCompleted = parseInt(baselineResult.rows[0].completed_tasks);
+    const baselineSuccessRate = baselineTotal > 0
+      ? ((baselineCompleted / baselineTotal) * 100).toFixed(2)
+      : null;
+
+    // 3. Calculate post-adjustment success rate (period AFTER adoption)
+    const postStart = adoptedAt;
+    const postEnd = new Date(adoptedAt.getTime() + days * 24 * 60 * 60 * 1000);
+
+    const postResult = await pool.query(`
+      SELECT
+        COUNT(*) AS total_tasks,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_tasks
+      FROM tasks
+      WHERE created_at >= $1 AND created_at < $2
+        AND task_type IN ('dev', 'review', 'qa', 'audit')
+    `, [postStart, postEnd]);
+
+    const postTotal = parseInt(postResult.rows[0].total_tasks);
+    const postCompleted = parseInt(postResult.rows[0].completed_tasks);
+    const postSuccessRate = postTotal > 0
+      ? ((postCompleted / postTotal) * 100).toFixed(2)
+      : null;
+
+    // 4. Determine if effective (success rate improvement > 5%)
+    const isEffective = baselineSuccessRate !== null && postSuccessRate !== null
+      ? (postSuccessRate - baselineSuccessRate) > 5
+      : null;
+
+    const improvementPercentage = baselineSuccessRate !== null && postSuccessRate !== null
+      ? (postSuccessRate - baselineSuccessRate).toFixed(2)
+      : null;
+
+    // 5. Save to strategy_effectiveness table
+    await pool.query(`
+      INSERT INTO strategy_effectiveness (
+        adoption_id,
+        strategy_key,
+        baseline_success_rate,
+        post_adjustment_success_rate,
+        sample_size,
+        evaluation_period_days,
+        is_effective,
+        improvement_percentage,
+        evaluated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      ON CONFLICT (adoption_id) DO UPDATE SET
+        baseline_success_rate = $3,
+        post_adjustment_success_rate = $4,
+        sample_size = $5,
+        is_effective = $7,
+        improvement_percentage = $8,
+        evaluated_at = NOW()
+    `, [
+      adoption.id,
+      strategyKey,
+      baselineSuccessRate,
+      postSuccessRate,
+      postTotal,
+      days,
+      isEffective,
+      improvementPercentage,
+    ]);
+
+    // 6. Update effectiveness_score in strategy_adoptions table
+    if (isEffective !== null) {
+      const effectivenessScore = isEffective
+        ? Math.min(40, Math.floor(parseFloat(improvementPercentage) * 4)) // Max 40 points
+        : 0;
+
+      await pool.query(`
+        UPDATE strategy_adoptions
+        SET effectiveness_score = $1, evaluated_at = NOW()
+        WHERE id = $2
+      `, [effectivenessScore, adoption.id]);
+    }
+
+    console.log(`[learning] Strategy effectiveness evaluated: ${strategyKey} - ${isEffective ? 'Effective' : 'Not effective'} (${improvementPercentage}% improvement)`);
+
+    return {
+      strategy_key: strategyKey,
+      adoption_id: adoption.id,
+      evaluation_possible: true,
+      baseline_success_rate: parseFloat(baselineSuccessRate),
+      post_adjustment_success_rate: parseFloat(postSuccessRate),
+      improvement_percentage: parseFloat(improvementPercentage),
+      is_effective: isEffective,
+      sample_size: postTotal,
+      evaluation_period_days: days,
+      baseline_period: { start: baselineStart, end: baselineEnd, sample_size: baselineTotal },
+      post_period: { start: postStart, end: postEnd, sample_size: postTotal },
+    };
+  } catch (err) {
+    console.error(`[learning] Failed to evaluate strategy effectiveness: ${err.message}`);
+    throw err;
+  }
+}
+
 export {
   ADJUSTABLE_PARAMS,
 };

@@ -216,8 +216,8 @@ describe('Cortex Quality Assessment', () => {
 
   describe('getQualityStats', () => {
     beforeEach(async () => {
-      // Clean up
-      await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE 'Test:%'");
+      // Clean all cortex_analyses for clean stats
+      await pool.query('DELETE FROM cortex_analyses');
     });
 
     it('should return stats for given time period', async () => {

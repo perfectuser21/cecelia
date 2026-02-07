@@ -236,3 +236,159 @@ export async function getQualityStats(days = 7) {
     max_quality_score: parseInt(stats.max_quality_score) || 0
   };
 }
+
+/**
+ * Record user feedback for an RCA analysis
+ * @param {string} analysisId - Analysis UUID
+ * @param {number} rating - User rating (1-5 stars)
+ * @param {string} comment - Optional feedback comment
+ * @returns {Promise<Object>} - Updated analysis record
+ */
+export async function recordQualityFeedback(analysisId, rating, comment = null) {
+  if (!analysisId) {
+    throw new Error('analysis_id is required');
+  }
+
+  if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+    throw new Error('rating must be a number between 1 and 5');
+  }
+
+  try {
+    const result = await pool.query(`
+      UPDATE cortex_analyses
+      SET
+        user_feedback = $1,
+        feedback_comment = $2,
+        feedback_updated_at = NOW()
+      WHERE id = $3
+      RETURNING id, user_feedback, feedback_comment, quality_score, quality_dimensions
+    `, [rating, comment, analysisId]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Analysis ${analysisId} not found`);
+    }
+
+    console.log(`[cortex-quality] Recorded feedback for analysis ${analysisId}: ${rating} stars`);
+    return result.rows[0];
+  } catch (err) {
+    console.error(`[cortex-quality] Failed to record feedback: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Update effectiveness score based on user feedback and reoccurrence
+ * Formula: effectiveness = (rating * 8) - reoccurrence_penalty
+ * - 5 stars = 40 points, 4 stars = 32, 3 stars = 24, 2 stars = 16, 1 star = 8
+ * - Reoccurrence penalty: 1 time = -5, 2 times = -10, 3+ times = -20
+ * @param {string} analysisId - Analysis UUID
+ * @returns {Promise<Object>} - Updated quality score and dimensions
+ */
+export async function updateEffectivenessScore(analysisId) {
+  try {
+    // Fetch current analysis data
+    const result = await pool.query(`
+      SELECT id, user_feedback, reoccurrence_count, quality_score, quality_dimensions
+      FROM cortex_analyses
+      WHERE id = $1
+    `, [analysisId]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Analysis ${analysisId} not found`);
+    }
+
+    const analysis = result.rows[0];
+    const { user_feedback, reoccurrence_count, quality_dimensions } = analysis;
+
+    // Parse existing dimensions
+    const dimensions = quality_dimensions || {
+      completeness: 0,
+      effectiveness: 0,
+      timeliness: 0,
+      uniqueness: 0
+    };
+
+    // Calculate effectiveness score
+    let effectiveness = 0;
+
+    // Base score from user feedback (if provided)
+    if (user_feedback !== null && user_feedback !== undefined) {
+      effectiveness = user_feedback * 8; // 5 stars = 40 points max
+    }
+
+    // Apply reoccurrence penalty
+    const reoccurrences = reoccurrence_count || 0;
+    let reoccurrencePenalty = 0;
+    if (reoccurrences === 1) {
+      reoccurrencePenalty = 5;
+    } else if (reoccurrences === 2) {
+      reoccurrencePenalty = 10;
+    } else if (reoccurrences >= 3) {
+      reoccurrencePenalty = 20;
+    }
+
+    effectiveness = Math.max(0, effectiveness - reoccurrencePenalty);
+
+    // Update dimensions
+    dimensions.effectiveness = effectiveness;
+
+    // Recalculate total quality score
+    const newQualityScore = dimensions.completeness + dimensions.effectiveness + dimensions.timeliness + dimensions.uniqueness;
+
+    // Update database
+    await pool.query(`
+      UPDATE cortex_analyses
+      SET
+        quality_score = $1,
+        quality_dimensions = $2
+      WHERE id = $3
+    `, [newQualityScore, JSON.stringify(dimensions), analysisId]);
+
+    console.log(`[cortex-quality] Updated effectiveness for ${analysisId}: ${effectiveness} points (quality: ${newQualityScore})`);
+
+    return {
+      analysis_id: analysisId,
+      quality_score: newQualityScore,
+      dimensions,
+      user_feedback,
+      reoccurrence_count: reoccurrences,
+      reoccurrence_penalty: reoccurrencePenalty
+    };
+  } catch (err) {
+    console.error(`[cortex-quality] Failed to update effectiveness: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Increment reoccurrence count when same failure happens again
+ * @param {string} analysisId - Analysis UUID of the original RCA
+ * @returns {Promise<Object>} - Updated reoccurrence data
+ */
+export async function incrementReoccurrence(analysisId) {
+  try {
+    const result = await pool.query(`
+      UPDATE cortex_analyses
+      SET
+        reoccurrence_count = COALESCE(reoccurrence_count, 0) + 1,
+        last_reoccurrence_at = NOW()
+      WHERE id = $1
+      RETURNING id, reoccurrence_count, last_reoccurrence_at
+    `, [analysisId]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Analysis ${analysisId} not found`);
+    }
+
+    const updated = result.rows[0];
+    console.log(`[cortex-quality] Incremented reoccurrence for ${analysisId}: count=${updated.reoccurrence_count}`);
+
+    // Automatically update effectiveness score after reoccurrence
+    await updateEffectivenessScore(analysisId);
+
+    return updated;
+  } catch (err) {
+    console.error(`[cortex-quality] Failed to increment reoccurrence: ${err.message}`);
+    throw err;
+  }
+}

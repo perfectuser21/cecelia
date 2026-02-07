@@ -1,5 +1,71 @@
 # Learnings
 
+## [2026-02-07] Cortex Quality Assessment System — 质量评估与去重机制 (v1.21.0)
+
+### Feature: 实现 Cortex 质量评估系统（PR #192）
+
+- **What**: 为 Cortex RCA 分析添加 4 维度质量评分（完整性、有效性、时效性、独特性）、基于 SHA256 的相似度检测去重（>80% 阈值复用现有分析）、策略采纳效果追踪
+- **Problem**: Cortex 生成的 RCA 分析缺少质量评估和去重机制，导致重复分析相似问题、无法量化分析质量、无法追踪策略有效性
+- **Solution**:
+  1. 新增 Migration 015：cortex_analyses 表添加 quality_score, quality_dimensions, similarity_hash, duplicate_of 列
+  2. 新增 cortex_quality_reports 和 strategy_adoptions 表用于聚合统计和效果追踪
+  3. 实现 cortex-quality.js 模块：evaluateQualityInitial(), generateSimilarityHash(), checkShouldCreateRCA()
+  4. 集成到 performRCA(): 执行前检查相似度，>80% 相似则复用现有分析
+  5. 集成到 saveCortexAnalysis(): 保存时生成 similarity_hash，异步触发质量评估（fire-and-forget）
+  6. 新增 3 个 API 端点：/evaluate-quality, /check-similarity, /quality-stats
+- **Tests**: 新增 19 个测试（12 cortex-quality + 7 migration-015），全部通过（802/802 total）
+
+### Gotchas（关键教训）
+
+1. **UUID vs String 类型问题**
+   - **Bug**: 测试中使用字符串 task_id（如 'test-task-id-1'），但 PostgreSQL 列类型是 UUID，导致 `invalid input syntax for type uuid` 错误
+   - **Fix**: 测试数据改用正确的 UUID 格式（'00000000-0000-0000-0000-000000000001'）或 null（如果不需要外键引用）
+   - **影响程度**: High - 阻塞所有包含 UUID 列的测试
+
+2. **event_id 类型是 INTEGER 不是 UUID**
+   - **Bug**: cortex_analyses.event_id 是 INTEGER 类型（外键到 cecelia_events.id），测试中传入 UUID 字符串导致类型错误
+   - **Fix**: 测试中移除 event.id 或使用整数 ID
+   - **影响程度**: High - 阻塞测试
+
+3. **PostgreSQL numeric 返回字符串**
+   - **Bug**: confidence_score 是 NUMERIC 类型，从数据库返回时是字符串（'0.90'）而不是数字（0.9）
+   - **Fix**: 测试断言时使用 `parseFloat(saved.confidence_score)` 转换
+   - **影响程度**: Low - 仅影响测试断言
+
+4. **版本号同步 - 双 .brain-versions 文件**
+   - **Bug**: 项目根目录和 brain/ 目录各有一个 .brain-versions 文件，CI 检查根目录的但我更新了 brain/ 目录的
+   - **Fix**: 同时更新两个文件（或者只更新根目录的）
+   - **影响程度**: High - 阻塞 CI "Check version sync"
+
+5. **测试数据时间戳影响排序**
+   - **Bug**: searchRelevantAnalyses 测试中，两个完全匹配的分析记录，时间戳会作为 tiebreaker，导致"不是期望的那个"排在前面
+   - **Fix**: 调整测试数据的时间戳，让期望排在前面的记录时间最新
+   - **影响程度**: Medium - 导致排序测试失败
+
+6. **thalamus.js 缺少 getRecentLearnings 导入**
+   - **Bug**: thalamus.js 导出列表包含 getRecentLearnings，但 import 语句没有从 learning.js 导入它，导致 GoldenPath E2E 启动时报 `Export 'getRecentLearnings' is not defined`
+   - **Fix**: 在 import 中添加 getRecentLearnings
+   - **影响程度**: High - 阻塞 Brain 启动和 GoldenPath E2E
+
+7. **selfcheck.test.js mock 数据需要同步**
+   - **Bug**: selfcheck.js 的 CORE_TABLES 列表包含 cortex_analyses，但 selfcheck.test.js 的 mock information_schema 数据没有包含这个表
+   - **Fix**: 在 mock 数据的 information_schema.rows 中添加 `{ table_name: 'cortex_analyses' }`
+   - **影响程度**: High - 导致所有 selfcheck 测试失败
+
+8. **Migration 必须在测试前运行**
+   - **Bug**: migration-015.test.js 检测 Migration 015 是否已应用，但本地开发时可能没运行 migration
+   - **Fix**: 使用 docker exec 运行 migration SQL 文件：`docker exec -i cecelia-postgres psql -U cecelia -d cecelia < migrations/015_cortex_quality_system.sql`
+   - **影响程度**: High - 阻塞所有依赖新 schema 的测试
+
+### Best Practices
+
+- **测试 UUID 字段**: 始终使用正确的 UUID 格式或 null，不要使用字符串 ID
+- **检查列类型**: 修改 schema 后，检查所有列的实际类型（用 `\d table_name`），不要假设类型
+- **版本号同步**: 修改版本号时，检查所有 version 文件位置（package.json, VERSION, .brain-versions, DEFINITION.md），使用 facts-check.mjs 验证
+- **测试数据顺序**: 如果测试依赖排序，确保测试数据的时间戳/优先级设置合理
+- **Import/Export 一致性**: 修改模块时，确保 import 语句和 export 列表同步
+- **Mock 数据完整性**: 修改 schema 后，同步更新所有相关测试的 mock 数据
+
 ## [2026-02-07] Cortex Persistent Memory — RCA 分析结果持久化与语义检索 (v1.20.0)
 
 ### Feature: 实现 Cortex 持久化记忆系统（PR #189）

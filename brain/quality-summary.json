@@ -1,8 +1,6 @@
 {
-  "branch": "cp-02071903-cortex-quality",
-  "head_sha": "1aaefc3",
-  "timestamp": "2026-02-07T11:21:02Z",
-  "tests_passed": 802,
-  "tests_total": 802,
-  "note": "All tests pass. Quality 只汇总，不判定。CI 是最终裁判。"
+  "branch": "cp-02071946-immune-connect",
+  "head_sha": "cd13a07",
+  "timestamp": "2026-02-07T11:51:42Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
