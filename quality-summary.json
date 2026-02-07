@@ -1,0 +1,6 @@
+{
+  "branch": "cp-02072212-brain-status-dashboard",
+  "head_sha": "ff7b0fb",
+  "timestamp": "2026-02-07T14:16:59Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
+}
