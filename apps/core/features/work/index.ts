@@ -35,7 +35,7 @@ const manifest: FeatureManifest = {
     { path: '/work/projects/:projectId', component: 'ProjectDetail' },
     { path: '/work/project-panorama', component: 'ProjectPanorama' },
     { path: '/work/whiteboard', component: 'Whiteboard' },
-    { path: '/work/okr/area/:areaId', component: 'AreaDetail' },
+    { path: '/work/okr/area/:areaId', component: 'AreaOKRDetail' },
     // Redirects from old paths
     { path: '/work/projects', redirect: '/work' },
     // /work/tasks is now a real tab route (WorkTabbed handles it)
@@ -60,7 +60,7 @@ const manifest: FeatureManifest = {
     ProjectDetail: () => import('../planning/pages/ProjectDetail'),
     ProjectPanorama: () => import('../planning/pages/ProjectPanorama'),
     Whiteboard: () => import('../planning/pages/Whiteboard'),
-    AreaDetail: () => import('../planning/pages/AreaDetail'),
+    AreaOKRDetail: () => import('../planning/pages/AreaOKRDetail'),
   },
 };
 
