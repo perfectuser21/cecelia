@@ -126,7 +126,7 @@ describe('Cortex Strategy Adjustments', () => {
 
   it('performRCA automatically saves analysis to cortex_analyses table', async () => {
     const failedTask = {
-      id: 'test-persist-task-001',
+      id: '00000000-0000-0000-0000-000000000003',
       title: 'Test Persistence Task',
       task_type: 'dev',
       status: 'failed'

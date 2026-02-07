@@ -4191,6 +4191,11 @@ router.post('/proposals/:id/rollback', async (req, res) => {
 // ============================================================
 
 import { searchRelevantAnalyses } from './cortex.js';
+import {
+  evaluateQualityInitial,
+  checkShouldCreateRCA,
+  getQualityStats,
+} from './cortex-quality.js';
 
 /**
  * GET /api/brain/cortex/analyses
@@ -4246,6 +4251,69 @@ router.get('/cortex/analyses/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error('[API] Failed to get cortex analysis:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/cortex/evaluate-quality
+ * Evaluate quality for a specific analysis
+ *
+ * Body: { analysis_id: UUID, evaluation_type: 'initial'|'final' }
+ */
+router.post('/cortex/evaluate-quality', async (req, res) => {
+  try {
+    const { analysis_id, evaluation_type = 'initial' } = req.body;
+
+    if (!analysis_id) {
+      return res.status(400).json({ error: 'analysis_id required' });
+    }
+
+    const result = await evaluateQualityInitial(analysis_id);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to evaluate quality:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/cortex/check-similarity
+ * Check if RCA should be created or reused
+ *
+ * Body: { task_type, reason, root_cause }
+ */
+router.post('/cortex/check-similarity', async (req, res) => {
+  try {
+    const { task_type, reason, root_cause } = req.body;
+
+    const result = await checkShouldCreateRCA({
+      task_type,
+      reason,
+      root_cause: root_cause || ''
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to check similarity:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/quality-stats
+ * Get quality statistics for a time period
+ *
+ * Query params: days (default: 7)
+ */
+router.get('/cortex/quality-stats', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || '7');
+    const stats = await getQualityStats(days);
+
+    res.json({ success: true, ...stats });
+  } catch (err) {
+    console.error('[API] Failed to get quality stats:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

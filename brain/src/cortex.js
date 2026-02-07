@@ -20,6 +20,11 @@
 import pool from './db.js';
 import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
 import { searchRelevantLearnings } from './learning.js';
+import {
+  evaluateQualityInitial,
+  generateSimilarityHash,
+  checkShouldCreateRCA,
+} from './cortex-quality.js';
 
 // ============================================================
 // Cortex Prompt
@@ -442,6 +447,13 @@ async function recordLearnings(learnings, event) {
 async function saveCortexAnalysis(analysis, context = {}) {
   const { task, event, failureInfo } = context;
 
+  // Generate similarity hash
+  const similarityHash = generateSimilarityHash({
+    task_type: task?.task_type || failureInfo?.task_type,
+    reason: failureInfo?.class || 'UNKNOWN',
+    root_cause: analysis.analysis || '',
+  });
+
   const result = await pool.query(`
     INSERT INTO cortex_analyses (
       task_id,
@@ -457,8 +469,9 @@ async function saveCortexAnalysis(analysis, context = {}) {
       analysis_depth,
       confidence_score,
       analyst,
-      metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      metadata,
+      similarity_hash
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     RETURNING id
   `, [
     task?.id || null,
@@ -474,10 +487,18 @@ async function saveCortexAnalysis(analysis, context = {}) {
     'deep',
     analysis.confidence || 0.8,
     'cortex',
-    JSON.stringify({ created_by: 'performRCA', ...context.metadata })
+    JSON.stringify({ created_by: 'performRCA', ...context.metadata }),
+    similarityHash
   ]);
 
-  return result.rows[0].id;
+  const analysisId = result.rows[0].id;
+
+  // Fire-and-forget quality evaluation
+  evaluateQualityInitial(analysisId).catch(err => {
+    console.error('[Cortex] Quality evaluation failed:', err.message);
+  });
+
+  return analysisId;
 }
 
 /**
@@ -549,6 +570,58 @@ async function performRCA(failedTask, history = []) {
     failure_history: history,
     timestamp: new Date().toISOString()
   };
+
+  // Check for duplicate RCA
+  const failureClass = history[0]?.failure_classification?.class || 'UNKNOWN';
+  const checkResult = await checkShouldCreateRCA({
+    task_type: failedTask.task_type,
+    reason: failureClass,
+    root_cause: '',
+  });
+
+  if (!checkResult.should_create) {
+    console.log(`[Cortex] Duplicate RCA detected (similarity: ${checkResult.similarity}%), reusing existing analysis`);
+
+    // Fetch existing analysis
+    const existingAnalysis = await pool.query(
+      'SELECT * FROM cortex_analyses WHERE id = $1',
+      [checkResult.duplicate_of]
+    );
+
+    if (existingAnalysis.rows.length > 0) {
+      const existing = existingAnalysis.rows[0];
+
+      // Parse JSONB fields
+      let contributing_factors = existing.contributing_factors;
+      if (typeof contributing_factors === 'string') {
+        try {
+          contributing_factors = JSON.parse(contributing_factors);
+        } catch (e) {
+          contributing_factors = [];
+        }
+      }
+
+      let strategy_adjustments = existing.strategy_adjustments;
+      if (typeof strategy_adjustments === 'string') {
+        try {
+          strategy_adjustments = JSON.parse(strategy_adjustments);
+        } catch (e) {
+          strategy_adjustments = [];
+        }
+      }
+
+      return {
+        task_id: failedTask.id,
+        analysis: existing.root_cause,
+        recommended_actions: [],
+        learnings: [],
+        strategy_adjustments,
+        contributing_factors,
+        confidence: existing.confidence_score,
+        reused_from: checkResult.duplicate_of
+      };
+    }
+  }
 
   // Inject adjustable parameters into context for RCA
   const rcaContext = {

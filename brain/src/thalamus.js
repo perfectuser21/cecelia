@@ -20,7 +20,7 @@
 /* global console */
 
 import pool from './db.js';
-import { searchRelevantLearnings } from './learning.js';
+import { searchRelevantLearnings, getRecentLearnings } from './learning.js';
 
 // ============================================================
 // LLM Error Type Classification
