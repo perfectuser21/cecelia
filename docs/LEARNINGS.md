@@ -1,5 +1,30 @@
 # Learnings
 
+## [2026-02-07] Cortex RCA 任务处理 — L2 皮层实现 (v1.15.0)
+
+### Feature: Brain 内部 Cortex RCA 任务处理（PR #184）
+
+- **What**: 实现 Brain 内部的 Cortex RCA（Root Cause Analysis）任务处理，完成 L2 皮层闭环
+- **Problem**: Alertness 系统在 EMERGENCY 级别创建 RCA 任务（`requires_cortex=true`），但 Brain 没有处理机制，任务一直 queued
+- **Solution**:
+  1. 在 `tick.js` 中添加 `processCortexTask()` 函数
+  2. 在 `dispatchNextTask()` 中检测 `payload.requires_cortex=true` 标志
+  3. 检测到 Cortex 任务时，直接调用 `cortex.performRCA()` 在 Brain 内部处理
+  4. 分析结果保存到 `cecelia_events` 表（event_type='cortex_rca_complete'）
+  5. 任务 payload 更新为包含 RCA 结果或错误信息
+- **Tests**: 新增 3 个测试（733 total passing）
+  - Cortex 任务处理成功场景
+  - Cortex 任务失败处理（Opus API error）
+  - 分析结果结构验证（root_cause, contributing_factors, mitigations, learnings）
+- **Integration**: Cortex 任务完全在 Brain 内部执行，不派发给外部 agent
+  - Alertness → 创建 RCA 任务 → Tick 检测 → Cortex 分析 → 保存结果 → 任务完成
+- **CI Gotcha**: Version sync 检查失败 2 次
+  1. DEFINITION.md 版本号未更新（1.14.1 → 1.15.0）
+  2. `.brain-versions` 文件未更新
+  - **Pattern**: `npm version minor` 只更新 package.json + package-lock.json，需手动同步其他文件
+- **Data model**: tasks 表没有 `result` 列，分析结果存储在 `payload.rca_result` 中
+- **Pattern**: Brain-internal 处理 vs 外部 agent 派发的决策标准：需要 Opus 深度分析 + 紧急响应 → Brain 内部；其他任务 → 外部 agent
+
 ## [2026-02-07] 修复免疫系统 P0 断链 — Systemic failure 检测 + Circuit breaker 成功恢复 + Watchdog kill 隔离 (v1.13.1)
 
 ### Feature: 免疫系统核心断链修复（PR #174）
