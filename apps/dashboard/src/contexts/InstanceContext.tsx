@@ -71,7 +71,7 @@ export function InstanceProvider({ children }: { children: ReactNode }) {
           setCoreConfig(dynamicConfig);
           setConfig(dynamicConfig.instanceConfig);
           applyTheme(dynamicConfig.instanceConfig.theme, dynamicConfig.instanceConfig.instance);
-          document.title = 'Cecelia Core';
+          document.title = 'Perfect21';
         } else {
           setError('Failed to load Core configuration');
         }

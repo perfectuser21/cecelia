@@ -84,14 +84,14 @@ export default function DynamicSidebar({
                 className="text-white font-semibold text-lg"
                 style={{ fontFamily: 'system-ui', letterSpacing: '-0.02em' }}
               >
-                {config?.theme.logoCollapsed || 'Z'}
+                {config?.theme.logoCollapsed || 'P'}
               </span>
             </div>
           </div>
         ) : (
           <img
             src={config?.theme.logo || '/logo-white.png'}
-            alt={config?.name || '运营中台'}
+            alt={config?.name || 'Perfect21'}
             className="h-9 drop-shadow-lg"
           />
         )}

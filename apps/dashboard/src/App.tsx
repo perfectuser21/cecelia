@@ -114,12 +114,12 @@ function AppContent() {
                   {/* 主圆 */}
                   <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/5 border border-white/30 flex items-center justify-center backdrop-blur-sm">
                     <span className="text-white font-semibold text-lg" style={{ fontFamily: 'system-ui', letterSpacing: '-0.02em' }}>
-                      {config?.theme.logoCollapsed || 'Z'}
+                      {config?.theme.logoCollapsed || 'P'}
                     </span>
                   </div>
                 </div>
               ) : (
-                <img src={config?.theme.logo || '/logo-white.png'} alt={config?.name || '运营中台'} className="h-9 drop-shadow-lg" />
+                <img src={config?.theme.logo || '/logo-white.png'} alt={config?.name || 'Perfect21'} className="h-9 drop-shadow-lg" />
               )}
             </div>
 

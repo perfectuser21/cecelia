@@ -9,7 +9,7 @@ import type { ThemeConfig, InstanceConfig } from './types';
 
 export const coreTheme: ThemeConfig = {
   logo: '/logo-white.png',
-  logoCollapsed: 'C',
+  logoCollapsed: 'P',
   primaryColor: '#94a3b8',  // slate-400 冷灰
   secondaryColor: '#cbd5e1', // slate-300
   sidebarGradient: 'linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.9) 50%, rgba(51,65,85,0.85) 100%)',
@@ -17,6 +17,6 @@ export const coreTheme: ThemeConfig = {
 
 export const coreInstanceConfig: InstanceConfig = {
   instance: 'core',
-  name: 'Core',
+  name: 'Perfect21',
   theme: coreTheme,
 };
