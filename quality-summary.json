@@ -1,12 +1,10 @@
 {
-  "branch": "cp-02042336-29ed8180-f852-4e24-943d-45dea1",
-  "checks": {
-    "typecheck": {"status": "pass"},
-    "build": {"status": "pass"},
-    "goals-api-test": {"status": "pass", "tests": 22}
+  "branch": "cp-20260207-hierarchical-nav",
+  "head_sha": "d6a589625",
+  "timestamp": "2026-02-07T02:11:11Z",
+  "builds": {
+    "tsc": "pass",
+    "vite": "pass"
   },
-  "gates": {
-    "quality": {"status": "pass"}
-  },
-  "timestamp": "2026-02-04T23:47:57+08:00"
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

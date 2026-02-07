@@ -22,6 +22,12 @@ export interface FeatureRoute {
     icon?: string;
     group?: string;   // Group ID to nest under
     order?: number;
+    children?: Array<{
+      path: string;
+      label: string;
+      icon?: string;
+      order?: number;
+    }>;
   };
 }
 
@@ -111,4 +117,5 @@ export interface NavGroupItem {
   featureKey: string;
   component?: string;
   requireSuperAdmin?: boolean;
+  children?: NavGroupItem[];
 }

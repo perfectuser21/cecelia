@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { LogOut, PanelLeftClose, PanelLeft, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import CollapsibleNavItem from './CollapsibleNavItem';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
 import {
@@ -18,7 +19,7 @@ import {
 
 // 将 Core 的 NavGroup 格式转换为带 LucideIcon 的格式
 function convertCoreNavGroups(
-  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string; children?: Array<{ path: string; icon: string; label: string; featureKey: string }> }> }>
 ): NavGroup[] {
   return coreNavGroups.map(group => ({
     title: group.title,
@@ -28,6 +29,12 @@ function convertCoreNavGroups(
       label: item.label,
       featureKey: item.featureKey,
       component: item.component,
+      children: item.children?.map(child => ({
+        path: child.path,
+        icon: (LucideIcons as any)[child.icon] || Circle,
+        label: child.label,
+        featureKey: child.featureKey,
+      })),
     })),
   }));
 }
@@ -117,6 +124,17 @@ export default function DynamicSidebar({
             )}
             <div className="space-y-1">
               {group.items.map((item) => {
+                if (item.children && item.children.length > 0) {
+                  return (
+                    <CollapsibleNavItem
+                      key={item.path}
+                      item={item}
+                      collapsed={collapsed}
+                      isCore={isCore}
+                      currentPath={location.pathname}
+                    />
+                  );
+                }
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
                 return (

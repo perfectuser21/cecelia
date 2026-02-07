@@ -16,7 +16,15 @@ const manifest: FeatureManifest = {
     {
       path: '/work',
       component: 'WorkTabbed',
-      navItem: { label: 'Work', icon: 'Briefcase', group: 'work' },
+      navItem: {
+        label: 'Work', icon: 'Briefcase', group: 'work',
+        children: [
+          { path: '/work', label: 'Projects', icon: 'FolderKanban', order: 1 },
+          { path: '/work/okr', label: 'OKR', icon: 'Target', order: 2 },
+          { path: '/work/roadmap', label: 'Roadmap', icon: 'Map', order: 3 },
+          { path: '/work/features', label: 'Features', icon: 'Layers', order: 4 },
+        ],
+      },
     },
     { path: '/work/okr', component: 'WorkTabbed' },
     { path: '/work/roadmap', component: 'WorkTabbed' },

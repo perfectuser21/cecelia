@@ -28,6 +28,8 @@ export interface NavItem {
   // 路由配置
   component?: string;  // 组件路径，用于懒加载
   redirect?: string;   // 重定向目标
+  // 子导航项（层级导航）
+  children?: NavItem[];
 }
 
 export interface NavGroup {
@@ -180,13 +182,23 @@ export function filterNavGroups(
   return groups
     .map(group => ({
       ...group,
-      items: group.items.filter(item => {
-        // 检查 feature flag
-        if (!isFeatureEnabled(item.featureKey)) return false;
-        // 检查超级管理员权限
-        if (item.requireSuperAdmin && !isSuperAdmin) return false;
-        return true;
-      })
+      items: group.items
+        .filter(item => {
+          // 检查 feature flag
+          if (!isFeatureEnabled(item.featureKey)) return false;
+          // 检查超级管理员权限
+          if (item.requireSuperAdmin && !isSuperAdmin) return false;
+          return true;
+        })
+        .map(item => ({
+          ...item,
+          // 递归过滤 children
+          children: item.children?.filter(child => {
+            if (!isFeatureEnabled(child.featureKey)) return false;
+            if (child.requireSuperAdmin && !isSuperAdmin) return false;
+            return true;
+          }),
+        })),
     }))
     .filter(group => group.items.length > 0);
 }

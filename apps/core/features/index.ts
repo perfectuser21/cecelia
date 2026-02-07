@@ -78,6 +78,12 @@ function buildNavGroupsFromManifests(manifests: FeatureManifest[]): NavGroup[] {
         label: route.navItem.label,
         featureKey: `${manifest.id}-${route.component}`,
         component: route.component,
+        children: route.navItem.children?.map((child, idx) => ({
+          path: child.path,
+          icon: child.icon || 'Circle',
+          label: child.label,
+          featureKey: `${manifest.id}-child-${idx}`,
+        })),
       };
 
       if (route.navItem.group) {

@@ -9,6 +9,8 @@ import { useState, useMemo, lazy, Suspense } from 'react';
 import { Route, Link, useLocation } from 'react-router-dom';
 import { LogOut, PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import CollapsibleNavItem from './components/CollapsibleNavItem';
+import Breadcrumb from './components/Breadcrumb';
 // 配置驱动
 import { getAutopilotNavGroups, filterNavGroups, additionalRoutes, type NavGroup } from './config/navigation.config';
 import DynamicRouter from './components/DynamicRouter';
@@ -26,7 +28,7 @@ import './App.css';
 
 // 将 Core 的 NavGroup 格式转换为带 LucideIcon 的格式
 function convertCoreNavGroups(
-  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string; children?: Array<{ path: string; icon: string; label: string; featureKey: string }> }> }>
 ): NavGroup[] {
   return coreNavGroups.map(group => ({
     title: group.title,
@@ -36,6 +38,12 @@ function convertCoreNavGroups(
       label: item.label,
       featureKey: item.featureKey,
       component: item.component,
+      children: item.children?.map(child => ({
+        path: child.path,
+        icon: (LucideIcons as any)[child.icon] || Circle,
+        label: child.label,
+        featureKey: child.featureKey,
+      })),
     })),
   }));
 }
@@ -210,6 +218,17 @@ function AppContent() {
                   )}
                   <div className="space-y-1">
                     {group.items.map((item) => {
+                      if (item.children && item.children.length > 0) {
+                        return (
+                          <CollapsibleNavItem
+                            key={item.path}
+                            item={item}
+                            collapsed={collapsed}
+                            isCore={isCore}
+                            currentPath={location.pathname}
+                          />
+                        );
+                      }
                       const Icon = item.icon;
                       const isActive = location.pathname === item.path;
                       return (
@@ -309,13 +328,15 @@ function AppContent() {
               ? 'bg-slate-900/90 border-indigo-500/20'
               : 'bg-white/90 dark:bg-slate-800/90 border-slate-200/80 dark:border-slate-700/50'
           } backdrop-blur-xl border-b flex items-center justify-between px-8 z-10 shadow-sm transition-all duration-300`}>
-            {/* 左侧：面包屑或页面标题 */}
+            {/* 左侧：面包屑导航 */}
             <div>
-              <h2 className={`text-lg font-semibold ${
-                location.pathname === '/canvas' ? 'text-white' : 'text-gray-900 dark:text-white'
-              }`}>
-                {navItems.find(item => item.path === location.pathname)?.label || '工作台'}
-              </h2>
+              {location.pathname === '/canvas' ? (
+                <h2 className="text-lg font-semibold text-white">
+                  {navItems.find(item => item.path === location.pathname)?.label || '工作台'}
+                </h2>
+              ) : (
+                <Breadcrumb navGroups={navGroups} />
+              )}
             </div>
 
             {/* 右侧：主题切换 */}

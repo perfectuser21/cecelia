@@ -16,7 +16,16 @@ const manifest: FeatureManifest = {
     {
       path: '/system',
       component: 'SystemTabbed',
-      navItem: { label: 'System', icon: 'Monitor', group: 'system' },
+      navItem: {
+        label: 'System', icon: 'Monitor', group: 'system',
+        children: [
+          { path: '/system', label: 'Cecelia', icon: 'Bot', order: 1 },
+          { path: '/system/automation', label: 'Automation', icon: 'Workflow', order: 2 },
+          { path: '/system/infra', label: 'Infrastructure', icon: 'Server', order: 3 },
+          { path: '/system/claude', label: 'Claude', icon: 'Brain', order: 4 },
+          { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 5 },
+        ],
+      },
     },
     { path: '/system/automation', component: 'SystemTabbed' },
     { path: '/system/infra', component: 'SystemTabbed' },

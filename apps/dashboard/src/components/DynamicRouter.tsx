@@ -60,7 +60,7 @@ function getLazyComponent(
 
 // 将 Core 的 NavGroup 格式转换为 Autopilot 的 NavGroup 格式
 function convertCoreNavGroups(
-  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string }> }>
+  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string; children?: Array<{ path: string; icon: string; label: string; featureKey: string }> }> }>
 ): NavGroup[] {
   return coreNavGroups.map(group => ({
     title: group.title,
@@ -70,6 +70,12 @@ function convertCoreNavGroups(
       label: item.label,
       featureKey: item.featureKey,
       component: item.component,
+      children: item.children?.map(child => ({
+        path: child.path,
+        icon: (LucideIcons as any)[child.icon] || LucideIcons.Circle,
+        label: child.label,
+        featureKey: child.featureKey,
+      })),
     })),
   }));
 }

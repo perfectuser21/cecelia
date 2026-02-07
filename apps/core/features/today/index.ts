@@ -15,7 +15,14 @@ const manifest: FeatureManifest = {
     {
       path: '/today',
       component: 'TodayTabbed',
-      navItem: { label: 'Today', icon: 'CalendarDays', group: 'today' },
+      navItem: {
+        label: 'Today', icon: 'CalendarDays', group: 'today',
+        children: [
+          { path: '/today', label: 'Daily', icon: 'CalendarDays', order: 1 },
+          { path: '/today/schedule', label: 'Schedule', icon: 'ListTodo', order: 2 },
+          { path: '/today/queue', label: 'Queue', icon: 'CalendarClock', order: 3 },
+        ],
+      },
     },
     { path: '/today/schedule', component: 'TodayTabbed' },
     { path: '/today/queue', component: 'TodayTabbed' },

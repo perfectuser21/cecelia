@@ -15,7 +15,14 @@ const manifest: FeatureManifest = {
     {
       path: '/knowledge',
       component: 'KnowledgeHome',
-      navItem: { label: 'Knowledge', icon: 'BookOpen', group: 'knowledge' },
+      navItem: {
+        label: 'Knowledge', icon: 'BookOpen', group: 'knowledge',
+        children: [
+          { path: '/knowledge', label: 'Home', icon: 'BookOpen', order: 1 },
+          { path: '/knowledge/content', label: 'Content Studio', icon: 'PenTool', order: 2 },
+          { path: '/knowledge/brain', label: 'Super Brain', icon: 'Brain', order: 3 },
+        ],
+      },
     },
     { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
