@@ -86,6 +86,7 @@ type ViewMode = 'table' | 'board';
 type GroupBy = 'none' | 'status' | 'priority' | 'project' | 'month';
 type SortField = 'title' | 'status' | 'priority' | 'project' | 'task_type' | 'created_at';
 type SortDir = 'asc' | 'desc';
+type PresetView = 'all' | 'today' | 'tomorrow' | 'next7' | 'next30' | 'pending' | 'in_progress' | 'completed';
 
 const PRIORITIES = ['P0', 'P1', 'P2'] as const;
 const TASK_STATUSES = ['queued', 'in_progress', 'completed', 'cancelled'] as const;
@@ -97,6 +98,39 @@ const BOARD_COLUMNS: { key: string; label: string }[] = [
 
 const PRIORITY_ORDER: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 const STATUS_ORDER: Record<string, number> = { queued: 0, in_progress: 1, completed: 2, cancelled: 3 };
+
+// ── Date Helpers ───────────────────────────────────────
+
+function isToday(date: Date): boolean {
+  const today = new Date();
+  return date.toDateString() === today.toDateString();
+}
+
+function isTomorrow(date: Date): boolean {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return date.toDateString() === tomorrow.toDateString();
+}
+
+function isWithinDays(date: Date, days: number): boolean {
+  const now = new Date();
+  const future = new Date();
+  future.setDate(future.getDate() + days);
+  return date >= now && date <= future;
+}
+
+// ── Preset Views ───────────────────────────────────────
+
+const PRESET_VIEWS: Array<{ key: PresetView; label: string; filter: (task: Task) => boolean }> = [
+  { key: 'all', label: 'All', filter: () => true },
+  { key: 'today', label: 'Today', filter: (t) => isToday(new Date(t.created_at)) },
+  { key: 'tomorrow', label: 'Tomorrow', filter: (t) => isTomorrow(new Date(t.created_at)) },
+  { key: 'next7', label: 'Next 7 days', filter: (t) => isWithinDays(new Date(t.created_at), 7) },
+  { key: 'next30', label: 'Next 30 days', filter: (t) => isWithinDays(new Date(t.created_at), 30) },
+  { key: 'pending', label: 'Pending', filter: (t) => t.status === 'queued' },
+  { key: 'in_progress', label: 'In Progress', filter: (t) => t.status === 'in_progress' },
+  { key: 'completed', label: 'Completed', filter: (t) => t.status === 'completed' },
+];
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -172,6 +206,14 @@ export default function TaskDatabase() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showQuarantine, setShowQuarantine] = useState(true);
 
+  // Preset view state (localStorage)
+  const [activeView, setActiveView] = useState<PresetView>(() => {
+    try {
+      const saved = localStorage.getItem('taskdb_active_view');
+      return (saved as PresetView) || 'all';
+    } catch { return 'all'; }
+  });
+
   // Row order (localStorage)
   const [rowOrder, setRowOrder] = useState<string[]>(() => {
     try {
@@ -185,8 +227,8 @@ export default function TaskDatabase() {
   const [pageSize, setPageSize] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('taskdb_page_size');
-      return saved ? Number(saved) : 10;
-    } catch { return 10; }
+      return saved ? Number(saved) : 20;
+    } catch { return 20; }
   });
 
   // Toast
@@ -243,6 +285,13 @@ export default function TaskDatabase() {
     const id = setInterval(fetchAll, 30000);
     return () => clearInterval(id);
   }, [fetchAll]);
+
+  // Persist activeView
+  useEffect(() => {
+    try {
+      localStorage.setItem('taskdb_active_view', activeView);
+    } catch {}
+  }, [activeView]);
 
   // Persist row order
   useEffect(() => {
@@ -303,7 +352,9 @@ export default function TaskDatabase() {
   }, [projectMap, goalMap]);
 
   const sortedTasks = useMemo(() => {
-    const list = [...tasks];
+    // Apply preset view filter
+    const viewFilter = PRESET_VIEWS.find(v => v.key === activeView)?.filter || (() => true);
+    const list = tasks.filter(viewFilter);
 
     // If custom row order and no active sort/group, use stored order
     if (groupBy === 'none' && rowOrder.length > 0 && sortField === 'created_at' && sortDir === 'desc') {
@@ -344,7 +395,7 @@ export default function TaskDatabase() {
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return list;
-  }, [tasks, sortField, sortDir, groupBy, rowOrder, getProjectName]);
+  }, [tasks, sortField, sortDir, groupBy, rowOrder, getProjectName, activeView]);
 
   // ── Grouping ────────────────────────────────────────
 
@@ -526,6 +577,24 @@ export default function TaskDatabase() {
         </div>
       </div>
 
+      {/* Preset View Tabs */}
+      <div className="flex flex-wrap gap-2">
+        {PRESET_VIEWS.map(view => (
+          <button
+            key={view.key}
+            onClick={() => setActiveView(view.key)}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+              activeView === view.key
+                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                : 'bg-slate-700/50 text-gray-400 border border-slate-600/50 hover:bg-slate-700 hover:text-gray-300 hover:border-slate-500'
+            }`}
+            style={{ transition: 'all 0.02s ease-in' }}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+
       {/* Toolbar: Stats + View + Group */}
       <div className="flex items-center gap-4 flex-wrap">
         {/* Stats */}
@@ -634,6 +703,7 @@ export default function TaskDatabase() {
               <option value={10}>10/页</option>
               <option value={20}>20/页</option>
               <option value={50}>50/页</option>
+              <option value={100}>100/页</option>
             </select>
           </div>
         </div>
