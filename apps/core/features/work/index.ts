@@ -21,12 +21,14 @@ const manifest: FeatureManifest = {
         children: [
           { path: '/work', label: 'Projects', icon: 'FolderKanban', order: 1 },
           { path: '/work/okr', label: 'OKR', icon: 'Target', order: 2 },
-          { path: '/work/roadmap', label: 'Roadmap', icon: 'Map', order: 3 },
-          { path: '/work/features', label: 'Features', icon: 'Layers', order: 4 },
+          { path: '/work/tasks', label: 'Tasks', icon: 'ListTodo', order: 3 },
+          { path: '/work/roadmap', label: 'Roadmap', icon: 'Map', order: 4 },
+          { path: '/work/features', label: 'Features', icon: 'Layers', order: 5 },
         ],
       },
     },
     { path: '/work/okr', component: 'WorkTabbed' },
+    { path: '/work/tasks', component: 'WorkTabbed' },
     { path: '/work/roadmap', component: 'WorkTabbed' },
     { path: '/work/features', component: 'WorkTabbed' },
     // Drill-down routes
@@ -35,11 +37,11 @@ const manifest: FeatureManifest = {
     { path: '/work/whiteboard', component: 'Whiteboard' },
     // Redirects from old paths
     { path: '/work/projects', redirect: '/work' },
-    { path: '/work/tasks', redirect: '/today/schedule' },
+    // /work/tasks is now a real tab route (WorkTabbed handles it)
     { path: '/work/dev-tasks', redirect: '/work' },
     // Legacy redirects
     { path: '/work/panorama', redirect: '/dashboard/panorama' },
-    { path: '/tasks', redirect: '/today/schedule' },
+    { path: '/tasks', redirect: '/work/tasks' },
     { path: '/projects', redirect: '/work' },
     { path: '/okr', redirect: '/work/okr' },
     { path: '/roadmap', redirect: '/work/roadmap' },

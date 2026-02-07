@@ -1,4 +1,4 @@
-import { FolderKanban, Target, Map, Layers } from 'lucide-react';
+import { FolderKanban, Target, Map, Layers, ListTodo } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
 
@@ -16,6 +16,13 @@ const tabs: TabConfig[] = [
     icon: Target,
     path: '/work/okr',
     component: () => import('../../planning/pages/OKRPage'),
+  },
+  {
+    id: 'tasks',
+    label: 'Tasks',
+    icon: ListTodo,
+    path: '/work/tasks',
+    component: () => import('../../planning/pages/OKRTaskTree'),
   },
   {
     id: 'roadmap',

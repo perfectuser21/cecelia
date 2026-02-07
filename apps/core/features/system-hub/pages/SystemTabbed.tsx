@@ -1,14 +1,21 @@
-import { Bot, Workflow, Server, Cpu } from 'lucide-react';
+import { Activity, Bot, Workflow, Server, Cpu } from 'lucide-react';
 import { Brain } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
 
 const tabs: TabConfig[] = [
   {
+    id: 'ops',
+    label: 'Ops',
+    icon: Activity,
+    path: '/system',
+    component: () => import('../../system/pages/OpsDashboard'),
+  },
+  {
     id: 'cecelia',
     label: 'Cecelia',
     icon: Bot,
-    path: '/system',
+    path: '/system/cecelia',
     component: () => import('../../execution/pages/CeceliaOverview'),
   },
   {
