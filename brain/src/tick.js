@@ -937,8 +937,8 @@ async function executeTick() {
 
     for (const obj of noKrObjectives.rows) {
       const decompResult = await pool.query(`
-        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload)
-        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4)
+        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
+        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4, 'brain_auto')
         RETURNING id, title
       `, [
         `OKR 拆解: ${obj.title}`,

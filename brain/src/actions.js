@@ -20,10 +20,10 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
  * @param {Object} params.payload - Additional payload (exploratory, feature_id, kr_goal)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10)
+    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11)
     RETURNING *
   `, [
     title,
@@ -35,7 +35,8 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     task_type || 'dev',
     prd_content || null,
     execution_profile || null,
-    payload ? JSON.stringify(payload) : null
+    payload ? JSON.stringify(payload) : null,
+    trigger_source || 'brain_auto'
   ]);
 
   const task = result.rows[0];

@@ -332,8 +332,8 @@ async function applyProposal(proposalId) {
       switch (change.type) {
         case 'create_task': {
           const taskResult = await pool.query(`
-            INSERT INTO tasks (title, description, priority, project_id, goal_id, status, task_type, payload)
-            VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7)
+            INSERT INTO tasks (title, description, priority, project_id, goal_id, status, task_type, payload, trigger_source)
+            VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, 'proposal')
             RETURNING id, title
           `, [
             change.title,

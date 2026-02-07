@@ -328,8 +328,8 @@ async function handlePlanInput(input, dryRun = false) {
       if (!projCheck.rows[0].repo_path) throw new Error('Hard constraint: Task\'s project must have repo_path');
 
       const tResult = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload)
-        VALUES ($1, $2, $3, $4, $5, 'queued', $6) RETURNING *
+        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, payload, trigger_source)
+        VALUES ($1, $2, $3, $4, $5, 'queued', $6, 'brain_auto') RETURNING *
       `, [
         input.task.title, input.task.description || '', input.task.priority || 'P1',
         input.task.project_id, input.task.goal_id || null,

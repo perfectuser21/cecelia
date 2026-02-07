@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-07
-**Brain 版本**: 1.12.1
-**Schema 版本**: 010
+**Brain 版本**: 1.12.2
+**Schema 版本**: 011
 **状态**: 生产运行中
 
 ---
@@ -684,7 +684,8 @@ brain/
 │   ├── 007_pending_actions.sql
 │   ├── 008_publishing_system.sql
 │   ├── 009_fix_decisions_schema.sql
-│   └── 010_proposals.sql
+│   ├── 010_proposals.sql
+│   └── 011_trigger_source_values.sql
 │
 └── src/__tests__/             # Vitest 测试 (668/673 pass)
 ```
