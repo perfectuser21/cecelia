@@ -22,7 +22,7 @@ const tabs: TabConfig[] = [
     label: 'Tasks',
     icon: ListTodo,
     path: '/work/tasks',
-    component: () => import('../../planning/pages/OKRTaskTree'),
+    component: () => import('../../planning/pages/TaskDatabase'),
   },
   {
     id: 'roadmap',
