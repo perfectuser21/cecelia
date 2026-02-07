@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-07
-**Brain 版本**: 1.11.3
+**Brain 版本**: 1.11.4
 **Schema 版本**: 008
 **状态**: 生产运行中
 
@@ -480,7 +480,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.9.5`（多阶段构建，163MB）
+- 镜像：`cecelia-brain:1.11.4`（多阶段构建，163MB）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -643,7 +643,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.9.5）
+├── package.json               # 版本号（当前 1.11.4）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）

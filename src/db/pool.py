@@ -20,9 +20,9 @@ class Database:
         self,
         host: str = "localhost",
         port: int = 5432,
-        database: str = "cecelia_tasks",
-        user: str = "n8n_user",
-        password: str = "n8n_password_2025",
+        database: str = "cecelia",
+        user: str = "cecelia",
+        password: str = "CeceliaUS2026",
         min_size: int = 2,
         max_size: int = 10,
     ):
@@ -52,9 +52,9 @@ class Database:
         return cls(
             host=os.getenv("DB_HOST", "localhost"),
             port=int(os.getenv("DB_PORT", "5432")),
-            database=os.getenv("DB_NAME", "cecelia_tasks"),
-            user=os.getenv("DB_USER", "n8n_user"),
-            password=os.getenv("DB_PASSWORD", "n8n_password_2025"),
+            database=os.getenv("DB_NAME", "cecelia"),
+            user=os.getenv("DB_USER", "cecelia"),
+            password=os.getenv("DB_PASSWORD", "CeceliaUS2026"),
             min_size=int(os.getenv("DB_POOL_MIN", "2")),
             max_size=int(os.getenv("DB_POOL_MAX", "10")),
         )

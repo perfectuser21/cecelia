@@ -6,7 +6,7 @@
 #   cecelia-quality/contracts/cecelia-core.regression-contract.yaml
 #
 # 查看完整契约：
-#   cat /home/xx/dev/cecelia-quality/contracts/cecelia-core.regression-contract.yaml
+#   cat /home/xx/perfect21/cecelia-quality/contracts/cecelia-core.regression-contract.yaml
 #
 # 通过 API 查询：
 #   curl http://localhost:5681/api/contracts/cecelia-core
