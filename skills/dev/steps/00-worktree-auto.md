@@ -51,34 +51,73 @@ DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
 
 ## 僵尸 .dev-mode 检测
 
-**判定条件**（满足任一即为僵尸）：
+**判定条件**（必须满足多个条件才判定为僵尸，防止误删）：
 
-1. **.dev-mode 超过 2 小时**：`started` 字段距现在超过 7200 秒
-2. **分支不存在**：.dev-mode 中的分支在本地不存在
+### 多条件综合判断
 
 ```bash
 # 读取 .dev-mode 信息
 ACTIVE_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
 STARTED=$(grep "^started:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2- || echo "")
 
-# 条件 1: 超时检测（2 小时 = 7200 秒）
+# 初始化判定结果
 IS_ZOMBIE=false
-if [[ -n "$STARTED" ]]; then
-    STARTED_EPOCH=$(date -d "$STARTED" +%s 2>/dev/null || echo "0")
-    NOW_EPOCH=$(date +%s)
-    AGE_SECONDS=$(( NOW_EPOCH - STARTED_EPOCH ))
-    if [[ "$AGE_SECONDS" -gt 7200 ]]; then
-        IS_ZOMBIE=true
-        echo "⚠️  .dev-mode 已超过 2 小时 (${AGE_SECONDS}s)，判定为僵尸"
-    fi
-fi
+NOW_EPOCH=$(date +%s)
 
-# 条件 2: 分支不存在
-if [[ -n "$ACTIVE_BRANCH" ]] && ! git rev-parse --verify "$ACTIVE_BRANCH" &>/dev/null; then
-    IS_ZOMBIE=true
-    echo "⚠️  分支 $ACTIVE_BRANCH 不存在，判定为僵尸"
+# 条件 1: 检查文件修改时间（主要判断依据）
+FILE_MTIME=$(stat -c %Y "$DEV_MODE_FILE" 2>/dev/null || echo "0")
+FILE_AGE_SECONDS=$(( NOW_EPOCH - FILE_MTIME ))
+
+if [[ "$FILE_AGE_SECONDS" -gt 7200 ]]; then
+    # 文件超过 2 小时，继续检查其他条件
+
+    # 条件 2: 尝试解析 started 字段（可能失败）
+    STARTED_EPOCH=$(date -d "$STARTED" +%s 2>/dev/null || echo "0")
+
+    # 如果 started 字段有效，使用它；否则使用文件修改时间
+    if [[ "$STARTED_EPOCH" -gt 0 ]]; then
+        AGE_SECONDS=$(( NOW_EPOCH - STARTED_EPOCH ))
+        echo "⏱️  .dev-mode started 字段: ${AGE_SECONDS}s 前"
+    else
+        AGE_SECONDS="$FILE_AGE_SECONDS"
+        echo "⚠️  .dev-mode started 字段无效，使用文件修改时间: ${FILE_AGE_SECONDS}s 前"
+    fi
+
+    # 条件 3: 检查分支状态
+    if [[ -n "$ACTIVE_BRANCH" ]]; then
+        if ! git rev-parse --verify "$ACTIVE_BRANCH" &>/dev/null; then
+            # 分支不存在 → 确定是僵尸
+            IS_ZOMBIE=true
+            echo "⚠️  判定为僵尸：文件 ${FILE_AGE_SECONDS}s，分支 $ACTIVE_BRANCH 不存在"
+        else
+            # 分支存在，检查最后提交时间
+            LAST_COMMIT_EPOCH=$(git log -1 --format=%ct "$ACTIVE_BRANCH" 2>/dev/null || echo "0")
+            BRANCH_AGE_SECONDS=$(( NOW_EPOCH - LAST_COMMIT_EPOCH ))
+
+            if [[ "$BRANCH_AGE_SECONDS" -gt 7200 ]]; then
+                # 分支超过 2 小时无提交 → 可能是僵尸
+                IS_ZOMBIE=true
+                echo "⚠️  判定为僵尸：文件 ${FILE_AGE_SECONDS}s，分支 ${BRANCH_AGE_SECONDS}s 无提交"
+            else
+                echo "✅ 分支 $ACTIVE_BRANCH 活跃（${BRANCH_AGE_SECONDS}s 前有提交），不是僵尸"
+            fi
+        fi
+    else
+        # 无法读取分支名，但文件很旧 → 判定为僵尸
+        IS_ZOMBIE=true
+        echo "⚠️  判定为僵尸：文件 ${FILE_AGE_SECONDS}s，无法读取分支信息"
+    fi
+else
+    echo "✅ .dev-mode 文件新鲜（${FILE_AGE_SECONDS}s），不是僵尸"
 fi
 ```
+
+### 关键改进
+
+1. **文件修改时间优先**：`stat -c %Y` 作为主要判断依据，不依赖 `started` 字段解析
+2. **Fallback 机制**：`started` 字段解析失败时，使用文件修改时间
+3. **分支活跃度**：检查分支最后提交时间，判断是否活跃
+4. **防止误删**：只在确定无疑（文件旧 + 分支不存在/无提交）时才删除
 
 ### 僵尸处理
 

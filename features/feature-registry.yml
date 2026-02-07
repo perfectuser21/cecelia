@@ -737,10 +737,11 @@ product_features:
     name: Worktree Parallel Development
     status: Committed
     priority: P1
-    version: "11.16.0"
-    updated: "2026-01-31"
+    version: "12.7.2"
+    updated: "2026-02-07"
     description: |
       自动检测 .dev-mode 冲突，自动创建 worktree 并 cd，支持并行开发：
+      v12.7.2: 修复僵尸检测过于激进（多条件综合判断，文件修改时间优先，防止误删活跃会话）
       v11.16.0: Step 0 前置自动检测 + 僵尸 .dev-mode 清理 + flock 并发锁 + Step 3 兜底
       v11.3.1: Step 3 强制检查 worktree（主仓库有活跃任务时阻止创建分支）
 

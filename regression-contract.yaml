@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.7.1"
-updated: "2026-02-04"
+version: "12.7.2"
+updated: "2026-02-07"
 
 # ============================================================================
 # Hooks 回归契约
@@ -916,7 +916,7 @@ workflow:
     priority: P1
     trigger: [Release]
     method: manual
-    tags: [dev, worktree, parallel]
+    tags: [dev, worktree, parallel, zombie-detection]
     owner: workflow
     steps:
       given: "在 develop 分支，有未合并的功能分支"
@@ -925,6 +925,57 @@ workflow:
     evidence:
       type: log
       contains: "检测到并行开发"
+
+  - id: W6-001-1
+    feature: W6
+    name: "僵尸检测 - started 字段无效但文件新鲜"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, worktree, zombie-detection]
+    owner: workflow
+    steps:
+      given: ".dev-mode 文件存在，started 字段格式错误（未展开），文件修改时间 < 2h"
+      when: "第二个会话运行 /dev"
+      then: "不判定为僵尸，创建 worktree 隔离"
+    evidence:
+      type: log
+      contains: ".dev-mode 文件新鲜"
+
+  - id: W6-001-2
+    feature: W6
+    name: "僵尸检测 - 文件旧且分支不存在"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, worktree, zombie-detection]
+    owner: workflow
+    steps:
+      given: ".dev-mode 文件 > 2h，分支不存在"
+      when: "运行 /dev"
+      then: "判定为僵尸，清理 .dev-mode，继续正常流程"
+    evidence:
+      type: log
+      contains: "判定为僵尸"
+
+  - id: W6-001-3
+    feature: W6
+    name: "僵尸检测 - 分支存在且活跃"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, worktree, zombie-detection]
+    owner: workflow
+    steps:
+      given: ".dev-mode 文件 > 2h，但分支有最近提交 (< 2h)"
+      when: "运行 /dev"
+      then: "不判定为僵尸，创建 worktree 隔离"
+    evidence:
+      type: log
+      contains: "分支.*活跃"
 
   - id: W6-002
     feature: W6
