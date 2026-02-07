@@ -17,24 +17,33 @@ export default function Breadcrumb({ navGroups }: BreadcrumbProps) {
   const segments: BreadcrumbSegment[] = [];
 
   // Find matching parent > child from navGroups
+  // Use longest path match to avoid /system matching before /system/automation
   for (const group of navGroups) {
     for (const item of group.items) {
-      // Check children first for deeper match
       if (item.children && item.children.length > 0) {
+        let bestMatch: typeof item.children[0] | null = null;
+        let bestLen = 0;
+
         for (const child of item.children) {
           if (location.pathname === child.path || location.pathname.startsWith(child.path + '/')) {
-            // Don't add parent if child path === parent path (e.g. /today -> Daily)
-            if (child.path !== item.path) {
-              segments.push({ label: item.label, path: item.path, icon: item.icon });
+            if (child.path.length > bestLen) {
+              bestLen = child.path.length;
+              bestMatch = child;
             }
-            segments.push({ label: child.label, path: child.path, icon: child.icon });
-            break;
           }
         }
-        if (segments.length > 0) break;
+
+        if (bestMatch) {
+          // Don't add parent if child path === parent path (e.g. /today -> Daily)
+          if (bestMatch.path !== item.path) {
+            segments.push({ label: item.label, path: item.path, icon: item.icon });
+          }
+          segments.push({ label: bestMatch.label, path: bestMatch.path, icon: bestMatch.icon });
+          break;
+        }
       }
 
-      // Fallback: exact match on parent (no child match)
+      // Fallback: exact match on parent (no children or no child match)
       if (location.pathname === item.path || location.pathname.startsWith(item.path + '/')) {
         segments.push({ label: item.label, path: item.path, icon: item.icon });
         break;
