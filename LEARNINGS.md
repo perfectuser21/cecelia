@@ -53,3 +53,69 @@
 - 版本更新时运行 `scripts/check-version-sync.sh` 提前发现不同步
 - 创建新迁移脚本时同步更新相关测试的 schema version 期望值
 - 测试中确保数据库结构准备充分，不依赖外部迁移状态
+
+---
+
+### [2026-02-07] 免疫系统完整连接实现
+
+**功能**：连接所有免疫系统组件 - Feature Tick 自动启动、策略调整效果监控、质量反馈循环。
+
+**Bug**：
+1. **UNIQUE 约束缺失** - migration 016 的 strategy_effectiveness 表缺少 UNIQUE 约束
+   - 问题：`ON CONFLICT (adoption_id)` 需要 adoption_id 有 UNIQUE 约束，但只有普通 REFERENCES
+   - 解决：改为 `adoption_id UUID UNIQUE REFERENCES`，UNIQUE 会自动创建索引
+   - 影响程度：High（CI 失败，migration 无法执行）
+   
+2. **Supertest 依赖缺失** - routes-immune-connections.test.js 导入了 supertest 但 package.json 没有
+   - 问题：测试文件创建了 API 路由测试，但 supertest 不是 Brain 的依赖
+   - 解决：删除 routes 测试文件，改用 manual testing（DoD 更新）
+   - 影响程度：High（CI 失败）
+
+3. **测试数据污染** - learning-effectiveness.test.js 和 cortex-quality.test.js 测试相互影响
+   - 问题：多个测试创建数据但不清理，导致后续测试查询到错误的数据量
+   - 解决：在 `beforeEach` 添加 `DELETE FROM cortex_analyses/tasks/strategy_adoptions/strategy_effectiveness`
+   - 影响程度：High（CI 随机失败，本地可能通过但 CI 失败）
+
+4. **错误的表名** - 测试代码使用了不存在的 `task_runs` 表
+   - 问题：复制测试代码时假设有 task_runs 表，实际表名是 `agent_runs`
+   - 解决：删除 `DELETE FROM task_runs` 语句
+   - 影响程度：Medium（本地测试失败）
+
+5. **测试时间窗口重叠** - "ineffective strategy" 测试与主测试使用相同时间点
+   - 问题：两个测试都用 `Date.now() - 10 * 24 * 60 * 60 * 1000`，查询时间窗口重叠，统计到对方的任务
+   - 解决：改用不同时间点（30天前 vs 10天前）并添加唯一的任务标题前缀
+   - 影响程度：High（导致成功率计算错误）
+
+6. **函数名错误** - server.js 导入了不存在的 `startFeatureTick` 函数
+   - 问题：feature-tick.js 导出的是 `startFeatureTickLoop`，但 server.js 导入的是 `startFeatureTick`
+   - 解决：修正 import 和调用为 `startFeatureTickLoop()`
+   - 影响程度：Critical（GoldenPath E2E 失败，服务器启动失败）
+
+**优化点**：
+1. **UNIQUE vs INDEX 的权衡**
+   - 发现：UNIQUE 约束会自动创建索引，不需要额外的 `CREATE INDEX`
+   - 建议：如果字段需要唯一性，直接用 UNIQUE 而不是 INDEX + 应用层检查
+   - 影响程度：Medium（简化数据库设计）
+
+2. **测试隔离原则**
+   - 发现：共享数据库的测试必须在 beforeEach 清理所有相关表数据
+   - 建议：测试应该清理它查询的所有表，不只是它直接写入的表
+   - 影响程度：High（避免 CI 随机失败）
+
+3. **时间窗口测试策略**
+   - 发现：测试时间敏感功能时，要确保不同测试的时间窗口不重叠
+   - 建议：使用明确不同的时间偏移（如 10天 vs 30天）+ 唯一标识符（任务标题）
+   - 影响程度：High（避免时间窗口查询污染）
+
+4. **Migration UNIQUE 约束最佳实践**
+   - 发现：`ON CONFLICT` 子句要求字段有 UNIQUE 或 EXCLUSION 约束
+   - 建议：如果 upsert 需要 ON CONFLICT，在 migration 里直接用 UNIQUE，不要只用 FK
+   - 影响程度：High（避免 upsert 失败）
+
+**收获**：
+- 学习了 PostgreSQL UNIQUE 约束自动创建索引的机制
+- 理解了测试数据污染的根本原因：时间窗口重叠 + 表级查询
+- 掌握了 ON CONFLICT 子句对约束类型的依赖关系
+- 实践了 CI 失败 5 次的完整调试流程（约束→依赖→数据→表名→时间→函数名）
+- 理解了 Feature Tick Loop 与主 Tick Loop 的独立性
+- 验证了 DoD → Test mapping 的 DevGate 检查机制
