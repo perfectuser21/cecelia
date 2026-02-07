@@ -317,6 +317,27 @@ async function analyzeDeep(event, thalamusDecision = null) {
     }));
   }
 
+  // Build #2: 注入历史 Cortex 分析（相似问题的深度分析结论）
+  try {
+    const historicalAnalyses = await searchRelevantAnalyses({
+      task_type: event.failed_task?.task_type || event.task?.task_type,
+      failure_class: event.failure_history?.[0]?.failure_classification?.class,
+      trigger_event: event.type
+    }, 5);
+
+    if (historicalAnalyses.length > 0) {
+      context.historical_analyses = historicalAnalyses.map((a, i) => ({
+        rank: i + 1,
+        relevance_score: a.relevance_score || 0,
+        root_cause: a.root_cause,
+        mitigations: a.mitigations ? JSON.parse(a.mitigations).slice(0, 3) : [],
+        created_at: a.created_at
+      }));
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to fetch historical analyses:', err.message);
+  }
+
   // Inject adjustable parameters for RCA requests
   if (event.type === 'rca_request' && thalamusDecision?.adjustable_params) {
     context.adjustable_params = thalamusDecision.adjustable_params;
@@ -408,6 +429,119 @@ async function recordLearnings(learnings, event) {
  * @param {Object[]} history - 历史失败记录
  * @returns {Promise<Object>} - RCA 报告
  */
+// ============================================================
+// Cortex Memory - Persistent Storage
+// ============================================================
+
+/**
+ * Save Cortex analysis to persistent storage
+ * @param {Object} analysis - RCA analysis result from performRCA
+ * @param {Object} context - Analysis context (task, event, etc.)
+ * @returns {Promise<UUID>} - Analysis record ID
+ */
+async function saveCortexAnalysis(analysis, context = {}) {
+  const { task, event, failureInfo } = context;
+
+  const result = await pool.query(`
+    INSERT INTO cortex_analyses (
+      task_id,
+      event_id,
+      trigger_event_type,
+      root_cause,
+      contributing_factors,
+      mitigations,
+      failure_pattern,
+      affected_systems,
+      learnings,
+      strategy_adjustments,
+      analysis_depth,
+      confidence_score,
+      analyst,
+      metadata
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING id
+  `, [
+    task?.id || null,
+    event?.id || null,
+    event?.type || 'rca_request',
+    analysis.analysis || 'No root cause identified',
+    JSON.stringify(analysis.contributing_factors || []),
+    JSON.stringify(analysis.recommended_actions || []),
+    JSON.stringify(failureInfo || {}),
+    JSON.stringify([]),
+    JSON.stringify(analysis.learnings || []),
+    JSON.stringify(analysis.strategy_adjustments || []),
+    'deep',
+    analysis.confidence || 0.8,
+    'cortex',
+    JSON.stringify({ created_by: 'performRCA', ...context.metadata })
+  ]);
+
+  return result.rows[0].id;
+}
+
+/**
+ * Search relevant historical Cortex analyses
+ * @param {Object} context - Search context
+ * @param {string} context.task_type - Task type
+ * @param {string} context.failure_class - Failure class (NETWORK, BILLING_CAP, etc.)
+ * @param {string} context.trigger_event - Trigger event type
+ * @param {number} limit - Max results
+ * @returns {Promise<Array>} - Sorted by relevance score
+ */
+async function searchRelevantAnalyses(context = {}, limit = 5) {
+  // Fetch recent analyses (last 100)
+  const result = await pool.query(`
+    SELECT
+      id, task_id, event_id, trigger_event_type,
+      root_cause, contributing_factors, mitigations,
+      failure_pattern, learnings, strategy_adjustments,
+      analysis_depth, confidence_score, created_at, metadata
+    FROM cortex_analyses
+    ORDER BY created_at DESC
+    LIMIT 100
+  `);
+
+  // Score each analysis
+  const scoredAnalyses = result.rows.map(analysis => {
+    let score = 0;
+    const failurePattern = analysis.failure_pattern || {};
+    const rootCauseLower = (analysis.root_cause || '').toLowerCase();
+
+    // 1. Failure class match (weight: 10)
+    if (context.failure_class && failurePattern.class === context.failure_class) {
+      score += 10;
+    }
+
+    // 2. Task type match (weight: 8)
+    if (context.task_type && failurePattern.task_type === context.task_type) {
+      score += 8;
+    }
+
+    // 3. Trigger event match (weight: 6)
+    if (context.trigger_event && analysis.trigger_event_type === context.trigger_event) {
+      score += 6;
+    }
+
+    // 4. Freshness (weight: 1-3)
+    const ageInDays = (Date.now() - new Date(analysis.created_at).getTime()) / (1000 * 60 * 60 * 24);
+    if (ageInDays <= 7) score += 3;
+    else if (ageInDays <= 30) score += 2;
+    else score += 1;
+
+    return { ...analysis, relevance_score: score };
+  });
+
+  // Sort by score descending
+  scoredAnalyses.sort((a, b) => b.relevance_score - a.relevance_score);
+
+  return scoredAnalyses.slice(0, limit);
+}
+
+// ============================================================
+// Root Cause Analysis (RCA)
+// ============================================================
+
 async function performRCA(failedTask, history = []) {
   const event = {
     type: 'rca_request',
@@ -442,7 +576,7 @@ async function performRCA(failedTask, history = []) {
     }
   })) || [];
 
-  return {
+  const analysisResult = {
     task_id: failedTask.id,
     analysis: decision.analysis,
     recommended_actions: decision.actions,
@@ -450,6 +584,27 @@ async function performRCA(failedTask, history = []) {
     strategy_adjustments: strategyAdjustments,
     confidence: decision.confidence
   };
+
+  // Persist analysis to cortex_analyses table
+  try {
+    const analysisId = await saveCortexAnalysis(analysisResult, {
+      task: failedTask,
+      event,
+      failureInfo: {
+        class: history[0]?.failure_classification?.class || 'UNKNOWN',
+        task_type: failedTask.task_type,
+        frequency: history.length + 1,
+        severity: 'high'
+      },
+      metadata: { rca_trigger: 'repeated_failure', failure_count: history.length + 1 }
+    });
+    console.log(`[Cortex] Analysis saved: ${analysisId}`);
+  } catch (err) {
+    console.error('[Cortex] Failed to save analysis:', err.message);
+    // Non-fatal, continue
+  }
+
+  return analysisResult;
 }
 
 // ============================================================
@@ -460,6 +615,10 @@ export {
   // 主入口
   analyzeDeep,
   performRCA,
+
+  // Memory
+  saveCortexAnalysis,
+  searchRelevantAnalyses,
 
   // API
   callOpus,

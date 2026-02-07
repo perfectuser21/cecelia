@@ -4186,4 +4186,68 @@ router.post('/proposals/:id/rollback', async (req, res) => {
   }
 });
 
+// ============================================================
+// Cortex Analyses API — Historical RCA Memory
+// ============================================================
+
+import { searchRelevantAnalyses } from './cortex.js';
+
+/**
+ * GET /api/brain/cortex/analyses
+ * Query historical Cortex analyses
+ *
+ * Query params:
+ * - task_id: Filter by task ID
+ * - failure_class: Filter by failure class (NETWORK, BILLING_CAP, etc.)
+ * - trigger_event: Filter by trigger event type
+ * - limit: Max results (default 10)
+ */
+router.get('/cortex/analyses', async (req, res) => {
+  try {
+    const { task_id, failure_class, trigger_event, limit } = req.query;
+
+    // If task_id is provided, query by task_id directly
+    if (task_id) {
+      const result = await pool.query(`
+        SELECT * FROM cortex_analyses
+        WHERE task_id = $1
+        ORDER BY created_at DESC
+      `, [task_id]);
+      return res.json(result.rows);
+    }
+
+    // Otherwise, use semantic search
+    const analyses = await searchRelevantAnalyses({
+      failure_class,
+      trigger_event
+    }, parseInt(limit) || 10);
+
+    res.json(analyses);
+  } catch (err) {
+    console.error('[API] Failed to query cortex analyses:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/analyses/:id
+ * Get single analysis by ID
+ */
+router.get('/cortex/analyses/:id', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM cortex_analyses WHERE id = $1
+    `, [req.params.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Analysis not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] Failed to get cortex analysis:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

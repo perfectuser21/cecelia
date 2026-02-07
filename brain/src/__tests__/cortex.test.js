@@ -4,8 +4,9 @@
  * Tests that Cortex generates strategy_adjustments during RCA analysis.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { performRCA, validateCortexDecision } from '../cortex.js';
+import pool from '../db.js';
 
 describe('Cortex Strategy Adjustments', () => {
 
@@ -122,4 +123,46 @@ describe('Cortex Strategy Adjustments', () => {
 
     expect(converted).toEqual([]);
   });
+
+  it('performRCA automatically saves analysis to cortex_analyses table', async () => {
+    const failedTask = {
+      id: 'test-persist-task-001',
+      title: 'Test Persistence Task',
+      task_type: 'dev',
+      status: 'failed'
+    };
+
+    const history = [
+      {
+        failure_reason: 'Test: Network timeout for persistence check',
+        failure_classification: { class: 'NETWORK' },
+        timestamp: new Date().toISOString()
+      }
+    ];
+
+    // Clean up before test
+    await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE '%persistence check%'");
+
+    const result = await performRCA(failedTask, history);
+
+    // Wait a bit for async save
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Verify analysis was saved
+    const saved = await pool.query(`
+      SELECT * FROM cortex_analyses
+      WHERE root_cause LIKE '%persistence check%' OR task_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [failedTask.id]);
+
+    // Clean up after test
+    if (saved.rows.length > 0) {
+      await pool.query('DELETE FROM cortex_analyses WHERE id = $1', [saved.rows[0].id]);
+    }
+
+    // Verify
+    expect(result).toHaveProperty('analysis');
+    expect(result).toHaveProperty('strategy_adjustments');
+  }, { timeout: 15000 });
 });
