@@ -1,5 +1,34 @@
 # Learnings
 
+## [2026-02-07] Cortex Strategy Adjustments Generation (v1.18.0)
+
+### Feature: Cortex 生成 strategy_adjustments 供 Learning 系统应用（PR #187）
+
+- **What**: 修复免疫系统断链 — Cortex RCA 分析时生成 strategy_adjustments 字段，完成 Learning 闭环
+- **Problem**: Cortex 执行 RCA 后返回的结果缺少 `strategy_adjustments` 字段，导致 Learning 系统无法提取策略调整建议并应用到 brain_config
+- **Solution**:
+  1. 增强 Cortex prompt：添加 strategy_updates 要求，列出可调整参数白名单（alertness.*, retry.*, resource.*）和允许范围
+  2. 修改 `performRCA()`: 将 Opus 返回的 `strategy_updates` (key/old_value/new_value/reason) 转换为 `strategy_adjustments` (params.param/params.new_value/params.reason)
+  3. 注入 `adjustable_params` 到 RCA context，为 Opus 提供参数调整指导
+  4. 新增 `cortex.test.js`: 5 个测试验证 strategy_adjustments 生成、格式匹配、白名单强制、空值处理
+- **Tests**: 新增 5 个测试（761 total passing）
+  - performRCA 返回 strategy_adjustments 字段（即使在 fallback 模式下）
+  - strategy_adjustments 格式符合 learning.js 期望（params.param, params.new_value, params.reason）
+  - 只调整白名单中的参数（6 个参数）
+  - 验证 Cortex decision 含 strategy_updates
+  - 空 strategy_adjustments 正确处理
+- **Integration**: 完整的 Learning 闭环
+  - Cortex RCA → 生成 strategy_adjustments → recordLearning() 提取 → applyStrategyAdjustments() 应用 → brain_config 更新
+- **CI Gotcha**: 版本号同步失败 2 次（与 v1.15.0 相同 pattern）
+  1. DEFINITION.md brain_version 未更新（1.17.0 → 1.18.0）
+  2. `.brain-versions` 文件未更新
+  - **Root cause**: `npm version minor` 只更新 package.json + package-lock.json，需手动同步 `.brain-versions` 和 DEFINITION.md
+  - **Fix**: `cat brain/package.json | jq -r .version > .brain-versions` + 手动编辑 DEFINITION.md
+  - **Pattern**: 这是重复问题（v1.15.0 也遇到），说明版本更新流程需要自动化检查或脚本封装
+- **Optimization idea**: 创建 `scripts/bump-version.sh` 脚本，一次性更新所有版本文件（package.json, .brain-versions, DEFINITION.md）
+- **Data model**: Cortex prompt 中的 strategy_updates 格式与 learning.js 的 ADJUSTABLE_PARAMS 白名单保持一致，确保类型安全
+- **影响程度**: High - 修复免疫系统核心断链，让 Brain 能从失败中学习并自动调整系统参数
+
 ## [2026-02-07] Cortex RCA 任务处理 — L2 皮层实现 (v1.15.0)
 
 ### Feature: Brain 内部 Cortex RCA 任务处理（PR #184）
