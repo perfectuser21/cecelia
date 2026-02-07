@@ -6,7 +6,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -393,6 +393,12 @@ async function selectNextDispatchableTask(goalIds) {
  */
 async function dispatchNextTask(goalIds) {
   const actions = [];
+
+  // 0a. Billing pause check — skip dispatch if API billing cap is active
+  const billingPause = getBillingPause();
+  if (billingPause.active) {
+    return { dispatched: false, reason: 'billing_pause', detail: `Billing cap active until ${billingPause.resetTime}`, actions };
+  }
 
   // 0. Server resource check — dynamic slot scaling based on actual load
   const resources = checkServerResources();
@@ -931,8 +937,8 @@ async function executeTick() {
 
     for (const obj of noKrObjectives.rows) {
       const decompResult = await pool.query(`
-        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload)
-        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4)
+        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
+        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4, 'brain_auto')
         RETURNING id, title
       `, [
         `OKR 拆解: ${obj.title}`,

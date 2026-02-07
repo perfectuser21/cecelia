@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-07
-**Brain 版本**: 1.9.5
-**Schema 版本**: 008
+**Brain 版本**: 1.12.2
+**Schema 版本**: 011
 **状态**: 生产运行中
 
 ---
@@ -88,7 +88,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
           ▼
 ┌─────────────────────────────────────────────┐
 │  PostgreSQL — 唯一真相源                     │
-│  cecelia 数据库, schema v008                 │
+│  cecelia 数据库, schema v010                 │
 │  19 张核心表                                │
 └─────────────────────────────────────────────┘
 ```
@@ -160,11 +160,12 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**16 个白名单 action**：
+**17 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
+- 规划：create_proposal
 - 控制：no_action, fallback_to_tick
 
 ### 3.3 L2 皮层 — Opus 深度分析
@@ -480,7 +481,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.9.5`（多阶段构建，163MB）
+- 镜像：`cecelia-brain:1.11.5`（多阶段构建，163MB）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -508,7 +509,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, features, working_memory, cecelia_events, decision_log, daily_logs
-5. **Schema 版本** — 必须 = '008'
+5. **Schema 版本** — 必须 = '010'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -643,7 +644,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.9.5）
+├── package.json               # 版本号（当前 1.11.5）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）
@@ -672,7 +673,7 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-008)
+├── migrations/                # SQL 迁移 (000-010)
 │   ├── 000_base_schema.sql
 │   ├── 001_cecelia_architecture_upgrade.sql
 │   ├── 002_task_type_review_merge.sql
@@ -681,7 +682,10 @@ brain/
 │   ├── 005_schema_version_and_config.sql
 │   ├── 006_exploratory_support.sql
 │   ├── 007_pending_actions.sql
-│   └── 008_publishing_system.sql
+│   ├── 008_publishing_system.sql
+│   ├── 009_fix_decisions_schema.sql
+│   ├── 010_proposals.sql
+│   └── 011_trigger_source_values.sql
 │
 └── src/__tests__/             # Vitest 测试 (668/673 pass)
 ```

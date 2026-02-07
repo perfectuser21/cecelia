@@ -246,8 +246,8 @@ async function executeNightlyAlignment() {
 
     // Create review task — dispatched by normal tick loop
     const reviewResult = await pool.query(`
-      INSERT INTO tasks (title, description, status, priority, project_id, task_type, payload)
-      VALUES ($1, $2, 'queued', 'P1', $3, 'review', $4)
+      INSERT INTO tasks (title, description, status, priority, project_id, task_type, payload, trigger_source)
+      VALUES ($1, $2, 'queued', 'P1', $3, 'review', $4, 'brain_auto')
       RETURNING id
     `, [
       `每日质检: ${report.project_name} (${today})`,

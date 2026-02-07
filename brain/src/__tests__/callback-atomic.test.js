@@ -30,18 +30,6 @@ vi.mock('../executor.js', () => ({
 }));
 
 // Mock other imports that routes.js needs
-vi.mock('../orchestrator.js', () => ({
-  getSystemStatus: vi.fn(),
-  getRecentDecisions: vi.fn(),
-  getWorkingMemory: vi.fn(),
-  getActivePolicy: vi.fn(),
-  getTopTasks: vi.fn(),
-}));
-vi.mock('../perception.js', () => ({
-  createSnapshot: vi.fn(),
-  getRecentSnapshots: vi.fn(),
-  getLatestSnapshot: vi.fn(),
-}));
 vi.mock('../actions.js', () => ({
   createTask: vi.fn(),
   updateTask: vi.fn(),
@@ -118,11 +106,6 @@ vi.mock('../intent.js', () => ({
   classifyIntent: vi.fn(),
   getSuggestedAction: vi.fn(),
 }));
-vi.mock('../decomposer.js', () => ({
-  decomposeTRD: vi.fn(),
-  getTRDProgress: vi.fn(),
-  listTRDs: vi.fn(),
-}));
 vi.mock('../templates.js', () => ({
   generatePrdFromTask: vi.fn(),
   generatePrdFromGoalKR: vi.fn(),
@@ -146,11 +129,6 @@ vi.mock('../planner.js', () => ({
   getPlanStatus: vi.fn(),
   handlePlanInput: vi.fn(),
 }));
-vi.mock('../planner-llm.js', () => ({
-  planWithLLM: vi.fn(),
-  shouldUseLLMPlanner: vi.fn(),
-  savePlannedTasks: vi.fn(),
-}));
 vi.mock('../event-bus.js', () => ({
   ensureEventsTable: vi.fn(),
   queryEvents: vi.fn(),
@@ -168,10 +146,6 @@ vi.mock('../notifier.js', () => ({
   notifyTaskCompleted: vi.fn(async () => {}),
   notifyTaskFailed: vi.fn(async () => {}),
 }));
-vi.mock('../self-diagnosis.js', () => ({
-  runDiagnosis: vi.fn(),
-}));
-
 // Import router after mocks
 const { default: router } = await import('../routes.js');
 

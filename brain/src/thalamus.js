@@ -163,6 +163,9 @@ const ACTION_WHITELIST = {
   'analyze_failure': { dangerous: false, description: '分析失败原因' },
   'predict_progress': { dangerous: false, description: '预测进度' },
 
+  // 规划操作
+  'create_proposal': { dangerous: false, description: '创建计划提案' },
+
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },

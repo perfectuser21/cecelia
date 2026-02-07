@@ -137,47 +137,47 @@ describe('chaos-hardening', () => {
   // Scenario 2: Failure Classification + Alertness Signal
   // ================================================================
   describe('Scenario 2: failure classification drives alertness signals', () => {
-    it('should classify ECONNREFUSED as SYSTEMIC', () => {
+    it('should classify ECONNREFUSED as NETWORK', () => {
       const result = classifyFailure('ECONNREFUSED 127.0.0.1:5432');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
       expect(result.confidence).toBeGreaterThanOrEqual(0.9);
     });
 
-    it('should classify rate limit as SYSTEMIC', () => {
+    it('should classify rate limit as RATE_LIMIT', () => {
       const result = classifyFailure('rate limit exceeded, retry in 60s');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RATE_LIMIT);
     });
 
-    it('should classify 500 Internal Server Error as SYSTEMIC', () => {
+    it('should classify 500 Internal Server Error as NETWORK', () => {
       const result = classifyFailure('HTTP 500 Internal Server Error');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
-    it('should classify ENOMEM as SYSTEMIC', () => {
+    it('should classify ENOMEM as RESOURCE', () => {
       const result = classifyFailure('ENOMEM: Cannot allocate memory');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify disk full as SYSTEMIC', () => {
+    it('should classify disk full as RESOURCE', () => {
       const result = classifyFailure('ENOSPC: no space left on device');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify normal TypeError as UNKNOWN (not systemic)', () => {
+    it('should classify normal TypeError as TASK_ERROR (not systemic)', () => {
       const result = classifyFailure('TypeError: undefined is not a function');
-      expect(result.class).toBe(FAILURE_CLASS.UNKNOWN);
+      expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
     });
 
     it('should handle Error objects, not just strings', () => {
       const err = new Error('Connection refused to database');
       const result = classifyFailure(err);
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
     it('should handle null/undefined gracefully', () => {
-      expect(classifyFailure(null).class).toBe(FAILURE_CLASS.UNKNOWN);
-      expect(classifyFailure(undefined).class).toBe(FAILURE_CLASS.UNKNOWN);
-      expect(classifyFailure('').class).toBe(FAILURE_CLASS.UNKNOWN);
+      expect(classifyFailure(null).class).toBe(FAILURE_CLASS.TASK_ERROR);
+      expect(classifyFailure(undefined).class).toBe(FAILURE_CLASS.TASK_ERROR);
+      expect(classifyFailure('').class).toBe(FAILURE_CLASS.TASK_ERROR);
     });
   });
 

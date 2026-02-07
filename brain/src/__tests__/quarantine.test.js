@@ -16,72 +16,72 @@ import {
 
 describe('quarantine', () => {
   describe('classifyFailure', () => {
-    it('should classify ECONNREFUSED as systemic', () => {
+    it('should classify ECONNREFUSED as NETWORK', () => {
       const result = classifyFailure('ECONNREFUSED 127.0.0.1:5432');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
       expect(result.confidence).toBeGreaterThanOrEqual(0.9);
     });
 
-    it('should classify connection refused as systemic', () => {
+    it('should classify connection refused as NETWORK', () => {
       const result = classifyFailure('connection refused to database');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
-    it('should classify rate limit as systemic', () => {
+    it('should classify rate limit as RATE_LIMIT', () => {
       const result = classifyFailure('rate limit exceeded, please try again');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RATE_LIMIT);
     });
 
-    it('should classify 429 as systemic', () => {
+    it('should classify 429 as RATE_LIMIT', () => {
       const result = classifyFailure('HTTP 429 Too Many Requests');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RATE_LIMIT);
     });
 
-    it('should classify permission denied as systemic', () => {
+    it('should classify permission denied as AUTH', () => {
       const result = classifyFailure('permission denied for directory /etc');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.AUTH);
     });
 
-    it('should classify out of memory as systemic', () => {
+    it('should classify out of memory as RESOURCE', () => {
       const result = classifyFailure('ENOMEM: not enough memory');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify 500 error as systemic', () => {
+    it('should classify 500 error as NETWORK', () => {
       const result = classifyFailure('500 Internal Server Error');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
-    it('should classify database connection error as systemic', () => {
+    it('should classify database connection error as NETWORK', () => {
       const result = classifyFailure('database connection pool exhausted');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
-    it('should classify disk full as systemic', () => {
+    it('should classify disk full as RESOURCE', () => {
       const result = classifyFailure('ENOSPC: no space left on device');
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.RESOURCE);
     });
 
-    it('should classify unknown errors as UNKNOWN', () => {
+    it('should classify unknown errors as TASK_ERROR', () => {
       const result = classifyFailure('TypeError: cannot read property foo');
-      expect(result.class).toBe(FAILURE_CLASS.UNKNOWN);
+      expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
       expect(result.confidence).toBe(0.5);
     });
 
     it('should handle Error objects', () => {
       const err = new Error('ECONNREFUSED');
       const result = classifyFailure(err);
-      expect(result.class).toBe(FAILURE_CLASS.SYSTEMIC);
+      expect(result.class).toBe(FAILURE_CLASS.NETWORK);
     });
 
     it('should handle null/undefined', () => {
       const result = classifyFailure(null);
-      expect(result.class).toBe(FAILURE_CLASS.UNKNOWN);
+      expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
     });
 
     it('should handle empty string', () => {
       const result = classifyFailure('');
-      expect(result.class).toBe(FAILURE_CLASS.UNKNOWN);
+      expect(result.class).toBe(FAILURE_CLASS.TASK_ERROR);
     });
   });
 
@@ -92,7 +92,14 @@ describe('quarantine', () => {
   });
 
   describe('FAILURE_CLASS', () => {
-    it('should have three classes', () => {
+    it('should have six primary classes plus backward-compat', () => {
+      expect(FAILURE_CLASS.BILLING_CAP).toBe('billing_cap');
+      expect(FAILURE_CLASS.RATE_LIMIT).toBe('rate_limit');
+      expect(FAILURE_CLASS.AUTH).toBe('auth');
+      expect(FAILURE_CLASS.NETWORK).toBe('network');
+      expect(FAILURE_CLASS.RESOURCE).toBe('resource');
+      expect(FAILURE_CLASS.TASK_ERROR).toBe('task_error');
+      // backward compat
       expect(FAILURE_CLASS.SYSTEMIC).toBe('systemic');
       expect(FAILURE_CLASS.TASK_SPECIFIC).toBe('task_specific');
       expect(FAILURE_CLASS.UNKNOWN).toBe('unknown');

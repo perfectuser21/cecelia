@@ -1,7 +1,28 @@
  
 import { Router } from 'express';
-import { getSystemStatus, getRecentDecisions, getWorkingMemory, getActivePolicy, getTopTasks } from './orchestrator.js';
-import { createSnapshot, getRecentSnapshots, getLatestSnapshot } from './perception.js';
+// Inlined from deleted orchestrator.js / perception.js (1/31 migration remnants replaced by three-layer brain)
+async function getActivePolicy() {
+  const result = await pool.query(`SELECT id, version, name, content_json FROM policy WHERE active = true ORDER BY version DESC LIMIT 1`);
+  return result.rows[0] || null;
+}
+async function getWorkingMemory() {
+  const result = await pool.query(`SELECT key, value_json FROM working_memory`);
+  const memory = {};
+  for (const row of result.rows) memory[row.key] = row.value_json;
+  return memory;
+}
+async function getTopTasks(limit = 10) {
+  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
+  return result.rows;
+}
+async function getRecentDecisions(limit = 10) {
+  const result = await pool.query(`SELECT id, ts, trigger, input_summary, llm_output_json, action_result_json, status FROM decision_log ORDER BY ts DESC LIMIT $1`, [limit]);
+  return result.rows;
+}
+async function getLatestSnapshot() {
+  const result = await pool.query(`SELECT id, ts, source, snapshot_json FROM system_snapshot ORDER BY ts DESC LIMIT 1`);
+  return result.rows[0] || null;
+}
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus, TASK_TYPE_AGENT_MAP } from './tick.js';
@@ -21,11 +42,9 @@ import {
 } from './nightly-tick.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from './db.js';
-import { decomposeTRD, getTRDProgress, listTRDs } from './decomposer.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
-import { planWithLLM, shouldUseLLMPlanner, savePlannedTasks } from './planner-llm.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
 import { getAlertness, getDecayStatus, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES, EVENT_BACKLOG_THRESHOLD, RECOVERY_THRESHOLDS } from './alertness.js';
@@ -34,11 +53,11 @@ import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './e
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
-import { runDiagnosis } from './self-diagnosis.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES, LLM_ERROR_TYPE } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
+import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 
 const router = Router();
 
@@ -266,43 +285,36 @@ router.get('/status/ws', (req, res) => {
 
 /**
  * GET /api/brain/status/full
- * 完整状态（给人 debug 用）
+ * 完整状态（给人 debug 用）— 使用 inlined helpers
  */
 router.get('/status/full', async (req, res) => {
   try {
-    const status = await getSystemStatus();
-    res.json(status);
+    const [snapshot, workingMemory, topTasks, recentDecisionsData, policy] = await Promise.all([
+      getLatestSnapshot(),
+      getWorkingMemory(),
+      getTopTasks(10),
+      getRecentDecisions(3),
+      getActivePolicy()
+    ]);
+    res.json({
+      snapshot: snapshot?.snapshot_json || null,
+      snapshot_ts: snapshot?.ts || null,
+      working_memory: workingMemory,
+      top_tasks: topTasks,
+      recent_decisions: recentDecisionsData.map(d => ({
+        ts: d.ts, trigger: d.trigger, input: d.input_summary,
+        action: d.llm_output_json?.next_action, status: d.status
+      })),
+      policy: policy?.content_json || {},
+      stats: {
+        open_p0: topTasks.filter(t => t.priority === 'P0' && t.status !== 'completed').length,
+        open_p1: topTasks.filter(t => t.priority === 'P1' && t.status !== 'completed').length,
+        in_progress: topTasks.filter(t => t.status === 'in_progress').length,
+        queued: topTasks.filter(t => t.status === 'queued').length
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get full status', details: err.message });
-  }
-});
-
-/**
- * GET /api/brain/snapshot/latest
- */
-router.get('/snapshot/latest', async (req, res) => {
-  try {
-    const snapshot = await getLatestSnapshot();
-    if (snapshot) {
-      res.json(snapshot);
-    } else {
-      res.status(404).json({ error: 'No snapshot found' });
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get snapshot', details: err.message });
-  }
-});
-
-/**
- * GET /api/brain/snapshots
- */
-router.get('/snapshots', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 10;
-    const snapshots = await getRecentSnapshots(limit);
-    res.json(snapshots);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to get snapshots', details: err.message });
   }
 });
 
@@ -822,21 +834,7 @@ router.post('/pending-actions/:id/reject', async (req, res) => {
 
 // ==================== 动作执行 API（白名单 + 幂等） ====================
 
-/**
- * POST /api/brain/snapshot
- */
-router.post('/snapshot', async (req, res) => {
-  try {
-    const snapshot = await createSnapshot();
-    if (snapshot) {
-      res.json({ success: true, snapshot });
-    } else {
-      res.json({ success: true, message: 'Snapshot unchanged' });
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to create snapshot', details: err.message });
-  }
-});
+// POST /api/brain/snapshot — removed (perception.js deleted, createSnapshot no longer available)
 
 /**
  * 通用 Action 处理器
@@ -1575,22 +1573,83 @@ router.post('/execution-callback', async (req, res) => {
       // Publish WebSocket event: task failed
       publishTaskFailed(task_id, run_id, status);
 
-      // Check if task should be quarantined
+      // === Failure Classification & Smart Retry ===
+      let failureHandled = false;
       let quarantined = false;
       try {
-        const quarantineResult = await handleTaskFailure(task_id);
-        if (quarantineResult.quarantined) {
-          quarantined = true;
-          console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
-          // Notify about quarantine
-          notifyTaskFailed({
-            task_id,
-            title: `Task ${task_id} QUARANTINED`,
-            reason: `Quarantined: ${quarantineResult.result?.reason}`
-          }).catch(() => {});
+        // Extract error message from result
+        const errorMsg = typeof result === 'object'
+          ? (result.result || result.error || result.stderr || JSON.stringify(result))
+          : String(result || status);
+
+        // Classify the failure
+        const { classifyFailure } = await import('./quarantine.js');
+        const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]);
+        const taskPayload = taskRow.rows[0]?.payload || {};
+        const classification = classifyFailure(errorMsg, { payload: taskPayload });
+
+        console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
+
+        // Store classification in task payload
+        await pool.query(
+          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [task_id, JSON.stringify({
+            failure_class: classification.class,
+            failure_detail: { pattern: classification.pattern, error_excerpt: errorMsg.slice(0, 500) },
+          })]
+        );
+
+        const strategy = classification.retry_strategy;
+
+        if (strategy && strategy.should_retry) {
+          // Smart retry: requeue with next_run_at
+          const retryCount = (taskPayload.failure_count || 0) + 1;
+          await pool.query(
+            `UPDATE tasks SET status = 'queued', started_at = NULL,
+             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+             WHERE id = $1 AND status = 'failed'`,
+            [task_id, JSON.stringify({
+              next_run_at: strategy.next_run_at,
+              failure_count: retryCount,
+              smart_retry: { class: classification.class, attempt: retryCount, scheduled_at: strategy.next_run_at },
+            })]
+          );
+          console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
+          failureHandled = true;
+
+          // Billing pause: stop all dispatch until reset
+          if (strategy.billing_pause) {
+            const { setBillingPause } = await import('./executor.js');
+            setBillingPause(strategy.next_run_at, `billing_cap (task ${task_id})`);
+          }
+        } else if (strategy && strategy.needs_human_review) {
+          // No retry, mark for human review
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [task_id, JSON.stringify({ needs_human_review: true })]
+          );
+          console.log(`[execution-callback] Needs human review: task=${task_id} class=${classification.class}`);
         }
-      } catch (quarantineErr) {
-        console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+      } catch (classifyErr) {
+        console.error(`[execution-callback] Classification error: ${classifyErr.message}`);
+      }
+
+      // Check if task should be quarantined (only if not already handled by smart retry)
+      if (!failureHandled) {
+        try {
+          const quarantineResult = await handleTaskFailure(task_id);
+          if (quarantineResult.quarantined) {
+            quarantined = true;
+            console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
+            notifyTaskFailed({
+              task_id,
+              title: `Task ${task_id} QUARANTINED`,
+              reason: `Quarantined: ${quarantineResult.result?.reason}`
+            }).catch(() => {});
+          }
+        } catch (quarantineErr) {
+          console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
+        }
       }
 
       // Thalamus: Analyze task failure event (more complex, may need deeper analysis)
@@ -2180,89 +2239,7 @@ router.post('/validate/trd', (req, res) => {
   }
 });
 
-// ==================== TRD API ====================
-
-/**
- * POST /api/brain/trd/decompose
- * Decompose a TRD into milestones, PRDs, and tasks
- */
-router.post('/trd/decompose', async (req, res) => {
-  try {
-    const { trd_content, project_id, goal_id } = req.body;
-
-    if (!trd_content) {
-      return res.status(400).json({
-        success: false,
-        error: 'trd_content is required'
-      });
-    }
-
-    const result = await decomposeTRD(trd_content, project_id, goal_id);
-
-    res.json({
-      success: true,
-      ...result
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to decompose TRD',
-      details: err.message
-    });
-  }
-});
-
-/**
- * GET /api/brain/trd/:id/progress
- * Get progress for a specific TRD
- */
-router.get('/trd/:id/progress', async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const progress = await getTRDProgress(id);
-
-    res.json({
-      success: true,
-      ...progress
-    });
-  } catch (err) {
-    if (err.message === 'TRD not found') {
-      res.status(404).json({
-        success: false,
-        error: err.message
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get TRD progress',
-        details: err.message
-      });
-    }
-  }
-});
-
-/**
- * GET /api/brain/trds
- * List all TRDs with progress
- */
-router.get('/trds', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 10;
-    const trds = await listTRDs(limit);
-
-    res.json({
-      success: true,
-      trds
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to list TRDs',
-      details: err.message
-    });
-  }
-});
+// TRD API — removed (decomposer.js deleted, TRD decomposition now handled by 秋米 /okr)
 
 
 /**
@@ -2815,93 +2792,7 @@ router.post('/plan', async (req, res) => {
   }
 });
 
-/**
- * POST /api/brain/plan/llm
- * Use LLM (Claude) to intelligently plan tasks for a goal
- *
- * Body:
- * - goal_id: UUID of the goal/KR to plan for
- * - use_opus: boolean (default: false, use Sonnet)
- * - save: boolean (default: true, save tasks to DB)
- * - context: object with additional context (projects, existing_tasks, etc.)
- */
-router.post('/plan/llm', async (req, res) => {
-  try {
-    const { goal_id, use_opus = false, save = true, context = {} } = req.body;
-
-    if (!goal_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'goal_id is required'
-      });
-    }
-
-    // Fetch goal from database
-    const goalResult = await pool.query(
-      'SELECT * FROM goals WHERE id = $1',
-      [goal_id]
-    );
-
-    if (goalResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Goal not found'
-      });
-    }
-
-    const goal = goalResult.rows[0];
-
-    // Check if already has queued tasks
-    const existingTasks = await pool.query(
-      'SELECT * FROM tasks WHERE goal_id = $1 AND status IN ($2, $3)',
-      [goal_id, 'queued', 'in_progress']
-    );
-
-    if (existingTasks.rows.length > 0 && !context.force) {
-      return res.status(400).json({
-        success: false,
-        error: 'Goal already has queued/in-progress tasks. Use force=true to override.',
-        existing_tasks: existingTasks.rows.length
-      });
-    }
-
-    // Plan with LLM
-    const enhancedContext = {
-      ...context,
-      useOpus: use_opus,
-      existingTasks: existingTasks.rows
-    };
-
-    const tasks = await planWithLLM(goal, enhancedContext);
-
-    // Save to database if requested
-    let savedTasks = [];
-    if (save) {
-      savedTasks = await savePlannedTasks(tasks, goal);
-    }
-
-    res.json({
-      success: true,
-      goal: {
-        id: goal.id,
-        title: goal.title,
-        priority: goal.priority
-      },
-      tasks: save ? savedTasks : tasks,
-      count: tasks.length,
-      model: use_opus ? 'claude-opus-4' : 'claude-sonnet-4',
-      saved: save
-    });
-
-  } catch (err) {
-    console.error('LLM Planning error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to plan with LLM',
-      details: err.message
-    });
-  }
-});
+// POST /api/brain/plan/llm — removed (planner-llm.js deleted, task planning now handled by 秋米 /okr)
 
 /**
  * GET /api/brain/plan/status
@@ -3037,26 +2928,7 @@ router.get('/health', async (req, res) => {
   }
 });
 
-// ==================== Self-Diagnosis API ====================
-
-/**
- * POST /api/brain/self-diagnosis
- * Run self-diagnosis and return report
- */
-router.post('/self-diagnosis', async (req, res) => {
-  try {
-    const { since, create_tasks = false, project_id, goal_id } = req.body || {};
-    const report = await runDiagnosis({
-      since,
-      createTasks: create_tasks,
-      projectId: project_id,
-      goalId: goal_id
-    });
-    res.json({ success: true, report });
-  } catch (err) {
-    res.status(500).json({ success: false, error: 'Self-diagnosis failed', details: err.message });
-  }
-});
+// Self-Diagnosis API — removed (self-diagnosis.js deleted, diagnosis now handled by cortex.js L2)
 
 // ==================== Blocks API (Notion-like Page Content) ====================
 
@@ -4193,6 +4065,83 @@ router.get('/hardening/status', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get hardening status', details: err.message });
+  }
+});
+
+// ==================== Plan Proposal 系统 ====================
+
+/**
+ * POST /api/brain/proposals — Create a new proposal
+ * Accepts both LLM proposals and user UI operations.
+ */
+router.post('/proposals', async (req, res) => {
+  try {
+    const proposal = await createProposal(req.body);
+    res.json(proposal);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/proposals — List proposals
+ */
+router.get('/proposals', async (req, res) => {
+  try {
+    const { status, limit } = req.query;
+    const proposals = await listProposals({ status, limit: parseInt(limit) || 20 });
+    res.json(proposals);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/proposals/:id — Get single proposal
+ */
+router.get('/proposals/:id', async (req, res) => {
+  try {
+    const proposal = await getProposal(req.params.id);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    res.json(proposal);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/approve — Approve and apply a proposal
+ */
+router.post('/proposals/:id/approve', async (req, res) => {
+  try {
+    const result = await approveProposal(req.params.id, req.body.approved_by || 'user');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/reject — Reject a proposal
+ */
+router.post('/proposals/:id/reject', async (req, res) => {
+  try {
+    const result = await rejectProposal(req.params.id, req.body.reason || '');
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/proposals/:id/rollback — Rollback an applied proposal
+ */
+router.post('/proposals/:id/rollback', async (req, res) => {
+  try {
+    const result = await rollbackProposal(req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

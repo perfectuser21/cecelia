@@ -142,9 +142,9 @@ async function createFeatureTask(taskData) {
   const result = await pool.query(`
     INSERT INTO tasks (
       title, feature_id, execution_mode, task_type, location,
-      priority, context, goal_id, project_id, status, quality_gate
+      priority, context, goal_id, project_id, status, quality_gate, trigger_source
     )
-    VALUES ($1, $2, 'feature_task', $3, $4, $5, $6, $7, $8, 'queued', 'pending')
+    VALUES ($1, $2, 'feature_task', $3, $4, $5, $6, $7, $8, 'queued', 'pending', 'brain_auto')
     RETURNING *
   `, [title, feature_id, task_type, location, priority, context, goal_id, project_id]);
 

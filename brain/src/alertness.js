@@ -239,10 +239,13 @@ async function collectSignals() {
   }
 
   // 3. 最近失败率（24 小时内，带封顶）
+  //    BILLING_CAP 和 RATE_LIMIT 不计入（它们是外部限制，不是系统异常）
   try {
     const failureResult = await pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+        COUNT(*) FILTER (WHERE status = 'failed'
+          AND COALESCE(payload->>'failure_class', '') NOT IN ('billing_cap', 'rate_limit')
+        ) as failed,
         COUNT(*) as total
       FROM tasks
       WHERE updated_at > NOW() - INTERVAL '24 hours'
@@ -264,17 +267,21 @@ async function collectSignals() {
   }
 
   // 4. 连续失败次数（带封顶：最多 +40）
+  //    BILLING_CAP 和 RATE_LIMIT 不计入连续失败
   try {
     const consecutiveResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM (
-        SELECT status, ROW_NUMBER() OVER (ORDER BY updated_at DESC) as rn
+        SELECT status, payload->>'failure_class' as failure_class,
+               ROW_NUMBER() OVER (ORDER BY updated_at DESC) as rn
         FROM tasks
         WHERE status IN ('completed', 'failed')
         ORDER BY updated_at DESC
         LIMIT 10
       ) t
-      WHERE status = 'failed' AND rn <= 5
+      WHERE status = 'failed'
+        AND COALESCE(failure_class, '') NOT IN ('billing_cap', 'rate_limit')
+        AND rn <= 5
     `);
     const consecutiveFailures = parseInt(consecutiveResult.rows[0].count);
     if (consecutiveFailures >= 3) {

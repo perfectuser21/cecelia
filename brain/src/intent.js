@@ -877,8 +877,8 @@ async function parseAndCreate(input, options = {}) {
   if (createTasks) {
     for (const task of parsedIntent.tasks) {
       const newTask = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, status)
-        VALUES ($1, $2, $3, $4, $5, 'queued')
+        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, trigger_source)
+        VALUES ($1, $2, $3, $4, $5, 'queued', 'user_headed')
         RETURNING *
       `, [
         task.title,

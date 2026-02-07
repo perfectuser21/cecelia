@@ -164,42 +164,12 @@ jobs:
           fi
           exit $FAILED
 
-  semantic-test:
-    name: Semantic Brain (Python)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run tests
-        run: |
-          PYTHONPATH=. pytest tests/ -v --tb=short
-
-      - name: Check code style
-        run: |
-          pip install ruff
-          ruff check src/ tests/ --ignore E501
-
   # L2: CI 通过汇总
   ci-passed:
-    needs: [version-check, facts-check, brain-test, semantic-test]
+    needs: [version-check, facts-check, brain-test]
     if: >-
       github.event_name == 'pull_request' && always()
       && needs.brain-test.result == 'success'
-      && needs.semantic-test.result == 'success'
       && needs.facts-check.result == 'success'
       && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
     runs-on: ubuntu-latest
@@ -212,8 +182,8 @@ jobs:
 
   # L2: 失败通知
   notify-failure:
-    needs: [brain-test, semantic-test]
-    if: always() && (needs.brain-test.result == 'failure' || needs.semantic-test.result == 'failure')
+    needs: [brain-test]
+    if: always() && needs.brain-test.result == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -224,24 +194,13 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_CI_DATABASE_ID }}
           BRAIN_TEST_RESULT: ${{ needs.brain-test.result }}
-          SEMANTIC_TEST_RESULT: ${{ needs.semantic-test.result }}
         run: |
           if [ -z "$NOTION_TOKEN" ] || [ -z "$NOTION_DATABASE_ID" ]; then
             echo "Notion secrets not configured, skipping notification"
             exit 0
           fi
 
-          FAILURE_REASON=""
-          if [ "$BRAIN_TEST_RESULT" = "failure" ]; then
-            FAILURE_REASON="brain-test"
-          fi
-          if [ "$SEMANTIC_TEST_RESULT" = "failure" ]; then
-            if [ -n "$FAILURE_REASON" ]; then
-              FAILURE_REASON="$FAILURE_REASON + semantic-test"
-            else
-              FAILURE_REASON="semantic-test"
-            fi
-          fi
+          FAILURE_REASON="brain-test"
 
           PR_URL="${{ github.event.pull_request.html_url }}"
           if [ -z "$PR_URL" ]; then

@@ -48,42 +48,69 @@ const QUARANTINE_REASONS = {
 // ============================================================
 
 const FAILURE_CLASS = {
-  SYSTEMIC: 'systemic',           // DB/网络/权限/配额 - 系统级问题
-  TASK_SPECIFIC: 'task_specific', // 任务本身问题
+  BILLING_CAP: 'billing_cap',     // API 账单上限 - 等 reset 时间
+  RATE_LIMIT: 'rate_limit',       // 429 限流 - 指数退避
+  AUTH: 'auth',                   // 权限/认证 - 不重试，通知人
+  NETWORK: 'network',             // 网络 - 短延迟重试
+  RESOURCE: 'resource',           // 资源不足 - 不重试，通知人
+  TASK_ERROR: 'task_error',       // 任务本身问题 - 正常失败计数
+  // 向后兼容
+  SYSTEMIC: 'systemic',
+  TASK_SPECIFIC: 'task_specific',
   UNKNOWN: 'unknown',
 };
 
-// 系统性失败判定模式
-const SYSTEMIC_PATTERNS = [
-  // 网络错误
-  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH/i,
-  /connection\s+refused|connection\s+reset/i,
-  /network\s+error|socket\s+hang\s+up/i,
+// 失败模式分组（按 FAILURE_CLASS 细分）
+const BILLING_CAP_PATTERNS = [
+  /spending\s+cap/i,
+  /cap\s+reached/i,
+  /billing.*limit/i,
+  /usage.*limit.*reached/i,
+];
 
-  // 权限错误
+const RATE_LIMIT_PATTERNS = [
+  /too\s+many\s+requests/i,
+  /rate\s+limit/i,
+  /429/,
+  /overloaded/i,
+  /resource\s+exhausted/i,
+  /quota\s+exceeded/i,
+];
+
+const AUTH_PATTERNS = [
   /permission\s+denied|access\s+denied|unauthorized/i,
   /EACCES|EPERM/i,
   /authentication\s+failed|auth\s+error/i,
+  /invalid.*api.*key/i,
+  /forbidden/i,
+];
 
-  // 配额/限流
-  /quota\s+exceeded|rate\s+limit/i,
-  /too\s+many\s+requests|429/i,
-  /resource\s+exhausted/i,
-
-  // 数据库错误
-  /database.*connection|pool.*exhausted/i,
-  /ECONNRESET.*postgres|pg.*connection/i,
-  /deadlock\s+detected|lock\s+timeout/i,
-
-  // 资源不足
-  /ENOMEM|out\s+of\s+memory/i,
-  /disk\s+full|no\s+space\s+left/i,
-  /ENOSPC/i,
-
-  // API 服务错误
+const NETWORK_PATTERNS = [
+  /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH/i,
+  /connection\s+refused|connection\s+reset/i,
+  /network\s+error|socket\s+hang\s+up/i,
+  /ECONNRESET/i,
   /5\d{2}\s+error|internal\s+server\s+error/i,
   /service\s+unavailable|bad\s+gateway/i,
   /upstream\s+connect\s+error/i,
+  /database.*connection|pool.*exhausted/i,
+  /deadlock\s+detected|lock\s+timeout/i,
+];
+
+const RESOURCE_PATTERNS = [
+  /ENOMEM|out\s+of\s+memory/i,
+  /disk\s+full|no\s+space\s+left/i,
+  /ENOSPC/i,
+  /oom/i,
+];
+
+// Legacy: combined SYSTEMIC_PATTERNS for backward compatibility
+const SYSTEMIC_PATTERNS = [
+  ...BILLING_CAP_PATTERNS,
+  ...RATE_LIMIT_PATTERNS,
+  ...AUTH_PATTERNS,
+  ...NETWORK_PATTERNS,
+  ...RESOURCE_PATTERNS,
 ];
 
 // 审核动作
@@ -498,34 +525,165 @@ function checkTimeoutPattern(task) {
 }
 
 /**
- * 分类失败原因（系统性 vs 任务性）
+ * 解析 reset 时间（从错误信息中提取）
+ * 支持格式：
+ *   "resets 11pm" → 今天 23:00 或明天 23:00（如果已过）
+ *   "resets at 11:00 PM" → 同上
+ *   "resets in 2 hours" → 当前时间 + 2 小时
+ *
+ * 所有时间使用北京时间 (UTC+8)
+ * @param {string} errorStr - 错误信息
+ * @returns {Date|null} - reset 时间（UTC），null 表示无法解析
+ */
+function parseResetTime(errorStr) {
+  if (!errorStr) return null;
+
+  // Pattern 1: "resets Xpm" or "resets X am/pm" or "resets at X:XX PM"
+  const resetMatch = errorStr.match(/resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (resetMatch) {
+    let hours = parseInt(resetMatch[1], 10);
+    const minutes = parseInt(resetMatch[2] || '0', 10);
+    const ampm = resetMatch[3].toLowerCase();
+
+    if (ampm === 'pm' && hours !== 12) hours += 12;
+    if (ampm === 'am' && hours === 12) hours = 0;
+
+    // 北京时间 (UTC+8)
+    const now = new Date();
+    const bjOffset = 8 * 60; // UTC+8 in minutes
+    const utcNow = now.getTime() + now.getTimezoneOffset() * 60000;
+    const bjNow = new Date(utcNow + bjOffset * 60000);
+
+    // 构造今天的 reset 时间（北京时间）
+    const resetBJ = new Date(bjNow);
+    resetBJ.setHours(hours, minutes, 0, 0);
+
+    // 如果 reset 时间已过，设为明天
+    if (resetBJ <= bjNow) {
+      resetBJ.setDate(resetBJ.getDate() + 1);
+    }
+
+    // 转回 UTC
+    return new Date(resetBJ.getTime() - bjOffset * 60000);
+  }
+
+  // Pattern 2: "resets in X hours" or "resets in X minutes"
+  const inMatch = errorStr.match(/resets?\s+in\s+(\d+)\s*(hour|minute|min|hr)/i);
+  if (inMatch) {
+    const amount = parseInt(inMatch[1], 10);
+    const unit = inMatch[2].toLowerCase();
+    const ms = unit.startsWith('hour') || unit.startsWith('hr')
+      ? amount * 60 * 60 * 1000
+      : amount * 60 * 1000;
+    return new Date(Date.now() + ms);
+  }
+
+  // 无法解析 → 默认 2 小时后
+  return new Date(Date.now() + 2 * 60 * 60 * 1000);
+}
+
+/**
+ * 获取失败类别对应的重试策略
+ * @param {string} failureClass - FAILURE_CLASS 值
+ * @param {Object} options - { retryCount, errorStr }
+ * @returns {{ should_retry: boolean, next_run_at?: string, needs_human_review?: boolean, billing_pause?: boolean, reason: string }}
+ */
+function getRetryStrategy(failureClass, options = {}) {
+  const { retryCount = 0, errorStr = '' } = options;
+
+  switch (failureClass) {
+    case FAILURE_CLASS.BILLING_CAP: {
+      const resetTime = parseResetTime(errorStr);
+      return {
+        should_retry: true,
+        next_run_at: resetTime ? resetTime.toISOString() : new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        billing_pause: true,
+        reason: `Billing cap hit, retry at reset time`,
+      };
+    }
+
+    case FAILURE_CLASS.RATE_LIMIT: {
+      if (retryCount >= 3) {
+        return { should_retry: false, needs_human_review: true, reason: 'Rate limit retries exhausted (3/3)' };
+      }
+      // 指数退避: 2min → 4min → 8min
+      const backoffMs = Math.pow(2, retryCount + 1) * 60 * 1000;
+      return {
+        should_retry: true,
+        next_run_at: new Date(Date.now() + backoffMs).toISOString(),
+        reason: `Rate limited, retry #${retryCount + 1} in ${backoffMs / 60000}min`,
+      };
+    }
+
+    case FAILURE_CLASS.NETWORK: {
+      if (retryCount >= 3) {
+        return { should_retry: false, needs_human_review: true, reason: 'Network retries exhausted (3/3)' };
+      }
+      // 短延迟: 30s → 1min → 2min
+      const backoffMs = Math.pow(2, retryCount) * 30 * 1000;
+      return {
+        should_retry: true,
+        next_run_at: new Date(Date.now() + backoffMs).toISOString(),
+        reason: `Network error, retry #${retryCount + 1} in ${backoffMs / 1000}s`,
+      };
+    }
+
+    case FAILURE_CLASS.AUTH:
+    case FAILURE_CLASS.RESOURCE:
+      return {
+        should_retry: false,
+        needs_human_review: true,
+        reason: `${failureClass} error - requires human intervention`,
+      };
+
+    case FAILURE_CLASS.TASK_ERROR:
+    default:
+      return {
+        should_retry: false,
+        reason: 'Task-level error, normal failure counting applies',
+      };
+  }
+}
+
+/**
+ * 分类失败原因（6 类细分）
  * @param {string|Error} error - 错误信息
  * @param {Object} task - 任务对象（可选）
- * @returns {{ class: string, pattern?: string, confidence: number }}
+ * @returns {{ class: string, pattern?: string, confidence: number, retry_strategy?: Object }}
  */
 function classifyFailure(error, task = null) {
   const errorStr = String(error?.message || error || '');
 
-  // 1. 检查是否匹配系统性失败模式
-  for (const pattern of SYSTEMIC_PATTERNS) {
-    if (pattern.test(errorStr)) {
-      return {
-        class: FAILURE_CLASS.SYSTEMIC,
-        pattern: pattern.toString(),
-        confidence: 0.9
-      };
+  // 按优先级检查各类模式
+  const patternGroups = [
+    { patterns: BILLING_CAP_PATTERNS, class: FAILURE_CLASS.BILLING_CAP },
+    { patterns: RATE_LIMIT_PATTERNS, class: FAILURE_CLASS.RATE_LIMIT },
+    { patterns: AUTH_PATTERNS, class: FAILURE_CLASS.AUTH },
+    { patterns: RESOURCE_PATTERNS, class: FAILURE_CLASS.RESOURCE },
+    { patterns: NETWORK_PATTERNS, class: FAILURE_CLASS.NETWORK },
+  ];
+
+  for (const group of patternGroups) {
+    for (const pattern of group.patterns) {
+      if (pattern.test(errorStr)) {
+        const retryCount = task?.payload?.failure_count || 0;
+        const retryStrategy = getRetryStrategy(group.class, { retryCount, errorStr });
+        return {
+          class: group.class,
+          pattern: pattern.toString(),
+          confidence: 0.9,
+          retry_strategy: retryStrategy,
+        };
+      }
     }
   }
 
-  // 2. 如果有任务上下文，检查是否与其他任务失败模式相同
-  // （这需要查询最近失败的任务，但为了避免循环依赖，这里返回 UNKNOWN）
-  // 实际的"最近 5 个任务相同错误"检查在 checkSystemicFailurePattern() 中
-
-  // 3. 默认为 UNKNOWN，需要进一步分析
+  // 默认为 TASK_ERROR
   return {
-    class: FAILURE_CLASS.UNKNOWN,
+    class: FAILURE_CLASS.TASK_ERROR,
     pattern: null,
-    confidence: 0.5
+    confidence: 0.5,
+    retry_strategy: getRetryStrategy(FAILURE_CLASS.TASK_ERROR),
   };
 }
 
@@ -696,4 +854,13 @@ export {
   // 失败分类
   classifyFailure,
   checkSystemicFailurePattern,
+  parseResetTime,
+  getRetryStrategy,
+
+  // 细分模式（测试用）
+  BILLING_CAP_PATTERNS,
+  RATE_LIMIT_PATTERNS,
+  AUTH_PATTERNS,
+  NETWORK_PATTERNS,
+  RESOURCE_PATTERNS,
 };
