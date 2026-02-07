@@ -441,6 +441,30 @@ async function processCortexTask(task, actions) {
       completed_at: new Date().toISOString()
     })]);
 
+    // If this is a learning task, record learning and apply strategy adjustments
+    if (task.payload.requires_learning === true) {
+      try {
+        const { recordLearning, applyStrategyAdjustments } = await import('./learning.js');
+
+        // Record learning
+        const learningRecord = await recordLearning(rcaResult);
+        console.log(`[tick] Learning recorded: ${learningRecord.id}`);
+
+        // Apply strategy adjustments if any
+        const strategyAdjustments = rcaResult.recommended_actions?.filter(
+          action => action.type === 'adjust_strategy'
+        ) || [];
+
+        if (strategyAdjustments.length > 0) {
+          const applyResult = await applyStrategyAdjustments(strategyAdjustments, learningRecord.id);
+          console.log(`[tick] Strategy adjustments applied: ${applyResult.applied}, skipped: ${applyResult.skipped}`);
+        }
+      } catch (learningErr) {
+        console.error(`[tick] Learning processing failed: ${learningErr.message}`);
+        // Don't fail the task, just log the error
+      }
+    }
+
     // Update task to completed with result in payload
     const updatedPayload = {
       ...task.payload,

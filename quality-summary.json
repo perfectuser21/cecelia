@@ -1,8 +1,6 @@
 {
-  "branch": "cp-0207-cortex-rca",
-  "head_sha": "b4b2f79",
-  "timestamp": "2026-02-07T07:05:55Z",
-  "tests_passed": 733,
-  "tests_added": 3,
+  "branch": "cp-0207-learning-loop",
+  "head_sha": "25fbafe",
+  "timestamp": "2026-02-07T07:27:01Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
