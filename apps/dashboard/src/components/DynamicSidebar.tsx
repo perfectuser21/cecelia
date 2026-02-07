@@ -51,15 +51,15 @@ export default function DynamicSidebar({
 }: DynamicSidebarProps) {
   const location = useLocation();
   const { isSuperAdmin } = useAuth();
-  const { config, isCore, isFeatureEnabled, coreConfig } = useInstance();
+  const { config, isFeatureEnabled, coreConfig } = useInstance();
 
   // 获取并过滤导航配置
   const baseNavGroups = useMemo(() => {
-    if (isCore && coreConfig) {
+    if (coreConfig) {
       return convertCoreNavGroups(coreConfig.navGroups);
     }
     return getAutopilotNavGroups();
-  }, [isCore, coreConfig]);
+  }, [coreConfig]);
   const navGroups = filterNavGroups(baseNavGroups, isFeatureEnabled, isSuperAdmin);
 
   return (
@@ -96,7 +96,7 @@ export default function DynamicSidebar({
       {/* 收缩按钮 */}
       <button
         onClick={() => onCollapsedChange(!collapsed)}
-        className="absolute -right-3 top-20 w-6 h-6 rounded-full flex items-center justify-center text-sky-200 hover:text-white transition-all shadow-lg border border-sky-400/30 bg-blue-900 hover:bg-blue-800"
+        className="absolute -right-3 top-20 w-6 h-6 rounded-full flex items-center justify-center text-slate-300 hover:text-white transition-all shadow-lg border border-slate-500/30 bg-slate-800 hover:bg-slate-700"
         title={collapsed ? '展开侧边栏' : '收起侧边栏'}
       >
         {collapsed ? (
@@ -111,7 +111,7 @@ export default function DynamicSidebar({
         {navGroups.map((group, groupIndex) => (
           <div key={group.title} className={groupIndex > 0 ? 'mt-6' : ''}>
             {!collapsed && (
-              <p className="px-3 mb-2 text-[10px] font-semibold text-sky-400/60 uppercase tracking-wider">
+              <p className="px-3 mb-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
                 {group.title}
               </p>
             )}
@@ -126,7 +126,6 @@ export default function DynamicSidebar({
                       key={item.path}
                       item={item}
                       collapsed={collapsed}
-                      isCore={isCore}
                       currentPath={location.pathname}
                     />
                   );
@@ -142,20 +141,20 @@ export default function DynamicSidebar({
                       collapsed ? 'justify-center px-2' : 'px-3'
                     } py-2.5 text-sm font-medium rounded-xl transition-all duration-200 ${
                       isActive
-                        ? 'bg-sky-500/20 text-white'
-                        : 'text-blue-200/70 hover:bg-white/5 hover:text-white'
+                        ? 'bg-slate-600/30 text-white'
+                        : 'text-slate-400 hover:bg-white/5 hover:text-white'
                     }`}
                   >
                     {isActive && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-sky-400" />
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-slate-400" />
                     )}
                     <Icon
                       className={`w-5 h-5 ${
                         collapsed ? '' : 'mr-3'
                       } transition-transform duration-200 ${
                         isActive
-                          ? 'text-sky-300'
-                          : 'text-blue-300/60 group-hover:text-white group-hover:scale-110'
+                          ? 'text-slate-300'
+                          : 'text-slate-500 group-hover:text-white group-hover:scale-110'
                       }`}
                     />
                     {!collapsed && item.label}

@@ -96,15 +96,15 @@ interface DynamicRouterProps {
 
 export default function DynamicRouter({ children }: DynamicRouterProps) {
   const { isSuperAdmin } = useAuth();
-  const { isCore, isFeatureEnabled, coreConfig } = useInstance();
+  const { isFeatureEnabled, coreConfig } = useInstance();
 
   // 获取当前实例的导航配置
   const navGroups = useMemo(() => {
-    if (isCore && coreConfig) {
+    if (coreConfig) {
       return convertCoreNavGroups(coreConfig.navGroups);
     }
     return getAutopilotNavGroups();
-  }, [isCore, coreConfig]);
+  }, [coreConfig]);
 
   // 获取页面组件映射
   const corePageComponents = coreConfig?.pageComponents;
@@ -113,8 +113,8 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
   const allRoutes: RouteConfig[] = useMemo(() => {
     const routes: RouteConfig[] = [];
 
-    // Core: 使用 allRoutes（包含所有路由，不仅是导航项）
-    if (isCore && coreConfig?.allRoutes) {
+    // 使用 allRoutes（包含所有路由，不仅是导航项）
+    if (coreConfig?.allRoutes) {
       for (const route of coreConfig.allRoutes) {
         routes.push({
           path: route.path,
@@ -123,7 +123,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
         });
       }
     } else {
-      // Autopilot: 从导航配置中提取路由
+      // Fallback: 从导航配置中提取路由
       for (const group of navGroups) {
         for (const item of group.items) {
           routes.push({
@@ -140,7 +140,7 @@ export default function DynamicRouter({ children }: DynamicRouterProps) {
     }
 
     return routes;
-  }, [navGroups, isCore, coreConfig]);
+  }, [navGroups, coreConfig]);
 
   // 渲染单个路由
   const renderRoute = (route: RouteConfig) => {

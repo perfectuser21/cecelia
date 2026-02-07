@@ -89,14 +89,12 @@ echo "✅ 文件同步完成"
 echo ""
 echo "🔄 检查端口冲突..."
 
-# 停止占用 5211/5212 的旧容器（如 autopilot-dashboard）
-for PORT in 5211 5212; do
-    EXISTING=$(ssh "$REMOTE" "docker ps --format '{{.Names}}' --filter publish=$PORT" 2>/dev/null || echo "")
-    if [[ -n "$EXISTING" && "$EXISTING" != "cecelia-frontend-hk" && "$EXISTING" != "cecelia-core-hk" ]]; then
-        echo "⚠️  端口 $PORT 被 $EXISTING 占用，停止旧容器..."
-        ssh "$REMOTE" "docker stop $EXISTING"
-    fi
-done
+# 停止占用 5211 的旧容器
+EXISTING=$(ssh "$REMOTE" "docker ps --format '{{.Names}}' --filter publish=5211" 2>/dev/null || echo "")
+if [[ -n "$EXISTING" && "$EXISTING" != "cecelia-core-hk" ]]; then
+    echo "⚠️  端口 5211 被 $EXISTING 占用，停止旧容器..."
+    ssh "$REMOTE" "docker stop $EXISTING"
+fi
 
 echo "🔄 启动 HK 容器..."
 
@@ -110,17 +108,10 @@ sleep 3
 
 HEALTH_OK=true
 
-if ssh "$REMOTE" "curl -sf http://localhost:5212 > /dev/null 2>&1"; then
-    echo "✅ dev-core (5212) 健康检查通过"
-else
-    echo "⚠️  dev-core (5212) 健康检查失败，容器可能还在启动"
-    HEALTH_OK=false
-fi
-
 if ssh "$REMOTE" "curl -sf http://localhost:5211 > /dev/null 2>&1"; then
-    echo "✅ core (5211) 健康检查通过"
+    echo "✅ 前端 (5211) 健康检查通过"
 else
-    echo "⚠️  core (5211) 健康检查失败，容器可能还在启动"
+    echo "⚠️  前端 (5211) 健康检查失败，容器可能还在启动"
     HEALTH_OK=false
 fi
 
@@ -132,5 +123,4 @@ echo "  分支: $BRANCH"
 echo "  Commit: ${LOCAL_SHA:0:8}"
 echo "  目标: $REMOTE:$REMOTE_DIR"
 echo ""
-echo "  dev-core: https://dev-core.zenjoymedia.media (HK:5212)"
-echo "  core:     https://core.zenjoymedia.media (HK:5211)"
+echo "  前端: https://core.zenjoymedia.media (HK:5211)"
