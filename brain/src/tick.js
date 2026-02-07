@@ -16,8 +16,8 @@ import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
-import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
-import { handleTaskFailure, getQuarantineStats } from './quarantine.js';
+import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -433,6 +433,18 @@ async function dispatchNextTask(goalIds) {
   // 2. Circuit breaker check
   if (!isAllowed('cecelia-run')) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
+  }
+
+  // 2a. P1 FIX: Token bucket rate limiting check
+  const tokenResult = tryConsumeToken('dispatch');
+  if (!tokenResult.allowed) {
+    return {
+      dispatched: false,
+      reason: 'rate_limited',
+      detail: tokenResult.reason,
+      remaining: tokenResult.remaining,
+      actions
+    };
   }
 
   // 3. Select next task (with dependency check)
@@ -882,6 +894,21 @@ async function executeTick() {
     }
   } catch (watchdogErr) {
     console.error('[tick] Watchdog error:', watchdogErr.message);
+  }
+
+  // P1 FIX #3: Check for expired quarantine tasks and auto-release
+  try {
+    const released = await checkExpiredQuarantineTasks();
+    for (const r of released) {
+      actionsTaken.push({
+        action: 'auto_release_quarantine',
+        task_id: r.task_id,
+        title: r.title,
+        reason: 'TTL expired',
+      });
+    }
+  } catch (quarantineErr) {
+    console.error('[tick] Quarantine check error:', quarantineErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)

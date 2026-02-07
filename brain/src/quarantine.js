@@ -151,6 +151,18 @@ async function quarantineTask(taskId, reason, details = {}) {
       return { success: true, already_quarantined: true, task };
     }
 
+    // P1 FIX #3: 添加 TTL (Time To Live) 到隔离信息
+    // 默认 TTL: repeated_failure=2h, resource_hog=4h, timeout_pattern=1h, 其他=30min
+    const ttlMap = {
+      repeated_failure: 2 * 60 * 60 * 1000,  // 2 hours
+      resource_hog: 4 * 60 * 60 * 1000,      // 4 hours
+      timeout_pattern: 1 * 60 * 60 * 1000,   // 1 hour
+      suspicious_input: 30 * 60 * 1000,      // 30 min
+      manual: 24 * 60 * 60 * 1000,           // 24 hours
+    };
+    const ttlMs = ttlMap[reason] || (30 * 60 * 1000);  // default 30min
+    const releaseAt = new Date(Date.now() + ttlMs).toISOString();
+
     // 更新任务状态为隔离
     const quarantineInfo = {
       quarantined_at: new Date().toISOString(),
@@ -158,6 +170,8 @@ async function quarantineTask(taskId, reason, details = {}) {
       details,
       previous_status: task.status,
       failure_count: task.payload?.failure_count || 0,
+      ttl_ms: ttlMs,          // P1 FIX: TTL 毫秒数
+      release_at: releaseAt,  // P1 FIX: 自动释放时间
     };
 
     await pool.query(`
@@ -548,23 +562,20 @@ function parseResetTime(errorStr) {
     if (ampm === 'pm' && hours !== 12) hours += 12;
     if (ampm === 'am' && hours === 12) hours = 0;
 
-    // 北京时间 (UTC+8)
+    // 假设 API 返回的是北京时间（UTC+8）
+    // 服务器也在北京时区，直接使用本地时间
     const now = new Date();
-    const bjOffset = 8 * 60; // UTC+8 in minutes
-    const utcNow = now.getTime() + now.getTimezoneOffset() * 60000;
-    const bjNow = new Date(utcNow + bjOffset * 60000);
 
-    // 构造今天的 reset 时间（北京时间）
-    const resetBJ = new Date(bjNow);
-    resetBJ.setHours(hours, minutes, 0, 0);
+    // 构造今天的 reset 时间
+    const resetTime = new Date(now);
+    resetTime.setHours(hours, minutes, 0, 0);
 
     // 如果 reset 时间已过，设为明天
-    if (resetBJ <= bjNow) {
-      resetBJ.setDate(resetBJ.getDate() + 1);
+    if (resetTime <= now) {
+      resetTime.setDate(resetTime.getDate() + 1);
     }
 
-    // 转回 UTC
-    return new Date(resetBJ.getTime() - bjOffset * 60000);
+    return resetTime;
   }
 
   // Pattern 2: "resets in X hours" or "resets in X minutes"
@@ -786,6 +797,44 @@ function checkShouldQuarantine(task, context = 'on_failure') {
 }
 
 /**
+ * P1 FIX #3: 检查隔离区到期任务并自动释放
+ * @returns {Promise<Array>} - 释放的任务列表
+ */
+async function checkExpiredQuarantineTasks() {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, payload
+      FROM tasks
+      WHERE status = 'quarantined'
+        AND payload->'quarantine_info'->>'release_at' IS NOT NULL
+        AND (payload->'quarantine_info'->>'release_at')::timestamptz < NOW()
+    `);
+
+    const released = [];
+    for (const task of result.rows) {
+      // P1 FIX: Use REVIEW_ACTIONS.RELEASE for auto-release
+      const releaseResult = await releaseTask(task.id, REVIEW_ACTIONS.RELEASE, {
+        reviewer: 'auto_ttl_expired'
+      });
+      if (releaseResult.success) {
+        released.push({
+          task_id: task.id,
+          title: task.title,
+          quarantined_at: task.payload?.quarantine_info?.quarantined_at,
+          released_at: new Date().toISOString(),
+        });
+        console.log(`[quarantine] Auto-released task ${task.id} (TTL expired)`);
+      }
+    }
+
+    return released;
+  } catch (err) {
+    console.error('[quarantine] checkExpiredQuarantineTasks error:', err.message);
+    return [];
+  }
+}
+
+/**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
  * @returns {Object} - { quarantined, result }
@@ -806,14 +855,22 @@ async function handleTaskFailure(taskId) {
 
     // 增加失败计数
     const newFailureCount = (task.payload?.failure_count || 0) + 1;
+
+    // P1 FIX #2: 分类失败并存储 retry_strategy
+    const errorDetails = task.payload?.error_details;
+    const classification = classifyFailure(errorDetails, task);
+
     await pool.query(`
       UPDATE tasks
       SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
       WHERE id = $1
-    `, [taskId, JSON.stringify({ failure_count: newFailureCount })]);
+    `, [taskId, JSON.stringify({
+      failure_count: newFailureCount,
+      failure_classification: classification  // P1 FIX: 存储分类和策略
+    })]);
 
     // 更新本地对象
-    task.payload = { ...task.payload, failure_count: newFailureCount };
+    task.payload = { ...task.payload, failure_count: newFailureCount, failure_classification: classification };
 
     // 检查是否需要隔离
     const check = checkShouldQuarantine(task, 'on_failure');
@@ -823,7 +880,7 @@ async function handleTaskFailure(taskId) {
       return { quarantined: true, result };
     }
 
-    return { quarantined: false, failure_count: newFailureCount };
+    return { quarantined: false, failure_count: newFailureCount, classification };
 
   } catch (err) {
     console.error('[quarantine] handleTaskFailure error:', err.message);
@@ -848,6 +905,7 @@ export {
   releaseTask,
   getQuarantinedTasks,
   getQuarantineStats,
+  checkExpiredQuarantineTasks,  // P1 FIX #3
 
   // 检查逻辑
   shouldQuarantineOnFailure,

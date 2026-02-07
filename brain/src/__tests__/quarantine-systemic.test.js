@@ -11,7 +11,12 @@ import { checkSystemicFailurePattern, FAILURE_CLASS } from '../quarantine.js';
 
 describe('quarantine-systemic (P0 Fix #1)', () => {
   beforeEach(async () => {
+    // Clean up test tasks
     await pool.query('DELETE FROM tasks WHERE title LIKE $1', ['%test-systemic%']);
+
+    // Also clean up other failed tasks to avoid interference
+    // (checkSystemicFailurePattern looks at last 5 failed tasks globally)
+    await pool.query(`DELETE FROM tasks WHERE status = 'failed' AND updated_at > NOW() - INTERVAL '30 minutes'`);
   });
 
   afterEach(async () => {
