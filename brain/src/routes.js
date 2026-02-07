@@ -25,7 +25,7 @@ async function getLatestSnapshot() {
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus, TASK_TYPE_AGENT_MAP } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus, TASK_TYPE_AGENT_MAP } from './tick.js';
 import {
   createFeature, getFeature, getFeaturesByStatus, updateFeature,
   createFeatureTask, handleFeatureTaskComplete, FEATURE_STATUS
@@ -507,6 +507,47 @@ router.post('/tick/disable', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to disable tick', details: err.message });
+  }
+});
+
+// ==================== Drain API ====================
+
+/**
+ * POST /api/brain/tick/drain
+ * Graceful drain — stop dispatching new tasks, let in_progress finish
+ */
+router.post('/tick/drain', async (req, res) => {
+  try {
+    const result = await drainTick();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to start drain', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tick/drain-status
+ * Check drain progress
+ */
+router.get('/tick/drain-status', async (req, res) => {
+  try {
+    const result = await getDrainStatus();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get drain status', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tick/drain-cancel
+ * Cancel drain mode, resume normal dispatching
+ */
+router.post('/tick/drain-cancel', (req, res) => {
+  try {
+    const result = cancelDrain();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to cancel drain', details: err.message });
   }
 });
 

@@ -1,5 +1,16 @@
 # Learnings
 
+## [2026-02-07] Auto KR decomposition — 填补 tick 管道缺口 (v1.12.3)
+
+### Feature: tick.js Step 6c — KR 自动拆解任务创建（PR #171）
+
+- **What**: planNextTask() 返回 `needs_planning` 时自动创建 KR 拆解任务，填补 Objective→KR 和 KR→Task 之间的管道缺口
+- **Root cause**: tick.js Step 6b 只对 Objective 没有 KR 的情况创建拆解任务；对 KR 没有 Task 的情况（needs_planning），只是日志记录，不做任何操作。导致 0 queued tasks，秋米永远不被触发
+- **Fix**: 在 needs_planning 分支新增 Step 6c，自动创建带 `payload.decomposition='continue'` 的 KR 拆解任务，dispatcher 会将其派给秋米执行
+- **Dedup**: 使用 SQL 去重查询，检查 `payload->>'decomposition' IN ('true','continue') OR title LIKE '%拆解%'`，且 status 为 queued/in_progress 或 24h 内 completed
+- **Pattern**: Brain 管道设计 = Objective→(6b auto-decomp)→KR→(6c auto-decomp)→Task→(dispatch)→Agent。6c 是缺失的一环
+- **Design note**: planner.js 注释明确说"Task creation is 秋米's responsibility via /okr"——但 6c 不是绕过这个设计，而是自动创建触发秋米的入口任务
+
 ## [2026-02-07] 删除全部 Python 代码 + 死迁移 (v1.11.5)
 
 ### Feature: Python Support Service 完全移除（PR #165）
@@ -662,6 +673,25 @@ Created comprehensive implementation planning for KR2.2 Phase 5, covering platfo
 After this planning is complete, the actual implementation will be in zenithjoy-autopilot repository with separate PRs for each of the 5 subtasks.
 
 ---
+
+## [2026-02-07] Plan Proposal 系统 (v1.12.0)
+
+### Feature: LLM 提案 + 约束层 + 审批工作流（PR #167）
+
+- **What**: 新增 Plan Proposal 系统，让 LLM 生成结构化调度提案，经人工审批后写入 DB，调度器自动吸收
+- **Root Cause**: planner.js 的纯算法调度缺乏智能重排能力，用户无法通过自然语言调整任务优先级
+- **Architecture**:
+  - `proposals` 表：完整状态机（pending_review → approved → applied，支持 rollback）
+  - `/api/brain/plan`：统一入口，LLM 和 UI 共用
+  - 约束层：白名单（7 种变更类型）、DAG 环检测、速率限制（20次/分钟）、批量阈值（>5 需审批）
+  - 提案只修改调度输入（priority, depends_on, next_run_at, focus），不改调度算法本身
+- **Key Design**:
+  - `hasCycleInGraph()` 提取为纯函数，接受 Map 参数，可脱离 DB 测试
+  - 回滚机制：apply 时存 snapshot，rollback 时恢复原值 + 删除新建任务
+  - `create_proposal` 加入 thalamus ACTION_WHITELIST（17 个总 action）
+- **Gotcha**: detectCycle 的 DB mock 测试困难 — vi.mock('../db.js') 无法在 proposal.js 的闭包中正确拦截。解决方案：提取纯图算法 `hasCycleInGraph()` 避免 DB 依赖
+- **Testing**: 26 新测试（validateChange 8 + validateChanges 4 + hasCycleInGraph 6 + checkRateLimit 1 + constants 3），全量 665 通过
+- **Pattern**: "LLM 提议 → 约束验证 → 人工审批 → 代码执行" 模式，确保 LLM 不能直接修改系统状态
 
 ## [2026-02-07] Brain 旧模块清理（v1.11.0）
 
