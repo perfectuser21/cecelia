@@ -53,6 +53,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // 初始化时从 cookie 读取用户信息（跨子域名共享）
   useEffect(() => {
+    const hostname = window.location.hostname;
+    const isLocalAccess = hostname === 'localhost' || hostname === '127.0.0.1' || /^100\./.test(hostname);
+
+    // localhost / 127.0.0.1 / Tailscale (100.x.x.x) → 自动登录为超级管理员
+    if (isLocalAccess) {
+      const localAdmin: User = {
+        id: 'local-admin',
+        name: 'Admin',
+        email: 'admin@local',
+        department: 'System',
+      };
+      setUser(localAdmin);
+      setToken('local-access-token');
+      setAuthLoading(false);
+      return;
+    }
+
     console.log('🔍 AuthProvider init, checking cookies...');
     console.log('🍪 All cookies:', document.cookie);
     const savedUser = getCookie('user');
@@ -111,14 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('token');
   };
 
-  // 超级管理员飞书 ID 列表（环境变量配置）
-  // 注意：user.id 就是飞书的 open_id，user.feishu_user_id 是可选的兼容字段
+  // 超级管理员判定：本地/Tailscale 访问自动为超管，外部域名检查飞书 ID
+  const hostname = window.location.hostname;
+  const isLocalAccess = hostname === 'localhost' || hostname === '127.0.0.1' || /^100\./.test(hostname);
   const superAdminIds = (import.meta.env.VITE_SUPER_ADMIN_FEISHU_IDS || '').split(',').filter(Boolean);
   const userFeishuId = user?.feishu_user_id || user?.id;
-  const isSuperAdmin = !!userFeishuId && superAdminIds.includes(userFeishuId);
-
-  // 调试日志
-  console.log('🔑 权限检查:', { userFeishuId, superAdminIds, isSuperAdmin });
+  const isSuperAdmin = isLocalAccess || (!!userFeishuId && superAdminIds.includes(userFeishuId));
 
   const value = {
     user,
