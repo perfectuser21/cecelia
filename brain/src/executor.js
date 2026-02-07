@@ -389,9 +389,20 @@ async function requeueTask(taskId, reason, evidence = {}) {
     return { requeued: false, quarantined: true };
   }
 
-  // Exponential backoff: 2min for retry 1 (kill 2 → quarantine, never reaches higher)
-  const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
-  const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+  // Check if failure classification has retry strategy
+  const retryStrategy = payload.failure_classification?.retry_strategy;
+  let nextRunAt;
+
+  if (retryStrategy && retryStrategy.next_run_at) {
+    // Use classified retry strategy (from quarantine.js classifyFailure)
+    nextRunAt = retryStrategy.next_run_at;
+    console.log(`[executor] Using classified retry strategy: ${retryStrategy.reason || 'unknown'}`);
+  } else {
+    // Fallback: Exponential backoff (2min for retry 1, max 30min)
+    const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
+    nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+    console.log(`[executor] Using default exponential backoff: ${backoffSec}s`);
+  }
 
   // P0 #2: WHERE status='in_progress' prevents reviving already-completed tasks
   const updateResult = await pool.query(
