@@ -1056,7 +1056,9 @@ async function executeTick() {
         action: 'auto_release_quarantine',
         task_id: r.task_id,
         title: r.title,
-        reason: 'TTL expired',
+        reason: r.reason || 'unknown',
+        failure_class: r.failure_class || 'unknown',
+        ttl_release: 'TTL expired',
       });
     }
   } catch (quarantineErr) {

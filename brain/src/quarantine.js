@@ -152,26 +152,57 @@ async function quarantineTask(taskId, reason, details = {}) {
     }
 
     // P1 FIX #3: 添加 TTL (Time To Live) 到隔离信息
-    // 默认 TTL: repeated_failure=2h, resource_hog=4h, timeout_pattern=1h, 其他=30min
-    const ttlMap = {
-      repeated_failure: 2 * 60 * 60 * 1000,  // 2 hours
-      resource_hog: 4 * 60 * 60 * 1000,      // 4 hours
-      timeout_pattern: 1 * 60 * 60 * 1000,   // 1 hour
-      suspicious_input: 30 * 60 * 1000,      // 30 min
-      manual: 24 * 60 * 60 * 1000,           // 24 hours
+    // TTL 根据失败类别（failure_class）和隔离原因（reason）确定
+    const failureClass = details.failure_class || 'unknown';
+
+    // 失败类别的 TTL 映射（根据 PRD）
+    const failureClassTTL = {
+      billing_cap: null,                       // 等待 reset_time，由 details.reset_time 决定
+      rate_limit: 30 * 60 * 1000,             // 30 分钟
+      network: 30 * 60 * 1000,                // 30 分钟
+      resource: 60 * 60 * 1000,               // 1 小时
+      repeated_failure: 24 * 60 * 60 * 1000,  // 24 小时
     };
-    const ttlMs = ttlMap[reason] || (30 * 60 * 1000);  // default 30min
-    const releaseAt = new Date(Date.now() + ttlMs).toISOString();
+
+    // 隔离原因的 TTL 映射（fallback）
+    const reasonTTL = {
+      repeated_failure: 24 * 60 * 60 * 1000,  // 24 小时
+      resource_hog: 60 * 60 * 1000,           // 1 小时
+      timeout_pattern: 60 * 60 * 1000,        // 1 小时
+      suspicious_input: 30 * 60 * 1000,       // 30 分钟
+      manual: null,                           // 手动隔离，永不自动释放
+    };
+
+    // 确定 TTL（优先使用 failure_class）
+    let ttlMs;
+    let releaseAt = null;
+
+    if (failureClass === 'billing_cap' && details.reset_time) {
+      // BILLING_CAP: 使用 API 返回的 reset_time
+      releaseAt = details.reset_time;
+      ttlMs = new Date(details.reset_time).getTime() - Date.now();
+    } else if (failureClassTTL[failureClass] !== undefined) {
+      ttlMs = failureClassTTL[failureClass];
+      releaseAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : null;
+    } else if (reasonTTL[reason] !== undefined) {
+      ttlMs = reasonTTL[reason];
+      releaseAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : null;
+    } else {
+      // 默认 30 分钟
+      ttlMs = 30 * 60 * 1000;
+      releaseAt = new Date(Date.now() + ttlMs).toISOString();
+    }
 
     // 更新任务状态为隔离
     const quarantineInfo = {
       quarantined_at: new Date().toISOString(),
       reason,
+      failure_class: failureClass,  // 失败类别（用于释放策略）
       details,
       previous_status: task.status,
       failure_count: task.payload?.failure_count || 0,
       ttl_ms: ttlMs,          // P1 FIX: TTL 毫秒数
-      release_at: releaseAt,  // P1 FIX: 自动释放时间
+      release_at: releaseAt,  // P1 FIX: 自动释放时间（null = 永不自动释放）
     };
 
     await pool.query(`
@@ -802,29 +833,63 @@ function checkShouldQuarantine(task, context = 'on_failure') {
  */
 async function checkExpiredQuarantineTasks() {
   try {
+    // 动态导入 alertness 模块（避免循环依赖）
+    const { getAlertness, ALERTNESS_LEVELS } = await import('./alertness.js');
+
+    // 检查 Alertness 状态：EMERGENCY/COMA 时不释放
+    const currentAlertness = await getAlertness();
+    if (currentAlertness.level >= ALERTNESS_LEVELS.EMERGENCY) {
+      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.name} (>=EMERGENCY)`);
+      return [];
+    }
+
     const result = await pool.query(`
       SELECT id, title, payload
       FROM tasks
       WHERE status = 'quarantined'
         AND payload->'quarantine_info'->>'release_at' IS NOT NULL
+        AND payload->'quarantine_info'->>'release_at' != 'null'
         AND (payload->'quarantine_info'->>'release_at')::timestamptz < NOW()
     `);
 
+    if (result.rows.length === 0) {
+      return [];
+    }
+
+    console.log(`[quarantine] Found ${result.rows.length} expired quarantine task(s), attempting auto-release...`);
+
     const released = [];
     for (const task of result.rows) {
+      const quarantineInfo = task.payload?.quarantine_info || {};
+      const reason = quarantineInfo.reason || 'unknown';
+      const failureClass = quarantineInfo.failure_class || 'unknown';
+
+      console.log(`[quarantine] Releasing task ${task.id}: reason=${reason}, class=${failureClass}`);
+
       // P1 FIX: Use REVIEW_ACTIONS.RELEASE for auto-release
       const releaseResult = await releaseTask(task.id, REVIEW_ACTIONS.RELEASE, {
-        reviewer: 'auto_ttl_expired'
+        reviewer: 'auto_ttl_expired',
+        reason: 'TTL expired',
+        failure_class: failureClass,
       });
+
       if (releaseResult.success) {
         released.push({
           task_id: task.id,
           title: task.title,
-          quarantined_at: task.payload?.quarantine_info?.quarantined_at,
+          reason,
+          failure_class: failureClass,
+          quarantined_at: quarantineInfo.quarantined_at,
           released_at: new Date().toISOString(),
         });
-        console.log(`[quarantine] Auto-released task ${task.id} (TTL expired)`);
+        console.log(`[quarantine] ✅ Auto-released task ${task.id} (${reason}/${failureClass})`);
+      } else {
+        console.error(`[quarantine] ❌ Failed to auto-release task ${task.id}:`, releaseResult.error);
       }
+    }
+
+    if (released.length > 0) {
+      console.log(`[quarantine] Auto-released ${released.length} task(s)`);
     }
 
     return released;

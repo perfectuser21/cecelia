@@ -42,16 +42,16 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
   });
 
   it('should use different TTL for different reasons', async () => {
-    // repeated_failure should have 2h TTL
+    // repeated_failure should have 24h TTL (PRD requirement)
     const result1 = await quarantineTask(testTaskId, 'repeated_failure');
-    expect(result1.quarantine_info.ttl_ms).toBe(2 * 60 * 60 * 1000);
+    expect(result1.quarantine_info.ttl_ms).toBe(24 * 60 * 60 * 1000);
 
-    // Create another task for resource_hog
+    // Create another task for resource_hog (should be 1h)
     const task2 = await pool.query(`
       INSERT INTO tasks (title, status) VALUES ('test-auto-release-2', 'queued') RETURNING id
     `);
     const result2 = await quarantineTask(task2.rows[0].id, 'resource_hog');
-    expect(result2.quarantine_info.ttl_ms).toBe(4 * 60 * 60 * 1000);
+    expect(result2.quarantine_info.ttl_ms).toBe(1 * 60 * 60 * 1000);
 
     // Cleanup
     await pool.query('DELETE FROM tasks WHERE id = $1', [task2.rows[0].id]);
@@ -77,9 +77,9 @@ describe('quarantine-auto-release (P1 Fix #3)', () => {
       WHERE id = $2
     `, [JSON.stringify({
       quarantine_info: {
-        quarantined_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+        quarantined_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
         reason: 'repeated_failure',
-        ttl_ms: 2 * 60 * 60 * 1000,
+        ttl_ms: 24 * 60 * 60 * 1000,  // 24h TTL
         release_at: new Date(Date.now() - 1000).toISOString(),  // expired 1 second ago
       }
     }), testTaskId]);
