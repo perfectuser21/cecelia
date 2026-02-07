@@ -1,5 +1,18 @@
 # Learnings
 
+## [2026-02-07] 深度清理 — Python 死代码 + Node.js 残留 (v1.11.2)
+
+### Feature: 仓库级死代码清理
+
+- **What**: Brain 三层大脑完成后，仓库仍残留 ~8600 行死代码（Python intelligence/core/cli + Node.js 残留）
+- **Scope**: 删除 63 个文件，净减 8606 行
+- **Python 清理**: 删除 `src/intelligence/`（parser/scheduler/planner/detector）、`src/core/`（embedder/store/search）、`src/cli/`、`src/api/semantic_routes.py`，重写 `main.py`（698→114 行）
+- **Node.js 清理**: 删除 `retry-analyzer.js`（零引用）、清理 `callback-atomic.test.js` 5 个死 mock
+- **Config 清理**: 删除 `sor/config.yaml`（全是错路径）、清理 `requirements.txt`（移除 chromadb/watchdog/langchain）
+- **Gotcha**: Sub-agent 误报 decision.js::executeDecision 和 intent.js 函数为死代码 — grep 验证后发现仍在使用。**永远用 grep 验证后再删。**
+- **Pattern**: 保留的 Python 服务（patrol/agent_monitor/orchestrator/cecelia_routes）仍在使用，不能全删
+- **Testing**: 622 Node.js tests pass, 40 Python tests pass
+
 ## [2026-02-07] 失败分类与智能重试 (v1.10.0)
 
 ### Feature: 6 类失败细分 + 按类型自动应对

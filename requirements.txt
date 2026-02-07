@@ -1,20 +1,11 @@
-# Cecelia Semantic Brain - Dependencies
+# Cecelia Support Service - Dependencies
 
 # API Framework
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 
-# Vector Database
-chromadb>=0.4.22
-
-# Embedding
+# OpenAI (used by orchestrator for Realtime API proxy)
 openai>=1.10.0
-
-# File Watching
-watchdog>=4.0.0
-
-# Text Processing
-langchain-text-splitters>=0.0.1
 
 # Core
 pydantic>=2.5.0
