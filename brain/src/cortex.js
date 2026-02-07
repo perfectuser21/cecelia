@@ -41,6 +41,7 @@ Level 2 事件包括：
 2. **根因追溯**：找到问题的真正原因，不是表面症状
 3. **权衡取舍**：多个方案时，分析利弊，做出选择
 4. **生成策略**：输出具体可执行的 actions
+5. **策略调整**：基于失败模式，生成系统参数调整建议（strategy_updates）
 
 ## 可用 Actions（白名单）
 ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.description}`).join('\n')}
@@ -70,12 +71,43 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
   "safety": false
 }
 
+## strategy_updates 规则（CRITICAL）
+
+**当执行 RCA 分析时，必须生成 strategy_updates 建议**。
+
+可调整参数（白名单）：
+- alertness.emergency_threshold (0.5-1.0): Emergency alertness threshold
+- alertness.alert_threshold (0.3-0.8): Alert threshold
+- retry.max_attempts (1-5): Maximum retry attempts
+- retry.base_delay_minutes (1-30): Base delay between retries (minutes)
+- resource.max_concurrent (1-20): Maximum concurrent tasks
+- resource.memory_threshold_mb (500-4000): Memory threshold (MB)
+
+**输出格式示例**：
+{
+  "strategy_updates": [
+    {
+      "key": "retry.max_attempts",
+      "old_value": 3,
+      "new_value": 5,
+      "reason": "Increase retry attempts to handle transient network failures"
+    }
+  ]
+}
+
+**要求**：
+1. 只调整白名单中的参数
+2. 新值必须在允许范围内
+3. 必须提供调整原因（reason）
+4. 如果没有需要调整的参数，返回空数组 []
+
 ## 规则
 
 1. 必须提供 analysis 分析过程
 2. 只能使用白名单内的 action
 3. 危险操作必须 safety: true
 4. 记录 learnings 供未来参考
+5. RCA 分析必须包含 strategy_updates 建议
 
 请深度分析以下事件：`;
 
@@ -277,6 +309,11 @@ async function analyzeDeep(event, thalamusDecision = null) {
     }));
   }
 
+  // Inject adjustable parameters for RCA requests
+  if (event.type === 'rca_request' && thalamusDecision?.adjustable_params) {
+    context.adjustable_params = thalamusDecision.adjustable_params;
+  }
+
   const contextJson = JSON.stringify(context, null, 2);
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 
@@ -371,16 +408,38 @@ async function performRCA(failedTask, history = []) {
     timestamp: new Date().toISOString()
   };
 
-  const decision = await analyzeDeep(event, {
+  // Inject adjustable parameters into context for RCA
+  const rcaContext = {
     reason: 'repeated_failure',
-    failure_count: history.length + 1
-  });
+    failure_count: history.length + 1,
+    adjustable_params: {
+      'alertness.emergency_threshold': { range: '0.5-1.0', description: 'Emergency alertness threshold' },
+      'alertness.alert_threshold': { range: '0.3-0.8', description: 'Alert threshold' },
+      'retry.max_attempts': { range: '1-5', description: 'Maximum retry attempts' },
+      'retry.base_delay_minutes': { range: '1-30', description: 'Base delay between retries (minutes)' },
+      'resource.max_concurrent': { range: '1-20', description: 'Maximum concurrent tasks' },
+      'resource.memory_threshold_mb': { range: '500-4000', description: 'Memory threshold (MB)' },
+    }
+  };
+
+  const decision = await analyzeDeep(event, rcaContext);
+
+  // Extract strategy_adjustments from decision
+  const strategyAdjustments = decision.strategy_updates?.map(update => ({
+    params: {
+      param: update.key,
+      new_value: update.new_value,
+      current_value: update.old_value,
+      reason: update.reason
+    }
+  })) || [];
 
   return {
     task_id: failedTask.id,
     analysis: decision.analysis,
     recommended_actions: decision.actions,
     learnings: decision.learnings,
+    strategy_adjustments: strategyAdjustments,
     confidence: decision.confidence
   };
 }

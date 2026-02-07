@@ -1,6 +1,6 @@
 {
-  "branch": "cp-0207-quarantine-auto-release",
-  "head_sha": "6f6b781",
-  "timestamp": "2026-02-07T08:28:13Z",
+  "branch": "cp-cortex-strategy",
+  "head_sha": "4a6c2d2",
+  "timestamp": "2026-02-07T08:59:42Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
