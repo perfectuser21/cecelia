@@ -1,6 +1,6 @@
 {
-  "branch": "cp-20260207-taskdb-smooth",
-  "head_sha": "8dcfdc368",
-  "timestamp": "2026-02-07T05:36:35Z",
+  "branch": "cp-0207-taskdb-resilience",
+  "head_sha": "$(git rev-parse --short HEAD)",
+  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "note": "Quality summary - CI is the final judge."
 }

@@ -179,18 +179,32 @@ export default function TaskDatabase() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [t, g, p, q, f] = await Promise.all([
+      // 核心数据必须成功
+      const [t, g, p] = await Promise.all([
         fetchJson<Task[]>('/api/tasks/tasks'),
         fetchJson<Goal[]>('/api/tasks/goals'),
         fetchJson<Project[]>('/api/tasks/projects'),
-        fetchJson<{ success: boolean; tasks: QuarantineTask[] }>('/api/brain/quarantine'),
-        fetchJson<FocusData>('/api/brain/focus'),
       ]);
+
       setTasks(t);
       setGoals(g);
       setProjects(p);
-      setQuarantine(q.tasks || []);
-      setFocus(f);
+
+      // Brain 数据可选，失败不影响整体显示
+      try {
+        const q = await fetchJson<{ success: boolean; tasks: QuarantineTask[] }>('/api/brain/quarantine');
+        setQuarantine(q.tasks || []);
+      } catch {
+        setQuarantine([]);
+      }
+
+      try {
+        const f = await fetchJson<FocusData>('/api/brain/focus');
+        setFocus(f);
+      } catch {
+        setFocus(null);
+      }
+
       setError(null);
       setLastUpdate(new Date());
     } catch (e: any) {
