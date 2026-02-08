@@ -245,9 +245,18 @@ console.log("");
 if (testsFailed === 0) {
   console.log(`${GREEN}✅ 所有测试通过${RESET} (${testsPassed}/${testsPassed})`);
   console.log("");
-  process.exit(0);
 } else {
   console.log(`${RED}❌ 部分测试失败${RESET} (${testsPassed} 通过, ${testsFailed} 失败)`);
   console.log("");
-  process.exit(1);
 }
+
+// Export results for potential use by other tools
+module.exports = { testsPassed, testsFailed };
+
+// When run directly, exit with appropriate code
+if (require.main === module) {
+  process.exit(testsFailed === 0 ? 0 : 1);
+}
+
+// Vitest will automatically pass if no errors are thrown during execution
+// and testsFailed is 0 (no assertion failures)

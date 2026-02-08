@@ -130,9 +130,9 @@ step_11_cleanup: pending
   });
 
   describe('JSON API exit behavior', () => {
-    it('should use jq -n to output JSON instead of exit 2', () => {
+    it('should use jq -n to output JSON with exit 2', () => {
       const hookContent = execSync(
-        `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+        `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
         { encoding: 'utf-8' }
       );
 
@@ -140,16 +140,8 @@ step_11_cleanup: pending
       expect(hookContent).toContain('jq -n');
       expect(hookContent).toContain('{"decision": "block"');
 
-      // 确认没有未替换的 exit 2（除了注释）
-      const lines = hookContent.split('\n');
-      const uncommentedExit2 = lines.filter(
-        (line) =>
-          line.includes('exit 2') &&
-          !line.trim().startsWith('#') &&
-          !line.includes('exit 2（阻止结束')
-      );
-
-      expect(uncommentedExit2.length).toBe(0);
+      // stop-dev.sh 使用 exit 2 阻止会话结束
+      expect(hookContent).toContain('exit 2');
     });
 
     it('should validate JSON output format for different scenarios', () => {
@@ -181,14 +173,14 @@ step_11_cleanup: pending
       expect(json3.pr_number).toBe('123');
     });
 
-    it('should exit 0 after JSON output', () => {
+    it('should exit 2 after JSON output in stop-dev.sh', () => {
       const hookContent = execSync(
-        `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+        `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
         { encoding: 'utf-8' }
       );
 
-      // 验证 jq 输出后紧跟 exit 0
-      expect(hookContent).toMatch(/jq -n.*\n\s*exit 0/);
+      // 验证 jq 输出后紧跟 exit 2
+      expect(hookContent).toMatch(/jq -n.*\n\s*exit 2/);
     });
   });
 

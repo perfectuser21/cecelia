@@ -94,7 +94,8 @@ retry_count: 0`
   })
 
   it('Stop Hook 注释应该说明修复原因', () => {
-    const hookContent = execSync(`cat ${hookScript}`, { encoding: 'utf-8' })
+    const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
+    const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
 
     // 验证修复注释存在
     expect(hookContent).toContain('v12.8.0')
@@ -104,7 +105,8 @@ retry_count: 0`
   })
 
   it('cleanup_done 检查仍然保留（向后兼容）', () => {
-    const hookContent = execSync(`cat ${hookScript}`, { encoding: 'utf-8' })
+    const stopDevScript = hookScript.replace('stop.sh', 'stop-dev.sh')
+    const hookContent = execSync(`cat ${stopDevScript}`, { encoding: 'utf-8' })
 
     // 验证 cleanup_done 检查仍在
     expect(hookContent).toContain('cleanup_done: true')

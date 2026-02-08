@@ -50,9 +50,20 @@ describe("stop.sh", () => {
   // v11.25.0: 改用 JSON API，重试上限从 20 改为 15
   it.todo("stop_hook_active is removed - now uses retry_count (max 15)");
 
-  describe("JSON API format (H7-003)", () => {
-    it("should use JSON API format instead of exit 2", () => {
+  describe("Router architecture (v13.0.0)", () => {
+    it("stop.sh should be a router that delegates to mode-specific hooks", () => {
       const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+
+      // Verify router architecture
+      expect(hookContent).toContain('Stop Hook 路由器');
+      expect(hookContent).toContain('stop-dev.sh');
+      expect(hookContent).toContain('.dev-mode');
+      expect(hookContent).toContain('v13.0.0');
+    });
+
+    it("stop-dev.sh should use JSON API format", () => {
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       // Verify JSON API usage
       expect(hookContent).toContain('{"decision": "block"');
@@ -60,8 +71,9 @@ describe("stop.sh", () => {
       expect(hookContent).toContain("--arg reason");
     });
 
-    it("should have v11.25.0 version marker", () => {
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+    it("stop-dev.sh should have v11.25.0 version marker", () => {
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       expect(hookContent).toContain("v11.25.0");
       expect(hookContent).toContain("H7-009");
@@ -80,15 +92,14 @@ describe("stop.sh", () => {
       expect(json.reason).toBe("Test reason");
     });
 
-    it("should have all exit 2 replaced with JSON API + exit 0", () => {
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+    it("stop-dev.sh should have all exit 2 replaced with JSON API + exit 2", () => {
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
-      // Count remaining exit 2 (should only be in comments)
-      const exit2Lines = hookContent.split("\n").filter((line) => {
-        return line.includes("exit 2") && !line.trim().startsWith("#");
-      });
-
-      expect(exit2Lines.length).toBe(0);
+      // stop-dev.sh still uses exit 2 for blocking (JSON API is for providing context)
+      // The router (stop.sh) receives the exit code
+      expect(hookContent).toContain('jq -n');
+      expect(hookContent).toContain('exit 2');
     });
   });
 
@@ -138,8 +149,9 @@ started: 2026-01-30`;
 
   describe("session isolation (H7-005)", () => {
     it("should detect branch mismatch pattern in code", () => {
-      // Verify the session isolation code exists in stop.sh
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+      // Verify the session isolation code exists in stop-dev.sh
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       // Check for the key session isolation logic
       expect(hookContent).toContain("BRANCH_IN_FILE");
@@ -176,8 +188,9 @@ tasks_created: true`;
   });
 
   describe("TTY isolation (H7-008)", () => {
-    it("should have TTY check logic in stop.sh", () => {
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+    it("should have TTY check logic in stop-dev.sh", () => {
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       expect(hookContent).toContain("TTY_IN_FILE");
       expect(hookContent).toContain("CURRENT_TTY");
@@ -227,9 +240,10 @@ session_id: abc123`;
     });
 
     it("should skip TTY check when tty field is 'not a tty'", () => {
-      // The condition in stop.sh skips when TTY_IN_FILE == "not a tty"
+      // The condition in stop-dev.sh skips when TTY_IN_FILE == "not a tty"
       // Verify the guard condition exists
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       expect(hookContent).toContain('"not a tty"');
       // Verify both sides are checked
@@ -239,7 +253,8 @@ session_id: abc123`;
 
     it("should exit 0 on TTY mismatch (different terminal)", () => {
       // Verify the exit 0 logic for TTY mismatch exists
-      const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
+      const stopDevPath = HOOK_PATH.replace('stop.sh', 'stop-dev.sh');
+      const hookContent = execSync(`cat "${stopDevPath}"`, { encoding: "utf-8" });
 
       // Check the mismatch comparison and exit 0
       expect(hookContent).toMatch(/TTY_IN_FILE.*!=.*CURRENT_TTY/);

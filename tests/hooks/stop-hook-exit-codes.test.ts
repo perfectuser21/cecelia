@@ -68,6 +68,10 @@ describe("hooks/stop-dev.sh exit codes", () => {
 
   describe("exit 2 scenarios (block session end)", () => {
     it("should return exit 2 when PR not created", () => {
+      // Create initial commit so we can create a branch
+      writeFileSync(join(tempDir, "README.md"), "test");
+      execSync(`cd "${tempDir}" && git add . && git config user.email "test@test.com" && git config user.name "Test" && git commit -m "init" -q`);
+
       writeFileSync(
         join(tempDir, ".dev-mode"),
         "dev\nbranch: test-branch\nsession_id: test123\n"

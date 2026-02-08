@@ -389,34 +389,18 @@ RUNTIME_FILES=(
     ".layer2-evidence.md"
     ".l3-analysis.md"
     ".quality-evidence.json"
-    ".dev-mode"
+    # .dev-mode 和 .dev-lock 由 Stop Hook 管理，不在此删除
 )
 
 DELETED_COUNT=0
 for FILE in "${RUNTIME_FILES[@]}"; do
     if [[ -f "$FILE" ]]; then
-        # W8: .dev-mode 特殊处理（删除后验证）
-        if [[ "$FILE" == ".dev-mode" ]]; then
-            if rm -f "$FILE" 2>/dev/null; then
-                # 验证删除成功
-                if [[ -f "$FILE" ]]; then
-                    echo -e "   ${RED}[FAIL] .dev-mode 删除失败，文件仍存在${NC}"
-                    FAILED=$((FAILED + 1))
-                else
-                    DELETED_COUNT=$((DELETED_COUNT + 1))
-                fi
-            else
-                echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
-                WARNINGS=$((WARNINGS + 1))
-            fi
+        # 正常删除所有运行时文件
+        if rm -f "$FILE" 2>/dev/null; then
+            DELETED_COUNT=$((DELETED_COUNT + 1))
         else
-            # 其他文件正常删除
-            if rm -f "$FILE" 2>/dev/null; then
-                DELETED_COUNT=$((DELETED_COUNT + 1))
-            else
-                echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
-                WARNINGS=$((WARNINGS + 1))
-            fi
+            echo -e "   ${YELLOW}[WARN]  删除 $FILE 失败${NC}"
+            WARNINGS=$((WARNINGS + 1))
         fi
     fi
 done
@@ -482,6 +466,11 @@ if [[ -f "$DEV_MODE_FILE" ]]; then
         sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
         echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
     fi
+
+    # v12.9.0: 双钥匙状态机 - 状态文件由 Stop Hook 管理
+    echo ""
+    echo -e "   ${YELLOW}注意: .dev-mode、.dev-lock 和 sentinel 将由 Stop Hook 在工作流完成后自动删除${NC}"
+    echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_11_cleanup: done${NC}"
 fi
 
 # ========================================

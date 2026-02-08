@@ -87,16 +87,33 @@ fi
 ## 创建功能分支
 
 ```bash
-# 生成分支名：{Feature ID}-{任务名}
-FEATURE_ID="<从 FEATURES.md 获取，如 W6>"
-TASK_NAME="<根据用户需求生成>"
-BRANCH_NAME="${FEATURE_ID}-${TASK_NAME}"
+# 检查是否从 Brain Task 创建（--task-id 参数）
+# task_id 从 Step 1 传递（通过 PRD 文件名检测）
+task_id=""
+if ls .prd-task-*.md 2>/dev/null; then
+    prd_file=$(ls .prd-task-*.md 2>/dev/null | head -1)
+    task_id=$(echo "$prd_file" | sed 's/.prd-task-//' | sed 's/.md//')
+fi
+
+# 生成分支名
+if [[ -n "$task_id" ]]; then
+    # 从 Brain Task 创建：task-<id>
+    BRANCH_NAME="task-$task_id"
+else
+    # 手动创建：{Feature ID}-{任务名}
+    FEATURE_ID="<从 FEATURES.md 获取，如 W6>"
+    TASK_NAME="<根据用户需求生成>"
+    BRANCH_NAME="${FEATURE_ID}-${TASK_NAME}"
+fi
 
 # 记住当前分支作为 base
 BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 echo "🌿 创建分支..."
 echo "   名称: $BRANCH_NAME"
+if [[ -n "$task_id" ]]; then
+    echo "   来源: Brain Task ($task_id)"
+fi
 echo "   Base: $BASE_BRANCH"
 
 # 创建分支
@@ -129,27 +146,99 @@ CURRENT_TTY=$(tty 2>/dev/null || echo "not a tty")
 
 # 在项目根目录创建 .dev-mode（分支已创建，分支名正确）
 # 包含 11 步 checklist 状态追踪
-cat > .dev-mode << EOF
-dev
-branch: $BRANCH_NAME
-session_id: $SESSION_ID
-tty: $CURRENT_TTY
-prd: .prd.md
-started: $(date -Iseconds)
-step_1_prd: done
-step_2_detect: done
-step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
-step_8_pr: pending
-step_9_ci: pending
-step_10_learning: pending
-step_11_cleanup: pending
-EOF
+# 如果有 task_id，添加 task_id 字段
 
-echo "✅ .dev-mode 已创建（session_id: $SESSION_ID，含 11 步 checklist）"
+# 确定 PRD 文件名
+if [[ -n "$task_id" ]]; then
+    PRD_FILE=".prd-task-$task_id.md"
+else
+    PRD_FILE=".prd.md"
+fi
+
+# ===== 创建 .dev-lock（硬钥匙，必须成功）=====
+echo "🔒 创建 .dev-lock..."
+
+# 原子写入：先写临时文件，再 mv（防止竞态）
+DEV_LOCK_TMP="$(mktemp .dev-lock.XXXXXX)"
+{
+  echo "dev_lock"
+  echo "branch: $BRANCH_NAME"
+  echo "session_id: ${SESSION_ID}"
+  echo "created_at: $(date -Iseconds)"
+} > "$DEV_LOCK_TMP"
+
+# 原子移动（覆盖旧文件，即使 git 中存在也能成功）
+mv -f "$DEV_LOCK_TMP" .dev-lock
+
+if [[ -f .dev-lock ]]; then
+    echo "✅ .dev-lock 创建成功（硬钥匙已设置）"
+else
+    echo "❌ .dev-lock 创建失败，无法继续" >&2
+    exit 1
+fi
+
+# ===== 创建 sentinel file（三重保险）=====
+echo "🛡️  创建 sentinel file..."
+mkdir -p .git/hooks
+SENTINEL_TMP="$(mktemp .git/hooks/cecelia-dev.sentinel.XXXXXX)"
+{
+  echo "dev_workflow_active"
+  echo "branch: $BRANCH_NAME"
+  echo "started: $(date -Iseconds)"
+} > "$SENTINEL_TMP"
+mv -f "$SENTINEL_TMP" .git/hooks/cecelia-dev.sentinel
+
+if [[ -f .git/hooks/cecelia-dev.sentinel ]]; then
+    echo "✅ Sentinel 创建成功（三重保险）"
+else
+    echo "⚠️  Sentinel 创建失败，但可以继续" >&2
+fi
+
+# ===== 创建 .dev-mode（软状态，允许失败）=====
+echo "📝 创建 .dev-mode..."
+
+# 原子写入（同样方式）
+DEV_MODE_TMP="$(mktemp .dev-mode.XXXXXX)"
+{
+  echo "dev"
+  echo "branch: $BRANCH_NAME"
+  echo "session_id: ${SESSION_ID}"
+  echo "tty: $CURRENT_TTY"
+  echo "prd: $PRD_FILE"
+  echo "started: $(date -Iseconds)"
+  echo "retry_count: 0"
+  echo "step_1_prd: done"
+  echo "step_2_detect: done"
+  echo "step_3_branch: done"
+  echo "step_4_dod: pending"
+  echo "step_5_code: pending"
+  echo "step_6_test: pending"
+  echo "step_7_quality: pending"
+  echo "step_8_pr: pending"
+  echo "step_9_ci: pending"
+  echo "step_10_learning: pending"
+  echo "step_11_cleanup: pending"
+  # 如果有 task_id，追加 task_id 字段
+  if [[ -n "$task_id" ]]; then
+    echo "task_id: $task_id"
+  fi
+} > "$DEV_MODE_TMP"
+
+mv -f "$DEV_MODE_TMP" .dev-mode
+
+if [[ -f .dev-mode ]]; then
+    echo "✅ .dev-mode 创建成功（软状态已设置）"
+else
+    echo "⚠️  .dev-mode 创建失败，但 .dev-lock 已设置，可以继续" >&2
+    echo "   Stop Hook 会检测到这个情况并阻止退出" >&2
+fi
+
+echo ""
+echo "✅ 双钥匙状态机已初始化"
+echo "   .dev-lock: 硬钥匙（不可绕过）"
+echo "   .dev-mode: 软状态（11 步 checklist）"
+echo "   sentinel: 三重保险（防止同时删除）"
+echo "   session_id: $SESSION_ID"
 
 # 注册会话到 /tmp/claude-engine-sessions/（多会话检测）
 SESSION_DIR="/tmp/claude-engine-sessions"
@@ -172,6 +261,7 @@ echo "✅ 会话已注册（PID: $$，用于多会话检测）"
 
 **文件格式**（含 11 步 checklist）：
 ```
+# 手动创建（无 task_id）
 dev
 branch: H7-remove-ralph-loop
 session_id: a1b2c3d4e5f6
@@ -189,6 +279,26 @@ step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
 step_11_cleanup: pending
+
+# 从 Brain Task 创建（有 task_id）
+dev
+branch: task-abc-123
+session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
+prd: .prd-task-abc-123.md
+started: 2026-01-29T10:00:00+00:00
+step_1_prd: done
+step_2_detect: done
+step_3_branch: done
+step_4_dod: pending
+step_5_code: pending
+step_6_test: pending
+step_7_quality: pending
+step_8_pr: pending
+step_9_ci: pending
+step_10_learning: pending
+step_11_cleanup: pending
+task_id: abc-123
 ```
 
 **生命周期**：
@@ -228,6 +338,7 @@ echo "✅ Task Checkpoint 已创建（11 个步骤）"
 
 **更新后的 .dev-mode 格式**：
 ```
+# 手动创建
 dev
 branch: H7-task-checkpoint
 session_id: a1b2c3d4e5f6
@@ -235,6 +346,16 @@ tty: /dev/pts/3
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 tasks_created: true
+
+# Brain Task 创建
+dev
+branch: task-abc-123
+session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
+prd: .prd-task-abc-123.md
+started: 2026-01-29T10:00:00+00:00
+tasks_created: true
+task_id: abc-123
 ```
 
 **Hook 检查**：

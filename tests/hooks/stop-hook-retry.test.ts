@@ -120,7 +120,7 @@ retry_count: 15
 
   it('应该调用 track.sh 上报失败（超限时）', () => {
     const hookContent = execSync(
-      `cat ${join(__dirname, '../../hooks/stop.sh')}`,
+      `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
       { encoding: 'utf-8' }
     );
 

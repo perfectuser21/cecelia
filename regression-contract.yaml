@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.12.0"
+version: "12.18.0"
 updated: "2026-02-08"
 
 # ============================================================================
@@ -2632,6 +2632,132 @@ skills:
       type: file
       path: "tests/okr/test-cheating-prevention.sh"
     test: "tests/okr/test-cheating-prevention.sh"
+
+  - id: S1-004
+    feature: S1
+    name: "OKR Database Integration"
+    scope: skill
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [okr, okr-database, brain-api]
+    owner: infra
+    steps:
+      given: "OKR output.json 生成完成"
+      when: "运行 store-to-database.sh"
+      then: "调用 Brain API 创建 Goal、Feature SubProjects、Tasks"
+    evidence:
+      type: file
+      path: "tests/okr/test-database-integration.sh"
+    test: "tests/okr/test-database-integration.sh"
+
+  - id: S1-005
+    feature: S1
+    name: "OKR Iterative Decomposition"
+    scope: skill
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [okr, iterative, decompose, continue-feature]
+    owner: infra
+    steps:
+      given: "用户需求或 Feature 反馈"
+      when: "运行 decompose-feature.sh 或 continue-feature.sh"
+      then: "生成初始规划（1 详细 + 2-4 草稿）或基于反馈细化下一个 Task"
+    evidence:
+      type: file
+      path: "tests/okr/test-decompose-feature.sh"
+    test: "tests/okr/test-decompose-feature.sh && tests/okr/test-continue-feature.sh"
+
+  - id: S1-006
+    feature: S1
+    name: "Dev Feedback Report Generation"
+    scope: skill
+    priority: P2
+    trigger: [PR]
+    method: auto
+    tags: [dev, feedback, reporting, json]
+    owner: infra
+    steps:
+      given: "/dev workflow 完成"
+      when: "运行 generate-feedback-report.sh"
+      then: "生成包含 11 个字段的结构化反馈报告 JSON"
+    evidence:
+      type: file
+      path: "tests/dev/test-generate-feedback-report.sh"
+    test: "tests/dev/test-generate-feedback-report.sh"
+
+  - id: S1-007
+    feature: S1
+    name: "Dev Task ID Support (Phase 3a)"
+    scope: skill
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, task-id, database-integration, okr]
+    owner: infra
+    steps:
+      given: "/dev --task-id task-001"
+      when: "运行 parse-dev-args.sh 和 fetch-task-prd.sh"
+      then: "从 Brain 数据库读取 Task PRD 并生成本地 PRD/DoD 文件"
+    evidence:
+      type: file
+      path: "tests/dev/test-parse-dev-args.sh"
+    test: "tests/dev/test-parse-dev-args.sh && tests/dev/test-fetch-task-prd.sh"
+
+  - id: S1-008
+    feature: S1
+    name: "Dev Task ID Workflow Integration (Phase 3b)"
+    scope: workflow
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, task-id, workflow, integration]
+    owner: infra
+    steps:
+      given: "/dev --task-id task-001 被调用"
+      when: "Step 1 检测参数，Step 3 生成分支名 task-<id> 和 .dev-mode"
+      then: "完整工作流执行，带 task_id 字段的 .dev-mode 文件生成"
+    evidence:
+      type: file
+      path: "tests/dev/test-workflow-integration.sh"
+    test: "tests/dev/test-workflow-integration.sh"
+
+  - id: S1-009
+    feature: S1
+    name: "Dev Feedback Upload (Phase 4a)"
+    scope: script
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, feedback, brain-api, upload]
+    owner: infra
+    steps:
+      given: ".dev-feedback-report.json 存在"
+      when: "运行 upload-feedback.sh <task_id>"
+      then: "反馈上传到 Brain API，返回成功"
+    evidence:
+      type: file
+      path: "tests/dev/test-upload-feedback.sh"
+    test: "tests/dev/test-upload-feedback.sh"
+
+  - id: S1-010
+    feature: S1
+    name: "Dev Task Status Sync (Phase 4a)"
+    scope: script
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, task-status, brain-api, sync]
+    owner: infra
+    steps:
+      given: "task_id 存在"
+      when: "运行 update-task-status.sh <task_id> <status>"
+      then: "Task 状态更新到 Brain，返回成功"
+    evidence:
+      type: file
+      path: "tests/dev/test-update-task-status.sh"
+    test: "tests/dev/test-update-task-status.sh"
 
   # ============================================================================
   # S2: PRD/DoD Validation Loop

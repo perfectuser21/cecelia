@@ -104,10 +104,119 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 ---
 
+## 生成反馈报告（新增 v12.15.0，4 维度分析 v12.18.0）
+
+### 基础反馈报告
+
+**生成结构化反馈报告（Brain 集成）**：
+
+```bash
+bash skills/dev/scripts/generate-feedback-report.sh
+```
+
+生成 `.dev-feedback-report.json`，包含：
+- task_id, branch, pr_number
+- summary, issues_found, next_steps_suggested
+- technical_notes, performance_notes
+- code_changes（files, lines 统计）
+- test_coverage
+
+**用途**：
+- OKR 迭代拆解（Phase 3/4）
+- Brain 自动化决策
+- 项目历史追溯
+
+### 4 维度分析报告（新增 v12.18.0）
+
+**生成深度分析报告（质量/效率/稳定性/自动化）**：
+
+```bash
+bash skills/dev/scripts/generate-feedback-report-v2.sh
+```
+
+生成 `docs/dev-reports/YYYY-MM-DD-HH-MM-SS.md`，包含：
+
+**质量维度**：
+- 每步期望 vs 实际对比
+- LLM 质量分析和评分
+- 发现的主要问题
+
+**效率维度**：
+- 每步耗时记录表
+- 总耗时统计
+- 用于改进前后对比
+
+**稳定性维度**：
+- 重试次数统计
+- CI 通过率
+- Stop Hook 触发次数
+
+**自动化维度**：
+- 每步自动化程度
+- 人工干预次数
+- 自动化率计算
+
+**改进建议**：
+- P0 质量问题
+- P1 效率提升
+- P2 自动化增强
+
+**用途**：
+- 持续改进 /dev 工作流
+- 识别瓶颈和问题模式
+- 评估优化效果
+
+---
+
+## 上传反馈到 Brain（新增 v12.17.0）
+
+**如果是 Brain Task，上传反馈并更新状态**：
+
+```bash
+# 检测 task_id（从 .dev-mode 文件读取）
+task_id=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+
+if [[ -n "$task_id" ]]; then
+    echo ""
+    echo "📤 上传反馈到 Brain..."
+
+    # 确保反馈报告已生成
+    if [[ ! -f ".dev-feedback-report.json" ]]; then
+        echo "⚠️  反馈报告不存在，正在生成..."
+        bash skills/dev/scripts/generate-feedback-report.sh "$BRANCH_NAME" develop
+    fi
+
+    # 上传反馈
+    if bash skills/dev/scripts/upload-feedback.sh "$task_id" 2>/dev/null || true; then
+        echo "✅ 反馈已上传到 Brain"
+    else
+        echo "⚠️  反馈上传失败（Brain 可能不可用，继续执行）"
+    fi
+
+    # 更新 Task 状态为 completed
+    if bash skills/dev/scripts/update-task-status.sh "$task_id" "completed" 2>/dev/null || true; then
+        echo "✅ Task 已标记为完成"
+    else
+        echo "⚠️  Task 状态更新失败（Brain 可能不可用，继续执行）"
+    fi
+else
+    echo ""
+    echo "ℹ️  非 Brain Task，跳过反馈上传"
+fi
+```
+
+**降级策略**：
+- Brain API 不可用时不阻塞流程
+- 使用 `2>/dev/null || true` 确保失败时继续
+- 显示警告但不中断工作流
+
+---
+
 ## 完成条件
 
 - [ ] 至少有一条 Learning 记录（Engine 或项目层面）
 - [ ] Learning 已提交并推送
+- [ ] 反馈报告已生成（.dev-feedback-report.json）
 
 **标记步骤完成**：
 

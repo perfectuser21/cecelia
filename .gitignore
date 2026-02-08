@@ -37,6 +37,9 @@ skills/dev/VALIDATION.md
 .project-info.json
 .dev-step
 .dev-mode
+.dev-mode.*
+.dev-lock
+.dev-lock.*
 .quality-report.json
 .test-level.json
 

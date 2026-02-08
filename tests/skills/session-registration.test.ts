@@ -208,7 +208,7 @@ COUNT=0
 
 for session_file in "$SESSION_DIR"/session-test-concurrent-*.json; do
     [[ ! -f "$session_file" ]] && continue
-    session_repo=$(cat "$session_file" | grep -o '"cwd": "[^"]*"' | cut -d'"' -f4)
+    session_repo=$(cat "$session_file" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
     if [[ "$session_repo" == "$CURRENT_REPO" ]]; then
         COUNT=$((COUNT + 1))
     fi
@@ -217,7 +217,9 @@ done
 echo $COUNT
       `;
 
-      const result = execSync(`bash -c '${script}'`, { encoding: "utf-8" });
+      const result = execSync(`bash <<'EOF'
+${script}
+EOF`, { encoding: "utf-8" });
       expect(parseInt(result.trim())).toBe(2);
     });
   });

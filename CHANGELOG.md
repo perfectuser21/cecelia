@@ -1,33 +1,23 @@
-## [12.12.0] - 2026-02-08
+## [12.18.0] - 2026-02-08
 
 ### Added
 
-- **Validation Loop for PRD/DoD**: 文档质量验证循环（#542）
-  - **功能**: 90 分制评分系统（form_score 40 + content_score 60）
-  - **核心机制**:
-    - Validation Loop: 自动循环改进，直到 total_score >= 90
-    - Anti-Cheat: 10 层防作弊检查，SHA256 hash 验证
-    - 测试覆盖 100%: 所有测试通过
-  - **新增脚本**:
-    - `skills/dev/scripts/validate-prd.py` - PRD 验证
-    - `skills/dev/scripts/validate-dod.py` - DoD 验证
-    - `skills/dev/scripts/anti-cheat-prd.sh` - PRD 防作弊
-    - `skills/dev/scripts/anti-cheat-dod.sh` - DoD 防作弊
-    - `tests/validation-loop/*.sh` - 测试套件
-  - **Feature Registry**: 注册 S2: PRD/DoD Validation Loop
-  - **RCI 覆盖**: S2-001 (PRD), S2-002 (DoD), S2-003 (Anti-Cheat)
+- **/dev 执行反馈报告（4 维度分析）**
+  - **新增脚本**: `skills/dev/scripts/record-step.sh` - 记录每步执行数据（时间/状态/重试/问题）
+  - **新增脚本**: `skills/dev/scripts/generate-feedback-report-v2.sh` - 生成 4 维度分析报告
+  - **新增定义**: `skills/dev/lib/step-expectations.json` - 每步质量期望和常见问题
+  - **集成到 Step 10**: 自动生成深度分析报告到 `docs/dev-reports/`
+  - **4 个维度**:
+    1. 质量维度：期望 vs 实际对比 + LLM 分析
+    2. 效率维度：每步耗时记录（用于改进前后对比）
+    3. 稳定性维度：重试次数、CI 通过率
+    4. 自动化维度：自动化程度评估
+  - **改进建议**: P0/P1/P2 优先级排序的改进建议
+  - **用途**: 持续改进 /dev 工作流，识别瓶颈和问题模式
 
-### Fixed
+### Changed
 
-- **OKR Skill v7.0.0**: Validation Loop 和防作弊机制（#540）
-  - **功能**: 90 分制验证（形式 40 + 内容 60）
-  - **10 层 Anti-Cheat**: 31 种攻击场景，100% 拦截率
-  - **测试覆盖**: tests/okr/test-cheating-prevention.sh
-
-- **Stop Hook 写死逻辑**: Headless 模式不再旁路（#541）
-  - **修复**: Headless 模式与有头模式使用同一套状态机
-  - **修复**: 锁获取失败返回 exit 2（不是 exit 0）
-  - **测试**: tests/stop-hook/test-headless-hardlock.sh
+- **skills/dev/steps/10-learning.md**: 扩展反馈报告章节，支持 4 维度分析
 
 ## [12.10.0] - 2026-02-08
 

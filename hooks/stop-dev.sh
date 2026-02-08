@@ -91,18 +91,77 @@ HOOK_INPUT=$(cat)
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# ===== 检查 .dev-mode 文件 =====
+# ===== 检查 .dev-lock 和 .dev-mode 文件（双钥匙状态机）=====
+# v12.9.0: 双钥匙修复 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险）
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock"
 DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+SENTINEL_FILE="$PROJECT_ROOT/.git/hooks/cecelia-dev.sentinel"
 
-if [[ ! -f "$DEV_MODE_FILE" ]]; then
-    # 普通会话，没有 .dev-mode，直接允许结束
+# Key-1: .dev-lock（硬钥匙）- 只要它在，就必须走 dev 检查
+if [[ ! -f "$DEV_LOCK_FILE" ]]; then
+    # 没有 .dev-lock，检查 .dev-mode 是否泄漏
+    if [[ -f "$DEV_MODE_FILE" ]]; then
+        # .dev-mode 泄漏（.dev-lock 被删除但 .dev-mode 还在）
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [Stop Hook: 状态文件泄漏]" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  ⚠️  .dev-lock 不存在但 .dev-mode 存在（泄漏）" >&2
+        echo "  清理泄漏的 .dev-mode 文件..." >&2
+        rm -f "$DEV_MODE_FILE" "$SENTINEL_FILE"
+        echo "  ✅ 已清理" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    fi
+
+    # 检查 sentinel（三重保险）
+    if [[ -f "$SENTINEL_FILE" ]]; then
+        # Sentinel 存在但 .dev-lock 不存在 → 状态文件被删除
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [Stop Hook: Sentinel 检测到状态丢失]" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  ⚠️  Sentinel 存在但 .dev-lock 和 .dev-mode 都不存在" >&2
+        echo "  可能原因：状态文件被误删或同时删除" >&2
+        echo "" >&2
+        echo "  下一步：重建状态文件或检查清理脚本" >&2
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        jq -n --arg reason "Sentinel 存在但状态文件丢失，判定为误删，阻止退出" '{"decision": "block", "reason": $reason}'
+        exit 2  # ← 强制阻止退出（三重保险生效）
+    fi
+
+    # 没有 .dev-lock 且没有 sentinel → 普通会话，允许结束
     exit 0
+fi
+
+# .dev-lock 存在，检查 .dev-mode（软状态）
+if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    # .dev-lock 在但 .dev-mode 不在 → 状态丢失/创建失败/被删除
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: 状态文件丢失]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  ⚠️  .dev-lock 存在但 .dev-mode 缺失" >&2
+    echo "  可能原因:" >&2
+    echo "    - .dev-mode 创建失败（Write 工具 git 污染）" >&2
+    echo "    - .dev-mode 被误删（cleanup.sh / 手动 rm / AI）" >&2
+    echo "" >&2
+    echo "  下一步：重建 .dev-mode 或执行最小检查" >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    jq -n --arg reason ".dev-lock 存在但 .dev-mode 缺失，阻止退出（状态丢失或创建失败）" '{"decision": "block", "reason": $reason}'
+    exit 2  # ← 强制阻止退出（双钥匙核心机制）
 fi
 
 # ===== 检查 cleanup 是否已完成 =====
 # 优先检查 cleanup_done: true（向后兼容旧版本）
 if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
-    rm -f "$DEV_MODE_FILE"
+    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
     exit 0
 fi
 
@@ -142,8 +201,8 @@ if [[ $RETRY_COUNT -gt 15 ]]; then
         bash "$TRACK_SCRIPT" fail "Stop Hook 重试 15 次后仍未完成" 2>/dev/null || true
     fi
 
-    # 删除 .dev-mode 文件
-    rm -f "$DEV_MODE_FILE"
+    # 删除 .dev-mode, .dev-lock, sentinel 文件
+    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     exit 0  # 允许会话结束（失败退出）
@@ -187,7 +246,7 @@ if [[ -n "$BRANCH_IN_FILE" && "$BRANCH_IN_FILE" != "$CURRENT_BRANCH" ]]; then
     # 分支不匹配，说明 .dev-mode 泄漏了，删除它
     echo "  ⚠️  检测到泄漏的 .dev-mode 文件（分支 $BRANCH_IN_FILE，当前 $CURRENT_BRANCH）" >&2
     echo "  🧹 删除泄漏文件..." >&2
-    rm -f "$DEV_MODE_FILE"
+    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
     exit 0
 fi
 
@@ -328,7 +387,7 @@ if [[ "$PR_STATE" == "merged" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  🎉 工作流完成！正在清理..." >&2
-        rm -f "$DEV_MODE_FILE"
+        rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
         exit 0  # 允许结束
     else

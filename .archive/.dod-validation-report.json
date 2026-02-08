@@ -1,0 +1,16 @@
+{
+  "dod_file": ".dod-okr-database-integration.md",
+  "form_score": 40,
+  "content_score": 58,
+  "total_score": 98,
+  "passing": true,
+  "checklist_count": 30,
+  "items_with_test": 30,
+  "form_issues": [],
+  "content_issues": [
+    "DoD 条目不够明确 (18/20分) - 需要更明确的动作动词"
+  ],
+  "content_sha256": "5b6065ad96eba1ba761fa7ac837ab890a827f8ba06ca529571b4ce80d87ed064",
+  "timestamp": "2026-02-08T14:15:09.130747",
+  "validation_version": "1.0.0"
+}

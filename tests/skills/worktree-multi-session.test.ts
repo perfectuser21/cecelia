@@ -164,7 +164,7 @@ if [[ -d "$SESSION_DIR" ]]; then
     for session_file in "$SESSION_DIR"/session-test-*.json; do
         [[ ! -f "$session_file" ]] && continue
 
-        session_repo=$(cat "$session_file" | grep -o '"cwd": "[^"]*"' | cut -d'"' -f4)
+        session_repo=$(cat "$session_file" | grep -o '"cwd":"[^"]*"' | cut -d'"' -f4)
         session_pid=$(cat "$session_file" | grep -o '"pid": [0-9]*' | awk '{print $2}')
 
         if [[ "$session_repo" == "$CURRENT_REPO" ]] && [[ "$session_pid" != "$$" ]]; then
@@ -183,7 +183,9 @@ else
 fi
       `;
 
-      const result = execSync(`cd "${tempDir}" && bash -c '${script}'`, {
+      const result = execSync(`cd "${tempDir}" && bash <<'EOF'
+${script}
+EOF`, {
         encoding: "utf-8",
       });
 
