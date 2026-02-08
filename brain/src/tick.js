@@ -16,7 +16,9 @@ import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
-import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch as canDispatchOld, canPlan, getDispatchRate as getDispatchRateOld, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { evaluateAlertness as evaluateAlertnessEnhanced, getCurrentAlertness, canDispatch as canDispatchEnhanced, getDispatchRate as getDispatchRateEnhanced } from './alertness/index.js';
+import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 
 // Tick configuration
@@ -779,13 +781,15 @@ async function autoFailTimedOutTasks(inProgressTasks) {
 async function executeTick() {
   const actionsTaken = [];
   const now = new Date();
+  const tickStartTime = Date.now();
   let decisionEngineResult = null;
   let thalamusResult = null;
 
-  // 0. Evaluate alertness level
+  // 0. Evaluate alertness level (enhanced version)
   let alertnessResult = null;
   try {
-    alertnessResult = await evaluateAlertness();
+    // Use enhanced alertness system
+    alertnessResult = await evaluateAlertnessEnhanced();
     if (alertnessResult.level >= ALERTNESS_LEVELS.ALERT) {
       console.log(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
       actionsTaken.push({
@@ -809,6 +813,8 @@ async function executeTick() {
     }
   } catch (alertErr) {
     console.error('[tick] Alertness evaluation failed:', alertErr.message);
+    // Record the failure in metrics
+    recordOperation(false, 'alertness_evaluation');
   }
 
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
@@ -1202,9 +1208,9 @@ async function executeTick() {
   let dispatched = 0;
   let lastDispatchResult = null;
 
-  // Check if dispatch is allowed
-  if (!canDispatch()) {
-    console.log(`[tick] Dispatch disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
+  // Check if dispatch is allowed (using enhanced alertness)
+  if (!canDispatchEnhanced()) {
+    console.log(`[tick] Dispatch disabled at alertness level ${alertnessResult?.levelName || 'UNKNOWN'}`);
     return {
       success: true,
       alertness: alertnessResult,
@@ -1280,6 +1286,13 @@ async function executeTick() {
     await incrementActionsToday(actionsTaken.length);
   }
 
+  // Record tick execution time for alertness metrics
+  const tickDuration = Date.now() - tickStartTime;
+  recordTickTime(tickDuration);
+
+  // Record operation success (tick completed successfully)
+  recordOperation(true, 'tick');
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1296,6 +1309,7 @@ async function executeTick() {
       queued: queued.length,
       stale: staleTasks.length
     },
+    tick_duration_ms: tickDuration,
     next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
   };
 }

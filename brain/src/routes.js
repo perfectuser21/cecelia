@@ -639,6 +639,101 @@ router.post('/alertness/clear-override', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/alertness/metrics
+ * 获取最近的系统指标
+ */
+router.get('/alertness/metrics', async (req, res) => {
+  try {
+    const { getCurrentAlertness, getMetrics } = await import('./alertness/index.js');
+    const metrics = await getMetrics();
+    const alertness = getCurrentAlertness();
+
+    res.json({
+      success: true,
+      alertness: alertness.levelName,
+      metrics
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get metrics', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/history
+ * 获取历史趋势数据
+ */
+router.get('/alertness/history', async (req, res) => {
+  try {
+    const { getHistory } = await import('./alertness/index.js');
+    const minutes = parseInt(req.query.minutes || '60', 10);
+    const history = await getHistory(minutes);
+
+    res.json({
+      success: true,
+      minutes,
+      count: history.length,
+      history
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get history', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/diagnosis
+ * 获取当前诊断结果
+ */
+router.get('/alertness/diagnosis', async (req, res) => {
+  try {
+    const { getDiagnosis } = await import('./alertness/index.js');
+    const diagnosis = getDiagnosis();
+
+    res.json({
+      success: true,
+      diagnosis: diagnosis || { issues: [], severity: 'none', summary: 'No diagnosis available' }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get diagnosis', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/escalation
+ * 获取升级响应状态
+ */
+router.get('/alertness/escalation', async (req, res) => {
+  try {
+    const { getEscalationStatus } = await import('./alertness/escalation.js');
+    const status = getEscalationStatus();
+
+    res.json({
+      success: true,
+      escalation: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get escalation status', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/healing
+ * 获取自愈恢复状态
+ */
+router.get('/alertness/healing', async (req, res) => {
+  try {
+    const { getRecoveryStatus } = await import('./alertness/healing.js');
+    const status = getRecoveryStatus();
+
+    res.json({
+      success: true,
+      healing: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get healing status', details: err.message });
+  }
+});
+
 // ==================== Quarantine API ====================
 
 /**
