@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.85.0"
+version: "2.86.0"
 updated: "2026-02-08"
 changelog:
+  - 2.86.0: v12.18.1 - Stop Hook sentinel 文件路径修复（.git/hooks/ → 根目录，避免 Bash 工具保护触发）
   - 2.85.0: v12.18.0 - Dev 执行反馈报告 4 维度分析（record-step.sh + generate-feedback-report-v2.sh + step-expectations.json + 质量/效率/稳定性/自动化分析）
   - 2.84.0: v12.17.0 - Dev Feedback Upload & Task Status Sync Phase 4a（upload-feedback.sh + update-task-status.sh + Brain 闭环）
   - 2.83.0: v12.16.0 - Dev Task ID Workflow Integration Phase 3b（Step 1/3 集成 + task-<id> 分支命名 + .dev-mode task_id）

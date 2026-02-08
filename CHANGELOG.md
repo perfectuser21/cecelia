@@ -1,6 +1,15 @@
-## [12.18.0] - 2026-02-08
+# Changelog
 
-### Added
+All notable changes to this project will be documented in this file.
+
+## [12.18.1] - 2026-02-08
+
+### Fixed
+- 修复 Stop Hook sentinel 文件删除失败问题
+  - sentinel 文件从 `.git/hooks/cecelia-dev.sentinel` 移到 `.dev-sentinel`
+  - 避免触发 Claude Code Bash 工具的 .git 保护机制
+  - 所有 cleanup 场景的 exit code 现在正确返回
+
 
 - **/dev 执行反馈报告（4 维度分析）**
   - **新增脚本**: `skills/dev/scripts/record-step.sh` - 记录每步执行数据（时间/状态/重试/问题）

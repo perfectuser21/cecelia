@@ -72,3 +72,4 @@ artifacts/screenshots/*.png
 .subagent-lock
 .subagent-proof.json
 .gate-*-passed
+# CI trigger
