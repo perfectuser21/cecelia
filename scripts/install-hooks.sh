@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-hooks.sh - Install hook-core to target project
+# install-hooks.sh - Install CI tools to target project
 # Version: 1.0.0
 
 set -euo pipefail
@@ -15,15 +15,14 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# L1 fix: Use hooks/ and skills/ directories directly (hook-core directory was removed)
-# Source directories for installation
+# Source directories for installation (hooks/ and skills/ directly)
 HOOKS_SRC_DIR="$ENGINE_ROOT/hooks"
 SKILLS_SRC_DIR="$ENGINE_ROOT/skills"
 
 # Version from package.json
 VERSION_FILE="$ENGINE_ROOT/package.json"
 if [[ -f "$VERSION_FILE" ]]; then
-    HOOK_CORE_VERSION=$(grep '"version"' "$VERSION_FILE" | head -1 | sed 's/.*"version".*"\([^"]*\)".*/\1/')
+    CI_TOOLS_VERSION=$(grep '"version"' "$VERSION_FILE" | head -1 | sed 's/.*"version".*"\([^"]*\)".*/\1/')
 else
     echo -e "${RED}ERROR: package.json not found at $VERSION_FILE${NC}"
     exit 1
@@ -33,11 +32,11 @@ fi
 usage() {
     echo "Usage: $0 [OPTIONS] [TARGET_DIR]"
     echo ""
-    echo "Install hook-core to a target project directory."
+    echo "Install CI tools to a target project directory."
     echo ""
     echo "Options:"
     echo "  -h, --help     Show this help message"
-    echo "  -v, --version  Show hook-core version"
+    echo "  -v, --version  Show CI tools version"
     echo "  -f, --force    Overwrite existing files"
     echo "  --dry-run      Show what would be installed without doing it"
     echo ""
@@ -62,7 +61,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -v|--version)
-            echo "hook-core version: $HOOK_CORE_VERSION"
+            echo "CI tools version: $CI_TOOLS_VERSION"
             exit 0
             ;;
         -f|--force)
@@ -102,7 +101,7 @@ if [[ ! -e "$TARGET_DIR/.git" ]]; then
 fi
 
 echo -e "${BLUE}======================================${NC}"
-echo -e "${BLUE}  hook-core Installer v$HOOK_CORE_VERSION${NC}"
+echo -e "${BLUE}  CI Tools Installer v$CI_TOOLS_VERSION${NC}"
 echo -e "${BLUE}======================================${NC}"
 echo ""
 echo -e "Source:  ${GREEN}$ENGINE_ROOT${NC}"
@@ -222,11 +221,11 @@ EOF
 fi
 
 # Create VERSION marker
-VERSION_MARKER="$TARGET_DIR/.hook-core-version"
+VERSION_MARKER="$TARGET_DIR/.ci-tools-version"
 if [[ "$DRY_RUN" == "true" ]]; then
     echo -e "  [DRY-RUN] Would write version to: $VERSION_MARKER"
 else
-    echo "$HOOK_CORE_VERSION" > "$VERSION_MARKER"
+    echo "$CI_TOOLS_VERSION" > "$VERSION_MARKER"
     echo -e "  ${GREEN}[OK]${NC} $VERSION_MARKER"
 fi
 
@@ -238,10 +237,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
 else
     echo -e "${GREEN}  Installation complete!${NC}"
 fi
-echo -e "${GREEN}  hook-core version: $HOOK_CORE_VERSION${NC}"
+echo -e "${GREEN}  CI tools version: $CI_TOOLS_VERSION${NC}"
 echo -e "${GREEN}======================================${NC}"
 echo ""
 echo "Next steps:"
 echo "  1. Review the installed files"
-echo "  2. Commit the changes: git add -A && git commit -m 'chore: install zenithjoy-engine v$HOOK_CORE_VERSION'"
+echo "  2. Commit the changes: git add -A && git commit -m 'chore: install zenithjoy-engine v$CI_TOOLS_VERSION'"
 echo "  3. Start developing with /dev"

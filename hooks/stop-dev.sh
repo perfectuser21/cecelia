@@ -96,7 +96,7 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock"
 DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
-SENTINEL_FILE="$PROJECT_ROOT/.git/hooks/cecelia-dev.sentinel"
+SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel"
 
 # Key-1: .dev-lock（硬钥匙）- 只要它在，就必须走 dev 检查
 if [[ ! -f "$DEV_LOCK_FILE" ]]; then

@@ -10,7 +10,7 @@
 #
 # 同步目标:
 #   - VERSION
-#   - hook-core/VERSION
+#   - ci-tools/VERSION
 #   - regression-contract.yaml
 #
 
@@ -101,7 +101,7 @@ sync_yaml() {
 # 执行同步
 echo "[Targets]"
 sync_file "VERSION"
-sync_file "hook-core/VERSION"
+sync_file "ci-tools/VERSION"
 sync_yaml
 
 echo ""

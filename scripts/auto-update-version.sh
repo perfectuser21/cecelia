@@ -46,16 +46,16 @@ if [[ -f "VERSION" ]]; then
     echo "✅ VERSION 已更新"
 fi
 
-# 同步 hook-core/VERSION（如果存在）
-if [[ -d "hook-core" ]]; then
-    echo "$NEW" > hook-core/VERSION
-    echo "✅ hook-core/VERSION 已更新"
+# 同步 ci-tools/VERSION（如果存在）
+if [[ -d "ci-tools" ]]; then
+    echo "$NEW" > ci-tools/VERSION
+    echo "✅ ci-tools/VERSION 已更新"
 fi
 
-# 同步 .hook-core-version（如果存在）
-if [[ -f ".hook-core-version" ]]; then
-    echo "$NEW" > .hook-core-version
-    echo "✅ .hook-core-version 已更新"
+# 同步 .ci-tools-version（如果存在）
+if [[ -f ".ci-tools-version" ]]; then
+    echo "$NEW" > .ci-tools-version
+    echo "✅ .ci-tools-version 已更新"
 fi
 
 # 同步 package-lock.json

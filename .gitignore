@@ -40,6 +40,8 @@ skills/dev/VALIDATION.md
 .dev-mode.*
 .dev-lock
 .dev-lock.*
+.dev-sentinel
+.dev-sentinel.*
 .quality-report.json
 .test-level.json
 
@@ -72,3 +74,4 @@ artifacts/screenshots/*.png
 .subagent-lock
 .subagent-proof.json
 .gate-*-passed
+# CI trigger

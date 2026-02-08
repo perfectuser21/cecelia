@@ -1,12 +1,11 @@
 /**
- * install-hooks.test.ts - Tests for hook-core installation
+ * install-hooks.test.ts - Tests for CI tools installation
  *
  * DoD H3-001 验收测试
  *
  * Tests:
- * - hook-core/VERSION 格式正确
- * - hook-core/hooks/ 包含核心 hooks
- * - hook-core/scripts/devgate/ 包含 DevGate 脚本
+ * - ci-tools/VERSION 格式正确
+ * - scripts/devgate/ 包含 DevGate 脚本
  * - scripts/install-hooks.sh 正确安装
  */
 
@@ -17,9 +16,9 @@ import * as path from 'path'
 import { tmpdir } from 'os'
 
 const ROOT = path.resolve(__dirname, '../..')
-const HOOK_CORE_DIR = path.join(ROOT, 'hook-core')
+const CI_TOOLS_DIR = path.join(ROOT, 'ci-tools')
 const INSTALL_SCRIPT = path.join(ROOT, 'scripts/install-hooks.sh')
-const TEST_DIR = path.join(tmpdir(), 'test-hook-core-install-vitest')
+const TEST_DIR = path.join(tmpdir(), 'test-ci-tools-install-vitest')
 
 /** Type for hook configuration object */
 interface HookConfig {
@@ -27,87 +26,58 @@ interface HookConfig {
   hooks: Array<{ type: string; command: string }>;
 }
 
-describe('hook-core 目录结构', () => {
+describe('ci-tools 目录结构', () => {
   describe('VERSION 文件', () => {
     it('VERSION 文件存在', () => {
-      const versionFile = path.join(HOOK_CORE_DIR, 'VERSION')
+      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
       expect(fs.existsSync(versionFile)).toBe(true)
     })
 
     it('VERSION 格式正确 (semver)', () => {
-      const versionFile = path.join(HOOK_CORE_DIR, 'VERSION')
+      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
       const version = fs.readFileSync(versionFile, 'utf-8').trim()
       // semver 格式: MAJOR.MINOR.PATCH
       expect(version).toMatch(/^\d+\.\d+\.\d+$/)
     })
 
     it('VERSION 不为空', () => {
-      const versionFile = path.join(HOOK_CORE_DIR, 'VERSION')
+      const versionFile = path.join(CI_TOOLS_DIR, 'VERSION')
       const version = fs.readFileSync(versionFile, 'utf-8').trim()
       expect(version.length).toBeGreaterThan(0)
     })
   })
 
-  describe('hooks 目录', () => {
-    it('hooks 目录存在', () => {
-      const hooksDir = path.join(HOOK_CORE_DIR, 'hooks')
-      expect(fs.existsSync(hooksDir)).toBe(true)
-      expect(fs.statSync(hooksDir).isDirectory()).toBe(true)
-    })
-
-    it('包含 branch-protect.sh', () => {
-      const hookFile = path.join(HOOK_CORE_DIR, 'hooks/branch-protect.sh')
-      expect(fs.existsSync(hookFile)).toBe(true)
-    })
-
-    it('hooks 是有效文件或符号链接', () => {
-      const hooksDir = path.join(HOOK_CORE_DIR, 'hooks')
-      const files = fs.readdirSync(hooksDir)
-      expect(files.length).toBeGreaterThan(0)
-
-      for (const file of files) {
-        const filePath = path.join(hooksDir, file)
-        const stat = fs.lstatSync(filePath)
-        // 要么是普通文件，要么是符号链接
-        expect(stat.isFile() || stat.isSymbolicLink()).toBe(true)
-
-        // 如果是符号链接，验证目标存在
-        if (stat.isSymbolicLink()) {
-          const realPath = fs.realpathSync(filePath)
-          expect(fs.existsSync(realPath)).toBe(true)
-        }
-      }
-    })
-  })
+  // Note: ci-tools/hooks/ directory was removed in P3-B refactor
+  // Hooks are now directly in hooks/ directory at repo root
 
   describe('scripts/devgate 目录', () => {
     it('devgate 目录存在', () => {
-      const devgateDir = path.join(HOOK_CORE_DIR, 'scripts/devgate')
+      const devgateDir = path.join(CI_TOOLS_DIR, 'scripts/devgate')
       expect(fs.existsSync(devgateDir)).toBe(true)
       expect(fs.statSync(devgateDir).isDirectory()).toBe(true)
     })
 
     it('包含 check-dod-mapping.cjs', () => {
-      const scriptFile = path.join(HOOK_CORE_DIR, 'scripts/devgate/check-dod-mapping.cjs')
+      const scriptFile = path.join(CI_TOOLS_DIR, 'scripts/devgate/check-dod-mapping.cjs')
       expect(fs.existsSync(scriptFile)).toBe(true)
     })
 
     it('包含 detect-priority.cjs', () => {
-      const scriptFile = path.join(HOOK_CORE_DIR, 'scripts/devgate/detect-priority.cjs')
+      const scriptFile = path.join(CI_TOOLS_DIR, 'scripts/devgate/detect-priority.cjs')
       expect(fs.existsSync(scriptFile)).toBe(true)
     })
 
     it('包含 snapshot 相关脚本', () => {
-      const snapshotScript = path.join(HOOK_CORE_DIR, 'scripts/devgate/snapshot-prd-dod.sh')
-      const listScript = path.join(HOOK_CORE_DIR, 'scripts/devgate/list-snapshots.sh')
-      const viewScript = path.join(HOOK_CORE_DIR, 'scripts/devgate/view-snapshot.sh')
+      const snapshotScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/snapshot-prd-dod.sh')
+      const listScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/list-snapshots.sh')
+      const viewScript = path.join(CI_TOOLS_DIR, 'scripts/devgate/view-snapshot.sh')
       expect(fs.existsSync(snapshotScript)).toBe(true)
       expect(fs.existsSync(listScript)).toBe(true)
       expect(fs.existsSync(viewScript)).toBe(true)
     })
 
     it('devgate 脚本是有效文件或符号链接', () => {
-      const devgateDir = path.join(HOOK_CORE_DIR, 'scripts/devgate')
+      const devgateDir = path.join(CI_TOOLS_DIR, 'scripts/devgate')
       const files = fs.readdirSync(devgateDir)
       expect(files.length).toBeGreaterThan(0)
 
@@ -139,7 +109,7 @@ describe('install-hooks.sh 安装脚本', () => {
         encoding: 'utf-8',
         cwd: ROOT,
       })
-      expect(output).toContain('hook-core version:')
+      expect(output).toContain('CI tools version:')
       expect(output).toMatch(/\d+\.\d+\.\d+/)
     })
 
@@ -202,7 +172,7 @@ describe('install-hooks.sh 安装脚本', () => {
       expect(fs.existsSync(path.join(TEST_DIR, '.claude/settings.json'))).toBe(true)
 
       // 验证版本标记
-      expect(fs.existsSync(path.join(TEST_DIR, '.hook-core-version'))).toBe(true)
+      expect(fs.existsSync(path.join(TEST_DIR, '.ci-tools-version'))).toBe(true)
     })
 
     it('安装的文件是真实文件（非符号链接）', () => {
@@ -229,8 +199,8 @@ describe('install-hooks.sh 安装脚本', () => {
     })
 
     it('版本标记与 VERSION 文件一致', () => {
-      const versionMarker = fs.readFileSync(path.join(TEST_DIR, '.hook-core-version'), 'utf-8').trim()
-      const versionFile = fs.readFileSync(path.join(HOOK_CORE_DIR, 'VERSION'), 'utf-8').trim()
+      const versionMarker = fs.readFileSync(path.join(TEST_DIR, '.ci-tools-version'), 'utf-8').trim()
+      const versionFile = fs.readFileSync(path.join(CI_TOOLS_DIR, 'VERSION'), 'utf-8').trim()
       expect(versionMarker).toBe(versionFile)
     })
 

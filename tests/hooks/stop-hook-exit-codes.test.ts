@@ -72,6 +72,9 @@ describe("hooks/stop-dev.sh exit codes", () => {
       writeFileSync(join(tempDir, "README.md"), "test");
       execSync(`cd "${tempDir}" && git add . && git config user.email "test@test.com" && git config user.name "Test" && git commit -m "init" -q`);
 
+      // Create .dev-lock and .dev-sentinel (双钥匙 + 三重保险)
+      writeFileSync(join(tempDir, ".dev-lock"), "dev_workflow_active\n");
+      writeFileSync(join(tempDir, ".dev-sentinel"), "dev_workflow_active\n");
       writeFileSync(
         join(tempDir, ".dev-mode"),
         "dev\nbranch: test-branch\nsession_id: test123\n"

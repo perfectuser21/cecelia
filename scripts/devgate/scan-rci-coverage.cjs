@@ -42,7 +42,7 @@ const ENTRY_PATTERNS = [
 const EXCLUDE_PATTERNS = [
   /^tests\//,                  // 测试文件（不是业务入口）
   /\.archive\//,               // 归档目录
-  /^hook-core\//,              // 部署产物目录
+  /^ci-tools\//,               // CI 工具目录
   /^skills\/[^/]+\/scripts\//, // Skill 内部脚本
   /^skills\/assurance\//,      // Assurance Skill（实验性，未启用）
   /^skills\/audit\//,          // Audit Skill（内部质检工具）

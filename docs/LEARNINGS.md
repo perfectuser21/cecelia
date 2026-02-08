@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.12.0
+version: 1.13.0
 created: 2026-01-16
 updated: 2026-02-08
 changelog:
+  - 1.13.0: Stop Hook sentinel 文件路径修复（.git 保护机制触发问题）
   - 1.12.0: 添加 /dev 反馈报告开发经验（4 维度分析、CI 旧测试问题）
   - 1.11.0: 添加 RCI 覆盖率检查与 bash 测试脚本规范经验
   - 1.10.0: 添加 CI P1 结构验证强化经验（L2A/L2B 结构检查、RCI 精确匹配、测试用例编写技巧）
@@ -22,6 +23,54 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+## 2026-02-08: Stop Hook sentinel 文件路径修复
+
+### 问题发现
+
+压力测试 Stop Hook 时发现 cleanup 场景的 exit code 全部错误：
+- 预期：cleanup_done/分支不匹配/重试超限 场景应该 `exit 0`
+- 实际：全部返回 `exit 1`（失败）
+- 错误提示：`❌ 禁止删除 .git 目录: .git/hooks/cecelia-dev.sentinel`
+
+### 根本原因
+
+**Claude Code Bash 工具有 `.git` 保护机制**：
+- Bash 工具拒绝删除 `.git` 目录下的任何文件
+- sentinel 文件在 `.git/hooks/cecelia-dev.sentinel` 触发保护
+- Stop Hook 尝试 `rm -f $SENTINEL_FILE` 失败，导致 exit 1
+
+### 解决方案
+
+**将 sentinel 文件移到项目根目录**：
+- 旧路径：`.git/hooks/cecelia-dev.sentinel`
+- 新路径：`.dev-sentinel`
+- 保持三重保险机制不变（.dev-lock + .dev-mode + .dev-sentinel）
+
+### 涉及修改
+
+1. `hooks/stop-dev.sh`: 更新 `SENTINEL_FILE` 路径
+2. `skills/dev/steps/03-branch.md`: 更新 sentinel 创建逻辑
+3. `tests/hooks/stop-hook-sentinel-cleanup.test.ts`: 新增压力测试
+4. `tests/hooks/stop-hook-exit-codes.test.ts`: 修复双钥匙缺失
+
+### 经验教训
+
+**工具保护机制需要提前考虑**：
+- Claude Code Bash 工具的 `.git` 保护是硬限制
+- 系统文件（`.dev-lock`, `.dev-mode`, `.dev-sentinel`）应该放在根目录
+- 测试要模拟真实环境（包括工具保护）
+- 压力测试是发现隐蔽 bug 的有效手段
+
+**测试改进**：
+- 所有涉及双钥匙系统的测试必须创建完整的 `.dev-lock + .dev-sentinel`
+- 不能只创建 `.dev-mode`，否则会被判定为"泄漏"
+
+**影响等级**: P1 - 功能性 Bug
+- 影响：所有 cleanup 场景失败，会话无法正常结束
+- 修复优先级：高（阻碍工作流正常运行）
 
 ---
 

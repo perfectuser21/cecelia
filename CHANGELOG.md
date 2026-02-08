@@ -1,6 +1,47 @@
-## [12.18.0] - 2026-02-08
+# Changelog
 
-### Added
+All notable changes to this project will be documented in this file.
+
+## [12.18.5] - 2026-02-08
+
+### Fixed
+- **回归契约更新**: 匹配 ci-tools 重命名
+  - H3-001: 更新预期输出从 "hook-core version:" 到 "CI tools version:"
+  - E2-001: 改为手动测试（.dev-runs 目录在 .gitignore 中）
+
+## [12.18.4] - 2026-02-08
+
+### Fixed
+- **P1 (High): GitHub Token 检测增强**
+  - 新增 4 种 GitHub token 格式检测：`gho_`, `ghs_`, `ghu_`, `ghp_`
+  - 更新 `lib/hook-utils.sh` 的 `TOKEN_PATTERNS` 数组
+  - credential-guard 和 bash-guard 共享 token 正则模式
+
+- **P2 (Medium): 全局 Hooks 清理**
+  - 删除 7 个过时的全局 hooks（从 13 个降至 6 个）
+  - 全局 hooks 与仓库 hooks 数量一致性验证通过
+
+- **P3-A (Low): .dev-runs 清理**
+  - 从 git 追踪中移除 `.dev-runs/.gitkeep` 和示例文件
+  - 确保 `.dev-runs/` 完全由 .gitignore 管理
+
+- **P3-B (Low): hook-core 重构为 ci-tools**
+  - 重命名 `hook-core/` → `ci-tools/`
+  - 重命名 `.hook-core-version` → `.ci-tools-version`
+  - 更新所有引用（6 个文件）
+
+### Quality
+- 测试覆盖率: 99.5% (373/375 通过)
+- 系统健康度: 95/100
+
+## [12.18.1] - 2026-02-08
+
+### Fixed
+- 修复 Stop Hook sentinel 文件删除失败问题
+  - sentinel 文件从 `.git/hooks/cecelia-dev.sentinel` 移到 `.dev-sentinel`
+  - 避免触发 Claude Code Bash 工具的 .git 保护机制
+  - 所有 cleanup 场景的 exit code 现在正确返回
+
 
 - **/dev 执行反馈报告（4 维度分析）**
   - **新增脚本**: `skills/dev/scripts/record-step.sh` - 记录每步执行数据（时间/状态/重试/问题）

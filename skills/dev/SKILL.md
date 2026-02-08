@@ -10,7 +10,6 @@ description: |
   - 所有检查交给 CI DevGate
   - DoD/RCI 检查由 CI 强制执行
   - Quality 只跑自动化测试
-  - Learning 使用 Subagent
 
   循环控制由 Stop Hook 实现：
   - 有头模式: Stop Hook 检测 .dev-mode 文件，exit 2 阻止会话结束

@@ -1,1 +1,0 @@
-../../hooks/branch-protect.sh

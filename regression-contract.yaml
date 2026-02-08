@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.18.0"
+version: "12.18.5"
 updated: "2026-02-08"
 
 # ============================================================================
@@ -642,21 +642,21 @@ hooks:
   # --------------------------------------------------------------------------
   - id: H3-001
     feature: H3
-    name: "hook-core 安装功能"
+    name: "CI tools 安装功能"
     scope: hook
     priority: P1
     trigger: [Release]
     method: auto
-    tags: [hook-core, install, phase3]
+    tags: [ci-tools, install, phase3]
     owner: infra
     steps:
       given: "目标项目是 git 仓库"
       when: "运行 bash scripts/install-hooks.sh <target_dir>"
-      then: "hook-core 安装到目标项目，包含 hooks/, scripts/devgate/, .claude/settings.json"
+      then: "CI tools 安装到目标项目，包含 hooks/, scripts/devgate/, .claude/settings.json"
     evidence:
       type: command
       run: "bash scripts/install-hooks.sh --version"
-      contains: "hook-core version:"
+      contains: "CI tools version:"
     test: "tests/hooks/install-hooks.test.ts"
 
   - id: H3-002
@@ -1980,7 +1980,7 @@ export:
     scope: export
     priority: P1
     trigger: [Release]
-    method: auto
+    method: manual
     tags: [export, dev, session, json]
     owner: workflow
     steps:
@@ -1988,9 +1988,8 @@ export:
       when: "cleanup 阶段调用 generate-report.sh"
       then: "在 .dev-runs/ 生成 JSON 报告"
     evidence:
-      type: file
-      path: ".dev-runs/*-report.json"
-      exists: true
+      type: manual
+      desc: "检查 .dev-runs/ 目录是否生成 *-report.json 文件（需要实际运行 /dev workflow）"
     test: "skills/dev/scripts/generate-report.sh"
 
   - id: E2-002

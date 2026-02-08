@@ -63,7 +63,11 @@ debug_log() {
 # 用法: for p in "${TOKEN_PATTERNS[@]}"; do grep -qE "$p" ...; done
 TOKEN_PATTERNS=(
     'ntn_[a-zA-Z0-9]{20,}'                                          # Notion API Key
-    'github_pat_[a-zA-Z0-9_]{30,}'                                  # GitHub PAT
+    'github_pat_[a-zA-Z0-9_]{30,}'                                  # GitHub PAT (new format)
+    'ghp_[a-zA-Z0-9]{36}'                                           # GitHub Personal Access Token (classic)
+    'gho_[a-zA-Z0-9]{36}'                                           # GitHub OAuth Token
+    'ghs_[a-zA-Z0-9]{36}'                                           # GitHub Server-to-server Token
+    'ghu_[a-zA-Z0-9]{36}'                                           # GitHub User-to-server Token
     'sk-proj-[a-zA-Z0-9_-]{40,}'                                    # OpenAI API Key
     'eyJ[a-zA-Z0-9_-]{50,}\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'       # JWT tokens
     'dop_v1_[a-zA-Z0-9]{50,}'                                       # DigitalOcean

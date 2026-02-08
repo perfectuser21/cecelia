@@ -178,17 +178,17 @@ else
 fi
 
 # ===== 创建 sentinel file（三重保险）=====
+# v12.19.0: 从 .git/hooks/ 移到根目录避免触发 Bash 工具的 .git 保护
 echo "🛡️  创建 sentinel file..."
-mkdir -p .git/hooks
-SENTINEL_TMP="$(mktemp .git/hooks/cecelia-dev.sentinel.XXXXXX)"
+SENTINEL_TMP="$(mktemp .dev-sentinel.XXXXXX)"
 {
   echo "dev_workflow_active"
   echo "branch: $BRANCH_NAME"
   echo "started: $(date -Iseconds)"
 } > "$SENTINEL_TMP"
-mv -f "$SENTINEL_TMP" .git/hooks/cecelia-dev.sentinel
+mv -f "$SENTINEL_TMP" .dev-sentinel
 
-if [[ -f .git/hooks/cecelia-dev.sentinel ]]; then
+if [[ -f .dev-sentinel ]]; then
     echo "✅ Sentinel 创建成功（三重保险）"
 else
     echo "⚠️  Sentinel 创建失败，但可以继续" >&2

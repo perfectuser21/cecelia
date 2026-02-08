@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02081904-dev-feedback-report",
-  "head_sha": "573ec86",
-  "timestamp": "2026-02-08T11:09:32Z",
+  "branch": "cp-02082040-sentinel-fix",
+  "head_sha": "ee4bbc6",
+  "timestamp": "2026-02-08T12:45:15Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
