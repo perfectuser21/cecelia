@@ -104,10 +104,33 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 ---
 
+## 生成反馈报告（新增 v12.15.0）
+
+**在 Learning 记录后，生成结构化反馈报告**：
+
+```bash
+bash skills/dev/scripts/generate-feedback-report.sh
+```
+
+生成 `.dev-feedback-report.json`，包含：
+- task_id, branch, pr_number
+- summary, issues_found, next_steps_suggested
+- technical_notes, performance_notes
+- code_changes（files, lines 统计）
+- test_coverage
+
+**用途**：
+- OKR 迭代拆解（Phase 3/4）
+- Brain 自动化决策
+- 项目历史追溯
+
+---
+
 ## 完成条件
 
 - [ ] 至少有一条 Learning 记录（Engine 或项目层面）
 - [ ] Learning 已提交并推送
+- [ ] 反馈报告已生成（.dev-feedback-report.json）
 
 **标记步骤完成**：
 

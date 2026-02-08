@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.14.0"
+version: "12.14.1"
 updated: "2026-02-08"
 
 # ============================================================================
@@ -2668,6 +2668,24 @@ skills:
       type: file
       path: "tests/okr/test-decompose-feature.sh"
     test: "tests/okr/test-decompose-feature.sh && tests/okr/test-continue-feature.sh"
+
+  - id: S1-006
+    feature: S1
+    name: "Dev Feedback Report Generation"
+    scope: skill
+    priority: P2
+    trigger: [PR]
+    method: auto
+    tags: [dev, feedback, reporting, json]
+    owner: infra
+    steps:
+      given: "/dev workflow 完成"
+      when: "运行 generate-feedback-report.sh"
+      then: "生成包含 11 个字段的结构化反馈报告 JSON"
+    evidence:
+      type: file
+      path: "tests/dev/test-generate-feedback-report.sh"
+    test: "tests/dev/test-generate-feedback-report.sh"
 
   # ============================================================================
   # S2: PRD/DoD Validation Loop
