@@ -87,16 +87,33 @@ fi
 ## 创建功能分支
 
 ```bash
-# 生成分支名：{Feature ID}-{任务名}
-FEATURE_ID="<从 FEATURES.md 获取，如 W6>"
-TASK_NAME="<根据用户需求生成>"
-BRANCH_NAME="${FEATURE_ID}-${TASK_NAME}"
+# 检查是否从 Brain Task 创建（--task-id 参数）
+# task_id 从 Step 1 传递（通过 PRD 文件名检测）
+task_id=""
+if ls .prd-task-*.md 2>/dev/null; then
+    prd_file=$(ls .prd-task-*.md 2>/dev/null | head -1)
+    task_id=$(echo "$prd_file" | sed 's/.prd-task-//' | sed 's/.md//')
+fi
+
+# 生成分支名
+if [[ -n "$task_id" ]]; then
+    # 从 Brain Task 创建：task-<id>
+    BRANCH_NAME="task-$task_id"
+else
+    # 手动创建：{Feature ID}-{任务名}
+    FEATURE_ID="<从 FEATURES.md 获取，如 W6>"
+    TASK_NAME="<根据用户需求生成>"
+    BRANCH_NAME="${FEATURE_ID}-${TASK_NAME}"
+fi
 
 # 记住当前分支作为 base
 BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 echo "🌿 创建分支..."
 echo "   名称: $BRANCH_NAME"
+if [[ -n "$task_id" ]]; then
+    echo "   来源: Brain Task ($task_id)"
+fi
 echo "   Base: $BASE_BRANCH"
 
 # 创建分支
@@ -129,12 +146,21 @@ CURRENT_TTY=$(tty 2>/dev/null || echo "not a tty")
 
 # 在项目根目录创建 .dev-mode（分支已创建，分支名正确）
 # 包含 11 步 checklist 状态追踪
+# 如果有 task_id，添加 task_id 字段
+
+# 确定 PRD 文件名
+if [[ -n "$task_id" ]]; then
+    PRD_FILE=".prd-task-$task_id.md"
+else
+    PRD_FILE=".prd.md"
+fi
+
 cat > .dev-mode << EOF
 dev
 branch: $BRANCH_NAME
 session_id: $SESSION_ID
 tty: $CURRENT_TTY
-prd: .prd.md
+prd: $PRD_FILE
 started: $(date -Iseconds)
 step_1_prd: done
 step_2_detect: done
@@ -148,6 +174,11 @@ step_9_ci: pending
 step_10_learning: pending
 step_11_cleanup: pending
 EOF
+
+# 如果有 task_id，追加 task_id 字段
+if [[ -n "$task_id" ]]; then
+    echo "task_id: $task_id" >> .dev-mode
+fi
 
 echo "✅ .dev-mode 已创建（session_id: $SESSION_ID，含 11 步 checklist）"
 
@@ -172,6 +203,7 @@ echo "✅ 会话已注册（PID: $$，用于多会话检测）"
 
 **文件格式**（含 11 步 checklist）：
 ```
+# 手动创建（无 task_id）
 dev
 branch: H7-remove-ralph-loop
 session_id: a1b2c3d4e5f6
@@ -189,6 +221,26 @@ step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
 step_11_cleanup: pending
+
+# 从 Brain Task 创建（有 task_id）
+dev
+branch: task-abc-123
+session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
+prd: .prd-task-abc-123.md
+started: 2026-01-29T10:00:00+00:00
+step_1_prd: done
+step_2_detect: done
+step_3_branch: done
+step_4_dod: pending
+step_5_code: pending
+step_6_test: pending
+step_7_quality: pending
+step_8_pr: pending
+step_9_ci: pending
+step_10_learning: pending
+step_11_cleanup: pending
+task_id: abc-123
 ```
 
 **生命周期**：
@@ -228,6 +280,7 @@ echo "✅ Task Checkpoint 已创建（11 个步骤）"
 
 **更新后的 .dev-mode 格式**：
 ```
+# 手动创建
 dev
 branch: H7-task-checkpoint
 session_id: a1b2c3d4e5f6
@@ -235,6 +288,16 @@ tty: /dev/pts/3
 prd: .prd.md
 started: 2026-01-29T10:00:00+00:00
 tasks_created: true
+
+# Brain Task 创建
+dev
+branch: task-abc-123
+session_id: a1b2c3d4e5f6
+tty: /dev/pts/3
+prd: .prd-task-abc-123.md
+started: 2026-01-29T10:00:00+00:00
+tasks_created: true
+task_id: abc-123
 ```
 
 **Hook 检查**：

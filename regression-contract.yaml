@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.15.0"
+version: "12.16.0"
 updated: "2026-02-08"
 
 # ============================================================================
@@ -2704,6 +2704,24 @@ skills:
       type: file
       path: "tests/dev/test-parse-dev-args.sh"
     test: "tests/dev/test-parse-dev-args.sh && tests/dev/test-fetch-task-prd.sh"
+
+  - id: S1-008
+    feature: S1
+    name: "Dev Task ID Workflow Integration (Phase 3b)"
+    scope: workflow
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, task-id, workflow, integration]
+    owner: infra
+    steps:
+      given: "/dev --task-id task-001 被调用"
+      when: "Step 1 检测参数，Step 3 生成分支名 task-<id> 和 .dev-mode"
+      then: "完整工作流执行，带 task_id 字段的 .dev-mode 文件生成"
+    evidence:
+      type: file
+      path: "tests/dev/test-workflow-integration.sh"
+    test: "tests/dev/test-workflow-integration.sh"
 
   # ============================================================================
   # S2: PRD/DoD Validation Loop

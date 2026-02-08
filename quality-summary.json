@@ -1,12 +1,36 @@
 {
-  "branch": "cp-02081634-dev-task-id",
-  "head_sha": "pending",
-  "timestamp": "2026-02-08T08:34:00Z",
-  "note": "Quality 只汇总，不判定。CI 是最终裁判。",
-  "changes": {
-    "skills/dev/scripts/parse-dev-args.sh": "新脚本：解析 /dev --task-id 参数",
-    "skills/dev/scripts/fetch-task-prd.sh": "新脚本：从 Brain 读取 Task PRD",
-    "tests/dev/test-parse-dev-args.sh": "新测试：5 个测试全部通过",
-    "tests/dev/test-fetch-task-prd.sh": "新测试：5 个测试全部通过（含集成测试占位）"
-  }
+  "phase": "Phase 3b - /dev --task-id Workflow Integration",
+  "version": "12.16.0",
+  "changes": [
+    {
+      "file": "skills/dev/SKILL.md",
+      "type": "modified",
+      "description": "添加 --task-id 参数使用说明"
+    },
+    {
+      "file": "skills/dev/steps/01-prd.md",
+      "type": "modified",
+      "description": "添加参数检测逻辑，自动调用 fetch-task-prd.sh"
+    },
+    {
+      "file": "skills/dev/steps/03-branch.md",
+      "type": "modified",
+      "description": "更新分支命名逻辑（task-<id>）和 .dev-mode 文件生成"
+    },
+    {
+      "file": "tests/dev/test-workflow-integration.sh",
+      "type": "created",
+      "description": "集成测试文件（手动测试占位符）"
+    }
+  ],
+  "tests": {
+    "phase_3a_tests": "全部通过（10/10）",
+    "phase_3b_tests": "集成测试（需手动验证）"
+  },
+  "next_steps": [
+    "版本号更新（12.15.0 → 12.16.0）",
+    "RCI 条目添加（S1-008）",
+    "Feature Registry 更新",
+    "创建 PR"
+  ]
 }
