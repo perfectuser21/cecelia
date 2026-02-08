@@ -125,6 +125,9 @@ describe('Tick Drain Mode', () => {
   });
 
   it('should auto-complete drain when no in_progress tasks remain', async () => {
+    // Clean up any lingering in_progress tasks from other tests
+    await pool.query("UPDATE tasks SET status = 'completed' WHERE status = 'in_progress'");
+
     // Activate drain (no in_progress tasks exist)
     const drainResult = await drainTick();
     expect(drainResult.draining).toBe(true);

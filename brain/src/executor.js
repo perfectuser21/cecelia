@@ -355,9 +355,14 @@ async function requeueTask(taskId, reason, evidence = {}) {
   const payload = result.rows[0].payload || {};
   const retryCount = (payload.watchdog_retry_count || 0) + 1;
 
+  // P0 FIX #3: Watchdog kill 也应增加 failure_count，防止无限循环
+  // 原问题：watchdog_retry_count 和 failure_count 分离，交替失败时永远不会隔离
+  const failureCount = (payload.failure_count || 0) + 1;
+
   // P2 #9: Complete evidence chain
   const watchdogInfo = {
     watchdog_retry_count: retryCount,
+    failure_count: failureCount,  // P0 FIX: 同时追踪总失败次数
     watchdog_kill: { reason, ts: new Date().toISOString(), ...evidence },
     watchdog_last_sample: evidence,
   };
@@ -373,7 +378,7 @@ async function requeueTask(taskId, reason, evidence = {}) {
         quarantine_info: {
           quarantined_at: new Date().toISOString(),
           reason: 'resource_hog',
-          details: { watchdog_retries: retryCount, kill_reason: reason },
+          details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
           previous_status: 'in_progress',
         }
       })]
@@ -384,9 +389,20 @@ async function requeueTask(taskId, reason, evidence = {}) {
     return { requeued: false, quarantined: true };
   }
 
-  // Exponential backoff: 2min for retry 1 (kill 2 → quarantine, never reaches higher)
-  const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
-  const nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+  // Check if failure classification has retry strategy
+  const retryStrategy = payload.failure_classification?.retry_strategy;
+  let nextRunAt;
+
+  if (retryStrategy && retryStrategy.next_run_at) {
+    // Use classified retry strategy (from quarantine.js classifyFailure)
+    nextRunAt = retryStrategy.next_run_at;
+    console.log(`[executor] Using classified retry strategy: ${retryStrategy.reason || 'unknown'}`);
+  } else {
+    // Fallback: Exponential backoff (2min for retry 1, max 30min)
+    const backoffSec = Math.min(Math.pow(2, retryCount) * 60, 1800);
+    nextRunAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+    console.log(`[executor] Using default exponential backoff: ${backoffSec}s`);
+  }
 
   // P0 #2: WHERE status='in_progress' prevents reviving already-completed tasks
   const updateResult = await pool.query(

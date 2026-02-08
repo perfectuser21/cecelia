@@ -16,8 +16,8 @@ import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
-import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
-import { handleTaskFailure, getQuarantineStats } from './quarantine.js';
+import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch, canPlan, getDispatchRate, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -354,6 +354,10 @@ async function incrementActionsToday(count = 1) {
  * @returns {Object|null} - The next task to dispatch, or null
  */
 async function selectNextDispatchableTask(goalIds) {
+  // Check if P2 tasks should be paused (alertness mitigation)
+  const { getMitigationState } = await import('./alertness-actions.js');
+  const mitigationState = getMitigationState();
+
   // Query queued tasks with payload for dependency checking
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
@@ -374,6 +378,12 @@ async function selectNextDispatchableTask(goalIds) {
   `, [goalIds]);
 
   for (const task of result.rows) {
+    // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
+    if (mitigationState.p2_paused && task.priority === 'P2') {
+      console.log(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
+      continue;
+    }
+
     const dependsOn = task.payload?.depends_on;
     if (Array.isArray(dependsOn) && dependsOn.length > 0) {
       // Check if all dependencies are completed
@@ -391,6 +401,134 @@ async function selectNextDispatchableTask(goalIds) {
 }
 
 /**
+ * Process Cortex task (Brain-internal RCA analysis)
+ * @param {Object} task - Task requiring Cortex processing
+ * @param {Array} actions - Actions array to append to
+ * @returns {Promise<Object>} - Dispatch result
+ */
+async function processCortexTask(task, actions) {
+  try {
+    console.log(`[tick] Processing Cortex task: ${task.title} (id=${task.id})`);
+
+    // Update status to in_progress
+    await updateTask({ task_id: task.id, status: 'in_progress' });
+    actions.push({ action: 'cortex-start', task_id: task.id, title: task.title });
+
+    // Import Cortex module
+    const { performRCA } = await import('./cortex.js');
+
+    // Extract signals from payload
+    const signals = task.payload.signals || {};
+    const trigger = task.payload.trigger || 'unknown';
+
+    // Execute RCA analysis
+    const rcaResult = await performRCA(
+      { id: task.id, title: task.title, description: task.description, payload: task.payload },
+      [] // history - can be enhanced later
+    );
+
+    // Save analysis results to cecelia_events
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ($1, $2, $3)
+    `, ['cortex_rca_complete', 'cortex', JSON.stringify({
+      task_id: task.id,
+      trigger,
+      analysis: rcaResult.analysis,
+      recommended_actions: rcaResult.recommended_actions,
+      learnings: rcaResult.learnings,
+      confidence: rcaResult.confidence,
+      completed_at: new Date().toISOString()
+    })]);
+
+    // If this is a learning task, record learning and apply strategy adjustments
+    if (task.payload.requires_learning === true) {
+      try {
+        const { recordLearning, applyStrategyAdjustments } = await import('./learning.js');
+
+        // Record learning
+        const learningRecord = await recordLearning(rcaResult);
+        console.log(`[tick] Learning recorded: ${learningRecord.id}`);
+
+        // Apply strategy adjustments if any
+        const strategyAdjustments = rcaResult.recommended_actions?.filter(
+          action => action.type === 'adjust_strategy'
+        ) || [];
+
+        if (strategyAdjustments.length > 0) {
+          const applyResult = await applyStrategyAdjustments(strategyAdjustments, learningRecord.id);
+          console.log(`[tick] Strategy adjustments applied: ${applyResult.applied}, skipped: ${applyResult.skipped}`);
+        }
+      } catch (learningErr) {
+        console.error(`[tick] Learning processing failed: ${learningErr.message}`);
+        // Don't fail the task, just log the error
+      }
+    }
+
+    // Update task to completed with result in payload
+    const updatedPayload = {
+      ...task.payload,
+      rca_result: {
+        root_cause: rcaResult.analysis.root_cause,
+        mitigations: rcaResult.recommended_actions?.slice(0, 3),
+        confidence: rcaResult.confidence,
+        completed_at: new Date().toISOString()
+      }
+    };
+    await pool.query(`
+      UPDATE tasks SET status = $1, payload = $2, completed_at = NOW(), updated_at = NOW()
+      WHERE id = $3
+    `, ['completed', JSON.stringify(updatedPayload), task.id]);
+
+    console.log(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
+
+    actions.push({
+      action: 'cortex-complete',
+      task_id: task.id,
+      confidence: rcaResult.confidence,
+      learnings_count: rcaResult.learnings?.length || 0
+    });
+
+    return {
+      dispatched: true,
+      reason: 'cortex_processed',
+      task_id: task.id,
+      actions
+    };
+
+  } catch (err) {
+    console.error(`[tick] Cortex task failed: ${err.message}`);
+
+    // Update task to failed with error in payload
+    const updatedPayload = {
+      ...task.payload,
+      rca_error: {
+        error: err.message,
+        failed_at: new Date().toISOString()
+      }
+    };
+    await pool.query(`
+      UPDATE tasks SET status = $1, payload = $2, updated_at = NOW()
+      WHERE id = $3
+    `, ['failed', JSON.stringify(updatedPayload), task.id]);
+
+    actions.push({
+      action: 'cortex-failed',
+      task_id: task.id,
+      error: err.message
+    });
+
+    return {
+      dispatched: false,
+      reason: 'cortex_error',
+      task_id: task.id,
+      error: err.message,
+      actions
+    };
+  }
+}
+
+/**
  * Dispatch the next queued task for execution.
  * Checks concurrency limit, executor availability, and dependencies.
  *
@@ -401,8 +539,17 @@ async function dispatchNextTask(goalIds) {
   const actions = [];
 
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
-  if (_draining) {
-    return { dispatched: false, reason: 'draining', detail: `Drain mode active since ${_drainStartedAt}`, actions };
+  // Also check alertness-requested drain mode
+  const { getMitigationState } = await import('./alertness-actions.js');
+  const mitigationState = getMitigationState();
+
+  if (_draining || mitigationState.drain_mode_requested) {
+    return {
+      dispatched: false,
+      reason: 'draining',
+      detail: _draining ? `Drain mode active since ${_drainStartedAt}` : 'Alertness COMA drain mode',
+      actions
+    };
   }
 
   // 0a. Billing pause check — skip dispatch if API billing cap is active
@@ -435,10 +582,27 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
+  // 2a. P1 FIX: Token bucket rate limiting check
+  const tokenResult = tryConsumeToken('dispatch');
+  if (!tokenResult.allowed) {
+    return {
+      dispatched: false,
+      reason: 'rate_limited',
+      detail: tokenResult.reason,
+      remaining: tokenResult.remaining,
+      actions
+    };
+  }
+
   // 3. Select next task (with dependency check)
   const nextTask = await selectNextDispatchableTask(goalIds);
   if (!nextTask) {
     return { dispatched: false, reason: 'no_dispatchable_task', actions };
+  }
+
+  // 3a. Check if task requires Cortex processing (Brain-internal RCA)
+  if (nextTask.payload && nextTask.payload.requires_cortex === true) {
+    return await processCortexTask(nextTask, actions);
   }
 
   // 4. Update task status to in_progress
@@ -884,6 +1048,23 @@ async function executeTick() {
     console.error('[tick] Watchdog error:', watchdogErr.message);
   }
 
+  // P1 FIX #3: Check for expired quarantine tasks and auto-release
+  try {
+    const released = await checkExpiredQuarantineTasks();
+    for (const r of released) {
+      actionsTaken.push({
+        action: 'auto_release_quarantine',
+        task_id: r.task_id,
+        title: r.title,
+        reason: r.reason || 'unknown',
+        failure_class: r.failure_class || 'unknown',
+        ttl_release: 'TTL expired',
+      });
+    }
+  } catch (quarantineErr) {
+    console.error('[tick] Quarantine check error:', quarantineErr.message);
+  }
+
   // Check for stale tasks (long-running, not dispatched)
   const staleTasks = tasks.filter(t => isStale(t));
   for (const task of staleTasks) {
@@ -1229,6 +1410,7 @@ export {
   stopTickLoop,
   initTickLoop,
   dispatchNextTask,
+  processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
   routeTask,

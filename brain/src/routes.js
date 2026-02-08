@@ -4186,4 +4186,193 @@ router.post('/proposals/:id/rollback', async (req, res) => {
   }
 });
 
+// ============================================================
+// Cortex Analyses API — Historical RCA Memory
+// ============================================================
+
+import { searchRelevantAnalyses } from './cortex.js';
+import {
+  evaluateQualityInitial,
+  checkShouldCreateRCA,
+  getQualityStats,
+} from './cortex-quality.js';
+
+/**
+ * GET /api/brain/cortex/analyses
+ * Query historical Cortex analyses
+ *
+ * Query params:
+ * - task_id: Filter by task ID
+ * - failure_class: Filter by failure class (NETWORK, BILLING_CAP, etc.)
+ * - trigger_event: Filter by trigger event type
+ * - limit: Max results (default 10)
+ */
+router.get('/cortex/analyses', async (req, res) => {
+  try {
+    const { task_id, failure_class, trigger_event, limit } = req.query;
+
+    // If task_id is provided, query by task_id directly
+    if (task_id) {
+      const result = await pool.query(`
+        SELECT * FROM cortex_analyses
+        WHERE task_id = $1
+        ORDER BY created_at DESC
+      `, [task_id]);
+      return res.json(result.rows);
+    }
+
+    // Otherwise, use semantic search
+    const analyses = await searchRelevantAnalyses({
+      failure_class,
+      trigger_event
+    }, parseInt(limit) || 10);
+
+    res.json(analyses);
+  } catch (err) {
+    console.error('[API] Failed to query cortex analyses:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/analyses/:id
+ * Get single analysis by ID
+ */
+router.get('/cortex/analyses/:id', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM cortex_analyses WHERE id = $1
+    `, [req.params.id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Analysis not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[API] Failed to get cortex analysis:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/cortex/evaluate-quality
+ * Evaluate quality for a specific analysis
+ *
+ * Body: { analysis_id: UUID, evaluation_type: 'initial'|'final' }
+ */
+router.post('/cortex/evaluate-quality', async (req, res) => {
+  try {
+    const { analysis_id, evaluation_type = 'initial' } = req.body;
+
+    if (!analysis_id) {
+      return res.status(400).json({ error: 'analysis_id required' });
+    }
+
+    const result = await evaluateQualityInitial(analysis_id);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to evaluate quality:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/cortex/check-similarity
+ * Check if RCA should be created or reused
+ *
+ * Body: { task_type, reason, root_cause }
+ */
+router.post('/cortex/check-similarity', async (req, res) => {
+  try {
+    const { task_type, reason, root_cause } = req.body;
+
+    const result = await checkShouldCreateRCA({
+      task_type,
+      reason,
+      root_cause: root_cause || ''
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to check similarity:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/quality-stats
+ * Get quality statistics for a time period
+ *
+ * Query params: days (default: 7)
+ */
+router.get('/cortex/quality-stats', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || '7');
+    const stats = await getQualityStats(days);
+
+    res.json({ success: true, ...stats });
+  } catch (err) {
+    console.error('[API] Failed to get quality stats:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/cortex/feedback
+ * Record user feedback for an RCA analysis
+ *
+ * Body: { analysis_id: UUID, rating: number (1-5), comment?: string }
+ */
+router.post('/cortex/feedback', async (req, res) => {
+  try {
+    const { analysis_id, rating, comment } = req.body;
+
+    if (!analysis_id) {
+      return res.status(400).json({ error: 'analysis_id required' });
+    }
+
+    if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'rating must be a number between 1 and 5' });
+    }
+
+    const { recordQualityFeedback, updateEffectivenessScore } = await import('./cortex-quality.js');
+
+    // Record feedback
+    await recordQualityFeedback(analysis_id, rating, comment);
+
+    // Update effectiveness score
+    const result = await updateEffectivenessScore(analysis_id);
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to record feedback:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/learning/evaluate-strategy
+ * Evaluate strategy adjustment effectiveness
+ *
+ * Body: { strategy_key: string, days?: number }
+ */
+router.post('/learning/evaluate-strategy', async (req, res) => {
+  try {
+    const { strategy_key, days = 7 } = req.body;
+
+    if (!strategy_key) {
+      return res.status(400).json({ error: 'strategy_key required' });
+    }
+
+    const { evaluateStrategyEffectiveness } = await import('./learning.js');
+    const result = await evaluateStrategyEffectiveness(strategy_key, days);
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] Failed to evaluate strategy:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

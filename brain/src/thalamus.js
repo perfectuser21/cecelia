@@ -20,6 +20,7 @@
 /* global console */
 
 import pool from './db.js';
+import { searchRelevantLearnings, getRecentLearnings } from './learning.js';
 
 // ============================================================
 // LLM Error Type Classification
@@ -277,24 +278,6 @@ async function recordTokenUsage(source, model, usage, context = {}) {
 }
 
 // ============================================================
-// Learnings Injection
-// ============================================================
-
-async function getRecentLearnings(limit = 20) {
-  try {
-    const result = await pool.query(`
-      SELECT title, content FROM reflections
-      WHERE type = 'learning'
-      ORDER BY created_at DESC
-      LIMIT $1
-    `, [limit]);
-    return result.rows;
-  } catch {
-    return [];
-  }
-}
-
-// ============================================================
 // Thalamus (Sonnet 调用)
 // ============================================================
 
@@ -340,11 +323,16 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 async function analyzeEvent(event) {
   const eventJson = JSON.stringify(event, null, 2);
 
-  // Build #1: 注入历史经验
-  const learnings = await getRecentLearnings();
+  // Build #1: 注入历史经验（使用语义检索）
+  const learnings = await searchRelevantLearnings({
+    task_type: event.task?.task_type,
+    failure_class: event.failure_info?.class,
+    event_type: event.type
+  }, 20);
+
   let learningBlock = '';
   if (learnings.length > 0) {
-    learningBlock = `\n\n## 系统历史经验（参考）\n${learnings.map(l => `- **${l.title}**: ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
+    learningBlock = `\n\n## 系统历史经验（参考，按相关性排序）\n${learnings.map((l, i) => `- [${i+1}] **${l.title}** (相关度: ${l.relevance_score || 0}): ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
   }
 
   const prompt = `${THALAMUS_PROMPT}${learningBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;

@@ -18,6 +18,7 @@ function makeMockPool(overrides = {}) {
       { table_name: 'cecelia_events' },
       { table_name: 'decision_log' },
       { table_name: 'daily_logs' },
+      { table_name: 'cortex_analyses' },
     ]},
     'schema_version': { rows: [{ max_ver: EXPECTED_SCHEMA_VERSION }] },
     'config_fingerprint': { rows: [] }, // first run
@@ -133,7 +134,7 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 011', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('011');
+  it('EXPECTED_SCHEMA_VERSION should be 017', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('017');
   });
 });

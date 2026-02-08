@@ -18,6 +18,7 @@
 
 import pool from './db.js';
 import { emit } from './event-bus.js';
+import { executeResponseActions } from './alertness-actions.js';
 import { getState as getCircuitState } from './circuit-breaker.js';
 import { checkServerResources, getActiveProcessCount, MAX_SEATS } from './executor.js';
 
@@ -469,6 +470,11 @@ async function setLevel(newLevel, reason, isManual = false) {
   }
 
   console.log(`[alertness] Level changed: ${LEVEL_NAMES[oldLevel]} → ${LEVEL_NAMES[newLevel]} (${reason})`);
+
+  // Execute response actions (fire-and-forget, don't block)
+  executeResponseActions(oldLevel, newLevel, _signals).catch(err => {
+    console.error('[alertness] Response actions failed:', err.message);
+  });
 
   return { changed: true, from: oldLevel, to: newLevel, reason };
 }

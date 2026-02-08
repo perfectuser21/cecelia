@@ -8,6 +8,7 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
+import { startFeatureTickLoop } from './src/feature-tick.js';
 
 const app = express();
 const server = createServer(app);
@@ -96,6 +97,10 @@ server.listen(PORT, async () => {
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();
+
+  // Initialize Feature Tick loop
+  startFeatureTickLoop();
+  console.log('[Server] Feature Tick started (30s interval)');
 });
 
 export default app;

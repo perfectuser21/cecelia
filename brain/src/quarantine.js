@@ -151,13 +151,58 @@ async function quarantineTask(taskId, reason, details = {}) {
       return { success: true, already_quarantined: true, task };
     }
 
+    // P1 FIX #3: 添加 TTL (Time To Live) 到隔离信息
+    // TTL 根据失败类别（failure_class）和隔离原因（reason）确定
+    const failureClass = details.failure_class || 'unknown';
+
+    // 失败类别的 TTL 映射（根据 PRD）
+    const failureClassTTL = {
+      billing_cap: null,                       // 等待 reset_time，由 details.reset_time 决定
+      rate_limit: 30 * 60 * 1000,             // 30 分钟
+      network: 30 * 60 * 1000,                // 30 分钟
+      resource: 60 * 60 * 1000,               // 1 小时
+      repeated_failure: 24 * 60 * 60 * 1000,  // 24 小时
+    };
+
+    // 隔离原因的 TTL 映射（fallback）
+    const reasonTTL = {
+      repeated_failure: 24 * 60 * 60 * 1000,  // 24 小时
+      resource_hog: 60 * 60 * 1000,           // 1 小时
+      timeout_pattern: 60 * 60 * 1000,        // 1 小时
+      suspicious_input: 30 * 60 * 1000,       // 30 分钟
+      manual: null,                           // 手动隔离，永不自动释放
+    };
+
+    // 确定 TTL（优先使用 failure_class）
+    let ttlMs;
+    let releaseAt = null;
+
+    if (failureClass === 'billing_cap' && details.reset_time) {
+      // BILLING_CAP: 使用 API 返回的 reset_time
+      releaseAt = details.reset_time;
+      ttlMs = new Date(details.reset_time).getTime() - Date.now();
+    } else if (failureClassTTL[failureClass] !== undefined) {
+      ttlMs = failureClassTTL[failureClass];
+      releaseAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : null;
+    } else if (reasonTTL[reason] !== undefined) {
+      ttlMs = reasonTTL[reason];
+      releaseAt = ttlMs ? new Date(Date.now() + ttlMs).toISOString() : null;
+    } else {
+      // 默认 30 分钟
+      ttlMs = 30 * 60 * 1000;
+      releaseAt = new Date(Date.now() + ttlMs).toISOString();
+    }
+
     // 更新任务状态为隔离
     const quarantineInfo = {
       quarantined_at: new Date().toISOString(),
       reason,
+      failure_class: failureClass,  // 失败类别（用于释放策略）
       details,
       previous_status: task.status,
       failure_count: task.payload?.failure_count || 0,
+      ttl_ms: ttlMs,          // P1 FIX: TTL 毫秒数
+      release_at: releaseAt,  // P1 FIX: 自动释放时间（null = 永不自动释放）
     };
 
     await pool.query(`
@@ -548,23 +593,20 @@ function parseResetTime(errorStr) {
     if (ampm === 'pm' && hours !== 12) hours += 12;
     if (ampm === 'am' && hours === 12) hours = 0;
 
-    // 北京时间 (UTC+8)
+    // 假设 API 返回的是北京时间（UTC+8）
+    // 服务器也在北京时区，直接使用本地时间
     const now = new Date();
-    const bjOffset = 8 * 60; // UTC+8 in minutes
-    const utcNow = now.getTime() + now.getTimezoneOffset() * 60000;
-    const bjNow = new Date(utcNow + bjOffset * 60000);
 
-    // 构造今天的 reset 时间（北京时间）
-    const resetBJ = new Date(bjNow);
-    resetBJ.setHours(hours, minutes, 0, 0);
+    // 构造今天的 reset 时间
+    const resetTime = new Date(now);
+    resetTime.setHours(hours, minutes, 0, 0);
 
     // 如果 reset 时间已过，设为明天
-    if (resetBJ <= bjNow) {
-      resetBJ.setDate(resetBJ.getDate() + 1);
+    if (resetTime <= now) {
+      resetTime.setDate(resetTime.getDate() + 1);
     }
 
-    // 转回 UTC
-    return new Date(resetBJ.getTime() - bjOffset * 60000);
+    return resetTime;
   }
 
   // Pattern 2: "resets in X hours" or "resets in X minutes"
@@ -689,7 +731,10 @@ function classifyFailure(error, task = null) {
 
 /**
  * 检查最近失败是否呈系统性模式
- * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number }>}
+ *
+ * P0 FIX: 检测同类失败（NETWORK/RATE_LIMIT/等）达到阈值，而不是检测永远不会出现的 SYSTEMIC 类别
+ *
+ * @returns {Promise<{ isSystemic: boolean, pattern?: string, count: number, failureClass?: string }>}
  */
 async function checkSystemicFailurePattern() {
   try {
@@ -711,28 +756,30 @@ async function checkSystemicFailurePattern() {
     const errors = result.rows.map(r => r.error_details || '');
     const classifications = errors.map(e => classifyFailure(e));
 
-    const systemicCount = classifications.filter(c => c.class === FAILURE_CLASS.SYSTEMIC).length;
-
-    if (systemicCount >= 3) {
-      // 找出最常见的 pattern
-      const patterns = classifications
-        .filter(c => c.pattern)
-        .map(c => c.pattern);
-      const patternCounts = {};
-      for (const p of patterns) {
-        patternCounts[p] = (patternCounts[p] || 0) + 1;
+    // P0 FIX: 统计同类失败（NETWORK/RATE_LIMIT/BILLING_CAP/RESOURCE），而不是统计永远为 0 的 SYSTEMIC
+    const classCounts = {};
+    for (const c of classifications) {
+      // 只统计系统性失败类型（不包括 TASK_ERROR/AUTH/UNKNOWN）
+      if ([FAILURE_CLASS.NETWORK, FAILURE_CLASS.RATE_LIMIT, FAILURE_CLASS.BILLING_CAP, FAILURE_CLASS.RESOURCE].includes(c.class)) {
+        classCounts[c.class] = (classCounts[c.class] || 0) + 1;
       }
-      const topPattern = Object.entries(patternCounts)
-        .sort((a, b) => b[1] - a[1])[0];
+    }
 
+    // 找出出现最多的失败类型
+    const topClass = Object.entries(classCounts)
+      .sort((a, b) => b[1] - a[1])[0];
+
+    if (topClass && topClass[1] >= 3) {
+      // 同类失败达到 3 次，判定为系统性故障
       return {
         isSystemic: true,
-        pattern: topPattern?.[0],
-        count: systemicCount
+        failureClass: topClass[0],
+        count: topClass[1],
+        pattern: `${topClass[0]} (${topClass[1]} occurrences in 30min)`
       };
     }
 
-    return { isSystemic: false, count: systemicCount };
+    return { isSystemic: false, count: Object.values(classCounts).reduce((a, b) => Math.max(a, b), 0) };
 
   } catch (err) {
     console.error('[quarantine] Failed to check systemic pattern:', err.message);
@@ -781,6 +828,78 @@ function checkShouldQuarantine(task, context = 'on_failure') {
 }
 
 /**
+ * P1 FIX #3: 检查隔离区到期任务并自动释放
+ * @returns {Promise<Array>} - 释放的任务列表
+ */
+async function checkExpiredQuarantineTasks() {
+  try {
+    // 动态导入 alertness 模块（避免循环依赖）
+    const { getAlertness, ALERTNESS_LEVELS } = await import('./alertness.js');
+
+    // 检查 Alertness 状态：EMERGENCY/COMA 时不释放
+    const currentAlertness = await getAlertness();
+    if (currentAlertness.level >= ALERTNESS_LEVELS.EMERGENCY) {
+      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.name} (>=EMERGENCY)`);
+      return [];
+    }
+
+    const result = await pool.query(`
+      SELECT id, title, payload
+      FROM tasks
+      WHERE status = 'quarantined'
+        AND payload->'quarantine_info'->>'release_at' IS NOT NULL
+        AND payload->'quarantine_info'->>'release_at' != 'null'
+        AND (payload->'quarantine_info'->>'release_at')::timestamptz < NOW()
+    `);
+
+    if (result.rows.length === 0) {
+      return [];
+    }
+
+    console.log(`[quarantine] Found ${result.rows.length} expired quarantine task(s), attempting auto-release...`);
+
+    const released = [];
+    for (const task of result.rows) {
+      const quarantineInfo = task.payload?.quarantine_info || {};
+      const reason = quarantineInfo.reason || 'unknown';
+      const failureClass = quarantineInfo.failure_class || 'unknown';
+
+      console.log(`[quarantine] Releasing task ${task.id}: reason=${reason}, class=${failureClass}`);
+
+      // P1 FIX: Use REVIEW_ACTIONS.RELEASE for auto-release
+      const releaseResult = await releaseTask(task.id, REVIEW_ACTIONS.RELEASE, {
+        reviewer: 'auto_ttl_expired',
+        reason: 'TTL expired',
+        failure_class: failureClass,
+      });
+
+      if (releaseResult.success) {
+        released.push({
+          task_id: task.id,
+          title: task.title,
+          reason,
+          failure_class: failureClass,
+          quarantined_at: quarantineInfo.quarantined_at,
+          released_at: new Date().toISOString(),
+        });
+        console.log(`[quarantine] ✅ Auto-released task ${task.id} (${reason}/${failureClass})`);
+      } else {
+        console.error(`[quarantine] ❌ Failed to auto-release task ${task.id}:`, releaseResult.error);
+      }
+    }
+
+    if (released.length > 0) {
+      console.log(`[quarantine] Auto-released ${released.length} task(s)`);
+    }
+
+    return released;
+  } catch (err) {
+    console.error('[quarantine] checkExpiredQuarantineTasks error:', err.message);
+    return [];
+  }
+}
+
+/**
  * 处理任务失败，检查是否需要隔离
  * @param {string} taskId - 任务 ID
  * @returns {Object} - { quarantined, result }
@@ -801,14 +920,22 @@ async function handleTaskFailure(taskId) {
 
     // 增加失败计数
     const newFailureCount = (task.payload?.failure_count || 0) + 1;
+
+    // P1 FIX #2: 分类失败并存储 retry_strategy
+    const errorDetails = task.payload?.error_details;
+    const classification = classifyFailure(errorDetails, task);
+
     await pool.query(`
       UPDATE tasks
       SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
       WHERE id = $1
-    `, [taskId, JSON.stringify({ failure_count: newFailureCount })]);
+    `, [taskId, JSON.stringify({
+      failure_count: newFailureCount,
+      failure_classification: classification  // P1 FIX: 存储分类和策略
+    })]);
 
     // 更新本地对象
-    task.payload = { ...task.payload, failure_count: newFailureCount };
+    task.payload = { ...task.payload, failure_count: newFailureCount, failure_classification: classification };
 
     // 检查是否需要隔离
     const check = checkShouldQuarantine(task, 'on_failure');
@@ -818,7 +945,7 @@ async function handleTaskFailure(taskId) {
       return { quarantined: true, result };
     }
 
-    return { quarantined: false, failure_count: newFailureCount };
+    return { quarantined: false, failure_count: newFailureCount, classification };
 
   } catch (err) {
     console.error('[quarantine] handleTaskFailure error:', err.message);
@@ -843,6 +970,7 @@ export {
   releaseTask,
   getQuarantinedTasks,
   getQuarantineStats,
+  checkExpiredQuarantineTasks,  // P1 FIX #3
 
   // 检查逻辑
   shouldQuarantineOnFailure,
