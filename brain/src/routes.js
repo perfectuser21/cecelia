@@ -401,6 +401,212 @@ router.get('/tasks', async (req, res) => {
   }
 });
 
+// ==================== Task Feedback & Status API (Phase 4b) ====================
+
+/**
+ * POST /api/brain/tasks/:task_id/feedback
+ * 接收 Engine 上传的任务执行反馈
+ */
+router.post('/tasks/:task_id/feedback', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { status, summary, metrics, artifacts, issues, learnings } = req.body;
+
+    // Validate required fields
+    if (!status || !summary) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        code: 'MISSING_FIELD',
+        required: ['status', 'summary']
+      });
+    }
+
+    // Validate status value
+    if (!['completed', 'failed'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status value',
+        code: 'INVALID_STATUS',
+        allowed: ['completed', 'failed']
+      });
+    }
+
+    // Check if task exists
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+        code: 'TASK_NOT_FOUND'
+      });
+    }
+
+    const task = taskResult.rows[0];
+
+    // Validate task status (must be in_progress or completed to receive feedback)
+    if (!['in_progress', 'completed', 'failed'].includes(task.status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Task must be in_progress, completed, or failed to receive feedback',
+        code: 'INVALID_TASK_STATUS',
+        current_status: task.status
+      });
+    }
+
+    // Generate unique feedback ID
+    const feedbackId = crypto.randomUUID();
+    const receivedAt = new Date().toISOString();
+
+    // Construct feedback object
+    const feedback = {
+      id: feedbackId,
+      status,
+      summary,
+      ...(metrics && { metrics }),
+      ...(artifacts && { artifacts }),
+      ...(issues && { issues }),
+      ...(learnings && { learnings }),
+      received_at: receivedAt
+    };
+
+    // Append to feedback array and increment count
+    await pool.query(`
+      UPDATE tasks
+      SET
+        feedback = feedback || $1::jsonb,
+        feedback_count = feedback_count + 1,
+        updated_at = NOW()
+      WHERE id = $2
+    `, [JSON.stringify([feedback]), task_id]);
+
+    res.json({
+      success: true,
+      task_id,
+      feedback_id: feedbackId,
+      received_at: receivedAt
+    });
+  } catch (err) {
+    console.error('Failed to store feedback:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to store feedback',
+      code: 'DATABASE_ERROR',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/tasks/:task_id
+ * 更新任务状态（Engine 调用）
+ */
+router.patch('/tasks/:task_id', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { status } = req.body;
+
+    // Validate status field
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: status',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    // Validate status value (only allow specific transitions)
+    const allowedStatuses = ['in_progress', 'completed', 'failed'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status value',
+        code: 'INVALID_STATUS',
+        allowed: allowedStatuses
+      });
+    }
+
+    // Get current task
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+        code: 'TASK_NOT_FOUND'
+      });
+    }
+
+    const task = taskResult.rows[0];
+    const currentStatus = task.status;
+
+    // Define allowed transitions
+    const allowedTransitions = {
+      'pending': ['in_progress'],
+      'in_progress': ['completed', 'failed'],
+      'completed': [],  // Cannot change from completed
+      'failed': []      // Cannot change from failed
+    };
+
+    // Validate transition
+    if (!allowedTransitions[currentStatus]?.includes(status)) {
+      return res.status(409).json({
+        success: false,
+        error: 'Invalid status transition',
+        code: 'INVALID_TRANSITION',
+        current_status: currentStatus,
+        requested_status: status,
+        allowed: allowedTransitions[currentStatus] || []
+      });
+    }
+
+    // Construct status history entry
+    const changedAt = new Date().toISOString();
+    const historyEntry = {
+      from: currentStatus,
+      to: status,
+      changed_at: changedAt,
+      source: 'engine'
+    };
+
+    // Update task status and record history
+    const updateResult = await pool.query(`
+      UPDATE tasks
+      SET
+        status = $1,
+        status_history = status_history || $2::jsonb,
+        updated_at = NOW()
+      WHERE id = $3
+      RETURNING status, updated_at
+    `, [status, JSON.stringify([historyEntry]), task_id]);
+
+    const updatedTask = updateResult.rows[0];
+
+    // Emit event for status change
+    await emitEvent('task_status_changed', {
+      task_id,
+      from: currentStatus,
+      to: status,
+      source: 'engine',
+      timestamp: changedAt
+    });
+
+    res.json({
+      success: true,
+      task_id,
+      status: updatedTask.status,
+      updated_at: updatedTask.updated_at
+    });
+  } catch (err) {
+    console.error('Failed to update task status:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update task status',
+      code: 'DATABASE_ERROR',
+      details: err.message
+    });
+  }
+});
+
 // ==================== Focus API（优先级引擎） ====================
 
 /**
@@ -636,6 +842,101 @@ router.post('/alertness/clear-override', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to clear override', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/metrics
+ * 获取最近的系统指标
+ */
+router.get('/alertness/metrics', async (req, res) => {
+  try {
+    const { getCurrentAlertness, getMetrics } = await import('./alertness/index.js');
+    const metrics = await getMetrics();
+    const alertness = getCurrentAlertness();
+
+    res.json({
+      success: true,
+      alertness: alertness.levelName,
+      metrics
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get metrics', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/history
+ * 获取历史趋势数据
+ */
+router.get('/alertness/history', async (req, res) => {
+  try {
+    const { getHistory } = await import('./alertness/index.js');
+    const minutes = parseInt(req.query.minutes || '60', 10);
+    const history = await getHistory(minutes);
+
+    res.json({
+      success: true,
+      minutes,
+      count: history.length,
+      history
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get history', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/diagnosis
+ * 获取当前诊断结果
+ */
+router.get('/alertness/diagnosis', async (req, res) => {
+  try {
+    const { getDiagnosis } = await import('./alertness/index.js');
+    const diagnosis = getDiagnosis();
+
+    res.json({
+      success: true,
+      diagnosis: diagnosis || { issues: [], severity: 'none', summary: 'No diagnosis available' }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get diagnosis', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/escalation
+ * 获取升级响应状态
+ */
+router.get('/alertness/escalation', async (req, res) => {
+  try {
+    const { getEscalationStatus } = await import('./alertness/escalation.js');
+    const status = getEscalationStatus();
+
+    res.json({
+      success: true,
+      escalation: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get escalation status', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/alertness/healing
+ * 获取自愈恢复状态
+ */
+router.get('/alertness/healing', async (req, res) => {
+  try {
+    const { getRecoveryStatus } = await import('./alertness/healing.js');
+    const status = getRecoveryStatus();
+
+    res.json({
+      success: true,
+      healing: status
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get healing status', details: err.message });
   }
 });
 
