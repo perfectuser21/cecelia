@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.81.0"
+version: "2.82.0"
 updated: "2026-02-08"
 changelog:
+  - 2.82.0: v12.15.0 - Dev Task ID Support Phase 3a（parse-dev-args.sh + fetch-task-prd.sh + Brain 集成）
   - 2.81.0: v12.14.1 - Dev Feedback Report（结构化反馈 + 11 字段 JSON + generate-feedback-report.sh）
   - 2.80.0: v12.14.0 - OKR 迭代拆解能力（策略 C：混合规划 + decompose-feature.sh + continue-feature.sh）
   - 2.79.0: v12.13.0 - OKR Skill 数据库集成（Stage 4.5 + store-to-database.sh + Brain API 调用）

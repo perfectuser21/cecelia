@@ -1,11 +1,12 @@
 {
-  "branch": "cp-02081541-enhance-feedback",
+  "branch": "cp-02081634-dev-task-id",
   "head_sha": "pending",
-  "timestamp": "2026-02-08T08:41:00Z",
+  "timestamp": "2026-02-08T08:34:00Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。",
   "changes": {
-    "skills/dev/scripts/generate-feedback-report.sh": "新脚本：生成反馈报告（JSON 格式）",
-    "skills/dev/steps/10-learning.md": "更新：添加反馈报告生成步骤",
-    "tests/dev/test-generate-feedback-report.sh": "新测试：6 个测试全部通过"
+    "skills/dev/scripts/parse-dev-args.sh": "新脚本：解析 /dev --task-id 参数",
+    "skills/dev/scripts/fetch-task-prd.sh": "新脚本：从 Brain 读取 Task PRD",
+    "tests/dev/test-parse-dev-args.sh": "新测试：5 个测试全部通过",
+    "tests/dev/test-fetch-task-prd.sh": "新测试：5 个测试全部通过（含集成测试占位）"
   }
 }

@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.14.1"
+version: "12.15.0"
 updated: "2026-02-08"
 
 # ============================================================================
@@ -2686,6 +2686,24 @@ skills:
       type: file
       path: "tests/dev/test-generate-feedback-report.sh"
     test: "tests/dev/test-generate-feedback-report.sh"
+
+  - id: S1-007
+    feature: S1
+    name: "Dev Task ID Support (Phase 3a)"
+    scope: skill
+    priority: P1
+    trigger: [PR]
+    method: auto
+    tags: [dev, task-id, database-integration, okr]
+    owner: infra
+    steps:
+      given: "/dev --task-id task-001"
+      when: "运行 parse-dev-args.sh 和 fetch-task-prd.sh"
+      then: "从 Brain 数据库读取 Task PRD 并生成本地 PRD/DoD 文件"
+    evidence:
+      type: file
+      path: "tests/dev/test-parse-dev-args.sh"
+    test: "tests/dev/test-parse-dev-args.sh && tests/dev/test-fetch-task-prd.sh"
 
   # ============================================================================
   # S2: PRD/DoD Validation Loop
