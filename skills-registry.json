@@ -2,11 +2,11 @@
   "version": "1.0.0",
   "updated": "2026-02-10",
   "skills": {
-    "platform-scraper": {
-      "name": "Platform Scraper",
-      "description": "社交媒体平台数据采集管道",
+    "platform-data": {
+      "name": "Platform Data Management",
+      "description": "社交媒体数据采集、分析、发布一体化管理",
       "type": "workspace",
-      "path": "../workspace/apps/platform-scrapers/skill",
+      "path": "../../zenithjoy/workflows/platform-data/skill",
       "entry": "command.sh",
       "enabled": true
     },
@@ -23,14 +23,6 @@
       "description": "跨仓库 QA 总控",
       "type": "engine",
       "path": "skills/qa",
-      "entry": "SKILL.md",
-      "enabled": true
-    },
-    "credentials": {
-      "name": "Credentials",
-      "description": "凭据管理",
-      "type": "engine",
-      "path": "skills/credentials",
       "entry": "SKILL.md",
       "enabled": true
     }
