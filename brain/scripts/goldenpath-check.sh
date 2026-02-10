@@ -7,6 +7,10 @@
 #   3. Status endpoint returns valid structure
 #   4. Manual tick executes successfully
 #   5. Tick status reports correct state
+#   6. PR Plans API endpoints respond
+#
+# For comprehensive PR Plans business logic testing, see:
+#   brain/src/__tests__/three-layer-decomposition-e2e.test.js
 #
 # Requires: PostgreSQL running, migrations already applied, ENV_REGION=us
 # Does NOT require: ANTHROPIC_API_KEY (no LLM calls in empty-DB tick)
@@ -24,7 +28,7 @@ echo "=== L4 GoldenPath: Brain Minimal Life Loop ==="
 echo ""
 
 # 1. Start server in background
-echo "[1/5] Starting Brain server on port $PORT..."
+echo "[1/6] Starting Brain server on port $PORT..."
 node server.js > /tmp/brain-goldenpath.log 2>&1 &
 SERVER_PID=$!
 
@@ -35,7 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 # 2. Wait for health check
-echo "[2/5] Waiting for health check..."
+echo "[2/6] Waiting for health check..."
 HEALTHY=0
 for i in $(seq 1 30); do
   if curl -sf "http://localhost:$PORT/" > /dev/null 2>&1; then
@@ -62,7 +66,7 @@ if [ "$HEALTHY" -eq 0 ]; then
 fi
 
 # 3. Check /api/brain/hardening/status (reliable: only queries core tables)
-echo "[3/5] Checking /api/brain/hardening/status..."
+echo "[3/6] Checking /api/brain/hardening/status..."
 STATUS_RESP=$(curl -s -w "\n%{http_code}" "http://localhost:$PORT/api/brain/hardening/status" || echo "")
 HTTP_CODE=$(echo "$STATUS_RESP" | tail -1)
 STATUS_BODY=$(echo "$STATUS_RESP" | sed '$d')
@@ -79,7 +83,7 @@ else
 fi
 
 # 4. Trigger one manual tick
-echo "[4/5] Triggering manual tick..."
+echo "[4/6] Triggering manual tick..."
 TICK=$(curl -sf -X POST "http://localhost:$PORT/api/brain/tick" || echo "")
 if [ -z "$TICK" ]; then
   fail "Tick endpoint returned empty response"
@@ -95,7 +99,7 @@ else
 fi
 
 # 5. Check tick status
-echo "[5/5] Checking tick status..."
+echo "[5/6] Checking tick status..."
 TICK_STATUS=$(curl -sf "http://localhost:$PORT/api/brain/tick/status" || echo "")
 if [ -z "$TICK_STATUS" ]; then
   fail "Tick status endpoint returned empty response"
@@ -107,10 +111,25 @@ else
   fi
 fi
 
+# 6. Check PR Plans API
+echo "[6/6] Checking PR Plans API..."
+PR_PLANS=$(curl -sf "http://localhost:$PORT/api/brain/pr-plans" || echo "")
+if [ -z "$PR_PLANS" ]; then
+  fail "PR Plans endpoint returned empty response"
+else
+  # Check if response has .pr_plans array (API envelope format)
+  if echo "$PR_PLANS" | jq -e '.pr_plans | type == "array"' > /dev/null 2>&1; then
+    pass "PR Plans API responds with valid structure"
+  else
+    fail "PR Plans API returned invalid structure"
+    echo "  Response: $(echo "$PR_PLANS" | head -c 200)"
+  fi
+fi
+
 echo ""
 if [ "$FAILED" -eq 0 ]; then
   echo "=== GoldenPath PASSED ==="
-  echo "  Server started, selfcheck passed, status OK, tick executed"
+  echo "  Server started, selfcheck passed, status OK, tick executed, PR Plans API OK"
   exit 0
 else
   echo "=== GoldenPath FAILED ==="
