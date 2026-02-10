@@ -434,3 +434,25 @@
 - **开发环境**: 记住开发环境 (perfect21:5212) 和正式环境 (perfect21:5211) 的区别
   - **具体**: 所有开发中的功能先部署到 5212，测试通过后部署到 5211
   - **影响程度**: Low
+
+### [2026-02-10] platform-data 删除操作（物理迁移后）
+
+**背景**：platform-data Feature 已物理迁移到 zenithjoy/workflows，需要在 cecelia/workspace 提交 git 删除操作。
+
+**Bug**：无
+
+**优化点**：流程顺畅，无明显优化点
+
+**影响程度**：N/A
+
+**执行流程**：
+1. 创建 PRD/DoD（定义删除操作的验收标准）
+2. 走完整 /dev 流程（创建分支 → git add → commit → push → PR）
+3. CI 通过（无特殊检查）
+4. PR 合并（删除 35 个文件，6244 行代码）
+
+**教训**：
+- 物理迁移（`mv`）和 git 提交是两个独立步骤
+- 删除操作也需要走完整 /dev 流程，确保 CI 验证和 PR review
+- 架构调整（Cecelia vs ZenithJoy）需要多个仓库协同（engine + workspace）
+
