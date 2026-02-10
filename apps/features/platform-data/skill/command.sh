@@ -2,7 +2,9 @@
 # Platform Data Feature - 统一入口路由
 set -euo pipefail
 
-FEATURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 解析真实路径（处理软链接）
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+FEATURE_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 SUBCOMMANDS_DIR="$FEATURE_DIR/skill/subcommands"
 
 # 显示帮助信息
