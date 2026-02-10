@@ -4676,4 +4676,433 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
   }
 });
 
+// ==================== PR Plans API (Layer 2) ====================
+
+/**
+ * POST /api/brain/pr-plans
+ * Create a new PR Plan
+ *
+ * Body: {
+ *   initiative_id: string (required),
+ *   project_id: string (required),
+ *   title: string (required),
+ *   description: string (optional),
+ *   dod: string (required),
+ *   files: string[] (optional),
+ *   sequence: number (optional, default 0),
+ *   depends_on: string[] (optional),
+ *   complexity: 'small'|'medium'|'large' (optional, default 'medium'),
+ *   estimated_hours: number (optional)
+ * }
+ */
+router.post('/pr-plans', async (req, res) => {
+  try {
+    const {
+      initiative_id,
+      project_id,
+      title,
+      description,
+      dod,
+      files,
+      sequence = 0,
+      depends_on,
+      complexity = 'medium',
+      estimated_hours
+    } = req.body;
+
+    // Validate required fields
+    if (!initiative_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: initiative_id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!project_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: project_id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: title',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!dod) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: dod',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    // Validate initiative exists
+    const initiativeCheck = await pool.query(
+      'SELECT id FROM features WHERE id = $1',
+      [initiative_id]
+    );
+    if (initiativeCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Initiative not found',
+        code: 'INITIATIVE_NOT_FOUND'
+      });
+    }
+
+    // Validate project exists
+    const projectCheck = await pool.query(
+      'SELECT id FROM projects WHERE id = $1',
+      [project_id]
+    );
+    if (projectCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Project not found',
+        code: 'PROJECT_NOT_FOUND'
+      });
+    }
+
+    // Validate complexity
+    const validComplexities = ['small', 'medium', 'large'];
+    if (complexity && !validComplexities.includes(complexity)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid complexity value',
+        code: 'INVALID_COMPLEXITY',
+        allowed: validComplexities
+      });
+    }
+
+    // Insert PR Plan
+    const result = await pool.query(
+      `INSERT INTO pr_plans (
+        initiative_id, project_id, title, description, dod,
+        files, sequence, depends_on, complexity, estimated_hours
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, initiative_id, project_id, title, description, dod,
+                files, sequence, depends_on, complexity, estimated_hours,
+                status, created_at, updated_at`,
+      [
+        initiative_id,
+        project_id,
+        title,
+        description || null,
+        dod,
+        files || null,
+        sequence,
+        depends_on || null,
+        complexity,
+        estimated_hours || null
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to create PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans
+ * Query PR Plans with optional filters
+ *
+ * Query params:
+ *   initiative_id: string (optional)
+ *   project_id: string (optional)
+ *   status: string (optional)
+ */
+router.get('/pr-plans', async (req, res) => {
+  try {
+    const { initiative_id, project_id, status } = req.query;
+
+    let query = 'SELECT * FROM pr_plans WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (initiative_id) {
+      query += ` AND initiative_id = $${paramIndex}`;
+      params.push(initiative_id);
+      paramIndex++;
+    }
+
+    if (project_id) {
+      query += ` AND project_id = $${paramIndex}`;
+      params.push(project_id);
+      paramIndex++;
+    }
+
+    if (status) {
+      query += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ' ORDER BY sequence ASC, created_at ASC';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      pr_plans: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] Failed to query PR Plans:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to query PR Plans',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans/:id
+ * Get a single PR Plan with full context
+ */
+router.get('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT * FROM pr_plan_full_context WHERE pr_plan_id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to get PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/pr-plans/:id
+ * Update a PR Plan
+ *
+ * Body: {
+ *   title: string (optional),
+ *   description: string (optional),
+ *   dod: string (optional),
+ *   files: string[] (optional),
+ *   sequence: number (optional),
+ *   depends_on: string[] (optional),
+ *   complexity: string (optional),
+ *   estimated_hours: number (optional),
+ *   status: string (optional)
+ * }
+ */
+router.patch('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      dod,
+      files,
+      sequence,
+      depends_on,
+      complexity,
+      estimated_hours,
+      status
+    } = req.body;
+
+    // Check if PR Plan exists
+    const checkResult = await pool.query(
+      'SELECT id FROM pr_plans WHERE id = $1',
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    // Validate status if provided
+    if (status) {
+      const validStatuses = ['planning', 'in_progress', 'completed', 'cancelled'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid status value',
+          code: 'INVALID_STATUS',
+          allowed: validStatuses
+        });
+      }
+    }
+
+    // Validate complexity if provided
+    if (complexity) {
+      const validComplexities = ['small', 'medium', 'large'];
+      if (!validComplexities.includes(complexity)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid complexity value',
+          code: 'INVALID_COMPLEXITY',
+          allowed: validComplexities
+        });
+      }
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const params = [id];
+    let paramIndex = 2;
+
+    if (title !== undefined) {
+      updates.push(`title = $${paramIndex}`);
+      params.push(title);
+      paramIndex++;
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex}`);
+      params.push(description);
+      paramIndex++;
+    }
+
+    if (dod !== undefined) {
+      updates.push(`dod = $${paramIndex}`);
+      params.push(dod);
+      paramIndex++;
+    }
+
+    if (files !== undefined) {
+      updates.push(`files = $${paramIndex}`);
+      params.push(files);
+      paramIndex++;
+    }
+
+    if (sequence !== undefined) {
+      updates.push(`sequence = $${paramIndex}`);
+      params.push(sequence);
+      paramIndex++;
+    }
+
+    if (depends_on !== undefined) {
+      updates.push(`depends_on = $${paramIndex}`);
+      params.push(depends_on);
+      paramIndex++;
+    }
+
+    if (complexity !== undefined) {
+      updates.push(`complexity = $${paramIndex}`);
+      params.push(complexity);
+      paramIndex++;
+    }
+
+    if (estimated_hours !== undefined) {
+      updates.push(`estimated_hours = $${paramIndex}`);
+      params.push(estimated_hours);
+      paramIndex++;
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex}`);
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No fields to update',
+        code: 'NO_UPDATES'
+      });
+    }
+
+    updates.push(`updated_at = NOW()`);
+
+    const updateQuery = `
+      UPDATE pr_plans
+      SET ${updates.join(', ')}
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, params);
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to update PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/brain/pr-plans/:id
+ * Delete a PR Plan
+ */
+router.delete('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'DELETE FROM pr_plans WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'PR Plan deleted successfully',
+      id: result.rows[0].id
+    });
+  } catch (err) {
+    console.error('[API] Failed to delete PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete PR Plan',
+      details: err.message
+    });
+  }
+});
+
 export default router;
