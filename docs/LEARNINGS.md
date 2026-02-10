@@ -1140,3 +1140,96 @@ After this planning is complete, the actual implementation will be in zenithjoy-
 
 - **自动化版本号同步**: 在 /dev Step 8 中添加脚本 `scripts/sync-version.sh`，一键更新所有 5 个版本号文件
 - **PRD/DoD 文件检测**: 改进 Step 1/4，自动检测并重命名 PRD/DoD 文件为标准名称
+
+### [2026-02-10] PR Plans Dispatch Integration (PR #212)
+
+**任务**: 集成 PR Plans dispatch 到 Brain 调度系统，支持三层拆解（Initiative → PR Plans → Tasks）
+
+#### 主要问题和解决方案
+
+1. **Migration 021 Trigger Bug**
+   - **Bug**: Migration 021 创建的 trigger `check_task_pr_plan_consistency` 引用了 tasks 表中不存在的 `initiative_id` 字段，导致所有涉及 tasks 的测试失败
+   - **Error**: "record 'new' has no field 'initiative_id'"
+   - **Root Cause**: Migration 假设 tasks 表有 initiative_id 列，但实际 schema 中不存在
+   - **Fix**: 创建 migration 022 重写 trigger，移除 initiative_id 检查，只保留 project_id 一致性验证
+   - **影响程度**: High - 阻塞所有 PR Plans 相关测试（17/17 tests 失败）
+
+2. **意外包含无关 Migrations**
+   - **Bug**: 首次 commit 意外包含了 migrations 019/020（Initiatives Phase 1/2），这些是其他 PR 的内容
+   - **Symptom**: CI migration 020 失败："constraint already exists"
+   - **Root Cause**: 这些 migration 文件存在于工作目录但不属于本 PR 功能范围
+   - **Fix**: 使用 `git reset` 重写 commit history，移除 019/020 migrations
+   - **影响程度**: High - 导致 CI migration 失败
+   - **预防**: 在 commit 前仔细检查 `git status`，确认只包含相关文件
+
+3. **Schema Version 不一致**
+   - **Bug**: 多个文件中的 schema version 不同步
+     - `selfcheck.js`: EXPECTED_SCHEMA_VERSION = '021'
+     - `DEFINITION.md`: Schema 版本: 021
+     - `selfcheck.test.js`: expect(EXPECTED_SCHEMA_VERSION).toBe('021')
+   - **Fix**: 创建 migration 022 后，需要同步更新所有 3 个文件到 '022'
+   - **影响程度**: High - CI Facts Consistency 和 selfcheck test 失败
+   - **预防**: 添加自动化脚本统一更新 schema version（类似 version sync）
+
+4. **Status Value 约束不一致**
+   - **Bug**: 测试代码使用 `status='pending'` 创建 pr_plans，但数据库约束只允许 'planning', 'in_progress', 'completed', 'cancelled'
+   - **Symptom**: "check constraint 'pr_plans_status_check' violated"
+   - **Root Cause**: PRD 文档示例使用 'pending'，但实际 migration 021 定义的是 'planning'
+   - **Fix**: 更新测试和代码中所有 'pending' → 'planning'（包括 planner.js 中的 query）
+   - **影响程度**: Medium - 容易发现但需要多处修改
+
+5. **Features Table Status 约束**
+   - **Bug**: 测试使用 `status='in_progress'` 创建 features (initiatives)，但 migration 003 定义的约束不允许此值
+   - **Allowed values**: 'planning', 'task_created', 'task_running', 'task_completed', 'evaluating', 'completed', 'cancelled'
+   - **Fix**: 更新测试使用 status='planning'
+   - **影响程度**: Low - 测试环境问题，容易修复
+
+6. **Cleanup 顺序导致外键冲突**
+   - **Bug**: `afterEach` cleanup 先删除 features，导致 "foreign key constraint violated" 因为 tasks 还引用 pr_plans
+   - **Root Cause**: tasks → pr_plans → features 的外键链，但 pr_plans → tasks 的 foreign key 没有 ON DELETE CASCADE
+   - **Fix**: 在 cleanup 中先删除 tasks，再删除 features（会 cascade 到 pr_plans）
+   - **影响程度**: Low - 测试环境问题
+
+#### 技术亮点
+
+1. **17 Comprehensive Tests**
+   - 覆盖所有 6 个新增函数
+   - 测试依赖验证、状态转换、自动完成
+   - 全部通过 ✅
+
+2. **Migration 最佳实践**
+   - Migration 022 展示了如何安全修复已部署的 migration
+   - 使用 `DROP TRIGGER IF EXISTS` + `CREATE OR REPLACE FUNCTION` 确保幂等性
+   - 完整的 verification DO block 提供清晰反馈
+
+3. **多次 CI Fix 迭代**
+   - 总共 7 次 push 修复 CI 问题
+   - 每次都精准定位问题并修复
+   - 最终 CI 全部通过 ✅
+
+#### 影响程度
+
+- **Overall**: High - 核心 Brain 调度功能扩展，支持三层拆解架构
+
+#### 开发时间
+
+- 总耗时: ~2.5 小时
+  - Code + Tests: ~1 hour
+  - CI Debugging: ~1.5 hours (7 rounds)
+
+#### 后续改进建议
+
+1. **P0 - Schema Version 自动化**
+   - 创建脚本 `scripts/update-schema-version.sh <version>`
+   - 自动同步 selfcheck.js, DEFINITION.md, selfcheck.test.js
+
+2. **P1 - Migration Validation**
+   - 在 migration 中添加更多 DO block 验证
+   - 检查假设的列是否存在（如 initiative_id）
+   - 提供清晰的错误消息
+
+3. **P2 - Test Data Factory**
+   - 创建 `test-helpers.js` 提供标准测试数据创建函数
+   - 集中管理 status values 常量
+   - 减少重复代码
+
