@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02101913-pr-plans-api",
-  "head_sha": "dac05d3",
-  "timestamp": "2026-02-10T11:19:39Z",
+  "branch": "cp-02102020-brain-pr-plans-dispatch",
+  "head_sha": "ef3ef47",
+  "timestamp": "2026-02-10T12:35:45Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

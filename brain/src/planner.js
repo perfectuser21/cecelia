@@ -160,12 +160,184 @@ async function generateNextTask(kr, project, state, options = {}) {
 
 
 /**
+ * =============================================================================
+ * PR Plans Dispatch (Layer 2 - 工程规划层调度)
+ * =============================================================================
+ * 三层拆解调度：Initiative → PR Plans → Tasks
+ * PR Plans 优先于传统 KR → Task 流程
+ */
+
+/**
+ * Get all PR Plans for an Initiative, sorted by sequence
+ * @param {string} initiativeId - Initiative ID (UUID)
+ * @returns {Array} - Array of PR Plan objects
+ */
+async function getPrPlansByInitiative(initiativeId) {
+  const result = await pool.query(`
+    SELECT * FROM pr_plans
+    WHERE initiative_id = $1
+    ORDER BY sequence ASC
+  `, [initiativeId]);
+  return result.rows;
+}
+
+/**
+ * Check if a PR Plan is completed (all its tasks are completed)
+ * @param {string} prPlanId - PR Plan ID (UUID)
+ * @returns {boolean} - true if completed, false otherwise
+ */
+async function isPrPlanCompleted(prPlanId) {
+  const result = await pool.query(`
+    SELECT COUNT(*) as total,
+           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
+    FROM tasks
+    WHERE pr_plan_id = $1
+  `, [prPlanId]);
+
+  const { total, completed } = result.rows[0];
+  // PR Plan is completed if it has tasks and all are completed
+  return parseInt(total) > 0 && parseInt(total) === parseInt(completed);
+}
+
+/**
+ * Update PR Plan status
+ * @param {string} prPlanId - PR Plan ID (UUID)
+ * @param {string} status - New status (planning/in_progress/completed/cancelled)
+ */
+async function updatePrPlanStatus(prPlanId, status) {
+  await pool.query(`
+    UPDATE pr_plans
+    SET status = $1, updated_at = NOW()
+    WHERE id = $2
+  `, [status, prPlanId]);
+}
+
+/**
+ * Check if a PR Plan's dependencies are all completed
+ * @param {Object} prPlan - PR Plan object with depends_on field
+ * @param {Array} allPrPlans - All PR Plans for this Initiative
+ * @returns {boolean} - true if all dependencies are met
+ */
+function canExecutePrPlan(prPlan, allPrPlans) {
+  // If no dependencies, can execute
+  if (!prPlan.depends_on || prPlan.depends_on.length === 0) {
+    return true;
+  }
+
+  // Check all dependencies are completed
+  for (const depId of prPlan.depends_on) {
+    const depPrPlan = allPrPlans.find(p => p.id === depId);
+    if (!depPrPlan || depPrPlan.status !== 'completed') {
+      return false; // Dependency not met
+    }
+  }
+
+  return true; // All dependencies met
+}
+
+/**
+ * Get the next executable PR Plan for an Initiative
+ * Priority order: pending status → dependencies met → lowest sequence
+ * @param {string} initiativeId - Initiative ID (UUID)
+ * @returns {Object|null} - Next PR Plan to execute, or null
+ */
+async function getNextPrPlan(initiativeId) {
+  const allPrPlans = await getPrPlansByInitiative(initiativeId);
+
+  if (allPrPlans.length === 0) {
+    return null; // No PR Plans for this Initiative
+  }
+
+  // Filter pending PR Plans
+  const pendingPlans = allPrPlans.filter(p => p.status === 'planning');
+
+  if (pendingPlans.length === 0) {
+    return null; // No pending PR Plans
+  }
+
+  // Find first pending plan that meets all dependencies (by sequence order)
+  for (const prPlan of pendingPlans) {
+    if (canExecutePrPlan(prPlan, allPrPlans)) {
+      return prPlan;
+    }
+  }
+
+  return null; // All pending plans are blocked by dependencies
+}
+
+/**
+ * Check for PR Plans completion in all active Initiatives
+ * Called by tick loop to auto-update PR Plan status
+ * @returns {Array} - Array of completed PR Plan IDs
+ */
+async function checkPrPlansCompletion() {
+  const completed = [];
+
+  // Get all in_progress PR Plans
+  const result = await pool.query(`
+    SELECT * FROM pr_plans WHERE status = 'in_progress'
+  `);
+
+  for (const prPlan of result.rows) {
+    if (await isPrPlanCompleted(prPlan.id)) {
+      await updatePrPlanStatus(prPlan.id, 'completed');
+      completed.push(prPlan.id);
+      console.log(`✅ PR Plan completed: ${prPlan.title} (${prPlan.id})`);
+    }
+  }
+
+  return completed;
+}
+
+/**
  * Main entry point - called each tick.
  * Iterates through all scored KRs until one produces a task.
+ * V3: PR Plans dispatch integration - checks Initiatives first
  */
 async function planNextTask(scopeKRIds = null) {
   const state = await getGlobalState();
 
+  // V3: Check for PR Plans first (三层拆解优先)
+  // Query all Initiatives (features with type='initiative' or features referenced by pr_plans)
+  const initiativesResult = await pool.query(`
+    SELECT DISTINCT f.* FROM features f
+    INNER JOIN pr_plans pp ON f.id = pp.initiative_id
+    WHERE pp.status IN ('planning', 'in_progress')
+    ORDER BY f.created_at ASC
+  `);
+
+  for (const initiative of initiativesResult.rows) {
+    const nextPrPlan = await getNextPrPlan(initiative.id);
+    if (nextPrPlan) {
+      // Found executable PR Plan - check if task already exists
+      const existingTaskResult = await pool.query(`
+        SELECT * FROM tasks WHERE pr_plan_id = $1 AND status IN ('queued', 'in_progress')
+        LIMIT 1
+      `, [nextPrPlan.id]);
+
+      if (existingTaskResult.rows[0]) {
+        // Task already exists for this PR Plan
+        const task = existingTaskResult.rows[0];
+        return {
+          planned: true,
+          source: 'pr_plan',
+          pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, sequence: nextPrPlan.sequence },
+          task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id },
+          initiative: { id: initiative.id, title: initiative.title }
+        };
+      }
+
+      // No task exists yet - indicate PR Plan is ready for task creation (秋米's job)
+      return {
+        planned: false,
+        reason: 'pr_plan_needs_task',
+        pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, dod: nextPrPlan.dod },
+        initiative: { id: initiative.id, title: initiative.title }
+      };
+    }
+  }
+
+  // No PR Plans available - fall back to traditional KR dispatch
   // If scoped to specific KRs (from tick focus), filter keyResults before selecting
   if (scopeKRIds && scopeKRIds.length > 0) {
     const scopeSet = new Set(scopeKRIds);
@@ -352,5 +524,12 @@ export {
   scoreKRs,
   selectTargetKR,
   selectTargetProject,
-  generateNextTask
+  generateNextTask,
+  // PR Plans dispatch functions
+  getPrPlansByInitiative,
+  isPrPlanCompleted,
+  updatePrPlanStatus,
+  canExecutePrPlan,
+  getNextPrPlan,
+  checkPrPlansCompletion
 };
