@@ -35,6 +35,12 @@ if [[ -f "$PROJECT_ROOT/.okr-mode" ]]; then
     exit $?
 fi
 
+# ===== 检查 .exploratory-mode → 调用 stop-exploratory.sh =====
+if [[ -f "$PROJECT_ROOT/.exploratory-mode" ]]; then
+    bash "$SCRIPT_DIR/stop-exploratory.sh"
+    exit $?
+fi
+
 # ===== 检查 .quality-mode → 调用 stop-quality.sh =====
 # 将来添加
 # if [[ -f "$PROJECT_ROOT/.quality-mode" ]]; then

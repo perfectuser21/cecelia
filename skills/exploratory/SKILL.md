@@ -64,6 +64,105 @@ Step 5: 清理 worktree
 2. /dev                  → 使用 PRD/DOD 重新实现
 ```
 
+## 使用模式
+
+Exploratory Skill 支持两种使用模式，根据任务规模选择：
+
+### 模式 1：小 Task（单个 Exploratory）
+
+**适用场景**：功能简单，一次能做完
+
+```
+/exploratory "添加用户登录功能"
+    ↓
+生成：login.prd.md + login.dod.md
+    ↓
+/dev（直接使用这对 PRD/DOD）
+    ↓
+PR #123 合并 ✅
+```
+
+**特点**：
+- 一次 Exploratory 产出一对 PRD/DOD
+- 直接给 /dev 使用
+- 适合独立功能、改动 < 5 个文件
+
+### 模式 2：大 Initiative（多个 Exploratory + 合并）
+
+**适用场景**：功能复杂，需要拆分成多个独立子任务
+
+**Step 1: 拆分并逐个验证**
+```
+Initiative: "完整的用户认证系统"
+    ↓
+/exploratory "用户登录"    → login.prd.md + login.dod.md
+/exploratory "用户注册"    → signup.prd.md + signup.dod.md
+/exploratory "密码重置"    → reset-pwd.prd.md + reset-pwd.dod.md
+/exploratory "第三方登录"  → oauth.prd.md + oauth.dod.md
+```
+
+**Step 2: 合并 PRD/DOD**
+```bash
+bash scripts/merge-exploratory-docs.sh \
+  --output auth-system \
+  exploratory-*.prd.md \
+  exploratory-*.dod.md
+```
+
+**输出**：
+```
+auth-system.prd.md  # 合并后的完整 PRD
+auth-system.dod.md  # 合并后的完整 DOD
+```
+
+**Step 3: 正式开发**
+```
+/dev（使用合并后的 auth-system.prd.md）
+    ↓
+实现完整的认证系统
+    ↓
+PR #200 合并 ✅（包含所有功能）
+```
+
+**特点**：
+- 多个 Exploratory 独立验证
+- 智能合并成系统级文档
+- 适合大型功能、跨模块改动
+
+### 合并工具使用
+
+**基本用法**：
+```bash
+# 自动合并所有 exploratory-* 文件
+bash scripts/merge-exploratory-docs.sh exploratory-*.{prd,dod}.md
+
+# 指定输出前缀
+bash scripts/merge-exploratory-docs.sh \
+  --output my-feature \
+  exploratory-*.{prd,dod}.md
+
+# 详细模式
+bash scripts/merge-exploratory-docs.sh \
+  --verbose \
+  --output auth-system \
+  exploratory-login.{prd,dod}.md \
+  exploratory-signup.{prd,dod}.md
+```
+
+**合并策略**：
+- **PRD 合并**：提取需求、技术方案、依赖、踩坑经验
+- **DOD 合并**：聚合验收标准、去重测试项、按模块组织
+- **保留溯源**：每个部分标注来源文件
+
+### 选择指南
+
+| 场景 | 推荐模式 | 原因 |
+|------|---------|------|
+| 添加一个 API endpoint | 模式 1 | 功能独立，改动小 |
+| 修复一个 bug | 模式 1 | 范围明确，快速完成 |
+| 添加用户认证系统 | 模式 2 | 多个子功能，需要统一架构 |
+| 重构整个模块 | 模式 2 | 影响面大，分步验证更安全 |
+
 ## 核心原则（CRITICAL）
 
 ### Exploratory 模式的自由度
