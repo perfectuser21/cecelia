@@ -156,6 +156,7 @@ LIMIT 20;
 CREATE OR REPLACE VIEW v_run_last_alive_span AS
 WITH ranked_spans AS (
     SELECT
+        task_id,
         run_id,
         span_id,
         layer,
@@ -175,6 +176,7 @@ WITH ranked_spans AS (
     FROM run_events
 )
 SELECT
+    task_id,
     run_id,
     span_id,
     layer,
