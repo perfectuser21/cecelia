@@ -1,24 +1,6 @@
 {
-  "branch": "cp-immune-system-p2",
-  "head_sha": "74d7fdc",
-  "timestamp": "2026-02-12T09:55:46Z",
-  "note": "Quality 只汇总，不判定。CI 是最终裁判。",
-  "changes": {
-    "new_files": [
-      "brain/src/similarity.js",
-      "brain/src/prompts/attach-decision.md",
-      "brain/src/__tests__/similarity.test.js",
-      "brain/src/__tests__/attach-decision-routes.test.js"
-    ],
-    "modified_files": [
-      "brain/src/routes.js",
-      "brain/package.json",
-      "brain/package-lock.json"
-    ],
-    "tests": {
-      "similarity": "30/30 passed",
-      "attach_decision_routes": "19/19 passed",
-      "total": "49/49 passed"
-    }
-  }
+  "branch": "cp-02121952-immune-system-p2",
+  "head_sha": "c1b07bc",
+  "timestamp": "2026-02-12T12:02:13Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

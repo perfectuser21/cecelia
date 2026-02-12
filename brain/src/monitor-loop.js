@@ -25,6 +25,7 @@ import {
   dispatchToDevSkill,
   getAutoFixStats
 } from './auto-fix.js';
+import { validatePolicyJson } from './policy-validator.js';
 
 // Configuration
 const MONITOR_INTERVAL_MS = 30000; // 30 seconds
@@ -356,41 +357,60 @@ async function handleFailureSpike(stats) {
     const probationPolicy = await findProbationPolicy(signature);
     if (probationPolicy) {
       console.log(`[Immune] Found probation policy: ${probationPolicy.policy_id} (simulate mode)`);
-      const startTime = Date.now();
 
-      try {
-        // Parse policy_json to extract intended action
-        const { parsePolicyAction } = await import('./immune-system.js');
-        const intendedAction = parsePolicyAction(probationPolicy.policy_json);
+      // P2: Validate policy JSON before use
+      const validation = validatePolicyJson(probationPolicy.policy_json, { strict: false });
+      if (!validation.valid) {
+        console.warn(`[Immune] Probation policy validation failed: ${probationPolicy.policy_id}`, validation.errors);
+        console.warn(`[Immune] Skipping invalid probation policy, continuing with RCA`);
 
-        // Simulate policy execution (P1: record what would be done)
-        console.log(`[Immune] Probation policy simulated: signature=${signature}, would_do=${intendedAction.type}`);
-
-        await recordPolicyEvaluation({
+        await pool.query(`
+          INSERT INTO cecelia_events (event_type, source, payload)
+          VALUES ('probation_policy_validation_failed', 'monitor_loop', $1)
+        `, [JSON.stringify({
           policy_id: probationPolicy.policy_id,
-          run_id: failure.run_id,
-          signature: signature,
-          mode: 'simulate',
-          decision: 'applied', // P1: probation uses mode='simulate' to differentiate
-          verification_result: 'unknown',
-          latency_ms: Date.now() - startTime,
-          details: {
-            // P1: Enhanced details with intended action
-            would_do: intendedAction.type,
-            would_apply: intendedAction.params,
-            expected_outcome: intendedAction.expected_outcome,
-            simulated_at: new Date().toISOString(),
-            failure: {
-              reason_code: failure.reason_code,
-              layer: failure.layer,
-              step_name: failure.step_name
-            }
-          }
-        });
+          signature,
+          validation_errors: validation.errors,
+          timestamp: new Date().toISOString()
+        })]);
+      } else {
+        // Policy is valid, proceed with simulation
+        const startTime = Date.now();
 
-        console.log(`[Immune] Policy evaluation recorded: mode=simulate decision=simulated would_do=${intendedAction.type}`);
-      } catch (error) {
-        console.error(`[Immune] Probation simulation failed:`, error.message);
+        try {
+          // Parse policy_json to extract intended action
+          const { parsePolicyAction } = await import('./immune-system.js');
+          const intendedAction = parsePolicyAction(probationPolicy.policy_json);
+
+          // Simulate policy execution (P1: record what would be done)
+          console.log(`[Immune] Probation policy simulated: signature=${signature}, would_do=${intendedAction.type}`);
+
+          await recordPolicyEvaluation({
+            policy_id: probationPolicy.policy_id,
+            run_id: failure.run_id,
+            signature: signature,
+            mode: 'simulate',
+            decision: 'applied', // P1: probation uses mode='simulate' to differentiate
+            verification_result: 'unknown',
+            latency_ms: Date.now() - startTime,
+            details: {
+              // P1: Enhanced details with intended action
+              would_do: intendedAction.type,
+              would_apply: intendedAction.params,
+              expected_outcome: intendedAction.expected_outcome,
+              simulated_at: new Date().toISOString(),
+              failure: {
+                reason_code: failure.reason_code,
+                layer: failure.layer,
+                step_name: failure.step_name
+              }
+            }
+          });
+
+          console.log(`[Immune] Policy evaluation recorded: mode=simulate decision=simulated would_do=${intendedAction.type}`);
+        } catch (error) {
+          console.error(`[Immune] Probation simulation failed:`, error.message);
+        }
       }
 
       // Continue with RCA even if probation policy exists (for validation)
