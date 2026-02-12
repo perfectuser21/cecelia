@@ -9,6 +9,84 @@ Workspace = 界面 + 可视化 + 用户交互
 
 ---
 
+## 🔍 Core vs External 边界
+
+**除了 Core vs Workspace，还有一个关键边界：Core vs External。**
+
+### Core = Cecelia 的生命体（内部器官）
+
+**Core 只包含 Cecelia 身体的一部分：**
+
+```
+┌─────────────────────────────────────────────┐
+│  Cecelia Core (cecelia/core)                │
+│  ❤️ 心脏 (tick.js)                          │
+│  🧠 大脑 (thalamus.js, cortex.js, ...)      │
+│  🛡️ 保护系统 (alertness, watchdog, ...)     │
+│  🔌 对外接口 (executor.js)                   │
+│  🌐 神经系统 (routes.js)                     │
+└─────────────────────────────────────────────┘
+```
+
+### External = 外部依赖 + 外部员工
+
+**这些不属于 Core：**
+
+| 组件 | 类型 | 位置 | 关系 |
+|------|------|------|------|
+| **PostgreSQL** | Infrastructure | 独立容器 | 外部存储设备 |
+| **N8N** | Infrastructure | HK server | 外包数据处理 |
+| **Caramel** | Agent Worker | 无头进程 | 外包程序员 |
+| **小检/小审** | Agent Worker | 无头进程 | 外包测试/审计 |
+| **秋米** | Agent Worker | 无头进程 | 外部顾问 |
+| **MiniMax** | Agent Worker | HK server | 外部翻译 |
+
+### executor.js 的定位
+
+**关键澄清**：
+
+```
+executor.js 的职责：
+✅ 属于 Core（对外接口器官）
+❌ 不是"执行器官"（不自己干活）
+
+职责：
+1. 召唤外部员工（spawn claude 进程）
+2. 检查服务器资源（CPU/内存）
+3. 跟踪进程（activeProcesses Map）
+4. 进程存活探测
+5. 孤儿清理
+
+类比：
+executor.js = HR 招聘接口
+Agent Workers = 被招聘的外包员工
+
+Cecelia 自己不干活！
+❌ 不会写代码（找 Caramel）
+❌ 不会 QA（找小检）
+❌ 不会审计（找小审）
+```
+
+### 调用链
+
+```
+用户 → Workspace (前端界面)
+         ↓ HTTP API
+      Core (Cecelia 身体)
+         ↓ tick.js 决策
+      executor.js (召唤接口)
+         ↓ spawn
+      Agent Workers (外部员工)
+         ↓ 完成
+      回调 Core API
+         ↓ 更新
+      PostgreSQL (外部存储)
+         ↓ 推送
+      Workspace (刷新界面)
+```
+
+---
+
 ## ✅ Core 的职责（只做这些）
 
 ### 1. 数据层
