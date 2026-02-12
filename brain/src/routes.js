@@ -5131,4 +5131,196 @@ router.get('/monitor/status', async (req, res) => {
   }
 });
 
+// ============================================================
+// Attachment Decision API
+// ============================================================
+
+/**
+ * POST /api/brain/search-similar
+ * Search for similar entities (Tasks/Initiatives/KRs)
+ */
+router.post('/search-similar', async (req, res) => {
+  try {
+    const { query, top_k = 5 } = req.body;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: query'
+      });
+    }
+
+    const { default: SimilarityService } = await import('./similarity.js');
+    const similarityService = new SimilarityService();
+
+    const result = await similarityService.searchSimilar(query, top_k);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[API] Failed to search similar entities:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search similar entities',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/attach-decision
+ * Make attachment decision for new task (LLM-based)
+ */
+router.post('/attach-decision', async (req, res) => {
+  try {
+    const { input, matches, context } = req.body;
+
+    if (!input) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: input'
+      });
+    }
+
+    // TODO: Implement LLM decision logic using prompts/attach-decision.md
+    // For now, return a simple rule-based decision
+
+    // Short-circuit A: Check for duplicate tasks (score >= 0.85)
+    const duplicateTasks = (matches || []).filter(m => m.level === 'task' && m.score >= 0.85);
+    if (duplicateTasks.length > 0) {
+      const target = duplicateTasks[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'duplicate_task',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `已存在高度相似的任务（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: duplicateTasks.slice(0, 3)
+        },
+        route: {
+          path: 'direct_dev',
+          why: ['任务已存在，可以参考或复用'],
+          confidence: 0.9
+        },
+        next_call: {
+          skill: '/dev',
+          args: {
+            reference_task_id: target.id
+          }
+        }
+      });
+    }
+
+    // Short-circuit B: Check for related initiatives (score >= 0.65)
+    const relatedInitiatives = (matches || []).filter(m => m.level === 'initiative' && m.score >= 0.65);
+    if (relatedInitiatives.length > 0) {
+      const target = relatedInitiatives[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'extend_initiative',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `属于现有 Initiative 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedInitiatives.slice(0, 3)
+        },
+        route: {
+          path: 'exploratory_then_dev',
+          why: ['在现有 Initiative 下扩展功能', '需要验证对现有系统的影响'],
+          confidence: 0.75
+        },
+        next_call: {
+          skill: '/exploratory',
+          args: {
+            initiative_id: target.id,
+            task_description: input
+          }
+        }
+      });
+    }
+
+    // Check for related KRs (score >= 0.60)
+    const relatedKRs = (matches || []).filter(m => m.level === 'kr' && m.score >= 0.60);
+    if (relatedKRs.length > 0) {
+      const target = relatedKRs[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'create_initiative_under_kr',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `在现有 KR 下创建新 Initiative（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedKRs.slice(0, 3)
+        },
+        route: {
+          path: 'okr_then_exploratory_then_dev',
+          why: ['需要先创建 Initiative', '然后进行技术验证'],
+          confidence: 0.7
+        },
+        next_call: {
+          skill: '/okr',
+          args: {
+            kr_id: target.id,
+            task_description: input
+          }
+        }
+      });
+    }
+
+    // Default: Create new OKR/KR
+    return res.json({
+      success: true,
+      input,
+      attach: {
+        action: 'create_new_okr_kr',
+        target: {
+          level: 'okr',
+          id: null,
+          title: null
+        },
+        confidence: 0.5,
+        reason: '没有找到相关的 OKR/KR/Initiative，需要创建新的',
+        top_matches: []
+      },
+      route: {
+        path: 'okr_then_exploratory_then_dev',
+        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
+        confidence: 0.6
+      },
+      next_call: {
+        skill: '/okr',
+        args: {
+          task_description: input
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] Failed to make attachment decision:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to make attachment decision',
+      details: err.message
+    });
+  }
+});
+
 export default router;
