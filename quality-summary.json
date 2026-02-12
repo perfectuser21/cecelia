@@ -1,6 +1,1 @@
-{
-  "branch": "cp-02121952-immune-system-p2",
-  "head_sha": "c1b07bc",
-  "timestamp": "2026-02-12T12:02:13Z",
-  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
-}
+{"branch": "cp-02122213-immune-system-api", "head_sha": "4987787", "timestamp": "2026-02-12T14:19:51Z", "note": "Quality 只汇总，不判定。CI 是最终裁判。"}

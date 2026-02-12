@@ -5323,4 +5323,484 @@ router.post('/attach-decision', async (req, res) => {
   }
 });
 
+// ============================================================
+// Immune System API
+// ============================================================
+
+/**
+ * GET /api/brain/policies
+ * List absorption policies with optional filtering
+ */
+router.get('/policies', async (req, res) => {
+  try {
+    const { status, limit = 50, offset = 0 } = req.query;
+
+    let query = `
+      SELECT
+        policy_id,
+        signature,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+    `;
+
+    const params = [];
+    const whereClauses = [];
+
+    if (status) {
+      whereClauses.push(`status = $${params.length + 1}`);
+      params.push(status);
+    }
+
+    if (whereClauses.length > 0) {
+      query += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(parseInt(limit), parseInt(offset));
+
+    const result = await pool.query(query, params);
+
+    // Get total count
+    let countQuery = `SELECT COUNT(*) as total FROM absorption_policies`;
+    if (whereClauses.length > 0) {
+      countQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+    const countResult = await pool.query(countQuery, status ? [status] : []);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: parseInt(countResult.rows[0].total)
+    });
+  } catch (err) {
+    console.error('[API] Failed to list policies:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list policies',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/promotions
+ * Get promotion history (probation → active)
+ * NOTE: Must be before /policies/:id to avoid matching "promotions" as an ID
+ */
+router.get('/policies/promotions', async (req, res) => {
+  try {
+    const { limit = 20, days = 7 } = req.query;
+
+    const result = await pool.query(`
+      SELECT
+        pe.policy_id,
+        ap.signature,
+        pe.evaluated_at as promoted_at,
+        ap.risk_level,
+        COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' THEN pe.eval_id END) as simulations,
+        ROUND(
+          COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' AND pe.result = 'would_succeed' THEN pe.eval_id END)::numeric /
+          NULLIF(COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' THEN pe.eval_id END), 0),
+          2
+        ) as pass_rate
+      FROM policy_evaluations pe
+      JOIN absorption_policies ap ON pe.policy_id = ap.policy_id
+      WHERE
+        pe.mode = 'promote'
+        AND pe.evaluated_at >= NOW() - INTERVAL '${parseInt(days)} days'
+      GROUP BY pe.policy_id, ap.signature, pe.evaluated_at, ap.risk_level
+      ORDER BY pe.evaluated_at DESC
+      LIMIT $1
+    `, [parseInt(limit)]);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (err) {
+    console.error('[API] Failed to get promotions:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get promotions',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/:id
+ * Get single policy with recent evaluations
+ */
+router.get('/policies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get policy
+    const policyResult = await pool.query(`
+      SELECT
+        policy_id,
+        signature,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+      WHERE policy_id = $1
+    `, [id]);
+
+    if (policyResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    const policy = policyResult.rows[0];
+
+    // Get recent 10 evaluations
+    const evalsResult = await pool.query(`
+      SELECT
+        eval_id,
+        task_id,
+        mode,
+        result,
+        evaluated_at,
+        details
+      FROM policy_evaluations
+      WHERE policy_id = $1
+      ORDER BY evaluated_at DESC
+      LIMIT 10
+    `, [id]);
+
+    policy.evaluations = evalsResult.rows;
+
+    res.json({
+      success: true,
+      data: policy
+    });
+  } catch (err) {
+    console.error('[API] Failed to get policy:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get policy',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/:id/evaluations
+ * Get policy evaluation history with pagination
+ */
+router.get('/policies/:id/evaluations', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 20, offset = 0 } = req.query;
+
+    // Check if policy exists
+    const policyCheck = await pool.query(`
+      SELECT policy_id FROM absorption_policies WHERE policy_id = $1
+    `, [id]);
+
+    if (policyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    // Get evaluations
+    const result = await pool.query(`
+      SELECT
+        eval_id,
+        task_id,
+        mode,
+        result,
+        evaluated_at,
+        details
+      FROM policy_evaluations
+      WHERE policy_id = $1
+      ORDER BY evaluated_at DESC
+      LIMIT $2 OFFSET $3
+    `, [id, parseInt(limit), parseInt(offset)]);
+
+    // Get total count
+    const countResult = await pool.query(`
+      SELECT COUNT(*) as total FROM policy_evaluations WHERE policy_id = $1
+    `, [id]);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: parseInt(countResult.rows[0].total)
+    });
+  } catch (err) {
+    console.error('[API] Failed to get policy evaluations:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get policy evaluations',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/policies/:id/status
+ * Update policy status (manual control)
+ */
+router.patch('/policies/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, reason } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: status'
+      });
+    }
+
+    const validStatuses = ['draft', 'probation', 'active', 'disabled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    // Update status
+    const result = await pool.query(`
+      UPDATE absorption_policies
+      SET status = $1, updated_at = NOW()
+      WHERE policy_id = $2
+      RETURNING policy_id
+    `, [status, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    // Log event
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, payload)
+      VALUES ('policy_status_updated', $1)
+    `, [JSON.stringify({ policy_id: id, status, reason, updated_by: 'api' })]);
+
+    res.json({
+      success: true,
+      message: `Policy status updated to ${status}`
+    });
+  } catch (err) {
+    console.error('[API] Failed to update policy status:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update policy status',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/failures/signatures
+ * Get failure signatures statistics
+ */
+router.get('/failures/signatures', async (req, res) => {
+  try {
+    const { limit = 20, min_count = 1 } = req.query;
+
+    const result = await pool.query(`
+      SELECT
+        fs.signature,
+        fs.count,
+        fs.first_seen,
+        fs.last_seen,
+        COUNT(DISTINCT CASE WHEN ap.status = 'active' THEN ap.policy_id END) as active_policies,
+        COUNT(DISTINCT CASE WHEN ap.status = 'probation' THEN ap.policy_id END) as probation_policies
+      FROM failure_signatures fs
+      LEFT JOIN absorption_policies ap ON fs.signature = ap.signature
+      WHERE fs.count >= $1
+      GROUP BY fs.signature, fs.count, fs.first_seen, fs.last_seen
+      ORDER BY fs.count DESC
+      LIMIT $2
+    `, [parseInt(min_count), parseInt(limit)]);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (err) {
+    console.error('[API] Failed to get failure signatures:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get failure signatures',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/failures/signatures/:signature
+ * Get single failure signature with related policies
+ */
+router.get('/failures/signatures/:signature', async (req, res) => {
+  try {
+    const { signature } = req.params;
+
+    // Get signature info
+    const sigResult = await pool.query(`
+      SELECT signature, count, first_seen, last_seen
+      FROM failure_signatures
+      WHERE signature = $1
+    `, [signature]);
+
+    if (sigResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Signature not found'
+      });
+    }
+
+    const signatureData = sigResult.rows[0];
+
+    // Get related policies
+    const policiesResult = await pool.query(`
+      SELECT
+        policy_id,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+      WHERE signature = $1
+      ORDER BY
+        CASE status
+          WHEN 'active' THEN 1
+          WHEN 'probation' THEN 2
+          WHEN 'draft' THEN 3
+          WHEN 'disabled' THEN 4
+        END,
+        created_at DESC
+    `, [signature]);
+
+    signatureData.policies = policiesResult.rows;
+
+    res.json({
+      success: true,
+      data: signatureData
+    });
+  } catch (err) {
+    console.error('[API] Failed to get signature details:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get signature details',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/immune/dashboard
+ * Immune system overview with aggregated data
+ */
+router.get('/immune/dashboard', async (req, res) => {
+  try {
+    // Policy statistics
+    const policyStats = await pool.query(`
+      SELECT
+        status,
+        COUNT(*) as count
+      FROM absorption_policies
+      GROUP BY status
+    `);
+
+    const policies = {
+      draft: 0,
+      probation: 0,
+      active: 0,
+      disabled: 0,
+      total: 0
+    };
+
+    policyStats.rows.forEach(row => {
+      policies[row.status] = parseInt(row.count);
+      policies.total += parseInt(row.count);
+    });
+
+    // Quarantine statistics (reuse existing data)
+    const quarantineStats = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN quarantine_reason = 'failure_threshold' THEN 1 END) as failure_threshold,
+        COUNT(CASE WHEN quarantine_reason = 'manual' THEN 1 END) as manual,
+        COUNT(CASE WHEN quarantine_reason = 'resource_hog' THEN 1 END) as resource_hog
+      FROM tasks
+      WHERE status = 'quarantined'
+    `);
+
+    const quarantine = {
+      total: parseInt(quarantineStats.rows[0].total),
+      by_reason: {
+        failure_threshold: parseInt(quarantineStats.rows[0].failure_threshold),
+        manual: parseInt(quarantineStats.rows[0].manual),
+        resource_hog: parseInt(quarantineStats.rows[0].resource_hog)
+      }
+    };
+
+    // Top failure signatures
+    const topSignatures = await pool.query(`
+      SELECT signature, count
+      FROM failure_signatures
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+
+    // Recent promotions
+    const recentPromotions = await pool.query(`
+      SELECT
+        pe.policy_id,
+        ap.signature,
+        pe.evaluated_at as promoted_at
+      FROM policy_evaluations pe
+      JOIN absorption_policies ap ON pe.policy_id = ap.policy_id
+      WHERE pe.mode = 'promote'
+      ORDER BY pe.evaluated_at DESC
+      LIMIT 5
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        policies,
+        quarantine,
+        failures: {
+          top_signatures: topSignatures.rows
+        },
+        recent_promotions: recentPromotions.rows
+      }
+    });
+  } catch (err) {
+    console.error('[API] Failed to get immune dashboard:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get immune dashboard',
+      details: err.message
+    });
+  }
+});
+
 export default router;
