@@ -352,26 +352,34 @@ async function handleFailureSpike(stats) {
       }
     }
 
-    // Check probation policy (simulate mode)
+    // Check probation policy (simulate mode) - P1 Enhanced
     const probationPolicy = await findProbationPolicy(signature);
     if (probationPolicy) {
       console.log(`[Immune] Found probation policy: ${probationPolicy.policy_id} (simulate mode)`);
       const startTime = Date.now();
 
       try {
-        // Simulate policy execution
-        console.log(`[Immune] Simulating policy ${probationPolicy.policy_id}`);
+        // Parse policy_json to extract intended action
+        const { parsePolicyAction } = await import('./immune-system.js');
+        const intendedAction = parsePolicyAction(probationPolicy.policy_json);
+
+        // Simulate policy execution (P1: record what would be done)
+        console.log(`[Immune] Probation policy simulated: signature=${signature}, would_do=${intendedAction.type}`);
 
         await recordPolicyEvaluation({
           policy_id: probationPolicy.policy_id,
           run_id: failure.run_id,
           signature: signature,
           mode: 'simulate',
-          decision: 'applied',
+          decision: 'applied', // P1: probation uses mode='simulate' to differentiate
           verification_result: 'unknown',
           latency_ms: Date.now() - startTime,
           details: {
-            simulation: true,
+            // P1: Enhanced details with intended action
+            would_do: intendedAction.type,
+            would_apply: intendedAction.params,
+            expected_outcome: intendedAction.expected_outcome,
+            simulated_at: new Date().toISOString(),
             failure: {
               reason_code: failure.reason_code,
               layer: failure.layer,
@@ -380,7 +388,7 @@ async function handleFailureSpike(stats) {
           }
         });
 
-        console.log(`[Immune] Policy evaluation recorded: mode=simulate decision=applied`);
+        console.log(`[Immune] Policy evaluation recorded: mode=simulate decision=simulated would_do=${intendedAction.type}`);
       } catch (error) {
         console.error(`[Immune] Probation simulation failed:`, error.message);
       }

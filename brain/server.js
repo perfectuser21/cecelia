@@ -110,6 +110,11 @@ server.listen(PORT, async () => {
   const { startMonitorLoop } = await import('./src/monitor-loop.js');
   startMonitorLoop();
   console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
+
+  // Initialize Promotion Job Loop (P1)
+  const { startPromotionJobLoop } = await import('./src/promotion-job.js');
+  startPromotionJobLoop();
+  console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
 });
 
 export default app;

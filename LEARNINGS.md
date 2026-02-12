@@ -4,6 +4,91 @@
 
 ---
 
+### [2026-02-12] Immune System v1 - P0 实现
+
+**功能**：实现免疫系统 P0 阶段 - Registry + State Machine + Evaluations，包含 3 个新表（failure_signatures, absorption_policies, policy_evaluations）和 Monitor Loop 集成。
+
+**Bug 记录**：
+1. **测试文件期望值未更新** - `selfcheck.test.js` 测试失败
+   - 问题：更新了 `selfcheck.js` 的 `EXPECTED_SCHEMA_VERSION` 从 '023' → '025'，但忘记更新测试文件的期望值
+   - 测试失败：`expected '025' to be '023'`
+   - 解决：同步更新 `brain/src/__tests__/selfcheck.test.js` 第 137-138 行的期望值
+   - 影响程度：High（CI 失败）
+   - 教训：更新常量时，必须同步更新对应的测试断言
+
+2. **.brain-versions 文件格式错误** - CI Version Check 失败
+   - 问题：文件中重复写了两行 `1.25.0`，导致 CI 读取时变成 `1.25.01.25.0`（字符串拼接）
+   - CI 错误：`❌ .brain-versions: 1.25.01.25.0 (expected: 1.25.0)`
+   - 解决：删除重复行，只保留一行 `1.25.0`
+   - 影响程度：High（CI 失败）
+   - 教训：.brain-versions 文件格式必须严格（只有一行版本号 + 空行）
+
+3. **依赖模块缺失** - monitor-loop.js 不存在
+   - 问题：Immune System 需要集成到 monitor-loop.js，但这个文件只存在于 `cp-add-monitoring-loop` 分支
+   - 解决：Cherry-pick 3 个相关 commits（4b54a28, 4798e89, 9615850）从 cp-add-monitoring-loop 分支
+   - 冲突：selfcheck.js 的 EXPECTED_SCHEMA_VERSION（'024' vs '025'），保留 '025'
+   - 影响程度：High（核心依赖缺失，无法集成）
+   - 教训：实现新功能前，先确认所有依赖模块的状态和位置
+
+4. **Migration schema_version 更新错误** - 迁移脚本执行失败
+   - 问题：使用 `UPDATE schema_version SET version = '025' WHERE id = 1`，但 schema_version 表没有 `id` 列，主键是 `version`
+   - 错误：`ERROR: column "id" does not exist`
+   - 解决：改用 `INSERT INTO schema_version (version, description) VALUES ('025', '...') ON CONFLICT (version) DO NOTHING;`
+   - 影响程度：Medium（本地迁移失败但可手动修复）
+   - 教训：迁移脚本应使用标准的 INSERT...ON CONFLICT 模式，不依赖表结构假设
+
+**优化点**：
+1. **完整的版本同步 Checklist**
+   - 实施：总结所有需要同步版本号的文件
+   - 清单：
+     1. `brain/package.json` - 基准版本
+     2. `brain/package-lock.json` - `npm install --package-lock-only`
+     3. `.brain-versions` - 只写一行版本号
+     4. `DEFINITION.md` - Brain 版本 + Schema 版本（两处）
+     5. `brain/src/selfcheck.js` - EXPECTED_SCHEMA_VERSION
+     6. `brain/src/__tests__/selfcheck.test.js` - 测试期望值
+   - 影响程度：Critical（避免版本不同步导致的 CI 失败）
+
+2. **.brain-versions 文件格式规范**
+   - 规则：只能有一行版本号 + 一个空行，不能有注释或其他内容
+   - 验证：`wc -l .brain-versions` 应该返回 2（版本号行 + 空行）
+   - 影响程度：High（CI 依赖正确格式）
+
+3. **Cherry-pick 策略**
+   - 原则：优先 cherry-pick 稳定的依赖模块，而不是重新实现
+   - 步骤：
+     1. 使用 `git log <branch> --oneline | grep <关键词>` 找到相关 commits
+     2. Cherry-pick 按顺序的多个 commits（保持依赖关系）
+     3. 解决冲突时优先保留当前分支的新值
+   - 影响程度：High（节省时间，保证依赖完整性）
+
+4. **Migration 标准模式**
+   - 最佳实践：使用 `INSERT...ON CONFLICT DO NOTHING` 更新 schema_version
+   - 避免：使用 `UPDATE...WHERE id = 1` 假设表结构
+   - 模板：
+     ```sql
+     INSERT INTO schema_version (version, description)
+     VALUES ('XXX', '...')
+     ON CONFLICT (version) DO NOTHING;
+     ```
+   - 影响程度：High（保证迁移脚本稳定性）
+
+**收获**：
+- 学习了免疫系统的完整设计模式（Registry → Probation → Active 状态机）
+- 掌握了 PostgreSQL JSONB 字段在策略存储中的应用
+- 理解了 Monitor Loop 与免疫系统的优先级集成（active policy 先于 RCA）
+- 实践了 Cherry-pick 整合跨分支依赖的流程
+- 深刻体会了版本同步检查的重要性（多次 CI 失败都因版本不同步）
+- 验证了测试文件也需要同步更新的必要性
+
+**下次改进**：
+- 版本更新时运行完整 checklist，确保 6 个文件全部同步
+- 创建新迁移脚本时，使用标准的 INSERT...ON CONFLICT 模式
+- Cherry-pick 前先确认目标 commits 的完整依赖链
+- 更新常量后立即搜索所有测试文件中的引用并同步更新
+
+---
+
 ### [2026-02-12] 可观测性系统 v1.1.1 实现
 
 **功能**：实现统一事件流可观测性系统，包含 run_events 表、trace SDK、8 个硬边界约定。

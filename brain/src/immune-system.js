@@ -309,3 +309,57 @@ export async function getTopFailureSignatures(limit = 10) {
     throw error;
   }
 }
+
+/**
+ * Parse policy_json to extract intended action (P1)
+ *
+ * Used by probation simulate to record what the policy would do
+ *
+ * @param {Object} policyJson - JSON from absorption_policies.policy_json
+ * @returns {Object} { type, params, expected_outcome }
+ *
+ * @example
+ * // Input policy_json:
+ * // {
+ * //   "action": "requeue",
+ * //   "params": { "delay_minutes": 30, "priority": "low" },
+ * //   "expected_outcome": "Task will retry after 30 min with lower priority"
+ * // }
+ * //
+ * // Output:
+ * // {
+ * //   type: "requeue",
+ * //   params: { delay_minutes: 30, priority: "low" },
+ * //   expected_outcome: "Task will retry after 30 min with lower priority"
+ * // }
+ */
+export function parsePolicyAction(policyJson) {
+  try {
+    // Handle null/undefined
+    if (!policyJson) {
+      return {
+        type: 'unknown',
+        params: {},
+        expected_outcome: 'No policy JSON provided'
+      };
+    }
+
+    // Parse if string
+    const parsed = typeof policyJson === 'string' ? JSON.parse(policyJson) : policyJson;
+
+    // Extract action details with defaults
+    return {
+      type: parsed.action || 'unknown',
+      params: parsed.params || {},
+      expected_outcome: parsed.expected_outcome || 'No expected outcome defined'
+    };
+  } catch (error) {
+    console.error('[Immune] Failed to parse policy_json:', error.message);
+    // Return safe default instead of throwing
+    return {
+      type: 'parse_error',
+      params: {},
+      expected_outcome: `Failed to parse policy JSON: ${error.message}`
+    };
+  }
+}

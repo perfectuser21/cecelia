@@ -20,7 +20,8 @@ import {
   shouldPromoteToProbation,
   getPolicyEvaluationStats,
   shouldPromoteToActive,
-  getTopFailureSignatures
+  getTopFailureSignatures,
+  parsePolicyAction
 } from '../immune-system.js';
 
 describe('Immune System Module', () => {
@@ -359,6 +360,69 @@ describe('Immune System Module', () => {
       expect(results[0].count_24h).toBe(5);
       expect(results[1].signature).toBe('test2345678901ab');
       expect(results[1].count_24h).toBe(3);
+    });
+  });
+
+  describe('parsePolicyAction() - P1', () => {
+    it('should parse complete policy_json', () => {
+      const policyJson = {
+        action: 'requeue',
+        params: { delay_minutes: 30, priority: 'low' },
+        expected_outcome: 'Task will retry after 30 min with lower priority'
+      };
+
+      const result = parsePolicyAction(policyJson);
+
+      expect(result.type).toBe('requeue');
+      expect(result.params).toEqual({ delay_minutes: 30, priority: 'low' });
+      expect(result.expected_outcome).toBe('Task will retry after 30 min with lower priority');
+    });
+
+    it('should handle missing fields with defaults', () => {
+      const policyJson = {
+        action: 'skip'
+        // Missing params and expected_outcome
+      };
+
+      const result = parsePolicyAction(policyJson);
+
+      expect(result.type).toBe('skip');
+      expect(result.params).toEqual({});
+      expect(result.expected_outcome).toBe('No expected outcome defined');
+    });
+
+    it('should handle null/undefined input', () => {
+      const result1 = parsePolicyAction(null);
+      const result2 = parsePolicyAction(undefined);
+
+      expect(result1.type).toBe('unknown');
+      expect(result1.params).toEqual({});
+      expect(result1.expected_outcome).toBe('No policy JSON provided');
+
+      expect(result2.type).toBe('unknown');
+    });
+
+    it('should parse JSON string', () => {
+      const policyJsonString = JSON.stringify({
+        action: 'adjust_params',
+        params: { timeout: 60 },
+        expected_outcome: 'Increase timeout to 60s'
+      });
+
+      const result = parsePolicyAction(policyJsonString);
+
+      expect(result.type).toBe('adjust_params');
+      expect(result.params.timeout).toBe(60);
+    });
+
+    it('should handle invalid JSON gracefully', () => {
+      const invalidJson = '{invalid json}';
+
+      const result = parsePolicyAction(invalidJson);
+
+      expect(result.type).toBe('parse_error');
+      expect(result.params).toEqual({});
+      expect(result.expected_outcome).toContain('Failed to parse policy JSON');
     });
   });
 });
