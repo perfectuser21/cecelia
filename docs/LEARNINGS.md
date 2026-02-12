@@ -1233,3 +1233,82 @@ After this planning is complete, the actual implementation will be in zenithjoy-
    - 集中管理 status values 常量
    - 减少重复代码
 
+
+## [2026-02-12] Immune System API Layer (v1.29.0)
+
+### Feature: 实现免疫系统 REST API 接口层（PR #221）
+
+- **What**: 实现 8 个 REST API 端点（Policies, Failures, Promotions, Dashboard），为前端展示层提供数据接口
+- **Context**: P0-P2 已完成后端逻辑（监控、试用期、策略标准化），本任务补充 API 接口层
+- **Tests**: brain/src/__tests__/immune-api.test.js（445 lines, 30+ test cases），全部通过
+
+### Gotchas（关键教训）
+
+1. **Express 路由顺序问题**
+   - **Bug**: 定义路由时，将 `/policies/promotions` 放在了 `/policies/:id` 之后
+   - **Error**: Express 按定义顺序匹配路由，"promotions" 被当作 `:id` 参数，导致 8 个测试失败：
+     * 返回晋升历史 - Expected 200, received 500（匹配到错误的路由）
+     * 支持 days 参数 - 调用了 policies/:id 而非 promotions 路由
+     * 包含 simulations 和 pass_rate - Cannot read property of undefined
+   - **Fix**: 将 `/policies/promotions` 路由移到 `/policies/:id` 之前
+   - **影响程度**: High - 阻塞 CI，8/30 测试失败
+   - **Root Cause**: Express 路由匹配是贪婪的，按定义顺序逐个尝试，:id 参数可以匹配任何字符串
+   - **Prevention**: 
+     * **规则：具体路由永远在参数化路由之前定义**
+     * 在路由定义上方添加注释：`// NOTE: Must be before /policies/:id to avoid matching "promotions" as an ID`
+     * 类似问题还可能出现在：`/users/me` vs `/users/:id`、`/tasks/stats` vs `/tasks/:id` 等
+   - **Code Location**: brain/src/routes.js:5390-5435（正确位置）vs 5716-5758（错误位置已删除）
+
+2. **Date 序列化问题导致测试失败**
+   - **Bug**: 测试中使用 `new Date()` 对象作为 mock 数据，但 Express 的 `res.json()` 自动将 Date 对象序列化为 ISO 字符串
+   - **Error**: 3 个测试失败，Vitest 断言失败：`expected [ { …, created_at: Date } ] to deeply equal [ { …, created_at: "2026-02-12T..." } ]`
+   - **Fix**: 将所有测试中的 `new Date()` 改为 `new Date().toISOString()`
+   - **影响程度**: Medium - 阻塞 CI，3/30 测试失败
+   - **Root Cause**: JavaScript Date 对象在 JSON 序列化时自动调用 `toISOString()`，测试需要模拟这个行为
+   - **Prevention**: 
+     * **规则：API 测试中永远使用 ISO 字符串，不使用 Date 对象**
+     * Mock 数据格式应与实际 API 返回格式一致
+     * 可以创建 test helper：`const now = () => new Date().toISOString()`
+   - **Code Location**: brain/src/__tests__/immune-api.test.js（7 处修改：lines 30, 96, 142, 224, 272, 308, 413）
+
+### 总结
+
+- **代码变更**: +500 lines routes.js, +445 lines tests
+- **CI 轮次**: 3 轮（首次失败 → 修复路由顺序 → 修复 Date 序列化 → 通过）
+- **总耗时**: ~1.5 小时
+  - Code + Tests: ~45 min
+  - CI Debugging: ~45 min（2 轮修复）
+
+### 可复用模式
+
+1. **API 路由设计模式（已验证可靠）**
+   ```javascript
+   // ✅ Correct order
+   router.get('/policies/promotions', ...)  // Specific route first
+   router.get('/policies/:id', ...)         // Parameterized route second
+   
+   // ❌ Wrong order
+   router.get('/policies/:id', ...)         // Will match "promotions"!
+   router.get('/policies/promotions', ...)  // Unreachable
+   ```
+
+2. **API 测试 Mock 数据模式**
+   ```javascript
+   // ✅ Correct: Use ISO strings
+   const now = new Date().toISOString();
+   const mockData = { created_at: now };
+   
+   // ❌ Wrong: Date object won't match
+   const mockData = { created_at: new Date() };
+   ```
+
+### 后续改进建议
+
+1. **P1 - 路由定义 Linter**
+   - 创建 ESLint 规则检测参数化路由在具体路由之前的情况
+   - 或在 pre-commit hook 中添加静态检查
+
+2. **P2 - 测试 Helper Library**
+   - 创建 `brain/src/__tests__/helpers.js`
+   - 提供 `mockTimestamp()`, `mockPolicy()` 等工厂函数
+   - 统一 API 测试数据格式
