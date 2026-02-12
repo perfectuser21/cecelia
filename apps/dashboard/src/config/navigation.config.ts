@@ -14,6 +14,7 @@ import {
   Users,
   KeyRound,
   LayoutGrid,
+  Activity,
 } from 'lucide-react';
 
 // ============ 类型定义 ============
@@ -56,6 +57,7 @@ export const autopilotPageComponents: Record<string, () => Promise<{ default: Co
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
   'ExecutionLogs': () => import('../pages/ExecutionLogs'),
   'SeatsStatus': () => import('../pages/SeatsStatus'),
+  'ObservabilityDashboard': () => import('../pages/ObservabilityDashboard'),
   // Tasks moved to zenithjoy-core
   'PublishStats': () => import('../pages/PublishStats'),
   'LoginPage': () => import('../pages/LoginPage'),
@@ -95,6 +97,13 @@ export const autopilotNavGroups: NavGroup[] = [
         label: '工作台',
         featureKey: 'workbench',
         component: 'Dashboard'
+      },
+      {
+        path: '/observability',
+        icon: Activity,
+        label: 'Observability',
+        featureKey: 'observability',
+        component: 'ObservabilityDashboard'
       },
       {
         path: '/media',

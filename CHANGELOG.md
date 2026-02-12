@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.23.0] - 2026-02-12
+
+### Added
+- Observability Dashboard UI - Real-time execution monitoring and failure analysis
+- ActiveRunsPanel component with 5-second auto-refresh
+- ExecutionTraceViewer with layer visualization (L0-L4)
+- FailureAnalysisChart showing Top 10 failure reasons with reason_kind colors
+- StuckDetectionPanel for detecting runs stuck >5 minutes
+- Integration with 7 Core Brain Trace APIs (v1.1.1)
+- Comprehensive test coverage for all components (API layer + 5 components)
+- Vitest test infrastructure with @testing-library/react
+
 ## [1.9.0] - 2026-02-01
 
 ### Added

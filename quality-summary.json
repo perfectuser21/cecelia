@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02102026-pr-plans-phase2",
-  "head_sha": "438286f97",
-  "timestamp": "2026-02-11T01:12:59Z",
+  "branch": "cp-observability-dashboard",
+  "head_sha": "8332d7497",
+  "timestamp": "2026-02-12T04:05:35Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
