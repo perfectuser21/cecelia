@@ -4,6 +4,78 @@
 
 ---
 
+### [2026-02-12] 可观测性系统 v1.1.1 实现
+
+**功能**：实现统一事件流可观测性系统，包含 run_events 表、trace SDK、8 个硬边界约定。
+
+**Bug 记录**：
+1. **分支命名不符合规范** - `cp-observability-v1.1.1` 包含点号，被 Hook 拒绝
+   - 问题：分支名包含点号不匹配 `^cp-[a-zA-Z0-9][-a-zA-Z0-9_]*$` 正则
+   - 解决：重命名为 `cp-observability-v111`
+   - 影响程度：Low（早期发现，快速修复）
+
+2. **迁移文件冲突** - 两个 023 编号的迁移文件同时存在
+   - 问题：`023_add_run_events_observability.sql` (旧) 和 `023_add_run_events_observability_v1.1.sql` (新) 冲突
+   - 旧文件缺少 `reason_kind` 列，导致新迁移执行失败
+   - 解决：删除旧迁移文件，只保留 v1.1 版本
+   - 影响程度：High（CI 失败，Schema 冲突）
+
+3. **版本号未更新** - CI Version Check 期望 feat: 提交有版本更新
+   - 问题：添加新功能后未更新版本号
+   - 解决：从 1.18.1 升级到 1.23.0 (minor bump)
+   - 影响程度：High（CI 失败）
+
+4. **View 缺少 task_id 列** - `v_run_last_alive_span` 视图不完整
+   - 问题：`detect_stuck_runs()` 函数查询 `task_id`，但 view 没有 select 这个列
+   - 解决：在 view 的 CTE 和 SELECT 子句中添加 `task_id`
+   - 影响程度：High（运行时错误，测试失败）
+
+5. **多文件版本不同步** - package.json、DEFINITION.md、.brain-versions、selfcheck.js 版本不一致
+   - 问题：更新 package.json 到 1.23.0 后，其他 4 个文件仍是旧版本
+   - 涉及文件：
+     - DEFINITION.md: Brain 版本 + Schema 版本
+     - .brain-versions: Brain 版本号
+     - selfcheck.js: EXPECTED_SCHEMA_VERSION
+     - selfcheck.test.js: 测试期望值
+   - 解决：逐一同步所有文件
+   - 影响程度：High（CI 多次失败）
+
+**优化点**：
+1. **硬边界约定 (Hard Boundaries)**
+   - 实施：在 PRD 中明确定义 8 个硬边界，防止实现漂移
+   - 效果：实现过程严格遵循约定，避免自由发挥
+   - 示例：run_id 必须由 L0 生成、span_id 使用 UUID、status 状态机、heartbeat 规则等
+   - 影响程度：High（保证实现质量）
+
+2. **版本同步检查列表**
+   - 建议：创建 checklist 确保版本更新时同步所有文件
+   - 需要同步的文件：
+     1. `brain/package.json`
+     2. `brain/package-lock.json` (npm install --package-lock-only)
+     3. `.brain-versions`
+     4. `DEFINITION.md` (Brain 版本 + Schema 版本)
+     5. `brain/src/selfcheck.js` (EXPECTED_SCHEMA_VERSION)
+     6. `brain/src/__tests__/selfcheck.test.js` (测试期望)
+   - 影响程度：High（避免版本不同步导致的 CI 失败）
+
+3. **迁移文件命名规范**
+   - 教训：迁移文件编号必须唯一，不能重复
+   - 建议：新建迁移前先 `ls brain/migrations/` 检查最新编号
+   - 影响程度：High（避免迁移冲突）
+
+4. **View 完整性检查**
+   - 教训：创建 View 后，确保包含所有依赖函数需要的列
+   - 建议：创建 View 同时编写测试，验证所有预期列存在
+   - 影响程度：Medium（避免运行时错误）
+
+**收获**：
+- 学习了完整的可观测性系统设计（统一事件流、三层 ID、五层执行追踪）
+- 掌握了 PostgreSQL View 和 Function 的创建与调试
+- 理解了 Git 分支命名规范和 Hook 验证机制
+- 实践了多文件版本同步流程
+- 深刻体会了 CI 检查的价值（发现了 8 个问题）
+- 理解了硬边界约定对实现质量的保障作用
+
 ### [2026-02-07] Brain 学习闭环实现
 
 **功能**：实现 Brain 自动从失败中学习并调整策略的闭环系统。
