@@ -3,6 +3,7 @@ import express from 'express';
 import { createServer } from 'http';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
+import traceRoutes from './src/trace-routes.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -62,6 +63,9 @@ app.use('/api/brain', brainRoutes);
 
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
+
+// Mount trace observability routes
+app.use('/api/brain/trace', traceRoutes);
 
 // Health check at root
 app.get('/', (_req, res) => {
