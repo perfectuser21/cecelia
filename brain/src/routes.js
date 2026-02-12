@@ -5105,4 +5105,30 @@ router.delete('/pr-plans/:id', async (req, res) => {
   }
 });
 
+// ============================================================
+// Monitoring Loop Status
+// ============================================================
+
+/**
+ * GET /api/brain/monitor/status
+ * Get monitoring loop status
+ */
+router.get('/monitor/status', async (req, res) => {
+  try {
+    const { getMonitorStatus } = await import('./monitor-loop.js');
+    const status = getMonitorStatus();
+
+    res.json({
+      success: true,
+      status: status
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get monitor status',
+      details: err.message
+    });
+  }
+});
+
 export default router;

@@ -105,6 +105,11 @@ server.listen(PORT, async () => {
   // Initialize Feature Tick loop
   startFeatureTickLoop();
   console.log('[Server] Feature Tick started (30s interval)');
+
+  // Initialize Monitoring Loop (auto-healing)
+  const { startMonitorLoop } = await import('./src/monitor-loop.js');
+  startMonitorLoop();
+  console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
 });
 
 export default app;
