@@ -20,11 +20,16 @@ class SimilarityService {
    * Search for similar entities (Tasks/Initiatives/KRs)
    * @param {string} query - User input query
    * @param {number} topK - Number of top matches to return
+   * @param {Object} filters - Optional filters for search
+   * @param {string} filters.repo - Filter by repository name
+   * @param {number} filters.project_id - Filter by project ID
+   * @param {string} filters.date_from - Filter by creation date (ISO format)
+   * @param {string} filters.date_to - Filter by creation date (ISO format)
    * @returns {Promise<{matches: Array}>}
    */
-  async searchSimilar(query, topK = 5) {
+  async searchSimilar(query, topK = 5, filters = {}) {
     // 1. Query all active entities
-    const entities = await this.getAllActiveEntities();
+    const entities = await this.getAllActiveEntities(filters);
 
     // 2. Calculate similarity scores
     const scored = entities.map(entity => ({
@@ -43,26 +48,70 @@ class SimilarityService {
 
   /**
    * Get all active entities from database
+   * @param {Object} filters - Optional filters
+   * @param {string} filters.repo - Filter by repository name (metadata->>'repo')
+   * @param {number} filters.project_id - Filter by project ID
+   * @param {string} filters.date_from - Filter by creation date (ISO format)
+   * @param {string} filters.date_to - Filter by creation date (ISO format)
+   * @param {number} filters.limit - Maximum number of results (default 1000)
    * @returns {Promise<Array>}
    */
-  async getAllActiveEntities() {
+  async getAllActiveEntities(filters = {}) {
     const entities = [];
+    const { repo, project_id, date_from, date_to, limit = 1000 } = filters;
 
-    // Query Tasks (most recent 100)
+    // Build WHERE clause dynamically
+    const taskWhereClauses = ["t.status IN ('pending', 'in_progress', 'completed')"];
+    const taskQueryParams = [];
+    let paramIndex = 1;
+
+    if (repo) {
+      taskWhereClauses.push(`t.metadata->>'repo' = $${paramIndex}`);
+      taskQueryParams.push(repo);
+      paramIndex++;
+    }
+
+    if (project_id) {
+      taskWhereClauses.push(`t.project_id = $${paramIndex}`);
+      taskQueryParams.push(project_id);
+      paramIndex++;
+    }
+
+    if (date_from) {
+      taskWhereClauses.push(`t.created_at >= $${paramIndex}`);
+      taskQueryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      taskWhereClauses.push(`t.created_at <= $${paramIndex}`);
+      taskQueryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const taskWhereClause = taskWhereClauses.join(' AND ');
+
+    // Query Tasks with filters
     const tasksResult = await this.db.query(`
       SELECT
-        t.id, t.title, t.description, t.status,
+        t.id, t.title, t.description, t.status, t.metadata, t.project_id,
         pp.initiative_id, pp.title as pr_plan_title,
         f.title as initiative_title
       FROM tasks t
       LEFT JOIN pr_plans pp ON t.pr_plan_id = pp.id
       LEFT JOIN features f ON pp.initiative_id = f.id
-      WHERE t.status IN ('pending', 'in_progress', 'completed')
+      WHERE ${taskWhereClause}
       ORDER BY t.updated_at DESC
-      LIMIT 100
-    `);
+      LIMIT $${paramIndex}
+    `, [...taskQueryParams, limit]);
 
     tasksResult.rows.forEach(task => {
+      // Parse metadata if it's a JSON string
+      let parsedMetadata = {};
+      if (task.metadata) {
+        parsedMetadata = typeof task.metadata === 'string' ? JSON.parse(task.metadata) : task.metadata;
+      }
+
       entities.push({
         level: 'task',
         id: task.id,
@@ -70,10 +119,14 @@ class SimilarityService {
         description: task.description || '',
         status: task.status,
         text: `${task.title} ${task.description || ''}`,
+        project_id: task.project_id,
         metadata: {
           initiative_id: task.initiative_id,
           initiative_title: task.initiative_title,
-          pr_plan_title: task.pr_plan_title
+          pr_plan_title: task.pr_plan_title,
+          repo: parsedMetadata.repo || null,
+          pr_number: parsedMetadata.pr_number || null,
+          pr_author: parsedMetadata.pr_author || null
         }
       });
     });

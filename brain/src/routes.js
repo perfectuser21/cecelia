@@ -5138,10 +5138,22 @@ router.get('/monitor/status', async (req, res) => {
 /**
  * POST /api/brain/search-similar
  * Search for similar entities (Tasks/Initiatives/KRs)
+ *
+ * Request body:
+ * {
+ *   query: string (required),
+ *   top_k: number (optional, default 5),
+ *   filters: {
+ *     repo: string (optional) - filter by repository name,
+ *     project_id: number (optional) - filter by project ID,
+ *     date_from: string (optional) - filter by creation date (ISO format),
+ *     date_to: string (optional) - filter by creation date (ISO format)
+ *   }
+ * }
  */
 router.post('/search-similar', async (req, res) => {
   try {
-    const { query, top_k = 5 } = req.body;
+    const { query, top_k = 5, filters = {} } = req.body;
 
     if (!query) {
       return res.status(400).json({
@@ -5150,13 +5162,29 @@ router.post('/search-similar', async (req, res) => {
       });
     }
 
+    // Validate filters if provided
+    if (filters.repo && typeof filters.repo !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filter: repo must be a string'
+      });
+    }
+
+    if (filters.project_id && typeof filters.project_id !== 'number') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filter: project_id must be a number'
+      });
+    }
+
     const { default: SimilarityService } = await import('./similarity.js');
     const similarityService = new SimilarityService();
 
-    const result = await similarityService.searchSimilar(query, top_k);
+    const result = await similarityService.searchSimilar(query, top_k, filters);
 
     res.json({
       success: true,
+      filters_applied: filters,
       ...result
     });
   } catch (err) {

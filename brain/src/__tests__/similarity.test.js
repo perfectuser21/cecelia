@@ -413,4 +413,152 @@ describe('SimilarityService', () => {
       expect(defaultService.db).toBeDefined();
     });
   });
+
+  describe('getAllActiveEntities with filters', () => {
+    it('should filter by repo', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] }) // tasks
+        .mockResolvedValueOnce({ rows: [] }) // initiatives
+        .mockResolvedValueOnce({ rows: [] }); // KRs
+
+      await service.getAllActiveEntities({ repo: 'cecelia-workspace' });
+
+      // Check that the first query (tasks) includes repo filter
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain("metadata->>'repo' = $1");
+      expect(mockDb.query.mock.calls[0][1]).toContain('cecelia-workspace');
+    });
+
+    it('should filter by project_id', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.getAllActiveEntities({ project_id: 123 });
+
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain('project_id = $1');
+      expect(mockDb.query.mock.calls[0][1]).toContain(123);
+    });
+
+    it('should filter by date range', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.getAllActiveEntities({
+        date_from: '2026-01-01',
+        date_to: '2026-02-12'
+      });
+
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain('created_at >= $1');
+      expect(taskQuery).toContain('created_at <= $2');
+      expect(mockDb.query.mock.calls[0][1]).toContain('2026-01-01');
+      expect(mockDb.query.mock.calls[0][1]).toContain('2026-02-12');
+    });
+
+    it('should combine multiple filters', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.getAllActiveEntities({
+        repo: 'cecelia-core',
+        project_id: 456,
+        date_from: '2026-01-01'
+      });
+
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain("metadata->>'repo' = $1");
+      expect(taskQuery).toContain('project_id = $2');
+      expect(taskQuery).toContain('created_at >= $3');
+    });
+
+    it('should use custom limit', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.getAllActiveEntities({ limit: 500 });
+
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain('LIMIT $1');
+      expect(mockDb.query.mock.calls[0][1]).toContain(500);
+    });
+
+    it('should use default limit 1000 when not specified', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.getAllActiveEntities({});
+
+      const params = mockDb.query.mock.calls[0][1];
+      expect(params[params.length - 1]).toBe(1000);
+    });
+
+    it('should parse metadata from tasks', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'task-123',
+            title: 'PR imported task',
+            description: 'Test description',
+            status: 'completed',
+            project_id: 1,
+            metadata: JSON.stringify({
+              repo: 'cecelia-workspace',
+              pr_number: 456,
+              pr_author: 'perfectuser21'
+            })
+          }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await service.getAllActiveEntities({});
+
+      expect(result[0].metadata.repo).toBe('cecelia-workspace');
+      expect(result[0].metadata.pr_number).toBe(456);
+      expect(result[0].metadata.pr_author).toBe('perfectuser21');
+      expect(result[0].project_id).toBe(1);
+    });
+  });
+
+  describe('searchSimilar with filters', () => {
+    it('should pass filters to getAllActiveEntities', async () => {
+      const filters = { repo: 'cecelia-engine', project_id: 789 };
+
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      await service.searchSimilar('test query', 5, filters);
+
+      const taskQuery = mockDb.query.mock.calls[0][0];
+      expect(taskQuery).toContain("metadata->>'repo' = $1");
+      expect(taskQuery).toContain('project_id = $2');
+    });
+
+    it('should work without filters (backward compatibility)', async () => {
+      mockDb.query
+        .mockResolvedValueOnce({
+          rows: [{ id: 'task-1', title: 'test task', status: 'pending' }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await service.searchSimilar('test');
+
+      expect(result.matches).toBeDefined();
+      expect(Array.isArray(result.matches)).toBe(true);
+    });
+  });
 });
