@@ -43,6 +43,13 @@ const manifest: FeatureManifest = {
     { path: '/system/panorama', component: 'DevPanorama' },
     { path: '/system/panorama/repo/:repoName', component: 'RepoDetail' },
     { path: '/system/devgate', component: 'DevGateMetrics' },
+    // Immune System routes
+    { path: '/immune', component: 'ImmuneDashboard' },
+    { path: '/immune/dashboard', component: 'ImmuneDashboard' },
+    { path: '/immune/policies', component: 'ImmunePolicies' },
+    { path: '/immune/policies/:id', component: 'ImmunePolicyDetail' },
+    { path: '/immune/signatures', component: 'ImmuneSignatures' },
+    { path: '/immune/signatures/:signature', component: 'ImmuneSignatureDetail' },
     // Redirects from old paths to new tab locations
     { path: '/system/ops', redirect: '/system' },
     { path: '/system/n8n/workflows', redirect: '/system/automation' },
@@ -127,6 +134,12 @@ const manifest: FeatureManifest = {
     DevGateMetrics: () => import('../system/pages/DevGateMetrics'),
     DevPanorama: () => import('../planning/pages/DevPanorama'),
     RepoDetail: () => import('../planning/pages/RepoDetail'),
+    // Immune System pages
+    ImmuneDashboard: () => import('../system/pages/immune/Dashboard'),
+    ImmunePolicies: () => import('../system/pages/immune/Policies'),
+    ImmunePolicyDetail: () => import('../system/pages/immune/PolicyDetail'),
+    ImmuneSignatures: () => import('../system/pages/immune/Signatures'),
+    ImmuneSignatureDetail: () => import('../system/pages/immune/SignatureDetail'),
   },
 };
 
