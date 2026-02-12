@@ -1,6 +1,27 @@
 {
-  "branch": "cp-observability-dashboard",
-  "head_sha": "8332d7497",
-  "timestamp": "2026-02-12T04:05:35Z",
-  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
+  "branch": "cp-02122252-immune-system-frontend",
+  "head_sha": "138607fe9",
+  "timestamp": "2026-02-12T15:01:20Z",
+  "status": "ready_for_pr",
+  "checks": {
+    "prd_exists": true,
+    "dod_exists": true,
+    "tests_created": true,
+    "typescript_types": true
+  },
+  "files_created": [
+    "apps/core/features/system/types/immune.ts",
+    "apps/core/features/system/api/immune.api.ts",
+    "apps/core/features/system/pages/immune/Dashboard.tsx",
+    "apps/core/features/system/pages/immune/Policies.tsx",
+    "apps/core/features/system/pages/immune/PolicyDetail.tsx",
+    "apps/core/features/system/pages/immune/Signatures.tsx",
+    "apps/core/features/system/pages/immune/SignatureDetail.tsx",
+    "apps/core/features/system/pages/immune/components/StatusBadge.tsx",
+    "apps/core/features/system/pages/immune/components/RiskBadge.tsx",
+    "apps/core/features/system/pages/immune/components/PolicyCard.tsx",
+    "apps/core/features/system/pages/immune/components/EvaluationTable.tsx",
+    "apps/core/features/system-hub/index.ts"
+  ],
+  "message": "Immune system frontend ready for PR. All core pages and components implemented."
 }
