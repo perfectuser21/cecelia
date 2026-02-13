@@ -159,6 +159,9 @@ class SimilarityService {
     });
 
     // Query KRs (most recent 30)
+    // TODO: Disabled until key_results table schema is finalized
+    // Current schema uses goals table with type='key_result', but fields differ
+    /*
     const krsResult = await this.db.query(`
       SELECT
         kr.id, kr.title, kr.target_value, kr.current_value, kr.unit, kr.status,
@@ -191,6 +194,7 @@ class SimilarityService {
         }
       });
     });
+    */
 
     return entities;
   }
