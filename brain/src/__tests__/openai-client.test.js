@@ -12,7 +12,7 @@ vi.mock('openai', () => {
       embeddings: {
         create: vi.fn().mockResolvedValue({
           data: [{
-            embedding: new Array(1536).fill(0.1)  // Mock 3072-dim vector
+            embedding: new Array(1536).fill(0.1)  // Mock 1536-dim vector
           }]
         })
       }
@@ -32,7 +32,7 @@ describe('OpenAI Client', () => {
 
       expect(embedding).toBeDefined();
       expect(Array.isArray(embedding)).toBe(true);
-      expect(embedding.length).toBe(3072);
+      expect(embedding.length).toBe(1536);
     });
 
     it('should throw error for invalid input', async () => {
@@ -45,7 +45,7 @@ describe('OpenAI Client', () => {
       const embedding = await generateEmbedding(longText, { maxLength: 8000 });
 
       expect(embedding).toBeDefined();
-      expect(embedding.length).toBe(3072);
+      expect(embedding.length).toBe(1536);
     });
   });
 
@@ -56,7 +56,7 @@ describe('OpenAI Client', () => {
 
       expect(embeddings.length).toBe(3);
       embeddings.forEach(emb => {
-        expect(emb.length).toBe(3072);
+        expect(emb.length).toBe(1536);
       });
     });
   });
