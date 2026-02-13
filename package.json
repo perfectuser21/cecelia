@@ -36,6 +36,8 @@
     "url": "https://github.com/ZenithJoycloud/cecelia-workspace.git"
   },
   "dependencies": {
+    "echarts": "^5.6.0",
+    "echarts-for-react": "^3.0.6",
     "reactflow": "^11.11.4"
   }
 }

@@ -59,6 +59,7 @@ const manifest: FeatureManifest = {
     QualityMonitorPage: () => import('./pages/QualityMonitorPage'),
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
+    FeatureMap: () => import('./pages/FeatureMap'),
   },
 };
 

@@ -25,6 +25,7 @@ const manifest: FeatureManifest = {
           { path: '/system/infra', label: 'Infrastructure', icon: 'Server', order: 4 },
           { path: '/system/claude', label: 'Claude', icon: 'Brain', order: 5 },
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
+          { path: '/system/feature-map', label: '功能地图', icon: 'Map', order: 7 },
         ],
       },
     },
@@ -33,6 +34,7 @@ const manifest: FeatureManifest = {
     { path: '/system/infra', component: 'SystemTabbed' },
     { path: '/system/claude', component: 'SystemTabbed' },
     { path: '/system/engine', component: 'SystemTabbed' },
+    { path: '/system/feature-map', component: 'SystemTabbed' },
     // Drill-down routes (remain separate)
     { path: '/brain-status', component: 'BrainStatusDashboard' },
     { path: '/system/cecelia/runs', component: 'CeceliaRuns' },

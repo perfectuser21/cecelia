@@ -1,4 +1,4 @@
-import { Activity, Bot, Workflow, Server, Cpu } from 'lucide-react';
+import { Activity, Bot, Workflow, Server, Cpu, Map } from 'lucide-react';
 import { Brain } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
@@ -45,6 +45,13 @@ const tabs: TabConfig[] = [
     icon: Cpu,
     path: '/system/engine',
     component: () => import('./SystemEngineTab'),
+  },
+  {
+    id: 'feature-map',
+    label: '功能地图',
+    icon: Map,
+    path: '/system/feature-map',
+    component: () => import('../../system/pages/FeatureMap'),
   },
 ];
 
