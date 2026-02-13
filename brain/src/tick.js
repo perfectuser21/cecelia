@@ -1210,7 +1210,7 @@ async function executeTick() {
   }
 
   // Apply dispatch rate limit based on alertness level
-  const dispatchRate = getDispatchRate();
+  const dispatchRate = getDispatchRateEnhanced();
   const effectiveDispatchMax = Math.max(1, Math.floor(AUTO_DISPATCH_MAX * dispatchRate));
   if (dispatchRate < 1.0) {
     console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
