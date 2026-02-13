@@ -162,26 +162,33 @@ class SimilarityService {
     // Query KRs (most recent 30)
     const krsResult = await this.db.query(`
       SELECT
-        kr.id, kr.title, kr.description, kr.status,
-        o.id as okr_id, o.objective
+        kr.id, kr.title, kr.target_value, kr.current_value, kr.unit, kr.status,
+        g.id as goal_id, g.title as goal_title
       FROM key_results kr
-      LEFT JOIN okrs o ON kr.okr_id = o.id
+      LEFT JOIN goals g ON kr.goal_id = g.id AND g.type = 'objective'
       WHERE kr.status IN ('active', 'in_progress')
       ORDER BY kr.updated_at DESC
       LIMIT 30
     `);
 
     krsResult.rows.forEach(kr => {
+      // Build text: combine title with target/current values
+      const valueText = kr.target_value ?
+        `target: ${kr.current_value || 0}/${kr.target_value} ${kr.unit || ''}` : '';
+
       entities.push({
         level: 'kr',
         id: kr.id,
         title: kr.title,
-        description: kr.description || '',
+        description: valueText,
         status: kr.status,
-        text: `${kr.title} ${kr.description || ''}`,
+        text: `${kr.title} ${valueText}`,
         metadata: {
-          okr_id: kr.okr_id,
-          okr_objective: kr.objective
+          goal_id: kr.goal_id,
+          goal_title: kr.goal_title,
+          target_value: kr.target_value,
+          current_value: kr.current_value,
+          unit: kr.unit
         }
       });
     });
