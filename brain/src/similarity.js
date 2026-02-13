@@ -95,11 +95,11 @@ class SimilarityService {
     const tasksResult = await this.db.query(`
       SELECT
         t.id, t.title, t.description, t.status, t.metadata, t.project_id,
-        pp.initiative_id, pp.title as pr_plan_title,
-        f.title as initiative_title
+        pp.project_id as initiative_id, pp.title as pr_plan_title,
+        p.name as initiative_title
       FROM tasks t
       LEFT JOIN pr_plans pp ON t.pr_plan_id = pp.id
-      LEFT JOIN features f ON pp.initiative_id = f.id
+      LEFT JOIN projects p ON pp.project_id = p.id
       WHERE ${taskWhereClause}
       ORDER BY t.updated_at DESC
       LIMIT $${paramIndex}
@@ -131,15 +131,16 @@ class SimilarityService {
       });
     });
 
-    // Query Initiatives (most recent 50)
+    // Query Initiatives (Sub-Projects, most recent 50)
     const initiativesResult = await this.db.query(`
       SELECT
-        f.id, f.title, f.description, f.status,
+        p.id, p.name as title, p.description, p.status,
         kr.id as kr_id, kr.title as kr_title
-      FROM features f
-      LEFT JOIN key_results kr ON f.kr_id = kr.id
-      WHERE f.status IN ('active', 'in_progress')
-      ORDER BY f.updated_at DESC
+      FROM projects p
+      LEFT JOIN project_kr_links pkl ON p.id = pkl.project_id
+      LEFT JOIN goals kr ON pkl.kr_id = kr.id AND kr.type = 'key_result'
+      WHERE p.parent_id IS NOT NULL AND p.status IN ('active', 'in_progress')
+      ORDER BY p.updated_at DESC
       LIMIT 50
     `);
 
@@ -147,7 +148,7 @@ class SimilarityService {
       entities.push({
         level: 'initiative',
         id: initiative.id,
-        title: initiative.title,
+        title: initiative.title,  // from p.name
         description: initiative.description || '',
         status: initiative.status,
         text: `${initiative.title} ${initiative.description || ''}`,
