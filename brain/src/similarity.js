@@ -1,15 +1,14 @@
 /**
- * Similarity Service - Phase 0 Implementation
+ * Similarity Service - Phase 0 + Phase 1 Implementation
  *
- * Simple similarity calculation using:
- * - Jaccard similarity (intersection / union of tokens)
- * - Keyword weighting
- * - Status penalty for completed tasks
+ * Phase 0: Jaccard similarity (intersection / union of tokens)
+ * Phase 1: OpenAI embeddings + pgvector (semantic search)
  *
- * Phase 1 will upgrade to embeddings (not in this implementation).
+ * Hybrid search: 70% vector similarity + 30% Jaccard similarity
  */
 
 import pool from './db.js';
+import { generateEmbedding } from './openai-client.js';
 
 class SimilarityService {
   constructor(db) {
@@ -252,6 +251,200 @@ class SimilarityService {
     const tokens = this.tokenize(text);
     const stopwords = ['的', '是', '在', '和', '了', '有', 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at'];
     return tokens.filter(t => !stopwords.includes(t));
+  }
+
+  /**
+   * Search with vector embeddings (Phase 1)
+   * @param {string} query - User query
+   * @param {Object} options - Search options
+   * @param {number} options.topK - Number of results (default: 5)
+   * @param {string} options.repo - Filter by single repo
+   * @param {string[]} options.repos - Filter by multiple repos
+   * @param {string} options.status - Filter by status
+   * @param {string} options.dateFrom - Filter by date range (ISO format)
+   * @param {string} options.dateTo - Filter by date range (ISO format)
+   * @param {number} options.hybridWeight - Vector weight vs Jaccard (default: 0.7)
+   * @param {boolean} options.fallbackToJaccard - Fallback to Jaccard if OpenAI fails (default: true)
+   * @returns {Promise<{matches: Array}>}
+   */
+  async searchWithVectors(query, options = {}) {
+    const {
+      topK = 5,
+      repo = null,
+      repos = [],
+      status = null,
+      dateFrom = null,
+      dateTo = null,
+      hybridWeight = 0.7,
+      fallbackToJaccard = true
+    } = options;
+
+    // 1. Generate query embedding
+    let queryEmbedding;
+    try {
+      queryEmbedding = await generateEmbedding(query);
+    } catch (error) {
+      console.error('OpenAI API failed:', error.message);
+      if (fallbackToJaccard) {
+        console.warn('Falling back to Jaccard similarity');
+        return this.searchSimilar(query, topK, { repo, status, date_from: dateFrom, date_to: dateTo });
+      }
+      throw error;
+    }
+
+    // 2. Build filters
+    const filters = {
+      repo: repo || (repos.length > 0 ? repos : null),
+      status,
+      date_from: dateFrom,
+      date_to: dateTo,
+      limit: topK * 3  // Get more candidates for hybrid ranking
+    };
+
+    // 3. Vector search
+    const vectorResults = await this.vectorSearch(queryEmbedding, filters);
+
+    // 4. Jaccard search (for hybrid)
+    const jaccardResults = await this.searchSimilar(query, topK * 3, filters);
+
+    // 5. Merge results (hybrid)
+    const hybridResults = this.mergeResults(vectorResults.matches, jaccardResults.matches, hybridWeight);
+
+    // 6. Return top K
+    return {
+      matches: hybridResults.slice(0, topK)
+    };
+  }
+
+  /**
+   * Vector search using pgvector
+   * @param {number[]} queryEmbedding - Query embedding vector (3072 dimensions)
+   * @param {Object} filters - Filters (repo, status, date)
+   * @returns {Promise<{matches: Array}>}
+   */
+  async vectorSearch(queryEmbedding, filters = {}) {
+    const matches = [];
+    const { repo, status, date_from, date_to, limit = 15 } = filters;
+
+    // Convert embedding to PostgreSQL vector format
+    const embeddingStr = `[${queryEmbedding.join(',')}]`;
+
+    // Build WHERE clauses
+    const whereClauses = ['t.embedding IS NOT NULL'];
+    const queryParams = [embeddingStr];
+    let paramIndex = 2;
+
+    // Repo filter (single or multiple)
+    if (repo) {
+      if (Array.isArray(repo)) {
+        whereClauses.push(`t.metadata->>'repo' = ANY($${paramIndex})`);
+        queryParams.push(repo);
+      } else {
+        whereClauses.push(`t.metadata->>'repo' = $${paramIndex}`);
+        queryParams.push(repo);
+      }
+      paramIndex++;
+    }
+
+    if (status) {
+      whereClauses.push(`t.status = $${paramIndex}`);
+      queryParams.push(status);
+      paramIndex++;
+    }
+
+    if (date_from) {
+      whereClauses.push(`t.created_at >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereClauses.push(`t.created_at <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const whereClause = whereClauses.join(' AND ');
+
+    // Query tasks
+    const tasksQuery = `
+      SELECT
+        t.id, t.title, t.description, t.status, t.metadata, t.project_id,
+        1 - (t.embedding <=> $1::vector) AS vector_score
+      FROM tasks t
+      WHERE ${whereClause}
+      ORDER BY t.embedding <=> $1::vector
+      LIMIT $${paramIndex}
+    `;
+
+    const tasksResult = await this.db.query(tasksQuery, [...queryParams, limit]);
+
+    tasksResult.rows.forEach(task => {
+      let parsedMetadata = {};
+      if (task.metadata) {
+        parsedMetadata = typeof task.metadata === 'string' ? JSON.parse(task.metadata) : task.metadata;
+      }
+
+      matches.push({
+        level: 'task',
+        id: task.id,
+        title: task.title,
+        description: task.description || '',
+        status: task.status,
+        score: task.vector_score,
+        metadata: {
+          repo: parsedMetadata.repo || null,
+          pr_number: parsedMetadata.pr_number || null,
+          pr_author: parsedMetadata.pr_author || null
+        }
+      });
+    });
+
+    // TODO: Add vector search for projects and goals (similar queries)
+
+    return { matches };
+  }
+
+  /**
+   * Merge vector and Jaccard results using weighted scoring
+   * @param {Array} vectorResults - Results from vector search
+   * @param {Array} jaccardResults - Results from Jaccard search
+   * @param {number} vectorWeight - Weight for vector score (default: 0.7)
+   * @returns {Array} Merged and sorted results
+   */
+  mergeResults(vectorResults, jaccardResults, vectorWeight = 0.7) {
+    const jaccardWeight = 1 - vectorWeight;
+
+    // Create a map of id -> combined score
+    const scoreMap = new Map();
+    const entityMap = new Map();
+
+    // Add vector results
+    vectorResults.forEach(result => {
+      const id = `${result.level}-${result.id}`;
+      scoreMap.set(id, (result.score || 0) * vectorWeight);
+      entityMap.set(id, result);
+    });
+
+    // Add Jaccard results
+    jaccardResults.forEach(result => {
+      const id = `${result.level}-${result.id}`;
+      const existingScore = scoreMap.get(id) || 0;
+      const jaccardScore = (result.score || 0) * jaccardWeight;
+      scoreMap.set(id, existingScore + jaccardScore);
+
+      if (!entityMap.has(id)) {
+        entityMap.set(id, result);
+      }
+    });
+
+    // Combine and sort
+    const combined = Array.from(scoreMap.entries()).map(([id, score]) => ({
+      ...entityMap.get(id),
+      score
+    }));
+
+    return combined.sort((a, b) => b.score - a.score);
   }
 }
 
