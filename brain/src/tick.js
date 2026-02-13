@@ -1076,8 +1076,7 @@ async function executeTick() {
 
   // 6. Planning: if no queued AND no in_progress tasks, invoke planner
   //    Skip if focused objective has no KRs — nothing to plan for
-  //    Skip if alertness level disables planning
-  if (queued.length === 0 && inProgress.length === 0 && krIds.length > 0 && canPlan()) {
+  if (queued.length === 0 && inProgress.length === 0 && krIds.length > 0) {
     try {
       const planned = await planNextTask(krIds);
       if (planned.planned) {
