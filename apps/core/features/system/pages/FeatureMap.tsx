@@ -190,6 +190,8 @@ const FeatureMap: React.FC = () => {
         center: detailsVisible ? ['75%', '45%'] : ['60%', '45%'],
         draggable: true,
         focusNodeAdjacency: true,
+        edgeSymbol: ['none', 'arrow'],
+        edgeSymbolSize: 10,
         edgeLabel: {
           show: true,
           fontSize: 9,
@@ -200,7 +202,8 @@ const FeatureMap: React.FC = () => {
           lineStyle: { width: 6, opacity: 1 }
         },
         lineStyle: {
-          opacity: 0.7
+          opacity: 0.7,
+          curveness: 0.1
         }
       }]
     };
