@@ -339,3 +339,67 @@
 - 掌握了测试数据隔离的最佳实践（beforeEach 清理全局状态）
 - 实践了"95%完成，5%连接"的软件工程常见问题
 - 验证了深度搜索在理解复杂代码库中的价值
+
+## 2026-02-13: Vector Search Implementation (PR #231)
+
+### Context
+Implemented Phase 1 Vector Search using OpenAI embeddings + pgvector for semantic search in Cecelia Brain.
+
+### Major Technical Decision: Model Downgrade (3072 → 1536 dimensions)
+**Problem**: Originally planned to use text-embedding-3-large (3072 dimensions) but discovered pgvector has a **hard 2000-dimension limit** for ALL index types (both ivfflat and hnsw).
+
+**Solution**: Downgraded to text-embedding-3-small (1536 dimensions).
+
+**Impact**:
+- ✅ Fits within pgvector's 2000-dim limit
+- ✅ 10x cheaper ($0.02/1M tokens vs $0.13/1M)
+- ✅ Faster indexing and queries
+- ❌ Slightly lower semantic quality (but acceptable for Phase 1)
+
+**Files changed** in dimension downgrade:
+- `brain/migrations/028_add_embeddings.sql`: vector(3072) → vector(1536)
+- `brain/src/openai-client.js`: model + validation
+- All test files: mock data + expectations
+
+### CI Iteration Learning (7 rounds)
+Each CI failure taught us something new:
+
+1. **Facts consistency**: DEFINITION.md must stay in sync with code
+2. **Version sync**: package.json, .brain-versions, DEFINITION.md must match
+3. **pgvector installation**: Need `pgvector/pgvector:pg15` Docker image, not plain `postgres:15`
+4. **Dimension limits**: All pgvector index types have same 2000-dim limit
+5. **Schema version table**: `updated_at` column doesn't exist, only track `version`
+6. **Migration idempotency**: Use `INSERT ... ON CONFLICT DO NOTHING` pattern
+7. **Missing dependency**: `openai` package wasn't in package.json
+
+### Best Practices Validated
+- ✅ Migration files should be idempotent (ON CONFLICT DO NOTHING)
+- ✅ Always update test expectations when changing implementations
+- ✅ DevGate facts-check catches version drift early
+- ✅ CI as the final judge - local tests can miss environment issues
+
+### Test Coverage Added
+- `openai-client.test.js`: OpenAI API integration (70 lines)
+- `similarity-vectors.test.js`: Vector search + hybrid algorithm (164 lines)
+- Updated `selfcheck.test.js`: Schema version 028
+
+### Performance Notes
+- hnsw index params: `m=16, ef_construction=64` (good balance of speed/quality)
+- Hybrid search: 70% vector + 30% Jaccard (configurable weight)
+- Fallback to Jaccard if OpenAI API fails (resilient design)
+
+### Next Steps (Not Done)
+- Run backfill script to generate embeddings for existing data
+- Monitor OpenAI API costs in production
+- Consider Phase 2: Add vector search for projects and goals tables
+
+### Files Modified
+18 files, +1310 insertions, -19 deletions
+- New: openai-client.js, backfill-embeddings.js, migration 028
+- Enhanced: similarity.js (hybrid search)
+- Tests: Full coverage for new functionality
+
+**PR**: https://github.com/perfectuser21/cecelia-core/pull/231
+**Branch**: cp-02131723-vector-search-phase1
+**Merged**: 2026-02-13 09:48:56 UTC
+
