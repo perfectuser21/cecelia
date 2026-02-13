@@ -25,7 +25,7 @@ async function getLatestSnapshot() {
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus, TASK_TYPE_AGENT_MAP } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP } from './tick.js';
 import {
   createFeature, getFeature, getFeaturesByStatus, updateFeature,
   createFeatureTask, handleFeatureTaskComplete, FEATURE_STATUS
@@ -3756,33 +3756,7 @@ router.post('/route-task', async (req, res) => {
 
 // ==================== Feature Tick API ====================
 
-/**
- * GET /api/brain/feature-tick/status
- * Get Feature tick loop status
- */
-router.get('/feature-tick/status', (req, res) => {
-  res.json({ success: true, ...getFeatureTickStatus() });
-});
-
-/**
- * POST /api/brain/feature-tick/enable
- * Enable Feature tick loop
- */
-router.post('/feature-tick/enable', (req, res) => {
-  const started = startFeatureTickLoop();
-  res.json({ success: true, started, ...getFeatureTickStatus() });
-});
-
-/**
- * POST /api/brain/feature-tick/disable
- * Disable Feature tick loop
- */
-router.post('/feature-tick/disable', (req, res) => {
-  const stopped = stopFeatureTickLoop();
-  res.json({ success: true, stopped, ...getFeatureTickStatus() });
-});
-
-// ==================== Features API ====================
+// ==================== Features API (REMOVED - features table deleted in migration 027) ====================
 
 /**
  * GET /api/brain/features
