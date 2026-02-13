@@ -37,4 +37,6 @@ CREATE INDEX IF NOT EXISTS goals_embedding_idx
   WITH (m = 16, ef_construction = 64);
 
 -- 4. Update schema version
-UPDATE schema_version SET version = '028';
+INSERT INTO schema_version (version, description)
+VALUES ('028', 'Add Vector Embeddings Support - pgvector extension + embedding columns')
+ON CONFLICT (version) DO NOTHING;
