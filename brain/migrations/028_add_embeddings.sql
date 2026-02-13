@@ -15,24 +15,25 @@ ALTER TABLE projects
 ALTER TABLE goals
   ADD COLUMN IF NOT EXISTS embedding vector(3072);
 
--- 3. Create vector indexes using ivfflat
--- Lists parameter: sqrt(num_rows) is a good starting point
--- We use 100 as a reasonable default for initial deployment
+-- 3. Create vector indexes using hnsw
+-- hnsw (Hierarchical Navigable Small World) supports large dimensions (3072+)
+-- m=16: number of connections per layer (good balance of speed/quality)
+-- ef_construction=64: construction time parameter (higher = better quality but slower build)
 
 CREATE INDEX IF NOT EXISTS tasks_embedding_idx
   ON tasks
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 
 CREATE INDEX IF NOT EXISTS projects_embedding_idx
   ON projects
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 
 CREATE INDEX IF NOT EXISTS goals_embedding_idx
   ON goals
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 
 -- 4. Update schema version
 UPDATE schema_version SET version = '028', updated_at = CURRENT_TIMESTAMP;
