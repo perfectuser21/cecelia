@@ -96,7 +96,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_DB: cecelia
           POSTGRES_USER: cecelia
