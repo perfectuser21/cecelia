@@ -11,7 +11,6 @@ import { compareGoalProgress, generateDecision, executeDecision } from './decisi
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
-import { runFeatureTickSafe, startFeatureTickLoop, stopFeatureTickLoop, getFeatureTickStatus } from './feature-tick.js';
 import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
@@ -939,35 +938,6 @@ async function executeTick() {
     );
   }
 
-  // 2.5 Feature Tick: process Features with planning/task_completed status
-  let featureTickResult = null;
-  try {
-    featureTickResult = await runFeatureTickSafe();
-    if (featureTickResult.actions_taken?.length > 0) {
-      actionsTaken.push({
-        action: 'feature_tick',
-        planning_processed: featureTickResult.planning_processed,
-        completed_processed: featureTickResult.completed_processed,
-        feature_actions: featureTickResult.actions_taken
-      });
-
-      await logTickDecision(
-        'tick',
-        `Feature Tick: ${featureTickResult.actions_taken.length} actions`,
-        { action: 'feature_tick', ...featureTickResult },
-        { success: true }
-      );
-    }
-  } catch (err) {
-    console.error('[tick-loop] Feature Tick error:', err.message);
-    await logTickDecision(
-      'tick',
-      `Feature Tick error: ${err.message}`,
-      { action: 'feature_tick_error', error: err.message },
-      { success: false }
-    );
-  }
-
   // 2.6 Anti-crossing cleanup: clear orphaned task references
   try {
     const orphansCleaned = await cleanupOrphanedTaskRefs();
@@ -1231,7 +1201,6 @@ async function executeTick() {
       success: true,
       alertness: alertnessResult,
       decision_engine: decisionEngineResult,
-      feature_tick: featureTickResult,
       focus: { objective_id: objectiveId, objective_title: focus.objective.title },
       dispatch: { dispatched: 0, reason: 'alertness_disabled' },
       actions_taken: actionsTaken,
@@ -1241,7 +1210,7 @@ async function executeTick() {
   }
 
   // Apply dispatch rate limit based on alertness level
-  const dispatchRate = getDispatchRate();
+  const dispatchRate = getDispatchRateEnhanced();
   const effectiveDispatchMax = Math.max(1, Math.floor(AUTO_DISPATCH_MAX * dispatchRate));
   if (dispatchRate < 1.0) {
     console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
@@ -1313,7 +1282,6 @@ async function executeTick() {
     success: true,
     alertness: alertnessResult,
     decision_engine: decisionEngineResult,
-    feature_tick: featureTickResult,
     focus: {
       objective_id: objectiveId,
       objective_title: focus.objective.title
@@ -1450,10 +1418,6 @@ export {
   cancelDrain,
   _getDrainState,
   _resetDrainState,
-  // Feature Tick re-exports
-  startFeatureTickLoop,
-  stopFeatureTickLoop,
-  getFeatureTickStatus,
   TASK_TYPE_AGENT_MAP,
   TICK_INTERVAL_MINUTES,
   TICK_LOOP_INTERVAL_MS,

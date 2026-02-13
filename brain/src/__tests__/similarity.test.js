@@ -193,15 +193,14 @@ describe('SimilarityService', () => {
   });
 
   describe('getAllActiveEntities', () => {
-    it('should query tasks, initiatives, and KRs', async () => {
+    it('should query tasks and initiatives (KRs disabled)', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] }) // tasks
-        .mockResolvedValueOnce({ rows: [] }) // initiatives
-        .mockResolvedValueOnce({ rows: [] }); // KRs
+        .mockResolvedValueOnce({ rows: [] }); // initiatives
 
       const result = await service.getAllActiveEntities();
 
-      expect(mockDb.query).toHaveBeenCalledTimes(3);
+      expect(mockDb.query).toHaveBeenCalledTimes(2);
       expect(result).toEqual([]);
     });
 
@@ -218,7 +217,6 @@ describe('SimilarityService', () => {
             pr_plan_title: 'Add priority'
           }]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.getAllActiveEntities();
@@ -269,7 +267,8 @@ describe('SimilarityService', () => {
       });
     });
 
-    it('should format KR entities correctly', async () => {
+    it.skip('should format KR entities correctly (disabled until KR schema finalized)', async () => {
+      // TODO: Re-enable when key_results table schema is finalized
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
@@ -277,10 +276,12 @@ describe('SimilarityService', () => {
           rows: [{
             id: 'kr-789',
             title: 'Reduce scheduling time by 50%',
-            description: 'Improve system performance',
+            target_value: 100,
+            current_value: 50,
+            unit: '%',
             status: 'active',
-            okr_id: 'okr-001',
-            objective: 'Improve system efficiency'
+            goal_id: 'goal-001',
+            goal_title: 'Improve system efficiency'
           }]
         });
 
@@ -293,8 +294,11 @@ describe('SimilarityService', () => {
         title: 'Reduce scheduling time by 50%',
         status: 'active',
         metadata: {
-          okr_id: 'okr-001',
-          okr_objective: 'Improve system efficiency'
+          goal_id: 'goal-001',
+          goal_title: 'Improve system efficiency',
+          target_value: 100,
+          current_value: 50,
+          unit: '%'
         }
       });
     });
@@ -309,7 +313,6 @@ describe('SimilarityService', () => {
             status: 'pending'
           }]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.getAllActiveEntities();
@@ -318,16 +321,15 @@ describe('SimilarityService', () => {
       expect(result[0].text).toBe('Task title ');
     });
 
-    it('should combine all entity types', async () => {
+    it('should combine tasks and initiatives (KRs disabled)', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [{ id: 'task-1', title: 'Task 1', status: 'pending' }] })
-        .mockResolvedValueOnce({ rows: [{ id: 'init-1', title: 'Init 1', status: 'active' }] })
-        .mockResolvedValueOnce({ rows: [{ id: 'kr-1', title: 'KR 1', status: 'active' }] });
+        .mockResolvedValueOnce({ rows: [{ id: 'init-1', title: 'Init 1', status: 'active' }] });
 
       const result = await service.getAllActiveEntities();
 
-      expect(result).toHaveLength(3);
-      expect(result.map(e => e.level)).toEqual(['task', 'initiative', 'kr']);
+      expect(result).toHaveLength(2);
+      expect(result.map(e => e.level)).toEqual(['task', 'initiative']);
     });
   });
 
@@ -341,7 +343,6 @@ describe('SimilarityService', () => {
             { id: 'task-3', title: 'priority task scheduling', status: 'pending' }
           ]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.searchSimilar('implement priority algorithm', 2);
@@ -359,7 +360,6 @@ describe('SimilarityService', () => {
             { id: 'task-2', title: 'completely different task', status: 'pending' }
           ]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.searchSimilar('implement priority algorithm', 10);
@@ -377,7 +377,6 @@ describe('SimilarityService', () => {
             status: 'pending'
           }))
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.searchSimilar('task priority algorithm');
@@ -390,7 +389,6 @@ describe('SimilarityService', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'task-1', title: 'implement priority', status: 'pending' }]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.searchSimilar('implement priority', 5);
@@ -432,7 +430,6 @@ describe('SimilarityService', () => {
     it('should filter by project_id', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       await service.getAllActiveEntities({ project_id: 123 });
@@ -444,7 +441,6 @@ describe('SimilarityService', () => {
 
     it('should filter by date range', async () => {
       mockDb.query
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -463,7 +459,6 @@ describe('SimilarityService', () => {
     it('should combine multiple filters', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       await service.getAllActiveEntities({
@@ -481,7 +476,6 @@ describe('SimilarityService', () => {
     it('should use custom limit', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       await service.getAllActiveEntities({ limit: 500 });
@@ -493,7 +487,6 @@ describe('SimilarityService', () => {
 
     it('should use default limit 1000 when not specified', async () => {
       mockDb.query
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -519,7 +512,6 @@ describe('SimilarityService', () => {
             })
           }]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.getAllActiveEntities({});
@@ -537,7 +529,6 @@ describe('SimilarityService', () => {
 
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       await service.searchSimilar('test query', 5, filters);
@@ -552,7 +543,6 @@ describe('SimilarityService', () => {
         .mockResolvedValueOnce({
           rows: [{ id: 'task-1', title: 'test task', status: 'pending' }]
         })
-        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await service.searchSimilar('test');

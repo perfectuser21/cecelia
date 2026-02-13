@@ -173,9 +173,11 @@ async function generateNextTask(kr, project, state, options = {}) {
  * @returns {Array} - Array of PR Plan objects
  */
 async function getPrPlansByInitiative(initiativeId) {
+  // Note: After migration 027, Initiative = Project (same entity)
+  // This function queries by project_id, but keeps "Initiative" naming for backward compatibility
   const result = await pool.query(`
     SELECT * FROM pr_plans
-    WHERE initiative_id = $1
+    WHERE project_id = $1
     ORDER BY sequence ASC
   `, [initiativeId]);
   return result.rows;
@@ -298,12 +300,13 @@ async function planNextTask(scopeKRIds = null) {
   const state = await getGlobalState();
 
   // V3: Check for PR Plans first (三层拆解优先)
-  // Query all Initiatives (features with type='initiative' or features referenced by pr_plans)
+  // Query all Initiatives (Sub-Projects with PR Plans)
+  // After migration 027: Initiative = Sub-Project (in projects table)
   const initiativesResult = await pool.query(`
-    SELECT DISTINCT f.* FROM features f
-    INNER JOIN pr_plans pp ON f.id = pp.initiative_id
+    SELECT DISTINCT p.* FROM projects p
+    INNER JOIN pr_plans pp ON p.id = pp.project_id
     WHERE pp.status IN ('planning', 'in_progress')
-    ORDER BY f.created_at ASC
+    ORDER BY p.created_at ASC
   `);
 
   for (const initiative of initiativesResult.rows) {
@@ -323,7 +326,7 @@ async function planNextTask(scopeKRIds = null) {
           source: 'pr_plan',
           pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, sequence: nextPrPlan.sequence },
           task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id },
-          initiative: { id: initiative.id, title: initiative.title }
+          initiative: { id: initiative.id, title: initiative.name }
         };
       }
 
@@ -332,7 +335,7 @@ async function planNextTask(scopeKRIds = null) {
         planned: false,
         reason: 'pr_plan_needs_task',
         pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, dod: nextPrPlan.dod },
-        initiative: { id: initiative.id, title: initiative.title }
+        initiative: { id: initiative.id, title: initiative.name }
       };
     }
   }
