@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-13
-**Brain 版本**: 1.31.2
+**Brain 版本**: 1.31.3
 **Schema 版本**: 027
 **状态**: 生产运行中
 
@@ -336,6 +336,7 @@ queued → in_progress → completed
 | review | US | 审查员 (/review) | Sonnet |
 | qa | US | 小检 (/qa) | Sonnet |
 | audit | US | 小审 (/audit) | Sonnet |
+| exploratory | US | Exploratory (/exploratory) | Opus |
 | talk | HK | MiniMax | MiniMax |
 | research | HK | MiniMax | MiniMax |
 | data | HK | N8N | - |
@@ -554,7 +555,8 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 │  └ Claude Code (headed)     │     │                             │
 │                             │     │  任务类型：                 │
 │  任务类型：                 │     │  talk, research, data       │
-│  dev, review, qa, audit     │     │                             │
+│  dev, review, qa, audit,    │     │                             │
+│  exploratory                │     │                             │
 │  ENV_REGION=us              │     │  ENV_REGION=hk              │
 └─────────────────────────────┘     └─────────────────────────────┘
 ```
