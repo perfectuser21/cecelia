@@ -277,10 +277,12 @@ describe('SimilarityService', () => {
           rows: [{
             id: 'kr-789',
             title: 'Reduce scheduling time by 50%',
-            description: 'Improve system performance',
+            target_value: 100,
+            current_value: 50,
+            unit: '%',
             status: 'active',
-            okr_id: 'okr-001',
-            objective: 'Improve system efficiency'
+            goal_id: 'goal-001',
+            goal_title: 'Improve system efficiency'
           }]
         });
 
@@ -293,8 +295,11 @@ describe('SimilarityService', () => {
         title: 'Reduce scheduling time by 50%',
         status: 'active',
         metadata: {
-          okr_id: 'okr-001',
-          okr_objective: 'Improve system efficiency'
+          goal_id: 'goal-001',
+          goal_title: 'Improve system efficiency',
+          target_value: 100,
+          current_value: 50,
+          unit: '%'
         }
       });
     });
