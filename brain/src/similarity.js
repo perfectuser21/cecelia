@@ -318,7 +318,7 @@ class SimilarityService {
 
   /**
    * Vector search using pgvector
-   * @param {number[]} queryEmbedding - Query embedding vector (3072 dimensions)
+   * @param {number[]} queryEmbedding - Query embedding vector (1536 dimensions)
    * @param {Object} filters - Filters (repo, status, date)
    * @returns {Promise<{matches: Array}>}
    */

@@ -5,15 +5,16 @@
 -- 1. Install pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 2. Add embedding columns (3072 dimensions for text-embedding-3-large)
+-- 2. Add embedding columns (1536 dimensions for text-embedding-3-small)
+-- Note: pgvector has 2000 dimension limit for indexes, so we use 1536
 ALTER TABLE tasks
-  ADD COLUMN IF NOT EXISTS embedding vector(3072);
+  ADD COLUMN IF NOT EXISTS embedding vector(1536);
 
 ALTER TABLE projects
-  ADD COLUMN IF NOT EXISTS embedding vector(3072);
+  ADD COLUMN IF NOT EXISTS embedding vector(1536);
 
 ALTER TABLE goals
-  ADD COLUMN IF NOT EXISTS embedding vector(3072);
+  ADD COLUMN IF NOT EXISTS embedding vector(1536);
 
 -- 3. Create vector indexes using hnsw
 -- hnsw (Hierarchical Navigable Small World) supports large dimensions (3072+)

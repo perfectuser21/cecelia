@@ -12,7 +12,7 @@ vi.mock('openai', () => {
       embeddings: {
         create: vi.fn().mockResolvedValue({
           data: [{
-            embedding: new Array(3072).fill(0.1)  // Mock 3072-dim vector
+            embedding: new Array(1536).fill(0.1)  // Mock 3072-dim vector
           }]
         })
       }

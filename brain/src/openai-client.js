@@ -2,7 +2,7 @@
  * OpenAI Client - Embedding Generation
  *
  * Provides embedding generation for semantic search.
- * Uses text-embedding-3-large (3072 dimensions).
+ * Uses text-embedding-3-small (1536 dimensions).
  */
 
 import OpenAI from 'openai';
@@ -31,7 +31,7 @@ function getOpenAIClient() {
  * @param {Object} options - Options
  * @param {number} options.maxLength - Maximum text length (default: 8000)
  * @param {number} options.retries - Number of retries on failure (default: 2)
- * @returns {Promise<number[]>} Embedding vector (3072 dimensions)
+ * @returns {Promise<number[]>} Embedding vector (1536 dimensions)
  * @throws {Error} If API call fails after retries
  */
 export async function generateEmbedding(text, options = {}) {
@@ -54,7 +54,7 @@ export async function generateEmbedding(text, options = {}) {
     try {
       const client = getOpenAIClient();
       const response = await client.embeddings.create({
-        model: 'text-embedding-3-large',
+        model: 'text-embedding-3-small',
         input: truncatedText,
         encoding_format: 'float'
       });
@@ -63,8 +63,8 @@ export async function generateEmbedding(text, options = {}) {
       const embedding = response.data[0].embedding;
 
       // Validate dimensions
-      if (embedding.length !== 3072) {
-        throw new Error(`Unexpected embedding dimensions: ${embedding.length} (expected 3072)`);
+      if (embedding.length !== 1536) {
+        throw new Error(`Unexpected embedding dimensions: ${embedding.length} (expected 1536)`);
       }
 
       return embedding;

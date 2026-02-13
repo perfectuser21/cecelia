@@ -7,7 +7,7 @@ import SimilarityService from '../similarity.js';
 
 // Mock OpenAI client
 vi.mock('../openai-client.js', () => ({
-  generateEmbedding: vi.fn().mockResolvedValue(new Array(3072).fill(0.1))
+  generateEmbedding: vi.fn().mockResolvedValue(new Array(1536).fill(0.1))
 }));
 
 describe('SimilarityService - Vector Search', () => {
@@ -101,7 +101,7 @@ describe('SimilarityService - Vector Search', () => {
 
   describe('vectorSearch', () => {
     it('should search using pgvector cosine similarity', async () => {
-      const queryEmbedding = new Array(3072).fill(0.1);
+      const queryEmbedding = new Array(1536).fill(0.1);
 
       mockDb.query.mockResolvedValue({
         rows: [{
