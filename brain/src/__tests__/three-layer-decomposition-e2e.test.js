@@ -54,72 +54,75 @@ describe('Three-Layer Decomposition E2E', () => {
     `);
     testProject = projectResult.rows[0];
 
-    // Create Initiative A (features table, linked to KR)
+    // Create Initiative A (Sub-Project, linked to KR)
+    // After migration 027: Initiative = Sub-Project (parent_id=Project, repo_path=NULL)
     const initiativeAResult = await pool.query(`
-      INSERT INTO features (title, description, status, goal_id)
+      INSERT INTO projects (name, description, status, parent_id, kr_id)
       VALUES (
         'User Authentication System',
         'Complete auth system with OAuth',
         'planning',
-        $1
+        $1,
+        $2
       )
       RETURNING *
-    `, [testKR.id]);
+    `, [testProject.id, testKR.id]);
     testInitiativeA = initiativeAResult.rows[0];
 
-    // Create Initiative B
+    // Create Initiative B (Sub-Project)
     const initiativeBResult = await pool.query(`
-      INSERT INTO features (title, description, status, goal_id)
+      INSERT INTO projects (name, description, status, parent_id, kr_id)
       VALUES (
         'Dashboard Analytics',
         'Real-time analytics dashboard',
         'planning',
-        $1
+        $1,
+        $2
       )
       RETURNING *
-    `, [testKR.id]);
+    `, [testProject.id, testKR.id]);
     testInitiativeB = initiativeBResult.rows[0];
 
     // Create PR Plan 1 for Initiative A (no dependencies)
     const prPlan1Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'Basic Auth API', 'Implement login/logout endpoints', '{}', 1, '{}', 'medium', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'Basic Auth API', 'Implement login/logout endpoints', '{}', 1, '{}', 'medium', 'planning')
       RETURNING *
-    `, [testInitiativeA.id, testProject.id]);
+    `, [testInitiativeA.id]);
     prPlan1 = prPlan1Result.rows[0];
 
     // Create PR Plan 2 for Initiative A (depends on PR Plan 1)
     const prPlan2Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'OAuth Integration', 'Add Google/GitHub OAuth', '{}', 2, $3, 'large', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'OAuth Integration', 'Add Google/GitHub OAuth', '{}', 2, $2, 'large', 'planning')
       RETURNING *
-    `, [testInitiativeA.id, testProject.id, `{"${prPlan1.id}"}`]);
+    `, [testInitiativeA.id, `{"${prPlan1.id}"}`]);
     prPlan2 = prPlan2Result.rows[0];
 
     // Create PR Plan 3 for Initiative A (depends on PR Plan 2)
     const prPlan3Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'Session Management', 'JWT tokens and refresh', '{}', 3, $3, 'medium', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'Session Management', 'JWT tokens and refresh', '{}', 3, $2, 'medium', 'planning')
       RETURNING *
-    `, [testInitiativeA.id, testProject.id, `{"${prPlan2.id}"}`]);
+    `, [testInitiativeA.id, `{"${prPlan2.id}"}`]);
     prPlan3 = prPlan3Result.rows[0];
 
     // Create PR Plan for Initiative B (independent)
     const prPlanB1Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'Chart Components', 'Build reusable chart library', '{}', 1, '{}', 'small', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'Chart Components', 'Build reusable chart library', '{}', 1, '{}', 'small', 'planning')
       RETURNING *
-    `, [testInitiativeB.id, testProject.id]);
+    `, [testInitiativeB.id]);
     prPlanB1 = prPlanB1Result.rows[0];
   });
 
   afterEach(async () => {
     // Clean up in correct order to avoid FK violations
-    // tasks → pr_plans → features → goals → projects
+    // tasks → pr_plans → sub-projects (initiatives) → projects → goals
     if (prPlan1 || prPlan2 || prPlan3 || prPlanB1) {
       await pool.query('DELETE FROM tasks WHERE pr_plan_id IN ($1, $2, $3, $4)', [
         prPlan1?.id || null,
@@ -129,8 +132,15 @@ describe('Three-Layer Decomposition E2E', () => {
       ]);
     }
 
+    // Delete pr_plans manually
+    if (prPlan1) await pool.query('DELETE FROM pr_plans WHERE id = $1', [prPlan1.id]);
+    if (prPlan2) await pool.query('DELETE FROM pr_plans WHERE id = $1', [prPlan2.id]);
+    if (prPlan3) await pool.query('DELETE FROM pr_plans WHERE id = $1', [prPlan3.id]);
+    if (prPlanB1) await pool.query('DELETE FROM pr_plans WHERE id = $1', [prPlanB1.id]);
+
+    // Delete sub-projects (initiatives) - must delete before parent project
     if (testInitiativeA || testInitiativeB) {
-      await pool.query('DELETE FROM features WHERE id IN ($1, $2)', [
+      await pool.query('DELETE FROM projects WHERE id IN ($1, $2)', [
         testInitiativeA?.id || null,
         testInitiativeB?.id || null
       ]);
@@ -165,11 +175,11 @@ describe('Three-Layer Decomposition E2E', () => {
         INSERT INTO tasks (title, project_id, pr_plan_id, goal_id, status, task_type)
         VALUES ('Implement login endpoint', $1, $2, $3, 'queued', 'dev')
         RETURNING *
-      `, [testProject.id, prPlan1.id, testKR.id]);
+      `, [testInitiativeA.id, prPlan1.id, testKR.id]);
       const task1 = task1Result.rows[0];
 
       expect(task1.pr_plan_id).toBe(prPlan1.id);
-      expect(task1.project_id).toBe(testProject.id);
+      expect(task1.project_id).toBe(testInitiativeA.id);
 
       // Step 3: planNextTask should now return the created task
       const plan1WithTask = await planNextTask();
@@ -285,12 +295,12 @@ describe('Three-Layer Decomposition E2E', () => {
       // Get PR Plans for Initiative A
       const prPlansA = await getPrPlansByInitiative(testInitiativeA.id);
       expect(prPlansA).toHaveLength(3);
-      expect(prPlansA.every(p => p.initiative_id === testInitiativeA.id)).toBe(true);
+      expect(prPlansA.every(p => p.project_id === testInitiativeA.id)).toBe(true);
 
       // Get PR Plans for Initiative B
       const prPlansB = await getPrPlansByInitiative(testInitiativeB.id);
       expect(prPlansB).toHaveLength(1);
-      expect(prPlansB[0].initiative_id).toBe(testInitiativeB.id);
+      expect(prPlansB[0].project_id).toBe(testInitiativeB.id);
 
       // Verify isolation
       expect(prPlansA.some(p => p.id === prPlanB1.id)).toBe(false);
@@ -320,13 +330,13 @@ describe('Three-Layer Decomposition E2E', () => {
       await pool.query('UPDATE pr_plans SET status = $1 WHERE id = $2', ['in_progress', prPlan1.id]);
       await pool.query('UPDATE pr_plans SET status = $1 WHERE id = $2', ['in_progress', prPlanB1.id]);
 
-      // Add completed tasks for both
+      // Add completed tasks for both initiatives
       await pool.query(`
         INSERT INTO tasks (title, project_id, pr_plan_id, status)
         VALUES
           ('Task A1', $1, $2, 'completed'),
-          ('Task B1', $1, $3, 'completed')
-      `, [testProject.id, prPlan1.id, prPlanB1.id]);
+          ('Task B1', $3, $4, 'completed')
+      `, [testInitiativeA.id, prPlan1.id, testInitiativeB.id, prPlanB1.id]);
 
       // Auto-completion should handle both
       const completedIds = await checkPrPlansCompletion();
@@ -346,7 +356,7 @@ describe('Three-Layer Decomposition E2E', () => {
         VALUES
           ('Task 1', $1, $2, 'completed'),
           ('Task 2', $1, $2, 'completed')
-      `, [testProject.id, prPlan1.id]);
+      `, [testInitiativeA.id, prPlan1.id]);
 
       // Run auto-completion
       const completedIds = await checkPrPlansCompletion();
@@ -369,7 +379,7 @@ describe('Three-Layer Decomposition E2E', () => {
         VALUES
           ('Task 1', $1, $2, 'completed'),
           ('Task 2', $1, $2, 'in_progress')
-      `, [testProject.id, prPlan1.id]);
+      `, [testInitiativeA.id, prPlan1.id]);
 
       // Run auto-completion
       const completedIds = await checkPrPlansCompletion();
@@ -386,13 +396,13 @@ describe('Three-Layer Decomposition E2E', () => {
       await pool.query('UPDATE pr_plans SET status = $1 WHERE id IN ($2, $3)',
         ['in_progress', prPlan1.id, prPlanB1.id]);
 
-      // Add completed tasks for both
+      // Add completed tasks for both initiatives
       await pool.query(`
         INSERT INTO tasks (title, project_id, pr_plan_id, status)
         VALUES
           ('Task A', $1, $2, 'completed'),
-          ('Task B', $1, $3, 'completed')
-      `, [testProject.id, prPlan1.id, prPlanB1.id]);
+          ('Task B', $3, $4, 'completed')
+      `, [testInitiativeA.id, prPlan1.id, testInitiativeB.id, prPlanB1.id]);
 
       // Run auto-completion
       const completedIds = await checkPrPlansCompletion();
@@ -405,19 +415,19 @@ describe('Three-Layer Decomposition E2E', () => {
 
   describe('Edge Cases', () => {
     it('should handle Initiative with no PR Plans', async () => {
-      // Create Initiative without PR Plans
+      // Create Initiative (Sub-Project) without PR Plans
       const emptyInitResult = await pool.query(`
-        INSERT INTO features (title, description, status, goal_id)
-        VALUES ('Empty Initiative', 'No PR Plans yet', 'planning', $1)
+        INSERT INTO projects (name, description, status, parent_id, kr_id)
+        VALUES ('Empty Initiative', 'No PR Plans yet', 'planning', $1, $2)
         RETURNING *
-      `, [testKR.id]);
+      `, [testProject.id, testKR.id]);
       const emptyInit = emptyInitResult.rows[0];
 
       const nextPlan = await getNextPrPlan(emptyInit.id);
       expect(nextPlan).toBeNull();
 
       // Clean up
-      await pool.query('DELETE FROM features WHERE id = $1', [emptyInit.id]);
+      await pool.query('DELETE FROM projects WHERE id = $1', [emptyInit.id]);
     });
 
     it('should handle PR Plan with no tasks', async () => {
@@ -434,7 +444,7 @@ describe('Three-Layer Decomposition E2E', () => {
 
     it('should handle all PR Plans completed for an Initiative', async () => {
       // Complete all PR Plans for Initiative A
-      await pool.query('UPDATE pr_plans SET status = $1 WHERE initiative_id = $2',
+      await pool.query('UPDATE pr_plans SET status = $1 WHERE project_id = $2',
         ['completed', testInitiativeA.id]);
 
       const nextPlan = await getNextPrPlan(testInitiativeA.id);

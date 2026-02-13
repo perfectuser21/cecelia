@@ -15,10 +15,10 @@ import {
 } from '../planner.js';
 
 describe('PR Plans Dispatch', () => {
-  let testProject, testInitiative, testPrPlan1, testPrPlan2, testPrPlan3;
+  let testProject, testPrPlan1, testPrPlan2, testPrPlan3;
 
   beforeEach(async () => {
-    // Create test project
+    // Create test project (Project = Initiative after migration 027)
     const projectResult = await pool.query(`
       INSERT INTO projects (name, repo_path, status)
       VALUES ('test-repo', '/test/repo', 'active')
@@ -26,44 +26,36 @@ describe('PR Plans Dispatch', () => {
     `);
     testProject = projectResult.rows[0];
 
-    // Create test initiative (stored in features table)
-    const initiativeResult = await pool.query(`
-      INSERT INTO features (title, description, status)
-      VALUES ('Test Initiative', 'Test initiative for PR Plans', 'planning')
-      RETURNING *
-    `);
-    testInitiative = initiativeResult.rows[0];
-
     // Create PR Plan 1 (no dependencies)
     const prPlan1Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'PR Plan 1', 'DoD for PR 1', '{}', 1, '{}', 'medium', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'PR Plan 1', 'DoD for PR 1', '{}', 1, '{}', 'medium', 'planning')
       RETURNING *
-    `, [testInitiative.id, testProject.id]);
+    `, [testProject.id]);
     testPrPlan1 = prPlan1Result.rows[0];
 
     // Create PR Plan 2 (depends on PR Plan 1)
     const prPlan2Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'PR Plan 2', 'DoD for PR 2', '{}', 2, $3, 'medium', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'PR Plan 2', 'DoD for PR 2', '{}', 2, $2, 'medium', 'planning')
       RETURNING *
-    `, [testInitiative.id, testProject.id, `{"${testPrPlan1.id}"}`]);
+    `, [testProject.id, `{"${testPrPlan1.id}"}`]);
     testPrPlan2 = prPlan2Result.rows[0];
 
     // Create PR Plan 3 (depends on PR Plan 2)
     const prPlan3Result = await pool.query(`
       INSERT INTO pr_plans (
-        initiative_id, project_id, title, dod, files, sequence, depends_on, complexity, status
-      ) VALUES ($1, $2, 'PR Plan 3', 'DoD for PR 3', '{}', 3, $3, 'medium', 'planning')
+        project_id, title, dod, files, sequence, depends_on, complexity, status
+      ) VALUES ($1, 'PR Plan 3', 'DoD for PR 3', '{}', 3, $2, 'medium', 'planning')
       RETURNING *
-    `, [testInitiative.id, testProject.id, `{"${testPrPlan2.id}"}`]);
+    `, [testProject.id, `{"${testPrPlan2.id}"}`]);
     testPrPlan3 = prPlan3Result.rows[0];
   });
 
   afterEach(async () => {
-    // Clean up test data in correct order (tasks → pr_plans → features/projects)
+    // Clean up test data in correct order (tasks → pr_plans → projects)
     // First delete any tasks that reference pr_plans
     if (testPrPlan1 || testPrPlan2 || testPrPlan3) {
       await pool.query('DELETE FROM tasks WHERE pr_plan_id IN ($1, $2, $3)', [
@@ -73,10 +65,10 @@ describe('PR Plans Dispatch', () => {
       ]);
     }
 
-    // Delete features (will cascade to pr_plans)
-    if (testInitiative) {
-      await pool.query('DELETE FROM features WHERE id = $1', [testInitiative.id]);
-    }
+    // Delete pr_plans manually (project deletion won't cascade)
+    if (testPrPlan1) await pool.query('DELETE FROM pr_plans WHERE id = $1', [testPrPlan1.id]);
+    if (testPrPlan2) await pool.query('DELETE FROM pr_plans WHERE id = $1', [testPrPlan2.id]);
+    if (testPrPlan3) await pool.query('DELETE FROM pr_plans WHERE id = $1', [testPrPlan3.id]);
 
     // Delete project
     if (testProject) {
@@ -86,7 +78,7 @@ describe('PR Plans Dispatch', () => {
 
   describe('getPrPlansByInitiative', () => {
     it('should return all PR Plans for an Initiative sorted by sequence', async () => {
-      const prPlans = await getPrPlansByInitiative(testInitiative.id);
+      const prPlans = await getPrPlansByInitiative(testProject.id);
 
       expect(prPlans).toHaveLength(3);
       expect(prPlans[0].sequence).toBe(1);
@@ -182,7 +174,7 @@ describe('PR Plans Dispatch', () => {
 
   describe('getNextPrPlan', () => {
     it('should return first PR Plan with no dependencies', async () => {
-      const nextPrPlan = await getNextPrPlan(testInitiative.id);
+      const nextPrPlan = await getNextPrPlan(testProject.id);
 
       expect(nextPrPlan).not.toBeNull();
       expect(nextPrPlan.id).toBe(testPrPlan1.id);
@@ -191,10 +183,10 @@ describe('PR Plans Dispatch', () => {
 
     it('should return null when no pending PR Plans exist', async () => {
       // Mark all PR Plans as completed
-      await pool.query('UPDATE pr_plans SET status = $1 WHERE initiative_id = $2',
-        ['completed', testInitiative.id]);
+      await pool.query('UPDATE pr_plans SET status = $1 WHERE project_id = $2',
+        ['completed', testProject.id]);
 
-      const nextPrPlan = await getNextPrPlan(testInitiative.id);
+      const nextPrPlan = await getNextPrPlan(testProject.id);
       expect(nextPrPlan).toBeNull();
     });
 
@@ -202,7 +194,7 @@ describe('PR Plans Dispatch', () => {
       // Complete PR Plan 1
       await pool.query('UPDATE pr_plans SET status = $1 WHERE id = $2', ['completed', testPrPlan1.id]);
 
-      const nextPrPlan = await getNextPrPlan(testInitiative.id);
+      const nextPrPlan = await getNextPrPlan(testProject.id);
 
       expect(nextPrPlan).not.toBeNull();
       expect(nextPrPlan.id).toBe(testPrPlan2.id);
@@ -213,7 +205,7 @@ describe('PR Plans Dispatch', () => {
       // Only PR Plan 2 and 3 are pending, but both depend on others
       await pool.query('UPDATE pr_plans SET status = $1 WHERE id = $2', ['in_progress', testPrPlan1.id]);
 
-      const nextPrPlan = await getNextPrPlan(testInitiative.id);
+      const nextPrPlan = await getNextPrPlan(testProject.id);
       expect(nextPrPlan).toBeNull(); // PR Plan 1 in_progress, not completed
     });
   });

@@ -15,13 +15,12 @@
 import crypto from 'crypto';
 
 /** Must match the highest migration version in migrations/ */
-export const EXPECTED_SCHEMA_VERSION = '026';
+export const EXPECTED_SCHEMA_VERSION = '027';
 
 const CORE_TABLES = [
   'tasks',
   'goals',
   'projects',
-  'features',
   'working_memory',
   'cecelia_events',
   'decision_log',
