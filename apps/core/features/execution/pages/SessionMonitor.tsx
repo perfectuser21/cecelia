@@ -19,7 +19,7 @@ interface SessionData {
   error?: string;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_API_URL) || '';
 
 // Emoji icons for status (different from lucide-react icons)
 const getStatusIcon = (status: string) => {

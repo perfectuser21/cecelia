@@ -1,6 +1,6 @@
 // N8n Live Status API client
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_API_URL) || '';
 
 export type N8nInstance = 'cloud' | 'local';
 

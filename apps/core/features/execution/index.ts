@@ -14,6 +14,8 @@ const manifest: FeatureManifest = {
   routes: [
     // Brain Status Dashboard
     { path: '/brain-status', component: 'BrainStatusDashboard' },
+    // Observability Dashboard
+    { path: '/observability', component: 'ObservabilityDashboard' },
     // Cecelia
     { path: '/cecelia', component: 'CeceliaOverview' },
     { path: '/cecelia/agents/:agentId', component: 'AgentDetail' },
@@ -47,6 +49,7 @@ const manifest: FeatureManifest = {
 
   components: {
     BrainStatusDashboard: () => import('./pages/BrainStatusDashboard'),
+    ObservabilityDashboard: () => import('../../../dashboard/src/pages/ObservabilityDashboard'),
     CeceliaOverview: () => import('./pages/CeceliaOverview'),
     AgentDetail: () => import('./pages/AgentDetail'),
     CeceliaRuns: () => import('./pages/CeceliaRuns'),
