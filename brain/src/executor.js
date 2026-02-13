@@ -19,6 +19,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import { readFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
@@ -530,8 +531,7 @@ async function ensurePromptDir() {
  * Generate a unique run ID
  */
 function generateRunId(taskId) {
-  const timestamp = Date.now();
-  return `run-${taskId.slice(0, 8)}-${timestamp}`;
+  return uuidv4();
 }
 
 /**
