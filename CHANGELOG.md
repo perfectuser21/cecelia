@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.25.0] - 2026-02-13
+
+### Added
+- cleanup.sh 自动清理远程已删除的分支（Step 9.5）
+  - 在删除当前工作分支后，自动检测并清理所有远程已删除（标记为 ': gone]'）的本地分支
+  - 保持仓库干净，避免垃圾分支积累
+
 ## [12.18.1] - 2026-02-08
 
 ### Fixed

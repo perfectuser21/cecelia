@@ -426,6 +426,21 @@ else
 fi
 
 # ========================================
+# 9.5 自动清理远程已删除的分支
+# ========================================
+echo ""
+echo "[9.5] 清理远程已删除的分支..."
+GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+if [[ -n "$GONE_BRANCHES" ]]; then
+    GONE_COUNT=$(echo "$GONE_BRANCHES" | wc -l)
+    echo "   → 发现 $GONE_COUNT 个远程已删除的分支"
+    echo "$GONE_BRANCHES" | xargs -r git branch -D
+    echo -e "   ${GREEN}[OK] 已清理 $GONE_COUNT 个分支${NC}"
+else
+    echo -e "   ${GREEN}[OK] 无需清理${NC}"
+fi
+
+# ========================================
 # 10. Cleanup 完成（v8: 不再使用步骤状态机）
 # ========================================
 echo ""

@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.89.0"
-updated: "2026-02-11"
+version: "2.90.0"
+updated: "2026-02-13"
 changelog:
+  - 2.90.0: v12.25.0 - cleanup.sh 自动清理远程已删除的分支（Step 9.5 + gone 分支检测 + 批量删除 + 保持仓库干净）
   - 2.89.0: v12.24.0 - Exploratory Skill 完整性保证（Stop Hook 检查 PRD/DOD 生成 + worktree 清理 + merge 工具合并多个 exploratory 产出 + 24 个测试）
   - 2.88.0: v12.22.0 - OKR 三层拆解集成 PR Plans（Layer 2 工程规划层 + store-to-database.sh 支持 + validate-okr.py 验证 + SKILL.md 文档）
   - 2.87.0: v12.18.3 - /dev SKILL.md 文档修复（删除错误的"Learning 使用 Subagent"说明，与 Step 10 定义一致）
