@@ -37,4 +37,4 @@ CREATE INDEX IF NOT EXISTS goals_embedding_idx
   WITH (m = 16, ef_construction = 64);
 
 -- 4. Update schema version
-UPDATE schema_version SET version = '028', updated_at = CURRENT_TIMESTAMP;
+UPDATE schema_version SET version = '028';
