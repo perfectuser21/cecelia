@@ -4676,4 +4676,1159 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
   }
 });
 
+// ==================== PR Plans API (Layer 2) ====================
+
+/**
+ * POST /api/brain/pr-plans
+ * Create a new PR Plan
+ *
+ * Body: {
+ *   initiative_id: string (required),
+ *   project_id: string (required),
+ *   title: string (required),
+ *   description: string (optional),
+ *   dod: string (required),
+ *   files: string[] (optional),
+ *   sequence: number (optional, default 0),
+ *   depends_on: string[] (optional),
+ *   complexity: 'small'|'medium'|'large' (optional, default 'medium'),
+ *   estimated_hours: number (optional)
+ * }
+ */
+router.post('/pr-plans', async (req, res) => {
+  try {
+    const {
+      initiative_id,
+      project_id,
+      title,
+      description,
+      dod,
+      files,
+      sequence = 0,
+      depends_on,
+      complexity = 'medium',
+      estimated_hours
+    } = req.body;
+
+    // Validate required fields
+    if (!initiative_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: initiative_id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!project_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: project_id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: title',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!dod) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: dod',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    // Validate initiative exists
+    const initiativeCheck = await pool.query(
+      'SELECT id FROM features WHERE id = $1',
+      [initiative_id]
+    );
+    if (initiativeCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Initiative not found',
+        code: 'INITIATIVE_NOT_FOUND'
+      });
+    }
+
+    // Validate project exists
+    const projectCheck = await pool.query(
+      'SELECT id FROM projects WHERE id = $1',
+      [project_id]
+    );
+    if (projectCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Project not found',
+        code: 'PROJECT_NOT_FOUND'
+      });
+    }
+
+    // Validate complexity
+    const validComplexities = ['small', 'medium', 'large'];
+    if (complexity && !validComplexities.includes(complexity)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid complexity value',
+        code: 'INVALID_COMPLEXITY',
+        allowed: validComplexities
+      });
+    }
+
+    // Insert PR Plan
+    const result = await pool.query(
+      `INSERT INTO pr_plans (
+        initiative_id, project_id, title, description, dod,
+        files, sequence, depends_on, complexity, estimated_hours
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, initiative_id, project_id, title, description, dod,
+                files, sequence, depends_on, complexity, estimated_hours,
+                status, created_at, updated_at`,
+      [
+        initiative_id,
+        project_id,
+        title,
+        description || null,
+        dod,
+        files || null,
+        sequence,
+        depends_on || null,
+        complexity,
+        estimated_hours || null
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to create PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans
+ * Query PR Plans with optional filters
+ *
+ * Query params:
+ *   initiative_id: string (optional)
+ *   project_id: string (optional)
+ *   status: string (optional)
+ */
+router.get('/pr-plans', async (req, res) => {
+  try {
+    const { initiative_id, project_id, status } = req.query;
+
+    let query = 'SELECT * FROM pr_plans WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (initiative_id) {
+      query += ` AND initiative_id = $${paramIndex}`;
+      params.push(initiative_id);
+      paramIndex++;
+    }
+
+    if (project_id) {
+      query += ` AND project_id = $${paramIndex}`;
+      params.push(project_id);
+      paramIndex++;
+    }
+
+    if (status) {
+      query += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ' ORDER BY sequence ASC, created_at ASC';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      pr_plans: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] Failed to query PR Plans:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to query PR Plans',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans/:id
+ * Get a single PR Plan with full context
+ */
+router.get('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT * FROM pr_plan_full_context WHERE pr_plan_id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to get PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/pr-plans/:id
+ * Update a PR Plan
+ *
+ * Body: {
+ *   title: string (optional),
+ *   description: string (optional),
+ *   dod: string (optional),
+ *   files: string[] (optional),
+ *   sequence: number (optional),
+ *   depends_on: string[] (optional),
+ *   complexity: string (optional),
+ *   estimated_hours: number (optional),
+ *   status: string (optional)
+ * }
+ */
+router.patch('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      dod,
+      files,
+      sequence,
+      depends_on,
+      complexity,
+      estimated_hours,
+      status
+    } = req.body;
+
+    // Check if PR Plan exists
+    const checkResult = await pool.query(
+      'SELECT id FROM pr_plans WHERE id = $1',
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    // Validate status if provided
+    if (status) {
+      const validStatuses = ['planning', 'in_progress', 'completed', 'cancelled'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid status value',
+          code: 'INVALID_STATUS',
+          allowed: validStatuses
+        });
+      }
+    }
+
+    // Validate complexity if provided
+    if (complexity) {
+      const validComplexities = ['small', 'medium', 'large'];
+      if (!validComplexities.includes(complexity)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid complexity value',
+          code: 'INVALID_COMPLEXITY',
+          allowed: validComplexities
+        });
+      }
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const params = [id];
+    let paramIndex = 2;
+
+    if (title !== undefined) {
+      updates.push(`title = $${paramIndex}`);
+      params.push(title);
+      paramIndex++;
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex}`);
+      params.push(description);
+      paramIndex++;
+    }
+
+    if (dod !== undefined) {
+      updates.push(`dod = $${paramIndex}`);
+      params.push(dod);
+      paramIndex++;
+    }
+
+    if (files !== undefined) {
+      updates.push(`files = $${paramIndex}`);
+      params.push(files);
+      paramIndex++;
+    }
+
+    if (sequence !== undefined) {
+      updates.push(`sequence = $${paramIndex}`);
+      params.push(sequence);
+      paramIndex++;
+    }
+
+    if (depends_on !== undefined) {
+      updates.push(`depends_on = $${paramIndex}`);
+      params.push(depends_on);
+      paramIndex++;
+    }
+
+    if (complexity !== undefined) {
+      updates.push(`complexity = $${paramIndex}`);
+      params.push(complexity);
+      paramIndex++;
+    }
+
+    if (estimated_hours !== undefined) {
+      updates.push(`estimated_hours = $${paramIndex}`);
+      params.push(estimated_hours);
+      paramIndex++;
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex}`);
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No fields to update',
+        code: 'NO_UPDATES'
+      });
+    }
+
+    updates.push(`updated_at = NOW()`);
+
+    const updateQuery = `
+      UPDATE pr_plans
+      SET ${updates.join(', ')}
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, params);
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to update PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/brain/pr-plans/:id
+ * Delete a PR Plan
+ */
+router.delete('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'DELETE FROM pr_plans WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'PR Plan deleted successfully',
+      id: result.rows[0].id
+    });
+  } catch (err) {
+    console.error('[API] Failed to delete PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete PR Plan',
+      details: err.message
+    });
+  }
+});
+
+// ============================================================
+// Monitoring Loop Status
+// ============================================================
+
+/**
+ * GET /api/brain/monitor/status
+ * Get monitoring loop status
+ */
+router.get('/monitor/status', async (req, res) => {
+  try {
+    const { getMonitorStatus } = await import('./monitor-loop.js');
+    const status = getMonitorStatus();
+
+    res.json({
+      success: true,
+      status: status
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get monitor status',
+      details: err.message
+    });
+  }
+});
+
+// ============================================================
+// Attachment Decision API
+// ============================================================
+
+/**
+ * POST /api/brain/search-similar
+ * Search for similar entities (Tasks/Initiatives/KRs)
+ *
+ * Request body:
+ * {
+ *   query: string (required),
+ *   top_k: number (optional, default 5),
+ *   filters: {
+ *     repo: string (optional) - filter by repository name,
+ *     project_id: number (optional) - filter by project ID,
+ *     date_from: string (optional) - filter by creation date (ISO format),
+ *     date_to: string (optional) - filter by creation date (ISO format)
+ *   }
+ * }
+ */
+router.post('/search-similar', async (req, res) => {
+  try {
+    const { query, top_k = 5, filters = {} } = req.body;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: query'
+      });
+    }
+
+    // Validate filters if provided
+    if (filters.repo && typeof filters.repo !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filter: repo must be a string'
+      });
+    }
+
+    if (filters.project_id && typeof filters.project_id !== 'number') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filter: project_id must be a number'
+      });
+    }
+
+    const { default: SimilarityService } = await import('./similarity.js');
+    const similarityService = new SimilarityService();
+
+    const result = await similarityService.searchSimilar(query, top_k, filters);
+
+    res.json({
+      success: true,
+      filters_applied: filters,
+      ...result
+    });
+  } catch (err) {
+    console.error('[API] Failed to search similar entities:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search similar entities',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/attach-decision
+ * Make attachment decision for new task (LLM-based)
+ */
+router.post('/attach-decision', async (req, res) => {
+  try {
+    const { input, matches, context } = req.body;
+
+    if (!input) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: input'
+      });
+    }
+
+    // TODO: Implement LLM decision logic using prompts/attach-decision.md
+    // For now, return a simple rule-based decision
+
+    // Short-circuit A: Check for duplicate tasks (score >= 0.85)
+    const duplicateTasks = (matches || []).filter(m => m.level === 'task' && m.score >= 0.85);
+    if (duplicateTasks.length > 0) {
+      const target = duplicateTasks[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'duplicate_task',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `已存在高度相似的任务（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: duplicateTasks.slice(0, 3)
+        },
+        route: {
+          path: 'direct_dev',
+          why: ['任务已存在，可以参考或复用'],
+          confidence: 0.9
+        },
+        next_call: {
+          skill: '/dev',
+          args: {
+            reference_task_id: target.id
+          }
+        }
+      });
+    }
+
+    // Short-circuit B: Check for related initiatives (score >= 0.65)
+    const relatedInitiatives = (matches || []).filter(m => m.level === 'initiative' && m.score >= 0.65);
+    if (relatedInitiatives.length > 0) {
+      const target = relatedInitiatives[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'extend_initiative',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `属于现有 Initiative 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedInitiatives.slice(0, 3)
+        },
+        route: {
+          path: 'exploratory_then_dev',
+          why: ['在现有 Initiative 下扩展功能', '需要验证对现有系统的影响'],
+          confidence: 0.75
+        },
+        next_call: {
+          skill: '/exploratory',
+          args: {
+            initiative_id: target.id,
+            task_description: input
+          }
+        }
+      });
+    }
+
+    // Check for related KRs (score >= 0.60)
+    const relatedKRs = (matches || []).filter(m => m.level === 'kr' && m.score >= 0.60);
+    if (relatedKRs.length > 0) {
+      const target = relatedKRs[0];
+      return res.json({
+        success: true,
+        input,
+        attach: {
+          action: 'create_initiative_under_kr',
+          target: {
+            level: target.level,
+            id: target.id,
+            title: target.title
+          },
+          confidence: target.score,
+          reason: `在现有 KR 下创建新 Initiative（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedKRs.slice(0, 3)
+        },
+        route: {
+          path: 'okr_then_exploratory_then_dev',
+          why: ['需要先创建 Initiative', '然后进行技术验证'],
+          confidence: 0.7
+        },
+        next_call: {
+          skill: '/okr',
+          args: {
+            kr_id: target.id,
+            task_description: input
+          }
+        }
+      });
+    }
+
+    // Default: Create new OKR/KR
+    return res.json({
+      success: true,
+      input,
+      attach: {
+        action: 'create_new_okr_kr',
+        target: {
+          level: 'okr',
+          id: null,
+          title: null
+        },
+        confidence: 0.5,
+        reason: '没有找到相关的 OKR/KR/Initiative，需要创建新的',
+        top_matches: []
+      },
+      route: {
+        path: 'okr_then_exploratory_then_dev',
+        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
+        confidence: 0.6
+      },
+      next_call: {
+        skill: '/okr',
+        args: {
+          task_description: input
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] Failed to make attachment decision:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to make attachment decision',
+      details: err.message
+    });
+  }
+});
+
+// ============================================================
+// Immune System API
+// ============================================================
+
+/**
+ * GET /api/brain/policies
+ * List absorption policies with optional filtering
+ */
+router.get('/policies', async (req, res) => {
+  try {
+    const { status, limit = 50, offset = 0 } = req.query;
+
+    let query = `
+      SELECT
+        policy_id,
+        signature,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+    `;
+
+    const params = [];
+    const whereClauses = [];
+
+    if (status) {
+      whereClauses.push(`status = $${params.length + 1}`);
+      params.push(status);
+    }
+
+    if (whereClauses.length > 0) {
+      query += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(parseInt(limit), parseInt(offset));
+
+    const result = await pool.query(query, params);
+
+    // Get total count
+    let countQuery = `SELECT COUNT(*) as total FROM absorption_policies`;
+    if (whereClauses.length > 0) {
+      countQuery += ` WHERE ${whereClauses.join(' AND ')}`;
+    }
+    const countResult = await pool.query(countQuery, status ? [status] : []);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: parseInt(countResult.rows[0].total)
+    });
+  } catch (err) {
+    console.error('[API] Failed to list policies:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list policies',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/promotions
+ * Get promotion history (probation → active)
+ * NOTE: Must be before /policies/:id to avoid matching "promotions" as an ID
+ */
+router.get('/policies/promotions', async (req, res) => {
+  try {
+    const { limit = 20, days = 7 } = req.query;
+
+    const result = await pool.query(`
+      SELECT
+        pe.policy_id,
+        ap.signature,
+        pe.evaluated_at as promoted_at,
+        ap.risk_level,
+        COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' THEN pe.eval_id END) as simulations,
+        ROUND(
+          COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' AND pe.result = 'would_succeed' THEN pe.eval_id END)::numeric /
+          NULLIF(COUNT(DISTINCT CASE WHEN pe.mode = 'simulate' THEN pe.eval_id END), 0),
+          2
+        ) as pass_rate
+      FROM policy_evaluations pe
+      JOIN absorption_policies ap ON pe.policy_id = ap.policy_id
+      WHERE
+        pe.mode = 'promote'
+        AND pe.evaluated_at >= NOW() - INTERVAL '${parseInt(days)} days'
+      GROUP BY pe.policy_id, ap.signature, pe.evaluated_at, ap.risk_level
+      ORDER BY pe.evaluated_at DESC
+      LIMIT $1
+    `, [parseInt(limit)]);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (err) {
+    console.error('[API] Failed to get promotions:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get promotions',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/:id
+ * Get single policy with recent evaluations
+ */
+router.get('/policies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get policy
+    const policyResult = await pool.query(`
+      SELECT
+        policy_id,
+        signature,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+      WHERE policy_id = $1
+    `, [id]);
+
+    if (policyResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    const policy = policyResult.rows[0];
+
+    // Get recent 10 evaluations
+    const evalsResult = await pool.query(`
+      SELECT
+        eval_id,
+        task_id,
+        mode,
+        result,
+        evaluated_at,
+        details
+      FROM policy_evaluations
+      WHERE policy_id = $1
+      ORDER BY evaluated_at DESC
+      LIMIT 10
+    `, [id]);
+
+    policy.evaluations = evalsResult.rows;
+
+    res.json({
+      success: true,
+      data: policy
+    });
+  } catch (err) {
+    console.error('[API] Failed to get policy:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get policy',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/policies/:id/evaluations
+ * Get policy evaluation history with pagination
+ */
+router.get('/policies/:id/evaluations', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 20, offset = 0 } = req.query;
+
+    // Check if policy exists
+    const policyCheck = await pool.query(`
+      SELECT policy_id FROM absorption_policies WHERE policy_id = $1
+    `, [id]);
+
+    if (policyCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    // Get evaluations
+    const result = await pool.query(`
+      SELECT
+        eval_id,
+        task_id,
+        mode,
+        result,
+        evaluated_at,
+        details
+      FROM policy_evaluations
+      WHERE policy_id = $1
+      ORDER BY evaluated_at DESC
+      LIMIT $2 OFFSET $3
+    `, [id, parseInt(limit), parseInt(offset)]);
+
+    // Get total count
+    const countResult = await pool.query(`
+      SELECT COUNT(*) as total FROM policy_evaluations WHERE policy_id = $1
+    `, [id]);
+
+    res.json({
+      success: true,
+      data: result.rows,
+      total: parseInt(countResult.rows[0].total)
+    });
+  } catch (err) {
+    console.error('[API] Failed to get policy evaluations:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get policy evaluations',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/policies/:id/status
+ * Update policy status (manual control)
+ */
+router.patch('/policies/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, reason } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter: status'
+      });
+    }
+
+    const validStatuses = ['draft', 'probation', 'active', 'disabled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    // Update status
+    const result = await pool.query(`
+      UPDATE absorption_policies
+      SET status = $1, updated_at = NOW()
+      WHERE policy_id = $2
+      RETURNING policy_id
+    `, [status, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Policy not found'
+      });
+    }
+
+    // Log event
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, payload)
+      VALUES ('policy_status_updated', $1)
+    `, [JSON.stringify({ policy_id: id, status, reason, updated_by: 'api' })]);
+
+    res.json({
+      success: true,
+      message: `Policy status updated to ${status}`
+    });
+  } catch (err) {
+    console.error('[API] Failed to update policy status:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update policy status',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/failures/signatures
+ * Get failure signatures statistics
+ */
+router.get('/failures/signatures', async (req, res) => {
+  try {
+    const { limit = 20, min_count = 1 } = req.query;
+
+    const result = await pool.query(`
+      SELECT
+        fs.signature,
+        fs.count,
+        fs.first_seen,
+        fs.last_seen,
+        COUNT(DISTINCT CASE WHEN ap.status = 'active' THEN ap.policy_id END) as active_policies,
+        COUNT(DISTINCT CASE WHEN ap.status = 'probation' THEN ap.policy_id END) as probation_policies
+      FROM failure_signatures fs
+      LEFT JOIN absorption_policies ap ON fs.signature = ap.signature
+      WHERE fs.count >= $1
+      GROUP BY fs.signature, fs.count, fs.first_seen, fs.last_seen
+      ORDER BY fs.count DESC
+      LIMIT $2
+    `, [parseInt(min_count), parseInt(limit)]);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (err) {
+    console.error('[API] Failed to get failure signatures:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get failure signatures',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/failures/signatures/:signature
+ * Get single failure signature with related policies
+ */
+router.get('/failures/signatures/:signature', async (req, res) => {
+  try {
+    const { signature } = req.params;
+
+    // Get signature info
+    const sigResult = await pool.query(`
+      SELECT signature, count, first_seen, last_seen
+      FROM failure_signatures
+      WHERE signature = $1
+    `, [signature]);
+
+    if (sigResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Signature not found'
+      });
+    }
+
+    const signatureData = sigResult.rows[0];
+
+    // Get related policies
+    const policiesResult = await pool.query(`
+      SELECT
+        policy_id,
+        status,
+        policy_json,
+        risk_level,
+        success_count,
+        failure_count,
+        created_at,
+        promoted_at
+      FROM absorption_policies
+      WHERE signature = $1
+      ORDER BY
+        CASE status
+          WHEN 'active' THEN 1
+          WHEN 'probation' THEN 2
+          WHEN 'draft' THEN 3
+          WHEN 'disabled' THEN 4
+        END,
+        created_at DESC
+    `, [signature]);
+
+    signatureData.policies = policiesResult.rows;
+
+    res.json({
+      success: true,
+      data: signatureData
+    });
+  } catch (err) {
+    console.error('[API] Failed to get signature details:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get signature details',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/immune/dashboard
+ * Immune system overview with aggregated data
+ */
+router.get('/immune/dashboard', async (req, res) => {
+  try {
+    // Policy statistics
+    const policyStats = await pool.query(`
+      SELECT
+        status,
+        COUNT(*) as count
+      FROM absorption_policies
+      GROUP BY status
+    `);
+
+    const policies = {
+      draft: 0,
+      probation: 0,
+      active: 0,
+      disabled: 0,
+      total: 0
+    };
+
+    policyStats.rows.forEach(row => {
+      policies[row.status] = parseInt(row.count);
+      policies.total += parseInt(row.count);
+    });
+
+    // Quarantine statistics (reuse existing data)
+    const quarantineStats = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN quarantine_reason = 'failure_threshold' THEN 1 END) as failure_threshold,
+        COUNT(CASE WHEN quarantine_reason = 'manual' THEN 1 END) as manual,
+        COUNT(CASE WHEN quarantine_reason = 'resource_hog' THEN 1 END) as resource_hog
+      FROM tasks
+      WHERE status = 'quarantined'
+    `);
+
+    const quarantine = {
+      total: parseInt(quarantineStats.rows[0].total),
+      by_reason: {
+        failure_threshold: parseInt(quarantineStats.rows[0].failure_threshold),
+        manual: parseInt(quarantineStats.rows[0].manual),
+        resource_hog: parseInt(quarantineStats.rows[0].resource_hog)
+      }
+    };
+
+    // Top failure signatures
+    const topSignatures = await pool.query(`
+      SELECT signature, count
+      FROM failure_signatures
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+
+    // Recent promotions
+    const recentPromotions = await pool.query(`
+      SELECT
+        pe.policy_id,
+        ap.signature,
+        pe.evaluated_at as promoted_at
+      FROM policy_evaluations pe
+      JOIN absorption_policies ap ON pe.policy_id = ap.policy_id
+      WHERE pe.mode = 'promote'
+      ORDER BY pe.evaluated_at DESC
+      LIMIT 5
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        policies,
+        quarantine,
+        failures: {
+          top_signatures: topSignatures.rows
+        },
+        recent_promotions: recentPromotions.rows
+      }
+    });
+  } catch (err) {
+    console.error('[API] Failed to get immune dashboard:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get immune dashboard',
+      details: err.message
+    });
+  }
+});
+
 export default router;

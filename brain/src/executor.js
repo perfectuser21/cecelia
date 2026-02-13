@@ -22,6 +22,7 @@ import path from 'path';
 import pool from './db.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
+import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -913,11 +914,36 @@ async function triggerCeceliaRun(task) {
   // Use original cecelia-bridge on port 3457
   const EXECUTOR_BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
+  // Generate run_id early (Hard Boundary #1: L0 generates run_id)
+  const runId = generateRunId(task.id);
+
+  // Create trace step for this execution (v1.1.1 observability)
+  const trace = traceStep({
+    taskId: task.id,
+    runId,
+    layer: LAYER.L0_ORCHESTRATOR,
+    stepName: 'trigger_cecelia_run',
+    executorHost: EXECUTOR_HOSTS.US_VPS,
+    agent: task.task_type || 'dev',
+    region: 'us',
+    inputSummary: {
+      task_type: task.task_type,
+      task_title: task.title,
+    },
+  });
+
   try {
+    // Start trace
+    await trace.start();
+
     // === DEDUP CHECK ===
     const existing = activeProcesses.get(task.id);
     if (existing && isProcessAlive(existing.pid)) {
       console.log(`[executor] Task ${task.id} already running (pid=${existing.pid}), skipping`);
+      await trace.end({
+        status: STATUS.FAILED,
+        error: new Error('Task already running'),
+      });
       return {
         success: false,
         taskId: task.id,
@@ -935,6 +961,10 @@ async function triggerCeceliaRun(task) {
     const resources = checkServerResources();
     if (!resources.ok) {
       console.log(`[executor] Server overloaded, refusing to spawn: ${resources.reason}`);
+      await trace.end({
+        status: STATUS.FAILED,
+        error: new Error(`Server overloaded: ${resources.reason}`),
+      });
       return {
         success: false,
         taskId: task.id,
@@ -943,8 +973,6 @@ async function triggerCeceliaRun(task) {
         metrics: resources.metrics,
       };
     }
-
-    const runId = generateRunId(task.id);
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
 
     // Prepare prompt content, permission mode, and model based on task_type
@@ -1004,6 +1032,15 @@ async function triggerCeceliaRun(task) {
 
     console.log(`[executor] Bridge dispatched task=${task.id} checkpoint=${checkpointId}`);
 
+    // Trace: success
+    await trace.end({
+      status: STATUS.SUCCESS,
+      outputSummary: {
+        checkpoint_id: checkpointId,
+        log_file: result.log_file,
+      },
+    });
+
     return {
       success: true,
       runId,
@@ -1015,6 +1052,13 @@ async function triggerCeceliaRun(task) {
 
   } catch (err) {
     console.error(`[executor] Error triggering via bridge: ${err.message}`);
+
+    // Trace: failure
+    await trace.end({
+      status: STATUS.FAILED,
+      error: err,
+    });
+
     return {
       success: false,
       taskId: task.id,

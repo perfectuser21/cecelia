@@ -2,9 +2,9 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-02-07
-**Brain 版本**: 1.15.0
-**Schema 版本**: 018
+**最后更新**: 2026-02-12
+**Brain 版本**: 1.30.1
+**Schema 版本**: 026
 **状态**: 生产运行中
 
 ---
@@ -32,66 +32,147 @@
 **Cecelia = 24/7 自主运行的管家系统**
 
 ```
-Cecelia = Brain (Node.js, port 5221)
-        + PostgreSQL (cecelia 数据库)
-        + Tick Loop (每 5s 循环检查，每 5min 执行一次 tick)
-        + 外部 Agent 群（Claude Code 无头进程）
+Cecelia Core = Brain (Node.js, port 5221)
+             + Tick Loop (每 5s 循环检查，每 5min 执行一次 tick)
+             + 三层大脑（L0 脑干/L1 丘脑/L2 皮层）
+             + 保护系统（alertness, circuit-breaker, quarantine, watchdog）
 ```
 
-Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目标，自动拆解为可执行任务，派发给无头 Claude Code Agent 执行，监控执行状态，处理失败和异常，并从经验中学习。
+**关键理解**：Cecelia **自己不干活**，只负责决策和调度。
 
-### 1.2 核心器官
+- **不写代码**：召唤 Caramel（外部程序员 Agent）
+- **不做 QA**：召唤小检（外部测试员 Agent）
+- **不做审计**：召唤小审（外部审计师 Agent）
+- **不处理数据任务**：路由到 N8N（外部自动化工具）
 
-| 器官 | 实现 | 职责 |
-|------|------|------|
-| 🧠 大脑 | Brain (Node.js) | 决策、调度、监控 |
-| ❤️ 心脏 | Tick Loop (5s 循环 / 5min 执行) | 持续运作，驱动一切 |
-| 📊 记忆 | PostgreSQL | 存储所有状态和历史 |
-| 💬 嘴巴 | /cecelia skill | 对外对话接口 |
+Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目标，自动拆解为可执行任务，派发给外部员工执行，监控执行状态，处理失败和异常，并从经验中学习。
 
-### 1.3 外部 Agent（员工）
+### 1.2 核心器官（Core 内部组件）
 
-这些是独立的无头 Claude Code 进程，由 Cecelia 召唤执行任务：
+**Core 只包含 Cecelia 的生命体内部器官**：
 
-| Agent | Skill | 模型 | 职责 |
-|-------|-------|------|------|
-| 秋米 | /okr | Opus | OKR 拆解（边做边拆） |
-| Caramel | /dev | Opus | 编程（写代码、PR、CI） |
-| 审查员 | /review | Sonnet | 代码审查（只读模式） |
-| 小检 | /qa | Sonnet | 质量验收 |
-| 小审 | /audit | Sonnet | 代码审计 |
+| 器官 | 实现 | 职责 | 说明 |
+|------|------|------|------|
+| ❤️ **心脏** | tick.js | Tick Loop 驱动 | 每 5s 循环，每 5min 执行 |
+| 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Opus，RCA/战略调整/记录经验 |
+| 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | Sonnet，快速判断/异常检测 |
+| 🧠 **大脑 L0** | planner.js, executor.js, tick.js | 脑干（纯代码） | 调度、派发、保护系统 |
+| 🛡️ **保护系统** | alertness, circuit-breaker, quarantine, watchdog | 自我保护 | 四重防护 |
+| 📋 **规划器** | planner.js | KR 轮转、任务生成 | 基于评分选择下一个任务 |
+| 🔌 **对外接口** | executor.js | 召唤外部员工 | 不自己干活，只召唤 |
+| 🌐 **神经系统** | routes.js | HTTP API | Express 路由 |
+| 📊 **记忆读写** | 读写 working_memory 等表 | 记忆逻辑 | 数据在外部（PostgreSQL） |
 
-**调用链**：Brain → cecelia-bridge → cecelia-run → claude -p "/skill ..."
+**明确**：PostgreSQL 不是"记忆器官"，它是外部存储设备（见 Section 1.3）。
+
+### 1.3 外部依赖（Infrastructure）
+
+**Cecelia 依赖以下外部服务，但它们不是 Core 的一部分**：
+
+| 服务 | 位置 | 职责 | 类比 |
+|------|------|------|------|
+| **PostgreSQL** | 独立容器 (port 5432) | 数据存储 | 外部硬盘 |
+| **N8N** | HK server (port 5678) | 处理 `data` 类型任务 | 外包数据公司 |
+
+**说明**：
+- PostgreSQL：存储所有状态和历史，但它不是 Core 的"器官"，而是外部存储设备
+- N8N：只处理 HK region 的 `data` 类型任务（task-router.js 路由规则），US region 的 data 任务不走 N8N
+
+### 1.4 外部员工（Agent Workers）
+
+**Cecelia 自己不干活**，通过 `executor.js` 召唤外部员工执行任务：
+
+| 员工 | Skill | 模型 | 职责 | 类比 |
+|------|-------|------|------|------|
+| **Caramel** | /dev | Opus | 编程（写代码、PR、CI） | 外包程序员 |
+| **小检** | /qa | Sonnet | QA 总控 | 外包测试员 |
+| **小审** | /audit | Sonnet | 代码审计 | 外包审计师 |
+| **秋米** | /okr | Opus | OKR 拆解（边做边拆） | 外部顾问 |
+| **审查员** | /review | Sonnet | 代码审查（只读模式） | 外部审查员 |
+| **MiniMax** | - | MiniMax (国内) | talk/research (HK) | 外部翻译 |
+
+**关键理解**：
+- 这些是**外部无头进程**，不属于 Core
+- Cecelia 通过 `executor.js` 召唤它们
+- `executor.js` 是 Core 的"对外接口器官"，不是"执行器官"
+
+**调用链**：
+```
+tick.js (决策派发)
+  ↓
+executor.js (召唤接口，检查资源)
+  ↓ spawn
+cecelia-bridge → cecelia-run → claude -p "/skill ..."
+  ↓ (独立进程，干活)
+Agent Workers (Caramel/小检/小审/...)
+  ↓ 完成后
+回调 Core API (POST /api/brain/execution-callback)
+```
 
 ---
 
 ## 2. 架构总览
 
-### 2.1 三层大脑架构
+### 2.1 四层完整架构
 
 ```
-┌─────────────────────────────────────────────┐
-│  L2 皮层 (Cortex)  — Opus                   │
-│  深度分析、RCA、战略调整、记录经验           │
-│  cortex.js                                   │
-├─────────────────────────────────────────────┤
-│  L1 丘脑 (Thalamus)  — Sonnet               │
-│  事件路由、快速判断、异常检测                │
-│  thalamus.js                                 │
-├─────────────────────────────────────────────┤
-│  L0 脑干 (Brainstem)  — 纯代码              │
-│  tick、dispatch、executor、watchdog           │
-│  alertness、circuit-breaker、quarantine       │
-│  tick.js, executor.js, planner.js, ...       │
-└─────────────────────────────────────────────┘
-          │
-          ▼
-┌─────────────────────────────────────────────┐
-│  PostgreSQL — 唯一真相源                     │
-│  cecelia 数据库, schema v010                 │
-│  19 张核心表                                │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Layer 1: Cecelia Core (cecelia/core repo)              │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │  ❤️ 心脏 (tick.js)                                │ │
+│  │  🧠 大脑 L2 (cortex.js) - Opus                    │ │
+│  │  🧠 大脑 L1 (thalamus.js) - Sonnet               │ │
+│  │  🧠 大脑 L0 (planner.js, executor.js) - 纯代码   │ │
+│  │  🛡️ 保护系统 (alertness, watchdog, ...)          │ │
+│  │  📋 规划器 (planner.js)                           │ │
+│  │  🔌 对外接口 (executor.js) - 召唤外部员工        │ │
+│  │  🌐 神经系统 (routes.js) - HTTP API              │ │
+│  │  📊 记忆读写逻辑 (读写 working_memory 等表)      │ │
+│  └───────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+          ↓ 依赖
+┌─────────────────────────────────────────────────────────┐
+│  Layer 2: Infrastructure (外部存储)                      │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │  PostgreSQL (独立容器, port 5432)                 │ │
+│  │  - cecelia 数据库                                 │ │
+│  │  - 19 张核心表                                    │ │
+│  │  - 唯一真相源                                     │ │
+│  ├───────────────────────────────────────────────────┤ │
+│  │  N8N (HK server, port 5678)                       │ │
+│  │  - 只处理 HK region 的 data 任务                  │ │
+│  └───────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+          ↓ 召唤
+┌─────────────────────────────────────────────────────────┐
+│  Layer 3: Agent Workers (外部员工)                       │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │  Caramel (/dev, Opus) - 外包程序员                │ │
+│  │  小检 (/qa, Sonnet) - 外包测试员                  │ │
+│  │  小审 (/audit, Sonnet) - 外包审计师               │ │
+│  │  秋米 (/okr, Opus) - 外部顾问                     │ │
+│  │  审查员 (/review, Sonnet) - 外部审查员            │ │
+│  │  MiniMax (talk/research) - 外部翻译 (HK)         │ │
+│  └───────────────────────────────────────────────────┘ │
+│  独立无头进程，通过 cecelia-bridge 召唤                  │
+└─────────────────────────────────────────────────────────┘
+          ↓ 展示
+┌─────────────────────────────────────────────────────────┐
+│  Layer 4: Workspace (对外窗口)                           │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │  cecelia/workspace (port 5211)                    │ │
+│  │  - React/Vue 前端界面                             │ │
+│  │  - Dashboard 面板                                 │ │
+│  │  - 数据可视化                                     │ │
+│  └───────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**架构层级说明**：
+- **Layer 1 (Core)**：Cecelia 的生命体，只包含内部器官
+- **Layer 2 (Infrastructure)**：外部存储设备，Core 依赖但不包含
+- **Layer 3 (Agent Workers)**：外部员工，Core 通过 executor.js 召唤
+- **Layer 4 (Workspace)**：对外展示窗口，调用 Core API
 
 ### 2.2 LLM 使用边界
 

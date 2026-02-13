@@ -1,9 +1,6 @@
 {
-  "branch": "cp-02081834-phase4b-feedback-api",
-  "head_sha": "935715a",
-  "timestamp": "2026-02-08T10:40:56Z",
-  "tests_passed": 883,
-  "tests_failed": 1,
-  "migration": "018_add_feedback_and_status_history.sql",
+  "branch": "cp-02102020-brain-pr-plans-dispatch",
+  "head_sha": "ef3ef47",
+  "timestamp": "2026-02-10T12:35:45Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

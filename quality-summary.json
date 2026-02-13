@@ -1,0 +1,6 @@
+{
+  "branch": "cp-02122322-arch-boundary-cleanup",
+  "head_sha": "59cf2fe",
+  "timestamp": "2026-02-12T15:30:47Z",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
+}

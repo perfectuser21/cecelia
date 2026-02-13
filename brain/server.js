@@ -3,6 +3,7 @@ import express from 'express';
 import { createServer } from 'http';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
+import traceRoutes from './src/trace-routes.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -63,6 +64,9 @@ app.use('/api/brain', brainRoutes);
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
 
+// Mount trace observability routes
+app.use('/api/brain/trace', traceRoutes);
+
 // Health check at root
 app.get('/', (_req, res) => {
   res.json({ service: 'cecelia-brain', status: 'running', port: PORT });
@@ -101,6 +105,16 @@ server.listen(PORT, async () => {
   // Initialize Feature Tick loop
   startFeatureTickLoop();
   console.log('[Server] Feature Tick started (30s interval)');
+
+  // Initialize Monitoring Loop (auto-healing)
+  const { startMonitorLoop } = await import('./src/monitor-loop.js');
+  startMonitorLoop();
+  console.log('[Server] Monitoring Loop started (30s interval) - P0: Auto-healing for stuck/spike/pressure');
+
+  // Initialize Promotion Job Loop (P1)
+  const { startPromotionJobLoop } = await import('./src/promotion-job.js');
+  startPromotionJobLoop();
+  console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
 });
 
 export default app;
