@@ -557,6 +557,7 @@ function getSkillForTaskType(taskType) {
     'dev': '/dev',           // 写代码：Opus
     'review': '/review',     // 审查：Sonnet，Plan Mode
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
+    'exploratory': '/exploratory', // 探索性验证：Opus
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
     // 兼容旧类型
@@ -600,6 +601,7 @@ function getPermissionModeForTaskType(taskType) {
   const modeMap = {
     'dev': 'bypassPermissions',        // 写代码
     'review': 'plan',                  // 只读分析（唯一用 plan 的）
+    'exploratory': 'bypassPermissions', // 探索性验证：需要读写文件
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
     // 兼容旧类型
