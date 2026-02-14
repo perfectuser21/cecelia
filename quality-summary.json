@@ -1,17 +1,13 @@
 {
-  "branch": "cp-02141415-slot-allocation",
-  "head_sha": "46ea599",
-  "timestamp": "2026-02-14T06:20:35Z",
-  "tests": {
-    "total": 1205,
-    "passed": 1191,
-    "failed": 13,
-    "skipped": 1,
-    "new_tests": 38,
-    "pre_existing_failures": 13,
-    "note": "All 13 failures are pre-existing (run_events FK constraint + EADDRINUSE), not caused by this PR"
-  },
-  "facts_check": "pass",
-  "version_sync": "pass",
+  "branch": "cp-02141611-skip-deploy-tests",
+  "head_sha": "02ae28a",
+  "timestamp": "2026-02-14T08:13:35Z",
+  "changes": [
+    {
+      "file": "scripts/brain-deploy.sh",
+      "type": "deployment_script",
+      "change": "Skip local tests during deployment (CI already validates)"
+    }
+  ],
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
