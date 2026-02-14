@@ -1,13 +1,6 @@
 {
-  "branch": "cp-02141611-skip-deploy-tests",
-  "head_sha": "02ae28a",
-  "timestamp": "2026-02-14T08:13:35Z",
-  "changes": [
-    {
-      "file": "scripts/brain-deploy.sh",
-      "type": "deployment_script",
-      "change": "Skip local tests during deployment (CI already validates)"
-    }
-  ],
+  "branch": "cp-02141824-update-schema-031",
+  "head_sha": "b4f291e",
+  "timestamp": "2026-02-14T10:35:25Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
