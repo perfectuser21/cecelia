@@ -2,9 +2,9 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-02-13
-**Brain 版本**: 1.35.0
-**Schema 版本**: 029
+**最后更新**: 2026-02-14
+**Brain 版本**: 1.36.0
+**Schema 版本**: 030
 **状态**: 生产运行中
 
 ---
@@ -694,6 +694,17 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 | `/pr-plans/:id` | DELETE | 删除 PR Plan |
 
 > **注意**：旧的 `/features` 系列端点仍在代码中但已废弃（`features` 表已在 Migration 027 中删除）。
+
+### 9.5a Capabilities 能力管理
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/capabilities` | GET | 列出所有能力（支持 current_stage/owner 过滤） |
+| `/capabilities/:id` | GET | 单个能力详情 |
+| `/capabilities` | POST | 创建新能力（从 capability_proposal 审批后） |
+| `/capabilities/:id` | PATCH | 更新能力（stage 推进 + evidence） |
+
+> **说明**：Capability-Driven Development Framework (Migration 030)，能力注册表 + 成熟度追踪（Stage 1-4）。
 
 ### 9.6 焦点系统
 

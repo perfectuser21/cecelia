@@ -4586,6 +4586,324 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
   }
 });
 
+// ==================== Capabilities API ====================
+
+/**
+ * GET /api/brain/capabilities
+ * List all capabilities with optional filters
+ *
+ * Query params:
+ *   current_stage: number (optional, 1-4)
+ *   owner: string (optional)
+ */
+router.get('/capabilities', async (req, res) => {
+  try {
+    const { current_stage, owner } = req.query;
+
+    let query = 'SELECT * FROM capabilities WHERE 1=1';
+    const params = [];
+
+    if (current_stage) {
+      params.push(parseInt(current_stage, 10));
+      query += ` AND current_stage = $${params.length}`;
+    }
+
+    if (owner) {
+      params.push(owner);
+      query += ` AND owner = $${params.length}`;
+    }
+
+    query += ' ORDER BY id ASC';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      capabilities: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] Failed to list capabilities:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list capabilities',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/capabilities/:id
+ * Get a single capability by ID
+ */
+router.get('/capabilities/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'SELECT * FROM capabilities WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Capability not found',
+        code: 'CAPABILITY_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      capability: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to get capability:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get capability',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/capabilities
+ * Create a new capability (from approved capability_proposal)
+ *
+ * Body: {
+ *   id: string (required, slug format: autonomous-task-scheduling),
+ *   name: string (required),
+ *   description: string (optional),
+ *   current_stage: number (optional, default 1),
+ *   stage_definitions: object (optional),
+ *   related_repos: string[] (optional),
+ *   related_skills: string[] (optional),
+ *   key_tables: string[] (optional),
+ *   evidence: string (optional),
+ *   owner: string (optional, default 'system')
+ * }
+ */
+router.post('/capabilities', async (req, res) => {
+  try {
+    const {
+      id,
+      name,
+      description,
+      current_stage = 1,
+      stage_definitions,
+      related_repos,
+      related_skills,
+      key_tables,
+      evidence,
+      owner = 'system'
+    } = req.body;
+
+    // Validate required fields
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: name',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    // Validate id format (slug: lowercase, hyphens, alphanumeric)
+    if (!/^[a-z0-9-]+$/.test(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid id format. Use lowercase alphanumeric with hyphens (e.g., autonomous-task-scheduling)',
+        code: 'INVALID_ID_FORMAT'
+      });
+    }
+
+    // Validate current_stage range
+    if (current_stage < 1 || current_stage > 4) {
+      return res.status(400).json({
+        success: false,
+        error: 'current_stage must be between 1 and 4',
+        code: 'INVALID_STAGE'
+      });
+    }
+
+    // Check for duplicate ID
+    const existingCheck = await pool.query(
+      'SELECT id FROM capabilities WHERE id = $1',
+      [id]
+    );
+    if (existingCheck.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: 'Capability with this ID already exists',
+        code: 'DUPLICATE_ID'
+      });
+    }
+
+    // Insert capability
+    const result = await pool.query(
+      `INSERT INTO capabilities (
+        id, name, description, current_stage, stage_definitions,
+        related_repos, related_skills, key_tables, evidence, owner
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *`,
+      [
+        id,
+        name,
+        description || null,
+        current_stage,
+        stage_definitions ? JSON.stringify(stage_definitions) : null,
+        related_repos || null,
+        related_skills || null,
+        key_tables || null,
+        evidence || null,
+        owner
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      capability: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to create capability:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create capability',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/capabilities/:id
+ * Update a capability (typically for stage progression)
+ *
+ * Body: {
+ *   current_stage: number (optional, 1-4),
+ *   evidence: string (optional),
+ *   description: string (optional),
+ *   stage_definitions: object (optional),
+ *   related_repos: string[] (optional),
+ *   related_skills: string[] (optional),
+ *   key_tables: string[] (optional)
+ * }
+ */
+router.patch('/capabilities/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      current_stage,
+      evidence,
+      description,
+      stage_definitions,
+      related_repos,
+      related_skills,
+      key_tables
+    } = req.body;
+
+    // Check capability exists
+    const existingCheck = await pool.query(
+      'SELECT * FROM capabilities WHERE id = $1',
+      [id]
+    );
+    if (existingCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Capability not found',
+        code: 'CAPABILITY_NOT_FOUND'
+      });
+    }
+
+    // Validate current_stage if provided
+    if (current_stage !== undefined && (current_stage < 1 || current_stage > 4)) {
+      return res.status(400).json({
+        success: false,
+        error: 'current_stage must be between 1 and 4',
+        code: 'INVALID_STAGE'
+      });
+    }
+
+    // Build dynamic UPDATE query
+    const updates = [];
+    const params = [id];
+
+    if (current_stage !== undefined) {
+      params.push(current_stage);
+      updates.push(`current_stage = $${params.length}`);
+    }
+
+    if (evidence !== undefined) {
+      params.push(evidence);
+      updates.push(`evidence = $${params.length}`);
+    }
+
+    if (description !== undefined) {
+      params.push(description);
+      updates.push(`description = $${params.length}`);
+    }
+
+    if (stage_definitions !== undefined) {
+      params.push(JSON.stringify(stage_definitions));
+      updates.push(`stage_definitions = $${params.length}`);
+    }
+
+    if (related_repos !== undefined) {
+      params.push(related_repos);
+      updates.push(`related_repos = $${params.length}`);
+    }
+
+    if (related_skills !== undefined) {
+      params.push(related_skills);
+      updates.push(`related_skills = $${params.length}`);
+    }
+
+    if (key_tables !== undefined) {
+      params.push(key_tables);
+      updates.push(`key_tables = $${params.length}`);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No fields to update',
+        code: 'NO_UPDATES'
+      });
+    }
+
+    // Always update updated_at
+    updates.push('updated_at = NOW()');
+
+    const query = `
+      UPDATE capabilities
+      SET ${updates.join(', ')}
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      capability: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to update capability:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update capability',
+      details: err.message
+    });
+  }
+});
+
 // ==================== PR Plans API (Layer 2) ====================
 
 /**
