@@ -45,7 +45,7 @@ async function selectDailyFocus() {
   const result = await pool.query(`
     SELECT *
     FROM goals
-    WHERE type = 'objective'
+    WHERE type IN ('global_okr', 'area_okr')
       AND status NOT IN ('completed', 'cancelled')
     ORDER BY
       -- 1. Pinned first

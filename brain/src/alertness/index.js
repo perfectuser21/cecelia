@@ -49,6 +49,9 @@ let currentState = {
   lastEvaluation: new Date()
 };
 
+// 手动覆盖：{ level, reason, until }
+let _manualOverride = null;
+
 // 状态历史（用于趋势分析）
 let stateHistory = [];
 const MAX_HISTORY_SIZE = 100;
@@ -62,6 +65,18 @@ const MAX_HISTORY_SIZE = 100;
  */
 export async function evaluateAlertness() {
   try {
+    // Check manual override expiration
+    if (_manualOverride && Date.now() > _manualOverride.until) {
+      console.log('[Alertness] Manual override expired');
+      _manualOverride = null;
+    }
+
+    // If manual override is active, skip evaluation
+    if (_manualOverride) {
+      currentState.lastEvaluation = new Date();
+      return currentState;
+    }
+
     // 1. 收集指标
     const metrics = await collectMetrics();
     const healthScore = calculateHealthScore(metrics);
@@ -304,7 +319,8 @@ export function getCurrentAlertness() {
     reason: currentState.reason,
     duration: Date.now() - currentState.startedAt.getTime(),
     isRecovering: currentState.isRecovering,
-    lastEvaluation: currentState.lastEvaluation
+    lastEvaluation: currentState.lastEvaluation,
+    override: _manualOverride
   };
 }
 
@@ -356,6 +372,46 @@ export async function setManualLevel(level, reason) {
 
   console.log(`[Alertness] Manual override: ${LEVEL_NAMES[level]} (${reason})`);
   await transitionToLevel(level, `Manual: ${reason}`);
+}
+
+/**
+ * 手动覆盖 Alertness 等级（持久化，带过期时间）
+ * evaluateAlertness() 会尊重这个覆盖，不会自动改回来
+ */
+export async function setManualOverride(level, reason, durationMs = 30 * 60 * 1000) {
+  _manualOverride = {
+    level,
+    reason,
+    set_at: Date.now(),
+    until: Date.now() + durationMs,
+  };
+
+  await transitionToLevel(level, `Manual override: ${reason}`);
+  return { success: true, override: _manualOverride };
+}
+
+/**
+ * 清除手动覆盖
+ */
+export async function clearManualOverride() {
+  if (!_manualOverride) {
+    return { success: false, reason: 'No override active' };
+  }
+
+  const oldOverride = _manualOverride;
+  _manualOverride = null;
+
+  // 清除后重新评估
+  await evaluateAlertness();
+
+  return { success: true, cleared: oldOverride };
+}
+
+/**
+ * 获取当前手动覆盖状态
+ */
+export function getManualOverride() {
+  return _manualOverride;
 }
 
 /**
@@ -522,6 +578,9 @@ export default {
   getDiagnosis,
   getHistory,
   setManualLevel,
+  setManualOverride,
+  clearManualOverride,
+  getManualOverride,
   canDispatch,
   getDispatchRate
 };

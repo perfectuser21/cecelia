@@ -15,7 +15,7 @@ import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.j
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
 import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch as canDispatchOld, canPlan, getDispatchRate as getDispatchRateOld, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
-import { evaluateAlertness as evaluateAlertnessEnhanced, getCurrentAlertness, canDispatch as canDispatchEnhanced, getDispatchRate as getDispatchRateEnhanced } from './alertness/index.js';
+import { evaluateAlertness as evaluateAlertnessEnhanced, getCurrentAlertness, canDispatch as canDispatchEnhanced, getDispatchRate as getDispatchRateEnhanced, ALERTNESS_LEVELS as ENHANCED_LEVELS, LEVEL_NAMES as ENHANCED_LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 
@@ -784,28 +784,31 @@ async function executeTick() {
   let thalamusResult = null;
 
   // 0. Evaluate alertness level (enhanced version)
+  // NOTE: Uses ENHANCED_LEVELS from alertness/index.js:
+  //   SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
+  // NOT old alertness.js levels (NORMAL=0, ALERT=1, EMERGENCY=2, COMA=3)
   let alertnessResult = null;
   try {
     // Use enhanced alertness system
     alertnessResult = await evaluateAlertnessEnhanced();
-    if (alertnessResult.level >= ALERTNESS_LEVELS.ALERT) {
-      console.log(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
+    if (alertnessResult.level >= ENHANCED_LEVELS.ALERT) {
+      console.log(`[tick] Alertness: ${ENHANCED_LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
       actionsTaken.push({
         action: 'alertness_check',
         level: alertnessResult.level,
-        level_name: LEVEL_NAMES[alertnessResult.level],
+        level_name: ENHANCED_LEVEL_NAMES[alertnessResult.level],
         score: alertnessResult.score
       });
     }
 
-    // In COMA mode, skip everything except basic health checks
-    if (alertnessResult.level === ALERTNESS_LEVELS.COMA) {
-      console.log('[tick] COMA mode: skipping all operations, only heartbeat');
+    // In PANIC mode, skip everything except basic health checks
+    if (alertnessResult.level >= ENHANCED_LEVELS.PANIC) {
+      console.log('[tick] PANIC mode: skipping all operations, only heartbeat');
       return {
         success: true,
         alertness: alertnessResult,
         actions_taken: actionsTaken,
-        reason: 'COMA mode - only heartbeat',
+        reason: 'PANIC mode - only heartbeat',
         next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
       };
     }
@@ -1132,7 +1135,7 @@ async function executeTick() {
       console.error('[tick-loop] Planner error:', planErr.message);
     }
   } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
-    console.log(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
+    console.log(`[tick] Planning disabled at alertness level ${ENHANCED_LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
 
   // 6b. Auto OKR decomposition: ONLY for TRUE top-level objectives (parent_id IS NULL)
@@ -1140,8 +1143,8 @@ async function executeTick() {
   try {
     const noKrObjectives = await pool.query(`
       SELECT o.id, o.title FROM goals o
-      WHERE o.type = 'objective'
-        AND o.parent_id IS NULL  -- CRITICAL: Only top-level objectives
+      WHERE o.type = 'global_okr'
+        AND o.parent_id IS NULL  -- CRITICAL: Only top-level global OKRs
         AND o.status NOT IN ('completed', 'cancelled', 'decomposing')
         AND NOT EXISTS (
           SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
@@ -1229,7 +1232,7 @@ async function executeTick() {
   if (dispatched < effectiveDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
-        SELECT id FROM goals WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
+        SELECT id FROM goals WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {
