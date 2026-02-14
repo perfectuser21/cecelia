@@ -5,6 +5,7 @@
 
 import pool from './db.js';
 import { emit } from './event-bus.js';
+import { createTask } from './actions.js';
 
 // OKR Tick configuration
 const OKR_TICK_INTERVAL_MS = parseInt(process.env.CECELIA_OKR_TICK_INTERVAL_MS || '300000', 10); // 5 minutes
@@ -81,11 +82,12 @@ async function getGoalsWithAnsweredQuestions() {
 
 /**
  * Trigger planner for goal decomposition
- * Calls Autumnrice to decompose the goal into tasks
+ * Creates a decomposition task that executor will dispatch via normal flow.
+ * executor.preparePrompt() handles decomposition='true' → generates /okr prompt.
  * @param {Object} goal - Goal to decompose
  */
 async function triggerPlannerForGoal(goal) {
-  console.log(`[okr-tick] Triggering Autumnrice for goal: ${goal.title} (${goal.id})`);
+  console.log(`[okr-tick] Creating decomposition task for goal: ${goal.title} (${goal.id})`);
 
   // Emit event for monitoring
   await emit('goal_ready_for_decomposition', 'okr-tick', {
@@ -95,79 +97,34 @@ async function triggerPlannerForGoal(goal) {
     description: goal.description
   });
 
-  // Build the prompt for Autumnrice (6-layer OKR decomposition)
-  const prompt = `/okr
-
-## Goal 信息
-- ID: ${goal.id}
-- 标题: ${goal.title}
-- 描述: ${goal.description || '无'}
-- 优先级: ${goal.priority}
-- 项目ID: ${goal.project_id || '未指定'}
-
-## 6 层架构
-Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-3小时) → Task (PR)
-
-## 要求
-1. 分析这个目标，创建 Initiative 和具体可执行的 Tasks
-2. 每个 Task 必须指定 task_type (dev/talk/qa/audit/research)
-3. 每个 Task 必须关联 goal_id = ${goal.id}
-4. 先创建 Initiative: POST http://localhost:5221/api/brain/action/create-initiative
-5. 再创建 Tasks: POST http://localhost:5221/api/brain/action/create-task
-6. 完成后更新 Goal 状态为 in_progress
-
-## Brain API 创建 Initiative
-curl -X POST http://localhost:5221/api/brain/action/create-initiative \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "name": "Initiative 名称",
-    "parent_id": "<Project ID>",
-    "kr_id": "${goal.id}",
-    "decomposition_mode": "known"
-  }'
-
-## Brain API 创建 Task
-curl -X POST http://localhost:5221/api/brain/action/create-task \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "title": "任务标题",
-    "task_type": "dev",
-    "project_id": "<Initiative ID>",
-    "goal_id": "${goal.id}",
-    "priority": "${goal.priority}",
-    "prd_content": "完整 PRD"
-  }'
-`;
-
-  // Call cecelia-bridge (port 3457) for decomposition
-  const bridgeUrl = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457/trigger-cecelia';
-
   try {
-    const response = await fetch(bridgeUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        goal_id: goal.id,
-        title: goal.title,
-        description: goal.description,
-        priority: goal.priority,
-        project_id: goal.project_id,
-        prompt
-      })
+    // Create a decomposition task — executor.preparePrompt() will generate the /okr prompt
+    const result = await createTask({
+      title: `OKR 拆解: ${goal.title}`,
+      description: goal.description || goal.title,
+      priority: goal.priority || 'P0',
+      goal_id: goal.id,
+      project_id: goal.project_id || null,
+      task_type: 'dev',
+      trigger_source: 'okr_tick',
+      payload: {
+        decomposition: 'true',
+        kr_id: goal.id,
+        kr_goal: goal.description || goal.title
+      }
     });
 
-    const result = await response.json();
-    console.log(`[okr-tick] Autumnrice triggered for goal ${goal.id}: ${JSON.stringify(result)}`);
+    console.log(`[okr-tick] Decomposition task created for goal ${goal.id}: ${result.task?.id || 'dedup'}`);
 
     return {
-      triggered: result.success,
+      triggered: true,
       goal_id: goal.id,
       title: goal.title,
-      pid: result.pid,
-      log_file: result.log_file
+      task_id: result.task?.id,
+      deduplicated: result.deduplicated || false
     };
   } catch (err) {
-    console.error(`[okr-tick] Failed to trigger Autumnrice: ${err.message}`);
+    console.error(`[okr-tick] Failed to create decomposition task: ${err.message}`);
     return {
       triggered: false,
       goal_id: goal.id,
