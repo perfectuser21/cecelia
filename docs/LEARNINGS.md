@@ -70,3 +70,25 @@
   - 修复后系统稳定性恢复
   - 后续可以安全地运行 OKR 拆解
 
+
+### [2026-02-14] Fix PORT Environment Variable Support in Brain Server
+
+- **Bug**: Rolling update failed during deployment due to environment variable mismatch
+  - Symptom: Green container health check failed after 60s, EADDRINUSE error
+  - Root cause: Brain server.js only checked `BRAIN_PORT`, ignored standard Docker `PORT`
+  - rolling-update.sh correctly set `PORT=5222`, but Brain defaulted to 5221
+  - Result: Green and blue containers both tried to bind to 5221, causing port conflict
+  - Solution: Changed server.js line 16 to `PORT || BRAIN_PORT || 5221` priority chain
+  - PR #266: Simple one-line fix, backward compatible with existing BRAIN_PORT usage
+
+- **优化点**: Environment variable naming conventions
+  - Standard Docker convention uses `PORT` (not `BRAIN_PORT`)
+  - Custom env vars should fallback to standard names for better compatibility
+  - Priority chain: standard → custom → default ensures maximum flexibility
+  - Testing deployment scripts requires real container execution, not just unit tests
+
+- **影响程度**: High (P0)
+  - Blocked zero-downtime deployment capability
+  - Fixed with single line change
+  - Enables future rolling updates between develop and main
+  - Auto-rollback mechanism successfully protected against bad deployments
