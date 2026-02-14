@@ -808,30 +808,45 @@ router.post('/alertness/evaluate', async (req, res) => {
 
 /**
  * POST /api/brain/alertness/override
- * 手动覆盖警觉级别
- * Body: { level: 0-3, reason: "string", duration_minutes?: 30 }
+ * 手动覆盖警觉级别（同时设置 old + enhanced 系统）
+ * Body: { level: 0-4, reason: "string", duration_minutes?: 30 }
+ *
+ * Enhanced levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
+ * Old levels: NORMAL=0, ALERT=1, EMERGENCY=2, COMA=3
  */
 router.post('/alertness/override', async (req, res) => {
   try {
     const { level, reason, duration_minutes = 30 } = req.body;
 
-    if (level === undefined || level < 0 || level > 3) {
-      return res.status(400).json({ error: 'level must be 0-3' });
+    if (level === undefined || level < 0 || level > 4) {
+      return res.status(400).json({ error: 'level must be 0-4 (enhanced: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4)' });
     }
     if (!reason) {
       return res.status(400).json({ error: 'reason is required' });
     }
 
     const durationMs = duration_minutes * 60 * 1000;
-    const result = await setManualOverride(level, reason, durationMs);
+
+    // Map enhanced level to old level: 0→0, 1→0, 2→1, 3→2, 4→3
+    const oldLevel = Math.max(0, Math.min(3, level - 1));
+    const oldResult = await setManualOverride(oldLevel, reason, durationMs);
+
+    // Set enhanced system override
+    const { setManualOverride: setEnhancedOverride } = await import('./alertness/index.js');
+    const enhancedResult = await setEnhancedOverride(level, reason, durationMs);
+
+    const { LEVEL_NAMES: ENHANCED_LEVEL_NAMES } = await import('./alertness/index.js');
 
     res.json({
       success: true,
       level,
-      level_name: LEVEL_NAMES[level],
+      level_name: ENHANCED_LEVEL_NAMES[level],
+      old_level: oldLevel,
+      old_level_name: LEVEL_NAMES[oldLevel],
       reason,
       duration_minutes,
-      ...result
+      enhanced: enhancedResult,
+      old: oldResult
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to set override', details: err.message });
@@ -840,17 +855,23 @@ router.post('/alertness/override', async (req, res) => {
 
 /**
  * POST /api/brain/alertness/clear-override
- * 清除手动覆盖
+ * 清除手动覆盖（同时清除 old + enhanced 系统）
  */
 router.post('/alertness/clear-override', async (req, res) => {
   try {
     const result = await clearManualOverride();
+
+    // Also clear enhanced system override
+    const { clearManualOverride: clearEnhancedOverride } = await import('./alertness/index.js');
+    const enhancedResult = await clearEnhancedOverride();
+
     const alertness = getAlertness();
     res.json({
-      success: result.success,
+      success: result.success || enhancedResult.success,
       current_level: alertness.level,
       current_level_name: LEVEL_NAMES[alertness.level],
-      ...result
+      old: result,
+      enhanced: enhancedResult
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to clear override', details: err.message });
