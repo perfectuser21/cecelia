@@ -77,7 +77,20 @@ export async function generateEmbedding(text, options = {}) {
         throw error;
       }
 
-      // Log retry attempt
+      // Don't retry on permanent errors (quota exceeded, rate limit)
+      // These errors indicate system-level issues that won't be resolved by retry
+      const isPermanentError =
+        error.message.includes('insufficient_quota') ||
+        error.message.includes('quota_exceeded') ||
+        error.code === 'insufficient_quota' ||
+        (error.status === 429 && error.type === 'insufficient_quota');
+
+      if (isPermanentError) {
+        // Wrap error with clear message for upstream handling
+        throw new Error(`OpenAI quota exceeded: ${error.message}`);
+      }
+
+      // Log retry attempt for temporary errors (network, rate limit, etc.)
       if (attempt < retries) {
         console.warn(`OpenAI API call failed (attempt ${attempt + 1}/${retries + 1}):`, error.message);
         // Exponential backoff
