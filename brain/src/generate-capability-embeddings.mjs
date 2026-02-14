@@ -58,11 +58,22 @@ async function main() {
       return;
     }
 
-    // Generate embeddings
+    // Generate embeddings with safety limits
     let successCount = 0;
     let failCount = 0;
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3;
+    const MAX_RUNTIME_MS = 5 * 60 * 1000; // 5 minutes
+    const startTime = Date.now();
 
     for (const capability of capabilities) {
+      // Check runtime limit
+      if (Date.now() - startTime > MAX_RUNTIME_MS) {
+        console.error('\n⚠️  Maximum runtime exceeded (5 minutes). Stopping to prevent resource exhaustion.');
+        console.log(`   Processed: ${successCount + failCount}/${capabilities.length}`);
+        process.exit(1);
+      }
+
       try {
         console.log(`Processing: ${capability.id}`);
         console.log(`  Name: ${capability.name}`);
@@ -83,6 +94,7 @@ async function main() {
         );
 
         successCount++;
+        consecutiveFailures = 0; // Reset on success
         console.log(`  ✅ Updated\n`);
 
         // Rate limiting: wait 100ms between requests
@@ -90,7 +102,26 @@ async function main() {
 
       } catch (error) {
         failCount++;
+        consecutiveFailures++;
         console.error(`  ❌ Failed: ${error.message}\n`);
+
+        // Check for quota exceeded errors - fail immediately
+        if (error.message.includes('OpenAI quota exceeded') ||
+            error.message.includes('insufficient_quota') ||
+            error.message.includes('quota_exceeded')) {
+          console.error('\n❌ OpenAI quota exceeded. Stopping immediately to prevent resource waste.');
+          console.log(`   Processed: ${successCount}/${capabilities.length} successful`);
+          console.log(`   Failed: ${failCount}/${capabilities.length}`);
+          process.exit(1);
+        }
+
+        // Check consecutive failures limit
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          console.error(`\n❌ ${MAX_CONSECUTIVE_FAILURES} consecutive failures. Stopping to prevent infinite retries.`);
+          console.log(`   Processed: ${successCount}/${capabilities.length} successful`);
+          console.log(`   Failed: ${failCount}/${capabilities.length}`);
+          process.exit(1);
+        }
       }
     }
 

@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02141824-update-schema-031",
-  "head_sha": "b4f291e",
-  "timestamp": "2026-02-14T10:35:25Z",
+  "branch": "cp-fix-embeddings-retry",
+  "head_sha": "03adf5d",
+  "timestamp": "2026-02-14T13:24:47Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

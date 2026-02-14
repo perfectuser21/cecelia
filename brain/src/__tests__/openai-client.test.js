@@ -67,4 +67,8 @@ describe('OpenAI Client', () => {
       expect(result).toBe(true);
     });
   });
+
+  // Note: Quota exceeded error handling and retry logic tests
+  // are covered by integration tests in generate-capability-embeddings.test.js
+  // due to complexity of mocking OpenAI client behavior
 });
