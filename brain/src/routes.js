@@ -2007,6 +2007,17 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Thalamus error: ${thalamusErr.message}`);
         // Continue with normal flow if thalamus fails
       }
+
+      // Cleanup worktree and branches (async, non-blocking)
+      try {
+        const { cleanupWorktree } = await import('./executor.js');
+        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+        if (taskResult.rows[0]) {
+          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
+            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
+          });
+        }
+      } catch { /* ignore if cleanup fails */ }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -2113,6 +2124,17 @@ router.post('/execution-callback', async (req, res) => {
           console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
         }
       }
+
+      // Cleanup worktree and branches (async, non-blocking)
+      try {
+        const { cleanupWorktree } = await import('./executor.js');
+        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
+        if (taskResult.rows[0]) {
+          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
+            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
+          });
+        }
+      } catch { /* ignore if cleanup fails */ }
     }
 
     // 5. Rollup progress to KR and O
