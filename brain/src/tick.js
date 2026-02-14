@@ -7,6 +7,7 @@ import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
+import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
@@ -108,6 +109,12 @@ async function getTickStatus() {
     quarantineStats = await getQuarantineStats();
   } catch { /* ignore */ }
 
+  // Get slot allocation budget
+  let slotBudget = null;
+  try {
+    slotBudget = await calculateSlotBudget();
+  } catch { /* ignore */ }
+
   return {
     enabled,
     loop_running: _loopTimer !== null,
@@ -123,6 +130,7 @@ async function getTickStatus() {
     max_concurrent: MAX_CONCURRENT_TASKS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
     resources: checkServerResources(),
+    slot_budget: slotBudget,
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
     circuit_breakers: getAllStates(),
     alertness: getAlertness(),
@@ -558,23 +566,16 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'billing_pause', detail: `Billing cap active until ${billingPause.resetTime}`, actions };
   }
 
-  // 0. Server resource check — dynamic slot scaling based on actual load
-  const resources = checkServerResources();
-  if (!resources.ok) {
-    return { dispatched: false, reason: 'server_overloaded', detail: resources.reason, metrics: resources.metrics, actions };
-  }
-
-  // 1. Check concurrency — use dynamic effectiveSlots from resource check
-  const effectiveLimit = Math.min(AUTO_DISPATCH_MAX, resources.effectiveSlots);
-  const activeResult = await pool.query(
-    "SELECT COUNT(*) FROM tasks WHERE goal_id = ANY($1) AND status = 'in_progress'",
-    [goalIds]
-  );
-  const dbActiveCount = parseInt(activeResult.rows[0].count);
-  const processActiveCount = getActiveProcessCount();
-  const activeCount = Math.max(dbActiveCount, processActiveCount);
-  if (activeCount >= effectiveLimit) {
-    return { dispatched: false, reason: 'max_concurrent_reached', active: activeCount, limit: effectiveLimit, effective_slots: resources.effectiveSlots, pressure: resources.metrics.max_pressure, db_active: dbActiveCount, process_active: processActiveCount, actions };
+  // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
+  const slotBudget = await calculateSlotBudget();
+  if (!slotBudget.dispatchAllowed) {
+    return {
+      dispatched: false,
+      reason: slotBudget.user.mode === 'team' ? 'user_team_mode' :
+             slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full',
+      budget: slotBudget,
+      actions,
+    };
   }
 
   // 2. Circuit breaker check
@@ -1203,7 +1204,13 @@ async function executeTick() {
 
   // Apply dispatch rate limit based on alertness level
   const dispatchRate = getDispatchRateEnhanced();
-  const effectiveDispatchMax = Math.max(1, Math.floor(AUTO_DISPATCH_MAX * dispatchRate));
+  // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
+  const tickSlotBudget = await calculateSlotBudget();
+  const poolCAvailable = tickSlotBudget.taskPool.available;
+  const effectiveDispatchMax = Math.max(0, Math.floor(poolCAvailable * dispatchRate));
+  if (tickSlotBudget.user.mode !== 'absent') {
+    console.log(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
+  }
   if (dispatchRate < 1.0) {
     console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
   }

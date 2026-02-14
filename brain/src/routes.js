@@ -2801,6 +2801,20 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 /**
+ * GET /api/brain/slots
+ * Three-pool slot allocation status
+ */
+router.get('/slots', async (req, res) => {
+  try {
+    const { getSlotStatus } = await import('./slot-allocator.js');
+    const status = await getSlotStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/vps-slots
  * Get real Claude process information with task details
  */

@@ -1,37 +1,17 @@
 {
-  "timestamp": "2026-02-14T09:41:00Z",
-  "branch": "cp-02140936-51812adb-3bd3-4d0f-9d94-77614a",
+  "branch": "cp-02141415-slot-allocation",
+  "head_sha": "46ea599",
+  "timestamp": "2026-02-14T06:20:35Z",
   "tests": {
-    "passed": 3,
-    "failed": 0,
-    "total": 3
+    "total": 1205,
+    "passed": 1191,
+    "failed": 13,
+    "skipped": 1,
+    "new_tests": 38,
+    "pre_existing_failures": 13,
+    "note": "All 13 failures are pre-existing (run_events FK constraint + EADDRINUSE), not caused by this PR"
   },
-  "coverage": {
-    "statements": 100,
-    "branches": 100,
-    "functions": 100,
-    "lines": 100
-  },
-  "dod_items": [
-    {
-      "description": "创建 hello API 端点 `/api/brain/hello`",
-      "status": "completed",
-      "test": "tests/hello.test.js"
-    },
-    {
-      "description": "返回 'Hello Cecelia' 消息",
-      "status": "completed",
-      "test": "tests/hello.test.js"
-    },
-    {
-      "description": "端点响应状态码为 200",
-      "status": "completed",
-      "test": "tests/hello.test.js"
-    },
-    {
-      "description": "所有测试通过",
-      "status": "completed",
-      "test": "CI execution"
-    }
-  ]
+  "facts_check": "pass",
+  "version_sync": "pass",
+  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
