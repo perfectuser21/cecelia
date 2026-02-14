@@ -48,7 +48,6 @@ describe('PR Plans API', () => {
     it('should create PR Plan successfully', async () => {
       const mockPrPlan = {
         id: 'pr-plan-1',
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         title: 'Add authentication',
         description: 'Implement JWT authentication',
@@ -63,14 +62,12 @@ describe('PR Plans API', () => {
         updated_at: new Date()
       };
 
-      // Mock initiative and project existence checks
+      // Mock project existence check + insert
       pool.query
-        .mockResolvedValueOnce({ rows: [{ id: 'initiative-1' }] }) // initiative exists
         .mockResolvedValueOnce({ rows: [{ id: 'project-1' }] })    // project exists
-        .mockResolvedValueOnce({ rows: [mockPrPlan] });            // insert result
+        .mockResolvedValueOnce({ rows: [mockPrPlan] });             // insert result
 
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         title: 'Add authentication',
         description: 'Implement JWT authentication',
@@ -86,27 +83,11 @@ describe('PR Plans API', () => {
       expect(res._status).toBe(201);
       expect(res._data.success).toBe(true);
       expect(res._data.pr_plan).toEqual(mockPrPlan);
-      expect(pool.query).toHaveBeenCalledTimes(3);
-    });
-
-    it('should return 400 if initiative_id is missing', async () => {
-      const { req, res } = mockReqRes({
-        project_id: 'project-1',
-        title: 'Add authentication',
-        dod: 'DoD content'
-      });
-
-      await handler(req, res);
-
-      expect(res._status).toBe(400);
-      expect(res._data.success).toBe(false);
-      expect(res._data.error).toBe('Missing required field: initiative_id');
-      expect(res._data.code).toBe('MISSING_FIELD');
+      expect(pool.query).toHaveBeenCalledTimes(2);
     });
 
     it('should return 400 if project_id is missing', async () => {
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         title: 'Add authentication',
         dod: 'DoD content'
       });
@@ -120,7 +101,6 @@ describe('PR Plans API', () => {
 
     it('should return 400 if title is missing', async () => {
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         dod: 'DoD content'
       });
@@ -134,7 +114,6 @@ describe('PR Plans API', () => {
 
     it('should return 400 if dod is missing', async () => {
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         title: 'Add authentication'
       });
@@ -146,31 +125,10 @@ describe('PR Plans API', () => {
       expect(res._data.error).toBe('Missing required field: dod');
     });
 
-    it('should return 404 if initiative does not exist', async () => {
-      pool.query.mockResolvedValueOnce({ rows: [] }); // initiative not found
-
-      const { req, res } = mockReqRes({
-        initiative_id: 'invalid-initiative',
-        project_id: 'project-1',
-        title: 'Add authentication',
-        dod: 'DoD content'
-      });
-
-      await handler(req, res);
-
-      expect(res._status).toBe(404);
-      expect(res._data.success).toBe(false);
-      expect(res._data.error).toBe('Initiative not found');
-      expect(res._data.code).toBe('INITIATIVE_NOT_FOUND');
-    });
-
     it('should return 404 if project does not exist', async () => {
-      pool.query
-        .mockResolvedValueOnce({ rows: [{ id: 'initiative-1' }] }) // initiative exists
-        .mockResolvedValueOnce({ rows: [] });                       // project not found
+      pool.query.mockResolvedValueOnce({ rows: [] }); // project not found
 
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'invalid-project',
         title: 'Add authentication',
         dod: 'DoD content'
@@ -186,11 +144,9 @@ describe('PR Plans API', () => {
 
     it('should return 400 if complexity is invalid', async () => {
       pool.query
-        .mockResolvedValueOnce({ rows: [{ id: 'initiative-1' }] })
         .mockResolvedValueOnce({ rows: [{ id: 'project-1' }] });
 
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         title: 'Add authentication',
         dod: 'DoD content',
@@ -226,26 +182,6 @@ describe('PR Plans API', () => {
       expect(res._data.success).toBe(true);
       expect(res._data.pr_plans).toEqual(mockPrPlans);
       expect(res._data.count).toBe(2);
-    });
-
-    it('should filter by initiative_id', async () => {
-      const mockPrPlans = [
-        { id: 'pr-plan-1', initiative_id: 'initiative-1', title: 'Plan 1' }
-      ];
-
-      pool.query.mockResolvedValueOnce({ rows: mockPrPlans });
-
-      const { req, res } = mockReqRes({}, {}, { initiative_id: 'initiative-1' });
-
-      await handler(req, res);
-
-      expect(res._status).toBe(200);
-      expect(res._data.success).toBe(true);
-      expect(res._data.pr_plans).toEqual(mockPrPlans);
-      expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('initiative_id = $1'),
-        ['initiative-1']
-      );
     });
 
     it('should filter by project_id', async () => {
@@ -297,8 +233,6 @@ describe('PR Plans API', () => {
         pr_plan_id: 'pr-plan-1',
         pr_plan_title: 'Add authentication',
         dod: 'DoD content',
-        initiative_id: 'initiative-1',
-        initiative_title: 'Security initiative',
         project_id: 'project-1',
         project_name: 'API service',
         repo_path: '/repos/api-service',
@@ -457,10 +391,12 @@ describe('PR Plans API', () => {
     const postHandler = getHandler('post', '/pr-plans');
 
     it('should handle database errors gracefully', async () => {
-      pool.query.mockRejectedValueOnce(new Error('Database connection failed'));
+      // First query (project check) succeeds, second (insert) fails
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ id: 'project-1' }] })
+        .mockRejectedValueOnce(new Error('Database connection failed'));
 
       const { req, res } = mockReqRes({
-        initiative_id: 'initiative-1',
         project_id: 'project-1',
         title: 'Test',
         dod: 'DoD content'

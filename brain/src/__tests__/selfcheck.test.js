@@ -13,7 +13,6 @@ function makeMockPool(overrides = {}) {
       { table_name: 'tasks' },
       { table_name: 'goals' },
       { table_name: 'projects' },
-      { table_name: 'features' },
       { table_name: 'working_memory' },
       { table_name: 'cecelia_events' },
       { table_name: 'decision_log' },

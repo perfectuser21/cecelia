@@ -52,19 +52,7 @@ vi.mock('../tick.js', () => ({
   executeTick: vi.fn(),
   runTickSafe: vi.fn(async () => ({ actions_taken: [] })),
   routeTask: vi.fn(),
-  startFeatureTickLoop: vi.fn(),
-  stopFeatureTickLoop: vi.fn(),
-  getFeatureTickStatus: vi.fn(),
   TASK_TYPE_AGENT_MAP: {},
-}));
-vi.mock('../feature-tick.js', () => ({
-  createFeature: vi.fn(),
-  getFeature: vi.fn(),
-  getFeaturesByStatus: vi.fn(),
-  updateFeature: vi.fn(),
-  createFeatureTask: vi.fn(),
-  handleFeatureTaskComplete: vi.fn(),
-  FEATURE_STATUS: {},
 }));
 vi.mock('../task-router.js', () => ({
   identifyWorkType: vi.fn(),
@@ -72,11 +60,6 @@ vi.mock('../task-router.js', () => ({
   routeTaskCreate: vi.fn(),
   getValidTaskTypes: vi.fn(),
   LOCATION_MAP: {},
-}));
-vi.mock('../anti-crossing.js', () => ({
-  checkAntiCrossing: vi.fn(),
-  validateTaskCompletion: vi.fn(),
-  getActiveFeaturesWithTasks: vi.fn(),
 }));
 vi.mock('../okr-tick.js', () => ({
   executeOkrTick: vi.fn(),

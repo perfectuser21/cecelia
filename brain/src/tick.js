@@ -11,7 +11,6 @@ import { compareGoalProgress, generateDecision, executeDecision } from './decisi
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
-import { cleanupOrphanedTaskRefs } from './anti-crossing.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
@@ -938,15 +937,6 @@ async function executeTick() {
     );
   }
 
-  // 2.6 Anti-crossing cleanup: clear orphaned task references
-  try {
-    const orphansCleaned = await cleanupOrphanedTaskRefs();
-    if (orphansCleaned > 0) {
-      console.log(`[tick-loop] Cleaned up ${orphansCleaned} orphaned task references`);
-    }
-  } catch (err) {
-    console.error('[tick-loop] Anti-crossing cleanup error:', err.message);
-  }
 
   // 3. Get daily focus
   const focusResult = await getDailyFocus();
