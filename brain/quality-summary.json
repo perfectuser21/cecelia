@@ -1,6 +1,1 @@
-{
-  "branch": "cp-02102020-brain-pr-plans-dispatch",
-  "head_sha": "ef3ef47",
-  "timestamp": "2026-02-10T12:35:45Z",
-  "note": "Quality 只汇总，不判定。CI 是最终裁判。"
-}
+{"tests_passed": 1261, "tests_skipped": 1, "test_status": "PASS", "code_changes": "Removed Old System token bucket check from dispatchNextTask()"}

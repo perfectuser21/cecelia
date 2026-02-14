@@ -15,7 +15,7 @@ import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
-import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch as canDispatchOld, canPlan, getDispatchRate as getDispatchRateOld, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
+import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch as canDispatchOld, canPlan, getDispatchRate as getDispatchRateOld, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
 import { evaluateAlertness as evaluateAlertnessEnhanced, getCurrentAlertness, canDispatch as canDispatchEnhanced, getDispatchRate as getDispatchRateEnhanced, ALERTNESS_LEVELS as ENHANCED_LEVELS, LEVEL_NAMES as ENHANCED_LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
@@ -581,18 +581,6 @@ async function dispatchNextTask(goalIds) {
   // 2. Circuit breaker check
   if (!isAllowed('cecelia-run')) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
-  }
-
-  // 2a. P1 FIX: Token bucket rate limiting check
-  const tokenResult = tryConsumeToken('dispatch');
-  if (!tokenResult.allowed) {
-    return {
-      dispatched: false,
-      reason: 'rate_limited',
-      detail: tokenResult.reason,
-      remaining: tokenResult.remaining,
-      actions
-    };
   }
 
   // 3. Select next task (with dependency check)
