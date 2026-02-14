@@ -1,678 +1,586 @@
 /**
- * LiveMonitorPage - Cecelia Live Monitor Dashboard (Enhanced)
+ * LiveMonitorPage v2 - Real-time Task Flow Monitor (tmux Style)
  *
- * 实时监控 Cecelia Brain 的工作状态 - 丰富信息展示版
- * 布局：多维度网格（Brain / Resources / Tasks / Logs / Completions / Alerts / Queue / DB）
+ * 实时任务流监控中心
+ * 布局：左侧主控（2/3）+ 右侧 Agent 窗格（1/3）
+ * 数据：Brain API 轮询 + 模拟 Agent 日志
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Activity,
   Cpu,
-  HardDrive,
   MemoryStick,
-  Pause,
-  Trash2,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  Database,
+  HardDrive,
   Zap,
-  TrendingUp,
+  Clock,
   Users,
-  Server,
+  AlertTriangle,
+  Info,
+  CheckCircle,
   GitBranch,
-  FileText,
-  Shield,
+  Loader,
 } from 'lucide-react';
 
-// ============ Enhanced Mock Data ============
-const mockBrainStatus = {
-  running: true,
-  tick_number: 1847,
-  alertness: { level: 1, name: 'NORMAL', color: 'green' },
-  uptime_seconds: 87345, // ~24h
-  circuit_breaker: {
-    status: 'closed',
-    failures: 0,
-    last_check: new Date().toISOString(),
-  },
-  watchdog: {
-    rss_mb: 245,
-    cpu_percent: 12.5,
-    healthy: true,
-  },
-  last_tick_duration_ms: 450,
-};
-
-const mockResources = {
-  cpu_percent: 45,
-  memory_percent: 68,
-  disk_percent: 34,
-  network_rx_mbps: 12.5,
-  network_tx_mbps: 8.3,
-  task_counts: {
-    active: 7,
-    queued: 12,
-    quarantined: 2,
-    completed_today: 156,
-  },
-  api_stats: {
-    requests_per_minute: 342,
-    avg_response_ms: 85,
-    error_rate: 0.03,
-  },
-};
-
-const mockActiveTasks = [
-  {
-    id: '890',
-    title: '重置 embeddings 重试',
-    status: 'in_progress',
-    priority: 'P0',
-    progress: 85,
-    started_at: new Date(Date.now() - 765000).toISOString(),
-    elapsed_seconds: 765,
-    executor: 'Caramel',
-  },
-  {
-    id: '891',
-    title: '熔断机制增强 PR #308',
-    status: 'in_progress',
-    priority: 'P1',
-    progress: 42,
-    started_at: new Date(Date.now() - 320000).toISOString(),
-    elapsed_seconds: 320,
-    executor: 'Caramel',
-  },
-  {
-    id: '892',
-    title: 'Platform Scraper 抖音数据',
-    status: 'in_progress',
-    priority: 'P1',
-    progress: 68,
-    started_at: new Date(Date.now() - 540000).toISOString(),
-    elapsed_seconds: 540,
-    executor: 'AutoScraper',
-  },
-  {
-    id: '893',
-    title: '今日头条发布调度',
-    status: 'in_progress',
-    priority: 'P2',
-    progress: 12,
-    started_at: new Date(Date.now() - 120000).toISOString(),
-    elapsed_seconds: 120,
-    executor: 'Publisher',
-  },
-  {
-    id: '894',
-    title: 'OKR 拆解 - Q1 2026',
-    status: 'queued',
-    priority: 'P0',
-    progress: 0,
-    blocked_by: ['890'],
-  },
-  {
-    id: '895',
-    title: 'Database Migration 028',
-    status: 'queued',
-    priority: 'P1',
-    progress: 0,
-    blocked_by: ['891'],
-  },
-  {
-    id: '896',
-    title: 'Quality Gate 检查',
-    status: 'queued',
-    priority: 'P2',
-    progress: 0,
-  },
-];
-
-const mockRecentCompletions = [
-  { id: '887', title: 'Core rebuild 完成', completed_at: new Date(Date.now() - 180000), duration_seconds: 24 },
-  { id: '888', title: 'LiveMonitor 路由注册', completed_at: new Date(Date.now() - 240000), duration_seconds: 156 },
-  { id: '889', title: 'Docker 容器重启', completed_at: new Date(Date.now() - 360000), duration_seconds: 8 },
-  { id: '886', title: 'Dashboard 构建', completed_at: new Date(Date.now() - 420000), duration_seconds: 31 },
-  { id: '885', title: 'PR #307 合并', completed_at: new Date(Date.now() - 540000), duration_seconds: 12 },
-];
-
-const mockQuarantineZone = [
-  { id: '782', title: 'N8N Workflow 创建失败', reason: '连续失败 3 次', quarantined_at: new Date(Date.now() - 3600000) },
-  { id: '801', title: 'API 超时任务', reason: '执行时间超过 10 分钟', quarantined_at: new Date(Date.now() - 7200000) },
-];
-
-const mockAlerts = [
-  { level: 'warning', message: 'CPU 使用率持续高于 60% (2min)', timestamp: new Date(Date.now() - 120000) },
-  { level: 'warning', message: 'Queue 深度达到 12（阈值 10）', timestamp: new Date(Date.now() - 240000) },
-  { level: 'info', message: 'Watchdog 健康检查通过', timestamp: new Date(Date.now() - 300000) },
-];
-
-let logCounter = 0;
-const generateMockLog = () => {
-  const sources = ['tick-loop', 'executor', 'watchdog', 'task', 'alertness', 'api', 'database', 'queue'];
-  const messages = [
-    `Tick #${mockBrainStatus.tick_number} completed in ${mockBrainStatus.last_tick_duration_ms}ms`,
-    `Dispatched task #${Math.floor(Math.random() * 1000)}`,
-    `CPU: ${mockResources.cpu_percent}%, Memory: ${mockResources.memory_percent}%`,
-    `API request processed: 200 OK (${Math.floor(Math.random() * 200)}ms)`,
-    `Queue depth: ${mockResources.task_counts.queued}`,
-    `Database query: SELECT * FROM tasks LIMIT 10 (${Math.floor(Math.random() * 50)}ms)`,
-    `Alertness level: ${mockBrainStatus.alertness.name}`,
-    `Watchdog RSS: ${mockBrainStatus.watchdog.rss_mb}MB`,
-    `Task #${Math.floor(Math.random() * 1000)} completed successfully`,
-    `Circuit breaker status: ${mockBrainStatus.circuit_breaker.status}`,
-  ];
-
-  return {
-    id: logCounter++,
-    timestamp: new Date(),
-    source: sources[Math.floor(Math.random() * sources.length)],
-    message: messages[Math.floor(Math.random() * messages.length)],
-    level: Math.random() > 0.9 ? 'warning' : 'info',
+// ============ Types ============
+interface BrainTask {
+  id: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  priority: 'P0' | 'P1' | 'P2';
+  progress?: number;
+  executor?: string;
+  started_at?: string;
+  estimated_duration?: number;
+  metadata?: {
+    current_step?: string;
+    step_number?: number;
+    total_steps?: number;
   };
-};
+}
 
-const initialLogs = Array.from({ length: 15 }, generateMockLog);
+interface BrainFocus {
+  okr_title?: string;
+  okr_priority?: string;
+  okr_progress?: number;
+  project_name?: string;
+  task?: BrainTask;
+}
+
+interface BrainStatus {
+  tick_number: number;
+  alertness: { level: number; name: string };
+  uptime_seconds: number;
+  running_tasks_count: number;
+  queued_tasks_count: number;
+  completed_today_count: number;
+}
+
+interface TaskFlowEvent {
+  timestamp: string;
+  agent: string;
+  message: string;
+  icon: string;
+}
+
+interface AgentLog {
+  text: string;
+  timestamp: number;
+}
+
+interface AgentState {
+  name: string;
+  icon: string;
+  status: 'Running' | 'Idle';
+  task?: BrainTask;
+  logs: AgentLog[];
+}
 
 // ============ Helper Functions ============
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
   return `${hours}h ${minutes}m`;
 }
 
 function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
+  const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  return `${minutes}m ${secs}s`;
+  return `${mins}m ${secs}s`;
 }
 
-function getProgressColor(percent: number): string {
-  if (percent < 60) return 'bg-green-500';
-  if (percent < 80) return 'bg-yellow-500';
-  return 'bg-red-500';
+function formatTime(timestamp: string): string {
+  return new Date(timestamp).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 }
 
-function getPriorityColor(priority: string): string {
-  if (priority === 'P0') return 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300';
-  if (priority === 'P1') return 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300';
-  return 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300';
+function calculateRunningDuration(startedAt: string): number {
+  return Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+}
+
+// ============ Mock Data Generators ============
+function generateMockAgentLog(agentName: string): string {
+  const logTemplates: Record<string, string[]> = {
+    Caramel: [
+      '> 编辑 LiveMonitorPage.tsx...',
+      '> 添加新组件 CurrentFocus',
+      '> 运行测试 npm test',
+      '> 提交代码 git commit',
+      '> 等待 CI 检查...',
+      '> 修复 TypeScript 错误',
+      '> 优化组件性能',
+    ],
+    秋米: [
+      '> 分析 OKR: Quality Monitor v2',
+      '> 拆解 KR #1 为 Features',
+      '> 生成 Task 优先级排序',
+      '> 评估工作量 3-5 天',
+      '> 更新 Project 进度',
+      '> 检查依赖关系',
+    ],
+    小检: [
+      '> 扫描 RCI 覆盖率...',
+      '> 检查回归契约 C2-001',
+      '> 分析代码质量指标',
+      '> 验证 DoD 映射',
+      '> 生成质检报告',
+      '> 发现 3 个潜在问题',
+    ],
+  };
+
+  const templates = logTemplates[agentName] || ['> Processing...'];
+  return templates[Math.floor(Math.random() * templates.length)];
 }
 
 // ============ Components ============
-
-function BrainStatusCard() {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center gap-3 mb-4">
-        <Activity className="w-5 h-5 text-blue-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">Brain Status</h3>
+function CurrentFocusCard({ focus }: { focus: BrainFocus | null }) {
+  if (!focus || !focus.task) {
+    return (
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-yellow-500" />
+          📌 Current Focus
+        </h3>
+        <div className="text-gray-400">No active task</div>
       </div>
+    );
+  }
+
+  const { task } = focus;
+  const runningDuration = task.started_at ? calculateRunningDuration(task.started_at) : 0;
+
+  return (
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <Zap className="w-5 h-5 text-yellow-500" />
+        📌 Current Focus
+      </h3>
 
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${mockBrainStatus.running ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            {mockBrainStatus.running ? 'Running' : 'Stopped'}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 text-sm">
+        {/* OKR */}
+        {focus.okr_title && (
           <div>
-            <div className="text-slate-500 dark:text-slate-400">Tick</div>
-            <div className="font-medium text-slate-700 dark:text-slate-300">#{mockBrainStatus.tick_number}</div>
-          </div>
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">Alertness</div>
-            <div className="font-medium text-green-600 dark:text-green-400">{mockBrainStatus.alertness.name}</div>
-          </div>
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">Uptime</div>
-            <div className="font-medium text-slate-700 dark:text-slate-300">{formatUptime(mockBrainStatus.uptime_seconds)}</div>
-          </div>
-          <div>
-            <div className="text-slate-500 dark:text-slate-400">Tick Duration</div>
-            <div className="font-medium text-slate-700 dark:text-slate-300">{mockBrainStatus.last_tick_duration_ms}ms</div>
-          </div>
-        </div>
-
-        {/* Circuit Breaker */}
-        <div className="pt-3 border-t border-slate-200 dark:border-slate-700">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-slate-600 dark:text-slate-400 flex items-center gap-2">
-              <Shield className="w-4 h-4" />
-              Circuit Breaker
-            </span>
-            <span className="font-medium text-green-600 dark:text-green-400 uppercase">{mockBrainStatus.circuit_breaker.status}</span>
-          </div>
-        </div>
-
-        {/* Watchdog */}
-        <div className="pt-2">
-          <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">Watchdog</div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-500">RSS</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">{mockBrainStatus.watchdog.rss_mb}MB</span>
+            <div className="text-sm text-gray-400">OKR</div>
+            <div className="font-medium">
+              {focus.okr_title}
+              {focus.okr_priority && (
+                <span className="ml-2 px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400">
+                  {focus.okr_priority}
+                </span>
+              )}
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-500">CPU</span>
-              <span className="font-medium text-slate-700 dark:text-slate-300">{mockBrainStatus.watchdog.cpu_percent}%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ResourcesCard() {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center gap-3 mb-4">
-        <Cpu className="w-5 h-5 text-blue-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">System Resources</h3>
-      </div>
-
-      <div className="space-y-4">
-        {/* CPU */}
-        <div>
-          <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-slate-600 dark:text-slate-400">CPU</span>
-            <span className="font-medium text-slate-700 dark:text-slate-300">{mockResources.cpu_percent}%</span>
-          </div>
-          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all ${getProgressColor(mockResources.cpu_percent)}`}
-              style={{ width: `${mockResources.cpu_percent}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Memory */}
-        <div>
-          <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-slate-600 dark:text-slate-400">Memory</span>
-            <span className="font-medium text-slate-700 dark:text-slate-300">{mockResources.memory_percent}%</span>
-          </div>
-          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all ${getProgressColor(mockResources.memory_percent)}`}
-              style={{ width: `${mockResources.memory_percent}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Disk */}
-        <div>
-          <div className="flex items-center justify-between text-sm mb-1">
-            <span className="text-slate-600 dark:text-slate-400">Disk</span>
-            <span className="font-medium text-slate-700 dark:text-slate-300">{mockResources.disk_percent}%</span>
-          </div>
-          <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all ${getProgressColor(mockResources.disk_percent)}`}
-              style={{ width: `${mockResources.disk_percent}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Network */}
-        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-700">
-          <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">Network RX</div>
-            <div className="font-medium text-slate-700 dark:text-slate-300">{mockResources.network_rx_mbps} MB/s</div>
-          </div>
-          <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">Network TX</div>
-            <div className="font-medium text-slate-700 dark:text-slate-300">{mockResources.network_tx_mbps} MB/s</div>
-          </div>
-        </div>
-
-        {/* Task Counts */}
-        <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600 dark:text-slate-400">Active</span>
-              <span className="font-bold text-blue-600 dark:text-blue-400">{mockResources.task_counts.active}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600 dark:text-slate-400">Queued</span>
-              <span className="font-bold text-yellow-600 dark:text-yellow-400">{mockResources.task_counts.queued}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600 dark:text-slate-400">Quarantined</span>
-              <span className="font-bold text-red-600 dark:text-red-400">{mockResources.task_counts.quarantined}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600 dark:text-slate-400">Done Today</span>
-              <span className="font-bold text-green-600 dark:text-green-400">{mockResources.task_counts.completed_today}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* API Stats */}
-        <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-          <div className="text-sm text-slate-600 dark:text-slate-400 mb-2 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4" />
-            API Statistics
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div>
-              <div className="text-xs text-slate-500">Requests/min</div>
-              <div className="font-medium text-slate-700 dark:text-slate-300">{mockResources.api_stats.requests_per_minute}</div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-500">Avg Response</div>
-              <div className="font-medium text-slate-700 dark:text-slate-300">{mockResources.api_stats.avg_response_ms}ms</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ActiveTasksList() {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center gap-3 mb-4">
-        <GitBranch className="w-5 h-5 text-blue-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">Active Tasks ({mockActiveTasks.filter(t => t.status === 'in_progress').length})</h3>
-      </div>
-
-      <div className="space-y-3 max-h-96 overflow-y-auto">
-        {mockActiveTasks.map(task => (
-          <div key={task.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3">
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${getPriorityColor(task.priority || 'P2')}`}>
-                    {task.priority}
-                  </span>
-                  <span className="font-medium text-slate-800 dark:text-white text-sm">#{task.id} {task.title}</span>
-                </div>
-                <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                  {task.status === 'in_progress' && task.started_at && (
-                    <span className="flex items-center gap-2">
-                      <Clock className="w-3 h-3" />
-                      Running: {formatDuration(task.elapsed_seconds)}
-                      {task.executor && <span>• Executor: {task.executor}</span>}
-                    </span>
-                  )}
-                  {task.status === 'queued' && task.blocked_by && (
-                    <span className="flex items-center gap-2">
-                      <AlertTriangle className="w-3 h-3" />
-                      Blocked by: #{task.blocked_by.join(', #')}
-                    </span>
-                  )}
-                  {task.status === 'queued' && !task.blocked_by && (
-                    <span className="text-slate-500">Waiting in queue...</span>
-                  )}
-                </div>
-              </div>
-              <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
-                task.status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
-                'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-              }`}>
-                {task.status}
-              </span>
-            </div>
-
-            {/* Progress Bar */}
-            {task.progress > 0 && (
-              <div>
-                <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
-                  <div
-                    className="bg-blue-500 h-1.5 rounded-full transition-all"
-                    style={{ width: `${task.progress}%` }}
-                  />
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{task.progress}%</div>
+            {focus.okr_progress !== undefined && (
+              <div className="mt-1 h-1 bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500"
+                  style={{ width: `${focus.okr_progress}%` }}
+                />
               </div>
             )}
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+        )}
 
-function RecentCompletionsPanel() {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center gap-3 mb-4">
-        <CheckCircle className="w-5 h-5 text-green-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">Recent Completions</h3>
-      </div>
-
-      <div className="space-y-2">
-        {mockRecentCompletions.map(task => (
-          <div key={task.id} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700 last:border-0">
-            <div className="flex-1">
-              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">#{task.id} {task.title}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {new Date(task.completed_at).toLocaleTimeString()} • Duration: {formatDuration(task.duration_seconds)}
-              </div>
-            </div>
-            <CheckCircle className="w-4 h-4 text-green-500" />
+        {/* Project */}
+        {focus.project_name && (
+          <div className="ml-4">
+            <div className="text-sm text-gray-400">└─ Project</div>
+            <div className="font-medium">{focus.project_name}</div>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+        )}
 
-function QuarantineZonePanel() {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-red-200 dark:border-red-800">
-      <div className="flex items-center gap-3 mb-4">
-        <AlertTriangle className="w-5 h-5 text-red-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">Quarantine Zone ({mockQuarantineZone.length})</h3>
-      </div>
-
-      <div className="space-y-3">
-        {mockQuarantineZone.map(task => (
-          <div key={task.id} className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
-            <div className="font-medium text-red-800 dark:text-red-300 text-sm">#{task.id} {task.title}</div>
-            <div className="text-xs text-red-600 dark:text-red-400 mt-1">
-              Reason: {task.reason}
-            </div>
-            <div className="text-xs text-red-500 dark:text-red-500 mt-1">
-              Quarantined: {new Date(task.quarantined_at).toLocaleString()}
-            </div>
+        {/* Task */}
+        <div className="ml-8">
+          <div className="text-sm text-gray-400">└─ Task</div>
+          <div className="font-medium">
+            {task.title}
+            {task.id && <span className="text-gray-500 ml-2">#{task.id}</span>}
           </div>
-        ))}
+
+          {/* Step info */}
+          {task.metadata?.current_step && (
+            <div className="mt-2 text-sm text-gray-300">
+              Step: {task.metadata.step_number}/{task.metadata.total_steps} - {task.metadata.current_step}
+            </div>
+          )}
+
+          {/* Executor */}
+          {task.executor && (
+            <div className="mt-1 text-sm text-gray-400">
+              Executor: <span className="text-blue-400">{task.executor}</span>
+            </div>
+          )}
+
+          {/* Running duration */}
+          {task.started_at && (
+            <div className="mt-1 text-sm text-gray-400">
+              Running: {formatDuration(runningDuration)}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function AlertsPanel() {
+function NextInQueueCard({ tasks }: { tasks: BrainTask[] }) {
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center gap-3 mb-4">
-        <Zap className="w-5 h-5 text-yellow-500" />
-        <h3 className="font-semibold text-slate-800 dark:text-white">Recent Alerts</h3>
-      </div>
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <Users className="w-5 h-5 text-purple-500" />
+        📋 Next in Queue ({tasks.length} total)
+      </h3>
 
-      <div className="space-y-2">
-        {mockAlerts.map((alert, i) => (
-          <div key={i} className={`p-3 rounded-lg ${
-            alert.level === 'warning' ? 'bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800' :
-            'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800'
-          }`}>
-            <div className="flex items-start gap-2">
-              {alert.level === 'warning' ? (
-                <AlertTriangle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-              ) : (
-                <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5" />
-              )}
-              <div className="flex-1">
-                <div className={`text-sm font-medium ${
-                  alert.level === 'warning' ? 'text-yellow-800 dark:text-yellow-300' :
-                  'text-blue-800 dark:text-blue-300'
-                }`}>
-                  {alert.message}
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  {new Date(alert.timestamp).toLocaleTimeString()}
+      {tasks.length === 0 ? (
+        <div className="text-gray-400">Queue is empty</div>
+      ) : (
+        <div className="space-y-3">
+          {tasks.slice(0, 5).map((task, index) => (
+            <div key={task.id} className="border-l-2 border-gray-600 pl-3">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="font-medium">
+                    {index + 1}. {task.title}
+                    <span className={`ml-2 px-2 py-0.5 text-xs rounded ${
+                      task.priority === 'P0' ? 'bg-red-500/20 text-red-400' :
+                      task.priority === 'P1' ? 'bg-orange-500/20 text-orange-400' :
+                      'bg-blue-500/20 text-blue-400'
+                    }`}>
+                      {task.priority}
+                    </span>
+                  </div>
+                  {task.metadata?.current_step && (
+                    <div className="text-sm text-gray-400 mt-1">
+                      Project: {task.metadata.current_step}
+                    </div>
+                  )}
+                  {task.estimated_duration && (
+                    <div className="text-sm text-gray-400">
+                      Estimated: {Math.floor(task.estimated_duration / 60)}min
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RealtimeMetricsCard({ status }: { status: BrainStatus | null }) {
+  if (!status) {
+    return (
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Activity className="w-5 h-5 text-green-500" />
+          📊 Real-time Metrics
+        </h3>
+        <div className="text-gray-400">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <Activity className="w-5 h-5 text-green-500" />
+        📊 Real-time Metrics
+      </h3>
+
+      <div className="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <div className="text-gray-400">Tasks</div>
+          <div className="font-mono">
+            Running: {status.running_tasks_count} |
+            Queued: {status.queued_tasks_count} |
+            Done Today: {status.completed_today_count}
           </div>
-        ))}
+        </div>
+
+        <div>
+          <div className="text-gray-400">Brain</div>
+          <div className="font-mono">
+            Tick #{status.tick_number} |
+            {status.alertness.name} |
+            {formatUptime(status.uptime_seconds)}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function LiveLogsPanel() {
-  const [isPaused, setIsPaused] = useState(false);
-  const [logs, setLogs] = useState(initialLogs);
-  const [autoScroll, setAutoScroll] = useState(true);
+function LiveTaskFlowCard({ events }: { events: TaskFlowEvent[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isPaused) return;
-
-    const interval = setInterval(() => {
-      setLogs(prev => {
-        const newLog = generateMockLog();
-        const updated = [newLog, ...prev].slice(0, 100); // Keep last 100
-        return updated;
-      });
-    }, 2000); // New log every 2 seconds
-
-    return () => clearInterval(interval);
-  }, [isPaused]);
-
-  const handleClear = () => {
-    setLogs([]);
-  };
-
-  const getSourceColor = (source: string) => {
-    const colors: Record<string, string> = {
-      'tick-loop': 'text-blue-500',
-      'executor': 'text-green-500',
-      'watchdog': 'text-yellow-500',
-      'task': 'text-purple-500',
-      'alertness': 'text-red-500',
-      'api': 'text-cyan-500',
-      'database': 'text-pink-500',
-      'queue': 'text-orange-500',
-    };
-    return colors[source] || 'text-slate-500';
-  };
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [events]);
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <FileText className="w-5 h-5 text-blue-500" />
-          <h3 className="font-semibold text-slate-800 dark:text-white">Live Logs ({logs.length})</h3>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsPaused(!isPaused)}
-            className={`p-2 rounded-lg transition-colors ${
-              isPaused ? 'bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-400' :
-              'hover:bg-slate-100 dark:hover:bg-slate-700'
-            }`}
-            title={isPaused ? 'Resume' : 'Pause'}
-          >
-            {isPaused ? <Activity className="w-4 h-4" /> : <Pause className="w-4 h-4 text-slate-600 dark:text-slate-400" />}
-          </button>
-          <button
-            onClick={handleClear}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-            title="Clear"
-          >
-            <Trash2 className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-          </button>
-        </div>
-      </div>
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+      <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+        <GitBranch className="w-5 h-5 text-cyan-500" />
+        🔄 Live Task Flow
+      </h3>
 
-      <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs">
-        {logs.map((log) => (
-          <div key={log.id} className="mb-1 hover:bg-slate-100 dark:hover:bg-slate-800 px-2 py-1 rounded cursor-pointer">
-            <span className="text-slate-400 dark:text-slate-600 mr-2">
-              {log.timestamp.toLocaleTimeString()}
-            </span>
-            <span className={`mr-2 font-medium ${getSourceColor(log.source)}`}>[{log.source}]</span>
-            <span className={log.level === 'warning' ? 'text-yellow-600 dark:text-yellow-400' : 'text-slate-700 dark:text-slate-300'}>
-              {log.message}
-            </span>
-          </div>
-        ))}
-        {logs.length === 0 && (
-          <div className="text-slate-400 dark:text-slate-600 text-center py-8">
-            No logs yet. Logs will appear here in real-time.
-          </div>
+      <div
+        ref={scrollRef}
+        className="space-y-2 max-h-96 overflow-y-auto font-mono text-sm"
+      >
+        {events.length === 0 ? (
+          <div className="text-gray-400">No recent events</div>
+        ) : (
+          events.map((event, index) => (
+            <div key={index} className="flex items-start gap-2 text-gray-300">
+              <span className="text-gray-500">{formatTime(event.timestamp)}</span>
+              <span>{event.icon}</span>
+              <span className="text-blue-400">{event.agent}</span>
+              <span>→</span>
+              <span className="flex-1">{event.message}</span>
+            </div>
+          ))
         )}
       </div>
     </div>
   );
 }
 
-// ============ Main Page ============
+function AgentPane({ agent }: { agent: AgentState }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-export default function LiveMonitorPage() {
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [agent.logs]);
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 p-6">
+    <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
-            🧠 Cecelia Live Monitor
-          </h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-            实时监控 Brain 状态、资源使用、任务执行和系统健康度
-          </p>
+      <div className="px-4 py-3 border-b border-gray-700 bg-gray-750">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold">
+            {agent.icon} {agent.name}
+          </span>
+          <span className={`px-2 py-0.5 text-xs rounded ${
+            agent.status === 'Running'
+              ? 'bg-green-500/20 text-green-400'
+              : 'bg-gray-500/20 text-gray-400'
+          }`}>
+            {agent.status}
+          </span>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
-          <RefreshCw className="w-4 h-4" />
-          刷新
-        </button>
+        {agent.task && (
+          <div className="text-sm text-gray-400 mt-1 truncate">
+            Task: {agent.task.title}
+            {agent.task.metadata?.current_step && (
+              <span className="ml-2">
+                ({agent.task.metadata.step_number}/{agent.task.metadata.total_steps})
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* 网格布局 - 8 个卡片 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {/* Brain Status */}
-        <BrainStatusCard />
-
-        {/* System Resources */}
-        <ResourcesCard />
-
-        {/* Alerts */}
-        <AlertsPanel />
-
-        {/* Active Tasks - 占 2 列 */}
-        <div className="lg:col-span-2">
-          <ActiveTasksList />
-        </div>
-
-        {/* Recent Completions */}
-        <RecentCompletionsPanel />
-
-        {/* Quarantine Zone */}
-        <QuarantineZonePanel />
-
-        {/* Live Logs - 占 2 列 */}
-        <div className="lg:col-span-2">
-          <LiveLogsPanel />
-        </div>
+      {/* Log Output */}
+      <div
+        ref={scrollRef}
+        className="px-4 py-3 font-mono text-xs h-32 overflow-y-auto bg-gray-900"
+      >
+        {agent.logs.length === 0 ? (
+          <div className="text-gray-500">Waiting...</div>
+        ) : (
+          agent.logs.map((log, index) => (
+            <div key={index} className="text-gray-300 truncate">
+              {log.text}
+            </div>
+          ))
+        )}
       </div>
+    </div>
+  );
+}
 
-      {/* 提示信息 */}
-      <div className="mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-        <p className="text-sm text-yellow-800 dark:text-yellow-200">
-          ⚠️ 当前使用 Mock 数据展示（自动更新模拟）。待 Brain API 完成后将连接实时数据源（WebSocket: ws://localhost:5221/ws）
+// ============ Main Component ============
+export default function LiveMonitorPage() {
+  const [focus, setFocus] = useState<BrainFocus | null>(null);
+  const [queuedTasks, setQueuedTasks] = useState<BrainTask[]>([]);
+  const [status, setStatus] = useState<BrainStatus | null>(null);
+  const [taskFlowEvents, setTaskFlowEvents] = useState<TaskFlowEvent[]>([]);
+  const [agents, setAgents] = useState<AgentState[]>([
+    { name: 'Caramel', icon: '🤖', status: 'Idle', logs: [] },
+    { name: '秋米', icon: '🍂', status: 'Idle', logs: [] },
+    { name: '小检', icon: '🔍', status: 'Idle', logs: [] },
+  ]);
+
+  // Fetch Brain data (focus, queue, status)
+  useEffect(() => {
+    const fetchBrainData = async () => {
+      try {
+        // Note: In real implementation, fetch from Brain API
+        // For now, use mock data
+
+        // Mock focus
+        setFocus({
+          okr_title: 'Quality Monitor v2',
+          okr_priority: 'P0',
+          okr_progress: 80,
+          project_name: 'cecelia-workspace',
+          task: {
+            id: '309',
+            title: 'LiveMonitor v2 - Real-time Task Flow',
+            status: 'in_progress',
+            priority: 'P0',
+            executor: 'Caramel',
+            started_at: new Date(Date.now() - 900000).toISOString(), // 15min ago
+            metadata: {
+              current_step: 'Writing Code',
+              step_number: 5,
+              total_steps: 11,
+            },
+          },
+        });
+
+        // Mock queue
+        setQueuedTasks([
+          {
+            id: '310',
+            title: 'QA Regression Scan',
+            status: 'pending',
+            priority: 'P0',
+            estimated_duration: 1800,
+          },
+          {
+            id: '311',
+            title: 'Code Audit - Security Review',
+            status: 'pending',
+            priority: 'P1',
+            estimated_duration: 2700,
+          },
+          {
+            id: '312',
+            title: 'Platform Scraper - 小红书数据',
+            status: 'pending',
+            priority: 'P1',
+            estimated_duration: 1200,
+          },
+        ]);
+
+        // Mock status
+        setStatus({
+          tick_number: 1847,
+          alertness: { level: 1, name: 'NORMAL' },
+          uptime_seconds: 87345,
+          running_tasks_count: 2,
+          queued_tasks_count: 12,
+          completed_today_count: 156,
+        });
+
+      } catch (error) {
+        console.error('Failed to fetch Brain data:', error);
+      }
+    };
+
+    fetchBrainData();
+    const interval = setInterval(fetchBrainData, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Generate task flow events
+  useEffect(() => {
+    const generateEvent = () => {
+      const agentNames = ['Caramel', '秋米', '小检'];
+      const agentIcons = ['🤖', '🍂', '🔍'];
+      const randomAgent = Math.floor(Math.random() * agentNames.length);
+
+      const messages = [
+        `Step 5/11: Writing code`,
+        `Started Task #${Math.floor(Math.random() * 100) + 300}`,
+        `Completed OKR breakdown`,
+        `Running tests...`,
+        `QA Analysis in progress`,
+        `Checking RCI coverage`,
+      ];
+
+      const newEvent: TaskFlowEvent = {
+        timestamp: new Date().toISOString(),
+        agent: agentNames[randomAgent],
+        icon: agentIcons[randomAgent],
+        message: messages[Math.floor(Math.random() * messages.length)],
+      };
+
+      setTaskFlowEvents(prev => [newEvent, ...prev.slice(0, 19)]);
+    };
+
+    const interval = setInterval(generateEvent, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update agent logs
+  useEffect(() => {
+    const updateAgentLogs = () => {
+      setAgents(prev => {
+        const updated = [...prev];
+        const randomIndex = Math.floor(Math.random() * updated.length);
+        const agent = updated[randomIndex];
+
+        const newLog: AgentLog = {
+          text: generateMockAgentLog(agent.name),
+          timestamp: Date.now(),
+        };
+
+        agent.logs = [...agent.logs.slice(-9), newLog];
+        agent.status = Math.random() > 0.3 ? 'Running' : 'Idle';
+
+        return updated;
+      });
+    };
+
+    const interval = setInterval(updateAgentLogs, 3500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white p-6">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold flex items-center gap-3">
+          <Activity className="w-8 h-8 text-red-500 animate-pulse" />
+          Cecelia Live Monitor
+        </h1>
+        <p className="text-gray-400 mt-1">
+          实时任务流监控中心 - Brain 状态、任务队列、Agent 活动
         </p>
+      </div>
+
+      {/* Main Layout: Left (2/3) + Right (1/3) */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Left: Main Control Area (2 columns) */}
+        <div className="xl:col-span-2 space-y-6">
+          <CurrentFocusCard focus={focus} />
+          <NextInQueueCard tasks={queuedTasks} />
+          <RealtimeMetricsCard status={status} />
+          <LiveTaskFlowCard events={taskFlowEvents} />
+        </div>
+
+        {/* Right: Agent Panes (1 column) */}
+        <div className="space-y-4">
+          {agents.map(agent => (
+            <AgentPane key={agent.name} agent={agent} />
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02142307-enhance-live-monitor",
-  "head_sha": "9492b4b6e",
-  "timestamp": "2026-02-14T15:12:39Z",
+  "branch": "cp-02150452-livemonitor-v2-realtime",
+  "head_sha": "a0fc55f5a",
+  "timestamp": "2026-02-14T20:57:08Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
