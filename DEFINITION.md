@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-13
-**Brain 版本**: 1.33.2
+**Brain 版本**: 1.33.3
 **Schema 版本**: 028
 **状态**: 生产运行中
 
@@ -136,7 +136,7 @@ Agent Workers (Caramel/小检/小审/...)
 │  ┌───────────────────────────────────────────────────┐ │
 │  │  PostgreSQL (独立容器, port 5432)                 │ │
 │  │  - cecelia 数据库                                 │ │
-│  │  - 19 张核心表                                    │ │
+│  │  - 核心表 + 系统表                                 │ │
 │  │  - 唯一真相源                                     │ │
 │  ├───────────────────────────────────────────────────┤ │
 │  │  N8N (HK server, port 5678)                       │ │
@@ -203,8 +203,7 @@ executeTick() 流程：
   1. L1 丘脑事件处理（如有事件）
      └─ level=2 → 升级到 L2 皮层
   2. 决策引擎（对比目标进度 → 生成决策 → 执行决策）
-  3. Feature Tick（处理 Feature 状态机）
-  4. 反串清理（清理孤儿任务引用）
+  3. 反串清理（清理孤儿任务引用）
   5. 获取每日焦点（selectDailyFocus）
   6. 自动超时（in_progress > 60min → failed）
   7. 存活探针（验证 in_progress 任务进程还活着）
@@ -264,37 +263,48 @@ executeTick() 流程：
 
 ## 4. 数据模型
 
-### 4.1 三层结构
+### 4.1 四层结构
 
 ```
 goals (OKR 目标)
 ├── Objective (parent_id=NULL)
 │   └── Key Result (parent_id=Objective.id)
 │
-projects (项目/Feature)
+projects (项目 / Sub-Project)
 ├── Project (repo_path≠NULL, parent_id=NULL)
-│   └── Feature (parent_id=Project.id, repo_path=NULL)
+│   └── Sub-Project (parent_id=Project.id, repo_path=NULL)
+│
+pr_plans (工程规划)
+└── PR Plan (project_id→Project/Sub-Project, pr_plan_id→tasks)
 │
 tasks (具体任务)
-└── Task (project_id→Feature.id, goal_id→KR.id)
+└── Task (project_id→Project/Sub-Project, goal_id→KR.id, pr_plan_id→PR Plan)
+```
+
+**完整拆解链**：
+```
+Goals (OKR) → Projects (Sub-Project) → PR Plans (工程规划) → Tasks (具体任务)
 ```
 
 **关键关系**：
-- Task.project_id → **Feature** ID（不是 Project）
+- Task.project_id → **Project 或 Sub-Project** ID
 - Task.goal_id → **KR** ID（不是 Objective）
-- Feature→Project 通过 parent_id 找到 repo_path（`resolveRepoPath()` 向上遍历）
+- Task.pr_plan_id → **PR Plan** ID（可选，通过 PR Plan 创建时必填）
+- Sub-Project→Project 通过 parent_id 找到 repo_path（`resolveRepoPath()` 向上遍历）
 - project_kr_links 表：Project ↔ KR 多对多关联
 
 ### 4.2 核心表
 
 | 表 | 用途 | 关键字段 |
 |----|------|---------|
-| **tasks** | 任务队列 | status, task_type, priority, payload, prd_content |
+| **tasks** | 任务队列 | status, task_type, priority, payload, prd_content, pr_plan_id |
 | **goals** | OKR 目标 | type(objective/key_result), parent_id, progress |
-| **projects** | 项目/Feature | repo_path, parent_id, decomposition_mode |
-| **features** | Feature 状态机 | status, active_task_id, prd |
+| **projects** | 项目/Sub-Project | repo_path, parent_id, kr_id, decomposition_mode |
+| **pr_plans** | 工程规划（PR 拆解层） | initiative_id→projects, project_id, dod, files, sequence, depends_on, complexity |
 | **areas** | PARA 领域 | name, group_name |
 | **project_kr_links** | 项目↔KR 关联 | project_id, kr_id |
+
+> **注意**：`features` 表已在 Migration 027 中删除。Sub-Project 功能由 `projects` 表的 `parent_id` 字段实现。
 
 ### 4.3 系统表
 
@@ -345,7 +355,7 @@ queued → in_progress → completed
 
 ## 5. 任务生命周期
 
-### 5.1 从 OKR 到任务
+### 5.1 从 OKR 到任务（四层拆解）
 
 ```
 Objective (目标)
@@ -355,6 +365,9 @@ Objective (目标)
   └─ KR (关键结果)
        │
        ├─ selectDailyFocus() → 选择今日焦点 Objective
+       │
+       ├─ 秋米 /okr 拆解:
+       │   └─ KR → Sub-Project (projects.parent_id) → PR Plans → Tasks
        │
        ├─ planNextTask(krIds) → KR 轮转评分
        │   ├─ 焦点 KR +100
@@ -367,6 +380,11 @@ Objective (目标)
            ├─ 匹配 KR_STRATEGIES（7 种策略模式）
            └─ Fallback：research → implement → test
 ```
+
+**PR Plans 层的作用**：
+- 将 Sub-Project 拆解为具体的 PR，每个 PR Plan 对应 1 个 Task
+- 支持依赖关系（depends_on）和执行顺序（sequence）
+- 包含 DoD（完成定义）和预计修改文件列表，帮助 Agent 估算范围
 
 ### 5.2 派发流程
 
@@ -382,7 +400,7 @@ dispatchNextTask():
   6. triggerCeceliaRun(task)
      ├─ preparePrompt() → 生成 skill + 参数
      ├─ getModelForTask() → 选模型
-     ├─ resolveRepoPath() → Feature→Project→repo_path
+     ├─ resolveRepoPath() → Sub-Project→Project→repo_path
      └─ HTTP → cecelia-bridge → cecelia-run → claude
   7. WebSocket 广播事件
   8. 记录到 working_memory
@@ -405,7 +423,7 @@ dispatchNextTask():
 
 ```
 KR → 首次拆解 (decomposition='true', /okr, Opus)
-  └─ 秋米分析 → 创建 Feature + 第一个 Task
+  └─ 秋米分析 → 创建 Sub-Project + PR Plans + 第一个 Task
        └─ Task 完成 → 回调触发"继续拆解"
             └─ (decomposition='continue', /okr, Opus)
                  └─ 秋米分析上次结果 → 创建下一个 Task
@@ -564,7 +582,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.11.5`（多阶段构建，163MB）
+- 镜像：`cecelia-brain:1.33.2`（多阶段构建）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -591,8 +609,8 @@ docker compose up -d cecelia-node-brain
 1. **ENV_REGION** — 必须是 'us' 或 'hk'
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
-4. **核心表存在** — tasks, goals, projects, features, working_memory, cecelia_events, decision_log, daily_logs
-5. **Schema 版本** — 必须 = '010'
+4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans
+5. **Schema 版本** — 必须 = '028'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -661,15 +679,17 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 | `/goal/compare` | POST | 对比目标进度 |
 | `/okr/statuses` | GET | OKR 状态枚举 |
 
-### 9.5 Feature 管理
+### 9.5 PR Plans 管理
 
 | 端点 | 方法 | 用途 |
 |------|------|------|
-| `/features` | GET | 查询 Feature |
-| `/features/:id` | GET | Feature 详情 |
-| `/features` | POST | 创建 Feature |
-| `/active-features` | GET | 活跃 Feature |
-| `/feature-task-complete` | POST | Feature 任务完成处理 |
+| `/pr-plans` | POST | 创建 PR Plan |
+| `/pr-plans` | GET | 查询 PR Plans（支持 project_id/status 过滤） |
+| `/pr-plans/:id` | GET | PR Plan 详情 |
+| `/pr-plans/:id` | PATCH | 更新 PR Plan |
+| `/pr-plans/:id` | DELETE | 删除 PR Plan |
+
+> **注意**：旧的 `/features` 系列端点仍在代码中但已废弃（`features` 表已在 Migration 027 中删除）。
 
 ### 9.6 焦点系统
 
@@ -727,7 +747,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.11.5）
+├── package.json               # 版本号（当前 1.33.2）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）
@@ -756,21 +776,15 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-010)
+├── migrations/                # SQL 迁移 (000-028)
 │   ├── 000_base_schema.sql
-│   ├── 001_cecelia_architecture_upgrade.sql
-│   ├── 002_task_type_review_merge.sql
-│   ├── 003_feature_tick_system.sql
-│   ├── 004_trigger_source.sql
-│   ├── 005_schema_version_and_config.sql
-│   ├── 006_exploratory_support.sql
-│   ├── 007_pending_actions.sql
-│   ├── 008_publishing_system.sql
-│   ├── 009_fix_decisions_schema.sql
-│   ├── 010_proposals.sql
-│   └── 011_trigger_source_values.sql
+│   ├── ...
+│   ├── 021_add_pr_plans_table.sql
+│   ├── ...
+│   ├── 027_align_project_feature_model.sql  # 删除 features 表
+│   └── 028_add_embeddings.sql
 │
-└── src/__tests__/             # Vitest 测试 (668/673 pass)
+└── src/__tests__/             # Vitest 测试
 ```
 
 ### 10.2 基础设施
