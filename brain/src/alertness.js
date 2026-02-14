@@ -147,16 +147,16 @@ let _lastLevelChangeAt = Date.now();
 
 // 令牌桶状态
 const _tokenBucket = {
-  dispatch: { tokens: 10, maxTokens: 10, refillRate: 10, lastRefill: Date.now() },
+  dispatch: { tokens: 20, maxTokens: 20, refillRate: 15, lastRefill: Date.now() },
   l1_calls: { tokens: 20, maxTokens: 20, refillRate: 20, lastRefill: Date.now() },
   l2_calls: { tokens: 5, maxTokens: 5, refillRate: 5, lastRefill: Date.now() },
 };
 
 // 每个级别的令牌消耗速率（每分钟生成的 token 数）
 const LEVEL_TOKEN_RATES = {
-  [ALERTNESS_LEVELS.NORMAL]: { dispatch: 10, l1: 20, l2: 5 },
-  [ALERTNESS_LEVELS.ALERT]: { dispatch: 5, l1: 10, l2: 3 },
-  [ALERTNESS_LEVELS.EMERGENCY]: { dispatch: 2, l1: 5, l2: 1 },
+  [ALERTNESS_LEVELS.NORMAL]: { dispatch: 15, l1: 20, l2: 5 },
+  [ALERTNESS_LEVELS.ALERT]: { dispatch: 8, l1: 10, l2: 3 },
+  [ALERTNESS_LEVELS.EMERGENCY]: { dispatch: 4, l1: 5, l2: 1 },
   [ALERTNESS_LEVELS.COMA]: { dispatch: 0, l1: 0, l2: 0 },
 };
 
