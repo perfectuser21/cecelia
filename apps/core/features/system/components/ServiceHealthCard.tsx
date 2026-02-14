@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { CheckCircle2, XCircle, RefreshCw, ChevronDown, ChevronUp, Clock, Globe, Info, History, BarChart3 } from 'lucide-react';
-import type { ServiceHealth, HealthCheckRecord } from '@/api';
+import type { ServiceHealth, HealthCheckRecord } from '../api/system.api';
 
 // Service metadata - description and endpoint info
 const SERVICE_INFO: Record<string, { description: string; endpoint: string }> = {

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Cpu, HardDrive, Clock, AlertTriangle, RefreshCw, Loader2, XCircle, Activity, Server, TrendingUp, Timer, Pause, ChevronDown, ArrowUpCircle, ArrowDownCircle, Database, Wifi, Shield, HeartPulse } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } from 'recharts';
-import { systemApi, SystemMetricsResponse, SystemMetrics, SystemHealthResponse, HealthCheckRecord } from '@/api';
-import { ServiceHealthCard } from '@/components';
+import { systemApi, type SystemMetricsResponse, type SystemMetrics, type SystemHealthResponse, type HealthCheckRecord } from '../api/system.api';
+import { ServiceHealthCard } from '../components/ServiceHealthCard';
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);

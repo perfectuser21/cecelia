@@ -12,7 +12,7 @@ import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './components/CollapsibleNavItem';
 import Breadcrumb from './components/Breadcrumb';
 // 配置驱动
-import { getAutopilotNavGroups, filterNavGroups, type NavGroup } from './config/navigation.config';
+import { filterNavGroups, type NavGroup } from './config/navigation.config';
 import DynamicRouter from './components/DynamicRouter';
 // Context
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -70,13 +70,12 @@ function AppContent() {
   };
 
   // ============ 配置驱动菜单 ============
-  // Autopilot 使用静态配置，Core 使用动态加载的 manifest
   const baseNavGroups = useMemo(() => {
-    if (isCore && coreConfig) {
+    if (coreConfig) {
       return convertCoreNavGroups(coreConfig.navGroups);
     }
-    return getAutopilotNavGroups();
-  }, [isCore, coreConfig]);
+    return [];
+  }, [coreConfig]);
   const navGroups = filterNavGroups(baseNavGroups, isFeatureEnabled, isSuperAdmin);
 
   // 兼容旧代码

@@ -49,7 +49,7 @@ const manifest: FeatureManifest = {
 
   components: {
     BrainStatusDashboard: () => import('./pages/BrainStatusDashboard'),
-    ObservabilityDashboard: () => import('../../../dashboard/src/pages/ObservabilityDashboard'),
+    ObservabilityDashboard: () => import('./pages/ObservabilityDashboard'),
     CeceliaOverview: () => import('./pages/CeceliaOverview'),
     AgentDetail: () => import('./pages/AgentDetail'),
     CeceliaRuns: () => import('./pages/CeceliaRuns'),

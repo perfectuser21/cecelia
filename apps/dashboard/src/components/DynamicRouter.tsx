@@ -10,14 +10,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstance } from '../contexts/InstanceContext';
 import PrivateRoute from './PrivateRoute';
-import {
-  getAutopilotNavGroups,
-  additionalRoutes,
-  autopilotPageComponents,
-  type RouteConfig,
-  type NavGroup,
-} from '../config/navigation.config';
-import * as LucideIcons from 'lucide-react';
+import { type RouteConfig } from '../config/navigation.config';
 
 // 加载状态组件
 function LoadingFallback() {
@@ -40,13 +33,8 @@ function getLazyComponent(
     return componentCache[name];
   }
 
-  // 先从 Autopilot 组件查找
-  let loader = autopilotPageComponents[name];
-
-  // 如果没有，从 Core 组件查找
-  if (!loader && corePageComponents) {
-    loader = corePageComponents[name];
-  }
+  // 从 Core 组件查找
+  const loader = corePageComponents?.[name];
 
   if (!loader) {
     console.warn(`Page component not found: ${name}`);
@@ -56,28 +44,6 @@ function getLazyComponent(
   const LazyComponent = lazy(loader);
   componentCache[name] = LazyComponent;
   return LazyComponent;
-}
-
-// 将 Core 的 NavGroup 格式转换为 Autopilot 的 NavGroup 格式
-function convertCoreNavGroups(
-  coreNavGroups: Array<{ title: string; items: Array<{ path: string; icon: string; label: string; featureKey: string; component?: string; children?: Array<{ path: string; icon: string; label: string; featureKey: string }> }> }>
-): NavGroup[] {
-  return coreNavGroups.map(group => ({
-    title: group.title,
-    items: group.items.map(item => ({
-      path: item.path,
-      icon: (LucideIcons as any)[item.icon] || LucideIcons.Circle,
-      label: item.label,
-      featureKey: item.featureKey,
-      component: item.component,
-      children: item.children?.map(child => ({
-        path: child.path,
-        icon: (LucideIcons as any)[child.icon] || LucideIcons.Circle,
-        label: child.label,
-        featureKey: child.featureKey,
-      })),
-    })),
-  }));
 }
 
 // 占位页面组件
@@ -96,51 +62,21 @@ interface DynamicRouterProps {
 
 export default function DynamicRouter({ children }: DynamicRouterProps) {
   const { isSuperAdmin } = useAuth();
-  const { isCore, isFeatureEnabled, coreConfig } = useInstance();
-
-  // 获取当前实例的导航配置
-  const navGroups = useMemo(() => {
-    if (isCore && coreConfig) {
-      return convertCoreNavGroups(coreConfig.navGroups);
-    }
-    return getAutopilotNavGroups();
-  }, [isCore, coreConfig]);
+  const { coreConfig } = useInstance();
 
   // 获取页面组件映射
   const corePageComponents = coreConfig?.pageComponents;
 
-  // 收集所有需要的路由
+  // 收集所有需要的路由（Core only）
   const allRoutes: RouteConfig[] = useMemo(() => {
-    const routes: RouteConfig[] = [];
+    if (!coreConfig?.allRoutes) return [];
 
-    // Core: 使用 allRoutes（包含所有路由，不仅是导航项）
-    if (isCore && coreConfig?.allRoutes) {
-      for (const route of coreConfig.allRoutes) {
-        routes.push({
-          path: route.path,
-          component: route.component,
-          requireAuth: route.requireAuth ?? true,
-        });
-      }
-    } else {
-      // Autopilot: 从导航配置中提取路由
-      for (const group of navGroups) {
-        for (const item of group.items) {
-          routes.push({
-            path: item.path,
-            component: item.component,
-            redirect: item.redirect,
-            requireAuth: true,
-            requireSuperAdmin: item.requireSuperAdmin,
-          });
-        }
-      }
-      // 添加额外路由
-      routes.push(...additionalRoutes);
-    }
-
-    return routes;
-  }, [navGroups, isCore, coreConfig]);
+    return coreConfig.allRoutes.map(route => ({
+      path: route.path,
+      component: route.component,
+      requireAuth: route.requireAuth ?? true,
+    }));
+  }, [coreConfig]);
 
   // 渲染单个路由
   const renderRoute = (route: RouteConfig) => {
