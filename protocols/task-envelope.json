@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Task Envelope",
+  "description": "LLM ↔ N8N 的统一任务协议（合同）",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["task_id", "owner", "goal", "definition_of_done", "status"],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "唯一任务 ID",
+      "pattern": "^task-[a-z0-9]{8}$"
+    },
+    "parent_id": {
+      "type": "string",
+      "description": "父任务 ID（用于任务树）"
+    },
+    "owner": {
+      "type": "string",
+      "enum": ["cecelia", "autumnrice", "caramel", "nobel", "xiaojian", "xiaoshen"],
+      "description": "发起者"
+    },
+    "executor": {
+      "type": "string",
+      "description": "执行者（执行层员工 ID）"
+    },
+    "goal": {
+      "type": "string",
+      "description": "一句话目标（人能看懂）",
+      "minLength": 5,
+      "maxLength": 200
+    },
+    "inputs": {
+      "type": "object",
+      "description": "输入参数",
+      "properties": {
+        "urls": { "type": "array", "items": { "type": "string" } },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "params": { "type": "object" }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "约束条件（不能做什么、必须遵守什么）",
+      "items": { "type": "string" }
+    },
+    "definition_of_done": {
+      "type": "array",
+      "description": "验收标准（DoD）",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "evidence_required": {
+      "type": "array",
+      "description": "必须提供的证据",
+      "items": {
+        "type": "string",
+        "enum": ["url", "screenshot", "log", "file", "json_output", "pr_link", "ci_status"]
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "assigned", "running", "success", "failed", "rejected", "cancelled"],
+      "description": "任务状态"
+    },
+    "handoff_to": {
+      "type": "string",
+      "description": "下一个处理角色"
+    },
+    "evidence": {
+      "type": "object",
+      "description": "执行证据（执行完成后填写）",
+      "properties": {
+        "output_url": { "type": "string" },
+        "screenshot": { "type": "string" },
+        "log_file": { "type": "string" },
+        "json_output": { "type": "object" },
+        "pr_link": { "type": "string" },
+        "ci_status": { "type": "string" }
+      }
+    },
+    "rejection": {
+      "type": "object",
+      "description": "打回信息（QA/Audit 打回时填写）",
+      "properties": {
+        "rejected_by": { "type": "string" },
+        "reason": { "type": "string" },
+        "level": { "type": "string", "enum": ["L1", "L2", "L3", "L4"] },
+        "action_required": { "type": "string" }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "properties": {
+        "created_at": { "type": "string", "format": "date-time" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

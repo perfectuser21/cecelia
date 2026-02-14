@@ -258,7 +258,7 @@ curl -X POST localhost:5679/webhook/claude-file-process \
 
 **示例**:
 ```bash
-# Notion 触发开发
+# 通过 Webhook 触发开发
 curl -X POST localhost:5679/webhook/claude-dev \
   -d '{
     "project": "autopilot",
@@ -335,10 +335,10 @@ curl -X POST localhost:5679/webhook/claude-batch \
 
 ## 组合使用
 
-### 场景 1: Notion 驱动的批量开发
+### 场景 1: 批量开发流程
 
 ```
-Notion 更新 → 05-Batch → (多个) 03-Dev → 聚合结果
+Webhook 触发 → 05-Batch → (多个) 03-Dev → 聚合结果
 ```
 
 ### 场景 2: 定期代码审查 + 文件报告
