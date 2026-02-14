@@ -1,0 +1,167 @@
+{
+  "version": "1.0.0",
+  "updated": "2024-02-15T00:00:00Z",
+  "departments": {
+    "research": {
+      "name": "Research & Development",
+      "prefix": "RD",
+      "owner": "Spark",
+      "workflows": []
+    },
+    "media": {
+      "name": "Media Operations",
+      "prefix": "MD",
+      "owner": "小运",
+      "workflows": []
+    },
+    "operations": {
+      "name": "System Operations",
+      "prefix": "OP",
+      "owner": "小维",
+      "workflows": []
+    },
+    "integration": {
+      "name": "Integration Services",
+      "prefix": "IN",
+      "owner": "小通",
+      "workflows": []
+    }
+  },
+  "classifications": {
+    "trigger_types": {
+      "webhook": {
+        "name": "Webhook Triggered",
+        "description": "Triggered by external webhooks",
+        "icon": "🔗"
+      },
+      "scheduled": {
+        "name": "Scheduled",
+        "description": "Runs on a schedule (cron)",
+        "icon": "⏰"
+      },
+      "manual": {
+        "name": "Manual",
+        "description": "Manually triggered",
+        "icon": "👆"
+      },
+      "event": {
+        "name": "Event Driven",
+        "description": "Triggered by system events",
+        "icon": "⚡"
+      },
+      "brain": {
+        "name": "Brain Triggered",
+        "description": "AI-scheduled by Brain",
+        "icon": "🧠"
+      }
+    },
+    "priorities": {
+      "P0": {
+        "name": "Critical",
+        "sla_minutes": 1,
+        "color": "#FF0000"
+      },
+      "P1": {
+        "name": "High",
+        "sla_minutes": 5,
+        "color": "#FFA500"
+      },
+      "P2": {
+        "name": "Medium",
+        "sla_minutes": 30,
+        "color": "#FFFF00"
+      },
+      "P3": {
+        "name": "Low",
+        "sla_minutes": null,
+        "color": "#00FF00"
+      }
+    },
+    "statuses": {
+      "active": {
+        "name": "Active",
+        "description": "Currently in production",
+        "color": "#00FF00"
+      },
+      "testing": {
+        "name": "Testing",
+        "description": "Under testing",
+        "color": "#FFFF00"
+      },
+      "deprecated": {
+        "name": "Deprecated",
+        "description": "Scheduled for removal",
+        "color": "#FFA500"
+      },
+      "archived": {
+        "name": "Archived",
+        "description": "No longer in use",
+        "color": "#808080"
+      }
+    }
+  },
+  "workflows": [
+    {
+      "id": "RD-BRAIN-cecelia-launcher",
+      "name": "Cecelia Task Launcher",
+      "department": "research",
+      "version": "2.0.0",
+      "description": "Launches Cecelia tasks via Claude Code",
+      "trigger_type": "webhook",
+      "priority": "P0",
+      "status": "active",
+      "n8n_id": "1",
+      "file": "n8n/workflows/cecelia/cecelia-launcher-v2.json",
+      "dependencies": ["brain-api"],
+      "timeout_seconds": 3600,
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "exponential"
+      }
+    },
+    {
+      "id": "RD-BRAIN-callback-handler",
+      "name": "Cecelia Callback Handler",
+      "department": "research",
+      "version": "1.0.0",
+      "description": "Handles task execution callbacks",
+      "trigger_type": "webhook",
+      "priority": "P0",
+      "status": "active",
+      "n8n_id": "2",
+      "file": "n8n/workflows/cecelia/cecelia-callback-handler.json",
+      "dependencies": ["brain-api"],
+      "timeout_seconds": 60,
+      "retry_policy": {
+        "max_attempts": 5,
+        "backoff": "fixed",
+        "delay_seconds": 10
+      }
+    },
+    {
+      "id": "OP-SCHED-devgate-push",
+      "name": "DevGate Nightly Push",
+      "department": "operations",
+      "version": "1.0.0",
+      "description": "Nightly development gate push",
+      "trigger_type": "scheduled",
+      "priority": "P1",
+      "status": "active",
+      "n8n_id": "3",
+      "file": "n8n/workflows/tools/devgate-nightly-push.json",
+      "schedule": "0 2 * * *",
+      "dependencies": ["git", "ci-pipeline"],
+      "timeout_seconds": 1800,
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "linear"
+      }
+    }
+  ],
+  "metrics": {
+    "total_workflows": 3,
+    "active_workflows": 3,
+    "departments_active": 2,
+    "last_deployment": "2024-02-15T00:00:00Z"
+  }
+}
