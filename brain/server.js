@@ -13,7 +13,7 @@ import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js
 
 const app = express();
 const server = createServer(app);
-const PORT = process.env.BRAIN_PORT || 5221;
+const PORT = process.env.PORT || process.env.BRAIN_PORT || 5221;
 
 // ============== Process-level Exception Handlers ==============
 // Prevent uncaught exceptions from crashing the entire service

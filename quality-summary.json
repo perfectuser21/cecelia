@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02142231-rolling-update",
-  "head_sha": "25ee78b",
-  "timestamp": "2026-02-14T14:36:46Z",
+  "branch": "cp-02142253-port-env-fix",
+  "head_sha": "a0adfc8",
+  "timestamp": "2026-02-14T14:58:13Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }
