@@ -1288,13 +1288,13 @@ router.post('/action/create-task', async (req, res) => {
 });
 
 /**
- * POST /api/brain/action/create-feature
- * Create a Feature (写入 projects 表，parent_id 指向 Project)
- * 秋米专用：拆解 KR 时创建 Feature
+ * POST /api/brain/action/create-initiative
+ * Create an Initiative (写入 projects 表, type='initiative', parent_id 指向 Project)
+ * 秋米专用：拆解 KR 时创建 Initiative
  */
-router.post('/action/create-feature', async (req, res) => {
+router.post('/action/create-initiative', async (req, res) => {
   try {
-    const { name, parent_id, kr_id, decomposition_mode, description } = req.body;
+    const { name, parent_id, kr_id, decomposition_mode, description, plan_content } = req.body;
 
     if (!name || !parent_id) {
       return res.status(400).json({
@@ -1303,20 +1303,87 @@ router.post('/action/create-feature', async (req, res) => {
       });
     }
 
-    const { createFeature: createFeatureAction } = await import('./actions.js');
-    const result = await createFeatureAction({
+    const { createInitiative } = await import('./actions.js');
+    const result = await createInitiative({
       name,
       parent_id,
       kr_id,
       decomposition_mode: decomposition_mode || 'known',
-      description
+      description,
+      plan_content
     });
 
     res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
     res.status(500).json({
       success: false,
-      error: 'Failed to create feature',
+      error: 'Failed to create initiative',
+      details: err.message
+    });
+  }
+});
+
+// Backward compatibility alias
+router.post('/action/create-feature', async (req, res) => {
+  try {
+    const { name, parent_id, kr_id, decomposition_mode, description, plan_content } = req.body;
+
+    if (!name || !parent_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'name and parent_id are required'
+      });
+    }
+
+    const { createInitiative } = await import('./actions.js');
+    const result = await createInitiative({
+      name,
+      parent_id,
+      kr_id,
+      decomposition_mode: decomposition_mode || 'known',
+      description,
+      plan_content
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create initiative',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/action/create-project
+ * Create a Project (写入 projects 表, type='project')
+ */
+router.post('/action/create-project', async (req, res) => {
+  try {
+    const { name, description, repo_path, repo_paths, kr_ids } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        error: 'name is required'
+      });
+    }
+
+    const { createProject } = await import('./actions.js');
+    const result = await createProject({
+      name,
+      description,
+      repo_path,
+      repo_paths,
+      kr_ids
+    });
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create project',
       details: err.message
     });
   }

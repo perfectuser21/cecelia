@@ -22,8 +22,22 @@ import {
 describe('Three-Layer Decomposition E2E', () => {
   let testObjective, testKR, testProject, testInitiativeA, testInitiativeB;
   let prPlan1, prPlan2, prPlan3, prPlanB1;
+  let savedPrPlanStatuses = [];
 
   beforeEach(async () => {
+    // Neutralize existing PR Plans so planNextTask() picks up test data first
+    const existing = await pool.query(
+      "SELECT id, status FROM pr_plans WHERE status IN ('planning', 'in_progress')"
+    );
+    savedPrPlanStatuses = existing.rows;
+    if (savedPrPlanStatuses.length > 0) {
+      const ids = savedPrPlanStatuses.map(r => r.id);
+      await pool.query(
+        "UPDATE pr_plans SET status = 'cancelled' WHERE id = ANY($1)",
+        [ids]
+      );
+    }
+
     // Create Objective (goals with parent_id=NULL)
     const objectiveResult = await pool.query(`
       INSERT INTO goals (title, description, status)
@@ -156,6 +170,12 @@ describe('Three-Layer Decomposition E2E', () => {
     if (testProject) {
       await pool.query('DELETE FROM projects WHERE id = $1', [testProject.id]);
     }
+
+    // Restore original PR Plan statuses
+    for (const { id, status } of savedPrPlanStatuses) {
+      await pool.query('UPDATE pr_plans SET status = $1 WHERE id = $2', [status, id]);
+    }
+    savedPrPlanStatuses = [];
   });
 
   describe('Scenario 1: Full Flow - Objective to Task', () => {

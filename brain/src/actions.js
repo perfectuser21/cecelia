@@ -67,35 +67,92 @@ async function createTask({ title, description, priority, project_id, goal_id, t
 }
 
 /**
- * Create a new Feature (写入 projects 表)
+ * Create a new Initiative (写入 projects 表, type='initiative')
+ * Initiative = 1-3 小时的功能模块，挂在 Project 下面
  * @param {Object} params
- * @param {string} params.name - Feature name
- * @param {string} params.parent_id - Project ID (repo_path≠NULL 的那个)
+ * @param {string} params.name - Initiative name
+ * @param {string} params.parent_id - Project ID (type='project' 的那个)
  * @param {string} params.kr_id - 关联的 KR ID
  * @param {string} params.decomposition_mode - 'known' | 'exploratory'
- * @param {string} params.description - Feature description
+ * @param {string} params.description - Initiative description
+ * @param {string} params.plan_content - Plan document content
  */
-async function createFeature({ name, parent_id, kr_id, decomposition_mode, description }) {
+async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content }) {
   if (!name || !parent_id) {
     return { success: false, error: 'name and parent_id are required' };
   }
 
   const result = await pool.query(`
-    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, status)
-    VALUES ($1, $2, $3, $4, $5, 'active')
+    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status)
+    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active')
     RETURNING *
   `, [
     name,
     parent_id,
     kr_id || null,
     decomposition_mode || 'known',
-    description || ''
+    description || '',
+    plan_content || null
   ]);
 
-  const feature = result.rows[0];
-  console.log(`[Action] Created feature: ${feature.id} - ${name} (mode: ${decomposition_mode || 'known'})`);
+  const initiative = result.rows[0];
+  console.log(`[Action] Created initiative: ${initiative.id} - ${name} (mode: ${decomposition_mode || 'known'})`);
 
-  return { success: true, feature };
+  return { success: true, initiative };
+}
+
+// Backward compatibility alias
+const createFeature = createInitiative;
+
+/**
+ * Create a new Project (写入 projects 表, type='project')
+ * Project = 1-2 周的项目，可以跨多个 Repository
+ * @param {Object} params
+ * @param {string} params.name - Project name
+ * @param {string} params.description - Project description
+ * @param {string} params.repo_path - Primary repository path (optional, use project_repos for multi-repo)
+ * @param {string[]} params.repo_paths - Multiple repository paths
+ * @param {string[]} params.kr_ids - Associated KR IDs
+ */
+async function createProject({ name, description, repo_path, repo_paths, kr_ids }) {
+  if (!name) {
+    return { success: false, error: 'name is required' };
+  }
+
+  const result = await pool.query(`
+    INSERT INTO projects (name, description, repo_path, type, status)
+    VALUES ($1, $2, $3, 'project', 'active')
+    RETURNING *
+  `, [
+    name,
+    description || '',
+    repo_path || (repo_paths?.[0]) || null
+  ]);
+
+  const project = result.rows[0];
+
+  // Insert into project_repos for multi-repo support
+  const allPaths = repo_paths || (repo_path ? [repo_path] : []);
+  for (const rp of allPaths) {
+    await pool.query(`
+      INSERT INTO project_repos (project_id, repo_path)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+    `, [project.id, rp]);
+  }
+
+  // Link to KRs if provided
+  if (Array.isArray(kr_ids)) {
+    for (const krId of kr_ids) {
+      await pool.query(
+        'INSERT INTO project_kr_links (project_id, kr_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [project.id, krId]
+      );
+    }
+  }
+
+  console.log(`[Action] Created project: ${project.id} - ${name}`);
+  return { success: true, project };
 }
 
 /**
@@ -300,7 +357,9 @@ async function batchUpdateTasks({ filter, update }) {
 
 export {
   createTask,
-  createFeature,
+  createInitiative,
+  createFeature, // backward compatibility alias
+  createProject,
   updateTask,
   createGoal,
   updateGoal,
