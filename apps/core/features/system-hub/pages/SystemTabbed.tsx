@@ -48,7 +48,7 @@ const tabs: TabConfig[] = [
   },
   {
     id: 'feature-map',
-    label: '功能地图',
+    label: 'Feature Map',
     icon: Map,
     path: '/system/feature-map',
     component: () => import('../../system/pages/FeatureMap'),
