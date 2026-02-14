@@ -4,6 +4,49 @@
 
 ---
 
+### [2026-02-15] Fix Alertness System Architecture Confusion (P0)
+
+- **Bug**: Two Alertness systems coexist and conflict, causing dispatch rate limiting to fail
+  - Old System (`alertness.js`): token bucket mechanism, 4 levels (NORMAL/ALERT/EMERGENCY/COMA)
+  - Enhanced System (`alertness/index.js`): percentage-based rate, 5 levels (SLEEPING/CALM/AWARE/ALERT/PANIC)
+  - tick.js uses Enhanced System to decide whether to dispatch
+  - BUT `dispatchNextTask()` internally uses Old System token bucket check
+  - **Result**: Even when Enhanced System allows dispatch (CALM=100%), Old System token bucket still rate_limited
+
+- **Symptom**: Manual Tick intermittently returned `rate_limited` even after PR #268 fixed Old System token bucket config
+  - Enhanced System: CALM (100% dispatch rate)
+  - Old System: Still in ALERT (refillRate=8/min < 12/min)
+  - Diagnosis showed "System is healthy" but alertness level stuck at ALERT
+
+- **Root Cause**: Architecture confusion from two systems running in parallel
+  - Old System was not deprecated when Enhanced System was introduced (Migration 029)
+  - tick.js mixed both systems:
+    - Line 1191: `canDispatchEnhanced()` (Enhanced)
+    - Line 1206: `getDispatchRateEnhanced()` (Enhanced)
+    - Line 587: `tryConsumeToken('dispatch')` (Old) ← redundant check
+  - Two systems not synchronized, causing conflicting rate limiting
+
+- **Solution**: Remove Old System token bucket check from `dispatchNextTask()`
+  - Deleted lines 586-596 in `brain/src/tick.js`
+  - Removed `tryConsumeToken` from import statement
+  - Now fully relies on Enhanced System dispatch rate control
+  - Enhanced System already computes `effectiveDispatchMax = poolCAvailable × dispatchRate` (line 1210)
+
+- **优化点**: Architecture migration best practices
+  - **Complete migration**: When introducing a new system, deprecate the old one completely
+  - **Single source of truth**: Avoid parallel systems with overlapping responsibilities
+  - **Explicit deprecation**: Document which system is authoritative
+  - **Gradual removal**: Remove old system checks once new system is proven stable
+  - **Testing**: Verify no conflicts between old and new systems during transition
+
+- **影响程度**: Critical (P0)
+  - **Severity**: Dispatch rate limiting completely ineffective (system confusion)
+  - **Duration**: Since Enhanced System introduction (Migration 029)
+  - **Impact**: PR #268 fix was ineffective due to architecture confusion
+  - **Fix time**: 30 minutes (once root cause identified)
+  - **Tests**: 1261 tests passed after fix ✅
+  - **Lesson**: Architecture debt can negate bug fixes in overlapping systems
+
 ### [2026-02-15] Fix Token Bucket Rate Limiting Configuration Defect (P0)
 
 - **Bug**: Brain's token bucket rate limiting configuration caused systematic dispatch failure
