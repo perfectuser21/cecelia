@@ -657,6 +657,23 @@ router.post('/focus/clear', async (req, res) => {
   }
 });
 
+// ==================== Hello API (Test Endpoint) ====================
+
+/**
+ * GET /api/brain/hello
+ * Returns a simple Hello Cecelia message
+ */
+router.get('/hello', async (req, res) => {
+  try {
+    res.json({
+      message: "Hello Cecelia",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to say hello', details: err.message });
+  }
+});
+
 // ==================== Tick API（Action Loop）====================
 
 /**

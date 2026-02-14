@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-02-14T09:41:00Z",
+  "branch": "cp-02140936-51812adb-3bd3-4d0f-9d94-77614a",
+  "tests": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3
+  },
+  "coverage": {
+    "statements": 100,
+    "branches": 100,
+    "functions": 100,
+    "lines": 100
+  },
+  "dod_items": [
+    {
+      "description": "创建 hello API 端点 `/api/brain/hello`",
+      "status": "completed",
+      "test": "tests/hello.test.js"
+    },
+    {
+      "description": "返回 'Hello Cecelia' 消息",
+      "status": "completed",
+      "test": "tests/hello.test.js"
+    },
+    {
+      "description": "端点响应状态码为 200",
+      "status": "completed",
+      "test": "tests/hello.test.js"
+    },
+    {
+      "description": "所有测试通过",
+      "status": "completed",
+      "test": "CI execution"
+    }
+  ]
+}
