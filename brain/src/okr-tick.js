@@ -95,8 +95,8 @@ async function triggerPlannerForGoal(goal) {
     description: goal.description
   });
 
-  // Build the prompt for Autumnrice
-  const prompt = `/autumnrice 拆解目标
+  // Build the prompt for Autumnrice (6-layer OKR decomposition)
+  const prompt = `/okr
 
 ## Goal 信息
 - ID: ${goal.id}
@@ -105,27 +105,42 @@ async function triggerPlannerForGoal(goal) {
 - 优先级: ${goal.priority}
 - 项目ID: ${goal.project_id || '未指定'}
 
+## 6 层架构
+Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-3小时) → Task (PR)
+
 ## 要求
-1. 分析这个目标，拆解成具体可执行的 Tasks
+1. 分析这个目标，创建 Initiative 和具体可执行的 Tasks
 2. 每个 Task 必须指定 task_type (dev/talk/qa/audit/research)
 3. 每个 Task 必须关联 goal_id = ${goal.id}
-4. 通过 Brain API 创建 Tasks: POST http://localhost:5221/api/brain/action/create-task
-5. 完成后更新 Goal 状态为 in_progress
+4. 先创建 Initiative: POST http://localhost:5221/api/brain/action/create-initiative
+5. 再创建 Tasks: POST http://localhost:5221/api/brain/action/create-task
+6. 完成后更新 Goal 状态为 in_progress
 
-## Brain API 创建 Task 格式
+## Brain API 创建 Initiative
+curl -X POST http://localhost:5221/api/brain/action/create-initiative \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "Initiative 名称",
+    "parent_id": "<Project ID>",
+    "kr_id": "${goal.id}",
+    "decomposition_mode": "known"
+  }'
+
+## Brain API 创建 Task
 curl -X POST http://localhost:5221/api/brain/action/create-task \\
   -H "Content-Type: application/json" \\
   -d '{
     "title": "任务标题",
     "task_type": "dev",
+    "project_id": "<Initiative ID>",
     "goal_id": "${goal.id}",
     "priority": "${goal.priority}",
-    "context": "任务描述"
+    "prd_content": "完整 PRD"
   }'
 `;
 
-  // Call Autumnrice Bridge (runs on host, port 5225)
-  const bridgeUrl = process.env.AUTUMNRICE_BRIDGE_URL || 'http://localhost:5225/trigger';
+  // Call cecelia-bridge (port 3457) for decomposition
+  const bridgeUrl = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457/trigger-cecelia';
 
   try {
     const response = await fetch(bridgeUrl, {

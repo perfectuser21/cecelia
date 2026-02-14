@@ -1140,8 +1140,8 @@ async function executeTick() {
   try {
     const noKrObjectives = await pool.query(`
       SELECT o.id, o.title FROM goals o
-      WHERE o.type = 'objective'
-        AND o.parent_id IS NULL  -- CRITICAL: Only top-level objectives
+      WHERE o.type = 'global_okr'
+        AND o.parent_id IS NULL  -- CRITICAL: Only top-level global OKRs
         AND o.status NOT IN ('completed', 'cancelled', 'decomposing')
         AND NOT EXISTS (
           SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
@@ -1229,7 +1229,7 @@ async function executeTick() {
   if (dispatched < effectiveDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
-        SELECT id FROM goals WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
+        SELECT id FROM goals WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {

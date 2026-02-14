@@ -137,7 +137,7 @@ class SimilarityService {
         kr.id as kr_id, kr.title as kr_title
       FROM projects p
       LEFT JOIN project_kr_links pkl ON p.id = pkl.project_id
-      LEFT JOIN goals kr ON pkl.kr_id = kr.id AND kr.type = 'key_result'
+      LEFT JOIN goals kr ON pkl.kr_id = kr.id AND kr.type = 'kr'
       WHERE p.parent_id IS NOT NULL AND p.status IN ('active', 'in_progress')
       ORDER BY p.updated_at DESC
       LIMIT 50

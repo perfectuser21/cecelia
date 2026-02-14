@@ -54,13 +54,25 @@ const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 
 const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
 
 /**
- * Resolve repo_path from a project, traversing parent chain for Features.
- * Features (sub-projects) have parent_id but no repo_path — walk up to find it.
+ * Resolve repo_path from a project, checking project_repos first, then parent chain.
+ * Initiatives (sub-projects) have parent_id but no repo_path — walk up to find it.
  * Max 5 levels to prevent infinite loops.
  */
 async function resolveRepoPath(projectId) {
   let currentId = projectId;
   for (let depth = 0; depth < 5 && currentId; depth++) {
+    // Check project_repos table first (multi-repo support)
+    try {
+      const repoResult = await pool.query(
+        'SELECT repo_path FROM project_repos WHERE project_id = $1 LIMIT 1',
+        [currentId]
+      );
+      if (repoResult.rows.length > 0) return repoResult.rows[0].repo_path;
+    } catch {
+      // project_repos table may not exist yet (pre-migration 029)
+    }
+
+    // Fallback to projects.repo_path
     const result = await pool.query(
       'SELECT repo_path, parent_id FROM projects WHERE id = $1',
       [currentId]
@@ -658,7 +670,7 @@ ${task.payload?.kr_goal || task.description || ''}
 POST /api/brain/action/create-task
 {
   "title": "下一步任务标题",
-  "project_id": "${featureId}",  // Feature ID
+  "project_id": "${featureId}",  // Initiative ID
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD...",
@@ -670,7 +682,7 @@ POST /api/brain/action/create-task
 }`;
     }
 
-    // 首次拆解：秋米需要创建 Feature + Task
+    // 首次拆解：秋米需要创建 Initiative + Task
     return `/okr
 
 # OKR 拆解: ${krTitle}
@@ -682,12 +694,15 @@ POST /api/brain/action/create-task
 ## 关联项目
 - Project ID: ${projectId}
 
+## 6 层架构
+Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-3小时) → Task (PR)
+
 ## 你的任务
-1. **确定 Repository**: 查询 projects 表找到 repo_path 不为空的 Project
+1. **确定 Repository**: 查询 projects 表找到 type='project' 且 repo_path 不为空的 Project
 2. **判断拆解模式**:
    - 已知型 (known): 知道怎么做，一次拆完所有 Tasks
    - 探索型 (exploratory): 不确定，需要边做边看
-3. **创建 Feature**: 写入 projects 表（不是 goals 表！）
+3. **创建 Initiative**: 写入 projects 表（type='initiative'，不是 goals 表！）
 4. **创建 Task + PRD**: 为每个 Task 写完整 PRD
 
 ## API 调用
@@ -695,26 +710,26 @@ POST /api/brain/action/create-task
 ### 查询 Projects（找 repo_path）
 curl -s http://localhost:5221/api/tasks/projects | jq '.[] | select(.repo_path != null)'
 
-### 创建 Feature
-POST /api/brain/action/create-feature
+### 创建 Initiative
+POST /api/brain/action/create-initiative
 {
-  "name": "Feature 名称",
-  "parent_id": "<Project ID (有 repo_path 的)>",
+  "name": "Initiative 名称",
+  "parent_id": "<Project ID (type='project' 的)>",
   "kr_id": "${krId}",
   "decomposition_mode": "known" 或 "exploratory"
 }
 
-### 创建 Task（注意 project_id 是 Feature ID！）
+### 创建 Task（注意 project_id 是 Initiative ID！）
 POST /api/brain/action/create-task
 {
   "title": "Task 标题",
-  "project_id": "<Feature ID>",  // 注意是 Feature，不是 Project！
+  "project_id": "<Initiative ID>",  // 注意是 Initiative，不是 Project！
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD（背景、目标、功能、验收标准、技术要点）",
   "payload": {
     "exploratory": true,  // 探索型必须设为 true
-    "feature_id": "<Feature ID>",
+    "feature_id": "<Initiative ID>",
     "kr_goal": "${task.description || ''}"
   }
 }
@@ -724,8 +739,8 @@ PUT /api/tasks/goals/${krId}
 {"status": "in_progress"}
 
 ## ⛔ 绝对禁止
-- 不能在 goals 表创建任何记录！OKR 只有 2 层（Objective + KR）
-- 不能把 Task.project_id 指向 Project，必须指向 Feature！`;
+- 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
+- 不能把 Task.project_id 指向 Project，必须指向 Initiative！`;
   }
 
   // Talk 类型：可以写文档（日报、总结等），但不能改代码

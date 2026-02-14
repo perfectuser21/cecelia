@@ -15,12 +15,12 @@ async function getGlobalState() {
   const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult] = await Promise.all([
     pool.query(`
       SELECT * FROM goals
-      WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
+      WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
       SELECT * FROM goals
-      WHERE type = 'key_result' AND status NOT IN ('completed', 'cancelled')
+      WHERE type = 'kr' AND status NOT IN ('completed', 'cancelled')
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`SELECT * FROM projects WHERE status = 'active'`),
@@ -296,10 +296,12 @@ async function checkPrPlansCompletion() {
  * Iterates through all scored KRs until one produces a task.
  * V3: PR Plans dispatch integration - checks Initiatives first
  */
-async function planNextTask(scopeKRIds = null) {
+async function planNextTask(scopeKRIds = null, options = {}) {
   const state = await getGlobalState();
 
   // V3: Check for PR Plans first (三层拆解优先)
+  // Can be skipped via options.skipPrPlans (used by KR rotation tests)
+  if (!options.skipPrPlans) {
   // Query all Initiatives (Sub-Projects with PR Plans)
   // After migration 027: Initiative = Sub-Project (in projects table)
   const initiativesResult = await pool.query(`
@@ -339,6 +341,7 @@ async function planNextTask(scopeKRIds = null) {
       };
     }
   }
+  } // end skipPrPlans check
 
   // No PR Plans available - fall back to traditional KR dispatch
   // If scoped to specific KRs (from tick focus), filter keyResults before selecting
@@ -434,11 +437,11 @@ async function handlePlanInput(input, dryRun = false) {
   };
 
   if (input.objective) {
-    result.level = 'objective';
+    result.level = 'global_okr';
     if (!dryRun) {
       const oResult = await pool.query(`
         INSERT INTO goals (title, description, priority, type, status, progress)
-        VALUES ($1, $2, $3, 'objective', 'pending', 0) RETURNING *
+        VALUES ($1, $2, $3, 'global_okr', 'pending', 0) RETURNING *
       `, [input.objective.title, input.objective.description || '', input.objective.priority || 'P1']);
       result.created.goals.push(oResult.rows[0]);
 
@@ -446,7 +449,7 @@ async function handlePlanInput(input, dryRun = false) {
         for (const krInput of input.objective.key_results) {
           const krResult = await pool.query(`
             INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-            VALUES ($1, $2, $3, 'key_result', $4, $5, 'pending', 0, $6) RETURNING *
+            VALUES ($1, $2, $3, 'kr', $4, $5, 'pending', 0, $6) RETURNING *
           `, [
             krInput.title, krInput.description || '', krInput.priority || input.objective.priority || 'P1',
             oResult.rows[0].id, krInput.weight || 1.0,
@@ -461,7 +464,7 @@ async function handlePlanInput(input, dryRun = false) {
     if (!dryRun) {
       const krResult = await pool.query(`
         INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-        VALUES ($1, $2, $3, 'key_result', $4, $5, 'pending', 0, $6) RETURNING *
+        VALUES ($1, $2, $3, 'kr', $4, $5, 'pending', 0, $6) RETURNING *
       `, [
         input.key_result.title, input.key_result.description || '', input.key_result.priority || 'P1',
         input.key_result.objective_id || null, input.key_result.weight || 1.0,

@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-13
-**Brain 版本**: 1.33.4
-**Schema 版本**: 028
+**Brain 版本**: 1.34.0
+**Schema 版本**: 029
 **状态**: 生产运行中
 
 ---
@@ -263,48 +263,52 @@ executeTick() 流程：
 
 ## 4. 数据模型
 
-### 4.1 四层结构
+### 4.1 六层结构
 
 ```
-goals (OKR 目标)
-├── Objective (parent_id=NULL)
-│   └── Key Result (parent_id=Objective.id)
+goals (OKR 目标，3 种 type)
+├── Global OKR (type='global_okr', parent_id=NULL, 季度目标)
+│   └── Area OKR (type='area_okr', parent_id=Global OKR.id, 月度目标)
+│       └── KR (type='kr', parent_id=Area OKR.id, Key Result)
 │
-projects (项目 / Sub-Project)
-├── Project (repo_path≠NULL, parent_id=NULL)
-│   └── Sub-Project (parent_id=Project.id, repo_path=NULL)
+projects (项目/Initiative，2 种 type)
+├── Project (type='project', 1-2 周, 可跨多个 Repo)
+│   └── Initiative (type='initiative', parent_id=Project.id, 1-3 小时)
 │
 pr_plans (工程规划)
-└── PR Plan (project_id→Project/Sub-Project, pr_plan_id→tasks)
+└── PR Plan (project_id→Initiative, dod, sequence, depends_on)
 │
 tasks (具体任务)
-└── Task (project_id→Project/Sub-Project, goal_id→KR.id, pr_plan_id→PR Plan)
+└── Task (project_id→Initiative, goal_id→KR.id, pr_plan_id→PR Plan)
 ```
 
-**完整拆解链**：
+**完整拆解链**（6 层）：
 ```
-Goals (OKR) → Projects (Sub-Project) → PR Plans (工程规划) → Tasks (具体任务)
+Global OKR → Area OKR → KR → Project → Initiative → Task
 ```
 
 **关键关系**：
-- Task.project_id → **Project 或 Sub-Project** ID
-- Task.goal_id → **KR** ID（不是 Objective）
+- Task.project_id → **Initiative** ID（不是 Project）
+- Task.goal_id → **KR** ID（不是 Global/Area OKR）
 - Task.pr_plan_id → **PR Plan** ID（可选，通过 PR Plan 创建时必填）
-- Sub-Project→Project 通过 parent_id 找到 repo_path（`resolveRepoPath()` 向上遍历）
+- Initiative→Project 通过 parent_id 找到 repo_path（`resolveRepoPath()` 向上遍历）
+- project_repos 表：Project ↔ Repository 多对多关联
 - project_kr_links 表：Project ↔ KR 多对多关联
+- Repository = 独立概念，Project 可跨多个 Repo
 
 ### 4.2 核心表
 
 | 表 | 用途 | 关键字段 |
 |----|------|---------|
 | **tasks** | 任务队列 | status, task_type, priority, payload, prd_content, pr_plan_id |
-| **goals** | OKR 目标 | type(objective/key_result), parent_id, progress |
-| **projects** | 项目/Sub-Project | repo_path, parent_id, kr_id, decomposition_mode |
-| **pr_plans** | 工程规划（PR 拆解层） | initiative_id→projects, project_id, dod, files, sequence, depends_on, complexity |
+| **goals** | OKR 目标 | type(global_okr/area_okr/kr), parent_id, progress |
+| **projects** | 项目/Initiative | type(project/initiative), repo_path, parent_id, kr_id, plan_content |
+| **pr_plans** | 工程规划（PR 拆解层） | project_id→Initiative, dod, files, sequence, depends_on, complexity |
+| **project_repos** | 项目↔仓库关联 | project_id, repo_path, role |
 | **areas** | PARA 领域 | name, group_name |
 | **project_kr_links** | 项目↔KR 关联 | project_id, kr_id |
 
-> **注意**：`features` 表已在 Migration 027 中删除。Sub-Project 功能由 `projects` 表的 `parent_id` 字段实现。
+> **注意**：`features` 表已在 Migration 027 中删除。Initiative 功能由 `projects` 表的 `parent_id` + `type='initiative'` 实现。
 
 ### 4.3 系统表
 
@@ -610,7 +614,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans
-5. **Schema 版本** — 必须 = '028'
+5. **Schema 版本** — 必须 = '029'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
