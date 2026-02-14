@@ -25,7 +25,7 @@ const manifest: FeatureManifest = {
           { path: '/system/infra', label: 'Infrastructure', icon: 'Server', order: 4 },
           { path: '/system/claude', label: 'Claude', icon: 'Brain', order: 5 },
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
-          { path: '/system/feature-map', label: '功能地图', icon: 'Map', order: 7 },
+          { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
         ],
       },
     },
