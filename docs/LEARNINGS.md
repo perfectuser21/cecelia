@@ -4,6 +4,49 @@
 
 ---
 
+### [2026-02-15] Fix Token Bucket Rate Limiting Configuration Defect (P0)
+
+- **Bug**: Brain's token bucket rate limiting configuration caused systematic dispatch failure
+  - Tick Loop frequency: 5 seconds = 12 ticks/minute
+  - Token consumption: 12 dispatch tokens/minute
+  - Token refill rate: 10 tokens/minute (NORMAL level)
+  - **Net result**: -2 tokens/minute → bucket permanently depleted
+  - Symptom: All dispatch attempts returned `rate_limited`, Brain couldn't dispatch any queued tasks
+
+- **Root Cause**: Configuration mismatch between loop frequency and refill rate
+  - Token bucket was designed for rate limiting, not for matching loop frequency
+  - Initial configuration (refillRate=10) was too conservative
+  - No monitoring/alerting for token bucket depletion
+  - Problem went undetected until observed manually
+
+- **Solution**: Adjust token bucket parameters to match system behavior
+  - `_tokenBucket.dispatch`: maxTokens=20, refillRate=15 (was 10, 10, 10)
+  - `LEVEL_TOKEN_RATES.NORMAL.dispatch`: 15 (was 10)
+  - `LEVEL_TOKEN_RATES.ALERT.dispatch`: 8 (was 5)
+  - `LEVEL_TOKEN_RATES.EMERGENCY.dispatch`: 4 (was 2)
+  - Principle: refillRate must be ≥ loop frequency for normal operation
+  - Reserve headroom (15 > 12) for burst capacity
+
+- **优化点**: Token bucket design principles
+  - **Normal operation**: Refill rate should match or exceed consumption rate
+  - **Burst capacity**: maxTokens should allow reasonable burst (20 tokens = 100 seconds of burst)
+  - **Alertness levels**: Rate limiting should slow down, not block completely
+    - NORMAL: Full speed (15/min > 12/min loop)
+    - ALERT: Reduce speed (8/min, still allows dispatch)
+    - EMERGENCY: Minimal speed (4/min, critical operations only)
+    - COMA: Complete stop (0/min)
+  - **Monitoring**: Should alert when bucket stays near-empty for >5 minutes
+  - **Testing**: Unit tests should verify refill rate matches expected consumption
+
+- **影响程度**: Critical (P0)
+  - **Severity**: Brain completely unable to dispatch tasks (total system failure)
+  - **Duration**: Unknown (likely days, until manually discovered)
+  - **Impact**: All queued tasks blocked, system appeared "stuck"
+  - **Detection**: Manual observation (no automated alerting)
+  - **Fix time**: 1 hour (once identified)
+  - **Lesson**: Configuration bugs can cause total system failure without crashing
+  - **Action item**: Add token bucket monitoring to prevent recurrence
+
 ### [2026-02-14] Skip Local Tests During Brain Deployment
 
 - **Bug**: Brain deployment script runs local tests that conflict with running Brain service on port 5221
