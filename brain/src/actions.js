@@ -203,10 +203,32 @@ async function updateTask({ task_id, status, priority }) {
 /**
  * Create a new goal
  */
-async function createGoal({ title, description, priority, project_id, target_date, parent_id }) {
+async function createGoal({ title, description, priority, project_id, target_date, parent_id, type }) {
+  // Auto-determine type based on parent if not provided
+  let goalType = type;
+  if (!goalType && parent_id) {
+    const parentResult = await pool.query('SELECT type FROM goals WHERE id = $1', [parent_id]);
+    if (parentResult.rows.length > 0) {
+      const parentType = parentResult.rows[0].type;
+      // Map parent type to child type
+      if (parentType === 'global_okr') {
+        goalType = 'global_kr';
+      } else if (parentType === 'area_okr') {
+        goalType = 'area_kr';
+      } else if (parentType === 'global_kr') {
+        goalType = 'area_okr';
+      } else {
+        goalType = 'kr'; // Default to kr for other cases
+      }
+    }
+  } else if (!goalType) {
+    // No parent and no type specified - assume it's a top-level global_okr
+    goalType = 'global_okr';
+  }
+
   const result = await pool.query(`
-    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, status, progress)
-    VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0)
+    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0)
     RETURNING *
   `, [
     title,
@@ -214,10 +236,11 @@ async function createGoal({ title, description, priority, project_id, target_dat
     priority || 'P1',
     project_id || null,
     target_date || null,
-    parent_id || null
+    parent_id || null,
+    goalType
   ]);
 
-  console.log(`[Action] Created goal: ${result.rows[0].id} - ${title}`);
+  console.log(`[Action] Created goal: ${result.rows[0].id} - ${title} (type: ${goalType})`);
   return { success: true, goal: result.rows[0] };
 }
 

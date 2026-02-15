@@ -861,6 +861,23 @@ async function executeTick() {
     console.error('[tick] PR Plans completion check failed:', prPlansErr.message);
   }
 
+  // 0.7. 统一拆解检查（七层架构）
+  try {
+    const { runDecompositionChecks } = await import('./decomposition-checker.js');
+    const decompSummary = await runDecompositionChecks();
+    if (decompSummary.total_created > 0) {
+      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks across ${decompSummary.layers_triggered.length} layers`);
+      actionsTaken.push({
+        action: 'decomposition_check',
+        created_count: decompSummary.total_created,
+        layers: decompSummary.layers_triggered,
+        tasks: decompSummary.created_tasks
+      });
+    }
+  } catch (decompErr) {
+    console.error('[tick] Decomposition check failed:', decompErr.message);
+  }
+
   // 0.6. Recurring Tasks Check
   try {
     const { checkRecurringTasks } = await import('./recurring.js');
@@ -1079,57 +1096,13 @@ async function executeTick() {
           title: planned.task.title
         });
       } else if (planned.reason === 'needs_planning' && planned.kr) {
-        // 6c. Auto KR decomposition: create a task for 秋米 to decompose this KR into Initiative + Tasks
-        try {
-          const krId = planned.kr.id;
-          const krTitle = planned.kr.title;
-          const projectId = planned.project?.id || null;
-
-          // Dedup: skip if a decomposition task already exists for this KR
-          const existingDecomp = await pool.query(`
-            SELECT id FROM tasks
-            WHERE goal_id = $1
-              AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
-              AND (status IN ('queued', 'in_progress') OR (status = 'completed' AND completed_at > NOW() - INTERVAL '24 hours'))
-          `, [krId]);
-
-          if (existingDecomp.rows.length === 0) {
-            const decompResult = await pool.query(`
-              INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
-              VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
-              RETURNING id, title
-            `, [
-              `KR 拆解: ${krTitle}`,
-              `请为 KR「${krTitle}」创建具体执行任务。\n\n要求：\n1. 分析 KR，确定需要哪些 Initiative 和 Task\n2. 为每个 Task 写完整 PRD\n3. 调用 Brain API 创建 Task:\n   POST http://localhost:5221/api/brain/action/create-task\n   Body: { "title": "...", "project_id": "${projectId}", "goal_id": "${krId}", "task_type": "dev", "prd_content": "..." }\n\nKR ID: ${krId}\nKR 标题: ${krTitle}`,
-              krId,
-              projectId,
-              JSON.stringify({ decomposition: 'continue', kr_id: krId })
-            ]);
-
-            console.log(`[tick-loop] Created KR decomposition task for: ${krTitle}`);
-            actionsTaken.push({
-              action: 'create_kr_decomposition',
-              task_id: decompResult.rows[0].id,
-              title: decompResult.rows[0].title,
-              kr: planned.kr,
-              project: planned.project
-            });
-          } else {
-            actionsTaken.push({
-              action: 'needs_planning',
-              kr: planned.kr,
-              project: planned.project,
-              note: 'decomposition_task_exists'
-            });
-          }
-        } catch (krDecompErr) {
-          console.error('[tick-loop] KR decomposition error:', krDecompErr.message);
-          actionsTaken.push({
-            action: 'needs_planning',
-            kr: planned.kr,
-            project: planned.project
-          });
-        }
+        // Note: KR decomposition now handled by decomposition-checker.js
+        actionsTaken.push({
+          action: 'needs_planning',
+          kr: planned.kr,
+          project: planned.project,
+          note: 'waiting_for_decomposition_checker'
+        });
       }
     } catch (planErr) {
       console.error('[tick-loop] Planner error:', planErr.message);
@@ -1138,48 +1111,7 @@ async function executeTick() {
     console.log(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
 
-  // 6b. Auto OKR decomposition: ONLY for TRUE top-level objectives (parent_id IS NULL)
-  // Do NOT decompose nested goals that were incorrectly typed as 'objective'
-  try {
-    const noKrObjectives = await pool.query(`
-      SELECT o.id, o.title FROM goals o
-      WHERE o.type = 'global_okr'
-        AND o.parent_id IS NULL  -- CRITICAL: Only top-level global OKRs
-        AND o.status NOT IN ('completed', 'cancelled', 'decomposing')
-        AND NOT EXISTS (
-          SELECT 1 FROM goals kr WHERE kr.parent_id = o.id
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM tasks t
-          WHERE t.goal_id = o.id
-            AND (t.payload->>'decomposition' = 'true' OR t.title LIKE '%OKR%拆解%')
-            AND (t.status IN ('queued', 'in_progress') OR (t.status = 'completed' AND t.completed_at > NOW() - INTERVAL '24 hours'))
-        )
-    `);
-
-    for (const obj of noKrObjectives.rows) {
-      const decompResult = await pool.query(`
-        INSERT INTO tasks (title, description, status, priority, goal_id, task_type, payload, trigger_source)
-        VALUES ($1, $2, 'queued', 'P0', $3, 'dev', $4, 'brain_auto')
-        RETURNING id, title
-      `, [
-        `OKR 拆解: ${obj.title}`,
-        `请为目标「${obj.title}」拆解 Key Results (KR)。\n\n要求：\n1. 分析目标，拆解为 3-5 个可量化的 KR\n2. 每个 KR 需要有明确的衡量标准和目标值\n3. 调用 Brain API 创建 KR:\n   POST http://localhost:5221/api/brain/action/create-goal\n   Body: { "title": "KR: ...", "description": "...", "priority": "P0", "parent_id": "${obj.id}" }\n4. 为每个 KR 关联合适的 Project\n\n目标 ID: ${obj.id}\n目标标题: ${obj.title}`,
-        obj.id,
-        JSON.stringify({ decomposition: 'true', objective_id: obj.id })
-      ]);
-
-      console.log(`[tick-loop] Created OKR decomposition task for objective: ${obj.title}`);
-      actionsTaken.push({
-        action: 'create_decomposition',
-        task_id: decompResult.rows[0].id,
-        title: decompResult.rows[0].title,
-        objective: obj.title
-      });
-    }
-  } catch (decompErr) {
-    console.error('[tick-loop] OKR decomposition error:', decompErr.message);
-  }
+  // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
 
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
   //    Respect alertness level dispatch settings
@@ -1238,7 +1170,9 @@ async function executeTick() {
   if (dispatched < effectiveDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
-        SELECT id FROM goals WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
+        SELECT id FROM goals
+        WHERE type IN ('global_okr', 'area_okr', 'kr', 'global_kr', 'area_kr')
+          AND status NOT IN ('completed', 'cancelled')
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {
