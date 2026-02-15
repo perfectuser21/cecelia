@@ -1080,7 +1080,7 @@ async function executeTick() {
           title: planned.task.title
         });
       } else if (planned.reason === 'needs_planning' && planned.kr) {
-        // 6c. Auto KR decomposition: create a task for 秋米 to decompose this KR into Feature + Tasks
+        // 6c. Auto KR decomposition: create a task for 秋米 to decompose this KR into Initiative + Tasks
         try {
           const krId = planned.kr.id;
           const krTitle = planned.kr.title;
@@ -1101,7 +1101,7 @@ async function executeTick() {
               RETURNING id, title
             `, [
               `KR 拆解: ${krTitle}`,
-              `请为 KR「${krTitle}」创建具体执行任务。\n\n要求：\n1. 分析 KR，确定需要哪些 Feature 和 Task\n2. 为每个 Task 写完整 PRD\n3. 调用 Brain API 创建 Task:\n   POST http://localhost:5221/api/brain/action/create-task\n   Body: { "title": "...", "project_id": "${projectId}", "goal_id": "${krId}", "task_type": "dev", "prd_content": "..." }\n\nKR ID: ${krId}\nKR 标题: ${krTitle}`,
+              `请为 KR「${krTitle}」创建具体执行任务。\n\n要求：\n1. 分析 KR，确定需要哪些 Initiative 和 Task\n2. 为每个 Task 写完整 PRD\n3. 调用 Brain API 创建 Task:\n   POST http://localhost:5221/api/brain/action/create-task\n   Body: { "title": "...", "project_id": "${projectId}", "goal_id": "${krId}", "task_type": "dev", "prd_content": "..." }\n\nKR ID: ${krId}\nKR 标题: ${krTitle}`,
               krId,
               projectId,
               JSON.stringify({ decomposition: 'continue', kr_id: krId })

@@ -1,5 +1,7 @@
 # Cecelia Core Learnings
 
+> **WARNING: OBSOLETE**: Line 10的alertness.js 4级系统描述已过时，仅作历史记录保留。当前系统为5级（SLEEPING/CALM/AWARE/ALERT/PANIC），实现在 `alertness/` 目录。
+
 开发过程中的经验总结和最佳实践。
 
 ---

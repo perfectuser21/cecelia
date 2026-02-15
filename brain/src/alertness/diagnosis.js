@@ -252,130 +252,6 @@ function simplifyMetrics(metrics) {
 }
 
 // ============================================================
-// 模式分析
-// ============================================================
-
-/**
- * 分析趋势
- */
-export function analyzeTrends(history, windowSize = 10) {
-  if (history.length < windowSize) {
-    return { trend: 'insufficient_data' };
-  }
-
-  const window = history.slice(-windowSize);
-  const trends = {};
-
-  // 分析各指标趋势
-  const metricTypes = ['memory', 'cpu', 'responseTime', 'errorRate', 'queueDepth'];
-
-  for (const metricType of metricTypes) {
-    const values = window.map(h => h.metrics?.[metricType]?.value || 0).filter(v => v > 0);
-
-    if (values.length < 3) continue;
-
-    // 计算趋势（简单线性回归）
-    const trend = calculateTrend(values);
-    trends[metricType] = trend;
-  }
-
-  return trends;
-}
-
-/**
- * 计算趋势（上升/下降/稳定）
- */
-function calculateTrend(values) {
-  if (values.length < 2) return 'stable';
-
-  // 计算斜率
-  const n = values.length;
-  const sumX = n * (n - 1) / 2;
-  const sumY = values.reduce((a, b) => a + b, 0);
-  const sumXY = values.reduce((sum, y, i) => sum + i * y, 0);
-  const sumX2 = (n - 1) * n * (2 * n - 1) / 6;
-
-  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-
-  // 判断趋势
-  const avgValue = sumY / n;
-  const relativeSlope = slope / avgValue;
-
-  if (relativeSlope > 0.1) return 'increasing';
-  if (relativeSlope < -0.1) return 'decreasing';
-  return 'stable';
-}
-
-// ============================================================
-// 异常预测
-// ============================================================
-
-/**
- * 预测即将发生的问题
- */
-export function predictProblems(metrics, history, trends) {
-  const predictions = [];
-
-  // 基于趋势预测
-  if (trends.memory === 'increasing' && metrics.memory?.value > 150) {
-    predictions.push({
-      type: 'MEMORY_EXHAUSTION',
-      timeToImpact: estimateTimeToThreshold(history, 'memory', 300),
-      confidence: 0.7
-    });
-  }
-
-  if (trends.cpu === 'increasing' && metrics.cpu?.value > 50) {
-    predictions.push({
-      type: 'CPU_OVERLOAD',
-      timeToImpact: estimateTimeToThreshold(history, 'cpu', 100),
-      confidence: 0.6
-    });
-  }
-
-  if (trends.queueDepth === 'increasing') {
-    predictions.push({
-      type: 'QUEUE_OVERFLOW',
-      timeToImpact: estimateTimeToThreshold(history, 'queueDepth', 100),
-      confidence: 0.8
-    });
-  }
-
-  return predictions;
-}
-
-/**
- * 估计达到阈值的时间
- */
-function estimateTimeToThreshold(history, metricType, threshold) {
-  const recentValues = history
-    .slice(-5)
-    .map(h => ({
-      value: h.metrics?.[metricType]?.value || 0,
-      timestamp: h.timestamp
-    }))
-    .filter(v => v.value > 0);
-
-  if (recentValues.length < 2) return null;
-
-  // 计算增长率
-  const first = recentValues[0];
-  const last = recentValues[recentValues.length - 1];
-  const timeDiff = last.timestamp - first.timestamp;
-  const valueDiff = last.value - first.value;
-
-  if (valueDiff <= 0) return null; // 不在增长
-
-  const growthRate = valueDiff / timeDiff;
-  const remainingCapacity = threshold - last.value;
-
-  if (remainingCapacity <= 0) return 0; // 已经超过阈值
-
-  const timeToThreshold = remainingCapacity / growthRate;
-  return Math.round(timeToThreshold / 60000); // 返回分钟数
-}
-
-// ============================================================
 // 获取异常模式
 // ============================================================
 
@@ -397,8 +273,6 @@ export function getAnomalyPatterns() {
 
 export default {
   diagnoseProblem,
-  analyzeTrends,
-  predictProblems,
   getAnomalyPatterns,
   ANOMALY_PATTERNS
 };

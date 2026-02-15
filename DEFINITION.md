@@ -4,7 +4,7 @@
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-15
 **Brain 版本**: 1.40.0
-**Schema 版本**: 033
+**Schema 版本**: 034
 **状态**: 生产运行中
 
 ---
@@ -209,7 +209,7 @@ executeTick() 流程：
   7. 存活探针（验证 in_progress 任务进程还活着）
   8. 看门狗（/proc 采样，三级响应）
   9. 规划（queued=0 且有 KR → planNextTask）
-  10. OKR 自动拆解（Objective 有 0 个 KR → 创建拆解任务）
+  10. OKR 自动拆解（Global OKR 有 0 个 KR → 创建拆解任务）
   11. 派发循环（填满所有可用 slot）
 ```
 
@@ -335,15 +335,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **schema_version** | 迁移版本追踪 |
 | **blocks** | 通用 block 存储 |
 
-### 4.4 发布系统表（Schema v008）
-
-| 表 | 用途 |
-|----|------|
-| **publishing_tasks** | 发布任务队列（platform、content、scheduled_at） |
-| **publishing_records** | 发布历史（success、error_message、platform_response） |
-| **publishing_credentials** | 平台凭据（platform、account_name、credentials） |
-
-### 4.5 任务状态
+### 4.4 任务状态
 
 ```
 queued → in_progress → completed
@@ -372,13 +364,13 @@ queued → in_progress → completed
 ### 5.1 从 OKR 到任务（四层拆解）
 
 ```
-Objective (目标)
+Global OKR (目标)
   │
   ├─ 有 0 个 KR？ → 自动创建拆解任务 → 秋米 /okr → 生成 KR
   │
   └─ KR (关键结果)
        │
-       ├─ selectDailyFocus() → 选择今日焦点 Objective
+       ├─ selectDailyFocus() → 选择今日焦点 Global OKR
        │
        ├─ 秋米 /okr 拆解:
        │   └─ KR → Sub-Project (projects.parent_id) → PR Plans → Tasks
@@ -589,7 +581,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.33.2`（多阶段构建）
+- 镜像：`cecelia-brain:1.40.0`（多阶段构建）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -617,7 +609,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans
-5. **Schema 版本** — 必须 = '032'
+5. **Schema 版本** — 必须 = '034'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -765,7 +757,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.33.2）
+├── package.json               # 版本号（当前 1.40.0）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）
@@ -794,13 +786,12 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-028)
+├── migrations/                # SQL 迁移 (000-034)
 │   ├── 000_base_schema.sql
 │   ├── ...
-│   ├── 021_add_pr_plans_table.sql
-│   ├── ...
 │   ├── 027_align_project_feature_model.sql  # 删除 features 表
-│   └── 028_add_embeddings.sql
+│   ├── ...
+│   └── 034_cleanup_orphan_tables_and_constraints.sql
 │
 └── src/__tests__/             # Vitest 测试
 ```

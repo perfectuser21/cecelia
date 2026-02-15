@@ -548,17 +548,6 @@ export function startMonitorLoop() {
 }
 
 /**
- * Stop monitoring loop
- */
-export function stopMonitorLoop() {
-  if (_monitorTimer) {
-    clearInterval(_monitorTimer);
-    _monitorTimer = null;
-    console.log('[Monitor] Loop stopped');
-  }
-}
-
-/**
  * Get monitoring status
  */
 export function getMonitorStatus() {

@@ -101,6 +101,9 @@ let recoveryState = {
 const healingHistory = [];
 const MAX_HISTORY_SIZE = 50;
 
+// Track recovery timers for cleanup
+let _recoveryTimers = [];
+
 // ============================================================
 // 自愈执行
 // ============================================================
@@ -182,11 +185,12 @@ async function executeObservationPhase() {
   });
 
   // 设置下一阶段的定时器
-  setTimeout(() => {
+  const timerId = setTimeout(() => {
     if (recoveryState.isRecovering && recoveryState.phase === 1) {
       transitionToNextPhase();
     }
   }, RECOVERY_PHASES[1].duration);
+  _recoveryTimers.push(timerId);
 }
 
 /**
@@ -239,11 +243,12 @@ async function executeTentativeRecovery() {
 
   if (checkpoint.passed) {
     // 检查点通过，继续下一阶段
-    setTimeout(() => {
+    const timerId2 = setTimeout(() => {
       if (recoveryState.isRecovering && recoveryState.phase === 2) {
         transitionToNextPhase();
       }
     }, RECOVERY_PHASES[2].duration);
+    _recoveryTimers.push(timerId2);
   } else {
     // 检查点失败，回退
     await rollback();
@@ -281,11 +286,12 @@ async function executeProgressiveRecovery() {
   }
 
   // 成功，进入完全恢复
-  setTimeout(() => {
+  const timerId3 = setTimeout(() => {
     if (recoveryState.isRecovering && recoveryState.phase === 3) {
       transitionToNextPhase();
     }
   }, RECOVERY_PHASES[3].duration);
+  _recoveryTimers.push(timerId3);
 }
 
 /**
@@ -371,8 +377,7 @@ async function executeAction(action) {
 
     case 'clear_expired_cache':
       // TODO: 实现缓存清理
-      console.log('[Healing] Cleared expired cache');
-      return { cacheCleared: true };
+      return { cacheCleared: false, stub: true };
 
     case 'compact_database_connections':
       // 关闭空闲连接
@@ -395,13 +400,11 @@ async function executeAction(action) {
 
     case 'restart_stuck_executors':
       // TODO: 实现执行器重启
-      console.log('[Healing] Restarted stuck executors');
-      return { executorsRestarted: true };
+      return { executorsRestarted: false, stub: true };
 
     case 'reset_process_pool':
       // TODO: 实现进程池重置
-      console.log('[Healing] Reset process pool');
-      return { poolReset: true };
+      return { poolReset: false, stub: true };
 
     // 队列疏通动作
     case 'redistribute_tasks':
@@ -422,13 +425,11 @@ async function executeAction(action) {
     // 错误缓解动作
     case 'retry_with_backoff':
       // TODO: 实现退避重试
-      console.log('[Healing] Enabled retry with backoff');
-      return { retryEnabled: true };
+      return { retryEnabled: false, stub: true };
 
     case 'switch_fallback_endpoints':
       // TODO: 实现降级端点
-      console.log('[Healing] Switched to fallback endpoints');
-      return { fallbackEnabled: true };
+      return { fallbackEnabled: false, stub: true };
 
     case 'quarantine_problematic_tasks':
       const quarantined = await quarantineProblematicTasks();
@@ -792,23 +793,6 @@ export function getRecoveryStatus() {
   };
 }
 
-/**
- * 获取恢复历史
- */
-export function getHealingHistory() {
-  return [...healingHistory];
-}
-
-/**
- * 手动停止恢复
- */
-export async function stopRecovery() {
-  if (!recoveryState.isRecovering) return;
-
-  console.log('[Healing] Manually stopping recovery');
-  await completeRecovery(false);
-}
-
 // ============================================================
 // 导出
 // ============================================================
@@ -817,8 +801,6 @@ export default {
   startRecovery,
   applySelfHealing,
   getRecoveryStatus,
-  getHealingHistory,
-  stopRecovery,
   HEALING_STRATEGIES,
   RECOVERY_PHASES
 };

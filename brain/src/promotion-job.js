@@ -19,6 +19,9 @@ import pool from './db.js';
 // Hard limit: max promotions per day
 const MAX_PROMOTIONS_PER_DAY = 3;
 
+// Track interval handle for cleanup
+let _promotionJobInterval = null;
+
 /**
  * Run promotion job - promote probation to active, disable failed policies
  *
@@ -335,9 +338,20 @@ export function startPromotionJobLoop() {
   });
 
   // Then run every 10 minutes
-  setInterval(() => {
+  _promotionJobInterval = setInterval(() => {
     runPromotionJob().catch(err => {
       console.error('[PromotionJob] Scheduled run failed:', err);
     });
   }, INTERVAL_MS);
+}
+
+/**
+ * Stop promotion job loop (cleanup interval)
+ */
+export function stopPromotionJob() {
+  if (_promotionJobInterval) {
+    clearInterval(_promotionJobInterval);
+    _promotionJobInterval = null;
+    console.log('[PromotionJob] Stopped promotion job loop');
+  }
 }

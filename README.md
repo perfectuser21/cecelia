@@ -112,7 +112,7 @@ cecelia-core/
 │   │   ├── planner.js        # 任务规划
 │   │   ├── decision.js       # 决策引擎
 │   │   ├── quarantine.js     # 隔离/分类
-│   │   ├── alertness.js      # 警觉等级
+│   │   ├── alertness/         # 警觉等级
 │   │   ├── watchdog.js       # 资源看门狗
 │   │   └── circuit-breaker.js # 熔断器
 │   ├── server.js       # Express 服务器

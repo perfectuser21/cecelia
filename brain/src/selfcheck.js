@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 
 /** Must match the highest migration version in migrations/ */
-export const EXPECTED_SCHEMA_VERSION = '033';
+export const EXPECTED_SCHEMA_VERSION = '034';
 
 const CORE_TABLES = [
   'tasks',
@@ -156,7 +156,7 @@ export async function runSelfCheck(pool, opts = {}) {
       console.warn(`  [WARN] Config fingerprint changed: stored="${rows[0].value}" current="${fingerprint}"`);
       try {
         await pool.query(
-          `INSERT INTO cecelia_events (type, source, payload)
+          `INSERT INTO cecelia_events (event_type, source, payload)
            VALUES ('config_fingerprint_mismatch', 'selfcheck', $1)`,
           [JSON.stringify({ stored: rows[0].value, current: fingerprint })]
         );
