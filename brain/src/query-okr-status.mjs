@@ -9,7 +9,7 @@ async function main() {
     // 1. Count Objectives and KRs
     const objectivesResult = await pool.query(`
       SELECT COUNT(*) as count FROM goals
-      WHERE type = 'objective' AND status NOT IN ('completed', 'cancelled')
+      WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
     `);
 
     const krsResult = await pool.query(`
@@ -52,7 +52,7 @@ async function main() {
     // 5. Check for OKR gaps (Objectives without KRs)
     const noKrObjectivesResult = await pool.query(`
       SELECT o.id, o.title FROM goals o
-      WHERE o.type = 'objective'
+      WHERE o.type IN ('global_okr', 'area_okr')
         AND o.parent_id IS NULL
         AND o.status NOT IN ('completed', 'cancelled')
         AND NOT EXISTS (

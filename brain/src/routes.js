@@ -20,8 +20,7 @@ async function getRecentDecisions(limit = 10) {
   return result.rows;
 }
 async function getLatestSnapshot() {
-  const result = await pool.query(`SELECT id, ts, source, snapshot_json FROM system_snapshot ORDER BY ts DESC LIMIT 1`);
-  return result.rows[0] || null;
+  return null; // system_snapshot table dropped in migration 033
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
@@ -38,11 +37,14 @@ import {
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from './db.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
-import { compareGoalProgress, generateDecision, executeDecision, getDecisionHistory, rollbackDecision } from './decision.js';
+import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
-import { getAlertness, getDecayStatus, setManualOverride, clearManualOverride, evaluateAndUpdate as evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES, EVENT_BACKLOG_THRESHOLD, RECOVERY_THRESHOLDS } from './alertness.js';
+import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
+
+// Constants previously in old alertness.js, kept for hardening status route
+const EVENT_BACKLOG_THRESHOLD = 50;
 import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure, FAILURE_CLASS } from './quarantine.js';
 import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
@@ -777,7 +779,7 @@ router.post('/tick/drain-cancel', (req, res) => {
  */
 router.get('/alertness', async (req, res) => {
   try {
-    const alertness = getAlertness();
+    const alertness = getCurrentAlertness();
     res.json({
       success: true,
       ...alertness,
@@ -808,45 +810,32 @@ router.post('/alertness/evaluate', async (req, res) => {
 
 /**
  * POST /api/brain/alertness/override
- * 手动覆盖警觉级别（同时设置 old + enhanced 系统）
+ * 手动覆盖警觉级别
  * Body: { level: 0-4, reason: "string", duration_minutes?: 30 }
  *
- * Enhanced levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
- * Old levels: NORMAL=0, ALERT=1, EMERGENCY=2, COMA=3
+ * Levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
  */
 router.post('/alertness/override', async (req, res) => {
   try {
     const { level, reason, duration_minutes = 30 } = req.body;
 
     if (level === undefined || level < 0 || level > 4) {
-      return res.status(400).json({ error: 'level must be 0-4 (enhanced: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4)' });
+      return res.status(400).json({ error: 'level must be 0-4 (SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4)' });
     }
     if (!reason) {
       return res.status(400).json({ error: 'reason is required' });
     }
 
     const durationMs = duration_minutes * 60 * 1000;
-
-    // Map enhanced level to old level: 0→0, 1→0, 2→1, 3→2, 4→3
-    const oldLevel = Math.max(0, Math.min(3, level - 1));
-    const oldResult = await setManualOverride(oldLevel, reason, durationMs);
-
-    // Set enhanced system override
-    const { setManualOverride: setEnhancedOverride } = await import('./alertness/index.js');
-    const enhancedResult = await setEnhancedOverride(level, reason, durationMs);
-
-    const { LEVEL_NAMES: ENHANCED_LEVEL_NAMES } = await import('./alertness/index.js');
+    const result = await setManualOverride(level, reason, durationMs);
 
     res.json({
       success: true,
       level,
-      level_name: ENHANCED_LEVEL_NAMES[level],
-      old_level: oldLevel,
-      old_level_name: LEVEL_NAMES[oldLevel],
+      level_name: LEVEL_NAMES[level],
       reason,
       duration_minutes,
-      enhanced: enhancedResult,
-      old: oldResult
+      ...result
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to set override', details: err.message });
@@ -855,23 +844,18 @@ router.post('/alertness/override', async (req, res) => {
 
 /**
  * POST /api/brain/alertness/clear-override
- * 清除手动覆盖（同时清除 old + enhanced 系统）
+ * 清除手动覆盖
  */
 router.post('/alertness/clear-override', async (req, res) => {
   try {
     const result = await clearManualOverride();
+    const alertness = getCurrentAlertness();
 
-    // Also clear enhanced system override
-    const { clearManualOverride: clearEnhancedOverride } = await import('./alertness/index.js');
-    const enhancedResult = await clearEnhancedOverride();
-
-    const alertness = getAlertness();
     res.json({
-      success: result.success || enhancedResult.success,
+      success: result.success,
       current_level: alertness.level,
       current_level_name: LEVEL_NAMES[alertness.level],
-      old: result,
-      enhanced: enhancedResult
+      ...result
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to clear override', details: err.message });
@@ -1314,38 +1298,6 @@ router.post('/action/create-task', async (req, res) => {
  * 秋米专用：拆解 KR 时创建 Initiative
  */
 router.post('/action/create-initiative', async (req, res) => {
-  try {
-    const { name, parent_id, kr_id, decomposition_mode, description, plan_content } = req.body;
-
-    if (!name || !parent_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'name and parent_id are required'
-      });
-    }
-
-    const { createInitiative } = await import('./actions.js');
-    const result = await createInitiative({
-      name,
-      parent_id,
-      kr_id,
-      decomposition_mode: decomposition_mode || 'known',
-      description,
-      plan_content
-    });
-
-    res.status(result.success ? 200 : 400).json(result);
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create initiative',
-      details: err.message
-    });
-  }
-});
-
-// Backward compatibility alias
-router.post('/action/create-feature', async (req, res) => {
   try {
     const { name, parent_id, kr_id, decomposition_mode, description, plan_content } = req.body;
 
@@ -2226,6 +2178,63 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Exploratory handling error: ${exploratoryErr.message}`);
       }
 
+      // 5b2. Phase-based transition: exploratory phase → dev phase
+      // When a task with phase='exploratory' completes, create a dev-phase follow-up task.
+      // This is separate from the decomposition continue pattern (5b above).
+      try {
+        const phaseResult = await pool.query(
+          'SELECT phase, project_id, goal_id, title, payload, prd_content FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const phaseTask = phaseResult.rows[0];
+
+        if (phaseTask?.phase === 'exploratory' && phaseTask.project_id) {
+          // Check if Initiative uses exploratory decomposition
+          const initResult = await pool.query(
+            'SELECT name, decomposition_mode, kr_id FROM projects WHERE id = $1',
+            [phaseTask.project_id]
+          );
+          const initiative = initResult.rows[0];
+
+          if (initiative?.decomposition_mode === 'exploratory') {
+            // Check that no dev-phase tasks already exist for this Initiative+KR
+            const existingDev = await pool.query(`
+              SELECT id FROM tasks
+              WHERE project_id = $1 AND goal_id = $2 AND phase = 'dev'
+                AND status IN ('queued', 'in_progress')
+              LIMIT 1
+            `, [phaseTask.project_id, phaseTask.goal_id]);
+
+            if (existingDev.rows.length === 0) {
+              console.log(`[execution-callback] Exploratory phase completed for ${initiative.name}, creating dev-phase task`);
+
+              const resultSummary = typeof result === 'object'
+                ? (result.result || JSON.stringify(result).slice(0, 1000))
+                : String(result || '').slice(0, 1000);
+
+              const { createTask: createDevTask } = await import('./actions.js');
+              await createDevTask({
+                title: `Dev: ${phaseTask.title.replace(/^(Exploratory|探索)[：:]\s*/i, '')}`,
+                description: `Exploratory phase completed. Implement based on findings.\n\nExploratory result:\n${resultSummary}`,
+                task_type: 'dev',
+                priority: phaseTask.payload?.priority || 'P1',
+                goal_id: phaseTask.goal_id,
+                project_id: phaseTask.project_id,
+                payload: {
+                  phase: 'dev',
+                  exploratory_task_id: task_id,
+                  exploratory_result: resultSummary,
+                }
+              });
+
+              console.log(`[execution-callback] Created dev-phase task for initiative: ${initiative.name}`);
+            }
+          }
+        }
+      } catch (phaseErr) {
+        console.error(`[execution-callback] Phase transition error: ${phaseErr.message}`);
+      }
+
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
@@ -2789,28 +2798,6 @@ router.post('/decision/:id/rollback', async (req, res) => {
     res.status(err.message.includes('not found') ? 404 : 500).json({
       success: false,
       error: 'Failed to rollback decision',
-      details: err.message
-    });
-  }
-});
-
-/**
- * GET /api/brain/decisions
- * Get decision history
- */
-router.get('/decisions', async (req, res) => {
-  try {
-    const limit = parseInt(req.query.limit) || 20;
-    const decisions = await getDecisionHistory(limit);
-
-    res.json({
-      success: true,
-      decisions
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get decision history',
       details: err.message
     });
   }
@@ -4222,10 +4209,10 @@ router.get('/hardening/status', async (req, res) => {
       `).catch(() => ({ rows: [{ peak: 0 }] })),
 
       // 6. Alertness state (sync)
-      Promise.resolve(getAlertness()),
+      Promise.resolve(getCurrentAlertness()),
 
-      // 7. Decay status (sync)
-      Promise.resolve(getDecayStatus()),
+      // 7. Decay status (deprecated - unified alertness has no decay)
+      Promise.resolve({ accumulated_score: 0 }),
 
       // 8. Pending actions stats
       pool.query(`
@@ -4255,14 +4242,14 @@ router.get('/hardening/status', async (req, res) => {
     const lRow = llmErrorStats.rows[0];
     const lastRb = lastRollback.rows[0] || null;
 
-    // Recovery gate calculation
+    // Recovery gate calculation (unified alertness: 60s cooldown)
     const currentLevel = alertness.level;
     let recoveryGate = null;
     if (currentLevel > 0) {
-      const threshold = RECOVERY_THRESHOLDS[currentLevel];
-      if (threshold) {
-        const elapsed = Date.now() - new Date(alertness.last_change_at).getTime();
-        const remaining = Math.max(0, threshold - elapsed);
+      const COOLDOWN_MS = 60 * 1000; // 1 minute cooldown per the unified alertness system
+      const elapsed = Date.now() - new Date(alertness.startedAt).getTime();
+      const remaining = Math.max(0, COOLDOWN_MS - elapsed);
+      if (remaining > 0) {
         const targetLevel = currentLevel - 1;
         recoveryGate = {
           target: LEVEL_NAMES[targetLevel],
@@ -4272,12 +4259,13 @@ router.get('/hardening/status', async (req, res) => {
     }
 
     // Compute overall_status: critical > warn > ok
+    // Unified levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
     const systemicCount = parseInt(fRow.systemic);
     const backlogCount = parseInt(backlogCurrent.rows[0].count);
     let overall_status = 'ok';
-    if (currentLevel >= 3 || systemicCount >= 5 || backlogCount >= EVENT_BACKLOG_THRESHOLD * 2) {
+    if (currentLevel >= ALERTNESS_LEVELS.PANIC || systemicCount >= 5 || backlogCount >= EVENT_BACKLOG_THRESHOLD * 2) {
       overall_status = 'critical';
-    } else if (currentLevel >= 1 || systemicCount >= 2 || backlogCount >= EVENT_BACKLOG_THRESHOLD || parseInt(pRow.pending) >= 3) {
+    } else if (currentLevel >= ALERTNESS_LEVELS.AWARE || systemicCount >= 2 || backlogCount >= EVENT_BACKLOG_THRESHOLD || parseInt(pRow.pending) >= 3) {
       overall_status = 'warn';
     }
 

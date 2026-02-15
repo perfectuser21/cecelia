@@ -15,8 +15,7 @@ import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision } from './decision-executor.js';
-import { initAlertness, evaluateAndUpdate as evaluateAlertness, getAlertness, canDispatch as canDispatchOld, canPlan, getDispatchRate as getDispatchRateOld, tryConsumeToken, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness.js';
-import { evaluateAlertness as evaluateAlertnessEnhanced, getCurrentAlertness, canDispatch as canDispatchEnhanced, getDispatchRate as getDispatchRateEnhanced, ALERTNESS_LEVELS as ENHANCED_LEVELS, LEVEL_NAMES as ENHANCED_LEVEL_NAMES } from './alertness/index.js';
+import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 
@@ -133,7 +132,7 @@ async function getTickStatus() {
     slot_budget: slotBudget,
     dispatch_timeout_minutes: DISPATCH_TIMEOUT_MINUTES,
     circuit_breakers: getAllStates(),
-    alertness: getAlertness(),
+    alertness: getCurrentAlertness(),
     quarantine: quarantineStats
   };
 }
@@ -583,18 +582,6 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
-  // 2a. P1 FIX: Token bucket rate limiting check
-  const tokenResult = tryConsumeToken('dispatch');
-  if (!tokenResult.allowed) {
-    return {
-      dispatched: false,
-      reason: 'rate_limited',
-      detail: tokenResult.reason,
-      remaining: tokenResult.remaining,
-      actions
-    };
-  }
-
   // 3. Select next task (with dependency check)
   const nextTask = await selectNextDispatchableTask(goalIds);
   if (!nextTask) {
@@ -784,26 +771,23 @@ async function executeTick() {
   let decisionEngineResult = null;
   let thalamusResult = null;
 
-  // 0. Evaluate alertness level (enhanced version)
-  // NOTE: Uses ENHANCED_LEVELS from alertness/index.js:
-  //   SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
-  // NOT old alertness.js levels (NORMAL=0, ALERT=1, EMERGENCY=2, COMA=3)
+  // 0. Evaluate alertness level
+  // ALERTNESS_LEVELS: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
   let alertnessResult = null;
   try {
-    // Use enhanced alertness system
-    alertnessResult = await evaluateAlertnessEnhanced();
-    if (alertnessResult.level >= ENHANCED_LEVELS.ALERT) {
-      console.log(`[tick] Alertness: ${ENHANCED_LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
+    alertnessResult = await evaluateAlertness();
+    if (alertnessResult.level >= ALERTNESS_LEVELS.ALERT) {
+      console.log(`[tick] Alertness: ${LEVEL_NAMES[alertnessResult.level]} (score=${alertnessResult.score || 'N/A'})`);
       actionsTaken.push({
         action: 'alertness_check',
         level: alertnessResult.level,
-        level_name: ENHANCED_LEVEL_NAMES[alertnessResult.level],
+        level_name: LEVEL_NAMES[alertnessResult.level],
         score: alertnessResult.score
       });
     }
 
     // In PANIC mode, skip everything except basic health checks
-    if (alertnessResult.level >= ENHANCED_LEVELS.PANIC) {
+    if (alertnessResult.level >= ALERTNESS_LEVELS.PANIC) {
       console.log('[tick] PANIC mode: skipping all operations, only heartbeat');
       return {
         success: true,
@@ -876,6 +860,22 @@ async function executeTick() {
     }
   } catch (prPlansErr) {
     console.error('[tick] PR Plans completion check failed:', prPlansErr.message);
+  }
+
+  // 0.6. Recurring Tasks Check
+  try {
+    const { checkRecurringTasks } = await import('./recurring.js');
+    const recurringCreated = await checkRecurringTasks(now);
+    if (recurringCreated.length > 0) {
+      console.log(`[tick] Created ${recurringCreated.length} recurring task instances`);
+      actionsTaken.push({
+        action: 'recurring_tasks_check',
+        created_count: recurringCreated.length,
+        created: recurringCreated
+      });
+    }
+  } catch (recurringErr) {
+    console.error('[tick] Recurring tasks check failed:', recurringErr.message);
   }
 
   // 1. Decision Engine: Compare goal progress
@@ -1136,7 +1136,7 @@ async function executeTick() {
       console.error('[tick-loop] Planner error:', planErr.message);
     }
   } else if (!canPlan() && queued.length === 0 && inProgress.length === 0) {
-    console.log(`[tick] Planning disabled at alertness level ${ENHANCED_LEVEL_NAMES[alertnessResult?.level || 0]}`);
+    console.log(`[tick] Planning disabled at alertness level ${LEVEL_NAMES[alertnessResult?.level || 0]}`);
   }
 
   // 6b. Auto OKR decomposition: ONLY for TRUE top-level objectives (parent_id IS NULL)
@@ -1188,7 +1188,7 @@ async function executeTick() {
   let lastDispatchResult = null;
 
   // Check if dispatch is allowed (using enhanced alertness)
-  if (!canDispatchEnhanced()) {
+  if (!canDispatch()) {
     console.log(`[tick] Dispatch disabled at alertness level ${alertnessResult?.levelName || 'UNKNOWN'}`);
     return {
       success: true,
@@ -1203,7 +1203,7 @@ async function executeTick() {
   }
 
   // Apply dispatch rate limit based on alertness level
-  const dispatchRate = getDispatchRateEnhanced();
+  const dispatchRate = getDispatchRate();
   // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
   const tickSlotBudget = await calculateSlotBudget();
   const poolCAvailable = tickSlotBudget.taskPool.available;

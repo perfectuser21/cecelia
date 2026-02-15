@@ -695,7 +695,7 @@ POST /api/brain/action/create-task
 - Project ID: ${projectId}
 
 ## 6 层架构
-Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-3小时) → Task (PR)
+Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-2小时) → Task (PR)
 
 ## 你的任务
 1. **确定 Repository**: 查询 projects 表找到 type='project' 且 repo_path 不为空的 Project

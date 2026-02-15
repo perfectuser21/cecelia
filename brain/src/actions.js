@@ -68,7 +68,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
 
 /**
  * Create a new Initiative (写入 projects 表, type='initiative')
- * Initiative = 1-3 小时的功能模块，挂在 Project 下面
+ * Initiative = 1-2 小时的功能模块，挂在 Project 下面
  * @param {Object} params
  * @param {string} params.name - Initiative name
  * @param {string} params.parent_id - Project ID (type='project' 的那个)
@@ -100,9 +100,6 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
 
   return { success: true, initiative };
 }
-
-// Backward compatibility alias
-const createFeature = createInitiative;
 
 /**
  * Create a new Project (写入 projects 表, type='project')
@@ -358,7 +355,6 @@ async function batchUpdateTasks({ filter, update }) {
 export {
   createTask,
   createInitiative,
-  createFeature, // backward compatibility alias
   createProject,
   updateTask,
   createGoal,

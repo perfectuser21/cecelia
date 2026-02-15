@@ -415,6 +415,14 @@ export function getManualOverride() {
 }
 
 /**
+ * 判断是否可以规划任务
+ * ALERT/PANIC 状态禁止规划
+ */
+export function canPlan() {
+  return currentState.level < ALERTNESS_LEVELS.ALERT;
+}
+
+/**
  * 判断是否可以派发任务
  */
 export function canDispatch() {
@@ -581,6 +589,7 @@ export default {
   setManualOverride,
   clearManualOverride,
   getManualOverride,
+  canPlan,
   canDispatch,
   getDispatchRate
 };
