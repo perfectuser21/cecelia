@@ -171,19 +171,45 @@ class SimilarityService {
     const queryTokens = this.tokenize(query);
     const entityTokens = this.tokenize(entity.text);
 
-    // 1. Jaccard similarity
-    const intersection = queryTokens.filter(t => entityTokens.includes(t));
-    const union = new Set([...queryTokens, ...entityTokens]);
-    const jaccard = intersection.length / union.size;
+    // Edge case: handle empty tokens to avoid division by zero
+    if (queryTokens.length === 0 && entityTokens.length === 0) {
+      return 0.0; // Both empty = no similarity
+    }
 
-    // 2. Keyword boost
-    let keywordBoost = 0;
-    const importantWords = this.extractKeywords(query);
-    importantWords.forEach(kw => {
-      if (entity.text.includes(kw)) {
-        keywordBoost += 0.1;
+    // 1. Jaccard similarity (optimized with Set operations for O(1) lookups)
+    const querySet = new Set(queryTokens);
+    const entitySet = new Set(entityTokens);
+
+    // Calculate intersection efficiently using Set
+    const intersection = new Set();
+    for (const token of querySet) {
+      if (entitySet.has(token)) {
+        intersection.add(token);
       }
-    });
+    }
+
+    // Calculate union
+    const union = new Set([...querySet, ...entitySet]);
+
+    // Safe division (union.size can't be 0 here due to edge case check above)
+    const jaccard = union.size > 0 ? intersection.size / union.size : 0;
+
+    // 2. Keyword boost (with limit and case-insensitive matching)
+    let keywordBoost = 0;
+    const MAX_KEYWORD_BOOST = 0.3; // Limit total boost to prevent score inflation
+    const importantWords = this.extractKeywords(query);
+    const entityTextLower = entity.text ? entity.text.toLowerCase() : '';
+
+    for (const kw of importantWords) {
+      if (entityTextLower.includes(kw)) {
+        keywordBoost += 0.1;
+        // Stop accumulating if we hit the limit
+        if (keywordBoost >= MAX_KEYWORD_BOOST) {
+          keywordBoost = MAX_KEYWORD_BOOST;
+          break;
+        }
+      }
+    }
 
     // 3. Status penalty (completed tasks get lower priority)
     let statusPenalty = 0;
