@@ -180,3 +180,80 @@
   - Fixed with single line change
   - Enables future rolling updates between develop and main
   - Auto-rollback mechanism successfully protected against bad deployments
+
+
+### [2026-02-15] Comprehensive Cleanup - Migration 034 and Dead Code Removal
+
+- **Goal**: Fix all 90+ issues identified in deep-cleanup scan using parallel team approach
+  - Deep cleanup scan identified: runtime bugs, orphan tables, timer leaks, dead code, version inconsistencies
+  - Original plan: 7 phases with 5 parallel agents (critical-fixer, version-unifier, code-cleaner, schema-config-fixer, doc-updater)
+  - Actual execution: Verification-first approach discovered most Critical fixes already complete
+  - Strategy pivot: Direct verification + cleanup instead of redundant parallel fixes
+  - Result: PR #272 merged successfully, 1113 lines deleted, 115 added (net -1000 lines)
+
+- **验证发现** (Verification-First Discovery)
+  - **Phase 1 Critical fixes already done**:
+    - selfcheck.js line 159: Already using correct `event_type` column
+    - query-okr-status.mjs: Already using correct `type='kr'` filter
+    - promotion-job.js: Timer leak already fixed with `_promotionJobInterval` tracking
+    - healing.js: Timer leak already fixed with `_recoveryTimers` array + cleanup
+    - Fake success logs already removed from healing.js
+  - **Lesson**: Verify before parallel fixing - saves agent resources, prevents duplicate work
+  - **Strategy**: verification-first > assumption-based parallel execution
+
+- **Migration 034 创建**
+  - Dropped orphan tables: `areas`, `cortex_quality_reports`
+  - Fixed `task_type` constraint: removed ghost 'automation' type
+  - Updated `EXPECTED_SCHEMA_VERSION` to '034'
+  - Test updates required: migration-015.test.js, selfcheck.test.js
+
+- **CI Failures and Fixes** (3 iterations to pass)
+  1. **First failure**: Test expectations stale
+     - selfcheck.test.js expected '033', needed '034'
+     - migration-015.test.js expected cortex_quality_reports to exist
+     - Fix: Update test expectations, document why table dropped
+  2. **Second failure**: DEFINITION.md version mismatch
+     - facts-check: code=1.40.1 ≠ doc=1.40.0
+     - Root cause: Edit tool changes weren't auto-staged
+     - Fix: Stage DEFINITION.md version references explicitly
+  3. **Third iteration**: CI passed ✅
+     - All 8 facts consistent
+     - 1227 tests passed
+     - PR merged successfully
+
+- **Dead Code Cleanup** (Phase 3)
+  - Deleted files (6 of 20+ identified):
+    - `brain/src/test-utils.js` - Unused test helper
+    - `brain/src/reset-alertness.mjs` - Obsolete script
+    - `ALERTNESS_ANALYSIS.md` - Outdated analysis
+    - `ALERTNESS_QUICK_REF.md` - Duplicated in DEFINITION.md
+    - `.dev-lock`, `.dev-sentinel` - Temporary workflow files
+  - Removed dead code from: diagnosis.js, escalation.js, healing.js, metrics.js, auto-fix.js, monitor-loop.js, similarity.js
+  - Net deletion: ~1000 lines of unused code
+
+- **Version Management** (Phase 2)
+  - Bumped: 1.40.0 → 1.40.1 (patch for cleanup + fixes)
+  - Synced 4 files: package.json, package-lock.json, .brain-versions, DEFINITION.md
+  - DevGate validation: facts-check, version-sync both required
+
+- **Key Learnings**
+  - **Verification > Assumption**: Check what's already done before starting parallel work
+  - **Edit tool caveat**: Changes aren't auto-staged, must `git add` manually
+  - **Test co-evolution**: Schema migrations require test updates (both expectations and reasons)
+  - **facts-check is strict**: Even doc version mismatches fail CI (good!)
+  - **Iterative fixing works**: /dev workflow + Stop Hook enabled 3 CI fix iterations seamlessly
+  - **Team cleanup important**: Shutdown agents properly, delete team files after work
+
+- **影响程度**: Medium (Code Health)
+  - No runtime behavior changes (all fixes already present)
+  - -1000 lines of dead code removed (improves maintainability)
+  - Migration 034 cleanup (reduces schema clutter)
+  - Version consistency enforced (1.40.1 across all files)
+  - Foundation for future cleanups (Phase 7 deferred)
+
+- **Process Validation**
+  - ✅ Deep-cleanup scan effective at identifying issues
+  - ✅ /dev workflow handles multi-iteration CI fixes correctly
+  - ✅ DevGate (facts-check, version-sync) catches integration errors
+  - ✅ Team agents useful but verification-first prevents waste
+  - ✅ Stop Hook successfully drove workflow to PR merge
