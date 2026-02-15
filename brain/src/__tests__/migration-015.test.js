@@ -66,14 +66,15 @@ describe('Migration 015 - Cortex Quality System', () => {
     expect(result.rows[0].data_type).toBe('uuid');
   });
 
-  it('cortex_quality_reports table exists', async () => {
+  it('cortex_quality_reports table dropped in Migration 034', async () => {
+    // Migration 034 dropped this orphan table as part of comprehensive cleanup
     const result = await pool.query(`
       SELECT table_name
       FROM information_schema.tables
       WHERE table_name = 'cortex_quality_reports'
     `);
 
-    expect(result.rows.length).toBe(1);
+    expect(result.rows.length).toBe(0);
   });
 
   it('strategy_adoptions table exists', async () => {
