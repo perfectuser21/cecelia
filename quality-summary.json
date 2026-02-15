@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02142253-port-env-fix",
-  "head_sha": "a0adfc8",
-  "timestamp": "2026-02-14T14:58:13Z",
+  "branch": "cp-fix-kr-type-compatibility",
+  "head_sha": "ea2a0d0",
+  "timestamp": "2026-02-15T13:51:54Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

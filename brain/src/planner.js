@@ -20,7 +20,7 @@ async function getGlobalState() {
     `),
     pool.query(`
       SELECT * FROM goals
-      WHERE type = 'kr' AND status NOT IN ('completed', 'cancelled')
+      WHERE type IN ('kr', 'global_kr', 'area_kr') AND status NOT IN ('completed', 'cancelled')
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`SELECT * FROM projects WHERE status = 'active'`),
