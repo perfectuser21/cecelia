@@ -28,8 +28,8 @@ async function selectDailyFocus() {
 
     // Fetch the manually set objective
     const objResult = await pool.query(
-      'SELECT * FROM goals WHERE id = $1 AND type = $2',
-      [manualObjectiveId, 'objective']
+      'SELECT * FROM goals WHERE id = $1 AND type IN ($2, $3)',
+      [manualObjectiveId, 'global_okr', 'area_okr']
     );
 
     if (objResult.rows.length > 0) {
@@ -179,8 +179,8 @@ async function getDailyFocus() {
 async function setDailyFocus(objectiveId) {
   // Verify objective exists
   const objResult = await pool.query(
-    'SELECT id FROM goals WHERE id = $1 AND type = $2',
-    [objectiveId, 'objective']
+    'SELECT id FROM goals WHERE id = $1 AND type IN ($2, $3)',
+    [objectiveId, 'global_okr', 'area_okr']
   );
 
   if (objResult.rows.length === 0) {

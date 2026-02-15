@@ -7,7 +7,17 @@
  */
 
 import pool from './db.js';
-import { ALERTNESS_LEVELS } from './alertness.js';
+import { ALERTNESS_LEVELS } from './alertness/index.js';
+
+// Map new 5-level system to action thresholds
+// Old: NORMAL=0, ALERT=1, EMERGENCY=2, COMA=3
+// New: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
+const ACTION_THRESHOLDS = {
+  NORMAL: ALERTNESS_LEVELS.CALM,      // was 0, now 1
+  ALERT: ALERTNESS_LEVELS.AWARE,      // was 1, now 2
+  EMERGENCY: ALERTNESS_LEVELS.ALERT,  // was 2, now 3
+  COMA: ALERTNESS_LEVELS.PANIC,       // was 3, now 4
+};
 
 // Color codes for console output
 const COLORS = {
@@ -49,13 +59,13 @@ export async function executeResponseActions(fromLevel, toLevel, signals = {}) {
     // === UPGRADES (health deteriorating) ===
     if (isUpgrade) {
       // ALERT+ : Notification
-      if (toLevel >= ALERTNESS_LEVELS.ALERT) {
+      if (toLevel >= ACTION_THRESHOLDS.ALERT) {
         await notifyAlert(toLevel, signals);
         actions.push('notification');
       }
 
       // EMERGENCY+ : Escalation + Mitigation
-      if (toLevel >= ALERTNESS_LEVELS.EMERGENCY) {
+      if (toLevel >= ACTION_THRESHOLDS.EMERGENCY) {
         await escalateToAnalysis(signals);
         actions.push('escalation');
 
@@ -64,7 +74,7 @@ export async function executeResponseActions(fromLevel, toLevel, signals = {}) {
       }
 
       // COMA : Shutdown Safety
-      if (toLevel === ALERTNESS_LEVELS.COMA) {
+      if (toLevel === ACTION_THRESHOLDS.COMA) {
         await activateShutdownSafety(signals);
         actions.push('shutdown_safety');
       }
@@ -253,21 +263,21 @@ export async function recoverFromLevel(fromLevel, toLevel) {
   const actions = [];
 
   // COMA → EMERGENCY: Start recovery
-  if (fromLevel === ALERTNESS_LEVELS.COMA && toLevel === ALERTNESS_LEVELS.EMERGENCY) {
+  if (fromLevel === ACTION_THRESHOLDS.COMA && toLevel === ACTION_THRESHOLDS.EMERGENCY) {
     _mitigationState.drain_mode_requested = false;
     actions.push('drain_mode_disabled');
     console.log(`  - Drain mode disabled`);
   }
 
   // EMERGENCY → ALERT: Re-enable planning
-  if (fromLevel === ALERTNESS_LEVELS.EMERGENCY && toLevel === ALERTNESS_LEVELS.ALERT) {
+  if (fromLevel === ACTION_THRESHOLDS.EMERGENCY && toLevel === ACTION_THRESHOLDS.ALERT) {
     _mitigationState.p2_paused = false;
     actions.push('p2_resumed');
     console.log(`  - P2 task dispatch resumed`);
   }
 
   // ALERT → NORMAL: Full recovery
-  if (fromLevel === ALERTNESS_LEVELS.ALERT && toLevel === ALERTNESS_LEVELS.NORMAL) {
+  if (fromLevel === ACTION_THRESHOLDS.ALERT && toLevel === ACTION_THRESHOLDS.NORMAL) {
     // Clear all mitigation state
     _mitigationState.p2_paused = false;
     _mitigationState.drain_mode_requested = false;
@@ -276,7 +286,7 @@ export async function recoverFromLevel(fromLevel, toLevel) {
   }
 
   // Multi-step downgrade (e.g., COMA → NORMAL): Clear everything
-  if (toLevel === ALERTNESS_LEVELS.NORMAL && fromLevel > ALERTNESS_LEVELS.NORMAL) {
+  if (toLevel === ACTION_THRESHOLDS.NORMAL && fromLevel > ACTION_THRESHOLDS.NORMAL) {
     _mitigationState.p2_paused = false;
     _mitigationState.drain_mode_requested = false;
     if (actions.length === 0) {

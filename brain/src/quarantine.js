@@ -834,12 +834,12 @@ function checkShouldQuarantine(task, context = 'on_failure') {
 async function checkExpiredQuarantineTasks() {
   try {
     // 动态导入 alertness 模块（避免循环依赖）
-    const { getAlertness, ALERTNESS_LEVELS } = await import('./alertness.js');
+    const { getCurrentAlertness, ALERTNESS_LEVELS } = await import('./alertness/index.js');
 
-    // 检查 Alertness 状态：EMERGENCY/COMA 时不释放
-    const currentAlertness = await getAlertness();
-    if (currentAlertness.level >= ALERTNESS_LEVELS.EMERGENCY) {
-      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.name} (>=EMERGENCY)`);
+    // 检查 Alertness 状态：ALERT/PANIC 时不释放
+    const currentAlertness = getCurrentAlertness();
+    if (currentAlertness.level >= ALERTNESS_LEVELS.ALERT) {
+      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.levelName} (>=ALERT)`);
       return [];
     }
 

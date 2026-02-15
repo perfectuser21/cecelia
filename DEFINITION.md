@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-15
-**Brain 版本**: 1.39.3
-**Schema 版本**: 031
+**Brain 版本**: 1.40.0
+**Schema 版本**: 033
 **状态**: 生产运行中
 
 ---
@@ -57,7 +57,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 | 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Opus，RCA/战略调整/记录经验 |
 | 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | Sonnet，快速判断/异常检测 |
 | 🧠 **大脑 L0** | planner.js, executor.js, tick.js | 脑干（纯代码） | 调度、派发、保护系统 |
-| 🛡️ **保护系统** | alertness, circuit-breaker, quarantine, watchdog | 自我保护 | 四重防护 |
+| 🛡️ **保护系统** | alertness/, circuit-breaker, quarantine, watchdog | 自我保护 | 四重防护 |
 | 📋 **规划器** | planner.js | KR 轮转、任务生成 | 基于评分选择下一个任务 |
 | 🔌 **对外接口** | executor.js | 召唤外部员工 | 不自己干活，只召唤 |
 | 🌐 **神经系统** | routes.js | HTTP API | Express 路由 |
@@ -221,7 +221,7 @@ executeTick() 流程：
 | `executor.js` | 进程管理、资源检测、命令生成 |
 | `planner.js` | KR 轮转、任务自动生成、PRD 生成 |
 | `watchdog.js` | /proc 采样、动态阈值、两段式 kill |
-| `alertness.js` | 4 级警觉、信号收集、衰减恢复 |
+| `alertness/index.js` | 5 级警觉、指标收集、诊断、自愈 |
 | `circuit-breaker.js` | 三态熔断（CLOSED/OPEN/HALF_OPEN） |
 | `quarantine.js` | 失败隔离、可疑输入检测 |
 | `decision-executor.js` | 决策执行（事务化、白名单、危险审批） |
@@ -273,19 +273,29 @@ goals (OKR 目标，3 种 type)
 │
 projects (项目/Initiative，2 种 type)
 ├── Project (type='project', 1-2 周, 可跨多个 Repo)
-│   └── Initiative (type='initiative', parent_id=Project.id, 1-3 小时)
+│   └── Initiative (type='initiative', parent_id=Project.id, 1-2 小时)
 │
 pr_plans (工程规划)
 └── PR Plan (project_id→Initiative, dod, sequence, depends_on)
 │
 tasks (具体任务)
-└── Task (project_id→Initiative, goal_id→KR.id, pr_plan_id→PR Plan)
+└── Task (project_id→Initiative, goal_id→KR.id, pr_plan_id→PR Plan, 20 分钟)
 ```
 
 **完整拆解链**（6 层）：
 ```
 Global OKR → Area OKR → KR → Project → Initiative → Task
 ```
+
+**时间维度**：
+
+| 层级 | 时间跨度 |
+|------|----------|
+| Global OKR | 3 个月（季度） |
+| Area OKR | 1 个月（月度） |
+| Project | 1-2 周 |
+| Initiative | 1-2 小时 |
+| Task | 20 分钟 |
 
 **关键关系**：
 - Task.project_id → **Initiative** ID（不是 Project）
@@ -300,7 +310,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 
 | 表 | 用途 | 关键字段 |
 |----|------|---------|
-| **tasks** | 任务队列 | status, task_type, priority, payload, prd_content, pr_plan_id |
+| **tasks** | 任务队列 | status, task_type, priority, payload, prd_content, pr_plan_id, phase(exploratory/dev) |
 | **goals** | OKR 目标 | type(global_okr/area_okr/kr), parent_id, progress |
 | **projects** | 项目/Initiative | type(project/initiative), repo_path, parent_id, kr_id, plan_content |
 | **pr_plans** | 工程规划（PR 拆解层） | project_id→Initiative, dod, files, sequence, depends_on, complexity |
@@ -321,7 +331,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **pending_actions** | 危险操作审批队列（24h 过期） |
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
-| **recurring_tasks** | 定时任务模板（cron 表达式） |
+| **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
 | **schema_version** | 迁移版本追踪 |
 | **blocks** | 通用 block 存储 |
 
@@ -438,36 +448,29 @@ KR → 首次拆解 (decomposition='true', /okr, Opus)
 
 ## 6. 保护系统
 
-### 6.1 警觉等级（alertness.js）
+### 6.1 警觉等级（alertness/index.js）
 
-4 级自我保护，根据信号自动升降级：
+5 级自我保护，基于实时指标自动诊断和响应：
 
 | 级别 | 名称 | 派发率 | 行为 |
 |------|------|--------|------|
-| 0 | Normal | 100% | 全速运行 |
-| 1 | Alert | 50% | 停止自动重试 |
-| 2 | Emergency | 25% | 停止规划 |
-| 3 | Coma | 0% | 只保留心跳 |
+| 0 | SLEEPING | 0% | 休眠，无任务 |
+| 1 | CALM | 100% | 正常运行 |
+| 2 | AWARE | 70% | 轻微异常，加强监控 |
+| 3 | ALERT | 30% | 明显异常，停止规划 |
+| 4 | PANIC | 0% | 严重异常，只保留心跳 |
 
-**信号源（9 种）**：
+**功能模块**：
+- `metrics.js`：实时指标收集（内存、CPU、队列深度等）
+- `diagnosis.js`：异常模式诊断（内存泄漏、队列阻塞等）
+- `escalation.js`：分级响应和升级
+- `healing.js`：自愈恢复策略
 
-| 信号 | 分值 |
-|------|------|
-| circuit_breaker_open | +30 |
-| db_connection_issues | +25 |
-| systemic_failure | +25 |
-| high_failure_rate | +20 |
-| llm_bad_output | +20 |
-| event_backlog | +20 |
-| resource_pressure | +15 |
-| llm_api_errors | +15 |
-| consecutive_failures | +10/次（最高 +40） |
-
-**阈值**：≥80→Coma, ≥50→Emergency, ≥20→Alert, <20→Normal
-
-**衰减**：每 10 分钟 score × 0.8，问题解决后自动恢复
-
-**恢复等待**：Coma→Emergency 30min, Emergency→Alert 15min, Alert→Normal 10min
+**状态转换规则**：
+- 降级冷却 60 秒（防震荡）
+- PANIC 锁定 30 分钟
+- 渐进式恢复（只能逐级降低）
+- 紧急升级可直接跳到 PANIC
 
 ### 6.2 熔断器（circuit-breaker.js）
 
@@ -614,7 +617,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans
-5. **Schema 版本** — 必须 = '029'
+5. **Schema 版本** — 必须 = '032'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -780,7 +783,7 @@ brain/
 │   ├── decision-executor.js   # 决策执行器
 │   │
 │   ├── watchdog.js            # 资源看门狗 (/proc)
-│   ├── alertness.js           # 4 级警觉
+│   ├── alertness/index.js     # 5 级警觉
 │   ├── circuit-breaker.js     # 三态熔断
 │   ├── quarantine.js          # 隔离区
 │   │
@@ -888,7 +891,7 @@ bash scripts/brain-rollback.sh
 
 | 症状 | 检查 | 处理 |
 |------|------|------|
-| 不派发任务 | alertness/circuit-breaker | 检查是否 Coma/OPEN |
+| 不派发任务 | alertness/circuit-breaker | 检查是否 PANIC/OPEN |
 | 任务卡 in_progress | executor/status | 检查进程是否存活 |
 | 内存高 | watchdog | 看门狗自动处理 |
 | DB 连接失败 | selfcheck 日志 | 检查 PostgreSQL 状态 |

@@ -92,7 +92,7 @@ const actionHandlers = {
     `, [
       params.title,
       params.description || '',
-      params.type || 'objective',
+      params.type || 'global_okr',
       params.priority || 'P1',
       params.project_id || null
     ]);
