@@ -47,6 +47,30 @@ async function hasExistingDecompositionTask(goalId) {
 }
 
 /**
+ * Check if a decomposition task already exists for the given project_id and level.
+ * Matches queued/in_progress, completed within DEDUP_WINDOW_HOURS, or failed within DEDUP_WINDOW_HOURS.
+ *
+ * @param {string} projectId - Project UUID to check
+ * @param {string} level - Decomposition level ('project' or 'initiative')
+ * @returns {boolean} true if a decomposition task already exists
+ */
+async function hasExistingDecompositionTaskByProject(projectId, level) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE project_id = $1
+      AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+      AND (payload->>'level' = $2)
+      AND (
+        status IN ('queued', 'in_progress')
+        OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
+        OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
+      )
+    LIMIT 1
+  `, [projectId, level]);
+  return result.rows.length > 0;
+}
+
+/**
  * Create a decomposition task for autumnrice.
  *
  * @param {Object} params
@@ -386,20 +410,8 @@ async function checkProjectDecomposition() {
   `);
 
   for (const proj of result.rows) {
-    // Dedup using project_id instead of goal_id
-    const existingDecomp = await pool.query(`
-      SELECT id FROM tasks
-      WHERE project_id = $1
-        AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
-        AND (payload->>'level' = 'project')
-        AND (
-          status IN ('queued', 'in_progress')
-          OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
-        )
-      LIMIT 1
-    `, [proj.id]);
-
-    if (existingDecomp.rows.length > 0) {
+    // Dedup using shared function
+    if (await hasExistingDecompositionTaskByProject(proj.id, 'project')) {
       actions.push({
         action: 'skip_dedup',
         check: 'project_decomposition',
@@ -480,20 +492,8 @@ async function checkInitiativeDecomposition() {
   `);
 
   for (const init of result.rows) {
-    // Dedup: check for existing decomposition tasks targeting this initiative
-    const existingDecomp = await pool.query(`
-      SELECT id FROM tasks
-      WHERE project_id = $1
-        AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
-        AND (payload->>'level' = 'initiative')
-        AND (
-          status IN ('queued', 'in_progress')
-          OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
-        )
-      LIMIT 1
-    `, [init.id]);
-
-    if (existingDecomp.rows.length > 0) {
+    // Dedup using shared function
+    if (await hasExistingDecompositionTaskByProject(init.id, 'initiative')) {
       actions.push({
         action: 'skip_dedup',
         check: 'initiative_decomposition',
@@ -699,6 +699,7 @@ export {
   checkExploratoryDecompositionContinue,
   // Exported for testing
   hasExistingDecompositionTask,
+  hasExistingDecompositionTaskByProject,
   createDecompositionTask,
   DEDUP_WINDOW_HOURS,
 };
