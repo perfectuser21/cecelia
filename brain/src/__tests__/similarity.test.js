@@ -551,4 +551,180 @@ describe('SimilarityService', () => {
       expect(Array.isArray(result.matches)).toBe(true);
     });
   });
+
+  describe('Edge Cases for calculateScore', () => {
+    it('should handle empty tokens without division by zero', () => {
+      const entity = {
+        level: 'task',
+        text: '',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('', entity);
+      expect(score).toBe(0.0);
+      expect(score).not.toBeNaN();
+    });
+
+    it('should handle empty query with non-empty entity', () => {
+      const entity = {
+        level: 'task',
+        text: 'implement priority algorithm',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('', entity);
+      expect(score).toBe(0.0);
+      expect(score).not.toBeNaN();
+    });
+
+    it('should handle non-empty query with empty entity', () => {
+      const entity = {
+        level: 'task',
+        text: '',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('implement priority', entity);
+      expect(score).toBe(0.0);
+      expect(score).not.toBeNaN();
+    });
+
+    it('should handle null entity text', () => {
+      const entity = {
+        level: 'task',
+        text: null,
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('test query', entity);
+      expect(score).toBeDefined();
+      expect(score).not.toBeNaN();
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(1.0);
+    });
+
+    it('should handle undefined entity text', () => {
+      const entity = {
+        level: 'task',
+        text: undefined,
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('test query', entity);
+      expect(score).toBeDefined();
+      expect(score).not.toBeNaN();
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(1.0);
+    });
+
+    it('should match keywords case-insensitively', () => {
+      const entity = {
+        level: 'task',
+        text: 'Implement PRIORITY Algorithm System',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('priority algorithm', entity);
+      expect(score).toBeGreaterThan(0.5); // Should get keyword boost
+    });
+
+    it('should limit keyword boost to maximum', () => {
+      // Create entity with many repeated keywords
+      const entity = {
+        level: 'task',
+        text: 'priority priority priority priority priority priority priority priority priority priority',
+        status: 'pending'
+      };
+
+      const score1 = service.calculateScore('priority', entity);
+
+      // Add more text with different keywords
+      const entity2 = {
+        level: 'task',
+        text: 'priority algorithm system task implement feature code test debug deploy',
+        status: 'pending'
+      };
+
+      const score2 = service.calculateScore('priority algorithm system task implement feature code test debug deploy', entity2);
+
+      // Both should be capped at 1.0, but score2 should not exceed score1 by more than 0.3 (max boost)
+      expect(score1).toBeLessThanOrEqual(1.0);
+      expect(score2).toBeLessThanOrEqual(1.0);
+
+      // The difference should not exceed MAX_KEYWORD_BOOST (0.3)
+      if (score1 < 1.0 && score2 < 1.0) {
+        const scoreDiff = Math.abs(score2 - score1);
+        expect(scoreDiff).toBeLessThanOrEqual(0.4); // Allow some tolerance for Jaccard difference
+      }
+    });
+
+    it('should use Set for efficient token comparison', () => {
+      // Generate large token sets to test performance
+      const largeText1 = Array.from({ length: 100 }, (_, i) => `word${i}`).join(' ');
+      const largeText2 = Array.from({ length: 100 }, (_, i) => `term${i}`).join(' ');
+
+      const entity = {
+        level: 'task',
+        text: largeText1,
+        status: 'pending'
+      };
+
+      const startTime = Date.now();
+      const score = service.calculateScore(largeText2, entity);
+      const endTime = Date.now();
+
+      // Should complete quickly even with many tokens
+      expect(endTime - startTime).toBeLessThan(50); // Should be fast (< 50ms)
+      expect(score).toBeDefined();
+      expect(score).not.toBeNaN();
+    });
+
+    it('should handle special characters correctly', () => {
+      const entity = {
+        level: 'task',
+        text: 'task@priority#algorithm!system',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('task priority algorithm', entity);
+      expect(score).toBeGreaterThan(0.7); // Should match after cleaning special chars
+    });
+
+    it('should handle numeric tokens', () => {
+      const entity = {
+        level: 'task',
+        text: 'PR 123 needs review',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('PR 123', entity);
+      expect(score).toBeGreaterThan(0.3); // Should match PR and possibly 123
+    });
+
+    it('should handle very long text without errors', () => {
+      const longText = 'implement ' + Array(1000).fill('word').join(' ');
+      const entity = {
+        level: 'task',
+        text: longText,
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('implement word', entity);
+      expect(score).toBeDefined();
+      expect(score).not.toBeNaN();
+      expect(score).toBeGreaterThan(0);
+      expect(score).toBeLessThanOrEqual(1.0);
+    });
+
+    it('should handle mixed languages correctly', () => {
+      const entity = {
+        level: 'task',
+        text: '实现 priority algorithm 系统',
+        status: 'pending'
+      };
+
+      const score = service.calculateScore('priority algorithm', entity);
+      expect(score).toBeGreaterThan(0.3); // Should match English tokens
+    });
+  });
 });

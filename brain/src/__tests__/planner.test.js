@@ -172,7 +172,7 @@ describe('Planner Agent', () => {
 
       // Cleanup
       for (const g of result.created.goals) {
-        if (g.type === 'kr') testKRIds.push(g.id);
+        if (['kr', 'global_kr', 'area_kr'].includes(g.type)) testKRIds.push(g.id);
         else testObjectiveIds.push(g.id);
       }
     });

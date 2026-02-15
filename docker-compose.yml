@@ -28,7 +28,7 @@ services:
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-cecelia}
       - DB_USER=${DB_USER:-cecelia}
-      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PASSWORD=${DB_PASSWORD:-cecelia}
       - BRAIN_PORT=5221
       - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
       # CECELIA_MAX_CONCURRENT: auto-calculated from resource capacity if not set
