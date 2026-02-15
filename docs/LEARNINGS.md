@@ -257,3 +257,29 @@
   - ✅ DevGate (facts-check, version-sync) catches integration errors
   - ✅ Team agents useful but verification-first prevents waste
   - ✅ Stop Hook successfully drove workflow to PR merge
+
+### [2026-02-15] Migration 036 KR 类型兼容性修复
+
+- **Bug**: Migration 036 引入新 KR 类型（global_kr, area_kr）后，planner.js, similarity.js, planner.test.js 中仍查询旧的 'kr' 类型，导致 Brain 无法找到任何 KR → 24/7 自动化完全失效
+  - **Root Cause**: Schema migration 未同步更新所有查询该表的代码
+  - **Solution**: 统一修改为 `type IN ('kr', 'global_kr', 'area_kr')`，向后兼容旧数据
+  - **Files**: brain/src/planner.js:23, brain/src/similarity.js:140, brain/src/__tests__/planner.test.js:175
+
+- **优化点**: 
+  1. **Schema migration checklist**: 引入新类型/字段时，全局搜索所有查询该表的代码
+  2. **CI 版本检查有效**: 捕获了 .brain-versions 格式错误和版本未更新问题
+  3. **合并策略**: 合并 develop 后需再次 bump 版本（develop 已包含最新版本）
+  4. **测试覆盖**: planner.test.js 修复后 19 个测试全部通过，验证了修复正确性
+
+- **影响程度**: High
+  - **修复前**: Brain 无法生成任务 → 24/7 自动化失效 → P0 阻塞
+  - **修复后**: Brain 能识别所有 KR 类型 → 自动化恢复
+  - **向后兼容**: 支持旧的 'kr' 类型数据，无需数据迁移
+  - **测试保障**: 1244 测试全部通过
+
+- **Process Validation**
+  - ✅ /dev workflow 完整流程顺畅执行（Step 1-11）
+  - ✅ CI DevGate 成功拦截版本同步问题
+  - ✅ Stop Hook 驱动循环：CI 失败 → 修复 → 重试 → 通过 → 合并
+  - ✅ Task Checkpoint 实时展示进度
+  - ✅ 合并冲突自动解决并重试
