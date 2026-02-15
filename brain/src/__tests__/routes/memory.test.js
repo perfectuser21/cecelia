@@ -9,11 +9,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 // Mock process.exit to prevent server.js from exiting during import
-// This is needed because server.js runs selfcheck at module level
+// Must use dynamic import because server.js runs selfcheck at module level
 const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => {});
 
-import app from '../../../server.js';
-import pool from '../../db.js';
+// Dynamic imports to ensure mocks are in place
+const { default: app } = await import('../../../server.js');
+const { default: pool } = await import('../../db.js');
 
 describe('Memory API Routes', () => {
   let testTaskId;
