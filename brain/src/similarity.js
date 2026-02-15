@@ -158,44 +158,6 @@ class SimilarityService {
       });
     });
 
-    // Query KRs (most recent 30)
-    // TODO: Disabled until key_results table schema is finalized
-    // Current schema uses goals table with type='key_result', but fields differ
-    /*
-    const krsResult = await this.db.query(`
-      SELECT
-        kr.id, kr.title, kr.target_value, kr.current_value, kr.unit, kr.status,
-        g.id as goal_id, g.title as goal_title
-      FROM key_results kr
-      LEFT JOIN goals g ON kr.goal_id = g.id AND g.type IN ('global_okr', 'area_okr')
-      WHERE kr.status IN ('active', 'in_progress')
-      ORDER BY kr.updated_at DESC
-      LIMIT 30
-    `);
-
-    krsResult.rows.forEach(kr => {
-      // Build text: combine title with target/current values
-      const valueText = kr.target_value ?
-        `target: ${kr.current_value || 0}/${kr.target_value} ${kr.unit || ''}` : '';
-
-      entities.push({
-        level: 'kr',
-        id: kr.id,
-        title: kr.title,
-        description: valueText,
-        status: kr.status,
-        text: `${kr.title} ${valueText}`,
-        metadata: {
-          goal_id: kr.goal_id,
-          goal_title: kr.goal_title,
-          target_value: kr.target_value,
-          current_value: kr.current_value,
-          unit: kr.unit
-        }
-      });
-    });
-    */
-
     return entities;
   }
 

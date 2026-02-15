@@ -14,7 +14,7 @@ async function main() {
 
     const krsResult = await pool.query(`
       SELECT COUNT(*) as count FROM goals
-      WHERE type = 'key_result' AND status NOT IN ('completed', 'cancelled')
+      WHERE type = 'kr' AND status NOT IN ('completed', 'cancelled')
     `);
 
     // 2. Get recent top-level goals
@@ -63,7 +63,7 @@ async function main() {
     // 6. Check for KRs without Tasks
     const noTaskKrsResult = await pool.query(`
       SELECT kr.id, kr.title FROM goals kr
-      WHERE kr.type = 'key_result'
+      WHERE kr.type = 'kr'
         AND kr.status NOT IN ('completed', 'cancelled')
         AND NOT EXISTS (
           SELECT 1 FROM tasks t WHERE t.goal_id = kr.id

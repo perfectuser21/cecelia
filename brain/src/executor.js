@@ -42,9 +42,8 @@ const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's 
 const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
 // Max seats (total capacity including interactive reserve)
-const MAX_SEATS = parseInt(process.env.CECELIA_MAX_CONCURRENT || String(
-  Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2)
-), 10);
+// CECELIA_MAX_CONCURRENT is deprecated since v1.35.0 - use auto-calculated slot allocation
+const MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
 // Auto-dispatch thresholds: subtract interactive reserve from budget
 // so when auto-dispatch hits the ceiling, user still has room for headed sessions
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
@@ -640,10 +639,10 @@ function preparePrompt(task) {
     const projectId = task.project_id || task.payload?.project_id || '';
     const isContinue = decomposition === 'continue';
     const previousResult = task.payload?.previous_result || '';
-    const featureId = task.payload?.feature_id || '';
+    const initiativeId = task.payload?.initiative_id || task.payload?.feature_id || '';
 
     // 继续拆解：秋米收到前一个 Task 的执行结果，决定下一步
-    if (isContinue && featureId) {
+    if (isContinue && initiativeId) {
       return `/okr
 
 # 继续拆解: ${krTitle}
@@ -651,8 +650,8 @@ function preparePrompt(task) {
 ## 任务类型
 探索型任务继续拆解
 
-## Feature ID
-${featureId}
+## Initiative ID
+${initiativeId}
 
 ## 前一个 Task 执行结果
 ${previousResult}
@@ -662,21 +661,21 @@ ${task.payload?.kr_goal || task.description || ''}
 
 ## 你的任务
 1. 分析前一个 Task 的执行结果
-2. 判断 Feature 是否已完成 KR 目标
-   - 如果已完成 → 更新 Feature 状态，不创建新 Task
+2. 判断 Initiative 是否已完成 KR 目标
+   - 如果已完成 → 更新 Initiative 状态，不创建新 Task
    - 如果未完成 → 创建下一个 Task，继续推进
 
 ## 创建下一个 Task（如需要）
 POST /api/brain/action/create-task
 {
   "title": "下一步任务标题",
-  "project_id": "${featureId}",  // Initiative ID
+  "project_id": "${initiativeId}",
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD...",
   "payload": {
     "exploratory": true,
-    "feature_id": "${featureId}",
+    "initiative_id": "${initiativeId}",
     "kr_goal": "${task.payload?.kr_goal || ''}"
   }
 }`;
@@ -729,7 +728,7 @@ POST /api/brain/action/create-task
   "prd_content": "完整 PRD（背景、目标、功能、验收标准、技术要点）",
   "payload": {
     "exploratory": true,  // 探索型必须设为 true
-    "feature_id": "<Initiative ID>",
+    "initiative_id": "<Initiative ID>",
     "kr_goal": "${task.description || ''}"
   }
 }

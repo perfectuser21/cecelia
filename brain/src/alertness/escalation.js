@@ -17,7 +17,7 @@ import { emit } from '../event-bus.js';
 // 响应级别定义
 // ============================================================
 
-export const RESPONSE_LEVELS = {
+const RESPONSE_LEVELS = {
   L0: 'auto_recovery',     // 自动恢复
   L1: 'graceful_degrade',  // 优雅降级
   L2: 'emergency_brake',   // 紧急刹车
@@ -485,59 +485,13 @@ export function getEscalationStatus() {
   };
 }
 
-/**
- * 获取升级历史
- */
-export function getEscalationHistory() {
-  return [...escalationHistory];
-}
-
-/**
- * 清除升级状态（恢复正常时调用）
- */
-export async function clearEscalation() {
-  if (!escalationState.isActive) return;
-
-  console.log('[Escalation] Clearing escalation state');
-
-  // 记录恢复
-  if (escalationState.currentLevel) {
-    const client = await pool.connect();
-    try {
-      await client.query(`
-        UPDATE alertness_escalations
-        SET resolved_at = NOW()
-        WHERE response_level = $1
-          AND resolved_at IS NULL
-      `, [escalationState.currentLevel]);
-    } finally {
-      client.release();
-    }
-  }
-
-  // 重置状态
-  escalationState = {
-    currentLevel: null,
-    startedAt: null,
-    triggeredBy: null,
-    actionsExecuted: [],
-    isActive: false
-  };
-
-  // 发送恢复事件
-  emit('escalation:cleared');
-}
-
 // ============================================================
 // 导出
 // ============================================================
 
 export default {
-  RESPONSE_LEVELS,
   escalateResponse,
   executeResponse,
   getCurrentResponseLevel,
-  getEscalationStatus,
-  getEscalationHistory,
-  clearEscalation
+  getEscalationStatus
 };

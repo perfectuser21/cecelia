@@ -344,42 +344,6 @@ export function getRecentMetrics() {
   return metricsCache;
 }
 
-/**
- * 获取指标趋势
- */
-export function getMetricTrends() {
-  return {
-    cpu: [...cpuHistory],
-    responseTime: [...responseTimeHistory],
-    operations: [...operationHistory]
-  };
-}
-
-/**
- * 检查是否有危险指标
- */
-export function hasDangerousMetrics() {
-  return Object.values(metricsCache).some(m => m.status === 'danger');
-}
-
-/**
- * 获取危险指标列表
- */
-export function getDangerousMetrics() {
-  return Object.entries(metricsCache)
-    .filter(([, metric]) => metric.status === 'danger')
-    .map(([name]) => name);
-}
-
-/**
- * 获取警告指标列表
- */
-export function getWarningMetrics() {
-  return Object.entries(metricsCache)
-    .filter(([, metric]) => metric.status === 'warning')
-    .map(([name]) => name);
-}
-
 // ============================================================
 // 导出
 // ============================================================
@@ -388,11 +352,7 @@ export default {
   collectMetrics,
   calculateHealthScore,
   getRecentMetrics,
-  getMetricTrends,
   recordOperation,
   recordTickTime,
-  hasDangerousMetrics,
-  getDangerousMetrics,
-  getWarningMetrics,
   THRESHOLDS
 };

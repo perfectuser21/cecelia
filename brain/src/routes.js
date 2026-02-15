@@ -19,9 +19,6 @@ async function getRecentDecisions(limit = 10) {
   const result = await pool.query(`SELECT id, ts, trigger, input_summary, llm_output_json, action_result_json, status FROM decision_log ORDER BY ts DESC LIMIT $1`, [limit]);
   return result.rows;
 }
-async function getLatestSnapshot() {
-  return null; // system_snapshot table dropped in migration 033
-}
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP } from './tick.js';
@@ -45,18 +42,20 @@ import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAl
 
 // Constants previously in old alertness.js, kept for hardening status route
 const EVENT_BACKLOG_THRESHOLD = 50;
-import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure, FAILURE_CLASS } from './quarantine.js';
+import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure } from './quarantine.js';
 import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
-import { processEvent as thalamusProcessEvent, EVENT_TYPES, LLM_ERROR_TYPE } from './thalamus.js';
+import { readFileSync } from 'fs';
+import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 
 const router = Router();
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
 
 // ==================== 白名单配置 ====================
 
@@ -152,14 +151,14 @@ router.get('/status', async (req, res) => {
     // 支持 ?mode=interactive|scheduled|incident
     const decisionMode = req.query.mode || 'interactive';
 
-    const [policy, workingMemory, topTasks, recentDecisions, snapshot, dailyFocus] = await Promise.all([
+    const [policy, workingMemory, topTasks, recentDecisions, dailyFocus] = await Promise.all([
       getActivePolicy(),
       getWorkingMemory(),
       getTopTasks(10),
       getRecentDecisions(5),
-      getLatestSnapshot(),
       getFocusSummary()
     ]);
+    const snapshot = null;
 
     const now = new Date();
 
@@ -286,13 +285,13 @@ router.get('/status/ws', (req, res) => {
  */
 router.get('/status/full', async (req, res) => {
   try {
-    const [snapshot, workingMemory, topTasks, recentDecisionsData, policy] = await Promise.all([
-      getLatestSnapshot(),
+    const [workingMemory, topTasks, recentDecisionsData, policy] = await Promise.all([
       getWorkingMemory(),
       getTopTasks(10),
       getRecentDecisions(3),
       getActivePolicy()
     ]);
+    const snapshot = null;
     res.json({
       snapshot: snapshot?.snapshot_json || null,
       snapshot_ts: snapshot?.ts || null,
@@ -2138,40 +2137,40 @@ router.post('/execution-callback', async (req, res) => {
         // 获取 Task 的 payload 检查是否是探索型
         const taskResult = await pool.query('SELECT payload, project_id, goal_id FROM tasks WHERE id = $1', [task_id]);
         const taskPayload = taskResult.rows[0]?.payload;
-        const featureId = taskResult.rows[0]?.project_id;
+        const initiativeId = taskResult.rows[0]?.project_id;
         const krId = taskResult.rows[0]?.goal_id;
 
-        if (taskPayload?.exploratory === true && featureId) {
+        if (taskPayload?.exploratory === true && initiativeId) {
           console.log(`[execution-callback] Exploratory task completed, triggering continue decomposition...`);
 
-          // 获取 Feature 信息
-          const featureResult = await pool.query('SELECT name, kr_id, decomposition_mode FROM projects WHERE id = $1', [featureId]);
-          const feature = featureResult.rows[0];
+          // 获取 Initiative 信息
+          const initiativeResult = await pool.query('SELECT name, kr_id, decomposition_mode FROM projects WHERE id = $1', [initiativeId]);
+          const initiative = initiativeResult.rows[0];
 
-          if (feature?.decomposition_mode === 'exploratory') {
+          if (initiative?.decomposition_mode === 'exploratory') {
             // 获取 KR 目标
-            const krResult = await pool.query('SELECT title FROM goals WHERE id = $1', [krId || feature.kr_id]);
+            const krResult = await pool.query('SELECT title FROM goals WHERE id = $1', [krId || initiative.kr_id]);
             const krGoal = krResult.rows[0]?.title || 'Unknown KR';
 
             // 创建"继续拆解"任务给秋米
             const { createTask: createDecompTask } = await import('./actions.js');
             await createDecompTask({
-              title: `继续拆解: ${feature.name}`,
-              description: `探索型 Task 完成，请根据结果继续拆解下一步。\n\nFeature: ${feature.name}\nKR 目标: ${krGoal}\n\n上一步结果将在执行时传入。`,
+              title: `继续拆解: ${initiative.name}`,
+              description: `探索型 Task 完成，请根据结果继续拆解下一步。\n\nInitiative: ${initiative.name}\nKR 目标: ${krGoal}\n\n上一步结果将在执行时传入。`,
               task_type: 'dev',
               priority: 'P0',
-              goal_id: krId || feature.kr_id,
-              project_id: featureId,
+              goal_id: krId || initiative.kr_id,
+              project_id: initiativeId,
               payload: {
                 decomposition: 'continue',
-                feature_id: featureId,
+                initiative_id: initiativeId,
                 previous_task_id: task_id,
                 previous_result: result?.result || result,
                 kr_goal: krGoal
               }
             });
 
-            console.log(`[execution-callback] Created continue decomposition task for feature: ${feature.name}`);
+            console.log(`[execution-callback] Created continue decomposition task for initiative: ${initiative.name}`);
           }
         }
       } catch (exploratoryErr) {
@@ -3881,7 +3880,7 @@ router.post('/route-task', async (req, res) => {
 
 /**
  * POST /api/brain/identify-work-type
- * Identify if input is a single task or feature
+ * Identify if input is a single task or initiative
  */
 router.post('/identify-work-type', (req, res) => {
   try {
@@ -3920,13 +3919,13 @@ router.get('/task-locations', (req, res) => {
  */
 router.post('/route-task-create', (req, res) => {
   try {
-    const { title, task_type, feature_id, is_recurring } = req.body;
+    const { title, task_type, initiative_id, feature_id, is_recurring } = req.body;
 
     if (!title && !task_type) {
       return res.status(400).json({ success: false, error: 'title or task_type is required' });
     }
 
-    const routing = routeTaskCreate({ title, task_type, feature_id, is_recurring });
+    const routing = routeTaskCreate({ title, task_type, feature_id: initiative_id || feature_id, is_recurring });
     res.json({ success: true, ...routing });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to route task create', details: err.message });
@@ -4150,7 +4149,7 @@ router.get('/tasks/:taskId/checkpoints', async (req, res) => {
  */
 router.get('/hardening/status', async (req, res) => {
   try {
-    const version = '1.7.0';
+    const version = pkg.version;
     const checked_at = new Date().toISOString();
 
     const [

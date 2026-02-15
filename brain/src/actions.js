@@ -18,7 +18,7 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @param {string} params.context - Legacy description field
  * @param {string} params.prd_content - PRD content (秋米写的)
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
- * @param {Object} params.payload - Additional payload (exploratory, feature_id, kr_goal)
+ * @param {Object} params.payload - Additional payload (exploratory, initiative_id, kr_goal)
  */
 async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
   // Dedup: check for existing task with same title + goal_id + project_id
