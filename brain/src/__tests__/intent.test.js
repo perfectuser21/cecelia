@@ -471,7 +471,7 @@ describe('Intent Recognition Module', () => {
       // Create a test goal first
       const goalResult = await pool.query(
         `INSERT INTO goals (title, type, priority, status) VALUES ($1, $2, $3, $4) RETURNING id`,
-        ['Test Goal', 'objective', 'P1', 'pending']
+        ['Test Goal', 'global_okr', 'P1', 'pending']
       );
       const goalId = goalResult.rows[0].id;
 

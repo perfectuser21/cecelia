@@ -96,7 +96,7 @@ function classifyFailure(error, task) {
 **解决方案**：
 
 ```javascript
-// alertness.js 新增信号
+// alertness/ 新增信号
 async function collectSignals() {
   // ... 现有信号 ...
 
@@ -129,7 +129,7 @@ async function deduplicateEvents() {
 ```
 
 **文件变更**：
-- `brain/src/alertness.js` - 添加 event_backlog 信号
+- `brain/src/alertness/` - 添加 event_backlog 信号
 - `brain/src/event-bus.js` - 添加 deduplicateEvents()
 
 ---
@@ -174,7 +174,7 @@ const RECOVERY_THRESHOLDS = {
 ```
 
 **文件变更**：
-- `brain/src/alertness.js` - 添加衰减逻辑和恢复门槛
+- `brain/src/alertness/` - 添加衰减逻辑和恢复门槛
 
 ---
 
@@ -293,7 +293,7 @@ async function callSonnet(prompt) {
 **文件变更**：
 - `brain/src/thalamus.js` - 分类记录错误
 - `brain/src/cortex.js` - 同上
-- `brain/src/alertness.js` - 分开统计和处理
+- `brain/src/alertness/` - 分开统计和处理
 
 ---
 

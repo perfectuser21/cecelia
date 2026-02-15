@@ -82,7 +82,7 @@ describe('Tick Drain Mode', () => {
   it('should report in_progress tasks during drain', async () => {
     // Create an in_progress task
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Drain test goal', 'key_result', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Drain test goal', 'kr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
 

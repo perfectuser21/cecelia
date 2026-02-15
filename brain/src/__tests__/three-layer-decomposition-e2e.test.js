@@ -40,21 +40,22 @@ describe('Three-Layer Decomposition E2E', () => {
 
     // Create Objective (goals with parent_id=NULL)
     const objectiveResult = await pool.query(`
-      INSERT INTO goals (title, description, status)
-      VALUES ('Q1 2026 Product Launch', 'Launch new product features', 'in_progress')
+      INSERT INTO goals (title, description, status, type)
+      VALUES ('Q1 2026 Product Launch', 'Launch new product features', 'in_progress', 'global_okr')
       RETURNING *
     `);
     testObjective = objectiveResult.rows[0];
 
     // Create KR (goals with parent_id=Objective)
     const krResult = await pool.query(`
-      INSERT INTO goals (title, description, status, parent_id, priority)
+      INSERT INTO goals (title, description, status, parent_id, priority, type)
       VALUES (
         'Implement core features',
         'Complete 3 major features',
         'in_progress',
         $1,
-        'P0'
+        'P0',
+        'kr'
       )
       RETURNING *
     `, [testObjective.id]);

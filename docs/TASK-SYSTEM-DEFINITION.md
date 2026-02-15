@@ -1,101 +1,204 @@
 # Cecelia 任务系统定义
 
-**版本**: 1.0.0
+**版本**: 2.0.0
 **创建时间**: 2026-02-04
+**更新时间**: 2026-02-15
 **状态**: 确认
 
 ---
 
-## 1. 层级架构
+## 1. 六层 OKR 架构
 
 ```
-大 OKR (季度，总目标)
-├── Repository OKR (每个仓库/业务有自己的 OKR)
-│   └── SubProject (Feature / Sprint，同一层级)
-│       └── Task
-│
-└── 其他业务 OKR (自媒体等)
-    └── SubProject (Sprint)
-        └── Task
+Global OKR (季度目标，3个月)
+├── Area OKR (月度目标，1个月)
+│   └── KR (Key Result，可量化指标)
+│       └── Project (项目，1-2周)
+│           └── Initiative (行动计划，1-2小时)
+│               └── Task (最小执行单元，20分钟)
 ```
 
 ### 层级说明
 
-| 层级 | 说明 | 数据库 |
-|------|------|--------|
-| **OKR** | O=目标，KR=衡量方式，可嵌套 | `goals` 表 |
-| **Project** | = Repository，代码仓库或业务线 | `projects` 表 (repo_path 有值) |
-| **SubProject** | Feature 或 Sprint，同一层级 | `projects` 表 (parent_id 有值) |
-| **Task** | 最小执行单元 | `tasks` 表 |
-
-### SubProject 的两种叫法
-
-| 场景 | 叫法 | 周期 |
-|------|------|------|
-| 代码项目 | **Feature** | 3-5 天 |
-| 运营/自媒体 | **Sprint** | 3-5 天 |
+| 层级 | 类型 | 时间维度 | 数据库 | 字段 |
+|------|------|----------|--------|------|
+| **Global OKR** | 季度总目标 | 3个月 | `goals` 表 | type='global_okr', parent_id=NULL |
+| **Area OKR** | 领域月度目标 | 1个月 | `goals` 表 | type='area_okr', parent_id=Global OKR |
+| **KR** | 可量化指标 | 月度 | `goals` 表 | type='kr', parent_id=Area OKR |
+| **Project** | 代码项目 | 1-2周 | `projects` 表 | type='project' |
+| **Initiative** | 行动计划 | 1-2小时 | `projects` 表 | type='initiative', parent_id=Project |
+| **Task** | 最小执行单元 | 20分钟 | `tasks` 表 | project_id→Initiative, goal_id→KR |
 
 ---
 
-## 2. OKR 嵌套
+## 2. OKR 嵌套示例
 
 ```
-你的总 OKR
-├── cecelia-core OKR (Repository)
+Q1 Global OKR: 构建自主运行的管家系统
+├── Area OKR: Cecelia Core 稳定性
 │   ├── KR1: 派发成功率 > 90%
-│   │   └── Feature: 实时派发
+│   │   └── Project: 保护系统增强
+│   │       ├── Initiative: 实现熔断器恢复
+│   │       └── Initiative: 优化看门狗阈值
 │   └── KR2: 自动完成 > 5 个/天
-│       └── Feature: Daily Brief
+│       └── Project: 调度优化
+│           └── Initiative: KR 轮转评分
 │
-└── 自媒体 OKR
+└── Area OKR: 自媒体运营
     ├── KR1: 日更 10 篇
-    │   └── Sprint: W6 内容计划
+    │   └── Project: 内容管理系统
+    │       └── Initiative: 发布引擎
     └── KR2: 粉丝增长 1000
-        └── Sprint: W6 涨粉计划
+        └── Project: 涨粉计划
+            └── Initiative: 互动策略
 ```
 
 ---
 
 ## 3. 对话层级
 
-| 层级 | 你聊什么 | 频率 |
-|------|----------|------|
-| **OKR** | 季度方向 | 季度 |
-| **KR** | 月度重点 | 月度 |
-| **Project** | 仓库整体 | 偶尔 |
-| **SubProject** | 具体功能/计划 | **每天** |
+| 层级 | 聊什么 | 频率 |
+|------|--------|------|
+| **Global OKR** | 季度方向 | 季度 |
+| **Area OKR** | 月度重点 | 月度 |
+| **KR** | 指标进展 | 每周 |
+| **Project** | 项目整体 | 每天 |
+| **Initiative** | 具体行动 | **每天** |
 
-**最小对话粒度是 SubProject（Feature/Sprint）**，不聊 Task。
-
----
-
-## 4. 任务自主级别
-
-标记在 **Task 层**，同一个 SubProject 下的 Task 可能有不同级别。
-
-| 级别 | 你的角色 | 适用场景 |
-|------|----------|----------|
-| 🔴 **Operator** | 你自己跑 | 全新探索、高风险 |
-| 🟡 **Collaborator** | 你和 AI 一起 | 半新任务 |
-| 🟠 **Consultant** | AI 建议，你决定 | 有方向但不确定 |
-| 🔵 **Approver** | AI 做完，你批准 | 已知但重要 |
-| ⚪ **Observer** | AI 自动跑 | 成熟、有 SOP |
-
-### 核心逻辑：有没有 SOP
-
-```
-有 SOP → Observer（自动跑）
-没 SOP → Operator（你先跑）→ 形成 SOP → 下次 Observer
-```
+**最小对话粒度是 Initiative**，不聊 Task。
 
 ---
 
-## 5. 动态导航模式
+## 4. 任务类型
+
+| 类型 | 说明 | 路由 |
+|------|------|------|
+| `dev` | 开发任务 | US |
+| `review` | 代码审查 | US |
+| `qa` | 质量检查 | US |
+| `audit` | 代码审计 | US |
+| `exploratory` | 探索性开发 | US |
+| `talk` | 沟通类 | HK |
+| `research` | 调研类 | HK |
+| `data` | 数据处理 | HK |
+
+路由规则在 `task-router.js` 中定义。
+
+---
+
+## 5. 任务生命周期
+
+```
+1. 创建 (Create)
+   ↓
+2. 路由 (Route) — task-router.js
+   - US: dev/review/qa/audit/exploratory
+   - HK: talk/research/data
+   ↓
+3. 规划 (Plan) — planner.js
+   - KR 轮转评分
+   - 生成 PRD
+   ↓
+4. 派发 (Dispatch) — tick.js
+   - 检查三池席位分配
+   - 检查熔断器
+   ↓
+5. 执行 (Execute) — executor.js
+   - 生成命令
+   - 创建进程
+   - 监控输出
+   ↓
+6. 监控 (Monitor) — watchdog.js
+   - RSS/CPU 采样
+   - 超时检测
+   ↓
+7. 结果处理
+   ├─ 成功 → 记录熔断器成功
+   ├─ 失败 → 分类 → 重试/隔离
+   └─ 超时 → 杀进程 → 重入队列
+```
+
+---
+
+## 6. PR Plan 工程规划层
+
+Initiative 到 Task 之间有 PR Plan 作为工程规划层：
+
+| 字段 | 说明 |
+|------|------|
+| `project_id` | 关联 Initiative |
+| `title` | PR 标题 |
+| `dod` | Definition of Done |
+| `files` | 涉及文件 |
+| `sequence` | 执行顺序 |
+| `depends_on` | 依赖的 PR Plan |
+| `complexity` | 复杂度 (low/medium/high) |
+
+---
+
+## 7. 数据库字段
+
+### goals 表（OKR 三层）
+
+```sql
+id UUID PRIMARY KEY
+parent_id UUID          -- 父级 OKR（嵌套）
+project_id UUID         -- 关联 Project（可空）
+type VARCHAR(50)        -- 'global_okr' | 'area_okr' | 'kr'
+title VARCHAR(255)
+progress INTEGER
+status VARCHAR(50)
+```
+
+### projects 表（Project + Initiative）
+
+```sql
+id UUID PRIMARY KEY
+parent_id UUID          -- 有值 = Initiative（父级是 Project）
+name VARCHAR(255)
+type VARCHAR(50)        -- 'project' | 'initiative'
+```
+
+### project_repos 表（多仓库关联）
+
+```sql
+project_id UUID         -- 关联 Project
+repo_path VARCHAR(500)  -- 仓库路径
+```
+
+### pr_plans 表（工程规划）
+
+```sql
+id UUID PRIMARY KEY
+project_id UUID         -- 关联 Initiative
+title VARCHAR(255)
+dod TEXT
+files JSONB
+sequence INTEGER
+depends_on UUID[]
+complexity VARCHAR(20)  -- 'low' | 'medium' | 'high'
+```
+
+### tasks 表
+
+```sql
+id UUID PRIMARY KEY
+project_id UUID         -- 所属 Initiative
+goal_id UUID            -- 关联 KR
+pr_plan_id UUID         -- 关联 PR Plan（可空）
+task_type VARCHAR(50)   -- dev/review/qa/audit/research/talk/data/exploratory
+prd_content TEXT        -- PRD 内容
+status VARCHAR(50)
+```
+
+---
+
+## 8. 动态导航模式
 
 **不提前拆 Task，边跑边生成**
 
 ```
-SubProject 创建 → 只知道目标和验收条件
+Initiative 创建 → 只知道目标和验收条件
     ↓
 执行 Task 1 → 看结果
     ↓
@@ -103,49 +206,37 @@ SubProject 创建 → 只知道目标和验收条件
     ↓
 ... 循环 ...
     ↓
-验收通过 → SubProject 完成
+验收通过 → Initiative 完成
 ```
 
-### Task 生成逻辑
+### planNextTask()
+
+KR 轮转评分选择下一个任务，支持 `skipPrPlans` 选项：
 
 ```javascript
-async function planNextTask(subproject) {
-  const completedTasks = await getCompletedTasks(subproject.id);
-  const lastResult = completedTasks[0]?.result_summary;
-
-  // LLM 决定下一步
-  const decision = await callLLM({
-    goal: subproject.title,
-    acceptance: subproject.acceptance_criteria,
-    completed: completedTasks,
-    lastResult: lastResult
-  });
-
-  if (decision.completed) {
-    await markComplete(subproject.id);
-  } else {
-    await createTask(subproject.id, decision.nextTask);
-  }
+async function planNextTask(options = {}) {
+  // 1. 评分所有活跃 KR
+  // 2. 选择得分最高的 KR
+  // 3. 在该 KR 下找 Initiative
+  // 4. 生成 Task
 }
 ```
 
 ---
 
-## 6. 反馈汇总
+## 9. 反馈汇总
 
-按你聊的层级汇总：
+按对话层级汇总：
 
 ```
-你: "实时派发怎么样了" (SubProject 层)
+你: "保护系统增强项目怎么样了" (Project 层)
 
-Cecelia: Feature「实时派发」进度 50%
+Cecelia: Project「保护系统增强」进度 50%
 
-         🔴 需要你参与:
-         - Task 1: 调研方案 [Consultant]
-
-         ⚪ 自动进行中:
-         - Task 2: 改配置 [Observer] - 完成
-         - Task 3: 测试 [Observer] - 进行中
+         Initiative 1: 实现熔断器恢复 - 100%
+         Initiative 2: 优化看门狗阈值 - 进行中
+           - Task: 调整 RSS 阈值 [完成]
+           - Task: 测试 CPU 告警 [进行中]
 ```
 
 ```
@@ -153,53 +244,6 @@ Cecelia: Feature「实时派发」进度 50%
 
 Cecelia: KR1「派发成功率 > 90%」进度 60%
 
-         Feature 1: 实时派发 - 50%
-         Feature 2: Seats 分配 - 100% ✅
-
-         🔴 需要你参与: 1 个决策
+         Project 1: 保护系统增强 - 50%
+         Project 2: 调度优化 - 100%
 ```
-
----
-
-## 7. 数据库字段
-
-### goals 表（OKR）
-
-```sql
-id UUID PRIMARY KEY
-parent_id UUID          -- 父 OKR（嵌套）
-project_id UUID         -- 关联 Repository（可空）
-type VARCHAR(50)        -- 'objective' | 'key_result'
-title VARCHAR(255)
-progress INTEGER
-```
-
-### projects 表（Repository + SubProject）
-
-```sql
-id UUID PRIMARY KEY
-parent_id UUID          -- 有值 = SubProject (Feature/Sprint)
-name VARCHAR(255)
-repo_path VARCHAR(500)  -- 有值 = Repository
-acceptance_criteria TEXT -- SubProject 的验收条件
-subproject_type VARCHAR(20) -- 'feature' | 'sprint'
-```
-
-### tasks 表
-
-```sql
-id UUID PRIMARY KEY
-project_id UUID         -- 所属 SubProject
-goal_id UUID            -- 关联 KR
-autonomy_level VARCHAR(20) DEFAULT 'observer'
-result_summary TEXT     -- 执行结果（用于动态规划下一步）
-sequence INTEGER        -- 执行顺序
-```
-
----
-
-## 8. PRD 规则
-
-- **PRD 针对 SubProject (Feature/Sprint) 写**
-- 不针对 Task
-- PRD 包含：目标、验收条件、不包含具体 Task 列表

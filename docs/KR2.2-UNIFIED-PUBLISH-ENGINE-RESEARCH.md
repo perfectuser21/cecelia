@@ -1,3 +1,5 @@
+> **WARNING: OBSOLETE**: publishing_tasks等表已在Migration 033中删除。此文档仅作历史记录保留。
+
 # KR2.2 统一发布引擎技术设计文档
 
 **版本**: v1.0

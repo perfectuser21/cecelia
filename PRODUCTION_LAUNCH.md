@@ -4,9 +4,9 @@
 **2026-02-07 21:51:00 (UTC+08:00)**
 
 ## 🎯 上线版本
-- **Brain Version**: 1.22.3
-- **Schema Version**: 017
-- **Container**: cecelia-brain:1.22.3
+- **Brain Version**: 1.40.0
+- **Schema Version**: 034
+- **Container**: cecelia-brain:1.40.0
 - **运行模式**: Autonomous (自主运行)
 
 ## ✅ 系统状态
@@ -174,5 +174,5 @@ docker stop cecelia-node-brain
 ---
 
 *报告生成时间: 2026-02-07 21:51:30*
-*Brain 版本: 1.22.3*
-*Schema 版本: 017*
+*Brain 版本: 1.40.0*
+*Schema 版本: 034*

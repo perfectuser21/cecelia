@@ -1,8 +1,8 @@
 # Cecelia Core Brain - 完整能力报告
 
 **生成时间**: 2026-02-07
-**Brain 版本**: 1.22.4
-**Schema 版本**: 016
+**Brain 版本**: 1.40.0
+**Schema 版本**: 034
 **测试通过率**: 860/860 (100%)
 
 ---
@@ -37,7 +37,7 @@ Cecelia Brain = **自主运行的任务调度与决策系统**
     ↓
 ┌─────────────────────────────────────────────┐
 │  PostgreSQL — 唯一真相源                    │
-│  cecelia 数据库, schema v016                │
+│  cecelia 数据库, schema v034                │
 │  20 张核心表                                │
 └─────────────────────────────────────────────┘
 ```
@@ -56,7 +56,7 @@ Cecelia Brain = **自主运行的任务调度与决策系统**
 | **执行器** | executor.js | • 动态并发控制（1-12席位）<br>• 压力自适应限流（4档）<br>• 进程生成和管理<br>• 指数退避重试<br>• 失败分类和隔离 |
 | **规划器** | planner.js | • KR 自动拆解任务<br>• PRD 生成<br>• 依赖识别 |
 | **看门狗** | watchdog.js | • /proc 实时采样<br>• 动态 RSS/CPU 阈值<br>• 三级响应（警告/杀进程/危机）<br>• 两阶段杀进程（SIGTERM→SIGKILL） |
-| **警觉系统** | alertness.js | • 4级保护（Normal/Alert/Emergency/Coma）<br>• 信号聚合（8种信号）<br>• 指数衰减恢复<br>• Token bucket 限流 |
+| **警觉系统** | alertness/ | • 5级保护（SLEEPING/CALM/AWARE/ALERT/PANIC）<br>• 实时指标收集<br>• 异常模式诊断<br>• 分级响应和自愈恢复 |
 | **熔断器** | circuit-breaker.js | • 三态隔离（CLOSED/OPEN/HALF_OPEN）<br>• 按服务追踪<br>• 3次失败自动熔断<br>• 30分钟自动半开 |
 | **隔离区** | quarantine.js | • 失败模式分类（6种）<br>• 3次失败自动隔离<br>• 可疑输入检测（80+正则）<br>• 手动释放需 RCA |
 
@@ -87,26 +87,19 @@ Cecelia Brain = **自主运行的任务调度与决策系统**
 
 ## 🛡️ 保护系统
 
-### 1. 警觉系统（Alertness）— 4级自适应保护
+### 1. 警觉系统（Alertness）— 5级自适应保护
 
-| 级别 | 触发条件 | 系统行为 | 限流效果 |
-|------|----------|----------|----------|
-| **L0 Normal** | 系统压力 < 0.5 | 100% 正常运行 | 12席位 |
-| **L1 Alert** | 压力 0.5-0.7 | 减少派发，增加监控 | 8席位 |
-| **L2 Emergency** | 压力 0.7-0.9 | 最小运营，停止新任务 | 4席位 |
-| **L3 Coma** | 压力 ≥ 0.9 | 仅心跳，等待恢复 | 0席位（停止） |
+| 级别 | 说明 | 系统行为 |
+|------|------|----------|
+| **SLEEPING (0)** | 休眠状态 - 无任务 | 最小资源消耗 |
+| **CALM (1)** | 平静状态 - 正常运行 | 100% 派发率 |
+| **AWARE (2)** | 警觉状态 - 轻微异常 | 减少派发，增加监控 |
+| **ALERT (3)** | 警报状态 - 明显异常 | 最小运营，限制新任务 |
+| **PANIC (4)** | 恐慌状态 - 严重异常 | 仅心跳，等待恢复 |
 
-**8种信号源**：
-- 熔断器打开次数
-- 隔离区任务数量
-- 看门狗杀进程次数
-- LLM 调用失败率
-- 数据库连接状态
-- 任务超时率
-- 资源使用率
-- 错误日志频率
+**实现**: `alertness/` 目录（metrics.js, diagnosis.js, escalation.js, healing.js）
 
-**恢复机制**: 指数衰减（信号半衰期 30分钟）
+**恢复机制**: 自愈恢复策略 + 分级响应升级
 
 ### 2. 熔断器（Circuit Breaker）
 
@@ -234,15 +227,6 @@ maxSlots = min(effectiveSlots, 12)
 | 0.9-1.0 | 1 | 危机模式，极少派发 |
 | ≥ 1.0 | 0 | 停止派发，仅心跳 |
 
-### Token Bucket 限流
-
-**3种桶**:
-- `dispatch`: 10 tokens/min（派发限流）
-- `l1_calls`: 20 tokens/min（丘脑调用限流）
-- `l2_calls`: 5 tokens/min（皮层调用限流）
-
-**自动补充**: 每分钟按 refillRate 补充
-
 ---
 
 ## 🧪 学习与智能
@@ -269,8 +253,6 @@ Cortex RCA 分析（系统性失败）
 生成策略调整建议
   ↓
 写入 brain_config 表
-  ↓
-config-loader 读取配置
   ↓
 应用到系统行为
   ↓
@@ -347,12 +329,6 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 - `POST /api/brain/cortex/check-similarity` - 相似度检测
 - `POST /api/brain/learning/evaluate-strategy` - 策略有效性评估
 
-### Feature 管理
-- `GET /api/brain/features` - 所有 Feature
-- `POST /api/brain/features` - 创建 Feature
-- `PUT /api/brain/features/:id` - 更新 Feature
-- `GET /api/brain/feature-tick/status` - Feature Tick 状态
-
 ### 决策与操作
 - `GET /api/brain/decisions` - 决策历史
 - `GET /api/brain/pending-actions` - 待审批操作
@@ -365,7 +341,7 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 
 ---
 
-## 💾 数据库 Schema（v016）
+## 💾 数据库 Schema（v034）
 
 ### 核心表（20张）
 
@@ -373,7 +349,7 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 |------|------|----------|
 | **goals** | OKR 存储 | id, title, type, status, parent_id, progress |
 | **projects** | 仓库+Feature | id, name, repo_path, parent_id |
-| **features** | Feature 状态机 | id, project_id, name, status |
+| **project_repos** | 多仓库关联 | project_id, repo_path |
 | **tasks** | 任务 | id, project_id, goal_id, task_type, status, payload |
 | **agent_runs** | 执行历史 | id, task_id, run_id, status, output |
 | **execution_logs** | 进程日志 | id, task_id, level, message, timestamp |
@@ -390,11 +366,11 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 | **strategy_effectiveness** | 策略有效性 | id, adoption_id, baseline_success_rate, post_adjustment_success_rate, is_effective |
 | **proposals** | 策略提案 | id, proposal_type, params, status |
 | **event_log** | 审计追踪 | id, event_type, data, timestamp |
-| **published_items** | 发布系统 | id, content, status |
+| **pr_plans** | 工程规划 | project_id, title, dod, complexity |
 
-### 迁移历史（16个）
-- 000_base_schema.sql → 016_immune_system_connections.sql
-- 最新: Migration 016 添加策略有效性追踪和质量反馈
+### 迁移历史（34个）
+- 000_base_schema.sql → 034
+- 最新: Migration 034
 
 ---
 
@@ -409,13 +385,13 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 |------|----------|--------|
 | **Tick Loop** | tick.test.js | 9 |
 | **Executor** | executor.test.js | 15+ |
-| **Alertness** | alertness.test.js | 12 |
+| **Alertness** | alertness-actions.test.js | 12 |
 | **Circuit Breaker** | circuit-breaker.test.js | 8 |
 | **Quarantine** | quarantine.test.js | 20+ |
 | **Watchdog** | watchdog.test.js | 10 |
 | **Cortex** | cortex.test.js | 15+ |
 | **Learning** | learning.test.js | 12 |
-| **Config Loader** | config-loader.test.js | 13 |
+| **Recurring** | recurring.test.js | 10+ |
 | **Quality** | cortex-quality.test.js | 20+ |
 | **Migrations** | migration-*.test.js | 100+ |
 
@@ -426,7 +402,6 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 ### 系统容量
 - **最大并发**: 12 任务（动态调整）
 - **Tick 间隔**: 5秒循环，5分钟执行
-- **Feature Tick**: 30秒间隔
 - **任务超时**: 60分钟自动失败
 - **熔断器恢复**: 30分钟
 
@@ -439,10 +414,6 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 ### LLM 调用
 - **L1 丘脑**: Sonnet, <1秒响应
 - **L2 皮层**: Opus, 5-30秒分析
-- **Token 限流**:
-  - dispatch: 10/min
-  - L1: 20/min
-  - L2: 5/min
 
 ---
 
@@ -453,12 +424,12 @@ effectiveness = (rating × 8) - reoccurrence_penalty
 1. **自主运行** - 24/7 无人值守运行
 2. **智能派发** - KR 轮转评分，自动选择下一个任务
 3. **资源管理** - 动态并发控制，压力自适应
-4. **故障保护** - 4级警觉，熔断器，看门狗，隔离区
+4. **故障保护** - 5级警觉（SLEEPING/CALM/AWARE/ALERT/PANIC），熔断器，看门狗，隔离区
 5. **失败学习** - RCA 分析，策略调整，有效性评估
 6. **质量评估** - 4维评分，相似度检测，用户反馈
 7. **智能重试** - 按失败类型自定义重试策略
 8. **动态配置** - 策略调整可被系统读取和应用
-9. **Feature 管理** - 多任务 Feature 状态机
+9. **OKR 管理** - 6层分解（Global OKR → Area OKR → KR → Project → Initiative → Task）
 10. **审计追踪** - 完整的事件日志和决策记录
 
 ### 🎉 免疫系统完整闭环
@@ -471,8 +442,6 @@ RCA 分析（Cortex）
 策略调整建议
   ↓
 写入 brain_config
-  ↓
-config-loader 读取 ✅
   ↓
 应用到系统 ✅
   ↓
@@ -488,10 +457,10 @@ config-loader 读取 ✅
 ## 📝 开发规范
 
 ### 版本控制
-- **Brain 版本**: `brain/package.json` (当前 1.22.4)
+- **Brain 版本**: `brain/package.json` (当前 1.40.0)
 - **版本追踪**: `.brain-versions` (SSOT)
-- **Schema 版本**: Migration 文件编号 (当前 016)
-- **EXPECTED_SCHEMA_VERSION**: `brain/src/selfcheck.js` (016)
+- **Schema 版本**: Migration 文件编号 (当前 034)
+- **EXPECTED_SCHEMA_VERSION**: `brain/src/selfcheck.js` (034)
 
 ### 文档规范
 - **架构定义**: `DEFINITION.md` (主文档)
@@ -522,8 +491,8 @@ config-loader 读取 ✅
 - ✅ 文档更新同步
 - ✅ 无遗留垃圾文件
 - ✅ 无矛盾信息
-- ✅ Schema 版本正确 (v016)
-- ✅ 版本号同步 (1.22.4)
+- ✅ Schema 版本正确 (v034)
+- ✅ 版本号同步 (1.40.0)
 
 **部署方式**:
 ```bash
@@ -545,6 +514,6 @@ curl http://localhost:5221/api/brain/status/full
 
 ---
 
-**报告结束** - Cecelia Brain 1.22.4 完整能力清单
+**报告结束** - Cecelia Brain 1.40.0 完整能力清单
 **免疫系统**: 100% 功能完整 ✅
 **系统状态**: 可立即部署 🚀
