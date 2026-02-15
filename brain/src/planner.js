@@ -138,11 +138,14 @@ async function selectTargetProject(kr, state) {
  * @returns {Object|null} - Task or null
  */
 async function generateNextTask(kr, project, state, options = {}) {
-  // V1: check existing queued or in_progress tasks first — don't generate if work exists
+  // V4: Phase-aware task selection — exploratory tasks first, then dev tasks.
+  // When an Initiative has decomposition_mode='exploratory', exploratory-phase tasks
+  // must complete before dev-phase tasks are dispatched.
   const result = await pool.query(`
     SELECT * FROM tasks
     WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
     ORDER BY
+      CASE phase WHEN 'exploratory' THEN 0 WHEN 'dev' THEN 1 ELSE 2 END,
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC

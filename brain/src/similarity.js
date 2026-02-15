@@ -167,7 +167,7 @@ class SimilarityService {
         kr.id, kr.title, kr.target_value, kr.current_value, kr.unit, kr.status,
         g.id as goal_id, g.title as goal_title
       FROM key_results kr
-      LEFT JOIN goals g ON kr.goal_id = g.id AND g.type = 'objective'
+      LEFT JOIN goals g ON kr.goal_id = g.id AND g.type IN ('global_okr', 'area_okr')
       WHERE kr.status IN ('active', 'in_progress')
       ORDER BY kr.updated_at DESC
       LIMIT 30

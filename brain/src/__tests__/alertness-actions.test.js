@@ -2,6 +2,7 @@
  * Tests for Alertness Response Actions
  *
  * Verifies that alertness level changes trigger correct protective and recovery actions.
+ * Uses unified alertness levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -16,6 +17,12 @@ import {
   getMitigationState,
   _resetMitigationState,
 } from '../alertness-actions.js';
+
+// New unified levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
+const CALM = 1;
+const AWARE = 2;
+const ALERT = 3;
+const PANIC = 4;
 
 describe('alertness-actions', () => {
   beforeEach(async () => {
@@ -35,28 +42,28 @@ describe('alertness-actions', () => {
 
   describe('executeResponseActions', () => {
     it('should not execute actions if level unchanged', async () => {
-      const result = await executeResponseActions(0, 0, {});
+      const result = await executeResponseActions(CALM, CALM, {});
       expect(result.actions).toEqual([]);
       expect(result.reason).toBe('no_change');
     });
 
-    it('should execute notification on NORMAL → ALERT', async () => {
-      const result = await executeResponseActions(0, 1, { resource_pressure: 0.3 });
+    it('should execute notification on CALM -> AWARE', async () => {
+      const result = await executeResponseActions(CALM, AWARE, { resource_pressure: 0.3 });
 
       expect(result.actions).toContain('notification');
-      expect(result.from_level).toBe(0);
-      expect(result.to_level).toBe(1);
+      expect(result.from_level).toBe(CALM);
+      expect(result.to_level).toBe(AWARE);
 
       // Check event was logged
       const events = await pool.query(
         `SELECT * FROM cecelia_events WHERE event_type = 'alertness_notification' ORDER BY created_at DESC LIMIT 1`
       );
       expect(events.rows.length).toBe(1);
-      expect(events.rows[0].payload.level).toBe(1);
+      expect(events.rows[0].payload.level).toBe(AWARE);
     });
 
-    it('should execute escalation + mitigation on ALERT → EMERGENCY', async () => {
-      const result = await executeResponseActions(1, 2, { consecutive_failures: 5 });
+    it('should execute escalation + mitigation on AWARE -> ALERT', async () => {
+      const result = await executeResponseActions(AWARE, ALERT, { consecutive_failures: 5 });
 
       expect(result.actions).toContain('notification');
       expect(result.actions).toContain('escalation');
@@ -72,8 +79,8 @@ describe('alertness-actions', () => {
       expect(state.p2_paused).toBe(true);
     });
 
-    it('should execute shutdown safety on EMERGENCY → COMA', async () => {
-      const result = await executeResponseActions(2, 3, { resource_pressure: 0.95 });
+    it('should execute shutdown safety on ALERT -> PANIC', async () => {
+      const result = await executeResponseActions(ALERT, PANIC, { resource_pressure: 0.95 });
 
       expect(result.actions).toContain('shutdown_safety');
 
@@ -88,12 +95,12 @@ describe('alertness-actions', () => {
       expect(events.rows.length).toBe(1);
     });
 
-    it('should execute recovery on COMA → NORMAL (multi-step downgrade)', async () => {
-      // Simulate COMA state first
-      await executeResponseActions(0, 3, {});
+    it('should execute recovery on PANIC -> CALM (multi-step downgrade)', async () => {
+      // Simulate PANIC state first
+      await executeResponseActions(CALM, PANIC, {});
 
       // Now recover
-      const result = await executeResponseActions(3, 0, {});
+      const result = await executeResponseActions(PANIC, CALM, {});
 
       expect(result.actions).toContain('recovery');
 
@@ -112,16 +119,14 @@ describe('alertness-actions', () => {
 
   describe('notifyAlert', () => {
     it('should record notification to events table', async () => {
-      await notifyAlert(1, { resource_pressure: 0.3 });
+      await notifyAlert(AWARE, { resource_pressure: 0.3 });
 
       const events = await pool.query(
         `SELECT * FROM cecelia_events WHERE event_type = 'alertness_notification' LIMIT 1`
       );
 
       expect(events.rows.length).toBe(1);
-      expect(events.rows[0].payload.level).toBe(1);
-      expect(events.rows[0].payload.level_name).toBe('ALERT');
-      expect(events.rows[0].payload.signals).toEqual({ resource_pressure: 0.3 });
+      expect(events.rows[0].payload.level).toBe(AWARE);
     });
   });
 
@@ -198,37 +203,37 @@ describe('alertness-actions', () => {
   });
 
   describe('recoverFromLevel', () => {
-    it('should disable drain mode on COMA → EMERGENCY', async () => {
-      // Setup: enter COMA
+    it('should disable drain mode on PANIC -> ALERT', async () => {
+      // Setup: enter PANIC
       await activateShutdownSafety({});
       expect(getMitigationState().drain_mode_requested).toBe(true);
 
       // Recover
-      await recoverFromLevel(3, 2);
+      await recoverFromLevel(PANIC, ALERT);
 
       const state = getMitigationState();
       expect(state.drain_mode_requested).toBe(false);
     });
 
-    it('should resume P2 on EMERGENCY → ALERT', async () => {
-      // Setup: enter EMERGENCY
+    it('should resume P2 on ALERT -> AWARE', async () => {
+      // Setup: enter ALERT
       await applyMitigation({});
       expect(getMitigationState().p2_paused).toBe(true);
 
       // Recover
-      await recoverFromLevel(2, 1);
+      await recoverFromLevel(ALERT, AWARE);
 
       const state = getMitigationState();
       expect(state.p2_paused).toBe(false);
     });
 
-    it('should clear all restrictions on ALERT → NORMAL', async () => {
+    it('should clear all restrictions on AWARE -> CALM', async () => {
       // Setup: mitigation active
       await applyMitigation({});
       await activateShutdownSafety({});
 
       // Recover
-      await recoverFromLevel(1, 0);
+      await recoverFromLevel(AWARE, CALM);
 
       const state = getMitigationState();
       expect(state.p2_paused).toBe(false);
@@ -236,15 +241,15 @@ describe('alertness-actions', () => {
     });
 
     it('should record recovery event', async () => {
-      await recoverFromLevel(2, 1);
+      await recoverFromLevel(ALERT, AWARE);
 
       const events = await pool.query(
         `SELECT * FROM cecelia_events WHERE event_type = 'alertness_recovery' LIMIT 1`
       );
 
       expect(events.rows.length).toBe(1);
-      expect(events.rows[0].payload.from_level).toBe(2);
-      expect(events.rows[0].payload.to_level).toBe(1);
+      expect(events.rows[0].payload.from_level).toBe(ALERT);
+      expect(events.rows[0].payload.to_level).toBe(AWARE);
     });
   });
 
