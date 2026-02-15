@@ -39,6 +39,7 @@ async function hasExistingDecompositionTask(goalId) {
       AND (
         status IN ('queued', 'in_progress')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
+        OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
     LIMIT 1
   `, [goalId]);
