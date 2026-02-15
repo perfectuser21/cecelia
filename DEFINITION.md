@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-15
-**Brain 版本**: 1.40.4
+**Brain 版本**: 1.40.5
 **Schema 版本**: 035
 **状态**: 生产运行中
 
@@ -581,7 +581,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.40.3`（多阶段构建）
+- 镜像：`cecelia-brain:1.40.5`（多阶段构建）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -608,8 +608,8 @@ docker compose up -d cecelia-node-brain
 1. **ENV_REGION** — 必须是 'us' 或 'hk'
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
-4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans
-5. **Schema 版本** — 必须 = '034'
+4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
+5. **Schema 版本** — 必须 = '035'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -622,7 +622,7 @@ DB_DEFAULTS = {
   port: parseInt(process.env.DB_PORT || '5432', 10),
   database: process.env.DB_NAME || 'cecelia',
   user: process.env.DB_USER || 'cecelia',
-  password: process.env.DB_PASSWORD || 'CeceliaUS2026',
+  password: process.env.DB_PASSWORD || '',
 }
 ```
 
@@ -757,7 +757,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.40.3）
+├── package.json               # 版本号（当前 1.40.5）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）
@@ -786,12 +786,13 @@ brain/
 │   ├── notifier.js            # 通知
 │   └── websocket.js           # WebSocket 推送
 │
-├── migrations/                # SQL 迁移 (000-034)
+├── migrations/                # SQL 迁移 (000-035)
 │   ├── 000_base_schema.sql
 │   ├── ...
 │   ├── 027_align_project_feature_model.sql  # 删除 features 表
 │   ├── ...
-│   └── 034_cleanup_orphan_tables_and_constraints.sql
+│   ├── 034_cleanup_orphan_tables_and_constraints.sql
+│   └── 035_final_cleanup_orphans_and_types.sql
 │
 └── src/__tests__/             # Vitest 测试
 ```

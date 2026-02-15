@@ -639,8 +639,7 @@ async function dispatchNextTask(goalIds) {
       title: nextTask.title
     });
 
-    // Publish executor status update
-    publishExecutorStatus(activeCount + 1, effectiveLimit - activeCount - 1, MAX_CONCURRENT_TASKS);
+    // Executor status is now available via GET /api/brain/slots (slot budget)
   } catch (wsErr) {
     console.error(`[tick] WebSocket broadcast failed: ${wsErr.message}`);
   }
