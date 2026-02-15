@@ -133,9 +133,30 @@ jobs:
         working-directory: brain
         run: node src/migrate.js
 
-      - name: Run Brain tests
+      - name: Run Brain tests with coverage
         working-directory: brain
-        run: npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
+        run: |
+          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage
+
+      - name: Check Thalamus/Cortex coverage
+        working-directory: brain
+        run: |
+          # Extract coverage for thalamus.js and cortex.js from JSON report
+          if [ -f coverage/coverage-final.json ]; then
+            echo "Checking coverage for thalamus.js and cortex.js..."
+
+            # Parse coverage using jq
+            THALAMUS_COV=$(jq '.["src/thalamus.js"].lines.pct // 0' coverage/coverage-final.json)
+            CORTEX_COV=$(jq '.["src/cortex.js"].lines.pct // 0' coverage/coverage-final.json)
+
+            echo "thalamus.js coverage: ${THALAMUS_COV}%"
+            echo "cortex.js coverage: ${CORTEX_COV}%"
+
+            # Note: Currently baseline only, not enforcing 95% threshold yet
+            # TODO: Enable threshold enforcement after coverage improvements
+          else
+            echo "Coverage report not found, skipping check"
+          fi
 
       # L4: GoldenPath — Brain minimal life loop E2E
       - name: GoldenPath E2E
