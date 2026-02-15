@@ -5,10 +5,16 @@
 // Set required env vars before importing server
 process.env.ENV_REGION = 'us';
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
-import app from '../../../server.js';
-import pool from '../../db.js';
+
+// Mock process.exit to prevent server.js from exiting during import
+// Must use dynamic import because server.js runs selfcheck at module level
+const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => {});
+
+// Dynamic imports to ensure mocks are in place
+const { default: app } = await import('../../../server.js');
+const { default: pool } = await import('../../db.js');
 
 describe('Memory API Routes', () => {
   let testTaskId;
@@ -33,6 +39,9 @@ describe('Memory API Routes', () => {
     if (testTaskId) {
       await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
     }
+
+    // Restore process.exit mock
+    mockExit.mockRestore();
   });
 
   describe('POST /api/brain/memory/search', () => {
