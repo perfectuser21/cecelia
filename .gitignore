@@ -48,6 +48,11 @@ Thumbs.db
 # Build artifacts
 frontend/dist/
 
+# Coverage reports
+brain/coverage/
+coverage/
+*.lcov
+
 # Images (screenshots, temp assets)
 *.png
 *.jpg

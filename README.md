@@ -1,5 +1,9 @@
 # Cecelia Core
 
+![Coverage](https://img.shields.io/badge/coverage-46%25-yellow)
+![Thalamus Coverage](https://img.shields.io/badge/thalamus-72%25-yellow)
+![Cortex Coverage](https://img.shields.io/badge/cortex-49%25-red)
+
 Cecelia 的核心大脑系统，负责任务调度、决策、保护和自主执行。
 
 ## 快速开始
