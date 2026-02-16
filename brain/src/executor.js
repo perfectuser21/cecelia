@@ -582,22 +582,13 @@ function getSkillForTaskType(taskType) {
  * Get model for a task based on task properties
  * Returns model name or null (use default Sonnet)
  *
- * 固定配置（简化版）：
- * - 秋米（OKR 拆解）: /okr + Opus
- * - 写代码（dev）: /dev + Opus（全部用 Opus）
- * - Review: /review + Sonnet
- * - HK 任务: MiniMax
+ * 配置（成本优化 - 2026-02-16）：
+ * - 全部任务: Sonnet (default)
+ * - 降低成本约 70%
  */
 function getModelForTask(task) {
-  // OKR decomposition → Opus (秋米拆解)
-  // 'true' = 首次拆解, 'continue' = 继续拆解
-  const decomposition = task.payload?.decomposition;
-  if (decomposition === 'true' || decomposition === 'continue') return 'opus';
-  // 写代码 → 全部用 Opus
-  if (task.task_type === 'dev') return 'opus';
-  // Review/QA tasks → Sonnet
-  if (['review', 'qa', 'audit'].includes(task.task_type)) return null;
-  // Default: null (cecelia-run default = Sonnet)
+  // 成本优化：全部使用 Sonnet
+  // 返回 null = cecelia-run 默认模型 (Sonnet)
   return null;
 }
 
