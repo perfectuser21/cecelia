@@ -687,10 +687,9 @@ function generateTasks(projectName, intentType, _input, entities = {}) {
 }
 
 /**
- * Generate PRD draft from parsed intent (legacy function)
+ * Generate PRD draft from parsed intent
  * @param {Object} parsedIntent - Parsed intent object
- * @returns {string} - PRD draft in markdown format
- * @deprecated Use generateStandardPrd for new implementations
+ * @returns {string} - PRD draft in markdown format (without frontmatter)
  */
 function generatePrdDraft(parsedIntent) {
   // Use new template system but without frontmatter for backward compatibility
