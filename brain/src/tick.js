@@ -593,6 +593,25 @@ async function dispatchNextTask(goalIds) {
     return await processCortexTask(nextTask, actions);
   }
 
+  // 3b. Pre-flight Check — validate task quality before dispatch
+  const { preFlightCheck } = await import('./pre-flight-check.js');
+  const checkResult = await preFlightCheck(nextTask);
+  if (!checkResult.passed) {
+    console.warn(`[dispatch] Pre-flight check failed for task ${nextTask.id}:`, checkResult.issues);
+    // Record failure reason to metadata
+    await pool.query(
+      `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [nextTask.id, JSON.stringify({
+        pre_flight_failed: true,
+        pre_flight_issues: checkResult.issues,
+        pre_flight_suggestions: checkResult.suggestions,
+        failed_at: new Date().toISOString()
+      })]
+    );
+    // Do not dispatch, return false
+    return { dispatched: false, reason: 'pre_flight_check_failed', issues: checkResult.issues, actions };
+  }
+
   // 4. Update task status to in_progress
   const updateResult = await updateTask({
     task_id: nextTask.id,
@@ -678,6 +697,19 @@ async function dispatchNextTask(goalIds) {
     run_id: execResult.runId,
     success: execResult.success
   });
+
+  // Record pre-flight check statistics
+  try {
+    const { getPreFlightStats } = await import('./pre-flight-check.js');
+    const stats = await getPreFlightStats(pool);
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['pre_flight_stats', stats]);
+  } catch (statsErr) {
+    console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
+  }
 
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
