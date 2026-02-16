@@ -137,8 +137,16 @@ grep "0%" coverage/coverage-final.json
 
 ### Enforcement Strategy
 1. **Phase 1** (Current): Baseline measurement and tracking
+   - Thresholds set to 0% to establish baseline
+   - Coverage reports generated but not enforced
+   - Tracking thalamus.js and cortex.js progress
 2. **Phase 2**: Gradual improvement toward 95%
+   - Incrementally increase thresholds as coverage improves
+   - Focus on critical files first (thalamus.js, cortex.js)
 3. **Phase 3**: Enforce 95% threshold in CI
+   - Enable perFile thresholds
+   - Set all thresholds to 95%
+   - CI fails if coverage drops below threshold
 
 ## Troubleshooting
 
