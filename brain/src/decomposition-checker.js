@@ -21,6 +21,40 @@ import pool from './db.js';
 const DEDUP_WINDOW_HOURS = 24;
 
 // ───────────────────────────────────────────────────────────────────
+// Execution Frontier Model - Inventory Management
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * Inventory configuration for task stock management
+ * Instead of decomposing everything upfront, we maintain a "ready tasks inventory"
+ * and replenish it when running low (like warehouse restocking).
+ */
+const INVENTORY_CONFIG = {
+  // Target number of ready tasks per initiative
+  TARGET_READY_TASKS: 5,
+
+  // Low watermark - trigger replenishment when below this
+  LOW_WATERMARK: 2,
+
+  // Batch size for each decomposition (replenishment amount)
+  BATCH_SIZE: 3,
+
+  // Maximum active execution paths to check
+  MAX_ACTIVE_PATHS: 10,
+
+  // Time window for "active" definition (24 hours)
+  ACTIVE_WINDOW_HOURS: 24,
+};
+
+/**
+ * Global WIP limits for decomposition tasks
+ */
+const WIP_LIMITS = {
+  // Maximum concurrent decomposition tasks (across all levels)
+  MAX_DECOMP_IN_FLIGHT: 3,
+};
+
+// ───────────────────────────────────────────────────────────────────
 // Shared helpers
 // ───────────────────────────────────────────────────────────────────
 
@@ -94,6 +128,118 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
     JSON.stringify({ decomposition: 'true', ...payload })
   ]);
   return result.rows[0];
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Execution Frontier - Active Paths & Inventory Management
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * Get active execution paths (Initiatives with recent activity).
+ * Only these paths will be checked for inventory replenishment.
+ *
+ * @returns {Array} Array of active initiatives
+ */
+async function getActiveExecutionPaths() {
+  const result = await pool.query(`
+    SELECT DISTINCT p.id, p.name, pkl.kr_id
+    FROM projects p
+    INNER JOIN tasks t ON t.project_id = p.id
+    LEFT JOIN project_kr_links pkl ON pkl.project_id = p.parent_id
+    WHERE p.type = 'initiative'
+      AND p.status = 'active'
+      AND t.updated_at > NOW() - INTERVAL '${INVENTORY_CONFIG.ACTIVE_WINDOW_HOURS} hours'
+      AND t.status IN ('in_progress', 'completed', 'queued')
+    ORDER BY MAX(t.updated_at) DESC
+    LIMIT ${INVENTORY_CONFIG.MAX_ACTIVE_PATHS}
+  `);
+
+  return result.rows;
+}
+
+/**
+ * Check if we can create a new decomposition task (WIP limit check).
+ *
+ * @returns {boolean} true if we can create more decomposition tasks
+ */
+async function canCreateDecompositionTask() {
+  const result = await pool.query(`
+    SELECT COUNT(*) as count FROM tasks
+    WHERE (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+      AND status IN ('queued', 'in_progress')
+  `);
+
+  const count = parseInt(result.rows[0].count, 10);
+  return count < WIP_LIMITS.MAX_DECOMP_IN_FLIGHT;
+}
+
+/**
+ * Ensure task inventory for an initiative (replenish if running low).
+ * This is the core of the "execution frontier" model - we only decompose
+ * when we're about to run out of tasks to execute.
+ *
+ * @param {Object} initiative - Initiative to check inventory for
+ * @returns {Object|null} Created decomposition task or null
+ */
+async function ensureTaskInventory(initiative) {
+  // 1. Count current ready tasks
+  const readyTasksResult = await pool.query(`
+    SELECT COUNT(*) as count FROM tasks
+    WHERE project_id = $1
+      AND status = 'queued'
+  `, [initiative.id]);
+
+  const readyTasks = parseInt(readyTasksResult.rows[0].count, 10);
+
+  // 2. Check if above low watermark
+  if (readyTasks >= INVENTORY_CONFIG.LOW_WATERMARK) {
+    return null;  // Inventory sufficient
+  }
+
+  // 3. Check if replenishment already in progress
+  if (await hasExistingDecompositionTaskByProject(initiative.id, 'initiative')) {
+    return null;  // Replenishment task already exists
+  }
+
+  // 4. Check global WIP limit
+  if (!(await canCreateDecompositionTask())) {
+    console.log(`[decomp] WIP limit reached, skipping inventory replenishment for ${initiative.name}`);
+    return null;
+  }
+
+  // 5. Create replenishment task (small batch)
+  const task = await createDecompositionTask({
+    title: `Initiative 库存补货: ${initiative.name}`,
+    description: [
+      `请为 Initiative「${initiative.name}」补充任务库存。`,
+      '',
+      `当前库存：${readyTasks} 个 tasks`,
+      `目标库存：${INVENTORY_CONFIG.TARGET_READY_TASKS} 个 tasks`,
+      `本次补货：生成 ${INVENTORY_CONFIG.BATCH_SIZE} 个新 tasks`,
+      '',
+      '要求：',
+      `1. 分析 Initiative 范围，创建 ${INVENTORY_CONFIG.BATCH_SIZE} 个具体的 Tasks`,
+      '2. 每个 Task 约 20 分钟可完成',
+      '3. 为每个 Task 写完整 PRD',
+      '4. 调用 Brain API 创建 Task:',
+      '   POST http://localhost:5221/api/brain/action/create-task',
+      `   Body: { "title": "...", "project_id": "${initiative.id}", "goal_id": "${initiative.kr_id || ''}", "task_type": "dev", "prd_content": "..." }`,
+      '',
+      `Initiative ID: ${initiative.id}`,
+      `Initiative 名称: ${initiative.name}`,
+    ].join('\n'),
+    goalId: initiative.kr_id,
+    projectId: initiative.id,
+    payload: {
+      level: 'initiative',
+      initiative_id: initiative.id,
+      inventory_replenishment: true,
+      batch_size: INVENTORY_CONFIG.BATCH_SIZE,
+    }
+  });
+
+  console.log(`[decomp] Created inventory replenishment task for ${initiative.name}`);
+  return task;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -630,62 +776,89 @@ async function checkExploratoryDecompositionContinue() {
 // ───────────────────────────────────────────────────────────────────
 
 /**
- * Run all 7 decomposition checks.
- * Called by tick.js to detect and fill gaps in the OKR hierarchy.
+ * Run decomposition checks using Execution Frontier Model.
+ * Instead of scanning all gaps, we only check active execution paths
+ * and replenish task inventory when running low.
  *
- * @returns {Object} Summary of all actions taken
+ * @returns {Object} Summary of actions taken
  */
 async function runDecompositionChecks() {
   const allActions = [];
-  const summary = {};
 
-  const checks = [
-    { name: 'global_okr', fn: checkGlobalOkrDecomposition },
-    { name: 'global_kr', fn: checkGlobalKrDecomposition },
-    { name: 'area_okr', fn: checkAreaOkrDecomposition },
-    { name: 'area_kr_project', fn: checkAreaKrProjectLink },
-    { name: 'project', fn: checkProjectDecomposition },
-    { name: 'initiative', fn: checkInitiativeDecomposition },
-    { name: 'exploratory', fn: checkExploratoryDecompositionContinue },
-  ];
+  try {
+    // 1. Get active execution paths (initiatives with recent activity)
+    const activePaths = await getActiveExecutionPaths();
 
-  for (const check of checks) {
-    try {
-      const actions = await check.fn();
-      allActions.push(...actions);
-      summary[check.name] = {
-        created: actions.filter(a => a.action === 'create_decomposition').length,
-        skipped: actions.filter(a => a.action === 'skip_dedup').length,
-      };
-    } catch (err) {
-      console.error(`[decomp-checker] Check ${check.name} failed:`, err.message);
-      summary[check.name] = { error: err.message };
+    console.log(`[decomp-checker] Found ${activePaths.length} active execution paths`);
+
+    // 2. Check inventory for each active path
+    for (const path of activePaths) {
+      try {
+        const task = await ensureTaskInventory(path);
+
+        if (task) {
+          allActions.push({
+            action: 'create_decomposition',
+            check: 'inventory_replenishment',
+            task_id: task.id,
+            initiative_id: path.id,
+            initiative_name: path.name,
+          });
+        } else {
+          allActions.push({
+            action: 'skip_inventory',
+            check: 'inventory_replenishment',
+            initiative_id: path.id,
+            initiative_name: path.name,
+            reason: 'inventory_sufficient_or_wip_limit',
+          });
+        }
+      } catch (err) {
+        console.error(`[decomp-checker] Inventory check failed for ${path.name}:`, err.message);
+        allActions.push({
+          action: 'error',
+          check: 'inventory_replenishment',
+          initiative_id: path.id,
+          initiative_name: path.name,
+          error: err.message,
+        });
+      }
     }
+
+    // 3. Summary
+    const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
+    const totalSkipped = allActions.filter(a => a.action === 'skip_inventory').length;
+
+    if (totalCreated > 0) {
+      console.log(`[decomp-checker] Created ${totalCreated} inventory replenishment tasks`);
+    }
+
+    return {
+      actions: allActions,
+      summary: {
+        active_paths: activePaths.length,
+        created: totalCreated,
+        skipped: totalSkipped,
+        errors: allActions.filter(a => a.action === 'error').length,
+      },
+      total_created: totalCreated,
+      total_skipped: totalSkipped,
+      active_paths: activePaths.map(p => ({ id: p.id, name: p.name })),
+      created_tasks: allActions
+        .filter(a => a.action === 'create_decomposition')
+        .map(a => ({ id: a.task_id, initiative: a.initiative_name })),
+    };
+  } catch (err) {
+    console.error('[decomp-checker] Execution frontier check failed:', err.message);
+    return {
+      actions: [],
+      summary: { error: err.message },
+      total_created: 0,
+      total_skipped: 0,
+      active_paths: [],
+      created_tasks: [],
+    };
   }
-
-  const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
-  if (totalCreated > 0) {
-    console.log(`[decomp-checker] Created ${totalCreated} decomposition tasks`);
-  }
-
-  // Extract layers that were triggered (created at least one task)
-  const layersTriggered = checks
-    .filter(c => summary[c.name]?.created > 0)
-    .map(c => c.name);
-
-  // Extract created task IDs
-  const createdTasks = allActions
-    .filter(a => a.action === 'create_decomposition')
-    .map(a => ({ id: a.task_id, check: a.check }));
-
-  return {
-    actions: allActions,
-    summary,
-    total_created: totalCreated,
-    total_skipped: allActions.filter(a => a.action === 'skip_dedup').length,
-    layers_triggered: layersTriggered,
-    created_tasks: createdTasks,
-  };
 }
 
 export {
@@ -697,9 +870,15 @@ export {
   checkProjectDecomposition,
   checkInitiativeDecomposition,
   checkExploratoryDecompositionContinue,
+  // Execution Frontier functions
+  getActiveExecutionPaths,
+  ensureTaskInventory,
+  canCreateDecompositionTask,
   // Exported for testing
   hasExistingDecompositionTask,
   hasExistingDecompositionTaskByProject,
   createDecompositionTask,
   DEDUP_WINDOW_HOURS,
+  INVENTORY_CONFIG,
+  WIP_LIMITS,
 };
