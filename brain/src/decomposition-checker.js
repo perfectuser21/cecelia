@@ -141,8 +141,10 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
  * @returns {Array} Array of active initiatives
  */
 async function getActiveExecutionPaths() {
+  // Fixed SQL: removed DISTINCT, added GROUP BY for MAX aggregation
+  // PostgreSQL requires ORDER BY expressions to appear in SELECT list when using DISTINCT
   const result = await pool.query(`
-    SELECT DISTINCT p.id, p.name, pkl.kr_id
+    SELECT p.id, p.name, pkl.kr_id, MAX(t.updated_at) as last_activity
     FROM projects p
     INNER JOIN tasks t ON t.project_id = p.id
     LEFT JOIN project_kr_links pkl ON pkl.project_id = p.parent_id
@@ -150,7 +152,8 @@ async function getActiveExecutionPaths() {
       AND p.status = 'active'
       AND t.updated_at > NOW() - INTERVAL '${INVENTORY_CONFIG.ACTIVE_WINDOW_HOURS} hours'
       AND t.status IN ('in_progress', 'completed', 'queued')
-    ORDER BY MAX(t.updated_at) DESC
+    GROUP BY p.id, p.name, pkl.kr_id
+    ORDER BY last_activity DESC
     LIMIT ${INVENTORY_CONFIG.MAX_ACTIVE_PATHS}
   `);
 
