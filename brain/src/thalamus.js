@@ -524,7 +524,17 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂原因或重试超限 → 交给 Sonnet
+    // 无复杂原因 + 重试超限 → 自动隔离（取消任务）
+    if (!hasComplexReason && retryExceeded) {
+      return {
+        level: 0,
+        actions: [{ type: 'cancel_task', params: { task_id: event.task_id, reason: 'retry_exceeded' } }],
+        rationale: `任务失败次数超限 (retry=${event.retry_count || 0})，自动隔离`,
+        confidence: 0.9,
+        safety: false
+      };
+    }
+    // 复杂原因（无论是否重试超限）→ 交给 Sonnet
     return null;
   }
 
