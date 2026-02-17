@@ -652,15 +652,44 @@ async function checkInitiativeDecomposition() {
       continue;
     }
 
-    // Get linked KR for this initiative's parent project
+    // Get linked KR for this initiative — 4-layer fallback chain
     let krId = null;
+    // Layer 1: project_kr_links on parent project (original behavior)
     if (init.parent_id) {
-      const krResult = await pool.query(`
-        SELECT pkl.kr_id FROM project_kr_links pkl
-        WHERE pkl.project_id = $1
-        LIMIT 1
-      `, [init.parent_id]);
+      const krResult = await pool.query(
+        `SELECT pkl.kr_id FROM project_kr_links pkl WHERE pkl.project_id = $1 LIMIT 1`,
+        [init.parent_id]
+      );
       krId = krResult.rows[0]?.kr_id || null;
+    }
+    // Layer 2: initiative's own kr_id field
+    if (!krId) {
+      const selfResult = await pool.query(
+        `SELECT kr_id FROM projects WHERE id = $1 AND kr_id IS NOT NULL LIMIT 1`,
+        [init.id]
+      );
+      krId = selfResult.rows[0]?.kr_id || null;
+    }
+    // Layer 3: parent project's kr_id field
+    if (!krId && init.parent_id) {
+      const parentResult = await pool.query(
+        `SELECT kr_id FROM projects WHERE id = $1 AND kr_id IS NOT NULL LIMIT 1`,
+        [init.parent_id]
+      );
+      krId = parentResult.rows[0]?.kr_id || null;
+    }
+    // Layer 4: project_kr_links on initiative itself
+    if (!krId) {
+      const selfLinkResult = await pool.query(
+        `SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1`,
+        [init.id]
+      );
+      krId = selfLinkResult.rows[0]?.kr_id || null;
+    }
+    // No KR found — skip to avoid accumulating NULL-goal_id tasks
+    if (!krId) {
+      console.log(`[decomp-checker] Check 6: Skip "${init.name}" — no KR linkage found`);
+      continue;
     }
 
     const task = await createDecompositionTask({
