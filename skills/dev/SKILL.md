@@ -16,6 +16,8 @@ description: |
   - 无头模式: CECELIA_HEADLESS=true 时 Stop Hook 直接 exit 0，外部循环控制
 ---
 
+> **CRITICAL LANGUAGE RULE（语言规则）: 所有输出必须使用简体中文。包括步骤说明、状态更新、日志信息、错误报告。严禁使用日语、韩语或任何其他语言，即使在无头（headless）子进程中也必须遵守。**
+
 # /dev - 统一开发工作流（v3.1）
 
 ## 🎯 使用方式

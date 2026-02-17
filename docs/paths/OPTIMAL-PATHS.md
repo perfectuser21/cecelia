@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 2.92.0
+version: 2.93.0
 created: 2026-02-17
 updated: 2026-02-17
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.92.0: 从 feature-registry.yml 自动生成
+  - 2.93.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -223,5 +223,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.92.0
+**版本**: 2.93.0
 **生成时间**: 2026-02-17
