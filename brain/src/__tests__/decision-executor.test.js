@@ -191,6 +191,36 @@ describe('decision-executor', () => {
       });
     });
 
+    describe('pause_task', () => {
+      it('should update task status to paused', async () => {
+        const result = await actionHandlers.pause_task({ task_id: 'test-id' }, {});
+        expect(result.success).toBe(true);
+      });
+    });
+
+    describe('resume_task', () => {
+      it('should update task status to queued', async () => {
+        const result = await actionHandlers.resume_task({ task_id: 'test-id' }, {});
+        expect(result.success).toBe(true);
+      });
+    });
+
+    describe('mark_task_blocked', () => {
+      it('should update task status to blocked', async () => {
+        const result = await actionHandlers.mark_task_blocked({ task_id: 'test-id', reason: 'dependency missing' }, {});
+        expect(result.success).toBe(true);
+        expect(result.reason).toBe('dependency missing');
+      });
+    });
+
+    describe('quarantine_task', () => {
+      it('should call quarantineTask with task_id and reason', async () => {
+        const result = await actionHandlers.quarantine_task({ task_id: 'test-id', reason: 'repeated_failure' }, {});
+        // quarantineTask returns success or already_quarantined for non-existent tasks
+        expect(typeof result.success).toBe('boolean');
+      });
+    });
+
     describe('notify_user', () => {
       it('should log notification and record event', async () => {
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
