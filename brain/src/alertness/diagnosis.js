@@ -29,12 +29,16 @@ const ANOMALY_PATTERNS = {
 
   MEMORY_LEAK: {
     name: '内存泄漏',
-    description: '内存持续上涨 > 10MB/分钟',
+    description: '内存持续上涨 > 50MB/分钟（RSS > 200MB 时）',
     severity: 'high',
     checks: (metrics, history) => {
-      if (history.length < 5) return false;
+      if (history.length < 10) return false;
 
-      const recentMemory = history.slice(-5).map(h => ({
+      // Brain 进程正常 RSS ~60MB，低于 200MB 不可能是真正泄漏
+      const currentRss = metrics.memory?.value || 0;
+      if (currentRss < 200) return false;
+
+      const recentMemory = history.slice(-10).map(h => ({
         value: h.metrics?.memory?.value || 0,
         timestamp: h.timestamp
       }));
@@ -47,7 +51,7 @@ const ANOMALY_PATTERNS = {
       if (timeDiffMinutes === 0) return false;
 
       const memGrowthRate = (lastMem.value - firstMem.value) / timeDiffMinutes;
-      return memGrowthRate > 10; // 10MB/分钟
+      return memGrowthRate > 50; // 50MB/分钟（Node.js GC 波动不会到这个量级）
     }
   },
 
@@ -97,7 +101,7 @@ const ANOMALY_PATTERNS = {
 
   QUEUE_BLOCKAGE: {
     name: '队列阻塞',
-    description: '队列深度持续 > 30',
+    description: '队列深度持续 > 60',
     severity: 'medium',
     checks: (metrics, history) => {
       if (!metrics.queueDepth) return false;
@@ -106,7 +110,8 @@ const ANOMALY_PATTERNS = {
       const recentQueues = history.slice(-3).map(h => h.metrics?.queueDepth?.value || 0);
       recentQueues.push(metrics.queueDepth.value);
 
-      return recentQueues.every(depth => depth > 30);
+      // 阈值 60：队列深度包含 goal_id=NULL 的任务（dispatch 看不见），30 太容易误报
+      return recentQueues.every(depth => depth > 60);
     }
   }
 };
