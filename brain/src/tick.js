@@ -1443,6 +1443,7 @@ export {
   cancelDrain,
   _getDrainState,
   _resetDrainState,
+  getRampedDispatchMax,
   TASK_TYPE_AGENT_MAP,
   TICK_INTERVAL_MINUTES,
   TICK_LOOP_INTERVAL_MS,
