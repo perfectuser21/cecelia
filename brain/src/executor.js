@@ -33,6 +33,96 @@ const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-r
 const PROMPT_DIR = '/tmp/cecelia-prompts';
 const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/workspace';
 
+// ==================== Diagnostic Functions ====================
+
+/**
+ * Get system dmesg information (last 100 lines).
+ * Used to check for OOM Killer events.
+ *
+ * @returns {string|null} - dmesg output or null on error
+ */
+function getDmesgInfo() {
+  try {
+    const output = execSync('dmesg | tail -100', {
+      timeout: 5000,
+      encoding: 'utf-8'
+    });
+    return output;
+  } catch (err) {
+    console.warn('[diagnostic] Failed to read dmesg:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Get last 20 lines of process log.
+ *
+ * @param {string} taskId - Task ID
+ * @returns {string|null} - Log tail or null if not found
+ */
+function getProcessLogTail(taskId) {
+  const logPath = `/tmp/cecelia-${taskId}.log`;
+  try {
+    if (readFileSync) {
+      const content = readFileSync(logPath, 'utf-8');
+      return content.split('\n').slice(-20).join('\n');
+    }
+  } catch (err) {
+    // Log file may not exist or not readable
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Check process exit reason by examining system logs and process state.
+ *
+ * @param {number|null} pid - Process ID (may be null)
+ * @param {string} taskId - Task ID for log lookup
+ * @returns {Promise<Object>} - { reason, diagnostic_info }
+ */
+async function checkExitReason(pid, taskId) {
+  const diagnosticInfo = {};
+
+  // 1. Check dmesg for OOM Killer
+  const dmesg = getDmesgInfo();
+  if (dmesg) {
+    diagnosticInfo.dmesg_snippet = dmesg.split('\n').slice(-10).join('\n'); // Last 10 lines
+
+    // Check for OOM Killer patterns
+    if (pid && (dmesg.includes(`killed process ${pid}`) || dmesg.includes('Out of memory'))) {
+      return { reason: 'oom_killed', diagnostic_info: diagnosticInfo };
+    }
+
+    // Generic OOM patterns (without PID)
+    if (dmesg.includes('Out of memory') || dmesg.includes('OOM killer')) {
+      return { reason: 'oom_likely', diagnostic_info: diagnosticInfo };
+    }
+  }
+
+  // 2. Check process log for clues
+  const logTail = getProcessLogTail(taskId);
+  if (logTail) {
+    diagnosticInfo.log_tail = logTail;
+
+    // Check for common error patterns in logs
+    if (logTail.includes('SIGKILL') || logTail.includes('Killed')) {
+      return { reason: 'killed_signal', diagnostic_info: diagnosticInfo };
+    }
+    if (logTail.includes('Error:') || logTail.includes('ERROR')) {
+      return { reason: 'process_error', diagnostic_info: diagnosticInfo };
+    }
+    if (logTail.includes('timeout') || logTail.includes('TIMEOUT')) {
+      return { reason: 'timeout', diagnostic_info: diagnosticInfo };
+    }
+  } else {
+    diagnosticInfo.log_tail = 'Log file not found or empty';
+  }
+
+  // 3. Default: process disappeared with unknown reason
+  return { reason: 'process_disappeared', diagnostic_info: diagnosticInfo };
+}
+
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
@@ -1252,12 +1342,19 @@ async function probeTaskLiveness() {
       activeProcesses.delete(task.id);
     }
 
-    // Auto-fail the task
+    // Auto-fail the task with enhanced diagnostics
+    const pid = entry?.pid || null;
+    const { reason, diagnostic_info } = await checkExitReason(pid, task.id);
+
     const errorDetails = {
       type: 'liveness_probe_failed',
+      reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
       message: `Process not found after double-confirm probe (suspect since ${suspect.firstSeen})`,
       first_suspect_at: suspect.firstSeen,
       probe_ticks: suspect.tickCount + 1,
+      last_seen: new Date().toISOString(),
+      pid: pid,
+      diagnostic_info: diagnostic_info,
     };
 
     // Update task status with WebSocket broadcast
@@ -1320,11 +1417,16 @@ async function syncOrphanTasksOnStartup() {
       // No matching process — this is an orphan
       orphansFound++;
 
+      // Enhanced diagnostics for orphaned tasks
+      const { reason, diagnostic_info } = await checkExitReason(null, task.id);
+
       const errorDetails = {
         type: 'orphan_detected',
+        reason: reason, // oom_killed / oom_likely / killed_signal / timeout / process_disappeared
         message: 'Task was in_progress but no matching process found on Brain startup',
         detected_at: new Date().toISOString(),
         run_id: runId || null,
+        diagnostic_info: diagnostic_info,
       };
 
       await pool.query(
@@ -1336,7 +1438,7 @@ async function syncOrphanTasksOnStartup() {
       );
 
       orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}"`);
+      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
     }
   }
 
