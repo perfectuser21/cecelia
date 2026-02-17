@@ -823,9 +823,10 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     reason = 'low_load';
   }
 
-  // Bootstrap guard: if stuck at 0 but system is not under high stress, allow minimum rate
-  // Prevents deadlock: AWARE alertness + current_rate=0 → nothing dispatches → stays AWARE
-  if (newRate === 0 && alertness.level < ALERTNESS_LEVELS.ALERT && pressure < 0.8) {
+  // Bootstrap guard: if stuck at 0 but system is not in PANIC, allow minimum rate
+  // Prevents deadlock: AWARE/ALERT alertness + current_rate=0 → nothing dispatches → stays stuck
+  // Only PANIC (level=4, true disaster) should completely stop dispatch
+  if (newRate === 0 && alertness.level < ALERTNESS_LEVELS.PANIC && pressure < 0.8) {
     newRate = 1;
     reason = `bootstrap (alertness=${alertness.levelName}, pressure=${pressure.toFixed(2)})`;
   }
