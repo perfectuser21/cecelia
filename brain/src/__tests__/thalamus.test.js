@@ -215,8 +215,26 @@ describe('thalamus', () => {
       expect(decision).toBeNull();
     });
 
-    it('should return null for task failed when retry exceeded (needs Sonnet)', () => {
+    it('should cancel task when retry exceeded and no complex reason (retry=3)', () => {
       const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'abc', retry_count: 3 };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('cancel_task');
+      expect(decision.actions[0].params.task_id).toBe('abc');
+      expect(decision.actions[0].params.reason).toBe('retry_exceeded');
+    });
+
+    it('should cancel task when retry=4 and no complex reason', () => {
+      const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'def', retry_count: 4 };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('cancel_task');
+    });
+
+    it('should still return null for task failed with complex reason even if retry exceeded', () => {
+      const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'ghi', complex_reason: true, retry_count: 3 };
       const decision = quickRoute(event);
 
       expect(decision).toBeNull();
