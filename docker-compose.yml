@@ -31,7 +31,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-cecelia}
       - BRAIN_PORT=5221
       - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
-      # CECELIA_MAX_CONCURRENT: auto-calculated from resource capacity if not set
+      # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
