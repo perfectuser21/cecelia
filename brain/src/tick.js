@@ -370,7 +370,7 @@ async function selectNextDispatchableTask(goalIds) {
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
   // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
   const result = await pool.query(`
-    SELECT t.id, t.title, t.status, t.priority, t.started_at, t.updated_at, t.payload
+    SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
     WHERE t.goal_id = ANY($1)
       AND t.status = 'queued'
