@@ -370,7 +370,7 @@ async function selectNextDispatchableTask(goalIds) {
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
   // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
   const result = await pool.query(`
-    SELECT t.id, t.title, t.status, t.priority, t.started_at, t.updated_at, t.payload
+    SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
     WHERE t.goal_id = ANY($1)
       AND t.status = 'queued'
@@ -821,6 +821,14 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     // Low pressure and calm - speed up
     newRate = currentRate + 1;
     reason = 'low_load';
+  }
+
+  // Bootstrap guard: if stuck at 0 but system is not in PANIC, allow minimum rate
+  // Prevents deadlock: AWARE/ALERT alertness + current_rate=0 → nothing dispatches → stays stuck
+  // Only PANIC (level=4, true disaster) should completely stop dispatch
+  if (newRate === 0 && alertness.level < ALERTNESS_LEVELS.PANIC && pressure < 0.8) {
+    newRate = 1;
+    reason = `bootstrap (alertness=${alertness.levelName}, pressure=${pressure.toFixed(2)})`;
   }
 
   // Cap at effectiveDispatchMax

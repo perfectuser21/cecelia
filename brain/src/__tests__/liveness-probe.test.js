@@ -154,4 +154,62 @@ describe('probeTaskLiveness', () => {
     expect(actions).toEqual([]); // Within 60s grace period
     expect(suspectProcesses.has('task-4')).toBe(false);
   });
+
+  it('should NOT mark decomposition task as dead within 60min grace period', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockReturnValue('0\n'); // Process not found in ps
+
+    const triggeredAt = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5 min ago
+
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'decomp-task-1',
+        title: 'Initiative 拆解: 丘脑路由',
+        payload: {
+          decomposition: 'true',
+          current_run_id: 'run-decomp-123',
+          run_triggered_at: triggeredAt,
+        },
+        started_at: triggeredAt,
+      }]
+    });
+
+    const actions = await probeTaskLiveness();
+    // Should NOT be suspect or failed — decomp grace period applies
+    expect(actions).toEqual([]);
+    expect(suspectProcesses.has('decomp-task-1')).toBe(false);
+  });
+
+  it('should still fail decomposition task after 60min grace period expires', async () => {
+    const { execSync } = await import('child_process');
+    execSync.mockReturnValue('0\n'); // Process not found in ps
+
+    // Pre-populate suspect status
+    suspectProcesses.set('decomp-task-2', {
+      firstSeen: new Date(Date.now() - 10000).toISOString(),
+      tickCount: 1
+    });
+
+    const triggeredAt = new Date(Date.now() - 65 * 60 * 1000).toISOString(); // 65 min ago (past grace)
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'decomp-task-2',
+          title: 'Initiative 拆解: 老任务',
+          payload: {
+            decomposition: 'true',
+            current_run_id: 'run-decomp-456',
+            run_triggered_at: triggeredAt,
+          },
+          started_at: triggeredAt,
+        }]
+      })
+      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE tasks SET status = 'failed'
+
+    const actions = await probeTaskLiveness();
+    expect(actions).toHaveLength(1);
+    expect(actions[0].action).toBe('liveness_auto_fail');
+    expect(actions[0].task_id).toBe('decomp-task-2');
+  });
 });

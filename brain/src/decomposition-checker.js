@@ -652,15 +652,44 @@ async function checkInitiativeDecomposition() {
       continue;
     }
 
-    // Get linked KR for this initiative's parent project
+    // Get linked KR for this initiative — 4-layer fallback chain
     let krId = null;
+    // Layer 1: project_kr_links on parent project (original behavior)
     if (init.parent_id) {
-      const krResult = await pool.query(`
-        SELECT pkl.kr_id FROM project_kr_links pkl
-        WHERE pkl.project_id = $1
-        LIMIT 1
-      `, [init.parent_id]);
+      const krResult = await pool.query(
+        `SELECT pkl.kr_id FROM project_kr_links pkl WHERE pkl.project_id = $1 LIMIT 1`,
+        [init.parent_id]
+      );
       krId = krResult.rows[0]?.kr_id || null;
+    }
+    // Layer 2: initiative's own kr_id field
+    if (!krId) {
+      const selfResult = await pool.query(
+        `SELECT kr_id FROM projects WHERE id = $1 AND kr_id IS NOT NULL LIMIT 1`,
+        [init.id]
+      );
+      krId = selfResult.rows[0]?.kr_id || null;
+    }
+    // Layer 3: parent project's kr_id field
+    if (!krId && init.parent_id) {
+      const parentResult = await pool.query(
+        `SELECT kr_id FROM projects WHERE id = $1 AND kr_id IS NOT NULL LIMIT 1`,
+        [init.parent_id]
+      );
+      krId = parentResult.rows[0]?.kr_id || null;
+    }
+    // Layer 4: project_kr_links on initiative itself
+    if (!krId) {
+      const selfLinkResult = await pool.query(
+        `SELECT kr_id FROM project_kr_links WHERE project_id = $1 LIMIT 1`,
+        [init.id]
+      );
+      krId = selfLinkResult.rows[0]?.kr_id || null;
+    }
+    // No KR found — skip to avoid accumulating NULL-goal_id tasks
+    if (!krId) {
+      console.log(`[decomp-checker] Check 6: Skip "${init.name}" — no KR linkage found`);
+      continue;
     }
 
     const task = await createDecompositionTask({
@@ -828,7 +857,28 @@ async function runDecompositionChecks() {
       }
     }
 
-    // 3. Summary
+    // 3. Check 6: Seed empty initiatives (run independently of execution paths)
+    // Finds active initiatives with no tasks and creates decomposition seed tasks
+    try {
+      const initiativeActions = await checkInitiativeDecomposition();
+      allActions.push(...initiativeActions);
+      const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
+      if (initiativeSeeded > 0) {
+        console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+      }
+    } catch (err) {
+      console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
+    }
+
+    // 4. Check 7: Exploratory continuation (run independently of execution paths)
+    try {
+      const exploratoryActions = await checkExploratoryDecompositionContinue();
+      allActions.push(...exploratoryActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
+    }
+
+    // 5. Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
     const totalSkipped = allActions.filter(a => a.action === 'skip_inventory').length;
 

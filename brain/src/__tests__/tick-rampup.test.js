@@ -136,7 +136,8 @@ describe('getRampedDispatchMax', () => {
     expect(result).toBe(1); // max(1, 1-1) = 1
   });
 
-  it('should reduce rate to 0 when alertness >= ALERT', async () => {
+  it('should bootstrap to 1 when alertness is ALERT (not stuck at 0)', async () => {
+    // ALERT reduces rate: max(0, 1-1) = 0, but bootstrap guard fires (ALERT < PANIC)
     getCurrentAlertness.mockReturnValue({
       level: ALERTNESS_LEVELS.ALERT,
       levelName: 'ALERT'
@@ -148,10 +149,11 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(0); // max(0, 1-1) = 0
+    expect(result).toBe(1); // reduced to 0, then bootstrap → 1
   });
 
-  it('should keep rate at 0 when alertness is ALERT and already at 0', async () => {
+  it('should bootstrap to 1 when alertness is ALERT and already at 0', async () => {
+    // ALERT + rate=0: stays 0 from alertness branch, but bootstrap fires (ALERT < PANIC)
     getCurrentAlertness.mockReturnValue({
       level: ALERTNESS_LEVELS.ALERT,
       levelName: 'ALERT'
@@ -163,7 +165,7 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(0);
+    expect(result).toBe(1); // bootstrap: 0 → 1
   });
 
   it('should hold rate steady when pressure is moderate (0.5-0.8) and CALM', async () => {
@@ -279,5 +281,110 @@ describe('getRampedDispatchMax', () => {
 
     const result = await getRampedDispatchMax(6);
     expect(result).toBe(4); // 5 - 1
+  });
+
+  describe('Bootstrap guard (防死锁)', () => {
+    it('should bootstrap to 1 when stuck at 0 with AWARE alertness and low pressure', async () => {
+      // This is the deadlock scenario: current_rate=0, AWARE, normal resources
+      // Without bootstrap guard: stable → stays 0 forever
+      // With bootstrap guard: → returns 1
+      getCurrentAlertness.mockReturnValue({
+        level: ALERTNESS_LEVELS.AWARE,
+        levelName: 'AWARE'
+      });
+      checkServerResources.mockReturnValue({
+        ok: true,
+        metrics: { max_pressure: 0.3 }
+      });
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ value_json: { current_rate: 0 } }]
+      });
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await getRampedDispatchMax(6);
+      expect(result).toBe(1); // bootstrap: 0 → 1
+    });
+
+    it('should bootstrap when alertness is ALERT (only PANIC blocks bootstrap)', async () => {
+      getCurrentAlertness.mockReturnValue({
+        level: ALERTNESS_LEVELS.ALERT,
+        levelName: 'ALERT'
+      });
+      checkServerResources.mockReturnValue({
+        ok: true,
+        metrics: { max_pressure: 0.3 }
+      });
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ value_json: { current_rate: 0 } }]
+      });
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await getRampedDispatchMax(6);
+      expect(result).toBe(1); // ALERT < PANIC → bootstrap fires
+    });
+
+    it('should NOT bootstrap when alertness is PANIC (true disaster)', async () => {
+      getCurrentAlertness.mockReturnValue({
+        level: ALERTNESS_LEVELS.PANIC,
+        levelName: 'PANIC'
+      });
+      checkServerResources.mockReturnValue({
+        ok: true,
+        metrics: { max_pressure: 0.3 }
+      });
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ value_json: { current_rate: 0 } }]
+      });
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // PANIC: alertness branch reduces to max(0, 0-1)=0, bootstrap guard: PANIC < PANIC = false
+      const result = await getRampedDispatchMax(6);
+      expect(result).toBe(0); // PANIC → no bootstrap, stays 0
+    });
+
+    it('should NOT bootstrap when pressure >= 0.8 (resource stress, already handled by pressure path)', async () => {
+      // When pressure > 0.8 and currentRate=0: Math.max(1, 0-1) = 1 (from pressure path)
+      // Bootstrap guard is not needed: pressure path already produces newRate=1
+      getCurrentAlertness.mockReturnValue({
+        level: ALERTNESS_LEVELS.AWARE,
+        levelName: 'AWARE'
+      });
+      checkServerResources.mockReturnValue({
+        ok: true,
+        metrics: { max_pressure: 0.85 }
+      });
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ value_json: { current_rate: 0 } }]
+      });
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Pressure path: Math.max(1, 0-1) = 1, bootstrap guard doesn't apply (newRate != 0)
+      const result = await getRampedDispatchMax(6);
+      expect(result).toBe(1);
+    });
+
+    it('should not affect non-zero rates when AWARE (only bootstraps from 0)', async () => {
+      // Existing test: rate=3, AWARE → stays 3 (bootstrap guard doesn't trigger because newRate != 0)
+      getCurrentAlertness.mockReturnValue({
+        level: ALERTNESS_LEVELS.AWARE,
+        levelName: 'AWARE'
+      });
+      checkServerResources.mockReturnValue({
+        ok: true,
+        metrics: { max_pressure: 0.3 }
+      });
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ value_json: { current_rate: 3 } }]
+      });
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await getRampedDispatchMax(6);
+      expect(result).toBe(3); // stable at 3, no bootstrap needed
+    });
   });
 });

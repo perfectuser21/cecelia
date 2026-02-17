@@ -33,10 +33,12 @@ export async function preFlightCheck(task) {
   }
 
   // Check 2: Description validation (PRD content)
-  if (!task.description || task.description.trim().length === 0) {
+  // Use description or prd_content as fallback
+  const descContent = task.description || task.prd_content;
+  if (!descContent || descContent.trim().length === 0) {
     issues.push('Task description is empty');
     suggestions.push('Provide a PRD with clear requirements');
-  } else if (task.description.trim().length < 20) {
+  } else if (descContent.trim().length < 20) {
     issues.push('Task description too short (< 20 characters)');
     suggestions.push('Provide more detailed requirements in the PRD');
   }
@@ -58,8 +60,8 @@ export async function preFlightCheck(task) {
   }
 
   // Check 5: Description content quality (basic heuristics)
-  if (task.description) {
-    const desc = task.description.toLowerCase();
+  if (descContent) {
+    const desc = descContent.toLowerCase();
 
     // Check for placeholder text
     const placeholders = ['todo', 'tbd', 'xxx', 'fixme', 'placeholder'];

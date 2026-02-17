@@ -82,6 +82,50 @@ const actionHandlers = {
   },
 
   /**
+   * 暂停任务
+   */
+  async pause_task(params, context) {
+    const result = await updateTask({
+      task_id: params.task_id,
+      status: 'paused'
+    });
+    return { success: result.success };
+  },
+
+  /**
+   * 恢复任务（从暂停或阻塞状态恢复到队列）
+   */
+  async resume_task(params, context) {
+    const result = await updateTask({
+      task_id: params.task_id,
+      status: 'queued'
+    });
+    return { success: result.success };
+  },
+
+  /**
+   * 标记任务为阻塞（记录阻塞原因）
+   */
+  async mark_task_blocked(params, context) {
+    const result = await updateTask({
+      task_id: params.task_id,
+      status: 'blocked'
+    });
+    return { success: result.success, reason: params.reason };
+  },
+
+  /**
+   * 隔离任务（调用隔离模块，dangerous=true）
+   */
+  async quarantine_task(params, context) {
+    const { quarantineTask } = await import('./quarantine.js');
+    const result = await quarantineTask(params.task_id, params.reason || 'thalamus_decision', {
+      failure_class: params.failure_class || 'quality'
+    });
+    return { success: result.success, already_quarantined: result.already_quarantined };
+  },
+
+  /**
    * 创建 OKR
    */
   async create_okr(params, context) {

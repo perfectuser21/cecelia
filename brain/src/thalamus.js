@@ -146,6 +146,10 @@ const ACTION_WHITELIST = {
   'cancel_task': { dangerous: false, description: '取消任务' },
   'retry_task': { dangerous: false, description: '重试任务' },
   'reprioritize_task': { dangerous: false, description: '调整优先级' },
+  'pause_task': { dangerous: false, description: '暂停任务' },
+  'resume_task': { dangerous: false, description: '恢复任务' },
+  'mark_task_blocked': { dangerous: false, description: '标记任务为阻塞' },
+  'quarantine_task': { dangerous: true, description: '隔离任务（移入隔离区）' },
 
   // OKR 操作
   'create_okr': { dangerous: false, description: '创建 OKR' },
@@ -275,6 +279,28 @@ async function recordTokenUsage(source, model, usage, context = {}) {
   } catch (err) {
     console.error(`[${source}] Failed to record token usage:`, err.message);
   }
+}
+
+/**
+ * 记录路由决策事件（fire and forget，不阻塞主路径）
+ * @param {string} routeType - 'quick_route' | 'llm_route' | 'cortex_route' | 'fallback_route'
+ * @param {Object} event - 原始事件
+ * @param {Object} decision - 路由决策结果
+ * @param {number} latencyMs - 路由耗时（毫秒）
+ */
+function recordRoutingDecision(routeType, event, decision, latencyMs) {
+  pool.query(`
+    INSERT INTO cecelia_events (event_type, source, payload)
+    VALUES ('routing_decision', 'thalamus', $1)
+  `, [JSON.stringify({
+    route_type: routeType,
+    event_type: event.type,
+    confidence: decision.confidence,
+    level: decision.level,
+    actions_count: (decision.actions || []).length,
+    latency_ms: latencyMs,
+    timestamp: new Date().toISOString()
+  })]).catch(err => console.error('[thalamus] Failed to record routing decision:', err.message));
 }
 
 // ============================================================
@@ -485,6 +511,48 @@ function quickRoute(event) {
     };
   }
 
+  // 任务失败（简单失败/重试次数未超限）：直接重试
+  if (event.type === EVENT_TYPES.TASK_FAILED) {
+    const hasComplexReason = event.complex_reason === true;
+    const retryExceeded = (event.retry_count || 0) >= 3;
+    if (!hasComplexReason && !retryExceeded) {
+      return {
+        level: 0,
+        actions: [{ type: 'retry_task', params: { task_id: event.task_id } }],
+        rationale: `任务失败，简单重试 (retry=${event.retry_count || 0})`,
+        confidence: 0.9,
+        safety: false
+      };
+    }
+    // 复杂原因或重试超限 → 交给 Sonnet
+    return null;
+  }
+
+  // 任务超时：记录事件 + 降级重试
+  if (event.type === EVENT_TYPES.TASK_TIMEOUT) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { reason: 'task_timeout', task_id: event.task_id } },
+        { type: 'retry_task', params: { task_id: event.task_id, backoff: true } }
+      ],
+      rationale: '任务超时，记录后降级重试',
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // 任务创建：无需处理（事件驱动下游消费）
+  if (event.type === EVENT_TYPES.TASK_CREATED) {
+    return {
+      level: 0,
+      actions: [{ type: 'no_action', params: {} }],
+      rationale: '任务创建事件，下游自行消费',
+      confidence: 1.0,
+      safety: false
+    };
+  }
+
   // 其他情况需要 Sonnet 判断
   return null;
 }
@@ -506,11 +574,13 @@ function quickRoute(event) {
  */
 async function processEvent(event) {
   console.log(`[thalamus] Processing event: ${event.type}`);
+  const startMs = Date.now();
 
   // 1. 尝试快速路由 (Level 0)
   const quickDecision = quickRoute(event);
   if (quickDecision) {
     console.log(`[thalamus] Quick route (L0): ${quickDecision.rationale}`);
+    recordRoutingDecision('quick_route', event, quickDecision, Date.now() - startMs);
     return quickDecision;
   }
 
@@ -520,6 +590,12 @@ async function processEvent(event) {
 
   console.log(`[thalamus] Sonnet decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
 
+  // 降级路径（analyzeEvent 内部失败时返回 _fallback=true）
+  if (decision._fallback) {
+    recordRoutingDecision('fallback_route', event, decision, Date.now() - startMs);
+    return decision;
+  }
+
   // 3. 如果 Level 2，唤醒皮层 (Opus)
   if (decision.level === 2) {
     console.log('[thalamus] Escalating to Cortex (L2)...');
@@ -528,6 +604,7 @@ async function processEvent(event) {
       const { analyzeDeep } = await import('./cortex.js');
       const cortexDecision = await analyzeDeep(event, decision);
       console.log(`[thalamus] Cortex decision: actions=${cortexDecision.actions.map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+      recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
       console.error('[thalamus] Cortex failed, using Sonnet decision:', err.message);
@@ -536,6 +613,7 @@ async function processEvent(event) {
     }
   }
 
+  recordRoutingDecision('llm_route', event, decision, Date.now() - startMs);
   return decision;
 }
 
@@ -555,6 +633,7 @@ export {
   quickRoute,
   analyzeEvent,
   createFallbackDecision,
+  recordRoutingDecision,
 
   // LLM 错误分类
   classifyLLMError,

@@ -66,6 +66,7 @@ docker run -d --name "$GREEN_CONTAINER" \
   --env-file "$ROOT_DIR/.env.docker" \
   -e "PORT=${GREEN_PORT}" \
   -e "ENV_REGION=${ENV_REGION}" \
+  -e "OPENAI_API_KEY=${OPENAI_API_KEY}" \
   --restart unless-stopped \
   "cecelia-brain:${VERSION}"
 
@@ -154,6 +155,7 @@ docker run -d --name "$BLUE_CONTAINER" \
   --network host \
   --env-file "$ROOT_DIR/.env.docker" \
   -e "ENV_REGION=${ENV_REGION}" \
+  -e "OPENAI_API_KEY=${OPENAI_API_KEY}" \
   --restart unless-stopped \
   "cecelia-brain:${VERSION}"
 

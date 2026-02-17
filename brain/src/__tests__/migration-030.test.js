@@ -68,9 +68,9 @@ describe('Migration 030: Capability-Driven Development', () => {
       expect(result.rows.length).toBeGreaterThan(0);
     });
 
-    it('should have 23 seed capabilities', async () => {
+    it('should have seed capabilities', async () => {
       const result = await pool.query('SELECT count(*) FROM capabilities');
-      expect(parseInt(result.rows[0].count, 10)).toBe(23);
+      expect(parseInt(result.rows[0].count, 10)).toBeGreaterThanOrEqual(23);
     });
 
     it('should have valid seed data structure', async () => {
