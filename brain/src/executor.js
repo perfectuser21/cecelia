@@ -778,12 +778,23 @@ POST /api/brain/action/create-task
 Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-2小时) → Task (PR)
 
 ## 你的任务
-1. **确定 Repository**: 查询 projects 表找到 type='project' 且 repo_path 不为空的 Project
-2. **判断拆解模式**:
-   - 已知型 (known): 知道怎么做，一次拆完所有 Tasks
-   - 探索型 (exploratory): 不确定，需要边做边看
+1. **确定 Repository**（必须设置 repo_path）:
+   - 查询现有 Projects: GET /api/tasks/projects
+   - 找到 type='project' 且 repo_path 不为空的 Project
+   - **如果没有，创建 Project 时必须设置 repo_path**
+   - cecelia-core: /home/xx/perfect21/cecelia/core
+   - cecelia-workspace: /home/xx/perfect21/cecelia/workspace
+   - 示例: {"name": "...", "type": "project", "repo_path": "/home/xx/perfect21/cecelia/core"}
+   - **CRITICAL**: 不设置 repo_path 会导致 Planner 无法派发任务！
+
+2. **拆解模式**（遵循 Exploratory 优先策略）:
+   - **默认使用 exploratory 模式**（99% 的情况）
+   - 只有"简单修复、已知方案"才用 known 模式
+   - 参考 OKR skill Stage 2 (Line 332): "拆解 Initiative 为 Task 时，必须遵循 Exploratory 优先策略"
+
 3. **创建 Initiative**: 写入 projects 表（type='initiative'，不是 goals 表！）
-4. **创建 Task + PRD**: 为每个 Task 写完整 PRD
+
+4. **创建 Task + PRD**: 遵循 Exploratory 优先模板
 
 ## API 调用
 
@@ -799,16 +810,32 @@ POST /api/brain/action/create-initiative
   "decomposition_mode": "known" 或 "exploratory"
 }
 
-### 创建 Task（注意 project_id 是 Initiative ID！）
+### 创建第一个 Task（必须是 exploratory）
 POST /api/brain/action/create-task
 {
-  "title": "Task 标题",
+  "title": "探索: 调研 [主题]",
   "project_id": "<Initiative ID>",  // 注意是 Initiative，不是 Project！
   "goal_id": "${krId}",
-  "task_type": "dev",
-  "prd_content": "完整 PRD（背景、目标、功能、验收标准、技术要点）",
+  "task_type": "exploratory",  // ✅ 第一个 Task 必须是 exploratory
+  "prd_content": "完整 PRD（调研目标、分析内容、输出报告格式）",
   "payload": {
-    "exploratory": true,  // 探索型必须设为 true
+    "exploratory": true,
+    "next_action": "decompose",  // ✅ 标记完成后需要续拆
+    "initiative_id": "<Initiative ID>",
+    "kr_goal": "${task.description || ''}"
+  }
+}
+
+### 创建后续 Task（保持 draft）
+POST /api/brain/action/create-task
+{
+  "title": "实现 [功能]",
+  "project_id": "<Initiative ID>",
+  "goal_id": "${krId}",
+  "task_type": "dev",  // ✅ 后续 Task 是 dev
+  "prd_content": "简短描述（draft，等 exploratory 结果后细化）",
+  "payload": {
+    "wait_for_exploratory": true,
     "initiative_id": "<Initiative ID>",
     "kr_goal": "${task.description || ''}"
   }
@@ -820,7 +847,19 @@ PUT /api/tasks/goals/${krId}
 
 ## ⛔ 绝对禁止
 - 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
-- 不能把 Task.project_id 指向 Project，必须指向 Initiative！`;
+- 不能把 Task.project_id 指向 Project，必须指向 Initiative！
+
+## 质量验证（确保符合 OKR skill 规范）
+
+创建完成后，检查：
+1. ✅ 第一个 Task 的 task_type='exploratory'
+2. ✅ exploratory task 的 payload.next_action='decompose'
+3. ✅ exploratory task 有完整 PRD
+4. ✅ 后续 dev tasks 有简短描述（draft 状态）
+5. ✅ Initiative 和 Project 都有 repo_path
+6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
+
+参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
 
   // Talk 类型：可以写文档（日报、总结等），但不能改代码
