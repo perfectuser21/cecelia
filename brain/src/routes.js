@@ -1888,7 +1888,7 @@ router.post('/execution-callback', async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // Update task in database
+      // Update task in database (idempotency: only update if still in_progress)
       await client.query(`
         UPDATE tasks
         SET
@@ -1899,7 +1899,7 @@ router.post('/execution-callback', async (req, res) => {
             'pr_url', $5
           ),
           completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
-        WHERE id = $1
+        WHERE id = $1 AND status = 'in_progress'
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
 
       // Log the execution result
@@ -6043,6 +6043,79 @@ router.get('/immune/dashboard', async (req, res) => {
       error: 'Failed to get immune dashboard',
       details: err.message
     });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/brain/routing/decisions - Thalamus routing decision history
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/routing/decisions', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const offset = parseInt(req.query.offset) || 0;
+    const routeType = req.query.route_type || null;
+    const eventType = req.query.event_type || null;
+    const since = req.query.since || null;
+    const hours = parseInt(req.query.hours) || 24;
+
+    const conditions = ["event_type = 'routing_decision'"];
+    const values = [];
+    let idx = 1;
+
+    if (since) {
+      conditions.push(`created_at >= $${idx++}`);
+      values.push(since);
+    } else {
+      conditions.push(`created_at >= NOW() - INTERVAL '${hours} hours'`);
+    }
+
+    if (routeType) {
+      conditions.push(`payload->>'route_type' = $${idx++}`);
+      values.push(routeType);
+    }
+
+    if (eventType) {
+      conditions.push(`payload->>'event_type' = $${idx++}`);
+      values.push(eventType);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    const [dataResult, countResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          id,
+          payload->>'route_type' AS route_type,
+          payload->>'event_type' AS event_type,
+          (payload->>'confidence')::float AS confidence,
+          (payload->>'level')::int AS level,
+          payload->'actions' AS actions,
+          payload->>'rationale' AS rationale,
+          (payload->>'latency_ms')::int AS latency_ms,
+          created_at AS timestamp
+        FROM cecelia_events
+        WHERE ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${idx} OFFSET $${idx + 1}
+      `, [...values, limit, offset]),
+      pool.query(`
+        SELECT COUNT(*) AS total
+        FROM cecelia_events
+        WHERE ${whereClause}
+      `, values)
+    ]);
+
+    res.json({
+      success: true,
+      decisions: dataResult.rows,
+      count: dataResult.rows.length,
+      total: parseInt(countResult.rows[0].total),
+      limit,
+      offset
+    });
+  } catch (err) {
+    console.error('[API] Failed to get routing decisions:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to get routing decisions', details: err.message });
   }
 });
 
