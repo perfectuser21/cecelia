@@ -199,11 +199,46 @@ describe('thalamus', () => {
       expect(decision).toBeNull();
     });
 
-    it('should return null for task failed (needs analysis)', () => {
-      const event = { type: EVENT_TYPES.TASK_FAILED };
+    it('should retry task on simple task failed (no complex reason)', () => {
+      const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'abc', retry_count: 0 };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('retry_task');
+      expect(decision.actions[0].params.task_id).toBe('abc');
+    });
+
+    it('should return null for task failed with complex reason (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'abc', complex_reason: true, retry_count: 1 };
       const decision = quickRoute(event);
 
       expect(decision).toBeNull();
+    });
+
+    it('should return null for task failed when retry exceeded (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.TASK_FAILED, task_id: 'abc', retry_count: 3 };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should log and retry on task timeout', () => {
+      const event = { type: EVENT_TYPES.TASK_TIMEOUT, task_id: 'abc' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[1].type).toBe('retry_task');
+      expect(decision.actions[1].params.backoff).toBe(true);
+    });
+
+    it('should return no_action for task created event', () => {
+      const event = { type: EVENT_TYPES.TASK_CREATED, task_id: 'abc' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('no_action');
     });
   });
 
