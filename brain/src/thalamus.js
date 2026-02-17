@@ -563,7 +563,29 @@ function quickRoute(event) {
     };
   }
 
-  // 其他情况需要 Sonnet 判断
+  // OKR 创建：只需记录，不需要 LLM 决策
+  if (event.type === EVENT_TYPES.OKR_CREATED) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'okr_created' } }],
+      rationale: 'OKR 创建事件，记录即可',
+      confidence: 0.95,
+      safety: false
+    };
+  }
+
+  // OKR 进度更新（非阻塞）：只需记录
+  if (event.type === EVENT_TYPES.OKR_PROGRESS_UPDATE && !event.is_blocked) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'okr_progress_update' } }],
+      rationale: 'OKR 非阻塞进度更新，记录即可',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // OKR_BLOCKED 以及其他情况需要 Sonnet 判断
   return null;
 }
 

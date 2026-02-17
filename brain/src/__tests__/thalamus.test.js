@@ -258,6 +258,33 @@ describe('thalamus', () => {
       expect(decision).not.toBeNull();
       expect(decision.actions[0].type).toBe('no_action');
     });
+
+    it('should log_event for OKR_CREATED with confidence=0.95', () => {
+      const event = { type: EVENT_TYPES.OKR_CREATED, okr_id: 'okr-1' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.confidence).toBe(0.95);
+    });
+
+    it('should log_event for OKR_PROGRESS_UPDATE when not blocked (confidence=0.9)', () => {
+      const event = { type: EVENT_TYPES.OKR_PROGRESS_UPDATE, okr_id: 'okr-1', is_blocked: false };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.confidence).toBe(0.9);
+    });
+
+    it('should return null for OKR_BLOCKED (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-1' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
   });
 
   describe('createFallbackDecision', () => {
