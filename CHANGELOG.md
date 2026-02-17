@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.28.0] - 2026-02-17
+
+### Added
+- Historical Drop-off Analysis feature for user churn analysis
+- Cohort Analysis with weekly/monthly grouping and retention tracking
+- Funnel Analysis to identify drop-off points in user journey
+- Drop-off Detector with risk scoring for at-risk users
+- Analysis API routes: /api/analysis/cohorts, /api/analysis/funnel, /api/analysis/dropoff, /api/analysis/complete
+- Comprehensive unit tests for all analysis components (80%+ coverage)
+- Integration tests for Analysis API endpoints
+
 ## [1.23.0] - 2026-02-12
 
 ### Added

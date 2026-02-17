@@ -32,6 +32,7 @@ import { auditMiddleware, initAuditTable } from '../middleware/audit.js';
 import orchestratorQueueRoutes from './orchestrator-queue.js';
 import vpsMonitorRoutes from '../vps-monitor/routes.js';
 import n8nApiRoutes from '../n8n-api/routes.js';
+import analysisRoutes from '../analysis/routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -190,6 +191,9 @@ app.use('/api/areas', areasRoutes);
 
 // Intent Recognition API routes (KR1: Natural Language → OKR/Project/Task)
 app.use('/api/intent', intentRoutes);
+
+// Analysis API routes (Historical Drop-off Analysis)
+app.use('/api/analysis', analysisRoutes);
 
 // Brain API routes → proxy to cecelia-semantic-brain Node.js service
 const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
