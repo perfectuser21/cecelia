@@ -39,6 +39,7 @@ import {
   CECELIA_RESERVED,
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
+  SESSION_TTL_SECONDS,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
@@ -58,6 +59,7 @@ describe('Slot Allocator Constants', () => {
     expect(CECELIA_RESERVED).toBe(1);
     expect(USER_RESERVED_BASE).toBe(2);
     expect(USER_PRIORITY_HEADROOM).toBe(2);
+    expect(SESSION_TTL_SECONDS).toBe(4 * 60 * 60); // 4 hours
   });
 
   it('TOTAL_CAPACITY equals MAX_SEATS from executor', () => {
@@ -80,9 +82,10 @@ describe('detectUserSessions', () => {
     expect(result).toEqual({ headed: [], headless: [], total: 0 });
   });
 
+  // ps output format: pid etimes comm args (etimes = elapsed seconds)
   it('should classify headed sessions (no -p flag)', () => {
     execSync.mockReturnValue(
-      '12345 claude claude --resume abc123\n'
+      '12345 300 claude claude --resume abc123\n'
     );
     const result = detectUserSessions();
     expect(result.headed).toHaveLength(1);
@@ -93,7 +96,7 @@ describe('detectUserSessions', () => {
 
   it('should classify headless sessions (with -p flag)', () => {
     execSync.mockReturnValue(
-      '12345 claude claude -p "do something"\n'
+      '12345 300 claude claude -p "do something"\n'
     );
     const result = detectUserSessions();
     expect(result.headless).toHaveLength(1);
@@ -104,7 +107,7 @@ describe('detectUserSessions', () => {
 
   it('should classify headless sessions (with --print flag)', () => {
     execSync.mockReturnValue(
-      '99999 claude claude --print "task prompt"\n'
+      '99999 300 claude claude --print "task prompt"\n'
     );
     const result = detectUserSessions();
     expect(result.headless).toHaveLength(1);
@@ -113,10 +116,10 @@ describe('detectUserSessions', () => {
 
   it('should handle mix of headed and headless', () => {
     execSync.mockReturnValue(
-      '100 claude claude --resume sess1\n' +
-      '200 claude claude -p "decompose"\n' +
-      '300 claude claude\n' +
-      '400 claude claude -p "dev task"\n'
+      '100 300 claude claude --resume sess1\n' +
+      '200 300 claude claude -p "decompose"\n' +
+      '300 300 claude claude\n' +
+      '400 300 claude claude -p "dev task"\n'
     );
     const result = detectUserSessions();
     expect(result.headed).toHaveLength(2); // pid 100, 300
@@ -132,9 +135,70 @@ describe('detectUserSessions', () => {
 
   it('should truncate args to 100 chars', () => {
     const longArgs = 'claude -p "' + 'x'.repeat(200) + '"';
-    execSync.mockReturnValue(`12345 claude ${longArgs}\n`);
+    execSync.mockReturnValue(`12345 300 claude ${longArgs}\n`);
     const result = detectUserSessions();
     expect(result.headless[0].args.length).toBeLessThanOrEqual(100);
+  });
+
+  // --- Session TTL filtering ---
+
+  it('should filter out headed sessions older than SESSION_TTL_SECONDS', () => {
+    const oldElapsed = SESSION_TTL_SECONDS + 1; // 1 second past TTL
+    execSync.mockReturnValue(
+      `99001 ${oldElapsed} claude claude --resume old-session\n`
+    );
+    const result = detectUserSessions();
+    // Old session should be excluded from headed count
+    expect(result.headed).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('should include headed sessions within SESSION_TTL_SECONDS', () => {
+    const freshElapsed = SESSION_TTL_SECONDS - 1; // 1 second before TTL
+    execSync.mockReturnValue(
+      `99002 ${freshElapsed} claude claude --resume fresh-session\n`
+    );
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(1);
+    expect(result.headed[0].pid).toBe(99002);
+  });
+
+  it('TTL does not apply to headless sessions (always included)', () => {
+    const oldElapsed = SESSION_TTL_SECONDS + 10000; // way past TTL
+    execSync.mockReturnValue(
+      `99003 ${oldElapsed} claude claude -p "old headless task"\n`
+    );
+    const result = detectUserSessions();
+    // Headless sessions are not filtered by TTL (they are managed tasks, not user sessions)
+    expect(result.headless).toHaveLength(1);
+  });
+
+  it('mix of fresh and stale headed sessions — only fresh counted', () => {
+    const freshElapsed = 300; // 5 minutes — fresh
+    const staleElapsed = SESSION_TTL_SECONDS + 3600; // 5 hours — stale
+    execSync.mockReturnValue(
+      `100 ${freshElapsed} claude claude --resume fresh\n` +
+      `200 ${staleElapsed} claude claude --resume stale\n` +
+      `300 ${freshElapsed} claude claude\n`
+    );
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(2); // pid 100, 300 (fresh)
+    expect(result.headed.map(s => s.pid)).toContain(100);
+    expect(result.headed.map(s => s.pid)).toContain(300);
+    expect(result.headed.map(s => s.pid)).not.toContain(200);
+  });
+
+  it('with TTL filtering: 1 fresh + 2 stale → interactive mode (not team)', () => {
+    const fresh = 600; // 10 minutes
+    const stale = SESSION_TTL_SECONDS + 3600; // 5 hours
+    execSync.mockReturnValue(
+      `100 ${stale} claude claude\n` +   // stale → filtered
+      `200 ${stale} claude claude\n` +   // stale → filtered
+      `300 ${fresh} claude claude\n`     // fresh → counted
+    );
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(1); // only PID 300
+    expect(detectUserMode(result)).toBe('interactive'); // not team!
   });
 });
 
@@ -302,7 +366,7 @@ describe('calculateSlotBudget', () => {
   // --- Interactive mode (1-2 headed sessions) ---
 
   it('interactive mode: user budget = used + headroom', async () => {
-    execSync.mockReturnValue('100 claude claude --resume s1\n');
+    execSync.mockReturnValue('100 300 claude claude --resume s1\n');
 
     const budget = await calculateSlotBudget();
     expect(budget.user.mode).toBe('interactive');
@@ -313,8 +377,8 @@ describe('calculateSlotBudget', () => {
 
   it('interactive mode with 2 headed: Pool C = 12 - 4 - 0 = 8', async () => {
     execSync.mockReturnValue(
-      '100 claude claude --resume s1\n' +
-      '200 claude claude --resume s2\n'
+      '100 300 claude claude --resume s1\n' +
+      '200 300 claude claude --resume s2\n'
     );
 
     const budget = await calculateSlotBudget();
@@ -327,9 +391,9 @@ describe('calculateSlotBudget', () => {
 
   it('team mode: user budget = used + headroom', async () => {
     execSync.mockReturnValue(
-      '100 claude claude\n' +
-      '200 claude claude\n' +
-      '300 claude claude\n'
+      '100 300 claude claude\n' +
+      '200 300 claude claude\n' +
+      '300 300 claude claude\n'
     );
 
     const budget = await calculateSlotBudget();
@@ -340,7 +404,7 @@ describe('calculateSlotBudget', () => {
 
   it('team mode: Cecelia yields its slot (budget=0) even with internal work', async () => {
     execSync.mockReturnValue(
-      '100 claude claude\n200 claude claude\n300 claude claude\n'
+      '100 300 claude claude\n200 300 claude claude\n300 300 claude claude\n'
     );
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks = true
@@ -353,8 +417,8 @@ describe('calculateSlotBudget', () => {
 
   it('team mode with 4 agents: Pool C = 12 - 6 - 0 = 6', async () => {
     execSync.mockReturnValue(
-      '100 claude claude\n200 claude claude\n' +
-      '300 claude claude\n400 claude claude\n'
+      '100 300 claude claude\n200 300 claude claude\n' +
+      '300 300 claude claude\n400 300 claude claude\n'
     );
 
     const budget = await calculateSlotBudget();
@@ -362,12 +426,30 @@ describe('calculateSlotBudget', () => {
     expect(budget.taskPool.budget).toBe(6); // 12 - 6 - 0
   });
 
+  // --- TTL: stale sessions do not trigger team mode ---
+
+  it('TTL filtering: 1 fresh + 2 stale = interactive (not team), Pool C larger', async () => {
+    const fresh = 300;
+    const stale = SESSION_TTL_SECONDS + 3600;
+    execSync.mockReturnValue(
+      `100 ${stale} claude claude\n` +   // stale → filtered
+      `200 ${stale} claude claude\n` +   // stale → filtered
+      `300 ${fresh} claude claude\n`     // fresh → counted
+    );
+
+    const budget = await calculateSlotBudget();
+    expect(budget.user.mode).toBe('interactive'); // only 1 active session
+    expect(budget.user.used).toBe(1);
+    expect(budget.user.budget).toBe(3); // 1 + 2 headroom
+    expect(budget.taskPool.budget).toBe(9); // 12 - 3(user) - 0(cecelia, no internal tasks) = 9
+  });
+
   // --- Pool C never negative ---
 
   it('Pool C never goes negative even when user takes most slots', async () => {
     // 10 headed sessions → user budget = 12 (10+2), but total is 12
     execSync.mockReturnValue(
-      Array.from({ length: 10 }, (_, i) => `${100 + i} claude claude`).join('\n') + '\n'
+      Array.from({ length: 10 }, (_, i) => `${100 + i} 300 claude claude`).join('\n') + '\n'
     );
 
     const budget = await calculateSlotBudget();
@@ -437,7 +519,7 @@ describe('getSlotStatus', () => {
   });
 
   it('should include session PIDs in user pool', async () => {
-    execSync.mockReturnValue('12345 claude claude --resume s1\n');
+    execSync.mockReturnValue('12345 300 claude claude --resume s1\n');
     const status = await getSlotStatus();
     expect(status.pools.user.sessions).toEqual([
       { pid: 12345, type: 'headed' },
