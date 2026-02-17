@@ -146,6 +146,10 @@ const ACTION_WHITELIST = {
   'cancel_task': { dangerous: false, description: '取消任务' },
   'retry_task': { dangerous: false, description: '重试任务' },
   'reprioritize_task': { dangerous: false, description: '调整优先级' },
+  'pause_task': { dangerous: false, description: '暂停任务' },
+  'resume_task': { dangerous: false, description: '恢复任务' },
+  'mark_task_blocked': { dangerous: false, description: '标记任务为阻塞' },
+  'quarantine_task': { dangerous: true, description: '隔离任务（移入隔离区）' },
 
   // OKR 操作
   'create_okr': { dangerous: false, description: '创建 OKR' },
