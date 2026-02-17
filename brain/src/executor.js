@@ -1360,6 +1360,19 @@ async function probeTaskLiveness() {
       continue;
     }
 
+    // Decomposition tasks (/okr) run for 3-10 minutes — apply extended grace period
+    // to avoid false-positive failures before the process fully starts or completes
+    const DECOMP_LIVENESS_GRACE_MINUTES = 60;
+    if (task.payload?.decomposition === 'true') {
+      const triggeredAt = task.payload?.run_triggered_at || task.started_at;
+      if (triggeredAt) {
+        const elapsedMin = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
+        if (elapsedMin < DECOMP_LIVENESS_GRACE_MINUTES) {
+          continue; // Still within grace period — don't mark as dead
+        }
+      }
+    }
+
     // Process appears dead — apply double-confirm
     const suspect = suspectProcesses.get(task.id);
     if (!suspect) {

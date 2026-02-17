@@ -105,6 +105,9 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       // getActiveExecutionPaths → no active paths (simplify other checks)
       pool.query.mockResolvedValueOnce({ rows: [] });
 
+      // Check 6 (checkInitiativeDecomposition) → no empty initiatives
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
       // Check 7 query → 1 exploratory task
       pool.query.mockResolvedValueOnce({
         rows: [{
@@ -126,6 +129,81 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       const contActions = result.actions.filter(a => a.check === 'exploratory_continue');
       expect(contActions.length).toBeGreaterThanOrEqual(1);
       expect(contActions[0].source_task_id).toBe(expTaskId);
+    });
+  });
+
+  describe('集成: runDecompositionChecks 调用 Check 6 (initiative seed)', () => {
+    it('runDecompositionChecks seeds empty initiatives via checkInitiativeDecomposition', async () => {
+      const initId = 'init-empty-001';
+      const parentId = 'proj-parent-001';
+
+      // getActiveExecutionPaths → no active paths
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Check 6: checkInitiativeDecomposition → 1 empty initiative
+      pool.query.mockResolvedValueOnce({
+        rows: [{
+          id: initId,
+          name: '丘脑快速路由扩展',
+          parent_id: parentId,
+          plan_content: null,
+          parent_name: 'cecelia-core',
+          repo_path: '/home/xx/perfect21/cecelia/core'
+        }]
+      });
+
+      // hasExistingDecompositionTaskByProject → no existing dedup
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Get linked KR for parent project
+      pool.query.mockResolvedValueOnce({ rows: [{ kr_id: 'kr-001' }] });
+
+      // createDecompositionTask INSERT
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'seed-task-001', title: 'Initiative 拆解: 丘脑快速路由扩展' }]
+      });
+
+      // Check 7 (exploratory continuation) → no triggers
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await runDecompositionChecks();
+
+      const initActions = result.actions.filter(a => a.check === 'initiative_decomposition');
+      expect(initActions.length).toBeGreaterThanOrEqual(1);
+      expect(initActions[0].action).toBe('create_decomposition');
+      expect(initActions[0].initiative_id).toBe(initId);
+      expect(result.total_created).toBeGreaterThanOrEqual(1);
+    });
+
+    it('runDecompositionChecks skips dedup for already-seeded initiative', async () => {
+      const initId = 'init-seeded-001';
+
+      // getActiveExecutionPaths → no active paths
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Check 6: checkInitiativeDecomposition → 1 initiative found
+      pool.query.mockResolvedValueOnce({
+        rows: [{
+          id: initId,
+          name: '已拆解的 Initiative',
+          parent_id: 'proj-parent-002',
+          plan_content: null,
+          parent_name: 'cecelia-core',
+          repo_path: '/home/xx/perfect21/cecelia/core'
+        }]
+      });
+
+      // hasExistingDecompositionTaskByProject → dedup found (already has seed)
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-seed' }] });
+
+      // Check 7 (exploratory continuation) → no triggers
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await runDecompositionChecks();
+
+      const skipActions = result.actions.filter(a => a.action === 'skip_dedup' && a.check === 'initiative_decomposition');
+      expect(skipActions.length).toBe(1);
+      expect(skipActions[0].initiative_id).toBe(initId);
     });
   });
 });

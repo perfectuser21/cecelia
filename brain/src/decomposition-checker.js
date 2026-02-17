@@ -828,7 +828,20 @@ async function runDecompositionChecks() {
       }
     }
 
-    // 3. Check 7: Exploratory continuation (run independently of execution paths)
+    // 3. Check 6: Seed empty initiatives (run independently of execution paths)
+    // Finds active initiatives with no tasks and creates decomposition seed tasks
+    try {
+      const initiativeActions = await checkInitiativeDecomposition();
+      allActions.push(...initiativeActions);
+      const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
+      if (initiativeSeeded > 0) {
+        console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+      }
+    } catch (err) {
+      console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
+    }
+
+    // 4. Check 7: Exploratory continuation (run independently of execution paths)
     try {
       const exploratoryActions = await checkExploratoryDecompositionContinue();
       allActions.push(...exploratoryActions);
@@ -836,7 +849,7 @@ async function runDecompositionChecks() {
       console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
     }
 
-    // 4. Summary
+    // 5. Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
     const totalSkipped = allActions.filter(a => a.action === 'skip_inventory').length;
 
