@@ -632,13 +632,15 @@ async function dispatchNextTask(goalIds) {
   // 5. Check executor availability and trigger
   const ceceliaAvailable = await checkCeceliaRunAvailable();
   if (!ceceliaAvailable.available) {
+    // Revert task to queued so it can be retried next tick
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
     await logTickDecision(
       'tick',
-      `cecelia-run not available, task status updated only`,
+      `cecelia-run not available, task reverted to queued`,
       { action: 'no-executor', task_id: nextTask.id, reason: ceceliaAvailable.error },
-      { success: true, warning: 'cecelia-run not available' }
+      { success: false, warning: 'cecelia-run not available, task reverted to queued' }
     );
-    return { dispatched: true, reason: 'no_executor', task_id: nextTask.id, actions };
+    return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, actions };
   }
 
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);

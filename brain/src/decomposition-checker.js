@@ -785,6 +785,7 @@ async function checkExploratoryDecompositionContinue() {
       goalId: expTask.goal_id,
       projectId: expTask.project_id,
       payload: {
+        decomposition: 'continue',  // override 'true' default so NOT EXISTS dedup check matches
         level: 'exploratory_continue',
         exploratory_source: expTask.id
       }
