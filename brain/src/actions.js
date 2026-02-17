@@ -6,13 +6,29 @@ const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 
 /**
+ * Check if a task type is a system/internal task that doesn't require goal_id
+ * @param {string} task_type - Task type
+ * @param {string} trigger_source - Trigger source
+ * @returns {boolean} - True if system task
+ */
+function isSystemTask(task_type, trigger_source) {
+  // System task types that don't need goal association
+  const systemTypes = ['exploratory', 'research'];
+
+  // System trigger sources that don't need goal association
+  const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker'];
+
+  return systemTypes.includes(task_type) || systemSources.includes(trigger_source);
+}
+
+/**
  * Create a new task
  * @param {Object} params
  * @param {string} params.title - Task title
  * @param {string} params.description - Task description
  * @param {string} params.priority - P0/P1/P2
  * @param {string} params.project_id - Feature ID (not Project!)
- * @param {string} params.goal_id - KR ID
+ * @param {string} params.goal_id - KR ID (required for most tasks)
  * @param {string[]} params.tags - Tags
  * @param {string} params.task_type - dev/talk/review
  * @param {string} params.context - Legacy description field
@@ -21,6 +37,12 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @param {Object} params.payload - Additional payload (exploratory, initiative_id, kr_goal)
  */
 async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
+  // Validate goal_id (required for most tasks except system tasks)
+  if (!goal_id && !isSystemTask(task_type, trigger_source)) {
+    const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
+    console.error(`[Action] Validation failed: ${error}`);
+    throw new Error(error);
+  }
   // Dedup: check for existing task with same title + goal_id + project_id
   // Skip if queued/in_progress, or completed within 24h
   const dedupResult = await pool.query(`
