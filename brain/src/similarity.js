@@ -392,7 +392,33 @@ class SimilarityService {
       });
     });
 
-    // TODO: Add vector search for projects and goals (similar queries)
+    // 查询 capabilities（能力知识库向量搜索）
+    const capsResult = await this.db.query(`
+      SELECT
+        id, name, description, current_stage,
+        1 - (embedding <=> $1::vector) AS vector_score
+      FROM capabilities
+      WHERE embedding IS NOT NULL
+      ORDER BY embedding <=> $1::vector
+      LIMIT $2
+    `, [embeddingStr, limit]);
+
+    capsResult.rows.forEach(cap => {
+      matches.push({
+        level: 'capability',
+        id: cap.id,
+        title: cap.name,
+        description: cap.description || '',
+        status: null,
+        score: cap.vector_score,
+        metadata: {
+          current_stage: cap.current_stage
+        }
+      });
+    });
+
+    // 按 score 降序合并排序
+    matches.sort((a, b) => b.score - a.score);
 
     return { matches };
   }
