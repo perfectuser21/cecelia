@@ -203,14 +203,19 @@ async function updateTask({ task_id, status, priority }) {
   }
 
   values.push(task_id);
+  // Atomic guard: when transitioning to in_progress, only update if still queued
+  // This prevents double-dispatch race conditions
+  const whereClause = status === 'in_progress'
+    ? `id = $${idx} AND status = 'queued'`
+    : `id = $${idx}`;
   const result = await pool.query(`
     UPDATE tasks SET ${updates.join(', ')}
-    WHERE id = $${idx}
+    WHERE ${whereClause}
     RETURNING *
   `, values);
 
   if (result.rows.length === 0) {
-    return { success: false, error: 'Task not found' };
+    return { success: false, error: status === 'in_progress' ? 'Task not found or already dispatched' : 'Task not found' };
   }
 
   const task = result.rows[0];

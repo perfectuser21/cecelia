@@ -1888,7 +1888,7 @@ router.post('/execution-callback', async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // Update task in database
+      // Update task in database (idempotency: only update if still in_progress)
       await client.query(`
         UPDATE tasks
         SET
@@ -1899,7 +1899,7 @@ router.post('/execution-callback', async (req, res) => {
             'pr_url', $5
           ),
           completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
-        WHERE id = $1
+        WHERE id = $1 AND status = 'in_progress'
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
 
       // Log the execution result
