@@ -24,6 +24,7 @@ const TOTAL_CAPACITY = MAX_SEATS;           // 12 on 8-core 16GB
 const CECELIA_RESERVED = 1;                  // Pool A: 1 slot for internal tasks
 const USER_RESERVED_BASE = 2;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 2;            // Extra free slots when user is active
+const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
 
 // ============================================================
 // Process Detection
@@ -33,12 +34,15 @@ const USER_PRIORITY_HEADROOM = 2;            // Extra free slots when user is ac
  * Detect and classify all claude processes on the system.
  * headed = `claude` without `-p` (user interactive sessions)
  * headless = `claude -p ...` (Cecelia auto-dispatched)
+ *
+ * Sessions older than SESSION_TTL_SECONDS are excluded from the headed count
+ * to prevent orphaned worktree processes from permanently triggering team mode.
  */
 function detectUserSessions() {
   try {
-    // Use comm field to match only actual `claude` processes (not bash wrappers)
+    // Include etimes (elapsed time in seconds) for TTL filtering
     const output = execSync(
-      "ps -eo pid,comm,args --no-headers 2>/dev/null | awk '$2 == \"claude\" {print}'",
+      "ps -eo pid,etimes,comm,args --no-headers 2>/dev/null | awk '$3 == \"claude\" {print}'",
       { encoding: 'utf-8', timeout: 3000 }
     ).trim();
 
@@ -50,8 +54,9 @@ function detectUserSessions() {
     for (const line of output.split('\n').filter(Boolean)) {
       const parts = line.trim().split(/\s+/);
       const pid = parseInt(parts[0], 10);
-      // parts[1] = "claude" (comm), parts[2+] = args
-      const args = parts.slice(2).join(' ');
+      const elapsedSec = parseInt(parts[1], 10);
+      // parts[2] = "claude" (comm), parts[3+] = args
+      const args = parts.slice(3).join(' ');
 
       if (isNaN(pid)) continue;
 
@@ -59,6 +64,11 @@ function detectUserSessions() {
       if (/ -p /.test(args) || /^-p /.test(args) || / --print /.test(args)) {
         headless.push({ pid, args: args.slice(0, 100) });
       } else {
+        // Filter out sessions older than TTL — likely orphaned worktree/agent processes
+        if (!isNaN(elapsedSec) && elapsedSec > SESSION_TTL_SECONDS) {
+          console.log(`[slot-allocator] Ignoring stale headed session PID ${pid} (elapsed ${Math.round(elapsedSec / 3600)}h > TTL ${SESSION_TTL_SECONDS / 3600}h)`);
+          continue;
+        }
         headed.push({ pid, args: args.slice(0, 100) });
       }
     }
@@ -256,6 +266,7 @@ export {
   CECELIA_RESERVED,
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
+  SESSION_TTL_SECONDS,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,

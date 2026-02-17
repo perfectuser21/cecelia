@@ -140,7 +140,7 @@ const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 c
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
 const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
-const SWAP_USED_MAX_PCT = 50;                     // Hard stop: swap > 50%
+const SWAP_USED_MAX_PCT = 70;                     // Hard stop: swap > 70% (50% was too aggressive — modern Linux uses swap as cache)
 
 /**
  * Resolve repo_path from a project, checking project_repos first, then parent chain.
