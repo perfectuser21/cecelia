@@ -53,6 +53,7 @@ import { readFileSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
+import { generateTaskEmbeddingAsync } from './embedding-service.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -1969,6 +1970,14 @@ router.post('/execution-callback', async (req, res) => {
           });
         }
       } catch { /* ignore if cleanup fails */ }
+
+      // Generate embedding for completed task (async, fire-and-forget)
+      {
+        const taskRow = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [task_id]);
+        if (taskRow.rows[0]) {
+          generateTaskEmbeddingAsync(task_id, taskRow.rows[0].title, taskRow.rows[0].description).catch(() => {});
+        }
+      }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
