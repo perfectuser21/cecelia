@@ -784,6 +784,64 @@ async function autoFailTimedOutTasks(inProgressTasks) {
 }
 
 /**
+ * Get ramped dispatch max - gradually increase/decrease dispatch rate
+ * based on system load and alertness level.
+ *
+ * @param {number} effectiveDispatchMax - The calculated dispatch max from slot budget
+ * @returns {Promise<number>} The ramped dispatch max (0 to effectiveDispatchMax)
+ */
+async function getRampedDispatchMax(effectiveDispatchMax) {
+  // Read current ramp state from working_memory
+  const stateResult = await pool.query(`
+    SELECT value_json FROM working_memory WHERE key = 'dispatch_ramp_state'
+  `);
+
+  let currentRate = stateResult.rows.length > 0
+    ? (stateResult.rows[0].value_json.current_rate || 0)
+    : 0;
+
+  // Check current system resources and alertness
+  const resources = checkServerResources();
+  const pressure = resources.metrics.max_pressure;
+  const alertness = getCurrentAlertness();
+
+  // Decide rate adjustment based on load
+  let newRate = currentRate;
+  let reason = 'stable';
+
+  if (alertness.level >= ALERTNESS_LEVELS.ALERT) {
+    // High alertness - slow down or stop
+    newRate = Math.max(0, currentRate - 1);
+    reason = `alertness=${alertness.levelName}`;
+  } else if (pressure > 0.8) {
+    // High pressure - slow down
+    newRate = Math.max(1, currentRate - 1);
+    reason = `pressure=${pressure.toFixed(2)}`;
+  } else if (pressure < 0.5 && alertness.level === ALERTNESS_LEVELS.CALM) {
+    // Low pressure and calm - speed up
+    newRate = currentRate + 1;
+    reason = 'low_load';
+  }
+
+  // Cap at effectiveDispatchMax
+  newRate = Math.min(newRate, effectiveDispatchMax);
+
+  // Save new state
+  await pool.query(`
+    INSERT INTO working_memory (key, value_json, updated_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+  `, ['dispatch_ramp_state', { current_rate: newRate }]);
+
+  // Log rate changes
+  if (newRate !== currentRate) {
+    console.log(`[tick] Ramped dispatch: ${currentRate} → ${newRate} (pressure: ${pressure.toFixed(2)}, alertness: ${alertness.levelName}, reason: ${reason})`);
+  }
+
+  return newRate;
+}
+
+/**
  * Execute a tick - the core self-driving loop
  *
  * 0. Evaluate alertness level
@@ -1178,8 +1236,11 @@ async function executeTick() {
     console.log(`[tick] Dispatch rate limited to ${Math.round(dispatchRate * 100)}% (max ${effectiveDispatchMax} tasks)`);
   }
 
+  // Apply gradual ramp-up to avoid sudden load spikes
+  const rampedDispatchMax = await getRampedDispatchMax(effectiveDispatchMax);
+
   // 7a. Fill slots from focused objective's tasks
-  for (let i = 0; i < effectiveDispatchMax; i++) {
+  for (let i = 0; i < rampedDispatchMax; i++) {
     const dispatchResult = await dispatchNextTask(allGoalIds);
     actionsTaken.push(...dispatchResult.actions);
     lastDispatchResult = dispatchResult;
@@ -1199,7 +1260,7 @@ async function executeTick() {
   }
 
   // 7b. If focus objective has no more tasks, fill remaining slots from ALL objectives
-  if (dispatched < effectiveDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
+  if (dispatched < rampedDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
       const allObjectiveIds = await pool.query(`
         SELECT id FROM goals
@@ -1208,7 +1269,7 @@ async function executeTick() {
       `);
       const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
       if (globalGoalIds.length > 0) {
-        for (let i = dispatched; i < effectiveDispatchMax; i++) {
+        for (let i = dispatched; i < rampedDispatchMax; i++) {
           const globalDispatch = await dispatchNextTask(globalGoalIds);
           actionsTaken.push(...globalDispatch.actions);
           if (!globalDispatch.dispatched) break;
