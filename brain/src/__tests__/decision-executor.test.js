@@ -339,6 +339,107 @@ describe('decision-executor', () => {
         expect(result.success).toBe(true);
       });
     });
+
+    describe('update_task_prd', () => {
+      it('should update task prd_content in database', async () => {
+        const result = await actionHandlers.update_task_prd({
+          task_id: 'test-task-id',
+          prd_content: '## Updated PRD\n\nNew content discovered during exploration.'
+        }, {});
+
+        expect(result.success).toBe(true);
+        expect(result.task_id).toBe('test-task-id');
+      });
+
+      it('should return error when task_id is missing', async () => {
+        const result = await actionHandlers.update_task_prd({
+          prd_content: 'some content'
+        }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('task_id');
+      });
+
+      it('should return error when prd_content is missing', async () => {
+        const result = await actionHandlers.update_task_prd({
+          task_id: 'test-task-id'
+        }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('prd_content');
+      });
+    });
+
+    describe('archive_task', () => {
+      it('should set task status to archived', async () => {
+        const result = await actionHandlers.archive_task({
+          task_id: 'old-task-id',
+          reason: 'expired after 30 days'
+        }, {});
+
+        expect(result.success).toBe(true);
+        expect(result.task_id).toBe('old-task-id');
+        expect(result.reason).toBe('expired after 30 days');
+      });
+
+      it('should return null reason when not provided', async () => {
+        const result = await actionHandlers.archive_task({
+          task_id: 'old-task-id'
+        }, {});
+
+        expect(result.success).toBe(true);
+        expect(result.reason).toBeNull();
+      });
+
+      it('should return error when task_id is missing', async () => {
+        const result = await actionHandlers.archive_task({}, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('task_id');
+      });
+    });
+
+    describe('defer_task', () => {
+      it('should update task due_at to specified timestamp', async () => {
+        const futureDate = new Date(Date.now() + 86400000).toISOString(); // tomorrow
+        const result = await actionHandlers.defer_task({
+          task_id: 'defer-task-id',
+          defer_until: futureDate
+        }, {});
+
+        expect(result.success).toBe(true);
+        expect(result.task_id).toBe('defer-task-id');
+        expect(result.defer_until).toBe(futureDate);
+      });
+
+      it('should return error when task_id is missing', async () => {
+        const result = await actionHandlers.defer_task({
+          defer_until: new Date().toISOString()
+        }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('task_id');
+      });
+
+      it('should return error when defer_until is missing', async () => {
+        const result = await actionHandlers.defer_task({
+          task_id: 'defer-task-id'
+        }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('defer_until');
+      });
+
+      it('should return error for invalid timestamp', async () => {
+        const result = await actionHandlers.defer_task({
+          task_id: 'defer-task-id',
+          defer_until: 'not-a-date'
+        }, {});
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('valid ISO 8601');
+      });
+    });
   });
 
   describe('isActionDangerous', () => {
@@ -364,6 +465,18 @@ describe('decision-executor', () => {
 
     it('should return false for unknown action', () => {
       expect(isActionDangerous({ type: 'totally_unknown' })).toBe(false);
+    });
+
+    it('should return false for update_task_prd (task lifecycle action)', () => {
+      expect(isActionDangerous({ type: 'update_task_prd' })).toBe(false);
+    });
+
+    it('should return false for archive_task (task lifecycle action)', () => {
+      expect(isActionDangerous({ type: 'archive_task' })).toBe(false);
+    });
+
+    it('should return false for defer_task (task lifecycle action)', () => {
+      expect(isActionDangerous({ type: 'defer_task' })).toBe(false);
     });
   });
 

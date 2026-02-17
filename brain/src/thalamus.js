@@ -171,6 +171,11 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
+  // 任务生命周期操作
+  'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },
+  'archive_task': { dangerous: false, description: '归档完成/超期任务' },
+  'defer_task': { dangerous: false, description: '延迟任务到指定时间' },
+
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },

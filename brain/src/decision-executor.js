@@ -278,6 +278,71 @@ const actionHandlers = {
   },
 
   // ============================================================
+  // 任务生命周期 Actions
+  // ============================================================
+
+  /**
+   * 更新任务 PRD 内容
+   * 用于探索任务完成后，将发现的信息更新回 PRD
+   */
+  async update_task_prd(params, context) {
+    const { task_id, prd_content } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    if (!prd_content) {
+      return { success: false, error: 'prd_content is required' };
+    }
+    await pool.query(
+      `UPDATE tasks SET prd_content = $1, updated_at = NOW() WHERE id = $2`,
+      [prd_content, task_id]
+    );
+    console.log(`[executor] Updated PRD for task: ${task_id}`);
+    return { success: true, task_id };
+  },
+
+  /**
+   * 归档完成/超期任务
+   * 将任务状态设置为 archived，用于清理长期未执行或已过期的任务
+   */
+  async archive_task(params, context) {
+    const { task_id, reason } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    await pool.query(
+      `UPDATE tasks SET status = 'archived', updated_at = NOW() WHERE id = $1`,
+      [task_id]
+    );
+    console.log(`[executor] Archived task: ${task_id}, reason: ${reason || 'not specified'}`);
+    return { success: true, task_id, reason: reason || null };
+  },
+
+  /**
+   * 延迟任务到指定时间
+   * 更新 tasks.due_at 字段，任务保持 queued 状态等待调度器处理
+   */
+  async defer_task(params, context) {
+    const { task_id, defer_until } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    if (!defer_until) {
+      return { success: false, error: 'defer_until is required (ISO 8601 timestamp)' };
+    }
+    const deferDate = new Date(defer_until);
+    if (isNaN(deferDate.getTime())) {
+      return { success: false, error: 'defer_until must be a valid ISO 8601 timestamp' };
+    }
+    await pool.query(
+      `UPDATE tasks SET due_at = $1, updated_at = NOW() WHERE id = $2`,
+      [deferDate.toISOString(), task_id]
+    );
+    console.log(`[executor] Deferred task: ${task_id} until ${defer_until}`);
+    return { success: true, task_id, defer_until };
+  },
+
+  // ============================================================
   // Cortex (皮层) Actions
   // ============================================================
 
