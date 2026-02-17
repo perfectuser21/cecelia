@@ -828,7 +828,15 @@ async function runDecompositionChecks() {
       }
     }
 
-    // 3. Summary
+    // 3. Check 7: Exploratory continuation (run independently of execution paths)
+    try {
+      const exploratoryActions = await checkExploratoryDecompositionContinue();
+      allActions.push(...exploratoryActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
+    }
+
+    // 4. Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
     const totalSkipped = allActions.filter(a => a.action === 'skip_inventory').length;
 
