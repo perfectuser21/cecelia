@@ -595,7 +595,27 @@ function quickRoute(event) {
     };
   }
 
-  // OKR_BLOCKED 以及其他情况需要 Sonnet 判断
+  // OKR 普通阻塞（非关键、非持续）：快速路由，通知用户并标记任务
+  if (event.type === EVENT_TYPES.OKR_BLOCKED) {
+    const isCritical = event.is_critical === true;
+    const isLongBlocked = event.long_blocked === true;
+    if (!isCritical && !isLongBlocked) {
+      return {
+        level: 0,
+        actions: [
+          { type: 'notify_user', params: { message: 'OKR 阻塞', okr_id: event.okr_id } },
+          { type: 'mark_task_blocked', params: { task_id: event.task_id } }
+        ],
+        rationale: 'OKR 普通阻塞，通知用户并标记任务',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 关键阻塞或持续阻塞 → 交给 Sonnet
+    return null;
+  }
+
+  // 其他情况需要 Sonnet 判断
   return null;
 }
 

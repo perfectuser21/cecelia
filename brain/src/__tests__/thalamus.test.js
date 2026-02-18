@@ -279,8 +279,36 @@ describe('thalamus', () => {
       expect(decision.confidence).toBe(0.9);
     });
 
-    it('should return null for OKR_BLOCKED (needs Sonnet)', () => {
-      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-1' };
+    it('should return notify_user + mark_task_blocked for normal OKR_BLOCKED', () => {
+      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-1', task_id: 'task-1' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('notify_user');
+      expect(decision.actions[1].type).toBe('mark_task_blocked');
+      expect(decision.confidence).toBe(0.85);
+    });
+
+    it('should pass okr_id and task_id in params for normal OKR_BLOCKED', () => {
+      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-42', task_id: 'task-99' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].params.okr_id).toBe('okr-42');
+      expect(decision.actions[1].params.task_id).toBe('task-99');
+    });
+
+    it('should return null for OKR_BLOCKED with is_critical=true (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-1', task_id: 'task-1', is_critical: true };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should return null for OKR_BLOCKED with long_blocked=true (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.OKR_BLOCKED, okr_id: 'okr-1', task_id: 'task-1', long_blocked: true };
       const decision = quickRoute(event);
 
       expect(decision).toBeNull();
