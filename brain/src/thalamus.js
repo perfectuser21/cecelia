@@ -442,7 +442,11 @@ async function callSonnet(prompt) {
   }
 
   const data = await response.json();
-  return { text: data.content[0].text, usage: data.usage || null };
+  const textBlock = (data.content || []).find(b => b.type === 'text');
+  if (!textBlock) {
+    throw new Error(`Sonnet returned empty content array (usage: ${JSON.stringify(data.usage)})`);
+  }
+  return { text: textBlock.text, usage: data.usage || null };
 }
 
 /**
@@ -451,8 +455,18 @@ async function callSonnet(prompt) {
  * @returns {Decision}
  */
 function parseDecisionFromResponse(response) {
-  // 尝试提取 JSON
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
+  // 优先匹配 markdown code block 中的 JSON（```json ... ``` 或 ``` ... ```）
+  const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch (_e) {
+      // code block 内容不是合法 JSON，继续 fallback
+    }
+  }
+
+  // fallback: 非贪婪匹配第一个完整 JSON 对象
+  const jsonMatch = response.match(/\{[\s\S]*?\}/);
   if (!jsonMatch) {
     throw new Error('No JSON found in response');
   }
@@ -774,6 +788,12 @@ function quickRoute(event) {
  * @returns {Promise<Decision>}
  */
 async function processEvent(event) {
+  // BUG P1 guard: null/undefined event 直接返回 fallback decision
+  if (event == null) {
+    console.warn('[thalamus] processEvent called with null/undefined event, returning fallback');
+    return createFallbackDecision({ type: 'unknown' }, 'null event received');
+  }
+
   console.log(`[thalamus] Processing event: ${event.type}`);
   const startMs = Date.now();
 
@@ -804,7 +824,7 @@ async function processEvent(event) {
       // 动态导入皮层模块（避免循环依赖）
       const { analyzeDeep } = await import('./cortex.js');
       const cortexDecision = await analyzeDeep(event, decision);
-      console.log(`[thalamus] Cortex decision: actions=${cortexDecision.actions.map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+      console.log(`[thalamus] Cortex decision: actions=${(cortexDecision.actions || []).map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
@@ -835,6 +855,7 @@ export {
   analyzeEvent,
   createFallbackDecision,
   recordRoutingDecision,
+  parseDecisionFromResponse,
 
   // LLM 错误分类
   classifyLLMError,
