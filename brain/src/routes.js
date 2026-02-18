@@ -1879,7 +1879,7 @@ router.post('/execution-callback', async (req, res) => {
       iterations,
       pr_url: pr_url || null,
       completed_at: new Date().toISOString(),
-      result_summary: typeof result === 'object' ? result.result : result
+      result_summary: (result !== null && typeof result === 'object') ? result.result : result
     };
 
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
@@ -1991,7 +1991,9 @@ router.post('/execution-callback', async (req, res) => {
       let quarantined = false;
       try {
         // Extract error message from result
-        const errorMsg = typeof result === 'object'
+        // Note: typeof null === 'object', so we must check result !== null first
+        // to avoid TypeError when result is null (e.g. claude CLI fails with Spending cap reached)
+        const errorMsg = (result !== null && typeof result === 'object')
           ? (result.result || result.error || result.stderr || JSON.stringify(result))
           : String(result || status);
 
@@ -2216,7 +2218,7 @@ router.post('/execution-callback', async (req, res) => {
             if (existingDev.rows.length === 0) {
               console.log(`[execution-callback] Exploratory phase completed for ${initiative.name}, creating dev-phase task`);
 
-              const resultSummary = typeof result === 'object'
+              const resultSummary = (result !== null && typeof result === 'object')
                 ? (result.result || JSON.stringify(result).slice(0, 1000))
                 : String(result || '').slice(0, 1000);
 
