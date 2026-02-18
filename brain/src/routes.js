@@ -1973,17 +1973,6 @@ router.post('/execution-callback', async (req, res) => {
         // Continue with normal flow if thalamus fails
       }
 
-      // Cleanup worktree and branches (async, non-blocking)
-      try {
-        const { cleanupWorktree } = await import('./executor.js');
-        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
-        if (taskResult.rows[0]) {
-          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
-            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
-          });
-        }
-      } catch { /* ignore if cleanup fails */ }
-
       // Generate embedding for completed task (async, fire-and-forget)
       {
         const taskRow = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [task_id]);
@@ -2100,16 +2089,6 @@ router.post('/execution-callback', async (req, res) => {
         }
       }
 
-      // Cleanup worktree and branches (async, non-blocking)
-      try {
-        const { cleanupWorktree } = await import('./executor.js');
-        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
-        if (taskResult.rows[0]) {
-          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
-            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
-          });
-        }
-      } catch { /* ignore if cleanup fails */ }
     }
 
     // 5. Rollup progress to KR and O
