@@ -13,6 +13,11 @@ const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
 const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
 const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
 
+// Content-aware score configuration
+const CONTENT_SCORE_EXPLORATORY_BONUS = 10;          // exploratory task 优先（调研先行）
+const CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY = -20;  // 等待调研完成的 dev task 延后
+const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
+
 /**
  * Build a map of task_type → penalty score based on recent learning failures.
  * Queries learnings table for failure_pattern entries in the past LEARNING_LOOKBACK_DAYS
@@ -59,6 +64,40 @@ async function buildLearningPenaltyMap(projectId) {
     console.error(`[planner] buildLearningPenaltyMap failed: ${err.message}`);
     return new Map();
   }
+}
+
+/**
+ * Apply content-aware score bonus to a list of tasks based on task_type and payload content.
+ *
+ * Scoring rules:
+ *   - task_type === 'exploratory'              → +10 (调研先行)
+ *   - payload.wait_for_exploratory === true    → -20 (等待调研完成再执行)
+ *   - payload.decomposition_mode === 'known'   → +5  (已知方案优先)
+ *
+ * @param {Array} tasks - Array of task objects from DB
+ * @returns {Array} - Same tasks, each augmented with _content_score_bonus field
+ */
+export function applyContentAwareScore(tasks) {
+  const scored = tasks.map(task => {
+    let bonus = 0;
+    const payload = task.payload || {};
+
+    if (task.task_type === 'exploratory') {
+      bonus += CONTENT_SCORE_EXPLORATORY_BONUS;
+    }
+    if (payload.wait_for_exploratory === true) {
+      bonus += CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY;
+    }
+    if (payload.decomposition_mode === 'known') {
+      bonus += CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS;
+    }
+
+    return { ...task, _content_score_bonus: bonus };
+  });
+
+  console.debug(`[planner] content-aware scores: ${JSON.stringify(scored.map(t => ({ id: t.id, task_type: t.task_type, bonus: t._content_score_bonus })))}`);
+
+  return scored;
 }
 
 /**
@@ -213,13 +252,39 @@ async function generateNextTask(kr, project, state, options = {}) {
   // Build penalty map from learnings (gracefully degrades if query fails).
   const penaltyMap = await buildLearningPenaltyMap(project.id);
 
+  // V6: Apply content-aware score bonus based on task_type and payload content.
+  // Always applied (even when penaltyMap is empty) to enable content-aware ordering.
+  const contentScoredTasks = applyContentAwareScore(result.rows);
+
   if (penaltyMap.size === 0) {
-    // No penalties — return first task (already sorted by phase/status/priority)
-    return result.rows[0];
+    // No learning penalties — re-sort with content-aware bonus only
+    const reScored = contentScoredTasks.map(task => {
+      let score = 0;
+
+      // Phase score (exploratory first)
+      if (task.phase === 'exploratory') score += 200;
+      else if (task.phase === 'dev') score += 100;
+
+      // Status score (queued before in_progress)
+      if (task.status === 'queued') score += 10;
+
+      // Priority score
+      if (task.priority === 'P0') score += 30;
+      else if (task.priority === 'P1') score += 20;
+      else if (task.priority === 'P2') score += 10;
+
+      // Content-aware bonus
+      score += task._content_score_bonus;
+
+      return { task, score };
+    });
+
+    reScored.sort((a, b) => b.score - a.score);
+    return reScored[0].task;
   }
 
-  // Re-score tasks with learning penalty applied
-  const scored = result.rows.map(task => {
+  // Re-score tasks with learning penalty + content-aware bonus applied
+  const scored = contentScoredTasks.map(task => {
     let score = 0;
 
     // Phase score (exploratory first)
@@ -237,6 +302,9 @@ async function generateNextTask(kr, project, state, options = {}) {
     // Apply learning penalty if this task_type has recent failures
     const penalty = penaltyMap.get(task.task_type) || 0;
     score += penalty;
+
+    // Content-aware bonus
+    score += task._content_score_bonus;
 
     return { task, score };
   });
@@ -628,6 +696,10 @@ export {
   LEARNING_PENALTY_SCORE,
   LEARNING_LOOKBACK_DAYS,
   LEARNING_FAILURE_THRESHOLD,
+  // Content-aware score
+  CONTENT_SCORE_EXPLORATORY_BONUS,
+  CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY,
+  CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS,
   // PR Plans dispatch functions
   getPrPlansByInitiative,
   isPrPlanCompleted,
