@@ -337,6 +337,34 @@ const actionHandlers = {
   },
 
   /**
+   * 建议 task_type 修正（只警告记录，不自动修改）
+   *
+   * 当 dev task 完成时 failure_rate > 30%（可能 task_type 选错了），
+   * 记录 warning 日志并写入 learnings 表，供人工审查。
+   * 绝不自动修改 task_type，避免引发连锁影响。
+   */
+  async suggest_task_type(params, context) {
+    const { task_id, current_type, suggested_type, reason = '' } = params;
+    if (!task_id || !current_type || !suggested_type) {
+      return { success: false, error: 'task_id、current_type、suggested_type 字段必填' };
+    }
+
+    console.warn(`[executor] suggest_task_type: task ${task_id} current=${current_type} suggested=${suggested_type} reason=${reason}`);
+
+    const content = `task_type 建议修正：task ${task_id} 当前类型 ${current_type}，建议改为 ${suggested_type}。原因：${reason}`;
+    const result = await pool.query(
+      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id`,
+      [content, JSON.stringify(['task_type', 'suggestion', 'warning']), task_id]
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[executor] suggest_task_type: 已记录 learning ${id}（不修改 task_type）`);
+
+    return { action: 'suggested', task_id, suggested_type, learning_id: id };
+  },
+
+  /**
    * 不需要操作
    */
   async no_action(params, context) {

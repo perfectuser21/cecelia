@@ -175,6 +175,7 @@ const ACTION_WHITELIST = {
   'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
   'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
   'trigger_rca': { dangerous: false, description: '触发根因分析 (RCA) 流程' },
+  'suggest_task_type': { dangerous: false, description: '建议 task_type 修正（只警告记录，不自动修改）' },
 
   // 任务生命周期操作
   'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },

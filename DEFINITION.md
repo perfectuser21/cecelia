@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-18
-**Brain 版本**: 1.49.10
+**Brain 版本**: 1.50.0
 **Schema 版本**: 038
 **状态**: 生产运行中
 
@@ -261,13 +261,13 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**27 个白名单 action**：
+**28 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
 - 规划：create_proposal
-- 知识/学习：create_learning, update_learning, trigger_rca
+- 知识/学习：create_learning, update_learning, trigger_rca, suggest_task_type
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
 
