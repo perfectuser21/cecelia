@@ -261,6 +261,81 @@ const actionHandlers = {
     return { success: true, prediction: 'not_implemented' };
   },
 
+  // ============================================================
+  // 知识/学习 Actions
+  // ============================================================
+
+  /**
+   * 保存经验教训到 learnings 表
+   */
+  async create_learning(params, context) {
+    const { content, tags = [], source_task_id = null } = params;
+    if (!content) {
+      return { success: false, error: 'content 字段必填' };
+    }
+    const result = await pool.query(
+      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id`,
+      [content, JSON.stringify(tags), source_task_id]
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[executor] create_learning: 已插入 learning ${id}`);
+    return { success: true, learning_id: id };
+  },
+
+  /**
+   * 更新已有 learning 记录
+   */
+  async update_learning(params, context) {
+    const { id, content, tags } = params;
+    if (!id) {
+      return { success: false, error: 'id 字段必填' };
+    }
+    const updates = [];
+    const values = [];
+    let idx = 1;
+    if (content !== undefined) {
+      updates.push(`content = $${idx++}`);
+      values.push(content);
+    }
+    if (tags !== undefined) {
+      updates.push(`tags = $${idx++}`);
+      values.push(JSON.stringify(tags));
+    }
+    if (updates.length === 0) {
+      return { success: false, error: '没有提供要更新的字段' };
+    }
+    updates.push(`updated_at = NOW()`);
+    values.push(id);
+    await pool.query(
+      `UPDATE learnings SET ${updates.join(', ')} WHERE id = $${idx}`,
+      values
+    );
+    console.log(`[executor] update_learning: 已更新 learning ${id}`);
+    return { success: true, learning_id: id };
+  },
+
+  /**
+   * 触发根因分析 (RCA) 流程
+   */
+  async trigger_rca(params, context) {
+    const { task_id, reason = '' } = params;
+    const result = await createTask({
+      title: `RCA: ${reason || `任务 ${task_id} 根因分析`}`,
+      description: `对任务 ${task_id} 触发根因分析，原因：${reason}`,
+      task_type: 'analysis',
+      priority: 'P1',
+      payload: {
+        analysis_type: 'rca',
+        source_task_id: task_id,
+        reason
+      }
+    });
+    console.log(`[executor] trigger_rca: 已创建 analysis 任务 ${result.task?.id}`);
+    return { success: result.success, rca_task_id: result.task?.id };
+  },
+
   /**
    * 不需要操作
    */

@@ -332,6 +332,28 @@ describe('thalamus', () => {
     it('should not mark dispatch_task as dangerous', () => {
       expect(ACTION_WHITELIST['dispatch_task'].dangerous).toBe(false);
     });
+
+    it('should include create_learning action with dangerous=false', () => {
+      expect(ACTION_WHITELIST['create_learning']).toBeDefined();
+      expect(ACTION_WHITELIST['create_learning'].dangerous).toBe(false);
+      expect(ACTION_WHITELIST['create_learning'].description).toBe('保存经验教训到 learnings 表');
+    });
+
+    it('should include update_learning action with dangerous=false', () => {
+      expect(ACTION_WHITELIST['update_learning']).toBeDefined();
+      expect(ACTION_WHITELIST['update_learning'].dangerous).toBe(false);
+      expect(ACTION_WHITELIST['update_learning'].description).toBe('更新已有 learning 记录');
+    });
+
+    it('should include trigger_rca action with dangerous=false', () => {
+      expect(ACTION_WHITELIST['trigger_rca']).toBeDefined();
+      expect(ACTION_WHITELIST['trigger_rca'].dangerous).toBe(false);
+      expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
+    });
+
+    it('should have 27 total actions in whitelist', () => {
+      expect(Object.keys(ACTION_WHITELIST).length).toBe(27);
+    });
   });
 
   describe('LLM_ERROR_TYPE', () => {

@@ -171,6 +171,11 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
+  // 知识/学习操作
+  'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
+  'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
+  'trigger_rca': { dangerous: false, description: '触发根因分析 (RCA) 流程' },
+
   // 任务生命周期操作
   'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },
   'archive_task': { dangerous: false, description: '归档完成/超期任务' },
