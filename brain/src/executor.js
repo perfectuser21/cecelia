@@ -363,6 +363,13 @@ function killProcess(taskId) {
   const entry = activeProcesses.get(taskId);
   if (!entry) return false;
 
+  // Guard: null pid would cause process.kill(0) which sends SIGTERM to own process group
+  if (!entry.pid) {
+    console.log(`[executor] Skipping kill task=${taskId}: pid is null (bridge-tracked), removing from active`);
+    activeProcesses.delete(taskId);
+    return false;
+  }
+
   try {
     // Kill the process group (negative PID) to catch child shells
     try {
