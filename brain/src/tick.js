@@ -18,6 +18,7 @@ import { executeDecision as executeThalamusDecision } from './decision-executor.
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
+import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -551,6 +552,7 @@ async function dispatchNextTask(goalIds) {
   const mitigationState = getMitigationState();
 
   if (_draining || mitigationState.drain_mode_requested) {
+    await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,
       reason: 'draining',
@@ -562,16 +564,19 @@ async function dispatchNextTask(goalIds) {
   // 0a. Billing pause check — skip dispatch if API billing cap is active
   const billingPause = getBillingPause();
   if (billingPause.active) {
+    await recordDispatchResult(pool, false, 'billing_pause');
     return { dispatched: false, reason: 'billing_pause', detail: `Billing cap active until ${billingPause.resetTime}`, actions };
   }
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
   if (!slotBudget.dispatchAllowed) {
+    const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
+                       slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
+    await recordDispatchResult(pool, false, slotReason);
     return {
       dispatched: false,
-      reason: slotBudget.user.mode === 'team' ? 'user_team_mode' :
-             slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full',
+      reason: slotReason,
       budget: slotBudget,
       actions,
     };
@@ -579,6 +584,7 @@ async function dispatchNextTask(goalIds) {
 
   // 2. Circuit breaker check
   if (!isAllowed('cecelia-run')) {
+    await recordDispatchResult(pool, false, 'circuit_breaker_open');
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
@@ -609,6 +615,7 @@ async function dispatchNextTask(goalIds) {
       })]
     );
     // Do not dispatch, return false
+    await recordDispatchResult(pool, false, 'pre_flight_check_failed');
     return { dispatched: false, reason: 'pre_flight_check_failed', issues: checkResult.issues, actions };
   }
 
@@ -640,11 +647,13 @@ async function dispatchNextTask(goalIds) {
       { action: 'no-executor', task_id: nextTask.id, reason: ceceliaAvailable.error },
       { success: false, warning: 'cecelia-run not available, task reverted to queued' }
     );
+    await recordDispatchResult(pool, false, 'no_executor');
     return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, actions };
   }
 
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
+    await recordDispatchResult(pool, false, 'task_not_found');
     return { dispatched: false, reason: 'task_not_found', task_id: nextTask.id, actions };
   }
 
@@ -712,6 +721,9 @@ async function dispatchNextTask(goalIds) {
   } catch (statsErr) {
     console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
   }
+
+  // Record dispatch success to rolling window stats
+  await recordDispatchResult(pool, true);
 
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
