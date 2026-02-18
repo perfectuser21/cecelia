@@ -654,18 +654,34 @@ function generateRunId(taskId) {
  * 简化版：只有 dev 和 review 两类
  *
  * payload 特判逻辑（优先级高于 taskType 映射）：
- * - payload.decomposition === 'exploratory' → /okr （探索型拆解任务）
+ * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留，记录日志）
+ * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
+ * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
  * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
  * - payload.decomposition === 'known' → 保持 taskType 原有路由
  * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
 function getSkillForTaskType(taskType, payload) {
-  // payload 特判：decomposition 模式路由
+  // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
   if (payload) {
+    // decomposition=true + task_type=dev → /dev（显式保留现有行为）
+    if (payload.decomposition === true && taskType === 'dev') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=true + task_type=dev → /dev`);
+      return '/dev';
+    }
+    // decomposition='exploratory' → /exploratory（探索性验证任务）
     if (payload.decomposition === 'exploratory') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=exploratory → /exploratory`);
+      return '/exploratory';
+    }
+    // decomposition='okr' → /okr（OKR 拆解任务）
+    if (payload.decomposition === 'okr') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=okr → /okr`);
       return '/okr';
     }
+    // next_action='decompose' → /okr（继续拆解任务）
     if (payload.next_action === 'decompose') {
+      console.log(`[executor] payload.next_action 路由: next_action=decompose → /okr`);
       return '/okr';
     }
     // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射

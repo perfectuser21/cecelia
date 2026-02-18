@@ -2,8 +2,10 @@
  * Test: executor.js getSkillForTaskType payload.decomposition 路由增强
  *
  * DoD 映射：
- * - payload.decomposition === 'exploratory' → /okr
- * - payload.next_action === 'decompose' → /okr
+ * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留）
+ * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
+ * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
+ * - payload.next_action === 'decompose' → /okr（继续拆解）
  * - payload.decomposition === 'known' → 原有 taskType 路由
  * - 无 payload → 向后兼容，原有 taskType 路由
  * - task_type: 'exploratory' → /exploratory（回归）
@@ -56,26 +58,44 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
     getSkillForTaskType = executor.getSkillForTaskType;
   });
 
-  // DoD-1: payload.decomposition === 'exploratory' → /okr
-  it('payload.decomposition === exploratory 应路由到 /okr', () => {
+  // DoD-1: payload.decomposition === true + task_type === 'dev' → /dev（显式保留）
+  it('payload.decomposition=true + task_type=dev 应路由到 /dev', () => {
+    const result = getSkillForTaskType('dev', { decomposition: true });
+    expect(result).toBe('/dev');
+  });
+
+  // DoD-1 extra: decomposition=true + task_type 非 dev → 不触发显式路由
+  it('payload.decomposition=true + task_type=exploratory 应走 taskType 原有路由', () => {
+    const result = getSkillForTaskType('exploratory', { decomposition: true });
+    expect(result).toBe('/exploratory');
+  });
+
+  // DoD-2: payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
+  it('payload.decomposition=exploratory 应路由到 /exploratory', () => {
     const result = getSkillForTaskType('dev', { decomposition: 'exploratory' });
+    expect(result).toBe('/exploratory');
+  });
+
+  // DoD-3: payload.decomposition === 'okr' → /okr（OKR 拆解任务）
+  it('payload.decomposition=okr 应路由到 /okr', () => {
+    const result = getSkillForTaskType('dev', { decomposition: 'okr' });
     expect(result).toBe('/okr');
   });
 
-  // DoD-2: payload.next_action === 'decompose' → /okr
-  it('payload.next_action === decompose 应路由到 /okr', () => {
+  // DoD-5: payload.next_action === 'decompose' → /okr（PR #370 回归）
+  it('payload.next_action=decompose 应路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { next_action: 'decompose' });
     expect(result).toBe('/okr');
   });
 
-  // DoD-3: payload.decomposition === 'known' → 原有路由
-  it('payload.decomposition === known 应保持原有 taskType 路由', () => {
+  // DoD-4: payload.decomposition === 'known' → 原有路由
+  it('payload.decomposition=known 应保持原有 taskType 路由', () => {
     const result = getSkillForTaskType('dev', { decomposition: 'known' });
     expect(result).toBe('/dev');
   });
 
-  // DoD-3 extra: 其他 taskType 配合 known
-  it('payload.decomposition === known + task_type exploratory 应路由到 /exploratory', () => {
+  // DoD-4 extra: 其他 taskType 配合 known
+  it('payload.decomposition=known + task_type=exploratory 应路由到 /exploratory', () => {
     const result = getSkillForTaskType('exploratory', { decomposition: 'known' });
     expect(result).toBe('/exploratory');
   });
@@ -92,8 +112,8 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
     expect(result).toBe('/dev');
   });
 
-  // DoD-5: task_type === 'exploratory' → /exploratory（回归）
-  it('task_type exploratory 无 payload 时应路由到 /exploratory', () => {
+  // DoD-4: task_type === 'exploratory' → /exploratory（回归）
+  it('task_type=exploratory 无 payload 时应路由到 /exploratory', () => {
     const result = getSkillForTaskType('exploratory');
     expect(result).toBe('/exploratory');
   });
@@ -104,23 +124,23 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
   });
 
   // 额外回归：其他 taskType 不受影响
-  it('task_type review 无 payload 时应路由到 /review', () => {
+  it('task_type=review 无 payload 时应路由到 /review', () => {
     const result = getSkillForTaskType('review');
     expect(result).toBe('/review');
   });
 
-  it('task_type talk 无 payload 时应路由到 /talk', () => {
+  it('task_type=talk 无 payload 时应路由到 /talk', () => {
     const result = getSkillForTaskType('talk');
     expect(result).toBe('/talk');
   });
 
   // payload.next_action === 'decompose' 优先于 decomposition === 'known'
-  it('next_action decompose 优先于 decomposition known', () => {
+  it('next_action=decompose 优先于 decomposition=known', () => {
     const result = getSkillForTaskType('dev', {
       decomposition: 'known',
       next_action: 'decompose'
     });
-    // decomposition 'exploratory' 先检查，但此处是 known，再检查 next_action → /okr
+    // decomposition='known' 不触发特判，next_action='decompose' → /okr
     expect(result).toBe('/okr');
   });
 
@@ -128,5 +148,13 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
   it('payload.next_action 不是 decompose 时不路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { next_action: 'continue' });
     expect(result).toBe('/dev');
+  });
+
+  // 优先级验证：decomposition 特判顺序
+  it('decomposition=true 比 decomposition=okr 优先级低（按顺序检查）', () => {
+    // 当 task_type=exploratory 时，decomposition=true 不触发 /dev 路由
+    // 而是走 taskType 映射 → /exploratory
+    const result = getSkillForTaskType('exploratory', { decomposition: true });
+    expect(result).toBe('/exploratory');
   });
 });
