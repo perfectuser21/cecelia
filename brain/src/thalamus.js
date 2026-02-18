@@ -510,6 +510,42 @@ function quickRoute(event) {
     };
   }
 
+  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 Sonnet）
+  if (event.type === EVENT_TYPES.TICK && event.has_anomaly === true) {
+    const anomalyType = event.anomaly_type;
+
+    // 资源压力：记录 + 降级到代码处理（降低派发频率）
+    if (anomalyType === 'resource_pressure') {
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { reason: 'resource_pressure', tick_id: event.tick_id } },
+          { type: 'fallback_to_tick', params: {} }
+        ],
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Sonnet',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+
+    // 积压任务：记录 + 重新排优先级
+    if (anomalyType === 'stale_tasks') {
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { reason: 'stale_tasks', tick_id: event.tick_id } },
+          { type: 'reprioritize_task', params: {} }
+        ],
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Sonnet',
+        confidence: 0.8,
+        safety: false
+      };
+    }
+
+    // 其他异常类型：交 Sonnet 深度分析
+    return null;
+  }
+
   // 任务完成（无异常）：简单派发下一个
   if (event.type === EVENT_TYPES.TASK_COMPLETED && !event.has_issues) {
     return {

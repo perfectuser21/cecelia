@@ -169,7 +169,40 @@ describe('thalamus', () => {
       expect(decision.actions[0].type).toBe('fallback_to_tick');
     });
 
-    it('should return null for tick with anomaly (needs Sonnet)', () => {
+    it('should return [log_event, fallback_to_tick] for tick with resource_pressure anomaly', () => {
+      const event = { type: EVENT_TYPES.TICK, has_anomaly: true, anomaly_type: 'resource_pressure' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.reason).toBe('resource_pressure');
+      expect(decision.actions[1].type).toBe('fallback_to_tick');
+      expect(decision.confidence).toBe(0.85);
+    });
+
+    it('should return [log_event, reprioritize_task] for tick with stale_tasks anomaly', () => {
+      const event = { type: EVENT_TYPES.TICK, has_anomaly: true, anomaly_type: 'stale_tasks' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.reason).toBe('stale_tasks');
+      expect(decision.actions[1].type).toBe('reprioritize_task');
+      expect(decision.confidence).toBe(0.8);
+    });
+
+    it('should return null for tick with unknown anomaly type (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.TICK, has_anomaly: true, anomaly_type: 'unknown_anomaly' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should return null for tick with anomaly and no anomaly_type (needs Sonnet)', () => {
       const event = { type: EVENT_TYPES.TICK, has_anomaly: true };
       const decision = quickRoute(event);
 
