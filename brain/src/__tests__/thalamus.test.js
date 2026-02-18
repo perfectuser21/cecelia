@@ -192,8 +192,37 @@ describe('thalamus', () => {
       expect(decision).toBeNull();
     });
 
-    it('should return null for user message (needs Sonnet)', () => {
+    it('should return null for user message without intent (needs Sonnet)', () => {
       const event = { type: EVENT_TYPES.USER_MESSAGE };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should log_event for USER_MESSAGE with intent=status_query (confidence=0.85)', () => {
+      const event = { type: EVENT_TYPES.USER_MESSAGE, intent: 'status_query' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.intent).toBe('status_query');
+      expect(decision.confidence).toBe(0.85);
+    });
+
+    it('should log_event for USER_MESSAGE with intent=acknowledge (confidence=0.9)', () => {
+      const event = { type: EVENT_TYPES.USER_MESSAGE, intent: 'acknowledge' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.intent).toBe('acknowledge');
+      expect(decision.confidence).toBe(0.9);
+    });
+
+    it('should return null for USER_MESSAGE with other intent (command) (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.USER_MESSAGE, intent: 'command' };
       const decision = quickRoute(event);
 
       expect(decision).toBeNull();

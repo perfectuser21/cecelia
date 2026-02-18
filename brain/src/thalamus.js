@@ -691,6 +691,33 @@ function quickRoute(event) {
     return null;
   }
 
+
+  // USER_MESSAGE：按意图分级处理
+  if (event.type === EVENT_TYPES.USER_MESSAGE) {
+    // 状态查询：直接记录，无需 LLM 决策
+    if (event.intent === 'status_query') {
+      return {
+        level: 0,
+        actions: [{ type: 'log_event', params: { event_type: 'user_message', intent: 'status_query' } }],
+        rationale: '用户状态查询，记录即可',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 确认消息：直接记录，无需 LLM 决策
+    if (event.intent === 'acknowledge') {
+      return {
+        level: 0,
+        actions: [{ type: 'log_event', params: { event_type: 'user_message', intent: 'acknowledge' } }],
+        rationale: '用户确认消息，记录即可',
+        confidence: 0.9,
+        safety: false
+      };
+    }
+    // 其他意图（命令式、请求式等）→ 交给 Sonnet 决策
+    return null;
+  }
+
   // 其他情况需要 Sonnet 判断
   return null;
 }
