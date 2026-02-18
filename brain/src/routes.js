@@ -21,7 +21,7 @@ async function getRecentDecisions(limit = 10) {
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP } from './task-router.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
@@ -768,6 +768,19 @@ router.post('/tick/drain-cancel', (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel drain', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tick/startup-errors
+ * 获取 Tick 启动错误历史，用于诊断 Brain 是否在启动时遇到问题
+ */
+router.get('/tick/startup-errors', async (req, res) => {
+  try {
+    const data = await getStartupErrors();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get startup errors', details: err.message });
   }
 });
 
@@ -6118,6 +6131,37 @@ router.get('/routing/decisions', async (req, res) => {
   } catch (err) {
     console.error('[API] Failed to get routing decisions:', err.message);
     res.status(500).json({ success: false, error: 'Failed to get routing decisions', details: err.message });
+  }
+});
+
+// POST /api/brain/manual-mode — 启用/禁用手动模式（暂停自动任务创建）
+router.post('/manual-mode', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ('manual_mode', $1, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+    `, [{ enabled: !!enabled }]);
+    console.log(`[brain] Manual mode ${enabled ? 'enabled' : 'disabled'}`);
+    res.json({ success: true, manual_mode: !!enabled });
+  } catch (err) {
+    console.error('[API] Failed to set manual mode:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to set manual mode', details: err.message });
+  }
+});
+
+// GET /api/brain/manual-mode — 查询手动模式状态
+router.get('/manual-mode', async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
+    );
+    const enabled = result.rows.length > 0 && result.rows[0].value_json?.enabled === true;
+    res.json({ success: true, manual_mode: enabled });
+  } catch (err) {
+    console.error('[API] Failed to get manual mode:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to get manual mode', details: err.message });
   }
 });
 

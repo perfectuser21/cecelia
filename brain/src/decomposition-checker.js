@@ -185,6 +185,18 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
+  // KR saturation check - skip if KR already has >= 3 active tasks
+  if (initiative.kr_id) {
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [initiative.kr_id]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] KR ${initiative.kr_id} already has ${satCheck.rows[0].count} active tasks, skipping`);
+      return null;
+    }
+  }
+
   // 1. Count current ready tasks
   const readyTasksResult = await pool.query(`
     SELECT COUNT(*) as count FROM tasks
@@ -692,6 +704,17 @@ async function checkInitiativeDecomposition() {
       continue;
     }
 
+    // KR saturation check - skip if KR already has >= 3 active tasks
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [krId]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] Check 6: KR ${krId} already has ${satCheck.rows[0].count} active tasks, skipping "${init.name}"`);
+      actions.push({ action: 'skip_saturated', check: 'initiative_decomposition', initiative_id: init.id, name: init.name, kr_id: krId });
+      continue;
+    }
+
     const task = await createDecompositionTask({
       title: `Initiative 拆解: ${init.name}`,
       description: [
@@ -819,6 +842,15 @@ async function runDecompositionChecks() {
   const allActions = [];
 
   try {
+    // Manual mode check - skip all auto-creation if enabled
+    const manualModeResult = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
+    );
+    if (manualModeResult.rows.length > 0 && manualModeResult.rows[0].value_json?.enabled === true) {
+      console.log('[decomp-checker] Manual mode enabled, skipping auto task creation');
+      return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
+    }
+
     // 1. Get active execution paths (initiatives with recent activity)
     const activePaths = await getActiveExecutionPaths();
 
