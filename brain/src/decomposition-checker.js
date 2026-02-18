@@ -780,7 +780,7 @@ async function checkExploratoryDecompositionContinue() {
           AND follow.project_id = t.project_id
           AND follow.payload->>'decomposition' = 'continue'
           AND follow.payload->>'exploratory_source' = t.id::text
-          AND follow.status IN ('queued', 'in_progress')
+          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled')
       )
   `);
 
