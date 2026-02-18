@@ -32,6 +32,12 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 
+// 后台恢复配置（initTickLoop 所有重试耗尽后使用）
+const INIT_RECOVERY_INTERVAL_MS = parseInt(
+  process.env.CECELIA_INIT_RECOVERY_INTERVAL_MS || String(5 * 60 * 1000),
+  10
+);
+
 // Task type to agent skill mapping
 const TASK_TYPE_AGENT_MAP = {
   'dev': '/dev',           // Caramel - 编程
@@ -70,6 +76,9 @@ let _tickRunning = false;
 let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 
+// Recovery state (in-memory) — 后台恢复 timer
+let _recoveryTimer = null;
+
 // Drain state (in-memory)
 let _draining = false;
 let _drainStartedAt = null;
@@ -80,8 +89,8 @@ let _drainStartedAt = null;
 async function getTickStatus() {
   const result = await pool.query(`
     SELECT key, value_json FROM working_memory
-    WHERE key IN ($1, $2, $3, $4)
-  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY]);
+    WHERE key IN ($1, $2, $3, $4, $5, $6)
+  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts']);
 
   const memory = {};
   for (const row of result.rows) {
@@ -102,6 +111,14 @@ async function getTickStatus() {
   }
 
   const lastDispatch = memory[TICK_LAST_DISPATCH_KEY] || null;
+
+  // startup_errors 可观测字段
+  const startupErrors = memory['startup_errors'] || null;
+  const startupErrorCount = startupErrors?.total_failures || 0;
+  const startupOk = startupErrorCount === 0;
+
+  // recovery_attempts 可观测字段
+  const recoveryAttempts = memory['recovery_attempts'] || null;
 
   // Get quarantine stats
   let quarantineStats = { total: 0 };
@@ -127,6 +144,10 @@ async function getTickStatus() {
     actions_today: actionsToday,
     tick_running: _tickRunning,
     last_dispatch: lastDispatch,
+    startup_ok: startupOk,
+    startup_error_count: startupErrorCount,
+    recovery_timer_active: _recoveryTimer !== null,
+    recovery_attempts: recoveryAttempts,
     max_concurrent: MAX_CONCURRENT_TASKS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
     resources: checkServerResources(),
@@ -216,8 +237,92 @@ function stopTickLoop() {
 }
 
 /**
+ * 记录恢复尝试到 working_memory recovery_attempts（尽力写入，失败不影响主流程）
+ * @param {boolean} success - 本次恢复是否成功
+ * @param {string} [errMessage] - 失败时的错误信息
+ */
+async function _recordRecoveryAttempt(success, errMessage) {
+  try {
+    const result = await pool.query(
+      'SELECT value_json FROM working_memory WHERE key = $1',
+      ['recovery_attempts']
+    );
+    const existing = result.rows[0]?.value_json || { attempts: [], total_attempts: 0, last_success_at: null };
+    const attempts = Array.isArray(existing.attempts) ? existing.attempts : [];
+    attempts.push({
+      ts: new Date().toISOString(),
+      success,
+      error: success ? undefined : errMessage
+    });
+    const updated = {
+      attempts: attempts.slice(-50), // 只保留最近50条
+      total_attempts: (existing.total_attempts || 0) + 1,
+      last_success_at: success ? new Date().toISOString() : existing.last_success_at,
+      last_attempt_at: new Date().toISOString()
+    };
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['recovery_attempts', updated]);
+  } catch {
+    // 尽力写入，失败不阻断恢复流程
+  }
+}
+
+/**
+ * 尝试一次恢复启动 tick loop（被后台 timer 调用）
+ * 成功时清除 recovery timer；失败时记录并等待下次 timer 触发
+ */
+async function tryRecoverTickLoop() {
+  // 如果 tick loop 已经在运行，停止恢复
+  if (_loopTimer) {
+    console.log('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
+    if (_recoveryTimer) {
+      clearInterval(_recoveryTimer);
+      _recoveryTimer = null;
+    }
+    return;
+  }
+
+  console.log('[tick-loop] Recovery: attempting to start tick loop...');
+
+  try {
+    const { ensureEventsTable } = await import('./event-bus.js');
+    await ensureEventsTable();
+
+    const envEnabled = process.env.CECELIA_TICK_ENABLED;
+    if (envEnabled === 'true') {
+      await enableTick();
+    } else {
+      const status = await getTickStatus();
+      if (status.enabled) {
+        startTickLoop();
+      } else {
+        console.log('[tick-loop] Recovery: tick disabled in DB, skipping');
+        await _recordRecoveryAttempt(false, 'tick_disabled_in_db');
+        return;
+      }
+    }
+
+    // 成功：清除恢复 timer 并记录
+    console.log('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
+    if (_recoveryTimer) {
+      clearInterval(_recoveryTimer);
+      _recoveryTimer = null;
+    }
+    await _recordRecoveryAttempt(true);
+  } catch (err) {
+    console.error(`[tick-loop] Recovery attempt failed: ${err.message}`);
+    await _recordRecoveryAttempt(false, err.message);
+  }
+}
+
+/**
  * Initialize tick loop on server startup
- * Checks DB state and starts loop if tick is enabled
+ * Checks DB state and starts loop if tick is enabled.
+ * If initialization fails, starts a background recovery timer that retries
+ * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
  */
 async function initTickLoop() {
   try {
@@ -266,6 +371,16 @@ async function initTickLoop() {
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
+
+    // 启动后台恢复 timer（每 INIT_RECOVERY_INTERVAL_MS 重试一次）
+    if (!_recoveryTimer) {
+      console.log(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
+      _recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
+      // 允许进程在没有其他活跃引用时正常退出
+      if (_recoveryTimer.unref) {
+        _recoveryTimer.unref();
+      }
+    }
   }
 }
 
@@ -810,9 +925,10 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     SELECT value_json FROM working_memory WHERE key = 'dispatch_ramp_state'
   `);
 
+  // Cold start: no ramp record or rate=0 → start at full speed (no slow ramp-up)
   let currentRate = stateResult.rows.length > 0
-    ? (stateResult.rows[0].value_json.current_rate || 0)
-    : 0;
+    ? (stateResult.rows[0].value_json.current_rate || effectiveDispatchMax)
+    : effectiveDispatchMax;
 
   // Check current system resources and alertness
   const resources = checkServerResources();
@@ -831,7 +947,7 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     // High pressure - slow down
     newRate = Math.max(1, currentRate - 1);
     reason = `pressure=${pressure.toFixed(2)}`;
-  } else if (pressure < 0.5 && alertness.level === ALERTNESS_LEVELS.CALM) {
+  } else if (pressure < 0.5 && alertness.level <= ALERTNESS_LEVELS.AWARE) {
     // Low pressure and calm - speed up
     newRate = currentRate + 1;
     reason = 'low_load';
@@ -1444,6 +1560,27 @@ function _resetDrainState() {
   _drainStartedAt = null;
 }
 
+/**
+ * 读取 working_memory 中的 startup_errors 数据
+ * 用于 GET /api/brain/tick/startup-errors 端点
+ * @returns {{ errors: Array, total_failures: number, last_error_at: string|null }}
+ */
+async function getStartupErrors() {
+  const result = await pool.query(
+    'SELECT value_json FROM working_memory WHERE key = $1',
+    ['startup_errors']
+  );
+  const data = result.rows[0]?.value_json;
+  if (!data) {
+    return { errors: [], total_failures: 0, last_error_at: null };
+  }
+  return {
+    errors: Array.isArray(data.errors) ? data.errors : [],
+    total_failures: data.total_failures || 0,
+    last_error_at: data.last_error_at || null
+  };
+}
+
 export {
   getTickStatus,
   enableTick,
@@ -1472,5 +1609,6 @@ export {
   TICK_TIMEOUT_MS,
   DISPATCH_TIMEOUT_MINUTES,
   MAX_CONCURRENT_TASKS,
-  AUTO_DISPATCH_MAX
+  AUTO_DISPATCH_MAX,
+  getStartupErrors
 };
