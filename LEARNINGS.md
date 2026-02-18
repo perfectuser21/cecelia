@@ -403,3 +403,150 @@ Each CI failure taught us something new:
 **Branch**: cp-02131723-vector-search-phase1
 **Merged**: 2026-02-13 09:48:56 UTC
 
+---
+
+## [2026-02-18] ACTION_WHITELIST 覆盖缺口审计
+
+**审计范围**：thalamus.js（ACTION_WHITELIST + quickRoute）、cortex.js（CORTEX_ACTION_WHITELIST）、decision-executor.js（actionHandlers）
+
+---
+
+### 1. 已有 ACTION_WHITELIST 分类汇总（27 个）
+
+| 分类 | Actions | 数量 |
+|------|---------|------|
+| 任务操作 | dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task | 9 |
+| OKR 操作 | create_okr, update_okr_progress, assign_to_autumnrice | 3 |
+| 通知 | notify_user, log_event | 2 |
+| 升级 | escalate_to_brain, request_human_review | 2 |
+| 分析 | analyze_failure, predict_progress | 2 |
+| 规划 | create_proposal | 1 |
+| 知识/学习 | create_learning, update_learning, trigger_rca | 3 |
+| 任务生命周期 | update_task_prd, archive_task, defer_task | 3 |
+| 系统 | no_action, fallback_to_tick | 2 |
+
+**Cortex 额外**（CORTEX_ACTION_WHITELIST 扩展）：adjust_strategy, record_learning, create_rca_report（3 个）
+
+---
+
+### 2. 典型 Tick 场景 vs. 现有 action 对比
+
+系统中实际 emit 的事件（来自 event-bus.js emit 调用审计）：
+
+| 实际发出的事件 | 来源模块 | quickRoute 有处理？ | 白名单有对应 action？ |
+|------------|---------|----------------|-----------------|
+| task_dispatched | tick.js | 无专属 event_type | ✅ dispatch_task |
+| patrol_cleanup | tick.js | ❌ 无 | ❌ 无 |
+| watchdog_kill | tick.js | ❌ 无 | ❌ 无 |
+| circuit_closed | circuit-breaker.js | ❌ 无 | ❌ 无 |
+| circuit_open | circuit-breaker.js | ❌ 无 | ❌ 无 |
+| goal_status_changed | okr-tick.js | ❌ 无 | ❌ 无 |
+| goal_ready_for_decomposition | okr-tick.js | ❌ 无 | ✅ assign_to_autumnrice（手动触发）|
+| task_quarantined | quarantine.js | ❌ 无 | ✅ quarantine_task |
+| task_released | quarantine.js | ❌ 无 | ❌ 无 |
+| nightly_alignment_completed | nightly-tick.js | ❌ 无 | ❌ 无 |
+
+EVENT_TYPES 已定义但 quickRoute 没有处理的：
+
+| EVENT_TYPE | quickRoute 处理？ | 备注 |
+|-----------|----------------|------|
+| USER_MESSAGE | ❌ 返回 null（交 Sonnet）| 每次都走 LLM，可考虑增加简单规则 |
+| USER_COMMAND | ❌ 未在 quickRoute 中 | 甚至没有 case |
+| RESOURCE_LOW | ❌ 未在 quickRoute 中 | 无处理 |
+| DEPARTMENT_REPORT | ❌ 未在 quickRoute 中 | 无处理 |
+| EXCEPTION_REPORT | ❌ 未在 quickRoute 中 | 无处理 |
+
+---
+
+### 3. 识别到的缺口清单
+
+#### P0 缺口（影响系统正确性）
+
+**缺口 1: `create_proposal` 白名单有但 executor 无 handler**
+- 文件：thalamus.js:172，decision-executor.js（无对应 handler）
+- 问题：LLM 可以输出 `create_proposal` action，但 executor 无法执行，导致 `No handler found` 错误
+- 建议：补充 handler（创建 proposal 记录），或将 action 从白名单移除
+- 危险等级：低
+
+**缺口 2: `USER_COMMAND` 在 EVENT_TYPES 中定义但 quickRoute 没有任何处理**
+- 文件：thalamus.js:119（EVENT_TYPES 定义），quickRoute 函数无 USER_COMMAND case
+- 问题：系统接收到 USER_COMMAND 事件时，每次都全量调用 Sonnet，即使是简单命令也走 LLM
+- 建议：增加基础 quickRoute 规则（如简单命令 → dispatch_task / no_action）
+- 危险等级：低（token 浪费）
+
+#### P1 缺口（影响系统完整性）
+
+**缺口 3: 熔断器状态变更（circuit_open/circuit_closed）无对应 action**
+- 来源：circuit-breaker.js 实际 emit 这些事件，丘脑无处理
+- 建议新增 action：`notify_circuit_breaker`（记录熔断状态 + 通知用户）
+- 危险等级：低
+
+**缺口 4: OKR goal_ready_for_decomposition 无 quickRoute 规则**
+- 来源：okr-tick.js emit `goal_ready_for_decomposition` 时，应自动触发 `assign_to_autumnrice`，但没有 quickRoute 规则
+- 建议：在 quickRoute 中添加 `goal_ready_for_decomposition` → `assign_to_autumnrice` 快速路由
+- 危险等级：低
+
+**缺口 5: 任务释放（task_released）无对应 action**
+- 来源：quarantine.js emit `task_released`，但白名单中没有 `unquarantine_task` action
+- 建议新增 action：`unquarantine_task`（从隔离区释放并重新入队）
+- 危险等级：低
+
+**缺口 6: `RESOURCE_LOW` / `DEPARTMENT_REPORT` / `EXCEPTION_REPORT` 事件类型有定义无处理**
+- 这些 EVENT_TYPES 在 thalamus.js:122-135 已定义，但 quickRoute 没有任何 case
+- 特别是 `RESOURCE_LOW` 场景下应有 `pause_task`（暂停低优先级任务）
+- 建议：
+  - RESOURCE_LOW → 快速路由到 pause_task（暂停非 P0 任务）
+  - EXCEPTION_REPORT → 升级到 escalate_to_brain
+  - DEPARTMENT_REPORT → 快速路由到 log_event
+
+#### P2 缺口（功能增强，非必须）
+
+**缺口 7: 无 `close_okr` / `complete_okr` action**
+- 现有：create_okr, update_okr_progress，但无法关闭/完成 OKR
+- 建议新增：`close_okr`（标记 OKR 为 completed/cancelled）
+- 危险等级：中（需要确认）
+
+**缺口 8: 无 `schedule_task` action（定时调度）**
+- 现有：`defer_task` 可以设置 due_at，但没有周期性调度的 action
+- 建议新增：`schedule_task`（设置 cron 表达式调度）
+- 危险等级：低
+
+**缺口 9: 无批量任务操作 action**
+- 现有：所有 task action 都是单任务操作
+- 建议新增：`bulk_cancel_tasks`、`bulk_reprioritize_tasks`
+- 危险等级：中（批量操作影响面大）
+
+**缺口 10: `predict_progress` 无实现（TODO 状态）**
+- 文件：decision-executor.js:262（`return { success: true, prediction: 'not_implemented' }`）
+- 建议：实现进度预测逻辑，或暂时移除此 action
+
+---
+
+### 4. 优先级排序
+
+| 优先级 | 缺口 | 修复难度 | 影响 |
+|-------|------|---------|------|
+| P0 | create_proposal 无 handler | 低（补充 handler） | 运行时错误 |
+| P0 | USER_COMMAND 无 quickRoute | 低（加 case） | Token 浪费 |
+| P1 | goal_ready_for_decomposition quickRoute | 低（加 quickRoute 规则） | OKR 核心流程 |
+| P1 | RESOURCE_LOW quickRoute | 低（加 quickRoute 规则） | 资源保护完整性 |
+| P1 | unquarantine_task action | 中（加 action + handler） | 隔离释放流程 |
+| P1 | circuit_breaker actions | 低（加 log action） | 熔断器可观测性 |
+| P2 | close_okr action | 中 | OKR 完整生命周期 |
+| P2 | schedule_task action | 高 | 定时任务支持 |
+| P2 | bulk_* actions | 高 | 批量操作效率 |
+| P2 | predict_progress 实现 | 高 | 功能完整性 |
+
+---
+
+### 结论
+
+ACTION_WHITELIST 的核心任务操作已较完善（9 个任务 action 覆盖主要生命周期），主要缺口集中在：
+
+1. **执行层缺口（P0）**：`create_proposal` 白名单有但无 executor handler，存在运行时 `No handler found` 错误
+2. **事件路由缺口（P0/P1）**：5 个已定义的 EVENT_TYPES（USER_COMMAND, RESOURCE_LOW 等）没有 quickRoute 处理，系统每次都走 Sonnet
+3. **系统完整性缺口（P1）**：熔断器、OKR 拆解触发、隔离释放等系统事件缺乏对应 action 和路由规则
+4. **功能缺口（P2）**：定时调度、批量操作、OKR 关闭等增强功能待补充
+
+**推荐下一步**：优先修复 P0 缺口（`create_proposal` handler + `USER_COMMAND` quickRoute），然后处理 P1 的系统完整性问题（`unquarantine_task` + RESOURCE_LOW quickRoute）。
+
