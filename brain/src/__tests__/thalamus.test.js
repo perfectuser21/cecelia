@@ -313,6 +313,60 @@ describe('thalamus', () => {
 
       expect(decision).toBeNull();
     });
+
+    it('should log and archive department report', () => {
+      const event = { type: EVENT_TYPES.DEPARTMENT_REPORT, department: 'engineering' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(1);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.event_type).toBe('department_report');
+      expect(decision.confidence).toBe(0.9);
+    });
+
+    it('should log and analyze low severity exception report', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'low', reason: 'disk_full' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.severity).toBe('low');
+      expect(decision.actions[1].type).toBe('analyze_failure');
+      expect(decision.actions[1].params.severity).toBe('low');
+      expect(decision.confidence).toBe(0.85);
+    });
+
+    it('should log and analyze medium severity exception report', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'medium', reason: 'oom' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.severity).toBe('medium');
+      expect(decision.actions[1].type).toBe('analyze_failure');
+      expect(decision.actions[1].params.severity).toBe('medium');
+      expect(decision.confidence).toBe(0.85);
+    });
+
+    it('should return null for high severity exception report (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'high', reason: 'service_down' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should return null for critical severity exception report (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'critical', reason: 'data_loss' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
   });
 
   describe('createFallbackDecision', () => {

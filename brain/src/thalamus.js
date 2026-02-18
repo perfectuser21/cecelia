@@ -615,6 +615,37 @@ function quickRoute(event) {
     return null;
   }
 
+  // 部门报告：直接记录并归档，无需 LLM 判断
+  if (event.type === EVENT_TYPES.DEPARTMENT_REPORT) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'department_report' } }],
+      rationale: '部门报告，记录并归档即可',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // 异常报告：根据严重度分支
+  if (event.type === EVENT_TYPES.EXCEPTION_REPORT) {
+    const severity = event.severity;
+    if (severity === 'low' || severity === 'medium') {
+      // 低/中等严重度：记录 + 分析失败原因
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { event_type: 'exception_report', severity } },
+          { type: 'analyze_failure', params: { reason: event.reason || 'unknown', severity } }
+        ],
+        rationale: `异常报告（${severity} 严重度），记录并分析失败原因`,
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 高/严重级别 → 交给 Sonnet/Opus 深度分析
+    return null;
+  }
+
   // 其他情况需要 Sonnet 判断
   return null;
 }
