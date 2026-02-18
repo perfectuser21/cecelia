@@ -367,6 +367,56 @@ describe('thalamus', () => {
 
       expect(decision).toBeNull();
     });
+
+    it('should log and notify for resource_low severity low', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW, severity: 'low' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.confidence).toBe(0.85);
+      expect(decision.safety).toBe(false);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.event_type).toBe('resource_low');
+      expect(decision.actions[0].params.severity).toBe('low');
+      expect(decision.actions[1].type).toBe('notify_user');
+      expect(decision.actions[1].params.channel).toBe('system');
+    });
+
+    it('should log and notify for resource_low severity medium', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW, severity: 'medium' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.confidence).toBe(0.85);
+      expect(decision.safety).toBe(false);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.severity).toBe('medium');
+      expect(decision.actions[1].type).toBe('notify_user');
+    });
+
+    it('should return null for resource_low severity critical (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW, severity: 'critical' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should treat resource_low with no severity as low', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.confidence).toBe(0.85);
+      expect(decision.actions).toHaveLength(2);
+      expect(decision.actions[0].type).toBe('log_event');
+      expect(decision.actions[0].params.severity).toBe('low');
+      expect(decision.actions[1].type).toBe('notify_user');
+    });
   });
 
   describe('createFallbackDecision', () => {

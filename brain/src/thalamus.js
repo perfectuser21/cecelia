@@ -646,6 +646,24 @@ function quickRoute(event) {
     return null;
   }
 
+  // RESOURCE_LOW：分级处理
+  if (event.type === EVENT_TYPES.RESOURCE_LOW) {
+    const severity = event.severity || 'low';
+    if (severity === 'critical') {
+      return null; // 交给 Sonnet 深度处理
+    }
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'resource_low', severity } },
+        { type: 'notify_user', params: { message: `资源告警: ${severity}`, channel: 'system' } }
+      ],
+      rationale: `资源${severity}告警，记录并通知`,
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
   // 其他情况需要 Sonnet 判断
   return null;
 }
