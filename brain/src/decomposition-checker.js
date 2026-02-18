@@ -71,7 +71,7 @@ async function hasExistingDecompositionTask(goalId) {
     WHERE goal_id = $1
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
@@ -95,7 +95,7 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (payload->>'level' = $2)
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
@@ -780,7 +780,7 @@ async function checkExploratoryDecompositionContinue() {
           AND follow.project_id = t.project_id
           AND follow.payload->>'decomposition' = 'continue'
           AND follow.payload->>'exploratory_source' = t.id::text
-          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled')
+          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled', 'cancelled')
       )
   `);
 
