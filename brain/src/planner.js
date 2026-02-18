@@ -8,6 +8,59 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 
+// Learning penalty configuration
+const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
+const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
+const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
+
+/**
+ * Build a map of task_type → penalty score based on recent learning failures.
+ * Queries learnings table for failure_pattern entries in the past LEARNING_LOOKBACK_DAYS
+ * that are associated with the given project, grouped by task_type.
+ *
+ * @param {string} projectId - Project ID to scope learnings query
+ * @returns {Promise<Map<string, number>>} - Map of task_type → penalty score (negative)
+ */
+async function buildLearningPenaltyMap(projectId) {
+  try {
+    const cutoff = new Date(Date.now() - LEARNING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+    // Query learnings for this project in the lookback window, grouped by task_type
+    // task_type is stored in metadata JSONB field
+    const result = await pool.query(`
+      SELECT metadata->>'task_type' AS task_type, COUNT(*) AS failure_count
+      FROM learnings
+      WHERE category = 'failure_pattern'
+        AND created_at >= $1
+        AND (
+          metadata->>'project_id' = $2::text
+          OR metadata->>'task_id' IN (
+            SELECT id::text FROM tasks WHERE project_id = $2::uuid
+          )
+        )
+      GROUP BY metadata->>'task_type'
+      HAVING COUNT(*) >= $3
+    `, [cutoff, projectId, LEARNING_FAILURE_THRESHOLD]);
+
+    const penaltyMap = new Map();
+    for (const row of result.rows) {
+      if (row.task_type) {
+        penaltyMap.set(row.task_type, LEARNING_PENALTY_SCORE);
+      }
+    }
+
+    if (penaltyMap.size > 0) {
+      console.log(`[planner] Learning penalty map for project ${projectId}: ${JSON.stringify(Object.fromEntries(penaltyMap))}`);
+    }
+
+    return penaltyMap;
+  } catch (err) {
+    // Graceful degradation: if learning query fails, return empty map (no penalty applied)
+    console.error(`[planner] buildLearningPenaltyMap failed: ${err.message}`);
+    return new Map();
+  }
+}
+
 /**
  * Get global state for planning decisions
  */
@@ -149,13 +202,49 @@ async function generateNextTask(kr, project, state, options = {}) {
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-    LIMIT 1
   `, [project.id, kr.id]);
 
-  if (result.rows[0]) return result.rows[0];
+  if (result.rows.length === 0) {
+    // No existing task — return null. Task creation is 秋米's responsibility via /okr.
+    return null;
+  }
 
-  // No existing task — return null. Task creation is 秋米's responsibility via /okr.
-  return null;
+  // V5: Apply learning penalty to sort tasks — penalize task types with recent failure patterns.
+  // Build penalty map from learnings (gracefully degrades if query fails).
+  const penaltyMap = await buildLearningPenaltyMap(project.id);
+
+  if (penaltyMap.size === 0) {
+    // No penalties — return first task (already sorted by phase/status/priority)
+    return result.rows[0];
+  }
+
+  // Re-score tasks with learning penalty applied
+  const scored = result.rows.map(task => {
+    let score = 0;
+
+    // Phase score (exploratory first)
+    if (task.phase === 'exploratory') score += 200;
+    else if (task.phase === 'dev') score += 100;
+
+    // Status score (queued before in_progress)
+    if (task.status === 'queued') score += 10;
+
+    // Priority score
+    if (task.priority === 'P0') score += 30;
+    else if (task.priority === 'P1') score += 20;
+    else if (task.priority === 'P2') score += 10;
+
+    // Apply learning penalty if this task_type has recent failures
+    const penalty = penaltyMap.get(task.task_type) || 0;
+    score += penalty;
+
+    return { task, score };
+  });
+
+  // Sort by score descending (highest score = highest priority)
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored[0].task;
 }
 
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
@@ -534,6 +623,11 @@ export {
   selectTargetKR,
   selectTargetProject,
   generateNextTask,
+  // Learning penalty
+  buildLearningPenaltyMap,
+  LEARNING_PENALTY_SCORE,
+  LEARNING_LOOKBACK_DAYS,
+  LEARNING_FAILURE_THRESHOLD,
   // PR Plans dispatch functions
   getPrPlansByInitiative,
   isPrPlanCompleted,
