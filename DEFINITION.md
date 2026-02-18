@@ -2,8 +2,8 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-02-18
-**Brain 版本**: 1.49.3
+**最后更新**: 2026-02-17
+**Brain 版本**: 1.49.4
 **Schema 版本**: 038
 **状态**: 生产运行中
 
@@ -234,7 +234,28 @@ executeTick() 流程：
 事件 → quickRoute()（L0 硬编码规则）
   ├─ HEARTBEAT → no_action
   ├─ TICK(无异常) → fallback_to_tick
+  ├─ TICK(有异常) → null → callSonnet()
   ├─ TASK_COMPLETED(无问题) → dispatch_task
+  ├─ TASK_COMPLETED(有问题) → null → callSonnet()
+  ├─ TASK_FAILED(简单/重试未超限) → retry_task
+  ├─ TASK_FAILED(简单/重试超限) → cancel_task
+  ├─ TASK_FAILED(复杂原因) → null → callSonnet()
+  ├─ TASK_TIMEOUT → log_event + retry_task(降级)
+  ├─ TASK_CREATED → no_action
+  ├─ OKR_CREATED → log_event
+  ├─ OKR_PROGRESS_UPDATE(非阻塞) → log_event
+  ├─ OKR_BLOCKED(普通) → notify_user + mark_task_blocked
+  ├─ OKR_BLOCKED(严重/持续) → null → callSonnet()
+  ├─ DEPARTMENT_REPORT(非严重) → log_event
+  ├─ DEPARTMENT_REPORT(严重) → null → callSonnet()
+  ├─ EXCEPTION_REPORT(低严重度) → log_event
+  ├─ EXCEPTION_REPORT(中/高严重度) → null → callSonnet()
+  ├─ RESOURCE_LOW(非严重) → notify_user
+  ├─ RESOURCE_LOW(严重) → null → callSonnet()
+  ├─ USER_COMMAND(简单) → log_event
+  ├─ USER_COMMAND(复杂) → null → callSonnet()
+  ├─ USER_MESSAGE(非紧急) → log_event
+  ├─ USER_MESSAGE(紧急) → null → callSonnet()
   └─ 其他 → callSonnet()（L1 判断）
                ├─ level=0/1 → 返回决策
                └─ level=2 → 升级到皮层

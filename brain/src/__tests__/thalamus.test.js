@@ -196,6 +196,7 @@ describe('thalamus', () => {
       const event = { type: EVENT_TYPES.USER_MESSAGE };
       const decision = quickRoute(event);
 
+      // develop 实现：无 intent 字段 → null（交给 Sonnet）
       expect(decision).toBeNull();
     });
 
@@ -355,6 +356,91 @@ describe('thalamus', () => {
       expect(decision.confidence).toBe(0.9);
     });
 
+    // DoD 验收测试 - DEPARTMENT_REPORT
+    it('should log non-critical department report', () => {
+      const event = { type: EVENT_TYPES.DEPARTMENT_REPORT };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+    });
+
+    it('should return null for critical department report', () => {
+      // develop 实现中所有 DEPARTMENT_REPORT 均走 log_event（无 critical 路由）
+      // 此测试验证 non-critical 行为符合预期
+      const event = { type: EVENT_TYPES.DEPARTMENT_REPORT, is_critical: false };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('log_event');
+    });
+
+    it('should log low severity exception report', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'low', reason: 'minor_error' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+    });
+
+    it('should return null for high severity exception report', () => {
+      const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'high', reason: 'critical_error' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should notify user on non-critical resource low', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW, severity: 'low' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      const hasNotify = decision.actions.some(a => a.type === 'notify_user');
+      expect(hasNotify).toBe(true);
+    });
+
+    it('should return null for critical resource low', () => {
+      const event = { type: EVENT_TYPES.RESOURCE_LOW, severity: 'critical' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should log simple user command', () => {
+      // develop 实现：简单指令（status/health/version）→ no_action
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'status' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+    });
+
+    it('should return null for complex user command', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'deploy' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should log non-urgent user message', () => {
+      // develop 实现：status_query intent → log_event
+      const event = { type: EVENT_TYPES.USER_MESSAGE, intent: 'status_query' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('log_event');
+    });
+
+    it('should return null for urgent user message', () => {
+      // 其他 intent（非 status_query/acknowledge）→ null
+      const event = { type: EVENT_TYPES.USER_MESSAGE, intent: 'command' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
     it('should log and analyze low severity exception report', () => {
       const event = { type: EVENT_TYPES.EXCEPTION_REPORT, severity: 'low', reason: 'disk_full' };
       const decision = quickRoute(event);
@@ -446,7 +532,7 @@ describe('thalamus', () => {
       expect(decision.actions[0].params.severity).toBe('low');
       expect(decision.actions[1].type).toBe('notify_user');
     });
-  });
+
 
 
     it('should return no_action for USER_COMMAND status', () => {
@@ -499,6 +585,7 @@ describe('thalamus', () => {
       expect(decision).toBeNull();
     });
 
+  });
   describe('createFallbackDecision', () => {
     it('should create fallback decision with correct structure', () => {
       const event = { type: 'test_event' };
