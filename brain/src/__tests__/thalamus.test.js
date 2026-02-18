@@ -419,6 +419,57 @@ describe('thalamus', () => {
     });
   });
 
+
+    it('should return no_action for USER_COMMAND status', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'status' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('no_action');
+      expect(decision.confidence).toBe(1.0);
+    });
+
+    it('should return no_action for USER_COMMAND health', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'health' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('no_action');
+    });
+
+    it('should return no_action for USER_COMMAND version', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'version' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.actions[0].type).toBe('no_action');
+    });
+
+    it('should return fallback_to_tick for USER_COMMAND tick', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'tick' };
+      const decision = quickRoute(event);
+
+      expect(decision).not.toBeNull();
+      expect(decision.level).toBe(0);
+      expect(decision.actions[0].type).toBe('fallback_to_tick');
+      expect(decision.confidence).toBe(1.0);
+    });
+
+    it('should return null for USER_COMMAND unknown (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND, command: 'deploy' };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
+    it('should return null for USER_COMMAND with no command field (needs Sonnet)', () => {
+      const event = { type: EVENT_TYPES.USER_COMMAND };
+      const decision = quickRoute(event);
+
+      expect(decision).toBeNull();
+    });
+
   describe('createFallbackDecision', () => {
     it('should create fallback decision with correct structure', () => {
       const event = { type: 'test_event' };

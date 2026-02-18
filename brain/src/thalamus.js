@@ -664,6 +664,33 @@ function quickRoute(event) {
     };
   }
 
+  // USER_COMMAND：简单指令快速路由，复杂指令交 Sonnet
+  if (event.type === EVENT_TYPES.USER_COMMAND) {
+    const cmd = (event.command || '').toLowerCase();
+    // 查询类指令：直接 no_action（由 API 层处理）
+    if (['status', 'health', 'version'].includes(cmd)) {
+      return {
+        level: 0,
+        actions: [{ type: 'no_action', params: {} }],
+        rationale: `用户查询指令 ${cmd}，API 层处理`,
+        confidence: 1.0,
+        safety: false
+      };
+    }
+    // tick 触发：fallback_to_tick
+    if (cmd === 'tick') {
+      return {
+        level: 0,
+        actions: [{ type: 'fallback_to_tick', params: {} }],
+        rationale: '用户手动触发 tick',
+        confidence: 1.0,
+        safety: false
+      };
+    }
+    // 复杂指令 → 交给 Sonnet
+    return null;
+  }
+
   // 其他情况需要 Sonnet 判断
   return null;
 }
