@@ -185,6 +185,7 @@ const ACTION_WHITELIST = {
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
+
 };
 
 // ============================================================
