@@ -650,10 +650,27 @@ function generateRunId(taskId) {
  */
 
 /**
- * Get skill command based on task_type
+ * Get skill command based on task_type and optional payload
  * 简化版：只有 dev 和 review 两类
+ *
+ * payload 特判逻辑（优先级高于 taskType 映射）：
+ * - payload.decomposition === 'exploratory' → /okr （探索型拆解任务）
+ * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
+ * - payload.decomposition === 'known' → 保持 taskType 原有路由
+ * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
-function getSkillForTaskType(taskType) {
+function getSkillForTaskType(taskType, payload) {
+  // payload 特判：decomposition 模式路由
+  if (payload) {
+    if (payload.decomposition === 'exploratory') {
+      return '/okr';
+    }
+    if (payload.next_action === 'decompose') {
+      return '/okr';
+    }
+    // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
+  }
+
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
     'review': '/review',     // 审查：Sonnet，Plan Mode
@@ -709,7 +726,7 @@ function getPermissionModeForTaskType(taskType) {
  */
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = getSkillForTaskType(taskType);
+  const skill = getSkillForTaskType(taskType, task.payload);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
@@ -1628,6 +1645,7 @@ export {
   updateTaskRunInfo,
   preparePrompt,
   generateRunId,
+  getSkillForTaskType,
   // v2 additions
   getActiveProcessCount,
   getActiveProcesses,
