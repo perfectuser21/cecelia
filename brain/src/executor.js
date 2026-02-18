@@ -737,6 +737,41 @@ function getPermissionModeForTaskType(taskType) {
 }
 
 /**
+ * 检查 task_type 与任务标题的匹配合理性
+ * warning 级别，不阻塞执行，仅记录到 console.warn
+ *
+ * @param {object} task - 任务对象，包含 task_type 和 title
+ */
+function checkTaskTypeMatch(task) {
+  const taskType = task.task_type || 'dev';
+  const title = (task.title || '').toLowerCase();
+
+  // dev 任务但标题包含调研/探索类关键词 → 可能应该用 exploratory
+  if (taskType === 'dev') {
+    const researchKeywords = ['调研', 'research', '探索', '调查', '了解', '分析现状'];
+    const matched = researchKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=dev 但标题含调研关键词"${matched}"，` +
+        `建议使用 task_type=exploratory。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+
+  // exploratory 任务但标题包含实现类关键词 → 可能应该用 dev
+  if (taskType === 'exploratory') {
+    const implKeywords = ['实现', 'feat', 'fix', '开发', '编写', '新增功能', '修复'];
+    const matched = implKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=exploratory 但标题含实现关键词"${matched}"，` +
+        `建议使用 task_type=dev。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+}
+
+/**
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
@@ -1143,6 +1178,9 @@ async function triggerCeceliaRun(task) {
       };
     }
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
+
+    // 检查 task_type 合理性（warning 级别，不阻塞执行）
+    checkTaskTypeMatch(task);
 
     // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
@@ -1692,4 +1730,6 @@ export {
   clearBillingPause,
   // v8: Worktree cleanup
   cleanupWorktree,
+  // v9: Task type matching validation
+  checkTaskTypeMatch,
 };

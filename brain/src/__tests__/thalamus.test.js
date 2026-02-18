@@ -688,6 +688,12 @@ describe('thalamus', () => {
     it('should have 28 total actions in whitelist', () => {
       expect(Object.keys(ACTION_WHITELIST).length).toBe(28);
     });
+
+    it('should include suggest_task_type action with dangerous=false', () => {
+      expect(ACTION_WHITELIST['suggest_task_type']).toBeDefined();
+      expect(ACTION_WHITELIST['suggest_task_type'].dangerous).toBe(false);
+      expect(ACTION_WHITELIST['suggest_task_type'].description).toBe('建议 task_type 修正（只警告记录，不自动修改）');
+    });
   });
 
   describe('LLM_ERROR_TYPE', () => {
