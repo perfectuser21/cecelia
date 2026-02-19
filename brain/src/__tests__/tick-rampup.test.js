@@ -75,14 +75,23 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValue({ rows: [] });
   });
 
-  it('should start at full speed from cold start (no previous state)', async () => {
-    // No previous state -> currentRate = effectiveDispatchMax = 6
-    // CALM + pressure < 0.5 -> +1 -> 7, clamped to ceiling 6
+  it('should start at min(2, max) from cold start to prevent restart burst', async () => {
+    // No previous state (cold start) -> currentRate = min(2, 6) = 2
+    // CALM + pressure < 0.5 -> +1 -> 3, clamped to ceiling 6
     pool.query.mockResolvedValueOnce({ rows: [] }); // SELECT
     pool.query.mockResolvedValueOnce({ rows: [] }); // INSERT
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(6);
+    expect(result).toBe(3); // min(2,6)=2 → +1=3 (not 6 which caused token burst)
+  });
+
+  it('should start at 1 from cold start when max is 1', async () => {
+    // min(2, 1) = 1; CALM + low pressure: +1=2, capped at 1 → result=1
+    pool.query.mockResolvedValueOnce({ rows: [] });
+    pool.query.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getRampedDispatchMax(1);
+    expect(result).toBe(1);
   });
 
   it('should ramp up by 1 each tick when calm and pressure is low', async () => {
@@ -215,16 +224,16 @@ describe('getRampedDispatchMax', () => {
     const insertCall = pool.query.mock.calls[1];
     expect(insertCall[0]).toContain('INSERT INTO working_memory');
     expect(insertCall[1][0]).toBe('dispatch_ramp_state');
-    // Cold start: currentRate=6 (effectiveDispatchMax), CALM+low pressure: +1=7, capped at 6
-    expect(insertCall[1][1]).toHaveProperty('current_rate', 6);
+    // Cold start: currentRate=min(2,6)=2, CALM+low pressure: +1=3, capped at 6
+    expect(insertCall[1][1]).toHaveProperty('current_rate', 3);
   });
 
-  it('should stay at ceiling from cold start (no slow ramp-up)', async () => {
+  it('should gradually ramp up from cold start (burst prevention)', async () => {
     const rates = [];
     const ceiling = 4;
 
     for (let tick = 0; tick < 6; tick++) {
-      const currentRate = tick === 0 ? 0 : rates[tick - 1];
+      const currentRate = tick === 0 ? null : rates[tick - 1];
       pool.query.mockResolvedValueOnce({
         rows: tick === 0 ? [] : [{ value_json: { current_rate: currentRate } }]
       });
@@ -243,9 +252,8 @@ describe('getRampedDispatchMax', () => {
       rates.push(result);
     }
 
-    // Cold start: currentRate=ceiling(4), CALM+low pressure: +1=5, capped to 4
-    // All subsequent ticks: same behavior → always 4
-    expect(rates).toEqual([4, 4, 4, 4, 4, 4]);
+    // Cold start: min(2,4)=2 → +1=3 → +1=4 → stays at 4 (ceiling)
+    expect(rates).toEqual([3, 4, 4, 4, 4, 4]);
   });
 
   it('should reduce under high pressure then recover', async () => {

@@ -649,6 +649,9 @@ async function checkInitiativeDecomposition() {
         SELECT 1 FROM tasks t
         WHERE t.project_id = p.id
           AND t.status NOT IN ('completed', 'cancelled')
+          -- Note: 'canceled' (US) is intentionally NOT excluded here — it acts as
+          -- a guard preventing automatic re-decomposition when tasks are abandoned.
+          -- Adding 'canceled' to this list would cause re-decomposition loops.
       )
   `);
 

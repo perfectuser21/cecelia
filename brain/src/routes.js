@@ -2301,11 +2301,13 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
-    // 6. Event-driven: Trigger next task immediately after completion
+    // 6. Event-driven: Trigger next task after completion (with short cooldown to avoid burst refill)
     let nextTickResult = null;
     if (newStatus === 'completed') {
-      console.log(`[execution-callback] Task completed, triggering next tick...`);
+      const CALLBACK_COOLDOWN_MS = 5000; // 5s cooldown prevents instant slot refill on rapid completions
+      console.log(`[execution-callback] Task completed, triggering next tick in ${CALLBACK_COOLDOWN_MS}ms...`);
       try {
+        await new Promise(resolve => setTimeout(resolve, CALLBACK_COOLDOWN_MS));
         nextTickResult = await runTickSafe('execution-callback');
         console.log(`[execution-callback] Next tick triggered, actions: ${nextTickResult.actions_taken?.length || 0}`);
       } catch (tickErr) {
