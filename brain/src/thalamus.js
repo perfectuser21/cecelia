@@ -354,6 +354,59 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 请分析以下事件并输出 Decision：`;
 
 /**
+ * 从 event payload 提取 Memory 搜索 query
+ * @param {Object} event - 事件包
+ * @returns {string} 搜索 query
+ */
+function extractMemoryQuery(event) {
+  return (
+    event.task?.title ||
+    event.payload?.title ||
+    event.payload?.description ||
+    event.type ||
+    ''
+  );
+}
+
+/**
+ * 调用 Memory API 语义搜索，构建注入 prompt 的 block
+ * 失败时返回空字符串（graceful fallback）
+ * @param {Object} event - 事件包
+ * @returns {Promise<string>} 格式化的 Memory block
+ */
+async function buildMemoryBlock(event) {
+  const query = extractMemoryQuery(event);
+  if (!query) return '';
+
+  try {
+    const response = await fetch('http://localhost:5221/api/brain/memory/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, topK: 3, mode: 'summary' }),
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (!response.ok) return '';
+
+    const data = await response.json();
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+
+    if (matches.length === 0) return '';
+
+    const lines = matches.map((m, i) => {
+      const preview = (m.preview || m.title || '').slice(0, 150);
+      return `- [${i + 1}] **${m.title || '(无标题)'}** (相似度: ${(m.similarity || 0).toFixed(2)}): ${preview}`;
+    });
+
+    return `\n\n## 相关历史任务（Memory 语义搜索，供参考）\n${lines.join('\n')}\n`;
+  } catch (err) {
+    // graceful fallback：Memory 搜索失败不影响主流程
+    console.warn('[thalamus] Memory search failed (graceful fallback):', err.message);
+    return '';
+  }
+}
+
+/**
  * 调用 Sonnet 分析事件
  * @param {Object} event - 事件包
  * @returns {Promise<Decision>}
@@ -373,7 +426,10 @@ async function analyzeEvent(event) {
     learningBlock = `\n\n## 系统历史经验（参考，按相关性排序）\n${learnings.map((l, i) => `- [${i+1}] **${l.title}** (相关度: ${l.relevance_score || 0}): ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
   }
 
-  const prompt = `${THALAMUS_PROMPT}${learningBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+  // Build #2: 注入 Memory 语义搜索结果（历史任务上下文）
+  const memoryBlock = await buildMemoryBlock(event);
+
+  const prompt = `${THALAMUS_PROMPT}${learningBlock}${memoryBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
     // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
@@ -383,6 +439,7 @@ async function analyzeEvent(event) {
     await recordTokenUsage('thalamus', 'claude-sonnet-4-20250514', usage, {
       event_type: event.type,
       learnings_injected: learnings.length,
+      memory_injected: memoryBlock.length > 0,
     });
 
     // 解析 JSON
@@ -871,6 +928,10 @@ export {
 
   // Learnings
   getRecentLearnings,
+
+  // Memory 注入
+  extractMemoryQuery,
+  buildMemoryBlock,
 
   // 常量
   EVENT_TYPES,
