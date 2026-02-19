@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-18
-**Brain 版本**: 1.50.3
-**Schema 版本**: 038
+**Brain 版本**: 1.50.8
+**Schema 版本**: 040
 **状态**: 生产运行中
 
 ---
@@ -267,9 +267,10 @@ executeTick() 流程：
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
 - 规划：create_proposal
-- 知识/学习：create_learning, update_learning, trigger_rca, suggest_task_type
+- 知识/学习：create_learning, update_learning, trigger_rca
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
+- 类型建议：suggest_task_type
 
 ### 3.3 L2 皮层 — Opus 深度分析
 
@@ -632,7 +633,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '038'
+5. **Schema 版本** — 必须 = '040'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置

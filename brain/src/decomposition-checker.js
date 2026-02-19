@@ -71,7 +71,7 @@ async function hasExistingDecompositionTask(goalId) {
     WHERE goal_id = $1
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
@@ -95,7 +95,7 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (payload->>'level' = $2)
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
@@ -116,6 +116,9 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
  * @returns {Object} Created task row
  */
 async function createDecompositionTask({ title, description, goalId, projectId, payload }) {
+  if (!goalId) {
+    throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
+  }
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
@@ -185,6 +188,18 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
+  // KR saturation check - skip if KR already has >= 3 active tasks
+  if (initiative.kr_id) {
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [initiative.kr_id]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] KR ${initiative.kr_id} already has ${satCheck.rows[0].count} active tasks, skipping`);
+      return null;
+    }
+  }
+
   // 1. Count current ready tasks
   const readyTasksResult = await pool.query(`
     SELECT COUNT(*) as count FROM tasks
@@ -637,6 +652,9 @@ async function checkInitiativeDecomposition() {
         SELECT 1 FROM tasks t
         WHERE t.project_id = p.id
           AND t.status NOT IN ('completed', 'cancelled')
+          -- Note: 'canceled' (US) is intentionally NOT excluded here — it acts as
+          -- a guard preventing automatic re-decomposition when tasks are abandoned.
+          -- Adding 'canceled' to this list would cause re-decomposition loops.
       )
   `);
 
@@ -689,6 +707,17 @@ async function checkInitiativeDecomposition() {
     // No KR found — skip to avoid accumulating NULL-goal_id tasks
     if (!krId) {
       console.log(`[decomp-checker] Check 6: Skip "${init.name}" — no KR linkage found`);
+      continue;
+    }
+
+    // KR saturation check - skip if KR already has >= 3 active tasks
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [krId]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] Check 6: KR ${krId} already has ${satCheck.rows[0].count} active tasks, skipping "${init.name}"`);
+      actions.push({ action: 'skip_saturated', check: 'initiative_decomposition', initiative_id: init.id, name: init.name, kr_id: krId });
       continue;
     }
 
@@ -757,7 +786,7 @@ async function checkExploratoryDecompositionContinue() {
           AND follow.project_id = t.project_id
           AND follow.payload->>'decomposition' = 'continue'
           AND follow.payload->>'exploratory_source' = t.id::text
-          AND follow.status IN ('queued', 'in_progress')
+          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled', 'cancelled')
       )
   `);
 
@@ -819,6 +848,15 @@ async function runDecompositionChecks() {
   const allActions = [];
 
   try {
+    // Manual mode check - skip all auto-creation if enabled
+    const manualModeResult = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
+    );
+    if (manualModeResult.rows.length > 0 && manualModeResult.rows[0].value_json?.enabled === true) {
+      console.log('[decomp-checker] Manual mode enabled, skipping auto task creation');
+      return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
+    }
+
     // 1. Get active execution paths (initiatives with recent activity)
     const activePaths = await getActiveExecutionPaths();
 

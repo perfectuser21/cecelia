@@ -18,6 +18,7 @@ import { executeDecision as executeThalamusDecision } from './decision-executor.
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
+import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -30,6 +31,12 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
+
+// 后台恢复配置（initTickLoop 所有重试耗尽后使用）
+const INIT_RECOVERY_INTERVAL_MS = parseInt(
+  process.env.CECELIA_INIT_RECOVERY_INTERVAL_MS || String(5 * 60 * 1000),
+  10
+);
 
 // Task type to agent skill mapping
 const TASK_TYPE_AGENT_MAP = {
@@ -69,6 +76,9 @@ let _tickRunning = false;
 let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 
+// Recovery state (in-memory) — 后台恢复 timer
+let _recoveryTimer = null;
+
 // Drain state (in-memory)
 let _draining = false;
 let _drainStartedAt = null;
@@ -79,8 +89,8 @@ let _drainStartedAt = null;
 async function getTickStatus() {
   const result = await pool.query(`
     SELECT key, value_json FROM working_memory
-    WHERE key IN ($1, $2, $3, $4)
-  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY]);
+    WHERE key IN ($1, $2, $3, $4, $5, $6)
+  `, [TICK_ENABLED_KEY, TICK_LAST_KEY, TICK_ACTIONS_TODAY_KEY, TICK_LAST_DISPATCH_KEY, 'startup_errors', 'recovery_attempts']);
 
   const memory = {};
   for (const row of result.rows) {
@@ -101,6 +111,14 @@ async function getTickStatus() {
   }
 
   const lastDispatch = memory[TICK_LAST_DISPATCH_KEY] || null;
+
+  // startup_errors 可观测字段
+  const startupErrors = memory['startup_errors'] || null;
+  const startupErrorCount = startupErrors?.total_failures || 0;
+  const startupOk = startupErrorCount === 0;
+
+  // recovery_attempts 可观测字段
+  const recoveryAttempts = memory['recovery_attempts'] || null;
 
   // Get quarantine stats
   let quarantineStats = { total: 0 };
@@ -126,6 +144,10 @@ async function getTickStatus() {
     actions_today: actionsToday,
     tick_running: _tickRunning,
     last_dispatch: lastDispatch,
+    startup_ok: startupOk,
+    startup_error_count: startupErrorCount,
+    recovery_timer_active: _recoveryTimer !== null,
+    recovery_attempts: recoveryAttempts,
     max_concurrent: MAX_CONCURRENT_TASKS,
     auto_dispatch_max: AUTO_DISPATCH_MAX,
     resources: checkServerResources(),
@@ -215,8 +237,92 @@ function stopTickLoop() {
 }
 
 /**
+ * 记录恢复尝试到 working_memory recovery_attempts（尽力写入，失败不影响主流程）
+ * @param {boolean} success - 本次恢复是否成功
+ * @param {string} [errMessage] - 失败时的错误信息
+ */
+async function _recordRecoveryAttempt(success, errMessage) {
+  try {
+    const result = await pool.query(
+      'SELECT value_json FROM working_memory WHERE key = $1',
+      ['recovery_attempts']
+    );
+    const existing = result.rows[0]?.value_json || { attempts: [], total_attempts: 0, last_success_at: null };
+    const attempts = Array.isArray(existing.attempts) ? existing.attempts : [];
+    attempts.push({
+      ts: new Date().toISOString(),
+      success,
+      error: success ? undefined : errMessage
+    });
+    const updated = {
+      attempts: attempts.slice(-50), // 只保留最近50条
+      total_attempts: (existing.total_attempts || 0) + 1,
+      last_success_at: success ? new Date().toISOString() : existing.last_success_at,
+      last_attempt_at: new Date().toISOString()
+    };
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['recovery_attempts', updated]);
+  } catch {
+    // 尽力写入，失败不阻断恢复流程
+  }
+}
+
+/**
+ * 尝试一次恢复启动 tick loop（被后台 timer 调用）
+ * 成功时清除 recovery timer；失败时记录并等待下次 timer 触发
+ */
+async function tryRecoverTickLoop() {
+  // 如果 tick loop 已经在运行，停止恢复
+  if (_loopTimer) {
+    console.log('[tick-loop] Recovery: tick loop already running, clearing recovery timer');
+    if (_recoveryTimer) {
+      clearInterval(_recoveryTimer);
+      _recoveryTimer = null;
+    }
+    return;
+  }
+
+  console.log('[tick-loop] Recovery: attempting to start tick loop...');
+
+  try {
+    const { ensureEventsTable } = await import('./event-bus.js');
+    await ensureEventsTable();
+
+    const envEnabled = process.env.CECELIA_TICK_ENABLED;
+    if (envEnabled === 'true') {
+      await enableTick();
+    } else {
+      const status = await getTickStatus();
+      if (status.enabled) {
+        startTickLoop();
+      } else {
+        console.log('[tick-loop] Recovery: tick disabled in DB, skipping');
+        await _recordRecoveryAttempt(false, 'tick_disabled_in_db');
+        return;
+      }
+    }
+
+    // 成功：清除恢复 timer 并记录
+    console.log('[tick-loop] Recovery: tick loop started successfully, clearing recovery timer');
+    if (_recoveryTimer) {
+      clearInterval(_recoveryTimer);
+      _recoveryTimer = null;
+    }
+    await _recordRecoveryAttempt(true);
+  } catch (err) {
+    console.error(`[tick-loop] Recovery attempt failed: ${err.message}`);
+    await _recordRecoveryAttempt(false, err.message);
+  }
+}
+
+/**
  * Initialize tick loop on server startup
- * Checks DB state and starts loop if tick is enabled
+ * Checks DB state and starts loop if tick is enabled.
+ * If initialization fails, starts a background recovery timer that retries
+ * every INIT_RECOVERY_INTERVAL_MS until tick loop is successfully started.
  */
 async function initTickLoop() {
   try {
@@ -265,6 +371,16 @@ async function initTickLoop() {
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
+
+    // 启动后台恢复 timer（每 INIT_RECOVERY_INTERVAL_MS 重试一次）
+    if (!_recoveryTimer) {
+      console.log(`[tick-loop] Starting background recovery timer (interval: ${INIT_RECOVERY_INTERVAL_MS}ms)`);
+      _recoveryTimer = setInterval(tryRecoverTickLoop, INIT_RECOVERY_INTERVAL_MS);
+      // 允许进程在没有其他活跃引用时正常退出
+      if (_recoveryTimer.unref) {
+        _recoveryTimer.unref();
+      }
+    }
   }
 }
 
@@ -358,9 +474,10 @@ async function incrementActionsToday(count = 1) {
  * Returns null if no dispatchable task found.
  *
  * @param {string[]} goalIds - Goal IDs to scope the query
+ * @param {string[]} [excludeIds=[]] - Task IDs to exclude (e.g. pre-flight failures)
  * @returns {Object|null} - The next task to dispatch, or null
  */
-async function selectNextDispatchableTask(goalIds) {
+async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   // Check if P2 tasks should be paused (alertness mitigation)
   const { getMitigationState } = await import('./alertness-actions.js');
   const mitigationState = getMitigationState();
@@ -369,11 +486,18 @@ async function selectNextDispatchableTask(goalIds) {
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
   // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
+  const queryParams = [goalIds];
+  let excludeClause = '';
+  if (excludeIds.length > 0) {
+    queryParams.push(excludeIds);
+    excludeClause = `AND t.id != ALL($${queryParams.length})`;
+  }
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
     WHERE t.goal_id = ANY($1)
       AND t.status = 'queued'
+      ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
         OR t.payload->>'next_run_at' = ''
@@ -382,7 +506,7 @@ async function selectNextDispatchableTask(goalIds) {
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       t.created_at ASC
-  `, [goalIds]);
+  `, queryParams);
 
   for (const task of result.rows) {
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
@@ -506,24 +630,34 @@ async function processCortexTask(task, actions) {
   } catch (err) {
     console.error(`[tick] Cortex task failed: ${err.message}`);
 
-    // Update task to failed with error in payload
-    const updatedPayload = {
-      ...task.payload,
-      rca_error: {
-        error: err.message,
-        failed_at: new Date().toISOString()
-      }
-    };
-    await pool.query(`
-      UPDATE tasks SET status = $1, payload = $2, updated_at = NOW()
-      WHERE id = $3
-    `, ['failed', JSON.stringify(updatedPayload), task.id]);
+    // Record error details in payload
+    await pool.query(
+      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [task.id, JSON.stringify({
+        rca_error: { error: err.message, failed_at: new Date().toISOString() }
+      })]
+    );
 
-    actions.push({
-      action: 'cortex-failed',
-      task_id: task.id,
-      error: err.message
-    });
+    // Use handleTaskFailure for quarantine check (repeated failures → auto-quarantine)
+    const quarantineResult = await handleTaskFailure(task.id);
+    if (quarantineResult.quarantined) {
+      console.log(`[tick] Cortex task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+      actions.push({
+        action: 'cortex-quarantined',
+        task_id: task.id,
+        error: err.message,
+        reason: quarantineResult.result?.reason
+      });
+    } else {
+      // Not quarantined — mark as failed normally
+      await updateTask({ task_id: task.id, status: 'failed' });
+      actions.push({
+        action: 'cortex-failed',
+        task_id: task.id,
+        error: err.message,
+        failure_count: quarantineResult.failure_count
+      });
+    }
 
     return {
       dispatched: false,
@@ -551,6 +685,7 @@ async function dispatchNextTask(goalIds) {
   const mitigationState = getMitigationState();
 
   if (_draining || mitigationState.drain_mode_requested) {
+    await recordDispatchResult(pool, false, 'draining');
     return {
       dispatched: false,
       reason: 'draining',
@@ -562,16 +697,19 @@ async function dispatchNextTask(goalIds) {
   // 0a. Billing pause check — skip dispatch if API billing cap is active
   const billingPause = getBillingPause();
   if (billingPause.active) {
+    await recordDispatchResult(pool, false, 'billing_pause');
     return { dispatched: false, reason: 'billing_pause', detail: `Billing cap active until ${billingPause.resetTime}`, actions };
   }
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
   if (!slotBudget.dispatchAllowed) {
+    const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
+                       slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
+    await recordDispatchResult(pool, false, slotReason);
     return {
       dispatched: false,
-      reason: slotBudget.user.mode === 'team' ? 'user_team_mode' :
-             slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full',
+      reason: slotReason,
       budget: slotBudget,
       actions,
     };
@@ -579,37 +717,53 @@ async function dispatchNextTask(goalIds) {
 
   // 2. Circuit breaker check
   if (!isAllowed('cecelia-run')) {
+    await recordDispatchResult(pool, false, 'circuit_breaker_open');
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
-  // 3. Select next task (with dependency check)
-  const nextTask = await selectNextDispatchableTask(goalIds);
-  if (!nextTask) {
-    return { dispatched: false, reason: 'no_dispatchable_task', actions };
-  }
+  // 3. Select next task (with dependency check + pre-flight validation)
+  //    If pre-flight fails, skip that task and try the next candidate (max 5 retries)
+  const MAX_PRE_FLIGHT_RETRIES = 5;
+  const preFlightFailedIds = [];
+  let nextTask = null;
 
-  // 3a. Check if task requires Cortex processing (Brain-internal RCA)
-  if (nextTask.payload && nextTask.payload.requires_cortex === true) {
-    return await processCortexTask(nextTask, actions);
-  }
-
-  // 3b. Pre-flight Check — validate task quality before dispatch
   const { preFlightCheck } = await import('./pre-flight-check.js');
-  const checkResult = await preFlightCheck(nextTask);
-  if (!checkResult.passed) {
-    console.warn(`[dispatch] Pre-flight check failed for task ${nextTask.id}:`, checkResult.issues);
-    // Record failure reason to metadata
+
+  for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
+    const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds);
+    if (!candidate) {
+      return { dispatched: false, reason: 'no_dispatchable_task', actions };
+    }
+
+    // 3a. Check if task requires Cortex processing (Brain-internal RCA)
+    if (candidate.payload && candidate.payload.requires_cortex === true) {
+      return await processCortexTask(candidate, actions);
+    }
+
+    // 3b. Pre-flight Check — validate task quality before dispatch
+    const checkResult = await preFlightCheck(candidate);
+    if (checkResult.passed) {
+      nextTask = candidate;
+      break;
+    }
+
+    // Pre-flight failed — record and skip to next candidate
+    console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
     await pool.query(
       `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-      [nextTask.id, JSON.stringify({
+      [candidate.id, JSON.stringify({
         pre_flight_failed: true,
         pre_flight_issues: checkResult.issues,
         pre_flight_suggestions: checkResult.suggestions,
         failed_at: new Date().toISOString()
       })]
     );
-    // Do not dispatch, return false
-    return { dispatched: false, reason: 'pre_flight_check_failed', issues: checkResult.issues, actions };
+    await recordDispatchResult(pool, false, 'pre_flight_check_failed');
+    preFlightFailedIds.push(candidate.id);
+  }
+
+  if (!nextTask) {
+    return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
   }
 
   // 4. Update task status to in_progress
@@ -640,15 +794,32 @@ async function dispatchNextTask(goalIds) {
       { action: 'no-executor', task_id: nextTask.id, reason: ceceliaAvailable.error },
       { success: false, warning: 'cecelia-run not available, task reverted to queued' }
     );
+    await recordDispatchResult(pool, false, 'no_executor');
     return { dispatched: false, reason: 'no_executor', task_id: nextTask.id, actions };
   }
 
   const fullTaskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [nextTask.id]);
   if (fullTaskResult.rows.length === 0) {
+    await recordDispatchResult(pool, false, 'task_not_found');
     return { dispatched: false, reason: 'task_not_found', task_id: nextTask.id, actions };
   }
 
   const execResult = await triggerCeceliaRun(fullTaskResult.rows[0]);
+
+  // 5a. Check if executor actually succeeded — revert to queued if not
+  if (!execResult.success) {
+    console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
+    await recordFailure('cecelia-run');
+    await logTickDecision(
+      'tick',
+      `Executor failed, task reverted to queued: ${execResult.error || execResult.reason}`,
+      { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error },
+      { success: false }
+    );
+    await recordDispatchResult(pool, false, 'executor_failed');
+    return { dispatched: false, reason: 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, actions };
+  }
 
   _lastDispatchTime = Date.now();
 
@@ -712,6 +883,9 @@ async function dispatchNextTask(goalIds) {
   } catch (statsErr) {
     console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
   }
+
+  // Record dispatch success to rolling window stats
+  await recordDispatchResult(pool, true);
 
   return { dispatched: true, task_id: nextTask.id, run_id: execResult.runId, actions };
 }
@@ -798,9 +972,11 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     SELECT value_json FROM working_memory WHERE key = 'dispatch_ramp_state'
   `);
 
+  // Cold start: no ramp record → start at min(2, max) to avoid burst on restart
+  // (Having no ramp record means Brain just restarted — avoid immediately dispatching 9 tasks)
   let currentRate = stateResult.rows.length > 0
-    ? (stateResult.rows[0].value_json.current_rate || 0)
-    : 0;
+    ? (stateResult.rows[0].value_json.current_rate || effectiveDispatchMax)
+    : Math.min(2, effectiveDispatchMax);
 
   // Check current system resources and alertness
   const resources = checkServerResources();
@@ -819,7 +995,7 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     // High pressure - slow down
     newRate = Math.max(1, currentRate - 1);
     reason = `pressure=${pressure.toFixed(2)}`;
-  } else if (pressure < 0.5 && alertness.level === ALERTNESS_LEVELS.CALM) {
+  } else if (pressure < 0.5 && alertness.level <= ALERTNESS_LEVELS.AWARE) {
     // Low pressure and calm - speed up
     newRate = currentRate + 1;
     reason = 'low_load';
@@ -966,11 +1142,12 @@ async function executeTick() {
     const { runDecompositionChecks } = await import('./decomposition-checker.js');
     const decompSummary = await runDecompositionChecks();
     if (decompSummary.total_created > 0) {
-      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks across ${decompSummary.layers_triggered.length} layers`);
+      const activePaths = decompSummary.active_paths?.length ?? 0;
+      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks (${activePaths} active paths)`);
       actionsTaken.push({
         action: 'decomposition_check',
         created_count: decompSummary.total_created,
-        layers: decompSummary.layers_triggered,
+        active_paths: activePaths,
         tasks: decompSummary.created_tasks
       });
     }
@@ -1061,38 +1238,45 @@ async function executeTick() {
   // 3. Get daily focus
   const focusResult = await getDailyFocus();
 
-  if (!focusResult) {
+  // When no daily focus (no active OKR), skip focus scoping but continue dispatch
+  // This prevents the entire tick from exiting when OKRs are temporarily absent
+  const hasFocus = !!focusResult;
+  if (!hasFocus) {
     await logTickDecision(
       'tick',
-      'No daily focus set',
-      { action: 'skip', reason: 'no_focus' },
-      { success: true, skipped: true }
+      'No daily focus — falling back to global dispatch',
+      { action: 'global_fallback', reason: 'no_focus' },
+      { success: true, skipped: false }
     );
-    return {
-      success: true,
-      decision_engine: decisionEngineResult,
-      actions_taken: actionsTaken,
-      reason: 'No active Objective to focus on',
-      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
-    };
+    console.log('[tick] No active Objective found, falling back to global task dispatch');
   }
 
-  const { focus } = focusResult;
-  const objectiveId = focus.objective.id;
+  const focus = hasFocus ? focusResult.focus : null;
+  const objectiveId = hasFocus ? focus.objective.id : null;
 
   // 4. Get tasks related to focus objective (include payload for timeout check)
-  const krIds = focus.key_results.map(kr => kr.id);
-  const allGoalIds = [objectiveId, ...krIds];
+  // When no focus: allGoalIds = all active goals (global fallback)
+  let allGoalIds;
+  let krIds = [];
+  if (hasFocus) {
+    krIds = focus.key_results.map(kr => kr.id);
+    allGoalIds = [objectiveId, ...krIds];
+  } else {
+    const allGoalsResult = await pool.query(`
+      SELECT id FROM goals WHERE status NOT IN ('completed', 'cancelled', 'canceled')
+    `);
+    allGoalIds = allGoalsResult.rows.map(r => r.id);
+  }
 
   const tasksResult = await pool.query(`
     SELECT id, title, status, priority, started_at, updated_at, payload
     FROM tasks
-    WHERE goal_id = ANY($1)
-      AND status NOT IN ('completed', 'cancelled')
+    WHERE (goal_id = ANY($1) OR $1 = '{}')
+      AND status NOT IN ('completed', 'cancelled', 'canceled')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-  `, [allGoalIds]);
+  `, [allGoalIds.length > 0 ? allGoalIds : []]);
 
   const tasks = tasksResult.rows;
   const inProgress = tasks.filter(t => t.status === 'in_progress');
@@ -1225,7 +1409,7 @@ async function executeTick() {
       success: true,
       alertness: alertnessResult,
       decision_engine: decisionEngineResult,
-      focus: { objective_id: objectiveId, objective_title: focus.objective.title },
+      focus: hasFocus ? { objective_id: objectiveId, objective_title: focus.objective.title } : null,
       dispatch: { dispatched: 0, reason: 'alertness_disabled' },
       actions_taken: actionsTaken,
       summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
@@ -1317,10 +1501,10 @@ async function executeTick() {
     success: true,
     alertness: alertnessResult,
     decision_engine: decisionEngineResult,
-    focus: {
+    focus: hasFocus ? {
       objective_id: objectiveId,
       objective_title: focus.objective.title
-    },
+    } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
     actions_taken: actionsTaken,
     summary: {
@@ -1432,6 +1616,27 @@ function _resetDrainState() {
   _drainStartedAt = null;
 }
 
+/**
+ * 读取 working_memory 中的 startup_errors 数据
+ * 用于 GET /api/brain/tick/startup-errors 端点
+ * @returns {{ errors: Array, total_failures: number, last_error_at: string|null }}
+ */
+async function getStartupErrors() {
+  const result = await pool.query(
+    'SELECT value_json FROM working_memory WHERE key = $1',
+    ['startup_errors']
+  );
+  const data = result.rows[0]?.value_json;
+  if (!data) {
+    return { errors: [], total_failures: 0, last_error_at: null };
+  }
+  return {
+    errors: Array.isArray(data.errors) ? data.errors : [],
+    total_failures: data.total_failures || 0,
+    last_error_at: data.last_error_at || null
+  };
+}
+
 export {
   getTickStatus,
   enableTick,
@@ -1460,5 +1665,6 @@ export {
   TICK_TIMEOUT_MS,
   DISPATCH_TIMEOUT_MINUTES,
   MAX_CONCURRENT_TASKS,
-  AUTO_DISPATCH_MAX
+  AUTO_DISPATCH_MAX,
+  getStartupErrors
 };

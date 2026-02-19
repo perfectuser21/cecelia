@@ -138,7 +138,7 @@ const MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, 
 // so when auto-dispatch hits the ceiling, user still has room for headed sessions
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
-const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
+const LOAD_THRESHOLD = CPU_CORES * 0.95 - RESERVE_CPU;        // e.g. 7.6 - 1.0 = 6.6 (was 0.85=5.8, too tight for 5+ tasks)
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
 const SWAP_USED_MAX_PCT = 70;                     // Hard stop: swap > 70% (50% was too aggressive — modern Linux uses swap as cache)
 
@@ -362,6 +362,13 @@ function isProcessAlive(pid) {
 function killProcess(taskId) {
   const entry = activeProcesses.get(taskId);
   if (!entry) return false;
+
+  // Guard: null pid would cause process.kill(0) which sends SIGTERM to own process group
+  if (!entry.pid) {
+    console.log(`[executor] Skipping kill task=${taskId}: pid is null (bridge-tracked), removing from active`);
+    activeProcesses.delete(taskId);
+    return false;
+  }
 
   try {
     // Kill the process group (negative PID) to catch child shells
@@ -777,7 +784,7 @@ function checkTaskTypeMatch(task) {
  */
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = getSkillForTaskType(taskType, task.payload);
+  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
@@ -1595,102 +1602,6 @@ async function recordHeartbeat(taskId, runId) {
   return { success: true, message: 'Heartbeat recorded' };
 }
 
-// ============================================================
-// Worktree Cleanup (v8)
-// ============================================================
-
-/**
- * Get worktree path for a branch
- * @param {string} branchName - Branch name (e.g., cp-02140730-xxx)
- * @returns {string|null} - Worktree path or null if not found
- */
-function getWorktreePath(branchName) {
-  try {
-    const output = execSync('git worktree list', { encoding: 'utf-8' });
-    const lines = output.split('\n');
-    for (const line of lines) {
-      if (line.includes(`[${branchName}]`)) {
-        return line.split(/\s+/)[0];
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Check if worktree has uncommitted changes
- * @param {string} worktreePath - Path to worktree directory
- * @returns {boolean} - True if has uncommitted changes
- */
-function hasUncommittedChanges(worktreePath) {
-  try {
-    const output = execSync(`git -C "${worktreePath}" status --porcelain`, { encoding: 'utf-8' });
-    return output.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Clean up worktree and branches after task completion
- * Called by execution-callback after task completes/fails.
- * Only cleans cp-* branches to avoid accidents.
- *
- * @param {Object} task - Task object with branch field
- * @returns {Promise<void>}
- */
-async function cleanupWorktree(task) {
-  const branchName = task?.branch || task?.payload?.branch;
-
-  if (!branchName || !branchName.startsWith('cp-')) {
-    return; // Only clean up cp-* branches
-  }
-
-  try {
-    // 1. Check if worktree exists
-    const worktreePath = getWorktreePath(branchName);
-    if (!worktreePath) {
-      console.log(`[cleanup] No worktree for ${branchName}`);
-      return;
-    }
-
-    // 2. Check for uncommitted changes
-    if (hasUncommittedChanges(worktreePath)) {
-      console.warn(`[cleanup] Worktree ${worktreePath} has uncommitted changes, skipping cleanup`);
-      return;
-    }
-
-    // 3. Remove worktree
-    try {
-      execSync(`git worktree remove "${worktreePath}" --force`, { encoding: 'utf-8' });
-      console.log(`[cleanup] Removed worktree: ${worktreePath}`);
-    } catch (err) {
-      console.error(`[cleanup] Failed to remove worktree ${worktreePath}: ${err.message}`);
-      return; // Don't continue if worktree removal failed
-    }
-
-    // 4. Delete local branch
-    try {
-      execSync(`git branch -D "${branchName}"`, { encoding: 'utf-8' });
-      console.log(`[cleanup] Deleted local branch: ${branchName}`);
-    } catch (err) {
-      console.error(`[cleanup] Failed to delete local branch ${branchName}: ${err.message}`);
-    }
-
-    // 5. Delete remote branch (optional, ignore failures)
-    try {
-      execSync(`git push origin --delete "${branchName}"`, { encoding: 'utf-8', stdio: 'ignore' });
-      console.log(`[cleanup] Deleted remote branch: ${branchName}`);
-    } catch {
-      // Remote branch may already be deleted by GitHub auto-delete, ignore
-    }
-  } catch (err) {
-    console.error(`[cleanup] Failed to cleanup ${branchName}: ${err.message}`);
-  }
-}
-
 export {
   triggerCeceliaRun,
   triggerMiniMaxExecutor,
@@ -1728,8 +1639,6 @@ export {
   setBillingPause,
   getBillingPause,
   clearBillingPause,
-  // v8: Worktree cleanup
-  cleanupWorktree,
   // v9: Task type matching validation
   checkTaskTypeMatch,
 };

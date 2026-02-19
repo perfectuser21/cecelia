@@ -160,4 +160,5 @@ describe('decomposition-checker: checkInitiativeDecomposition kr_id fallback', (
     const created = actions.filter(a => a.action === 'create_decomposition' && a.initiative_id === initId);
     expect(created.length).toBe(0);
   });
+
 });
