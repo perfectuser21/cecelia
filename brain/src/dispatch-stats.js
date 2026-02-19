@@ -21,6 +21,8 @@
 
 export const DISPATCH_STATS_KEY = 'dispatch_stats';
 export const WINDOW_MS = 60 * 60 * 1000; // 1 小时
+export const DISPATCH_RATE_THRESHOLD = 0.3; // 成功率低于 30% 触发熔断
+export const DISPATCH_MIN_SAMPLE = 10;     // 最低样本数
 
 /**
  * 读取当前 dispatch_stats（从 DB）

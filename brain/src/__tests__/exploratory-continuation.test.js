@@ -102,6 +102,9 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
     it('runDecompositionChecks result includes exploratory_continue actions when Check 7 triggers', async () => {
       const expTaskId = 'exp-task-integration';
 
+      // manual_mode check (added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
       // getActiveExecutionPaths → no active paths (simplify other checks)
       pool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -137,6 +140,9 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       const initId = 'init-empty-001';
       const parentId = 'proj-parent-001';
 
+      // manual_mode check (added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
       // getActiveExecutionPaths → no active paths
       pool.query.mockResolvedValueOnce({ rows: [] });
 
@@ -155,8 +161,11 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       // hasExistingDecompositionTaskByProject → no existing dedup
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // Get linked KR for parent project
+      // Get linked KR for parent project (Layer 1: project_kr_links)
       pool.query.mockResolvedValueOnce({ rows: [{ kr_id: 'kr-001' }] });
+
+      // KR saturation check → count = 0 (below threshold of 3, added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
       // createDecompositionTask INSERT
       pool.query.mockResolvedValueOnce({
@@ -177,6 +186,9 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
 
     it('runDecompositionChecks skips dedup for already-seeded initiative', async () => {
       const initId = 'init-seeded-001';
+
+      // manual_mode check (added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [] });
 
       // getActiveExecutionPaths → no active paths
       pool.query.mockResolvedValueOnce({ rows: [] });

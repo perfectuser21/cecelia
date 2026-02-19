@@ -474,9 +474,10 @@ async function incrementActionsToday(count = 1) {
  * Returns null if no dispatchable task found.
  *
  * @param {string[]} goalIds - Goal IDs to scope the query
+ * @param {string[]} [excludeIds=[]] - Task IDs to exclude (e.g. pre-flight failures)
  * @returns {Object|null} - The next task to dispatch, or null
  */
-async function selectNextDispatchableTask(goalIds) {
+async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   // Check if P2 tasks should be paused (alertness mitigation)
   const { getMitigationState } = await import('./alertness-actions.js');
   const mitigationState = getMitigationState();
@@ -485,11 +486,18 @@ async function selectNextDispatchableTask(goalIds) {
   // Watchdog backoff: skip tasks with next_run_at in the future
   // next_run_at is always written as UTC ISO-8601 by requeueTask().
   // Safety: NULL, empty string, or unparseable values are treated as "no backoff".
+  const queryParams = [goalIds];
+  let excludeClause = '';
+  if (excludeIds.length > 0) {
+    queryParams.push(excludeIds);
+    excludeClause = `AND t.id != ALL($${queryParams.length})`;
+  }
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
     WHERE t.goal_id = ANY($1)
       AND t.status = 'queued'
+      ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
         OR t.payload->>'next_run_at' = ''
@@ -498,7 +506,7 @@ async function selectNextDispatchableTask(goalIds) {
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       t.created_at ASC
-  `, [goalIds]);
+  `, queryParams);
 
   for (const task of result.rows) {
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
@@ -622,24 +630,34 @@ async function processCortexTask(task, actions) {
   } catch (err) {
     console.error(`[tick] Cortex task failed: ${err.message}`);
 
-    // Update task to failed with error in payload
-    const updatedPayload = {
-      ...task.payload,
-      rca_error: {
-        error: err.message,
-        failed_at: new Date().toISOString()
-      }
-    };
-    await pool.query(`
-      UPDATE tasks SET status = $1, payload = $2, updated_at = NOW()
-      WHERE id = $3
-    `, ['failed', JSON.stringify(updatedPayload), task.id]);
+    // Record error details in payload
+    await pool.query(
+      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [task.id, JSON.stringify({
+        rca_error: { error: err.message, failed_at: new Date().toISOString() }
+      })]
+    );
 
-    actions.push({
-      action: 'cortex-failed',
-      task_id: task.id,
-      error: err.message
-    });
+    // Use handleTaskFailure for quarantine check (repeated failures → auto-quarantine)
+    const quarantineResult = await handleTaskFailure(task.id);
+    if (quarantineResult.quarantined) {
+      console.log(`[tick] Cortex task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+      actions.push({
+        action: 'cortex-quarantined',
+        task_id: task.id,
+        error: err.message,
+        reason: quarantineResult.result?.reason
+      });
+    } else {
+      // Not quarantined — mark as failed normally
+      await updateTask({ task_id: task.id, status: 'failed' });
+      actions.push({
+        action: 'cortex-failed',
+        task_id: task.id,
+        error: err.message,
+        failure_count: quarantineResult.failure_count
+      });
+    }
 
     return {
       dispatched: false,
@@ -703,35 +721,49 @@ async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
 
-  // 3. Select next task (with dependency check)
-  const nextTask = await selectNextDispatchableTask(goalIds);
-  if (!nextTask) {
-    return { dispatched: false, reason: 'no_dispatchable_task', actions };
-  }
+  // 3. Select next task (with dependency check + pre-flight validation)
+  //    If pre-flight fails, skip that task and try the next candidate (max 5 retries)
+  const MAX_PRE_FLIGHT_RETRIES = 5;
+  const preFlightFailedIds = [];
+  let nextTask = null;
 
-  // 3a. Check if task requires Cortex processing (Brain-internal RCA)
-  if (nextTask.payload && nextTask.payload.requires_cortex === true) {
-    return await processCortexTask(nextTask, actions);
-  }
-
-  // 3b. Pre-flight Check — validate task quality before dispatch
   const { preFlightCheck } = await import('./pre-flight-check.js');
-  const checkResult = await preFlightCheck(nextTask);
-  if (!checkResult.passed) {
-    console.warn(`[dispatch] Pre-flight check failed for task ${nextTask.id}:`, checkResult.issues);
-    // Record failure reason to metadata
+
+  for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
+    const candidate = await selectNextDispatchableTask(goalIds, preFlightFailedIds);
+    if (!candidate) {
+      return { dispatched: false, reason: 'no_dispatchable_task', actions };
+    }
+
+    // 3a. Check if task requires Cortex processing (Brain-internal RCA)
+    if (candidate.payload && candidate.payload.requires_cortex === true) {
+      return await processCortexTask(candidate, actions);
+    }
+
+    // 3b. Pre-flight Check — validate task quality before dispatch
+    const checkResult = await preFlightCheck(candidate);
+    if (checkResult.passed) {
+      nextTask = candidate;
+      break;
+    }
+
+    // Pre-flight failed — record and skip to next candidate
+    console.warn(`[dispatch] Pre-flight check failed for task ${candidate.id} (attempt ${attempt + 1}/${MAX_PRE_FLIGHT_RETRIES + 1}):`, checkResult.issues);
     await pool.query(
       `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-      [nextTask.id, JSON.stringify({
+      [candidate.id, JSON.stringify({
         pre_flight_failed: true,
         pre_flight_issues: checkResult.issues,
         pre_flight_suggestions: checkResult.suggestions,
         failed_at: new Date().toISOString()
       })]
     );
-    // Do not dispatch, return false
     await recordDispatchResult(pool, false, 'pre_flight_check_failed');
-    return { dispatched: false, reason: 'pre_flight_check_failed', issues: checkResult.issues, actions };
+    preFlightFailedIds.push(candidate.id);
+  }
+
+  if (!nextTask) {
+    return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
   }
 
   // 4. Update task status to in_progress
@@ -773,6 +805,21 @@ async function dispatchNextTask(goalIds) {
   }
 
   const execResult = await triggerCeceliaRun(fullTaskResult.rows[0]);
+
+  // 5a. Check if executor actually succeeded — revert to queued if not
+  if (!execResult.success) {
+    console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
+    await updateTask({ task_id: nextTask.id, status: 'queued' });
+    await recordFailure('cecelia-run');
+    await logTickDecision(
+      'tick',
+      `Executor failed, task reverted to queued: ${execResult.error || execResult.reason}`,
+      { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error },
+      { success: false }
+    );
+    await recordDispatchResult(pool, false, 'executor_failed');
+    return { dispatched: false, reason: 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, actions };
+  }
 
   _lastDispatchTime = Date.now();
 

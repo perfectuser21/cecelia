@@ -6144,4 +6144,36 @@ router.get('/manual-mode', async (req, res) => {
   }
 });
 
+/**
+ * triggerAutoRCA — 任务失败时自动触发 RCA（依赖注入，便于测试）
+ * @param {object} opts
+ * @param {string} opts.task_id
+ * @param {string} opts.errorMsg
+ * @param {object} opts.classification - { class, pattern }
+ * @param {function} opts.shouldAnalyzeFailure - async (task_id, errorMsg) => { should_analyze, signature, cached_result? }
+ * @param {function} opts.performRCA - async ({ task_id, error, classification }) => {}
+ */
+export async function triggerAutoRCA({ task_id, errorMsg, classification, shouldAnalyzeFailure, performRCA }) {
+  // BILLING_CAP 类型不需要 RCA
+  if (classification?.class === 'BILLING_CAP') {
+    console.log(`[AutoRCA] Skip task=${task_id}: BILLING_CAP`);
+    return;
+  }
+
+  try {
+    // 去重检查
+    const dedup = await shouldAnalyzeFailure(task_id, errorMsg);
+    if (!dedup.should_analyze) {
+      console.log(`[AutoRCA] Skip task=${task_id}: duplicate (signature=${dedup.signature})`);
+      return;
+    }
+
+    // 执行 RCA
+    console.log(`[AutoRCA] Analyzing task=${task_id}`);
+    await performRCA({ task_id, error: errorMsg, classification });
+  } catch (err) {
+    console.error(`[AutoRCA] Error analyzing task=${task_id}: ${err.message}`);
+  }
+}
+
 export default router;

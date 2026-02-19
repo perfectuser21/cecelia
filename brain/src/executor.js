@@ -716,7 +716,7 @@ function getPermissionModeForTaskType(taskType) {
  */
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = getSkillForTaskType(taskType);
+  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
