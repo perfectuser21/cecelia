@@ -38,11 +38,16 @@ AND kr_id = '15e28187-e12e-487b-9f72-ba595acf0767';
 
 -- Establish project_kr_links: cecelia-core → KR1/KR2/KR3
 -- This allows planner to route through KR→Project→Initiative→Task path
+-- Only insert if both project and KR exist (safe in CI/fresh DB)
 INSERT INTO project_kr_links (project_id, kr_id, created_at)
-VALUES
-  ('574b9788-8987-4551-91e6-8c0b1aab63df', 'affafff2-007a-453e-aa25-26cd8d17e636', NOW()),
-  ('574b9788-8987-4551-91e6-8c0b1aab63df', '41ec41b0-bb3b-4fbe-998d-18fa1204ce76', NOW()),
-  ('574b9788-8987-4551-91e6-8c0b1aab63df', '6238d18a-bae2-4e2a-9bd1-472551070f63', NOW())
+SELECT p.id, g.id, NOW()
+FROM projects p, goals g
+WHERE p.id = '574b9788-8987-4551-91e6-8c0b1aab63df'
+  AND g.id IN (
+    'affafff2-007a-453e-aa25-26cd8d17e636',
+    '41ec41b0-bb3b-4fbe-998d-18fa1204ce76',
+    '6238d18a-bae2-4e2a-9bd1-472551070f63'
+  )
 ON CONFLICT DO NOTHING;
 
 -- Record migration
