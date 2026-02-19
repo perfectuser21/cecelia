@@ -1257,8 +1257,9 @@ async function executeTick() {
   // 4. Get tasks related to focus objective (include payload for timeout check)
   // When no focus: allGoalIds = all active goals (global fallback)
   let allGoalIds;
+  let krIds = [];
   if (hasFocus) {
-    const krIds = focus.key_results.map(kr => kr.id);
+    krIds = focus.key_results.map(kr => kr.id);
     allGoalIds = [objectiveId, ...krIds];
   } else {
     const allGoalsResult = await pool.query(`

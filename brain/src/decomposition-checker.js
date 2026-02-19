@@ -116,6 +116,9 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
  * @returns {Object} Created task row
  */
 async function createDecompositionTask({ title, description, goalId, projectId, payload }) {
+  if (!goalId) {
+    throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
+  }
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
