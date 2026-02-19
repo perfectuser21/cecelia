@@ -972,10 +972,11 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
     SELECT value_json FROM working_memory WHERE key = 'dispatch_ramp_state'
   `);
 
-  // Cold start: no ramp record or rate=0 → start at full speed (no slow ramp-up)
+  // Cold start: no ramp record → start at min(2, max) to avoid burst on restart
+  // (Having no ramp record means Brain just restarted — avoid immediately dispatching 9 tasks)
   let currentRate = stateResult.rows.length > 0
     ? (stateResult.rows[0].value_json.current_rate || effectiveDispatchMax)
-    : effectiveDispatchMax;
+    : Math.min(2, effectiveDispatchMax);
 
   // Check current system resources and alertness
   const resources = checkServerResources();
@@ -1141,11 +1142,12 @@ async function executeTick() {
     const { runDecompositionChecks } = await import('./decomposition-checker.js');
     const decompSummary = await runDecompositionChecks();
     if (decompSummary.total_created > 0) {
-      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks across ${decompSummary.layers_triggered.length} layers`);
+      const activePaths = decompSummary.active_paths?.length ?? 0;
+      console.log(`[tick] Created ${decompSummary.total_created} decomposition tasks (${activePaths} active paths)`);
       actionsTaken.push({
         action: 'decomposition_check',
         created_count: decompSummary.total_created,
-        layers: decompSummary.layers_triggered,
+        active_paths: activePaths,
         tasks: decompSummary.created_tasks
       });
     }
@@ -1236,38 +1238,44 @@ async function executeTick() {
   // 3. Get daily focus
   const focusResult = await getDailyFocus();
 
-  if (!focusResult) {
+  // When no daily focus (no active OKR), skip focus scoping but continue dispatch
+  // This prevents the entire tick from exiting when OKRs are temporarily absent
+  const hasFocus = !!focusResult;
+  if (!hasFocus) {
     await logTickDecision(
       'tick',
-      'No daily focus set',
-      { action: 'skip', reason: 'no_focus' },
-      { success: true, skipped: true }
+      'No daily focus — falling back to global dispatch',
+      { action: 'global_fallback', reason: 'no_focus' },
+      { success: true, skipped: false }
     );
-    return {
-      success: true,
-      decision_engine: decisionEngineResult,
-      actions_taken: actionsTaken,
-      reason: 'No active Objective to focus on',
-      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
-    };
+    console.log('[tick] No active Objective found, falling back to global task dispatch');
   }
 
-  const { focus } = focusResult;
-  const objectiveId = focus.objective.id;
+  const focus = hasFocus ? focusResult.focus : null;
+  const objectiveId = hasFocus ? focus.objective.id : null;
 
   // 4. Get tasks related to focus objective (include payload for timeout check)
-  const krIds = focus.key_results.map(kr => kr.id);
-  const allGoalIds = [objectiveId, ...krIds];
+  // When no focus: allGoalIds = all active goals (global fallback)
+  let allGoalIds;
+  if (hasFocus) {
+    const krIds = focus.key_results.map(kr => kr.id);
+    allGoalIds = [objectiveId, ...krIds];
+  } else {
+    const allGoalsResult = await pool.query(`
+      SELECT id FROM goals WHERE status NOT IN ('completed', 'cancelled', 'canceled')
+    `);
+    allGoalIds = allGoalsResult.rows.map(r => r.id);
+  }
 
   const tasksResult = await pool.query(`
     SELECT id, title, status, priority, started_at, updated_at, payload
     FROM tasks
-    WHERE goal_id = ANY($1)
-      AND status NOT IN ('completed', 'cancelled')
+    WHERE (goal_id = ANY($1) OR $1 = '{}')
+      AND status NOT IN ('completed', 'cancelled', 'canceled')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-  `, [allGoalIds]);
+  `, [allGoalIds.length > 0 ? allGoalIds : []]);
 
   const tasks = tasksResult.rows;
   const inProgress = tasks.filter(t => t.status === 'in_progress');
@@ -1400,7 +1408,7 @@ async function executeTick() {
       success: true,
       alertness: alertnessResult,
       decision_engine: decisionEngineResult,
-      focus: { objective_id: objectiveId, objective_title: focus.objective.title },
+      focus: hasFocus ? { objective_id: objectiveId, objective_title: focus.objective.title } : null,
       dispatch: { dispatched: 0, reason: 'alertness_disabled' },
       actions_taken: actionsTaken,
       summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
@@ -1492,10 +1500,10 @@ async function executeTick() {
     success: true,
     alertness: alertnessResult,
     decision_engine: decisionEngineResult,
-    focus: {
+    focus: hasFocus ? {
       objective_id: objectiveId,
       objective_title: focus.objective.title
-    },
+    } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
     actions_taken: actionsTaken,
     summary: {
