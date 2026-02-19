@@ -657,10 +657,43 @@ function generateRunId(taskId) {
  */
 
 /**
- * Get skill command based on task_type
+ * Get skill command based on task_type and optional payload
  * 简化版：只有 dev 和 review 两类
+ *
+ * payload 特判逻辑（优先级高于 taskType 映射）：
+ * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留，记录日志）
+ * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
+ * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
+ * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
+ * - payload.decomposition === 'known' → 保持 taskType 原有路由
+ * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
-function getSkillForTaskType(taskType) {
+function getSkillForTaskType(taskType, payload) {
+  // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
+  if (payload) {
+    // decomposition=true + task_type=dev → /dev（显式保留现有行为）
+    if (payload.decomposition === true && taskType === 'dev') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=true + task_type=dev → /dev`);
+      return '/dev';
+    }
+    // decomposition='exploratory' → /exploratory（探索性验证任务）
+    if (payload.decomposition === 'exploratory') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=exploratory → /exploratory`);
+      return '/exploratory';
+    }
+    // decomposition='okr' → /okr（OKR 拆解任务）
+    if (payload.decomposition === 'okr') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=okr → /okr`);
+      return '/okr';
+    }
+    // next_action='decompose' → /okr（继续拆解任务）
+    if (payload.next_action === 'decompose') {
+      console.log(`[executor] payload.next_action 路由: next_action=decompose → /okr`);
+      return '/okr';
+    }
+    // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
+  }
+
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
     'review': '/review',     // 审查：Sonnet，Plan Mode
@@ -711,12 +744,47 @@ function getPermissionModeForTaskType(taskType) {
 }
 
 /**
+ * 检查 task_type 与任务标题的匹配合理性
+ * warning 级别，不阻塞执行，仅记录到 console.warn
+ *
+ * @param {object} task - 任务对象，包含 task_type 和 title
+ */
+function checkTaskTypeMatch(task) {
+  const taskType = task.task_type || 'dev';
+  const title = (task.title || '').toLowerCase();
+
+  // dev 任务但标题包含调研/探索类关键词 → 可能应该用 exploratory
+  if (taskType === 'dev') {
+    const researchKeywords = ['调研', 'research', '探索', '调查', '了解', '分析现状'];
+    const matched = researchKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=dev 但标题含调研关键词"${matched}"，` +
+        `建议使用 task_type=exploratory。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+
+  // exploratory 任务但标题包含实现类关键词 → 可能应该用 dev
+  if (taskType === 'exploratory') {
+    const implKeywords = ['实现', 'feat', 'fix', '开发', '编写', '新增功能', '修复'];
+    const matched = implKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=exploratory 但标题含实现关键词"${matched}"，` +
+        `建议使用 task_type=dev。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+}
+
+/**
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType);
+  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
@@ -1117,6 +1185,9 @@ async function triggerCeceliaRun(task) {
       };
     }
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
+
+    // 检查 task_type 合理性（warning 级别，不阻塞执行）
+    checkTaskTypeMatch(task);
 
     // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
@@ -1539,6 +1610,7 @@ export {
   updateTaskRunInfo,
   preparePrompt,
   generateRunId,
+  getSkillForTaskType,
   // v2 additions
   getActiveProcessCount,
   getActiveProcesses,
@@ -1567,4 +1639,6 @@ export {
   setBillingPause,
   getBillingPause,
   clearBillingPause,
+  // v9: Task type matching validation
+  checkTaskTypeMatch,
 };

@@ -261,7 +261,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**27 个白名单 action**：
+**28 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -270,6 +270,7 @@ executeTick() 流程：
 - 知识/学习：create_learning, update_learning, trigger_rca
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
+- 类型建议：suggest_task_type
 
 ### 3.3 L2 皮层 — Opus 深度分析
 

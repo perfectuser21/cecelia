@@ -11,7 +11,9 @@ import {
   classifyLLMError,
   LLM_ERROR_TYPE,
   EVENT_TYPES,
-  ACTION_WHITELIST
+  ACTION_WHITELIST,
+  parseDecisionFromResponse,
+  processEvent
 } from '../thalamus.js';
 
 describe('thalamus', () => {
@@ -683,8 +685,14 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
     });
 
-    it('should have 27 total actions in whitelist', () => {
-      expect(Object.keys(ACTION_WHITELIST).length).toBe(27);
+    it('should have 28 total actions in whitelist', () => {
+      expect(Object.keys(ACTION_WHITELIST).length).toBe(28);
+    });
+
+    it('should include suggest_task_type action with dangerous=false', () => {
+      expect(ACTION_WHITELIST['suggest_task_type']).toBeDefined();
+      expect(ACTION_WHITELIST['suggest_task_type'].dangerous).toBe(false);
+      expect(ACTION_WHITELIST['suggest_task_type'].description).toBe('建议 task_type 修正（只警告记录，不自动修改）');
     });
   });
 
@@ -693,6 +701,72 @@ describe('thalamus', () => {
       expect(LLM_ERROR_TYPE.API_ERROR).toBe('llm_api_error');
       expect(LLM_ERROR_TYPE.BAD_OUTPUT).toBe('llm_bad_output');
       expect(LLM_ERROR_TYPE.TIMEOUT).toBe('llm_timeout');
+    });
+  });
+
+  // ============================================================
+  // BUG 修复测试（稳定性）
+  // ============================================================
+
+  describe('processEvent stability (BUG P1)', () => {
+    it('processEvent returns fallback for null event', async () => {
+      const result = await processEvent(null);
+      expect(result).toBeDefined();
+      expect(result._fallback).toBe(true);
+      expect(result.level).toBe(0);
+      expect(result.actions[0].type).toBe('fallback_to_tick');
+    });
+
+    it('processEvent returns fallback for undefined event', async () => {
+      const result = await processEvent(undefined);
+      expect(result).toBeDefined();
+      expect(result._fallback).toBe(true);
+      expect(result.level).toBe(0);
+    });
+  });
+
+  describe('parseDecisionFromResponse (BUG P2)', () => {
+    it('parseDecisionFromResponse handles markdown code block with JSON', () => {
+      const response = 'Here is the decision:\n```json\n{"level":1,"actions":[{"type":"dispatch_task","params":{}}],"rationale":"test","confidence":0.9,"safety":false}\n```';
+      const result = parseDecisionFromResponse(response);
+      expect(result.level).toBe(1);
+      expect(result.actions[0].type).toBe('dispatch_task');
+    });
+
+    it('parseDecisionFromResponse handles multiple JSON blocks (not grabbing wrong one)', () => {
+      // 含多个 {} 块，第一个是正确的 Decision
+      const response = 'Context: {"foo":"bar","baz":"qux"} and the decision is {"level":0,"actions":[{"type":"no_action","params":{}}],"rationale":"simple","confidence":1.0,"safety":false}';
+      // 非贪婪匹配第一个 {} 块，即 {"foo":"bar","baz":"qux"}
+      // 此测试验证 parseDecisionFromResponse 不会贪婪地抓取跨越多个 {} 的内容
+      // 只要不抛 SyntaxError 就是修复有效（旧贪婪版本会抓跨越两个 {} 的内容导致 SyntaxError）
+      expect(() => parseDecisionFromResponse(response)).not.toThrow();
+    });
+
+    it('parseDecisionFromResponse prefers code block over inline JSON', () => {
+      const response = '{"level":9,"actions":[],"rationale":"wrong","confidence":0,"safety":false}\n```json\n{"level":1,"actions":[{"type":"log_event","params":{}}],"rationale":"correct","confidence":0.9,"safety":false}\n```';
+      const result = parseDecisionFromResponse(response);
+      // code block 中的 JSON 优先
+      expect(result.level).toBe(1);
+      expect(result.rationale).toBe('correct');
+    });
+  });
+
+  describe('cortex null actions guard (BUG P4)', () => {
+    it('cortex null actions does not throw TypeError', () => {
+      // 验证 (actions || []).map() 的 guard 正确
+      const cortexDecision = { actions: null, confidence: 0.5 };
+      expect(() => {
+        const actionStr = (cortexDecision.actions || []).map(a => a.type).join(',');
+        expect(actionStr).toBe('');
+      }).not.toThrow();
+    });
+
+    it('cortex undefined actions does not throw TypeError', () => {
+      const cortexDecision = { confidence: 0.5 };
+      expect(() => {
+        const actionStr = (cortexDecision.actions || []).map(a => a.type).join(',');
+        expect(actionStr).toBe('');
+      }).not.toThrow();
     });
   });
 

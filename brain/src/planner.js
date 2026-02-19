@@ -8,6 +8,98 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 
+// Learning penalty configuration
+const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
+const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
+const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
+
+// Content-aware score configuration
+const CONTENT_SCORE_EXPLORATORY_BONUS = 10;          // exploratory task 优先（调研先行）
+const CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY = -20;  // 等待调研完成的 dev task 延后
+const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
+
+/**
+ * Build a map of task_type → penalty score based on recent learning failures.
+ * Queries learnings table for failure_pattern entries in the past LEARNING_LOOKBACK_DAYS
+ * that are associated with the given project, grouped by task_type.
+ *
+ * @param {string} projectId - Project ID to scope learnings query
+ * @returns {Promise<Map<string, number>>} - Map of task_type → penalty score (negative)
+ */
+async function buildLearningPenaltyMap(projectId) {
+  try {
+    const cutoff = new Date(Date.now() - LEARNING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+    // Query learnings for this project in the lookback window, grouped by task_type
+    // task_type is stored in metadata JSONB field
+    const result = await pool.query(`
+      SELECT metadata->>'task_type' AS task_type, COUNT(*) AS failure_count
+      FROM learnings
+      WHERE category = 'failure_pattern'
+        AND created_at >= $1
+        AND (
+          metadata->>'project_id' = $2::text
+          OR metadata->>'task_id' IN (
+            SELECT id::text FROM tasks WHERE project_id = $2::uuid
+          )
+        )
+      GROUP BY metadata->>'task_type'
+      HAVING COUNT(*) >= $3
+    `, [cutoff, projectId, LEARNING_FAILURE_THRESHOLD]);
+
+    const penaltyMap = new Map();
+    for (const row of result.rows) {
+      if (row.task_type) {
+        penaltyMap.set(row.task_type, LEARNING_PENALTY_SCORE);
+      }
+    }
+
+    if (penaltyMap.size > 0) {
+      console.log(`[planner] Learning penalty map for project ${projectId}: ${JSON.stringify(Object.fromEntries(penaltyMap))}`);
+    }
+
+    return penaltyMap;
+  } catch (err) {
+    // Graceful degradation: if learning query fails, return empty map (no penalty applied)
+    console.error(`[planner] buildLearningPenaltyMap failed: ${err.message}`);
+    return new Map();
+  }
+}
+
+/**
+ * Apply content-aware score bonus to a list of tasks based on task_type and payload content.
+ *
+ * Scoring rules:
+ *   - task_type === 'exploratory'              → +10 (调研先行)
+ *   - payload.wait_for_exploratory === true    → -20 (等待调研完成再执行)
+ *   - payload.decomposition_mode === 'known'   → +5  (已知方案优先)
+ *
+ * @param {Array} tasks - Array of task objects from DB
+ * @returns {Array} - Same tasks, each augmented with _content_score_bonus field
+ */
+export function applyContentAwareScore(tasks) {
+  const scored = tasks.map(task => {
+    let bonus = 0;
+    const payload = task.payload || {};
+
+    if (task.task_type === 'exploratory') {
+      bonus += CONTENT_SCORE_EXPLORATORY_BONUS;
+    }
+    if (payload.wait_for_exploratory === true) {
+      bonus += CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY;
+    }
+    if (payload.decomposition_mode === 'known') {
+      bonus += CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS;
+    }
+
+    return { ...task, _content_score_bonus: bonus };
+  });
+
+  console.debug(`[planner] content-aware scores: ${JSON.stringify(scored.map(t => ({ id: t.id, task_type: t.task_type, bonus: t._content_score_bonus })))}`);
+
+  return scored;
+}
+
 /**
  * Get global state for planning decisions
  */
@@ -149,13 +241,78 @@ async function generateNextTask(kr, project, state, options = {}) {
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-    LIMIT 1
   `, [project.id, kr.id]);
 
-  if (result.rows[0]) return result.rows[0];
+  if (result.rows.length === 0) {
+    // No existing task — return null. Task creation is 秋米's responsibility via /okr.
+    return null;
+  }
 
-  // No existing task — return null. Task creation is 秋米's responsibility via /okr.
-  return null;
+  // V5: Apply learning penalty to sort tasks — penalize task types with recent failure patterns.
+  // Build penalty map from learnings (gracefully degrades if query fails).
+  const penaltyMap = await buildLearningPenaltyMap(project.id);
+
+  // V6: Apply content-aware score bonus based on task_type and payload content.
+  // Always applied (even when penaltyMap is empty) to enable content-aware ordering.
+  const contentScoredTasks = applyContentAwareScore(result.rows);
+
+  if (penaltyMap.size === 0) {
+    // No learning penalties — re-sort with content-aware bonus only
+    const reScored = contentScoredTasks.map(task => {
+      let score = 0;
+
+      // Phase score (exploratory first)
+      if (task.phase === 'exploratory') score += 200;
+      else if (task.phase === 'dev') score += 100;
+
+      // Status score (queued before in_progress)
+      if (task.status === 'queued') score += 10;
+
+      // Priority score
+      if (task.priority === 'P0') score += 30;
+      else if (task.priority === 'P1') score += 20;
+      else if (task.priority === 'P2') score += 10;
+
+      // Content-aware bonus
+      score += task._content_score_bonus;
+
+      return { task, score };
+    });
+
+    reScored.sort((a, b) => b.score - a.score);
+    return reScored[0].task;
+  }
+
+  // Re-score tasks with learning penalty + content-aware bonus applied
+  const scored = contentScoredTasks.map(task => {
+    let score = 0;
+
+    // Phase score (exploratory first)
+    if (task.phase === 'exploratory') score += 200;
+    else if (task.phase === 'dev') score += 100;
+
+    // Status score (queued before in_progress)
+    if (task.status === 'queued') score += 10;
+
+    // Priority score
+    if (task.priority === 'P0') score += 30;
+    else if (task.priority === 'P1') score += 20;
+    else if (task.priority === 'P2') score += 10;
+
+    // Apply learning penalty if this task_type has recent failures
+    const penalty = penaltyMap.get(task.task_type) || 0;
+    score += penalty;
+
+    // Content-aware bonus
+    score += task._content_score_bonus;
+
+    return { task, score };
+  });
+
+  // Sort by score descending (highest score = highest priority)
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored[0].task;
 }
 
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
@@ -534,6 +691,15 @@ export {
   selectTargetKR,
   selectTargetProject,
   generateNextTask,
+  // Learning penalty
+  buildLearningPenaltyMap,
+  LEARNING_PENALTY_SCORE,
+  LEARNING_LOOKBACK_DAYS,
+  LEARNING_FAILURE_THRESHOLD,
+  // Content-aware score
+  CONTENT_SCORE_EXPLORATORY_BONUS,
+  CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY,
+  CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS,
   // PR Plans dispatch functions
   getPrPlansByInitiative,
   isPrPlanCompleted,

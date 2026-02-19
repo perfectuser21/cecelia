@@ -175,6 +175,7 @@ const ACTION_WHITELIST = {
   'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
   'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
   'trigger_rca': { dangerous: false, description: '触发根因分析 (RCA) 流程' },
+  'suggest_task_type': { dangerous: false, description: '建议 task_type 修正（只警告记录，不自动修改）' },
 
   // 任务生命周期操作
   'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },
@@ -184,6 +185,7 @@ const ACTION_WHITELIST = {
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
+
 };
 
 // ============================================================
@@ -352,6 +354,59 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 请分析以下事件并输出 Decision：`;
 
 /**
+ * 从 event payload 提取 Memory 搜索 query
+ * @param {Object} event - 事件包
+ * @returns {string} 搜索 query
+ */
+function extractMemoryQuery(event) {
+  return (
+    event.task?.title ||
+    event.payload?.title ||
+    event.payload?.description ||
+    event.type ||
+    ''
+  );
+}
+
+/**
+ * 调用 Memory API 语义搜索，构建注入 prompt 的 block
+ * 失败时返回空字符串（graceful fallback）
+ * @param {Object} event - 事件包
+ * @returns {Promise<string>} 格式化的 Memory block
+ */
+async function buildMemoryBlock(event) {
+  const query = extractMemoryQuery(event);
+  if (!query) return '';
+
+  try {
+    const response = await fetch('http://localhost:5221/api/brain/memory/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, topK: 3, mode: 'summary' }),
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (!response.ok) return '';
+
+    const data = await response.json();
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+
+    if (matches.length === 0) return '';
+
+    const lines = matches.map((m, i) => {
+      const preview = (m.preview || m.title || '').slice(0, 150);
+      return `- [${i + 1}] **${m.title || '(无标题)'}** (相似度: ${(m.similarity || 0).toFixed(2)}): ${preview}`;
+    });
+
+    return `\n\n## 相关历史任务（Memory 语义搜索，供参考）\n${lines.join('\n')}\n`;
+  } catch (err) {
+    // graceful fallback：Memory 搜索失败不影响主流程
+    console.warn('[thalamus] Memory search failed (graceful fallback):', err.message);
+    return '';
+  }
+}
+
+/**
  * 调用 Sonnet 分析事件
  * @param {Object} event - 事件包
  * @returns {Promise<Decision>}
@@ -371,7 +426,10 @@ async function analyzeEvent(event) {
     learningBlock = `\n\n## 系统历史经验（参考，按相关性排序）\n${learnings.map((l, i) => `- [${i+1}] **${l.title}** (相关度: ${l.relevance_score || 0}): ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
   }
 
-  const prompt = `${THALAMUS_PROMPT}${learningBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+  // Build #2: 注入 Memory 语义搜索结果（历史任务上下文）
+  const memoryBlock = await buildMemoryBlock(event);
+
+  const prompt = `${THALAMUS_PROMPT}${learningBlock}${memoryBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
     // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
@@ -381,6 +439,7 @@ async function analyzeEvent(event) {
     await recordTokenUsage('thalamus', 'claude-sonnet-4-20250514', usage, {
       event_type: event.type,
       learnings_injected: learnings.length,
+      memory_injected: memoryBlock.length > 0,
     });
 
     // 解析 JSON
@@ -442,7 +501,11 @@ async function callSonnet(prompt) {
   }
 
   const data = await response.json();
-  return { text: data.content[0].text, usage: data.usage || null };
+  const textBlock = (data.content || []).find(b => b.type === 'text');
+  if (!textBlock) {
+    throw new Error(`Sonnet returned empty content array (usage: ${JSON.stringify(data.usage)})`);
+  }
+  return { text: textBlock.text, usage: data.usage || null };
 }
 
 /**
@@ -451,8 +514,18 @@ async function callSonnet(prompt) {
  * @returns {Decision}
  */
 function parseDecisionFromResponse(response) {
-  // 尝试提取 JSON
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
+  // 优先匹配 markdown code block 中的 JSON（```json ... ``` 或 ``` ... ```）
+  const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch (_e) {
+      // code block 内容不是合法 JSON，继续 fallback
+    }
+  }
+
+  // fallback: 非贪婪匹配第一个完整 JSON 对象
+  const jsonMatch = response.match(/\{[\s\S]*?\}/);
   if (!jsonMatch) {
     throw new Error('No JSON found in response');
   }
@@ -774,6 +847,12 @@ function quickRoute(event) {
  * @returns {Promise<Decision>}
  */
 async function processEvent(event) {
+  // BUG P1 guard: null/undefined event 直接返回 fallback decision
+  if (event == null) {
+    console.warn('[thalamus] processEvent called with null/undefined event, returning fallback');
+    return createFallbackDecision({ type: 'unknown' }, 'null event received');
+  }
+
   console.log(`[thalamus] Processing event: ${event.type}`);
   const startMs = Date.now();
 
@@ -804,7 +883,7 @@ async function processEvent(event) {
       // 动态导入皮层模块（避免循环依赖）
       const { analyzeDeep } = await import('./cortex.js');
       const cortexDecision = await analyzeDeep(event, decision);
-      console.log(`[thalamus] Cortex decision: actions=${cortexDecision.actions.map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+      console.log(`[thalamus] Cortex decision: actions=${(cortexDecision.actions || []).map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
@@ -835,6 +914,7 @@ export {
   analyzeEvent,
   createFallbackDecision,
   recordRoutingDecision,
+  parseDecisionFromResponse,
 
   // LLM 错误分类
   classifyLLMError,
@@ -848,6 +928,10 @@ export {
 
   // Learnings
   getRecentLearnings,
+
+  // Memory 注入
+  extractMemoryQuery,
+  buildMemoryBlock,
 
   // 常量
   EVENT_TYPES,
