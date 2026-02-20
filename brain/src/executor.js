@@ -455,14 +455,15 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
   const result = await pool.query(
-    'SELECT payload FROM tasks WHERE id = $1 AND status = $2',
+    'SELECT payload, task_type, project_id, title FROM tasks WHERE id = $1 AND status = $2',
     [taskId, 'in_progress']
   );
   if (result.rows.length === 0) {
     return { requeued: false, reason: 'not_in_progress' };
   }
 
-  const payload = result.rows[0].payload || {};
+  const { payload: rawPayload, task_type, project_id, title: taskTitle } = result.rows[0];
+  const payload = rawPayload || {};
   const retryCount = (payload.watchdog_retry_count || 0) + 1;
 
   // P0 FIX #3: Watchdog kill 也应增加 failure_count，防止无限循环
@@ -524,6 +525,20 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   if (updateResult.rowCount === 0) {
     return { requeued: false, reason: 'status_changed' };
+  }
+
+  // Fix: 记录失败到 learnings 表，供 planner buildLearningPenaltyMap 使用
+  try {
+    await pool.query(`
+      INSERT INTO learnings (title, category, trigger_event, content, metadata)
+      VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3)
+    `, [
+      `Task Failure: ${taskTitle || taskId} [${reason}]`,
+      `Watchdog killed task after ${retryCount} attempts. Reason: ${reason}`,
+      JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
+    ]);
+  } catch (learningErr) {
+    console.error(`[executor] Failed to record learning for task ${taskId}:`, learningErr.message);
   }
 
   return { requeued: true, retry_count: retryCount, next_run_at: nextRunAt };

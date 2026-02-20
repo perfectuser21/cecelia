@@ -188,6 +188,12 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
+  // Fix: null kr_id → graceful skip（无法创建有效 goal 关联的 task）
+  if (!initiative.kr_id) {
+    console.warn(`[decomp-checker] Initiative ${initiative.id} (${initiative.name}) has no kr_id, skipping inventory check`);
+    return null;
+  }
+
   // KR saturation check - skip if KR already has >= 3 active tasks
   if (initiative.kr_id) {
     const satCheck = await pool.query(

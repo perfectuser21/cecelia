@@ -1295,15 +1295,31 @@ async function executeTick() {
     allGoalIds = allGoalsResult.rows.map(r => r.id);
   }
 
+  // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
+  if (allGoalIds.length === 0) {
+    console.log('[tick] No active goals found, skipping tick');
+    return {
+      success: true,
+      alertness: alertnessResult,
+      decision_engine: decisionEngineResult,
+      focus: null,
+      dispatch: { dispatched: 0, reason: 'no_active_goals' },
+      actions_taken: actionsTaken,
+      summary: { in_progress: 0, queued: 0, stale: 0 },
+      tick_duration_ms: Date.now() - now.getTime(),
+      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+    };
+  }
+
   const tasksResult = await pool.query(`
     SELECT id, title, status, priority, started_at, updated_at, payload
     FROM tasks
-    WHERE (goal_id = ANY($1) OR $1 = '{}')
+    WHERE goal_id = ANY($1)
       AND status NOT IN ('completed', 'cancelled', 'canceled')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
-  `, [allGoalIds.length > 0 ? allGoalIds : []]);
+  `, [allGoalIds]);
 
   const tasks = tasksResult.rows;
   const inProgress = tasks.filter(t => t.status === 'in_progress');
@@ -1396,10 +1412,11 @@ async function executeTick() {
   }
 
   // 6. Planning: if no queued AND no in_progress tasks, invoke planner
-  //    Skip if focused objective has no KRs — nothing to plan for
-  if (queued.length === 0 && inProgress.length === 0 && krIds.length > 0) {
+  //    Fix: global fallback 时 krIds=[] 但 allGoalIds 非空，应仍触发规划
+  if (queued.length === 0 && inProgress.length === 0 && allGoalIds.length > 0) {
+    const planKrIds = hasFocus ? krIds : allGoalIds; // global fallback 用全部活跃 goal ids
     try {
-      const planned = await planNextTask(krIds);
+      const planned = await planNextTask(planKrIds);
       if (planned.planned) {
         actionsTaken.push({
           action: 'plan',
