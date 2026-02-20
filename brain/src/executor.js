@@ -837,7 +837,7 @@ POST /api/brain/action/create-task
 }`;
     }
 
-    // 首次拆解：秋米需要创建 Initiative + Task
+    // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
     return `/okr
 
 # OKR 拆解: ${krTitle}
@@ -846,68 +846,88 @@ POST /api/brain/action/create-task
 - KR ID: ${krId}
 - 目标: ${task.description || krTitle}
 
-## 关联项目
-- Project ID: ${projectId}
+## 6 层架构（必须严格遵守）
+Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
 
-## 6 层架构
-Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-2小时) → Task (PR)
+## 你的任务（按顺序执行）
 
-## 你的任务
-1. **确定 Repository**（必须设置 repo_path）:
-   - 查询现有 Projects: GET /api/tasks/projects
-   - 找到 type='project' 且 repo_path 不为空的 Project
-   - **如果没有，创建 Project 时必须设置 repo_path**
-   - cecelia-core: /home/xx/perfect21/cecelia/core
-   - cecelia-workspace: /home/xx/perfect21/cecelia/workspace
-   - 示例: {"name": "...", "type": "project", "repo_path": "/home/xx/perfect21/cecelia/core"}
-   - **CRITICAL**: 不设置 repo_path 会导致 Planner 无法派发任务！
+### Step 1: 为该 KR 新建专属 Project（⛔ 禁止复用已有 project！）
 
-2. **拆解模式**（遵循 Exploratory 优先策略）:
-   - **默认使用 exploratory 模式**（99% 的情况）
-   - 只有"简单修复、已知方案"才用 known 模式
-   - 参考 OKR skill Stage 2 (Line 332): "拆解 Initiative 为 Task 时，必须遵循 Exploratory 优先策略"
+**CRITICAL**: 每个 KR 必须有自己独立的 Project，不能复用 cecelia-core 或其他已有 project。
 
-3. **创建 Initiative**: 写入 projects 表（type='initiative'，不是 goals 表！）
+首先查询 cecelia-core 的 repo_path：
+\`\`\`
+GET /api/tasks/projects
+找到 name='cecelia-core' 的记录，记录其 repo_path
+\`\`\`
 
-4. **创建 Task + PRD**: 遵循 Exploratory 优先模板
+然后新建 KR 专属 Project：
+\`\`\`
+POST /api/brain/projects
+{
+  "name": "<KR 简短标题> 实现",
+  "type": "project",
+  "description": "${task.description || krTitle}",
+  "repo_path": "<从 cecelia-core 获取的 repo_path>"
+}
+\`\`\`
 
-## API 调用
+最后通过 project_kr_links 绑定到该 KR：
+\`\`\`
+POST /api/brain/project-kr-links
+{
+  "project_id": "<新建 Project 的 ID>",
+  "kr_id": "${krId}"
+}
+\`\`\`
 
-### 查询 Projects（找 repo_path）
-curl -s http://localhost:5221/api/tasks/projects | jq '.[] | select(.repo_path != null)'
+记录新建 Project 的 ID（后面 Step 2 要用）。
 
-### 创建 Initiative
+### Step 2: 拆解模式（遵循 Exploratory 优先策略）
+- **默认使用 exploratory 模式**（99% 的情况）
+- 只有"简单修复、已知方案"才用 known 模式
+
+### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
+
+Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
+
+\`\`\`
 POST /api/brain/action/create-initiative
 {
   "name": "Initiative 名称",
-  "parent_id": "<Project ID (type='project' 的)>",
+  "parent_id": "<Step 1 新建的 Project ID>",
   "kr_id": "${krId}",
-  "decomposition_mode": "known" 或 "exploratory"
+  "decomposition_mode": "exploratory"
 }
+\`\`\`
 
-### 创建第一个 Task（必须是 exploratory）
+### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
+
+\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "探索: 调研 [主题]",
-  "project_id": "<Initiative ID>",  // 注意是 Initiative，不是 Project！
+  "project_id": "<Initiative ID>",
   "goal_id": "${krId}",
-  "task_type": "exploratory",  // ✅ 第一个 Task 必须是 exploratory
+  "task_type": "exploratory",
   "prd_content": "完整 PRD（调研目标、分析内容、输出报告格式）",
   "payload": {
     "exploratory": true,
-    "next_action": "decompose",  // ✅ 标记完成后需要续拆
+    "next_action": "decompose",
     "initiative_id": "<Initiative ID>",
     "kr_goal": "${task.description || ''}"
   }
 }
+\`\`\`
 
-### 创建后续 Task（保持 draft）
+后续 dev tasks（draft）：
+\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "实现 [功能]",
   "project_id": "<Initiative ID>",
   "goal_id": "${krId}",
-  "task_type": "dev",  // ✅ 后续 Task 是 dev
+  "task_type": "dev",
   "prd_content": "简短描述（draft，等 exploratory 结果后细化）",
   "payload": {
     "wait_for_exploratory": true,
@@ -915,24 +935,29 @@ POST /api/brain/action/create-task
     "kr_goal": "${task.description || ''}"
   }
 }
+\`\`\`
 
-### 更新 KR 状态
+### Step 5: 更新 KR 状态
+\`\`\`
 PUT /api/tasks/goals/${krId}
 {"status": "in_progress"}
+\`\`\`
 
 ## ⛔ 绝对禁止
-- 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
-- 不能把 Task.project_id 指向 Project，必须指向 Initiative！
+- ❌ 不能复用已有 project（cecelia-core 或其他）作为 Initiative 的 parent！
+- ❌ 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
+- ❌ 不能把 Task.project_id 指向 Project，必须指向 Initiative！
+- ❌ Task 的 goal_id 不能为空或指向错误的 KR！
 
-## 质量验证（确保符合 OKR skill 规范）
+## 质量验证（创建完成后逐项检查）
 
-创建完成后，检查：
-1. ✅ 第一个 Task 的 task_type='exploratory'
-2. ✅ exploratory task 的 payload.next_action='decompose'
-3. ✅ exploratory task 有完整 PRD
-4. ✅ 后续 dev tasks 有简短描述（draft 状态）
-5. ✅ Initiative 和 Project 都有 repo_path
-6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
+1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
+2. ✅ project_kr_links 已绑定新 Project → 当前 KR
+3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
+4. ✅ 第一个 Task 的 task_type='exploratory'
+5. ✅ exploratory task 的 payload.next_action='decompose'
+6. ✅ 所有 Task 的 goal_id = ${krId}
+7. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
