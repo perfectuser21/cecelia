@@ -1911,8 +1911,8 @@ router.post('/execution-callback', async (req, res) => {
           status = $2,
           payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
             'last_run_result', $3::jsonb,
-            'run_status', $4,
-            'pr_url', $5
+            'run_status', $4::text,
+            'pr_url', $5::text
           ),
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
