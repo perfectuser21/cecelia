@@ -75,6 +75,7 @@ let _loopTimer = null;
 let _tickRunning = false;
 let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
+let _lastExecuteTime = 0; // track last full executeTick() time for throttling
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -166,6 +167,16 @@ async function getTickStatus() {
  */
 async function runTickSafe(source = 'loop', tickFn) {
   const doTick = tickFn || executeTick;
+
+  // Throttle: loop ticks only execute once per TICK_INTERVAL_MINUTES
+  if (source === 'loop') {
+    const elapsed = Date.now() - _lastExecuteTime;
+    const intervalMs = TICK_INTERVAL_MINUTES * 60 * 1000;
+    if (_lastExecuteTime > 0 && elapsed < intervalMs) {
+      return { skipped: true, reason: 'throttled', source, next_in_ms: intervalMs - elapsed };
+    }
+  }
+
   // Reentry guard: check if already running
   if (_tickRunning) {
     // Timeout protection: release lock if held too long
@@ -184,6 +195,7 @@ async function runTickSafe(source = 'loop', tickFn) {
 
   try {
     const result = await doTick();
+    _lastExecuteTime = Date.now();
     console.log(`[tick-loop] Tick completed (source: ${source}), actions: ${result.actions_taken?.length || 0}`);
     return result;
   } catch (err) {
@@ -1637,6 +1649,9 @@ async function getStartupErrors() {
   };
 }
 
+/** Reset throttle state — for testing only */
+function _resetLastExecuteTime() { _lastExecuteTime = 0; }
+
 export {
   getTickStatus,
   enableTick,
@@ -1666,5 +1681,7 @@ export {
   DISPATCH_TIMEOUT_MINUTES,
   MAX_CONCURRENT_TASKS,
   AUTO_DISPATCH_MAX,
-  getStartupErrors
+  getStartupErrors,
+  // Test helpers
+  _resetLastExecuteTime
 };

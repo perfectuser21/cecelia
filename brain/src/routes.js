@@ -5423,8 +5423,7 @@ router.post('/attach-decision', async (req, res) => {
       });
     }
 
-    // TODO: Implement LLM decision logic using prompts/attach-decision.md
-    // For now, return a simple rule-based decision
+    // Rule-based attachment decision: check similarity scores to determine action
 
     // Short-circuit A: Check for duplicate tasks (score >= 0.85)
     const duplicateTasks = (matches || []).filter(m => m.level === 'task' && m.score >= 0.85);
