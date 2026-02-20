@@ -105,6 +105,28 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
 }
 
 /**
+ * Check if a decomposition task is actively in-flight (queued or in_progress) for the given project.
+ * Used by ensureTaskInventory() to avoid duplicate replenishment tasks.
+ * Unlike hasExistingDecompositionTaskByProject(), this does NOT block on completed tasks,
+ * allowing re-decomposition once all previously created tasks are done.
+ *
+ * @param {string} projectId - Project UUID to check
+ * @param {string} level - Decomposition level ('project' or 'initiative')
+ * @returns {boolean} true if a decomposition task is currently queued or in_progress
+ */
+async function hasActiveDecompositionTaskByProject(projectId, level) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE project_id = $1
+      AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+      AND payload->>'level' = $2
+      AND status IN ('queued', 'in_progress')
+    LIMIT 1
+  `, [projectId, level]);
+  return result.rows.length > 0;
+}
+
+/**
  * Create a decomposition task for autumnrice.
  *
  * @param {Object} params
@@ -220,9 +242,11 @@ async function ensureTaskInventory(initiative) {
     return null;  // Inventory sufficient
   }
 
-  // 3. Check if replenishment already in progress
-  if (await hasExistingDecompositionTaskByProject(initiative.id, 'initiative')) {
-    return null;  // Replenishment task already exists
+  // 3. Check if replenishment already in progress (only queued/in_progress, not completed)
+  // Using hasActiveDecompositionTaskByProject instead of hasExistingDecompositionTaskByProject
+  // to allow re-decomposition after all previously created tasks have finished.
+  if (await hasActiveDecompositionTaskByProject(initiative.id, 'initiative')) {
+    return null;  // Replenishment task already in flight
   }
 
   // 4. Check global WIP limit
@@ -988,6 +1012,7 @@ export {
   // Exported for testing
   hasExistingDecompositionTask,
   hasExistingDecompositionTaskByProject,
+  hasActiveDecompositionTaskByProject,
   createDecompositionTask,
   DEDUP_WINDOW_HOURS,
   INVENTORY_CONFIG,
