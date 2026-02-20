@@ -61,18 +61,28 @@ export async function preFlightCheck(task) {
 
   // Check 5: Description content quality (basic heuristics)
   if (descContent) {
-    const desc = descContent.toLowerCase();
+    // Strip markdown code blocks and inline code before placeholder detection,
+    // so that examples like `- Task ID: xxx` or ```sql ... xxx``` don't false-positive.
+    const stripped = descContent
+      .replace(/```[\s\S]*?```/g, '')   // remove fenced code blocks
+      .replace(/`[^`]*`/g, '');          // remove inline code spans
+    const desc = stripped.toLowerCase();
 
-    // Check for placeholder text
-    const placeholders = ['todo', 'tbd', 'xxx', 'fixme', 'placeholder'];
-    const hasPlaceholder = placeholders.some(ph => desc.includes(ph));
+    // Check for placeholder text using word boundaries to avoid false positives.
+    // e.g. "TODO 记录" or "fixme this" in prose vs a bare "todo" / "tbd" as description.
+    // `xxx` is only flagged when surrounded by non-CJK characters (avoids Chinese prose context).
+    const hasWordPlaceholder = /\b(todo|tbd|fixme)\b/.test(desc);
+    // `xxx` flagged only as a standalone token (word boundary, not inside Chinese text)
+    const hasXxx = /(?<![^\x00-\x7F])xxx(?![^\x00-\x7F])/.test(stripped.toLowerCase());
+    const hasPlaceholder = hasWordPlaceholder || hasXxx;
+
     if (hasPlaceholder) {
       issues.push('Description contains placeholder text');
       suggestions.push('Replace placeholder text with actual requirements');
     }
 
     // Check for minimal effort descriptions
-    if (desc === 'test' || desc === 'fix' || desc === 'update') {
+    if (desc.trim() === 'test' || desc.trim() === 'fix' || desc.trim() === 'update') {
       issues.push('Description is too generic');
       suggestions.push('Provide specific details about what needs to be done');
     }
