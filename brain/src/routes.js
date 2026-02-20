@@ -1902,6 +1902,9 @@ router.post('/execution-callback', async (req, res) => {
       await client.query('BEGIN');
 
       // Update task in database (idempotency: only update if still in_progress)
+      // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
+      // "inconsistent types deduced for parameter $2" (text vs character varying).
+      const isCompleted = newStatus === 'completed';
       await client.query(`
         UPDATE tasks
         SET
@@ -1911,9 +1914,9 @@ router.post('/execution-callback', async (req, res) => {
             'run_status', $4,
             'pr_url', $5
           ),
-          completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
+          completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted]);
 
       // Log the execution result
       await client.query(`

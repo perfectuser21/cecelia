@@ -226,4 +226,57 @@ describe('execution-callback atomicity', () => {
 
     expect(mockClient.release).toHaveBeenCalled();
   });
+
+  it('UPDATE tasks should use boolean $6 for completed_at, not reuse $2 in CASE WHEN', async () => {
+    // Regression test: "inconsistent types deduced for parameter $2 (text vs character varying)"
+    // The fix extracts isCompleted as a separate boolean param ($6) to avoid $2 type ambiguity.
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-sql-type',
+      run_id: 'run-sql-type',
+      status: 'AI Done',
+      result: { result: 'ok' },
+      duration_ms: 1000,
+      iterations: 1,
+    });
+
+    // Find the UPDATE tasks call (after BEGIN)
+    const clientCalls = mockClient.query.mock.calls;
+    const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    // Should have 6 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted]
+    const params = updateCall[1];
+    expect(params).toHaveLength(6);
+
+    // $6 (isCompleted) must be a boolean true for 'AI Done'
+    expect(typeof params[5]).toBe('boolean');
+    expect(params[5]).toBe(true);
+
+    // $2 (newStatus) must be 'completed'
+    expect(params[1]).toBe('completed');
+  });
+
+  it('isCompleted should be false for AI Failed status', async () => {
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-failed-type',
+      run_id: 'run-failed-type',
+      status: 'AI Failed',
+      duration_ms: 500,
+      iterations: 1,
+    });
+
+    const clientCalls = mockClient.query.mock.calls;
+    const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    expect(params).toHaveLength(6);
+    // $6 must be false for failed tasks
+    expect(params[5]).toBe(false);
+    expect(params[1]).toBe('failed');
+  });
 });
