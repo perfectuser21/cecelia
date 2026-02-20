@@ -31,6 +31,7 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
+const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -76,6 +77,7 @@ let _tickRunning = false;
 let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 let _lastExecuteTime = 0; // track last full executeTick() time for throttling
+let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1183,6 +1185,19 @@ async function executeTick() {
     console.error('[tick] Recurring tasks check failed:', recurringErr.message);
   }
 
+  // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
+  const cleanupElapsed = Date.now() - _lastCleanupTime;
+  if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+    try {
+      const cleanupResult = await pool.query('SELECT run_periodic_cleanup() AS msg');
+      const msg = cleanupResult.rows[0]?.msg || 'done';
+      _lastCleanupTime = Date.now();
+      console.log(`[tick] Periodic cleanup: ${msg}`);
+    } catch (cleanupErr) {
+      console.error('[tick] Periodic cleanup failed (non-fatal):', cleanupErr.message);
+    }
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
@@ -1651,6 +1666,8 @@ async function getStartupErrors() {
 
 /** Reset throttle state — for testing only */
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
+/** Reset cleanup timer — for testing only */
+function _resetLastCleanupTime() { _lastCleanupTime = 0; }
 
 export {
   getTickStatus,
@@ -1682,6 +1699,8 @@ export {
   MAX_CONCURRENT_TASKS,
   AUTO_DISPATCH_MAX,
   getStartupErrors,
+  CLEANUP_INTERVAL_MS,
   // Test helpers
-  _resetLastExecuteTime
+  _resetLastExecuteTime,
+  _resetLastCleanupTime
 };
