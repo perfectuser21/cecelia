@@ -1251,6 +1251,21 @@ async function executeTick() {
     console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
   }
 
+  // 0.10. Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活
+  try {
+    const { activateNextInitiatives } = await import('./initiative-closer.js');
+    const activated = await activateNextInitiatives(pool);
+    if (activated > 0) {
+      console.log(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
+      actionsTaken.push({
+        action: 'initiative_queue_activate',
+        activated_count: activated,
+      });
+    }
+  } catch (activateErr) {
+    console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();

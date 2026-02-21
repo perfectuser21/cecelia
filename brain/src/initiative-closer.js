@@ -18,7 +18,7 @@
  * 检查并关闭已完成的 Initiatives。
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
- * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}> }>}
+ * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}>, activatedCount: number }>}
  */
 async function checkInitiativeCompletion(pool) {
   // 查所有 in_progress 的 initiatives
@@ -31,7 +31,7 @@ async function checkInitiativeCompletion(pool) {
 
   const initiatives = initiativesResult.rows;
   if (initiatives.length === 0) {
-    return { closedCount: 0, closed: [] };
+    return { closedCount: 0, closed: [], activatedCount: 0 };
   }
 
   const closed = [];
@@ -80,7 +80,13 @@ async function checkInitiativeCompletion(pool) {
     closed.push({ id: initiative.id, name: initiative.name });
   }
 
-  return { closedCount: closed.length, closed };
+  // D7: initiative 完成后立刻激活下一批 pending，补充空位
+  let activatedCount = 0;
+  if (closed.length > 0) {
+    activatedCount = await activateNextInitiatives(pool);
+  }
+
+  return { closedCount: closed.length, closed, activatedCount };
 }
 
 /**
@@ -161,4 +167,84 @@ async function checkProjectCompletion(pool) {
   return { closedCount: closed.length, closed };
 }
 
-export { checkInitiativeCompletion, checkProjectCompletion };
+/**
+ * Initiative 队列管理器
+ *
+ * 从 pending initiative 中按优先级激活，确保 active 总数不超过 MAX。
+ *
+ * 激活逻辑：
+ *   1. 查当前 active initiative 数量
+ *   2. 如果 < MAX_ACTIVE_INITIATIVES，计算空位数
+ *   3. 从 pending 中按 KR 优先级（P0 > P1 > P2）和创建时间激活
+ *   4. 返回激活数量
+ *
+ * 触发位置：
+ *   - tick.js Section 0.10（每次 tick）
+ *   - checkInitiativeCompletion() 关闭 initiative 后（保证有空位就填上）
+ */
+
+/** 同时允许的最大 active initiative 数量 */
+export const MAX_ACTIVE_INITIATIVES = 10;
+
+/**
+ * 从 pending initiative 中按优先级激活，使 active 总数不超过 MAX_ACTIVE_INITIATIVES。
+ *
+ * @param {import('pg').Pool} pool - PostgreSQL 连接池
+ * @returns {Promise<number>} 本次激活的 initiative 数量
+ */
+async function activateNextInitiatives(pool) {
+  // 1. 查当前 active initiative 数量
+  const activeCountResult = await pool.query(`
+    SELECT COUNT(*) AS cnt
+    FROM projects
+    WHERE type = 'initiative'
+      AND status = 'active'
+  `);
+  const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
+
+  // 2. 计算空位
+  const slots = MAX_ACTIVE_INITIATIVES - currentActive;
+  if (slots <= 0) {
+    return 0;
+  }
+
+  // 3. 从 pending 中按优先级激活
+  const activateResult = await pool.query(`
+    UPDATE projects
+    SET status = 'active',
+        updated_at = NOW()
+    WHERE id IN (
+      SELECT p.id
+      FROM projects p
+      LEFT JOIN goals g ON g.id = p.kr_id
+      WHERE p.type = 'initiative'
+        AND p.status = 'pending'
+      ORDER BY
+        CASE g.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+        p.created_at ASC
+      LIMIT $1
+    )
+    RETURNING id, name
+  `, [slots]);
+
+  const activated = activateResult.rowCount ?? 0;
+
+  if (activated > 0) {
+    // 记录激活事件
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('initiatives_activated', 'initiative_queue', $1)
+    `, [JSON.stringify({
+      activated_count: activated,
+      activated_names: activateResult.rows.map(r => r.name),
+      previous_active: currentActive,
+      new_active: currentActive + activated,
+      max_allowed: MAX_ACTIVE_INITIATIVES,
+      timestamp: new Date().toISOString(),
+    })]);
+  }
+
+  return activated;
+}
+
+export { checkInitiativeCompletion, checkProjectCompletion, activateNextInitiatives };

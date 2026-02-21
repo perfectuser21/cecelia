@@ -25,7 +25,7 @@ function makeMockPool(initiatives = [], taskStats = {}) {
         return { rows: initiatives };
       }
 
-      // 查某 initiative 下的 tasks 统计
+      // 查某 initiative 下的 tasks 统计（FROM tasks WHERE project_id）
       if (s.includes('COUNT(*)') && s.includes('FROM tasks') && s.includes('project_id = $1')) {
         const id = params?.[0];
         const stats = taskStats[id] || { total: '0', queued: '0', in_progress: '0' };
@@ -38,17 +38,36 @@ function makeMockPool(initiatives = [], taskStats = {}) {
         };
       }
 
-      // UPDATE projects
+      // UPDATE projects SET completed
       if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
         return { rows: [] };
       }
 
-      // INSERT INTO cecelia_events
+      // INSERT INTO cecelia_events（initiative_completed）
       if (s.includes('cecelia_events') && s.includes('initiative_completed')) {
         return { rows: [] };
       }
 
-      return { rows: [] };
+      // activateNextInitiatives - 查当前 active 数量
+      if (s.includes('COUNT(*)') && s.includes("status = 'active'")) {
+        return { rows: [{ cnt: '5' }] };
+      }
+
+      // activateNextInitiatives - UPDATE projects active + RETURNING
+      if (
+        s.includes('UPDATE projects') &&
+        s.includes("status = 'active'") &&
+        s.includes('RETURNING id, name')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      // INSERT INTO cecelia_events（initiatives_activated）
+      if (s.includes('initiatives_activated')) {
+        return { rows: [] };
+      }
+
+      return { rows: [], rowCount: 0 };
     }),
   };
 }
