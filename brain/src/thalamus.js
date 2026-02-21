@@ -262,7 +262,7 @@ function hasDangerousActions(decision) {
 const MODEL_PRICING = {
   'claude-sonnet-4-20250514': { in: 3.0 / 1_000_000, out: 15.0 / 1_000_000 },
   'claude-opus-4-20250514': { in: 15.0 / 1_000_000, out: 75.0 / 1_000_000 },
-  'claude-haiku-4-20250514': { in: 0.8 / 1_000_000, out: 4.0 / 1_000_000 },
+  'claude-haiku-4-5-20251001': { in: 1.0 / 1_000_000, out: 5.0 / 1_000_000 },
 };
 
 function calculateCost(usage, model) {
@@ -433,10 +433,10 @@ async function analyzeEvent(event) {
 
   try {
     // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
-    const { text: response, usage } = await callSonnet(prompt);
+    const { text: response, usage } = await callHaiku(prompt);
 
     // Build #4: 记录 token 消耗
-    await recordTokenUsage('thalamus', 'claude-sonnet-4-20250514', usage, {
+    await recordTokenUsage('thalamus', 'claude-haiku-4-5-20251001', usage, {
       event_type: event.type,
       learnings_injected: learnings.length,
       memory_injected: memoryBlock.length > 0,
@@ -468,11 +468,11 @@ async function analyzeEvent(event) {
 }
 
 /**
- * 调用 Sonnet API
+ * 调用 Haiku API
  * @param {string} prompt
  * @returns {Promise<{text: string, usage: Object}>}
  */
-async function callSonnet(prompt) {
+async function callHaiku(prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
@@ -487,7 +487,7 @@ async function callSonnet(prompt) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       messages: [
         { role: 'user', content: prompt }
@@ -497,13 +497,13 @@ async function callSonnet(prompt) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Sonnet API error: ${response.status} - ${error}`);
+    throw new Error(`Haiku API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
   const textBlock = (data.content || []).find(b => b.type === 'text');
   if (!textBlock) {
-    throw new Error(`Sonnet returned empty content array (usage: ${JSON.stringify(data.usage)})`);
+    throw new Error(`Haiku returned empty content array (usage: ${JSON.stringify(data.usage)})`);
   }
   return { text: textBlock.text, usage: data.usage || null };
 }

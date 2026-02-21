@@ -4,7 +4,7 @@
  * 仿人脑设计：
  * - 由丘脑 (thalamus) 唤醒
  * - 只处理 level=2 的复杂决策
- * - 用 Opus 模型深度思考
+ * - 用 Sonnet 模型深度思考
  *
  * 职责：
  * 1. 跨部门资源权衡
@@ -163,11 +163,11 @@ const CORTEX_ACTION_WHITELIST = {
 };
 
 // ============================================================
-// Opus API 调用
+// Sonnet API 调用
 // ============================================================
 
 /**
- * 调用 Opus API 进行深度分析
+ * 调用 Sonnet API 进行深度分析
  * @param {string} prompt
  * @returns {Promise<string>}
  */
@@ -178,7 +178,7 @@ async function callOpus(prompt) {
     throw new Error('ANTHROPIC_API_KEY not set');
   }
 
-  console.log('[cortex] Calling Opus for deep analysis...');
+  console.log('[cortex] Calling Sonnet for deep analysis...');
   const startTime = Date.now();
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -189,7 +189,7 @@ async function callOpus(prompt) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-20250514',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 4096,  // 允许更长输出
       messages: [
         { role: 'user', content: prompt }
@@ -199,15 +199,15 @@ async function callOpus(prompt) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Opus API error: ${response.status} - ${error}`);
+    throw new Error(`Sonnet API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
   const elapsed = Date.now() - startTime;
-  console.log(`[cortex] Opus responded in ${elapsed}ms`);
+  console.log(`[cortex] Sonnet responded in ${elapsed}ms`);
 
   // Build #4: 记录 token 消耗
-  await recordTokenUsage('cortex', 'claude-opus-4-20250514', data.usage, {
+  await recordTokenUsage('cortex', 'claude-sonnet-4-20250514', data.usage, {
     elapsed_ms: elapsed,
   });
 
@@ -219,14 +219,14 @@ async function callOpus(prompt) {
 // ============================================================
 
 /**
- * 从 Opus 响应中解析 Decision
+ * 从 Sonnet 响应中解析 Decision
  * @param {string} response
  * @returns {Object}
  */
 function parseCortexDecision(response) {
   const jsonMatch = response.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    throw new Error('No JSON found in Opus response');
+    throw new Error('No JSON found in Sonnet response');
   }
   return JSON.parse(jsonMatch[0]);
 }
