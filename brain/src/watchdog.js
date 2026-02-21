@@ -9,6 +9,10 @@
  *
  * Dynamic thresholds based on total system memory.
  * 60-second startup grace period (except hard RSS limit).
+ *
+ * Also monitors idle interactive Claude Code sessions:
+ *   - Detects foreground `claude` processes not managed by Brain slots
+ *   - Kills sessions idle (CPU < 1%) for more than IDLE_KILL_HOURS hours
  */
 
 import { readFileSync, readdirSync, existsSync } from 'fs';
@@ -31,8 +35,16 @@ const STARTUP_GRACE_SEC = 60;
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
 
+// === Idle interactive session thresholds ===
+const IDLE_KILL_HOURS = parseFloat(process.env.IDLE_KILL_HOURS || '2');
+const IDLE_KILL_MS = IDLE_KILL_HOURS * 60 * 60 * 1000;
+const IDLE_CPU_PCT_THRESHOLD = parseFloat(process.env.IDLE_CPU_PCT_THRESHOLD || '1');
+
 // In-memory metrics store: taskId -> { samples: [], pid, pgid }
 const _taskMetrics = new Map();
+
+// In-memory idle session store: pid -> { lastHighCpuTs, prevSample }
+const _idleMetrics = new Map();
 
 /**
  * Read lock slot info.json files to resolve task → pid/pgid mappings.
@@ -109,6 +121,127 @@ function calcCpuPct(prev, curr) {
   const wallSec = (curr.timestamp - prev.timestamp) / 1000;
   if (wallSec <= 0) return 0;
   return Math.round((tickDelta / 100 / wallSec) * 100);
+}
+
+/**
+ * Scan /proc for interactive (foreground) Claude Code processes.
+ * Returns array of { pid } for processes that are:
+ *   - Running the `claude` binary (not `claude -p ...` background tasks)
+ *   - Not in managedPids (Brain slot-managed processes)
+ *
+ * @param {Set<number>} managedPids - PIDs already managed by Brain slots
+ * @returns {Array<{pid: number, cmdline: string}>}
+ */
+function scanInteractiveClaude(managedPids) {
+  const result = [];
+  let entries;
+  try {
+    entries = readdirSync('/proc', { withFileTypes: true });
+  } catch {
+    return result; // /proc not accessible (test env)
+  }
+
+  for (const entry of entries) {
+    // /proc entries for processes are numeric directories
+    if (!entry.isDirectory()) continue;
+    const pid = parseInt(entry.name, 10);
+    if (!Number.isFinite(pid) || pid <= 0) continue;
+    if (managedPids.has(pid)) continue;
+
+    try {
+      // cmdline has args separated by null bytes
+      const raw = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+      const args = raw.split('\0').filter(Boolean);
+      if (args.length === 0) continue;
+
+      // The binary path (first arg) must end with 'claude' or equal 'claude'
+      const bin = args[0];
+      if (!bin.endsWith('/claude') && bin !== 'claude') continue;
+
+      // Exclude background tasks: `claude -p ...` (Brain-dispatched)
+      if (args.includes('-p')) continue;
+
+      // Exclude wrapper invocations passed via shell
+      // (These show up as bash -c "claude ..." — not directly as claude)
+      result.push({ pid, cmdline: args.join(' ') });
+    } catch {
+      // Process may have exited between readdirSync and readFileSync
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Check for idle interactive Claude Code sessions and return kill actions.
+ *
+ * A session is considered idle when its CPU usage stays below
+ * IDLE_CPU_PCT_THRESHOLD (default 1%) for IDLE_KILL_MS (default 2 hours).
+ *
+ * Algorithm:
+ *   - Track `lastHighCpuTs` per PID: timestamp of last CPU >= threshold
+ *   - On first sight, set lastHighCpuTs = now (give initial grace)
+ *   - Each call: sample CPU, update lastHighCpuTs if CPU is high
+ *   - If now - lastHighCpuTs > IDLE_KILL_MS → return kill action
+ *   - Prune _idleMetrics entries for PIDs that are no longer running
+ *
+ * @returns {{ actions: Array<{pid, action: 'kill'|'warn', reason, idleMs}> }}
+ */
+function checkIdleSessions() {
+  const actions = [];
+  const { pidMap } = resolveTaskPids();
+
+  // Build set of managed PIDs (Brain slot-managed: use both pid and pgid)
+  const managedPids = new Set();
+  for (const { pid, pgid } of pidMap.values()) {
+    managedPids.add(pid);
+    if (pgid) managedPids.add(pgid);
+  }
+
+  const interactiveSessions = scanInteractiveClaude(managedPids);
+  const nowTs = Date.now();
+
+  // Prune _idleMetrics for PIDs no longer running
+  const activePids = new Set(interactiveSessions.map(s => s.pid));
+  for (const pid of _idleMetrics.keys()) {
+    if (!activePids.has(pid)) {
+      _idleMetrics.delete(pid);
+    }
+  }
+
+  for (const { pid } of interactiveSessions) {
+    const sample = sampleProcess(pid);
+    if (!sample) {
+      _idleMetrics.delete(pid);
+      continue;
+    }
+
+    let state = _idleMetrics.get(pid);
+    if (!state) {
+      // First time seeing this PID — initialize, give grace (CPU "was high" just now)
+      state = { lastHighCpuTs: nowTs, prevSample: null };
+      _idleMetrics.set(pid, state);
+    }
+
+    const cpuPct = calcCpuPct(state.prevSample, sample);
+    state.prevSample = sample;
+
+    if (cpuPct >= IDLE_CPU_PCT_THRESHOLD) {
+      state.lastHighCpuTs = nowTs;
+    }
+
+    const idleMs = nowTs - state.lastHighCpuTs;
+    if (idleMs >= IDLE_KILL_MS) {
+      actions.push({
+        pid,
+        action: 'kill',
+        reason: `Idle interactive session: CPU<${IDLE_CPU_PCT_THRESHOLD}% for ${Math.round(idleMs / 60000)}min`,
+        idleMs,
+      });
+    }
+  }
+
+  return { actions };
 }
 
 /**
@@ -265,6 +398,8 @@ export {
   checkRunaways,
   getWatchdogStatus,
   cleanupMetrics,
+  scanInteractiveClaude,
+  checkIdleSessions,
   // Expose for testing
   RSS_KILL_MB,
   RSS_WARN_MB,
@@ -273,5 +408,9 @@ export {
   STARTUP_GRACE_SEC,
   TOTAL_MEM_MB,
   PAGE_SIZE,
+  IDLE_KILL_HOURS,
+  IDLE_KILL_MS,
+  IDLE_CPU_PCT_THRESHOLD,
   _taskMetrics,
+  _idleMetrics,
 };
