@@ -1235,6 +1235,22 @@ async function executeTick() {
     console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
   }
 
+  // 0.9. Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkProjectCompletion } = await import('./initiative-closer.js');
+    const projectResult = await checkProjectCompletion(pool);
+    if (projectResult.closedCount > 0) {
+      console.log(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'project_completion_check',
+        closed_count: projectResult.closedCount,
+        closed: projectResult.closed,
+      });
+    }
+  } catch (projectErr) {
+    console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
