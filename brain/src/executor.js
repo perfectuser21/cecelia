@@ -1031,6 +1031,68 @@ ${task.description || ''}
 - ❌ 不能创建、修改或删除任何文件`;
   }
 
+  // Exploratory 类型：注入 Brain 上下文，启用 Output Loop
+  // Step 5 Output Loop: 探索完成后直接调 Brain API 创建 dev 任务，不需要再绕一圈秋米
+  if (taskType === 'exploratory') {
+    const brainTaskId = task.id || '';
+    const brainGoalId = task.goal_id || '';
+    const brainProjectId = task.project_id || '';
+    const exploratoryDesc = task.description || task.title;
+
+    return `/exploratory
+
+# 探索任务: ${task.title}
+
+## Brain 上下文（CRITICAL — Output Loop 必须使用这些 ID）
+- BRAIN_TASK_ID: ${brainTaskId}
+- BRAIN_GOAL_ID: ${brainGoalId}
+- BRAIN_PROJECT_ID: ${brainProjectId}
+- BRAIN_API: http://localhost:5221
+
+## 探索目标
+${exploratoryDesc}
+
+## Output Loop（Step 5，CRITICAL — 探索完成后必须执行）
+
+探索完成后，**必须**调用 Brain API 创建后续 dev 任务，然后回传 findings：
+
+### Step 5.1: 创建 dev 任务
+\`\`\`bash
+# 为每个发现的可实现点创建 dev 任务（至少 1 个）
+curl -s -X POST http://localhost:5221/api/brain/tasks \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "title": "实现: <具体功能>",
+    "task_type": "dev",
+    "priority": "P1",
+    "description": "<基于探索结论的具体 PRD，包含：做什么、用哪种方案、注意哪些坑>",
+    "goal_id": "${brainGoalId}",
+    "project_id": "${brainProjectId}"
+  }'
+\`\`\`
+
+### Step 5.2: 回传 findings（让 Cecelia 知道探索结论）
+\`\`\`bash
+curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "task_id": "${brainTaskId}",
+    "run_id": "manual",
+    "status": "completed",
+    "result": {
+      "findings": "<探索的核心结论，2-3段，包含：现状、可行方案、推荐方案、坑点>",
+      "next_tasks_created": <创建了几个 dev 任务>
+    }
+  }'
+\`\`\`
+
+## 探索完成标准
+- [ ] 明确了可行方案（至少一种）
+- [ ] 记录了踩坑点
+- [ ] 通过 Brain API 创建了至少 1 个 dev 任务
+- [ ] 回传了 findings 到 Brain`;
+  }
+
   // 有明确 PRD 内容的任务
   if (task.prd_content) {
     return `${skill}\n\n${task.prd_content}`;
