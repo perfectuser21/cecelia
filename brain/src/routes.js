@@ -1108,6 +1108,42 @@ router.get('/watchdog', async (req, res) => {
   }
 });
 
+// ==================== Session Tracking API ====================
+
+/**
+ * GET /api/brain/session/stats
+ * 返回当前 session 开始时间、已运行分钟数、历史 session 记录（最近 10 条）
+ * 用于分析 Anthropic spending cap 周期
+ */
+router.get('/session/stats', async (req, res) => {
+  try {
+    const { getSessionInfo } = await import('./executor.js');
+    const current = getSessionInfo();
+
+    // 查询最近 10 条历史 session 记录
+    const historyResult = await pool.query(`
+      SELECT payload, created_at
+      FROM cecelia_events
+      WHERE event_type = 'session_end'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const history = historyResult.rows.map(row => ({
+      ...row.payload,
+      recorded_at: row.created_at,
+    }));
+
+    res.json({
+      success: true,
+      current,
+      history,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get session stats', details: err.message });
+  }
+});
+
 // ==================== Token Usage API ====================
 
 /**

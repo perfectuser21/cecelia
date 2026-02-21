@@ -133,7 +133,12 @@ const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usabl
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
 // Max seats (total capacity including interactive reserve)
 // CECELIA_MAX_CONCURRENT is deprecated since v1.35.0 - use auto-calculated slot allocation
-const MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
+const _AUTO_MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
+// 允许通过环境变量硬限制并发数（覆盖自动计算值），用于降低 token 消耗
+const _MAX_SEATS_OVERRIDE = process.env.CECELIA_MAX_SEATS ? parseInt(process.env.CECELIA_MAX_SEATS, 10) : null;
+const MAX_SEATS = (_MAX_SEATS_OVERRIDE && _MAX_SEATS_OVERRIDE > 0)
+  ? Math.min(_MAX_SEATS_OVERRIDE, _AUTO_MAX_SEATS)
+  : _AUTO_MAX_SEATS;
 // Auto-dispatch thresholds: subtract interactive reserve from budget
 // so when auto-dispatch hits the ceiling, user still has room for headed sessions
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
@@ -246,6 +251,68 @@ function checkServerResources() {
 }
 
 // ============================================================
+// Session 时长追踪（Spending Cap 分析）
+// ============================================================
+
+let _sessionStart = null; // 本次 session 开始时间（cap 重置后首次派发）
+
+/**
+ * 记录 Session 开始（仅首次，不覆盖）
+ * 在首次成功派发任务时调用
+ */
+function recordSessionStart() {
+  if (!_sessionStart) {
+    _sessionStart = new Date().toISOString();
+    console.log(`[session] Session 开始: ${_sessionStart}`);
+  }
+}
+
+/**
+ * 记录 Session 结束（billing cap 触发时）
+ * @param {string} reason - 结束原因（通常为 'billing_cap'）
+ * @param {object|null} poolRef - DB pool 引用（可选，用于写 cecelia_events）
+ * @returns {{ start, end, duration_min, reason } | null}
+ */
+async function recordSessionEnd(reason, poolRef = null) {
+  if (!_sessionStart) return null;
+  const endTime = new Date().toISOString();
+  const durationMs = Date.now() - new Date(_sessionStart).getTime();
+  const durationMin = Math.round(durationMs / 60000);
+  console.log(`[session] Session 结束: 时长 ${durationMin} 分钟, 原因: ${reason}`);
+  const record = { start: _sessionStart, end: endTime, duration_min: durationMin, reason };
+  // 写入 cecelia_events（可选，如有 pool）
+  if (poolRef) {
+    try {
+      await poolRef.query(
+        `INSERT INTO cecelia_events (event_type, payload, created_at) VALUES ('session_end', $1, NOW())`,
+        [JSON.stringify(record)]
+      );
+    } catch (e) {
+      console.warn(`[session] 写入 cecelia_events 失败: ${e.message}`);
+    }
+  }
+  _sessionStart = null; // 重置，等待下次 cap 重置后的首次派发
+  return record;
+}
+
+/**
+ * 获取当前 session 信息
+ * @returns {{ active: boolean, start?: string, duration_min?: number }}
+ */
+function getSessionInfo() {
+  if (!_sessionStart) return { active: false };
+  const durationMin = Math.round((Date.now() - new Date(_sessionStart).getTime()) / 60000);
+  return { active: true, start: _sessionStart, duration_min: durationMin };
+}
+
+/**
+ * 重置 session（测试用）
+ */
+function _resetSessionStart() {
+  _sessionStart = null;
+}
+
+// ============================================================
 // Billing Pause (全局暂停派发)
 // ============================================================
 
@@ -253,10 +320,16 @@ let _billingPause = null; // { resetTime: ISO string, setAt: ISO string, reason:
 
 /**
  * 设置 billing pause（全局暂停派发直到 reset 时间）
+ * 同时触发 Session 结束记录（fire-and-forget，保持同步签名兼容性）
  * @param {string} resetTimeISO - reset 时间 (ISO 8601)
  * @param {string} reason - 原因描述
+ * @param {object|null} poolRef - DB pool 引用（可选，用于写 session_end 事件）
  */
-function setBillingPause(resetTimeISO, reason = 'billing_cap') {
+function setBillingPause(resetTimeISO, reason = 'billing_cap', poolRef = null) {
+  // 触发 session 结束记录（异步，不阻塞）
+  recordSessionEnd(reason, poolRef).catch(e => {
+    console.warn(`[session] recordSessionEnd 失败: ${e.message}`);
+  });
   _billingPause = {
     resetTime: resetTimeISO,
     setAt: new Date().toISOString(),
@@ -732,7 +805,11 @@ function getSkillForTaskType(taskType, payload) {
  * - 降低成本约 70%
  */
 function getModelForTask(task) {
-  // 成本优化：全部使用 Sonnet
+  // exploratory 任务用 Haiku（调研型，不需要最强模型，省 3x token）
+  if (task.task_type === 'exploratory') {
+    return 'claude-haiku-4-5-20251001';
+  }
+  // 其他任务用默认 Sonnet
   // 返回 null = cecelia-run 默认模型 (Sonnet)
   return null;
 }
@@ -1357,6 +1434,9 @@ async function triggerCeceliaRun(task) {
       },
     });
 
+    // 记录 session 开始（仅首次派发时，用于 spending cap 时长分析）
+    recordSessionStart();
+
     return {
       success: true,
       runId,
@@ -1743,4 +1823,9 @@ export {
   clearBillingPause,
   // v9: Task type matching validation
   checkTaskTypeMatch,
+  // v10: Session tracking
+  recordSessionStart,
+  recordSessionEnd,
+  getSessionInfo,
+  _resetSessionStart,
 };

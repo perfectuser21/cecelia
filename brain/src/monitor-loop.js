@@ -93,17 +93,33 @@ async function detectFailureSpike() {
 
 /**
  * Detector: Resource Pressure
- * 检测系统压力（活跃任务数 / 最大并发）
+ * 检测系统压力（活跃任务数 / 最大并发）并采集 CPU/RSS 指标
  */
 async function detectResourcePressure() {
   const { getActiveProcessCount, MAX_SEATS } = await import('./executor.js');
   const activeCount = getActiveProcessCount();
   const pressure = activeCount / MAX_SEATS;
-  
+
+  // 采集进程级 CPU 和内存 RSS（Node.js 自身）
+  const memUsage = process.memoryUsage();
+  const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+  // cpuUsage() 返回微秒累计，取两次快照算近似 %
+  // 注：monitor 每 30s 调用，此处仅记录瞬时 RSS，CPU% 近似为 user+sys / elapsed
+  const cpuBefore = process.cpuUsage();
+  const wallStart = Date.now();
+  // 同步等待 ~10ms 采样窗口（够精度，不阻塞）
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const cpuAfter = process.cpuUsage(cpuBefore);
+  const elapsedMs = Date.now() - wallStart;
+  const cpuPercent = Math.round(((cpuAfter.user + cpuAfter.system) / 1000 / elapsedMs) * 100 * 10) / 10;
+
   return {
     active_count: activeCount,
     max_seats: MAX_SEATS,
-    pressure: pressure
+    pressure: pressure,
+    rss_mb: rssMB,
+    cpu_percent: cpuPercent,
   };
 }
 
@@ -518,7 +534,24 @@ async function runMonitorCycle() {
     if (resourceStats.pressure > RESOURCE_PRESSURE_THRESHOLD) {
       await handleResourcePressure(resourceStats);
     }
-    
+
+    // 4. 记录资源快照（每次 cycle 写入，用于事后性能分析）
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type, payload, created_at) VALUES ('resource_snapshot', $1, NOW())`,
+        [JSON.stringify({
+          cpu_percent: resourceStats.cpu_percent,
+          rss_mb: resourceStats.rss_mb,
+          active_processes: resourceStats.active_count,
+          max_seats: resourceStats.max_seats,
+          utilization: resourceStats.pressure,
+        })]
+      );
+    } catch (snapshotErr) {
+      // 写入失败不影响 monitor 主流程
+      console.warn(`[Monitor] resource_snapshot 写入失败: ${snapshotErr.message}`);
+    }
+
     const elapsed = Date.now() - startTime;
     console.log(`[Monitor] Cycle completed in ${elapsed}ms`);
     
