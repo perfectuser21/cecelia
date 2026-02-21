@@ -4,6 +4,28 @@
 
 ---
 
+### [2026-02-22] Initiative 队列管理机制 (v1.57.0)
+
+**变更**：
+1. migration 047：将无活跃任务的 active initiative 改为 pending，重新激活最多 10 个
+2. initiative-closer.js：新增 `activateNextInitiatives(pool)`，`MAX_ACTIVE_INITIATIVES = 10`
+3. initiative-closer.js：`checkInitiativeCompletion()` 完成后自动触发激活
+4. tick.js：Section 0.10 每次 tick 触发激活检查
+5. selfcheck.test.js：硬编码版本号需要跟着 migration 版本一起更新
+
+**经验**：
+- **selfcheck.test.js 有硬编码版本号**：每次 migration 版本升级，必须同时更新 `selfcheck.test.js` 中的 `EXPECTED_SCHEMA_VERSION should be XXX` 测试，否则 CI 必定失败。教训：本次 CI 第一次失败就是这个原因。
+- **修改已有函数返回结构时，记得更新相关测试的 mock pool**：`checkInitiativeCompletion()` 增加了 `activatedCount` 后，会触发内部对 `activateNextInitiatives()` 的调用，mock pool 必须能处理新的查询（COUNT active、UPDATE active RETURNING），否则 mock 抛异常或返回 undefined。
+- **activateNextInitiatives 的 mock 复杂度**：内部有 3 种查询（COUNT active、UPDATE pending→active RETURNING、INSERT events），mock pool 必须分别识别。关键是通过 `s.includes("RETURNING id, name")` 区分"激活"的 UPDATE 和"关闭"的 UPDATE（后者不含 RETURNING）。
+- **MAX_ACTIVE_INITIATIVES = 10** 而非直接写数字，便于测试和未来调整。
+
+**避免踩坑**：
+- 每次 schema version 变更后立刻检查 `selfcheck.test.js` 是否有硬编码值需要更新
+- 新增导出函数时，同步更新 `export { ... }` 列表
+- 修改函数内部行为（如新增内部调用）时，检查所有现有测试的 mock pool 是否覆盖了新的 SQL 查询模式
+
+---
+
 ### [2026-02-21] Project 闭环检查器 + CLAUDE.md 概念清理 (v1.55.0)
 
 **变更**：
