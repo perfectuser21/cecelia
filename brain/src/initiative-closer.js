@@ -83,4 +83,82 @@ async function checkInitiativeCompletion(pool) {
   return { closedCount: closed.length, closed };
 }
 
-export { checkInitiativeCompletion };
+/**
+ * Project 闭环检查器
+ *
+ * 每次 tick 触发，纯 SQL 逻辑，无 LLM。
+ *
+ * 逻辑：
+ *   1. 查所有 type='project' AND status='active' 的 projects
+ *   2. 对每个 project，检查其下是否有 initiative，且全部 completed
+ *   3. 如果 total_initiatives > 0 AND 没有 non-completed 的 initiative
+ *      → UPDATE projects SET status='completed', completed_at=NOW()
+ *      → INSERT INTO cecelia_events (event_type='project_completed', ...)
+ *   4. 返回关闭的 project 数量
+ *
+ * 触发位置：tick.js Section 0.9（每次 tick 都跑，SQL 轻量）
+ */
+
+/**
+ * 检查并关闭已完成的 Projects。
+ *
+ * @param {import('pg').Pool} pool - PostgreSQL 连接池
+ * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string, kr_id: string}> }>}
+ */
+async function checkProjectCompletion(pool) {
+  // 查所有满足条件的 active Project：
+  //   - 存在至少一个 initiative（避免误关空 project）
+  //   - 没有 non-completed 的 initiative
+  const projectsResult = await pool.query(`
+    SELECT p.id, p.name, p.kr_id
+    FROM projects p
+    WHERE p.type = 'project'
+      AND p.status = 'active'
+      AND NOT EXISTS (
+        SELECT 1 FROM projects child
+        WHERE child.parent_id = p.id
+          AND child.type = 'initiative'
+          AND child.status != 'completed'
+      )
+      AND EXISTS (
+        SELECT 1 FROM projects child
+        WHERE child.parent_id = p.id
+          AND child.type = 'initiative'
+      )
+  `);
+
+  const projects = projectsResult.rows;
+  if (projects.length === 0) {
+    return { closedCount: 0, closed: [] };
+  }
+
+  const closed = [];
+
+  for (const project of projects) {
+    // 标记为完成
+    await pool.query(`
+      UPDATE projects
+      SET status = 'completed',
+          completed_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $1
+    `, [project.id]);
+
+    // 记录事件
+    await pool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('project_completed', 'project_closer', $1)
+    `, [JSON.stringify({
+      project_id: project.id,
+      project_name: project.name,
+      kr_id: project.kr_id,
+      closed_at: new Date().toISOString(),
+    })]);
+
+    closed.push({ id: project.id, name: project.name, kr_id: project.kr_id });
+  }
+
+  return { closedCount: closed.length, closed };
+}
+
+export { checkInitiativeCompletion, checkProjectCompletion };

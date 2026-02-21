@@ -4,6 +4,55 @@
 
 ---
 
+### [2026-02-21] Project 闭环检查器 + CLAUDE.md 概念清理 (v1.55.0)
+
+**变更**：
+1. initiative-closer.js 新增 `checkProjectCompletion()` 函数（与 initiative 检查同文件）
+2. tick.js 新增 Section 0.9 调用 `checkProjectCompletion()`
+3. CLAUDE.md 全局文档清理 "Project = Repository" 错误概念
+
+**经验**：
+- Project 闭环和 Initiative 闭环逻辑相似，放同一个文件（initiative-closer.js）保持逻辑集中
+- `checkProjectCompletion` 的 SQL 只需一次查询（NOT EXISTS + AND EXISTS 子查询），不需要像 initiative 那样两次查询；initiative 需要知道任务统计细节，project 只需知道"是否有未完成的 initiative"
+- 测试 P3（空 project 不关闭）和 P4（已 completed 不重复）都通过 SQL 层面过滤，mock 返回空列表即可验证，不需要额外的业务逻辑
+- export 时需要把新函数加到 `export { checkInitiativeCompletion, checkProjectCompletion }`，否则 tick.js 动态 import 会报 undefined
+- 文档概念清理：旧文档中 "Project = Repository" 是历史遗留错误，正确层级是 KR → Project → Initiative → Task，Repository 只是代码存放地，不在 OKR 层级中
+
+**避免踩坑**：
+- 向 export 列表追加新函数时，确认 import 端（tick.js）也用了解构 `{ checkProjectCompletion }`
+- `- [ ]` 格式的验收清单是 branch-protect.sh Hook 的强制要求，DoD 文件必须包含
+
+---
+
+### [2026-02-21] Initiative 闭环检查器 (v1.54.0)
+
+**变更**：新增 initiative-closer.js + migration 045 + tick.js Section 0.8
+
+**经验**：
+- `projects` 表没有 `completed_at` 字段，需要先写 migration 再实现业务逻辑
+- `cecelia_events` 的字段是 `event_type` 不是 `type`，与其他系统命名不同，写代码前务必确认字段名
+- `selfcheck.test.js` 中有硬编码的 schema version 断言（`expect(EXPECTED_SCHEMA_VERSION).toBe('044')`），每次 schema version 升级都必须同步更新这个测试文件
+- tick.js Section 0.8 使用动态 import（`await import('./initiative-closer.js')`），与 Section 0.7 的 health-monitor 静态 import 方式不同；动态 import 更灵活，可以在测试中 mock
+- 测试用 mock pool 时，SQL 匹配用 `s.includes(...)` 判断，需要覆盖所有可能的 SQL 语句（包括 UPDATE 和 INSERT）
+
+**避免踩坑**：
+- 升级 EXPECTED_SCHEMA_VERSION 后，立即在本地跑 `npx vitest run src/__tests__/selfcheck.test.js` 验证
+
+---
+
+### [2026-02-21] 成本优化 — 丘脑 Haiku + 皮层 Sonnet (v1.52.11)
+
+**变更**：thalamus Sonnet→Haiku，cortex Opus→Sonnet
+
+**经验**：
+- 丘脑职责是结构化 JSON 路由（从白名单选 action），Haiku 完全胜任，不需要 Sonnet 的推理能力
+- 皮层做深度 RCA，Sonnet 足够，不必用 Opus
+- 总节省：丘脑 3x + 皮层 5x，丘脑影响最大（每 5 分钟高频调用，全天 288 次）
+- MODEL_PRICING 的 haiku key 要更新为新模型 ID（`claude-haiku-4-5-20251001`），价格 $1/$5 per 1M
+- `.brain-versions` 必须用 `jq -r .version brain/package.json > .brain-versions` 覆写，不能 append，否则 CI 版本同步检查失败
+
+---
+
 ### [2026-02-12] Immune System v1 - P0 实现
 
 **功能**：实现免疫系统 P0 阶段 - Registry + State Machine + Evaluations，包含 3 个新表（failure_signatures, absorption_policies, policy_evaluations）和 Monitor Loop 集成。

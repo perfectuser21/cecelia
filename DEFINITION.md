@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-18
-**Brain 版本**: 1.54.0
+**Brain 版本**: 1.55.0
 **Schema 版本**: 045
 **状态**: 生产运行中
 
@@ -199,18 +199,28 @@ Agent Workers (Caramel/小检/小审/...)
 
 ```
 executeTick() 流程：
-  0. 评估警觉等级 → 调整行为
+  0.1. 评估警觉等级 → 调整行为
+  0.2. 定期清理（每小时，cecelia_events/decision_log 等）
+  0.3. PR Plans 完成检查（纯 SQL）
+  0.4. 反串清理（清理孤儿任务引用）
+  0.5. Pre-flight 检查（资源/熔断）
+  0.6. Codex 免疫检查（每 20h 一次，确保 codex_qa 任务存在）
+  0.7. 统一拆解检查（七层架构，decomposition-checker.js）
+  0.7. Layer 2 运行健康监控（每小时一次，health-monitor.js）
+  0.8. Initiative 闭环检查（initiative-closer.js，每次 tick）
+       如果 initiative 下所有 task 都 completed → 关闭 initiative
+  0.9. Project 闭环检查（initiative-closer.js，每次 tick）
+       如果 project 下所有 initiative 都 completed → 关闭 project
   1. L1 丘脑事件处理（如有事件）
      └─ level=2 → 升级到 L2 皮层
   2. 决策引擎（对比目标进度 → 生成决策 → 执行决策）
-  3. 反串清理（清理孤儿任务引用）
-  5. 获取每日焦点（selectDailyFocus）
-  6. 自动超时（in_progress > 60min → failed）
-  7. 存活探针（验证 in_progress 任务进程还活着）
-  8. 看门狗（/proc 采样，三级响应）
-  9. 规划（queued=0 且有 KR → planNextTask）
-  10. OKR 自动拆解（Global OKR 有 0 个 KR → 创建拆解任务）
-  11. 派发循环（填满所有可用 slot）
+  3. 焦点选择（selectDailyFocus）
+  4. 自动超时（in_progress > 60min → failed）
+  5. 存活探针（验证 in_progress 任务进程还活着）
+  6. 看门狗（/proc 采样，三级响应）
+  7. 规划（queued=0 且有 KR → planNextTask）
+  8. OKR 自动拆解（Global OKR 有 0 个 KR → 创建拆解任务）
+  9. 派发循环（填满所有可用 slot）
 ```
 
 **关键模块**：
@@ -220,6 +230,8 @@ executeTick() 流程：
 | `tick.js` | 心跳循环、派发调度、焦点选择 |
 | `executor.js` | 进程管理、资源检测、命令生成 |
 | `planner.js` | KR 轮转、任务自动生成、PRD 生成 |
+| `initiative-closer.js` | Initiative/Project 闭环检查（纯 SQL，每次 tick） |
+| `health-monitor.js` | Layer 2 运行健康监控（每小时，4 项 SQL 检查） |
 | `watchdog.js` | /proc 采样、动态阈值、两段式 kill |
 | `alertness/index.js` | 5 级警觉、指标收集、诊断、自愈 |
 | `circuit-breaker.js` | 三态熔断（CLOSED/OPEN/HALF_OPEN） |

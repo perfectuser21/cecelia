@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { checkInitiativeCompletion } from '../initiative-closer.js';
+import { checkInitiativeCompletion, checkProjectCompletion } from '../initiative-closer.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 工具函数：构造 mock pool
@@ -186,5 +186,163 @@ describe('D5: 已 completed 的 initiative 不重复处理', () => {
 
     expect(result.closedCount).toBe(1);
     expect(result.closed[0].id).toBe('init-006');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Project 闭环检查器测试
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 构造 mock pool，模拟 checkProjectCompletion 的 SQL 查询。
+ *
+ * @param {Array} activeProjects - 满足条件的 active projects（SELECT 结果）
+ */
+function makeMockProjectPool(activeProjects = []) {
+  return {
+    query: vi.fn().mockImplementation(async (sql, params) => {
+      const s = sql.trim();
+
+      // 查满足条件的 active projects（主查询）
+      if (s.includes("type = 'project'") && s.includes("status = 'active'")) {
+        return { rows: activeProjects };
+      }
+
+      // UPDATE projects SET status='completed'
+      if (s.includes('UPDATE projects') && s.includes("status = 'completed'")) {
+        return { rows: [] };
+      }
+
+      // INSERT INTO cecelia_events（project_completed）
+      if (s.includes('cecelia_events') && s.includes('project_completed')) {
+        return { rows: [] };
+      }
+
+      return { rows: [] };
+    }),
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// P1: 所有 initiative completed → project 被关闭
+// ────────────────────────────────────────────────────────────────────────────
+describe('P1: 所有 initiative completed 时关闭 project', () => {
+  it('应当关闭 project（SQL 返回满足条件的 project）', async () => {
+    const activeProjects = [
+      { id: 'proj-001', name: 'Test Project', kr_id: 'kr-001' },
+    ];
+    const pool = makeMockProjectPool(activeProjects);
+
+    const result = await checkProjectCompletion(pool);
+
+    expect(result.closedCount).toBe(1);
+    expect(result.closed).toHaveLength(1);
+    expect(result.closed[0].id).toBe('proj-001');
+    expect(result.closed[0].name).toBe('Test Project');
+    expect(result.closed[0].kr_id).toBe('kr-001');
+  });
+
+  it('UPDATE projects 和 INSERT cecelia_events 各被调用一次', async () => {
+    const activeProjects = [
+      { id: 'proj-002', name: 'Another Project', kr_id: 'kr-001' },
+    ];
+    const pool = makeMockProjectPool(activeProjects);
+
+    await checkProjectCompletion(pool);
+
+    const calls = pool.query.mock.calls.map(c => c[0].trim());
+    const hasUpdate = calls.some(s => s.includes('UPDATE projects') && s.includes("status = 'completed'"));
+    const hasInsert = calls.some(s => s.includes('cecelia_events') && s.includes('project_completed'));
+    expect(hasUpdate).toBe(true);
+    expect(hasInsert).toBe(true);
+  });
+
+  it('多个 project 同时满足条件时，全部关闭', async () => {
+    const activeProjects = [
+      { id: 'proj-003', name: 'Project A', kr_id: 'kr-001' },
+      { id: 'proj-004', name: 'Project B', kr_id: 'kr-002' },
+    ];
+    const pool = makeMockProjectPool(activeProjects);
+
+    const result = await checkProjectCompletion(pool);
+
+    expect(result.closedCount).toBe(2);
+    expect(result.closed).toHaveLength(2);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// P2: 有 initiative 未完成 → 不关闭
+// ────────────────────────────────────────────────────────────────────────────
+describe('P2: 有 initiative 未完成时不关闭 project', () => {
+  it('SQL NOT EXISTS 过滤掉有未完成 initiative 的 project，返回空列表', async () => {
+    // SQL 层面已过滤，mock 返回空列表
+    const pool = makeMockProjectPool([]);
+
+    const result = await checkProjectCompletion(pool);
+
+    expect(result.closedCount).toBe(0);
+    expect(result.closed).toHaveLength(0);
+
+    // 只调用了一次 query（查 projects 列表）
+    expect(pool.query).toHaveBeenCalledOnce();
+  });
+
+  it('不应当调用 UPDATE 或 INSERT（没有满足条件的 project）', async () => {
+    const pool = makeMockProjectPool([]);
+
+    await checkProjectCompletion(pool);
+
+    const calls = pool.query.mock.calls.map(c => c[0].trim());
+    const hasUpdate = calls.some(s => s.includes('UPDATE projects'));
+    const hasInsert = calls.some(s => s.includes('cecelia_events'));
+    expect(hasUpdate).toBe(false);
+    expect(hasInsert).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// P3: 没有任何 initiative → 不关闭（避免误关空 project）
+// ────────────────────────────────────────────────────────────────────────────
+describe('P3: 没有任何 initiative 时不关闭 project', () => {
+  it('SQL EXISTS 子查询过滤掉无 initiative 的 project，返回空列表', async () => {
+    // SQL 层面已过滤（AND EXISTS 子查询），mock 返回空列表
+    const pool = makeMockProjectPool([]);
+
+    const result = await checkProjectCompletion(pool);
+
+    expect(result.closedCount).toBe(0);
+    expect(result.closed).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// P4: 已经 completed 的 project → 不重复处理
+// ────────────────────────────────────────────────────────────────────────────
+describe('P4: 已 completed 的 project 不重复处理', () => {
+  it('只查询 status=active 的 project，已 completed 的不会出现在查询结果中', async () => {
+    // SQL WHERE status='active' 已过滤，mock 返回空列表
+    const pool = makeMockProjectPool([]);
+
+    const result = await checkProjectCompletion(pool);
+
+    expect(result.closedCount).toBe(0);
+    expect(result.closed).toHaveLength(0);
+
+    // 验证主查询包含 status='active' 条件
+    const [mainSql] = pool.query.mock.calls[0];
+    expect(mainSql).toContain("status = 'active'");
+    expect(mainSql).toContain("type = 'project'");
+  });
+
+  it('SQL 查询包含 NOT EXISTS 和 AND EXISTS 子查询（确保逻辑正确）', async () => {
+    const pool = makeMockProjectPool([]);
+
+    await checkProjectCompletion(pool);
+
+    const [mainSql] = pool.query.mock.calls[0];
+    expect(mainSql).toContain('NOT EXISTS');
+    expect(mainSql).toContain('AND EXISTS');
+    expect(mainSql).toContain("type = 'initiative'");
   });
 });
