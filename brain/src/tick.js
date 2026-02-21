@@ -1219,6 +1219,22 @@ async function executeTick() {
     }
   }
 
+  // 0.8. Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkInitiativeCompletion } = await import('./initiative-closer.js');
+    const initiativeResult = await checkInitiativeCompletion(pool);
+    console.log(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
+    if (initiativeResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'initiative_completion_check',
+        closed_count: initiativeResult.closedCount,
+        closed: initiativeResult.closed,
+      });
+    }
+  } catch (initiativeErr) {
+    console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
