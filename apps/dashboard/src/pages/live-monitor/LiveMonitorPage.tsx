@@ -155,6 +155,11 @@ function parseBackgroundCmd(cmd: string): { skill: string; taskTitle: string } {
   return { skill, taskTitle };
 }
 
+/** 清理任务标题中的冗余前缀 */
+function cleanTaskTitle(title: string): string {
+  return title.replace(/^Initiative 拆解:\s*/i, '').replace(/^I\d+(?:\.\d+)*:\s*/i, '');
+}
+
 // ── UI atoms ─────────────────────────────────────────────────────
 
 function Dot({ color, pulse }: { color: string; pulse?: boolean }) {
@@ -345,11 +350,16 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
 
 // ── Active Projects ───────────────────────────────────────────────
 
-interface ProjectGroup {
+interface SubGroup {
   id: string;
   name: string;
   inProgress: BrainTask[];
   queued: BrainTask[];
+}
+interface RootGroup {
+  id: string;
+  name: string;
+  subs: Map<string, SubGroup>;
 }
 
 function ActiveProjects({ inProgressTasks, queuedTasks, projects }: {
@@ -357,38 +367,64 @@ function ActiveProjects({ inProgressTasks, queuedTasks, projects }: {
   queuedTasks: BrainTask[];
   projects: Project[];
 }) {
-  const projectMap = new Map<string, string>(projects.map(p => [p.id, p.name]));
+  // 完整项目 map (id → Project)
+  const fullProjMap = new Map<string, Project>(projects.map(p => [p.id, p]));
 
-  // 合并所有任务，按 project 分组
-  const allTasks = [...inProgressTasks, ...queuedTasks];
-  const groupMap = new Map<string, ProjectGroup>();
-
-  for (const t of allTasks) {
-    const key = t.project_id ?? '__none__';
-    if (!groupMap.has(key)) {
-      groupMap.set(key, {
-        id: key,
-        name: key === '__none__'
-          ? '未分配项目'
-          : (projectMap.get(key) ?? `项目 ${key.slice(0, 8)}`),
-        inProgress: [],
-        queued: [],
-      });
+  // 沿 parent_id 链向上遍历，返回根项目
+  function findRoot(id: string): Project | undefined {
+    let cur = fullProjMap.get(id);
+    if (!cur) return undefined;
+    const seen = new Set<string>();
+    while (cur.parent_id && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const parent = fullProjMap.get(cur.parent_id);
+      if (!parent) break;
+      cur = parent;
     }
-    const g = groupMap.get(key)!;
-    if (t.status === 'in_progress') g.inProgress.push(t);
-    else g.queued.push(t);
+    return cur;
   }
 
-  // P0 任务的项目排前，再按 in_progress 数量排
-  const groups = [...groupMap.values()].sort((a, b) => {
-    const aP0 = a.inProgress.some(t => t.priority === 'P0') ? 1 : 0;
-    const bP0 = b.inProgress.some(t => t.priority === 'P0') ? 1 : 0;
-    if (bP0 !== aP0) return bP0 - aP0;
-    return b.inProgress.length - a.inProgress.length;
+  const allTasks = [...inProgressTasks, ...queuedTasks];
+  const rootMap = new Map<string, RootGroup>();
+
+  for (const t of allTasks) {
+    const leafId = t.project_id ?? '__none__';
+    const leafName = leafId === '__none__' ? '未分配' : (fullProjMap.get(leafId)?.name ?? leafId.slice(0, 12));
+
+    let rootId: string;
+    let rootName: string;
+    if (leafId === '__none__') {
+      rootId = '__none__';
+      rootName = '未分配项目';
+    } else {
+      const root = findRoot(leafId);
+      rootId = root?.id ?? leafId;
+      rootName = root?.name ?? leafName;
+    }
+
+    if (!rootMap.has(rootId)) {
+      rootMap.set(rootId, { id: rootId, name: rootName, subs: new Map() });
+    }
+    const rg = rootMap.get(rootId)!;
+    if (!rg.subs.has(leafId)) {
+      rg.subs.set(leafId, { id: leafId, name: leafName, inProgress: [], queued: [] });
+    }
+    const sg = rg.subs.get(leafId)!;
+    if (t.status === 'in_progress') sg.inProgress.push(t);
+    else sg.queued.push(t);
+  }
+
+  // 按进行中数量降序排列根项目
+  const sortedRoots = [...rootMap.values()].sort((a, b) => {
+    const aIP = [...a.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
+    const bIP = [...b.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
+    if (bIP !== aIP) return bIP - aIP;
+    const aQ = [...a.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
+    const bQ = [...b.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
+    return bQ - aQ;
   });
 
-  if (groups.length === 0) {
+  if (sortedRoots.length === 0) {
     return (
       <div style={{ padding: 16, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>
         暂无进行中的项目
@@ -398,52 +434,82 @@ function ActiveProjects({ inProgressTasks, queuedTasks, projects }: {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-      {groups.map(g => {
-        const hasP0 = g.inProgress.some(t => t.priority === 'P0');
-        const accentColor = hasP0 ? '#f87171' : (g.inProgress.length > 0 ? '#10b981' : '#30363d');
-        const allItems = [...g.inProgress, ...g.queued];
+      {sortedRoots.map(rg => {
+        const totalIP = [...rg.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
+        const totalQ = [...rg.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
+        const hasActive = totalIP > 0;
+        const accent = hasActive ? '#10b981' : '#f59e0b';
+        const sortedSubs = [...rg.subs.values()].sort((a, b) => b.inProgress.length - a.inProgress.length);
         return (
-          <div key={g.id} style={{
+          <div key={rg.id} style={{
             background: '#0d1117', borderRadius: 10,
-            border: `1px solid ${hasP0 ? 'rgba(248,113,113,.2)' : '#21262d'}`,
-            borderLeft: `3px solid ${accentColor}`,
+            border: '1px solid #21262d',
+            borderLeft: `3px solid ${accent}`,
             padding: '12px 14px',
           }}>
-            {/* Header */}
+            {/* 根项目 header */}
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-              <Dot color={accentColor} pulse={g.inProgress.length > 0} />
+              <Dot color={accent} pulse={hasActive} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', marginBottom: 5, lineHeight: 1.3 }}>
-                  {clip(g.name, 42)}
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', lineHeight: 1.3, marginBottom: 5 }}>
+                  {clip(rg.name, 40)}
                 </div>
                 <div style={{ display: 'flex', gap: 5 }}>
-                  {g.inProgress.length > 0 && (
+                  {totalIP > 0 && (
                     <span style={{ fontSize: 10, color: '#10b981', background: 'rgba(16,185,129,.12)', padding: '1px 6px', borderRadius: 4 }}>
-                      ● {g.inProgress.length} 进行中
+                      ● {totalIP} 进行中
                     </span>
                   )}
-                  {g.queued.length > 0 && (
+                  {totalQ > 0 && (
                     <span style={{ fontSize: 10, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 6px', borderRadius: 4 }}>
-                      ◎ {g.queued.length} 排队
+                      ◎ {totalQ} 排队
                     </span>
                   )}
                 </div>
               </div>
             </div>
-            {/* Task list */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {allItems.slice(0, 4).map(t => (
-                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <PBadge p={t.priority} />
-                  <span style={{ fontSize: 11, color: t.status === 'in_progress' ? '#8b949e' : '#484f58', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {clip(t.title, 48)}
-                  </span>
-                  {t.status === 'in_progress' && <Dot color="#10b981" pulse />}
-                </div>
-              ))}
-              {allItems.length > 4 && (
-                <div style={{ fontSize: 10, color: '#484f58', paddingLeft: 2 }}>+{allItems.length - 4} 个任务</div>
-              )}
+            {/* 子项目行（或任务行，当任务直挂根项目时） */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {sortedSubs.map(sg => {
+                const isRoot = sg.id === rg.id;
+                const sgAccent = sg.inProgress.length > 0 ? '#10b981' : '#484f58';
+                const allItems = [...sg.inProgress, ...sg.queued];
+                if (isRoot) {
+                  // 任务直挂根项目，显示任务行
+                  return (
+                    <div key={sg.id}>
+                      {allItems.slice(0, 3).map(t => (
+                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
+                          <PBadge p={t.priority} />
+                          <span style={{ fontSize: 10, color: t.status === 'in_progress' ? '#8b949e' : '#484f58', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {clip(cleanTaskTitle(t.title), 36)}
+                          </span>
+                          {t.status === 'in_progress' && <Dot color="#10b981" pulse />}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+                return (
+                  <div key={sg.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    padding: '5px 8px', background: '#161b22', borderRadius: 6,
+                  }}>
+                    <Dot color={sgAccent} pulse={sg.inProgress.length > 0} />
+                    <span style={{ fontSize: 11, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {clip(sg.name, 30)}
+                    </span>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      {sg.inProgress.length > 0 && (
+                        <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#10b981' }}>{sg.inProgress.length}进</span>
+                      )}
+                      {sg.queued.length > 0 && (
+                        <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#f59e0b' }}>{sg.queued.length}排</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );
