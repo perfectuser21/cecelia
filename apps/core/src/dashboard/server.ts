@@ -33,6 +33,7 @@ import orchestratorQueueRoutes from './orchestrator-queue.js';
 import vpsMonitorRoutes from '../vps-monitor/routes.js';
 import n8nApiRoutes from '../n8n-api/routes.js';
 import analysisRoutes from '../analysis/routes.js';
+import clusterRoutes from '../cluster/routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -194,6 +195,9 @@ app.use('/api/intent', intentRoutes);
 
 // Analysis API routes (Historical Drop-off Analysis)
 app.use('/api/analysis', analysisRoutes);
+
+// Cluster session management (session-info + kill-session)
+app.use('/api/cluster', clusterRoutes);
 
 // Brain API routes → proxy to cecelia-semantic-brain Node.js service
 const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';

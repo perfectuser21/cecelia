@@ -1,6 +1,6 @@
 {
   "name": "cecelia-workspace",
-  "version": "1.28.0",
+  "version": "1.28.1",
   "description": "Cecelia Workspace - AI-powered automation platform monorepo",
   "private": true,
   "type": "module",
@@ -13,9 +13,12 @@
     "build:core": "npm run build --workspace=apps/core",
     "dev:core": "npm run dev --workspace=apps/core",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
-    "clean:dist": "find . -name 'dist' -type d -prune -exec rm -rf '{}' +"
+    "clean:dist": "find . -name 'dist' -type d -prune -exec rm -rf '{}' +",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [
     "monorepo",
@@ -39,5 +42,14 @@
     "echarts": "^5.6.0",
     "echarts-for-react": "^3.0.6",
     "reactflow": "^11.11.4"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.55.0",
+    "@typescript-eslint/parser": "^8.55.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.8.1"
   }
 }
