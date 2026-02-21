@@ -3,16 +3,16 @@
  *
  * 仿人脑设计：
  * - 接收所有事件
- * - 用 Sonnet 判断复杂度
+ * - 用 Haiku 判断复杂度
  * - Level 0/1: 自己处理
- * - Level 2: 唤醒皮层 (Cortex/Opus)
+ * - Level 2: 唤醒皮层 (Cortex/Sonnet)
  * - 输出结构化 Decision
  * - 代码验证后执行
  *
  * 三层架构：
  * - 脑干 (Level 0): 纯代码，自动反应
- * - 丘脑 (Level 1): Sonnet，快速判断
- * - 皮层 (Level 2): Opus，深度思考
+ * - 丘脑 (Level 1): Haiku，快速判断
+ * - 皮层 (Level 2): Sonnet，深度思考
  *
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
@@ -161,7 +161,7 @@ const ACTION_WHITELIST = {
   'log_event': { dangerous: false, description: '记录事件' },
 
   // 升级操作
-  'escalate_to_brain': { dangerous: false, description: '升级到 Brain LLM (Opus)' },
+  'escalate_to_brain': { dangerous: false, description: '升级到 Brain LLM (Sonnet)' },
   'request_human_review': { dangerous: true, description: '请求人工确认' },
 
   // 分析操作
@@ -316,7 +316,7 @@ function recordRoutingDecision(routeType, event, decision, latencyMs) {
 }
 
 // ============================================================
-// Thalamus (Sonnet 调用)
+// Thalamus (Haiku 调用)
 // ============================================================
 
 const THALAMUS_PROMPT = `你是 Cecelia 的丘脑（Thalamus），负责事件路由和决策。
@@ -407,7 +407,7 @@ async function buildMemoryBlock(event) {
 }
 
 /**
- * 调用 Sonnet 分析事件
+ * 调用 Haiku 分析事件
  * @param {Object} event - 事件包
  * @returns {Promise<Decision>}
  */
@@ -432,7 +432,7 @@ async function analyzeEvent(event) {
   const prompt = `${THALAMUS_PROMPT}${learningBlock}${memoryBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
-    // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
+    // 调用 Haiku (通过 cecelia-bridge 或直接 API)
     const { text: response, usage } = await callHaiku(prompt);
 
     // Build #4: 记录 token 消耗
@@ -509,7 +509,7 @@ async function callHaiku(prompt) {
 }
 
 /**
- * 从 Sonnet 响应中解析 Decision
+ * 从 Haiku 响应中解析 Decision
  * @param {string} response
  * @returns {Decision}
  */
@@ -534,7 +534,7 @@ function parseDecisionFromResponse(response) {
 }
 
 /**
- * 创建降级 Decision（Sonnet 失败时使用）
+ * 创建降级 Decision（Haiku 失败时使用）
  * @param {Object} event
  * @param {string} reason
  * @returns {Decision}
@@ -556,7 +556,7 @@ function createFallbackDecision(event, reason) {
 
 /**
  * 快速路由：对于非常简单的事件，直接用代码规则判断
- * 返回 null 表示需要调用 Sonnet
+ * 返回 null 表示需要调用 Haiku
  * @param {Object} event
  * @returns {Decision|null}
  */
@@ -583,7 +583,7 @@ function quickRoute(event) {
     };
   }
 
-  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 Sonnet）
+  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 Haiku）
   if (event.type === EVENT_TYPES.TICK && event.has_anomaly === true) {
     const anomalyType = event.anomaly_type;
 
@@ -595,7 +595,7 @@ function quickRoute(event) {
           { type: 'log_event', params: { reason: 'resource_pressure', tick_id: event.tick_id } },
           { type: 'fallback_to_tick', params: {} }
         ],
-        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Sonnet',
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
         confidence: 0.85,
         safety: false
       };
@@ -609,13 +609,13 @@ function quickRoute(event) {
           { type: 'log_event', params: { reason: 'stale_tasks', tick_id: event.tick_id } },
           { type: 'reprioritize_task', params: {} }
         ],
-        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Sonnet',
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
         confidence: 0.8,
         safety: false
       };
     }
 
-    // 其他异常类型：交 Sonnet 深度分析
+    // 其他异常类型：交 Haiku 深度分析
     return null;
   }
 
@@ -653,7 +653,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂原因（无论是否重试超限）→ 交给 Sonnet
+    // 复杂原因（无论是否重试超限）→ 交给 Haiku
     return null;
   }
 
@@ -720,7 +720,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 关键阻塞或持续阻塞 → 交给 Sonnet
+    // 关键阻塞或持续阻塞 → 交给 Haiku
     return null;
   }
 
@@ -751,7 +751,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 高/严重级别 → 交给 Sonnet/Opus 深度分析
+    // 高/严重级别 → 交给 Haiku/Sonnet 深度分析
     return null;
   }
 
@@ -759,7 +759,7 @@ function quickRoute(event) {
   if (event.type === EVENT_TYPES.RESOURCE_LOW) {
     const severity = event.severity || 'low';
     if (severity === 'critical') {
-      return null; // 交给 Sonnet 深度处理
+      return null; // 交给 Haiku 深度处理
     }
     return {
       level: 0,
@@ -773,7 +773,7 @@ function quickRoute(event) {
     };
   }
 
-  // USER_COMMAND：简单指令快速路由，复杂指令交 Sonnet
+  // USER_COMMAND：简单指令快速路由，复杂指令交 Haiku
   if (event.type === EVENT_TYPES.USER_COMMAND) {
     const cmd = (event.command || '').toLowerCase();
     // 查询类指令：直接 no_action（由 API 层处理）
@@ -796,7 +796,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂指令 → 交给 Sonnet
+    // 复杂指令 → 交给 Haiku
     return null;
   }
 
@@ -823,11 +823,11 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 其他意图（命令式、请求式等）→ 交给 Sonnet 决策
+    // 其他意图（命令式、请求式等）→ 交给 Haiku 决策
     return null;
   }
 
-  // 其他情况需要 Sonnet 判断
+  // 其他情况需要 Haiku 判断
   return null;
 }
 
@@ -840,8 +840,8 @@ function quickRoute(event) {
  *
  * 处理流程：
  * 1. 尝试快速路由 (Level 0，纯代码)
- * 2. 调用 Sonnet 分析 (Level 1)
- * 3. 如果 Level 2，唤醒皮层 (Opus)
+ * 2. 调用 Haiku 分析 (Level 1)
+ * 3. 如果 Level 2，唤醒皮层 (Sonnet)
  *
  * @param {Object} event
  * @returns {Promise<Decision>}
@@ -864,11 +864,11 @@ async function processEvent(event) {
     return quickDecision;
   }
 
-  // 2. 调用 Sonnet 分析 (Level 1)
-  console.log('[thalamus] Calling Sonnet for analysis (L1)...');
+  // 2. 调用 Haiku 分析 (Level 1)
+  console.log('[thalamus] Calling Haiku for analysis (L1)...');
   const decision = await analyzeEvent(event);
 
-  console.log(`[thalamus] Sonnet decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
+  console.log(`[thalamus] Haiku decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
 
   // 降级路径（analyzeEvent 内部失败时返回 _fallback=true）
   if (decision._fallback) {
@@ -876,7 +876,7 @@ async function processEvent(event) {
     return decision;
   }
 
-  // 3. 如果 Level 2，唤醒皮层 (Opus)
+  // 3. 如果 Level 2，唤醒皮层 (Sonnet)
   if (decision.level === 2) {
     console.log('[thalamus] Escalating to Cortex (L2)...');
     try {
@@ -887,7 +887,7 @@ async function processEvent(event) {
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
-      console.error('[thalamus] Cortex failed, using Sonnet decision:', err.message);
+      console.error('[thalamus] Cortex failed, using Haiku decision:', err.message);
       // 皮层失败时，回退到丘脑决策
       return decision;
     }

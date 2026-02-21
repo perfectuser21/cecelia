@@ -31,8 +31,8 @@
 
 ```
 /home/xx/perfect21/cecelia/core/brain/src/
-├── thalamus.js                    # 丘脑（L1 决策）- Sonnet 模型
-├── cortex.js                      # 皮层（L2 决策）- Opus 模型
+├── thalamus.js                    # 丘脑（L1 决策）- Haiku 模型
+├── cortex.js                      # 皮层（L2 决策）- Sonnet 模型
 ├── decision.js                    # 决策对比分析
 ├── decision-executor.js           # 决策执行器
 ├── thalamus.js (L362-L372)       # ← 记忆注入点（在 analyzeEvent 中）

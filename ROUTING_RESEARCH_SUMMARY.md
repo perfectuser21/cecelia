@@ -167,7 +167,7 @@ thalamus.js 增强:
 
 ## 架构强项
 
-✅ **清晰分层** - L0 脑干 (代码) → L1 丘脑 (Sonnet) → L2 皮层 (Opus)
+✅ **清晰分层** - L0 脑干 (代码) → L1 丘脑 (Haiku) → L2 皮层 (Sonnet)
 
 ✅ **多区域支持** - US (Claude) vs HK (MiniMax)
 

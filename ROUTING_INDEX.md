@@ -157,8 +157,8 @@ ROUTING_INDEX.md (本文件)
 
 ### 三层路由
 - **L0 脑干 (代码)**: task-router.js → LOCATION_MAP / TASK_TYPE_AGENT_MAP
-- **L1 丘脑 (Sonnet)**: thalamus.js → 事件分类、快速判断
-- **L2 皮层 (Opus)**: cortex.js → 深度分析、战略调整
+- **L1 丘脑 (Haiku)**: thalamus.js → 事件分类、快速判断
+- **L2 皮层 (Sonnet)**: cortex.js → 深度分析、战略调整
 
 ### 8 种 task_type
 `dev` | `review` | `qa` | `audit` | `exploratory` | `talk` | `research` | `data`

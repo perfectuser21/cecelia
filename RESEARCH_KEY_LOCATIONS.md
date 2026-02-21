@@ -2,7 +2,7 @@
 
 ## 决策层相关
 
-### L1 丘脑（Sonnet 快速判断）
+### L1 丘脑（Haiku 快速判断）
 ```
 /home/xx/perfect21/cecelia/core/brain/src/thalamus.js
 
@@ -20,7 +20,7 @@
 - THALAMUS_PROMPT [line ~320] - L1 系统提示词
 ```
 
-### L2 皮层（Opus 深度分析）
+### L2 皮层（Sonnet 深度分析）
 ```
 /home/xx/perfect21/cecelia/core/brain/src/cortex.js
 

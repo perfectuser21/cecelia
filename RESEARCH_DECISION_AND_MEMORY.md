@@ -32,18 +32,18 @@ L0 脑干（纯代码）- 自动反应 - tick.js, executor.js
   ├─ 简单/常规/规则可处理 → 直接执行
   └─ 复杂/异常/需要判断 → 升级到 L1
      ↓
-L1 丘脑（Sonnet） - 快速判断 - thalamus.js
+L1 丘脑（Haiku） - 快速判断 - thalamus.js
   ├─ level=0: 脑干反射
   ├─ level=1: 快速判断（<1s）
   └─ level=2: 复杂决策 → 升级到 L2
      ↓
-L2 皮层（Opus） - 深度分析 - cortex.js
+L2 皮层（Sonnet） - 深度分析 - cortex.js
   └─ RCA / 战略调整 / 经验学习
 ```
 
 ### 1.2 决策触发条件
 
-**L1 丘脑（Sonnet）被唤醒的事件类型**：
+**L1 丘脑（Haiku）被唤醒的事件类型**：
 - TASK_COMPLETED（任务完成 - 可能有隐藏问题）
 - TASK_FAILED（任务失败 - 超过重试限制）
 - TASK_TIMEOUT（任务超时）
@@ -52,7 +52,7 @@ L2 皮层（Opus） - 深度分析 - cortex.js
 - USER_COMMAND（用户命令 - 复杂）
 - RESOURCE_LOW（资源不足 - 严重）
 
-**L2 皮层（Opus）被唤醒的条件**：
+**L2 皮层（Sonnet）被唤醒的条件**：
 - L1 判断结论为 level=2（深度思考）
 - 反复失败模式（failure_count >= 3）
 - 系统性故障检测
@@ -163,7 +163,7 @@ async function executeTick() {
 - `STALE_THRESHOLD_HOURS`: 24（任务超过 24h 未完成视为陈旧）
 - `DISPATCH_TIMEOUT_MINUTES`: 60（派发后 60min 自动失败）
 
-### 2.2 L1 丘脑（Sonnet 快速判断）
+### 2.2 L1 丘脑（Haiku 快速判断）
 
 **文件**：`/home/xx/perfect21/cecelia/core/brain/src/thalamus.js`
 
@@ -236,7 +236,7 @@ async function analyzeEvent(event) {
 - LLM 错误（分类为 API_ERROR / BAD_OUTPUT / TIMEOUT）
 - 路由决策事件（route_type, latency_ms）
 
-### 2.3 L2 皮层（Opus 深度分析）
+### 2.3 L2 皮层（Sonnet 深度分析）
 
 **文件**：`/home/xx/perfect21/cecelia/core/brain/src/cortex.js`
 
@@ -643,7 +643,7 @@ async function logCortexDecision(event, decision) {
 - 请求：事件 JSON
 - 响应：Decision（包含 actions, rationale, confidence）
 - 用途：手动触发决策分析
-- 模型：自动选择 L1 Sonnet 或 L2 Opus
+- 模型：自动选择 L1 Haiku 或 L2 Sonnet
 
 **POST /api/brain/rca** (推断)
 - 请求：{ failed_task_id, history: [...] }
@@ -1051,13 +1051,13 @@ L0 脑干（纯代码）
   ├─ NO
   └─ YES 升级
      ↓
-L1 丘脑（Sonnet）
+L1 丘脑（Haiku）
   ├─ quickRoute() → 快速路由（不调用 LLM）
   └─ analyzeEvent() → 调用 Sonnet
      ├─ level=0/1 → 返回决策
      └─ level=2 → 升级
         ↓
-L2 皮层（Opus）
+L2 皮层（Sonnet）
   └─ analyzeDeep() → 调用 Opus
      ├─ RCA 分析
      ├─ 战略调整建议

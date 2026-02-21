@@ -61,8 +61,8 @@ docker compose ps
 ### Brain (Node.js, port 5221)
 
 - **L0 脑干**: tick.js, executor.js, circuit-breaker.js — 纯代码调度
-- **L1 丘脑**: thalamus.js (Sonnet) — 事件路由、快速判断
-- **L2 皮层**: cortex.js (Opus) — 深度分析、RCA、战略调整
+- **L1 丘脑**: thalamus.js (Haiku) — 事件路由、快速判断
+- **L2 皮层**: cortex.js (Sonnet) — 深度分析、RCA、战略调整
 - **Tick 循环**: 5 秒检查一次，5 分钟执行一次
 - **保护系统**: 警觉等级、熔断器、隔离区、看门狗
 

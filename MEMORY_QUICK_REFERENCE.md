@@ -6,8 +6,8 @@
 ```
 Event 处理流程：
   L0 (脑干): quickRoute() - 纯代码规则，无记忆
-  L1 (丘脑): analyzeEvent(Sonnet) - + 历史学习记忆
-  L2 (皮层): analyzeDeep(Opus) - + 历史学习 + 历史分析记忆
+  L1 (丘脑): analyzeEvent(Haiku) - + 历史学习记忆
+  L2 (皮层): analyzeDeep(Sonnet) - + 历史学习 + 历史分析记忆
 ```
 
 ### 记忆三层查询
@@ -32,8 +32,8 @@ Cortex 分析 → 生成 learnings[] → 记录到 learnings 表
 
 | 文件 | 职责 | 核心函数 |
 |------|------|---------|
-| `thalamus.js` | L1 决策 (Sonnet) | `analyzeEvent()` - 注入 20 条学习 |
-| `cortex.js` | L2 决策 (Opus) | `analyzeDeep()` - 注入 20 条学习 + 5 条分析 |
+| `thalamus.js` | L1 决策 (Haiku) | `analyzeEvent()` - 注入 20 条学习 |
+| `cortex.js` | L2 决策 (Sonnet) | `analyzeDeep()` - 注入 20 条学习 + 5 条分析 |
 | `learning.js` | 学习管理 | `searchRelevantLearnings()` - 按相关度评分 |
 | `memory-service.js` | 记忆查询 API | `search()` / `getDetail()` |
 | `similarity.js` | 向量搜索 | `searchWithVectors()` - 70%向量 + 30%关键字 |
