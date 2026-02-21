@@ -19,6 +19,7 @@ import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, can
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
+import { runLayer2HealthCheck } from './health-monitor.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -78,6 +79,7 @@ let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 let _lastExecuteTime = 0; // track last full executeTick() time for throttling
 let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
+let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1205,6 +1207,18 @@ async function executeTick() {
     console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
   }
 
+  // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
+  const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
+  if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastHealthCheckTime = Date.now();
+    try {
+      const healthResult = await runLayer2HealthCheck(pool);
+      console.log(`[tick] ${healthResult.summary}`);
+    } catch (healthErr) {
+      console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
+    }
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
@@ -1718,6 +1732,8 @@ async function getStartupErrors() {
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
+/** Reset Layer 2 health check timer — for testing only */
+function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -1790,5 +1806,6 @@ export {
   CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
-  _resetLastCleanupTime
+  _resetLastCleanupTime,
+  _resetLastHealthCheckTime
 };
