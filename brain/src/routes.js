@@ -1905,6 +1905,21 @@ router.post('/execution-callback', async (req, res) => {
       // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
       // "inconsistent types deduced for parameter $2" (text vs character varying).
       const isCompleted = newStatus === 'completed';
+
+      // Extract findings from result for storage in payload.
+      // decomp-checker reads payload.findings to pass context to follow-up tasks.
+      // result can be a string (text output) or an object with a findings/result field.
+      const findingsRaw = (result !== null && typeof result === 'object')
+        ? (result.findings || result.result || result)
+        : result;
+      const findingsValue = findingsRaw
+        ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
+        : null;
+
+      if (!findingsValue && isCompleted) {
+        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result - exploratory chain may be broken`);
+      }
+
       await client.query(`
         UPDATE tasks
         SET
@@ -1913,10 +1928,10 @@ router.post('/execution-callback', async (req, res) => {
             'last_run_result', $3::jsonb,
             'run_status', $4::text,
             'pr_url', $5::text
-          ),
+          ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue]);
 
       // Log the execution result
       await client.query(`

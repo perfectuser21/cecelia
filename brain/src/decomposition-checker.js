@@ -836,6 +836,10 @@ async function checkExploratoryDecompositionContinue() {
   for (const expTask of result.rows) {
     const findings = expTask.payload?.findings || expTask.payload?.result || '';
 
+    if (!findings) {
+      console.warn(`[decomp-checker] Exploratory task ${expTask.id} ("${expTask.title}") has empty findings - context will be missing for follow-up tasks. Check execution-callback findings storage.`);
+    }
+
     const task = await createDecompositionTask({
       title: `探索续拆: ${expTask.title}`,
       description: [
