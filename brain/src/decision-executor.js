@@ -261,6 +261,109 @@ const actionHandlers = {
     return { success: true, prediction: 'not_implemented' };
   },
 
+  // ============================================================
+  // 知识/学习 Actions
+  // ============================================================
+
+  /**
+   * 保存经验教训到 learnings 表
+   */
+  async create_learning(params, context) {
+    const { content, tags = [], source_task_id = null } = params;
+    if (!content) {
+      return { success: false, error: 'content 字段必填' };
+    }
+    const result = await pool.query(
+      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id`,
+      [content, JSON.stringify(tags), source_task_id]
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[executor] create_learning: 已插入 learning ${id}`);
+    return { success: true, learning_id: id };
+  },
+
+  /**
+   * 更新已有 learning 记录
+   */
+  async update_learning(params, context) {
+    const { id, content, tags } = params;
+    if (!id) {
+      return { success: false, error: 'id 字段必填' };
+    }
+    const updates = [];
+    const values = [];
+    let idx = 1;
+    if (content !== undefined) {
+      updates.push(`content = $${idx++}`);
+      values.push(content);
+    }
+    if (tags !== undefined) {
+      updates.push(`tags = $${idx++}`);
+      values.push(JSON.stringify(tags));
+    }
+    if (updates.length === 0) {
+      return { success: false, error: '没有提供要更新的字段' };
+    }
+    updates.push(`updated_at = NOW()`);
+    values.push(id);
+    await pool.query(
+      `UPDATE learnings SET ${updates.join(', ')} WHERE id = $${idx}`,
+      values
+    );
+    console.log(`[executor] update_learning: 已更新 learning ${id}`);
+    return { success: true, learning_id: id };
+  },
+
+  /**
+   * 触发根因分析 (RCA) 流程
+   */
+  async trigger_rca(params, context) {
+    const { task_id, reason = '' } = params;
+    const result = await createTask({
+      title: `RCA: ${reason || `任务 ${task_id} 根因分析`}`,
+      description: `对任务 ${task_id} 触发根因分析，原因：${reason}`,
+      task_type: 'analysis',
+      priority: 'P1',
+      payload: {
+        analysis_type: 'rca',
+        source_task_id: task_id,
+        reason
+      }
+    });
+    console.log(`[executor] trigger_rca: 已创建 analysis 任务 ${result.task?.id}`);
+    return { success: result.success, rca_task_id: result.task?.id };
+  },
+
+  /**
+   * 建议 task_type 修正（只警告记录，不自动修改）
+   *
+   * 当 dev task 完成时 failure_rate > 30%（可能 task_type 选错了），
+   * 记录 warning 日志并写入 learnings 表，供人工审查。
+   * 绝不自动修改 task_type，避免引发连锁影响。
+   */
+  async suggest_task_type(params, context) {
+    const { task_id, current_type, suggested_type, reason = '' } = params;
+    if (!task_id || !current_type || !suggested_type) {
+      return { success: false, error: 'task_id、current_type、suggested_type 字段必填' };
+    }
+
+    console.warn(`[executor] suggest_task_type: task ${task_id} current=${current_type} suggested=${suggested_type} reason=${reason}`);
+
+    const content = `task_type 建议修正：task ${task_id} 当前类型 ${current_type}，建议改为 ${suggested_type}。原因：${reason}`;
+    const result = await pool.query(
+      `INSERT INTO learnings (content, tags, source_task_id, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id`,
+      [content, JSON.stringify(['task_type', 'suggestion', 'warning']), task_id]
+    );
+    const id = result.rows[0]?.id;
+    console.log(`[executor] suggest_task_type: 已记录 learning ${id}（不修改 task_type）`);
+
+    return { action: 'suggested', task_id, suggested_type, learning_id: id };
+  },
+
   /**
    * 不需要操作
    */
@@ -275,6 +378,71 @@ const actionHandlers = {
     console.log('[executor] Falling back to code-based Tick');
     // 不做任何事，让 Tick 的代码逻辑接管
     return { success: true, fallback: true };
+  },
+
+  // ============================================================
+  // 任务生命周期 Actions
+  // ============================================================
+
+  /**
+   * 更新任务 PRD 内容
+   * 用于探索任务完成后，将发现的信息更新回 PRD
+   */
+  async update_task_prd(params, context) {
+    const { task_id, prd_content } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    if (!prd_content) {
+      return { success: false, error: 'prd_content is required' };
+    }
+    await pool.query(
+      `UPDATE tasks SET prd_content = $1, updated_at = NOW() WHERE id = $2`,
+      [prd_content, task_id]
+    );
+    console.log(`[executor] Updated PRD for task: ${task_id}`);
+    return { success: true, task_id };
+  },
+
+  /**
+   * 归档完成/超期任务
+   * 将任务状态设置为 archived，用于清理长期未执行或已过期的任务
+   */
+  async archive_task(params, context) {
+    const { task_id, reason } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    await pool.query(
+      `UPDATE tasks SET status = 'archived', updated_at = NOW() WHERE id = $1`,
+      [task_id]
+    );
+    console.log(`[executor] Archived task: ${task_id}, reason: ${reason || 'not specified'}`);
+    return { success: true, task_id, reason: reason || null };
+  },
+
+  /**
+   * 延迟任务到指定时间
+   * 更新 tasks.due_at 字段，任务保持 queued 状态等待调度器处理
+   */
+  async defer_task(params, context) {
+    const { task_id, defer_until } = params;
+    if (!task_id) {
+      return { success: false, error: 'task_id is required' };
+    }
+    if (!defer_until) {
+      return { success: false, error: 'defer_until is required (ISO 8601 timestamp)' };
+    }
+    const deferDate = new Date(defer_until);
+    if (isNaN(deferDate.getTime())) {
+      return { success: false, error: 'defer_until must be a valid ISO 8601 timestamp' };
+    }
+    await pool.query(
+      `UPDATE tasks SET due_at = $1, updated_at = NOW() WHERE id = $2`,
+      [deferDate.toISOString(), task_id]
+    );
+    console.log(`[executor] Deferred task: ${task_id} until ${defer_until}`);
+    return { success: true, task_id, defer_until };
   },
 
   // ============================================================

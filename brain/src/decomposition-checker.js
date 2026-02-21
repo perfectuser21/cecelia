@@ -71,7 +71,7 @@ async function hasExistingDecompositionTask(goalId) {
     WHERE goal_id = $1
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
@@ -95,10 +95,32 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
       AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
       AND (payload->>'level' = $2)
       AND (
-        status IN ('queued', 'in_progress')
+        status IN ('queued', 'in_progress', 'canceled', 'cancelled')
         OR (status = 'completed' AND completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
         OR (status = 'failed' AND created_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours')
       )
+    LIMIT 1
+  `, [projectId, level]);
+  return result.rows.length > 0;
+}
+
+/**
+ * Check if a decomposition task is actively in-flight (queued or in_progress) for the given project.
+ * Used by ensureTaskInventory() to avoid duplicate replenishment tasks.
+ * Unlike hasExistingDecompositionTaskByProject(), this does NOT block on completed tasks,
+ * allowing re-decomposition once all previously created tasks are done.
+ *
+ * @param {string} projectId - Project UUID to check
+ * @param {string} level - Decomposition level ('project' or 'initiative')
+ * @returns {boolean} true if a decomposition task is currently queued or in_progress
+ */
+async function hasActiveDecompositionTaskByProject(projectId, level) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE project_id = $1
+      AND (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+      AND payload->>'level' = $2
+      AND status IN ('queued', 'in_progress')
     LIMIT 1
   `, [projectId, level]);
   return result.rows.length > 0;
@@ -116,6 +138,9 @@ async function hasExistingDecompositionTaskByProject(projectId, level) {
  * @returns {Object} Created task row
  */
 async function createDecompositionTask({ title, description, goalId, projectId, payload }) {
+  if (!goalId) {
+    throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
+  }
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
@@ -185,6 +210,24 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
+  // Fix: null kr_id → graceful skip（无法创建有效 goal 关联的 task）
+  if (!initiative.kr_id) {
+    console.warn(`[decomp-checker] Initiative ${initiative.id} (${initiative.name}) has no kr_id, skipping inventory check`);
+    return null;
+  }
+
+  // KR saturation check - skip if KR already has >= 3 active tasks
+  if (initiative.kr_id) {
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [initiative.kr_id]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] KR ${initiative.kr_id} already has ${satCheck.rows[0].count} active tasks, skipping`);
+      return null;
+    }
+  }
+
   // 1. Count current ready tasks
   const readyTasksResult = await pool.query(`
     SELECT COUNT(*) as count FROM tasks
@@ -199,9 +242,11 @@ async function ensureTaskInventory(initiative) {
     return null;  // Inventory sufficient
   }
 
-  // 3. Check if replenishment already in progress
-  if (await hasExistingDecompositionTaskByProject(initiative.id, 'initiative')) {
-    return null;  // Replenishment task already exists
+  // 3. Check if replenishment already in progress (only queued/in_progress, not completed)
+  // Using hasActiveDecompositionTaskByProject instead of hasExistingDecompositionTaskByProject
+  // to allow re-decomposition after all previously created tasks have finished.
+  if (await hasActiveDecompositionTaskByProject(initiative.id, 'initiative')) {
+    return null;  // Replenishment task already in flight
   }
 
   // 4. Check global WIP limit
@@ -503,10 +548,17 @@ async function checkAreaKrProjectLink() {
         '2. 如果 Project 已存在，创建关联；如果不存在，先创建 Project',
         '3. 创建 Project:',
         '   POST http://localhost:5221/api/brain/action/create-project',
-        `   Body: { "title": "...", "repo_path": "/home/xx/...", "kr_ids": ["${akr.id}"] }`,
+        `   Body: { "name": "...", "repo_path": "/home/xx/...", "kr_ids": ["${akr.id}"] }`,
         '4. 或关联已有 Project:',
         '   POST http://localhost:5221/api/brain/okr/link-project-kr',
         `   Body: { "project_id": "...", "kr_id": "${akr.id}" }`,
+        '',
+        '⛔ Project 命名规范（CRITICAL — 违反则重做）：',
+        '- 禁止使用 Initiative 编号前缀：不允许 "I1:"、"I2:"、"KR3-I1:" 等格式开头',
+        '- 禁止创建与 KR 同名的容器 Project：Project 名称不能和 KR 标题相同或高度相似',
+        '- Project 名称必须描述具体功能模块，如"RCA 自动触发实现"、"Learning 策略更新系统"',
+        '- 时间验证：每个 Project 应是 1-2 周的工作量（不是 1-3 小时的粒度）',
+        '- 一个 KR 建议创建 1-3 个 Project，不超过 3 个',
         '',
         `Area KR ID: ${akr.id}`,
         `Area KR 标题: ${akr.title}`,
@@ -584,11 +636,17 @@ async function checkProjectDecomposition() {
         `请为项目「${proj.name}」创建 Initiative（子项目）。`,
         '',
         '要求：',
-        '1. 分析项目需要完成的工作，拆解为 1-5 个 Initiative',
-        '2. 每个 Initiative 应在 1-2 小时内可完成',
+        '1. 分析项目需要完成的工作，拆解为 3-8 个 Initiative',
+        '2. 每个 Initiative 应在 1-3 小时内可完成（对应 7-15 个 Task）',
         '3. 调用 Brain API 创建 Initiative:',
         '   POST http://localhost:5221/api/brain/action/create-initiative',
         `   Body: { "name": "...", "parent_id": "${proj.id}", "kr_id": "<kr_id>" }`,
+        '',
+        '✅ Initiative 命名规范：',
+        '- 可以使用 I1/I2/I3 编号前缀，如"I1: RCA 触发机制设计"、"I2: 执行流程实现"',
+        '- 名称应描述具体的功能切片，不是整个 Project 的重复',
+        '- 时间粒度：1-3 小时 = 7-15 个 Task（每个 Task 约 10-20 分钟）',
+        '- 一个 Project 建议 3-8 个 Initiative，不超过 8 个',
         '',
         `Project ID: ${proj.id}`,
         `Project 名称: ${proj.name}`,
@@ -637,6 +695,9 @@ async function checkInitiativeDecomposition() {
         SELECT 1 FROM tasks t
         WHERE t.project_id = p.id
           AND t.status NOT IN ('completed', 'cancelled')
+          -- Note: 'canceled' (US) is intentionally NOT excluded here — it acts as
+          -- a guard preventing automatic re-decomposition when tasks are abandoned.
+          -- Adding 'canceled' to this list would cause re-decomposition loops.
       )
   `);
 
@@ -689,6 +750,17 @@ async function checkInitiativeDecomposition() {
     // No KR found — skip to avoid accumulating NULL-goal_id tasks
     if (!krId) {
       console.log(`[decomp-checker] Check 6: Skip "${init.name}" — no KR linkage found`);
+      continue;
+    }
+
+    // KR saturation check - skip if KR already has >= 3 active tasks
+    const satCheck = await pool.query(
+      "SELECT COUNT(*) FROM tasks WHERE goal_id = $1 AND status IN ('queued','in_progress')",
+      [krId]
+    );
+    if (parseInt(satCheck.rows[0].count) >= 3) {
+      console.log(`[decomp-checker] Check 6: KR ${krId} already has ${satCheck.rows[0].count} active tasks, skipping "${init.name}"`);
+      actions.push({ action: 'skip_saturated', check: 'initiative_decomposition', initiative_id: init.id, name: init.name, kr_id: krId });
       continue;
     }
 
@@ -757,7 +829,7 @@ async function checkExploratoryDecompositionContinue() {
           AND follow.project_id = t.project_id
           AND follow.payload->>'decomposition' = 'continue'
           AND follow.payload->>'exploratory_source' = t.id::text
-          AND follow.status IN ('queued', 'in_progress')
+          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled', 'cancelled')
       )
   `);
 
@@ -819,6 +891,15 @@ async function runDecompositionChecks() {
   const allActions = [];
 
   try {
+    // Manual mode check - skip all auto-creation if enabled
+    const manualModeResult = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
+    );
+    if (manualModeResult.rows.length > 0 && manualModeResult.rows[0].value_json?.enabled === true) {
+      console.log('[decomp-checker] Manual mode enabled, skipping auto task creation');
+      return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
+    }
+
     // 1. Get active execution paths (initiatives with recent activity)
     const activePaths = await getActiveExecutionPaths();
 
@@ -931,6 +1012,7 @@ export {
   // Exported for testing
   hasExistingDecompositionTask,
   hasExistingDecompositionTaskByProject,
+  hasActiveDecompositionTaskByProject,
   createDecompositionTask,
   DEDUP_WINDOW_HOURS,
   INVENTORY_CONFIG,

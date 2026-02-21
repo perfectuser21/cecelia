@@ -31,7 +31,7 @@ const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226'
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
-const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/workspace';
+const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/core';
 
 // ==================== Diagnostic Functions ====================
 
@@ -138,7 +138,7 @@ const MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, 
 // so when auto-dispatch hits the ceiling, user still has room for headed sessions
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
-const LOAD_THRESHOLD = CPU_CORES * 0.85 - RESERVE_CPU;        // e.g. 6.8 - 1.0 = 5.8
+const LOAD_THRESHOLD = CPU_CORES * 0.95 - RESERVE_CPU;        // e.g. 7.6 - 1.0 = 6.6 (was 0.85=5.8, too tight for 5+ tasks)
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
 const SWAP_USED_MAX_PCT = 70;                     // Hard stop: swap > 70% (50% was too aggressive — modern Linux uses swap as cache)
 
@@ -363,6 +363,13 @@ function killProcess(taskId) {
   const entry = activeProcesses.get(taskId);
   if (!entry) return false;
 
+  // Guard: null pid would cause process.kill(0) which sends SIGTERM to own process group
+  if (!entry.pid) {
+    console.log(`[executor] Skipping kill task=${taskId}: pid is null (bridge-tracked), removing from active`);
+    activeProcesses.delete(taskId);
+    return false;
+  }
+
   try {
     // Kill the process group (negative PID) to catch child shells
     try {
@@ -448,14 +455,15 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   // P0 #2: Only requeue tasks that are still in_progress (prevents reviving completed/failed tasks)
   const result = await pool.query(
-    'SELECT payload FROM tasks WHERE id = $1 AND status = $2',
+    'SELECT payload, task_type, project_id, title FROM tasks WHERE id = $1 AND status = $2',
     [taskId, 'in_progress']
   );
   if (result.rows.length === 0) {
     return { requeued: false, reason: 'not_in_progress' };
   }
 
-  const payload = result.rows[0].payload || {};
+  const { payload: rawPayload, task_type, project_id, title: taskTitle } = result.rows[0];
+  const payload = rawPayload || {};
   const retryCount = (payload.watchdog_retry_count || 0) + 1;
 
   // P0 FIX #3: Watchdog kill 也应增加 failure_count，防止无限循环
@@ -517,6 +525,20 @@ async function requeueTask(taskId, reason, evidence = {}) {
 
   if (updateResult.rowCount === 0) {
     return { requeued: false, reason: 'status_changed' };
+  }
+
+  // Fix: 记录失败到 learnings 表，供 planner buildLearningPenaltyMap 使用
+  try {
+    await pool.query(`
+      INSERT INTO learnings (title, category, trigger_event, content, metadata)
+      VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3)
+    `, [
+      `Task Failure: ${taskTitle || taskId} [${reason}]`,
+      `Watchdog killed task after ${retryCount} attempts. Reason: ${reason}`,
+      JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
+    ]);
+  } catch (learningErr) {
+    console.error(`[executor] Failed to record learning for task ${taskId}:`, learningErr.message);
   }
 
   return { requeued: true, retry_count: retryCount, next_run_at: nextRunAt };
@@ -650,10 +672,43 @@ function generateRunId(taskId) {
  */
 
 /**
- * Get skill command based on task_type
+ * Get skill command based on task_type and optional payload
  * 简化版：只有 dev 和 review 两类
+ *
+ * payload 特判逻辑（优先级高于 taskType 映射）：
+ * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留，记录日志）
+ * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
+ * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
+ * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
+ * - payload.decomposition === 'known' → 保持 taskType 原有路由
+ * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
-function getSkillForTaskType(taskType) {
+function getSkillForTaskType(taskType, payload) {
+  // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
+  if (payload) {
+    // decomposition=true + task_type=dev → /dev（显式保留现有行为）
+    if (payload.decomposition === true && taskType === 'dev') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=true + task_type=dev → /dev`);
+      return '/dev';
+    }
+    // decomposition='exploratory' → /exploratory（探索性验证任务）
+    if (payload.decomposition === 'exploratory') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=exploratory → /exploratory`);
+      return '/exploratory';
+    }
+    // decomposition='okr' → /okr（OKR 拆解任务）
+    if (payload.decomposition === 'okr') {
+      console.log(`[executor] payload.decomposition 路由: decomposition=okr → /okr`);
+      return '/okr';
+    }
+    // next_action='decompose' → /okr（继续拆解任务）
+    if (payload.next_action === 'decompose') {
+      console.log(`[executor] payload.next_action 路由: next_action=decompose → /okr`);
+      return '/okr';
+    }
+    // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
+  }
+
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
     'review': '/review',     // 审查：Sonnet，Plan Mode
@@ -704,12 +759,47 @@ function getPermissionModeForTaskType(taskType) {
 }
 
 /**
+ * 检查 task_type 与任务标题的匹配合理性
+ * warning 级别，不阻塞执行，仅记录到 console.warn
+ *
+ * @param {object} task - 任务对象，包含 task_type 和 title
+ */
+function checkTaskTypeMatch(task) {
+  const taskType = task.task_type || 'dev';
+  const title = (task.title || '').toLowerCase();
+
+  // dev 任务但标题包含调研/探索类关键词 → 可能应该用 exploratory
+  if (taskType === 'dev') {
+    const researchKeywords = ['调研', 'research', '探索', '调查', '了解', '分析现状'];
+    const matched = researchKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=dev 但标题含调研关键词"${matched}"，` +
+        `建议使用 task_type=exploratory。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+
+  // exploratory 任务但标题包含实现类关键词 → 可能应该用 dev
+  if (taskType === 'exploratory') {
+    const implKeywords = ['实现', 'feat', 'fix', '开发', '编写', '新增功能', '修复'];
+    const matched = implKeywords.find(kw => title.includes(kw));
+    if (matched) {
+      console.warn(
+        `[executor][suggest-task-type] task_type=exploratory 但标题含实现关键词"${matched}"，` +
+        `建议使用 task_type=dev。task_id=${task.id || 'unknown'}`
+      );
+    }
+  }
+}
+
+/**
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
 function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = getSkillForTaskType(taskType);
+  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
   // OKR 拆解任务：秋米用 /okr skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
@@ -762,7 +852,7 @@ POST /api/brain/action/create-task
 }`;
     }
 
-    // 首次拆解：秋米需要创建 Initiative + Task
+    // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
     return `/okr
 
 # OKR 拆解: ${krTitle}
@@ -771,68 +861,88 @@ POST /api/brain/action/create-task
 - KR ID: ${krId}
 - 目标: ${task.description || krTitle}
 
-## 关联项目
-- Project ID: ${projectId}
+## 6 层架构（必须严格遵守）
+Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
 
-## 6 层架构
-Global OKR (季度) → Area OKR (月度) → KR → Project (1-2周) → Initiative (1-2小时) → Task (PR)
+## 你的任务（按顺序执行）
 
-## 你的任务
-1. **确定 Repository**（必须设置 repo_path）:
-   - 查询现有 Projects: GET /api/tasks/projects
-   - 找到 type='project' 且 repo_path 不为空的 Project
-   - **如果没有，创建 Project 时必须设置 repo_path**
-   - cecelia-core: /home/xx/perfect21/cecelia/core
-   - cecelia-workspace: /home/xx/perfect21/cecelia/workspace
-   - 示例: {"name": "...", "type": "project", "repo_path": "/home/xx/perfect21/cecelia/core"}
-   - **CRITICAL**: 不设置 repo_path 会导致 Planner 无法派发任务！
+### Step 1: 为该 KR 新建专属 Project（⛔ 禁止复用已有 project！）
 
-2. **拆解模式**（遵循 Exploratory 优先策略）:
-   - **默认使用 exploratory 模式**（99% 的情况）
-   - 只有"简单修复、已知方案"才用 known 模式
-   - 参考 OKR skill Stage 2 (Line 332): "拆解 Initiative 为 Task 时，必须遵循 Exploratory 优先策略"
+**CRITICAL**: 每个 KR 必须有自己独立的 Project，不能复用 cecelia-core 或其他已有 project。
 
-3. **创建 Initiative**: 写入 projects 表（type='initiative'，不是 goals 表！）
+首先查询 cecelia-core 的 repo_path：
+\`\`\`
+GET /api/tasks/projects
+找到 name='cecelia-core' 的记录，记录其 repo_path
+\`\`\`
 
-4. **创建 Task + PRD**: 遵循 Exploratory 优先模板
+然后新建 KR 专属 Project：
+\`\`\`
+POST /api/brain/projects
+{
+  "name": "<KR 简短标题> 实现",
+  "type": "project",
+  "description": "${task.description || krTitle}",
+  "repo_path": "<从 cecelia-core 获取的 repo_path>"
+}
+\`\`\`
 
-## API 调用
+最后通过 project_kr_links 绑定到该 KR：
+\`\`\`
+POST /api/brain/project-kr-links
+{
+  "project_id": "<新建 Project 的 ID>",
+  "kr_id": "${krId}"
+}
+\`\`\`
 
-### 查询 Projects（找 repo_path）
-curl -s http://localhost:5221/api/tasks/projects | jq '.[] | select(.repo_path != null)'
+记录新建 Project 的 ID（后面 Step 2 要用）。
 
-### 创建 Initiative
+### Step 2: 拆解模式（遵循 Exploratory 优先策略）
+- **默认使用 exploratory 模式**（99% 的情况）
+- 只有"简单修复、已知方案"才用 known 模式
+
+### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
+
+Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
+
+\`\`\`
 POST /api/brain/action/create-initiative
 {
   "name": "Initiative 名称",
-  "parent_id": "<Project ID (type='project' 的)>",
+  "parent_id": "<Step 1 新建的 Project ID>",
   "kr_id": "${krId}",
-  "decomposition_mode": "known" 或 "exploratory"
+  "decomposition_mode": "exploratory"
 }
+\`\`\`
 
-### 创建第一个 Task（必须是 exploratory）
+### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
+
+\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "探索: 调研 [主题]",
-  "project_id": "<Initiative ID>",  // 注意是 Initiative，不是 Project！
+  "project_id": "<Initiative ID>",
   "goal_id": "${krId}",
-  "task_type": "exploratory",  // ✅ 第一个 Task 必须是 exploratory
+  "task_type": "exploratory",
   "prd_content": "完整 PRD（调研目标、分析内容、输出报告格式）",
   "payload": {
     "exploratory": true,
-    "next_action": "decompose",  // ✅ 标记完成后需要续拆
+    "next_action": "decompose",
     "initiative_id": "<Initiative ID>",
     "kr_goal": "${task.description || ''}"
   }
 }
+\`\`\`
 
-### 创建后续 Task（保持 draft）
+后续 dev tasks（draft）：
+\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "实现 [功能]",
   "project_id": "<Initiative ID>",
   "goal_id": "${krId}",
-  "task_type": "dev",  // ✅ 后续 Task 是 dev
+  "task_type": "dev",
   "prd_content": "简短描述（draft，等 exploratory 结果后细化）",
   "payload": {
     "wait_for_exploratory": true,
@@ -840,24 +950,29 @@ POST /api/brain/action/create-task
     "kr_goal": "${task.description || ''}"
   }
 }
+\`\`\`
 
-### 更新 KR 状态
+### Step 5: 更新 KR 状态
+\`\`\`
 PUT /api/tasks/goals/${krId}
 {"status": "in_progress"}
+\`\`\`
 
 ## ⛔ 绝对禁止
-- 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
-- 不能把 Task.project_id 指向 Project，必须指向 Initiative！
+- ❌ 不能复用已有 project（cecelia-core 或其他）作为 Initiative 的 parent！
+- ❌ 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
+- ❌ 不能把 Task.project_id 指向 Project，必须指向 Initiative！
+- ❌ Task 的 goal_id 不能为空或指向错误的 KR！
 
-## 质量验证（确保符合 OKR skill 规范）
+## 质量验证（创建完成后逐项检查）
 
-创建完成后，检查：
-1. ✅ 第一个 Task 的 task_type='exploratory'
-2. ✅ exploratory task 的 payload.next_action='decompose'
-3. ✅ exploratory task 有完整 PRD
-4. ✅ 后续 dev tasks 有简短描述（draft 状态）
-5. ✅ Initiative 和 Project 都有 repo_path
-6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
+1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
+2. ✅ project_kr_links 已绑定新 Project → 当前 KR
+3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
+4. ✅ 第一个 Task 的 task_type='exploratory'
+5. ✅ exploratory task 的 payload.next_action='decompose'
+6. ✅ 所有 Task 的 goal_id = ${krId}
+7. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
@@ -1110,6 +1225,9 @@ async function triggerCeceliaRun(task) {
       };
     }
     const checkpointId = `cp-${task.id.slice(0, 8)}`;
+
+    // 检查 task_type 合理性（warning 级别，不阻塞执行）
+    checkTaskTypeMatch(task);
 
     // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
@@ -1524,102 +1642,6 @@ async function recordHeartbeat(taskId, runId) {
   return { success: true, message: 'Heartbeat recorded' };
 }
 
-// ============================================================
-// Worktree Cleanup (v8)
-// ============================================================
-
-/**
- * Get worktree path for a branch
- * @param {string} branchName - Branch name (e.g., cp-02140730-xxx)
- * @returns {string|null} - Worktree path or null if not found
- */
-function getWorktreePath(branchName) {
-  try {
-    const output = execSync('git worktree list', { encoding: 'utf-8' });
-    const lines = output.split('\n');
-    for (const line of lines) {
-      if (line.includes(`[${branchName}]`)) {
-        return line.split(/\s+/)[0];
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Check if worktree has uncommitted changes
- * @param {string} worktreePath - Path to worktree directory
- * @returns {boolean} - True if has uncommitted changes
- */
-function hasUncommittedChanges(worktreePath) {
-  try {
-    const output = execSync(`git -C "${worktreePath}" status --porcelain`, { encoding: 'utf-8' });
-    return output.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Clean up worktree and branches after task completion
- * Called by execution-callback after task completes/fails.
- * Only cleans cp-* branches to avoid accidents.
- *
- * @param {Object} task - Task object with branch field
- * @returns {Promise<void>}
- */
-async function cleanupWorktree(task) {
-  const branchName = task?.branch || task?.payload?.branch;
-
-  if (!branchName || !branchName.startsWith('cp-')) {
-    return; // Only clean up cp-* branches
-  }
-
-  try {
-    // 1. Check if worktree exists
-    const worktreePath = getWorktreePath(branchName);
-    if (!worktreePath) {
-      console.log(`[cleanup] No worktree for ${branchName}`);
-      return;
-    }
-
-    // 2. Check for uncommitted changes
-    if (hasUncommittedChanges(worktreePath)) {
-      console.warn(`[cleanup] Worktree ${worktreePath} has uncommitted changes, skipping cleanup`);
-      return;
-    }
-
-    // 3. Remove worktree
-    try {
-      execSync(`git worktree remove "${worktreePath}" --force`, { encoding: 'utf-8' });
-      console.log(`[cleanup] Removed worktree: ${worktreePath}`);
-    } catch (err) {
-      console.error(`[cleanup] Failed to remove worktree ${worktreePath}: ${err.message}`);
-      return; // Don't continue if worktree removal failed
-    }
-
-    // 4. Delete local branch
-    try {
-      execSync(`git branch -D "${branchName}"`, { encoding: 'utf-8' });
-      console.log(`[cleanup] Deleted local branch: ${branchName}`);
-    } catch (err) {
-      console.error(`[cleanup] Failed to delete local branch ${branchName}: ${err.message}`);
-    }
-
-    // 5. Delete remote branch (optional, ignore failures)
-    try {
-      execSync(`git push origin --delete "${branchName}"`, { encoding: 'utf-8', stdio: 'ignore' });
-      console.log(`[cleanup] Deleted remote branch: ${branchName}`);
-    } catch {
-      // Remote branch may already be deleted by GitHub auto-delete, ignore
-    }
-  } catch (err) {
-    console.error(`[cleanup] Failed to cleanup ${branchName}: ${err.message}`);
-  }
-}
-
 export {
   triggerCeceliaRun,
   triggerMiniMaxExecutor,
@@ -1628,6 +1650,7 @@ export {
   updateTaskRunInfo,
   preparePrompt,
   generateRunId,
+  getSkillForTaskType,
   // v2 additions
   getActiveProcessCount,
   getActiveProcesses,
@@ -1656,6 +1679,6 @@ export {
   setBillingPause,
   getBillingPause,
   clearBillingPause,
-  // v8: Worktree cleanup
-  cleanupWorktree,
+  // v9: Task type matching validation
+  checkTaskTypeMatch,
 };

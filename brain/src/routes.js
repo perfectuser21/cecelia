@@ -21,7 +21,7 @@ async function getRecentDecisions(limit = 10) {
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP } from './task-router.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
@@ -768,6 +768,19 @@ router.post('/tick/drain-cancel', (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to cancel drain', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tick/startup-errors
+ * 获取 Tick 启动错误历史，用于诊断 Brain 是否在启动时遇到问题
+ */
+router.get('/tick/startup-errors', async (req, res) => {
+  try {
+    const data = await getStartupErrors();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get startup errors', details: err.message });
   }
 });
 
@@ -1879,7 +1892,7 @@ router.post('/execution-callback', async (req, res) => {
       iterations,
       pr_url: pr_url || null,
       completed_at: new Date().toISOString(),
-      result_summary: typeof result === 'object' ? result.result : result
+      result_summary: (result !== null && typeof result === 'object') ? result.result : result
     };
 
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
@@ -1889,18 +1902,21 @@ router.post('/execution-callback', async (req, res) => {
       await client.query('BEGIN');
 
       // Update task in database (idempotency: only update if still in_progress)
+      // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
+      // "inconsistent types deduced for parameter $2" (text vs character varying).
+      const isCompleted = newStatus === 'completed';
       await client.query(`
         UPDATE tasks
         SET
           status = $2,
           payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
             'last_run_result', $3::jsonb,
-            'run_status', $4,
-            'pr_url', $5
+            'run_status', $4::text,
+            'pr_url', $5::text
           ),
-          completed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE completed_at END
+          completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted]);
 
       // Log the execution result
       await client.query(`
@@ -1960,17 +1976,6 @@ router.post('/execution-callback', async (req, res) => {
         // Continue with normal flow if thalamus fails
       }
 
-      // Cleanup worktree and branches (async, non-blocking)
-      try {
-        const { cleanupWorktree } = await import('./executor.js');
-        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
-        if (taskResult.rows[0]) {
-          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
-            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
-          });
-        }
-      } catch { /* ignore if cleanup fails */ }
-
       // Generate embedding for completed task (async, fire-and-forget)
       {
         const taskRow = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [task_id]);
@@ -1991,7 +1996,9 @@ router.post('/execution-callback', async (req, res) => {
       let quarantined = false;
       try {
         // Extract error message from result
-        const errorMsg = typeof result === 'object'
+        // Note: typeof null === 'object', so we must check result !== null first
+        // to avoid TypeError when result is null (e.g. claude CLI fails with Spending cap reached)
+        const errorMsg = (result !== null && typeof result === 'object')
           ? (result.result || result.error || result.stderr || JSON.stringify(result))
           : String(result || status);
 
@@ -2085,16 +2092,6 @@ router.post('/execution-callback', async (req, res) => {
         }
       }
 
-      // Cleanup worktree and branches (async, non-blocking)
-      try {
-        const { cleanupWorktree } = await import('./executor.js');
-        const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [task_id]);
-        if (taskResult.rows[0]) {
-          cleanupWorktree(taskResult.rows[0]).catch(cleanupErr => {
-            console.error(`[execution-callback] Worktree cleanup error: ${cleanupErr.message}`);
-          });
-        }
-      } catch { /* ignore if cleanup fails */ }
     }
 
     // 5. Rollup progress to KR and O
@@ -2216,7 +2213,7 @@ router.post('/execution-callback', async (req, res) => {
             if (existingDev.rows.length === 0) {
               console.log(`[execution-callback] Exploratory phase completed for ${initiative.name}, creating dev-phase task`);
 
-              const resultSummary = typeof result === 'object'
+              const resultSummary = (result !== null && typeof result === 'object')
                 ? (result.result || JSON.stringify(result).slice(0, 1000))
                 : String(result || '').slice(0, 1000);
 
@@ -2307,11 +2304,13 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
-    // 6. Event-driven: Trigger next task immediately after completion
+    // 6. Event-driven: Trigger next task after completion (with short cooldown to avoid burst refill)
     let nextTickResult = null;
     if (newStatus === 'completed') {
-      console.log(`[execution-callback] Task completed, triggering next tick...`);
+      const CALLBACK_COOLDOWN_MS = 5000; // 5s cooldown prevents instant slot refill on rapid completions
+      console.log(`[execution-callback] Task completed, triggering next tick in ${CALLBACK_COOLDOWN_MS}ms...`);
       try {
+        await new Promise(resolve => setTimeout(resolve, CALLBACK_COOLDOWN_MS));
         nextTickResult = await runTickSafe('execution-callback');
         console.log(`[execution-callback] Next tick triggered, actions: ${nextTickResult.actions_taken?.length || 0}`);
       } catch (tickErr) {
@@ -5427,8 +5426,7 @@ router.post('/attach-decision', async (req, res) => {
       });
     }
 
-    // TODO: Implement LLM decision logic using prompts/attach-decision.md
-    // For now, return a simple rule-based decision
+    // Rule-based attachment decision: check similarity scores to determine action
 
     // Short-circuit A: Check for duplicate tasks (score >= 0.85)
     const duplicateTasks = (matches || []).filter(m => m.level === 'task' && m.score >= 0.85);
@@ -6118,5 +6116,68 @@ router.get('/routing/decisions', async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to get routing decisions', details: err.message });
   }
 });
+
+// POST /api/brain/manual-mode — 启用/禁用手动模式（暂停自动任务创建）
+router.post('/manual-mode', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ('manual_mode', $1, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+    `, [{ enabled: !!enabled }]);
+    console.log(`[brain] Manual mode ${enabled ? 'enabled' : 'disabled'}`);
+    res.json({ success: true, manual_mode: !!enabled });
+  } catch (err) {
+    console.error('[API] Failed to set manual mode:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to set manual mode', details: err.message });
+  }
+});
+
+// GET /api/brain/manual-mode — 查询手动模式状态
+router.get('/manual-mode', async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'manual_mode'"
+    );
+    const enabled = result.rows.length > 0 && result.rows[0].value_json?.enabled === true;
+    res.json({ success: true, manual_mode: enabled });
+  } catch (err) {
+    console.error('[API] Failed to get manual mode:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to get manual mode', details: err.message });
+  }
+});
+
+/**
+ * triggerAutoRCA — 任务失败时自动触发 RCA（依赖注入，便于测试）
+ * @param {object} opts
+ * @param {string} opts.task_id
+ * @param {string} opts.errorMsg
+ * @param {object} opts.classification - { class, pattern }
+ * @param {function} opts.shouldAnalyzeFailure - async (task_id, errorMsg) => { should_analyze, signature, cached_result? }
+ * @param {function} opts.performRCA - async ({ task_id, error, classification }) => {}
+ */
+export async function triggerAutoRCA({ task_id, errorMsg, classification, shouldAnalyzeFailure, performRCA }) {
+  // BILLING_CAP 类型不需要 RCA
+  if (classification?.class === 'BILLING_CAP') {
+    console.log(`[AutoRCA] Skip task=${task_id}: BILLING_CAP`);
+    return;
+  }
+
+  try {
+    // 去重检查
+    const dedup = await shouldAnalyzeFailure(task_id, errorMsg);
+    if (!dedup.should_analyze) {
+      console.log(`[AutoRCA] Skip task=${task_id}: duplicate (signature=${dedup.signature})`);
+      return;
+    }
+
+    // 执行 RCA
+    console.log(`[AutoRCA] Analyzing task=${task_id}`);
+    await performRCA({ task_id, error: errorMsg, classification });
+  } catch (err) {
+    console.error(`[AutoRCA] Error analyzing task=${task_id}: ${err.message}`);
+  }
+}
 
 export default router;

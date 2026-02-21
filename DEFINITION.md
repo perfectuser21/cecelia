@@ -2,9 +2,9 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-02-17
-**Brain 版本**: 1.48.3
-**Schema 版本**: 038
+**最后更新**: 2026-02-18
+**Brain 版本**: 1.52.12
+**Schema 版本**: 044
 **状态**: 生产运行中
 
 ---
@@ -54,8 +54,8 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 | 器官 | 实现 | 职责 | 说明 |
 |------|------|------|------|
 | ❤️ **心脏** | tick.js | Tick Loop 驱动 | 每 5s 循环，每 5min 执行 |
-| 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Opus，RCA/战略调整/记录经验 |
-| 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | Sonnet，快速判断/异常检测 |
+| 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Sonnet，RCA/战略调整/记录经验 |
+| 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | Haiku，快速判断/异常检测 |
 | 🧠 **大脑 L0** | planner.js, executor.js, tick.js | 脑干（纯代码） | 调度、派发、保护系统 |
 | 🛡️ **保护系统** | alertness/, circuit-breaker, quarantine, watchdog | 自我保护 | 四重防护 |
 | 📋 **规划器** | planner.js | KR 轮转、任务生成 | 基于评分选择下一个任务 |
@@ -120,8 +120,8 @@ Agent Workers (Caramel/小检/小审/...)
 │  Layer 1: Cecelia Core (cecelia/core repo)              │
 │  ┌───────────────────────────────────────────────────┐ │
 │  │  ❤️ 心脏 (tick.js)                                │ │
-│  │  🧠 大脑 L2 (cortex.js) - Opus                    │ │
-│  │  🧠 大脑 L1 (thalamus.js) - Sonnet               │ │
+│  │  🧠 大脑 L2 (cortex.js) - Sonnet                  │ │
+│  │  🧠 大脑 L1 (thalamus.js) - Haiku                │ │
 │  │  🧠 大脑 L0 (planner.js, executor.js) - 纯代码   │ │
 │  │  🛡️ 保护系统 (alertness, watchdog, ...)          │ │
 │  │  📋 规划器 (planner.js)                           │ │
@@ -181,8 +181,8 @@ Agent Workers (Caramel/小检/小审/...)
 | 层 | 允许 LLM | 职责 |
 |----|---------|------|
 | L0 脑干 | 禁止 | 调度、执行、保护（纯代码） |
-| L1 丘脑 | Sonnet | 事件分类、快速判断（<1s） |
-| L2 皮层 | Opus | 深度分析、战略调整（>5s） |
+| L1 丘脑 | Haiku | 事件分类、快速判断（<1s） |
+| L2 皮层 | Sonnet | 深度分析、战略调整（>5s） |
 
 **LLM 只提建议，代码做执行**：
 - L1/L2 输出 Decision JSON（actions + rationale + confidence）
@@ -226,7 +226,7 @@ executeTick() 流程：
 | `quarantine.js` | 失败隔离、可疑输入检测 |
 | `decision-executor.js` | 决策执行（事务化、白名单、危险审批） |
 
-### 3.2 L1 丘脑 — Sonnet 快速判断
+### 3.2 L1 丘脑 — Haiku 快速判断
 
 `thalamus.js` 处理系统事件，快速路由：
 
@@ -234,21 +234,45 @@ executeTick() 流程：
 事件 → quickRoute()（L0 硬编码规则）
   ├─ HEARTBEAT → no_action
   ├─ TICK(无异常) → fallback_to_tick
+  ├─ TICK(有异常) → null → callHaiku()
   ├─ TASK_COMPLETED(无问题) → dispatch_task
-  └─ 其他 → callSonnet()（L1 判断）
+  ├─ TASK_COMPLETED(有问题) → null → callHaiku()
+  ├─ TASK_FAILED(简单/重试未超限) → retry_task
+  ├─ TASK_FAILED(简单/重试超限) → cancel_task
+  ├─ TASK_FAILED(复杂原因) → null → callHaiku()
+  ├─ TASK_TIMEOUT → log_event + retry_task(降级)
+  ├─ TASK_CREATED → no_action
+  ├─ OKR_CREATED → log_event
+  ├─ OKR_PROGRESS_UPDATE(非阻塞) → log_event
+  ├─ OKR_BLOCKED(普通) → notify_user + mark_task_blocked
+  ├─ OKR_BLOCKED(严重/持续) → null → callHaiku()
+  ├─ DEPARTMENT_REPORT(非严重) → log_event
+  ├─ DEPARTMENT_REPORT(严重) → null → callHaiku()
+  ├─ EXCEPTION_REPORT(低严重度) → log_event
+  ├─ EXCEPTION_REPORT(中/高严重度) → null → callHaiku()
+  ├─ RESOURCE_LOW(非严重) → notify_user
+  ├─ RESOURCE_LOW(严重) → null → callHaiku()
+  ├─ USER_COMMAND(简单) → log_event
+  ├─ USER_COMMAND(复杂) → null → callHaiku()
+  ├─ USER_MESSAGE(非紧急) → log_event
+  ├─ USER_MESSAGE(紧急) → null → callHaiku()
+  └─ 其他 → callHaiku()（L1 判断）
                ├─ level=0/1 → 返回决策
                └─ level=2 → 升级到皮层
 ```
 
-**21 个白名单 action**：
+**28 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
 - 分析：analyze_failure, predict_progress
 - 规划：create_proposal
+- 知识/学习：create_learning, update_learning, trigger_rca
+- 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
+- 类型建议：suggest_task_type
 
-### 3.3 L2 皮层 — Opus 深度分析
+### 3.3 L2 皮层 — Sonnet 深度分析
 
 `cortex.js` 在 L1 判断 level=2 时介入：
 
@@ -581,7 +605,7 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 ### 8.2 容器化
 
 **Brain 容器**：
-- 镜像：`cecelia-brain:1.40.5`（多阶段构建）
+- 镜像：`cecelia-brain:1.52.5`（多阶段构建）
 - 基础：node:20-alpine + tini
 - 用户：非 root `cecelia` 用户
 - 文件系统：read-only rootfs（生产模式）
@@ -609,7 +633,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '038'
+5. **Schema 版本** — 必须 = '040'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -757,7 +781,7 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 brain/
 ├── server.js                  # 入口：迁移 → 自检 → 启动
 ├── Dockerfile                 # 多阶段构建, tini, non-root
-├── package.json               # 版本号（当前 1.40.5）
+├── package.json               # 版本号（当前 1.52.1）
 │
 ├── src/
 │   ├── db-config.js           # DB 连接配置（唯一来源）
@@ -770,8 +794,8 @@ brain/
 │   ├── planner.js             # KR 轮转 + 任务生成
 │   ├── focus.js               # 每日焦点选择
 │   │
-│   ├── thalamus.js            # L1 丘脑 (Sonnet)
-│   ├── cortex.js              # L2 皮层 (Opus)
+│   ├── thalamus.js            # L1 丘脑 (Haiku)
+│   ├── cortex.js              # L2 皮层 (Sonnet)
 │   ├── decision-executor.js   # 决策执行器
 │   │
 │   ├── watchdog.js            # 资源看门狗 (/proc)
@@ -902,8 +926,8 @@ bash brain/scripts/goldenpath-check.sh
 
 | 模型 | 输入 | 输出 | 用途 |
 |------|------|------|------|
-| Opus | $15/M | $75/M | L2 皮层、OKR 拆解、dev 任务 |
-| Sonnet | $3/M | $15/M | L1 丘脑、review/qa/audit |
-| Haiku | $0.8/M | $4/M | 嘴巴（轻认知） |
+| Opus | $15/M | $75/M | OKR 拆解、dev 任务 |
+| Sonnet | $3/M | $15/M | L2 皮层（RCA 分析）、review/qa/audit |
+| Haiku | $1/M | $5/M | L1 丘脑（事件路由）、嘴巴（轻认知） |
 
 每次 L1/L2 调用记录 token 使用到 cecelia_events 表。

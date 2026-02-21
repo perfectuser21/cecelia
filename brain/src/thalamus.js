@@ -3,16 +3,16 @@
  *
  * 仿人脑设计：
  * - 接收所有事件
- * - 用 Sonnet 判断复杂度
+ * - 用 Haiku 判断复杂度
  * - Level 0/1: 自己处理
- * - Level 2: 唤醒皮层 (Cortex/Opus)
+ * - Level 2: 唤醒皮层 (Cortex/Sonnet)
  * - 输出结构化 Decision
  * - 代码验证后执行
  *
  * 三层架构：
  * - 脑干 (Level 0): 纯代码，自动反应
- * - 丘脑 (Level 1): Sonnet，快速判断
- * - 皮层 (Level 2): Opus，深度思考
+ * - 丘脑 (Level 1): Haiku，快速判断
+ * - 皮层 (Level 2): Sonnet，深度思考
  *
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
@@ -161,7 +161,7 @@ const ACTION_WHITELIST = {
   'log_event': { dangerous: false, description: '记录事件' },
 
   // 升级操作
-  'escalate_to_brain': { dangerous: false, description: '升级到 Brain LLM (Opus)' },
+  'escalate_to_brain': { dangerous: false, description: '升级到 Brain LLM (Sonnet)' },
   'request_human_review': { dangerous: true, description: '请求人工确认' },
 
   // 分析操作
@@ -171,9 +171,21 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
+  // 知识/学习操作
+  'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },
+  'update_learning': { dangerous: false, description: '更新已有 learning 记录' },
+  'trigger_rca': { dangerous: false, description: '触发根因分析 (RCA) 流程' },
+  'suggest_task_type': { dangerous: false, description: '建议 task_type 修正（只警告记录，不自动修改）' },
+
+  // 任务生命周期操作
+  'update_task_prd': { dangerous: false, description: '更新任务 PRD 内容' },
+  'archive_task': { dangerous: false, description: '归档完成/超期任务' },
+  'defer_task': { dangerous: false, description: '延迟任务到指定时间' },
+
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
+
 };
 
 // ============================================================
@@ -250,7 +262,7 @@ function hasDangerousActions(decision) {
 const MODEL_PRICING = {
   'claude-sonnet-4-20250514': { in: 3.0 / 1_000_000, out: 15.0 / 1_000_000 },
   'claude-opus-4-20250514': { in: 15.0 / 1_000_000, out: 75.0 / 1_000_000 },
-  'claude-haiku-4-20250514': { in: 0.8 / 1_000_000, out: 4.0 / 1_000_000 },
+  'claude-haiku-4-5-20251001': { in: 1.0 / 1_000_000, out: 5.0 / 1_000_000 },
 };
 
 function calculateCost(usage, model) {
@@ -304,7 +316,7 @@ function recordRoutingDecision(routeType, event, decision, latencyMs) {
 }
 
 // ============================================================
-// Thalamus (Sonnet 调用)
+// Thalamus (Haiku 调用)
 // ============================================================
 
 const THALAMUS_PROMPT = `你是 Cecelia 的丘脑（Thalamus），负责事件路由和决策。
@@ -342,7 +354,60 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 请分析以下事件并输出 Decision：`;
 
 /**
- * 调用 Sonnet 分析事件
+ * 从 event payload 提取 Memory 搜索 query
+ * @param {Object} event - 事件包
+ * @returns {string} 搜索 query
+ */
+function extractMemoryQuery(event) {
+  return (
+    event.task?.title ||
+    event.payload?.title ||
+    event.payload?.description ||
+    event.type ||
+    ''
+  );
+}
+
+/**
+ * 调用 Memory API 语义搜索，构建注入 prompt 的 block
+ * 失败时返回空字符串（graceful fallback）
+ * @param {Object} event - 事件包
+ * @returns {Promise<string>} 格式化的 Memory block
+ */
+async function buildMemoryBlock(event) {
+  const query = extractMemoryQuery(event);
+  if (!query) return '';
+
+  try {
+    const response = await fetch('http://localhost:5221/api/brain/memory/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, topK: 3, mode: 'summary' }),
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (!response.ok) return '';
+
+    const data = await response.json();
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+
+    if (matches.length === 0) return '';
+
+    const lines = matches.map((m, i) => {
+      const preview = (m.preview || m.title || '').slice(0, 150);
+      return `- [${i + 1}] **${m.title || '(无标题)'}** (相似度: ${(m.similarity || 0).toFixed(2)}): ${preview}`;
+    });
+
+    return `\n\n## 相关历史任务（Memory 语义搜索，供参考）\n${lines.join('\n')}\n`;
+  } catch (err) {
+    // graceful fallback：Memory 搜索失败不影响主流程
+    console.warn('[thalamus] Memory search failed (graceful fallback):', err.message);
+    return '';
+  }
+}
+
+/**
+ * 调用 Haiku 分析事件
  * @param {Object} event - 事件包
  * @returns {Promise<Decision>}
  */
@@ -361,16 +426,20 @@ async function analyzeEvent(event) {
     learningBlock = `\n\n## 系统历史经验（参考，按相关性排序）\n${learnings.map((l, i) => `- [${i+1}] **${l.title}** (相关度: ${l.relevance_score || 0}): ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
   }
 
-  const prompt = `${THALAMUS_PROMPT}${learningBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+  // Build #2: 注入 Memory 语义搜索结果（历史任务上下文）
+  const memoryBlock = await buildMemoryBlock(event);
+
+  const prompt = `${THALAMUS_PROMPT}${learningBlock}${memoryBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
-    // 调用 Sonnet (通过 cecelia-bridge 或直接 API)
-    const { text: response, usage } = await callSonnet(prompt);
+    // 调用 Haiku (通过 cecelia-bridge 或直接 API)
+    const { text: response, usage } = await callHaiku(prompt);
 
     // Build #4: 记录 token 消耗
-    await recordTokenUsage('thalamus', 'claude-sonnet-4-20250514', usage, {
+    await recordTokenUsage('thalamus', 'claude-haiku-4-5-20251001', usage, {
       event_type: event.type,
       learnings_injected: learnings.length,
+      memory_injected: memoryBlock.length > 0,
     });
 
     // 解析 JSON
@@ -399,11 +468,11 @@ async function analyzeEvent(event) {
 }
 
 /**
- * 调用 Sonnet API
+ * 调用 Haiku API
  * @param {string} prompt
  * @returns {Promise<{text: string, usage: Object}>}
  */
-async function callSonnet(prompt) {
+async function callHaiku(prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
@@ -418,7 +487,7 @@ async function callSonnet(prompt) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       messages: [
         { role: 'user', content: prompt }
@@ -428,21 +497,35 @@ async function callSonnet(prompt) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Sonnet API error: ${response.status} - ${error}`);
+    throw new Error(`Haiku API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
-  return { text: data.content[0].text, usage: data.usage || null };
+  const textBlock = (data.content || []).find(b => b.type === 'text');
+  if (!textBlock) {
+    throw new Error(`Haiku returned empty content array (usage: ${JSON.stringify(data.usage)})`);
+  }
+  return { text: textBlock.text, usage: data.usage || null };
 }
 
 /**
- * 从 Sonnet 响应中解析 Decision
+ * 从 Haiku 响应中解析 Decision
  * @param {string} response
  * @returns {Decision}
  */
 function parseDecisionFromResponse(response) {
-  // 尝试提取 JSON
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
+  // 优先匹配 markdown code block 中的 JSON（```json ... ``` 或 ``` ... ```）
+  const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch (_e) {
+      // code block 内容不是合法 JSON，继续 fallback
+    }
+  }
+
+  // fallback: 非贪婪匹配第一个完整 JSON 对象
+  const jsonMatch = response.match(/\{[\s\S]*?\}/);
   if (!jsonMatch) {
     throw new Error('No JSON found in response');
   }
@@ -451,7 +534,7 @@ function parseDecisionFromResponse(response) {
 }
 
 /**
- * 创建降级 Decision（Sonnet 失败时使用）
+ * 创建降级 Decision（Haiku 失败时使用）
  * @param {Object} event
  * @param {string} reason
  * @returns {Decision}
@@ -473,7 +556,7 @@ function createFallbackDecision(event, reason) {
 
 /**
  * 快速路由：对于非常简单的事件，直接用代码规则判断
- * 返回 null 表示需要调用 Sonnet
+ * 返回 null 表示需要调用 Haiku
  * @param {Object} event
  * @returns {Decision|null}
  */
@@ -498,6 +581,42 @@ function quickRoute(event) {
       confidence: 1.0,
       safety: false
     };
+  }
+
+  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 Haiku）
+  if (event.type === EVENT_TYPES.TICK && event.has_anomaly === true) {
+    const anomalyType = event.anomaly_type;
+
+    // 资源压力：记录 + 降级到代码处理（降低派发频率）
+    if (anomalyType === 'resource_pressure') {
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { reason: 'resource_pressure', tick_id: event.tick_id } },
+          { type: 'fallback_to_tick', params: {} }
+        ],
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+
+    // 积压任务：记录 + 重新排优先级
+    if (anomalyType === 'stale_tasks') {
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { reason: 'stale_tasks', tick_id: event.tick_id } },
+          { type: 'reprioritize_task', params: {} }
+        ],
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
+        confidence: 0.8,
+        safety: false
+      };
+    }
+
+    // 其他异常类型：交 Haiku 深度分析
+    return null;
   }
 
   // 任务完成（无异常）：简单派发下一个
@@ -534,7 +653,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂原因（无论是否重试超限）→ 交给 Sonnet
+    // 复杂原因（无论是否重试超限）→ 交给 Haiku
     return null;
   }
 
@@ -563,7 +682,152 @@ function quickRoute(event) {
     };
   }
 
-  // 其他情况需要 Sonnet 判断
+  // OKR 创建：只需记录，不需要 LLM 决策
+  if (event.type === EVENT_TYPES.OKR_CREATED) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'okr_created' } }],
+      rationale: 'OKR 创建事件，记录即可',
+      confidence: 0.95,
+      safety: false
+    };
+  }
+
+  // OKR 进度更新（非阻塞）：只需记录
+  if (event.type === EVENT_TYPES.OKR_PROGRESS_UPDATE && !event.is_blocked) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'okr_progress_update' } }],
+      rationale: 'OKR 非阻塞进度更新，记录即可',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // OKR 普通阻塞（非关键、非持续）：快速路由，通知用户并标记任务
+  if (event.type === EVENT_TYPES.OKR_BLOCKED) {
+    const isCritical = event.is_critical === true;
+    const isLongBlocked = event.long_blocked === true;
+    if (!isCritical && !isLongBlocked) {
+      return {
+        level: 0,
+        actions: [
+          { type: 'notify_user', params: { message: 'OKR 阻塞', okr_id: event.okr_id } },
+          { type: 'mark_task_blocked', params: { task_id: event.task_id } }
+        ],
+        rationale: 'OKR 普通阻塞，通知用户并标记任务',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 关键阻塞或持续阻塞 → 交给 Haiku
+    return null;
+  }
+
+  // 部门报告：直接记录并归档，无需 LLM 判断
+  if (event.type === EVENT_TYPES.DEPARTMENT_REPORT) {
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'department_report' } }],
+      rationale: '部门报告，记录并归档即可',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // 异常报告：根据严重度分支
+  if (event.type === EVENT_TYPES.EXCEPTION_REPORT) {
+    const severity = event.severity;
+    if (severity === 'low' || severity === 'medium') {
+      // 低/中等严重度：记录 + 分析失败原因
+      return {
+        level: 0,
+        actions: [
+          { type: 'log_event', params: { event_type: 'exception_report', severity } },
+          { type: 'analyze_failure', params: { reason: event.reason || 'unknown', severity } }
+        ],
+        rationale: `异常报告（${severity} 严重度），记录并分析失败原因`,
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 高/严重级别 → 交给 Haiku/Sonnet 深度分析
+    return null;
+  }
+
+  // RESOURCE_LOW：分级处理
+  if (event.type === EVENT_TYPES.RESOURCE_LOW) {
+    const severity = event.severity || 'low';
+    if (severity === 'critical') {
+      return null; // 交给 Haiku 深度处理
+    }
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'resource_low', severity } },
+        { type: 'notify_user', params: { message: `资源告警: ${severity}`, channel: 'system' } }
+      ],
+      rationale: `资源${severity}告警，记录并通知`,
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // USER_COMMAND：简单指令快速路由，复杂指令交 Haiku
+  if (event.type === EVENT_TYPES.USER_COMMAND) {
+    const cmd = (event.command || '').toLowerCase();
+    // 查询类指令：直接 no_action（由 API 层处理）
+    if (['status', 'health', 'version'].includes(cmd)) {
+      return {
+        level: 0,
+        actions: [{ type: 'no_action', params: {} }],
+        rationale: `用户查询指令 ${cmd}，API 层处理`,
+        confidence: 1.0,
+        safety: false
+      };
+    }
+    // tick 触发：fallback_to_tick
+    if (cmd === 'tick') {
+      return {
+        level: 0,
+        actions: [{ type: 'fallback_to_tick', params: {} }],
+        rationale: '用户手动触发 tick',
+        confidence: 1.0,
+        safety: false
+      };
+    }
+    // 复杂指令 → 交给 Haiku
+    return null;
+  }
+
+
+  // USER_MESSAGE：按意图分级处理
+  if (event.type === EVENT_TYPES.USER_MESSAGE) {
+    // 状态查询：直接记录，无需 LLM 决策
+    if (event.intent === 'status_query') {
+      return {
+        level: 0,
+        actions: [{ type: 'log_event', params: { event_type: 'user_message', intent: 'status_query' } }],
+        rationale: '用户状态查询，记录即可',
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 确认消息：直接记录，无需 LLM 决策
+    if (event.intent === 'acknowledge') {
+      return {
+        level: 0,
+        actions: [{ type: 'log_event', params: { event_type: 'user_message', intent: 'acknowledge' } }],
+        rationale: '用户确认消息，记录即可',
+        confidence: 0.9,
+        safety: false
+      };
+    }
+    // 其他意图（命令式、请求式等）→ 交给 Haiku 决策
+    return null;
+  }
+
+  // 其他情况需要 Haiku 判断
   return null;
 }
 
@@ -576,13 +840,19 @@ function quickRoute(event) {
  *
  * 处理流程：
  * 1. 尝试快速路由 (Level 0，纯代码)
- * 2. 调用 Sonnet 分析 (Level 1)
- * 3. 如果 Level 2，唤醒皮层 (Opus)
+ * 2. 调用 Haiku 分析 (Level 1)
+ * 3. 如果 Level 2，唤醒皮层 (Sonnet)
  *
  * @param {Object} event
  * @returns {Promise<Decision>}
  */
 async function processEvent(event) {
+  // BUG P1 guard: null/undefined event 直接返回 fallback decision
+  if (event == null) {
+    console.warn('[thalamus] processEvent called with null/undefined event, returning fallback');
+    return createFallbackDecision({ type: 'unknown' }, 'null event received');
+  }
+
   console.log(`[thalamus] Processing event: ${event.type}`);
   const startMs = Date.now();
 
@@ -594,11 +864,11 @@ async function processEvent(event) {
     return quickDecision;
   }
 
-  // 2. 调用 Sonnet 分析 (Level 1)
-  console.log('[thalamus] Calling Sonnet for analysis (L1)...');
+  // 2. 调用 Haiku 分析 (Level 1)
+  console.log('[thalamus] Calling Haiku for analysis (L1)...');
   const decision = await analyzeEvent(event);
 
-  console.log(`[thalamus] Sonnet decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
+  console.log(`[thalamus] Haiku decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
 
   // 降级路径（analyzeEvent 内部失败时返回 _fallback=true）
   if (decision._fallback) {
@@ -606,18 +876,18 @@ async function processEvent(event) {
     return decision;
   }
 
-  // 3. 如果 Level 2，唤醒皮层 (Opus)
+  // 3. 如果 Level 2，唤醒皮层 (Sonnet)
   if (decision.level === 2) {
     console.log('[thalamus] Escalating to Cortex (L2)...');
     try {
       // 动态导入皮层模块（避免循环依赖）
       const { analyzeDeep } = await import('./cortex.js');
       const cortexDecision = await analyzeDeep(event, decision);
-      console.log(`[thalamus] Cortex decision: actions=${cortexDecision.actions.map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+      console.log(`[thalamus] Cortex decision: actions=${(cortexDecision.actions || []).map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
-      console.error('[thalamus] Cortex failed, using Sonnet decision:', err.message);
+      console.error('[thalamus] Cortex failed, using Haiku decision:', err.message);
       // 皮层失败时，回退到丘脑决策
       return decision;
     }
@@ -644,6 +914,7 @@ export {
   analyzeEvent,
   createFallbackDecision,
   recordRoutingDecision,
+  parseDecisionFromResponse,
 
   // LLM 错误分类
   classifyLLMError,
@@ -657,6 +928,10 @@ export {
 
   // Learnings
   getRecentLearnings,
+
+  // Memory 注入
+  extractMemoryQuery,
+  buildMemoryBlock,
 
   // 常量
   EVENT_TYPES,

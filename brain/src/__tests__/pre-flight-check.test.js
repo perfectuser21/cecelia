@@ -162,6 +162,108 @@ describe('preFlightCheck', () => {
   });
 });
 
+describe('placeholder detection — regression tests (D1/D2/D3)', () => {
+  const base = { title: 'Valid Task Title', priority: 'P1' };
+
+  // D1: 代码块内容在检测前被剥离
+  it('D1: xxx in backtick inline code should NOT trigger', async () => {
+    const task = {
+      ...base,
+      description: '实现以下格式：`- Task ID: xxx`，系统将根据此格式生成唯一任务标识。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D1: xxx in fenced code block should NOT trigger', async () => {
+    const task = {
+      ...base,
+      // 注意：描述主体里没有 xxx，xxx 仅在代码块内
+      description: '调用示例：\n```sql\nSELECT * FROM tasks WHERE id = xxx;\n```\n请根据实际任务情况填写对应 ID。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D1: todo inside backtick inline code should NOT trigger', async () => {
+    const task = {
+      ...base,
+      description: '验证标准：每个 DoD 项有对应 PR，或在 `todo` 看板中有跟踪记录。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  it('D1: TODO 记录 inside fenced code block should NOT trigger', async () => {
+    const task = {
+      ...base,
+      description: '验收方式：\n```\n- 有对应 bugfix PR 或 TODO 记录\n- 测试覆盖率 ≥ 80%\n```\n确保以上均已完成。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  // D2: xxx 独立出现且前后均为 ASCII 时触发，前后紧接中文字符时不触发
+  it('D2: xxx surrounded by ASCII spaces should still trigger', async () => {
+    const task = {
+      ...base,
+      // xxx 前后是空格（ASCII），会被检测到
+      description: 'Implementation plan: xxx - please fill in the actual plan details here.'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Description contains placeholder text');
+  });
+
+  it('D2: xxx directly surrounded by CJK characters should NOT trigger', async () => {
+    const task = {
+      ...base,
+      // xxx 紧接中文字符（如 "ID进行xxx格式"），不视为 placeholder
+      description: '系统需要对任务ID进行xxx格式校验，确保符合规范要求并通过所有单元测试。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+
+  // D3: todo/tbd/fixme 用 \b 词边界匹配
+  it('D3: bare "todo" as description should still trigger', async () => {
+    const task = { ...base, description: 'todo: 完善后续描述内容，待讨论确定。' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Description contains placeholder text');
+  });
+
+  it('D3: "tbd" in description should still trigger', async () => {
+    const task = { ...base, description: '具体实现方案 tbd，待讨论后细化确认。' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Description contains placeholder text');
+  });
+
+  it('D3: "fixme" in description should still trigger', async () => {
+    const task = { ...base, description: 'fixme: 这里的逻辑有问题，需要修复并重新测试。' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Description contains placeholder text');
+  });
+
+  it('D3: word containing "todo" as substring should NOT trigger', async () => {
+    // e.g. "vtodo", "todolist" should not flag
+    const task = {
+      ...base,
+      description: '参考 vtodo 协议规范，实现日历任务同步功能，确保与主流客户端兼容。'
+    };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Description contains placeholder text');
+  });
+});
+
 describe('getPreFlightStats', () => {
   it('should return stats structure', async () => {
     // Mock pool for testing
