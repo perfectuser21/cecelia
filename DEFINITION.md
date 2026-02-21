@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-18
-**Brain 版本**: 1.53.1
+**Brain 版本**: 1.53.2
 **Schema 版本**: 044
 **状态**: 生产运行中
 
@@ -377,6 +377,7 @@ queued → in_progress → completed
 | qa | US | 小检 (/qa) | Sonnet |
 | audit | US | 小审 (/audit) | Sonnet |
 | exploratory | US | Exploratory (/exploratory) | Opus |
+| codex_qa | US | Codex 免疫检查 (cx) | Codex/GPT-5 |
 | talk | HK | MiniMax | MiniMax |
 | research | HK | MiniMax | MiniMax |
 | data | HK | N8N | - |
