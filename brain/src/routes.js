@@ -51,9 +51,12 @@ import websocketService from './websocket.js';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
+import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
+import { handleChat } from './orchestrator-chat.js';
+import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
+import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -1108,6 +1111,42 @@ router.get('/watchdog', async (req, res) => {
   }
 });
 
+// ==================== Session Tracking API ====================
+
+/**
+ * GET /api/brain/session/stats
+ * 返回当前 session 开始时间、已运行分钟数、历史 session 记录（最近 10 条）
+ * 用于分析 Anthropic spending cap 周期
+ */
+router.get('/session/stats', async (req, res) => {
+  try {
+    const { getSessionInfo } = await import('./executor.js');
+    const current = getSessionInfo();
+
+    // 查询最近 10 条历史 session 记录
+    const historyResult = await pool.query(`
+      SELECT payload, created_at
+      FROM cecelia_events
+      WHERE event_type = 'session_end'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const history = historyResult.rows.map(row => ({
+      ...row.payload,
+      recorded_at: row.created_at,
+    }));
+
+    res.json({
+      success: true,
+      current,
+      history,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get session stats', details: err.message });
+  }
+});
+
 // ==================== Token Usage API ====================
 
 /**
@@ -1201,6 +1240,56 @@ router.post('/pending-actions/:id/reject', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to reject action', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/comment
+ * 追加评论到提案对话
+ * Body: { text: string, role?: 'user'|'cecelia' }
+ */
+router.post('/pending-actions/:id/comment', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text, role } = req.body || {};
+
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ error: 'text is required' });
+    }
+
+    const result = await addProposalComment(id, text.trim(), role || 'user');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add comment', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/select
+ * 选择提案选项并执行
+ * Body: { option_id: string, reviewer?: string }
+ */
+router.post('/pending-actions/:id/select', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { option_id, reviewer } = req.body || {};
+
+    if (!option_id) {
+      return res.status(400).json({ error: 'option_id is required' });
+    }
+
+    const result = await selectProposalOption(id, option_id, reviewer || 'dashboard-user');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    res.json({ success: true, execution_result: result.execution_result });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to select option', details: err.message });
   }
 });
 
@@ -1883,6 +1972,22 @@ router.post('/execution-callback', async (req, res) => {
       newStatus = 'in_progress'; // Unknown status, keep in progress
     }
 
+    // P1-1: Dev task completed without PR → completed_no_pr
+    // Only dev tasks are expected to produce PRs. Decomposition/exploratory tasks are exempt.
+    if (newStatus === 'completed' && !pr_url) {
+      try {
+        const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const taskType = taskRow.rows[0]?.task_type;
+        const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
+        if (taskType === 'dev' && !isDecomposition) {
+          newStatus = 'completed_no_pr';
+          console.warn(`[execution-callback] Dev task ${task_id} completed without PR → completed_no_pr`);
+        }
+      } catch (prCheckErr) {
+        console.error(`[execution-callback] PR check error (non-fatal): ${prCheckErr.message}`);
+      }
+    }
+
     // 2. Build the update payload
     const lastRunResult = {
       run_id,
@@ -1905,6 +2010,21 @@ router.post('/execution-callback', async (req, res) => {
       // Note: $6 (isCompleted) avoids reusing $2 in CASE WHEN, which causes
       // "inconsistent types deduced for parameter $2" (text vs character varying).
       const isCompleted = newStatus === 'completed';
+
+      // Extract findings from result for storage in payload.
+      // decomp-checker reads payload.findings to pass context to follow-up tasks.
+      // result can be a string (text output) or an object with a findings/result field.
+      const findingsRaw = (result !== null && typeof result === 'object')
+        ? (result.findings || result.result || result)
+        : result;
+      const findingsValue = findingsRaw
+        ? (typeof findingsRaw === 'string' ? findingsRaw : JSON.stringify(findingsRaw))
+        : null;
+
+      if (!findingsValue && isCompleted) {
+        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result - exploratory chain may be broken`);
+      }
+
       await client.query(`
         UPDATE tasks
         SET
@@ -1913,10 +2033,10 @@ router.post('/execution-callback', async (req, res) => {
             'last_run_result', $3::jsonb,
             'run_status', $4::text,
             'pr_url', $5::text
-          ),
+          ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue]);
 
       // Log the execution result
       await client.query(`
@@ -2240,6 +2360,46 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Phase transition error: ${phaseErr.message}`);
       }
 
+      // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
+      try {
+        const decompReviewResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const decompReviewRow = decompReviewResult.rows[0];
+
+        if (decompReviewRow?.task_type === 'decomp_review') {
+          console.log(`[execution-callback] Decomp review task completed, processing verdict...`);
+
+          // 从 result 中提取 verdict 和 findings
+          const verdictRaw = (result !== null && typeof result === 'object')
+            ? (result.verdict || result.result?.verdict)
+            : null;
+          const findingsRaw = (result !== null && typeof result === 'object')
+            ? (result.findings || result.result?.findings || result)
+            : {};
+
+          // verdict 归一化
+          const validVerdicts = ['approved', 'needs_revision', 'rejected'];
+          const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
+
+          const { processReviewResult } = await import('./review-gate.js');
+          await processReviewResult(pool, task_id, verdict, findingsRaw);
+
+          // 计划调整：如果 findings 包含 plan_adjustment，执行调整
+          if (findingsRaw?.plan_adjustment && decompReviewRow?.payload?.review_scope === 'plan_adjustment') {
+            try {
+              const { executePlanAdjustment } = await import('./progress-reviewer.js');
+              await executePlanAdjustment(pool, findingsRaw, decompReviewRow.payload?.plan_context);
+              console.log(`[execution-callback] Plan adjustment executed for project ${decompReviewRow.payload?.entity_id}`);
+            } catch (adjErr) {
+              console.error(`[execution-callback] Plan adjustment error: ${adjErr.message}`);
+            }
+          }
+
+          console.log(`[execution-callback] Decomp review processed: verdict=${verdict}`);
+        }
+      } catch (decompReviewErr) {
+        console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
+      }
+
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
@@ -2333,6 +2493,58 @@ ${resultStr.substring(0, 2000)}
       error: 'Failed to process execution callback',
       details: err.message
     });
+  }
+});
+
+// ==================== Heartbeat File API ====================
+
+const HEARTBEAT_PATH = new URL('../../HEARTBEAT.md', import.meta.url);
+
+const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
+
+## 巡检项目
+
+- [ ] 系统健康检查
+- [ ] 任务队列状态
+- [ ] 资源使用率
+`;
+
+/**
+ * GET /api/brain/heartbeat
+ * Read HEARTBEAT.md file content.
+ * Returns default template if file does not exist.
+ */
+router.get('/heartbeat', async (req, res) => {
+  try {
+    const { readFile } = await import('fs/promises');
+    const content = await readFile(HEARTBEAT_PATH, 'utf-8');
+    res.json({ success: true, content });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.json({ success: true, content: HEARTBEAT_DEFAULT_TEMPLATE });
+    }
+    console.error('[heartbeat-file] GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/heartbeat
+ * Write content to HEARTBEAT.md file.
+ * Request body: { content: "..." }
+ */
+router.put('/heartbeat', async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (content === undefined || content === null) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+    const { writeFile } = await import('fs/promises');
+    await writeFile(HEARTBEAT_PATH, content, 'utf-8');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[heartbeat-file] PUT error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -2827,6 +3039,20 @@ router.get('/slots', async (req, res) => {
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/budget-cap
+ * Set or clear the budget cap (dual-layer capacity model)
+ */
+router.put('/budget-cap', async (req, res) => {
+  try {
+    const { setBudgetCap } = await import('./executor.js');
+    const result = setBudgetCap(req.body.slots ?? null);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -6179,5 +6405,183 @@ export async function triggerAutoRCA({ task_id, errorMsg, classification, should
     console.error(`[AutoRCA] Error analyzing task=${task_id}: ${err.message}`);
   }
 }
+
+// ==================== Orchestrator Chat ====================
+
+/**
+ * POST /api/brain/orchestrator/chat
+ * Cecelia 嘴巴对话端点
+ *
+ * Request: { message: string, context?: { conversation_id, history } }
+ * Response: { reply: string, routing_level: number, intent: string }
+ */
+router.post('/orchestrator/chat', async (req, res) => {
+  try {
+    const { message, context } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'message is required and must be a string',
+      });
+    }
+
+    const result = await handleChat(message, context || {});
+    res.json(result);
+  } catch (err) {
+    console.error('[API] orchestrator/chat error:', err.message);
+    res.status(500).json({
+      error: 'Chat failed',
+      message: err.message,
+    });
+  }
+});
+
+// ==================== Orchestrator Realtime ====================
+
+/**
+ * GET /api/brain/orchestrator/realtime/config
+ * 返回 OpenAI Realtime API 配置（api_key, model, voice, tools）
+ */
+router.get('/orchestrator/realtime/config', (_req, res) => {
+  const result = getRealtimeConfig();
+  if (!result.success) {
+    return res.status(500).json(result);
+  }
+  res.json(result);
+});
+
+/**
+ * POST /api/brain/orchestrator/realtime/tool
+ * 处理 Realtime 语音会话中的工具调用
+ *
+ * Request: { tool_name: string, arguments?: object }
+ * Response: { success: boolean, result?: object, error?: string }
+ */
+router.post('/orchestrator/realtime/tool', async (req, res) => {
+  try {
+    const { tool_name, arguments: args } = req.body;
+
+    if (!tool_name || typeof tool_name !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'tool_name is required and must be a string',
+      });
+    }
+
+    const result = await handleRealtimeTool(tool_name, args || {});
+    res.json(result);
+  } catch (err) {
+    console.error('[API] orchestrator/realtime/tool error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Model Profile API ====================
+
+router.get('/model-profiles', async (_req, res) => {
+  try {
+    const profiles = await listModelProfiles(pool);
+    res.json({ success: true, profiles });
+  } catch (err) {
+    console.error('[API] model-profiles list error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Model Registry API ====================
+
+router.get('/model-profiles/models', async (_req, res) => {
+  try {
+    const { MODELS, AGENTS } = await import('./model-registry.js');
+    res.json({ success: true, models: MODELS, agents: AGENTS });
+  } catch (err) {
+    console.error('[API] model-registry error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/model-profiles/active', (_req, res) => {
+  try {
+    const profile = getActiveProfile();
+    res.json({ success: true, profile });
+  } catch (err) {
+    console.error('[API] model-profiles active error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.put('/model-profiles/active', async (req, res) => {
+  try {
+    const { profile_id } = req.body;
+    if (!profile_id) {
+      return res.status(400).json({ success: false, error: 'profile_id is required' });
+    }
+    const profile = await switchProfile(pool, profile_id);
+
+    // WebSocket 广播 profile:changed
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: profile.id,
+      profile_name: profile.name,
+    });
+
+    res.json({ success: true, profile });
+  } catch (err) {
+    console.error('[API] model-profiles switch error:', err.message);
+    const status = err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/model-profiles/active/agent', async (req, res) => {
+  try {
+    const { agent_id, model_id } = req.body;
+    if (!agent_id || !model_id) {
+      return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
+    }
+
+    const result = await updateAgentModel(pool, agent_id, model_id);
+
+    // WebSocket 广播
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: result.profile.id,
+      profile_name: result.profile.name,
+      agent_id: result.agent_id,
+      model_id: model_id,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] update-agent-model error:', err.message);
+    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
+      ? 400 : err.message.includes('No active profile') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/model-profiles/active/agents', async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ success: false, error: 'updates array is required' });
+    }
+
+    const result = await batchUpdateAgentModels(pool, updates);
+
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: result.profile.id,
+      profile_name: result.profile.name,
+      batch: true,
+      count: updates.length,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] batch-update-agent-models error:', err.message);
+    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
+      ? 400 : err.message.includes('No active profile') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
 
 export default router;

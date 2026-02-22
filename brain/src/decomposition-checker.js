@@ -16,9 +16,18 @@
  */
 
 import pool from './db.js';
+import { computeCapacity, isAtCapacity } from './capacity.js';
+import { validateTaskDescription } from './task-quality-gate.js';
+import { validateOkrStructure } from './validate-okr-structure.js';
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
+
+// OKR validation: blocked entity IDs (refreshed each runDecompositionChecks cycle)
+let _blockedEntityIds = new Set();
+
+// Maximum decomposition depth: depth >= this → cannot create sub-initiatives, only dev tasks
+const MAX_DECOMPOSITION_DEPTH = 2;
 
 // ───────────────────────────────────────────────────────────────────
 // Execution Frontier Model - Inventory Management
@@ -141,6 +150,20 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
   if (!goalId) {
     throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
   }
+
+  // OKR structure gate: skip if goal has BLOCK validation issues
+  if (_blockedEntityIds.has(goalId) || (projectId && _blockedEntityIds.has(projectId))) {
+    console.warn(`[decomp-checker] OKR validation BLOCKED "${title}" (goal=${goalId}, project=${projectId})`);
+    return { id: null, title, rejected: true, reasons: ['okr_validation_blocked'] };
+  }
+
+  // Quality gate: validate description quality
+  const validation = validateTaskDescription(description);
+  if (!validation.valid) {
+    console.warn(`[decomp-checker] Quality gate REJECTED "${title}": ${validation.reasons.join('; ')}`);
+    return { id: null, title, rejected: true, reasons: validation.reasons };
+  }
+
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
@@ -210,6 +233,9 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
+  // orchestrated initiative 由 orchestrator 管理，跳过 inventory
+  if (initiative.execution_mode === 'orchestrated') return null;
+
   // Fix: null kr_id → graceful skip（无法创建有效 goal 关联的 task）
   if (!initiative.kr_id) {
     console.warn(`[decomp-checker] Initiative ${initiative.id} (${initiative.name}) has no kr_id, skipping inventory check`);
@@ -597,7 +623,7 @@ async function checkProjectDecomposition() {
 
   // Only check projects linked to active KRs via project_kr_links
   const result = await pool.query(`
-    SELECT DISTINCT p.id, p.name, p.repo_path
+    SELECT DISTINCT p.id, p.name, p.repo_path, p.time_budget_days, p.deadline
     FROM projects p
     INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
     INNER JOIN goals g ON g.id = pkl.kr_id AND g.status NOT IN ('completed', 'cancelled')
@@ -652,7 +678,9 @@ async function checkProjectDecomposition() {
         `Project 名称: ${proj.name}`,
         `Repo: ${proj.repo_path || '(无)'}`,
         `关联 KRs: ${krs.map(kr => `${kr.title} (${kr.id})`).join(', ') || '(无)'}`,
-      ].join('\n'),
+        proj.time_budget_days ? `时间预算: ${proj.time_budget_days} 天` : '',
+        proj.deadline ? `截止日期: ${proj.deadline}` : '',
+      ].filter(Boolean).join('\n'),
       goalId: krs[0]?.id || null,
       projectId: proj.id,
       payload: { level: 'project', project_id: proj.id }
@@ -685,8 +713,10 @@ async function checkInitiativeDecomposition() {
   const actions = [];
 
   const result = await pool.query(`
-    SELECT p.id, p.name, p.parent_id, p.plan_content,
-           parent_proj.name AS parent_name, parent_proj.repo_path
+    SELECT p.id, p.name, p.parent_id, p.plan_content, p.execution_mode,
+           parent_proj.name AS parent_name, parent_proj.repo_path,
+           parent_proj.deadline AS parent_deadline, parent_proj.time_budget_days AS parent_time_budget,
+           COALESCE(p.decomposition_depth, 1) AS depth
     FROM projects p
     LEFT JOIN projects parent_proj ON parent_proj.id = p.parent_id
     WHERE p.type = 'initiative'
@@ -702,6 +732,17 @@ async function checkInitiativeDecomposition() {
   `);
 
   for (const init of result.rows) {
+    // orchestrated initiative 由 orchestrator 管理，跳过 decomposition
+    if (init.execution_mode === 'orchestrated') {
+      actions.push({
+        action: 'skip_orchestrated',
+        check: 'initiative_decomposition',
+        initiative_id: init.id,
+        name: init.name,
+      });
+      continue;
+    }
+
     // Dedup using shared function
     if (await hasExistingDecompositionTaskByProject(init.id, 'initiative')) {
       actions.push({
@@ -764,6 +805,18 @@ async function checkInitiativeDecomposition() {
       continue;
     }
 
+    // Depth limit: initiatives at max depth can only create dev tasks, not sub-initiatives
+    const atMaxDepth = init.depth >= MAX_DECOMPOSITION_DEPTH;
+    const depthWarning = atMaxDepth
+      ? [
+          '',
+          '⛔ 深度限制（CRITICAL）：',
+          `当前拆解深度 = ${init.depth}（最大 ${MAX_DECOMPOSITION_DEPTH}）。`,
+          '禁止创建子 Initiative。只能创建具体的 dev Task（有代码修改、有测试、有 PR 预期）。',
+          '每个 Task 必须包含：修改哪些文件、验收标准、测试计划。',
+        ]
+      : [];
+
     const task = await createDecompositionTask({
       title: `Initiative 拆解: ${init.name}`,
       description: [
@@ -772,20 +825,24 @@ async function checkInitiativeDecomposition() {
         '要求：',
         '1. 分析 Initiative 的范围，创建 1-5 个 Task',
         '2. 每个 Task 约 20 分钟可完成',
-        '3. 为每个 Task 写完整 PRD',
+        '3. 为每个 Task 写完整 PRD（包含：修改哪些文件、验收标准、测试计划）',
         '4. 调用 Brain API 创建 Task:',
         '   POST http://localhost:5221/api/brain/action/create-task',
         `   Body: { "title": "...", "project_id": "${init.id}", "goal_id": "${krId || ''}", "task_type": "dev", "prd_content": "..." }`,
+        ...depthWarning,
         '',
         `Initiative ID: ${init.id}`,
         `Initiative 名称: ${init.name}`,
+        `拆解深度: ${init.depth}/${MAX_DECOMPOSITION_DEPTH}`,
         `所属 Project: ${init.parent_name || '(未知)'} (${init.parent_id || 'N/A'})`,
         `Repo: ${init.repo_path || '(无)'}`,
+        init.parent_deadline ? `Project 截止日期: ${init.parent_deadline}` : '',
+        init.parent_time_budget ? `Project 时间预算: ${init.parent_time_budget} 天` : '',
         init.plan_content ? `Plan:\n${init.plan_content}` : '',
       ].filter(Boolean).join('\n'),
       goalId: krId,
       projectId: init.id,
-      payload: { level: 'initiative', initiative_id: init.id }
+      payload: { level: 'initiative', initiative_id: init.id, depth: init.depth, at_max_depth: atMaxDepth }
     });
 
     console.log(`[decomp-checker] Created Initiative decomposition: ${init.name}`);
@@ -835,6 +892,10 @@ async function checkExploratoryDecompositionContinue() {
 
   for (const expTask of result.rows) {
     const findings = expTask.payload?.findings || expTask.payload?.result || '';
+
+    if (!findings) {
+      console.warn(`[decomp-checker] Exploratory task ${expTask.id} ("${expTask.title}") has empty findings - context will be missing for follow-up tasks. Check execution-callback findings storage.`);
+    }
 
     const task = await createDecompositionTask({
       title: `探索续拆: ${expTask.title}`,
@@ -900,64 +961,157 @@ async function runDecompositionChecks() {
       return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
     }
 
+    // ── OKR Structure Validation Gate (L0) ──
+    // Run full validation once per cycle, collect BLOCK entity IDs
+    try {
+      const validation = await validateOkrStructure(pool, { scope: 'full' });
+      _blockedEntityIds = new Set();
+      for (const issue of validation.issues) {
+        if (issue.level === 'BLOCK' && issue.entityId) {
+          _blockedEntityIds.add(issue.entityId);
+        }
+      }
+      if (_blockedEntityIds.size > 0) {
+        console.log(`[decomp-checker] OKR validation: ${_blockedEntityIds.size} entities blocked`);
+      }
+    } catch (err) {
+      console.warn('[decomp-checker] OKR validation failed (non-fatal):', err.message);
+      _blockedEntityIds = new Set(); // clear on error, don't block anything
+    }
+
+    // ── Capacity Gate: 查各层 active 数量，计算是否还能拆解 ──
+    const DEFAULT_SLOTS = 9;
+    const cap = computeCapacity(DEFAULT_SLOTS);
+
+    const projectActiveResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM projects WHERE type = 'project' AND status = 'active'"
+    );
+    const projectActiveCount = parseInt(projectActiveResult.rows[0].cnt, 10);
+    const projectAtCap = isAtCapacity(projectActiveCount, cap.project.max);
+
+    const initiativeActiveResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM projects WHERE type = 'initiative' AND status IN ('active', 'in_progress')"
+    );
+    const initiativeActiveCount = parseInt(initiativeActiveResult.rows[0].cnt, 10);
+    const initiativeAtCap = isAtCapacity(initiativeActiveCount, cap.initiative.max);
+
+    const taskQueuedResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'queued'"
+    );
+    const taskQueuedCount = parseInt(taskQueuedResult.rows[0].cnt, 10);
+    const taskAtCap = isAtCapacity(taskQueuedCount, cap.task.queuedCap);
+
+    if (projectAtCap || initiativeAtCap || taskAtCap) {
+      console.log(`[decomp-checker] Capacity gate: projects=${projectActiveCount}/${cap.project.max} initiatives=${initiativeActiveCount}/${cap.initiative.max} tasks_queued=${taskQueuedCount}/${cap.task.queuedCap}`);
+    }
+
+    // Check 1-4: OKR hierarchy gaps（只在 project 层未满时运行）
+    if (!projectAtCap) {
+      try {
+        const c1 = await checkGlobalOkrDecomposition();
+        allActions.push(...c1);
+      } catch (err) { console.error('[decomp-checker] Check 1 failed:', err.message); }
+
+      try {
+        const c2 = await checkGlobalKrDecomposition();
+        allActions.push(...c2);
+      } catch (err) { console.error('[decomp-checker] Check 2 failed:', err.message); }
+
+      try {
+        const c3 = await checkAreaOkrDecomposition();
+        allActions.push(...c3);
+      } catch (err) { console.error('[decomp-checker] Check 3 failed:', err.message); }
+
+      try {
+        const c4 = await checkAreaKrProjectLink();
+        allActions.push(...c4);
+      } catch (err) { console.error('[decomp-checker] Check 4 failed:', err.message); }
+    } else {
+      console.log(`[decomp-checker] Skipping checks 1-4: projects at capacity (${projectActiveCount}/${cap.project.max})`);
+      allActions.push({ action: 'skip_capacity', check: 'checks_1_4', reason: 'project_at_capacity', active: projectActiveCount, max: cap.project.max });
+    }
+
+    // Check 5: Project → Initiative（只在 initiative 层未满时运行）
+    if (!initiativeAtCap) {
+      try {
+        const c5 = await checkProjectDecomposition();
+        allActions.push(...c5);
+      } catch (err) { console.error('[decomp-checker] Check 5 failed:', err.message); }
+    } else {
+      console.log(`[decomp-checker] Skipping check 5: initiatives at capacity (${initiativeActiveCount}/${cap.initiative.max})`);
+      allActions.push({ action: 'skip_capacity', check: 'check_5', reason: 'initiative_at_capacity', active: initiativeActiveCount, max: cap.initiative.max });
+    }
+
     // 1. Get active execution paths (initiatives with recent activity)
     const activePaths = await getActiveExecutionPaths();
 
     console.log(`[decomp-checker] Found ${activePaths.length} active execution paths`);
 
-    // 2. Check inventory for each active path
-    for (const path of activePaths) {
-      try {
-        const task = await ensureTaskInventory(path);
+    // 2. Check inventory for each active path（只在 task 层未满时运行）
+    if (!taskAtCap) {
+      for (const path of activePaths) {
+        try {
+          const task = await ensureTaskInventory(path);
 
-        if (task) {
+          if (task) {
+            allActions.push({
+              action: 'create_decomposition',
+              check: 'inventory_replenishment',
+              task_id: task.id,
+              initiative_id: path.id,
+              initiative_name: path.name,
+            });
+          } else {
+            allActions.push({
+              action: 'skip_inventory',
+              check: 'inventory_replenishment',
+              initiative_id: path.id,
+              initiative_name: path.name,
+              reason: 'inventory_sufficient_or_wip_limit',
+            });
+          }
+        } catch (err) {
+          console.error(`[decomp-checker] Inventory check failed for ${path.name}:`, err.message);
           allActions.push({
-            action: 'create_decomposition',
+            action: 'error',
             check: 'inventory_replenishment',
-            task_id: task.id,
             initiative_id: path.id,
             initiative_name: path.name,
-          });
-        } else {
-          allActions.push({
-            action: 'skip_inventory',
-            check: 'inventory_replenishment',
-            initiative_id: path.id,
-            initiative_name: path.name,
-            reason: 'inventory_sufficient_or_wip_limit',
+            error: err.message,
           });
         }
+      }
+    } else {
+      console.log(`[decomp-checker] Skipping inventory replenishment: tasks at capacity (${taskQueuedCount}/${cap.task.queuedCap})`);
+      allActions.push({ action: 'skip_capacity', check: 'inventory', reason: 'task_at_capacity', queued: taskQueuedCount, max: cap.task.queuedCap });
+    }
+
+    // 3. Check 6: Seed empty initiatives（只在 task 层未满时运行）
+    if (!taskAtCap && !initiativeAtCap) {
+      try {
+        const initiativeActions = await checkInitiativeDecomposition();
+        allActions.push(...initiativeActions);
+        const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
+        if (initiativeSeeded > 0) {
+          console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+        }
       } catch (err) {
-        console.error(`[decomp-checker] Inventory check failed for ${path.name}:`, err.message);
-        allActions.push({
-          action: 'error',
-          check: 'inventory_replenishment',
-          initiative_id: path.id,
-          initiative_name: path.name,
-          error: err.message,
-        });
+        console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
       }
+    } else {
+      allActions.push({ action: 'skip_capacity', check: 'check_6', reason: 'task_or_initiative_at_capacity' });
     }
 
-    // 3. Check 6: Seed empty initiatives (run independently of execution paths)
-    // Finds active initiatives with no tasks and creates decomposition seed tasks
-    try {
-      const initiativeActions = await checkInitiativeDecomposition();
-      allActions.push(...initiativeActions);
-      const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
-      if (initiativeSeeded > 0) {
-        console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+    // 4. Check 7: Exploratory continuation（只在 task 层未满时运行）
+    if (!taskAtCap) {
+      try {
+        const exploratoryActions = await checkExploratoryDecompositionContinue();
+        allActions.push(...exploratoryActions);
+      } catch (err) {
+        console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
       }
-    } catch (err) {
-      console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
-    }
-
-    // 4. Check 7: Exploratory continuation (run independently of execution paths)
-    try {
-      const exploratoryActions = await checkExploratoryDecompositionContinue();
-      allActions.push(...exploratoryActions);
-    } catch (err) {
-      console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
+    } else {
+      allActions.push({ action: 'skip_capacity', check: 'check_7', reason: 'task_at_capacity' });
     }
 
     // 5. Summary
@@ -996,6 +1150,11 @@ async function runDecompositionChecks() {
   }
 }
 
+// Reset blocked entity IDs (testing only)
+function _resetBlockedEntityIds() {
+  _blockedEntityIds = new Set();
+}
+
 export {
   runDecompositionChecks,
   checkGlobalOkrDecomposition,
@@ -1014,7 +1173,9 @@ export {
   hasExistingDecompositionTaskByProject,
   hasActiveDecompositionTaskByProject,
   createDecompositionTask,
+  _resetBlockedEntityIds,
   DEDUP_WINDOW_HOURS,
   INVENTORY_CONFIG,
   WIP_LIMITS,
+  MAX_DECOMPOSITION_DEPTH,
 };

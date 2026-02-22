@@ -362,6 +362,7 @@ class SimilarityService {
     const tasksQuery = `
       SELECT
         t.id, t.title, t.description, t.status, t.metadata, t.project_id,
+        t.created_at,
         1 - (t.embedding <=> $1::vector) AS vector_score
       FROM tasks t
       WHERE ${whereClause}
@@ -384,6 +385,7 @@ class SimilarityService {
         description: task.description || '',
         status: task.status,
         score: task.vector_score,
+        created_at: task.created_at || null,
         metadata: {
           repo: parsedMetadata.repo || null,
           pr_number: parsedMetadata.pr_number || null,

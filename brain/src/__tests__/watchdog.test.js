@@ -10,6 +10,8 @@ import {
   getWatchdogStatus,
   cleanupMetrics,
   resolveTaskPids,
+  scanInteractiveClaude,
+  checkIdleSessions,
   RSS_KILL_MB,
   RSS_WARN_MB,
   CPU_SUSTAINED_PCT,
@@ -17,7 +19,11 @@ import {
   STARTUP_GRACE_SEC,
   TOTAL_MEM_MB,
   PAGE_SIZE,
+  IDLE_KILL_HOURS,
+  IDLE_KILL_MS,
+  IDLE_CPU_PCT_THRESHOLD,
   _taskMetrics,
+  _idleMetrics,
 } from '../watchdog.js';
 
 // Mock fs functions
@@ -371,6 +377,242 @@ describe('watchdog', () => {
 
     it('should not error on non-existent task', () => {
       expect(() => cleanupMetrics('non-existent')).not.toThrow();
+    });
+  });
+
+  describe('idle session constants', () => {
+    it('should have IDLE_KILL_HOURS default of 2', () => {
+      expect(IDLE_KILL_HOURS).toBe(2);
+    });
+
+    it('should have IDLE_KILL_MS equal to 2 hours in ms', () => {
+      expect(IDLE_KILL_MS).toBe(2 * 60 * 60 * 1000);
+    });
+
+    it('should have IDLE_CPU_PCT_THRESHOLD of 1', () => {
+      expect(IDLE_CPU_PCT_THRESHOLD).toBe(1);
+    });
+  });
+
+  describe('scanInteractiveClaude', () => {
+    it('should return empty array when /proc is not accessible', () => {
+      readdirSync.mockImplementation(() => { throw new Error('ENOENT'); });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toEqual([]);
+    });
+
+    it('should skip non-numeric /proc entries', () => {
+      readdirSync.mockReturnValue([
+        { name: 'net', isDirectory: () => true },
+        { name: 'sys', isDirectory: () => true },
+        { name: 'self', isDirectory: () => false },
+      ]);
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toEqual([]);
+    });
+
+    it('should detect bare `claude` process', () => {
+      readdirSync.mockReturnValue([
+        { name: '12345', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/12345/cmdline') return 'claude\0';
+        throw new Error('unexpected');
+      });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toHaveLength(1);
+      expect(result[0].pid).toBe(12345);
+    });
+
+    it('should detect claude with full path', () => {
+      readdirSync.mockReturnValue([
+        { name: '11111', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/11111/cmdline') return '/usr/local/bin/claude\0';
+        throw new Error('unexpected');
+      });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toHaveLength(1);
+      expect(result[0].pid).toBe(11111);
+    });
+
+    it('should exclude `claude -p ...` background tasks', () => {
+      readdirSync.mockReturnValue([
+        { name: '22222', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/22222/cmdline') return 'claude\0-p\0/skill dev\0';
+        throw new Error('unexpected');
+      });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toHaveLength(0);
+    });
+
+    it('should exclude PIDs in managedPids set', () => {
+      readdirSync.mockReturnValue([
+        { name: '33333', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/33333/cmdline') return 'claude\0';
+        throw new Error('unexpected');
+      });
+      const managed = new Set([33333]);
+      const result = scanInteractiveClaude(managed);
+      expect(result).toHaveLength(0);
+    });
+
+    it('should exclude processes where cmdline is not claude', () => {
+      readdirSync.mockReturnValue([
+        { name: '44444', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/44444/cmdline') return 'node\0server.js\0';
+        throw new Error('unexpected');
+      });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toHaveLength(0);
+    });
+
+    it('should skip PIDs whose cmdline disappeared (process exited)', () => {
+      readdirSync.mockReturnValue([
+        { name: '55555', isDirectory: () => true },
+      ]);
+      readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+      const result = scanInteractiveClaude(new Set());
+      expect(result).toHaveLength(0);
+    });
+  });
+
+  describe('checkIdleSessions', () => {
+    beforeEach(() => {
+      _idleMetrics.clear();
+      // Default: no Brain-managed slots
+      readdirSync.mockReturnValue([]);
+    });
+
+    function mockInteractivePid(pid, cmdline, cpuTicks, rssMb) {
+      existsSync.mockReturnValue(true);
+      readFileSync.mockImplementation((path) => {
+        if (path === `/proc/${pid}/cmdline`) return cmdline;
+        if (path.includes(`/proc/${pid}/statm`)) {
+          const pages = Math.round((rssMb * 1024 * 1024) / PAGE_SIZE);
+          return `${pages} ${pages} 0 0 0 0 0`;
+        }
+        if (path.includes(`/proc/${pid}/stat`)) {
+          return `${pid} (claude) S 1 ${pid} ${pid} 0 -1 0 0 0 0 0 ${cpuTicks} 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0`;
+        }
+        throw new Error(`unexpected: ${path}`);
+      });
+    }
+
+    it('should return empty actions on first call (grace period)', () => {
+      // /proc has one interactive claude
+      readdirSync.mockImplementation((path) => {
+        if (path === '/proc') return [{ name: '99001', isDirectory: () => true }];
+        return [];
+      });
+      mockInteractivePid(99001, 'claude\0', 0, 100);
+
+      const result = checkIdleSessions();
+      // First sight — lastHighCpuTs = now, not yet idle
+      expect(result.actions).toHaveLength(0);
+      expect(_idleMetrics.has(99001)).toBe(true);
+    });
+
+    it('should not kill when CPU is active (>= threshold)', () => {
+      readdirSync.mockImplementation((path) => {
+        if (path === '/proc') return [{ name: '99002', isDirectory: () => true }];
+        return [];
+      });
+      // Simulate high CPU by giving large tick delta on second call
+      let callCount = 0;
+      existsSync.mockReturnValue(true);
+      readFileSync.mockImplementation((path) => {
+        if (path === '/proc/99002/cmdline') return 'claude\0';
+        if (path.includes('/proc/99002/statm')) return '1000 1000 0 0 0 0 0';
+        if (path.includes('/proc/99002/stat')) {
+          callCount++;
+          const ticks = callCount * 500; // 100% CPU each 5s interval
+          return `99002 (claude) S 1 99002 99002 0 -1 0 0 0 0 0 ${ticks} 0 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0`;
+        }
+        throw new Error(`unexpected: ${path}`);
+      });
+
+      checkIdleSessions(); // first call — initializes
+      checkIdleSessions(); // second call — CPU high, updates lastHighCpuTs
+
+      const state = _idleMetrics.get(99002);
+      expect(state).toBeDefined();
+      // lastHighCpuTs should have been updated (CPU was >= threshold)
+      const result = checkIdleSessions();
+      expect(result.actions).toHaveLength(0);
+    });
+
+    it('should kill when idle time exceeds IDLE_KILL_MS', () => {
+      readdirSync.mockImplementation((path) => {
+        if (path === '/proc') return [{ name: '99003', isDirectory: () => true }];
+        return [];
+      });
+      mockInteractivePid(99003, 'claude\0', 0, 50); // CPU ticks = 0 always
+
+      // Initialize
+      checkIdleSessions();
+
+      // Manually backdate lastHighCpuTs to simulate 2h+ ago
+      const state = _idleMetrics.get(99003);
+      expect(state).toBeDefined();
+      state.lastHighCpuTs = Date.now() - IDLE_KILL_MS - 1000;
+
+      const result = checkIdleSessions();
+      expect(result.actions).toHaveLength(1);
+      expect(result.actions[0].pid).toBe(99003);
+      expect(result.actions[0].action).toBe('kill');
+      expect(result.actions[0].reason).toContain('Idle interactive session');
+    });
+
+    it('should prune _idleMetrics for PIDs that stopped running', () => {
+      // First call: PID 99004 is running
+      readdirSync.mockImplementation((path) => {
+        if (path === '/proc') return [{ name: '99004', isDirectory: () => true }];
+        return [];
+      });
+      mockInteractivePid(99004, 'claude\0', 0, 50);
+      checkIdleSessions();
+      expect(_idleMetrics.has(99004)).toBe(true);
+
+      // Second call: PID 99004 has exited (not in /proc anymore)
+      readdirSync.mockImplementation((path) => {
+        if (path === '/proc') return [];
+        return [];
+      });
+      checkIdleSessions();
+      expect(_idleMetrics.has(99004)).toBe(false);
+    });
+
+    it('should exclude Brain-managed PIDs from idle check', () => {
+      // Brain has a slot with PID 99005
+      readdirSync.mockImplementation((path) => {
+        if (path === '/tmp/cecelia-locks') {
+          return [{ name: 'slot-1', isDirectory: () => true }];
+        }
+        if (path === '/proc') {
+          return [{ name: '99005', isDirectory: () => true }];
+        }
+        return [];
+      });
+      existsSync.mockReturnValue(true);
+      readFileSync.mockImplementation((path) => {
+        if (path.includes('slot-1/info.json')) {
+          return JSON.stringify({ task_id: 'task-brain', pid: 99005, child_pid: 99005, pgid: 99005, started: new Date().toISOString() });
+        }
+        if (path === '/proc/99005/cmdline') return 'claude\0-p\0/dev\0';
+        throw new Error(`unexpected: ${path}`);
+      });
+
+      checkIdleSessions();
+      // 99005 is managed by Brain (in managedPids), should not be in _idleMetrics
+      expect(_idleMetrics.has(99005)).toBe(false);
     });
   });
 });

@@ -11,6 +11,8 @@
 
 /* global console */
 import pool from './db.js';
+import { generateEmbedding } from './openai-client.js';
+import { generateLearningEmbeddingAsync } from './embedding-service.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -63,8 +65,14 @@ export async function recordLearning(analysis) {
       JSON.stringify({ task_id, confidence: analysis.confidence }),
     ]);
 
-    console.log(`[learning] Recorded learning: ${result.rows[0].id}`);
-    return result.rows[0];
+    const learning = result.rows[0];
+    console.log(`[learning] Recorded learning: ${learning.id}`);
+
+    // Fire-and-forget: 异步生成 embedding
+    const embeddingText = `${title}\n\n${content}`.substring(0, 4000);
+    generateLearningEmbeddingAsync(learning.id, embeddingText);
+
+    return learning;
   } catch (err) {
     console.error(`[learning] Failed to record learning: ${err.message}`);
     throw err;
@@ -172,73 +180,125 @@ export async function applyStrategyAdjustments(adjustments, learningId) {
  */
 export async function searchRelevantLearnings(context = {}, limit = 10) {
   try {
-    // Fetch all learnings (we'll score them in memory)
-    const result = await pool.query(`
-      SELECT id, title, category, trigger_event, content, strategy_adjustments, applied, created_at, metadata
-      FROM learnings
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
+    // Build query text from context
+    const queryText = [context.task_type, context.failure_class, context.event_type, context.description]
+      .filter(Boolean).join(' ');
 
-    if (result.rows.length === 0) {
-      return [];
+    // Check if vector search is available
+    let useVectorSearch = false;
+    if (queryText && process.env.OPENAI_API_KEY) {
+      try {
+        const countResult = await pool.query(
+          `SELECT COUNT(*) FROM learnings WHERE embedding IS NOT NULL`
+        );
+        useVectorSearch = parseInt(countResult.rows[0].count) > 0;
+      } catch (_err) {
+        // embedding column may not exist yet, fallback to keyword
+      }
     }
 
-    // Score each learning based on relevance
-    const scoredLearnings = result.rows.map(learning => {
-      let score = 0;
+    let results;
+    if (useVectorSearch) {
+      results = await vectorSearchLearnings(queryText, limit * 2, context);
+    } else {
+      results = await keywordSearchLearnings(context, limit);
+    }
 
-      // Parse metadata and content for matching
-      const metadata = learning.metadata || {};
-      const content = learning.content || '';
-      const contentLower = content.toLowerCase();
-
-      // 1. Task type exact match (weight: 10)
-      if (context.task_type && metadata.task_type === context.task_type) {
-        score += 10;
-      }
-
-      // 2. Failure class match in content (weight: 8)
-      if (context.failure_class) {
-        const failureClassLower = context.failure_class.toLowerCase();
-        if (contentLower.includes(failureClassLower)) {
-          score += 8;
-        }
-      }
-
-      // 3. Event type match (weight: 6)
-      if (context.event_type && learning.trigger_event === context.event_type) {
-        score += 6;
-      }
-
-      // 4. Category match (weight: 4)
-      if (learning.category === 'failure_pattern') {
-        score += 4;
-      }
-
-      // 5. Freshness (weight: 1-3)
-      const ageInDays = (Date.now() - new Date(learning.created_at).getTime()) / (1000 * 60 * 60 * 24);
-      if (ageInDays <= 7) {
-        score += 3; // Within 7 days
-      } else if (ageInDays <= 30) {
-        score += 2; // Within 30 days
-      } else {
-        score += 1; // Older than 30 days
-      }
-
-      return { ...learning, relevance_score: score };
-    });
-
-    // Sort by relevance score (descending)
-    scoredLearnings.sort((a, b) => b.relevance_score - a.relevance_score);
-
-    // Return top N results
-    return scoredLearnings.slice(0, limit);
+    // Sort by score and return top N
+    results.sort((a, b) => b.relevance_score - a.relevance_score);
+    return results.slice(0, limit);
   } catch (err) {
     console.error(`[learning] Failed to search relevant learnings: ${err.message}`);
     // Fallback to getRecentLearnings
     return getRecentLearnings(null, limit);
   }
+}
+
+/**
+ * Vector search for learnings using pgvector
+ * @param {string} queryText - Query text
+ * @param {number} limit - Maximum results
+ * @param {Object} context - Search context for keyword boost
+ * @returns {Promise<Array>} Scored learning records
+ */
+async function vectorSearchLearnings(queryText, limit, context = {}) {
+  const queryEmbedding = await generateEmbedding(queryText);
+  const embStr = `[${queryEmbedding.join(',')}]`;
+
+  const result = await pool.query(`
+    SELECT id, title, category, trigger_event, content, strategy_adjustments,
+           applied, created_at, metadata,
+           1 - (embedding <=> $1::vector) AS vector_score
+    FROM learnings
+    WHERE embedding IS NOT NULL
+    ORDER BY embedding <=> $1::vector
+    LIMIT $2
+  `, [embStr, limit]);
+
+  return result.rows.map(learning => {
+    const vectorScore = learning.vector_score || 0;
+    const boost = keywordBoost(learning, context);
+    return {
+      ...learning,
+      relevance_score: (vectorScore * 30) + boost,  // Scale to match keyword scoring range (~30 max)
+    };
+  });
+}
+
+/**
+ * Keyword-based search for learnings (fallback)
+ * @param {Object} context - Search context
+ * @param {number} limit - Maximum results
+ * @returns {Promise<Array>} Scored learning records
+ */
+async function keywordSearchLearnings(context, limit) {
+  const result = await pool.query(`
+    SELECT id, title, category, trigger_event, content, strategy_adjustments, applied, created_at, metadata
+    FROM learnings
+    ORDER BY created_at DESC
+    LIMIT 100
+  `);
+
+  return result.rows.map(learning => {
+    let score = 0;
+    const metadata = learning.metadata || {};
+    const content = learning.content || '';
+    const contentLower = content.toLowerCase();
+
+    if (context.task_type && metadata.task_type === context.task_type) score += 10;
+    if (context.failure_class) {
+      if (contentLower.includes(context.failure_class.toLowerCase())) score += 8;
+    }
+    if (context.event_type && learning.trigger_event === context.event_type) score += 6;
+    if (learning.category === 'failure_pattern') score += 4;
+
+    const ageInDays = (Date.now() - new Date(learning.created_at).getTime()) / 86400000;
+    if (ageInDays <= 7) score += 3;
+    else if (ageInDays <= 30) score += 2;
+    else score += 1;
+
+    return { ...learning, relevance_score: score };
+  }).slice(0, limit);
+}
+
+/**
+ * Calculate keyword boost for a learning record
+ * @param {Object} learning - Learning record
+ * @param {Object} context - Search context
+ * @returns {number} Boost score
+ */
+function keywordBoost(learning, context = {}) {
+  let boost = 0;
+  const metadata = learning.metadata || {};
+  const content = learning.content || '';
+  const contentLower = content.toLowerCase();
+
+  if (context.task_type && metadata.task_type === context.task_type) boost += 5;
+  if (context.failure_class && contentLower.includes(context.failure_class.toLowerCase())) boost += 4;
+  if (context.event_type && learning.trigger_event === context.event_type) boost += 3;
+  if (learning.category === 'failure_pattern') boost += 2;
+
+  return boost;
 }
 
 /**
@@ -494,4 +554,7 @@ export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
 
 export {
   ADJUSTABLE_PARAMS,
+  vectorSearchLearnings as _vectorSearchLearnings,
+  keywordSearchLearnings as _keywordSearchLearnings,
+  keywordBoost as _keywordBoost,
 };

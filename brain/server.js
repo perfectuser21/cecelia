@@ -10,6 +10,9 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
+import { loadActiveProfile } from './src/model-profile.js';
+import { WebSocketServer } from 'ws';
+import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 
 const app = express();
 const server = createServer(app);
@@ -95,12 +98,34 @@ if (!selfCheckOk) {
   process.exit(1);
 }
 
+// Load active model profile
+try {
+  await loadActiveProfile(pool);
+  console.log('[Server] Model profile loaded');
+} catch (err) {
+  console.warn('[Server] Failed to load model profile, using fallback:', err.message);
+}
+
+// Realtime WebSocket server (noServer mode, manually handle upgrade)
+const realtimeWss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  const url = req.url || '';
+  if (url.startsWith('/api/brain/orchestrator/realtime/ws')) {
+    realtimeWss.handleUpgrade(req, socket, head, (ws) => {
+      handleRealtimeWebSocket(ws, req);
+    });
+  }
+  // /ws path handled by initWebSocketServer's own WSS
+});
+
 server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
 
   // Initialize WebSocket server
   initWebSocketServer(server);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+  console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();

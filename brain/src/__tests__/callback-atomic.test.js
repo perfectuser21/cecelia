@@ -246,9 +246,9 @@ describe('execution-callback atomicity', () => {
     const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
     expect(updateCall).toBeDefined();
 
-    // Should have 6 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted]
+    // Should have 7 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue]
     const params = updateCall[1];
-    expect(params).toHaveLength(6);
+    expect(params).toHaveLength(7);
 
     // $6 (isCompleted) must be a boolean true for 'AI Done'
     expect(typeof params[5]).toBe('boolean');
@@ -274,9 +274,127 @@ describe('execution-callback atomicity', () => {
     expect(updateCall).toBeDefined();
 
     const params = updateCall[1];
-    expect(params).toHaveLength(6);
+    expect(params).toHaveLength(7);
     // $6 must be false for failed tasks
     expect(params[5]).toBe(false);
     expect(params[1]).toBe('failed');
+  });
+});
+
+describe('execution-callback findings storage (D1/D2/D3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+  });
+
+  function getUpdateParams() {
+    const calls = mockClient.query.mock.calls;
+    const call = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    return call ? call[1] : null;
+  }
+
+  it('D1: stores result.findings as $7 when result has findings field', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-findings-1',
+      run_id: 'run-findings-1',
+      status: 'AI Done',
+      result: { findings: 'These are the research findings about X' },
+    });
+
+    const params = getUpdateParams();
+    expect(params).not.toBeNull();
+    // $7 (findingsValue) should be the findings string
+    expect(params[6]).toBe('These are the research findings about X');
+  });
+
+  it('D1: stores result.result as $7 when result has result field but no findings', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-findings-2',
+      run_id: 'run-findings-2',
+      status: 'AI Done',
+      result: { result: 'Research conclusion text' },
+    });
+
+    const params = getUpdateParams();
+    expect(params).not.toBeNull();
+    expect(params[6]).toBe('Research conclusion text');
+  });
+
+  it('D1: stores string result directly as $7', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-findings-3',
+      run_id: 'run-findings-3',
+      status: 'AI Done',
+      result: 'Direct string result from task',
+    });
+
+    const params = getUpdateParams();
+    expect(params).not.toBeNull();
+    expect(params[6]).toBe('Direct string result from task');
+  });
+
+  it('D1: $7 is null when result is null/empty', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-findings-null',
+      run_id: 'run-findings-null',
+      status: 'AI Done',
+      result: null,
+    });
+
+    const params = getUpdateParams();
+    expect(params).not.toBeNull();
+    // $7 should be null when no findings
+    expect(params[6]).toBeNull();
+  });
+
+  it('D2: logs WARN when completed task has empty findings', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-no-findings',
+      run_id: 'run-no-findings',
+      status: 'AI Done',
+      result: null,
+    });
+
+    const warnCalls = warnSpy.mock.calls.flat().join(' ');
+    expect(warnCalls).toContain('empty findings');
+    expect(warnCalls).toContain('task-no-findings');
+    warnSpy.mockRestore();
+  });
+
+  it('D2: does NOT warn when failed task has empty findings (only completed tasks)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-failed-no-findings',
+      run_id: 'run-failed',
+      status: 'AI Failed',
+      result: null,
+    });
+
+    const warnCalls = warnSpy.mock.calls.flat().join(' ');
+    // Failed tasks should not warn about empty findings
+    expect(warnCalls).not.toContain('empty findings');
+    warnSpy.mockRestore();
+  });
+
+  it('D3: SQL includes CASE WHEN for findings field in payload', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-sql-findings',
+      run_id: 'run-sql-findings',
+      status: 'AI Done',
+      result: { findings: 'test finding' },
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    // SQL must include findings merge logic
+    expect(updateCall[0]).toContain('findings');
+    expect(updateCall[0]).toContain('CASE WHEN');
+    expect(updateCall[0]).toContain('jsonb_build_object');
   });
 });

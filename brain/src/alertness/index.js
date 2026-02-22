@@ -92,6 +92,14 @@ export async function evaluateAlertness() {
 
     if (canTransition && targetLevel !== currentState.level) {
       await transitionToLevel(targetLevel, diagnosis.summary || 'Health score based transition');
+    } else if (!canTransition && targetLevel < currentState.level) {
+      // 渐进式恢复：目标被跳级规则 block 时，自动降一级
+      // 例：ALERT(3)→CALM(1) 被 block → 改为 ALERT(3)→AWARE(2)
+      const stepTarget = currentState.level - 1;
+      if (checkTransitionRules(currentState.level, stepTarget)) {
+        const stepReason = `Step recovery: ${diagnosis.summary || 'Health improved'}`;
+        await transitionToLevel(stepTarget, stepReason);
+      }
     }
 
     // 5. 执行响应动作

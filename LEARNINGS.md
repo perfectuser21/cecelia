@@ -4,6 +4,140 @@
 
 ---
 
+### [2026-02-22] Time-Aware Decomposition — Prompt 升级 (v1.66.0)
+
+**变更**：
+1. `executor.js`：新增 `buildTimeContext(krId)` 异步函数，查询 KR 剩余天数 + 已有 Project 进度，注入 OKR 拆解 prompt
+2. `executor.js`：`preparePrompt(task)` 从同步改为 **async** 函数
+3. `decomposition-checker.js`：Check 5/6 描述中注入 `time_budget_days` 和 `deadline` 上下文
+4. `okr-validation-spec.yml`：新增 `recommended_fields`（sequence_order / time_budget_days，WARNING 级别）
+
+**经验**：
+- **sync→async 是 Breaking Change**：`preparePrompt` 从同步改为异步后，所有调用方和测试都必须加 `await`。CI 暴露了 3 个未更新的旧测试文件（executor-skill-override / executor-okr-project-layer / exploratory-prompt）。**教训**：改函数签名时，全仓搜索所有调用点，不能只改直接修改的文件。
+- **buildTimeContext 容错设计**：try-catch 包裹整个函数，失败时 console.error + 返回空字符串，不阻塞 prompt 生成。这保证了 DB 连接失败时不影响任务派发。
+- **pool.query mock 陷阱**：旧测试 mock `db.js` 的 `query` 为 `vi.fn()`（无返回值），`buildTimeContext` 内部调用 `pool.query().rows` 会 throw。设计时用 try-catch 兜底是关键。
+- **合并冲突处理**：develop 上有 v1.65.1 hotfix，PR 分支是 v1.66.0。解决方法：保留更高版本号（1.66.0），在 .brain-versions / DEFINITION.md / package.json 中统一。
+
+---
+
+### [2026-02-22] 渐进验证循环 — Progress Reviewer (v1.65.0)
+
+**变更**：
+1. 新增 `progress-reviewer.js`：4 个核心函数（reviewProjectCompletion / shouldAdjustPlan / createPlanAdjustmentTask / executePlanAdjustment）
+2. `initiative-closer.js`：`checkProjectCompletion()` 闭环后自动触发 `shouldAdjustPlan` 审查
+3. `routes.js`：decomp_review 完成时处理 `plan_adjustment` 闭环
+
+**经验**：
+- **时间边界条件注意 strict inequality**：`underBudget` 判断用 `timeRatio < 0.5`（strict less-than），`0.5` 不算 under budget。测试时容易误以为 `0.5` 应返回 `true`。
+- **复用 decomp_review 任务类型**：plan_adjustment 和 decomposition quality 审查共用 `decomp_review` task_type，通过 `payload.review_scope` 区分（`plan_adjustment` vs `decomposition_quality`），避免新增 task_type。
+- **executePlanAdjustment 的防御式设计**：`findings?.plan_adjustment` + `findings?.adjustments` 双重检查，adjustments 为空数组也跳过，每个 adjustment 检查 `project_id` 存在才执行。
+- **initiative-closer 中 try-catch 隔离审查失败**：审查逻辑失败不影响 Project 关闭结果（已关闭的不回滚），只 console.error 记录。
+
+---
+
+### [2026-02-22] OKR Validator 接入主链路 + CI (v1.61.0)
+
+**变更**：
+1. decomposition-checker.js: `runDecompositionChecks()` 开头调用 `validateOkrStructure(pool, { scope: 'full' })`，收集 BLOCK 实体 ID 到 `_blockedEntityIds` Set
+2. decomposition-checker.js: `createDecompositionTask()` 检查 goalId/projectId 是否在 blocked set → 跳过创建
+3. CI workflow: brain-test job 添加 OKR Structure Check 步骤（continue-on-error: true）
+4. 新增 decomp-okr-validation.test.js（9 个测试）
+
+**经验**：
+- **runDecompositionChecks 新增 async 调用会破坏所有使用 mockResolvedValueOnce 序列的测试**：`exploratory-continuation.test.js` 等测试按顺序 mock pool.query，新增 `validateOkrStructure` 调用会消耗队列中的 mock responses，导致后续 mock 顺序错乱。修复：在这些测试文件中添加 `vi.mock('../validate-okr-structure.js')`。
+- **容错设计模式**：validator 异常时 catch + clear blocked set（`_blockedEntityIds = new Set()`），确保不阻塞主流程。这是 PRD 中 "validator 异常时不阻止主流程" 的关键实现。
+- **Set 模式用于 O(1) 门控**：一次全量验证 → 收集 entityId → Set.has() 检查，比每次 createDecompositionTask 都 query DB 高效得多。
+
+---
+
+### [2026-02-22] OKR Validation Spec + Validator L0 (v1.60.0)
+
+**变更**：
+1. config/okr-validation-spec.yml: 统一验证规格（所有 OKR 实体的 required_fields/parent_rules/children_count/text_rules）
+2. brain/src/validate-okr-structure.js: 验证器模块（loadSpec + validateOkrStructure + detectCycles）
+3. scripts/devgate/check-okr-structure.mjs: CI 脚本
+4. 49 个测试覆盖 D1-D10
+
+**经验**：
+- **CI 环境的 PG\* 环境变量会干扰测试**：GitHub Actions 的 PostgreSQL service 容器设置了 PGHOST、PGDATABASE 等环境变量，`pg` 库会自动读取这些变量覆盖 DATABASE_URL。测试中需要清理 PG* 变量：`delete process.env.PGHOST` 等。
+- **exit code 用 toBeGreaterThan(0) 而非精确值**：不同环境下（有/无 DB 连接）退出码可能不同（1 vs 2），用范围断言更稳健。
+- **loadSpec 缓存策略**：默认路径（无参数）写缓存，自定义路径不写缓存。测试缓存行为时必须用默认路径调用两次。
+- **单表多态模式的验证**：goals 表 4 种 type、projects 表 2 种 type，spec 按 table + type 组织规则，validator 按 type 分别查询再逐条验证。
+- **DFS 环检测**：pr_plans.depends_on 是 uuid[] 数组，用三色标记法检测有向图环。
+
+---
+
+### [2026-02-22] Initiative 队列管理机制 (v1.57.0)
+
+**变更**：
+1. migration 047：将无活跃任务的 active initiative 改为 pending，重新激活最多 10 个
+2. initiative-closer.js：新增 `activateNextInitiatives(pool)`，`MAX_ACTIVE_INITIATIVES = 10`
+3. initiative-closer.js：`checkInitiativeCompletion()` 完成后自动触发激活
+4. tick.js：Section 0.10 每次 tick 触发激活检查
+5. selfcheck.test.js：硬编码版本号需要跟着 migration 版本一起更新
+
+**经验**：
+- **selfcheck.test.js 有硬编码版本号**：每次 migration 版本升级，必须同时更新 `selfcheck.test.js` 中的 `EXPECTED_SCHEMA_VERSION should be XXX` 测试，否则 CI 必定失败。教训：本次 CI 第一次失败就是这个原因。
+- **修改已有函数返回结构时，记得更新相关测试的 mock pool**：`checkInitiativeCompletion()` 增加了 `activatedCount` 后，会触发内部对 `activateNextInitiatives()` 的调用，mock pool 必须能处理新的查询（COUNT active、UPDATE active RETURNING），否则 mock 抛异常或返回 undefined。
+- **activateNextInitiatives 的 mock 复杂度**：内部有 3 种查询（COUNT active、UPDATE pending→active RETURNING、INSERT events），mock pool 必须分别识别。关键是通过 `s.includes("RETURNING id, name")` 区分"激活"的 UPDATE 和"关闭"的 UPDATE（后者不含 RETURNING）。
+- **MAX_ACTIVE_INITIATIVES = 10** 而非直接写数字，便于测试和未来调整。
+
+**避免踩坑**：
+- 每次 schema version 变更后立刻检查 `selfcheck.test.js` 是否有硬编码值需要更新
+- 新增导出函数时，同步更新 `export { ... }` 列表
+- 修改函数内部行为（如新增内部调用）时，检查所有现有测试的 mock pool 是否覆盖了新的 SQL 查询模式
+
+---
+
+### [2026-02-21] Project 闭环检查器 + CLAUDE.md 概念清理 (v1.55.0)
+
+**变更**：
+1. initiative-closer.js 新增 `checkProjectCompletion()` 函数（与 initiative 检查同文件）
+2. tick.js 新增 Section 0.9 调用 `checkProjectCompletion()`
+3. CLAUDE.md 全局文档清理 "Project = Repository" 错误概念
+
+**经验**：
+- Project 闭环和 Initiative 闭环逻辑相似，放同一个文件（initiative-closer.js）保持逻辑集中
+- `checkProjectCompletion` 的 SQL 只需一次查询（NOT EXISTS + AND EXISTS 子查询），不需要像 initiative 那样两次查询；initiative 需要知道任务统计细节，project 只需知道"是否有未完成的 initiative"
+- 测试 P3（空 project 不关闭）和 P4（已 completed 不重复）都通过 SQL 层面过滤，mock 返回空列表即可验证，不需要额外的业务逻辑
+- export 时需要把新函数加到 `export { checkInitiativeCompletion, checkProjectCompletion }`，否则 tick.js 动态 import 会报 undefined
+- 文档概念清理：旧文档中 "Project = Repository" 是历史遗留错误，正确层级是 KR → Project → Initiative → Task，Repository 只是代码存放地，不在 OKR 层级中
+
+**避免踩坑**：
+- 向 export 列表追加新函数时，确认 import 端（tick.js）也用了解构 `{ checkProjectCompletion }`
+- `- [ ]` 格式的验收清单是 branch-protect.sh Hook 的强制要求，DoD 文件必须包含
+
+---
+
+### [2026-02-21] Initiative 闭环检查器 (v1.54.0)
+
+**变更**：新增 initiative-closer.js + migration 045 + tick.js Section 0.8
+
+**经验**：
+- `projects` 表没有 `completed_at` 字段，需要先写 migration 再实现业务逻辑
+- `cecelia_events` 的字段是 `event_type` 不是 `type`，与其他系统命名不同，写代码前务必确认字段名
+- `selfcheck.test.js` 中有硬编码的 schema version 断言（`expect(EXPECTED_SCHEMA_VERSION).toBe('044')`），每次 schema version 升级都必须同步更新这个测试文件
+- tick.js Section 0.8 使用动态 import（`await import('./initiative-closer.js')`），与 Section 0.7 的 health-monitor 静态 import 方式不同；动态 import 更灵活，可以在测试中 mock
+- 测试用 mock pool 时，SQL 匹配用 `s.includes(...)` 判断，需要覆盖所有可能的 SQL 语句（包括 UPDATE 和 INSERT）
+
+**避免踩坑**：
+- 升级 EXPECTED_SCHEMA_VERSION 后，立即在本地跑 `npx vitest run src/__tests__/selfcheck.test.js` 验证
+
+---
+
+### [2026-02-21] 成本优化 — 丘脑 Haiku + 皮层 Sonnet (v1.52.11)
+
+**变更**：thalamus Sonnet→Haiku，cortex Opus→Sonnet
+
+**经验**：
+- 丘脑职责是结构化 JSON 路由（从白名单选 action），Haiku 完全胜任，不需要 Sonnet 的推理能力
+- 皮层做深度 RCA，Sonnet 足够，不必用 Opus
+- 总节省：丘脑 3x + 皮层 5x，丘脑影响最大（每 5 分钟高频调用，全天 288 次）
+- MODEL_PRICING 的 haiku key 要更新为新模型 ID（`claude-haiku-4-5-20251001`），价格 $1/$5 per 1M
+- `.brain-versions` 必须用 `jq -r .version brain/package.json > .brain-versions` 覆写，不能 append，否则 CI 版本同步检查失败
+
+---
+
 ### [2026-02-12] Immune System v1 - P0 实现
 
 **功能**：实现免疫系统 P0 阶段 - Registry + State Machine + Evaluations，包含 3 个新表（failure_signatures, absorption_policies, policy_evaluations）和 Monitor Loop 集成。

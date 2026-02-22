@@ -685,8 +685,8 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
     });
 
-    it('should have 28 total actions in whitelist', () => {
-      expect(Object.keys(ACTION_WHITELIST).length).toBe(28);
+    it('should have 34 total actions in whitelist', () => {
+      expect(Object.keys(ACTION_WHITELIST).length).toBe(34);
     });
 
     it('should include suggest_task_type action with dangerous=false', () => {
@@ -772,7 +772,7 @@ describe('thalamus', () => {
 
   describe('classifyLLMError', () => {
     it('should classify API errors', () => {
-      expect(classifyLLMError(new Error('Sonnet API error: 500'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('Opus API error: 500'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('ECONNREFUSED 127.0.0.1:443'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('rate limit exceeded'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('HTTP 429 Too Many Requests'))).toBe(LLM_ERROR_TYPE.API_ERROR);

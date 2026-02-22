@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
+import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
@@ -131,16 +132,69 @@ const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude pr
 const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
 const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
-// Max seats (total capacity including interactive reserve)
-// CECELIA_MAX_CONCURRENT is deprecated since v1.35.0 - use auto-calculated slot allocation
-const MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
-// Auto-dispatch thresholds: subtract interactive reserve from budget
-// so when auto-dispatch hits the ceiling, user still has room for headed sessions
-const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
-const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
-const LOAD_THRESHOLD = CPU_CORES * 0.95 - RESERVE_CPU;        // e.g. 7.6 - 1.0 = 6.6 (was 0.85=5.8, too tight for 5+ tasks)
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
-const SWAP_USED_MAX_PCT = 70;                     // Hard stop: swap > 70% (50% was too aggressive — modern Linux uses swap as cache)
+// ============================================================
+// Dual-Layer Capacity Model (v1.73.0)
+// ============================================================
+// Layer 1: PHYSICAL_CAPACITY — hardware ceiling (CPU + Memory)
+const PHYSICAL_CAPACITY = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
+
+// Layer 2: Budget Cap — user-controlled API spend limit (env or runtime API)
+const _envBudget = process.env.CECELIA_BUDGET_SLOTS
+  ? parseInt(process.env.CECELIA_BUDGET_SLOTS, 10)
+  : (process.env.CECELIA_MAX_SEATS ? parseInt(process.env.CECELIA_MAX_SEATS, 10) : null);
+let _budgetCap = (_envBudget && _envBudget > 0) ? _envBudget : null;
+
+function getEffectiveMaxSeats() {
+  if (_budgetCap && _budgetCap > 0) {
+    return Math.min(_budgetCap, PHYSICAL_CAPACITY);
+  }
+  return PHYSICAL_CAPACITY;
+}
+
+// MAX_SEATS: startup snapshot (backward compat for imports)
+const MAX_SEATS = getEffectiveMaxSeats();
+
+function getBudgetCap() {
+  return { budget: _budgetCap, physical: PHYSICAL_CAPACITY, effective: getEffectiveMaxSeats() };
+}
+
+function setBudgetCap(n) {
+  if (n === null || n === undefined) { _budgetCap = null; return getBudgetCap(); }
+  const val = parseInt(n, 10);
+  if (isNaN(val) || val < 1) throw new Error('Budget cap must be a positive integer');
+  _budgetCap = val;
+  return getBudgetCap();
+}
+
+// Auto-dispatch thresholds
+const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
+const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
+const SWAP_USED_MAX_PCT = 70;
+
+// ============================================================
+// CPU Sampler — real CPU% from /proc/stat (replaces load average)
+// ============================================================
+const CPU_THRESHOLD_PCT = 80;
+let _prevCpuTimes = null;
+
+function sampleCpuUsage() {
+  try {
+    const line = readFileSync('/proc/stat', 'utf-8').split('\n')[0];
+    const parts = line.split(/\s+/).slice(1).map(Number);
+    if (parts.length < 4) return null;
+    const idle = parts[3] + (parts[4] || 0);  // idle + iowait
+    const total = parts.reduce((a, b) => a + b, 0);
+    if (!_prevCpuTimes) { _prevCpuTimes = { idle, total }; return null; }
+    const diffIdle = idle - _prevCpuTimes.idle;
+    const diffTotal = total - _prevCpuTimes.total;
+    _prevCpuTimes = { idle, total };
+    if (diffTotal === 0) return 0;
+    return Math.round((1 - diffIdle / diffTotal) * 100);
+  } catch { return null; }
+}
+
+function _resetCpuSampler() { _prevCpuTimes = null; }
 
 /**
  * Resolve repo_path from a project, checking project_repos first, then parent chain.
@@ -180,6 +234,7 @@ async function resolveRepoPath(projectId) {
 function checkServerResources() {
   const loadAvg1 = os.loadavg()[0];
   const freeMem = Math.round(os.freemem() / 1024 / 1024);
+  const dynMaxSeats = getEffectiveMaxSeats();
 
   // Read swap from /proc/meminfo (Linux)
   let swapUsedPct = 0;
@@ -194,55 +249,116 @@ function checkServerResources() {
     // Not Linux or no /proc — skip swap check
   }
 
-  // Calculate resource pressure (0.0 = idle, 1.0 = at threshold)
-  const cpuPressure = loadAvg1 / LOAD_THRESHOLD;                      // e.g. 4.0/6.4 = 0.625
-  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));           // invert: more free = less pressure
-  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;               // e.g. 20/50 = 0.4
+  // CPU pressure from real CPU% (replaces load average)
+  const cpuPct = sampleCpuUsage();
+  const cpuPressure = cpuPct !== null ? cpuPct / CPU_THRESHOLD_PCT : 0;
+  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
   const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
 
   // Dynamic seat scaling based on highest pressure
-  //   pressure < 0.5  → full seats (MAX_SEATS)
-  //   pressure 0.5-0.7 → 2/3 of seats
-  //   pressure 0.7-0.9 → 1/3 of seats
-  //   pressure >= 0.9  → 1 seat (minimum)
-  //   pressure >= 1.0  → 0 (hard stop, ok=false)
-  let effectiveSlots = MAX_SEATS;
+  let effectiveSlots = dynMaxSeats;
   if (maxPressure >= 1.0) {
     effectiveSlots = 0;
   } else if (maxPressure >= 0.9) {
     effectiveSlots = 1;
   } else if (maxPressure >= 0.7) {
-    effectiveSlots = Math.max(Math.round(MAX_SEATS / 3), 1);
+    effectiveSlots = Math.max(Math.round(dynMaxSeats / 3), 1);
   } else if (maxPressure >= 0.5) {
-    effectiveSlots = Math.max(Math.round(MAX_SEATS * 2 / 3), 1);
+    effectiveSlots = Math.max(Math.round(dynMaxSeats * 2 / 3), 1);
   }
 
   const metrics = {
     load_avg_1m: loadAvg1,
-    load_threshold: LOAD_THRESHOLD,
+    cpu_usage_pct: cpuPct,
+    cpu_threshold_pct: CPU_THRESHOLD_PCT,
+    cpu_pressure: Math.round(cpuPressure * 100) / 100,
     free_mem_mb: freeMem,
     mem_min_mb: MEM_AVAILABLE_MIN_MB,
     swap_used_pct: swapUsedPct,
     swap_max_pct: SWAP_USED_MAX_PCT,
     cpu_cores: CPU_CORES,
     total_mem_mb: TOTAL_MEM_MB,
-    cpu_pressure: Math.round(cpuPressure * 100) / 100,
     mem_pressure: Math.round(memPressure * 100) / 100,
     swap_pressure: Math.round(swapPressure * 100) / 100,
     max_pressure: Math.round(maxPressure * 100) / 100,
-    max_seats: MAX_SEATS,
+    physical_capacity: PHYSICAL_CAPACITY,
+    budget_cap: _budgetCap,
+    max_seats: dynMaxSeats,
     effective_slots: effectiveSlots,
   };
 
   if (effectiveSlots === 0) {
     const reasons = [];
-    if (cpuPressure >= 1.0) reasons.push(`CPU load ${loadAvg1.toFixed(1)} > ${LOAD_THRESHOLD}`);
+    if (cpuPressure >= 1.0) reasons.push(`CPU ${cpuPct}% > ${CPU_THRESHOLD_PCT}%`);
     if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
     if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
     return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
   }
 
   return { ok: true, reason: null, effectiveSlots, metrics };
+}
+
+// ============================================================
+// Session 时长追踪（Spending Cap 分析）
+// ============================================================
+
+let _sessionStart = null; // 本次 session 开始时间（cap 重置后首次派发）
+
+/**
+ * 记录 Session 开始（仅首次，不覆盖）
+ * 在首次成功派发任务时调用
+ */
+function recordSessionStart() {
+  if (!_sessionStart) {
+    _sessionStart = new Date().toISOString();
+    console.log(`[session] Session 开始: ${_sessionStart}`);
+  }
+}
+
+/**
+ * 记录 Session 结束（billing cap 触发时）
+ * @param {string} reason - 结束原因（通常为 'billing_cap'）
+ * @param {object|null} poolRef - DB pool 引用（可选，用于写 cecelia_events）
+ * @returns {{ start, end, duration_min, reason } | null}
+ */
+async function recordSessionEnd(reason, poolRef = null) {
+  if (!_sessionStart) return null;
+  const endTime = new Date().toISOString();
+  const durationMs = Date.now() - new Date(_sessionStart).getTime();
+  const durationMin = Math.round(durationMs / 60000);
+  console.log(`[session] Session 结束: 时长 ${durationMin} 分钟, 原因: ${reason}`);
+  const record = { start: _sessionStart, end: endTime, duration_min: durationMin, reason };
+  // 写入 cecelia_events（可选，如有 pool）
+  if (poolRef) {
+    try {
+      await poolRef.query(
+        `INSERT INTO cecelia_events (event_type, payload, created_at) VALUES ('session_end', $1, NOW())`,
+        [JSON.stringify(record)]
+      );
+    } catch (e) {
+      console.warn(`[session] 写入 cecelia_events 失败: ${e.message}`);
+    }
+  }
+  _sessionStart = null; // 重置，等待下次 cap 重置后的首次派发
+  return record;
+}
+
+/**
+ * 获取当前 session 信息
+ * @returns {{ active: boolean, start?: string, duration_min?: number }}
+ */
+function getSessionInfo() {
+  if (!_sessionStart) return { active: false };
+  const durationMin = Math.round((Date.now() - new Date(_sessionStart).getTime()) / 60000);
+  return { active: true, start: _sessionStart, duration_min: durationMin };
+}
+
+/**
+ * 重置 session（测试用）
+ */
+function _resetSessionStart() {
+  _sessionStart = null;
 }
 
 // ============================================================
@@ -253,10 +369,16 @@ let _billingPause = null; // { resetTime: ISO string, setAt: ISO string, reason:
 
 /**
  * 设置 billing pause（全局暂停派发直到 reset 时间）
+ * 同时触发 Session 结束记录（fire-and-forget，保持同步签名兼容性）
  * @param {string} resetTimeISO - reset 时间 (ISO 8601)
  * @param {string} reason - 原因描述
+ * @param {object|null} poolRef - DB pool 引用（可选，用于写 session_end 事件）
  */
-function setBillingPause(resetTimeISO, reason = 'billing_cap') {
+function setBillingPause(resetTimeISO, reason = 'billing_cap', poolRef = null) {
+  // 触发 session 结束记录（异步，不阻塞）
+  recordSessionEnd(reason, poolRef).catch(e => {
+    console.warn(`[session] recordSessionEnd 失败: ${e.message}`);
+  });
   _billingPause = {
     resetTime: resetTimeISO,
     setAt: new Date().toISOString(),
@@ -723,18 +845,55 @@ function getSkillForTaskType(taskType, payload) {
   return skillMap[taskType] || '/dev';
 }
 
+// ============================================================
+// 模型常量（三个 Provider 的模型池）
+// ============================================================
+
+const MODELS = {
+  OPUS: 'claude-opus-4-20250514',
+  SONNET: 'claude-sonnet-4-20250514',
+  HAIKU: 'claude-haiku-4-5-20251001',
+  M25_HIGHSPEED: 'MiniMax-M2.5-highspeed',
+  M21: 'MiniMax-M2.1',
+  CODEX: 'codex',
+};
+
+// Fallback 常量（profile 不可用时使用）
+const MODEL_MAP = FALLBACK_PROFILE.config.executor.model_map;
+const FIXED_PROVIDER = FALLBACK_PROFILE.config.executor.fixed_provider;
+
 /**
- * Get model for a task based on task properties
- * Returns model name or null (use default Sonnet)
- *
- * 配置（成本优化 - 2026-02-16）：
- * - 全部任务: Sonnet (default)
- * - 降低成本约 70%
+ * Get model for a task based on task type and provider.
+ * Profile-aware: 优先读取 active profile 的 model_map。
  */
 function getModelForTask(task) {
-  // 成本优化：全部使用 Sonnet
-  // 返回 null = cecelia-run 默认模型 (Sonnet)
-  return null;
+  const taskType = task.task_type || 'dev';
+  const provider = getProviderForTask(task);
+  if (taskType === 'codex_qa') return null;
+
+  const profile = getActiveProfile();
+  const profileMap = profile?.config?.executor?.model_map;
+  const mapping = profileMap?.[taskType] || MODEL_MAP[taskType];
+  if (!mapping) return provider === 'minimax' ? MODELS.M25_HIGHSPEED : null;
+  return mapping[provider] || null;
+}
+
+/**
+ * Get provider for a task.
+ * Profile-aware: 优先读取 active profile 的 fixed_provider 和 default_provider。
+ */
+function getProviderForTask(task) {
+  const taskType = task.task_type || 'dev';
+
+  const profile = getActiveProfile();
+  const profileFixed = profile?.config?.executor?.fixed_provider;
+  if (profileFixed?.[taskType]) return profileFixed[taskType];
+
+  const profileDefault = profile?.config?.executor?.default_provider;
+  if (profileDefault) return profileDefault;
+
+  if (FIXED_PROVIDER[taskType]) return FIXED_PROVIDER[taskType];
+  return 'minimax';
 }
 
 /**
@@ -794,10 +953,87 @@ function checkTaskTypeMatch(task) {
 }
 
 /**
+ * 查询 OKR 拆解的时间上下文（KR 剩余天数、已有 Projects 进度）。
+ *
+ * @param {string} krId - KR ID
+ * @returns {Promise<string>} 格式化的时间上下文文本，注入到 prompt
+ */
+async function buildTimeContext(krId) {
+  if (!krId) return '';
+  try {
+    // 1. KR 的 target_date 和 time_budget_days
+    const krResult = await pool.query(
+      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      [krId]
+    );
+    const kr = krResult.rows[0];
+    if (!kr) return '';
+
+    // 2. KR 下所有 Projects（按 sequence_order 排列）
+    const projResult = await pool.query(
+      `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
+              p.created_at, p.completed_at
+       FROM projects p
+       JOIN project_kr_links pkl ON pkl.project_id = p.id
+       WHERE pkl.kr_id = $1 AND p.type = 'project'
+       ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+      [krId]
+    );
+    const projects = projResult.rows;
+
+    const lines = ['## 时间上下文（CRITICAL — 拆解时必须参考）'];
+
+    // KR 剩余天数
+    if (kr.target_date) {
+      const remaining = Math.ceil((new Date(kr.target_date) - new Date()) / (24 * 60 * 60 * 1000));
+      lines.push(`- KR 目标日期: ${kr.target_date}`);
+      lines.push(`- KR 剩余天数: ${remaining} 天${remaining < 7 ? '（⚠️ 紧急）' : ''}`);
+    }
+    if (kr.time_budget_days) {
+      lines.push(`- KR 时间预算: ${kr.time_budget_days} 天`);
+    }
+
+    // 已有 Projects 进度
+    if (projects.length > 0) {
+      const completed = projects.filter(p => p.status === 'completed');
+      lines.push('');
+      lines.push(`### 已有 Projects（${completed.length}/${projects.length} 完成）`);
+      for (const p of projects) {
+        let info = `- [${p.status}] ${p.name}`;
+        if (p.sequence_order != null) info += ` (序号 ${p.sequence_order})`;
+        if (p.time_budget_days) info += `, 预算 ${p.time_budget_days} 天`;
+        if (p.status === 'completed' && p.created_at && p.completed_at) {
+          const actual = Math.max(1, Math.round((new Date(p.completed_at) - new Date(p.created_at)) / (24 * 60 * 60 * 1000)));
+          info += `, 实际 ${actual} 天`;
+        }
+        lines.push(info);
+      }
+      lines.push('');
+      lines.push(`### 顺序提示`);
+      lines.push(`这是第 ${completed.length + 1}/${projects.length + 1} 个 Project（包含即将创建的）。`);
+      if (completed.length > 0) {
+        lines.push(`前 ${completed.length} 个已完成，请参考其执行时间来估算后续 Project 的 time_budget_days。`);
+      }
+    }
+
+    lines.push('');
+    lines.push('### 约束');
+    lines.push('- 请为每个 Project 标注 `sequence_order`（执行顺序，从 1 开始）');
+    lines.push('- 请为每个 Project 设置 `time_budget_days`（预计天数）');
+    lines.push('- 所有 Project 的 time_budget_days 之和不应超过 KR 剩余天数');
+
+    return lines.join('\n');
+  } catch (err) {
+    console.error('[executor] buildTimeContext failed (non-fatal):', err.message);
+    return '';
+  }
+}
+
+/**
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
-function preparePrompt(task) {
+async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
@@ -853,6 +1089,7 @@ POST /api/brain/action/create-task
     }
 
     // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
+    const timeContext = await buildTimeContext(krId);
     return `/okr
 
 # OKR 拆解: ${krTitle}
@@ -860,6 +1097,8 @@ POST /api/brain/action/create-task
 ## KR 信息
 - KR ID: ${krId}
 - 目标: ${task.description || krTitle}
+
+${timeContext}
 
 ## 6 层架构（必须严格遵守）
 Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
@@ -1029,6 +1268,68 @@ ${task.description || ''}
 - ✅ 可以读取代码/文档/日志
 - ✅ 输出调研结果和建议
 - ❌ 不能创建、修改或删除任何文件`;
+  }
+
+  // Exploratory 类型：注入 Brain 上下文，启用 Output Loop
+  // Step 5 Output Loop: 探索完成后直接调 Brain API 创建 dev 任务，不需要再绕一圈秋米
+  if (taskType === 'exploratory') {
+    const brainTaskId = task.id || '';
+    const brainGoalId = task.goal_id || '';
+    const brainProjectId = task.project_id || '';
+    const exploratoryDesc = task.description || task.title;
+
+    return `/exploratory
+
+# 探索任务: ${task.title}
+
+## Brain 上下文（CRITICAL — Output Loop 必须使用这些 ID）
+- BRAIN_TASK_ID: ${brainTaskId}
+- BRAIN_GOAL_ID: ${brainGoalId}
+- BRAIN_PROJECT_ID: ${brainProjectId}
+- BRAIN_API: http://localhost:5221
+
+## 探索目标
+${exploratoryDesc}
+
+## Output Loop（Step 5，CRITICAL — 探索完成后必须执行）
+
+探索完成后，**必须**调用 Brain API 创建后续 dev 任务，然后回传 findings：
+
+### Step 5.1: 创建 dev 任务
+\`\`\`bash
+# 为每个发现的可实现点创建 dev 任务（至少 1 个）
+curl -s -X POST http://localhost:5221/api/brain/tasks \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "title": "实现: <具体功能>",
+    "task_type": "dev",
+    "priority": "P1",
+    "description": "<基于探索结论的具体 PRD，包含：做什么、用哪种方案、注意哪些坑>",
+    "goal_id": "${brainGoalId}",
+    "project_id": "${brainProjectId}"
+  }'
+\`\`\`
+
+### Step 5.2: 回传 findings（让 Cecelia 知道探索结论）
+\`\`\`bash
+curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "task_id": "${brainTaskId}",
+    "run_id": "manual",
+    "status": "completed",
+    "result": {
+      "findings": "<探索的核心结论，2-3段，包含：现状、可行方案、推荐方案、坑点>",
+      "next_tasks_created": <创建了几个 dev 任务>
+    }
+  }'
+\`\`\`
+
+## 探索完成标准
+- [ ] 明确了可行方案（至少一种）
+- [ ] 记录了踩坑点
+- [ ] 通过 Brain API 创建了至少 1 个 dev 任务
+- [ ] 回传了 findings 到 Brain`;
   }
 
   // 有明确 PRD 内容的任务
@@ -1231,7 +1532,7 @@ async function triggerCeceliaRun(task) {
 
     // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
-    const promptContent = preparePrompt(task);
+    const promptContent = await preparePrompt(task);
     const permissionMode = getPermissionModeForTaskType(taskType);
     const model = getModelForTask(task);
 
@@ -1246,8 +1547,11 @@ async function triggerCeceliaRun(task) {
       } catch { /* ignore */ }
     }
 
+    // Get provider (minimax = 1/12 cost via api.minimaxi.com)
+    const provider = getProviderForTask(task);
+
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
 
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
@@ -1259,7 +1563,8 @@ async function triggerCeceliaRun(task) {
         task_type: taskType,
         permission_mode: permissionMode,
         repo_path: repoPath,
-        model: model
+        model: model,
+        provider: provider
       })
     });
 
@@ -1294,6 +1599,9 @@ async function triggerCeceliaRun(task) {
         log_file: result.log_file,
       },
     });
+
+    // 记录 session 开始（仅首次派发时，用于 spending cap 时长分析）
+    recordSessionStart();
 
     return {
       success: true,
@@ -1649,6 +1957,7 @@ export {
   getTaskExecutionStatus,
   updateTaskRunInfo,
   preparePrompt,
+  buildTimeContext,
   generateRunId,
   getSkillForTaskType,
   // v2 additions
@@ -1681,4 +1990,23 @@ export {
   clearBillingPause,
   // v9: Task type matching validation
   checkTaskTypeMatch,
+  // v10: Session tracking + provider
+  getProviderForTask,
+  // v11: Unified model routing
+  getModelForTask,
+  MODELS,
+  MODEL_MAP,
+  FIXED_PROVIDER,
+  recordSessionStart,
+  recordSessionEnd,
+  getSessionInfo,
+  _resetSessionStart,
+  // v12: Dual-layer capacity model
+  PHYSICAL_CAPACITY,
+  CPU_THRESHOLD_PCT,
+  getEffectiveMaxSeats,
+  getBudgetCap,
+  setBudgetCap,
+  sampleCpuUsage,
+  _resetCpuSampler,
 };

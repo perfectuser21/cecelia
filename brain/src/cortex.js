@@ -4,7 +4,7 @@
  * 仿人脑设计：
  * - 由丘脑 (thalamus) 唤醒
  * - 只处理 level=2 的复杂决策
- * - 用 Sonnet 模型深度思考
+ * - 用 Opus 模型深度思考
  *
  * 职责：
  * 1. 跨部门资源权衡
@@ -18,6 +18,7 @@
 /* global console */
 
 import pool from './db.js';
+import { getActiveProfile } from './model-profile.js';
 import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
 import { searchRelevantLearnings } from './learning.js';
 import {
@@ -163,22 +164,25 @@ const CORTEX_ACTION_WHITELIST = {
 };
 
 // ============================================================
-// Sonnet API 调用
+// Opus API 调用
 // ============================================================
 
 /**
- * 调用 Sonnet API 进行深度分析
+ * 调用 Opus API 进行深度分析
  * @param {string} prompt
  * @returns {Promise<string>}
  */
-async function callOpus(prompt) {
+async function callCortexLLM(prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY not set');
   }
 
-  console.log('[cortex] Calling Sonnet for deep analysis...');
+  const profile = getActiveProfile();
+  const cortexModel = profile?.config?.cortex?.model || 'claude-opus-4-20250514';
+
+  console.log(`[cortex] Calling ${cortexModel} for deep analysis...`);
   const startTime = Date.now();
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -189,8 +193,8 @@ async function callOpus(prompt) {
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,  // 允许更长输出
+      model: cortexModel,
+      max_tokens: 4096,
       messages: [
         { role: 'user', content: prompt }
       ]
@@ -199,15 +203,14 @@ async function callOpus(prompt) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Sonnet API error: ${response.status} - ${error}`);
+    throw new Error(`Cortex API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
   const elapsed = Date.now() - startTime;
-  console.log(`[cortex] Sonnet responded in ${elapsed}ms`);
+  console.log(`[cortex] ${cortexModel} responded in ${elapsed}ms`);
 
-  // Build #4: 记录 token 消耗
-  await recordTokenUsage('cortex', 'claude-sonnet-4-20250514', data.usage, {
+  await recordTokenUsage('cortex', cortexModel, data.usage, {
     elapsed_ms: elapsed,
   });
 
@@ -219,14 +222,14 @@ async function callOpus(prompt) {
 // ============================================================
 
 /**
- * 从 Sonnet 响应中解析 Decision
+ * 从 Opus 响应中解析 Decision
  * @param {string} response
  * @returns {Object}
  */
 function parseCortexDecision(response) {
   const jsonMatch = response.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    throw new Error('No JSON found in Sonnet response');
+    throw new Error('No JSON found in Opus response');
   }
   return JSON.parse(jsonMatch[0]);
 }
@@ -386,7 +389,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 
   try {
-    const response = await callOpus(prompt);
+    const response = await callCortexLLM(prompt);
     const decision = parseCortexDecision(response);
 
     // 验证
@@ -806,8 +809,8 @@ export {
   saveCortexAnalysis,
   searchRelevantAnalyses,
 
-  // API
-  callOpus,
+  // API (profile-aware)
+  callCortexLLM,
 
   // 验证
   validateCortexDecision,

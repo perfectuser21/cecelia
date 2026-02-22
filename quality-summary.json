@@ -1,41 +1,12 @@
 {
-  "branch": "cp-02160743-4e095134-4915-4965-8c49-893fde",
-  "head_sha": "pending",
-  "timestamp": "2026-02-16T07:54:00Z",
+  "branch": "cp-02221818-heartbeat-inspector",
+  "head_sha": "9e5acec",
+  "timestamp": "2026-02-22T10:31:09Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。",
   "tests": {
-    "total": 1270,
-    "passed": 826,
-    "failed": 223,
-    "skipped": 1,
-    "success_rate": "65%"
-  },
-  "coverage": {
-    "overall": {
-      "lines": 46.35,
-      "branches": 79.25,
-      "functions": 36.22,
-      "statements": 46.35
-    },
-    "thalamus": {
-      "lines": 72,
-      "branches": 95,
-      "functions": 50,
-      "statements": 72
-    },
-    "cortex": {
-      "lines": 49.2,
-      "branches": 42.85,
-      "functions": 27.27,
-      "statements": 49.2
-    },
-    "configuration": {
-      "vitest_config": "created",
-      "coverage_provider": "@vitest/coverage-v8",
-      "coverage_scripts": "added",
-      "ci_integration": "updated",
-      "documentation": "created",
-      "badge": "added"
-    }
+    "heartbeat-inspector": "15/15 passed",
+    "heartbeat-whitelist": "8/8 passed",
+    "heartbeat-tick": "4/4 passed",
+    "total": "27/27 passed"
   }
 }

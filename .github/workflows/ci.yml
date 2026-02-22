@@ -133,6 +133,11 @@ jobs:
         working-directory: brain
         run: node src/migrate.js
 
+      - name: OKR Structure Check
+        working-directory: brain
+        run: node ../scripts/devgate/check-okr-structure.mjs
+        continue-on-error: true
+
       - name: Run Brain tests with coverage
         working-directory: brain
         run: |

@@ -6,6 +6,37 @@
 
 ---
 
+### [2026-02-22] 收件箱提案系统 Phase 1 v1.71.0
+
+- **Bug**: `vi.mock` 工厂函数被 Vitest 提升到文件顶部，早于 `const mockPool = {...}` 声明执行，导致 `ReferenceError: Cannot access 'mockPool' before initialization`。**解决方案**: 使用 `vi.hoisted()` 在文件最顶部定义 mock 变量，这些变量在 `vi.mock` 工厂内可用。
+- **Bug**: migration 文件中 `ADD COLUMN IF NOT EXISTS` 和列名之间有换行，`toContain('ADD COLUMN IF NOT EXISTS category')` 失败。**解决方案**: 改用 `toMatch(new RegExp('ADD COLUMN IF NOT EXISTS\\s+' + col))` 匹配跨行。
+- **Bug**: `enqueueDangerousAction` 函数存在但未加入 export 块，导致外部 import 为 undefined。**教训**: 新增函数后必须检查 export 块。
+- **陷阱**: develop 上并行 PR 合并导致 migration 编号冲突（两个 053），需要改为 054 并更新所有引用（selfcheck.js + 3 个测试文件的硬编码版本号）。**教训**: migration 编号冲突时需要全仓搜索所有硬编码 schema 版本引用。
+- **陷阱**: develop 持续前进导致 version check 反复失败（1.68.0→1.69.0→1.70.0→1.71.0），每次都需要 bump + 推送 + 等 CI。**建议**: 大 PR 开发周期长时尽早 merge develop 减少版本差距。
+- **陷阱**: `.brain-versions` 文件用 `echo "v" > file && echo "v" >> file` 会导致 `cat file | tr -d '\n'` 把两行拼成一个字符串（`1.71.01.71.0`）。文件应该只有一行。
+- **影响程度**: Medium — 提案系统是 Inbox 功能的基础，但 Phase 1 只做了数据层，UI 在 workspace
+
+---
+
+### [2026-02-22] 统一模型路由重构 v1.70.0
+
+- **Bug**: `callThalamLLM` 通过 `readFileSync` 读取 `~/.credentials/minimax.json` 获取凭据，CI 环境没有这个文件导致集成测试失败。旧的 `callHaiku` 用 `process.env.ANTHROPIC_API_KEY`（测试易 mock）。解决方案：在测试中 `vi.doMock('node:fs')` 拦截 `readFileSync`，检测路径含 `minimax.json` 时返回 fake 凭据。
+- **Bug**: 切换 LLM 提供商后，测试中的 fetch mock 必须同步更新 API 响应格式。Anthropic 格式 `{ content: [{type:'text', text:...}] }` vs OpenAI 兼容格式 `{ choices: [{message:{content:...}}] }`。遗漏会导致 "returned empty content" 错误。
+- **优化点**: `callThalamLLM` 的凭据缓存（`_thalamusMinimaxKey` 模块变量）+ `_resetThalamusMinimaxKey()` 导出用于测试隔离，这是一个好模式
+- **陷阱**: develop 上有并行 PR 合并导致版本冲突，rebase 后需要重新 bump 版本号（1.69.0 → 1.70.0）
+- **影响程度**: High — L1/L2 模型切换影响所有 Brain 决策链路
+
+---
+
+### [2026-02-22] OKR 拆解质量治理 v1.59.0
+
+- **Bug**: 中文测试描述长度不够 MIN_DESCRIPTION_LENGTH (100字符)，导致测试失败。质量门禁验证字符串时要确保测试数据足够长。
+- **优化点**: decomposition_depth 用 COALESCE 默认值处理存量数据，无需回填所有记录
+- **架构决策**: KR 进度计算采用双触发（initiative 关闭时 + tick 每小时同步），确保实时性和最终一致性
+- **影响程度**: High — 解决了拆解无限递归、任务质量差、KR 进度永远为 0 三个系统性问题
+
+---
+
 ### [2026-02-15] Fix Alertness System Architecture Confusion (P0)
 
 - **Bug**: Two Alertness systems coexist and conflict, causing dispatch rate limiting to fail

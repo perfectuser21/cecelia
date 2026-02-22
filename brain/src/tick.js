@@ -14,11 +14,12 @@ import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision } from './decision-executor.js';
+import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
+import { runLayer2HealthCheck } from './health-monitor.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -78,6 +79,9 @@ let _tickLockTime = null;
 let _lastDispatchTime = 0; // track last dispatch time for logging
 let _lastExecuteTime = 0; // track last full executeTick() time for throttling
 let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
+let _lastHealthCheckTime = 0; // track last Layer 2 health check time
+let _lastKrProgressSyncTime = 0; // track last KR progress sync time
+let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1198,6 +1202,158 @@ async function executeTick() {
     }
   }
 
+  // 0.5.1. 提案过期清理：与 periodic cleanup 同频（每小时）
+  if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+    try {
+      const expiredCount = await expireStaleProposals();
+      if (expiredCount > 0) {
+        console.log(`[tick] Expired ${expiredCount} stale proposals`);
+      }
+    } catch (expireErr) {
+      console.error('[tick] Proposal expiry check failed (non-fatal):', expireErr.message);
+    }
+  }
+
+  // 0.6. Codex 免疫检查：每 20 小时自动创建一次 codex_qa 任务
+  try {
+    await ensureCodexImmune(pool);
+  } catch (immuneErr) {
+    console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
+  }
+
+  // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
+  const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
+  if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastHealthCheckTime = Date.now();
+    try {
+      const healthResult = await runLayer2HealthCheck(pool);
+      console.log(`[tick] ${healthResult.summary}`);
+    } catch (healthErr) {
+      console.error('[tick] Layer2 health check failed (non-fatal):', healthErr.message);
+    }
+  }
+
+  // 0.8. Initiative 闭环检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkInitiativeCompletion } = await import('./initiative-closer.js');
+    const initiativeResult = await checkInitiativeCompletion(pool);
+    console.log(`[TICK] Initiative 完成检查: ${initiativeResult.closedCount} 个已关闭`);
+    if (initiativeResult.closedCount > 0) {
+      actionsTaken.push({
+        action: 'initiative_completion_check',
+        closed_count: initiativeResult.closedCount,
+        closed: initiativeResult.closed,
+      });
+    }
+  } catch (initiativeErr) {
+    console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
+  }
+
+  // 0.8.5. Orchestrated Initiative 编排：每次 tick 都跑，纯 SQL + 创建 task
+  try {
+    const { checkOrchestratedInitiatives } = await import('./initiative-orchestrator.js');
+    const orchResult = await checkOrchestratedInitiatives(pool);
+    if (orchResult.actions > 0) {
+      console.log(`[TICK] Initiative 编排: ${orchResult.actions} 个操作`);
+      actionsTaken.push({
+        action: 'initiative_orchestration',
+        actions_count: orchResult.actions,
+        details: orchResult.details,
+      });
+    }
+  } catch (orchErr) {
+    console.error('[tick] Initiative orchestration failed (non-fatal):', orchErr.message);
+  }
+
+  // 0.9. Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
+  try {
+    const { checkProjectCompletion } = await import('./initiative-closer.js');
+    const projectResult = await checkProjectCompletion(pool);
+    if (projectResult.closedCount > 0) {
+      console.log(`[TICK] Project 完成检查: ${projectResult.closedCount} 个已关闭`);
+      actionsTaken.push({
+        action: 'project_completion_check',
+        closed_count: projectResult.closedCount,
+        closed: projectResult.closed,
+      });
+    }
+  } catch (projectErr) {
+    console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
+  }
+
+  // 0.10. Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
+  try {
+    const { activateNextInitiatives } = await import('./initiative-closer.js');
+    const activated = await activateNextInitiatives(pool);
+    if (activated > 0) {
+      console.log(`[TICK] Initiative 激活: ${activated} 个从 pending → active`);
+      actionsTaken.push({
+        action: 'initiative_queue_activate',
+        activated_count: activated,
+      });
+    }
+  } catch (activateErr) {
+    console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
+  // 0.11. Project 层容量管理：激活/降级确保 active 在 capacity 范围内
+  try {
+    const { manageProjectActivation } = await import('./project-activator.js');
+    const { computeCapacity } = await import('./capacity.js');
+    const DEFAULT_SLOTS = 9;
+    const cap = computeCapacity(DEFAULT_SLOTS);
+    const projectResult = await manageProjectActivation(pool, cap.project);
+    if (projectResult.activated > 0 || projectResult.deactivated > 0) {
+      console.log(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
+      actionsTaken.push({
+        action: 'project_capacity_management',
+        activated: projectResult.activated,
+        deactivated: projectResult.deactivated,
+      });
+    }
+  } catch (projectCapErr) {
+    console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
+  }
+
+  // 0.12. KR 进度同步：每小时一次，纯 SQL，无 LLM
+  const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
+  if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastKrProgressSyncTime = Date.now();
+    try {
+      const { syncAllKrProgress } = await import('./kr-progress.js');
+      const krResult = await syncAllKrProgress(pool);
+      if (krResult.updated > 0) {
+        console.log(`[TICK] KR 进度同步: ${krResult.updated} 个 KR 已更新`);
+        actionsTaken.push({
+          action: 'kr_progress_sync',
+          updated_count: krResult.updated,
+        });
+      }
+    } catch (krErr) {
+      console.error('[tick] KR progress sync failed (non-fatal):', krErr.message);
+    }
+  }
+
+  // 0.13. HEARTBEAT.md 灵活巡检：每 30 分钟一次，L1 丘脑执行
+  const heartbeatElapsed = Date.now() - _lastHeartbeatTime;
+  const { HEARTBEAT_INTERVAL_MS: HB_INTERVAL } = await import('./heartbeat-inspector.js');
+  if (heartbeatElapsed >= HB_INTERVAL) {
+    try {
+      const { runHeartbeatInspection } = await import('./heartbeat-inspector.js');
+      const hbResult = await runHeartbeatInspection(pool);
+      _lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
+      if (!hbResult.skipped && hbResult.actions_count > 0) {
+        console.log(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
+        actionsTaken.push({
+          action: 'heartbeat_inspection',
+          actions_count: hbResult.actions_count,
+        });
+      }
+    } catch (hbErr) {
+      console.error('[tick] Heartbeat inspection failed (non-fatal):', hbErr.message);
+    }
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
@@ -1375,6 +1531,32 @@ async function executeTick() {
     }
   } catch (watchdogErr) {
     console.error('[tick] Watchdog error:', watchdogErr.message);
+  }
+
+  // 5d. Idle session cleanup — kill interactive Claude sessions idle > 2h
+  try {
+    const { checkIdleSessions } = await import('./watchdog.js');
+    const idleResult = checkIdleSessions();
+
+    for (const action of idleResult.actions) {
+      if (action.action === 'kill') {
+        console.log(`[tick] idle-session kill: pid=${action.pid} reason=${action.reason}`);
+        try {
+          process.kill(action.pid, 'SIGTERM');
+          // Schedule SIGKILL after 60 seconds if still alive
+          setTimeout(() => {
+            try {
+              process.kill(action.pid, 'SIGKILL');
+            } catch { /* already dead */ }
+          }, 60000);
+          actionsTaken.push({ action: 'idle_session_kill', pid: action.pid, reason: action.reason });
+        } catch (killErr) {
+          console.error(`[tick] idle-session kill failed: pid=${action.pid} err=${killErr.message}`);
+        }
+      }
+    }
+  } catch (idleErr) {
+    console.error('[tick] Idle session check error:', idleErr.message);
   }
 
   // P1 FIX #3: Check for expired quarantine tasks and auto-release
@@ -1685,6 +1867,50 @@ async function getStartupErrors() {
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
+/** Reset Layer 2 health check timer — for testing only */
+function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
+/** Reset KR progress sync timer — for testing only */
+function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
+/** Reset heartbeat timer — for testing only */
+function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
+
+/**
+ * 确保每 20 小时触发一次 Codex 免疫检查
+ * 查询最近一条 codex_qa 任务，若超过 20h（或从未有过），自动创建
+ * @param {import('pg').Pool} dbPool
+ */
+export async function ensureCodexImmune(dbPool) {
+  const IMMUNE_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20 小时
+
+  const result = await dbPool.query(`
+    SELECT created_at FROM tasks
+    WHERE task_type = 'codex_qa'
+      AND status NOT IN ('cancelled', 'canceled')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+
+  const lastCreatedAt = result.rows[0]?.created_at;
+  const elapsed = lastCreatedAt
+    ? Date.now() - new Date(lastCreatedAt).getTime()
+    : Infinity;
+
+  if (elapsed < IMMUNE_INTERVAL_MS) {
+    return { skipped: true, reason: 'too_soon', elapsed_ms: elapsed };
+  }
+
+  await dbPool.query(`
+    INSERT INTO tasks (title, description, status, priority, task_type, trigger_source)
+    VALUES ($1, $2, 'queued', 'P1', 'codex_qa', 'brain_auto')
+  `, [
+    'Codex 免疫检查 - cecelia-core',
+    '/home/xx/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
+  ]);
+
+  console.log('[tick] Codex immune task created (last check: ' +
+    (lastCreatedAt ? new Date(lastCreatedAt).toISOString() : 'never') + ')');
+  return { created: true, elapsed_ms: elapsed };
+}
 
 export {
   getTickStatus,
@@ -1719,5 +1945,8 @@ export {
   CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
-  _resetLastCleanupTime
+  _resetLastCleanupTime,
+  _resetLastHealthCheckTime,
+  _resetLastKrProgressSyncTime,
+  _resetLastHeartbeatTime
 };
