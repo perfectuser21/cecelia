@@ -46,7 +46,9 @@ const TASK_TYPE_AGENT_MAP = {
   'talk': '/talk',         // 对话任务 → HK MiniMax
   'qa': '/qa',             // 小检 - QA
   'audit': '/audit',       // 小审 - 审计
-  'research': null         // 需要人工/Opus 处理
+  'research': null,        // 需要人工/Opus 处理
+  'initiative_plan': null,  // Initiative 规划 → executor 直接处理
+  'initiative_verify': null // Initiative 验收 → executor 直接处理
 };
 
 /**
@@ -1531,6 +1533,58 @@ async function executeTick() {
     }
   } catch (watchdogErr) {
     console.error('[tick] Watchdog error:', watchdogErr.message);
+  }
+
+  // 5c-2. Record bottleneck scan results to database
+  try {
+    const resources = checkServerResources();
+    const maxPressure = resources.metrics.max_pressure;
+
+    // Only record when system is under pressure (Tense >= 0.7 or Crisis >= 1.0)
+    if (maxPressure >= 0.7) {
+      // Determine severity based on pressure level
+      const severity = maxPressure >= 1.0 ? 'critical' : 'high';
+
+      // Identify bottleneck areas
+      const bottleneckAreas = [];
+      const recommendations = [];
+
+      if (resources.metrics.cpu_pressure >= maxPressure) {
+        bottleneckAreas.push('cpu');
+        recommendations.push(`CPU usage at ${resources.metrics.cpu_usage_pct}%, consider reducing concurrent tasks`);
+      }
+      if (resources.metrics.mem_pressure >= maxPressure) {
+        bottleneckAreas.push('memory');
+        recommendations.push(`Memory pressure at ${Math.round(resources.metrics.mem_pressure * 100)}%, consider increasing MEM_AVAILABLE_MIN_MB`);
+      }
+      if (resources.metrics.swap_pressure >= maxPressure) {
+        bottleneckAreas.push('swap');
+        recommendations.push(`Swap usage at ${resources.metrics.swap_used_pct}%, consider adding RAM or optimizing memory`);
+      }
+
+      // Record to bottleneck_scans table
+      await pool.query(
+        `INSERT INTO bottleneck_scans (scan_type, bottleneck_area, severity, details, recommendations)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          'watchdog_system_pressure',
+          bottleneckAreas.join(','),
+          severity,
+          JSON.stringify({
+            max_pressure: maxPressure,
+            cpu_usage_pct: resources.metrics.cpu_usage_pct,
+            mem_pressure: resources.metrics.mem_pressure,
+            swap_pressure: resources.metrics.swap_pressure,
+            effective_slots: resources.metrics.effective_slots,
+            max_seats: resources.metrics.max_seats,
+          }),
+          JSON.stringify(recommendations),
+        ]
+      );
+      console.log(`[tick] Bottleneck scan recorded: pressure=${maxPressure}, areas=${bottleneckAreas.join(',')}, severity=${severity}`);
+    }
+  } catch (bottleneckErr) {
+    console.error('[tick] Bottleneck scan error:', bottleneckErr.message);
   }
 
   // 5d. Idle session cleanup — kill interactive Claude sessions idle > 2h

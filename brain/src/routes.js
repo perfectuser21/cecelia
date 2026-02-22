@@ -1111,6 +1111,47 @@ router.get('/watchdog', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/bottleneck-scans
+ * 查询瓶颈扫描历史记录
+ * Query params:
+ *   - limit: 返回记录数 (默认 50, 最大 200)
+ *   - severity: 按严重程度过滤 (low, medium, high, critical)
+ *   - scan_type: 按扫描类型过滤
+ */
+router.get('/bottleneck-scans', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const severity = req.query.severity;
+    const scanType = req.query.scan_type;
+
+    let query = 'SELECT * FROM bottleneck_scans WHERE 1=1';
+    const params = [];
+
+    if (severity) {
+      params.push(severity);
+      query += ` AND severity = $${params.length}`;
+    }
+
+    if (scanType) {
+      params.push(scanType);
+      query += ` AND scan_type = $${params.length}`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+
+    const result = await pool.query(query, params);
+    res.json({
+      success: true,
+      count: result.rows.length,
+      scans: result.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to query bottleneck scans', details: err.message });
+  }
+});
+
 // ==================== Session Tracking API ====================
 
 /**
@@ -2398,6 +2439,99 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (decompReviewErr) {
         console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
+      }
+
+      // 5b3. Initiative 编排回调：initiative_plan / initiative_verify / decomp_review (for initiative)
+      try {
+        const initCallbackResult = await pool.query(
+          'SELECT task_type, payload, project_id, goal_id FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const initCallbackRow = initCallbackResult.rows[0];
+
+        if (initCallbackRow && isCompleted) {
+          const { handlePhaseTransition, promoteInitiativeTasks } = await import('./initiative-orchestrator.js');
+
+          // initiative_plan 完成 → plan→review
+          if (initCallbackRow.task_type === 'initiative_plan') {
+            console.log(`[execution-callback] Initiative plan completed, transitioning plan→review`);
+            const initiative = { id: initCallbackRow.project_id };
+            const ok = await handlePhaseTransition(pool, initiative, 'plan', 'review');
+            if (ok) {
+              console.log(`[execution-callback] Initiative ${initiative.id} transitioned to review`);
+            } else {
+              console.warn(`[execution-callback] Initiative ${initiative.id} phase transition plan→review failed (optimistic lock)`);
+            }
+          }
+
+          // decomp_review for initiative 完成 → promote/revise/reject
+          if (initCallbackRow.task_type === 'decomp_review' && initCallbackRow.payload?.entity_type === 'initiative') {
+            const verdictRaw = (result !== null && typeof result === 'object')
+              ? (result.verdict || result.result?.verdict)
+              : null;
+            const validVerdicts = ['approved', 'needs_revision', 'rejected'];
+            const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
+            const initiativeId = initCallbackRow.payload?.entity_id || initCallbackRow.project_id;
+
+            console.log(`[execution-callback] Initiative decomp review: verdict=${verdict}, initiative=${initiativeId}`);
+
+            if (verdict === 'approved') {
+              const promoted = await promoteInitiativeTasks(pool, initiativeId);
+              console.log(`[execution-callback] Promoted ${promoted} draft tasks for initiative ${initiativeId}`);
+              await handlePhaseTransition(pool, { id: initiativeId }, 'review', 'dev');
+            } else if (verdict === 'needs_revision') {
+              await handlePhaseTransition(pool, { id: initiativeId }, 'review', 'plan');
+              console.log(`[execution-callback] Initiative ${initiativeId} sent back to plan (needs_revision)`);
+            } else if (verdict === 'rejected') {
+              await pool.query(
+                "UPDATE projects SET status = 'cancelled', current_phase = NULL WHERE id = $1",
+                [initiativeId]
+              );
+              console.log(`[execution-callback] Initiative ${initiativeId} cancelled (rejected)`);
+            }
+          }
+
+          // initiative_verify 完成 → complete/rollback
+          if (initCallbackRow.task_type === 'initiative_verify') {
+            const allDodPassed = (result !== null && typeof result === 'object')
+              ? (result.all_dod_passed === true || result.result?.all_dod_passed === true)
+              : false;
+
+            console.log(`[execution-callback] Initiative verify: all_dod_passed=${allDodPassed}`);
+
+            if (allDodPassed) {
+              await handlePhaseTransition(pool, { id: initCallbackRow.project_id }, 'verify', null);
+              console.log(`[execution-callback] Initiative ${initCallbackRow.project_id} completed`);
+            } else {
+              // 部分失败 → 创建补充 dev task + 退回 dev
+              const dodResults = (result !== null && typeof result === 'object')
+                ? (result.dod_results || result.result?.dod_results || [])
+                : [];
+              const failedDods = dodResults.filter(d => !d.passed);
+
+              if (failedDods.length > 0) {
+                for (const fd of failedDods) {
+                  await pool.query(`
+                    INSERT INTO tasks (title, task_type, status, priority, project_id, goal_id, description, payload)
+                    VALUES ($1, 'dev', 'queued', 'P1', $2, $3, $4, $5)
+                  `, [
+                    `Fix: DoD #${fd.dod_index} - ${fd.fix_suggestion || 'verification failed'}`,
+                    initCallbackRow.project_id,
+                    initCallbackRow.goal_id,
+                    fd.fix_suggestion || `DoD #${fd.dod_index} 验证失败，需要修复`,
+                    JSON.stringify({ dod_index: fd.dod_index, from_verify: true }),
+                  ]);
+                }
+                console.log(`[execution-callback] Created ${failedDods.length} fix tasks for initiative ${initCallbackRow.project_id}`);
+              }
+
+              await handlePhaseTransition(pool, { id: initCallbackRow.project_id }, 'verify', 'dev');
+              console.log(`[execution-callback] Initiative ${initCallbackRow.project_id} rolled back to dev`);
+            }
+          }
+        }
+      } catch (initCallbackErr) {
+        console.error(`[execution-callback] Initiative callback error: ${initCallbackErr.message}`);
       }
 
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
