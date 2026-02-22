@@ -49,12 +49,6 @@ const manifest: FeatureManifest = {
     { path: '/ops/devgate', redirect: '/devgate' },
     // Performance
     { path: '/performance', component: 'PerformanceMonitoring' },
-    // Model Profile
-    {
-      path: '/model-profile',
-      component: 'ModelProfileSwitcher',
-      navItem: { label: '模型配置', icon: 'Brain', group: 'system', order: 6 },
-    },
   ],
 
   components: {
@@ -66,7 +60,6 @@ const manifest: FeatureManifest = {
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
     FeatureMap: () => import('./pages/FeatureMap'),
-    ModelProfileSwitcher: () => import('./pages/ModelProfileSwitcher'),
   },
 };
 

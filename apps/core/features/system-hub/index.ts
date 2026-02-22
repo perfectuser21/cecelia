@@ -26,7 +26,8 @@ const manifest: FeatureManifest = {
           { path: '/system/claude', label: 'Claude', icon: 'Brain', order: 5 },
           { path: '/system/engine', label: 'Engine', icon: 'Cpu', order: 6 },
           { path: '/system/feature-map', label: 'Feature Map', icon: 'Map', order: 7 },
-          { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 8 },
+          { path: '/system/model-profile', label: '模型配置', icon: 'Settings', order: 8 },
+          { path: '/live-monitor', label: 'Live Monitor', icon: 'Activity', order: 9 },
         ],
       },
     },
@@ -36,6 +37,7 @@ const manifest: FeatureManifest = {
     { path: '/system/claude', component: 'SystemTabbed' },
     { path: '/system/engine', component: 'SystemTabbed' },
     { path: '/system/feature-map', component: 'SystemTabbed' },
+    { path: '/system/model-profile', component: 'SystemTabbed' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/brain-status', component: 'BrainStatusDashboard' },

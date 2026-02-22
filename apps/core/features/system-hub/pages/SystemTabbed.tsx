@@ -1,4 +1,4 @@
-import { Activity, Bot, Workflow, Server, Cpu, Map } from 'lucide-react';
+import { Activity, Bot, Workflow, Server, Cpu, Map, Settings } from 'lucide-react';
 import { Brain } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
@@ -52,6 +52,13 @@ const tabs: TabConfig[] = [
     icon: Map,
     path: '/system/feature-map',
     component: () => import('../../system/pages/FeatureMap'),
+  },
+  {
+    id: 'model-profile',
+    label: '模型配置',
+    icon: Settings,
+    path: '/system/model-profile',
+    component: () => import('../../system/pages/ModelProfileSwitcher'),
   },
 ];
 
