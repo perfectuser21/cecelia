@@ -16,6 +16,7 @@
 
 import { computeCapacity } from './capacity.js';
 import { updateKrProgress } from './kr-progress.js';
+import { reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } from './progress-reviewer.js';
 
 /**
  * 检查并关闭已完成的 Initiatives。
@@ -187,6 +188,23 @@ async function checkProjectCompletion(pool) {
     })]);
 
     closed.push({ id: project.id, name: project.name, kr_id: project.kr_id });
+  }
+
+  // 渐进验证：Project 完成后触发审查 + 计划调整
+  for (const project of closed) {
+    try {
+      const adjustment = await shouldAdjustPlan(pool, project.kr_id, project.id);
+      if (adjustment) {
+        await createPlanAdjustmentTask(pool, {
+          krId: project.kr_id,
+          completedProjectId: project.id,
+          suggestion: adjustment,
+        });
+        console.log(`[project-closer] Triggered plan adjustment review for "${project.name}"`);
+      }
+    } catch (reviewErr) {
+      console.error(`[project-closer] Plan adjustment review failed for "${project.name}": ${reviewErr.message}`);
+    }
   }
 
   return { closedCount: closed.length, closed };

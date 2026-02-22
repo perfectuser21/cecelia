@@ -2331,6 +2331,17 @@ router.post('/execution-callback', async (req, res) => {
           const { processReviewResult } = await import('./review-gate.js');
           await processReviewResult(pool, task_id, verdict, findingsRaw);
 
+          // 计划调整：如果 findings 包含 plan_adjustment，执行调整
+          if (findingsRaw?.plan_adjustment && decompReviewRow?.payload?.review_scope === 'plan_adjustment') {
+            try {
+              const { executePlanAdjustment } = await import('./progress-reviewer.js');
+              await executePlanAdjustment(pool, findingsRaw, decompReviewRow.payload?.plan_context);
+              console.log(`[execution-callback] Plan adjustment executed for project ${decompReviewRow.payload?.entity_id}`);
+            } catch (adjErr) {
+              console.error(`[execution-callback] Plan adjustment error: ${adjErr.message}`);
+            }
+          }
+
           console.log(`[execution-callback] Decomp review processed: verdict=${verdict}`);
         }
       } catch (decompReviewErr) {
