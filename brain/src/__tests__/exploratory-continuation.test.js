@@ -20,6 +20,11 @@ vi.mock('../db.js', () => ({
   }
 }));
 
+// Mock validate-okr-structure.js (added by OKR validation integration)
+vi.mock('../validate-okr-structure.js', () => ({
+  validateOkrStructure: vi.fn().mockResolvedValue({ ok: true, issues: [] }),
+}));
+
 describe('Check 7: Exploratory Decomposition Continuation', () => {
   let pool;
   let checkExploratoryDecompositionContinue;

@@ -18,9 +18,13 @@
 import pool from './db.js';
 import { computeCapacity, isAtCapacity } from './capacity.js';
 import { validateTaskDescription } from './task-quality-gate.js';
+import { validateOkrStructure } from './validate-okr-structure.js';
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
+
+// OKR validation: blocked entity IDs (refreshed each runDecompositionChecks cycle)
+let _blockedEntityIds = new Set();
 
 // Maximum decomposition depth: depth >= this → cannot create sub-initiatives, only dev tasks
 const MAX_DECOMPOSITION_DEPTH = 2;
@@ -145,6 +149,12 @@ async function hasActiveDecompositionTaskByProject(projectId, level) {
 async function createDecompositionTask({ title, description, goalId, projectId, payload }) {
   if (!goalId) {
     throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
+  }
+
+  // OKR structure gate: skip if goal has BLOCK validation issues
+  if (_blockedEntityIds.has(goalId) || (projectId && _blockedEntityIds.has(projectId))) {
+    console.warn(`[decomp-checker] OKR validation BLOCKED "${title}" (goal=${goalId}, project=${projectId})`);
+    return { id: null, title, rejected: true, reasons: ['okr_validation_blocked'] };
   }
 
   // Quality gate: validate description quality
@@ -932,6 +942,24 @@ async function runDecompositionChecks() {
       return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
     }
 
+    // ── OKR Structure Validation Gate (L0) ──
+    // Run full validation once per cycle, collect BLOCK entity IDs
+    try {
+      const validation = await validateOkrStructure(pool, { scope: 'full' });
+      _blockedEntityIds = new Set();
+      for (const issue of validation.issues) {
+        if (issue.level === 'BLOCK' && issue.entityId) {
+          _blockedEntityIds.add(issue.entityId);
+        }
+      }
+      if (_blockedEntityIds.size > 0) {
+        console.log(`[decomp-checker] OKR validation: ${_blockedEntityIds.size} entities blocked`);
+      }
+    } catch (err) {
+      console.warn('[decomp-checker] OKR validation failed (non-fatal):', err.message);
+      _blockedEntityIds = new Set(); // clear on error, don't block anything
+    }
+
     // ── Capacity Gate: 查各层 active 数量，计算是否还能拆解 ──
     const DEFAULT_SLOTS = 9;
     const cap = computeCapacity(DEFAULT_SLOTS);
@@ -1103,6 +1131,11 @@ async function runDecompositionChecks() {
   }
 }
 
+// Reset blocked entity IDs (testing only)
+function _resetBlockedEntityIds() {
+  _blockedEntityIds = new Set();
+}
+
 export {
   runDecompositionChecks,
   checkGlobalOkrDecomposition,
@@ -1121,6 +1154,7 @@ export {
   hasExistingDecompositionTaskByProject,
   hasActiveDecompositionTaskByProject,
   createDecompositionTask,
+  _resetBlockedEntityIds,
   DEDUP_WINDOW_HOURS,
   INVENTORY_CONFIG,
   WIP_LIMITS,
