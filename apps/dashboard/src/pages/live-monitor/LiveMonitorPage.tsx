@@ -1,5 +1,5 @@
 /**
- * LiveMonitor v11 — 活跃项目视图 + 时间相对格式
+ * LiveMonitor v13 — 会话提供商标记（Anthropic / MiniMax）
  * TOP:    系统目标（OKR） + 今日快照
  * MID:    活跃项目（按 project 分组的 in_progress/queued 任务）
  * BOT:    实时 Agents（前台/后台 + Kill 按钮） + 等待队列
@@ -77,7 +77,8 @@ interface VpsStats {
 }
 
 interface Service { containerName: string; status: string }
-interface SessionInfo { cwd: string | null; projectName: string | null }
+interface SessionInfo { cwd: string | null; projectName: string | null; provider?: string; model?: string | null }
+interface ProviderInfo { provider: string; model: string | null }
 type KillState = 'idle' | 'confirm' | 'killing' | 'sent';
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -183,6 +184,29 @@ function PBadge({ p }: { p: string }) {
   return <span style={{ background: bg, color, fontFamily: 'monospace', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3, flexShrink: 0 }}>{p}</span>;
 }
 
+const PROVIDER_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+  anthropic: { bg: 'rgba(99,102,241,.15)', color: '#818cf8', label: 'Anthropic' },
+  minimax: { bg: 'rgba(16,185,129,.15)', color: '#34d399', label: 'MiniMax' },
+};
+
+function ProviderBadge({ provider, model }: { provider: string; model?: string | null }) {
+  const style = PROVIDER_STYLE[provider] ?? { bg: 'rgba(107,114,128,.15)', color: '#9ca3af', label: provider };
+  const modelShort = model
+    ? model.includes('haiku') ? 'Haiku' : model.includes('sonnet') ? 'Sonnet' : model.includes('opus') ? 'Opus' : null
+    : null;
+  return (
+    <span title={model ?? undefined} style={{
+      fontFamily: 'monospace', fontSize: 10, fontWeight: 600,
+      background: style.bg, color: style.color,
+      padding: '1px 6px', borderRadius: 4, flexShrink: 0,
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+    }}>
+      {style.label}
+      {modelShort && <span style={{ opacity: 0.7, fontWeight: 400 }}>·{modelShort}</span>}
+    </span>
+  );
+}
+
 function PBar({ pct, color, h = 5 }: { pct: number; color: string; h?: number }) {
   return (
     <div style={{ background: '#1f2937', borderRadius: 99, height: h, overflow: 'hidden' }}>
@@ -225,11 +249,12 @@ function Skel() {
 
 // ── Agent row ─────────────────────────────────────────────────────
 
-function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKilled }: {
+function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKilled, providerInfo }: {
   type: 'foreground' | 'background';
   pid: number; cpu: string; mem: string; startTime: string;
   title: string; skill?: string; accent: string;
   onKilled?: (pid: number) => void;
+  providerInfo?: ProviderInfo | null;
 }) {
   const [open, setOpen] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
@@ -284,6 +309,9 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
             旧
           </span>
         )}
+        {providerInfo && (
+          <ProviderBadge provider={providerInfo.provider} model={providerInfo.model} />
+        )}
         {skill && (
           <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#58a6ff', background: 'rgba(88,166,255,.1)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>
             {skill}
@@ -317,6 +345,7 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
               { l: 'CPU', v: cpu },
               { l: '内存', v: mem },
               { l: '启动', v: relTime },
+              ...(providerInfo ? [{ l: 'Provider', v: (PROVIDER_STYLE[providerInfo.provider]?.label ?? providerInfo.provider) + (providerInfo.model ? ` (${providerInfo.model})` : '') }] : []),
               ...(skill ? [{ l: 'Skill', v: skill }] : []),
             ].map(({ l, v }) => (
               <div key={l}>
@@ -533,6 +562,7 @@ export default function LiveMonitorPage() {
   const [cd, setCd] = useState(5);
   const [fullscreen, setFullscreen] = useState(false);
   const [killedPids, setKilledPids] = useState<Set<number>>(new Set());
+  const [providerMap, setProviderMap] = useState<Record<number, ProviderInfo>>({});
   const handleKilled = useCallback((pid: number) => setKilledPids(s => new Set([...s, pid])), []);
 
   const load = useCallback(async () => {
@@ -551,7 +581,19 @@ export default function LiveMonitorPage() {
     if (r[2].status === 'fulfilled') setActiveTasks(Array.isArray(r[2].value) ? r[2].value : []);
     if (r[3].status === 'fulfilled') setQueuedTasks(Array.isArray(r[3].value) ? r[3].value : []);
     if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) setProjects(r[4].value);
-    if (r[5].status === 'fulfilled') setCluster(r[5].value?.cluster ?? null);
+    if (r[5].status === 'fulfilled') {
+      const c = r[5].value?.cluster ?? null;
+      setCluster(c);
+      // 批量获取所有进程的 provider 信息
+      const procs = c?.servers?.[0]?.slots?.processes ?? [];
+      if (procs.length > 0) {
+        const pids = procs.map((p: ClusterProcess) => p.pid).join(',');
+        fetch(`/api/cluster/session-providers?pids=${pids}`)
+          .then(x => x.ok ? x.json() : {})
+          .then(data => setProviderMap(data))
+          .catch(() => null);
+      }
+    }
     if (r[6].status === 'fulfilled') setVps(r[6].value);
     if (r[7].status === 'fulfilled') setServices(r[7].value?.services || []);
     setUpdatedAt(new Date());
@@ -781,7 +823,8 @@ export default function LiveMonitorPage() {
                     {foregroundProcs.map(p => (
                       <AgentRow key={p.pid} type="foreground" pid={p.pid} cpu={p.cpu} mem={p.memory}
                         startTime={p.startTime} title="Claude Code 交互式会话"
-                        accent="#3b82f6" onKilled={handleKilled} />
+                        accent="#3b82f6" onKilled={handleKilled}
+                        providerInfo={providerMap[p.pid] ?? { provider: 'anthropic', model: null }} />
                     ))}
                   </div>
                 )}
@@ -801,7 +844,8 @@ export default function LiveMonitorPage() {
                       const { skill, taskTitle } = parseBackgroundCmd(p.command);
                       return (
                         <AgentRow key={p.pid} type="background" pid={p.pid} cpu={p.cpu} mem={p.memory}
-                          startTime={p.startTime} title={taskTitle} skill={skill} accent="#10b981" />
+                          startTime={p.startTime} title={taskTitle} skill={skill} accent="#10b981"
+                          providerInfo={providerMap[p.pid] ?? null} />
                       );
                     })}
                   </div>

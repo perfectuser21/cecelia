@@ -24,6 +24,30 @@ function readCmdline(pid: number): string[] | null {
 }
 
 /**
+ * 从 /proc/{pid}/environ 读取环境变量
+ * 返回指定 key 的值，或 null
+ */
+function readProcessEnv(pid: number, keys: string[]): Record<string, string | null> {
+  const result: Record<string, string | null> = {};
+  for (const k of keys) result[k] = null;
+  try {
+    const raw = readFileSync(`/proc/${pid}/environ`, 'utf-8');
+    const entries = raw.split('\0');
+    for (const entry of entries) {
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx === -1) continue;
+      const key = entry.slice(0, eqIdx);
+      if (keys.includes(key)) {
+        result[key] = entry.slice(eqIdx + 1);
+      }
+    }
+  } catch {
+    // 无法读取 environ（权限或进程不存在）
+  }
+  return result;
+}
+
+/**
  * 检查 PID 是否为前台 claude 进程（非 claude -p）
  */
 function isForegroundClaude(args: string[]): boolean {
@@ -69,13 +93,50 @@ router.get('/session-info/:pid', (req, res) => {
       : parts[parts.length - 1] || cwd;
   }
 
+  // 读取 provider/model 环境变量
+  const env = readProcessEnv(pid, ['CECELIA_PROVIDER', 'CECELIA_MODEL', 'ANTHROPIC_BASE_URL']);
+  let provider: string = 'anthropic';
+  let model: string | null = env.CECELIA_MODEL;
+  if (env.CECELIA_PROVIDER) {
+    provider = env.CECELIA_PROVIDER;
+  } else if (env.ANTHROPIC_BASE_URL?.includes('minimax')) {
+    provider = 'minimax';
+  }
+
   res.json({
     pid,
     cwd,
     projectName,
     cmdline: args.join(' '),
     isForeground: isForegroundClaude(args),
+    provider,
+    model,
   });
+});
+
+/**
+ * GET /api/cluster/session-providers?pids=123,456
+ * 批量获取进程的 provider/model 信息（用于 LiveMonitor 徽章）
+ */
+router.get('/session-providers', (req, res) => {
+  const pidsRaw = (req.query.pids as string) || '';
+  const pids = pidsRaw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0);
+  if (pids.length === 0) {
+    return res.json({});
+  }
+  const result: Record<number, { provider: string; model: string | null }> = {};
+  for (const pid of pids) {
+    if (!existsSync(`/proc/${pid}`)) continue;
+    const env = readProcessEnv(pid, ['CECELIA_PROVIDER', 'CECELIA_MODEL', 'ANTHROPIC_BASE_URL']);
+    let provider = 'anthropic';
+    if (env.CECELIA_PROVIDER) {
+      provider = env.CECELIA_PROVIDER;
+    } else if (env.ANTHROPIC_BASE_URL?.includes('minimax')) {
+      provider = 'minimax';
+    }
+    result[pid] = { provider, model: env.CECELIA_MODEL };
+  }
+  res.json(result);
 });
 
 /**
