@@ -51,7 +51,7 @@ describe('Check 5: Project decomposition 时间上下文', () => {
   it('D5: description 包含 time_budget_days', async () => {
     pool.query = vi.fn(async (sql, params) => {
       // OKR validation counts
-      if (sql.includes('schema_version')) return { rows: [{ version: '051' }] };
+      if (sql.includes('schema_version')) return { rows: [{ version: '052' }] };
       // Capacity counts
       if (sql.includes('COUNT') && sql.includes("type = 'project'")) return { rows: [{ cnt: '0' }] };
       if (sql.includes('COUNT') && sql.includes("type = 'initiative'")) return { rows: [{ cnt: '0' }] };
@@ -96,7 +96,7 @@ describe('Check 5: Project decomposition 时间上下文', () => {
 
   it('D6: description 包含 deadline', async () => {
     pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('schema_version')) return { rows: [{ version: '051' }] };
+      if (sql.includes('schema_version')) return { rows: [{ version: '052' }] };
       if (sql.includes('COUNT') && sql.includes("type = 'project'")) return { rows: [{ cnt: '0' }] };
       if (sql.includes('COUNT') && sql.includes("type = 'initiative'")) return { rows: [{ cnt: '0' }] };
       if (sql.includes('COUNT') && sql.includes('tasks')) return { rows: [{ cnt: '0' }] };
@@ -142,7 +142,7 @@ describe('Check 6: Initiative decomposition 时间上下文', () => {
 
   it('D7: description 包含 Project deadline', async () => {
     pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('schema_version')) return { rows: [{ version: '051' }] };
+      if (sql.includes('schema_version')) return { rows: [{ version: '052' }] };
       if (sql.includes('COUNT') && sql.includes("type = 'project'")) return { rows: [{ cnt: '0' }] };
       if (sql.includes('COUNT') && sql.includes("type = 'initiative'")) return { rows: [{ cnt: '0' }] };
       if (sql.includes('COUNT') && sql.includes('tasks')) return { rows: [{ cnt: '0' }] };
