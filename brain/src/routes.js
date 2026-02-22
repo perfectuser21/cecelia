@@ -2990,6 +2990,20 @@ router.get('/slots', async (req, res) => {
 });
 
 /**
+ * PUT /api/brain/budget-cap
+ * Set or clear the budget cap (dual-layer capacity model)
+ */
+router.put('/budget-cap', async (req, res) => {
+  try {
+    const { setBudgetCap } = await import('./executor.js');
+    const result = setBudgetCap(req.body.slots ?? null);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/vps-slots
  * Get real Claude process information with task details
  */

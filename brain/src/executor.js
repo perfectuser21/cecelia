@@ -131,21 +131,69 @@ const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude pr
 const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
 const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
 const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
-// Max seats (total capacity including interactive reserve)
-// CECELIA_MAX_CONCURRENT is deprecated since v1.35.0 - use auto-calculated slot allocation
-const _AUTO_MAX_SEATS = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
-// 允许通过环境变量硬限制并发数（覆盖自动计算值），用于降低 token 消耗
-const _MAX_SEATS_OVERRIDE = process.env.CECELIA_MAX_SEATS ? parseInt(process.env.CECELIA_MAX_SEATS, 10) : null;
-const MAX_SEATS = (_MAX_SEATS_OVERRIDE && _MAX_SEATS_OVERRIDE > 0)
-  ? Math.min(_MAX_SEATS_OVERRIDE, _AUTO_MAX_SEATS)
-  : _AUTO_MAX_SEATS;
-// Auto-dispatch thresholds: subtract interactive reserve from budget
-// so when auto-dispatch hits the ceiling, user still has room for headed sessions
-const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;       // 2 * 0.5 = 1.0 core reserved
-const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB; // 2 * 500 = 1000MB reserved
-const LOAD_THRESHOLD = CPU_CORES * 0.95 - RESERVE_CPU;        // e.g. 7.6 - 1.0 = 6.6 (was 0.85=5.8, too tight for 5+ tasks)
-const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB; // e.g. 2398 + 1000 = 3398MB
-const SWAP_USED_MAX_PCT = 70;                     // Hard stop: swap > 70% (50% was too aggressive — modern Linux uses swap as cache)
+// ============================================================
+// Dual-Layer Capacity Model (v1.73.0)
+// ============================================================
+// Layer 1: PHYSICAL_CAPACITY — hardware ceiling (CPU + Memory)
+const PHYSICAL_CAPACITY = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
+
+// Layer 2: Budget Cap — user-controlled API spend limit (env or runtime API)
+const _envBudget = process.env.CECELIA_BUDGET_SLOTS
+  ? parseInt(process.env.CECELIA_BUDGET_SLOTS, 10)
+  : (process.env.CECELIA_MAX_SEATS ? parseInt(process.env.CECELIA_MAX_SEATS, 10) : null);
+let _budgetCap = (_envBudget && _envBudget > 0) ? _envBudget : null;
+
+function getEffectiveMaxSeats() {
+  if (_budgetCap && _budgetCap > 0) {
+    return Math.min(_budgetCap, PHYSICAL_CAPACITY);
+  }
+  return PHYSICAL_CAPACITY;
+}
+
+// MAX_SEATS: startup snapshot (backward compat for imports)
+const MAX_SEATS = getEffectiveMaxSeats();
+
+function getBudgetCap() {
+  return { budget: _budgetCap, physical: PHYSICAL_CAPACITY, effective: getEffectiveMaxSeats() };
+}
+
+function setBudgetCap(n) {
+  if (n === null || n === undefined) { _budgetCap = null; return getBudgetCap(); }
+  const val = parseInt(n, 10);
+  if (isNaN(val) || val < 1) throw new Error('Budget cap must be a positive integer');
+  _budgetCap = val;
+  return getBudgetCap();
+}
+
+// Auto-dispatch thresholds
+const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
+const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
+const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
+const SWAP_USED_MAX_PCT = 70;
+
+// ============================================================
+// CPU Sampler — real CPU% from /proc/stat (replaces load average)
+// ============================================================
+const CPU_THRESHOLD_PCT = 80;
+let _prevCpuTimes = null;
+
+function sampleCpuUsage() {
+  try {
+    const line = readFileSync('/proc/stat', 'utf-8').split('\n')[0];
+    const parts = line.split(/\s+/).slice(1).map(Number);
+    if (parts.length < 4) return null;
+    const idle = parts[3] + (parts[4] || 0);  // idle + iowait
+    const total = parts.reduce((a, b) => a + b, 0);
+    if (!_prevCpuTimes) { _prevCpuTimes = { idle, total }; return null; }
+    const diffIdle = idle - _prevCpuTimes.idle;
+    const diffTotal = total - _prevCpuTimes.total;
+    _prevCpuTimes = { idle, total };
+    if (diffTotal === 0) return 0;
+    return Math.round((1 - diffIdle / diffTotal) * 100);
+  } catch { return null; }
+}
+
+function _resetCpuSampler() { _prevCpuTimes = null; }
 
 /**
  * Resolve repo_path from a project, checking project_repos first, then parent chain.
@@ -185,6 +233,7 @@ async function resolveRepoPath(projectId) {
 function checkServerResources() {
   const loadAvg1 = os.loadavg()[0];
   const freeMem = Math.round(os.freemem() / 1024 / 1024);
+  const dynMaxSeats = getEffectiveMaxSeats();
 
   // Read swap from /proc/meminfo (Linux)
   let swapUsedPct = 0;
@@ -199,49 +248,48 @@ function checkServerResources() {
     // Not Linux or no /proc — skip swap check
   }
 
-  // Calculate resource pressure (0.0 = idle, 1.0 = at threshold)
-  const cpuPressure = loadAvg1 / LOAD_THRESHOLD;                      // e.g. 4.0/6.4 = 0.625
-  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));           // invert: more free = less pressure
-  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;               // e.g. 20/50 = 0.4
+  // CPU pressure from real CPU% (replaces load average)
+  const cpuPct = sampleCpuUsage();
+  const cpuPressure = cpuPct !== null ? cpuPct / CPU_THRESHOLD_PCT : 0;
+  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+  const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
   const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
 
   // Dynamic seat scaling based on highest pressure
-  //   pressure < 0.5  → full seats (MAX_SEATS)
-  //   pressure 0.5-0.7 → 2/3 of seats
-  //   pressure 0.7-0.9 → 1/3 of seats
-  //   pressure >= 0.9  → 1 seat (minimum)
-  //   pressure >= 1.0  → 0 (hard stop, ok=false)
-  let effectiveSlots = MAX_SEATS;
+  let effectiveSlots = dynMaxSeats;
   if (maxPressure >= 1.0) {
     effectiveSlots = 0;
   } else if (maxPressure >= 0.9) {
     effectiveSlots = 1;
   } else if (maxPressure >= 0.7) {
-    effectiveSlots = Math.max(Math.round(MAX_SEATS / 3), 1);
+    effectiveSlots = Math.max(Math.round(dynMaxSeats / 3), 1);
   } else if (maxPressure >= 0.5) {
-    effectiveSlots = Math.max(Math.round(MAX_SEATS * 2 / 3), 1);
+    effectiveSlots = Math.max(Math.round(dynMaxSeats * 2 / 3), 1);
   }
 
   const metrics = {
     load_avg_1m: loadAvg1,
-    load_threshold: LOAD_THRESHOLD,
+    cpu_usage_pct: cpuPct,
+    cpu_threshold_pct: CPU_THRESHOLD_PCT,
+    cpu_pressure: Math.round(cpuPressure * 100) / 100,
     free_mem_mb: freeMem,
     mem_min_mb: MEM_AVAILABLE_MIN_MB,
     swap_used_pct: swapUsedPct,
     swap_max_pct: SWAP_USED_MAX_PCT,
     cpu_cores: CPU_CORES,
     total_mem_mb: TOTAL_MEM_MB,
-    cpu_pressure: Math.round(cpuPressure * 100) / 100,
     mem_pressure: Math.round(memPressure * 100) / 100,
     swap_pressure: Math.round(swapPressure * 100) / 100,
     max_pressure: Math.round(maxPressure * 100) / 100,
-    max_seats: MAX_SEATS,
+    physical_capacity: PHYSICAL_CAPACITY,
+    budget_cap: _budgetCap,
+    max_seats: dynMaxSeats,
     effective_slots: effectiveSlots,
   };
 
   if (effectiveSlots === 0) {
     const reasons = [];
-    if (cpuPressure >= 1.0) reasons.push(`CPU load ${loadAvg1.toFixed(1)} > ${LOAD_THRESHOLD}`);
+    if (cpuPressure >= 1.0) reasons.push(`CPU ${cpuPct}% > ${CPU_THRESHOLD_PCT}%`);
     if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
     if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
     return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
@@ -1955,4 +2003,12 @@ export {
   recordSessionEnd,
   getSessionInfo,
   _resetSessionStart,
+  // v12: Dual-layer capacity model
+  PHYSICAL_CAPACITY,
+  CPU_THRESHOLD_PCT,
+  getEffectiveMaxSeats,
+  getBudgetCap,
+  setBudgetCap,
+  sampleCpuUsage,
+  _resetCpuSampler,
 };
