@@ -54,6 +54,7 @@ import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
+import { handleChat } from './orchestrator-chat.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -6246,5 +6247,36 @@ export async function triggerAutoRCA({ task_id, errorMsg, classification, should
     console.error(`[AutoRCA] Error analyzing task=${task_id}: ${err.message}`);
   }
 }
+
+// ==================== Orchestrator Chat ====================
+
+/**
+ * POST /api/brain/orchestrator/chat
+ * Cecelia 嘴巴对话端点
+ *
+ * Request: { message: string, context?: { conversation_id, history } }
+ * Response: { reply: string, routing_level: number, intent: string }
+ */
+router.post('/orchestrator/chat', async (req, res) => {
+  try {
+    const { message, context } = req.body;
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'message is required and must be a string',
+      });
+    }
+
+    const result = await handleChat(message, context || {});
+    res.json(result);
+  } catch (err) {
+    console.error('[API] orchestrator/chat error:', err.message);
+    res.status(500).json({
+      error: 'Chat failed',
+      message: err.message,
+    });
+  }
+});
 
 export default router;
