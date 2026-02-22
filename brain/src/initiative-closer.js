@@ -14,6 +14,8 @@
  * 触发位置：tick.js Section 0.8（每次 tick 都跑，SQL 轻量）
  */
 
+import { computeCapacity } from './capacity.js';
+
 /**
  * 检查并关闭已完成的 Initiatives。
  *
@@ -183,28 +185,44 @@ async function checkProjectCompletion(pool) {
  *   - checkInitiativeCompletion() 关闭 initiative 后（保证有空位就填上）
  */
 
-/** 同时允许的最大 active initiative 数量 */
-export const MAX_ACTIVE_INITIATIVES = 10;
+/**
+ * 获取 initiative 层最大 active 数量（从 capacity 公式计算）。
+ *
+ * @param {number} slots - Pool C 可用 slot 数量
+ * @returns {number} 最大 active initiative 数量
+ */
+export function getMaxActiveInitiatives(slots) {
+  return computeCapacity(slots).initiative.max;
+}
+
+/** 默认值（SLOTS=9 时 max=9）。tick.js 运行时通过参数传入实际 slots。 */
+export const MAX_ACTIVE_INITIATIVES = 9;
 
 /**
- * 从 pending initiative 中按优先级激活，使 active 总数不超过 MAX_ACTIVE_INITIATIVES。
+ * 从 pending initiative 中按优先级激活，使 active 总数不超过容量上限。
  *
  * @param {import('pg').Pool} pool - PostgreSQL 连接池
+ * @param {number} [slotsOverride] - 可选，手动指定 SLOTS（用于测试）
  * @returns {Promise<number>} 本次激活的 initiative 数量
  */
-async function activateNextInitiatives(pool) {
-  // 1. 查当前 active initiative 数量
+async function activateNextInitiatives(pool, slotsOverride) {
+  // 从 capacity 公式获取上限
+  const maxActive = typeof slotsOverride === 'number'
+    ? computeCapacity(slotsOverride).initiative.max
+    : MAX_ACTIVE_INITIATIVES; // 运行时 fallback 到常量（避免 async import 复杂度）
+
+  // 1. 查当前 active initiative 数量（包含 active + in_progress）
   const activeCountResult = await pool.query(`
     SELECT COUNT(*) AS cnt
     FROM projects
     WHERE type = 'initiative'
-      AND status = 'active'
+      AND status IN ('active', 'in_progress')
   `);
   const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
 
   // 2. 计算空位
-  const slots = MAX_ACTIVE_INITIATIVES - currentActive;
-  if (slots <= 0) {
+  const availableSlots = maxActive - currentActive;
+  if (availableSlots <= 0) {
     return 0;
   }
 
@@ -225,7 +243,7 @@ async function activateNextInitiatives(pool) {
       LIMIT $1
     )
     RETURNING id, name
-  `, [slots]);
+  `, [availableSlots]);
 
   const activated = activateResult.rowCount ?? 0;
 
@@ -239,7 +257,7 @@ async function activateNextInitiatives(pool) {
       activated_names: activateResult.rows.map(r => r.name),
       previous_active: currentActive,
       new_active: currentActive + activated,
-      max_allowed: MAX_ACTIVE_INITIATIVES,
+      max_allowed: maxActive,
       timestamp: new Date().toISOString(),
     })]);
   }

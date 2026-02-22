@@ -105,11 +105,15 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       // manual_mode check (added v1.50.1)
       pool.query.mockResolvedValueOnce({ rows: [] });
 
+      // Capacity gate: project at cap (skip 1-4), initiative at cap (skip 5+6), task below (run 7)
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '5' }] });  // project active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '9' }] });  // initiative active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });  // task queued count
+
       // getActiveExecutionPaths → no active paths (simplify other checks)
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // Check 6 (checkInitiativeDecomposition) → no empty initiatives
-      pool.query.mockResolvedValueOnce({ rows: [] });
+      // Check 6 skipped (initiativeAtCap=true)
 
       // Check 7 query → 1 exploratory task
       pool.query.mockResolvedValueOnce({
@@ -141,6 +145,14 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       const parentId = 'proj-parent-001';
 
       // manual_mode check (added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Capacity gate: project at cap (skip 1-4), initiative below (run 5+6), task below (run 7)
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '5' }] });  // project active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });  // initiative active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });  // task queued count
+
+      // Check 5 (checkProjectDecomposition) → no projects without initiatives
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       // getActiveExecutionPaths → no active paths
@@ -188,6 +200,14 @@ describe('Check 7: Exploratory Decomposition Continuation', () => {
       const initId = 'init-seeded-001';
 
       // manual_mode check (added v1.50.1)
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // Capacity gate: project at cap (skip 1-4), initiative below (run 5+6), task below (run 7)
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '5' }] });  // project active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });  // initiative active count
+      pool.query.mockResolvedValueOnce({ rows: [{ cnt: '0' }] });  // task queued count
+
+      // Check 5 (checkProjectDecomposition) → no projects without initiatives
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       // getActiveExecutionPaths → no active paths

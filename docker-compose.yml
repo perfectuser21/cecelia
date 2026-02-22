@@ -58,7 +58,7 @@ services:
     network_mode: host
     working_dir: /app
     volumes:
-      - /home/xx/perfect21/zenithjoy/workspace/apps/dashboard/dist:/app
+      - /home/xx/perfect21/cecelia/workspace/apps/dashboard/dist:/app
       - ./frontend-proxy.js:/frontend-proxy.js:ro
     command: node /frontend-proxy.js
     depends_on:

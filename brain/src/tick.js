@@ -1251,7 +1251,7 @@ async function executeTick() {
     console.error('[tick] Project completion check failed (non-fatal):', projectErr.message);
   }
 
-  // 0.10. Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活
+  // 0.10. Initiative 队列激活：每次 tick 检查，从 pending 按优先级激活（capacity-aware）
   try {
     const { activateNextInitiatives } = await import('./initiative-closer.js');
     const activated = await activateNextInitiatives(pool);
@@ -1264,6 +1264,25 @@ async function executeTick() {
     }
   } catch (activateErr) {
     console.error('[tick] Initiative queue activation failed (non-fatal):', activateErr.message);
+  }
+
+  // 0.11. Project 层容量管理：激活/降级确保 active 在 capacity 范围内
+  try {
+    const { manageProjectActivation } = await import('./project-activator.js');
+    const { computeCapacity } = await import('./capacity.js');
+    const DEFAULT_SLOTS = 9;
+    const cap = computeCapacity(DEFAULT_SLOTS);
+    const projectResult = await manageProjectActivation(pool, cap.project);
+    if (projectResult.activated > 0 || projectResult.deactivated > 0) {
+      console.log(`[TICK] Project 容量管理: +${projectResult.activated} 激活, -${projectResult.deactivated} 降级`);
+      actionsTaken.push({
+        action: 'project_capacity_management',
+        activated: projectResult.activated,
+        deactivated: projectResult.deactivated,
+      });
+    }
+  } catch (projectCapErr) {
+    console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
   }
 
   // 1. Decision Engine: Compare goal progress

@@ -16,6 +16,7 @@
  */
 
 import pool from './db.js';
+import { computeCapacity, isAtCapacity } from './capacity.js';
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
@@ -904,64 +905,139 @@ async function runDecompositionChecks() {
       return { skipped: true, reason: 'manual_mode', actions: [], summary: { manual_mode: true }, total_created: 0, total_skipped: 0, active_paths: [], created_tasks: [] };
     }
 
+    // ── Capacity Gate: 查各层 active 数量，计算是否还能拆解 ──
+    const DEFAULT_SLOTS = 9;
+    const cap = computeCapacity(DEFAULT_SLOTS);
+
+    const projectActiveResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM projects WHERE type = 'project' AND status = 'active'"
+    );
+    const projectActiveCount = parseInt(projectActiveResult.rows[0].cnt, 10);
+    const projectAtCap = isAtCapacity(projectActiveCount, cap.project.max);
+
+    const initiativeActiveResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM projects WHERE type = 'initiative' AND status IN ('active', 'in_progress')"
+    );
+    const initiativeActiveCount = parseInt(initiativeActiveResult.rows[0].cnt, 10);
+    const initiativeAtCap = isAtCapacity(initiativeActiveCount, cap.initiative.max);
+
+    const taskQueuedResult = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'queued'"
+    );
+    const taskQueuedCount = parseInt(taskQueuedResult.rows[0].cnt, 10);
+    const taskAtCap = isAtCapacity(taskQueuedCount, cap.task.queuedCap);
+
+    if (projectAtCap || initiativeAtCap || taskAtCap) {
+      console.log(`[decomp-checker] Capacity gate: projects=${projectActiveCount}/${cap.project.max} initiatives=${initiativeActiveCount}/${cap.initiative.max} tasks_queued=${taskQueuedCount}/${cap.task.queuedCap}`);
+    }
+
+    // Check 1-4: OKR hierarchy gaps（只在 project 层未满时运行）
+    if (!projectAtCap) {
+      try {
+        const c1 = await checkGlobalOkrDecomposition();
+        allActions.push(...c1);
+      } catch (err) { console.error('[decomp-checker] Check 1 failed:', err.message); }
+
+      try {
+        const c2 = await checkGlobalKrDecomposition();
+        allActions.push(...c2);
+      } catch (err) { console.error('[decomp-checker] Check 2 failed:', err.message); }
+
+      try {
+        const c3 = await checkAreaOkrDecomposition();
+        allActions.push(...c3);
+      } catch (err) { console.error('[decomp-checker] Check 3 failed:', err.message); }
+
+      try {
+        const c4 = await checkAreaKrProjectLink();
+        allActions.push(...c4);
+      } catch (err) { console.error('[decomp-checker] Check 4 failed:', err.message); }
+    } else {
+      console.log(`[decomp-checker] Skipping checks 1-4: projects at capacity (${projectActiveCount}/${cap.project.max})`);
+      allActions.push({ action: 'skip_capacity', check: 'checks_1_4', reason: 'project_at_capacity', active: projectActiveCount, max: cap.project.max });
+    }
+
+    // Check 5: Project → Initiative（只在 initiative 层未满时运行）
+    if (!initiativeAtCap) {
+      try {
+        const c5 = await checkProjectDecomposition();
+        allActions.push(...c5);
+      } catch (err) { console.error('[decomp-checker] Check 5 failed:', err.message); }
+    } else {
+      console.log(`[decomp-checker] Skipping check 5: initiatives at capacity (${initiativeActiveCount}/${cap.initiative.max})`);
+      allActions.push({ action: 'skip_capacity', check: 'check_5', reason: 'initiative_at_capacity', active: initiativeActiveCount, max: cap.initiative.max });
+    }
+
     // 1. Get active execution paths (initiatives with recent activity)
     const activePaths = await getActiveExecutionPaths();
 
     console.log(`[decomp-checker] Found ${activePaths.length} active execution paths`);
 
-    // 2. Check inventory for each active path
-    for (const path of activePaths) {
-      try {
-        const task = await ensureTaskInventory(path);
+    // 2. Check inventory for each active path（只在 task 层未满时运行）
+    if (!taskAtCap) {
+      for (const path of activePaths) {
+        try {
+          const task = await ensureTaskInventory(path);
 
-        if (task) {
+          if (task) {
+            allActions.push({
+              action: 'create_decomposition',
+              check: 'inventory_replenishment',
+              task_id: task.id,
+              initiative_id: path.id,
+              initiative_name: path.name,
+            });
+          } else {
+            allActions.push({
+              action: 'skip_inventory',
+              check: 'inventory_replenishment',
+              initiative_id: path.id,
+              initiative_name: path.name,
+              reason: 'inventory_sufficient_or_wip_limit',
+            });
+          }
+        } catch (err) {
+          console.error(`[decomp-checker] Inventory check failed for ${path.name}:`, err.message);
           allActions.push({
-            action: 'create_decomposition',
+            action: 'error',
             check: 'inventory_replenishment',
-            task_id: task.id,
             initiative_id: path.id,
             initiative_name: path.name,
-          });
-        } else {
-          allActions.push({
-            action: 'skip_inventory',
-            check: 'inventory_replenishment',
-            initiative_id: path.id,
-            initiative_name: path.name,
-            reason: 'inventory_sufficient_or_wip_limit',
+            error: err.message,
           });
         }
+      }
+    } else {
+      console.log(`[decomp-checker] Skipping inventory replenishment: tasks at capacity (${taskQueuedCount}/${cap.task.queuedCap})`);
+      allActions.push({ action: 'skip_capacity', check: 'inventory', reason: 'task_at_capacity', queued: taskQueuedCount, max: cap.task.queuedCap });
+    }
+
+    // 3. Check 6: Seed empty initiatives（只在 task 层未满时运行）
+    if (!taskAtCap && !initiativeAtCap) {
+      try {
+        const initiativeActions = await checkInitiativeDecomposition();
+        allActions.push(...initiativeActions);
+        const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
+        if (initiativeSeeded > 0) {
+          console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+        }
       } catch (err) {
-        console.error(`[decomp-checker] Inventory check failed for ${path.name}:`, err.message);
-        allActions.push({
-          action: 'error',
-          check: 'inventory_replenishment',
-          initiative_id: path.id,
-          initiative_name: path.name,
-          error: err.message,
-        });
+        console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
       }
+    } else {
+      allActions.push({ action: 'skip_capacity', check: 'check_6', reason: 'task_or_initiative_at_capacity' });
     }
 
-    // 3. Check 6: Seed empty initiatives (run independently of execution paths)
-    // Finds active initiatives with no tasks and creates decomposition seed tasks
-    try {
-      const initiativeActions = await checkInitiativeDecomposition();
-      allActions.push(...initiativeActions);
-      const initiativeSeeded = initiativeActions.filter(a => a.action === 'create_decomposition').length;
-      if (initiativeSeeded > 0) {
-        console.log(`[decomp-checker] Check 6: Seeded ${initiativeSeeded} empty initiative(s)`);
+    // 4. Check 7: Exploratory continuation（只在 task 层未满时运行）
+    if (!taskAtCap) {
+      try {
+        const exploratoryActions = await checkExploratoryDecompositionContinue();
+        allActions.push(...exploratoryActions);
+      } catch (err) {
+        console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
       }
-    } catch (err) {
-      console.error('[decomp-checker] Check 6 (initiative decomposition) failed:', err.message);
-    }
-
-    // 4. Check 7: Exploratory continuation (run independently of execution paths)
-    try {
-      const exploratoryActions = await checkExploratoryDecompositionContinue();
-      allActions.push(...exploratoryActions);
-    } catch (err) {
-      console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
+    } else {
+      allActions.push({ action: 'skip_capacity', check: 'check_7', reason: 'task_at_capacity' });
     }
 
     // 5. Summary

@@ -48,8 +48,8 @@ function makeMockPool(initiatives = [], taskStats = {}) {
         return { rows: [] };
       }
 
-      // activateNextInitiatives - 查当前 active 数量
-      if (s.includes('COUNT(*)') && s.includes("status = 'active'")) {
+      // activateNextInitiatives - 查当前 active 数量（包含 active + in_progress）
+      if (s.includes('COUNT(*)') && s.includes("status IN ('active', 'in_progress')")) {
         return { rows: [{ cnt: '5' }] };
       }
 

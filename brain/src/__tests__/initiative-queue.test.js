@@ -21,10 +21,10 @@ function makeMockPool(currentActiveCount = 0, pendingInitiatives = []) {
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // 查当前 active initiative 数量
+      // 查当前 active initiative 数量（包含 active + in_progress）
       if (
         s.includes("type = 'initiative'") &&
-        s.includes("status = 'active'") &&
+        (s.includes("status IN ('active', 'in_progress')") || s.includes("status = 'active'")) &&
         s.includes('COUNT(*)')
       ) {
         return { rows: [{ cnt: String(currentActiveCount) }] };
@@ -71,8 +71,8 @@ describe('Q1: pending 少于 MAX 时激活到上限', () => {
     expect(activated).toBe(3);
   });
 
-  it('当前 active=0，pending=10，应激活 10 个（等于 MAX）', async () => {
-    const pending = Array.from({ length: 10 }, (_, i) => ({
+  it('当前 active=0，pending=9，应激活 9 个（等于 MAX）', async () => {
+    const pending = Array.from({ length: 9 }, (_, i) => ({
       id: `init-${i}`,
       name: `Initiative ${i}`,
     }));
@@ -80,15 +80,15 @@ describe('Q1: pending 少于 MAX 时激活到上限', () => {
 
     const activated = await activateNextInitiatives(pool);
 
-    expect(activated).toBe(10);
+    expect(activated).toBe(9);
   });
 
-  it('当前 active=8，pending=5，应激活 2 个（剩余空位 10-8=2）', async () => {
+  it('当前 active=7，pending=5，应激活 2 个（剩余空位 9-7=2）', async () => {
     const pending = Array.from({ length: 5 }, (_, i) => ({
       id: `init-${i}`,
       name: `Initiative ${i}`,
     }));
-    const pool = makeMockPool(8, pending);
+    const pool = makeMockPool(7, pending);
 
     const activated = await activateNextInitiatives(pool);
 
@@ -113,7 +113,7 @@ describe('Q1: pending 少于 MAX 时激活到上限', () => {
 // Q2: 已有 MAX_ACTIVE_INITIATIVES 个 active → 不激活新的
 // ────────────────────────────────────────────────────────────────────────────
 describe('Q2: 已达 MAX 时不激活新的', () => {
-  it('当前 active=10，返回 0，不调用 UPDATE', async () => {
+  it('当前 active=9，返回 0，不调用 UPDATE', async () => {
     const pending = [{ id: 'init-extra', name: 'Extra Initiative' }];
     const pool = makeMockPool(MAX_ACTIVE_INITIATIVES, pending);
 
@@ -241,8 +241,8 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
           return { rows: [] };
         }
 
-        // activateNextInitiatives - 查当前 active 数量
-        if (s.includes('COUNT(*)') && s.includes("status = 'active'")) {
+        // activateNextInitiatives - 查当前 active 数量（包含 active + in_progress）
+        if (s.includes('COUNT(*)') && (s.includes("status IN ('active', 'in_progress')") || s.includes("status = 'active'"))) {
           return { rows: [{ cnt: '5' }] };
         }
 
