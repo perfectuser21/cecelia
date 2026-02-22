@@ -10,6 +10,7 @@ import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
+import { loadActiveProfile } from './src/model-profile.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 
@@ -95,6 +96,14 @@ const selfCheckOk = await runSelfCheck(pool);
 if (!selfCheckOk) {
   console.error('[FATAL] Self-check failed. Brain will NOT start.');
   process.exit(1);
+}
+
+// Load active model profile
+try {
+  await loadActiveProfile(pool);
+  console.log('[Server] Model profile loaded');
+} catch (err) {
+  console.warn('[Server] Failed to load model profile, using fallback:', err.message);
 }
 
 // Realtime WebSocket server (noServer mode, manually handle upgrade)
