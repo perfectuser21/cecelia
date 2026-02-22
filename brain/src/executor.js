@@ -21,6 +21,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
+import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
@@ -809,43 +810,40 @@ const MODELS = {
   CODEX: 'codex',
 };
 
-const MODEL_MAP = {
-  dev:            { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  exploratory:    { anthropic: null,         minimax: MODELS.M21 },
-  review:         { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  qa:             { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  audit:          { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  talk:           { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  research:       { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  decomp_review:  { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
-  codex_qa:       { anthropic: null,         minimax: null },
-};
-
-const FIXED_PROVIDER = {
-  exploratory:   'minimax',
-  codex_qa:      'openai',
-  decomp_review: 'minimax',
-  talk:          'minimax',
-  research:      'minimax',
-};
+// Fallback 常量（profile 不可用时使用）
+const MODEL_MAP = FALLBACK_PROFILE.config.executor.model_map;
+const FIXED_PROVIDER = FALLBACK_PROFILE.config.executor.fixed_provider;
 
 /**
  * Get model for a task based on task type and provider.
+ * Profile-aware: 优先读取 active profile 的 model_map。
  */
 function getModelForTask(task) {
   const taskType = task.task_type || 'dev';
   const provider = getProviderForTask(task);
   if (taskType === 'codex_qa') return null;
-  const mapping = MODEL_MAP[taskType];
+
+  const profile = getActiveProfile();
+  const profileMap = profile?.config?.executor?.model_map;
+  const mapping = profileMap?.[taskType] || MODEL_MAP[taskType];
   if (!mapping) return provider === 'minimax' ? MODELS.M25_HIGHSPEED : null;
   return mapping[provider] || null;
 }
 
 /**
  * Get provider for a task.
+ * Profile-aware: 优先读取 active profile 的 fixed_provider 和 default_provider。
  */
 function getProviderForTask(task) {
   const taskType = task.task_type || 'dev';
+
+  const profile = getActiveProfile();
+  const profileFixed = profile?.config?.executor?.fixed_provider;
+  if (profileFixed?.[taskType]) return profileFixed[taskType];
+
+  const profileDefault = profile?.config?.executor?.default_provider;
+  if (profileDefault) return profileDefault;
+
   if (FIXED_PROVIDER[taskType]) return FIXED_PROVIDER[taskType];
   return 'minimax';
 }

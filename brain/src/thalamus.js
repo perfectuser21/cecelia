@@ -25,6 +25,7 @@ import { homedir } from 'node:os';
 import pool from './db.js';
 import { getRecentLearnings } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
+import { getActiveProfile } from './model-profile.js';
 
 // ============================================================
 // LLM Error Type Classification
@@ -471,10 +472,10 @@ async function analyzeEvent(event) {
 
   try {
     // 调用 MiniMax M2.1（丘脑 LLM）
-    const { text: response, usage } = await callThalamLLM(prompt);
+    const { text: response, usage, model: thalamusModel } = await callThalamusLLM(prompt);
 
     // 记录 token 消耗
-    await recordTokenUsage('thalamus', 'MiniMax-M2.1', usage, {
+    await recordTokenUsage('thalamus', thalamusModel || 'MiniMax-M2.1', usage, {
       event_type: event.type,
       memory_candidates: memoryMeta?.candidates || 0,
       memory_injected: memoryMeta?.injected || 0,
@@ -579,6 +580,67 @@ async function callThalamLLM(prompt) {
 }
 
 function _resetThalamusMinimaxKey() { _thalamusMinimaxKey = null; }
+
+/**
+ * 调用 Haiku（Anthropic Profile 时的丘脑 LLM）
+ */
+async function callHaiku(prompt) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set (thalamus)');
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Haiku API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+  const text = data.content?.[0]?.text || '';
+  if (!text) throw new Error('Haiku returned empty content');
+
+  const usage = data.usage ? {
+    total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+    input_tokens: data.usage.input_tokens || 0,
+    output_tokens: data.usage.output_tokens || 0,
+  } : null;
+
+  return { text, usage };
+}
+
+/**
+ * Profile-aware 丘脑 LLM 调用
+ * MiniMax profile → callThalamLLM（MiniMax M2.1）
+ * Anthropic profile → callHaiku（Haiku）
+ */
+async function callThalamusLLM(prompt) {
+  const profile = getActiveProfile();
+  const provider = profile?.config?.thalamus?.provider || 'minimax';
+  const model = profile?.config?.thalamus?.model || 'MiniMax-M2.1';
+
+  if (provider === 'anthropic') {
+    console.log(`[thalamus] Calling Haiku (${model}) via Anthropic profile...`);
+    const result = await callHaiku(prompt);
+    return { ...result, model };
+  }
+
+  console.log(`[thalamus] Calling MiniMax M2.1 (${model}) via MiniMax profile...`);
+  const result = await callThalamLLM(prompt);
+  return { ...result, model };
+}
 
 /**
  * 从 MiniMax M2.1 响应中解析 Decision
@@ -1006,7 +1068,9 @@ export {
   buildMemoryBlock,  // 保留向后兼容（Memory API 可能引用）
   recordMemoryRetrieval,
 
-  // MiniMax M2.1 丘脑 LLM
+  // 丘脑 LLM（profile-aware）
+  callThalamusLLM,
+  callHaiku,
   callThalamLLM,
   stripThinking,
   _resetThalamusMinimaxKey,

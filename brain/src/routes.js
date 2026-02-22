@@ -56,6 +56,7 @@ import { createProposal, approveProposal, rollbackProposal, rejectProposal, getP
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
+import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles } from './model-profile.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -6407,6 +6408,50 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
   } catch (err) {
     console.error('[API] orchestrator/realtime/tool error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Model Profile API ====================
+
+router.get('/model-profiles', async (_req, res) => {
+  try {
+    const profiles = await listModelProfiles(pool);
+    res.json({ success: true, profiles });
+  } catch (err) {
+    console.error('[API] model-profiles list error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/model-profiles/active', (_req, res) => {
+  try {
+    const profile = getActiveProfile();
+    res.json({ success: true, profile });
+  } catch (err) {
+    console.error('[API] model-profiles active error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.put('/model-profiles/active', async (req, res) => {
+  try {
+    const { profile_id } = req.body;
+    if (!profile_id) {
+      return res.status(400).json({ success: false, error: 'profile_id is required' });
+    }
+    const profile = await switchProfile(pool, profile_id);
+
+    // WebSocket 广播 profile:changed
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: profile.id,
+      profile_name: profile.name,
+    });
+
+    res.json({ success: true, profile });
+  } catch (err) {
+    console.error('[API] model-profiles switch error:', err.message);
+    const status = err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 
