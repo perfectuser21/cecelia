@@ -81,6 +81,7 @@ let _lastExecuteTime = 0; // track last full executeTick() time for throttling
 let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
 let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 let _lastKrProgressSyncTime = 0; // track last KR progress sync time
+let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1317,6 +1318,26 @@ async function executeTick() {
     }
   }
 
+  // 0.13. HEARTBEAT.md 灵活巡检：每 30 分钟一次，L1 丘脑执行
+  const heartbeatElapsed = Date.now() - _lastHeartbeatTime;
+  const { HEARTBEAT_INTERVAL_MS: HB_INTERVAL } = await import('./heartbeat-inspector.js');
+  if (heartbeatElapsed >= HB_INTERVAL) {
+    _lastHeartbeatTime = Date.now();
+    try {
+      const { runHeartbeatInspection } = await import('./heartbeat-inspector.js');
+      const hbResult = await runHeartbeatInspection(pool);
+      if (!hbResult.skipped && hbResult.actions_count > 0) {
+        console.log(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
+        actionsTaken.push({
+          action: 'heartbeat_inspection',
+          actions_count: hbResult.actions_count,
+        });
+      }
+    } catch (hbErr) {
+      console.error('[tick] Heartbeat inspection failed (non-fatal):', hbErr.message);
+    }
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
@@ -1834,6 +1855,8 @@ function _resetLastCleanupTime() { _lastCleanupTime = 0; }
 function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
 /** Reset KR progress sync timer — for testing only */
 function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
+/** Reset heartbeat timer — for testing only */
+function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -1908,5 +1931,6 @@ export {
   _resetLastExecuteTime,
   _resetLastCleanupTime,
   _resetLastHealthCheckTime,
-  _resetLastKrProgressSyncTime
+  _resetLastKrProgressSyncTime,
+  _resetLastHeartbeatTime
 };
