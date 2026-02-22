@@ -33,7 +33,7 @@ services:
       - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
       # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
       # CECELIA_MAX_SEATS: hard cap on concurrent slots (overrides auto-calc, set 0 to disable)
-      - CECELIA_MAX_SEATS=${CECELIA_MAX_SEATS:-6}
+      - CECELIA_MAX_SEATS=${CECELIA_MAX_SEATS:-8}
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}

@@ -6,6 +6,15 @@
 
 ---
 
+### [2026-02-22] OKR 拆解质量治理 v1.59.0
+
+- **Bug**: 中文测试描述长度不够 MIN_DESCRIPTION_LENGTH (100字符)，导致测试失败。质量门禁验证字符串时要确保测试数据足够长。
+- **优化点**: decomposition_depth 用 COALESCE 默认值处理存量数据，无需回填所有记录
+- **架构决策**: KR 进度计算采用双触发（initiative 关闭时 + tick 每小时同步），确保实时性和最终一致性
+- **影响程度**: High — 解决了拆解无限递归、任务质量差、KR 进度永远为 0 三个系统性问题
+
+---
+
 ### [2026-02-15] Fix Alertness System Architecture Confusion (P0)
 
 - **Bug**: Two Alertness systems coexist and conflict, causing dispatch rate limiting to fail
