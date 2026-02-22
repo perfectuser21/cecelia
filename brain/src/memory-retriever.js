@@ -71,6 +71,7 @@ export function timeDecay(createdAt, halfLifeDays) {
 
 /**
  * 简单 Jaccard 去重：高分优先，后续候选与已选结果 Jaccard > threshold 的丢弃
+ * （Phase 1 遗留，保留向后兼容；Phase 3 主流程已改用 mmrRerank）
  * @param {Array} scored - 已评分的候选列表（需有 text 和 finalScore）
  * @param {number} threshold - Jaccard 阈值（默认 0.8）
  * @returns {Array} 去重后的列表
@@ -83,6 +84,50 @@ export function simpleDedup(scored, threshold = 0.8) {
     if (!isDuplicate) result.push(item);
   }
   return result;
+}
+
+/**
+ * MMR (Maximal Marginal Relevance) 重排
+ *
+ * 平衡相关性和多样性：
+ * MMR(i) = lambda * relevance(i) - (1 - lambda) * max_similarity(i, selected)
+ *
+ * @param {Array} candidates - 已评分的候选列表（需有 text 和 finalScore）
+ * @param {number} topK - 返回的最大条数
+ * @param {number} lambda - 平衡因子（0-1，越大越偏相关性，默认 0.7）
+ * @returns {Array} MMR 重排后的列表
+ */
+export function mmrRerank(candidates, topK, lambda = 0.7) {
+  if (!candidates || candidates.length === 0) return [];
+  if (topK <= 0) return [];
+
+  const selected = [];
+  const remaining = [...candidates];
+
+  // 归一化 finalScore 到 0-1（避免不同数据源分数量纲差异）
+  const maxScore = Math.max(...remaining.map(r => r.finalScore), 0.001);
+
+  while (selected.length < topK && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMMR = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const relevance = remaining[i].finalScore / maxScore;
+      const maxSim = selected.length > 0
+        ? Math.max(...selected.map(s => jaccardSimilarity(s.text, remaining[i].text)))
+        : 0;
+      const mmr = lambda * relevance - (1 - lambda) * maxSim;
+
+      if (mmr > bestMMR) {
+        bestMMR = mmr;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  return selected;
 }
 
 /**
@@ -313,8 +358,8 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     };
   });
 
-  // 3. 简单去重（Jaccard > 0.8 的丢弃）
-  const deduped = simpleDedup(scored, 0.8);
+  // 3. MMR 重排（平衡相关性与多样性，替代简单去重）
+  const deduped = mmrRerank(scored, Math.min(scored.length, 20));
 
   // 4. Token 预算截断
   let block = '';

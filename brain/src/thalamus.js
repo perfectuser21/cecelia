@@ -295,6 +295,35 @@ async function recordTokenUsage(source, model, usage, context = {}) {
 }
 
 /**
+ * 记录 memory_retrieval 可观测性事件（fire and forget）
+ * @param {Object} dbPool - pg pool
+ * @param {string} query - 搜索查询文本
+ * @param {string} mode - 决策模式
+ * @param {Object} meta - buildMemoryContext 返回的 meta
+ * @param {string} eventType - 触发事件类型
+ */
+async function recordMemoryRetrieval(dbPool, query, mode, meta, eventType) {
+  try {
+    await dbPool.query(`
+      INSERT INTO cecelia_events (event_type, source, payload)
+      VALUES ('memory_retrieval', 'thalamus', $1)
+    `, [JSON.stringify({
+      query: (query || '').substring(0, 200),
+      mode,
+      candidates_count: meta?.candidates || 0,
+      injected_count: meta?.injected || 0,
+      injected_sources: meta?.sources || [],
+      token_used: meta?.tokenUsed || 0,
+      token_budget: meta?.tokenBudget || 800,
+      trigger_event_type: eventType,
+      timestamp: new Date().toISOString(),
+    })]);
+  } catch (err) {
+    console.warn('[thalamus] Failed to record memory_retrieval event:', err.message);
+  }
+}
+
+/**
  * 记录路由决策事件（fire and forget，不阻塞主路径）
  * @param {string} routeType - 'quick_route' | 'llm_route' | 'cortex_route' | 'fallback_route'
  * @param {Object} event - 原始事件
@@ -453,6 +482,9 @@ async function analyzeEvent(event) {
       });
       return createFallbackDecision(event, validation.errors.join('; '));
     }
+
+    // 可观测性：fire-and-forget 记录 memory_retrieval 事件
+    recordMemoryRetrieval(pool, memoryQuery, mode, memoryMeta, event.type).catch(() => {});
 
     return decision;
 
@@ -929,6 +961,7 @@ export {
   // Memory 注入（统一检索器）
   extractMemoryQuery,
   buildMemoryBlock,  // 保留向后兼容（Memory API 可能引用）
+  recordMemoryRetrieval,
 
   // 常量
   EVENT_TYPES,
