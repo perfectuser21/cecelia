@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.28.0"
+version: "12.29.0"
 updated: "2026-02-22"
 
 # ============================================================================
@@ -1105,6 +1105,24 @@ workflow:
     evidence:
       type: log
       contains: "已移除 worktree"
+
+  - id: W6-004
+    feature: W6
+    name: "主仓库 cp-*/feature-* 分支强制 worktree（v12.29.0）"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, worktree, detection, isolation]
+    owner: workflow
+    steps:
+      given: "主仓库残留在 cp-* 或 feature-* 分支上（非 worktree）"
+      when: "运行 /dev 触发 Step 0 或 Step 3"
+      then: "检测到异常状态，强制创建 worktree 而非复用主仓库分支"
+    evidence:
+      type: code
+      file: "skills/dev/steps/00-worktree-auto.md"
+      contains: "异常：主仓库残留在"
 
   # --------------------------------------------------------------------------
   # W7: Ralph Loop 自动化

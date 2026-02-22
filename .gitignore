@@ -77,4 +77,27 @@ artifacts/screenshots/*.png
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Temp test fixtures (never commit)
+.test-*.json
+.test-*.md
+
+# Temp learning/exploratory files
+.learning-*.md
+
+# PRD/DoD feature directories (branch-level, never commit)
+.prd-feature/
+.dod-feature/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Skill runtime output (never commit)
+skills/*/output.json
+skills/*/validation-report.json
+
+# Validation reports (runtime)
+validation-report.json
+
 # CI trigger

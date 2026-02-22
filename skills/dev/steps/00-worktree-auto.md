@@ -1,9 +1,10 @@
 ---
 id: dev-step-00-worktree-auto
-version: 2.0.0
+version: 2.1.0
 created: 2026-01-31
-updated: 2026-02-12
+updated: 2026-02-22
 changelog:
+  - 2.1.0: 修复主仓库 cp-*/feature-* 分支检测盲区（强制 worktree）
   - 2.0.0: 简化为强制创建 worktree（修复 Bug 1）
   - 1.0.0: 初始版本 - worktree 自动检测与创建
 ---
@@ -30,13 +31,24 @@ changelog:
 
 ---
 
-## 决策逻辑（简化后）
+## 决策逻辑（v2.1 修复盲区）
 
 ```
 检测是否在 worktree 中？
   ├─ 是 → 跳过，继续 Step 1
-  └─ 否 → 强制创建 worktree → cd → npm install → 继续 Step 1
+  └─ 否（在主仓库）
+       ├─ 在 develop/main → 正常创建 worktree
+       └─ 在 cp-*/feature-* → ⚠️ 异常状态！仍然强制创建 worktree
+           （主仓库的 cp-*/feature-* 分支是上次残留，不能复用）
 ```
+
+### ⚠️ v2.1 修复：主仓库 cp-*/feature-* 盲区
+
+**问题**：如果主仓库残留在 cp-*/feature-* 分支上，旧逻辑正确检测到"不在 worktree"并创建 worktree，
+但 Step 3 的"恢复现有分支"逻辑会跳过分支创建，导致 AI 留在主仓库。
+
+**修复**：Step 0 显式检测此情况并警告，确保 AI 理解必须 cd 到 worktree。
+同时 Step 3 的"恢复现有分支"也加了 worktree 检查（双保险）。
 
 ---
 
@@ -56,8 +68,20 @@ if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     exit 0
 fi
 
-echo "📍 当前在主仓库，需要创建 worktree"
+# v2.1: 检测主仓库是否残留在 cp-*/feature-* 分支上
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
+    echo "⚠️  异常：主仓库残留在 $CURRENT_BRANCH 分支上"
+    echo "   这是上次任务的残留分支，不能直接复用"
+    echo "   必须创建独立 worktree 隔离开发"
+    echo ""
+fi
+
+echo "📍 当前在主仓库（分支: $CURRENT_BRANCH），需要创建 worktree"
 ```
+
+**CRITICAL**: 无论主仓库在什么分支上（develop、main、cp-*、feature-*），
+只要不在 worktree 中，就必须创建 worktree。**绝对不要**因为"已经在 cp-* 分支上"就跳过 worktree 创建。
 
 ### 2. 提取 task-name
 
@@ -138,9 +162,11 @@ echo ""
    - 捕获最后一行输出（worktree 路径）
    - 检查路径是否有效
 
-3. **cd 到 worktree 路径**：
+3. **cd 到 worktree 路径（CRITICAL）**：
    - 后续所有操作都在 worktree 中
-   - 不要回到主仓库
+   - **绝对不要回到主仓库**
+   - **绝对不要用 `cd /path/to/主仓库` 然后 `git checkout`**
+   - 如果需要操作其他分支，使用 `git -C <worktree-path>` 而不是 cd + checkout
 
 4. **安装依赖**：
    - 检测 package.json 存在时自动 npm install
@@ -149,6 +175,14 @@ echo ""
 5. **继续 Step 1**：
    - PRD 文件直接在 worktree 中创建/使用
    - 不需要从主仓库 copy
+
+### ⚠️ 禁止行为
+
+| 禁止 | 正确做法 |
+|------|----------|
+| `cd /主仓库 && git checkout cp-xxx` | 在 worktree 中操作 |
+| 在主仓库的 cp-* 分支上直接开发 | 创建 worktree 后 cd 进去 |
+| 因为"已经在 cp-* 分支"就跳过 worktree | 主仓库的 cp-* 是残留，必须创建 worktree |
 
 ---
 
