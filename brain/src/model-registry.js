@@ -13,25 +13,25 @@
 export const MODELS = [
   {
     id: 'MiniMax-M2.1',
-    name: 'MiniMax M2.1',
+    name: 'M2.1',
     provider: 'minimax',
     tier: 'fast',
   },
   {
     id: 'MiniMax-M2.1-highspeed',
-    name: 'MiniMax M2.1 Fast',
+    name: 'M2.1 Fast',
     provider: 'minimax',
     tier: 'fast',
   },
   {
     id: 'MiniMax-M2.5',
-    name: 'MiniMax M2.5',
+    name: 'M2.5',
     provider: 'minimax',
     tier: 'standard',
   },
   {
     id: 'MiniMax-M2.5-highspeed',
-    name: 'MiniMax M2.5',
+    name: 'M2.5 Fast',
     provider: 'minimax',
     tier: 'standard',
   },
