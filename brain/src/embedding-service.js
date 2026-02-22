@@ -31,3 +31,23 @@ export async function generateTaskEmbeddingAsync(taskId, title, description) {
     // 静默失败 — 不影响主流程
   }
 }
+
+/**
+ * 异步为 learning 生成并保存 embedding（fire-and-forget）
+ * @param {string} learningId - Learning UUID
+ * @param {string} text - 要向量化的文本（title + content）
+ */
+export async function generateLearningEmbeddingAsync(learningId, text) {
+  if (!process.env.OPENAI_API_KEY) return;
+
+  try {
+    const embedding = await generateEmbedding(text.substring(0, 4000));
+    const embStr = '[' + embedding.join(',') + ']';
+    await pool.query(
+      `UPDATE learnings SET embedding = $1::vector WHERE id = $2`,
+      [embStr, learningId]
+    );
+  } catch (_err) {
+    // 静默失败 — 不影响主流程
+  }
+}
