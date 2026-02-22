@@ -40,10 +40,16 @@ vi.mock('fs', () => ({
   readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-key' })),
 }));
 
+// Mock memory-retriever.js (fetchMemoryContext now uses buildMemoryContext directly)
+vi.mock('../memory-retriever.js', () => ({
+  buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
+}));
+
 // Import after mocks
 import pool from '../db.js';
 import { processEvent as thalamusProcessEvent } from '../thalamus.js';
 import { parseIntent } from '../intent.js';
+import { buildMemoryContext } from '../memory-retriever.js';
 import {
   handleChat,
   callMiniMax,
@@ -79,13 +85,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - basic', () => {
     it('returns reply from MiniMax for simple queries', async () => {
-      // Mock memory search
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ matches: [] }),
-      });
-
-      // Mock MiniMax call
+      // Mock MiniMax call (memory now uses buildMemoryContext mock, not fetch)
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -113,13 +113,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - routing', () => {
     it('routes complex queries to thalamus when MiniMax returns [ESCALATE]', async () => {
-      // Memory search
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ matches: [] }),
-      });
-
-      // MiniMax returns ESCALATE
+      // MiniMax returns ESCALATE (memory uses buildMemoryContext mock)
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -150,13 +144,7 @@ describe('orchestrator-chat', () => {
     });
 
     it('falls back to thalamus when MiniMax fails', async () => {
-      // Memory search
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ matches: [] }),
-      });
-
-      // MiniMax fails
+      // MiniMax fails (memory uses buildMemoryContext mock)
       global.fetch.mockResolvedValueOnce({
         ok: false,
         text: async () => 'Service unavailable',
@@ -180,37 +168,33 @@ describe('orchestrator-chat', () => {
   // ===================== D3: 记忆系统集成 =====================
 
   describe('fetchMemoryContext', () => {
-    it('returns formatted memory block when matches found', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          matches: [
-            { title: '任务管理系统', similarity: 0.85, preview: '实现了任务调度' },
-            { title: 'OKR 拆解', similarity: 0.72, preview: 'KR 到 Task 的拆解' },
-          ],
-        }),
+    it('returns memory block from buildMemoryContext', async () => {
+      buildMemoryContext.mockResolvedValueOnce({
+        block: '\n## 相关历史上下文\n- [任务] **任务管理系统**: 实现了任务调度\n',
+        meta: { candidates: 2, injected: 1, tokenUsed: 50 },
       });
 
       const block = await fetchMemoryContext('任务管理');
 
-      expect(block).toContain('相关历史记忆');
+      expect(block).toContain('相关历史上下文');
       expect(block).toContain('任务管理系统');
-      expect(block).toContain('0.85');
-      expect(block).toContain('OKR 拆解');
+      expect(buildMemoryContext).toHaveBeenCalledWith(
+        expect.objectContaining({ query: '任务管理', mode: 'chat' })
+      );
     });
 
-    it('returns empty string when no matches', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ matches: [] }),
+    it('returns empty string when buildMemoryContext returns empty block', async () => {
+      buildMemoryContext.mockResolvedValueOnce({
+        block: '',
+        meta: { candidates: 0, injected: 0 },
       });
 
       const block = await fetchMemoryContext('随机查询');
       expect(block).toBe('');
     });
 
-    it('returns empty string on fetch failure (graceful)', async () => {
-      global.fetch.mockRejectedValueOnce(new Error('Network error'));
+    it('returns empty string on error (graceful)', async () => {
+      buildMemoryContext.mockRejectedValueOnce(new Error('DB error'));
 
       const block = await fetchMemoryContext('测试');
       expect(block).toBe('');
@@ -219,7 +203,7 @@ describe('orchestrator-chat', () => {
     it('returns empty string for empty query', async () => {
       const block = await fetchMemoryContext('');
       expect(block).toBe('');
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(buildMemoryContext).not.toHaveBeenCalled();
     });
   });
 
@@ -249,14 +233,10 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - memory integration', () => {
     it('injects memory context into MiniMax prompt', async () => {
-      // Memory search returns matches
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          matches: [
-            { title: '历史任务', similarity: 0.9, preview: '相关上下文' },
-          ],
-        }),
+      // Memory returns block via buildMemoryContext
+      buildMemoryContext.mockResolvedValueOnce({
+        block: '\n## 相关历史上下文\n- [任务] **历史任务**: 相关上下文\n',
+        meta: { candidates: 1, injected: 1, tokenUsed: 50 },
       });
 
       // MiniMax call
@@ -274,10 +254,10 @@ describe('orchestrator-chat', () => {
       expect(result.routing_level).toBe(0);
 
       // 验证 MiniMax 调用中的 system prompt 包含记忆
-      const minimaxCall = global.fetch.mock.calls[1];
+      const minimaxCall = global.fetch.mock.calls[0];
       const body = JSON.parse(minimaxCall[1].body);
       const systemMsg = body.messages.find(m => m.role === 'system');
-      expect(systemMsg.content).toContain('相关历史记忆');
+      expect(systemMsg.content).toContain('相关历史上下文');
     });
   });
 
@@ -285,13 +265,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - error handling', () => {
     it('handles MiniMax failure gracefully with thalamus fallback', async () => {
-      // Memory search
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ matches: [] }),
-      });
-
-      // MiniMax network error
+      // MiniMax network error (memory uses buildMemoryContext mock)
       global.fetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       // Thalamus also fails
@@ -304,10 +278,7 @@ describe('orchestrator-chat', () => {
     });
 
     it('handles both MiniMax and thalamus failure', async () => {
-      // Memory search fails
-      global.fetch.mockRejectedValueOnce(new Error('timeout'));
-
-      // MiniMax fails
+      // MiniMax fails (memory uses buildMemoryContext mock)
       global.fetch.mockRejectedValueOnce(new Error('timeout'));
 
       // Thalamus fails
