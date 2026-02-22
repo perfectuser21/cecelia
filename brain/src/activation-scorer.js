@@ -19,6 +19,8 @@ const AGING_PER_DAY = 2;
 const PROGRESS_BONUS = 40;
 const DEPENDENCY_BONUS = 80;
 const USER_PIN_BONUS = 999;
+const DEADLINE_URGENCY_MAX = 150;
+const DEADLINE_WINDOW_DAYS = 7;
 
 /**
  * 计算一个实体（project/initiative）的激活分数。
@@ -30,6 +32,7 @@ const USER_PIN_BONUS = 999;
  * @param {number} [entity.progress] - 进度 0-1（可选）
  * @param {number} [entity.dependency_count] - 被依赖数量（可选）
  * @param {boolean} [entity.user_pinned] - 是否被用户置顶（可选）
+ * @param {Date|string} [entity.deadline] - 截止日期（可选）
  * @param {number} cooldownMs - 冷却时间（毫秒），刚切换状态的不参与
  * @param {Date} [now] - 当前时间（用于测试注入）
  * @returns {number} 激活分数，-Infinity 表示在冷却期内
@@ -71,6 +74,20 @@ export function computeActivationScore(entity, cooldownMs, now = new Date()) {
     score += USER_PIN_BONUS;
   }
 
+  // 6. deadline urgency
+  if (entity.deadline) {
+    const deadlineDate = new Date(entity.deadline);
+    const daysUntil = (deadlineDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000);
+    if (daysUntil <= 0) {
+      // 已超期，加满分
+      score += DEADLINE_URGENCY_MAX;
+    } else if (daysUntil < DEADLINE_WINDOW_DAYS) {
+      // 7天窗口内线性增长：越近越高
+      score += Math.round(DEADLINE_URGENCY_MAX * (1 - daysUntil / DEADLINE_WINDOW_DAYS));
+    }
+    // 7天以外不加分
+  }
+
   return score;
 }
 
@@ -81,4 +98,6 @@ export {
   PROGRESS_BONUS,
   DEPENDENCY_BONUS,
   USER_PIN_BONUS,
+  DEADLINE_URGENCY_MAX,
+  DEADLINE_WINDOW_DAYS,
 };

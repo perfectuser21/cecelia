@@ -9,14 +9,15 @@ import { computeCapacity, isAtCapacity } from '../capacity.js';
 describe('Capacity gate logic', () => {
   it('projects at capacity → skips checks 1-4', () => {
     const cap = computeCapacity(9);
-    // 5 active projects = at capacity (max=5)
+    // max=2 (聚焦执行)，2+ active = at capacity
+    expect(isAtCapacity(2, cap.project.max)).toBe(true);
     expect(isAtCapacity(5, cap.project.max)).toBe(true);
-    expect(isAtCapacity(6, cap.project.max)).toBe(true);
   });
 
   it('projects below capacity → allows checks 1-4', () => {
     const cap = computeCapacity(9);
-    expect(isAtCapacity(3, cap.project.max)).toBe(false);
+    // max=2, 只有 0 或 1 是 below capacity
+    expect(isAtCapacity(1, cap.project.max)).toBe(false);
     expect(isAtCapacity(0, cap.project.max)).toBe(false);
   });
 

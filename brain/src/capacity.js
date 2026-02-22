@@ -5,10 +5,12 @@
  * SLOTS 变化时（设备升降级），所有 cap 自动适配。
  *
  * 公式：
- *   Project:    max = ceil(SLOTS/2)     softMin = 1
- *   Initiative: max = SLOTS             softMin = ceil(SLOTS/3)
- *   Task:       queuedCap = SLOTS × 3  softMin = SLOTS
+ *   Project:    max = min(2, ceil(SLOTS/2))  softMin = 1  （聚焦执行，最多 2 个）
+ *   Initiative: max = SLOTS                   softMin = ceil(SLOTS/3)
+ *   Task:       queuedCap = SLOTS × 3        softMin = SLOTS
  */
+
+export const MAX_ACTIVE_PROJECTS = 2;
 
 /**
  * 从 SLOTS 数量计算各层级的容量限制。
@@ -23,7 +25,7 @@ export function computeCapacity(slots) {
     slots: s,
 
     project: {
-      max: Math.ceil(s / 2),
+      max: Math.min(MAX_ACTIVE_PROJECTS, Math.ceil(s / 2)),
       softMin: 1,
       cooldownMs: 180_000,   // 3 分钟，Project 切换频率低
     },

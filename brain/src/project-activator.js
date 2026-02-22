@@ -98,13 +98,14 @@ async function manageProjectActivation(pool, cap) {
   const candidateResult = await pool.query(`
     SELECT p.id, p.name, p.status, p.created_at, p.updated_at,
            p.metadata->>'user_pinned' AS user_pinned,
+           p.deadline,
            g.priority
     FROM projects p
     LEFT JOIN project_kr_links pkl ON pkl.project_id = p.id
     LEFT JOIN goals g ON g.id = pkl.kr_id
     WHERE p.type = 'project'
       AND p.status IN ('pending', 'inactive')
-    ORDER BY p.created_at ASC
+    ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC
   `);
 
   // 计算分数并排序
@@ -117,6 +118,7 @@ async function manageProjectActivation(pool, cap) {
         created_at: p.created_at,
         updated_at: p.updated_at,
         user_pinned: p.user_pinned === 'true',
+        deadline: p.deadline,
       }, cap.cooldownMs, now),
     }))
     .filter(p => p.score !== -Infinity)
