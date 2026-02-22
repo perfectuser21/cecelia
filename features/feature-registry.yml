@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.94.0"
+version: "2.94.1"
 updated: "2026-02-22"
 changelog:
+  - 2.94.1: v12.28.1 - 清理误提交垃圾文件 + .gitignore 增强防护
   - 2.94.0: v12.28.0 - Worktree 路径迁移到 .claude/worktrees/（对齐官方约定）+ Stop Hook 强制清理 worktree 兜底（H7-013）
   - 2.93.0: v12.27.1 - 强制所有 skill 输出简体中文（CRITICAL LANGUAGE RULE + language-rule.test.ts）
   - 2.92.0: v12.27.0 - Step 10 自动推进 Capability stage（update-capability.sh + Brain API 链路）
