@@ -4,6 +4,21 @@
 
 ---
 
+### [2026-02-22] 渐进验证循环 — Progress Reviewer (v1.65.0)
+
+**变更**：
+1. 新增 `progress-reviewer.js`：4 个核心函数（reviewProjectCompletion / shouldAdjustPlan / createPlanAdjustmentTask / executePlanAdjustment）
+2. `initiative-closer.js`：`checkProjectCompletion()` 闭环后自动触发 `shouldAdjustPlan` 审查
+3. `routes.js`：decomp_review 完成时处理 `plan_adjustment` 闭环
+
+**经验**：
+- **时间边界条件注意 strict inequality**：`underBudget` 判断用 `timeRatio < 0.5`（strict less-than），`0.5` 不算 under budget。测试时容易误以为 `0.5` 应返回 `true`。
+- **复用 decomp_review 任务类型**：plan_adjustment 和 decomposition quality 审查共用 `decomp_review` task_type，通过 `payload.review_scope` 区分（`plan_adjustment` vs `decomposition_quality`），避免新增 task_type。
+- **executePlanAdjustment 的防御式设计**：`findings?.plan_adjustment` + `findings?.adjustments` 双重检查，adjustments 为空数组也跳过，每个 adjustment 检查 `project_id` 存在才执行。
+- **initiative-closer 中 try-catch 隔离审查失败**：审查逻辑失败不影响 Project 关闭结果（已关闭的不回滚），只 console.error 记录。
+
+---
+
 ### [2026-02-22] OKR Validator 接入主链路 + CI (v1.61.0)
 
 **变更**：
