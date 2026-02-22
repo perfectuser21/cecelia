@@ -2496,6 +2496,58 @@ ${resultStr.substring(0, 2000)}
   }
 });
 
+// ==================== Heartbeat File API ====================
+
+const HEARTBEAT_PATH = new URL('../../HEARTBEAT.md', import.meta.url);
+
+const HEARTBEAT_DEFAULT_TEMPLATE = `# HEARTBEAT.md — Cecelia 巡检清单
+
+## 巡检项目
+
+- [ ] 系统健康检查
+- [ ] 任务队列状态
+- [ ] 资源使用率
+`;
+
+/**
+ * GET /api/brain/heartbeat
+ * Read HEARTBEAT.md file content.
+ * Returns default template if file does not exist.
+ */
+router.get('/heartbeat', async (req, res) => {
+  try {
+    const { readFile } = await import('fs/promises');
+    const content = await readFile(HEARTBEAT_PATH, 'utf-8');
+    res.json({ success: true, content });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.json({ success: true, content: HEARTBEAT_DEFAULT_TEMPLATE });
+    }
+    console.error('[heartbeat-file] GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/heartbeat
+ * Write content to HEARTBEAT.md file.
+ * Request body: { content: "..." }
+ */
+router.put('/heartbeat', async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (content === undefined || content === null) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+    const { writeFile } = await import('fs/promises');
+    await writeFile(HEARTBEAT_PATH, content, 'utf-8');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[heartbeat-file] PUT error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 /**
  * POST /api/brain/heartbeat
  * Heartbeat endpoint for running tasks to report liveness.
