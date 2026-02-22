@@ -13,14 +13,15 @@
 /* global console */
 
 import { execSync } from 'child_process';
-import { MAX_SEATS, checkServerResources, getActiveProcessCount } from './executor.js';
+import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap } from './executor.js';
 import pool from './db.js';
 
 // ============================================================
 // Constants
 // ============================================================
 
-const TOTAL_CAPACITY = MAX_SEATS;           // 12 on 8-core 16GB
+const TOTAL_CAPACITY = MAX_SEATS;           // startup snapshot (backward compat)
+function getTotalCapacity() { return getEffectiveMaxSeats(); }
 const CECELIA_RESERVED = 1;                  // Pool A: 1 slot for internal tasks
 const USER_RESERVED_BASE = 2;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 2;            // Extra free slots when user is active
@@ -158,6 +159,7 @@ async function countAutoDispatchInProgress() {
  * @returns {Object} Budget breakdown with per-pool allocations
  */
 async function calculateSlotBudget() {
+  const dynamicCapacity = getTotalCapacity();
   const sessions = detectUserSessions();
   const userMode = detectUserMode(sessions);
   const userSlotsUsed = sessions.headed.length;
@@ -165,23 +167,19 @@ async function calculateSlotBudget() {
   // Pool B: user slots = used + headroom (or base if absent)
   let userBudget;
   if (userMode === 'team') {
-    // Team mode: user needs lots of slots, yield everything possible
     userBudget = userSlotsUsed + USER_PRIORITY_HEADROOM;
   } else if (userMode === 'interactive') {
-    // Interactive: keep headroom for additional sessions
     userBudget = userSlotsUsed + USER_PRIORITY_HEADROOM;
   } else {
-    // Absent: base reservation (ready for user to appear)
     userBudget = USER_RESERVED_BASE;
   }
 
   // Pool A: Cecelia internal (on-demand)
   const hasInternalWork = await hasPendingInternalTasks();
-  // In team mode, Cecelia also yields
   const ceceliaNeeded = (hasInternalWork && userMode !== 'team') ? CECELIA_RESERVED : 0;
 
-  // Pool C: remaining capacity after A and B
-  const poolCRaw = Math.max(0, TOTAL_CAPACITY - userBudget - ceceliaNeeded);
+  // Pool C: remaining capacity after A and B (uses dynamic capacity)
+  const poolCRaw = Math.max(0, dynamicCapacity - userBudget - ceceliaNeeded);
 
   // Further throttle by resource pressure
   const resources = checkServerResources();
@@ -191,8 +189,12 @@ async function calculateSlotBudget() {
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
 
+  // Capacity info from dual-layer model
+  const capInfo = getBudgetCap();
+
   return {
-    total: TOTAL_CAPACITY,
+    total: dynamicCapacity,
+    capacity: { physical: capInfo.physical, budget: capInfo.budget, effective: capInfo.effective },
     user: {
       budget: userBudget,
       used: userSlotsUsed,
@@ -230,6 +232,7 @@ async function getSlotStatus() {
 
   return {
     total_capacity: budget.total,
+    capacity: budget.capacity,
     pools: {
       user: {
         budget: budget.user.budget,

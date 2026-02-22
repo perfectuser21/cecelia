@@ -17,6 +17,9 @@ vi.mock('child_process', () => ({
 // Mock executor.js
 vi.mock('../executor.js', () => ({
   MAX_SEATS: 12,
+  PHYSICAL_CAPACITY: 12,
+  getEffectiveMaxSeats: vi.fn(() => 12),
+  getBudgetCap: vi.fn(() => ({ budget: null, physical: 12, effective: 12 })),
   checkServerResources: vi.fn(() => ({
     effectiveSlots: 12,
     metrics: { max_pressure: 0.1 },
@@ -516,6 +519,9 @@ describe('getSlotStatus', () => {
     expect(status).toHaveProperty('pressure');
     expect(status).toHaveProperty('dispatch_allowed');
     expect(status).toHaveProperty('headless_count');
+    // Dual-layer capacity model
+    expect(status).toHaveProperty('capacity');
+    expect(status.capacity).toEqual({ budget: null, physical: 12, effective: 12 });
   });
 
   it('should include session PIDs in user pool', async () => {
