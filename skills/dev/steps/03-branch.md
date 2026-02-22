@@ -80,7 +80,8 @@ fi
 **逻辑**：
 - 在 worktree 中 → 跳过检查（已隔离）
 - 在主仓库且有 `.dev-mode` → **自动创建 worktree + cd**（兜底）
-- 在主仓库且无 `.dev-mode` → 继续创建分支
+- 在主仓库且无 `.dev-mode` 但在 cp-*/feature-* 分支 → **也必须创建 worktree**（v2.1 新增）
+- 在主仓库且无 `.dev-mode` 且在 develop/main → 继续创建分支
 
 ---
 
@@ -411,24 +412,54 @@ PRD 中的子任务使用 `T-{序号}-{任务名}` 格式：
 
 ## 恢复现有分支
 
-如果当前已在功能分支（非 main/develop），跳过创建：
+如果当前已在功能分支（非 main/develop），**必须先检查是否在 worktree 中**：
 
 ```bash
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "develop" ]]; then
-    echo "✅ 已在功能分支: $CURRENT_BRANCH"
+    # v2.1 修复：必须检查是否在 worktree 中
+    GIT_DIR_CHECK=$(git rev-parse --git-dir 2>/dev/null)
+    if [[ "$GIT_DIR_CHECK" != *"worktrees"* ]]; then
+        # ⚠️ 在主仓库的 cp-*/feature-* 分支上 — 这是残留状态！
+        echo "⚠️  异常：在主仓库的 $CURRENT_BRANCH 分支上（非 worktree）"
+        echo "   这是上次任务的残留，不能直接复用"
+        echo "   必须创建独立 worktree"
+        echo ""
 
-    # 读取保存的状态
-    BASE_BRANCH=$(git config branch.$CURRENT_BRANCH.base-branch)
+        # 强制创建 worktree（与 Step 0 相同逻辑）
+        TASK_NAME="<从用户输入提取的简短英文任务名>"
+        WORKTREE_PATH=$(bash skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
 
-    echo "   Base: $BASE_BRANCH"
-    echo ""
-    echo "🔄 继续开发"
+        if [[ -n "$WORKTREE_PATH" && -d "$WORKTREE_PATH" ]]; then
+            echo "✅ Worktree 创建成功: $WORKTREE_PATH"
+            cd "$WORKTREE_PATH"
 
-    exit 0
+            if [[ -f "package.json" ]]; then
+                npm install --prefer-offline 2>/dev/null || npm install
+            fi
+        else
+            echo "❌ Worktree 创建失败，无法继续"
+            exit 1
+        fi
+    else
+        # ✅ 在 worktree 中的 cp-*/feature-* 分支 — 正常恢复
+        echo "✅ 已在功能分支: $CURRENT_BRANCH（worktree 中）"
+
+        # 读取保存的状态
+        BASE_BRANCH=$(git config branch.$CURRENT_BRANCH.base-branch)
+
+        echo "   Base: $BASE_BRANCH"
+        echo ""
+        echo "🔄 继续开发"
+
+        exit 0
+    fi
 fi
 ```
+
+**CRITICAL**: 只有在 **worktree 中** 的功能分支才能直接恢复。
+主仓库的功能分支是残留状态，必须创建 worktree 隔离。
 
 ---
 

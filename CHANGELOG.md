@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.29.0] - 2026-02-22
+
+### Fixed
+- Step 0 worktree 检测盲区：主仓库残留在 cp-*/feature-* 分支时，显式警告并强制创建 worktree
+- Step 3 "恢复现有分支"旁路：加 worktree 检查，主仓库的 cp-* 分支不再跳过 worktree 创建
+
 ## [12.28.0] - 2026-02-22
 
 ### Added
