@@ -69,9 +69,13 @@ TOKEN_PATTERNS=(
     'ghs_[a-zA-Z0-9]{36}'                                           # GitHub Server-to-server Token
     'ghu_[a-zA-Z0-9]{36}'                                           # GitHub User-to-server Token
     'sk-proj-[a-zA-Z0-9_-]{40,}'                                    # OpenAI API Key
+    'sk-ant-[a-zA-Z0-9_-]{20,}'                                     # Anthropic API Key
     'eyJ[a-zA-Z0-9_-]{50,}\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'       # JWT tokens
     'dop_v1_[a-zA-Z0-9]{50,}'                                       # DigitalOcean
     'cli_[a-zA-Z0-9]{16,}'                                          # Feishu App ID
+    'AKIA[A-Z0-9]{16}'                                               # AWS Access Key ID
+    'xox[bpas]-[a-zA-Z0-9-]{10,}'                                   # Slack tokens
+    '(sk|pk)_(live|test)_[a-zA-Z0-9]{20,}'                          # Stripe API Key
 )
 
 # 检查文本是否包含真实凭据

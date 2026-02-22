@@ -1,0 +1,24 @@
+{
+  "initiatives": [{
+    "title": "优化任务优先级",
+    "description": "实现基于资源和依赖的任务优先级算法",
+    "repository": "cecelia-core",
+    "capability_id": "autonomous-task-scheduling",
+    "from_stage": 3,
+    "to_stage": 4,
+    "evidence_required": "连续 7 天成功率 > 95%",
+    "pr_plans": [{
+      "title": "PR #1: 实现优先级算法",
+      "description": "算法实现",
+      "dod": ["算法通过单元测试", "覆盖率 > 80%"],
+      "files": ["brain/src/priority-algo.js"],
+      "sequence": 1,
+      "depends_on": [],
+      "complexity": "medium",
+      "tasks": [
+        {"title": "写算法", "type": "dev", "description": "实现优先级算法"},
+        {"title": "写测试", "type": "dev", "description": "单元测试"}
+      ]
+    }]
+  }]
+}

@@ -170,31 +170,54 @@ else
 fi
 echo ""
 
-# 5. Detect output format (new 3-layer vs old 2-layer)
-HAS_PR_PLANS=$(jq 'has("initiative") and has("pr_plans")' "$OUTPUT_FILE")
+# 5. Detect output format (Phase 2: initiatives[] vs old formats)
+HAS_INITIATIVES=$(jq 'has("initiatives")' "$OUTPUT_FILE")
 
-if [ "$HAS_PR_PLANS" = "true" ]; then
-    log_info "Detected 3-layer decomposition format (Initiative → PR Plans → Tasks)"
+if [ "$HAS_INITIATIVES" = "true" ]; then
+    log_info "Detected Phase 2 format (Initiatives with Capability Binding)"
     echo ""
 
-    # ===== 3-Layer Format Processing =====
+    # ===== Phase 2: Initiatives Format Processing =====
 
-    # 5a. Extract Initiative info
-    INITIATIVE_TITLE=$(jq -r '.initiative.title' "$OUTPUT_FILE")
-    INITIATIVE_DESC=$(jq -r '.initiative.description' "$OUTPUT_FILE")
-    REPO_NAME=$(jq -r '.initiative.repository' "$OUTPUT_FILE")
+    INITIATIVES=$(jq -c '.initiatives[]?' "$OUTPUT_FILE")
+    INITIATIVE_COUNT=0
+    PR_PLAN_COUNT=0
+    TASK_COUNT=0
+    FAILED_COUNT=0
 
-    log_info "Initiative: $INITIATIVE_TITLE"
-
-    # Map repository to project_id
-    if ! PROJECT_ID=$(map_repo_to_project "$REPO_NAME"); then
-        log_error "Failed to map repository to project"
-        exit 2
+    if [ -z "$INITIATIVES" ]; then
+        log_warn "No initiatives found in $OUTPUT_FILE"
+        exit 0
     fi
-    log_info "  Repository: $REPO_NAME → Project: $PROJECT_ID"
 
-    # 5b. Create Initiative (Feature with parent_id=NULL or project_id)
-    INITIATIVE_DATA=$(cat <<EOF
+    # Process each initiative
+    while IFS= read -r initiative; do
+        INITIATIVE_COUNT=$((INITIATIVE_COUNT + 1))
+
+        # 5a. Extract Initiative info
+        INITIATIVE_TITLE=$(echo "$initiative" | jq -r '.title')
+        INITIATIVE_DESC=$(echo "$initiative" | jq -r '.description // ""')
+        REPO_NAME=$(echo "$initiative" | jq -r '.repository')
+
+        # Phase 2: Extract capability fields
+        CAPABILITY_ID=$(echo "$initiative" | jq -r '.capability_id // null')
+        FROM_STAGE=$(echo "$initiative" | jq -r '.from_stage // null')
+        TO_STAGE=$(echo "$initiative" | jq -r '.to_stage // null')
+        EVIDENCE_REQUIRED=$(echo "$initiative" | jq -r '.evidence_required // ""')
+
+        log_info "Processing Initiative $INITIATIVE_COUNT: $INITIATIVE_TITLE"
+        log_info "  Capability: $CAPABILITY_ID ($FROM_STAGE → $TO_STAGE)"
+
+        # Map repository to project_id
+        if ! PROJECT_ID=$(map_repo_to_project "$REPO_NAME"); then
+            log_error "Failed to map repository to project"
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+            continue
+        fi
+        log_info "  Repository: $REPO_NAME → Project: $PROJECT_ID"
+
+        # 5b. Create Initiative (SubProject with parent_id=project_id)
+        INITIATIVE_DATA=$(cat <<EOF
 {
   "name": "$INITIATIVE_TITLE",
   "parent_id": "$PROJECT_ID",
@@ -203,47 +226,45 @@ if [ "$HAS_PR_PLANS" = "true" ]; then
 EOF
 )
 
-    if INITIATIVE_RESPONSE=$(retry_api_call POST "$TASKS_API/api/tasks/projects" "$INITIATIVE_DATA"); then
-        INITIATIVE_ID=$(echo "$INITIATIVE_RESPONSE" | jq -r '.id // empty')
-        if [ -n "$INITIATIVE_ID" ]; then
-            log_success "Initiative created: $INITIATIVE_ID"
+        if INITIATIVE_RESPONSE=$(retry_api_call POST "$TASKS_API/api/tasks/projects" "$INITIATIVE_DATA"); then
+            INITIATIVE_ID=$(echo "$INITIATIVE_RESPONSE" | jq -r '.id // empty')
+            if [ -n "$INITIATIVE_ID" ]; then
+                log_success "  Initiative created: $INITIATIVE_ID"
+            else
+                log_error "  Failed to extract Initiative ID from response"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+                continue
+            fi
         else
-            log_error "Failed to extract Initiative ID from response"
-            exit 2
+            log_error "  Failed to create Initiative"
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+            continue
         fi
-    else
-        log_error "Failed to create Initiative"
-        exit 2
-    fi
-    echo ""
 
-    # 5c. Process PR Plans and Tasks
-    PR_PLANS=$(jq -c '.pr_plans[]?' "$OUTPUT_FILE")
-    PR_PLAN_COUNT=0
-    TASK_COUNT=0
-    FAILED_COUNT=0
+        # 5c. Process PR Plans under this Initiative
+        PR_PLANS=$(echo "$initiative" | jq -c '.pr_plans[]?')
 
-    if [ -z "$PR_PLANS" ]; then
-        log_warn "No PR Plans found in $OUTPUT_FILE"
-        exit 0
-    fi
+        if [ -z "$PR_PLANS" ]; then
+            log_warn "  No PR Plans under Initiative $INITIATIVE_COUNT"
+            continue
+        fi
 
-    while IFS= read -r pr_plan; do
-        PR_PLAN_COUNT=$((PR_PLAN_COUNT + 1))
+        while IFS= read -r pr_plan; do
+            PR_PLAN_COUNT=$((PR_PLAN_COUNT + 1))
 
-        PR_TITLE=$(echo "$pr_plan" | jq -r '.title')
-        PR_DESC=$(echo "$pr_plan" | jq -r '.description // ""')
-        PR_DOD=$(echo "$pr_plan" | jq -c '.dod')
-        PR_FILES=$(echo "$pr_plan" | jq -c '.files')
-        PR_SEQUENCE=$(echo "$pr_plan" | jq -r '.sequence // 0')
-        PR_DEPENDS_ON=$(echo "$pr_plan" | jq -c '.depends_on // []')
-        PR_COMPLEXITY=$(echo "$pr_plan" | jq -r '.complexity // "medium"')
-        PR_ESTIMATED_HOURS=$(echo "$pr_plan" | jq -r '.estimated_hours // 0')
+            PR_TITLE=$(echo "$pr_plan" | jq -r '.title')
+            PR_DESC=$(echo "$pr_plan" | jq -r '.description // ""')
+            PR_DOD=$(echo "$pr_plan" | jq -c '.dod')
+            PR_FILES=$(echo "$pr_plan" | jq -c '.files')
+            PR_SEQUENCE=$(echo "$pr_plan" | jq -r '.sequence // 0')
+            PR_DEPENDS_ON=$(echo "$pr_plan" | jq -c '.depends_on // []')
+            PR_COMPLEXITY=$(echo "$pr_plan" | jq -r '.complexity // "medium"')
+            PR_ESTIMATED_HOURS=$(echo "$pr_plan" | jq -r '.estimated_hours // 0')
 
-        log_info "Processing PR Plan $PR_PLAN_COUNT: $PR_TITLE"
+            log_info "  Processing PR Plan: $PR_TITLE"
 
-        # Create PR Plan via Brain API
-        PR_PLAN_DATA=$(cat <<EOF
+            # Phase 2: Create PR Plan with capability fields
+            PR_PLAN_DATA=$(cat <<EOF
 {
   "initiative_id": "$INITIATIVE_ID",
   "project_id": "$PROJECT_ID",
@@ -254,7 +275,11 @@ EOF
   "sequence": $PR_SEQUENCE,
   "depends_on": $PR_DEPENDS_ON,
   "complexity": "$PR_COMPLEXITY",
-  "estimated_hours": $PR_ESTIMATED_HOURS
+  "estimated_hours": $PR_ESTIMATED_HOURS,
+  "capability_id": $CAPABILITY_ID,
+  "from_stage": $FROM_STAGE,
+  "to_stage": $TO_STAGE,
+  "evidence_required": "$EVIDENCE_REQUIRED"
 }
 EOF
 )
@@ -318,10 +343,12 @@ EOF
             fi
         done <<< "$TASKS"
 
-        echo ""
-    done <<< "$PR_PLANS"
+            echo ""
+        done <<< "$PR_PLANS"
 
-    FEATURE_COUNT=$PR_PLAN_COUNT
+    done <<< "$INITIATIVES"
+
+    FEATURE_COUNT=$INITIATIVE_COUNT
 
 else
     # ===== Original 2-Layer Format Processing (Backward Compatible) =====

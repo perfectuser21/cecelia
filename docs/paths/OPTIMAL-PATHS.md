@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 2.90.0
-created: 2026-02-13
-updated: 2026-02-13
+version: 2.94.0
+created: 2026-02-22
+updated: 2026-02-22
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.90.0: 从 feature-registry.yml 自动生成
+  - 2.94.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -152,7 +152,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ### P5: Worktree Parallel Development
 
 ```
-/dev 启动 → Step 0 强制创建 worktree（更新 develop + 创建 + cd）→ 继续正常流程
+/dev 启动 → Step 0 强制创建 worktree（.claude/worktrees/ 路径）→ 继续正常流程 → 退出时 Stop Hook 强制清理 worktree
 ```
 
 ---
@@ -173,11 +173,11 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 
 ---
 
-### H9: Bash Guard (Credential Leak + HK Deploy Protection)
+### H9: Bash Guard (Credential Leak + File Exposure + HK Deploy Protection)
 
 ```
-Bash 命令 → token 扫描 (~1ms) → rsync/scp + HK 检测 (~1ms) →
-未命中 → 放行 | 命中 HK → git 三连检 → 通过/阻止
+Bash 命令 → token 扫描 (~1ms) → .credentials/ 暴露检测 (~1ms) →
+rsync/scp + HK 检测 (~1ms) → 未命中 → 放行 | 命中 HK → git 三连检 → 通过/阻止
 ```
 
 ---
@@ -223,5 +223,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.90.0
-**生成时间**: 2026-02-13
+**版本**: 2.94.0
+**生成时间**: 2026-02-22

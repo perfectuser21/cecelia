@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.25.0"
-updated: "2026-02-12"
+version: "12.28.0"
+updated: "2026-02-22"
 
 # ============================================================================
 # Hooks 回归契约
@@ -353,6 +353,25 @@ hooks:
       contains: "session-$SESSION_ID.json"
     test: "tests/skills/session-registration.test.ts"
 
+  - id: H7-013
+    feature: H7
+    name: "Stop Hook 强制清理 worktree（兜底）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, worktree, cleanup]
+    owner: infra
+    steps:
+      given: "Stop Hook 检测到退出条件（cleanup_done/15次重试/PR合并）"
+      when: ".dev-mode 中有 branch 字段且对应 worktree 存在"
+      then: "force_cleanup_worktree 自动删除 worktree 并 prune"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "force_cleanup_worktree"
+    test: "tests/hooks/stop-dev.test.ts"
+
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
   # --------------------------------------------------------------------------
@@ -661,7 +680,7 @@ hooks:
 
   - id: H3-002
     feature: H3
-    name: "bash-guard 凭据泄露 + HK 部署防护"
+    name: "bash-guard 凭据泄露 + 凭据文件暴露 + HK 部署防护"
     scope: hook
     priority: P1
     trigger: [PR]
@@ -670,7 +689,7 @@ hooks:
     owner: infra
     steps:
       given: "Bash 命令通过 PreToolUse Hook 检查"
-      when: "命令包含真实 token 或 rsync/scp 到 HK IP"
+      when: "命令包含真实 token、cp/mv/重定向 ~/.credentials/ 或 rsync/scp 到 HK IP"
       then: "拦截命令（exit 2），日常命令不受影响"
     evidence:
       type: test

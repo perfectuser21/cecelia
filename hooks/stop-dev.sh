@@ -91,6 +91,44 @@ HOOK_INPUT=$(cat)
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
+# ===== Helper: 强制清理 worktree（兜底）=====
+force_cleanup_worktree() {
+    local mode_file="$1"
+    local branch
+    branch=$(grep "^branch:" "$mode_file" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$branch" ]]; then
+        return 0
+    fi
+    local wt_path
+    wt_path=$(git worktree list 2>/dev/null | grep "\[$branch\]" | awk '{print $1}')
+    local main_wt
+    main_wt=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
+    if [[ -n "$wt_path" && "$wt_path" != "$main_wt" ]]; then
+        git worktree remove "$wt_path" --force 2>/dev/null || true
+        git worktree prune 2>/dev/null || true
+    fi
+}
+
+# ===== Helper: 保存阻塞原因到 .dev-mode =====
+save_block_reason() {
+    local reason="$1"
+    local mode_file="$DEV_MODE_FILE"
+    [[ -n "$mode_file" && -f "$mode_file" ]] || return 0
+    {
+        flock -x 201
+        grep -v "^last_block_reason:" "$mode_file" > "$mode_file.reason.tmp" 2>/dev/null || true
+        echo "last_block_reason: $reason" >> "$mode_file.reason.tmp"
+        mv "$mode_file.reason.tmp" "$mode_file"
+    } 201>"$mode_file.reason.lock" 2>/dev/null || {
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "/^last_block_reason:/d" "$mode_file" 2>/dev/null || true
+        else
+            sed -i "/^last_block_reason:/d" "$mode_file" 2>/dev/null || true
+        fi
+        echo "last_block_reason: $reason" >> "$mode_file"
+    }
+}
+
 # ===== 检查 .dev-lock 和 .dev-mode 文件（双钥匙状态机）=====
 # v12.9.0: 双钥匙修复 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险）
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -161,6 +199,7 @@ fi
 # ===== 检查 cleanup 是否已完成 =====
 # 优先检查 cleanup_done: true（向后兼容旧版本）
 if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    force_cleanup_worktree "$DEV_MODE_FILE"
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
     exit 0
 fi
@@ -200,6 +239,22 @@ if [[ $RETRY_COUNT -gt 15 ]]; then
     if [[ -f "$TRACK_SCRIPT" ]]; then
         bash "$TRACK_SCRIPT" fail "Stop Hook 重试 15 次后仍未完成" 2>/dev/null || true
     fi
+
+    # 写入失败日志（.dev-failure.log）
+    FAILURE_LOG="$PROJECT_ROOT/.dev-failure.log"
+    FAIL_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "unknown")
+    LAST_REASON=$(grep "^last_block_reason:" "$DEV_MODE_FILE" 2>/dev/null | sed 's/^last_block_reason: //' || echo "unknown")
+    {
+        echo "=== Dev Failure Log ==="
+        echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+        echo "branch: $FAIL_BRANCH"
+        echo "retry_count: $RETRY_COUNT"
+        echo "last_block_reason: $LAST_REASON"
+        echo "========================"
+    } > "$FAILURE_LOG"
+
+    # 强制清理 worktree（兜底）
+    force_cleanup_worktree "$DEV_MODE_FILE"
 
     # 删除 .dev-mode, .dev-lock, sentinel 文件
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
@@ -306,6 +361,7 @@ if [[ -z "$PR_NUMBER" ]]; then
     echo "  下一步: 创建 PR" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    save_block_reason "PR 未创建"
     jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'
     exit 2
 fi
@@ -350,6 +406,7 @@ case "$CI_STATUS" in
             fi
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            save_block_reason "CI 失败 ($CI_CONCLUSION)"
             jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
             exit 2
         fi
@@ -360,6 +417,7 @@ case "$CI_STATUS" in
         echo "  下一步: 等待 CI 完成" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        save_block_reason "CI 进行中 ($CI_STATUS)"
         jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
         exit 2
         ;;
@@ -370,6 +428,7 @@ case "$CI_STATUS" in
         echo "    gh run list --branch $BRANCH_NAME --limit 1" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        save_block_reason "CI 状态未知 ($CI_STATUS)"
         jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
         exit 2
         ;;
@@ -387,6 +446,7 @@ if [[ "$PR_STATE" == "merged" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  🎉 工作流完成！正在清理..." >&2
+        force_cleanup_worktree "$DEV_MODE_FILE"
         rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
         exit 0  # 允许结束
@@ -395,6 +455,7 @@ if [[ "$PR_STATE" == "merged" ]]; then
         echo "" >&2
         echo "  下一步: 执行 Step 11 Cleanup" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        save_block_reason "PR 已合并，Cleanup 未完成"
         jq -n '{"decision": "block", "reason": "PR 已合并，执行 Step 11 Cleanup"}'
         exit 2
     fi
@@ -406,6 +467,7 @@ else
     echo "    gh pr merge $PR_NUMBER --squash --delete-branch" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    save_block_reason "PR 未合并 (#$PR_NUMBER)"
     jq -n --arg reason "PR #$PR_NUMBER CI 已通过但未合并，执行合并操作" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
     exit 2
 fi

@@ -1,6 +1,6 @@
 {
-  "branch": "cp-02131342-cleanup-auto-prune",
-  "head_sha": "45702e3",
-  "timestamp": "2026-02-13T05:45:08Z",
+  "branch": "cp-02131631-fix-ci-security-issues",
+  "head_sha": "53c1ddf",
+  "timestamp": "2026-02-13T08:37:23Z",
   "note": "Quality 只汇总，不判定。CI 是最终裁判。"
 }

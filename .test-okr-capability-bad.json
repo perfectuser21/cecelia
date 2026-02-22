@@ -1,0 +1,21 @@
+{
+  "initiatives": [{
+    "title": "测试功能",
+    "description": "测试不存在的 capability",
+    "repository": "cecelia-core",
+    "capability_id": "nonexistent-capability",
+    "from_stage": 1,
+    "to_stage": 2,
+    "evidence_required": "测试通过",
+    "pr_plans": [{
+      "title": "PR #1: 测试",
+      "description": "测试",
+      "dod": ["完成"],
+      "files": ["test.js"],
+      "sequence": 1,
+      "depends_on": [],
+      "complexity": "low",
+      "tasks": [{"title": "开发", "type": "dev", "description": "开发"}]
+    }]
+  }]
+}

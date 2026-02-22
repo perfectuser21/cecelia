@@ -4,7 +4,8 @@
  * 测试 Stop Hook 重试机制：
  * - 删除 stop_hook_active 检查
  * - 实现 15 次计数器（retry_count 字段）
- * - 15 次后上报失败并退出
+ * - 15 次后上报失败并退出 + 写入 .dev-failure.log
+ * - last_block_reason 追踪每次阻塞原因
  * - v11.25.0: 重试上限从 20 改为 15
  */
 
@@ -128,6 +129,64 @@ retry_count: 15
     expect(hookContent).toContain('track.sh');
     expect(hookContent).toContain('fail');
     expect(hookContent).toContain('15 次');
+  });
+
+  it('应该在超限时写入 .dev-failure.log', () => {
+    const hookContent = execSync(
+      `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
+      { encoding: 'utf-8' }
+    );
+
+    // 验证超限后写入 .dev-failure.log
+    expect(hookContent).toContain('.dev-failure.log');
+    expect(hookContent).toContain('FAILURE_LOG');
+    expect(hookContent).toContain('last_block_reason');
+    expect(hookContent).toContain('timestamp');
+    expect(hookContent).toContain('retry_count');
+  });
+
+  it('应该在每次 block 时保存 last_block_reason', () => {
+    const hookContent = execSync(
+      `cat ${join(__dirname, '../../hooks/stop-dev.sh')}`,
+      { encoding: 'utf-8' }
+    );
+
+    // 验证 save_block_reason 函数存在
+    expect(hookContent).toContain('save_block_reason()');
+
+    // 验证各个阻塞点都调用了 save_block_reason
+    expect(hookContent).toContain('save_block_reason "PR 未创建"');
+    expect(hookContent).toContain('save_block_reason "CI 失败');
+    expect(hookContent).toContain('save_block_reason "CI 进行中');
+    expect(hookContent).toContain('save_block_reason "CI 状态未知');
+    expect(hookContent).toContain('save_block_reason "PR 已合并，Cleanup 未完成"');
+    expect(hookContent).toContain('save_block_reason "PR 未合并');
+  });
+
+  it('应该在 .dev-failure.log 中包含完整失败信息', () => {
+    // 模拟 .dev-mode 中有 last_block_reason
+    writeFileSync(
+      devModeFile,
+      `dev
+branch: cp-test-branch
+prd: .prd.md
+started: 2026-02-01T10:00:00+00:00
+retry_count: 15
+last_block_reason: CI 失败 (failure)
+`,
+    );
+
+    const content = readFileSync(devModeFile, 'utf-8');
+
+    // 验证 last_block_reason 可以被读取
+    const reasonMatch = content.match(/^last_block_reason:\s*(.+)$/m);
+    expect(reasonMatch).toBeTruthy();
+    expect(reasonMatch![1]).toBe('CI 失败 (failure)');
+
+    // 验证 branch 可以被读取
+    const branchMatch = content.match(/^branch:\s*(.+)$/m);
+    expect(branchMatch).toBeTruthy();
+    expect(branchMatch![1]).toBe('cp-test-branch');
   });
 
   it('应该正确处理空或无效的 retry_count', () => {

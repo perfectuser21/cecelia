@@ -199,6 +199,11 @@ if [[ -n "$task_id" ]]; then
     else
         echo "⚠️  Task 状态更新失败（Brain 可能不可用，继续执行）"
     fi
+
+    # 更新关联 Capability stage（v12.27.0+）
+    echo ""
+    echo "🔄 检查 Capability stage 更新..."
+    bash skills/dev/scripts/update-capability.sh "$task_id" 2>/dev/null || true
 else
     echo ""
     echo "ℹ️  非 Brain Task，跳过反馈上传"

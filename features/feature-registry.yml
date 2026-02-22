@@ -15,9 +15,13 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.90.0"
-updated: "2026-02-13"
+version: "2.94.0"
+updated: "2026-02-22"
 changelog:
+  - 2.94.0: v12.28.0 - Worktree 路径迁移到 .claude/worktrees/（对齐官方约定）+ Stop Hook 强制清理 worktree 兜底（H7-013）
+  - 2.93.0: v12.27.1 - 强制所有 skill 输出简体中文（CRITICAL LANGUAGE RULE + language-rule.test.ts）
+  - 2.92.0: v12.27.0 - Step 10 自动推进 Capability stage（update-capability.sh + Brain API 链路）
+  - 2.91.0: v12.26.0 - Capability-Driven Development Phase 2（validate-okr.py 7 个 capability 校验 + store-to-database.sh capability 字段传递 + /okr SKILL.md "开工前必问"规则 + initiatives[] 格式）
   - 2.90.0: v12.25.0 - cleanup.sh 自动清理远程已删除的分支（Step 9.5 + gone 分支检测 + 批量删除 + 保持仓库干净）
   - 2.89.0: v12.24.0 - Exploratory Skill 完整性保证（Stop Hook 检查 PRD/DOD 生成 + worktree 清理 + merge 工具合并多个 exploratory 产出 + 24 个测试）
   - 2.88.0: v12.22.0 - OKR 三层拆解集成 PR Plans（Layer 2 工程规划层 + store-to-database.sh 支持 + validate-okr.py 验证 + SKILL.md 文档）
@@ -762,10 +766,11 @@ product_features:
     name: Worktree Parallel Development
     status: Committed
     priority: P1
-    version: "12.24.1"
-    updated: "2026-02-12"
+    version: "12.28.0"
+    updated: "2026-02-22"
     description: |
       强制创建 worktree，支持并行开发和连续任务：
+      v12.28.0: 路径迁移到 .claude/worktrees/（对齐官方约定）+ Stop Hook 强制清理 worktree（兜底）
       v12.24.1: 修复三个 bug（强制创建 worktree + 创建前更新 develop + /exploratory 同步修复）
       v12.7.2: 修复僵尸检测过于激进（多条件综合判断，文件修改时间优先，防止误删活跃会话）
       v11.16.0: Step 0 前置自动检测 + 僵尸 .dev-mode 清理 + flock 并发锁 + Step 3 兜底
@@ -780,12 +785,13 @@ product_features:
         file: skills/exploratory/steps/01-init.md
 
     golden_path: |
-      /dev 启动 → Step 0 强制创建 worktree（更新 develop + 创建 + cd）→ 继续正常流程
+      /dev 启动 → Step 0 强制创建 worktree（.claude/worktrees/ 路径）→ 继续正常流程 → 退出时 Stop Hook 强制清理 worktree
 
     minimal_paths:
       - "已在 worktree → 跳过创建"
-      - "主仓库 → 强制创建 worktree + cd"
+      - "主仓库 → 强制创建 worktree + cd（.claude/worktrees/ 路径）"
       - "worktree-manage.sh 创建前自动更新 develop 分支"
+      - "Stop Hook 退出时强制清理 worktree（兜底）"
 
     tests:
       - type: manual
@@ -906,14 +912,15 @@ product_features:
   # H9: Bash Guard - Bash 工具安全防护
   # --------------------------------------------------------------------------
   - id: H9
-    name: Bash Guard (Credential Leak + HK Deploy Protection)
+    name: Bash Guard (Credential Leak + File Exposure + HK Deploy Protection)
     status: Committed
     priority: P1
     version: "12.6.0"
-    updated: "2026-02-06"
+    updated: "2026-02-13"
     description: |
       防止通过 Bash 工具绕过 Write/Edit 层的安全防护：
       - 凭据泄露：检测命令行中的真实 token（复用 hook-utils.sh 共享正则）
+      - 凭据文件暴露：拦截 cp/mv/重定向 ~/.credentials/ 内容到其他位置
       - HK 部署防护：rsync/scp 到香港 IP 时强制 git 三连检（干净 + 已 push + 分支 allowlist）
       - 不做分支保护（交给 Write/Edit Hook + GitHub 远端）
       - 不拦 ssh hk（无法区分读写操作）
@@ -925,11 +932,14 @@ product_features:
         file: hooks/bash-guard.sh
 
     golden_path: |
-      Bash 命令 → token 扫描 (~1ms) → rsync/scp + HK 检测 (~1ms) →
-      未命中 → 放行 | 命中 HK → git 三连检 → 通过/阻止
+      Bash 命令 → token 扫描 (~1ms) → .credentials/ 暴露检测 (~1ms) →
+      rsync/scp + HK 检测 (~1ms) → 未命中 → 放行 | 命中 HK → git 三连检 → 通过/阻止
 
     minimal_paths:
       - "命令含真实 token → 被阻止"
+      - "cp/mv ~/.credentials/ → 被阻止"
+      - "cat ~/.credentials/ > file → 被阻止"
+      - "source ~/.credentials/ → 放行（安全加载）"
       - "rsync 到 HK + git dirty → 被阻止"
       - "rsync 到 HK + git clean + main → 放行"
       - "日常命令 (git/npm/echo) → 放行"
@@ -938,12 +948,13 @@ product_features:
     tests:
       - type: auto
         file: tests/hooks/bash-guard.test.ts
-        coverage: H9-001, H9-002, H9-003
+        coverage: H9-001, H9-002, H9-003, H9-004
 
     rcis:
       - H9-001  # 凭据泄露检测
       - H9-002  # HK 部署 git 检查
       - H9-003  # 日常命令放行
+      - H9-004  # 凭据文件暴露检测
 
   # --------------------------------------------------------------------------
   # G1: Gate Skill Family - 已删除 (v12.7.0)

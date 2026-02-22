@@ -52,6 +52,45 @@ if text_contains_token "$CMD"; then
     exit 2
 fi
 
+# ─── 规则 1b: 凭据文件暴露检测（~2ms）─────────────────────────
+# 拦截从 ~/.credentials/ 复制/重定向凭据到其他位置
+# 允许: source, ls, test, cat（无重定向）, grep（无重定向）
+if echo "$CMD" | grep -qF ".credentials/"; then
+    # 拦截：cp/mv 凭据文件
+    if echo "$CMD" | grep -qE '(cp|mv)\s+(-\w+\s+)*\S*\.credentials/'; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] 检测到凭据文件暴露风险" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "禁止复制/移动 ~/.credentials/ 中的凭据文件。" >&2
+        echo "" >&2
+        echo "正确做法：" >&2
+        echo "  1. source ~/.credentials/<service>.env 加载环境变量" >&2
+        echo "  2. 代码中使用 process.env.XXX 引用" >&2
+        echo "  3. 使用 /credentials skill 管理凭据" >&2
+        echo "" >&2
+        exit 2
+    fi
+    # 拦截：读取凭据文件 + 重定向到文件或 tee
+    if echo "$CMD" | grep -qE '(cat|head|tail|grep|sed|awk)\s+.*\.credentials/\S+' && \
+       echo "$CMD" | grep -qE '>>?\s*\S|[|]\s*tee\s'; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] 检测到凭据内容重定向" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "禁止将 ~/.credentials/ 内容重定向到文件。" >&2
+        echo "" >&2
+        echo "正确做法：" >&2
+        echo "  1. source ~/.credentials/<service>.env 加载环境变量" >&2
+        echo "  2. 代码中使用 process.env.XXX 引用" >&2
+        echo "  3. 使用 /credentials skill 管理凭据" >&2
+        echo "" >&2
+        exit 2
+    fi
+fi
+
 # ─── 规则 2: HK 部署防护（两步匹配，命中才跑 git）─────────
 # 第一步：是否是 rsync/scp 命令？（~1ms）
 if ! echo "$CMD" | grep -Eq "$DEPLOY_CMDS"; then

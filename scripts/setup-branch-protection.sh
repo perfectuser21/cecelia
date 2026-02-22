@@ -125,8 +125,12 @@ fix_branch() {
 
     if [[ "$has_protection" == "true" ]]; then
         # 已有保护，只更新 enforce_admins
-        gh api -X POST "repos/$repo/branches/$branch/protection/enforce_admins" >/dev/null 2>&1 || true
-        echo -e "  ${GREEN}✓${NC} $branch: enforce_admins 已启用"
+        if gh api -X POST "repos/$repo/branches/$branch/protection/enforce_admins" >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} $branch: enforce_admins 已启用"
+        else
+            echo -e "  ${RED}✗${NC} $branch: enforce_admins 设置失败"
+            return 1
+        fi
     else
         # 无保护，创建完整保护
         gh api -X PUT "repos/$repo/branches/$branch/protection" \
@@ -135,8 +139,12 @@ fix_branch() {
             return 1
         }
         # 再启用 enforce_admins
-        gh api -X POST "repos/$repo/branches/$branch/protection/enforce_admins" >/dev/null 2>&1 || true
-        echo -e "  ${GREEN}✓${NC} $branch: 完整保护已创建"
+        if gh api -X POST "repos/$repo/branches/$branch/protection/enforce_admins" >/dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} $branch: 完整保护已创建"
+        else
+            echo -e "  ${RED}✗${NC} $branch: enforce_admins 设置失败"
+            return 1
+        fi
     fi
 
     return 0

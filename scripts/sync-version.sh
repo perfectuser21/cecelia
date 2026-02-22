@@ -102,6 +102,7 @@ sync_yaml() {
 echo "[Targets]"
 sync_file "VERSION"
 sync_file "ci-tools/VERSION"
+sync_file ".hook-core-version"
 sync_yaml
 
 echo ""
@@ -131,5 +132,23 @@ else
   else
     echo "  ✅ 无需同步"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+
+  echo ""
+  echo "[package-lock.json]"
+  # 检查 package-lock.json 是否需要同步
+  if [[ -f "package-lock.json" ]]; then
+    LOCK_VERSION=$(jq -r '.version // ""' package-lock.json 2>/dev/null || echo "")
+    if [[ "$LOCK_VERSION" != "$VERSION" ]]; then
+      echo "  ⚠️  package-lock.json 版本不匹配 ($LOCK_VERSION != $VERSION)"
+      echo ""
+      echo "运行以下命令同步 package-lock.json："
+      echo "  npm install --package-lock-only"
+      echo ""
+    else
+      echo "  ✅ package-lock.json 已同步"
+    fi
+  else
+    echo "  ⏭️  package-lock.json 不存在"
   fi
 fi

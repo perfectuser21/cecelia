@@ -266,9 +266,14 @@ if [[ -n "$WORKTREE_PATH" ]]; then
                 echo -e "   ${GREEN}[OK] 已移除 worktree${NC}"
             else
                 echo -e "   ${YELLOW}[WARN]  worktree 移除失败，尝试强制清理...${NC}"
-                # v1.7: 使用安全删除，限制在主 worktree 的父目录内
-                MAIN_WT_PARENT=$(dirname "$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')")
-                if safe_rm_rf "$WORKTREE_PATH" "$MAIN_WT_PARENT"; then
+                # v1.9.1: 支持新路径（.claude/worktrees/）和旧路径（仓库外）
+                local ALLOWED_PARENT
+                if [[ "$WORKTREE_PATH" == *"/.claude/worktrees/"* ]]; then
+                    ALLOWED_PARENT="$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')/.claude/worktrees"
+                else
+                    ALLOWED_PARENT=$(dirname "$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')")
+                fi
+                if safe_rm_rf "$WORKTREE_PATH" "$ALLOWED_PARENT"; then
                     git worktree prune 2>/dev/null || true
                     echo -e "   ${GREEN}[OK] 已强制清理${NC}"
                 else

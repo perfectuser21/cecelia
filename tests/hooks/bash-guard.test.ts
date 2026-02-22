@@ -1,8 +1,9 @@
 /**
  * bash-guard.sh 测试
  *
- * 两类防护：
+ * 三类防护：
  * 1. 凭据泄露：命令行包含真实 token 时拦截
+ * 1b. 凭据文件暴露：cp/mv/重定向 ~/.credentials/ 内容时拦截
  * 2. HK 部署：rsync/scp 到 HK IP 时检查 git 状态
  *
  * 性能要求：未命中时 < 5ms
@@ -99,8 +100,109 @@ describe("bash-guard.sh", () => {
       expect(result.exitCode).toBe(2);
     });
 
+    it("blocks Anthropic key", () => {
+      const result = runHook(
+        'export ANTHROPIC_KEY="sk-ant-api03-abcdefghijklmnopqrst"',
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("blocks AWS Access Key ID", () => {
+      const result = runHook(
+        'echo "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE" > .env',
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("blocks Slack token", () => {
+      const result = runHook(
+        'curl -H "Authorization: Bearer xoxb-1234567890-abcdefghij"',
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    it("blocks Stripe key", () => {
+      // Use test mode key to avoid GitHub Push Protection (live keys are blocked)
+      const result = runHook(
+        'export STRIPE_KEY="sk_test_51abcdefghijklmnopqrstuvwxyz"',
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
     it("allows placeholder tokens", () => {
       const result = runHook('echo "ntn_YOUR_NOTION_KEY_HERE_placeholder"');
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ─── 凭据文件暴露拦截 ──────────────────────────────────────
+  describe("should block credential file exposure", () => {
+    it("blocks cp from ~/.credentials/", () => {
+      const result = runHook("cp ~/.credentials/ibkr.env ./");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据文件暴露");
+    });
+
+    it("blocks mv from ~/.credentials/", () => {
+      const result = runHook("mv ~/.credentials/polygon.env /tmp/");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据文件暴露");
+    });
+
+    it("blocks cp -r from ~/.credentials/", () => {
+      const result = runHook("cp -r ~/.credentials/ ./backup/");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据文件暴露");
+    });
+
+    it("blocks cat credentials with redirect", () => {
+      const result = runHook("cat ~/.credentials/polygon.env > exposed.txt");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据内容重定向");
+    });
+
+    it("blocks cat credentials with append", () => {
+      const result = runHook("cat ~/.credentials/ibkr.env >> leaked.txt");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据内容重定向");
+    });
+
+    it("blocks cat credentials piped to tee", () => {
+      const result = runHook("cat ~/.credentials/foo.env | tee backup.txt");
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据内容重定向");
+    });
+
+    it("blocks grep credentials with redirect", () => {
+      const result = runHook(
+        "grep KEY ~/.credentials/polygon.env > output.txt",
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("凭据内容重定向");
+    });
+
+    it("allows source ~/.credentials/ (safe load)", () => {
+      const result = runHook("source ~/.credentials/polygon.env");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows cat ~/.credentials/ without redirect (view only)", () => {
+      const result = runHook("cat ~/.credentials/polygon.env");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows ls ~/.credentials/", () => {
+      const result = runHook("ls ~/.credentials/");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows test -f ~/.credentials/", () => {
+      const result = runHook("test -f ~/.credentials/polygon.env");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows cat credentials piped to grep (no file output)", () => {
+      const result = runHook("cat ~/.credentials/polygon.env | grep KEY");
       expect(result.exitCode).toBe(0);
     });
   });

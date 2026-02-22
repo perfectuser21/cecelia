@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.28.0] - 2026-02-22
+
+### Added
+- Worktree 路径迁移到 `.claude/worktrees/`（对齐官方 Claude Code 约定）
+- Stop Hook 三个退出路径强制调用 `force_cleanup_worktree()` 兜底清理
+- `worktree-manage.sh` 自动确保 `.claude/worktrees/` 在 .gitignore 中
+- 强制所有 skill 输出简体中文，禁止日语/韩语 (v12.27.1)
+- Step 10 `update-capability.sh` 自动推进 capability stage (v12.27.0)
+- Phase 2 Capability Binding for OKR Decomposition
+
+### Fixed
+- CI/CD 安全检查发现的 P0 和 P1 级问题 (v12.25.1)
+
+## [12.25.1] - 2026-02-13
+
+### Fixed
+- 修复 CI/CD 安全检查发现的 P0 和 P1 级问题
+  - **P0-1**: `scripts/setup-branch-protection.sh` - 移除 `|| true` 错误吞噬，改为 if-else 判断并正确返回错误码
+  - **P0-2**: `.github/workflows/ci.yml` - Config Audit 扩展检查范围，添加 `hooks/`, `skills/`, `scripts/setup-branch-protection.sh`, `scripts/sync-version.sh` 到关键配置文件列表
+  - **P1-1**: `scripts/sync-version.sh` - 自动同步 `.hook-core-version` 文件
+  - **P1-2**: `scripts/sync-version.sh` - 添加 package-lock.json 同步检查和提示
+  - **P1-3**: `.github/workflows/ci.yml` - PRD/DoD Gate 使用 `--diff-filter=AM` 检查新增和修改的文件
+
+### Added
+- `tests/scripts/setup-branch-protection.test.sh` - 测试脚本错误处理逻辑
+
 ## [12.25.0] - 2026-02-13
 
 ### Added

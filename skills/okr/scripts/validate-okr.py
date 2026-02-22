@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-OKR Validation Script with Anti-Cheating (v7.0.0)
+OKR Validation Script with Anti-Cheating (v8.0.0)
 - Calculates content hash to prevent score tampering
 - Validates form (structure/fields)
+- Phase 2: Validates capability binding (capability_id, stage progression)
 - Generates validation report for AI self-assessment
 """
 
@@ -11,6 +12,7 @@ import sys
 import hashlib
 from datetime import datetime
 from pathlib import Path
+import requests
 
 
 def calculate_content_hash(data):
@@ -53,95 +55,144 @@ def detect_circular_dependency(pr_plans):
     return False
 
 
+def check_capability_exists(capability_id):
+    """Check if capability exists in Brain DB via API
+
+    Args:
+        capability_id: The capability ID to check
+
+    Returns:
+        tuple: (exists: bool, brain_available: bool)
+               - (True, True): capability exists
+               - (False, True): capability doesn't exist
+               - (False, False): Brain unavailable, cannot verify
+    """
+    try:
+        resp = requests.get(
+            f'http://localhost:5221/api/brain/capabilities/{capability_id}',
+            timeout=2
+        )
+        return (resp.status_code == 200, True)
+    except Exception:
+        # Fail open - if Brain is down, cannot verify
+        return (False, False)
+
+
 def validate_3layer_format(data):
-    """Validate 3-layer decomposition format (Initiative → PR Plans → Tasks)"""
+    """Validate 3-layer decomposition format (Initiatives → PR Plans → Tasks)
+
+    Phase 2: Now expects initiatives[] (plural) with capability binding
+    """
     score = 0
     issues = []
     suggestions = []
 
-    # 1. Initiative required fields (10 points)
-    initiative = data.get('initiative', {})
-    required_initiative_fields = ['title', 'description', 'repository']
-    initiative_complete = all(k in initiative for k in required_initiative_fields)
-
-    if initiative_complete:
-        score += 10
+    # 1. Check initiatives array exists (5 points)
+    initiatives = data.get('initiatives', [])
+    if initiatives:
+        score += 5
     else:
-        missing = [k for k in required_initiative_fields if k not in initiative]
-        issues.append(f"Initiative missing: {', '.join(missing)}")
-        suggestions.append(f"Add {', '.join(missing)} to initiative field")
+        issues.append('Missing initiatives array')
+        suggestions.append('Add initiatives array with at least one initiative')
 
-    # 2. PR Plans exist (10 points)
-    pr_plans = data.get('pr_plans', [])
-    if len(pr_plans) > 0:
-        score += 10
-    else:
-        issues.append("No PR Plans defined")
-        suggestions.append("Decompose Initiative into 2-5 PR Plans")
+    # Early return if no initiatives
+    if not initiatives:
+        return {
+            'score': min(score, 40),
+            'issues': issues,
+            'suggestions': suggestions,
+            'num_pr_plans': 0,
+            'format': '3-layer'
+        }
 
-    # 3. PR Plan field completeness (20 points)
-    if pr_plans:
-        complete_count = 0
-        for idx, plan in enumerate(pr_plans):
-            required = ['title', 'dod', 'files', 'complexity']
-            plan_complete = all(k in plan for k in required)
+    # 2. Check each initiative has capability_id (10 points, distributed)
+    capability_score = 0
+    for idx, init in enumerate(initiatives):
+        if init.get('capability_id'):
+            capability_score += 10 / len(initiatives)
+        else:
+            issues.append(f'Initiative {idx}: missing capability_id')
+            suggestions.append(f'Add capability_id to Initiative {idx}')
+    score += int(capability_score)
 
-            # Validate dod (at least 2 criteria)
-            dod = plan.get('dod', [])
-            if not isinstance(dod, list) or len(dod) < 2:
-                issues.append(f"PR Plan #{idx+1} '{plan.get('title', 'unknown')}': dod needs at least 2 criteria (found {len(dod)})")
-                suggestions.append(f"Add more acceptance criteria to PR Plan #{idx+1}")
-                plan_complete = False
+    # 3. Validate capability_id exists in Brain DB (5 points, distributed)
+    exists_score = 0
+    for idx, init in enumerate(initiatives):
+        cap_id = init.get('capability_id')
+        if cap_id:
+            exists, brain_available = check_capability_exists(cap_id)
+            if exists:
+                exists_score += 5 / len(initiatives)
+            elif brain_available:
+                # Brain is up, but capability not found
+                issues.append(f'Initiative {idx}: capability_id "{cap_id}" not found in registry')
+                suggestions.append(f'Use existing capability or create proposal for "{cap_id}"')
+            else:
+                # Brain is down, cannot verify - give points but warn
+                exists_score += 5 / len(initiatives)
+                issues.append(f'Initiative {idx}: Brain API unavailable, could not verify capability_id "{cap_id}"')
+                suggestions.append('Ensure Brain service is running at localhost:5221')
+    score += int(exists_score)
 
-            # Validate files (at least 1 file)
-            files = plan.get('files', [])
-            if not isinstance(files, list) or len(files) < 1:
-                issues.append(f"PR Plan #{idx+1} '{plan.get('title', 'unknown')}': files needs at least 1 file")
-                suggestions.append(f"Add file paths to PR Plan #{idx+1}")
-                plan_complete = False
+    # 4. Check from_stage / to_stage (5 points, distributed)
+    stage_fields_score = 0
+    for idx, init in enumerate(initiatives):
+        if init.get('from_stage') and init.get('to_stage'):
+            stage_fields_score += 5 / len(initiatives)
+        else:
+            issues.append(f'Initiative {idx}: missing from_stage or to_stage')
+            suggestions.append(f'Add from_stage and to_stage to Initiative {idx}')
+    score += int(stage_fields_score)
 
-            # Validate complexity (low/medium/high)
-            complexity = plan.get('complexity', '')
-            if complexity not in ['low', 'medium', 'high']:
-                issues.append(f"PR Plan #{idx+1} '{plan.get('title', 'unknown')}': invalid complexity '{complexity}' (must be low/medium/high)")
-                suggestions.append(f"Set complexity to low/medium/high for PR Plan #{idx+1}")
-                plan_complete = False
+    # 5. Check from_stage < to_stage (5 points, distributed)
+    stage_progression_score = 0
+    for idx, init in enumerate(initiatives):
+        from_s = init.get('from_stage')
+        to_s = init.get('to_stage')
+        if from_s and to_s:
+            if from_s < to_s:
+                stage_progression_score += 5 / len(initiatives)
+            else:
+                issues.append(f'Initiative {idx}: from_stage ({from_s}) must be < to_stage ({to_s})')
+                suggestions.append(f'Fix stage progression in Initiative {idx}')
+    score += int(stage_progression_score)
 
-            # Validate depends_on references
-            depends_on = plan.get('depends_on', [])
-            if depends_on:
-                valid_sequences = set(p.get('sequence', i+1) for i, p in enumerate(pr_plans))
-                for dep in depends_on:
-                    if dep not in valid_sequences:
-                        issues.append(f"PR Plan #{idx+1}: depends_on references non-existent sequence {dep}")
-                        suggestions.append(f"Remove or fix invalid dependency in PR Plan #{idx+1}")
-                        plan_complete = False
+    # 6. Check evidence_required (5 points, distributed)
+    evidence_score = 0
+    for idx, init in enumerate(initiatives):
+        if init.get('evidence_required'):
+            evidence_score += 5 / len(initiatives)
+        else:
+            issues.append(f'Initiative {idx}: missing evidence_required')
+            suggestions.append(f'Add evidence_required to Initiative {idx}')
+    score += int(evidence_score)
 
-            # Validate tasks exist
-            tasks = plan.get('tasks', [])
-            if len(tasks) < 1:
-                issues.append(f"PR Plan #{idx+1} '{plan.get('title', 'unknown')}': needs at least 1 task")
-                suggestions.append(f"Add tasks to PR Plan #{idx+1}")
-                plan_complete = False
-
-            if plan_complete:
-                complete_count += 1
-
-        completeness_ratio = complete_count / len(pr_plans) if pr_plans else 0
-        score += int(20 * completeness_ratio)
-
-    # 4. Circular dependency check
-    if pr_plans and detect_circular_dependency(pr_plans):
-        issues.append("Circular dependency detected in PR Plans (depends_on)")
-        suggestions.append("Review and break circular dependencies in depends_on fields")
-        # Don't deduct points, just flag the issue
+    # 7. Check pr_plans have tasks (5 points, distributed)
+    pr_plans_tasks_score = 0
+    total_pr_plans = 0
+    for idx, init in enumerate(initiatives):
+        pr_plans = init.get('pr_plans', [])
+        total_pr_plans += len(pr_plans)
+        if pr_plans:
+            if all(len(pp.get('tasks', [])) > 0 for pp in pr_plans):
+                pr_plans_tasks_score += 5 / len(initiatives)
+            else:
+                issues.append(f'Initiative {idx}: some pr_plans have no tasks')
+                suggestions.append(f'Add tasks to all pr_plans in Initiative {idx}')
+        else:
+            issues.append(f'Initiative {idx}: no pr_plans defined')
+            suggestions.append(f'Decompose Initiative {idx} into 2-5 PR Plans')
+    score += int(pr_plans_tasks_score)
 
     return {
         'score': min(score, 40),
+        'max': 40,
         'issues': issues,
         'suggestions': suggestions,
-        'num_pr_plans': len(pr_plans),
-        'format': '3-layer'
+        'num_pr_plans': total_pr_plans,
+        'num_initiatives': len(initiatives),
+        'format': '3-layer',
+        'passed': score >= 32  # 80% pass threshold
     }
 
 
@@ -212,11 +263,13 @@ def validate_2layer_format(data):
 def validate_okr_form(data):
     """Form validation (automated, 40 points max) - auto-detect format"""
     # Detect format
-    has_pr_plans = 'initiative' in data and 'pr_plans' in data
+    # Phase 2: initiatives[] (plural) with capability binding
+    has_initiatives = 'initiatives' in data
 
-    if has_pr_plans:
+    if has_initiatives:
         return validate_3layer_format(data)
     else:
+        # Backward compatible: 2-layer format or old 3-layer format
         return validate_2layer_format(data)
 
 

@@ -1,0 +1,21 @@
+{
+  "initiatives": [{
+    "title": "测试功能",
+    "description": "测试无效的 stage 推进",
+    "repository": "cecelia-core",
+    "capability_id": "autonomous-task-scheduling",
+    "from_stage": 4,
+    "to_stage": 3,
+    "evidence_required": "测试",
+    "pr_plans": [{
+      "title": "PR #1: 测试",
+      "description": "测试",
+      "dod": ["完成"],
+      "files": ["test.js"],
+      "sequence": 1,
+      "depends_on": [],
+      "complexity": "low",
+      "tasks": [{"title": "开发", "type": "dev", "description": "开发"}]
+    }]
+  }]
+}

@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 2.90.0
-created: 2026-02-13
-updated: 2026-02-13
+version: 2.94.0
+created: 2026-02-22
+updated: 2026-02-22
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.90.0: 从 feature-registry.yml 自动生成
+  - 2.94.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -162,8 +162,9 @@ changelog:
 ### P5: Worktree Parallel Development
 
 1. ✅ **已在 worktree → 跳过创建**
-2. ✅ **主仓库 → 强制创建 worktree + cd**
+2. ✅ **主仓库 → 强制创建 worktree + cd（.claude/worktrees/ 路径）**
 3. ✅ **worktree-manage.sh 创建前自动更新 develop 分支**
+4. ✅ **Stop Hook 退出时强制清理 worktree（兜底）**
 
 **RCI 覆盖**: W6-001
 
@@ -191,15 +192,18 @@ changelog:
 
 ---
 
-### H9: Bash Guard (Credential Leak + HK Deploy Protection)
+### H9: Bash Guard (Credential Leak + File Exposure + HK Deploy Protection)
 
 1. ✅ **命令含真实 token → 被阻止**
-2. ✅ **rsync 到 HK + git dirty → 被阻止**
-3. ✅ **rsync 到 HK + git clean + main → 放行**
-4. ✅ **日常命令 (git/npm/echo) → 放行**
-5. ✅ **ssh hk → 放行（不拦）**
+2. ✅ **cp/mv ~/.credentials/ → 被阻止**
+3. ✅ **cat ~/.credentials/ > file → 被阻止**
+4. ✅ **source ~/.credentials/ → 放行（安全加载）**
+5. ✅ **rsync 到 HK + git dirty → 被阻止**
+6. ✅ **rsync 到 HK + git clean + main → 放行**
+7. ✅ **日常命令 (git/npm/echo) → 放行**
+8. ✅ **ssh hk → 放行（不拦）**
 
-**RCI 覆盖**: H9-001,H9-002,H9-003
+**RCI 覆盖**: H9-001,H9-002,H9-003,H9-004
 
 ---
 
@@ -246,5 +250,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.90.0
-**生成时间**: 2026-02-13
+**版本**: 2.94.0
+**生成时间**: 2026-02-22

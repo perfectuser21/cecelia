@@ -1,0 +1,27 @@
+{
+  "form_score": 30,
+  "content_score": 0,
+  "content_breakdown": {
+    "title_quality": 0,
+    "description_quality": 0,
+    "kr_feature_mapping": 0,
+    "completeness": 0
+  },
+  "total": 30,
+  "passed": false,
+  "content_hash": "8d1e4cbe3dbfe8f6",
+  "timestamp": "2026-02-14T15:45:48.809151",
+  "issues": [
+    "Initiative 0: capability_id \"autonomous-task-scheduling\" not found in registry",
+    "Initiative 0: from_stage (4) must be < to_stage (3)"
+  ],
+  "suggestions": [
+    "Use existing capability or create proposal for \"autonomous-task-scheduling\"",
+    "Fix stage progression in Initiative 0"
+  ],
+  "format": "3-layer",
+  "details": {
+    "num_features": 0,
+    "num_pr_plans": 1
+  }
+}
