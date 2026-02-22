@@ -1,0 +1,22 @@
+{
+  "form_score": 40,
+  "content_score": 60,
+  "content_breakdown": {
+    "title_quality": 15,
+    "description_quality": 15,
+    "kr_feature_mapping": 15,
+    "completeness": 15
+  },
+  "total": 100,
+  "passed": true,
+  "content_hash": "73413f603ec03ec1",
+  "timestamp": "2026-02-20T13:21:46.148652",
+  "issues": [],
+  "suggestions": [],
+  "format": "2-layer",
+  "details": {
+    "num_features": 5,
+    "num_pr_plans": 0
+  },
+  "constraint_violated": false
+}

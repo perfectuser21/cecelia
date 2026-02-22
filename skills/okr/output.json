@@ -1,0 +1,118 @@
+{
+  "identified_layer": "initiative",
+  "input": "调研现有任务失败检测点",
+  "reasoning": "单仓库（cecelia-core）、具体调研任务、1-2 小时工作量",
+  "objective": "全面调研 Cecelia Brain 中所有任务失败的检测点，为后续 RCA 自动触发设计提供基础数据",
+  "key_results": [
+    {
+      "title": "完成失败检测点调研（代码+数据库+日志）",
+      "metric": "识别至少 5 个代码层面检测点 + 10 条数据库失败记录 + 3 个日志样本",
+      "features": [
+        {
+          "title": "探索: 调研代码层面的失败检测点",
+          "description": "搜索 Brain 代码中所有任务状态更新为 failed/quarantined 的位置。分析 execution-callback、tick.js、executor.js、decomposer-checker.js 中的失败判断逻辑。输出：失败检测点清单（文件路径:行号 + 代码片段）+ 失败分类（API错误、业务逻辑失败、超时等）。",
+          "repository": "cecelia-core",
+          "task_type": "exploratory",
+          "acceptance_criteria": [
+            "列出至少 5 个失败检测点（文件路径:行号）",
+            "每个检测点包含代码片段和触发条件",
+            "对失败类型进行分类（至少 3 种类型）"
+          ]
+        },
+        {
+          "title": "探索: 调研数据库层面的失败记录结构",
+          "description": "查询 tasks 表中 status=failed 的记录（至少 10 条最近失败）。分析 task_events / cecelia_events 中的失败事件记录。检查失败相关字段（error_message、failure_reason、retry_count 等）。输出：数据库 schema 分析 + 失败数据样本 + 字段完整性评估。",
+          "repository": "cecelia-core",
+          "task_type": "exploratory",
+          "acceptance_criteria": [
+            "分析至少 10 条最近的失败任务记录",
+            "列出所有失败相关的数据库字段",
+            "评估数据完整性（字段填充率）"
+          ]
+        },
+        {
+          "title": "探索: 分析失败任务的日志输出格式",
+          "description": "检查失败任务的日志输出格式（/tmp/cecelia-*.log）。分析日志中的错误信息结构（堆栈、错误码、上下文）。评估日志与数据库记录的一致性。输出：日志格式分析 + 日志与 DB 的映射关系 + 改进建议。",
+          "repository": "cecelia-core",
+          "task_type": "exploratory",
+          "acceptance_criteria": [
+            "分析至少 3 个失败任务的日志文件",
+            "对比日志与数据库记录的一致性",
+            "提出日志改进建议（如有必要）"
+          ]
+        },
+        {
+          "title": "探索: 汇总失败检测点并提出 RCA 触发建议",
+          "description": "基于前 3 个任务的调研结果，汇总所有失败检测点。分析现有检测机制的覆盖面和缺失点。提出 RCA 自动触发的时机建议（何时触发、触发条件、优先级）。输出：完整的调研报告 + RCA 触发点设计建议。",
+          "repository": "cecelia-core",
+          "task_type": "exploratory",
+          "acceptance_criteria": [
+            "汇总所有失败检测点（代码+DB+日志）",
+            "分析现有机制的问题（至少 2 个问题点）",
+            "提出至少 3 个 RCA 触发时机建议",
+            "提供下一步行动建议"
+          ],
+          "depends_on": ["探索: 调研代码层面的失败检测点", "探索: 调研数据库层面的失败记录结构", "探索: 分析失败任务的日志输出格式"]
+        }
+      ]
+    },
+    {
+      "title": "提出 RCA 触发机制设计建议",
+      "metric": "输出至少 3 个 RCA 触发时机建议 + 优先级评估 + 实现路径建议",
+      "features": [
+        {
+          "title": "探索: 汇总失败检测点并提出 RCA 触发建议",
+          "description": "基于前面的调研结果，汇总所有失败检测点。分析现有检测机制的覆盖面和缺失点。提出 RCA 自动触发的时机建议（何时触发、触发条件、优先级）。输出：完整的调研报告 + RCA 触发点设计建议。",
+          "repository": "cecelia-core",
+          "task_type": "exploratory",
+          "acceptance_criteria": [
+            "汇总所有失败检测点（代码+DB+日志）",
+            "分析现有机制的问题（至少 2 个问题点）",
+            "提出至少 3 个 RCA 触发时机建议",
+            "提供下一步行动建议"
+          ],
+          "depends_on": ["探索: 调研代码层面的失败检测点", "探索: 调研数据库层面的失败记录结构", "探索: 分析失败任务的日志输出格式"]
+        }
+      ]
+    }
+  ],
+  "created_tasks": {
+    "note": "下面是实际要创建到数据库的 Task 结构",
+    "tasks": [
+      {
+        "title": "探索: 调研代码层面的失败检测点",
+        "task_type": "exploratory",
+        "description": "搜索 Brain 代码中所有任务状态更新为 failed/quarantined 的位置。分析 execution-callback、tick.js、executor.js、decomposer-checker.js 中的失败判断逻辑。",
+        "priority": "P1",
+        "skill": "exploratory",
+        "parent_initiative": "调研现有任务失败检测点"
+      },
+      {
+        "title": "探索: 调研数据库层面的失败记录结构",
+        "task_type": "exploratory",
+        "description": "查询 tasks 表中 status=failed 的记录（至少 10 条最近失败）。分析 task_events / cecelia_events 中的失败事件记录。",
+        "priority": "P1",
+        "skill": "exploratory",
+        "parent_initiative": "调研现有任务失败检测点"
+      },
+      {
+        "title": "探索: 分析失败任务的日志输出格式",
+        "task_type": "exploratory",
+        "description": "检查失败任务的日志输出格式（/tmp/cecelia-*.log）。分析日志中的错误信息结构（堆栈、错误码、上下文）。",
+        "priority": "P1",
+        "skill": "exploratory",
+        "parent_initiative": "调研现有任务失败检测点"
+      },
+      {
+        "title": "探索: 汇总失败检测点并提出 RCA 触发建议",
+        "task_type": "exploratory",
+        "description": "基于前 3 个任务的调研结果，汇总所有失败检测点。分析现有检测机制的覆盖面和缺失点。提出 RCA 自动触发的时机建议。",
+        "priority": "P1",
+        "skill": "exploratory",
+        "parent_initiative": "调研现有任务失败检测点",
+        "depends_on": ["探索: 调研代码层面的失败检测点", "探索: 调研数据库层面的失败记录结构", "探索: 分析失败任务的日志输出格式"]
+      }
+    ]
+  },
+  "next_step": "执行前 3 个 exploratory tasks，汇总结果后执行第 4 个汇总任务"
+}
