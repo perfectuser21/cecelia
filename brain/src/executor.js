@@ -815,6 +815,17 @@ function getModelForTask(task) {
 }
 
 /**
+ * Get provider for a task.
+ * 'minimax' → cecelia-run 注入 MiniMax API env vars（api.minimaxi.com）
+ * null → 使用默认 Anthropic
+ *
+ * 策略：默认全部无头任务走 MiniMax（Ultra plan, 2000 prompts/5h, 成本 1/12）
+ */
+function getProviderForTask(task) {
+  return 'minimax';
+}
+
+/**
  * Get permission mode based on task_type
  * plan = 只读/Plan Mode，不能修改文件
  * bypassPermissions = 完全自动化，跳过权限检查
@@ -1385,8 +1396,11 @@ async function triggerCeceliaRun(task) {
       } catch { /* ignore */ }
     }
 
+    // Get provider (minimax = 1/12 cost via api.minimaxi.com)
+    const provider = getProviderForTask(task);
+
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
 
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
@@ -1398,7 +1412,8 @@ async function triggerCeceliaRun(task) {
         task_type: taskType,
         permission_mode: permissionMode,
         repo_path: repoPath,
-        model: model
+        model: model,
+        provider: provider
       })
     });
 
@@ -1823,7 +1838,8 @@ export {
   clearBillingPause,
   // v9: Task type matching validation
   checkTaskTypeMatch,
-  // v10: Session tracking
+  // v10: Session tracking + provider
+  getProviderForTask,
   recordSessionStart,
   recordSessionEnd,
   getSessionInfo,
