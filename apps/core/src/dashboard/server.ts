@@ -52,7 +52,7 @@ const N8N_BACKEND = process.env.N8N_BACKEND || 'http://localhost:5678';
 const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
 
 // Cecelia Brain API (semantic brain + orchestrator)
-const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
+const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
 
 // CORS
 app.use((_req, res, next) => {
@@ -90,7 +90,7 @@ app.use('/api/orchestrator', orchestratorQueueRoutes);
 const orchestratorProxy = createProxyMiddleware({
   target: BRAIN_API,
   changeOrigin: true,
-  pathRewrite: (path) => `/orchestrator${path}`,  // /chat → /orchestrator/chat
+  pathRewrite: (path) => `/api/brain/orchestrator${path}`,  // /chat → /api/brain/orchestrator/chat
   ws: true,  // Enable WebSocket proxying for realtime voice
 });
 app.use('/api/orchestrator', orchestratorProxy);
@@ -99,7 +99,7 @@ app.use('/api/orchestrator', orchestratorProxy);
 app.use('/api/autumnrice', createProxyMiddleware({
   target: BRAIN_API,
   changeOrigin: true,
-  pathRewrite: (path) => `/autumnrice${path}`,  // /run → /autumnrice/run
+  pathRewrite: (path) => `/api/brain/autumnrice${path}`,  // /run → /api/brain/autumnrice/run
 }));
 
 // Local API routes that replace Autopilot backend (port 3333 no longer needed)
