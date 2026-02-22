@@ -420,7 +420,7 @@ describe('migration 053 validation', () => {
 });
 
 describe('selfcheck schema version', () => {
-  it('should be updated to 054', async () => {
+  it('should match current schema version', async () => {
     vi.resetModules();
 
     vi.doMock('../db.js', () => ({ default: mockPool }));
@@ -429,6 +429,6 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('056');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('057');
   });
 });

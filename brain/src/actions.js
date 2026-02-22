@@ -99,14 +99,16 @@ async function createTask({ title, description, priority, project_id, goal_id, t
  * @param {string} params.description - Initiative description
  * @param {string} params.plan_content - Plan document content
  */
-async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content }) {
+async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content, execution_mode, dod_content }) {
   if (!name || !parent_id) {
     return { success: false, error: 'name and parent_id are required' };
   }
 
+  const isOrchestrated = execution_mode === 'orchestrated';
+
   const result = await pool.query(`
-    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status)
-    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active')
+    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status, execution_mode, current_phase, dod_content)
+    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active', $7, $8, $9)
     RETURNING *
   `, [
     name,
@@ -114,11 +116,15 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
     kr_id || null,
     decomposition_mode || 'known',
     description || '',
-    plan_content || null
+    plan_content || null,
+    execution_mode || 'simple',
+    isOrchestrated ? 'plan' : null,
+    dod_content ? JSON.stringify(dod_content) : null
   ]);
 
   const initiative = result.rows[0];
-  console.log(`[Action] Created initiative: ${initiative.id} - ${name} (mode: ${decomposition_mode || 'known'})`);
+  const modeLabel = isOrchestrated ? 'orchestrated' : (decomposition_mode || 'known');
+  console.log(`[Action] Created initiative: ${initiative.id} - ${name} (mode: ${modeLabel})`);
 
   return { success: true, initiative };
 }
