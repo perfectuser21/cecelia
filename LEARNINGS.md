@@ -4,6 +4,22 @@
 
 ---
 
+### [2026-02-22] Time-Aware Decomposition — Prompt 升级 (v1.66.0)
+
+**变更**：
+1. `executor.js`：新增 `buildTimeContext(krId)` 异步函数，查询 KR 剩余天数 + 已有 Project 进度，注入 OKR 拆解 prompt
+2. `executor.js`：`preparePrompt(task)` 从同步改为 **async** 函数
+3. `decomposition-checker.js`：Check 5/6 描述中注入 `time_budget_days` 和 `deadline` 上下文
+4. `okr-validation-spec.yml`：新增 `recommended_fields`（sequence_order / time_budget_days，WARNING 级别）
+
+**经验**：
+- **sync→async 是 Breaking Change**：`preparePrompt` 从同步改为异步后，所有调用方和测试都必须加 `await`。CI 暴露了 3 个未更新的旧测试文件（executor-skill-override / executor-okr-project-layer / exploratory-prompt）。**教训**：改函数签名时，全仓搜索所有调用点，不能只改直接修改的文件。
+- **buildTimeContext 容错设计**：try-catch 包裹整个函数，失败时 console.error + 返回空字符串，不阻塞 prompt 生成。这保证了 DB 连接失败时不影响任务派发。
+- **pool.query mock 陷阱**：旧测试 mock `db.js` 的 `query` 为 `vi.fn()`（无返回值），`buildTimeContext` 内部调用 `pool.query().rows` 会 throw。设计时用 try-catch 兜底是关键。
+- **合并冲突处理**：develop 上有 v1.65.1 hotfix，PR 分支是 v1.66.0。解决方法：保留更高版本号（1.66.0），在 .brain-versions / DEFINITION.md / package.json 中统一。
+
+---
+
 ### [2026-02-22] 渐进验证循环 — Progress Reviewer (v1.65.0)
 
 **变更**：
