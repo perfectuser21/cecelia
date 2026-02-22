@@ -1,0 +1,255 @@
+# OKR Validation Spec v1
+#
+# 统一验证标准，三层共享：
+#   L0: validate-okr-structure.js (runtime + CI) — 纯代码检查
+#   L1: /okr self-review (未来) — 拆解后 LLM 自检
+#   L2: /okr-audit (未来) — 独立审计 Agent
+#
+# 字段名严格对齐 DB schema（goals / projects / pr_plans / tasks 表）
+
+version: 1
+
+severity_levels:
+  BLOCK: "阻止入库 / 阻止 CI"
+  WARNING: "允许入库，标记问题"
+  INFO: "仅记录"
+
+# ─── goals 表（按 type 分段） ────────────────────────────
+
+goals:
+
+  global_okr:
+    description: "全局目标（顶层，parent_id = NULL）"
+    required_fields:
+      - title
+      - type
+      - status
+      - priority
+    parent_rules:
+      parent_id:
+        must_be_null: true
+        severity: BLOCK
+        message: "global_okr 不应有 parent"
+    children:
+      global_kr:
+        query: "goals WHERE parent_id = $id AND type = 'global_kr'"
+        min: 1
+        max: 7
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+  global_kr:
+    description: "全局关键结果（parent = global_okr）"
+    required_fields:
+      - title
+      - type
+      - parent_id
+      - status
+      - priority
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: global_okr
+        severity: BLOCK
+        message: "global_kr.parent_id 必须指向 global_okr"
+    children:
+      area_okr:
+        query: "goals WHERE parent_id = $id AND type = 'area_okr'"
+        min: 1
+        max: 5
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+  area_okr:
+    description: "领域目标（parent = global_kr）"
+    required_fields:
+      - title
+      - type
+      - parent_id
+      - status
+      - priority
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: global_kr
+        severity: BLOCK
+        message: "area_okr.parent_id 必须指向 global_kr"
+    children:
+      area_kr:
+        query: "goals WHERE parent_id = $id AND type = 'area_kr'"
+        min: 1
+        max: 5
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+  area_kr:
+    description: "领域关键结果（parent = area_okr）"
+    required_fields:
+      - title
+      - type
+      - parent_id
+      - status
+      - priority
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: area_okr
+        severity: BLOCK
+        message: "area_kr.parent_id 必须指向 area_okr"
+    children:
+      project:
+        query: "project_kr_links WHERE kr_id = $id → projects"
+        min: 1
+        max: 5
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+# ─── projects 表（按 type 分段） ─────────────────────────
+
+projects:
+
+  project:
+    description: "项目容器（type = 'project'）"
+    required_fields:
+      - name
+      - type
+      - status
+    parent_rules:
+      kr_link:
+        via: "project_kr_links WHERE project_id = $id"
+        min: 1
+        severity: WARNING
+        message: "project 应至少关联 1 个 KR"
+    children:
+      initiative:
+        query: "projects WHERE parent_id = $id AND type = 'initiative'"
+        min: 1
+        max: 8
+        severity: WARNING
+    text_rules:
+      name:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+  initiative:
+    description: "闭环工作包（type = 'initiative', parent = project）"
+    required_fields:
+      - name
+      - type
+      - parent_id
+      - status
+    parent_rules:
+      parent_id:
+        must_exist_in_projects: true
+        parent_type: project
+        severity: BLOCK
+        message: "initiative.parent_id 必须指向 project"
+    children:
+      task:
+        query: "tasks WHERE project_id = $id"
+        min: 1
+        severity: WARNING
+    depth_limit: 2
+    text_rules:
+      name:
+        min_length: 5
+        max_length: 200
+        severity: WARNING
+
+# ─── pr_plans 表 ─────────────────────────────────────────
+
+pr_plans:
+  required_fields:
+    - title
+    - project_id
+    - dod
+    - status
+  parent_rules:
+    project_id:
+      must_exist_in_projects: true
+      severity: BLOCK
+      message: "pr_plan.project_id 必须指向已有 project/initiative"
+  children:
+    task:
+      query: "tasks WHERE pr_plan_id = $id"
+      min: 1
+      max: 10
+      severity: WARNING
+  dependency_graph:
+    field: depends_on
+    detect_cycle: true
+    severity: BLOCK
+  text_rules:
+    title:
+      min_length: 5
+      max_length: 200
+      severity: WARNING
+
+# ─── tasks 表 ────────────────────────────────────────────
+
+tasks:
+  required_fields:
+    - title
+    - project_id
+    - status
+    - priority
+  parent_rules:
+    project_id:
+      must_exist_in_projects: true
+      severity: BLOCK
+      message: "task.project_id 必须指向已有 project/initiative"
+  text_rules:
+    title:
+      min_length: 3
+      max_length: 200
+      forbidden_phrases:
+        - "看一下"
+        - "处理一下"
+        - "优化一下"
+        - "随便"
+        - "先不管"
+      severity: BLOCK
+    description:
+      min_length: 50
+      severity: WARNING
+
+# ─── 全局规则 ────────────────────────────────────────────
+
+global_rules:
+
+  orphans:
+    - entity: tasks
+      parent_field: project_id
+      parent_table: projects
+      severity: BLOCK
+      message: "task.project_id 指向不存在的 project"
+
+    - entity: projects
+      filter: "type = 'initiative'"
+      parent_field: parent_id
+      parent_table: projects
+      severity: BLOCK
+      message: "initiative.parent_id 指向不存在的 project"
+
+  # 不检查 completed/cancelled/archived 实体
+  active_status_filter:
+    goals: ["pending", "in_progress", "decomposing"]
+    projects: ["active", "pending", "in_progress"]
+    tasks: ["queued", "in_progress"]
