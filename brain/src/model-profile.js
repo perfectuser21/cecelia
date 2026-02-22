@@ -130,6 +130,78 @@ export async function listProfiles(pool) {
 }
 
 /**
+ * 更新单个 agent 的模型配置
+ * 直接修改 active profile 的 config JSONB
+ */
+export async function updateAgentModel(pool, agentId, modelId) {
+  // 动态导入避免循环依赖
+  const { getAgentById, isModelAllowedForAgent, getProviderForModel } = await import('./model-registry.js');
+
+  const agent = getAgentById(agentId);
+  if (!agent) {
+    throw new Error(`Unknown agent: ${agentId}`);
+  }
+
+  if (!isModelAllowedForAgent(agentId, modelId)) {
+    throw new Error(`Model ${modelId} is not allowed for agent ${agentId}`);
+  }
+
+  const newProvider = getProviderForModel(modelId);
+  if (agent.fixed_provider && newProvider !== agent.fixed_provider) {
+    throw new Error(`Agent ${agentId} is locked to provider ${agent.fixed_provider}, cannot use ${newProvider}`);
+  }
+
+  // 获取 active profile
+  const { rows: activeRows } = await pool.query(
+    'SELECT id, name, config FROM model_profiles WHERE is_active = true LIMIT 1'
+  );
+  if (activeRows.length === 0) {
+    throw new Error('No active profile found');
+  }
+
+  const profile = activeRows[0];
+  const config = { ...profile.config };
+  const previous = {};
+
+  if (agent.layer === 'brain') {
+    // brain 层: 直接更新 thalamus 或 cortex
+    previous.provider = config[agentId]?.provider;
+    previous.model = config[agentId]?.model;
+    config[agentId] = { provider: newProvider, model: modelId };
+  } else {
+    // executor 层: 更新 model_map
+    const modelMap = { ...config.executor.model_map };
+    previous.model_map = modelMap[agentId] ? { ...modelMap[agentId] } : null;
+
+    // 设置新模型，其他 provider 设为 null
+    const newMap = {};
+    for (const p of ['anthropic', 'minimax', 'openai']) {
+      newMap[p] = p === newProvider ? modelId : null;
+    }
+    modelMap[agentId] = newMap;
+
+    config.executor = { ...config.executor, model_map: modelMap };
+  }
+
+  // 更新 DB
+  await pool.query(
+    'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
+    [JSON.stringify(config), profile.id]
+  );
+
+  // 刷新缓存
+  _activeProfile = { ...profile, config, is_active: true };
+  console.log(`[model-profile] Updated agent ${agentId} to model ${modelId}`);
+
+  return {
+    agent_id: agentId,
+    previous,
+    current: { provider: newProvider, model: modelId },
+    profile: _activeProfile,
+  };
+}
+
+/**
  * 重置缓存（测试用）
  */
 export function _resetProfileCache() {

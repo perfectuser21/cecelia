@@ -56,7 +56,7 @@ import { createProposal, approveProposal, rollbackProposal, rejectProposal, getP
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
-import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles } from './model-profile.js';
+import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel } from './model-profile.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -6489,6 +6489,18 @@ router.get('/model-profiles', async (_req, res) => {
   }
 });
 
+// ==================== Model Registry API ====================
+
+router.get('/model-profiles/models', async (_req, res) => {
+  try {
+    const { MODELS, AGENTS } = await import('./model-registry.js');
+    res.json({ success: true, models: MODELS, agents: AGENTS });
+  } catch (err) {
+    console.error('[API] model-registry error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/model-profiles/active', (_req, res) => {
   try {
     const profile = getActiveProfile();
@@ -6517,6 +6529,32 @@ router.put('/model-profiles/active', async (req, res) => {
   } catch (err) {
     console.error('[API] model-profiles switch error:', err.message);
     const status = err.message.includes('not found') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/model-profiles/active/agent', async (req, res) => {
+  try {
+    const { agent_id, model_id } = req.body;
+    if (!agent_id || !model_id) {
+      return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
+    }
+
+    const result = await updateAgentModel(pool, agent_id, model_id);
+
+    // WebSocket 广播
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: result.profile.id,
+      profile_name: result.profile.name,
+      agent_id: result.agent_id,
+      model_id: model_id,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] update-agent-model error:', err.message);
+    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
+      ? 400 : err.message.includes('No active profile') ? 404 : 500;
     res.status(status).json({ success: false, error: err.message });
   }
 });
