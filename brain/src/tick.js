@@ -80,6 +80,7 @@ let _lastDispatchTime = 0; // track last dispatch time for logging
 let _lastExecuteTime = 0; // track last full executeTick() time for throttling
 let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
 let _lastHealthCheckTime = 0; // track last Layer 2 health check time
+let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1285,6 +1286,25 @@ async function executeTick() {
     console.error('[tick] Project capacity management failed (non-fatal):', projectCapErr.message);
   }
 
+  // 0.12. KR 进度同步：每小时一次，纯 SQL，无 LLM
+  const krProgressElapsed = Date.now() - _lastKrProgressSyncTime;
+  if (krProgressElapsed >= CLEANUP_INTERVAL_MS) {
+    _lastKrProgressSyncTime = Date.now();
+    try {
+      const { syncAllKrProgress } = await import('./kr-progress.js');
+      const krResult = await syncAllKrProgress(pool);
+      if (krResult.updated > 0) {
+        console.log(`[TICK] KR 进度同步: ${krResult.updated} 个 KR 已更新`);
+        actionsTaken.push({
+          action: 'kr_progress_sync',
+          updated_count: krResult.updated,
+        });
+      }
+    } catch (krErr) {
+      console.error('[tick] KR progress sync failed (non-fatal):', krErr.message);
+    }
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();
@@ -1800,6 +1820,8 @@ function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
 /** Reset Layer 2 health check timer — for testing only */
 function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
+/** Reset KR progress sync timer — for testing only */
+function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -1873,5 +1895,6 @@ export {
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
-  _resetLastHealthCheckTime
+  _resetLastHealthCheckTime,
+  _resetLastKrProgressSyncTime
 };

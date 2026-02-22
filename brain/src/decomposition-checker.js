@@ -17,9 +17,13 @@
 
 import pool from './db.js';
 import { computeCapacity, isAtCapacity } from './capacity.js';
+import { validateTaskDescription } from './task-quality-gate.js';
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
+
+// Maximum decomposition depth: depth >= this → cannot create sub-initiatives, only dev tasks
+const MAX_DECOMPOSITION_DEPTH = 2;
 
 // ───────────────────────────────────────────────────────────────────
 // Execution Frontier Model - Inventory Management
@@ -142,6 +146,14 @@ async function createDecompositionTask({ title, description, goalId, projectId, 
   if (!goalId) {
     throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
   }
+
+  // Quality gate: validate description quality
+  const validation = validateTaskDescription(description);
+  if (!validation.valid) {
+    console.warn(`[decomp-checker] Quality gate REJECTED "${title}": ${validation.reasons.join('; ')}`);
+    return { id: null, title, rejected: true, reasons: validation.reasons };
+  }
+
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, payload, trigger_source)
     VALUES ($1, $2, 'queued', 'P0', $3, $4, 'dev', $5, 'brain_auto')
@@ -687,7 +699,8 @@ async function checkInitiativeDecomposition() {
 
   const result = await pool.query(`
     SELECT p.id, p.name, p.parent_id, p.plan_content,
-           parent_proj.name AS parent_name, parent_proj.repo_path
+           parent_proj.name AS parent_name, parent_proj.repo_path,
+           COALESCE(p.decomposition_depth, 1) AS depth
     FROM projects p
     LEFT JOIN projects parent_proj ON parent_proj.id = p.parent_id
     WHERE p.type = 'initiative'
@@ -765,6 +778,18 @@ async function checkInitiativeDecomposition() {
       continue;
     }
 
+    // Depth limit: initiatives at max depth can only create dev tasks, not sub-initiatives
+    const atMaxDepth = init.depth >= MAX_DECOMPOSITION_DEPTH;
+    const depthWarning = atMaxDepth
+      ? [
+          '',
+          '⛔ 深度限制（CRITICAL）：',
+          `当前拆解深度 = ${init.depth}（最大 ${MAX_DECOMPOSITION_DEPTH}）。`,
+          '禁止创建子 Initiative。只能创建具体的 dev Task（有代码修改、有测试、有 PR 预期）。',
+          '每个 Task 必须包含：修改哪些文件、验收标准、测试计划。',
+        ]
+      : [];
+
     const task = await createDecompositionTask({
       title: `Initiative 拆解: ${init.name}`,
       description: [
@@ -773,20 +798,22 @@ async function checkInitiativeDecomposition() {
         '要求：',
         '1. 分析 Initiative 的范围，创建 1-5 个 Task',
         '2. 每个 Task 约 20 分钟可完成',
-        '3. 为每个 Task 写完整 PRD',
+        '3. 为每个 Task 写完整 PRD（包含：修改哪些文件、验收标准、测试计划）',
         '4. 调用 Brain API 创建 Task:',
         '   POST http://localhost:5221/api/brain/action/create-task',
         `   Body: { "title": "...", "project_id": "${init.id}", "goal_id": "${krId || ''}", "task_type": "dev", "prd_content": "..." }`,
+        ...depthWarning,
         '',
         `Initiative ID: ${init.id}`,
         `Initiative 名称: ${init.name}`,
+        `拆解深度: ${init.depth}/${MAX_DECOMPOSITION_DEPTH}`,
         `所属 Project: ${init.parent_name || '(未知)'} (${init.parent_id || 'N/A'})`,
         `Repo: ${init.repo_path || '(无)'}`,
         init.plan_content ? `Plan:\n${init.plan_content}` : '',
       ].filter(Boolean).join('\n'),
       goalId: krId,
       projectId: init.id,
-      payload: { level: 'initiative', initiative_id: init.id }
+      payload: { level: 'initiative', initiative_id: init.id, depth: init.depth, at_max_depth: atMaxDepth }
     });
 
     console.log(`[decomp-checker] Created Initiative decomposition: ${init.name}`);
@@ -1097,4 +1124,5 @@ export {
   DEDUP_WINDOW_HOURS,
   INVENTORY_CONFIG,
   WIP_LIMITS,
+  MAX_DECOMPOSITION_DEPTH,
 };

@@ -1919,6 +1919,22 @@ router.post('/execution-callback', async (req, res) => {
       newStatus = 'in_progress'; // Unknown status, keep in progress
     }
 
+    // P1-1: Dev task completed without PR → completed_no_pr
+    // Only dev tasks are expected to produce PRs. Decomposition/exploratory tasks are exempt.
+    if (newStatus === 'completed' && !pr_url) {
+      try {
+        const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const taskType = taskRow.rows[0]?.task_type;
+        const isDecomposition = taskRow.rows[0]?.payload?.decomposition;
+        if (taskType === 'dev' && !isDecomposition) {
+          newStatus = 'completed_no_pr';
+          console.warn(`[execution-callback] Dev task ${task_id} completed without PR → completed_no_pr`);
+        }
+      } catch (prCheckErr) {
+        console.error(`[execution-callback] PR check error (non-fatal): ${prCheckErr.message}`);
+      }
+    }
+
     // 2. Build the update payload
     const lastRunResult = {
       run_id,

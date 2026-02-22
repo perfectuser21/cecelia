@@ -15,6 +15,7 @@
  */
 
 import { computeCapacity } from './capacity.js';
+import { updateKrProgress } from './kr-progress.js';
 
 /**
  * 检查并关闭已完成的 Initiatives。
@@ -86,6 +87,28 @@ async function checkInitiativeCompletion(pool) {
   let activatedCount = 0;
   if (closed.length > 0) {
     activatedCount = await activateNextInitiatives(pool);
+
+    // KR 进度更新：initiative 关闭后自动重算关联 KR 的 progress
+    try {
+      // 获取关闭的 initiatives 关联的 KR IDs（通过 parent project 的 project_kr_links）
+      const closedIds = closed.map(c => c.id);
+      const krResult = await pool.query(`
+        SELECT DISTINCT pkl.kr_id
+        FROM projects p
+        JOIN project_kr_links pkl ON pkl.project_id = p.parent_id
+        WHERE p.id = ANY($1)
+          AND pkl.kr_id IS NOT NULL
+      `, [closedIds]);
+
+      for (const row of krResult.rows) {
+        const result = await updateKrProgress(pool, row.kr_id);
+        if (result.total > 0) {
+          console.log(`[initiative-closer] KR ${row.kr_id} progress → ${result.progress}% (${result.completed}/${result.total})`);
+        }
+      }
+    } catch (krErr) {
+      console.error('[initiative-closer] KR progress update failed (non-fatal):', krErr.message);
+    }
   }
 
   return { closedCount: closed.length, closed, activatedCount };
