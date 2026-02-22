@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.28.0] - 2026-02-22
+
+### Added
+- Worktree 路径迁移到 `.claude/worktrees/`（对齐官方 Claude Code 约定）
+- Stop Hook 三个退出路径强制调用 `force_cleanup_worktree()` 兜底清理
+- `worktree-manage.sh` 自动确保 `.claude/worktrees/` 在 .gitignore 中
+- 强制所有 skill 输出简体中文，禁止日语/韩语 (v12.27.1)
+- Step 10 `update-capability.sh` 自动推进 capability stage (v12.27.0)
+- Phase 2 Capability Binding for OKR Decomposition
+
+### Fixed
+- CI/CD 安全检查发现的 P0 和 P1 级问题 (v12.25.1)
+
 ## [12.25.1] - 2026-02-13
 
 ### Fixed
