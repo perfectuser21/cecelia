@@ -6,6 +6,16 @@
 
 ---
 
+### [2026-02-22] 统一模型路由重构 v1.70.0
+
+- **Bug**: `callThalamLLM` 通过 `readFileSync` 读取 `~/.credentials/minimax.json` 获取凭据，CI 环境没有这个文件导致集成测试失败。旧的 `callHaiku` 用 `process.env.ANTHROPIC_API_KEY`（测试易 mock）。解决方案：在测试中 `vi.doMock('node:fs')` 拦截 `readFileSync`，检测路径含 `minimax.json` 时返回 fake 凭据。
+- **Bug**: 切换 LLM 提供商后，测试中的 fetch mock 必须同步更新 API 响应格式。Anthropic 格式 `{ content: [{type:'text', text:...}] }` vs OpenAI 兼容格式 `{ choices: [{message:{content:...}}] }`。遗漏会导致 "returned empty content" 错误。
+- **优化点**: `callThalamLLM` 的凭据缓存（`_thalamusMinimaxKey` 模块变量）+ `_resetThalamusMinimaxKey()` 导出用于测试隔离，这是一个好模式
+- **陷阱**: develop 上有并行 PR 合并导致版本冲突，rebase 后需要重新 bump 版本号（1.69.0 → 1.70.0）
+- **影响程度**: High — L1/L2 模型切换影响所有 Brain 决策链路
+
+---
+
 ### [2026-02-22] OKR 拆解质量治理 v1.59.0
 
 - **Bug**: 中文测试描述长度不够 MIN_DESCRIPTION_LENGTH (100字符)，导致测试失败。质量门禁验证字符串时要确保测试数据足够长。
