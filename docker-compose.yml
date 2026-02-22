@@ -16,6 +16,8 @@ services:
       # Skills + cecelia-run (read-only)
       - /home/xx/.claude:/home/xx/.claude:ro
       - /home/xx/bin:/home/xx/bin:ro
+      # Credentials (read-only, mapped to container user homedir)
+      - /home/xx/.credentials:/home/cecelia/.credentials:ro
       # Timezone (read-only)
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro

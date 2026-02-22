@@ -47,6 +47,7 @@ import { parseIntent } from '../intent.js';
 import {
   handleChat,
   callMiniMax,
+  stripThinking,
   fetchMemoryContext,
   recordChatEvent,
   needsEscalation,
@@ -366,7 +367,7 @@ describe('orchestrator-chat', () => {
   });
 
   describe('callMiniMax', () => {
-    it('calls MiniMax API with correct payload', async () => {
+    it('calls MiniMax API with correct URL and model (D1, D2)', async () => {
       global.fetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -381,12 +382,27 @@ describe('orchestrator-chat', () => {
       expect(result.usage).toEqual({ total_tokens: 50 });
 
       const [url, options] = global.fetch.mock.calls[0];
-      expect(url).toContain('minimaxi.com');
+      expect(url).toBe('https://api.minimaxi.com/v1/chat/completions');
       const body = JSON.parse(options.body);
-      expect(body.model).toBe('MiniMax-Text-01');
+      expect(body.model).toBe('MiniMax-M2.5');
       expect(body.messages).toHaveLength(2);
       expect(body.messages[0].role).toBe('system');
       expect(body.messages[1].role).toBe('user');
+    });
+
+    it('strips thinking block from reply (D3)', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '<think>\n思考过程...\n</think>\n\n实际回复内容' } }],
+          usage: { total_tokens: 80 },
+        }),
+      });
+
+      const result = await callMiniMax('你好', '系统提示');
+
+      expect(result.reply).toBe('实际回复内容');
+      expect(result.reply).not.toContain('<think>');
     });
 
     it('throws on API error', async () => {
@@ -397,6 +413,33 @@ describe('orchestrator-chat', () => {
       });
 
       await expect(callMiniMax('test', 'prompt')).rejects.toThrow('MiniMax API error: 500');
+    });
+  });
+
+  describe('stripThinking', () => {
+    it('removes thinking block from content (D3)', () => {
+      const input = '<think>\n分析用户问题...\n</think>\n\n你好！有什么需要帮助的吗？';
+      expect(stripThinking(input)).toBe('你好！有什么需要帮助的吗？');
+    });
+
+    it('handles content without thinking block (D3)', () => {
+      const input = '直接回复内容';
+      expect(stripThinking(input)).toBe('直接回复内容');
+    });
+
+    it('handles empty thinking block (D3)', () => {
+      const input = '<think></think>\n回复';
+      expect(stripThinking(input)).toBe('回复');
+    });
+
+    it('handles empty/null input', () => {
+      expect(stripThinking('')).toBe('');
+      expect(stripThinking(null)).toBe('');
+    });
+
+    it('handles multiple thinking blocks', () => {
+      const input = '<think>第一段</think>中间<think>第二段</think>结尾';
+      expect(stripThinking(input)).toBe('中间结尾');
     });
   });
 });

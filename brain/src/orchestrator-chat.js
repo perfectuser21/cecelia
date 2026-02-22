@@ -18,8 +18,8 @@ import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
 
-// MiniMax API（api.minimaxi.com 直连）
-const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/text/chatcompletion_v2';
+// MiniMax Coding Plan API（OpenAI 兼容端点）
+const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
 
 // 加载 MiniMax API Key（启动时一次性读取）
 let _minimaxApiKey = null;
@@ -40,6 +40,16 @@ function getMinimaxApiKey() {
 // 导出用于测试
 export function _resetApiKey() {
   _minimaxApiKey = null;
+}
+
+/**
+ * 去掉 MiniMax M2.5 的 <think>...</think> 思维链块
+ * @param {string} content - 原始回复内容
+ * @returns {string} 去掉思维链后的回复
+ */
+function stripThinking(content) {
+  if (!content) return '';
+  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
 }
 
 /**
@@ -64,7 +74,7 @@ async function callMiniMax(userMessage, systemPrompt, options = {}) {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'MiniMax-Text-01',
+      model: 'MiniMax-M2.5',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -82,7 +92,8 @@ async function callMiniMax(userMessage, systemPrompt, options = {}) {
 
   const data = await response.json();
   const choice = data.choices?.[0];
-  const reply = choice?.message?.content || '';
+  const rawReply = choice?.message?.content || '';
+  const reply = stripThinking(rawReply);
 
   return {
     reply,
@@ -291,6 +302,7 @@ export async function handleChat(message, context = {}) {
 // 导出用于测试
 export {
   callMiniMax,
+  stripThinking,
   fetchMemoryContext,
   recordChatEvent,
   needsEscalation,
