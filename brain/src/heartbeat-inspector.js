@@ -52,10 +52,10 @@ async function collectSystemSnapshot(pool) {
       GROUP BY status
     `),
     pool.query(`
-      SELECT type, COUNT(*)::int as count
+      SELECT event_type, COUNT(*)::int as count
       FROM cecelia_events
       WHERE created_at > NOW() - INTERVAL '24 hours'
-      GROUP BY type
+      GROUP BY event_type
       ORDER BY count DESC LIMIT 5
     `),
     pool.query(`
@@ -101,7 +101,7 @@ ${heartbeatMd}
 - 待处理提案: ${snapshot.pending_proposals}
 - 当前时间: ${snapshot.current_hour}:00, 星期${dayNames[snapshot.day_of_week]}
 - 活跃 OKR: ${snapshot.active_okrs.map(g => `${g.title}(${g.progress}%)`).join(', ') || '无'}
-- 24h 事件 TOP5: ${snapshot.top_events_24h.map(e => `${e.type}:${e.count}`).join(', ') || '无'}
+- 24h 事件 TOP5: ${snapshot.top_events_24h.map(e => `${e.event_type}:${e.count}`).join(', ') || '无'}
 
 ## 输出格式
 
@@ -230,7 +230,7 @@ async function runHeartbeatInspection(pool, options = {}) {
 
   // 8. 记录巡检事件
   await pool.query(`
-    INSERT INTO cecelia_events (type, payload)
+    INSERT INTO cecelia_events (event_type, payload)
     VALUES ('heartbeat_inspection', $1)
   `, [JSON.stringify({
     actions_count: safeActions.length,

@@ -75,7 +75,7 @@ describe('Heartbeat Inspector', () => {
     it('并行查询 4 张表返回结构化快照', async () => {
       mockPool.query
         .mockResolvedValueOnce({ rows: [{ status: 'in_progress', count: 3 }, { status: 'queued', count: 5 }] })
-        .mockResolvedValueOnce({ rows: [{ type: 'tick', count: 100 }] })
+        .mockResolvedValueOnce({ rows: [{ event_type: 'tick', count: 100 }] })
         .mockResolvedValueOnce({ rows: [{ count: 2 }] })
         .mockResolvedValueOnce({ rows: [{ title: 'KR1', progress: 50 }] });
 
@@ -105,6 +105,15 @@ describe('Heartbeat Inspector', () => {
       expect(calls[3]).toContain('goals');
       expect(calls[3]).toContain('in_progress');
     });
+
+    it('cecelia_events 查询使用 event_type 列名（不是 type）', async () => {
+      mockPool.query.mockResolvedValue({ rows: [] });
+      await collectSystemSnapshot(mockPool);
+
+      const eventsQuery = mockPool.query.mock.calls[1][0];
+      expect(eventsQuery).toContain('event_type');
+      expect(eventsQuery).not.toMatch(/SELECT\s+type\b/);
+    });
   });
 
   // D4: buildHeartbeatPrompt
@@ -118,7 +127,7 @@ describe('Heartbeat Inspector', () => {
         current_hour: 10,
         day_of_week: 1,
         active_okrs: [{ title: 'KR1', progress: 50 }],
-        top_events_24h: [{ type: 'tick', count: 100 }],
+        top_events_24h: [{ event_type: 'tick', count: 100 }],
       };
       const prompt = buildHeartbeatPrompt('# 检查清单\n- 检查任务', snapshot);
 
@@ -226,6 +235,8 @@ describe('Heartbeat Inspector', () => {
     // 最后一个 query 调用应该是 INSERT INTO cecelia_events
     const lastCall = mockPool.query.mock.calls[mockPool.query.mock.calls.length - 1];
     expect(lastCall[0]).toContain('INSERT INTO cecelia_events');
+    expect(lastCall[0]).toContain('event_type');
+    expect(lastCall[0]).not.toMatch(/\(type,/);
     expect(lastCall[0]).toContain('heartbeat_inspection');
     const payload = JSON.parse(lastCall[1][0]);
     expect(payload.actions_count).toBe(1);
