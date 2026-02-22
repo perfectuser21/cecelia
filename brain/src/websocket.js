@@ -34,6 +34,8 @@ export const WS_EVENTS = {
   PROPOSAL_CREATED: 'proposal:created',
   PROPOSAL_COMMENT: 'proposal:comment',
   PROPOSAL_RESOLVED: 'proposal:resolved',
+  // Model Profile 事件
+  PROFILE_CHANGED: 'profile:changed',
 };
 
 /**
