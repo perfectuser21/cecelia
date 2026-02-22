@@ -211,10 +211,10 @@ DEV_MODE_TMP="$(mktemp .dev-mode.XXXXXX)"
   echo "step_1_prd: done"
   echo "step_2_detect: done"
   echo "step_3_branch: done"
-  echo "step_4_dod: pending"
-  echo "step_5_code: pending"
-  echo "step_6_test: pending"
-  echo "step_7_quality: pending"
+  echo "step_4_explore: pending"
+  echo "step_5_dod: pending"
+  echo "step_6_code: pending"
+  echo "step_7_verify: pending"
   echo "step_8_pr: pending"
   echo "step_9_ci: pending"
   echo "step_10_learning: pending"
@@ -272,10 +272,10 @@ started: 2026-01-29T10:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: pending
+step_5_dod: pending
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
@@ -291,10 +291,10 @@ started: 2026-01-29T10:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: pending
+step_5_dod: pending
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
@@ -318,10 +318,10 @@ task_id: abc-123
 TaskCreate({ subject: "PRD 确认", description: "确认 PRD 文件存在且有效", activeForm: "确认 PRD" })
 TaskCreate({ subject: "环境检测", description: "检测项目环境和配置", activeForm: "检测环境" })
 TaskCreate({ subject: "分支创建", description: "创建或切换到功能分支", activeForm: "创建分支" })
-TaskCreate({ subject: "DoD 定稿", description: "生成 DoD 并调用 QA 决策", activeForm: "定稿 DoD" })
-TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能", activeForm: "写代码" })
-TaskCreate({ subject: "写测试", description: "为功能编写测试", activeForm: "写测试" })
-TaskCreate({ subject: "质检", description: "代码审计 + 自动化测试", activeForm: "质检中" })
+TaskCreate({ subject: "探索代码", description: "读代码理解架构，输出实现方案", activeForm: "探索代码" })
+TaskCreate({ subject: "DoD 定稿", description: "基于探索结果生成 DoD", activeForm: "定稿 DoD" })
+TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能 + 测试", activeForm: "写代码" })
+TaskCreate({ subject: "本地验证", description: "跑 npm test 验证", activeForm: "本地验证" })
 TaskCreate({ subject: "提交 PR", description: "版本号更新 + 创建 PR", activeForm: "提交 PR" })
 TaskCreate({ subject: "CI 监控", description: "等待 CI 通过并修复失败", activeForm: "监控 CI" })
 TaskCreate({ subject: "Learning 记录", description: "记录开发经验", activeForm: "记录经验" })
@@ -370,7 +370,7 @@ task_id: abc-123
 TaskUpdate({ taskId: "1", status: "completed" })  // PRD 确认
 TaskUpdate({ taskId: "2", status: "completed" })  // 环境检测
 TaskUpdate({ taskId: "3", status: "completed" })  // 分支创建
-TaskUpdate({ taskId: "4", status: "in_progress" }) // DoD 定稿 - 下一步
+TaskUpdate({ taskId: "4", status: "in_progress" }) // 探索代码 - 下一步
 ```
 
 ---
@@ -483,7 +483,7 @@ git config --get branch.$BRANCH_NAME.base-branch
 ```bash
 echo "✅ Step 3 完成 (分支创建)"
 echo ""
-echo "📝 下一步: Step 4 (DoD)"
+echo "📝 下一步: Step 4 (探索)"
 ```
 
 ---

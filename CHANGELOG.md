@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.0] - 2026-02-22
+
+### Changed
+- /dev 工作流步骤 4-7 重构：
+  - Step 4: DoD → **探索**（先读代码理解架构，再动手）
+  - Step 5: Code → **DoD**（基于探索结果写验收标准，更准确）
+  - Step 6: Test → **写代码**（代码+测试合并，测试是代码的一部分）
+  - Step 7: Quality → **本地验证**（跑 npm test，不再生成空 JSON）
+- .dev-mode 字段重命名：step_4_dod→step_4_explore, step_5_code→step_5_dod, step_6_test→step_6_code, step_7_quality→step_7_verify
+- SKILL.md 更新到 v3.2（流程图、TaskCreate、track.sh 调用同步）
+- 6 个测试文件更新字段名
+
 ## [12.29.0] - 2026-02-22
 
 ### Fixed

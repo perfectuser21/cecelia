@@ -1,15 +1,15 @@
 ---
 name: dev
-version: 3.1.0
-updated: 2026-02-04
+version: 3.2.0
+updated: 2026-02-22
 description: |
   统一开发工作流入口。
 
-  v3.1.0 变更（简化）：
-  - 删除本地 QA/Audit Subagent 调用
-  - 所有检查交给 CI DevGate
-  - DoD/RCI 检查由 CI 强制执行
-  - Quality 只跑自动化测试
+  v3.2.0 变更（步骤重构）：
+  - Step 4: DoD → 探索（先读代码理解架构）
+  - Step 5: 写代码 → DoD（基于探索结果定义验收标准）
+  - Step 6: 写测试 → 写代码（含测试，合并旧 05+06）
+  - Step 7: 质检 → 本地验证（跑 npm test，不生成空 JSON）
 
   循环控制由 Stop Hook 实现：
   - 有头模式: Stop Hook 检测 .dev-mode 文件，exit 2 阻止会话结束
@@ -18,7 +18,7 @@ description: |
 
 > **CRITICAL LANGUAGE RULE（语言规则）: 所有输出必须使用简体中文。包括步骤说明、状态更新、日志信息、错误报告。严禁使用日语、韩语或任何其他语言，即使在无头（headless）子进程中也必须遵守。**
 
-# /dev - 统一开发工作流（v3.1）
+# /dev - 统一开发工作流（v3.2）
 
 ## 🎯 使用方式
 
@@ -252,10 +252,10 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 
 ### 正确行为
 
-- ✅ 完成 Step 4 (DoD) → **立即**执行 Step 5 (Code)
-- ✅ 完成 Step 5 (Code) → **立即**执行 Step 6 (Test)
-- ✅ 完成 Step 6 (Test) → **立即**执行 Step 7 (Quality)
-- ✅ 完成 Step 7 (Quality) → **立即**执行 Step 8 (PR)
+- ✅ 完成 Step 4 (Explore) → **立即**执行 Step 5 (DoD)
+- ✅ 完成 Step 5 (DoD) → **立即**执行 Step 6 (Code)
+- ✅ 完成 Step 6 (Code) → **立即**执行 Step 7 (Verify)
+- ✅ 完成 Step 7 (Verify) → **立即**执行 Step 8 (PR)
 - ✅ 一直执行到 Step 8 创建 PR 为止
 
 ---
@@ -272,10 +272,10 @@ Step N 完成 → 立即读取 skills/dev/steps/{N+1}-xxx.md → 立即执行下
 TaskCreate({ subject: "PRD 确认", description: "确认 PRD 文件存在且有效", activeForm: "确认 PRD" })
 TaskCreate({ subject: "环境检测", description: "检测项目环境和配置", activeForm: "检测环境" })
 TaskCreate({ subject: "分支创建", description: "创建或切换到功能分支", activeForm: "创建分支" })
-TaskCreate({ subject: "DoD 定稿", description: "生成 DoD（CI 检查映射）", activeForm: "定稿 DoD" })
-TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能", activeForm: "写代码" })
-TaskCreate({ subject: "写测试", description: "为功能编写测试", activeForm: "写测试" })
-TaskCreate({ subject: "质检", description: "自动化测试（CI 检查 RCI）", activeForm: "质检中" })
+TaskCreate({ subject: "探索代码", description: "读代码理解架构，输出实现方案", activeForm: "探索代码" })
+TaskCreate({ subject: "DoD 定稿", description: "基于探索结果生成 DoD", activeForm: "定稿 DoD" })
+TaskCreate({ subject: "写代码", description: "根据 PRD 实现功能 + 测试", activeForm: "写代码" })
+TaskCreate({ subject: "本地验证", description: "跑 npm test 验证", activeForm: "本地验证" })
 TaskCreate({ subject: "提交 PR", description: "版本号更新 + 创建 PR", activeForm: "提交 PR" })
 TaskCreate({ subject: "CI 监控", description: "等待 CI 通过并修复失败", activeForm: "监控 CI" })
 TaskCreate({ subject: "Learning 记录", description: "记录开发经验", activeForm: "记录经验" })
@@ -305,8 +305,8 @@ TaskList()
 // ✅ 1. PRD 确认 (completed)
 // ✅ 2. 环境检测 (completed)
 // ✅ 3. 分支创建 (completed)
-// 🚧 4. DoD 定稿 (in_progress)
-// ⏸️  5. 写代码 (pending)
+// 🚧 4. 探索代码 (in_progress)
+// ⏸️  5. DoD 定稿 (pending)
 // ...
 ```
 
@@ -380,10 +380,10 @@ skills/dev/
 │   ├── 01-prd.md       ← PRD 确认
 │   ├── 02-detect.md    ← 环境检测
 │   ├── 03-branch.md    ← 创建 .dev-mode
-│   ├── 04-dod.md       ← DoD 定稿（CI 检查映射）
-│   ├── 05-code.md      ← 写代码（CI 检查 RCI）
-│   ├── 06-test.md      ← 写测试
-│   ├── 07-quality.md   ← 只汇总，不判定
+│   ├── 04-explore.md   ← 探索（读代码理解架构）
+│   ├── 05-dod.md       ← DoD 定稿（基于探索结果）
+│   ├── 06-code.md      ← 写代码 + 测试
+│   ├── 07-verify.md    ← 本地验证（跑 npm test）
 │   ├── 08-pr.md
 │   ├── 09-ci.md
 │   ├── 10-learning.md  ← 记录经验
@@ -394,7 +394,7 @@ skills/dev/
     └── ...
 ```
 
-### 流程图 (v3.2 - 无 Gate)
+### 流程图 (v3.3 - 步骤重构)
 
 ```
 0-Worktree → 检测 .dev-mode 冲突 → 自动 worktree + cd（如需要）
@@ -403,13 +403,13 @@ skills/dev/
     ↓
 2-Detect → 3-Branch
     ↓
-4-DoD ────→ DoD 定稿（每条 DoD 有 Test 字段）
+4-Explore → 读代码理解架构，输出实现方案
     ↓
-5-Code ───→ 写代码
+5-DoD ────→ DoD 定稿（基于探索结果，每条有 Test 字段）
     ↓
-6-Test ───→ 写测试
+6-Code ───→ 写代码 + 测试
     ↓
-7-Quality → 只汇总 (quality-summary.json)
+7-Verify ─→ 本地跑 npm test（省一轮 CI）
     ↓
 8-PR → 9-CI → 10-Learning → 11-Cleanup
 ```
@@ -419,7 +419,7 @@ skills/dev/
 | 层 | 位置 | 类型 | 职责 |
 |----|------|------|------|
 | **branch-protect** | 本地 | 阻止型 | PRD/DoD 文件存在检查 |
-| **Quality** | 本地 | 汇总型 | 打包结账单，不做判定 |
+| **Verify** | 本地 | 验证型 | 推送前跑 npm test |
 | **CI** | 远端 | 复核型 | 最终裁判，硬门禁 |
 
 ---
@@ -430,8 +430,8 @@ skills/dev/
 |------|------|----------|----------|
 | PRD | .prd.md | Hook 检查存在 | 写代码前 |
 | DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | Step 4 |
-| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | Step 5 后 |
+| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | Step 5 |
+| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | Step 6 后 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
 
 ---
@@ -448,10 +448,10 @@ bash skills/dev/scripts/track.sh start "$(basename "$(pwd)")" "$(git rev-parse -
 bash skills/dev/scripts/track.sh step 1 "PRD"
 bash skills/dev/scripts/track.sh step 2 "Detect"
 bash skills/dev/scripts/track.sh step 3 "Branch"
-bash skills/dev/scripts/track.sh step 4 "DoD"
-bash skills/dev/scripts/track.sh step 5 "Code"
-bash skills/dev/scripts/track.sh step 6 "Test"
-bash skills/dev/scripts/track.sh step 7 "Quality"
+bash skills/dev/scripts/track.sh step 4 "Explore"
+bash skills/dev/scripts/track.sh step 5 "DoD"
+bash skills/dev/scripts/track.sh step 6 "Code"
+bash skills/dev/scripts/track.sh step 7 "Verify"
 bash skills/dev/scripts/track.sh step 8 "PR"
 bash skills/dev/scripts/track.sh step 9 "CI"
 bash skills/dev/scripts/track.sh step 10 "Learning"

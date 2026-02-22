@@ -35,7 +35,7 @@ tasks_created: true
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
+step_4_explore: pending
 `,
     );
 

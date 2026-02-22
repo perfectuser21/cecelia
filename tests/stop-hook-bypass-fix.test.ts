@@ -33,10 +33,10 @@ started: 2026-02-07T19:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: done
-step_5_code: done
-step_6_test: done
-step_7_quality: done
+step_4_explore: done
+step_5_dod: done
+step_6_code: done
+step_7_verify: done
 step_8_pr: done
 step_9_ci: done
 step_10_learning: done
@@ -72,10 +72,10 @@ started: 2026-02-07T19:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: pending
+step_5_dod: pending
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
@@ -86,7 +86,7 @@ retry_count: 0`
 
     // 验证字段存在
     expect(devModeContent).toContain('step_1_prd: done')
-    expect(devModeContent).toContain('step_4_dod: pending')
+    expect(devModeContent).toContain('step_4_explore: pending')
     expect(devModeContent).toContain('retry_count: 0')
 
     // 清理
