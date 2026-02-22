@@ -4,6 +4,38 @@
 
 ---
 
+### [2026-02-22] OKR Validator 接入主链路 + CI (v1.61.0)
+
+**变更**：
+1. decomposition-checker.js: `runDecompositionChecks()` 开头调用 `validateOkrStructure(pool, { scope: 'full' })`，收集 BLOCK 实体 ID 到 `_blockedEntityIds` Set
+2. decomposition-checker.js: `createDecompositionTask()` 检查 goalId/projectId 是否在 blocked set → 跳过创建
+3. CI workflow: brain-test job 添加 OKR Structure Check 步骤（continue-on-error: true）
+4. 新增 decomp-okr-validation.test.js（9 个测试）
+
+**经验**：
+- **runDecompositionChecks 新增 async 调用会破坏所有使用 mockResolvedValueOnce 序列的测试**：`exploratory-continuation.test.js` 等测试按顺序 mock pool.query，新增 `validateOkrStructure` 调用会消耗队列中的 mock responses，导致后续 mock 顺序错乱。修复：在这些测试文件中添加 `vi.mock('../validate-okr-structure.js')`。
+- **容错设计模式**：validator 异常时 catch + clear blocked set（`_blockedEntityIds = new Set()`），确保不阻塞主流程。这是 PRD 中 "validator 异常时不阻止主流程" 的关键实现。
+- **Set 模式用于 O(1) 门控**：一次全量验证 → 收集 entityId → Set.has() 检查，比每次 createDecompositionTask 都 query DB 高效得多。
+
+---
+
+### [2026-02-22] OKR Validation Spec + Validator L0 (v1.60.0)
+
+**变更**：
+1. config/okr-validation-spec.yml: 统一验证规格（所有 OKR 实体的 required_fields/parent_rules/children_count/text_rules）
+2. brain/src/validate-okr-structure.js: 验证器模块（loadSpec + validateOkrStructure + detectCycles）
+3. scripts/devgate/check-okr-structure.mjs: CI 脚本
+4. 49 个测试覆盖 D1-D10
+
+**经验**：
+- **CI 环境的 PG\* 环境变量会干扰测试**：GitHub Actions 的 PostgreSQL service 容器设置了 PGHOST、PGDATABASE 等环境变量，`pg` 库会自动读取这些变量覆盖 DATABASE_URL。测试中需要清理 PG* 变量：`delete process.env.PGHOST` 等。
+- **exit code 用 toBeGreaterThan(0) 而非精确值**：不同环境下（有/无 DB 连接）退出码可能不同（1 vs 2），用范围断言更稳健。
+- **loadSpec 缓存策略**：默认路径（无参数）写缓存，自定义路径不写缓存。测试缓存行为时必须用默认路径调用两次。
+- **单表多态模式的验证**：goals 表 4 种 type、projects 表 2 种 type，spec 按 table + type 组织规则，validator 按 type 分别查询再逐条验证。
+- **DFS 环检测**：pr_plans.depends_on 是 uuid[] 数组，用三色标记法检测有向图环。
+
+---
+
 ### [2026-02-22] Initiative 队列管理机制 (v1.57.0)
 
 **变更**：
