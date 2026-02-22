@@ -14,7 +14,7 @@ import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
 import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision } from './decision-executor.js';
+import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
@@ -1198,6 +1198,18 @@ async function executeTick() {
       console.log(`[tick] Periodic cleanup: ${msg}`);
     } catch (cleanupErr) {
       console.error('[tick] Periodic cleanup failed (non-fatal):', cleanupErr.message);
+    }
+  }
+
+  // 0.5.1. 提案过期清理：与 periodic cleanup 同频（每小时）
+  if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+    try {
+      const expiredCount = await expireStaleProposals();
+      if (expiredCount > 0) {
+        console.log(`[tick] Expired ${expiredCount} stale proposals`);
+      }
+    } catch (expireErr) {
+      console.error('[tick] Proposal expiry check failed (non-fatal):', expireErr.message);
     }
   }
 

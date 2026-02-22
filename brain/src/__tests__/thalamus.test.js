@@ -685,8 +685,8 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['trigger_rca'].description).toBe('触发根因分析 (RCA) 流程');
     });
 
-    it('should have 28 total actions in whitelist', () => {
-      expect(Object.keys(ACTION_WHITELIST).length).toBe(28);
+    it('should have 34 total actions in whitelist', () => {
+      expect(Object.keys(ACTION_WHITELIST).length).toBe(34);
     });
 
     it('should include suggest_task_type action with dangerous=false', () => {

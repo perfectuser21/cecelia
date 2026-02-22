@@ -190,6 +190,14 @@ const ACTION_WHITELIST = {
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
 
+  // 提案操作（Inbox 系统，全部 dangerous → 进 pending_actions）
+  'propose_decomposition': { dangerous: true, description: 'OKR/Initiative 拆解结果确认' },
+  'propose_weekly_plan': { dangerous: true, description: '本周计划确认' },
+  'propose_priority_change': { dangerous: true, description: '优先级调整建议' },
+  'propose_anomaly_action': { dangerous: true, description: '异常处理方案选择' },
+  'propose_milestone_review': { dangerous: true, description: 'Initiative 完成验收' },
+  'heartbeat_finding': { dangerous: true, description: '巡检发现异常' },
+
 };
 
 // ============================================================

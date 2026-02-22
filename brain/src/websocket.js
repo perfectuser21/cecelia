@@ -29,7 +29,11 @@ export const WS_EVENTS = {
   TASK_FAILED: 'task:failed',
   EXECUTOR_STATUS: 'executor:status',
   PING: 'ping',
-  PONG: 'pong'
+  PONG: 'pong',
+  // Proposal / Inbox 事件
+  PROPOSAL_CREATED: 'proposal:created',
+  PROPOSAL_COMMENT: 'proposal:comment',
+  PROPOSAL_RESOLVED: 'proposal:resolved',
 };
 
 /**

@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-22
-**Brain 版本**: 1.70.0
-**Schema 版本**: 053
+**Brain 版本**: 1.71.0
+**Schema 版本**: 054
 **状态**: 生产运行中
 
 ---
@@ -273,7 +273,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**28 个白名单 action**：
+**34 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -283,6 +283,7 @@ executeTick() 流程：
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
 - 类型建议：suggest_task_type
+- 提案（Inbox）：propose_decomposition, propose_weekly_plan, propose_priority_change, propose_anomaly_action, propose_milestone_review, heartbeat_finding
 
 ### 3.3 L2 皮层 — Opus 深度分析
 
@@ -364,7 +365,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **decision_log** | LLM 决策记录（L1/L2 输出、执行结果） |
 | **working_memory** | 短期记忆（key-value，如 last_dispatch） |
 | **brain_config** | 配置（region、fingerprint） |
-| **pending_actions** | 危险操作审批队列（24h 过期） |
+| **pending_actions** | 通用提案系统（含审批/提案/通知，签名去重，24-72h 过期） |
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
@@ -761,9 +762,11 @@ Brain 服务运行在 `localhost:5221`，所有端点前缀 `/api/brain/`。
 | `/quarantine/:taskId/release` | POST | 释放任务 |
 | `/circuit-breaker` | GET | 熔断器状态 |
 | `/circuit-breaker/:key/reset` | POST | 重置熔断器 |
-| `/pending-actions` | GET | 待审批危险操作 |
+| `/pending-actions` | GET | 提案/审批列表（按优先级+时间排序） |
 | `/pending-actions/:id/approve` | POST | 批准 |
 | `/pending-actions/:id/reject` | POST | 拒绝 |
+| `/pending-actions/:id/comment` | POST | 追加评论（对话） |
+| `/pending-actions/:id/select` | POST | 选择选项并执行 |
 
 ### 9.8 规划与决策
 

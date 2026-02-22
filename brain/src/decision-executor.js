@@ -16,6 +16,26 @@ import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
+import { broadcast } from './websocket.js';
+
+// ============================================================
+// Proposal Constants
+// ============================================================
+
+const MAX_COMMENT_HISTORY = 10;
+
+// 提案类型的默认配置
+const PROPOSAL_DEFAULTS = {
+  'propose_decomposition':    { category: 'proposal', priority: 'normal', expiresHours: 72 },
+  'propose_weekly_plan':      { category: 'proposal', priority: 'normal', expiresHours: 72 },
+  'propose_priority_change':  { category: 'proposal', priority: 'normal', expiresHours: 72 },
+  'propose_anomaly_action':   { category: 'proposal', priority: 'urgent', expiresHours: 24 },
+  'propose_milestone_review': { category: 'proposal', priority: 'normal', expiresHours: 72 },
+  'heartbeat_finding':        { category: 'proposal', priority: 'urgent', expiresHours: 24 },
+  'quarantine_task':          { category: 'approval', priority: 'urgent', expiresHours: 24 },
+  'request_human_review':     { category: 'approval', priority: 'normal', expiresHours: 24 },
+  'adjust_strategy':          { category: 'approval', priority: 'normal', expiresHours: 24 },
+};
 
 // ============================================================
 // Action Handlers
@@ -617,30 +637,86 @@ function isActionDangerous(action) {
 }
 
 /**
- * 将危险动作入队待审批
- * @param {Object} action
+ * 检查同一 signature 的提案是否已存在（24h 去重）
+ * @param {Object} queryable - pool 或 client（支持事务内查询）
+ * @param {string|null} signature
+ * @returns {Promise<boolean>}
+ */
+async function shouldThrottleProposal(queryable, signature) {
+  if (!signature) return false;
+  const result = await queryable.query(`
+    SELECT id FROM pending_actions
+    WHERE signature = $1
+      AND status = 'pending_approval'
+      AND created_at > NOW() - INTERVAL '24 hours'
+    LIMIT 1
+  `, [signature]);
+  return result.rowCount > 0;
+}
+
+/**
+ * 将危险动作入队待审批（增强版：支持提案字段 + 签名去重 + WebSocket 推送）
+ * @param {Object} action - { type, params, category?, priority?, source?, signature?, options? }
  * @param {Object} context
  * @param {Object} client - DB 事务客户端
  * @returns {Promise<Object>}
  */
 async function enqueueDangerousAction(action, context, client) {
+  const signature = action.signature || null;
+
+  // 签名去重：同一 signature 24h 内不重复
+  if (signature) {
+    const throttled = await shouldThrottleProposal(client, signature);
+    if (throttled) {
+      console.log(`[executor] Proposal throttled (duplicate signature): ${signature}`);
+      return { success: true, throttled: true, signature };
+    }
+  }
+
+  const defaults = PROPOSAL_DEFAULTS[action.type] || { category: 'approval', priority: 'normal', expiresHours: 24 };
+  const category = action.category || defaults.category;
+  const priority = action.priority || defaults.priority;
+  const source = action.source || context.source || 'system';
+  const expiresHours = defaults.expiresHours;
+  const options = action.options ? JSON.stringify(action.options) : null;
+
   const result = await client.query(`
-    INSERT INTO pending_actions (action_type, params, context, decision_id, status, expires_at)
-    VALUES ($1, $2, $3, $4, 'pending_approval', NOW() + INTERVAL '24 hours')
-    RETURNING id
+    INSERT INTO pending_actions
+      (action_type, params, context, decision_id, status, expires_at, category, priority, source, signature, options, comments)
+    VALUES ($1, $2, $3, $4, 'pending_approval', NOW() + INTERVAL '${expiresHours} hours', $5, $6, $7, $8, $9, '[]'::jsonb)
+    RETURNING id, created_at
   `, [
     action.type,
     JSON.stringify(action.params || {}),
     JSON.stringify(context),
-    context.decision_id || null
+    context.decision_id || null,
+    category,
+    priority,
+    source,
+    signature,
+    options
   ]);
 
-  console.log(`[executor] Dangerous action queued for approval: ${action.type} (id: ${result.rows[0].id})`);
+  const newId = result.rows[0].id;
+  const createdAt = result.rows[0].created_at;
+
+  console.log(`[executor] Proposal queued: ${action.type} (id: ${newId}, category: ${category}, priority: ${priority})`);
+
+  // WebSocket 推送
+  broadcast('proposal:created', {
+    id: newId,
+    action_type: action.type,
+    category,
+    priority,
+    source,
+    params: action.params || {},
+    created_at: createdAt,
+  });
 
   return {
     success: true,
     pending_approval: true,
-    pending_action_id: result.rows[0].id
+    pending_action_id: newId
   };
 }
 
@@ -653,13 +729,128 @@ async function enqueueDangerousAction(action, context, client) {
  */
 async function getPendingActions() {
   const result = await pool.query(`
-    SELECT id, action_type, params, context, decision_id, created_at, status, expires_at
+    SELECT id, action_type, params, context, decision_id, created_at, status, expires_at,
+           category, comments, options, priority, source, signature
     FROM pending_actions
     WHERE status = 'pending_approval'
       AND (expires_at IS NULL OR expires_at > NOW())
-    ORDER BY created_at ASC
+    ORDER BY
+      CASE priority WHEN 'urgent' THEN 0 WHEN 'normal' THEN 1 WHEN 'info' THEN 2 ELSE 3 END,
+      created_at ASC
   `);
   return result.rows;
+}
+
+/**
+ * 追加评论到提案对话
+ * @param {string} actionId
+ * @param {string} text
+ * @param {string} role - 'user' or 'cecelia'
+ * @returns {Promise<Object>}
+ */
+async function addProposalComment(actionId, text, role = 'user') {
+  // 检查状态 + 过期
+  const check = await pool.query(
+    'SELECT status, expires_at FROM pending_actions WHERE id = $1', [actionId]
+  );
+  if (check.rowCount === 0) return { success: false, error: 'Not found', status: 404 };
+  if (check.rows[0].status !== 'pending_approval') return { success: false, error: 'Already processed', status: 400 };
+  if (check.rows[0].expires_at && new Date(check.rows[0].expires_at) < new Date()) {
+    return { success: false, error: 'Proposal expired', status: 410 };
+  }
+
+  const comment = { role, text, ts: new Date().toISOString() };
+  const result = await pool.query(`
+    UPDATE pending_actions
+    SET comments = comments || $1::jsonb
+    WHERE id = $2 AND status = 'pending_approval'
+    RETURNING id, comments, action_type, params
+  `, [JSON.stringify([comment]), actionId]);
+
+  if (result.rowCount === 0) return { success: false, error: 'Update failed', status: 500 };
+
+  broadcast('proposal:comment', { id: actionId, comment });
+
+  return { success: true, action: result.rows[0], comment };
+}
+
+/**
+ * 选择提案选项并执行（整个流程在同一事务内）
+ * @param {string} actionId
+ * @param {string} optionId
+ * @param {string} reviewer
+ * @returns {Promise<Object>}
+ */
+async function selectProposalOption(actionId, optionId, reviewer = 'dashboard-user') {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const actionResult = await client.query(
+      'SELECT * FROM pending_actions WHERE id = $1 AND status = $2 FOR UPDATE',
+      [actionId, 'pending_approval']
+    );
+    if (actionResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'Not found or already processed', status: 404 };
+    }
+
+    const action = actionResult.rows[0];
+    const options = (typeof action.options === 'string' ? JSON.parse(action.options) : action.options) || [];
+    const selected = options.find(o => o.id === optionId);
+    if (!selected) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'Invalid option', status: 400 };
+    }
+
+    // 如果选项包含 action，通过 executeDecision 执行
+    let executionResult = { selected_option: optionId };
+    if (selected.action && selected.action.type) {
+      const handler = actionHandlers[selected.action.type];
+      if (handler) {
+        const result = await handler(selected.action.params || {}, { approved_by: reviewer });
+        executionResult = { ...executionResult, ...result };
+      }
+    }
+
+    await client.query(`
+      UPDATE pending_actions
+      SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), execution_result = $2
+      WHERE id = $3
+    `, [reviewer, JSON.stringify(executionResult), actionId]);
+
+    await client.query('COMMIT');
+
+    broadcast('proposal:resolved', { id: actionId, option_id: optionId });
+    return { success: true, execution_result: executionResult };
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[executor] Failed to select proposal option:', err.message);
+    return { success: false, error: err.message, status: 500 };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 将过期的 pending_approval 提案标记为 expired
+ * @returns {Promise<number>} 过期数量
+ */
+async function expireStaleProposals() {
+  const result = await pool.query(`
+    UPDATE pending_actions
+    SET status = 'expired'
+    WHERE status = 'pending_approval'
+      AND expires_at IS NOT NULL
+      AND expires_at < NOW()
+    RETURNING id
+  `);
+  if (result.rowCount > 0) {
+    console.log(`[executor] Expired ${result.rowCount} stale proposals`);
+  }
+  return result.rowCount;
 }
 
 /**
@@ -926,4 +1117,15 @@ export {
   approvePendingAction,
   rejectPendingAction,
   isActionDangerous,
+
+  // Dangerous Action Enqueue
+  enqueueDangerousAction,
+
+  // Proposal System (Inbox Phase 1)
+  addProposalComment,
+  selectProposalOption,
+  expireStaleProposals,
+  shouldThrottleProposal,
+  PROPOSAL_DEFAULTS,
+  MAX_COMMENT_HISTORY,
 };

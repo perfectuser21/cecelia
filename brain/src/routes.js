@@ -51,7 +51,7 @@ import websocketService from './websocket.js';
 import crypto from 'crypto';
 import { readFileSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
-import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction } from './decision-executor.js';
+import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
@@ -1238,6 +1238,56 @@ router.post('/pending-actions/:id/reject', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to reject action', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/comment
+ * 追加评论到提案对话
+ * Body: { text: string, role?: 'user'|'cecelia' }
+ */
+router.post('/pending-actions/:id/comment', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text, role } = req.body || {};
+
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ error: 'text is required' });
+    }
+
+    const result = await addProposalComment(id, text.trim(), role || 'user');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add comment', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions/:id/select
+ * 选择提案选项并执行
+ * Body: { option_id: string, reviewer?: string }
+ */
+router.post('/pending-actions/:id/select', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { option_id, reviewer } = req.body || {};
+
+    if (!option_id) {
+      return res.status(400).json({ error: 'option_id is required' });
+    }
+
+    const result = await selectProposalOption(id, option_id, reviewer || 'dashboard-user');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    res.json({ success: true, execution_result: result.execution_result });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to select option', details: err.message });
   }
 });
 
