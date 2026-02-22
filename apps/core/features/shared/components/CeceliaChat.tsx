@@ -325,22 +325,11 @@ export function CeceliaChat() {
       });
       const data = await res.json();
 
-      if (data.success && data.response) {
-        // Check if backend wants to execute a frontend tool
-        if (data.response.frontendTool) {
-          const toolResult = await executeFrontendTool(
-            data.response.frontendTool.name,
-            data.response.frontendTool.args
-          );
-          addMessage({
-            id: generateId(),
-            role: 'assistant',
-            content: data.response.message || toolResult,
-            toolCall: { name: data.response.frontendTool.name, result: toolResult }
-          });
-        } else {
-          addMessage({ id: generateId(), role: 'assistant', content: data.response.message });
-        }
+      // Brain API returns { reply, routing_level, intent }
+      if (data.reply) {
+        addMessage({ id: generateId(), role: 'assistant', content: data.reply });
+      } else if (data.error) {
+        addMessage({ id: generateId(), role: 'assistant', content: `⚠️ ${data.error}` });
       }
     } catch {
       addMessage({ id: generateId(), role: 'assistant', content: 'An error occurred' });
