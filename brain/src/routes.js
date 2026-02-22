@@ -2308,6 +2308,35 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Phase transition error: ${phaseErr.message}`);
       }
 
+      // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
+      try {
+        const decompReviewResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const decompReviewRow = decompReviewResult.rows[0];
+
+        if (decompReviewRow?.task_type === 'decomp_review') {
+          console.log(`[execution-callback] Decomp review task completed, processing verdict...`);
+
+          // 从 result 中提取 verdict 和 findings
+          const verdictRaw = (result !== null && typeof result === 'object')
+            ? (result.verdict || result.result?.verdict)
+            : null;
+          const findingsRaw = (result !== null && typeof result === 'object')
+            ? (result.findings || result.result?.findings || result)
+            : {};
+
+          // verdict 归一化
+          const validVerdicts = ['approved', 'needs_revision', 'rejected'];
+          const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
+
+          const { processReviewResult } = await import('./review-gate.js');
+          await processReviewResult(pool, task_id, verdict, findingsRaw);
+
+          console.log(`[execution-callback] Decomp review processed: verdict=${verdict}`);
+        }
+      } catch (decompReviewErr) {
+        console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
+      }
+
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
