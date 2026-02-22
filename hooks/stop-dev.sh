@@ -91,6 +91,24 @@ HOOK_INPUT=$(cat)
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
+# ===== Helper: 强制清理 worktree（兜底）=====
+force_cleanup_worktree() {
+    local mode_file="$1"
+    local branch
+    branch=$(grep "^branch:" "$mode_file" 2>/dev/null | awk '{print $2}')
+    if [[ -z "$branch" ]]; then
+        return 0
+    fi
+    local wt_path
+    wt_path=$(git worktree list 2>/dev/null | grep "\[$branch\]" | awk '{print $1}')
+    local main_wt
+    main_wt=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
+    if [[ -n "$wt_path" && "$wt_path" != "$main_wt" ]]; then
+        git worktree remove "$wt_path" --force 2>/dev/null || true
+        git worktree prune 2>/dev/null || true
+    fi
+}
+
 # ===== Helper: 保存阻塞原因到 .dev-mode =====
 save_block_reason() {
     local reason="$1"
@@ -181,6 +199,7 @@ fi
 # ===== 检查 cleanup 是否已完成 =====
 # 优先检查 cleanup_done: true（向后兼容旧版本）
 if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
+    force_cleanup_worktree "$DEV_MODE_FILE"
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
     exit 0
 fi
@@ -233,6 +252,9 @@ if [[ $RETRY_COUNT -gt 15 ]]; then
         echo "last_block_reason: $LAST_REASON"
         echo "========================"
     } > "$FAILURE_LOG"
+
+    # 强制清理 worktree（兜底）
+    force_cleanup_worktree "$DEV_MODE_FILE"
 
     # 删除 .dev-mode, .dev-lock, sentinel 文件
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
@@ -424,6 +446,7 @@ if [[ "$PR_STATE" == "merged" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  🎉 工作流完成！正在清理..." >&2
+        force_cleanup_worktree "$DEV_MODE_FILE"
         rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
         exit 0  # 允许结束

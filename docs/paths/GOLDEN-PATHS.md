@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 2.93.0
-created: 2026-02-17
-updated: 2026-02-17
+version: 2.94.0
+created: 2026-02-22
+updated: 2026-02-22
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.93.0: 从 feature-registry.yml 自动生成
+  - 2.94.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -241,7 +241,7 @@ PR 创建 → CI 触发 → version-check + test + DevGate → 全部通过 → 
 ### Golden Path
 
 ```
-/dev 启动 → Step 0 强制创建 worktree（更新 develop + 创建 + cd）→ 继续正常流程
+/dev 启动 → Step 0 强制创建 worktree（.claude/worktrees/ 路径）→ 继续正常流程 → 退出时 Stop Hook 强制清理 worktree
 ```
 
 **RCI 覆盖**: W6-001
@@ -356,5 +356,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.93.0
-**生成时间**: 2026-02-17
+**版本**: 2.94.0
+**生成时间**: 2026-02-22

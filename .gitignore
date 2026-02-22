@@ -74,4 +74,7 @@ artifacts/screenshots/*.png
 .subagent-lock
 .subagent-proof.json
 .gate-*-passed
+
+# Claude Code worktrees
+.claude/worktrees/
 # CI trigger
