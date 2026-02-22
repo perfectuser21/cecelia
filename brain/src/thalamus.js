@@ -20,7 +20,8 @@
 /* global console */
 
 import pool from './db.js';
-import { searchRelevantLearnings, getRecentLearnings } from './learning.js';
+import { getRecentLearnings } from './learning.js';
+import { buildMemoryContext } from './memory-retriever.js';
 
 // ============================================================
 // LLM Error Type Classification
@@ -414,32 +415,28 @@ async function buildMemoryBlock(event) {
 async function analyzeEvent(event) {
   const eventJson = JSON.stringify(event, null, 2);
 
-  // Build #1: 注入历史经验（使用语义检索）
-  const learnings = await searchRelevantLearnings({
-    task_type: event.task?.task_type,
-    failure_class: event.failure_info?.class,
-    event_type: event.type
-  }, 20);
+  // 统一记忆注入（替代原来的 learningBlock + memoryBlock 双注入）
+  const memoryQuery = extractMemoryQuery(event);
+  const mode = event.type === EVENT_TYPES.TASK_FAILED ? 'debug' : 'execute';
+  const { block: memoryContextBlock, meta: memoryMeta } = await buildMemoryContext({
+    query: memoryQuery,
+    mode,
+    tokenBudget: 800,
+    pool,
+  });
 
-  let learningBlock = '';
-  if (learnings.length > 0) {
-    learningBlock = `\n\n## 系统历史经验（参考，按相关性排序）\n${learnings.map((l, i) => `- [${i+1}] **${l.title}** (相关度: ${l.relevance_score || 0}): ${(l.content || '').slice(0, 200)}`).join('\n')}\n`;
-  }
-
-  // Build #2: 注入 Memory 语义搜索结果（历史任务上下文）
-  const memoryBlock = await buildMemoryBlock(event);
-
-  const prompt = `${THALAMUS_PROMPT}${learningBlock}${memoryBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
+  const prompt = `${THALAMUS_PROMPT}${memoryContextBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
     // 调用 Haiku (通过 cecelia-bridge 或直接 API)
     const { text: response, usage } = await callHaiku(prompt);
 
-    // Build #4: 记录 token 消耗
+    // 记录 token 消耗
     await recordTokenUsage('thalamus', 'claude-haiku-4-5-20251001', usage, {
       event_type: event.type,
-      learnings_injected: learnings.length,
-      memory_injected: memoryBlock.length > 0,
+      memory_candidates: memoryMeta?.candidates || 0,
+      memory_injected: memoryMeta?.injected || 0,
+      memory_token_used: memoryMeta?.tokenUsed || 0,
     });
 
     // 解析 JSON
@@ -929,9 +926,9 @@ export {
   // Learnings
   getRecentLearnings,
 
-  // Memory 注入
+  // Memory 注入（统一检索器）
   extractMemoryQuery,
-  buildMemoryBlock,
+  buildMemoryBlock,  // 保留向后兼容（Memory API 可能引用）
 
   // 常量
   EVENT_TYPES,
