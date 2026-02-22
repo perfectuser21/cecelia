@@ -133,8 +133,8 @@ async function fetchMemoryContext(query) {
 async function recordChatEvent(userMessage, reply, metadata = {}) {
   try {
     await pool.query(
-      `INSERT INTO cecelia_events (type, data, created_at) VALUES ($1, $2, NOW())`,
-      ['orchestrator_chat', JSON.stringify({
+      `INSERT INTO cecelia_events (event_type, source, payload, created_at) VALUES ($1, $2, $3, NOW())`,
+      ['orchestrator_chat', 'orchestrator_chat', JSON.stringify({
         user_message: userMessage.slice(0, 500),
         reply_preview: reply.slice(0, 200),
         ...metadata,
