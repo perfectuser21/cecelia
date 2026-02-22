@@ -52,7 +52,7 @@ describe('executor preparePrompt - skill_override', () => {
     preparePrompt = executor.preparePrompt;
   });
 
-  it('uses skill_override from payload when present', () => {
+  it('uses skill_override from payload when present', async () => {
     const task = {
       id: 'task-001',
       task_type: 'dev',
@@ -63,12 +63,12 @@ describe('executor preparePrompt - skill_override', () => {
       },
     };
 
-    const prompt = preparePrompt(task);
+    const prompt = await preparePrompt(task);
     // The prompt should start with the skill_override value
     expect(prompt).toMatch(/^\/okr/);
   });
 
-  it('skill_override overrides default skill for task_type', () => {
+  it('skill_override overrides default skill for task_type', async () => {
     const task = {
       id: 'task-002',
       task_type: 'dev',  // 默认应该映射到 /dev
@@ -79,13 +79,13 @@ describe('executor preparePrompt - skill_override', () => {
       },
     };
 
-    const prompt = preparePrompt(task);
+    const prompt = await preparePrompt(task);
     // skill_override=/exploratory 应优先，而不是默认的 /dev
     expect(prompt).toMatch(/^\/exploratory/);
     expect(prompt).not.toMatch(/^\/dev/);
   });
 
-  it('uses default skill when skill_override is absent', () => {
+  it('uses default skill when skill_override is absent', async () => {
     const task = {
       id: 'task-003',
       task_type: 'dev',
@@ -94,12 +94,12 @@ describe('executor preparePrompt - skill_override', () => {
       payload: {},
     };
 
-    const prompt = preparePrompt(task);
+    const prompt = await preparePrompt(task);
     // 无 skill_override，task_type='dev' 应使用 /dev
     expect(prompt).toMatch(/^\/dev/);
   });
 
-  it('uses default skill when payload is null/undefined', () => {
+  it('uses default skill when payload is null/undefined', async () => {
     const task = {
       id: 'task-004',
       task_type: 'dev',
@@ -108,14 +108,11 @@ describe('executor preparePrompt - skill_override', () => {
       payload: null,
     };
 
-    const prompt = preparePrompt(task);
+    const prompt = await preparePrompt(task);
     expect(prompt).toMatch(/^\/dev/);
   });
 
-  it('uses default skill when skill_override is empty string', () => {
-    // 空字符串是 falsy，?? 运算符不会将其视为 override
-    // 但空字符串不是 null/undefined，所以 ?? 会用它
-    // 这个测试验证空字符串的行为（edge case）
+  it('uses default skill when skill_override is empty string', async () => {
     const task = {
       id: 'task-005',
       task_type: 'review',
@@ -126,7 +123,7 @@ describe('executor preparePrompt - skill_override', () => {
       },
     };
 
-    const prompt = preparePrompt(task);
+    const prompt = await preparePrompt(task);
     // null → ?? 触发默认映射，task_type='review' → /review
     expect(prompt).toMatch(/^\/review/);
   });

@@ -882,10 +882,87 @@ function checkTaskTypeMatch(task) {
 }
 
 /**
+ * 查询 OKR 拆解的时间上下文（KR 剩余天数、已有 Projects 进度）。
+ *
+ * @param {string} krId - KR ID
+ * @returns {Promise<string>} 格式化的时间上下文文本，注入到 prompt
+ */
+async function buildTimeContext(krId) {
+  if (!krId) return '';
+  try {
+    // 1. KR 的 target_date 和 time_budget_days
+    const krResult = await pool.query(
+      `SELECT title, target_date, time_budget_days FROM goals WHERE id = $1`,
+      [krId]
+    );
+    const kr = krResult.rows[0];
+    if (!kr) return '';
+
+    // 2. KR 下所有 Projects（按 sequence_order 排列）
+    const projResult = await pool.query(
+      `SELECT p.id, p.name, p.status, p.sequence_order, p.time_budget_days,
+              p.created_at, p.completed_at
+       FROM projects p
+       JOIN project_kr_links pkl ON pkl.project_id = p.id
+       WHERE pkl.kr_id = $1 AND p.type = 'project'
+       ORDER BY p.sequence_order ASC NULLS LAST, p.created_at ASC`,
+      [krId]
+    );
+    const projects = projResult.rows;
+
+    const lines = ['## 时间上下文（CRITICAL — 拆解时必须参考）'];
+
+    // KR 剩余天数
+    if (kr.target_date) {
+      const remaining = Math.ceil((new Date(kr.target_date) - new Date()) / (24 * 60 * 60 * 1000));
+      lines.push(`- KR 目标日期: ${kr.target_date}`);
+      lines.push(`- KR 剩余天数: ${remaining} 天${remaining < 7 ? '（⚠️ 紧急）' : ''}`);
+    }
+    if (kr.time_budget_days) {
+      lines.push(`- KR 时间预算: ${kr.time_budget_days} 天`);
+    }
+
+    // 已有 Projects 进度
+    if (projects.length > 0) {
+      const completed = projects.filter(p => p.status === 'completed');
+      lines.push('');
+      lines.push(`### 已有 Projects（${completed.length}/${projects.length} 完成）`);
+      for (const p of projects) {
+        let info = `- [${p.status}] ${p.name}`;
+        if (p.sequence_order != null) info += ` (序号 ${p.sequence_order})`;
+        if (p.time_budget_days) info += `, 预算 ${p.time_budget_days} 天`;
+        if (p.status === 'completed' && p.created_at && p.completed_at) {
+          const actual = Math.max(1, Math.round((new Date(p.completed_at) - new Date(p.created_at)) / (24 * 60 * 60 * 1000)));
+          info += `, 实际 ${actual} 天`;
+        }
+        lines.push(info);
+      }
+      lines.push('');
+      lines.push(`### 顺序提示`);
+      lines.push(`这是第 ${completed.length + 1}/${projects.length + 1} 个 Project（包含即将创建的）。`);
+      if (completed.length > 0) {
+        lines.push(`前 ${completed.length} 个已完成，请参考其执行时间来估算后续 Project 的 time_budget_days。`);
+      }
+    }
+
+    lines.push('');
+    lines.push('### 约束');
+    lines.push('- 请为每个 Project 标注 `sequence_order`（执行顺序，从 1 开始）');
+    lines.push('- 请为每个 Project 设置 `time_budget_days`（预计天数）');
+    lines.push('- 所有 Project 的 time_budget_days 之和不应超过 KR 剩余天数');
+
+    return lines.join('\n');
+  } catch (err) {
+    console.error('[executor] buildTimeContext failed (non-fatal):', err.message);
+    return '';
+  }
+}
+
+/**
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
-function preparePrompt(task) {
+async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
@@ -941,6 +1018,7 @@ POST /api/brain/action/create-task
     }
 
     // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
+    const timeContext = await buildTimeContext(krId);
     return `/okr
 
 # OKR 拆解: ${krTitle}
@@ -948,6 +1026,8 @@ POST /api/brain/action/create-task
 ## KR 信息
 - KR ID: ${krId}
 - 目标: ${task.description || krTitle}
+
+${timeContext}
 
 ## 6 层架构（必须严格遵守）
 Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
@@ -1381,7 +1461,7 @@ async function triggerCeceliaRun(task) {
 
     // Prepare prompt content, permission mode, and model based on task_type
     const taskType = task.task_type || 'dev';
-    const promptContent = preparePrompt(task);
+    const promptContent = await preparePrompt(task);
     const permissionMode = getPermissionModeForTaskType(taskType);
     const model = getModelForTask(task);
 
@@ -1806,6 +1886,7 @@ export {
   getTaskExecutionStatus,
   updateTaskRunInfo,
   preparePrompt,
+  buildTimeContext,
   generateRunId,
   getSkillForTaskType,
   // v2 additions

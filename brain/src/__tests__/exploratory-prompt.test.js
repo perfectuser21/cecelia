@@ -66,62 +66,62 @@ describe('preparePrompt - exploratory 任务注入 Brain 上下文 (D1/D2)', () 
     payload: {},
   };
 
-  it('D1-1: exploratory prompt 包含 BRAIN_TASK_ID', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D1-1: exploratory prompt 包含 BRAIN_TASK_ID', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('BRAIN_TASK_ID: task-uuid-1234');
   });
 
-  it('D1-2: exploratory prompt 包含 BRAIN_GOAL_ID', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D1-2: exploratory prompt 包含 BRAIN_GOAL_ID', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('BRAIN_GOAL_ID: goal-uuid-5678');
   });
 
-  it('D1-3: exploratory prompt 包含 BRAIN_PROJECT_ID', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D1-3: exploratory prompt 包含 BRAIN_PROJECT_ID', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('BRAIN_PROJECT_ID: proj-uuid-9012');
   });
 
-  it('D1-4: exploratory prompt 包含 BRAIN_API', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D1-4: exploratory prompt 包含 BRAIN_API', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('BRAIN_API: http://localhost:5221');
   });
 
-  it('D2-1: exploratory prompt 包含 Brain API 创建任务的指令', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D2-1: exploratory prompt 包含 Brain API 创建任务的指令', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('/api/brain/tasks');
   });
 
-  it('D2-2: exploratory prompt 包含 execution-callback 回传指令', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D2-2: exploratory prompt 包含 execution-callback 回传指令', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('execution-callback');
   });
 
-  it('D2-3: exploratory prompt 包含 Output Loop 章节', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D2-3: exploratory prompt 包含 Output Loop 章节', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('Output Loop');
   });
 
-  it('D2-4: exploratory prompt 包含探索目标（task description）', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D2-4: exploratory prompt 包含探索目标（task description）', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt).toContain('调研现有任务数据结构，评估改造可行性');
   });
 
-  it('D1-5: goal_id 为空时注入空字符串（不崩溃）', () => {
+  it('D1-5: goal_id 为空时注入空字符串（不崩溃）', async () => {
     const taskNoGoal = { ...exploratoryTask, goal_id: null, project_id: null };
-    const prompt = preparePrompt(taskNoGoal);
+    const prompt = await preparePrompt(taskNoGoal);
     expect(prompt).toContain('BRAIN_TASK_ID: task-uuid-1234');
     expect(prompt).toContain('BRAIN_GOAL_ID: ');
     expect(prompt).toContain('BRAIN_PROJECT_ID: ');
   });
 
-  it('D1-6: prompt 以 /exploratory 开头', () => {
-    const prompt = preparePrompt(exploratoryTask);
+  it('D1-6: prompt 以 /exploratory 开头', async () => {
+    const prompt = await preparePrompt(exploratoryTask);
     expect(prompt.trimStart()).toMatch(/^\/exploratory/);
   });
 
-  it('D2-5: non-exploratory 任务不注入 BRAIN_TASK_ID（其他类型不受影响）', () => {
+  it('D2-5: non-exploratory 任务不注入 BRAIN_TASK_ID（其他类型不受影响）', async () => {
     const devTask = { ...exploratoryTask, task_type: 'dev' };
-    const prompt = preparePrompt(devTask);
+    const prompt = await preparePrompt(devTask);
     expect(prompt).not.toContain('BRAIN_TASK_ID');
   });
 });

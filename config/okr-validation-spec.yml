@@ -130,6 +130,13 @@ projects:
       - name
       - type
       - status
+    recommended_fields:
+      sequence_order:
+        severity: WARNING
+        message: "project 建议设置 sequence_order 以支持顺序执行"
+      time_budget_days:
+        severity: WARNING
+        message: "project 建议设置 time_budget_days 以支持时间对比"
     parent_rules:
       kr_link:
         via: "project_kr_links WHERE project_id = $id"

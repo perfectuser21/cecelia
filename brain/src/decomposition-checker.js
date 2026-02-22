@@ -620,7 +620,7 @@ async function checkProjectDecomposition() {
 
   // Only check projects linked to active KRs via project_kr_links
   const result = await pool.query(`
-    SELECT DISTINCT p.id, p.name, p.repo_path
+    SELECT DISTINCT p.id, p.name, p.repo_path, p.time_budget_days, p.deadline
     FROM projects p
     INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
     INNER JOIN goals g ON g.id = pkl.kr_id AND g.status NOT IN ('completed', 'cancelled')
@@ -675,7 +675,9 @@ async function checkProjectDecomposition() {
         `Project 名称: ${proj.name}`,
         `Repo: ${proj.repo_path || '(无)'}`,
         `关联 KRs: ${krs.map(kr => `${kr.title} (${kr.id})`).join(', ') || '(无)'}`,
-      ].join('\n'),
+        proj.time_budget_days ? `时间预算: ${proj.time_budget_days} 天` : '',
+        proj.deadline ? `截止日期: ${proj.deadline}` : '',
+      ].filter(Boolean).join('\n'),
       goalId: krs[0]?.id || null,
       projectId: proj.id,
       payload: { level: 'project', project_id: proj.id }
@@ -710,6 +712,7 @@ async function checkInitiativeDecomposition() {
   const result = await pool.query(`
     SELECT p.id, p.name, p.parent_id, p.plan_content,
            parent_proj.name AS parent_name, parent_proj.repo_path,
+           parent_proj.deadline AS parent_deadline, parent_proj.time_budget_days AS parent_time_budget,
            COALESCE(p.decomposition_depth, 1) AS depth
     FROM projects p
     LEFT JOIN projects parent_proj ON parent_proj.id = p.parent_id
@@ -819,6 +822,8 @@ async function checkInitiativeDecomposition() {
         `拆解深度: ${init.depth}/${MAX_DECOMPOSITION_DEPTH}`,
         `所属 Project: ${init.parent_name || '(未知)'} (${init.parent_id || 'N/A'})`,
         `Repo: ${init.repo_path || '(无)'}`,
+        init.parent_deadline ? `Project 截止日期: ${init.parent_deadline}` : '',
+        init.parent_time_budget ? `Project 时间预算: ${init.parent_time_budget} 天` : '',
         init.plan_content ? `Plan:\n${init.plan_content}` : '',
       ].filter(Boolean).join('\n'),
       goalId: krId,

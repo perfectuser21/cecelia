@@ -69,55 +69,55 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
   });
 
   describe('首次拆解（decomposition=true）', () => {
-    it('PRD 必须要求新建 KR 专属 Project', () => {
+    it('PRD 必须要求新建 KR 专属 Project', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('新建 KR 专属 Project');
     });
 
-    it('PRD 必须禁止复用已有 project', () => {
+    it('PRD 必须禁止复用已有 project', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('禁止复用');
     });
 
-    it('PRD 必须包含 project_kr_links 绑定步骤', () => {
+    it('PRD 必须包含 project_kr_links 绑定步骤', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('project_kr_links');
     });
 
-    it('PRD 必须要求 Task goal_id = KR ID', () => {
+    it('PRD 必须要求 Task goal_id = KR ID', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('goal_id');
       // goal_id 必须用 krId（即 task.goal_id）
       expect(prompt).toContain('kr-001');
     });
 
-    it('PRD 不应包含"找到 type=\'project\' 且 repo_path 不为空"等复用指令', () => {
+    it('PRD 不应包含"找到 type=\'project\' 且 repo_path 不为空"等复用指令', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).not.toContain("找到 type='project' 且 repo_path 不为空");
       expect(prompt).not.toContain('找到 type=\'project\' 且 repo_path 不为空');
     });
 
-    it('PRD 应包含从 cecelia-core 获取 repo_path 的说明', () => {
+    it('PRD 应包含从 cecelia-core 获取 repo_path 的说明', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('cecelia-core');
       expect(prompt).toContain('repo_path');
     });
 
-    it('PRD 应包含 Initiative parent_id 指向新建 Project 的说明', () => {
+    it('PRD 应包含 Initiative parent_id 指向新建 Project 的说明', async () => {
       const task = makeOkrTask();
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('parent_id');
       // parent_id 应指向新建的 KR 专属 Project，而不是通用的 cecelia-core
@@ -126,7 +126,7 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
   });
 
   describe('继续拆解（decomposition=continue）- 不受影响', () => {
-    it('继续拆解分支应正常生成 prompt', () => {
+    it('继续拆解分支应正常生成 prompt', async () => {
       const task = makeOkrTask({
         payload: {
           decomposition: 'continue',
@@ -135,14 +135,14 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
           kr_goal: 'Tick 成功率 ≥ 70%'
         }
       });
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       expect(prompt).toContain('/okr');
       expect(prompt).toContain('继续拆解');
       expect(prompt).toContain('init-001');
     });
 
-    it('继续拆解 prompt 不应包含"新建 KR 专属 Project"指令', () => {
+    it('继续拆解 prompt 不应包含"新建 KR 专属 Project"指令', async () => {
       const task = makeOkrTask({
         payload: {
           decomposition: 'continue',
@@ -151,7 +151,7 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
           kr_goal: 'Tick 成功率 ≥ 70%'
         }
       });
-      const prompt = preparePrompt(task);
+      const prompt = await preparePrompt(task);
 
       // 继续拆解分支不应触发 project 创建
       expect(prompt).not.toContain('新建 KR 专属 Project');
