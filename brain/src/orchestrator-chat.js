@@ -74,7 +74,7 @@ async function callMiniMax(userMessage, systemPrompt, options = {}) {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'MiniMax-M2.5',
+      model: 'MiniMax-M2.5-highspeed',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },

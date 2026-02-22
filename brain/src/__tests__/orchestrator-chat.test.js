@@ -384,7 +384,7 @@ describe('orchestrator-chat', () => {
       const [url, options] = global.fetch.mock.calls[0];
       expect(url).toBe('https://api.minimaxi.com/v1/chat/completions');
       const body = JSON.parse(options.body);
-      expect(body.model).toBe('MiniMax-M2.5');
+      expect(body.model).toBe('MiniMax-M2.5-highspeed');
       expect(body.messages).toHaveLength(2);
       expect(body.messages[0].role).toBe('system');
       expect(body.messages[1].role).toBe('user');
