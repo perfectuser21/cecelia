@@ -3,7 +3,7 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-22
-**Brain 版本**: 1.69.0
+**Brain 版本**: 1.70.0
 **Schema 版本**: 053
 **状态**: 生产运行中
 
@@ -54,8 +54,8 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 | 器官 | 实现 | 职责 | 说明 |
 |------|------|------|------|
 | ❤️ **心脏** | tick.js | Tick Loop 驱动 | 每 5s 循环，每 5min 执行 |
-| 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Sonnet，RCA/战略调整/记录经验 |
-| 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | Haiku，快速判断/异常检测 |
+| 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Opus，RCA/战略调整/记录经验 |
+| 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | MiniMax M2.1，快速判断/异常检测 |
 | 🧠 **大脑 L0** | planner.js, executor.js, tick.js | 脑干（纯代码） | 调度、派发、保护系统 |
 | 🛡️ **保护系统** | alertness/, circuit-breaker, quarantine, watchdog | 自我保护 | 四重防护 |
 | 📋 **规划器** | planner.js | KR 轮转、任务生成 | 基于评分选择下一个任务 |
@@ -82,14 +82,14 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 
 **Cecelia 自己不干活**，通过 `executor.js` 召唤外部员工执行任务：
 
-| 员工 | Skill | 模型 | 职责 | 类比 |
+| 员工 | Skill | 模型 (Anthropic / MiniMax) | 职责 | 类比 |
 |------|-------|------|------|------|
-| **Caramel** | /dev | Opus | 编程（写代码、PR、CI） | 外包程序员 |
-| **小检** | /qa | Sonnet | QA 总控 | 外包测试员 |
-| **小审** | /audit | Sonnet | 代码审计 | 外包审计师 |
-| **秋米** | /okr | Opus | OKR 拆解（边做边拆） | 外部顾问 |
-| **审查员** | /review | Sonnet | 代码审查（只读模式） | 外部审查员 |
-| **MiniMax** | - | MiniMax (国内) | talk/research (HK) | 外部翻译 |
+| **Caramel** | /dev | Sonnet / M2.5-highspeed | 编程（写代码、PR、CI） | 外包程序员 |
+| **小检** | /qa | Sonnet / M2.5-highspeed | QA 总控 | 外包测试员 |
+| **小审** | /audit | Sonnet / M2.5-highspeed | 代码审计 | 外包审计师 |
+| **秋米** | /okr | Sonnet / M2.5-highspeed | OKR 拆解（边做边拆） | 外部顾问 |
+| **审查员** | /review | Sonnet / M2.5-highspeed | 代码审查（只读模式） | 外部审查员 |
+| **Vivian** | - | MiniMax Ultra | 拆解质量审查 (HK) | 外部审查员 |
 
 **关键理解**：
 - 这些是**外部无头进程**，不属于 Core
@@ -120,8 +120,8 @@ Agent Workers (Caramel/小检/小审/...)
 │  Layer 1: Cecelia Core (cecelia/core repo)              │
 │  ┌───────────────────────────────────────────────────┐ │
 │  │  ❤️ 心脏 (tick.js)                                │ │
-│  │  🧠 大脑 L2 (cortex.js) - Sonnet                  │ │
-│  │  🧠 大脑 L1 (thalamus.js) - Haiku                │ │
+│  │  🧠 大脑 L2 (cortex.js) - Opus                    │ │
+│  │  🧠 大脑 L1 (thalamus.js) - MiniMax M2.1         │ │
 │  │  🧠 大脑 L0 (planner.js, executor.js) - 纯代码   │ │
 │  │  🛡️ 保护系统 (alertness, watchdog, ...)          │ │
 │  │  📋 规划器 (planner.js)                           │ │
@@ -147,12 +147,12 @@ Agent Workers (Caramel/小检/小审/...)
 ┌─────────────────────────────────────────────────────────┐
 │  Layer 3: Agent Workers (外部员工)                       │
 │  ┌───────────────────────────────────────────────────┐ │
-│  │  Caramel (/dev, Opus) - 外包程序员                │ │
-│  │  小检 (/qa, Sonnet) - 外包测试员                  │ │
-│  │  小审 (/audit, Sonnet) - 外包审计师               │ │
-│  │  秋米 (/okr, Opus) - 外部顾问                     │ │
-│  │  审查员 (/review, Sonnet) - 外部审查员            │ │
-│  │  MiniMax (talk/research) - 外部翻译 (HK)         │ │
+│  │  Caramel (/dev, Sonnet/M2.5-hs) - 外包程序员     │ │
+│  │  小检 (/qa, Sonnet/M2.5-hs) - 外包测试员        │ │
+│  │  小审 (/audit, Sonnet/M2.5-hs) - 外包审计师     │ │
+│  │  秋米 (/okr, Sonnet/M2.5-hs) - 外部顾问        │ │
+│  │  审查员 (/review, Sonnet/M2.5-hs) - 外部审查员  │ │
+│  │  Vivian (decomp_review, MiniMax Ultra) - HK     │ │
 │  └───────────────────────────────────────────────────┘ │
 │  独立无头进程，通过 cecelia-bridge 召唤                  │
 └─────────────────────────────────────────────────────────┘
@@ -181,8 +181,8 @@ Agent Workers (Caramel/小检/小审/...)
 | 层 | 允许 LLM | 职责 |
 |----|---------|------|
 | L0 脑干 | 禁止 | 调度、执行、保护（纯代码） |
-| L1 丘脑 | Haiku | 事件分类、快速判断（<1s） |
-| L2 皮层 | Sonnet | 深度分析、战略调整（>5s） |
+| L1 丘脑 | MiniMax M2.1 | 事件分类、快速判断（<1s） |
+| L2 皮层 | Opus | 深度分析、战略调整（>5s） |
 
 **LLM 只提建议，代码做执行**：
 - L1/L2 输出 Decision JSON（actions + rationale + confidence）
@@ -238,7 +238,7 @@ executeTick() 流程：
 | `quarantine.js` | 失败隔离、可疑输入检测 |
 | `decision-executor.js` | 决策执行（事务化、白名单、危险审批） |
 
-### 3.2 L1 丘脑 — Haiku 快速判断
+### 3.2 L1 丘脑 — MiniMax M2.1 快速判断
 
 `thalamus.js` 处理系统事件，快速路由：
 
@@ -246,29 +246,29 @@ executeTick() 流程：
 事件 → quickRoute()（L0 硬编码规则）
   ├─ HEARTBEAT → no_action
   ├─ TICK(无异常) → fallback_to_tick
-  ├─ TICK(有异常) → null → callHaiku()
+  ├─ TICK(有异常) → null → callThalamLLM()
   ├─ TASK_COMPLETED(无问题) → dispatch_task
-  ├─ TASK_COMPLETED(有问题) → null → callHaiku()
+  ├─ TASK_COMPLETED(有问题) → null → callThalamLLM()
   ├─ TASK_FAILED(简单/重试未超限) → retry_task
   ├─ TASK_FAILED(简单/重试超限) → cancel_task
-  ├─ TASK_FAILED(复杂原因) → null → callHaiku()
+  ├─ TASK_FAILED(复杂原因) → null → callThalamLLM()
   ├─ TASK_TIMEOUT → log_event + retry_task(降级)
   ├─ TASK_CREATED → no_action
   ├─ OKR_CREATED → log_event
   ├─ OKR_PROGRESS_UPDATE(非阻塞) → log_event
   ├─ OKR_BLOCKED(普通) → notify_user + mark_task_blocked
-  ├─ OKR_BLOCKED(严重/持续) → null → callHaiku()
+  ├─ OKR_BLOCKED(严重/持续) → null → callThalamLLM()
   ├─ DEPARTMENT_REPORT(非严重) → log_event
-  ├─ DEPARTMENT_REPORT(严重) → null → callHaiku()
+  ├─ DEPARTMENT_REPORT(严重) → null → callThalamLLM()
   ├─ EXCEPTION_REPORT(低严重度) → log_event
-  ├─ EXCEPTION_REPORT(中/高严重度) → null → callHaiku()
+  ├─ EXCEPTION_REPORT(中/高严重度) → null → callThalamLLM()
   ├─ RESOURCE_LOW(非严重) → notify_user
-  ├─ RESOURCE_LOW(严重) → null → callHaiku()
+  ├─ RESOURCE_LOW(严重) → null → callThalamLLM()
   ├─ USER_COMMAND(简单) → log_event
-  ├─ USER_COMMAND(复杂) → null → callHaiku()
+  ├─ USER_COMMAND(复杂) → null → callThalamLLM()
   ├─ USER_MESSAGE(非紧急) → log_event
-  ├─ USER_MESSAGE(紧急) → null → callHaiku()
-  └─ 其他 → callHaiku()（L1 判断）
+  ├─ USER_MESSAGE(紧急) → null → callThalamLLM()
+  └─ 其他 → callThalamLLM()（L1 判断）
                ├─ level=0/1 → 返回决策
                └─ level=2 → 升级到皮层
 ```
@@ -284,7 +284,7 @@ executeTick() 流程：
 - 控制：no_action, fallback_to_tick
 - 类型建议：suggest_task_type
 
-### 3.3 L2 皮层 — Sonnet 深度分析
+### 3.3 L2 皮层 — Opus 深度分析
 
 `cortex.js` 在 L1 判断 level=2 时介入：
 
@@ -382,18 +382,18 @@ queued → in_progress → completed
 
 ### 4.6 任务类型与路由
 
-| 类型 | 位置 | Agent | 模型 |
-|------|------|-------|------|
-| dev | US | Caramel (/dev) | Opus |
-| review | US | 审查员 (/review) | Sonnet |
-| qa | US | 小检 (/qa) | Sonnet |
-| audit | US | 小审 (/audit) | Sonnet |
-| exploratory | US | Exploratory (/exploratory) | Opus |
-| codex_qa | US | Codex 免疫检查 (cx) | Codex/GPT-5 |
-| decomp_review | HK | Vivian (拆解审查) | MiniMax Ultra |
-| talk | HK | MiniMax | MiniMax |
-| research | HK | MiniMax | MiniMax |
-| data | HK | N8N | - |
+| 类型 | 位置 | Agent | 模型 (Anthropic / MiniMax) | Provider |
+|------|------|-------|------|----------|
+| dev | US | Caramel (/dev) | Sonnet / M2.5-highspeed | 默认 minimax |
+| review | US | 审查员 (/review) | Sonnet / M2.5-highspeed | 默认 minimax |
+| qa | US | 小检 (/qa) | Sonnet / M2.5-highspeed | 默认 minimax |
+| audit | US | 小审 (/audit) | Sonnet / M2.5-highspeed | 默认 minimax |
+| exploratory | US | Exploratory | - / M2.1 | 固定 minimax |
+| codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
+| decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
+| talk | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
+| research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
+| data | HK | N8N | - | - |
 
 ---
 
@@ -808,8 +808,8 @@ brain/
 │   ├── planner.js             # KR 轮转 + 任务生成
 │   ├── focus.js               # 每日焦点选择
 │   │
-│   ├── thalamus.js            # L1 丘脑 (Haiku)
-│   ├── cortex.js              # L2 皮层 (Sonnet)
+│   ├── thalamus.js            # L1 丘脑 (MiniMax M2.1)
+│   ├── cortex.js              # L2 皮层 (Opus)
 │   ├── decision-executor.js   # 决策执行器
 │   │
 │   ├── watchdog.js            # 资源看门狗 (/proc)
@@ -940,8 +940,10 @@ bash brain/scripts/goldenpath-check.sh
 
 | 模型 | 输入 | 输出 | 用途 |
 |------|------|------|------|
-| Opus | $15/M | $75/M | OKR 拆解、dev 任务 |
-| Sonnet | $3/M | $15/M | L2 皮层（RCA 分析）、review/qa/audit |
-| Haiku | $1/M | $5/M | L1 丘脑（事件路由）、嘴巴（轻认知） |
+| Opus | $15/M | $75/M | L2 皮层（RCA 分析） |
+| Sonnet | $3/M | $15/M | Claude Code 默认（Anthropic provider） |
+| Haiku | $1/M | $5/M | 嘴巴（轻认知，保留） |
+| MiniMax M2.5-hs | $0.30/M | $2.40/M | dev/review/qa/audit/talk（MiniMax provider） |
+| MiniMax M2.1 | $0.15/M | $1.20/M | L1 丘脑（事件路由）、exploratory |
 
 每次 L1/L2 调用记录 token 使用到 cecelia_events 表。

@@ -264,14 +264,25 @@ describe('analyzeEvent memory_retrieval integration', () => {
       searchRelevantLearnings: vi.fn().mockResolvedValue([]),
     }));
 
-    process.env.ANTHROPIC_API_KEY = 'test-key';
+    // Mock node:fs so callThalamLLM can read MiniMax credentials in CI
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual('node:fs');
+      return {
+        ...actual,
+        readFileSync: vi.fn((filePath, encoding) => {
+          if (typeof filePath === 'string' && filePath.includes('minimax.json')) {
+            return JSON.stringify({ api_key: 'test-minimax-key' });
+          }
+          return actual.readFileSync(filePath, encoding);
+        }),
+      };
+    });
 
     const mod = await import('../thalamus.js');
     analyzeEvent = mod.analyzeEvent;
   });
 
   afterEach(() => {
-    delete process.env.ANTHROPIC_API_KEY;
     vi.restoreAllMocks();
   });
 
@@ -287,11 +298,8 @@ describe('analyzeEvent memory_retrieval integration', () => {
     const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        content: [{
-          type: 'text',
-          text: '```json\n' + decisionJson + '\n```',
-        }],
-        usage: { input_tokens: 100, output_tokens: 50 },
+        choices: [{ message: { content: '```json\n' + decisionJson + '\n```' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
       }),
     });
 
@@ -328,11 +336,8 @@ describe('analyzeEvent memory_retrieval integration', () => {
     const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        content: [{
-          type: 'text',
-          text: '```json\n' + decisionJson2 + '\n```',
-        }],
-        usage: { input_tokens: 100, output_tokens: 50 },
+        choices: [{ message: { content: '```json\n' + decisionJson2 + '\n```' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
       }),
     });
 

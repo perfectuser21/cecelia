@@ -772,7 +772,7 @@ describe('thalamus', () => {
 
   describe('classifyLLMError', () => {
     it('should classify API errors', () => {
-      expect(classifyLLMError(new Error('Sonnet API error: 500'))).toBe(LLM_ERROR_TYPE.API_ERROR);
+      expect(classifyLLMError(new Error('Opus API error: 500'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('ECONNREFUSED 127.0.0.1:443'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('rate limit exceeded'))).toBe(LLM_ERROR_TYPE.API_ERROR);
       expect(classifyLLMError(new Error('HTTP 429 Too Many Requests'))).toBe(LLM_ERROR_TYPE.API_ERROR);

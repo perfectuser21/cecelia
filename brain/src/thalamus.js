@@ -3,22 +3,25 @@
  *
  * 仿人脑设计：
  * - 接收所有事件
- * - 用 Haiku 判断复杂度
+ * - 用 MiniMax M2.1 判断复杂度
  * - Level 0/1: 自己处理
- * - Level 2: 唤醒皮层 (Cortex/Sonnet)
+ * - Level 2: 唤醒皮层 (Cortex/Opus)
  * - 输出结构化 Decision
  * - 代码验证后执行
  *
  * 三层架构：
  * - 脑干 (Level 0): 纯代码，自动反应
- * - 丘脑 (Level 1): Haiku，快速判断
- * - 皮层 (Level 2): Sonnet，深度思考
+ * - 丘脑 (Level 1): MiniMax M2.1，快速判断
+ * - 皮层 (Level 2): Opus，深度思考
  *
  * 核心原则：LLM 只能下"指令"，不能直接改世界
  */
 
 /* global console */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import pool from './db.js';
 import { getRecentLearnings } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
@@ -264,6 +267,8 @@ const MODEL_PRICING = {
   'claude-sonnet-4-20250514': { in: 3.0 / 1_000_000, out: 15.0 / 1_000_000 },
   'claude-opus-4-20250514': { in: 15.0 / 1_000_000, out: 75.0 / 1_000_000 },
   'claude-haiku-4-5-20251001': { in: 1.0 / 1_000_000, out: 5.0 / 1_000_000 },
+  'MiniMax-M2.5-highspeed': { in: 0.30 / 1_000_000, out: 2.40 / 1_000_000 },
+  'MiniMax-M2.1': { in: 0.15 / 1_000_000, out: 1.20 / 1_000_000 },
 };
 
 function calculateCost(usage, model) {
@@ -346,7 +351,7 @@ function recordRoutingDecision(routeType, event, decision, latencyMs) {
 }
 
 // ============================================================
-// Thalamus (Haiku 调用)
+// Thalamus (MiniMax M2.1 调用)
 // ============================================================
 
 const THALAMUS_PROMPT = `你是 Cecelia 的丘脑（Thalamus），负责事件路由和决策。
@@ -437,7 +442,7 @@ async function buildMemoryBlock(event) {
 }
 
 /**
- * 调用 Haiku 分析事件
+ * 调用 MiniMax M2.1 分析事件
  * @param {Object} event - 事件包
  * @returns {Promise<Decision>}
  */
@@ -457,11 +462,11 @@ async function analyzeEvent(event) {
   const prompt = `${THALAMUS_PROMPT}${memoryContextBlock}\n\n\`\`\`json\n${eventJson}\n\`\`\``;
 
   try {
-    // 调用 Haiku (通过 cecelia-bridge 或直接 API)
-    const { text: response, usage } = await callHaiku(prompt);
+    // 调用 MiniMax M2.1（丘脑 LLM）
+    const { text: response, usage } = await callThalamLLM(prompt);
 
     // 记录 token 消耗
-    await recordTokenUsage('thalamus', 'claude-haiku-4-5-20251001', usage, {
+    await recordTokenUsage('thalamus', 'MiniMax-M2.1', usage, {
       event_type: event.type,
       memory_candidates: memoryMeta?.candidates || 0,
       memory_injected: memoryMeta?.injected || 0,
@@ -496,49 +501,79 @@ async function analyzeEvent(event) {
   }
 }
 
+// ============================================================
+// MiniMax M2.1 丘脑 LLM
+// ============================================================
+
+let _thalamusMinimaxKey = null;
+
+function getThalamusMinimaxKey() {
+  if (_thalamusMinimaxKey) return _thalamusMinimaxKey;
+  try {
+    const credPath = join(homedir(), '.credentials', 'minimax.json');
+    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
+    _thalamusMinimaxKey = cred.api_key;
+    return _thalamusMinimaxKey;
+  } catch (err) {
+    console.error('[thalamus] Failed to load MiniMax credentials:', err.message);
+    return null;
+  }
+}
+
 /**
- * 调用 Haiku API
+ * 去除 MiniMax 回复中的 <think> 思维链块
+ */
+function stripThinking(content) {
+  if (!content) return '';
+  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+}
+
+/**
+ * 调用 MiniMax M2.1 API（丘脑 LLM）
  * @param {string} prompt
  * @returns {Promise<{text: string, usage: Object}>}
  */
-async function callHaiku(prompt) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+async function callThalamLLM(prompt) {
+  const apiKey = getThalamusMinimaxKey();
+  if (!apiKey) throw new Error('MiniMax API key not available (thalamus)');
 
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not set');
-  }
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'MiniMax-M2.1',
       max_tokens: 1024,
-      messages: [
-        { role: 'user', content: prompt }
-      ]
-    })
+      messages: [{ role: 'user', content: prompt }]
+    }),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Haiku API error: ${response.status} - ${error}`);
+    throw new Error(`MiniMax M2.1 API error: ${response.status} - ${error}`);
   }
 
   const data = await response.json();
-  const textBlock = (data.content || []).find(b => b.type === 'text');
-  if (!textBlock) {
-    throw new Error(`Haiku returned empty content array (usage: ${JSON.stringify(data.usage)})`);
-  }
-  return { text: textBlock.text, usage: data.usage || null };
+  const choice = data.choices?.[0];
+  const rawText = choice?.message?.content || '';
+  const text = stripThinking(rawText);
+  if (!text) throw new Error(`MiniMax M2.1 returned empty content (usage: ${JSON.stringify(data.usage)})`);
+
+  const usage = data.usage ? {
+    input_tokens: data.usage.prompt_tokens || data.usage.input_tokens || 0,
+    output_tokens: data.usage.completion_tokens || data.usage.output_tokens || 0,
+  } : null;
+
+  return { text, usage };
 }
 
+function _resetThalamusMinimaxKey() { _thalamusMinimaxKey = null; }
+
 /**
- * 从 Haiku 响应中解析 Decision
+ * 从 MiniMax M2.1 响应中解析 Decision
  * @param {string} response
  * @returns {Decision}
  */
@@ -563,7 +598,7 @@ function parseDecisionFromResponse(response) {
 }
 
 /**
- * 创建降级 Decision（Haiku 失败时使用）
+ * 创建降级 Decision（MiniMax M2.1 失败时使用）
  * @param {Object} event
  * @param {string} reason
  * @returns {Decision}
@@ -585,7 +620,7 @@ function createFallbackDecision(event, reason) {
 
 /**
  * 快速路由：对于非常简单的事件，直接用代码规则判断
- * 返回 null 表示需要调用 Haiku
+ * 返回 null 表示需要调用 MiniMax M2.1
  * @param {Object} event
  * @returns {Decision|null}
  */
@@ -612,7 +647,7 @@ function quickRoute(event) {
     };
   }
 
-  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 Haiku）
+  // 异常 Tick：分级处理（轻量异常快速路由，复杂异常交 MiniMax M2.1）
   if (event.type === EVENT_TYPES.TICK && event.has_anomaly === true) {
     const anomalyType = event.anomaly_type;
 
@@ -624,7 +659,7 @@ function quickRoute(event) {
           { type: 'log_event', params: { reason: 'resource_pressure', tick_id: event.tick_id } },
           { type: 'fallback_to_tick', params: {} }
         ],
-        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 L1 LLM',
         confidence: 0.85,
         safety: false
       };
@@ -638,13 +673,13 @@ function quickRoute(event) {
           { type: 'log_event', params: { reason: 'stale_tasks', tick_id: event.tick_id } },
           { type: 'reprioritize_task', params: {} }
         ],
-        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 Haiku',
+        rationale: 'Tick 异常分级处理：轻量异常快速路由，复杂异常交 L1 LLM',
         confidence: 0.8,
         safety: false
       };
     }
 
-    // 其他异常类型：交 Haiku 深度分析
+    // 其他异常类型：交 L1 LLM 深度分析
     return null;
   }
 
@@ -682,7 +717,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂原因（无论是否重试超限）→ 交给 Haiku
+    // 复杂原因（无论是否重试超限）→ 交给 L1 LLM
     return null;
   }
 
@@ -749,7 +784,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 关键阻塞或持续阻塞 → 交给 Haiku
+    // 关键阻塞或持续阻塞 → 交给 L1 LLM
     return null;
   }
 
@@ -780,7 +815,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 高/严重级别 → 交给 Haiku/Sonnet 深度分析
+    // 高/严重级别 → 交给 L1/L2 LLM 深度分析
     return null;
   }
 
@@ -788,7 +823,7 @@ function quickRoute(event) {
   if (event.type === EVENT_TYPES.RESOURCE_LOW) {
     const severity = event.severity || 'low';
     if (severity === 'critical') {
-      return null; // 交给 Haiku 深度处理
+      return null; // 交给 L1 LLM 深度处理
     }
     return {
       level: 0,
@@ -802,7 +837,7 @@ function quickRoute(event) {
     };
   }
 
-  // USER_COMMAND：简单指令快速路由，复杂指令交 Haiku
+  // USER_COMMAND：简单指令快速路由，复杂指令交 L1 LLM
   if (event.type === EVENT_TYPES.USER_COMMAND) {
     const cmd = (event.command || '').toLowerCase();
     // 查询类指令：直接 no_action（由 API 层处理）
@@ -825,7 +860,7 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 复杂指令 → 交给 Haiku
+    // 复杂指令 → 交给 L1 LLM
     return null;
   }
 
@@ -852,11 +887,11 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 其他意图（命令式、请求式等）→ 交给 Haiku 决策
+    // 其他意图（命令式、请求式等）→ 交给 L1 LLM 决策
     return null;
   }
 
-  // 其他情况需要 Haiku 判断
+  // 其他情况需要 L1 LLM 判断
   return null;
 }
 
@@ -869,7 +904,7 @@ function quickRoute(event) {
  *
  * 处理流程：
  * 1. 尝试快速路由 (Level 0，纯代码)
- * 2. 调用 Haiku 分析 (Level 1)
+ * 2. 调用 MiniMax M2.1 分析 (Level 1)
  * 3. 如果 Level 2，唤醒皮层 (Sonnet)
  *
  * @param {Object} event
@@ -893,11 +928,11 @@ async function processEvent(event) {
     return quickDecision;
   }
 
-  // 2. 调用 Haiku 分析 (Level 1)
-  console.log('[thalamus] Calling Haiku for analysis (L1)...');
+  // 2. 调用 MiniMax M2.1 分析 (Level 1)
+  console.log('[thalamus] Calling MiniMax M2.1 for analysis (L1)...');
   const decision = await analyzeEvent(event);
 
-  console.log(`[thalamus] Haiku decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
+  console.log(`[thalamus] L1 decision: level=${decision.level}, actions=${decision.actions.map(a => a.type).join(',')}`);
 
   // 降级路径（analyzeEvent 内部失败时返回 _fallback=true）
   if (decision._fallback) {
@@ -916,7 +951,7 @@ async function processEvent(event) {
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
-      console.error('[thalamus] Cortex failed, using Haiku decision:', err.message);
+      console.error('[thalamus] Cortex failed, using L1 decision:', err.message);
       // 皮层失败时，回退到丘脑决策
       return decision;
     }
@@ -962,6 +997,11 @@ export {
   extractMemoryQuery,
   buildMemoryBlock,  // 保留向后兼容（Memory API 可能引用）
   recordMemoryRetrieval,
+
+  // MiniMax M2.1 丘脑 LLM
+  callThalamLLM,
+  stripThinking,
+  _resetThalamusMinimaxKey,
 
   // 常量
   EVENT_TYPES,

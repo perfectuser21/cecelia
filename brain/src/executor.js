@@ -796,32 +796,57 @@ function getSkillForTaskType(taskType, payload) {
   return skillMap[taskType] || '/dev';
 }
 
+// ============================================================
+// 模型常量（三个 Provider 的模型池）
+// ============================================================
+
+const MODELS = {
+  OPUS: 'claude-opus-4-20250514',
+  SONNET: 'claude-sonnet-4-20250514',
+  HAIKU: 'claude-haiku-4-5-20251001',
+  M25_HIGHSPEED: 'MiniMax-M2.5-highspeed',
+  M21: 'MiniMax-M2.1',
+  CODEX: 'codex',
+};
+
+const MODEL_MAP = {
+  dev:            { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  exploratory:    { anthropic: null,         minimax: MODELS.M21 },
+  review:         { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  qa:             { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  audit:          { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  talk:           { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  research:       { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  decomp_review:  { anthropic: null,         minimax: MODELS.M25_HIGHSPEED },
+  codex_qa:       { anthropic: null,         minimax: null },
+};
+
+const FIXED_PROVIDER = {
+  exploratory:   'minimax',
+  codex_qa:      'openai',
+  decomp_review: 'minimax',
+  talk:          'minimax',
+  research:      'minimax',
+};
+
 /**
- * Get model for a task based on task properties
- * Returns model name or null (use default Sonnet)
- *
- * 配置（成本优化 - 2026-02-16）：
- * - 全部任务: Sonnet (default)
- * - 降低成本约 70%
+ * Get model for a task based on task type and provider.
  */
 function getModelForTask(task) {
-  // exploratory 任务用 Haiku（调研型，不需要最强模型，省 3x token）
-  if (task.task_type === 'exploratory') {
-    return 'claude-haiku-4-5-20251001';
-  }
-  // 其他任务用默认 Sonnet
-  // 返回 null = cecelia-run 默认模型 (Sonnet)
-  return null;
+  const taskType = task.task_type || 'dev';
+  const provider = getProviderForTask(task);
+  if (taskType === 'codex_qa') return null;
+  const mapping = MODEL_MAP[taskType];
+  if (!mapping) return provider === 'minimax' ? MODELS.M25_HIGHSPEED : null;
+  return mapping[provider] || null;
 }
 
 /**
  * Get provider for a task.
- * 'minimax' → cecelia-run 注入 MiniMax API env vars（api.minimaxi.com）
- * null → 使用默认 Anthropic
- *
- * 策略：默认全部无头任务走 MiniMax（Ultra plan, 2000 prompts/5h, 成本 1/12）
  */
 function getProviderForTask(task) {
+  const taskType = task.task_type || 'dev';
+  if (FIXED_PROVIDER[taskType]) return FIXED_PROVIDER[taskType];
   return 'minimax';
 }
 
@@ -1921,6 +1946,11 @@ export {
   checkTaskTypeMatch,
   // v10: Session tracking + provider
   getProviderForTask,
+  // v11: Unified model routing
+  getModelForTask,
+  MODELS,
+  MODEL_MAP,
+  FIXED_PROVIDER,
   recordSessionStart,
   recordSessionEnd,
   getSessionInfo,

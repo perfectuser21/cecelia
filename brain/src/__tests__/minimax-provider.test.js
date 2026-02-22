@@ -1,15 +1,17 @@
 /**
  * minimax-provider.test.js
  *
- * 测试 MiniMax provider 支持：
+ * 测试 MiniMax provider 支持（双 Provider 路由）：
  * - T1 (D1): getProviderForTask() 默认返回 'minimax'
  * - T2 (D2): triggerCeceliaRun 传 provider 给 bridge body
  * - T3 (D3): getProviderForTask 已正确导出
+ * - T4 (D4): FIXED_PROVIDER 固定路由覆盖默认
  *
  * DoD 映射：
  * - D1 → 'getProviderForTask returns minimax by default'
  * - D2 → 'triggerCeceliaRun passes provider to bridge'
  * - D3 → 'getProviderForTask is exported'
+ * - D4 → 'FIXED_PROVIDER overrides default'
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -41,15 +43,17 @@ vi.mock('../task-updater.js', () => ({
 }));
 
 // ================================================================
-// T1 + T3: getProviderForTask 逻辑测试
+// T1 + T3 + T4: getProviderForTask 逻辑测试
 // ================================================================
 
-describe('getProviderForTask - MiniMax provider 选择', () => {
+describe('getProviderForTask - 双 Provider 路由', () => {
   let getProviderForTask;
+  let FIXED_PROVIDER;
 
   beforeEach(async () => {
     const executor = await import('../executor.js');
     getProviderForTask = executor.getProviderForTask;
+    FIXED_PROVIDER = executor.FIXED_PROVIDER;
   });
 
   it('T3 (D3): getProviderForTask 已从 executor.js 导出', () => {
@@ -57,24 +61,37 @@ describe('getProviderForTask - MiniMax provider 选择', () => {
     expect(typeof getProviderForTask).toBe('function');
   });
 
-  it('T1 (D1): dev 任务返回 minimax', () => {
+  it('T1 (D1): dev 任务返回 minimax（默认）', () => {
     const task = { id: 'task-1', task_type: 'dev', title: '编码任务' };
     expect(getProviderForTask(task)).toBe('minimax');
   });
 
-  it('T1 (D1): exploratory 任务返回 minimax', () => {
+  it('T4 (D4): exploratory 任务固定返回 minimax', () => {
     const task = { id: 'task-2', task_type: 'exploratory', title: '调研任务' };
     expect(getProviderForTask(task)).toBe('minimax');
   });
 
-  it('T1 (D1): talk 任务返回 minimax', () => {
-    const task = { id: 'task-3', task_type: 'talk', title: '对话任务' };
+  it('T4 (D4): codex_qa 任务固定返回 openai', () => {
+    const task = { id: 'task-3', task_type: 'codex_qa', title: 'Codex QA' };
+    expect(getProviderForTask(task)).toBe('openai');
+  });
+
+  it('T1 (D1): talk 任务固定返回 minimax', () => {
+    const task = { id: 'task-4', task_type: 'talk', title: '对话任务' };
     expect(getProviderForTask(task)).toBe('minimax');
   });
 
   it('T1 (D1): undefined task_type 返回 minimax', () => {
-    const task = { id: 'task-4', title: '未知类型' };
+    const task = { id: 'task-5', title: '未知类型' };
     expect(getProviderForTask(task)).toBe('minimax');
+  });
+
+  it('T4 (D4): FIXED_PROVIDER 包含正确映射', () => {
+    expect(FIXED_PROVIDER.exploratory).toBe('minimax');
+    expect(FIXED_PROVIDER.codex_qa).toBe('openai');
+    expect(FIXED_PROVIDER.decomp_review).toBe('minimax');
+    expect(FIXED_PROVIDER.talk).toBe('minimax');
+    expect(FIXED_PROVIDER.research).toBe('minimax');
   });
 });
 
