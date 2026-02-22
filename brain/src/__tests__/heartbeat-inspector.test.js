@@ -185,6 +185,29 @@ describe('Heartbeat Inspector', () => {
     expect(mockExecuteDecision).not.toHaveBeenCalled();
   });
 
+  // callThalamLLM 超时参数验证
+  it('callThalamLLM 被调用时传入 60s 超时参数', async () => {
+    mockCallThalamLLM.mockResolvedValueOnce({
+      text: '{"action": "no_action", "rationale": "ok"}',
+    });
+
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await runHeartbeatInspection(mockPool, {
+      heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
+    });
+
+    expect(mockCallThalamLLM).toHaveBeenCalledTimes(1);
+    expect(mockCallThalamLLM).toHaveBeenCalledWith(
+      expect.any(String),
+      { timeoutMs: 60000 },
+    );
+  });
+
   // D7: executeDecision 调用参数验证
   it('L1 返回 heartbeat_finding → 调用 executeDecision(source=heartbeat_inspection)', async () => {
     mockCallThalamLLM.mockResolvedValueOnce({

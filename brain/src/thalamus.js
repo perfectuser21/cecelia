@@ -542,7 +542,7 @@ function stripThinking(content) {
  * @param {string} prompt
  * @returns {Promise<{text: string, usage: Object}>}
  */
-async function callThalamLLM(prompt) {
+async function callThalamLLM(prompt, { timeoutMs = 30000 } = {}) {
   const apiKey = getThalamusMinimaxKey();
   if (!apiKey) throw new Error('MiniMax API key not available (thalamus)');
 
@@ -557,7 +557,7 @@ async function callThalamLLM(prompt) {
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }]
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {

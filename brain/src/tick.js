@@ -1322,10 +1322,10 @@ async function executeTick() {
   const heartbeatElapsed = Date.now() - _lastHeartbeatTime;
   const { HEARTBEAT_INTERVAL_MS: HB_INTERVAL } = await import('./heartbeat-inspector.js');
   if (heartbeatElapsed >= HB_INTERVAL) {
-    _lastHeartbeatTime = Date.now();
     try {
       const { runHeartbeatInspection } = await import('./heartbeat-inspector.js');
       const hbResult = await runHeartbeatInspection(pool);
+      _lastHeartbeatTime = Date.now(); // 仅成功后更新，失败时下次 tick 立即重试
       if (!hbResult.skipped && hbResult.actions_count > 0) {
         console.log(`[TICK] Heartbeat 巡检: ${hbResult.actions_count} 个行动`);
         actionsTaken.push({

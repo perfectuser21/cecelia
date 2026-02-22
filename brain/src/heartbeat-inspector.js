@@ -199,7 +199,7 @@ async function runHeartbeatInspection(pool, options = {}) {
 
   // 3. 构建 prompt，调用 L1 丘脑
   const prompt = buildHeartbeatPrompt(heartbeatContent, snapshot);
-  const { text: responseText } = await callThalamLLM(prompt);
+  const { text: responseText } = await callThalamLLM(prompt, { timeoutMs: 60000 });
 
   // 4. 解析响应
   const decision = parseHeartbeatResponse(responseText);
