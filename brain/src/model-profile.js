@@ -202,6 +202,70 @@ export async function updateAgentModel(pool, agentId, modelId) {
 }
 
 /**
+ * 批量更新多个 agent 的模型配置
+ * 前端"保存"按钮一次提交所有修改
+ */
+export async function batchUpdateAgentModels(pool, updates) {
+  // updates = [{ agent_id: 'dev', model_id: 'xxx' }, ...]
+  const { getAgentById, isModelAllowedForAgent, getProviderForModel } = await import('./model-registry.js');
+
+  // 先校验所有 updates
+  for (const { agent_id, model_id } of updates) {
+    const agent = getAgentById(agent_id);
+    if (!agent) throw new Error(`Unknown agent: ${agent_id}`);
+    if (!isModelAllowedForAgent(agent_id, model_id)) {
+      throw new Error(`Model ${model_id} is not allowed for agent ${agent_id}`);
+    }
+    const newProvider = getProviderForModel(model_id);
+    if (agent.fixed_provider && newProvider !== agent.fixed_provider) {
+      throw new Error(`Agent ${agent_id} is locked to provider ${agent.fixed_provider}`);
+    }
+  }
+
+  // 获取 active profile
+  const { rows: activeRows } = await pool.query(
+    'SELECT id, name, config FROM model_profiles WHERE is_active = true LIMIT 1'
+  );
+  if (activeRows.length === 0) {
+    throw new Error('No active profile found');
+  }
+
+  const profile = activeRows[0];
+  const config = JSON.parse(JSON.stringify(profile.config)); // deep clone
+
+  // 应用所有更新
+  const results = [];
+  for (const { agent_id, model_id } of updates) {
+    const agent = getAgentById(agent_id);
+    const newProvider = getProviderForModel(model_id);
+
+    if (agent.layer === 'brain') {
+      config[agent_id] = { provider: newProvider, model: model_id };
+    } else {
+      if (!config.executor.model_map) config.executor.model_map = {};
+      const newMap = {};
+      for (const p of ['anthropic', 'minimax', 'openai']) {
+        newMap[p] = p === newProvider ? model_id : null;
+      }
+      config.executor.model_map[agent_id] = newMap;
+    }
+    results.push({ agent_id, provider: newProvider, model: model_id });
+  }
+
+  // 单次 DB 写入
+  await pool.query(
+    'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
+    [JSON.stringify(config), profile.id]
+  );
+
+  // 刷新缓存
+  _activeProfile = { ...profile, config, is_active: true };
+  console.log(`[model-profile] Batch updated ${updates.length} agents`);
+
+  return { updated: results, profile: _activeProfile };
+}
+
+/**
  * 重置缓存（测试用）
  */
 export function _resetProfileCache() {

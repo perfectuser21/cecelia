@@ -11,7 +11,7 @@ import {
   isModelAllowedForAgent,
   getProviderForModel,
 } from '../model-registry.js';
-import { updateAgentModel, _resetProfileCache, getActiveProfile } from '../model-profile.js';
+import { updateAgentModel, batchUpdateAgentModels, _resetProfileCache, getActiveProfile } from '../model-profile.js';
 
 // ============================================================
 // Mock Pool Helper
@@ -32,6 +32,10 @@ describe('model-registry', () => {
         expect(m.provider).toBeTruthy();
         expect(m.tier).toBeTruthy();
       }
+    });
+
+    it('R1b: 模型总数为 10', () => {
+      expect(MODELS.length).toBe(10);
     });
 
     it('R2: 所有 agent 有 id/name/layer/allowed_models', () => {
@@ -61,6 +65,45 @@ describe('model-registry', () => {
           }
         }
       }
+    });
+
+    it('R10: 新增模型存在且属性正确', () => {
+      const m21hs = getModelById('MiniMax-M2.1-highspeed');
+      expect(m21hs).toBeTruthy();
+      expect(m21hs.provider).toBe('minimax');
+      expect(m21hs.tier).toBe('fast');
+
+      const m25 = getModelById('MiniMax-M2.5');
+      expect(m25).toBeTruthy();
+      expect(m25.provider).toBe('minimax');
+      expect(m25.tier).toBe('standard');
+
+      const o3 = getModelById('o3-mini');
+      expect(o3).toBeTruthy();
+      expect(o3.provider).toBe('openai');
+      expect(o3.tier).toBe('fast');
+
+      const o4 = getModelById('o4-mini');
+      expect(o4).toBeTruthy();
+      expect(o4.provider).toBe('openai');
+      expect(o4.tier).toBe('fast');
+    });
+
+    it('R11: 新模型正确加入 agent 白名单', () => {
+      // thalamus 包含 M2.1-highspeed
+      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.1-highspeed')).toBe(true);
+      // cortex 包含 M2.5
+      expect(isModelAllowedForAgent('cortex', 'MiniMax-M2.5')).toBe(true);
+      // codex_qa 包含 o3-mini 和 o4-mini
+      expect(isModelAllowedForAgent('codex_qa', 'o3-mini')).toBe(true);
+      expect(isModelAllowedForAgent('codex_qa', 'o4-mini')).toBe(true);
+      // qa 包含 o3-mini 和 o4-mini
+      expect(isModelAllowedForAgent('qa', 'o3-mini')).toBe(true);
+      expect(isModelAllowedForAgent('qa', 'o4-mini')).toBe(true);
+      // exploratory 包含 M2.1-highspeed
+      expect(isModelAllowedForAgent('exploratory', 'MiniMax-M2.1-highspeed')).toBe(true);
+      // dev 包含 M2.5
+      expect(isModelAllowedForAgent('dev', 'MiniMax-M2.5')).toBe(true);
     });
   });
 
@@ -92,6 +135,8 @@ describe('model-registry', () => {
       expect(getProviderForModel('MiniMax-M2.1')).toBe('minimax');
       expect(getProviderForModel('claude-opus-4-20250514')).toBe('anthropic');
       expect(getProviderForModel('codex-mini-latest')).toBe('openai');
+      expect(getProviderForModel('o3-mini')).toBe('openai');
+      expect(getProviderForModel('o4-mini')).toBe('openai');
       expect(getProviderForModel('nonexistent')).toBeNull();
     });
   });
@@ -190,5 +235,119 @@ describe('updateAgentModel', () => {
     const pool = makeMockPool(async () => ({ rows: [] }));
     await expect(updateAgentModel(pool, 'dev', 'MiniMax-M2.5-highspeed'))
       .rejects.toThrow('No active profile');
+  });
+});
+
+describe('batchUpdateAgentModels', () => {
+  beforeEach(() => {
+    _resetProfileCache();
+  });
+
+  const makeActiveProfile = () => ({
+    id: 'profile-minimax',
+    name: 'MiniMax 主力',
+    config: {
+      thalamus: { provider: 'minimax', model: 'MiniMax-M2.1' },
+      cortex: { provider: 'anthropic', model: 'claude-opus-4-20250514' },
+      executor: {
+        default_provider: 'minimax',
+        model_map: {
+          dev: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          qa: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          review: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          audit: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          talk: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          research: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          exploratory: { anthropic: null, minimax: 'MiniMax-M2.1' },
+          decomp_review: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
+          codex_qa: { anthropic: null, minimax: null },
+        },
+        fixed_provider: {
+          exploratory: 'minimax',
+          codex_qa: 'openai',
+          decomp_review: 'minimax',
+          talk: 'minimax',
+          research: 'minimax',
+        },
+      },
+    },
+  });
+
+  it('B1: 批量更新多个 agent 成功', async () => {
+    const profile = makeActiveProfile();
+    const pool = makeMockPool(async (sql) => {
+      if (sql.includes('SELECT')) return { rows: [profile] };
+      return { rows: [] };
+    });
+
+    const result = await batchUpdateAgentModels(pool, [
+      { agent_id: 'thalamus', model_id: 'MiniMax-M2.1-highspeed' },
+      { agent_id: 'dev', model_id: 'claude-sonnet-4-20250514' },
+      { agent_id: 'codex_qa', model_id: 'o3-mini' },
+    ]);
+
+    expect(result.updated.length).toBe(3);
+    expect(result.updated[0]).toEqual({ agent_id: 'thalamus', provider: 'minimax', model: 'MiniMax-M2.1-highspeed' });
+    expect(result.updated[1]).toEqual({ agent_id: 'dev', provider: 'anthropic', model: 'claude-sonnet-4-20250514' });
+    expect(result.updated[2]).toEqual({ agent_id: 'codex_qa', provider: 'openai', model: 'o3-mini' });
+
+    // 缓存更新
+    const cached = getActiveProfile();
+    expect(cached.config.thalamus.model).toBe('MiniMax-M2.1-highspeed');
+    expect(cached.config.executor.model_map.dev.anthropic).toBe('claude-sonnet-4-20250514');
+    expect(cached.config.executor.model_map.codex_qa.openai).toBe('o3-mini');
+
+    // 只调用一次 UPDATE
+    const updateCalls = pool.query.mock.calls.filter(c => c[0].includes('UPDATE'));
+    expect(updateCalls.length).toBe(1);
+  });
+
+  it('B2: 无效 agent 整体失败', async () => {
+    const pool = makeMockPool();
+    await expect(batchUpdateAgentModels(pool, [
+      { agent_id: 'dev', model_id: 'MiniMax-M2.5-highspeed' },
+      { agent_id: 'nonexistent', model_id: 'MiniMax-M2.1' },
+    ])).rejects.toThrow('Unknown agent: nonexistent');
+  });
+
+  it('B3: 不允许的模型整体失败', async () => {
+    const pool = makeMockPool();
+    await expect(batchUpdateAgentModels(pool, [
+      { agent_id: 'thalamus', model_id: 'claude-opus-4-20250514' },
+    ])).rejects.toThrow('not allowed');
+  });
+
+  it('B4: fixed_provider 冲突整体失败', async () => {
+    const pool = makeMockPool();
+    await expect(batchUpdateAgentModels(pool, [
+      { agent_id: 'codex_qa', model_id: 'MiniMax-M2.1' },
+    ])).rejects.toThrow('not allowed');
+  });
+
+  it('B5: 无 active profile 抛出错误', async () => {
+    const pool = makeMockPool(async () => ({ rows: [] }));
+    await expect(batchUpdateAgentModels(pool, [
+      { agent_id: 'dev', model_id: 'MiniMax-M2.5-highspeed' },
+    ])).rejects.toThrow('No active profile');
+  });
+
+  it('B6: brain 层 + executor 层混合更新', async () => {
+    const profile = makeActiveProfile();
+    const pool = makeMockPool(async (sql) => {
+      if (sql.includes('SELECT')) return { rows: [profile] };
+      return { rows: [] };
+    });
+
+    const result = await batchUpdateAgentModels(pool, [
+      { agent_id: 'cortex', model_id: 'MiniMax-M2.5' },
+      { agent_id: 'qa', model_id: 'o4-mini' },
+    ]);
+
+    expect(result.updated.length).toBe(2);
+    const cached = getActiveProfile();
+    expect(cached.config.cortex.model).toBe('MiniMax-M2.5');
+    expect(cached.config.cortex.provider).toBe('minimax');
+    expect(cached.config.executor.model_map.qa.openai).toBe('o4-mini');
+    expect(cached.config.executor.model_map.qa.minimax).toBeNull();
   });
 });

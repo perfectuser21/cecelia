@@ -56,7 +56,7 @@ import { createProposal, approveProposal, rollbackProposal, rejectProposal, getP
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
-import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel } from './model-profile.js';
+import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -6553,6 +6553,31 @@ router.patch('/model-profiles/active/agent', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     console.error('[API] update-agent-model error:', err.message);
+    const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
+      ? 400 : err.message.includes('No active profile') ? 404 : 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/model-profiles/active/agents', async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ success: false, error: 'updates array is required' });
+    }
+
+    const result = await batchUpdateAgentModels(pool, updates);
+
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: result.profile.id,
+      profile_name: result.profile.name,
+      batch: true,
+      count: updates.length,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] batch-update-agent-models error:', err.message);
     const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
       ? 400 : err.message.includes('No active profile') ? 404 : 500;
     res.status(status).json({ success: false, error: err.message });
