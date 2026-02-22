@@ -17,6 +17,7 @@ import { join } from 'path';
 import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
+import { buildMemoryContext } from './memory-retriever.js';
 
 // MiniMax Coding Plan API（OpenAI 兼容端点）
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
@@ -102,7 +103,7 @@ async function callMiniMax(userMessage, systemPrompt, options = {}) {
 }
 
 /**
- * 搜索相关记忆并构建注入块
+ * 搜索相关记忆并构建注入块（使用统一记忆系统 buildMemoryContext）
  * @param {string} query - 搜索关键词
  * @returns {Promise<string>} 格式化的记忆块
  */
@@ -110,25 +111,13 @@ async function fetchMemoryContext(query) {
   if (!query) return '';
 
   try {
-    const response = await fetch('http://localhost:5221/api/brain/memory/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, topK: 3, mode: 'summary' }),
-      signal: AbortSignal.timeout(3000),
+    const { block } = await buildMemoryContext({
+      query,
+      mode: 'chat',
+      tokenBudget: 600,
+      pool,
     });
-
-    if (!response.ok) return '';
-
-    const data = await response.json();
-    const matches = Array.isArray(data.matches) ? data.matches : [];
-    if (matches.length === 0) return '';
-
-    const lines = matches.map((m, i) => {
-      const preview = (m.preview || m.title || '').slice(0, 150);
-      return `- [${i + 1}] ${m.title || '(无标题)'} (相似度: ${(m.similarity || 0).toFixed(2)}): ${preview}`;
-    });
-
-    return `\n相关历史记忆:\n${lines.join('\n')}\n`;
+    return block || '';
   } catch (err) {
     console.warn('[orchestrator-chat] Memory search failed (graceful fallback):', err.message);
     return '';

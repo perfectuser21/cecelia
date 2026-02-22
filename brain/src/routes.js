@@ -55,6 +55,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
+import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -6366,6 +6367,46 @@ router.post('/orchestrator/chat', async (req, res) => {
       error: 'Chat failed',
       message: err.message,
     });
+  }
+});
+
+// ==================== Orchestrator Realtime ====================
+
+/**
+ * GET /api/brain/orchestrator/realtime/config
+ * 返回 OpenAI Realtime API 配置（api_key, model, voice, tools）
+ */
+router.get('/orchestrator/realtime/config', (_req, res) => {
+  const result = getRealtimeConfig();
+  if (!result.success) {
+    return res.status(500).json(result);
+  }
+  res.json(result);
+});
+
+/**
+ * POST /api/brain/orchestrator/realtime/tool
+ * 处理 Realtime 语音会话中的工具调用
+ *
+ * Request: { tool_name: string, arguments?: object }
+ * Response: { success: boolean, result?: object, error?: string }
+ */
+router.post('/orchestrator/realtime/tool', async (req, res) => {
+  try {
+    const { tool_name, arguments: args } = req.body;
+
+    if (!tool_name || typeof tool_name !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'tool_name is required and must be a string',
+      });
+    }
+
+    const result = await handleRealtimeTool(tool_name, args || {});
+    res.json(result);
+  } catch (err) {
+    console.error('[API] orchestrator/realtime/tool error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
