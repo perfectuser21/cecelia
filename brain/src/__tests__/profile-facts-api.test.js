@@ -52,7 +52,7 @@ describe('Profile Facts API', () => {
   describe('GET /api/brain/profile/facts', () => {
     it('返回 facts 列表和 total', async () => {
       const fakeFacts = [
-        { id: 'uuid-1', category: 'identity', content: '姓名是徐啸', has_embedding: true, created_at: new Date() },
+        { id: 'uuid-1', category: 'preference', content: '偏好简洁的回答', has_embedding: true, created_at: new Date() },
       ];
       mockQuery
         .mockResolvedValueOnce({ rows: fakeFacts })
@@ -63,7 +63,7 @@ describe('Profile Facts API', () => {
       expect(res.status).toBe(200);
       expect(res.body.facts).toHaveLength(1);
       expect(res.body.total).toBe(1);
-      expect(res.body.facts[0].content).toBe('姓名是徐啸');
+      expect(res.body.facts[0].content).toBe('偏好简洁的回答');
     });
 
     it('category 过滤传入查询参数', async () => {
@@ -71,14 +71,32 @@ describe('Profile Facts API', () => {
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ total: 0 }] });
 
-      const res = await request(app).get('/api/brain/profile/facts?category=identity&limit=10&offset=5');
+      const res = await request(app).get('/api/brain/profile/facts?category=behavior&limit=10&offset=5');
 
       expect(res.status).toBe(200);
       // 检查查询包含 category 参数
       const firstCallArgs = mockQuery.mock.calls[0];
-      expect(firstCallArgs[1]).toContain('identity');
+      expect(firstCallArgs[1]).toContain('behavior');
       expect(firstCallArgs[1]).toContain(10); // limit
       expect(firstCallArgs[1]).toContain(5);  // offset
+    });
+
+    it('GET ?category=behavior 正确过滤，不返回全量', async () => {
+      const behaviorFacts = [
+        { id: 'uuid-b', category: 'behavior', content: '习惯早起', has_embedding: false, created_at: new Date() },
+      ];
+      mockQuery
+        .mockResolvedValueOnce({ rows: behaviorFacts })
+        .mockResolvedValueOnce({ rows: [{ total: 1 }] });
+
+      const res = await request(app).get('/api/brain/profile/facts?category=behavior');
+
+      expect(res.status).toBe(200);
+      expect(res.body.facts).toHaveLength(1);
+      expect(res.body.facts[0].category).toBe('behavior');
+      // 验证 SQL 包含 category 条件
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('category = $');
     });
 
     it('DB 错误时返回 500', async () => {
@@ -251,6 +269,48 @@ describe('Profile Facts API', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('text is required');
+    });
+
+    it('MiniMax 返回 markdown 代码块时正确解析，不插入代码符号', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '```json\n{"facts": ["习惯早起", "偏好简洁"]}\n```' } }],
+        }),
+      });
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'id-1' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'id-2' }] });
+
+      const res = await request(app)
+        .post('/api/brain/profile/facts/import')
+        .send({ text: '我习惯早起，偏好简洁' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.imported).toBe(2);
+      expect(res.body.facts).toEqual(['习惯早起', '偏好简洁']);
+      // 确保没有代码符号被插入
+      expect(res.body.facts).not.toContain('```');
+      expect(res.body.facts).not.toContain('{');
+    });
+
+    it('POST category=behavior 保存为 behavior，不降级为 other', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"facts": ["习惯早起"]}' } }],
+        }),
+      });
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'id-1' }] });
+
+      const res = await request(app)
+        .post('/api/brain/profile/facts/import')
+        .send({ text: '我习惯早起', category: 'behavior' });
+
+      expect(res.status).toBe(200);
+      // 验证插入时使用了 behavior 分类
+      const insertParams = mockQuery.mock.calls[0][1];
+      expect(insertParams[1]).toBe('behavior');
     });
 
     it('MiniMax 返回空 facts 时返回 imported: 0', async () => {

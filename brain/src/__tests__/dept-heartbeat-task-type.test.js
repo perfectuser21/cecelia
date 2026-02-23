@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createDeptHeartbeatTask, getEnabledDepts, triggerDeptHeartbeats } from '../dept-heartbeat.js';
+import { createDeptHeartbeatTask, getEnabledDepts, triggerDeptHeartbeats, lookupDeptPrimaryGoal } from '../dept-heartbeat.js';
 
 describe('dept-heartbeat task_type constraint (migration 070)', () => {
   let capturedSQL;
@@ -36,6 +36,11 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
           return { rows: [] };
         }
 
+        // lookupDeptPrimaryGoal → return a goal_id
+        if (sql.includes('FROM goals') && sql.includes("metadata->>'dept'")) {
+          return { rows: [{ id: 'test-goal-id' }] };
+        }
+
         // INSERT → return new task id
         if (sql.includes('INSERT INTO tasks')) {
           return { rows: [{ id: 'test-heartbeat-task-id' }] };
@@ -58,6 +63,52 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
       const insertSQL = capturedSQL.find(sql => sql.includes('INSERT INTO tasks'));
       expect(insertSQL).toBeDefined();
       expect(insertSQL).toContain("'dept_heartbeat'");
+    });
+
+    it('should include description in INSERT', async () => {
+      const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
+      await createDeptHeartbeatTask(mockPool, dept);
+
+      const insertIdx = capturedSQL.findIndex(sql => sql.includes('INSERT INTO tasks'));
+      expect(insertIdx).toBeGreaterThanOrEqual(0);
+
+      const insertSQL = capturedSQL[insertIdx];
+      expect(insertSQL).toContain('description');
+
+      const insertParams = capturedParams[insertIdx];
+      // $2 = description
+      expect(insertParams[1]).toContain('zenithjoy');
+      expect(insertParams[1]).toContain('dept-heartbeat');
+    });
+
+    it('should include goal_id in INSERT when goals exist', async () => {
+      const dept = { dept_name: 'zenithjoy', repo_path: '/home/xx/perfect21/zenithjoy', max_llm_slots: 2 };
+      await createDeptHeartbeatTask(mockPool, dept);
+
+      const insertIdx = capturedSQL.findIndex(sql => sql.includes('INSERT INTO tasks'));
+      const insertParams = capturedParams[insertIdx];
+      // $4 = goal_id
+      expect(insertParams[3]).toBe('test-goal-id');
+    });
+
+    it('should set goal_id to null when no goals found for dept', async () => {
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes('status IN') && sql.includes('dept_heartbeat')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM goals')) {
+          return { rows: [] }; // 无匹配 goal
+        }
+        if (sql.includes('INSERT INTO tasks')) {
+          return { rows: [{ id: 'task-no-goal' }] };
+        }
+        return { rows: [] };
+      });
+
+      const dept = { dept_name: 'newdept', repo_path: '/tmp/newdept', max_llm_slots: 1 };
+      const result = await createDeptHeartbeatTask(mockPool, dept);
+
+      expect(result.created).toBe(true);
     });
 
     it('should check for existing dept_heartbeat tasks before inserting', async () => {
@@ -98,10 +149,47 @@ describe('dept-heartbeat task_type constraint (migration 070)', () => {
       expect(insertIdx).toBeGreaterThanOrEqual(0);
 
       const insertParams = capturedParams[insertIdx];
-      const payload = JSON.parse(insertParams[2]);
+      // $5 = payload JSON (title=$1, description=$2, dept=$3, goal_id=$4, payload=$5)
+      const payload = JSON.parse(insertParams[4]);
       expect(payload.dept_name).toBe('zenithjoy');
       expect(payload.repo_path).toBe('/home/xx/perfect21/zenithjoy');
       expect(payload.max_llm_slots).toBe(2);
+    });
+  });
+
+  describe('lookupDeptPrimaryGoal', () => {
+    it('should return goal_id when goals table has matching dept', async () => {
+      const goalId = await lookupDeptPrimaryGoal(mockPool, 'zenithjoy');
+      expect(goalId).toBe('test-goal-id');
+
+      const sql = capturedSQL.find(s => s.includes('FROM goals'));
+      expect(sql).toBeDefined();
+      expect(sql).toContain("metadata->>'dept'");
+      expect(sql).toContain("NOT IN");
+    });
+
+    it('should return null when no matching goals found', async () => {
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes('FROM goals')) {
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const goalId = await lookupDeptPrimaryGoal(mockPool, 'unknowndept');
+      expect(goalId).toBeNull();
+    });
+
+    it('should return null on DB error (graceful degradation)', async () => {
+      mockPool.query.mockImplementation(async (sql) => {
+        if (sql.includes('FROM goals')) {
+          throw new Error('DB error');
+        }
+        return { rows: [] };
+      });
+
+      const goalId = await lookupDeptPrimaryGoal(mockPool, 'zenithjoy');
+      expect(goalId).toBeNull();
     });
   });
 

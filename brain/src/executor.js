@@ -832,6 +832,7 @@ function getSkillForTaskType(taskType, payload) {
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
+    'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // 兼容旧类型
     'qa': '/review',
     'audit': '/review',
@@ -900,9 +901,10 @@ function getPermissionModeForTaskType(taskType) {
   // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
   const modeMap = {
     'dev': 'bypassPermissions',        // 写代码
-    'review': 'plan',                  // 只读分析（唯一用 plan 的）
+    'review': 'plan',                  // 只读分析
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
+    'code_review': 'bypassPermissions', // 需要写报告文件到 docs/reviews/
     // 兼容旧类型
     'qa': 'plan',
     'audit': 'plan',
@@ -1214,6 +1216,14 @@ ${task.description || ''}
 - ✅ 可以读取代码/文档/日志
 - ✅ 输出调研结果和建议
 - ❌ 不能创建、修改或删除任何文件`;
+  }
+
+  // code_review 类型：传入 repo_path 给 /code-review skill
+  if (taskType === 'code_review') {
+    const repoPath = task.payload?.repo_path || '';
+    const since = task.payload?.since_hours ? `--since=${task.payload.since_hours}h` : '';
+    const repoArg = repoPath ? `${repoPath}` : '';
+    return `/code-review ${repoArg} ${since}`.trim();
   }
 
   // 有明确 PRD 内容的任务
