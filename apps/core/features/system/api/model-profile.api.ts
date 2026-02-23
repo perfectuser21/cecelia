@@ -63,6 +63,7 @@ export interface AgentInfo {
   description: string;
   layer: 'brain' | 'executor';
   allowed_models: string[];
+  recommended_model?: string;
   fixed_provider: string | null;
 }
 
