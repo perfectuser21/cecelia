@@ -205,7 +205,9 @@ const brainProxy = createProxyMiddleware({
   target: BRAIN_NODE_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api/brain${path}`,
-  ws: true,
+  // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
+  // server.on('upgrade') listener that conflicts with the manual handler below.
+  // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
 });
 app.use('/api/brain', brainProxy);
 
