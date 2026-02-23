@@ -133,7 +133,7 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 067', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('067');
+  it('EXPECTED_SCHEMA_VERSION should be 068', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('068');
   });
 });

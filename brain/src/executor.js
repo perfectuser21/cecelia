@@ -831,6 +831,7 @@ function getSkillForTaskType(taskType, payload) {
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
+    'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     // 兼容旧类型
     'qa': '/review',
     'audit': '/review',
@@ -1428,6 +1429,10 @@ async function triggerCeceliaRun(task) {
       try {
         repoPath = await resolveRepoPath(task.project_id);
       } catch { /* ignore */ }
+    }
+    // Fallback: dept_heartbeat (and any task with payload.repo_path) uses payload directly
+    if (!repoPath && task.payload?.repo_path) {
+      repoPath = task.payload.repo_path;
     }
 
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
