@@ -198,7 +198,8 @@ async function callCortexLLM(prompt) {
       messages: [
         { role: 'user', content: prompt }
       ]
-    })
+    }),
+    signal: AbortSignal.timeout(90000)
   });
 
   if (!response.ok) {
