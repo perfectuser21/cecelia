@@ -7,10 +7,7 @@
 #   3. Status endpoint returns valid structure
 #   4. Manual tick executes successfully
 #   5. Tick status reports correct state
-#   6. PR Plans API endpoints respond
-#
-# For comprehensive PR Plans business logic testing, see:
-#   brain/src/__tests__/three-layer-decomposition-e2e.test.js
+#   6. Tasks API endpoint responds
 #
 # Requires: PostgreSQL running, migrations already applied, ENV_REGION=us
 # Does NOT require: ANTHROPIC_API_KEY (no LLM calls in empty-DB tick)
@@ -111,25 +108,24 @@ else
   fi
 fi
 
-# 6. Check PR Plans API
-echo "[6/6] Checking PR Plans API..."
-PR_PLANS=$(curl -sf "http://localhost:$PORT/api/brain/pr-plans" || echo "")
-if [ -z "$PR_PLANS" ]; then
-  fail "PR Plans endpoint returned empty response"
+# 6. Check Tasks API
+echo "[6/6] Checking Tasks API..."
+TASKS=$(curl -sf "http://localhost:$PORT/api/brain/tasks?status=queued&limit=1" || echo "")
+if [ -z "$TASKS" ]; then
+  fail "Tasks endpoint returned empty response"
 else
-  # Check if response has .pr_plans array (API envelope format)
-  if echo "$PR_PLANS" | jq -e '.pr_plans | type == "array"' > /dev/null 2>&1; then
-    pass "PR Plans API responds with valid structure"
+  if echo "$TASKS" | jq -e '. | type == "array"' > /dev/null 2>&1; then
+    pass "Tasks API responds with valid structure"
   else
-    fail "PR Plans API returned invalid structure"
-    echo "  Response: $(echo "$PR_PLANS" | head -c 200)"
+    fail "Tasks API returned invalid structure"
+    echo "  Response: $(echo "$TASKS" | head -c 200)"
   fi
 fi
 
 echo ""
 if [ "$FAILED" -eq 0 ]; then
   echo "=== GoldenPath PASSED ==="
-  echo "  Server started, selfcheck passed, status OK, tick executed, PR Plans API OK"
+  echo "  Server started, selfcheck passed, status OK, tick executed, Tasks API OK"
   exit 0
 else
   echo "=== GoldenPath FAILED ==="

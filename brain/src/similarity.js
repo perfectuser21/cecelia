@@ -93,12 +93,8 @@ class SimilarityService {
     // Query Tasks with filters
     const tasksResult = await this.db.query(`
       SELECT
-        t.id, t.title, t.description, t.status, t.metadata, t.project_id,
-        pp.project_id as initiative_id, pp.title as pr_plan_title,
-        p.name as initiative_title
+        t.id, t.title, t.description, t.status, t.metadata, t.project_id
       FROM tasks t
-      LEFT JOIN pr_plans pp ON t.pr_plan_id = pp.id
-      LEFT JOIN projects p ON pp.project_id = p.id
       WHERE ${taskWhereClause}
       ORDER BY t.updated_at DESC
       LIMIT $${paramIndex}
@@ -120,9 +116,6 @@ class SimilarityService {
         text: `${task.title} ${task.description || ''}`,
         project_id: task.project_id,
         metadata: {
-          initiative_id: task.initiative_id,
-          initiative_title: task.initiative_title,
-          pr_plan_title: task.pr_plan_title,
           repo: parsedMetadata.repo || null,
           pr_number: parsedMetadata.pr_number || null,
           pr_author: parsedMetadata.pr_author || null
