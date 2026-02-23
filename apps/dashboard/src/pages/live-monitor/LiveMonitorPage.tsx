@@ -575,6 +575,7 @@ export default function LiveMonitorPage() {
       fetch('/api/brain/cluster/status').then(x => x.json()),
       fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
       fetch('/api/v1/vps-monitor/services').then(x => x.json()),
+      fetch('/api/cluster/scan-sessions').then(x => x.json()),
     ]);
     if (r[0].status === 'fulfilled') setBrainStatus(r[0].value);
     if (r[1].status === 'fulfilled') setTick(r[1].value);
@@ -583,9 +584,16 @@ export default function LiveMonitorPage() {
     if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) setProjects(r[4].value);
     if (r[5].status === 'fulfilled') {
       const c = r[5].value?.cluster ?? null;
+      // Brain 容器无 --pid=host，ps aux 看不到宿主机进程。
+      // 用 Core server（宿主机 pm2）扫描的结果覆盖 US 服务器的 processes。
+      const scanResult = r[8].status === 'fulfilled' ? r[8].value : null;
+      if (c?.servers?.[0] && scanResult?.processes) {
+        c.servers[0].slots.processes = scanResult.processes;
+        c.servers[0].slots.used = scanResult.total ?? scanResult.processes.length;
+      }
       setCluster(c);
-      // 批量获取所有进程的 provider 信息
-      const procs = c?.servers?.[0]?.slots?.processes ?? [];
+      // 批量获取所有进程的 provider 信息（用扫描到的真实进程列表）
+      const procs: ClusterProcess[] = c?.servers?.[0]?.slots?.processes ?? [];
       if (procs.length > 0) {
         const pids = procs.map((p: ClusterProcess) => p.pid).join(',');
         fetch(`/api/cluster/session-providers?pids=${pids}`)

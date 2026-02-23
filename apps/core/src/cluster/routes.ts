@@ -1,11 +1,13 @@
 /**
  * Cluster session management routes
  *
+ * GET  /api/cluster/scan-sessions      — 扫描宿主机 Claude 进程（绕过 Docker PID 隔离）
  * GET  /api/cluster/session-info/:pid  — 读取进程 cwd（项目目录）
  * POST /api/cluster/kill-session       — 安全 kill claude 前台进程
  */
 
 import { Router } from 'express';
+import { execSync } from 'child_process';
 import { readlinkSync, readFileSync, existsSync } from 'fs';
 
 const router = Router();
@@ -57,6 +59,43 @@ function isForegroundClaude(args: string[]): boolean {
   if (args.includes('-p')) return false;
   return true;
 }
+
+/**
+ * GET /api/cluster/scan-sessions
+ * 扫描宿主机 Claude 进程列表。
+ * 因为 Brain 运行在 Docker 容器（无 --pid=host），它的 ps aux 看不到宿主机进程。
+ * Core server 运行在宿主机（pm2），可以直接扫描 /proc。
+ */
+router.get('/scan-sessions', (_req, res) => {
+  try {
+    const stdout = execSync(
+      'ps aux | grep -E " claude( |$)" | grep -v grep | grep -v "/bin/bash"',
+      { encoding: 'utf-8', timeout: 5000 }
+    );
+    const processes: Array<{
+      pid: number; cpu: string; memory: string; startTime: string; command: string;
+    }> = [];
+    for (const line of stdout.trim().split('\n').filter(Boolean)) {
+      const parts = line.split(/\s+/);
+      if (parts.length >= 11) {
+        const pid = parseInt(parts[1], 10);
+        if (!Number.isFinite(pid) || pid <= 0) continue;
+        processes.push({
+          pid,
+          cpu: `${parts[2]}%`,
+          memory: `${parts[3]}%`,
+          startTime: parts[8],
+          command: parts.slice(10).join(' ').slice(0, 120),
+        });
+      }
+    }
+    const headed = processes.filter(p => !p.command.includes(' -p ')).length;
+    const headless = processes.filter(p => p.command.includes(' -p ')).length;
+    res.json({ processes, total: processes.length, headed, headless, scanned_at: new Date().toISOString() });
+  } catch {
+    res.json({ processes: [], total: 0, headed: 0, headless: 0, scanned_at: new Date().toISOString() });
+  }
+});
 
 /**
  * GET /api/cluster/session-info/:pid
