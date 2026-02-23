@@ -209,6 +209,13 @@ const brainProxy = createProxyMiddleware({
 });
 app.use('/api/brain', brainProxy);
 
+// Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
+const brainWsProxy = createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  ws: true,
+});
+
 // OKR Tree API routes (tree-based OKR management)
 app.use('/api/okr', okrRoutes);
 
@@ -261,7 +268,7 @@ server.on('upgrade', (req, socket, head) => {
   } else if (req.url?.startsWith('/api/brain/ws')) {
     req.url = '/ws';
     console.log('[WebSocket Upgrade] Proxying brain WS');
-    brainProxy.upgrade(req, socket as any, head);
+    brainWsProxy.upgrade(req, socket as any, head);
   }
 });
 
