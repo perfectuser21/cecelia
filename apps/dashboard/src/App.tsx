@@ -7,7 +7,7 @@
 
 import { useState, useMemo, lazy, Suspense, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle, Wrench } from 'lucide-react';
+import { PanelLeftClose, PanelLeft, Sun, Moon, Monitor, Circle } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import CollapsibleNavItem from './components/CollapsibleNavItem';
 import Breadcrumb from './components/Breadcrumb';
@@ -53,13 +53,10 @@ function AppContent() {
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(false);
 
-  // 环境检测：5212 = 开发环境，5211 = 生产环境
-  const isDev = typeof window !== 'undefined' && window.location.port === '5212';
-
   // 设置浏览器标题
   useEffect(() => {
-    document.title = isDev ? 'Cecelia [DEV]' : 'Cecelia';
-  }, [isDev]);
+    document.title = 'Cecelia';
+  }, []);
 
   // 主题切换
   const cycleTheme = () => {
@@ -109,14 +106,6 @@ function AppContent() {
         ? 'bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400/50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800'
         : 'bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800'
     }`}>
-      {/* 开发环境标识 - 橙色顶部横条 */}
-      {isDev && (
-        <div className="fixed top-0 left-0 right-0 h-12 bg-gradient-to-r from-orange-500 to-orange-600 text-white flex items-center justify-center text-lg font-bold z-[100] shadow-lg">
-          <Wrench className="w-5 h-5 mr-2" />
-          开发环境 (DEV)
-        </div>
-      )}
-
       {isAuthenticated && (
         <>
           {/* 左侧导航栏 - 使用配置的渐变色 */}
@@ -224,7 +213,7 @@ function AppContent() {
           </aside>
 
           {/* 顶部栏 - Canvas 页面使用深色主题 */}
-          <div className={`fixed ${isDev ? 'top-12' : 'top-0'} ${collapsed ? 'left-16' : 'left-64'} right-0 h-16 ${
+          <div className={`fixed top-0 ${collapsed ? 'left-16' : 'left-64'} right-0 h-16 ${
             location.pathname === '/canvas'
               ? 'bg-slate-900/90 border-indigo-500/20'
               : 'bg-white/90 dark:bg-slate-800/90 border-slate-200/80 dark:border-slate-700/50'
@@ -265,7 +254,7 @@ function AppContent() {
       )}
 
       {/* 主内容区域 - 配置驱动路由 */}
-      <main className={isAuthenticated ? `flex-1 overflow-auto ${collapsed ? 'ml-16' : 'ml-64'} ${isDev ? 'pt-28' : 'pt-16'} transition-all duration-300` : "flex-1 overflow-auto"}>
+      <main className={isAuthenticated ? `flex-1 overflow-auto ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-auto"}>
         <div key={location.pathname} className={isAuthenticated ? "p-8 page-fade-in" : ""}>
           <DynamicRouter />
         </div>

@@ -136,7 +136,7 @@ async function getBrainStatus(): Promise<ServiceStatus> {
     // Get task counts from workspace's own task system
     let taskCounts = { p0: 0, p1: 0, p2: 0 };
     try {
-      const tasksResponse = await fetch('http://localhost:5212/api/tasks/tasks');
+      const tasksResponse = await fetch('http://localhost:5211/api/tasks/tasks');
       const tasksData = await tasksResponse.json() as { tasks?: any[] };
       const tasks = tasksData.tasks || [];
       taskCounts = {
@@ -1274,7 +1274,7 @@ router.get('/live', async (_req: Request, res: Response) => {
     // Get tasks from local task API
     let tasks: any[] = [];
     try {
-      const tasksResponse = await fetch('http://localhost:5212/api/tasks/tasks?limit=20');
+      const tasksResponse = await fetch('http://localhost:5211/api/tasks/tasks?limit=20');
       const tasksData = await tasksResponse.json() as { tasks?: any[] };
       tasks = (tasksData.tasks || []).slice(0, 20);
     } catch {
