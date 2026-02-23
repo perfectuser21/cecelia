@@ -45,6 +45,17 @@ vi.mock('../memory-retriever.js', () => ({
   buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
 }));
 
+// Mock user-profile.js — 阻止 extractAndSaveUserFacts 触发额外 fetch
+vi.mock('../user-profile.js', () => ({
+  extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock chat-action-dispatcher.js — 默认不执行动作（各测试按需覆盖）
+const mockDetectAndExecuteAction = vi.hoisted(() => vi.fn().mockResolvedValue(''));
+vi.mock('../chat-action-dispatcher.js', () => ({
+  detectAndExecuteAction: mockDetectAndExecuteAction,
+}));
+
 // Import after mocks
 import pool from '../db.js';
 import { processEvent as thalamusProcessEvent } from '../thalamus.js';
@@ -563,6 +574,44 @@ describe('orchestrator-chat', () => {
     it('handles multiple thinking blocks', () => {
       const input = '<think>第一段</think>中间<think>第二段</think>结尾';
       expect(stripThinking(input)).toBe('中间结尾');
+    });
+  });
+
+  describe('handleChat action suffix (D9)', () => {
+    it('D9: 动作回复追加到 reply 末尾', async () => {
+      // MiniMax 返回正常回复
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '好的，我来帮你记录。' } }],
+          usage: {},
+        }),
+      });
+
+      // dispatcher 返回确认文本
+      mockDetectAndExecuteAction.mockResolvedValueOnce('\n\n✅ 已创建任务：完成周报');
+
+      const result = await handleChat('帮我记个任务：完成周报');
+
+      expect(result.reply).toContain('好的，我来帮你记录。');
+      expect(result.reply).toContain('✅ 已创建任务：完成周报');
+      expect(mockDetectAndExecuteAction).toHaveBeenCalledWith('帮我记个任务：完成周报');
+    });
+
+    it('D9-2: 无动作意图时 reply 不变', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '你好！有什么需要帮助的吗？' } }],
+          usage: {},
+        }),
+      });
+
+      mockDetectAndExecuteAction.mockResolvedValueOnce('');
+
+      const result = await handleChat('你好');
+
+      expect(result.reply).toBe('你好！有什么需要帮助的吗？');
     });
   });
 });

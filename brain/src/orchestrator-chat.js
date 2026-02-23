@@ -19,6 +19,7 @@ import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js
 import { parseIntent } from './intent.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { extractAndSaveUserFacts } from './user-profile.js';
+import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 
 // MiniMax Coding Plan API（OpenAI 兼容端点）
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
@@ -284,7 +285,13 @@ export async function handleChat(message, context = {}, messages = []) {
     has_memory: memoryBlock.length > 0,
   });
 
-  // 7. 异步提取用户事实（fire-and-forget，不阻塞回复）
+  // 7. 动作检测与执行（追加到 reply 末尾）
+  const actionSuffix = await detectAndExecuteAction(message);
+  if (actionSuffix) {
+    reply += actionSuffix;
+  }
+
+  // 8. 异步提取用户事实（fire-and-forget，不阻塞回复）
   Promise.resolve().then(() =>
     extractAndSaveUserFacts(pool, 'owner', messages, reply)
   ).catch(() => {});
