@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.1] - 2026-02-23
+
+### Fixed
+- cleanup.sh Step [9] 现在自动删除已合并到 develop/main 的 cp-* 分支（之前只 warn）
+- 未合并的 cp-* 分支仍然只 warn，不强制删除
+
 ## [12.30.0] - 2026-02-22
 
 ### Changed

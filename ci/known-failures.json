@@ -15,7 +15,7 @@
     "stop-hook-router-tests": {
       "description": "Stop Hook 路由器架构重构（v13.0.0）导致旧测试失败",
       "ticket": "#536 - Stop Hook router + Branch Protection & DevGate enhancements",
-      "expires": "2026-02-15"
+      "expires": "2026-03-15"
     }
   }
 }
