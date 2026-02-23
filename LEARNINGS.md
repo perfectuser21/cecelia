@@ -4,6 +4,39 @@
 
 ---
 
+### [2026-02-24] code_review task type + 每日调度 (v1.89.0)
+
+**变更**：
+1. `task-router.js`：LOCATION_MAP + isValidTaskType 添加 `code_review`（第 13 种 task type）
+2. `migration 072`：tasks_task_type_check 约束更新
+3. `executor.js`：skillMap / permissionMode / preparePrompt 处理 code_review
+4. `daily-review-scheduler.js`：每天 02:00 UTC 自动为活跃 repo 创建 code_review task（去重）
+5. `tick.js`：Step 10 调用 triggerDailyReview()
+
+**踩坑 1 — GitHub Actions 对"回收利用"的分支名不触发 CI**
+
+- **现象**：同一分支名（cp-02240015-code-review-task-type）历经多次 PR 开关、分支删除/重建后，GitHub Actions 不再为新 commit 创建 check suite，只有 Cursor app 的 check suite。
+- **原因**：GitHub 对曾有过多次关闭 PR 的分支名存在内部状态缓存，不再响应新的 pull_request 事件。
+- **解法**：换新分支名（cp-02240015-code-review-v3），CI 立即恢复正常。
+- **规则**：若 CI 持续不触发（5 分钟内没有 GitHub Actions check suite），直接换分支名创建新 PR，不要在旧分支名上反复尝试。
+
+**踩坑 2 — rebase 后多个测试文件需同步更新 schema version 断言**
+
+- **现象**：rebase 解决了 `learnings-vectorize.test.js` 的 `'070'→'072'` 冲突，但漏掉了 `selfcheck.test.js` 里的 `expect(EXPECTED_SCHEMA_VERSION).toBe('071')` — develop 上的 `62a5cdf` 已将该断言更新为 '071'，而我的目标是 '072'，两个文件都需要改。
+- **规则**：每次更新 EXPECTED_SCHEMA_VERSION 后，全仓搜索所有断言：`grep -r "EXPECTED_SCHEMA_VERSION\|schema version" brain/src/__tests__/`，确保所有测试文件的期望值统一。
+
+**踩坑 3 — rolling-update.sh 需要 OPENAI_API_KEY 在 shell 环境中**
+
+- **现象**：脚本用 `set -u` 严格模式，第 64 行 `-e "OPENAI_API_KEY=${OPENAI_API_KEY}"` 需要 shell 中有该变量，即使 `--env-file .env.docker` 已包含它也不行（env-file 只注入到容器，不设置 shell 变量）。
+- **解法**：`set -a && source .env.docker && set +a && bash scripts/rolling-update.sh`
+- **根本原因**：rolling-update.sh 的这行是冗余的（env-file 已有），但 set -u 严格模式会报错。
+
+**其他**：
+- Brain 实际由 pm2 管理（不是 Docker），`pm2 restart brain` 即可加载新代码并自动应用 migration。
+- migration 会在 Brain 启动时自动执行，无需手动跑 SQL 文件。
+
+---
+
 ### [2026-02-22] Time-Aware Decomposition — Prompt 升级 (v1.66.0)
 
 **变更**：
