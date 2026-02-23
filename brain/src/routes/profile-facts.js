@@ -32,7 +32,7 @@ function getApiKey() {
   }
 }
 
-const VALID_CATEGORIES = ['identity', 'preference', 'work_style', 'focus', 'other', 'auto'];
+const VALID_CATEGORIES = ['preference', 'behavior', 'background', 'goal', 'relationship', 'health', 'other'];
 
 /**
  * 调用 MiniMax 将文本拆解成 facts 列表
@@ -82,12 +82,15 @@ async function parseFactsFromText(text) {
   // 去掉可能的 <think>...</think> 块
   const cleaned = content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
 
+  // 剥离 markdown 代码块（MiniMax 有时返回 ```json {...} ``` 格式）
+  const stripped = cleaned.replace(/^```(?:json)?\s*\n?|```\s*$/gm, '').trim();
+
   try {
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(stripped);
     return Array.isArray(parsed.facts) ? parsed.facts.filter(f => typeof f === 'string' && f.trim()) : [];
   } catch {
     // 如果 JSON 解析失败，按行分割作为 fallback
-    return cleaned.split('\n').map(l => l.replace(/^[-*\d.]+\s*/, '').trim()).filter(Boolean);
+    return stripped.split('\n').map(l => l.replace(/^[-*\d.]+\s*/, '').trim()).filter(Boolean);
   }
 }
 
