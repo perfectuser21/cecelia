@@ -297,9 +297,7 @@ async function loadRecentEvents(pool, _query, mode) {
  * @returns {Promise<string>} 格式化的 profile 片段
  */
 async function loadActiveProfile(pool, mode) {
-  // chat 模式也注入 OKR 焦点（让 Cecelia 知道自己在帮谁干活）
-  // mode 参数保留用于未来区分注入深度
-  void mode;
+  if (mode === 'chat') return '';
 
   try {
     const goals = await pool.query(`
