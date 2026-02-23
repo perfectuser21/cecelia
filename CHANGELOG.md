@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.3] - 2026-02-23
+
+### Fixed
+- hooks/stop-dev.sh：泄漏检测路径（.dev-lock 丢失但 .dev-mode 还在）现在会先调 force_cleanup_worktree() 清理孤立 worktree，再删除 .dev-mode（之前直接删除 .dev-mode，导致 worktree 成为孤立）
+
 ## [12.30.2] - 2026-02-23
 
 ### Fixed
