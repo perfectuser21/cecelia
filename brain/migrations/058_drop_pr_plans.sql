@@ -22,7 +22,7 @@ DROP FUNCTION IF EXISTS check_task_pr_plan_consistency();
 -- ============================================================
 
 DROP INDEX IF EXISTS idx_tasks_pr_plan;
-ALTER TABLE tasks DROP COLUMN IF EXISTS pr_plan_id;
+ALTER TABLE tasks DROP COLUMN IF EXISTS pr_plan_id CASCADE;
 
 -- ============================================================
 -- Step 4: 删除 pr_plans 表
