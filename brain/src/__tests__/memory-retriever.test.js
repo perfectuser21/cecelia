@@ -53,11 +53,22 @@ vi.mock('../learning.js', () => ({
   getRecentLearnings: vi.fn().mockResolvedValue([]),
 }));
 
+// Mock user-profile.js（避免干扰 loadActiveProfile 的 goals 查询）
+const mockLoadUserProfile = vi.fn();
+const mockFormatProfileSnippet = vi.fn();
+vi.mock('../user-profile.js', () => ({
+  loadUserProfile: (...args) => mockLoadUserProfile(...args),
+  formatProfileSnippet: (...args) => mockFormatProfileSnippet(...args),
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSearchWithVectors.mockResolvedValue({ matches: [] });
   mockSearchRelevantLearnings.mockResolvedValue([]);
   mockQuery.mockResolvedValue({ rows: [] });
+  // 默认：用户画像为空（不影响已有测试）
+  mockLoadUserProfile.mockResolvedValue(null);
+  mockFormatProfileSnippet.mockReturnValue('');
 });
 
 // ============================================================
@@ -272,6 +283,50 @@ describe('loadActiveProfile', () => {
     mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
     const result = await _loadActiveProfile({ query: mockQuery }, 'plan');
     expect(result).toBe('');
+  });
+});
+
+// ============================================================
+// D3: loadActiveProfile — 用户画像注入
+// ============================================================
+
+describe('loadActiveProfile — 用户画像注入', () => {
+  it('D3-1: 有 profile 时 block 包含用户姓名', async () => {
+    mockLoadUserProfile.mockResolvedValueOnce({
+      display_name: '徐啸 / Alex Xu',
+      focus_area: 'Cecelia',
+      preferred_style: 'detailed',
+    });
+    mockFormatProfileSnippet.mockReturnValueOnce('## 主人信息\n你正在和 徐啸 / Alex Xu 对话。\n');
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals 为空
+
+    const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
+
+    expect(result).toContain('徐啸 / Alex Xu');
+    expect(mockLoadUserProfile).toHaveBeenCalledWith(expect.any(Object), 'owner');
+  });
+
+  it('D3-2: 无 profile 时 block 不含 "正在和" 片段', async () => {
+    mockLoadUserProfile.mockResolvedValueOnce(null);
+    mockFormatProfileSnippet.mockReturnValueOnce('');
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals 为空
+
+    const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
+
+    expect(result).not.toContain('正在和');
+  });
+
+  it('D3-3: 有 profile 且有 OKR 时两者都注入', async () => {
+    mockLoadUserProfile.mockResolvedValueOnce({ display_name: '徐啸', focus_area: 'Cecelia' });
+    mockFormatProfileSnippet.mockReturnValueOnce('## 主人信息\n你正在和 徐啸 对话。\n');
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ title: 'Cecelia 管家系统', status: 'in_progress', progress: 50 }],
+    });
+
+    const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
+
+    expect(result).toContain('徐啸');
+    expect(result).toContain('OKR 焦点');
   });
 });
 

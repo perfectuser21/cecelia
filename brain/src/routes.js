@@ -55,6 +55,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
+import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 
@@ -6373,6 +6374,39 @@ router.get('/orchestrator/chat/history', async (req, res) => {
       error: 'Failed to fetch chat history',
       message: err.message,
     });
+  }
+});
+
+// ==================== User Profile ====================
+
+/**
+ * GET /api/brain/user/profile
+ * 查询当前用户画像
+ */
+router.get('/user/profile', async (_req, res) => {
+  try {
+    const profile = await loadUserProfile(pool, 'owner');
+    res.json({ profile: profile || null });
+  } catch (err) {
+    console.error('[API] user/profile GET error:', err.message);
+    res.status(500).json({ error: 'Failed to load user profile', message: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/user/profile
+ * 手动更新用户画像
+ * Body: { display_name?, focus_area?, preferred_style?, timezone?, raw_facts? }
+ */
+router.put('/user/profile', async (req, res) => {
+  try {
+    const { display_name, focus_area, preferred_style, timezone, raw_facts } = req.body || {};
+    const facts = { display_name, focus_area, preferred_style, timezone, raw_facts };
+    const updated = await upsertUserProfile(pool, 'owner', facts);
+    res.json({ profile: updated });
+  } catch (err) {
+    console.error('[API] user/profile PUT error:', err.message);
+    res.status(500).json({ error: 'Failed to update user profile', message: err.message });
   }
 });
 

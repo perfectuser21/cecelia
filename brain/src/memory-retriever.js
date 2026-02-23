@@ -14,6 +14,7 @@
 
 import SimilarityService from './similarity.js';
 import { searchRelevantLearnings } from './learning.js';
+import { loadUserProfile, formatProfileSnippet } from './user-profile.js';
 
 // ============================================================
 // 常量配置
@@ -301,6 +302,18 @@ async function loadActiveProfile(pool, mode) {
   // mode 参数保留用于未来区分注入深度
   void mode;
 
+  const snippets = [];
+
+  // 主人画像（user_profiles）
+  try {
+    const profile = await loadUserProfile(pool, 'owner');
+    const profileSnippet = formatProfileSnippet(profile);
+    if (profileSnippet) snippets.push(profileSnippet);
+  } catch (err) {
+    console.warn('[memory-retriever] User profile load failed (graceful fallback):', err.message);
+  }
+
+  // OKR 焦点
   try {
     const goals = await pool.query(`
       SELECT title, status, progress FROM goals
@@ -309,17 +322,18 @@ async function loadActiveProfile(pool, mode) {
       LIMIT 3
     `);
 
-    if (goals.rows.length === 0) return '';
-
-    let snippet = '## 当前 OKR 焦点\n';
-    for (const g of goals.rows) {
-      snippet += `- ${g.title} (${g.status}, ${g.progress || 0}%)\n`;
+    if (goals.rows.length > 0) {
+      let snippet = '## 当前 OKR 焦点\n';
+      for (const g of goals.rows) {
+        snippet += `- ${g.title} (${g.status}, ${g.progress || 0}%)\n`;
+      }
+      snippets.push(snippet);
     }
-    return snippet;
   } catch (err) {
     console.warn('[memory-retriever] Profile load failed (graceful fallback):', err.message);
-    return '';
   }
+
+  return snippets.join('\n');
 }
 
 // ============================================================

@@ -18,6 +18,7 @@ import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
 import { buildMemoryContext } from './memory-retriever.js';
+import { extractAndSaveUserFacts } from './user-profile.js';
 
 // MiniMax Coding Plan API（OpenAI 兼容端点）
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
@@ -282,6 +283,11 @@ export async function handleChat(message, context = {}, messages = []) {
     conversation_id: context.conversation_id || null,
     has_memory: memoryBlock.length > 0,
   });
+
+  // 7. 异步提取用户事实（fire-and-forget，不阻塞回复）
+  Promise.resolve().then(() =>
+    extractAndSaveUserFacts(pool, 'owner', messages, reply)
+  ).catch(() => {});
 
   return {
     reply,

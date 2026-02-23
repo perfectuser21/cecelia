@@ -44,6 +44,11 @@ describe('orchestrator-chat memory unification (D1)', () => {
       readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-key' })),
     }));
 
+    // mock user-profile.js — 阻止 extractAndSaveUserFacts 触发额外 fetch 调用
+    vi.doMock('../user-profile.js', () => ({
+      extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
+    }));
+
     const mod = await import('../orchestrator-chat.js');
     handleChat = mod.handleChat;
     fetchMemoryContext = mod.fetchMemoryContext;
