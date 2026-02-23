@@ -208,6 +208,19 @@ const brainProxy = createProxyMiddleware({
   // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
   // server.on('upgrade') listener that conflicts with the manual handler below.
   // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
+  on: {
+    // express.json() consumes the body stream globally; re-write it so the proxy
+    // can forward POST/PUT bodies correctly to the Brain service.
+    proxyReq: (proxyReq, req) => {
+      const body = (req as any).body;
+      if (body && Object.keys(body).length > 0) {
+        const bodyData = JSON.stringify(body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
+    },
+  },
 });
 app.use('/api/brain', brainProxy);
 

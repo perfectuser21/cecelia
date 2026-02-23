@@ -1,6 +1,6 @@
 {
   "name": "@cecelia/core",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Cecelia Core: Multi-model AI executor + Dashboard task visualization API",
   "type": "module",
   "main": "dist/index.js",
