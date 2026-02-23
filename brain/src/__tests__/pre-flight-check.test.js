@@ -264,6 +264,48 @@ describe('placeholder detection — regression tests (D1/D2/D3)', () => {
   });
 });
 
+describe('system task type exemption', () => {
+  it('dept_heartbeat passes pre-flight without description', async () => {
+    const task = { title: '[heartbeat] zenithjoy', priority: 'P1', task_type: 'dept_heartbeat' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Task description is empty');
+  });
+
+  it('codex_qa passes pre-flight without description', async () => {
+    const task = { title: 'Codex 免疫检查 - core', priority: 'P1', task_type: 'codex_qa' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
+
+  it('initiative_verify passes pre-flight without description', async () => {
+    const task = { title: 'Initiative verify check', priority: 'P1', task_type: 'initiative_verify' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+  });
+
+  it('dept_heartbeat with empty title still fails', async () => {
+    const task = { title: '', priority: 'P1', task_type: 'dept_heartbeat' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task title is empty');
+  });
+
+  it('dept_heartbeat with invalid priority still fails', async () => {
+    const task = { title: '[heartbeat] zenithjoy', priority: 'P5', task_type: 'dept_heartbeat' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Invalid priority: P5');
+  });
+
+  it('regular task type still requires description', async () => {
+    const task = { title: 'Regular dev task', priority: 'P1', task_type: 'dev' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(false);
+    expect(result.issues).toContain('Task description is empty');
+  });
+});
+
 describe('getPreFlightStats', () => {
   it('should return stats structure', async () => {
     // Mock pool for testing

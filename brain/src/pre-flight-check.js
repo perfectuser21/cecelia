@@ -23,6 +23,10 @@ export async function preFlightCheck(task) {
   const issues = [];
   const suggestions = [];
 
+  // System-generated tasks do not need PRDs — skip description/content checks
+  const SYSTEM_TASK_TYPES = ['dept_heartbeat', 'codex_qa', 'initiative_verify'];
+  const isSystemTask = SYSTEM_TASK_TYPES.includes(task.task_type);
+
   // Check 1: Title validation
   if (!task.title || task.title.trim().length === 0) {
     issues.push('Task title is empty');
@@ -33,14 +37,17 @@ export async function preFlightCheck(task) {
   }
 
   // Check 2: Description validation (PRD content)
+  // System tasks (dept_heartbeat, codex_qa, etc.) are auto-generated — no PRD required
   // Use description or prd_content as fallback
   const descContent = task.description || task.prd_content;
-  if (!descContent || descContent.trim().length === 0) {
-    issues.push('Task description is empty');
-    suggestions.push('Provide a PRD with clear requirements');
-  } else if (descContent.trim().length < 20) {
-    issues.push('Task description too short (< 20 characters)');
-    suggestions.push('Provide more detailed requirements in the PRD');
+  if (!isSystemTask) {
+    if (!descContent || descContent.trim().length === 0) {
+      issues.push('Task description is empty');
+      suggestions.push('Provide a PRD with clear requirements');
+    } else if (descContent.trim().length < 20) {
+      issues.push('Task description too short (< 20 characters)');
+      suggestions.push('Provide more detailed requirements in the PRD');
+    }
   }
 
   // Check 3: Priority validation
