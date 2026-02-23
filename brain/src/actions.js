@@ -13,7 +13,7 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  */
 function isSystemTask(task_type, trigger_source) {
   // System task types that don't need goal association
-  const systemTypes = ['exploratory', 'research'];
+  const systemTypes = ['research'];
 
   // System trigger sources that don't need goal association
   const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker'];
@@ -34,7 +34,7 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.context - Legacy description field
  * @param {string} params.prd_content - PRD content (秋米写的)
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
- * @param {Object} params.payload - Additional payload (exploratory, initiative_id, kr_goal)
+ * @param {Object} params.payload - Additional payload (initiative_id, kr_goal)
  */
 async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
   // Validate goal_id (required for most tasks except system tasks)
@@ -79,8 +79,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   ]);
 
   const task = result.rows[0];
-  const isExploratory = payload?.exploratory ? ' [exploratory]' : '';
-  console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})${isExploratory}`);
+  console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);
 
   // Broadcast task creation to WebSocket clients
   await broadcastTaskState(task.id);
@@ -95,7 +94,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
  * @param {string} params.name - Initiative name
  * @param {string} params.parent_id - Project ID (type='project' 的那个)
  * @param {string} params.kr_id - 关联的 KR ID
- * @param {string} params.decomposition_mode - 'known' | 'exploratory'
+ * @param {string} params.decomposition_mode - 'known'
  * @param {string} params.description - Initiative description
  * @param {string} params.plan_content - Plan document content
  */

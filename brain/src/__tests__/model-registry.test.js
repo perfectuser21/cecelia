@@ -100,8 +100,6 @@ describe('model-registry', () => {
       // qa 包含 o3-mini 和 o4-mini
       expect(isModelAllowedForAgent('qa', 'o3-mini')).toBe(true);
       expect(isModelAllowedForAgent('qa', 'o4-mini')).toBe(true);
-      // exploratory 包含 M2.1-highspeed
-      expect(isModelAllowedForAgent('exploratory', 'MiniMax-M2.1-highspeed')).toBe(true);
       // dev 包含 M2.5
       expect(isModelAllowedForAgent('dev', 'MiniMax-M2.5')).toBe(true);
     });

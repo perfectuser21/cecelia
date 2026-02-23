@@ -799,7 +799,6 @@ function generateRunId(taskId) {
  *
  * payload 特判逻辑（优先级高于 taskType 映射）：
  * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留，记录日志）
- * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
  * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
  * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
  * - payload.decomposition === 'known' → 保持 taskType 原有路由
@@ -812,11 +811,6 @@ function getSkillForTaskType(taskType, payload) {
     if (payload.decomposition === true && taskType === 'dev') {
       console.log(`[executor] payload.decomposition 路由: decomposition=true + task_type=dev → /dev`);
       return '/dev';
-    }
-    // decomposition='exploratory' → /exploratory（探索性验证任务）
-    if (payload.decomposition === 'exploratory') {
-      console.log(`[executor] payload.decomposition 路由: decomposition=exploratory → /exploratory`);
-      return '/exploratory';
     }
     // decomposition='okr' → /okr（OKR 拆解任务）
     if (payload.decomposition === 'okr') {
@@ -835,7 +829,6 @@ function getSkillForTaskType(taskType, payload) {
     'dev': '/dev',           // 写代码：Opus
     'review': '/review',     // 审查：Sonnet，Plan Mode
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
-    'exploratory': '/exploratory', // 探索性验证：Opus
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
     // Initiative 编排任务：不用 skill，直接用 prompt
@@ -911,7 +904,6 @@ function getPermissionModeForTaskType(taskType) {
   const modeMap = {
     'dev': 'bypassPermissions',        // 写代码
     'review': 'plan',                  // 只读分析（唯一用 plan 的）
-    'exploratory': 'bypassPermissions', // 探索性验证：需要读写文件
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
     // Initiative 编排任务
@@ -934,29 +926,6 @@ function checkTaskTypeMatch(task) {
   const taskType = task.task_type || 'dev';
   const title = (task.title || '').toLowerCase();
 
-  // dev 任务但标题包含调研/探索类关键词 → 可能应该用 exploratory
-  if (taskType === 'dev') {
-    const researchKeywords = ['调研', 'research', '探索', '调查', '了解', '分析现状'];
-    const matched = researchKeywords.find(kw => title.includes(kw));
-    if (matched) {
-      console.warn(
-        `[executor][suggest-task-type] task_type=dev 但标题含调研关键词"${matched}"，` +
-        `建议使用 task_type=exploratory。task_id=${task.id || 'unknown'}`
-      );
-    }
-  }
-
-  // exploratory 任务但标题包含实现类关键词 → 可能应该用 dev
-  if (taskType === 'exploratory') {
-    const implKeywords = ['实现', 'feat', 'fix', '开发', '编写', '新增功能', '修复'];
-    const matched = implKeywords.find(kw => title.includes(kw));
-    if (matched) {
-      console.warn(
-        `[executor][suggest-task-type] task_type=exploratory 但标题含实现关键词"${matched}"，` +
-        `建议使用 task_type=dev。task_id=${task.id || 'unknown'}`
-      );
-    }
-  }
 }
 
 /**
@@ -1088,7 +1057,6 @@ POST /api/brain/action/create-task
   "task_type": "dev",
   "prd_content": "完整 PRD...",
   "payload": {
-    "exploratory": true,
     "initiative_id": "${initiativeId}",
     "kr_goal": "${task.payload?.kr_goal || ''}"
   }
@@ -1144,11 +1112,7 @@ POST /api/brain/project-kr-links
 
 记录新建 Project 的 ID（后面 Step 2 要用）。
 
-### Step 2: 拆解模式（遵循 Exploratory 优先策略）
-- **默认使用 exploratory 模式**（99% 的情况）
-- 只有"简单修复、已知方案"才用 known 模式
-
-### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
+### Step 2: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
 
 Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
 
@@ -1157,48 +1121,11 @@ POST /api/brain/action/create-initiative
 {
   "name": "Initiative 名称",
   "parent_id": "<Step 1 新建的 Project ID>",
-  "kr_id": "${krId}",
-  "decomposition_mode": "exploratory"
+  "kr_id": "${krId}"
 }
 \`\`\`
 
-### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
-
-\`\`\`
-POST /api/brain/action/create-task
-{
-  "title": "探索: 调研 [主题]",
-  "project_id": "<Initiative ID>",
-  "goal_id": "${krId}",
-  "task_type": "exploratory",
-  "prd_content": "完整 PRD（调研目标、分析内容、输出报告格式）",
-  "payload": {
-    "exploratory": true,
-    "next_action": "decompose",
-    "initiative_id": "<Initiative ID>",
-    "kr_goal": "${task.description || ''}"
-  }
-}
-\`\`\`
-
-后续 dev tasks（draft）：
-\`\`\`
-POST /api/brain/action/create-task
-{
-  "title": "实现 [功能]",
-  "project_id": "<Initiative ID>",
-  "goal_id": "${krId}",
-  "task_type": "dev",
-  "prd_content": "简短描述（draft，等 exploratory 结果后细化）",
-  "payload": {
-    "wait_for_exploratory": true,
-    "initiative_id": "<Initiative ID>",
-    "kr_goal": "${task.description || ''}"
-  }
-}
-\`\`\`
-
-### Step 5: 更新 KR 状态
+### Step 4: 更新 KR 状态
 \`\`\`
 PUT /api/tasks/goals/${krId}
 {"status": "in_progress"}
@@ -1215,10 +1142,8 @@ PUT /api/tasks/goals/${krId}
 1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
 2. ✅ project_kr_links 已绑定新 Project → 当前 KR
 3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
-4. ✅ 第一个 Task 的 task_type='exploratory'
-5. ✅ exploratory task 的 payload.next_action='decompose'
-6. ✅ 所有 Task 的 goal_id = ${krId}
-7. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
+4. ✅ 所有 Task 的 goal_id = ${krId}
+5. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
@@ -1422,68 +1347,6 @@ curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
 - 每条 DoD 必须有明确的 pass/fail 判定
 - 失败项必须提供 fix_suggestion（修复建议）
 - evidence 要具体到文件和行号`;
-  }
-
-  // Exploratory 类型：注入 Brain 上下文，启用 Output Loop
-  // Step 5 Output Loop: 探索完成后直接调 Brain API 创建 dev 任务，不需要再绕一圈秋米
-  if (taskType === 'exploratory') {
-    const brainTaskId = task.id || '';
-    const brainGoalId = task.goal_id || '';
-    const brainProjectId = task.project_id || '';
-    const exploratoryDesc = task.description || task.title;
-
-    return `/exploratory
-
-# 探索任务: ${task.title}
-
-## Brain 上下文（CRITICAL — Output Loop 必须使用这些 ID）
-- BRAIN_TASK_ID: ${brainTaskId}
-- BRAIN_GOAL_ID: ${brainGoalId}
-- BRAIN_PROJECT_ID: ${brainProjectId}
-- BRAIN_API: http://localhost:5221
-
-## 探索目标
-${exploratoryDesc}
-
-## Output Loop（Step 5，CRITICAL — 探索完成后必须执行）
-
-探索完成后，**必须**调用 Brain API 创建后续 dev 任务，然后回传 findings：
-
-### Step 5.1: 创建 dev 任务
-\`\`\`bash
-# 为每个发现的可实现点创建 dev 任务（至少 1 个）
-curl -s -X POST http://localhost:5221/api/brain/tasks \\
-  -H 'Content-Type: application/json' \\
-  -d '{
-    "title": "实现: <具体功能>",
-    "task_type": "dev",
-    "priority": "P1",
-    "description": "<基于探索结论的具体 PRD，包含：做什么、用哪种方案、注意哪些坑>",
-    "goal_id": "${brainGoalId}",
-    "project_id": "${brainProjectId}"
-  }'
-\`\`\`
-
-### Step 5.2: 回传 findings（让 Cecelia 知道探索结论）
-\`\`\`bash
-curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
-  -H 'Content-Type: application/json' \\
-  -d '{
-    "task_id": "${brainTaskId}",
-    "run_id": "manual",
-    "status": "completed",
-    "result": {
-      "findings": "<探索的核心结论，2-3段，包含：现状、可行方案、推荐方案、坑点>",
-      "next_tasks_created": <创建了几个 dev 任务>
-    }
-  }'
-\`\`\`
-
-## 探索完成标准
-- [ ] 明确了可行方案（至少一种）
-- [ ] 记录了踩坑点
-- [ ] 通过 Brain API 创建了至少 1 个 dev 任务
-- [ ] 回传了 findings 到 Brain`;
   }
 
   // 有明确 PRD 内容的任务

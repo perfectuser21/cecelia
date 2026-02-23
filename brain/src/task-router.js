@@ -46,7 +46,6 @@ const LOCATION_MAP = {
   'review': 'us',     // 代码审查 → US (Sonnet + /review)
   'qa': 'us',         // QA → US (Sonnet)
   'audit': 'us',      // 审计 → US (Sonnet)
-  'exploratory': 'us', // 探索性验证 → US (Opus + /exploratory)
   'codex_qa': 'us',    // Codex 免疫检查 → US (Codex CLI)
   'decomp_review': 'hk', // 拆解审查 → HK (Vivian, MiniMax Ultra)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
@@ -165,7 +164,7 @@ function routeTaskCreate(taskData) {
  * @returns {boolean} - Whether task type is valid
  */
 function isValidTaskType(taskType) {
-  const validTypes = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research', 'exploratory', 'codex_qa', 'decomp_review', 'initiative_plan', 'initiative_verify'];
+  const validTypes = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research', 'codex_qa', 'decomp_review', 'initiative_plan', 'initiative_verify'];
   return validTypes.includes(taskType?.toLowerCase());
 }
 

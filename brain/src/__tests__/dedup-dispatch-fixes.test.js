@@ -1,7 +1,6 @@
 /**
  * Tests for Bug Fixes: dedup + dispatch reliability (PR post-v1.48.1)
  *
- * Bug 1: Check 7 payload missing decomposition:'continue' → NOT EXISTS dedup always fails → duplicate tasks
  * Bug 2: Task stuck in in_progress when no executor (cecelia-run unavailable)
  * Bug 3: updateTask lacks WHERE status='queued' atomic guard on dispatch
  * Bug 4: execution-callback lacks AND status='in_progress' idempotency guard
@@ -9,102 +8,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Bug 1: Check 7 payload has decomposition: 'continue'
-// ─────────────────────────────────────────────────────────────────────────────
-
 vi.mock('../db.js', () => ({
   default: {
     query: vi.fn()
   }
 }));
-
-describe('Bug 1: Check 7 creates task with decomposition=continue (not true)', () => {
-  let pool;
-  let checkExploratoryDecompositionContinue;
-
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    const dbModule = await import('../db.js');
-    pool = dbModule.default;
-    const checker = await import('../decomposition-checker.js');
-    checkExploratoryDecompositionContinue = checker.checkExploratoryDecompositionContinue;
-  });
-
-  it('stores decomposition=continue in payload so NOT EXISTS dedup can find it', async () => {
-    const expTaskId = 'exp-dedup-001';
-
-    // Check 7 SELECT: returns 1 exploratory task with next_action=decompose
-    pool.query.mockResolvedValueOnce({
-      rows: [{
-        id: expTaskId,
-        title: '探索: 分析调度瓶颈',
-        project_id: 'proj-001',
-        goal_id: 'kr-001',
-        payload: { next_action: 'decompose', findings: '发现瓶颈' }
-      }]
-    });
-
-    // createDecompositionTask INSERT → capture the payload argument
-    pool.query.mockResolvedValueOnce({
-      rows: [{ id: 'cont-task-001', title: '探索续拆: 探索: 分析调度瓶颈' }]
-    });
-
-    await checkExploratoryDecompositionContinue();
-
-    // Find the INSERT call (second pool.query call)
-    const insertCall = pool.query.mock.calls[1];
-    expect(insertCall).toBeDefined();
-
-    // The 5th argument ($5) is the payload JSON
-    const payloadArg = insertCall[1][4]; // values array index 4 = $5
-    const payload = JSON.parse(payloadArg);
-
-    // CRITICAL: payload must have decomposition='continue', not 'true'
-    // This allows the NOT EXISTS subquery to match: payload->>'decomposition' = 'continue'
-    expect(payload.decomposition).toBe('continue');
-    expect(payload.level).toBe('exploratory_continue');
-    expect(payload.exploratory_source).toBe(expTaskId);
-  });
-
-  it('NOT EXISTS dedup: second call for same exploratory task returns no actions', async () => {
-    // Simulate NOT EXISTS working: SQL returns empty because existing task found
-    pool.query.mockResolvedValueOnce({ rows: [] });
-
-    const actions = await checkExploratoryDecompositionContinue();
-
-    expect(actions.length).toBe(0);
-  });
-
-  it('decomposition value is continue, which differs from default true for other checks', async () => {
-    // Verify the override: Check 7 payload { decomposition: 'continue', ... }
-    // overrides the default { decomposition: 'true', ...payload } in createDecompositionTask()
-    // Result: { decomposition: 'continue', level: 'exploratory_continue', ... }
-
-    pool.query.mockResolvedValueOnce({
-      rows: [{
-        id: 'exp-002',
-        title: '探索: 验证 API 性能',
-        project_id: 'proj-002',
-        goal_id: 'kr-002',
-        payload: { next_action: 'decompose' }
-      }]
-    });
-    pool.query.mockResolvedValueOnce({
-      rows: [{ id: 'cont-002', title: '探索续拆: 探索: 验证 API 性能' }]
-    });
-
-    await checkExploratoryDecompositionContinue();
-
-    const insertCall = pool.query.mock.calls[1];
-    const payload = JSON.parse(insertCall[1][4]);
-
-    // Must NOT be 'true' (the default) — must be 'continue' (the override)
-    expect(payload.decomposition).not.toBe('true');
-    expect(payload.decomposition).toBe('continue');
-  });
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bug 2: Task revert to queued behavior - tested via updateTask
