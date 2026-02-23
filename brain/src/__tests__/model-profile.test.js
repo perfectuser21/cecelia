@@ -200,7 +200,7 @@ describe('model-profile', () => {
     });
 
     it('D11: executor model_map 包含所有 task type', () => {
-      const taskTypes = ['dev', 'exploratory', 'review', 'qa', 'audit', 'talk', 'research', 'decomp_review', 'codex_qa'];
+      const taskTypes = ['dev', 'review', 'qa', 'audit', 'talk', 'research', 'decomp_review', 'codex_qa'];
       for (const tt of taskTypes) {
         expect(FALLBACK_PROFILE.config.executor.model_map[tt]).toBeDefined();
       }

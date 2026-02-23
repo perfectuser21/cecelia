@@ -79,19 +79,6 @@ describe('createTask - goal_id validation', () => {
   });
 
   describe('system task exemptions', () => {
-    it('should allow exploratory task without goal_id', async () => {
-      const result = await createTask({
-        title: 'Test Task - Exploratory',
-        description: 'Exploratory task',
-        priority: 'P1',
-        task_type: 'exploratory',
-        trigger_source: 'brain_auto'
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.task.goal_id).toBeNull();
-    });
-
     it('should allow research task without goal_id', async () => {
       const result = await createTask({
         title: 'Test Task - Research',

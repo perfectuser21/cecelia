@@ -2014,7 +2014,7 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // P1-1: Dev task completed without PR → completed_no_pr
-    // Only dev tasks are expected to produce PRs. Decomposition/exploratory tasks are exempt.
+    // Only dev tasks are expected to produce PRs. Decomposition tasks are exempt.
     if (newStatus === 'completed' && !pr_url) {
       try {
         const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
@@ -2063,7 +2063,7 @@ router.post('/execution-callback', async (req, res) => {
         : null;
 
       if (!findingsValue && isCompleted) {
-        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result - exploratory chain may be broken`);
+        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
       await client.query(`
@@ -5340,12 +5340,12 @@ router.post('/attach-decision', async (req, res) => {
           top_matches: relatedInitiatives.slice(0, 3)
         },
         route: {
-          path: 'exploratory_then_dev',
-          why: ['在现有 Initiative 下扩展功能', '需要验证对现有系统的影响'],
+          path: 'extend_initiative_then_dev',
+          why: ['在现有 Initiative 下扩展功能'],
           confidence: 0.75
         },
         next_call: {
-          skill: '/exploratory',
+          skill: '/dev',
           args: {
             initiative_id: target.id,
             task_description: input
@@ -5373,8 +5373,8 @@ router.post('/attach-decision', async (req, res) => {
           top_matches: relatedKRs.slice(0, 3)
         },
         route: {
-          path: 'okr_then_exploratory_then_dev',
-          why: ['需要先创建 Initiative', '然后进行技术验证'],
+          path: 'okr_then_dev',
+          why: ['需要先创建 Initiative', '然后进行开发'],
           confidence: 0.7
         },
         next_call: {
@@ -5403,8 +5403,8 @@ router.post('/attach-decision', async (req, res) => {
         top_matches: []
       },
       route: {
-        path: 'okr_then_exploratory_then_dev',
-        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
+        path: 'okr_then_dev',
+        why: ['需要完整规划（OKR → Initiative）', '然后进行开发'],
         confidence: 0.6
       },
       next_call: {
