@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-23
-**Brain 版本**: 1.88.5
-**Schema 版本**: 071
+**Brain 版本**: 1.89.0
+**Schema 版本**: 072
 **状态**: 生产运行中
 
 ---
@@ -398,6 +398,7 @@ queued → in_progress → completed
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | data | HK | N8N | - | - |
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
+| code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 
 ---
 

@@ -21,6 +21,7 @@ import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } fr
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
+import { triggerDailyReview } from './daily-review-scheduler.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1716,6 +1717,14 @@ async function executeTick() {
     console.error('[tick] dept heartbeat error:', deptErr.message);
   }
 
+  // 10. Trigger daily code review (每天 02:00 UTC，为活跃 repo 创建 code_review task)
+  let dailyReviewResult = { triggered: 0, skipped: 0, skipped_window: true, results: [] };
+  try {
+    dailyReviewResult = await triggerDailyReview(pool);
+  } catch (reviewErr) {
+    console.error('[tick] daily review error:', reviewErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1726,6 +1735,7 @@ async function executeTick() {
     } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
     dept_heartbeats: deptHeartbeatResult,
+    daily_review: dailyReviewResult,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
