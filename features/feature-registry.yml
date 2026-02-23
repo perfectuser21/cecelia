@@ -1032,8 +1032,8 @@ product_features:
     name: PRD/DoD Validation Loop
     status: Committed
     priority: P1
-    version: "1.0.0"
-    updated: "2026-02-08"
+    version: "1.0.1"
+    updated: "2026-02-23"
     description: |
       PRD 和 DoD 文档质量验证循环 - 确保 /dev 工作流文档质量
 
