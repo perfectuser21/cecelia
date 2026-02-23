@@ -211,10 +211,7 @@ describe('SimilarityService', () => {
             id: 'task-123',
             title: 'Implement algorithm',
             description: 'Priority calculation',
-            status: 'in_progress',
-            initiative_id: 'init-456',
-            initiative_title: 'Smart scheduling',
-            pr_plan_title: 'Add priority'
+            status: 'in_progress'
           }]
         })
         .mockResolvedValueOnce({ rows: [] });
@@ -230,9 +227,9 @@ describe('SimilarityService', () => {
         status: 'in_progress',
         text: 'Implement algorithm Priority calculation',
         metadata: {
-          initiative_id: 'init-456',
-          initiative_title: 'Smart scheduling',
-          pr_plan_title: 'Add priority'
+          repo: null,
+          pr_number: null,
+          pr_author: null
         }
       });
     });

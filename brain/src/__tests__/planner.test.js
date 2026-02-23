@@ -114,7 +114,7 @@ describe('Planner Agent', () => {
         expect(result).toHaveProperty('project');
       } else {
         expect(result).toHaveProperty('reason');
-        expect(['no_active_kr', 'no_project_for_kr', 'needs_planning', 'pr_plan_needs_task']).toContain(result.reason);
+        expect(['no_active_kr', 'no_project_for_kr', 'needs_planning']).toContain(result.reason);
       }
     });
   });
@@ -393,8 +393,7 @@ describe('Planner Agent', () => {
       );
       testTaskIds.push(tResult.rows[0].id);
 
-      // Use skipPrPlans to test KR rotation without PR Plans interference
-      const result = await planNextTask([kr1Result.rows[0].id, kr2Result.rows[0].id], { skipPrPlans: true });
+      const result = await planNextTask([kr1Result.rows[0].id, kr2Result.rows[0].id]);
 
       expect(result.planned).toBe(true);
       expect(result.kr.id).toBe(kr2Result.rows[0].id);
@@ -426,8 +425,7 @@ describe('Planner Agent', () => {
       );
       testLinks.push({ project_id: projResult.rows[0].id, kr_id: krResult.rows[0].id });
 
-      // Use skipPrPlans to test KR rotation without PR Plans interference
-      const result = await planNextTask([krResult.rows[0].id], { skipPrPlans: true });
+      const result = await planNextTask([krResult.rows[0].id]);
 
       expect(result.planned).toBe(false);
       expect(result.reason).toBe('needs_planning');
