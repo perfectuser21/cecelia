@@ -4,7 +4,7 @@
 
 set -e
 
-API_BASE="http://localhost:5212/api/brain"
+API_BASE="http://localhost:5211/api/brain"
 GOAL_ID="1c09826d-9608-46b5-9e89-b4c9111f0238"
 RESULTS=()
 

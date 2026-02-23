@@ -16,7 +16,7 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || 'CeceliaUS2026'
 });
 
-const API_BASE = process.env.API_BASE || 'http://localhost:5212';
+const API_BASE = process.env.API_BASE || 'http://localhost:5211';
 
 let testGoalIds = [];
 

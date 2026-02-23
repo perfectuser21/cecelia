@@ -5,7 +5,7 @@
 **每次会话开始时，先获取系统状态：**
 
 ```bash
-curl -s http://localhost:5212/api/brain/status | jq
+curl -s http://localhost:5211/api/brain/status | jq
 ```
 
 ### 架构
@@ -39,7 +39,7 @@ Claude Code = 皮层（按需推理）
 
 ```bash
 # 更新任务状态（带幂等键）
-curl -X POST http://localhost:5212/api/brain/action/update-task \
+curl -X POST http://localhost:5211/api/brain/action/update-task \
   -H "Content-Type: application/json" \
   -d '{
     "task_id": "xxx",
@@ -48,7 +48,7 @@ curl -X POST http://localhost:5212/api/brain/action/update-task \
   }'
 
 # 设置当前 focus
-curl -X POST http://localhost:5212/api/brain/action/set-memory \
+curl -X POST http://localhost:5211/api/brain/action/set-memory \
   -H "Content-Type: application/json" \
   -d '{
     "key": "current_focus",

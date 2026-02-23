@@ -114,7 +114,7 @@ dlq_list() {
 dlq_replay() {
   local type="$1"  # memory or evidence
   local brain_url="${BRAIN_URL:-http://localhost:5220}"
-  local workspace_url="${WORKSPACE_URL:-http://localhost:5212}"
+  local workspace_url="${WORKSPACE_URL:-http://localhost:5211}"
 
   local dlq_file
   local replayed=0

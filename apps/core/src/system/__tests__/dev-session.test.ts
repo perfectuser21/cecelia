@@ -10,7 +10,7 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 
-const API_BASE = 'http://localhost:5212/api/system';
+const API_BASE = 'http://localhost:5211/api/system';
 
 interface ApiResponse {
   success: boolean;

@@ -12,12 +12,12 @@
 #   bash scripts/verify-dev-session.sh
 #
 # Environment:
-#   CORE_API - Core API URL (default: http://localhost:5212)
+#   CORE_API - Core API URL (default: http://localhost:5211)
 
 set -euo pipefail
 
 # Configuration
-CORE_API="${CORE_API:-http://localhost:5212}"
+CORE_API="${CORE_API:-http://localhost:5211}"
 
 # Colors
 GREEN='\033[0;32m'

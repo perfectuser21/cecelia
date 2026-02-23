@@ -89,8 +89,8 @@ echo "✅ 文件同步完成"
 echo ""
 echo "🔄 检查端口冲突..."
 
-# 停止占用 5211/5212 的旧容器（如 autopilot-dashboard）
-for PORT in 5211 5212; do
+# 停止占用 5211 的旧容器（如 autopilot-dashboard）
+for PORT in 5211; do
     EXISTING=$(ssh "$REMOTE" "docker ps --format '{{.Names}}' --filter publish=$PORT" 2>/dev/null || echo "")
     if [[ -n "$EXISTING" && "$EXISTING" != "cecelia-frontend-hk" && "$EXISTING" != "cecelia-core-hk" ]]; then
         echo "⚠️  端口 $PORT 被 $EXISTING 占用，停止旧容器..."
@@ -109,13 +109,6 @@ echo "🏥 健康检查..."
 sleep 3
 
 HEALTH_OK=true
-
-if ssh "$REMOTE" "curl -sf http://localhost:5212 > /dev/null 2>&1"; then
-    echo "✅ dev-core (5212) 健康检查通过"
-else
-    echo "⚠️  dev-core (5212) 健康检查失败，容器可能还在启动"
-    HEALTH_OK=false
-fi
 
 if ssh "$REMOTE" "curl -sf http://localhost:5211 > /dev/null 2>&1"; then
     echo "✅ core (5211) 健康检查通过"
@@ -139,5 +132,4 @@ echo "  分支: $BRANCH"
 echo "  Commit: ${LOCAL_SHA:0:8}"
 echo "  目标: $REMOTE:$REMOTE_DIR"
 echo ""
-echo "  dev-core: http://perfect21:5212 (本地研发)"
-echo "  core:     http://perfect21:5211 (本地生产)"
+echo "  core: http://perfect21:5211"

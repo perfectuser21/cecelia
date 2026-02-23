@@ -31,7 +31,7 @@ WARN=0
 VIOLATIONS=()
 
 # Service endpoints
-WORKSPACE_URL="${WORKSPACE_URL:-http://localhost:5212}"
+WORKSPACE_URL="${WORKSPACE_URL:-http://localhost:5211}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5220}"
 QUALITY_URL="${QUALITY_URL:-http://localhost:5681}"
 N8N_URL="${N8N_URL:-http://localhost:5679}"
@@ -90,11 +90,11 @@ layer1_port_exposure() {
   local port_info=$(ss -tlnp 2>/dev/null)
 
   # Check each service
-  # Workspace 5212
-  if echo "$port_info" | grep -E ":5212\s" | grep -qE "0\.0\.0\.0|\*:"; then
-    pass "Workspace (5212) listening"
+  # Workspace 5211
+  if echo "$port_info" | grep -E ":5211\s" | grep -qE "0\.0\.0\.0|\*:"; then
+    pass "Workspace (5211) listening"
   else
-    warn "Workspace (5212) not detected"
+    warn "Workspace (5211) not detected"
   fi
 
   # Brain 5220 - check if exposed
