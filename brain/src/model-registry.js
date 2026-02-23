@@ -16,12 +16,20 @@ export const MODELS = [
     name: 'M2.1',
     provider: 'minimax',
     tier: 'fast',
+    deprecated: true, // ⚠️ 纯推理链模型（reasoning-only），仅输出 <think> 块，无法用于正常 completion
   },
   {
     id: 'MiniMax-M2.1-highspeed',
     name: 'M2.1 Fast',
     provider: 'minimax',
     tier: 'fast',
+    deprecated: true, // ⚠️ 纯推理链模型（reasoning-only），仅输出 <think> 块，无法用于正常 completion
+  },
+  {
+    id: 'MiniMax-M2',
+    name: 'M2 (Coding Plan)',
+    provider: 'minimax',
+    tier: 'premium',
   },
   {
     id: 'MiniMax-M2.5',
@@ -84,8 +92,8 @@ export const AGENTS = [
     name: 'L1 丘脑',
     description: '事件路由、快速判断',
     layer: 'brain',
-    allowed_models: ['MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-20250514'],
-    recommended_model: 'MiniMax-M2.1',
+    allowed_models: ['MiniMax-M2.5-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-20250514'],
+    recommended_model: 'MiniMax-M2.5-highspeed',
     fixed_provider: null,
   },
   {
