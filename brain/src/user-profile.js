@@ -15,6 +15,8 @@
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { generateProfileFactEmbeddingAsync } from './embedding-service.js';
+import { generateEmbedding } from './openai-client.js';
 
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
 
@@ -132,12 +134,56 @@ export function formatProfileSnippet(profile) {
 }
 
 /**
- * 获取用户画像的 LLM 注入文本（loadUserProfile + formatProfileSnippet 便捷组合）
+ * 向量搜索最相关的用户 facts（需要 OPENAI_API_KEY）
+ * @param {Object} pool
+ * @param {string} userId
+ * @param {string} conversationText - 当前对话上下文（用于生成查询向量）
+ * @param {number} [topK=10]
+ * @returns {Promise<string[]>} 最相关的 fact content 列表，失败返回 []
+ */
+async function vectorSearchProfileFacts(pool, userId, conversationText, topK = 10) {
+  try {
+    const embedding = await generateEmbedding(conversationText.substring(0, 2000));
+    const embStr = '[' + embedding.join(',') + ']';
+    const result = await pool.query(
+      `SELECT content
+       FROM user_profile_facts
+       WHERE user_id = $1 AND embedding IS NOT NULL
+       ORDER BY embedding <=> $2::vector
+       LIMIT $3`,
+      [userId, embStr, topK]
+    );
+    return result.rows.map(r => r.content);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 获取用户画像的 LLM 注入文本
+ *
+ * 当提供 conversationText 且环境具备向量搜索能力时，返回语义最相关的 Top-10 facts。
+ * 降级条件：无 OPENAI_API_KEY、无 conversationText、向量搜索失败 → 返回结构化字段片段。
+ *
  * @param {Object} pool - pg Pool
  * @param {string} [userId='owner']
+ * @param {string} [conversationText=''] - 当前对话文本，用于向量检索
  * @returns {Promise<string>} 格式化的画像片段，无数据时返回 ''
  */
-export async function getUserProfileContext(pool, userId = 'owner') {
+export async function getUserProfileContext(pool, userId = 'owner', conversationText = '') {
+  // 尝试向量搜索：需要 API key + 对话上下文
+  if (process.env.OPENAI_API_KEY && conversationText.trim()) {
+    try {
+      const facts = await vectorSearchProfileFacts(pool, userId, conversationText);
+      if (facts.length > 0) {
+        return `## 关于你\n${facts.map(f => `- ${f}`).join('\n')}\n`;
+      }
+    } catch {
+      // 降级到结构化字段
+    }
+  }
+
+  // 降级：结构化字段
   const profile = await loadUserProfile(pool, userId);
   return formatProfileSnippet(profile);
 }
@@ -213,6 +259,56 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
     if (Object.keys(facts).length === 0) return;
 
     await upsertUserProfile(pool, userId, facts);
+
+    // 将 raw_facts 中每条 KV 存入 user_profile_facts（向量化存储）
+    if (facts.raw_facts && typeof facts.raw_facts === 'object') {
+      for (const [key, value] of Object.entries(facts.raw_facts)) {
+        const content = `${key}: ${value}`;
+        try {
+          const result = await pool.query(
+            `INSERT INTO user_profile_facts (user_id, category, content)
+             VALUES ($1, 'raw', $2)
+             RETURNING id`,
+            [userId, content]
+          );
+          const factId = result.rows[0]?.id;
+          if (factId) {
+            // fire-and-forget embedding
+            Promise.resolve().then(() =>
+              generateProfileFactEmbeddingAsync(factId, content)
+            ).catch(() => {});
+          }
+        } catch {
+          // 静默失败，不影响主流程
+        }
+      }
+    }
+
+    // 结构化字段也存一份（display_name, focus_area 等）
+    const structuredFacts = [];
+    if (facts.display_name) structuredFacts.push({ category: 'identity', content: `名字: ${facts.display_name}` });
+    if (facts.focus_area) structuredFacts.push({ category: 'work_style', content: `当前重点方向: ${facts.focus_area}` });
+    if (facts.preferred_style) structuredFacts.push({ category: 'preference', content: `回答风格偏好: ${facts.preferred_style}` });
+
+    for (const { category, content } of structuredFacts) {
+      try {
+        const result = await pool.query(
+          `INSERT INTO user_profile_facts (user_id, category, content)
+           VALUES ($1, $2, $3)
+           RETURNING id`,
+          [userId, category, content]
+        );
+        const factId = result.rows[0]?.id;
+        if (factId) {
+          Promise.resolve().then(() =>
+            generateProfileFactEmbeddingAsync(factId, content)
+          ).catch(() => {});
+        }
+      } catch {
+        // 静默失败
+      }
+    }
+
     console.log('[user-profile] Updated user facts:', Object.keys(facts));
   } catch (err) {
     console.warn('[user-profile] extractAndSaveUserFacts failed (ignored):', err.message);

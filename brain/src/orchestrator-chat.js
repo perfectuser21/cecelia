@@ -221,7 +221,9 @@ export async function handleChat(message, context = {}, messages = []) {
   const statusBlock = await buildStatusSummary();
 
   // 3b. 加载用户画像（fire-safe：失败时返回 ''，不阻塞）
-  const profileSnippet = await getUserProfileContext(pool);
+  // 传入最近对话文本用于向量搜索相关 facts
+  const recentText = messages.slice(-3).map(m => m.content).join('\n');
+  const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
 
   // 4. 调用 MiniMax 嘴巴层（传入历史消息）
   const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${memoryBlock}${statusBlock}`;

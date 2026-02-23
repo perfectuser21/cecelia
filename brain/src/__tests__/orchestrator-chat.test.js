@@ -643,7 +643,7 @@ describe('orchestrator-chat', () => {
       expect(capturedSystemPrompt).toContain('徐啸');
       expect(capturedSystemPrompt).toContain('Cecelia 自主运行');
       expect(result.reply).toBe('你好，徐啸！');
-      expect(mockGetUserProfileContext).toHaveBeenCalledWith(expect.anything());
+      expect(mockGetUserProfileContext).toHaveBeenCalledWith(expect.anything(), expect.any(String), expect.any(String));
     });
 
     it('D10-2: profileSnippet 为空时 systemPrompt 不受影响', async () => {
