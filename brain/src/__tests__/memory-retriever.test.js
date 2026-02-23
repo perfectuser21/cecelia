@@ -232,10 +232,22 @@ describe('常量配置', () => {
 // ============================================================
 
 describe('loadActiveProfile', () => {
-  it('chat 模式返回空字符串', async () => {
+  it('chat 模式也应注入 OKR 焦点（不再跳过）', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { title: 'Cecelia 管家系统', status: 'in_progress', progress: 50 },
+      ]
+    });
+    const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
+    expect(result).toContain('OKR 焦点');
+    expect(result).toContain('Cecelia 管家系统');
+    expect(mockQuery).toHaveBeenCalled();
+  });
+
+  it('chat 模式 goals 为空时返回空字符串', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
     expect(result).toBe('');
-    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it('有 goals 时返回 OKR 焦点', async () => {
@@ -382,10 +394,13 @@ describe('buildMemoryContext', () => {
     expect(block).toContain('目标A');
   });
 
-  it('mode=chat 时 profile 为空', async () => {
+  it('mode=chat 时 profile 包含 OKR（不再跳过）', async () => {
     mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // events
-    // chat 模式不查 goals
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // events
+      .mockResolvedValueOnce({             // goals
+        rows: [{ title: 'Cecelia 目标A', status: 'in_progress', progress: 30 }]
+      });
 
     const { block } = await buildMemoryContext({
       query: 'chat query',
@@ -393,7 +408,8 @@ describe('buildMemoryContext', () => {
       pool: { query: mockQuery },
     });
 
-    expect(block).not.toContain('OKR');
+    expect(block).toContain('OKR');
+    expect(block).toContain('目标A');
   });
 
   it('所有数据源失败时 graceful fallback', async () => {
