@@ -417,15 +417,47 @@ else
 fi
 
 # ========================================
-# 9. 检查是否有其他 cp-* 分支遗留
+# 9. 检查是否有其他 cp-* 分支遗留（自动删除已合并的）
 # ========================================
 echo ""
 echo "[9]  检查其他遗留的 cp-* 分支..."
-OTHER_CP=$(git branch --list "cp-*" 2>/dev/null | grep -v "^\*" || true)
+# 排除当前检出分支（* 开头）和带 + 标记的 worktree 分支
+OTHER_CP=$(git branch --list "cp-*" 2>/dev/null | grep -v "^\*" | grep -v "^+" | tr -d ' ' || true)
 if [[ -n "$OTHER_CP" ]]; then
-    echo -e "   ${YELLOW}[WARN]  发现其他 cp-* 分支:${NC}"
-    echo "$OTHER_CP" | sed 's/^/      /'
-    WARNINGS=$((WARNINGS + 1))
+    MERGED_COUNT=0
+    UNMERGED_BRANCHES=()
+
+    while IFS= read -r branch; do
+        [[ -z "$branch" ]] && continue
+        # 检查是否已合并到 base 分支（develop 或 main）
+        if git branch --merged "$BASE_BRANCH" 2>/dev/null | grep -qx "  $branch\|* $branch\|+ $branch\| $branch"; then
+            if git branch -D "$branch" 2>/dev/null; then
+                echo -e "   ${GREEN}[OK] 已删除已合并分支: $branch${NC}"
+                MERGED_COUNT=$((MERGED_COUNT + 1))
+            else
+                echo -e "   ${YELLOW}[WARN]  删除失败: $branch${NC}"
+                UNMERGED_BRANCHES+=("$branch")
+            fi
+        else
+            UNMERGED_BRANCHES+=("$branch")
+        fi
+    done <<< "$OTHER_CP"
+
+    if [[ $MERGED_COUNT -gt 0 ]]; then
+        echo -e "   ${GREEN}[OK] 已自动删除 $MERGED_COUNT 个已合并的 cp-* 分支${NC}"
+    fi
+
+    if [[ ${#UNMERGED_BRANCHES[@]} -gt 0 ]]; then
+        echo -e "   ${YELLOW}[WARN]  以下 cp-* 分支未合并到 $BASE_BRANCH，请手动处理:${NC}"
+        for b in "${UNMERGED_BRANCHES[@]}"; do
+            echo "      $b"
+        done
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    if [[ $MERGED_COUNT -eq 0 && ${#UNMERGED_BRANCHES[@]} -eq 0 ]]; then
+        echo -e "   ${GREEN}[OK] 无其他 cp-* 分支${NC}"
+    fi
 else
     echo -e "   ${GREEN}[OK] 无其他 cp-* 分支${NC}"
 fi

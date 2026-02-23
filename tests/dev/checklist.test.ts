@@ -35,10 +35,10 @@ tasks_created: true
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: pending
+step_5_dod: pending
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
@@ -53,10 +53,10 @@ step_11_cleanup: pending
       'step_1_prd',
       'step_2_detect',
       'step_3_branch',
-      'step_4_dod',
-      'step_5_code',
-      'step_6_test',
-      'step_7_quality',
+      'step_4_explore',
+      'step_5_dod',
+      'step_6_code',
+      'step_7_verify',
       'step_8_pr',
       'step_9_ci',
       'step_10_learning',
@@ -73,29 +73,29 @@ step_11_cleanup: pending
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-step_4_dod: pending
-step_5_code: pending
+step_4_explore: pending
+step_5_dod: pending
 `;
 
     writeFileSync(devModeFile, initialContent);
 
     // 模拟 Step 4 完成
     let content = readFileSync(devModeFile, 'utf-8');
-    content = content.replace(/^step_4_dod: pending$/m, 'step_4_dod: done');
+    content = content.replace(/^step_4_explore: pending$/m, 'step_4_explore: done');
     writeFileSync(devModeFile, content);
 
     const updatedContent = readFileSync(devModeFile, 'utf-8');
-    expect(updatedContent).toContain('step_4_dod: done');
-    expect(updatedContent).toContain('step_5_code: pending');
+    expect(updatedContent).toContain('step_4_explore: done');
+    expect(updatedContent).toContain('step_5_dod: pending');
 
     // 模拟 Step 5 完成
     let nextContent = readFileSync(devModeFile, 'utf-8');
-    nextContent = nextContent.replace(/^step_5_code: pending$/m, 'step_5_code: done');
+    nextContent = nextContent.replace(/^step_5_dod: pending$/m, 'step_5_dod: done');
     writeFileSync(devModeFile, nextContent);
 
     const finalContent = readFileSync(devModeFile, 'utf-8');
-    expect(finalContent).toContain('step_4_dod: done');
-    expect(finalContent).toContain('step_5_code: done');
+    expect(finalContent).toContain('step_4_explore: done');
+    expect(finalContent).toContain('step_5_dod: done');
   });
 
   it('应该能检测所有步骤是否完成', () => {
@@ -106,10 +106,10 @@ started: 2026-02-01T10:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: done
-step_5_code: done
-step_6_test: done
-step_7_quality: done
+step_4_explore: done
+step_5_dod: done
+step_6_code: done
+step_7_verify: done
 step_8_pr: done
 step_9_ci: done
 step_10_learning: done
@@ -140,10 +140,10 @@ started: 2026-02-01T10:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: done
-step_5_code: done
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: done
+step_5_dod: done
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending
@@ -170,7 +170,7 @@ step_11_cleanup: pending
 
     expect(allDone).toBe(false);
     expect(pendingSteps.length).toBeGreaterThan(0);
-    expect(pendingSteps).toContain('step_6_test');
+    expect(pendingSteps).toContain('step_6_code');
     expect(pendingSteps).toContain('step_11_cleanup');
   });
 
@@ -185,10 +185,10 @@ started: 2026-02-01T10:00:00+00:00
 step_1_prd: done
 step_2_detect: done
 step_3_branch: done
-step_4_dod: pending
-step_5_code: pending
-step_6_test: pending
-step_7_quality: pending
+step_4_explore: pending
+step_5_dod: pending
+step_6_code: pending
+step_7_verify: pending
 step_8_pr: pending
 step_9_ci: pending
 step_10_learning: pending

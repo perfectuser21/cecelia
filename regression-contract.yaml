@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.29.0"
+version: "12.30.1"
 updated: "2026-02-22"
 
 # ============================================================================
@@ -1123,6 +1123,24 @@ workflow:
       type: code
       file: "skills/dev/steps/00-worktree-auto.md"
       contains: "异常：主仓库残留在"
+
+  - id: W6-005
+    feature: W6
+    name: "cleanup.sh Step [9] 自动删除已合并 cp-* 分支（v12.30.1）"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, cleanup, branch-management]
+    owner: workflow
+    steps:
+      given: "存在其他已合并到 develop 的 cp-* 分支"
+      when: "运行 cleanup.sh"
+      then: "Step [9] 使用 git branch --merged 检测并自动删除已合并分支，未合并的只 warn"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      contains: "git branch --merged"
 
   # --------------------------------------------------------------------------
   # W7: Ralph Loop 自动化

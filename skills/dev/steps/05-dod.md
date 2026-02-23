@@ -1,22 +1,22 @@
-# Step 4: DoD
+# Step 5: DoD
 
-> 定义验收标准（Definition of Done）
+> 定义验收标准（Definition of Done）— 基于探索结果，更准确
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "in_progress" })`
+**Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "in_progress" })`
 
 ---
 
 ## 流程（简化版）
 
 ```
-DoD 草稿 → DoD 定稿 → 继续
+探索结果 + PRD → DoD 草稿 → DoD 定稿 → 继续
 ```
 
 **CI 会检查**：每条 DoD 条目是否有 Test 字段（check-dod-mapping.cjs）
 
 ---
 
-## Step 4.1: DoD 草稿
+## Step 5.1: DoD 草稿
 
 把 PRD 里的"成功标准"变成可勾选的清单：
 
@@ -32,7 +32,7 @@ DoD 草稿:
 
 ---
 
-## Step 4.2: DoD 定稿
+## Step 5.2: DoD 定稿
 
 为每个 DoD 条目指定 Test 字段：
 
@@ -115,17 +115,18 @@ exit 1  ← CI 失败，阻止合并
 **标记步骤完成**：
 
 ```bash
-echo "✅ Step 4 完成"
+sed -i 's/^step_5_dod: pending/step_5_dod: done/' .dev-mode
+echo "✅ Step 5 完成标记已写入 .dev-mode"
 ```
 
-**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "completed" })`
+**Task Checkpoint**: `TaskUpdate({ taskId: "5", status: "completed" })`
 
 **立即执行下一步**：
 
-1. 读取 `skills/dev/steps/05-code.md`
+1. 读取 `skills/dev/steps/06-code.md`
 2. 立即开始写代码
 3. **不要**输出总结或等待确认
 
 ---
 
-**Step 5：写代码**
+**Step 6：写代码**
