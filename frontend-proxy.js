@@ -2,8 +2,10 @@
  * Frontend Proxy Server
  * Serves static files from /app and proxies /api/* to Core Express server (5211)
  * Used by cecelia-frontend Docker container on port 5212
+ * Supports WebSocket upgrade via TCP tunnel (net.createConnection)
  */
 const http = require('http');
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 
@@ -81,6 +83,31 @@ const server = http.createServer((req, res) => {
       fs.createReadStream(indexPath).pipe(res);
     }
   });
+});
+
+// Proxy WebSocket upgrade requests to Core Express server (5211)
+server.on('upgrade', (req, clientSocket, head) => {
+  if (req.url.startsWith('/api/') || req.url.startsWith('/n8n/')) {
+    const targetSocket = net.createConnection(5211, 'localhost', () => {
+      // Reconstruct the HTTP upgrade request header
+      let requestLine = `${req.method} ${req.url} HTTP/1.1\r\n`;
+      let headers = '';
+      for (const [k, v] of Object.entries(req.headers)) {
+        headers += `${k}: ${v}\r\n`;
+      }
+      targetSocket.write(requestLine + headers + '\r\n');
+      if (head && head.length) targetSocket.write(head);
+    });
+
+    targetSocket.on('data', (data) => clientSocket.write(data));
+    clientSocket.on('data', (data) => targetSocket.write(data));
+    targetSocket.on('end', () => clientSocket.end());
+    clientSocket.on('end', () => targetSocket.end());
+    targetSocket.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => targetSocket.destroy());
+  } else {
+    clientSocket.destroy();
+  }
 });
 
 server.listen(PORT, () => {
