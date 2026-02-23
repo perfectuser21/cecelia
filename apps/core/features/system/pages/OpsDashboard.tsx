@@ -183,7 +183,29 @@ export default function OpsDashboard() {
       setAlertness(a);
       setBreakers(b);
       setToken(tk);
-      setSlots(s);
+      // Brain 容器无 --pid=host，vps-slots 看不到宿主机进程。
+      // 用 Core server 扫描的结果覆盖 slots state。
+      if (scanRes?.processes && scanRes.processes.length > 0) {
+        setSlots({
+          success: true,
+          total: 12,
+          used: scanRes.total,
+          available: Math.max(0, 12 - scanRes.total),
+          slots: scanRes.processes.map(p => ({
+            pid: p.pid,
+            cpu: p.cpu,
+            memory: p.memory,
+            startTime: p.startTime,
+            taskId: null,
+            runId: null,
+            taskTitle: null,
+            taskPriority: null,
+            command: p.command,
+          })),
+        });
+      } else {
+        setSlots(s);
+      }
       setError(null);
       setLastUpdate(new Date());
     } catch (e: any) {
