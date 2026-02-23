@@ -374,20 +374,22 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
-    // Auto-enable tick from env var if set
+    // 24/7 系统：启动时始终 auto-enable tick
+    // 只有 CECELIA_TICK_ENABLED=false 时才禁用（显式关闭）
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
-    if (envEnabled === 'true') {
-      console.log('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
-      await enableTick();
+    if (envEnabled === 'false') {
+      console.log('[tick-loop] CECELIA_TICK_ENABLED=false, tick disabled by env');
       return;
     }
 
+    // 默认启用 — Cecelia 是 24/7 自主运行系统，tick 必须持续运作
     const status = await getTickStatus();
-    if (status.enabled) {
-      console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
-      startTickLoop();
+    if (!status.enabled) {
+      console.log('[tick-loop] Tick was disabled in DB, auto-enabling for 24/7 operation');
+      await enableTick();
     } else {
-      console.log('[tick-loop] Tick is disabled in DB, not starting loop');
+      console.log('[tick-loop] Tick is enabled, starting loop');
+      startTickLoop();
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
@@ -1843,14 +1845,14 @@ async function getDrainStatus() {
 
   const tasks = inProgressResult.rows;
 
-  // Auto-complete drain: if no in_progress tasks remain, disable tick
+  // Auto-complete drain: if no in_progress tasks remain, resume normal operation
+  // 注意：drain 完成后不再禁用 tick，Cecelia 是 24/7 系统
   if (tasks.length === 0) {
-    console.log('[tick] Drain complete — no in_progress tasks remain, disabling tick');
+    console.log('[tick] Drain complete — no in_progress tasks remain, resuming normal dispatch');
     const drainEnd = new Date().toISOString();
     const startedAt = _drainStartedAt;
     _draining = false;
     _drainStartedAt = null;
-    await disableTick();
     return {
       draining: false,
       drain_completed: true,
