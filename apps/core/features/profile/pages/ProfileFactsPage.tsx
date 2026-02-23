@@ -1,21 +1,26 @@
 /**
- * ProfileFactsPage — 记忆管理页面
+ * ProfileFactsPage — 记忆管理（表格视图）
  *
- * 查看 / 添加 / 编辑 / 删除 Cecelia 存储的用户记忆（user_profile_facts）
- * 支持按 Category 过滤 + 批量导入（文本粘贴 or 文件上传）
+ * 以数据库表格样式展示 user_profile_facts，支持：
+ * - 关键字实时搜索
+ * - Category Tab 筛选
+ * - 分页（每页 20 条）
+ * - 添加 / 编辑 / 删除（Modal）
+ * - 批量导入（文本粘贴 / 文件上传）
  *
  * API 端点（Core v1.88.1）:
- *   GET    /api/brain/profile/facts?category=xxx&limit=50&offset=0
+ *   GET    /api/brain/profile/facts?category=xxx&limit=500&offset=0
  *   POST   /api/brain/profile/facts          {content, category}
  *   PUT    /api/brain/profile/facts/:id      {content, category}
  *   DELETE /api/brain/profile/facts/:id
  *   POST   /api/brain/profile/facts/import   {text}
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   BrainCircuit, Plus, Pencil, Trash2, Upload, Check, X,
-  ChevronDown, Loader2, RefreshCw, FileText,
+  Loader2, RefreshCw, FileText, Search,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,21 +46,22 @@ interface FactsResponse {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 20;
+
 const CATEGORIES: { value: Category | 'all'; label: string; color: string }[] = [
-  { value: 'all',          label: '全部',     color: 'bg-slate-500/20 text-slate-300' },
-  { value: 'preference',   label: '偏好',     color: 'bg-blue-500/20 text-blue-300' },
-  { value: 'behavior',     label: '行为',     color: 'bg-emerald-500/20 text-emerald-300' },
-  { value: 'background',   label: '背景',     color: 'bg-violet-500/20 text-violet-300' },
-  { value: 'goal',         label: '目标',     color: 'bg-amber-500/20 text-amber-300' },
-  { value: 'relationship', label: '关系',     color: 'bg-pink-500/20 text-pink-300' },
-  { value: 'health',       label: '健康',     color: 'bg-red-500/20 text-red-300' },
-  { value: 'other',        label: '其他',     color: 'bg-slate-400/20 text-slate-400' },
+  { value: 'all',          label: '全部',     color: 'bg-slate-500/20 text-slate-300 border-slate-500/30' },
+  { value: 'preference',   label: '偏好',     color: 'bg-blue-500/20 text-blue-300 border-blue-500/30' },
+  { value: 'behavior',     label: '行为',     color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+  { value: 'background',   label: '背景',     color: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
+  { value: 'goal',         label: '目标',     color: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+  { value: 'relationship', label: '关系',     color: 'bg-pink-500/20 text-pink-300 border-pink-500/30' },
+  { value: 'health',       label: '健康',     color: 'bg-red-500/20 text-red-300 border-red-500/30' },
+  { value: 'other',        label: '其他',     color: 'bg-slate-400/20 text-slate-400 border-slate-400/30' },
 ];
 
-const CAT_COLOR: Record<string, string> = Object.fromEntries(
-  CATEGORIES.map(c => [c.value, c.color])
-);
-const catLabel = (c: string) => CATEGORIES.find(x => x.value === c)?.label ?? c;
+const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]));
+const catLabel = (c: string) => CAT_MAP[c]?.label ?? c;
+const catColor = (c: string) => CAT_MAP[c]?.color ?? CAT_MAP['other'].color;
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
@@ -73,77 +79,13 @@ async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── CategoryBadge ────────────────────────────────────────────────────────────
 
 function CategoryBadge({ category }: { category: string }) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${CAT_COLOR[category] ?? CAT_COLOR['other']}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${catColor(category)}`}>
       {catLabel(category)}
     </span>
-  );
-}
-
-function FactRow({
-  fact,
-  onEdit,
-  onDelete,
-}: {
-  fact: ProfileFact;
-  onEdit: (f: ProfileFact) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-
-  return (
-    <div className="group flex items-start gap-3 px-4 py-3 rounded-xl bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/30 hover:border-slate-600/50 transition-all">
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-slate-200 leading-relaxed break-words">{fact.content}</p>
-        <div className="flex items-center gap-2 mt-1.5">
-          <CategoryBadge category={fact.category} />
-          <span className="text-[11px] text-slate-500">
-            {new Date(fact.created_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', year: 'numeric' })}
-          </span>
-        </div>
-      </div>
-      {/* Actions */}
-      <div className={`flex items-center gap-1 shrink-0 transition-opacity ${confirming ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-        {confirming ? (
-          <>
-            <span className="text-xs text-rose-400 mr-1">确认删除?</span>
-            <button
-              onClick={() => onDelete(fact.id)}
-              className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/40 text-rose-400 hover:text-rose-300 transition-colors"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setConfirming(false)}
-              className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-slate-300 transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => onEdit(fact)}
-              className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-500 hover:text-slate-300 transition-colors"
-              title="编辑"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setConfirming(true)}
-              className="p-1.5 rounded-lg hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-colors"
-              title="删除"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -186,8 +128,6 @@ function FactModal({
         <h3 className="text-base font-semibold text-slate-100 mb-4">
           {initial ? '编辑记忆' : '添加记忆'}
         </h3>
-
-        {/* Category selector */}
         <div className="flex flex-wrap gap-2 mb-4">
           {CATEGORIES.filter(c => c.value !== 'all').map(c => (
             <button
@@ -195,16 +135,14 @@ function FactModal({
               onClick={() => setCategory(c.value as Category)}
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
                 category === c.value
-                  ? `${c.color} border-current opacity-100`
-                  : 'border-slate-700 text-slate-500 hover:border-slate-500'
+                  ? `${c.color} opacity-100`
+                  : 'border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'
               }`}
             >
               {c.label}
             </button>
           ))}
         </div>
-
-        {/* Content */}
         <textarea
           ref={textRef}
           value={content}
@@ -214,7 +152,6 @@ function FactModal({
           placeholder="记录一条关于你的信息，例如：我偏好使用简体中文沟通..."
         />
         {error && <p className="mt-1.5 text-xs text-rose-400">{error}</p>}
-
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onClose}
@@ -268,45 +205,26 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // For txt files, read directly. For others, send raw file name + ask user to paste.
-    // Full PDF/Excel parsing happens server-side via MiniMax text extraction if we send text.
-    // Here we use FileReader for txt; for binary files we read as ArrayBuffer and convert name.
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    if (ext === 'txt') {
-      const reader = new FileReader();
-      reader.onload = () => { setText(reader.result as string); };
-      reader.readAsText(file);
-    } else {
-      // For PDF/Excel/Word: read as text (browsers can't parse these natively).
-      // We inform user to paste the text content, or read as data URL and send.
-      // Best-effort: read as text (often produces garbage for binary, but MiniMax handles it).
-      const reader = new FileReader();
-      reader.onload = () => {
-        // Try to use whatever text was extracted; MiniMax is robust
-        const raw = reader.result as string;
-        setText(raw.length > 5 ? raw : `[${file.name}] 请手动粘贴文件内容`);
-      };
-      reader.readAsText(file, 'utf-8');
-    }
-    // Reset input
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = reader.result as string;
+      setText(raw.length > 5 ? raw : `[${file.name}] 请手动粘贴文件内容`);
+    };
+    reader.readAsText(file, 'utf-8');
     if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <textarea
-          value={text}
-          onChange={e => setText(e.target.value)}
-          rows={5}
-          className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-slate-500 resize-none"
-          placeholder="粘贴文字或上传文件，Cecelia 会自动拆解成记忆条目...&#10;例如：我叫徐啸，喜欢用简体中文沟通，目前在做 AI 创业项目..."
-        />
-      </div>
-
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={5}
+        className="w-full bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-slate-500 resize-none"
+        placeholder="粘贴文字或上传文件，Cecelia 会自动拆解成记忆条目...&#10;例如：我叫徐啸，喜欢用简体中文沟通，目前在做 AI 创业项目..."
+      />
       {error && <p className="text-xs text-rose-400">{error}</p>}
       {result && <p className="text-xs text-emerald-400">{result}</p>}
-
       <div className="flex items-center gap-2">
         <button
           onClick={() => fileRef.current?.click()}
@@ -315,15 +233,8 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
           <FileText className="w-3.5 h-3.5" />
           上传文件
         </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".txt,.pdf,.xlsx,.xls,.docx,.doc,.csv"
-          onChange={handleFile}
-          className="hidden"
-        />
+        <input ref={fileRef} type="file" accept=".txt,.pdf,.xlsx,.xls,.docx,.doc,.csv" onChange={handleFile} className="hidden" />
         <span className="text-xs text-slate-500">支持 txt / PDF / Excel / Word</span>
-
         <button
           onClick={() => doImport(text)}
           disabled={importing || !text.trim()}
@@ -337,20 +248,105 @@ function ImportPanel({ onImported }: { onImported: () => void }) {
   );
 }
 
+// ─── FactTableRow ─────────────────────────────────────────────────────────────
+
+function FactTableRow({
+  fact,
+  isLast,
+  isDeleting,
+  onEdit,
+  onDeleteRequest,
+  onDeleteConfirm,
+  onDeleteCancel,
+}: {
+  fact: ProfileFact;
+  isLast: boolean;
+  isDeleting: boolean;
+  onEdit: () => void;
+  onDeleteRequest: () => void;
+  onDeleteConfirm: () => void;
+  onDeleteCancel: () => void;
+}) {
+  const formatted = new Date(fact.created_at).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+
+  return (
+    <div
+      className={`group grid items-center px-4 py-2.5 gap-3 hover:bg-slate-800/40 transition-colors ${
+        !isLast ? 'border-b border-slate-700/30' : ''
+      }`}
+      style={{ gridTemplateColumns: '1fr 80px 90px 64px' }}
+    >
+      {/* Content */}
+      <p className="text-sm text-slate-200 truncate leading-relaxed" title={fact.content}>
+        {fact.content}
+      </p>
+
+      {/* Category */}
+      <div><CategoryBadge category={fact.category} /></div>
+
+      {/* Date */}
+      <span className="text-xs text-slate-500 tabular-nums">{formatted}</span>
+
+      {/* Actions */}
+      <div className="flex items-center justify-end gap-1">
+        {isDeleting ? (
+          <>
+            <button
+              onClick={onDeleteConfirm}
+              className="p-1 rounded-md bg-rose-500/20 hover:bg-rose-500/40 text-rose-400 hover:text-rose-300 transition-colors"
+              title="确认删除"
+            >
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onDeleteCancel}
+              className="p-1 rounded-md hover:bg-slate-700 text-slate-500 hover:text-slate-300 transition-colors"
+              title="取消"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={onEdit}
+              className="p-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-slate-700 transition-colors opacity-0 group-hover:opacity-100"
+              title="编辑"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onDeleteRequest}
+              className="p-1 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors opacity-0 group-hover:opacity-100"
+              title="删除"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ProfileFactsPage() {
-  const [facts, setFacts] = useState<ProfileFact[]>([]);
+  const [allFacts, setAllFacts] = useState<ProfileFact[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
+  const [fetchError, setFetchError] = useState('');
 
   const [category, setCategory] = useState<Category | 'all'>('all');
-  const [showCatMenu, setShowCatMenu] = useState(false);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
 
   const [showAdd, setShowAdd] = useState(false);
   const [editFact, setEditFact] = useState<ProfileFact | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [showImport, setShowImport] = useState(false);
 
@@ -358,15 +354,16 @@ export default function ProfileFactsPage() {
 
   const fetchFacts = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
-    setError('');
+    setFetchError('');
     try {
-      const params = new URLSearchParams({ limit: '100', offset: '0' });
+      const params = new URLSearchParams({ limit: '500', offset: '0' });
       if (category !== 'all') params.set('category', category);
       const data = await apiFetch<FactsResponse>(`${BASE}?${params}`);
-      setFacts(data.facts);
+      setAllFacts(data.facts);
       setTotal(data.total);
+      setPage(0);
     } catch (e: any) {
-      setError(e.message ?? '加载失败');
+      setFetchError(e.message ?? '加载失败');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -374,6 +371,20 @@ export default function ProfileFactsPage() {
   }, [category]);
 
   useEffect(() => { fetchFacts(); }, [fetchFacts]);
+  useEffect(() => { setPage(0); }, [search]);
+
+  // ── Filter + paginate ──────────────────────────────────────────────────────
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return allFacts;
+    return allFacts.filter(f => f.content.toLowerCase().includes(q));
+  }, [allFacts, search]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const startIdx = filtered.length === 0 ? 0 : page * PAGE_SIZE + 1;
+  const endIdx = Math.min((page + 1) * PAGE_SIZE, filtered.length);
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
 
@@ -390,40 +401,38 @@ export default function ProfileFactsPage() {
 
   const handleDelete = async (id: string) => {
     await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
-    setFacts(prev => prev.filter(f => f.id !== id));
+    setAllFacts(prev => prev.filter(f => f.id !== id));
     setTotal(prev => prev - 1);
+    setDeletingId(null);
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const currentCatLabel = CATEGORIES.find(c => c.value === category)?.label ?? '全部';
-
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-700/60 flex items-center justify-center">
-            <BrainCircuit className="w-5 h-5 text-slate-300" />
+          <div className="w-9 h-9 rounded-xl bg-slate-700/60 flex items-center justify-center shrink-0">
+            <BrainCircuit className="w-[18px] h-[18px] text-slate-300" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-slate-100">记忆管理</h1>
-            <p className="text-sm text-slate-400">Cecelia 存储的关于你的记忆条目 · {total} 条</p>
+            <h1 className="text-lg font-semibold text-slate-100 leading-tight">记忆管理</h1>
+            <p className="text-xs text-slate-500 mt-0.5">共 {total} 条 · pgvector 向量化存储</p>
           </div>
         </div>
-
         <div className="flex items-center gap-2">
           <button
             onClick={() => fetchFacts(true)}
             disabled={refreshing}
-            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
             title="刷新"
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setShowImport(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-xl border transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-colors ${
               showImport
                 ? 'bg-slate-700 border-slate-600 text-slate-200'
                 : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -434,110 +443,144 @@ export default function ProfileFactsPage() {
           </button>
           <button
             onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 transition-colors"
           >
-            <Plus className="w-4 h-4" />
-            添加记忆
+            <Plus className="w-3.5 h-3.5" />
+            添加
           </button>
         </div>
       </div>
 
       {/* Import Panel */}
       {showImport && (
-        <div className="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-5">
-          <h2 className="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
-            <Upload className="w-4 h-4" /> 批量导入
+        <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+          <h2 className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
+            <Upload className="w-3.5 h-3.5" /> 批量导入
           </h2>
           <ImportPanel onImported={() => fetchFacts(true)} />
         </div>
       )}
 
-      {/* Filter bar */}
-      <div className="flex items-center gap-3">
-        {/* Category dropdown */}
+      {/* Toolbar: Category tabs + Search */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
+          {CATEGORIES.map(c => (
+            <button
+              key={c.value}
+              onClick={() => setCategory(c.value as any)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all border ${
+                category === c.value
+                  ? c.color
+                  : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/60'
+              }`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1" />
         <div className="relative">
-          <button
-            onClick={() => setShowCatMenu(v => !v)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-xl border border-slate-700 text-slate-300 hover:border-slate-500 transition-colors"
-          >
-            {currentCatLabel}
-            <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-          </button>
-          {showCatMenu && (
-            <div className="absolute top-full mt-1 left-0 z-20 w-36 bg-slate-900 border border-slate-700 rounded-xl shadow-xl py-1 overflow-hidden">
-              {CATEGORIES.map(c => (
-                <button
-                  key={c.value}
-                  onClick={() => { setCategory(c.value as any); setShowCatMenu(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
-                    category === c.value
-                      ? 'bg-slate-700 text-slate-200'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                  }`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="搜索记忆..."
+            className="w-48 pl-8 pr-7 py-1.5 text-xs bg-slate-800/60 border border-slate-700/50 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           )}
         </div>
-        {category !== 'all' && (
-          <button
-            onClick={() => setCategory('all')}
-            className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            清除过滤
-          </button>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-xl border border-slate-700/50 overflow-hidden">
+        {/* Table header */}
+        <div
+          className="grid bg-slate-800/60 border-b border-slate-700/50 px-4 py-2.5 gap-3"
+          style={{ gridTemplateColumns: '1fr 80px 90px 64px' }}
+        >
+          <span className="text-xs font-medium text-slate-400">内容</span>
+          <span className="text-xs font-medium text-slate-400">分类</span>
+          <span className="text-xs font-medium text-slate-400">时间</span>
+          <span className="text-xs font-medium text-slate-400 text-right">操作</span>
+        </div>
+
+        {/* Rows */}
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-slate-500">
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            <span className="text-sm">加载中…</span>
+          </div>
+        ) : fetchError ? (
+          <div className="py-12 text-center text-rose-400 text-sm">{fetchError}</div>
+        ) : pageData.length === 0 ? (
+          <div className="py-16 text-center">
+            <BrainCircuit className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+            <p className="text-sm text-slate-500">
+              {search
+                ? `没有包含「${search}」的记忆`
+                : category !== 'all'
+                ? '当前分类暂无记忆'
+                : '还没有任何记忆，点击「添加」开始记录'}
+            </p>
+          </div>
+        ) : (
+          pageData.map((fact, idx) => (
+            <FactTableRow
+              key={fact.id}
+              fact={fact}
+              isLast={idx === pageData.length - 1}
+              isDeleting={deletingId === fact.id}
+              onEdit={() => setEditFact(fact)}
+              onDeleteRequest={() => setDeletingId(fact.id)}
+              onDeleteConfirm={() => handleDelete(fact.id)}
+              onDeleteCancel={() => setDeletingId(null)}
+            />
+          ))
         )}
       </div>
 
-      {/* List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-slate-500">
-          <Loader2 className="w-5 h-5 animate-spin mr-2" />
-          加载中…
-        </div>
-      ) : error ? (
-        <div className="py-12 text-center text-rose-400 text-sm">{error}</div>
-      ) : facts.length === 0 ? (
-        <div className="py-16 text-center">
-          <BrainCircuit className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-          <p className="text-sm text-slate-500">
-            {category !== 'all' ? '当前分类没有记忆' : '还没有任何记忆，点击「添加记忆」开始记录'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {facts.map(fact => (
-            <FactRow
-              key={fact.id}
-              fact={fact}
-              onEdit={(f) => setEditFact(f)}
-              onDelete={handleDelete}
-            />
-          ))}
+      {/* Pagination */}
+      {!loading && filtered.length > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs text-slate-500">
+            {(search || category !== 'all') && filtered.length !== total
+              ? `筛选结果 ${filtered.length} 条（共 ${total} 条）`
+              : `共 ${total} 条`}
+            {filtered.length > 0 && `，显示 ${startIdx}–${endIdx}`}
+          </span>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="p-1 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-xs text-slate-400 px-2">{page + 1} / {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="p-1 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Modals */}
-      {showAdd && (
-        <FactModal
-          onClose={() => setShowAdd(false)}
-          onSave={handleAdd}
-        />
-      )}
-      {editFact && (
-        <FactModal
-          initial={editFact}
-          onClose={() => setEditFact(null)}
-          onSave={handleEdit}
-        />
-      )}
-
-      {/* Close cat menu on outside click */}
-      {showCatMenu && (
-        <div className="fixed inset-0 z-10" onClick={() => setShowCatMenu(false)} />
-      )}
+      {showAdd && <FactModal onClose={() => setShowAdd(false)} onSave={handleAdd} />}
+      {editFact && <FactModal initial={editFact} onClose={() => setEditFact(null)} onSave={handleEdit} />}
     </div>
   );
 }
