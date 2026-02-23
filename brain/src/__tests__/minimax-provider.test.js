@@ -66,11 +66,6 @@ describe('getProviderForTask - 双 Provider 路由', () => {
     expect(getProviderForTask(task)).toBe('minimax');
   });
 
-  it('T4 (D4): exploratory 任务固定返回 minimax', () => {
-    const task = { id: 'task-2', task_type: 'exploratory', title: '调研任务' };
-    expect(getProviderForTask(task)).toBe('minimax');
-  });
-
   it('T4 (D4): codex_qa 任务固定返回 openai', () => {
     const task = { id: 'task-3', task_type: 'codex_qa', title: 'Codex QA' };
     expect(getProviderForTask(task)).toBe('openai');
@@ -87,11 +82,11 @@ describe('getProviderForTask - 双 Provider 路由', () => {
   });
 
   it('T4 (D4): FIXED_PROVIDER 包含正确映射', () => {
-    expect(FIXED_PROVIDER.exploratory).toBe('minimax');
     expect(FIXED_PROVIDER.codex_qa).toBe('openai');
     expect(FIXED_PROVIDER.decomp_review).toBe('minimax');
     expect(FIXED_PROVIDER.talk).toBe('minimax');
     expect(FIXED_PROVIDER.research).toBe('minimax');
+    expect(FIXED_PROVIDER.exploratory).toBeUndefined();
   });
 });
 

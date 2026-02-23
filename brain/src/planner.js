@@ -14,8 +14,6 @@ const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
 const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
 
 // Content-aware score configuration
-const CONTENT_SCORE_EXPLORATORY_BONUS = 10;          // exploratory task 优先（调研先行）
-const CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY = -20;  // 等待调研完成的 dev task 延后
 const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
 
 /**
@@ -70,8 +68,6 @@ async function buildLearningPenaltyMap(projectId) {
  * Apply content-aware score bonus to a list of tasks based on task_type and payload content.
  *
  * Scoring rules:
- *   - task_type === 'exploratory'              → +10 (调研先行)
- *   - payload.wait_for_exploratory === true    → -20 (等待调研完成再执行)
  *   - payload.decomposition_mode === 'known'   → +5  (已知方案优先)
  *
  * @param {Array} tasks - Array of task objects from DB
@@ -82,12 +78,6 @@ export function applyContentAwareScore(tasks) {
     let bonus = 0;
     const payload = task.payload || {};
 
-    if (task.task_type === 'exploratory') {
-      bonus += CONTENT_SCORE_EXPLORATORY_BONUS;
-    }
-    if (payload.wait_for_exploratory === true) {
-      bonus += CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY;
-    }
     if (payload.decomposition_mode === 'known') {
       bonus += CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS;
     }
@@ -230,14 +220,12 @@ async function selectTargetProject(kr, state) {
  * @returns {Object|null} - Task or null
  */
 async function generateNextTask(kr, project, state, options = {}) {
-  // V4: Phase-aware task selection — exploratory tasks first, then dev tasks.
-  // When an Initiative has decomposition_mode='exploratory', exploratory-phase tasks
-  // must complete before dev-phase tasks are dispatched.
+  // V4: Phase-aware task selection — dev tasks first.
   const result = await pool.query(`
     SELECT * FROM tasks
     WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
     ORDER BY
-      CASE phase WHEN 'exploratory' THEN 0 WHEN 'dev' THEN 1 ELSE 2 END,
+      CASE phase WHEN 'dev' THEN 0 ELSE 1 END,
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
@@ -261,9 +249,8 @@ async function generateNextTask(kr, project, state, options = {}) {
     const reScored = contentScoredTasks.map(task => {
       let score = 0;
 
-      // Phase score (exploratory first)
-      if (task.phase === 'exploratory') score += 200;
-      else if (task.phase === 'dev') score += 100;
+      // Phase score (dev first)
+      if (task.phase === 'dev') score += 100;
 
       // Status score (queued before in_progress)
       if (task.status === 'queued') score += 10;
@@ -287,9 +274,8 @@ async function generateNextTask(kr, project, state, options = {}) {
   const scored = contentScoredTasks.map(task => {
     let score = 0;
 
-    // Phase score (exploratory first)
-    if (task.phase === 'exploratory') score += 200;
-    else if (task.phase === 'dev') score += 100;
+    // Phase score (dev first)
+    if (task.phase === 'dev') score += 100;
 
     // Status score (queued before in_progress)
     if (task.status === 'queued') score += 10;
@@ -697,8 +683,6 @@ export {
   LEARNING_LOOKBACK_DAYS,
   LEARNING_FAILURE_THRESHOLD,
   // Content-aware score
-  CONTENT_SCORE_EXPLORATORY_BONUS,
-  CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY,
   CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS,
   // PR Plans dispatch functions
   getPrPlansByInitiative,

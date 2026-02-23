@@ -153,15 +153,6 @@ export const AGENTS = [
     fixed_provider: 'minimax',
   },
   {
-    id: 'exploratory',
-    name: '探索',
-    description: '探索性任务',
-    layer: 'executor',
-    allowed_models: ['MiniMax-M2.1', 'MiniMax-M2.1-highspeed'],
-    recommended_model: 'MiniMax-M2.1',
-    fixed_provider: 'minimax',
-  },
-  {
     id: 'decomp_review',
     name: '拆解审查 Vivian',
     description: 'OKR 拆解审查',

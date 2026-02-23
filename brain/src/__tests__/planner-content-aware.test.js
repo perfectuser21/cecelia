@@ -25,20 +25,20 @@ describe('applyContentAwareScore', () => {
     expect(typeof applyContentAwareScore).toBe('function');
   });
 
-  it('exploratory task gets +10 bonus', () => {
+  it('exploratory task (removed concept) gets 0 bonus', () => {
     const tasks = [
       { id: 'task-1', task_type: 'exploratory', payload: {} }
     ];
     const result = applyContentAwareScore(tasks);
-    expect(result[0]._content_score_bonus).toBe(10);
+    expect(result[0]._content_score_bonus).toBe(0);
   });
 
-  it('dev task with wait_for_exploratory gets -20 penalty', () => {
+  it('dev task with wait_for_exploratory (removed) gets 0 bonus', () => {
     const tasks = [
       { id: 'task-2', task_type: 'dev', payload: { wait_for_exploratory: true } }
     ];
     const result = applyContentAwareScore(tasks);
-    expect(result[0]._content_score_bonus).toBe(-20);
+    expect(result[0]._content_score_bonus).toBe(0);
   });
 
   it('dev task with decomposition_mode=known gets +5 bonus', () => {
@@ -65,19 +65,20 @@ describe('applyContentAwareScore', () => {
     expect(result[0]._content_score_bonus).toBe(0);
   });
 
-  it('exploratory task排序高于同级dev task', () => {
+  it('exploratory task (removed) 与 dev task 得分相同（均为 0）', () => {
     const tasks = [
       { id: 'dev-task', task_type: 'dev', payload: {}, phase: 'dev', status: 'queued', priority: 'P1' },
-      { id: 'exp-task', task_type: 'exploratory', payload: {}, phase: 'exploratory', status: 'queued', priority: 'P1' }
+      { id: 'exp-task', task_type: 'exploratory', payload: {}, phase: 'dev', status: 'queued', priority: 'P1' }
     ];
     const result = applyContentAwareScore(tasks);
-    // exploratory 得 +10，dev 得 0
     const expTask = result.find(t => t.id === 'exp-task');
     const devTask = result.find(t => t.id === 'dev-task');
-    expect(expTask._content_score_bonus).toBeGreaterThan(devTask._content_score_bonus);
+    // exploratory 概念已移除，两者均得 0
+    expect(expTask._content_score_bonus).toBe(0);
+    expect(devTask._content_score_bonus).toBe(0);
   });
 
-  it('wait_for_exploratory dev task排序最后（bonus最低）', () => {
+  it('wait_for_exploratory (removed) 与普通 dev task 得分相同', () => {
     const tasks = [
       { id: 'normal-dev', task_type: 'dev', payload: {}, phase: 'dev' },
       { id: 'known-dev', task_type: 'dev', payload: { decomposition_mode: 'known' }, phase: 'dev' },
@@ -87,8 +88,10 @@ describe('applyContentAwareScore', () => {
     const waitBonus = result.find(t => t.id === 'wait-dev')._content_score_bonus;
     const normalBonus = result.find(t => t.id === 'normal-dev')._content_score_bonus;
     const knownBonus = result.find(t => t.id === 'known-dev')._content_score_bonus;
-    expect(waitBonus).toBeLessThan(normalBonus);
-    expect(waitBonus).toBeLessThan(knownBonus);
+    // wait_for_exploratory 惩罚已移除，normal 和 wait 都是 0，known 是 +5
+    expect(waitBonus).toBe(0);
+    expect(normalBonus).toBe(0);
+    expect(knownBonus).toBe(5);
   });
 
   it('logs content-aware scores at debug level', () => {

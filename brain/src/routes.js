@@ -1973,7 +1973,7 @@ router.post('/execution-callback', async (req, res) => {
     }
 
     // P1-1: Dev task completed without PR → completed_no_pr
-    // Only dev tasks are expected to produce PRs. Decomposition/exploratory tasks are exempt.
+    // Only dev tasks are expected to produce PRs. Decomposition tasks are exempt.
     if (newStatus === 'completed' && !pr_url) {
       try {
         const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
@@ -2022,7 +2022,7 @@ router.post('/execution-callback', async (req, res) => {
         : null;
 
       if (!findingsValue && isCompleted) {
-        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result - exploratory chain may be broken`);
+        console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
       await client.query(`
@@ -2257,108 +2257,8 @@ router.post('/execution-callback', async (req, res) => {
       }
     }
 
-    // 5b. 探索型任务闭环：Task 完成后回调秋米继续拆解
+    // 5b. 探索型任务闭环已移除
     if (newStatus === 'completed') {
-      try {
-        // 获取 Task 的 payload 检查是否是探索型
-        const taskResult = await pool.query('SELECT payload, project_id, goal_id FROM tasks WHERE id = $1', [task_id]);
-        const taskPayload = taskResult.rows[0]?.payload;
-        const initiativeId = taskResult.rows[0]?.project_id;
-        const krId = taskResult.rows[0]?.goal_id;
-
-        if (taskPayload?.exploratory === true && initiativeId) {
-          console.log(`[execution-callback] Exploratory task completed, triggering continue decomposition...`);
-
-          // 获取 Initiative 信息
-          const initiativeResult = await pool.query('SELECT name, kr_id, decomposition_mode FROM projects WHERE id = $1', [initiativeId]);
-          const initiative = initiativeResult.rows[0];
-
-          if (initiative?.decomposition_mode === 'exploratory') {
-            // 获取 KR 目标
-            const krResult = await pool.query('SELECT title FROM goals WHERE id = $1', [krId || initiative.kr_id]);
-            const krGoal = krResult.rows[0]?.title || 'Unknown KR';
-
-            // 创建"继续拆解"任务给秋米
-            const { createTask: createDecompTask } = await import('./actions.js');
-            await createDecompTask({
-              title: `继续拆解: ${initiative.name}`,
-              description: `探索型 Task 完成，请根据结果继续拆解下一步。\n\nInitiative: ${initiative.name}\nKR 目标: ${krGoal}\n\n上一步结果将在执行时传入。`,
-              task_type: 'dev',
-              priority: 'P0',
-              goal_id: krId || initiative.kr_id,
-              project_id: initiativeId,
-              payload: {
-                decomposition: 'continue',
-                initiative_id: initiativeId,
-                previous_task_id: task_id,
-                previous_result: result?.result || result,
-                kr_goal: krGoal
-              }
-            });
-
-            console.log(`[execution-callback] Created continue decomposition task for initiative: ${initiative.name}`);
-          }
-        }
-      } catch (exploratoryErr) {
-        console.error(`[execution-callback] Exploratory handling error: ${exploratoryErr.message}`);
-      }
-
-      // 5b2. Phase-based transition: exploratory phase → dev phase
-      // When a task with phase='exploratory' completes, create a dev-phase follow-up task.
-      // This is separate from the decomposition continue pattern (5b above).
-      try {
-        const phaseResult = await pool.query(
-          'SELECT phase, project_id, goal_id, title, payload, prd_content FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const phaseTask = phaseResult.rows[0];
-
-        if (phaseTask?.phase === 'exploratory' && phaseTask.project_id) {
-          // Check if Initiative uses exploratory decomposition
-          const initResult = await pool.query(
-            'SELECT name, decomposition_mode, kr_id FROM projects WHERE id = $1',
-            [phaseTask.project_id]
-          );
-          const initiative = initResult.rows[0];
-
-          if (initiative?.decomposition_mode === 'exploratory') {
-            // Check that no dev-phase tasks already exist for this Initiative+KR
-            const existingDev = await pool.query(`
-              SELECT id FROM tasks
-              WHERE project_id = $1 AND goal_id = $2 AND phase = 'dev'
-                AND status IN ('queued', 'in_progress')
-              LIMIT 1
-            `, [phaseTask.project_id, phaseTask.goal_id]);
-
-            if (existingDev.rows.length === 0) {
-              console.log(`[execution-callback] Exploratory phase completed for ${initiative.name}, creating dev-phase task`);
-
-              const resultSummary = (result !== null && typeof result === 'object')
-                ? (result.result || JSON.stringify(result).slice(0, 1000))
-                : String(result || '').slice(0, 1000);
-
-              const { createTask: createDevTask } = await import('./actions.js');
-              await createDevTask({
-                title: `Dev: ${phaseTask.title.replace(/^(Exploratory|探索)[：:]\s*/i, '')}`,
-                description: `Exploratory phase completed. Implement based on findings.\n\nExploratory result:\n${resultSummary}`,
-                task_type: 'dev',
-                priority: phaseTask.payload?.priority || 'P1',
-                goal_id: phaseTask.goal_id,
-                project_id: phaseTask.project_id,
-                payload: {
-                  phase: 'dev',
-                  exploratory_task_id: task_id,
-                  exploratory_result: resultSummary,
-                }
-              });
-
-              console.log(`[execution-callback] Created dev-phase task for initiative: ${initiative.name}`);
-            }
-          }
-        }
-      } catch (phaseErr) {
-        console.error(`[execution-callback] Phase transition error: ${phaseErr.message}`);
-      }
 
       // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
       try {
@@ -5705,12 +5605,12 @@ router.post('/attach-decision', async (req, res) => {
           top_matches: relatedInitiatives.slice(0, 3)
         },
         route: {
-          path: 'exploratory_then_dev',
-          why: ['在现有 Initiative 下扩展功能', '需要验证对现有系统的影响'],
+          path: 'extend_initiative_then_dev',
+          why: ['在现有 Initiative 下扩展功能', '直接创建 dev 任务'],
           confidence: 0.75
         },
         next_call: {
-          skill: '/exploratory',
+          skill: '/dev',
           args: {
             initiative_id: target.id,
             task_description: input
@@ -5738,7 +5638,7 @@ router.post('/attach-decision', async (req, res) => {
           top_matches: relatedKRs.slice(0, 3)
         },
         route: {
-          path: 'okr_then_exploratory_then_dev',
+          path: 'okr_then_dev',
           why: ['需要先创建 Initiative', '然后进行技术验证'],
           confidence: 0.7
         },
@@ -5768,7 +5668,7 @@ router.post('/attach-decision', async (req, res) => {
         top_matches: []
       },
       route: {
-        path: 'okr_then_exploratory_then_dev',
+        path: 'okr_then_dev',
         why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
         confidence: 0.6
       },

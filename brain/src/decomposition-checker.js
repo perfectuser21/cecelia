@@ -12,7 +12,7 @@
  *   L5 Project     → L5b Initiative (projects table, parent_id)
  *   L5b Initiative  → L6 Task       (tasks table, project_id)
  *
- * Plus: exploratory decomposition continue (check 7).
+ * 6-Layer OKR gap detection.
  */
 
 import pool from './db.js';
@@ -845,84 +845,6 @@ async function checkInitiativeDecomposition() {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Check 7: Exploratory decomposition continue
-// ───────────────────────────────────────────────────────────────────
-
-/**
- * Find completed exploratory tasks that recommend continuing decomposition.
- * When an exploratory task completes with payload.next_action = 'decompose',
- * create a follow-up decomposition task to continue the work.
- *
- * @returns {Object[]} Array of actions taken
- */
-async function checkExploratoryDecompositionContinue() {
-  const actions = [];
-
-  // Find completed exploratory tasks that flagged decomposition continue
-  const result = await pool.query(`
-    SELECT t.id, t.title, t.project_id, t.goal_id, t.payload
-    FROM tasks t
-    WHERE t.task_type = 'exploratory'
-      AND t.status = 'completed'
-      AND t.completed_at > NOW() - INTERVAL '${DEDUP_WINDOW_HOURS} hours'
-      AND t.payload->>'next_action' = 'decompose'
-      AND NOT EXISTS (
-        SELECT 1 FROM tasks follow
-        WHERE follow.goal_id = t.goal_id
-          AND follow.project_id = t.project_id
-          AND follow.payload->>'decomposition' = 'continue'
-          AND follow.payload->>'exploratory_source' = t.id::text
-          AND follow.status IN ('queued', 'in_progress', 'completed', 'canceled', 'cancelled')
-      )
-  `);
-
-  for (const expTask of result.rows) {
-    const findings = expTask.payload?.findings || expTask.payload?.result || '';
-
-    if (!findings) {
-      console.warn(`[decomp-checker] Exploratory task ${expTask.id} ("${expTask.title}") has empty findings - context will be missing for follow-up tasks. Check execution-callback findings storage.`);
-    }
-
-    const task = await createDecompositionTask({
-      title: `探索续拆: ${expTask.title}`,
-      description: [
-        `探索型任务「${expTask.title}」已完成，建议继续拆解。`,
-        '',
-        '背景：',
-        `原始探索结果：${typeof findings === 'string' ? findings : JSON.stringify(findings)}`,
-        '',
-        '要求：',
-        '1. 基于探索结果，创建具体的 dev Tasks',
-        '2. 调用 Brain API 创建 Task:',
-        '   POST http://localhost:5221/api/brain/action/create-task',
-        `   Body: { "title": "...", "project_id": "${expTask.project_id}", "goal_id": "${expTask.goal_id}", "task_type": "dev" }`,
-        '',
-        `探索任务 ID: ${expTask.id}`,
-        `Project ID: ${expTask.project_id}`,
-        `Goal ID: ${expTask.goal_id}`,
-      ].join('\n'),
-      goalId: expTask.goal_id,
-      projectId: expTask.project_id,
-      payload: {
-        decomposition: 'continue',  // override 'true' default so NOT EXISTS dedup check matches
-        level: 'exploratory_continue',
-        exploratory_source: expTask.id
-      }
-    });
-
-    console.log(`[decomp-checker] Created exploratory continue: ${expTask.title}`);
-    actions.push({
-      action: 'create_decomposition',
-      check: 'exploratory_continue',
-      task_id: task.id,
-      source_task_id: expTask.id,
-      title: expTask.title
-    });
-  }
-
-  return actions;
-}
-
 // ───────────────────────────────────────────────────────────────────
 // Main entry point
 // ───────────────────────────────────────────────────────────────────
@@ -1088,19 +1010,7 @@ async function runDecompositionChecks() {
       allActions.push({ action: 'skip_capacity', check: 'check_6', reason: 'task_or_initiative_at_capacity' });
     }
 
-    // 4. Check 7: Exploratory continuation（只在 task 层未满时运行）
-    if (!taskAtCap) {
-      try {
-        const exploratoryActions = await checkExploratoryDecompositionContinue();
-        allActions.push(...exploratoryActions);
-      } catch (err) {
-        console.error('[decomp-checker] Check 7 (exploratory continuation) failed:', err.message);
-      }
-    } else {
-      allActions.push({ action: 'skip_capacity', check: 'check_7', reason: 'task_at_capacity' });
-    }
-
-    // 5. Summary
+    // 4. Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
     const totalSkipped = allActions.filter(a => a.action === 'skip_inventory').length;
 

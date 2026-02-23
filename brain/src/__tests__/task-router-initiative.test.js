@@ -42,7 +42,7 @@ describe('task-router initiative types', () => {
     expect(mod.getTaskLocation('decomp_review')).toBe('hk');
     expect(mod.getTaskLocation('talk')).toBe('hk');
     expect(mod.isValidTaskType('dev')).toBe(true);
-    expect(mod.isValidTaskType('exploratory')).toBe(true);
+    expect(mod.isValidTaskType('exploratory')).toBe(false);
     expect(mod.isValidTaskType('codex_qa')).toBe(true);
   });
 });

@@ -30,7 +30,6 @@ export const FALLBACK_PROFILE = {
       default_provider: 'minimax',
       model_map: {
         dev:           { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        exploratory:   { anthropic: null, minimax: 'MiniMax-M2.1' },
         review:        { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
         qa:            { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
         audit:         { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
@@ -40,7 +39,6 @@ export const FALLBACK_PROFILE = {
         codex_qa:      { anthropic: null, minimax: null },
       },
       fixed_provider: {
-        exploratory:   'minimax',
         codex_qa:      'openai',
         decomp_review: 'minimax',
         talk:          'minimax',

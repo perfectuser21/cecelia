@@ -40,26 +40,10 @@ describe('D1: 双 Provider 模型路由', () => {
   });
 
   // ============================================================
-  // D1-2: minimax provider + exploratory → M2.1
-  // ============================================================
-  it('D1-2: exploratory 任务（固定 minimax）返回 M2.1', () => {
-    const task = { id: 'task-2', task_type: 'exploratory', title: '调研任务' };
-    expect(getProviderForTask(task)).toBe('minimax');
-    expect(getModelForTask(task)).toBe('MiniMax-M2.1');
-  });
-
-  // ============================================================
   // D1-3: anthropic provider 下 dev 返回 null（默认 Sonnet）
   // ============================================================
   it('D1-3: MODEL_MAP 中 anthropic dev 映射为 null', () => {
     expect(MODEL_MAP.dev.anthropic).toBeNull();
-  });
-
-  // ============================================================
-  // D1-4: anthropic provider 下 exploratory 返回 null
-  // ============================================================
-  it('D1-4: MODEL_MAP 中 anthropic exploratory 映射为 null', () => {
-    expect(MODEL_MAP.exploratory.anthropic).toBeNull();
   });
 
   // ============================================================
@@ -88,8 +72,8 @@ describe('D1: 双 Provider 模型路由', () => {
   // ============================================================
   // D1-6: FIXED_PROVIDER 固定路由
   // ============================================================
-  it('D1-6: exploratory 固定 minimax', () => {
-    expect(FIXED_PROVIDER.exploratory).toBe('minimax');
+  it('D1-6: exploratory 不再在 FIXED_PROVIDER 中', () => {
+    expect(FIXED_PROVIDER.exploratory).toBeUndefined();
   });
 
   it('D1-6: codex_qa 固定 openai', () => {
