@@ -3,7 +3,7 @@
  * 测试 Cecelia 嘴巴对话链路
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Mock db.js — vi.mock 工厂不能引用外部变量
 vi.mock('../db.js', () => ({
@@ -229,6 +229,109 @@ describe('orchestrator-chat', () => {
         recordChatEvent('test', 'reply', {})
       ).resolves.toBeUndefined();
     });
+
+    it('stores full message without truncation (D4)', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const longMessage = 'A'.repeat(1000);
+      const longReply = 'B'.repeat(500);
+
+      await recordChatEvent(longMessage, longReply, {});
+
+      const callArgs = pool.query.mock.calls[0];
+      const payload = JSON.parse(callArgs[1][2]);
+      expect(payload.user_message).toBe(longMessage);
+      expect(payload.user_message).toHaveLength(1000);
+      expect(payload.reply).toBe(longReply);
+      expect(payload.reply).toHaveLength(500);
+    });
+
+    it('uses reply key not reply_preview (D4)', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      await recordChatEvent('消息', '回复内容', {});
+
+      const callArgs = pool.query.mock.calls[0];
+      const payload = JSON.parse(callArgs[1][2]);
+      expect(payload).toHaveProperty('reply');
+      expect(payload).not.toHaveProperty('reply_preview');
+    });
+  });
+
+  // ===================== D5: 多轮历史上下文 =====================
+
+  describe('handleChat - multi-turn history (D2)', () => {
+    it('passes messages to callMiniMax', async () => {
+      // MiniMax call (memory uses buildMemoryContext mock)
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '记得，你叫小明。' } }],
+          usage: {},
+        }),
+      });
+
+      const history = [
+        { role: 'user', content: '我叫小明' },
+        { role: 'assistant', content: '你好，小明！' },
+      ];
+
+      const result = await handleChat('你还记得我叫什么吗', {}, history);
+
+      expect(result.reply).toBe('记得，你叫小明。');
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      // system + 2 history + user = 4
+      expect(body.messages).toHaveLength(4);
+      expect(body.messages[1]).toEqual({ role: 'user', content: '我叫小明' });
+    });
+
+    it('works without history (backward compatible)', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '你好！' } }],
+          usage: {},
+        }),
+      });
+
+      const result = await handleChat('你好');
+      expect(result.reply).toBe('你好！');
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.messages).toHaveLength(2); // system + user only
+    });
+  });
+
+  // ===================== D3: 始终注入状态 =====================
+
+  describe('handleChat - always inject status (D3)', () => {
+    it('injects status for CREATE_TASK intent (not just QUERY_STATUS/QUESTION)', async () => {
+      parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
+
+      // buildStatusSummary needs pool.query mocks
+      pool.query
+        .mockResolvedValueOnce({ rows: [{ status: 'in_progress', cnt: 2 }] }) // tasks
+        .mockResolvedValueOnce({ rows: [{ status: 'active', cnt: 1 }] })      // goals
+        .mockResolvedValueOnce({ rows: [] });                                  // recordChatEvent
+
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '好的，我来创建任务。' } }],
+          usage: {},
+        }),
+      });
+
+      const result = await handleChat('帮我创建一个任务');
+
+      expect(result.reply).toBe('好的，我来创建任务。');
+
+      // 验证 system prompt 包含状态（无论 intent 类型）
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      const systemMsg = body.messages.find(m => m.role === 'system');
+      expect(systemMsg.content).toContain('当前系统状态');
+    });
   });
 
   describe('handleChat - memory integration', () => {
@@ -359,6 +462,55 @@ describe('orchestrator-chat', () => {
       expect(body.messages).toHaveLength(2);
       expect(body.messages[0].role).toBe('system');
       expect(body.messages[1].role).toBe('user');
+    });
+
+    it('inserts history messages between system and user (D1)', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '记得，你叫小明。' } }],
+          usage: { total_tokens: 80 },
+        }),
+      });
+
+      const history = [
+        { role: 'user', content: '我叫小明' },
+        { role: 'assistant', content: '你好，小明！' },
+      ];
+
+      const result = await callMiniMax('你还记得我叫什么吗', '系统提示', {}, history);
+
+      expect(result.reply).toBe('记得，你叫小明。');
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      expect(body.messages).toHaveLength(4); // system + 2 history + user
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages[1]).toEqual({ role: 'user', content: '我叫小明' });
+      expect(body.messages[2]).toEqual({ role: 'assistant', content: '你好，小明！' });
+      expect(body.messages[3]).toEqual({ role: 'user', content: '你还记得我叫什么吗' });
+    });
+
+    it('limits history to last 10 messages (D1)', async () => {
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '好的' } }],
+          usage: {},
+        }),
+      });
+
+      // 12 条历史，应只取最后 10 条
+      const history = Array.from({ length: 12 }, (_, i) => ({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `消息 ${i + 1}`,
+      }));
+
+      await callMiniMax('新消息', '系统提示', {}, history);
+
+      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+      // system(1) + last 10 history + user(1) = 12
+      expect(body.messages).toHaveLength(12);
+      expect(body.messages[1].content).toBe('消息 3'); // 第3条（0-index=2）开始
     });
 
     it('strips thinking block from reply (D3)', async () => {

@@ -6412,12 +6412,12 @@ export async function triggerAutoRCA({ task_id, errorMsg, classification, should
  * POST /api/brain/orchestrator/chat
  * Cecelia 嘴巴对话端点
  *
- * Request: { message: string, context?: { conversation_id, history } }
+ * Request: { message: string, context?: { conversation_id, history }, messages?: Array<{role, content}> }
  * Response: { reply: string, routing_level: number, intent: string }
  */
 router.post('/orchestrator/chat', async (req, res) => {
   try {
-    const { message, context } = req.body;
+    const { message, context, messages } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({
@@ -6426,12 +6426,51 @@ router.post('/orchestrator/chat', async (req, res) => {
       });
     }
 
-    const result = await handleChat(message, context || {});
+    const result = await handleChat(message, context || {}, Array.isArray(messages) ? messages : []);
     res.json(result);
   } catch (err) {
     console.error('[API] orchestrator/chat error:', err.message);
     res.status(500).json({
       error: 'Chat failed',
+      message: err.message,
+    });
+  }
+});
+
+/**
+ * GET /api/brain/orchestrator/chat/history
+ * 返回最近 N 条对话历史（从 cecelia_events 重建消息对）
+ *
+ * Query: ?limit=20 (默认 20，最大 100)
+ * Response: Array<{ role: 'user'|'assistant', content: string, created_at: string }>
+ */
+router.get('/orchestrator/chat/history', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+
+    const result = await pool.query(
+      `SELECT payload, created_at FROM cecelia_events
+       WHERE event_type = 'orchestrator_chat'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    // 从新到旧倒序排列，重建为时间正序的消息对数组
+    const messages = result.rows.reverse().flatMap(row => {
+      const p = row.payload;
+      const createdAt = row.created_at;
+      return [
+        { role: 'user', content: p.user_message || '', created_at: createdAt },
+        { role: 'assistant', content: p.reply || p.reply_preview || '', created_at: createdAt },
+      ];
+    });
+
+    res.json(messages);
+  } catch (err) {
+    console.error('[API] orchestrator/chat/history error:', err.message);
+    res.status(500).json({
+      error: 'Failed to fetch chat history',
       message: err.message,
     });
   }
