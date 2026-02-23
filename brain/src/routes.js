@@ -402,6 +402,32 @@ router.get('/tasks', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/goals
+ * 查询 goals 列表，支持按部门过滤
+ * Query params:
+ *   dept: 按 metadata->>'dept' 过滤（可选）
+ */
+router.get('/goals', async (req, res) => {
+  try {
+    const { dept } = req.query;
+    let query = `
+      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, created_at, updated_at
+      FROM goals
+    `;
+    const params = [];
+    if (dept) {
+      query += ` WHERE metadata->>'dept' = $1`;
+      params.push(dept);
+    }
+    query += ` ORDER BY priority ASC, created_at DESC`;
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get goals', details: err.message });
+  }
+});
+
 // ==================== Task Feedback & Status API (Phase 4b) ====================
 
 /**
@@ -1197,6 +1223,29 @@ router.get('/pending-actions', async (req, res) => {
     res.json({ success: true, count: actions.length, actions });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get pending actions', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions
+ * 创建新的 pending action（部门主管向 Cecelia 提案）
+ * Body: { action_type, requester, context? }
+ */
+router.post('/pending-actions', async (req, res) => {
+  try {
+    const { action_type, requester, context } = req.body || {};
+    if (!action_type || !requester) {
+      return res.status(400).json({ error: 'action_type and requester are required' });
+    }
+    const result = await pool.query(`
+      INSERT INTO pending_actions
+        (action_type, params, context, status, source, comments)
+      VALUES ($1, '{}', $2, 'pending_approval', 'repo-lead', '[]'::jsonb)
+      RETURNING id, action_type, status, source, created_at
+    `, [action_type, JSON.stringify({ requester, ...(context || {}) })]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create pending action', details: err.message });
   }
 });
 
