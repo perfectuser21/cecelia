@@ -112,7 +112,7 @@ export const AGENTS = [
     description: '编程专家',
     layer: 'executor',
     allowed_models: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'claude-opus-4-20250514',
+    recommended_model: 'claude-sonnet-4-20250514',
     fixed_provider: null,
   },
   {
