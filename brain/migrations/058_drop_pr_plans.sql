@@ -3,34 +3,35 @@
 -- 目标: 清理旧的三层拆解架构（pr_plans），替换为 Initiative 4-Phase 编排
 
 -- ============================================================
--- Step 1: 删除 tasks.pr_plan_id 外键和列
--- ============================================================
-
--- Drop the trigger first (depends on pr_plans table)
-DROP TRIGGER IF EXISTS ensure_task_pr_plan_consistency ON tasks;
-DROP FUNCTION IF EXISTS check_task_pr_plan_consistency();
-
--- Drop index
-DROP INDEX IF EXISTS idx_tasks_pr_plan;
-
--- Drop column
-ALTER TABLE tasks DROP COLUMN IF EXISTS pr_plan_id;
-
--- ============================================================
--- Step 2: 删除视图（依赖 pr_plans 表）
+-- Step 1: 删除视图（依赖 pr_plans 表和 tasks.pr_plan_id）
+-- 必须在删除表和列之前执行
 -- ============================================================
 
 DROP VIEW IF EXISTS pr_plan_full_context;
 DROP VIEW IF EXISTS initiative_pr_progress;
 
 -- ============================================================
--- Step 3: 删除 pr_plans 表
+-- Step 2: 删除触发器和函数
+-- ============================================================
+
+DROP TRIGGER IF EXISTS ensure_task_pr_plan_consistency ON tasks;
+DROP FUNCTION IF EXISTS check_task_pr_plan_consistency();
+
+-- ============================================================
+-- Step 3: 删除 tasks.pr_plan_id 外键和列
+-- ============================================================
+
+DROP INDEX IF EXISTS idx_tasks_pr_plan;
+ALTER TABLE tasks DROP COLUMN IF EXISTS pr_plan_id;
+
+-- ============================================================
+-- Step 4: 删除 pr_plans 表
 -- ============================================================
 
 DROP TABLE IF EXISTS pr_plans CASCADE;
 
 -- ============================================================
--- Step 4: 更新 schema_version
+-- Step 5: 更新 schema_version
 -- ============================================================
 
 INSERT INTO schema_version (version, description, applied_at)
