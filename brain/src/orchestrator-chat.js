@@ -60,13 +60,19 @@ function stripThinking(content) {
  * @param {Object} options - { timeout }
  * @returns {Promise<{reply: string, usage: Object}>}
  */
-async function callMiniMax(userMessage, systemPrompt, options = {}) {
+async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
   const apiKey = getMinimaxApiKey();
   if (!apiKey) {
     throw new Error('MiniMax API key not available');
   }
 
   const timeout = options.timeout || 30000;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+    { role: 'user', content: userMessage },
+  ];
 
   const response = await fetch(MINIMAX_API_URL, {
     method: 'POST',
@@ -76,10 +82,7 @@ async function callMiniMax(userMessage, systemPrompt, options = {}) {
     },
     body: JSON.stringify({
       model: 'MiniMax-M2.5-highspeed',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
+      messages,
       max_tokens: 2048,
       temperature: 0.7,
     }),
@@ -198,7 +201,7 @@ async function buildStatusSummary() {
  * @param {Object} context - 上下文 { conversation_id, history }
  * @returns {Promise<{reply: string, routing_level: number, intent: string}>}
  */
-export async function handleChat(message, context = {}) {
+export async function handleChat(message, context = {}, messages = []) {
   if (!message || typeof message !== 'string') {
     throw new Error('message is required and must be a string');
   }
@@ -210,11 +213,8 @@ export async function handleChat(message, context = {}) {
   // 2. 搜索相关记忆
   const memoryBlock = await fetchMemoryContext(message);
 
-  // 3. 构建状态摘要（简单查询类意图）
-  let statusBlock = '';
-  if (['QUERY_STATUS', 'QUESTION'].includes(intentType)) {
-    statusBlock = await buildStatusSummary();
-  }
+  // 3. 始终注入实时状态（无论意图类型）
+  const statusBlock = await buildStatusSummary();
 
   // 4. 调用 MiniMax 嘴巴层
   const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${memoryBlock}${statusBlock}`;
@@ -223,7 +223,7 @@ export async function handleChat(message, context = {}) {
   let routingLevel = 0;
 
   try {
-    const result = await callMiniMax(message, systemPrompt);
+    const result = await callMiniMax(message, systemPrompt, {}, messages);
     reply = result.reply;
   } catch (err) {
     console.error('[orchestrator-chat] MiniMax call failed:', err.message);
