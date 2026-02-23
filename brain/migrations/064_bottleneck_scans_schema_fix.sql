@@ -11,11 +11,27 @@ ALTER TABLE bottleneck_scans
 
 CREATE INDEX IF NOT EXISTS idx_bottleneck_scans_scan_type ON bottleneck_scans(scan_type);
 
--- 旧列改为可空（新代码使用 scan_type 等新列，不填写旧列）
-ALTER TABLE bottleneck_scans ALTER COLUMN bottleneck_type DROP NOT NULL;
-ALTER TABLE bottleneck_scans ALTER COLUMN affected_component DROP NOT NULL;
-ALTER TABLE bottleneck_scans ALTER COLUMN description DROP NOT NULL;
-ALTER TABLE bottleneck_scans ALTER COLUMN metrics SET DEFAULT '{}'::jsonb;
+-- 旧列改为可空（仅适用于 migration 046 之前已存在旧 schema 的安装）
+-- 全新安装（从 migration 046 开始）不存在这些旧列，跳过即可
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='bottleneck_scans' AND column_name='bottleneck_type') THEN
+    ALTER TABLE bottleneck_scans ALTER COLUMN bottleneck_type DROP NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='bottleneck_scans' AND column_name='affected_component') THEN
+    ALTER TABLE bottleneck_scans ALTER COLUMN affected_component DROP NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='bottleneck_scans' AND column_name='description') THEN
+    ALTER TABLE bottleneck_scans ALTER COLUMN description DROP NOT NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name='bottleneck_scans' AND column_name='metrics') THEN
+    ALTER TABLE bottleneck_scans ALTER COLUMN metrics SET DEFAULT '{}'::jsonb;
+  END IF;
+END $$;
 
 -- Insert schema version
 INSERT INTO schema_version (version, description)
