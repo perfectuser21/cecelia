@@ -235,6 +235,22 @@ export function CeceliaProvider({ children, onNavigate }: CeceliaProviderProps) 
   const [sending, setSending] = useState(false);
   const currentStreamingIdRef = useRef<string | null>(null);
 
+  // Load chat history on mount
+  useEffect(() => {
+    fetch('/api/brain/orchestrator/chat/history?limit=20')
+      .then(r => r.json())
+      .then((history: any[]) => {
+        if (Array.isArray(history) && history.length > 0) {
+          setMessages(history.map((msg, i) => ({
+            id: `history_${i}_${Date.now()}`,
+            role: msg.role as 'user' | 'assistant',
+            content: msg.content,
+          })));
+        }
+      })
+      .catch(() => {}); // 静默失败，不影响正常对话
+  }, []);
+
   // Page state
   const [pageState, setPageState] = useState<PageState | null>(null);
   const [pageActions, setPageActions] = useState<PageActions>({});
