@@ -124,6 +124,13 @@ else
     HEALTH_OK=false
 fi
 
+# Brain API 连通性验证（通过 nginx proxy 链：5211 → US VPS:5211 → Brain:5221）
+if ssh "$REMOTE" "curl -sf http://localhost:5211/api/brain/health > /dev/null 2>&1"; then
+    echo "✅ Brain API 健康检查通过（nginx → US VPS → Brain）"
+else
+    echo "⚠️  Brain API 暂无响应（可能 Brain 未运行或 Tailscale 连通性问题）"
+fi
+
 # ── 6. 完成 ──────────────────────────────────────────
 
 echo ""
