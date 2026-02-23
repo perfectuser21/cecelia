@@ -63,6 +63,7 @@ describe('createDeptHeartbeatTask', () => {
   it('D3: 无活跃 heartbeat 时创建新 task', async () => {
     const pool = makePool([
       { rows: [] },                                  // no existing
+      { rows: [] },                                  // lookupDeptPrimaryGoal → no goal
       { rows: [{ id: 'task-uuid-001' }] },           // insert returns id
     ]);
     const result = await createDeptHeartbeatTask(pool, dept);
@@ -95,9 +96,13 @@ describe('triggerDeptHeartbeats', () => {
       ]},
       // zenithjoy: no existing
       { rows: [] },
+      // zenithjoy: lookupDeptPrimaryGoal → no goal
+      { rows: [] },
       // zenithjoy: insert
       { rows: [{ id: 'task-1' }] },
       // creator: no existing
+      { rows: [] },
+      // creator: lookupDeptPrimaryGoal → no goal
       { rows: [] },
       // creator: insert
       { rows: [{ id: 'task-2' }] },
