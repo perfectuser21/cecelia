@@ -148,6 +148,7 @@ if [[ ! -f "$DEV_LOCK_FILE" ]]; then
         echo "" >&2
         echo "  ⚠️  .dev-lock 不存在但 .dev-mode 存在（泄漏）" >&2
         echo "  清理泄漏的 .dev-mode 文件..." >&2
+        force_cleanup_worktree "$DEV_MODE_FILE" || true
         rm -f "$DEV_MODE_FILE" "$SENTINEL_FILE"
         echo "  ✅ 已清理" >&2
         echo "" >&2

@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.30.2"
+version: "12.30.3"
 updated: "2026-02-22"
 
 # ============================================================================
@@ -1141,6 +1141,24 @@ workflow:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       contains: "git branch --merged"
+
+  - id: W6-006
+    feature: W6
+    name: "stop-dev.sh 泄漏路径 worktree 清理（v12.30.3）"
+    scope: workflow
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, stop-hook, worktree, leak-detection]
+    owner: workflow
+    steps:
+      given: ".dev-lock 不存在但 .dev-mode 存在（泄漏状态）"
+      when: "Stop Hook 检测到泄漏"
+      then: "先调 force_cleanup_worktree() 清理孤立 worktree，再删除 .dev-mode"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "force_cleanup_worktree"
 
   # --------------------------------------------------------------------------
   # W7: Ralph Loop 自动化

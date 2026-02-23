@@ -169,8 +169,8 @@ platform_features:
     name: Stop Hook Router (v13.0.0)
     status: Committed
     priority: P0
-    version: "12.17.1"
-    updated: "2026-02-08"
+    version: "12.30.3"
+    updated: "2026-02-23"
     description: |
       Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
       - 路由器：stop.sh（~46 lines）检测 .dev-mode/.okr-mode 等，调用对应 handler
@@ -178,6 +178,7 @@ platform_features:
       - stop-okr.sh：/okr 工作流完成条件检查（Feature + Task + PRD + DoD + KR 状态）
       - 职责分离：路由器只负责分发，具体逻辑在 handler 中
       - 写死逻辑：有 .dev-mode 时，任何情况（包括 headless、锁失败）都必须 exit 2，只有真正完成才 exit 0
+      v12.30.3: 修复泄漏路径 - .dev-lock 丢失但 .dev-mode 存在时，先调 force_cleanup_worktree() 再删 .dev-mode，防止孤立 worktree（W6-006）
       v12.17.1: 双钥匙状态机 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险），修复 .dev-mode 创建失败/被删除导致会话退出的漏洞，Step 3 改用 Bash 原子写入，cleanup.sh 不删除状态文件
       v12.11.1: 写死逻辑修复 - 删除 headless 模式的 exit 0 旁路 + 锁失败返回 exit 2（不是 exit 0）+ 更新注释
       v12.9.0: stop-okr.sh 完整实现 - 5 个完成条件检查（Feature/Task/PRD/DoD/KR 状态）+ 测试脚本 + 文档格式修正
@@ -216,6 +217,7 @@ platform_features:
       - H7-006  # session_id 验证
       - H7-007  # 共享锁工具库原子操作
       - H7-008  # TTY 会话隔离
+      - W6-006  # 泄漏路径 worktree 清理
 
   # --------------------------------------------------------------------------
   # H2: PR Gate (Dual Mode) - 提交门禁
