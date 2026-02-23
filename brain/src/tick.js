@@ -20,6 +20,7 @@ import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
+import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1707,6 +1708,14 @@ async function executeTick() {
   // Record operation success (tick completed successfully)
   recordOperation(true, 'tick');
 
+  // 9. Trigger dept heartbeats (每轮 Tick 末尾，为活跃部门创建 heartbeat task)
+  let deptHeartbeatResult = { triggered: 0, skipped: 0, results: [] };
+  try {
+    deptHeartbeatResult = await triggerDeptHeartbeats(pool);
+  } catch (deptErr) {
+    console.error('[tick] dept heartbeat error:', deptErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1716,6 +1725,7 @@ async function executeTick() {
       objective_title: focus.objective.title
     } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
+    dept_heartbeats: deptHeartbeatResult,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,

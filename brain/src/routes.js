@@ -6557,4 +6557,112 @@ router.patch('/model-profiles/active/agents', async (req, res) => {
   }
 });
 
+// ============================================================
+// Device Lock API（部门主管架构 - 脚本员工设备互斥锁）
+// ============================================================
+
+/**
+ * GET /api/brain/device-locks
+ * 查看所有设备锁状态
+ */
+router.get('/device-locks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT device_name, locked_by, locked_at, expires_at,
+              (expires_at IS NOT NULL AND expires_at < NOW()) AS expired
+       FROM device_locks
+       ORDER BY device_name`
+    );
+    res.json({ success: true, locks: rows });
+  } catch (err) {
+    console.error('[API] device-locks GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/device-locks/acquire
+ * 申请设备锁
+ * body: { device_name, locked_by, ttl_minutes? }
+ * 返回: { acquired: true, lock } 或 { acquired: false, locked_by, expires_at }
+ */
+router.post('/device-locks/acquire', async (req, res) => {
+  try {
+    const { device_name, locked_by, ttl_minutes = 30 } = req.body;
+    if (!device_name || !locked_by) {
+      return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
+    }
+
+    const expiresAt = new Date(Date.now() + ttl_minutes * 60 * 1000);
+
+    // 先看设备是否存在
+    const { rows: existing } = await pool.query(
+      'SELECT device_name, locked_by, expires_at FROM device_locks WHERE device_name = $1',
+      [device_name]
+    );
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, error: `Unknown device: ${device_name}` });
+    }
+
+    const current = existing[0];
+    const isLocked = current.locked_by && current.expires_at && new Date(current.expires_at) > new Date();
+
+    if (isLocked) {
+      return res.json({
+        acquired: false,
+        locked_by: current.locked_by,
+        expires_at: current.expires_at,
+      });
+    }
+
+    // 抢锁（包括已过期的锁）
+    const { rows: updated } = await pool.query(
+      `UPDATE device_locks
+       SET locked_by = $1, locked_at = NOW(), expires_at = $2
+       WHERE device_name = $3
+       RETURNING *`,
+      [locked_by, expiresAt, device_name]
+    );
+
+    res.json({ acquired: true, lock: updated[0] });
+  } catch (err) {
+    console.error('[API] device-locks/acquire error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/device-locks/release
+ * 释放设备锁（只有持有者可以释放）
+ * body: { device_name, locked_by }
+ */
+router.post('/device-locks/release', async (req, res) => {
+  try {
+    const { device_name, locked_by } = req.body;
+    if (!device_name || !locked_by) {
+      return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE device_locks
+       SET locked_by = NULL, locked_at = NULL, expires_at = NULL
+       WHERE device_name = $1 AND locked_by = $2
+       RETURNING *`,
+      [device_name, locked_by]
+    );
+
+    if (rows.length === 0) {
+      return res.status(409).json({
+        success: false,
+        error: `Device ${device_name} is not locked by ${locked_by}`,
+      });
+    }
+
+    res.json({ success: true, released: rows[0] });
+  } catch (err) {
+    console.error('[API] device-locks/release error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
