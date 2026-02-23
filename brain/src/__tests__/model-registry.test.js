@@ -38,12 +38,13 @@ describe('model-registry', () => {
       expect(MODELS.length).toBe(10);
     });
 
-    it('R2: 所有 agent 有 id/name/layer/allowed_models', () => {
+    it('R2: 所有 agent 有 id/name/layer/allowed_models/recommended_model', () => {
       for (const a of AGENTS) {
         expect(a.id).toBeTruthy();
         expect(a.name).toBeTruthy();
         expect(a.layer).toMatch(/^(brain|executor)$/);
         expect(a.allowed_models.length).toBeGreaterThan(0);
+        expect(a.recommended_model).toBeTruthy();
       }
     });
 
@@ -104,6 +105,23 @@ describe('model-registry', () => {
       expect(isModelAllowedForAgent('exploratory', 'MiniMax-M2.1-highspeed')).toBe(true);
       // dev 包含 M2.5
       expect(isModelAllowedForAgent('dev', 'MiniMax-M2.5')).toBe(true);
+    });
+
+    it('R12: recommended_model 在各 agent 的 allowed_models 内', () => {
+      for (const a of AGENTS) {
+        expect(a.allowed_models).toContain(a.recommended_model);
+      }
+    });
+
+    it('R13: 扩大后的跨 provider 白名单正确', () => {
+      // thalamus 新增 Sonnet
+      expect(isModelAllowedForAgent('thalamus', 'claude-sonnet-4-20250514')).toBe(true);
+      // review 新增 Opus
+      expect(isModelAllowedForAgent('review', 'claude-opus-4-20250514')).toBe(true);
+      // audit 新增 Opus
+      expect(isModelAllowedForAgent('audit', 'claude-opus-4-20250514')).toBe(true);
+      // dev 推荐 Opus 且在白名单
+      expect(isModelAllowedForAgent('dev', 'claude-opus-4-20250514')).toBe(true);
     });
   });
 
