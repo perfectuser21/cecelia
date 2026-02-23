@@ -34,6 +34,7 @@ import {
   upsertUserProfile,
   formatProfileSnippet,
   extractAndSaveUserFacts,
+  getUserProfileContext,
   _resetApiKey,
 } from '../user-profile.js';
 
@@ -145,6 +146,43 @@ describe('formatProfileSnippet', () => {
   it('偏好 brief 时输出简洁说明', () => {
     const snippet = formatProfileSnippet({ display_name: 'Alex', preferred_style: 'brief' });
     expect(snippet).toContain('简洁');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// D1-D3: getUserProfileContext
+// ─────────────────────────────────────────────────────────────
+describe('getUserProfileContext', () => {
+  it('D1: 有画像时返回格式化字符串', async () => {
+    const fakeProfile = {
+      user_id: 'owner',
+      display_name: '徐啸',
+      focus_area: 'Cecelia 自主运行',
+      preferred_style: 'detailed',
+    };
+    mockPool.query.mockResolvedValueOnce({ rows: [fakeProfile] });
+
+    const result = await getUserProfileContext(mockPool, 'owner');
+
+    expect(typeof result).toBe('string');
+    expect(result).toContain('徐啸');
+    expect(result).toContain('Cecelia 自主运行');
+  });
+
+  it('D2: 无画像时返回空字符串', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getUserProfileContext(mockPool, 'owner');
+
+    expect(result).toBe('');
+  });
+
+  it('D3: DB 异常时返回空字符串（不抛出）', async () => {
+    mockPool.query.mockRejectedValueOnce(new Error('connection refused'));
+
+    const result = await getUserProfileContext(mockPool, 'owner');
+
+    expect(result).toBe('');
   });
 });
 

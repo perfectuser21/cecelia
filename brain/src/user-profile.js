@@ -131,6 +131,17 @@ export function formatProfileSnippet(profile) {
   return `## 主人信息\n${parts.join('')}\n`;
 }
 
+/**
+ * 获取用户画像的 LLM 注入文本（loadUserProfile + formatProfileSnippet 便捷组合）
+ * @param {Object} pool - pg Pool
+ * @param {string} [userId='owner']
+ * @returns {Promise<string>} 格式化的画像片段，无数据时返回 ''
+ */
+export async function getUserProfileContext(pool, userId = 'owner') {
+  const profile = await loadUserProfile(pool, userId);
+  return formatProfileSnippet(profile);
+}
+
 const EXTRACT_PROMPT = `你是一个信息提取助手。从以下对话中提取用户透露的**稳定的、长期的个人事实**。
 
 只提取以下类型：

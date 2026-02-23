@@ -45,9 +45,11 @@ vi.mock('../memory-retriever.js', () => ({
   buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
 }));
 
-// Mock user-profile.js — 阻止 extractAndSaveUserFacts 触发额外 fetch
+// Mock user-profile.js — 阻止副作用，getUserProfileContext 默认返回 ''
+const mockGetUserProfileContext = vi.hoisted(() => vi.fn().mockResolvedValue(''));
 vi.mock('../user-profile.js', () => ({
   extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
+  getUserProfileContext: mockGetUserProfileContext,
 }));
 
 // Mock chat-action-dispatcher.js — 默认不执行动作（各测试按需覆盖）
@@ -612,6 +614,59 @@ describe('orchestrator-chat', () => {
       const result = await handleChat('你好');
 
       expect(result.reply).toBe('你好！有什么需要帮助的吗？');
+    });
+  });
+
+  // ===================== D10: 用户画像注入 =====================
+
+  describe('handleChat profile context injection (D10)', () => {
+    it('D10: profileSnippet 注入到 systemPrompt', async () => {
+      // 让 getUserProfileContext 返回画像片段
+      mockGetUserProfileContext.mockResolvedValueOnce('## 主人信息\n你正在和 徐啸 对话。TA 目前的重点方向是：Cecelia 自主运行。\n');
+
+      let capturedSystemPrompt = '';
+      global.fetch.mockImplementationOnce(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        capturedSystemPrompt = body.messages.find(m => m.role === 'system')?.content || '';
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: '你好，徐啸！' } }],
+            usage: {},
+          }),
+        };
+      });
+
+      const result = await handleChat('你好');
+
+      expect(capturedSystemPrompt).toContain('## 主人信息');
+      expect(capturedSystemPrompt).toContain('徐啸');
+      expect(capturedSystemPrompt).toContain('Cecelia 自主运行');
+      expect(result.reply).toBe('你好，徐啸！');
+      expect(mockGetUserProfileContext).toHaveBeenCalledWith(expect.anything());
+    });
+
+    it('D10-2: profileSnippet 为空时 systemPrompt 不受影响', async () => {
+      mockGetUserProfileContext.mockResolvedValueOnce('');
+
+      let capturedSystemPrompt = '';
+      global.fetch.mockImplementationOnce(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        capturedSystemPrompt = body.messages.find(m => m.role === 'system')?.content || '';
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: '我是 Cecelia。' } }],
+            usage: {},
+          }),
+        };
+      });
+
+      await handleChat('你好');
+
+      // systemPrompt 应以 MOUTH_SYSTEM_PROMPT 内容开头，无多余画像块
+      expect(capturedSystemPrompt).toContain('你是 Cecelia');
+      expect(capturedSystemPrompt).not.toContain('## 主人信息');
     });
   });
 });

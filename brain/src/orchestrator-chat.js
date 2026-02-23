@@ -18,7 +18,7 @@ import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
 import { buildMemoryContext } from './memory-retriever.js';
-import { extractAndSaveUserFacts } from './user-profile.js';
+import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 
 // MiniMax Coding Plan API（OpenAI 兼容端点）
@@ -220,8 +220,11 @@ export async function handleChat(message, context = {}, messages = []) {
   // 3. 始终注入实时状态（无论意图类型）
   const statusBlock = await buildStatusSummary();
 
+  // 3b. 加载用户画像（fire-safe：失败时返回 ''，不阻塞）
+  const profileSnippet = await getUserProfileContext(pool);
+
   // 4. 调用 MiniMax 嘴巴层（传入历史消息）
-  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${memoryBlock}${statusBlock}`;
+  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${memoryBlock}${statusBlock}`;
 
   let reply;
   let routingLevel = 0;
