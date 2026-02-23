@@ -1,127 +1,127 @@
 #!/usr/bin/env bash
-# DoD Anti-Cheat - 10-layer verification (reused from OKR stop-okr.sh architecture)
+# DoD 防篡改验证 - 10 层校验（复用 OKR stop-okr.sh 架构）
 #
-# Prevents bypassing validation via:
-# - Manual score editing
-# - Report deletion
-# - Environment variable bypass
-# - SHA256 hash mismatch
+# 防止通过以下方式绕过验证：
+# - 手动编辑分数
+# - 删除报告文件
+# - 环境变量绕过
+# - SHA256 哈希不匹配
 #
-# Exit codes:
-#   0 - All checks pass
-#   2 - Any check fails (blocks workflow, maintains Stop Hook loop)
+# 退出码：
+#   0 - 全部检查通过
+#   2 - 任意检查失败（阻断工作流，维持 Stop Hook 循环）
 
 set -euo pipefail
 
 DOD_FILE="${1:-.dod-*.md}"
 REPORT_FILE=".dod-validation-report.json"
 
-# Resolve glob pattern
+# 解析 glob 模式
 DOD_FILE=$(ls $DOD_FILE 2>/dev/null | head -1 || echo "")
 
 if [[ -z "$DOD_FILE" ]]; then
-    echo "❌ Layer 1 FAIL: DoD file not found (pattern: .dod-*.md)" >&2
+    echo "❌ 第 1 层失败：未找到 DoD 文件（模式：.dod-*.md）" >&2
     exit 2
 fi
 
-echo "🔒 DoD Anti-Cheat: 10-layer verification"
+echo "🔒 DoD 防篡改：10 层校验"
 echo ""
 
-# ===== Layer 1: File Exists =====
-echo "Layer 1: DoD file exists"
+# ===== 第 1 层：文件存在 =====
+echo "第 1 层：DoD 文件存在"
 if [[ ! -f "$DOD_FILE" ]]; then
-    echo "❌ FAIL: $DOD_FILE not found" >&2
+    echo "❌ 失败：$DOD_FILE 不存在" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 2: Not Empty =====
-echo "Layer 2: DoD not empty"
+# ===== 第 2 层：文件非空 =====
+echo "第 2 层：DoD 非空"
 if [[ ! -s "$DOD_FILE" ]]; then
-    echo "❌ FAIL: $DOD_FILE is empty" >&2
+    echo "❌ 失败：$DOD_FILE 为空文件" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 3: Has Frontmatter =====
-echo "Layer 3: Has frontmatter"
+# ===== 第 3 层：有 Frontmatter =====
+echo "第 3 层：包含 frontmatter"
 if ! head -1 "$DOD_FILE" | grep -q '^---$'; then
-    echo "❌ FAIL: Missing YAML frontmatter" >&2
+    echo "❌ 失败：缺少 YAML frontmatter" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 4: Report Exists =====
-echo "Layer 4: Validation report exists"
+# ===== 第 4 层：验证报告存在 =====
+echo "第 4 层：验证报告存在"
 if [[ ! -f "$REPORT_FILE" ]]; then
-    echo "❌ FAIL: $REPORT_FILE not found" >&2
-    echo "   Run: python skills/dev/scripts/validate-dod.py \"$DOD_FILE\"" >&2
+    echo "❌ 失败：$REPORT_FILE 不存在" >&2
+    echo "   运行：python skills/dev/scripts/validate-dod.py \"$DOD_FILE\"" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 5: Report Not Empty =====
-echo "Layer 5: Report not empty"
+# ===== 第 5 层：报告非空 =====
+echo "第 5 层：验证报告非空"
 if [[ ! -s "$REPORT_FILE" ]]; then
-    echo "❌ FAIL: $REPORT_FILE is empty" >&2
+    echo "❌ 失败：$REPORT_FILE 为空文件" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 6: Report Valid JSON =====
-echo "Layer 6: Report valid JSON"
+# ===== 第 6 层：报告为合法 JSON =====
+echo "第 6 层：验证报告为合法 JSON"
 if ! jq empty "$REPORT_FILE" 2>/dev/null; then
-    echo "❌ FAIL: $REPORT_FILE is not valid JSON" >&2
+    echo "❌ 失败：$REPORT_FILE 不是合法的 JSON" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 7: Has Score Fields =====
-echo "Layer 7: Report has score fields"
+# ===== 第 7 层：包含分数字段 =====
+echo "第 7 层：报告包含分数字段"
 FORM_SCORE=$(jq -r '.form_score // "null"' "$REPORT_FILE")
 CONTENT_SCORE=$(jq -r '.content_score // "null"' "$REPORT_FILE")
 TOTAL_SCORE=$(jq -r '.total_score // "null"' "$REPORT_FILE")
 
 if [[ "$FORM_SCORE" == "null" ]] || [[ "$CONTENT_SCORE" == "null" ]] || [[ "$TOTAL_SCORE" == "null" ]]; then
-    echo "❌ FAIL: Missing score fields in report" >&2
-    echo "   form_score: $FORM_SCORE" >&2
-    echo "   content_score: $CONTENT_SCORE" >&2
-    echo "   total_score: $TOTAL_SCORE" >&2
+    echo "❌ 失败：报告缺少分数字段" >&2
+    echo "   格式分：$FORM_SCORE" >&2
+    echo "   内容分：$CONTENT_SCORE" >&2
+    echo "   总分：$TOTAL_SCORE" >&2
     exit 2
 fi
-echo "✅ PASS (form: $FORM_SCORE, content: $CONTENT_SCORE, total: $TOTAL_SCORE)"
+echo "✅ 通过（格式: $FORM_SCORE, 内容: $CONTENT_SCORE, 总分: $TOTAL_SCORE）"
 
-# ===== Layer 8: SHA256 Match =====
-echo "Layer 8: SHA256 hash match"
+# ===== 第 8 层：SHA256 哈希匹配 =====
+echo "第 8 层：SHA256 哈希匹配"
 REPORT_SHA=$(jq -r '.content_sha256 // "null"' "$REPORT_FILE")
 ACTUAL_SHA=$(sha256sum "$DOD_FILE" | awk '{print $1}')
 
 if [[ "$REPORT_SHA" != "$ACTUAL_SHA" ]]; then
-    echo "❌ FAIL: SHA256 mismatch (content modified after validation)" >&2
-    echo "   Report SHA: $REPORT_SHA" >&2
-    echo "   Actual SHA: $ACTUAL_SHA" >&2
-    echo "   Re-run: python skills/dev/scripts/validate-dod.py \"$DOD_FILE\"" >&2
+    echo "❌ 失败：SHA256 不匹配（验证后内容被修改）" >&2
+    echo "   报告 SHA：$REPORT_SHA" >&2
+    echo "   实际 SHA：$ACTUAL_SHA" >&2
+    echo "   重新运行：python skills/dev/scripts/validate-dod.py \"$DOD_FILE\"" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 9: Score >= 90 =====
-echo "Layer 9: Total score >= 90"
+# ===== 第 9 层：总分 >= 90 =====
+echo "第 9 层：总分 >= 90"
 if (( TOTAL_SCORE < 90 )); then
-    echo "❌ FAIL: Score $TOTAL_SCORE < 90" >&2
-    echo "   Read validation report for issues to fix" >&2
+    echo "❌ 失败：总分 $TOTAL_SCORE < 90" >&2
+    echo "   请查阅验证报告了解需修复的问题" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
-# ===== Layer 10: No Bypass Env =====
-echo "Layer 10: No bypass environment variables"
+# ===== 第 10 层：无绕过环境变量 =====
+echo "第 10 层：无绕过环境变量"
 if [[ "${SKIP_VALIDATION:-false}" == "true" ]]; then
-    echo "❌ FAIL: SKIP_VALIDATION=true detected (bypass not allowed)" >&2
+    echo "❌ 失败：检测到 SKIP_VALIDATION=true（不允许绕过）" >&2
     exit 2
 fi
-echo "✅ PASS"
+echo "✅ 通过"
 
 echo ""
-echo "🎉 All 10 layers passed - DoD quality verified"
+echo "🎉 全部 10 层通过 — DoD 质量已验证"
 exit 0

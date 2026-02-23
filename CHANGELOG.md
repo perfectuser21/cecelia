@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.2] - 2026-02-23
+
+### Fixed
+- anti-cheat-prd.sh / anti-cheat-dod.sh：将所有英文输出（FAIL:, PASS, Layer N: 等）改为简体中文，符合全局语言规则
+
 ## [12.30.1] - 2026-02-23
 
 ### Fixed
