@@ -18,6 +18,8 @@ import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
 import { buildMemoryContext } from './memory-retriever.js';
+import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
+import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 
 // MiniMax Coding Plan API（OpenAI 兼容端点）
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
@@ -58,6 +60,7 @@ function stripThinking(content) {
  * @param {string} userMessage - 用户消息
  * @param {string} systemPrompt - 系统提示词
  * @param {Object} options - { timeout }
+ * @param {Array} historyMessages - 历史消息 [{role, content}]，最多取最近 10 条
  * @returns {Promise<{reply: string, usage: Object}>}
  */
 async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
@@ -128,7 +131,7 @@ async function fetchMemoryContext(query) {
 }
 
 /**
- * 记录对话事件到 cecelia_events
+ * 记录对话事件到 cecelia_events（存完整内容，供历史回放使用）
  * @param {string} userMessage - 用户消息
  * @param {string} reply - 回复内容
  * @param {Object} metadata - 额外元数据
@@ -138,8 +141,8 @@ async function recordChatEvent(userMessage, reply, metadata = {}) {
     await pool.query(
       `INSERT INTO cecelia_events (event_type, source, payload, created_at) VALUES ($1, $2, $3, NOW())`,
       ['orchestrator_chat', 'orchestrator_chat', JSON.stringify({
-        user_message: userMessage.slice(0, 500),
-        reply_preview: reply.slice(0, 200),
+        user_message: userMessage,
+        reply,
         ...metadata,
       })]
     );
@@ -199,6 +202,7 @@ async function buildStatusSummary() {
  * 主入口：处理对话请求
  * @param {string} message - 用户消息
  * @param {Object} context - 上下文 { conversation_id, history }
+ * @param {Array} messages - 历史消息 [{role, content}]，用于多轮记忆
  * @returns {Promise<{reply: string, routing_level: number, intent: string}>}
  */
 export async function handleChat(message, context = {}, messages = []) {
@@ -216,8 +220,13 @@ export async function handleChat(message, context = {}, messages = []) {
   // 3. 始终注入实时状态（无论意图类型）
   const statusBlock = await buildStatusSummary();
 
-  // 4. 调用 MiniMax 嘴巴层
-  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${memoryBlock}${statusBlock}`;
+  // 3b. 加载用户画像（fire-safe：失败时返回 ''，不阻塞）
+  // 传入最近对话文本用于向量搜索相关 facts
+  const recentText = messages.slice(-3).map(m => m.content).join('\n');
+  const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
+
+  // 4. 调用 MiniMax 嘴巴层（传入历史消息）
+  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${memoryBlock}${statusBlock}`;
 
   let reply;
   let routingLevel = 0;
@@ -280,6 +289,17 @@ export async function handleChat(message, context = {}, messages = []) {
     conversation_id: context.conversation_id || null,
     has_memory: memoryBlock.length > 0,
   });
+
+  // 7. 动作检测与执行（追加到 reply 末尾）
+  const actionSuffix = await detectAndExecuteAction(message);
+  if (actionSuffix) {
+    reply += actionSuffix;
+  }
+
+  // 8. 异步提取用户事实（fire-and-forget，不阻塞回复）
+  Promise.resolve().then(() =>
+    extractAndSaveUserFacts(pool, 'owner', messages, reply)
+  ).catch(() => {});
 
   return {
     reply,

@@ -9,7 +9,7 @@
  * Exit code: 0 = all consistent, 1 = mismatches found
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -256,6 +256,88 @@ function validateFacts(facts) {
   return { results, hasFailure };
 }
 
+// ─── Integrity checks (code-level, no DEFINITION.md comparison) ─────────────
+
+/**
+ * 检查 brain/migrations/ 目录是否有重复编号的 migration 文件
+ * 例如：057_create_strategies_table.sql 和 057_initiative_orchestration.sql 同时存在
+ */
+function checkMigrationConflicts() {
+  const migrationsDir = resolve(ROOT, 'brain/migrations');
+  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
+  const byNumber = {};
+  for (const f of files) {
+    const m = f.match(/^(\d+)_/);
+    if (m) {
+      const num = m[1];
+      if (!byNumber[num]) byNumber[num] = [];
+      byNumber[num].push(f);
+    }
+  }
+  const conflicts = Object.entries(byNumber).filter(([, arr]) => arr.length > 1);
+  return conflicts; // [ ['057', ['057_a.sql', '057_b.sql']], ... ]
+}
+
+/**
+ * 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION 是否等于 migrations/ 最高编号
+ */
+function checkSelfcheckVersionSync() {
+  const migrationsDir = resolve(ROOT, 'brain/migrations');
+  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
+  const nums = files
+    .map(f => f.match(/^(\d+)_/)?.[1])
+    .filter(Boolean)
+    .map(Number);
+  const highest = Math.max(...nums);
+  const highestStr = String(highest).padStart(3, '0');
+
+  const selfcheckSrc = readFile('brain/src/selfcheck.js');
+  const match = selfcheckSrc.match(/EXPECTED_SCHEMA_VERSION\s*=\s*'(\d+)'/);
+  const selfcheckVersion = match ? match[1] : null;
+
+  return { selfcheckVersion, highestMigration: highestStr };
+}
+
+/**
+ * 扫描 thalamus.js 和 cortex.js 中所有对外部 LLM API 的 fetch 调用
+ * 检查每个调用是否在选项对象内包含 AbortSignal.timeout
+ */
+function checkLlmFetchTimeouts() {
+  const LLM_URL_PATTERNS = ['api.anthropic.com', 'api.minimaxi.com', 'api.minimax.io'];
+  const FILES_TO_CHECK = ['brain/src/thalamus.js', 'brain/src/cortex.js'];
+  const violations = [];
+
+  for (const filePath of FILES_TO_CHECK) {
+    const src = readFile(filePath);
+    const lines = src.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('await fetch(')) continue;
+      const isLlmFetch = LLM_URL_PATTERNS.some(p => line.includes(p));
+      if (!isLlmFetch) continue;
+
+      // Look ahead up to 30 lines for AbortSignal.timeout
+      // Stop early if we hit the closing '}); ' of the fetch options
+      let hasTimeout = false;
+      for (let j = i; j < Math.min(i + 30, lines.length); j++) {
+        if (lines[j].includes('AbortSignal.timeout')) {
+          hasTimeout = true;
+          break;
+        }
+        // End of fetch options block
+        if (j > i && /^\s*\}\s*\)\s*;?\s*$/.test(lines[j])) break;
+      }
+
+      if (!hasTimeout) {
+        violations.push({ file: filePath, line: i + 1 });
+      }
+    }
+  }
+
+  return violations;
+}
+
 // ─── Main ───────────────────────────────────────────────────
 
 const facts = [
@@ -269,9 +351,11 @@ const facts = [
   extractSchemaVersion(),
 ];
 
-const { results, hasFailure } = validateFacts(facts);
+const { results, hasFailure: factsFailure } = validateFacts(facts);
+let integrityFailure = false;
 
-// Output
+// ── Section 1: Facts vs DEFINITION.md ────────────────────────
+console.log('── Facts vs DEFINITION.md ──────────────────────────────');
 for (const r of results) {
   const icon = r.status === 'pass' ? '✓' : '✗';
   const srcRef = r.line ? `${r.source}:${r.line}` : r.source;
@@ -285,8 +369,44 @@ for (const r of results) {
   }
 }
 
+// ── Section 2: Code Integrity Checks ─────────────────────────
+console.log('\n── Code Integrity Checks ───────────────────────────────');
+
+// Check 1: Migration number conflicts
+const migrationConflicts = checkMigrationConflicts();
+if (migrationConflicts.length === 0) {
+  console.log('  ✓ migration_conflicts: no duplicate numbers in brain/migrations/');
+} else {
+  integrityFailure = true;
+  for (const [num, files] of migrationConflicts) {
+    console.log(`  ✗ migration_conflicts: number ${num} has ${files.length} files → ${files.join(', ')}`);
+  }
+}
+
+// Check 2: selfcheck.js version vs highest migration
+const { selfcheckVersion, highestMigration } = checkSelfcheckVersionSync();
+if (selfcheckVersion === highestMigration) {
+  console.log(`  ✓ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION = '${selfcheckVersion}' matches highest migration`);
+} else {
+  integrityFailure = true;
+  console.log(`  ✗ selfcheck_version_sync: selfcheck.js='${selfcheckVersion}' but highest migration='${highestMigration}' — update EXPECTED_SCHEMA_VERSION in brain/src/selfcheck.js`);
+}
+
+// Check 3: LLM fetch timeouts
+const llmViolations = checkLlmFetchTimeouts();
+if (llmViolations.length === 0) {
+  console.log('  ✓ llm_fetch_timeouts: all external LLM fetch calls have AbortSignal.timeout');
+} else {
+  integrityFailure = true;
+  for (const v of llmViolations) {
+    console.log(`  ✗ llm_fetch_timeouts: ${v.file}:${v.line} — fetch to LLM API missing AbortSignal.timeout`);
+  }
+}
+
+// ── Final result ──────────────────────────────────────────────
+const hasFailure = factsFailure || integrityFailure;
 if (hasFailure) {
-  console.log('\nFacts check FAILED — DEFINITION.md is out of sync with code.');
+  console.log('\nFacts check FAILED.');
   process.exit(1);
 } else {
   console.log('\nAll facts consistent.');

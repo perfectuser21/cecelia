@@ -3,13 +3,17 @@
  *
  * 测试双 Provider 模型路由：
  * - D1-1: getModelForTask() 当 provider=minimax 时 dev 返回 M2.5-highspeed
+ * - D1-2: getModelForTask() 当 provider=minimax 时 exploratory 返回 M2.1
  * - D1-3: getModelForTask() 当 provider=anthropic 时 dev 返回 null (默认 Sonnet)
+ * - D1-4: getModelForTask() 当 provider=anthropic 时 exploratory 返回 null
  * - D1-5: getProviderForTask() 默认返回 minimax
- * - D1-6: FIXED_PROVIDER 固定路由（codex_qa→openai, decomp_review→minimax 等）
+ * - D1-6: FIXED_PROVIDER 固定路由（exploratory→minimax, codex_qa→openai）
  *
  * DoD 映射：
  * - D1-1 → 'minimax dev 返回 M2.5-highspeed'
+ * - D1-2 → 'minimax exploratory 返回 M2.1'
  * - D1-3 → 'anthropic dev 返回 null'
+ * - D1-4 → 'anthropic exploratory 返回 null'
  * - D1-5 → 'getProviderForTask 默认 minimax'
  * - D1-6 → 'FIXED_PROVIDER 完整'
  */
@@ -68,6 +72,10 @@ describe('D1: 双 Provider 模型路由', () => {
   // ============================================================
   // D1-6: FIXED_PROVIDER 固定路由
   // ============================================================
+  it('D1-6: exploratory 不再在 FIXED_PROVIDER 中', () => {
+    expect(FIXED_PROVIDER.exploratory).toBeUndefined();
+  });
+
   it('D1-6: codex_qa 固定 openai', () => {
     expect(FIXED_PROVIDER.codex_qa).toBe('openai');
     expect(getProviderForTask({ task_type: 'codex_qa' })).toBe('openai');

@@ -3,10 +3,12 @@
  *
  * DoD 映射：
  * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留）
+ * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
  * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
  * - payload.next_action === 'decompose' → /okr（继续拆解）
  * - payload.decomposition === 'known' → 原有 taskType 路由
  * - 无 payload → 向后兼容，原有 taskType 路由
+ * - task_type: 'exploratory' → /exploratory（回归）
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -123,4 +125,5 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
     const result = getSkillForTaskType('dev', { next_action: 'continue' });
     expect(result).toBe('/dev');
   });
+
 });

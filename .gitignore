@@ -61,4 +61,6 @@ coverage/
 # Archive (old PRDs, DODs, etc.)
 .archive/
 # Trigger CI
+
+# Claude Code worktrees
 .claude/worktrees/

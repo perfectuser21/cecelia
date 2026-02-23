@@ -1,6 +1,7 @@
 /**
  * Tests for Bug Fixes: dedup + dispatch reliability (PR post-v1.48.1)
  *
+ * Bug 1: Check 7 payload missing decomposition:'continue' → NOT EXISTS dedup always fails → duplicate tasks
  * Bug 2: Task stuck in in_progress when no executor (cecelia-run unavailable)
  * Bug 3: updateTask lacks WHERE status='queued' atomic guard on dispatch
  * Bug 4: execution-callback lacks AND status='in_progress' idempotency guard
@@ -8,11 +9,26 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug 1: Check 7 payload has decomposition: 'continue'
+// ─────────────────────────────────────────────────────────────────────────────
+
 vi.mock('../db.js', () => ({
   default: {
     query: vi.fn()
   }
 }));
+
+/**
+ * Bug 1: PLACEHOLDER
+ * checkExploratoryDecompositionContinue (Check 7) 已从 decomposition-checker.js 删除
+ * 原 Bug 1 测试（dedup payload=continue）随函数一同移除
+ */
+describe('Bug 1 (removed): Check 7 / checkExploratoryDecompositionContinue removed', () => {
+  it('placeholder: Check 7 removed with exploratory concept', () => {
+    // checkExploratoryDecompositionContinue 已删除，不再需要测试
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bug 2: Task revert to queued behavior - tested via updateTask

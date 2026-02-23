@@ -79,6 +79,19 @@ describe('createTask - goal_id validation', () => {
   });
 
   describe('system task exemptions', () => {
+    it('exploratory task (concept removed) now requires goal_id like any other type', async () => {
+      // exploratory 已从 systemTypes 移除，不再豁免 goal_id 要求，应抛出错误
+      await expect(
+        createTask({
+          title: 'Test Task - Exploratory',
+          description: 'Exploratory task',
+          priority: 'P1',
+          task_type: 'exploratory',
+          trigger_source: 'brain_auto'
+        })
+      ).rejects.toThrow('goal_id is required');
+    });
+
     it('should allow research task without goal_id', async () => {
       const result = await createTask({
         title: 'Test Task - Research',

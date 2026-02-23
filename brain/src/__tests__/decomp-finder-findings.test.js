@@ -1,16 +1,10 @@
 /**
- * decomp-finder-findings.test.js
- *
- * NOTE: checkExploratoryDecompositionContinue() was removed in the exploratory
- * concept cleanup (Initiative 4-Phase architecture). This file is kept as a
- * placeholder to avoid breaking tracked file references.
+ * decomp-finder-findings.test.js — PLACEHOLDER
+ * checkExploratoryDecompositionContinue() 已从 decomposition-checker.js 删除
+ * 原 D4 测试（findings 降级告警）随函数一同移除
  */
-
-import { describe, it } from 'vitest';
-
-describe('decomp-finder-findings (exploratory removed)', () => {
-  it('placeholder: exploratory concept removed, no tests needed', () => {
-    // checkExploratoryDecompositionContinue() was deleted
-    // New architecture: Initiative 4-Phase (plan→review→dev→verify)
+describe('decomp-finder-findings (removed)', () => {
+  it('placeholder: checkExploratoryDecompositionContinue removed, D4 tests obsolete', () => {
+    // Check 7 / checkExploratoryDecompositionContinue 已删除，不再测试
   });
 });

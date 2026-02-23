@@ -34,16 +34,17 @@ describe('model-registry', () => {
       }
     });
 
-    it('R1b: 模型总数为 10', () => {
-      expect(MODELS.length).toBe(10);
+    it('R1b: 模型总数为 11', () => {
+      expect(MODELS.length).toBe(11);
     });
 
-    it('R2: 所有 agent 有 id/name/layer/allowed_models', () => {
+    it('R2: 所有 agent 有 id/name/layer/allowed_models/recommended_model', () => {
       for (const a of AGENTS) {
         expect(a.id).toBeTruthy();
         expect(a.name).toBeTruthy();
         expect(a.layer).toMatch(/^(brain|executor)$/);
         expect(a.allowed_models.length).toBeGreaterThan(0);
+        expect(a.recommended_model).toBeTruthy();
       }
     });
 
@@ -72,6 +73,7 @@ describe('model-registry', () => {
       expect(m21hs).toBeTruthy();
       expect(m21hs.provider).toBe('minimax');
       expect(m21hs.tier).toBe('fast');
+      expect(m21hs.deprecated).toBe(true); // 纯推理链模型，已废弃
 
       const m25 = getModelById('MiniMax-M2.5');
       expect(m25).toBeTruthy();
@@ -87,11 +89,21 @@ describe('model-registry', () => {
       expect(o4).toBeTruthy();
       expect(o4.provider).toBe('openai');
       expect(o4.tier).toBe('fast');
+
+      // 2026-02-23 Benchmark 新增：MiniMax-M2.1 废弃 + MiniMax-M2 新增
+      const m21 = getModelById('MiniMax-M2.1');
+      expect(m21).toBeTruthy();
+      expect(m21.deprecated).toBe(true);
+
+      const m2 = getModelById('MiniMax-M2');
+      expect(m2).toBeTruthy();
+      expect(m2.provider).toBe('minimax');
+      expect(m2.tier).toBe('premium');
     });
 
     it('R11: 新模型正确加入 agent 白名单', () => {
-      // thalamus 包含 M2.1-highspeed
-      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.1-highspeed')).toBe(true);
+      // thalamus 包含 M2.5-highspeed（M2.1 已废弃移除）
+      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.5-highspeed')).toBe(true);
       // cortex 包含 M2.5
       expect(isModelAllowedForAgent('cortex', 'MiniMax-M2.5')).toBe(true);
       // codex_qa 包含 o3-mini 和 o4-mini
@@ -102,6 +114,23 @@ describe('model-registry', () => {
       expect(isModelAllowedForAgent('qa', 'o4-mini')).toBe(true);
       // dev 包含 M2.5
       expect(isModelAllowedForAgent('dev', 'MiniMax-M2.5')).toBe(true);
+    });
+
+    it('R12: recommended_model 在各 agent 的 allowed_models 内', () => {
+      for (const a of AGENTS) {
+        expect(a.allowed_models).toContain(a.recommended_model);
+      }
+    });
+
+    it('R13: 扩大后的跨 provider 白名单正确', () => {
+      // thalamus 新增 Sonnet
+      expect(isModelAllowedForAgent('thalamus', 'claude-sonnet-4-20250514')).toBe(true);
+      // review 新增 Opus
+      expect(isModelAllowedForAgent('review', 'claude-opus-4-20250514')).toBe(true);
+      // audit 新增 Opus
+      expect(isModelAllowedForAgent('audit', 'claude-opus-4-20250514')).toBe(true);
+      // dev 推荐 Opus 且在白名单
+      expect(isModelAllowedForAgent('dev', 'claude-opus-4-20250514')).toBe(true);
     });
   });
 
@@ -125,7 +154,9 @@ describe('model-registry', () => {
     });
 
     it('R8: isModelAllowedForAgent 正确校验', () => {
-      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.1')).toBe(true);
+      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.5-highspeed')).toBe(true);
+      // M2.1 已从 thalamus 白名单移除（deprecated 纯推理链模型）
+      expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.1')).toBe(false);
       expect(isModelAllowedForAgent('thalamus', 'claude-opus-4-20250514')).toBe(false);
     });
 
@@ -160,12 +191,10 @@ describe('updateAgentModel', () => {
           audit: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           talk: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           research: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-          exploratory: { anthropic: null, minimax: 'MiniMax-M2.1' },
           decomp_review: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           codex_qa: { anthropic: null, minimax: null },
         },
         fixed_provider: {
-          exploratory: 'minimax',
           codex_qa: 'openai',
           decomp_review: 'minimax',
           talk: 'minimax',
@@ -256,12 +285,10 @@ describe('batchUpdateAgentModels', () => {
           audit: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           talk: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           research: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-          exploratory: { anthropic: null, minimax: 'MiniMax-M2.1' },
           decomp_review: { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
           codex_qa: { anthropic: null, minimax: null },
         },
         fixed_provider: {
-          exploratory: 'minimax',
           codex_qa: 'openai',
           decomp_review: 'minimax',
           talk: 'minimax',
@@ -279,19 +306,19 @@ describe('batchUpdateAgentModels', () => {
     });
 
     const result = await batchUpdateAgentModels(pool, [
-      { agent_id: 'thalamus', model_id: 'MiniMax-M2.1-highspeed' },
+      { agent_id: 'thalamus', model_id: 'MiniMax-M2.5-highspeed' },
       { agent_id: 'dev', model_id: 'claude-sonnet-4-20250514' },
       { agent_id: 'codex_qa', model_id: 'o3-mini' },
     ]);
 
     expect(result.updated.length).toBe(3);
-    expect(result.updated[0]).toEqual({ agent_id: 'thalamus', provider: 'minimax', model: 'MiniMax-M2.1-highspeed' });
+    expect(result.updated[0]).toEqual({ agent_id: 'thalamus', provider: 'minimax', model: 'MiniMax-M2.5-highspeed' });
     expect(result.updated[1]).toEqual({ agent_id: 'dev', provider: 'anthropic', model: 'claude-sonnet-4-20250514' });
     expect(result.updated[2]).toEqual({ agent_id: 'codex_qa', provider: 'openai', model: 'o3-mini' });
 
     // 缓存更新
     const cached = getActiveProfile();
-    expect(cached.config.thalamus.model).toBe('MiniMax-M2.1-highspeed');
+    expect(cached.config.thalamus.model).toBe('MiniMax-M2.5-highspeed');
     expect(cached.config.executor.model_map.dev.anthropic).toBe('claude-sonnet-4-20250514');
     expect(cached.config.executor.model_map.codex_qa.openai).toBe('o3-mini');
 

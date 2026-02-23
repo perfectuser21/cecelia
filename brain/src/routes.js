@@ -55,6 +55,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
+import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 
@@ -398,6 +399,32 @@ router.get('/tasks', async (req, res) => {
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: 'Failed to get tasks', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/goals
+ * 查询 goals 列表，支持按部门过滤
+ * Query params:
+ *   dept: 按 metadata->>'dept' 过滤（可选）
+ */
+router.get('/goals', async (req, res) => {
+  try {
+    const { dept } = req.query;
+    let query = `
+      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, created_at, updated_at
+      FROM goals
+    `;
+    const params = [];
+    if (dept) {
+      query += ` WHERE metadata->>'dept' = $1`;
+      params.push(dept);
+    }
+    query += ` ORDER BY priority ASC, created_at DESC`;
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get goals', details: err.message });
   }
 });
 
@@ -1111,47 +1138,6 @@ router.get('/watchdog', async (req, res) => {
   }
 });
 
-/**
- * GET /api/brain/bottleneck-scans
- * 查询瓶颈扫描历史记录
- * Query params:
- *   - limit: 返回记录数 (默认 50, 最大 200)
- *   - severity: 按严重程度过滤 (low, medium, high, critical)
- *   - scan_type: 按扫描类型过滤
- */
-router.get('/bottleneck-scans', async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-    const severity = req.query.severity;
-    const scanType = req.query.scan_type;
-
-    let query = 'SELECT * FROM bottleneck_scans WHERE 1=1';
-    const params = [];
-
-    if (severity) {
-      params.push(severity);
-      query += ` AND severity = $${params.length}`;
-    }
-
-    if (scanType) {
-      params.push(scanType);
-      query += ` AND scan_type = $${params.length}`;
-    }
-
-    params.push(limit);
-    query += ` ORDER BY created_at DESC LIMIT $${params.length}`;
-
-    const result = await pool.query(query, params);
-    res.json({
-      success: true,
-      count: result.rows.length,
-      scans: result.rows,
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to query bottleneck scans', details: err.message });
-  }
-});
-
 // ==================== Session Tracking API ====================
 
 /**
@@ -1237,6 +1223,29 @@ router.get('/pending-actions', async (req, res) => {
     res.json({ success: true, count: actions.length, actions });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get pending actions', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/pending-actions
+ * 创建新的 pending action（部门主管向 Cecelia 提案）
+ * Body: { action_type, requester, context? }
+ */
+router.post('/pending-actions', async (req, res) => {
+  try {
+    const { action_type, requester, context } = req.body || {};
+    if (!action_type || !requester) {
+      return res.status(400).json({ error: 'action_type and requester are required' });
+    }
+    const result = await pool.query(`
+      INSERT INTO pending_actions
+        (action_type, params, context, status, source, comments)
+      VALUES ($1, '{}', $2, 'pending_approval', 'repo-lead', '[]'::jsonb)
+      RETURNING id, action_type, status, source, created_at
+    `, [action_type, JSON.stringify({ requester, ...(context || {}) })]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create pending action', details: err.message });
   }
 });
 
@@ -2298,8 +2307,9 @@ router.post('/execution-callback', async (req, res) => {
       }
     }
 
-    // 5b. Task 完成后的闭环处理
+    // 5b. 探索型任务闭环已移除
     if (newStatus === 'completed') {
+
       // 5c1. Decomp Review 闭环：Vivian 审查完成 → 激活/修正/拒绝
       try {
         const decompReviewResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
@@ -2338,99 +2348,6 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (decompReviewErr) {
         console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
-      }
-
-      // 5b3. Initiative 编排回调：initiative_plan / initiative_verify / decomp_review (for initiative)
-      try {
-        const initCallbackResult = await pool.query(
-          'SELECT task_type, payload, project_id, goal_id FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const initCallbackRow = initCallbackResult.rows[0];
-
-        if (initCallbackRow && isCompleted) {
-          const { handlePhaseTransition, promoteInitiativeTasks } = await import('./initiative-orchestrator.js');
-
-          // initiative_plan 完成 → plan→review
-          if (initCallbackRow.task_type === 'initiative_plan') {
-            console.log(`[execution-callback] Initiative plan completed, transitioning plan→review`);
-            const initiative = { id: initCallbackRow.project_id };
-            const ok = await handlePhaseTransition(pool, initiative, 'plan', 'review');
-            if (ok) {
-              console.log(`[execution-callback] Initiative ${initiative.id} transitioned to review`);
-            } else {
-              console.warn(`[execution-callback] Initiative ${initiative.id} phase transition plan→review failed (optimistic lock)`);
-            }
-          }
-
-          // decomp_review for initiative 完成 → promote/revise/reject
-          if (initCallbackRow.task_type === 'decomp_review' && initCallbackRow.payload?.entity_type === 'initiative') {
-            const verdictRaw = (result !== null && typeof result === 'object')
-              ? (result.verdict || result.result?.verdict)
-              : null;
-            const validVerdicts = ['approved', 'needs_revision', 'rejected'];
-            const verdict = validVerdicts.includes(verdictRaw) ? verdictRaw : 'approved';
-            const initiativeId = initCallbackRow.payload?.entity_id || initCallbackRow.project_id;
-
-            console.log(`[execution-callback] Initiative decomp review: verdict=${verdict}, initiative=${initiativeId}`);
-
-            if (verdict === 'approved') {
-              const promoted = await promoteInitiativeTasks(pool, initiativeId);
-              console.log(`[execution-callback] Promoted ${promoted} draft tasks for initiative ${initiativeId}`);
-              await handlePhaseTransition(pool, { id: initiativeId }, 'review', 'dev');
-            } else if (verdict === 'needs_revision') {
-              await handlePhaseTransition(pool, { id: initiativeId }, 'review', 'plan');
-              console.log(`[execution-callback] Initiative ${initiativeId} sent back to plan (needs_revision)`);
-            } else if (verdict === 'rejected') {
-              await pool.query(
-                "UPDATE projects SET status = 'cancelled', current_phase = NULL WHERE id = $1",
-                [initiativeId]
-              );
-              console.log(`[execution-callback] Initiative ${initiativeId} cancelled (rejected)`);
-            }
-          }
-
-          // initiative_verify 完成 → complete/rollback
-          if (initCallbackRow.task_type === 'initiative_verify') {
-            const allDodPassed = (result !== null && typeof result === 'object')
-              ? (result.all_dod_passed === true || result.result?.all_dod_passed === true)
-              : false;
-
-            console.log(`[execution-callback] Initiative verify: all_dod_passed=${allDodPassed}`);
-
-            if (allDodPassed) {
-              await handlePhaseTransition(pool, { id: initCallbackRow.project_id }, 'verify', null);
-              console.log(`[execution-callback] Initiative ${initCallbackRow.project_id} completed`);
-            } else {
-              // 部分失败 → 创建补充 dev task + 退回 dev
-              const dodResults = (result !== null && typeof result === 'object')
-                ? (result.dod_results || result.result?.dod_results || [])
-                : [];
-              const failedDods = dodResults.filter(d => !d.passed);
-
-              if (failedDods.length > 0) {
-                for (const fd of failedDods) {
-                  await pool.query(`
-                    INSERT INTO tasks (title, task_type, status, priority, project_id, goal_id, description, payload)
-                    VALUES ($1, 'dev', 'queued', 'P1', $2, $3, $4, $5)
-                  `, [
-                    `Fix: DoD #${fd.dod_index} - ${fd.fix_suggestion || 'verification failed'}`,
-                    initCallbackRow.project_id,
-                    initCallbackRow.goal_id,
-                    fd.fix_suggestion || `DoD #${fd.dod_index} 验证失败，需要修复`,
-                    JSON.stringify({ dod_index: fd.dod_index, from_verify: true }),
-                  ]);
-                }
-                console.log(`[execution-callback] Created ${failedDods.length} fix tasks for initiative ${initCallbackRow.project_id}`);
-              }
-
-              await handlePhaseTransition(pool, { id: initCallbackRow.project_id }, 'verify', 'dev');
-              console.log(`[execution-callback] Initiative ${initCallbackRow.project_id} rolled back to dev`);
-            }
-          }
-        }
-      } catch (initCallbackErr) {
-        console.error(`[execution-callback] Initiative callback error: ${initCallbackErr.message}`);
       }
 
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
@@ -5180,6 +5097,404 @@ router.patch('/capabilities/:id', async (req, res) => {
   }
 });
 
+// ==================== PR Plans API (Layer 2) ====================
+
+/**
+ * POST /api/brain/pr-plans
+ * Create a new PR Plan
+ *
+ * Body: {
+ *   project_id: string (required),
+ *   title: string (required),
+ *   description: string (optional),
+ *   dod: string (required),
+ *   files: string[] (optional),
+ *   sequence: number (optional, default 0),
+ *   depends_on: string[] (optional),
+ *   complexity: 'small'|'medium'|'large' (optional, default 'medium'),
+ *   estimated_hours: number (optional)
+ * }
+ */
+router.post('/pr-plans', async (req, res) => {
+  try {
+    const {
+      project_id,
+      title,
+      description,
+      dod,
+      files,
+      sequence = 0,
+      depends_on,
+      complexity = 'medium',
+      estimated_hours
+    } = req.body;
+
+    // Validate required fields
+    if (!project_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: project_id',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: title',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    if (!dod) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: dod',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    // Validate project exists
+    const projectCheck = await pool.query(
+      'SELECT id FROM projects WHERE id = $1',
+      [project_id]
+    );
+    if (projectCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Project not found',
+        code: 'PROJECT_NOT_FOUND'
+      });
+    }
+
+    // Validate complexity
+    const validComplexities = ['small', 'medium', 'large'];
+    if (complexity && !validComplexities.includes(complexity)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid complexity value',
+        code: 'INVALID_COMPLEXITY',
+        allowed: validComplexities
+      });
+    }
+
+    // Insert PR Plan
+    const result = await pool.query(
+      `INSERT INTO pr_plans (
+        project_id, title, description, dod,
+        files, sequence, depends_on, complexity, estimated_hours
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, project_id, title, description, dod,
+                files, sequence, depends_on, complexity, estimated_hours,
+                status, created_at, updated_at`,
+      [
+        project_id,
+        title,
+        description || null,
+        dod,
+        files || null,
+        sequence,
+        depends_on || null,
+        complexity,
+        estimated_hours || null
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to create PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans
+ * Query PR Plans with optional filters
+ *
+ * Query params:
+ *   project_id: string (optional)
+ *   status: string (optional)
+ */
+router.get('/pr-plans', async (req, res) => {
+  try {
+    const { project_id, status } = req.query;
+
+    let query = 'SELECT * FROM pr_plans WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+
+    if (project_id) {
+      query += ` AND project_id = $${paramIndex}`;
+      params.push(project_id);
+      paramIndex++;
+    }
+
+    if (status) {
+      query += ` AND status = $${paramIndex}`;
+      params.push(status);
+      paramIndex++;
+    }
+
+    query += ' ORDER BY sequence ASC, created_at ASC';
+
+    const result = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      pr_plans: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] Failed to query PR Plans:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to query PR Plans',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/pr-plans/:id
+ * Get a single PR Plan with full context
+ */
+router.get('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT * FROM pr_plan_full_context WHERE pr_plan_id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to get PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PATCH /api/brain/pr-plans/:id
+ * Update a PR Plan
+ *
+ * Body: {
+ *   title: string (optional),
+ *   description: string (optional),
+ *   dod: string (optional),
+ *   files: string[] (optional),
+ *   sequence: number (optional),
+ *   depends_on: string[] (optional),
+ *   complexity: string (optional),
+ *   estimated_hours: number (optional),
+ *   status: string (optional)
+ * }
+ */
+router.patch('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      dod,
+      files,
+      sequence,
+      depends_on,
+      complexity,
+      estimated_hours,
+      status
+    } = req.body;
+
+    // Check if PR Plan exists
+    const checkResult = await pool.query(
+      'SELECT id FROM pr_plans WHERE id = $1',
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    // Validate status if provided
+    if (status) {
+      const validStatuses = ['planning', 'in_progress', 'completed', 'cancelled'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid status value',
+          code: 'INVALID_STATUS',
+          allowed: validStatuses
+        });
+      }
+    }
+
+    // Validate complexity if provided
+    if (complexity) {
+      const validComplexities = ['small', 'medium', 'large'];
+      if (!validComplexities.includes(complexity)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid complexity value',
+          code: 'INVALID_COMPLEXITY',
+          allowed: validComplexities
+        });
+      }
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const params = [id];
+    let paramIndex = 2;
+
+    if (title !== undefined) {
+      updates.push(`title = $${paramIndex}`);
+      params.push(title);
+      paramIndex++;
+    }
+
+    if (description !== undefined) {
+      updates.push(`description = $${paramIndex}`);
+      params.push(description);
+      paramIndex++;
+    }
+
+    if (dod !== undefined) {
+      updates.push(`dod = $${paramIndex}`);
+      params.push(dod);
+      paramIndex++;
+    }
+
+    if (files !== undefined) {
+      updates.push(`files = $${paramIndex}`);
+      params.push(files);
+      paramIndex++;
+    }
+
+    if (sequence !== undefined) {
+      updates.push(`sequence = $${paramIndex}`);
+      params.push(sequence);
+      paramIndex++;
+    }
+
+    if (depends_on !== undefined) {
+      updates.push(`depends_on = $${paramIndex}`);
+      params.push(depends_on);
+      paramIndex++;
+    }
+
+    if (complexity !== undefined) {
+      updates.push(`complexity = $${paramIndex}`);
+      params.push(complexity);
+      paramIndex++;
+    }
+
+    if (estimated_hours !== undefined) {
+      updates.push(`estimated_hours = $${paramIndex}`);
+      params.push(estimated_hours);
+      paramIndex++;
+    }
+
+    if (status !== undefined) {
+      updates.push(`status = $${paramIndex}`);
+      params.push(status);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No fields to update',
+        code: 'NO_UPDATES'
+      });
+    }
+
+    updates.push(`updated_at = NOW()`);
+
+    const updateQuery = `
+      UPDATE pr_plans
+      SET ${updates.join(', ')}
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const result = await pool.query(updateQuery, params);
+
+    res.json({
+      success: true,
+      pr_plan: result.rows[0]
+    });
+  } catch (err) {
+    console.error('[API] Failed to update PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update PR Plan',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/brain/pr-plans/:id
+ * Delete a PR Plan
+ */
+router.delete('/pr-plans/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      'DELETE FROM pr_plans WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'PR Plan not found',
+        code: 'PR_PLAN_NOT_FOUND'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'PR Plan deleted successfully',
+      id: result.rows[0].id
+    });
+  } catch (err) {
+    console.error('[API] Failed to delete PR Plan:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete PR Plan',
+      details: err.message
+    });
+  }
+});
+
 // ============================================================
 // Monitoring Loop Status
 // ============================================================
@@ -5341,7 +5656,7 @@ router.post('/attach-decision', async (req, res) => {
         },
         route: {
           path: 'extend_initiative_then_dev',
-          why: ['在现有 Initiative 下扩展功能'],
+          why: ['在现有 Initiative 下扩展功能', '直接创建 dev 任务'],
           confidence: 0.75
         },
         next_call: {
@@ -5374,7 +5689,7 @@ router.post('/attach-decision', async (req, res) => {
         },
         route: {
           path: 'okr_then_dev',
-          why: ['需要先创建 Initiative', '然后进行开发'],
+          why: ['需要先创建 Initiative', '然后进行技术验证'],
           confidence: 0.7
         },
         next_call: {
@@ -5404,7 +5719,7 @@ router.post('/attach-decision', async (req, res) => {
       },
       route: {
         path: 'okr_then_dev',
-        why: ['需要完整规划（OKR → Initiative）', '然后进行开发'],
+        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
         confidence: 0.6
       },
       next_call: {
@@ -6047,12 +6362,12 @@ export async function triggerAutoRCA({ task_id, errorMsg, classification, should
  * POST /api/brain/orchestrator/chat
  * Cecelia 嘴巴对话端点
  *
- * Request: { message: string, context?: { conversation_id, history } }
+ * Request: { message: string, context?: { conversation_id, history }, messages?: Array<{role, content}> }
  * Response: { reply: string, routing_level: number, intent: string }
  */
 router.post('/orchestrator/chat', async (req, res) => {
   try {
-    const { message, context } = req.body;
+    const { message, context, messages } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({
@@ -6061,7 +6376,7 @@ router.post('/orchestrator/chat', async (req, res) => {
       });
     }
 
-    const result = await handleChat(message, context || {});
+    const result = await handleChat(message, context || {}, Array.isArray(messages) ? messages : []);
     res.json(result);
   } catch (err) {
     console.error('[API] orchestrator/chat error:', err.message);
@@ -6069,6 +6384,78 @@ router.post('/orchestrator/chat', async (req, res) => {
       error: 'Chat failed',
       message: err.message,
     });
+  }
+});
+
+/**
+ * GET /api/brain/orchestrator/chat/history
+ * 返回最近 N 条对话历史（从 cecelia_events 重建消息对）
+ *
+ * Query: ?limit=20 (默认 20，最大 100)
+ * Response: Array<{ role: 'user'|'assistant', content: string, created_at: string }>
+ */
+router.get('/orchestrator/chat/history', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+
+    const result = await pool.query(
+      `SELECT payload, created_at FROM cecelia_events
+       WHERE event_type = 'orchestrator_chat'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    // 从新到旧倒序排列，重建为时间正序的消息对数组
+    const messages = result.rows.reverse().flatMap(row => {
+      const p = row.payload;
+      const createdAt = row.created_at;
+      return [
+        { role: 'user', content: p.user_message || '', created_at: createdAt },
+        { role: 'assistant', content: p.reply || p.reply_preview || '', created_at: createdAt },
+      ];
+    });
+
+    res.json(messages);
+  } catch (err) {
+    console.error('[API] orchestrator/chat/history error:', err.message);
+    res.status(500).json({
+      error: 'Failed to fetch chat history',
+      message: err.message,
+    });
+  }
+});
+
+// ==================== User Profile ====================
+
+/**
+ * GET /api/brain/user/profile
+ * 查询当前用户画像
+ */
+router.get('/user/profile', async (_req, res) => {
+  try {
+    const profile = await loadUserProfile(pool, 'owner');
+    res.json({ profile: profile || null });
+  } catch (err) {
+    console.error('[API] user/profile GET error:', err.message);
+    res.status(500).json({ error: 'Failed to load user profile', message: err.message });
+  }
+});
+
+/**
+ * PUT /api/brain/user/profile
+ * 手动更新用户画像
+ * Body: { display_name?, focus_area?, preferred_style?, timezone?, raw_facts? }
+ */
+router.put('/user/profile', async (req, res) => {
+  try {
+    const { display_name, focus_area, preferred_style, timezone, raw_facts } = req.body || {};
+    const facts = { display_name, focus_area, preferred_style, timezone, raw_facts };
+    const updated = await upsertUserProfile(pool, 'owner', facts);
+    res.json({ profile: updated });
+  } catch (err) {
+    console.error('[API] user/profile PUT error:', err.message);
+    res.status(500).json({ error: 'Failed to update user profile', message: err.message });
   }
 });
 
@@ -6216,6 +6603,114 @@ router.patch('/model-profiles/active/agents', async (req, res) => {
     const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
       ? 400 : err.message.includes('No active profile') ? 404 : 500;
     res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// Device Lock API（部门主管架构 - 脚本员工设备互斥锁）
+// ============================================================
+
+/**
+ * GET /api/brain/device-locks
+ * 查看所有设备锁状态
+ */
+router.get('/device-locks', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT device_name, locked_by, locked_at, expires_at,
+              (expires_at IS NOT NULL AND expires_at < NOW()) AS expired
+       FROM device_locks
+       ORDER BY device_name`
+    );
+    res.json({ success: true, locks: rows });
+  } catch (err) {
+    console.error('[API] device-locks GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/device-locks/acquire
+ * 申请设备锁
+ * body: { device_name, locked_by, ttl_minutes? }
+ * 返回: { acquired: true, lock } 或 { acquired: false, locked_by, expires_at }
+ */
+router.post('/device-locks/acquire', async (req, res) => {
+  try {
+    const { device_name, locked_by, ttl_minutes = 30 } = req.body;
+    if (!device_name || !locked_by) {
+      return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
+    }
+
+    const expiresAt = new Date(Date.now() + ttl_minutes * 60 * 1000);
+
+    // 先看设备是否存在
+    const { rows: existing } = await pool.query(
+      'SELECT device_name, locked_by, expires_at FROM device_locks WHERE device_name = $1',
+      [device_name]
+    );
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, error: `Unknown device: ${device_name}` });
+    }
+
+    const current = existing[0];
+    const isLocked = current.locked_by && current.expires_at && new Date(current.expires_at) > new Date();
+
+    if (isLocked) {
+      return res.json({
+        acquired: false,
+        locked_by: current.locked_by,
+        expires_at: current.expires_at,
+      });
+    }
+
+    // 抢锁（包括已过期的锁）
+    const { rows: updated } = await pool.query(
+      `UPDATE device_locks
+       SET locked_by = $1, locked_at = NOW(), expires_at = $2
+       WHERE device_name = $3
+       RETURNING *`,
+      [locked_by, expiresAt, device_name]
+    );
+
+    res.json({ acquired: true, lock: updated[0] });
+  } catch (err) {
+    console.error('[API] device-locks/acquire error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/device-locks/release
+ * 释放设备锁（只有持有者可以释放）
+ * body: { device_name, locked_by }
+ */
+router.post('/device-locks/release', async (req, res) => {
+  try {
+    const { device_name, locked_by } = req.body;
+    if (!device_name || !locked_by) {
+      return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE device_locks
+       SET locked_by = NULL, locked_at = NULL, expires_at = NULL
+       WHERE device_name = $1 AND locked_by = $2
+       RETURNING *`,
+      [device_name, locked_by]
+    );
+
+    if (rows.length === 0) {
+      return res.status(409).json({
+        success: false,
+        error: `Device ${device_name} is not locked by ${locked_by}`,
+      });
+    }
+
+    res.json({ success: true, released: rows[0] });
+  } catch (err) {
+    console.error('[API] device-locks/release error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

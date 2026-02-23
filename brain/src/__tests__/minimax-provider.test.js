@@ -86,6 +86,7 @@ describe('getProviderForTask - 双 Provider 路由', () => {
     expect(FIXED_PROVIDER.decomp_review).toBe('minimax');
     expect(FIXED_PROVIDER.talk).toBe('minimax');
     expect(FIXED_PROVIDER.research).toBe('minimax');
+    expect(FIXED_PROVIDER.exploratory).toBeUndefined();
   });
 });
 

@@ -20,6 +20,7 @@ import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
+import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -46,9 +47,7 @@ const TASK_TYPE_AGENT_MAP = {
   'talk': '/talk',         // 对话任务 → HK MiniMax
   'qa': '/qa',             // 小检 - QA
   'audit': '/audit',       // 小审 - 审计
-  'research': null,        // 需要人工/Opus 处理
-  'initiative_plan': null,  // Initiative 规划 → executor 直接处理
-  'initiative_verify': null // Initiative 验收 → executor 直接处理
+  'research': null         // 需要人工/Opus 处理
 };
 
 /**
@@ -374,22 +373,20 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
-    // 24/7 系统：启动时始终 auto-enable tick
-    // 只有 CECELIA_TICK_ENABLED=false 时才禁用（显式关闭）
+    // Auto-enable tick from env var if set
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
-    if (envEnabled === 'false') {
-      console.log('[tick-loop] CECELIA_TICK_ENABLED=false, tick disabled by env');
+    if (envEnabled === 'true') {
+      console.log('[tick-loop] CECELIA_TICK_ENABLED=true, auto-enabling tick');
+      await enableTick();
       return;
     }
 
-    // 默认启用 — Cecelia 是 24/7 自主运行系统，tick 必须持续运作
     const status = await getTickStatus();
-    if (!status.enabled) {
-      console.log('[tick-loop] Tick was disabled in DB, auto-enabling for 24/7 operation');
-      await enableTick();
-    } else {
-      console.log('[tick-loop] Tick is enabled, starting loop');
+    if (status.enabled) {
+      console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
       startTickLoop();
+    } else {
+      console.log('[tick-loop] Tick is disabled in DB, not starting loop');
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
@@ -1143,6 +1140,22 @@ async function executeTick() {
     // Continue with normal tick if thalamus fails
   }
 
+  // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
+  try {
+    const { checkPrPlansCompletion } = await import('./planner.js');
+    const completedPrPlans = await checkPrPlansCompletion();
+    if (completedPrPlans.length > 0) {
+      console.log(`[tick] Auto-completed ${completedPrPlans.length} PR Plans`);
+      actionsTaken.push({
+        action: 'pr_plans_completion_check',
+        completed_count: completedPrPlans.length,
+        completed_ids: completedPrPlans
+      });
+    }
+  } catch (prPlansErr) {
+    console.error('[tick] PR Plans completion check failed:', prPlansErr.message);
+  }
+
   // 0.7. 统一拆解检查（七层架构）
   try {
     const { runDecompositionChecks } = await import('./decomposition-checker.js');
@@ -1235,22 +1248,6 @@ async function executeTick() {
     }
   } catch (initiativeErr) {
     console.error('[tick] Initiative completion check failed (non-fatal):', initiativeErr.message);
-  }
-
-  // 0.8.5. Orchestrated Initiative 编排：每次 tick 都跑，纯 SQL + 创建 task
-  try {
-    const { checkOrchestratedInitiatives } = await import('./initiative-orchestrator.js');
-    const orchResult = await checkOrchestratedInitiatives(pool);
-    if (orchResult.actions > 0) {
-      console.log(`[TICK] Initiative 编排: ${orchResult.actions} 个操作`);
-      actionsTaken.push({
-        action: 'initiative_orchestration',
-        actions_count: orchResult.actions,
-        details: orchResult.details,
-      });
-    }
-  } catch (orchErr) {
-    console.error('[tick] Initiative orchestration failed (non-fatal):', orchErr.message);
   }
 
   // 0.9. Project 完成检查：每次 tick 都跑，纯 SQL，无 LLM
@@ -1521,58 +1518,6 @@ async function executeTick() {
     console.error('[tick] Watchdog error:', watchdogErr.message);
   }
 
-  // 5c-2. Record bottleneck scan results to database
-  try {
-    const resources = checkServerResources();
-    const maxPressure = resources.metrics.max_pressure;
-
-    // Only record when system is under pressure (Tense >= 0.7 or Crisis >= 1.0)
-    if (maxPressure >= 0.7) {
-      // Determine severity based on pressure level
-      const severity = maxPressure >= 1.0 ? 'critical' : 'high';
-
-      // Identify bottleneck areas
-      const bottleneckAreas = [];
-      const recommendations = [];
-
-      if (resources.metrics.cpu_pressure >= maxPressure) {
-        bottleneckAreas.push('cpu');
-        recommendations.push(`CPU usage at ${resources.metrics.cpu_usage_pct}%, consider reducing concurrent tasks`);
-      }
-      if (resources.metrics.mem_pressure >= maxPressure) {
-        bottleneckAreas.push('memory');
-        recommendations.push(`Memory pressure at ${Math.round(resources.metrics.mem_pressure * 100)}%, consider increasing MEM_AVAILABLE_MIN_MB`);
-      }
-      if (resources.metrics.swap_pressure >= maxPressure) {
-        bottleneckAreas.push('swap');
-        recommendations.push(`Swap usage at ${resources.metrics.swap_used_pct}%, consider adding RAM or optimizing memory`);
-      }
-
-      // Record to bottleneck_scans table
-      await pool.query(
-        `INSERT INTO bottleneck_scans (scan_type, bottleneck_area, severity, details, recommendations)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          'watchdog_system_pressure',
-          bottleneckAreas.join(','),
-          severity,
-          JSON.stringify({
-            max_pressure: maxPressure,
-            cpu_usage_pct: resources.metrics.cpu_usage_pct,
-            mem_pressure: resources.metrics.mem_pressure,
-            swap_pressure: resources.metrics.swap_pressure,
-            effective_slots: resources.metrics.effective_slots,
-            max_seats: resources.metrics.max_seats,
-          }),
-          JSON.stringify(recommendations),
-        ]
-      );
-      console.log(`[tick] Bottleneck scan recorded: pressure=${maxPressure}, areas=${bottleneckAreas.join(',')}, severity=${severity}`);
-    }
-  } catch (bottleneckErr) {
-    console.error('[tick] Bottleneck scan error:', bottleneckErr.message);
-  }
-
   // 5d. Idle session cleanup — kill interactive Claude sessions idle > 2h
   try {
     const { checkIdleSessions } = await import('./watchdog.js');
@@ -1763,6 +1708,14 @@ async function executeTick() {
   // Record operation success (tick completed successfully)
   recordOperation(true, 'tick');
 
+  // 9. Trigger dept heartbeats (每轮 Tick 末尾，为活跃部门创建 heartbeat task)
+  let deptHeartbeatResult = { triggered: 0, skipped: 0, results: [] };
+  try {
+    deptHeartbeatResult = await triggerDeptHeartbeats(pool);
+  } catch (deptErr) {
+    console.error('[tick] dept heartbeat error:', deptErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1772,6 +1725,7 @@ async function executeTick() {
       objective_title: focus.objective.title
     } : null,
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
+    dept_heartbeats: deptHeartbeatResult,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
@@ -1829,14 +1783,14 @@ async function getDrainStatus() {
 
   const tasks = inProgressResult.rows;
 
-  // Auto-complete drain: if no in_progress tasks remain, resume normal operation
-  // 注意：drain 完成后不再禁用 tick，Cecelia 是 24/7 系统
+  // Auto-complete drain: if no in_progress tasks remain, disable tick
   if (tasks.length === 0) {
-    console.log('[tick] Drain complete — no in_progress tasks remain, resuming normal dispatch');
+    console.log('[tick] Drain complete — no in_progress tasks remain, disabling tick');
     const drainEnd = new Date().toISOString();
     const startedAt = _drainStartedAt;
     _draining = false;
     _drainStartedAt = null;
+    await disableTick();
     return {
       draining: false,
       drain_completed: true,

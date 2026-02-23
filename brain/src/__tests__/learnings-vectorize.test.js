@@ -429,6 +429,6 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('063');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('070');
   });
 });

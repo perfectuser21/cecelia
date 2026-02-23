@@ -5,6 +5,7 @@ import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
 import traceRoutes from './src/trace-routes.js';
 import memoryRoutes from './src/routes/memory.js';
+import profileFactsRoutes from './src/routes/profile-facts.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -13,6 +14,7 @@ import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js
 import { loadActiveProfile } from './src/model-profile.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
+import { handleChat } from './src/orchestrator-chat.js';
 
 const app = express();
 const server = createServer(app);
@@ -63,6 +65,7 @@ app.use(express.json({ limit: '256kb' }));
 
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);
+app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
@@ -72,6 +75,19 @@ app.use('/api/cecelia', ceceliaRoutes);
 
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
+
+// POST /api/brain/orchestrator/chat
+app.post('/api/brain/orchestrator/chat', async (req, res) => {
+  try {
+    const { message, messages = [], context = {} } = req.body;
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    const result = await handleChat(message, context, messages);
+    res.json(result);
+  } catch (err) {
+    console.error('[orchestrator/chat]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Health check at root
 app.get('/', (_req, res) => {

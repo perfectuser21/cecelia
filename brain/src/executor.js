@@ -831,15 +831,12 @@ function getSkillForTaskType(taskType, payload) {
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
-    // Initiative 编排任务：不用 skill，直接用 prompt
-    'initiative_plan': null,
-    'initiative_verify': null,
+    'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     // 兼容旧类型
     'qa': '/review',
     'audit': '/review',
   };
-  if (taskType in skillMap) return skillMap[taskType];
-  return '/dev';
+  return skillMap[taskType] || '/dev';
 }
 
 // ============================================================
@@ -906,9 +903,6 @@ function getPermissionModeForTaskType(taskType) {
     'review': 'plan',                  // 只读分析（唯一用 plan 的）
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
-    // Initiative 编排任务
-    'initiative_plan': 'bypassPermissions',
-    'initiative_verify': 'bypassPermissions',
     // 兼容旧类型
     'qa': 'plan',
     'audit': 'plan',
@@ -922,10 +916,8 @@ function getPermissionModeForTaskType(taskType) {
  *
  * @param {object} task - 任务对象，包含 task_type 和 title
  */
-function checkTaskTypeMatch(task) {
-  const taskType = task.task_type || 'dev';
-  const title = (task.title || '').toLowerCase();
-
+function checkTaskTypeMatch(_task) {
+  // 此函数保留接口，检查逻辑已移除
 }
 
 /**
@@ -1112,7 +1104,10 @@ POST /api/brain/project-kr-links
 
 记录新建 Project 的 ID（后面 Step 2 要用）。
 
-### Step 2: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
+### Step 2: 拆解模式
+- 使用 known 模式，直接拆解为 dev 任务
+
+### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
 
 Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
 
@@ -1121,11 +1116,29 @@ POST /api/brain/action/create-initiative
 {
   "name": "Initiative 名称",
   "parent_id": "<Step 1 新建的 Project ID>",
-  "kr_id": "${krId}"
+  "kr_id": "${krId}",
+  "decomposition_mode": "known"
 }
 \`\`\`
 
-### Step 4: 更新 KR 状态
+### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
+
+\`\`\`
+POST /api/brain/action/create-task
+{
+  "title": "实现 [功能]",
+  "project_id": "<Initiative ID>",
+  "goal_id": "${krId}",
+  "task_type": "dev",
+  "prd_content": "完整 PRD（目标、方案、验收标准）",
+  "payload": {
+    "initiative_id": "<Initiative ID>",
+    "kr_goal": "${task.description || ''}"
+  }
+}
+\`\`\`
+
+### Step 5: 更新 KR 状态
 \`\`\`
 PUT /api/tasks/goals/${krId}
 {"status": "in_progress"}
@@ -1142,8 +1155,9 @@ PUT /api/tasks/goals/${krId}
 1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
 2. ✅ project_kr_links 已绑定新 Project → 当前 KR
 3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
-4. ✅ 所有 Task 的 goal_id = ${krId}
-5. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
+4. ✅ 第一个 Task 的 task_type='dev'
+5. ✅ 所有 Task 的 goal_id = ${krId}
+6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
@@ -1200,153 +1214,6 @@ ${task.description || ''}
 - ✅ 可以读取代码/文档/日志
 - ✅ 输出调研结果和建议
 - ❌ 不能创建、修改或删除任何文件`;
-  }
-
-  // Initiative Plan 类型：Agent 读代码自主拆 Task
-  if (taskType === 'initiative_plan') {
-    const initiativeId = task.project_id || '';
-    const krId = task.goal_id || '';
-    const dodContent = task.payload?.dod_content || [];
-    const repoPath = task.payload?.repo_path || '';
-    const initiativeName = task.payload?.initiative_name || task.title?.replace(/^Plan:\s*/, '') || '';
-    const initiativeDesc = task.payload?.initiative_description || task.description || '';
-
-    const dodList = Array.isArray(dodContent)
-      ? dodContent.map((d, i) => `${i + 1}. ${typeof d === 'string' ? d : d.criterion || d.description || JSON.stringify(d)}`).join('\n')
-      : String(dodContent);
-
-    return `# Initiative 规划任务
-
-## Initiative 信息
-- **名称**: ${initiativeName}
-- **ID**: ${initiativeId}
-- **描述**: ${initiativeDesc}
-
-## DoD (Definition of Done)
-${dodList || '（未指定）'}
-
-## 代码仓库
-${repoPath || '（未指定）'}
-
-## Brain API
-- BRAIN_API: http://localhost:5221
-
-## 你的任务
-
-1. **读取代码**：仔细阅读仓库中相关代码，理解现有架构和模式
-2. **设计拆分**：将 Initiative 拆分为多个 dev Task，每个 Task 是一个独立 PR
-3. **创建 Task**：通过 Brain API 创建 dev task（status='draft'）
-
-### 创建 Task 格式
-\`\`\`bash
-curl -s -X POST http://localhost:5221/api/brain/tasks \\
-  -H 'Content-Type: application/json' \\
-  -d '{
-    "title": "实现: <具体功能>",
-    "task_type": "dev",
-    "status": "draft",
-    "priority": "P1",
-    "description": "<完整 PRD：做什么、怎么做、涉及哪些文件、注意事项>",
-    "goal_id": "${krId}",
-    "project_id": "${initiativeId}",
-    "payload": {
-      "target_files": ["file1.js", "file2.js"],
-      "dod_refs": [1, 2],
-      "can_merge_independently": true
-    }
-  }'
-\`\`\`
-
-### 每个 Task 要求
-- **target_files**：该 Task 会修改的文件列表
-- **dod_refs**：该 Task 覆盖的 DoD 序号（从 1 开始）
-- **can_merge_independently**：是否可以独立合并（无依赖关系）
-- 描述要足够详细，让 /dev 能独立完成
-
-## 完成后回传
-\`\`\`bash
-curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
-  -H 'Content-Type: application/json' \\
-  -d '{
-    "task_id": "<当前 task_id>",
-    "status": "AI Done",
-    "result": {
-      "tasks_created": <创建的 task 数量>,
-      "dod_coverage": [1, 2, 3],
-      "summary": "拆分概要"
-    }
-  }'
-\`\`\`
-
-## 质量要求
-- 所有 DoD 项必须被至少一个 Task 覆盖
-- Task 之间尽量减少依赖，优先可独立合并
-- 每个 Task 的粒度是 1 个 PR（1-2 小时工作量）`;
-  }
-
-  // Initiative Verify 类型：逐条验证 DoD
-  if (taskType === 'initiative_verify') {
-    const initiativeId = task.project_id || '';
-    const krId = task.goal_id || '';
-    const dodContent = task.payload?.dod_content || [];
-    const devTasks = task.payload?.dev_tasks || [];
-    const repoPath = task.payload?.repo_path || '';
-    const initiativeName = task.payload?.initiative_name || task.title?.replace(/^Verify:\s*/, '') || '';
-
-    const dodList = Array.isArray(dodContent)
-      ? dodContent.map((d, i) => `${i + 1}. ${typeof d === 'string' ? d : d.criterion || d.description || JSON.stringify(d)}`).join('\n')
-      : String(dodContent);
-
-    const taskList = Array.isArray(devTasks)
-      ? devTasks.map(t => `- [${t.status}] ${t.title} (${t.id})`).join('\n')
-      : '';
-
-    return `# Initiative 验收任务
-
-## Initiative 信息
-- **名称**: ${initiativeName}
-- **ID**: ${initiativeId}
-
-## DoD (Definition of Done)
-${dodList || '（未指定）'}
-
-## 已完成的 Dev Tasks
-${taskList || '（无）'}
-
-## 代码仓库
-${repoPath || '（未指定）'}
-
-## 你的任务
-
-逐条验证 DoD，检查代码、测试、API 是否满足每条标准。
-
-### 验证步骤
-1. 对每条 DoD，找到对应的代码变更
-2. 检查测试覆盖是否充分
-3. 检查功能是否正确实现
-4. 记录每条 DoD 的 pass/fail + 证据
-
-## 完成后回传
-\`\`\`bash
-curl -s -X POST http://localhost:5221/api/brain/execution-callback \\
-  -H 'Content-Type: application/json' \\
-  -d '{
-    "task_id": "<当前 task_id>",
-    "status": "AI Done",
-    "result": {
-      "all_dod_passed": true/false,
-      "dod_results": [
-        {"dod_index": 1, "passed": true, "evidence": "测试 xxx 通过"},
-        {"dod_index": 2, "passed": false, "evidence": "缺少 xxx", "fix_suggestion": "需要添加 xxx"}
-      ]
-    }
-  }'
-\`\`\`
-
-## 质量要求
-- 每条 DoD 必须有明确的 pass/fail 判定
-- 失败项必须提供 fix_suggestion（修复建议）
-- evidence 要具体到文件和行号`;
   }
 
   // 有明确 PRD 内容的任务
@@ -1562,6 +1429,10 @@ async function triggerCeceliaRun(task) {
       try {
         repoPath = await resolveRepoPath(task.project_id);
       } catch { /* ignore */ }
+    }
+    // Fallback: dept_heartbeat (and any task with payload.repo_path) uses payload directly
+    if (!repoPath && task.payload?.repo_path) {
+      repoPath = task.payload.repo_path;
     }
 
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
@@ -2018,8 +1889,6 @@ export {
   recordSessionEnd,
   getSessionInfo,
   _resetSessionStart,
-  // v13: Initiative orchestration
-  getPermissionModeForTaskType,
   // v12: Dual-layer capacity model
   PHYSICAL_CAPACITY,
   CPU_THRESHOLD_PCT,

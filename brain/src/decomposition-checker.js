@@ -1,5 +1,5 @@
 /**
- * Decomposition Checker - 6-Layer OKR Decomposition Gap Detection
+ * Decomposition Checker - 7-Layer OKR Decomposition Gap Detection
  *
  * Scans the 6-layer OKR hierarchy for missing child entities and creates
  * decomposition tasks for autumnrice (/okr) to fill the gaps.
@@ -11,6 +11,8 @@
  *   L4 Area KR     → L5 Project     (project_kr_links table)
  *   L5 Project     → L5b Initiative (projects table, parent_id)
  *   L5b Initiative  → L6 Task       (tasks table, project_id)
+ *
+ * 6-Layer OKR gap detection.
  */
 
 import pool from './db.js';
@@ -231,9 +233,6 @@ async function canCreateDecompositionTask() {
  * @returns {Object|null} Created decomposition task or null
  */
 async function ensureTaskInventory(initiative) {
-  // orchestrated initiative 由 orchestrator 管理，跳过 inventory
-  if (initiative.execution_mode === 'orchestrated') return null;
-
   // Fix: null kr_id → graceful skip（无法创建有效 goal 关联的 task）
   if (!initiative.kr_id) {
     console.warn(`[decomp-checker] Initiative ${initiative.id} (${initiative.name}) has no kr_id, skipping inventory check`);
@@ -711,7 +710,7 @@ async function checkInitiativeDecomposition() {
   const actions = [];
 
   const result = await pool.query(`
-    SELECT p.id, p.name, p.parent_id, p.plan_content, p.execution_mode,
+    SELECT p.id, p.name, p.parent_id, p.plan_content,
            parent_proj.name AS parent_name, parent_proj.repo_path,
            parent_proj.deadline AS parent_deadline, parent_proj.time_budget_days AS parent_time_budget,
            COALESCE(p.decomposition_depth, 1) AS depth
@@ -730,17 +729,6 @@ async function checkInitiativeDecomposition() {
   `);
 
   for (const init of result.rows) {
-    // orchestrated initiative 由 orchestrator 管理，跳过 decomposition
-    if (init.execution_mode === 'orchestrated') {
-      actions.push({
-        action: 'skip_orchestrated',
-        check: 'initiative_decomposition',
-        initiative_id: init.id,
-        name: init.name,
-      });
-      continue;
-    }
-
     // Dedup using shared function
     if (await hasExistingDecompositionTaskByProject(init.id, 'initiative')) {
       actions.push({
@@ -856,6 +844,7 @@ async function checkInitiativeDecomposition() {
   return actions;
 }
 
+// ───────────────────────────────────────────────────────────────────
 // ───────────────────────────────────────────────────────────────────
 // Main entry point
 // ───────────────────────────────────────────────────────────────────

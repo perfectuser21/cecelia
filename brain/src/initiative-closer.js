@@ -25,9 +25,9 @@ import { reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } f
  * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}>, activatedCount: number }>}
  */
 async function checkInitiativeCompletion(pool) {
-  // 查所有 in_progress 的 initiatives（排除 orchestrated，由 orchestrator 管理）
+  // 查所有 in_progress 的 initiatives
   const initiativesResult = await pool.query(`
-    SELECT id, name, execution_mode
+    SELECT id, name
     FROM projects
     WHERE type = 'initiative'
       AND status = 'in_progress'
@@ -41,9 +41,6 @@ async function checkInitiativeCompletion(pool) {
   const closed = [];
 
   for (const initiative of initiatives) {
-    // orchestrated initiative 由 orchestrator 管理，跳过
-    if (initiative.execution_mode === 'orchestrated') continue;
-
     // 查该 initiative 下的 tasks 状态分布
     const statsResult = await pool.query(`
       SELECT

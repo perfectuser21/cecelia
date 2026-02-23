@@ -51,3 +51,23 @@ export async function generateLearningEmbeddingAsync(learningId, text) {
     // 静默失败 — 不影响主流程
   }
 }
+
+/**
+ * 异步为用户 profile fact 生成并保存 embedding（fire-and-forget）
+ * @param {string} factId - user_profile_facts UUID
+ * @param {string} text - 事实内容文本
+ */
+export async function generateProfileFactEmbeddingAsync(factId, text) {
+  if (!process.env.OPENAI_API_KEY) return;
+
+  try {
+    const embedding = await generateEmbedding(text.substring(0, 2000));
+    const embStr = '[' + embedding.join(',') + ']';
+    await pool.query(
+      `UPDATE user_profile_facts SET embedding = $1::vector WHERE id = $2`,
+      [embStr, factId]
+    );
+  } catch (_err) {
+    // 静默失败 — 不影响主流程
+  }
+}
