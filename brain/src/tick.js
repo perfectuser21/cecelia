@@ -1143,22 +1143,6 @@ async function executeTick() {
     // Continue with normal tick if thalamus fails
   }
 
-  // 0.5. PR Plans Completion Check (三层拆解状态自动更新)
-  try {
-    const { checkPrPlansCompletion } = await import('./planner.js');
-    const completedPrPlans = await checkPrPlansCompletion();
-    if (completedPrPlans.length > 0) {
-      console.log(`[tick] Auto-completed ${completedPrPlans.length} PR Plans`);
-      actionsTaken.push({
-        action: 'pr_plans_completion_check',
-        completed_count: completedPrPlans.length,
-        completed_ids: completedPrPlans
-      });
-    }
-  } catch (prPlansErr) {
-    console.error('[tick] PR Plans completion check failed:', prPlansErr.message);
-  }
-
   // 0.7. 统一拆解检查（七层架构）
   try {
     const { runDecompositionChecks } = await import('./decomposition-checker.js');
