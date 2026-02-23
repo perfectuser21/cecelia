@@ -13,11 +13,6 @@ const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
 const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
 const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
 
-// Content-aware score configuration
-const CONTENT_SCORE_EXPLORATORY_BONUS = 10;          // exploratory task 优先（调研先行）
-const CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY = -20;  // 等待调研完成的 dev task 延后
-const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
-
 /**
  * Build a map of task_type → penalty score based on recent learning failures.
  * Queries learnings table for failure_pattern entries in the past LEARNING_LOOKBACK_DAYS
@@ -64,40 +59,6 @@ async function buildLearningPenaltyMap(projectId) {
     console.error(`[planner] buildLearningPenaltyMap failed: ${err.message}`);
     return new Map();
   }
-}
-
-/**
- * Apply content-aware score bonus to a list of tasks based on task_type and payload content.
- *
- * Scoring rules:
- *   - task_type === 'exploratory'              → +10 (调研先行)
- *   - payload.wait_for_exploratory === true    → -20 (等待调研完成再执行)
- *   - payload.decomposition_mode === 'known'   → +5  (已知方案优先)
- *
- * @param {Array} tasks - Array of task objects from DB
- * @returns {Array} - Same tasks, each augmented with _content_score_bonus field
- */
-export function applyContentAwareScore(tasks) {
-  const scored = tasks.map(task => {
-    let bonus = 0;
-    const payload = task.payload || {};
-
-    if (task.task_type === 'exploratory') {
-      bonus += CONTENT_SCORE_EXPLORATORY_BONUS;
-    }
-    if (payload.wait_for_exploratory === true) {
-      bonus += CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY;
-    }
-    if (payload.decomposition_mode === 'known') {
-      bonus += CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS;
-    }
-
-    return { ...task, _content_score_bonus: bonus };
-  });
-
-  console.debug(`[planner] content-aware scores: ${JSON.stringify(scored.map(t => ({ id: t.id, task_type: t.task_type, bonus: t._content_score_bonus })))}`);
-
-  return scored;
 }
 
 /**
@@ -230,14 +191,10 @@ async function selectTargetProject(kr, state) {
  * @returns {Object|null} - Task or null
  */
 async function generateNextTask(kr, project, state, options = {}) {
-  // V4: Phase-aware task selection — exploratory tasks first, then dev tasks.
-  // When an Initiative has decomposition_mode='exploratory', exploratory-phase tasks
-  // must complete before dev-phase tasks are dispatched.
   const result = await pool.query(`
     SELECT * FROM tasks
     WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
     ORDER BY
-      CASE phase WHEN 'exploratory' THEN 0 WHEN 'dev' THEN 1 ELSE 2 END,
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
       created_at ASC
@@ -248,48 +205,17 @@ async function generateNextTask(kr, project, state, options = {}) {
     return null;
   }
 
-  // V5: Apply learning penalty to sort tasks — penalize task types with recent failure patterns.
-  // Build penalty map from learnings (gracefully degrades if query fails).
+  // Apply learning penalty to sort tasks — penalize task types with recent failure patterns.
   const penaltyMap = await buildLearningPenaltyMap(project.id);
 
-  // V6: Apply content-aware score bonus based on task_type and payload content.
-  // Always applied (even when penaltyMap is empty) to enable content-aware ordering.
-  const contentScoredTasks = applyContentAwareScore(result.rows);
-
   if (penaltyMap.size === 0) {
-    // No learning penalties — re-sort with content-aware bonus only
-    const reScored = contentScoredTasks.map(task => {
-      let score = 0;
-
-      // Phase score (exploratory first)
-      if (task.phase === 'exploratory') score += 200;
-      else if (task.phase === 'dev') score += 100;
-
-      // Status score (queued before in_progress)
-      if (task.status === 'queued') score += 10;
-
-      // Priority score
-      if (task.priority === 'P0') score += 30;
-      else if (task.priority === 'P1') score += 20;
-      else if (task.priority === 'P2') score += 10;
-
-      // Content-aware bonus
-      score += task._content_score_bonus;
-
-      return { task, score };
-    });
-
-    reScored.sort((a, b) => b.score - a.score);
-    return reScored[0].task;
+    // No learning penalties — return first task from SQL ordering
+    return result.rows[0];
   }
 
-  // Re-score tasks with learning penalty + content-aware bonus applied
-  const scored = contentScoredTasks.map(task => {
+  // Re-score tasks with learning penalty applied
+  const scored = result.rows.map(task => {
     let score = 0;
-
-    // Phase score (exploratory first)
-    if (task.phase === 'exploratory') score += 200;
-    else if (task.phase === 'dev') score += 100;
 
     // Status score (queued before in_progress)
     if (task.status === 'queued') score += 10;
@@ -303,9 +229,6 @@ async function generateNextTask(kr, project, state, options = {}) {
     const penalty = penaltyMap.get(task.task_type) || 0;
     score += penalty;
 
-    // Content-aware bonus
-    score += task._content_score_bonus;
-
     return { task, score };
   });
 
@@ -315,195 +238,12 @@ async function generateNextTask(kr, project, state, options = {}) {
   return scored[0].task;
 }
 
-// autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
-// — all removed. Task creation is now 秋米's responsibility via /okr skill.
-
-
-/**
- * =============================================================================
- * PR Plans Dispatch (Layer 2 - 工程规划层调度)
- * =============================================================================
- * 三层拆解调度：Initiative → PR Plans → Tasks
- * PR Plans 优先于传统 KR → Task 流程
- */
-
-/**
- * Get all PR Plans for an Initiative, sorted by sequence
- * @param {string} initiativeId - Initiative ID (UUID)
- * @returns {Array} - Array of PR Plan objects
- */
-async function getPrPlansByInitiative(initiativeId) {
-  // Note: After migration 027, Initiative = Project (same entity)
-  // This function queries by project_id, but keeps "Initiative" naming for backward compatibility
-  const result = await pool.query(`
-    SELECT * FROM pr_plans
-    WHERE project_id = $1
-    ORDER BY sequence ASC
-  `, [initiativeId]);
-  return result.rows;
-}
-
-/**
- * Check if a PR Plan is completed (all its tasks are completed)
- * @param {string} prPlanId - PR Plan ID (UUID)
- * @returns {boolean} - true if completed, false otherwise
- */
-async function isPrPlanCompleted(prPlanId) {
-  const result = await pool.query(`
-    SELECT COUNT(*) as total,
-           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
-    FROM tasks
-    WHERE pr_plan_id = $1
-  `, [prPlanId]);
-
-  const { total, completed } = result.rows[0];
-  // PR Plan is completed if it has tasks and all are completed
-  return parseInt(total) > 0 && parseInt(total) === parseInt(completed);
-}
-
-/**
- * Update PR Plan status
- * @param {string} prPlanId - PR Plan ID (UUID)
- * @param {string} status - New status (planning/in_progress/completed/cancelled)
- */
-async function updatePrPlanStatus(prPlanId, status) {
-  await pool.query(`
-    UPDATE pr_plans
-    SET status = $1, updated_at = NOW()
-    WHERE id = $2
-  `, [status, prPlanId]);
-}
-
-/**
- * Check if a PR Plan's dependencies are all completed
- * @param {Object} prPlan - PR Plan object with depends_on field
- * @param {Array} allPrPlans - All PR Plans for this Initiative
- * @returns {boolean} - true if all dependencies are met
- */
-function canExecutePrPlan(prPlan, allPrPlans) {
-  // If no dependencies, can execute
-  if (!prPlan.depends_on || prPlan.depends_on.length === 0) {
-    return true;
-  }
-
-  // Check all dependencies are completed
-  for (const depId of prPlan.depends_on) {
-    const depPrPlan = allPrPlans.find(p => p.id === depId);
-    if (!depPrPlan || depPrPlan.status !== 'completed') {
-      return false; // Dependency not met
-    }
-  }
-
-  return true; // All dependencies met
-}
-
-/**
- * Get the next executable PR Plan for an Initiative
- * Priority order: pending status → dependencies met → lowest sequence
- * @param {string} initiativeId - Initiative ID (UUID)
- * @returns {Object|null} - Next PR Plan to execute, or null
- */
-async function getNextPrPlan(initiativeId) {
-  const allPrPlans = await getPrPlansByInitiative(initiativeId);
-
-  if (allPrPlans.length === 0) {
-    return null; // No PR Plans for this Initiative
-  }
-
-  // Filter pending PR Plans
-  const pendingPlans = allPrPlans.filter(p => p.status === 'planning');
-
-  if (pendingPlans.length === 0) {
-    return null; // No pending PR Plans
-  }
-
-  // Find first pending plan that meets all dependencies (by sequence order)
-  for (const prPlan of pendingPlans) {
-    if (canExecutePrPlan(prPlan, allPrPlans)) {
-      return prPlan;
-    }
-  }
-
-  return null; // All pending plans are blocked by dependencies
-}
-
-/**
- * Check for PR Plans completion in all active Initiatives
- * Called by tick loop to auto-update PR Plan status
- * @returns {Array} - Array of completed PR Plan IDs
- */
-async function checkPrPlansCompletion() {
-  const completed = [];
-
-  // Get all in_progress PR Plans
-  const result = await pool.query(`
-    SELECT * FROM pr_plans WHERE status = 'in_progress'
-  `);
-
-  for (const prPlan of result.rows) {
-    if (await isPrPlanCompleted(prPlan.id)) {
-      await updatePrPlanStatus(prPlan.id, 'completed');
-      completed.push(prPlan.id);
-      console.log(`✅ PR Plan completed: ${prPlan.title} (${prPlan.id})`);
-    }
-  }
-
-  return completed;
-}
-
 /**
  * Main entry point - called each tick.
  * Iterates through all scored KRs until one produces a task.
- * V3: PR Plans dispatch integration - checks Initiatives first
  */
 async function planNextTask(scopeKRIds = null, options = {}) {
   const state = await getGlobalState();
-
-  // V3: Check for PR Plans first (三层拆解优先)
-  // Can be skipped via options.skipPrPlans (used by KR rotation tests)
-  if (!options.skipPrPlans) {
-  // Query all Initiatives (Sub-Projects with PR Plans)
-  // After migration 027: Initiative = Sub-Project (in projects table)
-  const initiativesResult = await pool.query(`
-    SELECT DISTINCT p.* FROM projects p
-    INNER JOIN pr_plans pp ON p.id = pp.project_id
-    WHERE pp.status IN ('planning', 'in_progress')
-    ORDER BY p.created_at ASC
-  `);
-
-  for (const initiative of initiativesResult.rows) {
-    const nextPrPlan = await getNextPrPlan(initiative.id);
-    if (nextPrPlan) {
-      // Found executable PR Plan - check if task already exists
-      const existingTaskResult = await pool.query(`
-        SELECT * FROM tasks WHERE pr_plan_id = $1 AND status IN ('queued', 'in_progress')
-        LIMIT 1
-      `, [nextPrPlan.id]);
-
-      if (existingTaskResult.rows[0]) {
-        // Task already exists for this PR Plan
-        const task = existingTaskResult.rows[0];
-        return {
-          planned: true,
-          source: 'pr_plan',
-          pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, sequence: nextPrPlan.sequence },
-          task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id },
-          initiative: { id: initiative.id, title: initiative.name }
-        };
-      }
-
-      // No task exists yet - indicate PR Plan is ready for task creation (秋米's job)
-      return {
-        planned: false,
-        reason: 'pr_plan_needs_task',
-        pr_plan: { id: nextPrPlan.id, title: nextPrPlan.title, dod: nextPrPlan.dod },
-        initiative: { id: initiative.id, title: initiative.name }
-      };
-    }
-  }
-  } // end skipPrPlans check
-
-  // No PR Plans available - fall back to traditional KR dispatch
   // If scoped to specific KRs (from tick focus), filter keyResults before selecting
   if (scopeKRIds && scopeKRIds.length > 0) {
     const scopeSet = new Set(scopeKRIds);
@@ -695,16 +435,5 @@ export {
   buildLearningPenaltyMap,
   LEARNING_PENALTY_SCORE,
   LEARNING_LOOKBACK_DAYS,
-  LEARNING_FAILURE_THRESHOLD,
-  // Content-aware score
-  CONTENT_SCORE_EXPLORATORY_BONUS,
-  CONTENT_SCORE_WAIT_EXPLORATORY_PENALTY,
-  CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS,
-  // PR Plans dispatch functions
-  getPrPlansByInitiative,
-  isPrPlanCompleted,
-  updatePrPlanStatus,
-  canExecutePrPlan,
-  getNextPrPlan,
-  checkPrPlansCompletion
+  LEARNING_FAILURE_THRESHOLD
 };
