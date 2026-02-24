@@ -314,3 +314,25 @@
   - ✅ Stop Hook 驱动循环：CI 失败 → 修复 → 重试 → 通过 → 合并
   - ✅ Task Checkpoint 实时展示进度
   - ✅ 合并冲突自动解决并重试
+
+### [2026-02-24] 扩展 actions-dedup.test.js 测试套件
+
+- **Bug**: CI 版本检查失败，需要同时更新多个版本相关文件：
+  - `brain/package.json` (主版本文件)
+  - `brain/package-lock.json` (npm 自动生成)
+  - `.brain-versions` (版本同步检查文件)
+  - `DEFINITION.md` (文档中的版本号)
+  
+- **优化点**: 测试代码更新应该避免版本号检查，可以考虑：
+  1. 使用 `test:` commit 前缀时自动跳过版本检查
+  2. 或提供一个 `--skip-version-check` 标志
+  3. 版本同步脚本应该一次性更新所有相关文件
+
+- **技术点**: 为 actions-dedup 逻辑添加了 canceled/cancelled 状态的测试覆盖：
+  - 确认当前去重逻辑不包含 canceled 状态任务
+  - 验证时间窗口机制对 canceled 任务的影响
+  - 支持 canceled/cancelled 两种拼写格式
+  - 测试用例记录了当前系统行为，为未来逻辑修改提供基线
+
+- **影响程度**: Medium - 版本检查流程需要改进，但不影响核心功能开发
+
