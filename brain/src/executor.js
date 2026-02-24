@@ -913,6 +913,24 @@ function getPermissionModeForTaskType(taskType) {
 }
 
 /**
+ * 获取特定 task_type 需要注入的额外环境变量。
+ * 这些变量会通过 cecelia-bridge → cecelia-run → claude 进程传递，
+ * 让 Engine Hook 能识别当前运行的 skill 类型并做相应限制。
+ *
+ * @param {string} taskType - 任务类型
+ * @returns {Object} - key-value 形式的额外环境变量，空对象表示无需注入
+ */
+function getExtraEnvForTaskType(taskType) {
+  if (taskType === 'code_review') {
+    // SKILL_CONTEXT=code_review 让 Engine PreToolUse Hook
+    // 拦截对非 docs/reviews/ 路径的 Write/Edit 操作，
+    // 确保 code-review agent 只能写报告文件，不能修改代码
+    return { SKILL_CONTEXT: 'code_review' };
+  }
+  return {};
+}
+
+/**
  * 检查 task_type 与任务标题的匹配合理性
  * warning 级别，不阻塞执行，仅记录到 console.warn
  *
@@ -1424,10 +1442,11 @@ async function triggerCeceliaRun(task) {
     // 检查 task_type 合理性（warning 级别，不阻塞执行）
     checkTaskTypeMatch(task);
 
-    // Prepare prompt content, permission mode, and model based on task_type
+    // Prepare prompt content, permission mode, extra env, and model based on task_type
     const taskType = task.task_type || 'dev';
     const promptContent = await preparePrompt(task);
     const permissionMode = getPermissionModeForTaskType(taskType);
+    const extraEnv = getExtraEnvForTaskType(taskType);
     const model = getModelForTask(task);
 
     // Update task with run info before execution
@@ -1449,7 +1468,8 @@ async function triggerCeceliaRun(task) {
     const provider = getProviderForTask(task);
 
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
-    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}`);
+    const extraEnvKeys = Object.keys(extraEnv);
+    console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
 
     const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
@@ -1462,7 +1482,8 @@ async function triggerCeceliaRun(task) {
         permission_mode: permissionMode,
         repo_path: repoPath,
         model: model,
-        provider: provider
+        provider: provider,
+        extra_env: extraEnvKeys.length ? extraEnv : undefined
       })
     });
 
@@ -1907,4 +1928,6 @@ export {
   setBudgetCap,
   sampleCpuUsage,
   _resetCpuSampler,
+  // v13: code-review env isolation
+  getExtraEnvForTaskType,
 };
