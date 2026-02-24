@@ -5,6 +5,22 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
+// Mock node:fs — 提供 MiniMax credentials（必须在 import 之前）
+vi.mock('node:fs', () => ({
+  readFileSync: vi.fn().mockReturnValue(JSON.stringify({ api_key: 'test-minimax-key' })),
+}));
+
+// Mock node:os — 返回固定 homedir
+vi.mock('node:os', () => ({
+  homedir: vi.fn().mockReturnValue('/home/testuser'),
+}));
+
+// Mock node:path — 真实实现已足够
+vi.mock('node:path', async () => {
+  const actual = await vi.importActual('node:path');
+  return actual;
+});
+
 // Mock db.js — vi.mock 工厂不能引用外部变量
 vi.mock('../db.js', () => ({
   default: {
@@ -73,11 +89,21 @@ import {
 // Mock fetch globally
 const originalFetch = global.fetch;
 
+// MiniMax 响应格式工厂函数
+function mmResp(text) {
+  return {
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { content: text } }],
+      usage: { total_tokens: 100 },
+    }),
+  };
+}
+
 describe('orchestrator-chat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetApiKey();
-    process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
     global.fetch = vi.fn();
 
     // 默认 mock parseIntent
@@ -95,14 +121,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - basic', () => {
     it('returns reply from MiniMax for simple queries', async () => {
-      // Mock MiniMax call (memory now uses buildMemoryContext mock, not fetch)
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '当前有 5 个任务在进行中。' }],
-          usage: { input_tokens: 50, output_tokens: 50 },
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('当前有 5 个任务在进行中。'));
 
       const result = await handleChat('现在有多少任务？');
 
@@ -123,14 +142,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - routing', () => {
     it('routes complex queries to thalamus when MiniMax returns [ESCALATE]', async () => {
-      // MiniMax returns ESCALATE (memory uses buildMemoryContext mock)
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '[ESCALATE] 这个问题需要深度分析。' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('[ESCALATE] 这个问题需要深度分析。'));
 
       // Thalamus decision
       thalamusProcessEvent.mockResolvedValueOnce({
@@ -272,14 +284,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - multi-turn history (D2)', () => {
     it('passes messages to callMiniMax', async () => {
-      // MiniMax call (memory uses buildMemoryContext mock)
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '记得，你叫小明。' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('记得，你叫小明。'));
 
       const history = [
         { role: 'user', content: '我叫小明' },
@@ -291,28 +296,22 @@ describe('orchestrator-chat', () => {
       expect(result.reply).toBe('记得，你叫小明。');
 
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // Anthropic: system top-level, messages = 2 history + user = 3
-      expect(body.system).toBeDefined();
-      expect(body.messages).toHaveLength(3);
+      // MiniMax: system in messages[0], messages = system + 2 history + user = 4
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages).toHaveLength(4);
       expect(body.messages.find(m => m.role === 'user' && m.content === '我叫小明')).toBeTruthy();
     });
 
     it('works without history (backward compatible)', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '你好！' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('你好！'));
 
       const result = await handleChat('你好');
       expect(result.reply).toBe('你好！');
 
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // Anthropic: system top-level, messages = user only = 1
-      expect(body.system).toBeDefined();
-      expect(body.messages).toHaveLength(1);
+      // MiniMax: system in messages[0], messages = system + user = 2
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages).toHaveLength(2);
     });
   });
 
@@ -328,13 +327,7 @@ describe('orchestrator-chat', () => {
         .mockResolvedValueOnce({ rows: [{ status: 'active', cnt: 1 }] })      // goals
         .mockResolvedValueOnce({ rows: [] });                                  // recordChatEvent
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '好的，我来创建任务。' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('好的，我来创建任务。'));
 
       const result = await handleChat('帮我创建一个任务');
 
@@ -342,7 +335,8 @@ describe('orchestrator-chat', () => {
 
       // 验证 system prompt 包含状态（无论 intent 类型）
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      expect(body.system).toContain('当前系统状态');
+      const systemMsg = body.messages.find(m => m.role === 'system');
+      expect(systemMsg?.content).toContain('当前系统状态');
     });
   });
 
@@ -354,14 +348,7 @@ describe('orchestrator-chat', () => {
         meta: { candidates: 1, injected: 1, tokenUsed: 50 },
       });
 
-      // MiniMax call
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '好的，我知道了。' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('好的，我知道了。'));
 
       const result = await handleChat('告诉我关于任务系统的情况');
 
@@ -371,7 +358,8 @@ describe('orchestrator-chat', () => {
       // 验证 MiniMax 调用中的 system prompt 包含记忆
       const minimaxCall = global.fetch.mock.calls[0];
       const body = JSON.parse(minimaxCall[1].body);
-      expect(body.system).toContain('相关历史上下文');
+      const systemMsg = body.messages.find(m => m.role === 'system');
+      expect(systemMsg?.content).toContain('相关历史上下文');
     });
   });
 
@@ -488,13 +476,7 @@ describe('orchestrator-chat', () => {
 
   describe('callMiniMax', () => {
     it('calls MiniMax API with correct URL and model (D1, D2)', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '测试回复' }],
-          usage: { input_tokens: 25, output_tokens: 25 },
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('测试回复'));
 
       const result = await callMiniMax('你好', '系统提示');
 
@@ -502,23 +484,18 @@ describe('orchestrator-chat', () => {
       expect(result.usage).toBeDefined();
 
       const [url, options] = global.fetch.mock.calls[0];
-      expect(url).toBe('https://api.anthropic.com/v1/messages');
+      expect(url).toBe('https://api.minimaxi.com/v1/chat/completions');
       const body = JSON.parse(options.body);
-      expect(body.model).toBe('claude-sonnet-4-6-20251001');
-      // Anthropic: system is top-level, messages only contains user/assistant
-      expect(body.system).toBeDefined();
-      expect(body.messages).toHaveLength(1);
-      expect(body.messages[0].role).toBe('user');
+      expect(body.model).toBe('MiniMax-M2.5-highspeed');
+      // MiniMax: system in messages[0], user in messages[1]
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages[0].content).toBe('系统提示');
+      expect(body.messages).toHaveLength(2);
+      expect(body.messages[1].role).toBe('user');
     });
 
     it('inserts history messages between system and user (D1)', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '记得，你叫小明。' }],
-          usage: { input_tokens: 40, output_tokens: 40 },
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('记得，你叫小明。'));
 
       const history = [
         { role: 'user', content: '我叫小明' },
@@ -530,22 +507,16 @@ describe('orchestrator-chat', () => {
       expect(result.reply).toBe('记得，你叫小明。');
 
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // Anthropic: system top-level, messages = 2 history + 1 user = 3
-      expect(body.system).toBeDefined();
-      expect(body.messages).toHaveLength(3);
+      // MiniMax: system + 2 history + user = 4
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages).toHaveLength(4);
       expect(body.messages.find(m => m.role === 'user' && m.content === '我叫小明')).toBeTruthy();
-      expect(body.messages[1]).toEqual({ role: 'assistant', content: '你好，小明！' });
-      expect(body.messages[2]).toEqual({ role: 'user', content: '你还记得我叫什么吗' });
+      expect(body.messages[2]).toEqual({ role: 'assistant', content: '你好，小明！' });
+      expect(body.messages[3]).toEqual({ role: 'user', content: '你还记得我叫什么吗' });
     });
 
     it('limits history to last 10 messages (D1)', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '好的' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('好的'));
 
       // 12 条历史，应只取最后 10 条
       const history = Array.from({ length: 12 }, (_, i) => ({
@@ -556,20 +527,14 @@ describe('orchestrator-chat', () => {
       await callMiniMax('新消息', '系统提示', {}, history);
 
       const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // Anthropic: system top-level, messages = last 10 history + user = 11
-      expect(body.system).toBeDefined();
-      expect(body.messages).toHaveLength(11);
-      expect(body.messages[0].content).toBe('消息 3'); // 第3条（0-index=2）开始
+      // MiniMax: system + last 10 history + user = 12
+      expect(body.messages[0].role).toBe('system');
+      expect(body.messages).toHaveLength(12);
+      expect(body.messages[1].content).toBe('消息 3'); // 第3条（0-index=2）开始
     });
 
-    it('returns text from Anthropic response (D3)', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '实际回复内容' }],
-          usage: { input_tokens: 40, output_tokens: 40 },
-        }),
-      });
+    it('returns text from MiniMax response (D3)', async () => {
+      global.fetch.mockResolvedValueOnce(mmResp('实际回复内容'));
 
       const result = await callMiniMax('你好', '系统提示');
 
@@ -588,7 +553,12 @@ describe('orchestrator-chat', () => {
   });
 
   describe('stripThinking', () => {
-    it('returns text as-is (Sonnet has no think blocks)', () => {
+    it('strips <think> blocks from MiniMax response', () => {
+      const input = '<think>\n这是思维链内容，不应显示给用户\n</think>你好！有什么需要帮助的吗？';
+      expect(stripThinking(input)).toBe('你好！有什么需要帮助的吗？');
+    });
+
+    it('returns text as-is when no think blocks', () => {
       const input = '你好！有什么需要帮助的吗？';
       expect(stripThinking(input)).toBe('你好！有什么需要帮助的吗？');
     });
@@ -606,14 +576,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat action suffix (D9)', () => {
     it('D9: 动作回复追加到 reply 末尾', async () => {
-      // MiniMax 返回正常回复
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '好的，我来帮你记录。' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('好的，我来帮你记录。'));
 
       // dispatcher 返回确认文本
       mockDetectAndExecuteAction.mockResolvedValueOnce('\n\n✅ 已创建任务：完成周报');
@@ -626,13 +589,7 @@ describe('orchestrator-chat', () => {
     });
 
     it('D9-2: 无动作意图时 reply 不变', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: [{ type: 'text', text: '你好！有什么需要帮助的吗？' }],
-          usage: {},
-        }),
-      });
+      global.fetch.mockResolvedValueOnce(mmResp('你好！有什么需要帮助的吗？'));
 
       mockDetectAndExecuteAction.mockResolvedValueOnce('');
 
@@ -652,11 +609,11 @@ describe('orchestrator-chat', () => {
       let capturedSystemPrompt = '';
       global.fetch.mockImplementationOnce(async (url, opts) => {
         const body = JSON.parse(opts.body);
-        capturedSystemPrompt = body.system || body.messages?.find(m => m.role === 'system')?.content || '';
+        capturedSystemPrompt = body.messages?.find(m => m.role === 'system')?.content || '';
         return {
           ok: true,
           json: async () => ({
-            content: [{ type: 'text', text: '你好，徐啸！' }],
+            choices: [{ message: { content: '你好，徐啸！' } }],
             usage: {},
           }),
         };
@@ -677,11 +634,11 @@ describe('orchestrator-chat', () => {
       let capturedSystemPrompt = '';
       global.fetch.mockImplementationOnce(async (url, opts) => {
         const body = JSON.parse(opts.body);
-        capturedSystemPrompt = body.system || body.messages?.find(m => m.role === 'system')?.content || '';
+        capturedSystemPrompt = body.messages?.find(m => m.role === 'system')?.content || '';
         return {
           ok: true,
           json: async () => ({
-            content: [{ type: 'text', text: '我是 Cecelia。' }],
+            choices: [{ message: { content: '我是 Cecelia。' } }],
             usage: {},
           }),
         };

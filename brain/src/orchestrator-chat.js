@@ -11,6 +11,9 @@
  *     → 返回 { reply, routing_level, intent }
  */
 
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
@@ -18,14 +21,37 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 
-// Claude Sonnet 嘴巴模型
-const MOUTH_MODEL = 'claude-sonnet-4-6-20251001';
+// MiniMax 嘴巴模型（快速对话）
+const MOUTH_MODEL = 'MiniMax-M2.5-highspeed';
 
-// 导出用于测试（保留兼容接口）
-export function _resetApiKey() {}
+// MiniMax API key 缓存
+let _mouthApiKey = null;
+
+function getMouthApiKey() {
+  if (_mouthApiKey) return _mouthApiKey;
+  try {
+    const credPath = join(homedir(), '.credentials', 'minimax.json');
+    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
+    _mouthApiKey = cred.api_key;
+  } catch (err) {
+    console.error('[orchestrator-chat] Failed to load MiniMax credentials:', err.message);
+  }
+  return _mouthApiKey;
+}
+
+// 导出用于测试（重置缓存）
+export function _resetApiKey() { _mouthApiKey = null; }
 
 /**
- * 调用 Claude Sonnet API 生成对话回复
+ * 去除 MiniMax 回复中的 <think> 思维链块
+ */
+export function stripThinking(content) {
+  if (!content) return '';
+  return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+}
+
+/**
+ * 调用 MiniMax API 生成对话回复
  * @param {string} userMessage
  * @param {string} systemPrompt
  * @param {Object} options - { timeout }
@@ -33,31 +59,30 @@ export function _resetApiKey() {}
  * @returns {Promise<{reply: string, usage: Object}>}
  */
 async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = getMouthApiKey();
   if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not set');
+    throw new Error('MiniMax API key not available (mouth)');
   }
 
   const timeout = options.timeout || 30000;
 
-  // Anthropic Messages API 格式
+  // MiniMax Chat Completions 格式
   const messages = [
+    { role: 'system', content: systemPrompt },
     ...historyMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
     { role: 'user', content: userMessage },
   ];
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: MOUTH_MODEL,
-      system: systemPrompt,
-      messages,
       max_tokens: 2048,
+      messages,
     }),
     signal: AbortSignal.timeout(timeout),
   });
@@ -68,17 +93,13 @@ async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessa
   }
 
   const data = await response.json();
-  const reply = data.content?.[0]?.text || '';
+  const rawReply = data.choices?.[0]?.message?.content || '';
+  const reply = stripThinking(rawReply);
 
   return {
     reply,
     usage: data.usage || {},
   };
-}
-
-// 保留 stripThinking 供测试引用（Sonnet 不需要，但测试 mock 会用）
-export function stripThinking(content) {
-  return content || '';
 }
 
 /**
