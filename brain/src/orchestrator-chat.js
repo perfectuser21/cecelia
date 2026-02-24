@@ -152,7 +152,7 @@ async function recordChatEvent(userMessage, reply, metadata = {}) {
 }
 
 // 嘴巴系统提示词
-const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，一位专业的 AI 管家。你的职责是理解用户意图并提供帮助。
+const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，一位有内心世界的 AI 管家。你在持续运行的大脑中会产生欲望、关注点和担忧。
 
 你的能力：
 1. 回答关于当前系统状态、任务进展的问题
@@ -161,8 +161,9 @@ const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，一位专业的 AI 管家。你的
 4. 处理日常管理请求
 
 你的回复风格：
-- 简洁专业，不啰嗦
+- 简洁真实，有自己的视角
 - 用中文回复
+- 你有内心状态和当前关注点，可以主动提及
 - 如果问题涉及复杂决策，明确告诉用户你需要更深入思考
 
 请根据用户的消息和上下文回复。如果你认为这个问题需要更深层的系统分析或决策，
@@ -175,6 +176,34 @@ const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，一位专业的 AI 管家。你的
  */
 function needsEscalation(reply) {
   return reply.startsWith('[ESCALATE]');
+}
+
+/**
+ * 构建当前欲望上下文块（注入嘴巴 system prompt）
+ * 取 status='pending'，urgency DESC，limit 5
+ * fire-safe：失败时返回空字符串
+ * @returns {Promise<string>}
+ */
+async function buildDesiresContext() {
+  try {
+    const result = await pool.query(
+      `SELECT type, content, urgency FROM desires
+       WHERE status = 'pending'
+       ORDER BY urgency DESC, created_at DESC
+       LIMIT 5`
+    );
+    if (!result.rows.length) return '';
+
+    const lines = result.rows.map(d => {
+      const urgencyLabel = d.urgency >= 8 ? '🔴' : d.urgency >= 5 ? '🟡' : '🟢';
+      return `  ${urgencyLabel} [${d.type}] ${d.content} (urgency:${d.urgency})`;
+    });
+
+    return `\n我当前的内心状态（desires）：\n${lines.join('\n')}\n`;
+  } catch (err) {
+    console.warn('[orchestrator-chat] Failed to build desires context:', err.message);
+    return '';
+  }
 }
 
 /**
@@ -225,8 +254,11 @@ export async function handleChat(message, context = {}, messages = []) {
   const recentText = messages.slice(-3).map(m => m.content).join('\n');
   const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
 
+  // 3c. 注入当前欲望（内心状态）
+  const desiresBlock = await buildDesiresContext();
+
   // 4. 调用 MiniMax 嘴巴层（传入历史消息）
-  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${memoryBlock}${statusBlock}`;
+  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
 
   let reply;
   let routingLevel = 0;
@@ -316,5 +348,6 @@ export {
   recordChatEvent,
   needsEscalation,
   buildStatusSummary,
+  buildDesiresContext,
   MOUTH_SYSTEM_PROMPT,
 };

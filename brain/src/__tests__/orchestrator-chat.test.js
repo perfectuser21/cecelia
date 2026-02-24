@@ -71,6 +71,7 @@ import {
   recordChatEvent,
   needsEscalation,
   buildStatusSummary,
+  buildDesiresContext,
   _resetApiKey,
 } from '../orchestrator-chat.js';
 
@@ -450,6 +451,41 @@ describe('orchestrator-chat', () => {
 
       const summary = await buildStatusSummary();
       expect(summary).toBe('');
+    });
+  });
+
+  describe('buildDesiresContext', () => {
+    it('returns formatted desires block when desires exist', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { type: 'concern', content: 'dev tasks failing with no report', urgency: 10 },
+          { type: 'goal', content: '完成 work streams API', urgency: 6 },
+        ],
+      });
+
+      const result = await buildDesiresContext();
+
+      expect(result).toContain('内心状态');
+      expect(result).toContain('concern');
+      expect(result).toContain('dev tasks failing with no report');
+      expect(result).toContain('urgency:10');
+      expect(result).toContain('🔴');
+    });
+
+    it('returns empty string when no pending desires', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await buildDesiresContext();
+
+      expect(result).toBe('');
+    });
+
+    it('returns empty string on DB error (fire-safe)', async () => {
+      pool.query.mockRejectedValueOnce(new Error('DB connection failed'));
+
+      const result = await buildDesiresContext();
+
+      expect(result).toBe('');
     });
   });
 
