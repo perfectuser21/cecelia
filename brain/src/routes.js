@@ -6874,7 +6874,7 @@ router.post('/device-locks/release', async (req, res) => {
  * 列出 desires，支持按 type/status 筛选
  * Query: type, status, limit(default 50)
  */
-router.get('/brain/desires', async (req, res) => {
+router.get('/desires', async (req, res) => {
   try {
     const { type, status = 'pending', limit = 50 } = req.query;
     const conditions = [];
@@ -6912,7 +6912,7 @@ router.get('/brain/desires', async (req, res) => {
  * GET /api/brain/desires/stats
  * 各状态/类型数量，用于前端 badge
  */
-router.get('/brain/desires/stats', async (req, res) => {
+router.get('/desires/stats', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -6936,7 +6936,7 @@ router.get('/brain/desires/stats', async (req, res) => {
  * 更新 desire 状态（read / dismissed / expressed）
  * Body: { status: 'expressed' | 'suppressed' }
  */
-router.patch('/brain/desires/:id', async (req, res) => {
+router.patch('/desires/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;

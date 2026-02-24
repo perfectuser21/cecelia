@@ -17,7 +17,7 @@ import router from '../routes.js';
 
 const app = express();
 app.use(express.json());
-app.use('/api', router);
+app.use('/api/brain', router);
 
 const mockDesires = [
   { id: 'uuid-1', type: 'warn', content: '任务失败率上升', insight: '失败4次', proposed_action: '检查executor', urgency: 9, evidence: {}, status: 'pending', created_at: new Date().toISOString(), expires_at: null },
