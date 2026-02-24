@@ -861,8 +861,6 @@ export {
   canExecutePrPlan,
   getNextPrPlan,
   checkPrPlansCompletion,
-  // Area Stream dispatch
-  selectTopAreas,
-  selectActiveInitiativeForArea,
+  // Area Stream dispatch（selectTopAreas / selectActiveInitiativeForArea 已在函数定义处 export）
   ACTIVE_AREA_COUNT
 };
