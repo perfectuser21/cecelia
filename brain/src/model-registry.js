@@ -165,9 +165,9 @@ export const AGENTS = [
     name: '拆解审查 Vivian',
     description: 'OKR 拆解审查',
     layer: 'executor',
-    allowed_models: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'MiniMax-M2.5-highspeed',
-    fixed_provider: 'minimax',
+    allowed_models: ['claude-haiku-4-5-20251001'],
+    recommended_model: 'claude-haiku-4-5-20251001',
+    fixed_provider: null,
   },
   {
     id: 'codex_qa',

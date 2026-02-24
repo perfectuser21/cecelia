@@ -48,7 +48,7 @@ const LOCATION_MAP = {
   'audit': 'us',      // 审计 → US (Sonnet)
   'codex_qa': 'us',    // Codex 免疫检查 → US (Codex CLI)
   'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
-  'decomp_review': 'hk', // 拆解审查 → HK (Vivian, MiniMax Ultra)
+  'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)

@@ -38,6 +38,11 @@ export function _resetApiKey() {
   _apiKey = null;
 }
 
+/** 仅测试用：注入 API key，绕过 credentials 文件读取 */
+export function _setApiKeyForTest(key) {
+  _apiKey = key;
+}
+
 function stripThinking(content) {
   if (!content) return '';
   return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
@@ -286,8 +291,8 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
 
     // 结构化字段也存一份（display_name, focus_area 等）
     const structuredFacts = [];
-    if (facts.display_name) structuredFacts.push({ category: 'identity', content: `名字: ${facts.display_name}` });
-    if (facts.focus_area) structuredFacts.push({ category: 'work_style', content: `当前重点方向: ${facts.focus_area}` });
+    if (facts.display_name) structuredFacts.push({ category: 'background', content: `名字: ${facts.display_name}` });
+    if (facts.focus_area) structuredFacts.push({ category: 'behavior', content: `当前重点方向: ${facts.focus_area}` });
     if (facts.preferred_style) structuredFacts.push({ category: 'preference', content: `回答风格偏好: ${facts.preferred_style}` });
 
     for (const { category, content } of structuredFacts) {

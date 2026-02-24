@@ -4,6 +4,66 @@
 
 ---
 
+### [2026-02-24] code-review 权限隔离 + Brain pm2→Docker 迁移 (v1.90.0)
+
+**变更**：
+1. `executor.js`：新增 `getExtraEnvForTaskType(taskType)`，code_review task 注入 `SKILL_CONTEXT=code_review`
+2. `triggerCeceliaRun`：透传 `extra_env` 字段到 cecelia-bridge
+3. `/home/xx/bin/cecelia-bridge.js`：接收 `extra_env`，转为 `CECELIA_SKILLENV_*` shell 环境变量
+4. `/home/xx/bin/cecelia-run`：收集 `CECELIA_SKILLENV_*` → 追加到 `PROVIDER_ENV` → 注入 claude 子进程
+5. `engine/hooks/skill-guard.sh`：PreToolUse hook，code_review session 内拦截非 `docs/reviews/` 的 Write/Edit
+
+**踩坑 1 — vitest mock 缺少命名导出报错延迟**
+
+- **现象**：`vi.mock('../db-config.js', () => ({ default: {...} }))` 看起来完整，但运行时报 `No "DB_DEFAULTS" export`，因为 `db.js` 在模块顶层用了 `const pool = new Pool(DB_DEFAULTS)`。
+- **原因**：vitest 的 mock 工厂只替换模块导出，缺少命名导出时在 **import 阶段**（不是测试执行阶段）抛错。错误信息只显示链式依赖（executor.js → db.js → db-config.js），容易误以为是 executor.js 的问题。
+- **解法**：mock 工厂必须覆盖所有被使用的命名导出（`DB_DEFAULTS`），或改用 `importOriginal` 模式：
+  ```js
+  vi.mock('../model-profile.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, getActiveProfile: vi.fn(() => null) };
+  });
+  ```
+- **规则**：写新测试 mock 模块时，先 `grep -n "^export" src/该模块.js` 列出所有导出，确保 mock 工厂不遗漏。
+
+**踩坑 2 — `.brain-versions` 粘连**
+
+- **现象**：在 `brain/` 目录下执行 `npm version minor`，内置行为会把版本写到同目录的 `.brain-versions`（如果存在 version script）；再在仓库根执行 `jq -r .version brain/package.json > .brain-versions` 时，因旧内容没清掉，导致文件变成 `1.89.11.90.0`（两行粘连无换行）。
+- **解法**：始终用 `jq -r .version brain/package.json > .brain-versions`（覆盖写），不要用 `>>`。如发现粘连，直接覆盖写一次即可。
+
+**Brain pm2 → Docker 迁移**
+
+- **背景**：Brain 长期以 pm2 跑，今次借 v1.90.0 更新机会正式迁移到 Docker 容器。
+- **流程**：① `bash scripts/brain-build.sh` 构建镜像（Brain 仍运行，无停机）→ ② `pm2 stop brain && pm2 delete brain` → ③ `docker rm <旧容器>` → ④ `docker run -d --name cecelia-node-brain --network host --env-file .env.docker -e ENV_REGION=us --restart unless-stopped cecelia-brain:1.90.0`
+- **注意**：旧的 `cecelia-node-brain` 容器可能以 `Created`（停止）状态存在，需先 `docker rm` 再 `docker run`，否则报 Conflict 错误。
+- **验证**：`curl -s localhost:5221/api/brain/health`（status=healthy）+ `docker inspect cecelia-node-brain --format '{{.Config.Image}}'`（确认镜像版本）。
+
+**env 注入路径（备忘）**
+
+```
+executor.js: getExtraEnvForTaskType('code_review') → { SKILL_CONTEXT: 'code_review' }
+  ↓ extra_env 字段写入 bridge HTTP body
+cecelia-bridge.js: 循环 extra_env → envVars += ' CECELIA_SKILLENV_SKILL_CONTEXT="code_review"'
+  ↓ 以 shell export 形式传给 cecelia-run
+cecelia-run: compgen -v | grep CECELIA_SKILLENV_ → PROVIDER_ENV += 'SKILL_CONTEXT=code_review'
+  ↓ --env SKILL_CONTEXT=code_review 传给 claude 子进程
+skill-guard.sh: [[ "${SKILL_CONTEXT:-}" == "code_review" ]] → 拦截非 docs/reviews/ 的 Write/Edit
+```
+
+---
+
+### [2026-02-24] user-profile category 映射修复 (v1.89.1)
+
+**变更**：`user-profile.js` 自动提取 structured facts 时使用的 category 从旧值改为新 VALID_CATEGORIES 内的值：
+- `identity` → `background`（display_name）
+- `work_style` → `behavior`（focus_area）
+
+**经验**：
+- **vi.clearAllMocks() 不清除 mock 队列**：只清 call history，不清 `mockResolvedValueOnce/mockRejectedValueOnce` 队列。如果前一个测试设置了 mock 但函数提前返回（导致 mock 未被消费），下一个测试会拿到残余 mock。解决：在新测试开头显式 `mockFetch.mockReset()`。
+- **测试注入 API key 的模式**：`vi.doMock` 对已 import 的模块无效；正确做法是在被测模块里导出 `_setApiKeyForTest(key)` 函数（与 `_resetApiKey()` 保持一致的 test-helper 模式）。
+
+---
+
 ### [2026-02-24] code_review task type + 每日调度 (v1.89.0)
 
 **变更**：
@@ -32,7 +92,6 @@
 - **根本原因**：rolling-update.sh 的这行是冗余的（env-file 已有），但 set -u 严格模式会报错。
 
 **其他**：
-- Brain 实际由 pm2 管理（不是 Docker），`pm2 restart brain` 即可加载新代码并自动应用 migration。
 - migration 会在 Brain 启动时自动执行，无需手动跑 SQL 文件。
 
 ---

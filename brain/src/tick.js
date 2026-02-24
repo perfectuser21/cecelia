@@ -22,6 +22,7 @@ import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview } from './daily-review-scheduler.js';
+import { runDesireSystem } from './desire/index.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1725,6 +1726,14 @@ async function executeTick() {
     console.error('[tick] daily review error:', reviewErr.message);
   }
 
+  // 11. 欲望系统（六层主动意识）
+  let desireResult = null;
+  try {
+    desireResult = await runDesireSystem(pool);
+  } catch (desireErr) {
+    console.error('[tick] desire system error:', desireErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1736,6 +1745,7 @@ async function executeTick() {
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
     dept_heartbeats: deptHeartbeatResult,
     daily_review: dailyReviewResult,
+    desire_system: desireResult,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,

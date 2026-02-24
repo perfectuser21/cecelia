@@ -36,6 +36,7 @@ import {
   extractAndSaveUserFacts,
   getUserProfileContext,
   _resetApiKey,
+  _setApiKeyForTest,
 } from '../user-profile.js';
 
 beforeEach(() => {
@@ -213,5 +214,71 @@ describe('extractAndSaveUserFacts', () => {
   it('对话为空时直接返回，不调用 API', async () => {
     await extractAndSaveUserFacts(mockPool, 'owner', [], '');
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('D1: display_name 自动提取时 category 为 background', async () => {
+    // 清除前面测试可能残留的未消费 mock（vi.clearAllMocks 不清 mock 队列）
+    mockFetch.mockReset();
+    mockPool.query.mockReset();
+    // 注入 test API key，绕过 credentials 文件读取
+    _setApiKeyForTest('sk-test');
+
+    // MiniMax 返回 display_name
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"display_name": "徐啸"}' } }],
+      }),
+    });
+    // call #1: upsertUserProfile → user_profiles
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    // call #2: structured fact INSERT → user_profile_facts
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'fact-bg-1' }] });
+
+    await extractAndSaveUserFacts(
+      mockPool,
+      'owner',
+      [{ role: 'user', content: '我叫徐啸' }],
+      '好的，我记住了'
+    );
+
+    // 找到存入 user_profile_facts 的调用，验证 category 为 background
+    const insertCalls = mockPool.query.mock.calls.filter(
+      ([sql]) => sql && sql.includes('INSERT INTO user_profile_facts')
+    );
+    const backgroundCall = insertCalls.find(
+      ([, params]) => Array.isArray(params) && params.includes('background')
+    );
+    expect(backgroundCall).toBeDefined();
+  });
+
+  it('D2: focus_area 自动提取时 category 为 behavior', async () => {
+    mockFetch.mockReset();
+    mockPool.query.mockReset();
+    _setApiKeyForTest('sk-test');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"focus_area": "Cecelia 自主运行"}' } }],
+      }),
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'fact-bh-1' }] });
+
+    await extractAndSaveUserFacts(
+      mockPool,
+      'owner',
+      [{ role: 'user', content: '我最近在做 Cecelia' }],
+      '明白了'
+    );
+
+    const insertCalls = mockPool.query.mock.calls.filter(
+      ([sql]) => sql && sql.includes('INSERT INTO user_profile_facts')
+    );
+    const behaviorCall = insertCalls.find(
+      ([, params]) => Array.isArray(params) && params.includes('behavior')
+    );
+    expect(behaviorCall).toBeDefined();
   });
 });

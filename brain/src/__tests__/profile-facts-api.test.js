@@ -328,5 +328,111 @@ describe('Profile Facts API', () => {
       expect(res.status).toBe(200);
       expect(res.body.imported).toBe(0);
     });
+
+    it('CSV 格式绕过 MiniMax 直接解析，指令行被跳过', async () => {
+      // 模拟用户实际输入的 CSV（含说明行、header、数据）
+      const csvText = [
+        '使用说明：,,,,,,',
+        '1. 个人关系数据库调用，每当我提到任何一个人的名字时，必须立即检查个人关系数据库，确定我与该人的关系背景，以便准确理解上下文与互动细节。,,,,,,',
+        '姓名,称呼,实际关系,生日,分类,职业,备注',
+        '张三,小张,同事,1990-01-01,工作,工程师,',
+        '李四,老李,朋友,1985-05-15,朋友,,',
+      ].join('\n');
+
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'id-1' }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'id-2' }] });
+
+      const res = await request(app)
+        .post('/api/brain/profile/facts/import')
+        .send({ text: csvText });
+
+      expect(res.status).toBe(200);
+      expect(res.body.imported).toBe(2);
+      // MiniMax 没有被调用（CSV 直接解析）
+      expect(mockFetch).not.toHaveBeenCalled();
+      // 记录内容应包含 姓名:张三，而不是指令行内容
+      expect(res.body.facts[0]).toContain('姓名:张三');
+      expect(res.body.facts[1]).toContain('姓名:李四');
+      // 不应包含指令行文字
+      expect(res.body.facts[0]).not.toContain('个人关系数据库调用');
+    });
+
+    it('CSV 说明行（单个非空列）被正确跳过，不产生垃圾记录', async () => {
+      const csvText = [
+        '使用说明：,,,,,,',
+        '姓名,称呼,实际关系',
+        '王五,小王,朋友',
+      ].join('\n');
+
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'id-1' }] });
+
+      const res = await request(app)
+        .post('/api/brain/profile/facts/import')
+        .send({ text: csvText });
+
+      expect(res.status).toBe(200);
+      expect(res.body.imported).toBe(1);
+      expect(res.body.facts[0]).toContain('姓名:王五');
+    });
+  });
+
+  // ============ DELETE /batch ============
+
+  describe('DELETE /api/brain/profile/facts/batch', () => {
+    it('批量删除多条 facts', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ id: 'uuid-1' }, { id: 'uuid-2' }, { id: 'uuid-3' }],
+      });
+
+      const res = await request(app)
+        .delete('/api/brain/profile/facts/batch')
+        .send({ ids: ['uuid-1', 'uuid-2', 'uuid-3'] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(3);
+      expect(res.body.ids).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+    });
+
+    it('使用 ANY($1) 操作符批量删除', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'uuid-1' }] });
+
+      await request(app)
+        .delete('/api/brain/profile/facts/batch')
+        .send({ ids: ['uuid-1'] });
+
+      const [sql, params] = mockQuery.mock.calls[0];
+      expect(sql).toContain('ANY($1)');
+      expect(params[0]).toEqual(['uuid-1']);
+      expect(params[1]).toBe('owner');
+    });
+
+    it('ids 为空数组时返回 400', async () => {
+      const res = await request(app)
+        .delete('/api/brain/profile/facts/batch')
+        .send({ ids: [] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('ids must be a non-empty array');
+    });
+
+    it('ids 不是数组时返回 400', async () => {
+      const res = await request(app)
+        .delete('/api/brain/profile/facts/batch')
+        .send({ ids: 'uuid-1' });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('DB 错误时返回 500', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('DB error'));
+
+      const res = await request(app)
+        .delete('/api/brain/profile/facts/batch')
+        .send({ ids: ['uuid-1'] });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Failed to batch delete facts');
+    });
   });
 });
