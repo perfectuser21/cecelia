@@ -75,7 +75,9 @@ async function scoreImportance(context) {
     const data = await response.json();
     const rawText = data.choices?.[0]?.message?.content || '';
     const text = stripThinking(rawText);
-    const score = parseInt(text.trim());
+    // 从任意位置提取第一个 1-10 的数字（防止模型包裹在 markdown 里）
+    const numMatch = text.match(/\b([1-9]|10)\b/);
+    const score = numMatch ? parseInt(numMatch[1]) : NaN;
     if (isNaN(score) || score < 1 || score > 10) return 5;
     return score;
   } catch (err) {

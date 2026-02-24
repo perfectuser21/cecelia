@@ -76,7 +76,7 @@ type 选择：
       },
       body: JSON.stringify({
         model: 'MiniMax-M2.5-highspeed',
-        max_tokens: 256,
+        max_tokens: 512,
         messages: [{ role: 'user', content: prompt }]
       }),
       signal: AbortSignal.timeout(20000),
@@ -88,11 +88,12 @@ type 选择：
     const rawText = data.choices?.[0]?.message?.content || '';
     const text = stripThinking(rawText);
 
-    // 提取 JSON
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON in response');
+    // 提取 JSON（支持 markdown 代码块包裹和纯 JSON 两种格式）
+    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    const jsonStr = codeBlockMatch ? codeBlockMatch[1] : text.match(/\{[\s\S]*\}/)?.[0];
+    if (!jsonStr) throw new Error('No JSON in response');
 
-    const parsed = JSON.parse(match[0]);
+    const parsed = JSON.parse(jsonStr);
     const type = VALID_TYPES.includes(parsed.type) ? parsed.type : 'inform';
     const urgency = Math.max(1, Math.min(10, parseInt(parsed.urgency) || 5));
 
