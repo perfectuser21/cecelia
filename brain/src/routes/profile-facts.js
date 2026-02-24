@@ -5,6 +5,7 @@
  * - GET    /api/brain/profile/facts         列出所有 facts
  * - POST   /api/brain/profile/facts         添加一条 fact
  * - PUT    /api/brain/profile/facts/:id     更新 fact
+ * - DELETE /api/brain/profile/facts/batch   批量删除（{ids: string[]}）
  * - DELETE /api/brain/profile/facts/:id     删除 fact
  * - POST   /api/brain/profile/facts/import  批量导入（文本 → MiniMax 拆解）
  */
@@ -66,10 +67,16 @@ function parseCSVFacts(text) {
 
     const cols = trimmed.split(',').map(c => c.trim());
 
-    // 识别 header 行（首次出现含关键字的行）
-    if (!headerCols && cols.some(c => HEADER_KEYWORDS.some(k => c.includes(k)))) {
-      headerCols = cols;
-      continue;
+    // 跳过有效列少于 2 个的说明行（如 "使用说明：,,,,,," 或长指令行）
+    if (cols.filter(c => c).length < 2) continue;
+
+    // 识别 header 行：要求 ≥2 个短列（≤10 字符）匹配关键字
+    if (!headerCols) {
+      const shortMatches = cols.filter(c => c.length <= 10 && HEADER_KEYWORDS.some(k => c.includes(k)));
+      if (shortMatches.length >= 2) {
+        headerCols = cols;
+        continue;
+      }
     }
 
     // 跳过逗号少于 2 个的说明行
@@ -320,6 +327,28 @@ router.put('/:id', async (req, res) => {
   } catch (err) {
     console.error('[profile-facts] PUT error:', err.message);
     res.status(500).json({ error: 'Failed to update fact', message: err.message });
+  }
+});
+
+// ===================== DELETE /api/brain/profile/facts/batch =====================
+// 注意：放在 DELETE /:id 之前，避免 'batch' 被解析为 id
+
+router.delete('/batch', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM user_profile_facts WHERE id = ANY($1) AND user_id = $2 RETURNING id`,
+      [ids, 'owner']
+    );
+
+    res.json({ deleted: result.rows.length, ids: result.rows.map(r => r.id) });
+  } catch (err) {
+    console.error('[profile-facts] DELETE /batch error:', err.message);
+    res.status(500).json({ error: 'Failed to batch delete facts', message: err.message });
   }
 });
 
