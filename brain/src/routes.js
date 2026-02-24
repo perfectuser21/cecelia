@@ -6499,6 +6499,157 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
   }
 });
 
+// ==================== Staff API ====================
+
+/**
+ * GET /api/brain/staff
+ * 返回所有员工列表，含角色和模型配置
+ */
+router.get('/staff', async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    // 1. 读 workers.config.json
+    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersRaw = fs.readFileSync(workersPath, 'utf-8');
+    const workersConfig = JSON.parse(workersRaw);
+
+    // 2. 读 model_map（当前 active profile）
+    const activeProfile = getActiveProfile();
+    const modelMap = activeProfile?.config?.executor?.model_map || {};
+
+    // 3. 合并数据
+    const teams = workersConfig.teams.map(team => ({
+      id: team.id,
+      name: team.name,
+      level: team.level,
+      icon: team.icon,
+      description: team.description,
+      workers: team.workers.map(worker => {
+        // 从 model_map 找对应模型（按 worker.id 或 worker.skill）
+        const skillKey = worker.skill?.replace('/', '') || worker.id;
+        const modelEntry = modelMap[skillKey] || modelMap[worker.id] || {};
+        // 取第一个非 null 的 provider/model
+        let activeModel = null;
+        let activeProvider = null;
+        for (const [provider, model] of Object.entries(modelEntry)) {
+          if (model) {
+            activeProvider = provider;
+            activeModel = model;
+            break;
+          }
+        }
+        return {
+          id: worker.id,
+          name: worker.name,
+          alias: worker.alias || null,
+          icon: worker.icon,
+          type: worker.type,
+          role: worker.role,
+          skill: worker.skill || null,
+          description: worker.description,
+          abilities: worker.abilities || [],
+          gradient: worker.gradient || null,
+          model: {
+            provider: activeProvider,
+            name: activeModel,
+            full_map: modelEntry,
+          },
+        };
+      }),
+    }));
+
+    res.json({
+      success: true,
+      version: workersConfig.version,
+      teams,
+      total_workers: teams.reduce((sum, t) => sum + t.workers.length, 0),
+    });
+  } catch (err) {
+    console.error('[API] staff error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Skills Registry API ====================
+
+/**
+ * GET /api/brain/skills-registry
+ * 返回所有注册的 Skills 和 Agents（从 cecelia-workflows 读取）
+ */
+router.get('/skills-registry', async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    const WORKFLOWS_BASE = '/home/xx/perfect21/cecelia/workflows';
+
+    function parseSkillMd(filePath) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // 解析 YAML frontmatter（--- ... ---）
+        const match = content.match(/^---\n([\s\S]*?)\n---/);
+        if (!match) return null;
+
+        const frontmatter = {};
+        for (const line of match[1].split('\n')) {
+          const colonIdx = line.indexOf(':');
+          if (colonIdx === -1) continue;
+          const key = line.slice(0, colonIdx).trim();
+          let value = line.slice(colonIdx + 1).trim();
+          // 去掉引号
+          value = value.replace(/^["']|["']$/g, '');
+          if (key && value) frontmatter[key] = value;
+        }
+        // description 可能是多行，取 | 之后的第一行
+        const descMatch = content.match(/^description:\s*\|\n\s+(.*)/m);
+        if (descMatch) frontmatter.description = descMatch[1].trim();
+
+        return frontmatter;
+      } catch {
+        return null;
+      }
+    }
+
+    function scanDir(baseDir, type) {
+      const items = [];
+      try {
+        const dirs = fs.readdirSync(baseDir, { withFileTypes: true });
+        for (const dir of dirs) {
+          if (!dir.isDirectory() && !dir.isSymbolicLink()) continue;
+          const skillMdPath = path.join(baseDir, dir.name, 'SKILL.md');
+          if (!fs.existsSync(skillMdPath)) continue;
+
+          const meta = parseSkillMd(skillMdPath);
+          items.push({
+            id: dir.name,
+            name: meta?.name || dir.name,
+            description: meta?.description || '',
+            version: meta?.version || '1.0.0',
+            type,
+            path: path.join(baseDir, dir.name),
+          });
+        }
+      } catch {}
+      return items;
+    }
+
+    const skills = scanDir(path.join(WORKFLOWS_BASE, 'skills'), 'skill');
+    const agents = scanDir(path.join(WORKFLOWS_BASE, 'agents'), 'agent');
+
+    res.json({
+      success: true,
+      total: skills.length + agents.length,
+      skills,
+      agents,
+    });
+  } catch (err) {
+    console.error('[API] skills-registry error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==================== Model Profile API ====================
 
 router.get('/model-profiles', async (_req, res) => {

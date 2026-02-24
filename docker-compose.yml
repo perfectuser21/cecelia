@@ -18,6 +18,8 @@ services:
       - /home/xx/bin:/home/xx/bin:ro
       # Credentials (read-only, mapped to container user homedir)
       - /home/xx/.credentials:/home/cecelia/.credentials:ro
+      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
+      - /home/xx/perfect21/cecelia/workflows:/home/xx/perfect21/cecelia/workflows:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
       - /home/xx/perfect21/cecelia/core/HEARTBEAT.md:/HEARTBEAT.md:rw
       # Timezone (read-only)
