@@ -39,7 +39,7 @@ describe('task-router initiative types', () => {
   it('existing types still work correctly', async () => {
     const mod = await import('../task-router.js');
     expect(mod.getTaskLocation('dev')).toBe('us');
-    expect(mod.getTaskLocation('decomp_review')).toBe('hk');
+    expect(mod.getTaskLocation('decomp_review')).toBe('us');
     expect(mod.getTaskLocation('talk')).toBe('hk');
     expect(mod.isValidTaskType('dev')).toBe(true);
     expect(mod.isValidTaskType('exploratory')).toBe(false);
