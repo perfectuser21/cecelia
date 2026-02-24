@@ -6616,6 +6616,7 @@ router.get('/staff', async (_req, res) => {
             break;
           }
         }
+        const credentialsFile = modelEntry.minimax_credentials || worker.credentials_file || null;
         return {
           id: worker.id,
           name: worker.name,
@@ -6631,6 +6632,7 @@ router.get('/staff', async (_req, res) => {
             provider: activeProvider,
             name: activeModel,
             full_map: modelEntry,
+            credentials_file: credentialsFile,
           },
         };
       }),
@@ -6659,7 +6661,7 @@ router.get('/staff', async (_req, res) => {
 router.put('/staff/workers/:workerId', async (req, res) => {
   try {
     const { workerId } = req.params;
-    const { skill, model } = req.body;
+    const { skill, model, credentials_file } = req.body;
     const fs = await import('fs');
 
     const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
@@ -6672,6 +6674,9 @@ router.put('/staff/workers/:workerId', async (req, res) => {
       if (worker) {
         if (skill !== undefined) {
           worker.skill = skill || null;
+        }
+        if (credentials_file !== undefined) {
+          worker.credentials_file = credentials_file || null;
         }
         targetWorker = worker;
         break;
@@ -6700,6 +6705,12 @@ router.put('/staff/workers/:workerId', async (req, res) => {
           minimax:   model.provider === 'minimax'   ? model.name : (existing.minimax   || null),
           openai:    model.provider === 'openai'    ? model.name : (existing.openai    || null),
         };
+        // 保存 credentials_file（minimax 账户选择）
+        if (credentials_file !== undefined) {
+          newMap.minimax_credentials = credentials_file || null;
+        } else if (existing.minimax_credentials !== undefined) {
+          newMap.minimax_credentials = existing.minimax_credentials;
+        }
         modelMap[skillKey] = newMap;
         config.executor = { ...config.executor, model_map: modelMap };
         await pool.query(

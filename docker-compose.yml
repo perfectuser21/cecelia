@@ -22,6 +22,8 @@ services:
       - /home/xx/perfect21/cecelia/workflows:/home/xx/perfect21/cecelia/workflows:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
       - /home/xx/perfect21/cecelia/core/HEARTBEAT.md:/HEARTBEAT.md:rw
+      # workers.config.json (read-write for PUT /staff/workers API)
+      - /home/xx/perfect21/cecelia/workflows/staff/workers.config.json:/home/xx/perfect21/cecelia/workflows/staff/workers.config.json:rw
       # Timezone (read-only)
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
