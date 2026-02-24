@@ -35,7 +35,7 @@ import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEn
 import pool from './db.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from './decision.js';
-import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
+import { planNextTask, getPlanStatus, handlePlanInput, getGlobalState, selectTopAreas, selectActiveInitiativeForArea, ACTIVE_AREA_COUNT } from './planner.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
 import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
@@ -3473,6 +3473,74 @@ router.post('/plan/next', async (req, res) => {
       error: 'Failed to plan next task',
       details: err.message
     });
+  }
+});
+
+// ==================== Work Streams API ====================
+
+/**
+ * GET /api/brain/work/streams
+ * 返回当前 Area Stream 调度状态，供前端展示
+ * 使用 planner.js 的 selectTopAreas + selectActiveInitiativeForArea
+ */
+router.get('/work/streams', async (_req, res) => {
+  try {
+    const state = await getGlobalState();
+    const topAreas = selectTopAreas(state, ACTIVE_AREA_COUNT);
+
+    const streams = topAreas.map(area => {
+      const areaKRs = state.keyResults.filter(kr => kr.parent_id === area.id);
+      const areaKRIds = new Set(areaKRs.map(kr => kr.id));
+
+      const areaTasks = state.activeTasks.filter(
+        t => (t.status === 'queued' || t.status === 'in_progress') && areaKRIds.has(t.goal_id)
+      );
+      const totalQueuedTasks = areaTasks.filter(t => t.status === 'queued').length;
+
+      const initiativeResult = selectActiveInitiativeForArea(area, state);
+      let activeInitiative = null;
+      if (initiativeResult) {
+        const { initiative, kr } = initiativeResult;
+        const initTasks = areaTasks.filter(t => t.project_id === initiative.id);
+        const inProgressCount = initTasks.filter(t => t.status === 'in_progress').length;
+        const queuedCount = initTasks.filter(t => t.status === 'queued').length;
+        // lockReason: in_progress 任务存在 → 'in_progress'，否则 → 'fifo'
+        const lockReason = inProgressCount > 0 ? 'in_progress' : 'fifo';
+        activeInitiative = {
+          initiative: {
+            id: initiative.id,
+            name: initiative.name,
+            status: initiative.status,
+            created_at: initiative.created_at,
+          },
+          kr: { id: kr.id, title: kr.title || kr.name },
+          lockReason,
+          inProgressTasks: inProgressCount,
+          queuedTasks: queuedCount,
+        };
+      }
+
+      return {
+        area: {
+          id: area.id,
+          title: area.title || area.name,
+          priority: area.priority,
+          status: area.status,
+          progress: area.progress || 0,
+        },
+        activeInitiative,
+        totalQueuedTasks,
+      };
+    });
+
+    res.json({
+      activeAreaCount: ACTIVE_AREA_COUNT,
+      streams,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[work/streams] Error:', err);
+    res.status(500).json({ error: 'Failed to get work streams', details: err.message });
   }
 });
 
