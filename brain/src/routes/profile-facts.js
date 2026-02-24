@@ -35,7 +35,69 @@ function getApiKey() {
 const VALID_CATEGORIES = ['preference', 'behavior', 'background', 'goal', 'relationship', 'health', 'other'];
 
 /**
- * 调用 MiniMax 将文本拆解成 facts 列表
+ * 检测输入是否为 CSV 格式
+ * 条件：非空行数 >= 3，且多数行逗号数量 >= 2 且一致
+ */
+function isCSV(text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  if (lines.length < 3) return false;
+  const commaCounts = lines.map(l => (l.match(/,/g) || []).length);
+  const hasEnoughCommas = commaCounts.some(c => c >= 2);
+  if (!hasEnoughCommas) return false;
+  const sorted = [...commaCounts].sort((a, b) => a - b);
+  const mode = sorted[Math.floor(sorted.length / 2)];
+  const consistent = commaCounts.filter(c => c === mode).length >= lines.length * 0.6;
+  return consistent;
+}
+
+/**
+ * CSV 人员数据直接解析为 facts（跳过 MiniMax）
+ * 支持格式：姓名,称呼,实际关系,生日,分类,职业,备注
+ */
+function parseCSVFacts(text) {
+  const lines = text.split('\n');
+  const facts = [];
+  const HEADER_KEYWORDS = ['姓名', '称呼', '关系', '生日', '分类', '职业', '备注', 'name'];
+  let headerCols = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const cols = trimmed.split(',').map(c => c.trim());
+
+    // 识别 header 行（首次出现含关键字的行）
+    if (!headerCols && cols.some(c => HEADER_KEYWORDS.some(k => c.includes(k)))) {
+      headerCols = cols;
+      continue;
+    }
+
+    // 跳过逗号少于 2 个的说明行
+    if ((trimmed.match(/,/g) || []).length < 2) continue;
+
+    // 跳过全空列行
+    if (cols.every(c => !c)) continue;
+
+    const h = headerCols || ['姓名', '称呼', '实际关系', '生日', '分类', '职业', '备注'];
+    const parts = [];
+
+    for (let i = 0; i < Math.min(h.length, cols.length); i++) {
+      const key = h[i];
+      const val = cols[i];
+      if (!val || val.startsWith('（') || val.startsWith('(')) continue;
+      parts.push(`${key}:${val}`);
+    }
+
+    if (parts.length > 0) {
+      facts.push(parts.join(' '));
+    }
+  }
+
+  return facts;
+}
+
+/**
+ * 调用 MiniMax 将自然语言文本拆解成 facts 列表
  * @param {string} text - 输入文本
  * @returns {Promise<string[]>} facts 数组
  */
@@ -62,7 +124,7 @@ async function parseFactsFromText(text) {
         },
         {
           role: 'user',
-          content: text.substring(0, 3000),
+          content: text.substring(0, 50000),
         },
       ],
       max_tokens: 1024,
@@ -148,7 +210,8 @@ router.post('/import', async (req, res) => {
       return res.status(400).json({ error: 'text is required' });
     }
 
-    const facts = await parseFactsFromText(text);
+    // CSV 格式直接解析，跳过 MiniMax
+    const facts = isCSV(text) ? parseCSVFacts(text) : await parseFactsFromText(text);
     if (facts.length === 0) {
       return res.json({ imported: 0, facts: [] });
     }
