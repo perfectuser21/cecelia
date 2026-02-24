@@ -4,16 +4,13 @@
  * 数据流:
  *   前端 CeceliaChat → proxy → POST /api/brain/orchestrator/chat
  *     → 1. Memory 搜索（注入上下文）
- *     → 2. MiniMax 判断意图 + 生成回复
+ *     → 2. Claude Sonnet 判断意图 + 生成回复
  *     → 3a. 简单查询 → 直接返回
  *     → 3b. 复杂问题 → thalamusProcessEvent (USER_MESSAGE)
  *     → 4. 记录对话事件
  *     → 返回 { reply, routing_level, intent }
  */
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
@@ -21,73 +18,46 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 
-// MiniMax Coding Plan API（OpenAI 兼容端点）
-const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
+// Claude Sonnet 嘴巴模型
+const MOUTH_MODEL = 'claude-sonnet-4-6-20251001';
 
-// 加载 MiniMax API Key（启动时一次性读取）
-let _minimaxApiKey = null;
-
-function getMinimaxApiKey() {
-  if (_minimaxApiKey) return _minimaxApiKey;
-  try {
-    const credPath = join(homedir(), '.credentials', 'minimax.json');
-    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
-    _minimaxApiKey = cred.api_key;
-    return _minimaxApiKey;
-  } catch (err) {
-    console.error('[orchestrator-chat] Failed to load MiniMax credentials:', err.message);
-    return null;
-  }
-}
-
-// 导出用于测试
-export function _resetApiKey() {
-  _minimaxApiKey = null;
-}
+// 导出用于测试（保留兼容接口）
+export function _resetApiKey() {}
 
 /**
- * 去掉 MiniMax M2.5 的 <think>...</think> 思维链块
- * @param {string} content - 原始回复内容
- * @returns {string} 去掉思维链后的回复
- */
-function stripThinking(content) {
-  if (!content) return '';
-  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-}
-
-/**
- * 调用 MiniMax API 生成对话回复
- * @param {string} userMessage - 用户消息
- * @param {string} systemPrompt - 系统提示词
+ * 调用 Claude Sonnet API 生成对话回复
+ * @param {string} userMessage
+ * @param {string} systemPrompt
  * @param {Object} options - { timeout }
- * @param {Array} historyMessages - 历史消息 [{role, content}]，最多取最近 10 条
+ * @param {Array} historyMessages - [{role, content}]
  * @returns {Promise<{reply: string, usage: Object}>}
  */
 async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
-  const apiKey = getMinimaxApiKey();
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error('MiniMax API key not available');
+    throw new Error('ANTHROPIC_API_KEY not set');
   }
 
   const timeout = options.timeout || 30000;
 
+  // Anthropic Messages API 格式
   const messages = [
-    { role: 'system', content: systemPrompt },
     ...historyMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
     { role: 'user', content: userMessage },
   ];
 
-  const response = await fetch(MINIMAX_API_URL, {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'MiniMax-M2.5-highspeed',
+      model: MOUTH_MODEL,
+      system: systemPrompt,
       messages,
       max_tokens: 2048,
-      temperature: 0.7,
     }),
     signal: AbortSignal.timeout(timeout),
   });
@@ -98,14 +68,17 @@ async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessa
   }
 
   const data = await response.json();
-  const choice = data.choices?.[0];
-  const rawReply = choice?.message?.content || '';
-  const reply = stripThinking(rawReply);
+  const reply = data.content?.[0]?.text || '';
 
   return {
     reply,
     usage: data.usage || {},
   };
+}
+
+// 保留 stripThinking 供测试引用（Sonnet 不需要，但测试 mock 会用）
+export function stripThinking(content) {
+  return content || '';
 }
 
 /**
@@ -343,7 +316,6 @@ export async function handleChat(message, context = {}, messages = []) {
 // 导出用于测试
 export {
   callMiniMax,
-  stripThinking,
   fetchMemoryContext,
   recordChatEvent,
   needsEscalation,

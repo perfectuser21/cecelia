@@ -61,6 +61,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
 
     // Mock global fetch for MiniMax calls
     global.fetch = vi.fn();
+    process.env.ANTHROPIC_API_KEY = 'test-key';
   });
 
   afterEach(() => {
@@ -108,7 +109,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: '好的，我了解了。' } }],
+        content: [{ type: 'text', text: '好的，我了解了。' }],
         usage: {},
       }),
     });
@@ -121,9 +122,9 @@ describe('orchestrator-chat memory unification (D1)', () => {
     // 验证 MiniMax 调用中的 system prompt 包含记忆
     const minimaxCall = global.fetch.mock.calls[0];
     const body = JSON.parse(minimaxCall[1].body);
-    const systemMsg = body.messages.find(m => m.role === 'system');
-    expect(systemMsg.content).toContain('相关历史上下文');
-    expect(systemMsg.content).toContain('历史任务');
+    // Anthropic: system is top-level field
+    expect(body.system).toContain('相关历史上下文');
+    expect(body.system).toContain('历史任务');
   });
 
   it('handleChat works when memory returns empty block', async () => {
@@ -135,7 +136,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: '你好！' } }],
+        content: [{ type: 'text', text: '你好！' }],
         usage: {},
       }),
     });
@@ -152,7 +153,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: '测试' } }],
+        content: [{ type: 'text', text: '测试' }],
         usage: {},
       }),
     });
@@ -163,7 +164,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
     // And the call should be to MiniMax, not memory/search
     const [url] = global.fetch.mock.calls[0];
-    expect(url).toContain('minimaxi.com');
+    expect(url).toContain('anthropic.com');
     expect(url).not.toContain('memory/search');
   });
 });
