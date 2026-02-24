@@ -312,6 +312,7 @@ export function CeceliaChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMessage,
+          messages: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
           context: {
             currentRoute,
             pageContext,

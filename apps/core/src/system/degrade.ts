@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 // Configuration
 const CHECK_INTERVAL_MS = 30000; // 30 seconds
 const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
-const WORKSPACE_API = process.env.WORKSPACE_API || 'http://localhost:5212';
+const WORKSPACE_API = process.env.WORKSPACE_API || 'http://localhost:5211';
 const DLQ_SCRIPT = path.resolve(__dirname, '../../../../scripts/dlq-utils.sh');
 
 // Service health state

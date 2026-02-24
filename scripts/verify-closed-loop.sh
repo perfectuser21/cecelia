@@ -11,7 +11,7 @@
 #   2 = Setup/connection error
 
 # Configuration (override via environment)
-WORKSPACE_URL="${WORKSPACE_URL:-http://localhost:5212}"
+WORKSPACE_URL="${WORKSPACE_URL:-http://localhost:5211}"
 N8N_URL="${N8N_URL:-http://localhost:5679}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5220}"
 QUALITY_URL="${QUALITY_URL:-http://localhost:5681}"

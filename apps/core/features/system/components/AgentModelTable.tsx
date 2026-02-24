@@ -131,7 +131,10 @@ function AgentRow({ agent, models, currentModelId, pendingModelId, onSelect }: A
                           }`}
                         >
                           <span>{m.name}</span>
-                          {m.id === displayModelId && <Check className="w-3 h-3 ml-auto" />}
+                          {m.id === agent.recommended_model && (
+                            <span className="text-xs text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">推荐</span>
+                          )}
+                          {m.id === displayModelId && <Check className="w-3 h-3 ml-auto flex-shrink-0" />}
                         </button>
                       ))}
                     </div>

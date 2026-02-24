@@ -893,7 +893,7 @@ router.get('/full', async (_req: Request, res: Response) => {
     // Fetch GitHub panorama (local endpoint)
     let githubData: any = { health: 'unavailable' };
     try {
-      const response = await fetch('http://localhost:5212/api/github/panorama');
+      const response = await fetch('http://localhost:5211/api/github/panorama');
       if (response.ok) {
         const result = await response.json() as { data?: any };
         githubData = { health: 'ok', ...result.data };

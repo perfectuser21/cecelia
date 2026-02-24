@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-const BASE = 'http://localhost:5212/api/cecelia/chat';
+const BASE = 'http://localhost:5211/api/cecelia/chat';
 
 async function chat(message: unknown) {
   return fetch(BASE, {

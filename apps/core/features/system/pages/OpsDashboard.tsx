@@ -161,7 +161,7 @@ export default function OpsDashboard() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [h, c, t, a, b, tk, s] = await Promise.all([
+      const [h, c, t, a, b, tk, s, scanRes] = await Promise.all([
         fetchJson<HealthData>('/api/brain/health'),
         fetchJson<ClusterData>('/api/brain/cluster/status'),
         fetchJson<TickData>('/api/brain/tick/status'),
@@ -169,14 +169,43 @@ export default function OpsDashboard() {
         fetchJson<CircuitBreakerData>('/api/brain/circuit-breaker'),
         fetchJson<TokenData>('/api/brain/token-usage'),
         fetchJson<VpsSlotsData>('/api/brain/vps-slots'),
+        fetchJson<{ processes: ClusterServer['slots']['processes']; total: number }>('/api/cluster/scan-sessions').catch(() => null),
       ]);
       setHealth(h);
+      // Brain 容器无 --pid=host，ps aux 看不到宿主机进程。
+      // 用 Core server 扫描的结果覆盖 US 服务器的 processes。
+      if (c?.cluster?.servers?.[0] && scanRes?.processes) {
+        c.cluster.servers[0].slots.processes = scanRes.processes;
+        c.cluster.servers[0].slots.used = scanRes.total;
+      }
       setCluster(c);
       setTick(t);
       setAlertness(a);
       setBreakers(b);
       setToken(tk);
-      setSlots(s);
+      // Brain 容器无 --pid=host，vps-slots 看不到宿主机进程。
+      // 用 Core server 扫描的结果覆盖 slots state。
+      if (scanRes?.processes && scanRes.processes.length > 0) {
+        setSlots({
+          success: true,
+          total: 12,
+          used: scanRes.total,
+          available: Math.max(0, 12 - scanRes.total),
+          slots: scanRes.processes.map(p => ({
+            pid: p.pid,
+            cpu: p.cpu,
+            memory: p.memory,
+            startTime: p.startTime,
+            taskId: null,
+            runId: null,
+            taskTitle: null,
+            taskPriority: null,
+            command: p.command,
+          })),
+        });
+      } else {
+        setSlots(s);
+      }
       setError(null);
       setLastUpdate(new Date());
     } catch (e: any) {

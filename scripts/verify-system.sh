@@ -63,9 +63,9 @@ check "Quality API (5681)" "$QUALITY_HEALTH" '"status":"ok"'
 N8N_HEALTH=$(curl -s --max-time 5 http://localhost:5679/healthz 2>/dev/null || echo "TIMEOUT")
 check "N8N Workflows (5679)" "$N8N_HEALTH" '"status":"ok"'
 
-# Workspace Dev (5212)
-WORKSPACE_HEALTH=$(curl -s --max-time 5 http://localhost:5212/api/system/health 2>/dev/null || echo "TIMEOUT")
-check "Workspace Dev (5212)" "$WORKSPACE_HEALTH" '"status":"healthy"'
+# Workspace (5211)
+WORKSPACE_HEALTH=$(curl -s --max-time 5 http://localhost:5211/api/system/health 2>/dev/null || echo "TIMEOUT")
+check "Workspace (5211)" "$WORKSPACE_HEALTH" '"status":"healthy"'
 
 echo ""
 
@@ -73,7 +73,7 @@ echo ""
 echo "2. Aggregated System Status"
 echo "--------------------------------"
 
-SYSTEM_STATUS=$(curl -s --max-time 10 http://localhost:5212/api/system/status 2>/dev/null || echo "TIMEOUT")
+SYSTEM_STATUS=$(curl -s --max-time 10 http://localhost:5211/api/system/status 2>/dev/null || echo "TIMEOUT")
 HEALTH=$(echo "$SYSTEM_STATUS" | jq -r '.data.health' 2>/dev/null || echo "ERROR")
 check "Overall health" "$HEALTH" "ok"
 
@@ -92,7 +92,7 @@ echo ""
 echo "3. Panorama Services"
 echo "--------------------------------"
 
-PANORAMA=$(curl -s --max-time 10 http://localhost:5212/api/panorama/full 2>/dev/null || echo "TIMEOUT")
+PANORAMA=$(curl -s --max-time 10 http://localhost:5211/api/panorama/full 2>/dev/null || echo "TIMEOUT")
 BRAIN_SVC=$(echo "$PANORAMA" | jq -r '.data.services[] | select(.name=="semantic-brain") | .status' 2>/dev/null || echo "ERROR")
 check "Brain in panorama" "$BRAIN_SVC" "up"
 
@@ -137,11 +137,11 @@ echo "5. Proxy Verification"
 echo "--------------------------------"
 
 # /api/quality/* should proxy to Quality
-PROXY_QUALITY=$(curl -s --max-time 5 http://localhost:5212/api/quality/health 2>/dev/null || echo "TIMEOUT")
+PROXY_QUALITY=$(curl -s --max-time 5 http://localhost:5211/api/quality/health 2>/dev/null || echo "TIMEOUT")
 check "Quality proxy working" "$PROXY_QUALITY" '"status":"ok"'
 
 # /api/orchestrator/* should proxy to Brain
-PROXY_ORCH=$(curl -s --max-time 5 http://localhost:5212/api/orchestrator/health 2>/dev/null || echo "TIMEOUT")
+PROXY_ORCH=$(curl -s --max-time 5 http://localhost:5211/api/orchestrator/health 2>/dev/null || echo "TIMEOUT")
 warn_check "Orchestrator proxy working" "$PROXY_ORCH" "status"
 
 echo ""

@@ -102,7 +102,7 @@ fi
 echo ""
 echo "Step 4: Verifying tasks in database..."
 
-TASKS_RESPONSE=$(curl -s "http://localhost:5212/api/tasks/tasks?status=pending&limit=5" 2>/dev/null || echo '{"error": "API not available"}')
+TASKS_RESPONSE=$(curl -s "http://localhost:5211/api/tasks/tasks?status=pending&limit=5" 2>/dev/null || echo '{"error": "API not available"}')
 
 if echo "$TASKS_RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
   echo "  ⚠️  Tasks API not available, skipping database verification"
