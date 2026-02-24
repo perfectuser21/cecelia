@@ -1,6 +1,18 @@
 {
   "$schema": "./workers.schema.json",
   "version": "3.0.0",
+  "areas": {
+    "cecelia": {
+      "name": "Cecelia",
+      "description": "管家系统 - AI 调度与质量控制",
+      "icon": "Bot"
+    },
+    "zenithjoy": {
+      "name": "ZenithJoy",
+      "description": "媒体公司 - 内容运营与系统集成",
+      "icon": "Building2"
+    }
+  },
   "workerTypes": {
     "llm-skill": {
       "name": "LLM + Skill",
@@ -15,6 +27,8 @@
     {
       "id": "core",
       "name": "核心团队",
+      "area": "cecelia",
+      "department": "核心团队",
       "level": "management",
       "icon": "Brain",
       "description": "管理层，负责入口、调度、编程、质量、N8N 管理",
@@ -193,8 +207,37 @@
       ]
     },
     {
+      "id": "ops",
+      "name": "运维部",
+      "area": "cecelia",
+      "department": "运维部",
+      "level": "execution",
+      "icon": "Wrench",
+      "managedBy": "nobel",
+      "description": "执行层，负责系统运维，由 Nobel 调度",
+      "workers": [
+        {
+          "id": "xiaowei",
+          "name": "小维",
+          "alias": "Wei",
+          "icon": "Server",
+          "type": "n8n",
+          "role": "系统运维",
+          "description": "负责系统维护、定时任务和监控",
+          "n8nWorkflows": ["夜间任务调度器", "健康检查", "夜间备份"],
+          "n8nKeywords": ["nightly", "scheduler", "定时", "夜间", "备份", "监控", "monitor", "health", "cleanup", "清理", "维护"],
+          "gradient": {
+            "from": "from-slate-500",
+            "to": "to-gray-600"
+          }
+        }
+      ]
+    },
+    {
       "id": "media",
       "name": "新媒体部",
+      "area": "zenithjoy",
+      "department": "新媒体 & 集成部",
       "level": "execution",
       "icon": "Monitor",
       "managedBy": "nobel",
@@ -233,33 +276,10 @@
       ]
     },
     {
-      "id": "ops",
-      "name": "运维部",
-      "level": "execution",
-      "icon": "Wrench",
-      "managedBy": "nobel",
-      "description": "执行层，负责系统运维，由 Nobel 调度",
-      "workers": [
-        {
-          "id": "xiaowei",
-          "name": "小维",
-          "alias": "Wei",
-          "icon": "Server",
-          "type": "n8n",
-          "role": "系统运维",
-          "description": "负责系统维护、定时任务和监控",
-          "n8nWorkflows": ["夜间任务调度器", "健康检查", "夜间备份"],
-          "n8nKeywords": ["nightly", "scheduler", "定时", "夜间", "备份", "监控", "monitor", "health", "cleanup", "清理", "维护"],
-          "gradient": {
-            "from": "from-slate-500",
-            "to": "to-gray-600"
-          }
-        }
-      ]
-    },
-    {
       "id": "integration",
       "name": "集成部",
+      "area": "zenithjoy",
+      "department": "新媒体 & 集成部",
       "level": "execution",
       "icon": "Plug",
       "managedBy": "nobel",
