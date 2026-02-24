@@ -67,10 +67,16 @@ import routes from '../routes.js';
 
 const MOCK_WORKERS_CONFIG = {
   version: '3.0.0',
+  areas: {
+    cecelia: { name: 'Cecelia', description: '管家系统', icon: 'Bot' },
+    zenithjoy: { name: 'ZenithJoy', description: '媒体公司', icon: 'Building2' },
+  },
   teams: [
     {
       id: 'core',
       name: '核心团队',
+      area: 'cecelia',
+      department: '核心团队',
       level: 1,
       icon: '🧠',
       description: '核心管理层',
@@ -202,6 +208,20 @@ describe('GET /api/brain/staff', () => {
     const worker = res.body.teams[0].workers[0];
     expect(worker.model.provider).toBeNull();
     expect(worker.model.name).toBeNull();
+  });
+
+  it('team 包含 area 和 department 字段', async () => {
+    const res = await request(app).get('/api/brain/staff');
+    const team = res.body.teams[0];
+    expect(team).toHaveProperty('area', 'cecelia');
+    expect(team).toHaveProperty('department', '核心团队');
+  });
+
+  it('response 包含 areas 对象', async () => {
+    const res = await request(app).get('/api/brain/staff');
+    expect(res.body).toHaveProperty('areas');
+    expect(res.body.areas).toHaveProperty('cecelia');
+    expect(res.body.areas.cecelia).toHaveProperty('name', 'Cecelia');
   });
 });
 
