@@ -6523,6 +6523,8 @@ router.get('/staff', async (_req, res) => {
     const teams = workersConfig.teams.map(team => ({
       id: team.id,
       name: team.name,
+      area: team.area || null,
+      department: team.department || null,
       level: team.level,
       icon: team.icon,
       description: team.description,
@@ -6563,6 +6565,7 @@ router.get('/staff', async (_req, res) => {
     res.json({
       success: true,
       version: workersConfig.version,
+      areas: workersConfig.areas || {},
       teams,
       total_workers: teams.reduce((sum, t) => sum + t.workers.length, 0),
     });
