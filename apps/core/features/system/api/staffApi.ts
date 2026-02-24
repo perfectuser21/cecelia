@@ -23,15 +23,24 @@ export interface Worker {
 export interface Team {
   id: string;
   name: string;
+  area: string | null;
+  department: string | null;
   level: string;
   icon: string;
   description: string;
   workers: Worker[];
 }
 
+export interface AreaConfig {
+  name: string;
+  description: string;
+  icon: string;
+}
+
 export interface StaffResponse {
   success: boolean;
   version: string;
+  areas: Record<string, AreaConfig>;
   teams: Team[];
   total_workers: number;
 }
