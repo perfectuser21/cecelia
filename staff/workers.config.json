@@ -11,10 +11,16 @@
       "description": "N8N workflow 执行单元，由 Nobel 调度"
     }
   },
+  "areas": {
+    "cecelia": { "name": "Cecelia", "description": "管家系统", "icon": "Bot" },
+    "zenithjoy": { "name": "ZenithJoy", "description": "媒体公司", "icon": "Building2" }
+  },
   "teams": [
     {
       "id": "core",
       "name": "核心团队",
+      "area": "cecelia",
+      "department": "核心团队",
       "level": "management",
       "icon": "Brain",
       "description": "管理层，负责入口、调度、编程、质量、N8N 管理",
@@ -195,6 +201,8 @@
     {
       "id": "media",
       "name": "新媒体部",
+      "area": "zenithjoy",
+      "department": "新媒体 & 集成部",
       "level": "execution",
       "icon": "Monitor",
       "managedBy": "nobel",
@@ -235,6 +243,8 @@
     {
       "id": "ops",
       "name": "运维部",
+      "area": "cecelia",
+      "department": "运维部",
       "level": "execution",
       "icon": "Wrench",
       "managedBy": "nobel",
@@ -260,6 +270,8 @@
     {
       "id": "integration",
       "name": "集成部",
+      "area": "zenithjoy",
+      "department": "新媒体 & 集成部",
       "level": "execution",
       "icon": "Plug",
       "managedBy": "nobel",
