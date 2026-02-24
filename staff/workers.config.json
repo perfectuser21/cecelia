@@ -36,7 +36,7 @@
         {
           "id": "cecelia",
           "name": "Cecelia",
-          "alias": "塞西莉亚",
+          "alias": null,
           "icon": "Mic",
           "type": "llm-skill",
           "role": "入口",
@@ -61,7 +61,7 @@
         {
           "id": "autumnrice",
           "name": "Autumnrice",
-          "alias": "秋米",
+          "alias": null,
           "icon": "Workflow",
           "type": "llm-skill",
           "role": "调度",
@@ -92,7 +92,7 @@
         {
           "id": "caramel",
           "name": "Caramel",
-          "alias": "焦糖",
+          "alias": null,
           "icon": "Code",
           "type": "llm-skill",
           "role": "编程",
@@ -123,7 +123,7 @@
         {
           "id": "nobel",
           "name": "Nobel",
-          "alias": "诺贝",
+          "alias": null,
           "icon": "Cog",
           "type": "llm-skill",
           "role": "N8N 管理",
@@ -154,8 +154,8 @@
         },
         {
           "id": "xiaojian",
-          "name": "小检",
-          "alias": "Inspector",
+          "name": "Inspector",
+          "alias": null,
           "icon": "Search",
           "type": "llm-skill",
           "role": "QA",
@@ -180,8 +180,8 @@
         },
         {
           "id": "xiaoshen",
-          "name": "小审",
-          "alias": "Auditor",
+          "name": "Auditor",
+          "alias": null,
           "icon": "FileSearch",
           "type": "llm-skill",
           "role": "审计",
@@ -218,8 +218,8 @@
       "workers": [
         {
           "id": "xiaowei",
-          "name": "小维",
-          "alias": "Wei",
+          "name": "Wei",
+          "alias": null,
           "icon": "Server",
           "type": "n8n",
           "role": "系统运维",
@@ -245,8 +245,8 @@
       "workers": [
         {
           "id": "xiaoyun",
-          "name": "小运",
-          "alias": "Yun",
+          "name": "Yun",
+          "alias": null,
           "icon": "Video",
           "type": "n8n",
           "role": "内容运营",
@@ -260,8 +260,8 @@
         },
         {
           "id": "xiaoxi",
-          "name": "小析",
-          "alias": "Xi",
+          "name": "Xi",
+          "alias": null,
           "icon": "BarChart3",
           "type": "n8n",
           "role": "数据分析",
@@ -287,8 +287,8 @@
       "workers": [
         {
           "id": "xiaotong",
-          "name": "小通",
-          "alias": "Tong",
+          "name": "Tong",
+          "alias": null,
           "icon": "Link",
           "type": "n8n",
           "role": "系统集成",
