@@ -6714,4 +6714,97 @@ router.post('/device-locks/release', async (req, res) => {
   }
 });
 
+// ============================================================
+// Desire System API — Cecelia 的欲望/表达
+// ============================================================
+
+/**
+ * GET /api/brain/desires
+ * 列出 desires，支持按 type/status 筛选
+ * Query: type, status, limit(default 50)
+ */
+router.get('/brain/desires', async (req, res) => {
+  try {
+    const { type, status = 'pending', limit = 50 } = req.query;
+    const conditions = [];
+    const params = [];
+
+    if (type) {
+      params.push(type);
+      conditions.push(`type = $${params.length}`);
+    }
+    if (status !== 'all') {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+
+    params.push(Math.min(parseInt(limit) || 50, 200));
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows } = await pool.query(`
+      SELECT id, type, content, insight, proposed_action,
+             urgency, evidence, status, created_at, expires_at
+      FROM desires
+      ${where}
+      ORDER BY urgency DESC, created_at DESC
+      LIMIT $${params.length}
+    `, params);
+
+    res.json({ desires: rows, total: rows.length });
+  } catch (err) {
+    console.error('[API] desires error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/desires/stats
+ * 各状态/类型数量，用于前端 badge
+ */
+router.get('/brain/desires/stats', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('propose','question')) AS pending_decisions,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('warn')) AS pending_warns,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('inform','celebrate')) AS pending_updates,
+        COUNT(*) AS total
+      FROM desires
+      WHERE expires_at IS NULL OR expires_at > NOW()
+    `);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[API] desires/stats error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/desires/:id
+ * 更新 desire 状态（read / dismissed / expressed）
+ * Body: { status: 'expressed' | 'suppressed' }
+ */
+router.patch('/brain/desires/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const ALLOWED = ['expressed', 'suppressed'];
+    if (!ALLOWED.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${ALLOWED.join(', ')}` });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE desires SET status = $1 WHERE id = $2 RETURNING id, status`,
+      [status, id]
+    );
+
+    if (rows.length === 0) return res.status(404).json({ error: 'desire not found' });
+    res.json({ success: true, desire: rows[0] });
+  } catch (err) {
+    console.error('[API] desires/:id patch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
