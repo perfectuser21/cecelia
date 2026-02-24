@@ -58,6 +58,12 @@ import { handleChat } from './orchestrator-chat.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
+import {
+  runDecompositionChecks,
+  getActiveExecutionPaths,
+  checkInitiativeDecomposition,
+  INVENTORY_CONFIG
+} from './decomposition-checker.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -7025,6 +7031,169 @@ router.patch('/desires/:id', async (req, res) => {
     res.json({ success: true, desire: rows[0] });
   } catch (err) {
     console.error('[API] desires/:id patch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/decomposition/missing
+ * 查询缺失拆解任务的 Initiative 列表
+ */
+router.get('/decomposition/missing', async (req, res) => {
+  try {
+    // 获取缺失拆解任务的活跃 Initiative
+    const activePaths = await getActiveExecutionPaths();
+
+    const missingList = [];
+
+    for (const initiative of activePaths) {
+      // 检查任务库存是否充足
+      const readyTasksResult = await pool.query(`
+        SELECT COUNT(*) as count FROM tasks
+        WHERE project_id = $1 AND status = 'queued'
+      `, [initiative.id]);
+
+      const readyTasks = parseInt(readyTasksResult.rows[0].count, 10);
+
+      if (readyTasks < INVENTORY_CONFIG.LOW_WATERMARK) {
+        missingList.push({
+          initiative_id: initiative.id,
+          initiative_name: initiative.name,
+          kr_id: initiative.kr_id,
+          ready_tasks: readyTasks,
+          low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+          target_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      missing_initiatives: missingList,
+      total_active_paths: activePaths.length,
+      low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+      target_ready_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/decomposition/create-missing
+ * 手动触发为缺失拆解任务的 Initiative 创建任务
+ */
+router.post('/decomposition/create-missing', async (req, res) => {
+  try {
+    const result = await runDecompositionChecks();
+
+    // 统计创建的任务
+    const createdTasks = result.actions?.filter(action => action.action === 'create_decomposition') || [];
+    const inventoryTasks = createdTasks.filter(task => task.check === 'inventory_replenishment');
+    const initiativeTasks = createdTasks.filter(task => task.check === 'initiative_decomposition');
+
+    res.json({
+      success: true,
+      message: 'Decomposition check completed',
+      summary: result.summary || {},
+      created_tasks: {
+        total: createdTasks.length,
+        inventory_replenishment: inventoryTasks.length,
+        initiative_seeding: initiativeTasks.length
+      },
+      details: {
+        active_paths: result.active_paths || [],
+        created_tasks: result.created_tasks || []
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/create-missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/decomposition/stats
+ * 获取拆解任务统计信息
+ */
+router.get('/decomposition/stats', async (req, res) => {
+  try {
+    // 获取活跃的执行路径
+    const activePaths = await getActiveExecutionPaths();
+
+    // 获取拆解任务统计
+    const decompTasksResult = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN status = 'queued' THEN 1 END) as queued,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed
+      FROM tasks
+      WHERE (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+    `);
+
+    // 获取库存统计
+    const inventoryStats = [];
+    let totalLowInventory = 0;
+
+    for (const initiative of activePaths) {
+      const readyTasksResult = await pool.query(`
+        SELECT COUNT(*) as count FROM tasks
+        WHERE project_id = $1 AND status = 'queued'
+      `, [initiative.id]);
+
+      const readyTasks = parseInt(readyTasksResult.rows[0].count, 10);
+      const isLowInventory = readyTasks < INVENTORY_CONFIG.LOW_WATERMARK;
+
+      if (isLowInventory) totalLowInventory++;
+
+      inventoryStats.push({
+        initiative_id: initiative.id,
+        initiative_name: initiative.name,
+        ready_tasks: readyTasks,
+        is_low_inventory: isLowInventory
+      });
+    }
+
+    // 获取项目和Initiative统计
+    const projectStatsResult = await pool.query(`
+      SELECT
+        type,
+        status,
+        COUNT(*) as count
+      FROM projects
+      WHERE type IN ('project', 'initiative')
+      GROUP BY type, status
+    `);
+
+    const projectStats = {};
+    for (const row of projectStatsResult.rows) {
+      if (!projectStats[row.type]) projectStats[row.type] = {};
+      projectStats[row.type][row.status] = parseInt(row.count, 10);
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        active_execution_paths: activePaths.length,
+        low_inventory_initiatives: totalLowInventory,
+        total_initiatives: activePaths.length
+      },
+      decomposition_tasks: decompTasksResult.rows[0] || {},
+      inventory_stats: inventoryStats,
+      project_stats: projectStats,
+      config: {
+        low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+        target_ready_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS,
+        batch_size: INVENTORY_CONFIG.BATCH_SIZE
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/stats error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
