@@ -1,0 +1,29 @@
+{
+  "form_score": 5,
+  "content_score": 0,
+  "content_breakdown": {
+    "title_quality": 0,
+    "description_quality": 0,
+    "kr_feature_mapping": 0,
+    "completeness": 0
+  },
+  "total": 5,
+  "passed": false,
+  "content_hash": "6095f205808dddd7",
+  "timestamp": "2026-02-24T14:50:13.656725",
+  "issues": [
+    "Missing 'key_results' field",
+    "Need at least 2 Key Results (found 0)",
+    "No Features defined for any KR"
+  ],
+  "suggestions": [
+    "Add 'key_results' array with at least 2 KRs",
+    "Add more Key Results to achieve the Objective",
+    "Decompose each KR into 2-5 Features"
+  ],
+  "format": "2-layer",
+  "details": {
+    "num_features": 0,
+    "num_pr_plans": 0
+  }
+}
