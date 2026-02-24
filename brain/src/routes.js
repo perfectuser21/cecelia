@@ -6649,6 +6649,75 @@ router.get('/staff', async (_req, res) => {
   }
 });
 
+// ==================== Staff Worker Edit API ====================
+
+/**
+ * PUT /api/brain/staff/workers/:workerId
+ * 更新 worker 的 skill 和/或 model 配置
+ * body: { skill?: string, model?: { provider: string, name: string } }
+ */
+router.put('/staff/workers/:workerId', async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const { skill, model } = req.body;
+    const fs = await import('fs');
+
+    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersConfig = JSON.parse(fs.readFileSync(workersPath, 'utf-8'));
+
+    // 找到 worker
+    let targetWorker = null;
+    for (const team of workersConfig.teams) {
+      const worker = team.workers.find(w => w.id === workerId);
+      if (worker) {
+        if (skill !== undefined) {
+          worker.skill = skill || null;
+        }
+        targetWorker = worker;
+        break;
+      }
+    }
+    if (!targetWorker) {
+      return res.status(404).json({ success: false, error: `Worker ${workerId} not found` });
+    }
+
+    // 保存 workers.config.json（skill 变更）
+    fs.writeFileSync(workersPath, JSON.stringify(workersConfig, null, 2));
+
+    // 更新 model（直接写 active profile 的 model_map）
+    if (model?.provider && model?.name) {
+      const { rows: activeRows } = await pool.query(
+        'SELECT id, config FROM model_profiles WHERE is_active = true LIMIT 1'
+      );
+      if (activeRows.length > 0) {
+        const profile = activeRows[0];
+        const config = { ...profile.config };
+        const modelMap = { ...(config.executor?.model_map || {}) };
+        const skillKey = targetWorker.skill?.replace('/', '') || workerId;
+        const existing = modelMap[skillKey] || {};
+        const newMap = {
+          anthropic: model.provider === 'anthropic' ? model.name : (existing.anthropic || null),
+          minimax:   model.provider === 'minimax'   ? model.name : (existing.minimax   || null),
+          openai:    model.provider === 'openai'    ? model.name : (existing.openai    || null),
+        };
+        modelMap[skillKey] = newMap;
+        config.executor = { ...config.executor, model_map: modelMap };
+        await pool.query(
+          'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
+          [JSON.stringify(config), profile.id]
+        );
+        const { loadActiveProfile } = await import('./model-profile.js');
+        await loadActiveProfile(pool);
+      }
+    }
+
+    res.json({ success: true, workerId });
+  } catch (err) {
+    console.error('[API] staff worker PUT error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==================== Skills Registry API ====================
 
 /**
