@@ -50,6 +50,18 @@ export const MODELS = [
     tier: 'fast',
   },
   {
+    id: 'claude-sonnet-4-6',
+    name: 'Sonnet 4.6',
+    provider: 'anthropic',
+    tier: 'standard',
+  },
+  {
+    id: 'claude-opus-4-6',
+    name: 'Opus 4.6',
+    provider: 'anthropic',
+    tier: 'premium',
+  },
+  {
     id: 'claude-sonnet-4-20250514',
     name: 'Sonnet',
     provider: 'anthropic',

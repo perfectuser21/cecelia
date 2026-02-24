@@ -34,8 +34,8 @@ describe('model-registry', () => {
       }
     });
 
-    it('R1b: 模型总数为 11', () => {
-      expect(MODELS.length).toBe(11);
+    it('R1b: 模型总数为 13', () => {
+      expect(MODELS.length).toBe(13);
     });
 
     it('R2: 所有 agent 有 id/name/layer/allowed_models/recommended_model', () => {
@@ -99,6 +99,17 @@ describe('model-registry', () => {
       expect(m2).toBeTruthy();
       expect(m2.provider).toBe('minimax');
       expect(m2.tier).toBe('premium');
+
+      // 2026-02-24 新增：Claude 4.6 模型
+      const sonnet46 = getModelById('claude-sonnet-4-6');
+      expect(sonnet46).toBeTruthy();
+      expect(sonnet46.provider).toBe('anthropic');
+      expect(sonnet46.tier).toBe('standard');
+
+      const opus46 = getModelById('claude-opus-4-6');
+      expect(opus46).toBeTruthy();
+      expect(opus46.provider).toBe('anthropic');
+      expect(opus46.tier).toBe('premium');
     });
 
     it('R11: 新模型正确加入 agent 白名单', () => {
