@@ -600,7 +600,7 @@ router.get('/status', (_req: Request, res: Response) => {
  * Semantic Brain API proxy routes
  * Forward requests to the Task Intelligence system
  */
-const SEMANTIC_BRAIN_URL = process.env.SEMANTIC_BRAIN_URL || 'http://localhost:5220';
+const SEMANTIC_BRAIN_URL = process.env.SEMANTIC_BRAIN_URL || 'http://localhost:5221';
 
 /**
  * POST /api/panorama/tasks/parse
@@ -850,7 +850,7 @@ router.post('/execute', async (req: Request, res: Response) => {
  */
 router.get('/full', async (_req: Request, res: Response) => {
   try {
-    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
+    const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
     const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
     const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5679';
 
@@ -906,7 +906,7 @@ router.get('/full', async (_req: Request, res: Response) => {
     const services = [
       {
         name: 'semantic-brain',
-        port: 5220,
+        port: 5221,
         status: brainData.health === 'ok' ? 'up' : 'down',
         endpoint: BRAIN_API,
       },

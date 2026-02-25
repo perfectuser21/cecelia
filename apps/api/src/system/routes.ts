@@ -86,7 +86,7 @@ const __dirname = path.dirname(__filename);
 const DLQ_SCRIPT = path.resolve(__dirname, '../../../../scripts/dlq-utils.sh');
 
 // Service endpoints
-const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5220';
+const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
 const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
 const N8N_API = process.env.N8N_BACKEND || 'http://localhost:5679';
 
