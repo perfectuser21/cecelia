@@ -6731,6 +6731,52 @@ router.put('/staff/workers/:workerId', async (req, res) => {
   }
 });
 
+// ==================== Credentials API ====================
+
+/**
+ * GET /api/brain/credentials
+ * 返回可用账户列表（扫描 account*.json 和 ~/.credentials/*.json）
+ */
+router.get('/credentials', async (_req, res) => {
+  const fs = require('fs');
+  const credentials = [];
+  
+  // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
+  const claudeDir = '/home/xx/.claude';
+  try {
+    const files = fs.readdirSync(claudeDir);
+    files.filter(f => /^\.account\d+\.json$/.test(f)).sort().forEach(file => {
+      const num = file.match(/\.account(\d+)\.json/)[1];
+      credentials.push({
+        name: `account${num}`,
+        type: 'anthropic_oauth',
+        path: `~/.claude/${file}`,
+        provider: 'anthropic'
+      });
+    });
+  } catch(e) {}
+  
+  // 2. API key credentials: /home/cecelia/.credentials/*.json (Docker mount)
+  const credDir = '/home/cecelia/.credentials';
+  try {
+    const files = fs.readdirSync(credDir);
+    files.filter(f => f.endsWith('.json')).sort().forEach(file => {
+      const name = file.replace('.json', '');
+      let provider = 'openai';
+      if (name.startsWith('minimax')) provider = 'minimax';
+      else if (name.startsWith('openai')) provider = 'openai';
+      credentials.push({
+        name,
+        type: 'api_key',
+        path: `~/.credentials/${file}`,
+        provider
+      });
+    });
+  } catch(e) {}
+  
+  res.json({ credentials });
+});
+
 // ==================== Skills Registry API ====================
 
 /**
