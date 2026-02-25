@@ -4,7 +4,7 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
-    "../core/features/**/*.{js,ts,jsx,tsx}",
+    "../api/features/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
