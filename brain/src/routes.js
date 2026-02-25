@@ -49,7 +49,7 @@ import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circui
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
@@ -6738,13 +6738,12 @@ router.put('/staff/workers/:workerId', async (req, res) => {
  * 返回可用账户列表（扫描 account*.json 和 ~/.credentials/*.json）
  */
 router.get('/credentials', async (_req, res) => {
-  const fs = require('fs');
   const credentials = [];
-  
+
   // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
   const claudeDir = '/home/xx/.claude';
   try {
-    const files = fs.readdirSync(claudeDir);
+    const files = readdirSync(claudeDir);
     files.filter(f => /^\.account\d+\.json$/.test(f)).sort().forEach(file => {
       const num = file.match(/\.account(\d+)\.json/)[1];
       credentials.push({
@@ -6754,12 +6753,12 @@ router.get('/credentials', async (_req, res) => {
         provider: 'anthropic'
       });
     });
-  } catch(e) {}
-  
+  } catch(e) { /* dir may not exist in test env */ }
+
   // 2. API key credentials: /home/cecelia/.credentials/*.json (Docker mount)
   const credDir = '/home/cecelia/.credentials';
   try {
-    const files = fs.readdirSync(credDir);
+    const files = readdirSync(credDir);
     files.filter(f => f.endsWith('.json')).sort().forEach(file => {
       const name = file.replace('.json', '');
       let provider = 'openai';
@@ -6772,8 +6771,8 @@ router.get('/credentials', async (_req, res) => {
         provider
       });
     });
-  } catch(e) {}
-  
+  } catch(e) { /* dir may not exist in test env */ }
+
   res.json({ credentials });
 });
 
