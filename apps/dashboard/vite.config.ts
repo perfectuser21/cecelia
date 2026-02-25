@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
-// Core features — point to workspace's own features directory
-const coreFeaturesPath = path.resolve(__dirname, '../core/features')
+// Core features — point to api's features directory (monorepo: core → api)
+const coreFeaturesPath = path.resolve(__dirname, '../api/features')
 
 export default defineConfig({
   resolve: {

@@ -10,11 +10,6 @@ on:
       - '.brain-versions'
   pull_request:
     branches: [main]
-    paths:
-      - 'packages/brain/**'
-      - 'scripts/**'
-      - 'DEFINITION.md'
-      - '.brain-versions'
   workflow_dispatch:
 
 concurrency:
@@ -22,8 +17,30 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  # Detect which paths changed to skip heavy jobs on non-brain PRs
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            brain:
+              - 'packages/brain/**'
+              - 'scripts/**'
+              - 'DEFINITION.md'
+              - '.brain-versions'
+
   version-check:
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true'
     name: Version Check
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -64,6 +81,8 @@ jobs:
           fi
 
   facts-check:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -84,6 +103,8 @@ jobs:
         run: bash scripts/check-version-sync.sh
 
   brain-test:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
     name: Brain Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -138,14 +159,23 @@ jobs:
         run: bash scripts/goldenpath-check.sh
 
   ci-passed:
-    needs: [version-check, facts-check, brain-test]
-    if: >-
-      github.event_name == 'pull_request' && always()
-      && needs.brain-test.result == 'success'
-      && needs.facts-check.result == 'success'
-      && (needs.version-check.result == 'success' || needs.version-check.result == 'skipped')
+    needs: [changes, version-check, facts-check, brain-test]
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Brain CI Passed
-        run: echo "Brain CI checks passed"
+        run: |
+          if [ "${{ needs.changes.outputs.brain }}" != "true" ]; then
+            echo "No brain changes detected, skipping checks"
+            exit 0
+          fi
+          if [ "${{ needs.brain-test.result }}" != "success" ]; then
+            echo "Brain Tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.facts-check.result }}" != "success" ]; then
+            echo "Facts Consistency failed"
+            exit 1
+          fi
+          echo "All Brain CI checks passed"
