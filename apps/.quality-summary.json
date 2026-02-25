@@ -1,0 +1,69 @@
+{
+  "generated_at": "2026-02-10T14:45:00Z",
+  "pr_branch": "cp-platform-data-feature",
+  "quality_checks": {
+    "directory_structure": {
+      "status": "pass",
+      "description": "目录结构完整",
+      "details": [
+        "apps/features/platform-data/ 目录存在",
+        "skill/, workflows/, shared/ 目录存在",
+        "所有 README.md 文件存在"
+      ]
+    },
+    "skill_files": {
+      "status": "pass",
+      "description": "Skill 入口文件完整",
+      "details": [
+        "SKILL.md 存在",
+        "command.sh 存在且可执行",
+        "三个子命令脚本存在 (scrape.sh, analyze.sh, publish.sh)"
+      ]
+    },
+    "workflow_scripts": {
+      "status": "pass",
+      "description": "Workflow 脚本迁移完成",
+      "details": [
+        "scraper: 8 个平台脚本已迁移",
+        "analyzer: 脚本已迁移",
+        "publisher: 脚本已迁移"
+      ]
+    },
+    "documentation": {
+      "status": "pass",
+      "description": "文档完整",
+      "details": [
+        "Feature README.md 存在",
+        "Skill SKILL.md 存在",
+        "每个 workflow 有 README.md"
+      ]
+    },
+    "tests": {
+      "status": "pending",
+      "description": "测试文件已创建",
+      "details": [
+        "structure.test.ts 已创建",
+        "skill-routing.test.ts 已创建",
+        "测试执行由 CI 完成"
+      ]
+    }
+  },
+  "manual_verification_required": [
+    "目录结构验证",
+    "文件清单验证",
+    "文档验证",
+    "功能验证",
+    "权限验证",
+    "安全审查",
+    "代码审查",
+    "文件检查（skills-registry.json 未修改）",
+    "目录检查（shared/ 未实现）",
+    "文件系统检查（旧 repo 未删除）"
+  ],
+  "summary": {
+    "total_checks": 5,
+    "passed": 4,
+    "pending": 1,
+    "failed": 0
+  }
+}

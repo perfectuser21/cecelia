@@ -1,0 +1,302 @@
+/**
+ * Core Dashboard Server
+ * Serves both Core and Dashboard frontends based on hostname
+ * Proxies /api/v1/* to autopilot backend
+ */
+
+import 'dotenv/config';
+import express from 'express';
+import compression from 'compression';
+import { createServer } from 'http';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { createProxyMiddleware } from 'http-proxy-middleware';
+import routes from './routes.js';
+import devRoutes from '../dev/routes.js';
+import engineRoutes from '../engine/routes.js';
+import githubRoutes from '../github/routes.js';
+import workersRoutes from '../workers/routes.js';
+import panoramaRoutes from '../panorama/routes.js';
+import devgateRoutes from '../devgate/routes.js';
+import mediaRoutes from '../media/routes.js';
+import taskSystemRoutes from '../task-system/routes.js';
+import areasRoutes from '../task-system/areas.js';
+// Brain routes migrated to cecelia-semantic-brain (port 5221)
+import okrRoutes from '../okr/routes.js';
+import watchdogRoutes from '../watchdog/routes.js';
+import systemRoutes from '../system/routes.js';
+import intentRoutes from '../intent/routes.js';
+import { startMonitor as startWatchdogMonitor } from '../watchdog/service.js';
+// Tick loop migrated to cecelia-semantic-brain
+import { auditMiddleware, initAuditTable } from '../middleware/audit.js';
+import orchestratorQueueRoutes from './orchestrator-queue.js';
+import vpsMonitorRoutes from '../vps-monitor/routes.js';
+import n8nApiRoutes from '../n8n-api/routes.js';
+import analysisRoutes from '../analysis/routes.js';
+import clusterRoutes from '../cluster/routes.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const app = express();
+const PORT = process.env.PORT || 5211;
+const AUTOPILOT_BACKEND = process.env.AUTOPILOT_BACKEND || 'http://localhost:3333';
+
+// Feishu auth backend
+const FEISHU_AUTH_BACKEND = process.env.FEISHU_AUTH_BACKEND || 'http://localhost:3002';
+
+// N8N backend (for workflow automation)
+const N8N_BACKEND = process.env.N8N_BACKEND || 'http://localhost:5678';
+
+// Cecelia Quality API (quality monitoring) - port 5681
+const QUALITY_API = process.env.QUALITY_API || 'http://localhost:5681';
+
+// Cecelia Brain API (semantic brain + orchestrator)
+const BRAIN_API = process.env.BRAIN_API || 'http://localhost:5221';
+
+// CORS
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (_req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Gzip compression for all responses
+app.use(compression() as unknown as express.RequestHandler);
+
+// Proxy routes BEFORE body parser (so request body is not consumed)
+// Proxy /api/quality to cecelia-quality API
+// Note: Express strips the mount path, so /api/quality/state becomes /state in the middleware
+// We need to prepend /api to make it /api/state for the target server
+app.use('/api/quality', createProxyMiddleware({
+  target: QUALITY_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api${path}`  // /state → /api/state
+}));
+
+// Local orchestrator queue management routes (registered before proxy)
+// These routes handle queue operations locally: /queue, /execute-now/:id, /pause/:id
+// All other orchestrator routes are proxied to semantic-brain API
+// No route conflicts: orchestratorQueueRoutes only defines specific paths, no wildcards
+app.use('/api/orchestrator', orchestratorQueueRoutes);
+
+// Proxy remaining /api/orchestrator/* to semantic-brain API
+// All other orchestrator routes (chat, voice, state, health, realtime) are in Brain
+// Note: Express strips mount path, so /api/orchestrator/chat becomes /chat
+const orchestratorProxy = createProxyMiddleware({
+  target: BRAIN_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api/brain/orchestrator${path}`,  // /chat → /api/brain/orchestrator/chat
+  ws: true,  // Enable WebSocket proxying for realtime voice
+});
+app.use('/api/orchestrator', orchestratorProxy);
+
+// Proxy /api/autumnrice/* to semantic-brain API (R-cell one-click execution)
+app.use('/api/autumnrice', createProxyMiddleware({
+  target: BRAIN_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api/brain/autumnrice${path}`,  // /run → /api/brain/autumnrice/run
+}));
+
+// Local API routes that replace Autopilot backend (port 3333 no longer needed)
+app.use('/api/v1/vps-monitor', vpsMonitorRoutes);
+app.use('/api/v1', n8nApiRoutes);
+
+// Proxy remaining /api/v1/* to autopilot backend (fallback)
+app.use('/api/v1', createProxyMiddleware({
+  target: AUTOPILOT_BACKEND,
+  changeOrigin: true,
+  timeout: 8000,
+  proxyTimeout: 8000,
+  pathRewrite: {
+    '^/api/v1': '/v1'
+  },
+  on: {
+    error: (_err, _req, res) => {
+      if ('writeHead' in res) {
+        (res as any).writeHead(502, { 'Content-Type': 'application/json' });
+        (res as any).end(JSON.stringify({ error: 'Autopilot backend unavailable' }));
+      }
+    },
+  },
+}));
+
+// Proxy /n8n/* to N8N container (workflow automation)
+app.use('/n8n', createProxyMiddleware({
+  target: N8N_BACKEND,
+  changeOrigin: true,
+  ws: true,
+}));
+
+// Middleware
+app.use(express.json({ limit: '256kb' }));
+
+// Audit middleware (logs all /api/* requests)
+app.use(auditMiddleware);
+
+// Forward /api/feishu-login to feishu-auth-backend
+app.post('/api/feishu-login', async (req, res) => {
+  try {
+    const response = await fetch(`${FEISHU_AUTH_BACKEND}/api/feishu-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch {
+    res.status(500).json({ success: false, error: 'Proxy error' });
+  }
+});
+
+// API routes middleware
+app.use('/api', (_req, _res, next) => {
+  next();
+});
+
+// Local API routes (Cecelia)
+app.use('/api/cecelia', routes);
+
+// Dev Task Tracker routes
+app.use('/api/dev', devRoutes);
+
+// Engine info routes
+app.use('/api/engine', engineRoutes);
+
+// GitHub API routes (for dev panorama)
+app.use('/api/github', githubRoutes);
+
+// Workers API routes (unified AI employees)
+app.use('/api/workers', workersRoutes);
+
+// Panorama API routes (VPS overview)
+app.use('/api/panorama', panoramaRoutes);
+
+// DevGate API routes (metrics from engine)
+app.use('/api/devgate', devgateRoutes);
+
+// Claude Accounts API routes (account switcher + usage stats)
+
+// Media Data API routes (social metrics proxy)
+app.use('/api/media', mediaRoutes);
+
+// Task System API routes (PARA + OKR)
+app.use('/api/tasks', taskSystemRoutes);
+
+// Areas API routes (PARA alignment)
+app.use('/api/areas', areasRoutes);
+
+// Intent Recognition API routes (KR1: Natural Language → OKR/Project/Task)
+app.use('/api/intent', intentRoutes);
+
+// Analysis API routes (Historical Drop-off Analysis)
+app.use('/api/analysis', analysisRoutes);
+
+// Cluster session management (session-info + kill-session)
+app.use('/api/cluster', clusterRoutes);
+
+// Brain API routes → proxy to cecelia-semantic-brain Node.js service
+const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
+const brainProxy = createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api/brain${path}`,
+  // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
+  // server.on('upgrade') listener that conflicts with the manual handler below.
+  // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
+  on: {
+    // express.json() consumes the body stream globally; re-write it so the proxy
+    // can forward POST/PUT bodies correctly to the Brain service.
+    proxyReq: (proxyReq, req) => {
+      const body = (req as any).body;
+      if (body && Object.keys(body).length > 0) {
+        const bodyData = JSON.stringify(body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
+    },
+  },
+});
+app.use('/api/brain', brainProxy);
+
+// Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
+const brainWsProxy = createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  ws: true,
+});
+
+// OKR Tree API routes (tree-based OKR management)
+app.use('/api/okr', okrRoutes);
+
+// Watchdog API routes (agent activity monitoring)
+app.use('/api/watchdog', watchdogRoutes);
+
+// System status API routes (aggregated status from all subsystems)
+app.use('/api/system', systemRoutes);
+
+// Static frontend files (single frontend, theme switches by hostname in JS)
+// Frontend lives in apps/dashboard/ within this workspace
+const frontendPath = process.env.DASHBOARD_FRONTEND_PATH || join(__dirname, '../../../dashboard/dist');
+
+// Hashed assets (/assets/*) — immutable long-term cache (1 year)
+app.use('/assets', express.static(join(frontendPath, 'assets'), {
+  maxAge: '1y',
+  immutable: true,
+}));
+
+// Other static files (index.html, favicon, logos) — no cache
+app.use(express.static(frontendPath, {
+  maxAge: 0,
+  etag: true,
+}));
+
+// SPA fallback — no cache for index.html
+app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(join(frontendPath, 'index.html'));
+});
+
+// Error handler
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('Error:', err.message);
+  res.status(500).json({
+    success: false,
+    error: err.message,
+  });
+});
+
+// Start server with WebSocket support
+const server = createServer(app);
+
+// Handle WebSocket upgrade for orchestrator realtime and brain WS
+server.on('upgrade', (req, socket, head) => {
+  if (req.url?.startsWith('/api/orchestrator/realtime/ws')) {
+    req.url = '/realtime/ws';
+    console.log('[WebSocket Upgrade] Proxying orchestrator, input URL rewritten to:', req.url);
+    orchestratorProxy.upgrade(req, socket as any, head);
+  } else if (req.url?.startsWith('/api/brain/ws')) {
+    req.url = '/ws';
+    console.log('[WebSocket Upgrade] Proxying brain WS');
+    brainWsProxy.upgrade(req, socket as any, head);
+  }
+});
+
+server.listen(PORT, async () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+
+  // Initialize audit table
+  await initAuditTable();
+
+  // Start watchdog monitor automatically
+  startWatchdogMonitor();
+
+  // Tick loop now runs in cecelia-semantic-brain Node.js service (port 5221)
+});
+
+export default app;

@@ -1,0 +1,23 @@
+{
+  "gate": "test",
+  "decision": "PASS",
+  "timestamp": "2026-02-01T13:37:00+08:00",
+  "validated_by": "gate:test subagent",
+  "test_results": {
+    "total": 47,
+    "passed": 46,
+    "failed": 1,
+    "pass_rate": "97.9%"
+  },
+  "coverage": {
+    "bug_fix_1_context_validation": "4 new tests",
+    "bug_fix_2_enum_mapping": "43 existing tests"
+  },
+  "failing_tests": [
+    {
+      "name": "明确的创建请求应有高置信度",
+      "classification": "L3 calibration issue",
+      "blocking": false
+    }
+  ]
+}

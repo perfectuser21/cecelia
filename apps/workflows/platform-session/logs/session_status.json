@@ -1,0 +1,65 @@
+{
+  "douyin": {
+    "name": "抖音",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 22.5
+  },
+  "kuaishou": {
+    "name": "快手",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "xiaohongshu": {
+    "name": "小红书",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "toutiao": {
+    "name": "头条主号",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "toutiao2": {
+    "name": "头条AI测试",
+    "login_time": "2025-12-23T17:44:00.000000",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 43.3
+  },
+  "weibo": {
+    "name": "微博",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "channels": {
+    "name": "视频号",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "gongzhonghao": {
+    "name": "公众号",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  },
+  "zhihu": {
+    "name": "知乎",
+    "login_time": "2025-12-23T14:28:05.438003",
+    "last_check": "2026-01-16T22:00:01.829759",
+    "status": "logged_out",
+    "duration_hours": 46.5
+  }
+}

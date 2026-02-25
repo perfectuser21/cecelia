@@ -1,0 +1,286 @@
+{
+  "$schema": "./workers.schema.json",
+  "version": "3.0.0",
+  "workerTypes": {
+    "llm-skill": {
+      "name": "LLM + Skill",
+      "description": "无头 LLM + Skill，管理层使用"
+    },
+    "n8n": {
+      "name": "N8N Workflow",
+      "description": "N8N workflow 执行单元，由 Nobel 调度"
+    }
+  },
+  "teams": [
+    {
+      "id": "core",
+      "name": "核心团队",
+      "level": "management",
+      "icon": "Brain",
+      "description": "管理层，负责入口、调度、编程、质量、N8N 管理",
+      "workers": [
+        {
+          "id": "cecelia",
+          "name": "Cecelia",
+          "alias": "塞西莉亚",
+          "icon": "Mic",
+          "type": "llm-skill",
+          "role": "入口",
+          "description": "接收语音/文本/CLI 输入，解析意图，写 Request，激活管家",
+          "abilities": [
+            {
+              "id": "intent-parse",
+              "name": "意图解析",
+              "description": "解析用户输入的意图"
+            },
+            {
+              "id": "request-write",
+              "name": "Request 生成",
+              "description": "将意图转化为结构化 Request"
+            }
+          ],
+          "gradient": {
+            "from": "from-purple-500",
+            "to": "to-pink-500"
+          }
+        },
+        {
+          "id": "autumnrice",
+          "name": "Autumnrice",
+          "alias": "秋米",
+          "icon": "Workflow",
+          "type": "llm-skill",
+          "role": "调度",
+          "skill": "/orchestrator",
+          "description": "接收 Request，拆解 TRD → Tasks，调度派发给 Caramel 或 Nobel",
+          "abilities": [
+            {
+              "id": "task-decompose",
+              "name": "任务拆解",
+              "description": "将 TRD 拆解为可执行 Tasks"
+            },
+            {
+              "id": "dispatch",
+              "name": "调度派发",
+              "description": "将任务分配给 Caramel（编程）或 Nobel（自动化）"
+            },
+            {
+              "id": "tick",
+              "name": "状态推进",
+              "description": "tick 推进状态机，重试、解锁、检查"
+            }
+          ],
+          "gradient": {
+            "from": "from-amber-500",
+            "to": "to-yellow-500"
+          }
+        },
+        {
+          "id": "caramel",
+          "name": "Caramel",
+          "alias": "焦糖",
+          "icon": "Code",
+          "type": "llm-skill",
+          "role": "编程",
+          "skill": "/dev",
+          "description": "执行 /dev workflow，写代码、跑测试、提 PR、修 CI",
+          "abilities": [
+            {
+              "id": "code-write",
+              "name": "代码编写",
+              "description": "根据 Task 编写代码"
+            },
+            {
+              "id": "test-run",
+              "name": "测试执行",
+              "description": "运行测试确保代码质量"
+            },
+            {
+              "id": "pr-submit",
+              "name": "PR 提交",
+              "description": "提交 PR 并修复 CI"
+            }
+          ],
+          "gradient": {
+            "from": "from-orange-500",
+            "to": "to-red-500"
+          }
+        },
+        {
+          "id": "nobel",
+          "name": "Nobel",
+          "alias": "诺贝",
+          "icon": "Cog",
+          "type": "llm-skill",
+          "role": "N8N 管理",
+          "skill": "/n8n-manage",
+          "description": "管理和调度所有 N8N workflow 员工，决定调用哪个 workflow",
+          "manages": ["media", "ops", "integration"],
+          "abilities": [
+            {
+              "id": "workflow-dispatch",
+              "name": "Workflow 调度",
+              "description": "根据任务类型选择合适的 N8N workflow"
+            },
+            {
+              "id": "workflow-monitor",
+              "name": "执行监控",
+              "description": "监控 N8N workflow 执行状态"
+            },
+            {
+              "id": "workflow-manage",
+              "name": "Workflow 管理",
+              "description": "创建、更新、删除 N8N workflows"
+            }
+          ],
+          "gradient": {
+            "from": "from-blue-500",
+            "to": "to-indigo-500"
+          }
+        },
+        {
+          "id": "xiaojian",
+          "name": "小检",
+          "alias": "Inspector",
+          "icon": "Search",
+          "type": "llm-skill",
+          "role": "QA",
+          "skill": "/qa",
+          "description": "跨仓库 QA 总控，管理测试决策、回归契约、Golden Paths",
+          "abilities": [
+            {
+              "id": "qa-test",
+              "name": "QA 测试",
+              "description": "执行质量测试和验证"
+            },
+            {
+              "id": "regression",
+              "name": "回归测试",
+              "description": "管理回归契约和 Golden Paths"
+            }
+          ],
+          "gradient": {
+            "from": "from-green-500",
+            "to": "to-emerald-500"
+          }
+        },
+        {
+          "id": "xiaoshen",
+          "name": "小审",
+          "alias": "Auditor",
+          "icon": "FileSearch",
+          "type": "llm-skill",
+          "role": "审计",
+          "skill": "/audit",
+          "description": "有边界的代码审计与修复，分层标准 L1-L4",
+          "abilities": [
+            {
+              "id": "code-audit",
+              "name": "代码审计",
+              "description": "审计代码质量和安全性"
+            },
+            {
+              "id": "auto-fix",
+              "name": "自动修复",
+              "description": "自动修复 L1/L2 级别问题"
+            }
+          ],
+          "gradient": {
+            "from": "from-red-500",
+            "to": "to-orange-500"
+          }
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "name": "新媒体部",
+      "level": "execution",
+      "icon": "Monitor",
+      "managedBy": "nobel",
+      "description": "执行层，负责社交媒体运营，由 Nobel 调度",
+      "workers": [
+        {
+          "id": "xiaoyun",
+          "name": "小运",
+          "alias": "Yun",
+          "icon": "Video",
+          "type": "n8n",
+          "role": "内容运营",
+          "description": "负责各平台账号的登录管理和内容发布",
+          "n8nWorkflows": ["内容发布", "账号登录"],
+          "n8nKeywords": ["登录", "login", "发布", "publish", "post", "内容发布", "VNC"],
+          "gradient": {
+            "from": "from-pink-500",
+            "to": "to-rose-500"
+          }
+        },
+        {
+          "id": "xiaoxi",
+          "name": "小析",
+          "alias": "Xi",
+          "icon": "BarChart3",
+          "type": "n8n",
+          "role": "数据分析",
+          "description": "负责数据采集和分析任务",
+          "n8nWorkflows": ["数据采集调度器", "平台数据爬取"],
+          "n8nKeywords": ["爬取", "scrape", "采集", "数据爬取", "抖音", "小红书", "微博", "知乎", "快手", "公众号", "视频号", "头条", "分析", "analytics", "统计"],
+          "gradient": {
+            "from": "from-amber-500",
+            "to": "to-orange-500"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ops",
+      "name": "运维部",
+      "level": "execution",
+      "icon": "Wrench",
+      "managedBy": "nobel",
+      "description": "执行层，负责系统运维，由 Nobel 调度",
+      "workers": [
+        {
+          "id": "xiaowei",
+          "name": "小维",
+          "alias": "Wei",
+          "icon": "Server",
+          "type": "n8n",
+          "role": "系统运维",
+          "description": "负责系统维护、定时任务和监控",
+          "n8nWorkflows": ["夜间任务调度器", "健康检查", "夜间备份"],
+          "n8nKeywords": ["nightly", "scheduler", "定时", "夜间", "备份", "监控", "monitor", "health", "cleanup", "清理", "维护"],
+          "gradient": {
+            "from": "from-slate-500",
+            "to": "to-gray-600"
+          }
+        }
+      ]
+    },
+    {
+      "id": "integration",
+      "name": "集成部",
+      "level": "execution",
+      "icon": "Plug",
+      "managedBy": "nobel",
+      "description": "执行层，负责外部系统集成，由 Nobel 调度",
+      "workers": [
+        {
+          "id": "xiaotong",
+          "name": "小通",
+          "alias": "Tong",
+          "icon": "Link",
+          "type": "n8n",
+          "role": "系统集成",
+          "description": "负责 Notion、飞书等外部系统的数据同步",
+          "n8nWorkflows": ["Notion 同步", "Webhook 处理"],
+          "n8nKeywords": ["Notion", "sync", "同步", "webhook", "callback", "trigger", "飞书"],
+          "gradient": {
+            "from": "from-indigo-500",
+            "to": "to-blue-600"
+          }
+        }
+      ]
+    }
+  ]
+}

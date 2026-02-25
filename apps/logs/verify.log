@@ -1,0 +1,77 @@
+========================================
+Autopilot v1.4 端到端验证
+========================================
+时间: 2026-01-05 12:21:25
+
+【阶段 1/4】检查 n8n 层
+----------------------------------------
+[0;32m[INFO][0m 检查 n8n 容器状态...
+[0;32m[INFO][0m ✅ n8n 容器正在运行
+[0;32m[INFO][0m 检查 n8n 健康状态...
+[0;32m[INFO][0m ✅ n8n 健康状态正常
+[0;32m[INFO][0m 检查 Task Dispatcher workflow...
+[0;32m[INFO][0m ✅ Task Dispatcher workflow 已激活 (ID: FkD3AmxALsv6Y3Pv)
+[0;32m[INFO][0m ✅ Workflow 源文件存在: /home/xx/dev/zenithjoy-autopilot/workflows/exports/bundles/ai-factory/vibe-coding-master.json
+
+【阶段 2/4】检查 VPS 层
+----------------------------------------
+[0;32m[INFO][0m 检查 ai-factory-v2 目录...
+[0;32m[INFO][0m ✅ ai-factory-v2 目录存在
+[0;32m[INFO][0m 检查关键脚本...
+[0;32m[INFO][0m ✅ main.sh 存在且可执行
+[0;32m[INFO][0m ✅ prepare.sh 存在且可执行
+[0;32m[INFO][0m ✅ cleanup.sh 存在且可执行
+[0;32m[INFO][0m ✅ monitor.sh 存在且可执行
+[0;32m[INFO][0m ✅ utils.sh 存在且可执行
+[0;32m[INFO][0m 检查必需命令...
+[0;32m[INFO][0m ✅ jq 已安装
+[0;32m[INFO][0m ✅ curl 已安装
+[0;32m[INFO][0m ✅ git 已安装
+[0;32m[INFO][0m 测试 monitor.sh...
+[0;32m[INFO][0m ✅ monitor.sh 工作正常 (CPU: 10%, Memory: 28%, Running: 2)
+
+【阶段 3/4】检查 Notion 层配置
+----------------------------------------
+[0;32m[INFO][0m 检查 Notion API Key...
+[1;33m[WARN][0m ⚠️  NOTION_API_KEY 未在当前环境设置
+[1;33m[WARN][0m     脚本将尝试从 /home/xx/.bashrc 或其他配置文件加载
+[0;32m[INFO][0m 检查任务数据库配置...
+[0;32m[INFO][0m ✅ Tasks Database ID: 54fe0d4cf4344e918bb0e33967661c42
+[0;32m[INFO][0m ✅ AI Systems & Automation Area ID: 21e53f413ec5805f8be2ce01f4247df2
+
+【阶段 4/4】运行简化测试
+----------------------------------------
+[0;32m[INFO][0m 运行 MVP v1.4 测试...
+[0;32m[INFO][0m ✅ MVP v1.4 测试通过
+[0;32m[INFO][0m 验证工作目录结构...
+[0;32m[INFO][0m ✅ 工作目录 /home/xx/data/runs 存在
+
+========================================
+验证结果
+========================================
+[0;32m[INFO][0m ✅ 所有检查通过！
+
+【系统状态概览】
+  n8n 容器: 运行中
+  Task Dispatcher: 已激活 (ID: FkD3AmxALsv6Y3Pv)
+  VPS 执行器: 就绪
+  系统负载: CPU 10%, Memory 28%
+  运行任务数: 2
+
+【下一步操作】
+1. 在 Notion 创建测试任务，设置：
+   - Area: AI Systems & Automation
+   - Status: Next Action
+   - AI Task: ✅ (checked)
+   - Coding Type: check
+
+2. 等待 n8n 定时轮询（每 5 分钟）或手动触发：
+   docker exec n8n-self-hosted n8n execute --id=FkD3AmxALsv6Y3Pv
+
+3. 观察任务状态变化：
+   Next Action → In Progress → Waiting
+
+4. 查看执行日志：
+   ls -lt /home/xx/data/runs/
+
+========================================

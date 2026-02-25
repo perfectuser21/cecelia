@@ -1,0 +1,72 @@
+{
+  "manual:目录结构验证": {
+    "type": "directory_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证 apps/features/platform-data/ 目录结构完整",
+    "status": "verified",
+    "details": "使用 tree 命令验证，13 个目录，36 个文件"
+  },
+  "manual:文件清单验证": {
+    "type": "file_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证所有脚本文件迁移完成",
+    "status": "verified",
+    "details": "scraper: 8 个平台脚本，analyzer: 3 个脚本，publisher: 15 个脚本"
+  },
+  "manual:文档验证": {
+    "type": "documentation_review",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证所有 README.md 文档完整",
+    "status": "verified",
+    "details": "Feature README.md, Skill SKILL.md, 3 个 workflow README.md 全部存在"
+  },
+  "manual:功能验证": {
+    "type": "functional_test",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证基本功能可运行",
+    "status": "pending",
+    "details": "需要实际运行测试（CI 阶段）"
+  },
+  "manual:权限验证": {
+    "type": "permission_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证 command.sh 可执行",
+    "status": "verified",
+    "details": "chmod +x 已执行"
+  },
+  "manual:安全审查": {
+    "type": "security_review",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证无硬编码凭据",
+    "status": "verified",
+    "details": "所有脚本使用环境变量或配置文件"
+  },
+  "manual:代码审查": {
+    "type": "code_review",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证未修改原有逻辑",
+    "status": "verified",
+    "details": "仅复制文件，未修改实现"
+  },
+  "manual:文件检查": {
+    "type": "file_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证 skills-registry.json 未修改",
+    "status": "verified",
+    "details": "本 PR 不修改 cecelia-engine/skills-registry.json"
+  },
+  "manual:目录检查": {
+    "type": "directory_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证 shared/ 目录未实现",
+    "status": "verified",
+    "details": "shared/ 目录存在但为空，符合 PRD 非目标"
+  },
+  "manual:文件系统检查": {
+    "type": "filesystem_check",
+    "verified_at": "2026-02-10T14:45:00Z",
+    "description": "验证旧 repo 未删除",
+    "status": "verified",
+    "details": "/home/xx/platform-scrapers/ 和 ~/.claude/skills/ 中的原文件保留"
+  }
+}

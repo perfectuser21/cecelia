@@ -1,0 +1,44 @@
+# N1: Cecelia Headless Mode - 从 zenithjoy-engine 迁移
+# 原位置: features/feature-registry.yml
+
+  - id: N1
+    name: Cecelia Headless Mode
+    status: Committed
+    priority: P1
+    description: |
+      无头 Claude Code，供 n8n 调度执行开发任务
+      - 触发: Notion 任务 / GitHub CI fail 通知
+      - 执行: cecelia-run → claude -p "/dev ..." → 输出 JSON
+      - 状态同步: Core API + Notion 镜像
+
+    entrypoints:
+      - type: cli
+        command: cecelia-run
+        file: /home/xx/bin/cecelia-run
+      - type: cli
+        command: cecelia-api
+        file: /home/xx/bin/cecelia-api
+      - type: n8n
+        workflow: Task Dispatcher v2.0
+
+    golden_path: |
+      n8n 触发 → cecelia-run → PHASE_OVERRIDE (可选) → claude -p "/dev ..." →
+      执行流程 → 输出 JSON → cecelia-api 更新 Core + 同步 Notion
+
+    minimal_paths:
+      - "Notion 任务 → n8n 轮询 (5分钟) → cecelia-run → 执行 → 更新状态"
+      - "CI fail → PHASE_OVERRIDE=p1 → cecelia-run → 修复 → push → 退出"
+
+    tests:
+      - type: manual
+        description: Notion 任务执行验证
+        coverage: N1-001, N1-002
+      - type: manual
+        description: CI 失败修复流程验证
+        coverage: N1-003, N1-004
+
+    rcis:
+      - N1-001  # Notion 任务触发
+      - N1-002  # Cecelia 执行 & 状态更新
+      - N1-003  # PHASE_OVERRIDE 支持
+      - N1-004  # JSON 输出格式

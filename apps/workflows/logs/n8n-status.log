@@ -1,0 +1,61 @@
+========================================
+n8n 主控 Workflow 状态检查报告
+========================================
+检查时间: $(date '+%Y-%m-%d %H:%M:%S')
+Workflow ID: BO6V3MYDHVp2bkvd
+Workflow 名称: Task Dispatcher v2.0 (vibe-coding-master)
+
+【状态概览】
+❌ Workflow 未导入到 n8n
+   - 在 n8n 实例中未找到该 workflow
+   - 需要导入后才能运行
+
+【Workflow 配置分析】
+✅ 触发方式: 
+   - 定时触发: 每 5 分钟 (minutesInterval: 5)
+   - 手动触发: 支持
+   - Webhook 触发: 支持 (路径: /task-dispatcher)
+
+✅ Notion 筛选条件:
+   过滤逻辑 (workflows/exports/bundles/ai-factory/vibe-coding-master.json:166):
+   - Status = 'Next Action' 或 'Waiting'
+   - AI Task = true (checked)
+   - Coding Type 有值 (n8n/backend/frontend/check)
+   - Area 包含 'AI Systems & Automation' (ID: 21e53f413ec5805f8be2ce01f4247df2)
+   - 依赖任务都已完成 (blocked_by 任务为 'AI Done' 或 'Completed')
+
+✅ 执行逻辑:
+   - 资源检查: 通过 SSH 调用 /home/xx/bin/ai-factory-v2/monitor.sh
+   - 阈值: CPU < 75%, Memory < 75%, Running tasks < 5
+   - 异步执行: nohup main.sh (日志输出到 /home/xx/data/runs/${taskId}.log)
+   - 状态更新: 执行前更新为 "In Progress"
+   - 飞书通知: 任务调度后发送通知
+
+✅ 回调配置:
+   - 回调处理: 通过独立的 cleanup.sh + Execution Callback webhook
+   - 执行脚本: /home/xx/dev/zenithjoy-autopilot/workflows/scripts/v2/main.sh
+
+【执行记录】
+❌ 无法获取执行记录 (workflow 未导入)
+
+【问题诊断】
+1. Workflow 文件存在于: /home/xx/dev/zenithjoy-autopilot/workflows/exports/bundles/ai-factory/vibe-coding-master.json
+2. 需要导入到 n8n 才能激活和运行
+3. 导入后需要:
+   - 设置 Notion API credentials (已配置 ID: KOSUxBByCoMPR3Au)
+   - 设置 SSH credentials (已配置 ID: vvJsQOZ95sqzemla)
+   - 激活 workflow
+   - 验证环境变量 NOTION_API_KEY 已配置
+
+【下一步行动】
+1. 导入 workflow 到 n8n
+2. 激活 workflow
+3. 手动触发测试
+4. 验证 5 分钟轮询是否正常工作
+5. 检查飞书通知是否能正常发送
+
+【参考信息】
+- Manifest: /home/xx/dev/zenithjoy-autopilot/workflows/exports/bundles/ai-factory/manifest.yml
+- 文档: /home/xx/dev/zenithjoy-autopilot/workflows/docs/FACTORY.md
+- n8n 容器: n8n-self-hosted
+- VPS: 146.190.52.84

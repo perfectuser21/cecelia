@@ -1,0 +1,79 @@
+# N1 Regression Contract - 从 zenithjoy-engine 迁移
+# 原位置: regression-contract.yaml > n8n section
+
+# --------------------------------------------------------------------------
+# N1: Cecilia (无头模式)
+# --------------------------------------------------------------------------
+- id: N1-001
+  feature: N1
+  name: "Cecilia CLI 健康检查"
+  scope: n8n
+  priority: P0
+  trigger: [PR, Release]
+  method: auto
+  tags: [n8n, cecilia, health]
+  owner: infra
+  steps:
+    given: "cecilia CLI 已安装"
+    when: "运行 cecilia --health"
+    then: "返回 healthy: true 的 JSON"
+  evidence:
+    type: command
+    run: "cecilia --health"
+    contains: "healthy.*true"
+  test: "cecilia --health"
+
+- id: N1-002
+  feature: N1
+  name: "Cecilia 执行 PRD Task"
+  scope: n8n
+  priority: P0
+  trigger: [Release]
+  method: auto
+  tags: [n8n, cecilia, prd]
+  owner: infra
+  steps:
+    given: "存在合法的 PRD JSON 文件"
+    when: "运行 cecilia -p prd.json -t T-001"
+    then: "返回包含 success 字段的 JSON 结果"
+  evidence:
+    type: command
+    run: "cecilia -p n8n/test-prd.json -t T-001 --output /tmp/test.json && cat /tmp/test.json"
+    contains: "success"
+  test: "n8n/test-prd.json"
+
+- id: N1-003
+  feature: N1
+  name: "N8N Workflow 定义存在"
+  scope: n8n
+  priority: P1
+  trigger: [Release]
+  method: auto
+  tags: [n8n, workflow]
+  owner: infra
+  steps:
+    given: "n8n/workflows/ 目录存在"
+    when: "检查 workflow 文件"
+    then: "存在 prd-executor 相关的 JSON 文件"
+  evidence:
+    type: file
+    path: "n8n/workflows/prd-executor-simple.json"
+    exists: true
+
+- id: N1-004
+  feature: N1
+  name: "p1 阶段无头修复语义"
+  scope: n8n
+  priority: P0
+  trigger: [PR, Release]
+  method: manual
+  tags: [n8n, cecelia, p1, v2.0.0, headless]
+  owner: infra
+  steps:
+    given: "CI fail 触发无头修复（PHASE_OVERRIDE=p1）"
+    when: "运行 cecelia-run 执行修复流程"
+    then: "修复 → push → 检测 CI pending → exit 0（不挂着等）"
+  evidence:
+    type: log
+    contains: "p1.*CI pending.*exit 0"
+  test: "手动模拟 p1 场景"

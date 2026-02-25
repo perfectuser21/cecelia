@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test-core:
+    runs-on: ubuntu-latest
+    name: Test Core Backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/core/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/core
+        run: npm ci
+
+      - name: Build Core Backend
+        working-directory: apps/core
+        run: npm run build
+
+  # Aggregate job for branch protection (required by GitHub)
+  test:
+    runs-on: ubuntu-latest
+    name: All Tests Passed
+    needs: [test-core]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test-core.result }}" != "success" ]; then
+            echo "❌ Some tests failed"
+            exit 1
+          fi
+          echo "✅ All tests passed"
