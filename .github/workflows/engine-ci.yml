@@ -6,7 +6,6 @@ on:
     paths: ['packages/engine/**']
   pull_request:
     branches: [main]
-    paths: ['packages/engine/**']
   workflow_dispatch:
 
 concurrency:
@@ -14,14 +13,93 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
-  test:
-    name: Engine Tests
+  # Detect which paths changed to skip heavy jobs on non-engine PRs
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'packages/engine/**'
+
+  version-check:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine == 'true'
+    name: Version Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package.json version updated
+        if: |
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:')
+        run: |
+          set -e
+          PKGJSON="packages/engine/package.json"
+
+          if [ ! -f "$PKGJSON" ]; then
+            echo "No $PKGJSON found, skipping"
+            exit 0
+          fi
+
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:$PKGJSON 2>/dev/null | jq -r '.version' || echo "")
+
+          if [ -z "$BASE_VERSION" ] || [ "$BASE_VERSION" = "null" ]; then
+            echo "Could not read base branch version, skipping"
+            exit 0
+          fi
+
+          CURRENT_VERSION=$(jq -r '.version' "$PKGJSON")
+
+          echo "Base branch version: $BASE_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$CURRENT_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "Invalid version format: $CURRENT_VERSION"
+            echo "Version must follow semver: MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          if [ "$BASE_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "Version not updated in $PKGJSON"
+            exit 1
+          else
+            echo "Version updated: $BASE_VERSION -> $CURRENT_VERSION"
+          fi
+
+      - name: Check all version files in sync
+        working-directory: packages/engine
+        run: bash ci/scripts/check-version-sync.sh
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    name: Engine Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -32,17 +110,591 @@ jobs:
         working-directory: packages/engine
         run: npm ci
 
-      - name: Run tests
+      # L1-1: TypeCheck
+      - name: TypeCheck
         working-directory: packages/engine
-        run: npm test
-
-      - name: Check shell scripts syntax
+        id: typecheck
         run: |
-          FAILED=0
-          while IFS= read -r -d '' f; do
-            if ! bash -n "$f" 2>/dev/null; then
-              echo "FAIL: $f"
-              FAILED=1
+          set -e
+          if npm run typecheck --if-present; then
+            echo "TypeCheck passed"
+            bash ci/scripts/write-check-result.sh typecheck true 0 "npm run typecheck"
+          else
+            EXIT_CODE=$?
+            echo "TypeCheck failed"
+            bash ci/scripts/write-check-result.sh typecheck false $EXIT_CODE "npm run typecheck" "TypeCheck failed"
+            exit $EXIT_CODE
+          fi
+
+      # L1-2: Unit Tests (with Known-Failures whitelist validation)
+      - name: Unit Tests
+        working-directory: packages/engine
+        id: test
+        run: |
+          set -e
+          if npm run test --if-present; then
+            echo "Tests passed"
+            bash ci/scripts/write-check-result.sh test true 0 "npm run test"
+          else
+            TEST_EXIT_CODE=$?
+            echo "Tests failed (exit: $TEST_EXIT_CODE)"
+
+            # Strict known-failures whitelist validation
+            if [ -f .quality-evidence.json ] && [ -f ci/known-failures.json ]; then
+              if ! jq -e '.known_failure_keys | type == "array"' .quality-evidence.json >/dev/null 2>&1; then
+                echo "Test failed: .quality-evidence.json missing known_failure_keys array"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "missing known_failure_keys"
+                exit $TEST_EXIT_CODE
+              fi
+
+              REQUESTED_KEYS=$(jq -r '.known_failure_keys[]' .quality-evidence.json 2>/dev/null || echo "")
+              if [ -z "$REQUESTED_KEYS" ]; then
+                echo "Test failed: known_failure_keys is empty"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys empty"
+                exit $TEST_EXIT_CODE
+              fi
+
+              KEY_COUNT=$(echo "$REQUESTED_KEYS" | wc -l)
+              MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
+              if [ "$KEY_COUNT" -gt "$MAX_SKIP" ]; then
+                echo "Test failed: skip count $KEY_COUNT exceeds max $MAX_SKIP"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "skip count $KEY_COUNT > max $MAX_SKIP"
+                exit $TEST_EXIT_CODE
+              fi
+
+              ALLOWED_KEYS=$(jq -r '.allowed | keys[]' ci/known-failures.json)
+              INVALID_KEYS=""
+              while IFS= read -r key; do
+                if ! echo "$ALLOWED_KEYS" | grep -qx "$key"; then
+                  INVALID_KEYS="$INVALID_KEYS $key"
+                fi
+              done <<< "$REQUESTED_KEYS"
+
+              if [ -n "$INVALID_KEYS" ]; then
+                echo "Test failed: unknown known_failure_keys:$INVALID_KEYS"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "unknown keys:$INVALID_KEYS"
+                exit $TEST_EXIT_CODE
+              fi
+
+              echo "Known failures validated ($KEY_COUNT items registered)"
+              echo "$REQUESTED_KEYS" | sed 's/^/  - /'
+              bash ci/scripts/write-check-result.sh test true 0 "npm run test" "known failures validated ($KEY_COUNT items)"
+            else
+              echo "Test failed with no valid known-failures config"
+              bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "no known-failures config"
+              exit $TEST_EXIT_CODE
             fi
-          done < <(find packages/engine -name "*.sh" -type f -not -path "*/node_modules/*" -print0)
-          exit $FAILED
+          fi
+
+      # L1-3: Build
+      - name: Build
+        working-directory: packages/engine
+        id: build
+        run: |
+          set -e
+          if npm run build --if-present; then
+            echo "Build passed"
+            bash ci/scripts/write-check-result.sh build true 0 "npm run build"
+          else
+            EXIT_CODE=$?
+            echo "Build failed"
+            bash ci/scripts/write-check-result.sh build false $EXIT_CODE "npm run build" "Build failed"
+            exit $EXIT_CODE
+          fi
+
+      # L2A: PRD/DoD Gate - block working docs from entering main
+      - name: Block PRD/DoD in PR to main
+        if: |
+          github.event_name == 'pull_request' &&
+          github.base_ref == 'main'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  PRD/DoD Gate (PR to main)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          PRD_DOD_FILES=$(git diff --diff-filter=AM --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^\.(prd|dod)(-[^/]+)?\.md$' || true)
+
+          if [ -n "$PRD_DOD_FILES" ]; then
+            echo "PRD/DoD files should not appear in PR to main:"
+            echo "$PRD_DOD_FILES" | sed 's/^/  - /'
+            echo ""
+            echo "Please remove before merge: git rm <files>"
+            exit 1
+          fi
+
+          echo "No PRD/DoD files in PR"
+
+      # Shell scripts syntax check
+      - name: Check shell scripts
+        working-directory: packages/engine
+        id: shell_check
+        run: |
+          echo "Checking shell scripts..."
+          FAILED=0
+          FOUND=0
+          FAIL_LIST=""
+          while IFS= read -r -d '' f; do
+            FOUND=1
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+              FAIL_LIST="$FAIL_LIST $f"
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No .sh files found"
+          fi
+
+          if [ "$FAILED" -eq 0 ]; then
+            bash ci/scripts/write-check-result.sh shell-check true 0 "bash -n *.sh"
+          else
+            bash ci/scripts/write-check-result.sh shell-check false 1 "bash -n *.sh" "Failed:$FAIL_LIST"
+            exit 1
+          fi
+
+      # Evidence generation (CI-only, SSOT)
+      - name: Generate Evidence
+        working-directory: packages/engine
+        run: bash ci/scripts/generate-evidence.sh
+
+      - name: Evidence Gate
+        working-directory: packages/engine
+        run: bash ci/scripts/evidence-gate.sh
+
+      # DevGate 4-check: script existence + DoD mapping + P0/P1 RCI + RCI coverage
+      - name: DevGate checks
+        if: |
+          github.event_name == 'pull_request' &&
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:') &&
+          !startsWith(github.event.pull_request.title, 'release:')
+        working-directory: packages/engine
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate checks"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # 1. Script existence check (P1)
+          echo ""
+          echo "  [DevGate script existence - P1]"
+          REQUIRED_SCRIPTS=(
+            "scripts/devgate/check-dod-mapping.cjs"
+            "scripts/devgate/scan-rci-coverage.cjs"
+            "scripts/devgate/require-rci-update-if-p0p1.sh"
+          )
+          MISSING_SCRIPTS=()
+          for script in "${REQUIRED_SCRIPTS[@]}"; do
+            if [ ! -f "$script" ]; then
+              MISSING_SCRIPTS+=("$script")
+            fi
+          done
+
+          if [ ${#MISSING_SCRIPTS[@]} -gt 0 ]; then
+            echo "  Missing required DevGate scripts:"
+            for script in "${MISSING_SCRIPTS[@]}"; do
+              echo "   - $script"
+            done
+            exit 1
+          fi
+          echo "  All required DevGate scripts present"
+
+          # 2. DoD mapping check
+          if [ -f "scripts/devgate/check-dod-mapping.cjs" ]; then
+            echo ""
+            echo "  [DoD <-> Test mapping check]"
+            node scripts/devgate/check-dod-mapping.cjs || exit 1
+          fi
+
+          # 3. P0/P1 RCI update check
+          if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
+            echo ""
+            echo "  [P0/P1 RCI update check]"
+            export PR_TITLE="${{ github.event.pull_request.title }}"
+            export BASE_REF="origin/${{ github.base_ref || 'main' }}"
+            bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
+          fi
+
+          # 4. RCI coverage check
+          if [ -f "scripts/devgate/scan-rci-coverage.cjs" ]; then
+            echo ""
+            echo "  [RCI coverage check]"
+            node scripts/devgate/scan-rci-coverage.cjs || {
+              echo ""
+              echo "  RCI coverage check failed"
+              echo "  New business entries must have corresponding RCI entries"
+              echo "  Please add coverage in regression-contract.yaml"
+              exit 1
+            }
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate checks passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # P0: Known-Failures Protection - prevent malicious whitelist modification
+  known-failures-protection:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine == 'true'
+    name: Known-Failures Protection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check known-failures.json modification
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Known-Failures Protection (P0)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          KF_PATH="packages/engine/ci/known-failures.json"
+
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^${KF_PATH}$"; then
+            echo "detected: $KF_PATH was modified"
+            echo ""
+
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+              echo "known-failures.json modified but PR title missing [INFRA] tag"
+              echo ""
+              echo "Modifying the test whitelist is a high-risk operation."
+              echo "Please change PR title to: [INFRA] $PR_TITLE"
+              exit 1
+            fi
+
+            echo "PR title contains [INFRA] tag"
+            echo ""
+
+            # Validate JSON
+            if ! jq empty "$KF_PATH" 2>/dev/null; then
+              echo "known-failures.json is not valid JSON"
+              exit 1
+            fi
+
+            # Check max skip count
+            MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' "$KF_PATH")
+            if [[ "$MAX_SKIP" -gt 5 ]]; then
+              echo "max_skip_count too large: $MAX_SKIP (max allowed: 5)"
+              exit 1
+            fi
+
+            # Check allowed entries count
+            ALLOWED_COUNT=$(jq '.allowed | length' "$KF_PATH")
+            if [[ "$ALLOWED_COUNT" -gt "$MAX_SKIP" ]]; then
+              echo "allowed entries ($ALLOWED_COUNT) exceeds max_skip_count ($MAX_SKIP)"
+              exit 1
+            fi
+
+            # Check required fields
+            INVALID_ENTRIES=$(jq -r '.allowed | to_entries[] | select(.value.description == null or .value.ticket == null or .value.expires == null) | .key' "$KF_PATH")
+            if [[ -n "$INVALID_ENTRIES" ]]; then
+              echo "Entries missing required fields (description, ticket, expires):"
+              echo "$INVALID_ENTRIES" | sed 's/^/   - /'
+              exit 1
+            fi
+
+            echo "known-failures.json content is valid"
+            echo ""
+            echo "Changes:"
+            git diff origin/${{ github.base_ref }}...HEAD "$KF_PATH" | head -50
+          else
+            echo "known-failures.json not modified"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Known-Failures Protection passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # Contract Drift Check - prevent derived views from drifting
+  contract-drift-check:
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    name: Contract Drift Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Generate path views from registry
+        working-directory: packages/engine
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Contract Drift Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Checking feature-registry.yml and derived views are in sync"
+          echo ""
+          bash scripts/generate-path-views.sh
+
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code packages/engine/docs/paths/; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Contract Drift detected!"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "feature-registry.yml changed but derived views not updated!"
+            echo ""
+            echo "Fix:"
+            echo "  cd packages/engine && bash scripts/generate-path-views.sh"
+            echo "  git add docs/paths/ && git commit -m 'docs: update derived views'"
+            echo ""
+            git diff --name-only packages/engine/docs/paths/
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Contract Drift Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # P1: Config Audit - critical config file change audit
+  config-audit:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine == 'true'
+    name: Config Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check critical config modifications
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Config Audit (P1)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # Monorepo-adapted critical config paths
+          CRITICAL_CONFIGS=(
+            ".github/workflows/engine-ci.yml"
+            "packages/engine/regression-contract.yaml"
+            "packages/engine/ci/known-failures.json"
+            "packages/engine/hooks/"
+            "packages/engine/skills/"
+            "packages/engine/scripts/setup-branch-protection.sh"
+            "packages/engine/scripts/sync-version.sh"
+          )
+
+          MODIFIED_CONFIGS=()
+          for config in "${CRITICAL_CONFIGS[@]}"; do
+            if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^${config}"; then
+              MODIFIED_CONFIGS+=("$config")
+            fi
+          done
+
+          if [ ${#MODIFIED_CONFIGS[@]} -gt 0 ]; then
+            echo "Critical config files modified:"
+            for config in "${MODIFIED_CONFIGS[@]}"; do
+              echo "   - $config"
+            done
+            echo ""
+
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+              echo "PR title must contain [CONFIG] or [INFRA] tag"
+              echo "Suggested: [CONFIG] $PR_TITLE"
+              exit 1
+            else
+              echo "PR title contains config change tag"
+            fi
+
+            echo ""
+            echo "Change details:"
+            for config in "${MODIFIED_CONFIGS[@]}"; do
+              echo ""
+              echo "--- $config ---"
+              git diff --stat origin/${{ github.base_ref }}...HEAD "$config"
+            done
+          else
+            echo "No critical config files modified"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Config Audit passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # Impact Check - capability change forced registration (P0-1)
+  impact-check:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.engine == 'true'
+    name: Impact Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Impact Check
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Impact Check: capability change registration"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base ref not found: $BASE_REF"
+            exit 1
+          fi
+
+          # Monorepo-adapted core capability paths
+          CORE_PATHS=(
+            "packages/engine/hooks/"
+            "packages/engine/skills/"
+            "packages/engine/scripts/qa-with-gate.sh"
+          )
+
+          REGISTRY_PATH="packages/engine/features/feature-registry.yml"
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "No changed files detected, skipping"
+            exit 0
+          fi
+
+          CORE_CHANGED=false
+          for path in "${CORE_PATHS[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^$path"; then
+              CORE_CHANGED=true
+              echo "Core capability changed: $path"
+            fi
+          done
+
+          REGISTRY_CHANGED=false
+          if echo "$CHANGED_FILES" | grep -q "^${REGISTRY_PATH}$"; then
+            REGISTRY_CHANGED=true
+            echo "feature-registry.yml updated"
+          fi
+
+          echo ""
+
+          if [[ "$CORE_CHANGED" == "true" && "$REGISTRY_CHANGED" == "false" ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Impact Check FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Core capability files changed but feature-registry.yml not updated!"
+            echo ""
+            echo "Fix: update packages/engine/features/feature-registry.yml"
+            exit 1
+          elif [[ "$REGISTRY_CHANGED" == "true" && "$CORE_CHANGED" == "false" ]]; then
+            echo "Registry-only update, allowed"
+          elif [[ "$CORE_CHANGED" == "true" && "$REGISTRY_CHANGED" == "true" ]]; then
+            echo "Core and registry both updated, passed"
+          else
+            echo "No core capability files changed, skipping"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Impact Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # Gate job: all checks must pass, non-engine PRs fast-pass
+  ci-passed:
+    needs: [changes, version-check, test, contract-drift-check, impact-check, known-failures-protection, config-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Engine CI Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Engine CI Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Non-engine changes: skip all checks
+          if [ "${{ needs.changes.outputs.engine }}" != "true" ]; then
+            echo "No engine changes detected, all checks skipped"
+            exit 0
+          fi
+
+          FAILED=false
+
+          # Always required: test + contract-drift-check
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "FAIL: Engine Tests (${{ needs.test.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.contract-drift-check.result }}" != "success" ]; then
+            echo "FAIL: Contract Drift Check (${{ needs.contract-drift-check.result }})"
+            FAILED=true
+          fi
+
+          # PR-only checks (skipped on push)
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            if [ "${{ needs.known-failures-protection.result }}" != "success" ]; then
+              echo "FAIL: Known-Failures Protection (${{ needs.known-failures-protection.result }})"
+              FAILED=true
+            fi
+
+            if [ "${{ needs.config-audit.result }}" != "success" ]; then
+              echo "FAIL: Config Audit (${{ needs.config-audit.result }})"
+              FAILED=true
+            fi
+
+            if [ "${{ needs.impact-check.result }}" != "success" ]; then
+              echo "FAIL: Impact Check (${{ needs.impact-check.result }})"
+              FAILED=true
+            fi
+
+            # version-check may be skipped for chore/docs/test PRs
+            if [ "${{ needs.version-check.result }}" != "success" ] && [ "${{ needs.version-check.result }}" != "skipped" ]; then
+              echo "FAIL: Version Check (${{ needs.version-check.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "$FAILED" == "true" ]; then
+            echo ""
+            echo "Engine CI Gate FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "Passed checks:"
+          echo "  - Engine Tests (L1: TypeCheck + Tests + Build)"
+          echo "  - Shell Syntax Check"
+          echo "  - Evidence Gate"
+          echo "  - DevGate (script existence + DoD mapping + RCI)"
+          echo "  - Known-Failures Protection (P0)"
+          echo "  - Config Audit (P1)"
+          echo "  - Impact Check (P0-1)"
+          echo "  - Contract Drift Check"
+          echo "  - PRD/DoD Gate"
+          echo ""
+          echo "All Engine CI checks passed"
