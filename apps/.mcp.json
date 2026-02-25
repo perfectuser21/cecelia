@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "chrome-devtools": {
-      "type": "stdio",
-      "command": "/home/xx/.claude/chrome-devtools-wrapper.sh",
-      "args": ["--headless", "--no-sandbox"]
-    }
-  }
-}
