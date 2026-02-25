@@ -16,14 +16,6 @@ export const MODELS = [
     name: 'M2.1',
     provider: 'minimax',
     tier: 'fast',
-    deprecated: true, // ⚠️ 纯推理链模型（reasoning-only），仅输出 <think> 块，无法用于正常 completion
-  },
-  {
-    id: 'MiniMax-M2.1-highspeed',
-    name: 'M2.1 Fast',
-    provider: 'minimax',
-    tier: 'fast',
-    deprecated: true, // ⚠️ 纯推理链模型（reasoning-only），仅输出 <think> 块，无法用于正常 completion
   },
   {
     id: 'MiniMax-M2',
@@ -62,18 +54,6 @@ export const MODELS = [
     tier: 'premium',
   },
   {
-    id: 'claude-sonnet-4-20250514',
-    name: 'Sonnet',
-    provider: 'anthropic',
-    tier: 'standard',
-  },
-  {
-    id: 'claude-opus-4-20250514',
-    name: 'Opus',
-    provider: 'anthropic',
-    tier: 'premium',
-  },
-  {
     id: 'codex-mini-latest',
     name: 'Codex Mini',
     provider: 'openai',
@@ -104,7 +84,7 @@ export const AGENTS = [
     name: 'L1 丘脑',
     description: '事件路由、快速判断',
     layer: 'brain',
-    allowed_models: ['MiniMax-M2.5-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-20250514'],
+    allowed_models: ['MiniMax-M2.5-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
     recommended_model: 'MiniMax-M2.5-highspeed',
     fixed_provider: null,
   },
@@ -113,8 +93,8 @@ export const AGENTS = [
     name: 'L2 皮层',
     description: '深度分析、RCA、战略调整',
     layer: 'brain',
-    allowed_models: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'claude-opus-4-20250514',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
+    recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
   // ---- 执行层 ----
@@ -123,8 +103,8 @@ export const AGENTS = [
     name: '开发 Caramel',
     description: '编程专家',
     layer: 'executor',
-    allowed_models: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'claude-sonnet-4-20250514',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
@@ -132,8 +112,8 @@ export const AGENTS = [
     name: 'QA 小检',
     description: 'QA 总控',
     layer: 'executor',
-    allowed_models: ['claude-sonnet-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'codex-mini-latest', 'o3-mini', 'o4-mini'],
-    recommended_model: 'claude-sonnet-4-20250514',
+    allowed_models: ['claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'codex-mini-latest', 'o3-mini', 'o4-mini'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
@@ -141,8 +121,8 @@ export const AGENTS = [
     name: '审查',
     description: '代码审查',
     layer: 'executor',
-    allowed_models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'claude-sonnet-4-20250514',
+    allowed_models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
@@ -150,8 +130,8 @@ export const AGENTS = [
     name: '审计 小审',
     description: '代码审计',
     layer: 'executor',
-    allowed_models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'claude-sonnet-4-20250514',
+    allowed_models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
