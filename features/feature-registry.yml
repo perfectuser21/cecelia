@@ -789,8 +789,6 @@ product_features:
         file: skills/dev/steps/00-worktree-auto.md
       - type: script
         file: skills/dev/scripts/worktree-manage.sh
-      - type: step
-        file: skills/exploratory/steps/01-init.md
 
     golden_path: |
       /dev 启动 → Step 0 强制创建 worktree（.claude/worktrees/ 路径）→ 继续正常流程 → 退出时 Stop Hook 强制清理 worktree
@@ -1091,58 +1089,3 @@ product_features:
       - S2-002  # DoD Validation
       - S2-003  # Anti-Cheat 机制
 
-  # --------------------------------------------------------------------------
-  # S3: Exploratory Skill - 快速验证工作流
-  # --------------------------------------------------------------------------
-  - id: S3
-    name: Exploratory Skill
-    status: Committed
-    priority: P2
-    version: "1.0.0"
-    updated: "2026-02-11"
-    description: |
-      快速验证工作流 - 在临时 worktree 中证明能做，生成正式 PRD/DOD
-      
-      核心机制:
-      - 临时 worktree: exp-<timestamp> 分支隔离
-      - 快速实现: 允许 hack 代码，不要求干净
-      - 功能验证: 手动或简单自动化验证
-      - PRD/DOD 生成: 基于真实实现和踩坑经验
-      - 清理: 临时代码不进主线，只保留文档
-      
-      与 /dev 关系:
-      - Exploratory: 证明能做（在 worktree 中）
-      - Dev: 重新实现干净版本（基于生成的 PRD/DOD）
-
-    entrypoints:
-      - type: skill
-        file: skills/exploratory/SKILL.md
-        trigger: "/exploratory"
-      - type: script
-        file: skills/exploratory/scripts/init-worktree.sh
-        description: "创建临时 worktree"
-      - type: script
-        file: skills/exploratory/scripts/generate-prd-dod.sh
-        description: "生成 PRD/DOD 文档"
-      - type: script
-        file: skills/exploratory/scripts/cleanup-worktree.sh
-        description: "清理临时 worktree"
-
-    golden_path: |
-      /exploratory → 创建 worktree → hack 实现 → 验证跑通 →
-      生成 PRD/DOD → 清理 worktree → PRD/DOD 保留
-
-    minimal_paths:
-      - "基本流程: /exploratory → worktree → 实现 → PRD/DOD"
-      - "快速验证: hack 代码 → 能跑就行 → 记录真实踩坑"
-      - "清理: 删除 worktree → 保留文档到主仓库"
-
-    tests:
-      - type: auto
-        file: tests/skills/exploratory-skill.test.js
-        coverage: S3-001, S3-002, S3-003
-
-    rcis:
-      - S3-001  # Exploratory Skill 基本功能
-      - S3-002  # Worktree 管理
-      - S3-003  # PRD/DOD 生成

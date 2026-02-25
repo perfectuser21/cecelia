@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.5] - 2026-02-25
+
+### Removed
+- skills/exploratory/ 整个目录（exploratory skill 已废弃）
+- hooks/stop-exploratory.sh（exploratory stop hook）
+- tests/skills/exploratory-skill.test.js, tests/skills/exploratory-e2e.test.ts（exploratory 测试）
+- tests/hooks/stop-exploratory.test.ts（stop hook 测试）
+- tests/scripts/merge-exploratory-docs.test.ts（merge 工具测试）
+- scripts/merge-exploratory-docs.sh（多 exploratory 文档合并脚本）
+
+### Changed
+- skills-registry.json：移除 exploratory skill 注册条目
+- hooks/stop.sh：移除 .exploratory-mode 路由逻辑
+- regression-contract.yaml：移除 S3 section（Exploratory Skill RCI）
+- features/feature-registry.yml：移除 S3 feature 定义
+
 ## [12.30.4] - 2026-02-25
 
 ### Fixed

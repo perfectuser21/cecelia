@@ -328,22 +328,6 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 
 ---
 
-## GP-021: Exploratory Skill (S3)
-
-**Feature**: S3 - Exploratory Skill
-**Priority**: P2
-
-### Golden Path
-
-```
-/exploratory → 创建 worktree → hack 实现 → 验证跑通 →
-生成 PRD/DOD → 清理 worktree → PRD/DOD 保留
-```
-
-**RCI 覆盖**: S3-001,S3-002,S3-003
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

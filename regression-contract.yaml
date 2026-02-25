@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.30.4"
+version: "12.30.5"
 updated: "2026-02-22"
 
 # ============================================================================
@@ -2888,96 +2888,3 @@ skills:
       type: file
       path: "tests/validation-loop/test-anti-cheat.sh"
     test: "tests/validation-loop/test-anti-cheat.sh"
-  # ============================================================================
-  # S3: Exploratory Skill - 快速验证工作流
-  # ============================================================================
-
-  - id: S3-001
-    feature: S3
-    name: "/exploratory 流程可启动"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [exploratory, validation, worktree]
-    owner: infra
-    steps:
-      given: "用户调用 /exploratory skill"
-      when: "提供任务描述"
-      then: "创建临时 worktree，实现功能，生成 PRD/DOD，清理"
-    evidence:
-      type: file
-      path: "tests/skills/exploratory-skill.test.js"
-    test: "tests/skills/exploratory-skill.test.js"
-
-  - id: S3-002
-    feature: S3
-    name: "Exploratory Worktree 管理"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [worktree, isolation, cleanup]
-    owner: infra
-    steps:
-      given: "Exploratory 流程启动"
-      when: "创建和清理 worktree"
-      then: "临时分支和代码不进主线"
-    evidence:
-      type: file
-      path: "tests/skills/exploratory-skill.test.js"
-    test: "tests/skills/exploratory-skill.test.js"
-
-  - id: S3-003
-    feature: S3
-    name: "PRD/DOD 生成基于实际实现"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [prd, dod, templates]
-    owner: infra
-    steps:
-      given: "功能在 worktree 中跑通"
-      when: "生成 PRD 和 DOD"
-      then: "文档基于真实踩坑，包含实际依赖和修改文件"
-    evidence:
-      type: file
-      path: "tests/skills/exploratory-skill.test.js"
-    test: "tests/skills/exploratory-skill.test.js"
-
-  - id: S3-004
-    feature: S3
-    name: "Exploratory Stop Hook 完成度检查"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [exploratory, stop-hook, completeness]
-    owner: infra
-    steps:
-      given: ".exploratory-mode 文件存在"
-      when: "Stop Hook 检查 Exploratory 完成状态"
-      then: "PRD/DOD 已生成且 worktree 已清理才允许结束"
-    evidence:
-      type: test
-      path: "tests/hooks/stop-exploratory.test.ts"
-    test: "tests/hooks/stop-exploratory.test.ts"
-
-  - id: S3-005
-    feature: S3
-    name: "多个 Exploratory 合并工具"
-    scope: script
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [exploratory, merge, prd, dod]
-    owner: infra
-    steps:
-      given: "多个 exploratory-*.prd.md 和 *.dod.md 文件"
-      when: "执行 scripts/merge-exploratory-docs.sh"
-      then: "生成合并后的完整 PRD/DOD，保留来源标注"
-    evidence:
-      type: test
-      path: "tests/scripts/merge-exploratory-docs.test.ts"
-    test: "tests/scripts/merge-exploratory-docs.test.ts"

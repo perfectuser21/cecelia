@@ -228,16 +228,6 @@ changelog:
 
 ---
 
-### S3: Exploratory Skill
-
-1. ✅ **基本流程: /exploratory → worktree → 实现 → PRD/DOD**
-2. ✅ **快速验证: hack 代码 → 能跑就行 → 记录真实踩坑**
-3. ✅ **清理: 删除 worktree → 保留文档到主仓库**
-
-**RCI 覆盖**: S3-001,S3-002,S3-003
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

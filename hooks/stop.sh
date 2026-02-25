@@ -9,6 +9,9 @@
 # - .okr-mode     → stop-okr.sh    (/okr 拆解流程)
 # - .quality-mode → stop-quality.sh (/quality 质检流程) [将来]
 #
+# 已移除：
+# - .exploratory-mode (exploratory skill 已废弃，2026-02-25)
+#
 # 没有任何 mode 文件 → exit 0（普通对话，允许结束）
 # ============================================================================
 
@@ -32,12 +35,6 @@ fi
 # ===== 检查 .okr-mode → 调用 stop-okr.sh =====
 if [[ -f "$PROJECT_ROOT/.okr-mode" ]]; then
     bash "$SCRIPT_DIR/stop-okr.sh"
-    exit $?
-fi
-
-# ===== 检查 .exploratory-mode → 调用 stop-exploratory.sh =====
-if [[ -f "$PROJECT_ROOT/.exploratory-mode" ]]; then
-    bash "$SCRIPT_DIR/stop-exploratory.sh"
     exit $?
 fi
 

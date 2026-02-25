@@ -202,15 +202,6 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 
 ---
 
-### S3: Exploratory Skill
-
-```
-/exploratory → 创建 worktree → hack 实现 → 验证跑通 →
-生成 PRD/DOD → 清理 worktree → PRD/DOD 保留
-```
-
----
-
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

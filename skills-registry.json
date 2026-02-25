@@ -50,13 +50,5 @@
       "entry": "SKILL.md",
       "enabled": true
     },
-    "exploratory": {
-      "name": "Exploratory",
-      "description": "快速验证工作流 - 证明能做，生成 PRD/DOD",
-      "type": "engine",
-      "path": "skills/exploratory",
-      "entry": "SKILL.md",
-      "enabled": true
-    }
   }
 }

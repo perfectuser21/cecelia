@@ -17,10 +17,6 @@ const WORKTREE_MANAGE = resolve(
 );
 const STOP_DEV = resolve(PROJECT_ROOT, "hooks/stop-dev.sh");
 const CLEANUP = resolve(PROJECT_ROOT, "skills/dev/scripts/cleanup.sh");
-const INIT_WORKTREE = resolve(
-  PROJECT_ROOT,
-  "skills/exploratory/scripts/init-worktree.sh"
-);
 const GITIGNORE = resolve(PROJECT_ROOT, ".gitignore");
 const VITEST_CONFIG = resolve(PROJECT_ROOT, "vitest.config.ts");
 
@@ -113,20 +109,6 @@ describe("Worktree path migration", () => {
     it("should support .claude/worktrees/ path in safe_rm_rf", () => {
       const content = readFileSync(CLEANUP, "utf-8");
       expect(content).toContain('/.claude/worktrees/');
-    });
-  });
-
-  describe("init-worktree.sh (exploratory)", () => {
-    it("should pass syntax check", () => {
-      expect(() => {
-        execSync(`bash -n "${INIT_WORKTREE}"`, { encoding: "utf-8" });
-      }).not.toThrow();
-    });
-
-    it("should use .claude/worktrees/ path", () => {
-      const content = readFileSync(INIT_WORKTREE, "utf-8");
-      expect(content).toContain('.claude/worktrees/');
-      expect(content).not.toContain('WORKTREE_PATH="../$WORKTREE_NAME"');
     });
   });
 
