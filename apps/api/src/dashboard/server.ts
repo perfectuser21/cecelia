@@ -102,6 +102,26 @@ app.use('/api/autumnrice', createProxyMiddleware({
   pathRewrite: (path) => `/api/brain/autumnrice${path}`,  // /run → /api/brain/autumnrice/run
 }));
 
+// Brain API routes → proxy to cecelia-semantic-brain Node.js service
+// Must be BEFORE express.json() so the request body stream is not consumed
+const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
+const brainProxy = createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api/brain${path}`,
+  // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
+  // server.on('upgrade') listener that conflicts with the manual handler below.
+  // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
+});
+app.use('/api/brain', brainProxy);
+
+// Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
+const brainWsProxy = createProxyMiddleware({
+  target: BRAIN_NODE_API,
+  changeOrigin: true,
+  ws: true,
+});
+
 // Local API routes that replace Autopilot backend (port 3333 no longer needed)
 app.use('/api/v1/vps-monitor', vpsMonitorRoutes);
 app.use('/api/v1', n8nApiRoutes);
@@ -198,38 +218,6 @@ app.use('/api/analysis', analysisRoutes);
 
 // Cluster session management (session-info + kill-session)
 app.use('/api/cluster', clusterRoutes);
-
-// Brain API routes → proxy to cecelia-semantic-brain Node.js service
-const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
-const brainProxy = createProxyMiddleware({
-  target: BRAIN_NODE_API,
-  changeOrigin: true,
-  pathRewrite: (path) => `/api/brain${path}`,
-  // NOTE: do NOT set ws:true here — http-proxy-middleware v3 would auto-register a
-  // server.on('upgrade') listener that conflicts with the manual handler below.
-  // WebSocket upgrades for /api/brain/ws are handled exclusively in server.on('upgrade').
-  on: {
-    // express.json() consumes the body stream globally; re-write it so the proxy
-    // can forward POST/PUT bodies correctly to the Brain service.
-    proxyReq: (proxyReq, req) => {
-      const body = (req as any).body;
-      if (body && Object.keys(body).length > 0) {
-        const bodyData = JSON.stringify(body);
-        proxyReq.setHeader('Content-Type', 'application/json');
-        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
-        proxyReq.write(bodyData);
-      }
-    },
-  },
-});
-app.use('/api/brain', brainProxy);
-
-// Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
-const brainWsProxy = createProxyMiddleware({
-  target: BRAIN_NODE_API,
-  changeOrigin: true,
-  ws: true,
-});
 
 // OKR Tree API routes (tree-based OKR management)
 app.use('/api/okr', okrRoutes);
