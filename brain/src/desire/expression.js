@@ -128,7 +128,7 @@ export async function runExpression(pool, desire) {
       INSERT INTO working_memory (key, value_json, updated_at)
       VALUES ($1, $2, NOW())
       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-    `, ['last_feishu_at', new Date().toISOString()]);
+    `, ['last_feishu_at', JSON.stringify(new Date().toISOString())]);
   } catch (err) {
     console.error('[expression] update last_feishu_at error:', err.message);
   }

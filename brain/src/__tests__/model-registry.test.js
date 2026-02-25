@@ -34,8 +34,8 @@ describe('model-registry', () => {
       }
     });
 
-    it('R1b: 模型总数为 11', () => {
-      expect(MODELS.length).toBe(11);
+    it('R1b: 模型总数为 10', () => {
+      expect(MODELS.length).toBe(10);
     });
 
     it('R2: 所有 agent 有 id/name/layer/allowed_models/recommended_model', () => {
@@ -68,13 +68,7 @@ describe('model-registry', () => {
       }
     });
 
-    it('R10: 新增模型存在且属性正确', () => {
-      const m21hs = getModelById('MiniMax-M2.1-highspeed');
-      expect(m21hs).toBeTruthy();
-      expect(m21hs.provider).toBe('minimax');
-      expect(m21hs.tier).toBe('fast');
-      expect(m21hs.deprecated).toBe(true); // 纯推理链模型，已废弃
-
+    it('R10: 模型存在且属性正确', () => {
       const m25 = getModelById('MiniMax-M2.5');
       expect(m25).toBeTruthy();
       expect(m25.provider).toBe('minimax');
@@ -90,15 +84,29 @@ describe('model-registry', () => {
       expect(o4.provider).toBe('openai');
       expect(o4.tier).toBe('fast');
 
-      // 2026-02-23 Benchmark 新增：MiniMax-M2.1 废弃 + MiniMax-M2 新增
       const m21 = getModelById('MiniMax-M2.1');
       expect(m21).toBeTruthy();
-      expect(m21.deprecated).toBe(true);
+      expect(m21.deprecated).toBeUndefined();
 
       const m2 = getModelById('MiniMax-M2');
       expect(m2).toBeTruthy();
       expect(m2.provider).toBe('minimax');
       expect(m2.tier).toBe('premium');
+
+      const sonnet46 = getModelById('claude-sonnet-4-6');
+      expect(sonnet46).toBeTruthy();
+      expect(sonnet46.provider).toBe('anthropic');
+      expect(sonnet46.tier).toBe('standard');
+
+      const opus46 = getModelById('claude-opus-4-6');
+      expect(opus46).toBeTruthy();
+      expect(opus46.provider).toBe('anthropic');
+      expect(opus46.tier).toBe('premium');
+
+      // 旧模型已移除
+      expect(getModelById('MiniMax-M2.1-highspeed')).toBeNull();
+      expect(getModelById('claude-sonnet-4-20250514')).toBeNull();
+      expect(getModelById('claude-opus-4-20250514')).toBeNull();
     });
 
     it('R11: 新模型正确加入 agent 白名单', () => {
@@ -122,23 +130,19 @@ describe('model-registry', () => {
       }
     });
 
-    it('R13: 扩大后的跨 provider 白名单正确', () => {
-      // thalamus 新增 Sonnet
-      expect(isModelAllowedForAgent('thalamus', 'claude-sonnet-4-20250514')).toBe(true);
-      // review 新增 Opus
-      expect(isModelAllowedForAgent('review', 'claude-opus-4-20250514')).toBe(true);
-      // audit 新增 Opus
-      expect(isModelAllowedForAgent('audit', 'claude-opus-4-20250514')).toBe(true);
-      // dev 推荐 Opus 且在白名单
-      expect(isModelAllowedForAgent('dev', 'claude-opus-4-20250514')).toBe(true);
+    it('R13: 跨 provider 白名单正确（已更新为 4.6）', () => {
+      expect(isModelAllowedForAgent('thalamus', 'claude-sonnet-4-6')).toBe(true);
+      expect(isModelAllowedForAgent('review', 'claude-opus-4-6')).toBe(true);
+      expect(isModelAllowedForAgent('audit', 'claude-opus-4-6')).toBe(true);
+      expect(isModelAllowedForAgent('dev', 'claude-opus-4-6')).toBe(true);
     });
   });
 
   describe('辅助函数', () => {
     it('R5: getModelById 返回正确模型', () => {
-      const m = getModelById('claude-opus-4-20250514');
+      const m = getModelById('claude-opus-4-6');
       expect(m).toBeTruthy();
-      expect(m.name).toBe('Opus');
+      expect(m.name).toBe('Opus 4.6');
       expect(m.provider).toBe('anthropic');
     });
 
@@ -155,14 +159,13 @@ describe('model-registry', () => {
 
     it('R8: isModelAllowedForAgent 正确校验', () => {
       expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.5-highspeed')).toBe(true);
-      // M2.1 已从 thalamus 白名单移除（deprecated 纯推理链模型）
       expect(isModelAllowedForAgent('thalamus', 'MiniMax-M2.1')).toBe(false);
-      expect(isModelAllowedForAgent('thalamus', 'claude-opus-4-20250514')).toBe(false);
+      expect(isModelAllowedForAgent('thalamus', 'claude-opus-4-6')).toBe(false);
     });
 
     it('R9: getProviderForModel 返回 provider', () => {
       expect(getProviderForModel('MiniMax-M2.1')).toBe('minimax');
-      expect(getProviderForModel('claude-opus-4-20250514')).toBe('anthropic');
+      expect(getProviderForModel('claude-opus-4-6')).toBe('anthropic');
       expect(getProviderForModel('codex-mini-latest')).toBe('openai');
       expect(getProviderForModel('o3-mini')).toBe('openai');
       expect(getProviderForModel('o4-mini')).toBe('openai');
@@ -228,14 +231,14 @@ describe('updateAgentModel', () => {
       return { rows: [] };
     });
 
-    const result = await updateAgentModel(pool, 'dev', 'claude-sonnet-4-20250514');
+    const result = await updateAgentModel(pool, 'dev', 'claude-sonnet-4-6');
 
     expect(result.agent_id).toBe('dev');
     expect(result.current.provider).toBe('anthropic');
-    expect(result.current.model).toBe('claude-sonnet-4-20250514');
+    expect(result.current.model).toBe('claude-sonnet-4-6');
     // model_map 更新
     const devMap = getActiveProfile().config.executor.model_map.dev;
-    expect(devMap.anthropic).toBe('claude-sonnet-4-20250514');
+    expect(devMap.anthropic).toBe('claude-sonnet-4-6');
     expect(devMap.minimax).toBeNull();
   });
 
@@ -247,7 +250,7 @@ describe('updateAgentModel', () => {
 
   it('U4: 不允许的模型抛出错误', async () => {
     const pool = makeMockPool();
-    await expect(updateAgentModel(pool, 'thalamus', 'claude-opus-4-20250514'))
+    await expect(updateAgentModel(pool, 'thalamus', 'claude-opus-4-6'))
       .rejects.toThrow('not allowed');
   });
 
@@ -307,19 +310,19 @@ describe('batchUpdateAgentModels', () => {
 
     const result = await batchUpdateAgentModels(pool, [
       { agent_id: 'thalamus', model_id: 'MiniMax-M2.5-highspeed' },
-      { agent_id: 'dev', model_id: 'claude-sonnet-4-20250514' },
+      { agent_id: 'dev', model_id: 'claude-sonnet-4-6' },
       { agent_id: 'codex_qa', model_id: 'o3-mini' },
     ]);
 
     expect(result.updated.length).toBe(3);
     expect(result.updated[0]).toEqual({ agent_id: 'thalamus', provider: 'minimax', model: 'MiniMax-M2.5-highspeed' });
-    expect(result.updated[1]).toEqual({ agent_id: 'dev', provider: 'anthropic', model: 'claude-sonnet-4-20250514' });
+    expect(result.updated[1]).toEqual({ agent_id: 'dev', provider: 'anthropic', model: 'claude-sonnet-4-6' });
     expect(result.updated[2]).toEqual({ agent_id: 'codex_qa', provider: 'openai', model: 'o3-mini' });
 
     // 缓存更新
     const cached = getActiveProfile();
     expect(cached.config.thalamus.model).toBe('MiniMax-M2.5-highspeed');
-    expect(cached.config.executor.model_map.dev.anthropic).toBe('claude-sonnet-4-20250514');
+    expect(cached.config.executor.model_map.dev.anthropic).toBe('claude-sonnet-4-6');
     expect(cached.config.executor.model_map.codex_qa.openai).toBe('o3-mini');
 
     // 只调用一次 UPDATE
@@ -338,7 +341,7 @@ describe('batchUpdateAgentModels', () => {
   it('B3: 不允许的模型整体失败', async () => {
     const pool = makeMockPool();
     await expect(batchUpdateAgentModels(pool, [
-      { agent_id: 'thalamus', model_id: 'claude-opus-4-20250514' },
+      { agent_id: 'thalamus', model_id: 'claude-opus-4-6' },
     ])).rejects.toThrow('not allowed');
   });
 

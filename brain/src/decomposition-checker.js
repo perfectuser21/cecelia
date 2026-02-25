@@ -1059,7 +1059,6 @@ export {
   checkAreaKrProjectLink,
   checkProjectDecomposition,
   checkInitiativeDecomposition,
-  checkExploratoryDecompositionContinue,
   // Execution Frontier functions
   getActiveExecutionPaths,
   ensureTaskInventory,

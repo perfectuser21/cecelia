@@ -12,7 +12,7 @@ async function getWorkingMemory() {
   return memory;
 }
 async function getTopTasks(limit = 10) {
-  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
+  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at, custom_props FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
   return result.rows;
 }
 async function getRecentDecisions(limit = 10) {
@@ -35,7 +35,7 @@ import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEn
 import pool from './db.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from './decision.js';
-import { planNextTask, getPlanStatus, handlePlanInput } from './planner.js';
+import { planNextTask, getPlanStatus, handlePlanInput, getGlobalState, selectTopAreas, selectActiveInitiativeForArea, ACTIVE_AREA_COUNT } from './planner.js';
 import { ensureEventsTable, queryEvents, getEventCounts } from './event-bus.js';
 import { getState as getCBState, reset as resetCB, getAllStates as getAllCBStates } from './circuit-breaker.js';
 import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAlertness, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
@@ -49,7 +49,7 @@ import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circui
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
 import websocketService from './websocket.js';
 import crypto from 'crypto';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
@@ -58,6 +58,12 @@ import { handleChat } from './orchestrator-chat.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
+import {
+  runDecompositionChecks,
+  getActiveExecutionPaths,
+  checkInitiativeDecomposition,
+  INVENTORY_CONFIG
+} from './decomposition-checker.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -412,7 +418,7 @@ router.get('/goals', async (req, res) => {
   try {
     const { dept } = req.query;
     let query = `
-      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, created_at, updated_at
+      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, custom_props, created_at, updated_at
       FROM goals
     `;
     const params = [];
@@ -3476,6 +3482,74 @@ router.post('/plan/next', async (req, res) => {
   }
 });
 
+// ==================== Work Streams API ====================
+
+/**
+ * GET /api/brain/work/streams
+ * 返回当前 Area Stream 调度状态，供前端展示
+ * 使用 planner.js 的 selectTopAreas + selectActiveInitiativeForArea
+ */
+router.get('/work/streams', async (_req, res) => {
+  try {
+    const state = await getGlobalState();
+    const topAreas = selectTopAreas(state, ACTIVE_AREA_COUNT);
+
+    const streams = topAreas.map(area => {
+      const areaKRs = state.keyResults.filter(kr => kr.parent_id === area.id);
+      const areaKRIds = new Set(areaKRs.map(kr => kr.id));
+
+      const areaTasks = state.activeTasks.filter(
+        t => (t.status === 'queued' || t.status === 'in_progress') && areaKRIds.has(t.goal_id)
+      );
+      const totalQueuedTasks = areaTasks.filter(t => t.status === 'queued').length;
+
+      const initiativeResult = selectActiveInitiativeForArea(area, state);
+      let activeInitiative = null;
+      if (initiativeResult) {
+        const { initiative, kr } = initiativeResult;
+        const initTasks = areaTasks.filter(t => t.project_id === initiative.id);
+        const inProgressCount = initTasks.filter(t => t.status === 'in_progress').length;
+        const queuedCount = initTasks.filter(t => t.status === 'queued').length;
+        // lockReason: in_progress 任务存在 → 'in_progress'，否则 → 'fifo'
+        const lockReason = inProgressCount > 0 ? 'in_progress' : 'fifo';
+        activeInitiative = {
+          initiative: {
+            id: initiative.id,
+            name: initiative.name,
+            status: initiative.status,
+            created_at: initiative.created_at,
+          },
+          kr: { id: kr.id, title: kr.title || kr.name },
+          lockReason,
+          inProgressTasks: inProgressCount,
+          queuedTasks: queuedCount,
+        };
+      }
+
+      return {
+        area: {
+          id: area.id,
+          title: area.title || area.name,
+          priority: area.priority,
+          status: area.status,
+          progress: area.progress || 0,
+        },
+        activeInitiative,
+        totalQueuedTasks,
+      };
+    });
+
+    res.json({
+      activeAreaCount: ACTIVE_AREA_COUNT,
+      streams,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[work/streams] Error:', err);
+    res.status(500).json({ error: 'Failed to get work streams', details: err.message });
+  }
+});
+
 // ==================== Events API (EventBus) ====================
 
 /**
@@ -6499,6 +6573,287 @@ router.post('/orchestrator/realtime/tool', async (req, res) => {
   }
 });
 
+// ==================== Staff API ====================
+
+/**
+ * GET /api/brain/staff
+ * 返回所有员工列表，含角色和模型配置
+ */
+router.get('/staff', async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    // 1. 读 workers.config.json
+    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersRaw = fs.readFileSync(workersPath, 'utf-8');
+    const workersConfig = JSON.parse(workersRaw);
+
+    // 2. 读 model_map（当前 active profile）
+    const activeProfile = getActiveProfile();
+    const modelMap = activeProfile?.config?.executor?.model_map || {};
+
+    // 3. 合并数据
+    const teams = workersConfig.teams.map(team => ({
+      id: team.id,
+      name: team.name,
+      area: team.area || null,
+      department: team.department || null,
+      level: team.level,
+      icon: team.icon,
+      description: team.description,
+      workers: team.workers.map(worker => {
+        // 从 model_map 找对应模型（按 worker.id 或 worker.skill）
+        const skillKey = worker.skill?.replace('/', '') || worker.id;
+        const modelEntry = modelMap[skillKey] || modelMap[worker.id] || {};
+        // 取第一个非 null 的 provider/model
+        let activeModel = null;
+        let activeProvider = null;
+        for (const [provider, model] of Object.entries(modelEntry)) {
+          if (model) {
+            activeProvider = provider;
+            activeModel = model;
+            break;
+          }
+        }
+        const credentialsFile = modelEntry.credentials || modelEntry.minimax_credentials || worker.credentials_file || null;
+        return {
+          id: worker.id,
+          name: worker.name,
+          alias: worker.alias || null,
+          icon: worker.icon,
+          type: worker.type,
+          role: worker.role,
+          skill: worker.skill || null,
+          description: worker.description,
+          abilities: worker.abilities || [],
+          gradient: worker.gradient || null,
+          model: {
+            provider: activeProvider,
+            name: activeModel,
+            full_map: modelEntry,
+            credentials_file: credentialsFile,
+          },
+        };
+      }),
+    }));
+
+    res.json({
+      success: true,
+      version: workersConfig.version,
+      areas: workersConfig.areas || {},
+      teams,
+      total_workers: teams.reduce((sum, t) => sum + t.workers.length, 0),
+    });
+  } catch (err) {
+    console.error('[API] staff error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Staff Worker Edit API ====================
+
+/**
+ * PUT /api/brain/staff/workers/:workerId
+ * 更新 worker 的 skill 和/或 model 配置
+ * body: { skill?: string, model?: { provider: string, name: string } }
+ */
+router.put('/staff/workers/:workerId', async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const { skill, model, credentials_file } = req.body;
+    const fs = await import('fs');
+
+    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersConfig = JSON.parse(fs.readFileSync(workersPath, 'utf-8'));
+
+    // 找到 worker
+    let targetWorker = null;
+    for (const team of workersConfig.teams) {
+      const worker = team.workers.find(w => w.id === workerId);
+      if (worker) {
+        if (skill !== undefined) {
+          worker.skill = skill || null;
+        }
+        if (credentials_file !== undefined) {
+          worker.credentials_file = credentials_file || null;
+        }
+        targetWorker = worker;
+        break;
+      }
+    }
+    if (!targetWorker) {
+      return res.status(404).json({ success: false, error: `Worker ${workerId} not found` });
+    }
+
+    // 保存 workers.config.json（skill 变更）
+    fs.writeFileSync(workersPath, JSON.stringify(workersConfig, null, 2));
+
+    // 更新 model（直接写 active profile 的 model_map）
+    if (model?.provider && model?.name) {
+      const { rows: activeRows } = await pool.query(
+        'SELECT id, config FROM model_profiles WHERE is_active = true LIMIT 1'
+      );
+      if (activeRows.length > 0) {
+        const profile = activeRows[0];
+        const config = { ...profile.config };
+        const modelMap = { ...(config.executor?.model_map || {}) };
+        const skillKey = targetWorker.skill?.replace('/', '') || workerId;
+        const existing = modelMap[skillKey] || {};
+        const newMap = {
+          anthropic: model.provider === 'anthropic' ? model.name : (existing.anthropic || null),
+          minimax:   model.provider === 'minimax'   ? model.name : (existing.minimax   || null),
+          openai:    model.provider === 'openai'    ? model.name : (existing.openai    || null),
+        };
+        // 保存 credentials（通用账户选择，适用所有 provider）
+        if (credentials_file !== undefined) {
+          newMap.credentials = credentials_file || null;
+          newMap.minimax_credentials = credentials_file || null; // 向后兼容
+        } else if (existing.credentials !== undefined) {
+          newMap.credentials = existing.credentials;
+          newMap.minimax_credentials = existing.minimax_credentials;
+        }
+        modelMap[skillKey] = newMap;
+        config.executor = { ...config.executor, model_map: modelMap };
+        await pool.query(
+          'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
+          [JSON.stringify(config), profile.id]
+        );
+        const { loadActiveProfile } = await import('./model-profile.js');
+        await loadActiveProfile(pool);
+      }
+    }
+
+    res.json({ success: true, workerId });
+  } catch (err) {
+    console.error('[API] staff worker PUT error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Credentials API ====================
+
+/**
+ * GET /api/brain/credentials
+ * 返回可用账户列表（扫描 account*.json 和 ~/.credentials/*.json）
+ */
+router.get('/credentials', async (_req, res) => {
+  const credentials = [];
+
+  // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
+  const claudeDir = '/home/xx/.claude';
+  try {
+    const files = readdirSync(claudeDir);
+    files.filter(f => /^\.account\d+\.json$/.test(f)).sort().forEach(file => {
+      const num = file.match(/\.account(\d+)\.json/)[1];
+      credentials.push({
+        name: `account${num}`,
+        type: 'anthropic_oauth',
+        path: `~/.claude/${file}`,
+        provider: 'anthropic'
+      });
+    });
+  } catch(e) { /* dir may not exist in test env */ }
+
+  // 2. API key credentials: /home/cecelia/.credentials/*.json (Docker mount)
+  const credDir = '/home/cecelia/.credentials';
+  try {
+    const files = readdirSync(credDir);
+    files.filter(f => f.endsWith('.json')).sort().forEach(file => {
+      const name = file.replace('.json', '');
+      let provider = 'openai';
+      if (name.startsWith('minimax')) provider = 'minimax';
+      else if (name.startsWith('openai')) provider = 'openai';
+      credentials.push({
+        name,
+        type: 'api_key',
+        path: `~/.credentials/${file}`,
+        provider
+      });
+    });
+  } catch(e) { /* dir may not exist in test env */ }
+
+  res.json({ credentials });
+});
+
+// ==================== Skills Registry API ====================
+
+/**
+ * GET /api/brain/skills-registry
+ * 返回所有注册的 Skills 和 Agents（从 cecelia-workflows 读取）
+ */
+router.get('/skills-registry', async (_req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+
+    const WORKFLOWS_BASE = '/home/xx/perfect21/cecelia/workflows';
+
+    function parseSkillMd(filePath) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // 解析 YAML frontmatter（--- ... ---）
+        const match = content.match(/^---\n([\s\S]*?)\n---/);
+        if (!match) return null;
+
+        const frontmatter = {};
+        for (const line of match[1].split('\n')) {
+          const colonIdx = line.indexOf(':');
+          if (colonIdx === -1) continue;
+          const key = line.slice(0, colonIdx).trim();
+          let value = line.slice(colonIdx + 1).trim();
+          // 去掉引号
+          value = value.replace(/^["']|["']$/g, '');
+          if (key && value) frontmatter[key] = value;
+        }
+        // description 可能是多行，取 | 之后的第一行
+        const descMatch = content.match(/^description:\s*\|\n\s+(.*)/m);
+        if (descMatch) frontmatter.description = descMatch[1].trim();
+
+        return frontmatter;
+      } catch {
+        return null;
+      }
+    }
+
+    function scanDir(baseDir, type) {
+      const items = [];
+      try {
+        const dirs = fs.readdirSync(baseDir, { withFileTypes: true });
+        for (const dir of dirs) {
+          if (!dir.isDirectory() && !dir.isSymbolicLink()) continue;
+          const skillMdPath = path.join(baseDir, dir.name, 'SKILL.md');
+          if (!fs.existsSync(skillMdPath)) continue;
+
+          const meta = parseSkillMd(skillMdPath);
+          items.push({
+            id: dir.name,
+            name: meta?.name || dir.name,
+            description: meta?.description || '',
+            version: meta?.version || '1.0.0',
+            type,
+            path: path.join(baseDir, dir.name),
+          });
+        }
+      } catch {}
+      return items;
+    }
+
+    const skills = scanDir(path.join(WORKFLOWS_BASE, 'skills'), 'skill');
+    const agents = scanDir(path.join(WORKFLOWS_BASE, 'agents'), 'agent');
+
+    res.json({
+      success: true,
+      total: skills.length + agents.length,
+      skills,
+      agents,
+    });
+  } catch (err) {
+    console.error('[API] skills-registry error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==================== Model Profile API ====================
 
 router.get('/model-profiles', async (_req, res) => {
@@ -6711,6 +7066,262 @@ router.post('/device-locks/release', async (req, res) => {
   } catch (err) {
     console.error('[API] device-locks/release error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// Desire System API — Cecelia 的欲望/表达
+// ============================================================
+
+/**
+ * GET /api/brain/desires
+ * 列出 desires，支持按 type/status 筛选
+ * Query: type, status, limit(default 50)
+ */
+router.get('/desires', async (req, res) => {
+  try {
+    const { type, status = 'pending', limit = 50 } = req.query;
+    const conditions = [];
+    const params = [];
+
+    if (type) {
+      params.push(type);
+      conditions.push(`type = $${params.length}`);
+    }
+    if (status !== 'all') {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+
+    params.push(Math.min(parseInt(limit) || 50, 200));
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows } = await pool.query(`
+      SELECT id, type, content, insight, proposed_action,
+             urgency, evidence, status, created_at, expires_at
+      FROM desires
+      ${where}
+      ORDER BY urgency DESC, created_at DESC
+      LIMIT $${params.length}
+    `, params);
+
+    res.json({ desires: rows, total: rows.length });
+  } catch (err) {
+    console.error('[API] desires error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/desires/stats
+ * 各状态/类型数量，用于前端 badge
+ */
+router.get('/desires/stats', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('propose','question')) AS pending_decisions,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('warn')) AS pending_warns,
+        COUNT(*) FILTER (WHERE status = 'pending' AND type IN ('inform','celebrate')) AS pending_updates,
+        COUNT(*) AS total
+      FROM desires
+      WHERE expires_at IS NULL OR expires_at > NOW()
+    `);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[API] desires/stats error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/desires/:id
+ * 更新 desire 状态（read / dismissed / expressed）
+ * Body: { status: 'expressed' | 'suppressed' }
+ */
+router.patch('/desires/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const ALLOWED = ['expressed', 'suppressed'];
+    if (!ALLOWED.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${ALLOWED.join(', ')}` });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE desires SET status = $1 WHERE id = $2 RETURNING id, status`,
+      [status, id]
+    );
+
+    if (rows.length === 0) return res.status(404).json({ error: 'desire not found' });
+    res.json({ success: true, desire: rows[0] });
+  } catch (err) {
+    console.error('[API] desires/:id patch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/decomposition/missing
+ * 查询缺失拆解任务的 Initiative 列表
+ */
+router.get('/decomposition/missing', async (req, res) => {
+  try {
+    // 获取缺失拆解任务的活跃 Initiative
+    const activePaths = await getActiveExecutionPaths();
+
+    const missingList = [];
+
+    for (const initiative of activePaths) {
+      // 检查任务库存是否充足
+      const readyTasksResult = await pool.query(`
+        SELECT COUNT(*) as count FROM tasks
+        WHERE project_id = $1 AND status = 'queued'
+      `, [initiative.id]);
+
+      const readyTasks = parseInt(readyTasksResult.rows[0].count, 10);
+
+      if (readyTasks < INVENTORY_CONFIG.LOW_WATERMARK) {
+        missingList.push({
+          initiative_id: initiative.id,
+          initiative_name: initiative.name,
+          kr_id: initiative.kr_id,
+          ready_tasks: readyTasks,
+          low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+          target_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      missing_initiatives: missingList,
+      total_active_paths: activePaths.length,
+      low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+      target_ready_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/decomposition/create-missing
+ * 手动触发为缺失拆解任务的 Initiative 创建任务
+ */
+router.post('/decomposition/create-missing', async (req, res) => {
+  try {
+    const result = await runDecompositionChecks();
+
+    // 统计创建的任务
+    const createdTasks = result.actions?.filter(action => action.action === 'create_decomposition') || [];
+    const inventoryTasks = createdTasks.filter(task => task.check === 'inventory_replenishment');
+    const initiativeTasks = createdTasks.filter(task => task.check === 'initiative_decomposition');
+
+    res.json({
+      success: true,
+      message: 'Decomposition check completed',
+      summary: result.summary || {},
+      created_tasks: {
+        total: createdTasks.length,
+        inventory_replenishment: inventoryTasks.length,
+        initiative_seeding: initiativeTasks.length
+      },
+      details: {
+        active_paths: result.active_paths || [],
+        created_tasks: result.created_tasks || []
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/create-missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/decomposition/stats
+ * 获取拆解任务统计信息
+ */
+router.get('/decomposition/stats', async (req, res) => {
+  try {
+    // 获取活跃的执行路径
+    const activePaths = await getActiveExecutionPaths();
+
+    // 获取拆解任务统计
+    const decompTasksResult = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN status = 'queued' THEN 1 END) as queued,
+        COUNT(CASE WHEN status = 'in_progress' THEN 1 END) as in_progress,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed
+      FROM tasks
+      WHERE (payload->>'decomposition' IN ('true', 'continue') OR title LIKE '%拆解%')
+    `);
+
+    // 获取库存统计
+    const inventoryStats = [];
+    let totalLowInventory = 0;
+
+    for (const initiative of activePaths) {
+      const readyTasksResult = await pool.query(`
+        SELECT COUNT(*) as count FROM tasks
+        WHERE project_id = $1 AND status = 'queued'
+      `, [initiative.id]);
+
+      const readyTasks = parseInt(readyTasksResult.rows[0].count, 10);
+      const isLowInventory = readyTasks < INVENTORY_CONFIG.LOW_WATERMARK;
+
+      if (isLowInventory) totalLowInventory++;
+
+      inventoryStats.push({
+        initiative_id: initiative.id,
+        initiative_name: initiative.name,
+        ready_tasks: readyTasks,
+        is_low_inventory: isLowInventory
+      });
+    }
+
+    // 获取项目和Initiative统计
+    const projectStatsResult = await pool.query(`
+      SELECT
+        type,
+        status,
+        COUNT(*) as count
+      FROM projects
+      WHERE type IN ('project', 'initiative')
+      GROUP BY type, status
+    `);
+
+    const projectStats = {};
+    for (const row of projectStatsResult.rows) {
+      if (!projectStats[row.type]) projectStats[row.type] = {};
+      projectStats[row.type][row.status] = parseInt(row.count, 10);
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        active_execution_paths: activePaths.length,
+        low_inventory_initiatives: totalLowInventory,
+        total_initiatives: activePaths.length
+      },
+      decomposition_tasks: decompTasksResult.rows[0] || {},
+      inventory_stats: inventoryStats,
+      project_stats: projectStats,
+      config: {
+        low_watermark: INVENTORY_CONFIG.LOW_WATERMARK,
+        target_ready_tasks: INVENTORY_CONFIG.TARGET_READY_TASKS,
+        batch_size: INVENTORY_CONFIG.BATCH_SIZE
+      }
+    });
+
+  } catch (err) {
+    console.error('[API] decomposition/stats error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -185,20 +185,13 @@ describe('Layer 3: 反思层（Reflection）', () => {
   });
 
   it('D4: accumulator >= 30 时触发反思并重置', async () => {
-    // CI 没有 ~/.credentials/minimax.json，提供假凭据使 fetch 能被触发
-    vi.doMock('fs', () => ({
-      readFileSync: (path) => {
-        if (String(path).includes('minimax.json')) {
-          return JSON.stringify({ api_key: 'test-key-for-ci' });
-        }
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
-      }
-    }));
+    // reflection.js 现在使用 Anthropic API（ANTHROPIC_API_KEY）
+    process.env.ANTHROPIC_API_KEY = 'test-key-for-ci';
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: '系统任务失败率上升，需要关注 executor 稳定性。' } }]
+        content: [{ type: 'text', text: '系统任务失败率上升，需要关注 executor 稳定性。' }]
       })
     });
 
@@ -497,8 +490,8 @@ describe('D8: runDesireSystem 集成测试', () => {
 // ============================================================
 
 describe('D9: EXPECTED_SCHEMA_VERSION', () => {
-  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 073', async () => {
+  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 075', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('073');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('075');
   });
 });

@@ -16,6 +16,10 @@ const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数�
 // Content-aware score configuration
 const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
 
+// Area Stream configuration
+// 同时活跃的 Area OKR 数量（流的数量），支持环境变量覆盖
+const ACTIVE_AREA_COUNT = parseInt(process.env.ACTIVE_AREA_COUNT || '3', 10);
+
 /**
  * Build a map of task_type → penalty score based on recent learning failures.
  * Queries learnings table for failure_pattern entries in the past LEARNING_LOOKBACK_DAYS
@@ -307,6 +311,147 @@ async function generateNextTask(kr, project, state, options = {}) {
 
 /**
  * =============================================================================
+ * Area Stream Dispatch (流调度层)
+ * =============================================================================
+ * 基于 Area OKR 的流调度：每个活跃 Area 保底 1 个 slot，Initiative Lock。
+ *
+ * 调度链：Area OKR → KR（最优先）→ Initiative（Lock）→ Task
+ *
+ * 流的定义：
+ * - 流 = 一个 Area OKR
+ * - 流内部 Initiative Lock：有 in_progress 任务的 Initiative 优先继续
+ * - 无 in_progress 时，选最早创建的有 queued 任务的 Initiative（FIFO）
+ */
+
+/**
+ * 选出有任务的 top N 个 Area OKR，按优先级 + queued 数量排序。
+ *
+ * @param {Object} state - Global planning state (from getGlobalState)
+ * @param {number} count - 最多返回几个 Area
+ * @returns {Array} - Area OKR objects, sorted by score descending
+ */
+export function selectTopAreas(state, count) {
+  const { objectives, keyResults, activeTasks } = state;
+
+  const areas = objectives.filter(
+    g => g.type === 'area_okr' && g.status !== 'completed' && g.status !== 'cancelled'
+  );
+
+  if (areas.length === 0) return [];
+
+  // KR.parent_id → Area.id 的映射
+  const krToAreaId = {};
+  for (const kr of keyResults) {
+    if (kr.parent_id) {
+      krToAreaId[kr.id] = kr.parent_id;
+    }
+  }
+
+  // 统计每个 Area 下的 queued 任务数
+  const queuedByArea = {};
+  for (const task of activeTasks) {
+    if (task.status !== 'queued' || !task.goal_id) continue;
+    const areaId = krToAreaId[task.goal_id];
+    if (areaId) {
+      queuedByArea[areaId] = (queuedByArea[areaId] || 0) + 1;
+    }
+  }
+
+  // 只保留有 queued 任务的 Area
+  const activeAreas = areas.filter(a => queuedByArea[a.id] > 0);
+  if (activeAreas.length === 0) return [];
+
+  // 打分：优先级 + queued 数量（上限 20，防止数量完全主导）
+  const scored = activeAreas.map(area => {
+    let score = 0;
+    if (area.priority === 'P0') score += 30;
+    else if (area.priority === 'P1') score += 20;
+    else if (area.priority === 'P2') score += 10;
+    score += Math.min(queuedByArea[area.id] || 0, 20);
+    return { area, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, count).map(s => s.area);
+}
+
+/**
+ * Initiative Lock：为指定 Area 选出当前应专注的 Initiative。
+ *
+ * 优先级：
+ * 1. 有 in_progress 任务的 Initiative（Lock，继续跑完）
+ * 2. 无 in_progress 时，最早创建的有 queued 任务的 Initiative（FIFO）
+ *
+ * @param {Object} area - Area OKR object
+ * @param {Object} state - Global planning state
+ * @returns {{ initiative: Object, kr: Object } | null}
+ */
+export function selectActiveInitiativeForArea(area, state) {
+  const { keyResults, activeTasks, projects } = state;
+
+  // 找出该 Area 下所有 KR 的 ID
+  const areaKRIds = new Set(
+    keyResults
+      .filter(kr => kr.parent_id === area.id)
+      .map(kr => kr.id)
+  );
+
+  if (areaKRIds.size === 0) return null;
+
+  // 汇总：initiativeId → { inProgress: [], queued: [], krId }
+  const initiativeMap = {};
+  for (const task of activeTasks) {
+    if (!task.goal_id || !areaKRIds.has(task.goal_id)) continue;
+    if (!task.project_id) continue;
+
+    const initId = task.project_id;
+    if (!initiativeMap[initId]) {
+      initiativeMap[initId] = { inProgress: [], queued: [], krId: task.goal_id };
+    }
+
+    if (task.status === 'in_progress') {
+      initiativeMap[initId].inProgress.push(task);
+    } else if (task.status === 'queued') {
+      initiativeMap[initId].queued.push(task);
+    }
+  }
+
+  if (Object.keys(initiativeMap).length === 0) return null;
+
+  // 优先 1：有 in_progress 任务的 Initiative（Initiative Lock）
+  for (const [initId, data] of Object.entries(initiativeMap)) {
+    if (data.inProgress.length > 0) {
+      const initiative = projects.find(p => p.id === initId);
+      const kr = keyResults.find(k => k.id === data.krId);
+      if (initiative && kr) {
+        return { initiative, kr };
+      }
+    }
+  }
+
+  // 优先 2：无 in_progress，选最早创建的有 queued 任务的 Initiative（FIFO）
+  const queuedCandidates = Object.entries(initiativeMap)
+    .filter(([, data]) => data.queued.length > 0)
+    .map(([initId, data]) => ({
+      initiative: projects.find(p => p.id === initId),
+      kr: keyResults.find(k => k.id === data.krId),
+      queuedCount: data.queued.length
+    }))
+    .filter(item => item.initiative && item.kr);
+
+  if (queuedCandidates.length === 0) return null;
+
+  // 按 Initiative 创建时间升序（FIFO）
+  queuedCandidates.sort(
+    (a, b) => new Date(a.initiative.created_at) - new Date(b.initiative.created_at)
+  );
+
+  return queuedCandidates[0];
+}
+
+
+/**
+ * =============================================================================
  * PR Plans Dispatch (Layer 2 - 工程规划层调度)
  * =============================================================================
  * 三层拆解调度：Initiative → PR Plans → Tasks
@@ -489,7 +634,32 @@ async function planNextTask(scopeKRIds = null, options = {}) {
   }
   } // end skipPrPlans check
 
-  // No PR Plans available - fall back to traditional KR dispatch
+  // Area Stream dispatch（流调度层，在 PR Plans 之后、传统 KR dispatch 之前）
+  // 每个活跃 Area 保底 1 个 slot，Initiative Lock。
+  // 可通过 options.skipAreaStreams=true 跳过（用于测试兼容）
+  if (!options.skipAreaStreams) {
+    const topAreas = selectTopAreas(state, ACTIVE_AREA_COUNT);
+    for (const area of topAreas) {
+      const result = selectActiveInitiativeForArea(area, state);
+      if (!result) continue;
+
+      const { initiative, kr } = result;
+      const task = await generateNextTask(kr, initiative, state);
+      if (task) {
+        console.log(`[planner] Area stream: ${area.title} → KR: ${kr.title} → Initiative: ${initiative.name}`);
+        return {
+          planned: true,
+          source: 'area_stream',
+          area: { id: area.id, title: area.title },
+          task: { id: task.id, title: task.title, priority: task.priority, project_id: task.project_id, goal_id: task.goal_id },
+          kr: { id: kr.id, title: kr.title },
+          initiative: { id: initiative.id, title: initiative.name }
+        };
+      }
+    }
+  }
+
+  // No Area Stream task found - fall back to traditional KR dispatch
   // If scoped to specific KRs (from tick focus), filter keyResults before selecting
   if (scopeKRIds && scopeKRIds.length > 0) {
     const scopeSet = new Set(scopeKRIds);
@@ -690,5 +860,7 @@ export {
   updatePrPlanStatus,
   canExecutePrPlan,
   getNextPrPlan,
-  checkPrPlansCompletion
+  checkPrPlansCompletion,
+  // Area Stream dispatch（selectTopAreas / selectActiveInitiativeForArea 已在函数定义处 export）
+  ACTIVE_AREA_COUNT
 };

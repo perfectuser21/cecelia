@@ -40,9 +40,18 @@ describe('orchestrator-chat memory unification (D1)', () => {
       parseIntent: vi.fn().mockReturnValue({ type: 'QUESTION', confidence: 0.8 }),
     }));
 
-    vi.doMock('fs', () => ({
-      readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-key' })),
+    vi.doMock('node:fs', () => ({
+      readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-minimax-key' })),
     }));
+
+    vi.doMock('node:os', () => ({
+      homedir: vi.fn().mockReturnValue('/home/testuser'),
+    }));
+
+    vi.doMock('node:path', async () => {
+      const actual = await vi.importActual('node:path');
+      return actual;
+    });
 
     // mock user-profile.js — 阻止 extractAndSaveUserFacts 触发额外 fetch 调用，getUserProfileContext 返回 ''
     vi.doMock('../user-profile.js', () => ({
@@ -118,12 +127,12 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(result.reply).toBe('好的，我了解了。');
     expect(result.routing_level).toBe(0);
 
-    // 验证 MiniMax 调用中的 system prompt 包含记忆
+    // 验证 MiniMax 调用中的 system prompt 包含记忆（system 在 messages[0]）
     const minimaxCall = global.fetch.mock.calls[0];
     const body = JSON.parse(minimaxCall[1].body);
-    const systemMsg = body.messages.find(m => m.role === 'system');
-    expect(systemMsg.content).toContain('相关历史上下文');
-    expect(systemMsg.content).toContain('历史任务');
+    const systemContent = body.messages?.find(m => m.role === 'system')?.content || '';
+    expect(systemContent).toContain('相关历史上下文');
+    expect(systemContent).toContain('历史任务');
   });
 
   it('handleChat works when memory returns empty block', async () => {
