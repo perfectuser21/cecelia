@@ -16,8 +16,7 @@ const manifest: FeatureManifest = {
     { path: '/brain-status', component: 'BrainStatusDashboard' },
     // Observability Dashboard
     { path: '/observability', component: 'ObservabilityDashboard' },
-    // Cecelia
-    { path: '/cecelia', component: 'CeceliaOverview' },
+    // Cecelia（/cecelia 顶级路由由 cecelia feature 管理，不在此注册）
     { path: '/cecelia/agents/:agentId', component: 'AgentDetail' },
     { path: '/cecelia/runs', component: 'CeceliaRuns' },
     { path: '/cecelia/runs/:runId', component: 'RunDetail' },

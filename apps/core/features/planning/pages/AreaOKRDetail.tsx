@@ -1,208 +1,144 @@
 /**
- * Area OKR Detail - Shows all Objectives and Key Results for an Area
+ * Area OKR Detail - 展示某个 Area 的所有 KR（Key Results）
+ * 数据源: /api/tasks/goals（同一 PostgreSQL，不再查 businesses 表）
  */
 
-import React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
-import { useApi } from '../../shared/hooks/useApi';
-import { SkeletonCard } from '../../shared/components/LoadingState';
-import { fetchAreaOKR, type AreaDetail, type Objective, type KeyResult } from '../api/okr.api';
+import { DatabaseView } from '../../shared/components/DatabaseView';
+import type { ColumnDef } from '../../shared/components/DatabaseView';
 
-const statusColors: Record<string, string> = {
-  on_track: 'text-green-600',
-  at_risk: 'text-yellow-600',
-  behind: 'text-red-600',
-};
-
-const priorityColors: Record<string, string> = {
-  P0: 'bg-red-100 text-red-800 border-red-300',
-  P1: 'bg-orange-100 text-orange-800 border-orange-300',
-  P2: 'bg-yellow-100 text-yellow-800 border-yellow-300',
-};
-
-function KeyResultItem({ kr }: { kr: KeyResult }) {
-  const progress = kr.target_value > 0
-    ? Math.round((kr.current_value / kr.target_value) * 100)
-    : 0;
-
-  return (
-    <div className="p-4 bg-gray-50 rounded-lg">
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1">
-          <h4 className="font-medium text-gray-900">{kr.title}</h4>
-          {kr.description && (
-            <p className="text-sm text-gray-600 mt-1">{kr.description}</p>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 ml-4">
-          {kr.priority && (
-            <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${
-              priorityColors[kr.priority] || 'bg-gray-100 text-gray-800'
-            }`}>
-              {kr.priority}
-            </span>
-          )}
-          <span className={`text-xs font-medium ${statusColors[kr.status]}`}>
-            {kr.status}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-4 mb-2">
-        <div className="flex-1 bg-gray-200 rounded-full h-2">
-          <div
-            className="bg-blue-600 h-2 rounded-full transition-all"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <span className="text-sm font-medium text-gray-700 w-16 text-right">
-          {kr.current_value}{kr.unit ? ` ${kr.unit}` : ''} / {kr.target_value}{kr.unit ? ` ${kr.unit}` : ''}
-        </span>
-      </div>
-
-      {kr.projects && kr.projects.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="text-xs text-gray-500 mb-2">Contributing Projects:</div>
-          <div className="flex flex-wrap gap-2">
-            {kr.projects.map(project => (
-              <span
-                key={project.id}
-                className="px-2 py-1 bg-white rounded border border-gray-200 text-xs text-gray-700"
-              >
-                {project.name}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {kr.expected_completion_date && (
-        <div className="text-xs text-gray-500 mt-2">
-          Target: {new Date(kr.expected_completion_date).toLocaleDateString()}
-        </div>
-      )}
-    </div>
-  );
+interface Goal {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  priority: string;
+  progress: number;
+  weight: number;
+  parent_id: string | null;
+  custom_props: Record<string, unknown>;
 }
 
-function ObjectiveItem({ objective }: { objective: Objective }) {
-  const avgProgress = objective.key_results?.length
-    ? Math.round(
-        objective.key_results.reduce((sum, kr) => {
-          const progress = kr.target_value > 0 ? (kr.current_value / kr.target_value) * 100 : 0;
-          return sum + progress;
-        }, 0) / objective.key_results.length
-      )
-    : 0;
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-gray-900">{objective.title}</h3>
-          {objective.description && (
-            <p className="text-sm text-gray-600 mt-1">{objective.description}</p>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 ml-4">
-          <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${
-            priorityColors[objective.priority] || 'bg-gray-100 text-gray-800'
-          }`}>
-            {objective.priority}
-          </span>
-          {objective.quarter && (
-            <span className="text-xs text-gray-500">{objective.quarter}</span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 mb-4">
-        <div className="flex-1 bg-gray-200 rounded-full h-2">
-          <div
-            className="bg-blue-600 h-2 rounded-full transition-all"
-            style={{ width: `${avgProgress}%` }}
-          />
-        </div>
-        <span className="text-sm font-medium text-gray-700 w-12 text-right">
-          {avgProgress}%
-        </span>
-      </div>
-
-      {objective.key_results && objective.key_results.length > 0 && (
-        <div className="space-y-3">
-          <div className="text-sm font-medium text-gray-700">
-            Key Results ({objective.key_results.length})
-          </div>
-          {objective.key_results.map(kr => (
-            <KeyResultItem key={kr.id} kr={kr} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+interface KRRow {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  progress: number;
+  weight: number;
+  [key: string]: unknown;
 }
+
+const COLUMNS: ColumnDef[] = [
+  { id: 'title', label: 'KR 名称', type: 'text', sortable: true, width: 400 },
+  { id: 'priority', label: '优先级', type: 'badge', sortable: true, width: 90,
+    options: [
+      { value: 'P0', label: 'P0', color: '#ef4444' },
+      { value: 'P1', label: 'P1', color: '#f59e0b' },
+      { value: 'P2', label: 'P2', color: '#6b7280' },
+    ],
+  },
+  { id: 'status', label: '状态', type: 'badge', sortable: true, width: 110,
+    options: [
+      { value: 'pending', label: '待开始', color: '#6b7280' },
+      { value: 'in_progress', label: '进行中', color: '#3b82f6' },
+      { value: 'completed', label: '已完成', color: '#10b981' },
+      { value: 'paused', label: '暂停', color: '#f59e0b' },
+    ],
+  },
+  { id: 'progress', label: '进度', type: 'progress', sortable: true, width: 140 },
+  { id: 'weight', label: '权重', type: 'number', sortable: true, width: 80 },
+];
+
+const FIELD_IDS = COLUMNS.map(c => c.id);
 
 export default function AreaOKRDetail() {
   const { areaId } = useParams<{ areaId: string }>();
   const navigate = useNavigate();
+  const [area, setArea] = useState<Goal | null>(null);
+  const [rows, setRows] = useState<KRRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const { data: areaData, loading } = useApi<AreaDetail>(
-    `/api/okr/areas/${areaId}`,
-    {
-      fetcher: () => fetchAreaOKR(areaId!),
-    }
-  );
+  const fetchData = useCallback(async () => {
+    if (!areaId) return;
+    setLoading(true);
+    try {
+      const [areaRes, allGoalsRes] = await Promise.all([
+        fetch(`/api/tasks/goals/${areaId}`),
+        fetch('/api/tasks/goals'),
+      ]);
+      if (!areaRes.ok) { setArea(null); setRows([]); return; }
 
-  if (loading) {
+      const areaGoal: Goal = await areaRes.json();
+      setArea(areaGoal);
+
+      const allGoals: Goal[] = await allGoalsRes.json();
+      const krs = allGoals
+        .filter(g => g.type === 'kr' && g.parent_id === areaId)
+        .map(g => ({
+          id: g.id,
+          title: g.title,
+          status: g.status,
+          priority: g.priority ?? 'P2',
+          progress: g.progress ?? 0,
+          weight: g.weight ?? 1,
+          ...(g.custom_props ?? {}),
+        }));
+      setRows(krs);
+    } catch { setArea(null); setRows([]); }
+    finally { setLoading(false); }
+  }, [areaId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleUpdate = useCallback(async (id: string, field: string, value: unknown) => {
+    const isCustom = !FIELD_IDS.includes(field);
+    const body = isCustom ? { custom_props: { [field]: value } } : { [field]: value };
+    await fetch(`/api/tasks/goals/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+  }, []);
+
+  if (!loading && !area) {
     return (
-      <div className="p-6">
-        <SkeletonCard count={3} />
-      </div>
-    );
-  }
-
-  if (!areaData) {
-    return (
-      <div className="p-6">
-        <div className="text-center py-12 text-gray-500">
-          Area not found
-        </div>
+      <div className="h-full flex flex-col bg-slate-900 text-gray-200 p-6">
+        <button onClick={() => navigate('/work')} className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 transition-colors">
+          <ChevronLeft className="w-4 h-4" /> 返回
+        </button>
+        <div className="text-center py-16 text-slate-500">Area 未找到</div>
       </div>
     );
   }
 
   return (
-    <div className="p-6">
-      <button
-        onClick={() => navigate('/work/okr')}
-        className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
-      >
-        <ChevronLeft className="w-4 h-4" />
-        <span>Back to Dashboard</span>
-      </button>
-
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">
-          {areaData.area.name}
+    <div className="h-full flex flex-col bg-slate-900 overflow-hidden">
+      <div className="px-6 pt-4 pb-3 border-b border-slate-700/50 shrink-0">
+        <button onClick={() => navigate('/work')} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors mb-3">
+          <ChevronLeft className="w-3.5 h-3.5" /> Area 总览
+        </button>
+        <h1 className="text-lg font-semibold text-gray-100 truncate">
+          {area?.title ?? '加载中...'}
         </h1>
-        <p className="text-gray-600 mt-1">
-          {areaData.objectives.length} Objective{areaData.objectives.length !== 1 ? 's' : ''}
-        </p>
+        <div className="flex items-center gap-4 mt-1 text-xs text-slate-400">
+          <span>{rows.length} 个 KR</span>
+          <span>活跃 {rows.filter(r => r.status === 'in_progress').length}</span>
+          {area?.progress !== undefined && <span>总进度 {area.progress}%</span>}
+        </div>
       </div>
-
-      <div className="space-y-4">
-        {areaData.objectives.length > 0 ? (
-          areaData.objectives.map(objective => (
-            <ObjectiveItem key={objective.id} objective={objective} />
-          ))
-        ) : (
-          <div className="text-center py-12 text-gray-500 bg-white rounded-lg border">
-            No objectives found for this area
-          </div>
-        )}
+      <div className="flex-1 overflow-hidden">
+        <DatabaseView
+          data={rows} columns={COLUMNS} onUpdate={handleUpdate}
+          loading={loading} defaultView="table"
+          stateKey={`area-kr-${areaId}`} boardGroupField="status"
+          stats={{ total: rows.length, byStatus: {
+            in_progress: rows.filter(r => r.status === 'in_progress').length || undefined,
+          }}}
+        />
       </div>
     </div>
   );

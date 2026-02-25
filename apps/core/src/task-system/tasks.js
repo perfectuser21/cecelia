@@ -72,14 +72,14 @@ router.post('/', async (req, res) => {
 // PATCH /api/tasks/:id - Update task
 router.patch('/:id', async (req, res) => {
   try {
-    const { title, description, intent, priority, status, payload, tags, worker_id, error } = req.body;
+    const { title, description, intent, priority, status, payload, tags, worker_id, error, custom_props } = req.body;
 
     const updates = [];
     const params = [];
     let paramIndex = 1;
 
     // Validate at least one field to update
-    if (!title && !description && !intent && !priority && !status && !payload && !tags && !worker_id && error === undefined) {
+    if (!title && !description && !intent && !priority && !status && !payload && !tags && !worker_id && error === undefined && !custom_props) {
       return res.status(400).json({ error: 'At least one field must be provided for update' });
     }
     
@@ -125,7 +125,11 @@ router.patch('/:id', async (req, res) => {
       updates.push('error = $' + paramIndex++);
       params.push(error);
     }
-    
+    if (custom_props !== undefined) {
+      updates.push('custom_props = custom_props || $' + paramIndex++);
+      params.push(JSON.stringify(custom_props));
+    }
+
     params.push(req.params.id);
     
     const query = 'UPDATE tasks SET ' + updates.join(', ') + ' WHERE id = $' + paramIndex + ' RETURNING *';

@@ -53,6 +53,10 @@ function AppContent() {
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(false);
 
+  // Tab 路由不加 p-8 内边距（TabbedPage 自带布局）
+  const isTabbedRoute = (path: string) =>
+    path.startsWith('/system') || path.startsWith('/work') || path.startsWith('/immune') || path.startsWith('/cecelia');
+
   // 设置浏览器标题
   useEffect(() => {
     document.title = 'Cecelia';
@@ -255,7 +259,7 @@ function AppContent() {
 
       {/* 主内容区域 - 配置驱动路由 */}
       <main className={isAuthenticated ? `flex-1 overflow-auto ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-auto"}>
-        <div key={location.pathname} className={isAuthenticated ? "p-8 page-fade-in" : ""}>
+        <div key={location.pathname} className={isAuthenticated ? (isTabbedRoute(location.pathname) ? "page-fade-in" : "p-8 page-fade-in") : ""}>
           <DynamicRouter />
         </div>
       </main>

@@ -8,15 +8,8 @@ router.get('/', async (req, res) => {
   try {
     const { project_id, scope, business_id, department_id, area_id } = req.query;
 
-    // Join with businesses and departments for related data
-    let query = `
-      SELECT g.*,
-        b.name as business_name, b.owner as business_owner,
-        d.name as department_name, d.lead as department_lead
-      FROM goals g
-      LEFT JOIN businesses b ON g.business_id = b.id
-      LEFT JOIN departments d ON g.department_id = d.id
-    `;
+    // 直接查询 goals 表（businesses/departments 表不存在）
+    let query = `SELECT g.* FROM goals g`;
     let params = [];
     let conditions = [];
     let paramIndex = 1;
@@ -50,24 +43,11 @@ router.get('/', async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    // Transform to include nested objects
+    // 保留 business/department 为 null（表不存在，无法 JOIN）
     const goals = result.rows.map(row => ({
       ...row,
-      business: row.business_id ? {
-        id: row.business_id,
-        name: row.business_name,
-        owner: row.business_owner
-      } : null,
-      department: row.department_id ? {
-        id: row.department_id,
-        name: row.department_name,
-        lead: row.department_lead
-      } : null,
-      // Remove flattened fields
-      business_name: undefined,
-      business_owner: undefined,
-      department_name: undefined,
-      department_lead: undefined
+      business: null,
+      department: null,
     }));
 
     res.json(goals);
@@ -97,7 +77,8 @@ router.post('/', async (req, res) => {
     const {
       project_id, title, description, status, priority, target_date, progress, metadata, parent_id, type, weight,
       scope, cycle, business_id, department_id, area_id,
-      expected_start_date, expected_end_date, actual_start_date, actual_end_date
+      expected_start_date, expected_end_date, actual_start_date, actual_end_date,
+      custom_props
     } = req.body;
 
     // Determine type based on parent_id if not explicitly set
@@ -164,7 +145,8 @@ router.patch('/:id', async (req, res) => {
     const {
       title, description, status, priority, target_date, progress, metadata, weight,
       scope, cycle, business_id, department_id, area_id,
-      expected_start_date, expected_end_date, actual_start_date, actual_end_date
+      expected_start_date, expected_end_date, actual_start_date, actual_end_date,
+      custom_props
     } = req.body;
 
     const updates = [];
@@ -238,6 +220,10 @@ router.patch('/:id', async (req, res) => {
     if (actual_end_date !== undefined) {
       updates.push('actual_end_date = $' + paramIndex++);
       params.push(actual_end_date);
+    }
+    if (custom_props !== undefined) {
+      updates.push('custom_props = custom_props || $' + paramIndex++);
+      params.push(JSON.stringify(custom_props));
     }
 
     if (updates.length === 0) {

@@ -48,9 +48,9 @@ export default function TabbedPage({ tabs, basePath }: TabbedPageProps) {
   const ActiveComponent = activeTab ? lazyComponents[activeTab] : null;
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      <div className="border-b border-slate-700 bg-slate-800">
-        <div className="flex space-x-1 p-1">
+    <div className="flex flex-col bg-slate-900 text-white">
+      <div className="border-b border-slate-700 bg-slate-800 sticky top-0 z-10">
+        <div className="flex space-x-1 p-1 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -58,7 +58,7 @@ export default function TabbedPage({ tabs, basePath }: TabbedPageProps) {
               <button
                 key={tab.id}
                 onClick={() => navigate(tab.path)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
                   isActive
                     ? 'bg-slate-700 text-white'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'

@@ -189,7 +189,7 @@ function getMonthKey(dateStr: string): string {
 
 // ── Main Component ─────────────────────────────────────
 
-export default function TaskDatabase() {
+function TaskDatabaseList() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -1149,6 +1149,304 @@ function EditableStatus({ status, options, onChange }: { status: string; options
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// 分组视图：按 Area → Initiative 展示 queued/in_progress 任务
+// ══════════════════════════════════════════════════════════
+
+interface GoalForGroup {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  priority: string;
+  parent_id: string | null;
+}
+
+interface ProjectForGroup {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  parent_id?: string | null;
+  kr_id?: string | null;
+  goal_id?: string | null;
+}
+
+interface TaskForGroup {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  task_type: string;
+  created_at: string;
+  project_id?: string | null;
+  goal_id?: string | null;
+}
+
+function TaskGroupedView() {
+  const [goals, setGoals] = useState<GoalForGroup[]>([]);
+  const [projects, setProjects] = useState<ProjectForGroup[]>([]);
+  const [tasks, setTasks] = useState<TaskForGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
+  const [expandedInits, setExpandedInits] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/tasks/goals').then(r => r.json()),
+      fetch('/api/tasks/projects').then(r => r.json()),
+      fetch('/api/tasks/tasks?limit=500').then(r => r.json()),
+    ]).then(([g, p, t]) => {
+      setGoals(Array.isArray(g) ? g : []);
+      setProjects(Array.isArray(p) ? p : []);
+      setTasks(Array.isArray(t) ? t : []);
+      // 默认展开所有 area
+      const areas = (Array.isArray(g) ? g : []).filter((x: GoalForGroup) => x.type === 'area_okr');
+      setExpandedAreas(new Set(areas.map((a: GoalForGroup) => a.id)));
+    }).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  const toggleArea = (id: string) => {
+    setExpandedAreas(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+  const toggleInit = (id: string) => {
+    setExpandedInits(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  // 数据处理
+  const areaOkrs = goals
+    .filter(g => g.type === 'area_okr')
+    .sort((a, b) => ({ P0: 0, P1: 1, P2: 2 }[a.priority] ?? 9) - ({ P0: 0, P1: 1, P2: 2 }[b.priority] ?? 9));
+
+  const krs = goals.filter(g => g.type === 'kr');
+  const krMap: Record<string, GoalForGroup> = {};
+  for (const k of krs) krMap[k.id] = k;
+
+  const initiatives = projects.filter(p => p.type === 'initiative' && p.status !== 'archived');
+  const initMap: Record<string, ProjectForGroup> = {};
+  for (const i of initiatives) initMap[i.id] = i;
+
+  // 找 initiative 归属的 area
+  const allProjectsMap: Record<string, ProjectForGroup> = {};
+  for (const p of projects) allProjectsMap[p.id] = p;
+
+  function getInitiativeArea(init: ProjectForGroup): string | null {
+    // initiative → parent project → kr_id/goal_id → kr → parent_id → area
+    if (init.parent_id) {
+      const parentProj = allProjectsMap[init.parent_id];
+      if (parentProj) {
+        const krId = parentProj.kr_id || parentProj.goal_id;
+        if (krId) {
+          const kr = krMap[krId];
+          if (kr?.parent_id) return kr.parent_id;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 活跃任务
+  const activeTasks = tasks.filter(t => t.status === 'queued' || t.status === 'in_progress');
+
+  // task → initiative 映射
+  const tasksByInit: Record<string, TaskForGroup[]> = {};
+  const ungroupedTasks: TaskForGroup[] = [];
+
+  for (const task of activeTasks) {
+    if (task.project_id && initMap[task.project_id]) {
+      if (!tasksByInit[task.project_id]) tasksByInit[task.project_id] = [];
+      tasksByInit[task.project_id].push(task);
+    } else {
+      ungroupedTasks.push(task);
+    }
+  }
+
+  // initiative → area 映射
+  const initsByArea: Record<string, ProjectForGroup[]> = {};
+  const orphanInits: ProjectForGroup[] = [];
+
+  for (const init of initiatives) {
+    if (!tasksByInit[init.id]) continue; // 没有活跃任务的跳过
+    const areaId = getInitiativeArea(init);
+    if (areaId) {
+      if (!initsByArea[areaId]) initsByArea[areaId] = [];
+      initsByArea[areaId].push(init);
+    } else {
+      orphanInits.push(init);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-3 p-4">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-slate-800 rounded-xl p-4 animate-pulse">
+            <div className="h-4 bg-slate-700 rounded w-1/2" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const priorityBadge = (p: string) => {
+    const cls = p === 'P0' ? 'bg-red-500/20 text-red-400' : p === 'P1' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-700 text-slate-400';
+    return <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${cls}`}>{p}</span>;
+  };
+
+  const statusStyle = (s: string) => {
+    if (s === 'in_progress') return 'text-blue-400';
+    if (s === 'queued') return 'text-slate-400';
+    return 'text-slate-500';
+  };
+
+  return (
+    <div className="space-y-3 p-3">
+      {areaOkrs.map(area => {
+        const areaInits = initsByArea[area.id] || [];
+        if (areaInits.length === 0) return null;
+        const totalTasks = areaInits.reduce((s, i) => s + (tasksByInit[i.id]?.length || 0), 0);
+        const isOpen = expandedAreas.has(area.id);
+
+        return (
+          <div key={area.id} className="bg-slate-800/80 rounded-xl border border-slate-700 overflow-hidden">
+            <button
+              onClick={() => toggleArea(area.id)}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left"
+            >
+              {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+              <span className="font-semibold text-white flex-1 truncate text-sm">{area.title}</span>
+              {priorityBadge(area.priority)}
+              <span className="text-xs text-slate-400">{areaInits.length} initiatives · {totalTasks} 任务</span>
+            </button>
+
+            {isOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                {areaInits.map(init => {
+                  const initTasks = tasksByInit[init.id] || [];
+                  const isInitOpen = expandedInits.has(init.id);
+                  const queued = initTasks.filter(t => t.status === 'queued').length;
+                  const inProg = initTasks.filter(t => t.status === 'in_progress').length;
+
+                  return (
+                    <div key={init.id} className="bg-slate-700/50 rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleInit(init.id)}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-700 transition-colors text-left"
+                      >
+                        {isInitOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                        <span className="text-sm text-slate-200 flex-1 truncate">{init.name}</span>
+                        <div className="flex items-center gap-2 text-xs shrink-0">
+                          {inProg > 0 && <span className="text-blue-400">{inProg} 进行中</span>}
+                          {queued > 0 && <span className="text-slate-400">{queued} 排队</span>}
+                        </div>
+                      </button>
+
+                      {isInitOpen && (
+                        <div className="px-3 pb-2 space-y-1">
+                          {initTasks.map(task => (
+                            <div key={task.id} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-slate-600/50 transition-colors">
+                              <span className={`text-xs ${statusStyle(task.status)} shrink-0`}>
+                                {task.status === 'in_progress' ? '▶' : '·'}
+                              </span>
+                              <span className="text-sm text-slate-300 flex-1 truncate">{task.title}</span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {priorityBadge(task.priority)}
+                                {task.task_type && (
+                                  <span className="text-xs text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded">
+                                    {task.task_type}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* 未归属任务 */}
+      {ungroupedTasks.length > 0 && (
+        <div className="bg-slate-800/60 rounded-xl border border-slate-700/50 overflow-hidden">
+          <div className="px-4 py-3 flex items-center gap-2">
+            <ListTodo className="w-4 h-4 text-slate-400" />
+            <span className="text-sm text-slate-400 font-medium">未分组 ({ungroupedTasks.length})</span>
+          </div>
+          <div className="px-3 pb-3 space-y-1">
+            {ungroupedTasks.map(task => (
+              <div key={task.id} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-slate-700/50 transition-colors">
+                <span className="text-xs text-slate-500 shrink-0">{task.status === 'in_progress' ? '▶' : '·'}</span>
+                <span className="text-sm text-slate-300 flex-1 truncate">{task.title}</span>
+                <span className="text-xs text-slate-500">{task.task_type || ''}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {areaOkrs.every(a => !initsByArea[a.id]?.length) && ungroupedTasks.length === 0 && (
+        <div className="text-center py-12 text-slate-500">
+          <ListTodo className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p>暂无活跃任务</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════
+// 包装器：提供分组/列表视图切换
+// ══════════════════════════════════════════════════════════
+
+export default function TaskDatabase() {
+  const [viewType, setViewType] = useState<'grouped' | 'list'>('grouped');
+
+  return (
+    <div>
+      {/* 视图切换 */}
+      <div className="flex items-center gap-1 px-3 pt-3 pb-1">
+        <button
+          onClick={() => setViewType('grouped')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            viewType === 'grouped'
+              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+              : 'bg-slate-700/50 text-slate-400 border border-slate-600/50 hover:text-slate-200'
+          }`}
+        >
+          <Columns className="w-4 h-4" />
+          分组视图
+        </button>
+        <button
+          onClick={() => setViewType('list')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            viewType === 'list'
+              ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+              : 'bg-slate-700/50 text-slate-400 border border-slate-600/50 hover:text-slate-200'
+          }`}
+        >
+          <LayoutList className="w-4 h-4" />
+          列表视图
+        </button>
+      </div>
+
+      {viewType === 'grouped' ? <TaskGroupedView /> : <TaskDatabaseList />}
     </div>
   );
 }

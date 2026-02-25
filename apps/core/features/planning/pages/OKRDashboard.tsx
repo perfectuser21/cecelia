@@ -1,140 +1,124 @@
 /**
- * OKR Dashboard - Single-layer Area OKR architecture
+ * OKR Dashboard - DatabaseView 表格模式
+ * 数据源: /api/tasks/goals (type=area_okr 和 type=kr)
  */
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useApi } from '../../shared/hooks/useApi';
-import { SkeletonCard } from '../../shared/components/LoadingState';
-import { fetchAreas, type Area } from '../api/okr.api';
+import { useState, useEffect, useCallback } from 'react';
+import { DatabaseView } from '../../shared/components/DatabaseView';
+import type { ColumnDef } from '../../shared/components/DatabaseView';
 
-function getCurrentQuarter(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  const quarter = Math.ceil(month / 3);
-  return `${year} Q${quarter}`;
+interface Goal {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  progress: number;
+  type: string;
+  parent_id: string | null;
+  weight: number;
 }
 
-function calculateQuarter(baseQuarter: string, offset: number): string {
-  const [yearStr, qStr] = baseQuarter.split(' Q');
-  let year = parseInt(yearStr);
-  let q = parseInt(qStr);
-
-  q += offset;
-  while (q > 4) { q -= 4; year += 1; }
-  while (q < 1) { q += 4; year -= 1; }
-
-  return `${year} Q${q}`;
+interface OKRRow {
+  id: string;
+  type_label: string;
+  title: string;
+  area: string;
+  priority: string;
+  status: string;
+  progress: number;
+  weight: number;
+  [key: string]: unknown;
 }
+
+const COLUMNS: ColumnDef[] = [
+  { id: 'type_label', label: '类型', type: 'badge', sortable: true, width: 90,
+    options: [
+      { value: 'Area OKR', label: 'Area OKR', color: '#8b5cf6' },
+      { value: 'KR', label: 'KR', color: '#3b82f6' },
+    ],
+  },
+  { id: 'title', label: '标题', type: 'text', sortable: true, width: 360 },
+  { id: 'area', label: 'Area', type: 'text', sortable: true, width: 140 },
+  { id: 'priority', label: '优先级', type: 'badge', sortable: true, width: 90,
+    options: [
+      { value: 'P0', label: 'P0', color: '#ef4444' },
+      { value: 'P1', label: 'P1', color: '#f59e0b' },
+      { value: 'P2', label: 'P2', color: '#6b7280' },
+    ],
+  },
+  { id: 'status', label: '状态', type: 'badge', sortable: true, width: 100,
+    options: [
+      { value: 'in_progress', label: '进行中', color: '#3b82f6' },
+      { value: 'completed', label: '已完成', color: '#10b981' },
+      { value: 'pending', label: '待开始', color: '#6b7280' },
+    ],
+  },
+  { id: 'progress', label: '进度 %', type: 'number', sortable: true, width: 90 },
+  { id: 'weight', label: '权重', type: 'number', sortable: true, width: 70 },
+];
 
 export default function OKRDashboard() {
-  const navigate = useNavigate();
-  const [quarter, setQuarter] = useState(getCurrentQuarter());
+  const [rows, setRows] = useState<OKRRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const { data: areas, loading } = useApi<Area[]>(
-    `/api/okr/areas?quarter=${quarter}`,
-    {
-      fetcher: () => fetchAreas(quarter),
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/tasks/goals');
+      if (!res.ok) throw new Error(res.status.toString());
+      const goals: Goal[] = await res.json();
+
+      const areaMap = new Map<string, string>();
+      goals.filter(g => g.type === 'area_okr').forEach(a => areaMap.set(a.id, a.title));
+
+      const mapped: OKRRow[] = goals.map(g => ({
+        id: g.id,
+        type_label: g.type === 'area_okr' ? 'Area OKR' : 'KR',
+        title: g.title,
+        area: g.type === 'kr' && g.parent_id ? (areaMap.get(g.parent_id) ?? '—') : '—',
+        priority: g.priority,
+        status: g.status,
+        progress: g.progress || 0,
+        weight: g.weight || 0,
+      }));
+
+      mapped.sort((a, b) => {
+        if (a.type_label !== b.type_label) return a.type_label === 'Area OKR' ? -1 : 1;
+        const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+        return (po[a.priority] ?? 9) - (po[b.priority] ?? 9);
+      });
+
+      setRows(mapped);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
     }
-  );
+  }, []);
 
-  const totalObjectives = areas?.reduce((sum, a) => sum + a.objectives_count, 0) || 0;
-  const avgProgress = areas?.length
-    ? Math.round(areas.reduce((sum, a) => sum + a.avg_progress, 0) / areas.length)
-    : 0;
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <SkeletonCard count={3} />
-      </div>
-    );
-  }
+  const handleUpdate = async (id: string, field: string, value: unknown) => {
+    const isCustom = !COLUMNS.find(c => c.id === field);
+    const body = isCustom ? { custom_props: { [field]: value } } : { [field]: value };
+    await fetch(`/api/tasks/goals/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+  };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">OKR Dashboard</h1>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setQuarter(calculateQuarter(quarter, -1))}
-            className="p-2 rounded-lg hover:bg-gray-100"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <span className="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium">
-            {quarter}
-          </span>
-          <button
-            onClick={() => setQuarter(calculateQuarter(quarter, 1))}
-            className="p-2 rounded-lg hover:bg-gray-100"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg border p-6">
-        <div className="grid grid-cols-3 gap-6">
-          <div>
-            <div className="text-sm text-gray-500">Areas</div>
-            <div className="text-3xl font-semibold">{areas?.length || 0}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-500">Total Objectives</div>
-            <div className="text-3xl font-semibold">{totalObjectives}</div>
-          </div>
-          <div>
-            <div className="text-sm text-gray-500">Avg Progress</div>
-            <div className="text-3xl font-semibold">{avgProgress}%</div>
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <h2 className="text-lg font-semibold mb-4">Areas</h2>
-
-        {areas && areas.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {areas.map(area => (
-              <div
-                key={area.id}
-                onClick={() => navigate(`/work/okr/area/${area.id}`)}
-                className="bg-white rounded-lg border p-6 hover:border-blue-500 hover:shadow-lg transition-all cursor-pointer"
-              >
-                <h3 className="text-lg font-semibold mb-4">{area.name}</h3>
-
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Objectives</span>
-                    <span className="font-semibold">{area.objectives_count}</span>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-sm mb-2">
-                      <span className="text-gray-500">Progress</span>
-                      <span className="font-semibold">{area.avg_progress}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${area.avg_progress}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-12 text-gray-500 bg-white rounded-lg border">
-            No areas found for this quarter
-          </div>
-        )}
-      </div>
-    </div>
+    <DatabaseView
+      data={rows}
+      columns={COLUMNS}
+      onUpdate={handleUpdate}
+      loading={loading}
+      defaultView="table"
+      stateKey="okr"
+      stats={{ total: rows.length, byStatus: { in_progress: rows.filter(r => r.status === 'in_progress').length || undefined } }}
+      boardGroupField="status"
+    />
   );
 }

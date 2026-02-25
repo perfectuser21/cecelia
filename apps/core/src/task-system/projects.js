@@ -107,14 +107,14 @@ router.post('/', async (req, res) => {
 // PATCH /api/projects/:id - Update project
 router.patch('/:id', async (req, res) => {
   try {
-    const { name, description, repo_path, icon, color, status, metadata } = req.body;
+    const { name, description, repo_path, icon, color, status, metadata, custom_props } = req.body;
 
     const updates = [];
     const params = [];
     let paramIndex = 1;
 
     // Validate at least one field to update
-    if (!name && !description && repo_path === undefined && !icon && !color && !status && !metadata) {
+    if (!name && !description && repo_path === undefined && !icon && !color && !status && !metadata && !custom_props) {
       return res.status(400).json({ error: 'At least one field must be provided for update' });
     }
 
@@ -157,6 +157,10 @@ router.patch('/:id', async (req, res) => {
     if (metadata !== undefined) {
       updates.push('metadata = $' + paramIndex++);
       params.push(metadata);
+    }
+    if (custom_props !== undefined) {
+      updates.push('custom_props = custom_props || $' + paramIndex++);
+      params.push(JSON.stringify(custom_props));
     }
 
     updates.push('updated_at = NOW()');

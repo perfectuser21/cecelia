@@ -64,3 +64,6 @@ dist-dev/
 
 # Stray symlinks & generated files
 apps/core/features/node_modules
+
+# Claude Code worktrees
+.claude/worktrees/

@@ -11,6 +11,7 @@ import linksRouter from './links.js';
 import runsRouter from './runs.js';
 import businessesRouter from './businesses.js';
 import departmentsRouter from './departments.js';
+import dbSchemaRouter from './db-schema.js';
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.use('/tasks', linksRouter);  // Task links routes
 router.use('/runs', runsRouter);
 router.use('/businesses', businessesRouter);
 router.use('/departments', departmentsRouter);
+router.use('/db-schema', dbSchemaRouter);  // Meta-Schema: custom field definitions
 
 // Personal tasks stub (Notion-backed, not yet implemented)
 router.get('/personal', (_req, res) => {

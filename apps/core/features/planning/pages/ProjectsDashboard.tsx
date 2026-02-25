@@ -1,374 +1,180 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  FolderKanban,
-  RefreshCw,
-  Target,
-  ListTodo,
-  ChevronRight,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
-  Plus
-} from 'lucide-react';
-import { useCeceliaPage } from '@/contexts/CeceliaContext';
+/**
+ * Projects Dashboard - DatabaseView 表格模式
+ * 数据源: /api/tasks/goals + /api/tasks/projects
+ */
 
-interface Project {
-  id: string;
-  name: string;
-  status: string;
-  description?: string;
-  repo_path?: string;
-  goal_id?: string;
-}
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { DatabaseView } from '../../shared/components/DatabaseView';
+import type { ColumnDef } from '../../shared/components/DatabaseView';
 
 interface Goal {
   id: string;
   title: string;
-  priority: string;
+  type: string;
+  parent_id: string | null;
 }
 
-interface Task {
+interface Project {
   id: string;
-  title: string;
+  name: string;
+  type: string;
   status: string;
   priority: string;
-  project_id?: string;
+  progress?: number;
+  parent_id: string | null;
+  kr_id: string | null;
+  goal_id: string | null;
+  repo_path: string | null;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const colorClass = status === 'active'
-    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-    : status === 'completed'
-    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-    : status === 'archived'
-    ? 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
-    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-
-  return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}>
-      {status}
-    </span>
-  );
+interface ProjectRow {
+  id: string;
+  type_label: string;
+  name: string;
+  area: string;
+  status: string;
+  priority: string;
+  progress: number;
+  [key: string]: unknown;
 }
 
-function PriorityBadge({ priority }: { priority: string }) {
-  const colorClass = priority === 'P0'
-    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-    : priority === 'P1'
-    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-    : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-400';
-
-  return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colorClass}`}>
-      {priority}
-    </span>
-  );
-}
-
-function ProjectCard({
-  project,
-  linkedGoal,
-  taskCount,
-  activeTaskCount,
-}: {
-  project: Project;
-  linkedGoal?: Goal;
-  taskCount: number;
-  activeTaskCount: number;
-}) {
-  return (
-    <Link
-      to={`/projects/${project.id}`}
-      className="block bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-md transition-all group"
-    >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-            <FolderKanban className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-              {project.name}
-            </h3>
-            {project.description && (
-              <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-1">
-                {project.description}
-              </p>
-            )}
-          </div>
-        </div>
-        <ChevronRight className="w-5 h-5 text-slate-400 group-hover:text-blue-500 transition-colors" />
-      </div>
-
-      {/* Stats Row */}
-      <div className="flex items-center gap-4 text-sm mb-3">
-        <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
-          <ListTodo className="w-4 h-4" />
-          <span>{taskCount} tasks</span>
-        </div>
-        {activeTaskCount > 0 && (
-          <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-            <Clock className="w-4 h-4" />
-            <span>{activeTaskCount} active</span>
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center gap-2 pt-3 border-t border-slate-100 dark:border-slate-700">
-        <StatusBadge status={project.status} />
-        {linkedGoal && (
-          <div className="flex items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
-            <Target className="w-3.5 h-3.5" />
-            <span className="truncate max-w-[150px]">{linkedGoal.title}</span>
-          </div>
-        )}
-      </div>
-    </Link>
-  );
-}
+const FIELD_IDS = ['type_label', 'name', 'area', 'priority', 'status', 'progress'];
 
 export default function ProjectsDashboard() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [filter, setFilter] = useState<'all' | 'active' | 'completed'>('all');
-
-  // Ref for refresh function (set after fetchData is defined)
-  const refreshRef = useRef<() => void>(() => {});
-
-  // Filter actions for Cecelia
-  const setStatusFilter = useCallback((value: string) => {
-    if (value === 'all' || value === 'active' || value === 'completed') {
-      setFilter(value);
-    }
-  }, []);
-
-  // Page actions for Cecelia
-  const pageActions = useMemo(() => ({
-    refresh: () => refreshRef.current(),
-    setFilter: (_name: string, value: string) => setStatusFilter(value),
-    setFilter_status: (_name: string, value: string) => setStatusFilter(value),
-  }), [setStatusFilter]);
-
-  // Register with Cecelia
-  const { register, unregisterPage } = useCeceliaPage(
-    'projects',
-    'Projects Dashboard',
-    () => projects,
-    () => ({ filter, loading }),
-    pageActions,
-    () => {
-      const active = projects.filter(p => p.status === 'active').length;
-      const completed = projects.filter(p => p.status === 'completed').length;
-      const totalTasks = tasks.length;
-      return `${projects.length} projects (${active} active, ${completed} completed), ${totalTasks} tasks`;
-    }
-  );
-
-  // Update registration when data changes
-  useEffect(() => {
-    register();
-    return () => unregisterPage();
-  }, [register, unregisterPage, projects, tasks, filter, loading]);
+  const [areaNavMap, setAreaNavMap] = useState<Map<string, string>>(new Map());
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
     try {
-      const [projectsRes, goalsRes, tasksRes] = await Promise.all([
-        fetch('/api/tasks/projects'),
+      const [goalsRes, projectsRes] = await Promise.all([
         fetch('/api/tasks/goals'),
-        fetch('/api/tasks/tasks?limit=100')
+        fetch('/api/tasks/projects'),
       ]);
+      const goals: Goal[] = await goalsRes.json();
+      const projects: Project[] = await projectsRes.json();
 
-      const [projectsData, goalsData, tasksData] = await Promise.all([
-        projectsRes.json(),
-        goalsRes.json(),
-        tasksRes.json()
-      ]);
+      const areaNameMap = new Map<string, string>();
+      const areaPathMap = new Map<string, string>();
+      goals.filter(g => g.type === 'area_okr').forEach(a => {
+        areaNameMap.set(a.id, a.title);
+        areaPathMap.set(a.id, `/work/okr/area/${a.id}`);
+      });
 
-      setProjects(projectsData);
-      setGoals(goalsData);
-      setTasks(tasksData);
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error('Failed to fetch data:', err);
+      const krToArea = new Map<string, { id: string; title: string }>();
+      goals.filter(g => g.type === 'kr').forEach(k => {
+        if (k.parent_id && areaNameMap.has(k.parent_id)) {
+          krToArea.set(k.id, { id: k.parent_id, title: areaNameMap.get(k.parent_id)! });
+        }
+      });
+
+      const projAreaTitle = new Map<string, string>();
+      const projAreaNav = new Map<string, string>();
+      projects.filter(p => p.type === 'project').forEach(p => {
+        const kr = p.kr_id || p.goal_id;
+        if (kr && krToArea.has(kr)) {
+          const area = krToArea.get(kr)!;
+          projAreaTitle.set(p.id, area.title);
+          projAreaNav.set(p.id, areaPathMap.get(area.id) ?? '');
+        }
+      });
+
+      const navMap = new Map<string, string>();
+      const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+
+      const mapped: ProjectRow[] = projects.map(p => {
+        let areaTitle = '—';
+        let nav = '';
+        if (p.type === 'initiative' && p.parent_id) {
+          areaTitle = projAreaTitle.get(p.parent_id) ?? '—';
+          nav = projAreaNav.get(p.parent_id) ?? '';
+        } else {
+          areaTitle = projAreaTitle.get(p.id) ?? '—';
+          nav = projAreaNav.get(p.id) ?? '';
+        }
+        if (nav) navMap.set(p.id, nav);
+        return {
+          id: p.id,
+          type_label: p.type,
+          name: p.name,
+          area: areaTitle,
+          status: p.status,
+          priority: p.priority ?? 'P2',
+          progress: p.progress ?? 0,
+        };
+      });
+
+      mapped.sort((a, b) => {
+        if (a.type_label !== b.type_label) return a.type_label === 'project' ? -1 : 1;
+        return (po[a.priority] ?? 9) - (po[b.priority] ?? 9);
+      });
+
+      setAreaNavMap(navMap);
+      setRows(mapped);
+    } catch {
+      setRows([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleRefresh = () => {
-    setLoading(true);
-    fetchData();
+  const columns = useMemo<ColumnDef[]>(() => [
+    { id: 'type_label', label: '类型', type: 'badge', sortable: true, width: 100,
+      options: [
+        { value: 'project', label: 'Project', color: '#8b5cf6' },
+        { value: 'initiative', label: 'Initiative', color: '#3b82f6' },
+      ],
+    },
+    { id: 'name', label: '名称', type: 'text', sortable: true, width: 300 },
+    { id: 'area', label: 'Area', type: 'relation', editable: false, sortable: true, width: 160,
+      navigateTo: (rowId: string) => areaNavMap.get(rowId) ?? null,
+    },
+    { id: 'priority', label: '优先级', type: 'badge', sortable: true, width: 90,
+      options: [
+        { value: 'P0', label: 'P0', color: '#ef4444' },
+        { value: 'P1', label: 'P1', color: '#f59e0b' },
+        { value: 'P2', label: 'P2', color: '#6b7280' },
+      ],
+    },
+    { id: 'status', label: '状态', type: 'badge', sortable: true, width: 110,
+      options: [
+        { value: 'active', label: '活跃', color: '#10b981' },
+        { value: 'in_progress', label: '进行中', color: '#3b82f6' },
+        { value: 'pending', label: '待开始', color: '#6b7280' },
+        { value: 'completed', label: '已完成', color: '#10b981' },
+        { value: 'paused', label: '暂停', color: '#f59e0b' },
+      ],
+    },
+    { id: 'progress', label: '进度 %', type: 'number', sortable: true, width: 90 },
+  ], [areaNavMap]);
+
+  const handleUpdate = async (id: string, field: string, value: unknown) => {
+    const isCustom = !FIELD_IDS.includes(field);
+    const body = isCustom ? { custom_props: { [field]: value } } : { [field]: value };
+    await fetch(`/api/tasks/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
-
-  // Set the refresh ref so Cecelia can trigger refresh
-  refreshRef.current = handleRefresh;
-
-  const filteredProjects = projects.filter(p => {
-    if (filter === 'all') return true;
-    if (filter === 'active') return p.status === 'active';
-    if (filter === 'completed') return p.status === 'completed';
-    return true;
-  });
-
-  const getLinkedGoal = (goalId?: string) => {
-    if (!goalId) return undefined;
-    return goals.find(g => g.id === goalId);
-  };
-
-  const getTaskCount = (projectId: string) => {
-    return tasks.filter(t => t.project_id === projectId).length;
-  };
-
-  const getActiveTaskCount = (projectId: string) => {
-    return tasks.filter(t => t.project_id === projectId && t.status === 'in_progress').length;
-  };
-
-  // Stats
-  const activeProjects = projects.filter(p => p.status === 'active').length;
-  const completedProjects = projects.filter(p => p.status === 'completed').length;
-  const totalTasks = tasks.length;
-  const activeTasks = tasks.filter(t => t.status === 'in_progress').length;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl">
-            <FolderKanban className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Projects</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Manage your projects and tasks</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          {lastRefresh && (
-            <span className="text-xs text-slate-400">
-              Last: {lastRefresh.toLocaleTimeString('zh-CN')}
-            </span>
-          )}
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-5 h-5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Stats Bar */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-              <FolderKanban className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{projects.length}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Total Projects</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{activeProjects}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Active</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-violet-100 dark:bg-violet-900/30 rounded-lg">
-              <Target className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{completedProjects}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Completed</p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
-              <ListTodo className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{activeTasks}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Active Tasks</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-2">
-        {(['all', 'active', 'completed'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === f
-                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
-            }`}
-          >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-            {f === 'all' && <span className="ml-1.5 text-xs">({projects.length})</span>}
-            {f === 'active' && <span className="ml-1.5 text-xs">({activeProjects})</span>}
-            {f === 'completed' && <span className="ml-1.5 text-xs">({completedProjects})</span>}
-          </button>
-        ))}
-      </div>
-
-      {/* Projects Grid */}
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700 animate-pulse">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 bg-slate-200 dark:bg-slate-700 rounded-lg" />
-                <div className="flex-1">
-                  <div className="h-5 bg-slate-200 dark:bg-slate-700 rounded w-2/3 mb-2" />
-                  <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
-                </div>
-              </div>
-              <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/4" />
-            </div>
-          ))}
-        </div>
-      ) : filteredProjects.length === 0 ? (
-        <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-8 text-center border border-slate-200 dark:border-slate-700">
-          <FolderKanban className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-500 dark:text-slate-400">No projects found</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              linkedGoal={getLinkedGoal(project.goal_id)}
-              taskCount={getTaskCount(project.id)}
-              activeTaskCount={getActiveTaskCount(project.id)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <DatabaseView
+      data={rows}
+      columns={columns}
+      onUpdate={handleUpdate}
+      loading={loading}
+      defaultView="table"
+      stateKey="initiatives"
+      stats={{ total: rows.length, byStatus: {
+        active: rows.filter(r => r.status === 'active').length || undefined,
+        in_progress: rows.filter(r => r.status === 'in_progress').length || undefined,
+      }}}
+      boardGroupField="status"
+    />
   );
 }
