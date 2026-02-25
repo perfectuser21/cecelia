@@ -1,0 +1,35 @@
+{
+  "name": "zenithjoy-engine",
+  "version": "12.30.5",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "qa": "npm run typecheck && npm run test && npm run build",
+    "qa:local": "npm run typecheck",
+    "qa:gate": "bash scripts/qa-with-gate.sh",
+    "pr:check": "npm run qa",
+    "release:check": "npm run qa && bash scripts/release-check.sh",
+    "coverage:rci": "node scripts/devgate/scan-rci-coverage.cjs",
+    "ci:preflight": "bash scripts/devgate/ci-preflight.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "AI development workflow engine",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.0.9",
+    "js-yaml": "^4.1.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

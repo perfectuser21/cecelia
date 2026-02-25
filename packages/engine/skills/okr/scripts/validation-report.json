@@ -1,0 +1,21 @@
+{
+  "form_score": 40,
+  "content_score": 0,
+  "content_breakdown": {
+    "title_quality": 0,
+    "description_quality": 0,
+    "kr_feature_mapping": 0,
+    "completeness": 0
+  },
+  "total": 40,
+  "passed": false,
+  "content_hash": "6095f205808dddd7",
+  "timestamp": "2026-02-10T19:55:47.001645",
+  "issues": [],
+  "suggestions": [],
+  "format": "3-layer",
+  "details": {
+    "num_features": 0,
+    "num_pr_plans": 3
+  }
+}

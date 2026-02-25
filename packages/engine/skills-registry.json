@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-02-10",
+  "skills": {
+    "platform-data": {
+      "name": "Platform Data Management",
+      "description": "社交媒体数据采集、分析、发布一体化管理",
+      "type": "workspace",
+      "path": "../../zenithjoy/workflows/platform-data/skill",
+      "entry": "command.sh",
+      "enabled": true
+    },
+    "dev": {
+      "name": "Dev Workflow",
+      "description": "统一开发工作流",
+      "type": "engine",
+      "path": "skills/dev",
+      "entry": "SKILL.md",
+      "enabled": true
+    },
+    "qa": {
+      "name": "QA",
+      "description": "跨仓库 QA 总控",
+      "type": "engine",
+      "path": "skills/qa",
+      "entry": "SKILL.md",
+      "enabled": true
+    },
+    "audit": {
+      "name": "Audit",
+      "description": "有边界的代码审计与修复。分层标准：L1阻塞性/L2功能性/L3最佳实践/L4过度优化",
+      "type": "engine",
+      "path": "skills/audit",
+      "entry": "SKILL.md",
+      "enabled": true
+    },
+    "okr": {
+      "name": "OKR",
+      "description": "OKR 拆解工具。从 KR 拆解到 Feature 和 Task。完全自动化，带防作弊验证循环",
+      "type": "engine",
+      "path": "skills/okr",
+      "entry": "SKILL.md",
+      "enabled": true
+    },
+    "assurance": {
+      "name": "Assurance",
+      "description": "质量保证体系协调者",
+      "type": "engine",
+      "path": "skills/assurance",
+      "entry": "SKILL.md",
+      "enabled": true
+    },
+  }
+}

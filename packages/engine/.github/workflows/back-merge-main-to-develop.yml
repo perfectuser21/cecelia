@@ -1,0 +1,122 @@
+name: Back-merge main into develop
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write  # CRITICAL FIX: 需要 write 权限才能创建 merge commit
+  pull-requests: write
+
+jobs:
+  # 无条件 entry job：确保即使其他 jobs 跳过，workflow 也能成功
+  # 解决 GitHub Actions 的问题：所有 jobs 跳过 = workflow failure
+  entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      is-main: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Check branch
+        run: |
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Is main: ${{ github.ref == 'refs/heads/main' }}"
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "⏭️ 非 main 分支，跳过 back-merge"
+          fi
+
+  check-trigger:
+    needs: [entry]
+    if: needs.entry.outputs.is-main == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Check trigger conditions
+        id: check
+        run: |
+          set -euo pipefail
+
+          EVENT_NAME="${{ github.event_name }}"
+          REF_NAME="${{ github.ref_name }}"
+
+          echo "Event: $EVENT_NAME"
+          echo "Branch: $REF_NAME"
+
+          # 只在 push 到 main 分支时运行
+          if [[ "$EVENT_NAME" == "push" && "$REF_NAME" == "main" ]]; then
+            echo "✅ 触发条件满足：push 到 main 分支"
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "⏭️ 跳过：当前触发条件不符合（需要 push to main）"
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  back-merge:
+    needs: [check-trigger]
+    if: needs.check-trigger.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Create PR main -> develop (if needed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER_REPO="${{ github.repository }}"
+          BASE="develop"
+          HEAD="main"
+
+          echo "Repository: $OWNER_REPO"
+          echo "Creating PR: $HEAD -> $BASE"
+
+          # 1) 如果已经存在同样 head/base 的 PR，则不重复创建
+          existing=$(gh pr list --repo "$OWNER_REPO" --head "$HEAD" --base "$BASE" --state open --json number --jq '.[0].number // empty' || true)
+          if [[ -n "${existing:-}" ]]; then
+            echo "✅ 已存在 open PR #$existing ($HEAD -> $BASE)，跳过创建"
+            exit 0
+          fi
+
+          # 2) 如果 main 已经完全包含 develop（或 develop 已经追上），则无需 PR
+          # 用 compare 判断：如果 main 相对 develop 没有 ahead commits，则没必要 back-merge
+          ahead=$(gh api "repos/$OWNER_REPO/compare/$BASE...$HEAD" --jq '.ahead_by' || echo "0")
+          if [[ "$ahead" == "0" ]]; then
+            echo "✅ $HEAD 相对 $BASE 没有新提交（ahead_by=0），无需 back-merge PR"
+            exit 0
+          fi
+
+          title="chore: back-merge main → develop"
+          body='自动回合并：main → develop
+
+- 触发条件：main 分支有新提交
+- 目的：避免 main/develop 长期分叉导致 release 冲突
+
+> 由 GitHub Actions 自动创建'
+
+          pr_url=$(gh pr create --repo "$OWNER_REPO" --base "$BASE" --head "$HEAD" --title "$title" --body "$body")
+          echo "✅ 已创建 back-merge PR: $pr_url"
+
+          # 3) 尝试开启 auto-merge
+          # CRITICAL FIX: 移除 || true，让失败被正确报告
+          pr_number=$(echo "$pr_url" | sed -n 's#.*/pull/\([0-9]\+\)$#\1#p')
+          if [[ -z "${pr_number:-}" ]]; then
+            echo "❌ 无法从 PR URL 提取 PR 号: $pr_url"
+            exit 1
+          fi
+          if [[ -n "${pr_number:-}" ]]; then
+            echo "尝试启用 auto-merge..."
+            if gh pr merge "$pr_number" --repo "$OWNER_REPO" --auto --merge; then
+              echo "✅ Auto-merge 已启用"
+            else
+              echo "⚠️  Auto-merge 失败（可能需要手动合并）"
+              echo "PR URL: $pr_url"
+              echo "可能原因："
+              echo "  - 分支保护规则要求 CI 通过"
+              echo "  - 需要 code review"
+              echo "  - 存在合并冲突"
+              exit 1
+            fi
+          fi

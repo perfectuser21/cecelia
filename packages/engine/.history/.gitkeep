@@ -1,0 +1,13 @@
+# PRD/DoD History Directory
+#
+# 存放 PR 创建时的 PRD/DoD 快照。
+#
+# 文件命名规则：PR-{number}-{YYYYMMDD-HHMM}.{prd|dod}.md
+#
+# 示例：
+#   PR-204-20260122-1048.prd.md
+#   PR-204-20260122-1048.dod.md
+#
+# 查看命令：
+#   bash scripts/devgate/list-snapshots.sh      # 列出所有快照
+#   bash scripts/devgate/view-snapshot.sh 204   # 查看 PR #204 的快照

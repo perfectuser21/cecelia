@@ -1,0 +1,8 @@
+tree 0eb9ac9a96e2f23fcaf3c19a1030e455f4997eef
+parent 1fb547e33f5b2cfa35f4d8de799455ebe512d783
+author Claude Code <noreply@anthropic.com> 1769791582 +0800
+committer Claude Code <noreply@anthropic.com> 1769791582 +0800
+
+docs: update path views (auto-generated)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>

@@ -1,0 +1,15 @@
+name: 'Setup Project'
+description: 'Setup Node.js and install dependencies'
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci

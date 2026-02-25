@@ -1,0 +1,1076 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop, 'feature/*', 'cp-*']
+  push:
+    branches: [main, develop, 'feature/*', 'cp-*']
+
+# 工作流级并发控制：同一 ref 的多次 push 只保留最新
+# 注意：auto-merge job 有自己的并发组（merge-*），不受此影响
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  version-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check package.json version updated
+        if: |
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:')
+        run: |
+          set -e
+          if [ ! -f package.json ]; then
+            echo "ℹ️ No package.json found, skipping version check"
+            exit 0
+          fi
+
+          echo "🔍 Checking if package.json version was updated..."
+
+          # Get base branch version using jq (more reliable than sed)
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:package.json 2>/dev/null | jq -r '.version' || echo "")
+
+          if [ -z "$BASE_VERSION" ] || [ "$BASE_VERSION" = "null" ]; then
+            echo "⚠️ Could not read base branch version, skipping check"
+            exit 0
+          fi
+
+          # Get current version
+          CURRENT_VERSION=$(jq -r '.version' package.json)
+
+          echo "Base branch version: $BASE_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+
+          # Validate semver format (MAJOR.MINOR.PATCH)
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$CURRENT_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "❌ Invalid version format: $CURRENT_VERSION"
+            echo "Version must follow semver format: MAJOR.MINOR.PATCH (e.g., 1.2.3)"
+            exit 1
+          fi
+
+          if [ "$BASE_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "❌ Version not updated in package.json"
+            echo "Please update the version according to semver rules"
+            exit 1
+          else
+            echo "✅ Version updated: $BASE_VERSION → $CURRENT_VERSION"
+          fi
+
+      - name: Check all version files in sync
+        run: bash ci/scripts/check-version-sync.sh
+
+  test:
+    runs-on: ubuntu-latest
+    # M1 FIX: 增加超时时间到30分钟（复杂测试可能需要更长时间）
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # DevGate 需要完整历史来 diff base 分支
+
+      - name: Detect project type
+        id: detect
+        # 注意：Python/Go 检测是为多语言仓库预留的
+        # 当前 zenithjoy-engine 是 npm 项目，但此检测可复用于其他仓库
+        run: |
+          if [ -f package.json ]; then
+            echo "type=npm" >> $GITHUB_OUTPUT
+          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            echo "type=python" >> $GITHUB_OUTPUT
+            # 检测 Python 版本要求
+            if [ -f .python-version ]; then
+              echo "python_version=$(cat .python-version)" >> $GITHUB_OUTPUT
+            else
+              echo "python_version=3.11" >> $GITHUB_OUTPUT
+            fi
+          elif [ -f go.mod ]; then
+            echo "type=go" >> $GITHUB_OUTPUT
+            # 从 go.mod 读取 Go 版本（head -1 确保只取第一个匹配）
+            GO_VERSION=$(grep '^go ' go.mod | head -1 | awk '{print $2}' || echo "1.21")
+            echo "go_version=$GO_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "type=shell" >> $GITHUB_OUTPUT
+          fi
+
+      # Node.js
+      - name: Setup Project
+        if: steps.detect.outputs.type == 'npm'
+        uses: ./.github/actions/setup-project
+
+      # L1-1: TypeCheck
+      - name: TypeCheck
+        if: steps.detect.outputs.type == 'npm'
+        id: typecheck
+        run: |
+          set -e
+          if npm run typecheck --if-present; then
+            echo "✅ TypeCheck 通过"
+            bash ci/scripts/write-check-result.sh typecheck true 0 "npm run typecheck"
+          else
+            EXIT_CODE=$?
+            echo "❌ TypeCheck 失败"
+            bash ci/scripts/write-check-result.sh typecheck false $EXIT_CODE "npm run typecheck" "TypeCheck failed"
+            exit $EXIT_CODE
+          fi
+
+      # L1-2: Unit Tests
+      - name: Unit Tests
+        if: steps.detect.outputs.type == 'npm'
+        id: test
+        run: |
+          set -e
+          # 单元测试 - P0-4 修复：严格的已知失败白名单校验
+          if npm run test --if-present; then
+            echo "✅ 测试通过"
+            bash ci/scripts/write-check-result.sh test true 0 "npm run test"
+          else
+            TEST_EXIT_CODE=$?
+            echo "⚠️ 测试失败（退出码: $TEST_EXIT_CODE）"
+
+            # P0-4 修复：严格校验 known-failures，不接受任意字符串
+            if [ -f .quality-evidence.json ] && [ -f ci/known-failures.json ]; then
+              # 必须包含 known_failure_keys 数组字段
+              if ! jq -e '.known_failure_keys | type == "array"' .quality-evidence.json >/dev/null 2>&1; then
+                echo "❌ 测试失败：.quality-evidence.json 缺少有效的 known_failure_keys 数组"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "缺少有效的 known_failure_keys 数组"
+                exit $TEST_EXIT_CODE
+              fi
+
+              # 提取请求跳过的 keys
+              REQUESTED_KEYS=$(jq -r '.known_failure_keys[]' .quality-evidence.json 2>/dev/null || echo "")
+              if [ -z "$REQUESTED_KEYS" ]; then
+                echo "❌ 测试失败：known_failure_keys 为空"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys 为空"
+                exit $TEST_EXIT_CODE
+              fi
+
+              # 检查数量限制（最多 3 个）
+              KEY_COUNT=$(echo "$REQUESTED_KEYS" | wc -l)
+              MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
+              if [ "$KEY_COUNT" -gt "$MAX_SKIP" ]; then
+                echo "❌ 测试失败：请求跳过 $KEY_COUNT 项，超过最大限制 $MAX_SKIP"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "请求跳过 $KEY_COUNT 项，超过最大限制 $MAX_SKIP"
+                exit $TEST_EXIT_CODE
+              fi
+
+              # 验证每个 key 都在白名单中
+              ALLOWED_KEYS=$(jq -r '.allowed | keys[]' ci/known-failures.json)
+              INVALID_KEYS=""
+              while IFS= read -r key; do
+                if ! echo "$ALLOWED_KEYS" | grep -qx "$key"; then
+                  INVALID_KEYS="$INVALID_KEYS $key"
+                fi
+              done <<< "$REQUESTED_KEYS"
+
+              if [ -n "$INVALID_KEYS" ]; then
+                echo "❌ 测试失败：以下 known_failure_keys 不在白名单中：$INVALID_KEYS"
+                echo "   允许的 keys: $ALLOWED_KEYS"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys 不在白名单中：$INVALID_KEYS"
+                exit $TEST_EXIT_CODE
+              fi
+
+              echo "✅ 已知失败校验通过（$KEY_COUNT 项已登记）"
+              echo "   跳过的测试："
+              echo "$REQUESTED_KEYS" | sed 's/^/     - /'
+              bash ci/scripts/write-check-result.sh test true 0 "npm run test" "已知失败校验通过（$KEY_COUNT 项已登记）"
+            else
+              echo "❌ 测试失败且无有效的 known-failures 配置"
+              bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "测试失败且无有效的 known-failures 配置"
+              exit $TEST_EXIT_CODE
+            fi
+          fi
+
+      # L1-3: Build
+      - name: Build
+        if: steps.detect.outputs.type == 'npm'
+        id: build
+        run: |
+          set -e
+          if npm run build --if-present; then
+            echo "✅ Build 通过"
+            bash ci/scripts/write-check-result.sh build true 0 "npm run build"
+          else
+            EXIT_CODE=$?
+            echo "❌ Build 失败"
+            bash ci/scripts/write-check-result.sh build false $EXIT_CODE "npm run build" "Build failed"
+            exit $EXIT_CODE
+          fi
+
+      # L2A: PRD/DoD/QA/Audit 远端检查
+      # PRD/DoD Gate: 阻止 PRD/DoD 文件进入 develop/main PR（前移检查）
+      - name: Block PRD/DoD in PR to develop/main
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.detect.outputs.type == 'npm' &&
+          (github.base_ref == 'develop' || github.base_ref == 'main')
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  PRD/DoD Gate (PR to ${{ github.base_ref }})"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 检查 PR 中是否新增或修改 PRD/DoD 文件（删除是允许的）
+          PRD_DOD_FILES=$(git diff --diff-filter=AM --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^\.(prd|dod)(-[^/]+)?\.md$' || true)
+
+          if [ -n "$PRD_DOD_FILES" ]; then
+            echo "❌ PRD/DoD 文件不应出现在 PR to ${{ github.base_ref }} 中"
+            echo ""
+            echo "发现的文件："
+            echo "$PRD_DOD_FILES" | sed 's/^/  - /'
+            echo ""
+            echo "请在 merge 前删除这些文件："
+            echo "  git rm \$PRD_DOD_FILES"
+            echo "  git commit --amend"
+            echo ""
+            echo "说明: PRD/DoD 是功能分支的工作文档，不应进入 develop/main"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
+
+          echo "✅ 无 PRD/DoD 文件"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # Python
+      - name: Setup Python
+        if: steps.detect.outputs.type == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ steps.detect.outputs.python_version }}
+
+      - name: Install & Test (python)
+        if: steps.detect.outputs.type == 'python'
+        run: |
+          set -e
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt || { echo "❌ pip install failed"; exit 1; }
+          elif [ -f pyproject.toml ]; then
+            pip install -e . || { echo "❌ pip install failed"; exit 1; }
+          fi
+          if [ -f pytest.ini ] || [ -d tests ] || [ -d test ]; then
+            pytest -v
+          else
+            echo "ℹ️ No pytest config or tests directory found, skipping tests"
+          fi
+
+      # Go
+      - name: Setup Go
+        if: steps.detect.outputs.type == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.detect.outputs.go_version }}
+
+      - name: Test (go)
+        if: steps.detect.outputs.type == 'go'
+        run: go test -v ./...
+
+      # Shell scripts - always syntax check (hooks exist in all project types)
+      - name: Check shell scripts
+        id: shell_check
+        run: |
+          echo "Checking shell scripts..."
+          FAILED=0
+          FOUND=0
+          FAIL_LIST=""
+          # 使用 find + while read 遍历所有 .sh 文件
+          # -print0 + read -d '' 处理文件名中的特殊字符
+          while IFS= read -r -d '' f; do
+            FOUND=1
+            # 捕获 stderr 以便显示具体错误
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+              FAIL_LIST="$FAIL_LIST $f"
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No .sh files found"
+          fi
+
+          # 写入 check 结果
+          if [ "$FAILED" -eq 0 ]; then
+            bash ci/scripts/write-check-result.sh shell-check true 0 "bash -n *.sh"
+          else
+            bash ci/scripts/write-check-result.sh shell-check false 1 "bash -n *.sh" "Failed:$FAIL_LIST"
+            exit 1
+          fi
+
+      # Evidence 生成（CI-only，SSOT）- 必须在所有 check 步骤之后
+      - name: Generate Evidence
+        if: steps.detect.outputs.type == 'npm'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence 生成（CI-only）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash ci/scripts/generate-evidence.sh
+
+      - name: Evidence Gate
+        if: steps.detect.outputs.type == 'npm'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Evidence Gate 校验"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash ci/scripts/evidence-gate.sh
+
+      # Phase 1: DevGate 检查（DoD 映射 + P0/P1 RCI 更新 + RCI 覆盖率）
+      # 注意：当前只对 npm 项目启用，非 npm 项目跳过此检查
+      # chore/docs/test/release PR 跳过（这些不需要 DoD）
+      - name: DevGate checks
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.detect.outputs.type == 'npm' &&
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:') &&
+          !startsWith(github.event.pull_request.title, 'release:')
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Phase 1: DevGate 检查"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # P1: DevGate 脚本存在性强制检查
+          echo ""
+          echo "  [DevGate 脚本存在性检查 - P1]"
+          REQUIRED_SCRIPTS=(
+            "scripts/devgate/check-dod-mapping.cjs"
+            "scripts/devgate/scan-rci-coverage.cjs"
+            "scripts/devgate/require-rci-update-if-p0p1.sh"
+          )
+          MISSING_SCRIPTS=()
+          for script in "${REQUIRED_SCRIPTS[@]}"; do
+            if [ ! -f "$script" ]; then
+              MISSING_SCRIPTS+=("$script")
+            fi
+          done
+
+          if [ ${#MISSING_SCRIPTS[@]} -gt 0 ]; then
+            echo "❌ 必需的 DevGate 脚本缺失："
+            for script in "${MISSING_SCRIPTS[@]}"; do
+              echo "   - $script"
+            done
+            echo ""
+            echo "DevGate 脚本是 CI 安全保障的关键部分，不允许删除。"
+            echo "如果需要重构或移动脚本，请在 PR 中说明原因。"
+            exit 1
+          fi
+          echo "✅ 所有必需的 DevGate 脚本存在"
+
+          # DoD 映射检查
+          if [ -f "scripts/devgate/check-dod-mapping.cjs" ]; then
+            echo ""
+            echo "  [DoD ↔ Test 映射检查]"
+            node scripts/devgate/check-dod-mapping.cjs || exit 1
+          else
+            echo "ℹ️ check-dod-mapping.cjs not found, skipping"
+          fi
+
+          # P0/P1 RCI 更新检查（如果脚本存在）
+          if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
+            echo ""
+            echo "  [P0/P1 RCI 更新检查]"
+            # 从 PR title 或 labels 设置环境变量
+            export PR_TITLE="${{ github.event.pull_request.title }}"
+            # CI 中需要使用 origin/ 前缀
+            export BASE_REF="origin/${{ github.base_ref || 'develop' }}"
+            bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
+          else
+            echo "ℹ️ require-rci-update-if-p0p1.sh not found, skipping"
+          fi
+
+          # RCI 覆盖率检查（如果脚本存在）
+          # 新增业务入口必须添加对应的 RCI 条目
+          if [ -f "scripts/devgate/scan-rci-coverage.cjs" ]; then
+            echo ""
+            echo "  [RCI 覆盖率检查]"
+            node scripts/devgate/scan-rci-coverage.cjs || {
+              echo ""
+              echo "❌ RCI 覆盖率检查失败"
+              echo "   新增的业务入口没有对应的 RCI 条目"
+              echo "   请在 regression-contract.yaml 中添加覆盖"
+              echo ""
+              echo "   运行以下命令查看详情："
+              echo "   npm run coverage:rci -- --explain"
+              exit 1
+            }
+          else
+            echo "ℹ️ scan-rci-coverage.cjs not found, skipping"
+          fi
+
+          # Gate 文件检查（v20: 提示型，gate 文件不提交到仓库）
+          # 本地 Hook 强制检查，CI 只提示（gate 文件在 .gitignore 中）
+          if [ -f "scripts/gate/verify-gate-signature.sh" ]; then
+            echo ""
+            echo "  [Gate 审核文件检查 - 提示型]"
+            echo "  ℹ️ Gate 文件不提交到仓库（在 .gitignore 中）"
+            echo "  ℹ️ 本地 Hook 已强制检查，CI 此处仅提示"
+          else
+            echo "ℹ️ verify-gate-signature.sh not found, skipping gate check"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ DevGate 检查通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # P0: Known-Failures Protection - 防止恶意修改测试白名单
+  known-failures-protection:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check known-failures.json modification
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Known-Failures Protection (P0)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 检查文件是否被修改
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q "^ci/known-failures.json$"; then
+            echo "⚠️  detected: ci/known-failures.json 被修改"
+            echo ""
+
+            # 检查 PR title 是否包含 [INFRA] 标记
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+              echo "❌ known-failures.json 被修改，但 PR title 缺少 [INFRA] 标记"
+              echo ""
+              echo "修改测试白名单是高风险操作，需要基础设施团队审核。"
+              echo ""
+              echo "请将 PR title 改为: [INFRA] $PR_TITLE"
+              echo ""
+              exit 1
+            fi
+
+            echo "✅ PR title 包含 [INFRA] 标记"
+            echo ""
+
+            # 验证文件内容合法性
+            echo "验证 known-failures.json 内容..."
+
+            if ! jq empty ci/known-failures.json 2>/dev/null; then
+              echo "❌ known-failures.json 格式无效（不是合法的 JSON）"
+              exit 1
+            fi
+
+            # 检查最大跳过数量
+            MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
+            if [[ "$MAX_SKIP" -gt 5 ]]; then
+              echo "❌ max_skip_count 过大: $MAX_SKIP (最多允许 5)"
+              echo "   过多的跳过项会降低 CI 的有效性"
+              exit 1
+            fi
+
+            # 检查 allowed 条目数量
+            ALLOWED_COUNT=$(jq '.allowed | length' ci/known-failures.json)
+            if [[ "$ALLOWED_COUNT" -gt "$MAX_SKIP" ]]; then
+              echo "❌ allowed 条目数量 ($ALLOWED_COUNT) 超过 max_skip_count ($MAX_SKIP)"
+              exit 1
+            fi
+
+            # 检查每个条目必须有 description, ticket, expires
+            INVALID_ENTRIES=$(jq -r '.allowed | to_entries[] | select(.value.description == null or .value.ticket == null or .value.expires == null) | .key' ci/known-failures.json)
+            if [[ -n "$INVALID_ENTRIES" ]]; then
+              echo "❌ 以下条目缺少必需字段（description, ticket, expires）:"
+              echo "$INVALID_ENTRIES" | sed 's/^/   - /'
+              exit 1
+            fi
+
+            echo "✅ known-failures.json 内容合法"
+            echo ""
+            echo "变更详情:"
+            git diff origin/${{ github.base_ref }}...HEAD ci/known-failures.json | head -50
+          else
+            echo "✅ known-failures.json 未被修改"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Known-Failures Protection 通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # Contract Drift Check - 防止派生视图漂移
+  contract-drift-check:
+    runs-on: ubuntu-latest
+    # M1 FIX: 减少超时时间到5分钟（检查操作应该很快）
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Generate path views from registry
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Contract Drift Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "检查 feature-registry.yml 和派生视图是否同步"
+          echo ""
+
+          # 生成派生视图
+          bash scripts/generate-path-views.sh
+
+      - name: Check for drift
+        run: |
+          # 检查是否有未提交的变更
+          if ! git diff --exit-code docs/paths/; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ Contract Drift 检测到"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "features/feature-registry.yml 已变更，但派生视图未更新！"
+            echo ""
+            echo "修复方法："
+            echo "  1. 在本地运行: bash scripts/generate-path-views.sh"
+            echo "  2. 提交生成的视图文件:"
+            echo "     git add docs/paths/"
+            echo "     git commit -m 'docs: 更新派生视图（自动生成）'"
+            echo ""
+            echo "变更的文件:"
+            git diff --name-only docs/paths/
+            echo ""
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Contract Drift Check 通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "feature-registry.yml 和派生视图已同步"
+
+  # P1: Config Audit - 关键配置文件变更审计
+  config-audit:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check critical config modifications
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Config Audit (P1)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 关键配置文件列表
+          CRITICAL_CONFIGS=(
+            ".github/workflows/ci.yml"
+            "regression-contract.yaml"
+            "ci/known-failures.json"
+            "hooks/"
+            "skills/"
+            "scripts/setup-branch-protection.sh"
+            "scripts/sync-version.sh"
+          )
+
+          MODIFIED_CONFIGS=()
+          for config in "${CRITICAL_CONFIGS[@]}"; do
+            if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qx "$config"; then
+              MODIFIED_CONFIGS+=("$config")
+            fi
+          done
+
+          if [ ${#MODIFIED_CONFIGS[@]} -gt 0 ]; then
+            echo "⚠️  检测到关键配置文件变更:"
+            for config in "${MODIFIED_CONFIGS[@]}"; do
+              echo "   - $config"
+            done
+            echo ""
+
+            # 检查 PR title 是否包含 [CONFIG] 或 [INFRA] 标记
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+              echo "❌ PR title 必须包含 [CONFIG] 或 [INFRA] 标记"
+              echo "   这有助于团队识别配置变更类 PR"
+              echo ""
+              echo "建议 title: [CONFIG] $PR_TITLE"
+              echo ""
+              # L4 FIX: 改为强制要求，配置变更必须明确标记
+              exit 1
+            else
+              echo "✅ PR title 包含配置变更标记"
+            fi
+
+            echo ""
+            echo "变更详情:"
+            for config in "${MODIFIED_CONFIGS[@]}"; do
+              echo ""
+              echo "--- $config ---"
+              git diff --stat origin/${{ github.base_ref }}...HEAD "$config"
+            done
+          else
+            echo "✅ 无关键配置文件变更"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Config Audit 完成"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # Impact Check - 能力变更强制登记（P0-1）
+  impact-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来 diff base 分支
+
+      - name: Run Impact Check
+        run: |
+          # CI 中需要使用 origin/ 前缀
+          export BASE_REF="origin/${{ github.base_ref || 'develop' }}"
+          bash scripts/devgate/impact-check.sh
+
+  # develop PR 的 L3 子集（防止 develop 分支腐烂）
+  regression-pr:
+    if: github.event_name == 'pull_request' && github.base_ref == 'develop'
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Project
+        uses: ./.github/actions/setup-project
+
+      - name: L3 Regression Tests (PR subset)
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L3: PR 回归测试（子集）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "防止 develop 分支积累回归风险"
+          echo "跑 trigger 包含 PR 的 RCI 子集"
+          echo ""
+          bash scripts/run-regression.sh pr
+
+  # Release 检查（仅 develop → main 的 PR）
+  release-check:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check PR source branch
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  PR 来源分支检查"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "目标分支: main"
+          echo "来源分支: ${{ github.head_ref }}"
+          echo ""
+
+          HEAD_BRANCH="${{ github.head_ref }}"
+
+          # 允许 develop 或 release/* 分支
+          if [[ "$HEAD_BRANCH" == "develop" ]]; then
+            echo "✅ 来源分支: develop → main (标准 release)"
+          elif [[ "$HEAD_BRANCH" =~ ^release/ ]]; then
+            echo "ℹ️  来源分支: $HEAD_BRANCH (release 分支)"
+            echo "   需要验证: 该分支必须包含 develop 的所有提交"
+            echo ""
+            # 标记需要后续步骤验证（在 checkout 后）
+            echo "NEED_ANCESTOR_CHECK=true" >> $GITHUB_ENV
+          else
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ PR to main 只能来自 develop 或 release/* 分支"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "当前来源: $HEAD_BRANCH"
+            echo ""
+            echo "正确流程:"
+            echo "  1. 功能分支 (cp-*/feature/*) → develop"
+            echo "  2. develop → main (标准 release)"
+            echo "  3. release/* → main (解冲突专用，需包含 develop)"
+            echo ""
+            echo "如果遇到 develop → main 冲突，请："
+            echo "  1. 基于 develop 创建 release/* 分支"
+            echo "  2. 合并 main 到 release/* 并解决冲突"
+            echo "  3. 从 release/* 创建 PR 到 main"
+            exit 1
+          fi
+
+          echo ""
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来检查祖先关系
+
+      - name: Verify release/* branch contains develop
+        if: env.NEED_ANCESTOR_CHECK == 'true'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  验证 release/* 分支包含 develop"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 检查 origin/develop 是否存在（develop 删除后跳过检查）
+          if ! git rev-parse origin/develop >/dev/null 2>&1; then
+            echo "ℹ️  origin/develop 不存在，跳过祖先检查"
+            echo "   （develop 已合并到 main 并删除，release 分支从 main 切出是合法的）"
+            exit 0
+          fi
+
+          # 检查 merge-base: 如果 HEAD 包含 develop 的所有提交，
+          # 则 merge-base(HEAD, origin/develop) == origin/develop
+          MERGE_BASE=$(git merge-base HEAD origin/develop)
+          DEVELOP_SHA=$(git rev-parse origin/develop)
+
+          echo "Merge base:  $MERGE_BASE"
+          echo "develop SHA: $DEVELOP_SHA"
+          echo ""
+
+          if [[ "$MERGE_BASE" != "$DEVELOP_SHA" ]]; then
+            echo "❌ release/* 分支不包含 develop 的所有提交"
+            echo ""
+            echo "这意味着你的 release 分支不是从 develop 切出来的，"
+            echo "或者缺少了 develop 的某些提交。"
+            echo ""
+            echo "正确做法："
+            echo "  1. 确保从最新的 develop 创建 release 分支："
+            echo "     git checkout -b release/xxx origin/develop"
+            echo "  2. 如需合并 main 解冲突："
+            echo "     git merge origin/main"
+            echo "  3. 解决冲突后推送"
+            echo ""
+            exit 1
+          fi
+
+          echo "✅ 验证通过: release/* 分支包含 develop 的所有提交"
+          echo "   这是一个合法的 release 分支"
+          echo ""
+
+      - name: Setup Project
+        uses: ./.github/actions/setup-project
+
+      # Release 只需要 L1+L3，不需要 L2A/L2B/L4（功能验收在功能分支已完成）
+
+      - name: L3 Regression Tests
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Release Check: L3 回归测试（全量）"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash scripts/run-regression.sh release
+
+      - name: CHANGELOG Check
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Release Check: CHANGELOG 检查"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          # 获取当前版本
+          VERSION=$(jq -r '.version' package.json)
+          echo "当前版本: $VERSION"
+          echo ""
+
+          # 检查 CHANGELOG.md 是否包含当前版本
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "❌ CHANGELOG.md 不存在"
+            exit 1
+          fi
+
+          if grep -q "## \[$VERSION\]" CHANGELOG.md || grep -q "## $VERSION" CHANGELOG.md; then
+            echo "✅ CHANGELOG.md 包含 $VERSION 版本条目"
+          else
+            echo "❌ CHANGELOG.md 缺少 $VERSION 版本条目"
+            echo ""
+            echo "请在 CHANGELOG.md 中添加本次发布的变更记录"
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Release Check 通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # L2B Check - 可复核证据（只对 PR to develop，release 不需要）
+  l2b-check:
+    if: github.event_name == 'pull_request' && github.base_ref != 'main'
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # M6 FIX: 需要完整历史来验证 evidence 中的 SHA
+
+      - name: L2B Evidence Check
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L2B: 可复核证据检查"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          if [ -f "scripts/devgate/l2b-check.sh" ]; then
+            bash scripts/devgate/l2b-check.sh pr || exit 1
+          else
+            echo "⚠️ l2b-check.sh not found, skipping"
+            echo "   (仓库可能还未升级到 L2B 检查)"
+          fi
+
+  # CI 通过后通知（不自动合并，需要手动确认）
+  # 注意：此 job 只在 pull_request 事件时运行，push 事件时跳过
+  # v10.5.0: 修复条件 needs，正确处理 regression-pr 和 release-check
+  # v10.6.0: 增加 l2b-check 依赖
+  # cleanup-prd-dod job 已删除
+  # PRD/DoD 现在通过 PR Gate 阻止进入 develop/main，不再需要 push 后清理
+
+  ci-passed:
+    # CRITICAL FIX: 添加 regression-pr 和 release-check 到依赖链
+    # 确保 ci-passed 等待这些 jobs 完成，防止 PR 在回归测试完成前合并
+    needs: [version-check, test, contract-drift-check, impact-check, l2b-check, known-failures-protection, config-audit, regression-pr, release-check]
+    # SECURITY FIX v3: 全面加强检查，禁止关键 jobs 被 skipped 绕过
+    # H4 FIX: 关键安全检查（known-failures-protection, config-audit, impact-check）必须 success，不允许 skipped
+    # CRITICAL FIX: regression-pr/release-check 条件性检查
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.test.result == 'success' &&
+      needs.contract-drift-check.result == 'success' &&
+      needs.known-failures-protection.result == 'success' &&
+      needs.config-audit.result == 'success' &&
+      needs.impact-check.result == 'success' &&
+      (needs.version-check.result == 'success' || needs.version-check.result == 'skipped') &&
+      (needs.l2b-check.result == 'success' || needs.l2b-check.result == 'skipped') &&
+      (github.base_ref != 'develop' || needs.regression-pr.result == 'success' || needs.regression-pr.result == 'skipped') &&
+      (github.base_ref != 'main' || needs.release-check.result == 'success' || needs.release-check.result == 'skipped') &&
+      needs.contract-drift-check.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # CRITICAL FIX: 不再需要 gh API 后验证，因为已添加到 needs 依赖链
+      # 依赖链确保 ci-passed 只有在 regression-pr/release-check 成功后才运行
+
+      - name: CI Passed
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ CI 通过"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "[$(date -u +%H:%M:%S)] PR #${{ github.event.pull_request.number }} CI 检查通过"
+          echo ""
+          echo "已通过的检查："
+          echo "  ✅ test (L1 + DevGate + DevGate 脚本存在性)"
+          echo "  ✅ known-failures-protection (P0)"
+          echo "  ✅ config-audit (P1)"
+          echo "  ✅ impact-check (P1)"
+          if [ "${{ needs.l2b-check.result }}" = "success" ]; then
+            echo "  ✅ l2b-check (L2B 证据 + SHA 验证)"
+          fi
+          echo "  ✅ contract-drift-check"
+          echo ""
+          echo "下一步："
+          echo "  1. 手动 review（如有需要）"
+          echo "  2. 手动合并 PR"
+          echo ""
+          echo "不再自动合并，需要确认所有检查通过后手动操作"
+
+  # CI 失败时通知 Notion（version-check 或 test 失败都通知）
+  notify-failure:
+    needs: [version-check, test]
+    if: always() && (needs.version-check.result == 'failure' || needs.test.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # CRITICAL 修复: 显式声明最小权限
+    permissions:
+      contents: read
+    steps:
+      - name: Notify Notion
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_CI_DATABASE_ID }}
+          VERSION_CHECK_RESULT: ${{ needs.version-check.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          if [ -z "$NOTION_TOKEN" ] || [ -z "$NOTION_DATABASE_ID" ]; then
+            echo "⚠️ Notion secrets not configured, skipping notification"
+            exit 0
+          fi
+
+          # 确定失败原因
+          FAILURE_REASON=""
+          if [ "$VERSION_CHECK_RESULT" = "failure" ]; then
+            FAILURE_REASON="version-check"
+          fi
+          if [ "$TEST_RESULT" = "failure" ]; then
+            if [ -n "$FAILURE_REASON" ]; then
+              FAILURE_REASON="$FAILURE_REASON + test"
+            else
+              FAILURE_REASON="test"
+            fi
+          fi
+
+          # 确定 PR URL 或 Action URL
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          if [ -z "$PR_URL" ]; then
+            PR_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          # CRITICAL 修复: 使用 jq 安全生成 JSON，防止注入
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          JSON_PAYLOAD=$(jq -n \
+            --arg db_id "$NOTION_DATABASE_ID" \
+            --arg name "❌ CI Failed ($FAILURE_REASON): ${{ github.repository }}" \
+            --arg branch "${{ github.head_ref || github.ref_name }}" \
+            --arg pr_url "$PR_URL" \
+            --arg timestamp "$TIMESTAMP" \
+            '{
+              parent: {database_id: $db_id},
+              properties: {
+                Name: {title: [{text: {content: $name}}]},
+                Status: {select: {name: "Failed"}},
+                Branch: {rich_text: [{text: {content: $branch}}]},
+                PR: {url: $pr_url},
+                Time: {date: {start: $timestamp}}
+              }
+            }')
+
+          curl -s --fail -X POST "https://api.notion.com/v1/pages" \
+            -H "Authorization: Bearer $NOTION_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Notion-Version: 2022-06-28" \
+            -d "$JSON_PAYLOAD"
+          echo "📨 Notification sent to Notion (failed: $FAILURE_REASON)"
+
+  # AI Review (L2C) - 语义/影响面审查
+  # 在 CI 全绿后运行，不阻断 PR（初期）
+  ai-review:
+    # C3 FIX: 允许 ci-passed skipped（非 PR 事件时 ci-passed 不运行）
+    if: |
+      github.event_name == 'pull_request' &&
+      (needs.ci-passed.result == 'success' || needs.ci-passed.result == 'skipped')
+    needs: [ci-passed]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write  # 需要写权限来发 comment
+    # SECURITY FIX: 移除 continue-on-error，让 AI review 失败正确报告
+    # 如果 VPS_REVIEW_URL 未配置，脚本会优雅跳过而非失败
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          # 获取 PR diff（限制大小，防止超长）
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+
+          # 限制 diff 大小（最多 50KB，约 1000 行代码）
+          DIFF_SIZE=$(wc -c < pr.diff)
+          if [ "$DIFF_SIZE" -gt 51200 ]; then
+            echo "⚠️ PR diff 过大 (${DIFF_SIZE} bytes)，截断到 50KB"
+            head -c 51200 pr.diff > pr.diff.truncated
+            mv pr.diff.truncated pr.diff
+            echo "truncated=true" >> $GITHUB_OUTPUT
+          else
+            echo "truncated=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Call AI Review API
+        id: review
+        env:
+          VPS_REVIEW_URL: ${{ secrets.VPS_REVIEW_URL }}
+        run: |
+          if [ -z "$VPS_REVIEW_URL" ]; then
+            echo "⚠️ VPS_REVIEW_URL not configured, skipping AI review"
+            echo "review_result=skipped" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 构建 JSON payload
+          DIFF_CONTENT=$(jq -Rs . < pr.diff)
+          JSON_PAYLOAD=$(jq -n \
+            --arg pr_number "${{ github.event.pull_request.number }}" \
+            --arg repo "${{ github.repository }}" \
+            --argjson diff "$DIFF_CONTENT" \
+            '{pr_number: $pr_number, repo: $repo, diff: $diff}')
+
+          # 调用 VPS Review API
+          RESPONSE=$(curl -s -X POST "$VPS_REVIEW_URL" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD")
+
+          # 保存响应
+          echo "$RESPONSE" > review.json
+          echo "review_result=success" >> $GITHUB_OUTPUT
+
+      - name: Post comment
+        if: steps.review.outputs.review_result == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const review = JSON.parse(fs.readFileSync('review.json', 'utf8'));
+
+            const truncated = '${{ steps.diff.outputs.truncated }}' === 'true';
+            let comment = '## 🤖 AI Review (L2C - 语义/影响面审查)\n\n';
+
+            if (truncated) {
+              comment += '⚠️ **PR diff 已截断到 50KB**，审查可能不完整\n\n';
+            }
+
+            comment += review.content || '无审查结果';
+
+            comment += '\n\n---\n';
+            comment += '*这是 AI 自动审查，不阻断 PR 合并。仅供参考。*';
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });

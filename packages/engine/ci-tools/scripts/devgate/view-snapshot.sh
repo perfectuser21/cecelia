@@ -1,0 +1,1 @@
+../../../scripts/devgate/view-snapshot.sh

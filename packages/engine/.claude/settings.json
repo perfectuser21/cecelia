@@ -1,0 +1,17 @@
+{
+  "skills": {
+    "paths": ["./skills"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [{"type": "command", "command": "./hooks/branch-protect.sh"}]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "./hooks/bash-guard.sh"}]
+      }
+    ]
+  }
+}

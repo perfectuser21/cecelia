@@ -1,0 +1,103 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment (allow .env.example)
+.env
+.env.local
+.env.*.local
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage
+coverage/
+
+# Skill validation (temporary)
+skills/dev/SKILL.md.backup
+skills/dev/VALIDATION.md
+
+# Generated state files (runtime)
+.project-info.json
+.dev-step
+.dev-mode
+.dev-mode.*
+.dev-lock
+.dev-lock.*
+.dev-sentinel
+.dev-sentinel.*
+.quality-report.json
+.test-level.json
+
+# Archived PRD/DoD (local history, never commit)
+.history/
+
+# Dev run reports (local, never commit)
+.dev-runs/
+
+# Workflow runtime files (per-branch, runtime)
+# v1.1: 支持分支级别 PRD/DoD 文件
+.prd.md
+.prd-*.md
+.dod.md
+.dod-*.md
+.quality-gate-passed
+.layer2-evidence.md
+.l3-analysis.md
+artifacts/screenshots/*.png
+
+# P0-2: Quality Evidence (CI-only, never commit)
+# Evidence 只在 CI 生成，永不提交到 git（避免 SHA 漂移）
+.quality-evidence*.json
+
+# L2B: Evidence (MUST be tracked for PR to develop)
+# .layer2-evidence.md 记录可复核证据，L2B-min 检查需要
+!.layer2-evidence.md
+
+# Old Subagent files (deprecated)
+.subagent-lock
+.subagent-proof.json
+.gate-*-passed
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# Temp test fixtures (never commit)
+.test-*.json
+.test-*.md
+
+# Temp learning/exploratory files
+.learning-*.md
+
+# PRD/DoD feature directories (branch-level, never commit)
+.prd-feature/
+.dod-feature/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Skill runtime output (never commit)
+skills/*/output.json
+skills/*/validation-report.json
+
+# Validation reports (runtime)
+validation-report.json
+
+# CI trigger

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PRD Schema",
+  "description": "N8N 可解析的 PRD 结构，用于自动化调度 Cecilia",
+  "type": "object",
+  "required": ["meta", "tasks"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["project", "feature_branch", "status"],
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "项目名称"
+        },
+        "feature_branch": {
+          "type": "string",
+          "pattern": "^feature/",
+          "description": "功能分支名"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "approved", "in_progress", "done", "failed"]
+        },
+        "notion_page_id": {
+          "type": "string",
+          "description": "Notion 页面 ID（可选）"
+        }
+      }
+    },
+    "background": {
+      "type": "string",
+      "description": "背景说明"
+    },
+    "goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "目标列表"
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "非目标列表"
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "type", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^T-[0-9]{3}$",
+            "description": "Task ID，如 T-001"
+          },
+          "name": {
+            "type": "string",
+            "description": "Task 名称"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["code", "test", "config", "docs", "review"],
+            "description": "任务类型"
+          },
+          "depends_on": {
+            "type": ["string", "null"],
+            "description": "依赖的 task ID，无依赖为 null"
+          },
+          "size": {
+            "type": "string",
+            "enum": ["small", "medium", "large"],
+            "description": "预计工作量"
+          },
+          "description": {
+            "type": "string",
+            "description": "任务描述"
+          },
+          "dod": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "完成标准列表"
+          },
+          "verify_commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "验证命令"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "done", "failed", "skipped"],
+            "description": "当前状态"
+          },
+          "branch_name": {
+            "type": ["string", "null"],
+            "pattern": "^cp-",
+            "description": "对应的 cp-* 分支名（执行时生成）"
+          },
+          "pr_url": {
+            "type": ["string", "null"],
+            "description": "PR 链接（完成后填写）"
+          },
+          "error": {
+            "type": ["string", "null"],
+            "description": "失败原因（失败时填写）"
+          },
+          "retry_count": {
+            "type": "integer",
+            "default": 0,
+            "description": "重试次数"
+          }
+        }
+      }
+    }
+  }
+}

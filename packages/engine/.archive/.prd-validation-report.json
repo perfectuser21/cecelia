@@ -1,0 +1,14 @@
+{
+  "prd_file": ".prd-okr-database-integration.md",
+  "form_score": 40,
+  "content_score": 55,
+  "total_score": 95,
+  "passing": true,
+  "form_issues": [],
+  "content_issues": [
+    "技术方案不够详细 (10/15分) - 需要更多技术细节"
+  ],
+  "content_sha256": "16a6b2740ae378ec9cbd39f0d896bcad011b3602037830296c19279595c49242",
+  "timestamp": "2026-02-08T14:13:52.029578",
+  "validation_version": "1.0.0"
+}

@@ -1,0 +1,1 @@
+../../../scripts/devgate/detect-priority.cjs

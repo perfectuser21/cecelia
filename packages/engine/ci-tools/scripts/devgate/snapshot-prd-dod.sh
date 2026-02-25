@@ -1,0 +1,1 @@
+../../../scripts/devgate/snapshot-prd-dod.sh

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "已知测试失败白名单 - 只有这里登记的失败模式才能跳过 CI",
+  "version": "1.0.0",
+  "rules": {
+    "max_skip_count": 3,
+    "require_ticket": true
+  },
+  "allowed": {
+    "test:flaky:integration": {
+      "description": "Flaky integration tests on CI runners",
+      "ticket": "N/A - infrastructure issue",
+      "expires": "2026-03-01"
+    },
+    "stop-hook-router-tests": {
+      "description": "Stop Hook 路由器架构重构（v13.0.0）导致旧测试失败",
+      "ticket": "#536 - Stop Hook router + Branch Protection & DevGate enhancements",
+      "expires": "2026-03-15"
+    }
+  }
+}
