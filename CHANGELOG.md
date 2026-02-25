@@ -5,6 +5,36 @@ All notable changes to Cecelia Quality Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-01-29
+
+### Added
+
+- **Quality Activation APIs** - Turn static config into live APIs
+  - `GET /api/repos` - List all registered repos
+  - `GET /api/repos/:id` - Get single repo details
+  - `POST /api/repos` - Register new repo
+  - `DELETE /api/repos/:id` - Remove repo
+  - `POST /api/repos/discover` - Auto-discover unregistered repos in /home/xx/dev/
+  - `GET /api/contracts` - List all RCI contracts
+  - `GET /api/contracts/:repoId` - Get repo's RCI list
+  - `GET /api/contracts/:repoId/rci/:rciId` - Get single RCI details
+  - `POST /api/execute` - Execute QA for a repo
+  - `POST /api/execute/all` - Execute QA for all repos
+  - `GET /api/execute/:runId` - Get execution status
+  - `GET /api/dashboard/overview` - All repos health overview
+  - `GET /api/dashboard/repo/:id` - Single repo dashboard
+  - `GET /api/dashboard/history` - History/trend data
+- New modules:
+  - `api/lib/registry.js` - Repo registry CRUD operations
+  - `api/lib/contracts.js` - RCI contract operations
+  - `api/lib/executor.js` - Remote QA execution engine
+  - `api/lib/dashboard.js` - Dashboard data aggregation
+- Test files:
+  - `tests/api/registry.test.ts`
+  - `tests/api/contracts.test.ts`
+  - `tests/api/executor.test.ts`
+  - `tests/api/dashboard.test.ts`
+
 ## [1.1.0] - 2026-01-27
 
 ### Added
