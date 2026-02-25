@@ -97,7 +97,8 @@ description: |
 
 ```bash
 # 计算 RISK SCORE
-node scripts/qa/risk-score.cjs --base develop --head HEAD
+BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+node scripts/qa/risk-score.cjs --base $BASE_BRANCH --head HEAD
 
 # 输出示例：
 {
@@ -129,7 +130,8 @@ node scripts/qa/risk-score.cjs --base develop --head HEAD
 
 ```bash
 # Step 4: 计算风险分数
-RISK_SCORE=$(node scripts/qa/risk-score.cjs --base develop --head HEAD)
+BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+RISK_SCORE=$(node scripts/qa/risk-score.cjs --base $BASE_BRANCH --head HEAD)
 
 if [ $? -eq 1 ]; then
   echo "RISK SCORE >= 3, 执行 QA Decision Node"

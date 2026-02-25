@@ -57,7 +57,7 @@ description: |
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到 develop。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（develop 或 main，自动检测）。**
 
 ### 完成条件
 
@@ -65,7 +65,7 @@ description: |
 开始 → ... → PR 创建 → CI 通过 → PR 合并 ✅ 完成
 ```
 
-**只有一个完成标志**：PR 已合并到 develop
+**只有一个完成标志**：PR 已合并到目标分支（develop 或 main，自动检测）
 
 ### 遇到任何问题 = 自动修复
 
@@ -337,7 +337,7 @@ TaskList()
 ### 3. 分支策略
 
 1. **只在 cp-* 或 feature/* 分支写代码** - Hook 强制
-2. **develop 是主开发线** - PR 合并回 develop
+2. **目标分支自动检测** - 有 develop 用 develop，否则用 main（PR 合并回目标分支）
 3. **main 始终稳定** - 只在里程碑时从 develop 合并
 
 ### 4. 质量保证
