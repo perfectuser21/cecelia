@@ -892,15 +892,15 @@ function getProviderForTask(task) {
 }
 
 /**
- * Get minimax credentials file for a task.
- * 从 active profile 的 model_map 读取 minimax_credentials 字段。
- * 默认返回 null（cecelia-run 使用默认的 "minimax" 文件）。
+ * Get credentials file for a task (universal, works for all providers).
+ * 从 active profile 的 model_map 读取 credentials 字段（新），或 minimax_credentials（旧，向后兼容）。
+ * 默认返回 null（cecelia-run 使用 provider 默认账户）。
  */
-function getMinimaxCredentialsForTask(task) {
+function getCredentialsForTask(task) {
   const taskType = task.task_type || 'dev';
   const profile = getActiveProfile();
   const profileMap = profile?.config?.executor?.model_map;
-  return profileMap?.[taskType]?.minimax_credentials || null;
+  return profileMap?.[taskType]?.credentials || profileMap?.[taskType]?.minimax_credentials || null;
 }
 
 /**
@@ -1479,10 +1479,10 @@ async function triggerCeceliaRun(task) {
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
     const provider = getProviderForTask(task);
 
-    // Get MiniMax credentials file (if provider is minimax, may specify minimax2 etc.)
-    const minimaxCredentials = provider === 'minimax' ? getMinimaxCredentialsForTask(task) : null;
-    if (minimaxCredentials) {
-      extraEnv.CECELIA_MINIMAX_CREDENTIALS = minimaxCredentials;
+    // Get credentials file for the task (universal, works for all providers)
+    const credentials = getCredentialsForTask(task);
+    if (credentials) {
+      extraEnv.CECELIA_CREDENTIALS = credentials;
     }
 
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)
@@ -1932,7 +1932,7 @@ export {
   // v11: Unified model routing
   getModelForTask,
   // v12: Multi-account credentials
-  getMinimaxCredentialsForTask,
+  getCredentialsForTask,
   MODELS,
   MODEL_MAP,
   FIXED_PROVIDER,

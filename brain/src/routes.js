@@ -6616,7 +6616,7 @@ router.get('/staff', async (_req, res) => {
             break;
           }
         }
-        const credentialsFile = modelEntry.minimax_credentials || worker.credentials_file || null;
+        const credentialsFile = modelEntry.credentials || modelEntry.minimax_credentials || worker.credentials_file || null;
         return {
           id: worker.id,
           name: worker.name,
@@ -6705,10 +6705,12 @@ router.put('/staff/workers/:workerId', async (req, res) => {
           minimax:   model.provider === 'minimax'   ? model.name : (existing.minimax   || null),
           openai:    model.provider === 'openai'    ? model.name : (existing.openai    || null),
         };
-        // 保存 credentials_file（minimax 账户选择）
+        // 保存 credentials（通用账户选择，适用所有 provider）
         if (credentials_file !== undefined) {
-          newMap.minimax_credentials = credentials_file || null;
-        } else if (existing.minimax_credentials !== undefined) {
+          newMap.credentials = credentials_file || null;
+          newMap.minimax_credentials = credentials_file || null; // 向后兼容
+        } else if (existing.credentials !== undefined) {
+          newMap.credentials = existing.credentials;
           newMap.minimax_credentials = existing.minimax_credentials;
         }
         modelMap[skillKey] = newMap;
