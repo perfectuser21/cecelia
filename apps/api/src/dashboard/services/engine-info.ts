@@ -8,7 +8,7 @@ import { join, basename } from 'path';
 import type { EngineInfo, Skill, Hook, ChangelogEntry } from '../../shared/engine-types.js';
 
 // Default engine path - can be overridden via environment variable
-const ENGINE_PATH = process.env.ZENITHJOY_ENGINE || '/home/xx/perfect21/cecelia/engine';
+const ENGINE_PATH = process.env.ZENITHJOY_ENGINE || '/home/xx/perfect21/cecelia/packages/engine';
 
 /**
  * Parse YAML front matter from a markdown file
