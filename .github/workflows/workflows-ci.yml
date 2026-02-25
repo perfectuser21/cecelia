@@ -1,0 +1,389 @@
+name: Workflows CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/workflows/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: workflows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  # Detect which paths changed to skip heavy jobs on non-workflows PRs
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            workflows:
+              - 'packages/workflows/**'
+
+  # JSON/YAML config validation
+  validate:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    name: Config Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate JSON files
+        working-directory: packages/workflows
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  JSON Validation"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=false
+          COUNT=0
+
+          # Critical JSON files (must exist and be valid)
+          CRITICAL_JSON=(
+            "workflow-registry.json"
+            "n8n/capability_mapping.json"
+            "staff/workers.config.json"
+          )
+
+          for f in "${CRITICAL_JSON[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "  [FAIL] $f not found"
+              FAILED=true
+              continue
+            fi
+            if node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null; then
+              echo "  [OK] $f"
+              COUNT=$((COUNT + 1))
+            else
+              echo "  [FAIL] $f is not valid JSON"
+              FAILED=true
+            fi
+          done
+
+          echo ""
+
+          # N8N workflow JSON files (validate all found)
+          echo "Checking n8n workflow JSON files..."
+          while IFS= read -r -d '' f; do
+            if node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null; then
+              echo "  [OK] $f"
+              COUNT=$((COUNT + 1))
+            else
+              echo "  [FAIL] $f is not valid JSON"
+              FAILED=true
+            fi
+          done < <(find n8n/workflows -name "*.json" -type f -print0 2>/dev/null)
+
+          # N8N template JSON files
+          echo ""
+          echo "Checking n8n template JSON files..."
+          while IFS= read -r -d '' f; do
+            if node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null; then
+              echo "  [OK] $f"
+              COUNT=$((COUNT + 1))
+            else
+              echo "  [FAIL] $f is not valid JSON"
+              FAILED=true
+            fi
+          done < <(find n8n/templates -name "*.json" -type f -print0 2>/dev/null)
+
+          echo ""
+          echo "Validated $COUNT JSON files"
+
+          if [ "$FAILED" = "true" ]; then
+            echo "JSON validation failed"
+            exit 1
+          fi
+
+      - name: Validate YAML files
+        working-directory: packages/workflows
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  YAML Validation"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=false
+
+          YAML_FILES=(
+            "regression-contract.yaml"
+          )
+
+          for f in "${YAML_FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "  [FAIL] $f not found"
+              FAILED=true
+              continue
+            fi
+            if python3 -c "import yaml; yaml.safe_load(open('$f'))" 2>/dev/null; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f is not valid YAML"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo "YAML validation failed"
+            exit 1
+          fi
+
+      - name: Check shell scripts syntax
+        working-directory: packages/workflows
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Shell Script Syntax"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=0
+          COUNT=0
+
+          while IFS= read -r -d '' f; do
+            COUNT=$((COUNT + 1))
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+
+          echo ""
+          echo "Checked $COUNT shell scripts"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "Shell syntax check failed"
+            exit 1
+          fi
+          echo "All shell scripts passed syntax check"
+
+  # Directory structure validation
+  structure:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    name: Structure Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required directories
+        working-directory: packages/workflows
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Workflows Structure Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=false
+          REQUIRED_DIRS=(
+            "agents"
+            "protocols"
+            "n8n/workflows"
+            "skills"
+            "scripts"
+            "gateway"
+          )
+
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ -d "$dir" ]; then
+              echo "  [OK] $dir/"
+            else
+              echo "  [FAIL] $dir/ not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Missing required directories"
+            exit 1
+          fi
+          echo ""
+          echo "All required directories present"
+
+      - name: Check agent SKILL.md files
+        working-directory: packages/workflows
+        run: |
+          echo ""
+          echo "Checking agent definitions..."
+          FAILED=false
+
+          if [ ! -d "agents" ]; then
+            echo "  [FAIL] agents/ directory not found"
+            exit 1
+          fi
+
+          for agent_dir in agents/*/; do
+            agent_name=$(basename "$agent_dir")
+            if [ -f "${agent_dir}SKILL.md" ]; then
+              LINES=$(wc -l < "${agent_dir}SKILL.md")
+              echo "  [OK] agents/$agent_name/SKILL.md ($LINES lines)"
+            else
+              echo "  [FAIL] agents/$agent_name/SKILL.md not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Missing agent SKILL.md files"
+            exit 1
+          fi
+          echo ""
+          echo "All agents have SKILL.md"
+
+      - name: Check required files
+        working-directory: packages/workflows
+        run: |
+          echo ""
+          echo "Checking required files..."
+          FAILED=false
+          REQUIRED_FILES=(
+            "workflow-registry.json"
+            "regression-contract.yaml"
+            "staff/workers.config.json"
+            "n8n/capability_mapping.json"
+            "protocols/README.md"
+          )
+
+          for f in "${REQUIRED_FILES[@]}"; do
+            if [ -f "$f" ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Missing required files"
+            exit 1
+          fi
+          echo ""
+          echo "All required files present"
+
+  # Gateway syntax check
+  gateway-check:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    name: Gateway Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check gateway syntax
+        working-directory: packages/workflows
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Gateway Syntax Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          if [ -f "gateway/ai-gateway.cjs" ]; then
+            if node --check gateway/ai-gateway.cjs 2>&1; then
+              echo "  [OK] gateway/ai-gateway.cjs"
+            else
+              echo "  [FAIL] gateway/ai-gateway.cjs has syntax errors"
+              exit 1
+            fi
+          else
+            echo "  [SKIP] gateway/ai-gateway.cjs not found"
+          fi
+
+          # Check any other .js/.cjs files in gateway/
+          for f in gateway/*.js gateway/*.cjs; do
+            [ -f "$f" ] || continue
+            [ "$f" = "gateway/ai-gateway.cjs" ] && continue
+            if node --check "$f" 2>&1; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f has syntax errors"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "Gateway syntax check passed"
+
+  # Gate job: non-workflows PRs fast-pass
+  ci-passed:
+    needs: [changes, validate, structure, gateway-check]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Workflows CI Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Workflows CI Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Non-workflows changes: skip all checks
+          if [ "${{ needs.changes.outputs.workflows }}" != "true" ]; then
+            echo "No workflows changes detected, all checks skipped"
+            exit 0
+          fi
+
+          FAILED=false
+
+          if [ "${{ needs.validate.result }}" != "success" ]; then
+            echo "FAIL: Config Validation (${{ needs.validate.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.structure.result }}" != "success" ]; then
+            echo "FAIL: Structure Check (${{ needs.structure.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.gateway-check.result }}" != "success" ]; then
+            echo "FAIL: Gateway Check (${{ needs.gateway-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" == "true" ]; then
+            echo ""
+            echo "Workflows CI Gate FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "All Workflows CI checks passed"

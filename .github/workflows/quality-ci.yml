@@ -1,0 +1,362 @@
+name: Quality CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/quality/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  # Detect which paths changed to skip heavy jobs on non-quality PRs
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      quality: ${{ steps.filter.outputs.quality }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            quality:
+              - 'packages/quality/**'
+
+  # Structure & config validation
+  quality-check:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
+    name: Quality Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required directories
+        working-directory: packages/quality
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Quality Structure Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=false
+          REQUIRED_DIRS=(
+            "hooks"
+            "scripts/devgate"
+            "skills"
+            "contracts"
+            "tests"
+            "docs"
+          )
+
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ -d "$dir" ]; then
+              echo "  [OK] $dir/"
+            else
+              echo "  [FAIL] $dir/ not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Missing required directories"
+            exit 1
+          fi
+          echo ""
+          echo "All required directories present"
+
+      - name: Check VERSION file format
+        working-directory: packages/quality
+        run: |
+          echo ""
+          echo "Checking VERSION file..."
+          if [ ! -f "VERSION" ]; then
+            echo "  [FAIL] VERSION file not found"
+            exit 1
+          fi
+
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if [[ "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "  [OK] VERSION = $VERSION"
+          else
+            echo "  [FAIL] Invalid version format: '$VERSION'"
+            echo "  Expected semver: MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+      - name: Check skills SKILL.md
+        working-directory: packages/quality
+        run: |
+          echo ""
+          echo "Checking skills..."
+          FAILED=false
+          REQUIRED_SKILLS=(
+            "skills/audit/SKILL.md"
+            "skills/qa/SKILL.md"
+            "skills/assurance/SKILL.md"
+          )
+
+          for skill in "${REQUIRED_SKILLS[@]}"; do
+            if [ -f "$skill" ]; then
+              LINES=$(wc -l < "$skill")
+              if [ "$LINES" -ge 3 ]; then
+                echo "  [OK] $skill ($LINES lines)"
+              else
+                echo "  [FAIL] $skill too short ($LINES lines)"
+                FAILED=true
+              fi
+            else
+              echo "  [FAIL] $skill not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            exit 1
+          fi
+          echo ""
+          echo "All required skills present"
+
+      - name: Check contract templates
+        working-directory: packages/quality
+        run: |
+          echo ""
+          echo "Checking contract templates..."
+          FAILED=false
+          REQUIRED_CONTRACTS=(
+            "contracts/regression-contract.template.yaml"
+            "contracts/gate-contract.template.yaml"
+          )
+
+          for contract in "${REQUIRED_CONTRACTS[@]}"; do
+            if [ -f "$contract" ]; then
+              echo "  [OK] $contract"
+            else
+              echo "  [FAIL] $contract not found"
+              FAILED=true
+            fi
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            exit 1
+          fi
+
+  # Run vitest
+  test:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
+    name: Quality Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: packages/quality
+        run: npm ci
+
+      - name: Run tests
+        working-directory: packages/quality
+        run: npx vitest run --reporter=verbose
+
+  # Shell script syntax check
+  lint:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
+    name: Shell Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell scripts syntax
+        working-directory: packages/quality
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Shell Script Lint"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=0
+          COUNT=0
+          FAIL_LIST=""
+
+          while IFS= read -r -d '' f; do
+            COUNT=$((COUNT + 1))
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+              FAIL_LIST="$FAIL_LIST $f"
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+
+          echo ""
+          echo "Checked $COUNT shell scripts"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "Failed scripts:$FAIL_LIST"
+            exit 1
+          fi
+          echo "All shell scripts passed syntax check"
+
+      - name: ShellCheck (advisory)
+        working-directory: packages/quality
+        continue-on-error: true
+        run: |
+          echo ""
+          echo "Running shellcheck (advisory, non-blocking)..."
+          echo ""
+
+          if ! command -v shellcheck &> /dev/null; then
+            echo "shellcheck not installed, skipping"
+            exit 0
+          fi
+
+          WARN_COUNT=0
+          while IFS= read -r -d '' f; do
+            OUTPUT=$(shellcheck -S warning "$f" 2>&1 || true)
+            if [ -n "$OUTPUT" ]; then
+              echo "  [WARN] $f"
+              echo "$OUTPUT" | head -20 | sed 's/^/     /'
+              WARN_COUNT=$((WARN_COUNT + 1))
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+
+          if [ "$WARN_COUNT" -gt 0 ]; then
+            echo ""
+            echo "$WARN_COUNT files with shellcheck warnings (non-blocking)"
+          else
+            echo "No shellcheck warnings"
+          fi
+
+  # Documentation completeness
+  docs:
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
+    name: Docs Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required documentation
+        working-directory: packages/quality
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Documentation Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          FAILED=false
+          REQUIRED_DOCS=(
+            "README.md"
+            "CHANGELOG.md"
+          )
+
+          for doc in "${REQUIRED_DOCS[@]}"; do
+            if [ -f "$doc" ]; then
+              LINES=$(wc -l < "$doc")
+              echo "  [OK] $doc ($LINES lines)"
+            else
+              echo "  [FAIL] $doc not found"
+              FAILED=true
+            fi
+          done
+
+          echo ""
+          echo "Checking docs/ directory..."
+          DOC_COUNT=$(find docs/ -name "*.md" -type f 2>/dev/null | wc -l)
+          if [ "$DOC_COUNT" -gt 0 ]; then
+            echo "  [OK] docs/ contains $DOC_COUNT markdown files"
+          else
+            echo "  [FAIL] docs/ is empty or missing"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Documentation check failed"
+            exit 1
+          fi
+
+          echo ""
+          echo "Documentation check passed"
+
+  # Gate job: non-quality PRs fast-pass
+  ci-passed:
+    needs: [changes, quality-check, test, lint, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Quality CI Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Quality CI Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Non-quality changes: skip all checks
+          if [ "${{ needs.changes.outputs.quality }}" != "true" ]; then
+            echo "No quality changes detected, all checks skipped"
+            exit 0
+          fi
+
+          FAILED=false
+
+          if [ "${{ needs.quality-check.result }}" != "success" ]; then
+            echo "FAIL: Quality Check (${{ needs.quality-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "FAIL: Quality Tests (${{ needs.test.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "FAIL: Shell Lint (${{ needs.lint.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.docs.result }}" != "success" ]; then
+            echo "FAIL: Docs Check (${{ needs.docs.result }})"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" == "true" ]; then
+            echo ""
+            echo "Quality CI Gate FAILED"
+            exit 1
+          fi
+
+          echo ""
+          echo "All Quality CI checks passed"
