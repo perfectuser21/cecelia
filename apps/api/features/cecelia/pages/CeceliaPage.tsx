@@ -1,8 +1,8 @@
 /**
- * CeceliaPage V2 — 有意识的管家指挥室
+ * CeceliaPage V2 Phase 3 — 管家指挥室
  *
- * Phase 2: Frontend skeleton rewrite
- * Layout: AmbientGlow → PulseStrip → dual-column (ConsciousnessFlow + ActivityPanel)
+ * Layout: AmbientGlow → PulseStrip → ActionZone → Three-column grid → ChatDrawer
+ * Design: Command center, not chat window.
  * Data: WebSocket events + REST fallback for initial load
  */
 
@@ -10,8 +10,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { AmbientGlow } from '../components/AmbientGlow';
 import { PulseStrip } from '../components/PulseStrip';
-import { ConsciousnessFlow } from '../components/ConsciousnessFlow';
-import { ActivityPanel, useActivityData } from '../components/ActivityPanel';
+import { ActionZone } from '../components/ActionZone';
+import { AgentMonitor } from '../components/AgentMonitor';
+import { TodayOverview } from '../components/TodayOverview';
+import { EventStream } from '../components/EventStream';
+import { ChatDrawer } from '../components/ChatDrawer';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
 import { useBriefing } from '../hooks/useBriefing';
 import type { EventType } from '../components/cards/EventCard';
@@ -31,6 +34,28 @@ interface Task {
   title: string;
   task_type: string;
   priority: string;
+  status: string;
+  started_at?: string;
+  skill?: string;
+  agent_name?: string;
+}
+
+interface ClusterNode {
+  name: string;
+  location: string;
+  cpu_percent: number;
+  memory_used_gb: number;
+  memory_total_gb: number;
+  active_agents: number;
+  available_slots: number;
+}
+
+interface TodayStats {
+  completed: number;
+  failed: number;
+  queued: number;
+  successRate: number;
+  tokenCostUsd: number;
 }
 
 interface FlowEvent {
@@ -45,21 +70,20 @@ interface FlowEvent {
 
 export default function CeceliaPage() {
   const [fullscreen, setFullscreen] = useState(false);
-  const [activityCollapsed, setActivityCollapsed] = useState(false);
 
   // ── Data hooks ──────────────────────────────────────────
   const { connected, subscribe } = useCeceliaWS();
-  const { data: briefing, loading: briefingLoading } = useBriefing();
-  const { runningTasks, clusterNodes, todayStats, refetch: refetchActivity } = useActivityData();
+  const { data: briefing } = useBriefing();
 
-  // ── State: alertness, tick info ─────────────────────────
+  // ── State ───────────────────────────────────────────────
   const [alertness, setAlertness] = useState(1);
   const [lastTickAt, setLastTickAt] = useState<string | null>(null);
   const [tickIntervalMinutes, setTickIntervalMinutes] = useState(5);
-
-  // ── State: desires, tasks, events ───────────────────────
   const [desires, setDesires] = useState<Desire[]>([]);
   const [queuedTasks, setQueuedTasks] = useState<Task[]>([]);
+  const [runningTasks, setRunningTasks] = useState<Task[]>([]);
+  const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
+  const [todayStats, setTodayStats] = useState<TodayStats>({ completed: 0, failed: 0, queued: 0, successRate: 100, tokenCostUsd: 0 });
   const [events, setEvents] = useState<FlowEvent[]>([]);
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
   const eventIdRef = useRef(0);
@@ -72,41 +96,75 @@ export default function CeceliaPage() {
   }, [fullscreen]);
 
   // ── Initial REST fetch ──────────────────────────────────
+  const fetchActivity = useCallback(async () => {
+    try {
+      const [tasksRes, clusterRes, statusRes] = await Promise.all([
+        fetch('/api/brain/tasks?status=in_progress&limit=10'),
+        fetch('/api/brain/cluster/status').catch(() => null),
+        fetch('/api/brain/status/full'),
+      ]);
+
+      if (tasksRes.ok) {
+        const d = await tasksRes.json();
+        setRunningTasks(Array.isArray(d) ? d : (d.tasks || []));
+      }
+
+      if (clusterRes?.ok) {
+        const d = await clusterRes.json();
+        const nodes: ClusterNode[] = [];
+        if (d.servers) {
+          for (const s of d.servers) {
+            nodes.push({
+              name: s.name || s.location?.toUpperCase() || 'Node',
+              location: s.location || 'us',
+              cpu_percent: s.cpu_percent ?? s.cpu ?? 0,
+              memory_used_gb: s.memory_used_gb ?? s.mem_used ?? 0,
+              memory_total_gb: s.memory_total_gb ?? s.mem_total ?? 8,
+              active_agents: s.active_agents ?? s.activeAgents ?? 0,
+              available_slots: s.available_slots ?? s.availableSlots ?? 0,
+            });
+          }
+        }
+        if (d.us) nodes.push({ name: 'US', location: 'us', ...d.us });
+        if (d.hk) nodes.push({ name: 'HK', location: 'hk', ...d.hk });
+        setClusterNodes(nodes);
+      }
+
+      if (statusRes.ok) {
+        const d = await statusRes.json();
+        const completed = d.task_stats?.completed_today ?? d.tick_stats?.actions_today ?? 0;
+        const failed = d.task_stats?.failed_today ?? 0;
+        const queued = d.task_queue?.queued ?? 0;
+        const total = completed + failed;
+        setTodayStats({
+          completed, failed, queued,
+          successRate: total > 0 ? (completed / total) * 100 : 100,
+          tokenCostUsd: d.token_stats?.today_usd ?? 0,
+        });
+        setLastTickAt(d.tick_stats?.last_tick_at ?? null);
+        setTickIntervalMinutes(d.tick_stats?.interval_minutes ?? 5);
+      }
+    } catch { /* */ }
+  }, []);
+
   useEffect(() => {
     async function loadInitial() {
       try {
-        const [alertRes, statusRes, desiresRes, tasksRes] = await Promise.all([
+        const [alertRes, desiresRes, tasksRes] = await Promise.all([
           fetch('/api/brain/alertness'),
-          fetch('/api/brain/status/full'),
           fetch('/api/brain/desires?status=pending&limit=20'),
-          fetch('/api/brain/tasks?status=queued&limit=8'),
+          fetch('/api/brain/tasks?status=queued&limit=12'),
         ]);
-
-        if (alertRes.ok) {
-          const d = await alertRes.json();
-          setAlertness(d.level ?? 1);
-        }
-
-        if (statusRes.ok) {
-          const d = await statusRes.json();
-          setLastTickAt(d.tick_stats?.last_tick_at ?? null);
-          setTickIntervalMinutes(d.tick_stats?.interval_minutes ?? 5);
-        }
-
-        if (desiresRes.ok) {
-          const d = await desiresRes.json();
-          setDesires(Array.isArray(d) ? d : (d.desires || []));
-        }
-
-        if (tasksRes.ok) {
-          const d = await tasksRes.json();
-          setQueuedTasks(Array.isArray(d) ? d : (d.tasks || []));
-        }
-      } catch { /* initial load best-effort */ }
+        if (alertRes.ok) { const d = await alertRes.json(); setAlertness(d.level ?? 1); }
+        if (desiresRes.ok) { const d = await desiresRes.json(); setDesires(Array.isArray(d) ? d : (d.desires || [])); }
+        if (tasksRes.ok) { const d = await tasksRes.json(); setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); }
+      } catch { /* */ }
     }
-
     loadInitial();
-  }, []);
+    fetchActivity();
+    const t = setInterval(fetchActivity, 30000);
+    return () => clearInterval(t);
+  }, [fetchActivity]);
 
   // ── WebSocket subscriptions ─────────────────────────────
 
@@ -116,7 +174,6 @@ export default function CeceliaPage() {
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     setEvents(prev => {
       const next = [...prev, { id, type, text, time, timestamp: now.getTime() }];
-      // Keep max 50 events
       return next.length > 50 ? next.slice(-50) : next;
     });
   }, []);
@@ -126,14 +183,13 @@ export default function CeceliaPage() {
 
     unsubs.push(subscribe(WS_EVENTS.ALERTNESS_CHANGED, (data) => {
       setAlertness(data.level ?? data.alertness ?? 1);
-      pushEvent('alertness_changed', `警觉等级变为 ${data.level ?? data.alertness}`);
+      pushEvent('alertness_changed', `警觉等级 → ${data.level ?? data.alertness}`);
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TASK_COMPLETED, (data) => {
       pushEvent('task_completed', data.title || '任务完成');
-      refetchActivity();
-      // Refresh queued tasks list
-      fetch('/api/brain/tasks?status=queued&limit=8')
+      fetchActivity();
+      fetch('/api/brain/tasks?status=queued&limit=12')
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); })
         .catch(() => {});
@@ -141,12 +197,12 @@ export default function CeceliaPage() {
 
     unsubs.push(subscribe(WS_EVENTS.TASK_FAILED, (data) => {
       pushEvent('task_failed', data.title || '任务失败');
-      refetchActivity();
+      fetchActivity();
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TASK_STARTED, (data) => {
       pushEvent('task_started', data.title || '任务开始');
-      refetchActivity();
+      fetchActivity();
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TICK_EXECUTED, (data) => {
@@ -156,23 +212,21 @@ export default function CeceliaPage() {
 
     unsubs.push(subscribe(WS_EVENTS.DESIRE_CREATED, (data) => {
       pushEvent('desire_created', data.content?.slice(0, 60) || '新 Desire');
-      // Refresh desires
       fetch('/api/brain/desires?status=pending&limit=20')
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setDesires(Array.isArray(d) ? d : (d.desires || [])); })
         .catch(() => {});
     }));
 
-    unsubs.push(subscribe(WS_EVENTS.TASK_CREATED, (data) => {
-      // Refresh queued tasks
-      fetch('/api/brain/tasks?status=queued&limit=8')
+    unsubs.push(subscribe(WS_EVENTS.TASK_CREATED, () => {
+      fetch('/api/brain/tasks?status=queued&limit=12')
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); })
         .catch(() => {});
     }));
 
     return () => unsubs.forEach(u => u());
-  }, [subscribe, pushEvent, refetchActivity]);
+  }, [subscribe, pushEvent, fetchActivity]);
 
   // ── Desire actions ──────────────────────────────────────
 
@@ -188,32 +242,21 @@ export default function CeceliaPage() {
         })
       ));
       const r = await fetch('/api/brain/desires?status=pending&limit=20');
-      if (r.ok) {
-        const d = await r.json();
-        setDesires(Array.isArray(d) ? d : (d.desires || []));
-      }
+      if (r.ok) { const d = await r.json(); setDesires(Array.isArray(d) ? d : (d.desires || [])); }
     } catch { /* */ }
-    finally {
-      setLoadingActions(prev => { const n = new Set(prev); n.delete(key); return n; });
-    }
+    finally { setLoadingActions(prev => { const n = new Set(prev); n.delete(key); return n; }); }
   }, []);
-
-  // ── Task actions ────────────────────────────────────────
 
   const dispatchTask = useCallback(async (taskId: string) => {
     setLoadingActions(prev => new Set(prev).add(taskId));
     try {
       await fetch(`/api/brain/tasks/${taskId}/dispatch`, { method: 'POST' });
-      const r = await fetch('/api/brain/tasks?status=queued&limit=8');
-      if (r.ok) {
-        const d = await r.json();
-        setQueuedTasks(Array.isArray(d) ? d : (d.tasks || []));
-      }
+      const r = await fetch('/api/brain/tasks?status=queued&limit=12');
+      if (r.ok) { const d = await r.json(); setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); }
+      fetchActivity();
     } catch { /* */ }
-    finally {
-      setLoadingActions(prev => { const n = new Set(prev); n.delete(taskId); return n; });
-    }
-  }, []);
+    finally { setLoadingActions(prev => { const n = new Set(prev); n.delete(taskId); return n; }); }
+  }, [fetchActivity]);
 
   // ── Render ──────────────────────────────────────────────
 
@@ -225,7 +268,7 @@ export default function CeceliaPage() {
     <div style={containerStyle}>
       <AmbientGlow alertness={alertness}>
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-          {/* PulseStrip — top status bar */}
+          {/* Status Bar */}
           <PulseStrip
             alertness={alertness}
             runningCount={runningTasks.length}
@@ -235,69 +278,81 @@ export default function CeceliaPage() {
             tickIntervalMinutes={tickIntervalMinutes}
           />
 
-          {/* Fullscreen toggle (top-right overlay) */}
-          <button
-            onClick={() => setFullscreen(!fullscreen)}
-            style={{
-              position: 'absolute', top: 8, right: 8, zIndex: 10,
-              padding: 5, borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: fullscreen ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)',
-              color: fullscreen ? '#a78bfa' : 'rgba(255,255,255,0.3)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-            title={fullscreen ? '退出全屏 (Esc)' : '全屏'}
-          >
-            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-
-          {/* WebSocket indicator */}
-          <div style={{
-            position: 'absolute', top: 12, right: 40, zIndex: 10,
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}>
-            <div style={{
-              width: 5, height: 5, borderRadius: '50%',
-              background: connected ? '#10b981' : '#ef4444',
-              boxShadow: connected ? '0 0 4px #10b981' : 'none',
-            }} />
-            <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>
-              {connected ? 'WS' : '离线'}
-            </span>
+          {/* Top-right controls */}
+          <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <div style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: connected ? '#10b981' : '#ef4444',
+                boxShadow: connected ? '0 0 4px #10b981' : 'none',
+              }} />
+              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>
+                {connected ? 'WS' : '离线'}
+              </span>
+            </div>
+            <button
+              onClick={() => setFullscreen(!fullscreen)}
+              style={{
+                padding: 5, borderRadius: 6, border: 'none', cursor: 'pointer',
+                background: fullscreen ? 'rgba(167,139,250,0.15)' : 'rgba(255,255,255,0.04)',
+                color: fullscreen ? '#a78bfa' : 'rgba(255,255,255,0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+              title={fullscreen ? '退出全屏 (Esc)' : '全屏'}
+            >
+              {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
           </div>
 
-          {/* Dual-column layout */}
-          <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-            {/* Left: Consciousness Flow */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <ConsciousnessFlow
-                briefing={briefing}
-                briefingLoading={briefingLoading}
-                events={events}
-                desires={desires}
-                queuedTasks={queuedTasks}
-                onAcknowledgeDesire={acknowledgeDesire}
-                onDispatchTask={dispatchTask}
-                loadingActions={loadingActions}
-              />
+          {/* Action Required Zone — only shows when there are items */}
+          <ActionZone
+            desires={desires}
+            queuedTasks={queuedTasks}
+            onAcknowledgeDesire={acknowledgeDesire}
+            onDispatchTask={dispatchTask}
+            loadingActions={loadingActions}
+          />
+
+          {/* Three-column grid */}
+          <div style={{
+            flex: 1, display: 'flex', minHeight: 0,
+            borderTop: '1px solid rgba(255,255,255,0.04)',
+          }}>
+            {/* Left: Agent Monitor */}
+            <div style={{
+              flex: 1, minWidth: 0,
+              borderRight: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <AgentMonitor runningTasks={runningTasks} queuedTasks={queuedTasks} />
             </div>
 
-            {/* Right: Activity Panel */}
-            <ActivityPanel
-              runningTasks={runningTasks}
-              clusterNodes={clusterNodes}
-              todayStats={todayStats}
-              collapsed={activityCollapsed}
-              onToggleCollapse={() => setActivityCollapsed(!activityCollapsed)}
-            />
+            {/* Center: Today Overview */}
+            <div style={{
+              flex: 1, minWidth: 0,
+              borderRight: '1px solid rgba(255,255,255,0.04)',
+            }}>
+              <TodayOverview todayStats={todayStats} clusterNodes={clusterNodes} briefing={briefing} />
+            </div>
+
+            {/* Right: Event Stream */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <EventStream events={events} />
+            </div>
           </div>
+
+          {/* Chat Drawer — bottom, collapsed by default */}
+          <ChatDrawer />
         </div>
       </AmbientGlow>
 
-      {/* Global CSS for spin animation */}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
         }
       `}</style>
     </div>
