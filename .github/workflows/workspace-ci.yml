@@ -1,0 +1,41 @@
+name: Workspace CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/**']
+  pull_request:
+    branches: [main]
+    paths: ['apps/**']
+  workflow_dispatch:
+
+concurrency:
+  group: workspace-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  build:
+    name: Dashboard Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: npm ci
+
+      - name: Install Dashboard dependencies
+        working-directory: apps/dashboard
+        run: npm ci
+
+      - name: Build Dashboard
+        working-directory: apps/dashboard
+        run: npm run build

@@ -47,9 +47,10 @@ Thumbs.db
 
 # Build artifacts
 frontend/dist/
+apps/dashboard/dist/
 
 # Coverage reports
-brain/coverage/
+packages/brain/coverage/
 coverage/
 *.lcov
 
