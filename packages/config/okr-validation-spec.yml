@@ -1,0 +1,177 @@
+# OKR Validation Spec
+# 定义 OKR 结构验证规则，供 validate-okr-structure.js 使用
+#
+# 层级: global_okr → global_kr → area_okr → area_kr → project → initiative → task
+
+global_rules:
+  active_status_filter:
+    goals:
+      - pending
+      - in_progress
+      - active
+    projects:
+      - active
+      - planning
+      - in_progress
+    tasks:
+      - queued
+      - in_progress
+      - blocked
+
+  orphans:
+    - entity: tasks
+      parent_field: project_id
+      parent_table: projects
+      severity: BLOCK
+    - entity: projects
+      parent_field: parent_id
+      parent_table: projects
+      filter: "type = 'initiative'"
+      severity: BLOCK
+
+# ─── Goals 各类型 ────────────────────────────────────
+
+goals:
+  global_okr:
+    required_fields: [id, title, type, status, priority]
+    parent_rules:
+      parent_id:
+        must_be_null: true
+        severity: BLOCK
+    children:
+      global_kr:
+        min: 1
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+  global_kr:
+    required_fields: [id, title, type, status, priority]
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: global_okr
+        severity: BLOCK
+    children:
+      area_okr:
+        min: 1
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+  area_okr:
+    required_fields: [id, title, type, status, priority]
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: global_kr
+        severity: BLOCK
+    children:
+      area_kr:
+        min: 1
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+  area_kr:
+    required_fields: [id, title, type, status, priority]
+    parent_rules:
+      parent_id:
+        must_exist_in_goals: true
+        parent_type: area_okr
+        severity: BLOCK
+    children:
+      project:
+        min: 1
+        severity: WARNING
+    text_rules:
+      title:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+# ─── Projects 各类型 ──────────────────────────────────
+
+projects:
+  project:
+    required_fields: [id, name, type, status]
+    parent_rules:
+      kr_link:
+        min: 1
+        severity: WARNING
+    children:
+      initiative:
+        min: 0
+        severity: WARNING
+    text_rules:
+      name:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+  initiative:
+    required_fields: [id, name, type, status]
+    parent_rules:
+      parent_id:
+        must_exist_in_projects: true
+        parent_type: project
+        severity: BLOCK
+    children:
+      task:
+        min: 0
+        severity: WARNING
+    text_rules:
+      name:
+        min_length: 4
+        max_length: 200
+        severity: WARNING
+
+# ─── Tasks ────────────────────────────────────────────
+
+tasks:
+  required_fields: [id, title, project_id, status, priority]
+  parent_rules:
+    project_id:
+      must_exist_in_projects: true
+      severity: BLOCK
+  text_rules:
+    title:
+      min_length: 4
+      max_length: 500
+      forbidden_phrases:
+        - "看一下"
+        - "处理一下"
+        - "搞一下"
+        - "弄一下"
+      severity: BLOCK
+
+# ─── PR Plans ─────────────────────────────────────────
+
+pr_plans:
+  required_fields: [id, title, project_id, status]
+  parent_rules:
+    project_id:
+      must_exist_in_projects: true
+      severity: BLOCK
+  children:
+    task:
+      min: 0
+      severity: WARNING
+  dependency_graph:
+    field: depends_on
+    detect_cycle: true
+    severity: BLOCK
+  text_rules:
+    title:
+      min_length: 4
+      max_length: 500
+      severity: WARNING
