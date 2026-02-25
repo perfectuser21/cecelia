@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SCRIPT_PATH = resolve(__dirname, '../../../scripts/devgate/check-okr-structure.mjs');
+const SCRIPT_PATH = resolve(__dirname, '../../../../scripts/devgate/check-okr-structure.mjs');
 
 describe('D10: check-okr-structure.mjs CI 脚本', () => {
   it('脚本文件存在', () => {
