@@ -1,0 +1,110 @@
+{
+  "objective": "完成 Cecelia 任务智能调度系统",
+  "kr_id": "kr-test-001",
+  "initiative": {
+    "title": "实现任务智能调度系统",
+    "description": "支持基于资源使用率的动态优先级调整，包含优先级算法、资源监控和前端界面",
+    "repository": "cecelia-core"
+  },
+  "pr_plans": [
+    {
+      "title": "添加任务优先级算法",
+      "description": "实现基于资源使用率和任务类型的优先级计算算法",
+      "dod": [
+        "优先级算法实现完成，支持 CPU/内存权重计算",
+        "单元测试覆盖率 > 80%",
+        "API 端点返回正确的优先级分数"
+      ],
+      "files": [
+        "brain/src/priority-algo.js",
+        "brain/src/__tests__/priority-algo.test.js",
+        "brain/src/tick.js"
+      ],
+      "sequence": 1,
+      "depends_on": [],
+      "complexity": "medium",
+      "estimated_hours": 8,
+      "tasks": [
+        {
+          "title": "写 priority-algo.js 核心算法",
+          "type": "dev",
+          "description": "实现优先级计算函数，支持多维度权重"
+        },
+        {
+          "title": "写单元测试覆盖所有场景",
+          "type": "dev",
+          "description": "测试正常场景、边界情况、异常输入"
+        },
+        {
+          "title": "集成到 tick.js 调度循环",
+          "type": "dev",
+          "description": "在任务派发前调用优先级算法排序"
+        }
+      ]
+    },
+    {
+      "title": "实现资源监控模块",
+      "description": "监控系统 CPU/内存使用率，为优先级算法提供实时数据",
+      "dod": [
+        "实时监控 CPU 和内存使用率",
+        "数据存储到 brain_config 表",
+        "提供 API 端点查询当前资源状态"
+      ],
+      "files": [
+        "brain/src/resource-monitor.js",
+        "brain/src/__tests__/resource-monitor.test.js"
+      ],
+      "sequence": 2,
+      "depends_on": [],
+      "complexity": "low",
+      "estimated_hours": 4,
+      "tasks": [
+        {
+          "title": "写 resource-monitor.js 监控模块",
+          "type": "dev",
+          "description": "使用 os 模块获取系统资源信息"
+        },
+        {
+          "title": "写单元测试",
+          "type": "dev",
+          "description": "Mock os 模块测试数据采集"
+        }
+      ]
+    },
+    {
+      "title": "集成前端调度界面",
+      "description": "在 workspace 添加任务调度状态展示页面",
+      "dod": [
+        "展示当前任务队列和优先级",
+        "实时显示资源使用率",
+        "支持手动调整任务优先级"
+      ],
+      "files": [
+        "workspace/src/components/TaskScheduler.tsx",
+        "workspace/src/components/TaskScheduler.test.tsx",
+        "workspace/src/pages/TaskManagement.tsx"
+      ],
+      "sequence": 3,
+      "depends_on": [1],
+      "complexity": "high",
+      "estimated_hours": 12,
+      "tasks": [
+        {
+          "title": "写 TaskScheduler 组件",
+          "type": "dev",
+          "description": "展示任务列表、优先级、资源状态"
+        },
+        {
+          "title": "写组件单元测试",
+          "type": "dev",
+          "description": "测试组件渲染和交互"
+        },
+        {
+          "title": "E2E 测试",
+          "type": "qa",
+          "description": "端到端测试完整调度流程"
+        }
+      ]
+    }
+  ]
+}

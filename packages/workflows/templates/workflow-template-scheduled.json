@@ -1,0 +1,263 @@
+{
+  "name": "Template: Scheduled Job",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/scheduled-job",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "jobName",
+              "value": "{{$workflow.name}}"
+            },
+            {
+              "name": "executionId",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "startTime",
+              "value": "={{$now.toISO()}}"
+            },
+            {
+              "name": "schedule",
+              "value": "hourly"
+            }
+          ]
+        }
+      },
+      "id": "log-start",
+      "name": "Log Job Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if job should run\n// This can include checking for dependencies, time windows, etc.\n\nconst currentHour = new Date().getHours();\nconst currentDay = new Date().getDay();\n\n// Example: Only run during business hours (9-17) on weekdays (1-5)\nconst isBusinessHours = currentHour >= 9 && currentHour < 17;\nconst isWeekday = currentDay >= 1 && currentDay <= 5;\n\nif (!isBusinessHours || !isWeekday) {\n  return [{\n    shouldRun: false,\n    reason: 'Outside business hours',\n    nextRun: 'Next business day at 9 AM'\n  }];\n}\n\nreturn [{\n  shouldRun: true,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "check-conditions",
+      "name": "Check Conditions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.shouldRun}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-should-run",
+      "name": "Should Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Main job logic\n// This is where the scheduled task performs its work\n\nconst results = {\n  tasksProcessed: 0,\n  errors: [],\n  warnings: [],\n  metrics: {}\n};\n\ntry {\n  // Example: Clean up old logs\n  results.tasksProcessed++;\n  results.metrics.logsDeleted = Math.floor(Math.random() * 100);\n  \n  // Example: Generate reports\n  results.tasksProcessed++;\n  results.metrics.reportsGenerated = 5;\n  \n  // Example: Sync data\n  results.tasksProcessed++;\n  results.metrics.recordsSynced = Math.floor(Math.random() * 1000);\n  \n} catch (error) {\n  results.errors.push(error.message);\n}\n\nresults.completedAt = new Date().toISOString();\nresults.status = results.errors.length > 0 ? 'completed_with_errors' : 'success';\n\nreturn [results];"
+      },
+      "id": "execute-job",
+      "name": "Execute Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/scheduled-job-complete",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "jobName",
+              "value": "{{$workflow.name}}"
+            },
+            {
+              "name": "executionId",
+              "value": "={{$execution.id}}"
+            },
+            {
+              "name": "status",
+              "value": "={{$json.status}}"
+            },
+            {
+              "name": "results",
+              "value": "={{$json}}"
+            },
+            {
+              "name": "completedAt",
+              "value": "={{$json.completedAt}}"
+            }
+          ]
+        }
+      },
+      "id": "log-complete",
+      "name": "Log Job Complete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5221/api/brain/scheduled-job-skipped",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "jobName",
+              "value": "{{$workflow.name}}"
+            },
+            {
+              "name": "reason",
+              "value": "={{$json.reason}}"
+            },
+            {
+              "name": "nextRun",
+              "value": "={{$json.nextRun}}"
+            },
+            {
+              "name": "skippedAt",
+              "value": "={{$now.toISO()}}"
+            }
+          ]
+        }
+      },
+      "id": "log-skipped",
+      "name": "Log Job Skipped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1050, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store job metrics for monitoring\nconst metrics = $input.first().json;\n\n// You can send these metrics to monitoring systems like:\n// - Prometheus\n// - Grafana\n// - CloudWatch\n// - Custom monitoring dashboard\n\nconsole.log('Job Metrics:', metrics);\n\nreturn [metrics];"
+      },
+      "id": "store-metrics",
+      "name": "Store Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 200]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log Job Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Job Start": {
+      "main": [
+        [
+          {
+            "node": "Check Conditions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Conditions": {
+      "main": [
+        [
+          {
+            "node": "Should Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Run?": {
+      "main": [
+        [
+          {
+            "node": "Execute Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Job Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Job": {
+      "main": [
+        [
+          {
+            "node": "Log Job Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Job Complete": {
+      "main": [
+        [
+          {
+            "node": "Store Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "template",
+      "createdAt": "2024-02-15T00:00:00.000Z"
+    },
+    {
+      "name": "scheduled",
+      "createdAt": "2024-02-15T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-02-15T00:00:00.000Z",
+  "versionId": "1.0.0"
+}

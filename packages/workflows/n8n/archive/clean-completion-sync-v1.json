@@ -1,0 +1,454 @@
+{
+  "name": "Completion Sync v1.0",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "定时触发",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "manual-trigger",
+      "name": "手动触发",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        600
+      ]
+    },
+    {
+      "id": "query-completed-features",
+      "name": "查询已完成的 Feature Check",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        500
+      ],
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "54fe0d4cf4344e918bb0e33967661c42"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "KOSUxBByCoMPR3Au",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "id": "filter-features",
+      "name": "过滤 Feature Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// 过滤条件:\n// - Daily Highlight = true (Feature Check)\n// - AI Task = true\n// - Status = Completed\n\nconst allTasks = $input.all();\n\n// 创建任务 ID -> 任务对象映射\nconst taskMap = new Map();\nallTasks.forEach(item => {\n  const id = item.json.id?.replace(/-/g, '');\n  if (id) taskMap.set(id, item.json);\n});\n\n// 找到已完成的 Feature Check\nconst completedFeatures = allTasks.filter(item => {\n  const json = item.json;\n  \n  // Daily Highlight = true\n  if (!json.property_daily_highlight) return false;\n  \n  // AI Task = true\n  if (!json.property_ai_task) return false;\n  \n  // Status = Completed\n  if (json.property_status !== 'Completed') return false;\n  \n  return true;\n});\n\n// 对于每个已完成的 Feature，检查其依赖任务\nconst tasksToSync = [];\n\nfor (const feature of completedFeatures) {\n  const blockedBy = feature.json.property_blocked_by || [];\n  \n  for (const dep of blockedBy) {\n    const depId = (typeof dep === 'string' ? dep : dep.id)?.replace(/-/g, '');\n    const depTask = taskMap.get(depId);\n    \n    if (depTask && depTask.property_status !== 'Completed') {\n      // 依赖任务还未同步为 Completed\n      tasksToSync.push({\n        task_id: depTask.id,\n        task_name: depTask.name || depTask.property_name,\n        current_status: depTask.property_status,\n        feature_name: feature.json.name || feature.json.property_name,\n        feature_id: feature.json.id\n      });\n    }\n  }\n}\n\nif (tasksToSync.length === 0) {\n  return [{ json: { no_tasks: true, message: '没有需要同步的任务' } }];\n}\n\nreturn tasksToSync.map(t => ({ json: t }));"
+      }
+    },
+    {
+      "id": "check-tasks",
+      "name": "有任务需要同步?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-no-tasks",
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual"
+              },
+              "leftValue": "={{ $json.no_tasks }}",
+              "rightValue": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "no-sync",
+      "name": "无需同步",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        660
+      ]
+    },
+    {
+      "id": "loop-tasks",
+      "name": "逐个同步",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        500
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "update-status",
+      "name": "更新状态: Completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        500
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/pages/{{ $json.task_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"properties\": {\n    \"Status\": {\n      \"status\": {\n        \"name\": \"Completed\"\n      }\n    }\n  }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "log-sync",
+      "name": "记录同步",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const task = $('逐个同步').item.json;\n\nreturn {\n  synced: true,\n  task_id: task.task_id,\n  task_name: task.task_name,\n  from_status: task.current_status,\n  to_status: 'Completed',\n  feature_name: task.feature_name\n};"
+      }
+    },
+    {
+      "id": "collect-results",
+      "name": "收集结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// 这个节点在循环完成后执行\nconst allItems = $input.all();\nconst syncedTasks = allItems.filter(item => item.json.synced);\n\nif (syncedTasks.length === 0) {\n  return { json: { synced_count: 0, message: '没有同步任何任务' } };\n}\n\n// 按 feature 分组\nconst byFeature = {};\nfor (const item of syncedTasks) {\n  const featureName = item.json.feature_name || 'Unknown';\n  if (!byFeature[featureName]) {\n    byFeature[featureName] = [];\n  }\n  byFeature[featureName].push(item.json.task_name);\n}\n\nconst summaryParts = [];\nfor (const [feature, tasks] of Object.entries(byFeature)) {\n  summaryParts.push(`**${feature}**: ${tasks.join(', ')}`);\n}\n\nreturn {\n  synced_count: syncedTasks.length,\n  summary: summaryParts.join('\\n'),\n  details: syncedTasks.map(t => t.json)\n};"
+      }
+    },
+    {
+      "id": "check-synced",
+      "name": "有同步?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "check-count",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "leftValue": "={{ $json.synced_count }}",
+              "rightValue": 0
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "notify-sync",
+      "name": "通知: 状态同步",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"msg_type\": \"interactive\",\n  \"card\": {\n    \"header\": {\n      \"title\": {\n        \"tag\": \"plain_text\",\n        \"content\": \"🔄 Task 状态同步\"\n      },\n      \"template\": \"turquoise\"\n    },\n    \"elements\": [\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"已同步 {{ $json.synced_count }} 个任务为 Completed:\\n\\n{{ $json.summary }}\"\n        }\n      }\n    ]\n  }\n}",
+        "options": {}
+      }
+    },
+    {
+      "id": "done",
+      "name": "完成",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "定时触发": {
+      "main": [
+        [
+          {
+            "node": "查询已完成的 Feature Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "手动触发": {
+      "main": [
+        [
+          {
+            "node": "查询已完成的 Feature Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查询已完成的 Feature Check": {
+      "main": [
+        [
+          {
+            "node": "过滤 Feature Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "过滤 Feature Check": {
+      "main": [
+        [
+          {
+            "node": "有任务需要同步?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有任务需要同步?": {
+      "main": [
+        [
+          {
+            "node": "逐个同步",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "无需同步",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "逐个同步": {
+      "main": [
+        [
+          {
+            "node": "更新状态: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "收集结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新状态: Completed": {
+      "main": [
+        [
+          {
+            "node": "记录同步",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "记录同步": {
+      "main": [
+        [
+          {
+            "node": "逐个同步",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "收集结果": {
+      "main": [
+        [
+          {
+            "node": "有同步?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "有同步?": {
+      "main": [
+        [
+          {
+            "node": "通知: 状态同步",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "完成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "通知: 状态同步": {
+      "main": [
+        [
+          {
+            "node": "完成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:定时触发": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionCounter": 7,
+  "shared": [
+    {
+      "updatedAt": "2025-12-29T11:00:19.178Z",
+      "createdAt": "2025-12-29T11:00:19.178Z",
+      "role": "workflow:owner",
+      "workflowId": "wgmPp5zhh1dqyNqk",
+      "projectId": "XvpIUT75BWOBRhfk",
+      "project": {
+        "updatedAt": "2025-12-19T12:48:01.773Z",
+        "createdAt": "2025-12-19T12:44:28.241Z",
+        "id": "XvpIUT75BWOBRhfk",
+        "name": "Alex Xu  <zenithjoycloud@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "projectRelations": [
+          {
+            "updatedAt": "2025-12-19T12:44:28.241Z",
+            "createdAt": "2025-12-19T12:44:28.241Z",
+            "userId": "57fa6390-a40c-4605-97ed-6ca13f0b80a7",
+            "projectId": "XvpIUT75BWOBRhfk",
+            "user": {
+              "updatedAt": "2025-12-30T16:01:06.000Z",
+              "createdAt": "2025-12-19T12:44:26.915Z",
+              "id": "57fa6390-a40c-4605-97ed-6ca13f0b80a7",
+              "email": "zenithjoycloud@gmail.com",
+              "firstName": "Alex",
+              "lastName": "Xu ",
+              "personalizationAnswers": null,
+              "settings": {
+                "userActivated": true,
+                "userClaimedAiCredits": true,
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "Ar2BwcAElSsexIKC",
+                "userActivatedAt": 1766314472886
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2025-12-30",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

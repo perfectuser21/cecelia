@@ -1,0 +1,155 @@
+{
+  "name": "template-claude-dev-flow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-dev",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "claude-dev-flow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 提取参数\nconst body = $json.body || $json;\nconst project = body.project || 'auto-project';\nconst prd = body.prd || body.requirements || '';\nconst repo_path = body.repo_path || '/home/xx/dev/' + project;\nconst checkpoint = body.checkpoint || 'CP-001';\n\n// 生成 task_id\nconst d = new Date();\nconst taskId = `${project}-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}-${Math.random().toString(16).slice(2,6)}`;\n\n// 构建完整的 /dev prompt\nconst prompt = `/dev\n\nTASK_ID: ${taskId}\nCHECKPOINT: ${checkpoint}\nREPO: ${repo_path}\n\n=== PRD ===\n${prd}\n\n=== INSTRUCTION ===\n${checkpoint === 'CP-001' ? 'Execute p0 phase: PRD → DoD → Code → Test → Quality → PR' : 'Continue development from checkpoint'}\n`;\n\nreturn {\n  task_id: taskId,\n  project: project,\n  repo_path: repo_path,\n  checkpoint: checkpoint,\n  prompt: prompt.trim()\n};"
+      },
+      "id": "build-dev-prompt",
+      "name": "Build /dev Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成 prompt 文件路径\nconst promptPath = `/tmp/dev-prompt-${$json.task_id}.txt`;\n\nreturn {\n  ...$json,\n  prompt_path: promptPath\n};"
+      },
+      "id": "prepare-file",
+      "name": "Prepare File Path",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'echo \"{{ $json.prompt }}\" > {{ $json.prompt_path }} && echo \"Prompt saved to {{ $json.prompt_path }}\"'",
+        "options": {}
+      },
+      "id": "save-prompt",
+      "name": "Save Prompt File",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'cd {{ $('Build /dev Prompt').item.json.repo_path }} && cecelia-run {{ $('Build /dev Prompt').item.json.task_id }} {{ $('Build /dev Prompt').item.json.checkpoint }} {{ $('Prepare File Path').item.json.prompt_path }}'",
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "run-cecelia",
+      "name": "Run Cecelia (with lock)",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 解析执行结果\nconst stdout = $json.stdout || '{}';\nlet result;\n\ntry {\n  result = JSON.parse(stdout);\n} catch (e) {\n  result = { raw_output: stdout, parse_error: e.message };\n}\n\nreturn {\n  success: true,\n  task_id: $('Build /dev Prompt').item.json.task_id,\n  checkpoint: $('Build /dev Prompt').item.json.checkpoint,\n  project: $('Build /dev Prompt').item.json.project,\n  result: result,\n  executed_at: new Date().toISOString()\n};"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "command": "=/bin/bash -c 'rm -f {{ $('Prepare File Path').item.json.prompt_path }}'",
+        "options": {}
+      },
+      "id": "cleanup",
+      "name": "Cleanup",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1560, 300],
+      "credentials": {
+        "sshPassword": {
+          "id": "1",
+          "name": "localhost"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{"node": "Build /dev Prompt", "type": "main", "index": 0}]]
+    },
+    "Build /dev Prompt": {
+      "main": [[{"node": "Prepare File Path", "type": "main", "index": 0}]]
+    },
+    "Prepare File Path": {
+      "main": [[{"node": "Save Prompt File", "type": "main", "index": 0}]]
+    },
+    "Save Prompt File": {
+      "main": [[{"node": "Run Cecelia (with lock)", "type": "main", "index": 0}]]
+    },
+    "Run Cecelia (with lock)": {
+      "main": [[{"node": "Parse Result", "type": "main", "index": 0}]]
+    },
+    "Parse Result": {
+      "main": [[{"node": "Cleanup", "type": "main", "index": 0}]]
+    },
+    "Cleanup": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "description": "完整 /dev 开发流程模板 - PRD → Branch → Code → PR → CI",
+    "usage": "POST /webhook/claude-dev with: {\"project\": \"my-project\", \"prd\": \"功能需求描述\", \"repo_path\": \"/path/to/repo\"}",
+    "features": [
+      "自动并发控制（cecelia-run）",
+      "完整开发流程",
+      "Webhook 回调",
+      "结构化日志"
+    ],
+    "author": "Cecelia Workflows"
+  }
+}

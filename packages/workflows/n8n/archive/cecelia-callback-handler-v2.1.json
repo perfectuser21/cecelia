@@ -1,0 +1,226 @@
+{
+  "name": "cecelia-callback-handler-v2_1",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "cecelia-callback",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {
+          "responseData": "={{({ acknowledged: true })}}"
+        }
+      },
+      "id": "WebhookCallback",
+      "name": "Webhook (Callback) - ACK immediately",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const headers = $json.headers || {};\nconst token = headers['x-cecelia-token'] || headers['X-Cecelia-Token'] || headers['x-cecelia-Token'] || '';\nconst expected = $env.CECELIA_WEBHOOK_TOKEN || '';\n\nconst callback = $json.body || $json;\nconst taskId = callback.task_id || 'unknown';\nconst cpId = callback.checkpoint_id || 'unknown';\n\n// If token missing/mismatch, do NOT throw. Just mark and exit later.\nlet authorized = true;\nlet reason = '';\n\nif (!expected) {\n  authorized = false;\n  reason = 'missing_env_token';\n} else if (!token) {\n  authorized = false;\n  reason = 'missing_header_token';\n} else if (token !== expected) {\n  authorized = false;\n  reason = 'token_mismatch';\n}\n\nif (!authorized) {\n  console.log(`[cecelia-security] drop unauthorized callback reason=${reason} task=${taskId} cp=${cpId} ip=${headers['x-forwarded-for'] || headers['X-Forwarded-For'] || ''}`);\n}\n\nreturn { ...$json, authorized, auth_reason: reason };"
+      },
+      "id": "ValidateTokenSoft",
+      "name": "Validate Token (soft, no-throw)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 240]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "operation": "isTrue", "value1": "={{$json.authorized}}" }
+          ]
+        }
+      },
+      "id": "IfAuthorized",
+      "name": "IF Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 240]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            { "name": "cfg.datastore_name", "value": "cecelia_tasks" },
+            { "name": "cfg.ssh_work_dir", "value": "/home/xx/dev/zenithjoy-core" },
+            { "name": "cfg.remote_prompt_dir", "value": "/tmp/cecelia-prompts" },
+            { "name": "cfg.cecelia_bin", "value": "/home/xx/bin/cecelia" }
+          ],
+          "number": [
+            { "name": "cfg.max_concurrent", "value": 3 }
+          ]
+        },
+        "options": {}
+      },
+      "id": "Config",
+      "name": "Config (Edit me)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [940, 160]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataStore": "={{$json.cfg.datastore_name}}",
+        "key": "={{$json.body.task_id || $json.task_id}}"
+      },
+      "id": "DSGet",
+      "name": "Data Store Get (task context)",
+      "type": "n8n-nodes-base.dataStore",
+      "typeVersion": 1,
+      "position": [1180, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $json.cfg;\nconst callback = $json.body || $json;\nconst task_id = callback.task_id;\nconst cpId = callback.checkpoint_id;\n\nconst raw = $json.value;\nif (!raw) {\n  console.log(`[cecelia-callback] missing_context task=${task_id} cp=${cpId}`);\n  return { cfg, task_id, checkpoint_id: cpId, callback, next_action: 'skip' };\n}\nconst taskContext = JSON.parse(raw);\n\ntaskContext.results = taskContext.results || {};\n\n// Idempotency\nif (taskContext.results[cpId]?.done === true) {\n  console.log(`[cecelia-callback] task=${task_id} cp=${cpId} action=skip (already done)`);\n  return { cfg, task_id, checkpoint_id: cpId, taskContext, callback, next_action: 'skip' };\n}\n\ntaskContext.results[cpId] = {\n  status: callback.status,\n  result: callback.result,\n  duration_ms: callback.duration_ms,\n  completed_at: new Date().toISOString(),\n  done: true\n};\n\nconst idx = taskContext.checkpoints.indexOf(cpId);\nif (idx >= 0) taskContext.current_index = Math.max(taskContext.current_index, idx + 1);\n\nlet next_action = 'completed';\nlet next_checkpoint_id = null;\n\nif (callback.status !== 'success') {\n  next_action = 'error';\n} else if (taskContext.current_index < taskContext.checkpoints.length) {\n  next_action = 'next_checkpoint';\n  next_checkpoint_id = taskContext.checkpoints[taskContext.current_index];\n}\n\nconsole.log(`[cecelia-callback] task=${task_id} cp=${cpId} action=${next_action}`);\nreturn { cfg, task_id, checkpoint_id: cpId, taskContext, callback, next_action, next_checkpoint_id };"
+      },
+      "id": "UpdateAndDecide",
+      "name": "Update Results + Decide Next",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 160]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "dataStore": "={{$json.cfg.datastore_name}}",
+        "key": "={{$json.task_id}}",
+        "value": "={{JSON.stringify($json.taskContext)}}"
+      },
+      "id": "DSSet",
+      "name": "Data Store Set (updated context)",
+      "type": "n8n-nodes-base.dataStore",
+      "typeVersion": 1,
+      "position": [1660, 160]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            { "operation": "equal", "value1": "={{$json.next_action}}", "value2": "skip" },
+            { "operation": "equal", "value1": "={{$json.next_action}}", "value2": "error" },
+            { "operation": "equal", "value1": "={{$json.next_action}}", "value2": "completed" },
+            { "operation": "equal", "value1": "={{$json.next_action}}", "value2": "next_checkpoint" }
+          ]
+        }
+      },
+      "id": "Switch",
+      "name": "Switch (next_action)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [1900, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { ok: true, action: 'skip' };"
+      },
+      "id": "Skip",
+      "name": "Idempotent Skip (No-Op)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { ok: false, action: 'error', task_id: $json.task_id, checkpoint_id: $json.checkpoint_id };"
+      },
+      "id": "Error",
+      "name": "Error Handler (No-Op)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "return { ok: true, action: 'completed', task_id: $json.task_id };"
+      },
+      "id": "Completed",
+      "name": "Completed (No-Op)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $json.cfg;\nconst taskContext = $json.taskContext;\nconst task_id = $json.task_id;\nconst cp = $json.next_checkpoint_id;\n\nconst prompt = [\n  `TASK_ID: ${task_id}`,\n  `CHECKPOINT: ${cp}`,\n  `\\n=== PRD ===\\n${taskContext.prd}`,\n  `\\n=== HISTORY_RESULTS(JSON) ===\\n${JSON.stringify(taskContext.results, null, 2)}`,\n  `\\n=== INSTRUCTION ===\\nPlease execute ${cp}. Output machine-readable JSON.`\n].join('\\n');\n\nreturn { ...$json, checkpoint_id: cp, prompt };"
+      },
+      "id": "BuildNextPrompt",
+      "name": "Build Next Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2120, 280]
+    },
+    {
+      "parameters": {
+        "command": "={{(\n`set -euo pipefail\\n`+\n`cd ${$json.cfg.ssh_work_dir}\\n`+\n`mkdir -p ${$json.cfg.remote_prompt_dir}\\n`+\n`PROMPT_FILE=\\\"${$json.cfg.remote_prompt_dir}/${$json.task_id}-${$json.checkpoint_id}.prompt\\\"\\n`+\n`cat > \\\"$PROMPT_FILE\\\" <<'CECELIA_PROMPT_EOF'\\n`+\n`${$json.prompt}\\n`+\n`CECELIA_PROMPT_EOF\\n`+\n`export MAX_CONCURRENT=${$json.cfg.max_concurrent}\\n`+\n`export CECELIA_WEBHOOK_TOKEN=\\\"${$env.CECELIA_WEBHOOK_TOKEN || ''}\\\"\\n`+\n`${$json.cfg.cecelia_bin} \\\"${$json.task_id}\\\" \\\"${$json.checkpoint_id}\\\" \\\"$PROMPT_FILE\\\"\\n`\n)}}"
+      },
+      "id": "SSHRunNext",
+      "name": "SSH (run next checkpoint) - heredoc",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2360, 280],
+      "credentials": {
+        "ssh": {
+          "id": "YOUR_SSH_CREDENTIAL_ID",
+          "name": "YOUR_SSH_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log(`[cecelia-security] unauthorized callback ignored reason=${$json.auth_reason}`);\nreturn { ok: true, action: 'ignored_unauthorized' };"
+      },
+      "id": "UnauthorizedNoop",
+      "name": "Unauthorized (No-Op)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 320]
+    }
+  ],
+  "connections": {
+    "Webhook (Callback) - ACK immediately": {
+      "main": [[{ "node": "Validate Token (soft, no-throw)", "type": "main", "index": 0 }]]
+    },
+    "Validate Token (soft, no-throw)": {
+      "main": [[{ "node": "IF Authorized?", "type": "main", "index": 0 }]]
+    },
+    "IF Authorized?": {
+      "main": [
+        [{ "node": "Config (Edit me)", "type": "main", "index": 0 }],
+        [{ "node": "Unauthorized (No-Op)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Config (Edit me)": {
+      "main": [[{ "node": "Data Store Get (task context)", "type": "main", "index": 0 }]]
+    },
+    "Data Store Get (task context)": {
+      "main": [[{ "node": "Update Results + Decide Next", "type": "main", "index": 0 }]]
+    },
+    "Update Results + Decide Next": {
+      "main": [[{ "node": "Data Store Set (updated context)", "type": "main", "index": 0 }]]
+    },
+    "Data Store Set (updated context)": {
+      "main": [[{ "node": "Switch (next_action)", "type": "main", "index": 0 }]]
+    },
+    "Switch (next_action)": {
+      "main": [
+        [{ "node": "Idempotent Skip (No-Op)", "type": "main", "index": 0 }],
+        [{ "node": "Error Handler (No-Op)", "type": "main", "index": 0 }],
+        [{ "node": "Completed (No-Op)", "type": "main", "index": 0 }],
+        [{ "node": "Build Next Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Next Prompt": {
+      "main": [[{ "node": "SSH (run next checkpoint) - heredoc", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "timezone": "America/Los_Angeles",
+    "executionOrder": "v1"
+  },
+  "active": false
+}

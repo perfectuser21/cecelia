@@ -1,0 +1,111 @@
+{
+  "capabilities": [
+    {
+      "id": "data-collection",
+      "name": "数据采集",
+      "icon": "📊",
+      "description": "自动采集各平台数据",
+      "workflows": [
+        {
+          "n8n_name": "[Flow] 数据采集调度器",
+          "role": "orchestrator",
+          "description": "统一调度所有数据采集任务"
+        },
+        {
+          "n8n_name": "[Unit] 今日头条数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 小红书数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 微博数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 快手数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 知乎数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 视频号数据爬取",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 公众号数据爬取",
+          "role": "worker"
+        }
+      ]
+    },
+    {
+      "id": "content-publish",
+      "name": "内容发布",
+      "icon": "📤",
+      "description": "自动发布内容到各平台",
+      "workflows": [
+        {
+          "n8n_name": "[Flow] 内容发布",
+          "role": "orchestrator",
+          "description": "统一发布流程"
+        },
+        {
+          "n8n_name": "[Flow] Notion到头条发布",
+          "role": "orchestrator",
+          "description": "从 Notion 发布到头条"
+        }
+      ]
+    },
+    {
+      "id": "cecelia-automation",
+      "name": "Cecelia 自动化",
+      "icon": "🤖",
+      "description": "Claude Code 自动执行",
+      "workflows": [
+        {
+          "n8n_name": "[Flow] Cecelia 任务启动器",
+          "role": "orchestrator"
+        },
+        {
+          "n8n_name": "[Unit] Cecelia 回调处理",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] Claude Code 异步执行",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] Claude HTTP 触发器",
+          "role": "worker"
+        }
+      ]
+    },
+    {
+      "id": "vps-maintenance",
+      "name": "服务器维护",
+      "icon": "🖥️",
+      "description": "自动化服务器运维",
+      "workflows": [
+        {
+          "n8n_name": "[Flow] 夜间任务调度器",
+          "role": "orchestrator"
+        },
+        {
+          "n8n_name": "[Flow] DevGate 每夜推送",
+          "role": "orchestrator"
+        },
+        {
+          "n8n_name": "[Unit] 健康检查",
+          "role": "worker"
+        },
+        {
+          "n8n_name": "[Unit] 夜间备份",
+          "role": "worker"
+        }
+      ]
+    }
+  ]
+}

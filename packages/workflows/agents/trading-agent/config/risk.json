@@ -1,0 +1,29 @@
+{
+  "risk_limits": {
+    "max_daily_loss": 100,
+    "max_daily_loss_percent": 2,
+    "max_drawdown": 15,
+    "max_consecutive_losses": 3
+  },
+  "circuit_breakers": {
+    "daily_loss_exceeded": {
+      "action": "halt_trading",
+      "notification": "cecelia_alert"
+    },
+    "api_failures": {
+      "threshold": 3,
+      "action": "switch_to_manual",
+      "notification": "cecelia_alert"
+    },
+    "network_outage": {
+      "threshold_minutes": 5,
+      "action": "safe_mode",
+      "notification": "cecelia_alert"
+    }
+  },
+  "position_limits": {
+    "single_stock_max": 0.2,
+    "sector_max": 0.4,
+    "cash_reserve_min": 0.2
+  }
+}
