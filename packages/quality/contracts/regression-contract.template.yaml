@@ -1,0 +1,1571 @@
+# ============================================================================
+# Regression Contract - ZenithJoy Engine
+# ============================================================================
+# Schema: regression-contract-v1.yaml (internal)
+#
+# 全量回归的唯一合法定义来源
+#
+# Trigger 规则：
+#   - PR Gate:      跑 trigger 包含 PR 的条目
+#   - Release Gate: 跑 trigger 包含 Release 的条目
+#   - Nightly:      跑全部条目（忽略 trigger 过滤）
+#
+# Method 规则：
+#   - auto:   必须有 test 字段指向自动化测试
+#   - manual: 无 test 字段，需人工验证
+#
+# ============================================================================
+
+# NOTE: version 需要与 package.json 保持同步
+# 更新 package.json 时同步更新此处
+version: "10.0.0"
+updated: "2026-01-24"
+
+# ============================================================================
+# Hooks 回归契约
+# ============================================================================
+hooks:
+  # --------------------------------------------------------------------------
+  # H1: branch-protect
+  # --------------------------------------------------------------------------
+  - id: H1-001
+    feature: H1
+    name: "分支保护拦截 main/develop 写入"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [branch, write-protect, security]
+    owner: infra
+    steps:
+      given: "当前在 main 或 develop 分支"
+      when: "尝试写入代码文件（Write/Edit 工具）"
+      then: "Hook 阻止并提示切换到 cp-* 或 feature/* 分支"
+    evidence:
+      type: log
+      contains: "请先创建工作分支"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-002
+    feature: H1
+    name: "cp-* 分支允许写入"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [branch, write-protect]
+    owner: infra
+    steps:
+      given: "当前在 cp-* 分支"
+      when: "尝试写入代码文件"
+      then: "Hook 放行（exit 0）"
+    evidence:
+      type: exit_code
+      equals: 0
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-003
+    feature: H1
+    name: "feature/* 分支允许写入"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [branch, write-protect]
+    owner: infra
+    steps:
+      given: "当前在 feature/* 分支"
+      when: "尝试写入代码文件"
+      then: "Hook 放行（exit 0）"
+    evidence:
+      type: exit_code
+      equals: 0
+    test: "tests/hooks/branch-protect.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H1-010~H1-012: v8.24.0 安全修复 (branch-protect.sh)
+  # --------------------------------------------------------------------------
+  - id: H1-010
+    feature: H1
+    name: "JSON 预验证防止注入 (branch-protect)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, json, injection, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 接收包含特殊字符的输入"
+      when: "解析 JSON 输入前"
+      then: "使用 jq 预验证 JSON 格式，无效 JSON 直接报错退出"
+    evidence:
+      type: code
+      file: "hooks/branch-protect.sh"
+      contains: "jq -e . >/dev/null 2>&1"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  - id: H1-011
+    feature: H1
+    name: "路径遍历检查 (branch-protect)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, path-traversal, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 接收文件路径参数"
+      when: "处理路径前"
+      then: "拒绝包含 .. 的路径，防止目录遍历攻击"
+    evidence:
+      type: code
+      file: "hooks/branch-protect.sh"
+      contains: "reject_path_traversal"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2: pr-gate-v2
+  # --------------------------------------------------------------------------
+  - id: H2-001
+    feature: H2
+    name: "PR Gate 拦截 gh pr create"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality]
+    owner: infra
+    steps:
+      given: "在任意分支"
+      when: "执行包含 'gh pr create' 的 Bash 命令"
+      then: "Hook 运行 L1 质检"
+    evidence:
+      type: log
+      contains: "PR GATE"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-002
+    feature: H2
+    name: "L1 失败阻止 PR 创建"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality]
+    owner: infra
+    steps:
+      given: "typecheck 或 test 或 build 失败"
+      when: "执行 gh pr create"
+      then: "Hook 阻止并返回 exit 2"
+    evidence:
+      type: exit_code
+      equals: 2
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-003
+    feature: H2
+    name: "L1 通过允许 PR 创建"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, quality]
+    owner: infra
+    steps:
+      given: "npm run qa 全绿"
+      when: "执行 gh pr create"
+      then: "Hook 放行（exit 0）"
+    evidence:
+      type: log
+      contains: "✅ PR Gate 通过"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-004
+    feature: H2
+    name: "双模式：--base main 触发 Release 模式"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [pr, gate, release]
+    owner: infra
+    steps:
+      given: "执行 gh pr create --base main"
+      when: "Hook 解析命令"
+      then: "自动切换到 Release 模式，检查 L2B + L3"
+    evidence:
+      type: log
+      contains: "Release 模式"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-005
+    feature: H2
+    name: "双模式：默认 PR 模式只检查 L1"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate]
+    owner: infra
+    steps:
+      given: "执行 gh pr create（无 --base main）"
+      when: "Hook 解析命令"
+      then: "使用 PR 模式，只检查 L1"
+    evidence:
+      type: log
+      contains: "PR 模式 (L1 only)"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-006
+    feature: H2
+    name: "DoD 文件检查（PR 模式）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, dod]
+    owner: infra
+    steps:
+      given: "PR 模式下"
+      when: ".dod.md 不存在或未更新"
+      then: "Hook 报错并阻止 PR"
+    evidence:
+      type: log
+      contains: "DoD"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2-007: Phase 1 - DoD 映射检查
+  # --------------------------------------------------------------------------
+  - id: H2-007
+    feature: H2
+    name: "DoD ↔ Test 映射检查"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, dod, phase1]
+    owner: infra
+    steps:
+      given: "PR 模式下"
+      when: "执行 gh pr create"
+      then: "Hook 调用 check-dod-mapping.cjs 验证每条 DoD 有 Test 字段"
+    evidence:
+      type: log
+      contains: "DoD ↔ Test 映射检查"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  - id: H2-008
+    feature: H2
+    name: "P0/P1 强制 RCI 更新"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, rci, phase1]
+    owner: infra
+    steps:
+      given: "PR 优先级为 P0 或 P1"
+      when: "执行 gh pr create"
+      then: "Hook 调用 require-rci-update-if-p0p1.sh 验证 RCI 已更新"
+    evidence:
+      type: log
+      contains: "P0/P1 → RCI 更新检查"
+    test: "tests/hooks/pr-gate-phase1.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2-009: Phase 2 - PRD/DoD 快照
+  # --------------------------------------------------------------------------
+  - id: H2-009
+    feature: H2
+    name: "PRD/DoD 快照功能"
+    scope: hook
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [pr, gate, snapshot, phase2]
+    owner: infra
+    steps:
+      given: "PR 创建成功"
+      when: "/dev 流程调用 snapshot-prd-dod.sh"
+      then: "PRD/DoD 复制到 .history/ 目录，文件名包含 PR 号和时间戳"
+    evidence:
+      type: file
+      path: ".history/PR-*.prd.md"
+      exists: true
+    test: "tests/hooks/pr-gate-phase2.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2-010: Phase 6 - Skill 产物检查
+  # --------------------------------------------------------------------------
+  - id: H2-010
+    feature: H2
+    name: "Skill 产物检查（QA-DECISION + AUDIT-REPORT）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [pr, gate, skill, phase6]
+    owner: infra
+    steps:
+      given: "PR 模式下"
+      when: "执行 gh pr create"
+      then: "Hook 检查 docs/QA-DECISION.md 和 docs/AUDIT-REPORT.md 存在，且审计通过"
+    evidence:
+      type: log
+      contains: "Phase 6: Skill 产物检查"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H2-011~H2-013: v8.24.0 安全修复 (pr-gate-v2.sh)
+  # --------------------------------------------------------------------------
+  - id: H2-011
+    feature: H2
+    name: "JSON 预验证防止注入 (pr-gate)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, json, injection, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 接收包含特殊字符的输入"
+      when: "解析 JSON 输入前"
+      then: "使用 jq 预验证 JSON 格式，无效 JSON 直接报错退出"
+    evidence:
+      type: code
+      file: "hooks/pr-gate-v2.sh"
+      contains: "jq -e . >/dev/null 2>&1"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-012
+    feature: H2
+    name: "sed 注入防护 (pr-gate)"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, sed, injection, v8.24.0]
+    owner: infra
+    steps:
+      given: "Hook 使用 sed 处理用户输入"
+      when: "构造 sed 命令"
+      then: "使用 # 作为分隔符，避免 / 分隔符被路径中的 / 破坏"
+    evidence:
+      type: code
+      file: "hooks/pr-gate-v2.sh"
+      contains: "sed -n 's#"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  - id: H2-013
+    feature: H2
+    name: "CRITICAL/HIGH → P0/P1 优先级映射"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, priority, mapping, v8.24.0]
+    owner: infra
+    steps:
+      given: "PR 包含 CRITICAL/HIGH 关键字"
+      when: "detect-priority.cjs 检测优先级"
+      then: "CRITICAL 映射为 P0，HIGH 映射为 P1，security 前缀映射为 P0"
+    evidence:
+      type: code
+      file: "scripts/devgate/detect-priority.cjs"
+      contains: "CRITICAL|HIGH|security"
+    test: "tests/hooks/detect-priority.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H7: Stop Hook Quality Gate (v2.0.0 核心)
+  # --------------------------------------------------------------------------
+  - id: H7-001
+    feature: H7
+    name: "p0 阶段质检门禁"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, quality-gate, p0, v2.0.0]
+    owner: infra
+    steps:
+      given: "p0 阶段（无 PR）"
+      when: "会话尝试结束（StopHook 触发）"
+      then: "检查 L2A (AUDIT-REPORT.md PASS) + L1 (.quality-gate-passed) + PR 创建，全部通过则 exit 0，否则 exit 2"
+    evidence:
+      type: code
+      file: "hooks/stop.sh"
+      contains: "PHASE: p0"
+    test: "tests/hooks/stop-hook.test.ts"
+
+  - id: H7-002
+    feature: H7
+    name: "p1 阶段 CI 状态检查"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, ci-check, p1, v2.0.0]
+    owner: infra
+    steps:
+      given: "p1 阶段（PR + CI fail）"
+      when: "会话尝试结束（StopHook 触发）"
+      then: "检查 CI 状态：FAILURE → exit 2 | PENDING → exit 0 | SUCCESS → exit 0"
+    evidence:
+      type: code
+      file: "hooks/stop.sh"
+      contains: "PHASE: p1"
+    test: "tests/hooks/stop-hook.test.ts"
+
+  - id: H7-003
+    feature: H7
+    name: "阶段检测集成"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, phase-detection, v2.0.0]
+    owner: infra
+    steps:
+      given: "任意阶段"
+      when: "StopHook 触发"
+      then: "调用 scripts/detect-phase.sh 检测当前阶段（p0/p1/p2/pending/unknown），根据阶段执行对应检查"
+    evidence:
+      type: command
+      run: "bash scripts/detect-phase.sh"
+      contains: "PHASE:"
+    test: "tests/hooks/stop-hook.test.ts"
+
+  - id: H7-004
+    feature: H7
+    name: "stop.sh v10.0.0 两阶段语义对齐"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [stop-hook, v10.0.0, contract-rebase]
+    owner: infra
+    steps:
+      given: "v10.0.0 Contract Rebase"
+      when: "hooks/stop.sh 执行"
+      then: "使用 v2.0.0 两阶段语义（p0/p1/p2），不再使用旧的 Loop/Ralph 术语"
+    evidence:
+      type: manual
+      desc: "代码审查确认无旧术语残留"
+
+  # --------------------------------------------------------------------------
+  # H8: Session End Hook
+  # --------------------------------------------------------------------------
+  - id: H8-001
+    feature: H8
+    name: "session-end.sh 会话结束状态追踪"
+    scope: hook
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [session, tracking, v10.0.0]
+    owner: infra
+    steps:
+      given: "Claude Code 会话结束时"
+      when: "hooks/session-end.sh 触发"
+      then: "记录会话结束状态，清理临时文件"
+    evidence:
+      type: manual
+      desc: "检查会话结束后的清理效果"
+
+  # --------------------------------------------------------------------------
+  # H3: Phase 3 - Hook Core 多仓库治理
+  # --------------------------------------------------------------------------
+  - id: H3-001
+    feature: H3
+    name: "hook-core 安装功能"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [hook-core, install, phase3]
+    owner: infra
+    steps:
+      given: "目标项目是 git 仓库"
+      when: "运行 bash scripts/install-hooks.sh <target_dir>"
+      then: "hook-core 安装到目标项目，包含 hooks/, scripts/devgate/, .claude/settings.json"
+    evidence:
+      type: command
+      run: "bash scripts/install-hooks.sh --version"
+      contains: "hook-core version:"
+    test: "tests/hooks/install-hooks.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H4: Phase 4 - DevGate Metrics 指标面板
+  # --------------------------------------------------------------------------
+  - id: H4-001
+    feature: H4
+    name: "DevGate Metrics 指标计算"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [metrics, devgate, phase4]
+    owner: infra
+    steps:
+      given: ".history/ 目录包含带 meta 的快照文件"
+      when: "运行 bash scripts/devgate/metrics.sh"
+      then: "输出 P0/P1 PR 数、RCI 覆盖率、新增 RCI 数、DoD 条目数"
+    evidence:
+      type: command
+      run: "bash scripts/devgate/metrics.sh --format json"
+      contains: "rci_coverage"
+    test: "tests/hooks/metrics.test.ts"
+
+  - id: H4-002
+    feature: H4
+    name: "快照 Meta 格式增强"
+    scope: hook
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [snapshot, meta, phase4]
+    owner: infra
+    steps:
+      given: "存在 .prd.md 和 .dod.md"
+      when: "运行 snapshot-prd-dod.sh 创建快照"
+      then: "快照顶部包含完整 meta: pr, base, priority, head, merged, created"
+    evidence:
+      type: file
+      path: ".history/PR-*.dod.md"
+      contains: "<!-- pr:"
+    test: "tests/hooks/metrics.test.ts"
+
+  # --------------------------------------------------------------------------
+  # H4-003: v8.24.0 安全修复 (run-regression.sh)
+  # --------------------------------------------------------------------------
+  - id: H4-003
+    feature: H4
+    name: "RCI ID 格式白名单验证"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, validation, whitelist, v8.24.0]
+    owner: infra
+    steps:
+      given: "run-regression.sh 接收 RCI ID 参数"
+      when: "处理 ID 前"
+      then: "验证 ID 符合 [A-Z][0-9]-[0-9]{3} 格式，拒绝非法字符防止命令注入"
+    evidence:
+      type: code
+      file: "scripts/run-regression.sh"
+      contains: "^[A-Z][0-9]-[0-9]{3}$"
+    test: "tests/hooks/run-regression.test.ts"
+
+# ============================================================================
+# Workflow 回归契约
+# ============================================================================
+# TODO: W1 系列当前为 manual 测试，需要添加自动化测试
+# 自动化方向：使用 expect 脚本或 playwright 模拟交互式会话
+workflow:
+  # --------------------------------------------------------------------------
+  # W1: /dev 11 步流程
+  # --------------------------------------------------------------------------
+  - id: W1-001
+    feature: W1
+    name: "/dev 流程可启动"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, entry]
+    owner: workflow
+    steps:
+      given: "用户在项目根目录"
+      when: "运行 /dev 或说开发需求"
+      then: "Skill 加载，显示 PRD 确认步骤"
+    evidence:
+      type: screenshot
+      description: "Skill 加载截图"
+
+  - id: W1-002
+    feature: W1
+    name: "分支自动创建"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, branch]
+    owner: workflow
+    steps:
+      given: "PRD 确认后进入 Step 3"
+      when: "Claude 执行分支创建"
+      then: "创建 cp-MMDDHHNN-task 格式分支"
+    evidence:
+      type: command
+      run: "git branch --show-current"
+      contains: "cp-"
+
+  - id: W1-003
+    feature: W1
+    name: "DoD 自动生成"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, dod]
+    owner: workflow
+    steps:
+      given: "分支创建后进入 Step 4"
+      when: "Claude 推演 DoD"
+      then: "生成 .dod.md 文件，包含验收标准"
+    evidence:
+      type: file
+      path: ".dod.md"
+      exists: true
+
+  - id: W1-004
+    feature: W1
+    name: "p0 阶段完整流程"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, p0, v2.0.0, two-phase]
+    owner: workflow
+    steps:
+      given: "进入 p0 阶段（本地开发）"
+      when: "执行 PRD → DoD → Code → Audit (PASS) → Test (L1) → PR"
+      then: "创建 PR 后结束，不等待 CI（Stop Hook 检查 phase=p0，直接 exit 0）"
+    evidence:
+      type: log
+      description: "PR 创建后 Stop Hook 输出 'p0 阶段: PR 已创建 → exit 0'"
+
+  - id: W1-005
+    feature: W1
+    name: "p1 阶段事件驱动修复"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, p1, v2.0.0, two-phase, event-driven]
+    owner: workflow
+    steps:
+      given: "PR 已创建，CI 检测到失败（phase=p1）"
+      when: "CI fail 事件触发（n8n 轮询 Notion / GitHub webhook / cron）"
+      then: "PHASE_OVERRIDE=p1 启动 → 诊断 → 修复 → push → 退出（不等待 CI，等下次唤醒）"
+    evidence:
+      type: log
+      contains: "p1 阶段.*CI.*fail.*修复.*push.*exit 0"
+
+  - id: W1-006
+    feature: W1
+    name: "p2 阶段自动 merge"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, p2, v2.0.0, two-phase, auto-merge]
+    owner: workflow
+    steps:
+      given: "PR CI 全部通过（phase=p2）"
+      when: "CI pass 事件触发（GitHub Actions auto-merge job）"
+      then: "自动合并 PR → Learning（总结经验）→ Cleanup（清理分支）→ 完成"
+    evidence:
+      type: log
+      contains: "p2 阶段.*CI pass.*merge.*learning.*cleanup"
+
+  # --------------------------------------------------------------------------
+  # W3: 循环回退
+  # --------------------------------------------------------------------------
+  - id: W3-001
+    feature: W3
+    name: "质检失败触发回退"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, loop, quality]
+    owner: workflow
+    steps:
+      given: "Step 7 质检（npm run qa）失败"
+      when: "Claude 检测到失败"
+      then: "自动返回 Step 5 继续修复，而非中止流程"
+    evidence:
+      type: log
+      description: "对话记录显示循环回退"
+
+  - id: W3-002
+    feature: W3
+    name: "CI 失败触发回退"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, loop, ci]
+    owner: workflow
+    steps:
+      given: "Step 9 CI 红"
+      when: "wait-for-merge.sh 检测到 CI 失败"
+      then: "自动返回 Step 5 重新循环，而非中止"
+    evidence:
+      type: log
+      contains: "CI 失败"
+
+  # --------------------------------------------------------------------------
+  # W5: 模式自动检测
+  # --------------------------------------------------------------------------
+  - id: W5-001
+    feature: W5
+    name: "new 模式：在 develop/main 检测为新任务"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前在 develop 或 main 分支"
+      when: "运行 /dev"
+      then: "检测为 new 模式，开始完整流程"
+    evidence:
+      type: log
+      contains: "检测到模式: new"
+
+  - id: W5-002
+    feature: W5
+    name: "continue 模式：cp-* 无 PR 检测为继续开发"
+    scope: workflow
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前在 cp-* 分支且没有打开的 PR"
+      when: "运行 /dev"
+      then: "检测为 continue 模式，直接进入 Loop 1"
+    evidence:
+      type: log
+      contains: "检测到模式: continue"
+
+  - id: W5-003
+    feature: W5
+    name: "fix 模式：有 PR + CI 红检测为修复"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前分支有打开的 PR 且 CI 失败"
+      when: "运行 /dev"
+      then: "检测为 fix 模式，直接进入 Loop 2"
+    evidence:
+      type: log
+      contains: "检测到模式: fix"
+
+  - id: W5-004
+    feature: W5
+    name: "merge 模式：有 PR + CI 绿检测为合并"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, mode, detect]
+    owner: workflow
+    steps:
+      given: "当前分支有打开的 PR 且 CI 通过"
+      when: "运行 /dev"
+      then: "检测为 merge 模式，进入清理和合并"
+    evidence:
+      type: log
+      contains: "检测到模式: merge"
+
+  # --------------------------------------------------------------------------
+  # W6: Worktree 并行开发
+  # --------------------------------------------------------------------------
+  - id: W6-001
+    feature: W6
+    name: "检测活跃的功能分支"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, worktree, parallel]
+    owner: workflow
+    steps:
+      given: "在 develop 分支，有未合并的功能分支"
+      when: "运行 /dev 进入新任务模式"
+      then: "Step 2.5 检测到活跃分支并显示选项"
+    evidence:
+      type: log
+      contains: "检测到并行开发"
+
+  - id: W6-002
+    feature: W6
+    name: "worktree-manage.sh create 创建 worktree"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [dev, worktree, script]
+    owner: workflow
+    steps:
+      given: "在主工作区"
+      when: "运行 worktree-manage.sh create <task-name>"
+      then: "创建新 worktree 目录和对应分支"
+    evidence:
+      type: exit_code
+      equals: 0
+    test: "manual:script-test"
+
+  - id: W6-003
+    feature: W6
+    name: "cleanup.sh 清理关联的 worktree"
+    scope: workflow
+    priority: P1
+    trigger: [Release]
+    method: manual
+    tags: [dev, worktree, cleanup]
+    owner: workflow
+    steps:
+      given: "功能分支有关联的 worktree"
+      when: "运行 cleanup.sh"
+      then: "Step 4.5 检测并移除关联的 worktree"
+    evidence:
+      type: log
+      contains: "已移除 worktree"
+
+# ============================================================================
+# CI/Release 回归契约
+# ============================================================================
+ci:
+  # --------------------------------------------------------------------------
+  # C1: version-check
+  # --------------------------------------------------------------------------
+  - id: C1-001
+    feature: C1
+    name: "PR 版本号必须递增"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, version]
+    owner: infra
+    steps:
+      given: "PR 包含代码改动"
+      when: "CI 运行 version-check job"
+      then: "package.json 版本号 > develop 分支版本"
+    evidence:
+      type: ci_job
+      name: "version-check"
+      status: success
+    # CI jobs are tested by running the workflow; no separate test file
+    test: "tests/ci/version-check.test.ts"
+
+  # --------------------------------------------------------------------------
+  # C1-002~C1-003: v8.24.0 安全修复 (ci.yml)
+  # --------------------------------------------------------------------------
+  - id: C1-002
+    feature: C1
+    name: "CI Job 权限最小化声明"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, ci, permissions, v8.24.0]
+    owner: infra
+    steps:
+      given: "CI workflow 文件"
+      when: "定义 job"
+      then: "每个 job 显式声明 permissions，遵循最小权限原则"
+    evidence:
+      type: code
+      file: ".github/workflows/ci.yml"
+      contains: "permissions:"
+    # Evidence check: grep for 'permissions:' in ci.yml
+    test: "tests/ci/permissions.test.ts"
+
+  - id: C1-003
+    feature: C1
+    name: "curl JSON 安全生成"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [security, ci, json, v8.24.0]
+    owner: infra
+    steps:
+      given: "CI 需要发送 JSON 数据"
+      when: "构造 curl 请求"
+      then: "使用 jq -n 生成 JSON，避免字符串拼接注入"
+    evidence:
+      type: code
+      file: ".github/workflows/ci.yml"
+      contains: "jq -n"
+    # Evidence check: grep for 'jq -n' in ci.yml
+    test: "tests/ci/json-safety.test.ts"
+
+  # --------------------------------------------------------------------------
+  # C2: test job
+  # --------------------------------------------------------------------------
+  - id: C2-001
+    feature: C2
+    name: "CI 运行 npm run qa"
+    scope: ci
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, test, l1]
+    owner: infra
+    steps:
+      given: "PR 提交"
+      when: "CI 运行 test job"
+      then: "typecheck + test + build 全绿"
+    evidence:
+      type: ci_job
+      name: "test"
+      status: success
+    # CI test job is validated by the job itself passing
+    test: "tests/ci/test-job.test.ts"
+
+  # --------------------------------------------------------------------------
+  # C3: shell syntax check
+  # --------------------------------------------------------------------------
+  - id: C3-001
+    feature: C3
+    name: "Shell 脚本语法检查"
+    scope: ci
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, shell, lint]
+    owner: infra
+    steps:
+      given: "仓库包含 .sh 文件"
+      when: "CI 运行 shell-check"
+      then: "所有 .sh 文件 bash -n 通过"
+    evidence:
+      type: ci_job
+      name: "shell-check"
+      status: success
+    # Shell check is part of test job, validated by CI
+    test: "tests/ci/shell-check.test.ts"
+
+  # --------------------------------------------------------------------------
+  # C6: Phase 1 DevGate
+  # --------------------------------------------------------------------------
+  - id: C6-001
+    feature: C6
+    name: "CI DevGate 检查步骤"
+    scope: ci
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [ci, devgate, phase1]
+    owner: infra
+    steps:
+      given: "PR 提交到 develop"
+      when: "CI 运行 DevGate checks step"
+      then: "DoD 映射检查 + P0/P1 RCI 检查通过"
+    evidence:
+      type: ci_job
+      name: "DevGate checks"
+      status: success
+    test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # C7: Nightly DevGate Metrics
+  # --------------------------------------------------------------------------
+  - id: C7-001
+    feature: C7
+    name: "Nightly DevGate Metrics 收集"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, metrics, phase4]
+    owner: infra
+    steps:
+      given: "Nightly workflow 运行"
+      when: "执行 DevGate Metrics step"
+      then: "生成 JSON 报告并上传为 artifact"
+    evidence:
+      type: ci_job
+      name: "DevGate Metrics"
+      status: success
+    test: ".github/workflows/nightly.yml"
+
+  - id: C7-002
+    feature: C7
+    name: "Nightly L2 阈值检查"
+    scope: ci
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, threshold, phase41]
+    owner: infra
+    steps:
+      given: "devgate-metrics.json 已生成"
+      when: "执行 DevGate Threshold Check (L2) step"
+      then: "P0/P1 RCI 覆盖率 100% 且 P0 manual tests = 0"
+    evidence:
+      type: ci_job
+      name: "DevGate Threshold Check (L2)"
+      status: success
+    test: ".github/workflows/nightly.yml"
+
+  - id: C7-003
+    feature: C7
+    name: "LEARNINGS 自动写回"
+    scope: ci
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [ci, nightly, learnings, phase5]
+    owner: infra
+    steps:
+      given: "devgate-metrics.json 已生成"
+      when: "执行 Append to LEARNINGS step"
+      then: "月度报告追加到 docs/LEARNINGS.md 并 commit/push"
+    evidence:
+      type: ci_job
+      name: "Append to LEARNINGS"
+      status: success
+    test: ".github/workflows/nightly.yml"
+
+  # --------------------------------------------------------------------------
+  # C5: release-check
+  # --------------------------------------------------------------------------
+  - id: C5-001
+    feature: C5
+    name: "Release 前 DoD 完成度检查"
+    scope: ci
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [ci, release, dod]
+    owner: infra
+    steps:
+      given: "PR 到 main 分支"
+      when: "运行 npm run release:check"
+      then: "DoD 所有必要项完成，Evidence 引用正确"
+    evidence:
+      type: command
+      run: "bash scripts/release-check.sh"
+      contains: "Release 检查通过"
+    test: "scripts/release-check.sh"
+
+# ============================================================================
+# Export 回归契约
+# ============================================================================
+export:
+  # --------------------------------------------------------------------------
+  # E1: QA Reporting
+  # --------------------------------------------------------------------------
+  - id: E1-001
+    feature: E1
+    name: "QA 审计脚本输出合法 JSON"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, json]
+    owner: infra
+    steps:
+      given: "项目包含 regression-contract.yaml 和 FEATURES.md"
+      when: "运行 bash scripts/qa-report.sh"
+      then: "输出合法的 JSON 格式"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh | jq . > /dev/null && echo valid"
+      contains: "valid"
+    test: "scripts/qa-report.sh"
+
+  - id: E1-002
+    feature: E1
+    name: "QA JSON 包含完整结构"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, json, schema]
+    owner: infra
+    steps:
+      given: "运行 qa-report.sh"
+      when: "解析 JSON 输出"
+      then: "包含 repo, version, timestamp, summary, features, rcis, golden_paths, gates 字段"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh | jq 'keys'"
+      contains: "repo"
+    test: "scripts/qa-report.sh"
+
+  - id: E1-003
+    feature: E1
+    name: "QA 审计 summary 计算正确"
+    scope: export
+    priority: P2
+    trigger: [Release]
+    method: auto
+    tags: [export, qa, summary]
+    owner: infra
+    steps:
+      given: "项目包含完整的 QA 基础设施"
+      when: "解析 summary 字段"
+      then: "meta, unit, e2e 百分比在 0-100 范围内"
+    evidence:
+      type: command
+      run: "bash scripts/qa-report.sh --fast | jq '.summary.overall'"
+      contains: "[0-9]+"
+      description: "返回 0-100 的数字"
+    test: "scripts/qa-report.sh"
+
+  # --------------------------------------------------------------------------
+  # E2: Dev Session Reporting
+  # --------------------------------------------------------------------------
+  - id: E2-001
+    feature: E2
+    name: "开发任务报告生成 JSON"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, json]
+    owner: workflow
+    steps:
+      given: "完成一次 /dev 流程"
+      when: "cleanup 阶段调用 generate-report.sh"
+      then: "在 .dev-runs/ 生成 JSON 报告"
+    evidence:
+      type: file
+      path: ".dev-runs/*-report.json"
+      exists: true
+    test: "skills/dev/scripts/generate-report.sh"
+
+  - id: E2-002
+    feature: E2
+    name: "报告包含 mode 字段"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, mode]
+    owner: workflow
+    steps:
+      given: "生成开发任务报告"
+      when: "解析 JSON"
+      then: "包含 mode 字段（interactive 或 headless）"
+    evidence:
+      type: command
+      run: "jq '.mode' .dev-runs/*-report.json"
+      contains: "interactive|headless"
+      description: "返回 interactive 或 headless"
+    test: "skills/dev/scripts/generate-report.sh"
+
+  - id: E2-003
+    feature: E2
+    name: "报告包含质检结果"
+    scope: export
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [export, dev, session, quality]
+    owner: workflow
+    steps:
+      given: "生成开发任务报告"
+      when: "解析 JSON"
+      then: "包含 quality_report 字段（L1/L2/L3 状态）"
+    evidence:
+      type: command
+      run: "jq '.quality_report' .dev-runs/*-report.json"
+      contains: "L1_automated|L2_verification|L3_acceptance"
+      description: "返回 L1/L2/L3 状态对象"
+    test: "skills/dev/scripts/generate-report.sh"
+
+  # --------------------------------------------------------------------------
+  # E3: Assurance Skill
+  # --------------------------------------------------------------------------
+  - id: E3-001
+    feature: E3
+    name: "/assurance 保证级别评估"
+    scope: skill
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [skill, assurance, quality]
+    owner: qa
+    steps:
+      given: "需要评估系统保证级别"
+      when: "运行 /assurance skill"
+      then: "提供 L1/L2/L3/L4 分层保证评估"
+    evidence:
+      type: manual
+      desc: "验证 assurance 评估流程"
+
+  # --------------------------------------------------------------------------
+  # E4: Audit Skill
+  # --------------------------------------------------------------------------
+  - id: E4-001
+    feature: E4
+    name: "/audit 代码审计与修复"
+    scope: skill
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [skill, audit, quality]
+    owner: qa
+    steps:
+      given: "需要审计代码质量"
+      when: "运行 /audit skill"
+      then: "执行 L1-L4 分层审计，修复到目标层级"
+    evidence:
+      type: manual
+      desc: "验证 audit 流程和边界控制"
+
+# ============================================================================
+# N8N Integration 回归契约
+# ============================================================================
+n8n:
+  # --------------------------------------------------------------------------
+  # N1: Cecilia (无头模式)
+  # --------------------------------------------------------------------------
+  - id: N1-001
+    feature: N1
+    name: "Cecilia CLI 健康检查"
+    scope: n8n
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [n8n, cecilia, health]
+    owner: infra
+    steps:
+      given: "cecilia CLI 已安装"
+      when: "运行 cecilia --health"
+      then: "返回 healthy: true 的 JSON"
+    evidence:
+      type: command
+      run: "cecilia --health"
+      contains: "healthy.*true"
+    test: "cecilia --health"
+
+  - id: N1-002
+    feature: N1
+    name: "Cecilia 执行 PRD Checkpoint"
+    scope: n8n
+    priority: P0
+    trigger: [Release]
+    method: auto
+    tags: [n8n, cecilia, prd]
+    owner: infra
+    steps:
+      given: "存在合法的 PRD JSON 文件"
+      when: "运行 cecilia -p prd.json -c CP-001"
+      then: "返回包含 success 字段的 JSON 结果"
+    evidence:
+      type: command
+      run: "cecilia -p n8n/test-prd.json -c CP-001 --output /tmp/test.json && cat /tmp/test.json"
+      contains: "success"
+    test: "n8n/test-prd.json"
+
+  - id: N1-003
+    feature: N1
+    name: "N8N Workflow 定义存在"
+    scope: n8n
+    priority: P1
+    trigger: [Release]
+    method: auto
+    tags: [n8n, workflow]
+    owner: infra
+    steps:
+      given: "n8n/workflows/ 目录存在"
+      when: "检查 workflow 文件"
+      then: "存在 prd-executor 相关的 JSON 文件"
+    evidence:
+      type: file
+      path: "n8n/workflows/prd-executor-simple.json"
+      exists: true
+
+  - id: N1-004
+    feature: N1
+    name: "p1 阶段无头修复语义"
+    scope: n8n
+    priority: P0
+    trigger: [PR, Release]
+    method: manual
+    tags: [n8n, cecelia, p1, v2.0.0, headless]
+    owner: infra
+    steps:
+      given: "CI fail 触发无头修复（PHASE_OVERRIDE=p1）"
+      when: "运行 cecelia-run 执行修复流程"
+      then: "修复 → push → 检测 CI pending → exit 0（不挂着等）"
+    evidence:
+      type: log
+      contains: "p1.*CI pending.*exit 0"
+    test: "手动模拟 p1 场景"
+
+  # --------------------------------------------------------------------------
+  # P1: Regression Testing Framework - 回归测试框架
+  # --------------------------------------------------------------------------
+  - id: P1-001
+    feature: P1
+    name: "rc-filter.sh 正确过滤 RCI"
+    scope: regression
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [regression, filter, pr, release]
+    owner: qa
+    steps:
+      given: "regression-contract.yaml 存在多个 trigger 的 RCI"
+      when: "运行 bash scripts/rc-filter.sh pr"
+      then: "只输出 trigger 包含 PR 的 RCI id"
+    evidence:
+      type: command
+      run: "bash scripts/rc-filter.sh pr | head -5"
+      contains: "H1-001|H2-001"
+    test: "bash scripts/rc-filter.sh pr && bash scripts/rc-filter.sh release"
+
+  - id: P1-002
+    feature: P1
+    name: "run-regression.sh 执行回归测试"
+    scope: regression
+    priority: P0
+    trigger: [Release]
+    method: auto
+    tags: [regression, execution]
+    owner: qa
+    steps:
+      given: "RCI 定义存在"
+      when: "运行 bash scripts/run-regression.sh"
+      then: "执行对应的自动化测试"
+    evidence:
+      type: command
+      run: "bash scripts/run-regression.sh --dry-run"
+      contains: "tests/"
+    test: "bash scripts/run-regression.sh --dry-run"
+
+  - id: P1-003
+    feature: P1
+    name: "regression-contract.yaml 格式解析"
+    scope: regression
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [regression, yaml, validation]
+    owner: qa
+    steps:
+      given: "regression-contract.yaml 存在"
+      when: "使用 yq 解析 YAML 结构"
+      then: "成功解析 rci_definitions 数组"
+    evidence:
+      type: command
+      run: "yq '.rci_definitions | length' regression-contract.yaml"
+      contains: "[0-9]+"
+    test: "yq '.rci_definitions[] | select(.id == \"H1-001\")' regression-contract.yaml"
+
+  # --------------------------------------------------------------------------
+  # P2: DevGate Quality Checks
+  # --------------------------------------------------------------------------
+  - id: P2-001
+    feature: P2
+    name: "qa-with-gate.sh 执行"
+    scope: devgate
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [devgate, qa, v10.0.0]
+    owner: qa
+    steps:
+      given: "执行 QA 检查"
+      when: "运行 scripts/qa-with-gate.sh"
+      then: "执行完整的 QA 检查流程，输出结果"
+    evidence:
+      type: manual
+      desc: "验证 QA 检查流程完整性"
+
+  # --------------------------------------------------------------------------
+  # N1: Infrastructure Scripts
+  # --------------------------------------------------------------------------
+  - id: N1-001
+    feature: N1
+    name: "generate-path-views.sh 视图生成"
+    scope: infrastructure
+    priority: P1
+    trigger: [PR, Release]
+    method: manual
+    tags: [contract, views, v10.0.0, contract-rebase]
+    owner: infra
+    steps:
+      given: "feature-registry.yml 已更新"
+      when: "运行 scripts/generate-path-views.sh"
+      then: "生成 MINIMAL/GOLDEN/OPTIMAL-PATHS.md 派生视图"
+    evidence:
+      type: manual
+      desc: "验证视图生成无 git diff"
+
+  # --------------------------------------------------------------------------
+  # W1-007: Phase Detection
+  # --------------------------------------------------------------------------
+  - id: W1-007
+    feature: W1
+    name: "detect-phase.sh 阶段检测"
+    scope: workflow
+    priority: P2
+    trigger: [Release]
+    method: manual
+    tags: [workflow, phase-detection, v10.0.0]
+    owner: infra
+    steps:
+      given: "在任意工作阶段"
+      when: "运行 scripts/detect-phase.sh"
+      then: "正确识别当前阶段（p0/p1/p2/pending/unknown）"
+    evidence:
+      type: manual
+      desc: "验证阶段检测逻辑"
+
+# ============================================================================
+# Golden Paths (E2E 关键链路)
+# ============================================================================
+#
+# Golden Path = 端到端链路验证，跨多个 RCI 的组合断言
+# Engine 的 GP = 流程链路（/dev → PR → CI）
+# 业务 repo 的 GP = 用户链路（登录 → 操作 → 结果）
+#
+# ============================================================================
+golden_paths:
+  # --------------------------------------------------------------------------
+  # GP-001: 完整开发流程
+  # --------------------------------------------------------------------------
+  - id: GP-001
+    name: "完整开发流程"
+    description: "/dev → 模式检测 → 分支 → DoD → 循环修复 → PR Gate → CI → 合并"
+    trigger: [Release]
+    method: manual
+    rcis:
+      - W5-001  # new 模式检测
+      - W5-002  # continue 模式检测
+      - W1-001  # /dev 流程可启动
+      - W1-002  # 分支自动创建
+      - W1-003  # DoD 自动生成
+      - W3-001  # 质检失败触发回退
+      - W3-002  # CI 失败触发回退
+      - H2-003  # L1 通过允许 PR 创建
+      - C1-001  # PR 版本号必须递增
+      - C2-001  # CI 运行 npm run qa
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 /dev，确认模式检测（new/continue）"
+        - "确认 cp-* 分支自动创建"
+        - "确认 .dod.md 生成"
+        - "运行 npm run qa，确认通过"
+        - "若失败，确认自动回退到修复循环"
+        - "创建 PR，确认 PR Gate 放行"
+        - "等待 CI 通过，确认可合并"
+
+  # --------------------------------------------------------------------------
+  # GP-002: 分支保护链路
+  # --------------------------------------------------------------------------
+  - id: GP-002
+    name: "分支保护链路"
+    description: "main 写 → 拦截 → cp-* 写 → 通过"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - H1-001  # 分支保护拦截 main/develop 写入
+      - H1-002  # cp-* 分支允许写入
+    verification:
+      type: end-to-end
+      steps:
+        - "切换到 main 分支"
+        - "尝试写入代码文件，确认被 Hook 拦截"
+        - "创建 cp-test 分支"
+        - "尝试写入代码文件，确认 Hook 放行"
+    test: "tests/hooks/branch-protect.test.ts"
+
+  # --------------------------------------------------------------------------
+  # GP-003: PR Gate 链路
+  # --------------------------------------------------------------------------
+  - id: GP-003
+    name: "PR Gate 链路"
+    description: "L1 失败 → 阻止 / L1 通过 → 放行"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - H2-001  # PR Gate 拦截 gh pr create
+      - H2-002  # L1 失败阻止 PR 创建
+      - H2-003  # L1 通过允许 PR 创建
+      - H2-005  # 默认 PR 模式只检查 L1
+    verification:
+      type: end-to-end
+      steps:
+        - "引入一个 typecheck 错误"
+        - "运行 gh pr create，确认被 Hook 阻止"
+        - "修复错误，npm run qa 通过"
+        - "运行 gh pr create，确认 Hook 放行"
+    test: "tests/hooks/pr-gate.test.ts"
+
+  # --------------------------------------------------------------------------
+  # GP-004: CI 链路
+  # --------------------------------------------------------------------------
+  - id: GP-004
+    name: "CI 链路"
+    description: "PR → 版本检查 → 测试 → Shell 检查 → Release 检查"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - C1-001  # PR 版本号必须递增
+      - C2-001  # CI 运行 npm run qa
+      - C3-001  # Shell 脚本语法检查
+      - C5-001  # Release 前 DoD 完成度检查
+    verification:
+      type: ci
+      steps:
+        - "创建 PR（不更新版本号）→ 确认 version-check 失败"
+        - "更新版本号，推送 → 确认 version-check 通过"
+        - "确认 test job 执行 typecheck + test + build"
+        - "确认 shell-check job 检查所有 .sh 文件"
+    test: ".github/workflows/ci.yml"
+
+  # --------------------------------------------------------------------------
+  # GP-005: Export 链路
+  # --------------------------------------------------------------------------
+  - id: GP-005
+    name: "Export 链路"
+    description: "QA 审计 + Dev Session 报告输出"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - E1-001  # QA 审计脚本输出合法 JSON
+      - E1-002  # QA JSON 包含完整结构
+      - E2-001  # 开发任务报告生成 JSON
+      - E2-002  # 报告包含 mode 字段
+      - E2-003  # 报告包含质检结果
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 bash scripts/qa-report.sh，确认输出合法 JSON"
+        - "完成一次 /dev 流程，确认 .dev-runs/ 生成报告"
+        - "检查报告包含 mode 字段（interactive/headless）"
+    test: "scripts/qa-report.sh"
+
+  # --------------------------------------------------------------------------
+  # GP-006: N8N/Cecilia 无头链路
+  # --------------------------------------------------------------------------
+  - id: GP-006
+    name: "N8N/Cecilia 无头链路"
+    description: "N8N Webhook → cecilia CLI → PRD 执行 → JSON 结果"
+    trigger: [Release]
+    method: auto
+    rcis:
+      - N1-001  # Cecilia CLI 健康检查
+      - N1-002  # Cecilia 执行 PRD Checkpoint
+      - N1-003  # N8N Workflow 定义存在
+      - E2-002  # 报告包含 mode 字段 (headless)
+    verification:
+      type: end-to-end
+      steps:
+        - "运行 cecilia --health，确认返回 healthy: true"
+        - "运行 cecilia -p test-prd.json -c CP-001，确认执行成功"
+        - "检查输出 JSON 包含 success 字段"
+        - "确认 N8N workflow JSON 文件存在"
+    test: "cecilia --health"

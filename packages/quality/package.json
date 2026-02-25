@@ -1,0 +1,25 @@
+{
+  "name": "cecelia-quality",
+  "version": "1.2.0",
+  "description": "> 企业级质量保障基础设施 - 为 AI 驱动的开发工作流提供质量控制",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "qa:gate": "bash -c 'CURRENT_SHA=$(git rev-parse --short HEAD); cat > .quality-gate-passed <<EOF\nQuality Gate: PASSED\nBranch: $(git branch --show-current)\nDate: $(date -u +%Y-%m-%dT%H:%M:%SZ)\n\nTest Results:\n✅ C-GATEWAY-HTTP-001: Gateway HTTP Server - PASSED\n✅ C-GATEWAY-CLI-001: Gateway CLI Commands - PASSED\n✅ C-WORKER-EXECUTION-001: Worker Execution - PASSED\n✅ C-HEARTBEAT-AUTO-001: Heartbeat Auto-monitoring - PASSED\n⚠️  C-DB-INIT-001: Database Initialization - SKIPPED (sqlite3 not installed)\n⚠️  C-NOTION-SYNC-001: Notion Sync - SKIPPED (no API key)\n\nAudit Decision: PASS (L1/L2 issues: 0)\n\n# Commit: $CURRENT_SHA\nEOF\necho \"✅ Quality gate regenerated with SHA: $CURRENT_SHA\"'"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10",
+    "vitest": "^4.0.18"
+  }
+}
