@@ -3,6 +3,19 @@
 #
 # 层级: global_okr → global_kr → area_okr → area_kr → project → initiative → task
 
+version: 1
+
+severity_levels:
+  BLOCK:
+    description: "阻塞性问题，必须修复才能继续"
+    stops_pipeline: true
+  WARNING:
+    description: "建议修复，不阻塞流程"
+    stops_pipeline: false
+  INFO:
+    description: "信息提示"
+    stops_pipeline: false
+
 global_rules:
   active_status_filter:
     goals:
