@@ -14,6 +14,7 @@ import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js
 import { loadActiveProfile } from './src/model-profile.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
+import { handleChat } from './src/orchestrator-chat.js';
 
 const app = express();
 const server = createServer(app);
@@ -74,6 +75,19 @@ app.use('/api/cecelia', ceceliaRoutes);
 
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
+
+// POST /api/brain/orchestrator/chat
+app.post('/api/brain/orchestrator/chat', async (req, res) => {
+  try {
+    const { message, messages = [], context = {} } = req.body;
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    const result = await handleChat(message, context, messages);
+    res.json(result);
+  } catch (err) {
+    console.error('[orchestrator/chat]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Health check at root
 app.get('/', (_req, res) => {
