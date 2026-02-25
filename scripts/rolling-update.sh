@@ -27,7 +27,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VERSION=$(node -e "console.log(require('$ROOT_DIR/brain/package.json').version)")
+VERSION=$(node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
 
 # Container names

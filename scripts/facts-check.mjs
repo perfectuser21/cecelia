@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const BRAIN = resolve(ROOT, 'brain');
+const BRAIN = resolve(ROOT, 'packages/brain');
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -36,100 +36,100 @@ function findLineNumber(content, pattern) {
 // ─── Fact extractors ────────────────────────────────────────
 
 function extractBrainPort() {
-  const src = readFile('brain/server.js');
+  const src = readFile('packages/brain/server.js');
   const match = src.match(/const PORT\s*=\s*.*\|\|\s*(\d+)/);
   return {
     name: 'brain_port',
     value: match ? parseInt(match[1], 10) : null,
-    source: 'brain/server.js',
+    source: 'packages/brain/server.js',
     line: findLineNumber(src, 'const PORT'),
   };
 }
 
 function extractVersion() {
-  const pkg = JSON.parse(readFile('brain/package.json'));
+  const pkg = JSON.parse(readFile('packages/brain/package.json'));
   return {
     name: 'brain_version',
     value: pkg.version,
-    source: 'brain/package.json',
-    line: findLineNumber(readFile('brain/package.json'), '"version"'),
+    source: 'packages/brain/package.json',
+    line: findLineNumber(readFile('packages/brain/package.json'), '"version"'),
   };
 }
 
 function extractTickLoopMs() {
-  const src = readFile('brain/src/tick.js');
+  const src = readFile('packages/brain/src/tick.js');
   const match = src.match(/TICK_LOOP_INTERVAL_MS\s*=\s*parseInt\([^|]*\|\|\s*'(\d+)'/);
   return {
     name: 'tick_loop_ms',
     value: match ? parseInt(match[1], 10) : null,
-    source: 'brain/src/tick.js',
+    source: 'packages/brain/src/tick.js',
     line: findLineNumber(src, 'TICK_LOOP_INTERVAL_MS'),
   };
 }
 
 function extractTickIntervalMin() {
-  const src = readFile('brain/src/tick.js');
+  const src = readFile('packages/brain/src/tick.js');
   const match = src.match(/TICK_INTERVAL_MINUTES\s*=\s*(\d+)/);
   return {
     name: 'tick_interval_min',
     value: match ? parseInt(match[1], 10) : null,
-    source: 'brain/src/tick.js',
+    source: 'packages/brain/src/tick.js',
     line: findLineNumber(src, 'TICK_INTERVAL_MINUTES'),
   };
 }
 
 function extractTaskTypes() {
-  const src = readFile('brain/src/task-router.js');
+  const src = readFile('packages/brain/src/task-router.js');
   // Extract keys from LOCATION_MAP — only the key before the colon on each line
   const mapMatch = src.match(/const LOCATION_MAP\s*=\s*\{([^}]+)\}/s);
-  if (!mapMatch) return { name: 'task_types', value: null, source: 'brain/src/task-router.js', line: null };
+  if (!mapMatch) return { name: 'task_types', value: null, source: 'packages/brain/src/task-router.js', line: null };
   // Match pattern: 'key': 'value' — capture only the key
   const keys = [...mapMatch[1].matchAll(/'(\w+)'\s*:/g)].map(m => m[1]);
   return {
     name: 'task_types',
     value: keys.sort().join(','),
-    source: 'brain/src/task-router.js',
+    source: 'packages/brain/src/task-router.js',
     line: findLineNumber(src, 'LOCATION_MAP'),
   };
 }
 
 function extractActionCount() {
-  const src = readFile('brain/src/thalamus.js');
+  const src = readFile('packages/brain/src/thalamus.js');
   const mapMatch = src.match(/const ACTION_WHITELIST\s*=\s*\{([\s\S]*?)\n\};/);
-  if (!mapMatch) return { name: 'action_count', value: null, source: 'brain/src/thalamus.js', line: null };
+  if (!mapMatch) return { name: 'action_count', value: null, source: 'packages/brain/src/thalamus.js', line: null };
   // Match 'action_name': { pattern — only keys
   const keys = [...mapMatch[1].matchAll(/'(\w+)'\s*:/g)].map(m => m[1]);
   return {
     name: 'action_count',
     value: keys.length,
-    source: 'brain/src/thalamus.js',
+    source: 'packages/brain/src/thalamus.js',
     line: findLineNumber(src, 'ACTION_WHITELIST'),
   };
 }
 
 function extractCortexActionCount() {
-  const src = readFile('brain/src/cortex.js');
+  const src = readFile('packages/brain/src/cortex.js');
   // Cortex adds extra actions on top of ACTION_WHITELIST via spread
   // Count only the NEW actions (not the ...ACTION_WHITELIST spread)
   const mapMatch = src.match(/const CORTEX_ACTION_WHITELIST\s*=\s*\{([\s\S]*?)\n\};/);
-  if (!mapMatch) return { name: 'cortex_extra_actions', value: null, source: 'brain/src/cortex.js', line: null };
+  if (!mapMatch) return { name: 'cortex_extra_actions', value: null, source: 'packages/brain/src/cortex.js', line: null };
   // Count lines with 'key': { ... } pattern, excluding the spread
   const extraKeys = [...mapMatch[1].matchAll(/'(\w+)'/g)].map(m => m[1]);
   return {
     name: 'cortex_extra_actions',
     value: extraKeys.length,
-    source: 'brain/src/cortex.js',
+    source: 'packages/brain/src/cortex.js',
     line: findLineNumber(src, 'CORTEX_ACTION_WHITELIST'),
   };
 }
 
 function extractSchemaVersion() {
-  const src = readFile('brain/src/selfcheck.js');
+  const src = readFile('packages/brain/src/selfcheck.js');
   const match = src.match(/EXPECTED_SCHEMA_VERSION\s*=\s*'(\d+)'/);
   return {
     name: 'schema_version',
     value: match ? match[1] : null,
-    source: 'brain/src/selfcheck.js',
+    source: 'packages/brain/src/selfcheck.js',
     line: findLineNumber(src, 'EXPECTED_SCHEMA_VERSION'),
   };
 }
@@ -259,11 +259,11 @@ function validateFacts(facts) {
 // ─── Integrity checks (code-level, no DEFINITION.md comparison) ─────────────
 
 /**
- * 检查 brain/migrations/ 目录是否有重复编号的 migration 文件
+ * 检查 packages/brain/migrations/ 目录是否有重复编号的 migration 文件
  * 例如：057_create_strategies_table.sql 和 057_initiative_orchestration.sql 同时存在
  */
 function checkMigrationConflicts() {
-  const migrationsDir = resolve(ROOT, 'brain/migrations');
+  const migrationsDir = resolve(ROOT, 'packages/brain/migrations');
   const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
   const byNumber = {};
   for (const f of files) {
@@ -282,7 +282,7 @@ function checkMigrationConflicts() {
  * 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION 是否等于 migrations/ 最高编号
  */
 function checkSelfcheckVersionSync() {
-  const migrationsDir = resolve(ROOT, 'brain/migrations');
+  const migrationsDir = resolve(ROOT, 'packages/brain/migrations');
   const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
   const nums = files
     .map(f => f.match(/^(\d+)_/)?.[1])
@@ -291,7 +291,7 @@ function checkSelfcheckVersionSync() {
   const highest = Math.max(...nums);
   const highestStr = String(highest).padStart(3, '0');
 
-  const selfcheckSrc = readFile('brain/src/selfcheck.js');
+  const selfcheckSrc = readFile('packages/brain/src/selfcheck.js');
   const match = selfcheckSrc.match(/EXPECTED_SCHEMA_VERSION\s*=\s*'(\d+)'/);
   const selfcheckVersion = match ? match[1] : null;
 
@@ -304,7 +304,7 @@ function checkSelfcheckVersionSync() {
  */
 function checkLlmFetchTimeouts() {
   const LLM_URL_PATTERNS = ['api.anthropic.com', 'api.minimaxi.com', 'api.minimax.io'];
-  const FILES_TO_CHECK = ['brain/src/thalamus.js', 'brain/src/cortex.js'];
+  const FILES_TO_CHECK = ['packages/brain/src/thalamus.js', 'packages/brain/src/cortex.js'];
   const violations = [];
 
   for (const filePath of FILES_TO_CHECK) {
@@ -375,7 +375,7 @@ console.log('\n── Code Integrity Checks ────────────
 // Check 1: Migration number conflicts
 const migrationConflicts = checkMigrationConflicts();
 if (migrationConflicts.length === 0) {
-  console.log('  ✓ migration_conflicts: no duplicate numbers in brain/migrations/');
+  console.log('  ✓ migration_conflicts: no duplicate numbers in packages/brain/migrations/');
 } else {
   integrityFailure = true;
   for (const [num, files] of migrationConflicts) {
@@ -389,7 +389,7 @@ if (selfcheckVersion === highestMigration) {
   console.log(`  ✓ selfcheck_version_sync: EXPECTED_SCHEMA_VERSION = '${selfcheckVersion}' matches highest migration`);
 } else {
   integrityFailure = true;
-  console.log(`  ✗ selfcheck_version_sync: selfcheck.js='${selfcheckVersion}' but highest migration='${highestMigration}' — update EXPECTED_SCHEMA_VERSION in brain/src/selfcheck.js`);
+  console.log(`  ✗ selfcheck_version_sync: selfcheck.js='${selfcheckVersion}' but highest migration='${highestMigration}' — update EXPECTED_SCHEMA_VERSION in packages/brain/src/selfcheck.js`);
 }
 
 // Check 3: LLM fetch timeouts
