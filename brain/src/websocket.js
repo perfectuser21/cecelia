@@ -9,9 +9,14 @@
 import { WebSocketServer, WebSocket } from 'ws';
 
 let wss = null;
+let heartbeatInterval = null;
 
 // Security: Maximum message size (1KB)
 const MAX_MESSAGE_SIZE = 1024;
+
+// Server-side heartbeat: ping every 30s, terminate if no pong within 60s
+const HEARTBEAT_INTERVAL_MS = 30000;
+const HEARTBEAT_TIMEOUT_MS = 60000;
 
 // Security: Allowed origins (for CORS-like protection)
 const ALLOWED_ORIGINS = process.env.WS_ALLOWED_ORIGINS
@@ -36,6 +41,13 @@ export const WS_EVENTS = {
   PROPOSAL_RESOLVED: 'proposal:resolved',
   // Model Profile 事件
   PROFILE_CHANGED: 'profile:changed',
+  // Alertness 事件
+  ALERTNESS_CHANGED: 'alertness:changed',
+  // Desire 事件
+  DESIRE_CREATED: 'desire:created',
+  DESIRE_UPDATED: 'desire:updated',
+  // Tick 事件
+  TICK_EXECUTED: 'tick:executed',
 };
 
 /**
@@ -62,6 +74,10 @@ export function initWebSocketServer(server) {
     }
 
     console.log(`[WebSocket] Client connected from ${clientIp}`);
+
+    // Mark connection as alive for server-side heartbeat
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
 
     // Send welcome message
     if (ws.readyState === WebSocket.OPEN) {
@@ -101,6 +117,24 @@ export function initWebSocketServer(server) {
 
   wss.on('error', (err) => {
     console.error('[WebSocket] Server error:', err.message);
+  });
+
+  // Server-side heartbeat: detect and clean up zombie connections
+  heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        console.log('[WebSocket] Terminating zombie connection');
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+
+  // Clean up interval when server closes
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   });
 
   console.log('[WebSocket] Server initialized on path /ws');
@@ -166,6 +200,12 @@ export function shutdownWebSocketServer() {
 
     console.log('[WebSocket] Shutting down...');
 
+    // Stop heartbeat
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+
     // Close all client connections first
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
@@ -219,6 +259,9 @@ export function broadcastRunUpdate(update) {
   });
 }
 
+// Constants exported for testing
+export { HEARTBEAT_INTERVAL_MS, HEARTBEAT_TIMEOUT_MS };
+
 // Default export for convenience
 export default {
   initWebSocketServer,
@@ -226,5 +269,7 @@ export default {
   broadcastRunUpdate,
   getConnectedClientsCount,
   shutdownWebSocketServer,
-  WS_EVENTS
+  WS_EVENTS,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS
 };

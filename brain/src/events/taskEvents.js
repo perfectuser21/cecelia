@@ -99,3 +99,73 @@ export function publishExecutorStatus(activeCount, availableSlots, maxConcurrent
     timestamp: new Date().toISOString()
   });
 }
+
+/**
+ * Publish alertness level changed event
+ * @param {object} data - Alertness change data
+ * @param {number} data.level - New alertness level (0-4)
+ * @param {number} data.previous - Previous alertness level
+ * @param {string} data.label - Level name (SLEEPING/CALM/AWARE/ALERT/PANIC)
+ * @param {string} data.reason - Reason for transition
+ */
+export function publishAlertnessChanged(data) {
+  broadcast(WS_EVENTS.ALERTNESS_CHANGED, {
+    level: data.level,
+    previous: data.previous,
+    label: data.label,
+    reason: data.reason,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
+ * Publish desire created event
+ * @param {object} desire - Desire data
+ * @param {string} desire.id - Desire ID
+ * @param {string} desire.type - Desire type (propose/warn/inform/celebrate/question)
+ * @param {number} desire.urgency - Urgency score
+ * @param {string} desire.content - Desire summary content
+ */
+export function publishDesireCreated(desire) {
+  broadcast(WS_EVENTS.DESIRE_CREATED, {
+    id: desire.id,
+    type: desire.type,
+    urgency: desire.urgency,
+    summary: desire.content,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
+ * Publish desire updated event
+ * @param {object} data - Update data
+ * @param {string} data.id - Desire ID
+ * @param {string} data.status - New status
+ * @param {string} data.previous_status - Previous status
+ */
+export function publishDesireUpdated(data) {
+  broadcast(WS_EVENTS.DESIRE_UPDATED, {
+    id: data.id,
+    status: data.status,
+    previous_status: data.previous_status,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
+ * Publish tick executed event
+ * @param {object} data - Tick execution data
+ * @param {number} data.tick_number - Tick counter
+ * @param {number} data.duration_ms - Tick duration in milliseconds
+ * @param {number} data.actions_taken - Number of actions taken
+ * @param {string} data.next_tick_at - ISO timestamp of next tick
+ */
+export function publishTickExecuted(data) {
+  broadcast(WS_EVENTS.TICK_EXECUTED, {
+    tick_number: data.tick_number,
+    duration_ms: data.duration_ms,
+    actions_taken: data.actions_taken,
+    next_tick_at: data.next_tick_at,
+    timestamp: new Date().toISOString()
+  });
+}

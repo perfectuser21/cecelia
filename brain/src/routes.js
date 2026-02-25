@@ -641,6 +641,24 @@ router.patch('/tasks/:task_id', async (req, res) => {
   }
 });
 
+// ==================== Briefing API ====================
+
+/**
+ * GET /api/brain/briefing
+ * 一站式简报数据聚合，前端打开页面时调用一次
+ * Query: since (ISO timestamp, 默认 24h 前)
+ */
+router.get('/briefing', async (req, res) => {
+  try {
+    const { getBriefing } = await import('./briefing.js');
+    const briefing = await getBriefing({ since: req.query.since });
+    res.json(briefing);
+  } catch (err) {
+    console.error('[API] briefing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==================== Focus API（优先级引擎） ====================
 
 /**
@@ -7156,6 +7174,11 @@ router.patch('/desires/:id', async (req, res) => {
     );
 
     if (rows.length === 0) return res.status(404).json({ error: 'desire not found' });
+
+    // 广播 WebSocket 事件
+    const { publishDesireUpdated } = await import('./events/taskEvents.js');
+    publishDesireUpdated({ id, status, previous_status: 'pending' });
+
     res.json({ success: true, desire: rows[0] });
   } catch (err) {
     console.error('[API] desires/:id patch error:', err.message);

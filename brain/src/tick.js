@@ -1734,6 +1734,20 @@ async function executeTick() {
     console.error('[tick] desire system error:', desireErr.message);
   }
 
+  // 12. 广播 tick:executed WebSocket 事件
+  const nextTickAt = new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString();
+  try {
+    const { publishTickExecuted } = await import('./events/taskEvents.js');
+    publishTickExecuted({
+      tick_number: actionsToday,
+      duration_ms: tickDuration,
+      actions_taken: actionsTaken.length,
+      next_tick_at: nextTickAt
+    });
+  } catch (wsErr) {
+    console.error('[tick] WebSocket tick:executed broadcast failed:', wsErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,
@@ -1753,7 +1767,7 @@ async function executeTick() {
       stale: staleTasks.length
     },
     tick_duration_ms: tickDuration,
-    next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+    next_tick: nextTickAt
   };
 }
 

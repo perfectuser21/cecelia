@@ -18,6 +18,7 @@ import { escalateResponse, getCurrentResponseLevel, executeResponse } from './es
 import { applySelfHealing, getRecoveryStatus, startRecovery } from './healing.js';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
+import { publishAlertnessChanged } from '../events/taskEvents.js';
 
 // ============================================================
 // Alertness 等级定义
@@ -212,10 +213,18 @@ async function transitionToLevel(newLevel, reason) {
   currentState.startedAt = new Date();
   currentState.reason = reason;
 
-  // 发送事件
+  // 发送 event-bus 事件
   emit('alertness:level_changed', {
     from: oldLevel,
     to: newLevel,
+    reason
+  });
+
+  // 广播 WebSocket 事件到前端
+  publishAlertnessChanged({
+    level: newLevel,
+    previous: oldLevel,
+    label: LEVEL_NAMES[newLevel],
     reason
   });
 

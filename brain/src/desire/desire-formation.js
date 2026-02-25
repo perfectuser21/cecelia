@@ -142,6 +142,19 @@ export async function runDesireFormation(pool, insight) {
       expiresAt
     ]);
 
+    // 广播 WebSocket 事件到前端
+    try {
+      const { publishDesireCreated } = await import('../events/taskEvents.js');
+      publishDesireCreated({
+        id: rows[0].id,
+        type: desire.type,
+        urgency: desire.urgency,
+        content: desire.content
+      });
+    } catch (wsErr) {
+      console.error('[desire-formation] WebSocket broadcast failed:', wsErr.message);
+    }
+
     return { created: true, desire_id: rows[0].id };
   } catch (err) {
     console.error('[desire-formation] insert error:', err.message);
