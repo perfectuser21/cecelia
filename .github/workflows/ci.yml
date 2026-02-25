@@ -750,6 +750,13 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
 
+          # 检查 origin/develop 是否存在（develop 删除后跳过检查）
+          if ! git rev-parse origin/develop >/dev/null 2>&1; then
+            echo "ℹ️  origin/develop 不存在，跳过祖先检查"
+            echo "   （develop 已合并到 main 并删除，release 分支从 main 切出是合法的）"
+            exit 0
+          fi
+
           # 检查 merge-base: 如果 HEAD 包含 develop 的所有提交，
           # 则 merge-base(HEAD, origin/develop) == origin/develop
           MERGE_BASE=$(git merge-base HEAD origin/develop)

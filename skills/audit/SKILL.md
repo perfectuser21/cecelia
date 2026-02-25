@@ -134,7 +134,8 @@ description: |
 
 ```bash
 # 对比实际改动与 QA-DECISION.md 中允许的 Scope
-node scripts/audit/compare-scope.cjs --base develop --head HEAD
+BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+node scripts/audit/compare-scope.cjs --base $BASE_BRANCH --head HEAD
 
 # 输出：
 {
@@ -157,7 +158,8 @@ node scripts/audit/compare-scope.cjs --base develop --head HEAD
 
 ```bash
 # 检查是否触碰禁止修改的区域
-node scripts/audit/check-forbidden.cjs --base develop --head HEAD
+BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+node scripts/audit/check-forbidden.cjs --base $BASE_BRANCH --head HEAD
 
 # 输出：
 {
@@ -187,7 +189,8 @@ node scripts/audit/check-proof.cjs --qa-decision docs/QA-DECISION.md
 
 ```bash
 # 聚合所有审计结果，生成 AUDIT-REPORT.md
-node scripts/audit/generate-report.cjs --base develop --head HEAD --output docs/AUDIT-REPORT.md
+BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")
+node scripts/audit/generate-report.cjs --base $BASE_BRANCH --head HEAD --output docs/AUDIT-REPORT.md
 
 # 输出：
 {

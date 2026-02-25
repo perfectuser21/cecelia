@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.30.4] - 2026-02-25
+
+### Fixed
+- skills/dev/steps/08-pr.md, skills/audit/SKILL.md, skills/qa/SKILL.md：将硬编码的 `--base develop` 改为自动检测逻辑（`BASE_BRANCH=$(git branch -r | grep -q 'origin/develop' && echo "develop" || echo "main")`），解决在无 develop 分支的仓库（如 cecelia）执行时失败的问题
+- .github/workflows/ci.yml：release-check 在 origin/develop 不存在时直接跳过祖先检查，避免 fatal 错误
+
+### Changed
+- skills/dev/SKILL.md：文字描述更新，"develop 是主开发线" 改为 "目标分支自动检测（有 develop 用 develop，否则用 main）"
+
 ## [12.30.3] - 2026-02-23
 
 ### Fixed
