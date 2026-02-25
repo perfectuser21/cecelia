@@ -1,17 +1,20 @@
 /**
  * Chat Action Dispatcher - 对话动作检测与执行
  *
- * 识别用户消息中的动作意图，直接调用 actions.js / pool 执行，
- * 返回追加到 reply 末尾的确认文本。
+ * 两层检测：
+ * 1. 关键词匹配（快速通道，零延迟）
+ * 2. Intent 管道（回退，综合模式匹配 + 实体提取）
  *
  * 设计原则：
- * - 关键词匹配（无额外 LLM 调用，零延迟）
- * - 失败不阻塞回复（catch 后返回 ⚠️ 文本而不是 throw）
+ * - 关键词匹配优先（无额外 LLM 调用，零延迟）
+ * - Intent 管道作为回退（更全面的意图识别，仍无 LLM 调用）
+ * - 失败不阻塞回复（catch 后返回空或 ⚠️ 文本）
  * - 结果追加到 reply 末尾（"\n\n✅ xxx"）
  */
 
 import pool from './db.js';
 import { createTask } from './actions.js';
+import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
 
 /**
  * 动作触发规则表
@@ -158,11 +161,109 @@ export async function executeAction(action) {
 
 /**
  * 检测并执行动作（对外统一入口）
+ *
+ * 两层检测：
+ * 1. 关键词匹配 → 直接执行（快速通道）
+ * 2. Intent 管道 → parseIntent + parseAndCreate（回退）
+ *
  * @param {string} message - 用户消息
  * @returns {Promise<string>} 追加到 reply 末尾的文本，无动作时返回 ''
  */
 export async function detectAndExecuteAction(message) {
+  // Layer 1: 关键词快速通道（零延迟）
   const action = detectAction(message);
-  if (!action) return '';
-  return executeAction(action);
+  if (action) return executeAction(action);
+
+  // Layer 2: Intent 管道回退（综合模式匹配）
+  return executeViaIntentPipeline(message);
+}
+
+// ── Intent 管道 ──────────────────────────────────────────
+
+/**
+ * 通过 Intent 管道识别并执行动作
+ * 使用 parseIntent（模式匹配 + 实体提取，无 LLM 调用）
+ */
+async function executeViaIntentPipeline(message) {
+  try {
+    const parsed = await parseIntent(message);
+
+    // 跳过非动作性意图（纯提问、未知）
+    if (parsed.intentType === INTENT_TYPES.QUESTION ||
+        parsed.intentType === INTENT_TYPES.UNKNOWN) {
+      return '';
+    }
+
+    // 跳过低置信度（<0.4 大概率是普通聊天）
+    if (parsed.confidence < 0.4) {
+      return '';
+    }
+
+    console.log(`[chat-action-dispatcher] Intent detected: ${parsed.intentType} (confidence: ${parsed.confidence.toFixed(2)})`);
+
+    // QUERY_STATUS → 内联查询
+    if (parsed.intentType === INTENT_TYPES.QUERY_STATUS) {
+      const result = await pool.query(
+        `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+      );
+      if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+      const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+      return `\n\n📊 当前任务统计：\n${lines}`;
+    }
+
+    // CREATE_GOAL → 直接写入 goals 表
+    if (parsed.intentType === INTENT_TYPES.CREATE_GOAL) {
+      const params = parsed.suggestedAction?.params || {};
+      const title = params.title || parsed.projectName;
+      const priority = params.priority || 'P1';
+      const result = await pool.query(
+        `INSERT INTO goals (title, priority, status, progress) VALUES ($1, $2, 'pending', 0) RETURNING id, title`,
+        [title, priority]
+      );
+      return `\n\n✅ 已创建目标：${result.rows[0].title}`;
+    }
+
+    // CREATE_TASK / FIX_BUG / REFACTOR → 只创建任务（不创建项目）
+    if ([INTENT_TYPES.CREATE_TASK, INTENT_TYPES.FIX_BUG, INTENT_TYPES.REFACTOR].includes(parsed.intentType)) {
+      const result = await parseAndCreate(message, { createProject: false });
+      return formatIntentResult(result);
+    }
+
+    // CREATE_PROJECT / CREATE_FEATURE / EXPLORE → 完整创建（项目 + 任务）
+    if ([INTENT_TYPES.CREATE_PROJECT, INTENT_TYPES.CREATE_FEATURE, INTENT_TYPES.EXPLORE].includes(parsed.intentType)) {
+      const result = await parseAndCreate(message);
+      return formatIntentResult(result);
+    }
+
+    return '';
+  } catch (err) {
+    console.warn('[chat-action-dispatcher] Intent pipeline failed:', err.message);
+    return ''; // 静默失败，让 LLM 回复正常返回
+  }
+}
+
+/**
+ * 格式化 Intent 管道执行结果为用户可读文本
+ */
+function formatIntentResult(result) {
+  const { created } = result;
+  const parts = [];
+
+  if (created.project) {
+    if (created.project.created) {
+      parts.push(`📁 已创建项目：${created.project.name}`);
+    } else {
+      parts.push(`📁 关联到已有项目：${created.project.name}`);
+    }
+  }
+
+  if (created.tasks.length > 0) {
+    parts.push(`📋 已创建 ${created.tasks.length} 个任务：`);
+    for (const task of created.tasks) {
+      parts.push(`  - ${task.title}（${task.priority}）`);
+    }
+  }
+
+  if (parts.length === 0) return '';
+  return '\n\n' + parts.join('\n');
 }
