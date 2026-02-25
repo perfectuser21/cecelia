@@ -113,6 +113,61 @@ export interface CredentialEntry {
   provider: string;
 }
 
+// ── Brain Profile API ─────────────────────────────────────────
+
+export interface BrainAgentInfo {
+  id: string;
+  name: string;
+  description: string;
+  layer: string;
+  allowed_models: string[];
+  recommended_model: string;
+  fixed_provider: string | null;
+}
+
+export interface BrainProfileConfig {
+  [agentId: string]: { model: string; provider: string };
+}
+
+export interface BrainProfile {
+  id: string;
+  name: string;
+  config: BrainProfileConfig;
+}
+
+export interface BrainModelsResponse {
+  models: ModelEntry[];
+  agents: BrainAgentInfo[];
+}
+
+export async function fetchBrainProfile(): Promise<BrainProfile | null> {
+  try {
+    const res = await fetch(`${BRAIN_URL}/model-profiles/active`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.success ? data.profile : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchBrainModels(): Promise<BrainModelsResponse> {
+  const res = await fetch(`${BRAIN_URL}/model-profiles/models`);
+  if (!res.ok) throw new Error(`Brain models API error: ${res.status}`);
+  const data = await res.json();
+  return { models: data.models || [], agents: data.agents || [] };
+}
+
+export async function updateBrainAgent(agentId: string, modelId: string): Promise<void> {
+  const res = await fetch(`${BRAIN_URL}/model-profiles/active/agent`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, model_id: modelId }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || '更新失败');
+}
+
 export async function fetchCredentials(): Promise<CredentialEntry[]> {
   try {
     const res = await fetch(`${BRAIN_URL}/credentials`);
