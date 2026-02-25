@@ -12,7 +12,7 @@ async function getWorkingMemory() {
   return memory;
 }
 async function getTopTasks(limit = 10) {
-  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
+  const result = await pool.query(`SELECT id, title, description, priority, status, project_id, queued_at, updated_at, due_at, custom_props FROM tasks WHERE status NOT IN ('completed', 'cancelled') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at ASC LIMIT $1`, [limit]);
   return result.rows;
 }
 async function getRecentDecisions(limit = 10) {
@@ -418,7 +418,7 @@ router.get('/goals', async (req, res) => {
   try {
     const { dept } = req.query;
     let query = `
-      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, created_at, updated_at
+      SELECT id, title, type, status, priority, progress, weight, parent_id, metadata, custom_props, created_at, updated_at
       FROM goals
     `;
     const params = [];
