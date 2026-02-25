@@ -1,0 +1,168 @@
+/**
+ * Chat Action Dispatcher - 对话动作检测与执行
+ *
+ * 识别用户消息中的动作意图，直接调用 actions.js / pool 执行，
+ * 返回追加到 reply 末尾的确认文本。
+ *
+ * 设计原则：
+ * - 关键词匹配（无额外 LLM 调用，零延迟）
+ * - 失败不阻塞回复（catch 后返回 ⚠️ 文本而不是 throw）
+ * - 结果追加到 reply 末尾（"\n\n✅ xxx"）
+ */
+
+import pool from './db.js';
+import { createTask } from './actions.js';
+
+/**
+ * 动作触发规则表
+ * patterns: 正则列表，任一匹配即触发
+ * extract:  从消息中提取参数，返回 null 表示匹配但参数不足（跳过）
+ */
+const ACTION_PATTERNS = [
+  {
+    type: 'CREATE_TASK',
+    patterns: [
+      /帮我记.{0,2}任务[：:]/u,
+      /新建任务[：:]/u,
+      /加个\s*[tT]ask[：:]/u,
+      /创建任务[：:]/u,
+      /记一个任务[：:]/u,
+    ],
+    extract: (msg) => {
+      const m = msg.match(/(?:帮我记.{0,2}任务|新建任务|加个\s*task|创建任务|记一个任务)[：:]\s*(.+)/iu);
+      return m ? { title: m[1].trim() } : null;
+    },
+  },
+  {
+    type: 'CREATE_LEARNING',
+    patterns: [
+      /记录学习[：:]/u,
+      /记一条学习[：:]/u,
+      /总结学习[：:]/u,
+      /学到了[：:]/u,
+      /记学习[：:]/u,
+    ],
+    extract: (msg) => {
+      const m = msg.match(/(?:记录学习|记一条学习|总结学习|学到了|记学习)[：:]\s*(.+)/iu);
+      return m ? { title: m[1].trim() } : null;
+    },
+  },
+  {
+    type: 'QUERY_STATUS',
+    patterns: [
+      /任务状态/u,
+      /现在有几个任务/u,
+      /查一下任务/u,
+      /有多少任务/u,
+      /任务统计/u,
+    ],
+    extract: () => ({}),
+  },
+  {
+    type: 'QUERY_GOALS',
+    patterns: [
+      /OKR\s*进度/ui,
+      /目标进度/u,
+      /有哪些OKR/ui,
+      /当前OKR/ui,
+    ],
+    extract: () => ({}),
+  },
+];
+
+/**
+ * 检测用户消息中的动作意图
+ * @param {string} message - 用户消息
+ * @returns {{ type: string, params: Object } | null}
+ */
+export function detectAction(message) {
+  if (!message || typeof message !== 'string') return null;
+
+  for (const rule of ACTION_PATTERNS) {
+    for (const pattern of rule.patterns) {
+      if (pattern.test(message)) {
+        const params = rule.extract(message);
+        if (params !== null) {
+          return { type: rule.type, params };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 执行检测到的动作，返回追加到 reply 末尾的文本
+ * @param {{ type: string, params: Object }} action
+ * @returns {Promise<string>}
+ */
+export async function executeAction(action) {
+  if (!action) return '';
+
+  try {
+    switch (action.type) {
+      case 'CREATE_TASK': {
+        const { title } = action.params;
+        if (!title) return '\n\n⚠️ 创建任务失败：请提供任务标题';
+
+        const result = await createTask({
+          title,
+          priority: 'P2',
+          task_type: 'research',
+          trigger_source: 'chat',
+        });
+
+        const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
+        return `\n\n✅ 已创建任务：${title}${dedupNote}`;
+      }
+
+      case 'CREATE_LEARNING': {
+        const { title } = action.params;
+        if (!title) return '\n\n⚠️ 记录学习失败：请提供学习内容';
+
+        await pool.query(
+          `INSERT INTO learnings (title, category, content, trigger_event) VALUES ($1, $2, $3, $4)`,
+          [title, 'manual', title, 'chat_action']
+        );
+
+        return `\n\n✅ 已记录学习：${title}`;
+      }
+
+      case 'QUERY_STATUS': {
+        const result = await pool.query(
+          `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+        );
+        if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+        const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+        return `\n\n📊 当前任务统计：\n${lines}`;
+      }
+
+      case 'QUERY_GOALS': {
+        const result = await pool.query(
+          `SELECT title, status, progress FROM goals ORDER BY created_at DESC LIMIT 5`
+        );
+        if (result.rows.length === 0) return '\n\n📊 暂无 OKR 目标';
+        const lines = result.rows.map(r => `  - ${r.title}（${r.status}, ${r.progress}%）`).join('\n');
+        return `\n\n📊 OKR 目标：\n${lines}`;
+      }
+
+      default:
+        return '';
+    }
+  } catch (err) {
+    console.warn('[chat-action-dispatcher] Action execution failed:', err.message);
+    return `\n\n⚠️ 操作执行时遇到问题：${err.message}`;
+  }
+}
+
+/**
+ * 检测并执行动作（对外统一入口）
+ * @param {string} message - 用户消息
+ * @returns {Promise<string>} 追加到 reply 末尾的文本，无动作时返回 ''
+ */
+export async function detectAndExecuteAction(message) {
+  const action = detectAction(message);
+  if (!action) return '';
+  return executeAction(action);
+}

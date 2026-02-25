@@ -1,0 +1,66 @@
+# Node.js
+node_modules/
+
+# Environment (ALL .env files except .env.example)
+.env
+.env.local
+.env.docker
+.env.production
+
+# Data
+data/
+data.old/
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Temp files
+*.tmp
+*.bak
+*.backup
+
+# Dev workflow
+.dev-mode
+.dev-mode.lock
+.gate-*
+.quality-gate-passed
+
+# Brain deployment
+.brain-versions
+
+# Build artifacts
+frontend/dist/
+
+# Coverage reports
+brain/coverage/
+coverage/
+*.lcov
+
+# Images (screenshots, temp assets)
+*.png
+*.jpg
+*.jpeg
+
+# Archive (old PRDs, DODs, etc.)
+.archive/
+# Trigger CI
+
+# Claude Code worktrees
+.claude/worktrees/

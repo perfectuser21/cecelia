@@ -1,0 +1,80 @@
+# == Production Environment ==
+# Uses pre-built immutable image (brain/Dockerfile).
+# Build first: bash scripts/brain-build.sh
+# Deploy:      bash scripts/brain-deploy.sh
+
+services:
+  node-brain:
+    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    container_name: cecelia-node-brain
+    network_mode: host
+    pid: host
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+    volumes:
+      # Skills + cecelia-run (read-only)
+      - /home/xx/.claude:/home/xx/.claude:ro
+      - /home/xx/bin:/home/xx/bin:ro
+      # Credentials (read-only, mapped to container user homedir)
+      - /home/xx/.credentials:/home/cecelia/.credentials:ro
+      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
+      - /home/xx/perfect21/cecelia/workflows:/home/xx/perfect21/cecelia/workflows:ro
+      # HEARTBEAT.md (read-write for GET/PUT API)
+      - /home/xx/perfect21/cecelia/core/HEARTBEAT.md:/HEARTBEAT.md:rw
+      # workers.config.json (read-write for PUT /staff/workers API)
+      - /home/xx/perfect21/cecelia/workflows/staff/workers.config.json:/home/xx/perfect21/cecelia/workflows/staff/workers.config.json:rw
+      # Timezone (read-only)
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    env_file:
+      - .env.docker
+    environment:
+      - TZ=Asia/Shanghai
+      - ENV_REGION=${ENV_REGION:-us}
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-cecelia}
+      - DB_USER=${DB_USER:-cecelia}
+      - DB_PASSWORD=${DB_PASSWORD:-cecelia}
+      - BRAIN_PORT=5221
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
+      # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
+      # CECELIA_MAX_SEATS: hard cap on concurrent slots (overrides auto-calc, set 0 to disable)
+      - CECELIA_MAX_SEATS=${CECELIA_MAX_SEATS:-8}
+      - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
+      - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: node:20-alpine
+    container_name: cecelia-frontend
+    network_mode: host
+    working_dir: /app
+    volumes:
+      - /home/xx/perfect21/cecelia/workspace/apps/dashboard/dist:/app
+      - ./frontend-proxy.js:/frontend-proxy.js:ro
+    command: node /frontend-proxy.js
+    depends_on:
+      node-brain:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"

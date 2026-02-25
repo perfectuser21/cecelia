@@ -1,0 +1,173 @@
+{
+  "version": "1.0",
+  "date": "2026-02-23",
+  "description": "7模型 × 5维度全面 Benchmark，用于指导 Cecelia 模型路由决策",
+  "methodology": {
+    "runner": "headless claude CLI + MiniMax API direct",
+    "tests": [
+      {
+        "id": "h1",
+        "name": "编程",
+        "type": "coding",
+        "description": "从零实现递归下降 JS 表达式求值器（不用 eval），支持变量、函数、优先级、错误处理",
+        "scoring": "0-5，看代码完整性和测试通过率"
+      },
+      {
+        "id": "h2",
+        "name": "调试",
+        "type": "debugging",
+        "description": "找出 TaskQueue 代码里 5 个 bug（循环越界/setInterval泄漏/race condition/results未清/isDone逻辑错）",
+        "scoring": "每找到一个 bug 得 1 分，满分 5"
+      },
+      {
+        "id": "h3",
+        "name": "算法",
+        "type": "algorithm",
+        "description": "实现 maxProfit(prices, k) O(n×k) DP，处理边界，扩展手续费/冷却期",
+        "scoring": "0-5，看状态转移方程正确性和边界处理"
+      },
+      {
+        "id": "h4",
+        "name": "商业分析",
+        "type": "business",
+        "description": "麦肯锡风格并购决策分析（战略矩阵/风险/估值/谈判/建议）",
+        "scoring": "0-5，看结构完整性和分析深度"
+      },
+      {
+        "id": "h5",
+        "name": "系统设计",
+        "type": "sysdesign",
+        "description": "设计 Cecelia 智能任务调度器（算法/数据结构/复杂度/死锁/测试用例）",
+        "scoring": "0-5，看覆盖度和设计质量"
+      }
+    ]
+  },
+  "results": [
+    {
+      "model_id": "claude-opus-4-6",
+      "display_name": "Claude Opus 4.6",
+      "provider": "anthropic",
+      "tests": {
+        "h1": { "elapsed_s": 54, "quality": 5, "notes": "23/23 tests pass，实际写文件跑测试" },
+        "h2": { "elapsed_s": 49, "quality": 5, "notes": "5/5 bugs found" },
+        "h3": { "elapsed_s": 81, "quality": 5 },
+        "h4": { "elapsed_s": 67, "quality": 5, "notes": "最深度的并购分析，每维度量化影响" },
+        "h5": { "elapsed_s": 77, "quality": 4, "notes": "完整设计 11138 chars" }
+      },
+      "avg_speed_s": 66,
+      "quality_score": 24,
+      "max_quality": 25,
+      "recommended_for": ["dev", "review", "audit"],
+      "not_recommended_for": [],
+      "key_insight": "最快+最强。coding 题实际创建文件跑测试再汇报结果。无思维链 overhead。"
+    },
+    {
+      "model_id": "claude-sonnet-4-6",
+      "display_name": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "tests": {
+        "h1": { "elapsed_s": 88, "quality": 5, "notes": "23/23 tests pass" },
+        "h2": { "elapsed_s": 27, "quality": 4, "notes": "4/5 bugs found（漏 Bug5 isDone）" },
+        "h3": { "elapsed_s": 37, "quality": 4 },
+        "h4": { "elapsed_s": 68, "quality": 4 },
+        "h5": { "elapsed_s": 143, "quality": 5, "notes": "18/18 验证通过，12171 chars 完整" }
+      },
+      "avg_speed_s": 73,
+      "quality_score": 22,
+      "max_quality": 25,
+      "recommended_for": ["review", "qa", "audit"],
+      "not_recommended_for": [],
+      "key_insight": "性价比最高。自验证能力（运行代码测试）。h5 系统设计甚至比 Opus 更完整。"
+    },
+    {
+      "model_id": "MiniMax-M2.5-highspeed",
+      "display_name": "MiniMax M2.5 Fast",
+      "provider": "minimax",
+      "tests": {
+        "h1": { "elapsed_s": 134, "quality": 3, "notes": "10013 chars，无自验证", "thinking_tokens": 11139 },
+        "h2": { "elapsed_s": 63,  "quality": 2, "notes": "2/5 bugs found", "thinking_tokens": 4868 },
+        "h3": { "elapsed_s": 131, "quality": 3, "notes": "3947 chars", "thinking_tokens": 14237 },
+        "h4": { "elapsed_s": 28,  "quality": 4, "notes": "商业分析快！仅 482 thinking tokens", "thinking_tokens": 482 },
+        "h5": { "elapsed_s": 120, "quality": 4, "notes": "14448 chars 完整", "thinking_tokens": 5253 }
+      },
+      "avg_speed_s": 95,
+      "quality_score": 16,
+      "max_quality": 25,
+      "recommended_for": ["thalamus", "talk", "research", "decomp_review", "business_analysis"],
+      "not_recommended_for": ["dev", "review", "audit"],
+      "key_insight": "非编程任务最佳 MiniMax。商业分析/意图路由只需 28-63s 且仅用少量 thinking tokens。编程任务 2/5 bug，不适合。"
+    },
+    {
+      "model_id": "MiniMax-M2",
+      "display_name": "MiniMax M2 (Coding Plan)",
+      "provider": "minimax",
+      "tests": {
+        "h1": { "elapsed_s": 263, "quality": 4, "notes": "12169 chars，完整实现" },
+        "h2": { "elapsed_s": 129, "quality": 3, "notes": "3-4/5 bugs found" },
+        "h3": { "elapsed_s": 188, "quality": 3 },
+        "h4": { "elapsed_s": 49,  "quality": 4 },
+        "h5": { "elapsed_s": 241, "quality": 4, "notes": "13712 chars 完整" }
+      },
+      "avg_speed_s": 174,
+      "quality_score": 18,
+      "max_quality": 25,
+      "recommended_for": ["heavy_analysis"],
+      "not_recommended_for": ["dev", "review"],
+      "key_insight": "比 M2.5 质量略好（Coding Plan 特化），但慢 2-3x。编程类每题需要 130-260s，不适合 Cecelia 实时调度。"
+    },
+    {
+      "model_id": "MiniMax-M2.5",
+      "display_name": "MiniMax M2.5 Standard",
+      "provider": "minimax",
+      "tests": {
+        "h1": { "elapsed_s": 229, "quality": 3 },
+        "h2": { "elapsed_s": 258, "quality": 2 },
+        "h3": { "elapsed_s": 155, "quality": 3 },
+        "h4": { "elapsed_s": 60,  "quality": 4 },
+        "h5": { "elapsed_s": 221, "quality": 4 }
+      },
+      "avg_speed_s": 185,
+      "quality_score": 16,
+      "max_quality": 25,
+      "recommended_for": [],
+      "not_recommended_for": ["dev", "review"],
+      "key_insight": "质量与 M2.5-highspeed 相当，但慢 2x。直接用 M2.5-highspeed 替代，无需保留标准版。"
+    },
+    {
+      "model_id": "MiniMax-M2.1",
+      "display_name": "MiniMax M2.1",
+      "provider": "minimax",
+      "tests": {
+        "h1": { "elapsed_s": 172, "quality": 0, "notes": "35013 chars 全是思维链，无实际答案" },
+        "h2": { "elapsed_s": 347, "quality": 0, "notes": "16000 tokens 全被思维链吃尽，0 chars 输出" },
+        "h3": { "elapsed_s": 260, "quality": 2 },
+        "h4": { "elapsed_s": 62,  "quality": 3 },
+        "h5": { "elapsed_s": 238, "quality": 3, "notes": "23086 chars，绝大部分是思维链" }
+      },
+      "avg_speed_s": 216,
+      "quality_score": 8,
+      "max_quality": 25,
+      "recommended_for": [],
+      "not_recommended_for": ["ALL"],
+      "key_insight": "⚠️ 纯推理模型（reasoning-only）：响应仅包含 <think> 块，无独立答案段。strip 思维链后输出为空。不可用于正常 completion 任务。应从所有 agent allowed_models 中移除。",
+      "deprecated": true
+    }
+  ],
+  "key_insights": [
+    "Claude 模型（Opus/Sonnet）有自验证能力：headless 模式会实际创建文件、运行测试、报告通过率。MiniMax 只输出文字，不验证。",
+    "MiniMax 思维链 overhead：编程/算法题 80-90% token 消耗在思维链，实际输出少，且需要 max_tokens ≥ 16000 才能不被截断。",
+    "MiniMax-M2.1 是纯推理模型，响应只有 <think> 块，无法用于正常 completion，已废弃。",
+    "商业分析（h4）几乎不需要推理：M2.5hs 只用 482 thinking tokens，28s 完成，与 Claude 质量相当。",
+    "Opus 意外地比 Sonnet 快（66s vs 73s）：更聪明，更直接，不需要写大段废话。"
+  ],
+  "routing_recommendations": {
+    "dev":          { "primary": "claude-opus-4-6",          "fallback": "claude-sonnet-4-6" },
+    "review":       { "primary": "claude-sonnet-4-6",        "fallback": "claude-opus-4-6" },
+    "qa":           { "primary": "claude-sonnet-4-6",        "fallback": "claude-opus-4-6" },
+    "audit":        { "primary": "claude-sonnet-4-6",        "fallback": "claude-opus-4-6" },
+    "thalamus":     { "primary": "MiniMax-M2.5-highspeed",   "fallback": "claude-haiku-4-5-20251001" },
+    "talk":         { "primary": "MiniMax-M2.5-highspeed",   "fallback": "MiniMax-M2.5" },
+    "research":     { "primary": "MiniMax-M2.5-highspeed",   "fallback": "MiniMax-M2.5" },
+    "decomp_review":{ "primary": "MiniMax-M2.5-highspeed",   "fallback": "claude-sonnet-4-6" }
+  }
+}
