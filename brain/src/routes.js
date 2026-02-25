@@ -64,6 +64,7 @@ import {
   checkInitiativeDecomposition,
   INVENTORY_CONFIG
 } from './decomposition-checker.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -7144,7 +7145,7 @@ router.patch('/desires/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const ALLOWED = ['expressed', 'suppressed'];
+    const ALLOWED = ['expressed', 'suppressed', 'acknowledged'];
     if (!ALLOWED.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${ALLOWED.join(', ')}` });
     }
@@ -7158,6 +7159,71 @@ router.patch('/desires/:id', async (req, res) => {
     res.json({ success: true, desire: rows[0] });
   } catch (err) {
     console.error('[API] desires/:id patch error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/dispatch
+ * 手动派发单个任务（用户从前端点击"派发"按钮）
+ * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
+ */
+router.post('/tasks/:id/dispatch', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. 查找任务
+    const taskResult = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'task not found' });
+    }
+
+    const task = taskResult.rows[0];
+
+    // 2. 只允许 queued 状态的任务被派发
+    if (task.status !== 'queued') {
+      return res.status(409).json({
+        error: `task status is '${task.status}', only 'queued' tasks can be dispatched`,
+        current_status: task.status
+      });
+    }
+
+    // 3. 更新为 in_progress
+    await pool.query(
+      `UPDATE tasks SET status = 'in_progress', updated_at = NOW(),
+       metadata = COALESCE(metadata, '{}'::jsonb) || '{"manually_dispatched": true}'::jsonb
+       WHERE id = $1`,
+      [id]
+    );
+
+    // 4. 检查执行器可用性
+    const ceceliaAvailable = await checkCeceliaRunAvailable();
+    if (!ceceliaAvailable.available) {
+      await pool.query(`UPDATE tasks SET status = 'queued', updated_at = NOW() WHERE id = $1`, [id]);
+      return res.status(503).json({
+        error: 'executor not available',
+        detail: ceceliaAvailable.error
+      });
+    }
+
+    // 5. 触发执行
+    const execResult = await triggerCeceliaRun(task);
+    if (!execResult.success) {
+      await pool.query(`UPDATE tasks SET status = 'queued', updated_at = NOW() WHERE id = $1`, [id]);
+      return res.status(500).json({
+        error: 'dispatch failed',
+        detail: execResult.error || execResult.reason
+      });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      title: task.title,
+      run_id: execResult.runId
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/dispatch error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
