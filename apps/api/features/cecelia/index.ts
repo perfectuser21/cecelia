@@ -22,21 +22,11 @@ const manifest: FeatureManifest = {
         order: 1,
       },
     },
-    {
-      path: '/cecelia/config',
-      component: 'CeceliaConfigPage',
-      navItem: {
-        label: '配置',
-        icon: 'Settings2',
-        group: 'cecelia',
-        order: 2,
-      },
-    },
+    { path: '/cecelia/config', redirect: '/system/team' },
   ],
 
   components: {
     CeceliaPage: () => import('./pages/CeceliaPage'),
-    CeceliaConfigPage: () => import('./pages/CeceliaConfigPage'),
   },
 };
 

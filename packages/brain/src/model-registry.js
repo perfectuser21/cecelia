@@ -97,6 +97,24 @@ export const AGENTS = [
     recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
+  {
+    id: 'reflection',
+    name: 'L3 反思层',
+    description: '定期深度反思、生成洞察',
+    layer: 'brain',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    recommended_model: 'claude-opus-4-6',
+    fixed_provider: null,
+  },
+  {
+    id: 'mouth',
+    name: '嘴巴',
+    description: '对话生成、对外接口',
+    layer: 'brain',
+    allowed_models: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
+    recommended_model: 'MiniMax-M2.5-highspeed',
+    fixed_provider: null,
+  },
   // ---- 执行层 ----
   {
     id: 'dev',

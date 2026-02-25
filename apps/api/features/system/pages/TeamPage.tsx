@@ -13,6 +13,7 @@ import {
   type ModelEntry,
   type CredentialEntry,
 } from '../api/staffApi';
+import BrainLayerConfig from '../components/BrainLayerConfig';
 
 
 
@@ -292,6 +293,7 @@ export default function TeamPage() {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
   const [selected, setSelected]         = useState<Worker | null>(null);
+  const [activeTab, setActiveTab]       = useState('cecelia');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -346,12 +348,41 @@ export default function TeamPage() {
       ? <Brain size={18} className="text-purple-500" />
       : <Building2 size={18} className="text-blue-500" />;
 
-  return (
-    <div className="p-6 space-y-10">
+  const areaLabel = (id: string) => areas[id]?.name || (id === 'cecelia' ? 'Cecelia' : id === 'zenithjoy' ? 'ZenithJoy' : id);
 
-      {/* ── Team ──────────────────────────────────────────── */}
+  const renderWorkers = (areaId: string) => {
+    const deptMap = groupByDept(areaId);
+    if (!Object.keys(deptMap).length) return null;
+    return (
+      <div className="space-y-6">
+        {Object.entries(deptMap).map(([dept, deptTeams]) => {
+          const workers = deptTeams.flatMap(t => t.workers);
+          return (
+            <div key={dept}>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{dept}</span>
+                <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
+                  {workers.length}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {workers.map(w => (
+                  <WorkerCard key={w.id} worker={w} onClick={() => setSelected(w)} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-6 space-y-8">
+
+      {/* ── Header + Tab Bar ─────────────────────────────── */}
       <section>
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-5">
           <Users size={22} className="text-gray-500" />
           <div>
             <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Team</h2>
@@ -359,49 +390,35 @@ export default function TeamPage() {
           </div>
         </div>
 
-        <div className="space-y-8">
-          {areaIds.map(areaId => {
-            const area = areas[areaId];
-            const deptMap = groupByDept(areaId);
-            if (!Object.keys(deptMap).length) return null;
-            return (
-              <div key={areaId}>
-                <div className="flex items-center gap-2 mb-4">
-                  {areaIcon(areaId)}
-                  <h3 className="text-base font-semibold text-gray-800 dark:text-gray-200">
-                    {area?.name || areaId}
-                  </h3>
-                  {area?.description && (
-                    <span className="text-xs text-gray-400">{area.description}</span>
-                  )}
-                </div>
-                <div className="pl-4 space-y-6 border-l-2 border-gray-100 dark:border-gray-800">
-                  {Object.entries(deptMap).map(([dept, deptTeams]) => {
-                    const workers = deptTeams.flatMap(t => t.workers);
-                    return (
-                      <div key={dept}>
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{dept}</span>
-                          <span className="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
-                            {workers.length}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {workers.map(w => (
-                            <WorkerCard key={w.id} worker={w} onClick={() => setSelected(w)} />
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+        {/* Area Tab Bar */}
+        <div className="flex gap-1 p-1 rounded-lg bg-gray-100 dark:bg-gray-800/60 w-fit mb-6">
+          {areaIds.map(areaId => (
+            <button
+              key={areaId}
+              onClick={() => setActiveTab(areaId)}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                activeTab === areaId
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+            >
+              {areaIcon(areaId)}
+              {areaLabel(areaId)}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Tab Content ────────────────────────────────── */}
+        <div className="space-y-6">
+          {/* Brain Layer Config — only for Cecelia tab */}
+          {activeTab === 'cecelia' && <BrainLayerConfig />}
+
+          {/* Workers for active tab */}
+          {renderWorkers(activeTab)}
         </div>
       </section>
 
-      {/* ── Skills ──────────────────────────────────────── */}
+      {/* ── Skills（所有 tab 共享）──────────────────────── */}
       <section>
         <div className="flex items-center gap-3 mb-4">
           <Puzzle size={22} className="text-gray-500" />
