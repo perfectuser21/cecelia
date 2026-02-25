@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.97.0"
-updated: "2026-02-23"
+version: "2.98.0"
+updated: "2026-02-25"
 changelog:
+  - 2.98.0: v12.30.4 - Skills 中 --base develop 改为自动检测（有 develop 用 develop，否则用 main）
   - 2.97.0: v12.30.1 - cleanup.sh Step [9] 自动删除已合并 cp-* 分支（git branch --merged 检测 + W6-005）
   - 2.96.0: v12.30.0 - /dev 步骤重构（Step 4 探索/Step 5 DoD/Step 6 写代码+测试/Step 7 本地验证 + .dev-mode 字段重命名 + SKILL.md v3.2）
   - 2.95.0: v12.29.0 - Step 0/Step 3 worktree 检测盲区修复（主仓库 cp-*/feature-* 强制 worktree + W6-004）
@@ -274,14 +275,15 @@ platform_features:
     name: Unified Dev Workflow
     status: Committed
     priority: P0
-    version: "12.4.9"
-    updated: "2026-02-04"
+    version: "12.30.4"
+    updated: "2026-02-25"
     description: |
       v2.2.0 统一开发工作流（删除阶段检测 + 强制 Task Checkpoint）：
       - 统一完成条件：PR 创建 + CI 通过 + PR 合并 = DONE
       - Task Checkpoint：TaskCreate/TaskUpdate 追踪进度
       - 从头到尾一直执行，不在 PR 创建后停止
       - Ralph Loop: 用户直接在 Claude Code 会话内输入 /ralph-loop 命令
+      - v12.30.4: Skills 中 --base develop 改为自动检测（有 origin/develop 用 develop，否则用 main）
       - v12.4.9: 添加版本更新流程文档（防止 package-lock.json 再次不同步）
       - v12.4.3: 强调核心目标 - 成功合并 PR，不停止，遇到问题自动修复
       - v12.4.2: 添加 Step 11 任务列表清理逻辑（防止任务残留）
@@ -507,8 +509,8 @@ platform_features:
     name: RISK SCORE Trigger
     status: Committed
     priority: P1
-    version: "11.0.0"
-    updated: "2026-01-27"
+    version: "11.0.1"
+    updated: "2026-02-25"
     description: |
       基于 R1-R8 规则的 RISK SCORE 自动触发机制：
       - 每个规则 1 分，≥3 分自动触发 QA Decision Node
@@ -550,8 +552,8 @@ platform_features:
     name: Structured Audit
     status: Committed
     priority: P1
-    version: "11.0.0"
-    updated: "2026-01-27"
+    version: "11.0.1"
+    updated: "2026-02-25"
     description: |
       结构化 Audit 验证流程，四步自动化检查：
       - Scope 验证：对比实际改动与 QA-DECISION.md
