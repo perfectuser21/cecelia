@@ -1,20 +1,21 @@
 /**
- * CeceliaPage V2 Phase 3 — 管家指挥室
+ * CeceliaPage V2 Phase 3.1 — 管家指挥室
  *
- * Layout: AmbientGlow → PulseStrip → ActionZone → Three-column grid → ChatDrawer
+ * Layout: AmbientGlow → PulseStrip → ActionZone → Three-column grid
+ * Chat: Cmd+K 命令面板 + 右下角迷你气泡（替代底部 ChatDrawer）
  * Design: Command center, not chat window.
  * Data: WebSocket events + REST fallback for initial load
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Sparkles } from 'lucide-react';
 import { AmbientGlow } from '../components/AmbientGlow';
 import { PulseStrip } from '../components/PulseStrip';
 import { ActionZone } from '../components/ActionZone';
 import { AgentMonitor } from '../components/AgentMonitor';
 import { TodayOverview } from '../components/TodayOverview';
 import { EventStream } from '../components/EventStream';
-import { ChatDrawer } from '../components/ChatDrawer';
+import { CommandPalette } from '../components/CommandPalette';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
 import { useBriefing } from '../hooks/useBriefing';
 import type { EventType } from '../components/cards/EventCard';
@@ -70,6 +71,8 @@ interface FlowEvent {
 
 export default function CeceliaPage() {
   const [fullscreen, setFullscreen] = useState(false);
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+  const [toast, setToast] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
 
   // ── Data hooks ──────────────────────────────────────────
   const { connected, subscribe } = useCeceliaWS();
@@ -88,12 +91,29 @@ export default function CeceliaPage() {
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
   const eventIdRef = useRef(0);
 
-  // ── Escape exits fullscreen ─────────────────────────────
+  // ── Toast auto-dismiss ────────────────────────────────
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && fullscreen) setFullscreen(false); };
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showToast = useCallback((text: string, type: 'error' | 'success' = 'error') => {
+    setToast({ text, type });
+  }, []);
+
+  // ── Cmd+K global shortcut ─────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdkOpen(prev => !prev);
+      }
+      if (e.key === 'Escape' && fullscreen && !cmdkOpen) setFullscreen(false);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen]);
+  }, [fullscreen, cmdkOpen]);
 
   // ── Initial REST fetch ──────────────────────────────────
   const fetchActivity = useCallback(async () => {
@@ -234,29 +254,47 @@ export default function CeceliaPage() {
     const key = ids.join(',');
     setLoadingActions(prev => new Set(prev).add(key));
     try {
-      await Promise.all(ids.map(id =>
+      const results = await Promise.all(ids.map(id =>
         fetch(`/api/brain/desires/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'acknowledged' }),
         })
       ));
+      const failed = results.filter(r => !r.ok);
+      if (failed.length > 0) {
+        showToast(`确认失败 (${failed.length}/${results.length})`, 'error');
+      } else {
+        showToast('已确认', 'success');
+      }
       const r = await fetch('/api/brain/desires?status=pending&limit=20');
       if (r.ok) { const d = await r.json(); setDesires(Array.isArray(d) ? d : (d.desires || [])); }
-    } catch { /* */ }
-    finally { setLoadingActions(prev => { const n = new Set(prev); n.delete(key); return n; }); }
-  }, []);
+    } catch {
+      showToast('确认请求失败，请重试', 'error');
+    } finally {
+      setLoadingActions(prev => { const n = new Set(prev); n.delete(key); return n; });
+    }
+  }, [showToast]);
 
   const dispatchTask = useCallback(async (taskId: string) => {
     setLoadingActions(prev => new Set(prev).add(taskId));
     try {
-      await fetch(`/api/brain/tasks/${taskId}/dispatch`, { method: 'POST' });
+      const res = await fetch(`/api/brain/tasks/${taskId}/dispatch`, { method: 'POST' });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || `派发失败 (${res.status})`, 'error');
+      } else {
+        showToast('已派发', 'success');
+      }
       const r = await fetch('/api/brain/tasks?status=queued&limit=12');
       if (r.ok) { const d = await r.json(); setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); }
       fetchActivity();
-    } catch { /* */ }
-    finally { setLoadingActions(prev => { const n = new Set(prev); n.delete(taskId); return n; }); }
-  }, [fetchActivity]);
+    } catch {
+      showToast('派发请求失败，请重试', 'error');
+    } finally {
+      setLoadingActions(prev => { const n = new Set(prev); n.delete(taskId); return n; });
+    }
+  }, [fetchActivity, showToast]);
 
   // ── Render ──────────────────────────────────────────────
 
@@ -340,10 +378,44 @@ export default function CeceliaPage() {
             </div>
           </div>
 
-          {/* Chat Drawer — bottom, collapsed by default */}
-          <ChatDrawer />
         </div>
       </AmbientGlow>
+
+      {/* Cmd+K Command Palette */}
+      <CommandPalette open={cmdkOpen} onClose={() => setCmdkOpen(false)} />
+
+      {/* Mini floating bubble — bottom-right */}
+      {!cmdkOpen && (
+        <button
+          onClick={() => setCmdkOpen(true)}
+          style={{
+            position: 'fixed', right: 16, bottom: 16, zIndex: 100,
+            width: 40, height: 40, borderRadius: '50%', border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(135deg, #7c3aed, #6d28d9)',
+            boxShadow: '0 4px 20px rgba(124,58,237,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'transform 0.2s, box-shadow 0.2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.1)'; e.currentTarget.style.boxShadow = '0 6px 28px rgba(124,58,237,0.5)'; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(124,58,237,0.4)'; }}
+          title="问 Cecelia (⌘K)"
+        >
+          <Sparkles size={18} color="#fff" />
+        </button>
+      )}
+
+      {/* Toast notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 70, left: '50%', transform: 'translateX(-50%)', zIndex: 10002,
+          padding: '8px 16px', borderRadius: 8, fontSize: 13,
+          background: toast.type === 'error' ? 'rgba(239,68,68,0.9)' : 'rgba(16,185,129,0.9)',
+          color: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          pointerEvents: 'none',
+        }}>
+          {toast.text}
+        </div>
+      )}
 
       <style>{`
         @keyframes spin {
