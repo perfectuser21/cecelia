@@ -37,3 +37,6 @@ queue/
 runs/
 state/
 db/
+
+# Claude Code worktrees
+.claude/worktrees/

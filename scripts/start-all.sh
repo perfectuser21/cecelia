@@ -1,10 +1,5 @@
-#!/bin/bash
-# Start All Services - One-command startup for Cecelia Quality Platform
-
+#!/usr/bin/env bash
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
 GREEN='\033[0;32m'
@@ -12,143 +7,135 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}"
-cat <<'EOF'
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║      Cecelia Quality Platform - Start All Services      ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
-EOF
-echo -e "${NC}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
 
-# Check dependencies
-echo "Checking dependencies..."
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  Starting Cecelia Quality Platform${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo
 
-# Check Node.js
+# Step 1: Check dependencies
+echo -e "${YELLOW}Step 1: Checking dependencies...${NC}"
+
 if ! command -v node &> /dev/null; then
-    echo -e "${RED}❌ Node.js not found${NC}"
-    exit 1
+  echo -e "${RED}Error: Node.js is not installed${NC}"
+  exit 1
 fi
 
-# Check SQLite3
-if ! command -v sqlite3 &> /dev/null; then
-    echo -e "${YELLOW}⚠️  SQLite3 not found. Run: sudo apt-get install -y sqlite3${NC}"
-    echo "Continuing without database features..."
-fi
-
-# Check jq
 if ! command -v jq &> /dev/null; then
-    echo -e "${YELLOW}⚠️  jq not found. Run: sudo apt-get install -y jq${NC}"
+  echo -e "${YELLOW}Warning: jq is not installed (optional)${NC}"
 fi
 
-echo -e "${GREEN}✅ Dependencies OK${NC}"
-echo ""
+echo -e "${GREEN}✓ Dependencies OK${NC}"
+echo
 
-# Step 1: Initialize Database (if not exists)
-if [[ ! -f "$PROJECT_ROOT/db/cecelia.db" && -x "$PROJECT_ROOT/scripts/db-init.sh" ]]; then
-    echo "📦 Initializing database..."
-    bash "$PROJECT_ROOT/scripts/db-init.sh" init
-    echo ""
+# Step 2: Initialize data directories
+echo -e "${YELLOW}Step 2: Initializing data directories...${NC}"
+
+mkdir -p state queue runs worker
+
+if [ ! -f state/state.json ]; then
+  echo '{
+  "health": "ok",
+  "queueLength": 0,
+  "priorityCounts": {"P0": 0, "P1": 0, "P2": 0},
+  "lastRun": null,
+  "lastHeartbeat": null,
+  "stats": {"totalTasks": 0, "successRate": 0},
+  "systemHealth": {
+    "inbox_count": 0,
+    "todo_count": 0,
+    "doing_count": 0,
+    "done_count": 0,
+    "failed_24h": 0
+  },
+  "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+}' > state/state.json
+  echo -e "${GREEN}✓ Initialized state/state.json${NC}"
 fi
 
-# Step 2: Start Gateway HTTP Server
-echo "🚪 Starting Gateway HTTP Server..."
-if pgrep -f "gateway-http.js" > /dev/null; then
-    echo -e "${YELLOW}Gateway HTTP already running${NC}"
+if [ ! -f queue/queue.jsonl ]; then
+  touch queue/queue.jsonl
+  echo -e "${GREEN}✓ Initialized queue/queue.jsonl${NC}"
+fi
+
+echo
+
+# Step 3: Install API dependencies
+echo -e "${YELLOW}Step 3: Installing API dependencies...${NC}"
+
+cd api
+if [ ! -d node_modules ]; then
+  npm install
 else
-    cd "$PROJECT_ROOT/gateway"
-    nohup node gateway-http.js > /tmp/gateway-http.log 2>&1 &
-    GATEWAY_PID=$!
-    sleep 2
-
-    if pgrep -f "gateway-http.js" > /dev/null; then
-        echo -e "${GREEN}✅ Gateway HTTP started (PID: $GATEWAY_PID)${NC}"
-        echo "   Logs: tail -f /tmp/gateway-http.log"
-        echo "   URL: http://localhost:5680"
-    else
-        echo -e "${RED}❌ Failed to start Gateway HTTP${NC}"
-    fi
+  echo -e "${GREEN}✓ Dependencies already installed${NC}"
 fi
-echo ""
+cd ..
 
-# Step 3: Start Dashboard API Server
-echo "🖥️  Starting Dashboard API Server..."
+echo
 
-# Install API dependencies if needed
-if [[ ! -d "$PROJECT_ROOT/api/node_modules" ]]; then
-    echo "Installing API dependencies..."
-    cd "$PROJECT_ROOT/api"
-    npm install --silent
-fi
+# Step 4: Start Dashboard API
+echo -e "${YELLOW}Step 4: Starting Dashboard API (Port 5681)...${NC}"
 
-if pgrep -f "api/server.js" > /dev/null; then
-    echo -e "${YELLOW}Dashboard API already running${NC}"
-else
-    cd "$PROJECT_ROOT/api"
-    nohup node server.js > /tmp/cecelia-api.log 2>&1 &
-    API_PID=$!
-    sleep 2
+cd api
+nohup npm start > /tmp/cecelia-api.log 2>&1 &
+API_PID=$!
+echo "$API_PID" > /tmp/cecelia-api.pid
+cd ..
 
-    if pgrep -f "api/server.js" > /dev/null; then
-        echo -e "${GREEN}✅ Dashboard API started (PID: $API_PID)${NC}"
-        echo "   Logs: tail -f /tmp/cecelia-api.log"
-        echo "   URL: http://localhost:5681"
-    else
-        echo -e "${RED}❌ Failed to start Dashboard API${NC}"
-    fi
-fi
-echo ""
+echo -e "${GREEN}✓ Dashboard API started (PID: $API_PID)${NC}"
+echo -e "  Logs: /tmp/cecelia-api.log"
+echo
 
-# Step 4: Test services
-echo "🧪 Testing services..."
+# Step 5: Wait for API to be ready
+echo -e "${YELLOW}Step 5: Waiting for API to be ready...${NC}"
 
-# Test Gateway HTTP
-echo -n "  Gateway HTTP... "
-if curl -s http://localhost:5680/health > /dev/null 2>&1; then
-    echo -e "${GREEN}OK${NC}"
-else
-    echo -e "${RED}FAILED${NC}"
-fi
+MAX_WAIT=30
+COUNTER=0
 
-# Test Dashboard API
-echo -n "  Dashboard API... "
-if curl -s http://localhost:5681/api/health > /dev/null 2>&1; then
-    echo -e "${GREEN}OK${NC}"
-else
-    echo -e "${RED}FAILED${NC}"
-fi
+while [ $COUNTER -lt $MAX_WAIT ]; do
+  if curl -s http://localhost:5681/api/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ API is ready!${NC}"
+    break
+  fi
+  
+  COUNTER=$((COUNTER + 1))
+  if [ $COUNTER -eq $MAX_WAIT ]; then
+    echo -e "${RED}Error: API failed to start within ${MAX_WAIT}s${NC}"
+    echo -e "${YELLOW}Check logs: tail /tmp/cecelia-api.log${NC}"
+    exit 1
+  fi
+  
+  sleep 1
+done
 
-echo ""
+echo
+
+# Step 6: Health check
+echo -e "${YELLOW}Step 6: Running health checks...${NC}"
+
+HEALTH_RESPONSE=$(curl -s http://localhost:5681/api/health)
+echo -e "${GREEN}✓ Health check OK${NC}"
+echo -e "  Response: $HEALTH_RESPONSE"
+echo
 
 # Summary
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}✅ All services started!${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-
-echo "Services running:"
-echo "  1. Gateway HTTP:    http://localhost:5680"
-echo "  2. Dashboard API:   http://localhost:5681"
-echo ""
-
-echo "Quick commands:"
-echo "  • Submit task:      curl -X POST http://localhost:5680/add -H 'Content-Type: application/json' -d '{...}'"
-echo "  • View queue:       curl http://localhost:5680/status"
-echo "  • View state:       curl http://localhost:5681/api/state | jq ."
-echo "  • Execute worker:   bash worker/worker.sh"
-echo "  • Heartbeat:        bash heartbeat/heartbeat.sh"
-echo ""
-
-echo "Logs:"
-echo "  • Gateway HTTP:     tail -f /tmp/gateway-http.log"
-echo "  • Dashboard API:    tail -f /tmp/cecelia-api.log"
-echo ""
-
-echo "Stop services:"
-echo "  • Gateway HTTP:     pkill -f gateway-http.js"
-echo "  • Dashboard API:    pkill -f 'api/server.js'"
-echo "  • All:              bash scripts/stop-all.sh"
-echo ""
-
-echo -e "${GREEN}🚀 Cecelia Quality Platform is ready!${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  All services started successfully!${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo
+echo -e "API Endpoints:"
+echo -e "  ${YELLOW}Health:${NC}    http://localhost:5681/api/health"
+echo -e "  ${YELLOW}State:${NC}     http://localhost:5681/api/state"
+echo -e "  ${YELLOW}Queue:${NC}     http://localhost:5681/api/queue"
+echo -e "  ${YELLOW}Runs:${NC}      http://localhost:5681/api/runs"
+echo -e "  ${YELLOW}Failures:${NC}  http://localhost:5681/api/failures"
+echo
+echo -e "Test commands:"
+echo -e "  ${YELLOW}curl http://localhost:5681/api/health | jq .${NC}"
+echo -e "  ${YELLOW}curl http://localhost:5681/api/state | jq .${NC}"
+echo
+echo -e "Stop services:"
+echo -e "  ${YELLOW}bash scripts/stop-all.sh${NC}"
+echo
