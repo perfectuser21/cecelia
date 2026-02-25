@@ -1,0 +1,18 @@
+{
+  "name": "cecelia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cecelia - AI Virtual Butler System (Monorepo)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "brain:start": "npm start -w packages/brain",
+    "brain:test": "npm test -w packages/brain",
+    "brain:build": "bash scripts/brain-build.sh",
+    "dashboard:build": "npm run build -w apps/dashboard",
+    "dashboard:dev": "npm run dev -w apps/dashboard",
+    "test": "npm run brain:test"
+  }
+}
