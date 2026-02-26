@@ -31,7 +31,7 @@ const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226'
 
 // ==================== Input Validation ====================
 
-const SAFE_ID_RE = /^[0-9a-f-]+$/;
+const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
 const PID_RE = /^\d+$/;
 
 /**

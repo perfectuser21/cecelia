@@ -45,8 +45,13 @@ describe('assertSafeId', () => {
     expect(() => assertSafeId('', 'id')).toThrow('[executor] Invalid id');
   });
 
-  it('rejects uppercase letters', () => {
-    expect(() => assertSafeId('ABC-123', 'id')).toThrow('[executor] Invalid id');
+  it('accepts alphanumeric with dashes and underscores', () => {
+    expect(() => assertSafeId('run-abc-123', 'id')).not.toThrow();
+    expect(() => assertSafeId('task_ABC-456', 'id')).not.toThrow();
+  });
+
+  it('rejects whitespace', () => {
+    expect(() => assertSafeId('abc 123', 'id')).toThrow('[executor] Invalid id');
   });
 });
 
