@@ -1,19 +1,18 @@
 /**
- * CeceliaPage V2 Phase 3.1 — 管家指挥室
+ * CeceliaPage V3 — 主动式管家界面
  *
- * Layout: AmbientGlow → PulseStrip → ActionZone → Three-column grid
- * Chat: Cmd+K 命令面板 + 右下角迷你气泡（替代底部 ChatDrawer）
- * Design: Command center, not chat window.
+ * Layout: AmbientGlow → StatusBar → VoiceCard → DecisionInbox → Two-column grid
+ * 核心转变：Cecelia 先说话，用户一键决策。
  * Data: WebSocket events + REST fallback for initial load
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Maximize2, Minimize2, Sparkles } from 'lucide-react';
 import { AmbientGlow } from '../components/AmbientGlow';
-import { PulseStrip } from '../components/PulseStrip';
-import { ActionZone } from '../components/ActionZone';
+import { StatusBar } from '../components/StatusBar';
+import { VoiceCard } from '../components/VoiceCard';
+import { DecisionInbox } from '../components/DecisionInbox';
 import { AgentMonitor } from '../components/AgentMonitor';
-import { TodayOverview } from '../components/TodayOverview';
 import { EventStream } from '../components/EventStream';
 import { CommandPalette } from '../components/CommandPalette';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
@@ -30,6 +29,15 @@ interface Desire {
   proposed_action?: string;
 }
 
+interface DesireExpressed {
+  id: string;
+  type: string;
+  urgency: number;
+  content: string;
+  message?: string;
+  timestamp: string;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -41,22 +49,10 @@ interface Task {
   agent_name?: string;
 }
 
-interface ClusterNode {
-  name: string;
-  location: string;
-  cpu_percent: number;
-  memory_used_gb: number;
-  memory_total_gb: number;
-  active_agents: number;
-  available_slots: number;
-}
-
-interface TodayStats {
-  completed: number;
-  failed: number;
-  queued: number;
-  successRate: number;
-  tokenCostUsd: number;
+interface InnerLifeData {
+  rumination?: { daily_budget: number; undigested_count: number };
+  reflection?: { accumulator: number; threshold: number; progress_pct: number };
+  desires?: { pending: number; expressed: number; total: number };
 }
 
 interface FlowEvent {
@@ -85,10 +81,11 @@ export default function CeceliaPage() {
   const [desires, setDesires] = useState<Desire[]>([]);
   const [queuedTasks, setQueuedTasks] = useState<Task[]>([]);
   const [runningTasks, setRunningTasks] = useState<Task[]>([]);
-  const [clusterNodes, setClusterNodes] = useState<ClusterNode[]>([]);
-  const [todayStats, setTodayStats] = useState<TodayStats>({ completed: 0, failed: 0, queued: 0, successRate: 100, tokenCostUsd: 0 });
+  const [todayStats, setTodayStats] = useState({ completed: 0, failed: 0, queued: 0, successRate: 100, tokenCostUsd: 0 });
   const [events, setEvents] = useState<FlowEvent[]>([]);
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
+  const [innerLife, setInnerLife] = useState<InnerLifeData | null>(null);
+  const [latestExpression, setLatestExpression] = useState<DesireExpressed | null>(null);
   const eventIdRef = useRef(0);
 
   // ── Toast auto-dismiss ────────────────────────────────
@@ -118,37 +115,14 @@ export default function CeceliaPage() {
   // ── Initial REST fetch ──────────────────────────────────
   const fetchActivity = useCallback(async () => {
     try {
-      const [tasksRes, clusterRes, statusRes] = await Promise.all([
+      const [tasksRes, statusRes] = await Promise.all([
         fetch('/api/brain/tasks?status=in_progress&limit=10'),
-        fetch('/api/brain/cluster/status').catch(() => null),
         fetch('/api/brain/status/full'),
       ]);
 
       if (tasksRes.ok) {
         const d = await tasksRes.json();
         setRunningTasks(Array.isArray(d) ? d : (d.tasks || []));
-      }
-
-      if (clusterRes?.ok) {
-        const d = await clusterRes.json();
-        const nodes: ClusterNode[] = [];
-        const servers = d.cluster?.servers || d.servers || [];
-        for (const s of servers) {
-          const memTotal = s.resources?.mem_total_gb ?? s.memory_total_gb ?? s.mem_total ?? 8;
-          const memFree = s.resources?.mem_free_gb ?? 0;
-          nodes.push({
-            name: s.name || s.location?.toUpperCase() || 'Node',
-            location: s.location || 'us',
-            cpu_percent: s.resources?.cpu_pct ?? s.cpu_percent ?? s.cpu ?? 0,
-            memory_used_gb: s.memory_used_gb ?? (memTotal - memFree),
-            memory_total_gb: memTotal,
-            active_agents: s.slots?.used ?? s.active_agents ?? s.activeAgents ?? 0,
-            available_slots: s.slots?.available ?? s.available_slots ?? s.availableSlots ?? 0,
-          });
-        }
-        if (d.us) nodes.push({ name: 'US', location: 'us', ...d.us });
-        if (d.hk) nodes.push({ name: 'HK', location: 'hk', ...d.hk });
-        setClusterNodes(nodes);
       }
 
       if (statusRes.ok) {
@@ -164,6 +138,16 @@ export default function CeceliaPage() {
         });
         setLastTickAt(d.tick_stats?.last_tick_at ?? null);
         setTickIntervalMinutes(d.tick_stats?.interval_minutes ?? 5);
+      }
+    } catch { /* */ }
+  }, []);
+
+  const fetchInnerLife = useCallback(async () => {
+    try {
+      const res = await fetch('/api/brain/inner-life');
+      if (res.ok) {
+        const d = await res.json();
+        setInnerLife(d);
       }
     } catch { /* */ }
   }, []);
@@ -204,9 +188,11 @@ export default function CeceliaPage() {
     }
     loadInitial();
     fetchActivity();
+    fetchInnerLife();
     const t = setInterval(fetchActivity, 30000);
-    return () => clearInterval(t);
-  }, [fetchActivity]);
+    const t2 = setInterval(fetchInnerLife, 60000);
+    return () => { clearInterval(t); clearInterval(t2); };
+  }, [fetchActivity, fetchInnerLife]);
 
   // ── WebSocket subscriptions ─────────────────────────────
 
@@ -250,14 +236,29 @@ export default function CeceliaPage() {
     unsubs.push(subscribe(WS_EVENTS.TICK_EXECUTED, (data) => {
       pushEvent('tick_executed', `Tick #${data.tick_number || '?'}`);
       setLastTickAt(new Date().toISOString());
+      // 刷新 inner-life 数据（每个 tick 后反刍/反思数据可能变化）
+      fetchInnerLife();
     }));
 
     unsubs.push(subscribe(WS_EVENTS.DESIRE_CREATED, (data) => {
-      pushEvent('desire_created', data.content?.slice(0, 60) || '新 Desire');
+      pushEvent('desire_created', data.summary?.slice(0, 60) || data.content?.slice(0, 60) || '新 Desire');
       fetch('/api/brain/desires?status=pending&limit=20')
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setDesires(Array.isArray(d) ? d : (d.desires || [])); })
         .catch(() => {});
+    }));
+
+    // 订阅 DESIRE_EXPRESSED — 更新 VoiceCard
+    unsubs.push(subscribe(WS_EVENTS.DESIRE_EXPRESSED, (data) => {
+      setLatestExpression({
+        id: data.id,
+        type: data.type,
+        urgency: data.urgency,
+        content: data.content,
+        message: data.message,
+        timestamp: data.timestamp || new Date().toISOString(),
+      });
+      pushEvent('desire_created', `Cecelia: ${data.message?.slice(0, 50) || data.content?.slice(0, 50) || '主动表达'}`);
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TASK_CREATED, () => {
@@ -268,7 +269,7 @@ export default function CeceliaPage() {
     }));
 
     return () => unsubs.forEach(u => u());
-  }, [subscribe, pushEvent, fetchActivity]);
+  }, [subscribe, pushEvent, fetchActivity, fetchInnerLife]);
 
   // ── Desire actions ──────────────────────────────────────
 
@@ -328,14 +329,15 @@ export default function CeceliaPage() {
     <div style={containerStyle}>
       <AmbientGlow alertness={alertness}>
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-          {/* Status Bar */}
-          <PulseStrip
+          {/* Status Bar — 增强版，含反刍/反思指标 */}
+          <StatusBar
             alertness={alertness}
             runningCount={runningTasks.length}
             queuedCount={queuedTasks.length}
             tokenCostUsd={todayStats.tokenCostUsd}
             lastTickAt={lastTickAt}
             tickIntervalMinutes={tickIntervalMinutes}
+            innerLife={innerLife}
           />
 
           {/* Top-right controls */}
@@ -364,18 +366,29 @@ export default function CeceliaPage() {
             </button>
           </div>
 
-          {/* Action Required Zone — only shows when there are items */}
-          <ActionZone
-            desires={desires}
-            queuedTasks={queuedTasks}
-            onAcknowledgeDesire={acknowledgeDesire}
-            onDispatchTask={dispatchTask}
-            loadingActions={loadingActions}
+          {/* VoiceCard — Cecelia 的主动表达 */}
+          <VoiceCard
+            greeting={briefing?.greeting ?? null}
+            latestExpression={latestExpression}
+            onAcknowledge={(id) => acknowledgeDesire([id])}
+            onChat={() => setCmdkOpen(true)}
           />
 
-          {/* Three-column grid */}
+          {/* Decision Inbox — 等你决策 */}
+          <div style={{ margin: '12px 0 0' }}>
+            <DecisionInbox
+              desires={desires}
+              queuedTasks={queuedTasks}
+              onAcknowledgeDesire={acknowledgeDesire}
+              onDispatchTask={dispatchTask}
+              loadingActions={loadingActions}
+            />
+          </div>
+
+          {/* Two-column grid: Agent Monitor + Event Stream */}
           <div style={{
             flex: 1, display: 'flex', minHeight: 0,
+            marginTop: 12,
             borderTop: '1px solid rgba(255,255,255,0.04)',
           }}>
             {/* Left: Agent Monitor */}
@@ -384,14 +397,6 @@ export default function CeceliaPage() {
               borderRight: '1px solid rgba(255,255,255,0.04)',
             }}>
               <AgentMonitor runningTasks={runningTasks} queuedTasks={queuedTasks} />
-            </div>
-
-            {/* Center: Today Overview */}
-            <div style={{
-              flex: 1, minWidth: 0,
-              borderRight: '1px solid rgba(255,255,255,0.04)',
-            }}>
-              <TodayOverview todayStats={todayStats} clusterNodes={clusterNodes} briefing={briefing} />
             </div>
 
             {/* Right: Event Stream */}

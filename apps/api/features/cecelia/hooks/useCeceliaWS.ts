@@ -21,6 +21,7 @@ export const WS_EVENTS = {
   ALERTNESS_CHANGED: 'alertness:changed',
   DESIRE_CREATED: 'desire:created',
   DESIRE_UPDATED: 'desire:updated',
+  DESIRE_EXPRESSED: 'desire:expressed',
   TICK_EXECUTED: 'tick:executed',
   PING: 'ping',
   PONG: 'pong',
