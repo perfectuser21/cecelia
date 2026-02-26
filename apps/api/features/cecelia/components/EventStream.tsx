@@ -30,6 +30,7 @@ const EVENT_CONFIG: Record<string, { symbol: string; color: string }> = {
   alertness_changed: { symbol: '\u25c6', color: '#f59e0b' },
   tick_executed: { symbol: '\u25cb', color: '#475569' },
   desire_created: { symbol: '\u2606', color: '#a78bfa' },
+  cognitive_state: { symbol: '\u25cf', color: '#6366f1' },
 };
 
 // ── Main Component ───────────────────────────────────────

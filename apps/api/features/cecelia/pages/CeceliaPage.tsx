@@ -14,6 +14,7 @@ import { VoiceCard } from '../components/VoiceCard';
 import { DecisionInbox } from '../components/DecisionInbox';
 import { AgentMonitor } from '../components/AgentMonitor';
 import { EventStream } from '../components/EventStream';
+import { InnerLifePanel } from '../components/InnerLifePanel';
 import { CommandPalette } from '../components/CommandPalette';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
 import { useBriefing } from '../hooks/useBriefing';
@@ -49,9 +50,18 @@ interface Task {
   agent_name?: string;
 }
 
+interface InnerLifeInsight {
+  id: number;
+  content: string;
+  importance: number;
+  type: 'rumination' | 'reflection';
+  created_at: string;
+}
+
 interface InnerLifeData {
   rumination?: { daily_budget: number; undigested_count: number };
   reflection?: { accumulator: number; threshold: number; progress_pct: number };
+  insights?: InnerLifeInsight[];
   desires?: { pending: number; expressed: number; total: number };
 }
 
@@ -240,7 +250,12 @@ export default function CeceliaPage() {
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TICK_EXECUTED, (data) => {
-      pushEvent('tick_executed', `Tick #${data.tick_number || '?'}`);
+      const actions = data.actions_taken ?? 0;
+      const duration = data.duration_ms ? `${data.duration_ms}ms` : '';
+      const summary = actions > 0
+        ? `Tick #${data.tick_number || '?'} · ${actions} 动作${duration ? ` · ${duration}` : ''}`
+        : `Tick #${data.tick_number || '?'}${duration ? ` · ${duration}` : ''}`;
+      pushEvent('tick_executed', summary);
       setLastTickAt(new Date().toISOString());
       // 刷新 inner-life 数据（每个 tick 后反刍/反思数据可能变化）
       fetchInnerLife();
@@ -267,10 +282,26 @@ export default function CeceliaPage() {
       pushEvent('desire_created', `Cecelia: ${data.message?.slice(0, 50) || data.content?.slice(0, 50) || '主动表达'}`);
     }));
 
-    // 订阅认知状态事件（活性信号）
+    // 订阅认知状态事件（活性信号）— 更新 StatusBar + 推入 EventStream
     unsubs.push(subscribe(WS_EVENTS.COGNITIVE_STATE, (data) => {
-      setCognitivePhase(data.phase || 'idle');
+      const phase = data.phase || 'idle';
+      setCognitivePhase(phase);
       setCognitiveDetail(data.detail || '');
+      // 非 idle 阶段才推入 EventStream（idle 太频繁会刷屏）
+      if (phase !== 'idle') {
+        pushEvent('cognitive_state', data.detail || phase);
+      }
+      // 用 meta 数据实时更新 innerLife（如反刍阶段的 undigested 数）
+      if (data.meta && (phase === 'rumination' || phase === 'reflecting')) {
+        setInnerLife(prev => {
+          if (!prev) return prev;
+          const next = { ...prev };
+          if (phase === 'rumination' && data.meta.undigested !== undefined) {
+            next.rumination = { ...prev.rumination!, undigested_count: data.meta.undigested };
+          }
+          return next;
+        });
+      }
     }));
 
     unsubs.push(subscribe(WS_EVENTS.TASK_CREATED, () => {
@@ -443,12 +474,14 @@ export default function CeceliaPage() {
             marginTop: 12,
             borderTop: '1px solid rgba(255,255,255,0.04)',
           }}>
-            {/* Left: Agent Monitor */}
+            {/* Left: Agent Monitor + Inner Life */}
             <div style={{
               flex: 1, minWidth: 0,
               borderRight: '1px solid rgba(255,255,255,0.04)',
+              display: 'flex', flexDirection: 'column',
             }}>
               <AgentMonitor runningTasks={runningTasks} queuedTasks={queuedTasks} />
+              <InnerLifePanel data={innerLife} cognitivePhase={cognitivePhase} />
             </div>
 
             {/* Right: Event Stream */}
