@@ -10,6 +10,29 @@ import pool from './db.js';
 // Configuration
 const STALE_THRESHOLD_HOURS = 24;
 const HIGH_CONFIDENCE_THRESHOLD = 0.8;
+const MAX_AUTO_RETRY_COUNT = 3;
+
+// Actions that are safe to auto-execute regardless of confidence
+export const SAFE_ACTIONS = new Set(['retry', 'reprioritize', 'skip']);
+
+/**
+ * Extract safe actions from a decision that can be auto-executed
+ * even when overall confidence is below threshold
+ * @param {Array} actions - All decision actions
+ * @returns {{ safeActions: Array, unsafeActions: Array }}
+ */
+export function splitActionsBySafety(actions) {
+  const safeActions = [];
+  const unsafeActions = [];
+  for (const action of actions) {
+    if (SAFE_ACTIONS.has(action.type)) {
+      safeActions.push(action);
+    } else {
+      unsafeActions.push(action);
+    }
+  }
+  return { safeActions, unsafeActions };
+}
 
 /**
  * Calculate expected progress based on time elapsed
@@ -239,14 +262,15 @@ export async function generateDecision(context = {}) {
     }
   }
 
-  // Add retry actions for failed tasks
+  // Add retry actions for failed tasks (only those not yet exhausted)
   const failedTasksResult = await pool.query(`
     SELECT id, title, goal_id
     FROM tasks
     WHERE status = 'failed'
+      AND (retry_count IS NULL OR retry_count < $1)
     ORDER BY created_at DESC
     LIMIT 5
-  `);
+  `, [MAX_AUTO_RETRY_COUNT]);
 
   for (const task of failedTasksResult.rows) {
     actions.push({
@@ -255,7 +279,8 @@ export async function generateDecision(context = {}) {
       target_type: 'task',
       reason: 'Task failed, retry recommended'
     });
-    confidence = Math.min(confidence, 0.7);
+    // retry is a safe action — no confidence penalty
+    // (max_retries + thalamus quarantine provide protection)
   }
 
   // Determine if approval is required
@@ -272,7 +297,7 @@ export async function generateDecision(context = {}) {
     JSON.stringify({ comparison_summary: comparison.overall_health, goal_count: comparison.goals.length }),
     JSON.stringify(actions),
     confidence,
-    requiresApproval ? 'pending' : 'pending'
+    requiresApproval ? 'pending' : 'approved'
   ]);
 
   return {

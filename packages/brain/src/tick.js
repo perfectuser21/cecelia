@@ -8,7 +8,7 @@ import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
-import { compareGoalProgress, generateDecision, executeDecision } from './decision.js';
+import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordSuccess, recordFailure, getAllStates } from './circuit-breaker.js';
@@ -1364,6 +1364,7 @@ async function executeTick() {
       );
 
       if (decision.confidence >= AUTO_EXECUTE_CONFIDENCE && decision.actions.length > 0) {
+        // High confidence — execute all actions
         const execResult = await executeDecision(decision.decision_id);
 
         await logTickDecision(
@@ -1380,12 +1381,35 @@ async function executeTick() {
           confidence: decision.confidence
         });
       } else if (decision.actions.length > 0) {
-        await logTickDecision(
-          'tick',
-          `Decision pending approval: confidence ${decision.confidence} < ${AUTO_EXECUTE_CONFIDENCE}`,
-          { action: 'decision_pending', decision_id: decision.decision_id },
-          { success: true, requires_approval: true }
-        );
+        // Low confidence — but safe actions can still auto-execute
+        const { safeActions, unsafeActions } = splitActionsBySafety(decision.actions);
+
+        if (safeActions.length > 0) {
+          // Execute safe actions directly (retry, reprioritize, skip)
+          const execResult = await executeDecision(decision.decision_id);
+
+          await logTickDecision(
+            'tick',
+            `Auto-executed ${safeActions.length} safe actions (${safeActions.map(a => a.type).join(', ')}), ${unsafeActions.length} pending approval`,
+            { action: 'execute_safe_actions', decision_id: decision.decision_id },
+            { success: true, safe_executed: safeActions.length, unsafe_pending: unsafeActions.length }
+          );
+
+          actionsTaken.push({
+            action: 'execute_safe_actions',
+            decision_id: decision.decision_id,
+            safe_actions_executed: safeActions.length,
+            unsafe_actions_pending: unsafeActions.length,
+            confidence: decision.confidence
+          });
+        } else {
+          await logTickDecision(
+            'tick',
+            `Decision pending approval: confidence ${decision.confidence} < ${AUTO_EXECUTE_CONFIDENCE}, no safe actions`,
+            { action: 'decision_pending', decision_id: decision.decision_id },
+            { success: true, requires_approval: true }
+          );
+        }
       }
 
       decisionEngineResult = {
