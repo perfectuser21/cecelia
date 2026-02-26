@@ -6796,7 +6796,6 @@ router.get('/credentials', async (_req, res) => {
       credentials.push({
         name: `account${num}`,
         type: 'anthropic_oauth',
-        path: `~/.claude/${file}`,
         provider: 'anthropic'
       });
     });
@@ -6814,7 +6813,6 @@ router.get('/credentials', async (_req, res) => {
       credentials.push({
         name,
         type: 'api_key',
-        path: `~/.credentials/${file}`,
         provider
       });
     });

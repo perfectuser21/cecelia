@@ -109,7 +109,6 @@ export async function updateWorker(workerId: string, payload: WorkerUpdatePayloa
 export interface CredentialEntry {
   name: string;
   type: 'anthropic_oauth' | 'api_key';
-  path: string;
   provider: string;
 }
 

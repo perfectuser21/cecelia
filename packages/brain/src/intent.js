@@ -878,6 +878,7 @@ async function parseAndCreate(input, options = {}) {
       const newTask = await pool.query(`
         INSERT INTO tasks (title, description, priority, project_id, goal_id, status, trigger_source)
         VALUES ($1, $2, $3, $4, $5, 'queued', 'user_headed')
+        ON CONFLICT DO NOTHING
         RETURNING *
       `, [
         task.title,
@@ -887,8 +888,12 @@ async function parseAndCreate(input, options = {}) {
         goalId
       ]);
 
-      result.created.tasks.push(newTask.rows[0]);
-      console.log(`[Intent] Created task: ${newTask.rows[0].id} - ${task.title}`);
+      if (newTask.rows.length > 0) {
+        result.created.tasks.push(newTask.rows[0]);
+        console.log(`[Intent] Created task: ${newTask.rows[0].id} - ${task.title}`);
+      } else {
+        console.log(`[Intent] Dedup: task "${task.title}" already exists, skipped`);
+      }
     }
   }
 

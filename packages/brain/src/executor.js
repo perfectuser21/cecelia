@@ -29,6 +29,33 @@ import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
+// ==================== Input Validation ====================
+
+const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
+const PID_RE = /^\d+$/;
+
+/**
+ * Validate that a value is a safe UUID/hex-dash identifier before shell use.
+ * @param {string} value
+ * @param {string} label - for error messages
+ */
+function assertSafeId(value, label = 'id') {
+  if (typeof value !== 'string' || !SAFE_ID_RE.test(value)) {
+    throw new Error(`[executor] Invalid ${label}: ${String(value).slice(0, 50)}`);
+  }
+}
+
+/**
+ * Validate that a value is a numeric PID before shell use.
+ * @param {*} value
+ * @param {string} label - for error messages
+ */
+function assertSafePid(value, label = 'pid') {
+  if (!PID_RE.test(String(value))) {
+    throw new Error(`[executor] Invalid ${label}: ${String(value).slice(0, 50)}`);
+  }
+}
+
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
@@ -730,6 +757,7 @@ function cleanupOrphanProcesses() {
       // Check if parent is a cecelia-run process (has a task_id we're tracking)
       let parentIsTracked = false;
       try {
+        assertSafePid(ppid, 'ppid');
         const ppidArgs = execSync(`ps -o args= -p ${ppid} 2>/dev/null`, { encoding: 'utf-8' }).trim();
         if (ppidArgs.includes('cecelia-run')) {
           // Extract task_id from parent cecelia-run args
@@ -1631,6 +1659,7 @@ async function getTaskExecutionStatus(taskId) {
  */
 function isRunIdProcessAlive(runId) {
   if (!runId) return false;
+  assertSafeId(runId, 'runId');
   try {
     const output = execSync(
       `ps aux | grep -F "${runId}" | grep -v grep | wc -l`,
@@ -1649,6 +1678,7 @@ function isRunIdProcessAlive(runId) {
  */
 function isTaskProcessAlive(taskId) {
   if (!taskId) return false;
+  assertSafeId(taskId, 'taskId');
   try {
     const output = execSync(
       `ps aux | grep -F "${taskId}" | grep -v grep | wc -l`,
@@ -1950,4 +1980,7 @@ export {
   _resetCpuSampler,
   // v13: code-review env isolation
   getExtraEnvForTaskType,
+  // v14: Input validation for shell commands
+  assertSafeId,
+  assertSafePid,
 };
