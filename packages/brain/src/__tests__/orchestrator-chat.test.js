@@ -5,21 +5,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
-// Mock node:fs — 提供 MiniMax credentials（必须在 import 之前）
-vi.mock('node:fs', () => ({
-  readFileSync: vi.fn().mockReturnValue(JSON.stringify({ api_key: 'test-minimax-key' })),
+// Mock 统一 LLM 调用层 — callMiniMax 内部调用 callLLM('mouth', ...)
+const mockCallLLM = vi.hoisted(() => vi.fn());
+vi.mock('../llm-caller.js', () => ({
+  callLLM: mockCallLLM,
 }));
-
-// Mock node:os — 返回固定 homedir
-vi.mock('node:os', () => ({
-  homedir: vi.fn().mockReturnValue('/home/testuser'),
-}));
-
-// Mock node:path — 真实实现已足够
-vi.mock('node:path', async () => {
-  const actual = await vi.importActual('node:path');
-  return actual;
-});
 
 // Mock db.js — vi.mock 工厂不能引用外部变量
 vi.mock('../db.js', () => ({
@@ -86,25 +76,15 @@ import {
   _resetApiKey,
 } from '../orchestrator-chat.js';
 
-// Mock fetch globally
-const originalFetch = global.fetch;
-
-// MiniMax 响应格式工厂函数
-function mmResp(text) {
-  return {
-    ok: true,
-    json: async () => ({
-      choices: [{ message: { content: text } }],
-      usage: { total_tokens: 100 },
-    }),
-  };
+// callLLM 响应工厂函数
+function llmResp(text) {
+  return { text, model: 'test-model', provider: 'test', elapsed_ms: 10 };
 }
 
 describe('orchestrator-chat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetApiKey();
-    global.fetch = vi.fn();
 
     // 默认 mock parseIntent
     parseIntent.mockReturnValue({ type: 'QUESTION', confidence: 0.8 });
@@ -113,15 +93,11 @@ describe('orchestrator-chat', () => {
     pool.query.mockResolvedValue({ rows: [] });
   });
 
-  afterAll(() => {
-    global.fetch = originalFetch;
-  });
-
   // ===================== D1: 端点基本功能 =====================
 
   describe('handleChat - basic', () => {
     it('returns reply from MiniMax for simple queries', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('当前有 5 个任务在进行中。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('当前有 5 个任务在进行中。'));
 
       const result = await handleChat('现在有多少任务？');
 
@@ -142,7 +118,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - routing', () => {
     it('routes complex queries to thalamus when MiniMax returns [ESCALATE]', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('[ESCALATE] 这个问题需要深度分析。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('[ESCALATE] 这个问题需要深度分析。'));
 
       // Thalamus decision
       thalamusProcessEvent.mockResolvedValueOnce({
@@ -166,11 +142,8 @@ describe('orchestrator-chat', () => {
     });
 
     it('falls back to thalamus when MiniMax fails', async () => {
-      // MiniMax fails (memory uses buildMemoryContext mock)
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        text: async () => 'Service unavailable',
-      });
+      // callLLM throws → callMiniMax propagates error → handleChat falls back to thalamus
+      mockCallLLM.mockRejectedValueOnce(new Error('Service unavailable'));
 
       // Thalamus decision
       thalamusProcessEvent.mockResolvedValueOnce({
@@ -284,7 +257,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - multi-turn history (D2)', () => {
     it('passes messages to callMiniMax', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('记得，你叫小明。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('记得，你叫小明。'));
 
       const history = [
         { role: 'user', content: '我叫小明' },
@@ -295,23 +268,22 @@ describe('orchestrator-chat', () => {
 
       expect(result.reply).toBe('记得，你叫小明。');
 
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // MiniMax: system in messages[0], messages = system + 2 history + user = 4
-      expect(body.messages[0].role).toBe('system');
-      expect(body.messages).toHaveLength(4);
-      expect(body.messages.find(m => m.role === 'user' && m.content === '我叫小明')).toBeTruthy();
+      // callLLM('mouth', prompt, ...) — prompt 包含 history 和用户消息
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('我叫小明');
+      expect(prompt).toContain('Alex：你还记得我叫什么吗');
     });
 
     it('works without history (backward compatible)', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('你好！'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('你好！'));
 
       const result = await handleChat('你好');
       expect(result.reply).toBe('你好！');
 
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // MiniMax: system in messages[0], messages = system + user = 2
-      expect(body.messages[0].role).toBe('system');
-      expect(body.messages).toHaveLength(2);
+      // prompt 包含系统提示和用户消息
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('你是 Cecelia');
+      expect(prompt).toContain('Alex：你好');
     });
   });
 
@@ -327,16 +299,15 @@ describe('orchestrator-chat', () => {
         .mockResolvedValueOnce({ rows: [{ status: 'active', cnt: 1 }] })      // goals
         .mockResolvedValueOnce({ rows: [] });                                  // recordChatEvent
 
-      global.fetch.mockResolvedValueOnce(mmResp('好的，我来创建任务。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的，我来创建任务。'));
 
       const result = await handleChat('帮我创建一个任务');
 
       expect(result.reply).toBe('好的，我来创建任务。');
 
-      // 验证 system prompt 包含状态（无论 intent 类型）
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      const systemMsg = body.messages.find(m => m.role === 'system');
-      expect(systemMsg?.content).toContain('当前系统状态');
+      // 验证 prompt 包含状态（无论 intent 类型）
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('当前系统状态');
     });
   });
 
@@ -348,18 +319,16 @@ describe('orchestrator-chat', () => {
         meta: { candidates: 1, injected: 1, tokenUsed: 50 },
       });
 
-      global.fetch.mockResolvedValueOnce(mmResp('好的，我知道了。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的，我知道了。'));
 
       const result = await handleChat('告诉我关于任务系统的情况');
 
       expect(result.reply).toBe('好的，我知道了。');
       expect(result.routing_level).toBe(0);
 
-      // 验证 MiniMax 调用中的 system prompt 包含记忆
-      const minimaxCall = global.fetch.mock.calls[0];
-      const body = JSON.parse(minimaxCall[1].body);
-      const systemMsg = body.messages.find(m => m.role === 'system');
-      expect(systemMsg?.content).toContain('相关历史上下文');
+      // 验证 callLLM prompt 中包含记忆上下文
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('相关历史上下文');
     });
   });
 
@@ -367,8 +336,8 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - error handling', () => {
     it('handles MiniMax failure gracefully with thalamus fallback', async () => {
-      // MiniMax network error (memory uses buildMemoryContext mock)
-      global.fetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      // callLLM throws → callMiniMax propagates error → handleChat falls back to thalamus
+      mockCallLLM.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
       // Thalamus also fails
       thalamusProcessEvent.mockRejectedValueOnce(new Error('API key not set'));
@@ -380,8 +349,8 @@ describe('orchestrator-chat', () => {
     });
 
     it('handles both MiniMax and thalamus failure', async () => {
-      // MiniMax fails (memory uses buildMemoryContext mock)
-      global.fetch.mockRejectedValueOnce(new Error('timeout'));
+      // callLLM throws → callMiniMax propagates error
+      mockCallLLM.mockRejectedValueOnce(new Error('timeout'));
 
       // Thalamus fails
       thalamusProcessEvent.mockRejectedValueOnce(new Error('timeout'));
@@ -475,27 +444,27 @@ describe('orchestrator-chat', () => {
   });
 
   describe('callMiniMax', () => {
-    it('calls MiniMax API with correct URL and model (D1, D2)', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('测试回复'));
+    it('calls callLLM("mouth", ...) with system prompt and user message (D1, D2)', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('测试回复'));
 
       const result = await callMiniMax('你好', '系统提示');
 
       expect(result.reply).toBe('测试回复');
       expect(result.usage).toBeDefined();
 
-      const [url, options] = global.fetch.mock.calls[0];
-      expect(url).toBe('https://api.minimaxi.com/v1/chat/completions');
-      const body = JSON.parse(options.body);
-      expect(body.model).toBe('MiniMax-M2.5-highspeed');
-      // MiniMax: system in messages[0], user in messages[1]
-      expect(body.messages[0].role).toBe('system');
-      expect(body.messages[0].content).toBe('系统提示');
-      expect(body.messages).toHaveLength(2);
-      expect(body.messages[1].role).toBe('user');
+      // 验证 callLLM 被正确调用
+      expect(mockCallLLM).toHaveBeenCalledWith(
+        'mouth',
+        expect.stringContaining('系统提示'),
+        expect.objectContaining({ maxTokens: 2048 }),
+      );
+      // prompt 末尾包含用户消息
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('Alex：你好');
     });
 
-    it('inserts history messages between system and user (D1)', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('记得，你叫小明。'));
+    it('includes history in prompt (D1)', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('记得，你叫小明。'));
 
       const history = [
         { role: 'user', content: '我叫小明' },
@@ -506,49 +475,45 @@ describe('orchestrator-chat', () => {
 
       expect(result.reply).toBe('记得，你叫小明。');
 
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // MiniMax: system + 2 history + user = 4
-      expect(body.messages[0].role).toBe('system');
-      expect(body.messages).toHaveLength(4);
-      expect(body.messages.find(m => m.role === 'user' && m.content === '我叫小明')).toBeTruthy();
-      expect(body.messages[2]).toEqual({ role: 'assistant', content: '你好，小明！' });
-      expect(body.messages[3]).toEqual({ role: 'user', content: '你还记得我叫什么吗' });
+      // prompt 中包含历史消息
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('对话历史');
+      expect(prompt).toContain('我叫小明');
+      expect(prompt).toContain('你好，小明');
+      expect(prompt).toContain('Alex：你还记得我叫什么吗');
     });
 
     it('limits history to last 10 messages (D1)', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('好的'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的'));
 
       // 12 条历史，应只取最后 10 条
       const history = Array.from({ length: 12 }, (_, i) => ({
         role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `消息 ${i + 1}`,
+        content: `历史消息第${i + 1}条`,
       }));
 
       await callMiniMax('新消息', '系统提示', {}, history);
 
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // MiniMax: system + last 10 history + user = 12
-      expect(body.messages[0].role).toBe('system');
-      expect(body.messages).toHaveLength(12);
-      expect(body.messages[1].content).toBe('消息 3'); // 第3条（0-index=2）开始
+      const prompt = mockCallLLM.mock.calls[0][1];
+      // 最后 10 条 = 第3~12条（跳过第1和第2条）
+      expect(prompt).not.toContain('历史消息第1条');
+      expect(prompt).not.toContain('历史消息第2条');
+      expect(prompt).toContain('历史消息第3条');
+      expect(prompt).toContain('历史消息第12条');
     });
 
-    it('returns text from MiniMax response (D3)', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('实际回复内容'));
+    it('returns text from callLLM response (D3)', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('实际回复内容'));
 
       const result = await callMiniMax('你好', '系统提示');
 
       expect(result.reply).toBe('实际回复内容');
     });
 
-    it('throws on API error', async () => {
-      global.fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        text: async () => 'Internal Server Error',
-      });
+    it('throws on callLLM error', async () => {
+      mockCallLLM.mockRejectedValueOnce(new Error('Bridge /llm-call error: 500'));
 
-      await expect(callMiniMax('test', 'prompt')).rejects.toThrow('MiniMax API error: 500');
+      await expect(callMiniMax('test', 'prompt')).rejects.toThrow('Bridge /llm-call error: 500');
     });
   });
 
@@ -576,7 +541,7 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat action suffix (D9)', () => {
     it('D9: 动作回复追加到 reply 末尾', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('好的，我来帮你记录。'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的，我来帮你记录。'));
 
       // dispatcher 返回确认文本
       mockDetectAndExecuteAction.mockResolvedValueOnce('\n\n✅ 已创建任务：完成周报');
@@ -589,7 +554,7 @@ describe('orchestrator-chat', () => {
     });
 
     it('D9-2: 无动作意图时 reply 不变', async () => {
-      global.fetch.mockResolvedValueOnce(mmResp('你好！有什么需要帮助的吗？'));
+      mockCallLLM.mockResolvedValueOnce(llmResp('你好！有什么需要帮助的吗？'));
 
       mockDetectAndExecuteAction.mockResolvedValueOnce('');
 
@@ -606,24 +571,15 @@ describe('orchestrator-chat', () => {
       // 让 getUserProfileContext 返回画像片段
       mockGetUserProfileContext.mockResolvedValueOnce('## 主人信息\n你正在和 徐啸 对话。TA 目前的重点方向是：Cecelia 自主运行。\n');
 
-      let capturedSystemPrompt = '';
-      global.fetch.mockImplementationOnce(async (url, opts) => {
-        const body = JSON.parse(opts.body);
-        capturedSystemPrompt = body.messages?.find(m => m.role === 'system')?.content || '';
-        return {
-          ok: true,
-          json: async () => ({
-            choices: [{ message: { content: '你好，徐啸！' } }],
-            usage: {},
-          }),
-        };
-      });
+      mockCallLLM.mockResolvedValueOnce(llmResp('你好，徐啸！'));
 
       const result = await handleChat('你好');
 
-      expect(capturedSystemPrompt).toContain('## 主人信息');
-      expect(capturedSystemPrompt).toContain('徐啸');
-      expect(capturedSystemPrompt).toContain('Cecelia 自主运行');
+      // 验证 callLLM prompt 包含画像信息
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('## 主人信息');
+      expect(prompt).toContain('徐啸');
+      expect(prompt).toContain('Cecelia 自主运行');
       expect(result.reply).toBe('你好，徐啸！');
       expect(mockGetUserProfileContext).toHaveBeenCalledWith(expect.anything(), expect.any(String), expect.any(String));
     });
@@ -631,24 +587,14 @@ describe('orchestrator-chat', () => {
     it('D10-2: profileSnippet 为空时 systemPrompt 不受影响', async () => {
       mockGetUserProfileContext.mockResolvedValueOnce('');
 
-      let capturedSystemPrompt = '';
-      global.fetch.mockImplementationOnce(async (url, opts) => {
-        const body = JSON.parse(opts.body);
-        capturedSystemPrompt = body.messages?.find(m => m.role === 'system')?.content || '';
-        return {
-          ok: true,
-          json: async () => ({
-            choices: [{ message: { content: '我是 Cecelia。' } }],
-            usage: {},
-          }),
-        };
-      });
+      mockCallLLM.mockResolvedValueOnce(llmResp('我是 Cecelia。'));
 
       await handleChat('你好');
 
-      // systemPrompt 应以 MOUTH_SYSTEM_PROMPT 内容开头，无多余画像块
-      expect(capturedSystemPrompt).toContain('你是 Cecelia');
-      expect(capturedSystemPrompt).not.toContain('## 主人信息');
+      // prompt 应包含 MOUTH_SYSTEM_PROMPT 内容，无多余画像块
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('你是 Cecelia');
+      expect(prompt).not.toContain('## 主人信息');
     });
   });
 });

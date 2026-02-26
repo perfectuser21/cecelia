@@ -2,13 +2,14 @@
  * Layer 3: 反思层（Reflection）
  *
  * 触发条件：desire_importance_accumulator >= 30
- * 取最近 50 条 memory_stream，用 Claude Opus 4 生成深度洞察。
+ * 取最近 50 条 memory_stream，用 LLM 生成深度洞察。
  * 问：「这些观察意味着什么？有什么模式？有什么风险？」
  * 洞察写入 memory_stream（long 类型，重要性 8），重置 accumulator。
  */
 
+import { callLLM } from '../llm-caller.js';
+
 const REFLECTION_THRESHOLD = 30;
-const REFLECTION_MODEL = 'claude-opus-4-20250514';
 
 /**
  * 读取当前 accumulator 值
@@ -19,37 +20,6 @@ async function getAccumulator(pool) {
   );
   const val = rows[0]?.value_json;
   return typeof val === 'number' ? val : 0;
-}
-
-/**
- * 调用 Claude Opus 生成反思洞察
- */
-async function callOpusReflection(prompt) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: REFLECTION_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Opus API error: ${response.status} - ${err}`);
-  }
-
-  const data = await response.json();
-  return data.content?.[0]?.text || '';
 }
 
 /**
@@ -111,8 +81,9 @@ ${memorySummary}
 
   let insight = '';
   try {
-    console.log(`[reflection] Calling ${REFLECTION_MODEL} for deep reflection (accumulator=${accumulator})...`);
-    insight = await callOpusReflection(prompt);
+    console.log(`[reflection] Calling LLM for deep reflection (accumulator=${accumulator})...`);
+    const result = await callLLM('reflection', prompt, { timeout: 60000 });
+    insight = result.text;
   } catch (err) {
     console.error('[reflection] Opus call error:', err.message);
     return { triggered: false };

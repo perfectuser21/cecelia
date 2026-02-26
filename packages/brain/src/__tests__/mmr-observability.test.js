@@ -152,6 +152,9 @@ describe('recordMemoryRetrieval', () => {
       getRecentLearnings: vi.fn().mockResolvedValue([]),
       searchRelevantLearnings: vi.fn().mockResolvedValue([]),
     }));
+    vi.doMock('../llm-caller.js', () => ({
+      callLLM: vi.fn(),
+    }));
 
     const mod = await import('../thalamus.js');
     recordMemoryRetrieval = mod.recordMemoryRetrieval;
@@ -237,10 +240,12 @@ describe('recordMemoryRetrieval', () => {
 describe('analyzeEvent memory_retrieval integration', () => {
   let analyzeEvent;
   let mockDbPool;
+  let mockCallLLM;
 
   beforeEach(async () => {
     vi.resetModules();
     mockDbPool = { query: vi.fn() };
+    mockCallLLM = vi.fn();
 
     vi.doMock('../db.js', () => ({ default: mockDbPool }));
     vi.doMock('../openai-client.js', () => ({
@@ -264,19 +269,10 @@ describe('analyzeEvent memory_retrieval integration', () => {
       searchRelevantLearnings: vi.fn().mockResolvedValue([]),
     }));
 
-    // Mock node:fs so callThalamLLM can read MiniMax credentials in CI
-    vi.doMock('node:fs', async () => {
-      const actual = await vi.importActual('node:fs');
-      return {
-        ...actual,
-        readFileSync: vi.fn((filePath, encoding) => {
-          if (typeof filePath === 'string' && filePath.includes('minimax.json')) {
-            return JSON.stringify({ api_key: 'test-minimax-key' });
-          }
-          return actual.readFileSync(filePath, encoding);
-        }),
-      };
-    });
+    // Mock 统一 LLM 调用层
+    vi.doMock('../llm-caller.js', () => ({
+      callLLM: mockCallLLM,
+    }));
 
     const mod = await import('../thalamus.js');
     analyzeEvent = mod.analyzeEvent;
@@ -287,7 +283,7 @@ describe('analyzeEvent memory_retrieval integration', () => {
   });
 
   it('should call recordMemoryRetrieval after successful decision', async () => {
-    // Wrap JSON in code block to match parseDecisionFromResponse's primary path
+    // callLLM 返回包含 decision JSON 的文本
     const decisionJson = JSON.stringify({
       level: 1,
       rationale: 'Test reasoning for decision',
@@ -295,12 +291,11 @@ describe('analyzeEvent memory_retrieval integration', () => {
       safety: false,
       actions: [{ type: 'log_event', params: { message: 'test' } }],
     });
-    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        choices: [{ message: { content: '```json\n' + decisionJson + '\n```' } }],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
-      }),
+    mockCallLLM.mockResolvedValue({
+      text: '```json\n' + decisionJson + '\n```',
+      model: 'test-model',
+      provider: 'test',
+      elapsed_ms: 50,
     });
 
     mockDbPool.query.mockResolvedValue({ rows: [] });
@@ -321,8 +316,6 @@ describe('analyzeEvent memory_retrieval integration', () => {
       call => typeof call[0] === 'string' && call[0].includes('memory_retrieval')
     );
     expect(memoryRetrievalCalls.length).toBe(1);
-
-    fetchSpy.mockRestore();
   });
 
   it('should not fail analyzeEvent if memory_retrieval recording fails', async () => {
@@ -333,12 +326,11 @@ describe('analyzeEvent memory_retrieval integration', () => {
       safety: false,
       actions: [{ type: 'log_event', params: { message: 'test' } }],
     });
-    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        choices: [{ message: { content: '```json\n' + decisionJson2 + '\n```' } }],
-        usage: { prompt_tokens: 100, completion_tokens: 50 },
-      }),
+    mockCallLLM.mockResolvedValue({
+      text: '```json\n' + decisionJson2 + '\n```',
+      model: 'test-model',
+      provider: 'test',
+      elapsed_ms: 50,
     });
 
     mockDbPool.query.mockImplementation(async (sql) => {
@@ -357,7 +349,5 @@ describe('analyzeEvent memory_retrieval integration', () => {
 
     // Wait for fire-and-forget
     await new Promise(r => setTimeout(r, 50));
-
-    fetchSpy.mockRestore();
   });
 });

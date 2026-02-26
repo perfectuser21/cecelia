@@ -3,6 +3,8 @@
  *
  * 验证 fetchMemoryContext 改用 buildMemoryContext（memory-retriever.js）
  * 而不是旧的 HTTP API（memory-service.js）
+ *
+ * callMiniMax 内部调用 callLLM('mouth', ...) 而非直接调 MiniMax API
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -11,6 +13,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
   let handleChat;
   let fetchMemoryContext;
   let mockBuildMemoryContext;
+  let mockCallLLM;
   let mockPool;
 
   beforeEach(async () => {
@@ -18,11 +21,16 @@ describe('orchestrator-chat memory unification (D1)', () => {
 
     mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     mockBuildMemoryContext = vi.fn().mockResolvedValue({ block: '', meta: {} });
+    mockCallLLM = vi.fn().mockResolvedValue({ text: '', model: 'claude-haiku-4-5-20251001', provider: 'anthropic', elapsed_ms: 100 });
 
     vi.doMock('../db.js', () => ({ default: mockPool }));
 
     vi.doMock('../memory-retriever.js', () => ({
       buildMemoryContext: mockBuildMemoryContext,
+    }));
+
+    vi.doMock('../llm-caller.js', () => ({
+      callLLM: mockCallLLM,
     }));
 
     vi.doMock('../thalamus.js', () => ({
@@ -53,13 +61,13 @@ describe('orchestrator-chat memory unification (D1)', () => {
       return actual;
     });
 
-    // mock user-profile.js — 阻止 extractAndSaveUserFacts 触发额外 fetch 调用，getUserProfileContext 返回 ''
+    // mock user-profile.js
     vi.doMock('../user-profile.js', () => ({
       extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
       getUserProfileContext: vi.fn().mockResolvedValue(''),
     }));
 
-    // mock chat-action-dispatcher.js — 阻止动作检测影响 fetch 调用计数
+    // mock chat-action-dispatcher.js
     vi.doMock('../chat-action-dispatcher.js', () => ({
       detectAndExecuteAction: vi.fn().mockResolvedValue(''),
     }));
@@ -67,9 +75,6 @@ describe('orchestrator-chat memory unification (D1)', () => {
     const mod = await import('../orchestrator-chat.js');
     handleChat = mod.handleChat;
     fetchMemoryContext = mod.fetchMemoryContext;
-
-    // Mock global fetch for MiniMax calls
-    global.fetch = vi.fn();
   });
 
   afterEach(() => {
@@ -107,19 +112,18 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(block).toBe('');
   });
 
-  it('handleChat injects memory block into MiniMax prompt', async () => {
+  it('handleChat calls callLLM with mouth agent and injects memory into prompt', async () => {
     mockBuildMemoryContext.mockResolvedValueOnce({
       block: '\n## 相关历史上下文\n- [任务] **历史任务**: 相关上下文\n',
       meta: { candidates: 1, injected: 1, tokenUsed: 50 },
     });
 
-    // Mock MiniMax call
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '好的，我了解了。' } }],
-        usage: {},
-      }),
+    // Mock callLLM response
+    mockCallLLM.mockResolvedValueOnce({
+      text: '好的，我了解了。',
+      model: 'claude-haiku-4-5-20251001',
+      provider: 'anthropic',
+      elapsed_ms: 200,
     });
 
     const result = await handleChat('告诉我关于任务系统');
@@ -127,12 +131,13 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(result.reply).toBe('好的，我了解了。');
     expect(result.routing_level).toBe(0);
 
-    // 验证 MiniMax 调用中的 system prompt 包含记忆（system 在 messages[0]）
-    const minimaxCall = global.fetch.mock.calls[0];
-    const body = JSON.parse(minimaxCall[1].body);
-    const systemContent = body.messages?.find(m => m.role === 'system')?.content || '';
-    expect(systemContent).toContain('相关历史上下文');
-    expect(systemContent).toContain('历史任务');
+    // 验证 callLLM 被调用，agent 为 'mouth'，prompt 包含记忆上下文
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
+    const [agent, prompt, opts] = mockCallLLM.mock.calls[0];
+    expect(agent).toBe('mouth');
+    expect(prompt).toContain('相关历史上下文');
+    expect(prompt).toContain('历史任务');
+    expect(prompt).toContain('告诉我关于任务系统');
   });
 
   it('handleChat works when memory returns empty block', async () => {
@@ -141,12 +146,11 @@ describe('orchestrator-chat memory unification (D1)', () => {
       meta: { candidates: 0, injected: 0, tokenUsed: 0 },
     });
 
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '你好！' } }],
-        usage: {},
-      }),
+    mockCallLLM.mockResolvedValueOnce({
+      text: '你好！',
+      model: 'claude-haiku-4-5-20251001',
+      provider: 'anthropic',
+      elapsed_ms: 100,
     });
 
     const result = await handleChat('你好');
@@ -155,24 +159,24 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(result.routing_level).toBe(0);
   });
 
-  it('does NOT call old memory-service HTTP API', async () => {
+  it('does NOT call global.fetch (no direct MiniMax API calls)', async () => {
     mockBuildMemoryContext.mockResolvedValueOnce({ block: '', meta: {} });
 
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '测试' } }],
-        usage: {},
-      }),
+    mockCallLLM.mockResolvedValueOnce({
+      text: '测试',
+      model: 'claude-haiku-4-5-20251001',
+      provider: 'anthropic',
+      elapsed_ms: 50,
     });
+
+    // Set up a spy on global.fetch to ensure it's NOT called
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
 
     await handleChat('测试');
 
-    // global.fetch should only be called once (MiniMax), not twice (old API + MiniMax)
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    // And the call should be to MiniMax, not memory/search
-    const [url] = global.fetch.mock.calls[0];
-    expect(url).toContain('minimaxi.com');
-    expect(url).not.toContain('memory/search');
+    // callLLM should be called, not global.fetch
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
