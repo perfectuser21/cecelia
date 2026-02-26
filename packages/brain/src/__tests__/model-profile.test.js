@@ -84,7 +84,7 @@ describe('model-profile', () => {
     it('D4: 未加载时返回 FALLBACK_PROFILE', () => {
       const profile = getActiveProfile();
       expect(profile).toEqual(FALLBACK_PROFILE);
-      expect(profile.id).toBe('profile-minimax');
+      expect(profile.id).toBe('profile-anthropic');
     });
 
     it('D5: 加载后返回缓存的 profile', async () => {
@@ -189,18 +189,24 @@ describe('model-profile', () => {
   // ==================== FALLBACK_PROFILE 结构 ====================
 
   describe('FALLBACK_PROFILE', () => {
-    it('D10: 包含 thalamus/cortex/executor 三层配置', () => {
+    it('D10: 包含 thalamus/cortex/reflection/mouth/memory/executor 六层配置', () => {
       expect(FALLBACK_PROFILE.config.thalamus).toBeDefined();
       expect(FALLBACK_PROFILE.config.cortex).toBeDefined();
+      expect(FALLBACK_PROFILE.config.reflection).toBeDefined();
+      expect(FALLBACK_PROFILE.config.mouth).toBeDefined();
+      expect(FALLBACK_PROFILE.config.memory).toBeDefined();
       expect(FALLBACK_PROFILE.config.executor).toBeDefined();
 
-      expect(FALLBACK_PROFILE.config.thalamus.provider).toBe('minimax');
+      expect(FALLBACK_PROFILE.config.thalamus.provider).toBe('anthropic');
       expect(FALLBACK_PROFILE.config.cortex.provider).toBe('anthropic');
-      expect(FALLBACK_PROFILE.config.executor.default_provider).toBe('minimax');
+      expect(FALLBACK_PROFILE.config.reflection.provider).toBe('anthropic');
+      expect(FALLBACK_PROFILE.config.mouth.provider).toBe('anthropic');
+      expect(FALLBACK_PROFILE.config.memory.provider).toBe('anthropic');
+      expect(FALLBACK_PROFILE.config.executor.default_provider).toBe('anthropic');
     });
 
     it('D11: executor model_map 包含所有 task type', () => {
-      const taskTypes = ['dev', 'review', 'qa', 'audit', 'talk', 'research', 'decomp_review', 'codex_qa'];
+      const taskTypes = ['dev', 'review', 'qa', 'audit', 'talk', 'research', 'decomp_review', 'dept_heartbeat', 'codex_qa'];
       for (const tt of taskTypes) {
         expect(FALLBACK_PROFILE.config.executor.model_map[tt]).toBeDefined();
       }

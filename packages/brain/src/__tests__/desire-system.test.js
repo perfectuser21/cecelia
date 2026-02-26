@@ -6,6 +6,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Mock 统一 LLM 调用层 — 所有 desire 子模块现在通过 callLLM 调用
+vi.mock('../llm-caller.js', () => ({
+  callLLM: vi.fn().mockResolvedValue({ text: '5', model: 'test', provider: 'test', elapsed_ms: 10 }),
+}));
+
 // ============================================================
 // D2: 感知层测试
 // ============================================================
@@ -110,13 +115,9 @@ describe('Layer 2: 记忆层（Memory）', () => {
   });
 
   it('D3: 有 observations 时写入 memory_stream 并更新 accumulator', async () => {
-    // mock fetch for MiniMax（环境中可能没有 credentials，fallback 时不调用 fetch）
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '7' } }]
-      })
-    });
+    // mock callLLM 返回重要性分数
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({ text: '1: 7', model: 'test', provider: 'test', elapsed_ms: 10 });
 
     const insertedRows = [];
     const upsertedKeys = [];
@@ -185,15 +186,9 @@ describe('Layer 3: 反思层（Reflection）', () => {
   });
 
   it('D4: accumulator >= 30 时触发反思并重置', async () => {
-    // reflection.js 现在使用 Anthropic API（ANTHROPIC_API_KEY）
-    process.env.ANTHROPIC_API_KEY = 'test-key-for-ci';
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        content: [{ type: 'text', text: '系统任务失败率上升，需要关注 executor 稳定性。' }]
-      })
-    });
+    // mock callLLM 返回反思洞察
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({ text: '系统任务失败率上升，需要关注 executor 稳定性。', model: 'test', provider: 'test', elapsed_ms: 10 });
 
     const queries = [];
     const mockPool = {
@@ -239,26 +234,16 @@ describe('Layer 4: 欲望形成层（Desire Formation）', () => {
   });
 
   it('D5: runDesireFormation 插入 desires 表', async () => {
-    // CI 没有 ~/.credentials/minimax.json，提供假凭据使 fetch 能被触发
-    vi.doMock('fs', () => ({
-      readFileSync: (path) => {
-        if (String(path).includes('minimax.json')) {
-          return JSON.stringify({ api_key: 'test-key-for-ci' });
-        }
-        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
-      }
-    }));
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: JSON.stringify({
-          type: 'warn',
-          content: '系统任务失败率持续上升',
-          proposed_action: '检查 executor 日志',
-          urgency: 8
-        }) } }]
-      })
+    // mock callLLM 返回 desire 结构
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({
+      text: JSON.stringify({
+        type: 'warn',
+        content: '系统任务失败率持续上升',
+        proposed_action: '检查 executor 日志',
+        urgency: 8
+      }),
+      model: 'test', provider: 'test', elapsed_ms: 10
     });
 
     const mockPool = {
@@ -389,11 +374,11 @@ describe('Layer 6: 表达层（Expression）', () => {
   });
 
   it('D7: runExpression 更新 last_expression_at 和 desire 状态', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '**⚠️ 预警**\n\n**观察**：任务失败率上升\n\n**判断**：需要关注\n\n**建议**：检查 executor 日志' } }]
-      })
+    // mock callLLM 返回格式化消息
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({
+      text: '**⚠️ 预警**\n\n**观察**：任务失败率上升\n\n**判断**：需要关注\n\n**建议**：检查 executor 日志',
+      model: 'test', provider: 'test', elapsed_ms: 10
     });
 
     const upsertedKeys = [];
@@ -443,12 +428,9 @@ describe('D8: runDesireSystem 集成测试', () => {
   });
 
   it('D8: runDesireSystem 返回完整结果结构', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '5' } }]
-      })
-    });
+    // mock callLLM 返回默认分数
+    const { callLLM } = await import('../llm-caller.js');
+    callLLM.mockResolvedValue({ text: '1: 5', model: 'test', provider: 'test', elapsed_ms: 10 });
 
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {

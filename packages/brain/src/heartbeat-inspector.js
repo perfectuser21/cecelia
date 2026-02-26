@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { callThalamLLM } from './thalamus.js';
+import { callLLM } from './llm-caller.js';
 import { executeDecision } from './decision-executor.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -199,7 +199,7 @@ async function runHeartbeatInspection(pool, options = {}) {
 
   // 3. 构建 prompt，调用 L1 丘脑
   const prompt = buildHeartbeatPrompt(heartbeatContent, snapshot);
-  const { text: responseText } = await callThalamLLM(prompt, { timeoutMs: 60000 });
+  const { text: responseText } = await callLLM('thalamus', prompt, { timeout: 60000 });
 
   // 4. 解析响应
   const decision = parseHeartbeatResponse(responseText);

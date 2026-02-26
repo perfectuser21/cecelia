@@ -4,17 +4,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockPool, mockCallThalamLLM, mockExecuteDecision } = vi.hoisted(() => ({
+const { mockPool, mockCallLLM, mockExecuteDecision } = vi.hoisted(() => ({
   mockPool: { query: vi.fn() },
-  mockCallThalamLLM: vi.fn(),
+  mockCallLLM: vi.fn(),
   mockExecuteDecision: vi.fn(),
 }));
 
 vi.mock('../db.js', () => ({ default: mockPool }));
-vi.mock('../thalamus.js', () => ({
-  callThalamLLM: (...args) => mockCallThalamLLM(...args),
-  ACTION_WHITELIST: {},
-  EVENT_TYPES: {},
+vi.mock('../llm-caller.js', () => ({
+  callLLM: (...args) => mockCallLLM(...args),
 }));
 vi.mock('../decision-executor.js', () => ({
   executeDecision: (...args) => mockExecuteDecision(...args),
@@ -67,7 +65,7 @@ describe('Heartbeat Inspector', () => {
     });
     expect(result.skipped).toBe(true);
     expect(result.reason).toBe('file_not_found');
-    expect(mockCallThalamLLM).not.toHaveBeenCalled();
+    expect(mockCallLLM).not.toHaveBeenCalled();
   });
 
   // D3: collectSystemSnapshot
@@ -165,7 +163,7 @@ describe('Heartbeat Inspector', () => {
 
   // D9: no_action 静默返回
   it('L1 返回 no_action → actions_count=0, 不调用 executeDecision', async () => {
-    mockCallThalamLLM.mockResolvedValueOnce({
+    mockCallLLM.mockResolvedValueOnce({
       text: '```json\n{"action": "no_action", "rationale": "一切正常"}\n```',
     });
 
@@ -185,10 +183,11 @@ describe('Heartbeat Inspector', () => {
     expect(mockExecuteDecision).not.toHaveBeenCalled();
   });
 
-  // callThalamLLM 超时参数验证
-  it('callThalamLLM 被调用时传入 60s 超时参数', async () => {
-    mockCallThalamLLM.mockResolvedValueOnce({
+  // callLLM 超时参数验证
+  it('callLLM 被调用时传入 thalamus + 60s 超时参数', async () => {
+    mockCallLLM.mockResolvedValueOnce({
       text: '{"action": "no_action", "rationale": "ok"}',
+      model: 'test', provider: 'test', elapsed_ms: 10,
     });
 
     mockPool.query
@@ -201,16 +200,17 @@ describe('Heartbeat Inspector', () => {
       heartbeatPath: new URL('../../../HEARTBEAT.md', import.meta.url).pathname,
     });
 
-    expect(mockCallThalamLLM).toHaveBeenCalledTimes(1);
-    expect(mockCallThalamLLM).toHaveBeenCalledWith(
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
+    expect(mockCallLLM).toHaveBeenCalledWith(
+      'thalamus',
       expect.any(String),
-      { timeoutMs: 60000 },
+      { timeout: 60000 },
     );
   });
 
   // D7: executeDecision 调用参数验证
   it('L1 返回 heartbeat_finding → 调用 executeDecision(source=heartbeat_inspection)', async () => {
-    mockCallThalamLLM.mockResolvedValueOnce({
+    mockCallLLM.mockResolvedValueOnce({
       text: '```json\n{"actions": [{"type": "heartbeat_finding", "params": {"msg": "任务卡住"}}], "rationale": "发现问题"}\n```',
     });
 
@@ -239,7 +239,7 @@ describe('Heartbeat Inspector', () => {
 
   // D8: cecelia_events 记录
   it('巡检完成后记录 cecelia_events (type=heartbeat_inspection)', async () => {
-    mockCallThalamLLM.mockResolvedValueOnce({
+    mockCallLLM.mockResolvedValueOnce({
       text: '{"actions": [{"type": "heartbeat_finding", "params": {}}], "rationale": "test"}',
     });
     mockPool.query
@@ -267,7 +267,7 @@ describe('Heartbeat Inspector', () => {
 
   // LLM 响应解析失败
   it('LLM 返回无法解析的内容 → skipped=true, reason=parse_error', async () => {
-    mockCallThalamLLM.mockResolvedValueOnce({ text: '这不是JSON格式的回复' });
+    mockCallLLM.mockResolvedValueOnce({ text: '这不是JSON格式的回复' });
 
     mockPool.query
       .mockResolvedValueOnce({ rows: [] })

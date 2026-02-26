@@ -15,36 +15,44 @@
 // ============================================================
 
 export const FALLBACK_PROFILE = {
-  id: 'profile-minimax',
-  name: 'MiniMax 主力',
+  id: 'profile-anthropic',
+  name: 'Anthropic 主力（Claude Code 无头）',
   config: {
     thalamus: {
-      provider: 'minimax',
-      model: 'MiniMax-M2.1',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
     },
     cortex: {
       provider: 'anthropic',
-      model: 'claude-opus-4-20250514',
+      model: 'claude-sonnet-4-6',
+    },
+    reflection: {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    },
+    mouth: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
+    },
+    memory: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
     },
     executor: {
-      default_provider: 'minimax',
+      default_provider: 'anthropic',
       model_map: {
-        dev:           { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        review:        { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        qa:            { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        audit:         { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        talk:          { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        research:      { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        decomp_review:   { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        dept_heartbeat:  { anthropic: null, minimax: 'MiniMax-M2.5-highspeed' },
-        codex_qa:        { anthropic: null, minimax: null },
+        dev:           { anthropic: 'claude-sonnet-4-6', minimax: null },
+        review:        { anthropic: 'claude-sonnet-4-6', minimax: null },
+        qa:            { anthropic: 'claude-sonnet-4-6', minimax: null },
+        audit:         { anthropic: 'claude-sonnet-4-6', minimax: null },
+        talk:          { anthropic: 'claude-haiku-4-5-20251001', minimax: null },
+        research:      { anthropic: 'claude-sonnet-4-6', minimax: null },
+        decomp_review: { anthropic: 'claude-haiku-4-5-20251001', minimax: null },
+        dept_heartbeat:{ anthropic: 'claude-haiku-4-5-20251001', minimax: null },
+        codex_qa:      { anthropic: null, minimax: null },
       },
       fixed_provider: {
         codex_qa:        'openai',
-        decomp_review:   'minimax',
-        talk:            'minimax',
-        research:        'minimax',
-        dept_heartbeat:  'minimax',
       },
     },
   },

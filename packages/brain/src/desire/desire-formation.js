@@ -6,29 +6,7 @@
  * type: inform / propose / warn / celebrate / question
  */
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-
-let _minimaxKey = null;
-
-function getMinimaxKey() {
-  if (_minimaxKey) return _minimaxKey;
-  try {
-    const credPath = join(homedir(), '.credentials', 'minimax.json');
-    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
-    _minimaxKey = cred.api_key;
-    return _minimaxKey;
-  } catch (err) {
-    console.error('[desire-formation] Failed to load MiniMax credentials:', err.message);
-    return null;
-  }
-}
-
-function stripThinking(content) {
-  if (!content) return '';
-  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-}
+import { callLLM } from '../llm-caller.js';
 
 const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act', 'follow_up'];
 
@@ -38,16 +16,6 @@ const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act'
  * @returns {Promise<{type: string, content: string, proposed_action: string, urgency: number}>}
  */
 async function generateDesireFromInsight(insight) {
-  const apiKey = getMinimaxKey();
-  if (!apiKey) {
-    return {
-      type: 'inform',
-      content: insight,
-      proposed_action: '请 Alex 查看系统状态',
-      urgency: 5
-    };
-  }
-
   const prompt = `你是 Cecelia，Alex 的 AI 管家。基于以下反思洞察，生成一个「欲望」——你想要向 Alex 表达什么。
 
 洞察：${insight}
@@ -72,25 +40,7 @@ type 选择：
 重要：如果是你自己能处理的事，优先选 act/follow_up，不要只是 inform Alex。`;
 
   try {
-    const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'MiniMax-M2.5-highspeed',
-        max_tokens: 512,
-        messages: [{ role: 'user', content: prompt }]
-      }),
-      signal: AbortSignal.timeout(20000),
-    });
-
-    if (!response.ok) throw new Error(`MiniMax API error: ${response.status}`);
-
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '';
-    const text = stripThinking(rawText);
+    const { text } = await callLLM('mouth', prompt, { timeout: 20000 });
 
     // 提取 JSON（支持 markdown 代码块包裹和纯 JSON 两种格式）
     const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);

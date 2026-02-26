@@ -115,6 +115,15 @@ export const AGENTS = [
     recommended_model: 'MiniMax-M2.5-highspeed',
     fixed_provider: null,
   },
+  {
+    id: 'memory',
+    name: '记忆打分',
+    description: '为感知观察打重要性分（批量）',
+    layer: 'brain',
+    allowed_models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
+    recommended_model: 'claude-haiku-4-5-20251001',
+    fixed_provider: null,
+  },
   // ---- 执行层 ----
   {
     id: 'dev',
