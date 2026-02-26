@@ -1,16 +1,11 @@
 /**
- * NotebookLM CLI 松耦合适配器
+ * NotebookLM 适配器 — 通过 cecelia-bridge 调用宿主机 CLI
  *
- * 通过 CLI 与 NotebookLM 交互：添加源 + 查询知识
- * 不可用时静默降级，不影响反刍流程
+ * Brain 运行在 Docker 容器中（无 Python），通过 bridge HTTP 端点
+ * 中转 NotebookLM CLI 调用。不可用时静默降级，不影响反刍流程。
  */
 
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
-
-const NOTEBOOKLM_CLI = '/home/xx/.local/bin/notebooklm';
+const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 const TIMEOUT_MS = 15000;
 
 /**
@@ -20,10 +15,14 @@ const TIMEOUT_MS = 15000;
  */
 export async function addSource(url) {
   try {
-    await execFileAsync(NOTEBOOKLM_CLI, ['add-source', '--url', url], {
-      timeout: TIMEOUT_MS,
+    const response = await fetch(`${BRIDGE_URL}/notebook/add-source`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    return { ok: true };
+    const data = await response.json();
+    return data;
   } catch (err) {
     console.warn('[notebook-adapter] addSource failed:', err.message);
     return { ok: false, error: err.message };
@@ -37,10 +36,14 @@ export async function addSource(url) {
  */
 export async function queryNotebook(query) {
   try {
-    const { stdout } = await execFileAsync(NOTEBOOKLM_CLI, ['query', '--q', query], {
-      timeout: TIMEOUT_MS,
+    const response = await fetch(`${BRIDGE_URL}/notebook/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    return { ok: true, text: stdout.trim() };
+    const data = await response.json();
+    return data;
   } catch (err) {
     console.warn('[notebook-adapter] queryNotebook failed:', err.message);
     return { ok: false, error: err.message };
