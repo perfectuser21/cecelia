@@ -60,10 +60,20 @@ import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.j
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 import {
   runDecompositionChecks,
-  getActiveExecutionPaths,
-  checkInitiativeDecomposition,
-  INVENTORY_CONFIG
 } from './decomposition-checker.js';
+
+// Inventory config for decomposition routes (moved here after decomp-checker simplification)
+const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
+
+async function getActiveExecutionPaths() {
+  const result = await pool.query(`
+    SELECT p.id, p.name, pkl.kr_id
+    FROM projects p
+    INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
+    WHERE p.type = 'initiative' AND p.status IN ('active', 'in_progress')
+  `);
+  return result.rows;
+}
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 
 const router = Router();
