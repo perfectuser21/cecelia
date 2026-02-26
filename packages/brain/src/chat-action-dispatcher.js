@@ -16,6 +16,7 @@ import pool from './db.js';
 import { createTask } from './actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
 import { linkEntities } from './entity-linker.js';
+import { addSource } from './notebook-adapter.js';
 
 /**
  * 动作触发规则表
@@ -233,7 +234,7 @@ async function executeViaLlmIntent(message, llmIntent) {
 
       case 'LEARN': {
         await pool.query(
-          `INSERT INTO learnings (title, category, content, trigger_event) VALUES ($1, $2, $3, $4)`,
+          `INSERT INTO learnings (title, category, content, trigger_event, digested) VALUES ($1, $2, $3, $4, false)`,
           [title, 'user_shared', entities.description || message, 'chat_llm']
         );
         await pool.query(
@@ -241,6 +242,11 @@ async function executeViaLlmIntent(message, llmIntent) {
            VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,
           [`[学习记录] ${title}`]
         );
+        // URL 检测：有链接时异步投递 NotebookLM（fire-and-forget）
+        const urlMatch = message.match(/https?:\/\/[^\s]+/);
+        if (urlMatch) {
+          addSource(urlMatch[0]).catch(() => {});
+        }
         return `\n\n✅ 已记录学习：${title}`;
       }
 

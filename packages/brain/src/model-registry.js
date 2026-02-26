@@ -124,6 +124,15 @@ export const AGENTS = [
     recommended_model: 'claude-haiku-4-5-20251001',
     fixed_provider: null,
   },
+  {
+    id: 'rumination',
+    name: '反刍消化',
+    description: '空闲时消化知识、关联 OKR、产出洞察',
+    layer: 'brain',
+    allowed_models: ['claude-haiku-4-5-20251001', 'MiniMax-M2.5-highspeed'],
+    recommended_model: 'claude-haiku-4-5-20251001',
+    fixed_provider: null,
+  },
   // ---- 执行层 ----
   {
     id: 'dev',

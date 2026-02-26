@@ -3,8 +3,8 @@
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-26
-**Brain 版本**: 1.102.0
-**Schema 版本**: 078
+**Brain 版本**: 1.103.0
+**Schema 版本**: 079
 **状态**: 生产运行中
 
 ---
@@ -221,6 +221,10 @@ executeTick() 流程：
   7. 规划（queued=0 且有 KR → planNextTask）
   8. OKR 自动拆解（Global OKR 有 0 个 KR → 创建拆解任务）
   9. 派发循环（填满所有可用 slot）
+  10. 每日代码审查触发
+  10.5. 反刍回路（空闲时消化 learnings → 洞察写入 memory_stream）
+  11. 欲望系统（六层主动意识，自然消费反刍洞察）
+  12. WebSocket 广播 tick:executed
 ```
 
 **关键模块**：
@@ -652,7 +656,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '078'
+5. **Schema 版本** — 必须 = '079'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
@@ -818,6 +822,9 @@ brain/
 │   ├── thalamus.js            # L1 丘脑 (MiniMax M2.1)
 │   ├── cortex.js              # L2 皮层 (Opus)
 │   ├── decision-executor.js   # 决策执行器
+│   │
+│   ├── rumination.js           # 反刍回路（空闲时消化知识）
+│   ├── notebook-adapter.js    # NotebookLM CLI 适配器
 │   │
 │   ├── watchdog.js            # 资源看门狗 (/proc)
 │   ├── alertness/index.js     # 5 级警觉

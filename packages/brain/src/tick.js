@@ -23,6 +23,7 @@ import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
+import { runRumination } from './rumination.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1759,6 +1760,14 @@ async function executeTick() {
     console.error('[tick] daily review error:', reviewErr.message);
   }
 
+  // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
+  let ruminationResult = null;
+  try {
+    ruminationResult = await runRumination(pool);
+  } catch (rumErr) {
+    console.error('[tick] rumination error:', rumErr.message);
+  }
+
   // 11. 欲望系统（六层主动意识）
   let desireResult = null;
   try {
@@ -1792,6 +1801,7 @@ async function executeTick() {
     dispatch: { dispatched: dispatched, last: lastDispatchResult },
     dept_heartbeats: deptHeartbeatResult,
     daily_review: dailyReviewResult,
+    rumination: ruminationResult,
     desire_system: desireResult,
     actions_taken: actionsTaken,
     summary: {
