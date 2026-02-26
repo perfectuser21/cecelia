@@ -56,10 +56,17 @@ const server = http.createServer((req, res) => {
 
   // Proxy other /api/* to Brain (orchestrator, autumnrice, etc. are all under Brain now)
   if (req.url.startsWith('/api/')) {
+    // Rewrite /api/v1/vps-monitor/* → /api/brain/vps-monitor/* (strip legacy /v1 prefix)
+    let targetPath;
+    if (req.url.startsWith('/api/v1/vps-monitor')) {
+      targetPath = `/api/brain/vps-monitor${req.url.slice('/api/v1/vps-monitor'.length)}`;
+    } else {
+      targetPath = `/api/brain${req.url.slice(4)}`;
+    }
     const options = {
       hostname: 'localhost',
       port: BRAIN_PORT,
-      path: `/api/brain${req.url.slice(4)}`,
+      path: targetPath,
       method: req.method,
       headers: { ...req.headers, host: `localhost:${BRAIN_PORT}` },
     };
