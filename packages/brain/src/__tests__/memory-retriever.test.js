@@ -451,11 +451,12 @@ describe('buildMemoryContext', () => {
 
   it('mode=chat 时 profile 包含 OKR（不再跳过）', async () => {
     mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] }) // events
-      .mockResolvedValueOnce({             // goals
-        rows: [{ title: 'Cecelia 目标A', status: 'in_progress', progress: 30 }]
-      });
+    mockQuery.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('goals')) {
+        return Promise.resolve({ rows: [{ title: 'Cecelia 目标A', status: 'in_progress', progress: 30 }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const { block } = await buildMemoryContext({
       query: 'chat query',

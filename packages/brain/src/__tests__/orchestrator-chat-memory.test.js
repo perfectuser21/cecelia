@@ -84,7 +84,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
   it('fetchMemoryContext calls buildMemoryContext with mode=chat', async () => {
     mockBuildMemoryContext.mockResolvedValueOnce({
       block: '## 当前 OKR 焦点\n- 任务管理 (in_progress, 50%)\n\n## 相关历史上下文\n- [任务] **测试任务**: 任务描述',
-      meta: { candidates: 5, injected: 1, tokenUsed: 100, tokenBudget: 600 },
+      meta: { candidates: 5, injected: 1, tokenUsed: 100, tokenBudget: 1000 },
     });
 
     const block = await fetchMemoryContext('任务管理');
@@ -92,7 +92,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(mockBuildMemoryContext).toHaveBeenCalledWith({
       query: '任务管理',
       mode: 'chat',
-      tokenBudget: 600,
+      tokenBudget: 1000,
       pool: mockPool,
     });
     expect(block).toContain('相关历史上下文');

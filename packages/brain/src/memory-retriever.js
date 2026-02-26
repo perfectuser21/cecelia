@@ -25,17 +25,19 @@ export const HALF_LIFE = {
   task: 30,
   learning: 90,
   event: 1,
+  conversation: 7,
   okr: Infinity,
   capability: Infinity,
 };
 
 /** 各模式下各数据源的权重 */
 export const MODE_WEIGHT = {
-  task:       { plan: 1.0, execute: 1.2, debug: 1.0, chat: 0.8 },
-  learning:   { plan: 0.8, execute: 1.0, debug: 1.5, chat: 0.6 },
-  event:      { plan: 0.5, execute: 0.8, debug: 1.5, chat: 0.3 },
-  okr:        { plan: 1.5, execute: 0.5, debug: 0.3, chat: 1.0 },
-  capability: { plan: 1.0, execute: 0.8, debug: 0.5, chat: 0.5 },
+  task:         { plan: 1.0, execute: 1.2, debug: 1.0, chat: 0.8 },
+  learning:     { plan: 0.8, execute: 1.0, debug: 1.5, chat: 0.6 },
+  event:        { plan: 0.5, execute: 0.8, debug: 1.5, chat: 0.3 },
+  conversation: { plan: 0.3, execute: 0.3, debug: 0.3, chat: 1.5 },
+  okr:          { plan: 1.5, execute: 0.5, debug: 0.3, chat: 1.0 },
+  capability:   { plan: 1.0, execute: 0.8, debug: 0.5, chat: 0.5 },
 };
 
 /** 默认 token 预算 */
@@ -50,6 +52,7 @@ const RELEVANT_EVENT_TYPES = [
   'escalation',
   'llm_api_error',
   'llm_bad_output',
+  'orchestrator_chat',
 ];
 
 // ============================================================
@@ -261,7 +264,7 @@ async function searchSemanticMemory(pool, query, mode) {
  * @returns {Promise<Array>} 候选列表
  */
 async function loadRecentEvents(pool, _query, mode) {
-  const hours = mode === 'debug' ? 72 : 24;
+  const hours = (mode === 'debug' || mode === 'chat') ? 72 : 24;
 
   try {
     const result = await pool.query(`
@@ -287,6 +290,43 @@ async function loadRecentEvents(pool, _query, mode) {
     });
   } catch (err) {
     console.warn('[memory-retriever] Events search failed (graceful fallback):', err.message);
+    return [];
+  }
+}
+
+/**
+ * 对话历史检索：从 cecelia_events 查最近的 orchestrator_chat 事件
+ * @param {Object} pool - pg pool
+ * @param {number} [limit=15] - 最多返回条数
+ * @returns {Promise<Array>} 候选列表（source='conversation'）
+ */
+async function loadConversationHistory(pool, limit = 15) {
+  try {
+    const result = await pool.query(`
+      SELECT id, payload, created_at
+      FROM cecelia_events
+      WHERE event_type = 'orchestrator_chat'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    return result.rows.map(r => {
+      const payload = typeof r.payload === 'string' ? JSON.parse(r.payload) : (r.payload || {});
+      const userMsg = (payload.user_message || '').slice(0, 150);
+      const replyMsg = (payload.reply || '').slice(0, 150);
+      const text = `Alex: ${userMsg}\nCecelia: ${replyMsg}`;
+      return {
+        id: r.id,
+        source: 'conversation',
+        title: `[对话] ${userMsg.slice(0, 60)}`,
+        description: replyMsg.slice(0, 200),
+        text,
+        relevance: 0.6,
+        created_at: r.created_at,
+      };
+    });
+  } catch (err) {
+    console.warn('[memory-retriever] Conversation history load failed (graceful fallback):', err.message);
     return [];
   }
 }
@@ -355,15 +395,19 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     return { block: '', meta: { candidates: 0, injected: 0, tokenUsed: 0 } };
   }
 
-  // 1. 并行检索三路数据
-  const [semanticResults, eventResults, profileSnippet] = await Promise.all([
+  // 1. 并行检索三路数据（chat 模式额外加载对话历史）
+  const fetches = [
     searchSemanticMemory(dbPool, query, mode),
     loadRecentEvents(dbPool, query, mode),
     loadActiveProfile(dbPool, mode),
-  ]);
+  ];
+  if (mode === 'chat') {
+    fetches.push(loadConversationHistory(dbPool));
+  }
+  const [semanticResults, eventResults, profileSnippet, conversationResults] = await Promise.all(fetches);
 
-  // 2. 统一评分（语义 + 事件混合，profile 不参与）
-  const candidates = [...semanticResults, ...eventResults];
+  // 2. 统一评分（语义 + 事件 + 对话混合，profile 不参与）
+  const candidates = [...semanticResults, ...eventResults, ...(conversationResults || [])];
   const scored = candidates.map(c => {
     const source = c.source || 'task';
     const halfLife = HALF_LIFE[source] || 30;
@@ -426,6 +470,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
 export {
   searchSemanticMemory as _searchSemanticMemory,
   loadRecentEvents as _loadRecentEvents,
+  loadConversationHistory as _loadConversationHistory,
   loadActiveProfile as _loadActiveProfile,
   formatItem as _formatItem,
   tokenize as _tokenize,
