@@ -1,7 +1,7 @@
 /**
  * Frontend Proxy Server
- * Serves static files from /app and proxies /api/* to Core Express server (5211)
- * Used by cecelia-frontend Docker container on port 5212
+ * Serves static files from /app and proxies /api/brain/* directly to Brain (5221)
+ * Used by cecelia-frontend Docker container on port 5211
  * Supports WebSocket upgrade via TCP tunnel (net.createConnection)
  */
 const http = require('http');
@@ -9,8 +9,8 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 5212;
-const API_TARGET = 'http://localhost:5211';
+const PORT = 5211;
+const BRAIN_PORT = 5221;
 const STATIC_DIR = '/app';
 
 const MIME_TYPES = {
@@ -29,14 +29,14 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer((req, res) => {
-  // Proxy /api/* and /n8n/* to Core Express server
-  if (req.url.startsWith('/api/') || req.url.startsWith('/n8n/')) {
+  // Proxy /api/brain/* directly to Brain service
+  if (req.url.startsWith('/api/brain/')) {
     const options = {
       hostname: 'localhost',
-      port: 5211,
+      port: BRAIN_PORT,
       path: req.url,
       method: req.method,
-      headers: { ...req.headers, host: 'localhost:5211' },
+      headers: { ...req.headers, host: `localhost:${BRAIN_PORT}` },
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
@@ -45,9 +45,34 @@ const server = http.createServer((req, res) => {
     });
 
     proxyReq.on('error', (err) => {
-      console.error(`Proxy error: ${err.message}`);
+      console.error(`Brain proxy error: ${err.message}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Backend unavailable' }));
+      res.end(JSON.stringify({ error: 'Brain service unavailable' }));
+    });
+
+    req.pipe(proxyReq);
+    return;
+  }
+
+  // Proxy other /api/* to Brain (orchestrator, autumnrice, etc. are all under Brain now)
+  if (req.url.startsWith('/api/')) {
+    const options = {
+      hostname: 'localhost',
+      port: BRAIN_PORT,
+      path: `/api/brain${req.url.slice(4)}`,
+      method: req.method,
+      headers: { ...req.headers, host: `localhost:${BRAIN_PORT}` },
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error(`API proxy error: ${err.message}`);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'API unavailable' }));
     });
 
     req.pipe(proxyReq);
@@ -56,7 +81,6 @@ const server = http.createServer((req, res) => {
 
   // Serve static files
   let filePath = path.join(STATIC_DIR, req.url === '/' ? 'index.html' : req.url);
-  // Strip query string
   filePath = filePath.split('?')[0];
 
   fs.stat(filePath, (err, stats) => {
@@ -64,9 +88,8 @@ const server = http.createServer((req, res) => {
       const ext = path.extname(filePath);
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
       const headers = { 'Content-Type': contentType };
-      // No cache for HTML and service worker files - force fresh load
       const basename = path.basename(filePath);
-      if (ext === '.html' || basename === 'sw.js' || basename === 'registerSW.js' || basename === 'workbox-4b126c97.js') {
+      if (ext === '.html' || basename === 'sw.js' || basename === 'registerSW.js') {
         headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
         headers['Pragma'] = 'no-cache';
         headers['Expires'] = '0';
@@ -74,7 +97,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, headers);
       fs.createReadStream(filePath).pipe(res);
     } else {
-      // SPA fallback - serve index.html for all other routes
+      // SPA fallback
       const indexPath = path.join(STATIC_DIR, 'index.html');
       res.writeHead(200, {
         'Content-Type': 'text/html',
@@ -85,15 +108,23 @@ const server = http.createServer((req, res) => {
   });
 });
 
-// Proxy WebSocket upgrade requests to Core Express server (5211)
+// WebSocket upgrade — proxy directly to Brain
 server.on('upgrade', (req, clientSocket, head) => {
-  if (req.url.startsWith('/api/') || req.url.startsWith('/n8n/')) {
-    const targetSocket = net.createConnection(5211, 'localhost', () => {
-      // Reconstruct the HTTP upgrade request header
-      let requestLine = `${req.method} ${req.url} HTTP/1.1\r\n`;
+  if (req.url.startsWith('/api/brain/ws')) {
+    // Rewrite path: /api/brain/ws → /ws
+    const targetUrl = req.url.replace('/api/brain/ws', '/ws');
+    const targetSocket = net.createConnection(BRAIN_PORT, 'localhost', () => {
+      let requestLine = `${req.method} ${targetUrl} HTTP/1.1\r\n`;
       let headers = '';
       for (const [k, v] of Object.entries(req.headers)) {
-        headers += `${k}: ${v}\r\n`;
+        // Rewrite origin/host to localhost so Brain's origin check passes
+        if (k === 'origin') {
+          headers += `origin: http://localhost:${PORT}\r\n`;
+        } else if (k === 'host') {
+          headers += `host: localhost:${BRAIN_PORT}\r\n`;
+        } else {
+          headers += `${k}: ${v}\r\n`;
+        }
       }
       targetSocket.write(requestLine + headers + '\r\n');
       if (head && head.length) targetSocket.write(head);
@@ -112,6 +143,6 @@ server.on('upgrade', (req, clientSocket, head) => {
 
 server.listen(PORT, () => {
   console.log(`Frontend proxy running on http://localhost:${PORT}`);
-  console.log(`API proxy target: ${API_TARGET}`);
+  console.log(`Brain target: http://localhost:${BRAIN_PORT}`);
   console.log(`Static dir: ${STATIC_DIR}`);
 });

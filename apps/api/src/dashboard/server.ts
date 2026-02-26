@@ -91,7 +91,9 @@ const orchestratorProxy = createProxyMiddleware({
   target: BRAIN_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api/brain/orchestrator${path}`,  // /chat → /api/brain/orchestrator/chat
-  ws: true,  // Enable WebSocket proxying for realtime voice
+  // NOTE: do NOT set ws:true here — v3 auto-registers a server.on('upgrade') listener
+  // that intercepts ALL upgrade requests, breaking the manual handler below.
+  // WebSocket upgrades are handled exclusively in server.on('upgrade').
 });
 app.use('/api/orchestrator', orchestratorProxy);
 
