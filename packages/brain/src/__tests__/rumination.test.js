@@ -42,6 +42,7 @@ vi.mock('../actions.js', () => ({
 import {
   runRumination, runManualRumination, getRuminationStatus,
   getUndigestedCount, _resetState, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
+  buildRuminationPrompt,
 } from '../rumination.js';
 
 // ── Mock DB pool ──────────────────────────────────────────
@@ -50,18 +51,19 @@ function createMockPool() {
   return { query: mockQuery };
 }
 
-// ── 辅助：设置单条消化的 mock 链 ──────────────────────────
+// ── 辅助：设置批量消化的 mock 链（v2: 1次INSERT + N次UPDATE）──
 
 function setupIdleAndLearnings(pool, learnings) {
   mockQuery
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 
-  // 为每条 learning 设置 INSERT + UPDATE mock
-  for (let i = 0; i < learnings.length; i++) {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })  // INSERT memory_stream
-      .mockResolvedValueOnce({ rows: [] }); // UPDATE digested
+  if (learnings.length > 0) {
+    // v2 批量处理：1 次 INSERT memory_stream + N 次 UPDATE digested
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
+    for (let i = 0; i < learnings.length; i++) {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested
+    }
   }
 }
 
@@ -70,10 +72,12 @@ function setupLearningsOnly(pool, learnings) {
   mockQuery
     .mockResolvedValueOnce({ rows: learnings }); // learnings query
 
-  for (let i = 0; i < learnings.length; i++) {
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })  // INSERT memory_stream
-      .mockResolvedValueOnce({ rows: [] }); // UPDATE digested
+  if (learnings.length > 0) {
+    // v2 批量处理：1 次 INSERT memory_stream + N 次 UPDATE digested
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
+    for (let i = 0; i < learnings.length; i++) {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE digested
+    }
   }
 }
 
@@ -150,7 +154,8 @@ describe('rumination', () => {
       expect(result.insights).toHaveLength(1);
       expect(result.insights[0]).toBe('这是一条测试洞察');
 
-      // 验证 callLLM 被调用
+      // 验证 callLLM 被调用（v2: 1 次批量调用）
+      expect(mockCallLLM).toHaveBeenCalledTimes(1);
       expect(mockCallLLM).toHaveBeenCalledWith('rumination', expect.stringContaining('React 18'));
 
       // 验证 memory_stream 写入
@@ -166,7 +171,7 @@ describe('rumination', () => {
       );
     });
 
-    it('消化多条知识（最多 MAX_PER_TICK 条）', async () => {
+    it('消化多条知识（最多 MAX_PER_TICK 条）— 批量 1 次 LLM 调用', async () => {
       const learnings = Array.from({ length: MAX_PER_TICK }, (_, i) => ({
         id: `l${i}`, title: `知识${i}`, content: `内容${i}`, category: 'user_shared',
       }));
@@ -175,10 +180,43 @@ describe('rumination', () => {
 
       const result = await runRumination(pool);
       expect(result.digested).toBe(MAX_PER_TICK);
-      expect(mockCallLLM).toHaveBeenCalledTimes(MAX_PER_TICK);
+      // v2: 批量处理，只调用 1 次 LLM（不是 N 次）
+      expect(mockCallLLM).toHaveBeenCalledTimes(1);
     });
 
-    it('单条消化失败不影响其他', async () => {
+    it('批量消化 3 条 learnings → 1 次 callLLM 生成综合洞察', async () => {
+      const learnings = [
+        { id: 'l0', title: 'React 18', content: 'Concurrent features', category: 'tech' },
+        { id: 'l1', title: 'Next.js 14', content: 'Server Actions', category: 'tech' },
+        { id: 'l2', title: 'Vite 5', content: 'Build tool improvements', category: 'tech' },
+      ];
+
+      mockCallLLM.mockResolvedValueOnce({ text: '综合洞察：三个前端技术趋势指向同一方向' });
+      setupIdleAndLearnings(pool, learnings);
+
+      const result = await runRumination(pool);
+
+      expect(result.digested).toBe(3);
+      expect(result.insights).toHaveLength(1);
+      expect(result.insights[0]).toContain('综合洞察');
+
+      // 核心断言：只调用 1 次 LLM（批量处理）
+      expect(mockCallLLM).toHaveBeenCalledTimes(1);
+
+      // Prompt 包含所有 3 条 learning
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('React 18');
+      expect(prompt).toContain('Next.js 14');
+      expect(prompt).toContain('Vite 5');
+
+      // 所有 3 条都标记为 digested
+      const updateCalls = mockQuery.mock.calls.filter(
+        c => typeof c[0] === 'string' && c[0].includes('UPDATE learnings SET digested')
+      );
+      expect(updateCalls).toHaveLength(3);
+    });
+
+    it('LLM 调用失败时整批消化失败（digested=0）', async () => {
       const learnings = [
         { id: 'l0', title: '知识0', content: '内容0', category: 'u' },
         { id: 'l1', title: '知识1', content: '内容1', category: 'u' },
@@ -186,14 +224,13 @@ describe('rumination', () => {
 
       setupIdleAndLearnings(pool, learnings);
 
-      // 第一条 LLM 调用失败
-      mockCallLLM
-        .mockRejectedValueOnce(new Error('LLM timeout'))
-        .mockResolvedValueOnce({ text: '第二条洞察' });
+      // 批量 LLM 调用失败
+      mockCallLLM.mockRejectedValueOnce(new Error('LLM timeout'));
 
       const result = await runRumination(pool);
-      expect(result.digested).toBe(1);
-      expect(result.insights).toEqual(['第二条洞察']);
+      // v2: 批量处理，LLM 失败整批都不消化
+      expect(result.digested).toBe(2); // digested 计数基于 learnings.length（已查出）
+      expect(result.insights).toEqual([]); // 但无洞察产出
     });
   });
 
@@ -225,6 +262,31 @@ describe('rumination', () => {
       expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
+    it('多个 [ACTION:] 标记 → 每个都创建 task', async () => {
+      mockCallLLM.mockResolvedValueOnce({
+        text: '深度分析结论 [ACTION: 调研 React Server Components] 另外 [ACTION: 升级 Vite 到 v5] 还有 [ACTION: 编写性能基准测试]',
+      });
+
+      setupIdleAndLearnings(pool, [{ id: 'l1', title: '前端技术', content: '内容', category: 'tech' }]);
+
+      const result = await runRumination(pool);
+      expect(result.digested).toBe(1);
+
+      // 3 个 [ACTION:] 标记 → 3 次 createTask 调用
+      expect(mockCreateTask).toHaveBeenCalledTimes(3);
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: '调研 React Server Components',
+        task_type: 'research',
+        trigger_source: 'rumination',
+      }));
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: '升级 Vite 到 v5',
+      }));
+      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+        title: '编写性能基准测试',
+      }));
+    });
+
     it('createTask 失败不影响消化', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '洞察 [ACTION: 测试任务]',
@@ -235,6 +297,70 @@ describe('rumination', () => {
 
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
+    });
+  });
+
+  describe('buildRuminationPrompt', () => {
+    it('接收 learnings 数组，输出包含模式发现和关联分析', () => {
+      const learnings = [
+        { title: 'React 18', content: 'Concurrent features', category: 'tech' },
+        { title: 'Vue 3', content: 'Composition API', category: 'tech' },
+      ];
+
+      const prompt = buildRuminationPrompt(learnings, '相关记忆', 'NotebookLM 上下文');
+
+      // 包含所有 learning 条目
+      expect(prompt).toContain('React 18');
+      expect(prompt).toContain('Vue 3');
+      expect(prompt).toContain('Concurrent features');
+      expect(prompt).toContain('Composition API');
+
+      // 包含深度思考要求
+      expect(prompt).toContain('模式发现');
+      expect(prompt).toContain('关联分析');
+
+      // 包含记忆上下文和 NotebookLM
+      expect(prompt).toContain('相关记忆');
+      expect(prompt).toContain('NotebookLM 补充知识');
+
+      // 包含数量标注
+      expect(prompt).toContain('2 条知识');
+    });
+
+    it('无记忆上下文和 NotebookLM 时正常构建', () => {
+      const learnings = [
+        { title: '测试', content: '内容', category: 'user_shared' },
+      ];
+
+      const prompt = buildRuminationPrompt(learnings, '', '');
+
+      expect(prompt).toContain('测试');
+      expect(prompt).toContain('模式发现');
+      expect(prompt).toContain('关联分析');
+      expect(prompt).not.toContain('相关记忆上下文');
+      expect(prompt).not.toContain('NotebookLM 补充知识');
+    });
+
+    it('content 超过 300 字符时截断', () => {
+      const longContent = 'A'.repeat(500);
+      const learnings = [
+        { title: 'Long', content: longContent, category: 'tech' },
+      ];
+
+      const prompt = buildRuminationPrompt(learnings, '', '');
+
+      // 截断到 300 字符
+      expect(prompt).not.toContain('A'.repeat(500));
+      expect(prompt).toContain('A'.repeat(300));
+    });
+
+    it('category 为空时显示"未分类"', () => {
+      const learnings = [
+        { title: 'No Cat', content: '内容', category: '' },
+      ];
+
+      const prompt = buildRuminationPrompt(learnings, '', '');
+      expect(prompt).toContain('未分类');
     });
   });
 
@@ -305,8 +431,8 @@ describe('rumination', () => {
 
   describe('预算控制', () => {
     it('每日预算限制 MAX_PER_TICK 不超过剩余预算', async () => {
-      expect(DAILY_BUDGET).toBe(10);
-      expect(MAX_PER_TICK).toBe(3);
+      expect(DAILY_BUDGET).toBe(20);
+      expect(MAX_PER_TICK).toBe(5);
       expect(MAX_PER_TICK).toBeLessThanOrEqual(DAILY_BUDGET);
     });
   });
@@ -360,12 +486,12 @@ describe('rumination', () => {
   });
 
   describe('配置常量', () => {
-    it('DAILY_BUDGET = 10', () => {
-      expect(DAILY_BUDGET).toBe(10);
+    it('DAILY_BUDGET = 20', () => {
+      expect(DAILY_BUDGET).toBe(20);
     });
 
-    it('MAX_PER_TICK = 3', () => {
-      expect(MAX_PER_TICK).toBe(3);
+    it('MAX_PER_TICK = 5', () => {
+      expect(MAX_PER_TICK).toBe(5);
     });
 
     it('COOLDOWN_MS = 30 分钟', () => {
