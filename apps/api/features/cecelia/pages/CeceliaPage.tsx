@@ -132,18 +132,19 @@ export default function CeceliaPage() {
       if (clusterRes?.ok) {
         const d = await clusterRes.json();
         const nodes: ClusterNode[] = [];
-        if (d.servers) {
-          for (const s of d.servers) {
-            nodes.push({
-              name: s.name || s.location?.toUpperCase() || 'Node',
-              location: s.location || 'us',
-              cpu_percent: s.cpu_percent ?? s.cpu ?? 0,
-              memory_used_gb: s.memory_used_gb ?? s.mem_used ?? 0,
-              memory_total_gb: s.memory_total_gb ?? s.mem_total ?? 8,
-              active_agents: s.active_agents ?? s.activeAgents ?? 0,
-              available_slots: s.available_slots ?? s.availableSlots ?? 0,
-            });
-          }
+        const servers = d.cluster?.servers || d.servers || [];
+        for (const s of servers) {
+          const memTotal = s.resources?.mem_total_gb ?? s.memory_total_gb ?? s.mem_total ?? 8;
+          const memFree = s.resources?.mem_free_gb ?? 0;
+          nodes.push({
+            name: s.name || s.location?.toUpperCase() || 'Node',
+            location: s.location || 'us',
+            cpu_percent: s.resources?.cpu_pct ?? s.cpu_percent ?? s.cpu ?? 0,
+            memory_used_gb: s.memory_used_gb ?? (memTotal - memFree),
+            memory_total_gb: memTotal,
+            active_agents: s.slots?.used ?? s.active_agents ?? s.activeAgents ?? 0,
+            available_slots: s.slots?.available ?? s.available_slots ?? s.availableSlots ?? 0,
+          });
         }
         if (d.us) nodes.push({ name: 'US', location: 'us', ...d.us });
         if (d.hk) nodes.push({ name: 'HK', location: 'hk', ...d.hk });
@@ -170,14 +171,35 @@ export default function CeceliaPage() {
   useEffect(() => {
     async function loadInitial() {
       try {
-        const [alertRes, desiresRes, tasksRes] = await Promise.all([
+        const [alertRes, desiresRes, tasksRes, eventsRes] = await Promise.all([
           fetch('/api/brain/alertness'),
           fetch('/api/brain/desires?status=pending&limit=20'),
           fetch('/api/brain/tasks?status=queued&limit=12'),
+          fetch('/api/brain/events?limit=50'),
         ]);
         if (alertRes.ok) { const d = await alertRes.json(); setAlertness(d.level ?? 1); }
         if (desiresRes.ok) { const d = await desiresRes.json(); setDesires(Array.isArray(d) ? d : (d.desires || [])); }
         if (tasksRes.ok) { const d = await tasksRes.json(); setQueuedTasks(Array.isArray(d) ? d : (d.tasks || [])); }
+        if (eventsRes?.ok) {
+          const d = await eventsRes.json();
+          const rawEvents = d.events || [];
+          const mapped: FlowEvent[] = rawEvents.reverse().map((e: { id: number; event_type: string; payload?: { title?: string; content?: string }; created_at: string }, i: number) => {
+            const dt = new Date(e.created_at);
+            const time = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+            const typeMap: Record<string, EventType> = {
+              'task_completed': 'task_completed', 'task_failed': 'task_failed',
+              'task_started': 'task_started', 'task_dispatched': 'task_started',
+              'alertness_changed': 'alertness_changed', 'tick_executed': 'tick_executed',
+              'desire_created': 'desire_created', 'routing_decision': 'tick_executed',
+              'dispatch_attempt': 'task_started', 'dispatch_success': 'task_started',
+            };
+            const type = typeMap[e.event_type] || 'tick_executed';
+            const text = e.payload?.title || e.payload?.content || e.event_type.replace(/_/g, ' ');
+            return { id: `hist-${e.id || i}`, type, text, time, timestamp: dt.getTime() };
+          });
+          setEvents(mapped);
+          eventIdRef.current = mapped.length;
+        }
       } catch { /* */ }
     }
     loadInitial();
