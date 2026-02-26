@@ -63,6 +63,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   const result = await pool.query(`
     INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source)
     VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11)
+    ON CONFLICT DO NOTHING
     RETURNING *
   `, [
     title,
@@ -77,6 +78,22 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     payload ? JSON.stringify(payload) : null,
     trigger_source || 'brain_auto'
   ]);
+
+  // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
+  if (result.rows.length === 0) {
+    const existing = await pool.query(`
+      SELECT * FROM tasks
+      WHERE title = $1
+        AND (goal_id IS NOT DISTINCT FROM $2)
+        AND (project_id IS NOT DISTINCT FROM $3)
+        AND status IN ('queued', 'in_progress')
+      LIMIT 1
+    `, [title, goal_id || null, project_id || null]);
+    if (existing.rows.length > 0) {
+      console.log(`[Action] Dedup (race): task "${title}" already exists (id: ${existing.rows[0].id})`);
+      return { success: true, task: existing.rows[0], deduplicated: true };
+    }
+  }
 
   const task = result.rows[0];
   console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task_type || 'dev'})`);

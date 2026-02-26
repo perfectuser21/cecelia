@@ -172,7 +172,7 @@ function WorkerPanel({ worker, skills, models, onClose, onSaved }: WorkerPanelPr
               )}
               {credentials.map(cred => (
                 <option key={cred.name} value={cred.name}>
-                  {cred.name}  ({cred.path})
+                  {cred.name}  ({cred.provider})
                 </option>
               ))}
             </select>
