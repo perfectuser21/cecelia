@@ -189,3 +189,22 @@ export function publishTickExecuted(data) {
     timestamp: new Date().toISOString()
   });
 }
+
+/**
+ * Publish cognitive state event (活性信号)
+ * 让前端实时感知 Cecelia 的认知阶段
+ * @param {object} data
+ * @param {string} data.phase - 认知阶段 (idle|alertness|thalamus|decomposition|planning|dispatching|decision|rumination|desire|reflecting)
+ * @param {string} data.detail - 人类可读的描述
+ * @param {number} [data.progress] - 可选进度 0-100
+ * @param {object} [data.meta] - 可选元数据
+ */
+export function publishCognitiveState(data) {
+  broadcast(WS_EVENTS.COGNITIVE_STATE, {
+    phase: data.phase,
+    detail: data.detail,
+    progress: data.progress,
+    meta: data.meta,
+    timestamp: new Date().toISOString()
+  });
+}

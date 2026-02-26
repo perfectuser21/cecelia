@@ -86,6 +86,8 @@ export default function CeceliaPage() {
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
   const [innerLife, setInnerLife] = useState<InnerLifeData | null>(null);
   const [latestExpression, setLatestExpression] = useState<DesireExpressed | null>(null);
+  const [cognitivePhase, setCognitivePhase] = useState<string>('idle');
+  const [cognitiveDetail, setCognitiveDetail] = useState<string>('');
   const eventIdRef = useRef(0);
 
   // ── Toast auto-dismiss ────────────────────────────────
@@ -265,6 +267,12 @@ export default function CeceliaPage() {
       pushEvent('desire_created', `Cecelia: ${data.message?.slice(0, 50) || data.content?.slice(0, 50) || '主动表达'}`);
     }));
 
+    // 订阅认知状态事件（活性信号）
+    unsubs.push(subscribe(WS_EVENTS.COGNITIVE_STATE, (data) => {
+      setCognitivePhase(data.phase || 'idle');
+      setCognitiveDetail(data.detail || '');
+    }));
+
     unsubs.push(subscribe(WS_EVENTS.TASK_CREATED, () => {
       fetch('/api/brain/tasks?status=queued&limit=12')
         .then(r => r.ok ? r.json() : null)
@@ -354,7 +362,7 @@ export default function CeceliaPage() {
 
   return (
     <div style={containerStyle}>
-      <AmbientGlow alertness={alertness}>
+      <AmbientGlow alertness={alertness} cognitivePhase={cognitivePhase}>
         <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
           {/* Status Bar — 增强版，含反刍/反思指标 */}
           <StatusBar
@@ -365,6 +373,8 @@ export default function CeceliaPage() {
             lastTickAt={lastTickAt}
             tickIntervalMinutes={tickIntervalMinutes}
             innerLife={innerLife}
+            cognitivePhase={cognitivePhase as any}
+            cognitiveDetail={cognitiveDetail}
           />
 
           {/* Top-right controls */}
@@ -412,6 +422,7 @@ export default function CeceliaPage() {
             }}
             onAcknowledge={(id) => acknowledgeDesire([id])}
             onChat={() => setCmdkOpen(true)}
+            cognitivePhase={cognitivePhase}
           />
 
           {/* Decision Inbox — 等你决策 */}

@@ -49,6 +49,8 @@ export const WS_EVENTS = {
   DESIRE_EXPRESSED: 'desire:expressed',
   // Tick 事件
   TICK_EXECUTED: 'tick:executed',
+  // 认知状态事件（活性信号）
+  COGNITIVE_STATE: 'cognitive:state',
 };
 
 /**

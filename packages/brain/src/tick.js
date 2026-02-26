@@ -24,6 +24,7 @@ import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
+import { publishCognitiveState } from './events/taskEvents.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -226,9 +227,29 @@ function startTickLoop() {
     return false;
   }
 
+  // 微心跳计数器：每 6 次循环（约 30s）推送一次 idle 状态
+  let _microHeartbeatCounter = 0;
+  const MICRO_HEARTBEAT_INTERVAL = 6; // 6 × 5s = 30s
+
   _loopTimer = setInterval(async () => {
     try {
-      await runTickSafe('loop');
+      const result = await runTickSafe('loop');
+      // 微心跳：tick 被节流时，定期推送 idle 认知状态
+      if (result?.skipped && result?.reason === 'throttled') {
+        _microHeartbeatCounter++;
+        if (_microHeartbeatCounter >= MICRO_HEARTBEAT_INTERVAL) {
+          _microHeartbeatCounter = 0;
+          const nextInMs = result.next_in_ms || 0;
+          const nextInMin = Math.ceil(nextInMs / 60000);
+          publishCognitiveState({
+            phase: 'idle',
+            detail: nextInMin > 0 ? `等待下次 tick（${nextInMin}分钟后）` : '空闲中',
+            meta: { next_in_ms: nextInMs },
+          });
+        }
+      } else {
+        _microHeartbeatCounter = 0; // tick 执行了，重置计数器
+      }
     } catch (err) {
       console.error('[tick-loop] Unexpected error in loop:', err.message);
     }
@@ -1070,6 +1091,7 @@ async function executeTick() {
 
   // 0. Evaluate alertness level
   // ALERTNESS_LEVELS: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
+  publishCognitiveState({ phase: 'alertness', detail: '评估警觉等级…' });
   let alertnessResult = null;
   try {
     alertnessResult = await evaluateAlertness();
@@ -1101,6 +1123,7 @@ async function executeTick() {
   }
 
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
+  publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
     const tickEvent = {
       type: EVENT_TYPES.TICK,
@@ -1160,6 +1183,7 @@ async function executeTick() {
   }
 
   // 0.7. 统一拆解检查（七层架构）
+  publishCognitiveState({ phase: 'decomposition', detail: '检查 OKR 拆解状态…' });
   try {
     const { runDecompositionChecks } = await import('./decomposition-checker.js');
     const decompSummary = await runDecompositionChecks();
@@ -1634,6 +1658,7 @@ async function executeTick() {
   }
 
   // 6. Planning: if no queued AND no in_progress tasks, invoke planner
+  publishCognitiveState({ phase: 'planning', detail: '规划下一步任务…', meta: { queued: queued.length, in_progress: inProgress.length } });
   //    Fix: global fallback 时 krIds=[] 但 allGoalIds 非空，应仍触发规划
   if (queued.length === 0 && inProgress.length === 0 && allGoalIds.length > 0) {
     const planKrIds = readyKrIds.length > 0 ? readyKrIds : allGoalIds; // 优先 ready KRs
@@ -1664,6 +1689,7 @@ async function executeTick() {
   // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
 
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
+  publishCognitiveState({ phase: 'dispatching', detail: '派发任务…' });
   //    Respect alertness level dispatch settings
   let dispatched = 0;
   let lastDispatchResult = null;
@@ -1778,6 +1804,7 @@ async function executeTick() {
   }
 
   // 10.5 反刍回路（空闲时消化知识 → 洞察写入 memory_stream → Desire 自然消费）
+  publishCognitiveState({ phase: 'rumination', detail: '反刍消化知识…' });
   let ruminationResult = null;
   try {
     ruminationResult = await runRumination(pool);
@@ -1786,6 +1813,7 @@ async function executeTick() {
   }
 
   // 11. 欲望系统（六层主动意识）
+  publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
   try {
     desireResult = await runDesireSystem(pool);

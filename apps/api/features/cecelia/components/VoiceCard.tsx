@@ -36,6 +36,7 @@ interface VoiceCardProps {
   briefingSummary: BriefingSummary | null;
   onAcknowledge?: (id: string) => void;
   onChat?: () => void;
+  cognitivePhase?: string;
 }
 
 // ── Icon & Color mapping ─────────────────────────────────
@@ -101,7 +102,22 @@ function getTimeGreeting(): string {
 
 // ── Main Component ───────────────────────────────────────
 
-export function VoiceCard({ greeting, latestExpression, briefingSummary, onAcknowledge, onChat }: VoiceCardProps) {
+// ── 认知阶段 → 背景渐变色映射 ──────────────────────────
+
+const PHASE_GRADIENTS: Record<string, string> = {
+  idle:          'linear-gradient(135deg, rgba(124,58,237,0.06), rgba(99,102,241,0.04))',
+  alertness:     'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(99,102,241,0.04))',
+  thalamus:      'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(99,102,241,0.04))',
+  decomposition: 'linear-gradient(135deg, rgba(139,92,246,0.08), rgba(99,102,241,0.04))',
+  planning:      'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(124,58,237,0.04))',
+  dispatching:   'linear-gradient(135deg, rgba(6,182,212,0.08), rgba(99,102,241,0.04))',
+  decision:      'linear-gradient(135deg, rgba(20,184,166,0.08), rgba(99,102,241,0.04))',
+  rumination:    'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(124,58,237,0.04))',
+  desire:        'linear-gradient(135deg, rgba(236,72,153,0.08), rgba(124,58,237,0.04))',
+  reflecting:    'linear-gradient(135deg, rgba(167,139,250,0.1), rgba(124,58,237,0.06))',
+};
+
+export function VoiceCard({ greeting, latestExpression, briefingSummary, onAcknowledge, onChat, cognitivePhase }: VoiceCardProps) {
   const [dismissed, setDismissed] = useState(false);
 
   // 决定展示什么内容
@@ -142,7 +158,8 @@ export function VoiceCard({ greeting, latestExpression, briefingSummary, onAckno
     <div style={{
       margin: '12px 16px 0',
       padding: '16px 20px',
-      background: 'linear-gradient(135deg, rgba(124,58,237,0.06), rgba(99,102,241,0.04))',
+      background: PHASE_GRADIENTS[cognitivePhase || 'idle'] || PHASE_GRADIENTS.idle,
+      transition: 'background 1.5s ease',
       border: `1px solid ${typeConf.color}20`,
       borderLeft: `3px solid ${typeConf.color}`,
       borderRadius: 12,
