@@ -178,5 +178,31 @@ export async function runPerception(pool) {
     console.error('[perception] failure pattern error:', err.message);
   }
 
+  // 8. 任务里程碑信号（欲望多样性：不只报警，也庆祝）
+  try {
+    const { rows: milestoneRows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) AS total
+      FROM tasks
+      WHERE updated_at > NOW() - INTERVAL '7 days'
+    `);
+    const ms = milestoneRows[0] || {};
+    const completed = parseInt(ms.completed || 0);
+    const total = parseInt(ms.total || 0);
+    if (total > 0) {
+      const completionRate = completed / total;
+      if (completionRate >= 0.8 && completed >= 5) {
+        observations.push({
+          signal: 'task_milestone',
+          value: { completed, total, rate: completionRate },
+          context: `任务里程碑：过去 7 天完成率 ${(completionRate * 100).toFixed(0)}%（${completed}/${total}）`
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[perception] task milestone error:', err.message);
+  }
+
   return observations;
 }

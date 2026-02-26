@@ -127,10 +127,10 @@ export const AGENTS = [
   {
     id: 'rumination',
     name: '反刍消化',
-    description: '空闲时消化知识、关联 OKR、产出洞察',
+    description: '深度思考：模式发现、跨知识关联、可执行洞察',
     layer: 'brain',
-    allowed_models: ['claude-haiku-4-5-20251001', 'MiniMax-M2.5-highspeed'],
-    recommended_model: 'claude-haiku-4-5-20251001',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
   // ---- 执行层 ----

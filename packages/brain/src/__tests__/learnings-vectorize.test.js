@@ -133,6 +133,8 @@ describe('learning.js: recordLearning with embedding', () => {
     const fakeEmbedding = Array(1536).fill(0.1);
     mockGenerateEmbedding.mockResolvedValue(fakeEmbedding);
 
+    // content_hash dedup check (no duplicate found)
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     // INSERT returns the learning record
     mockPool.query.mockResolvedValueOnce({
       rows: [{ id: 'learning-abc', title: 'RCA Learning: test' }],
@@ -429,6 +431,6 @@ describe('selfcheck schema version', () => {
     }));
 
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('080');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('081');
   });
 });

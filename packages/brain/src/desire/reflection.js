@@ -59,6 +59,23 @@ export async function runReflection(pool) {
     return { triggered: false };
   }
 
+  // 去重：memory_stream 中大量重复感知信号会淹没反思质量
+  // 使用简单 Jaccard 去重，保留多样化的记忆
+  const dedupedMemories = [];
+  for (const m of memories) {
+    const isDuplicate = dedupedMemories.some(existing => {
+      const tokensA = new Set(m.content.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+      const tokensB = new Set(existing.content.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+      if (tokensA.size === 0 && tokensB.size === 0) return false;
+      let intersection = 0;
+      for (const t of tokensA) { if (tokensB.has(t)) intersection++; }
+      const union = new Set([...tokensA, ...tokensB]).size;
+      return union > 0 && (intersection / union) > 0.7;
+    });
+    if (!isDuplicate) dedupedMemories.push(m);
+  }
+  memories = dedupedMemories;
+
   const memorySummary = memories
     .map((m, i) => `${i + 1}. [重要性${m.importance}] ${m.content}`)
     .join('\n');
