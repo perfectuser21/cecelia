@@ -7,6 +7,4 @@ WHERE category = 'failure_pattern'
   AND title LIKE 'Task Failure:%'
   AND digested = false;
 
--- schema version
-INSERT INTO schema_migrations (version) VALUES ('081')
-ON CONFLICT (version) DO NOTHING;
+-- 版本记录由 migrate.js 自动管理，无需手动插入
