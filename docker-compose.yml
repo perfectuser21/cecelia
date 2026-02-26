@@ -20,6 +20,8 @@ services:
       - /home/xx/.credentials:/home/cecelia/.credentials:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
+      # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
+      - /home/xx/perfect21/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
       - /home/xx/perfect21/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
       # workers.config.json (read-write for PUT /staff/workers API)
