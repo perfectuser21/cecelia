@@ -47,7 +47,7 @@ import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './e
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
-import websocketService from './websocket.js';
+import websocketService, { WS_EVENTS } from './websocket.js';
 import crypto from 'crypto';
 import { readFileSync, readdirSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
