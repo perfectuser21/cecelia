@@ -7592,4 +7592,88 @@ router.get('/decomposition/stats', async (req, res) => {
   }
 });
 
+// ── 反刍回路 API ──────────────────────────────────────────
+
+/**
+ * POST /api/brain/ruminate — 手动触发反刍（跳过 idle check）
+ */
+router.post('/ruminate', async (req, res) => {
+  try {
+    const { runManualRumination } = await import('./rumination.js');
+    const result = await runManualRumination(pool);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] ruminate error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/rumination/status — 反刍系统状态
+ */
+router.get('/rumination/status', async (req, res) => {
+  try {
+    const { getRuminationStatus } = await import('./rumination.js');
+    const status = await getRuminationStatus(pool);
+    res.json(status);
+  } catch (err) {
+    console.error('[API] rumination/status error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/learnings — 知识列表（分页 + 筛选）
+ * Query: digested=true|false, archived=true|false, limit=20, offset=0
+ */
+router.get('/learnings', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '20'), 100);
+    const offset = parseInt(req.query.offset || '0');
+
+    const conditions = [];
+    const params = [];
+    let paramIdx = 1;
+
+    if (req.query.digested !== undefined) {
+      conditions.push(`digested = $${paramIdx++}`);
+      params.push(req.query.digested === 'true');
+    }
+
+    // 默认排除 archived，除非明确请求
+    if (req.query.archived === 'true') {
+      conditions.push(`archived = true`);
+    } else {
+      conditions.push(`(archived = false OR archived IS NULL)`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS total FROM learnings ${where}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0]?.total || 0);
+
+    params.push(limit, offset);
+    const dataResult = await pool.query(
+      `SELECT id, title, content, category, digested, archived, created_at, updated_at
+       FROM learnings ${where}
+       ORDER BY created_at DESC
+       LIMIT $${paramIdx++} OFFSET $${paramIdx}`,
+      params
+    );
+
+    res.json({
+      learnings: dataResult.rows,
+      total,
+      limit,
+      offset,
+    });
+  } catch (err) {
+    console.error('[API] learnings error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
