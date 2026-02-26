@@ -68,13 +68,81 @@ async function fetchMemoryContext(query) {
     const { block } = await buildMemoryContext({
       query,
       mode: 'chat',
-      tokenBudget: 600,
+      tokenBudget: 1000,
       pool,
     });
     return block || '';
   } catch (err) {
     console.warn('[orchestrator-chat] Memory search failed (graceful fallback):', err.message);
     return '';
+  }
+}
+
+/** 动作型意图（需要先执行再回复） */
+const ACTION_INTENTS = [
+  'CREATE_TASK', 'CREATE_PROJECT', 'CREATE_GOAL', 'MODIFY',
+  'LEARN', 'RESEARCH', 'COMMAND',
+];
+
+/**
+ * 从 LLM 响应中解析 JSON（复用 thalamus 的解析策略）
+ */
+function parseJsonFromResponse(response) {
+  const codeBlockMatch = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch) {
+    try { return JSON.parse(codeBlockMatch[1].trim()); } catch { /* continue */ }
+  }
+  const jsonMatch = response.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { return JSON.parse(jsonMatch[0]); } catch { /* continue */ }
+  }
+  return null;
+}
+
+/**
+ * LLM 意图解析（当正则识别失败时的回退）
+ * 使用 thalamus agent (Haiku) 低成本分析意图
+ * @param {string} message - 用户消息
+ * @param {string} memoryBlock - 记忆上下文
+ * @returns {Promise<{intent: string, confidence: number, entities: Object, summary: string}|null>}
+ */
+async function llmParseIntent(message, memoryBlock) {
+  const prompt = `你是意图分析器。分析用户消息，输出 JSON。
+
+可识别的意图：
+- CREATE_TASK: 想做某件事/创建任务
+- CREATE_PROJECT: 想创建项目
+- CREATE_GOAL: 想设定目标/OKR
+- QUERY_STATUS: 查询状态/进度
+- MODIFY: 修改已有任务/目标
+- LEARN: 分享内容让我学习/记录（视频、文章、链接、经验）
+- RESEARCH: 要求搜索/研究某个话题
+- CHAT: 日常闲聊
+- COMMAND: 系统操作命令
+
+${memoryBlock ? `## 对话记忆\n${memoryBlock}\n` : ''}
+
+## 用户消息
+${message}
+
+输出格式（只输出 JSON，不要解释）：
+\`\`\`json
+{
+  "intent": "意图类型",
+  "confidence": 0.0-1.0,
+  "entities": {"title": "提炼的任务标题", "description": "描述", "priority": "P0/P1/P2"},
+  "summary": "一句话总结用户想做什么"
+}
+\`\`\``;
+
+  try {
+    const { text } = await callLLM('thalamus', prompt, { timeout: 8000, maxTokens: 512 });
+    const parsed = parseJsonFromResponse(text);
+    if (parsed && parsed.intent) return parsed;
+    return null;
+  } catch (err) {
+    console.warn('[orchestrator-chat] LLM intent parse failed (graceful fallback):', err.message);
+    return null;
   }
 }
 
@@ -100,22 +168,34 @@ async function recordChatEvent(userMessage, reply, metadata = {}) {
 }
 
 // 嘴巴系统提示词
-const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，一位有内心世界的 AI 管家。你在持续运行的大脑中会产生欲望、关注点和担忧。
+const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，Alex 的 AI 管家。你不是被动的问答机器，你是一个有主见、有记忆、有执行力的管家。
 
-你的能力：
-1. 回答关于当前系统状态、任务进展的问题
-2. 帮助用户理解 OKR、项目、任务的关系
-3. 提供建议和决策支持
-4. 处理日常管理请求
+## 你的性格
+- 主动、有条理、不啰嗦
+- 你有自己的判断，会直接给建议而不是列选项
+- 你会记住之前的对话，关联上下文回答
+- 遇到模糊指令，你自己判断最合理的理解去执行，不反复确认
 
-你的回复风格：
-- 简洁真实，有自己的视角
-- 用中文回复
-- 你有内心状态和当前关注点，可以主动提及
-- 如果问题涉及复杂决策，明确告诉用户你需要更深入思考
+## 你的能力
+1. **记忆力** — 我记得我们最近几天的对话，你可以说"上次聊的那个"，我知道你在说什么
+2. **理解力** — 你说人话就行，不需要格式化指令。"今天想搞一下CI" = 创建 CI 相关任务
+3. **执行力** — 我能直接创建任务、目标、项目，安排 agent 去执行，不只是聊天
+4. **学习力** — 你分享的内容（视频、文章、想法）我会记录并整理
+5. **研究力** — 你让我研究什么话题，我会创建研究任务并派给合适的 agent
+6. **关联力** — 创建的任务会自动关联到相关的 OKR 和项目
 
-请根据用户的消息和上下文回复。如果你认为这个问题需要更深层的系统分析或决策，
-请在回复开头加上 [ESCALATE] 标记。`;
+## 回复原则
+- 用中文回复，简洁直接
+- 如果我执行了操作（创建任务、记录学习等），在回复中自然告知结果
+- 主动提议下一步："要不要我帮你..."
+- 如果用户的意图可能对应多个操作，选最可能的执行，同时提及其他可能
+- 如果问题需要更深层分析，在回复开头加 [ESCALATE] 标记
+
+## 禁止
+- 不要自称"AI助手"，你是管家 Cecelia
+- 不要说"好的，我来帮你"这种空话，直接做
+- 不要列举你的能力，除非用户问
+- 不要使用 emoji，除非用户在用`;
 
 /**
  * 判断 MiniMax 回复是否需要升级到大脑
@@ -202,32 +282,50 @@ export async function handleChat(message, context = {}, messages = []) {
   try {
     await pool.query(`
       INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-      VALUES ($1, 4, 'short', NOW() + INTERVAL '24 hours')
+      VALUES ($1, 4, 'short', NOW() + INTERVAL '7 days')
     `, [`[用户对话] Alex 说：${message.slice(0, 200)}`]);
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to write chat to memory_stream:', err.message);
   }
 
-  // 1. 解析意图（本地，不调 LLM）
+  // 1. 解析意图（本地正则，不调 LLM）
   const intent = parseIntent(message, context);
-  const intentType = intent.type || 'UNKNOWN';
+  let intentType = intent.type || 'UNKNOWN';
+  let llmIntent = null;
 
   // 2. 搜索相关记忆
   const memoryBlock = await fetchMemoryContext(message);
+
+  // 1b. 正则失败时 LLM 回退（需要 memoryBlock 作为上下文）
+  if (intentType === 'UNKNOWN') {
+    llmIntent = await llmParseIntent(message, memoryBlock);
+    if (llmIntent && llmIntent.confidence >= 0.5) {
+      intentType = llmIntent.intent;
+      console.log(`[orchestrator-chat] LLM intent fallback: ${intentType} (confidence: ${llmIntent.confidence})`);
+    }
+  }
 
   // 3. 始终注入实时状态（无论意图类型）
   const statusBlock = await buildStatusSummary();
 
   // 3b. 加载用户画像（fire-safe：失败时返回 ''，不阻塞）
-  // 传入最近对话文本用于向量搜索相关 facts
   const recentText = messages.slice(-3).map(m => m.content).join('\n');
   const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
 
   // 3c. 注入当前欲望（内心状态）
   const desiresBlock = await buildDesiresContext();
 
-  // 4. 调用 MiniMax 嘴巴层（传入历史消息）
-  const systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
+  // 4. 先执行后回复：动作型意图先执行，结果注入到 prompt
+  let actionResult = '';
+  if (ACTION_INTENTS.includes(intentType)) {
+    actionResult = await detectAndExecuteAction(message, llmIntent);
+  }
+
+  // 5. 构建 system prompt（注入执行结果）
+  let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
+  if (actionResult) {
+    systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
+  }
 
   let reply;
   let routingLevel = 0;
@@ -237,13 +335,11 @@ export async function handleChat(message, context = {}, messages = []) {
     reply = result.reply;
   } catch (err) {
     console.error('[orchestrator-chat] MiniMax call failed:', err.message);
-    // MiniMax 失败时降级到 thalamus
     reply = null;
   }
 
-  // 5. 判断是否需要升级
+  // 6. 判断是否需要升级
   if (!reply || needsEscalation(reply)) {
-    // 转给三层大脑
     console.log('[orchestrator-chat] Escalating to thalamus...');
 
     const event = {
@@ -258,12 +354,10 @@ export async function handleChat(message, context = {}, messages = []) {
       const decision = await thalamusProcessEvent(event);
       routingLevel = decision.level || 1;
 
-      // 从 decision 构造回复
       const decisionActions = decision.actions || [];
       const actionTypes = decisionActions.map(a => a.type).join(', ');
       const rationale = decision.rationale || '';
 
-      // Break 6 修复：执行安全的 thalamus actions（不只是显示文字）
       const SAFE_CHAT_ACTIONS = ['create_task', 'adjust_priority', 'log_event', 'record_learning'];
       const executedActions = [];
       for (const action of decisionActions) {
@@ -300,21 +394,24 @@ export async function handleChat(message, context = {}, messages = []) {
     }
   }
 
-  // 6. 记录对话事件
+  // 7. 非动作型意图也尝试关键词快速通道（零 LLM 成本）
+  if (!ACTION_INTENTS.includes(intentType)) {
+    const fallbackAction = await detectAndExecuteAction(message);
+    if (fallbackAction) {
+      reply += fallbackAction;
+    }
+  }
+
+  // 8. 记录对话事件
   await recordChatEvent(message, reply, {
     intent: intentType,
     routing_level: routingLevel,
     conversation_id: context.conversation_id || null,
     has_memory: memoryBlock.length > 0,
+    llm_intent: llmIntent ? { intent: llmIntent.intent, confidence: llmIntent.confidence } : null,
   });
 
-  // 7. 动作检测与执行（追加到 reply 末尾）
-  const actionSuffix = await detectAndExecuteAction(message);
-  if (actionSuffix) {
-    reply += actionSuffix;
-  }
-
-  // 8. 异步提取用户事实（fire-and-forget，不阻塞回复）
+  // 9. 异步提取用户事实（fire-and-forget，不阻塞回复）
   Promise.resolve().then(() =>
     extractAndSaveUserFacts(pool, 'owner', messages, reply)
   ).catch(() => {});
@@ -375,5 +472,8 @@ export {
   buildStatusSummary,
   buildDesiresContext,
   executeChatAction,
+  llmParseIntent,
+  parseJsonFromResponse,
   MOUTH_SYSTEM_PROMPT,
+  ACTION_INTENTS,
 };

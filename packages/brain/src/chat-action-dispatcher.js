@@ -15,6 +15,7 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
+import { linkEntities } from './entity-linker.js';
 
 /**
  * 动作触发规则表
@@ -162,20 +163,118 @@ export async function executeAction(action) {
 /**
  * 检测并执行动作（对外统一入口）
  *
- * 两层检测：
+ * 三层检测：
  * 1. 关键词匹配 → 直接执行（快速通道）
- * 2. Intent 管道 → parseIntent + parseAndCreate（回退）
+ * 2. LLM 意图 → 当 llmIntent 存在且类型明确时直接执行
+ * 3. Intent 管道 → parseIntent + parseAndCreate（回退）
  *
  * @param {string} message - 用户消息
+ * @param {Object|null} llmIntent - LLM 解析的意图（可选）
  * @returns {Promise<string>} 追加到 reply 末尾的文本，无动作时返回 ''
  */
-export async function detectAndExecuteAction(message) {
+export async function detectAndExecuteAction(message, llmIntent = null) {
   // Layer 1: 关键词快速通道（零延迟）
   const action = detectAction(message);
   if (action) return executeAction(action);
 
-  // Layer 2: Intent 管道回退（综合模式匹配）
+  // Layer 2: LLM 意图直接执行（当有 llmIntent 且类型明确时）
+  if (llmIntent && llmIntent.intent && llmIntent.confidence >= 0.5) {
+    const result = await executeViaLlmIntent(message, llmIntent);
+    if (result) return result;
+  }
+
+  // Layer 3: Intent 管道回退（综合模式匹配）
   return executeViaIntentPipeline(message);
+}
+
+// ── LLM 意图执行 ─────────────────────────────────────────
+
+/**
+ * 通过 LLM 解析的意图执行动作
+ * @param {string} message - 原始消息
+ * @param {Object} llmIntent - {intent, confidence, entities, summary}
+ * @returns {Promise<string|null>} 操作结果文本，或 null（不处理）
+ */
+async function executeViaLlmIntent(message, llmIntent) {
+  try {
+    const { intent, entities = {}, summary } = llmIntent;
+    const title = summary || entities.title || message.slice(0, 80);
+
+    switch (intent) {
+      case 'CREATE_TASK': {
+        const linked = await linkEntities(llmIntent, message);
+        const result = await createTask({
+          title,
+          description: entities.description || message,
+          priority: entities.priority || 'P2',
+          task_type: 'research',
+          trigger_source: 'chat_llm',
+          ...(linked.goal_id && { goal_id: linked.goal_id }),
+          ...(linked.project_id && { project_id: linked.project_id }),
+        });
+        const dedupNote = result.deduplicated ? '（已存在，跳过重复创建）' : '';
+        const linkNote = linked.goal_id || linked.project_id ? '（已关联到 OKR/项目）' : '';
+        return `\n\n✅ 已创建任务：${title}${dedupNote}${linkNote}`;
+      }
+
+      case 'CREATE_GOAL': {
+        const linked = await linkEntities(llmIntent, message);
+        await pool.query(
+          `INSERT INTO goals (title, priority, status, progress, project_id) VALUES ($1, $2, 'pending', 0, $3) RETURNING id, title`,
+          [title, entities.priority || 'P1', linked.project_id || null]
+        );
+        return `\n\n✅ 已创建目标：${title}`;
+      }
+
+      case 'CREATE_PROJECT': {
+        const result = await parseAndCreate(message);
+        return formatIntentResult(result);
+      }
+
+      case 'LEARN': {
+        await pool.query(
+          `INSERT INTO learnings (title, category, content, trigger_event) VALUES ($1, $2, $3, $4)`,
+          [title, 'user_shared', entities.description || message, 'chat_llm']
+        );
+        await pool.query(
+          `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+           VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,
+          [`[学习记录] ${title}`]
+        );
+        return `\n\n✅ 已记录学习：${title}`;
+      }
+
+      case 'RESEARCH': {
+        const linked = await linkEntities(llmIntent, message);
+        const result = await createTask({
+          title: `[研究] ${title}`,
+          description: `用户请求研究：${message}`,
+          priority: entities.priority || 'P2',
+          task_type: 'research',
+          trigger_source: 'chat_llm',
+          ...(linked.goal_id && { goal_id: linked.goal_id }),
+          ...(linked.project_id && { project_id: linked.project_id }),
+        });
+        const dedupNote = result.deduplicated ? '（已存在）' : '';
+        return `\n\n✅ 已创建研究任务：${title}${dedupNote}\n将在下个调度周期派发给合适的 agent。`;
+      }
+
+      case 'QUERY_STATUS': {
+        const result = await pool.query(
+          `SELECT status, count(*)::int as cnt FROM tasks GROUP BY status ORDER BY status`
+        );
+        if (result.rows.length === 0) return '\n\n📊 当前暂无任务';
+        const lines = result.rows.map(r => `  - ${r.status}: ${r.cnt} 个`).join('\n');
+        return `\n\n📊 当前任务统计：\n${lines}`;
+      }
+
+      default:
+        return null;
+    }
+  } catch (err) {
+    console.warn('[chat-action-dispatcher] LLM intent execution failed:', err.message);
+    return null;
+  }
 }
 
 // ── Intent 管道 ──────────────────────────────────────────

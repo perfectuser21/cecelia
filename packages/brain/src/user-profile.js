@@ -193,15 +193,20 @@ export async function getUserProfileContext(pool, userId = 'owner', conversation
   return formatProfileSnippet(profile);
 }
 
-const EXTRACT_PROMPT = `你是一个信息提取助手。从以下对话中提取用户透露的**稳定的、长期的个人事实**。
+const EXTRACT_PROMPT = `你是一个信息提取助手。从以下对话中**只提取 Alex（用户）说的话中透露的稳定、长期个人事实**。
+
+对话中有两个角色：
+- Alex（用户）：是你要提取信息的对象
+- Cecelia（AI管家）：是 AI 助手，不是用户。Cecelia 说的任何内容都不应该被提取为用户事实。
 
 只提取以下类型：
-- display_name: 用户的名字
-- focus_area: 用户当前的重点工作/关注方向
-- preferred_style: 回答风格，只能是 "brief" 或 "detailed"
-- raw_facts: 其他值得长期记住的 KV 事实
+- display_name: Alex 的名字（注意：Cecelia 是 AI 的名字，不是用户的名字）
+- focus_area: Alex 当前的重点工作/关注方向
+- preferred_style: Alex 的回答风格偏好，只能是 "brief" 或 "detailed"
+- raw_facts: 关于 Alex 的其他值得长期记住的 KV 事实
 
 规则：
+- 只从 Alex 的发言中提取，忽略 Cecelia 说的一切
 - 没有提取到某字段就不包含它
 - 整个对话没有值得提取的长期事实，返回 {}
 - 不提取一次性的请求或话题
@@ -223,8 +228,8 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
 
   const recent = messages.slice(-5);
   const conversationText = [
-    ...recent.map(m => `${m.role === 'user' ? '用户' : 'Cecelia'}: ${m.content}`),
-    ...(reply.trim() ? [`Cecelia: ${reply}`] : []),
+    ...recent.map(m => `${m.role === 'user' ? 'Alex（用户）' : 'Cecelia（AI管家）'}: ${m.content}`),
+    ...(reply.trim() ? [`Cecelia（AI管家）: ${reply}`] : []),
   ].join('\n');
 
   if (!conversationText.trim()) return;
