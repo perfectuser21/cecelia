@@ -7314,6 +7314,57 @@ router.patch('/desires/:id', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/desires/:id/respond
+ * 用户对 desire 回复意见/想法（对话式决策）
+ * Body: { message: string }
+ */
+router.post('/desires/:id/respond', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: 'message is required' });
+    }
+
+    // 1. 检查 desire 存在
+    const { rows: desireRows } = await pool.query(
+      'SELECT id, type, content, urgency FROM desires WHERE id = $1',
+      [id]
+    );
+    if (desireRows.length === 0) {
+      return res.status(404).json({ error: 'desire not found' });
+    }
+
+    const desire = desireRows[0];
+
+    // 2. 将用户回复写入 memory_stream（作为 Cecelia 记忆）
+    await pool.query(`
+      INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+      VALUES ($1, $2, 'user_desire_response', NOW() + INTERVAL '30 days')
+    `, [
+      `[用户回复 desire] 类型=${desire.type}, 原始内容="${desire.content?.substring(0, 100)}"。用户回复: "${message.trim()}"`,
+      Math.min(desire.urgency + 2, 10)
+    ]);
+
+    // 3. 更新 desire 状态为 acknowledged
+    await pool.query(
+      'UPDATE desires SET status = $1 WHERE id = $2',
+      ['acknowledged', id]
+    );
+
+    // 4. 广播 WebSocket 事件
+    const { publishDesireUpdated } = await import('./events/taskEvents.js');
+    publishDesireUpdated({ id, status: 'acknowledged', previous_status: 'pending', user_response: message.trim() });
+
+    res.json({ success: true, desire_id: id, status: 'acknowledged' });
+  } catch (err) {
+    console.error('[API] desires/:id/respond error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/tasks/:id/dispatch
  * 手动派发单个任务（用户从前端点击"派发"按钮）
  * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查

@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 
 /** Must match the highest migration version in migrations/ */
-export const EXPECTED_SCHEMA_VERSION = '079';
+export const EXPECTED_SCHEMA_VERSION = '080';
 
 const CORE_TABLES = [
   'tasks',

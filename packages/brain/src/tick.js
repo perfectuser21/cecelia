@@ -1206,7 +1206,24 @@ async function executeTick() {
     }
   }
 
-  // 0.5.1. 提案过期清理：与 periodic cleanup 同频（每小时）
+  // 0.5.1. 知识归档：90天前已消化的 learnings 标记 archived（与 cleanup 同频每小时）
+  if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+    try {
+      const archiveResult = await pool.query(`
+        UPDATE learnings SET archived = true
+        WHERE digested = true
+          AND (archived = false OR archived IS NULL)
+          AND created_at < NOW() - INTERVAL '90 days'
+      `);
+      if (archiveResult.rowCount > 0) {
+        console.log(`[tick] Archived ${archiveResult.rowCount} old learnings`);
+      }
+    } catch (archiveErr) {
+      console.error('[tick] Knowledge archive failed (non-fatal):', archiveErr.message);
+    }
+  }
+
+  // 0.5.2. 提案过期清理：与 periodic cleanup 同频（每小时）
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
     try {
       const expiredCount = await expireStaleProposals();

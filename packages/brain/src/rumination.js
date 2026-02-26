@@ -13,13 +13,14 @@ import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook } from './notebook-adapter.js';
+import { createTask } from './actions.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 10;
 export const MAX_PER_TICK = 3;
 export const COOLDOWN_MS = 30 * 60 * 1000; // 30 分钟
 
-// 运行时状态（进程内，午夜不重置 — Phase 2 做）
+// 运行时状态（进程内，午夜通过 hasBudget() 中日期对比自动重置）
 let _dailyCount = 0;
 let _lastRunAt = 0;
 let _lastResetDate = new Date().toDateString();
@@ -91,9 +92,92 @@ function buildRuminationPrompt(learning, memoryBlock, notebookContext) {
 1. 将这条知识与用户已有的 OKR/目标关联
 2. 产出 1-2 句洞察（格式：[反刍洞察] ...）
 3. 如果没有明显关联，说明知识的潜在价值
-4. 简体中文回复`;
+4. 如果有可执行的建议，在末尾加 [ACTION: 建议标题]
+5. 简体中文回复`;
 
   return prompt;
+}
+
+// ── 消化核心逻辑（共享）──────────────────────────────────
+
+/**
+ * 消化一批 learnings（runRumination 和 runManualRumination 共用）
+ */
+async function digestLearnings(db, learnings) {
+  const insights = [];
+
+  for (const learning of learnings) {
+    try {
+      // 1. 获取相关记忆上下文
+      let memoryBlock = '';
+      try {
+        const ctx = await buildMemoryContext({
+          query: learning.title,
+          mode: 'reflect',
+          tokenBudget: 500,
+          pool: db,
+        });
+        memoryBlock = ctx.block || '';
+      } catch {
+        // 记忆检索失败不影响反刍
+      }
+
+      // 2. 查询 NotebookLM（可选，降级安全）
+      let notebookContext = '';
+      try {
+        const nbResult = await queryNotebook(learning.title);
+        if (nbResult.ok && nbResult.text) {
+          notebookContext = nbResult.text;
+        }
+      } catch {
+        // NotebookLM 不可用，静默降级
+      }
+
+      // 3. 调用 LLM 生成洞察
+      const prompt = buildRuminationPrompt(learning, memoryBlock, notebookContext);
+      const { text: insight } = await callLLM('rumination', prompt);
+
+      // 4. 写入 memory_stream
+      if (insight) {
+        await db.query(
+          `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+           VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
+          [`[反刍洞察] ${insight.trim()}`]
+        );
+        insights.push(insight.trim());
+
+        // 4.1 检测 actionable 洞察 → 自动创建 task
+        const actionMatch = insight.match(/\[ACTION:\s*(.+?)\]/);
+        if (actionMatch) {
+          try {
+            await createTask({
+              title: actionMatch[1],
+              description: `反刍洞察自动创建：${insight.trim()}`,
+              priority: 'P2',
+              task_type: 'research',
+              trigger_source: 'rumination',
+            });
+            console.log(`[rumination] actionable insight → task: ${actionMatch[1]}`);
+          } catch (taskErr) {
+            console.error('[rumination] create task from insight failed:', taskErr.message);
+          }
+        }
+      }
+
+      // 5. 标记已消化
+      await db.query(
+        'UPDATE learnings SET digested = true WHERE id = $1',
+        [learning.id]
+      );
+
+      _dailyCount++;
+    } catch (err) {
+      console.error(`[rumination] digest learning ${learning.id} failed:`, err.message);
+      // 单条失败不影响其他
+    }
+  }
+
+  return insights;
 }
 
 // ── 核心流程 ──────────────────────────────────────────────
@@ -151,68 +235,90 @@ export async function runRumination(dbPool) {
     return { skipped: 'no_undigested', digested: 0, insights: [] };
   }
 
-  // 逐条消化
-  const insights = [];
-
-  for (const learning of learnings) {
-    try {
-      // 1. 获取相关记忆上下文
-      let memoryBlock = '';
-      try {
-        const ctx = await buildMemoryContext({
-          query: learning.title,
-          mode: 'reflect',
-          tokenBudget: 500,
-          pool: db,
-        });
-        memoryBlock = ctx.block || '';
-      } catch {
-        // 记忆检索失败不影响反刍
-      }
-
-      // 2. 查询 NotebookLM（可选，降级安全）
-      let notebookContext = '';
-      try {
-        const nbResult = await queryNotebook(learning.title);
-        if (nbResult.ok && nbResult.text) {
-          notebookContext = nbResult.text;
-        }
-      } catch {
-        // NotebookLM 不可用，静默降级
-      }
-
-      // 3. 调用 LLM 生成洞察
-      const prompt = buildRuminationPrompt(learning, memoryBlock, notebookContext);
-      const { text: insight } = await callLLM('rumination', prompt);
-
-      // 4. 写入 memory_stream
-      if (insight) {
-        await db.query(
-          `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-           VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
-          [`[反刍洞察] ${insight.trim()}`]
-        );
-        insights.push(insight.trim());
-      }
-
-      // 5. 标记已消化
-      await db.query(
-        'UPDATE learnings SET digested = true WHERE id = $1',
-        [learning.id]
-      );
-
-      _dailyCount++;
-    } catch (err) {
-      console.error(`[rumination] digest learning ${learning.id} failed:`, err.message);
-      // 单条失败不影响其他
-    }
-  }
+  const insights = await digestLearnings(db, learnings);
 
   _lastRunAt = Date.now();
 
   return {
     digested: insights.length,
     insights,
+  };
+}
+
+/**
+ * 手动触发反刍（跳过 idle check，保留预算和冷却期）
+ * @param {object} [dbPool] - 数据库连接池
+ * @returns {Promise<{skipped?: string, digested: number, insights: string[], manual?: boolean}>}
+ */
+export async function runManualRumination(dbPool) {
+  const db = dbPool || pool;
+  const now = Date.now();
+
+  if (!hasBudget()) {
+    return { skipped: 'daily_budget_exhausted', digested: 0, insights: [] };
+  }
+
+  if (!isCooldownPassed(now)) {
+    return { skipped: 'cooldown', digested: 0, insights: [] };
+  }
+
+  const remaining = DAILY_BUDGET - _dailyCount;
+  const limit = Math.min(MAX_PER_TICK, remaining);
+
+  let learnings;
+  try {
+    const { rows } = await db.query(
+      `SELECT id, title, content, category FROM learnings
+       WHERE digested = false
+       ORDER BY created_at ASC
+       LIMIT $1`,
+      [limit]
+    );
+    learnings = rows;
+  } catch (err) {
+    console.error('[rumination] manual fetch learnings failed:', err.message);
+    return { skipped: 'fetch_error', digested: 0, insights: [] };
+  }
+
+  if (learnings.length === 0) {
+    return { skipped: 'no_undigested', digested: 0, insights: [] };
+  }
+
+  const insights = await digestLearnings(db, learnings);
+
+  _lastRunAt = Date.now();
+
+  return {
+    digested: insights.length,
+    insights,
+    manual: true,
+  };
+}
+
+/**
+ * 获取反刍系统状态
+ */
+export async function getRuminationStatus(dbPool) {
+  const db = dbPool || pool;
+
+  // 触发午夜重置检查
+  hasBudget();
+
+  const now = Date.now();
+  const cooldownRemaining = Math.max(0, COOLDOWN_MS - (now - _lastRunAt));
+
+  const { rows } = await db.query(
+    'SELECT COUNT(*) AS cnt FROM learnings WHERE digested = false AND (archived = false OR archived IS NULL)'
+  );
+  const undigestedCount = parseInt(rows[0]?.cnt || 0);
+
+  return {
+    daily_count: _dailyCount,
+    daily_budget: DAILY_BUDGET,
+    remaining: DAILY_BUDGET - _dailyCount,
+    cooldown_remaining_ms: cooldownRemaining,
+    undigested_count: undigestedCount,
+    last_run_at: _lastRunAt > 0 ? new Date(_lastRunAt).toISOString() : null,
   };
 }
 
