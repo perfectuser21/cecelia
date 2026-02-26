@@ -1,6 +1,9 @@
 /**
  * Routes Unit Tests for Decomposition API Endpoints
  * Tests the new decomposition API endpoints in routes.js
+ *
+ * v2.0: getActiveExecutionPaths 和 INVENTORY_CONFIG 已从 decomposition-checker
+ *       迁移到 routes.js 内部定义，测试通过 pool.query mock 控制行为。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,17 +17,11 @@ vi.mock('../db.js', () => {
 });
 
 vi.mock('../decomposition-checker.js', () => ({
-  getActiveExecutionPaths: vi.fn(),
   runDecompositionChecks: vi.fn(),
-  INVENTORY_CONFIG: {
-    LOW_WATERMARK: 2,
-    TARGET_READY_TASKS: 5,
-    BATCH_SIZE: 3
-  }
 }));
 
 import pool from '../db.js';
-import { getActiveExecutionPaths, runDecompositionChecks, INVENTORY_CONFIG } from '../decomposition-checker.js';
+import { runDecompositionChecks } from '../decomposition-checker.js';
 
 // Import after mocking to avoid module loading issues
 const { default: router } = await import('../routes.js');
@@ -59,16 +56,18 @@ describe('Decomposition API Routes', () => {
     const handler = getHandler('get', '/decomposition/missing');
 
     it('should return missing initiatives list', async () => {
-      // Mock active execution paths
-      getActiveExecutionPaths.mockResolvedValueOnce([
-        { id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' },
-        { id: 'init-2', name: 'Initiative 2', kr_id: 'kr-2' }
-      ]);
-
-      // Mock task count queries
+      // pool.query call 1: getActiveExecutionPaths → returns initiatives
       pool.query
-        .mockResolvedValueOnce({ rows: [{ count: '1' }] })  // init-1 has 1 task (below watermark)
-        .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // init-2 has 3 tasks (above watermark)
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' },
+            { id: 'init-2', name: 'Initiative 2', kr_id: 'kr-2' }
+          ]
+        })
+        // pool.query call 2: task count for init-1 (below LOW_WATERMARK=3)
+        .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+        // pool.query call 3: task count for init-2 (at or above LOW_WATERMARK)
+        .mockResolvedValueOnce({ rows: [{ count: '3' }] });
 
       const { req, res } = mockReqRes();
       await handler(req, res);
@@ -81,18 +80,18 @@ describe('Decomposition API Routes', () => {
         initiative_name: 'Initiative 1',
         kr_id: 'kr-1',
         ready_tasks: 1,
-        low_watermark: 2,
-        target_tasks: 5
+        low_watermark: 3,
+        target_tasks: 9
       });
       expect(res._data.total_active_paths).toBe(2);
     });
 
     it('should return empty list when all initiatives have sufficient tasks', async () => {
-      getActiveExecutionPaths.mockResolvedValueOnce([
-        { id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' }
-      ]);
-
-      pool.query.mockResolvedValueOnce({ rows: [{ count: '5' }] }); // Above watermark
+      pool.query
+        .mockResolvedValueOnce({
+          rows: [{ id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' }]
+        })
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // Above watermark
 
       const { req, res } = mockReqRes();
       await handler(req, res);
@@ -101,7 +100,7 @@ describe('Decomposition API Routes', () => {
     });
 
     it('should handle errors gracefully', async () => {
-      getActiveExecutionPaths.mockRejectedValueOnce(new Error('Database error'));
+      pool.query.mockRejectedValueOnce(new Error('Database error'));
 
       const { req, res } = mockReqRes();
       await handler(req, res);
@@ -153,22 +152,23 @@ describe('Decomposition API Routes', () => {
     const handler = getHandler('get', '/decomposition/stats');
 
     it('should return comprehensive decomposition statistics', async () => {
-      // Mock active execution paths
-      getActiveExecutionPaths.mockResolvedValueOnce([
-        { id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' },
-        { id: 'init-2', name: 'Initiative 2', kr_id: 'kr-2' }
-      ]);
-
-      // Mock database queries
       pool.query
-        // Decomposition tasks stats
+        // Call 1: getActiveExecutionPaths → initiatives
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'init-1', name: 'Initiative 1', kr_id: 'kr-1' },
+            { id: 'init-2', name: 'Initiative 2', kr_id: 'kr-2' }
+          ]
+        })
+        // Call 2: Decomposition tasks stats
         .mockResolvedValueOnce({
           rows: [{ total: '10', queued: '3', in_progress: '2', completed: '5' }]
         })
-        // Initiative task counts
-        .mockResolvedValueOnce({ rows: [{ count: '1' }] })  // init-1: low inventory
-        .mockResolvedValueOnce({ rows: [{ count: '4' }] })  // init-2: sufficient
-        // Project stats
+        // Call 3: Task count for init-1 (below LOW_WATERMARK=3)
+        .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+        // Call 4: Task count for init-2 (above LOW_WATERMARK)
+        .mockResolvedValueOnce({ rows: [{ count: '4' }] })
+        // Call 5: Project stats
         .mockResolvedValueOnce({
           rows: [
             { type: 'project', status: 'active', count: '5' },
@@ -194,14 +194,14 @@ describe('Decomposition API Routes', () => {
       expect(res._data.inventory_stats[0].is_low_inventory).toBe(true);
       expect(res._data.inventory_stats[1].is_low_inventory).toBe(false);
       expect(res._data.config).toMatchObject({
-        low_watermark: 2,
-        target_ready_tasks: 5,
+        low_watermark: 3,
+        target_ready_tasks: 9,
         batch_size: 3
       });
     });
 
     it('should handle errors gracefully', async () => {
-      getActiveExecutionPaths.mockRejectedValueOnce(new Error('Stats error'));
+      pool.query.mockRejectedValueOnce(new Error('Stats error'));
 
       const { req, res } = mockReqRes();
       await handler(req, res);
