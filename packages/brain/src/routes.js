@@ -732,6 +732,56 @@ router.get('/briefing', async (req, res) => {
   }
 });
 
+// ==================== Greet API（主动问候） ====================
+
+/**
+ * POST /api/brain/greet
+ * 用户打开 Dashboard 时调用，触发 Cecelia 主动问候。
+ * 通过 WebSocket DESIRE_EXPRESSED 推送问候到前端。
+ * 5 分钟冷却期防止重复生成。
+ */
+router.post('/greet', async (req, res) => {
+  try {
+    const { generateGreeting, isInCooldown } = await import('./greet.js');
+
+    // 冷却检查（提前返回，不需要生成）
+    if (await isInCooldown()) {
+      // 即使冷却期，也更新 user_last_seen
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ('user_last_seen', $1, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+      `, [JSON.stringify(new Date().toISOString())]);
+      return res.json({ status: 'cooldown', message: '5 分钟内已问候过' });
+    }
+
+    // 异步生成问候（不阻塞响应）
+    res.json({ status: 'generating' });
+
+    // 在响应后异步生成并推送
+    const greeting = await generateGreeting();
+    if (greeting) {
+      // 通过 WebSocket 推送
+      websocketService.broadcast(WS_EVENTS.DESIRE_EXPRESSED, {
+        id: `greet-${Date.now()}`,
+        type: greeting.type,
+        urgency: greeting.urgency,
+        content: greeting.message,
+        message: greeting.message,
+        source: 'greet',
+        timestamp: new Date().toISOString(),
+      });
+      console.log('[greet] 主动问候已推送:', greeting.message.slice(0, 60));
+    }
+  } catch (err) {
+    console.error('[API] greet error:', err.message);
+    // 如果还没发送响应
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
 // ==================== Focus API（优先级引擎） ====================
 
 /**

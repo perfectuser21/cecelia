@@ -189,6 +189,10 @@ export default function CeceliaPage() {
     loadInitial();
     fetchActivity();
     fetchInnerLife();
+
+    // 通知后端用户到来，触发 Cecelia 主动问候
+    fetch('/api/brain/greet', { method: 'POST' }).catch(() => {});
+
     const t = setInterval(fetchActivity, 30000);
     const t2 = setInterval(fetchInnerLife, 60000);
     return () => { clearInterval(t); clearInterval(t2); };
