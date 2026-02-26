@@ -1,49 +1,26 @@
 /**
  * Layer 2: 记忆层（Memory）
  *
- * 每个感知观察打重要性分 1-10（MiniMax M2.5-highspeed）。
+ * 所有观察批量打重要性分 1-10（一次 LLM 调用）。
  * 写入 memory_stream 表，并将分数累积到 working_memory desire_importance_accumulator。
  */
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-
-let _minimaxKey = null;
-
-function getMinimaxKey() {
-  if (_minimaxKey) return _minimaxKey;
-  try {
-    const credPath = join(homedir(), '.credentials', 'minimax.json');
-    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
-    _minimaxKey = cred.api_key;
-    return _minimaxKey;
-  } catch (err) {
-    console.error('[memory] Failed to load MiniMax credentials:', err.message);
-    return null;
-  }
-}
-
-function stripThinking(content) {
-  if (!content) return '';
-  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-}
+import { callLLM } from '../llm-caller.js';
 
 /**
- * 调用 MiniMax M2.5-highspeed 为观察打重要性分
- * @param {string} context - 观察内容
- * @returns {Promise<number>} 1-10 整数
+ * 批量为所有观察打重要性分（一次 LLM 调用）
+ * @param {Array<{context: string}>} observations
+ * @returns {Promise<number[]>} 每个观察的分数数组
  */
-async function scoreImportance(context) {
-  const apiKey = getMinimaxKey();
-  if (!apiKey) {
-    console.warn('[memory] No MiniMax key, defaulting importance to 5');
-    return 5;
-  }
+async function batchScoreImportance(observations) {
+  if (!observations || observations.length === 0) return [];
 
-  const prompt = `你是 Cecelia，Alex 的 AI 管家。请评估以下观察的重要性，给出 1-10 的整数分数。
+  const obsLines = observations.map((obs, i) => `${i + 1}. ${obs.context}`).join('\n');
 
-观察：${context}
+  const prompt = `你是 Cecelia，Alex 的 AI 管家。请评估以下每个观察的重要性，给出 1-10 的整数分数。
+
+观察列表：
+${obsLines}
 
 评分标准：
 - 1-3: 日常信息，不需要特别关注
@@ -51,38 +28,28 @@ async function scoreImportance(context) {
 - 7-8: 重要，可能需要向 Alex 汇报
 - 9-10: 紧急，必须立即关注
 
-只输出一个整数，不要其他内容。`;
+请严格按以下格式输出（每行一个分数，对应上面的编号，只输出数字）：
+1: 分数
+2: 分数
+...`;
 
   try {
-    const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'MiniMax-M2.5-highspeed',
-        max_tokens: 16,
-        messages: [{ role: 'user', content: prompt }]
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+    const { text } = await callLLM('memory', prompt, { timeout: 30000 });
 
-    if (!response.ok) {
-      throw new Error(`MiniMax API error: ${response.status}`);
+    // 解析分数：每行 "N: X" 或纯数字
+    const scores = [];
+    const lines = text.split('\n').filter(l => l.trim());
+    for (let i = 0; i < observations.length; i++) {
+      const line = lines[i] || '';
+      const numMatch = line.match(/\b([1-9]|10)\b/);
+      const score = numMatch ? parseInt(numMatch[1]) : 5;
+      scores.push(score >= 1 && score <= 10 ? score : 5);
     }
 
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '';
-    const text = stripThinking(rawText);
-    // 从任意位置提取第一个 1-10 的数字（防止模型包裹在 markdown 里）
-    const numMatch = text.match(/\b([1-9]|10)\b/);
-    const score = numMatch ? parseInt(numMatch[1]) : NaN;
-    if (isNaN(score) || score < 1 || score > 10) return 5;
-    return score;
+    return scores;
   } catch (err) {
-    console.error('[memory] scoreImportance error:', err.message);
-    return 5;
+    console.error('[memory] batchScoreImportance error:', err.message);
+    return observations.map(() => 5); // 降级：所有观察默认 5 分
   }
 }
 
@@ -97,11 +64,15 @@ export async function runMemory(pool, observations) {
     return { written: 0, total_importance: 0 };
   }
 
+  // 批量打分（一次 LLM 调用）
+  const scores = await batchScoreImportance(observations);
+
   let totalImportance = 0;
   let written = 0;
 
-  for (const obs of observations) {
-    const importance = await scoreImportance(obs.context);
+  for (let i = 0; i < observations.length; i++) {
+    const obs = observations[i];
+    const importance = scores[i] || 5;
     const memoryType = importance >= 7 ? 'long' : importance >= 4 ? 'mid' : 'short';
     const expiresAt = memoryType === 'long' ? null
       : memoryType === 'mid' ? new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()

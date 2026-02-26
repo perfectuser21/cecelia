@@ -11,39 +11,19 @@
  *     → 返回 { reply, routing_level, intent }
  */
 
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
+import { callLLM } from './llm-caller.js';
 
-// MiniMax 嘴巴模型（快速对话）
-const MOUTH_MODEL = 'MiniMax-M2.5-highspeed';
-
-// MiniMax API key 缓存
-let _mouthApiKey = null;
-
-function getMouthApiKey() {
-  if (_mouthApiKey) return _mouthApiKey;
-  try {
-    const credPath = join(homedir(), '.credentials', 'minimax.json');
-    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
-    _mouthApiKey = cred.api_key;
-  } catch (err) {
-    console.error('[orchestrator-chat] Failed to load MiniMax credentials:', err.message);
-  }
-  return _mouthApiKey;
-}
-
-// 导出用于测试（重置缓存）
-export function _resetApiKey() { _mouthApiKey = null; }
+// 导出用于测试（重置缓存，已不需要但保留兼容）
+export function _resetApiKey() { /* no-op */ }
 
 /**
- * 去除 MiniMax 回复中的 <think> 思维链块
+ * 去除 LLM 回复中的 <think> 思维链块
  */
 export function stripThinking(content) {
   if (!content) return '';
@@ -51,7 +31,7 @@ export function stripThinking(content) {
 }
 
 /**
- * 调用 MiniMax API 生成对话回复
+ * 调用统一 LLM 层生成对话回复
  * @param {string} userMessage
  * @param {string} systemPrompt
  * @param {Object} options - { timeout }
@@ -59,46 +39,20 @@ export function stripThinking(content) {
  * @returns {Promise<{reply: string, usage: Object}>}
  */
 async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
-  const apiKey = getMouthApiKey();
-  if (!apiKey) {
-    throw new Error('MiniMax API key not available (mouth)');
-  }
-
   const timeout = options.timeout || 30000;
 
-  // MiniMax Chat Completions 格式
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...historyMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userMessage },
-  ];
+  // 将 system prompt + history + user message 合并为单一 prompt
+  const historyBlock = historyMessages.slice(-10)
+    .map(m => `${m.role === 'user' ? 'Alex' : 'Cecelia'}：${m.content}`)
+    .join('\n');
 
-  const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: MOUTH_MODEL,
-      max_tokens: 2048,
-      messages,
-    }),
-    signal: AbortSignal.timeout(timeout),
-  });
+  const fullPrompt = `${systemPrompt}\n\n${historyBlock ? `## 对话历史\n${historyBlock}\n\n` : ''}Alex：${userMessage}`;
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`MiniMax API error: ${response.status} - ${errText}`);
-  }
-
-  const data = await response.json();
-  const rawReply = data.choices?.[0]?.message?.content || '';
-  const reply = stripThinking(rawReply);
+  const { text } = await callLLM('mouth', fullPrompt, { timeout, maxTokens: 2048 });
 
   return {
-    reply,
-    usage: data.usage || {},
+    reply: text,
+    usage: {},
   };
 }
 

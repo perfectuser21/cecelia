@@ -6,30 +6,8 @@
  * 渠道：Feishu（inform/warn/celebrate）+ proposals 表（propose/question）
  */
 
-import { readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import { sendFeishu } from '../notifier.js';
-
-let _minimaxKey = null;
-
-function getMinimaxKey() {
-  if (_minimaxKey) return _minimaxKey;
-  try {
-    const credPath = join(homedir(), '.credentials', 'minimax.json');
-    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
-    _minimaxKey = cred.api_key;
-    return _minimaxKey;
-  } catch (err) {
-    console.error('[expression] Failed to load MiniMax credentials:', err.message);
-    return null;
-  }
-}
-
-function stripThinking(content) {
-  if (!content) return '';
-  return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
-}
+import { callLLM } from '../llm-caller.js';
 
 /**
  * 用 MiniMax 生成格式化的 Feishu 消息
@@ -37,8 +15,6 @@ function stripThinking(content) {
  * @returns {Promise<string>}
  */
 async function generateMessage(desire) {
-  const apiKey = getMinimaxKey();
-
   const typeLabel = {
     inform: '📊 汇报',
     propose: '💡 提案',
@@ -46,11 +22,6 @@ async function generateMessage(desire) {
     celebrate: '🎉 好消息',
     question: '❓ 需要决定'
   }[desire.type] || '📝 消息';
-
-  if (!apiKey) {
-    // 无 API key 时使用简单格式
-    return `${typeLabel}\n\n${desire.content}\n\n建议：${desire.proposed_action}`;
-  }
 
   const prompt = `你是 Cecelia，Alex 的 AI 管家。请把以下信息格式化为一条 Feishu 消息，发给 Alex。
 
@@ -74,25 +45,7 @@ ${desire.type === 'question' || desire.type === 'propose' ? '**需要 Alex 决�
 要求：简洁、专业、直接。不超过 150 字。`;
 
   try {
-    const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'MiniMax-M2.5-highspeed',
-        max_tokens: 512,
-        messages: [{ role: 'user', content: prompt }]
-      }),
-      signal: AbortSignal.timeout(20000),
-    });
-
-    if (!response.ok) throw new Error(`MiniMax API error: ${response.status}`);
-
-    const data = await response.json();
-    const rawText = data.choices?.[0]?.message?.content || '';
-    const text = stripThinking(rawText);
+    const { text } = await callLLM('mouth', prompt, { timeout: 20000 });
     return text || `${typeLabel}\n\n${desire.content}\n\n建议：${desire.proposed_action}`;
   } catch (err) {
     console.error('[expression] generateMessage error:', err.message);

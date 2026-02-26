@@ -18,8 +18,8 @@
 /* global console */
 
 import pool from './db.js';
-import { getActiveProfile } from './model-profile.js';
 import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
+import { callLLM } from './llm-caller.js';
 import { searchRelevantLearnings } from './learning.js';
 import {
   evaluateQualityInitial,
@@ -164,58 +164,17 @@ const CORTEX_ACTION_WHITELIST = {
 };
 
 // ============================================================
-// Opus API 调用
+// Cortex LLM 调用（通过统一 callLLM 层）
 // ============================================================
 
 /**
- * 调用 Opus API 进行深度分析
+ * 调用皮层 LLM 进行深度分析（通过统一 callLLM 层）
  * @param {string} prompt
  * @returns {Promise<string>}
  */
 async function callCortexLLM(prompt) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY not set');
-  }
-
-  const profile = getActiveProfile();
-  const cortexModel = profile?.config?.cortex?.model || 'claude-opus-4-20250514';
-
-  console.log(`[cortex] Calling ${cortexModel} for deep analysis...`);
-  const startTime = Date.now();
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: cortexModel,
-      max_tokens: 4096,
-      messages: [
-        { role: 'user', content: prompt }
-      ]
-    }),
-    signal: AbortSignal.timeout(90000)
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Cortex API error: ${response.status} - ${error}`);
-  }
-
-  const data = await response.json();
-  const elapsed = Date.now() - startTime;
-  console.log(`[cortex] ${cortexModel} responded in ${elapsed}ms`);
-
-  await recordTokenUsage('cortex', cortexModel, data.usage, {
-    elapsed_ms: elapsed,
-  });
-
-  return data.content[0].text;
+  const { text } = await callLLM('cortex', prompt, { timeout: 90000, maxTokens: 4096 });
+  return text;
 }
 
 // ============================================================

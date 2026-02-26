@@ -145,48 +145,44 @@ describe('executor profile-aware routing', () => {
 
 describe('thalamus profile dispatch', () => {
   let callThalamusLLM;
-  let mockGetActiveProfile;
+  let mockCallLLM;
 
   beforeEach(async () => {
     vi.resetModules();
 
-    mockGetActiveProfile = vi.fn();
-    vi.doMock('../model-profile.js', () => ({
-      getActiveProfile: mockGetActiveProfile,
+    // callThalamusLLM 现在是一个 legacy shim，内部转发到 callLLM
+    // 直接 mock llm-caller.js
+    mockCallLLM = vi.fn();
+    vi.doMock('../llm-caller.js', () => ({
+      callLLM: mockCallLLM,
     }));
 
     // Mock DB
     vi.doMock('../db.js', () => ({ default: { query: vi.fn() } }));
 
-    // Mock node:fs (for minimax credentials)
-    vi.doMock('node:fs', () => ({
-      readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-minimax-key' })),
-    }));
-
     // Mock event-bus
     vi.doMock('../event-bus.js', () => ({ emit: vi.fn() }));
 
-    // Mock global fetch
-    global.fetch = vi.fn();
+    // Mock memory/learning deps
+    vi.doMock('../memory-retriever.js', () => ({
+      buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
+    }));
+    vi.doMock('../learning.js', () => ({
+      getRecentLearnings: vi.fn().mockResolvedValue([]),
+      searchRelevantLearnings: vi.fn().mockResolvedValue([]),
+    }));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete global.fetch;
   });
 
-  it('D14a: MiniMax profile → 调用 callThalamLLM (MiniMax API)', async () => {
-    mockGetActiveProfile.mockReturnValue({
-      config: { thalamus: { provider: 'minimax', model: 'MiniMax-M2.1' } },
-    });
-
-    // Mock MiniMax API response (OpenAI compatible format)
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"action":"none"}' } }],
-        usage: { total_tokens: 100 },
-      }),
+  it('D14a: callThalamusLLM 转发到 callLLM("thalamus", ...)', async () => {
+    mockCallLLM.mockResolvedValueOnce({
+      text: '{"action":"none"}',
+      model: 'MiniMax-M2.1',
+      provider: 'minimax',
+      elapsed_ms: 50,
     });
 
     const mod = await import('../thalamus.js');
@@ -196,44 +192,26 @@ describe('thalamus profile dispatch', () => {
     expect(result.text).toContain('none');
     expect(result.model).toBe('MiniMax-M2.1');
 
-    // 验证调用的是 MiniMax API 地址
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('minimax'),
-      expect.any(Object)
-    );
+    // 验证 callLLM 被正确调用
+    expect(mockCallLLM).toHaveBeenCalledWith('thalamus', 'test prompt');
   });
 
-  it('D14b: Anthropic profile → 调用 callHaiku (Anthropic API)', async () => {
-    mockGetActiveProfile.mockReturnValue({
-      config: { thalamus: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
-    });
-
-    // 需要 ANTHROPIC_API_KEY
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-
-    // Mock Anthropic API response
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        content: [{ text: '{"action":"none"}' }],
-        usage: { input_tokens: 50, output_tokens: 50 },
-      }),
+  it('D14b: callThalamLLM legacy shim 转发到 callLLM("thalamus", ...)', async () => {
+    mockCallLLM.mockResolvedValueOnce({
+      text: '{"action":"none"}',
+      model: 'claude-haiku-4-5-20251001',
+      provider: 'anthropic',
+      elapsed_ms: 50,
     });
 
     const mod = await import('../thalamus.js');
-    callThalamusLLM = mod.callThalamusLLM;
+    const { callThalamLLM } = mod;
 
-    const result = await callThalamusLLM('test prompt');
+    const result = await callThalamLLM('test prompt', { timeoutMs: 60000 });
     expect(result.text).toContain('none');
-    expect(result.model).toBe('claude-haiku-4-5-20251001');
 
-    // 验证调用的是 Anthropic API 地址
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('anthropic.com'),
-      expect.any(Object)
-    );
-
-    delete process.env.ANTHROPIC_API_KEY;
+    // 验证 callLLM 被调用时传入了 timeout 参数
+    expect(mockCallLLM).toHaveBeenCalledWith('thalamus', 'test prompt', { timeout: 60000 });
   });
 });
 
@@ -243,42 +221,48 @@ describe('thalamus profile dispatch', () => {
 
 describe('cortex profile-aware model', () => {
   let callCortexLLM;
-  let mockGetActiveProfile;
+  let mockCallLLM;
 
   beforeEach(async () => {
     vi.resetModules();
 
-    mockGetActiveProfile = vi.fn();
-    vi.doMock('../model-profile.js', () => ({
-      getActiveProfile: mockGetActiveProfile,
+    // callCortexLLM 内部调用 callLLM('cortex', prompt, { timeout: 90000, maxTokens: 4096 })
+    mockCallLLM = vi.fn();
+    vi.doMock('../llm-caller.js', () => ({
+      callLLM: mockCallLLM,
     }));
 
     // Mock DB
     vi.doMock('../db.js', () => ({ default: { query: vi.fn() } }));
 
-    // Mock global fetch
-    global.fetch = vi.fn();
-
-    process.env.ANTHROPIC_API_KEY = 'test-key';
+    // Mock thalamus deps (cortex imports from thalamus)
+    vi.doMock('../learning.js', () => ({
+      getRecentLearnings: vi.fn().mockResolvedValue([]),
+      searchRelevantLearnings: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock('../memory-retriever.js', () => ({
+      buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
+    }));
+    vi.doMock('../cortex-quality.js', () => ({
+      evaluateQualityInitial: vi.fn().mockResolvedValue(null),
+      generateSimilarityHash: vi.fn().mockReturnValue('hash'),
+      checkShouldCreateRCA: vi.fn().mockResolvedValue({ should_create: true }),
+    }));
+    vi.doMock('../policy-validator.js', () => ({
+      validatePolicyJson: vi.fn().mockReturnValue({ valid: true, normalized: {} }),
+    }));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete global.fetch;
-    delete process.env.ANTHROPIC_API_KEY;
   });
 
-  it('D15a: profile 指定 opus → 使用 opus', async () => {
-    mockGetActiveProfile.mockReturnValue({
-      config: { cortex: { provider: 'anthropic', model: 'claude-opus-4-20250514' } },
-    });
-
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        content: [{ text: 'deep analysis result' }],
-        usage: { input_tokens: 100, output_tokens: 200 },
-      }),
+  it('D15a: callCortexLLM 转发到 callLLM("cortex", ...) 并返回 text', async () => {
+    mockCallLLM.mockResolvedValueOnce({
+      text: 'deep analysis result',
+      model: 'claude-opus-4-20250514',
+      provider: 'anthropic',
+      elapsed_ms: 1000,
     });
 
     const mod = await import('../cortex.js');
@@ -287,31 +271,24 @@ describe('cortex profile-aware model', () => {
     const result = await callCortexLLM('analyze this');
     expect(result).toContain('deep analysis result');
 
-    // 验证传了正确的模型
-    const fetchBody = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(fetchBody.model).toBe('claude-opus-4-20250514');
+    // 验证 callLLM 被正确调用
+    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this', { timeout: 90000, maxTokens: 4096 });
   });
 
-  it('D15b: profile 指定 sonnet → 使用 sonnet', async () => {
-    mockGetActiveProfile.mockReturnValue({
-      config: { cortex: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' } },
-    });
-
-    global.fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        content: [{ text: 'sonnet analysis' }],
-        usage: { input_tokens: 100, output_tokens: 200 },
-      }),
+  it('D15b: callCortexLLM 传递不同 prompt 内容', async () => {
+    mockCallLLM.mockResolvedValueOnce({
+      text: 'sonnet analysis',
+      model: 'claude-sonnet-4-20250514',
+      provider: 'anthropic',
+      elapsed_ms: 500,
     });
 
     const mod = await import('../cortex.js');
     callCortexLLM = mod.callCortexLLM;
 
-    const result = await callCortexLLM('analyze this');
+    const result = await callCortexLLM('analyze this differently');
     expect(result).toContain('sonnet analysis');
 
-    const fetchBody = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(fetchBody.model).toBe('claude-sonnet-4-20250514');
+    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this differently', { timeout: 90000, maxTokens: 4096 });
   });
 });

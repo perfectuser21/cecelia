@@ -5,10 +5,8 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
-vi.mock('../thalamus.js', () => ({
-  callThalamLLM: vi.fn(),
-  ACTION_WHITELIST: {},
-  EVENT_TYPES: {},
+vi.mock('../llm-caller.js', () => ({
+  callLLM: vi.fn(),
 }));
 vi.mock('../decision-executor.js', () => ({
   executeDecision: vi.fn(),

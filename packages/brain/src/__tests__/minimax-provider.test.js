@@ -1,14 +1,14 @@
 /**
  * minimax-provider.test.js
  *
- * 测试 MiniMax provider 支持（双 Provider 路由）：
- * - T1 (D1): getProviderForTask() 默认返回 'minimax'
+ * 测试双 Provider 路由（Anthropic 默认）：
+ * - T1 (D1): getProviderForTask() 默认返回 'anthropic'
  * - T2 (D2): triggerCeceliaRun 传 provider 给 bridge body
  * - T3 (D3): getProviderForTask 已正确导出
  * - T4 (D4): FIXED_PROVIDER 固定路由覆盖默认
  *
  * DoD 映射：
- * - D1 → 'getProviderForTask returns minimax by default'
+ * - D1 → 'getProviderForTask returns anthropic by default'
  * - D2 → 'triggerCeceliaRun passes provider to bridge'
  * - D3 → 'getProviderForTask is exported'
  * - D4 → 'FIXED_PROVIDER overrides default'
@@ -61,9 +61,9 @@ describe('getProviderForTask - 双 Provider 路由', () => {
     expect(typeof getProviderForTask).toBe('function');
   });
 
-  it('T1 (D1): dev 任务返回 minimax（默认）', () => {
+  it('T1 (D1): dev 任务返回 anthropic（默认）', () => {
     const task = { id: 'task-1', task_type: 'dev', title: '编码任务' };
-    expect(getProviderForTask(task)).toBe('minimax');
+    expect(getProviderForTask(task)).toBe('anthropic');
   });
 
   it('T4 (D4): codex_qa 任务固定返回 openai', () => {
@@ -71,21 +71,22 @@ describe('getProviderForTask - 双 Provider 路由', () => {
     expect(getProviderForTask(task)).toBe('openai');
   });
 
-  it('T1 (D1): talk 任务固定返回 minimax', () => {
+  it('T1 (D1): talk 任务返回 anthropic（默认，无 fixed_provider）', () => {
     const task = { id: 'task-4', task_type: 'talk', title: '对话任务' };
-    expect(getProviderForTask(task)).toBe('minimax');
+    expect(getProviderForTask(task)).toBe('anthropic');
   });
 
-  it('T1 (D1): undefined task_type 返回 minimax', () => {
+  it('T1 (D1): undefined task_type 返回 anthropic', () => {
     const task = { id: 'task-5', title: '未知类型' };
-    expect(getProviderForTask(task)).toBe('minimax');
+    expect(getProviderForTask(task)).toBe('anthropic');
   });
 
   it('T4 (D4): FIXED_PROVIDER 包含正确映射', () => {
     expect(FIXED_PROVIDER.codex_qa).toBe('openai');
-    expect(FIXED_PROVIDER.decomp_review).toBe('minimax');
-    expect(FIXED_PROVIDER.talk).toBe('minimax');
-    expect(FIXED_PROVIDER.research).toBe('minimax');
+    // decomp_review/talk/research 不再有 fixed_provider，走 default_provider
+    expect(FIXED_PROVIDER.decomp_review).toBeUndefined();
+    expect(FIXED_PROVIDER.talk).toBeUndefined();
+    expect(FIXED_PROVIDER.research).toBeUndefined();
     expect(FIXED_PROVIDER.exploratory).toBeUndefined();
   });
 });
@@ -121,7 +122,7 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
     triggerCeceliaRun = executor.triggerCeceliaRun;
   });
 
-  it('T2 (D2): bridge 请求 body 包含 provider=minimax', async () => {
+  it('T2 (D2): bridge 请求 body 包含 provider=anthropic', async () => {
     const task = {
       id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       title: '测试任务',
@@ -137,7 +138,7 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
 
     // 验证 body 包含 provider 字段
     expect(capturedBody).toBeDefined();
-    expect(capturedBody.provider).toBe('minimax');
+    expect(capturedBody.provider).toBe('anthropic');
     expect(capturedBody.task_id).toBe(task.id);
   });
 });
