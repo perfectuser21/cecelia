@@ -6,6 +6,9 @@ import ceceliaRoutes from './src/cecelia-routes.js';
 import traceRoutes from './src/trace-routes.js';
 import memoryRoutes from './src/routes/memory.js';
 import profileFactsRoutes from './src/routes/profile-facts.js';
+import clusterRoutes from './src/routes/cluster.js';
+import vpsMonitorRoutes from './src/routes/vps-monitor.js';
+import taskProjectsRoutes from './src/routes/task-projects.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -66,6 +69,11 @@ app.use(express.json({ limit: '256kb' }));
 // Mount memory routes (before brain routes to avoid conflicts)
 app.use('/api/brain/memory', memoryRoutes);
 app.use('/api/brain/profile/facts', profileFactsRoutes);
+
+// Migrated local routes (from apps/api → Brain)
+app.use('/api/brain/cluster', clusterRoutes);
+app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
+app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
