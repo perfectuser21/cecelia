@@ -339,10 +339,10 @@ export function selectTopAreas(state, count) {
 
   if (areas.length === 0) return [];
 
-  // KR.parent_id → Area.id 的映射
+  // KR.parent_id → Area.id 的映射（只看 ready/in_progress 的 KR）
   const krToAreaId = {};
   for (const kr of keyResults) {
-    if (kr.parent_id) {
+    if (kr.parent_id && (kr.status === 'ready' || kr.status === 'in_progress')) {
       krToAreaId[kr.id] = kr.parent_id;
     }
   }

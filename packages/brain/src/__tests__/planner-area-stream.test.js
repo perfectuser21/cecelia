@@ -26,7 +26,7 @@ describe('selectTopAreas', () => {
         { id: 'area-1', type: 'area_okr', priority: 'P0', status: 'active' }
       ],
       keyResults: [
-        { id: 'kr-1', parent_id: 'area-1' }
+        { id: 'kr-1', parent_id: 'area-1', status: 'ready' }
       ],
       activeTasks: [] // no queued tasks
     };
@@ -40,8 +40,8 @@ describe('selectTopAreas', () => {
         { id: 'area-2', type: 'area_okr', priority: 'P1', status: 'active' }
       ],
       keyResults: [
-        { id: 'kr-1', parent_id: 'area-1' },
-        { id: 'kr-2', parent_id: 'area-2' }
+        { id: 'kr-1', parent_id: 'area-1', status: 'ready' },
+        { id: 'kr-2', parent_id: 'area-2', status: 'ready' }
       ],
       activeTasks: [
         { id: 't-1', status: 'queued', goal_id: 'kr-1', project_id: 'init-1' }
@@ -60,8 +60,8 @@ describe('selectTopAreas', () => {
         { id: 'area-p0', type: 'area_okr', priority: 'P0', status: 'active' }
       ],
       keyResults: [
-        { id: 'kr-p1', parent_id: 'area-p1' },
-        { id: 'kr-p0', parent_id: 'area-p0' }
+        { id: 'kr-p1', parent_id: 'area-p1', status: 'ready' },
+        { id: 'kr-p0', parent_id: 'area-p0', status: 'ready' }
       ],
       activeTasks: [
         { id: 't-1', status: 'queued', goal_id: 'kr-p1', project_id: 'init-1' },
@@ -80,9 +80,9 @@ describe('selectTopAreas', () => {
         { id: 'area-3', type: 'area_okr', priority: 'P1', status: 'active' }
       ],
       keyResults: [
-        { id: 'kr-1', parent_id: 'area-1' },
-        { id: 'kr-2', parent_id: 'area-2' },
-        { id: 'kr-3', parent_id: 'area-3' }
+        { id: 'kr-1', parent_id: 'area-1', status: 'ready' },
+        { id: 'kr-2', parent_id: 'area-2', status: 'ready' },
+        { id: 'kr-3', parent_id: 'area-3', status: 'ready' }
       ],
       activeTasks: [
         { id: 't-1', status: 'queued', goal_id: 'kr-1', project_id: 'init-1' },
@@ -102,9 +102,9 @@ describe('selectTopAreas', () => {
         { id: 'area-active', type: 'area_okr', priority: 'P1', status: 'active' }
       ],
       keyResults: [
-        { id: 'kr-done', parent_id: 'area-done' },
-        { id: 'kr-cancel', parent_id: 'area-cancel' },
-        { id: 'kr-active', parent_id: 'area-active' }
+        { id: 'kr-done', parent_id: 'area-done', status: 'ready' },
+        { id: 'kr-cancel', parent_id: 'area-cancel', status: 'ready' },
+        { id: 'kr-active', parent_id: 'area-active', status: 'ready' }
       ],
       activeTasks: [
         { id: 't-1', status: 'queued', goal_id: 'kr-done', project_id: 'init-1' },

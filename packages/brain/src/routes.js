@@ -60,10 +60,20 @@ import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.j
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
 import {
   runDecompositionChecks,
-  getActiveExecutionPaths,
-  checkInitiativeDecomposition,
-  INVENTORY_CONFIG
 } from './decomposition-checker.js';
+
+// Inventory config for decomposition routes (moved here after decomp-checker simplification)
+const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
+
+async function getActiveExecutionPaths() {
+  const result = await pool.query(`
+    SELECT p.id, p.name, pkl.kr_id
+    FROM projects p
+    INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
+    WHERE p.type = 'initiative' AND p.status IN ('active', 'in_progress')
+  `);
+  return result.rows;
+}
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 
 const router = Router();
@@ -460,6 +470,41 @@ router.get('/goals', async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Failed to get goals', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/goals/:id/approve
+ * 用户放行 KR（reviewing → ready）。
+ * 只有 type='kr' 且 status='reviewing' 的 goal 可以被放行。
+ */
+router.post('/goals/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `UPDATE goals SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND type = 'kr' AND status = 'reviewing'
+       RETURNING id, title, status`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'KR not found or not in reviewing status'
+      });
+    }
+
+    console.log(`[goals] KR ${id} approved: reviewing → ready`);
+
+    res.json({
+      success: true,
+      goal: result.rows[0],
+      message: `KR "${result.rows[0].title}" 已放行`
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to approve KR', details: err.message });
   }
 });
 
@@ -2401,6 +2446,62 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (decompReviewErr) {
         console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
+      }
+
+      // 5c2. 秋米拆解完成 → 触发 Vivian 审查 + KR 状态更新
+      try {
+        const decompCheckResult = await pool.query('SELECT task_type, payload, goal_id FROM tasks WHERE id = $1', [task_id]);
+        const decompCheckRow = decompCheckResult.rows[0];
+
+        // 只处理秋米的拆解任务（不是 Vivian 的 decomp_review）
+        if (decompCheckRow?.payload?.decomposition === 'true'
+            && decompCheckRow?.task_type !== 'decomp_review'
+            && decompCheckRow?.goal_id) {
+          const krId = decompCheckRow.goal_id;
+
+          // 检查 KR 是否处于 decomposing 状态
+          const krCheckResult = await pool.query(
+            'SELECT id, title, status FROM goals WHERE id = $1 AND status = $2',
+            [krId, 'decomposing']
+          );
+
+          if (krCheckResult.rows.length > 0) {
+            // 找到秋米创建的 Project（通过 project_kr_links）
+            const projectCheckResult = await pool.query(`
+              SELECT p.id, p.name FROM projects p
+              INNER JOIN project_kr_links pkl ON pkl.project_id = p.id
+              WHERE pkl.kr_id = $1 AND p.type = 'project'
+              ORDER BY p.created_at DESC LIMIT 1
+            `, [krId]);
+
+            if (projectCheckResult.rows.length > 0) {
+              const project = projectCheckResult.rows[0];
+
+              // 触发 Vivian 审查
+              const { shouldTriggerReview, createReviewTask } = await import('./review-gate.js');
+              const needsReview = await shouldTriggerReview(pool, 'project', project.id);
+
+              if (needsReview) {
+                await createReviewTask(pool, {
+                  entityType: 'project',
+                  entityId: project.id,
+                  entityName: project.name,
+                  parentKrId: krId,
+                });
+                console.log(`[execution-callback] Vivian review triggered for KR ${krId} project ${project.id}`);
+              }
+            }
+
+            // 更新 KR 状态: decomposing → reviewing
+            await pool.query(
+              `UPDATE goals SET status = 'reviewing', updated_at = NOW() WHERE id = $1`,
+              [krId]
+            );
+            console.log(`[execution-callback] KR ${krId} → reviewing (秋米拆解完成)`);
+          }
+        }
+      } catch (decompTriggerErr) {
+        console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
       }
 
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task

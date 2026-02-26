@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeCapacity, isAtCapacity, MAX_ACTIVE_PROJECTS } from '../capacity.js';
+import { computeCapacity, isAtCapacity, MAX_ACTIVE_PROJECTS, getMaxStreams } from '../capacity.js';
 
 describe('computeCapacity - project max 聚焦执行', () => {
   it('D1: SLOTS=9 → project.max = 2（不超过 MAX_ACTIVE_PROJECTS）', () => {
@@ -73,6 +73,20 @@ describe('computeCapacity - 其他层级不变', () => {
   it('SLOTS 小数向下取整', () => {
     const cap = computeCapacity(9.7);
     expect(cap.slots).toBe(9);
+  });
+});
+
+describe('getMaxStreams - 动态资源计算', () => {
+  it('should return a positive integer', () => {
+    const streams = getMaxStreams();
+    expect(streams).toBeGreaterThanOrEqual(1);
+    expect(Number.isInteger(streams)).toBe(true);
+  });
+
+  it('computeCapacity() without argument uses getMaxStreams()', () => {
+    const cap = computeCapacity();
+    expect(cap.slots).toBeGreaterThanOrEqual(1);
+    expect(cap.project.max).toBeGreaterThanOrEqual(1);
   });
 });
 

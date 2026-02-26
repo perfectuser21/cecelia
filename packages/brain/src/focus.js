@@ -1,20 +1,37 @@
 /**
- * Priority Engine - Daily Focus Selection
- * Implements the "today's focus" selection logic for Brain
+ * Focus Engine - OKR 统一版 (v2.0)
+ *
+ * Focus = ready 状态的 KR 列表。
+ * 不再有自动选择算法 — 用户通过标记 KR 为 ready 来决定焦点。
+ *
+ * 保留手动覆盖机制（setDailyFocus）用于兼容。
  */
 
 import pool from './db.js';
 
-// Working memory key for manual focus override
 const FOCUS_OVERRIDE_KEY = 'daily_focus_override';
 
 /**
- * Select daily focus using priority algorithm
- * Priority rules:
- * 1. Manually pinned Objective (is_pinned = true)
- * 2. Higher priority (P0 > P1 > P2)
- * 3. Near completion (80%+ progress - prioritize finishing)
- * 4. Recently active (most recent updated_at)
+ * 获取所有 ready 状态的 KR（即用户已放行的 KR）。
+ * 这些就是系统当前的焦点。
+ */
+async function getReadyKRs() {
+  const result = await pool.query(`
+    SELECT id, title, description, priority, progress, status, parent_id
+    FROM goals
+    WHERE type = 'kr'
+      AND status IN ('ready', 'in_progress')
+    ORDER BY
+      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
+      created_at ASC
+  `);
+  return result.rows;
+}
+
+/**
+ * Select daily focus — 基于 ready KR 的父 Area 选择。
+ * 如果有手动覆盖，优先使用手动设置。
+ * 否则选 ready KR 最多的 Area OKR 作为焦点。
  */
 async function selectDailyFocus() {
   // Check for manual override first
@@ -25,8 +42,6 @@ async function selectDailyFocus() {
 
   if (overrideResult.rows.length > 0 && overrideResult.rows[0].value_json?.objective_id) {
     const manualObjectiveId = overrideResult.rows[0].value_json.objective_id;
-
-    // Fetch the manually set objective
     const objResult = await pool.query(
       'SELECT * FROM goals WHERE id = $1 AND type IN ($2, $3)',
       [manualObjectiveId, 'global_okr', 'area_okr']
@@ -41,71 +56,50 @@ async function selectDailyFocus() {
     }
   }
 
-  // Auto-select using algorithm
-  const result = await pool.query(`
-    SELECT *
-    FROM goals
-    WHERE type IN ('global_okr', 'area_okr')
-      AND status NOT IN ('completed', 'cancelled')
-    ORDER BY
-      -- 1. Pinned first
-      CASE WHEN (metadata->>'is_pinned')::boolean = true THEN 0 ELSE 1 END,
-      -- 2. Priority order (P0 > P1 > P2)
-      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-      -- 3. Near completion (80%+) gets priority boost
-      CASE WHEN progress >= 80 THEN 0 ELSE 1 END,
-      -- 4. Recently active
-      updated_at DESC NULLS LAST
-    LIMIT 1
-  `);
+  // 基于 ready KR 选择焦点 Area
+  const readyKRs = await getReadyKRs();
 
-  if (result.rows.length === 0) {
+  if (readyKRs.length === 0) {
     return null;
   }
 
-  const objective = result.rows[0];
+  // 统计每个 Area 下有多少 ready KR
+  const areaCount = {};
+  for (const kr of readyKRs) {
+    if (kr.parent_id) {
+      areaCount[kr.parent_id] = (areaCount[kr.parent_id] || 0) + 1;
+    }
+  }
 
-  // Generate reason
-  const reason = generateReason(objective);
+  // 选 ready KR 最多的 Area
+  const bestAreaId = Object.entries(areaCount)
+    .sort(([, a], [, b]) => b - a)[0]?.[0];
+
+  if (!bestAreaId) {
+    return null;
+  }
+
+  const areaResult = await pool.query(
+    'SELECT * FROM goals WHERE id = $1',
+    [bestAreaId]
+  );
+
+  if (areaResult.rows.length === 0) {
+    return null;
+  }
+
+  const objective = areaResult.rows[0];
+  const krCount = areaCount[bestAreaId];
 
   return {
     objective,
-    reason,
+    reason: `${krCount} 个 ready KR`,
     is_manual: false
   };
 }
 
 /**
- * Generate human-readable reason for focus selection
- */
-function generateReason(objective) {
-  const reasons = [];
-
-  if (objective.metadata?.is_pinned) {
-    reasons.push('已置顶');
-  }
-
-  if (objective.priority === 'P0') {
-    reasons.push('P0 最高优先级');
-  } else if (objective.priority === 'P1') {
-    reasons.push('P1 高优先级');
-  }
-
-  if (objective.progress >= 80) {
-    reasons.push(`进度 ${objective.progress}%，接近完成`);
-  } else if (objective.progress > 0) {
-    reasons.push(`当前进度 ${objective.progress}%`);
-  }
-
-  if (reasons.length === 0) {
-    reasons.push('最近有活动');
-  }
-
-  return reasons.join('，');
-}
-
-/**
- * Get daily focus with full details
+ * Get daily focus with full details (兼容旧接口)
  */
 async function getDailyFocus() {
   const focusResult = await selectDailyFocus();
@@ -116,26 +110,21 @@ async function getDailyFocus() {
 
   const { objective, reason, is_manual } = focusResult;
 
-  // Get ALL Key Results recursively (including nested KRs)
-  // Using recursive CTE to get full hierarchy
-  const krsResult = await pool.query(`
-    WITH RECURSIVE kr_tree AS (
-      -- Base: direct children of objective
-      SELECT * FROM goals WHERE parent_id = $1
-      UNION ALL
-      -- Recursive: children of KRs
-      SELECT g.* FROM goals g
-      INNER JOIN kr_tree kt ON g.parent_id = kt.id
-    )
-    SELECT * FROM kr_tree ORDER BY created_at ASC
+  // Get ready KRs under this objective
+  const readyKRs = await pool.query(`
+    SELECT id, title, progress, weight, status
+    FROM goals
+    WHERE parent_id = $1
+      AND status IN ('ready', 'in_progress')
+    ORDER BY
+      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,
+      created_at ASC
   `, [objective.id]);
 
-  // Get suggested tasks (tasks linked to this objective or ANY level KRs)
-  const krIds = krsResult.rows.map(kr => kr.id);
-  const allGoalIds = [objective.id, ...krIds];
-
+  // Get suggested tasks (tasks under ready KRs)
+  const krIds = readyKRs.rows.map(kr => kr.id);
   let suggestedTasks = [];
-  if (allGoalIds.length > 0) {
+  if (krIds.length > 0) {
     const tasksResult = await pool.query(`
       SELECT id, title, status, priority
       FROM tasks
@@ -145,7 +134,7 @@ async function getDailyFocus() {
         CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
         created_at ASC
       LIMIT 5
-    `, [allGoalIds]);
+    `, [krIds]);
     suggestedTasks = tasksResult.rows;
   }
 
@@ -159,13 +148,7 @@ async function getDailyFocus() {
         progress: objective.progress,
         status: objective.status
       },
-      key_results: krsResult.rows.map(kr => ({
-        id: kr.id,
-        title: kr.title,
-        progress: kr.progress,
-        weight: kr.weight,
-        status: kr.status
-      })),
+      key_results: readyKRs.rows,
       suggested_tasks: suggestedTasks
     },
     reason,
@@ -174,10 +157,9 @@ async function getDailyFocus() {
 }
 
 /**
- * Manually set daily focus (override algorithm)
+ * Manually set daily focus (override)
  */
 async function setDailyFocus(objectiveId) {
-  // Verify objective exists
   const objResult = await pool.query(
     'SELECT id FROM goals WHERE id = $1 AND type IN ($2, $3)',
     [objectiveId, 'global_okr', 'area_okr']
@@ -187,7 +169,6 @@ async function setDailyFocus(objectiveId) {
     throw new Error('Objective not found');
   }
 
-  // Store override in working memory
   await pool.query(`
     INSERT INTO working_memory (key, value_json, updated_at)
     VALUES ($1, $2, NOW())
@@ -198,38 +179,32 @@ async function setDailyFocus(objectiveId) {
 }
 
 /**
- * Clear manual focus override, restore auto-selection
+ * Clear manual focus override
  */
 async function clearDailyFocus() {
   await pool.query(
     'DELETE FROM working_memory WHERE key = $1',
     [FOCUS_OVERRIDE_KEY]
   );
-
   return { success: true };
 }
 
 /**
- * Get focus summary for Decision Pack
+ * Get focus summary (兼容旧接口)
  */
 async function getFocusSummary() {
   const focusResult = await selectDailyFocus();
-
-  if (!focusResult) {
-    return null;
-  }
+  if (!focusResult) return null;
 
   const { objective, reason, is_manual } = focusResult;
 
-  // Get Key Results for this Objective (top 3, any level)
   const krsResult = await pool.query(`
-    WITH RECURSIVE kr_tree AS (
-      SELECT * FROM goals WHERE parent_id = $1
-      UNION ALL
-      SELECT g.* FROM goals g
-      INNER JOIN kr_tree kt ON g.parent_id = kt.id
-    )
-    SELECT id, title, progress FROM kr_tree ORDER BY weight DESC NULLS LAST LIMIT 3
+    SELECT id, title, progress
+    FROM goals
+    WHERE parent_id = $1 AND status IN ('ready', 'in_progress')
+    ORDER BY
+      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END
+    LIMIT 3
   `, [objective.id]);
 
   return {
@@ -248,5 +223,6 @@ export {
   setDailyFocus,
   clearDailyFocus,
   getFocusSummary,
-  selectDailyFocus
+  selectDailyFocus,
+  getReadyKRs,
 };
