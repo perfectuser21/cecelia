@@ -4,9 +4,9 @@
  * Smaller text, muted colors — shows system is alive without stealing focus.
  */
 
-import { CheckCircle2, XCircle, Play, AlertTriangle, Zap } from 'lucide-react';
+import { CheckCircle2, XCircle, Play, AlertTriangle, Zap, Brain } from 'lucide-react';
 
-export type EventType = 'task_completed' | 'task_failed' | 'task_started' | 'alertness_changed' | 'tick_executed' | 'desire_created';
+export type EventType = 'task_completed' | 'task_failed' | 'task_started' | 'alertness_changed' | 'tick_executed' | 'desire_created' | 'cognitive_state';
 
 const EVENT_CONFIG: Record<EventType, { icon: React.ReactNode; color: string }> = {
   task_completed: { icon: <CheckCircle2 size={11} />, color: '#10b981' },
@@ -15,6 +15,7 @@ const EVENT_CONFIG: Record<EventType, { icon: React.ReactNode; color: string }> 
   alertness_changed: { icon: <AlertTriangle size={11} />, color: '#f59e0b' },
   tick_executed: { icon: <Zap size={11} />, color: '#a78bfa' },
   desire_created: { icon: <AlertTriangle size={11} />, color: '#f59e0b' },
+  cognitive_state: { icon: <Brain size={11} />, color: '#6366f1' },
 };
 
 interface EventCardProps {
