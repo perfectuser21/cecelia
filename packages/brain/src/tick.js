@@ -1424,14 +1424,25 @@ async function executeTick() {
   const focus = hasFocus ? focusResult.focus : null;
   const objectiveId = hasFocus ? focus.objective.id : null;
 
-  // 4. Get tasks related to focus objective (include payload for timeout check)
-  // When no focus: allGoalIds = all active goals (global fallback)
+  // 4. Get tasks scoped to ready KRs only (OKR unification: only dispatch for user-approved KRs)
+  // Ready KRs = KRs that have been decomposed, reviewed, and approved by user
+  const readyKRsResult = await pool.query(`
+    SELECT id FROM goals WHERE type = 'kr' AND status IN ('ready', 'in_progress')
+  `);
+  const readyKrIds = readyKRsResult.rows.map(r => r.id);
+
+  // Also include focus objective's KRs if focus is set (backward compat)
   let allGoalIds;
   let krIds = [];
   if (hasFocus) {
     krIds = focus.key_results.map(kr => kr.id);
-    allGoalIds = [objectiveId, ...krIds];
+    // Merge focus KRs with ready KRs (ready KRs take priority)
+    const merged = new Set([...readyKrIds, ...krIds]);
+    allGoalIds = [objectiveId, ...merged];
+  } else if (readyKrIds.length > 0) {
+    allGoalIds = readyKrIds;
   } else {
+    // Fallback: if no ready KRs exist yet, use all active goals (transition period)
     const allGoalsResult = await pool.query(`
       SELECT id FROM goals WHERE status NOT IN ('completed', 'cancelled', 'canceled')
     `);
@@ -1583,7 +1594,7 @@ async function executeTick() {
   // 6. Planning: if no queued AND no in_progress tasks, invoke planner
   //    Fix: global fallback 时 krIds=[] 但 allGoalIds 非空，应仍触发规划
   if (queued.length === 0 && inProgress.length === 0 && allGoalIds.length > 0) {
-    const planKrIds = hasFocus ? krIds : allGoalIds; // global fallback 用全部活跃 goal ids
+    const planKrIds = readyKrIds.length > 0 ? readyKrIds : allGoalIds; // 优先 ready KRs
     try {
       const planned = await planNextTask(planKrIds);
       if (planned.planned) {
@@ -1669,18 +1680,13 @@ async function executeTick() {
     dispatched++;
   }
 
-  // 7b. If focus objective has no more tasks, fill remaining slots from ALL objectives
+  // 7b. If focus objective has no more tasks, fill remaining slots from ready KRs only
   if (dispatched < rampedDispatchMax && (!lastDispatchResult?.dispatched || lastDispatchResult?.reason === 'no_dispatchable_task')) {
     try {
-      const allObjectiveIds = await pool.query(`
-        SELECT id FROM goals
-        WHERE type IN ('global_okr', 'area_okr', 'kr', 'global_kr', 'area_kr')
-          AND status NOT IN ('completed', 'cancelled')
-      `);
-      const globalGoalIds = allObjectiveIds.rows.map(r => r.id);
-      if (globalGoalIds.length > 0) {
+      // Only use ready/in_progress KRs, not all objectives (OKR unification)
+      if (readyKrIds.length > 0) {
         for (let i = dispatched; i < rampedDispatchMax; i++) {
-          const globalDispatch = await dispatchNextTask(globalGoalIds);
+          const globalDispatch = await dispatchNextTask(readyKrIds);
           actionsTaken.push(...globalDispatch.actions);
           if (!globalDispatch.dispatched) break;
           dispatched++;
