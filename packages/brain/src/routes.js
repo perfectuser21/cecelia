@@ -7657,7 +7657,7 @@ router.get('/learnings', async (req, res) => {
 
     params.push(limit, offset);
     const dataResult = await pool.query(
-      `SELECT id, title, content, category, digested, archived, created_at, updated_at
+      `SELECT id, title, content, category, digested, archived, created_at
        FROM learnings ${where}
        ORDER BY created_at DESC
        LIMIT $${paramIdx++} OFFSET $${paramIdx}`,
