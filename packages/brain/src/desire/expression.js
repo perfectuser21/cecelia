@@ -101,16 +101,35 @@ ${desire.type === 'question' || desire.type === 'propose' ? '**需要 Alex 决�
 }
 
 /**
- * 执行表达：发送 Feishu，更新 desire 状态，记录 last_feishu_at
+ * 执行表达：Dashboard WebSocket 广播 + 紧急时发飞书备份
  * @param {import('pg').Pool} pool
  * @param {Object} desire - desires 表记录
- * @returns {Promise<{sent: boolean, message?: string}>}
+ * @returns {Promise<{sent: boolean, message?: string, channel?: string}>}
  */
 export async function runExpression(pool, desire) {
   const message = await generateMessage(desire);
 
-  // 发送 Feishu
-  const sent = await sendFeishu(message);
+  // 主渠道：Dashboard WebSocket 广播（Break 4：走 dashboard 不走飞书）
+  let wsSent = false;
+  try {
+    const { publishDesireExpressed } = await import('../events/taskEvents.js');
+    publishDesireExpressed({
+      id: desire.id,
+      type: desire.type,
+      urgency: desire.urgency,
+      content: desire.content,
+      message,
+    });
+    wsSent = true;
+  } catch (wsErr) {
+    console.error('[expression] WebSocket broadcast failed:', wsErr.message);
+  }
+
+  // 备用渠道：紧急度 >= 9 时同时发飞书
+  let feishuSent = false;
+  if (desire.urgency >= 9) {
+    feishuSent = await sendFeishu(message);
+  }
 
   // 更新 desire 状态
   try {
@@ -122,16 +141,16 @@ export async function runExpression(pool, desire) {
     console.error('[expression] update desire status error:', err.message);
   }
 
-  // 记录 last_feishu_at（无论是否发送成功，只要触发了表达就记录）
+  // 记录 last_expression_at（统一 key，不再只用 last_feishu_at）
   try {
     await pool.query(`
       INSERT INTO working_memory (key, value_json, updated_at)
       VALUES ($1, $2, NOW())
       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-    `, ['last_feishu_at', JSON.stringify(new Date().toISOString())]);
+    `, ['last_expression_at', JSON.stringify(new Date().toISOString())]);
   } catch (err) {
-    console.error('[expression] update last_feishu_at error:', err.message);
+    console.error('[expression] update last_expression_at error:', err.message);
   }
 
-  return { sent, message };
+  return { sent: wsSent || feishuSent, message, channel: wsSent ? 'websocket' : (feishuSent ? 'feishu' : 'none') };
 }

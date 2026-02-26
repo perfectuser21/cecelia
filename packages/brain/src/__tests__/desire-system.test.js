@@ -299,13 +299,16 @@ describe('Layer 5: 表达决策层（Expression Decision）', () => {
     vi.resetModules();
   });
 
-  it('D6: 高urgency + 长沉默 → 评分 > 0.6 触发表达', async () => {
+  it('D6: 高urgency + 长沉默 → 评分 > 0.35 触发表达', async () => {
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {
-        if (sql.includes("key = 'last_feishu_at'")) {
+        if (sql.includes('last_expression_at') || sql.includes('last_feishu_at')) {
           // 沉默 48 小时
           const time48hAgo = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
           return { rows: [{ value_json: time48hAgo }] };
+        }
+        if (sql.includes("key = 'user_last_seen'")) {
+          return { rows: [] };
         }
         if (sql.includes('FROM desires')) {
           return { rows: [{
@@ -327,17 +330,20 @@ describe('Layer 5: 表达决策层（Expression Decision）', () => {
     const result = await runExpressionDecision(mockPool);
 
     expect(result).not.toBeNull();
-    expect(result.score).toBeGreaterThan(0.6);
+    expect(result.score).toBeGreaterThan(0.35);
     expect(result.desire.urgency).toBe(9);
   });
 
-  it('D6: 低urgency + 刚发过 Feishu → 评分 <= 0.6 不触发', async () => {
+  it('D6: 低urgency + 刚发过 → 评分 <= 0.35 不触发', async () => {
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {
-        if (sql.includes("key = 'last_feishu_at'")) {
+        if (sql.includes('last_expression_at') || sql.includes('last_feishu_at')) {
           // 刚刚发过（1 分钟前）
           const time1minAgo = new Date(Date.now() - 1 * 60 * 1000).toISOString();
           return { rows: [{ value_json: time1minAgo }] };
+        }
+        if (sql.includes("key = 'user_last_seen'")) {
+          return { rows: [] };
         }
         if (sql.includes('FROM desires')) {
           return { rows: [{
@@ -382,7 +388,7 @@ describe('Layer 6: 表达层（Expression）', () => {
     vi.resetModules();
   });
 
-  it('D7: runExpression 更新 last_feishu_at 和 desire 状态', async () => {
+  it('D7: runExpression 更新 last_expression_at 和 desire 状态', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -417,10 +423,10 @@ describe('Layer 6: 表达层（Expression）', () => {
 
     const result = await runExpression(mockPool, desire);
 
-    // last_feishu_at 应该被更新（params: ['last_feishu_at', isoString]）
-    const feishuUpdate = upsertedKeys.find(k => k.key === 'last_feishu_at');
-    expect(feishuUpdate).toBeDefined();
-    expect(typeof feishuUpdate.val).toBe('string'); // ISO 时间字符串
+    // last_expression_at 应该被更新（从 last_feishu_at 改名）
+    const exprUpdate = upsertedKeys.find(k => k.key === 'last_expression_at');
+    expect(exprUpdate).toBeDefined();
+    expect(typeof exprUpdate.val).toBe('string'); // ISO 时间字符串
 
     // desire 状态应该更新为 expressed
     expect(updatedStatuses.length).toBeGreaterThan(0);
@@ -452,7 +458,10 @@ describe('D8: runDesireSystem 集成测试', () => {
         if (sql.includes('FROM goals')) {
           return { rows: [] };
         }
-        if (sql.includes("key = 'last_feishu_at'")) {
+        if (sql.includes('last_expression_at') || sql.includes('last_feishu_at')) {
+          return { rows: [] };
+        }
+        if (sql.includes("key = 'user_last_seen'")) {
           return { rows: [] };
         }
         if (sql.includes("key = 'desire_importance_accumulator'")) {

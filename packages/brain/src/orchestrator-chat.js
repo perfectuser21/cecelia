@@ -233,6 +233,27 @@ export async function handleChat(message, context = {}, messages = []) {
     throw new Error('message is required and must be a string');
   }
 
+  // 0. 标记用户在线（Break 5：让 desire system 感知 Alex 的存在）
+  try {
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ('user_last_seen', $1, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+    `, [JSON.stringify(new Date().toISOString())]);
+  } catch (err) {
+    console.warn('[orchestrator-chat] Failed to update user_last_seen:', err.message);
+  }
+
+  // 0b. 写入 memory_stream（让 desire system 感知到对话）
+  try {
+    await pool.query(`
+      INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+      VALUES ($1, 4, 'short', NOW() + INTERVAL '24 hours')
+    `, [`[用户对话] Alex 说：${message.slice(0, 200)}`]);
+  } catch (err) {
+    console.warn('[orchestrator-chat] Failed to write chat to memory_stream:', err.message);
+  }
+
   // 1. 解析意图（本地，不调 LLM）
   const intent = parseIntent(message, context);
   const intentType = intent.type || 'UNKNOWN';
@@ -284,21 +305,38 @@ export async function handleChat(message, context = {}, messages = []) {
       routingLevel = decision.level || 1;
 
       // 从 decision 构造回复
-      const actions = (decision.actions || []).map(a => a.type).join(', ');
+      const decisionActions = decision.actions || [];
+      const actionTypes = decisionActions.map(a => a.type).join(', ');
       const rationale = decision.rationale || '';
 
+      // Break 6 修复：执行安全的 thalamus actions（不只是显示文字）
+      const SAFE_CHAT_ACTIONS = ['create_task', 'adjust_priority', 'log_event', 'record_learning'];
+      const executedActions = [];
+      for (const action of decisionActions) {
+        if (SAFE_CHAT_ACTIONS.includes(action.type)) {
+          try {
+            await executeChatAction(action);
+            executedActions.push(action.type);
+          } catch (actErr) {
+            console.warn(`[orchestrator-chat] Failed to execute ${action.type}:`, actErr.message);
+          }
+        }
+      }
+
       if (reply && needsEscalation(reply)) {
-        // 有 MiniMax 回复但要升级 — 用大脑的分析补充
         reply = reply.replace('[ESCALATE]', '').trim();
         reply += `\n\n[大脑分析] ${rationale}`;
-        if (actions && actions !== 'no_action') {
-          reply += `\n建议动作: ${actions}`;
+        if (executedActions.length > 0) {
+          reply += `\n已执行: ${executedActions.join(', ')}`;
+        } else if (actionTypes && actionTypes !== 'no_action') {
+          reply += `\n建议动作: ${actionTypes}`;
         }
       } else {
-        // MiniMax 完全失败 — 纯用大脑回复
         reply = rationale || '我正在处理你的请求，请稍候。';
-        if (actions && actions !== 'no_action') {
-          reply += `\n建议动作: ${actions}`;
+        if (executedActions.length > 0) {
+          reply += `\n已执行: ${executedActions.join(', ')}`;
+        } else if (actionTypes && actionTypes !== 'no_action') {
+          reply += `\n建议动作: ${actionTypes}`;
         }
       }
     } catch (err) {
@@ -334,6 +372,46 @@ export async function handleChat(message, context = {}, messages = []) {
   };
 }
 
+/**
+ * 执行聊天中 thalamus 返回的安全 action（Break 6 修复）
+ * @param {Object} action - { type, params }
+ */
+async function executeChatAction(action) {
+  switch (action.type) {
+    case 'create_task': {
+      const p = action.params || {};
+      await pool.query(`
+        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
+        VALUES ($1, $2, $3, $4, 'queued', 'chat_thalamus')
+      `, [p.title || 'Chat-triggered task', p.description || '', p.priority || 'P2', p.task_type || 'research']);
+      break;
+    }
+    case 'adjust_priority': {
+      const p = action.params || {};
+      if (p.task_id && p.new_priority) {
+        await pool.query('UPDATE tasks SET priority = $1 WHERE id = $2', [p.new_priority, p.task_id]);
+      }
+      break;
+    }
+    case 'log_event': {
+      const p = action.params || {};
+      await pool.query(`
+        INSERT INTO cecelia_events (event_type, source, payload, created_at)
+        VALUES ($1, 'chat_thalamus', $2, NOW())
+      `, [p.event_type || 'chat_action', JSON.stringify(p)]);
+      break;
+    }
+    case 'record_learning': {
+      const p = action.params || {};
+      await pool.query(`
+        INSERT INTO learnings (title, category, content, trigger_event)
+        VALUES ($1, $2, $3, 'chat_thalamus')
+      `, [p.title || 'Chat learning', p.category || 'chat', p.content || '']);
+      break;
+    }
+  }
+}
+
 // 导出用于测试
 export {
   callMiniMax,
@@ -342,5 +420,6 @@ export {
   needsEscalation,
   buildStatusSummary,
   buildDesiresContext,
+  executeChatAction,
   MOUTH_SYSTEM_PROMPT,
 };

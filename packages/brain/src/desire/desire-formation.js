@@ -30,7 +30,7 @@ function stripThinking(content) {
   return content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
 }
 
-const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question'];
+const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act', 'follow_up'];
 
 /**
  * 基于洞察生成欲望结构
@@ -54,18 +54,22 @@ async function generateDesireFromInsight(insight) {
 
 生成 JSON（严格格式，不要其他内容）：
 {
-  "type": "inform|propose|warn|celebrate|question",
+  "type": "inform|propose|warn|celebrate|question|act|follow_up",
   "content": "你想说什么（简短，不超过 100 字）",
-  "proposed_action": "建议 Alex 做什么（具体可执行）",
+  "proposed_action": "建议 Alex 做什么 或 你自己打算做什么（具体可执行）",
   "urgency": 1-10
 }
 
 type 选择：
+- act：你自己能处理的事（创建任务、调整优先级、触发检查）— 优先选这个
+- follow_up：之前做过的事需要跟进（验收结果、催促进度）
 - warn：风险、失败、异常
-- propose：建议改进、新想法
+- propose：建议改进、新想法（需要 Alex 同意）
 - inform：一般性汇报
 - celebrate：好消息、里程碑
-- question：需要 Alex 决策的问题`;
+- question：需要 Alex 决策的问题
+
+重要：如果是你自己能处理的事，优先选 act/follow_up，不要只是 inform Alex。`;
 
   try {
     const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {

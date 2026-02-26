@@ -46,6 +46,7 @@ export const WS_EVENTS = {
   // Desire 事件
   DESIRE_CREATED: 'desire:created',
   DESIRE_UPDATED: 'desire:updated',
+  DESIRE_EXPRESSED: 'desire:expressed',
   // Tick 事件
   TICK_EXECUTED: 'tick:executed',
 };

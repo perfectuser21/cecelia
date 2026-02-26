@@ -98,7 +98,48 @@ export async function runPerception(pool) {
     console.error('[perception] feishu time error:', err.message);
   }
 
-  // 4. 连续失败模式检测
+  // 4. 系统空闲信号（Break 1 修复：没任务跑时也要产生感知）
+  try {
+    const { rows: taskRows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+        COUNT(*) FILTER (WHERE status = 'completed' AND updated_at > NOW() - INTERVAL '24 hours') AS completed_24h
+      FROM tasks
+    `);
+    const t = taskRows[0] || {};
+    if (parseInt(t.in_progress || 0) === 0 && parseInt(t.queued || 0) === 0) {
+      observations.push({
+        signal: 'system_idle',
+        value: true,
+        context: `系统空闲：无进行中任务，无排队任务（过去24h完成 ${t.completed_24h || 0} 个）`
+      });
+    }
+  } catch (err) {
+    console.error('[perception] system idle check error:', err.message);
+  }
+
+  // 5. 用户在线信号（Break 5 修复：感知 Alex 的存在）
+  try {
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'user_last_seen'"
+    );
+    const lastSeen = rows[0]?.value_json;
+    if (lastSeen) {
+      const minutesSince = (Date.now() - new Date(lastSeen).getTime()) / (1000 * 60);
+      if (minutesSince < 5) {
+        observations.push({
+          signal: 'user_online',
+          value: true,
+          context: `Alex 刚刚在 dashboard 活跃（${Math.round(minutesSince)} 分钟前）`
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[perception] user_last_seen error:', err.message);
+  }
+
+  // 6. 连续失败模式检测
   try {
     const { rows: failures } = await pool.query(`
       SELECT task_type, COUNT(*) AS cnt
