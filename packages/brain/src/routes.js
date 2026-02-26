@@ -297,12 +297,23 @@ router.get('/status/ws', (req, res) => {
  */
 router.get('/status/full', async (req, res) => {
   try {
-    const [workingMemory, topTasks, recentDecisionsData, policy] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0];
+    const [workingMemory, topTasks, recentDecisionsData, policy, tickStatus, todayTaskStats] = await Promise.all([
       getWorkingMemory(),
       getTopTasks(10),
       getRecentDecisions(3),
-      getActivePolicy()
+      getActivePolicy(),
+      getTickStatus(),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = $1::date) AS completed_today,
+          COUNT(*) FILTER (WHERE status = 'failed' AND updated_at::date = $1::date) AS failed_today,
+          COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+          COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress
+        FROM tasks
+      `, [today])
     ]);
+    const taskRow = todayTaskStats.rows[0] || {};
     const snapshot = null;
     res.json({
       snapshot: snapshot?.snapshot_json || null,
@@ -319,6 +330,23 @@ router.get('/status/full', async (req, res) => {
         open_p1: topTasks.filter(t => t.priority === 'P1' && t.status !== 'completed').length,
         in_progress: topTasks.filter(t => t.status === 'in_progress').length,
         queued: topTasks.filter(t => t.status === 'queued').length
+      },
+      task_stats: {
+        completed_today: parseInt(taskRow.completed_today || 0),
+        failed_today: parseInt(taskRow.failed_today || 0),
+        queued: parseInt(taskRow.queued || 0),
+        in_progress: parseInt(taskRow.in_progress || 0)
+      },
+      task_queue: {
+        queued: parseInt(taskRow.queued || 0)
+      },
+      tick_stats: {
+        actions_today: tickStatus.actions_today || 0,
+        last_tick_at: tickStatus.last_tick || null,
+        interval_minutes: tickStatus.interval_minutes || 5
+      },
+      token_stats: {
+        today_usd: 0
       }
     });
   } catch (err) {

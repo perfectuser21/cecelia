@@ -1739,7 +1739,7 @@ async function executeTick() {
   try {
     const { publishTickExecuted } = await import('./events/taskEvents.js');
     publishTickExecuted({
-      tick_number: actionsToday,
+      tick_number: actionsTaken.length,
       duration_ms: tickDuration,
       actions_taken: actionsTaken.length,
       next_tick_at: nextTickAt
