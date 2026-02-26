@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 
-VERSION=$(node -e "console.log(require('$ROOT_DIR/brain/package.json').version)")
+VERSION=$(node -e "console.log(require('$ROOT_DIR/packages/brain/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
 
 echo "=== Deploying cecelia-brain v${VERSION} (region=${ENV_REGION}) ==="

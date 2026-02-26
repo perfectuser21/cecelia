@@ -1635,7 +1635,10 @@ async function executeTick() {
   // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
   const tickSlotBudget = await calculateSlotBudget();
   const poolCAvailable = tickSlotBudget.taskPool.available;
-  const effectiveDispatchMax = Math.max(0, Math.floor(poolCAvailable * dispatchRate));
+  // 保证有 slot 且 rate > 0 时至少能派发 1 个（Math.floor 会把 0.3~0.9 杀成 0）
+  const effectiveDispatchMax = (poolCAvailable > 0 && dispatchRate > 0)
+    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate))
+    : 0;
   if (tickSlotBudget.user.mode !== 'absent') {
     console.log(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
   }

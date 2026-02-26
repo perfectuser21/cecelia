@@ -826,7 +826,7 @@ function generateRunId(taskId) {
  * 简化版：只有 dev 和 review 两类
  *
  * payload 特判逻辑（优先级高于 taskType 映射）：
- * - payload.decomposition === true + task_type === 'dev' → /dev（显式保留，记录日志）
+ * - payload.decomposition === 'true' (或 true) + task_type === 'dev' → /okr（OKR 拆解）
  * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
  * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
  * - payload.decomposition === 'known' → 保持 taskType 原有路由
@@ -835,10 +835,11 @@ function generateRunId(taskId) {
 function getSkillForTaskType(taskType, payload) {
   // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
   if (payload) {
-    // decomposition=true + task_type=dev → /dev（显式保留现有行为）
-    if (payload.decomposition === true && taskType === 'dev') {
-      console.log(`[executor] payload.decomposition 路由: decomposition=true + task_type=dev → /dev`);
-      return '/dev';
+    // decomposition='true' + task_type=dev → /okr（OKR 拆解，由秋米执行）
+    // 注意：decomp-checker 写入的是字符串 'true'，不是布尔值 true
+    if ((payload.decomposition === 'true' || payload.decomposition === true) && taskType === 'dev') {
+      console.log(`[executor] payload.decomposition 路由: decomposition='true' + task_type=dev → /okr`);
+      return '/okr';
     }
     // decomposition='okr' → /okr（OKR 拆解任务）
     if (payload.decomposition === 'okr') {
@@ -1113,6 +1114,44 @@ POST /api/brain/action/create-task
     "kr_goal": "${task.payload?.kr_goal || ''}"
   }
 }`;
+    }
+
+    // Initiative 级别补充拆解：给空 Initiative 创建 Task（由 decomp-checker Check 6 触发）
+    if (!isContinue && initiativeId) {
+      return `/okr
+
+# Initiative 补充拆解: ${krTitle}
+
+## 任务类型
+为已有 Initiative 创建可执行 Task
+
+## Initiative 信息
+- Initiative ID: ${initiativeId}
+- KR ID: ${krId}
+- Project ID: ${projectId}
+- 目标: ${task.description || krTitle}
+
+## 你的任务
+这个 Initiative 下缺少可执行的 Task。请为其创建 1-3 个具体、可执行的 Task。
+
+### 创建 Task
+POST /api/brain/action/create-task
+{
+  "title": "实现 [功能]",
+  "project_id": "${initiativeId}",
+  "goal_id": "${krId}",
+  "task_type": "dev",
+  "prd_content": "完整 PRD（目标、方案、验收标准）",
+  "payload": {
+    "initiative_id": "${initiativeId}",
+    "kr_goal": "${task.description || ''}"
+  }
+}
+
+## ⛔ 禁止
+- ❌ 不要创建新的 Initiative 或 Project（已经有了）
+- ❌ Task 的 project_id 必须指向 Initiative ID: ${initiativeId}
+- ❌ Task 的 goal_id 必须 = KR ID: ${krId}`;
     }
 
     // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
