@@ -139,7 +139,24 @@ export async function runPerception(pool) {
     console.error('[perception] user_last_seen error:', err.message);
   }
 
-  // 6. 连续失败模式检测
+  // 6. 未消化知识信号（反刍回路感知）
+  try {
+    const { rows: undigested } = await pool.query(
+      'SELECT COUNT(*) AS cnt FROM learnings WHERE digested = false'
+    );
+    const undigestedCount = parseInt(undigested[0]?.cnt || 0);
+    if (undigestedCount > 0) {
+      observations.push({
+        signal: 'undigested_knowledge',
+        value: undigestedCount,
+        context: `有 ${undigestedCount} 条未消化的知识等待反刍`
+      });
+    }
+  } catch (err) {
+    console.error('[perception] undigested knowledge check error:', err.message);
+  }
+
+  // 7. 连续失败模式检测
   try {
     const { rows: failures } = await pool.query(`
       SELECT task_type, COUNT(*) AS cnt
