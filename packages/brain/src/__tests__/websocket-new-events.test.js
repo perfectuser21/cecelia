@@ -30,6 +30,7 @@ vi.mock('../websocket.js', () => ({
     DESIRE_CREATED: 'desire:created',
     DESIRE_UPDATED: 'desire:updated',
     TICK_EXECUTED: 'tick:executed',
+    COGNITIVE_STATE: 'cognitive:state',
   }
 }));
 
@@ -38,7 +39,8 @@ import {
   publishAlertnessChanged,
   publishDesireCreated,
   publishDesireUpdated,
-  publishTickExecuted
+  publishTickExecuted,
+  publishCognitiveState
 } from '../events/taskEvents.js';
 
 describe('WebSocket 新事件类型', () => {
@@ -63,8 +65,12 @@ describe('WebSocket 新事件类型', () => {
       expect(WS_EVENTS.TICK_EXECUTED).toBe('tick:executed');
     });
 
-    it('总共有 16 个事件类型', () => {
-      expect(Object.keys(WS_EVENTS).length).toBe(16);
+    it('包含 cognitive:state 事件', () => {
+      expect(WS_EVENTS.COGNITIVE_STATE).toBe('cognitive:state');
+    });
+
+    it('总共有 17 个事件类型', () => {
+      expect(Object.keys(WS_EVENTS).length).toBe(17);
     });
   });
 
@@ -148,6 +154,44 @@ describe('WebSocket 新事件类型', () => {
           duration_ms: 1234,
           actions_taken: 5,
           next_tick_at: '2026-02-25T10:05:00.000Z',
+          timestamp: expect.any(String)
+        })
+      );
+    });
+  });
+
+  describe('publishCognitiveState', () => {
+    it('广播 cognitive:state 事件', () => {
+      publishCognitiveState({
+        phase: 'rumination',
+        detail: '反刍消化知识…',
+        progress: 30,
+        meta: { undigested: 888 }
+      });
+
+      expect(broadcast).toHaveBeenCalledWith(
+        'cognitive:state',
+        expect.objectContaining({
+          phase: 'rumination',
+          detail: '反刍消化知识…',
+          progress: 30,
+          meta: { undigested: 888 },
+          timestamp: expect.any(String)
+        })
+      );
+    });
+
+    it('缺省字段发送 undefined', () => {
+      publishCognitiveState({
+        phase: 'idle',
+        detail: '空闲中',
+      });
+
+      expect(broadcast).toHaveBeenCalledWith(
+        'cognitive:state',
+        expect.objectContaining({
+          phase: 'idle',
+          detail: '空闲中',
           timestamp: expect.any(String)
         })
       );

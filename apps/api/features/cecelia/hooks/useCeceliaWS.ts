@@ -23,6 +23,7 @@ export const WS_EVENTS = {
   DESIRE_UPDATED: 'desire:updated',
   DESIRE_EXPRESSED: 'desire:expressed',
   TICK_EXECUTED: 'tick:executed',
+  COGNITIVE_STATE: 'cognitive:state',
   PING: 'ping',
   PONG: 'pong',
 } as const;
