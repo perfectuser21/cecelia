@@ -17,6 +17,7 @@ import { createTask } from './actions.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES } from './intent.js';
 import { linkEntities } from './entity-linker.js';
 import { addSource } from './notebook-adapter.js';
+import crypto from 'crypto';
 
 /**
  * 动作触发规则表
@@ -126,9 +127,24 @@ export async function executeAction(action) {
         const { title } = action.params;
         if (!title) return '\n\n⚠️ 记录学习失败：请提供学习内容';
 
+        // 去重检查
+        const clHash = crypto.createHash('sha256').update(`${title}\n${title}`).digest('hex').slice(0, 16);
+        const clExisting = await pool.query(
+          'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+          [clHash]
+        );
+
+        if (clExisting.rows.length > 0) {
+          const eid = clExisting.rows[0].id;
+          const nv = (clExisting.rows[0].version || 1) + 1;
+          await pool.query('UPDATE learnings SET version = $1 WHERE id = $2', [nv, eid]);
+          return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
+        }
+
         await pool.query(
-          `INSERT INTO learnings (title, category, content, trigger_event) VALUES ($1, $2, $3, $4)`,
-          [title, 'manual', title, 'chat_action']
+          `INSERT INTO learnings (title, category, content, trigger_event, content_hash, version, is_latest)
+           VALUES ($1, $2, $3, $4, $5, 1, true)`,
+          [title, 'manual', title, 'chat_action', clHash]
         );
 
         return `\n\n✅ 已记录学习：${title}`;
@@ -233,21 +249,60 @@ async function executeViaLlmIntent(message, llmIntent) {
       }
 
       case 'LEARN': {
+        // 去重检查：content_hash
+        const learnContent = entities.description || message;
+        const learnHash = crypto.createHash('sha256').update(`${title}\n${learnContent}`).digest('hex').slice(0, 16);
+        const existingLearn = await pool.query(
+          'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+          [learnHash]
+        );
+
+        if (existingLearn.rows.length > 0) {
+          // 已存在，更新版本
+          const eid = existingLearn.rows[0].id;
+          const nv = (existingLearn.rows[0].version || 1) + 1;
+          await pool.query(
+            'UPDATE learnings SET version = $1 WHERE id = $2',
+            [nv, eid]
+          );
+          return `\n\n✅ 已更新学习记录（第 ${nv} 版）：${title}`;
+        }
+
         await pool.query(
-          `INSERT INTO learnings (title, category, content, trigger_event, digested) VALUES ($1, $2, $3, $4, false)`,
-          [title, 'user_shared', entities.description || message, 'chat_llm']
+          `INSERT INTO learnings (title, category, content, trigger_event, digested, content_hash, version, is_latest)
+           VALUES ($1, $2, $3, $4, false, $5, 1, true)`,
+          [title, 'user_shared', learnContent, 'chat_llm', learnHash]
         );
         await pool.query(
           `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
            VALUES ($1, 5, 'long', NOW() + INTERVAL '30 days')`,
           [`[学习记录] ${title}`]
         );
-        // URL 检测：有链接时异步投递 NotebookLM（fire-and-forget）
+
+        // URL 检测：有链接时异步投递 NotebookLM + 后台研究
         const urlMatch = message.match(/https?:\/\/[^\s]+/);
         if (urlMatch) {
-          addSource(urlMatch[0]).catch(() => {});
+          // 异步研究流：前台秒回，后台 NotebookLM 研究
+          (async () => {
+            try {
+              await addSource(urlMatch[0]);
+              // 研究完成后查询 NotebookLM 获取摘要
+              const { queryNotebook } = await import('./notebook-adapter.js');
+              const nbResult = await queryNotebook(`总结这个资源的核心内容和关键要点：${title}`);
+              if (nbResult.ok && nbResult.text) {
+                // 研究结果写入 memory_stream（高重要性，让 desire system 感知）
+                await pool.query(
+                  `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+                   VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
+                  [`[研究完成] ${title}\n${nbResult.text.slice(0, 500)}`]
+                );
+              }
+            } catch (researchErr) {
+              console.warn('[chat-action-dispatcher] async research failed:', researchErr.message);
+            }
+          })();
         }
-        return `\n\n✅ 已记录学习：${title}`;
+        return `\n\n✅ 已记录学习：${title}${urlMatch ? '\n📚 已启动后台研究，结果稍后自动整理。' : ''}`;
       }
 
       case 'RESEARCH': {

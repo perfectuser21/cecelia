@@ -28,16 +28,20 @@ async function generateDesireFromInsight(insight) {
   "urgency": 1-10
 }
 
-type 选择：
-- act：你自己能处理的事（创建任务、调整优先级、触发检查）— 优先选这个
+type 选择（按优先级）：
+- act：你自己能处理的事（创建任务、调整优先级、触发检查）— 最优先
 - follow_up：之前做过的事需要跟进（验收结果、催促进度）
-- warn：风险、失败、异常
-- propose：建议改进、新想法（需要 Alex 同意）
-- inform：一般性汇报
-- celebrate：好消息、里程碑
+- celebrate：好消息、里程碑达成、任务完成率高、KR 进度推进 — 积极信号时优先选这个
+- propose：建议改进、新想法、基于反刍洞察的可执行建议
+- warn：风险、失败、异常（只在真正有风险时用，不要重复报同一个问题）
+- inform：一般性汇报（最后选择）
 - question：需要 Alex 决策的问题
 
-重要：如果是你自己能处理的事，优先选 act/follow_up，不要只是 inform Alex。`;
+重要规则：
+1. 好消息用 celebrate，不要用 inform — 让 Alex 感受到进展
+2. 可执行建议用 propose，不要用 inform — 让 Alex 看到你在思考
+3. 避免重复 warn 同一个问题 — 如果之前已经警告过，用 act 自己解决
+4. act/follow_up 不需要 Alex 同意，直接执行`;
 
   try {
     const { text } = await callLLM('mouth', prompt, { timeout: 20000 });

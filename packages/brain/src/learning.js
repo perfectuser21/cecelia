@@ -10,6 +10,7 @@
  */
 
 /* global console */
+import crypto from 'crypto';
 import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
@@ -52,9 +53,31 @@ export async function recordLearning(analysis) {
   });
 
   try {
+    // 计算 content_hash 进行去重
+    const hashInput = `${title}\n${content}`;
+    const contentHash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
+
+    // 检查是否已存在相同 hash 的记录
+    const existing = await pool.query(
+      'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+      [contentHash]
+    );
+
+    if (existing.rows.length > 0) {
+      // 已存在：更新版本号，不重复插入
+      const existingId = existing.rows[0].id;
+      const newVersion = (existing.rows[0].version || 1) + 1;
+      await pool.query(
+        'UPDATE learnings SET version = $1, metadata = metadata || $2, created_at = NOW() WHERE id = $3',
+        [newVersion, JSON.stringify({ last_duplicate_at: new Date().toISOString() }), existingId]
+      );
+      console.log(`[learning] Deduplicated: existing=${existingId} version=${newVersion}`);
+      return existing.rows[0];
+    }
+
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true)
       RETURNING *
     `, [
       title,
@@ -63,6 +86,7 @@ export async function recordLearning(analysis) {
       content,
       JSON.stringify(strategyAdjustments),
       JSON.stringify({ task_id, confidence: analysis.confidence }),
+      contentHash,
     ]);
 
     const learning = result.rows[0];
