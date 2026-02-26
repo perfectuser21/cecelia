@@ -273,6 +273,29 @@ export default function CeceliaPage() {
 
   // ── Desire actions ──────────────────────────────────────
 
+  const respondDesire = useCallback(async (id: string, message: string) => {
+    setLoadingActions(prev => new Set(prev).add(id));
+    try {
+      const res = await fetch(`/api/brain/desires/${id}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || `回复失败 (${res.status})`, 'error');
+      } else {
+        showToast('已回复', 'success');
+      }
+      const r = await fetch('/api/brain/desires?status=pending&limit=20');
+      if (r.ok) { const d = await r.json(); setDesires(Array.isArray(d) ? d : (d.desires || [])); }
+    } catch {
+      showToast('回复请求失败，请重试', 'error');
+    } finally {
+      setLoadingActions(prev => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  }, [showToast]);
+
   const acknowledgeDesire = useCallback(async (ids: string[]) => {
     const key = ids.join(',');
     setLoadingActions(prev => new Set(prev).add(key));
@@ -366,10 +389,23 @@ export default function CeceliaPage() {
             </button>
           </div>
 
-          {/* VoiceCard — Cecelia 的主动表达 */}
+          {/* VoiceCard — Cecelia 的主动表达（永远有内容） */}
           <VoiceCard
             greeting={briefing?.greeting ?? null}
             latestExpression={latestExpression}
+            briefingSummary={briefing ? {
+              completed: briefing.since_last_visit?.completed ?? todayStats.completed,
+              failed: briefing.since_last_visit?.failed ?? todayStats.failed,
+              queued: briefing.since_last_visit?.queued ?? todayStats.queued,
+              in_progress: (briefing as any).since_last_visit?.in_progress ?? runningTasks.length,
+              running_tasks: (briefing as any).running_tasks ?? runningTasks.map(t => ({ title: t.title, priority: t.priority })),
+            } : {
+              completed: todayStats.completed,
+              failed: todayStats.failed,
+              queued: todayStats.queued,
+              in_progress: runningTasks.length,
+              running_tasks: runningTasks.map(t => ({ title: t.title, priority: t.priority })),
+            }}
             onAcknowledge={(id) => acknowledgeDesire([id])}
             onChat={() => setCmdkOpen(true)}
           />
@@ -379,6 +415,7 @@ export default function CeceliaPage() {
             <DecisionInbox
               desires={desires}
               queuedTasks={queuedTasks}
+              onRespondDesire={respondDesire}
               onAcknowledgeDesire={acknowledgeDesire}
               onDispatchTask={dispatchTask}
               loadingActions={loadingActions}

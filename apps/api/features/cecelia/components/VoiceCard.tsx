@@ -1,12 +1,15 @@
 /**
  * VoiceCard — Cecelia 的主动表达
  *
- * 展示 Cecelia 最近的表达（desire:expressed）和 briefing greeting。
- * 核心理念：Cecelia 先说话，不等用户问。
+ * 永远展示有意义的内容，从不为空：
+ * P0: desire:expressed（Cecelia 主动表达）
+ * P1: 智能简报（任务进展、运行中、排队中）
+ * P2: 反刍洞察
+ * P3: 时间问候 + 状态概览
  */
 
 import { useState } from 'react';
-import { MessageCircle, Sparkles, Check, RefreshCw, AlertTriangle, PartyPopper, HelpCircle } from 'lucide-react';
+import { MessageCircle, Sparkles, Check, RefreshCw, AlertTriangle, PartyPopper, HelpCircle, Activity } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────
 
@@ -19,9 +22,18 @@ interface DesireExpressed {
   timestamp: string;
 }
 
+interface BriefingSummary {
+  completed: number;
+  failed: number;
+  queued: number;
+  in_progress: number;
+  running_tasks?: { title: string; priority: string }[];
+}
+
 interface VoiceCardProps {
   greeting: string | null;
   latestExpression: DesireExpressed | null;
+  briefingSummary: BriefingSummary | null;
   onAcknowledge?: (id: string) => void;
   onChat?: () => void;
 }
@@ -34,24 +46,80 @@ const TYPE_CONFIG: Record<string, { icon: React.ReactNode; color: string; label:
   inform: { icon: <MessageCircle size={14} />, color: '#60a5fa', label: '汇报' },
   celebrate: { icon: <PartyPopper size={14} />, color: '#10b981', label: '好消息' },
   question: { icon: <HelpCircle size={14} />, color: '#f472b6', label: '请决策' },
+  briefing: { icon: <Activity size={14} />, color: '#818cf8', label: '简报' },
 };
+
+// ── Helper: 构建智能简报文字 ──────────────────────────────
+
+function buildBriefingText(greeting: string | null, summary: BriefingSummary | null): string {
+  const greet = greeting || getTimeGreeting();
+  const parts: string[] = [greet];
+
+  if (summary) {
+    const { completed, failed, queued, in_progress, running_tasks } = summary;
+
+    // 运行中的任务
+    if (in_progress > 0 && running_tasks && running_tasks.length > 0) {
+      const taskNames = running_tasks.slice(0, 2).map(t => t.title).join('、');
+      parts.push(`正在执行 ${in_progress} 个任务：${taskNames}${in_progress > 2 ? ' 等' : ''}`);
+    } else if (in_progress > 0) {
+      parts.push(`正在执行 ${in_progress} 个任务`);
+    }
+
+    // 完成统计
+    if (completed > 0 || failed > 0) {
+      const statParts: string[] = [];
+      if (completed > 0) statParts.push(`完成 ${completed}`);
+      if (failed > 0) statParts.push(`失败 ${failed}`);
+      parts.push(`今天已${statParts.join('，')}`);
+    }
+
+    // 排队中
+    if (queued > 0) {
+      parts.push(`${queued} 个任务排队等待派发`);
+    }
+
+    // 全部为零的情况
+    if (completed === 0 && failed === 0 && in_progress === 0 && queued === 0) {
+      parts.push('系统空闲中，等待指令');
+    }
+  } else {
+    parts.push('系统运行中');
+  }
+
+  return parts.join('。') + '。';
+}
+
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 6) return '夜深了';
+  if (hour < 12) return '早上好';
+  if (hour < 14) return '中午好';
+  if (hour < 18) return '下午好';
+  return '晚上好';
+}
 
 // ── Main Component ───────────────────────────────────────
 
-export function VoiceCard({ greeting, latestExpression, onAcknowledge, onChat }: VoiceCardProps) {
+export function VoiceCard({ greeting, latestExpression, briefingSummary, onAcknowledge, onChat }: VoiceCardProps) {
   const [dismissed, setDismissed] = useState(false);
 
   // 决定展示什么内容
   const hasExpression = latestExpression && !dismissed;
-  const content = hasExpression
-    ? (latestExpression.message || latestExpression.content)
-    : greeting;
 
-  if (!content) return null;
+  let content: string;
+  let typeKey: string;
 
-  const typeConf = hasExpression
-    ? (TYPE_CONFIG[latestExpression!.type] || TYPE_CONFIG.inform)
-    : { icon: <Sparkles size={14} />, color: '#a78bfa', label: '简报' };
+  if (hasExpression) {
+    content = latestExpression.message || latestExpression.content;
+    typeKey = latestExpression.type;
+  } else {
+    // 永远有内容：智能简报
+    content = buildBriefingText(greeting, briefingSummary);
+    typeKey = 'briefing';
+  }
+
+  const typeConf = TYPE_CONFIG[typeKey] || TYPE_CONFIG.briefing;
 
   const handleAck = () => {
     if (hasExpression && onAcknowledge) {
