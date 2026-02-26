@@ -2,30 +2,32 @@
  * Layer 5: 表达决策层（Expression Decision）
  *
  * 每次 tick 扫描 pending desires，综合评分决定是否表达。
- * 评分公式：urgency(30%) × kr_relevance(20%) × impact(20%) × time_sensitivity(15%) × silence_penalty(15%)
- * silence_penalty = min(hours_since_last_feishu / 24, 1)
- * 评分 > 0.6 触发表达。
+ * 评分公式：urgency(40%) + silence_penalty(30%) + user_online_boost(+0.15)
+ * 阈值 0.35（降低，让日常 inform 也能发出来）。
+ * act/follow_up 类型跳过评分直接通过（Cecelia 自主行动不需要门槛）。
  */
 
-const EXPRESSION_THRESHOLD = 0.6;
+const EXPRESSION_THRESHOLD = 0.35;
 
 /**
- * 计算综合表达评分
+ * 计算综合表达评分（简化版，聚焦紧急度和沉默时长）
  * @param {Object} desire - desires 表记录
- * @param {number} hoursSinceFeishu - 距上次 Feishu 消息的小时数
+ * @param {number} hoursSinceExpression - 距上次表达的小时数
+ * @param {boolean} userOnline - 用户是否在线
  * @returns {number} 0-1 评分
  */
-function calculateExpressionScore(desire, hoursSinceFeishu) {
-  const urgency = (desire.urgency / 10) * 0.30;
+function calculateExpressionScore(desire, hoursSinceExpression, userOnline = false) {
+  // urgency 权重 40%
+  const urgencyScore = (desire.urgency / 10) * 0.40;
 
-  // kr_relevance: warn/propose 与 KR 相关度更高
-  const krRelevanceMap = { warn: 0.8, propose: 0.7, question: 0.6, inform: 0.5, celebrate: 0.4 };
-  const krRelevance = (krRelevanceMap[desire.type] || 0.5) * 0.20;
+  // silence_penalty 权重 30%：沉默越久越应该表达
+  const silenceScore = Math.min(hoursSinceExpression / 24, 1) * 0.30;
 
-  // impact: urgency >= 7 高影响
-  const impact = (desire.urgency >= 7 ? 0.9 : desire.urgency >= 4 ? 0.6 : 0.3) * 0.20;
+  // kr_relevance 权重 15%
+  const krRelevanceMap = { warn: 0.8, propose: 0.7, question: 0.6, act: 0.9, follow_up: 0.8, inform: 0.5, celebrate: 0.4 };
+  const krRelevance = (krRelevanceMap[desire.type] || 0.5) * 0.15;
 
-  // time_sensitivity: 接近过期时增大
+  // time_sensitivity 权重 15%
   let timeSensitivity = 0.5;
   if (desire.expires_at) {
     const hoursUntilExpiry = (new Date(desire.expires_at).getTime() - Date.now()) / (1000 * 3600);
@@ -35,10 +37,12 @@ function calculateExpressionScore(desire, hoursSinceFeishu) {
   }
   const timeSensScore = timeSensitivity * 0.15;
 
-  // silence_penalty: 沉默越久，门槛越低（分数越高）
-  const silencePenalty = Math.min(hoursSinceFeishu / 24, 1) * 0.15;
+  let score = urgencyScore + silenceScore + krRelevance + timeSensScore;
 
-  return urgency + krRelevance + impact + timeSensScore + silencePenalty;
+  // 用户在线加分（Break 5：Alex 在时更主动）
+  if (userOnline) score += 0.15;
+
+  return Math.min(score, 1.0);
 }
 
 /**
@@ -47,18 +51,33 @@ function calculateExpressionScore(desire, hoursSinceFeishu) {
  * @returns {Promise<{desire: Object, score: number} | null>}
  */
 export async function runExpressionDecision(pool) {
-  // 读取 hours_since_feishu
-  let hoursSinceFeishu = 999;
+  // 读取 hours_since_expression（兼容旧 key last_feishu_at）
+  let hoursSinceExpression = 999;
   try {
     const { rows } = await pool.query(
-      "SELECT value_json FROM working_memory WHERE key = 'last_feishu_at'"
+      "SELECT value_json FROM working_memory WHERE key IN ('last_expression_at', 'last_feishu_at') ORDER BY updated_at DESC LIMIT 1"
     );
-    const lastFeishu = rows[0]?.value_json;
-    if (lastFeishu) {
-      hoursSinceFeishu = (Date.now() - new Date(lastFeishu).getTime()) / (1000 * 3600);
+    const lastExpr = rows[0]?.value_json;
+    if (lastExpr) {
+      hoursSinceExpression = (Date.now() - new Date(lastExpr).getTime()) / (1000 * 3600);
     }
   } catch (err) {
-    console.error('[expression-decision] get last_feishu_at error:', err.message);
+    console.error('[expression-decision] get last_expression_at error:', err.message);
+  }
+
+  // 检查用户是否在线（Break 5）
+  let userOnline = false;
+  try {
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'user_last_seen'"
+    );
+    const lastSeen = rows[0]?.value_json;
+    if (lastSeen) {
+      const minutesSince = (Date.now() - new Date(lastSeen).getTime()) / (1000 * 60);
+      userOnline = minutesSince < 5;
+    }
+  } catch (err) {
+    console.error('[expression-decision] get user_last_seen error:', err.message);
   }
 
   // 获取所有 pending desires（未过期）
@@ -79,12 +98,18 @@ export async function runExpressionDecision(pool) {
 
   if (desires.length === 0) return null;
 
+  // act/follow_up 类型跳过评分直接通过（Break 3：Cecelia 自主行动）
+  const actDesire = desires.find(d => d.type === 'act' || d.type === 'follow_up');
+  if (actDesire) {
+    return { desire: actDesire, score: 1.0 };
+  }
+
   // 为每个 desire 计算评分，选最高分
   let best = null;
   let bestScore = 0;
 
   for (const desire of desires) {
-    const score = calculateExpressionScore(desire, hoursSinceFeishu);
+    const score = calculateExpressionScore(desire, hoursSinceExpression, userOnline);
     if (score > bestScore) {
       bestScore = score;
       best = desire;

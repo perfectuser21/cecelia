@@ -153,6 +153,26 @@ export function publishDesireUpdated(data) {
 }
 
 /**
+ * Publish desire expressed event (管家主动表达，发送到 Dashboard)
+ * @param {object} data - Expression data
+ * @param {string} data.id - Desire ID
+ * @param {string} data.type - Desire type
+ * @param {number} data.urgency - Urgency score
+ * @param {string} data.content - Desire content
+ * @param {string} data.message - Formatted message text
+ */
+export function publishDesireExpressed(data) {
+  broadcast(WS_EVENTS.DESIRE_EXPRESSED, {
+    id: data.id,
+    type: data.type,
+    urgency: data.urgency,
+    content: data.content,
+    message: data.message,
+    timestamp: new Date().toISOString()
+  });
+}
+
+/**
  * Publish tick executed event
  * @param {object} data - Tick execution data
  * @param {number} data.tick_number - Tick counter

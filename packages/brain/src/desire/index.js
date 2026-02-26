@@ -87,7 +87,55 @@ export async function runDesireSystem(pool) {
     console.error('[desire] expression decision error:', err.message);
   }
 
-  // Layer 6: 表达
+  // Break 3+4 修复：act/follow_up desire → 直接创建任务（桥接到执行管道）
+  if (expressionCandidate && (expressionCandidate.desire.type === 'act' || expressionCandidate.desire.type === 'follow_up')) {
+    const desire = expressionCandidate.desire;
+    result.expression = { triggered: true, acted: true };
+
+    try {
+      // 根据 desire 内容创建任务
+      const taskType = desire.type === 'follow_up' ? 'review' : 'research';
+      const priority = desire.urgency >= 8 ? 'P0' : desire.urgency >= 5 ? 'P1' : 'P2';
+
+      const { rows } = await pool.query(`
+        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
+        VALUES ($1, $2, $3, $4, 'queued', 'desire_system')
+        RETURNING id
+      `, [
+        desire.content.slice(0, 200),
+        `${desire.proposed_action}\n\n来源：desire ${desire.id}\n洞察：${desire.insight || '无'}`,
+        priority,
+        taskType,
+      ]);
+
+      // 更新 desire 状态为 acted
+      await pool.query(
+        "UPDATE desires SET status = 'acted' WHERE id = $1",
+        [desire.id]
+      );
+
+      // 广播事件
+      try {
+        const { publishDesireExpressed } = await import('../events/taskEvents.js');
+        publishDesireExpressed({
+          id: desire.id,
+          type: desire.type,
+          urgency: desire.urgency,
+          content: desire.content,
+          message: `[自主行动] ${desire.content} → 已创建任务 ${rows[0]?.id}`,
+        });
+      } catch (_) { /* ignore ws errors */ }
+
+      result.expression.task_created = rows[0]?.id;
+    } catch (err) {
+      console.error('[desire] act/follow_up task creation error:', err.message);
+      result.expression.sent = false;
+    }
+
+    return result;
+  }
+
+  // Layer 6: 表达（inform/warn/propose 等通知类型）
   if (expressionCandidate) {
     result.expression = { triggered: true };
     try {
