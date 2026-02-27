@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.4.0"
+version: "3.5.0"
 updated: "2026-02-27"
 changelog:
+  - 3.5.0: v12.32.1 - fix stop-dev.sh force_cleanup_worktree Bug（改用子 shell cd 到 main_wt 再执行 git worktree remove，绕过 git 禁止删除当前 CWD 所在 worktree 的限制，彻底解决 worktree 残留问题）
   - 3.4.0: v12.32.0 - 清理 /okr 残留，对齐 /decomp 命名（删除 S1 OKR Skill feature entry + stop-okr.sh → stop-decomp.sh + .okr-mode → .decomp-mode + 删除 skills/okr/ 目录 + regression-contract H7-003/S1-001~S1-005 清理）
   - 3.3.0: v12.30.10 - SKILL.md 无头模式描述修正（对齐 stop.sh v13.1.0 实际行为，删除过时的"外部 while 循环"说法）
   - 3.2.0: v12.30.9 - stop.sh 路由器删除 CECELIA_HEADLESS 绕过（Bug 修复：无头模式与有头模式走同一套状态机，H7-014 RCI 新增）
@@ -176,8 +177,8 @@ platform_features:
     name: Stop Hook Router (v13.0.0)
     status: Committed
     priority: P0
-    version: "12.30.3"
-    updated: "2026-02-23"
+    version: "12.32.1"
+    updated: "2026-02-27"
     description: |
       Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
       - 路由器：stop.sh（~46 lines）检测 .dev-mode/.decomp-mode 等，调用对应 handler
@@ -185,6 +186,7 @@ platform_features:
       - stop-decomp.sh：/decomp 工作流完成条件检查（output.json + DB 写入）
       - 职责分离：路由器只负责分发，具体逻辑在 handler 中
       - 写死逻辑：有 .dev-mode 时，任何情况（包括 headless、锁失败）都必须 exit 2，只有真正完成才 exit 0
+      v12.32.1: 修复 force_cleanup_worktree 无法删除当前 CWD 所在 worktree 的 Bug（子 shell cd 到 main_wt 再执行 git worktree remove，彻底解决 worktree 残留问题）
       v12.32.0: 清理 /okr 残留 - stop-okr.sh → stop-decomp.sh，.okr-mode → .decomp-mode，删除 skills/okr/
       v12.30.3: 修复泄漏路径 - .dev-lock 丢失但 .dev-mode 存在时，先调 force_cleanup_worktree() 再删 .dev-mode，防止孤立 worktree（W6-006）
       v12.17.1: 双钥匙状态机 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险），修复 .dev-mode 创建失败/被删除导致会话退出的漏洞，Step 3 改用 Bash 原子写入，cleanup.sh 不删除状态文件

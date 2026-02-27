@@ -104,8 +104,9 @@ force_cleanup_worktree() {
     local main_wt
     main_wt=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
     if [[ -n "$wt_path" && "$wt_path" != "$main_wt" ]]; then
-        git worktree remove "$wt_path" --force 2>/dev/null || true
-        git worktree prune 2>/dev/null || true
+        # cd 到主仓库再删除，避免 git 拒绝删除当前 CWD 所在的 worktree
+        (cd "$main_wt" && git worktree remove "$wt_path" --force 2>/dev/null) || true
+        (cd "$main_wt" && git worktree prune 2>/dev/null) || true
     fi
 }
 
