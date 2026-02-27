@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] OKR 拆解确认门 bug 修复 (PR #79, Brain 1.118.1)
+- **作用域 bug 模式**: `const x = ...` 在 if 块内声明，try/catch 在 if 块外引用 → ReferenceError，被 catch 静默吞掉。这类 bug 只能通过容器日志 `catch error message` 发现，测试难以覆盖
+- **非阻塞 catch 的危险性**: `try { ... } catch (err) { console.error(...) }` 会把逻辑错误转变为静默失败。重要功能（如创建 pending_action）被 catch 包裹时，测试必须 spy 该代码路径确认执行
+- **修复方法**: 将 pending_action 创建代码整体移入 `if (project)` 块内，保证变量始终在作用域内
+- **E2E 验证流程**: 1）`docker exec psql` 插入测试数据（project_kr_links + initiatives）→ 2）PUT tasks status to in_progress → 3）POST execution-callback with `status: "AI Done"` → 4）检查 pending_actions 表 → 5）POST /pending-actions/:id/approve → 6）验证 KR status = ready
+- **execution-callback status 值**: 必须用 `"AI Done"` 而非 `"completed"` 才触发任务状态转为 completed；其他字符串会被映射为 `in_progress`
+- **测试数据插入**: psql 的 UUID 列不支持 varchar LIKE，用 `gen_random_uuid()` 并记录返回 ID 用于后续关联
+- **backfill 问题**: 38 个已有 reviewing KR（在 PR #74 部署前产生）没有对应 pending_action，属于历史遗留，不影响新流程；可通过 backfill 脚本补充
+
 ### [2026-02-27] memory_stream L1 中间层 (PR #73, Brain 1.118.0, Schema 086)
 - **migration 号冲突**: 并行 PR 同时使用同一 migration 号（085），facts-check 报 `migration_conflicts`。解决：rename 到下一个号（086），同步更新 selfcheck.js、3 个测试文件中的硬编码版本断言、DEFINITION.md
 - **三层下钻实现模式**: L0（summary）= 快筛；L1（l1_content）= 结构化摘要 fire-and-forget LLM 生成；L2（content）= 全文。`description` 字段优先用 l1_content，降级到 `content.slice(0,200)`
