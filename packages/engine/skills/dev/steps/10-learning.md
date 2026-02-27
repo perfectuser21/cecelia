@@ -53,6 +53,21 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 记录到：项目的 `docs/LEARNINGS.md`
 
+### Auto Memory（MEMORY.md）— SSOT 原则
+
+**每次 PR 合并后，必须按以下规则更新 `memory/MEMORY.md`：**
+
+| 信息类型 | 处理方式 |
+|---------|---------|
+| 版本号、Schema版本、端口、当前激活配置 | **绝对不写** — 有 SSOT（package.json/selfcheck.js/DB） |
+| 文件路径变更（新增/移动/删除） | 更新"关键文件"section 对应行 |
+| 新的架构设计决策（为什么这样做） | 追加到对应 section |
+| 新的踩坑（非显而易见的 bug/陷阱） | 追加到对应踩坑 section |
+| Schema 新版本 | 追加一行到"Schema 版本历史" |
+| 已有记录的同类知识有更新 | 更新那一行，不追加重复 |
+
+**没有新的架构知识或踩坑 → 不改 MEMORY.md（不要为了"完整"强行追加）**
+
 ---
 
 ## 记录模板
