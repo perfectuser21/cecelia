@@ -18,6 +18,7 @@ function makeMockPool(overrides = {}) {
       { table_name: 'decision_log' },
       { table_name: 'daily_logs' },
       { table_name: 'cortex_analyses' },
+      { table_name: 'suggestions' },
     ]},
     'schema_version': { rows: [{ max_ver: EXPECTED_SCHEMA_VERSION }] },
     'config_fingerprint': { rows: [] }, // first run

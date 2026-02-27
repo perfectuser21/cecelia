@@ -92,7 +92,7 @@ describe('Migration 087: Suggestions Table', () => {
       expect(inserted.content).toBe(testSuggestion.content);
       expect(inserted.source).toBe(testSuggestion.source);
       expect(inserted.status).toBe('pending'); // 默认状态
-      expect(inserted.priority_score).toBe(0.5); // 默认优先级
+      expect(parseFloat(inserted.priority_score)).toBe(0.5); // 默认优先级
       expect(inserted.created_at).toBeDefined();
       expect(inserted.expires_at).toBeDefined();
     });

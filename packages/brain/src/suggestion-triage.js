@@ -35,8 +35,12 @@ const PRIORITY_WEIGHTS = {
 function calculatePriorityScore(suggestion) {
   let score = 0.5; // 基础分数
 
-  // 来源权重
-  const sourceWeight = PRIORITY_WEIGHTS.source[suggestion.source] || PRIORITY_WEIGHTS.source.default;
+  // 来源权重（支持完整匹配和包含匹配，e.g. 'integration-test-cortex' → cortex 权重）
+  const src = (suggestion.source || '').toLowerCase();
+  let sourceWeight = PRIORITY_WEIGHTS.source.default;
+  for (const [key, weight] of Object.entries(PRIORITY_WEIGHTS.source)) {
+    if (key !== 'default' && src.includes(key)) { sourceWeight = weight; break; }
+  }
   score = score * 0.5 + sourceWeight * 0.5;
 
   // 类型权重
@@ -59,20 +63,36 @@ function calculatePriorityScore(suggestion) {
  * @param {Object} suggestion2
  * @returns {boolean} 是否相似
  */
-function areSuggestionsSimil (suggestion1, suggestion2) {
+function areSuggestionsSimil(suggestion1, suggestion2) {
   // 基本去重逻辑：相同来源、相同类型、相同目标实体
   if (suggestion1.source === suggestion2.source &&
       suggestion1.suggestion_type === suggestion2.suggestion_type &&
       suggestion1.target_entity_type === suggestion2.target_entity_type &&
       suggestion1.target_entity_id === suggestion2.target_entity_id) {
 
-    // 内容相似度检查（简单版本：关键词匹配）
-    const content1Words = suggestion1.content.toLowerCase().split(/\s+/);
-    const content2Words = suggestion2.content.toLowerCase().split(/\s+/);
-    const commonWords = content1Words.filter(word => content2Words.includes(word));
-    const similarity = commonWords.length / Math.max(content1Words.length, content2Words.length);
+    const c1 = suggestion1.content.toLowerCase();
+    const c2 = suggestion2.content.toLowerCase();
 
-    return similarity > 0.7; // 70% 相似度阈值
+    // 子字符串包含检查（支持中文）：一个包含另一个且覆盖率 > 70%
+    if (c1.includes(c2) || c2.includes(c1)) {
+      const shorter = Math.min(c1.length, c2.length);
+      const longer = Math.max(c1.length, c2.length);
+      if (shorter / longer > 0.7) return true;
+    }
+
+    // 词级别相似度（英文多词文本）
+    const words1 = c1.split(/\s+/).filter(w => w.length > 0);
+    const words2 = c2.split(/\s+/).filter(w => w.length > 0);
+    if (words1.length > 1 || words2.length > 1) {
+      const common = words1.filter(w => words2.includes(w));
+      return common.length / Math.max(words1.length, words2.length) > 0.7;
+    }
+
+    // 字符集相似度（中文单句）
+    const chars1 = new Set([...c1]);
+    const chars2 = new Set([...c2]);
+    const commonChars = [...chars1].filter(c => chars2.has(c));
+    return commonChars.length / Math.max(chars1.size, chars2.size) > 0.7;
   }
 
   return false;

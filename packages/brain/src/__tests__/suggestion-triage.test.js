@@ -14,15 +14,15 @@ import pool from '../db.js';
 
 describe('Suggestion Triage System', () => {
   beforeEach(async () => {
-    // 清理测试数据
-    await pool.query('DELETE FROM suggestions WHERE source = $1', ['test']);
-    await pool.query('DELETE FROM cecelia_events WHERE source = $1', ['test']);
+    // 清理所有测试数据（包括 cortex/executor/integration-test-* 等测试源）
+    await pool.query("DELETE FROM suggestions WHERE source NOT IN ('system', 'user')");
+    await pool.query("DELETE FROM cecelia_events WHERE source IN ('suggestion_triage', 'test')");
   });
 
   afterAll(async () => {
     // 最终清理
-    await pool.query('DELETE FROM suggestions WHERE source = $1', ['test']);
-    await pool.query('DELETE FROM cecelia_events WHERE source = $1', ['test']);
+    await pool.query("DELETE FROM suggestions WHERE source NOT IN ('system', 'user')");
+    await pool.query("DELETE FROM cecelia_events WHERE source IN ('suggestion_triage', 'test')");
   });
 
   describe('createSuggestion', () => {
