@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] memory_stream L1 中间层 (PR #73, Brain 1.118.0, Schema 086)
+- **migration 号冲突**: 并行 PR 同时使用同一 migration 号（085），facts-check 报 `migration_conflicts`。解决：rename 到下一个号（086），同步更新 selfcheck.js、3 个测试文件中的硬编码版本断言、DEFINITION.md
+- **三层下钻实现模式**: L0（summary）= 快筛；L1（l1_content）= 结构化摘要 fire-and-forget LLM 生成；L2（content）= 全文。`description` 字段优先用 l1_content，降级到 `content.slice(0,200)`
+- **fire-and-forget 模式**: `generateMemoryStreamL1Async` 用 `Promise.resolve().then(async () => {...})` 包裹，内部 dynamic import llm-caller 避免循环依赖，不 await 不阻塞主流程
+- **schema 版本断言文件三处**: selfcheck.test.js, desire-system.test.js, learnings-vectorize.test.js 均有硬编码 schema 版本，每次版本变更都要同步更新
+- **.brain-versions 在根目录**: 不是在 `packages/brain/`，version sync check 读的是仓库根目录的 `.brain-versions`
+- **向量搜索 LIMIT 10→20**: 更多候选让 L1 过滤有更多材料，提升召回质量
+
 ### [2026-02-27] OKR 拆解确认门 (PR #74, Brain 1.117.1)
 - **actionHandlers 扩展模式**: 在 `decision-executor.js` 的 `actionHandlers` 对象中添加新的 action type 是标准模式，`approvePendingAction` 会自动查找并调用对应 handler
 - **pending_action 签名去重**: 对同一 kr_id 24h 内只创建一条 pending_action（通过 `params->>'kr_id'` JSONB 查询），避免拆解失败重试时重复创建
