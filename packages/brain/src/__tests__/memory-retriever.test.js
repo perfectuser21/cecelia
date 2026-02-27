@@ -63,6 +63,12 @@ vi.mock('../user-profile.js', () => ({
   formatProfileSnippet: (...args) => mockFormatProfileSnippet(...args),
 }));
 
+// Mock openai-client.js（控制向量搜索路径）
+const mockGenerateEmbedding = vi.fn();
+vi.mock('../openai-client.js', () => ({
+  generateEmbedding: (...args) => mockGenerateEmbedding(...args),
+}));
+
 // Mock memory-router.js（已有测试不感知路由逻辑）
 vi.mock('../memory-router.js', () => ({
   routeMemory: vi.fn().mockReturnValue({
@@ -82,6 +88,8 @@ beforeEach(() => {
   // 默认：用户画像为空（不影响已有测试）
   mockLoadUserProfile.mockResolvedValue(null);
   mockFormatProfileSnippet.mockReturnValue('');
+  // 默认：embedding 生成返回 1536 维零向量
+  mockGenerateEmbedding.mockResolvedValue(new Array(1536).fill(0));
 });
 
 // ============================================================
@@ -641,5 +649,78 @@ describe('searchEpisodicMemory', () => {
     // 极小 token 预算
     const result = await searchEpisodicMemory(mockPool, '反思', 50);
     expect(result.length).toBeLessThan(10);
+  });
+
+  it('D10-6: 有 OPENAI_API_KEY 时走向量搜索路径', async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-key';
+    try {
+      const fakeEmbedding = new Array(1536).fill(0.1);
+      mockGenerateEmbedding.mockResolvedValue(fakeEmbedding);
+
+      const mockPool = {
+        query: vi.fn().mockResolvedValue({
+          rows: [
+            {
+              id: 'vec-uuid-1',
+              content: '[反思洞察] 聪慧的瘫痪——每次诊断准确但从不行动',
+              summary: '[反思洞察] 聪慧的瘫痪',
+              importance: 8,
+              memory_type: 'long',
+              created_at: new Date().toISOString(),
+              vector_score: 0.87,
+            },
+          ],
+        }),
+      };
+
+      const result = await searchEpisodicMemory(mockPool, '你有什么深层感悟', 500);
+
+      // 应调用 generateEmbedding
+      expect(mockGenerateEmbedding).toHaveBeenCalledOnce();
+      // 应返回向量搜索结果
+      expect(result.length).toBe(1);
+      expect(result[0].source).toBe('episodic');
+      expect(result[0].id).toBe('vec-uuid-1');
+      // relevance 应基于 vector_score 计算
+      expect(result[0].relevance).toBeGreaterThan(0.5);
+    } finally {
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+    }
+  });
+
+  it('D10-7: 向量搜索失败时降级到 Jaccard', async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-key';
+    try {
+      // generateEmbedding 抛出异常
+      mockGenerateEmbedding.mockRejectedValue(new Error('OpenAI quota exceeded'));
+
+      const mockPool = {
+        query: vi.fn().mockResolvedValue({
+          rows: [
+            {
+              id: 'fallback-uuid-1',
+              content: '[反思洞察] 系统异常诊断',
+              summary: '系统异常',
+              importance: 6,
+              memory_type: 'long',
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      };
+
+      const result = await searchEpisodicMemory(mockPool, '系统诊断', 500);
+
+      // 向量失败后应走 Jaccard 路径，也能返回结果
+      expect(Array.isArray(result)).toBe(true);
+      // pool.query 被调用（Jaccard 路径的查询）
+      expect(mockPool.query).toHaveBeenCalled();
+    } finally {
+      if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalKey;
+    }
   });
 });
