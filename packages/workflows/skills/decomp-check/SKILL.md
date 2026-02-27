@@ -1,10 +1,11 @@
 ---
 name: decomp-check
-version: 1.0.0
+version: 1.1.0
 model: claude-sonnet-4-6
 created: 2026-02-27
 updated: 2026-02-27
 changelog:
+  - 1.1.0: 加入 type 字段验证和层级跳跃检测，rejected 条件加入层级跳跃
   - 1.0.0: 从 /vivian 重写。改名 decomp-check，升级为 Sonnet，覆盖所有层，加入打回重拆机制
 description: |
   OKR 拆解质检引擎。供 Vivian 角色调用，用 Sonnet 模型审查 /decomp 的产出质量。
@@ -79,6 +80,8 @@ Brain 传入：
 | **覆盖度** | 所有 Initiative 做完 → Project 验收条件全过 | 明显遗漏关键步骤（如没有测试、没有部署） |
 | **命名可执行** | 名称明确说明交付什么 | "处理"、"完善"、"优化"等无内容词 |
 | **层级正确** | Initiative 下是 Task，不是另一个 Initiative | 层级错误（Initiative 嵌套） |
+| **type 字段正确** | 每个 child 的 `type` 字段为 `'initiative'` | `type` 为 `'task'`、`'project'` 或其他错误值 |
+| **无层级跳跃** | children 中不存在 `type='task'` 的记录 | 出现 `type='task'` 说明 decomp 误写了 tasks 表，跳过了 Initiative 层级 |
 
 ---
 
@@ -100,6 +103,7 @@ Brain 传入：
 - 拆解与父层目标完全不相关
 - 层级错误（Initiative 下嵌套 Initiative）
 - 子项全是空洞名称，无法执行
+- **层级跳跃**（children 中出现 `type='task'`，说明 decomp 误写了 tasks 表，直接打回重拆）
 
 ---
 

@@ -25,10 +25,10 @@ const SKILL_WHITELIST = {
   'research': '/exploratory',
   'codex_qa': '/codex',
   'code_review': '/code-review',
-  'decomp_review': '/decomp',
+  'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
-  'initiative_plan': '/okr',
-  'initiative_verify': '/okr'
+  'initiative_plan': '/decomp',
+  'initiative_verify': '/decomp'
 };
 
 // Fallback strategies when primary routing fails

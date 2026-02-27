@@ -29,7 +29,7 @@ Cecelia 器官：
 ```
 
 **关键**：
-- 秋米是**角色**，使用 /okr Skill
+- 秋米是**角色**，使用 /decomp Skill
 - 由大脑在后台调用
 
 ---
@@ -65,7 +65,7 @@ Cecelia 器官：
 3. 大脑存储 OKR (status=ready)
 4. Tick 检测到 ready
 5. Tick 调用秋米 ← 这里
-6. 秋米执行 /okr Skill 拆解
+6. 秋米执行 /decomp Skill 拆解
 7. Tick 路由 Tasks 给执行者
 ```
 
@@ -75,7 +75,7 @@ Cecelia 器官：
 
 ```bash
 # 由 Tick 或大脑调用
-claude -p "/okr <OKR 内容>" --model opus
+claude -p "/decomp <OKR 内容>" --model opus
 
 # 或通过 Bridge
 POST http://localhost:5225/trigger
@@ -100,7 +100,7 @@ POST http://localhost:5225/trigger
 
 ## 核心原则
 
-1. **使用 /okr Skill** - 不重复定义规则
+1. **使用 /decomp Skill** - 不重复定义规则
 2. **深度思考** - 用 Opus，不怕慢
 3. **后台运行** - 异步执行，不阻塞前台
 4. **完整分类** - 每个 Task 必须有 task_type + execution_profile

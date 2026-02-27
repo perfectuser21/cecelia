@@ -62,7 +62,7 @@ for t in d[:5]: print(f\"{t['task_type']} | {t['title'][:60]}\")
 |------|------|
 | /plan skill | ~/.claude/skills/plan/SKILL.md |
 | /dev skill | ~/.claude/skills/dev/SKILL.md |
-| /okr skill | ~/.claude/skills/okr/SKILL.md |
+| /decomp skill | ~/.claude/skills/decomp/SKILL.md |
 | 部署脚本 | ~/perfect21/cecelia/core/scripts/rolling-update.sh |
 | Capability 文档 | ~/perfect21/cecelia/core/docs/CAPABILITY_*.md |
 | Brain API | http://localhost:5221/api/brain/* |
