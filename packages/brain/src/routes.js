@@ -2360,6 +2360,36 @@ router.post('/execution-callback', async (req, res) => {
         status === 'AI Done' ? 'success' : 'failed'
       ]);
 
+      // Record progress step for completed execution
+      try {
+        const { recordProgressStep } = await import('./progress-ledger.js');
+        await recordProgressStep(task_id, run_id, {
+          sequence: 1, // 简化版：每个任务记录为单步骤
+          name: 'task_execution',
+          type: 'execution',
+          status: status === 'AI Done' ? 'completed' : 'failed',
+          startedAt: null, // execution-callback 时不知道开始时间
+          completedAt: new Date(),
+          durationMs: duration_ms || null,
+          inputSummary: null,
+          outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
+          findings: result && typeof result === 'object' ? result : {},
+          errorCode: status !== 'AI Done' ? 'execution_failed' : null,
+          errorMessage: status !== 'AI Done' ? `Task execution failed with status: ${status}` : null,
+          retryCount: iterations || 0,
+          artifacts: { pr_url: pr_url || null },
+          metadata: {
+            checkpoint_id: checkpoint_id || null,
+            original_status: status
+          },
+          confidenceScore: status === 'AI Done' ? 1.0 : 0.2
+        });
+        console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
+      } catch (progressErr) {
+        // Progress ledger errors should not break the main flow
+        console.error(`[execution-callback] Progress step recording failed: ${progressErr.message}`);
+      }
+
       await client.query('COMMIT');
     } catch (txErr) {
       await client.query('ROLLBACK');
@@ -7934,6 +7964,101 @@ router.get('/learnings', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] learnings error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Progress Ledger API ──────────────────────────────────────
+
+/**
+ * GET /api/brain/progress/:task_id — 获取任务的完整进展历史
+ */
+router.get('/progress/:task_id', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { run_id } = req.query;
+
+    const { getProgressSteps, getTaskProgressSummary } = await import('./progress-ledger.js');
+
+    const [steps, summary] = await Promise.all([
+      getProgressSteps(task_id, run_id),
+      getTaskProgressSummary(task_id)
+    ]);
+
+    res.json({
+      taskId: task_id,
+      runId: run_id || null,
+      summary,
+      steps
+    });
+  } catch (err) {
+    console.error('[API] progress/:task_id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/progress/latest — 获取最新的进展步骤
+ */
+router.get('/progress/latest', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+
+    const result = await pool.query(`
+      SELECT * FROM v_latest_progress_step
+      ORDER BY started_at DESC NULLS LAST
+      LIMIT $1
+    `, [limit]);
+
+    res.json({
+      steps: result.rows
+    });
+  } catch (err) {
+    console.error('[API] progress/latest error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/progress/anomalies — 获取异常任务列表
+ */
+router.get('/progress/anomalies', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours) || 1;
+
+    const { getProgressAnomalies } = await import('./progress-ledger.js');
+    const anomalies = await getProgressAnomalies(hours);
+
+    res.json({
+      hoursWindow: hours,
+      anomalies
+    });
+  } catch (err) {
+    console.error('[API] progress/anomalies error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/progress/record — 手动记录进展步骤（测试用）
+ */
+router.post('/progress/record', async (req, res) => {
+  try {
+    const { taskId, runId, step } = req.body;
+
+    if (!taskId || !runId || !step) {
+      return res.status(400).json({ error: 'Missing required fields: taskId, runId, step' });
+    }
+
+    const { recordProgressStep } = await import('./progress-ledger.js');
+    const ledgerId = await recordProgressStep(taskId, runId, step);
+
+    res.json({
+      success: true,
+      ledgerId
+    });
+  } catch (err) {
+    console.error('[API] progress/record error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
