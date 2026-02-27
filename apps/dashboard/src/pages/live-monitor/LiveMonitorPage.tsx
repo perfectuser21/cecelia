@@ -553,117 +553,59 @@ function ActiveProjects({ inProgressTasks, queuedTasks, projects }: {
   );
 }
 
-// ── Account Usage Card ────────────────────────────────────────────
+// ── Account Usage Rings（内联，嵌入基础设施行）────────────────────
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const usageColor = (pct: number) => pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#10b981';
 
-function AccountUsageCard() {
+function AccUsageRings() {
   const [usage, setUsage] = useState<Record<string, AccountUsage> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const fetchUsage = useCallback(async () => {
     try {
       const res = await fetch('/api/brain/account-usage');
-      if (!res.ok) throw new Error(`API ${res.status}`);
+      if (!res.ok) return;
       const data = await res.json();
-      if (data.ok) { setUsage(data.usage); setError(null); }
-      else setError('API 返回错误');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '请求失败');
-    } finally {
-      setLoading(false);
-      setLastRefreshed(new Date());
-    }
+      if (data.ok) setUsage(data.usage);
+    } catch { /* 静默，不影响基础设施行 */ }
   }, []);
 
   useEffect(() => {
     fetchUsage();
-    const timer = setInterval(fetchUsage, 60000);
-    return () => clearInterval(timer);
+    const t = setInterval(fetchUsage, 60000);
+    return () => clearInterval(t);
   }, [fetchUsage]);
 
-  const bestAccount = usage
-    ? Object.entries(usage).reduce<{ id: string; pct: number } | null>((best, [id, u]) => {
-        if (!best || u.five_hour_pct < best.pct) return { id, pct: u.five_hour_pct };
-        return best;
-      }, null)?.id
-    : null;
+  if (!usage) return null;
+
+  const bestId = Object.entries(usage).reduce<{ id: string; pct: number } | null>((best, [id, u]) => {
+    if (!best || u.five_hour_pct < best.pct) return { id, pct: u.five_hour_pct };
+    return best;
+  }, null)?.id;
 
   return (
-    <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#818cf8', letterSpacing: 1.4, textTransform: 'uppercase' }}>Claude Max 用量</span>
-        {bestAccount && !loading && !error && (
-          <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#818cf8', background: 'rgba(99,102,241,.15)', padding: '1px 8px', borderRadius: 10 }}>
-            推荐 {bestAccount}
-          </span>
-        )}
-        <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-        {lastRefreshed && (
-          <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58' }}>
-            {lastRefreshed.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        )}
-        <button
-          onClick={() => { setLoading(true); fetchUsage(); }}
-          disabled={loading}
-          style={{
-            background: 'transparent', border: '1px solid #30363d', borderRadius: 6,
-            padding: '2px 10px', color: '#8b949e', cursor: 'pointer', fontSize: 11,
-            opacity: loading ? 0.5 : 1,
-          }}
-        >
-          {loading ? '…' : '↻'}
-        </button>
-      </div>
-
-      {error ? (
-        <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 8, fontSize: 11, color: '#f87171' }}>
-          ⚠ {error}
-        </div>
-      ) : loading && !usage ? (
-        <Skel />
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-          {ACCOUNTS.map(id => {
-            const u = usage?.[id];
-            const pct = u?.five_hour_pct ?? 0;
-            const color = usageColor(pct);
-            const isBest = id === bestAccount;
-            return (
-              <div key={id} style={{
-                background: '#0d1117', borderRadius: 10, padding: '12px 14px',
-                border: `1px solid ${isBest ? 'rgba(129,140,248,.3)' : '#21262d'}`,
-                borderLeft: `3px solid ${isBest ? '#818cf8' : color}`,
-                position: 'relative',
-              }}>
-                {isBest && (
-                  <span style={{
-                    position: 'absolute', top: 8, right: 8,
-                    fontFamily: 'monospace', fontSize: 9, fontWeight: 700,
-                    background: 'rgba(99,102,241,.2)', color: '#818cf8',
-                    padding: '1px 6px', borderRadius: 4,
-                  }}>推荐</span>
-                )}
-                <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 8 }}>{id}</div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 6 }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>{pct}</span>
-                  <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#484f58' }}>%</span>
-                </div>
-                <PBar pct={pct} color={color} h={4} />
-                <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .6 }}>5小时</span>
-                  <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58' }}>7天 {u?.seven_day_pct ?? 0}%</span>
-                </div>
+    <>
+      {ACCOUNTS.map(id => {
+        const u = usage[id];
+        const pct = u?.five_hour_pct ?? 0;
+        const isBest = id === bestId;
+        const color = isBest ? '#818cf8' : usageColor(pct);
+        const label = id.replace('account', 'ACC');
+        const resetsAt = u?.resets_at
+          ? new Date(u.resets_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+          : null;
+        return (
+          <div key={id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+            <Ring pct={pct} color={color} label={label} value={`${pct}%`} />
+            {resetsAt && (
+              <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace', marginTop: -2 }}>
+                ↺{resetsAt}
               </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -909,9 +851,6 @@ export default function LiveMonitorPage() {
             </div>
           </div>
 
-          {/* ══ Claude Max 用量 ══ */}
-          <AccountUsageCard />
-
           {/* ══ 活跃项目 ══ */}
           <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
@@ -1020,6 +959,8 @@ export default function LiveMonitorPage() {
                   <Ring pct={vps.cpu.usage} color={metricColor(vps.cpu.usage)} label="CPU" value={`${vps.cpu.usage.toFixed(0)}%`} />
                   <Ring pct={vps.memory.usagePercent} color={metricColor(vps.memory.usagePercent)} label="RAM" value={`${vps.memory.usagePercent.toFixed(0)}%`} />
                   <Ring pct={vps.disk.usagePercent} color={metricColor(vps.disk.usagePercent)} label="DISK" value={`${vps.disk.usagePercent}%`} />
+                  <div style={{ width: 1, height: 40, background: '#21262d' }} />
+                  <AccUsageRings />
                   <div style={{ width: 1, height: 40, background: '#21262d' }} />
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, max-content)', gap: '2px 16px' }}>
                     {[
