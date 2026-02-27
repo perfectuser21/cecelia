@@ -2802,7 +2802,8 @@ ${resultStr.substring(0, 2000)}
     }
 
     // 5e. Initiative 执行循环：dev 任务完成 → 触发下一轮 initiative_plan
-    if (newStatus === 'completed') {
+    // completed_no_pr（无 PR 的完成）同样需要触发，避免循环中断
+    if (newStatus === 'completed' || newStatus === 'completed_no_pr') {
       try {
         const devTaskRow = await pool.query(
           'SELECT task_type, project_id, payload FROM tasks WHERE id = $1',
