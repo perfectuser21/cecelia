@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const SKILLS_DIR = join(__dirname, '../../skills');
-const CORE_SKILLS = ['dev', 'qa', 'audit', 'okr'];
+const CORE_SKILLS = ['dev', 'qa', 'audit'];
 const LANGUAGE_RULE = 'CRITICAL LANGUAGE RULE';
 
 describe('Skill Language Rule', () => {

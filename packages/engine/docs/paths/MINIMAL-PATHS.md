@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.3.0
+version: 3.4.0
 created: 2026-02-27
 updated: 2026-02-27
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.3.0: 从 feature-registry.yml 自动生成
+  - 3.4.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -34,7 +34,7 @@ changelog:
 2. ✅ **有 .dev-mode + PR 未创建 → exit 2 (继续)**
 3. ✅ **有 .dev-mode + PR 已合并 → 删除 .dev-mode + exit 0 (完成)**
 
-**RCI 覆盖**: H7-001,H7-002,H7-003,H7-004,H7-006,H7-007,H7-008,W6-006
+**RCI 覆盖**: H7-001,H7-002,H7-004,H7-006,H7-007,H7-008,W6-006
 
 ---
 
@@ -207,16 +207,6 @@ changelog:
 
 ---
 
-### S1: OKR Skill
-
-1. ✅ **基本拆解: /okr → 生成 Features → 验证通过**
-2. ✅ **质量循环: 初始 80 分 → 改进 → 验证 → 92 分通过**
-3. ✅ **防作弊: 改分不改内容 → hash 不匹配 → exit 2**
-
-**RCI 覆盖**: S1-001,S1-002,S1-003
-
----
-
 ### S2: PRD/DoD Validation Loop
 
 1. ✅ **PRD 验证: 生成 PRD → 验证 → 90+ 通过**
@@ -225,6 +215,19 @@ changelog:
 4. ✅ **防作弊: 手动改分 → SHA256 不匹配 → exit 2**
 
 **RCI 覆盖**: S2-001,S2-002,S2-003
+
+---
+
+### S3: Decomp Skill
+
+1. ✅ **基本拆解: 秋米 → /decomp → 生成层级结构 → 写入 DB**
+
+---
+
+### S4: Decomp-Check Skill
+
+1. ✅ **质检通过: Vivian → /decomp-check → approved**
+2. ✅ **质检驳回: Vivian → /decomp-check → rejected → 秋米重拆**
 
 ---
 
@@ -240,5 +243,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.3.0
+**版本**: 3.4.0
 **生成时间**: 2026-02-27

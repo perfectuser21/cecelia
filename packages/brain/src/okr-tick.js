@@ -83,7 +83,7 @@ async function getGoalsWithAnsweredQuestions() {
 /**
  * Trigger planner for goal decomposition
  * Creates a decomposition task that executor will dispatch via normal flow.
- * executor.preparePrompt() handles decomposition='true' → generates /okr prompt.
+ * executor.preparePrompt() handles decomposition='true' → generates /decomp prompt.
  * @param {Object} goal - Goal to decompose
  */
 async function triggerPlannerForGoal(goal) {
@@ -98,7 +98,7 @@ async function triggerPlannerForGoal(goal) {
   });
 
   try {
-    // Create a decomposition task — executor.preparePrompt() will generate the /okr prompt
+    // Create a decomposition task — executor.preparePrompt() will generate the /decomp prompt
     const result = await createTask({
       title: `OKR 拆解: ${goal.title}`,
       description: goal.description || goal.title,

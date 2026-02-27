@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.3.0
+version: 3.4.0
 created: 2026-02-27
 updated: 2026-02-27
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.3.0: 从 feature-registry.yml 自动生成
+  - 3.4.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -182,22 +182,35 @@ rsync/scp + HK 检测 (~1ms) → 未命中 → 放行 | 命中 HK → git 三连
 
 ---
 
-### S1: OKR Skill
-
-```
-/okr 调用 → 分析 KR → 生成 Features/Tasks → validate-okr.py（形式 40 分）→
-AI 自评内容质量（60 分）→ Validation Loop（< 90 分时自动改进）→
-stop-okr.sh（10 层防作弊检查）→ 通过（total >= 90）
-```
-
----
-
 ### S2: PRD/DoD Validation Loop
 
 ```
 生成 PRD/DoD → validate-*.py 打分 → total < 90 →
 AI 读取 validation report → 改进文档 → 重新验证 →
 Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
+```
+
+---
+
+### S3: Decomp Skill
+
+```
+秋米被调用 → 读取 /decomp → 三维矩阵识别层级 →
+按五层模板拆解 → 战略对齐检查 → 写入数据库 →
+OKR层: status=reviewing（等人工确认）
+KR以下: 触发 Decomp-Check 审查
+```
+
+---
+
+### S4: Decomp-Check Skill
+
+```
+Vivian 被调用 → 读取 /decomp-check → 按层级选审查标准 →
+检查因果链/覆盖度/命名/战略对齐 →
+approved: Brain 继续流程
+needs_revision: 秋米修正
+rejected: Brain 打回重拆
 ```
 
 ---
@@ -214,5 +227,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.3.0
+**版本**: 3.4.0
 **生成时间**: 2026-02-27

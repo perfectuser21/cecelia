@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.30.10"
+version: "12.32.0"
 updated: "2026-02-27"
 
 # ============================================================================
@@ -163,24 +163,6 @@ hooks:
       file: "hooks/stop.sh"
       contains: "gh pr list"
     test: "tests/hooks/stop-hook-retry.test.ts"
-
-  - id: H7-003
-    feature: H7
-    name: "Stop Hook - stop-okr.sh 完成条件检查"
-    scope: hook
-    priority: P0
-    trigger: [PR, Release]
-    method: auto
-    tags: [stop, okr, completion, feature-tracking]
-    owner: infra
-    steps:
-      given: ".okr-mode 文件存在且为 okr 模式"
-      when: "Stop Hook 检查秋米拆解完成条件"
-      then: "检查 5 个条件：Feature/Task/PRD/DoD/KR 状态，未满足时 exit 2"
-    evidence:
-      type: script
-      run: "bash hooks/stop-okr.sh"
-    test: "tests/hooks/test-stop-okr.sh"
 
   - id: H7-004
     feature: H7
@@ -2667,99 +2649,6 @@ quality_enforcement:
 # Skills 回归契约
 # ============================================================================
 skills:
-  # --------------------------------------------------------------------------
-  # S1: OKR Skill - OKR 拆解工具
-  # --------------------------------------------------------------------------
-  - id: S1-001
-    feature: S1
-    name: "/okr 流程可启动"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [okr, validation, quality]
-    owner: infra
-    steps:
-      given: "用户调用 /okr skill"
-      when: "提供 Key Result 描述"
-      then: "生成 Features 和 Tasks，质量分数 >= 90"
-    evidence:
-      type: file
-      path: "tests/okr/run-all-tests.sh"
-    test: "tests/okr/run-all-tests.sh"
-
-  - id: S1-002
-    feature: S1
-    name: "OKR Validation Loop"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [okr, validation, anti-cheat]
-    owner: infra
-    steps:
-      given: "OKR 拆解生成 output.json"
-      when: "运行 validate-okr.py"
-      then: "形式验证 40 分 + SHA256 hash 生成"
-    evidence:
-      type: file
-      path: "tests/okr/test-validate-okr.sh"
-    test: "tests/okr/test-validate-okr.sh"
-
-  - id: S1-003
-    feature: S1
-    name: "OKR Anti-Cheat 机制"
-    scope: skill
-    priority: P2
-    trigger: [PR]
-    method: auto
-    tags: [okr, anti-cheat, stop-hook]
-    owner: infra
-    steps:
-      given: "OKR 验证报告生成"
-      when: "运行 stop-okr.sh"
-      then: "10 层防作弊检查，31 种攻击场景 100% 拦截"
-    evidence:
-      type: file
-      path: "tests/okr/test-cheating-prevention.sh"
-    test: "tests/okr/test-cheating-prevention.sh"
-
-  - id: S1-004
-    feature: S1
-    name: "OKR Database Integration"
-    scope: skill
-    priority: P1
-    trigger: [PR]
-    method: auto
-    tags: [okr, okr-database, brain-api]
-    owner: infra
-    steps:
-      given: "OKR output.json 生成完成"
-      when: "运行 store-to-database.sh"
-      then: "调用 Brain API 创建 Goal、Feature SubProjects、Tasks"
-    evidence:
-      type: file
-      path: "tests/okr/test-database-integration.sh"
-    test: "tests/okr/test-database-integration.sh"
-
-  - id: S1-005
-    feature: S1
-    name: "OKR Iterative Decomposition"
-    scope: skill
-    priority: P1
-    trigger: [PR]
-    method: auto
-    tags: [okr, iterative, decompose, continue-feature]
-    owner: infra
-    steps:
-      given: "用户需求或 Feature 反馈"
-      when: "运行 decompose-feature.sh 或 continue-feature.sh"
-      then: "生成初始规划（1 详细 + 2-4 草稿）或基于反馈细化下一个 Task"
-    evidence:
-      type: file
-      path: "tests/okr/test-decompose-feature.sh"
-    test: "tests/okr/test-decompose-feature.sh && tests/okr/test-continue-feature.sh"
-
   - id: S1-006
     feature: S1
     name: "Dev Feedback Report Generation"

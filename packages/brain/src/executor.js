@@ -826,30 +826,30 @@ function generateRunId(taskId) {
  * 简化版：只有 dev 和 review 两类
  *
  * payload 特判逻辑（优先级高于 taskType 映射）：
- * - payload.decomposition === 'true' (或 true) + task_type === 'dev' → /okr（OKR 拆解）
- * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
- * - payload.next_action === 'decompose' → /okr （需要继续拆解的任务）
+ * - payload.decomposition === 'true' (或 true) + task_type === 'dev' → /decomp（OKR 拆解）
+ * - payload.decomposition === 'okr' → /decomp（OKR 拆解任务）
+ * - payload.next_action === 'decompose' → /decomp （需要继续拆解的任务）
  * - payload.decomposition === 'known' → 保持 taskType 原有路由
  * - 无 payload → 保持 taskType 原有路由（向后兼容）
  */
 function getSkillForTaskType(taskType, payload) {
   // payload 特判：decomposition 模式路由（优先级高于 taskType 静态映射）
   if (payload) {
-    // decomposition='true' + task_type=dev → /okr（OKR 拆解，由秋米执行）
+    // decomposition='true' + task_type=dev → /decomp（OKR 拆解，由秋米执行）
     // 注意：decomp-checker 写入的是字符串 'true'，不是布尔值 true
     if ((payload.decomposition === 'true' || payload.decomposition === true) && taskType === 'dev') {
-      console.log(`[executor] payload.decomposition 路由: decomposition='true' + task_type=dev → /okr`);
-      return '/okr';
+      console.log(`[executor] payload.decomposition 路由: decomposition='true' + task_type=dev → /decomp`);
+      return '/decomp';
     }
-    // decomposition='okr' → /okr（OKR 拆解任务）
+    // decomposition='okr' → /decomp（OKR 拆解任务）
     if (payload.decomposition === 'okr') {
-      console.log(`[executor] payload.decomposition 路由: decomposition=okr → /okr`);
-      return '/okr';
+      console.log(`[executor] payload.decomposition 路由: decomposition=okr → /decomp`);
+      return '/decomp';
     }
-    // next_action='decompose' → /okr（继续拆解任务）
+    // next_action='decompose' → /decomp（继续拆解任务）
     if (payload.next_action === 'decompose') {
-      console.log(`[executor] payload.next_action 路由: next_action=decompose → /okr`);
-      return '/okr';
+      console.log(`[executor] payload.next_action 路由: next_action=decompose → /decomp`);
+      return '/decomp';
     }
     // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
   }
@@ -1066,7 +1066,7 @@ async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
 
-  // OKR 拆解任务：秋米用 /okr skill + Opus
+  // OKR 拆解任务：秋米用 /decomp skill + Opus
   // decomposition = 'true' (首次拆解) 或 'continue' (继续拆解)
   const decomposition = task.payload?.decomposition;
   if (decomposition === 'true' || decomposition === 'continue') {
@@ -1079,7 +1079,7 @@ async function preparePrompt(task) {
 
     // 继续拆解：秋米收到前一个 Task 的执行结果，决定下一步
     if (isContinue && initiativeId) {
-      return `/okr
+      return `/decomp
 
 # 继续拆解: ${krTitle}
 
@@ -1118,7 +1118,7 @@ POST /api/brain/action/create-task
 
     // Initiative 级别补充拆解：给空 Initiative 创建 Task（由 decomp-checker Check 6 触发）
     if (!isContinue && initiativeId) {
-      return `/okr
+      return `/decomp
 
 # Initiative 补充拆解: ${krTitle}
 
@@ -1156,7 +1156,7 @@ POST /api/brain/action/create-task
 
     // 首次拆解：秋米需要创建 KR 专属 Project + Initiative + Task
     const timeContext = await buildTimeContext(krId);
-    return `/okr
+    return `/decomp
 
 # OKR 拆解: ${krTitle}
 
@@ -1792,7 +1792,7 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // Decomposition tasks (/okr) run for 3-10 minutes — apply extended grace period
+    // Decomposition tasks (/decomp) run for 3-10 minutes — apply extended grace period
     // to avoid false-positive failures before the process fully starts or completes
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
     if (task.payload?.decomposition === 'true') {
