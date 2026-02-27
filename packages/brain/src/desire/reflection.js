@@ -8,6 +8,7 @@
  */
 
 import { callLLM } from '../llm-caller.js';
+import { generateL0Summary } from '../memory-utils.js';
 
 const REFLECTION_THRESHOLD = 12;
 
@@ -110,12 +111,14 @@ ${memorySummary}
     return { triggered: false };
   }
 
-  // 写入 memory_stream（long 类型，高重要性）
+  // 写入 memory_stream（long 类型，高重要性，附带 L0 摘要）
   try {
+    const insightContent = `[反思洞察] ${insight}`;
+    const insightSummary = generateL0Summary(insightContent);
     await pool.query(`
-      INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-      VALUES ($1, 8, 'long', NULL)
-    `, [`[反思洞察] ${insight}`]);
+      INSERT INTO memory_stream (content, importance, memory_type, expires_at, summary)
+      VALUES ($1, 8, 'long', NULL, $2)
+    `, [insightContent, insightSummary]);
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);
   }
