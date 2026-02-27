@@ -31,19 +31,15 @@ describe("stop.sh", () => {
     }).not.toThrow();
   });
 
-  it("should exit 0 when CECELIA_HEADLESS=true", () => {
-    const input = JSON.stringify({ stop_hook_active: false });
+  it("should NOT bypass when CECELIA_HEADLESS=true (H7-014 Bug Fix)", () => {
+    // v13.1.0: 无头模式不再绕过，与有头模式走同一套状态机
+    // 验证绕过逻辑已从可执行代码中删除（注释中允许提及）
+    const hookContent = execSync(`cat "${HOOK_PATH}"`, { encoding: "utf-8" });
 
-    // In headless mode, hook should exit 0 immediately
-    const result = execSync(
-      `echo '${input}' | CECELIA_HEADLESS=true bash "${HOOK_PATH}"`,
-      {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
-
-    expect(result).toBe("");
+    // 验证没有 if [[ ... CECELIA_HEADLESS ... ]] 形式的可执行绕过
+    expect(hookContent).not.toMatch(/^\s*if\s+\[\[.*CECELIA_HEADLESS/m);
+    // 验证版本已升级到 v13.1.0
+    expect(hookContent).toContain('v13.1.0');
   });
 
   // REMOVED: stop_hook_active 检查已删除（改用 15 次 retry_count 机制）
@@ -58,7 +54,7 @@ describe("stop.sh", () => {
       expect(hookContent).toContain('Stop Hook 路由器');
       expect(hookContent).toContain('stop-dev.sh');
       expect(hookContent).toContain('.dev-mode');
-      expect(hookContent).toContain('v13.0.0');
+      expect(hookContent).toContain('v13.1.0');
     });
 
     it("stop-dev.sh should use JSON API format", () => {
