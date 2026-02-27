@@ -35,7 +35,7 @@ export async function runPerception(pool) {
       });
     }
 
-    if (parseInt(s.queued) > 10) {
+    if (parseInt(s.queued) > 3) {
       observations.push({
         signal: 'queue_buildup',
         value: parseInt(s.queued),
@@ -68,6 +68,13 @@ export async function runPerception(pool) {
         signal: 'kr_status_snapshot',
         value: goals.map(g => ({ title: g.title, progress: parseInt(g.progress) })),
         context: `活跃 KR 概览：${goals.map(g => `${g.title} ${g.progress}%`).join('、')}`
+      });
+    } else {
+      observations.push({
+        signal: 'kr_status_snapshot',
+        value: [],
+        context: '当前无活跃目标，等待规划',
+        importance: 3
       });
     }
   } catch (err) {
@@ -203,6 +210,50 @@ export async function runPerception(pool) {
   } catch (err) {
     console.error('[perception] task milestone error:', err.message);
   }
+
+  // 9. 今日完成任务数（正向信号）
+  try {
+    const { rows: todayRows } = await pool.query(`
+      SELECT COUNT(*) as cnt FROM tasks
+      WHERE status = 'completed'
+      AND updated_at >= CURRENT_DATE
+    `);
+    const cnt = parseInt(todayRows[0]?.cnt || 0);
+    if (cnt > 0) {
+      observations.push({
+        signal: 'task_completed_today',
+        value: cnt,
+        context: `今日已完成 ${cnt} 个任务，进展顺利`,
+        importance: 5
+      });
+    }
+  } catch (err) {
+    console.error('[perception] task_completed_today error:', err.message);
+  }
+
+  // 10. 时间感知问候（每次 tick 都产生）
+  const hour = new Date().getHours();
+  let greetingContext;
+  let greetingImportance;
+  if (hour >= 6 && hour <= 11) {
+    greetingContext = '早晨好，开始新的一天';
+    greetingImportance = 3;
+  } else if (hour >= 12 && hour <= 17) {
+    greetingContext = '下午进行中，持续推进';
+    greetingImportance = 2;
+  } else if (hour >= 18 && hour <= 23) {
+    greetingContext = '傍晚了，回顾今日进度';
+    greetingImportance = 3;
+  } else {
+    greetingContext = '深夜运行中，系统正常';
+    greetingImportance = 2;
+  }
+  observations.push({
+    signal: 'time_aware_greeting',
+    value: hour,
+    context: greetingContext,
+    importance: greetingImportance
+  });
 
   return observations;
 }
