@@ -56,6 +56,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat } from './orchestrator-chat.js';
+import { callLLM } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
@@ -1489,6 +1490,98 @@ router.post('/pending-actions/:id/select', async (req, res) => {
     res.json({ success: true, execution_result: result.execution_result });
   } catch (err) {
     res.status(500).json({ error: 'Failed to select option', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/autumnrice/chat
+ * 与秋米直接对话，讨论 OKR 拆解结果
+ * Body: { pending_action_id: string, message: string }
+ * 秋米加载 KR + 拆解上下文，回复用户，并将对话存入 pending_actions.comments
+ */
+router.post('/autumnrice/chat', async (req, res) => {
+  try {
+    const { pending_action_id, message } = req.body || {};
+
+    if (!pending_action_id || !message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'pending_action_id and message are required' });
+    }
+
+    // 加载 pending_action（含拆解上下文和历史对话）
+    const actionResult = await pool.query(
+      `SELECT id, context, params, comments, status FROM pending_actions WHERE id = $1`,
+      [pending_action_id]
+    );
+    if (actionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Pending action not found' });
+    }
+
+    const action = actionResult.rows[0];
+    if (action.status !== 'pending_approval') {
+      return res.status(400).json({ error: 'Pending action already processed' });
+    }
+
+    const ctx = action.context || {};
+    const initiatives = Array.isArray(ctx.initiatives) ? ctx.initiatives : [];
+    const existingComments = Array.isArray(action.comments) ? action.comments : [];
+
+    // 构建秋米的 system prompt + 对话历史
+    const initiativeList = initiatives.length > 0
+      ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
+      : '  （暂无 Initiative）';
+
+    const systemPrompt = `你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。你刚刚完成了以下 OKR 拆解工作：
+
+**KR（关键结果）**：${ctx.kr_title || '未知'}
+**Project（项目）**：${ctx.project_name || '未知'}
+**Initiatives（执行项）**：
+${initiativeList}
+
+用户现在直接来找你，对这个拆解有疑问或修改意见。请：
+1. 认真倾听用户意见
+2. 解释你的拆解思路和依据
+3. 如需调整，提出具体的新方案
+4. 保持专业、简洁、务实的风格
+5. 用户满意时引导他们点击"确认放行"
+
+注意：你是秋米，不是 Cecelia。直接以秋米的身份回应，不要用"我是 Cecelia"等语句。`;
+
+    // 构建历史对话
+    const historyParts = existingComments
+      .filter(c => c.role === 'user' || c.role === 'autumnrice')
+      .map(c => {
+        const roleLabel = c.role === 'user' ? '用户' : '秋米';
+        const content = c.text || c.content || '';
+        return `${roleLabel}：${content}`;
+      });
+
+    const historyBlock = historyParts.length > 0
+      ? `\n## 之前的对话\n${historyParts.join('\n\n')}\n\n`
+      : '';
+
+    const fullPrompt = `${systemPrompt}${historyBlock}\n## 用户最新消息\n${message.trim()}\n\n请回复用户（直接输出回复内容，不要输出"秋米："前缀）：`;
+
+    // 调用 LLM（秋米使用 claude-sonnet-4-6）
+    const { text: reply } = await callLLM('autumnrice', fullPrompt, {
+      model: 'claude-sonnet-4-6',
+      timeout: 30000,
+      maxTokens: 512,
+    });
+
+    const now = new Date().toISOString();
+    const userComment = { role: 'user', text: message.trim(), ts: now };
+    const autumnriceComment = { role: 'autumnrice', text: reply, ts: now };
+
+    // 存入 pending_actions.comments
+    await pool.query(
+      `UPDATE pending_actions SET comments = comments || $1::jsonb WHERE id = $2 AND status = 'pending_approval'`,
+      [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
+    );
+
+    res.json({ success: true, reply, comment: autumnriceComment });
+  } catch (err) {
+    console.error('[autumnrice/chat] Error:', err.message);
+    res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });
   }
 });
 
