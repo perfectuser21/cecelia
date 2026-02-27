@@ -15,6 +15,8 @@
 import SimilarityService from './similarity.js';
 import { searchRelevantLearnings } from './learning.js';
 import { loadUserProfile, formatProfileSnippet } from './user-profile.js';
+import { routeMemory } from './memory-router.js';
+import { generateL0Summary } from './memory-utils.js';
 
 // ============================================================
 // 常量配置
@@ -256,6 +258,101 @@ async function searchSemanticMemory(pool, query, mode) {
   return candidates;
 }
 
+// ============================================================
+// L0/L1 分层记忆工具
+// ============================================================
+
+// generateL0Summary 来自 memory-utils.js（避免循环依赖）
+export { generateL0Summary };
+
+/**
+ * 片段记忆检索（Episodic Memory）：从 memory_stream 中按 L0 摘要过滤后展开
+ *
+ * L0 阶段：只看 summary（100字），用 Jaccard 过滤相关候选
+ * L1 阶段：对相关候选展开完整 content
+ *
+ * @param {Object} pool - pg pool
+ * @param {string} query - 搜索文本
+ * @param {number} [tokenBudget=300] - token 预算
+ * @returns {Promise<Array>} 候选列表（source='episodic'）
+ */
+export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
+  if (!pool || !query) return [];
+
+  try {
+    // 查最近 30 条非 self_model 的记忆（包含 summary 和 content）
+    const result = await pool.query(`
+      SELECT id, content, summary, importance, memory_type, created_at
+      FROM memory_stream
+      WHERE (source_type IS NULL OR source_type != 'self_model')
+        AND (expires_at IS NULL OR expires_at > NOW())
+      ORDER BY created_at DESC
+      LIMIT 30
+    `);
+
+    const rows = result.rows;
+    if (rows.length === 0) return [];
+
+    const queryTokens = new Set(query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
+
+    // L0 过滤：有 summary 就用 summary，否则用 content 前 100 字符
+    const relevant = [];
+    for (const row of rows) {
+      const l0Text = row.summary || generateL0Summary(row.content);
+      const l0Tokens = new Set(l0Text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
+
+      // Jaccard 计算
+      if (queryTokens.size === 0 || l0Tokens.size === 0) {
+        // 无法计算相似度：直接纳入（宽容策略）
+        relevant.push({ ...row, l0Score: 0.1 });
+        continue;
+      }
+
+      let intersection = 0;
+      for (const t of queryTokens) {
+        if (l0Tokens.has(t)) intersection++;
+      }
+      const union = new Set([...queryTokens, ...l0Tokens]).size;
+      const jaccard = union > 0 ? intersection / union : 0;
+
+      // 阈值 0.05：宽松过滤，避免漏掉中文记忆
+      if (jaccard >= 0.05 || relevant.length < 3) {
+        relevant.push({ ...row, l0Score: jaccard });
+      }
+    }
+
+    // 按 L0 分数排序，最多取 10 条
+    relevant.sort((a, b) => b.l0Score - a.l0Score);
+    const candidates = relevant.slice(0, 10);
+
+    // L1 展开：填充完整 content（已在 SELECT 中取到），token 截断
+    const results = [];
+    let usedTokens = 0;
+    for (const row of candidates) {
+      const preview = (row.content || '').slice(0, 200);
+      const lineTokens = estimateTokens(preview);
+      if (usedTokens + lineTokens > tokenBudget) break;
+
+      results.push({
+        id: row.id,
+        source: 'episodic',
+        title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
+        description: preview,
+        text: row.content || '',
+        relevance: 0.5 + row.l0Score,
+        created_at: row.created_at,
+        importance: row.importance,
+      });
+      usedTokens += lineTokens;
+    }
+
+    return results;
+  } catch (err) {
+    console.warn('[memory-retriever] Episodic memory search failed (graceful fallback):', err.message);
+    return [];
+  }
+}
+
 /**
  * 事件记忆检索：时间窗口 + type 过滤（不做向量搜索）
  * @param {Object} pool - pg pool
@@ -395,19 +492,36 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     return { block: '', meta: { candidates: 0, injected: 0, tokenUsed: 0 } };
   }
 
-  // 1. 并行检索三路数据（chat 模式额外加载对话历史）
+  // 0. 记忆路由：根据意图决定激活哪类记忆（chat 模式启用）
+  const { strategy } = mode === 'chat'
+    ? routeMemory(query, mode)
+    : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
+
+  // 1. 并行检索多路数据（根据路由策略）
   const fetches = [
-    searchSemanticMemory(dbPool, query, mode),
-    loadRecentEvents(dbPool, query, mode),
+    strategy.semantic !== false ? searchSemanticMemory(dbPool, query, mode) : Promise.resolve([]),
+    strategy.events !== false ? loadRecentEvents(dbPool, query, mode) : Promise.resolve([]),
     loadActiveProfile(dbPool, mode),
   ];
   if (mode === 'chat') {
     fetches.push(loadConversationHistory(dbPool));
+    // 片段记忆（episodic）：仅 chat 模式按路由策略加载
+    if (strategy.episodic) {
+      fetches.push(searchEpisodicMemory(dbPool, query, strategy.episodicBudget || 300));
+    } else {
+      fetches.push(Promise.resolve([]));
+    }
   }
-  const [semanticResults, eventResults, profileSnippet, conversationResults] = await Promise.all(fetches);
+  const [semanticResults, eventResults, profileSnippet, conversationResults, episodicResults] =
+    await Promise.all(fetches);
 
-  // 2. 统一评分（语义 + 事件 + 对话混合，profile 不参与）
-  const candidates = [...semanticResults, ...eventResults, ...(conversationResults || [])];
+  // 2. 统一评分（语义 + 事件 + 对话 + 片段记忆混合，profile 不参与）
+  const candidates = [
+    ...semanticResults,
+    ...eventResults,
+    ...(conversationResults || []),
+    ...(episodicResults || []),
+  ];
   const scored = candidates.map(c => {
     const source = c.source || 'task';
     const halfLife = HALF_LIFE[source] || 30;

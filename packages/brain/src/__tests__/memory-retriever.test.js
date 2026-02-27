@@ -20,6 +20,8 @@ import {
   jaccardSimilarity,
   estimateTokens,
   buildMemoryContext,
+  generateL0Summary,
+  searchEpisodicMemory,
   HALF_LIFE,
   MODE_WEIGHT,
   _loadActiveProfile,
@@ -60,6 +62,17 @@ vi.mock('../user-profile.js', () => ({
   loadUserProfile: (...args) => mockLoadUserProfile(...args),
   formatProfileSnippet: (...args) => mockFormatProfileSnippet(...args),
 }));
+
+// Mock memory-router.js（已有测试不感知路由逻辑）
+vi.mock('../memory-router.js', () => ({
+  routeMemory: vi.fn().mockReturnValue({
+    intentType: 'general',
+    strategy: { semantic: true, episodic: true, events: true, episodicBudget: 250, semanticBudget: 400, eventsBudget: 150 },
+  }),
+  INTENT_TYPES: { SELF_REFLECTION: 'self_reflection', TASK_QUERY: 'task_query', STATUS_CHECK: 'status_check', GENERAL: 'general' },
+  MEMORY_STRATEGY: {},
+}));
+
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -529,5 +542,104 @@ describe('buildMemoryContext', () => {
 
     expect(meta.sources).toBeDefined();
     expect(meta.injected).toBeGreaterThan(0);
+  });
+});
+
+// ============================================================
+// D9: generateL0Summary
+// ============================================================
+
+describe('generateL0Summary', () => {
+  it('D9-1: 正常文本截断为 100 字符', () => {
+    const long = 'A'.repeat(200);
+    const result = generateL0Summary(long);
+    expect(result.length).toBeLessThanOrEqual(100);
+  });
+
+  it('D9-2: 空字符串返回空字符串', () => {
+    expect(generateL0Summary('')).toBe('');
+    expect(generateL0Summary(null)).toBe('');
+    expect(generateL0Summary(undefined)).toBe('');
+  });
+
+  it('D9-3: 多余空白被合并', () => {
+    const text = '  hello   world  ';
+    expect(generateL0Summary(text)).toBe('hello world');
+  });
+
+  it('D9-4: 短文本直接返回', () => {
+    const text = '反思洞察：今天 CI 通过了';
+    expect(generateL0Summary(text)).toBe(text.trim());
+  });
+});
+
+// ============================================================
+// D10: searchEpisodicMemory
+// ============================================================
+
+describe('searchEpisodicMemory', () => {
+  it('D10-1: pool 为 null 返回空数组', async () => {
+    const result = await searchEpisodicMemory(null, '任务状态');
+    expect(result).toEqual([]);
+  });
+
+  it('D10-2: query 为空返回空数组', async () => {
+    const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const result = await searchEpisodicMemory(mockPool, '');
+    expect(result).toEqual([]);
+  });
+
+  it('D10-3: 正常返回片段记忆记录', async () => {
+    const mockPool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          {
+            id: 'uuid-1',
+            content: '[反思洞察] CI 今天连续失败，需要检查测试配置',
+            summary: '[反思洞察] CI 今天连续失败',
+            importance: 8,
+            memory_type: 'long',
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: 'uuid-2',
+            content: '[反思洞察] Alex 最近对任务调度很感兴趣',
+            summary: null,  // 历史记录无 summary
+            importance: 6,
+            memory_type: 'long',
+            created_at: new Date().toISOString(),
+          },
+        ],
+      }),
+    };
+
+    const result = await searchEpisodicMemory(mockPool, 'CI 失败', 500);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+    expect(result[0].source).toBe('episodic');
+  });
+
+  it('D10-4: DB 错误时 graceful fallback 返回空数组', async () => {
+    const mockPool = {
+      query: vi.fn().mockRejectedValue(new Error('DB connection error')),
+    };
+    const result = await searchEpisodicMemory(mockPool, '任务');
+    expect(result).toEqual([]);
+  });
+
+  it('D10-5: token 预算控制（小预算只返回少量记录）', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      id: `uuid-${i}`,
+      content: `[反思洞察] 记录内容 ${i} `.repeat(10), // 每条约 100 字符
+      summary: `摘要 ${i}`,
+      importance: 5,
+      memory_type: 'long',
+      created_at: new Date().toISOString(),
+    }));
+    const mockPool = { query: vi.fn().mockResolvedValue({ rows }) };
+
+    // 极小 token 预算
+    const result = await searchEpisodicMemory(mockPool, '反思', 50);
+    expect(result.length).toBeLessThan(10);
   });
 });
