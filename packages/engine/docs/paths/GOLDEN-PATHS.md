@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 2.98.0
-created: 2026-02-25
-updated: 2026-02-25
+version: 2.99.0
+created: 2026-02-27
+updated: 2026-02-27
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 2.98.0: 从 feature-registry.yml 自动生成
+  - 2.99.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -340,5 +340,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 2.98.0
-**生成时间**: 2026-02-25
+**版本**: 2.99.0
+**生成时间**: 2026-02-27
