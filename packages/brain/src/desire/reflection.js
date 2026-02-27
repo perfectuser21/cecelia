@@ -9,7 +9,7 @@
 
 import { callLLM } from '../llm-caller.js';
 
-const REFLECTION_THRESHOLD = 30;
+const REFLECTION_THRESHOLD = 12;
 
 /**
  * 读取当前 accumulator 值
