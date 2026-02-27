@@ -25,6 +25,7 @@ import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
+import { selectBestAccount } from './account-usage.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -1544,12 +1545,24 @@ async function triggerCeceliaRun(task) {
     }
 
     // Get provider (minimax = 1/12 cost via api.minimaxi.com)
-    const provider = getProviderForTask(task);
+    let provider = getProviderForTask(task);
 
     // Get credentials file for the task (universal, works for all providers)
     const credentials = getCredentialsForTask(task);
     if (credentials) {
+      // Profile 中已固定账号，直接使用
       extraEnv.CECELIA_CREDENTIALS = credentials;
+    } else if (provider === 'anthropic') {
+      // 智能账号选择：选用量最低的 Claude Max 账号
+      const bestAccount = await selectBestAccount();
+      if (bestAccount) {
+        extraEnv.CECELIA_CREDENTIALS = bestAccount;
+      } else {
+        // 所有 Claude Max 账号满载（>=80%），降级到 MiniMax
+        console.log(`[executor] Anthropic 账号全满，自动降级到 MiniMax for task=${task.id}`);
+        provider = 'minimax';
+        extraEnv.CECELIA_PROVIDER = 'minimax';
+      }
     }
 
     // Call original cecelia-bridge via HTTP (POST /trigger-cecelia)

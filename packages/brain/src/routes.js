@@ -47,6 +47,7 @@ import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './e
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
+import { getAccountUsage, selectBestAccount } from './account-usage.js';
 import websocketService, { WS_EVENTS } from './websocket.js';
 import crypto from 'crypto';
 import { readFileSync, readdirSync } from 'fs';
@@ -2548,6 +2549,53 @@ router.post('/execution-callback', async (req, res) => {
               [krId]
             );
             console.log(`[execution-callback] KR ${krId} → reviewing (秋米拆解完成)`);
+
+            // 创建用户确认门：okr_decomp_review pending_action
+            try {
+              const krTitle = krCheckResult.rows[0].title;
+              const projectName = project.name;
+
+              // 查询拆解产出的 Initiatives
+              const initiativesResult = await pool.query(`
+                SELECT p2.name FROM projects p2
+                WHERE p2.parent_id = $1 AND p2.type = 'initiative'
+                ORDER BY p2.created_at ASC
+              `, [project.id]);
+              const initiatives = initiativesResult.rows.map(r => r.name);
+
+              // 签名去重：同一 KR 24h 内不重复创建
+              const existingApproval = await pool.query(`
+                SELECT id FROM pending_actions
+                WHERE action_type = 'okr_decomp_review'
+                  AND status = 'pending_approval'
+                  AND (params->>'kr_id') = $1
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                LIMIT 1
+              `, [krId]);
+
+              if (existingApproval.rows.length === 0) {
+                await pool.query(`
+                  INSERT INTO pending_actions
+                    (action_type, category, params, context, priority, source, expires_at, status)
+                  VALUES
+                    ('okr_decomp_review', 'approval', $1, $2, 'urgent', 'okr_decomposer',
+                     NOW() + INTERVAL '72 hours', 'pending_approval')
+                `, [
+                  JSON.stringify({ kr_id: krId, project_id: project.id }),
+                  JSON.stringify({
+                    kr_title: krTitle,
+                    project_name: projectName,
+                    initiatives,
+                    decomposed_at: new Date().toISOString()
+                  })
+                ]);
+                console.log(`[execution-callback] OKR 确认门已创建：KR ${krId}「${krTitle}」，${initiatives.length} 个 Initiative`);
+              } else {
+                console.log(`[execution-callback] OKR 确认门已存在（去重跳过）：KR ${krId}`);
+              }
+            } catch (approvalErr) {
+              console.error(`[execution-callback] 创建 OKR 确认门失败（非阻塞）: ${approvalErr.message}`);
+            }
           }
         }
       } catch (decompTriggerErr) {
@@ -6950,6 +6998,35 @@ router.put('/staff/workers/:workerId', async (req, res) => {
   } catch (err) {
     console.error('[API] staff worker PUT error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Account Usage API ====================
+
+/**
+ * GET /api/brain/account-usage
+ * 返回所有 Claude Max 账号当前用量（读缓存，10分钟 TTL）
+ */
+router.get('/account-usage', async (_req, res) => {
+  try {
+    const usage = await getAccountUsage();
+    res.json({ ok: true, usage });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/account-usage/refresh
+ * 强制刷新账号用量缓存（忽略 TTL，直接从 Anthropic API 获取）
+ */
+router.post('/account-usage/refresh', async (_req, res) => {
+  try {
+    const usage = await getAccountUsage(true); // forceRefresh=true
+    const best = await selectBestAccount();
+    res.json({ ok: true, usage, recommended: best || 'minimax (all at capacity)' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

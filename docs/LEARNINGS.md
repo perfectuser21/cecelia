@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] OKR 拆解确认门 (PR #74, Brain 1.117.1)
+- **actionHandlers 扩展模式**: 在 `decision-executor.js` 的 `actionHandlers` 对象中添加新的 action type 是标准模式，`approvePendingAction` 会自动查找并调用对应 handler
+- **pending_action 签名去重**: 对同一 kr_id 24h 内只创建一条 pending_action（通过 `params->>'kr_id'` JSONB 查询），避免拆解失败重试时重复创建
+- **orchestrator-chat 注入点**: 在 `handleChat` 的 step 3c 区域添加 DB 查询并注入到 `systemPrompt` 字符串，失败时用 try/catch 静默降级（不阻塞主流程）
+- **ProposalCard 专属渲染**: 通过 `action_type` 条件判断渲染不同内容，OKR 拆解卡片使用 `OkrDecompDetails` 组件展示 initiatives 列表
+- **facts-check 使用 __dirname**: `scripts/facts-check.mjs` 使用脚本自身的 `__dirname` 解析路径，所以本地运行时始终读主仓库的文件，不受 CWD 影响；CI checkout PR 分支后读的是正确文件
+- **并行 PR 版本冲突**: PR #71 在此 PR 合并前提前合并到 main（1.117.0），导致 rebase 时需要跳到 1.117.1，并同步 DEFINITION.md schema 版本（084→085）
+
 ### [2026-02-27] Intent Match API 端点实现 (PR #66, Brain 1.114.0)
 - **版本冲突**: Team A 和 Team B 并行开发时，Team A 的 PR #61 已占用 1.112.0，Team A 的 PR #62 已占用 1.113.0，本 PR rebase 后需要跳到 1.114.0
 - **limit=0 Bug**: `parseInt(0, 10) || 5` 在 JavaScript 中会返回 5（因为 `0 || 5 = 5`），正确写法是用 `Number.isNaN(parsedLimit) ? 5 : parsedLimit` 避免误判 0
@@ -361,3 +369,31 @@
 
 - **影响程度**: Medium - 版本检查流程需要改进，但不影响核心功能开发
 
+
+## 2026-02-27: 用量感知账号调度（schema 085）
+
+### 背景
+为 Cecelia Brain 新增 Claude Max 账号用量感知调度，使用 Anthropic OAuth usage API 查询各账号5小时用量，自动选择用量最低的账号，超过80%时降级到 MiniMax。
+
+### 经验
+
+**版本同步需要更新多个文件**
+新增 migration 后，以下所有地方都需要同步更新：
+1. `packages/brain/src/selfcheck.js` → `EXPECTED_SCHEMA_VERSION`
+2. `DEFINITION.md` → Brain 版本 + Schema 版本
+3. `.brain-versions` → 版本号
+4. `packages/brain/src/__tests__/selfcheck.test.js` → 版本断言
+5. `packages/brain/src/__tests__/desire-system.test.js` → D9 版本断言
+6. `packages/brain/src/__tests__/learnings-vectorize.test.js` → 版本断言
+
+**未来参考**：新增 migration 时，直接搜索当前版本号并全部替换：
+```bash
+grep -r "084" packages/brain/src/__tests__/ --include="*.test.js"
+```
+
+### 技术亮点
+- Anthropic OAuth usage API: `GET https://api.anthropic.com/api/oauth/usage`
+  - Headers: `Authorization: Bearer {accessToken}`, `anthropic-beta: oauth-2025-04-20`
+  - 从 `~/.claude-accountN/.credentials.json` 读取 accessToken
+- 缓存到 PostgreSQL（TTL 10分钟），API 失败时用旧缓存
+- `selectBestAccount()` 按 five_hour_pct 排序，过滤 ≥80% 的账号

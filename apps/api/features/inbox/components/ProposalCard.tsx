@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Check, X, MessageCircle, ChevronDown, ChevronUp,
   AlertTriangle, GitBranch, Target, Calendar, Shield,
-  Milestone, BarChart3, Activity,
+  Milestone, BarChart3, Activity, ClipboardCheck,
 } from 'lucide-react';
 import type { Proposal } from '../hooks/useProposals';
 import ProposalChat from './ProposalChat';
@@ -20,6 +20,7 @@ const TYPE_CONFIG: Record<string, { icon: React.ElementType; color: string; labe
   quarantine_task: { icon: Shield, color: 'text-yellow-500 bg-yellow-100 dark:bg-yellow-900/40', label: '任务隔离' },
   request_human_review: { icon: MessageCircle, color: 'text-indigo-500 bg-indigo-100 dark:bg-indigo-900/40', label: '人工审核' },
   adjust_strategy: { icon: Target, color: 'text-teal-500 bg-teal-100 dark:bg-teal-900/40', label: '策略调整' },
+  okr_decomp_review: { icon: ClipboardCheck, color: 'text-violet-500 bg-violet-100 dark:bg-violet-900/40', label: 'OKR 拆解确认' },
 };
 
 function getTypeConfig(type: string) {
@@ -38,8 +39,40 @@ function timeAgo(dateStr: string): string {
 }
 
 function getSummary(proposal: Proposal): string {
+  if (proposal.action_type === 'okr_decomp_review') {
+    const ctx = proposal.context as Record<string, unknown>;
+    return `秋米已完成拆解：KR「${ctx.kr_title || '未知'}」→ 项目「${ctx.project_name || '未知'}」`;
+  }
   const p = proposal.params;
   return (p.summary || p.description || p.title || p.reason || JSON.stringify(p).slice(0, 120)) as string;
+}
+
+function OkrDecompDetails({ context }: { context: Record<string, unknown> }): React.ReactElement | null {
+  const initiatives = Array.isArray(context.initiatives) ? context.initiatives as string[] : [];
+  const decomposedAt = context.decomposed_at as string | undefined;
+
+  if (initiatives.length === 0) return null;
+
+  return (
+    <div className="mt-3 p-3 rounded-xl bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800/30">
+      <p className="text-xs font-medium text-violet-700 dark:text-violet-300 mb-2">
+        拆解结果（{initiatives.length} 个 Initiative）
+      </p>
+      <ul className="space-y-1">
+        {initiatives.map((name, idx) => (
+          <li key={idx} className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
+            {name}
+          </li>
+        ))}
+      </ul>
+      {decomposedAt && (
+        <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
+          拆解时间：{new Date(decomposedAt).toLocaleString('zh-CN')}
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface ProposalCardProps {
@@ -102,8 +135,13 @@ export default function ProposalCard({
           </div>
         </div>
 
-        {/* Expandable details */}
-        {proposal.context && Object.keys(proposal.context).length > 0 && (
+        {/* OKR 拆解专属展示 */}
+        {proposal.action_type === 'okr_decomp_review' && (
+          <OkrDecompDetails context={proposal.context as Record<string, unknown>} />
+        )}
+
+        {/* Expandable details（非 okr_decomp_review 类型） */}
+        {proposal.action_type !== 'okr_decomp_review' && proposal.context && Object.keys(proposal.context).length > 0 && (
           <div className="mt-2">
             <button
               onClick={() => setShowDetails(!showDetails)}
@@ -138,7 +176,7 @@ export default function ProposalCard({
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-50 transition-colors"
               >
                 <Check className="w-3.5 h-3.5" />
-                批准
+                {proposal.action_type === 'okr_decomp_review' ? '确认放行' : '批准'}
               </button>
               <button
                 onClick={handleReject}
@@ -146,7 +184,7 @@ export default function ProposalCard({
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors"
               >
                 <X className="w-3.5 h-3.5" />
-                拒绝
+                {proposal.action_type === 'okr_decomp_review' ? '需要调整' : '拒绝'}
               </button>
             </>
           )}
