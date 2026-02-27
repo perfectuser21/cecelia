@@ -80,7 +80,7 @@ function areSuggestionsSimil(suggestion1, suggestion2) {
       if (shorter / longer > 0.7) return true;
     }
 
-    // 词级别相似度（英文多词文本）
+    // 词级别相似度（英文或含空格的多词文本）
     const words1 = c1.split(/\s+/).filter(w => w.length > 0);
     const words2 = c2.split(/\s+/).filter(w => w.length > 0);
     if (words1.length > 1 || words2.length > 1) {
@@ -88,11 +88,8 @@ function areSuggestionsSimil(suggestion1, suggestion2) {
       return common.length / Math.max(words1.length, words2.length) > 0.7;
     }
 
-    // 字符集相似度（中文单句）
-    const chars1 = new Set([...c1]);
-    const chars2 = new Set([...c2]);
-    const commonChars = [...chars1].filter(c => chars2.has(c));
-    return commonChars.length / Math.max(chars1.size, chars2.size) > 0.7;
+    // 单词文本：仅子字符串检查有效，否则视为不同
+    return false;
   }
 
   return false;
