@@ -81,6 +81,18 @@ import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
 
+// 秋米 /decomp skill 内容（模块启动时加载一次，注入到 autumnrice/chat system prompt）
+// 路径：容器内 volume 挂载路径与宿主机一致
+let _decompSkillContent = '';
+try {
+  _decompSkillContent = readFileSync(
+    '/home/xx/perfect21/cecelia/packages/workflows/skills/decomp/SKILL.md', 'utf-8'
+  );
+  console.log('[autumnrice] decomp SKILL.md loaded:', _decompSkillContent.length, 'chars');
+} catch (e) {
+  console.warn('[autumnrice] decomp SKILL.md not found, using basic persona:', e.message);
+}
+
 // ==================== 白名单配置 ====================
 
 const ALLOWED_ACTIONS = {
@@ -1530,7 +1542,13 @@ router.post('/autumnrice/chat', async (req, res) => {
       ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
       : '  （暂无 Initiative）';
 
-    const systemPrompt = `你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。你刚刚完成了以下 OKR 拆解工作：
+    const decompSkillBlock = _decompSkillContent
+      ? `# 你的核心技能（/decomp Skill）\n\n${_decompSkillContent}\n\n---\n\n`
+      : '';
+
+    const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。上面是你的 /decomp 技能全文。
+
+你刚刚完成了以下 OKR 拆解工作：
 
 **KR（关键结果）**：${ctx.kr_title || '未知'}
 **Project（项目）**：${ctx.project_name || '未知'}
@@ -1538,13 +1556,13 @@ router.post('/autumnrice/chat', async (req, res) => {
 ${initiativeList}
 
 用户现在直接来找你，对这个拆解有疑问或修改意见。请：
-1. 认真倾听用户意见
-2. 解释你的拆解思路和依据
-3. 如需调整，提出具体的新方案
+1. 用你的 /decomp 专业能力认真倾听并回应用户意见
+2. 解释你的拆解思路和依据（引用 /decomp 的原则）
+3. 如需调整，提出具体的新方案（符合 /decomp 的层级规范）
 4. 保持专业、简洁、务实的风格
 5. 用户满意时引导他们点击"确认放行"
 
-注意：你是秋米，不是 Cecelia。直接以秋米的身份回应，不要用"我是 Cecelia"等语句。`;
+注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。`;
 
     // 构建历史对话
     const historyParts = existingComments
