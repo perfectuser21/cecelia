@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Check, X, MessageCircle, ChevronDown, ChevronUp,
   AlertTriangle, GitBranch, Target, Calendar, Shield,
@@ -7,7 +8,6 @@ import {
 import type { Proposal } from '../hooks/useProposals';
 import ProposalChat from './ProposalChat';
 import ProposalOptions from './ProposalOptions';
-import AutumnriceChat from './AutumnriceChat';
 import type { ProposalComment } from '../hooks/useProposals';
 
 const TYPE_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
@@ -91,8 +91,8 @@ export default function ProposalCard({
   onComment,
   onSelect,
 }: ProposalCardProps): React.ReactElement {
+  const navigate = useNavigate();
   const [showChat, setShowChat] = useState(false);
-  const [showAutumnrice, setShowAutumnrice] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [acting, setActing] = useState(false);
   const config = getTypeConfig(proposal.action_type);
@@ -182,12 +182,12 @@ export default function ProposalCard({
               </button>
               {proposal.action_type === 'okr_decomp_review' ? (
                 <button
-                  onClick={() => setShowAutumnrice(!showAutumnrice)}
+                  onClick={() => navigate(`/okr/review/${proposal.id}`)}
                   disabled={acting}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors"
                 >
                   <Leaf className="w-3.5 h-3.5" />
-                  {showAutumnrice ? '收起对话' : '与秋米对话'}
+                  与秋米对话
                 </button>
               ) : (
                 <button
@@ -223,14 +223,6 @@ export default function ProposalCard({
           />
         )}
 
-        {/* 秋米直连对话（仅 okr_decomp_review） */}
-        {showAutumnrice && proposal.action_type === 'okr_decomp_review' && (
-          <AutumnriceChat
-            proposal={proposal}
-            onApprove={handleApprove}
-            onClose={() => setShowAutumnrice(false)}
-          />
-        )}
       </div>
     </div>
   );
