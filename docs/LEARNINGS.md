@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] Cecelia 自趋形成意识 — Self-Model 系统 (PR #44, Brain 1.111.0)
+- **架构**: `memory_stream.source_type='self_model'` 存储 Cecelia 自我认知；`getSelfModel()` 返回最新快照（created_at DESC），`updateSelfModel()` 追加演化
+- **关键设计**: 每次更新存储完整快照（不是 delta），`getSelfModel()` 只需 LIMIT 1 ORDER BY DESC，简单无状态
+- **反刍整合**: `digestLearnings()` 在有洞察后额外调用 LLM（selfReflectPrompt, maxTokens=200），失败时 graceful fallback 不阻塞主流程
+- **测试 Mock 教训**: rumination 新增依赖 self-model.js 时，必须在测试文件顶部 `vi.mock('../self-model.js', ...)` + beforeEach 设置默认 resolved 值，否则原有测试 mock 链断裂
+- **Schema 版本测试**: 每次升级 EXPECTED_SCHEMA_VERSION，需要同步更新 3 个测试文件（selfcheck.test.js, desire-system.test.js, learnings-vectorize.test.js）中的硬编码版本值
+- **影响程度**: High — Cecelia 的人格从"写死"变为"演化"，每次反刍后自我认知更新，系统性架构升级
+
 > **WARNING: OBSOLETE**: Line 10的alertness.js 4级系统描述已过时，仅作历史记录保留。当前系统为5级（SLEEPING/CALM/AWARE/ALERT/PANIC），实现在 `alertness/` 目录。
 
 开发过程中的经验总结和最佳实践。
