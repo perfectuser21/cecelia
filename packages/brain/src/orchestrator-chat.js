@@ -310,6 +310,26 @@ export async function handleChat(message, context = {}, messages = []) {
   // 3c. 注入当前欲望（内心状态）
   const desiresBlock = await buildDesiresContext();
 
+  // 3c2. 注入待用户确认的 OKR 拆解（Mode A 对话式提醒）
+  let pendingDecompBlock = '';
+  try {
+    const pendingReviews = await pool.query(`
+      SELECT id, context FROM pending_actions
+      WHERE action_type = 'okr_decomp_review' AND status = 'pending_approval'
+      ORDER BY created_at DESC LIMIT 3
+    `);
+    if (pendingReviews.rows.length > 0) {
+      const list = pendingReviews.rows.map(r => {
+        const ctx = typeof r.context === 'string' ? JSON.parse(r.context) : r.context;
+        const count = Array.isArray(ctx.initiatives) ? ctx.initiatives.length : 0;
+        return `- KR「${ctx.kr_title || '未知'}」（${count} 个 Initiative）`;
+      }).join('\n');
+      pendingDecompBlock = `\n\n## 待用户确认的 OKR 拆解（${pendingReviews.rows.length} 个）\n${list}\n用户说"确认"时，在 Inbox 页面点击"确认放行"即可放行 KR 继续执行。\n`;
+    }
+  } catch (err) {
+    console.warn('[orchestrator-chat] Failed to load pending decomp reviews:', err.message);
+  }
+
   // 3d. 加载 self-model（Cecelia 对自己的认知，动态演化）
   let selfModelBlock = '';
   try {
@@ -326,7 +346,7 @@ export async function handleChat(message, context = {}, messages = []) {
   }
 
   // 5. 构建 system prompt（注入执行结果）
-  let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
+  let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${profileSnippet}${desiresBlock}${pendingDecompBlock}${memoryBlock}${statusBlock}`;
   if (actionResult) {
     systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
   }
