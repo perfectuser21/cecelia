@@ -16,6 +16,7 @@ import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook } from './notebook-adapter.js';
 import { createTask } from './actions.js';
+import { updateSelfModel } from './self-model.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 20;
@@ -178,7 +179,27 @@ async function digestLearnings(db, learnings) {
       }
     }
 
-    // 5. 标记所有 learnings 已消化
+    // 5. 自我反思：基于洞察更新 self-model（仅在有实质性洞察时触发）
+    if (insight && insight.trim()) {
+      try {
+        const selfReflectPrompt = `基于刚才的反刍洞察：
+
+${insight.trim().slice(0, 800)}
+
+请用1-3句话（约150字以内）描述：你（Cecelia）对自己有什么新认知？
+关注：你的性格特点、你在意的事、你说话和工作的风格、你与 Alex 的关系。
+直接输出认知描述，用第一人称"我"开头，不要有前缀和解释。`;
+
+        const { text: selfInsight } = await callLLM('rumination', selfReflectPrompt, { maxTokens: 200 });
+        if (selfInsight && selfInsight.trim()) {
+          await updateSelfModel(selfInsight.trim(), db);
+        }
+      } catch (selfErr) {
+        console.warn('[rumination] self-model update failed (non-blocking):', selfErr.message);
+      }
+    }
+
+    // 6. 标记所有 learnings 已消化
     for (const learning of learnings) {
       await db.query(
         'UPDATE learnings SET digested = true WHERE id = $1',

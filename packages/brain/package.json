@@ -1,7 +1,6 @@
 {
   "name": "cecelia-brain",
-
-  "version": "1.110.0",
+  "version": "1.111.0",
   "type": "module",
   "description": "Cecelia Node.js Brain - decision engine, tick loop, and action system",
   "main": "server.js",
