@@ -125,7 +125,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 | 模式 | 循环实现 | 工作方式 |
 |------|----------|----------|
 | **有头模式** | Stop Hook | 检测 `.dev-mode` 文件，未完成时 exit 2 阻止会话结束 |
-| **无头模式** | 外部 while 循环 | `CECELIA_HEADLESS=true` 时 Stop Hook exit 0，由 cecelia-run 控制 |
+| **无头模式** | Stop Hook（同有头） | v13.1.0 起与有头模式完全一致，`CECELIA_HEADLESS` 不再绕过 |
 
 ### 工作流程
 
