@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import {
   Check, X, MessageCircle, ChevronDown, ChevronUp,
   AlertTriangle, GitBranch, Target, Calendar, Shield,
-  Milestone, BarChart3, Activity, ClipboardCheck,
+  Milestone, BarChart3, Activity, ClipboardCheck, Leaf,
 } from 'lucide-react';
 import type { Proposal } from '../hooks/useProposals';
 import ProposalChat from './ProposalChat';
 import ProposalOptions from './ProposalOptions';
+import AutumnriceChat from './AutumnriceChat';
 import type { ProposalComment } from '../hooks/useProposals';
 
 const TYPE_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
@@ -91,6 +92,7 @@ export default function ProposalCard({
   onSelect,
 }: ProposalCardProps): React.ReactElement {
   const [showChat, setShowChat] = useState(false);
+  const [showAutumnrice, setShowAutumnrice] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [acting, setActing] = useState(false);
   const config = getTypeConfig(proposal.action_type);
@@ -178,14 +180,25 @@ export default function ProposalCard({
                 <Check className="w-3.5 h-3.5" />
                 {proposal.action_type === 'okr_decomp_review' ? '确认放行' : '批准'}
               </button>
-              <button
-                onClick={handleReject}
-                disabled={acting}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-                {proposal.action_type === 'okr_decomp_review' ? '需要调整' : '拒绝'}
-              </button>
+              {proposal.action_type === 'okr_decomp_review' ? (
+                <button
+                  onClick={() => setShowAutumnrice(!showAutumnrice)}
+                  disabled={acting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors"
+                >
+                  <Leaf className="w-3.5 h-3.5" />
+                  {showAutumnrice ? '收起对话' : '与秋米对话'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleReject}
+                  disabled={acting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  拒绝
+                </button>
+              )}
             </>
           )}
           <button
@@ -202,11 +215,20 @@ export default function ProposalCard({
           </button>
         </div>
 
-        {/* Chat area */}
+        {/* Chat area (通用追问) */}
         {showChat && (
           <ProposalChat
             comments={proposal.comments || []}
             onSend={(msg) => onComment(proposal.id, msg)}
+          />
+        )}
+
+        {/* 秋米直连对话（仅 okr_decomp_review） */}
+        {showAutumnrice && proposal.action_type === 'okr_decomp_review' && (
+          <AutumnriceChat
+            proposal={proposal}
+            onApprove={handleApprove}
+            onClose={() => setShowAutumnrice(false)}
           />
         )}
       </div>

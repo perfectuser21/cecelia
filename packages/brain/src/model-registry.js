@@ -206,6 +206,15 @@ export const AGENTS = [
     recommended_model: 'codex-mini-latest',
     fixed_provider: 'openai',
   },
+  {
+    id: 'autumnrice',
+    name: '秋米',
+    description: 'OKR 拆解专家，直接与用户对话讨论拆解结果',
+    layer: 'executor',
+    allowed_models: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    recommended_model: 'claude-sonnet-4-6',
+    fixed_provider: null,
+  },
 ];
 
 // ============================================================
