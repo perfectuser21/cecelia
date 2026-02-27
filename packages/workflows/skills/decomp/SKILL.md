@@ -1,9 +1,10 @@
 ---
 name: decomp
-version: 1.3.0
+version: 1.4.0
 created: 2026-02-27
 updated: 2026-02-27
 changelog:
+  - 1.4.0: Phase 2 Step 1 补充读取 parent Project 描述（北极星），initiative_plan session 有完整全局上下文
   - 1.3.0: 加入 Phase 2 initiative_plan 模式，打通 Initiative → PR 执行循环
   - 1.2.0: 加入 Stage 0.5 - 上次审查反馈读取（rejected 重拆时必须针对性修正）
   - 1.1.0: 加入顶部 HARD RULE，补写入前自检，修复 Stage 4 幂等检查漏查 projects 表
@@ -382,15 +383,22 @@ Initiative 是"一组 PR 的闭环工作包"。当 Initiative 有 0 个活跃任
 
 ### 执行步骤
 
-**Step 1：读取 Initiative 信息**
+**Step 1：读取全量上下文（Project + Initiative + 已完成 PR）**
 
 ```bash
-# 读 Initiative 描述
-curl -s "localhost:5221/api/brain/projects/<initiative_id>" | jq '{name, description, status}'
+# 读 Initiative 描述（同时拿到 parent_id = 所属 Project 的 ID）
+INITIATIVE=$(curl -s "localhost:5221/api/brain/projects/<initiative_id>")
+echo $INITIATIVE | jq '{name, description, status, parent_id}'
+
+# 读 parent Project 描述（方向锚点，判断 Initiative 是否仍在正轨）
+PROJECT_ID=$(echo $INITIATIVE | jq -r '.parent_id')
+curl -s "localhost:5221/api/brain/projects/$PROJECT_ID" | jq '{name, description}'
 
 # 读已完成的 PR 列表
 curl -s "localhost:5221/api/brain/tasks?project_id=<initiative_id>&status=completed" | jq '[.[] | {title, description}]'
 ```
+
+> **为什么要读 Project？** Initiative 可能已完成自身子目标，但 Project 整体目标还需要更多工作。Project 描述是你的"北极星"——确认当前 Initiative 的进度放在 Project 全局视野里是否足够。
 
 **Step 2：评估 Initiative 是否完成**
 
