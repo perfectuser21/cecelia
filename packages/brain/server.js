@@ -10,6 +10,7 @@ import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
 import taskProjectsRoutes from './src/routes/task-projects.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
+import intentMatchRoutes from './src/routes/intent-match.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -76,6 +77,7 @@ app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/inner-life', innerLifeRoutes);
+app.use('/api/brain/intent', intentMatchRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
