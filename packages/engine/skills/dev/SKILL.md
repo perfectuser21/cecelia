@@ -1,21 +1,40 @@
 ---
 name: dev
-version: 3.3.0
+version: 3.4.0
 updated: 2026-02-27
 description: |
-  统一开发工作流入口。当用户需要开发新功能、修复 bug、代码重构，
-  或任何会进 git 的代码变更时立即触发。不走 /dev 不允许改代码。
+  统一开发工作流入口。任何会进 git 的代码变更都必须走 /dev，没有例外。
+  不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
 
-  自动完成完整闭环：PRD → Worktree 隔离 → 探索架构 → DoD 定稿
+  自动完成完整闭环：Worktree 隔离 → PRD → 探索架构 → DoD 定稿
   → 写代码 → 本地验证 → PR → CI 监控 → 合并 → Learning → 清理。
 
-  触发词：开始开发、加功能、修 bug、实现 XXX、改代码、做这个功能、/dev。
+  触发词（凡用户意图涉及代码改动，必须触发）：
+  开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
+  调整代码、优化代码、重构、补测试、做这个功能、/dev、
+  这里有问题、这段有 bug、帮我改一下、帮我调整、
+  补充一下、完成这个任务、写代码、改一下 XXX、
+  看看为什么不过（需要改代码时）、优化一下。
+
   有 --task-id 参数时从 Brain PostgreSQL 自动读取 Task PRD。
 ---
 
 > **CRITICAL LANGUAGE RULE（语言规则）: 所有输出必须使用简体中文。包括步骤说明、状态更新、日志信息、错误报告。严禁使用日语、韩语或任何其他语言，即使在无头（headless）子进程中也必须遵守。**
 
-# /dev - 统一开发工作流（v3.3）
+## 🚨 启动第一步（CRITICAL — 不可跳过）
+
+**触发 /dev 后，第一件事是读取并执行 Step 00（Worktree 检测）：**
+
+```bash
+cat ~/.claude/skills/dev/steps/00-worktree-auto.md
+```
+
+**在 Step 00 完成、确认已在独立 worktree 中之前，禁止进行任何其他操作。**
+原因：worktree 隔离是整个流程的基础——没有 worktree，代码改动会污染主仓库 main 分支。
+
+---
+
+# /dev - 统一开发工作流（v3.4）
 
 ## 🎯 使用方式
 
@@ -54,7 +73,7 @@ description: |
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到 main（仓库有 develop 时自动检测）。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（动态检测：有 develop 用 develop，否则 main）。**
 
 ### 完成条件
 
@@ -62,7 +81,7 @@ description: |
 开始 → ... → PR 创建 → CI 通过 → PR 合并 ✅ 完成
 ```
 
-**只有一个完成标志**：PR 已合并到目标分支（默认 main，有 develop 时自动检测）
+**只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
 
 ### 遇到任何问题 = 自动修复
 
@@ -325,7 +344,7 @@ TaskList()
 
 1. **只在 cp-* 或 feature/* 分支写代码** — Hook 强制
 2. **分支命名**：`cp-MMDDHHNN-task-name`（例：`cp-02270800-fix-login`）
-3. **目标分支**：默认 main；仓库有 develop 时自动检测，PR 合并回 develop
+3. **目标分支**：动态检测——`git rev-parse --verify develop` 成功则 PR 合并到 develop，否则合并到 main
 
 ### 4. 质量保证
 
@@ -489,7 +508,7 @@ features:
 
 **Branch**: cp-01240101-login-basic
 **PR**: #123
-**Status**: Merged to develop
+**Status**: Merged to main
 
 **反馈**：
 - 登录成功
@@ -520,7 +539,7 @@ Feature N 完成后，运行：
 
 /dev 自动：
 1. 读取状态文件找到下一个 pending feature
-2. 拉取最新 develop（包含前面 features 的代码）
+2. 拉取最新目标分支（动态检测 develop/main，包含前面 features 的代码）
 3. 创建新分支开始下一个 feature
 4. 引用上一个 feature 的反馈
 

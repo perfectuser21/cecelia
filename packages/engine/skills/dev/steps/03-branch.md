@@ -31,12 +31,13 @@ fi
 
 | 当前分支 | 动作 |
 |----------|------|
-| main | 不能在 main 开发，切到 develop |
-| develop | → 创建 cp-* 分支 |
-| feature/* | → 创建 cp-* 分支 |
-| cp-* | ✅ 继续当前任务，跳到 Step 4 |
+| main | ⚠️ 禁止直接在 main 开发，Step 0 应已在 worktree 中创建了 cp-* 分支 |
+| develop | ⚠️ 同上，Step 0 应已在 worktree 中创建了 cp-* 分支 |
+| feature/* | → 若在 worktree 中则继续；若在主仓库则创建 worktree |
+| cp-* （在 worktree） | ✅ 正常，继续当前任务，跳到 Step 4 |
+| cp-* （在主仓库） | ⚠️ 异常残留，Step 0 应已处理，兜底创建 worktree |
 
-**Worktree 注意**：如果在 worktree 中，分支已由 worktree-manage.sh 创建。
+**Worktree 注意**：正常情况下 Step 0 已通过 worktree-manage.sh 创建分支（`cp-MMDDHHNN-task-name` 格式）。Step 3 只需确认分支已存在。
 
 ---
 
@@ -59,7 +60,7 @@ if [[ "$IS_WORKTREE" == "false" ]]; then
 
         # 自动创建 worktree（与 Step 0 相同逻辑）
         TASK_NAME="<从用户输入提取的简短英文任务名>"
-        WORKTREE_PATH=$(bash skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
+        WORKTREE_PATH=$(bash ~/.claude/skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
 
         if [[ -n "$WORKTREE_PATH" && -d "$WORKTREE_PATH" ]]; then
             echo "✅ Worktree 创建成功: $WORKTREE_PATH"
@@ -85,46 +86,41 @@ fi
 
 ---
 
-## 创建功能分支
+## 确认分支（正常路径）
+
+**正常情况下，Step 0 已通过 worktree-manage.sh 创建了分支，格式为 `cp-MMDDHHNN-task-name`。**
+Step 3 只需确认当前分支，不需要手动创建：
 
 ```bash
-# 检查是否从 Brain Task 创建（--task-id 参数）
-# task_id 从 Step 1 传递（通过 PRD 文件名检测）
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+BASE_BRANCH=$(git config "branch.$BRANCH_NAME.base-branch" 2>/dev/null || echo "")
+
+# 如果 base-branch 未保存（手动进入 worktree 的情况），动态检测
+if [[ -z "$BASE_BRANCH" ]]; then
+    if git rev-parse --verify develop &>/dev/null 2>&1; then
+        BASE_BRANCH="develop"
+    else
+        BASE_BRANCH="main"
+    fi
+fi
+
+echo "✅ 当前分支: $BRANCH_NAME"
+echo "   Base: $BASE_BRANCH"
+```
+
+**分支命名格式**：`cp-MMDDHHNN-task-name`（由 worktree-manage.sh 自动生成）
+- 示例：`cp-02270800-fix-login`、`cp-02270926-fix-dev-skill-v2`
+- branch-protect.sh 只允许 `cp-*` 和 `feature/*` 格式
+
+**--task-id 路径**（从 Brain Task 创建时）：
+```bash
+# PRD 文件名检测 task_id
 task_id=""
-if ls .prd-task-*.md 2>/dev/null; then
+if ls .prd-task-*.md 2>/dev/null | head -1 | grep -q .; then
     prd_file=$(ls .prd-task-*.md 2>/dev/null | head -1)
-    task_id=$(echo "$prd_file" | sed 's/.prd-task-//' | sed 's/.md//')
+    task_id=$(basename "$prd_file" .md | sed 's/^\.prd-task-//')
 fi
-
-# 生成分支名
-if [[ -n "$task_id" ]]; then
-    # 从 Brain Task 创建：task-<id>
-    BRANCH_NAME="task-$task_id"
-else
-    # 手动创建：{Feature ID}-{任务名}
-    FEATURE_ID="<从 FEATURES.md 获取，如 W6>"
-    TASK_NAME="<根据用户需求生成>"
-    BRANCH_NAME="${FEATURE_ID}-${TASK_NAME}"
-fi
-
-# 记住当前分支作为 base
-BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-echo "🌿 创建分支..."
-echo "   名称: $BRANCH_NAME"
-if [[ -n "$task_id" ]]; then
-    echo "   来源: Brain Task ($task_id)"
-fi
-echo "   Base: $BASE_BRANCH"
-
-# 创建分支
-git checkout -b "$BRANCH_NAME"
-
-# 保存 base 分支到 git config
-git config branch.$BRANCH_NAME.base-branch "$BASE_BRANCH"
-
-echo "✅ 分支已创建: $BRANCH_NAME"
-echo "   Base: $BASE_BRANCH"
+# task-id 路径的分支由 worktree-manage.sh 创建，格式: cp-MMDDHHNN-task-{id}
 ```
 
 ---
@@ -377,20 +373,19 @@ TaskUpdate({ taskId: "4", status: "in_progress" }) // 探索代码 - 下一步
 
 ## 分支命名规则
 
-**格式**：`{Feature ID}-{任务名}`
+**格式**：`cp-MMDDHHNN-task-name`（由 worktree-manage.sh 自动生成）
 
-| Feature | 任务描述 | 分支名 |
-|---------|----------|--------|
-| W6 (Worktree) | 脚本管理 | `W6-worktree-manage` |
-| H1 (branch-protect) | 修复 bug | `H1-fix-checkout` |
-| C1 (version-check) | 添加验证 | `C1-add-validation` |
-| D1 (dev-workflow) | 清理提示词 | `D1-cleanup-prompts` |
+| 示例 | 任务描述 | 分支名 |
+|------|----------|--------|
+| worktree 修复 | 脚本管理 | `cp-02270800-worktree-manage` |
+| branch-protect | 修复 bug | `cp-02270900-fix-branch-protect` |
+| version-check | 添加验证 | `cp-02271000-add-validation` |
+| dev-workflow | 清理提示词 | `cp-02271100-cleanup-prompts` |
 
 **规则**：
-- Feature ID 必须在 FEATURES.md 中已注册
-- 新功能需先在 FEATURES.md 注册后再创建分支
+- 必须以 `cp-` 开头（branch-protect.sh 只允许 `cp-*` 和 `feature/*`）
+- 格式由 worktree-manage.sh 自动生成，无需手动拼接
 - 任务名使用英文小写，多个单词用 `-` 连接
-- 不需要 `cp-` 前缀（`cp-` 只用于 Checkpoint 编号）
 
 ---
 
@@ -429,7 +424,7 @@ if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "develop" ]]; then
 
         # 强制创建 worktree（与 Step 0 相同逻辑）
         TASK_NAME="<从用户输入提取的简短英文任务名>"
-        WORKTREE_PATH=$(bash skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
+        WORKTREE_PATH=$(bash ~/.claude/skills/dev/scripts/worktree-manage.sh create "$TASK_NAME" 2>/dev/null | tail -1)
 
         if [[ -n "$WORKTREE_PATH" && -d "$WORKTREE_PATH" ]]; then
             echo "✅ Worktree 创建成功: $WORKTREE_PATH"
@@ -490,7 +485,6 @@ echo "📝 下一步: Step 4 (探索)"
 
 ## 注意事项
 
-- **分支名格式**：`{Feature ID}-{任务名}`
-- **Feature ID 必须已注册** - 在 FEATURES.md 中
-- **base-branch 必须保存** - PR 时使用
-- **不要用 `cp-` 前缀** - `cp-` 只用于 Task 编号（历史遗留，建议用 t- 但不强制）
+- **分支名格式**：`cp-MMDDHHNN-task-name`（worktree-manage.sh 自动生成）
+- **必须以 cp- 开头** - branch-protect.sh 只允许 `cp-*` 和 `feature/*`
+- **base-branch 必须保存** - PR 时使用，worktree-manage.sh 已自动保存到 git config
