@@ -294,33 +294,33 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
         const queryEmbedding = await generateEmbedding(query.substring(0, 2000));
         const embStr = '[' + queryEmbedding.join(',') + ']';
 
-        // 2. pgvector cosine 检索（只取有 embedding 的记录）
+        // 2. pgvector cosine 检索（只取有 embedding 的记录，TOP 20 候选）
         const vectorResult = await pool.query(`
-          SELECT id, content, summary, importance, memory_type, created_at,
+          SELECT id, content, summary, l1_content, importance, memory_type, created_at,
                  1 - (embedding <=> $1::vector) AS vector_score
           FROM memory_stream
           WHERE embedding IS NOT NULL
             AND (source_type IS NULL OR source_type != 'self_model')
             AND (expires_at IS NULL OR expires_at > NOW())
           ORDER BY embedding <=> $1::vector
-          LIMIT 10
+          LIMIT 20
         `, [embStr]);
 
         if (vectorResult.rows.length > 0) {
-          // 3. L1 展开：token 截断
+          // 3. L1 决策层：有 l1_content 用结构化摘要，否则降级到 content 前200字
           const results = [];
           let usedTokens = 0;
           for (const row of vectorResult.rows) {
             // 向量相似度低于 0.3 的忽略（避免完全不相关）
             if ((row.vector_score || 0) < 0.3) continue;
-            const preview = (row.content || '').slice(0, 200);
-            const lineTokens = estimateTokens(preview);
+            const description = row.l1_content || (row.content || '').slice(0, 200);
+            const lineTokens = estimateTokens(description);
             if (usedTokens + lineTokens > tokenBudget) break;
             results.push({
               id: row.id,
               source: 'episodic',
               title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
-              description: preview,
+              description,
               text: row.content || '',
               relevance: 0.4 + (row.vector_score || 0) * 0.6,
               created_at: row.created_at,
@@ -339,7 +339,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
 
     // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
     const result = await pool.query(`
-      SELECT id, content, summary, importance, memory_type, created_at
+      SELECT id, content, summary, l1_content, importance, memory_type, created_at
       FROM memory_stream
       WHERE (source_type IS NULL OR source_type != 'self_model')
         AND (expires_at IS NULL OR expires_at > NOW())
@@ -378,18 +378,18 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
     relevant.sort((a, b) => b.l0Score - a.l0Score);
     const candidates = relevant.slice(0, 10);
 
-    // L1 展开
+    // L1 决策层：有 l1_content 用结构化摘要，否则降级到 content 前200字
     const results = [];
     let usedTokens = 0;
     for (const row of candidates) {
-      const preview = (row.content || '').slice(0, 200);
-      const lineTokens = estimateTokens(preview);
+      const description = row.l1_content || (row.content || '').slice(0, 200);
+      const lineTokens = estimateTokens(description);
       if (usedTokens + lineTokens > tokenBudget) break;
       results.push({
         id: row.id,
         source: 'episodic',
         title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
-        description: preview,
+        description,
         text: row.content || '',
         relevance: 0.5 + row.l0Score,
         created_at: row.created_at,
