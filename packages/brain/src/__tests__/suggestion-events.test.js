@@ -36,6 +36,10 @@ describe('Suggestion Events Integration', () => {
             id: 'test-suggestion-id',
             content: params[0],
             source: params[1],
+            agent_id: params[2],
+            suggestion_type: params[3] || 'general',
+            target_entity_type: params[4],
+            target_entity_id: params[5],
             priority_score: 0.7,
             status: 'pending',
             created_at: new Date()
