@@ -117,6 +117,10 @@ const EVENT_TYPES = {
   TASK_FAILED: 'task_failed',
   TASK_TIMEOUT: 'task_timeout',
   TASK_CREATED: 'task_created',
+  TASK_RESCHEDULED: 'task_rescheduled',
+  TASK_AGGREGATED: 'task_aggregated',
+  TASK_MERGED: 'task_merged',
+  TASK_SPLIT: 'task_split',
 
   // 用户相关
   USER_MESSAGE: 'user_message',
@@ -126,6 +130,9 @@ const EVENT_TYPES = {
   TICK: 'tick',
   HEARTBEAT: 'heartbeat',
   RESOURCE_LOW: 'resource_low',
+  RESOURCE_CRITICAL: 'resource_critical',
+  BACKUP_TRIGGERED: 'backup_triggered',
+  CREDENTIALS_ROTATED: 'credentials_rotated',
 
   // OKR 相关
   OKR_CREATED: 'okr_created',
@@ -135,6 +142,11 @@ const EVENT_TYPES = {
   // 汇报相关
   DEPARTMENT_REPORT: 'department_report',
   EXCEPTION_REPORT: 'exception_report',
+
+  // 调度相关
+  SCHEDULED_TASK: 'scheduled_task',
+  BATCH_COMPLETED: 'batch_completed',
+  DEPENDENCY_COMPLETED: 'dependency_completed',
 };
 
 // ============================================================
@@ -195,6 +207,16 @@ const ACTION_WHITELIST = {
   'propose_anomaly_action': { dangerous: true, description: '异常处理方案选择' },
   'propose_milestone_review': { dangerous: true, description: 'Initiative 完成验收' },
   'heartbeat_finding': { dangerous: true, description: '巡检发现异常' },
+
+  // 扩展操作 v1.121.0
+  'reschedule_task': { dangerous: false, description: '重新安排任务时间' },
+  'aggregate_tasks': { dangerous: false, description: '聚合相似任务' },
+  'merge_tasks': { dangerous: false, description: '合并可合并的任务' },
+  'split_task': { dangerous: false, description: '拆分大型任务' },
+  'notify_oncall': { dangerous: false, description: '通知值班人员' },
+  'adjust_resource_allocation': { dangerous: true, description: '调整资源分配' },
+  'trigger_backup': { dangerous: false, description: '触发备份' },
+  'rotate_credentials': { dangerous: true, description: '凭据轮换' },
 
 };
 
@@ -447,6 +469,79 @@ async function buildMemoryBlock(event) {
   }
 }
 
+// ============================================================
+// 决策上下文感知 - 历史成功率调整
+// ============================================================
+
+/**
+ * 基于任务历史成功率调整置信度
+ * @param {Object} event - 事件
+ * @param {Decision} decision - 原始决策
+ * @returns {Promise<Decision>} - 调整后的决策
+ */
+async function adjustConfidenceByHistory(event, decision) {
+  // 只有任务相关事件才需要调整
+  const taskRelatedEvents = [
+    EVENT_TYPES.TASK_COMPLETED,
+    EVENT_TYPES.TASK_FAILED,
+    EVENT_TYPES.TASK_TIMEOUT,
+    EVENT_TYPES.TASK_CREATED,
+  ];
+
+  if (!taskRelatedEvents.includes(event.type)) {
+    return decision;
+  }
+
+  const taskId = event.task_id || event.task?.id;
+  if (!taskId) {
+    return decision;
+  }
+
+  try {
+    // 查询任务历史成功率（最近 30 天）
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed
+      FROM tasks
+      WHERE task_type = $1
+        AND created_at > NOW() - INTERVAL '30 days'
+    `, [event.task?.task_type || 'dev']);
+
+    const total = parseInt(result.rows[0]?.total || '0', 10);
+    if (total < 5) {
+      // 样本太少，不调整
+      return decision;
+    }
+
+    const completed = parseInt(result.rows[0]?.completed || '0', 10);
+    const successRate = completed / total;
+
+    // 成功率低于 0.6 时，降低置信度并考虑升级到 L2
+    if (successRate < 0.6) {
+      const adjustedConfidence = Math.max(0.3, decision.confidence * successRate);
+      console.log(`[thalamus] Low success rate (${successRate.toFixed(2)}) for task_type=${event.task?.task_type}, adjusting confidence: ${decision.confidence} -> ${adjustedConfidence}`);
+
+      return {
+        ...decision,
+        confidence: adjustedConfidence,
+        // 如果成功率极低（<0.3），建议升级到 L2
+        level: successRate < 0.3 ? 2 : decision.level,
+        rationale: `${decision.rationale} [历史成功率: ${(successRate * 100).toFixed(1)}%]`,
+        _historyAdjusted: true,
+        _successRate: successRate,
+      };
+    }
+
+    return decision;
+  } catch (err) {
+    // 查询失败时不影响主流程
+    console.warn('[thalamus] Failed to query task history:', err.message);
+    return decision;
+  }
+}
+
 /**
  * 调用 MiniMax M2.1 分析事件
  * @param {Object} event - 事件包
@@ -489,7 +584,10 @@ async function analyzeEvent(event) {
     // 可观测性：fire-and-forget 记录 memory_retrieval 事件
     recordMemoryRetrieval(pool, memoryQuery, mode, memoryMeta, event.type).catch(() => {});
 
-    return decision;
+    // 决策上下文感知：基于历史成功率调整置信度
+    const adjustedDecision = await adjustConfidenceByHistory(event, decision);
+
+    return adjustedDecision;
 
   } catch (err) {
     console.error('[thalamus] Error analyzing event:', err.message);
@@ -837,6 +935,146 @@ function quickRoute(event) {
     }
     // 其他意图（命令式、请求式等）→ 交给 L1 LLM 决策
     return null;
+  }
+
+  // 扩展快速路由场景 v1.121.0
+
+  // 任务重新安排：简单调度
+  if (event.type === EVENT_TYPES.TASK_RESCHEDULED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'task_rescheduled', task_id: event.task_id } },
+        { type: 'dispatch_task', params: { trigger: 'task_rescheduled' } }
+      ],
+      rationale: '任务已重新安排，触发派发',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // 任务聚合：批量派发
+  if (event.type === EVENT_TYPES.TASK_AGGREGATED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'task_aggregated', count: event.task_count } },
+        { type: 'dispatch_task', params: { trigger: 'task_aggregated', batch: true } }
+      ],
+      rationale: '任务已聚合，批量派发',
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // 任务合并：派发合并后任务
+  if (event.type === EVENT_TYPES.TASK_MERGED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'task_merged', original_ids: event.original_task_ids } },
+        { type: 'dispatch_task', params: { trigger: 'task_merged' } }
+      ],
+      rationale: '任务已合并，派发新任务',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // 任务拆分：派发子任务
+  if (event.type === EVENT_TYPES.TASK_SPLIT) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'task_split', parent_id: event.task_id } },
+        { type: 'dispatch_task', params: { trigger: 'task_split', sub_tasks: true } }
+      ],
+      rationale: '任务已拆分，派发子任务',
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // 资源告警严重：快速降级派发
+  if (event.type === EVENT_TYPES.RESOURCE_CRITICAL) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'resource_critical', resource: event.resource } },
+        { type: 'notify_oncall', params: { severity: 'critical', resource: event.resource } },
+        { type: 'fallback_to_tick', params: { mode: 'low_resource' } }
+      ],
+      rationale: '资源严重告警，通知值班并降级',
+      confidence: 0.8,
+      safety: false
+    };
+  }
+
+  // 备份触发：记录并确认
+  if (event.type === EVENT_TYPES.BACKUP_TRIGGERED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'backup_triggered', backup_type: event.backup_type } }
+      ],
+      rationale: '备份已触发，记录即可',
+      confidence: 0.95,
+      safety: false
+    };
+  }
+
+  // 凭据轮换：记录
+  if (event.type === EVENT_TYPES.CREDENTIALS_ROTATED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'credentials_rotated', provider: event.provider } }
+      ],
+      rationale: '凭据已轮换，记录即可',
+      confidence: 0.95,
+      safety: false
+    };
+  }
+
+  // 周期性任务：直接派发
+  if (event.type === EVENT_TYPES.SCHEDULED_TASK) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'dispatch_task', params: { trigger: 'scheduled', task_id: event.task_id } }
+      ],
+      rationale: '周期性任务触发，直接派发',
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // 批量任务完成：批量派发下一个
+  if (event.type === EVENT_TYPES.BATCH_COMPLETED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'batch_completed', count: event.completed_count } },
+        { type: 'dispatch_task', params: { trigger: 'batch_completed', count: event.completed_count } }
+      ],
+      rationale: '批量任务完成，批量派发下一个',
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // 依赖任务完成：检查并派发下游
+  if (event.type === EVENT_TYPES.DEPENDENCY_COMPLETED) {
+    return {
+      level: 0,
+      actions: [
+        { type: 'log_event', params: { event_type: 'dependency_completed', dependency_id: event.dependency_id } },
+        { type: 'dispatch_task', params: { trigger: 'dependency_met', dependent_id: event.dependent_id } }
+      ],
+      rationale: '依赖满足，触发下游任务',
+      confidence: 0.9,
+      safety: false
+    };
   }
 
   // 其他情况需要 L1 LLM 判断
