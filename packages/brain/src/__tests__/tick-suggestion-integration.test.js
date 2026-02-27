@@ -50,15 +50,19 @@ import { evaluateAlertness } from '../alertness/index.js';
 
 describe('Tick Suggestion Integration', () => {
   let executeTick;
+  let resetLastCleanupTime;
 
   beforeAll(async () => {
     // Import executeTick after mocks are set up
     const tickModule = await import('../tick.js');
     executeTick = tickModule.executeTick;
+    resetLastCleanupTime = tickModule._resetLastCleanupTime;
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // 重置 cleanup 计时器，确保每个测试从干净状态开始
+    resetLastCleanupTime?.();
 
     // Default mock implementations
     pool.query.mockImplementation((query) => {
@@ -124,12 +128,7 @@ describe('Tick Suggestion Integration', () => {
     });
 
     test('executes cleanup during periodic maintenance', async () => {
-      // Mock cleanup interval elapsed (simulate 1+ hour passed)
-      const mockDate = new Date();
-      vi.spyOn(Date, 'now')
-        .mockReturnValueOnce(mockDate.getTime() - (60 * 60 * 1000 + 1)) // _lastCleanupTime
-        .mockReturnValueOnce(mockDate.getTime()); // current time
-
+      // beforeEach 已调用 _resetLastCleanupTime()，cleanup 必定触发
       cleanupExpiredSuggestions.mockResolvedValue(3);
 
       const result = await executeTick();
@@ -142,12 +141,11 @@ describe('Tick Suggestion Integration', () => {
     });
 
     test('does not execute cleanup when interval not elapsed', async () => {
-      // Mock cleanup interval not elapsed
-      const mockDate = new Date();
-      vi.spyOn(Date, 'now')
-        .mockReturnValueOnce(mockDate.getTime() - 1000) // _lastCleanupTime (1 second ago)
-        .mockReturnValueOnce(mockDate.getTime()); // current time
+      // 先 tick 一次：触发 cleanup 并更新 _lastCleanupTime
+      await executeTick();
+      cleanupExpiredSuggestions.mockClear();
 
+      // 立即再 tick：距上次不足 1 小时，cleanup 不应触发
       const result = await executeTick();
 
       expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
@@ -177,12 +175,7 @@ describe('Tick Suggestion Integration', () => {
     test('handles cleanup errors gracefully', async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      // Mock cleanup interval elapsed
-      const mockDate = new Date();
-      vi.spyOn(Date, 'now')
-        .mockReturnValueOnce(mockDate.getTime() - (60 * 60 * 1000 + 1))
-        .mockReturnValueOnce(mockDate.getTime());
-
+      // beforeEach 已调用 _resetLastCleanupTime()，cleanup 必定触发
       cleanupExpiredSuggestions.mockRejectedValue(new Error('Cleanup failed'));
 
       const result = await executeTick();
