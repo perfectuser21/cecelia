@@ -863,6 +863,10 @@ function getSkillForTaskType(taskType, payload) {
     'research': null,        // 研究：完全只读
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
+    // Initiative 执行循环
+    'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
+    'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
+    'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // 兼容旧类型
     'qa': '/review',
     'audit': '/review',
@@ -1260,6 +1264,17 @@ PUT /api/tasks/goals/${krId}
 6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
 
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
+  }
+
+  // initiative_plan / initiative_verify：直接将任务描述作为 /decomp Phase 2 上下文注入
+  // 任务描述已包含完整的 Initiative ID、KR ID、历史 PR 等信息，无需额外处理
+  if (taskType === 'initiative_plan' || taskType === 'initiative_verify') {
+    return `/decomp\n\n${task.description || task.title}`;
+  }
+
+  // decomp_review：将任务描述传给 /decomp-check 做拆解质检
+  if (taskType === 'decomp_review') {
+    return `/decomp-check\n\n${task.description || task.title}`;
   }
 
   // Talk 类型：可以写文档（日报、总结等），但不能改代码

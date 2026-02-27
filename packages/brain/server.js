@@ -76,6 +76,7 @@ app.use('/api/brain/profile/facts', profileFactsRoutes);
 app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/tasks/projects', taskProjectsRoutes);
+app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
 app.use('/api/brain/inner-life', innerLifeRoutes);
 app.use('/api/brain/intent', intentMatchRoutes);
 
