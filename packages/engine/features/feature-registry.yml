@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.2.0"
+version: "3.3.0"
 updated: "2026-02-27"
 changelog:
+  - 3.3.0: v12.30.10 - SKILL.md 无头模式描述修正（对齐 stop.sh v13.1.0 实际行为，删除过时的"外部 while 循环"说法）
   - 3.2.0: v12.30.9 - stop.sh 路由器删除 CECELIA_HEADLESS 绕过（Bug 修复：无头模式与有头模式走同一套状态机，H7-014 RCI 新增）
   - 3.1.0: v12.30.8 - bash-guard.sh Rule 3（Bash 工具写代码文件检测：redirect/sed-i/tee，main 分支拦截，cp-*/feature/* 放行）
   - 3.0.0: v12.30.7 - /dev SKILL.md v3.4（P0:启动强制 Step 00 命令 + 触发词扩充到 18 个；P1:Step 03 worktree 兜底路径修复 + 分支表格动态化 + 手动分支格式替换为 cp-*；P2:develop 遗留引用清理 + 分支命名规则统一）
