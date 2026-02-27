@@ -9,6 +9,7 @@
 
 import { callLLM } from '../llm-caller.js';
 import { generateL0Summary } from '../memory-utils.js';
+import { generateMemoryStreamEmbeddingAsync } from '../embedding-service.js';
 
 const REFLECTION_THRESHOLD = 12;
 
@@ -115,10 +116,16 @@ ${memorySummary}
   try {
     const insightContent = `[反思洞察] ${insight}`;
     const insightSummary = generateL0Summary(insightContent);
-    await pool.query(`
+    const insertResult = await pool.query(`
       INSERT INTO memory_stream (content, importance, memory_type, expires_at, summary)
       VALUES ($1, 8, 'long', NULL, $2)
+      RETURNING id
     `, [insightContent, insightSummary]);
+    // Fire-and-forget：异步生成 embedding，不阻塞反思流程
+    const newId = insertResult.rows[0]?.id;
+    if (newId) {
+      generateMemoryStreamEmbeddingAsync(newId, insightContent, pool);
+    }
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);
   }

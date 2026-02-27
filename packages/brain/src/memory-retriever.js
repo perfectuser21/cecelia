@@ -17,6 +17,7 @@ import { searchRelevantLearnings } from './learning.js';
 import { loadUserProfile, formatProfileSnippet } from './user-profile.js';
 import { routeMemory } from './memory-router.js';
 import { generateL0Summary } from './memory-utils.js';
+import { generateEmbedding } from './openai-client.js';
 
 // ============================================================
 // 常量配置
@@ -266,10 +267,16 @@ async function searchSemanticMemory(pool, query, mode) {
 export { generateL0Summary };
 
 /**
- * 片段记忆检索（Episodic Memory）：从 memory_stream 中按 L0 摘要过滤后展开
+ * 片段记忆检索（Episodic Memory）：向量优先，Jaccard 降级
  *
- * L0 阶段：只看 summary（100字），用 Jaccard 过滤相关候选
- * L1 阶段：对相关候选展开完整 content
+ * 向量路径（优先）：
+ *   1. 生成 query embedding
+ *   2. pgvector cosine 相似度检索 memory_stream（embedding IS NOT NULL）
+ *   3. L1 展开：token 预算截断
+ *
+ * Jaccard 降级（无 OPENAI_API_KEY 或无向量数据时）：
+ *   L0: summary/content 前100字 Jaccard 过滤
+ *   L1: 展开 content，token 截断
  *
  * @param {Object} pool - pg pool
  * @param {string} query - 搜索文本
@@ -280,7 +287,57 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
   if (!pool || !query) return [];
 
   try {
-    // 查最近 30 条非 self_model 的记忆（包含 summary 和 content）
+    // ── 向量路径（OPENAI_API_KEY 存在时尝试）──────────────────
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        // 1. 生成 query embedding
+        const queryEmbedding = await generateEmbedding(query.substring(0, 2000));
+        const embStr = '[' + queryEmbedding.join(',') + ']';
+
+        // 2. pgvector cosine 检索（只取有 embedding 的记录）
+        const vectorResult = await pool.query(`
+          SELECT id, content, summary, importance, memory_type, created_at,
+                 1 - (embedding <=> $1::vector) AS vector_score
+          FROM memory_stream
+          WHERE embedding IS NOT NULL
+            AND (source_type IS NULL OR source_type != 'self_model')
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY embedding <=> $1::vector
+          LIMIT 10
+        `, [embStr]);
+
+        if (vectorResult.rows.length > 0) {
+          // 3. L1 展开：token 截断
+          const results = [];
+          let usedTokens = 0;
+          for (const row of vectorResult.rows) {
+            // 向量相似度低于 0.3 的忽略（避免完全不相关）
+            if ((row.vector_score || 0) < 0.3) continue;
+            const preview = (row.content || '').slice(0, 200);
+            const lineTokens = estimateTokens(preview);
+            if (usedTokens + lineTokens > tokenBudget) break;
+            results.push({
+              id: row.id,
+              source: 'episodic',
+              title: `[片段记忆] ${(row.content || '').slice(0, 50)}`,
+              description: preview,
+              text: row.content || '',
+              relevance: 0.4 + (row.vector_score || 0) * 0.6,
+              created_at: row.created_at,
+              importance: row.importance,
+            });
+            usedTokens += lineTokens;
+          }
+          if (results.length > 0) return results;
+          // 向量结果为空（所有分数 < 0.3）→ 继续降级到 Jaccard
+        }
+      } catch (_embErr) {
+        // embedding 生成失败（网络/quota）→ 降级到 Jaccard
+        console.warn('[memory-retriever] Episodic vector search failed, falling back to Jaccard:', _embErr.message);
+      }
+    }
+
+    // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
     const result = await pool.query(`
       SELECT id, content, summary, importance, memory_type, created_at
       FROM memory_stream
@@ -301,9 +358,7 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
       const l0Text = row.summary || generateL0Summary(row.content);
       const l0Tokens = new Set(l0Text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
 
-      // Jaccard 计算
       if (queryTokens.size === 0 || l0Tokens.size === 0) {
-        // 无法计算相似度：直接纳入（宽容策略）
         relevant.push({ ...row, l0Score: 0.1 });
         continue;
       }
@@ -315,24 +370,21 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
       const union = new Set([...queryTokens, ...l0Tokens]).size;
       const jaccard = union > 0 ? intersection / union : 0;
 
-      // 阈值 0.05：宽松过滤，避免漏掉中文记忆
       if (jaccard >= 0.05 || relevant.length < 3) {
         relevant.push({ ...row, l0Score: jaccard });
       }
     }
 
-    // 按 L0 分数排序，最多取 10 条
     relevant.sort((a, b) => b.l0Score - a.l0Score);
     const candidates = relevant.slice(0, 10);
 
-    // L1 展开：填充完整 content（已在 SELECT 中取到），token 截断
+    // L1 展开
     const results = [];
     let usedTokens = 0;
     for (const row of candidates) {
       const preview = (row.content || '').slice(0, 200);
       const lineTokens = estimateTokens(preview);
       if (usedTokens + lineTokens > tokenBudget) break;
-
       results.push({
         id: row.id,
         source: 'episodic',

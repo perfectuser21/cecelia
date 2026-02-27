@@ -1,8 +1,8 @@
 /**
- * Embedding Service - 异步生成任务向量
+ * Embedding Service - 异步生成向量
  *
  * 职责：
- * - task 创建/完成后 fire-and-forget 生成 embedding
+ * - task/learning/memory_stream 写入后 fire-and-forget 生成 embedding
  * - 无 OPENAI_API_KEY → no-op
  * - 失败静默，不影响任何主流程
  */
@@ -46,6 +46,32 @@ export async function generateLearningEmbeddingAsync(learningId, text) {
     await pool.query(
       `UPDATE learnings SET embedding = $1::vector WHERE id = $2`,
       [embStr, learningId]
+    );
+  } catch (_err) {
+    // 静默失败 — 不影响主流程
+  }
+}
+
+/**
+ * 异步为 memory_stream 记录生成并保存 embedding（fire-and-forget）
+ *
+ * 供 reflection.js 在写入反思洞察后调用，接受外部 pool 参数
+ * （embedding-service 默认 pool 和 reflection 使用同一 pool，保持一致）
+ *
+ * @param {string} recordId - memory_stream UUID
+ * @param {string} text - 要向量化的内容（content 字段）
+ * @param {Object} [dbPool] - pg Pool 实例（可选，默认用 module-level pool）
+ */
+export async function generateMemoryStreamEmbeddingAsync(recordId, text, dbPool) {
+  if (!process.env.OPENAI_API_KEY) return;
+
+  try {
+    const embedding = await generateEmbedding(text.substring(0, 4000));
+    const embStr = '[' + embedding.join(',') + ']';
+    const p = dbPool || pool;
+    await p.query(
+      `UPDATE memory_stream SET embedding = $1::vector WHERE id = $2`,
+      [embStr, recordId]
     );
   } catch (_err) {
     // 静默失败 — 不影响主流程
