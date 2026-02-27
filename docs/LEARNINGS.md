@@ -443,3 +443,28 @@ const usageColor = (pct: number) =>
 **版本冲突解决**
 main 推进后分支的 package.json 版本可能冲突（比如 main=1.3.1，分支=1.4.0）。
 冲突时选"Keep branch version"（1.4.0），确保 feature 版本号生效。
+
+
+## 2026-02-27: Brain 版本追赶竞争（account-usage-compact）
+
+### 背景
+在开发账号用量 UI compact 时，brain 版本 bump 遇到"追赶"问题：worktree 创建时 main 是 1.117.x，bump 到 1.118.1 后 main 又推进到 1.118.1，反复竞争。
+
+### 经验
+
+**Brain 版本竞争的根本原因**
+当多个 PR 并行开发时，main 的 Brain 版本持续推进，导致我们的版本 bump 赶不上。
+正确做法：在 push 前先查 main 的最新 Brain 版本，直接设到比 main 高 1 的版本：
+```bash
+MAIN_VER=$(git show origin/main:packages/brain/package.json | jq -r '.version')
+# 手动设置比 MAIN_VER 高 1 的 patch 版本
+```
+
+**Brain CI 不自动触发的问题**
+push 后 Brain CI 有时不会自动触发 PR 检查（原因待查）。解法：手动 dispatch：
+```bash
+gh workflow run "Brain CI" --repo perfectuser21/cecelia --ref <branch>
+```
+
+**check-version-sync.sh 检查范围**
+除了 `packages/brain/package.json`，还检查 `packages/brain/package-lock.json`、`DEFINITION.md`、`.brain-versions`，必须全部同步。
