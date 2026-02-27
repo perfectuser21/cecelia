@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.30.8"
+version: "12.30.9"
 updated: "2026-02-27"
 
 # ============================================================================
@@ -371,6 +371,25 @@ hooks:
       file: "hooks/stop-dev.sh"
       contains: "force_cleanup_worktree"
     test: "tests/hooks/stop-dev.test.ts"
+
+  - id: H7-014
+    feature: H7
+    name: "Stop Hook 路由器无头绕过删除 - 无头模式与有头模式同等强制"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, headless, bypass, bug-fix]
+    owner: infra
+    steps:
+      given: "CECELIA_HEADLESS=true 的无头会话，且存在 .dev-mode 文件"
+      when: "Stop Hook（stop.sh 路由器）触发"
+      then: "不绕过检查，正常调用 stop-dev.sh 执行完成条件验证"
+    evidence:
+      type: code
+      file: "hooks/stop.sh"
+      not_contains: "CECELIA_HEADLESS"
+    test: "tests/hooks/stop-hook.test.ts"
 
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
