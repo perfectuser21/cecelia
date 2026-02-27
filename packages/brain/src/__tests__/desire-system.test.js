@@ -189,11 +189,11 @@ describe('Layer 3: 反思层（Reflection）', () => {
     vi.resetModules();
   });
 
-  it('D4: accumulator < 30 时不触发反思', async () => {
+  it('D4: accumulator < 12 时不触发反思', async () => {
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {
         if (sql.includes("key = 'desire_importance_accumulator'")) {
-          return { rows: [{ value_json: 20 }] };
+          return { rows: [{ value_json: 8 }] };
         }
         return { rows: [] };
       })
@@ -203,7 +203,7 @@ describe('Layer 3: 反思层（Reflection）', () => {
     const result = await runReflection(mockPool);
 
     expect(result.triggered).toBe(false);
-    expect(result.accumulator).toBe(20);
+    expect(result.accumulator).toBe(8);
   });
 
   it('D4: accumulator >= 30 时触发反思并重置', async () => {

@@ -80,7 +80,7 @@ export async function runExpression(pool, desire) {
 
   // 备用渠道：紧急度 >= 9 时同时发飞书
   let feishuSent = false;
-  if (desire.urgency >= 9) {
+  if (desire.urgency >= 6) {
     feishuSent = await sendFeishu(message);
   }
 
