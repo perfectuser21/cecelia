@@ -1389,6 +1389,49 @@ router.get('/pending-actions', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/pending-actions/:id
+ * 获取单个 pending action 详情
+ */
+router.get('/pending-actions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM pending_actions WHERE id = $1`,
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, action: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending action', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/pending-actions/:id/versions
+ * 查询同一 KR 的所有 okr_decomp_review 版本历史
+ */
+router.get('/pending-actions/:id/versions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const current = await pool.query(
+      `SELECT context FROM pending_actions WHERE id = $1`,
+      [id]
+    );
+    const krId = current.rows[0]?.context?.kr_id;
+    if (!krId) return res.json({ success: true, versions: [] });
+    const versions = await pool.query(
+      `SELECT id, context, status, created_at FROM pending_actions
+       WHERE action_type = 'okr_decomp_review' AND context->>'kr_id' = $1
+       ORDER BY created_at ASC`,
+      [krId]
+    );
+    res.json({ success: true, versions: versions.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get versions', details: err.message });
+  }
+});
+
+/**
  * POST /api/brain/pending-actions
  * 创建新的 pending action（部门主管向 Cecelia 提案）
  * Body: { action_type, requester, context? }
@@ -1562,6 +1605,13 @@ ${initiativeList}
 4. 保持专业、简洁、务实的风格
 5. 用户满意时引导他们点击"确认放行"
 
+## 重要能力：你可以触发重新拆解
+
+**如果用户要求重新拆解**（说"重新拆"、"重拆"、"重做"、"再拆一次"等），你有能力触发重拆：
+- 系统会自动检测这些关键词，重置 KR 状态，下一个 Tick 会启动新一轮完整拆解
+- 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，新版本完成后会出现在版本历史中，请稍等片刻"
+- 重拆后当前这个版本不会消失，新版本会作为独立卡片出现
+
 注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。`;
 
     // 构建历史对话
@@ -1596,7 +1646,24 @@ ${initiativeList}
       [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
     );
 
-    res.json({ success: true, reply, comment: autumnriceComment });
+    // 重拆意图检测
+    const REDECOMP_TRIGGERS = ['重新拆', '重拆', '重做', '重新分析', '重新规划', '再拆一次'];
+    const isRedecomp = REDECOMP_TRIGGERS.some(kw => message.includes(kw));
+
+    let redecompTriggered = false;
+    if (isRedecomp) {
+      const krId = action.context?.kr_id;
+      if (krId) {
+        await pool.query(
+          `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='kr'`,
+          [krId]
+        );
+        redecompTriggered = true;
+        console.log(`[autumnrice/chat] redecomp triggered for KR: ${krId}`);
+      }
+    }
+
+    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: redecompTriggered });
   } catch (err) {
     console.error('[autumnrice/chat] Error:', err.message);
     res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });
