@@ -222,6 +222,38 @@ async function quarantineTask(taskId, reason, details = {}) {
 
     console.log(`[quarantine] Task ${taskId} quarantined: ${reason}`);
 
+    // 失败学习：当任务因重复失败进隔离区时，自动分析根因
+    if (reason === QUARANTINE_REASONS.REPEATED_FAILURE && quarantineInfo.failure_count >= FAILURE_THRESHOLD) {
+      try {
+        // 动态导入 callLLM 避免循环依赖
+        const { callLLM } = await import('./llm-caller.js');
+
+        // 构建分析提示词
+        const quarantinePrompt = `任务「${task.title}」连续${quarantineInfo.failure_count}次失败。类型：${task.task_type || '未知'}。描述：${(task.description || '').slice(0, 300)}。请用1-2句分析失败根因，第一人称（我）。`;
+
+        // 调用 LLM 分析（限制 150 tokens）
+        const analysisResult = await callLLM('rumination', quarantinePrompt, { maxTokens: 150 });
+
+        if (analysisResult && analysisResult.text) {
+          // 写入 learnings 表
+          await pool.query(`
+            INSERT INTO learnings (title, content, category, digested)
+            VALUES ($1, $2, $3, $4)
+          `, [
+            `隔离分析：${task.title}`,
+            analysisResult.text.trim(),
+            'quarantine_pattern',
+            false
+          ]);
+
+          console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
+        }
+      } catch (analysisErr) {
+        // 分析失败不影响隔离主流程
+        console.warn(`[quarantine] LLM analysis failed for task ${taskId}:`, analysisErr.message);
+      }
+    }
+
     return {
       success: true,
       task_id: taskId,
