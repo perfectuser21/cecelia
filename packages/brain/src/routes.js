@@ -47,6 +47,7 @@ import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './e
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted, notifyTaskFailed } from './notifier.js';
+import { getAccountUsage, selectBestAccount } from './account-usage.js';
 import websocketService, { WS_EVENTS } from './websocket.js';
 import crypto from 'crypto';
 import { readFileSync, readdirSync } from 'fs';
@@ -6950,6 +6951,35 @@ router.put('/staff/workers/:workerId', async (req, res) => {
   } catch (err) {
     console.error('[API] staff worker PUT error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==================== Account Usage API ====================
+
+/**
+ * GET /api/brain/account-usage
+ * 返回所有 Claude Max 账号当前用量（读缓存，10分钟 TTL）
+ */
+router.get('/account-usage', async (_req, res) => {
+  try {
+    const usage = await getAccountUsage();
+    res.json({ ok: true, usage });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/account-usage/refresh
+ * 强制刷新账号用量缓存（忽略 TTL，直接从 Anthropic API 获取）
+ */
+router.post('/account-usage/refresh', async (_req, res) => {
+  try {
+    const usage = await getAccountUsage(true); // forceRefresh=true
+    const best = await selectBestAccount();
+    res.json({ ok: true, usage, recommended: best || 'minimax (all at capacity)' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
