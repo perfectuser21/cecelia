@@ -8,7 +8,7 @@
  */
 
 import { callLLM } from '../llm-caller.js';
-import { generateL0Summary } from '../memory-utils.js';
+import { generateL0Summary, generateMemoryStreamL1Async } from '../memory-utils.js';
 import { generateMemoryStreamEmbeddingAsync } from '../embedding-service.js';
 
 const REFLECTION_THRESHOLD = 12;
@@ -121,10 +121,11 @@ ${memorySummary}
       VALUES ($1, 8, 'long', NULL, $2)
       RETURNING id
     `, [insightContent, insightSummary]);
-    // Fire-and-forget：异步生成 embedding，不阻塞反思流程
+    // Fire-and-forget：异步生成 embedding + L1 摘要，不阻塞反思流程
     const newId = insertResult.rows[0]?.id;
     if (newId) {
       generateMemoryStreamEmbeddingAsync(newId, insightContent, pool);
+      generateMemoryStreamL1Async(newId, insightContent, pool);
     }
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);
