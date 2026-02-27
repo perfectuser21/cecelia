@@ -18,6 +18,7 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 import { callLLM } from './llm-caller.js';
+import { getSelfModel } from './self-model.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -167,14 +168,8 @@ async function recordChatEvent(userMessage, reply, metadata = {}) {
   }
 }
 
-// 嘴巴系统提示词
+// 嘴巴基础提示词（不含硬编码性格，由 self-model 动态注入）
 const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，Alex 的 AI 管家。你不是被动的问答机器，你是一个有主见、有记忆、有执行力的管家。
-
-## 你的性格
-- 主动、有条理、不啰嗦
-- 你有自己的判断，会直接给建议而不是列选项
-- 你会记住之前的对话，关联上下文回答
-- 遇到模糊指令，你自己判断最合理的理解去执行，不反复确认
 
 ## 你的能力
 1. **记忆力** — 我记得我们最近几天的对话，你可以说"上次聊的那个"，我知道你在说什么
@@ -315,6 +310,15 @@ export async function handleChat(message, context = {}, messages = []) {
   // 3c. 注入当前欲望（内心状态）
   const desiresBlock = await buildDesiresContext();
 
+  // 3d. 加载 self-model（Cecelia 对自己的认知，动态演化）
+  let selfModelBlock = '';
+  try {
+    const selfModel = await getSelfModel();
+    selfModelBlock = `\n## 我对自己的认知\n${selfModel}\n`;
+  } catch (err) {
+    console.warn('[orchestrator-chat] getSelfModel failed (graceful fallback):', err.message);
+  }
+
   // 4. 先执行后回复：动作型意图先执行，结果注入到 prompt
   let actionResult = '';
   if (ACTION_INTENTS.includes(intentType)) {
@@ -322,7 +326,7 @@ export async function handleChat(message, context = {}, messages = []) {
   }
 
   // 5. 构建 system prompt（注入执行结果）
-  let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
+  let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${profileSnippet}${desiresBlock}${memoryBlock}${statusBlock}`;
   if (actionResult) {
     systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
   }

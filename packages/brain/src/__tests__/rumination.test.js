@@ -15,6 +15,7 @@ const mockBuildMemoryContext = vi.hoisted(() => vi.fn());
 const mockQueryNotebook = vi.hoisted(() => vi.fn());
 const mockAddSource = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
+const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
 
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
@@ -35,6 +36,10 @@ vi.mock('../notebook-adapter.js', () => ({
 
 vi.mock('../actions.js', () => ({
   createTask: mockCreateTask,
+}));
+
+vi.mock('../self-model.js', () => ({
+  updateSelfModel: mockUpdateSelfModel,
 }));
 
 // ── 导入被测模块 ──────────────────────────────────────────
@@ -94,6 +99,7 @@ describe('rumination', () => {
     mockBuildMemoryContext.mockResolvedValue({ block: '相关记忆', meta: {} });
     mockQueryNotebook.mockResolvedValue({ ok: true, text: 'NotebookLM 补充' });
     mockCreateTask.mockResolvedValue({ success: true });
+    mockUpdateSelfModel.mockResolvedValue('演化后的 self-model');
   });
 
   describe('条件检查', () => {
@@ -154,8 +160,8 @@ describe('rumination', () => {
       expect(result.insights).toHaveLength(1);
       expect(result.insights[0]).toBe('这是一条测试洞察');
 
-      // 验证 callLLM 被调用（v2: 1 次批量调用）
-      expect(mockCallLLM).toHaveBeenCalledTimes(1);
+      // 验证 callLLM 被调用（v2: 1 次批量洞察 + 1 次自我反思 = 2 次）
+      expect(mockCallLLM).toHaveBeenCalledTimes(2);
       expect(mockCallLLM).toHaveBeenCalledWith('rumination', expect.stringContaining('React 18'));
 
       // 验证 memory_stream 写入
@@ -180,8 +186,8 @@ describe('rumination', () => {
 
       const result = await runRumination(pool);
       expect(result.digested).toBe(MAX_PER_TICK);
-      // v2: 批量处理，只调用 1 次 LLM（不是 N 次）
-      expect(mockCallLLM).toHaveBeenCalledTimes(1);
+      // v2: 批量处理 → 1 次洞察 LLM + 1 次自我反思 LLM = 2 次（不是 N 次）
+      expect(mockCallLLM).toHaveBeenCalledTimes(2);
     });
 
     it('批量消化 3 条 learnings → 1 次 callLLM 生成综合洞察', async () => {
@@ -200,8 +206,8 @@ describe('rumination', () => {
       expect(result.insights).toHaveLength(1);
       expect(result.insights[0]).toContain('综合洞察');
 
-      // 核心断言：只调用 1 次 LLM（批量处理）
-      expect(mockCallLLM).toHaveBeenCalledTimes(1);
+      // 核心断言：2 次 LLM 调用（1 次批量洞察 + 1 次自我反思，不是 3 次）
+      expect(mockCallLLM).toHaveBeenCalledTimes(2);
 
       // Prompt 包含所有 3 条 learning
       const prompt = mockCallLLM.mock.calls[0][1];
@@ -496,6 +502,58 @@ describe('rumination', () => {
 
     it('COOLDOWN_MS = 30 分钟', () => {
       expect(COOLDOWN_MS).toBe(30 * 60 * 1000);
+    });
+  });
+
+  // ── Self-Model 更新测试 ──────────────────────────────────
+
+  describe('self-model 更新', () => {
+    it('有洞察时调用 updateSelfModel', async () => {
+      mockCallLLM
+        .mockResolvedValueOnce({ text: '[反刍洞察] 这是主洞察内容' }) // 主反刍
+        .mockResolvedValueOnce({ text: '我发现自己更在意系统稳定性。' }); // 自我反思
+
+      setupIdleAndLearnings(pool, [{
+        id: 'l1', title: '系统测试', content: '内容', category: 'tech',
+      }]);
+
+      await runRumination(pool);
+
+      expect(mockUpdateSelfModel).toHaveBeenCalledTimes(1);
+      expect(mockUpdateSelfModel).toHaveBeenCalledWith(
+        '我发现自己更在意系统稳定性。',
+        expect.anything() // db pool
+      );
+    });
+
+    it('主洞察为空时不调用 updateSelfModel', async () => {
+      // callLLM 主反刍返回空字符串
+      mockCallLLM.mockResolvedValueOnce({ text: '' });
+
+      setupIdleAndLearnings(pool, [{
+        id: 'l1', title: '无效', content: '空', category: 'misc',
+      }]);
+
+      await runRumination(pool);
+
+      expect(mockUpdateSelfModel).not.toHaveBeenCalled();
+    });
+
+    it('updateSelfModel 失败时不影响主流程（graceful fallback）', async () => {
+      mockCallLLM
+        .mockResolvedValueOnce({ text: '[反刍洞察] 洞察内容' }) // 主反刍
+        .mockResolvedValueOnce({ text: '自我认知更新' }); // 自我反思
+
+      mockUpdateSelfModel.mockRejectedValueOnce(new Error('DB write failed'));
+
+      setupIdleAndLearnings(pool, [{
+        id: 'l1', title: '测试', content: '内容', category: 'tech',
+      }]);
+
+      // 不应该 throw
+      const result = await runRumination(pool);
+      expect(result.digested).toBe(1);
+      expect(result.insights.length).toBeGreaterThan(0);
     });
   });
 });

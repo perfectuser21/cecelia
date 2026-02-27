@@ -7726,4 +7726,20 @@ router.get('/learnings', async (req, res) => {
   }
 });
 
+// ── Self-Model API ──────────────────────────────────────────
+
+/**
+ * GET /api/brain/self-model — 读取 Cecelia 当前 self-model
+ */
+router.get('/self-model', async (_req, res) => {
+  try {
+    const { getSelfModelRecord } = await import('./self-model.js');
+    const record = await getSelfModelRecord(pool);
+    res.json(record);
+  } catch (err) {
+    console.error('[API] self-model error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
