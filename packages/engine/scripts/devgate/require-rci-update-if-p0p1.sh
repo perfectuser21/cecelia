@@ -29,7 +29,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# 找项目根目录
+# 找脚本自身目录（monorepo 兼容：不依赖 --show-toplevel）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$PROJECT_ROOT"
 
@@ -39,8 +40,8 @@ echo "  P0/P1 → RCI 更新检查"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# 检测优先级
-DETECT_SCRIPT="$PROJECT_ROOT/scripts/devgate/detect-priority.cjs"
+# 检测优先级（使用脚本自身目录，兼容 monorepo）
+DETECT_SCRIPT="$SCRIPT_DIR/detect-priority.cjs"
 
 if [[ ! -f "$DETECT_SCRIPT" ]]; then
     echo -e "  ${RED}❌ detect-priority.cjs 不存在${NC}"

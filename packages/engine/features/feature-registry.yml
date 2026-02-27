@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "2.98.0"
-updated: "2026-02-25"
+version: "2.99.0"
+updated: "2026-02-27"
 changelog:
+  - 2.99.0: v12.30.6 - /dev SKILL.md v3.3（description 触发描述修复 + 删废弃 p0/p1/p2 注释 + 分支策略对齐 main 单分支 + 产物清单修正）+ Step 10 Learning 推送切回 base 分支 + worktree-manage.sh 动态检测 develop/main
   - 2.98.0: v12.30.4 - Skills 中 --base develop 改为自动检测（有 develop 用 develop，否则用 main）
   - 2.97.0: v12.30.1 - cleanup.sh Step [9] 自动删除已合并 cp-* 分支（git branch --merged 检测 + W6-005）
   - 2.96.0: v12.30.0 - /dev 步骤重构（Step 4 探索/Step 5 DoD/Step 6 写代码+测试/Step 7 本地验证 + .dev-mode 字段重命名 + SKILL.md v3.2）

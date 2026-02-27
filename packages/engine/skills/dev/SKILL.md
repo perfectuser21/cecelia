@@ -1,24 +1,21 @@
 ---
 name: dev
-version: 3.2.0
-updated: 2026-02-22
+version: 3.3.0
+updated: 2026-02-27
 description: |
-  统一开发工作流入口。
+  统一开发工作流入口。当用户需要开发新功能、修复 bug、代码重构，
+  或任何会进 git 的代码变更时立即触发。不走 /dev 不允许改代码。
 
-  v3.2.0 变更（步骤重构）：
-  - Step 4: DoD → 探索（先读代码理解架构）
-  - Step 5: 写代码 → DoD（基于探索结果定义验收标准）
-  - Step 6: 写测试 → 写代码（含测试，合并旧 05+06）
-  - Step 7: 质检 → 本地验证（跑 npm test，不生成空 JSON）
+  自动完成完整闭环：PRD → Worktree 隔离 → 探索架构 → DoD 定稿
+  → 写代码 → 本地验证 → PR → CI 监控 → 合并 → Learning → 清理。
 
-  循环控制由 Stop Hook 实现：
-  - 有头模式: Stop Hook 检测 .dev-mode 文件，exit 2 阻止会话结束
-  - 无头模式: CECELIA_HEADLESS=true 时 Stop Hook 直接 exit 0，外部循环控制
+  触发词：开始开发、加功能、修 bug、实现 XXX、改代码、做这个功能、/dev。
+  有 --task-id 参数时从 Brain PostgreSQL 自动读取 Task PRD。
 ---
 
 > **CRITICAL LANGUAGE RULE（语言规则）: 所有输出必须使用简体中文。包括步骤说明、状态更新、日志信息、错误报告。严禁使用日语、韩语或任何其他语言，即使在无头（headless）子进程中也必须遵守。**
 
-# /dev - 统一开发工作流（v3.2）
+# /dev - 统一开发工作流（v3.3）
 
 ## 🎯 使用方式
 
@@ -57,7 +54,7 @@ description: |
 
 ## ⚡ 核心目标（CRITICAL）
 
-**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到目标分支（develop 或 main，自动检测）。**
+**从 /dev 启动的那一刻起，唯一的目标就是：成功合并 PR 到 main（仓库有 develop 时自动检测）。**
 
 ### 完成条件
 
@@ -65,7 +62,7 @@ description: |
 开始 → ... → PR 创建 → CI 通过 → PR 合并 ✅ 完成
 ```
 
-**只有一个完成标志**：PR 已合并到目标分支（develop 或 main，自动检测）
+**只有一个完成标志**：PR 已合并到目标分支（默认 main，有 develop 时自动检测）
 
 ### 遇到任何问题 = 自动修复
 
@@ -227,11 +224,6 @@ tasks_created: true
    ✅ → 删除 .dev-mode → exit 0 → 完成
 ```
 
-**不再分阶段**：
-- ❌ 不再有 p0/p1/p2 阶段
-- ❌ 不再运行 detect-phase.sh
-- ✅ 从头到尾一直执行，直到 PR 合并
-
 ---
 
 ## ⚡ 自动执行规则（CRITICAL）
@@ -314,18 +306,13 @@ TaskList()
 
 ## 核心规则
 
-### 1. 统一流程（不分阶段）✅
+### 1. 统一流程
 
 ```
-开始 → Step 1-11 → PR 创建 → CI 监控 → PR 合并 → 完成
+开始 → Step 0-11 → PR 创建 → CI 监控 → PR 合并 → 完成
 ```
 
-**不再有**：
-- ❌ p0/p1/p2 阶段
-- ❌ detect-phase.sh 阶段检测
-- ❌ "发 PR 后就结束" 的错误逻辑
-
-### 2. Task Checkpoint 追踪 ✅
+### 2. Task Checkpoint 追踪
 
 ```
 每个步骤：
@@ -336,9 +323,9 @@ TaskList()
 
 ### 3. 分支策略
 
-1. **只在 cp-* 或 feature/* 分支写代码** - Hook 强制
-2. **目标分支自动检测** - 有 develop 用 develop，否则用 main（PR 合并回目标分支）
-3. **main 始终稳定** - 只在里程碑时从 develop 合并
+1. **只在 cp-* 或 feature/* 分支写代码** — Hook 强制
+2. **分支命名**：`cp-MMDDHHNN-task-name`（例：`cp-02270800-fix-login`）
+3. **目标分支**：默认 main；仓库有 develop 时自动检测，PR 合并回 develop
 
 ### 4. 质量保证
 
@@ -428,11 +415,10 @@ skills/dev/
 
 | 产物 | 位置 | 检查方式 | 检查时机 |
 |------|------|----------|----------|
-| PRD | .prd.md | Hook 检查存在 | 写代码前 |
-| DoD | .dod.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
-| QA 决策 | docs/QA-DECISION.md | skills/qa/SKILL.md | Step 5 |
-| 审计报告 | docs/AUDIT-REPORT.md | skills/audit/SKILL.md | Step 6 后 |
+| PRD | .prd-*.md | Hook 检查存在 | 写代码前 |
+| DoD | .dod-*.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
+| Learning | docs/LEARNINGS.md | 手动追加后推到 base branch | Step 10 完成时 |
 
 ---
 
