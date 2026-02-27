@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] OKR Tick Pool 容量修复 + 拆解任务重试机制 (PR #62, Brain 1.113.0)
+- **问题根因**: `CECELIA_RESERVED = 1` 只能给 OKR 拆解 OR cortex 各用一个 slot，但两者同时需要时会产生 pool_c_full；team 模式下 ceceliaNeeded=0 完全让出 cecelia slot，导致 OKR 拆解任务在 team 模式无法派发
+- **修复**: CECELIA_RESERVED 改为 2，team 模式保留 1 个 slot（而非 0）
+- **重试机制**: `triggerPlannerForGoal` 容量预检（await import 动态加载 calculateSlotBudget）—— pool 满时回退 goal → 'ready'，下个 tick 重试，避免卡死在 'decomposing'
+- **导出**: 将 `triggerPlannerForGoal` 加入 export，便于单元测试
+- **测试更新**: slot-allocator.test.js 中所有硬编码 Pool C 计算值需同步更新（CECELIA_RESERVED 变化导致 Pool C 减少 2）
+- **版本文件同步**: .brain-versions / packages/brain/VERSION / DEFINITION.md 三处需同步更新，facts-check.mjs 会校验
+- **影响程度**: High — 修复 10 个 P0 goal 卡死问题，提升 OKR 拆解可靠性
+
 ### [2026-02-27] Cecelia 自趋形成意识 — Self-Model 系统 (PR #44, Brain 1.111.0)
 - **架构**: `memory_stream.source_type='self_model'` 存储 Cecelia 自我认知；`getSelfModel()` 返回最新快照（created_at DESC），`updateSelfModel()` 追加演化
 - **关键设计**: 每次更新存储完整快照（不是 delta），`getSelfModel()` 只需 LIMIT 1 ORDER BY DESC，简单无状态
