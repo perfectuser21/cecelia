@@ -1094,3 +1094,49 @@ product_features:
       - S2-002  # DoD Validation
       - S2-003  # Anti-Cheat 机制
 
+
+  decomp-skill:
+    version: 1.0.0
+    status: stable
+    description: |
+      全链路 PM 拆解引擎 - 从 OKR 拆解到 Initiative
+      供秋米（autumnrice）角色后台调用。
+      支持三维层级识别矩阵（范围/抽象度/工作量）。
+      OKR 层拆解后标记 reviewing（需人工确认）；KR 以下由 Decomp-Check 自动审查。
+
+    entrypoints:
+      - type: skill
+        file: ../workflows/skills/decomp/SKILL.md
+        trigger: "/decomp"
+
+    golden_path: |
+      秋米被调用 → 读取 /decomp → 三维矩阵识别层级 →
+      按五层模板拆解 → 战略对齐检查 → 写入数据库 →
+      OKR层: status=reviewing（等人工确认）
+      KR以下: 触发 Decomp-Check 审查
+
+    rcis: []
+
+  decomp-check-skill:
+    version: 1.0.0
+    status: stable
+    description: |
+      PM 拆解质检引擎 - 审查 /decomp 产出质量
+      供 Vivian 角色调用，使用 Sonnet 模型。
+      覆盖所有层级：OKR→KR / KR→Project / Project→Initiative。
+      三态裁决：approved / needs_revision / rejected。
+      rejected 时自动触发秋米重拆（最多3次）。
+
+    entrypoints:
+      - type: skill
+        file: ../workflows/skills/decomp-check/SKILL.md
+        trigger: "/decomp-check"
+
+    golden_path: |
+      Vivian 被调用 → 读取 /decomp-check → 按层级选审查标准 →
+      检查因果链/覆盖度/命名/战略对齐 →
+      approved: Brain 继续流程
+      needs_revision: 秋米修正
+      rejected: Brain 打回重拆
+
+    rcis: []
