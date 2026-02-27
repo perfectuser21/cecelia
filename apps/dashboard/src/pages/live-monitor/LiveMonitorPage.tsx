@@ -602,6 +602,11 @@ function AccUsageRings() {
                 ↺{resetsAt}
               </div>
             )}
+            {u?.seven_day_pct !== undefined && (
+              <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
+                7d:{u.seven_day_pct}%
+              </div>
+            )}
           </div>
         );
       })}
