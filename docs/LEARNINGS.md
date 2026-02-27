@@ -405,3 +405,32 @@ grep -r "084" packages/brain/src/__tests__/ --include="*.test.js"
   - 从 `~/.claude-accountN/.credentials.json` 读取 accessToken
 - 缓存到 PostgreSQL（TTL 10分钟），API 失败时用旧缓存
 - `selectBestAccount()` 按 five_hour_pct 排序，过滤 ≥80% 的账号
+
+
+## 2026-02-27: Claude Max 账号用量卡片（Dashboard UI）
+
+### 背景
+在 LiveMonitorPage 添加 AccountUsageCard，实时展示 account1/2/3 的5小时用量进度条，高亮最低用量账号（推荐）。
+
+### 经验
+
+**bash-guard 阻止 force push 的处理方式**
+当尝试 `git rebase origin/main` 后再 `git push --force-with-lease` 时，bash-guard.sh Hook 会阻止所有带 `-f`/`--force` 的 push。
+正确解法：不用 rebase + force push，改用 merge：
+```bash
+git reset --hard origin/<branch>  # 回到远端状态
+git merge origin/main --no-edit   # 普通 merge（包含冲突解决）
+git push origin <branch>          # 普通 push，无需 force
+```
+这样保留 merge commit，不需要 force push，bash-guard 不会阻止。
+
+**多账号进度条组件的颜色逻辑**
+三色区间：绿 (<50%) / 黄 (50-79%) / 红 (≥80%)，用简单的函数实现：
+```typescript
+const usageColor = (pct: number) => 
+  pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#10b981';
+```
+
+**版本冲突解决**
+main 推进后分支的 package.json 版本可能冲突（比如 main=1.3.1，分支=1.4.0）。
+冲突时选"Keep branch version"（1.4.0），确保 feature 版本号生效。
