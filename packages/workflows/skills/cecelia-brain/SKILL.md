@@ -74,7 +74,7 @@ docker exec -i cecelia-postgres psql -U cecelia -d cecelia -c "SELECT title, con
 
 **Brain 只做定义，不做拆解**：
 
-| Brain 做 | 秋米做（通过 /okr Skill） |
+| Brain 做 | 秋米做（通过 /decomp Skill） |
 |----------|---------------------------|
 | 用必问清单问清楚 OKR | 从 OKR 拆到 Feature |
 | 补充细节（方向、目的、验收标准） | 从 Feature 拆到 Task |
@@ -93,7 +93,7 @@ Brain 定义 OKR
     ↓ 存入 goals 表 (status=ready)
 Tick 检测到 ready
     ↓ 调用秋米
-秋米执行 /okr Skill 拆解
+秋米执行 /decomp Skill 拆解
     ↓ Tasks 存入数据库（含 execution_profile）
 Tick 路由 Tasks
     ↓ 根据 execution_profile 派发
@@ -332,7 +332,7 @@ curl -X POST http://localhost:5212/api/brain/tick
 
 | 员工 | Skill | 模型 | 职责 |
 |------|-------|------|------|
-| 秋米 | /okr | Opus | OKR 拆解专家 |
+| 秋米 | /decomp | Opus | OKR 拆解专家 |
 | repo-lead | /repo-lead | MiniMax | 部门主管（汇报，不拆解） |
 | Caramel | /dev | Opus | 编程 |
 | Nobel | /nobel | Sonnet | N8N 管理 |

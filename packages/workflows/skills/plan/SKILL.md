@@ -1,9 +1,10 @@
 ---
 name: plan
-version: 1.2.0
+version: 1.3.0
 created: 2026-02-17
-updated: 2026-02-24
+updated: 2026-02-27
 changelog:
+  - 1.3.0: 修复旧 skill 名残留，/okr 后台 → /decomp 后台；修复注意项末尾拆解 skill 名
   - 1.2.0: 重构层级识别框架——以规模/范围为主信号，时间为辅助信号，加入多维评估矩阵
   - 1.1.0: 加入 Stage 2 Capability 查询，识别输出格式增加已有能力和缺口
   - 1.0.0: 初始版本
@@ -184,7 +185,7 @@ curl -s http://localhost:5221/api/brain/capabilities | jq
 
 - 如果用户想做的事已经有 capability 覆盖 → 缺口写"无明显缺口"
 - 如果用户想做的事没有 capability 覆盖 → 缺口写出缺少什么能力
-- 缺口信息帮助后续 /dev 或 /okr 决定是否需要新建 capability
+- 缺口信息帮助后续 /dev 或 /decomp 决定是否需要新建 capability
 
 ---
 
@@ -194,7 +195,7 @@ curl -s http://localhost:5221/api/brain/capabilities | jq
 |---------|--------|------|
 | Layer 1: Global OKR | 讨论澄清 → 存入 DB | 太大，需要先讨论全局方向 |
 | Layer 2: Area OKR | 讨论澄清 → 存入 DB | 需要明确 Area 目标 |
-| Layer 3: KR | 触发秋米（`/okr` 后台） | 先收集信息 → 确认 → 拆解到 Initiative |
+| Layer 3: KR | 触发秋米（`/decomp` 后台） | 先收集信息 → 确认 → 拆解到 Initiative |
 | Layer 4: Project | `/dev` + 多 PR 规划 | 创建 Initiative + 拆 PR |
 | Layer 5: Initiative ★ | **直接 `/dev`** | 最常见路径 |
 | Layer 6: Task | **直接 `/dev`** | 小改动，直接做 |
@@ -235,9 +236,9 @@ curl -s http://localhost:5221/api/brain/capabilities | jq
     ↓
 存入 DB（POST /api/brain/action/create-goal, type='kr', status='ready'）
     ↓
-OKR Tick 自动检测 → 触发秋米拆解（/okr 后台）
+OKR Tick 自动检测 → 触发秋米调用 /decomp 后台拆解
     ↓
-秋米拆解到 Initiative（Brain 自动创建 Task）
+秋米调用 /decomp 拆解到 Initiative（Brain 自动创建 Task）
 ```
 
 ---
@@ -249,4 +250,4 @@ OKR Tick 自动检测 → 触发秋米拆解（/okr 后台）
 - **有度量指标 → KR**：无论用户说"这个月"还是"这个季度"
 - **不确定就问**：用"涉及几个仓库？"和"有没有度量指标？"两个问题快速定级
 - **Initiative 是默认**：模糊情况统一判 Layer 5，不要过度拆解
-- **不要自己做拆解**：/plan 只识别 + 引导，拆解是 /okr 的工作
+- **不要自己做拆解**：/plan 只识别 + 引导，拆解是 /decomp 的工作
