@@ -620,6 +620,32 @@ const actionHandlers = {
 
     return { success: true, task_id };
   },
+
+  /**
+   * OKR 拆解审批放行
+   * 用户确认秋米拆解结果 → 将 KR 从 reviewing 状态放行到 ready
+   */
+  async okr_decomp_review(params, context) {
+    const { kr_id } = params;
+    if (!kr_id) {
+      return { success: false, error: 'kr_id is required' };
+    }
+
+    const result = await pool.query(
+      `UPDATE goals SET status = 'ready', updated_at = NOW()
+       WHERE id = $1 AND type = 'kr' AND status = 'reviewing'
+       RETURNING id, title, status`,
+      [kr_id]
+    );
+
+    if (result.rows.length === 0) {
+      console.warn(`[executor] okr_decomp_review: KR ${kr_id} not found or not in reviewing status`);
+      return { success: false, error: 'KR not found or not in reviewing status' };
+    }
+
+    console.log(`[executor] okr_decomp_review: KR ${kr_id} → ready (用户确认拆解)`);
+    return { success: true, kr_id, kr_title: result.rows[0].title };
+  },
 };
 
 // ============================================================
