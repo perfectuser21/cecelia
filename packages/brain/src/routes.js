@@ -2618,6 +2618,30 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5d. Auto-Learning: 自动从任务执行结果中学习
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      try {
+        const { processExecutionAutoLearning } = await import('./auto-learning.js');
+        const learningResult = await processExecutionAutoLearning(task_id, newStatus, result, {
+          trigger_source: 'execution_callback',
+          retry_count: iterations,
+          iterations: iterations,
+          metadata: {
+            run_id,
+            duration_ms,
+            pr_url: pr_url || null
+          }
+        });
+
+        if (learningResult) {
+          console.log(`[execution-callback] Auto-learning created: ${learningResult.title} (id: ${learningResult.id})`);
+        }
+      } catch (autoLearningErr) {
+        console.error(`[execution-callback] Auto-learning error (non-fatal): ${autoLearningErr.message}`);
+        // Continue with normal flow - auto-learning failure should not affect main functionality
+      }
+    }
+
     // 6. Event-driven: Trigger next task after completion (with short cooldown to avoid burst refill)
     let nextTickResult = null;
     if (newStatus === 'completed') {
