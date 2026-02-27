@@ -73,7 +73,8 @@ describe('Suggestion Triage System', () => {
       const eventResult = await pool.query(`
         SELECT * FROM cecelia_events
         WHERE event_type = 'suggestion_created'
-        AND source = 'test'
+        AND source = 'suggestion_triage'
+        AND payload->>'source' = 'test'
         ORDER BY created_at DESC
         LIMIT 1
       `);
@@ -117,7 +118,7 @@ describe('Suggestion Triage System', () => {
         source: 'test',
         suggestion_type: 'task_creation',
         target_entity_type: 'project',
-        target_entity_id: '12345'
+        target_entity_id: '00000000-0000-0000-0000-000000001234'
       });
 
       const suggestion2 = await createSuggestion({
@@ -125,7 +126,7 @@ describe('Suggestion Triage System', () => {
         source: 'test',
         suggestion_type: 'task_creation',
         target_entity_type: 'project',
-        target_entity_id: '12345'
+        target_entity_id: '00000000-0000-0000-0000-000000001234'
       });
 
       await executeTriage(10);

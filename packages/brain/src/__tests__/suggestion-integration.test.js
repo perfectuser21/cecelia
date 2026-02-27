@@ -21,13 +21,14 @@ describe('Suggestion System Integration', () => {
   beforeEach(async () => {
     // 清理测试数据
     await pool.query('DELETE FROM suggestions WHERE source LIKE $1', ['integration-test%']);
-    await pool.query('DELETE FROM cecelia_events WHERE source LIKE $1', ['integration-test%']);
+    // 清理 suggestion_triage 模块发出的集成测试事件（source 字段由模块名决定，不是 suggestion source）
+    await pool.query(`DELETE FROM cecelia_events WHERE source = 'suggestion_triage'`);
   });
 
   afterAll(async () => {
     // 最终清理
     await pool.query('DELETE FROM suggestions WHERE source LIKE $1', ['integration-test%']);
-    await pool.query('DELETE FROM cecelia_events WHERE source LIKE $1', ['integration-test%']);
+    await pool.query(`DELETE FROM cecelia_events WHERE source = 'suggestion_triage'`);
   });
 
   describe('Complete workflow integration', () => {
@@ -63,7 +64,7 @@ describe('Suggestion System Integration', () => {
           agent_id: 'executor-v1',
           suggestion_type: 'task_creation',
           target_entity_type: 'project',
-          target_entity_id: 'test-project-id'
+          target_entity_id: '00000000-0000-0000-0000-000000000001'
         })
       ]);
 
@@ -114,14 +115,20 @@ describe('Suggestion System Integration', () => {
 
       expect(updatedSuggestions.rows).toHaveLength(2);
 
-      // 6. 验证事件记录
-      const events = await pool.query(`
+      // 6. 验证事件记录（事件 source 是 'suggestion_triage'，通过 suggestion_id 关联）
+      const suggestionIds = suggestions.map(s => s.id);
+      const createdEvents = await pool.query(`
         SELECT * FROM cecelia_events
-        WHERE source LIKE 'integration-test%'
-        ORDER BY created_at DESC
+        WHERE source = 'suggestion_triage'
+        AND event_type IN ('suggestion_created', 'suggestion_status_updated', 'suggestions_triaged')
+        AND payload->>'suggestion_id' = ANY($1::text[])
+      `, [suggestionIds]);
+      const triagedEvents = await pool.query(`
+        SELECT * FROM cecelia_events
+        WHERE source = 'suggestion_triage' AND event_type = 'suggestions_triaged'
       `);
 
-      expect(events.rows.length).toBeGreaterThanOrEqual(5); // 创建事件 + 状态更新事件 + triage 事件
+      expect(createdEvents.rows.length + triagedEvents.rows.length).toBeGreaterThanOrEqual(5); // 创建事件 + 状态更新事件 + triage 事件
     });
 
     test('handles duplicate suggestion detection and rejection', async () => {
@@ -138,7 +145,7 @@ describe('Suggestion System Integration', () => {
         source: 'integration-test-cortex',
         suggestion_type: 'optimization',
         target_entity_type: 'database',
-        target_entity_id: 'main-db'
+        target_entity_id: '00000000-0000-0000-0000-000000000002'
       });
 
       const suggestion2 = await createSuggestion({
@@ -146,7 +153,7 @@ describe('Suggestion System Integration', () => {
         source: 'integration-test-cortex',
         suggestion_type: 'optimization',
         target_entity_type: 'database',
-        target_entity_id: 'main-db'
+        target_entity_id: '00000000-0000-0000-0000-000000000002'
       });
 
       // 执行 triage

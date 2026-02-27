@@ -110,9 +110,10 @@ export async function createSuggestion(suggestionData) {
   ]);
 
   const suggestion = result.rows[0];
+  suggestion.priority_score = parseFloat(suggestion.priority_score);
 
   // 发布事件
-  await emit('suggestion_created', {
+  await emit('suggestion_created', 'suggestion_triage', {
     suggestion_id: suggestion.id,
     source: suggestion.source,
     priority_score: suggestion.priority_score,
@@ -151,6 +152,7 @@ export async function executeTriage(limit = 50) {
   const updatedSuggestions = [];
 
   for (const suggestion of pendingSuggestions) {
+    suggestion.priority_score = parseFloat(suggestion.priority_score);
     const newScore = calculatePriorityScore(suggestion);
 
     if (newScore !== suggestion.priority_score) {
@@ -205,7 +207,7 @@ export async function executeTriage(limit = 50) {
   console.log(`[Triage] 完成处理，${deduplicatedSuggestions.length} 条建议待进一步评估`);
 
   // 发布 triage 完成事件
-  await emit('suggestions_triaged', {
+  await emit('suggestions_triaged', 'suggestion_triage', {
     processed_count: pendingSuggestions.length,
     deduplicated_count: deduplicatedSuggestions.length,
     rejected_count: pendingSuggestions.length - deduplicatedSuggestions.length
@@ -227,7 +229,10 @@ export async function getTopPrioritySuggestions(limit = 10) {
     LIMIT $1
   `, [limit]);
 
-  return result.rows;
+  return result.rows.map(row => ({
+    ...row,
+    priority_score: parseFloat(row.priority_score)
+  }));
 }
 
 /**
@@ -257,7 +262,7 @@ export async function updateSuggestionStatus(suggestionId, status, metadata = {}
   ]);
 
   // 发布状态更新事件
-  await emit('suggestion_status_updated', {
+  await emit('suggestion_status_updated', 'suggestion_triage', {
     suggestion_id: suggestionId,
     new_status: status,
     metadata
@@ -281,7 +286,7 @@ export async function cleanupExpiredSuggestions() {
   if (cleanupCount > 0) {
     console.log(`[Triage] 清理了 ${cleanupCount} 条过期建议`);
 
-    await emit('suggestions_cleaned', {
+    await emit('suggestions_cleaned', 'suggestion_triage', {
       cleanup_count: cleanupCount
     });
   }
