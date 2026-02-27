@@ -95,6 +95,9 @@ ${learningsList}
     prompt += `\n## NotebookLM 补充知识\n${notebookContext}\n`;
   }
 
+  // 检测是否包含隔离失败记录
+  const hasQuarantinePattern = learnings.some(l => l.category === 'quarantine_pattern');
+
   prompt += `
 ## 深度思考要求
 
@@ -103,7 +106,7 @@ ${learningsList}
 1. **模式发现**：这些知识之间有什么共同点或关联？是否揭示了某个系统性的规律？
 2. **关联分析**：与用户的 OKR/目标有什么关联？能帮助推进哪些关键结果？
 3. **可执行洞察**：基于分析，有什么具体可执行的建议？（在末尾加 [ACTION: 建议标题]）
-4. **风险或机会**：是否暗示了某些风险或未被发现的机会？
+4. **风险或机会**：是否暗示了某些风险或未被发现的机会？${hasQuarantinePattern ? '\n\n注意：其中含有隔离失败记录，请重点分析应如何避免同类失败，给出策略调整建议。' : ''}
 
 ## 输出格式
 用 [反刍洞察] 开头，300-500 字深度分析。
