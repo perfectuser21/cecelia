@@ -193,8 +193,8 @@ export const AGENTS = [
     name: '拆解审查 Vivian',
     description: 'OKR 拆解审查',
     layer: 'executor',
-    allowed_models: ['claude-haiku-4-5-20251001'],
-    recommended_model: 'claude-haiku-4-5-20251001',
+    allowed_models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
