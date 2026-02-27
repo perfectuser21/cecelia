@@ -1,10 +1,12 @@
 /**
- * 反刍回路（Rumination Loop）
+ * 反刍回路（Rumination Loop）— v2 深度思考
  *
- * 空闲时自动消化用户分享的知识，与 OKR 关联后写入 memory_stream，
- * 由 Desire System 自然消费产生洞察。
+ * 空闲时批量消化知识，用 Opus 做深度思考：
+ * - 批量取 N 条相似 learnings 一起分析（发现跨知识模式）
+ * - Prompt 要求模式发现 + 关联分析 + 可执行建议
+ * - 洞察写入 memory_stream，由 Desire System 自然消费
  *
- * 成本控制：每 tick ≤3 条，每日 ≤10 条，30 分钟冷却期
+ * 成本控制：每 tick ≤5 条，每日 ≤20 条，30 分钟冷却期
  */
 
 /* global console */
@@ -16,8 +18,8 @@ import { queryNotebook } from './notebook-adapter.js';
 import { createTask } from './actions.js';
 
 // ── 配置 ──────────────────────────────────────────────────
-export const DAILY_BUDGET = 10;
-export const MAX_PER_TICK = 3;
+export const DAILY_BUDGET = 20;
+export const MAX_PER_TICK = 5;
 export const COOLDOWN_MS = 30 * 60 * 1000; // 30 分钟
 
 // 运行时状态（进程内，午夜通过 hasBudget() 中日期对比自动重置）
@@ -68,15 +70,20 @@ function hasBudget() {
   return _dailyCount < DAILY_BUDGET;
 }
 
-// ── 反刍 Prompt ──────────────────────────────────────────
+// ── 反刍 Prompt（v2 深度思考）──────────────────────────────
 
-function buildRuminationPrompt(learning, memoryBlock, notebookContext) {
-  let prompt = `你是 Cecelia 的反刍模块。请消化以下用户分享的知识，产出 1-2 句简洁洞察。
+/**
+ * 构建批量反刍 Prompt（多条 learnings 一起深度分析）
+ */
+export function buildRuminationPrompt(learnings, memoryBlock, notebookContext) {
+  const learningsList = learnings.map((l, i) =>
+    `${i + 1}. 【${l.category || '未分类'}】${l.title}\n   ${(l.content || '（无详细内容）').slice(0, 300)}`
+  ).join('\n');
 
-## 用户分享的知识
-标题：${learning.title}
-内容：${learning.content || '（无详细内容）'}
-分类：${learning.category || '未分类'}
+  let prompt = `你是 Cecelia 的深度思考模块。请对以下 ${learnings.length} 条知识进行深度分析。
+
+## 待消化的知识
+${learningsList}
 `;
 
   if (memoryBlock) {
@@ -88,93 +95,100 @@ function buildRuminationPrompt(learning, memoryBlock, notebookContext) {
   }
 
   prompt += `
-## 要求
-1. 将这条知识与用户已有的 OKR/目标关联
-2. 产出 1-2 句洞察（格式：[反刍洞察] ...）
-3. 如果没有明显关联，说明知识的潜在价值
-4. 如果有可执行的建议，在末尾加 [ACTION: 建议标题]
-5. 简体中文回复`;
+## 深度思考要求
+
+请从以下角度分析（不是简单摘要，要有深度）：
+
+1. **模式发现**：这些知识之间有什么共同点或关联？是否揭示了某个系统性的规律？
+2. **关联分析**：与用户的 OKR/目标有什么关联？能帮助推进哪些关键结果？
+3. **可执行洞察**：基于分析，有什么具体可执行的建议？（在末尾加 [ACTION: 建议标题]）
+4. **风险或机会**：是否暗示了某些风险或未被发现的机会？
+
+## 输出格式
+用 [反刍洞察] 开头，300-500 字深度分析。
+如果有可执行建议，每个建议单独一行 [ACTION: 建议标题]。
+简体中文回复。`;
 
   return prompt;
 }
 
-// ── 消化核心逻辑（共享）──────────────────────────────────
+// ── 消化核心逻辑（v2 批量处理）──────────────────────────────
 
 /**
- * 消化一批 learnings（runRumination 和 runManualRumination 共用）
+ * 批量消化 learnings（v2: 一次 LLM 调用处理多条，发现跨知识模式）
  */
 async function digestLearnings(db, learnings) {
   const insights = [];
 
-  for (const learning of learnings) {
+  try {
+    // 1. 获取相关记忆上下文（用第一条 learning 的标题作为查询）
+    let memoryBlock = '';
     try {
-      // 1. 获取相关记忆上下文
-      let memoryBlock = '';
-      try {
-        const ctx = await buildMemoryContext({
-          query: learning.title,
-          mode: 'reflect',
-          tokenBudget: 500,
-          pool: db,
-        });
-        memoryBlock = ctx.block || '';
-      } catch {
-        // 记忆检索失败不影响反刍
+      const queryText = learnings.map(l => l.title).join(' ');
+      const ctx = await buildMemoryContext({
+        query: queryText.slice(0, 200),
+        mode: 'reflect',
+        tokenBudget: 500,
+        pool: db,
+      });
+      memoryBlock = ctx.block || '';
+    } catch {
+      // 记忆检索失败不影响反刍
+    }
+
+    // 2. 查询 NotebookLM（可选，降级安全）
+    let notebookContext = '';
+    try {
+      const nbResult = await queryNotebook(learnings[0].title);
+      if (nbResult.ok && nbResult.text) {
+        notebookContext = nbResult.text;
       }
+    } catch {
+      // NotebookLM 不可用，静默降级
+    }
 
-      // 2. 查询 NotebookLM（可选，降级安全）
-      let notebookContext = '';
-      try {
-        const nbResult = await queryNotebook(learning.title);
-        if (nbResult.ok && nbResult.text) {
-          notebookContext = nbResult.text;
-        }
-      } catch {
-        // NotebookLM 不可用，静默降级
-      }
+    // 3. 调用 LLM 生成深度洞察（一次调用处理所有 learnings）
+    const prompt = buildRuminationPrompt(learnings, memoryBlock, notebookContext);
+    const { text: insight } = await callLLM('rumination', prompt);
 
-      // 3. 调用 LLM 生成洞察
-      const prompt = buildRuminationPrompt(learning, memoryBlock, notebookContext);
-      const { text: insight } = await callLLM('rumination', prompt);
+    // 4. 写入 memory_stream
+    if (insight) {
+      await db.query(
+        `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+         VALUES ($1, 8, 'long', NOW() + INTERVAL '30 days')`,
+        [`[反刍洞察] ${insight.trim()}`]
+      );
+      insights.push(insight.trim());
 
-      // 4. 写入 memory_stream
-      if (insight) {
-        await db.query(
-          `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-           VALUES ($1, 7, 'long', NOW() + INTERVAL '30 days')`,
-          [`[反刍洞察] ${insight.trim()}`]
-        );
-        insights.push(insight.trim());
-
-        // 4.1 检测 actionable 洞察 → 自动创建 task
-        const actionMatch = insight.match(/\[ACTION:\s*(.+?)\]/);
-        if (actionMatch) {
-          try {
-            await createTask({
-              title: actionMatch[1],
-              description: `反刍洞察自动创建：${insight.trim()}`,
-              priority: 'P2',
-              task_type: 'research',
-              trigger_source: 'rumination',
-            });
-            console.log(`[rumination] actionable insight → task: ${actionMatch[1]}`);
-          } catch (taskErr) {
-            console.error('[rumination] create task from insight failed:', taskErr.message);
-          }
+      // 4.1 检测 actionable 洞察 → 自动创建 task（支持多个 [ACTION:] 标记）
+      const actionMatches = insight.matchAll(/\[ACTION:\s*(.+?)\]/g);
+      for (const match of actionMatches) {
+        try {
+          await createTask({
+            title: match[1],
+            description: `反刍洞察自动创建：${insight.trim().slice(0, 500)}`,
+            priority: 'P2',
+            task_type: 'research',
+            trigger_source: 'rumination',
+          });
+          console.log(`[rumination] actionable insight → task: ${match[1]}`);
+        } catch (taskErr) {
+          console.error('[rumination] create task from insight failed:', taskErr.message);
         }
       }
+    }
 
-      // 5. 标记已消化
+    // 5. 标记所有 learnings 已消化
+    for (const learning of learnings) {
       await db.query(
         'UPDATE learnings SET digested = true WHERE id = $1',
         [learning.id]
       );
-
-      _dailyCount++;
-    } catch (err) {
-      console.error(`[rumination] digest learning ${learning.id} failed:`, err.message);
-      // 单条失败不影响其他
     }
+
+    _dailyCount += learnings.length;
+  } catch (err) {
+    console.error(`[rumination] batch digest failed:`, err.message);
   }
 
   return insights;
@@ -212,7 +226,7 @@ export async function runRumination(dbPool) {
     return { skipped: 'system_busy', digested: 0, insights: [] };
   }
 
-  // 取未消化的知识（FIFO，最多 MAX_PER_TICK 条）
+  // 取未消化的知识（FIFO，最多 MAX_PER_TICK 条，批量一次处理）
   const remaining = DAILY_BUDGET - _dailyCount;
   const limit = Math.min(MAX_PER_TICK, remaining);
 
@@ -220,7 +234,7 @@ export async function runRumination(dbPool) {
   try {
     const { rows } = await db.query(
       `SELECT id, title, content, category FROM learnings
-       WHERE digested = false
+       WHERE digested = false AND (archived = false OR archived IS NULL)
        ORDER BY created_at ASC
        LIMIT $1`,
       [limit]
@@ -240,7 +254,7 @@ export async function runRumination(dbPool) {
   _lastRunAt = Date.now();
 
   return {
-    digested: insights.length,
+    digested: learnings.length,
     insights,
   };
 }
@@ -269,7 +283,7 @@ export async function runManualRumination(dbPool) {
   try {
     const { rows } = await db.query(
       `SELECT id, title, content, category FROM learnings
-       WHERE digested = false
+       WHERE digested = false AND (archived = false OR archived IS NULL)
        ORDER BY created_at ASC
        LIMIT $1`,
       [limit]
@@ -289,7 +303,7 @@ export async function runManualRumination(dbPool) {
   _lastRunAt = Date.now();
 
   return {
-    digested: insights.length,
+    digested: learnings.length,
     insights,
     manual: true,
   };

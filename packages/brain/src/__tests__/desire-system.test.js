@@ -92,6 +92,27 @@ describe('Layer 1: 感知层（Perception）', () => {
     expect(queueObs).toBeDefined();
     expect(queueObs.value).toBe(15);
   });
+
+  it('should detect task_milestone when completion rate >= 80%', async () => {
+    // Mock: 过去 7 天 10 个任务完成 8 个
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ completed: '2', failed: '1', queued: '0', in_progress: '0' }] }) // 信号1: 任务统计
+        .mockResolvedValueOnce({ rows: [] }) // 信号2: KR 进度
+        .mockResolvedValueOnce({ rows: [] }) // 信号3: last_feishu_at
+        .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0', completed_24h: '0' }] }) // 信号4: 空闲信号
+        .mockResolvedValueOnce({ rows: [] }) // 信号5: user_last_seen
+        .mockResolvedValueOnce({ rows: [{ cnt: '0' }] }) // 信号6: undigested
+        .mockResolvedValueOnce({ rows: [] }) // 信号7: 连续失败
+        .mockResolvedValueOnce({ rows: [{ completed: '8', total: '10' }] }) // 信号8: 里程碑：80%
+    };
+
+    const { runPerception } = await import('../desire/perception.js');
+    const observations = await runPerception(mockPool);
+    const milestone = observations.find(o => o.signal === 'task_milestone');
+    expect(milestone).toBeDefined();
+    expect(milestone.value.rate).toBeGreaterThanOrEqual(0.8);
+  });
 });
 
 // ============================================================
@@ -481,8 +502,8 @@ describe('D8: runDesireSystem 集成测试', () => {
 // ============================================================
 
 describe('D9: EXPECTED_SCHEMA_VERSION', () => {
-  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 080', async () => {
+  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 081', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('080');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('081');
   });
 });
