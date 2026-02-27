@@ -2,38 +2,36 @@
  * Tests for suggestion API endpoints
  */
 
+import { vi, describe, test, expect, beforeEach } from 'vitest';
 import request from 'supertest';
-import { jest } from '@jest/globals';
+import express from 'express';
 
 // Mock the modules since we're testing API routes
-jest.unstable_mockModule('../suggestion-triage.js', () => ({
-  createSuggestion: jest.fn(),
-  executeTriage: jest.fn(),
-  getTopPrioritySuggestions: jest.fn(),
-  updateSuggestionStatus: jest.fn(),
-  cleanupExpiredSuggestions: jest.fn(),
-  getTriageStats: jest.fn()
+vi.mock('../suggestion-triage.js', () => ({
+  createSuggestion: vi.fn(),
+  executeTriage: vi.fn(),
+  getTopPrioritySuggestions: vi.fn(),
+  updateSuggestionStatus: vi.fn(),
+  cleanupExpiredSuggestions: vi.fn(),
+  getTriageStats: vi.fn()
 }));
 
-jest.unstable_mockModule('../db.js', () => ({
+vi.mock('../db.js', () => ({
   default: {
-    query: jest.fn()
+    query: vi.fn()
   }
 }));
 
-const { default: pool } = await import('../db.js');
-const {
+import pool from '../db.js';
+import {
   createSuggestion,
   executeTriage,
   getTopPrioritySuggestions,
   updateSuggestionStatus,
   cleanupExpiredSuggestions,
   getTriageStats
-} = await import('../suggestion-triage.js');
-
-// 需要在导入 routes 之前设置 mock
-const { default: router } = await import('../routes.js');
-import express from 'express';
+} from '../suggestion-triage.js';
+import router from '../routes.js';
 
 const app = express();
 app.use(express.json());
@@ -41,7 +39,7 @@ app.use('/api/brain', router);
 
 describe('Suggestion API Endpoints', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('POST /api/brain/suggestions', () => {

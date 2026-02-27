@@ -2,51 +2,51 @@
  * Tests for suggestion integration with tick loop
  */
 
-import { jest } from '@jest/globals';
+import { vi, describe, test, expect, beforeAll, beforeEach } from 'vitest';
 
 // Mock suggestion-triage module
-jest.unstable_mockModule('../suggestion-triage.js', () => ({
-  executeTriage: jest.fn(),
-  cleanupExpiredSuggestions: jest.fn()
+vi.mock('../suggestion-triage.js', () => ({
+  executeTriage: vi.fn(),
+  cleanupExpiredSuggestions: vi.fn()
 }));
 
-const {
-  executeTriage,
-  cleanupExpiredSuggestions
-} = await import('../suggestion-triage.js');
-
 // Mock other dependencies to isolate tick logic
-jest.unstable_mockModule('../db.js', () => ({
+vi.mock('../db.js', () => ({
   default: {
-    query: jest.fn()
+    query: vi.fn()
   }
 }));
 
-jest.unstable_mockModule('../alertness/index.js', () => ({
-  evaluateAlertness: jest.fn().mockResolvedValue({ level: 1, score: 0.3 }),
+vi.mock('../alertness/index.js', () => ({
+  evaluateAlertness: vi.fn().mockResolvedValue({ level: 1, score: 0.3 }),
   ALERTNESS_LEVELS: { PANIC: 4, ALERT: 3 },
   LEVEL_NAMES: ['SLEEPING', 'CALM', 'AWARE', 'ALERT', 'PANIC']
 }));
 
-jest.unstable_mockModule('../thalamus.js', () => ({
-  processEvent: jest.fn().mockResolvedValue({ actions: [{ type: 'fallback_to_tick' }] }),
+vi.mock('../thalamus.js', () => ({
+  processEvent: vi.fn().mockResolvedValue({ actions: [{ type: 'fallback_to_tick' }] }),
   EVENT_TYPES: { TICK: 'tick' }
 }));
 
 // Mock other modules that are called during tick
-jest.unstable_mockModule('../executor.js', () => ({
-  cleanupOrphanProcesses: jest.fn(),
-  syncOrphanTasksOnStartup: jest.fn(),
-  getActiveProcessCount: jest.fn().mockReturnValue(0),
+vi.mock('../executor.js', () => ({
+  cleanupOrphanProcesses: vi.fn(),
+  syncOrphanTasksOnStartup: vi.fn(),
+  getActiveProcessCount: vi.fn().mockReturnValue(0),
   MAX_SEATS: 5,
   INTERACTIVE_RESERVE: 2
 }));
 
-jest.unstable_mockModule('../decision-executor.js', () => ({
-  expireStaleProposals: jest.fn().mockResolvedValue(0)
+vi.mock('../decision-executor.js', () => ({
+  expireStaleProposals: vi.fn().mockResolvedValue(0)
 }));
 
-const { default: pool } = await import('../db.js');
+import pool from '../db.js';
+import {
+  executeTriage,
+  cleanupExpiredSuggestions
+} from '../suggestion-triage.js';
+import { evaluateAlertness } from '../alertness/index.js';
 
 describe('Tick Suggestion Integration', () => {
   let executeTick;
@@ -58,7 +58,7 @@ describe('Tick Suggestion Integration', () => {
   });
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Default mock implementations
     pool.query.mockImplementation((query) => {
@@ -126,7 +126,7 @@ describe('Tick Suggestion Integration', () => {
     test('executes cleanup during periodic maintenance', async () => {
       // Mock cleanup interval elapsed (simulate 1+ hour passed)
       const mockDate = new Date();
-      jest.spyOn(Date, 'now')
+      vi.spyOn(Date, 'now')
         .mockReturnValueOnce(mockDate.getTime() - (60 * 60 * 1000 + 1)) // _lastCleanupTime
         .mockReturnValueOnce(mockDate.getTime()); // current time
 
@@ -144,7 +144,7 @@ describe('Tick Suggestion Integration', () => {
     test('does not execute cleanup when interval not elapsed', async () => {
       // Mock cleanup interval not elapsed
       const mockDate = new Date();
-      jest.spyOn(Date, 'now')
+      vi.spyOn(Date, 'now')
         .mockReturnValueOnce(mockDate.getTime() - 1000) // _lastCleanupTime (1 second ago)
         .mockReturnValueOnce(mockDate.getTime()); // current time
 
@@ -160,7 +160,7 @@ describe('Tick Suggestion Integration', () => {
 
   describe('Error handling and resilience', () => {
     test('handles triage errors gracefully', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       executeTriage.mockRejectedValue(new Error('Database connection failed'));
 
       const result = await executeTick();
@@ -175,11 +175,11 @@ describe('Tick Suggestion Integration', () => {
     });
 
     test('handles cleanup errors gracefully', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       // Mock cleanup interval elapsed
       const mockDate = new Date();
-      jest.spyOn(Date, 'now')
+      vi.spyOn(Date, 'now')
         .mockReturnValueOnce(mockDate.getTime() - (60 * 60 * 1000 + 1))
         .mockReturnValueOnce(mockDate.getTime());
 
@@ -204,7 +204,7 @@ describe('Tick Suggestion Integration', () => {
     });
 
     test('measures and logs processing time appropriately', async () => {
-      const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       const mockProcessedSuggestions = [{ id: '1' }, { id: '2' }];
       executeTriage.mockResolvedValue(mockProcessedSuggestions);
@@ -244,8 +244,6 @@ describe('Tick Suggestion Integration', () => {
     });
 
     test('suggestion processing does not interfere with alertness evaluation', async () => {
-      const { evaluateAlertness } = await import('../alertness/index.js');
-
       executeTriage.mockResolvedValue([{ id: '1' }]);
 
       const result = await executeTick();
