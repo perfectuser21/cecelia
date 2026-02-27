@@ -49,7 +49,7 @@ describe('Auto Learning Module', () => {
           rows: []
         }) // Duplicate check - not found
         .mockResolvedValueOnce({
-          rows: [{ id: 'learning-123', title: '任务完成：test-task' }]
+          rows: [{ id: 'learning-123', title: '任务完成：Fix bug' }]
         }); // Insert learning
 
       const result = await processExecutionAutoLearning(
@@ -60,7 +60,7 @@ describe('Auto Learning Module', () => {
 
       expect(result).toEqual({
         id: 'learning-123',
-        title: '任务完成：test-task'
+        title: '任务完成：Fix bug'
       });
 
       // Verify database calls
@@ -79,7 +79,7 @@ describe('Auto Learning Module', () => {
         3,
         expect.stringContaining('INSERT INTO learnings'),
         expect.arrayContaining([
-          '任务完成：test-task',
+          '任务完成：Fix bug',
           'execution_result',
           'task_completed_auto'
         ])
@@ -97,7 +97,7 @@ describe('Auto Learning Module', () => {
           rows: []
         })
         .mockResolvedValueOnce({
-          rows: [{ id: 'learning-failed', title: '任务失败：failed-task' }]
+          rows: [{ id: 'learning-failed', title: '任务失败：New feature' }]
         });
 
       const result = await processExecutionAutoLearning(
@@ -109,14 +109,14 @@ describe('Auto Learning Module', () => {
 
       expect(result).toEqual({
         id: 'learning-failed',
-        title: '任务失败：failed-task'
+        title: '任务失败：New feature'
       });
 
       expect(mockPool.query).toHaveBeenNthCalledWith(
         3,
         expect.stringContaining('INSERT INTO learnings'),
         expect.arrayContaining([
-          '任务失败：failed-task',
+          '任务失败：New feature',
           'failure_pattern',
           'task_failed_auto'
         ])

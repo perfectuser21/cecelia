@@ -128,14 +128,14 @@ function extractTaskSummary(result, maxLength = 200) {
 /**
  * 处理任务完成的自动学习
  */
-export async function handleTaskCompletedLearning(task_id, taskType, status, result, metadata = {}) {
+export async function handleTaskCompletedLearning(task_id, taskType, status, result, metadata = {}, taskTitle = null) {
   // 只处理有价值的任务类型
   if (!VALUABLE_TASK_TYPES.includes(taskType)) {
     console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);
     return null;
   }
 
-  const title = `任务完成：${task_id}`;
+  const title = `任务完成：${taskTitle || task_id}`;
   const summary = extractTaskSummary(result);
   const triggerSource = metadata.trigger_source || 'execution_callback';
 
@@ -159,14 +159,14 @@ export async function handleTaskCompletedLearning(task_id, taskType, status, res
 /**
  * 处理任务失败的自动学习
  */
-export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}) {
+export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}, taskTitle = null) {
   // 只处理有价值的任务类型
   if (!VALUABLE_TASK_TYPES.includes(taskType)) {
     console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);
     return null;
   }
 
-  const title = `任务失败：${task_id}`;
+  const title = `任务失败：${taskTitle || task_id}`;
   const errorSummary = extractTaskSummary(result);
 
   const content = `任务执行失败。重试次数：${retryCount}。错误摘要：${errorSummary}`;
@@ -211,10 +211,10 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
     };
 
     if (newStatus === 'completed') {
-      return await handleTaskCompletedLearning(task_id, taskType, newStatus, result, metadata);
+      return await handleTaskCompletedLearning(task_id, taskType, newStatus, result, metadata, taskTitle);
     } else if (newStatus === 'failed') {
       const retryCount = options.retry_count || options.iterations || 0;
-      return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata);
+      return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata, taskTitle);
     }
 
     console.log(`[auto-learning] Status ${newStatus} not handled for auto-learning`);
