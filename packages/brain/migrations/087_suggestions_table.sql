@@ -37,6 +37,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS trigger_suggestions_updated_at ON suggestions;
 CREATE TRIGGER trigger_suggestions_updated_at
     BEFORE UPDATE ON suggestions
     FOR EACH ROW
