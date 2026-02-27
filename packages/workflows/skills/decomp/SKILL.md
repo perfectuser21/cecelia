@@ -1,9 +1,11 @@
 ---
 name: decomp
-version: 1.0.0
+version: 1.2.0
 created: 2026-02-27
 updated: 2026-02-27
 changelog:
+  - 1.2.0: 加入 Stage 0.5 - 上次审查反馈读取（rejected 重拆时必须针对性修正）
+  - 1.1.0: 加入顶部 HARD RULE，补写入前自检，修复 Stage 4 幂等检查漏查 projects 表
   - 1.0.0: 从 /okr 重写。改名 decomp，对齐数据库结构，移除时间约束，加入战略对齐检查，KR→Project 数量不设上限
 description: |
   全链路 Project Management 拆解引擎。供秋米（autumnrice）角色在后台调用。
@@ -17,12 +19,59 @@ description: |
 
 # Decomp — 全链路 PM 拆解引擎
 
+## ⛔ HARD RULE（最高优先级，不可违反）
+
+**Decomp 绝对不创建 tasks 表的记录。**
+
+| 层级流向 | 写入表 | type 字段 |
+|---------|-------|-----------|
+| Global OKR → Area OKR | goals | area_okr |
+| Area OKR → KR | goals | kr |
+| KR → Project | projects | project |
+| Project → Initiative | projects | initiative |
+
+任何情况下，Decomp 的写入操作只涉及 `goals` 表和 `projects` 表。
+`tasks` 表由 `/dev` 在 Initiative 执行阶段写入，与 Decomp 完全无关。
+
+**写入任何记录前，必须自问并确认（不可跳过）：**
+1. 我要写的是 `goals` 表还是 `projects` 表？（绝不是 `tasks` 表）
+2. `type` 字段值是正确的（`kr` / `project` / `initiative`）吗？
+3. `parent_id` 或 `kr_id` 指向的是正确的父记录吗？
+
+如果发现自己在构造写入 `tasks` 表的 curl 命令——立刻停止，重新看此 HARD RULE。
+
+---
+
 ## 核心设计原则
 
 1. **野心驱动**：OKR 应该激进，70% 达成算成功。KR 不要因为"怕完不成"而定保守。
 2. **范围驱动，不设时间约束**：Project 和 Initiative 的大小由范围决定。KR 下 Project 数量按需生成，无上限。
 3. **战略对齐**：每层拆解前必须问"这能推动上层指标/目标吗？"
 4. **边做边拆**：只详细写下一步，后续保持 draft。
+
+---
+
+## Stage 0.5：上次审查反馈（重拆时必读，首次跳过）
+
+**Brain 在重新调用秋米时，会在 task payload 中传入上次 Vivian 的审查结果。如果存在 `findings`，必须在拆解前读取并针对性修正。**
+
+检查 task 描述/payload 是否包含类似以下内容：
+
+```
+上次 Decomp-Check 审查结果（rejected）：
+- 因果链：断裂 - "Project X 无法说明如何推动 KR 指标"
+- 命名质量：模糊 - "Initiative #2 '优化处理' 无法判断交付什么"
+- 覆盖度：遗漏 - "没有覆盖监控和告警"
+```
+
+**如果有 findings：**
+1. 逐条列出上次的问题
+2. 明确说明本次如何针对每个问题修正
+3. 再开始拆解
+
+**如果没有 findings（首次拆解）：** 跳过此 Stage，直接 Stage 0。
+
+这就是 validation loop 的"学习"环节——每次 rejected 都有具体的修正依据，不是盲目重拆。
 
 ---
 
@@ -228,6 +277,18 @@ curl -X POST localhost:5221/api/brain/projects \
 3. 不确定的先创建 exploratory Initiative
 4. **写入后触发 Decomp-Check**（自动审查）
 
+```bash
+curl -X POST localhost:5221/api/brain/projects \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "...",
+    "type": "initiative",
+    "parent_id": "<project_id>",
+    "description": "...",
+    "metadata": {"dod": [...], "task_type": "dev"}
+  }'
+```
+
 ---
 
 ## Stage 3：战略对齐检查（每层必做）
@@ -248,7 +309,7 @@ curl -X POST localhost:5221/api/brain/projects \
 ## Stage 4：幂等性检查（拆解前必做）
 
 ```bash
-# 检查是否已有子节点（防止重复拆解）
+# 检查是否已有子节点（防止重复拆解）——OKR 层级用 goals 表
 curl -s "localhost:5221/api/brain/goals?parent_id=<id>" | jq 'length'
 # > 0 → 停止，列出已有子节点
 
@@ -259,6 +320,14 @@ curl -s "localhost:5221/api/brain/goals?type=area_okr" | jq 'length'
 # KR 上限（每个 Objective 最多 5 个）
 curl -s "localhost:5221/api/brain/goals?parent_id=<okr_id>&type=kr" | jq 'length'
 # >= 5 → 停止
+
+# Project 幂等检查（KR → Project，查 projects 表，不是 goals 表）
+curl -s "localhost:5221/api/brain/projects?kr_id=<kr_id>&type=project" | jq 'length'
+# > 0 → 停止，列出已有 Project，不重复拆解
+
+# Initiative 幂等检查（Project → Initiative，查 projects 表）
+curl -s "localhost:5221/api/brain/projects?parent_id=<project_id>&type=initiative" | jq 'length'
+# > 0 → 停止，列出已有 Initiative，不重复拆解
 ```
 
 ---

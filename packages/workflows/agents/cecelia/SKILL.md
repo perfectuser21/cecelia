@@ -244,7 +244,7 @@ Cecelia: 3 个任务执行中，2 个已完成，1 个排队。
 
 | 员工 | Skill | 模型 | 职责 |
 |------|-------|------|------|
-| 秋米 | /okr | Opus | OKR 拆解专家 |
+| 秋米 | /decomp | Opus | OKR 拆解专家 |
 | repo-lead | /repo-lead | MiniMax | 部门主管 |
 | Caramel | /dev | Opus | 编程 |
 | Nobel | /nobel | Sonnet | N8N 管理 |
