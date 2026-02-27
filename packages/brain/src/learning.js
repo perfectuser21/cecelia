@@ -14,6 +14,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
+import { generateL0Summary } from './memory-utils.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -75,9 +76,10 @@ export async function recordLearning(analysis) {
       return existing.rows[0];
     }
 
+    const summary = generateL0Summary(`${title} ${content}`);
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8)
       RETURNING *
     `, [
       title,
@@ -87,6 +89,7 @@ export async function recordLearning(analysis) {
       JSON.stringify(strategyAdjustments),
       JSON.stringify({ task_id, confidence: analysis.confidence }),
       contentHash,
+      summary,
     ]);
 
     const learning = result.rows[0];
