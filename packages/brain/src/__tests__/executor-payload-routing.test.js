@@ -2,10 +2,10 @@
  * Test: executor.js getSkillForTaskType payload.decomposition 路由增强
  *
  * DoD 映射：
- * - payload.decomposition === 'true' (或 true) + task_type === 'dev' → /okr（OKR 拆解）
+ * - payload.decomposition === 'true' (或 true) + task_type === 'dev' → /decomp（OKR 拆解）
  * - payload.decomposition === 'exploratory' → /exploratory（探索性验证任务）
- * - payload.decomposition === 'okr' → /okr（OKR 拆解任务）
- * - payload.next_action === 'decompose' → /okr（继续拆解）
+ * - payload.decomposition === 'okr' → /decomp（OKR 拆解任务）
+ * - payload.next_action === 'decompose' → /decomp（继续拆解）
  * - payload.decomposition === 'known' → 原有 taskType 路由
  * - 无 payload → 向后兼容，原有 taskType 路由
  * - task_type: 'exploratory' → /exploratory（回归）
@@ -58,27 +58,27 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
     getSkillForTaskType = executor.getSkillForTaskType;
   });
 
-  // DoD-1: decomposition='true' 或 true + task_type=dev → /okr（OKR 拆解由秋米执行）
+  // DoD-1: decomposition='true' 或 true + task_type=dev → /decomp（OKR 拆解由秋米执行）
   it('payload.decomposition=true (boolean) + task_type=dev 应路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { decomposition: true });
-    expect(result).toBe('/okr');
+    expect(result).toBe('/decomp');
   });
 
   it('payload.decomposition="true" (string) + task_type=dev 应路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { decomposition: 'true' });
-    expect(result).toBe('/okr');
+    expect(result).toBe('/decomp');
   });
 
-  // DoD-3: payload.decomposition === 'okr' → /okr（OKR 拆解任务）
+  // DoD-3: payload.decomposition === 'okr' → /decomp（OKR 拆解任务）
   it('payload.decomposition=okr 应路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { decomposition: 'okr' });
-    expect(result).toBe('/okr');
+    expect(result).toBe('/decomp');
   });
 
-  // DoD-5: payload.next_action === 'decompose' → /okr（PR #370 回归）
+  // DoD-5: payload.next_action === 'decompose' → /decomp（PR #370 回归）
   it('payload.next_action=decompose 应路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { next_action: 'decompose' });
-    expect(result).toBe('/okr');
+    expect(result).toBe('/decomp');
   });
 
   // DoD-4: payload.decomposition === 'known' → 原有路由
@@ -121,11 +121,11 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
       decomposition: 'known',
       next_action: 'decompose'
     });
-    // decomposition='known' 不触发特判，next_action='decompose' → /okr
-    expect(result).toBe('/okr');
+    // decomposition='known' 不触发特判，next_action='decompose' → /decomp
+    expect(result).toBe('/decomp');
   });
 
-  // next_action !== 'decompose' → 不触发 /okr
+  // next_action !== 'decompose' → 不触发 /decomp
   it('payload.next_action 不是 decompose 时不路由到 /okr', () => {
     const result = getSkillForTaskType('dev', { next_action: 'continue' });
     expect(result).toBe('/dev');
