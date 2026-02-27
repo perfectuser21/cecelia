@@ -2,6 +2,7 @@
  * Progress Ledger 模块测试
  */
 
+import crypto from 'crypto';
 import pool from '../db.js';
 import {
   recordProgressStep,
@@ -12,14 +13,19 @@ import {
   getProgressAnomalies
 } from '../progress-ledger.js';
 
+// 生成UUID的辅助函数
+function generateUUID() {
+  return crypto.randomUUID();
+}
+
 // 测试数据库连接池
 let testTaskId, testRunId;
 
 describe('Progress Ledger', () => {
   beforeAll(async () => {
     // 确保测试数据库有必要的表
-    testTaskId = 'test-task-' + Math.random().toString(36).substr(2, 9);
-    testRunId = 'test-run-' + Math.random().toString(36).substr(2, 9);
+    testTaskId = generateUUID();
+    testRunId = generateUUID();
 
     // 创建测试用的 task 记录（如果 tasks 表存在）
     try {
@@ -174,7 +180,7 @@ describe('Progress Ledger', () => {
     });
 
     test('should return default values for non-existent task', async () => {
-      const nonExistentTaskId = 'non-existent-task-' + Date.now();
+      const nonExistentTaskId = generateUUID();
       const summary = await getTaskProgressSummary(nonExistentTaskId);
 
       expect(summary.totalSteps).toBe(0);
