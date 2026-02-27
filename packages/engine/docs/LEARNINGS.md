@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.14.0
+version: 1.15.0
 created: 2026-01-16
-updated: 2026-02-10
+updated: 2026-02-27
 changelog:
+  - 1.15.0: 添加 /dev skill 自修复经验（5 个已知问题 + CI 三连修复）
   - 1.14.0: 添加 OKR 三层拆解集成 PR Plans 经验（CI 系统化修复、版本同步、Feature Registry SSOT）
   - 1.13.0: Stop Hook sentinel 文件路径修复（.git 保护机制触发问题）
   - 1.12.0: 添加 /dev 反馈报告开发经验（4 维度分析、CI 旧测试问题）
@@ -24,6 +25,21 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+## 2026-02-27: /dev skill 自修复 (PR #42, v12.30.6)
+
+- **Bug 1 (P0)**: `SKILL.md` description 字段写的是版本更新日志而非触发描述，AI 无法知道何时触发 /dev。**解决方案**: 改为清晰的触发场景描述（"当用户需要开发新功能、修复 bug..."）。
+- **Bug 2 (P0)**: Step 10 Learning 在 `gh pr merge --delete-branch` 后仍尝试 `git push` 到已删除的远端功能分支（必然失败）。**解决方案**: 先 `git checkout $BASE_BRANCH`，再在 base branch 上提交并推送 Learning 记录。
+- **Bug 3 (P1)**: `worktree-manage.sh` create/cleanup 两处硬编码 `develop` 分支名，在 cecelia（单分支 main 模式）中报 `Not a valid object name: 'develop'`。**解决方案**: 改为动态检测（`git rev-parse --verify develop` 决定用 develop 还是 main）。
+- **Bug 4 (P1)**: `SKILL.md` 中残留大量废弃的历史说明（"不再有 p0/p1/p2 阶段"、"分支策略提 develop" 等），与实际规范不符。**解决方案**: 统一清理，分支策略对齐全局 main 单分支规范。
+- **Bug 5 (P1)**: 产物清单中有 `QA-DECISION.md` 和 `AUDIT-REPORT.md` 但步骤文件中无对应步骤，误导 AI 创建不必要的文件。**解决方案**: 从产物清单中删除这两项，添加实际产出的 Learning 记录。
+- **CI 三连修复**（本次发现的额外问题）:
+  - `.dod.md`（Brain 安全加固旧 DoD）未在 `.gitignore` 中，被意外 committed 到 main，`check-dod-mapping.cjs` 扫描后失败。**解决方案**: 归档到 `docs/archive/`，并在 `.gitignore` 中防护。
+  - `require-rci-update-if-p0p1.sh` 用 `git rev-parse --show-toplevel`（返回 monorepo root）定位 `detect-priority.cjs`，但实际在 `packages/engine/scripts/devgate/`。**解决方案**: 改用 `BASH_SOURCE[0]` 的目录定位同级脚本。
+  - Config Audit 要求修改 `regression-contract.yaml` 时 PR 标题加 `[CONFIG]` 标签。删远端分支重新 push 会关闭 PR，需重新创建（PR #41 → #42）。
+- **影响程度**: High — /dev 是所有开发任务的入口，这些 bug 直接影响工作流可靠性。
 
 ---
 
