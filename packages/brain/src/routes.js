@@ -1417,14 +1417,26 @@ router.get('/pending-actions/:id/versions', async (req, res) => {
       `SELECT context FROM pending_actions WHERE id = $1`,
       [id]
     );
-    const krId = current.rows[0]?.context?.kr_id;
-    if (!krId) return res.json({ success: true, versions: [] });
-    const versions = await pool.query(
-      `SELECT id, context, status, created_at FROM pending_actions
-       WHERE action_type = 'okr_decomp_review' AND context->>'kr_id' = $1
-       ORDER BY created_at ASC`,
-      [krId]
-    );
+    const ctx = current.rows[0]?.context || {};
+    // 优先用 kr_id，没有则用 kr_title 匹配同一 KR 的所有版本
+    let versions;
+    if (ctx.kr_id) {
+      versions = await pool.query(
+        `SELECT id, context, status, created_at FROM pending_actions
+         WHERE action_type = 'okr_decomp_review' AND context->>'kr_id' = $1
+         ORDER BY created_at ASC`,
+        [ctx.kr_id]
+      );
+    } else if (ctx.kr_title) {
+      versions = await pool.query(
+        `SELECT id, context, status, created_at FROM pending_actions
+         WHERE action_type = 'okr_decomp_review' AND context->>'kr_title' = $1
+         ORDER BY created_at ASC`,
+        [ctx.kr_title]
+      );
+    } else {
+      return res.json({ success: true, versions: [] });
+    }
     res.json({ success: true, versions: versions.rows });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get versions', details: err.message });
@@ -1652,7 +1664,15 @@ ${initiativeList}
 
     let redecompTriggered = false;
     if (isRedecomp) {
-      const krId = action.context?.kr_id;
+      // 优先用 context.kr_id，没有则用 kr_title 反查
+      let krId = action.context?.kr_id;
+      if (!krId && action.context?.kr_title) {
+        const krResult = await pool.query(
+          `SELECT id FROM goals WHERE title = $1 AND type = 'kr' LIMIT 1`,
+          [action.context.kr_title]
+        );
+        if (krResult.rows.length > 0) krId = krResult.rows[0].id;
+      }
       if (krId) {
         await pool.query(
           `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='kr'`,
@@ -1660,6 +1680,8 @@ ${initiativeList}
         );
         redecompTriggered = true;
         console.log(`[autumnrice/chat] redecomp triggered for KR: ${krId}`);
+      } else {
+        console.warn(`[autumnrice/chat] redecomp: could not find KR for action ${pending_action_id}`);
       }
     }
 
