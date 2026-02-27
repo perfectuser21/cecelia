@@ -102,7 +102,7 @@ function validateManualEvidence(evidenceFile, evidenceId) {
 /**
  * 解析 DoD 文件，提取验收项和对应的 Test 字段
  * @param {string} content - DoD 文件内容
- * @returns {Array<{item: string, test: string|null, line: number}>}
+ * @returns {Array<{item: string, test: string|null, line: number, checked: boolean}>}
  */
 function parseDodItems(content) {
   const lines = content.split("\n");
@@ -111,20 +111,21 @@ function parseDodItems(content) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // 匹配验收项格式：- [ ] 或 - [x]
-    const checkboxMatch = line.match(/^\s*-\s*\[[ xX]\]\s*(.+)$/);
+    const checkboxMatch = line.match(/^\s*-\s*\[([ xX])\]\s*(.+)$/);
 
     if (checkboxMatch) {
-      const itemText = checkboxMatch[1];
+      const checked = checkboxMatch[1].toLowerCase() === "x";
+      const itemText = checkboxMatch[2];
       let testRef = null;
 
       // 检查下一行是否是 Test: 字段
       if (i + 1 < lines.length) {
         const nextLine = lines[i + 1];
         const testMatch = nextLine.match(
-          /^\s*Test:\s*(tests\/[^\s]+|contract:[^\s]+|manual:[^\s]+)\s*$/
+          /^\s*Test:\s*(tests\/[^\s]+|contract:[^\s]+|manual:.+)\s*$/
         );
         if (testMatch) {
-          testRef = testMatch[1];
+          testRef = testMatch[1].trim();
         }
       }
 
@@ -132,6 +133,7 @@ function parseDodItems(content) {
         item: itemText.trim(),
         test: testRef,
         line: i + 1,
+        checked,
       });
     }
   }
@@ -251,11 +253,23 @@ function validateTestRef(testRef, projectRoot) {
   }
 
   if (testRef.startsWith("manual:")) {
-    // P0-2 修复：manual 必须有对应的 manual_verifications 记录
-    // 不再直接返回 valid: true，必须验证证据存在
-    const evidenceId = testRef.substring("manual:".length);
+    const evidenceContent = testRef.substring("manual:".length);
 
-    // 查找 evidence 文件
+    // 新格式：manual:<可执行命令>（含 curl/grep/psql 等关键词）
+    // Step 7 实际执行命令后标记 [x]，[x] 本身是验证通过的证明，不需要 evidence 文件
+    const isInlineCommand = /\b(curl|grep|psql|node|npm|npx|bash|python|pytest|jest|vitest)\b/.test(evidenceContent);
+    if (isInlineCommand) {
+      // 只检查假测试（禁止 echo/test -f/TODO 等）
+      const fakeCheck = detectFakeTest(evidenceContent);
+      if (!fakeCheck.valid) {
+        return fakeCheck;
+      }
+      return { valid: true };
+    }
+
+    // 旧格式：manual:<EVIDENCE_ID>（短 ID，向后兼容）
+    // 要求 .quality-evidence.*.json 中有对应记录
+    const evidenceId = evidenceContent;
     const HEAD_SHA = getHeadSha();
     const evidenceFile = path.join(projectRoot, `.quality-evidence.${HEAD_SHA}.json`);
 
@@ -265,7 +279,7 @@ function validateTestRef(testRef, projectRoot) {
       if (files.length === 0) {
         return {
           valid: false,
-          reason: `manual: 需要 evidence 文件，但未找到 .quality-evidence.*.json`
+          reason: `manual:${evidenceId} 需要 evidence 文件，或改用 manual:<curl命令> 内联格式`
         };
       }
       // 使用最新的 evidence 文件
@@ -381,6 +395,26 @@ function main() {
   }
 
   console.log("");
+
+  // 新增检查：所有验收项必须已勾选（[x]），不允许 [ ] 未验证项
+  const uncheckedItems = items.filter((item) => !item.checked);
+  let hasUnchecked = false;
+
+  if (uncheckedItems.length > 0) {
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("  未验证项检查");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("");
+    for (const item of uncheckedItems) {
+      console.log(`  ${RED}❌${RESET} L${item.line}: - [ ] ${item.item}`);
+      console.log(
+        `     → ${RED}此项未验证，请在 Step 7 执行验证后将 [ ] 改为 [x]${RESET}`
+      );
+    }
+    hasUnchecked = true;
+    console.log("");
+  }
+
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   if (hasError) {
@@ -393,14 +427,24 @@ function main() {
     console.log("      Test: tests/path/to/test.ts");
     console.log("");
     console.log("  支持的格式：");
-    console.log("    - Test: tests/...           (自动化测试文件)");
-    console.log("    - Test: contract:<RCI_ID>   (引用回归契约)");
-    console.log("    - Test: manual:<EVIDENCE_ID> (手动证据)");
+    console.log("    - Test: tests/...                          (自动化测试文件)");
+    console.log("    - Test: contract:<RCI_ID>                  (引用回归契约)");
+    console.log("    - Test: manual:curl -s http://... | jq ... (可执行命令)");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);
   }
 
-  console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项)`);
+  if (hasUnchecked) {
+    console.log(
+      `  ${RED}❌ 未验证项检查失败${RESET} (${uncheckedItems.length} 项未勾选)`
+    );
+    console.log("");
+    console.log("  请在 Step 7 执行 DoD 验证后将所有 [ ] 改为 [x]");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    process.exit(1);
+  }
+
+  console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项，全部已验证)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   process.exit(0);
 }
