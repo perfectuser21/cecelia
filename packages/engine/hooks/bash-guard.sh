@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Bash Guard Hook - 凭据泄露 + HK 部署防护
-# 只拦两类高确定性风险，不做分支保护（交给 Write/Edit Hook + GitHub 远端）
+# Bash Guard Hook - 凭据泄露 + 代码写入保护 + HK 部署防护
 #
 # 性能模型：
-#   - 99% 的命令：2 次字符串匹配 (~2ms) → 放行
-#   - 命中 HK 部署时：才跑 git 检查 (~200ms)
+#   - 99% 的命令：3 次字符串匹配 (~3ms) → 放行
+#   - 命中代码写入时：才跑 git branch 检查 (~50ms)
+#   - 命中 HK 部署时：才跑 git 三连检 (~200ms)
 
 set -euo pipefail
 
@@ -86,6 +86,58 @@ if echo "$CMD" | grep -qF ".credentials/"; then
         echo "  1. source ~/.credentials/<service>.env 加载环境变量" >&2
         echo "  2. 代码中使用 process.env.XXX 引用" >&2
         echo "  3. 使用 /credentials skill 管理凭据" >&2
+        echo "" >&2
+        exit 2
+    fi
+fi
+
+# ─── 规则 3: Bash 写代码文件检测（~3ms）──────────────────────
+# 拦截 Bash 工具对代码文件的直接写入（与 branch-protect.sh 的 Write/Edit 保护对称）
+# 放行条件：已在 cp-*/feature/* 分支（/dev 工作流中）或目标是 /tmp/ 路径
+CODE_EXT_PATTERN='\.(js|jsx|ts|tsx|py|go|rs|java|rb|php|swift|kt|c|cpp|h|hpp|sh|bash|mjs|cjs)([[:space:]]|["\x27]|;|$|&&|\|\|)'
+BASH_WRITES_CODE=false
+
+# 模式 1: 重定向写入 (> file.ts 或 >> file.ts)
+# 匹配形如: echo/printf/cat/anything > file.ext 或 >> file.ext
+if echo "$CMD" | grep -Eq ">>?[[:space:]]*['\"]?[^'\"\n[:space:]>]*$CODE_EXT_PATTERN"; then
+    # 排除 /tmp/ 路径
+    if ! echo "$CMD" | grep -Eq ">>?[[:space:]]*/tmp/"; then
+        BASH_WRITES_CODE=true
+    fi
+fi
+
+# 模式 2: sed -i 原地修改代码文件
+if [[ "$BASH_WRITES_CODE" == "false" ]]; then
+    if echo "$CMD" | grep -qE '\bsed\b[^|]*-[iI]' && \
+       echo "$CMD" | grep -Eq "$CODE_EXT_PATTERN"; then
+        BASH_WRITES_CODE=true
+    fi
+fi
+
+# 模式 3: | tee 写入代码文件
+if [[ "$BASH_WRITES_CODE" == "false" ]]; then
+    if echo "$CMD" | grep -Eq "\|[[:space:]]*tee[[:space:]]+['\"]?[^'\"\n[:space:]]*$CODE_EXT_PATTERN"; then
+        BASH_WRITES_CODE=true
+    fi
+fi
+
+if [[ "$BASH_WRITES_CODE" == "true" ]]; then
+    # 只在非功能分支时拦截（cp-* 和 feature/* 已在 /dev 工作流中）
+    CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    # 不在 git 仓库或已在功能分支 → 放行
+    if [[ -z "$CURRENT_BRANCH" ]] || [[ "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
+        : # 放行
+    else
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] Bash 直接写代码文件被拦截" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "当前分支: $CURRENT_BRANCH" >&2
+        echo "禁止在 '$CURRENT_BRANCH' 分支用 Bash 直接写代码文件。" >&2
+        echo "代码变更必须在功能分支（cp-* / feature/*）中进行。" >&2
+        echo "" >&2
+        echo "[SKILL_REQUIRED: dev]" >&2
         echo "" >&2
         exit 2
     fi
