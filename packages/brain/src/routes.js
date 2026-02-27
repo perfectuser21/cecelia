@@ -1597,8 +1597,9 @@ router.post('/autumnrice/chat', async (req, res) => {
       ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
       : '  （暂无 Initiative）';
 
+    // 只取前 1500 字符，避免 prompt 过长导致超时
     const decompSkillBlock = _decompSkillContent
-      ? `# 你的核心技能（/decomp Skill）\n\n${_decompSkillContent}\n\n---\n\n`
+      ? `# 你的核心技能（/decomp Skill，节选）\n\n${_decompSkillContent.slice(0, 1500)}...\n\n---\n\n`
       : '';
 
     const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。上面是你的 /decomp 技能全文。
@@ -1641,11 +1642,12 @@ ${initiativeList}
 
     const fullPrompt = `${systemPrompt}${historyBlock}\n## 用户最新消息\n${message.trim()}\n\n请回复用户（直接输出回复内容，不要输出"秋米："前缀）：`;
 
-    // 调用 LLM（秋米使用 claude-sonnet-4-6）
+    // 调用 LLM（秋米使用 MiniMax 直连 API，避免通过 bridge 启动无头进程）
     const { text: reply } = await callLLM('autumnrice', fullPrompt, {
-      model: 'claude-sonnet-4-6',
+      model: 'MiniMax-M2.5-highspeed',
+      provider: 'minimax',
       timeout: 30000,
-      maxTokens: 512,
+      maxTokens: 800,
     });
 
     const now = new Date().toISOString();
