@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.3.0
+version: 3.4.0
 created: 2026-02-27
 updated: 2026-02-27
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.3.0: 从 feature-registry.yml 自动生成
+  - 3.4.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -43,7 +43,7 @@ changelog:
 会话结束 → 检测 .dev-mode → 检查完成条件 → exit 2 (继续) | exit 0 (结束)
 ```
 
-**RCI 覆盖**: H7-001,H7-002,H7-003,H7-004,H7-006,H7-007,H7-008,W6-006
+**RCI 覆盖**: H7-001,H7-002,H7-004,H7-006,H7-007,H7-008,W6-006
 
 ---
 
@@ -294,24 +294,7 @@ rsync/scp + HK 检测 (~1ms) → 未命中 → 放行 | 命中 HK → git 三连
 
 ---
 
-## GP-019: OKR Skill (S1)
-
-**Feature**: S1 - OKR Skill
-**Priority**: P2
-
-### Golden Path
-
-```
-/okr 调用 → 分析 KR → 生成 Features/Tasks → validate-okr.py（形式 40 分）→
-AI 自评内容质量（60 分）→ Validation Loop（< 90 分时自动改进）→
-stop-okr.sh（10 层防作弊检查）→ 通过（total >= 90）
-```
-
-**RCI 覆盖**: S1-001,S1-002,S1-003
-
----
-
-## GP-020: PRD/DoD Validation Loop (S2)
+## GP-019: PRD/DoD Validation Loop (S2)
 
 **Feature**: S2 - PRD/DoD Validation Loop
 **Priority**: P1
@@ -328,6 +311,39 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 
 ---
 
+## GP-020: Decomp Skill (S3)
+
+**Feature**: S3 - Decomp Skill
+**Priority**: P1
+
+### Golden Path
+
+```
+秋米被调用 → 读取 /decomp → 三维矩阵识别层级 →
+按五层模板拆解 → 战略对齐检查 → 写入数据库 →
+OKR层: status=reviewing（等人工确认）
+KR以下: 触发 Decomp-Check 审查
+```
+
+---
+
+## GP-021: Decomp-Check Skill (S4)
+
+**Feature**: S4 - Decomp-Check Skill
+**Priority**: P1
+
+### Golden Path
+
+```
+Vivian 被调用 → 读取 /decomp-check → 按层级选审查标准 →
+检查因果链/覆盖度/命名/战略对齐 →
+approved: Brain 继续流程
+needs_revision: 秋米修正
+rejected: Brain 打回重拆
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -340,5 +356,5 @@ Loop until >= 90 → anti-cheat-*.sh 验证 → 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.3.0
+**版本**: 3.4.0
 **生成时间**: 2026-02-27

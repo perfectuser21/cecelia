@@ -6,7 +6,7 @@
 #
 # 支持的模式：
 # - .dev-mode     → stop-dev.sh    (/dev 工作流)
-# - .okr-mode     → stop-okr.sh    (/okr 拆解流程)
+# - .decomp-mode  → stop-decomp.sh (/decomp 拆解流程)
 # - .quality-mode → stop-quality.sh (/quality 质检流程) [将来]
 #
 # 已移除：
@@ -29,9 +29,9 @@ if [[ -f "$PROJECT_ROOT/.dev-mode" ]]; then
     exit $?
 fi
 
-# ===== 检查 .okr-mode → 调用 stop-okr.sh =====
-if [[ -f "$PROJECT_ROOT/.okr-mode" ]]; then
-    bash "$SCRIPT_DIR/stop-okr.sh"
+# ===== 检查 .decomp-mode → 调用 stop-decomp.sh =====
+if [[ -f "$PROJECT_ROOT/.decomp-mode" ]]; then
+    bash "$SCRIPT_DIR/stop-decomp.sh"
     exit $?
 fi
 

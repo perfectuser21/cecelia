@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.3.0"
+version: "3.4.0"
 updated: "2026-02-27"
 changelog:
+  - 3.4.0: v12.32.0 - 清理 /okr 残留，对齐 /decomp 命名（删除 S1 OKR Skill feature entry + stop-okr.sh → stop-decomp.sh + .okr-mode → .decomp-mode + 删除 skills/okr/ 目录 + regression-contract H7-003/S1-001~S1-005 清理）
   - 3.3.0: v12.30.10 - SKILL.md 无头模式描述修正（对齐 stop.sh v13.1.0 实际行为，删除过时的"外部 while 循环"说法）
   - 3.2.0: v12.30.9 - stop.sh 路由器删除 CECELIA_HEADLESS 绕过（Bug 修复：无头模式与有头模式走同一套状态机，H7-014 RCI 新增）
   - 3.1.0: v12.30.8 - bash-guard.sh Rule 3（Bash 工具写代码文件检测：redirect/sed-i/tee，main 分支拦截，cp-*/feature/* 放行）
@@ -179,15 +180,15 @@ platform_features:
     updated: "2026-02-23"
     description: |
       Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
-      - 路由器：stop.sh（~46 lines）检测 .dev-mode/.okr-mode 等，调用对应 handler
+      - 路由器：stop.sh（~46 lines）检测 .dev-mode/.decomp-mode 等，调用对应 handler
       - stop-dev.sh：/dev 工作流完成条件检查（PR 创建 + CI 通过 + PR 合并）
-      - stop-okr.sh：/okr 工作流完成条件检查（Feature + Task + PRD + DoD + KR 状态）
+      - stop-decomp.sh：/decomp 工作流完成条件检查（output.json + DB 写入）
       - 职责分离：路由器只负责分发，具体逻辑在 handler 中
       - 写死逻辑：有 .dev-mode 时，任何情况（包括 headless、锁失败）都必须 exit 2，只有真正完成才 exit 0
+      v12.32.0: 清理 /okr 残留 - stop-okr.sh → stop-decomp.sh，.okr-mode → .decomp-mode，删除 skills/okr/
       v12.30.3: 修复泄漏路径 - .dev-lock 丢失但 .dev-mode 存在时，先调 force_cleanup_worktree() 再删 .dev-mode，防止孤立 worktree（W6-006）
       v12.17.1: 双钥匙状态机 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险），修复 .dev-mode 创建失败/被删除导致会话退出的漏洞，Step 3 改用 Bash 原子写入，cleanup.sh 不删除状态文件
       v12.11.1: 写死逻辑修复 - 删除 headless 模式的 exit 0 旁路 + 锁失败返回 exit 2（不是 exit 0）+ 更新注释
-      v12.9.0: stop-okr.sh 完整实现 - 5 个完成条件检查（Feature/Task/PRD/DoD/KR 状态）+ 测试脚本 + 文档格式修正
       v12.8.0: 重构为路由器架构（v13.0.0）- 从单一 352 lines 文件拆分为路由器+handlers，支持多 Skill 扩展
       v12.7.1: 修复被绕过问题 - 删除"11步全部done"提前退出逻辑（line 108-136），步骤状态只用于进度展示，流程控制只依赖实际 PR/CI/Merge 状态
       v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal (/dev/pts/N) 隔离
@@ -218,7 +219,6 @@ platform_features:
     rcis:
       - H7-001  # .dev-mode 检测
       - H7-002  # 完成条件检查
-      - H7-003  # stop-okr.sh 完成条件检查
       - H7-004  # exit 2 阻止会话结束
       - H7-006  # session_id 验证
       - H7-007  # 共享锁工具库原子操作
@@ -974,65 +974,6 @@ product_features:
   # 删除于 2026-02-06，参见 PR #xxx
 
   # --------------------------------------------------------------------------
-  # S1: OKR Skill - OKR 拆解工具
-  # --------------------------------------------------------------------------
-  - id: S1
-    name: OKR Skill
-    status: Committed
-    priority: P2
-    version: "7.0.0"
-    updated: "2026-02-08"
-    description: |
-      OKR 拆解工具 - 从 Key Result 拆解到 Feature 和 Task
-      v7.0.0: 加入 Validation Loop 和防作弊机制
-
-      核心机制:
-      - Validation Loop: 自动循环改进，直到质量 >= 90 分
-      - Anti-Cheat: 10 层防作弊检查（hash 验证、git diff、分数计算等）
-      - Testing: 31 种攻击场景，100% 拦截率
-
-    entrypoints:
-      - type: skill
-        file: skills/okr/SKILL.md
-        trigger: "/okr"
-      - type: script
-        file: skills/okr/scripts/validate-okr.py
-        description: "形式验证（40 分）+ SHA256 hash 计算"
-      - type: hook
-        event: Stop
-        file: hooks/stop-okr.sh
-        description: "10 层防作弊检查"
-
-    golden_path: |
-      /okr 调用 → 分析 KR → 生成 Features/Tasks → validate-okr.py（形式 40 分）→
-      AI 自评内容质量（60 分）→ Validation Loop（< 90 分时自动改进）→
-      stop-okr.sh（10 层防作弊检查）→ 通过（total >= 90）
-
-    minimal_paths:
-      - "基本拆解: /okr → 生成 Features → 验证通过"
-      - "质量循环: 初始 80 分 → 改进 → 验证 → 92 分通过"
-      - "防作弊: 改分不改内容 → hash 不匹配 → exit 2"
-
-    tests:
-      - type: auto
-        file: tests/okr/test-validate-okr.sh
-        coverage: S1-002
-      - type: auto
-        file: tests/okr/test-stop-okr.sh
-        coverage: S1-003
-      - type: auto
-        file: tests/okr/test-cheating-prevention.sh
-        coverage: S1-003
-      - type: auto
-        file: tests/okr/run-all-tests.sh
-        description: "完整测试套件"
-
-    rcis:
-      - S1-001  # OKR Skill 基本功能
-      - S1-002  # Validation Loop
-      - S1-003  # Anti-Cheat 机制
-
-  # --------------------------------------------------------------------------
   # S2: PRD/DoD Validation Loop - /dev 文档质量保障
   # --------------------------------------------------------------------------
   - id: S2
@@ -1095,9 +1036,15 @@ product_features:
       - S2-003  # Anti-Cheat 机制
 
 
-  decomp-skill:
-    version: 1.0.0
-    status: stable
+  # --------------------------------------------------------------------------
+  # S3: Decomp Skill - 全链路 PM 拆解引擎
+  # --------------------------------------------------------------------------
+  - id: S3
+    name: Decomp Skill
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-02-27"
     description: |
       全链路 PM 拆解引擎 - 从 OKR 拆解到 Initiative
       供秋米（autumnrice）角色后台调用。
@@ -1115,11 +1062,20 @@ product_features:
       OKR层: status=reviewing（等人工确认）
       KR以下: 触发 Decomp-Check 审查
 
+    minimal_paths:
+      - "基本拆解: 秋米 → /decomp → 生成层级结构 → 写入 DB"
+
     rcis: []
 
-  decomp-check-skill:
-    version: 1.0.0
-    status: stable
+  # --------------------------------------------------------------------------
+  # S4: Decomp-Check Skill - PM 拆解质检引擎
+  # --------------------------------------------------------------------------
+  - id: S4
+    name: Decomp-Check Skill
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-02-27"
     description: |
       PM 拆解质检引擎 - 审查 /decomp 产出质量
       供 Vivian 角色调用，使用 Sonnet 模型。
@@ -1138,5 +1094,9 @@ product_features:
       approved: Brain 继续流程
       needs_revision: 秋米修正
       rejected: Brain 打回重拆
+
+    minimal_paths:
+      - "质检通过: Vivian → /decomp-check → approved"
+      - "质检驳回: Vivian → /decomp-check → rejected → 秋米重拆"
 
     rcis: []
