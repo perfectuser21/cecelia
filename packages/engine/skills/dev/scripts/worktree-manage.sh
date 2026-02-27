@@ -133,7 +133,12 @@ cmd_create() {
         if [[ -n "$saved_base" ]]; then
             base_branch="$saved_base"
         else
-            base_branch="develop"
+            # 动态检测：有 develop 用 develop，否则用 main
+            if git rev-parse --verify develop &>/dev/null 2>&1; then
+                base_branch="develop"
+            else
+                base_branch="main"
+            fi
         fi
     fi
 
@@ -329,7 +334,14 @@ cmd_cleanup() {
         [[ "$path" == "$main_wt" ]] && continue
 
         # 检查分支是否已合并
-        if git branch --merged develop 2>/dev/null | grep -q "$branch"; then
+        # 动态检测 base branch（有 develop 用 develop，否则 main）
+        local cleanup_base
+        if git rev-parse --verify develop &>/dev/null 2>&1; then
+            cleanup_base="develop"
+        else
+            cleanup_base="main"
+        fi
+        if git branch --merged "$cleanup_base" 2>/dev/null | grep -q "$branch"; then
             echo "  移除已合并的 worktree: $path ($branch)"
             git worktree remove "$path" --force 2>/dev/null || true
             ((cleaned++))

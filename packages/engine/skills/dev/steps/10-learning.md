@@ -81,12 +81,23 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 2. **追加到对应的 LEARNINGS.md**
 
-3. **提交 Learning**
+3. **提交 Learning（注意：PR 已合并分支已删，必须推到 base branch）**
    ```bash
+   # 读取 base branch（Step 3 保存在 git config）
+   BASE_BRANCH=$(git config branch."$BRANCH_NAME".base-branch 2>/dev/null || echo "main")
+
+   # 切到 base branch 并拉取最新
+   git checkout "$BASE_BRANCH"
+   git pull origin "$BASE_BRANCH"
+
+   # 编辑 LEARNINGS.md 后提交
    git add docs/LEARNINGS.md
-   git commit -m "docs: 记录 <任务> 的开发经验"
-   git push
+   git commit -m "docs: 记录 <任务简述> 的开发经验"
+   git push origin "$BASE_BRANCH"
    ```
+
+   **原因**：Step 9 合并 PR 时用了 `--delete-branch`，远端功能分支已不存在。
+   Learning 是项目知识积累，直接进 main 不需要走 PR 流程。
 
 ---
 
@@ -183,7 +194,8 @@ if [[ -n "$task_id" ]]; then
     # 确保反馈报告已生成
     if [[ ! -f ".dev-feedback-report.json" ]]; then
         echo "⚠️  反馈报告不存在，正在生成..."
-        bash skills/dev/scripts/generate-feedback-report.sh "$BRANCH_NAME" develop
+        BASE_BRANCH=$(git config branch."$BRANCH_NAME".base-branch 2>/dev/null || echo "main")
+        bash skills/dev/scripts/generate-feedback-report.sh "$BRANCH_NAME" "$BASE_BRANCH"
     fi
 
     # 上传反馈
