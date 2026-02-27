@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-02-27] Initiative 执行循环架构设计 (PR #93, Brain 1.122.0)
+- **分布式指挥官模式**: 没有中心化的"执行指挥官"。/decomp session 每次被调用时自己判断"是否完成，下一步做什么"，Brain L0 只负责机械调度（发现 queued 任务就 dispatch）
+- **信号 vs 实际写入的区别**: Check B 原本只生成 `needs_task` 信号但无人消费，是典型的"生产者写了但没有消费者"bug。修复关键：直接在产生信号的地方写入 tasks 表，消除中间层
+- **幂等性保护模式**: 任何自动创建任务的代码都需要幂等检查（查 queued/in_progress 任务是否已存在），否则 tick 每 5 分钟就会重复创建
+- **两 Phase 同一 Skill 的设计模式**: /decomp 同时承担 Phase 1（OKR 拆解，写 goals/projects）和 Phase 2（initiative_plan，写 tasks），用 task_type 区分模式，HARD RULE 明确标注每个 Phase 的写入权限边界
+
 ### [2026-02-27] OKR 拆解确认门 bug 修复 (PR #79, Brain 1.118.1)
 - **作用域 bug 模式**: `const x = ...` 在 if 块内声明，try/catch 在 if 块外引用 → ReferenceError，被 catch 静默吞掉。这类 bug 只能通过容器日志 `catch error message` 发现，测试难以覆盖
 - **非阻塞 catch 的危险性**: `try { ... } catch (err) { console.error(...) }` 会把逻辑错误转变为静默失败。重要功能（如创建 pending_action）被 catch 包裹时，测试必须 spy 该代码路径确认执行
