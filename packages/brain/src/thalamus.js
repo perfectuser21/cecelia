@@ -208,7 +208,7 @@ const ACTION_WHITELIST = {
   'propose_milestone_review': { dangerous: true, description: 'Initiative 完成验收' },
   'heartbeat_finding': { dangerous: true, description: '巡检发现异常' },
 
-  // 扩展操作 v1.120.0
+  // 扩展操作 v1.121.0
   'reschedule_task': { dangerous: false, description: '重新安排任务时间' },
   'aggregate_tasks': { dangerous: false, description: '聚合相似任务' },
   'merge_tasks': { dangerous: false, description: '合并可合并的任务' },
@@ -937,7 +937,7 @@ function quickRoute(event) {
     return null;
   }
 
-  // 扩展快速路由场景 v1.120.0
+  // 扩展快速路由场景 v1.121.0
 
   // 任务重新安排：简单调度
   if (event.type === EVENT_TYPES.TASK_RESCHEDULED) {
