@@ -137,7 +137,7 @@ describe('executor OKR 拆解 PRD 模板 - KR 专属 Project', () => {
       });
       const prompt = await preparePrompt(task);
 
-      expect(prompt).toContain('/okr');
+      expect(prompt).toContain('/decomp');
       expect(prompt).toContain('继续拆解');
       expect(prompt).toContain('init-001');
     });
