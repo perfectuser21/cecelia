@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.5.0"
-updated: "2026-02-27"
+version: "3.6.0"
+updated: "2026-02-28"
 changelog:
+  - 3.6.0: v12.32.2 - Step 10 Learning 加入 MEMORY.md SSOT 更新规则（防止版本漂移）
   - 3.5.0: v12.32.1 - fix stop-dev.sh force_cleanup_worktree Bug（改用子 shell cd 到 main_wt 再执行 git worktree remove，绕过 git 禁止删除当前 CWD 所在 worktree 的限制，彻底解决 worktree 残留问题）
   - 3.4.0: v12.32.0 - 清理 /okr 残留，对齐 /decomp 命名（删除 S1 OKR Skill feature entry + stop-okr.sh → stop-decomp.sh + .okr-mode → .decomp-mode + 删除 skills/okr/ 目录 + regression-contract H7-003/S1-001~S1-005 清理）
   - 3.3.0: v12.30.10 - SKILL.md 无头模式描述修正（对齐 stop.sh v13.1.0 实际行为，删除过时的"外部 while 循环"说法）
