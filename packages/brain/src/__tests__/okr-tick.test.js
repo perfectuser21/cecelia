@@ -3,8 +3,49 @@
  * Tests for OKR state machine functionality
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock db.js
+vi.mock('../db.js', () => ({
+  default: {
+    query: vi.fn(() => Promise.resolve({ rows: [] })),
+  },
+}));
+
+// Mock event-bus.js
+vi.mock('../event-bus.js', () => ({
+  emit: vi.fn(() => Promise.resolve()),
+}));
+
+// Mock actions.js
+vi.mock('../actions.js', () => ({
+  createTask: vi.fn(() => Promise.resolve({ task: { id: 'task-123' }, deduplicated: false })),
+}));
+
+// Mock slot-allocator.js (used via dynamic import in triggerPlannerForGoal)
+vi.mock('../slot-allocator.js', () => ({
+  calculateSlotBudget: vi.fn(() => Promise.resolve({ dispatchAllowed: true })),
+  TOTAL_CAPACITY: 12,
+  CECELIA_RESERVED: 2,
+  USER_RESERVED_BASE: 2,
+  USER_PRIORITY_HEADROOM: 2,
+  SESSION_TTL_SECONDS: 4 * 60 * 60,
+  detectUserSessions: vi.fn(() => ({ headed: [], headless: [], total: 0 })),
+  detectUserMode: vi.fn(() => 'absent'),
+  hasPendingInternalTasks: vi.fn(() => Promise.resolve(false)),
+  countCeceliaInProgress: vi.fn(() => Promise.resolve(0)),
+  countAutoDispatchInProgress: vi.fn(() => Promise.resolve(0)),
+  getSlotStatus: vi.fn(() => Promise.resolve({})),
+}));
+
+import pool from '../db.js';
+import { createTask } from '../actions.js';
+import { calculateSlotBudget } from '../slot-allocator.js';
 import { areAllQuestionsAnswered, OKR_STATUS } from '../okr-tick.js';
+
+// triggerPlannerForGoal is not exported directly; test via executeOkrTick
+// Instead we test the deferred logic by re-importing with pool mocked for goal state revert
+import { triggerPlannerForGoal } from '../okr-tick.js';
 
 describe('areAllQuestionsAnswered', () => {
   it('should return true when no questions exist', () => {
@@ -77,5 +118,65 @@ describe('OKR_STATUS', () => {
     expect(OKR_STATUS.IN_PROGRESS).toBe('in_progress');
     expect(OKR_STATUS.COMPLETED).toBe('completed');
     expect(OKR_STATUS.CANCELLED).toBe('cancelled');
+  });
+});
+
+// ============================================================
+// triggerPlannerForGoal — pool_c_full 容量预检
+// ============================================================
+
+describe('triggerPlannerForGoal - pool capacity check', () => {
+  const mockGoal = {
+    id: 'goal-abc',
+    title: 'Test Goal',
+    description: 'Test description',
+    priority: 'P0',
+    project_id: null,
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // Default: pool has capacity
+    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
+    pool.query.mockResolvedValue({ rows: [] });
+    createTask.mockResolvedValue({ task: { id: 'task-123' }, deduplicated: false });
+  });
+
+  it('should create decomposition task when pool has capacity', async () => {
+    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
+
+    const result = await triggerPlannerForGoal(mockGoal);
+
+    expect(result.triggered).toBe(true);
+    expect(result.goal_id).toBe('goal-abc');
+    expect(createTask).toHaveBeenCalledOnce();
+  });
+
+  it('should defer goal when pool is full (dispatchAllowed=false)', async () => {
+    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: false });
+
+    const result = await triggerPlannerForGoal(mockGoal);
+
+    expect(result.triggered).toBe(false);
+    expect(result.deferred).toBe(true);
+    expect(result.reason).toBe('pool_c_full');
+    expect(result.goal_id).toBe('goal-abc');
+    expect(result.title).toBe('Test Goal');
+    // Goal status should be reverted to 'ready'
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("status='ready'"),
+      ['goal-abc']
+    );
+    // createTask should NOT be called
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it('should NOT defer when pool has exactly 1 available slot', async () => {
+    calculateSlotBudget.mockResolvedValue({ dispatchAllowed: true });
+
+    const result = await triggerPlannerForGoal(mockGoal);
+
+    expect(result.triggered).toBe(true);
+    expect(result.deferred).toBeUndefined();
   });
 });

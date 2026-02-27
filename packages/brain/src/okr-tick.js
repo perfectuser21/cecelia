@@ -98,6 +98,24 @@ async function triggerPlannerForGoal(goal) {
   });
 
   try {
+    // 容量预检：pool满时回退 goal 状态，下个 tick 重试
+    const { calculateSlotBudget } = await import('./slot-allocator.js');
+    const budget = await calculateSlotBudget();
+    if (!budget.dispatchAllowed) {
+      await pool.query(
+        `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1`,
+        [goal.id]
+      );
+      console.warn(`[okr-tick] goal ${goal.id} deferred (pool_c_full), will retry next tick`);
+      return {
+        triggered: false,
+        deferred: true,
+        goal_id: goal.id,
+        title: goal.title,
+        reason: 'pool_c_full'
+      };
+    }
+
     // Create a decomposition task — executor.preparePrompt() will generate the /decomp prompt
     const result = await createTask({
       title: `OKR 拆解: ${goal.title}`,
@@ -359,6 +377,7 @@ export {
   getOkrTickStatus,
   getGoalsByStatus,
   updateGoalStatus,
+  triggerPlannerForGoal,
   addQuestionToGoal,
   answerQuestionForGoal,
   getPendingQuestions,

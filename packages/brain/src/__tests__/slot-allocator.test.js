@@ -59,7 +59,7 @@ import {
 describe('Slot Allocator Constants', () => {
   it('should export correct constants', () => {
     expect(TOTAL_CAPACITY).toBe(12);
-    expect(CECELIA_RESERVED).toBe(1);
+    expect(CECELIA_RESERVED).toBe(2);
     expect(USER_RESERVED_BASE).toBe(2);
     expect(USER_PRIORITY_HEADROOM).toBe(2);
     expect(SESSION_TTL_SECONDS).toBe(4 * 60 * 60); // 4 hours
@@ -346,24 +346,23 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.used).toBe(0);
   });
 
-  it('absent mode: Pool C = total - user_base - cecelia(0) = 10', async () => {
-    // No internal tasks → cecelia budget = 0
+  it('absent mode: Pool C = total - user_base - cecelia(2) = 8', async () => {
+    // absent mode → ceceliaNeeded = CECELIA_RESERVED = 2 (always, regardless of internal tasks)
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(0);
-    expect(budget.taskPool.budget).toBe(10); // 12 - 2 - 0
+    expect(budget.cecelia.budget).toBe(2);
+    expect(budget.taskPool.budget).toBe(8); // 12 - 2 - 2
   });
 
-  it('absent mode with internal tasks: Pool C = total - user_base - cecelia(1) = 9', async () => {
-    // First call: hasPendingInternalTasks → count > 0
-    // Subsequent calls: countCeceliaInProgress, countAutoDispatchInProgress → 0
+  it('absent mode with internal tasks: Pool C = total - user_base - cecelia(2) = 8', async () => {
+    // absent mode: ceceliaNeeded = CECELIA_RESERVED = 2 regardless of hasInternalWork
     pool.query
-      .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] }) // hasPendingInternalTasks (not used in new logic)
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }); // countAutoDispatchInProgress
 
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(1);
-    expect(budget.taskPool.budget).toBe(9); // 12 - 2 - 1
+    expect(budget.cecelia.budget).toBe(2);
+    expect(budget.taskPool.budget).toBe(8); // 12 - 2 - 2
   });
 
   // --- Interactive mode (1-2 headed sessions) ---
@@ -378,7 +377,7 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.headroom).toBe(USER_PRIORITY_HEADROOM); // 2
   });
 
-  it('interactive mode with 2 headed: Pool C = 12 - 4 - 0 = 8', async () => {
+  it('interactive mode with 2 headed: Pool C = 12 - 4 - 2 = 6', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude --resume s1\n' +
       '200 300 claude claude --resume s2\n'
@@ -387,7 +386,7 @@ describe('calculateSlotBudget', () => {
     const budget = await calculateSlotBudget();
     expect(budget.user.mode).toBe('interactive');
     expect(budget.user.budget).toBe(4); // 2 + 2
-    expect(budget.taskPool.budget).toBe(8); // 12 - 4 - 0
+    expect(budget.taskPool.budget).toBe(6); // 12 - 4 - 2(cecelia reserved)
   });
 
   // --- Team mode (3+ headed sessions) ---
@@ -405,7 +404,7 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.budget).toBe(3 + USER_PRIORITY_HEADROOM); // 5
   });
 
-  it('team mode: Cecelia yields its slot (budget=0) even with internal work', async () => {
+  it('team mode: Cecelia keeps 1 slot (budget=1) even with internal work', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude\n200 300 claude claude\n300 300 claude claude\n'
     );
@@ -415,10 +414,10 @@ describe('calculateSlotBudget', () => {
       .mockResolvedValueOnce({ rows: [{ count: '0' }] });
 
     const budget = await calculateSlotBudget();
-    expect(budget.cecelia.budget).toBe(0); // yields in team mode
+    expect(budget.cecelia.budget).toBe(1); // team mode keeps 1 slot for OKR decomp
   });
 
-  it('team mode with 4 agents: Pool C = 12 - 6 - 0 = 6', async () => {
+  it('team mode with 4 agents: Pool C = 12 - 6 - 1 = 5', async () => {
     execSync.mockReturnValue(
       '100 300 claude claude\n200 300 claude claude\n' +
       '300 300 claude claude\n400 300 claude claude\n'
@@ -426,7 +425,7 @@ describe('calculateSlotBudget', () => {
 
     const budget = await calculateSlotBudget();
     expect(budget.user.budget).toBe(6); // 4 + 2
-    expect(budget.taskPool.budget).toBe(6); // 12 - 6 - 0
+    expect(budget.taskPool.budget).toBe(5); // 12 - 6 - 1(cecelia team reserved)
   });
 
   // --- TTL: stale sessions do not trigger team mode ---
@@ -444,7 +443,7 @@ describe('calculateSlotBudget', () => {
     expect(budget.user.mode).toBe('interactive'); // only 1 active session
     expect(budget.user.used).toBe(1);
     expect(budget.user.budget).toBe(3); // 1 + 2 headroom
-    expect(budget.taskPool.budget).toBe(9); // 12 - 3(user) - 0(cecelia, no internal tasks) = 9
+    expect(budget.taskPool.budget).toBe(7); // 12 - 3(user) - 2(cecelia always reserved in interactive) = 7
   });
 
   // --- Pool C never negative ---
@@ -481,14 +480,15 @@ describe('calculateSlotBudget', () => {
   });
 
   it('dispatchAllowed is false when Pool C is full', async () => {
-    // Make autoDispatchUsed = pool C budget
+    // absent mode: Pool C budget = 12 - 2(user) - 2(cecelia) = 8
+    // Make autoDispatchUsed = 8 to fill Pool C
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
       .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
-      .mockResolvedValueOnce({ rows: [{ count: '10' }] }); // countAutoDispatchInProgress = 10
+      .mockResolvedValueOnce({ rows: [{ count: '8' }] }); // countAutoDispatchInProgress = 8
 
     const budget = await calculateSlotBudget();
-    // Pool C budget = 10, used = 10 → available = 0
+    // Pool C budget = 8, used = 8 → available = 0
     expect(budget.taskPool.available).toBe(0);
     expect(budget.dispatchAllowed).toBe(false);
   });

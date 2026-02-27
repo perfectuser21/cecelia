@@ -22,7 +22,7 @@ import pool from './db.js';
 
 const TOTAL_CAPACITY = MAX_SEATS;           // startup snapshot (backward compat)
 function getTotalCapacity() { return getEffectiveMaxSeats(); }
-const CECELIA_RESERVED = 1;                  // Pool A: 1 slot for internal tasks
+const CECELIA_RESERVED = 2;                  // Pool A: 2 slots for internal tasks (OKR decomp + cortex)
 const USER_RESERVED_BASE = 2;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 2;            // Extra free slots when user is active
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
@@ -176,7 +176,7 @@ async function calculateSlotBudget() {
 
   // Pool A: Cecelia internal (on-demand)
   const hasInternalWork = await hasPendingInternalTasks();
-  const ceceliaNeeded = (hasInternalWork && userMode !== 'team') ? CECELIA_RESERVED : 0;
+  const ceceliaNeeded = userMode !== 'team' ? CECELIA_RESERVED : 1;  // team 模式也保留 1
 
   // Pool C: remaining capacity after A and B (uses dynamic capacity)
   const poolCRaw = Math.max(0, dynamicCapacity - userBudget - ceceliaNeeded);
