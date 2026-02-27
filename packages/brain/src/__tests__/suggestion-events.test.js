@@ -2,33 +2,31 @@
  * Tests for suggestion event integration
  */
 
-import { jest } from '@jest/globals';
+import { vi, describe, test, expect, beforeEach } from 'vitest';
 
 // Mock event-bus
-jest.unstable_mockModule('../event-bus.js', () => ({
-  emit: jest.fn().mockResolvedValue(true)
+vi.mock('../event-bus.js', () => ({
+  emit: vi.fn().mockResolvedValue(true)
 }));
 
-jest.unstable_mockModule('../db.js', () => ({
+vi.mock('../db.js', () => ({
   default: {
-    query: jest.fn()
+    query: vi.fn()
   }
 }));
 
-const { emit } = await import('../event-bus.js');
-const { default: pool } = await import('../db.js');
-
-// Import after mocks are set up
-const {
+import { emit } from '../event-bus.js';
+import pool from '../db.js';
+import {
   createSuggestion,
   updateSuggestionStatus,
   executeTriage,
   cleanupExpiredSuggestions
-} = await import('../suggestion-triage.js');
+} from '../suggestion-triage.js';
 
 describe('Suggestion Events Integration', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Default database mock responses
     pool.query.mockImplementation((query, params) => {
@@ -84,7 +82,7 @@ describe('Suggestion Events Integration', () => {
 
       await createSuggestion(suggestionData);
 
-      expect(emit).toHaveBeenCalledWith('suggestion_created', {
+      expect(emit).toHaveBeenCalledWith('suggestion_created', 'suggestion_triage', {
         suggestion_id: 'test-suggestion-id',
         source: 'test',
         priority_score: 0.7,
@@ -102,7 +100,7 @@ describe('Suggestion Events Integration', () => {
 
       await createSuggestion(suggestionData);
 
-      expect(emit).toHaveBeenCalledWith('suggestion_created',
+      expect(emit).toHaveBeenCalledWith('suggestion_created', 'suggestion_triage',
         expect.objectContaining({
           source: 'cortex',
           suggestion_type: 'alert',
@@ -133,7 +131,7 @@ describe('Suggestion Events Integration', () => {
         task_id: 'new-task-123'
       });
 
-      expect(emit).toHaveBeenCalledWith('suggestion_status_updated', {
+      expect(emit).toHaveBeenCalledWith('suggestion_status_updated', 'suggestion_triage', {
         suggestion_id: 'test-id',
         new_status: 'processed',
         metadata: {
@@ -149,7 +147,7 @@ describe('Suggestion Events Integration', () => {
         rejected_by: 'cortex'
       });
 
-      expect(emit).toHaveBeenCalledWith('suggestion_status_updated', {
+      expect(emit).toHaveBeenCalledWith('suggestion_status_updated', 'suggestion_triage', {
         suggestion_id: 'test-id',
         new_status: 'rejected',
         metadata: {
@@ -186,7 +184,7 @@ describe('Suggestion Events Integration', () => {
 
       await executeTriage(10);
 
-      expect(emit).toHaveBeenCalledWith('suggestions_triaged',
+      expect(emit).toHaveBeenCalledWith('suggestions_triaged', 'suggestion_triage',
         expect.objectContaining({
           processed_count: expect.any(Number),
           deduplicated_count: expect.any(Number),
@@ -209,7 +207,7 @@ describe('Suggestion Events Integration', () => {
 
       await executeTriage(10);
 
-      expect(emit).toHaveBeenCalledWith('suggestions_triaged',
+      expect(emit).toHaveBeenCalledWith('suggestions_triaged', 'suggestion_triage',
         expect.objectContaining({
           processed_count: 3
         })
@@ -221,11 +219,8 @@ describe('Suggestion Events Integration', () => {
 
       await executeTriage(10);
 
-      expect(emit).toHaveBeenCalledWith('suggestions_triaged', {
-        processed_count: 0,
-        deduplicated_count: 0,
-        rejected_count: 0
-      });
+      // No suggestions → returns early, no event emitted
+      expect(emit).not.toHaveBeenCalledWith('suggestions_triaged', expect.any(String), expect.any(Object));
     });
   });
 
@@ -237,7 +232,7 @@ describe('Suggestion Events Integration', () => {
 
       await cleanupExpiredSuggestions();
 
-      expect(emit).toHaveBeenCalledWith('suggestions_cleaned', {
+      expect(emit).toHaveBeenCalledWith('suggestions_cleaned', 'suggestion_triage', {
         cleanup_count: 3
       });
     });
@@ -248,11 +243,11 @@ describe('Suggestion Events Integration', () => {
       await cleanupExpiredSuggestions();
 
       // Should not emit event for zero cleanup
-      expect(emit).not.toHaveBeenCalledWith('suggestions_cleaned', expect.any(Object));
+      expect(emit).not.toHaveBeenCalledWith('suggestions_cleaned', expect.any(String), expect.any(Object));
     });
 
     test('logs cleanup count correctly', async () => {
-      const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
       pool.query.mockImplementationOnce(() => Promise.resolve({
         rows: [{ id: '1' }, { id: '2' }]
@@ -276,7 +271,7 @@ describe('Suggestion Events Integration', () => {
         suggestion_type: 'test'
       });
 
-      expect(emit).toHaveBeenCalledWith('suggestion_created',
+      expect(emit).toHaveBeenCalledWith('suggestion_created', 'suggestion_triage',
         expect.objectContaining({
           suggestion_id: expect.any(String),
           source: expect.any(String),
@@ -289,7 +284,7 @@ describe('Suggestion Events Integration', () => {
     test('suggestion_status_updated event has required fields', async () => {
       await updateSuggestionStatus('test-id', 'processed', { test: 'data' });
 
-      expect(emit).toHaveBeenCalledWith('suggestion_status_updated',
+      expect(emit).toHaveBeenCalledWith('suggestion_status_updated', 'suggestion_triage',
         expect.objectContaining({
           suggestion_id: expect.any(String),
           new_status: expect.any(String),
@@ -305,7 +300,7 @@ describe('Suggestion Events Integration', () => {
 
       await executeTriage(5);
 
-      expect(emit).toHaveBeenCalledWith('suggestions_triaged',
+      expect(emit).toHaveBeenCalledWith('suggestions_triaged', 'suggestion_triage',
         expect.objectContaining({
           processed_count: expect.any(Number),
           deduplicated_count: expect.any(Number),
@@ -327,7 +322,7 @@ describe('Suggestion Events Integration', () => {
       await executeTriage(5);
 
       // Should emit triage completion event
-      expect(emit).toHaveBeenCalledWith('suggestions_triaged', expect.any(Object));
+      expect(emit).toHaveBeenCalledWith('suggestions_triaged', 'suggestion_triage', expect.any(Object));
     });
 
     test('events are emitted after database operations complete', async () => {

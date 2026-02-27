@@ -73,22 +73,22 @@ function areSuggestionsSimil(suggestion1, suggestion2) {
     const c1 = suggestion1.content.toLowerCase();
     const c2 = suggestion2.content.toLowerCase();
 
-    // 子字符串包含检查（支持中文）：一个包含另一个且覆盖率 > 70%
+    const words1 = c1.split(/\s+/).filter(w => w.length > 0);
+    const words2 = c2.split(/\s+/).filter(w => w.length > 0);
+
+    if (words1.length > 1 || words2.length > 1) {
+      // 多词文本（含空格）：仅使用 Jaccard 词级别相似度
+      const common = words1.filter(w => words2.includes(w));
+      return common.length / Math.max(words1.length, words2.length) > 0.7;
+    }
+
+    // 单词文本（纯中文等无空格文本）：使用子字符串包含检查
     if (c1.includes(c2) || c2.includes(c1)) {
       const shorter = Math.min(c1.length, c2.length);
       const longer = Math.max(c1.length, c2.length);
       if (shorter / longer > 0.7) return true;
     }
 
-    // 词级别相似度（英文或含空格的多词文本）
-    const words1 = c1.split(/\s+/).filter(w => w.length > 0);
-    const words2 = c2.split(/\s+/).filter(w => w.length > 0);
-    if (words1.length > 1 || words2.length > 1) {
-      const common = words1.filter(w => words2.includes(w));
-      return common.length / Math.max(words1.length, words2.length) > 0.7;
-    }
-
-    // 单词文本：仅子字符串检查有效，否则视为不同
     return false;
   }
 
@@ -129,13 +129,15 @@ export async function createSuggestion(suggestionData) {
   const suggestion = result.rows[0];
   suggestion.priority_score = parseFloat(suggestion.priority_score);
 
-  // 发布事件
-  await emit('suggestion_created', 'suggestion_triage', {
-    suggestion_id: suggestion.id,
-    source: suggestion.source,
-    priority_score: suggestion.priority_score,
-    suggestion_type: suggestion.suggestion_type
-  });
+  // 发布事件（非阻塞，失败不影响返回值）
+  try {
+    await emit('suggestion_created', 'suggestion_triage', {
+      suggestion_id: suggestion.id,
+      source: suggestion.source,
+      priority_score: suggestion.priority_score,
+      suggestion_type: suggestion.suggestion_type
+    });
+  } catch { /* non-blocking */ }
 
   return suggestion;
 }
@@ -223,12 +225,14 @@ export async function executeTriage(limit = 50) {
 
   console.log(`[Triage] 完成处理，${deduplicatedSuggestions.length} 条建议待进一步评估`);
 
-  // 发布 triage 完成事件
-  await emit('suggestions_triaged', 'suggestion_triage', {
-    processed_count: pendingSuggestions.length,
-    deduplicated_count: deduplicatedSuggestions.length,
-    rejected_count: pendingSuggestions.length - deduplicatedSuggestions.length
-  });
+  // 发布 triage 完成事件（非阻塞，失败不影响返回值）
+  try {
+    await emit('suggestions_triaged', 'suggestion_triage', {
+      processed_count: pendingSuggestions.length,
+      deduplicated_count: deduplicatedSuggestions.length,
+      rejected_count: pendingSuggestions.length - deduplicatedSuggestions.length
+    });
+  } catch { /* non-blocking */ }
 
   return deduplicatedSuggestions;
 }
@@ -278,12 +282,14 @@ export async function updateSuggestionStatus(suggestionId, status, metadata = {}
     suggestionId
   ]);
 
-  // 发布状态更新事件
-  await emit('suggestion_status_updated', 'suggestion_triage', {
-    suggestion_id: suggestionId,
-    new_status: status,
-    metadata
-  });
+  // 发布状态更新事件（非阻塞，失败不影响返回值）
+  try {
+    await emit('suggestion_status_updated', 'suggestion_triage', {
+      suggestion_id: suggestionId,
+      new_status: status,
+      metadata
+    });
+  } catch { /* non-blocking */ }
 }
 
 /**
@@ -303,9 +309,11 @@ export async function cleanupExpiredSuggestions() {
   if (cleanupCount > 0) {
     console.log(`[Triage] 清理了 ${cleanupCount} 条过期建议`);
 
-    await emit('suggestions_cleaned', 'suggestion_triage', {
-      cleanup_count: cleanupCount
-    });
+    try {
+      await emit('suggestions_cleaned', 'suggestion_triage', {
+        cleanup_count: cleanupCount
+      });
+    } catch { /* non-blocking */ }
   }
 
   return cleanupCount;
