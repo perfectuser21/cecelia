@@ -253,21 +253,20 @@ export async function runRumination(dbPool) {
     return { skipped: 'cooldown', digested: 0, insights: [] };
   }
 
-  let idle;
+  // 软限制：系统繁忙时降低反刍批量（但不完全跳过）
+  let busyMultiplier = 1;
   try {
-    idle = await isSystemIdle(db);
+    const idle = await isSystemIdle(db);
+    if (!idle) {
+      busyMultiplier = 0.4; // 繁忙时只反刍 40% 的量（向上取整，最少 1 条）
+    }
   } catch (err) {
-    console.error('[rumination] idle check failed:', err.message);
-    return { skipped: 'idle_check_error', digested: 0, insights: [] };
-  }
-
-  if (!idle) {
-    return { skipped: 'system_busy', digested: 0, insights: [] };
+    console.error('[rumination] idle check failed, proceeding anyway:', err.message);
   }
 
   // 取未消化的知识（FIFO，最多 MAX_PER_TICK 条，批量一次处理）
   const remaining = DAILY_BUDGET - _dailyCount;
-  const limit = Math.min(MAX_PER_TICK, remaining);
+  const limit = Math.max(1, Math.round(Math.min(MAX_PER_TICK, remaining) * busyMultiplier));
 
   let learnings;
   try {

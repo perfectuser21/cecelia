@@ -30,7 +30,7 @@ import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } f
 import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
 
 // Tick configuration
-const TICK_INTERVAL_MINUTES = 5;
+const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
@@ -1755,10 +1755,11 @@ async function executeTick() {
     });
   }
 
-  // 6. Planning: if no queued AND no in_progress tasks, invoke planner
+  // 6. Planning: 队列 < 3 时预规划下一批（不再要求完全空闲）
+  //    原设计：queued=0 AND in_progress=0 才规划，导致 Cecelia 只能被动消化
+  //    修复后：队列较少时提前规划，更主动
   publishCognitiveState({ phase: 'planning', detail: '规划下一步任务…', meta: { queued: queued.length, in_progress: inProgress.length } });
-  //    Fix: global fallback 时 krIds=[] 但 allGoalIds 非空，应仍触发规划
-  if (queued.length === 0 && inProgress.length === 0 && allGoalIds.length > 0) {
+  if (queued.length < 3 && allGoalIds.length > 0) {
     const planKrIds = readyKrIds.length > 0 ? readyKrIds : allGoalIds; // 优先 ready KRs
     try {
       const planned = await planNextTask(planKrIds);
