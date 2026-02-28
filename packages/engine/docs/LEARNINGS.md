@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.16.0
+version: 1.17.0
 created: 2026-01-16
 updated: 2026-02-28
 changelog:
+  - 1.17.0: DoD 视觉验证盲区修复；branch protection Dashboard Build SKIP 坑；rebase+删分支导致 PR 关闭
   - 1.16.0: Learning/Cleanup 加强；~/.claude/skills/ 是 symlink 不是独立目录
   - 1.15.0: 添加 /dev skill 自修复经验（5 个已知问题 + CI 三连修复）
   - 1.14.0: 添加 OKR 三层拆解集成 PR Plans 经验（CI 系统化修复、版本同步、Feature Registry SSOT）
@@ -2616,3 +2617,34 @@ PR: #48, v12.30.9
 - 如果是 symlink，找到 target 路径对应的 git 仓库，在那个仓库里走 /dev
 
 **影响程度**：Low（功能正常，只是流程没走对）
+
+### [2026-02-28] 修复前端 DoD 视觉验证盲区
+
+**失败统计**：CI 失败 0 次，本地测试失败 1 次（ci-tools/VERSION 未同步）
+
+**核心发现**：
+- `manual:curl | grep -q 'class'` 只能验证元素存在，无法验证位置/布局/颜色/交互
+- 修复方案：新增 `manual:chrome:` 类型，AI 通过截图进行视觉判断
+- check-dod-mapping.cjs 需在 `manual:` 块**之前**处理 `manual:chrome:` 前缀（顺序很重要）
+
+**坑 1：branch protection Dashboard Build SKIP**
+- required check 是 "Dashboard Build"，但 engine-only PR 会 SKIP 这个 job
+- GitHub 把 SKIP 视为"未满足"（不同于 SUCCESS），导致 BLOCKED
+- 上次 PR #140 能合并是因为它是 dashboard 变更，Dashboard Build 实际运行了
+- 长期修复：从 required checks 移除 Dashboard Build，只保留 ci-passed
+
+**坑 2：rebase + 删分支 → PR 自动关闭**
+- bash-guard.sh 拦截 `--force-with-lease`，无法 force push
+- 旧方法（delete 分支 + 重推）会让 GitHub 自动关联 PR 关闭
+- 正确做法：用 `git merge origin/main`（非 rebase），然后正常 push，不需要 force push
+- 这次创建了 3 个 PR（#145/148/149），最终 #149 合并成功
+
+**版本同步清单**（npm version minor 后必须同步 4 个文件）：
+1. `package.json` ← npm version 自动
+2. `package-lock.json` ← npm version 自动
+3. `VERSION` ← `cat package.json | jq -r .version > VERSION`
+4. `ci-tools/VERSION` ← 同上
+5. `.hook-core-version` ← 同上
+6. `regression-contract.yaml` ← sed 替换 version 字段
+
+PR: #149, v12.35.0
