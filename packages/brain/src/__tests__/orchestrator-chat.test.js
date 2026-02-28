@@ -65,6 +65,13 @@ vi.mock('../owner-input-extractor.js', () => ({
   extractSuggestionsFromChat: mockExtractSuggestionsFromChat,
 }));
 
+// Mock self-model.js — 避免 getSelfModel/initSeed 产生额外 pool.query 调用
+vi.mock('../self-model.js', () => ({
+  getSelfModel: vi.fn().mockResolvedValue('保护型，追求精确'),
+  updateSelfModel: vi.fn().mockResolvedValue(undefined),
+  initSeed: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Import after mocks
 import pool from '../db.js';
 import { processEvent as thalamusProcessEvent } from '../thalamus.js';
@@ -90,6 +97,9 @@ function llmResp(text) {
 describe('orchestrator-chat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // 明确重置 once-queue，防止上一个测试未消费的 mock 泄漏
+    mockCallLLM.mockReset();
+    pool.query.mockReset();
     _resetApiKey();
 
     // 默认 mock parseIntent
@@ -99,10 +109,22 @@ describe('orchestrator-chat', () => {
     pool.query.mockResolvedValue({ rows: [] });
   });
 
+  // 辅助：mock pool.query 使 retrieveCeceliaVoice 返回叙事内容（触发传声器 LLM 调用）
+  function withNarratives(content = '今天我感到专注，工作有序推进。') {
+    pool.query.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes("source_type = 'narrative'")) {
+        return Promise.resolve({ rows: [{ content }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+  }
+
   // ===================== D1: 端点基本功能 =====================
 
   describe('handleChat - basic', () => {
     it('returns reply from MiniMax for simple queries', async () => {
+      // 检索优先：提供叙事内容 → LLM 被调用（传声器模式）
+      withNarratives('当前系统运行正常，有 5 个任务在进行中。');
       mockCallLLM.mockResolvedValueOnce(llmResp('当前有 5 个任务在进行中。'));
 
       const result = await handleChat('现在有多少任务？');
@@ -124,6 +146,8 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - routing', () => {
     it('routes complex queries to thalamus when MiniMax returns [ESCALATE]', async () => {
+      // 检索优先：提供叙事 → LLM 被调用 → LLM 返回 [ESCALATE] → 丘脑
+      withNarratives('有很多任务失败，需要分析原因。');
       mockCallLLM.mockResolvedValueOnce(llmResp('[ESCALATE] 这个问题需要深度分析。'));
 
       // Thalamus decision
@@ -148,6 +172,8 @@ describe('orchestrator-chat', () => {
     });
 
     it('falls back to thalamus when MiniMax fails', async () => {
+      // 检索优先：提供叙事 → LLM 被调用 → LLM 抛出错误 → 丘脑回退
+      withNarratives('系统状态信息。');
       // callLLM throws → callMiniMax propagates error → handleChat falls back to thalamus
       mockCallLLM.mockRejectedValueOnce(new Error('Service unavailable'));
 
@@ -263,6 +289,8 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - multi-turn history (D2)', () => {
     it('passes messages to callMiniMax', async () => {
+      // 检索优先：提供叙事 → LLM 被调用（传声器模式），history 包含在 prompt 中
+      withNarratives('我叫小明这件事我记得。');
       mockCallLLM.mockResolvedValueOnce(llmResp('记得，你叫小明。'));
 
       const history = [
@@ -281,6 +309,8 @@ describe('orchestrator-chat', () => {
     });
 
     it('works without history (backward compatible)', async () => {
+      // 动作意图走 MOUTH_SYSTEM_PROMPT 路径，不依赖叙事
+      parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
       mockCallLLM.mockResolvedValueOnce(llmResp('你好！'));
 
       const result = await handleChat('你好');
@@ -299,11 +329,20 @@ describe('orchestrator-chat', () => {
     it('injects status for CREATE_TASK intent (not just QUERY_STATUS/QUESTION)', async () => {
       parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
 
-      // buildStatusSummary needs pool.query mocks
-      pool.query
-        .mockResolvedValueOnce({ rows: [{ status: 'in_progress', cnt: 2 }] }) // tasks
-        .mockResolvedValueOnce({ rows: [{ status: 'active', cnt: 1 }] })      // goals
-        .mockResolvedValueOnce({ rows: [] });                                  // recordChatEvent
+      // pool.query 真实调用顺序（动作意图）：
+      // 1,2=working_memory/memory_stream INSERT（graceful，用默认 rows:[]）
+      // 3,4=buildStatusSummary（Promise.all → tasks + goals）
+      // 5=buildDesiresContext; 6=pending_actions
+      // 7=callLLM（非 pool.query）; 8=recordChatEvent
+      pool.query.mockImplementation((sql) => {
+        if (typeof sql === 'string' && sql.includes('FROM tasks GROUP BY status')) {
+          return Promise.resolve({ rows: [{ status: 'in_progress', cnt: 2 }] });
+        }
+        if (typeof sql === 'string' && sql.includes('FROM goals GROUP BY status')) {
+          return Promise.resolve({ rows: [{ status: 'active', cnt: 1 }] });
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       mockCallLLM.mockResolvedValueOnce(llmResp('好的，我来创建任务。'));
 
@@ -318,8 +357,9 @@ describe('orchestrator-chat', () => {
   });
 
   describe('handleChat - memory integration', () => {
-    it('injects memory context into MiniMax prompt', async () => {
-      // Memory returns block via buildMemoryContext
+    it('injects memory context into MiniMax prompt for action intents', async () => {
+      // 动作意图使用 MOUTH_SYSTEM_PROMPT，memoryBlock 会被注入到 prompt
+      parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
       buildMemoryContext.mockResolvedValueOnce({
         block: '\n## 相关历史上下文\n- [任务] **历史任务**: 相关上下文\n',
         meta: { candidates: 1, injected: 1, tokenUsed: 50 },
@@ -342,10 +382,9 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat - error handling', () => {
     it('handles MiniMax failure gracefully with thalamus fallback', async () => {
-      // callLLM throws → callMiniMax propagates error → handleChat falls back to thalamus
+      // 检索优先：提供叙事 → LLM 被调用 → LLM 抛出 → 丘脑回退 → 丘脑也失败
+      withNarratives('系统信息。');
       mockCallLLM.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-
-      // Thalamus also fails
       thalamusProcessEvent.mockRejectedValueOnce(new Error('API key not set'));
 
       const result = await handleChat('测试');
@@ -355,10 +394,9 @@ describe('orchestrator-chat', () => {
     });
 
     it('handles both MiniMax and thalamus failure', async () => {
-      // callLLM throws → callMiniMax propagates error
+      // 检索优先：提供叙事 → LLM 被调用 → LLM 抛出 → 丘脑也失败
+      withNarratives('系统信息。');
       mockCallLLM.mockRejectedValueOnce(new Error('timeout'));
-
-      // Thalamus fails
       thalamusProcessEvent.mockRejectedValueOnce(new Error('timeout'));
 
       const result = await handleChat('你好');
@@ -547,9 +585,13 @@ describe('orchestrator-chat', () => {
 
   describe('handleChat action suffix (D9)', () => {
     it('D9: 动作回复追加到 reply 末尾', async () => {
+      // 动作意图：使用 MOUTH_SYSTEM_PROMPT，detectAndExecuteAction 在步骤 4 执行
+      // 非动作意图也有 fallback detectAndExecuteAction（步骤 7）
+      // 测试步骤 7 fallback：QUESTION 意图 + 叙事内容 → LLM 回复 + 动作追加
+      withNarratives('今天我帮助了很多任务管理。');
       mockCallLLM.mockResolvedValueOnce(llmResp('好的，我来帮你记录。'));
 
-      // dispatcher 返回确认文本
+      // dispatcher 返回确认文本（步骤 7 fallback）
       mockDetectAndExecuteAction.mockResolvedValueOnce('\n\n✅ 已创建任务：完成周报');
 
       const result = await handleChat('帮我记个任务：完成周报');
@@ -560,8 +602,9 @@ describe('orchestrator-chat', () => {
     });
 
     it('D9-2: 无动作意图时 reply 不变', async () => {
+      // 非动作意图 + 叙事 → LLM 回复，detectAndExecuteAction 返回空
+      withNarratives('今天系统正常运行。');
       mockCallLLM.mockResolvedValueOnce(llmResp('你好！有什么需要帮助的吗？'));
-
       mockDetectAndExecuteAction.mockResolvedValueOnce('');
 
       const result = await handleChat('你好');
@@ -573,8 +616,9 @@ describe('orchestrator-chat', () => {
   // ===================== D10: 用户画像注入 =====================
 
   describe('handleChat profile context injection (D10)', () => {
-    it('D10: profileSnippet 注入到 systemPrompt', async () => {
-      // 让 getUserProfileContext 返回画像片段
+    it('D10: profileSnippet 注入到 systemPrompt（动作意图）', async () => {
+      // 动作意图使用 MOUTH_SYSTEM_PROMPT，profileSnippet 会被注入
+      parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
       mockGetUserProfileContext.mockResolvedValueOnce('## 主人信息\n你正在和 徐啸 对话。TA 目前的重点方向是：Cecelia 自主运行。\n');
 
       mockCallLLM.mockResolvedValueOnce(llmResp('你好，徐啸！'));
@@ -590,7 +634,9 @@ describe('orchestrator-chat', () => {
       expect(mockGetUserProfileContext).toHaveBeenCalledWith(expect.anything(), expect.any(String), expect.any(String));
     });
 
-    it('D10-2: profileSnippet 为空时 systemPrompt 不受影响', async () => {
+    it('D10-2: profileSnippet 为空时 systemPrompt 不受影响（动作意图）', async () => {
+      // 动作意图使用 MOUTH_SYSTEM_PROMPT，无画像时仍包含系统提示
+      parseIntent.mockReturnValueOnce({ type: 'CREATE_TASK', confidence: 0.9 });
       mockGetUserProfileContext.mockResolvedValueOnce('');
 
       mockCallLLM.mockResolvedValueOnce(llmResp('我是 Cecelia。'));
@@ -630,6 +676,8 @@ describe('orchestrator-chat', () => {
     });
 
     it('extractSuggestionsFromChat 失败时不影响 handleChat 返回值', async () => {
+      // 提供叙事内容 → LLM 被调用 → 返回 '好的。'
+      withNarratives('测试叙事内容。');
       mockCallLLM.mockResolvedValueOnce(llmResp('好的。'));
       mockExtractSuggestionsFromChat.mockRejectedValueOnce(new Error('suggestion failed'));
 
