@@ -18,6 +18,7 @@ NC='\033[0m'
 
 # 默认保护的仓库列表
 DEFAULT_REPOS=(
+    "perfectuser21/cecelia"
     "perfectuser21/zenithjoy-engine"
     "perfectuser21/zenithjoy-autopilot"
     "perfectuser21/zenithjoy-core"
@@ -58,6 +59,12 @@ usage() {
 check_branch() {
     local repo=$1
     local branch=$2
+
+    # 检查分支是否存在，不存在则跳过（不报错）
+    if ! gh api "repos/$repo/branches/$branch" >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}⚠${NC} $branch: 分支不存在，跳过"
+        return 0
+    fi
 
     local result
     result=$(gh api "repos/$repo/branches/$branch/protection" 2>&1) || {
