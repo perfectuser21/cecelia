@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Leaf, Send, Check, Loader2, Clock, GitBranch,
-  ChevronDown, ChevronRight, Pencil,
+  ArrowLeft, Leaf, Send, Check, Loader2, GitBranch, Pencil, Clock,
 } from 'lucide-react';
 
 interface PendingAction {
@@ -48,7 +47,7 @@ function extractMessages(comments: PendingAction['comments']): ChatMessage[] {
     }));
 }
 
-// 简洁 Markdown 渲染：粗体 / 行内代码 / 标题 / 列表，不渲染表格和分隔线
+// 简洁 Markdown：粗体 / 行内代码 / 标题 / 列表，过滤分隔线和表格
 function renderMarkdown(text: string): React.ReactElement {
   const lines = text.split('\n');
   const elements: React.ReactElement[] = [];
@@ -73,14 +72,9 @@ function renderMarkdown(text: string): React.ReactElement {
 
   while (i < lines.length) {
     const line = lines[i];
-
-    // 跳过空行和分隔线（--- / ===）
-    if (line.trim() === '' || /^[-=]{3,}$/.test(line.trim())) {
-      i++;
-      continue;
+    if (line.trim() === '' || /^[-=]{3,}$/.test(line.trim()) || line.trim().startsWith('|')) {
+      i++; continue;
     }
-
-    // 标题 → 加粗小字
     const headMatch = line.match(/^(#{1,3})\s+(.+)/);
     if (headMatch) {
       elements.push(
@@ -88,11 +82,8 @@ function renderMarkdown(text: string): React.ReactElement {
           {renderInline(headMatch[2])}
         </p>
       );
-      i++;
-      continue;
+      i++; continue;
     }
-
-    // 列表
     if (/^[-*]\s/.test(line.trim())) {
       const listItems: string[] = [];
       while (i < lines.length && /^[-*]\s/.test(lines[i].trim())) {
@@ -111,8 +102,6 @@ function renderMarkdown(text: string): React.ReactElement {
       );
       continue;
     }
-
-    // 普通段落
     elements.push(
       <p key={i} className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
         {renderInline(line)}
@@ -120,19 +109,15 @@ function renderMarkdown(text: string): React.ReactElement {
     );
     i++;
   }
-
   return <div className="space-y-0.5">{elements}</div>;
 }
 
-// Initiative 内联编辑组件
+// Initiative 内联编辑
 function EditableInitiative({
   name, index, actionId, allInitiatives, onSave,
 }: {
-  name: string;
-  index: number;
-  actionId: string;
-  allInitiatives: string[];
-  onSave: (newList: string[]) => void;
+  name: string; index: number; actionId: string;
+  allInitiatives: string[]; onSave: (newList: string[]) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(name);
@@ -162,7 +147,7 @@ function EditableInitiative({
 
   if (editing) {
     return (
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2">
         <input
           ref={inputRef}
           value={value}
@@ -172,21 +157,21 @@ function EditableInitiative({
             if (e.key === 'Escape') { setEditing(false); setValue(name); }
           }}
           onBlur={save}
-          className="flex-1 text-xs bg-white dark:bg-slate-900 border border-violet-400 rounded px-1.5 py-0.5 outline-none text-slate-700 dark:text-slate-200"
+          className="flex-1 text-sm bg-white dark:bg-slate-800 border border-violet-400 rounded-lg px-3 py-1.5 outline-none text-slate-700 dark:text-slate-200"
         />
-        {saving && <Loader2 className="w-3 h-3 animate-spin text-slate-400 shrink-0" />}
+        {saving && <Loader2 className="w-4 h-4 animate-spin text-slate-400 shrink-0" />}
       </div>
     );
   }
 
   return (
     <button
-      className="group flex items-center gap-1.5 w-full text-left py-0.5"
+      className="group flex items-center gap-3 w-full text-left px-3 py-2.5 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-900/10 transition-colors"
       onClick={() => setEditing(true)}
     >
-      <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
-      <span className="text-xs text-slate-600 dark:text-slate-300 flex-1 leading-snug">{name}</span>
-      <Pencil className="w-2.5 h-2.5 text-transparent group-hover:text-violet-400 transition-colors shrink-0" />
+      <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
+      <span className="text-sm text-slate-700 dark:text-slate-200 flex-1 leading-snug">{name}</span>
+      <Pencil className="w-3.5 h-3.5 text-transparent group-hover:text-violet-400 transition-colors shrink-0" />
     </button>
   );
 }
@@ -201,7 +186,8 @@ export default function OkrReviewPage(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [initiatives, setInitiatives] = useState<string[]>([]);
 
-  const [expandedVersionIdx, setExpandedVersionIdx] = useState<number | null>(null);
+  // 横向 Tab 当前选中的版本索引
+  const [activeTabIdx, setActiveTabIdx] = useState<number>(0);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -249,11 +235,11 @@ export default function OkrReviewPage(): React.ReactElement {
     init();
   }, [loadAction, loadVersions]);
 
-  // 版本加载后自动展开当前版本
+  // 版本加载后默认选中当前版本的 Tab
   useEffect(() => {
     if (versions.length > 0) {
       const idx = versions.findIndex(v => v.id === id);
-      setExpandedVersionIdx(idx >= 0 ? idx : versions.length - 1);
+      setActiveTabIdx(idx >= 0 ? idx : versions.length - 1);
     }
   }, [versions, id]);
 
@@ -275,9 +261,7 @@ export default function OkrReviewPage(): React.ReactElement {
     if (!msg || sending || !id) return;
     setInput('');
     setSending(true);
-
     setMessages(prev => [...prev, { role: 'user', text: msg, ts: new Date().toISOString() }]);
-
     try {
       const res = await fetch('/api/brain/autumnrice/chat', {
         method: 'POST',
@@ -296,7 +280,7 @@ export default function OkrReviewPage(): React.ReactElement {
     } catch {
       setMessages(prev => [...prev, {
         role: 'autumnrice',
-        text: '网络超时，稍后重试。（重拆任务可能已发起）',
+        text: '网络超时，稍后重试。',
         ts: new Date().toISOString(),
       }]);
     } finally {
@@ -332,7 +316,7 @@ export default function OkrReviewPage(): React.ReactElement {
   );
 
   if (error || !action) return (
-    <div className="p-6">
+    <div className="p-8">
       <button onClick={() => navigate('/inbox')} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4">
         <ArrowLeft className="w-4 h-4" /> 返回收件箱
       </button>
@@ -341,17 +325,27 @@ export default function OkrReviewPage(): React.ReactElement {
   );
 
   const ctx = action.context;
-  const currentVersionIdx = versions.findIndex(v => v.id === id);
-  const versionLabel = currentVersionIdx >= 0 ? `V${currentVersionIdx + 1}` : 'V1';
   const hasVersions = versions.length > 1;
+
+  // 当前 Tab 对应的版本数据
+  const activeVersion = hasVersions ? versions[activeTabIdx] : null;
+  const activeVersionId = activeVersion?.id ?? id;
+  const isCurrentVersion = activeVersionId === id;
+  const activeInitiatives: string[] = hasVersions
+    ? (Array.isArray(activeVersion?.context.initiatives) ? activeVersion!.context.initiatives as string[] : [])
+    : initiatives;
+
+  const currentVersionIdx = hasVersions ? versions.findIndex(v => v.id === id) : 0;
+  const versionLabel = currentVersionIdx >= 0 ? `V${currentVersionIdx + 1}` : 'V1';
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white dark:bg-slate-900">
-      {/* 顶部导航 */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 shrink-0">
+
+      {/* ─── 顶部 Header ─── */}
+      <div className="flex items-center gap-3 px-6 py-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
         <button
           onClick={() => navigate('/inbox')}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
           收件箱
@@ -362,186 +356,163 @@ export default function OkrReviewPage(): React.ReactElement {
           {ctx.kr_title as string || 'OKR 拆解讨论'}
         </span>
         {action.status === 'approved' && (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 shrink-0">
+          <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 shrink-0 font-medium">
             已放行
           </span>
         )}
       </div>
 
-      {/* 主体：左面板 + 右聊天 */}
+      {/* ─── 主体：内容区 65% + 聊天侧栏 35% ─── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
-        {/* ─── 左面板 ─── */}
-        <div className="w-60 xl:w-64 flex flex-col border-r border-slate-200 dark:border-slate-700 overflow-hidden shrink-0">
-          {/* KR 基本信息 */}
-          <div className="px-3 py-3 border-b border-slate-100 dark:border-slate-700/50 shrink-0 space-y-2">
+        {/* ════ 内容主区域（65%）════ */}
+        <div className="flex flex-col min-h-0 overflow-hidden border-r border-slate-200 dark:border-slate-700" style={{ flex: '0 0 65%' }}>
+
+          {/* 版本横向 Tab */}
+          {hasVersions && (
+            <div className="flex items-center gap-1 px-6 py-2.5 border-b border-slate-100 dark:border-slate-700/50 shrink-0 bg-slate-50/50 dark:bg-slate-800/20">
+              <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-1" />
+              {versions.map((v, idx) => {
+                const isCurrent = v.id === id;
+                const isActive = idx === activeTabIdx;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => setActiveTabIdx(idx)}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                      isActive
+                        ? 'bg-violet-500 text-white shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                    title={formatDate(v.created_at)}
+                  >
+                    V{idx + 1}
+                    {isCurrent && (
+                      <span className={`text-[9px] ${isActive ? 'text-violet-200' : 'text-violet-500'}`}>当前</span>
+                    )}
+                  </button>
+                );
+              })}
+              {redecompNotice && (
+                <span className="ml-2 flex items-center gap-1 text-[11px] text-violet-500">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  重拆中，新版本稍后出现
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* KR + Project 信息 */}
+          <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-700/50 shrink-0 space-y-2">
             <div>
-              <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-0.5">KR</p>
-              <p className="text-xs text-slate-700 dark:text-slate-200 leading-snug">{ctx.kr_title as string || '—'}</p>
+              <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1 font-medium">KR</p>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-snug">
+                {ctx.kr_title as string || '—'}
+              </p>
             </div>
             {ctx.project_name && (
               <div>
-                <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-0.5">Project</p>
-                <p className="text-xs text-slate-600 dark:text-slate-300">{ctx.project_name as string}</p>
+                <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-1 font-medium">Project</p>
+                <p className="text-sm text-slate-600 dark:text-slate-300">{ctx.project_name as string}</p>
+              </div>
+            )}
+            {activeVersion && (
+              <p className="text-[11px] text-slate-400 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {formatDate(activeVersion.created_at)}
+                {!isCurrentVersion && (
+                  <button
+                    onClick={() => navigate(`/okr/review/${activeVersionId}`)}
+                    className="ml-2 text-violet-500 hover:text-violet-700 transition-colors"
+                  >
+                    切换到此版本 →
+                  </button>
+                )}
+              </p>
+            )}
+          </div>
+
+          {/* Initiative 列表（可滚动） */}
+          <div className="flex-1 overflow-y-auto min-h-0 px-6 py-4">
+            <p className="text-[11px] text-slate-400 uppercase tracking-wider mb-3 font-medium">
+              拆解方案 · {activeInitiatives.length} 个 Initiative
+            </p>
+
+            {activeInitiatives.length > 0 ? (
+              <div className="space-y-1">
+                {activeInitiatives.map((name, idx) => (
+                  <div key={idx}>
+                    {isCurrentVersion ? (
+                      <EditableInitiative
+                        name={name}
+                        index={idx}
+                        actionId={id!}
+                        allInitiatives={initiatives}
+                        onSave={setInitiatives}
+                      />
+                    ) : (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0" />
+                        <span className="text-sm text-slate-500 dark:text-slate-400 leading-snug">{name}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-32 text-slate-400">
+                <p className="text-sm">尚无 Initiative</p>
               </div>
             )}
           </div>
 
-          {/* 版本列表（手风琴） */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="px-3 py-2 flex items-center gap-1.5">
-              <Clock className="w-3 h-3 text-slate-400" />
-              <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">
-                {hasVersions ? `版本历史（${versions.length}）` : 'Initiatives'}
-              </span>
-            </div>
-
-            {hasVersions ? (
-              /* 多版本手风琴 */
-              <div className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {versions.map((v, idx) => {
-                  const isCurrentVersion = v.id === id;
-                  const isExpanded = expandedVersionIdx === idx;
-                  const vInitiatives = Array.isArray(v.context.initiatives)
-                    ? v.context.initiatives as string[]
-                    : [];
-
-                  return (
-                    <div key={v.id}>
-                      <button
-                        onClick={() => setExpandedVersionIdx(isExpanded ? null : idx)}
-                        className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
-                          isCurrentVersion
-                            ? 'bg-violet-50/60 dark:bg-violet-900/10 hover:bg-violet-50 dark:hover:bg-violet-900/20'
-                            : 'hover:bg-slate-50 dark:hover:bg-slate-700/30'
-                        }`}
-                      >
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                          isCurrentVersion
-                            ? 'bg-violet-500 text-white'
-                            : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                        }`}>
-                          {idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                              V{idx + 1}
-                            </span>
-                            {isCurrentVersion && (
-                              <span className="text-[9px] text-violet-500">当前</span>
-                            )}
-                          </div>
-                          <span className="text-[9px] text-slate-400">{formatDate(v.created_at)}</span>
-                        </div>
-                        {isExpanded
-                          ? <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
-                          : <ChevronRight className="w-3 h-3 text-slate-400 shrink-0" />}
-                      </button>
-
-                      {isExpanded && (
-                        <div className="px-3 pb-2.5 pt-1 bg-slate-50/50 dark:bg-slate-800/20">
-                          {vInitiatives.length > 0 ? (
-                            <ul className="space-y-0.5">
-                              {vInitiatives.map((name, nidx) => (
-                                <li key={nidx}>
-                                  {isCurrentVersion ? (
-                                    <EditableInitiative
-                                      name={name}
-                                      index={nidx}
-                                      actionId={id!}
-                                      allInitiatives={initiatives}
-                                      onSave={setInitiatives}
-                                    />
-                                  ) : (
-                                    <div className="flex items-start gap-1.5 py-0.5">
-                                      <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0 mt-1.5" />
-                                      <span className="text-xs text-slate-500 dark:text-slate-400 leading-snug">{name}</span>
-                                    </div>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="text-[10px] text-slate-400 italic">无 Initiative</p>
-                          )}
-                          {!isCurrentVersion && (
-                            <button
-                              onClick={() => navigate(`/okr/review/${v.id}`)}
-                              className="mt-2 text-[10px] text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 transition-colors"
-                            >
-                              切换到此版本 →
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+          {/* 底部：确认放行 */}
+          <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-700/50 shrink-0">
+            {isCurrentVersion && action.status !== 'approved' ? (
+              <button
+                onClick={handleApprove}
+                disabled={approving}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              >
+                {approving
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Check className="w-4 h-4" />}
+                确认放行
+              </button>
+            ) : action.status === 'approved' ? (
+              <p className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                <Check className="w-4 h-4" /> 已放行
+              </p>
             ) : (
-              /* 单版本：直接显示 initiatives（可编辑） */
-              <div className="px-3 pb-3">
-                {initiatives.length > 0 ? (
-                  <ul className="space-y-0.5">
-                    {initiatives.map((name, idx) => (
-                      <li key={idx}>
-                        <EditableInitiative
-                          name={name}
-                          index={idx}
-                          actionId={id!}
-                          allInitiatives={initiatives}
-                          onSave={setInitiatives}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-slate-400 italic">尚无 Initiative</p>
-                )}
-                {ctx.decomposed_at && (
-                  <p className="text-[10px] text-slate-400 mt-2">
-                    {new Date(ctx.decomposed_at as string).toLocaleString('zh-CN')}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {redecompNotice && (
-              <div className="px-3 pb-3">
-                <p className="text-[10px] text-violet-500 flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  重拆进行中，新版本出现后自动更新...
-                </p>
-              </div>
+              <p className="text-xs text-slate-400">切换到当前版本后可确认放行</p>
             )}
           </div>
         </div>
 
-        {/* ─── 右侧聊天区 ─── */}
-        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
-          {/* 秋米头部 + 版本标识 */}
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 dark:border-slate-700/50 shrink-0 bg-white dark:bg-slate-900">
-            <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center shrink-0">
-              <Leaf className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
+        {/* ════ 聊天侧栏（35%）════ */}
+        <div className="flex flex-col min-h-0 overflow-hidden" style={{ flex: '0 0 35%' }}>
+
+          {/* 秋米头部 */}
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-slate-100 dark:border-slate-700/50 shrink-0">
+            <div className="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center shrink-0">
+              <Leaf className="w-4 h-4 text-violet-600 dark:text-violet-400" />
             </div>
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">秋米</span>
-            <span className="text-xs text-slate-400">·</span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">{versionLabel} 版本对话</span>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">秋米</span>
+              <span className="text-[11px] text-slate-400">{versionLabel} 版本对话</span>
+            </div>
           </div>
 
-          {/* 消息列表（固定高度，内部滚动） */}
+          {/* 消息列表 */}
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-slate-50/50 dark:bg-slate-800/20 min-h-0"
+            className="flex-1 overflow-y-auto min-h-0 px-4 py-3 space-y-3 bg-slate-50/30 dark:bg-slate-800/10"
           >
             {messages.length === 0 && (
-              <div className="flex items-center justify-center h-full text-center text-xs text-slate-400 py-16">
-                <div>
-                  <Leaf className="w-8 h-8 text-violet-200 dark:text-violet-800 mx-auto mb-2" />
-                  <p>有什么疑问或修改意见？直接告诉秋米...</p>
-                  <p className="text-[10px] mt-1 opacity-60">说「重新拆」可触发重拆</p>
-                </div>
+              <div className="flex flex-col items-center justify-center h-full text-center text-slate-400 py-12">
+                <Leaf className="w-8 h-8 text-violet-200 dark:text-violet-800 mb-3" />
+                <p className="text-xs">有想法直接告诉秋米</p>
+                <p className="text-[11px] mt-1 opacity-60">说「重新拆」可触发重拆</p>
               </div>
             )}
 
@@ -552,16 +523,15 @@ export default function OkrReviewPage(): React.ReactElement {
                     <Leaf className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
                   </div>
                 )}
-                <div className={`max-w-[80%] rounded-2xl px-3 py-2 ${
+                <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
                   m.role === 'user'
                     ? 'bg-violet-600 text-white rounded-tr-sm'
                     : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-sm shadow-sm'
                 }`}>
-                  {m.role === 'user' ? (
-                    <p className="text-sm whitespace-pre-wrap">{m.text}</p>
-                  ) : (
-                    renderMarkdown(m.text)
-                  )}
+                  {m.role === 'user'
+                    ? <p className="text-sm whitespace-pre-wrap">{m.text}</p>
+                    : renderMarkdown(m.text)
+                  }
                   {m.redecomp && (
                     <p className="mt-1.5 text-[10px] text-violet-400 flex items-center gap-1">
                       <Loader2 className="w-3 h-3 animate-spin" />
@@ -576,55 +546,44 @@ export default function OkrReviewPage(): React.ReactElement {
             ))}
 
             {sending && (
-              <div className="flex gap-2 items-start">
+              <div className="flex gap-2">
                 <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center shrink-0">
-                  <Loader2 className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400 animate-spin" />
+                  <Leaf className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />
                 </div>
                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-sm px-3 py-2 shadow-sm">
-                  <p className="text-xs text-slate-400">秋米思考中...</p>
+                  <div className="flex gap-1 items-center h-4">
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* 确认放行（仅 pending_approval 状态） */}
-          {action.status === 'pending_approval' && (
-            <div className="px-4 py-1.5 border-t border-slate-100 dark:border-slate-700/50 bg-white dark:bg-slate-800/80 shrink-0">
-              <button
-                onClick={handleApprove}
-                disabled={approving || sending}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 disabled:opacity-50 transition-colors"
-              >
-                {approving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                {approving ? '放行中...' : '确认放行'}
-              </button>
-            </div>
-          )}
-
           {/* 输入区 */}
-          <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2.5 shrink-0">
-            <div className="flex items-end gap-2 bg-slate-50 dark:bg-slate-700/50 rounded-2xl px-3 py-2 border border-slate-200 dark:border-slate-600 focus-within:border-violet-400 dark:focus-within:border-violet-600 transition-colors">
+          <div className="shrink-0 border-t border-slate-100 dark:border-slate-700/50 px-4 py-3">
+            <div className="flex items-end gap-2">
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="告诉秋米你的想法... (Enter 发送，Shift+Enter 换行)"
-                disabled={sending || approving}
-                rows={1}
-                className="flex-1 text-sm bg-transparent border-none outline-none resize-none text-slate-700 dark:text-slate-200 placeholder:text-slate-400 leading-relaxed max-h-28 overflow-y-auto"
-                style={{ fieldSizing: 'content' } as React.CSSProperties}
+                placeholder="告诉秋米你的想法..."
+                rows={2}
+                className="flex-1 resize-none text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors text-slate-700 dark:text-slate-200 placeholder:text-slate-400"
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || sending || approving}
-                className="p-1.5 rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+                disabled={!input.trim() || sending}
+                className="shrink-0 w-9 h-9 rounded-xl bg-violet-500 hover:bg-violet-600 text-white flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Send className="w-3.5 h-3.5" />
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>
             </div>
           </div>
         </div>
+
       </div>
     </div>
   );
