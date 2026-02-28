@@ -395,7 +395,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export default function ConsciousnessChat() {
   const navigate = useNavigate();
   const {
-    messages, addMessage, clearMessages,
+    messages, addMessage, updateMessage, clearMessages,
     input, setInput, sending, setSending,
     generateId, currentRoute, frontendTools, getPageContext,
   } = useCecelia();
@@ -610,8 +610,14 @@ export default function ConsciousnessChat() {
     unsubs.push(subscribe(WS_EVENTS.ALERTNESS_CHANGED, (data) => {
       setBrain(prev => ({ ...prev, alertness: data.level ?? prev.alertness, alertnessName: data.levelName ?? prev.alertnessName }));
     }));
+    // ★ 接收 Cecelia 主动推送（叙事/情绪变化）
+    unsubs.push(subscribe('cecelia:message', (data) => {
+      if (data?.message) {
+        addMessage({ id: `proactive_${Date.now()}`, role: 'assistant', content: `[主动] ${data.message}` });
+      }
+    }));
     return () => unsubs.forEach(u => u());
-  }, [subscribe, fetchBrain, fetchDesires]);
+  }, [subscribe, fetchBrain, fetchDesires, addMessage]);
 
   // ── Chat send ─────────────────────────────────────────
   const handleSend = useCallback(async () => {
@@ -643,10 +649,15 @@ export default function ConsciousnessChat() {
         }
       }
 
-      setProcessingStage('L2 皮层 → 检索记忆...');
-      await new Promise(r => setTimeout(r, 250));
+      setProcessingStage('检索意识...');
+      await new Promise(r => setTimeout(r, 200));
 
-      const r = await fetch('/api/orchestrator/chat', {
+      // 使用 SSE 流式端点，字一个个出来
+      const streamingMsgId = generateId();
+      addMessage({ id: streamingMsgId, role: 'assistant', content: '', isStreaming: true });
+      setProcessingStage('传声中...');
+
+      const r = await fetch('/api/brain/orchestrator/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -660,14 +671,50 @@ export default function ConsciousnessChat() {
         }),
       });
 
-      setProcessingStage('嘴巴 → 生成回复...');
-      const data = await r.json();
-      setProcessingStage(null);
+      if (!r.ok || !r.body) {
+        updateMessage(streamingMsgId, { content: '连接失败，请稍后再试', isStreaming: false });
+        setProcessingStage(null);
+        setSending(false);
+        return;
+      }
 
-      if (data.reply) {
-        addMessage({ id: generateId(), role: 'assistant', content: data.reply });
-      } else if (data.error) {
-        addMessage({ id: generateId(), role: 'assistant', content: `连接异常：${data.error}` });
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      let buf = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const data = trimmed.slice(6);
+            if (data === '[DONE]') {
+              updateMessage(streamingMsgId, { content: accumulated || '我还没想过这个。', isStreaming: false });
+              setProcessingStage(null);
+              break;
+            }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.delta) {
+                accumulated += parsed.delta;
+                updateMessage(streamingMsgId, { content: accumulated, isStreaming: true });
+              } else if (parsed.error) {
+                updateMessage(streamingMsgId, { content: `连接异常：${parsed.error}`, isStreaming: false });
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        // 确保消息标记为非流式（兜底）
+        updateMessage(streamingMsgId, { isStreaming: false });
+        setProcessingStage(null);
       }
     } catch {
       setProcessingStage(null);
@@ -677,7 +724,7 @@ export default function ConsciousnessChat() {
       setProcessingStage(null);
     }
   }, [viewMode, input, sending, messages, currentRoute, frontendTools, getPageContext,
-    addMessage, setInput, setSending, generateId, navigate]);
+    addMessage, updateMessage, setInput, setSending, generateId, navigate]);
 
   // ── Derived ───────────────────────────────────────────
   const alertColor = ALERTNESS_COLOR[brain.alertness] ?? '#3b82f6';

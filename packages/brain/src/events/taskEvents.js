@@ -208,3 +208,20 @@ export function publishCognitiveState(data) {
     timestamp: new Date().toISOString()
   });
 }
+
+/**
+ * Publish Cecelia proactive message (主动推送)
+ * 叙事完成、情绪变化时推送，不经过 LLM 直接广播
+ * @param {object} data
+ * @param {string} data.type - 消息类型 ('narrative'|'emotion'|'task_complete')
+ * @param {string} data.message - 消息文本（Cecelia 的原文）
+ * @param {object} [data.meta] - 可选元数据
+ */
+export function publishCeceliaMessage(data) {
+  broadcast(WS_EVENTS.CECELIA_MESSAGE, {
+    type: data.type,
+    message: data.message,
+    meta: data.meta || {},
+    timestamp: new Date().toISOString()
+  });
+}

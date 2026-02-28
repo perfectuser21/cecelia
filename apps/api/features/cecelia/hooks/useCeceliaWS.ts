@@ -24,6 +24,7 @@ export const WS_EVENTS = {
   DESIRE_EXPRESSED: 'desire:expressed',
   TICK_EXECUTED: 'tick:executed',
   COGNITIVE_STATE: 'cognitive:state',
+  CECELIA_MESSAGE: 'cecelia:message',
   PING: 'ping',
   PONG: 'pong',
 } as const;

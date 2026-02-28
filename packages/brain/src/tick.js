@@ -2008,6 +2008,27 @@ async function executeTick() {
     console.error('[tick] WebSocket tick:executed broadcast failed:', wsErr.message);
   }
 
+  // 13. 主动推送：检查新叙事（最近 10 分钟内写完的），直接推送给前端
+  try {
+    const recentNarrative = await pool.query(
+      `SELECT content FROM memory_stream
+       WHERE source_type = 'narrative'
+         AND created_at > NOW() - INTERVAL '10 minutes'
+       ORDER BY created_at DESC LIMIT 1`
+    );
+    if (recentNarrative.rows.length > 0) {
+      const { publishCeceliaMessage } = await import('./events/taskEvents.js');
+      publishCeceliaMessage({
+        type: 'narrative',
+        message: recentNarrative.rows[0].content.slice(0, 500),
+        meta: { source: 'tick_proactive' },
+      });
+      console.log('[tick] 主动推送新叙事');
+    }
+  } catch (pushErr) {
+    console.warn('[tick] 主动推送叙事失败（non-critical）:', pushErr.message);
+  }
+
   return {
     success: true,
     alertness: alertnessResult,

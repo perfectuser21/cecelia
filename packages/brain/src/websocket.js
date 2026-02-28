@@ -51,6 +51,8 @@ export const WS_EVENTS = {
   TICK_EXECUTED: 'tick:executed',
   // 认知状态事件（活性信号）
   COGNITIVE_STATE: 'cognitive:state',
+  // Cecelia 主动推送消息（叙事/情绪变化）
+  CECELIA_MESSAGE: 'cecelia:message',
 };
 
 /**
