@@ -1715,6 +1715,24 @@ router.post('/autumnrice/chat', async (req, res) => {
     const initiatives = Array.isArray(ctx.initiatives) ? ctx.initiatives : [];
     const existingComments = Array.isArray(action.comments) ? action.comments : [];
 
+    // 新版本意图检测（在构建 prompt 之前，以便调整 prompt 格式）
+    const NEW_VERSION_TRIGGERS = ['写一个新版本', '写新版本', '生成新版本', '给我新版本', '写一版新的', '帮我写个新版本'];
+    const isNewVersion = NEW_VERSION_TRIGGERS.some(kw => message.includes(kw));
+
+    const versionCreationSection = isNewVersion ? `
+
+## 当前任务：生成新版本 Initiative 列表
+
+用户希望你直接创建一个新版本，系统会自动保存到数据库，在左侧展示。
+请以严格 JSON 格式回复（只输出 JSON，无其他文字）：
+{"initiatives": ["Initiative 名称 1", "Initiative 名称 2"], "message": "新版本已在左侧展示，请查看"}
+
+要求：
+- initiatives 数组包含 3-6 个 Initiative，基于 KR 目标和现有版本进行优化
+- 保留合理的部分，改进不足的部分，或根据用户的具体要求调整
+- message 字段 30 字以内，告诉用户新版本已展示
+- 输出必须是合法 JSON，不要有任何其他文字` : '';
+
     // 构建秋米的 system prompt + 对话历史
     const initiativeList = initiatives.length > 0
       ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
@@ -1747,7 +1765,7 @@ ${initiativeList}
 - 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，新版本完成后会出现在版本历史中，请稍等片刻"
 - 重拆后当前这个版本不会消失，新版本会作为独立卡片出现
 
-注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。`;
+注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。${versionCreationSection}`;
 
     // 构建历史对话
     const historyParts = existingComments
@@ -1768,12 +1786,46 @@ ${initiativeList}
     const { text: reply } = await callLLM('autumnrice', fullPrompt, {
       model: 'claude-sonnet-4-6',
       timeout: 90000,
-      maxTokens: 800,
+      maxTokens: isNewVersion ? 1200 : 800,
     });
+
+    // 新版本意图：解析 LLM JSON 响应，创建新 pending_action
+    let finalReply = reply;
+    let versionCreated = false;
+    let newVersionId = null;
+
+    if (isNewVersion) {
+      try {
+        const jsonMatch = reply.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const newInitiatives = Array.isArray(parsed.initiatives) ? parsed.initiatives : [];
+          if (parsed.message) finalReply = parsed.message;
+          if (newInitiatives.length > 0) {
+            const insertResult = await pool.query(
+              `INSERT INTO pending_actions (action_type, context, params, status, comments, created_at, updated_at)
+               VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', '[]'::jsonb, NOW(), NOW())
+               RETURNING id`,
+              [
+                action.action_type,
+                JSON.stringify({ ...ctx, initiatives: newInitiatives }),
+                JSON.stringify(action.params || {}),
+              ]
+            );
+            newVersionId = insertResult.rows[0].id;
+            versionCreated = true;
+            console.log(`[autumnrice/chat] new version created: ${newVersionId} (${newInitiatives.length} initiatives)`);
+          }
+        }
+      } catch (parseErr) {
+        console.warn('[autumnrice/chat] new version parse failed:', parseErr.message);
+        // finalReply 保持原始 reply，降级为普通回复
+      }
+    }
 
     const now = new Date().toISOString();
     const userComment = { role: 'user', text: message.trim(), ts: now };
-    const autumnriceComment = { role: 'autumnrice', text: reply, ts: now };
+    const autumnriceComment = { role: 'autumnrice', text: finalReply, ts: now };
 
     // 存入 pending_actions.comments
     await pool.query(
@@ -1781,9 +1833,9 @@ ${initiativeList}
       [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
     );
 
-    // 重拆意图检测
+    // 重拆意图检测（与 isNewVersion 互斥，避免同时触发两种流程）
     const REDECOMP_TRIGGERS = ['重新拆', '重拆', '重做', '重新分析', '重新规划', '再拆一次'];
-    const isRedecomp = REDECOMP_TRIGGERS.some(kw => message.includes(kw));
+    const isRedecomp = !isNewVersion && REDECOMP_TRIGGERS.some(kw => message.includes(kw));
 
     let redecompTriggered = false;
     if (isRedecomp) {
@@ -1808,7 +1860,7 @@ ${initiativeList}
       }
     }
 
-    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: redecompTriggered });
+    res.json({ success: true, reply: finalReply, comment: autumnriceComment, redecomp_triggered: redecompTriggered, version_created: versionCreated, new_version_id: newVersionId });
   } catch (err) {
     console.error('[autumnrice/chat] Error:', err.message);
     res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });
