@@ -1716,7 +1716,7 @@ router.post('/autumnrice/chat', async (req, res) => {
     const existingComments = Array.isArray(action.comments) ? action.comments : [];
 
     // 新版本意图检测（在构建 prompt 之前，以便调整 prompt 格式）
-    const NEW_VERSION_TRIGGERS = ['写一个新版本', '写新版本', '生成新版本', '给我新版本', '写一版新的', '帮我写个新版本'];
+    const NEW_VERSION_TRIGGERS = ['写一个新版本', '写新版本', '生成新版本', '给我新版本', '写一版新的', '帮我写个新版本', '写一个新的', '新的一个版本', '一个新版本', '试试新版', '新版方案', '重新写个版本', '换个版本', '再写一版'];
     const isNewVersion = NEW_VERSION_TRIGGERS.some(kw => message.includes(kw));
 
     const versionCreationSection = isNewVersion ? `
