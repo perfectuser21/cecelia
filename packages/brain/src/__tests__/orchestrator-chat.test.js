@@ -59,6 +59,12 @@ vi.mock('../chat-action-dispatcher.js', () => ({
   detectAndExecuteAction: mockDetectAndExecuteAction,
 }));
 
+// Mock owner-input-extractor.js — DOD-6: 验证 fire-and-forget 调用
+const mockExtractSuggestionsFromChat = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../owner-input-extractor.js', () => ({
+  extractSuggestionsFromChat: mockExtractSuggestionsFromChat,
+}));
+
 // Import after mocks
 import pool from '../db.js';
 import { processEvent as thalamusProcessEvent } from '../thalamus.js';
@@ -595,6 +601,42 @@ describe('orchestrator-chat', () => {
       const prompt = mockCallLLM.mock.calls[0][1];
       expect(prompt).toContain('你是 Cecelia');
       expect(prompt).not.toContain('## 主人信息');
+    });
+  });
+
+  // ===================== D11: DOD-6 owner-input-extractor fire-and-forget =====================
+
+  describe('DOD-6: handleChat 触发 extractSuggestionsFromChat（fire-and-forget）', () => {
+    it('handleChat 返回后 extractSuggestionsFromChat 被异步调用', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的，我来处理。'));
+
+      await handleChat('帮我创建一个任务');
+
+      // flushPromises：等待 Promise.resolve().then() 微任务执行
+      await Promise.resolve();
+
+      expect(mockExtractSuggestionsFromChat).toHaveBeenCalledTimes(1);
+    });
+
+    it('extractSuggestionsFromChat 接收正确的 message 参数', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('收到。'));
+
+      const message = '想做一个 AI 学习项目';
+      await handleChat(message);
+      await Promise.resolve();
+
+      const [calledMessage] = mockExtractSuggestionsFromChat.mock.calls[0];
+      expect(calledMessage).toBe(message);
+    });
+
+    it('extractSuggestionsFromChat 失败时不影响 handleChat 返回值', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('好的。'));
+      mockExtractSuggestionsFromChat.mockRejectedValueOnce(new Error('suggestion failed'));
+
+      const result = await handleChat('测试消息');
+      await Promise.resolve();
+
+      expect(result).toHaveProperty('reply', '好的。');
     });
   });
 });
