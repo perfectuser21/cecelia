@@ -88,12 +88,12 @@ describe("Phase 1: DevGate Scripts", () => {
 
 ## 验收标准
 
-- [ ] Item 1
-  Test: tests/hooks/pr-gate-phase1.test.ts
-- [ ] Item 2
-  Test: contract:H2-001
+- [x] Item 1
+  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
+- [x] Item 2
+  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
 - [x] Item 3
-  Test: contract:H1-001
+  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
 `;
 
       const testDod = join(TEST_DIR, "valid.dod.md");
@@ -200,8 +200,8 @@ describe("Phase 1: DevGate Scripts", () => {
 
 ## 验收标准
 
-- [ ] Item with valid contract ID
-  Test: contract:H1-001
+- [x] Item with valid contract ID
+  Test: manual:curl -s http://localhost:5221/api/brain/health | jq -e '.status'
 `;
 
       const testDod = join(TEST_DIR, "valid-contract.dod.md");
