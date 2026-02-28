@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -617,6 +618,7 @@ function AccUsageRings() {
 // ── Main ─────────────────────────────────────────────────────────
 
 export default function LiveMonitorPage() {
+  const navigate = useNavigate();
   const [brainStatus, setBrainStatus] = useState<BrainStatus | null>(null);
   const [tick, setTick] = useState<TickStatus | null>(null);
   const [activeTasks, setActiveTasks] = useState<BrainTask[]>([]);
@@ -790,7 +792,9 @@ export default function LiveMonitorPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
             {/* 当前 OKR */}
-            <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px' }}>
+            <div onClick={() => navigate('/planning/okr')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
                 <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>当前 OKR</span>
                 <span style={{ fontSize: 10, color: '#484f58', background: '#21262d', padding: '1px 6px', borderRadius: 4 }}>今日焦点</span>
@@ -848,7 +852,10 @@ export default function LiveMonitorPage() {
                     { label: '排队中', value: stats.queued, color: stats.queued > 0 ? '#f59e0b' : '#484f58' },
                     { label: '逾期', value: stats.overdue, color: stats.overdue > 0 ? '#ef4444' : '#484f58' },
                   ].map(({ label, value, color }) => (
-                    <div key={label} style={{ background: '#0d1117', borderRadius: 8, padding: '10px 8px', textAlign: 'center' }}>
+                    <div key={label} onClick={() => navigate('/work')}
+                      style={{ background: '#0d1117', borderRadius: 8, padding: '10px 8px', textAlign: 'center', cursor: 'pointer', transition: 'background .15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#161b22')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '#0d1117')}>
                       <div style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 700, color, lineHeight: 1 }}>{value}</div>
                       <div style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .6, marginTop: 5 }}>{label}</div>
                     </div>

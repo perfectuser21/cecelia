@@ -113,7 +113,7 @@ function AppContent() {
       {isAuthenticated && (
         <>
           {/* 左侧导航栏 - 使用配置的渐变色 */}
-          <aside className={`fixed inset-y-0 left-0 ${collapsed ? 'w-16' : 'w-64'} flex flex-col shadow-2xl transition-all duration-300 z-20`} style={{ background: config?.theme.sidebarGradient || 'var(--sidebar-gradient)' }}>
+          <aside className={`fixed inset-y-0 left-0 ${collapsed ? 'w-16' : 'w-64'} flex flex-col border-r border-white/5 transition-all duration-300 z-20`} style={{ background: config?.theme.sidebarGradient || 'var(--sidebar-gradient)' }}>
             {/* Logo 区域 */}
             <div className={`h-16 flex items-center justify-center border-b border-white/10`}>
               {collapsed ? (
