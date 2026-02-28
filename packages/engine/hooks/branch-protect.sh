@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - 分支保护 Hook v20
-# v20: 强制 worktree 检测——cp-*/feature/* 分支必须在 worktree 中，防止主仓库污染
+# v21: 分支名正则与 devgate.yml 同步（强制 8 位数字时间戳）+ worktree 检测双重保险
 # v19: 支持 monorepo 子目录的 PRD/DoD 文件（如 apps/core/.prd.md）
 # v18: 放宽 skills 目录保护，只保护 Engine 相关 skills (dev, qa, audit, semver)
 # v17: 支持分支级别 PRD/DoD 文件 (.prd-{branch}.md, .dod-{branch}.md)
@@ -174,18 +174,23 @@ fi
 
 # ===== 分支检查 =====
 
-# L1 修复: 统一分支正则标准
-# cp-* 要求: cp- 后至少1个字符，允许字母数字、连字符、下划线
-# feature/* 要求: feature/ 后至少1个字符，允许字母数字、连字符、下划线、斜杠
-if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9][-a-zA-Z0-9_]*$ ]] || \
+# v21: 分支名正则与 devgate.yml 统一
+# cp-* 要求: cp- + 8位数字时间戳 + 小写字母/数字/连字符/下划线（与 devgate.yml 保持一致）
+# feature/* 要求: feature/ 后至少1个字符，允许字母数字、连字符、下划线、斜杠（无时间戳要求）
+if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
    [[ "$CURRENT_BRANCH" =~ ^feature/[a-zA-Z0-9][-a-zA-Z0-9_/]*$ ]]; then
 
-    # ===== v20: Worktree 检测 =====
+    # ===== v21: Worktree 检测（双重保险）=====
     # 必须在独立 worktree 中开发，不能在主仓库的 cp-*/feature/* 残留分支上写代码
     # 原因：主仓库残留分支通过分支名检查，但代码会污染主仓库状态（monorepo 尤其危险）
+    # 检测方式（双重保险，满足任一即视为 worktree）：
+    #   1. 路径包含 "worktrees"（标准 git worktree 路径特征）
+    #   2. $GIT_DIR/gitdir 文件存在（worktree 专用文件，主仓库 .git 目录中不存在）
     GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null || echo "")
     IS_WORKTREE=false
     if [[ "$GIT_DIR_PATH" == *"worktrees"* ]]; then
+        IS_WORKTREE=true
+    elif [[ -n "$GIT_DIR_PATH" && -f "${GIT_DIR_PATH}/gitdir" ]]; then
         IS_WORKTREE=true
     fi
 
