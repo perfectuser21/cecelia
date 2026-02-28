@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.15.0
+version: 1.16.0
 created: 2026-01-16
-updated: 2026-02-27
+updated: 2026-02-28
 changelog:
+  - 1.16.0: Learning/Cleanup 加强；~/.claude/skills/ 是 symlink 不是独立目录
   - 1.15.0: 添加 /dev skill 自修复经验（5 个已知问题 + CI 三连修复）
   - 1.14.0: 添加 OKR 三层拆解集成 PR Plans 经验（CI 系统化修复、版本同步、Feature Registry SSOT）
   - 1.13.0: Stop Hook sentinel 文件路径修复（.git 保护机制触发问题）
@@ -2601,3 +2602,17 @@ runs:
 
 **修复**：删除 stop.sh 的 3 行 CECELIA_HEADLESS 检查（H7-014）。
 PR: #48, v12.30.9
+
+### [2026-02-28] 加强 /dev Learning 和 Cleanup 步骤
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**错误判断记录**：
+- 以为 `~/.claude/skills/` 是独立目录、不被 git 追踪 → 实际上是 symlink 指向 `cecelia/packages/engine/skills/dev`，改动归属 cecelia 仓库，必须走 cecelia 的 /dev 流程
+- 根本原因：没有在改 skills 文件前先 `readlink ~/.claude/skills/dev` 确认目标路径
+
+**预防措施**：
+- 改 `~/.claude/skills/` 里的任何文件前，先运行 `ls -la ~/.claude/skills/<name>` 确认是 symlink 还是实体目录
+- 如果是 symlink，找到 target 路径对应的 git 仓库，在那个仓库里走 /dev
+
+**影响程度**：Low（功能正常，只是流程没走对）
