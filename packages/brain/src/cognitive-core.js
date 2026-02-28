@@ -431,7 +431,7 @@ export function calculateMotivation(task, trustScores, emotionState, krAlignment
 // ═══════════════════════════════════════════════════════════════
 
 let _lastNarrativeAt = 0;
-const NARRATIVE_INTERVAL_MS = 60 * 60 * 1000; // 每小时一次
+const NARRATIVE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 每天一次
 
 // tick 事件缓冲区
 let _tickEventBuffer = [];
