@@ -15,14 +15,14 @@ import pool from './db.js';
  * @returns {number} 创建的任务数量
  */
 export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
-  // 1. 查询高分 pending suggestions（score≥0.7，未过期）
+  // 1. 查询高分 pending suggestions（priority_score≥0.7，未过期）
   const candidateResult = await dbPool.query(`
-    SELECT s.id, s.content, s.score, s.source_type, s.source_id
+    SELECT s.id, s.content, s.priority_score, s.source, s.agent_id
     FROM suggestions s
     WHERE s.status = 'pending'
-      AND s.score >= 0.7
+      AND s.priority_score >= 0.7
       AND (s.expires_at IS NULL OR s.expires_at > NOW())
-    ORDER BY s.score DESC, s.created_at ASC
+    ORDER BY s.priority_score DESC, s.created_at ASC
     LIMIT $1
   `, [limit * 5]); // 多取一些，去重后再限制
 
@@ -66,8 +66,8 @@ export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
       const taskDescription = `[SUGGESTION_MODE]
 
 Suggestion ID: ${suggestion.id}
-Score: ${suggestion.score}
-Source: ${suggestion.source_type || 'unknown'}
+Score: ${suggestion.priority_score}
+Source: ${suggestion.source || 'unknown'}
 
 内容：
 ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(suggestion.content, null, 2)}
@@ -87,9 +87,9 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
         taskDescription,
         JSON.stringify({
           suggestion_id: String(suggestion.id),
-          suggestion_score: suggestion.score,
-          source_type: suggestion.source_type || null,
-          source_id: suggestion.source_id || null,
+          suggestion_score: suggestion.priority_score,
+          source: suggestion.source || null,
+          agent_id: suggestion.agent_id || null,
         })
       ]);
 
@@ -103,7 +103,7 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
 
       await client.query('COMMIT');
 
-      console.log(`[suggestion-dispatcher] Created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.score})`);
+      console.log(`[suggestion-dispatcher] Created suggestion_plan task ${newTaskId} for suggestion ${suggestion.id} (score=${suggestion.priority_score})`);
       created++;
     } catch (err) {
       await client.query('ROLLBACK');
