@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] executor.js failure_pattern content_hash 去重 (PR #173, Brain 1.135.1)
+- **根因**: `executor.js` 直接 INSERT INTO learnings 时未设 `content_hash`，绕过 `auto-learning.js` 的去重逻辑，每次 watchdog kill 均产生新记录。实测：916 条 test-watchdog-kill 记录 content_hash 全为 NULL
+- **修复**: 提取 `failureTitle`/`failureContent` 变量 → 计算 `SHA256(title\ncontent).slice(0,16)` → 先 SELECT 检查去重 → INSERT 补充 `content_hash / version / is_latest / digested`（与 auto-learning.js 规范一致）
+- **pattern**: 任何绕过专用模块直接 INSERT learnings 的地方，都必须手动计算并填写 content_hash，否则去重永久失效
+- **.brain-versions 必须随 version bump 同步**: check-version-sync.sh 会检查此文件，遗忘会导致 Facts Consistency CI 失败
+
 ### [2026-02-28] /dev Step 4 PRD Scope 漂移修复 (PR #168, Engine 12.35.2)
 - **Scope 漂移根因**: Step 4（探索）广泛读代码库，AI 遇到 `docs/design-*.md` 等"看起来更权威"的设计文档，会默默切换框架——`.prd-*.md` 定义的目标就被架空了
 - **修复方案**: 在 `04-explore.md` 末尾加强制 PRD Scope Check，要求 AI 进入 Step 5 前明确回答"我的方案覆盖了 PRD 的哪个目标"，并声明探索中的其他文档只是上下文参考
