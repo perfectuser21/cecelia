@@ -63,11 +63,23 @@ get_completed_at() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-# 生成总结（基于 quality-summary.json 和 git diff）
+# 生成总结（基于 incident log 统计 + quality-summary.json）
 generate_summary() {
     local summary="功能实现完成"
+    local INCIDENT_FILE=".dev-incident-log.json"
 
-    # 尝试从 quality-summary.json 读取
+    # 从 incident log 统计失败次数
+    if [[ -f "$INCIDENT_FILE" ]]; then
+        local ci_failures test_failures
+        ci_failures=$(jq '[.[] | select(.type == "ci_failure")] | length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
+        test_failures=$(jq '[.[] | select(.type == "test_failure")] | length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
+
+        if [[ "$ci_failures" -gt 0 || "$test_failures" -gt 0 ]]; then
+            summary="功能实现完成（CI 失败 ${ci_failures} 次，本地测试失败 ${test_failures} 次）"
+        fi
+    fi
+
+    # 尝试从 quality-summary.json 读取（覆盖上面的默认值）
     if [[ -f "$QUALITY_SUMMARY" ]]; then
         local note
         note=$(jq -r '.note // ""' "$QUALITY_SUMMARY" 2>/dev/null || echo "")
@@ -79,22 +91,34 @@ generate_summary() {
     echo "$summary"
 }
 
-# 从 quality-summary.json 提取问题
+# 从 .dev-incident-log.json 提取真实问题（优先）
+# 降级：从 quality-summary.json 关键词提取（兼容旧流程）
 extract_issues() {
-    local issues=()
+    local INCIDENT_FILE=".dev-incident-log.json"
 
-    if [[ -f "$QUALITY_SUMMARY" ]]; then
-        # 尝试读取 changes 字段，分析是否有问题标记
-        local changes
-        changes=$(jq -r '.changes // {}' "$QUALITY_SUMMARY" 2>/dev/null || echo "{}")
+    # 优先从 incident log 读取真实数据
+    if [[ -f "$INCIDENT_FILE" ]]; then
+        local count
+        count=$(jq 'length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
 
-        # 如果有 "修复"、"fix" 等关键字，认为是问题修复
-        if echo "$changes" | grep -qiE '修复|fix|bug'; then
-            issues+=("代码中存在需要修复的问题")
+        if [[ "$count" -gt 0 ]]; then
+            # 将每条 incident 转成可读字符串
+            jq -r '[.[] | "[" + .step + "] " + .description + (if .resolution != "" then " → 修复: " + .resolution else " → 未记录修复" end)]' \
+                "$INCIDENT_FILE" 2>/dev/null || echo "[]"
+            return
         fi
     fi
 
-    # 默认：无问题
+    # 降级：从 quality-summary.json 关键词提取
+    local issues=()
+    if [[ -f "$QUALITY_SUMMARY" ]]; then
+        local changes
+        changes=$(jq -r '.changes // {}' "$QUALITY_SUMMARY" 2>/dev/null || echo "{}")
+        if echo "$changes" | grep -qiE '修复|fix|bug'; then
+            issues+=("代码中存在需要修复的问题（来源：quality-summary 关键词）")
+        fi
+    fi
+
     if [[ ${#issues[@]} -eq 0 ]]; then
         echo "[]"
     else

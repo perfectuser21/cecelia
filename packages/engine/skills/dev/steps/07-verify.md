@@ -39,8 +39,45 @@ fi
 | 结果 | 动作 |
 |------|------|
 | 通过 | 继续 Step 7.2 |
-| 失败 | 修复代码 → 重跑 |
+| 失败 | **记录 incident** → 修复代码 → 重跑 |
 | 无测试命令 | 继续 Step 7.2 |
+
+**测试失败时，必须立即记录到 `.dev-incident-log.json`**：
+
+```bash
+# 每次测试失败时追加记录（append 模式）
+append_incident() {
+    local type="$1"
+    local description="$2"
+    local error_snippet="$3"
+    local resolution="$4"
+
+    INCIDENT_FILE=".dev-incident-log.json"
+    ENTRY=$(jq -n \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg step "7-verify" \
+        --arg type "$type" \
+        --arg desc "$description" \
+        --arg err "$error_snippet" \
+        --arg res "$resolution" \
+        '{timestamp: $ts, step: $step, type: $type, description: $desc, error: $err, resolution: $res}')
+
+    # 读取现有数组并追加（若文件不存在则初始化）
+    if [[ -f "$INCIDENT_FILE" ]]; then
+        jq --argjson e "$ENTRY" '. += [$e]' "$INCIDENT_FILE" > /tmp/incident_tmp.json && mv /tmp/incident_tmp.json "$INCIDENT_FILE"
+    else
+        jq -n --argjson e "$ENTRY" '[$e]' > "$INCIDENT_FILE"
+    fi
+}
+
+# 示例用法（测试失败时）：
+# append_incident "test_failure" "npm run qa 失败：TypeScript 类型错误" "Type 'string' is not assignable to..." "修正了 user-input-extractor.ts 第 45 行的类型声明"
+```
+
+**记录时机**：
+- 每次 `npm run qa` / `npm test` 失败时记录一条
+- 每次 DoD 验证项失败时记录一条
+- `resolution` 字段在修复完成后填写（不是在失败时就能填）
 
 ---
 
