@@ -95,6 +95,27 @@ export async function recordLearning(analysis) {
     const learning = result.rows[0];
     console.log(`[learning] Recorded learning: ${learning.id}`);
 
+    // 写 memory_stream 记录，建立闭环链条（failure_pattern → memory_stream active）
+    try {
+      const memContent = `[故障记录] ${title}\n\n${rcaAnalysis.root_cause || ''}`;
+      const memResult = await pool.query(
+        `INSERT INTO memory_stream (content, importance, memory_type, source_type, status)
+         VALUES ($1, 7, 'long', 'failure_record', 'active')
+         RETURNING id`,
+        [memContent]
+      );
+      const memId = memResult.rows[0].id;
+      // 反向链接：learning.source_memory_id → memory_stream
+      await pool.query(
+        'UPDATE learnings SET source_memory_id = $1 WHERE id = $2',
+        [memId, learning.id]
+      );
+      learning.source_memory_id = memId;
+      console.log(`[learning] Closure chain: learning=${learning.id} → memory=${memId}`);
+    } catch (chainErr) {
+      console.warn(`[learning] Closure chain write failed (non-fatal): ${chainErr.message}`);
+    }
+
     // Fire-and-forget: 异步生成 embedding
     const embeddingText = `${title}\n\n${content}`.substring(0, 4000);
     generateLearningEmbeddingAsync(learning.id, embeddingText);

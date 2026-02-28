@@ -2629,6 +2629,11 @@ router.post('/execution-callback', async (req, res) => {
           generateTaskEmbeddingAsync(task_id, taskRow.rows[0].title, taskRow.rows[0].description).catch(() => {});
         }
       }
+
+      // 闭环回写：dev 任务完成后，将相关 failure_pattern 的 memory_stream 标记为 resolved
+      resolveRelatedFailureMemories(task_id, pool).catch(err =>
+        console.warn(`[execution-callback] Closure resolve failed (non-fatal): ${err.message}`)
+      );
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -8559,5 +8564,71 @@ router.get('/self-model', async (_req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * 闭环回写：dev 任务完成后，将相关 failure_pattern 的 memory_stream 标记为 resolved
+ *
+ * 策略：从 task 的 title/description 提取关键词，在 failure_pattern learnings 中做
+ * 关键词匹配（ILIKE），找到有 source_memory_id 的条目，将对应 memory_stream 标记为 resolved。
+ *
+ * @param {string} task_id - 已完成的任务 ID
+ * @param {import('pg').Pool} db - PostgreSQL 连接池
+ */
+export async function resolveRelatedFailureMemories(task_id, db) {
+  // 1. 获取任务标题
+  const taskRow = await db.query('SELECT title FROM tasks WHERE id = $1', [task_id]);
+  if (!taskRow.rows[0]) return;
+
+  const taskTitle = taskRow.rows[0].title;
+
+  // 2. 从标题提取关键词（去掉常见词，取实质词汇）
+  const stopWords = new Set(['fix', 'feat', 'add', 'update', 'the', 'a', 'an', 'and', 'or',
+    '修复', '添加', '更新', '实现', '优化', '改进', '完成', '任务', '功能']);
+  const keywords = taskTitle
+    .toLowerCase()
+    .replace(/[^\w\u4e00-\u9fa5\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopWords.has(w))
+    .slice(0, 5);
+
+  if (keywords.length === 0) return;
+
+  // 3. 在 failure_pattern learnings 中匹配关键词（有 source_memory_id 的才处理）
+  const likeConditions = keywords.map((kw, i) => `(l.title ILIKE $${i + 2} OR l.content ILIKE $${i + 2})`);
+  const likeParams = keywords.map(kw => `%${kw}%`);
+
+  const learnings = await db.query(
+    `SELECT l.id, l.source_memory_id
+     FROM learnings l
+     WHERE l.category = 'failure_pattern'
+       AND l.source_memory_id IS NOT NULL
+       AND l.archived = false
+       AND (${likeConditions.join(' OR ')})
+     LIMIT 10`,
+    [task_id, ...likeParams]
+  );
+
+  if (learnings.rows.length === 0) {
+    console.log(`[closure] No matching failure memories for task=${task_id}`);
+    return;
+  }
+
+  // 4. 批量标记 memory_stream 为 resolved
+  const memIds = learnings.rows.map(r => r.source_memory_id).filter(Boolean);
+  if (memIds.length === 0) return;
+
+  const placeholders = memIds.map((_, i) => `$${i + 3}`).join(', ');
+  await db.query(
+    `UPDATE memory_stream
+     SET status = 'resolved',
+         resolved_by_task_id = $1,
+         resolved_at = NOW()
+     WHERE id IN (${placeholders})
+       AND status = 'active'`,
+    [task_id, task_id, ...memIds]
+  );
+
+  console.log(`[closure] Resolved ${memIds.length} failure memories for task=${task_id} (keywords: ${keywords.join(',')})`);
+}
 
 export default router;
