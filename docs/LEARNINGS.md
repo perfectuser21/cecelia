@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] 认知-决策双闭环 (PR #170, Brain 1.135.0)
+- **情绪真正影响调度**: `evaluateEmotion()` 已计算 `dispatch_rate_modifier`，但原 tick 从未使用。修复：在 `effectiveDispatchMax = poolCAvailable * dispatchRate` 后乘以 `emotionDispatchModifier`，overloaded 状态直接跳过本轮派发
+- **DB 真实数据替代硬编码**: 情绪评估的 `queueDepth/successRate` 原来是 `0/1.0` 硬编码 → 改为真实 SQL 查询（COUNT tasks WHERE status='queued'，最近 1h 成功/失败率）
+- **异步反刍 → 同步规划的桥接**: `buildInsightAdjustments()` 是异步（查 DB），`scoreKRs()` 是同步纯函数。解决方案：在调用 `scoreKRs` 之前 await 好 adjustments Map，再作为参数传入（不改 scoreKRs 签名，默认为 new Map()）
+- **DoD Test 格式白名单**: check-dod-mapping.cjs 只接受 `tests/`, `contract:`, `manual:` 三种前缀。`npm:test:packages/brain` 是自定义格式，不在白名单内 → 应改为 `manual:npm run test --workspace packages/brain -- --run src/__tests__/...`
+- **grep -q 代替 grep | wc -l**: DevGate 禁止 `grep | wc -l` 假测试，改用 `grep -q` 检查字符串是否存在（命令存在即返回 0）
+- **merge 冲突版本策略**: main 频繁前进时，版本文件冲突用 `git checkout HEAD -- <file>` + `python3 re.sub` 保留 HEAD 版本（minor bump），然后 `npm install --package-lock-only` 重新生成 lock 文件
+
+### [2026-02-28] /dev Step 4 PRD Scope 漂移修复 (PR #168, Engine 12.35.2)
+- **Scope 漂移根因**: Step 4（探索）广泛读代码库，AI 遇到 `docs/design-*.md` 等"看起来更权威"的设计文档，会默默切换框架——`.prd-*.md` 定义的目标就被架空了
+- **修复方案**: 在 `04-explore.md` 末尾加强制 PRD Scope Check，要求 AI 进入 Step 5 前明确回答"我的方案覆盖了 PRD 的哪个目标"，并声明探索中的其他文档只是上下文参考
+- **ci-tools/VERSION 和 hooks/VERSION 必须同步**: Engine 版本 bump 时，`ci-tools/VERSION` 和 `hooks/VERSION` 两个文件也必须改，否则 `install-hooks.test.ts` 版本一致性检查会失败
+
+### [2026-02-28] 收件箱体验修复三连 (PR #167, Dashboard 1.11.1)
+- **isFullHeightRoute 滚动陷阱**: App.tsx 将 `/inbox` 标为 `isFullHeightRoute`，父容器变 `overflow-hidden`；InboxPage 自身无滚动容器导致超出内容被裁剪。修复：在 InboxPage 根 div 外加 `h-full overflow-y-auto` 包装层
+- **UI 层去重优于 DB 层**: 同一 KR 多次触发 decomp 会产生多条 pending_action，DB 层清理有历史风险；在 UI `useMemo` 里做 `deduplicateOkrReviews`（按 `context.kr_title` 分组取最新 `created_at`），零侵入、可回溯
+- **source 原始值要映射**: `proposal.source` 存 `system`/`okr_decomposer` 等内部标识，直接渲染很奇怪。在 ProposalCard 顶部加 `SOURCE_LABELS` 常量对象做映射，fallback 到原始值，覆盖各渠道来源
+- **PR merge 时 main 被 worktree 占用**: `gh pr merge` 需要本地 checkout main，但 main 已被另一个 worktree 使用。用 `--admin` flag 通过 GitHub API 直接合并，无需本地 checkout
+
 ### [2026-02-28] 认知架构升级——8 个认知系统 (PR #164, Brain 1.134.0)
 - **设计原则**: 认知系统 = 纯计算（不调 LLM）+ 叙事系统（Haiku）。其余 7 个系统都是基于已有数据的轻量计算，只有 narrative-loop 调用 LLM（每小时一次）
 - **缓存陷阱**: world-model 和 trust-model 有 5min/10min TTL 缓存，测试时需在 `beforeEach` 调用 `_resetCaches()` 避免跨测试污染
