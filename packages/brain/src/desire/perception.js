@@ -255,5 +255,24 @@ export async function runPerception(pool) {
     importance: greetingImportance
   });
 
+  // 13. 好奇心积累信号（环2：自主学习驱动）
+  try {
+    const curiosityResult = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'curiosity_topics' LIMIT 1`
+    );
+    const topics = curiosityResult.rows[0]?.value_json;
+    if (Array.isArray(topics) && topics.length > 0) {
+      const topicSummary = topics.map(t => t.topic || '').filter(Boolean).join('、').slice(0, 100);
+      observations.push({
+        signal: 'curiosity_accumulated',
+        value: topics.length,
+        context: `发现 ${topics.length} 个知识盲点待探索：${topicSummary}`,
+        importance: Math.min(5 + topics.length, 8),
+      });
+    }
+  } catch (err) {
+    console.error('[perception] curiosity check error:', err.message);
+  }
+
   return observations;
 }

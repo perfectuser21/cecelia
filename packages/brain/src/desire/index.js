@@ -19,6 +19,7 @@ import { runDesireFormation } from './desire-formation.js';
 import { runExpressionDecision } from './expression-decision.js';
 import { runExpression } from './expression.js';
 import { createSuggestion } from '../suggestion-triage.js';
+import { runEmotionLayer } from '../emotion-layer.js';
 
 /**
  * 运行完整欲望系统（六层）
@@ -47,6 +48,15 @@ export async function runDesireSystem(pool) {
     result.perception.observations = observations.length;
   } catch (err) {
     console.error('[desire] perception error:', err.message);
+  }
+
+  // Layer 1.5: 情绪层（从感知信号有机推导情绪状态）
+  if (observations.length > 0) {
+    try {
+      await runEmotionLayer(observations, pool);
+    } catch (err) {
+      console.warn('[desire] emotion layer error (non-critical):', err.message);
+    }
   }
 
   // Layer 2: 记忆（打分 + 写入 + 累积）
@@ -86,6 +96,38 @@ export async function runDesireSystem(pool) {
     expressionCandidate = await runExpressionDecision(pool);
   } catch (err) {
     console.error('[desire] expression decision error:', err.message);
+  }
+
+  // 环2：explore desire → 自主学习（好奇心驱动的 research 任务）
+  if (expressionCandidate && expressionCandidate.desire.type === 'explore') {
+    const desire = expressionCandidate.desire;
+    result.expression = { triggered: true, acted: true };
+
+    try {
+      const { rows } = await pool.query(`
+        INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
+        VALUES ($1, $2, 'P2', 'research', 'queued', 'curiosity')
+        RETURNING id
+      `, [
+        `[自主探索] ${desire.content.slice(0, 80)}`,
+        `${desire.proposed_action || desire.content}\n\n来源：好奇心信号 desire ${desire.id}`,
+      ]);
+
+      await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
+
+      // 清空 curiosity_topics（已派发任务）
+      await pool.query(`
+        UPDATE working_memory SET value_json = '[]'::jsonb, updated_at = NOW()
+        WHERE key = 'curiosity_topics'
+      `);
+
+      result.expression.task_created = rows[0]?.id;
+      console.log(`[desire] explore → research task created: ${rows[0]?.id}`);
+    } catch (err) {
+      console.error('[desire] explore task creation error:', err.message);
+    }
+
+    return result;
   }
 
   // Break 3+4 修复：act/follow_up desire → 直接创建任务（桥接到执行管道）
