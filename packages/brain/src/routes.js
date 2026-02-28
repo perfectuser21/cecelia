@@ -1389,6 +1389,61 @@ router.get('/pending-actions', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/pending-actions/:id
+ * 获取单个 pending action 详情
+ */
+router.get('/pending-actions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM pending_actions WHERE id = $1`,
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, action: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get pending action', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/pending-actions/:id/versions
+ * 查询同一 KR 的所有 okr_decomp_review 版本历史
+ */
+router.get('/pending-actions/:id/versions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const current = await pool.query(
+      `SELECT context FROM pending_actions WHERE id = $1`,
+      [id]
+    );
+    const ctx = current.rows[0]?.context || {};
+    // 优先用 kr_id，没有则用 kr_title 匹配同一 KR 的所有版本
+    let versions;
+    if (ctx.kr_id) {
+      versions = await pool.query(
+        `SELECT id, context, status, created_at FROM pending_actions
+         WHERE action_type = 'okr_decomp_review' AND context->>'kr_id' = $1
+         ORDER BY created_at ASC`,
+        [ctx.kr_id]
+      );
+    } else if (ctx.kr_title) {
+      versions = await pool.query(
+        `SELECT id, context, status, created_at FROM pending_actions
+         WHERE action_type = 'okr_decomp_review' AND context->>'kr_title' = $1
+         ORDER BY created_at ASC`,
+        [ctx.kr_title]
+      );
+    } else {
+      return res.json({ success: true, versions: [] });
+    }
+    res.json({ success: true, versions: versions.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get versions', details: err.message });
+  }
+});
+
+/**
  * POST /api/brain/pending-actions
  * 创建新的 pending action（部门主管向 Cecelia 提案）
  * Body: { action_type, requester, context? }
@@ -1542,8 +1597,9 @@ router.post('/autumnrice/chat', async (req, res) => {
       ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
       : '  （暂无 Initiative）';
 
+    // 只取前 1500 字符，避免 prompt 过长导致超时
     const decompSkillBlock = _decompSkillContent
-      ? `# 你的核心技能（/decomp Skill）\n\n${_decompSkillContent}\n\n---\n\n`
+      ? `# 你的核心技能（/decomp Skill，节选）\n\n${_decompSkillContent.slice(0, 1500)}...\n\n---\n\n`
       : '';
 
     const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。上面是你的 /decomp 技能全文。
@@ -1562,6 +1618,13 @@ ${initiativeList}
 4. 保持专业、简洁、务实的风格
 5. 用户满意时引导他们点击"确认放行"
 
+## 重要能力：你可以触发重新拆解
+
+**如果用户要求重新拆解**（说"重新拆"、"重拆"、"重做"、"再拆一次"等），你有能力触发重拆：
+- 系统会自动检测这些关键词，重置 KR 状态，下一个 Tick 会启动新一轮完整拆解
+- 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，新版本完成后会出现在版本历史中，请稍等片刻"
+- 重拆后当前这个版本不会消失，新版本会作为独立卡片出现
+
 注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。`;
 
     // 构建历史对话
@@ -1579,11 +1642,12 @@ ${initiativeList}
 
     const fullPrompt = `${systemPrompt}${historyBlock}\n## 用户最新消息\n${message.trim()}\n\n请回复用户（直接输出回复内容，不要输出"秋米："前缀）：`;
 
-    // 调用 LLM（秋米使用 claude-sonnet-4-6）
+    // 调用 LLM（秋米使用 MiniMax 直连 API，避免通过 bridge 启动无头进程）
     const { text: reply } = await callLLM('autumnrice', fullPrompt, {
-      model: 'claude-sonnet-4-6',
+      model: 'MiniMax-M2.5-highspeed',
+      provider: 'minimax',
       timeout: 30000,
-      maxTokens: 512,
+      maxTokens: 800,
     });
 
     const now = new Date().toISOString();
@@ -1596,7 +1660,34 @@ ${initiativeList}
       [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
     );
 
-    res.json({ success: true, reply, comment: autumnriceComment });
+    // 重拆意图检测
+    const REDECOMP_TRIGGERS = ['重新拆', '重拆', '重做', '重新分析', '重新规划', '再拆一次'];
+    const isRedecomp = REDECOMP_TRIGGERS.some(kw => message.includes(kw));
+
+    let redecompTriggered = false;
+    if (isRedecomp) {
+      // 优先用 context.kr_id，没有则用 kr_title 反查
+      let krId = action.context?.kr_id;
+      if (!krId && action.context?.kr_title) {
+        const krResult = await pool.query(
+          `SELECT id FROM goals WHERE title = $1 AND type = 'kr' LIMIT 1`,
+          [action.context.kr_title]
+        );
+        if (krResult.rows.length > 0) krId = krResult.rows[0].id;
+      }
+      if (krId) {
+        await pool.query(
+          `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='kr'`,
+          [krId]
+        );
+        redecompTriggered = true;
+        console.log(`[autumnrice/chat] redecomp triggered for KR: ${krId}`);
+      } else {
+        console.warn(`[autumnrice/chat] redecomp: could not find KR for action ${pending_action_id}`);
+      }
+    }
+
+    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: redecompTriggered });
   } catch (err) {
     console.error('[autumnrice/chat] Error:', err.message);
     res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });

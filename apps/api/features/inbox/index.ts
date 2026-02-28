@@ -22,10 +22,15 @@ const manifest: FeatureManifest = {
         order: 1,
       },
     },
+    {
+      path: '/okr/review/:id',
+      component: 'OkrReviewPage',
+    },
   ],
 
   components: {
     InboxPage: () => import('./pages/InboxPage'),
+    OkrReviewPage: () => import('./pages/OkrReviewPage'),
   },
 };
 
