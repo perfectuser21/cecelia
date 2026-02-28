@@ -63,6 +63,81 @@ describe('Suggestion Triage System', () => {
       expect(cortexSuggestion.priority_score).toBeGreaterThan(executorSuggestion.priority_score);
     });
 
+    test('goal_evaluator source crosses 0.7 threshold (regression: was 0.696)', async () => {
+      const suggestion = await createSuggestion({
+        content: 'Goal evaluation: OKR progress is below target',
+        source: 'goal_evaluator',
+        agent_id: 'goal-evaluator-v1',
+        suggestion_type: 'task_creation',
+      });
+
+      // Root bug: goal_evaluator was not mapped, used default=0.5, resulting in 0.696
+      // Fix: added goal_evaluator: 0.85, now score should be ~0.78
+      expect(suggestion.priority_score).toBeGreaterThan(0.7);
+    });
+
+    test('owner_input source exceeds 0.7 threshold', async () => {
+      const suggestion = await createSuggestion({
+        content: 'Owner wants to review monthly OKR progress',
+        source: 'owner_input',
+        agent_id: 'owner-input-extractor',
+        suggestion_type: 'owner_request',
+      });
+
+      expect(suggestion.priority_score).toBeGreaterThan(0.7);
+    });
+
+    test('rumination source exceeds 0.7 threshold', async () => {
+      const suggestion = await createSuggestion({
+        content: 'Insight: task failure rate increased in last 3 days',
+        source: 'rumination',
+        agent_id: 'rumination-v1',
+        suggestion_type: 'insight_action',
+      });
+
+      expect(suggestion.priority_score).toBeGreaterThan(0.7);
+    });
+
+    test('desire_system source exceeds 0.7 threshold', async () => {
+      const suggestion = await createSuggestion({
+        content: 'High-value desire: improve daily task completion rate',
+        source: 'desire_system',
+        agent_id: 'desire-system-v1',
+        suggestion_type: 'task_creation',
+      });
+
+      expect(suggestion.priority_score).toBeGreaterThan(0.7);
+    });
+
+    test('source priority ordering: cortex > owner_input > rumination > thalamus > executor', async () => {
+      const cortex = await createSuggestion({ content: 'cortex test', source: 'cortex', suggestion_type: 'general' });
+      const ownerInput = await createSuggestion({ content: 'owner test', source: 'owner_input', suggestion_type: 'general' });
+      const rumination = await createSuggestion({ content: 'rumination test', source: 'rumination', suggestion_type: 'general' });
+      const thalamus = await createSuggestion({ content: 'thalamus test', source: 'thalamus', suggestion_type: 'general' });
+      const executor = await createSuggestion({ content: 'executor test', source: 'executor', suggestion_type: 'general' });
+
+      expect(cortex.priority_score).toBeGreaterThan(ownerInput.priority_score);
+      expect(ownerInput.priority_score).toBeGreaterThan(rumination.priority_score);
+      expect(rumination.priority_score).toBeGreaterThan(thalamus.priority_score);
+      expect(thalamus.priority_score).toBeGreaterThan(executor.priority_score);
+    });
+
+    test('type priority ordering: alert > owner_request > task_creation > insight_action > optimization > general', async () => {
+      const src = 'cortex';
+      const alert = await createSuggestion({ content: 'alert test', source: src, suggestion_type: 'alert' });
+      const ownerReq = await createSuggestion({ content: 'owner_request test', source: src, suggestion_type: 'owner_request' });
+      const taskCreate = await createSuggestion({ content: 'task_creation test', source: src, suggestion_type: 'task_creation' });
+      const insightAct = await createSuggestion({ content: 'insight_action test', source: src, suggestion_type: 'insight_action' });
+      const optimization = await createSuggestion({ content: 'optimization test', source: src, suggestion_type: 'optimization' });
+      const general = await createSuggestion({ content: 'general test', source: src, suggestion_type: 'general' });
+
+      expect(alert.priority_score).toBeGreaterThan(ownerReq.priority_score);
+      expect(ownerReq.priority_score).toBeGreaterThan(taskCreate.priority_score);
+      expect(taskCreate.priority_score).toBeGreaterThan(insightAct.priority_score);
+      expect(insightAct.priority_score).toBeGreaterThan(optimization.priority_score);
+      expect(optimization.priority_score).toBeGreaterThan(general.priority_score);
+    });
+
     test('emits event when suggestion is created', async () => {
       await createSuggestion({
         content: 'Test event emission',
