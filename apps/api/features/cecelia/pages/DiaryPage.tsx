@@ -62,7 +62,7 @@ export default function DiaryPage() {
   const groups = groupByDate(narratives);
 
   return (
-    <div className="min-h-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
+    <div className="h-full overflow-y-auto bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       {/* 顶部标题区 */}
       <div className="relative overflow-hidden border-b border-white/5">
         <div className="absolute inset-0 bg-gradient-to-r from-violet-900/20 via-transparent to-blue-900/20 pointer-events-none" />
