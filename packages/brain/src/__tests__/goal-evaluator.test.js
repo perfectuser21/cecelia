@@ -206,6 +206,32 @@ describe('evaluateGoal', () => {
     expect(result.verdict).toBe('needs_attention');
     expect(result.action_taken).toBe('suggestion_created');
   });
+
+  it('needs_attention suggestion has priority_score 0.75 (≥ dispatcher threshold)', async () => {
+    // getGoalMetrics
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        total_tasks_7d: '5',
+        completed_tasks_7d: '1',
+        failed_tasks_7d: '3',
+        last_completed_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      }],
+    });
+    // INSERT into suggestions (capture the call)
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'sug-2' }] });
+    // INSERT into goal_evaluations
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await evaluateGoal({ id: 'goal-score', title: 'Score KR' });
+
+    // Find the suggestions INSERT call
+    const suggestionCall = mockPool.query.mock.calls.find(
+      call => typeof call[0] === 'string' && call[0].includes('INSERT INTO suggestions')
+    );
+    expect(suggestionCall).toBeDefined();
+    // priority_score 0.75 is a literal in the SQL (not a param), verify SQL string
+    expect(suggestionCall[0]).toContain('0.75');
+  });
 });
 
 // ── Tests: evaluateGoalOuterLoop ──────────────────────────────────────────────
