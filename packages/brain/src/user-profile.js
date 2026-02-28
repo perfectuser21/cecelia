@@ -176,7 +176,7 @@ async function vectorSearchProfileFacts(pool, userId, conversationText, topK = 1
  * @returns {Promise<string>} 格式化的画像片段，无数据时返回 ''
  */
 export async function getUserProfileContext(pool, userId = 'owner', conversationText = '') {
-  // 尝试向量搜索：需要 API key + 对话上下文
+  // 1. 向量搜索（需要 OPENAI_API_KEY + 对话上下文，且 embedding 存在）
   if (process.env.OPENAI_API_KEY && conversationText.trim()) {
     try {
       const facts = await vectorSearchProfileFacts(pool, userId, conversationText);
@@ -184,11 +184,24 @@ export async function getUserProfileContext(pool, userId = 'owner', conversation
         return `## 关于你\n${facts.map(f => `- ${f}`).join('\n')}\n`;
       }
     } catch {
-      // 降级到结构化字段
+      // 降级到精确查询
     }
   }
 
-  // 降级：结构化字段
+  // 2. 降级：直接查 user_profile_facts（修复：原来查不存在的 user_profiles 表）
+  try {
+    const result = await pool.query(
+      `SELECT content FROM user_profile_facts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`,
+      [userId]
+    );
+    if (result.rows.length > 0) {
+      return `## 关于主人\n${result.rows.map(r => `- ${r.content}`).join('\n')}\n`;
+    }
+  } catch (err) {
+    console.warn('[user-profile] getUserProfileContext facts fallback failed:', err.message);
+  }
+
+  // 3. 最终降级：结构化字段（user_profiles 可能不存在，失败则静默返回 ''）
   const profile = await loadUserProfile(pool, userId);
   return formatProfileSnippet(profile);
 }

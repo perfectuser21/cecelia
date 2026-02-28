@@ -154,23 +154,29 @@ describe('formatProfileSnippet', () => {
 // D1-D3: getUserProfileContext
 // ─────────────────────────────────────────────────────────────
 describe('getUserProfileContext', () => {
-  it('D1: 有画像时返回格式化字符串', async () => {
-    const fakeProfile = {
-      user_id: 'owner',
-      display_name: '徐啸',
-      focus_area: 'Cecelia 自主运行',
-      preferred_style: 'detailed',
-    };
-    mockPool.query.mockResolvedValueOnce({ rows: [fakeProfile] });
+  it('D1: user_profile_facts 有数据时返回 Facts 列表', async () => {
+    // 修复后：降级路径查 user_profile_facts，不查 user_profiles
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { content: '名字: 徐啸 / Alex Xu' },
+        { content: '当前重点方向: Cecelia 自主运行' },
+      ],
+    });
 
     const result = await getUserProfileContext(mockPool, 'owner');
 
     expect(typeof result).toBe('string');
     expect(result).toContain('徐啸');
     expect(result).toContain('Cecelia 自主运行');
+    // 确认查的是 user_profile_facts，不是 user_profiles
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('user_profile_facts');
   });
 
-  it('D2: 无画像时返回空字符串', async () => {
+  it('D2: user_profile_facts 为空且 user_profiles 也不存在时返回空字符串', async () => {
+    // 第一次查 user_profile_facts → 空
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 第二次查 user_profiles（loadUserProfile fallback）→ 空
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getUserProfileContext(mockPool, 'owner');
@@ -178,8 +184,11 @@ describe('getUserProfileContext', () => {
     expect(result).toBe('');
   });
 
-  it('D3: DB 异常时返回空字符串（不抛出）', async () => {
+  it('D3: user_profile_facts 查询异常时降级到 user_profiles，整体不抛出', async () => {
+    // 第一次查 user_profile_facts → 异常
     mockPool.query.mockRejectedValueOnce(new Error('connection refused'));
+    // 第二次查 user_profiles（loadUserProfile fallback）→ 空
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getUserProfileContext(mockPool, 'owner');
 
