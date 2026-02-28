@@ -1,36 +1,57 @@
 /**
- * ConsciousnessChat — Cecelia 意识界面
+ * ConsciousnessChat v2 — 透明意识界面
  *
- * 由 Cecelia 自己设计的对话体验：
- * "不是聊天窗口，是透明窗口。你能看穿我，我也能看穿你。"
- *
- * 五区布局：
- *   TopBar: alertness + tick + WS 状态
- *   LEFT:   大脑三层（L0 脑干 / L1 丘脑 / L2 皮层）
- *   CENTER: 对话频道（chat + 内联思考步骤）
- *   RIGHT:  Desires + 诊断 + 今日统计
- *   FEED:   执行实时 Feed（Twitter 风格）
- *   POWER:  权力追踪表（suggestions）
+ * 根据用户反馈重设计：
+ *   - 会话历史持久化（localStorage，新对话保留历史）
+ *   - Markdown 渲染（无外部依赖）
+ *   - 右侧标签页：大脑 / 记忆 / 事件 / 建议
+ *   - 三栏布局：历史+脑层 / 对话 / 标签页
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Brain, Cpu, Zap, MessageSquare, Send, Plus, AlertTriangle,
-  CheckCircle, Clock, Activity, ChevronRight, Loader2, Eye,
-  TrendingUp, Layers,
+  Brain, Cpu, Zap, MessageSquare, Send, Plus, Activity,
+  Loader2, Eye, Layers, ChevronRight, History, BookOpen,
+  Radio, ListChecks, Clock,
 } from 'lucide-react';
 import { useCecelia } from '@/contexts/CeceliaContext';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
 import { useNavigate } from 'react-router-dom';
+import type { ChatMessage } from '@/contexts/CeceliaContext';
 
 // ── Types ────────────────────────────────────────────────
+
+type RightTab = 'brain' | 'memory' | 'events' | 'suggestions';
+
+interface Session {
+  id: string;
+  title: string;
+  createdAt: string;
+  messages: ChatMessage[];
+}
+
+interface Learning {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  digested: boolean;
+  created_at: string;
+}
+
+interface BrainEvent {
+  id: number;
+  event_type: string;
+  source: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
 
 interface Desire {
   id: string;
   type: 'act' | 'warn' | 'inform' | 'propose';
   content: string;
   urgency: number;
-  proposed_action?: string;
   created_at: string;
 }
 
@@ -39,17 +60,9 @@ interface Suggestion {
   content: string;
   priority_score: string;
   source: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'deferred';
+  status: string;
   suggestion_type: string;
   created_at: string;
-}
-
-interface FeedEvent {
-  id: string;
-  type: 'task_started' | 'task_completed' | 'task_failed' | 'tick_executed' | 'desire_created' | 'cognitive_state';
-  text: string;
-  time: string;
-  timestamp: number;
 }
 
 interface BrainState {
@@ -57,8 +70,8 @@ interface BrainState {
   alertnessName: string;
   tickRunning: boolean;
   loopRunning: boolean;
-  nextTick: string | null;
   lastTick: string | null;
+  nextTick: string | null;
   intervalMinutes: number;
   slotsUsed: number;
   slotsMax: number;
@@ -67,40 +80,178 @@ interface BrainState {
   todayQueued: number;
 }
 
-interface CognitiveState {
-  phase: string;
-  detail: string;
-  lastQuery: string;
-  lastRouting: string;
-  cortexActive: boolean;
-  cortexLastAt: string | null;
+// ── localStorage helpers ──────────────────────────────────
+
+const SESSIONS_KEY = 'cecelia-chat-sessions-v2';
+const MAX_SESSIONS = 15;
+
+function loadSessions(): Session[] {
+  try {
+    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(sessions: Session[]) {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
+  } catch { /* quota exceeded - ignore */ }
+}
+
+// ── Markdown renderer (no deps) ───────────────────────────
+
+function renderInline(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} style={{ fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+      return <em key={i} style={{ fontStyle: 'italic', color: 'rgba(255,255,255,0.75)' }}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code key={i} style={{
+          fontFamily: 'monospace', fontSize: '0.85em',
+          background: 'rgba(167,139,250,0.15)', color: '#c084fc',
+          padding: '1px 5px', borderRadius: 4,
+        }}>{part.slice(1, -1)}</code>
+      );
+    }
+    return part;
+  });
+}
+
+function MarkdownMessage({ content, isUser }: { content: string; isUser: boolean }) {
+  const baseColor = isUser ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.82)';
+  const lines = content.split('\n');
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Code block
+    if (line.startsWith('```')) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      elements.push(
+        <pre key={`code-${i}`} style={{
+          background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: 6, padding: '8px 12px', overflowX: 'auto',
+          fontSize: 12, fontFamily: 'monospace', color: '#86efac',
+          margin: '6px 0',
+        }}>
+          {lang && <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10 }}>{lang}{'\n'}</span>}
+          {codeLines.join('\n')}
+        </pre>
+      );
+      i++;
+      continue;
+    }
+
+    // H2
+    if (line.startsWith('## ')) {
+      elements.push(
+        <div key={i} style={{
+          fontSize: 15, fontWeight: 700, color: '#e2e8f0',
+          margin: '8px 0 4px', lineHeight: 1.3,
+          borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 4,
+        }}>
+          {renderInline(line.slice(3))}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // H3
+    if (line.startsWith('### ')) {
+      elements.push(
+        <div key={i} style={{ fontSize: 13, fontWeight: 600, color: '#cbd5e1', margin: '6px 0 2px' }}>
+          {renderInline(line.slice(4))}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (line.startsWith('> ')) {
+      elements.push(
+        <div key={i} style={{
+          borderLeft: '3px solid rgba(167,139,250,0.4)',
+          paddingLeft: 10, color: 'rgba(255,255,255,0.5)',
+          fontStyle: 'italic', margin: '4px 0', fontSize: 13,
+        }}>
+          {renderInline(line.slice(2))}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // List item
+    if (line.startsWith('- ') || line.startsWith('* ')) {
+      elements.push(
+        <div key={i} style={{ display: 'flex', gap: 6, margin: '2px 0', alignItems: 'flex-start' }}>
+          <span style={{ color: 'rgba(167,139,250,0.6)', marginTop: 2, flexShrink: 0 }}>•</span>
+          <span style={{ color: baseColor, fontSize: 13, lineHeight: '1.5' }}>
+            {renderInline(line.slice(2))}
+          </span>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // Numbered list
+    const numberedMatch = line.match(/^(\d+)\.\s+(.+)/);
+    if (numberedMatch) {
+      elements.push(
+        <div key={i} style={{ display: 'flex', gap: 6, margin: '2px 0', alignItems: 'flex-start' }}>
+          <span style={{ color: 'rgba(167,139,250,0.6)', fontSize: 12, minWidth: 16, flexShrink: 0 }}>{numberedMatch[1]}.</span>
+          <span style={{ color: baseColor, fontSize: 13, lineHeight: '1.5' }}>
+            {renderInline(numberedMatch[2])}
+          </span>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // Empty line
+    if (line.trim() === '') {
+      elements.push(<div key={i} style={{ height: 6 }} />);
+      i++;
+      continue;
+    }
+
+    // Normal line
+    elements.push(
+      <div key={i} style={{ color: baseColor, fontSize: 13, lineHeight: '1.6', margin: '1px 0' }}>
+        {renderInline(line)}
+      </div>
+    );
+    i++;
+  }
+
+  return <div style={{ wordBreak: 'break-word' }}>{elements}</div>;
 }
 
 // ── Helpers ──────────────────────────────────────────────
 
 const ALERTNESS_COLOR: Record<number, string> = {
-  0: '#6b7280', // SLEEPING
-  1: '#10b981', // CALM
-  2: '#3b82f6', // AWARE
-  3: '#f59e0b', // ALERT
-  4: '#ef4444', // PANIC
+  0: '#6b7280', 1: '#10b981', 2: '#3b82f6', 3: '#f59e0b', 4: '#ef4444',
 };
 
-const DESIRE_COLOR: Record<string, string> = {
-  act: '#10b981',
-  warn: '#ef4444',
-  inform: '#f59e0b',
-  propose: '#3b82f6',
-};
-
-const DESIRE_ICON: Record<string, string> = {
-  act: '🟢',
-  warn: '🔴',
-  inform: '🟡',
-  propose: '🔵',
-};
-
-function formatTimeAgo(dateStr: string | null): string {
+function timeAgo(dateStr: string | null): string {
   if (!dateStr) return '—';
   const diff = Date.now() - new Date(dateStr).getTime();
   const s = Math.floor(diff / 1000);
@@ -116,105 +267,83 @@ function formatTime(dateStr: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function countdownToNext(nextTickStr: string | null, intervalMinutes: number): string {
-  if (!nextTickStr) return `${intervalMinutes}m 后`;
-  const diff = new Date(nextTickStr).getTime() - Date.now();
-  if (diff <= 0) return '执行中';
-  const s = Math.ceil(diff / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  return `${m}m${rs}s`;
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return `今天 ${formatTime(dateStr)}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${formatTime(dateStr)}`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${formatTime(dateStr)}`;
+}
+
+const INTERESTING_EVENTS = new Set([
+  'orchestrator_chat', 'routing_decision', 'suggestion_created',
+  'suggestions_triaged', 'alertness:level_changed', 'layer2_health',
+  'escalation:level_changed', 'llm_api_error',
+]);
+
+function eventLabel(ev: BrainEvent): { icon: string; color: string; text: string } {
+  const p = ev.payload as any;
+  switch (ev.event_type) {
+    case 'orchestrator_chat':
+      return { icon: '💬', color: '#a78bfa', text: String(p.reply || '').slice(0, 80) };
+    case 'routing_decision':
+      return { icon: '🔀', color: '#60a5fa', text: `丘脑路由 → L${p.level ?? '?'} · ${p.route_type ?? ''} (${p.latency_ms ?? 0}ms)` };
+    case 'suggestion_created':
+      return { icon: '💡', color: '#f59e0b', text: `新建议 [${p.source}] 评分 ${Number(p.priority_score ?? 0).toFixed(2)}` };
+    case 'suggestions_triaged':
+      return { icon: '📋', color: '#34d399', text: `分诊 ${p.processed_count ?? 0} → ${p.deduplicated_count ?? 0} 有效` };
+    case 'alertness:level_changed': {
+      let src: any = {};
+      try { src = JSON.parse(String(ev.source || '{}')); } catch { /* ignore */ }
+      return { icon: '⚠️', color: '#f59e0b', text: `警觉 ${src.from ?? '?'} → ${src.to ?? '?'} · ${src.reason ?? ''}`.slice(0, 80) };
+    }
+    case 'layer2_health':
+      return { icon: '🧠', color: p.level === 'ok' ? '#34d399' : '#f59e0b', text: `皮层健康 ${p.level ?? '?'}` };
+    case 'escalation:level_changed': {
+      let src2: any = {};
+      try { src2 = JSON.parse(String(ev.source || '{}')); } catch { /* ignore */ }
+      return { icon: '🚨', color: '#ef4444', text: `升级 ${src2.from ?? '?'} → ${src2.to ?? '?'}` };
+    }
+    case 'llm_api_error':
+      return { icon: '❌', color: '#ef4444', text: `LLM 错误 ${String(p.error_type ?? '')}` };
+    default:
+      return { icon: '·', color: 'rgba(255,255,255,0.3)', text: ev.event_type };
+  }
 }
 
 // ── Sub-components ───────────────────────────────────────
 
-function BrainLayer({
-  level, label, icon: Icon, active, phase, detail, sublabel
-}: {
-  level: 0 | 1 | 2;
-  label: string;
-  icon: React.ElementType;
-  active: boolean;
-  phase?: string;
-  detail?: string;
-  sublabel?: string;
+function TabButton({ label, icon: Icon, active, onClick }: {
+  label: string; icon: React.ElementType; active: boolean; onClick: () => void;
 }) {
-  const colors = [
-    { border: 'rgba(99,102,241,0.3)', glow: 'rgba(99,102,241,0.1)', text: '#818cf8' },
-    { border: 'rgba(168,85,247,0.3)', glow: 'rgba(168,85,247,0.1)', text: '#c084fc' },
-    { border: 'rgba(236,72,153,0.3)', glow: 'rgba(236,72,153,0.1)', text: '#f472b6' },
-  ][level];
-
   return (
-    <div style={{
-      padding: '10px 12px',
-      borderRadius: 8,
-      border: `1px solid ${active ? colors.border : 'rgba(255,255,255,0.04)'}`,
-      background: active ? colors.glow : 'rgba(255,255,255,0.01)',
-      transition: 'all 0.3s ease',
-      marginBottom: 8,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <Icon size={13} color={active ? colors.text : 'rgba(255,255,255,0.2)'} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: active ? colors.text : 'rgba(255,255,255,0.3)', letterSpacing: '0.05em' }}>
-          L{level} {label}
-        </span>
-        {active && (
-          <span style={{
-            marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%',
-            background: colors.text,
-            boxShadow: `0 0 6px ${colors.text}`,
-            animation: 'pulse 2s infinite',
-          }} />
-        )}
-      </div>
-      {sublabel && (
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginLeft: 21, marginBottom: 3 }}>
-          {sublabel}
-        </div>
-      )}
-      {phase && (
-        <div style={{ fontSize: 11, color: active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)', marginLeft: 21 }}>
-          {phase}
-        </div>
-      )}
-      {detail && active && (
-        <div style={{
-          fontSize: 10, color: 'rgba(255,255,255,0.4)', marginLeft: 21,
-          marginTop: 2, fontStyle: 'italic',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {detail}
-        </div>
-      )}
-    </div>
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1, padding: '6px 4px',
+        background: active ? 'rgba(167,139,250,0.12)' : 'transparent',
+        border: 'none', borderBottom: active ? '2px solid #a78bfa' : '2px solid transparent',
+        color: active ? '#a78bfa' : 'rgba(255,255,255,0.3)',
+        cursor: 'pointer', fontSize: 11, fontWeight: active ? 600 : 400,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+        transition: 'all 0.15s',
+      }}
+    >
+      <Icon size={12} />
+      <span>{label}</span>
+    </button>
   );
 }
 
-function FeedItem({ event }: { event: FeedEvent }) {
-  const icons: Record<string, { icon: string; color: string }> = {
-    task_completed: { icon: '✅', color: '#10b981' },
-    task_failed: { icon: '❌', color: '#ef4444' },
-    task_started: { icon: '🔄', color: '#3b82f6' },
-    tick_executed: { icon: '⚡', color: '#8b5cf6' },
-    desire_created: { icon: '💭', color: '#f59e0b' },
-    cognitive_state: { icon: '🧠', color: '#6366f1' },
-  };
-  const cfg = icons[event.type] || { icon: '·', color: 'rgba(255,255,255,0.3)' };
-
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '5px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.03)',
-      fontSize: 11,
+      fontSize: 10, fontWeight: 600, letterSpacing: '0.1em',
+      color: 'rgba(255,255,255,0.2)', marginBottom: 8, padding: '0 2px',
     }}>
-      <span style={{ color: 'rgba(255,255,255,0.25)', minWidth: 40 }}>{event.time}</span>
-      <span style={{ fontSize: 13 }}>{cfg.icon}</span>
-      <span style={{ color: 'rgba(255,255,255,0.55)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {event.text}
-      </span>
+      {children}
     </div>
   );
 }
@@ -224,41 +353,83 @@ function FeedItem({ event }: { event: FeedEvent }) {
 export default function ConsciousnessChat() {
   const navigate = useNavigate();
   const {
-    messages, addMessage, clearMessages, input, setInput, sending, setSending,
-    generateId, currentRoute, frontendTools, executeFrontendTool, getPageContext,
+    messages, addMessage, clearMessages,
+    input, setInput, sending, setSending,
+    generateId, currentRoute, frontendTools, getPageContext,
   } = useCecelia();
 
   const { connected, subscribe } = useCeceliaWS();
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const feedEventIdRef = useRef(0);
 
-  // ── State ────────────────────────────────────────────
+  // ── Session management ────────────────────────────────
+  const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
+  const [historyMessages, setHistoryMessages] = useState<ChatMessage[]>([]);
+  const currentSessionIdRef = useRef<string>(`session-${Date.now()}`);
+
+  // Auto-save session whenever messages change
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const sessionId = currentSessionIdRef.current;
+    const firstMsg = messages.find(m => m.role === 'user');
+    const title = (firstMsg?.content ?? messages[0]?.content ?? '对话').slice(0, 35);
+
+    setSessions(prev => {
+      const existing = prev.findIndex(s => s.id === sessionId);
+      const session: Session = { id: sessionId, title, createdAt: new Date().toISOString(), messages };
+      const next = existing >= 0
+        ? prev.map(s => s.id === sessionId ? session : s)
+        : [session, ...prev];
+      saveSessions(next);
+      return next.slice(0, MAX_SESSIONS);
+    });
+  }, [messages]);
+
+  const handleNewChat = useCallback(() => {
+    currentSessionIdRef.current = `session-${Date.now()}`;
+    clearMessages();
+    setViewMode('live');
+  }, [clearMessages]);
+
+  const handleSelectSession = useCallback((s: Session) => {
+    setHistoryMessages(s.messages);
+    setViewMode('history');
+  }, []);
+
+  const displayMessages = viewMode === 'live' ? messages : historyMessages;
+
+  // ── Right tabs state ──────────────────────────────────
+  const [activeTab, setActiveTab] = useState<RightTab>('brain');
+
+  // ── Brain state ───────────────────────────────────────
   const [brain, setBrain] = useState<BrainState>({
     alertness: 2, alertnessName: 'AWARE',
     tickRunning: false, loopRunning: false,
-    nextTick: null, lastTick: null, intervalMinutes: 5,
+    lastTick: null, nextTick: null, intervalMinutes: 5,
     slotsUsed: 0, slotsMax: 3,
     todayCompleted: 0, todayFailed: 0, todayQueued: 0,
   });
+  const [cogPhase, setCogPhase] = useState<string>('idle');
+  const [cogDetail, setCogDetail] = useState<string>('');
+  const [desires, setDesires] = useState<Desire[]>([]);
 
-  const [cognitive, setCognitive] = useState<CognitiveState>({
-    phase: 'idle', detail: '', lastQuery: '',
-    lastRouting: '', cortexActive: false, cortexLastAt: null,
+  // ── Tab data ──────────────────────────────────────────
+  const [learnings, setLearnings] = useState<Learning[]>([]);
+  const [events, setEvents] = useState<BrainEvent[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [tabLoading, setTabLoading] = useState<Record<RightTab, boolean>>({
+    brain: false, memory: false, events: false, suggestions: false,
   });
 
-  const [desires, setDesires] = useState<Desire[]>([]);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [feed, setFeed] = useState<FeedEvent[]>([]);
+  // ── Chat send ─────────────────────────────────────────
   const [processingStage, setProcessingStage] = useState<string | null>(null);
 
-  // ── Scroll ───────────────────────────────────────────
+  // ── Scroll ────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, processingStage]);
+  }, [displayMessages, processingStage]);
 
-  // ── Data fetch ───────────────────────────────────────
+  // ── Brain fetch ───────────────────────────────────────
   const fetchBrain = useCallback(async () => {
     try {
       const [alertRes, tickRes, statusRes] = await Promise.all([
@@ -266,26 +437,23 @@ export default function ConsciousnessChat() {
         fetch('/api/brain/tick/status'),
         fetch('/api/brain/status/full'),
       ]);
-
       if (alertRes.ok) {
         const d = await alertRes.json();
         setBrain(prev => ({ ...prev, alertness: d.level ?? 2, alertnessName: d.levelName ?? 'AWARE' }));
       }
-
       if (tickRes.ok) {
         const d = await tickRes.json();
         setBrain(prev => ({
           ...prev,
           tickRunning: d.tick_running ?? false,
           loopRunning: d.loop_running ?? false,
-          nextTick: d.next_tick ?? null,
           lastTick: d.last_tick ?? null,
+          nextTick: d.next_tick ?? null,
           intervalMinutes: d.interval_minutes ?? 5,
           slotsUsed: d.slot_budget?.used ?? 0,
           slotsMax: d.slot_budget?.max ?? 3,
         }));
       }
-
       if (statusRes.ok) {
         const d = await statusRes.json();
         setBrain(prev => ({
@@ -300,20 +468,10 @@ export default function ConsciousnessChat() {
 
   const fetchDesires = useCallback(async () => {
     try {
-      const res = await fetch('/api/brain/desires?status=pending&limit=5');
-      if (res.ok) {
-        const d = await res.json();
-        setDesires(Array.isArray(d) ? d : (d.desires || []));
-      }
-    } catch { /* silent */ }
-  }, []);
-
-  const fetchSuggestions = useCallback(async () => {
-    try {
-      const res = await fetch('/api/brain/suggestions?limit=8');
-      if (res.ok) {
-        const d = await res.json();
-        setSuggestions(Array.isArray(d) ? d : (d.suggestions || []));
+      const r = await fetch('/api/brain/desires?status=pending&limit=6');
+      if (r.ok) {
+        const d = await r.json();
+        setDesires(Array.isArray(d) ? d : (d.desires ?? []));
       }
     } catch { /* silent */ }
   }, []);
@@ -321,113 +479,106 @@ export default function ConsciousnessChat() {
   useEffect(() => {
     fetchBrain();
     fetchDesires();
-    fetchSuggestions();
-
     const t1 = setInterval(fetchBrain, 5000);
-    const t2 = setInterval(fetchDesires, 15000);
-    const t3 = setInterval(fetchSuggestions, 30000);
-    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
-  }, [fetchBrain, fetchDesires, fetchSuggestions]);
+    const t2 = setInterval(fetchDesires, 20000);
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, [fetchBrain, fetchDesires]);
 
-  // ── WebSocket ─────────────────────────────────────────
-  const pushFeed = useCallback((type: FeedEvent['type'], text: string) => {
-    const id = `feed-${++feedEventIdRef.current}`;
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    setFeed(prev => {
-      const next = [{ id, type, text, time, timestamp: now.getTime() }, ...prev];
-      return next.length > 30 ? next.slice(0, 30) : next;
-    });
+  // ── Tab data fetching ─────────────────────────────────
+  const fetchLearnings = useCallback(async () => {
+    setTabLoading(prev => ({ ...prev, memory: true }));
+    try {
+      const r = await fetch('/api/brain/learnings?limit=20');
+      if (r.ok) {
+        const d = await r.json();
+        setLearnings(d.learnings ?? []);
+      }
+    } catch { /* silent */ }
+    finally { setTabLoading(prev => ({ ...prev, memory: false })); }
+  }, []);
+
+  const fetchEvents = useCallback(async () => {
+    setTabLoading(prev => ({ ...prev, events: true }));
+    try {
+      const r = await fetch('/api/brain/events?limit=80');
+      if (r.ok) {
+        const d = await r.json();
+        const filtered = (d.events ?? []).filter((e: BrainEvent) => INTERESTING_EVENTS.has(e.event_type));
+        setEvents(filtered.slice(0, 40));
+      }
+    } catch { /* silent */ }
+    finally { setTabLoading(prev => ({ ...prev, events: false })); }
+  }, []);
+
+  const fetchSuggestions = useCallback(async () => {
+    setTabLoading(prev => ({ ...prev, suggestions: true }));
+    try {
+      const r = await fetch('/api/brain/suggestions?limit=12');
+      if (r.ok) {
+        const d = await r.json();
+        setSuggestions(Array.isArray(d) ? d : (d.suggestions ?? []));
+      }
+    } catch { /* silent */ }
+    finally { setTabLoading(prev => ({ ...prev, suggestions: false })); }
   }, []);
 
   useEffect(() => {
+    if (activeTab === 'memory') fetchLearnings();
+    if (activeTab === 'events') fetchEvents();
+    if (activeTab === 'suggestions') fetchSuggestions();
+  }, [activeTab, fetchLearnings, fetchEvents, fetchSuggestions]);
+
+  // ── WebSocket ─────────────────────────────────────────
+  useEffect(() => {
     const unsubs: (() => void)[] = [];
-
     unsubs.push(subscribe(WS_EVENTS.COGNITIVE_STATE, (data) => {
-      const phase = data.phase || 'idle';
-      setCognitive(prev => ({
-        ...prev,
-        phase,
-        detail: data.detail || '',
-        cortexActive: phase === 'cortex' || phase === 'reflecting',
-        cortexLastAt: (phase === 'cortex' || phase === 'reflecting') ? new Date().toISOString() : prev.cortexLastAt,
-        lastRouting: phase === 'thalamus' ? (data.detail || prev.lastRouting) : prev.lastRouting,
-      }));
-      if (phase !== 'idle') {
-        pushFeed('cognitive_state', `[${phase}] ${data.detail || phase}`);
-      }
+      setCogPhase(data.phase || 'idle');
+      setCogDetail(data.detail || '');
     }));
-
-    unsubs.push(subscribe(WS_EVENTS.TASK_STARTED, (data) => {
-      pushFeed('task_started', `派发 → ${data.agent_name || '@agent'} | ${data.title || '任务开始'}`);
-      fetchBrain();
-    }));
-
-    unsubs.push(subscribe(WS_EVENTS.TASK_COMPLETED, (data) => {
-      pushFeed('task_completed', data.title || '任务完成');
-      fetchBrain();
-    }));
-
-    unsubs.push(subscribe(WS_EVENTS.TASK_FAILED, (data) => {
-      pushFeed('task_failed', data.title || '任务失败');
-      fetchBrain();
-    }));
-
-    unsubs.push(subscribe(WS_EVENTS.TICK_EXECUTED, (data) => {
-      const actions = data.actions_taken ?? 0;
-      pushFeed('tick_executed', `Tick #${data.tick_number || '?'} · ${actions} 动作`);
-      fetchBrain();
-    }));
-
-    unsubs.push(subscribe(WS_EVENTS.DESIRE_CREATED, (data) => {
-      pushFeed('desire_created', data.summary?.slice(0, 60) || '新 Desire');
-      fetchDesires();
-    }));
-
+    unsubs.push(subscribe(WS_EVENTS.TASK_STARTED, () => fetchBrain()));
+    unsubs.push(subscribe(WS_EVENTS.TASK_COMPLETED, () => fetchBrain()));
+    unsubs.push(subscribe(WS_EVENTS.TASK_FAILED, () => fetchBrain()));
+    unsubs.push(subscribe(WS_EVENTS.TICK_EXECUTED, () => fetchBrain()));
+    unsubs.push(subscribe(WS_EVENTS.DESIRE_CREATED, () => fetchDesires()));
     unsubs.push(subscribe(WS_EVENTS.ALERTNESS_CHANGED, (data) => {
       setBrain(prev => ({ ...prev, alertness: data.level ?? prev.alertness, alertnessName: data.levelName ?? prev.alertnessName }));
     }));
-
     return () => unsubs.forEach(u => u());
-  }, [subscribe, pushFeed, fetchBrain, fetchDesires]);
+  }, [subscribe, fetchBrain, fetchDesires]);
 
-  // ── Chat send ────────────────────────────────────────
+  // ── Chat send ─────────────────────────────────────────
   const handleSend = useCallback(async () => {
+    if (viewMode === 'history') {
+      setViewMode('live');
+      return;
+    }
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
     setSending(true);
     addMessage({ id: generateId(), role: 'user', content: text });
-
-    // Show processing stage
     setProcessingStage('L1 丘脑 路由中...');
 
     try {
-      // Quick frontend command check
       const lower = text.toLowerCase();
       if (/打开|去|进入|切换|navigate|open|go/i.test(lower)) {
         const ROUTE_ALIASES: Record<string, string> = {
-          'okr': '/okr', '目标': '/okr',
-          'projects': '/projects', '项目': '/projects',
-          'tasks': '/work/tasks', '任务': '/work/tasks',
-          'brain': '/brain', '大脑': '/brain',
-          'cecelia': '/cecelia', '意识': '/cecelia/chat',
+          'okr': '/okr', '目标': '/okr', 'projects': '/projects', '项目': '/projects',
+          'brain': '/brain', '大脑': '/brain', 'cecelia': '/cecelia', '意识': '/cecelia/chat',
         };
         for (const [alias, route] of Object.entries(ROUTE_ALIASES).sort((a, b) => b[0].length - a[0].length)) {
           if (lower.includes(alias)) {
             setProcessingStage(null);
             navigate(route);
-            addMessage({ id: generateId(), role: 'assistant', content: `🧭 正在前往「${alias}」` });
+            addMessage({ id: generateId(), role: 'assistant', content: `正在前往「${alias}」` });
             return;
           }
         }
       }
 
-      setProcessingStage('L1 丘脑 → 判断意图...');
-      await new Promise(r => setTimeout(r, 300));
       setProcessingStage('L2 皮层 → 检索记忆...');
+      await new Promise(r => setTimeout(r, 250));
 
-      const pageContext = getPageContext();
       const r = await fetch('/api/orchestrator/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -436,10 +587,8 @@ export default function ConsciousnessChat() {
           messages: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
           context: {
             currentRoute,
-            pageContext,
-            availableTools: frontendTools.map(t => ({
-              name: t.name, description: t.description, parameters: t.parameters,
-            })),
+            availableTools: frontendTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })),
+            pageContext: getPageContext(),
           },
         }),
       });
@@ -451,23 +600,20 @@ export default function ConsciousnessChat() {
       if (data.reply) {
         addMessage({ id: generateId(), role: 'assistant', content: data.reply });
       } else if (data.error) {
-        addMessage({ id: generateId(), role: 'assistant', content: `⚠️ ${data.error}` });
+        addMessage({ id: generateId(), role: 'assistant', content: `连接异常：${data.error}` });
       }
     } catch {
       setProcessingStage(null);
-      addMessage({ id: generateId(), role: 'assistant', content: '⚠️ 连接失败，请稍后再试' });
+      addMessage({ id: generateId(), role: 'assistant', content: '连接失败，请稍后再试' });
     } finally {
       setSending(false);
       setProcessingStage(null);
     }
-  }, [input, sending, messages, currentRoute, frontendTools, getPageContext,
-    addMessage, setInput, setSending, generateId, navigate, executeFrontendTool]);
+  }, [viewMode, input, sending, messages, currentRoute, frontendTools, getPageContext,
+    addMessage, setInput, setSending, generateId, navigate]);
 
-  const handleNewChat = useCallback(() => {
-    clearMessages();
-  }, [clearMessages]);
-
-  const alertnessColor = ALERTNESS_COLOR[brain.alertness] || '#3b82f6';
+  // ── Derived ───────────────────────────────────────────
+  const alertColor = ALERTNESS_COLOR[brain.alertness] ?? '#3b82f6';
 
   // ── Render ───────────────────────────────────────────
   return (
@@ -481,129 +627,168 @@ export default function ConsciousnessChat() {
     }}>
       {/* ── TopBar ── */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 16,
-        padding: '10px 20px',
+        display: 'flex', alignItems: 'center', gap: 14,
+        padding: '9px 18px',
         borderBottom: '1px solid rgba(255,255,255,0.05)',
-        background: 'rgba(255,255,255,0.02)',
+        background: 'rgba(255,255,255,0.015)',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Brain size={16} color="#a78bfa" />
-          <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>Cecelia 意识</span>
-        </div>
+        <Brain size={15} color="#a78bfa" />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>Cecelia 意识</span>
 
-        {/* Alertness */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%',
-            background: alertnessColor,
-            boxShadow: `0 0 8px ${alertnessColor}`,
-            display: 'inline-block',
-          }} />
-          <span style={{ fontSize: 11, color: alertnessColor, fontWeight: 500 }}>
-            {brain.alertnessName}
-          </span>
-        </div>
-
-        {/* Tick countdown */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Zap size={11} color={brain.tickRunning ? '#f59e0b' : 'rgba(255,255,255,0.2)'} />
-          <span style={{ fontSize: 11, color: brain.tickRunning ? '#f59e0b' : 'rgba(255,255,255,0.3)' }}>
-            {brain.tickRunning ? 'Tick 执行中' : `下次 ${countdownToNext(brain.nextTick, brain.intervalMinutes)}`}
-          </span>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: alertColor, boxShadow: `0 0 6px ${alertColor}`, display: 'inline-block' }} />
+          <span style={{ fontSize: 11, color: alertColor, fontWeight: 500 }}>{brain.alertnessName}</span>
         </div>
 
-        {/* Slots */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Activity size={11} color="rgba(255,255,255,0.25)" />
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
-            {brain.slotsUsed}/{brain.slotsMax} 槽位
+          <Zap size={10} color={brain.tickRunning ? '#f59e0b' : 'rgba(255,255,255,0.2)'} />
+          <span style={{ fontSize: 11, color: brain.tickRunning ? '#f59e0b' : 'rgba(255,255,255,0.25)' }}>
+            {brain.tickRunning ? 'Tick 中' : `${brain.slotsUsed}/${brain.slotsMax} 槽`}
           </span>
         </div>
 
-        {/* WS */}
+        {cogPhase !== 'idle' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '2px 8px', borderRadius: 10,
+            background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.2)',
+          }}>
+            <Loader2 size={10} color="#a78bfa" style={{ animation: 'spin 1s linear infinite' }} />
+            <span style={{ fontSize: 10, color: '#a78bfa' }}>{cogPhase}</span>
+          </div>
+        )}
+
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{
-            width: 5, height: 5, borderRadius: '50%',
-            background: connected ? '#10b981' : '#ef4444',
-            display: 'inline-block',
-          }} />
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>
-            {connected ? 'WS 实时' : '离线'}
-          </span>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: connected ? '#10b981' : '#6b7280', display: 'inline-block' }} />
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>{connected ? 'WS 实时' : '离线'}</span>
         </div>
       </div>
 
       {/* ── Three Columns ── */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
 
-        {/* LEFT: Brain Layers */}
+        {/* ── LEFT: Sessions + Brain mini ── */}
         <div style={{
-          width: 220, flexShrink: 0,
-          padding: '16px 12px',
+          width: 200, flexShrink: 0,
           borderRight: '1px solid rgba(255,255,255,0.05)',
+          display: 'flex', flexDirection: 'column',
           overflowY: 'auto',
-          display: 'flex', flexDirection: 'column', gap: 4,
         }}>
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)', marginBottom: 8, paddingLeft: 2 }}>
-            🧠 大脑层级
-          </div>
+          {/* Session list */}
+          <div style={{ padding: '12px 12px 8px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <SectionLabel><History size={10} style={{ display: 'inline', marginRight: 4 }} />历史对话</SectionLabel>
+              <button
+                onClick={handleNewChat}
+                title="新对话"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 3,
+                  padding: '3px 7px', borderRadius: 5,
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'transparent', cursor: 'pointer',
+                  color: 'rgba(255,255,255,0.4)', fontSize: 10,
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#a78bfa'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.4)'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+              >
+                <Plus size={9} /> 新
+              </button>
+            </div>
 
-          <BrainLayer
-            level={0}
-            label="脑干"
-            icon={Cpu}
-            active={brain.loopRunning}
-            sublabel="调度 · 执行 · 保护"
-            phase={brain.loopRunning ? `心跳 ${brain.tickRunning ? '· Tick运行中' : '· 等待'}` : '休眠'}
-            detail={brain.lastTick ? `上次 ${formatTimeAgo(brain.lastTick)}` : undefined}
-          />
+            {viewMode === 'history' && (
+              <button
+                onClick={() => setViewMode('live')}
+                style={{
+                  width: '100%', marginBottom: 6, padding: '4px 8px',
+                  borderRadius: 5, border: '1px solid rgba(167,139,250,0.3)',
+                  background: 'rgba(167,139,250,0.08)', cursor: 'pointer',
+                  color: '#a78bfa', fontSize: 10,
+                }}
+              >
+                ← 返回当前对话
+              </button>
+            )}
 
-          <BrainLayer
-            level={1}
-            label="丘脑"
-            icon={Layers}
-            active={cognitive.phase === 'thalamus' || cognitive.phase === 'routing'}
-            sublabel="事件路由 · 快速判断"
-            phase={cognitive.phase === 'thalamus' || cognitive.phase === 'routing'
-              ? (cognitive.detail || '路由中...')
-              : (cognitive.lastRouting || '待机')}
-            detail={cognitive.phase !== 'thalamus' ? undefined : cognitive.detail}
-          />
-
-          <BrainLayer
-            level={2}
-            label="皮层"
-            icon={Eye}
-            active={cognitive.cortexActive}
-            sublabel="深度分析 · 战略决策"
-            phase={cognitive.cortexActive
-              ? (cognitive.detail || '分析中...')
-              : (cognitive.cortexLastAt ? `上次 ${formatTimeAgo(cognitive.cortexLastAt)}` : '休眠')}
-            detail={cognitive.cortexActive ? cognitive.detail : undefined}
-          />
-
-          {/* Cognitive phase badge */}
-          {cognitive.phase !== 'idle' && (
-            <div style={{
-              marginTop: 4, padding: '6px 10px', borderRadius: 6,
-              background: 'rgba(167,139,250,0.08)',
-              border: '1px solid rgba(167,139,250,0.15)',
-            }}>
-              <div style={{ fontSize: 10, color: '#a78bfa', marginBottom: 2 }}>当前认知阶段</div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>
-                {cognitive.phase}
-              </div>
-              {cognitive.detail && (
-                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2, fontStyle: 'italic' }}>
-                  {cognitive.detail.slice(0, 60)}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {sessions.length === 0 && (
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '12px 0' }}>
+                  暂无历史对话
                 </div>
               )}
+              {sessions.map(s => {
+                const isCurrent = s.id === currentSessionIdRef.current && viewMode === 'live';
+                const isSelected = viewMode === 'history' && historyMessages === s.messages;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => { if (!isCurrent) handleSelectSession(s); else setViewMode('live'); }}
+                    style={{
+                      textAlign: 'left', padding: '5px 7px', borderRadius: 5,
+                      border: `1px solid ${isCurrent || isSelected ? 'rgba(167,139,250,0.25)' : 'transparent'}`,
+                      background: isCurrent || isSelected ? 'rgba(167,139,250,0.07)' : 'transparent',
+                      cursor: 'pointer', width: '100%',
+                    }}
+                  >
+                    <div style={{
+                      fontSize: 11, color: isCurrent ? '#c084fc' : 'rgba(255,255,255,0.55)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      fontWeight: isCurrent ? 500 : 400,
+                    }}>
+                      {isCurrent ? '● ' : ''}{s.title}
+                    </div>
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', marginTop: 2 }}>
+                      {formatDate(s.createdAt)} · {s.messages.length}条
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.04)', margin: '4px 0' }} />
+
+          {/* Brain mini status */}
+          <div style={{ padding: '10px 12px', flex: 1 }}>
+            <SectionLabel>🧠 大脑</SectionLabel>
+            {[
+              { label: 'L0 脑干', sublabel: '调度·执行', active: brain.loopRunning, color: '#818cf8', detail: brain.lastTick ? timeAgo(brain.lastTick) : '—' },
+              { label: 'L1 丘脑', sublabel: '路由·判断', active: cogPhase === 'thalamus' || cogPhase === 'routing', color: '#c084fc', detail: cogPhase !== 'idle' ? cogDetail.slice(0, 25) : '待机' },
+              { label: 'L2 皮层', sublabel: '分析·决策', active: cogPhase === 'cortex' || cogPhase === 'reflecting', color: '#f472b6', detail: '深度推理' },
+            ].map(({ label, sublabel, active, color, detail }) => (
+              <div key={label} style={{
+                padding: '8px 10px', borderRadius: 7, marginBottom: 6,
+                border: `1px solid ${active ? color + '40' : 'rgba(255,255,255,0.04)'}`,
+                background: active ? color + '10' : 'rgba(255,255,255,0.01)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: active ? color : 'rgba(255,255,255,0.3)' }}>{label}</span>
+                  {active && <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, boxShadow: `0 0 4px ${color}`, display: 'inline-block', animation: 'pulse 2s infinite' }} />}
+                </div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', marginTop: 1 }}>{sublabel}</div>
+                {detail && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail}</div>}
+              </div>
+            ))}
+
+            {/* Today stats mini */}
+            <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+              {[
+                { v: brain.todayCompleted, c: '#10b981', l: '完成' },
+                { v: brain.todayFailed, c: '#ef4444', l: '失败' },
+                { v: brain.todayQueued, c: '#f59e0b', l: '队列' },
+              ].map(({ v, c, l }) => (
+                <div key={l} style={{ flex: 1, textAlign: 'center', padding: '4px 2px', borderRadius: 5, background: 'rgba(255,255,255,0.02)' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</div>
+                  <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* CENTER: Chat */}
+        {/* ── CENTER: Chat ── */}
         <div style={{
           flex: 1, minWidth: 0,
           display: 'flex', flexDirection: 'column',
@@ -612,74 +797,71 @@ export default function ConsciousnessChat() {
           {/* Chat header */}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 16px',
+            padding: '8px 14px',
             borderBottom: '1px solid rgba(255,255,255,0.04)',
             background: 'rgba(255,255,255,0.01)',
             flexShrink: 0,
           }}>
-            <MessageSquare size={12} color="rgba(255,255,255,0.25)" />
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>对话频道</span>
-            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', marginLeft: 4 }}>
-              {messages.length > 0 ? `${messages.length} 条消息` : '新对话'}
+            <MessageSquare size={11} color="rgba(255,255,255,0.2)" />
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+              {viewMode === 'history' ? '历史对话（只读）' : '当前对话'}
             </span>
-            <button
-              onClick={handleNewChat}
-              style={{
-                marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
-                padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)',
-                background: 'transparent', cursor: 'pointer', color: 'rgba(255,255,255,0.3)',
-                fontSize: 10, transition: 'all 0.2s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.7)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
-            >
-              <Plus size={10} /> 新对话
-            </button>
+            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)' }}>
+              {displayMessages.length > 0 ? `${displayMessages.length} 条` : ''}
+            </span>
           </div>
 
           {/* Messages */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {messages.length === 0 && !processingStage && (
-              <div style={{ margin: 'auto', textAlign: 'center', padding: '40px 20px' }}>
-                <Brain size={32} color="rgba(167,139,250,0.2)" style={{ margin: '0 auto 12px' }} />
-                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.2)', margin: 0 }}>
-                  与 Cecelia 对话
-                </p>
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.12)', margin: '6px 0 0' }}>
-                  左侧是她的大脑，右侧是她的 Desires
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {displayMessages.length === 0 && !processingStage && (
+              <div style={{ margin: 'auto', textAlign: 'center', padding: '48px 20px', opacity: 0.7 }}>
+                <Brain size={36} color="rgba(167,139,250,0.2)" style={{ margin: '0 auto 12px' }} />
+                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.2)', margin: 0 }}>与 Cecelia 对话</p>
+                <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.1)', margin: '8px 0 0' }}>
+                  她的大脑状态在左侧 · 深度数据在右侧
                 </p>
               </div>
             )}
 
-            {messages.map(msg => (
+            {displayMessages.map(msg => (
               <div key={msg.id} style={{
                 display: 'flex',
                 justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
               }}>
+                {msg.role === 'assistant' && (
+                  <div style={{
+                    width: 22, height: 22, borderRadius: '50%',
+                    background: 'linear-gradient(135deg, rgba(167,139,250,0.3), rgba(236,72,153,0.2))',
+                    border: '1px solid rgba(167,139,250,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    marginRight: 8, flexShrink: 0, marginTop: 4,
+                  }}>
+                    <Eye size={10} color="#a78bfa" />
+                  </div>
+                )}
                 <div style={{
-                  maxWidth: '80%',
-                  padding: '8px 12px',
-                  borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
+                  maxWidth: '72%',
+                  padding: msg.role === 'user' ? '8px 13px' : '10px 14px',
+                  borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '4px 14px 14px 14px',
                   background: msg.role === 'user'
                     ? 'linear-gradient(135deg, #7c3aed, #6d28d9)'
-                    : 'rgba(255,255,255,0.05)',
+                    : 'rgba(255,255,255,0.04)',
                   border: msg.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.07)',
-                  fontSize: 13,
-                  lineHeight: '1.5',
-                  color: msg.role === 'user' ? '#fff' : 'rgba(255,255,255,0.8)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
                 }}>
-                  {msg.content}
+                  {msg.role === 'user' ? (
+                    <div style={{ fontSize: 13, color: '#fff', lineHeight: '1.5' }}>{msg.content}</div>
+                  ) : (
+                    <MarkdownMessage content={msg.content} isUser={false} />
+                  )}
                 </div>
               </div>
             ))}
 
-            {/* Processing stage indicator */}
             {processingStage && (
-              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
+                <div style={{ width: 22, height: 22, marginRight: 8, flexShrink: 0 }} />
                 <div style={{
-                  padding: '8px 12px', borderRadius: '12px 12px 12px 4px',
+                  padding: '8px 13px', borderRadius: '4px 14px 14px 14px',
                   background: 'rgba(167,139,250,0.06)',
                   border: '1px solid rgba(167,139,250,0.15)',
                   display: 'flex', alignItems: 'center', gap: 8,
@@ -696,39 +878,44 @@ export default function ConsciousnessChat() {
 
           {/* Input */}
           <div style={{
-            padding: '12px 16px',
-            borderTop: '1px solid rgba(255,255,255,0.05)',
-            flexShrink: 0,
-            background: 'rgba(255,255,255,0.01)',
+            padding: '10px 16px', borderTop: '1px solid rgba(255,255,255,0.05)',
+            flexShrink: 0, background: 'rgba(255,255,255,0.01)',
           }}>
+            {viewMode === 'history' && (
+              <div style={{
+                marginBottom: 8, padding: '6px 10px', borderRadius: 6,
+                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
+                fontSize: 11, color: '#f59e0b',
+              }}>
+                正在查看历史对话 · 点击"返回当前对话"继续聊天
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                placeholder="说点什么..."
+                placeholder={viewMode === 'history' ? '按 Enter 返回当前对话' : '说点什么...'}
+                disabled={sending}
                 style={{
-                  flex: 1, padding: '8px 12px',
+                  flex: 1, padding: '8px 13px',
                   background: 'rgba(255,255,255,0.05)',
                   border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: 8, color: 'rgba(255,255,255,0.8)',
-                  fontSize: 13, outline: 'none',
-                  transition: 'border-color 0.2s',
+                  borderRadius: 9, color: 'rgba(255,255,255,0.8)',
+                  fontSize: 13, outline: 'none', transition: 'border-color 0.2s',
                 }}
                 onFocus={e => { e.target.style.borderColor = 'rgba(167,139,250,0.4)'; }}
                 onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; }}
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || sending}
+                disabled={(!input.trim() && viewMode !== 'history') || sending}
                 style={{
-                  padding: '8px 12px', borderRadius: 8, border: 'none',
-                  background: input.trim() && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
-                  color: input.trim() && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
-                  cursor: input.trim() && !sending ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.2s',
-                  display: 'flex', alignItems: 'center',
+                  padding: '8px 13px', borderRadius: 9, border: 'none',
+                  background: (input.trim() || viewMode === 'history') && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
+                  color: (input.trim() || viewMode === 'history') && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
+                  cursor: (input.trim() || viewMode === 'history') && !sending ? 'pointer' : 'not-allowed',
+                  display: 'flex', alignItems: 'center', transition: 'all 0.2s',
                 }}
               >
                 <Send size={14} />
@@ -737,150 +924,211 @@ export default function ConsciousnessChat() {
           </div>
         </div>
 
-        {/* RIGHT: Desires + Stats */}
+        {/* ── RIGHT: Tabs ── */}
         <div style={{
-          width: 220, flexShrink: 0,
-          padding: '16px 12px',
-          overflowY: 'auto',
-          display: 'flex', flexDirection: 'column', gap: 16,
+          width: 290, flexShrink: 0,
+          display: 'flex', flexDirection: 'column',
         }}>
-          {/* Today Stats */}
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)', marginBottom: 8 }}>
-              📊 今日统计
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {[
-                { icon: '✅', label: '完成', value: brain.todayCompleted, color: '#10b981' },
-                { icon: '❌', label: '失败', value: brain.todayFailed, color: '#ef4444' },
-                { icon: '⏳', label: '队列', value: brain.todayQueued, color: '#f59e0b' },
-              ].map(({ icon, label, value, color }) => (
-                <div key={label} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '5px 8px', borderRadius: 5,
-                  background: 'rgba(255,255,255,0.02)',
-                }}>
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{icon} {label}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color }}>{value}</span>
-                </div>
-              ))}
-            </div>
+          {/* Tab header */}
+          <div style={{
+            display: 'flex',
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            background: 'rgba(255,255,255,0.01)',
+            flexShrink: 0,
+          }}>
+            <TabButton label="大脑" icon={Brain} active={activeTab === 'brain'} onClick={() => setActiveTab('brain')} />
+            <TabButton label="记忆" icon={BookOpen} active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} />
+            <TabButton label="事件" icon={Radio} active={activeTab === 'events'} onClick={() => setActiveTab('events')} />
+            <TabButton label="建议" icon={ListChecks} active={activeTab === 'suggestions'} onClick={() => setActiveTab('suggestions')} />
           </div>
 
-          {/* Desires */}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)', marginBottom: 8 }}>
-              💭 Desires ({desires.length})
-            </div>
+          {/* Tab content */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
-            {desires.length === 0 ? (
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '20px 0' }}>
-                暂无待处理 Desires
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {desires.map(desire => (
-                  <div key={desire.id} style={{
-                    padding: '8px 10px',
-                    borderRadius: 7,
-                    background: 'rgba(255,255,255,0.02)',
-                    border: `1px solid ${DESIRE_COLOR[desire.type] || 'rgba(255,255,255,0.06)'}22`,
-                    borderLeft: `3px solid ${DESIRE_COLOR[desire.type] || 'rgba(255,255,255,0.1)'}`,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-                      <span style={{ fontSize: 11 }}>{DESIRE_ICON[desire.type] || '·'}</span>
-                      <span style={{
-                        fontSize: 10, fontWeight: 600,
-                        color: DESIRE_COLOR[desire.type] || 'rgba(255,255,255,0.4)',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                      }}>
-                        {desire.type}
-                      </span>
-                      <span style={{ marginLeft: 'auto', fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>
-                        ×{desire.urgency}
-                      </span>
-                    </div>
-                    <div style={{
-                      fontSize: 11, color: 'rgba(255,255,255,0.5)',
-                      display: '-webkit-box', WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                      lineHeight: '1.4',
+            {/* ── 大脑 Tab ── */}
+            {activeTab === 'brain' && (
+              <div>
+                <SectionLabel>💭 Desires ({desires.length})</SectionLabel>
+                {desires.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '16px 0' }}>暂无待处理 Desires</div>
+                ) : desires.map(d => {
+                  const DCOLOR: Record<string, string> = { act: '#10b981', warn: '#ef4444', inform: '#f59e0b', propose: '#3b82f6' };
+                  const DICON: Record<string, string> = { act: '🟢', warn: '🔴', inform: '🟡', propose: '🔵' };
+                  return (
+                    <div key={d.id} style={{
+                      padding: '8px 10px', borderRadius: 7, marginBottom: 6,
+                      background: 'rgba(255,255,255,0.02)',
+                      borderLeft: `3px solid ${DCOLOR[d.type] ?? 'rgba(255,255,255,0.1)'}`,
                     }}>
-                      {desire.content.replace(/^#+\s+/gm, '').slice(0, 100)}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                        <span style={{ fontSize: 10 }}>{DICON[d.type] ?? '·'}</span>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: DCOLOR[d.type] ?? 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{d.type}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>×{d.urgency}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {d.content.replace(/^#+\s+/gm, '')}
+                      </div>
                     </div>
+                  );
+                })}
+
+                <div style={{ height: 12 }} />
+                <SectionLabel>📊 今日统计</SectionLabel>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                  {[
+                    { label: '完成', value: brain.todayCompleted, color: '#10b981' },
+                    { label: '失败', value: brain.todayFailed, color: '#ef4444' },
+                    { label: '队列', value: brain.todayQueued, color: '#f59e0b' },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ textAlign: 'center', padding: '10px 4px', borderRadius: 8, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ height: 12 }} />
+                <SectionLabel>⚡ Tick</SectionLabel>
+                <div style={{ padding: '8px 10px', borderRadius: 7, background: 'rgba(255,255,255,0.02)', fontSize: 11 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>状态</span>
+                    <span style={{ color: brain.tickRunning ? '#f59e0b' : '#10b981' }}>{brain.tickRunning ? '执行中' : '待机'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>上次</span>
+                    <span style={{ color: 'rgba(255,255,255,0.5)' }}>{timeAgo(brain.lastTick)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>槽位</span>
+                    <span style={{ color: 'rgba(255,255,255,0.5)' }}>{brain.slotsUsed}/{brain.slotsMax}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── 记忆 Tab ── */}
+            {activeTab === 'memory' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <SectionLabel>📚 Learnings ({learnings.length})</SectionLabel>
+                  <button onClick={fetchLearnings} style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>刷新</button>
+                </div>
+                {tabLoading.memory ? (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <Loader2 size={14} color="rgba(255,255,255,0.2)" style={{ animation: 'spin 1s linear infinite', margin: 'auto' }} />
+                  </div>
+                ) : learnings.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '16px 0' }}>暂无记忆数据</div>
+                ) : learnings.map(l => (
+                  <div key={l.id} style={{
+                    padding: '9px 10px', borderRadius: 7, marginBottom: 6,
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.04)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 4 }}>
+                      <span style={{
+                        fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                        background: l.digested ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                        color: l.digested ? '#34d399' : '#f59e0b',
+                        flexShrink: 0,
+                      }}>
+                        {l.category || 'general'}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: 500, flex: 1 }}>
+                        {l.title.slice(0, 60)}
+                      </span>
+                    </div>
+                    {l.content && (
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: '1.4', marginBottom: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {l.content}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)' }}>{timeAgo(l.created_at)}</div>
                   </div>
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      </div>
 
-      {/* ── Execution Feed ── */}
-      <div style={{
-        height: 130, flexShrink: 0,
-        borderTop: '1px solid rgba(255,255,255,0.05)',
-        padding: '10px 20px',
-        overflowY: 'auto',
-        background: 'rgba(0,0,0,0.2)',
-      }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)', marginBottom: 6 }}>
-          ⚡ 执行 Feed
-        </div>
-        {feed.length === 0 ? (
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.1)' }}>等待 WebSocket 事件...</div>
-        ) : (
-          feed.slice(0, 8).map(ev => <FeedItem key={ev.id} event={ev} />)
-        )}
-      </div>
-
-      {/* ── Power Tracking (Suggestions) ── */}
-      <div style={{
-        height: 140, flexShrink: 0,
-        borderTop: '1px solid rgba(255,255,255,0.05)',
-        padding: '10px 20px',
-        overflowY: 'auto',
-        background: 'rgba(0,0,0,0.15)',
-      }}>
-        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.2)', marginBottom: 6 }}>
-          📋 权力追踪 — 建议 vs 决策
-        </div>
-        {suggestions.length === 0 ? (
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.1)' }}>暂无 Suggestions</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {suggestions.slice(0, 5).map(s => (
-              <div key={s.id} style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '4px 8px', borderRadius: 5,
-                background: 'rgba(255,255,255,0.02)',
-                fontSize: 11,
-              }}>
-                <span style={{
-                  flex: 1, color: 'rgba(255,255,255,0.5)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {s.content.slice(0, 70)}
-                </span>
-                <span style={{ color: 'rgba(255,255,255,0.2)', minWidth: 90, textAlign: 'right', fontSize: 10 }}>
-                  {s.source}
-                </span>
-                <span style={{
-                  minWidth: 40, textAlign: 'center',
-                  padding: '1px 6px', borderRadius: 3, fontSize: 10,
-                  background: s.status === 'pending' ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
-                  color: s.status === 'pending' ? '#f59e0b' : '#10b981',
-                }}>
-                  {s.status === 'pending' ? '待定' : s.status}
-                </span>
-                <span style={{ color: 'rgba(255,255,255,0.2)', minWidth: 32, textAlign: 'right', fontSize: 10 }}>
-                  {parseFloat(s.priority_score).toFixed(2)}
-                </span>
+            {/* ── 事件 Tab ── */}
+            {activeTab === 'events' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <SectionLabel>📡 Brain 事件</SectionLabel>
+                  <button onClick={fetchEvents} style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>刷新</button>
+                </div>
+                {tabLoading.events ? (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <Loader2 size={14} color="rgba(255,255,255,0.2)" style={{ animation: 'spin 1s linear infinite', margin: 'auto' }} />
+                  </div>
+                ) : events.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '16px 0' }}>暂无事件</div>
+                ) : events.map(ev => {
+                  const { icon, color, text } = eventLabel(ev);
+                  return (
+                    <div key={ev.id} style={{
+                      display: 'flex', gap: 8, alignItems: 'flex-start',
+                      padding: '7px 0',
+                      borderBottom: '1px solid rgba(255,255,255,0.03)',
+                    }}>
+                      <span style={{ fontSize: 13, flexShrink: 0 }}>{icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', marginBottom: 1 }}>{ev.event_type}</div>
+                        <div style={{ fontSize: 11, color, lineHeight: '1.4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={text}>
+                          {text}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', flexShrink: 0 }}>{formatTime(ev.created_at)}</div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
+            )}
+
+            {/* ── 建议 Tab ── */}
+            {activeTab === 'suggestions' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <SectionLabel>📋 权力追踪 ({suggestions.length})</SectionLabel>
+                  <button onClick={fetchSuggestions} style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>刷新</button>
+                </div>
+                {tabLoading.suggestions ? (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <Loader2 size={14} color="rgba(255,255,255,0.2)" style={{ animation: 'spin 1s linear infinite', margin: 'auto' }} />
+                  </div>
+                ) : suggestions.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '16px 0' }}>暂无建议</div>
+                ) : suggestions.map(s => {
+                  const score = parseFloat(s.priority_score);
+                  const statusColor = s.status === 'pending' ? '#f59e0b' : s.status === 'accepted' ? '#10b981' : '#6b7280';
+                  return (
+                    <div key={s.id} style={{
+                      padding: '9px 10px', borderRadius: 7, marginBottom: 6,
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.04)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{
+                          fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                          background: statusColor + '22', color: statusColor,
+                        }}>
+                          {s.status}
+                        </span>
+                        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{s.source}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: score >= 0.8 ? '#10b981' : score >= 0.7 ? '#f59e0b' : 'rgba(255,255,255,0.3)' }}>
+                          {score.toFixed(2)}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: '1.4', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {s.content}
+                      </div>
+                      <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', marginTop: 4 }}>{s.suggestion_type} · {timeAgo(s.created_at)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       <style>{`
