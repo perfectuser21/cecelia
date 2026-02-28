@@ -89,6 +89,9 @@ let _lastCleanupTime = 0; // track last run_periodic_cleanup() call time
 let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
+let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
+
+const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1313,6 +1316,31 @@ async function executeTick() {
     }
   }
 
+  // 0.5.5. Goal Outer Loop 评估：每 24 小时评估一次所有活跃 KR 整体进展
+  const goalEvalElapsed = Date.now() - _lastGoalEvalTime;
+  if (goalEvalElapsed >= GOAL_EVAL_INTERVAL_MS) {
+    _lastGoalEvalTime = Date.now();
+    try {
+      const { evaluateGoalOuterLoop } = await import('./goal-evaluator.js');
+      const goalResults = await evaluateGoalOuterLoop(GOAL_EVAL_INTERVAL_MS);
+      if (goalResults.length > 0) {
+        const stalledCount = goalResults.filter(r => r.verdict === 'stalled').length;
+        const attentionCount = goalResults.filter(r => r.verdict === 'needs_attention').length;
+        console.log(`[tick] Goal outer loop: ${goalResults.length} goals evaluated, ${stalledCount} stalled, ${attentionCount} needs_attention`);
+        if (stalledCount > 0) {
+          actionsTaken.push({
+            action: 'goal_outer_loop',
+            evaluated: goalResults.length,
+            stalled: stalledCount,
+            needs_attention: attentionCount,
+          });
+        }
+      }
+    } catch (goalEvalErr) {
+      console.error('[tick] Goal outer loop evaluation failed (non-fatal):', goalEvalErr.message);
+    }
+  }
+
   // 0.6. Codex 免疫检查：每 20 小时自动创建一次 codex_qa 任务
   try {
     await ensureCodexImmune(pool);
@@ -2045,6 +2073,8 @@ function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 /** Reset heartbeat timer — for testing only */
 function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
+function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
  * 查询最近一条 codex_qa 任务，若超过 20h（或从未有过），自动创建
@@ -2119,5 +2149,7 @@ export {
   _resetLastCleanupTime,
   _resetLastHealthCheckTime,
   _resetLastKrProgressSyncTime,
-  _resetLastHeartbeatTime
+  _resetLastHeartbeatTime,
+  _resetLastGoalEvalTime,
+  GOAL_EVAL_INTERVAL_MS
 };
