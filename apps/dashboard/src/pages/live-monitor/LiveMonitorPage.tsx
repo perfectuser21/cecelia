@@ -1,8 +1,8 @@
 /**
- * LiveMonitor v15 — v3.4 布局优化
- * LEFT (220px): INFRA (US+HK 合并紧凑) | BRAIN (警觉/调度状态) | ACC (账号) | AGENTS (紧凑)
- * RIGHT (1fr):  OKR 总览 (Global→Area) | Projects by Area (2列, 所有 area, 更多信息)
- * v3.4 变更：去 emoji + VPS 合并 + 新增 BRAIN 块 + 2列 project + 全 area 显示
+ * LiveMonitor v16 — v3.5
+ * LEFT (220px): INFRA (US+HK 真正左右并排) | BRAIN | ACC | AGENTS
+ * RIGHT (1fr):  OKR 总览 | Projects by Area (Notion 风格表格)
+ * v3.5 变更：修复 INFRA grid bug + 去掉 CECELIA NOC + Projects 改 Notion 表格（按 Area 分组）
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -48,6 +48,9 @@ interface Project {
   status: string;
   parent_id: string | null;
   goal_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  deadline: string | null;
 }
 
 interface GoalItem {
@@ -552,6 +555,18 @@ function projStatusLabel(s: string): string {
   return m[s] ?? s;
 }
 
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays === 0) return '今天';
+  if (diffDays < 7) return `${diffDays}天前`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
   projects: Project[];
   allGoals: GoalItem[];
@@ -561,7 +576,6 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
   const navigate = useNavigate();
   const projMap = new Map(projects.map(p => [p.id, p]));
 
-  /** 沿 goal_id → allGoals 链，找到归属的 area_okr.id */
   function findAreaId(goalId: string | null): string | null {
     if (!goalId) return null;
     const goal = allGoals.find(g => g.id === goalId);
@@ -574,7 +588,6 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     return null;
   }
 
-  /** 找到 project.goal_id 所指的 KR 标题 */
   function findKrTitle(goalId: string | null): string | null {
     if (!goalId) return null;
     const goal = allGoals.find(g => g.id === goalId);
@@ -582,11 +595,18 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     return null;
   }
 
+  function findAreaTitle(goalId: string | null): string | null {
+    if (!goalId) return null;
+    const areaId = findAreaId(goalId);
+    if (!areaId) return null;
+    const area = allGoals.find(g => g.id === areaId);
+    return area ? shortAreaTitle(area.title) : null;
+  }
+
   const areaOkrs = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status));
   const activeProjects = projects.filter(p => p.type === 'project' && !INACTIVE_STATUSES.has(p.status));
   const activeInits = projects.filter(p => p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status));
 
-  // 按 area 分组 projects
   const projsByArea = new Map<string, Project[]>();
   const noAreaProjs: Project[] = [];
   for (const proj of activeProjects) {
@@ -599,15 +619,6 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     }
   }
 
-  // Initiatives 按 parent project 分组
-  const initsByProj = new Map<string, Project[]>();
-  for (const ini of activeInits) {
-    const key = ini.parent_id ?? '__none__';
-    if (!initsByProj.has(key)) initsByProj.set(key, []);
-    initsByProj.get(key)!.push(ini);
-  }
-
-  /** 计算某 project 下的 active/queued 任务数 */
   function countTasksForProj(projId: string, tasks: BrainTask[]): number {
     return tasks.filter(t => {
       if (!t.project_id) return false;
@@ -616,7 +627,6 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     }).length;
   }
 
-  /** 计算某 area 下的 queued 任务数 */
   function countQueuedForArea(areaId: string): number {
     return queuedTasks.filter(t => {
       if (!t.project_id) return false;
@@ -631,14 +641,12 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     }).length;
   }
 
-  // 显示所有 area（包括没有 project 的）
   const areaGroups = areaOkrs.map(area => ({
     area,
     projs: projsByArea.get(area.id) ?? [],
     queuedCount: countQueuedForArea(area.id),
   }));
 
-  // 缩短 area 标题：截到第一个"——"或"—"
   function shortAreaTitle(title: string): string {
     const idx = title.indexOf('——');
     if (idx > 0) return title.slice(0, idx).trim();
@@ -658,97 +666,89 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
     );
   }
 
-  function renderProjectCard(proj: Project) {
-    const inis = initsByProj.get(proj.id) ?? [];
-    const hasActive = inis.some(i => i.status === 'in_progress' || i.status === 'active');
+  // Notion 表格样式常量
+  const thStyle: React.CSSProperties = {
+    padding: '5px 10px', fontSize: 10, fontWeight: 600, color: '#6e7681',
+    textAlign: 'left', whiteSpace: 'nowrap', userSelect: 'none',
+    borderBottom: '1px solid #21262d',
+  };
+  const tdStyle: React.CSSProperties = {
+    padding: '6px 10px', fontSize: 11, color: '#c9d1d9',
+    borderBottom: '1px solid #161b22', verticalAlign: 'middle',
+  };
+
+  function renderProjectRow(proj: Project) {
     const activeCount = countTasksForProj(proj.id, activeTasks);
     const queuedCount = countTasksForProj(proj.id, queuedTasks);
+    const hasActive = activeCount > 0;
     const accent = hasActive ? '#3b82f6' : projStatusColor(proj.status);
     const krTitle = findKrTitle(proj.goal_id);
+    const taskCount = activeCount + queuedCount;
 
     return (
-      <div key={proj.id}
+      <tr key={proj.id}
         onClick={() => navigate('/work/projects')}
-        style={{
-          background: '#0d1117', borderRadius: 8,
-          border: '1px solid #21262d',
-          borderLeft: `3px solid ${accent}`,
-          padding: '10px 12px', cursor: 'pointer',
-          transition: 'border-color .15s',
-        }}
-        onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
-        onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-
-        {/* Project name + status */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5 }}>
-          <Dot color={accent} pulse={hasActive} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-            {proj.name}
-          </span>
-        </div>
-
-        {/* Status + task counts */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5, paddingLeft: 13 }}>
-          <span style={{ fontSize: 9, color: accent, background: accent + '15', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
+        style={{ cursor: 'pointer', transition: 'background .1s' }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#161b22')}
+        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+        {/* 名称 */}
+        <td style={{ ...tdStyle, maxWidth: 220 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 3, height: 14, borderRadius: 2, background: accent, flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {proj.name}
+            </span>
+          </div>
+        </td>
+        {/* 类型 */}
+        <td style={{ ...tdStyle, color: '#8b949e', fontFamily: 'monospace', fontSize: 10 }}>
+          {proj.type === 'project' ? 'Project' : proj.type === 'initiative' ? 'Initiative' : proj.type}
+        </td>
+        {/* 状态 */}
+        <td style={tdStyle}>
+          <span style={{ fontSize: 10, color: accent, background: accent + '18', padding: '1px 7px', borderRadius: 10, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
             {projStatusLabel(proj.status)}
           </span>
-          {activeCount > 0 && (
-            <span style={{ fontSize: 9, color: '#10b981', background: 'rgba(16,185,129,.12)', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
-              {activeCount} 运行
+        </td>
+        {/* KR */}
+        <td style={{ ...tdStyle, color: '#6e7681', maxWidth: 160 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', fontSize: 10 }}>
+            {krTitle ? clip(krTitle, 24) : '—'}
+          </span>
+        </td>
+        {/* 创建 */}
+        <td style={{ ...tdStyle, color: '#484f58', fontFamily: 'monospace', fontSize: 10, whiteSpace: 'nowrap' }}>
+          {fmtDate(proj.created_at)}
+        </td>
+        {/* 最后活跃 */}
+        <td style={{ ...tdStyle, color: '#484f58', fontFamily: 'monospace', fontSize: 10, whiteSpace: 'nowrap' }}>
+          {fmtDate(proj.updated_at)}
+        </td>
+        {/* 任务数 */}
+        <td style={{ ...tdStyle, textAlign: 'center' }}>
+          {taskCount > 0 ? (
+            <span style={{ fontFamily: 'monospace', fontSize: 10 }}>
+              {activeCount > 0 && <span style={{ color: '#10b981' }}>{activeCount}</span>}
+              {activeCount > 0 && queuedCount > 0 && <span style={{ color: '#484f58' }}>/</span>}
+              {queuedCount > 0 && <span style={{ color: '#f59e0b' }}>{queuedCount}q</span>}
             </span>
+          ) : (
+            <span style={{ color: '#30363d', fontSize: 10 }}>—</span>
           )}
-          {queuedCount > 0 && (
-            <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
-              {queuedCount}q
-            </span>
-          )}
-        </div>
-
-        {/* KR reference */}
-        {krTitle && (
-          <div style={{ paddingLeft: 13, marginBottom: 5 }}>
-            <span style={{ fontSize: 9, color: '#484f58' }}>KR: {clip(krTitle, 30)}</span>
-          </div>
-        )}
-
-        {/* Initiatives list */}
-        {inis.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 13 }}>
-            {inis.slice(0, 3).map(ini => {
-              const sc = projStatusColor(ini.status);
-              return (
-                <div key={ini.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', background: '#161b22', borderRadius: 4 }}>
-                  <Dot color={sc} pulse={ini.status === 'in_progress'} />
-                  <span style={{ fontSize: 9, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {clip(ini.name, 26)}
-                  </span>
-                  <span style={{ fontSize: 8, color: sc, fontFamily: 'monospace', flexShrink: 0 }}>
-                    {projStatusLabel(ini.status)}
-                  </span>
-                </div>
-              );
-            })}
-            {inis.length > 3 && (
-              <div style={{ fontSize: 8, color: '#484f58', paddingLeft: 6 }}>+{inis.length - 3} 更多</div>
-            )}
-          </div>
-        )}
-        {inis.length === 0 && (
-          <div style={{ paddingLeft: 13, fontSize: 9, color: '#30363d', fontStyle: 'italic' }}>无 Initiative</div>
-        )}
-      </div>
+        </td>
+      </tr>
     );
   }
 
-  function renderAreaGroup(label: string, projs: Project[], queuedCount: number) {
+  function renderAreaSection(label: string, projs: Project[], queuedCount: number) {
     return (
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 20 }}>
         {/* Area header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: 1, textTransform: 'uppercase', flexShrink: 0 }}>{label}</span>
-          <div style={{ flex: 1, height: 1, background: 'rgba(192,132,252,.2)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, padding: '0 2px' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(192,132,252,.15)' }} />
           {projs.length > 0 && (
-            <span style={{ fontSize: 9, color: '#6e7681', fontFamily: 'monospace', flexShrink: 0 }}>{projs.length}项目</span>
+            <span style={{ fontSize: 9, color: '#6e7681', fontFamily: 'monospace', flexShrink: 0 }}>{projs.length}</span>
           )}
           {queuedCount > 0 && (
             <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 6px', borderRadius: 10, flexShrink: 0, fontFamily: 'monospace' }}>
@@ -756,10 +756,33 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
             </span>
           )}
         </div>
-        {/* Project cards - 2 columns */}
         {projs.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {projs.map(proj => renderProjectCard(proj))}
+          <div style={{ border: '1px solid #21262d', borderRadius: 6, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '28%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '20%' }} />
+                <col style={{ width: '10%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '7%' }} />
+              </colgroup>
+              <thead style={{ background: '#161b22' }}>
+                <tr>
+                  <th style={thStyle}>名称</th>
+                  <th style={thStyle}>类型</th>
+                  <th style={thStyle}>状态</th>
+                  <th style={thStyle}>KR</th>
+                  <th style={thStyle}>创建</th>
+                  <th style={thStyle}>最后活跃</th>
+                  <th style={{ ...thStyle, textAlign: 'center' }}>任务</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projs.map(proj => renderProjectRow(proj))}
+              </tbody>
+            </table>
           </div>
         ) : (
           <div style={{ fontSize: 10, color: '#30363d', fontStyle: 'italic', paddingLeft: 4, paddingBottom: 4 }}>
@@ -782,10 +805,10 @@ function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
       </div>
       {areaGroups.map(({ area, projs, queuedCount }) => (
         <div key={area.id}>
-          {renderAreaGroup(shortAreaTitle(area.title), projs, queuedCount)}
+          {renderAreaSection(shortAreaTitle(area.title), projs, queuedCount)}
         </div>
       ))}
-      {noAreaProjs.length > 0 && renderAreaGroup('未关联 Area', noAreaProjs, 0)}
+      {noAreaProjs.length > 0 && renderAreaSection('未关联 Area', noAreaProjs, 0)}
     </div>
   );
 }
@@ -914,9 +937,6 @@ export default function LiveMonitorPage() {
         }}>
           <Dot color="#10b981" pulse />
           <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: '#10b981', letterSpacing: 2 }}>LIVE</span>
-          <span style={{ color: '#30363d' }}>│</span>
-          <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#6e7681' }}>CECELIA NOC</span>
-
           <div title={ALERT_DESC[alertName] ?? ''} style={{ background: alertColor + '1a', border: `1px solid ${alertColor}40`, borderRadius: 20, padding: '2px 12px', display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}>
             <Dot color={alertColor} />
             <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: alertColor }}>{ALERT_LABEL[alertName] ?? alertName}</span>
@@ -986,10 +1006,10 @@ export default function LiveMonitorPage() {
               {/* INFRA — US + HK 合并紧凑 */}
               <div style={cardStyle}>
                 <SectionLabel label="INFRA" />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr', gap: 0 }}>
                   <VpsSide label="US" data={vps} svcDown={svcDown} svcUp={svcUp} />
-                  <div style={{ width: 1, background: '#21262d', alignSelf: 'stretch' }} />
-                  <VpsSide label="HK" data={hkVps} />
+                  <div style={{ background: '#21262d', alignSelf: 'stretch' }} />
+                  <div style={{ paddingLeft: 8 }}><VpsSide label="HK" data={hkVps} /></div>
                 </div>
               </div>
 

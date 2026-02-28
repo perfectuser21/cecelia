@@ -14,6 +14,7 @@
  */
 
 /* global console */
+import crypto from 'crypto';
 import { spawn, execSync } from 'child_process';
 import { writeFile, mkdir } from 'fs/promises';
 import { readFileSync } from 'fs';
@@ -678,15 +679,33 @@ async function requeueTask(taskId, reason, evidence = {}) {
   }
 
   // Fix: 记录失败到 learnings 表，供 planner buildLearningPenaltyMap 使用
+  // 使用 content_hash 去重，防止相同失败原因无限堆积
   try {
-    await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata)
-      VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3)
-    `, [
-      `Task Failure: ${taskTitle || taskId} [${reason}]`,
-      `Watchdog killed task after ${retryCount} attempts. Reason: ${reason}`,
-      JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
-    ]);
+    const failureTitle = `Task Failure: ${taskTitle || taskId} [${reason}]`;
+    const failureContent = `Watchdog killed task after ${retryCount} attempts. Reason: ${reason}`;
+    const contentHash = crypto.createHash('sha256')
+      .update(`${failureTitle}\n${failureContent}`)
+      .digest('hex')
+      .slice(0, 16);
+
+    const existing = await pool.query(
+      'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+      [contentHash]
+    );
+
+    if (existing.rows.length === 0) {
+      await pool.query(`
+        INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
+        VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false)
+      `, [
+        failureTitle,
+        failureContent,
+        JSON.stringify({ task_id: taskId, task_type: task_type || null, project_id: project_id || null }),
+        contentHash,
+      ]);
+    } else {
+      console.log(`[executor] Skipping duplicate failure_pattern (hash=${contentHash})`);
+    }
   } catch (learningErr) {
     console.error(`[executor] Failed to record learning for task ${taskId}:`, learningErr.message);
   }

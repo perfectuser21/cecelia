@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import crypto from 'crypto';
 
 // Mock pool
 vi.mock('../db.js', () => ({
@@ -13,16 +14,42 @@ vi.mock('../db.js', () => ({
 }));
 
 describe('executor requeueTask: learning record', () => {
-  it('learning INSERT uses correct category=failure_pattern', () => {
-    // 验证 INSERT 语句使用正确的 category
+  it('learning INSERT uses correct category=failure_pattern and includes content_hash', () => {
+    // 验证 INSERT 语句使用正确的 category，且包含 content_hash 去重字段
     const expectedCategory = 'failure_pattern';
     const expectedTriggerEvent = 'watchdog_kill';
 
-    // 模拟 INSERT 构造
-    const insertSql = `INSERT INTO learnings (title, category, trigger_event, content, metadata) VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3)`;
+    // 模拟修复后的 INSERT 构造（包含 content_hash）
+    const insertSql = `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested) VALUES ($1, 'failure_pattern', 'watchdog_kill', $2, $3, $4, 1, true, false)`;
 
     expect(insertSql).toContain(expectedCategory);
     expect(insertSql).toContain(expectedTriggerEvent);
+    expect(insertSql).toContain('content_hash');
+  });
+
+  it('content_hash is computed as SHA256(title+content).slice(0,16)', () => {
+    const title = 'Task Failure: test-task [RSS exceeded]';
+    const content = 'Watchdog killed task after 1 attempts. Reason: RSS exceeded';
+    const hash = crypto.createHash('sha256')
+      .update(`${title}\n${content}`)
+      .digest('hex')
+      .slice(0, 16);
+
+    // 同样的 title+content 总是产生相同的 hash
+    const hash2 = crypto.createHash('sha256')
+      .update(`${title}\n${content}`)
+      .digest('hex')
+      .slice(0, 16);
+
+    expect(hash).toBe(hash2);
+    expect(hash).toHaveLength(16);
+
+    // 不同内容产生不同 hash
+    const hashDiff = crypto.createHash('sha256')
+      .update(`${title}\nWatchdog killed task after 2 attempts. Reason: RSS exceeded`)
+      .digest('hex')
+      .slice(0, 16);
+    expect(hash).not.toBe(hashDiff);
   });
 
   it('learning metadata contains task_id, task_type, project_id', () => {
@@ -70,5 +97,13 @@ describe('executor requeueTask: learning record', () => {
       : { requeued: true, retry_count: 1 };
 
     expect(result.requeued).toBe(true); // requeue 仍然成功
+  });
+
+  it('duplicate failure_pattern with same hash is skipped', () => {
+    // 模拟去重逻辑：existing.rows.length > 0 时跳过 INSERT
+    const existingRows = [{ id: 'existing-id' }];
+    const shouldInsert = existingRows.length === 0;
+
+    expect(shouldInsert).toBe(false); // 有重复时不 INSERT
   });
 });

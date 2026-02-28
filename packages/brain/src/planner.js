@@ -13,6 +13,12 @@ const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
 const LEARNING_LOOKBACK_DAYS = 7;         // 回溯天数（可配置）
 const LEARNING_FAILURE_THRESHOLD = 2;     // 触发惩罚的最低失败次数（可配置）
 
+// Insight adjustment configuration（反刍/皮层洞察对 KR 得分的影响）
+const INSIGHT_LOOKBACK_DAYS = 7;
+const INSIGHT_SUCCESS_BONUS = 5;      // 成功模式 → 优先推进
+const INSIGHT_WARNING_PENALTY = -8;   // 皮层警告 → 谨慎
+const INSIGHT_FAILURE_PENALTY = -10;  // 失败模式（已处理但值得关注）→ 减速
+
 // Content-aware score configuration
 const CONTENT_SCORE_KNOWN_DECOMPOSITION_BONUS = 5;   // 已知方案 dev task 优先
 
@@ -64,6 +70,68 @@ async function buildLearningPenaltyMap(projectId) {
   } catch (err) {
     // Graceful degradation: if learning query fails, return empty map (no penalty applied)
     console.error(`[planner] buildLearningPenaltyMap failed: ${err.message}`);
+    return new Map();
+  }
+}
+
+/**
+ * Build a map of kr_id → score_adjustment based on recent rumination/cortex insights.
+ *
+ * 反刍闭环：将 rumination / cortex 洞察从"抽屉里"流回到 KR 选择权重。
+ *
+ * 查询规则：
+ *   - category = 'success_pattern'   → INSIGHT_SUCCESS_BONUS（推进该 KR）
+ *   - category = 'cortex_insight'    → INSIGHT_WARNING_PENALTY（谨慎）
+ *   - category = 'failure_pattern'   → INSIGHT_FAILURE_PENALTY（已失败，减速）
+ *   - metadata.kr_id 或 metadata.goal_id 存在 → 关联到具体 KR
+ *   - 无 KR 关联的洞察 → 跳过（只影响有归属的 KR）
+ *
+ * @param {string[]} krIds - KR IDs to look up insights for
+ * @returns {Promise<Map<string, number>>} - Map of kr_id → adjustment score
+ */
+export async function buildInsightAdjustments(krIds) {
+  if (!krIds || krIds.length === 0) return new Map();
+
+  try {
+    const cutoff = new Date(Date.now() - INSIGHT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+    const result = await pool.query(`
+      SELECT
+        COALESCE(metadata->>'kr_id', metadata->>'goal_id') AS kr_id,
+        category,
+        COUNT(*) AS cnt
+      FROM learnings
+      WHERE created_at >= $1
+        AND category IN ('success_pattern', 'cortex_insight', 'failure_pattern', 'rumination')
+        AND (
+          metadata->>'kr_id' = ANY($2::text[])
+          OR metadata->>'goal_id' = ANY($2::text[])
+        )
+      GROUP BY 1, 2
+    `, [cutoff, krIds]);
+
+    const adjustMap = new Map();
+    for (const row of result.rows) {
+      if (!row.kr_id) continue;
+      const cnt = parseInt(row.cnt, 10);
+      let adjustment = 0;
+      if (row.category === 'success_pattern') {
+        adjustment = INSIGHT_SUCCESS_BONUS * Math.min(cnt, 3); // 最多叠加 3 次
+      } else if (row.category === 'cortex_insight') {
+        adjustment = INSIGHT_WARNING_PENALTY;
+      } else if (row.category === 'failure_pattern' || row.category === 'rumination') {
+        adjustment = INSIGHT_FAILURE_PENALTY * Math.min(cnt, 2);
+      }
+      adjustMap.set(row.kr_id, (adjustMap.get(row.kr_id) || 0) + adjustment);
+    }
+
+    if (adjustMap.size > 0) {
+      console.log(`[planner] Insight adjustments: ${JSON.stringify(Object.fromEntries(adjustMap))}`);
+    }
+
+    return adjustMap;
+  } catch (err) {
+    console.error(`[planner] buildInsightAdjustments failed: ${err.message}`);
     return new Map();
   }
 }
@@ -127,8 +195,11 @@ async function getGlobalState() {
 
 /**
  * Score and sort KRs by priority/progress/focus.
+ *
+ * @param {Object} state - Global planning state
+ * @param {Map<string, number>} [insightAdjustments] - Optional kr_id → adjustment from rumination/cortex
  */
-function scoreKRs(state) {
+function scoreKRs(state, insightAdjustments = new Map()) {
   const { keyResults, activeTasks, focus } = state;
   if (keyResults.length === 0) return [];
 
@@ -156,6 +227,9 @@ function scoreKRs(state) {
       if (daysLeft > 0 && daysLeft < 7) score += 20;
     }
     if (queuedByGoal[kr.id]) score += 15;
+    // 反刍/皮层洞察调整（方向3：反思闭环流回决策权重）
+    const insightAdj = insightAdjustments.get(kr.id) || 0;
+    if (insightAdj !== 0) score += insightAdj;
     return { kr, score };
   });
 
@@ -165,9 +239,11 @@ function scoreKRs(state) {
 
 /**
  * Select the KR most in need of advancement.
+ * @param {Object} state
+ * @param {Map<string, number>} [insightAdjustments]
  */
-function selectTargetKR(state) {
-  const scored = scoreKRs(state);
+function selectTargetKR(state, insightAdjustments = new Map()) {
+  const scored = scoreKRs(state, insightAdjustments);
   return scored[0]?.kr || null;
 }
 
@@ -670,8 +746,12 @@ async function planNextTask(scopeKRIds = null, options = {}) {
     return { planned: false, reason: 'no_active_kr' };
   }
 
-  // Score and sort all KRs, then try each in order
-  const scored = scoreKRs(state);
+  // 方向3：反刍闭环 — 查询最近洞察，流回 KR 选择权重
+  const krIds = state.keyResults.map(kr => kr.id);
+  const insightAdjustments = await buildInsightAdjustments(krIds);
+
+  // Score and sort all KRs, then try each in order（含反刍洞察调整）
+  const scored = scoreKRs(state, insightAdjustments);
 
   let lastKR = null;
   let lastProject = null;

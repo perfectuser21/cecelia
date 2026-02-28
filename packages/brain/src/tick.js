@@ -28,6 +28,7 @@ import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
 import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
+import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1128,6 +1129,51 @@ async function executeTick() {
     recordOperation(false, 'alertness_evaluation');
   }
 
+  // 0.5 认知评估：情绪 + 主观时间 + 并发意识（轻量，纯计算）
+  publishCognitiveState({ phase: 'cognition', detail: '认知评估…' });
+  let cognitionSnapshot = null;
+  try {
+    const resources = checkServerResources();
+    const cpuPercent = resources.cpu_percent || 0;
+
+    // 从 DB 获取真实的队列深度和最近成功率（用于情绪评估）
+    let queueDepth = 0;
+    let successRate = 1.0;
+    try {
+      const queueRes = await pool.query(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'queued'"
+      );
+      queueDepth = parseInt(queueRes.rows[0]?.cnt || 0, 10);
+
+      const successRes = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+          COUNT(*) FILTER (WHERE status = 'failed') AS failed
+        FROM tasks
+        WHERE updated_at >= NOW() - INTERVAL '1 hour'
+      `);
+      const completed = parseInt(successRes.rows[0]?.completed || 0, 10);
+      const failed = parseInt(successRes.rows[0]?.failed || 0, 10);
+      const total = completed + failed;
+      if (total > 0) successRate = completed / total;
+    } catch {
+      // 静默降级：使用默认值
+    }
+
+    const emotionResult = evaluateEmotion({
+      alertnessLevel: alertnessResult?.level ?? 1,
+      cpuPercent,
+      queueDepth,
+      successRate
+    });
+    updateSubjectiveTime();
+    recordTickEvent({ phase: 'tick', detail: `警觉=${alertnessResult?.levelName || 'CALM'}, 情绪=${emotionResult.label}` });
+    cognitionSnapshot = { emotion: emotionResult, time: getSubjectiveTime?.() };
+    console.log(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 队列=${queueDepth}, 成功率=${Math.round(successRate * 100)}%, 派发修正=${emotionResult.dispatch_rate_modifier}`);
+  } catch (cogErr) {
+    console.warn('[tick] 认知评估跳过:', cogErr.message);
+  }
+
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
@@ -1810,13 +1856,35 @@ async function executeTick() {
 
   // Apply dispatch rate limit based on alertness level
   const dispatchRate = getDispatchRate();
+
+  // 情绪门禁：过载状态跳过本轮派发
+  const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
+  const emotionDispatchModifier = cognitionSnapshot?.emotion?.dispatch_rate_modifier ?? 1.0;
+  if (emotionState === 'overloaded') {
+    console.log('[tick] 情绪过载，跳过本轮派发（dispatch_rate_modifier=' + emotionDispatchModifier + '）');
+    actionsTaken.push({ action: 'emotion_gate', emotion: emotionState, reason: 'overloaded_skip_dispatch' });
+    return {
+      success: true,
+      alertness: alertnessResult,
+      cognition: cognitionSnapshot,
+      dispatch: { dispatched: 0, reason: 'emotion_overloaded' },
+      actions_taken: actionsTaken,
+      summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
+      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+    };
+  }
+
   // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
   const tickSlotBudget = await calculateSlotBudget();
   const poolCAvailable = tickSlotBudget.taskPool.available;
   // 保证有 slot 且 rate > 0 时至少能派发 1 个（Math.floor 会把 0.3~0.9 杀成 0）
+  // 乘以情绪修正系数（focused/excited 加速，tired/anxious 减速）
   const effectiveDispatchMax = (poolCAvailable > 0 && dispatchRate > 0)
-    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate))
+    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate * emotionDispatchModifier))
     : 0;
+  if (emotionDispatchModifier !== 1.0) {
+    console.log(`[tick] 情绪派发修正: ${emotionState} × ${emotionDispatchModifier} → effectiveMax=${effectiveDispatchMax}`);
+  }
   if (tickSlotBudget.user.mode !== 'absent') {
     console.log(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
   }
@@ -1911,6 +1979,12 @@ async function executeTick() {
     console.error('[tick] rumination error:', rumErr.message);
   }
 
+  // 10.7 内在叙事更新（每小时一次，fire-and-forget）
+  try {
+    const currentEmotion = getCurrentEmotion();
+    updateNarrative(currentEmotion, pool).catch(e => console.warn('[tick] 叙事更新失败:', e.message));
+  } catch { /* 静默 */ }
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
@@ -1947,6 +2021,7 @@ async function executeTick() {
     daily_review: dailyReviewResult,
     rumination: ruminationResult,
     desire_system: desireResult,
+    cognition: cognitionSnapshot,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
