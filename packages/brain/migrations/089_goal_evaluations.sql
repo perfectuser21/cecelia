@@ -45,7 +45,3 @@ FROM goal_evaluations ge
 JOIN goals g ON g.id = ge.goal_id
 ORDER BY goal_id, created_at DESC;
 
--- 注册 migration 版本
-INSERT INTO schema_migrations (version, description)
-VALUES ('089', 'goal_evaluations outer loop table')
-ON CONFLICT (version) DO NOTHING;
