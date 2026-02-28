@@ -165,6 +165,40 @@ WARNINGS=0
 CHECKOUT_FAILED=0
 
 # ========================================
+# 0.1 归档 .dev-incident-log.json
+# ========================================
+echo "[0.1] 归档 Incident Log..."
+INCIDENT_FILE=".dev-incident-log.json"
+RUNS_DIR=".dev-runs"
+mkdir -p "$RUNS_DIR"
+if [[ -f "$INCIDENT_FILE" ]]; then
+    INCIDENT_COUNT=$(jq 'length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
+    ARCHIVE_NAME="${RUNS_DIR}/${CP_BRANCH}-incident-log.json"
+    cp "$INCIDENT_FILE" "$ARCHIVE_NAME"
+    rm -f "$INCIDENT_FILE"
+    echo -e "   ${GREEN}[OK] Incident Log 已归档（${INCIDENT_COUNT} 条）→ $ARCHIVE_NAME${NC}"
+else
+    echo -e "   ${GREEN}[OK] 无 Incident Log（本次开发无失败记录）${NC}"
+fi
+echo ""
+
+# ========================================
+# 0.2 清理 .dev-feedback-report.json
+# ========================================
+echo "[0.2] 清理反馈报告..."
+FEEDBACK_FILE=".dev-feedback-report.json"
+if [[ -f "$FEEDBACK_FILE" ]]; then
+    # 归档到 .dev-runs/ 而非直接删除（保留记录）
+    FEEDBACK_ARCHIVE="${RUNS_DIR}/${CP_BRANCH}-feedback-report.json"
+    cp "$FEEDBACK_FILE" "$FEEDBACK_ARCHIVE"
+    rm -f "$FEEDBACK_FILE"
+    echo -e "   ${GREEN}[OK] 反馈报告已归档 → $FEEDBACK_ARCHIVE${NC}"
+else
+    echo -e "   ${GREEN}[OK] 无反馈报告文件${NC}"
+fi
+echo ""
+
+# ========================================
 # 1. 检查当前分支
 # ========================================
 echo "[1]  检查当前分支..."

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.34.0] - 2026-02-28
+
+### Added
+- Step 7/9 Incident Log 实时记录：测试失败/CI 失败时自动写入 `.dev-incident-log.json`
+- Step 10 强制结构化回顾：必须先读 incident log，回答 5 个强制问题（CI/测试失败次数/原因/错误判断/预防措施）
+- generate-feedback-report.sh：`extract_issues()` 优先从 incident log 读取真实数据，`generate_summary()` 包含失败统计
+- cleanup.sh：新增 [0.1] 归档 incident log，[0.2] 归档 feedback report 到 `.dev-runs/`
+
+### Fixed
+- 11-cleanup.md：修复 `.dev-mode` 删除时机描述矛盾（必须在 Step 11 最后，不是开始时）
+
 ## [12.30.5] - 2026-02-25
 
 ### Removed
