@@ -37,7 +37,7 @@ function buildMockPool({
   return {
     query: vi.fn(async (sql, params) => {
       // Candidates query
-      if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.7')) {
+      if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.68')) {
         return { rows: candidates };
       }
       // In-flight dedup query
