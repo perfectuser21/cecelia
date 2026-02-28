@@ -44,8 +44,24 @@ describe('orchestrator-chat memory unification (D1)', () => {
       },
     }));
 
+    // handleChat 测试（tests 4-6）验证动作型意图路径仍走 buildMemoryContext + callLLM
+    // 检索优先架构只对非动作型意图（QUESTION/CHAT）生效；CREATE_TASK 走 MOUTH_SYSTEM_PROMPT 路径
     vi.doMock('../intent.js', () => ({
-      parseIntent: vi.fn().mockReturnValue({ type: 'QUESTION', confidence: 0.8 }),
+      parseIntent: vi.fn().mockReturnValue({ type: 'CREATE_TASK', confidence: 0.9 }),
+    }));
+
+    vi.doMock('../self-model.js', () => ({
+      getSelfModel: vi.fn().mockResolvedValue('Cecelia 是一个 24/7 自主运行的管家系统。'),
+      updateSelfModel: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    vi.doMock('../owner-input-extractor.js', () => ({
+      extractSuggestionsFromChat: vi.fn().mockResolvedValue([]),
+    }));
+
+    vi.doMock('../memory-utils.js', () => ({
+      generateL0Summary: vi.fn().mockReturnValue(''),
+      generateMemoryStreamL1Async: vi.fn(),
     }));
 
     vi.doMock('node:fs', () => ({

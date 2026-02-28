@@ -55,7 +55,7 @@ import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
-import { handleChat } from './orchestrator-chat.js';
+import { handleChat, handleChatStream } from './orchestrator-chat.js';
 import { callLLM } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
@@ -7275,6 +7275,56 @@ router.post('/orchestrator/chat', async (req, res) => {
       error: 'Chat failed',
       message: err.message,
     });
+  }
+});
+
+/**
+ * POST /api/brain/orchestrator/chat/stream
+ * Cecelia 嘴巴流式对话端点（SSE）
+ *
+ * Request: { message: string, context?: object, messages?: Array<{role, content}> }
+ * Response: text/event-stream — 每行格式 `data: <chunk>\n\n`，结束为 `data: [DONE]\n\n`
+ */
+router.post('/orchestrator/chat/stream', async (req, res) => {
+  const { message, context, messages } = req.body;
+
+  if (!message || typeof message !== 'string') {
+    res.status(400).json({ error: 'Invalid request', message: 'message is required and must be a string' });
+    return;
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // 禁用 nginx 缓冲
+  res.flushHeaders();
+
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  try {
+    await handleChatStream(
+      message,
+      context || {},
+      Array.isArray(messages) ? messages : [],
+      (delta, isDone) => {
+        if (closed) return;
+        if (isDone) {
+          res.write('data: [DONE]\n\n');
+          res.end();
+        } else if (delta) {
+          res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+        }
+      }
+    );
+  } catch (err) {
+    console.error('[API] orchestrator/chat/stream error:', err.message);
+    if (!closed) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 });
 
