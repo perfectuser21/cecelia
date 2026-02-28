@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'cecelia',
   name: 'Cecelia',
-  version: '1.2.0',
+  version: '1.3.0',
   source: 'core',
   instances: ['core'],
 
@@ -42,6 +42,16 @@ const manifest: FeatureManifest = {
         order: 3,
       },
     },
+    {
+      path: '/cecelia/growth',
+      component: 'GrowthProfilePage',
+      navItem: {
+        label: '成长档案',
+        icon: 'Sprout',
+        group: 'cecelia',
+        order: 4,
+      },
+    },
     { path: '/cecelia/config', redirect: '/system/team' },
   ],
 
@@ -49,6 +59,7 @@ const manifest: FeatureManifest = {
     CeceliaPage: () => import('./pages/CeceliaPage'),
     ConsciousnessChat: () => import('./pages/ConsciousnessChat'),
     DiaryPage: () => import('./pages/DiaryPage'),
+    GrowthProfilePage: () => import('./pages/GrowthProfilePage'),
   },
 };
 
