@@ -2993,6 +2993,29 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5c5. Suggestion Plan 闭环：suggestion_plan 完成/失败 → 更新 suggestion.status
+    if (newStatus === 'completed' || newStatus === 'failed') {
+      try {
+        const spResult = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const spRow = spResult.rows[0];
+
+        if (spRow?.task_type === 'suggestion_plan') {
+          const suggestionId = spRow?.payload?.suggestion_id;
+          if (suggestionId) {
+            const suggestionStatus = newStatus === 'completed' ? 'processed' : 'failed';
+            await pool.query(
+              `UPDATE suggestions SET status = $1, updated_at = NOW() WHERE id = $2`,
+              [suggestionStatus, suggestionId]
+            );
+            console.log(`[execution-callback] Suggestion ${suggestionId} → ${suggestionStatus} (suggestion_plan task ${task_id})`);
+          }
+        }
+      } catch (spErr) {
+        // best-effort：失败不影响主流程
+        console.error(`[execution-callback] Suggestion status update error (non-fatal): ${spErr.message}`);
+      }
+    }
+
     // 5d. Auto-Learning: 自动从任务执行结果中学习
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
