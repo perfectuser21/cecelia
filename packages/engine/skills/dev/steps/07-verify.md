@@ -139,6 +139,44 @@ fi
 # 失败 → 检查前端 build 产物、API proxy 配置
 ```
 
+#### Test: manual:chrome:...（视觉截图验证）
+
+`manual:chrome:` 是视觉需求的唯一验证方式，不是 shell 命令——AI 直接执行截图并视觉判断。
+
+**格式**：`manual:chrome:screenshot <断言描述> at <URL>`
+
+**执行流程**：
+
+```
+1. 解析断言：提取 URL 和视觉断言
+   示例："verify .sidebar is on LEFT side of viewport at http://localhost:5211/page"
+   → URL = http://localhost:5211/page
+   → 断言 = ".sidebar 元素应在页面左侧"
+
+2. 调用 /chrome skill 截图：
+   使用 chrome-devtools MCP 导航到 URL，截图当前页面状态
+
+3. 视觉判断：
+   观察截图，判断断言是否满足：
+   - 位置类：元素是否在指定区域（左/右/上/下）
+   - 可见类：元素是否出现、颜色/样式是否正确
+   - 交互类（含 click）：先执行操作再截图验证结果
+
+4. 判断结果：
+   - 满足 → 把 DoD 中该行 [ ] 改为 [x]
+   - 不满足 → 记录原因，修复代码，重新截图
+```
+
+**常见失败排查**：
+```
+元素不在左侧 → 检查 CSS flex/grid 方向、组件 className 是否正确
+元素不可见   → 检查 z-index、display、visibility
+样式不对     → 检查 Tailwind 类名或 CSS 变量是否生效
+```
+
+**注意**：`manual:chrome:` 不是 shell 命令，Step 7 不会用 bash 执行它。
+AI 必须亲自截图判断，不能跳过或用 curl|grep 替代。
+
 ---
 
 ### 7.3 确认全部 [x]
