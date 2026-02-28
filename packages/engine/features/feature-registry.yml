@@ -135,10 +135,11 @@ platform_features:
     name: Branch Protection
     status: Committed
     priority: P0
-    version: "12.33.2"
+    version: "12.33.3"
     updated: "2026-02-28"
     description: |
       防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
+      v12.33.3: 双重修复（v21）- cp-* 分支名正则与 devgate.yml 同步（强制 8 位时间戳）+ worktree 检测加 gitdir 文件检查
       v12.33.2: 强制 worktree 检测（v20）- cp-*/feature/* 分支必须在独立 worktree 中，防止主仓库污染
       v12.8.0: 加强数据库检查（v20）- .dev-mode 存在时优先检查 Brain API 数据库（PRD/DoD 初稿），支持秋米→/dev 工作流
       v12.4.14: 修复 gitignored PRD/DoD 文件检测（跳过 git 追踪检查，只验证存在性和内容）
