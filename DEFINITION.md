@@ -4,7 +4,7 @@
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-27
 
-**Brain 版本**: 1.127.0
+**Brain 版本**: 1.128.0
 
 **Schema 版本**: 090
 **状态**: 生产运行中
@@ -405,6 +405,7 @@ queued → in_progress → completed
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 | Opus / - | 默认 anthropic |
+| suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
 | talk | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | data | HK | N8N | - | - |

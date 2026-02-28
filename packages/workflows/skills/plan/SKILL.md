@@ -1,9 +1,10 @@
 ---
 name: plan
-version: 1.3.0
+version: 1.4.0
 created: 2026-02-17
-updated: 2026-02-27
+updated: 2026-02-28
 changelog:
+  - 1.4.0: 新增无头 Suggestion 模式（[SUGGESTION_MODE]），Magentic-One 第5步
   - 1.3.0: 修复旧 skill 名残留，/okr 后台 → /decomp 后台；修复注意项末尾拆解 skill 名
   - 1.2.0: 重构层级识别框架——以规模/范围为主信号，时间为辅助信号，加入多维评估矩阵
   - 1.1.0: 加入 Stage 2 Capability 查询，识别输出格式增加已有能力和缺口
@@ -251,3 +252,132 @@ OKR Tick 自动检测 → 触发秋米调用 /decomp 后台拆解
 - **不确定就问**：用"涉及几个仓库？"和"有没有度量指标？"两个问题快速定级
 - **Initiative 是默认**：模糊情况统一判 Layer 5，不要过度拆解
 - **不要自己做拆解**：/plan 只识别 + 引导，拆解是 /decomp 的工作
+
+---
+
+## 无头 Suggestion 模式
+
+**触发条件**：task description 包含 `[SUGGESTION_MODE]`
+
+此模式由 Brain 自动触发（无用户交互），task_type=`suggestion_plan`。
+目标：识别 Suggestion 的层级，找挂载点，调 Brain API 创建相应结构。
+
+### 输入格式
+
+task description 格式：
+```
+[SUGGESTION_MODE]
+
+Suggestion ID: <uuid>
+Score: <float>
+Source: <source_type>
+
+内容：
+<suggestion 原文>
+```
+
+### 执行步骤
+
+**Step 1: 读取当前 OKR 结构**
+
+```bash
+# 获取所有活跃 KR
+curl -s http://localhost:5221/api/brain/goals | jq '.[] | {id, title, status, level}'
+
+# 获取所有活跃 Projects
+curl -s http://localhost:5221/api/brain/projects | jq '.[] | {id, name, type, parent_id}'
+```
+
+**Step 2: 层级判断（使用本文档的多维矩阵）**
+
+重点判断信号：
+- Suggestion 内容是否有度量指标？→ Layer 3 KR
+- 涉及多个 repo 或系统架构？→ Layer 4 Project
+- 单个功能、1-2 个 PR？→ Layer 5 Initiative（**最常见**）
+- 极小改动，立即能做？→ Layer 6 Task
+
+**默认规则**：不确定时 → Layer 5 Initiative。
+
+**Step 3: 找挂载点**
+
+根据 Suggestion 内容，在现有 OKR 结构中找到最合适的父节点：
+- Layer 3 KR → 找所属的 Goal（Area OKR）
+- Layer 4 Project → 找所属的 KR
+- Layer 5 Initiative → 找所属的 Project（type='project'）
+- Layer 6 Task → 找所属的 Project（type='initiative'）
+
+**Step 4: 调 Brain API 创建结构**
+
+| 层级 | API 调用 |
+|------|---------|
+| Layer 3 KR | `POST /api/brain/action/create-goal` (type='kr') |
+| Layer 4 Project | `POST /api/brain/action/create-project` (type='project', kr_id=...) |
+| Layer 5 Initiative | `POST /api/brain/action/create-project` (type='initiative', parent_id=<project_id>) |
+| Layer 6 Task | `POST /api/brain/tasks` (task_type='dev', project_id=<initiative_id>) |
+
+Layer 5 Initiative API 示例：
+```bash
+curl -s -X POST http://localhost:5221/api/brain/action/create-project \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "<initiative 名称，来自 suggestion 内容>",
+    "type": "initiative",
+    "parent_id": "<project_id>",
+    "description": "<suggestion 原文>"
+  }'
+```
+
+Layer 6 Task API 示例：
+```bash
+curl -s -X POST http://localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "<task 标题>",
+    "description": "<suggestion 原文>",
+    "task_type": "dev",
+    "priority": "P2",
+    "project_id": "<initiative_id>"
+  }'
+```
+
+### 输出格式（结构化 JSON）
+
+执行完成后，输出以下结构化 JSON（供 execution-callback 解析）：
+
+```json
+{
+  "suggestion_id": "<uuid>",
+  "identified_layer": 5,
+  "layer_name": "Initiative",
+  "reasoning": "单 repo，单功能，约 1-2 PR 工作量",
+  "mount_point": {
+    "type": "project",
+    "id": "<project_id>",
+    "name": "<project 名称>"
+  },
+  "created": {
+    "type": "initiative",
+    "id": "<新创建的 initiative id>",
+    "name": "<initiative 名称>"
+  },
+  "status": "success"
+}
+```
+
+如果判断失败或找不到挂载点：
+```json
+{
+  "suggestion_id": "<uuid>",
+  "identified_layer": null,
+  "reasoning": "无法确定层级或找不到合适的挂载点",
+  "status": "failed",
+  "error": "<错误说明>"
+}
+```
+
+### 注意事项
+
+- **不要等用户确认**：全自动运行，不输出交互式问题
+- **幂等性**：如果同名 Initiative/Task 已存在，跳过创建，返回已有 ID
+- **不确定就选 Layer 5**：Initiative 是最安全的默认选择
+- **写完就结束**：输出 JSON 后立即结束，不进入 /dev 流程
