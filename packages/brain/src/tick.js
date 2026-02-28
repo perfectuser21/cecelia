@@ -3,6 +3,7 @@
  * Implements automatic task progression through periodic ticks
  */
 
+import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
@@ -1285,6 +1286,31 @@ async function executeTick() {
     }
   } catch (suggestionErr) {
     console.error('[tick] Suggestion processing failed (non-fatal):', suggestionErr.message);
+  }
+
+  // 0.5.4. Progress Ledger 进展评估：与 periodic cleanup 同频（每小时）
+  if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+    try {
+      const { evaluateProgressInTick } = await import('./progress-ledger.js');
+      const tickId = crypto.randomUUID();
+      const tickNumber = Math.floor(Date.now() / 1000); // 简化的 tick 序号
+
+      const evaluationResults = await evaluateProgressInTick(tickId, tickNumber);
+      const alertCount = evaluationResults.filter(r => r.shouldAlert).length;
+
+      if (evaluationResults.length > 0) {
+        console.log(`[tick] Progress evaluation: ${evaluationResults.length} tasks evaluated, ${alertCount} alerts`);
+
+        // 如果有高风险任务，提升警觉度
+        if (alertCount > 0) {
+          alertnessResult.score += Math.min(alertCount * 10, 50); // 每个警报+10分，最多+50分
+          alertnessResult.reasons.push(`${alertCount} tasks with progress anomalies detected`);
+          console.log(`[tick] Alertness increased due to progress anomalies: +${Math.min(alertCount * 10, 50)} points`);
+        }
+      }
+    } catch (progressErr) {
+      console.error('[tick] Progress evaluation failed (non-fatal):', progressErr.message);
+    }
   }
 
   // 0.6. Codex 免疫检查：每 20 小时自动创建一次 codex_qa 任务

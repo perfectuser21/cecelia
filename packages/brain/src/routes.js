@@ -2368,6 +2368,36 @@ router.post('/execution-callback', async (req, res) => {
         status === 'AI Done' ? 'success' : 'failed'
       ]);
 
+      // Record progress step for completed execution
+      try {
+        const { recordProgressStep } = await import('./progress-ledger.js');
+        await recordProgressStep(task_id, run_id, {
+          sequence: 1, // 简化版：每个任务记录为单步骤
+          name: 'task_execution',
+          type: 'execution',
+          status: status === 'AI Done' ? 'completed' : 'failed',
+          startedAt: null, // execution-callback 时不知道开始时间
+          completedAt: new Date(),
+          durationMs: duration_ms || null,
+          inputSummary: null,
+          outputSummary: findingsValue ? findingsValue.substring(0, 500) : null,
+          findings: result && typeof result === 'object' ? result : {},
+          errorCode: status !== 'AI Done' ? 'execution_failed' : null,
+          errorMessage: status !== 'AI Done' ? `Task execution failed with status: ${status}` : null,
+          retryCount: iterations || 0,
+          artifacts: { pr_url: pr_url || null },
+          metadata: {
+            checkpoint_id: checkpoint_id || null,
+            original_status: status
+          },
+          confidenceScore: status === 'AI Done' ? 1.0 : 0.2
+        });
+        console.log(`[execution-callback] Progress step recorded for task ${task_id}`);
+      } catch (progressErr) {
+        // Progress ledger errors should not break the main flow
+        console.error(`[execution-callback] Progress step recording failed: ${progressErr.message}`);
+      }
+
       await client.query('COMMIT');
     } catch (txErr) {
       await client.query('ROLLBACK');
@@ -2806,6 +2836,78 @@ ${resultStr.substring(0, 2000)}
       } catch (autoLearningErr) {
         console.error(`[execution-callback] Auto-learning error (non-fatal): ${autoLearningErr.message}`);
         // Continue with normal flow - auto-learning failure should not affect main functionality
+      }
+    }
+
+    // 5e. Initiative 执行循环：dev 任务完成 → 触发下一轮 initiative_plan
+    // completed_no_pr（无 PR 的完成）同样需要触发，避免循环中断
+    if (newStatus === 'completed' || newStatus === 'completed_no_pr') {
+      try {
+        const devTaskRow = await pool.query(
+          'SELECT task_type, project_id, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const devTask = devTaskRow.rows[0];
+
+        // 仅处理 dev 类型任务（非拆解任务）
+        const isDevTask = devTask?.task_type === 'dev' && !devTask?.payload?.decomposition;
+
+        if (isDevTask && devTask?.project_id) {
+          // 检查 project 是否为 initiative 且仍然活跃
+          const projectRow = await pool.query(
+            "SELECT id, name, type, status FROM projects WHERE id = $1 AND type = 'initiative' AND status IN ('active', 'in_progress')",
+            [devTask.project_id]
+          );
+          const initiative = projectRow.rows[0];
+
+          if (initiative) {
+            // 幂等检查：已有 queued/in_progress 的 initiative_plan 任务则跳过
+            const existingPlan = await pool.query(
+              "SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'initiative_plan' AND status IN ('queued', 'in_progress') LIMIT 1",
+              [initiative.id]
+            );
+
+            if (existingPlan.rows.length === 0) {
+              // 获取所属 KR（通过 parent project 的 project_kr_links）
+              const krRow = await pool.query(`
+                SELECT pkl.kr_id
+                FROM projects p
+                LEFT JOIN project_kr_links pkl ON pkl.project_id = p.parent_id
+                WHERE p.id = $1
+                LIMIT 1
+              `, [initiative.id]);
+              const krId = krRow.rows[0]?.kr_id || null;
+
+              const planTitle = `Initiative 规划: ${initiative.name}`;
+              const planDescription = [
+                `请为 Initiative「${initiative.name}」规划下一个 PR。`,
+                '',
+                '你的任务（initiative_plan 模式）：',
+                '1. 读取 Initiative 描述（GET /api/brain/projects/' + initiative.id + '）',
+                '2. 读取已完成的 PR 列表（GET /api/brain/tasks?project_id=' + initiative.id + '&status=completed）',
+                '3. 判断 Initiative 目标是否达成',
+                '   - 已达成 → 标记 Initiative completed，结束',
+                '   - 未达成 → 规划下一个 PR，写入 tasks 表一条 dev 任务',
+                '',
+                `Initiative ID: ${initiative.id}`,
+                `Initiative 名称: ${initiative.name}`,
+                `所属 KR ID: ${krId || '(未知)'}`,
+                `触发原因: dev 任务 ${task_id} 已完成，继续执行循环`,
+              ].join('\n');
+
+              await pool.query(`
+                INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
+                VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'execution_callback')
+              `, [planTitle, planDescription, krId, initiative.id]);
+
+              console.log(`[execution-callback] Initiative ${initiative.id} 执行循环：创建下一轮 initiative_plan 任务`);
+            } else {
+              console.log(`[execution-callback] Initiative ${initiative.id} 已有 initiative_plan 任务，跳过创建`);
+            }
+          }
+        }
+      } catch (initiativeLoopErr) {
+        console.error(`[execution-callback] Initiative 执行循环错误（非阻塞）: ${initiativeLoopErr.message}`);
       }
     }
 
@@ -8160,6 +8262,100 @@ router.get('/suggestions/stats', async (req, res) => {
       error: 'Failed to get triage stats',
       details: err.message
     });
+
+// ── Progress Ledger API ──────────────────────────────────────
+
+/**
+ * GET /api/brain/progress/:task_id — 获取任务的完整进展历史
+ */
+router.get('/progress/:task_id', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { run_id } = req.query;
+
+    const { getProgressSteps, getTaskProgressSummary } = await import('./progress-ledger.js');
+
+    const [steps, summary] = await Promise.all([
+      getProgressSteps(task_id, run_id),
+      getTaskProgressSummary(task_id)
+    ]);
+
+    res.json({
+      taskId: task_id,
+      runId: run_id || null,
+      summary,
+      steps
+    });
+  } catch (err) {
+    console.error('[API] progress/:task_id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/progress/latest — 获取最新的进展步骤
+ */
+router.get('/progress/latest', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+
+    const result = await pool.query(`
+      SELECT * FROM v_latest_progress_step
+      ORDER BY started_at DESC NULLS LAST
+      LIMIT $1
+    `, [limit]);
+
+    res.json({
+      steps: result.rows
+    });
+  } catch (err) {
+    console.error('[API] progress/latest error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/progress/anomalies — 获取异常任务列表
+ */
+router.get('/progress/anomalies', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours) || 1;
+
+    const { getProgressAnomalies } = await import('./progress-ledger.js');
+    const anomalies = await getProgressAnomalies(hours);
+
+    res.json({
+      hoursWindow: hours,
+      anomalies
+    });
+  } catch (err) {
+    console.error('[API] progress/anomalies error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/progress/record — 手动记录进展步骤（测试用）
+ */
+router.post('/progress/record', async (req, res) => {
+  try {
+    const { taskId, runId, step } = req.body;
+
+    if (!taskId || !runId || !step) {
+      return res.status(400).json({ error: 'Missing required fields: taskId, runId, step' });
+    }
+
+    const { recordProgressStep } = await import('./progress-ledger.js');
+    const ledgerId = await recordProgressStep(taskId, runId, step);
+
+    res.json({
+      success: true,
+      ledgerId
+    });
+  } catch (err) {
+    console.error('[API] progress/record error:', err.message);
+    res.status(500).json({ error: err.message });
+
   }
 });
 

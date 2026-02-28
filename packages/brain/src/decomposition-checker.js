@@ -50,6 +50,58 @@ async function hasExistingDecompositionTask(goalId) {
 }
 
 /**
+ * Check if an initiative_plan task already exists for the given initiative (project_id).
+ * Prevents duplicate initiative_plan tasks for the same initiative.
+ */
+async function hasExistingInitiativePlanTask(initiativeId) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE project_id = $1
+      AND task_type = 'initiative_plan'
+      AND status IN ('queued', 'in_progress')
+    LIMIT 1
+  `, [initiativeId]);
+  return result.rows.length > 0;
+}
+
+/**
+ * Create an initiative_plan task to kick off the Initiative → PR execution loop.
+ * Called by Check B when an Initiative has no active tasks.
+ */
+async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) {
+  const title = `Initiative 规划: ${initiativeName}`;
+  const description = [
+    `请为 Initiative「${initiativeName}」规划下一个 PR。`,
+    '',
+    '你的任务（initiative_plan 模式）：',
+    '1. 读取 Initiative 描述（GET /api/brain/projects/<initiative_id>）',
+    '2. 读取已完成的 PR 列表（GET /api/brain/tasks?project_id=<initiative_id>&status=completed）',
+    '3. 判断 Initiative 目标是否达成',
+    '   - 已达成 → 标记 Initiative completed，不创建新任务，结束',
+    '   - 未达成 → 规划下一个 PR，写入 tasks 表一条 dev 任务',
+    '',
+    '写 dev 任务时必须包含：',
+    '  - title: 简洁的 PR 标题',
+    '  - description: 详细的 PRD（背景、具体需求、成功标准）',
+    '  - project_id: 指向本 Initiative',
+    `  - goal_id: ${krId || 'null'}（所属 KR）`,
+    '  - task_type: dev',
+    '  - priority: P1',
+    '',
+    `Initiative ID: ${initiativeId}`,
+    `Initiative 名称: ${initiativeName}`,
+    `所属 KR ID: ${krId || '(未知)'}`,
+  ].join('\n');
+
+  const result = await pool.query(`
+    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
+    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'brain_auto')
+    RETURNING id, title
+  `, [title, description, krId || null, initiativeId]);
+  return result.rows[0];
+}
+
+/**
  * Check global WIP limit for decomposition tasks.
  */
 async function canCreateDecompositionTask() {
@@ -234,16 +286,38 @@ async function checkReadyKRInitiatives() {
       }
     }
 
-    // 标记无活跃 Task 的 Initiative（planner 会处理）
+    // 为无活跃 Task 的 Initiative 创建 initiative_plan 任务（启动执行循环）
     for (const init of initiatives.rows) {
       if (parseInt(init.active_tasks) === 0) {
-        actions.push({
-          action: 'needs_task',
-          check: 'ready_kr_initiative',
-          kr_id: kr.id,
-          initiative_id: init.id,
-          initiative_name: init.name
+        // 幂等检查：已有 queued/in_progress 的 initiative_plan 任务则跳过
+        if (await hasExistingInitiativePlanTask(init.id)) {
+          actions.push({
+            action: 'skip_initiative_plan_dedup',
+            check: 'ready_kr_initiative',
+            kr_id: kr.id,
+            initiative_id: init.id,
+            initiative_name: init.name
+          });
+          continue;
+        }
+
+        const task = await createInitiativePlanTask({
+          initiativeId: init.id,
+          krId: kr.id,
+          initiativeName: init.name,
         });
+
+        if (task) {
+          console.log(`[decomp-checker] Initiative ${init.id} → created initiative_plan task: ${task.title}`);
+          actions.push({
+            action: 'create_initiative_plan',
+            check: 'ready_kr_initiative',
+            kr_id: kr.id,
+            initiative_id: init.id,
+            initiative_name: init.name,
+            task_id: task.id,
+          });
+        }
       }
     }
   }
@@ -281,18 +355,18 @@ async function runDecompositionChecks() {
 
     // Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
-    const needsTask = allActions.filter(a => a.action === 'needs_task').length;
+    const initiativePlansCreated = allActions.filter(a => a.action === 'create_initiative_plan').length;
     const statusChanges = allActions.filter(a => a.action === 'status_change').length;
 
-    if (totalCreated > 0 || needsTask > 0 || statusChanges > 0) {
-      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${needsTask} initiatives need tasks, ${statusChanges} status changes`);
+    if (totalCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0) {
+      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes`);
     }
 
     return {
       actions: allActions,
       summary: {
         created: totalCreated,
-        needs_task: needsTask,
+        initiative_plans_created: initiativePlansCreated,
         status_changes: statusChanges,
       },
       total_created: totalCreated,
@@ -313,8 +387,10 @@ export {
   checkReadyKRInitiatives,
   // Shared helpers (exported for testing)
   hasExistingDecompositionTask,
+  hasExistingInitiativePlanTask,
   canCreateDecompositionTask,
   createDecompositionTask,
+  createInitiativePlanTask,
   DEDUP_WINDOW_HOURS,
   WIP_LIMITS,
 };

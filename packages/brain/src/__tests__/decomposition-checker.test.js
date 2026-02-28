@@ -119,7 +119,7 @@ describe('decomposition-checker v2.0', () => {
   // ─── Check B: checkReadyKRInitiatives ───
 
   describe('Check B: checkReadyKRInitiatives', () => {
-    it('should detect initiatives needing tasks', async () => {
+    it('should create initiative_plan task for initiatives needing tasks', async () => {
       const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
 
       // Find ready/in_progress KRs
@@ -135,11 +135,18 @@ describe('decomposition-checker v2.0', () => {
         }]
       });
 
+      // hasExistingInitiativePlanTask: no existing task
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // createInitiativePlanTask: INSERT returns new task
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'task-new', title: 'Initiative 规划: Test Initiative' }] });
+
       const actions = await checkReadyKRInitiatives();
 
-      const needsTask = actions.filter(a => a.action === 'needs_task');
-      expect(needsTask.length).toBe(1);
-      expect(needsTask[0].initiative_id).toBe('init-1');
+      const created = actions.filter(a => a.action === 'create_initiative_plan');
+      expect(created.length).toBe(1);
+      expect(created[0].initiative_id).toBe('init-1');
+      expect(created[0].task_id).toBe('task-new');
     });
 
     it('should transition KR from ready to in_progress when tasks running', async () => {
