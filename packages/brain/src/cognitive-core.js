@@ -496,7 +496,7 @@ ${eventSummary}
     await db.query(`
       INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
       VALUES ($1, $2, 'short', 'narrative', NOW() + INTERVAL '7 days')
-    `, [narrative, 0.6]);
+    `, [narrative, 6]);
     _lastNarrativeAt = now;
     _tickEventBuffer = []; // 清空缓冲区
     console.log('[cognitive] 叙事已写入 memory_stream:', narrative.slice(0, 50) + '...');
