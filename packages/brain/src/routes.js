@@ -1803,8 +1803,8 @@ ${initiativeList}
           if (parsed.message) finalReply = parsed.message;
           if (newInitiatives.length > 0) {
             const insertResult = await pool.query(
-              `INSERT INTO pending_actions (action_type, context, params, status, comments, created_at, updated_at)
-               VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', '[]'::jsonb, NOW(), NOW())
+              `INSERT INTO pending_actions (action_type, context, params, status, comments, created_at)
+               VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', '[]'::jsonb, NOW())
                RETURNING id`,
               [
                 action.action_type,
