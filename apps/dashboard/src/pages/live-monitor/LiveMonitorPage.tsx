@@ -1,12 +1,7 @@
 /**
- * LiveMonitor v13 — 会话提供商标记（Anthropic / MiniMax）
- * TOP:    系统目标（OKR） + 今日快照
- * MID:    活跃项目（按 project 分组的 in_progress/queued 任务）
- * BOT:    实时 Agents（前台/后台 + Kill 按钮） + 等待队列
- * FOOT:   基础设施
- *
- * 时间：startTime (ps/CST) → "Xh前" 相对格式
- * 项目：/api/brain/tasks?status=in_progress|queued + /api/tasks/projects
+ * LiveMonitor v14 — v3.3 全面重构布局
+ * LEFT (240px): 🖥️ US VPS (donut CPU + bars) | 🖥️ HK VPS | 💳 Account (rings) | 🤖 Agents (compact dots)
+ * RIGHT (1fr):  📊 OKR 总览 (Global→Area 分层) | 📁 Projects by Area + Queue
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -268,6 +263,26 @@ function Skel() {
   );
 }
 
+/** 圆盘图 — 用于 VPS CPU 显示 */
+function Donut({ pct, color, size = 64 }: { pct: number; color: string; size?: number }) {
+  const r = size / 2 - 8;
+  const circ = 2 * Math.PI * r;
+  const dash = (Math.min(Math.max(pct, 0), 100) / 100) * circ;
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', display: 'block' }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1a2233" strokeWidth={10} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={10}
+          strokeDasharray={`${dash} ${circ - dash}`} strokeLinecap="round"
+          style={{ transition: 'stroke-dasharray .5s ease' }} />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color }}>
+        {pct.toFixed(0)}%
+      </div>
+    </div>
+  );
+}
+
 // ── Agent row ─────────────────────────────────────────────────────
 
 function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKilled, providerInfo }: {
@@ -398,177 +413,7 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
   );
 }
 
-// ── Active Projects ───────────────────────────────────────────────
-
-interface SubGroup {
-  id: string;
-  name: string;
-  inProgress: BrainTask[];
-  queued: BrainTask[];
-}
-interface RootGroup {
-  id: string;
-  name: string;
-  subs: Map<string, SubGroup>;
-}
-
-function ActiveProjects({ inProgressTasks, queuedTasks, projects }: {
-  inProgressTasks: BrainTask[];
-  queuedTasks: BrainTask[];
-  projects: Project[];
-}) {
-  // 完整项目 map (id → Project)
-  const fullProjMap = new Map<string, Project>(projects.map(p => [p.id, p]));
-
-  // 沿 parent_id 链向上遍历，返回根项目
-  function findRoot(id: string): Project | undefined {
-    let cur = fullProjMap.get(id);
-    if (!cur) return undefined;
-    const seen = new Set<string>();
-    while (cur.parent_id && !seen.has(cur.id)) {
-      seen.add(cur.id);
-      const parent = fullProjMap.get(cur.parent_id);
-      if (!parent) break;
-      cur = parent;
-    }
-    return cur;
-  }
-
-  const allTasks = [...inProgressTasks, ...queuedTasks];
-  const rootMap = new Map<string, RootGroup>();
-
-  for (const t of allTasks) {
-    const leafId = t.project_id ?? '__none__';
-    const leafName = leafId === '__none__' ? '未分配' : (fullProjMap.get(leafId)?.name ?? leafId.slice(0, 12));
-
-    let rootId: string;
-    let rootName: string;
-    if (leafId === '__none__') {
-      rootId = '__none__';
-      rootName = '未分配项目';
-    } else {
-      const root = findRoot(leafId);
-      rootId = root?.id ?? leafId;
-      rootName = root?.name ?? leafName;
-    }
-
-    if (!rootMap.has(rootId)) {
-      rootMap.set(rootId, { id: rootId, name: rootName, subs: new Map() });
-    }
-    const rg = rootMap.get(rootId)!;
-    if (!rg.subs.has(leafId)) {
-      rg.subs.set(leafId, { id: leafId, name: leafName, inProgress: [], queued: [] });
-    }
-    const sg = rg.subs.get(leafId)!;
-    if (t.status === 'in_progress') sg.inProgress.push(t);
-    else sg.queued.push(t);
-  }
-
-  // 按进行中数量降序排列根项目
-  const sortedRoots = [...rootMap.values()].sort((a, b) => {
-    const aIP = [...a.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
-    const bIP = [...b.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
-    if (bIP !== aIP) return bIP - aIP;
-    const aQ = [...a.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
-    const bQ = [...b.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
-    return bQ - aQ;
-  });
-
-  if (sortedRoots.length === 0) {
-    return (
-      <div style={{ padding: 16, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>
-        暂无进行中的项目
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-      {sortedRoots.map(rg => {
-        const totalIP = [...rg.subs.values()].reduce((s, sg) => s + sg.inProgress.length, 0);
-        const totalQ = [...rg.subs.values()].reduce((s, sg) => s + sg.queued.length, 0);
-        const hasActive = totalIP > 0;
-        const accent = hasActive ? '#10b981' : '#f59e0b';
-        const sortedSubs = [...rg.subs.values()].sort((a, b) => b.inProgress.length - a.inProgress.length);
-        return (
-          <div key={rg.id} style={{
-            background: '#0d1117', borderRadius: 10,
-            border: '1px solid #21262d',
-            borderLeft: `3px solid ${accent}`,
-            padding: '12px 14px',
-          }}>
-            {/* 根项目 header */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 10 }}>
-              <Dot color={accent} pulse={hasActive} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', lineHeight: 1.3, marginBottom: 5 }}>
-                  {clip(rg.name, 40)}
-                </div>
-                <div style={{ display: 'flex', gap: 5 }}>
-                  {totalIP > 0 && (
-                    <span style={{ fontSize: 10, color: '#10b981', background: 'rgba(16,185,129,.12)', padding: '1px 6px', borderRadius: 4 }}>
-                      ● {totalIP} 进行中
-                    </span>
-                  )}
-                  {totalQ > 0 && (
-                    <span style={{ fontSize: 10, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 6px', borderRadius: 4 }}>
-                      ◎ {totalQ} 排队
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            {/* 子项目行（或任务行，当任务直挂根项目时） */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {sortedSubs.map(sg => {
-                const isRoot = sg.id === rg.id;
-                const sgAccent = sg.inProgress.length > 0 ? '#10b981' : '#484f58';
-                const allItems = [...sg.inProgress, ...sg.queued];
-                if (isRoot) {
-                  // 任务直挂根项目，显示任务行
-                  return (
-                    <div key={sg.id}>
-                      {allItems.slice(0, 3).map(t => (
-                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
-                          <PBadge p={t.priority} />
-                          <span style={{ fontSize: 10, color: t.status === 'in_progress' ? '#8b949e' : '#484f58', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {clip(cleanTaskTitle(t.title), 36)}
-                          </span>
-                          {t.status === 'in_progress' && <Dot color="#10b981" pulse />}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={sg.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 7,
-                    padding: '5px 8px', background: '#161b22', borderRadius: 6,
-                  }}>
-                    <Dot color={sgAccent} pulse={sg.inProgress.length > 0} />
-                    <span style={{ fontSize: 11, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {clip(sg.name, 30)}
-                    </span>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                      {sg.inProgress.length > 0 && (
-                        <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#10b981' }}>{sg.inProgress.length}进</span>
-                      )}
-                      {sg.queued.length > 0 && (
-                        <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#f59e0b' }}>{sg.queued.length}排</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Account Usage Rings（内联，嵌入基础设施行）────────────────────
+// ── Account Usage Rings（嵌入左栏 Account 卡片）────────────────────
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const usageColor = (pct: number) => pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#10b981';
@@ -582,7 +427,7 @@ function AccUsageRings() {
       if (!res.ok) return;
       const data = await res.json();
       if (data.ok) setUsage(data.usage);
-    } catch { /* 静默，不影响基础设施行 */ }
+    } catch { /* 静默，不影响左栏显示 */ }
   }, []);
 
   useEffect(() => {
@@ -629,7 +474,7 @@ function AccUsageRings() {
   );
 }
 
-// ── Project + Initiative List ─────────────────────────────────────
+// ── Projects by Area ──────────────────────────────────────────────
 
 const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done']);
 
@@ -647,42 +492,76 @@ function projStatusLabel(s: string): string {
   return m[s] ?? s;
 }
 
-function ProjectInitiativeList({ projects }: { projects: Project[] }) {
+function ProjectsByArea({ projects, allGoals, queuedTasks }: {
+  projects: Project[];
+  allGoals: GoalItem[];
+  queuedTasks: BrainTask[];
+}) {
   const navigate = useNavigate();
-  const projMap = new Map(projects.filter(p => p.type === 'project').map(p => [p.id, p]));
+  const projMap = new Map(projects.map(p => [p.id, p]));
 
-  const activeInitiatives = projects.filter(p =>
-    p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status)
-  );
-
-  // Group initiatives by parent project
-  const grouped = new Map<string, { project: Project | null; name: string; initiatives: Project[] }>();
-
-  for (const ini of activeInitiatives) {
-    const parentKey = ini.parent_id ?? '__none__';
-    if (!grouped.has(parentKey)) {
-      const proj = ini.parent_id ? (projMap.get(ini.parent_id) ?? null) : null;
-      const name = proj?.name ?? (ini.parent_id ? `项目 ${ini.parent_id.slice(0, 8)}` : '未关联项目');
-      grouped.set(parentKey, { project: proj, name, initiatives: [] });
+  /** 沿 goal_id → allGoals 链，找到归属的 area_okr.id */
+  function findAreaId(goalId: string | null): string | null {
+    if (!goalId) return null;
+    const goal = allGoals.find(g => g.id === goalId);
+    if (!goal) return null;
+    if (goal.type === 'area_okr') return goal.id;
+    if (goal.parent_id) {
+      const parent = allGoals.find(g => g.id === goal.parent_id);
+      if (parent?.type === 'area_okr') return parent.id;
     }
-    grouped.get(parentKey)!.initiatives.push(ini);
+    return null;
   }
 
-  // Also include active top-level projects with no active initiatives
-  for (const proj of projMap.values()) {
-    if (!INACTIVE_STATUSES.has(proj.status) && !grouped.has(proj.id)) {
-      grouped.set(proj.id, { project: proj, name: proj.name, initiatives: [] });
+  const areaOkrs = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status));
+  const activeProjects = projects.filter(p => p.type === 'project' && !INACTIVE_STATUSES.has(p.status));
+  const activeInits = projects.filter(p => p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status));
+
+  // 按 area 分组 projects
+  const projsByArea = new Map<string, Project[]>();
+  const noAreaProjs: Project[] = [];
+  for (const proj of activeProjects) {
+    const areaId = findAreaId(proj.goal_id);
+    if (areaId) {
+      if (!projsByArea.has(areaId)) projsByArea.set(areaId, []);
+      projsByArea.get(areaId)!.push(proj);
+    } else {
+      noAreaProjs.push(proj);
     }
   }
 
-  const groups = [...grouped.values()].sort((a, b) => {
-    const aHasProj = !!a.project;
-    const bHasProj = !!b.project;
-    if (aHasProj !== bHasProj) return aHasProj ? -1 : 1;
-    return b.initiatives.length - a.initiatives.length;
-  });
+  // Initiatives 按 parent project 分组
+  const initsByProj = new Map<string, Project[]>();
+  for (const ini of activeInits) {
+    const key = ini.parent_id ?? '__none__';
+    if (!initsByProj.has(key)) initsByProj.set(key, []);
+    initsByProj.get(key)!.push(ini);
+  }
 
-  if (groups.length === 0) {
+  /** 计算某 area 下的 queued 任务数 */
+  function countQueuedForArea(areaId: string): number {
+    return queuedTasks.filter(t => {
+      if (!t.project_id) return false;
+      const proj = projMap.get(t.project_id);
+      if (!proj) return false;
+      if (findAreaId(proj.goal_id) === areaId) return true;
+      if (proj.parent_id) {
+        const parent = projMap.get(proj.parent_id);
+        if (parent && findAreaId(parent.goal_id) === areaId) return true;
+      }
+      return false;
+    }).length;
+  }
+
+  const areaGroups = areaOkrs.map(area => ({
+    area,
+    projs: projsByArea.get(area.id) ?? [],
+    queuedCount: countQueuedForArea(area.id),
+  })).filter(g => g.projs.length > 0);
+
+  const hasAny = areaGroups.length > 0 || noAreaProjs.length > 0;
+
+  if (!hasAny) {
     return (
       <div style={{ padding: 16, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>
         暂无活跃项目
@@ -690,56 +569,92 @@ function ProjectInitiativeList({ projects }: { projects: Project[] }) {
     );
   }
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
-      {groups.map(g => {
-        const accent = g.project ? '#3b82f6' : '#6e7681';
-        const hasActive = g.initiatives.some(i => i.status === 'in_progress' || i.status === 'active');
-        return (
-          <div key={g.project?.id ?? '__none__'}
-            onClick={() => navigate('/work/projects')}
-            style={{
-              background: '#0d1117', borderRadius: 10,
-              border: '1px solid #21262d',
-              borderLeft: `3px solid ${accent}`,
-              padding: '12px 14px',
-              cursor: 'pointer',
-            }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <Dot color={accent} pulse={hasActive} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {clip(g.name, 34)}
-              </span>
-              {g.project && (
-                <span style={{ fontSize: 9, color: accent, background: `${accent}20`, padding: '1px 5px', borderRadius: 3, flexShrink: 0, letterSpacing: .5 }}>PROJECT</span>
-              )}
-            </div>
-            {g.initiatives.length === 0 ? (
-              <div style={{ fontSize: 10, color: '#484f58', fontStyle: 'italic', paddingLeft: 4 }}>暂无活跃 Initiative</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {g.initiatives.map(ini => {
-                  const sc = projStatusColor(ini.status);
-                  return (
-                    <div key={ini.id} style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '4px 8px', background: '#161b22', borderRadius: 6,
-                    }}>
-                      <Dot color={sc} pulse={ini.status === 'in_progress'} />
-                      <span style={{ fontSize: 11, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {clip(ini.name, 30)}
-                      </span>
-                      <span style={{ fontSize: 9, color: sc, fontFamily: 'monospace', flexShrink: 0 }}>
-                        {projStatusLabel(ini.status)}
-                      </span>
-                    </div>
-                  );
-                })}
+  function renderAreaGroup(label: string, projs: Project[], queuedCount: number) {
+    return (
+      <div style={{ marginBottom: 16 }}>
+        {/* Area header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>{clip(label, 24)}</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(192,132,252,.2)' }} />
+          {queuedCount > 0 && (
+            <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 6px', borderRadius: 10, flexShrink: 0, fontFamily: 'monospace' }}>
+              {queuedCount} queued
+            </span>
+          )}
+        </div>
+        {/* Project cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+          {projs.map(proj => {
+            const inis = initsByProj.get(proj.id) ?? [];
+            const hasActive = inis.some(i => i.status === 'in_progress' || i.status === 'active');
+            const projQueued = queuedTasks.filter(t => {
+              if (!t.project_id) return false;
+              const tp = projMap.get(t.project_id);
+              return tp?.id === proj.id || tp?.parent_id === proj.id;
+            }).length;
+            const accent = hasActive ? '#3b82f6' : '#6e7681';
+            return (
+              <div key={proj.id}
+                onClick={() => navigate('/work/projects')}
+                style={{
+                  background: '#0d1117', borderRadius: 8,
+                  border: '1px solid #21262d',
+                  borderLeft: `3px solid ${accent}`,
+                  padding: '10px 12px', cursor: 'pointer',
+                  transition: 'border-color .15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <Dot color={accent} pulse={hasActive} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {clip(proj.name, 30)}
+                  </span>
+                  {projQueued > 0 && (
+                    <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 5px', borderRadius: 8, flexShrink: 0, fontFamily: 'monospace' }}>
+                      {projQueued}q
+                    </span>
+                  )}
+                </div>
+                {inis.length === 0 ? (
+                  <div style={{ fontSize: 10, color: '#484f58', fontStyle: 'italic', paddingLeft: 4 }}>暂无活跃 Initiative</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {inis.slice(0, 3).map(ini => {
+                      const sc = projStatusColor(ini.status);
+                      return (
+                        <div key={ini.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 7px', background: '#161b22', borderRadius: 5 }}>
+                          <Dot color={sc} pulse={ini.status === 'in_progress'} />
+                          <span style={{ fontSize: 10, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {clip(ini.name, 28)}
+                          </span>
+                          <span style={{ fontSize: 9, color: sc, fontFamily: 'monospace', flexShrink: 0 }}>
+                            {projStatusLabel(ini.status)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {inis.length > 3 && (
+                      <div style={{ fontSize: 9, color: '#484f58', paddingLeft: 7 }}>+{inis.length - 3} 更多</div>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {areaGroups.map(({ area, projs, queuedCount }) => (
+        <div key={area.id}>
+          {renderAreaGroup(area.title, projs, queuedCount)}
+        </div>
+      ))}
+      {noAreaProjs.length > 0 && renderAreaGroup('未关联 Area', noAreaProjs, 0)}
     </div>
   );
 }
@@ -799,7 +714,7 @@ export default function LiveMonitorPage() {
         c.servers[0].slots.used = scanResult.total ?? scanResult.processes.length;
       }
       setCluster(c);
-      // 批量获取所有进程的 provider 信息（用扫描到的真实进程列表）
+      // 批量获取所有进程的 provider 信息
       const procs: ClusterProcess[] = c?.servers?.[0]?.slots?.processes ?? [];
       if (procs.length > 0) {
         const pids = procs.map((p: ClusterProcess) => p.pid).join(',');
@@ -829,7 +744,6 @@ export default function LiveMonitorPage() {
   }, []);
 
   // Derived
-  const focus = brainStatus?.daily_focus;
   const stats = brainStatus?.task_digest?.stats;
   const alertName = tick?.alertness?.levelName ?? 'NORMAL';
   const alertColor = ALERT_COLOR[alertName] ?? '#6e7681';
@@ -840,6 +754,10 @@ export default function LiveMonitorPage() {
   const foregroundProcs = allProcs.filter(p => classifyProcess(p.command) === 'foreground');
   const backgroundProcs = allProcs.filter(p => classifyProcess(p.command) === 'background');
   const totalAgents = foregroundProcs.length + backgroundProcs.length;
+
+  const activeGlobals = allGoals.filter(g => g.type === 'global_okr' && !INACTIVE_STATUSES.has(g.status));
+  const activeAreas = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id && !INACTIVE_STATUSES.has(g.status));
+  const todayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
 
   const wrapStyle: React.CSSProperties = fullscreen
     ? { position: 'fixed', inset: 0, zIndex: 9999, overflowY: 'auto', background: '#0d1117' }
@@ -893,298 +811,277 @@ export default function LiveMonitorPage() {
           </button>
         </div>
 
-        <div style={{ padding: '16px 20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* ══ STATS STRIP ══ */}
+        <div style={{ background: '#161b22', borderBottom: '1px solid #21262d', padding: '6px 20px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {stats && [
+            { label: 'P0', value: stats.open_p0, color: stats.open_p0 > 0 ? '#f87171' : '#484f58' },
+            { label: 'P1', value: stats.open_p1, color: stats.open_p1 > 0 ? '#fbbf24' : '#484f58' },
+            { label: '进行中', value: stats.in_progress, color: '#10b981' },
+            { label: '排队', value: stats.queued, color: stats.queued > 0 ? '#f59e0b' : '#484f58' },
+            { label: '逾期', value: stats.overdue, color: stats.overdue > 0 ? '#ef4444' : '#484f58' },
+          ].map(({ label, value, color }, i) => (
+            <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              {i > 0 && <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>}
+              <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{value}</span>
+              <span style={{ fontSize: 9, color: '#484f58' }}>{label}</span>
+            </span>
+          ))}
+          {tick && (
+            <>
+              <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58' }}>{tick.actions_today} ticks</span>
+            </>
+          )}
+          {tick?.last_dispatch && (
+            <>
+              <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>
+              <span style={{ fontSize: 9, color: '#484f58', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+                派发: {clip(tick.last_dispatch.task_title, 22)} {fmtAgo(tick.last_dispatch.dispatched_at)}
+              </span>
+            </>
+          )}
+        </div>
 
-          {/* ══ 基础设施状态栏 ══ */}
-          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 8, padding: '10px 16px' }}>
-            <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
-              {/* US VPS */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', flex: 1 }}>
-                <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>US VPS</span>
+        <div style={{ padding: '16px 20px 24px' }}>
+
+          {/* ══ MAIN GRID: 240px | 1fr ══ */}
+          <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 14, alignItems: 'start' }}>
+
+            {/* ── LEFT COLUMN ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+              {/* 🖥️ US VPS */}
+              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 14 }}>🖥️</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>US VPS</span>
+                  {vps && <span style={{ marginLeft: 'auto', fontSize: 9, color: '#484f58', fontFamily: 'monospace' }}>{fmtUptime(vps.uptime)}</span>}
+                </div>
                 {vps ? (
                   <>
-                    {[
-                      { l: 'CPU', v: `${vps.cpu.usage.toFixed(0)}%`, color: metricColor(vps.cpu.usage) },
-                      { l: 'RAM', v: `${vps.memory.usagePercent.toFixed(0)}%`, color: metricColor(vps.memory.usagePercent) },
-                      { l: 'DISK', v: `${vps.disk.usagePercent}%`, color: metricColor(vps.disk.usagePercent) },
-                      { l: 'LOAD', v: String(vps.cpu.loadAverage['1min']), color: vps.cpu.loadAverage['1min'] > vps.cpu.cores ? '#ef4444' : vps.cpu.loadAverage['1min'] > vps.cpu.cores * 0.7 ? '#f59e0b' : '#10b981' },
-                      { l: 'UP', v: fmtUptime(vps.uptime), color: '#6e7681' },
-                    ].map(({ l, v, color }) => (
-                      <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase' }}>{l}</span>
-                        <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{v}</span>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <Donut pct={vps.cpu.usage} color={metricColor(vps.cpu.usage)} />
+                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>CPU</span>
                       </div>
-                    ))}
-                    {svcDown > 0 && <span style={{ background: 'rgba(239,68,68,.15)', color: '#ef4444', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20 }}>{svcDown} down</span>}
-                    {svcUp > 0 && svcDown === 0 && <span style={{ background: 'rgba(16,185,129,.1)', color: '#10b981', fontSize: 10, padding: '1px 6px', borderRadius: 20 }}>all up</span>}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {([
+                        { l: 'RAM', v: vps.memory.usagePercent },
+                        { l: 'Disk', v: vps.disk.usagePercent },
+                      ] as { l: string; v: number }[]).map(({ l, v }) => (
+                        <div key={l}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>{l}</span>
+                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: metricColor(v) }}>{v.toFixed(0)}%</span>
+                          </div>
+                          <PBar pct={v} color={metricColor(v)} h={4} />
+                        </div>
+                      ))}
+                      {svcDown > 0 && (
+                        <span style={{ fontSize: 9, color: '#ef4444', background: 'rgba(239,68,68,.1)', padding: '2px 6px', borderRadius: 8, textAlign: 'center' }}>
+                          {svcDown} services down
+                        </span>
+                      )}
+                      {svcUp > 0 && svcDown === 0 && (
+                        <span style={{ fontSize: 9, color: '#10b981', background: 'rgba(16,185,129,.08)', padding: '2px 6px', borderRadius: 8, textAlign: 'center' }}>
+                          all services up
+                        </span>
+                      )}
+                    </div>
                   </>
-                ) : <span style={{ fontSize: 11, color: '#484f58' }}>—</span>}
+                ) : <Skel />}
               </div>
-              {/* HK VPS */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', flex: 1, borderLeft: '1px solid #21262d', paddingLeft: 16, marginLeft: 16 }}>
-                <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>HK VPS</span>
+
+              {/* 🖥️ HK VPS */}
+              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 14 }}>🖥️</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>HK VPS</span>
+                  {hkVps && <span style={{ marginLeft: 'auto', fontSize: 9, color: '#484f58', fontFamily: 'monospace' }}>{fmtUptime(hkVps.uptime)}</span>}
+                </div>
                 {hkVps ? (
                   <>
-                    {[
-                      { l: 'CPU', v: `${hkVps.cpu.usage.toFixed(0)}%`, color: metricColor(hkVps.cpu.usage) },
-                      { l: 'RAM', v: `${hkVps.memory.usagePercent.toFixed(0)}%`, color: metricColor(hkVps.memory.usagePercent) },
-                      { l: 'DISK', v: `${hkVps.disk.usagePercent}%`, color: metricColor(hkVps.disk.usagePercent) },
-                      { l: 'LOAD', v: String(hkVps.cpu.loadAverage['1min']), color: hkVps.cpu.loadAverage['1min'] > hkVps.cpu.cores ? '#ef4444' : hkVps.cpu.loadAverage['1min'] > hkVps.cpu.cores * 0.7 ? '#f59e0b' : '#10b981' },
-                      { l: 'UP', v: fmtUptime(hkVps.uptime), color: '#6e7681' },
-                    ].map(({ l, v, color }) => (
-                      <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase' }}>{l}</span>
-                        <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{v}</span>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <Donut pct={hkVps.cpu.usage} color={metricColor(hkVps.cpu.usage)} />
+                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>CPU</span>
                       </div>
-                    ))}
-                  </>
-                ) : <span style={{ fontSize: 11, color: '#484f58' }}>—</span>}
-              </div>
-              {/* Account Rings */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid #21262d', paddingLeft: 16, marginLeft: 16, flexShrink: 0 }}>
-                <AccUsageRings />
-              </div>
-            </div>
-          </div>
-
-          {/* ══ OKR（左 45%）+ Project/Initiative（右 55%）══ */}
-          <div style={{ display: 'grid', gridTemplateColumns: '45% 1fr', gap: 14 }}>
-
-            {/* OKR 总览 */}
-            {(() => {
-              const topAreas = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id);
-              const activeAreas = topAreas.filter(g => g.status !== 'cancelled' && g.status !== 'archived');
-              const activeGlobals = allGoals.filter(g => g.type === 'global_okr' && g.status !== 'cancelled' && g.status !== 'archived' && g.status !== 'completed');
-              const avgProgress = activeAreas.length > 0 ? Math.round(activeAreas.reduce((s, g) => s + (g.progress ?? 0), 0) / activeAreas.length) : 0;
-              const activeKRs = allGoals.filter(g => g.type === 'kr' && (g.status === 'in_progress' || g.status === 'ready'));
-              const todayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-              return (
-                <div onClick={() => navigate('/okr')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>OKR 总览</span>
-                    <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                    <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
-                  </div>
-                  {/* Global OKR 层 */}
-                  {activeGlobals.length > 0 ? (
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>全局目标</div>
-                      {activeGlobals.map(g => {
-                        const gc = krColor(g.progress ?? 0);
-                        return (
-                          <div key={g.id} style={{ marginBottom: 6 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                              <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(245,158,11,.15)', color: '#f59e0b', padding: '0 4px', borderRadius: 3, flexShrink: 0 }}>GLOBAL</span>
-                              <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(g.title, 28)}</span>
-                              <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: gc, flexShrink: 0 }}>{g.progress ?? 0}%</span>
-                            </div>
-                            <PBar pct={g.progress ?? 0} color={gc} h={3} />
-                          </div>
-                        );
-                      })}
-                      <div style={{ height: 1, background: '#21262d', margin: '6px 0 10px' }} />
                     </div>
-                  ) : (
-                    <div style={{ marginBottom: 12, padding: '5px 8px', fontSize: 10, color: '#484f58', background: '#0d1117', borderRadius: 6 }}>
-                      全局目标未设置
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {([
+                        { l: 'RAM', v: hkVps.memory.usagePercent },
+                        { l: 'Disk', v: hkVps.disk.usagePercent },
+                      ] as { l: string; v: number }[]).map(({ l, v }) => (
+                        <div key={l}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>{l}</span>
+                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: metricColor(v) }}>{v.toFixed(0)}%</span>
+                          </div>
+                          <PBar pct={v} color={metricColor(v)} h={4} />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ padding: 8, textAlign: 'center', color: '#484f58', fontSize: 11 }}>—</div>
+                )}
+              </div>
+
+              {/* 💳 Account */}
+              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                  <span style={{ fontSize: 14 }}>💳</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>Account</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-around' }}>
+                  <AccUsageRings />
+                </div>
+              </div>
+
+              {/* 🤖 Agents */}
+              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 14 }}>🤖</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>Agents</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 9, fontFamily: 'monospace', color: totalAgents > 0 ? '#10b981' : '#484f58' }}>
+                    {cluster?.total_used ?? totalAgents}/{cluster?.total_slots ?? 8}
+                  </span>
+                </div>
+                {/* 槽位圆点 */}
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {Array.from({ length: cluster?.total_slots ?? 8 }, (_, i) => (
+                    <span key={i} style={{
+                      width: 10, height: 10, borderRadius: '50%', display: 'inline-block',
+                      background: i < totalAgents ? '#10b981' : '#21262d',
+                      boxShadow: i < totalAgents ? '0 0 5px rgba(16,185,129,.6)' : undefined,
+                      transition: 'background .3s',
+                    }} />
+                  ))}
+                </div>
+                {/* 进程简列 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {backgroundProcs.slice(0, 4).map(p => {
+                    const { skill, taskTitle } = parseBackgroundCmd(p.command);
+                    return (
+                      <div key={p.pid} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <Dot color="#10b981" pulse />
+                        <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#58a6ff', flexShrink: 0 }}>{skill}</span>
+                        <span style={{ fontSize: 9, color: '#6e7681', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {clip(taskTitle, 20)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {foregroundProcs.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <Dot color="#3b82f6" />
+                      <span style={{ fontSize: 9, color: '#6e7681' }}>{foregroundProcs.length} 前台会话</span>
                     </div>
                   )}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 14 }}>
-                    {/* 左：全局汇总 */}
-                    <div style={{ background: '#0d1117', borderRadius: 8, padding: '10px 14px', minWidth: 90, display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
-                      <div>
-                        <div style={{ fontFamily: 'monospace', fontSize: 28, fontWeight: 700, color: krColor(avgProgress), lineHeight: 1 }}>{avgProgress}%</div>
-                        <div style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .8, marginTop: 2 }}>平均进度</div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>{activeAreas.length} 个目标</div>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>{activeKRs.length} 活跃 KR</div>
-                      </div>
-                    </div>
-                    {/* 右：Area 分组（含剩余天数） */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center' }}>
-                      {activeAreas.length > 0 ? activeAreas.map(obj => {
-                        const c = krColor(obj.progress ?? 0);
-                        const krCount = allGoals.filter(g => g.type === 'kr' && g.parent_id === obj.id && g.status !== 'cancelled').length;
-                        const endDate = obj.custom_props?.end_date;
-                        const daysLeft = endDate ? Math.ceil((new Date(endDate).setHours(0, 0, 0, 0) - todayMs) / 86400000) : null;
-                        return (
-                          <div key={obj.id}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                              <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(192,132,252,.15)', color: '#c084fc', padding: '0 4px', borderRadius: 3, flexShrink: 0 }}>{obj.priority}</span>
-                              <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(obj.title, 30)}</span>
-                              <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: c, flexShrink: 0 }}>{obj.progress ?? 0}%</span>
-                              {krCount > 0 && <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#484f58', flexShrink: 0 }}>{krCount}KR</span>}
-                            </div>
-                            <PBar pct={obj.progress ?? 0} color={c} h={3} />
-                            {daysLeft !== null && (
-                              <div style={{ marginTop: 3, fontSize: 9, fontFamily: 'monospace', color: daysLeft < 0 ? '#ef4444' : daysLeft < 30 ? '#f59e0b' : '#484f58' }}>
-                                {daysLeft < 0 ? `已过期 ${-daysLeft} 天` : `还剩 ${daysLeft} 天`}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }) : <Skel />}
-                    </div>
-                  </div>
+                  {totalAgents === 0 && (
+                    <div style={{ fontSize: 10, color: '#484f58', textAlign: 'center', paddingTop: 2 }}>空闲</div>
+                  )}
                 </div>
-              );
-            })()}
-
-            {/* Project + Initiative 列表（右侧，替代今日快照） */}
-            <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', letterSpacing: 1.4, textTransform: 'uppercase' }}>Project + Initiative</span>
-                {(() => {
-                  const cnt = projects.filter(p => p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status)).length;
-                  return (
-                    <span style={{ background: cnt > 0 ? 'rgba(59,130,246,.15)' : '#21262d', color: cnt > 0 ? '#60a5fa' : '#6e7681', fontFamily: 'monospace', fontSize: 11, padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                      {cnt} 活跃
-                    </span>
-                  );
-                })()}
-                <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                <span style={{ fontSize: 10, color: '#484f58' }} onClick={e => { e.stopPropagation(); navigate('/work'); }} role="button">↗</span>
               </div>
-              <ProjectInitiativeList projects={projects} />
+
             </div>
-          </div>
 
-          {/* ══ Agents + 等待队列 并排 ══ */}
-          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 14 }}>
+            {/* ── RIGHT COLUMN ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-            {/* 实时 Agents */}
-            <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '14px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#e6edf3', letterSpacing: 1.4, textTransform: 'uppercase' }}>实时 Agents</span>
-                <span style={{ background: totalAgents > 0 ? 'rgba(16,185,129,.15)' : '#21262d', color: totalAgents > 0 ? '#10b981' : '#6e7681', fontFamily: 'monospace', fontSize: 11, padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                  {totalAgents} active
-                </span>
-                <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                <span style={{ fontSize: 10, color: '#484f58' }}>slots {cluster?.total_used ?? '—'} / {cluster?.total_slots ?? '—'}</span>
-              </div>
-
-              {/* 今日概况小条 */}
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 12, padding: '5px 10px', background: '#0d1117', borderRadius: 7, flexWrap: 'wrap' }}>
-                {stats && [
-                  { label: 'P0', value: stats.open_p0, color: stats.open_p0 > 0 ? '#f87171' : '#484f58' },
-                  { label: 'P1', value: stats.open_p1, color: stats.open_p1 > 0 ? '#fbbf24' : '#484f58' },
-                  { label: '进行中', value: stats.in_progress, color: '#10b981' },
-                  { label: '排队', value: stats.queued, color: stats.queued > 0 ? '#f59e0b' : '#484f58' },
-                  { label: '逾期', value: stats.overdue, color: stats.overdue > 0 ? '#ef4444' : '#484f58' },
-                ].map(({ label, value, color }, i) => (
-                  <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                    {i > 0 && <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>}
-                    <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{value}</span>
-                    <span style={{ fontSize: 9, color: '#484f58' }}>{label}</span>
+              {/* 📊 OKR 总览 */}
+              <div
+                onClick={() => navigate('/okr')}
+                style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'border-color .15s' }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>OKR 总览</span>
+                  <span style={{ fontSize: 9, color: '#484f58' }}>
+                    {activeAreas.length} Area · {allGoals.filter(g => g.type === 'kr' && (g.status === 'in_progress' || g.status === 'ready')).length} 活跃 KR
                   </span>
-                ))}
-                {tick && (
-                  <>
-                    <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>
-                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58' }}>{tick.actions_today} ticks</span>
-                  </>
-                )}
-                {tick?.last_dispatch && (
-                  <>
-                    <span style={{ color: '#30363d', margin: '0 2px' }}>·</span>
-                    <span style={{ fontSize: 9, color: '#484f58', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}>
-                      派发: {clip(tick.last_dispatch.task_title, 22)} {fmtAgo(tick.last_dispatch.dispatched_at)}
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {/* 前台 */}
-              {foregroundProcs.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <Dot color="#3b82f6" />
-                    <span style={{ fontSize: 10, fontWeight: 600, color: '#3b82f6' }}>前台 · 交互式</span>
-                    <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#3b82f6', background: 'rgba(59,130,246,.15)', padding: '0 5px', borderRadius: 8 }}>{foregroundProcs.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {foregroundProcs.map(p => (
-                      <AgentRow key={p.pid} type="foreground" pid={p.pid} cpu={p.cpu} mem={p.memory}
-                        startTime={p.startTime} title="Claude Code 交互式会话"
-                        accent="#3b82f6" onKilled={handleKilled}
-                        providerInfo={providerMap[p.pid] ?? { provider: 'anthropic', model: null }} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 后台 */}
-              <div>
-                <div onClick={() => navigate('/work')} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, cursor: 'pointer' }}>
-                  <Dot color="#10b981" pulse={backgroundProcs.length > 0} />
-                  <span style={{ fontSize: 10, fontWeight: 600, color: '#10b981' }}>后台 · Brain 派发</span>
-                  <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#10b981', background: 'rgba(16,185,129,.15)', padding: '0 5px', borderRadius: 8 }}>{backgroundProcs.length}</span>
                   <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                  <span style={{ fontSize: 9, color: '#484f58' }}>↗</span>
+                  <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
                 </div>
-                {backgroundProcs.length === 0 ? (
-                  <div onClick={() => navigate('/work')} style={{ padding: 10, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8, cursor: 'pointer', transition: 'border-color .15s' }}
-                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff40')}
-                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-                    暂无后台任务 · 点击查看任务列表
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {backgroundProcs.map(p => {
-                      const { skill, taskTitle } = parseBackgroundCmd(p.command);
+
+                {/* Global OKR 层 */}
+                {activeGlobals.length > 0 ? (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>全局目标</div>
+                    {activeGlobals.map(g => {
+                      const gc = krColor(g.progress ?? 0);
                       return (
-                        <AgentRow key={p.pid} type="background" pid={p.pid} cpu={p.cpu} mem={p.memory}
-                          startTime={p.startTime} title={taskTitle} skill={skill} accent="#10b981"
-                          providerInfo={providerMap[p.pid] ?? null} />
+                        <div key={g.id} style={{ marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(245,158,11,.15)', color: '#f59e0b', padding: '0 5px', borderRadius: 3, flexShrink: 0 }}>GLOBAL</span>
+                            <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(g.title, 50)}</span>
+                            <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: gc, flexShrink: 0 }}>{g.progress ?? 0}%</span>
+                          </div>
+                          <PBar pct={g.progress ?? 0} color={gc} h={3} />
+                        </div>
                       );
                     })}
                   </div>
+                ) : (
+                  <div style={{ marginBottom: 10, padding: '5px 8px', fontSize: 10, color: '#484f58', background: '#0d1117', borderRadius: 6 }}>
+                    全局目标未设置
+                  </div>
                 )}
-              </div>
-            </div>
 
-            {/* 等待队列 */}
-            <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '14px 16px' }}>
-              <div onClick={() => navigate('/work')} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', letterSpacing: 1.4, textTransform: 'uppercase' }}>等待队列</span>
-                <span style={{ background: queuedTasks.length > 0 ? 'rgba(245,158,11,.15)' : '#21262d', color: queuedTasks.length > 0 ? '#fbbf24' : '#6e7681', fontFamily: 'monospace', fontSize: 11, padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                  {queuedTasks.length}
-                </span>
-                <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                <span style={{ fontSize: 9, color: '#484f58' }}>↗</span>
+                {/* 分隔线 */}
+                <div style={{ height: 1, background: '#21262d', margin: '8px 0 12px' }} />
+
+                {/* Area OKR 层 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {activeAreas.length > 0 ? activeAreas.map(area => {
+                    const c = krColor(area.progress ?? 0);
+                    const krCount = allGoals.filter(g => g.type === 'kr' && g.parent_id === area.id && g.status !== 'cancelled').length;
+                    const endDate = area.custom_props?.end_date;
+                    const daysLeft = endDate ? Math.ceil((new Date(endDate).setHours(0, 0, 0, 0) - todayMs) / 86400000) : null;
+                    return (
+                      <div key={area.id}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(192,132,252,.15)', color: '#c084fc', padding: '0 5px', borderRadius: 3, flexShrink: 0 }}>AREA</span>
+                          <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(area.title, 50)}</span>
+                          <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: c, flexShrink: 0 }}>{area.progress ?? 0}%</span>
+                          {krCount > 0 && <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#484f58', flexShrink: 0 }}>{krCount}KR</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ flex: 1 }}><PBar pct={area.progress ?? 0} color={c} h={4} /></div>
+                          {daysLeft !== null && (
+                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: daysLeft < 0 ? '#ef4444' : daysLeft < 30 ? '#f59e0b' : '#484f58', flexShrink: 0 }}>
+                              {daysLeft < 0 ? `逾${-daysLeft}d` : `${daysLeft}d`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }) : <Skel />}
+                </div>
               </div>
-              {queuedTasks.length === 0 ? (
-                <div style={{ padding: 12, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>
-                  队列为空
+
+              {/* 📁 Projects by Area */}
+              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', letterSpacing: 1.4, textTransform: 'uppercase' }}>Projects</span>
+                  {(() => {
+                    const cnt = projects.filter(p => p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status)).length;
+                    return (
+                      <span style={{ background: cnt > 0 ? 'rgba(59,130,246,.15)' : '#21262d', color: cnt > 0 ? '#60a5fa' : '#6e7681', fontFamily: 'monospace', fontSize: 11, padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                        {cnt} 活跃 Initiative
+                      </span>
+                    );
+                  })()}
+                  <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+                  <span style={{ fontSize: 10, color: '#484f58' }} onClick={e => { e.stopPropagation(); navigate('/work'); }} role="button">↗</span>
                 </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {queuedTasks.slice(0, 12).map((t, i) => (
-                    <div key={t.id} onClick={e => { e.stopPropagation(); navigate('/work'); }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 6, background: '#0d1117', border: '1px solid #21262d', cursor: 'pointer', transition: 'border-color .15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff40')}
-                      onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58', flexShrink: 0, width: 18 }}>#{i + 1}</span>
-                      <PBadge p={t.priority} />
-                      <span style={{ fontSize: 11, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(t.title, 36)}</span>
-                      <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58', flexShrink: 0 }}>{fmtAgo(t.created_at)}</span>
-                    </div>
-                  ))}
-                  {queuedTasks.length > 12 && (
-                    <div onClick={e => { e.stopPropagation(); navigate('/work'); }}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 6, borderRadius: 6, background: '#0d1117', border: '1px dashed #21262d', color: '#484f58', fontSize: 11, cursor: 'pointer' }}>
-                      +{queuedTasks.length - 12} 个任务 →
-                    </div>
-                  )}
-                </div>
-              )}
+                <ProjectsByArea projects={projects} allGoals={allGoals} queuedTasks={queuedTasks} />
+              </div>
+
             </div>
 
           </div>
-
         </div>
       </div>
     </>
