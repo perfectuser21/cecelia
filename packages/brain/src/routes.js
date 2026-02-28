@@ -1502,6 +1502,34 @@ router.get('/pending-actions/:id', async (req, res) => {
 });
 
 /**
+ * PATCH /api/brain/pending-actions/:id/context
+ * 更新 pending action 的 context 字段（UI 内联编辑用）
+ * Body: { initiatives: string[] }
+ */
+router.patch('/pending-actions/:id/context', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { initiatives } = req.body || {};
+    if (!Array.isArray(initiatives)) {
+      return res.status(400).json({ error: 'initiatives must be an array' });
+    }
+    const result = await pool.query(
+      `UPDATE pending_actions
+       SET context = context || jsonb_build_object('initiatives', $1::jsonb),
+           updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, context`,
+      [JSON.stringify(initiatives), id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true, action: result.rows[0] });
+  } catch (err) {
+    console.error('[PATCH /pending-actions/:id/context]', err);
+    res.status(500).json({ error: 'Failed to update context', details: err.message });
+  }
+});
+
+/**
  * GET /api/brain/pending-actions/:id/versions
  * 查询同一 KR 的所有 okr_decomp_review 版本历史
  */
