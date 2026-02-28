@@ -17,6 +17,20 @@ function getUniqueTypes(proposals: Proposal[]): string[] {
   return Array.from(types).sort();
 }
 
+function deduplicateOkrReviews(proposals: Proposal[]): Proposal[] {
+  const okrDecomp = proposals.filter(p => p.action_type === 'okr_decomp_review');
+  const others = proposals.filter(p => p.action_type !== 'okr_decomp_review');
+  const byKr = new Map<string, Proposal>();
+  for (const p of okrDecomp) {
+    const kr = ((p.context as Record<string, unknown>)?.kr_title as string) || p.id;
+    const existing = byKr.get(kr);
+    if (!existing || new Date(p.created_at) > new Date(existing.created_at)) {
+      byKr.set(kr, p);
+    }
+  }
+  return [...others, ...Array.from(byKr.values())];
+}
+
 const TYPE_LABELS: Record<string, string> = {
   propose_decomposition: 'OKR 拆解',
   propose_anomaly_action: '异常处理',
@@ -58,10 +72,10 @@ export default function InboxPage(): React.ReactElement {
     [proposals]
   );
 
-  const filteredPending = useMemo(
-    () => filter === 'all' ? pending : pending.filter(p => p.action_type === filter),
-    [pending, filter]
-  );
+  const filteredPending = useMemo(() => {
+    const filtered = filter === 'all' ? pending : pending.filter(p => p.action_type === filter);
+    return deduplicateOkrReviews(filtered);
+  }, [pending, filter]);
 
   const filteredResolved = useMemo(
     () => filter === 'all' ? resolved : resolved.filter(p => p.action_type === filter),
@@ -71,6 +85,7 @@ export default function InboxPage(): React.ReactElement {
   const uniqueTypes = useMemo(() => getUniqueTypes(proposals), [proposals]);
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between">
@@ -240,6 +255,7 @@ export default function InboxPage(): React.ReactElement {
           )}
         </>
       )}
+    </div>
     </div>
   );
 }

@@ -13,11 +13,15 @@
 
 import { createSuggestion } from './suggestion-triage.js';
 
-/** 需要生成 suggestion 的意图类型（排除纯查询和闲聊） */
+/** 需要生成 suggestion 的意图类型（大写，比较时统一转换） */
 const ACTION_INTENTS = new Set([
   'CREATE_TASK',
   'CREATE_PROJECT',
   'CREATE_GOAL',
+  'CREATE_FEATURE',
+  'FIX_BUG',
+  'REFACTOR',
+  'EXPLORE',
   'MODIFY',
   'LEARN',
   'RESEARCH',
@@ -35,7 +39,8 @@ export async function extractSuggestionsFromChat(message, intentType) {
   if (!message || !intentType) return;
 
   // 只处理动作型意图（跳过 CHAT/QUERY_STATUS/UNKNOWN）
-  if (!ACTION_INTENTS.has(intentType)) return;
+  // intent.js 返回小写（create_task），统一转大写后比较
+  if (!ACTION_INTENTS.has((intentType || '').toUpperCase())) return;
 
   const content = `owner_request: ${message.slice(0, 200)}`;
 

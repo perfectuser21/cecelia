@@ -20,6 +20,7 @@ import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 import { callLLM } from './llm-caller.js';
 import { getSelfModel } from './self-model.js';
 import { extractSuggestionsFromChat } from './owner-input-extractor.js';
+import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -276,10 +277,14 @@ export async function handleChat(message, context = {}, messages = []) {
 
   // 0b. 写入 memory_stream（让 desire system 感知到对话）
   try {
-    await pool.query(`
-      INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-      VALUES ($1, 4, 'short', NOW() + INTERVAL '7 days')
-    `, [`[用户对话] Alex 说：${message.slice(0, 200)}`]);
+    const userContent = `[用户对话] Alex 说：${message.slice(0, 200)}`;
+    const userResult = await pool.query(`
+      INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
+      VALUES ($1, $2, 4, 'short', 'orchestrator_chat', NOW() + INTERVAL '7 days')
+      RETURNING id
+    `, [userContent, generateL0Summary(userContent)]);
+    const userRecordId = userResult.rows[0]?.id;
+    if (userRecordId) generateMemoryStreamL1Async(userRecordId, userContent, pool);
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to write chat to memory_stream:', err.message);
   }
@@ -435,6 +440,22 @@ export async function handleChat(message, context = {}, messages = []) {
     has_memory: memoryBlock.length > 0,
     llm_intent: llmIntent ? { intent: llmIntent.intent, confidence: llmIntent.confidence } : null,
   });
+
+  // 8b. 写 Cecelia 回复到 memory_stream（长期记忆，异步不阻塞）
+  Promise.resolve().then(async () => {
+    try {
+      const replyContent = `[对话回复] Alex: ${message.slice(0, 150)}\nCecelia: ${reply.slice(0, 350)}`;
+      const replyResult = await pool.query(`
+        INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
+        VALUES ($1, $2, 5, 'short', 'orchestrator_chat', NOW() + INTERVAL '30 days')
+        RETURNING id
+      `, [replyContent, generateL0Summary(replyContent)]);
+      const replyRecordId = replyResult.rows[0]?.id;
+      if (replyRecordId) generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
+    } catch (err) {
+      console.warn('[orchestrator-chat] Failed to write reply to memory_stream:', err.message);
+    }
+  }).catch(() => {});
 
   // 9. 异步提取用户事实（fire-and-forget，不阻塞回复）
   Promise.resolve().then(() =>
