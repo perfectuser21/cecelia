@@ -51,7 +51,7 @@ function AppContent() {
   const { isAuthenticated, isSuperAdmin, authLoading } = useAuth();
   const { theme, setTheme } = useTheme();
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   // Tab 路由不加 p-8 内边距（TabbedPage 自带布局）
   const isTabbedRoute = (path: string) =>
@@ -107,8 +107,8 @@ function AppContent() {
     <CeceliaProvider onNavigate={handleNavigation}>
     <div className={`h-screen overflow-hidden flex flex-col transition-colors ${
       isCore
-        ? 'bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400/50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800'
-        : 'bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800'
+        ? 'bg-gradient-to-br from-slate-50 to-slate-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800'
+        : 'bg-gradient-to-br from-slate-50 to-slate-50 dark:from-slate-900 dark:to-slate-800'
     }`}>
       {isAuthenticated && (
         <>

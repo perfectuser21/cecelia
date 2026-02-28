@@ -161,6 +161,9 @@ function OverviewPage({
   navigate
 }: any) {
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set());
+  const { data: accountUsage } = useApi<{ ok: boolean; usage: Record<string, { account_id: string; five_hour_pct: number; seven_day_pct: number; resets_at: string | null }> }>(
+    '/api/brain/account-usage', { pollInterval: 60_000, staleTime: 120_000 }
+  );
 
   const toggleGoal = (goalId: string) => {
     setExpandedGoals(prev => {
@@ -218,12 +221,45 @@ function OverviewPage({
     <div className="space-y-8">
       {/* Header */}
       <div className="text-center">
-        <h1 className="text-3xl font-bold text-slate-800 dark:text-white">Command Center</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-2">统一控制中心</p>
+        <h1 className="text-3xl font-bold text-slate-800 dark:text-white">今日全景</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-2">{new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p>
       </div>
 
-      {/* Cluster Status (US + HK) */}
-      <ClusterStatusComponent data={clusterStatus} loading={loading} />
+      {/* 集群状态已移至 Live Monitor，Dashboard 改为今日全景 */}
+
+      {/* Token 用量（3 账号） */}
+      {accountUsage?.usage && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Activity className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Claude 账号用量（5小时窗口）</span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {['account1', 'account2', 'account3'].map(id => {
+              const u = accountUsage.usage[id];
+              const pct = u?.five_hour_pct ?? 0;
+              const color = pct >= 80 ? 'text-red-500' : pct >= 50 ? 'text-amber-500' : 'text-emerald-500';
+              const barColor = pct >= 80 ? 'bg-red-500' : pct >= 50 ? 'bg-amber-500' : 'bg-emerald-500';
+              return (
+                <div key={id} className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/30 border border-slate-200 dark:border-slate-700">
+                  <div className="flex justify-between items-baseline mb-1.5">
+                    <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{id}</span>
+                    <span className={`text-sm font-bold ${color}`}>{pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                    <div className={`h-full ${barColor} transition-all`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                  {u?.resets_at && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      重置: {new Date(u.resets_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Today Stats + Execution */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
