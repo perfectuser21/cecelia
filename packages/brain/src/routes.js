@@ -1692,9 +1692,8 @@ router.post('/autumnrice/chat', async (req, res) => {
       ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
       : '  （暂无 Initiative）';
 
-    // 只取前 1500 字符，避免 prompt 过长导致超时
     const decompSkillBlock = _decompSkillContent
-      ? `# 你的核心技能（/decomp Skill，节选）\n\n${_decompSkillContent.slice(0, 1500)}...\n\n---\n\n`
+      ? `# 你的核心技能（/decomp Skill 完整版）\n\n${_decompSkillContent}\n\n---\n\n`
       : '';
 
     const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。上面是你的 /decomp 技能全文。
