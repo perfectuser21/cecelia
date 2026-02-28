@@ -1,6 +1,6 @@
 /**
- * LiveMonitorPage v16 (Live Monitor v3.2) - 基础渲染测试
- * 变更：HK VPS 代理修复 + Global OKR 层 + Project 点击跳转
+ * LiveMonitorPage v17 (Live Monitor v3.3) - 基础渲染测试
+ * 变更：左栏基础设施(donut/rings/circles) + OKR Global→Area层级 + Projects by Area
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,24 +25,22 @@ function renderWithRouter() {
   );
 }
 
-describe('LiveMonitorPage v16', () => {
+describe('LiveMonitorPage v17', () => {
   it('渲染顶部栏标识', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
     expect(screen.getByText('CECELIA NOC')).toBeInTheDocument();
   });
 
-  it('渲染 OKR 总览和 Project+Initiative 区块标题', () => {
+  it('渲染 OKR 总览和 Projects 区块标题', () => {
     renderWithRouter();
     expect(screen.getByText('OKR 总览')).toBeInTheDocument();
-    expect(screen.getByText('Project + Initiative')).toBeInTheDocument();
+    expect(screen.getByText('Projects')).toBeInTheDocument();
   });
 
-  it('渲染实时 Agents 和等待队列区块', () => {
+  it('渲染左栏 Agents 紧凑圆点区块', () => {
     renderWithRouter();
-    expect(screen.getByText('实时 Agents')).toBeInTheDocument();
-    expect(screen.getByText('后台 · Brain 派发')).toBeInTheDocument();
-    expect(screen.getByText('等待队列')).toBeInTheDocument();
+    expect(screen.getByText('Agents')).toBeInTheDocument();
   });
 
   it('渲染基础设施指标（US VPS + HK VPS 标签）', () => {
@@ -51,14 +49,14 @@ describe('LiveMonitorPage v16', () => {
     expect(screen.getByText('HK VPS')).toBeInTheDocument();
   });
 
-  it('Project+Initiative 区块显示空状态', () => {
+  it('Projects 区块显示空状态', () => {
     renderWithRouter();
     expect(screen.getByText('暂无活跃项目')).toBeInTheDocument();
   });
 
-  it('空状态显示占位文本', () => {
+  it('无 Agent 时显示空闲状态', () => {
     renderWithRouter();
-    expect(screen.getByText(/暂无后台任务/)).toBeInTheDocument();
+    expect(screen.getByText('空闲')).toBeInTheDocument();
   });
 
   it('无 global_okr 时显示"全局目标未设置"占位', () => {
