@@ -1,7 +1,8 @@
 /**
- * LiveMonitor v14 — v3.3 全面重构布局
- * LEFT (240px): 🖥️ US VPS (donut CPU + bars) | 🖥️ HK VPS | 💳 Account (rings) | 🤖 Agents (compact dots)
- * RIGHT (1fr):  📊 OKR 总览 (Global→Area 分层) | 📁 Projects by Area + Queue
+ * LiveMonitor v15 — v3.4 布局优化
+ * LEFT (220px): INFRA (US+HK 合并紧凑) | BRAIN (警觉/调度状态) | ACC (账号) | AGENTS (紧凑)
+ * RIGHT (1fr):  OKR 总览 (Global→Area) | Projects by Area (2列, 所有 area, 更多信息)
+ * v3.4 变更：去 emoji + VPS 合并 + 新增 BRAIN 块 + 2列 project + 全 area 显示
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -124,14 +125,13 @@ function fmtRelTime(startTime: string): string {
     const d = new Date();
     d.setHours(h, m, 0, 0);
     let ms = d.getTime();
-    if (ms > now) ms -= 86400000; // 昨天启动
+    if (ms > now) ms -= 86400000;
     const diff = Math.round((now - ms) / 60000);
     if (diff < 60) return `${diff}m 前`;
     const hh = Math.floor(diff / 60);
     const mm = diff % 60;
     return mm > 0 ? `${hh}h${mm}m 前` : `${hh}h 前`;
   }
-  // "Feb14" 格式
   const MON: Record<string, number> = {
     Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11,
   };
@@ -150,7 +150,7 @@ function fmtAgo(iso: string) {
 }
 function fmtUptime(s: number) {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
-  return d > 0 ? `${d}d ${h}h` : `${h}h`;
+  return d > 0 ? `${d}d${h}h` : `${h}h`;
 }
 function fmtBytes(b: number) {
   return b >= 1e9 ? `${(b / 1e9).toFixed(1)}G` : `${(b / 1e6).toFixed(0)}M`;
@@ -172,7 +172,6 @@ function parseBackgroundCmd(cmd: string): { skill: string; taskTitle: string } {
   return { skill, taskTitle };
 }
 
-/** 清理任务标题中的冗余前缀 */
 function cleanTaskTitle(title: string): string {
   return title.replace(/^Initiative 拆解:\s*/i, '').replace(/^I\d+(?:\.\d+)*:\s*/i, '');
 }
@@ -263,22 +262,85 @@ function Skel() {
   );
 }
 
-/** 圆盘图 — 用于 VPS CPU 显示 */
-function Donut({ pct, color, size = 64 }: { pct: number; color: string; size?: number }) {
-  const r = size / 2 - 8;
+/** 小圆盘图 — 用于紧凑 VPS CPU 显示 */
+function MiniDonut({ pct, color, size = 40 }: { pct: number; color: string; size?: number }) {
+  const r = size / 2 - 6;
   const circ = 2 * Math.PI * r;
   const dash = (Math.min(Math.max(pct, 0), 100) / 100) * circ;
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
       <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', display: 'block' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1a2233" strokeWidth={10} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={10}
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1a2233" strokeWidth={7} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={7}
           strokeDasharray={`${dash} ${circ - dash}`} strokeLinecap="round"
           style={{ transition: 'stroke-dasharray .5s ease' }} />
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color }}>
-        {pct.toFixed(0)}%
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: 10, fontWeight: 700, color }}>
+        {pct.toFixed(0)}
       </div>
+    </div>
+  );
+}
+
+// ── Left column section header ─────────────────────────────────
+function SectionLabel({ label, right }: { label: string; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, color: '#6e7681', letterSpacing: 1.4, textTransform: 'uppercase' }}>{label}</span>
+      {right && <span style={{ marginLeft: 'auto' }}>{right}</span>}
+    </div>
+  );
+}
+
+// ── VPS side (single server metrics) ──────────────────────────
+function VpsSide({ label, data, svcDown, svcUp }: { label: string; data: VpsStats | null; svcDown?: number; svcUp?: number }) {
+  const cpu = data?.cpu?.usage ?? 0;
+  const ram = data?.memory?.usagePercent ?? 0;
+  const disk = data?.disk?.usagePercent ?? 0;
+  const cpuColor = metricColor(cpu);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      {/* Label + uptime */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#8b949e', letterSpacing: .8, textTransform: 'uppercase' }}>{label}</span>
+        {data && <span style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>{fmtUptime(data.uptime)}</span>}
+      </div>
+      {/* CPU mini donut */}
+      {data ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <MiniDonut pct={cpu} color={cpuColor} size={36} />
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <span style={{ fontSize: 8, color: '#484f58' }}>RAM</span>
+                  <span style={{ fontSize: 8, fontFamily: 'monospace', color: metricColor(ram) }}>{ram.toFixed(0)}%</span>
+                </div>
+                <PBar pct={ram} color={metricColor(ram)} h={3} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <span style={{ fontSize: 8, color: '#484f58' }}>DSK</span>
+                  <span style={{ fontSize: 8, fontFamily: 'monospace', color: metricColor(disk) }}>{disk.toFixed(0)}%</span>
+                </div>
+                <PBar pct={disk} color={metricColor(disk)} h={3} />
+              </div>
+            </div>
+          </div>
+          {/* Services (US only) */}
+          {svcDown !== undefined && (
+            <div style={{ fontSize: 8, fontFamily: 'monospace', textAlign: 'center', marginTop: 2 }}>
+              {svcDown > 0
+                ? <span style={{ color: '#ef4444', background: 'rgba(239,68,68,.1)', padding: '1px 6px', borderRadius: 6 }}>{svcDown} down</span>
+                : <span style={{ color: '#10b981', background: 'rgba(16,185,129,.08)', padding: '1px 6px', borderRadius: 6 }}>all up</span>
+              }
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ fontSize: 10, color: '#484f58', textAlign: 'center', padding: '8px 0' }}>—</div>
+      )}
     </div>
   );
 }
@@ -337,7 +399,6 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
         opacity: stale ? 0.65 : (killState === 'sent' ? 0.4 : 1),
       }}
     >
-      {/* Row header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px' }}>
         <Dot color={rowAccent} pulse={type === 'background' && !stale} />
         {stale && (
@@ -372,7 +433,6 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
         <span style={{ fontSize: 9, color: '#484f58', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }}>▶</span>
       </div>
 
-      {/* Expanded detail */}
       {open && (
         <div style={{ padding: '0 12px 10px', borderTop: `1px solid ${rowAccent}20`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -404,7 +464,7 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
           )}
           {stale && (
             <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)', borderRadius: 6, padding: '8px 12px', fontSize: 11, color: '#f59e0b' }}>
-              ⚠ 此进程已运行 {relTime}，可能是已关闭终端的残留会话。点击 Kill 可安全终止。
+              此进程已运行 {relTime}，可能是已关闭终端的残留会话。点击 Kill 可安全终止。
             </div>
           )}
         </div>
@@ -413,7 +473,7 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
   );
 }
 
-// ── Account Usage Rings（嵌入左栏 Account 卡片）────────────────────
+// ── Account Usage Rings ────────────────────────────────────────
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const usageColor = (pct: number) => pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#10b981';
@@ -427,7 +487,7 @@ function AccUsageRings() {
       if (!res.ok) return;
       const data = await res.json();
       if (data.ok) setUsage(data.usage);
-    } catch { /* 静默，不影响左栏显示 */ }
+    } catch { /* 静默 */ }
   }, []);
 
   useEffect(() => {
@@ -492,9 +552,10 @@ function projStatusLabel(s: string): string {
   return m[s] ?? s;
 }
 
-function ProjectsByArea({ projects, allGoals, queuedTasks }: {
+function ProjectsByArea({ projects, allGoals, activeTasks, queuedTasks }: {
   projects: Project[];
   allGoals: GoalItem[];
+  activeTasks: BrainTask[];
   queuedTasks: BrainTask[];
 }) {
   const navigate = useNavigate();
@@ -510,6 +571,14 @@ function ProjectsByArea({ projects, allGoals, queuedTasks }: {
       const parent = allGoals.find(g => g.id === goal.parent_id);
       if (parent?.type === 'area_okr') return parent.id;
     }
+    return null;
+  }
+
+  /** 找到 project.goal_id 所指的 KR 标题 */
+  function findKrTitle(goalId: string | null): string | null {
+    if (!goalId) return null;
+    const goal = allGoals.find(g => g.id === goalId);
+    if (goal?.type === 'kr') return goal.title;
     return null;
   }
 
@@ -538,6 +607,15 @@ function ProjectsByArea({ projects, allGoals, queuedTasks }: {
     initsByProj.get(key)!.push(ini);
   }
 
+  /** 计算某 project 下的 active/queued 任务数 */
+  function countTasksForProj(projId: string, tasks: BrainTask[]): number {
+    return tasks.filter(t => {
+      if (!t.project_id) return false;
+      const tp = projMap.get(t.project_id);
+      return tp?.id === projId || tp?.parent_id === projId;
+    }).length;
+  }
+
   /** 计算某 area 下的 queued 任务数 */
   function countQueuedForArea(areaId: string): number {
     return queuedTasks.filter(t => {
@@ -553,18 +631,111 @@ function ProjectsByArea({ projects, allGoals, queuedTasks }: {
     }).length;
   }
 
+  // 显示所有 area（包括没有 project 的）
   const areaGroups = areaOkrs.map(area => ({
     area,
     projs: projsByArea.get(area.id) ?? [],
     queuedCount: countQueuedForArea(area.id),
-  })).filter(g => g.projs.length > 0);
+  }));
 
-  const hasAny = areaGroups.length > 0 || noAreaProjs.length > 0;
+  // 缩短 area 标题：截到第一个"——"或"—"
+  function shortAreaTitle(title: string): string {
+    const idx = title.indexOf('——');
+    if (idx > 0) return title.slice(0, idx).trim();
+    const idx2 = title.indexOf('—');
+    if (idx2 > 0) return title.slice(0, idx2).trim();
+    return clip(title, 20);
+  }
 
-  if (!hasAny) {
+  const totalActive = activeProjects.length;
+  const totalQueued = queuedTasks.length;
+
+  if (areaGroups.length === 0 && noAreaProjs.length === 0) {
     return (
       <div style={{ padding: 16, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>
         暂无活跃项目
+      </div>
+    );
+  }
+
+  function renderProjectCard(proj: Project) {
+    const inis = initsByProj.get(proj.id) ?? [];
+    const hasActive = inis.some(i => i.status === 'in_progress' || i.status === 'active');
+    const activeCount = countTasksForProj(proj.id, activeTasks);
+    const queuedCount = countTasksForProj(proj.id, queuedTasks);
+    const accent = hasActive ? '#3b82f6' : projStatusColor(proj.status);
+    const krTitle = findKrTitle(proj.goal_id);
+
+    return (
+      <div key={proj.id}
+        onClick={() => navigate('/work/projects')}
+        style={{
+          background: '#0d1117', borderRadius: 8,
+          border: '1px solid #21262d',
+          borderLeft: `3px solid ${accent}`,
+          padding: '10px 12px', cursor: 'pointer',
+          transition: 'border-color .15s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
+        onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
+
+        {/* Project name + status */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5 }}>
+          <Dot color={accent} pulse={hasActive} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+            {proj.name}
+          </span>
+        </div>
+
+        {/* Status + task counts */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5, paddingLeft: 13 }}>
+          <span style={{ fontSize: 9, color: accent, background: accent + '15', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
+            {projStatusLabel(proj.status)}
+          </span>
+          {activeCount > 0 && (
+            <span style={{ fontSize: 9, color: '#10b981', background: 'rgba(16,185,129,.12)', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
+              {activeCount} 运行
+            </span>
+          )}
+          {queuedCount > 0 && (
+            <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '0 5px', borderRadius: 3, fontFamily: 'monospace' }}>
+              {queuedCount}q
+            </span>
+          )}
+        </div>
+
+        {/* KR reference */}
+        {krTitle && (
+          <div style={{ paddingLeft: 13, marginBottom: 5 }}>
+            <span style={{ fontSize: 9, color: '#484f58' }}>KR: {clip(krTitle, 30)}</span>
+          </div>
+        )}
+
+        {/* Initiatives list */}
+        {inis.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 13 }}>
+            {inis.slice(0, 3).map(ini => {
+              const sc = projStatusColor(ini.status);
+              return (
+                <div key={ini.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px', background: '#161b22', borderRadius: 4 }}>
+                  <Dot color={sc} pulse={ini.status === 'in_progress'} />
+                  <span style={{ fontSize: 9, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {clip(ini.name, 26)}
+                  </span>
+                  <span style={{ fontSize: 8, color: sc, fontFamily: 'monospace', flexShrink: 0 }}>
+                    {projStatusLabel(ini.status)}
+                  </span>
+                </div>
+              );
+            })}
+            {inis.length > 3 && (
+              <div style={{ fontSize: 8, color: '#484f58', paddingLeft: 6 }}>+{inis.length - 3} 更多</div>
+            )}
+          </div>
+        )}
+        {inis.length === 0 && (
+          <div style={{ paddingLeft: 13, fontSize: 9, color: '#30363d', fontStyle: 'italic' }}>无 Initiative</div>
+        )}
       </div>
     );
   }
@@ -574,84 +745,44 @@ function ProjectsByArea({ projects, allGoals, queuedTasks }: {
       <div style={{ marginBottom: 16 }}>
         {/* Area header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>{clip(label, 24)}</span>
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#c084fc', letterSpacing: 1, textTransform: 'uppercase', flexShrink: 0 }}>{label}</span>
           <div style={{ flex: 1, height: 1, background: 'rgba(192,132,252,.2)' }} />
+          {projs.length > 0 && (
+            <span style={{ fontSize: 9, color: '#6e7681', fontFamily: 'monospace', flexShrink: 0 }}>{projs.length}项目</span>
+          )}
           {queuedCount > 0 && (
             <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 6px', borderRadius: 10, flexShrink: 0, fontFamily: 'monospace' }}>
-              {queuedCount} queued
+              {queuedCount}q
             </span>
           )}
         </div>
-        {/* Project cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
-          {projs.map(proj => {
-            const inis = initsByProj.get(proj.id) ?? [];
-            const hasActive = inis.some(i => i.status === 'in_progress' || i.status === 'active');
-            const projQueued = queuedTasks.filter(t => {
-              if (!t.project_id) return false;
-              const tp = projMap.get(t.project_id);
-              return tp?.id === proj.id || tp?.parent_id === proj.id;
-            }).length;
-            const accent = hasActive ? '#3b82f6' : '#6e7681';
-            return (
-              <div key={proj.id}
-                onClick={() => navigate('/work/projects')}
-                style={{
-                  background: '#0d1117', borderRadius: 8,
-                  border: '1px solid #21262d',
-                  borderLeft: `3px solid ${accent}`,
-                  padding: '10px 12px', cursor: 'pointer',
-                  transition: 'border-color .15s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <Dot color={accent} pulse={hasActive} />
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {clip(proj.name, 30)}
-                  </span>
-                  {projQueued > 0 && (
-                    <span style={{ fontSize: 9, color: '#f59e0b', background: 'rgba(245,158,11,.12)', padding: '1px 5px', borderRadius: 8, flexShrink: 0, fontFamily: 'monospace' }}>
-                      {projQueued}q
-                    </span>
-                  )}
-                </div>
-                {inis.length === 0 ? (
-                  <div style={{ fontSize: 10, color: '#484f58', fontStyle: 'italic', paddingLeft: 4 }}>暂无活跃 Initiative</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {inis.slice(0, 3).map(ini => {
-                      const sc = projStatusColor(ini.status);
-                      return (
-                        <div key={ini.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 7px', background: '#161b22', borderRadius: 5 }}>
-                          <Dot color={sc} pulse={ini.status === 'in_progress'} />
-                          <span style={{ fontSize: 10, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {clip(ini.name, 28)}
-                          </span>
-                          <span style={{ fontSize: 9, color: sc, fontFamily: 'monospace', flexShrink: 0 }}>
-                            {projStatusLabel(ini.status)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {inis.length > 3 && (
-                      <div style={{ fontSize: 9, color: '#484f58', paddingLeft: 7 }}>+{inis.length - 3} 更多</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {/* Project cards - 2 columns */}
+        {projs.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {projs.map(proj => renderProjectCard(proj))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 10, color: '#30363d', fontStyle: 'italic', paddingLeft: 4, paddingBottom: 4 }}>
+            暂无活跃项目
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div>
+      {/* Stats row */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, fontSize: 10, color: '#484f58' }}>
+        <span>{areaOkrs.length} 个 Area</span>
+        <span>·</span>
+        <span style={{ color: totalActive > 0 ? '#3b82f6' : '#484f58' }}>{totalActive} 活跃项目</span>
+        <span>·</span>
+        <span style={{ color: totalQueued > 0 ? '#f59e0b' : '#484f58' }}>{totalQueued} 任务排队</span>
+      </div>
       {areaGroups.map(({ area, projs, queuedCount }) => (
         <div key={area.id}>
-          {renderAreaGroup(area.title, projs, queuedCount)}
+          {renderAreaGroup(shortAreaTitle(area.title), projs, queuedCount)}
         </div>
       ))}
       {noAreaProjs.length > 0 && renderAreaGroup('未关联 Area', noAreaProjs, 0)}
@@ -706,15 +837,12 @@ export default function LiveMonitorPage() {
     if (r[10].status === 'fulfilled' && !r[10].value?.error) setHkVps(r[10].value);
     if (r[5].status === 'fulfilled') {
       const c = r[5].value?.cluster ?? null;
-      // Brain 容器无 --pid=host，ps aux 看不到宿主机进程。
-      // 用 Core server（宿主机 pm2）扫描的结果覆盖 US 服务器的 processes。
       const scanResult = r[8].status === 'fulfilled' ? r[8].value : null;
       if (c?.servers?.[0] && scanResult?.processes) {
         c.servers[0].slots.processes = scanResult.processes;
         c.servers[0].slots.used = scanResult.total ?? scanResult.processes.length;
       }
       setCluster(c);
-      // 批量获取所有进程的 provider 信息
       const procs: ClusterProcess[] = c?.servers?.[0]?.slots?.processes ?? [];
       if (procs.length > 0) {
         const pids = procs.map((p: ClusterProcess) => p.pid).join(',');
@@ -749,6 +877,7 @@ export default function LiveMonitorPage() {
   const alertColor = ALERT_COLOR[alertName] ?? '#6e7681';
   const svcUp = services.filter(s => s.status === 'running').length;
   const svcDown = services.filter(s => s.status !== 'running').length;
+  const pressure = tick?.slot_budget?.pressure ?? 0;
 
   const allProcs = (cluster?.servers?.[0]?.slots?.processes ?? []).filter(p => !killedPids.has(p.pid));
   const foregroundProcs = allProcs.filter(p => classifyProcess(p.command) === 'foreground');
@@ -762,6 +891,10 @@ export default function LiveMonitorPage() {
   const wrapStyle: React.CSSProperties = fullscreen
     ? { position: 'fixed', inset: 0, zIndex: 9999, overflowY: 'auto', background: '#0d1117' }
     : { background: '#0d1117', minHeight: '100vh' };
+
+  const cardStyle: React.CSSProperties = {
+    background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px',
+  };
 
   return (
     <>
@@ -807,7 +940,7 @@ export default function LiveMonitorPage() {
           <span style={{ background: '#21262d', fontFamily: 'monospace', fontSize: 11, color: '#6e7681', padding: '2px 8px', borderRadius: 6 }}>↻ {cd}s</span>
           <button onClick={() => setFullscreen(f => !f)} className="lm-btn"
             style={{ background: 'transparent', border: '1px solid #30363d', borderRadius: 6, padding: '4px 12px', color: '#8b949e', cursor: 'pointer', fontSize: 12 }}>
-            {fullscreen ? '⊠ 收起' : '⛶ 全屏'}
+            {fullscreen ? '收起' : '全屏'}
           </button>
         </div>
 
@@ -844,110 +977,82 @@ export default function LiveMonitorPage() {
 
         <div style={{ padding: '16px 20px 24px' }}>
 
-          {/* ══ MAIN GRID: 240px | 1fr ══ */}
-          <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 14, alignItems: 'start' }}>
+          {/* ══ MAIN GRID: 220px | 1fr ══ */}
+          <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 14, alignItems: 'start' }}>
 
             {/* ── LEFT COLUMN ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-              {/* 🖥️ US VPS */}
-              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                  <span style={{ fontSize: 14 }}>🖥️</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>US VPS</span>
-                  {vps && <span style={{ marginLeft: 'auto', fontSize: 9, color: '#484f58', fontFamily: 'monospace' }}>{fmtUptime(vps.uptime)}</span>}
+              {/* INFRA — US + HK 合并紧凑 */}
+              <div style={cardStyle}>
+                <SectionLabel label="INFRA" />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <VpsSide label="US" data={vps} svcDown={svcDown} svcUp={svcUp} />
+                  <div style={{ width: 1, background: '#21262d', alignSelf: 'stretch' }} />
+                  <VpsSide label="HK" data={hkVps} />
                 </div>
-                {vps ? (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                        <Donut pct={vps.cpu.usage} color={metricColor(vps.cpu.usage)} />
-                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>CPU</span>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {([
-                        { l: 'RAM', v: vps.memory.usagePercent },
-                        { l: 'Disk', v: vps.disk.usagePercent },
-                      ] as { l: string; v: number }[]).map(({ l, v }) => (
-                        <div key={l}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                            <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>{l}</span>
-                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: metricColor(v) }}>{v.toFixed(0)}%</span>
-                          </div>
-                          <PBar pct={v} color={metricColor(v)} h={4} />
-                        </div>
-                      ))}
-                      {svcDown > 0 && (
-                        <span style={{ fontSize: 9, color: '#ef4444', background: 'rgba(239,68,68,.1)', padding: '2px 6px', borderRadius: 8, textAlign: 'center' }}>
-                          {svcDown} services down
-                        </span>
-                      )}
-                      {svcUp > 0 && svcDown === 0 && (
-                        <span style={{ fontSize: 9, color: '#10b981', background: 'rgba(16,185,129,.08)', padding: '2px 6px', borderRadius: 8, textAlign: 'center' }}>
-                          all services up
-                        </span>
-                      )}
-                    </div>
-                  </>
-                ) : <Skel />}
               </div>
 
-              {/* 🖥️ HK VPS */}
-              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                  <span style={{ fontSize: 14 }}>🖥️</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>HK VPS</span>
-                  {hkVps && <span style={{ marginLeft: 'auto', fontSize: 9, color: '#484f58', fontFamily: 'monospace' }}>{fmtUptime(hkVps.uptime)}</span>}
+              {/* BRAIN — 警觉/调度状态 */}
+              <div style={cardStyle}>
+                <SectionLabel
+                  label="BRAIN"
+                  right={
+                    <div style={{
+                      background: alertColor + '1a', border: `1px solid ${alertColor}30`,
+                      borderRadius: 20, padding: '1px 8px',
+                      display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      <Dot color={alertColor} />
+                      <span style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 700, color: alertColor }}>{ALERT_LABEL[alertName]}</span>
+                    </div>
+                  }
+                />
+                {/* Pressure bar */}
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                    <span style={{ fontSize: 8, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>负载压力</span>
+                    <span style={{ fontSize: 8, fontFamily: 'monospace', color: pressure > 0.8 ? '#ef4444' : pressure > 0.5 ? '#f59e0b' : '#10b981' }}>
+                      {Math.round(pressure * 100)}%
+                    </span>
+                  </div>
+                  <PBar pct={pressure * 100} color={pressure > 0.8 ? '#ef4444' : pressure > 0.5 ? '#f59e0b' : '#10b981'} h={3} />
                 </div>
-                {hkVps ? (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                        <Donut pct={hkVps.cpu.usage} color={metricColor(hkVps.cpu.usage)} />
-                        <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>CPU</span>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {([
-                        { l: 'RAM', v: hkVps.memory.usagePercent },
-                        { l: 'Disk', v: hkVps.disk.usagePercent },
-                      ] as { l: string; v: number }[]).map(({ l, v }) => (
-                        <div key={l}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                            <span style={{ fontSize: 9, color: '#484f58', textTransform: 'uppercase', letterSpacing: .5 }}>{l}</span>
-                            <span style={{ fontSize: 9, fontFamily: 'monospace', color: metricColor(v) }}>{v.toFixed(0)}%</span>
-                          </div>
-                          <PBar pct={v} color={metricColor(v)} h={4} />
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ padding: 8, textAlign: 'center', color: '#484f58', fontSize: 11 }}>—</div>
+                {/* Ticks + dispatch */}
+                <div style={{ fontSize: 9, color: '#484f58', display: 'flex', gap: 6, marginBottom: 4 }}>
+                  <span style={{ color: '#6e7681', fontFamily: 'monospace' }}>{tick?.actions_today ?? 0} ticks</span>
+                  {tick?.last_dispatch && (
+                    <span>· {fmtAgo(tick.last_dispatch.dispatched_at)}</span>
+                  )}
+                  {tick?.slot_budget?.dispatchAllowed === false && (
+                    <span style={{ color: '#f59e0b' }}>· 暂停派发</span>
+                  )}
+                </div>
+                {tick?.last_dispatch && (
+                  <div style={{ fontSize: 9, color: '#6e7681', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {tick.last_dispatch.success ? '' : '[x] '}{clip(tick.last_dispatch.task_title, 24)}
+                  </div>
                 )}
               </div>
 
-              {/* 💳 Account */}
-              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
-                  <span style={{ fontSize: 14 }}>💳</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>Account</span>
-                </div>
+              {/* ACC — Account Usage */}
+              <div style={cardStyle}>
+                <SectionLabel label="ACC" />
                 <div style={{ display: 'flex', justifyContent: 'space-around' }}>
                   <AccUsageRings />
                 </div>
               </div>
 
-              {/* 🤖 Agents */}
-              <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                  <span style={{ fontSize: 14 }}>🤖</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', letterSpacing: 1, textTransform: 'uppercase' }}>Agents</span>
-                  <span style={{ marginLeft: 'auto', fontSize: 9, fontFamily: 'monospace', color: totalAgents > 0 ? '#10b981' : '#484f58' }}>
-                    {cluster?.total_used ?? totalAgents}/{cluster?.total_slots ?? 8}
-                  </span>
-                </div>
+              {/* AGENTS — 紧凑 */}
+              <div style={cardStyle}>
+                <SectionLabel
+                  label="AGENTS"
+                  right={
+                    <span style={{ fontSize: 9, fontFamily: 'monospace', color: totalAgents > 0 ? '#10b981' : '#484f58' }}>
+                      {cluster?.total_used ?? totalAgents}/{cluster?.total_slots ?? 8}
+                    </span>
+                  }
+                />
                 {/* 槽位圆点 */}
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 10 }}>
                   {Array.from({ length: cluster?.total_slots ?? 8 }, (_, i) => (
@@ -968,7 +1073,7 @@ export default function LiveMonitorPage() {
                         <Dot color="#10b981" pulse />
                         <span style={{ fontFamily: 'monospace', fontSize: 9, color: '#58a6ff', flexShrink: 0 }}>{skill}</span>
                         <span style={{ fontSize: 9, color: '#6e7681', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {clip(taskTitle, 20)}
+                          {clip(taskTitle, 18)}
                         </span>
                       </div>
                     );
@@ -990,7 +1095,7 @@ export default function LiveMonitorPage() {
             {/* ── RIGHT COLUMN ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-              {/* 📊 OKR 总览 */}
+              {/* OKR 总览 */}
               <div
                 onClick={() => navigate('/okr')}
                 style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px', cursor: 'pointer', transition: 'border-color .15s' }}
@@ -1061,7 +1166,7 @@ export default function LiveMonitorPage() {
                 </div>
               </div>
 
-              {/* 📁 Projects by Area */}
+              {/* Projects by Area */}
               <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '16px 18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6', letterSpacing: 1.4, textTransform: 'uppercase' }}>Projects</span>
@@ -1069,14 +1174,19 @@ export default function LiveMonitorPage() {
                     const cnt = projects.filter(p => p.type === 'initiative' && !INACTIVE_STATUSES.has(p.status)).length;
                     return (
                       <span style={{ background: cnt > 0 ? 'rgba(59,130,246,.15)' : '#21262d', color: cnt > 0 ? '#60a5fa' : '#6e7681', fontFamily: 'monospace', fontSize: 11, padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                        {cnt} 活跃 Initiative
+                        {cnt} Initiative
                       </span>
                     );
                   })()}
                   <div style={{ flex: 1, height: 1, background: '#21262d' }} />
-                  <span style={{ fontSize: 10, color: '#484f58' }} onClick={e => { e.stopPropagation(); navigate('/work'); }} role="button">↗</span>
+                  <span style={{ fontSize: 10, color: '#484f58', cursor: 'pointer' }} onClick={e => { e.stopPropagation(); navigate('/work'); }}>↗</span>
                 </div>
-                <ProjectsByArea projects={projects} allGoals={allGoals} queuedTasks={queuedTasks} />
+                <ProjectsByArea
+                  projects={projects}
+                  allGoals={allGoals}
+                  activeTasks={activeTasks}
+                  queuedTasks={queuedTasks}
+                />
               </div>
 
             </div>
