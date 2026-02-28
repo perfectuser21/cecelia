@@ -4,7 +4,7 @@
  * 验证 fetchMemoryContext 改用 buildMemoryContext（memory-retriever.js）
  * 而不是旧的 HTTP API（memory-service.js）
  *
- * callMiniMax 内部调用 callLLM('mouth', ...) 而非直接调 MiniMax API
+ * callWithHistory 内部调用 callLLM('mouth', ...) 而非直接调 MiniMax API
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

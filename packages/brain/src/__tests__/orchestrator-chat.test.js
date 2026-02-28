@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
-// Mock 统一 LLM 调用层 — callMiniMax 内部调用 callLLM('mouth', ...)
+// Mock 统一 LLM 调用层 — callWithHistory 内部调用 callLLM('mouth', ...)
 const mockCallLLM = vi.hoisted(() => vi.fn());
 vi.mock('../llm-caller.js', () => ({
   callLLM: mockCallLLM,
@@ -79,7 +79,7 @@ import { parseIntent } from '../intent.js';
 import { buildMemoryContext } from '../memory-retriever.js';
 import {
   handleChat,
-  callMiniMax,
+  callWithHistory,
   stripThinking,
   fetchMemoryContext,
   recordChatEvent,
@@ -174,7 +174,7 @@ describe('orchestrator-chat', () => {
     it('falls back to thalamus when MiniMax fails', async () => {
       // 检索优先：提供叙事 → LLM 被调用 → LLM 抛出错误 → 丘脑回退
       withNarratives('系统状态信息。');
-      // callLLM throws → callMiniMax propagates error → handleChat falls back to thalamus
+      // callLLM throws → callWithHistory propagates error → handleChat falls back to thalamus
       mockCallLLM.mockRejectedValueOnce(new Error('Service unavailable'));
 
       // Thalamus decision
@@ -288,7 +288,7 @@ describe('orchestrator-chat', () => {
   // ===================== D5: 多轮历史上下文 =====================
 
   describe('handleChat - multi-turn history (D2)', () => {
-    it('passes messages to callMiniMax', async () => {
+    it('passes messages to callWithHistory', async () => {
       // 检索优先：提供叙事 → LLM 被调用（传声器模式），history 包含在 prompt 中
       withNarratives('我叫小明这件事我记得。');
       mockCallLLM.mockResolvedValueOnce(llmResp('记得，你叫小明。'));
@@ -487,11 +487,11 @@ describe('orchestrator-chat', () => {
     });
   });
 
-  describe('callMiniMax', () => {
+  describe('callWithHistory', () => {
     it('calls callLLM("mouth", ...) with system prompt and user message (D1, D2)', async () => {
       mockCallLLM.mockResolvedValueOnce(llmResp('测试回复'));
 
-      const result = await callMiniMax('你好', '系统提示');
+      const result = await callWithHistory('你好', '系统提示');
 
       expect(result.reply).toBe('测试回复');
       expect(result.usage).toBeDefined();
@@ -515,7 +515,7 @@ describe('orchestrator-chat', () => {
         { role: 'assistant', content: '你好，小明！' },
       ];
 
-      const result = await callMiniMax('你还记得我叫什么吗', '系统提示', {}, history);
+      const result = await callWithHistory('你还记得我叫什么吗', '系统提示', {}, history);
 
       expect(result.reply).toBe('记得，你叫小明。');
 
@@ -536,7 +536,7 @@ describe('orchestrator-chat', () => {
         content: `历史消息第${i + 1}条`,
       }));
 
-      await callMiniMax('新消息', '系统提示', {}, history);
+      await callWithHistory('新消息', '系统提示', {}, history);
 
       const prompt = mockCallLLM.mock.calls[0][1];
       // 最后 10 条 = 第3~12条（跳过第1和第2条）
@@ -549,7 +549,7 @@ describe('orchestrator-chat', () => {
     it('returns text from callLLM response (D3)', async () => {
       mockCallLLM.mockResolvedValueOnce(llmResp('实际回复内容'));
 
-      const result = await callMiniMax('你好', '系统提示');
+      const result = await callWithHistory('你好', '系统提示');
 
       expect(result.reply).toBe('实际回复内容');
     });
@@ -557,7 +557,7 @@ describe('orchestrator-chat', () => {
     it('throws on callLLM error', async () => {
       mockCallLLM.mockRejectedValueOnce(new Error('Bridge /llm-call error: 500'));
 
-      await expect(callMiniMax('test', 'prompt')).rejects.toThrow('Bridge /llm-call error: 500');
+      await expect(callWithHistory('test', 'prompt')).rejects.toThrow('Bridge /llm-call error: 500');
     });
   });
 

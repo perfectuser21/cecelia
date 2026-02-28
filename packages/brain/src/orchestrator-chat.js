@@ -41,7 +41,7 @@ export function stripThinking(content) {
  * @param {Array} historyMessages - [{role, content}]
  * @returns {Promise<{reply: string, usage: Object}>}
  */
-async function callMiniMax(userMessage, systemPrompt, options = {}, historyMessages = []) {
+async function callWithHistory(userMessage, systemPrompt, options = {}, historyMessages = []) {
   const timeout = options.timeout || 30000;
 
   // 将 system prompt + history + user message 合并为单一 prompt
@@ -442,7 +442,7 @@ export async function handleChat(message, context = {}, messages = []) {
     } else {
       // 传声器模式：LLM 只传递，不思考
       try {
-        const result = await callMiniMax(message, transmitterPrompt, {}, messages);
+        const result = await callWithHistory(message, transmitterPrompt, {}, messages);
         reply = result.reply;
         console.log('[orchestrator-chat] retrieval-first: transmitter mode used');
       } catch (err) {
@@ -458,7 +458,7 @@ export async function handleChat(message, context = {}, messages = []) {
     }
 
     try {
-      const result = await callMiniMax(message, systemPrompt, {}, messages);
+      const result = await callWithHistory(message, systemPrompt, {}, messages);
       reply = result.reply;
     } catch (err) {
       console.error('[orchestrator-chat] MiniMax call failed:', err.message);
@@ -649,7 +649,7 @@ export async function handleChatStream(message, context = {}, messages = [], onC
       console.error('[orchestrator-chat] stream transmitter failed:', err.message);
       // 降级到非流式
       try {
-        const result = await callMiniMax(message, transmitterPrompt, {}, messages);
+        const result = await callWithHistory(message, transmitterPrompt, {}, messages);
         onChunk(result.reply, true);
       } catch {
         onChunk('我还没想过这个。', true);
@@ -684,7 +684,7 @@ export async function handleChatStream(message, context = {}, messages = [], onC
 
 // 导出用于测试
 export {
-  callMiniMax,
+  callWithHistory,
   fetchMemoryContext,
   recordChatEvent,
   needsEscalation,
