@@ -11,6 +11,7 @@ import vpsMonitorRoutes from './src/routes/vps-monitor.js';
 import taskProjectsRoutes from './src/routes/task-projects.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
+import selfReportsRoutes from './src/routes/self-reports.js';
 import narrativesRoutes from './src/routes/narratives.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
@@ -80,6 +81,7 @@ app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
 app.use('/api/brain/inner-life', innerLifeRoutes);
 app.use('/api/brain/intent', intentMatchRoutes);
+app.use('/api/brain/self-reports', selfReportsRoutes);
 app.use('/api/brain/narratives', narrativesRoutes);
 
 // Mount brain routes
