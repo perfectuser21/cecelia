@@ -8423,6 +8423,40 @@ router.get('/suggestions/stats', async (req, res) => {
   }
 });
 
+// ── Goal Evaluations API ──────────────────────────────────────────
+
+/**
+ * GET /api/brain/goal-evaluations — 查询 goal 评估结果（最新一条/每 goal）
+ */
+router.get('/goal-evaluations', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
+    const result = await pool.query(`
+      SELECT ge.id, ge.goal_id, ge.verdict, ge.metrics, ge.action_taken, ge.action_detail, ge.created_at,
+             g.title AS goal_title, g.priority AS goal_priority, g.progress AS goal_progress
+      FROM goal_evaluations ge
+      JOIN goals g ON g.id = ge.goal_id
+      ORDER BY ge.created_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({ success: true, evaluations: result.rows, count: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get goal evaluations', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/goal-evaluations/latest — 每个 goal 的最新评估
+ */
+router.get('/goal-evaluations/latest', async (_req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM v_latest_goal_evaluation ORDER BY goal_priority, created_at DESC`);
+    res.json({ success: true, evaluations: result.rows, count: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get latest goal evaluations', details: err.message });
+  }
+});
+
 // ── Self-Model API ──────────────────────────────────────────
 
 /**
