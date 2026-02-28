@@ -1,5 +1,12 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] 秋米直接写入新版本到左侧 Tab (PR #138, Brain 1.132.1)
+- **LLM JSON 输出模式**: 需要 LLM 返回结构化数据时，在 system prompt 末尾添加独立段落说明 JSON 格式要求（而非与对话指令混写），并用 `reply.match(/\{[\s\S]*\}/)` 容错提取（LLM 可能带前后缀）
+- **互斥意图检测**: isNewVersion 和 isRedecomp 使用 `!isNewVersion &&` 前置条件互斥，避免同一 message 触发两种流程；关键词集合要刻意避免重叠（`写新版本` vs `重新拆`）
+- **React useRef 驱动异步状态切换**: `switchToLatestRef.current = true` + `loadVersions()` 的组合确保：(1) loadVersions 触发 setVersions；(2) versions effect 读到 ref 为 true 时切换 Tab。相比 useState，ref 不触发额外 re-render 且 effect 回调可直接读取最新值
+- **autumnriceComment 必须用 finalReply**: 存入 DB 的评论和 res.json 返回的 reply 应该一致，两处都用 `finalReply` 而非原始 `reply`（否则 DB 存 JSON 字符串，前端显示 JSON）
+- **isNewVersion 时提升 maxTokens**: 要求 LLM 输出 JSON 格式时，完整的 initiatives + message 可能超过 800 tokens，改为 1200 以避免截断
+
 ### [2026-02-28] OkrReviewPage UX 重设计 + 分支冲突 (PR #126, Brain 1.130.2)
 - **main 版本漂移问题**: 两个 PR (#122 #123) 并行合并后，branch 创建时的 base 落后两个提交 → CONFLICTING。解决：`git reset --hard origin/main` + cherry-pick 功能提交 + delete+push 重建分支
 - **workflow_dispatch 不计入 PR required checks**: 手动触发 Brain CI 通过了，但 GitHub PR 的 required status check 只认 `pull_request` 事件触发的 CI，需要删远端分支重推才能触发新 PR CI
