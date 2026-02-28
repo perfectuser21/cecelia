@@ -1,0 +1,77 @@
+name: DevGate (All PRs)
+
+# 对所有 PR 跑 DoD 检查，不管改的是 Brain/Dashboard/Workflows/Engine
+# 确保：DoD 格式正确 + 没有伪测试 + 所有验收项已勾选 [x]
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: devgate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dod-check:
+    name: DoD Verification Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 拉取 PR 源分支（含 DoD 文件）
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install engine dependencies
+        run: |
+          cd packages/engine
+          npm ci --ignore-scripts
+
+      - name: Run DoD Verification Check
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate: DoD Verification (Branch: $GITHUB_HEAD_REF)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          node packages/engine/scripts/devgate/check-dod-mapping.cjs
+
+  ci-passed:
+    name: DevGate CI Passed
+    needs: [dod-check]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: DevGate Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          FAILED=false
+
+          if [ "${{ needs.dod-check.result }}" != "success" ]; then
+            echo "FAIL: DoD Verification Gate (${{ needs.dod-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ DevGate Failed"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ DevGate Passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

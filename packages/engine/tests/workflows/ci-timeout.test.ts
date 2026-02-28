@@ -4,7 +4,7 @@ import { join } from 'path';
 import * as yaml from 'js-yaml';
 
 describe('CI Workflow - Timeout Configuration', () => {
-  const workflowPath = join(__dirname, '../../.github/workflows/ci.yml');
+  const workflowPath = join(__dirname, '../../../../.github/workflows/engine-ci.yml');
   let workflow: any;
 
   it('C1-004: 所有关键 jobs 应该有 timeout-minutes', () => {
@@ -12,14 +12,13 @@ describe('CI Workflow - Timeout Configuration', () => {
     workflow = yaml.load(content);
 
     const criticalJobs = [
+      'changes',
       'version-check',
       'test',
       'impact-check',
       'contract-drift-check',
       'known-failures-protection',
       'config-audit',
-      'regression-pr',
-      'release-check',
       'ci-passed',
     ];
 
@@ -49,25 +48,21 @@ describe('CI Workflow - Timeout Configuration', () => {
     expect(testJob['timeout-minutes']).toBe(30);
   });
 
-  it('regression jobs 超时应该更长（15-30 分钟）', () => {
+  it('test job 超时应该比快速 jobs 更长（15-30 分钟）', () => {
     const content = readFileSync(workflowPath, 'utf8');
     workflow = yaml.load(content);
 
-    const regressionPr = workflow.jobs['regression-pr'];
-    const releaseCheck = workflow.jobs['release-check'];
+    const testJob = workflow.jobs['test'];
 
-    expect(regressionPr['timeout-minutes']).toBeGreaterThanOrEqual(15);
-    expect(regressionPr['timeout-minutes']).toBeLessThanOrEqual(30);
-
-    expect(releaseCheck['timeout-minutes']).toBeGreaterThanOrEqual(15);
-    expect(releaseCheck['timeout-minutes']).toBeLessThanOrEqual(30);
+    expect(testJob['timeout-minutes']).toBeGreaterThanOrEqual(15);
+    expect(testJob['timeout-minutes']).toBeLessThanOrEqual(30);
   });
 
   it('快速 jobs 超时应该短（1-5 分钟）', () => {
     const content = readFileSync(workflowPath, 'utf8');
     workflow = yaml.load(content);
 
-    const fastJobs = ['version-check', 'impact-check', 'contract-drift-check', 'ci-passed'];
+    const fastJobs = ['changes', 'version-check', 'impact-check', 'contract-drift-check', 'ci-passed'];
 
     fastJobs.forEach(jobName => {
       const job = workflow.jobs[jobName];
