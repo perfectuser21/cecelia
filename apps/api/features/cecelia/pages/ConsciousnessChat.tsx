@@ -613,7 +613,7 @@ export default function ConsciousnessChat() {
     // ★ 接收 Cecelia 主动推送（叙事/情绪变化）
     unsubs.push(subscribe('cecelia:message', (data) => {
       if (data?.message) {
-        addMessage({ id: `proactive_${Date.now()}`, role: 'assistant', content: `[主动] ${data.message}` });
+        addMessage({ id: `proactive_${Date.now()}`, role: 'assistant', content: data.message });
       }
     }));
     return () => unsubs.forEach(u => u());
@@ -959,9 +959,22 @@ export default function ConsciousnessChat() {
                   borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '4px 14px 14px 14px',
                   background: msg.role === 'user'
                     ? 'linear-gradient(135deg, #7c3aed, #6d28d9)'
-                    : 'rgba(255,255,255,0.04)',
-                  border: msg.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.07)',
+                    : msg.id.startsWith('proactive_')
+                      ? 'rgba(167,139,250,0.05)'
+                      : 'rgba(255,255,255,0.04)',
+                  border: msg.role === 'user' ? 'none'
+                    : msg.id.startsWith('proactive_')
+                      ? '1px solid rgba(167,139,250,0.2)'
+                      : '1px solid rgba(255,255,255,0.07)',
                 }}>
+                  {msg.id.startsWith('proactive_') && (
+                    <div style={{
+                      fontSize: 10, color: 'rgba(167,139,250,0.6)',
+                      marginBottom: 4, letterSpacing: '0.05em',
+                    }}>
+                      自述
+                    </div>
+                  )}
                   {msg.role === 'user' ? (
                     <div style={{ fontSize: 13, color: '#fff', lineHeight: '1.5' }}>{msg.content}</div>
                   ) : (
