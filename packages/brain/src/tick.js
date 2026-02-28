@@ -27,6 +27,7 @@ import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
+import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1289,6 +1290,20 @@ async function executeTick() {
     }
   } catch (suggestionErr) {
     console.error('[tick] Suggestion processing failed (non-fatal):', suggestionErr.message);
+  }
+
+  // 0.5.3b. Suggestion Dispatcher: 将高分 pending suggestions 转换为 suggestion_plan 任务
+  try {
+    const dispatchedCount = await dispatchPendingSuggestions(pool, 2);
+    if (dispatchedCount > 0) {
+      console.log(`[tick] Dispatched ${dispatchedCount} suggestion_plan tasks`);
+      actionsTaken.push({
+        action: 'suggestion_dispatch',
+        dispatched_count: dispatchedCount
+      });
+    }
+  } catch (dispatchErr) {
+    console.error('[tick] Suggestion dispatch failed (non-fatal):', dispatchErr.message);
   }
 
   // 0.5.4. Progress Ledger 进展评估：与 periodic cleanup 同频（每小时）
