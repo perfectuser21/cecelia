@@ -648,6 +648,7 @@ function projStatusLabel(s: string): string {
 }
 
 function ProjectInitiativeList({ projects }: { projects: Project[] }) {
+  const navigate = useNavigate();
   const projMap = new Map(projects.filter(p => p.type === 'project').map(p => [p.id, p]));
 
   const activeInitiatives = projects.filter(p =>
@@ -695,12 +696,15 @@ function ProjectInitiativeList({ projects }: { projects: Project[] }) {
         const accent = g.project ? '#3b82f6' : '#6e7681';
         const hasActive = g.initiatives.some(i => i.status === 'in_progress' || i.status === 'active');
         return (
-          <div key={g.project?.id ?? '__none__'} style={{
-            background: '#0d1117', borderRadius: 10,
-            border: '1px solid #21262d',
-            borderLeft: `3px solid ${accent}`,
-            padding: '12px 14px',
-          }}>
+          <div key={g.project?.id ?? '__none__'}
+            onClick={() => navigate('/work/projects')}
+            style={{
+              background: '#0d1117', borderRadius: 10,
+              border: '1px solid #21262d',
+              borderLeft: `3px solid ${accent}`,
+              padding: '12px 14px',
+              cursor: 'pointer',
+            }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
               <Dot color={accent} pulse={hasActive} />
               <span style={{ fontSize: 12, fontWeight: 600, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -950,6 +954,7 @@ export default function LiveMonitorPage() {
             {(() => {
               const topAreas = allGoals.filter(g => g.type === 'area_okr' && !g.parent_id);
               const activeAreas = topAreas.filter(g => g.status !== 'cancelled' && g.status !== 'archived');
+              const activeGlobals = allGoals.filter(g => g.type === 'global_okr' && g.status !== 'cancelled' && g.status !== 'archived' && g.status !== 'completed');
               const avgProgress = activeAreas.length > 0 ? Math.round(activeAreas.reduce((s, g) => s + (g.progress ?? 0), 0) / activeAreas.length) : 0;
               const activeKRs = allGoals.filter(g => g.type === 'kr' && (g.status === 'in_progress' || g.status === 'ready'));
               const todayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
@@ -962,6 +967,30 @@ export default function LiveMonitorPage() {
                     <div style={{ flex: 1, height: 1, background: '#21262d' }} />
                     <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
                   </div>
+                  {/* Global OKR 层 */}
+                  {activeGlobals.length > 0 ? (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>全局目标</div>
+                      {activeGlobals.map(g => {
+                        const gc = krColor(g.progress ?? 0);
+                        return (
+                          <div key={g.id} style={{ marginBottom: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <span style={{ fontFamily: 'monospace', fontSize: 9, background: 'rgba(245,158,11,.15)', color: '#f59e0b', padding: '0 4px', borderRadius: 3, flexShrink: 0 }}>GLOBAL</span>
+                              <span style={{ fontSize: 11, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(g.title, 28)}</span>
+                              <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: gc, flexShrink: 0 }}>{g.progress ?? 0}%</span>
+                            </div>
+                            <PBar pct={g.progress ?? 0} color={gc} h={3} />
+                          </div>
+                        );
+                      })}
+                      <div style={{ height: 1, background: '#21262d', margin: '6px 0 10px' }} />
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: 12, padding: '5px 8px', fontSize: 10, color: '#484f58', background: '#0d1117', borderRadius: 6 }}>
+                      全局目标未设置
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 14 }}>
                     {/* 左：全局汇总 */}
                     <div style={{ background: '#0d1117', borderRadius: 8, padding: '10px 14px', minWidth: 90, display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>

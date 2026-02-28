@@ -54,14 +54,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Proxy HK VPS stats → 100.86.118.99:3001 (via Tailscale)
+  // Proxy HK VPS stats → 100.86.118.99:5211 (HK Brain port, via Tailscale)
   if (req.url.startsWith('/api/v1/vps-monitor/hk-stats')) {
     const options = {
       hostname: '100.86.118.99',
-      port: 3001,
-      path: '/api/stats',
+      port: 5211,
+      path: '/api/v1/vps-monitor/stats',
       method: 'GET',
-      headers: { host: '100.86.118.99:3001' },
+      headers: { host: '100.86.118.99:5211' },
       timeout: 5000,
     };
     const proxyReq = http.request(options, (proxyRes) => {

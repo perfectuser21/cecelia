@@ -252,6 +252,15 @@ function validateTestRef(testRef, projectRoot) {
     }
   }
 
+  // manual:chrome: 视觉截图验证（非 shell 命令，由 AI 在 Step 7 截图判断）
+  if (testRef.startsWith("manual:chrome:")) {
+    const assertion = testRef.substring("manual:chrome:".length).trim();
+    if (!assertion || /^TODO$/i.test(assertion) || assertion.length < 10) {
+      return { valid: false, reason: "manual:chrome: 需要明确的视觉断言描述（至少10字符，不能是TODO）。示例：screenshot verify .sidebar is on LEFT side at http://localhost:5211/page" };
+    }
+    return { valid: true };
+  }
+
   if (testRef.startsWith("manual:")) {
     const evidenceContent = testRef.substring("manual:".length);
 

@@ -482,3 +482,11 @@ gh workflow run "Brain CI" --repo perfectuser21/cecelia --ref <branch>
 
 **check-version-sync.sh 检查范围**
 除了 `packages/brain/package.json`，还检查 `packages/brain/package-lock.json`、`DEFINITION.md`、`.brain-versions`，必须全部同步。
+
+## Live Monitor v3.1 布局重设计（2026-02-28）
+
+**知识点：React IIFE 中的日期计算**
+在 JSX 的 `{(() => { ... })()}` IIFE 中计算今天的时间戳，用 `new Date(new Date().setHours(0,0,0,0)).getTime()` 而不是 `new Date()`，保证与 `end_date` 的纯日期比较不受时区影响。
+
+**踩坑：setVps 缺 error guard**
+`/api/v1/vps-monitor/stats` 偶发 500 时，返回 `{"error":"..."}` 但 Promise 仍 resolved。`setVps({"error":"..."})` 使 `vps` 非 null，绕过了 `{vps ? ... : "—"}` 守护，导致 `vps.cpu.usage` TypeError。修复：加 `&& !r[6].value?.error` 检查，与 hkVps 保持一致。
