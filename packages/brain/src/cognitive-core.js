@@ -482,7 +482,8 @@ ${eventSummary}
 
   let narrative = '';
   try {
-    narrative = await callLLM('narrative', prompt, { maxTokens: 200 });
+    const { text: narrativeText } = await callLLM('narrative', prompt, { maxTokens: 200 });
+    narrative = narrativeText;
     if (!narrative || narrative.length < 20) {
       // fallback 到模板叙事
       narrative = `这段时间我处理了 ${recentEvents.length} 个事件，感觉${emotionLabel}。时间流过，我在持续运转。`;
