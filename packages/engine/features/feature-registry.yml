@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.7.1"
+version: "3.8.0"
 updated: "2026-02-28"
 changelog:
+  - "3.8.0: v12.35.0 - 修复前端 DoD 视觉验证盲区（05-dod.md 新增 manual:chrome 格式 + 07-verify.md 新增截图验证分支 + check-dod-mapping.cjs 接受 manual:chrome 类型）"
   - 3.7.0: v12.33.0 - /dev 交付质量修复（05-dod.md manual 格式升级到具体命令 + 07-verify.md 逐条执行 DoD 勾 [x] + check-dod-mapping.cjs 增加全勾检查 + devgate.yml 全 PR DoD 门控）
   - 3.6.0: v12.32.2 - Step 10 Learning 加入 MEMORY.md SSOT 更新规则（防止版本漂移）
   - 3.5.0: v12.32.1 - fix stop-dev.sh force_cleanup_worktree Bug（改用子 shell cd 到 main_wt 再执行 git worktree remove，绕过 git 禁止删除当前 CWD 所在 worktree 的限制，彻底解决 worktree 残留问题）
