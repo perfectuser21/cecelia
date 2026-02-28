@@ -1699,7 +1699,7 @@ router.post('/autumnrice/chat', async (req, res) => {
 
     // 加载 pending_action（含拆解上下文和历史对话）
     const actionResult = await pool.query(
-      `SELECT id, context, params, comments, status FROM pending_actions WHERE id = $1`,
+      `SELECT id, action_type, context, params, comments, status FROM pending_actions WHERE id = $1`,
       [pending_action_id]
     );
     if (actionResult.rows.length === 0) {
