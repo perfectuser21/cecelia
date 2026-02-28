@@ -8,7 +8,7 @@
  *   - 三栏布局：历史+脑层 / 对话 / 标签页
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Brain, Cpu, Zap, MessageSquare, Send, Plus, Activity,
   Loader2, Eye, Layers, ChevronRight, History, BookOpen,
@@ -97,6 +97,48 @@ function saveSessions(sessions: Session[]) {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.slice(0, MAX_SESSIONS)));
   } catch { /* quota exceeded - ignore */ }
+}
+
+// ── Brain history helpers ─────────────────────────────────
+
+interface BrainMsg { role: string; content: string; created_at: string; }
+
+const GAP_MS = 30 * 60 * 1000; // 30 minutes = new conversation
+
+function groupHistoryIntoSessions(msgs: BrainMsg[]): Session[] {
+  if (msgs.length === 0) return [];
+  // Sort ASC (oldest first)
+  const sorted = [...msgs].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const groups: BrainMsg[][] = [];
+  let current: BrainMsg[] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = new Date(sorted[i - 1].created_at).getTime();
+    const curr = new Date(sorted[i].created_at).getTime();
+    if (curr - prev >= GAP_MS) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(sorted[i]);
+  }
+  if (current.length > 0) groups.push(current);
+  return groups.map((group, idx) => {
+    const firstUser = group.find(m => m.role === 'user');
+    const title = (firstUser?.content ?? group[0]?.content ?? 'Cecelia 对话').slice(0, 35);
+    const createdAt = group[0].created_at;
+    const messages: ChatMessage[] = group.map((m, i) => ({
+      id: `brain-msg-${idx}-${i}`,
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+    return {
+      id: `brain-history-${new Date(createdAt).getTime()}`,
+      title,
+      createdAt,
+      messages,
+    };
+  });
 }
 
 // ── Markdown renderer (no deps) ───────────────────────────
@@ -362,10 +404,34 @@ export default function ConsciousnessChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ── Session management ────────────────────────────────
-  const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  const [sessions, setSessions] = useState<Session[]>(() => loadSessions()); // localStorage only
+  const [brainSessions, setBrainSessions] = useState<Session[]>([]); // Brain API history (memory only)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
   const [historyMessages, setHistoryMessages] = useState<ChatMessage[]>([]);
   const currentSessionIdRef = useRef<string>(`session-${Date.now()}`);
+
+  // All sessions (brain history + localStorage), sorted newest first
+  const allSessions = useMemo(() => {
+    const combined = [...brainSessions, ...sessions];
+    return combined.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [brainSessions, sessions]);
+
+  // Load historical conversations from Brain API on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/brain/orchestrator/chat/history?limit=500');
+        if (!r.ok) return;
+        const data = await r.json();
+        const msgs: BrainMsg[] = Array.isArray(data) ? data : [];
+        if (msgs.length === 0) return;
+        setBrainSessions(groupHistoryIntoSessions(msgs));
+      } catch { /* silent */ }
+    })();
+  }, []); // Run once on mount
 
   // Auto-save session whenever messages change
   useEffect(() => {
@@ -393,6 +459,7 @@ export default function ConsciousnessChat() {
 
   const handleSelectSession = useCallback((s: Session) => {
     setHistoryMessages(s.messages);
+    setSelectedSessionId(s.id);
     setViewMode('history');
   }, []);
 
@@ -712,14 +779,14 @@ export default function ConsciousnessChat() {
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {sessions.length === 0 && (
+              {allSessions.length === 0 && (
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)', textAlign: 'center', padding: '12px 0' }}>
                   暂无历史对话
                 </div>
               )}
-              {sessions.map(s => {
+              {allSessions.map(s => {
                 const isCurrent = s.id === currentSessionIdRef.current && viewMode === 'live';
-                const isSelected = viewMode === 'history' && historyMessages === s.messages;
+                const isSelected = viewMode === 'history' && selectedSessionId === s.id;
                 return (
                   <button
                     key={s.id}
