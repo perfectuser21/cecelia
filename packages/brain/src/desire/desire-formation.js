@@ -8,7 +8,7 @@
 
 import { callLLM } from '../llm-caller.js';
 
-const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act', 'follow_up'];
+const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act', 'follow_up', 'explore'];
 
 /**
  * 基于洞察生成欲望结构
@@ -30,6 +30,7 @@ async function generateDesireFromInsight(insight) {
 
 type 选择（按优先级）：
 - act：你自己能处理的事（创建任务、调整优先级、触发检查）— 最优先
+- explore：你发现了自己不理解的模式或知识盲点，想主动去研究 — 好奇心驱动，自主学习
 - follow_up：之前做过的事需要跟进（验收结果、催促进度）
 - celebrate：好消息、里程碑达成、任务完成率高、KR 进度推进 — 积极信号时优先选这个
 - propose：建议改进、新想法、基于反刍洞察的可执行建议
@@ -41,7 +42,8 @@ type 选择（按优先级）：
 1. 好消息用 celebrate，不要用 inform — 让 Alex 感受到进展
 2. 可执行建议用 propose，不要用 inform — 让 Alex 看到你在思考
 3. 避免重复 warn 同一个问题 — 如果之前已经警告过，用 act 自己解决
-4. act/follow_up 不需要 Alex 同意，直接执行`;
+4. act/follow_up/explore 不需要 Alex 同意，直接执行
+5. 如果洞察中含有「需要研究」「不理解」「值得探索」的内容，优先选 explore`;
 
   try {
     const { text } = await callLLM('mouth', prompt, { timeout: 20000 });
