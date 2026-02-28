@@ -1,6 +1,6 @@
 /**
- * LiveMonitorPage v17 (Live Monitor v3.3) - 基础渲染测试
- * 变更：左栏基础设施(donut/rings/circles) + OKR Global→Area层级 + Projects by Area
+ * LiveMonitorPage v18 (Live Monitor v3.4) - 基础渲染测试
+ * 变更：去 emoji + INFRA 合并块 + BRAIN 块 + 2列 Project + 全 Area 显示
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,7 +25,7 @@ function renderWithRouter() {
   );
 }
 
-describe('LiveMonitorPage v17', () => {
+describe('LiveMonitorPage v18', () => {
   it('渲染顶部栏标识', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
@@ -38,15 +38,26 @@ describe('LiveMonitorPage v17', () => {
     expect(screen.getByText('Projects')).toBeInTheDocument();
   });
 
-  it('渲染左栏 Agents 紧凑圆点区块', () => {
+  it('渲染左栏 INFRA 合并区块（US + HK）', () => {
     renderWithRouter();
-    expect(screen.getByText('Agents')).toBeInTheDocument();
+    expect(screen.getByText('INFRA')).toBeInTheDocument();
+    expect(screen.getByText('US')).toBeInTheDocument();
+    expect(screen.getByText('HK')).toBeInTheDocument();
   });
 
-  it('渲染基础设施指标（US VPS + HK VPS 标签）', () => {
+  it('渲染左栏 BRAIN 区块', () => {
     renderWithRouter();
-    expect(screen.getByText('US VPS')).toBeInTheDocument();
-    expect(screen.getByText('HK VPS')).toBeInTheDocument();
+    expect(screen.getByText('BRAIN')).toBeInTheDocument();
+  });
+
+  it('渲染左栏 ACC 账号区块', () => {
+    renderWithRouter();
+    expect(screen.getByText('ACC')).toBeInTheDocument();
+  });
+
+  it('渲染左栏 AGENTS 区块', () => {
+    renderWithRouter();
+    expect(screen.getByText('AGENTS')).toBeInTheDocument();
   });
 
   it('Projects 区块显示空状态', () => {
