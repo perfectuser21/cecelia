@@ -28,6 +28,7 @@ import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
 import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
+import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1128,6 +1129,26 @@ async function executeTick() {
     recordOperation(false, 'alertness_evaluation');
   }
 
+  // 0.5 认知评估：情绪 + 主观时间 + 并发意识（轻量，纯计算）
+  publishCognitiveState({ phase: 'cognition', detail: '认知评估…' });
+  let cognitionSnapshot = null;
+  try {
+    const resources = checkServerResources();
+    const cpuPercent = resources.cpu_percent || 0;
+    const emotionResult = evaluateEmotion({
+      alertnessLevel: alertnessResult?.level ?? 1,
+      cpuPercent,
+      queueDepth: 0, // 稍后从 DB 获取实际值
+      successRate: 1.0
+    });
+    updateSubjectiveTime();
+    recordTickEvent({ phase: 'tick', detail: `警觉=${alertnessResult?.levelName || 'CALM'}, 情绪=${emotionResult.label}` });
+    cognitionSnapshot = { emotion: emotionResult, time: getSubjectiveTime?.() };
+    console.log(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 派发修正=${emotionResult.dispatch_rate_modifier}`);
+  } catch (cogErr) {
+    console.warn('[tick] 认知评估跳过:', cogErr.message);
+  }
+
   // 0. Thalamus: Analyze tick event (quick route for simple ticks)
   publishCognitiveState({ phase: 'thalamus', detail: '丘脑路由分析…' });
   try {
@@ -1911,6 +1932,12 @@ async function executeTick() {
     console.error('[tick] rumination error:', rumErr.message);
   }
 
+  // 10.7 内在叙事更新（每小时一次，fire-and-forget）
+  try {
+    const currentEmotion = getCurrentEmotion();
+    updateNarrative(currentEmotion, pool).catch(e => console.warn('[tick] 叙事更新失败:', e.message));
+  } catch { /* 静默 */ }
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
@@ -1947,6 +1974,7 @@ async function executeTick() {
     daily_review: dailyReviewResult,
     rumination: ruminationResult,
     desire_system: desireResult,
+    cognition: cognitionSnapshot,
     actions_taken: actionsTaken,
     summary: {
       in_progress: inProgress.length,
