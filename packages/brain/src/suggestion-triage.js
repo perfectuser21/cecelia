@@ -10,16 +10,22 @@ import { emit } from './event-bus.js';
 // 优先级权重配置
 const PRIORITY_WEIGHTS = {
   source: {
-    cortex: 0.9,      // 高级决策层建议权重高
-    thalamus: 0.7,    // 中级路由层建议
-    executor: 0.6,    // 执行层建议
-    default: 0.5      // 默认权重
+    cortex: 0.9,          // 高级决策层建议权重高
+    owner_input: 0.85,    // 主人直接声音（最高优先）
+    goal_evaluator: 0.85, // Goal 评估器（外部反馈）
+    rumination: 0.80,     // 反刍/深度思考洞察
+    desire_system: 0.75,  // 欲望系统信号
+    thalamus: 0.7,        // 中级路由层建议
+    executor: 0.6,        // 执行层建议
+    default: 0.5          // 默认权重
   },
   type: {
-    alert: 0.95,      // 警告类建议最高优先级
-    task_creation: 0.8, // 任务创建建议
-    optimization: 0.6,  // 优化建议
-    general: 0.5      // 普通建议
+    alert: 0.95,          // 警告类建议最高优先级
+    owner_request: 0.90,  // 主人请求（明确意图）
+    task_creation: 0.8,   // 任务创建建议
+    insight_action: 0.75, // 洞察驱动行动
+    optimization: 0.6,    // 优化建议
+    general: 0.5          // 普通建议
   },
   freshness: {
     maxAge: 24 * 60 * 60 * 1000, // 24小时，超过后权重递减
