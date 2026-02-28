@@ -242,7 +242,7 @@ function OKRCard({
               {/* KR 下的 Projects */}
               {expandedKrs.has(kr.id) && (() => {
                 const krProjects = allProjects.filter(p =>
-                  (p.kr_id === kr.id || p.goal_id === tree.id) && !p.parent_id
+                  p.kr_id === kr.id && !p.parent_id
                 );
                 return krProjects.length > 0 ? (
                   <div className="bg-slate-50/50 dark:bg-slate-900/30">
@@ -418,35 +418,53 @@ export default function OKRPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [treesRes, projectsRes] = await Promise.all([
-        fetch('/api/okr/trees'),
-        fetch('/api/tasks/projects')
+      const [goalsRes, projectsRes] = await Promise.all([
+        fetch('/api/goals?limit=200'),
+        fetch('/api/tasks/projects?limit=200')
       ]);
 
-      const [treesData, projectsData] = await Promise.all([
-        treesRes.json(),
+      const [goalsData, projectsData] = await Promise.all([
+        goalsRes.json(),
         projectsRes.json()
       ]);
 
-      setProjects(projectsData);
+      const allProjects = Array.isArray(projectsData) ? projectsData : [];
+      setProjects(allProjects);
 
-      // Fetch children for each tree
-      const treesWithChildren = await Promise.all(
-        treesData.trees.map(async (tree: Objective) => {
-          const detailRes = await fetch(`/api/okr/trees/${tree.id}`);
-          const treeWithChildren = detailRes.ok
-            ? await detailRes.json()
-            : { ...tree, children: [] };
+      const allGoals = Array.isArray(goalsData) ? goalsData : [];
 
-          // Link projects to this objective
-          const linkedProjects = projectsData.filter((p: Project) => p.goal_id === tree.id);
+      // area_okr（无 parent_id）= Objective 层级
+      const areaOkrs = allGoals.filter((g: any) => g.type === 'area_okr' && !g.parent_id);
 
-          return {
-            ...treeWithChildren,
-            linkedProjects
-          };
-        })
-      );
+      const treesWithChildren: OKRTree[] = areaOkrs.map((obj: any) => {
+        // KR = type='kr'，parent_id 指向该 Objective
+        const krs: KeyResult[] = allGoals
+          .filter((g: any) => g.parent_id === obj.id && g.type === 'kr')
+          .map((kr: any) => ({
+            id: kr.id,
+            title: kr.title,
+            progress: kr.progress ?? 0,
+            weight: parseFloat(kr.weight) || 1,
+            status: kr.status,
+          }));
+
+        // 该 Objective 下所有 KR 关联的 Project
+        const krIds = new Set(krs.map(kr => kr.id));
+        const linkedProjects = allProjects.filter(
+          (p: Project) => p.kr_id && krIds.has(p.kr_id) && !p.parent_id
+        );
+
+        return {
+          id: obj.id,
+          title: obj.title,
+          description: obj.description ?? '',
+          priority: obj.priority ?? 'P2',
+          progress: obj.progress ?? 0,
+          status: obj.status ?? 'active',
+          children: krs,
+          linkedProjects,
+        };
+      });
 
       setTrees(treesWithChildren);
       setLastRefresh(new Date());
