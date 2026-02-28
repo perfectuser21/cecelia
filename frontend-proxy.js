@@ -54,6 +54,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Proxy HK VPS stats → 100.86.118.99:3001 (via Tailscale)
+  if (req.url.startsWith('/api/v1/vps-monitor/hk-stats')) {
+    const options = {
+      hostname: '100.86.118.99',
+      port: 3001,
+      path: '/api/stats',
+      method: 'GET',
+      headers: { host: '100.86.118.99:3001' },
+      timeout: 5000,
+    };
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', () => {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'HK VPS unreachable' }));
+    });
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy();
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'HK VPS timeout' }));
+    });
+    proxyReq.end();
+    return;
+  }
+
   // Proxy other /api/* to Brain (orchestrator, autumnrice, etc. are all under Brain now)
   if (req.url.startsWith('/api/')) {
     // Rewrite /api/v1/vps-monitor/* → /api/brain/vps-monitor/* (strip legacy /v1 prefix)
