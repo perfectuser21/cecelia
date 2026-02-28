@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] 新增 Cecelia 日记页面 (PR #177, Brain 1.135.2)
+- **架构模式**: Brain 子路由放 `src/routes/` 目录，在 `server.js`（根目录，不是 src/）注册 `app.use('/api/brain/xxx', router)`
+- **前端路由注册**: `apps/api/features/cecelia/index.ts` manifest 中加路由 + components 懒加载，DynamicRouter 自动处理
+- **narrative content 格式**: memory_stream 的 content 字段存储的是 JSON 字符串 `{"text":"...","model":"...","elapsed_ms":...}`，API 层需要 `JSON.parse` 再取 text 字段
+- **DEFINITION.md 版本**: version-sync.sh 会检查 DEFINITION.md 第 7 行 `Brain 版本`，version bump 时必须同时更新
+
 ### [2026-02-28] executor.js failure_pattern content_hash 去重 (PR #173, Brain 1.135.1)
 - **根因**: `executor.js` 直接 INSERT INTO learnings 时未设 `content_hash`，绕过 `auto-learning.js` 的去重逻辑，每次 watchdog kill 均产生新记录。实测：916 条 test-watchdog-kill 记录 content_hash 全为 NULL
 - **修复**: 提取 `failureTitle`/`failureContent` 变量 → 计算 `SHA256(title\ncontent).slice(0,16)` → 先 SELECT 检查去重 → INSERT 补充 `content_hash / version / is_latest / digested`（与 auto-learning.js 规范一致）
