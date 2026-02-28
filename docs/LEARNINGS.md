@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] Layer 4 欲望轨迹追踪系统 (PR #176, Brain 1.136.0)
+- **.brain-versions 必须同步**: version bump 时除了 package.json/package-lock.json/DEFINITION.md/VERSION，还要更新根目录 `.brain-versions`（纯版本号一行，无前缀）
+- **翻译器模式提示词**: 让 LLM 只转述信号，不创作——"你不是 Cecelia，你是翻译器，让信号说话"，产出比"你是 Cecelia"更真实的欲望自述
+- **parallel 并发冲突解法**: main 分支前进（1.135.2 narratives PR）时，用 `git merge origin/main` + 手动解决冲突（package.json/DEFINITION.md/server.js/package-lock.json），保留双方新增内容
+- **fire-and-forget 集成模式**: tick 步骤中的长时 IO（LLM 调用）用 `Promise.resolve().then(...).catch(...)` 包裹，不阻塞主循环，不影响 tick 时序
+
 ### [2026-02-28] 新增 Cecelia 日记页面 (PR #177, Brain 1.135.2)
 - **架构模式**: Brain 子路由放 `src/routes/` 目录，在 `server.js`（根目录，不是 src/）注册 `app.use('/api/brain/xxx', router)`
 - **前端路由注册**: `apps/api/features/cecelia/index.ts` manifest 中加路由 + components 懒加载，DynamicRouter 自动处理
