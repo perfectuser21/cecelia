@@ -10,6 +10,18 @@ import ProposalChat from './ProposalChat';
 import ProposalOptions from './ProposalOptions';
 import type { ProposalComment } from '../hooks/useProposals';
 
+const SOURCE_LABELS: Record<string, string> = {
+  system: '系统',
+  okr_decomposer: '秋米',
+  autumnrice: '秋米',
+  thalamus: '丘脑',
+  cortex: '皮层',
+  rumination: '反刍',
+  desire_system: '欲望系统',
+  goal_evaluator: '目标评估',
+  owner_input: '用户输入',
+};
+
 const TYPE_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
   propose_decomposition: { icon: GitBranch, color: 'text-purple-500 bg-purple-100 dark:bg-purple-900/40', label: 'OKR 拆解' },
   propose_anomaly_action: { icon: AlertTriangle, color: 'text-red-500 bg-red-100 dark:bg-red-900/40', label: '异常处理' },
@@ -124,7 +136,7 @@ export default function ProposalCard({
               </span>
               {proposal.source && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
-                  {proposal.source}
+                  {SOURCE_LABELS[proposal.source] || proposal.source}
                 </span>
               )}
               <span className="text-[10px] text-slate-400 dark:text-slate-500 ml-auto whitespace-nowrap">
