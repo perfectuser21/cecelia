@@ -197,6 +197,40 @@ async function digestLearnings(db, learnings) {
       }
     }
 
+    // 4.2 检测好奇心信号 → 写入 working_memory curiosity_topics（环2：自主学习驱动）
+    if (insight) {
+      const CURIOSITY_PATTERNS = [
+        /不理解|不清楚|机制不明|原因未知|需要验证|需要更多信息|值得深入研究|待探索|unclear/i,
+        /为什么会|如何实现|背后的原因|有待研究|还不确定/i,
+      ];
+      const hasCuriosity = CURIOSITY_PATTERNS.some(p => p.test(insight));
+      if (hasCuriosity) {
+        try {
+          // 提取好奇的主题（优先用 [ACTION:] 标记，否则取洞察前80字）
+          const actionMatch = insight.match(/\[ACTION:\s*(.+?)\]/);
+          const topic = actionMatch ? actionMatch[1].trim() : insight.slice(0, 80).trim();
+
+          // 读取现有 curiosity_topics，追加，保留最近 10 个
+          const existing = await db.query(
+            `SELECT value_json FROM working_memory WHERE key = 'curiosity_topics' LIMIT 1`
+          );
+          const topics = Array.isArray(existing.rows[0]?.value_json) ? existing.rows[0].value_json : [];
+          topics.push({ topic, ts: new Date().toISOString() });
+          const trimmed = topics.slice(-10);
+
+          await db.query(`
+            INSERT INTO working_memory (key, value_json, updated_at)
+            VALUES ('curiosity_topics', $1, NOW())
+            ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+          `, [JSON.stringify(trimmed)]);
+
+          console.log(`[rumination] curiosity detected → topic: ${topic}`);
+        } catch (curErr) {
+          console.warn('[rumination] curiosity_topics write failed (non-blocking):', curErr.message);
+        }
+      }
+    }
+
     // 5. 自我反思：基于洞察更新 self-model（仅在有实质性洞察时触发）
     if (insight && insight.trim()) {
       try {

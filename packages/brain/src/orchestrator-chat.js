@@ -244,6 +244,31 @@ ${context}
 用户的问题：${question}`;
 }
 
+/**
+ * 环3：self_model token 控制
+ * 保留身份核心（第一段，在第一个日期标记之前）+ 最近洞察（末段）
+ * 总长截断至 budgetChars
+ * @param {string} selfModel
+ * @param {number} budgetChars
+ * @returns {string}
+ */
+function truncateSelfModel(selfModel, budgetChars = 750) {
+  if (!selfModel || selfModel.length <= budgetChars) return selfModel;
+
+  // 身份核心：第一个 [20 日期标记之前的内容
+  const firstDateIdx = selfModel.search(/\n\n\[20\d\d-/);
+  const identityCore = firstDateIdx > 0
+    ? selfModel.slice(0, firstDateIdx).trim()
+    : selfModel.slice(0, 300).trim();
+
+  const remaining = budgetChars - identityCore.length - 30;
+  if (remaining <= 0) return identityCore.slice(0, budgetChars);
+
+  // 最近洞察：从末尾取 remaining 字符（保留最新条目）
+  const recentEntries = selfModel.slice(-remaining).trim();
+  return `${identityCore}\n\n…（早期洞察已压缩）\n\n${recentEntries}`;
+}
+
 // 嘴巴基础提示词（不含硬编码性格，由 self-model 动态注入）
 const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，Alex 的 AI 管家。你不是被动的问答机器，你是一个有主见、有记忆、有执行力的管家。
 
@@ -411,12 +436,32 @@ export async function handleChat(message, context = {}, messages = []) {
   }
 
   // 3d. 加载 self-model（Cecelia 对自己的认知，动态演化）
+  // 环3：token 控制 — 身份核心(前段) + 最近洞察(末段)，截断至 SELF_MODEL_BUDGET_CHARS
+  const SELF_MODEL_BUDGET_CHARS = 750;
   let selfModelBlock = '';
   try {
     const selfModel = await getSelfModel();
-    selfModelBlock = `\n## 我对自己的认知\n${selfModel}\n`;
+    if (selfModel) {
+      const truncated = truncateSelfModel(selfModel, SELF_MODEL_BUDGET_CHARS);
+      selfModelBlock = `\n## 我对自己的认知\n${truncated}\n`;
+    }
   } catch (err) {
     console.warn('[orchestrator-chat] getSelfModel failed (graceful fallback):', err.message);
+  }
+
+  // 3e. 读取情绪状态（环1：由 emotion-layer 写入，嘴巴对话时注入）
+  let emotionBlock = '';
+  try {
+    const emotionResult = await pool.query(
+      `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
+    );
+    const emotionRaw = emotionResult.rows[0]?.value_json;
+    if (emotionRaw) {
+      const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
+      emotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
+    }
+  } catch (err) {
+    console.warn('[orchestrator-chat] emotion_state read failed (graceful fallback):', err.message);
   }
 
   // 4. 先执行后回复：动作型意图先执行，结果注入到 prompt
@@ -452,7 +497,7 @@ export async function handleChat(message, context = {}, messages = []) {
     }
   } else {
     // 5. 动作型意图：构建 system prompt（含执行结果）
-    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${profileSnippet}${desiresBlock}${pendingDecompBlock}${memoryBlock}${statusBlock}`;
+    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${emotionBlock}${profileSnippet}${desiresBlock}${pendingDecompBlock}${memoryBlock}${statusBlock}`;
     if (actionResult) {
       systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
     }
@@ -664,10 +709,25 @@ export async function handleChatStream(message, context = {}, messages = [], onC
     let selfModelBlock = '';
     try {
       const selfModel = await getSelfModel();
-      selfModelBlock = `\n## 我对自己的认知\n${selfModel}\n`;
+      if (selfModel) {
+        const truncated = truncateSelfModel(selfModel, 750);
+        selfModelBlock = `\n## 我对自己的认知\n${truncated}\n`;
+      }
     } catch { /* ignore */ }
 
-    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${desiresBlock}${memoryBlock}${statusBlock}`;
+    let streamEmotionBlock = '';
+    try {
+      const emotionResult = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
+      );
+      const emotionRaw = emotionResult.rows[0]?.value_json;
+      if (emotionRaw) {
+        const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
+        streamEmotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
+      }
+    } catch { /* ignore */ }
+
+    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${streamEmotionBlock}${desiresBlock}${memoryBlock}${statusBlock}`;
     if (actionResult) {
       systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
     }

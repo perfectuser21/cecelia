@@ -11,6 +11,12 @@
 - **merge 冲突 minor bump 策略**: 当 main 已有 1.137.1，我们的 1.137.0 需 bump 到 1.138.0（minor，因为是新功能）。用 `python3 re.sub` 精确替换冲突块，比 `git checkout HEAD --` + 手工改更可靠
 - **facts-check 终态检查**: 合并后 facts-check 显示 "092" 是由于上一次运行缓存——重新 `node scripts/facts-check.mjs` 即可看到正确的 "093"
 
+### [2026-02-28] Cecelia 成长档案页面 (PR #186, Dashboard v1.12.0 / Brain v1.137.0)
+- **facts-check 必须同步 DEFINITION.md**: version bump 后必须更新 `DEFINITION.md` 里的 `Brain 版本` 字段，否则 facts-check CI 失败（`brain_version: code=1.137.0 ≠ doc=1.136.3`）
+- **Lucide 图标字符串映射**: Dashboard `App.tsx` 用 `import * as LucideIcons` 动态解析 nav icon 字符串，新图标（如 `Sprout`）直接写字符串即可，无需额外注册
+- **Birthday 页面设计**: Day 1 特殊态（isDay1）用 gradient border + amber Star 徽章区分，非 Day 1 用普通 slate 边框；计数逻辑 `Math.floor((now - birth) / 86400000) + 1` 保证 Day 1=1
+- **前端统计来源**: 成长档案统计（tasks_completed/learnings_count）全从新增的 `GET /api/brain/stats/overview` 读取，Brain 层负责汇总，前端只展示
+
 ### [2026-02-28] Layer 4 欲望轨迹追踪系统 (PR #176, Brain 1.136.0)
 - **.brain-versions 必须同步**: version bump 时除了 package.json/package-lock.json/DEFINITION.md/VERSION，还要更新根目录 `.brain-versions`（纯版本号一行，无前缀）
 - **翻译器模式提示词**: 让 LLM 只转述信号，不创作——"你不是 Cecelia，你是翻译器，让信号说话"，产出比"你是 Cecelia"更真实的欲望自述
