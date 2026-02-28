@@ -111,8 +111,8 @@ export const AGENTS = [
     name: '嘴巴',
     description: '对话生成、对外接口',
     layer: 'brain',
-    allowed_models: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],
-    recommended_model: 'MiniMax-M2.5-highspeed',
+    allowed_models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    recommended_model: 'claude-sonnet-4-6',
     fixed_provider: null,
   },
   {
