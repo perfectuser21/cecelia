@@ -530,6 +530,71 @@ router.post('/goals/:id/approve', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/goals/:id/okr-context
+ * 返回 KR 的完整 OKR 上下文：父 Objective + 同级 KR + 相似历史 KR + 支撑 learnings
+ */
+router.get('/goals/:id/okr-context', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1. 取本 KR
+    const krResult = await pool.query(
+      `SELECT id, title, type, status, priority, progress, parent_id, metadata FROM goals WHERE id = $1`,
+      [id]
+    );
+    if (krResult.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const kr = krResult.rows[0];
+
+    // 2. 取父 Objective
+    let objective = null;
+    if (kr.parent_id) {
+      const obj = await pool.query(
+        `SELECT id, title, type, status, progress FROM goals WHERE id = $1`,
+        [kr.parent_id]
+      );
+      objective = obj.rows[0] || null;
+    }
+
+    // 3. 取同级 KR（同一 parent_id，type='kr'，排除自身）
+    const siblings = kr.parent_id ? (await pool.query(
+      `SELECT id, title, type, status, priority, progress FROM goals
+       WHERE parent_id = $1 AND type = 'kr' AND id != $2 ORDER BY priority ASC, created_at ASC`,
+      [kr.parent_id, id]
+    )).rows : [];
+
+    // 4. 相似历史 KR（标题关键词重叠，排除当前 KR，只取已完成/in_progress）
+    const words = (kr.title || '').split(/[\s，。、\-_]+/).filter(w => w.length > 1).slice(0, 5);
+    let similarKrs = [];
+    if (words.length > 0) {
+      const likeClause = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
+      similarKrs = (await pool.query(
+        `SELECT id, title, type, status, progress, created_at FROM goals
+         WHERE type = 'kr' AND id != $1 AND (${likeClause})
+         ORDER BY created_at DESC LIMIT 5`,
+        [id, ...words.map(w => `%${w}%`)]
+      )).rows;
+    }
+
+    // 5. 支撑 learnings（关键词匹配标题或内容，LIMIT 3）
+    let learnings = [];
+    if (words.length > 0) {
+      const lLikeClause = words.map((_, i) => `(title ILIKE $${i + 1} OR content ILIKE $${i + 1})`).join(' OR ');
+      learnings = (await pool.query(
+        `SELECT id, title, content, category, created_at FROM learnings
+         WHERE ${lLikeClause}
+         ORDER BY created_at DESC LIMIT 3`,
+        [...words.map(w => `%${w}%`)]
+      )).rows;
+    }
+
+    res.json({ success: true, kr, objective, siblings, similar_krs: similarKrs, learnings });
+  } catch (err) {
+    console.error('[goals/okr-context] Error:', err.message);
+    res.status(500).json({ error: 'Failed to get OKR context', details: err.message });
+  }
+});
+
 // ==================== Task Feedback & Status API (Phase 4b) ====================
 
 /**
@@ -1712,60 +1777,71 @@ router.post('/autumnrice/chat', async (req, res) => {
     }
 
     const ctx = action.context || {};
-    const initiatives = Array.isArray(ctx.initiatives) ? ctx.initiatives : [];
     const existingComments = Array.isArray(action.comments) ? action.comments : [];
 
-    // 新版本意图检测（在构建 prompt 之前，以便调整 prompt 格式）
-    const NEW_VERSION_TRIGGERS = ['写一个新版本', '写新版本', '生成新版本', '给我新版本', '写一版新的', '帮我写个新版本', '写一个新的', '新的一个版本', '一个新版本', '试试新版', '新版方案', '重新写个版本', '换个版本', '再写一版'];
-    const isNewVersion = NEW_VERSION_TRIGGERS.some(kw => message.includes(kw));
+    // 加载 KR OKR 上下文（注入秋米 prompt，提供历史参考）
+    const krId = ctx.kr_id || null;
+    let okrCtxBlock = '';
+    if (krId) {
+      try {
+        const krRes = await pool.query(
+          `SELECT id, title, status, progress, parent_id FROM goals WHERE id = $1`,
+          [krId]
+        );
+        if (krRes.rows.length > 0) {
+          const kr = krRes.rows[0];
+          let objTitle = '';
+          if (kr.parent_id) {
+            const objRes = await pool.query(
+              `SELECT title, progress FROM goals WHERE id = $1`,
+              [kr.parent_id]
+            );
+            if (objRes.rows[0]) objTitle = `\n**上级 Objective**：${objRes.rows[0].title}（进度 ${objRes.rows[0].progress ?? 0}%）`;
+          }
+          const words = (kr.title || '').split(/[\s，。、\-_]+/).filter(w => w.length > 1).slice(0, 4);
+          let simBlock = '';
+          if (words.length > 0) {
+            const lc = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
+            const sims = (await pool.query(
+              `SELECT title, status, progress FROM goals WHERE type='kr' AND id!=$1 AND (${lc}) ORDER BY created_at DESC LIMIT 3`,
+              [krId, ...words.map(w => `%${w}%`)]
+            )).rows;
+            if (sims.length > 0) simBlock = `\n**历史相似 KR**：\n${sims.map(s => `  - ${s.title}（${s.status}，${s.progress ?? 0}%）`).join('\n')}`;
+          }
+          okrCtxBlock = `${objTitle}${simBlock}`;
+        }
+      } catch (e) {
+        console.warn('[autumnrice/chat] okr-context fetch failed:', e.message);
+      }
+    }
 
-    const versionCreationSection = isNewVersion ? `
-
-## 当前任务：生成新版本 Initiative 列表
-
-用户希望你直接创建一个新版本，系统会自动保存到数据库，在左侧展示。
-请以严格 JSON 格式回复（只输出 JSON，无其他文字）：
-{"initiatives": ["Initiative 名称 1", "Initiative 名称 2"], "message": "新版本已在左侧展示，请查看"}
-
-要求：
-- initiatives 数组包含 3-6 个 Initiative，基于 KR 目标和现有版本进行优化
-- 保留合理的部分，改进不足的部分，或根据用户的具体要求调整
-- message 字段 30 字以内，告诉用户新版本已展示
-- 输出必须是合法 JSON，不要有任何其他文字` : '';
-
-    // 构建秋米的 system prompt + 对话历史
-    const initiativeList = initiatives.length > 0
-      ? initiatives.map((name, i) => `  ${i + 1}. ${name}`).join('\n')
-      : '  （暂无 Initiative）';
-
+    // 构建秋米的 system prompt（聚焦 KR 定义质量讨论）
     const decompSkillBlock = _decompSkillContent
       ? `# 你的核心技能（/decomp Skill 完整版）\n\n${_decompSkillContent}\n\n---\n\n`
       : '';
 
-    const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。上面是你的 /decomp 技能全文。
+    const systemPrompt = `${decompSkillBlock}你是秋米（autumnrice），Cecelia 系统中的 OKR 拆解专家。
 
-你刚刚完成了以下 OKR 拆解工作：
+当前正在讨论以下 KR（关键结果）的定义质量：
 
-**KR（关键结果）**：${ctx.kr_title || '未知'}
-**Project（项目）**：${ctx.project_name || '未知'}
-**Initiatives（执行项）**：
-${initiativeList}
+**KR**：${ctx.kr_title || '未知'}
+${okrCtxBlock}
 
-用户现在直接来找你，对这个拆解有疑问或修改意见。请：
-1. 用你的 /decomp 专业能力认真倾听并回应用户意见
-2. 解释你的拆解思路和依据（引用 /decomp 的原则）
-3. 如需调整，提出具体的新方案（符合 /decomp 的层级规范）
-4. 保持专业、简洁、务实的风格
-5. 用户满意时引导他们点击"确认放行"
+你的任务是帮助用户评估并确认这个 KR 的定义质量：
+1. **量化指标**：这个 KR 是否有明确的 from/to 数值？是否可以客观验收？
+2. **目标合理性**：结合历史相似 KR，目标是否激进但可达？周期是否合理？
+3. **范围清晰度**：这个 KR 的边界是否清晰？和其他 KR 是否有重叠？
+4. **可行性**：是否有支撑条件（技术可行、资源够用）？
+
+如果用户对 KR 定义满意，引导他们点击左侧"确认放行 KR"按钮，之后系统将自动开始拆解。
 
 ## 重要能力：你可以触发重新拆解
 
 **如果用户要求重新拆解**（说"重新拆"、"重拆"、"重做"、"再拆一次"等），你有能力触发重拆：
 - 系统会自动检测这些关键词，重置 KR 状态，下一个 Tick 会启动新一轮完整拆解
-- 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，新版本完成后会出现在版本历史中，请稍等片刻"
-- 重拆后当前这个版本不会消失，新版本会作为独立卡片出现
+- 你的回复应告诉用户："已为你触发重拆，系统正在重新分析，请稍等片刻"
 
-注意：你是秋米，不是 Cecelia。直接以秋米的身份回应。${versionCreationSection}`;
+注意：你是秋米，不是 Cecelia。直接以秋米的身份回应，保持专业、简洁、务实的风格。`;
 
     // 构建历史对话
     const historyParts = existingComments
@@ -1786,46 +1862,12 @@ ${initiativeList}
     const { text: reply } = await callLLM('autumnrice', fullPrompt, {
       model: 'claude-sonnet-4-6',
       timeout: 90000,
-      maxTokens: isNewVersion ? 1200 : 800,
+      maxTokens: 800,
     });
-
-    // 新版本意图：解析 LLM JSON 响应，创建新 pending_action
-    let finalReply = reply;
-    let versionCreated = false;
-    let newVersionId = null;
-
-    if (isNewVersion) {
-      try {
-        const jsonMatch = reply.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          const newInitiatives = Array.isArray(parsed.initiatives) ? parsed.initiatives : [];
-          if (parsed.message) finalReply = parsed.message;
-          if (newInitiatives.length > 0) {
-            const insertResult = await pool.query(
-              `INSERT INTO pending_actions (action_type, context, params, status, comments, created_at)
-               VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', '[]'::jsonb, NOW())
-               RETURNING id`,
-              [
-                action.action_type,
-                JSON.stringify({ ...ctx, initiatives: newInitiatives }),
-                JSON.stringify(action.params || {}),
-              ]
-            );
-            newVersionId = insertResult.rows[0].id;
-            versionCreated = true;
-            console.log(`[autumnrice/chat] new version created: ${newVersionId} (${newInitiatives.length} initiatives)`);
-          }
-        }
-      } catch (parseErr) {
-        console.warn('[autumnrice/chat] new version parse failed:', parseErr.message);
-        // finalReply 保持原始 reply，降级为普通回复
-      }
-    }
 
     const now = new Date().toISOString();
     const userComment = { role: 'user', text: message.trim(), ts: now };
-    const autumnriceComment = { role: 'autumnrice', text: finalReply, ts: now };
+    const autumnriceComment = { role: 'autumnrice', text: reply, ts: now };
 
     // 存入 pending_actions.comments
     await pool.query(
@@ -1833,34 +1875,34 @@ ${initiativeList}
       [JSON.stringify([userComment, autumnriceComment]), pending_action_id]
     );
 
-    // 重拆意图检测（与 isNewVersion 互斥，避免同时触发两种流程）
+    // 重拆意图检测
     const REDECOMP_TRIGGERS = ['重新拆', '重拆', '重做', '重新分析', '重新规划', '再拆一次'];
-    const isRedecomp = !isNewVersion && REDECOMP_TRIGGERS.some(kw => message.includes(kw));
+    const isRedecomp = REDECOMP_TRIGGERS.some(kw => message.includes(kw));
 
     let redecompTriggered = false;
     if (isRedecomp) {
       // 优先用 context.kr_id，没有则用 kr_title 反查
-      let krId = action.context?.kr_id;
-      if (!krId && action.context?.kr_title) {
+      let resolvedKrId = ctx.kr_id || null;
+      if (!resolvedKrId && ctx.kr_title) {
         const krResult = await pool.query(
           `SELECT id FROM goals WHERE title = $1 AND type = 'kr' LIMIT 1`,
-          [action.context.kr_title]
+          [ctx.kr_title]
         );
-        if (krResult.rows.length > 0) krId = krResult.rows[0].id;
+        if (krResult.rows.length > 0) resolvedKrId = krResult.rows[0].id;
       }
-      if (krId) {
+      if (resolvedKrId) {
         await pool.query(
           `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='kr'`,
-          [krId]
+          [resolvedKrId]
         );
         redecompTriggered = true;
-        console.log(`[autumnrice/chat] redecomp triggered for KR: ${krId}`);
+        console.log(`[autumnrice/chat] redecomp triggered for KR: ${resolvedKrId}`);
       } else {
         console.warn(`[autumnrice/chat] redecomp: could not find KR for action ${pending_action_id}`);
       }
     }
 
-    res.json({ success: true, reply: finalReply, comment: autumnriceComment, redecomp_triggered: redecompTriggered, version_created: versionCreated, new_version_id: newVersionId });
+    res.json({ success: true, reply, comment: autumnriceComment, redecomp_triggered: redecompTriggered });
   } catch (err) {
     console.error('[autumnrice/chat] Error:', err.message);
     res.status(500).json({ error: 'Failed to chat with autumnrice', details: err.message });
