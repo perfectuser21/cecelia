@@ -19,6 +19,7 @@ import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.j
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 import { callLLM } from './llm-caller.js';
 import { getSelfModel } from './self-model.js';
+import { extractSuggestionsFromChat } from './owner-input-extractor.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -438,6 +439,11 @@ export async function handleChat(message, context = {}, messages = []) {
   // 9. 异步提取用户事实（fire-and-forget，不阻塞回复）
   Promise.resolve().then(() =>
     extractAndSaveUserFacts(pool, 'owner', messages, reply)
+  ).catch(() => {});
+
+  // ★NEW: 异步提取可执行意图 → suggestions（fire-and-forget）
+  Promise.resolve().then(() =>
+    extractSuggestionsFromChat(message, intentType)
   ).catch(() => {});
 
   return {
