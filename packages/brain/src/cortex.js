@@ -17,10 +17,13 @@
 
 /* global console */
 
+import crypto from 'crypto';
 import pool from './db.js';
 import { ACTION_WHITELIST, validateDecision, recordLLMError, recordTokenUsage } from './thalamus.js';
 import { callLLM } from './llm-caller.js';
 import { searchRelevantLearnings } from './learning.js';
+import { getSelfModel } from './self-model.js';
+import { generateL0Summary } from './memory-utils.js';
 import {
   evaluateQualityInitial,
   generateSimilarityHash,
@@ -340,6 +343,13 @@ async function analyzeDeep(event, thalamusDecision = null) {
     console.error('[cortex] Failed to fetch historical analyses:', err.message);
   }
 
+  // Build #3: 注入 self-model（Cecelia 对自己的认知，让皮层决策有自我意识）
+  try {
+    context.self_model = await getSelfModel();
+  } catch (err) {
+    console.error('[cortex] Failed to fetch self-model:', err.message);
+  }
+
   // Inject adjustable parameters for RCA requests
   if (event.type === 'rca_request' && thalamusDecision?.adjustable_params) {
     context.adjustable_params = thalamusDecision.adjustable_params;
@@ -415,24 +425,45 @@ async function logCortexDecision(event, decision) {
 }
 
 /**
- * 记录学习经验
+ * 记录学习经验到 learnings 表（供 rumination 消化）
  */
 async function recordLearnings(learnings, event) {
-  try {
-    for (const learning of learnings) {
+  let recorded = 0;
+  for (const learning of learnings) {
+    try {
+      const title = `Cortex Insight: ${String(learning).slice(0, 100)}`;
+      const content = String(learning);
+      const triggerEvent = event.type || 'cortex_analysis';
+      const hashInput = `${title}\n${content}`;
+      const contentHash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
+
+      // 去重：相同 hash 已存在则跳过
+      const existing = await pool.query(
+        'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+        [contentHash]
+      );
+      if (existing.rows.length > 0) {
+        continue;
+      }
+
+      const summary = generateL0Summary(`${title} ${content}`);
       await pool.query(`
-        INSERT INTO cecelia_events (event_type, source, payload)
-        VALUES ('learning', 'cortex', $1)
-      `, [JSON.stringify({
-        learning,
-        event_type: event.type,
-        recorded_at: new Date().toISOString()
-      })]);
+        INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
+        VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6)
+      `, [
+        title,
+        triggerEvent,
+        content,
+        JSON.stringify({ source: 'cortex', event_type: event.type, recorded_at: new Date().toISOString() }),
+        contentHash,
+        summary,
+      ]);
+      recorded++;
+    } catch (err) {
+      console.error('[cortex] Failed to record learning:', err.message);
     }
-    console.log(`[cortex] Recorded ${learnings.length} learnings`);
-  } catch (err) {
-    console.error('[cortex] Failed to record learnings:', err.message);
   }
+  console.log(`[cortex] Recorded ${recorded}/${learnings.length} learnings to learnings table`);
 }
 
 /**

@@ -168,7 +168,7 @@ async function createAttentionSuggestion(goalId, goalTitle, metrics) {
 
     const result = await pool.query(`
       INSERT INTO suggestions (content, source, agent_id, suggestion_type, target_entity_type, target_entity_id, priority_score)
-      VALUES ($1, 'goal_evaluator', 'system', 'goal_health', 'goal', $2, 0.6)
+      VALUES ($1, 'goal_evaluator', 'system', 'goal_health', 'goal', $2, 0.75)
       RETURNING id
     `, [content, goalId]);
 
