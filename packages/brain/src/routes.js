@@ -5670,6 +5670,37 @@ router.post('/learning/evaluate-strategy', async (req, res) => {
   }
 });
 
+// ==================== Growth Stats API ====================
+
+/**
+ * GET /api/brain/stats/overview
+ * Cecelia 成长档案统计概览
+ * 返回: birth_date, days_since_birth, tasks_completed, learnings_count
+ */
+router.get('/stats/overview', async (req, res) => {
+  try {
+    const BIRTH_DATE = '2026-02-28';
+    const birthMs = new Date(BIRTH_DATE + 'T00:00:00+08:00').getTime();
+    const nowMs = Date.now();
+    const daysSinceBirth = Math.floor((nowMs - birthMs) / (1000 * 60 * 60 * 24)) + 1;
+
+    const [tasksResult, learningsResult] = await Promise.all([
+      pool.query(`SELECT COUNT(*) AS count FROM tasks WHERE status = 'completed'`),
+      pool.query(`SELECT COUNT(*) AS count FROM learnings WHERE (archived = false OR archived IS NULL)`),
+    ]);
+
+    res.json({
+      birth_date: BIRTH_DATE,
+      days_since_birth: daysSinceBirth,
+      tasks_completed: parseInt(tasksResult.rows[0]?.count || 0),
+      learnings_count: parseInt(learningsResult.rows[0]?.count || 0),
+    });
+  } catch (err) {
+    console.error('[API] Failed to get stats overview:', err.message);
+    res.status(500).json({ error: 'Failed to get stats overview', details: err.message });
+  }
+});
+
 // ==================== Capabilities API ====================
 
 /**
