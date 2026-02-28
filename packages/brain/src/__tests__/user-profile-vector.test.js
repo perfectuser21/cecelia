@@ -147,9 +147,12 @@ describe('user-profile: getUserProfileContext with vector search', () => {
 
   it('should fallback to structured profile when no OPENAI_API_KEY', async () => {
     delete process.env.OPENAI_API_KEY;
-    mockPool.query.mockResolvedValue({
-      rows: [{ display_name: '徐啸', focus_area: 'Cecelia', preferred_style: 'brief', raw_facts: {} }],
-    });
+    // 新增 user_profile_facts 降级步骤：先查 facts（空），再查 user_profiles
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })  // user_profile_facts 降级（空）
+      .mockResolvedValueOnce({             // loadUserProfile fallback
+        rows: [{ display_name: '徐啸', focus_area: 'Cecelia', preferred_style: 'brief', raw_facts: {} }],
+      });
 
     const result = await getUserProfileContext(mockPool, 'owner', '帮我看看代码');
 
@@ -159,9 +162,12 @@ describe('user-profile: getUserProfileContext with vector search', () => {
 
   it('should fallback to structured profile when no conversationText', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
-    mockPool.query.mockResolvedValue({
-      rows: [{ display_name: '徐啸', focus_area: 'Cecelia', preferred_style: 'detailed', raw_facts: {} }],
-    });
+    // 新增 user_profile_facts 降级步骤：先查 facts（空），再查 user_profiles
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })  // user_profile_facts 降级（空）
+      .mockResolvedValueOnce({             // loadUserProfile fallback
+        rows: [{ display_name: '徐啸', focus_area: 'Cecelia', preferred_style: 'detailed', raw_facts: {} }],
+      });
 
     const result = await getUserProfileContext(mockPool, 'owner');
 
@@ -172,10 +178,12 @@ describe('user-profile: getUserProfileContext with vector search', () => {
   it('should fallback when vector search returns no results', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
     mockGenerateEmbedding.mockResolvedValue(Array(1536).fill(0.1));
-    mockPool.query.mockResolvedValueOnce({ rows: [] }); // vector search empty
-    mockPool.query.mockResolvedValueOnce({             // fallback loadUserProfile
-      rows: [{ display_name: '徐啸', focus_area: null, preferred_style: 'brief', raw_facts: {} }],
-    });
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })  // vectorSearchProfileFacts DB query（空）
+      .mockResolvedValueOnce({ rows: [] })  // user_profile_facts 降级（空）
+      .mockResolvedValueOnce({             // loadUserProfile fallback
+        rows: [{ display_name: '徐啸', focus_area: null, preferred_style: 'brief', raw_facts: {} }],
+      });
 
     const result = await getUserProfileContext(mockPool, 'owner', '帮我看看代码');
 
@@ -184,10 +192,13 @@ describe('user-profile: getUserProfileContext with vector search', () => {
 
   it('should fallback when vector search throws', async () => {
     process.env.OPENAI_API_KEY = 'test-key';
+    // vectorSearchProfileFacts 内部 catch 了 generateEmbedding 的错误，返回 []，不调用 pool.query
     mockGenerateEmbedding.mockRejectedValue(new Error('quota exceeded'));
-    mockPool.query.mockResolvedValue({
-      rows: [{ display_name: '徐啸', focus_area: null, preferred_style: 'detailed', raw_facts: {} }],
-    });
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })  // user_profile_facts 降级（空）
+      .mockResolvedValueOnce({             // loadUserProfile fallback
+        rows: [{ display_name: '徐啸', focus_area: null, preferred_style: 'detailed', raw_facts: {} }],
+      });
 
     const result = await getUserProfileContext(mockPool, 'owner', '帮我看看代码');
 
