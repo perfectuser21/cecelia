@@ -48,6 +48,8 @@ DoD 草稿:
       Test: manual:curl -s -X POST http://localhost:5221/api/okr/goals -H "Content-Type: application/json" -d '{"title":"test"}' | jq -e '.goal_id'
 - [ ] OKR 页面正常展示目标列表（.okr-list 元素存在）
       Test: manual:curl -s http://localhost:5211/okr | grep -q 'okr-list'
+- [ ] 侧边栏菜单显示在页面左侧
+      Test: manual:chrome:screenshot verify .sidebar is on LEFT side of viewport at http://localhost:5211/okr
 
 ### 测试验收
 - [ ] npm run qa 通过
@@ -68,8 +70,10 @@ DoD 草稿:
       Test: tests/...
 - [ ] <API 端点> 返回 <期望状态码> 且包含 <期望字段>
       Test: manual:curl -s -X <METHOD> http://localhost:<PORT>/<path> | jq -e '<assertion>'
-- [ ] <前端页面> 正常展示 <内容>
+- [ ] <前端页面> 正常展示 <内容>（存在性）
       Test: manual:curl -s http://localhost:<PORT>/<page> | grep -q '<selector>'
+- [ ] <组件> 显示在 <位置>（视觉位置/布局）
+      Test: manual:chrome:screenshot verify <selector> is on <LEFT/RIGHT/TOP> side at http://localhost:<PORT>/<page>
 
 ### 测试验收
 - [ ] npm run qa 通过
@@ -82,26 +86,52 @@ DoD 草稿:
 |------|------|--------|------|
 | `tests/xxx.test.ts` | 自动化单元测试 | ⭐⭐⭐ 最优 | `tests/auth.test.ts` |
 | `contract:RCI-ID` | 回归契约验证 | ⭐⭐ 次优 | `contract:C2-001` |
+| `manual:chrome:<断言>` | 视觉/布局/交互验证（截图） | ⭐⭐ 次优 | 见下方规则 |
 | `manual:<命令>` | 真实可执行命令 | ⭐ 最后 | 见下方规则 |
 
-### manual: 格式规则（必读）
+### manual:chrome: 格式规则（视觉验证专用）
+
+**适用场景**：涉及布局位置、颜色、交互状态等 `curl|grep` 无法验证的视觉需求。
+
+Step 7 验证时，AI 会通过 `/chrome` skill 截图，视觉判断断言是否满足。
+
+| 变更类型 | 示例 |
+|----------|------|
+| 布局位置 | `manual:chrome:screenshot verify .left-panel is on LEFT side of viewport at http://localhost:5211/page` |
+| 组件可见 | `manual:chrome:screenshot verify .user-avatar appears in top-right corner at http://localhost:5211` |
+| 交互状态 | `manual:chrome:screenshot click .btn-submit then verify .success-toast appears at http://localhost:5211/form` |
+
+**断言要求**：
+- 必须描述清楚"什么元素"在"什么位置/状态"
+- 必须包含 URL（`at http://localhost:PORT/path`）
+- 不能是 TODO 或少于 10 字符的模糊描述
+
+**禁止写法**：
+```
+Test: manual:chrome:TODO                    ← 禁止占位符
+Test: manual:chrome:截图看一下              ← 太模糊，缺少具体断言
+Test: manual:chrome:screenshot something    ← 缺少 URL
+```
+
+### manual: 格式规则（命令验证）
 
 **manual: 必须包含可执行的验证命令，不允许模糊描述。**
 
 | 变更类型 | 要求 | 示例 |
 |----------|------|------|
 | API 变更 | curl 命令 + jq/grep 断言 | `manual:curl -s http://localhost:5221/api/foo \| jq -e '.id'` |
-| 前端变更 | curl 检查可达 + 关键元素 | `manual:curl -s http://localhost:5211/page \| grep -q 'key-class'` |
+| 前端存在性 | curl 检查可达 + 关键元素 | `manual:curl -s http://localhost:5211/page \| grep -q 'key-class'` |
+| 前端位置/视觉 | **必须用 manual:chrome:** | 见上方规则 |
 | 数据库变更 | psql 查询断言 | `manual:psql $DATABASE_URL -c "SELECT count(*) FROM foo" \| grep -q ' 1'` |
 
 **禁止写法**（check-dod-mapping.cjs 会拦截）：
 ```
 Test: manual:TODO              ← 禁止占位符
-Test: manual:截图验证          ← 禁止模糊描述（无命令）
+Test: manual:截图验证          ← 禁止模糊描述（无命令）——改用 manual:chrome:
 Test: manual:手动看一下        ← 禁止无法执行的描述
 ```
 
-**选择原则**：能自动化测试的优先自动化，其次引用回归契约，最后才用 manual（必须带真实命令）。
+**选择原则**：能自动化测试的优先自动化，其次引用回归契约，位置/视觉需求用 `manual:chrome:`，其他用 manual 带真实命令。
 
 ---
 
