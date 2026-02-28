@@ -55,13 +55,7 @@ vi.mock('../learning.js', () => ({
   getRecentLearnings: vi.fn().mockResolvedValue([]),
 }));
 
-// Mock user-profile.js（避免干扰 loadActiveProfile 的 goals 查询）
-const mockLoadUserProfile = vi.fn();
-const mockFormatProfileSnippet = vi.fn();
-vi.mock('../user-profile.js', () => ({
-  loadUserProfile: (...args) => mockLoadUserProfile(...args),
-  formatProfileSnippet: (...args) => mockFormatProfileSnippet(...args),
-}));
+// user-profile.js 不再被 memory-retriever.js 导入（PR-B 修复）
 
 // Mock openai-client.js（控制向量搜索路径）
 const mockGenerateEmbedding = vi.fn();
@@ -85,9 +79,6 @@ beforeEach(() => {
   mockSearchWithVectors.mockResolvedValue({ matches: [] });
   mockSearchRelevantLearnings.mockResolvedValue([]);
   mockQuery.mockResolvedValue({ rows: [] });
-  // 默认：用户画像为空（不影响已有测试）
-  mockLoadUserProfile.mockResolvedValue(null);
-  mockFormatProfileSnippet.mockReturnValue('');
   // 默认：embedding 生成返回 1536 维零向量
   mockGenerateEmbedding.mockResolvedValue(new Array(1536).fill(0));
 });
@@ -265,6 +256,9 @@ describe('常量配置', () => {
 
 describe('loadActiveProfile', () => {
   it('chat 模式也应注入 OKR 焦点（不再跳过）', async () => {
+    // 1st query: user_profile_facts（空）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 2nd query: goals
     mockQuery.mockResolvedValueOnce({
       rows: [
         { title: 'Cecelia 管家系统', status: 'in_progress', progress: 50 },
@@ -276,13 +270,18 @@ describe('loadActiveProfile', () => {
     expect(mockQuery).toHaveBeenCalled();
   });
 
-  it('chat 模式 goals 为空时返回空字符串', async () => {
+  it('chat 模式 goals 为空时：有 facts 则注入 facts，无 facts 则返回空', async () => {
+    // 1st query: user_profile_facts（空），2nd query: goals（空）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
     expect(result).toBe('');
   });
 
   it('有 goals 时返回 OKR 焦点', async () => {
+    // 1st query: user_profile_facts（空）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // 2nd query: goals
     mockQuery.mockResolvedValueOnce({
       rows: [
         { title: '完成 Task Intelligence', status: 'in_progress', progress: 60 },
@@ -294,13 +293,16 @@ describe('loadActiveProfile', () => {
     expect(result).toContain('Task Intelligence');
   });
 
-  it('无 goals 时返回空', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+  it('无 goals 无 facts 时返回空', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // user_profile_facts
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals
     const result = await _loadActiveProfile({ query: mockQuery }, 'execute');
     expect(result).toBe('');
   });
 
   it('DB 查询失败时优雅降级', async () => {
+    // user_profile_facts 查询失败，goals 查询也失败
+    mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
     mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
     const result = await _loadActiveProfile({ query: mockQuery }, 'plan');
     expect(result).toBe('');
@@ -308,38 +310,44 @@ describe('loadActiveProfile', () => {
 });
 
 // ============================================================
-// D3: loadActiveProfile — 用户画像注入
+// D3: loadActiveProfile — user_profile_facts 注入（PR-B 修复）
 // ============================================================
 
-describe('loadActiveProfile — 用户画像注入', () => {
-  it('D3-1: 有 profile 时 block 包含用户姓名', async () => {
-    mockLoadUserProfile.mockResolvedValueOnce({
-      display_name: '徐啸 / Alex Xu',
-      focus_area: 'Cecelia',
-      preferred_style: 'detailed',
+describe('loadActiveProfile — user_profile_facts 注入', () => {
+  it('D3-1: 有 facts 时 block 包含关于主人标题', async () => {
+    // 1st query: user_profile_facts
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { content: '名字: 徐啸 / Alex Xu' },
+        { content: '当前重点方向: Cecelia AI 管家系统' },
+      ],
     });
-    mockFormatProfileSnippet.mockReturnValueOnce('## 主人信息\n你正在和 徐啸 / Alex Xu 对话。\n');
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals 为空
+    // 2nd query: goals（空）
+    mockQuery.mockResolvedValueOnce({ rows: [] });
 
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
 
+    expect(result).toContain('关于主人（Alex）');
     expect(result).toContain('徐啸 / Alex Xu');
-    expect(mockLoadUserProfile).toHaveBeenCalledWith(expect.any(Object), 'owner');
+    expect(result).toContain('Cecelia AI 管家系统');
+    // 确认不再查询不存在的 user_profiles 表（通过 query 调用次数验证）
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
-  it('D3-2: 无 profile 时 block 不含 "正在和" 片段', async () => {
-    mockLoadUserProfile.mockResolvedValueOnce(null);
-    mockFormatProfileSnippet.mockReturnValueOnce('');
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals 为空
+  it('D3-2: 无 facts 时 block 不含 "关于主人" 片段', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // user_profile_facts 空
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // goals 空
 
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
 
-    expect(result).not.toContain('正在和');
+    expect(result).not.toContain('关于主人');
+    expect(result).toBe('');
   });
 
-  it('D3-3: 有 profile 且有 OKR 时两者都注入', async () => {
-    mockLoadUserProfile.mockResolvedValueOnce({ display_name: '徐啸', focus_area: 'Cecelia' });
-    mockFormatProfileSnippet.mockReturnValueOnce('## 主人信息\n你正在和 徐啸 对话。\n');
+  it('D3-3: 有 facts 且有 OKR 时两者都注入', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ content: '名字: 徐啸' }],
+    });
     mockQuery.mockResolvedValueOnce({
       rows: [{ title: 'Cecelia 管家系统', status: 'in_progress', progress: 50 }],
     });
@@ -455,10 +463,13 @@ describe('buildMemoryContext', () => {
 
   it('mode=plan 时 profile 包含 OKR', async () => {
     mockSearchWithVectors.mockResolvedValueOnce({ matches: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // events
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ title: '目标A', status: 'in_progress', progress: 50 }]
-    }); // goals
+    // 使用 mockImplementation 区分 SQL，避免 Promise.all 并发时 mockResolvedValueOnce 顺序不确定
+    mockQuery.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('goals')) {
+        return Promise.resolve({ rows: [{ title: '目标A', status: 'in_progress', progress: 50 }] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
 
     const { block } = await buildMemoryContext({
       query: 'planning query',

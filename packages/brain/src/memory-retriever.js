@@ -14,7 +14,6 @@
 
 import SimilarityService from './similarity.js';
 import { searchRelevantLearnings } from './learning.js';
-import { loadUserProfile, formatProfileSnippet } from './user-profile.js';
 import { routeMemory } from './memory-router.js';
 import { generateL0Summary } from './memory-utils.js';
 import { generateEmbedding } from './openai-client.js';
@@ -481,7 +480,7 @@ async function loadConversationHistory(pool, limit = 15) {
 }
 
 /**
- * 画像配置加载：当前 OKR 焦点（不参与评分排序）
+ * 画像配置加载：主人 Facts（第0层）+ 当前 OKR 焦点（不参与评分排序）
  * @param {Object} pool - pg pool
  * @param {string} mode - 模式
  * @returns {Promise<string>} 格式化的 profile 片段
@@ -493,13 +492,21 @@ async function loadActiveProfile(pool, mode) {
 
   const snippets = [];
 
-  // 主人画像（user_profiles）
+  // 第0层：主人 Facts（user_profile_facts，精确查询，不走语义，约200 tokens）
+  // 修复：原来查询不存在的 user_profiles 表，永远返回 null
   try {
-    const profile = await loadUserProfile(pool, 'owner');
-    const profileSnippet = formatProfileSnippet(profile);
-    if (profileSnippet) snippets.push(profileSnippet);
+    const factsResult = await pool.query(`
+      SELECT content FROM user_profile_facts
+      WHERE user_id = 'owner'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+    if (factsResult.rows.length > 0) {
+      const factsText = factsResult.rows.map(r => `- ${r.content}`).join('\n');
+      snippets.push(`## 关于主人（Alex）\n${factsText}\n`);
+    }
   } catch (err) {
-    console.warn('[memory-retriever] User profile load failed (graceful fallback):', err.message);
+    console.warn('[memory-retriever] Owner facts load failed (graceful fallback):', err.message);
   }
 
   // OKR 焦点
