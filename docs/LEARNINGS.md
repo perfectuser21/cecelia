@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] executor.js failure_pattern content_hash 去重 (PR #173, Brain 1.135.1)
+- **根因**: `executor.js` 直接 INSERT INTO learnings 时未设 `content_hash`，绕过 `auto-learning.js` 的去重逻辑，每次 watchdog kill 均产生新记录。实测：916 条 test-watchdog-kill 记录 content_hash 全为 NULL
+- **修复**: 提取 `failureTitle`/`failureContent` 变量 → 计算 `SHA256(title\ncontent).slice(0,16)` → 先 SELECT 检查去重 → INSERT 补充 `content_hash / version / is_latest / digested`（与 auto-learning.js 规范一致）
+- **pattern**: 任何绕过专用模块直接 INSERT learnings 的地方，都必须手动计算并填写 content_hash，否则去重永久失效
+- **.brain-versions 必须随 version bump 同步**: check-version-sync.sh 会检查此文件，遗忘会导致 Facts Consistency CI 失败
+
 ### [2026-02-28] 认知-决策双闭环 (PR #170, Brain 1.135.0)
 - **情绪真正影响调度**: `evaluateEmotion()` 已计算 `dispatch_rate_modifier`，但原 tick 从未使用。修复：在 `effectiveDispatchMax = poolCAvailable * dispatchRate` 后乘以 `emotionDispatchModifier`，overloaded 状态直接跳过本轮派发
 - **DB 真实数据替代硬编码**: 情绪评估的 `queueDepth/successRate` 原来是 `0/1.0` 硬编码 → 改为真实 SQL 查询（COUNT tasks WHERE status='queued'，最近 1h 成功/失败率）
