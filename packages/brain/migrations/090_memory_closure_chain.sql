@@ -35,7 +35,3 @@ CREATE INDEX IF NOT EXISTS idx_learnings_source_memory
   ON learnings (source_memory_id)
   WHERE source_memory_id IS NOT NULL;
 
--- 6. 记录 schema 版本
-INSERT INTO schema_migrations (version, applied_at)
-  VALUES ('090', NOW())
-  ON CONFLICT (version) DO NOTHING;
