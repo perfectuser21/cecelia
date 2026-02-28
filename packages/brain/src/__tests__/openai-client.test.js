@@ -8,15 +8,17 @@ import { generateEmbedding, generateEmbeddingsBatch, testOpenAIConnection } from
 // Mock OpenAI SDK
 vi.mock('openai', () => {
   return {
-    default: vi.fn().mockImplementation(() => ({
-      embeddings: {
-        create: vi.fn().mockResolvedValue({
-          data: [{
-            embedding: new Array(1536).fill(0.1)  // Mock 1536-dim vector
-          }]
-        })
+    default: class MockOpenAI {
+      constructor() {
+        this.embeddings = {
+          create: vi.fn().mockResolvedValue({
+            data: [{
+              embedding: new Array(1536).fill(0.1)  // Mock 1536-dim vector
+            }]
+          })
+        };
       }
-    }))
+    }
   };
 });
 

@@ -63,6 +63,14 @@ import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as lis
 import {
   runDecompositionChecks,
 } from './decomposition-checker.js';
+import {
+  createSuggestion,
+  executeTriage,
+  getTopPrioritySuggestions,
+  updateSuggestionStatus,
+  cleanupExpiredSuggestions,
+  getTriageStats
+} from './suggestion-triage.js';
 
 // Inventory config for decomposition routes (moved here after decomp-checker simplification)
 const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
@@ -8223,6 +8231,195 @@ router.post('/progress/record', async (req, res) => {
   } catch (err) {
     console.error('[API] progress/record error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Suggestions API ──────────────────────────────────────────
+
+/**
+ * POST /api/brain/suggestions — 创建新的建议
+ */
+router.post('/suggestions', async (req, res) => {
+  try {
+    const suggestionData = req.body;
+
+    if (!suggestionData.content || !suggestionData.source) {
+      return res.status(400).json({
+        success: false,
+        error: 'content and source are required'
+      });
+    }
+
+    const suggestion = await createSuggestion(suggestionData);
+
+    res.json({
+      success: true,
+      suggestion
+    });
+  } catch (err) {
+    console.error('[API] Create suggestion error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create suggestion',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/suggestions — 查询建议列表
+ */
+router.get('/suggestions', async (req, res) => {
+  try {
+    const {
+      status = 'pending',
+      limit = 50,
+      priority_threshold = 0
+    } = req.query;
+
+    const query = `
+      SELECT * FROM suggestions
+      WHERE status = $1 AND priority_score >= $2 AND expires_at > now()
+      ORDER BY priority_score DESC, created_at DESC
+      LIMIT $3
+    `;
+
+    const result = await pool.query(query, [status, priority_threshold, limit]);
+
+    res.json({
+      success: true,
+      suggestions: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] Get suggestions error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get suggestions',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * PUT /api/brain/suggestions/:id/status — 更新建议状态
+ */
+router.put('/suggestions/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, metadata = {} } = req.body;
+
+    if (!['processed', 'rejected', 'archived'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be: processed, rejected, or archived'
+      });
+    }
+
+    await updateSuggestionStatus(id, status, metadata);
+
+    res.json({
+      success: true,
+      message: `Suggestion ${id} status updated to ${status}`
+    });
+  } catch (err) {
+    console.error('[API] Update suggestion status error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update suggestion status',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/suggestions/triage — 执行 triage 处理
+ */
+router.post('/suggestions/triage', async (req, res) => {
+  try {
+    const { limit = 50 } = req.body;
+
+    const processedSuggestions = await executeTriage(limit);
+
+    res.json({
+      success: true,
+      processed_count: processedSuggestions.length,
+      suggestions: processedSuggestions.slice(0, 10)
+    });
+  } catch (err) {
+    console.error('[API] Triage suggestions error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to execute triage',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/suggestions/top-priority — 获取优先级最高的建议
+ */
+router.get('/suggestions/top-priority', async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    const suggestions = await getTopPrioritySuggestions(parseInt(limit));
+
+    res.json({
+      success: true,
+      suggestions,
+      count: suggestions.length
+    });
+  } catch (err) {
+    console.error('[API] Get top priority suggestions error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get top priority suggestions',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/brain/suggestions/cleanup — 清理过期建议
+ */
+router.post('/suggestions/cleanup', async (req, res) => {
+  try {
+    const cleanupCount = await cleanupExpiredSuggestions();
+
+    res.json({
+      success: true,
+      cleanup_count: cleanupCount,
+      message: `Cleaned up ${cleanupCount} expired suggestions`
+    });
+  } catch (err) {
+    console.error('[API] Cleanup suggestions error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cleanup suggestions',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/suggestions/stats — 获取 triage 统计信息
+ */
+router.get('/suggestions/stats', async (req, res) => {
+  try {
+    const stats = await getTriageStats();
+
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (err) {
+    console.error('[API] Get triage stats error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get triage stats',
+      details: err.message
+    });
   }
 });
 

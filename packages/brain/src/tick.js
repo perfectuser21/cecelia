@@ -26,6 +26,7 @@ import { triggerDailyReview } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
+import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 5;
@@ -1260,7 +1261,34 @@ async function executeTick() {
     }
   }
 
-  // 0.5.3. Progress Ledger 进展评估：与 periodic cleanup 同频（每小时）
+  // 0.5.3. Suggestion Triage: 每 tick 执行 triage 评估，每小时清理过期建议
+  try {
+    // 每个 tick 都执行 triage 处理
+    const processedSuggestions = await executeTriage(20); // 限制处理20条建议
+    if (processedSuggestions.length > 0) {
+      console.log(`[tick] Processed ${processedSuggestions.length} suggestions in triage`);
+      actionsTaken.push({
+        action: 'suggestion_triage',
+        processed_count: processedSuggestions.length
+      });
+    }
+
+    // 每小时清理过期建议
+    if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
+      const cleanedUpCount = await cleanupExpiredSuggestions();
+      if (cleanedUpCount > 0) {
+        console.log(`[tick] Cleaned up ${cleanedUpCount} expired suggestions`);
+        actionsTaken.push({
+          action: 'suggestion_cleanup',
+          cleanup_count: cleanedUpCount
+        });
+      }
+    }
+  } catch (suggestionErr) {
+    console.error('[tick] Suggestion processing failed (non-fatal):', suggestionErr.message);
+  }
+
+  // 0.5.4. Progress Ledger 进展评估：与 periodic cleanup 同频（每小时）
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
     try {
       const { evaluateProgressInTick } = await import('./progress-ledger.js');
