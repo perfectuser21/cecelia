@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.34.1] - 2026-02-28
+
+### Docs
+- 记录 learning-cleanup 加强的开发经验（LEARNINGS.md）
+
 ## [12.34.0] - 2026-02-28
 
 ### Added
