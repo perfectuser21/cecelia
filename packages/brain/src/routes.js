@@ -1737,11 +1737,10 @@ ${initiativeList}
 
     const fullPrompt = `${systemPrompt}${historyBlock}\n## 用户最新消息\n${message.trim()}\n\n请回复用户（直接输出回复内容，不要输出"秋米："前缀）：`;
 
-    // 调用 LLM（秋米使用 MiniMax 直连 API，避免通过 bridge 启动无头进程）
+    // 调用 LLM（秋米使用 claude-sonnet-4-6，含历史对话，timeout 90s）
     const { text: reply } = await callLLM('autumnrice', fullPrompt, {
-      model: 'MiniMax-M2.5-highspeed',
-      provider: 'minimax',
-      timeout: 30000,
+      model: 'claude-sonnet-4-6',
+      timeout: 90000,
       maxTokens: 800,
     });
 
