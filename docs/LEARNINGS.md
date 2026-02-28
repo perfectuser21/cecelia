@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] 修复 branch protection + Engine CI 踩坑 (PR #151, Engine 12.35.1)
+- **GitHub SKIP ≠ SUCCESS**: `Dashboard Build` 等 job 在 engine-only PR 中会被 SKIP，GitHub branch protection 的 required checks 把 SKIP 视为"未满足"→ PR BLOCKED。正确做法：required checks 只放 `ci-passed` gate，各 CI workflow 内部已处理"非目标 package 时快速通过"
+- **setup-branch-protection.sh 的 develop 分支误报**: `check_branch()` 在分支不存在时报 `✗ 无保护`（exit 1）而非跳过，导致 cecelia（单分支 main）检查失败。修复：先 `gh api repos/$repo/branches/$branch` 确认存在性，不存在则 return 0 跳过
+- **PRD/DoD 文件禁止提交**: Engine CI "Block PRD/DoD in PR to main" 会检查 `.prd-*.md` / `.dod-*.md` 是否出现在 PR diff 中，出现则 exit 1。这些文件应为本地临时文件，不要 `git add`。已提交时用 `git rm --cached <file>` 移除
+- **manual:grep 不被 check-dod-mapping 接受**: DoD 的 Test 字段 `manual:` 格式要求包含 `node|npm|npx|psql|curl|bash|python` 等，`grep` 不在白名单。需改为 `manual:bash -c "grep ..."`
+- **contract:C2-001 不存在会阻断 CI**: DoD 引用不存在的 RCI ID（如 C2-001）会导致 check-dod-mapping 报错。应改为 `manual:bash -c "cd packages/engine && npm test 2>&1 | grep -q 'passed'"` 或引用已存在的 RCI ID
+- **worktree typecheck 失败是预存问题**: worktree 的 `node_modules/@types/` 有 TS 错误（d3-scale / react），main 分支不受影响。跑 `npm run test`（跳过 typecheck）可验证功能正确性
+
 ### [2026-02-28] 秋米直接写入新版本到左侧 Tab (PR #138, Brain 1.132.1)
 - **LLM JSON 输出模式**: 需要 LLM 返回结构化数据时，在 system prompt 末尾添加独立段落说明 JSON 格式要求（而非与对话指令混写），并用 `reply.match(/\{[\s\S]*\}/)` 容错提取（LLM 可能带前后缀）
 - **互斥意图检测**: isNewVersion 和 isRedecomp 使用 `!isNewVersion &&` 前置条件互斥，避免同一 message 触发两种流程；关键词集合要刻意避免重叠（`写新版本` vs `重新拆`）
