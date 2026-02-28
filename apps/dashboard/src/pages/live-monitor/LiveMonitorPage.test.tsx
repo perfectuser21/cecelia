@@ -1,6 +1,6 @@
 /**
- * LiveMonitorPage v15 (Live Monitor v3.1) - 基础渲染测试
- * 变更：OKR 放大（左 45%）+ Project+Initiative 右侧替换今日快照 + 概况小条并入 Agents
+ * LiveMonitorPage v16 (Live Monitor v3.2) - 基础渲染测试
+ * 变更：HK VPS 代理修复 + Global OKR 层 + Project 点击跳转
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,7 +25,7 @@ function renderWithRouter() {
   );
 }
 
-describe('LiveMonitorPage v15', () => {
+describe('LiveMonitorPage v16', () => {
   it('渲染顶部栏标识', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
@@ -59,5 +59,10 @@ describe('LiveMonitorPage v15', () => {
   it('空状态显示占位文本', () => {
     renderWithRouter();
     expect(screen.getByText(/暂无后台任务/)).toBeInTheDocument();
+  });
+
+  it('无 global_okr 时显示"全局目标未设置"占位', () => {
+    renderWithRouter();
+    expect(screen.getByText('全局目标未设置')).toBeInTheDocument();
   });
 });
