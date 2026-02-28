@@ -20,6 +20,7 @@ import {
   recordTickEvent,
   updateNarrative,
   getLatestNarrative,
+  initNarrativeTimer,
   _resetCaches,
 } from '../cognitive-core.js';
 
@@ -292,5 +293,46 @@ describe('内在叙事 (Narrative Loop)', () => {
     };
     const result = await getLatestNarrative(mockDb);
     expect(result?.content).toBe('今天我处理了几个任务');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────
+// 9. 叙事计时器初始化（重启持久化）
+// ──────────────────────────────────────────────────────────────
+
+describe('initNarrativeTimer（重启计时器持久化）', () => {
+  beforeEach(() => { _resetCaches(); });
+
+  it('DB 有记录时正确初始化 _lastNarrativeAt', async () => {
+    const pastTime = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 小时前
+    const mockDb = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ created_at: pastTime }]
+      })
+    };
+    // 初始化后，updateNarrative 应因冷却期返回 null（间隔未到 24h）
+    await initNarrativeTimer(mockDb);
+    // 重新记录足够多的事件
+    for (let i = 0; i < 5; i++) {
+      recordTickEvent({ phase: 'tick', detail: `事件 ${i}` });
+    }
+    const result = await updateNarrative({ state: 'calm', label: '平静', intensity: 0.5 }, mockDb);
+    expect(result).toBeNull(); // 上次写入 2 小时前，24h 间隔未到
+  });
+
+  it('DB 无记录时 _lastNarrativeAt 保持 0', async () => {
+    const mockDb = {
+      query: vi.fn().mockResolvedValue({ rows: [] })
+    };
+    // 不抛出异常
+    await expect(initNarrativeTimer(mockDb)).resolves.toBeUndefined();
+  });
+
+  it('DB 查询失败时静默忽略', async () => {
+    const mockDb = {
+      query: vi.fn().mockRejectedValue(new Error('DB connection failed'))
+    };
+    // 不抛出异常，静默忽略
+    await expect(initNarrativeTimer(mockDb)).resolves.toBeUndefined();
   });
 });
