@@ -18,6 +18,7 @@ import { runReflection } from './reflection.js';
 import { runDesireFormation } from './desire-formation.js';
 import { runExpressionDecision } from './expression-decision.js';
 import { runExpression } from './expression.js';
+import { createSuggestion } from '../suggestion-triage.js';
 
 /**
  * 运行完整欲望系统（六层）
@@ -127,6 +128,17 @@ export async function runDesireSystem(pool) {
       } catch (_) { /* ignore ws errors */ }
 
       result.expression.task_created = rows[0]?.id;
+
+      // ★NEW: act desire → 额外创建 suggestion（fire-and-forget，不阻塞）
+      if (desire.type === 'act') {
+        Promise.resolve().then(() => createSuggestion({
+          content: `${desire.content.slice(0, 300)}\n\n提议行动：${desire.proposed_action}`,
+          source: 'desire_system',
+          suggestion_type: 'desire_action',
+        })).catch((sugErr) => {
+          console.error('[desire] createSuggestion for act failed:', sugErr.message);
+        });
+      }
     } catch (err) {
       console.error('[desire] act/follow_up task creation error:', err.message);
       result.expression.sent = false;
@@ -144,6 +156,18 @@ export async function runDesireSystem(pool) {
     } catch (err) {
       console.error('[desire] expression error:', err.message);
       result.expression.sent = false;
+    }
+
+    // ★NEW: warn/propose desire → 额外创建 suggestion（fire-and-forget，不阻塞）
+    const desireType = expressionCandidate.desire.type;
+    if (desireType === 'warn' || desireType === 'propose') {
+      Promise.resolve().then(() => createSuggestion({
+        content: `${expressionCandidate.desire.content.slice(0, 300)}\n\n提议行动：${expressionCandidate.desire.proposed_action}`,
+        source: 'desire_system',
+        suggestion_type: 'desire_action',
+      })).catch((sugErr) => {
+        console.error('[desire] createSuggestion for warn/propose failed:', sugErr.message);
+      });
     }
   }
 

@@ -17,6 +17,7 @@ import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook } from './notebook-adapter.js';
 import { createTask } from './actions.js';
 import { updateSelfModel } from './self-model.js';
+import { createSuggestion } from './suggestion-triage.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 20;
@@ -164,8 +165,9 @@ async function digestLearnings(db, learnings) {
       );
       insights.push(insight.trim());
 
-      // 4.1 检测 actionable 洞察 → 自动创建 task（支持多个 [ACTION:] 标记）
+      // 4.1 检测 actionable 洞察 → 自动创建 task + suggestion（支持多个 [ACTION:] 标记）
       const actionMatches = insight.matchAll(/\[ACTION:\s*(.+?)\]/g);
+      let suggestionCount = 0; // limit=2 防洪峰
       for (const match of actionMatches) {
         try {
           await createTask({
@@ -178,6 +180,19 @@ async function digestLearnings(db, learnings) {
           console.log(`[rumination] actionable insight → task: ${match[1]}`);
         } catch (taskErr) {
           console.error('[rumination] create task from insight failed:', taskErr.message);
+        }
+        // ★NEW: 额外创建 suggestion（limit=2，fire-and-forget）
+        if (suggestionCount < 2) {
+          try {
+            await createSuggestion({
+              content: `反刍洞察可执行行动：${match[1]}\n\n来源洞察：${insight.trim().slice(0, 300)}`,
+              source: 'rumination',
+              suggestion_type: 'insight_action',
+            });
+            suggestionCount++;
+          } catch (sugErr) {
+            console.error('[rumination] createSuggestion failed (non-blocking):', sugErr.message);
+          }
         }
       }
     }
