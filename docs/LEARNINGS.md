@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] 三环意识架构 (PR #189, Brain 1.138.0)
+
+**背景**: emotion_state 从未被写入，desires 只有通讯类型，self_model 全文注入无 token 控制，无自主学习驱动。
+
+- **情绪层 fire-and-forget**: `runEmotionLayer()` 在 desire/index.js Layer 1.5 插入，非阻塞。如果抛错只 warn 不中断欲望系统。emotion_state 同时写 working_memory（实时读）和 memory_stream（历史查询）
+- **好奇心闭环**: rumination.js 用正则检测"不理解/不清楚/需要验证"等模式 → 追加 curiosity_topics 到 working_memory → perception.js 读取为 `curiosity_accumulated` 信号 → desire-formation 识别 `explore` 类型 → desire/index.js 派发 research 任务（trigger_source='curiosity'）→ 清除 working_memory 中的 curiosity_topics
+- **self_model token 控制**: `truncateSelfModel(selfModel, 750)` 保留 identity core（第一个日期 marker 之前的内容）+ 最近的 entries，总长度不超过 750 chars。这样 self_model 无论增长多长，注入量恒定
+- **情绪注入嘴巴**: handleChat 和 stream 路径都从 working_memory 读 emotion_state，拼成 `\n\n当前情绪状态：<text>` 插入 systemPrompt（位于 self_model 之后）
+- **merge 冲突 minor bump 策略**: 当 main 已有 1.137.1，我们的 1.137.0 需 bump 到 1.138.0（minor，因为是新功能）。用 `python3 re.sub` 精确替换冲突块，比 `git checkout HEAD --` + 手工改更可靠
+- **facts-check 终态检查**: 合并后 facts-check 显示 "092" 是由于上一次运行缓存——重新 `node scripts/facts-check.mjs` 即可看到正确的 "093"
+
 ### [2026-02-28] Cecelia 成长档案页面 (PR #186, Dashboard v1.12.0 / Brain v1.137.0)
 - **facts-check 必须同步 DEFINITION.md**: version bump 后必须更新 `DEFINITION.md` 里的 `Brain 版本` 字段，否则 facts-check CI 失败（`brain_version: code=1.137.0 ≠ doc=1.136.3`）
 - **Lucide 图标字符串映射**: Dashboard `App.tsx` 用 `import * as LucideIcons` 动态解析 nav icon 字符串，新图标（如 `Sprout`）直接写字符串即可，无需额外注册
@@ -566,3 +577,48 @@ gh workflow run "Brain CI" --repo perfectuser21/cecelia --ref <branch>
 
 **踩坑：setVps 缺 error guard**
 `/api/v1/vps-monitor/stats` 偶发 500 时，返回 `{"error":"..."}` 但 Promise 仍 resolved。`setVps({"error":"..."})` 使 `vps` 非 null，绕过了 `{vps ? ... : "—"}` 守护，导致 `vps.cpu.usage` TypeError。修复：加 `&& !r[6].value?.error` 检查，与 hkVps 保持一致。
+
+## callLLM 返回值是对象，不是字符串（2026-02-28）
+
+**核心踩坑**：`callLLM(agentId, prompt, options)` 返回 `{text, model, provider, elapsed_ms}` 对象，不是字符串。
+
+错误用法：
+```js
+narrative = await callLLM('narrative', prompt, { maxTokens: 200 });
+// narrative 现在是 {text:'...', model:'...', provider:'...', elapsed_ms:8802}
+// 存入 DB 的是 JSON 字符串！
+```
+
+正确用法（解构取 text）：
+```js
+const { text: narrativeText } = await callLLM('narrative', prompt, { maxTokens: 200 });
+narrative = narrativeText;
+```
+
+**排查路径**：前端 [主动] 消息显示 `{"text":"...","model":"claude-haiku-4-5-20251001",...}` 原始 JSON → 定位到 cognitive-core.js narrative 变量赋值处。
+
+---
+
+## FALLBACK_PROFILE 需要与 DB profile 保持同步（2026-02-28）
+
+新增 agent（如 narrative）时，必须同时：
+1. `model-profile.js` FALLBACK_PROFILE 中加入配置
+2. 用 `docker exec cecelia-postgres psql` 更新 DB 中的 `model_profiles` active profile config
+3. `docker restart cecelia-node-brain` 让内存缓存刷新
+
+如果只改代码不更新 DB，Brain 启动时会从 DB 加载旧 profile，覆盖 FALLBACK_PROFILE，新 agent 仍然缺失配置，fallback 到 Haiku。
+
+**更新 DB 的 SQL**：
+```sql
+UPDATE model_profiles 
+SET config = jsonb_set(config, '{narrative}', '{"provider":"anthropic","model":"claude-sonnet-4-6"}')
+WHERE id='profile-anthropic';
+```
+
+---
+
+## DEFINITION.md 合并冲突导致 version-sync 失败（2026-02-28）
+
+合并 main 时 DEFINITION.md 出现冲突标记，version-sync 检查不识别冲突标记，找到 1.136.4（来自 HEAD 侧）而 package.json 是 1.137.0，导致失败。
+
+解法：解决合并冲突后手动删除冲突标记 `<<<<<<`/`=======`/`>>>>>>>` 行，保留目标版本号，再 version bump。
