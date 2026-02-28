@@ -114,19 +114,24 @@ bash scripts/post-pr-checklist.sh
 
 ---
 
-## 删除 .dev-mode 文件（CRITICAL）
+## 删除 .dev-mode 文件（CRITICAL - 必须在最后）
 
-**在 Cleanup 开始时，必须删除 .dev-mode 和会话注册**：
+**⚠️ 重要顺序**：`.dev-mode` 必须在 Step 11 的**最后一步**才能删除，不是开始时。
+
+原因：`sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' .dev-mode` 需要文件存在才能写入完成标记；Stop Hook 检测到这个标记后才允许退出，然后才删除 `.dev-mode`。
+
+**正确顺序**：
+```
+1. 所有清理操作...
+2. 写入 step_11_cleanup: done → .dev-mode
+3. Stop Hook 检测完成 → 删除 .dev-mode（由 Stop Hook 负责）
+```
+
+**会话注册清理**（在开始时就可以做，与 .dev-mode 无关）：
 
 ```bash
 # 读取 session_id（用于清理会话注册）
 SESSION_ID=$(grep "^session_id:" ".dev-mode" 2>/dev/null | awk '{print $2}' || echo "")
-
-# 删除 .dev-mode 文件（Stop Hook 循环控制信号）
-if [[ -f ".dev-mode" ]]; then
-    rm -f .dev-mode
-    echo "✅ .dev-mode 已删除（Stop Hook 循环控制已禁用）"
-fi
 
 # 清理会话注册（多会话检测）
 if [[ -n "$SESSION_ID" ]]; then
@@ -142,8 +147,6 @@ find /tmp/claude-engine-sessions/ -name "session-*.json" -mmin +60 -delete 2>/de
 echo "✅ 过期会话已清理（超过 1 小时）"
 ```
 
-**注意**：如果 PR 已合并，Stop Hook 会自动删除 .dev-mode。但为了确保清理完整，Cleanup 步骤也要删除。会话注册清理是新增功能，用于多会话检测。
-
 ---
 
 ## 使用 cleanup 脚本（推荐）
@@ -153,16 +156,20 @@ bash skills/dev/scripts/cleanup.sh "$BRANCH_NAME" "$BASE_BRANCH"
 ```
 
 **脚本会**：
-1. **删除 .dev-mode 文件**（新增）
-2. **运行 Post-PR Checklist**
-3. 切换到 base 分支
-4. 拉取最新代码
-5. 删除本地 cp-* 分支
-6. 删除远程 cp-* 分支
-7. 清理 git config
-8. 清理 stale remote refs
-9. 检查未提交文件
-10. 检查其他遗留 cp-* 分支
+1. **归档 `.dev-incident-log.json` 到 `.dev-runs/`**（新增）
+2. **删除 `.dev-feedback-report.json`**（新增）
+3. **运行 Post-PR Checklist**
+4. 切换到 base 分支
+5. 拉取最新代码
+6. 删除本地 cp-* 分支
+7. 删除远程 cp-* 分支
+8. 归档 PRD/DoD 到 `.history/`
+9. 清理 git config
+10. 清理 stale remote refs
+11. 检查未提交文件
+12. 检查其他遗留 cp-* 分支
+13. **标记 `step_11_cleanup: done` → Stop Hook 检测到允许退出**
+14. **删除 `.dev-mode` 文件**（必须在最后！）
 
 ---
 

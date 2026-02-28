@@ -74,29 +74,75 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 ```markdown
 ### [YYYY-MM-DD] <任务简述>
-- **Bug**: <遇到的问题和解决方案>
-- **优化点**: <可改进的地方和具体建议>
-- **影响程度**: Low/Medium/High
+
+**失败统计**：CI 失败 N 次，本地测试失败 M 次
+
+**CI 失败记录**（有则填，无则省略）：
+- 失败 #1：根本原因 → 修复方式 → 下次如何预防
+- 失败 #2：...
+
+**本地测试失败记录**（有则填，无则省略）：
+- 失败 #1：根本原因 → 修复方式 → 下次如何预防
+
+**错误判断记录**（以为对但错了）：
+- <描述判断错误的地方> → 正确答案是什么
+
+**影响程度**: Low/Medium/High
+**预防措施**（下次开发中应该注意什么）：
+- ...
 ```
 
 ### 影响程度说明
 
-- **Low**: 体验小问题，不影响功能
-- **Medium**: 功能性问题，需要尽快修复
-- **High**: 阻塞性问题，必须立即处理
+- **Low**: 体验小问题，不影响功能（CI 0 次失败，流程顺畅）
+- **Medium**: 功能性问题，需要尽快修复（CI 1-2 次失败，有明确根因）
+- **High**: 阻塞性问题，必须立即处理（CI 3+ 次失败，或涉及架构错误判断）
 
 ---
 
 ## 执行方式
 
-1. **回顾本次开发**
-   - 有遇到什么意外的 bug 吗？
-   - 有什么地方可以做得更好？
-   - 这些问题/优化会影响到未来吗？
+### 0. 读取过程数据（必须先做）
+
+**在写任何 Learning 之前，先读取 `.dev-incident-log.json`**：
+
+```bash
+INCIDENT_FILE=".dev-incident-log.json"
+if [[ -f "$INCIDENT_FILE" ]]; then
+    echo "=== 本次开发 Incident Log ==="
+    jq -r '.[] | "[\(.step)] \(.type): \(.description)\n  错误: \(.error | split("\n")[0])\n  修复: \(.resolution)\n"' "$INCIDENT_FILE"
+    CI_FAILURES=$(jq '[.[] | select(.type == "ci_failure")] | length' "$INCIDENT_FILE")
+    TEST_FAILURES=$(jq '[.[] | select(.type == "test_failure")] | length' "$INCIDENT_FILE")
+    echo "CI 失败次数: $CI_FAILURES"
+    echo "本地测试失败次数: $TEST_FAILURES"
+else
+    echo "无 Incident Log（本次开发无失败记录）"
+    CI_FAILURES=0
+    TEST_FAILURES=0
+fi
+```
+
+### 1. 强制回答以下问题（必答，不允许跳过）
+
+**基于 Incident Log 和本次开发过程，必须回答**：
+
+| # | 问题 | 数据来源 |
+|---|------|---------|
+| Q1 | 本次 CI 失败了几次？每次的根本原因是什么？ | `.dev-incident-log.json` (type=ci_failure) |
+| Q2 | 本次本地验证失败了几次？每次的根本原因是什么？ | `.dev-incident-log.json` (type=test_failure) |
+| Q3 | 有没有哪个判断"以为对但后来发现是错的"？ | 回顾整个开发过程 |
+| Q4 | 这些问题会不会再次出现？如果会，下次怎么更快解决？ | 分析根因 |
+| Q5 | 有没有什么应该加入 MEMORY.md 的新踩坑或架构决策？ | 判断是否有"非显而易见"的知识 |
+
+**答案决定 Learning 内容的深度**：
+- CI 失败 0 次 + 本地失败 0 次 + 无错误判断 → 可简要记录"流程顺畅"
+- 有任何失败或错误判断 → 必须详细记录根因和预防措施
+
+### 2. 写 Learning（基于问题回答）
 
 2. **追加到对应的 LEARNINGS.md**
 
-3. **提交 Learning（注意：PR 已合并分支已删，必须推到 base branch）**
+### 3. **提交 Learning（注意：PR 已合并分支已删，必须推到 base branch）**
    ```bash
    # 读取 base branch（Step 3 保存在 git config）
    BASE_BRANCH=$(git config branch."$BRANCH_NAME".base-branch 2>/dev/null || echo "main")
