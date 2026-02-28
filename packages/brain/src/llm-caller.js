@@ -235,7 +235,8 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
     // Anthropic via bridge 不支持流式 → 降级到非流式，一次性返回
     console.warn(`[llm-caller] callLLMStream: provider ${provider} does not support streaming, falling back`);
     const text = await callClaudeViaBridge(prompt, model, timeout);
-    onChunk(text, true);
+    onChunk(text, false);
+    onChunk('', true);
   }
 }
 
