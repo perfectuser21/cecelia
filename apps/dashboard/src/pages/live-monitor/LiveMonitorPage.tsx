@@ -764,33 +764,38 @@ export default function LiveMonitorPage() {
         <div style={{ padding: '16px 20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
           {/* ══ 基础设施状态栏（顶部可见）══ */}
-          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 8, padding: '8px 16px' }}>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>US VPS</span>
-              {vps ? (
-                <>
-                  {[
-                    { l: 'CPU', v: `${vps.cpu.usage.toFixed(0)}%`, color: metricColor(vps.cpu.usage) },
-                    { l: 'RAM', v: `${vps.memory.usagePercent.toFixed(0)}%`, color: metricColor(vps.memory.usagePercent) },
-                    { l: 'DISK', v: `${vps.disk.usagePercent}%`, color: metricColor(vps.disk.usagePercent) },
-                    { l: 'LOAD', v: String(vps.cpu.loadAverage['1min']), color: vps.cpu.loadAverage['1min'] > vps.cpu.cores ? '#ef4444' : vps.cpu.loadAverage['1min'] > vps.cpu.cores * 0.7 ? '#f59e0b' : '#10b981' },
-                    { l: 'MEM', v: `${fmtBytes(vps.memory.used)}/${fmtBytes(vps.memory.total)}`, color: '#6e7681' },
-                    { l: 'UP', v: fmtUptime(vps.uptime), color: '#6e7681' },
-                  ].map(({ l, v, color }) => (
-                    <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                      <span style={{ fontSize: 9, color: '#484f58', letterSpacing: .8, textTransform: 'uppercase' }}>{l}</span>
-                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{v}</span>
-                    </div>
-                  ))}
-                  <div style={{ width: 1, height: 20, background: '#21262d' }} />
-                  <AccUsageRings />
-                  <div style={{ width: 1, height: 20, background: '#21262d' }} />
-                  {svcDown > 0 && <span style={{ background: 'rgba(239,68,68,.15)', color: '#ef4444', fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 20 }}>{svcDown} down</span>}
-                  {svcUp > 0 && svcDown === 0 && <span style={{ background: 'rgba(16,185,129,.1)', color: '#10b981', fontSize: 11, padding: '1px 8px', borderRadius: 20 }}>all up</span>}
-                </>
-              ) : (
-                <span style={{ fontSize: 11, color: '#484f58' }}>加载中…</span>
-              )}
+          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 8, padding: '10px 16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'center' }}>
+              {/* 左列：VPS 物理指标 */}
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>US VPS</span>
+                {vps ? (
+                  <>
+                    {[
+                      { l: 'CPU', v: `${vps.cpu.usage.toFixed(0)}%`, color: metricColor(vps.cpu.usage) },
+                      { l: 'RAM', v: `${vps.memory.usagePercent.toFixed(0)}%`, color: metricColor(vps.memory.usagePercent) },
+                      { l: 'DISK', v: `${vps.disk.usagePercent}%`, color: metricColor(vps.disk.usagePercent) },
+                      { l: 'LOAD', v: String(vps.cpu.loadAverage['1min']), color: vps.cpu.loadAverage['1min'] > vps.cpu.cores ? '#ef4444' : vps.cpu.loadAverage['1min'] > vps.cpu.cores * 0.7 ? '#f59e0b' : '#10b981' },
+                      { l: 'MEM', v: `${fmtBytes(vps.memory.used)}/${fmtBytes(vps.memory.total)}`, color: '#6e7681' },
+                      { l: 'UP', v: fmtUptime(vps.uptime), color: '#6e7681' },
+                    ].map(({ l, v, color }) => (
+                      <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ fontSize: 9, color: '#484f58', letterSpacing: .8, textTransform: 'uppercase' }}>{l}</span>
+                        <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{v}</span>
+                      </div>
+                    ))}
+                    <div style={{ width: 1, height: 18, background: '#21262d', flexShrink: 0 }} />
+                    {svcDown > 0 && <span style={{ background: 'rgba(239,68,68,.15)', color: '#ef4444', fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 20 }}>{svcDown} down</span>}
+                    {svcUp > 0 && svcDown === 0 && <span style={{ background: 'rgba(16,185,129,.1)', color: '#10b981', fontSize: 11, padding: '1px 8px', borderRadius: 20 }}>all up</span>}
+                  </>
+                ) : (
+                  <span style={{ fontSize: 11, color: '#484f58' }}>加载中…</span>
+                )}
+              </div>
+              {/* 右列：Account rings */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid #21262d', paddingLeft: 16 }}>
+                <AccUsageRings />
+              </div>
             </div>
           </div>
 
@@ -798,7 +803,7 @@ export default function LiveMonitorPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
             {/* OKR 总览 */}
-            <div onClick={() => navigate('/planning/okr')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
+            <div onClick={() => navigate('/okr')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
               onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
               onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -972,13 +977,19 @@ export default function LiveMonitorPage() {
               </div>
               {/* 后台 */}
               <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div onClick={() => navigate('/work')} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
                   <Dot color="#10b981" pulse={backgroundProcs.length > 0} />
                   <span style={{ fontSize: 11, fontWeight: 600, color: '#10b981' }}>后台 · Brain 派发</span>
                   <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#10b981', background: 'rgba(16,185,129,.15)', padding: '0 6px', borderRadius: 8 }}>{backgroundProcs.length}</span>
+                  <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+                  <span style={{ fontSize: 9, color: '#484f58' }}>↗</span>
                 </div>
                 {backgroundProcs.length === 0 ? (
-                  <div style={{ padding: 12, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8 }}>暂无后台任务</div>
+                  <div onClick={() => navigate('/work')} style={{ padding: 12, textAlign: 'center', color: '#484f58', fontSize: 12, border: '1px dashed #21262d', borderRadius: 8, cursor: 'pointer', transition: 'border-color .15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff40')}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
+                    暂无后台任务 · 点击查看任务列表
+                  </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     {backgroundProcs.map(p => {
