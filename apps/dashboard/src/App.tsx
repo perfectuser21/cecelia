@@ -53,9 +53,13 @@ function AppContent() {
   const { config, loading: instanceLoading, isFeatureEnabled, isCore, coreConfig } = useInstance();
   const [collapsed, setCollapsed] = useState(true);
 
+  // 全高路由：不加 p-8，overflow-hidden，页面自己管理滚动
+  const isFullHeightRoute = (path: string) =>
+    path.startsWith('/system') || path.startsWith('/work') || path.startsWith('/immune') ||
+    path.startsWith('/cecelia') || path.startsWith('/okr/review') || path.startsWith('/inbox');
+
   // Tab 路由不加 p-8 内边距（TabbedPage 自带布局）
-  const isTabbedRoute = (path: string) =>
-    path.startsWith('/system') || path.startsWith('/work') || path.startsWith('/immune') || path.startsWith('/cecelia');
+  const isTabbedRoute = isFullHeightRoute;
 
   // 设置浏览器标题
   useEffect(() => {
@@ -258,8 +262,8 @@ function AppContent() {
       )}
 
       {/* 主内容区域 - 配置驱动路由 */}
-      <main className={isAuthenticated ? `flex-1 overflow-auto ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-auto"}>
-        <div key={location.pathname} className={isAuthenticated ? (isTabbedRoute(location.pathname) ? "page-fade-in" : "p-8 page-fade-in") : ""}>
+      <main className={isAuthenticated ? `flex-1 overflow-hidden flex flex-col ${collapsed ? 'ml-16' : 'ml-64'} pt-16 transition-all duration-300` : "flex-1 overflow-hidden flex flex-col"}>
+        <div key={location.pathname} className={isAuthenticated ? (isFullHeightRoute(location.pathname) ? "flex-1 min-h-0 overflow-hidden page-fade-in" : "flex-1 min-h-0 overflow-y-auto p-8 page-fade-in") : ""}>
           <DynamicRouter />
         </div>
       </main>
