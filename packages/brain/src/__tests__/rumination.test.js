@@ -103,14 +103,16 @@ describe('rumination', () => {
   });
 
   describe('条件检查', () => {
-    it('系统繁忙时跳过反刍', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ in_progress: '2', queued: '5' }],
-      });
+    it('系统繁忙时降低反刍批量（软限制，不再完全跳过）', async () => {
+      // 繁忙时：busyMultiplier=0.4，但仍继续执行（返回 no_undigested 或实际消化）
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ in_progress: '2', queued: '5' }] }) // isSystemIdle → busy
+        .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
       const result = await runRumination(pool);
-      expect(result.skipped).toBe('system_busy');
-      expect(result.digested).toBe(0);
+      // 繁忙时不再返回 system_busy，而是继续（只是批量减少）
+      expect(result.skipped).not.toBe('system_busy');
+      expect(result.digested).toBe(0); // 无知识可消化
     });
 
     it('冷却期内跳过反刍', async () => {
@@ -142,11 +144,14 @@ describe('rumination', () => {
       expect(result.skipped).toBe('no_undigested'); // 通过了 idle 检查
     });
 
-    it('queued>3 时不空闲', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '4' }] });
+    it('queued>3 时系统繁忙，但反刍仍以较低批量继续', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '4' }] }) // isSystemIdle → busy
+        .mockResolvedValueOnce({ rows: [] }); // 无未消化知识
 
       const result = await runRumination(pool);
-      expect(result.skipped).toBe('system_busy');
+      // 不再跳过，改为软限制（批量 × 0.4）
+      expect(result.skipped).not.toBe('system_busy');
     });
   });
 

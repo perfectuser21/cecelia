@@ -867,6 +867,8 @@ function getSkillForTaskType(taskType, payload) {
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
+    // Suggestion 驱动的自主规划
+    'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
     // 兼容旧类型
     'qa': '/review',
     'audit': '/review',

@@ -4,7 +4,7 @@
 **创建时间**: 2026-02-01
 **最后更新**: 2026-02-27
 
-**Brain 版本**: 1.132.5
+**Brain 版本**: 1.133.0
 **Schema 版本**: 091
 **状态**: 生产运行中
 
@@ -34,7 +34,7 @@
 
 ```
 Cecelia Core = Brain (Node.js, port 5221)
-             + Tick Loop (每 5s 循环检查，每 5min 执行一次 tick)
+             + Tick Loop (每 5s 循环检查，每 2min 执行一次 tick)
              + 三层大脑（L0 脑干/L1 丘脑/L2 皮层）
              + 保护系统（alertness, circuit-breaker, quarantine, watchdog）
 ```
@@ -58,7 +58,7 @@ Cecelia 是一个自主运行的任务调度与决策系统。她接收 OKR 目�
 
 | 器官 | 实现 | 职责 | 说明 |
 |------|------|------|------|
-| ❤️ **心脏** | tick.js | Tick Loop 驱动 | 每 5s 循环，每 5min 执行 |
+| ❤️ **心脏** | tick.js | Tick Loop 驱动 | 每 5s 循环，每 2min 执行 |
 | 🧠 **大脑 L2** | cortex.js | 皮层（深度分析） | Opus，RCA/战略调整/记录经验 |
 | 🧠 **大脑 L1** | thalamus.js | 丘脑（事件路由） | MiniMax M2.1，快速判断/异常检测 |
 | 🧠 **大脑 L0** | planner.js, executor.js, tick.js | 脑干（纯代码） | 调度、派发、保护系统 |
@@ -200,7 +200,7 @@ Agent Workers (Caramel/小检/小审/...)
 
 ### 3.1 L0 脑干 — 纯代码
 
-循环每 5 秒检查一次，正式 tick 每 5 分钟执行一次 `executeTick()`：
+循环每 5 秒检查一次，正式 tick 每 2 分钟执行一次 `executeTick()`：
 
 ```
 executeTick() 流程：
