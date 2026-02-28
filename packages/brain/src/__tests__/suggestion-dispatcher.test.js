@@ -37,7 +37,7 @@ function buildMockPool({
   return {
     query: vi.fn(async (sql, params) => {
       // Candidates query
-      if (sql.includes("status = 'pending'") && sql.includes('score >= 0.7')) {
+      if (sql.includes("status = 'pending'") && sql.includes('priority_score >= 0.7')) {
         return { rows: candidates };
       }
       // In-flight dedup query
@@ -64,7 +64,7 @@ describe('suggestion-dispatcher', () => {
 
   it('D1: 创建 suggestion_plan 任务并返回数量', async () => {
     const candidates = [
-      { id: 'sug-1', content: '优化任务调度性能', score: 0.85, source_type: 'agent_feedback', source_id: null },
+      { id: 'sug-1', content: '优化任务调度性能', priority_score: 0.85, source: 'agent_feedback', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
 
@@ -80,12 +80,12 @@ describe('suggestion-dispatcher', () => {
     // 验证 payload 包含 suggestion_id
     const payload = JSON.parse(insertCall[1][2]);
     expect(payload.suggestion_id).toBe('sug-1');
-    expect(payload.suggestion_score).toBe(0.85);
+    expect(payload.suggestion_score).toBe(0.85); // priority_score 值
   });
 
   it('D1: suggestion.status 改为 in_progress', async () => {
     const candidates = [
-      { id: 'sug-2', content: '建议新增 KR 监控', score: 0.9, source_type: 'reflection', source_id: null },
+      { id: 'sug-2', content: '建议新增 KR 监控', priority_score: 0.9, source: 'reflection', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
 
@@ -102,7 +102,7 @@ describe('suggestion-dispatcher', () => {
 
   it('D1: 去重——已有 in_progress 任务的 suggestion 不重复创建', async () => {
     const candidates = [
-      { id: 'sug-3', content: '重复建议', score: 0.95, source_type: 'agent_feedback', source_id: null },
+      { id: 'sug-3', content: '重复建议', priority_score: 0.95, source: 'agent_feedback', agent_id: null },
     ];
     const inFlight = [{ suggestion_id: 'sug-3' }]; // sug-3 已在处理中
     const pool = buildMockPool({ candidates, inFlight });
@@ -113,9 +113,9 @@ describe('suggestion-dispatcher', () => {
 
   it('D1: 最多处理 limit 条', async () => {
     const candidates = [
-      { id: 'sug-4', content: '建议 4', score: 0.95, source_type: 'agent', source_id: null },
-      { id: 'sug-5', content: '建议 5', score: 0.90, source_type: 'agent', source_id: null },
-      { id: 'sug-6', content: '建议 6', score: 0.85, source_type: 'agent', source_id: null },
+      { id: 'sug-4', content: '建议 4', priority_score: 0.95, source: 'agent', agent_id: null },
+      { id: 'sug-5', content: '建议 5', priority_score: 0.90, source: 'agent', agent_id: null },
+      { id: 'sug-6', content: '建议 6', priority_score: 0.85, source: 'agent', agent_id: null },
     ];
     const pool = buildMockPool({ candidates });
 
@@ -125,8 +125,8 @@ describe('suggestion-dispatcher', () => {
 
   it('D1: 单个任务失败不影响其他任务', async () => {
     const candidates = [
-      { id: 'sug-7', content: '会失败的建议', score: 0.9, source_type: null, source_id: null },
-      { id: 'sug-8', content: '正常建议', score: 0.85, source_type: null, source_id: null },
+      { id: 'sug-7', content: '会失败的建议', priority_score: 0.9, source: null, agent_id: null },
+      { id: 'sug-8', content: '正常建议', priority_score: 0.85, source: null, agent_id: null },
     ];
 
     let callCount = 0;
