@@ -341,6 +341,7 @@ async function cancelPendingTasks(keepCritical) {
       SET status = 'canceled',
           updated_at = NOW()
       WHERE status IN ('queued', 'pending')
+        AND task_type NOT IN ('research', 'suggestion_plan')
     `;
 
     if (keepCritical) {
