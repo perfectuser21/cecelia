@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useCecelia } from '@/contexts/CeceliaContext';
 import { useRealtimeVoice } from '../hooks/useRealtimeVoice';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 // Frontend command patterns for local execution (more flexible matching)
 const FRONTEND_PATTERNS = {
@@ -92,6 +93,8 @@ const PAGE_DISPLAY_NAMES: Record<string, string> = {
 };
 
 export function CeceliaChat() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const {
     messages,
     addMessage,
@@ -112,6 +115,9 @@ export function CeceliaChat() {
     getPageContext,
     showNavigationToast,
   } = useCecelia();
+
+  // 如果当前在意识页面，不显示悬浮球
+  const isConsciousnessPage = location.pathname === '/cecelia/chat';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -449,15 +455,19 @@ export function CeceliaChat() {
     );
   }
 
+  // 意识页面不显示悬浮球
+  if (isConsciousnessPage) return null;
+
   return (
     <button
-      onClick={() => setChatOpen(true)}
+      onClick={() => navigate('/cecelia/chat')}
       className="fixed p-4 bg-gradient-to-br from-slate-800 via-purple-900/50 to-slate-900 text-white rounded-full shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/30 hover:scale-105 transition-all z-50 border border-slate-600/50 group"
       style={{ bottom: '24px', right: '24px' }}
+      title="打开 Cecelia 意识界面"
     >
       {/* Glow effect */}
       <div className="absolute inset-0 rounded-full bg-purple-500/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity" />
-      <MessageCircle className="w-6 h-6 relative z-10" />
+      <Eye className="w-6 h-6 relative z-10" />
       {realtime.isConnected && (
         <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full animate-pulse" />
       )}

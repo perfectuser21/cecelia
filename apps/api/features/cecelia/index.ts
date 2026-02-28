@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'cecelia',
   name: 'Cecelia',
-  version: '1.1.0',
+  version: '1.2.0',
   source: 'core',
   instances: ['core'],
 
@@ -16,10 +16,20 @@ const manifest: FeatureManifest = {
       path: '/cecelia',
       component: 'CeceliaPage',
       navItem: {
-        label: '对话',
-        icon: 'MessageSquare',
+        label: '主页',
+        icon: 'LayoutDashboard',
         group: 'cecelia',
         order: 1,
+      },
+    },
+    {
+      path: '/cecelia/chat',
+      component: 'ConsciousnessChat',
+      navItem: {
+        label: '意识',
+        icon: 'Eye',
+        group: 'cecelia',
+        order: 2,
       },
     },
     { path: '/cecelia/config', redirect: '/system/team' },
@@ -27,6 +37,7 @@ const manifest: FeatureManifest = {
 
   components: {
     CeceliaPage: () => import('./pages/CeceliaPage'),
+    ConsciousnessChat: () => import('./pages/ConsciousnessChat'),
   },
 };
 
