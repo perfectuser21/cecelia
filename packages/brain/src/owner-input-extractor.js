@@ -13,15 +13,15 @@
 
 import { createSuggestion } from './suggestion-triage.js';
 
-/** 需要生成 suggestion 的意图类型（排除纯查询和闲聊） */
+/** 需要生成 suggestion 的意图类型（与 intent.js INTENT_TYPES 值对应，均为小写） */
 const ACTION_INTENTS = new Set([
-  'CREATE_TASK',
-  'CREATE_PROJECT',
-  'CREATE_GOAL',
-  'MODIFY',
-  'LEARN',
-  'RESEARCH',
-  'COMMAND',
+  'create_task',
+  'create_project',
+  'create_goal',
+  'create_feature',
+  'fix_bug',
+  'refactor',
+  'explore',
 ]);
 
 /**
