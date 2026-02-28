@@ -17,6 +17,7 @@ import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
 import pool from './src/db.js';
+import { initNarrativeTimer } from './src/cognitive-core.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { WebSocketServer } from 'ws';
@@ -159,6 +160,10 @@ server.listen(PORT, async () => {
   initWebSocketServer(server);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
   console.log(`Realtime WebSocket ready at ws://localhost:${PORT}/api/brain/orchestrator/realtime/ws`);
+
+  // Initialize narrative timer from DB (prevent duplicate diary on restart)
+  await initNarrativeTimer(pool);
+  console.log('[Server] Narrative timer initialized from DB');
 
   // Initialize tick loop if enabled in DB
   await initTickLoop();

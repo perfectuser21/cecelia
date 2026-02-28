@@ -508,6 +508,28 @@ ${eventSummary}
 }
 
 /**
+ * 初始化叙事计时器
+ * Brain 启动时从数据库读取上次写入时间，防止重启后立即重复写日记
+ * @param {object} db - pg pool 实例
+ */
+export async function initNarrativeTimer(db) {
+  try {
+    const result = await db.query(`
+      SELECT created_at FROM memory_stream
+      WHERE source_type = 'narrative'
+      ORDER BY created_at DESC LIMIT 1
+    `);
+    if (result.rows.length > 0) {
+      _lastNarrativeAt = new Date(result.rows[0].created_at).getTime();
+      console.log('[cognitive] 叙事计时器已从 DB 恢复，上次写入:', new Date(_lastNarrativeAt).toLocaleString('zh-CN'));
+    }
+  } catch (e) {
+    // 查询失败静默忽略，保持 0（保持原有行为）
+    console.warn('[cognitive] 叙事计时器初始化查询失败（静默忽略）:', e.message);
+  }
+}
+
+/**
  * 获取最新叙事
  */
 export async function getLatestNarrative(dbPool) {
