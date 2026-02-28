@@ -755,6 +755,37 @@ export default function LiveMonitorPage() {
 
         <div style={{ padding: '16px 20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
+          {/* ══ 基础设施状态栏（顶部可见）══ */}
+          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 8, padding: '8px 16px' }}>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>US VPS</span>
+              {vps ? (
+                <>
+                  {[
+                    { l: 'CPU', v: `${vps.cpu.usage.toFixed(0)}%`, color: metricColor(vps.cpu.usage) },
+                    { l: 'RAM', v: `${vps.memory.usagePercent.toFixed(0)}%`, color: metricColor(vps.memory.usagePercent) },
+                    { l: 'DISK', v: `${vps.disk.usagePercent}%`, color: metricColor(vps.disk.usagePercent) },
+                    { l: 'LOAD', v: String(vps.cpu.loadAverage['1min']), color: vps.cpu.loadAverage['1min'] > vps.cpu.cores ? '#ef4444' : vps.cpu.loadAverage['1min'] > vps.cpu.cores * 0.7 ? '#f59e0b' : '#10b981' },
+                    { l: 'MEM', v: `${fmtBytes(vps.memory.used)}/${fmtBytes(vps.memory.total)}`, color: '#6e7681' },
+                    { l: 'UP', v: fmtUptime(vps.uptime), color: '#6e7681' },
+                  ].map(({ l, v, color }) => (
+                    <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ fontSize: 9, color: '#484f58', letterSpacing: .8, textTransform: 'uppercase' }}>{l}</span>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color }}>{v}</span>
+                    </div>
+                  ))}
+                  <div style={{ width: 1, height: 20, background: '#21262d' }} />
+                  <AccUsageRings />
+                  <div style={{ width: 1, height: 20, background: '#21262d' }} />
+                  {svcDown > 0 && <span style={{ background: 'rgba(239,68,68,.15)', color: '#ef4444', fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 20 }}>{svcDown} down</span>}
+                  {svcUp > 0 && svcDown === 0 && <span style={{ background: 'rgba(16,185,129,.1)', color: '#10b981', fontSize: 11, padding: '1px 8px', borderRadius: 20 }}>all up</span>}
+                </>
+              ) : (
+                <span style={{ fontSize: 11, color: '#484f58' }}>加载中…</span>
+              )}
+            </div>
+          </div>
+
           {/* ══ OKR + 今日快照 ══ */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
@@ -955,46 +986,6 @@ export default function LiveMonitorPage() {
             )}
           </div>
 
-          {/* ══ 基础设施 ══ */}
-          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '12px 20px' }}>
-            <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 9, color: '#484f58', letterSpacing: 1.2, textTransform: 'uppercase', flexShrink: 0 }}>基础设施</span>
-              {vps && (
-                <>
-                  <Ring pct={vps.cpu.usage} color={metricColor(vps.cpu.usage)} label="CPU" value={`${vps.cpu.usage.toFixed(0)}%`} />
-                  <Ring pct={vps.memory.usagePercent} color={metricColor(vps.memory.usagePercent)} label="RAM" value={`${vps.memory.usagePercent.toFixed(0)}%`} />
-                  <Ring pct={vps.disk.usagePercent} color={metricColor(vps.disk.usagePercent)} label="DISK" value={`${vps.disk.usagePercent}%`} />
-                  <div style={{ width: 1, height: 40, background: '#21262d' }} />
-                  <AccUsageRings />
-                  <div style={{ width: 1, height: 40, background: '#21262d' }} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, max-content)', gap: '2px 16px' }}>
-                    {[
-                      { l: 'LOAD', v: String(vps.cpu.loadAverage['1min']) },
-                      { l: 'CORES', v: String(vps.cpu.cores) },
-                      { l: 'MEM', v: `${fmtBytes(vps.memory.used)}/${fmtBytes(vps.memory.total)}` },
-                      { l: 'UPTIME', v: fmtUptime(vps.uptime) },
-                    ].map(({ l, v }) => (
-                      <div key={l}>
-                        <div style={{ fontSize: 9, color: '#484f58', letterSpacing: 1, textTransform: 'uppercase' }}>{l}</div>
-                        <div style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600, color: '#c9d1d9' }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-              <div style={{ width: 1, height: 40, background: '#21262d' }} />
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                {svcUp > 0 && <span style={{ background: 'rgba(16,185,129,.15)', color: '#10b981', fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 20 }}>{svcUp} up</span>}
-                {svcDown > 0 && <span style={{ background: 'rgba(239,68,68,.15)', color: '#ef4444', fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 20 }}>{svcDown} down</span>}
-                {services.slice(0, 6).map(s => (
-                  <div key={s.containerName} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Dot color={s.status === 'running' ? '#10b981' : '#ef4444'} />
-                    <span style={{ fontSize: 11, color: '#6e7681' }}>{s.containerName}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </>
