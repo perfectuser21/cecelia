@@ -1,6 +1,6 @@
 /**
- * LiveMonitorPage v14 (Live Monitor v3) - 基础渲染测试
- * 变更：HK VPS + OKR 分层 + Project/Initiative 全宽 + Agents/Queue 并排
+ * LiveMonitorPage v15 (Live Monitor v3.1) - 基础渲染测试
+ * 变更：OKR 放大（左 45%）+ Project+Initiative 右侧替换今日快照 + 概况小条并入 Agents
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,17 +25,17 @@ function renderWithRouter() {
   );
 }
 
-describe('LiveMonitorPage v14', () => {
+describe('LiveMonitorPage v15', () => {
   it('渲染顶部栏标识', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
     expect(screen.getByText('CECELIA NOC')).toBeInTheDocument();
   });
 
-  it('渲染 OKR 总览和今日快照区块标题', () => {
+  it('渲染 OKR 总览和 Project+Initiative 区块标题', () => {
     renderWithRouter();
     expect(screen.getByText('OKR 总览')).toBeInTheDocument();
-    expect(screen.getByText('今日快照')).toBeInTheDocument();
+    expect(screen.getByText('Project + Initiative')).toBeInTheDocument();
   });
 
   it('渲染实时 Agents 和等待队列区块', () => {
@@ -51,9 +51,9 @@ describe('LiveMonitorPage v14', () => {
     expect(screen.getByText('HK VPS')).toBeInTheDocument();
   });
 
-  it('渲染活跃 Project 区块', () => {
+  it('Project+Initiative 区块显示空状态', () => {
     renderWithRouter();
-    expect(screen.getByText('活跃 Project')).toBeInTheDocument();
+    expect(screen.getByText('暂无活跃项目')).toBeInTheDocument();
   });
 
   it('空状态显示占位文本', () => {
