@@ -632,6 +632,7 @@ export default function LiveMonitorPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const [killedPids, setKilledPids] = useState<Set<number>>(new Set());
   const [providerMap, setProviderMap] = useState<Record<number, ProviderInfo>>({});
+  const [allObjectives, setAllObjectives] = useState<Array<{ id: string; title: string; progress: number; priority: string }>>([]);
   const handleKilled = useCallback((pid: number) => setKilledPids(s => new Set([...s, pid])), []);
 
   const load = useCallback(async () => {
@@ -645,12 +646,17 @@ export default function LiveMonitorPage() {
       fetch('/api/v1/vps-monitor/stats').then(x => x.json()),
       fetch('/api/v1/vps-monitor/services').then(x => x.json()),
       fetch('/api/cluster/scan-sessions').then(x => x.json()),
+      fetch('/api/goals?limit=200').then(x => x.json()),
     ]);
     if (r[0].status === 'fulfilled') setBrainStatus(r[0].value);
     if (r[1].status === 'fulfilled') setTick(r[1].value);
     if (r[2].status === 'fulfilled') setActiveTasks(Array.isArray(r[2].value) ? r[2].value : []);
     if (r[3].status === 'fulfilled') setQueuedTasks(Array.isArray(r[3].value) ? r[3].value : []);
     if (r[4].status === 'fulfilled' && Array.isArray(r[4].value)) setProjects(r[4].value);
+    if (r[9].status === 'fulfilled') {
+      const goals = Array.isArray(r[9].value) ? r[9].value : [];
+      setAllObjectives(goals.filter((g: any) => g.type === 'area_okr' && !g.parent_id));
+    }
     if (r[5].status === 'fulfilled') {
       const c = r[5].value?.cluster ?? null;
       // Brain 容器无 --pid=host，ps aux 看不到宿主机进程。
@@ -791,16 +797,35 @@ export default function LiveMonitorPage() {
           {/* ══ OKR + 今日快照 ══ */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
-            {/* 当前 OKR */}
+            {/* OKR 总览 */}
             <div onClick={() => navigate('/planning/okr')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
               onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
               onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>当前 OKR</span>
-                <span style={{ fontSize: 10, color: '#484f58', background: '#21262d', padding: '1px 6px', borderRadius: 4 }}>今日焦点</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#c084fc', letterSpacing: 1.4, textTransform: 'uppercase' }}>OKR 总览</span>
+                {allObjectives.length > 0 && (
+                  <span style={{ fontSize: 10, color: '#484f58', background: '#21262d', padding: '1px 6px', borderRadius: 4 }}>{allObjectives.length} 个目标</span>
+                )}
                 <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+                <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
               </div>
-              {focus ? (
+              {allObjectives.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {allObjectives.map(obj => {
+                    const c = krColor(obj.progress);
+                    return (
+                      <div key={obj.id}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: 10, background: 'rgba(245,158,11,.15)', color: '#fbbf24', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>{obj.priority ?? 'P2'}</span>
+                          <span style={{ fontSize: 12, color: '#c9d1d9', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(obj.title, 40)}</span>
+                          <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: c, flexShrink: 0 }}>{obj.progress ?? 0}%</span>
+                        </div>
+                        <PBar pct={obj.progress ?? 0} color={c} h={3} />
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : focus ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, alignItems: 'start' }}>
                   <div style={{ textAlign: 'center', minWidth: 56 }}>
                     <div style={{ fontFamily: 'monospace', fontSize: 44, fontWeight: 700, lineHeight: 1, color: krColor(focus.progress), letterSpacing: -2 }}>
@@ -895,7 +920,9 @@ export default function LiveMonitorPage() {
           </div>
 
           {/* ══ 活跃项目 ══ */}
-          <div style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px' }}>
+          <div onClick={() => navigate('/work')} style={{ background: '#161b22', border: '1px solid #21262d', borderRadius: 12, padding: '18px 20px', cursor: 'pointer', transition: 'border-color .15s' }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
               <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', letterSpacing: 1.4, textTransform: 'uppercase' }}>活跃项目</span>
               <span style={{
@@ -906,6 +933,7 @@ export default function LiveMonitorPage() {
                 {activeTasks.length} 进行中 · {queuedTasks.length} 排队
               </span>
               <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+              <span style={{ fontSize: 10, color: '#484f58' }}>↗</span>
             </div>
             <ActiveProjects inProgressTasks={activeTasks} queuedTasks={queuedTasks} projects={projects} />
           </div>
@@ -969,14 +997,18 @@ export default function LiveMonitorPage() {
             {/* 等待队列 */}
             {queuedTasks.length > 0 && (
               <div style={{ marginTop: 14, borderTop: '1px solid #21262d', paddingTop: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div onClick={() => navigate('/work')} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b', letterSpacing: 1, textTransform: 'uppercase' }}>等待队列</span>
                   <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#f59e0b', background: 'rgba(245,158,11,.15)', padding: '0 6px', borderRadius: 8 }}>{queuedTasks.length}</span>
                   <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+                  <span style={{ fontSize: 10, color: '#484f58' }}>↗ 查看全部</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
                   {queuedTasks.slice(0, 8).map((t, i) => (
-                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, background: '#0d1117', border: '1px solid #21262d' }}>
+                    <div key={t.id} onClick={e => { e.stopPropagation(); navigate('/work'); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, background: '#0d1117', border: '1px solid #21262d', cursor: 'pointer', transition: 'border-color .15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = '#58a6ff40')}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = '#21262d')}>
                       <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#484f58', flexShrink: 0 }}>#{i + 1}</span>
                       <PBadge p={t.priority} />
                       <span style={{ fontSize: 11, color: '#8b949e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip(t.title, 45)}</span>
@@ -984,8 +1016,9 @@ export default function LiveMonitorPage() {
                     </div>
                   ))}
                   {queuedTasks.length > 8 && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 7, borderRadius: 6, background: '#0d1117', border: '1px dashed #21262d', color: '#484f58', fontSize: 11 }}>
-                      +{queuedTasks.length - 8} 个任务
+                    <div onClick={e => { e.stopPropagation(); navigate('/work'); }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 7, borderRadius: 6, background: '#0d1117', border: '1px dashed #21262d', color: '#484f58', fontSize: 11, cursor: 'pointer' }}>
+                      +{queuedTasks.length - 8} 个任务 →
                     </div>
                   )}
                 </div>
