@@ -11,7 +11,8 @@
 const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
   'research', 'codex_qa', 'code_review', 'decomp_review',
-  'dept_heartbeat', 'initiative_plan', 'initiative_verify'
+  'dept_heartbeat', 'initiative_plan', 'initiative_verify',
+  'suggestion_plan'
 ];
 
 // Skill whitelist based on task type
@@ -28,7 +29,8 @@ const SKILL_WHITELIST = {
   'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
   'initiative_plan': '/decomp',
-  'initiative_verify': '/decomp'
+  'initiative_verify': '/decomp',
+  'suggestion_plan': '/plan'
 };
 
 // Fallback strategies when primary routing fails
@@ -93,6 +95,7 @@ const LOCATION_MAP = {
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
+  'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
   'talk': 'hk',       // 对话 → HK (MiniMax)
   'research': 'hk',   // 调研 → HK (MiniMax)
   'data': 'hk',       // 数据处理 → HK (N8N)
@@ -207,8 +210,7 @@ function routeTaskCreate(taskData) {
  * @returns {boolean} - Whether task type is valid
  */
 function isValidTaskType(taskType) {
-  const validTypes = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research', 'codex_qa', 'code_review', 'decomp_review', 'dept_heartbeat', 'initiative_plan', 'initiative_verify'];
-  return validTypes.includes(taskType?.toLowerCase());
+  return VALID_TASK_TYPES.includes(taskType?.toLowerCase());
 }
 
 /**
