@@ -29,6 +29,7 @@ import { publishCognitiveState } from './events/taskEvents.js';
 import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
 import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
+import { collectSelfReport } from './self-report-collector.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1984,6 +1985,9 @@ async function executeTick() {
     const currentEmotion = getCurrentEmotion();
     updateNarrative(currentEmotion, pool).catch(e => console.warn('[tick] 叙事更新失败:', e.message));
   } catch { /* 静默 */ }
+
+  // 10.8 欲望轨迹采集（每 6 小时一次，fire-and-forget，Layer 4）
+  Promise.resolve().then(() => collectSelfReport(pool)).catch(e => console.warn('[tick] self-report 采集失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });

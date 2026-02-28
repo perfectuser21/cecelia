@@ -32,12 +32,23 @@ const manifest: FeatureManifest = {
         order: 2,
       },
     },
+    {
+      path: '/cecelia/diary',
+      component: 'DiaryPage',
+      navItem: {
+        label: '日记',
+        icon: 'BookOpen',
+        group: 'cecelia',
+        order: 3,
+      },
+    },
     { path: '/cecelia/config', redirect: '/system/team' },
   ],
 
   components: {
     CeceliaPage: () => import('./pages/CeceliaPage'),
     ConsciousnessChat: () => import('./pages/ConsciousnessChat'),
+    DiaryPage: () => import('./pages/DiaryPage'),
   },
 };
 

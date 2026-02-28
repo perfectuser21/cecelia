@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] Layer 4 欲望轨迹追踪系统 (PR #176, Brain 1.136.0)
+- **.brain-versions 必须同步**: version bump 时除了 package.json/package-lock.json/DEFINITION.md/VERSION，还要更新根目录 `.brain-versions`（纯版本号一行，无前缀）
+- **翻译器模式提示词**: 让 LLM 只转述信号，不创作——"你不是 Cecelia，你是翻译器，让信号说话"，产出比"你是 Cecelia"更真实的欲望自述
+- **parallel 并发冲突解法**: main 分支前进（1.135.2 narratives PR）时，用 `git merge origin/main` + 手动解决冲突（package.json/DEFINITION.md/server.js/package-lock.json），保留双方新增内容
+- **fire-and-forget 集成模式**: tick 步骤中的长时 IO（LLM 调用）用 `Promise.resolve().then(...).catch(...)` 包裹，不阻塞主循环，不影响 tick 时序
+
+### [2026-02-28] 新增 Cecelia 日记页面 (PR #177, Brain 1.135.2)
+- **架构模式**: Brain 子路由放 `src/routes/` 目录，在 `server.js`（根目录，不是 src/）注册 `app.use('/api/brain/xxx', router)`
+- **前端路由注册**: `apps/api/features/cecelia/index.ts` manifest 中加路由 + components 懒加载，DynamicRouter 自动处理
+- **narrative content 格式**: memory_stream 的 content 字段存储的是 JSON 字符串 `{"text":"...","model":"...","elapsed_ms":...}`，API 层需要 `JSON.parse` 再取 text 字段
+- **DEFINITION.md 版本**: version-sync.sh 会检查 DEFINITION.md 第 7 行 `Brain 版本`，version bump 时必须同时更新
+
 ### [2026-02-28] executor.js failure_pattern content_hash 去重 (PR #173, Brain 1.135.1)
 - **根因**: `executor.js` 直接 INSERT INTO learnings 时未设 `content_hash`，绕过 `auto-learning.js` 的去重逻辑，每次 watchdog kill 均产生新记录。实测：916 条 test-watchdog-kill 记录 content_hash 全为 NULL
 - **修复**: 提取 `failureTitle`/`failureContent` 变量 → 计算 `SHA256(title\ncontent).slice(0,16)` → 先 SELECT 检查去重 → INSERT 补充 `content_hash / version / is_latest / digested`（与 auto-learning.js 规范一致）
