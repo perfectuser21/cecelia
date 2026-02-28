@@ -138,7 +138,7 @@ ${message}
 \`\`\``;
 
   try {
-    const { text } = await callLLM('thalamus', prompt, { timeout: 8000, maxTokens: 512 });
+    const { text } = await callLLM('thalamus', prompt, { timeout: 30000, maxTokens: 512 });
     const parsed = parseJsonFromResponse(text);
     if (parsed && parsed.intent) return parsed;
     return null;

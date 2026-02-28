@@ -52,7 +52,7 @@ function stripThinking(content) {
  * @param {string} agentId - brain 层 agent: 'thalamus' | 'cortex' | 'reflection' | 'mouth'
  * @param {string} prompt - 完整 prompt
  * @param {Object} [options]
- * @param {number} [options.timeout] - 超时毫秒数（默认 30000）
+ * @param {number} [options.timeout] - 超时毫秒数（默认 90000，Sonnet 并发时需要充足时间）
  * @param {number} [options.maxTokens] - 最大输出 token 数（默认 1024）
  * @param {string} [options.model] - 覆盖 profile 的模型选择
  * @param {string} [options.provider] - 覆盖 profile 的 provider 选择
@@ -66,7 +66,7 @@ export async function callLLM(agentId, prompt, options = {}) {
   const agentConfig = profile?.config?.[agentId] || {};
   const model = options.model || agentConfig.model || 'claude-haiku-4-5-20251001';
   const provider = options.provider || agentConfig.provider || 'anthropic';
-  const timeout = options.timeout || 30000;
+  const timeout = options.timeout || 90000;
   const maxTokens = options.maxTokens || 1024;
 
   let text;

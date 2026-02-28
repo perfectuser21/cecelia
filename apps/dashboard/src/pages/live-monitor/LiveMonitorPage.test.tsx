@@ -26,10 +26,10 @@ function renderWithRouter() {
 }
 
 describe('LiveMonitorPage v18', () => {
-  it('渲染顶部栏标识', () => {
+  it('渲染顶部栏标识（无 CECELIA NOC）', () => {
     renderWithRouter();
     expect(screen.getByText('LIVE')).toBeInTheDocument();
-    expect(screen.getByText('CECELIA NOC')).toBeInTheDocument();
+    expect(screen.queryByText('CECELIA NOC')).not.toBeInTheDocument();
   });
 
   it('渲染 OKR 总览和 Projects 区块标题', () => {

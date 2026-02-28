@@ -15,12 +15,12 @@ import pool from './db.js';
  * @returns {number} 创建的任务数量
  */
 export async function dispatchPendingSuggestions(dbPool = pool, limit = 2) {
-  // 1. 查询高分 pending suggestions（priority_score≥0.7，未过期）
+  // 1. 查询高分 pending suggestions（priority_score≥0.68，未过期）
   const candidateResult = await dbPool.query(`
     SELECT s.id, s.content, s.priority_score, s.source, s.agent_id
     FROM suggestions s
     WHERE s.status = 'pending'
-      AND s.priority_score >= 0.7
+      AND s.priority_score >= 0.68
       AND (s.expires_at IS NULL OR s.expires_at > NOW())
     ORDER BY s.priority_score DESC, s.created_at ASC
     LIMIT $1
