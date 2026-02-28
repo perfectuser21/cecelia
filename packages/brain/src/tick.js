@@ -1135,16 +1135,41 @@ async function executeTick() {
   try {
     const resources = checkServerResources();
     const cpuPercent = resources.cpu_percent || 0;
+
+    // 从 DB 获取真实的队列深度和最近成功率（用于情绪评估）
+    let queueDepth = 0;
+    let successRate = 1.0;
+    try {
+      const queueRes = await pool.query(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'queued'"
+      );
+      queueDepth = parseInt(queueRes.rows[0]?.cnt || 0, 10);
+
+      const successRes = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+          COUNT(*) FILTER (WHERE status = 'failed') AS failed
+        FROM tasks
+        WHERE updated_at >= NOW() - INTERVAL '1 hour'
+      `);
+      const completed = parseInt(successRes.rows[0]?.completed || 0, 10);
+      const failed = parseInt(successRes.rows[0]?.failed || 0, 10);
+      const total = completed + failed;
+      if (total > 0) successRate = completed / total;
+    } catch {
+      // 静默降级：使用默认值
+    }
+
     const emotionResult = evaluateEmotion({
       alertnessLevel: alertnessResult?.level ?? 1,
       cpuPercent,
-      queueDepth: 0, // 稍后从 DB 获取实际值
-      successRate: 1.0
+      queueDepth,
+      successRate
     });
     updateSubjectiveTime();
     recordTickEvent({ phase: 'tick', detail: `警觉=${alertnessResult?.levelName || 'CALM'}, 情绪=${emotionResult.label}` });
     cognitionSnapshot = { emotion: emotionResult, time: getSubjectiveTime?.() };
-    console.log(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 派发修正=${emotionResult.dispatch_rate_modifier}`);
+    console.log(`[tick] 认知状态: 情绪=${emotionResult.label}(${emotionResult.state}), 队列=${queueDepth}, 成功率=${Math.round(successRate * 100)}%, 派发修正=${emotionResult.dispatch_rate_modifier}`);
   } catch (cogErr) {
     console.warn('[tick] 认知评估跳过:', cogErr.message);
   }
@@ -1831,13 +1856,35 @@ async function executeTick() {
 
   // Apply dispatch rate limit based on alertness level
   const dispatchRate = getDispatchRate();
+
+  // 情绪门禁：过载状态跳过本轮派发
+  const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
+  const emotionDispatchModifier = cognitionSnapshot?.emotion?.dispatch_rate_modifier ?? 1.0;
+  if (emotionState === 'overloaded') {
+    console.log('[tick] 情绪过载，跳过本轮派发（dispatch_rate_modifier=' + emotionDispatchModifier + '）');
+    actionsTaken.push({ action: 'emotion_gate', emotion: emotionState, reason: 'overloaded_skip_dispatch' });
+    return {
+      success: true,
+      alertness: alertnessResult,
+      cognition: cognitionSnapshot,
+      dispatch: { dispatched: 0, reason: 'emotion_overloaded' },
+      actions_taken: actionsTaken,
+      summary: { in_progress: inProgress.length, queued: queued.length, stale: staleTasks.length },
+      next_tick: new Date(now.getTime() + TICK_INTERVAL_MINUTES * 60 * 1000).toISOString()
+    };
+  }
+
   // Use slot budget for max dispatch count (slot-allocator replaces flat AUTO_DISPATCH_MAX)
   const tickSlotBudget = await calculateSlotBudget();
   const poolCAvailable = tickSlotBudget.taskPool.available;
   // 保证有 slot 且 rate > 0 时至少能派发 1 个（Math.floor 会把 0.3~0.9 杀成 0）
+  // 乘以情绪修正系数（focused/excited 加速，tired/anxious 减速）
   const effectiveDispatchMax = (poolCAvailable > 0 && dispatchRate > 0)
-    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate))
+    ? Math.max(1, Math.floor(poolCAvailable * dispatchRate * emotionDispatchModifier))
     : 0;
+  if (emotionDispatchModifier !== 1.0) {
+    console.log(`[tick] 情绪派发修正: ${emotionState} × ${emotionDispatchModifier} → effectiveMax=${effectiveDispatchMax}`);
+  }
   if (tickSlotBudget.user.mode !== 'absent') {
     console.log(`[tick] User mode: ${tickSlotBudget.user.mode} (${tickSlotBudget.user.used} headed), Pool C: ${poolCAvailable}/${tickSlotBudget.taskPool.budget}`);
   }
