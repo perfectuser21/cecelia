@@ -15,7 +15,7 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.7.0"
+version: "3.7.1"
 updated: "2026-02-28"
 changelog:
   - 3.7.0: v12.33.0 - /dev 交付质量修复（05-dod.md manual 格式升级到具体命令 + 07-verify.md 逐条执行 DoD 勾 [x] + check-dod-mapping.cjs 增加全勾检查 + devgate.yml 全 PR DoD 门控）
@@ -135,10 +135,11 @@ platform_features:
     name: Branch Protection
     status: Committed
     priority: P0
-    version: "12.8.0"
-    updated: "2026-02-08"
+    version: "12.33.2"
+    updated: "2026-02-28"
     description: |
       防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
+      v12.33.2: 强制 worktree 检测（v20）- cp-*/feature/* 分支必须在独立 worktree 中，防止主仓库污染
       v12.8.0: 加强数据库检查（v20）- .dev-mode 存在时优先检查 Brain API 数据库（PRD/DoD 初稿），支持秋米→/dev 工作流
       v12.4.14: 修复 gitignored PRD/DoD 文件检测（跳过 git 追踪检查，只验证存在性和内容）
       v11.13.1: 支持 monorepo 子目录 PRD/DoD 文件检测（如 apps/core/.prd.md）
