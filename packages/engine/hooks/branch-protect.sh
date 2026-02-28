@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v19
+# ZenithJoy Engine - 分支保护 Hook v20
+# v20: 强制 worktree 检测——cp-*/feature/* 分支必须在 worktree 中，防止主仓库污染
 # v19: 支持 monorepo 子目录的 PRD/DoD 文件（如 apps/core/.prd.md）
 # v18: 放宽 skills 目录保护，只保护 Engine 相关 skills (dev, qa, audit, semver)
 # v17: 支持分支级别 PRD/DoD 文件 (.prd-{branch}.md, .dod-{branch}.md)
@@ -178,6 +179,32 @@ fi
 # feature/* 要求: feature/ 后至少1个字符，允许字母数字、连字符、下划线、斜杠
 if [[ "$CURRENT_BRANCH" =~ ^cp-[a-zA-Z0-9][-a-zA-Z0-9_]*$ ]] || \
    [[ "$CURRENT_BRANCH" =~ ^feature/[a-zA-Z0-9][-a-zA-Z0-9_/]*$ ]]; then
+
+    # ===== v20: Worktree 检测 =====
+    # 必须在独立 worktree 中开发，不能在主仓库的 cp-*/feature/* 残留分支上写代码
+    # 原因：主仓库残留分支通过分支名检查，但代码会污染主仓库状态（monorepo 尤其危险）
+    GIT_DIR_PATH=$(git rev-parse --git-dir 2>/dev/null || echo "")
+    IS_WORKTREE=false
+    if [[ "$GIT_DIR_PATH" == *"worktrees"* ]]; then
+        IS_WORKTREE=true
+    fi
+
+    if [[ "$IS_WORKTREE" == false ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  ❌ 必须在独立 worktree 中开发" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  当前状态：主仓库的 $CURRENT_BRANCH 分支（非 worktree）" >&2
+        echo "  风险：代码改动会污染主仓库，在 monorepo 中尤其危险" >&2
+        echo "" >&2
+        echo "  修复：" >&2
+        echo "    git checkout main" >&2
+        echo "    然后重新运行 /dev" >&2
+        echo "" >&2
+        echo "[SKILL_REQUIRED: dev]" >&2
+        exit 2
+    fi
 
     # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
     # 优先级: 子目录 PRD/DoD > 根目录 PRD/DoD
