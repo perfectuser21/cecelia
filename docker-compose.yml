@@ -18,6 +18,10 @@ services:
       - /home/xx/bin:/home/xx/bin:ro
       # Credentials (read-only, mapped to container user homedir)
       - /home/xx/.credentials:/home/cecelia/.credentials:ro
+      # Claude account credentials for account-usage API (homedir mapping)
+      - /home/xx/.claude-account1:/home/cecelia/.claude-account1:ro
+      - /home/xx/.claude-account2:/home/cecelia/.claude-account2:ro
+      - /home/xx/.claude-account3:/home/cecelia/.claude-account3:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
