@@ -198,6 +198,8 @@ export default function OkrReviewPage(): React.ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 新版本创建后，下次 versions 状态更新时自动切换到最新 Tab
+  const switchToLatestRef = useRef(false);
 
   const loadAction = useCallback(async () => {
     if (!id) return;
@@ -235,11 +237,16 @@ export default function OkrReviewPage(): React.ReactElement {
     init();
   }, [loadAction, loadVersions]);
 
-  // 版本加载后默认选中当前版本的 Tab
+  // 版本加载后默认选中当前版本的 Tab；新版本创建后自动切到最新 Tab
   useEffect(() => {
     if (versions.length > 0) {
-      const idx = versions.findIndex(v => v.id === id);
-      setActiveTabIdx(idx >= 0 ? idx : versions.length - 1);
+      if (switchToLatestRef.current) {
+        setActiveTabIdx(versions.length - 1);
+        switchToLatestRef.current = false;
+      } else {
+        const idx = versions.findIndex(v => v.id === id);
+        setActiveTabIdx(idx >= 0 ? idx : versions.length - 1);
+      }
     }
   }, [versions, id]);
 
@@ -277,6 +284,11 @@ export default function OkrReviewPage(): React.ReactElement {
         redecomp: !!data.redecomp_triggered,
       }]);
       if (data.redecomp_triggered) setRedecompNotice(true);
+      // 新版本创建：设置切换标志 + 立即刷新版本列表
+      if (data.version_created && data.new_version_id) {
+        switchToLatestRef.current = true;
+        loadVersions();
+      }
     } catch {
       setMessages(prev => [...prev, {
         role: 'autumnrice',
