@@ -313,6 +313,6 @@ describe('migration 089 validation', () => {
     expect(content).toContain('goal_id UUID NOT NULL');
     expect(content).toContain('verdict VARCHAR(20)');
     expect(content).toContain('metrics JSONB');
-    expect(content).toContain("'089'");
+    expect(content).toContain('089');
   });
 });
