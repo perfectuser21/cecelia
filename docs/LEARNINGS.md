@@ -1,5 +1,12 @@
 # Cecelia Core Learnings
 
+### [2026-02-28] OkrReviewPage UX 重设计 + 分支冲突 (PR #126, Brain 1.130.2)
+- **main 版本漂移问题**: 两个 PR (#122 #123) 并行合并后，branch 创建时的 base 落后两个提交 → CONFLICTING。解决：`git reset --hard origin/main` + cherry-pick 功能提交 + delete+push 重建分支
+- **workflow_dispatch 不计入 PR required checks**: 手动触发 Brain CI 通过了，但 GitHub PR 的 required status check 只认 `pull_request` 事件触发的 CI，需要删远端分支重推才能触发新 PR CI
+- **flex 固定高度聊天窗口**: `flex-1 min-h-0 overflow-y-auto` 是关键组合，缺少 `min-h-0` 会导致 flex child 撑开超出 flex container 高度
+- **Initiative 内联编辑模式**: group hover + Pencil 图标（`text-transparent group-hover:text-violet-400`），input onBlur + Enter 触发 PATCH
+- **简化 Markdown 渲染**: 秋米回复中 `---` 分隔线和表格会变成杂乱符号，应在 renderMarkdown 中直接 skip 这些行
+
 ### [2026-02-27] OKR 拆解确认门 bug 修复 (PR #79, Brain 1.118.1)
 - **作用域 bug 模式**: `const x = ...` 在 if 块内声明，try/catch 在 if 块外引用 → ReferenceError，被 catch 静默吞掉。这类 bug 只能通过容器日志 `catch error message` 发现，测试难以覆盖
 - **非阻塞 catch 的危险性**: `try { ... } catch (err) { console.error(...) }` 会把逻辑错误转变为静默失败。重要功能（如创建 pending_action）被 catch 包裹时，测试必须 spy 该代码路径确认执行
