@@ -43,6 +43,7 @@ const manifest: FeatureManifest = {
     { path: '/system/skills-registry', redirect: '/system/team' },
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
+    { path: '/account-usage', component: 'AccountUsagePage' },
     { path: '/brain-status', component: 'BrainStatusDashboard' },
     { path: '/system/cecelia/runs', component: 'CeceliaRuns' },
     { path: '/system/cecelia/runs/:runId', component: 'RunDetail' },
@@ -135,6 +136,7 @@ const manifest: FeatureManifest = {
     SystemTabbed: () => import('./pages/SystemTabbed'),
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
+    AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
     BrainStatusDashboard: () => import('../execution/pages/BrainStatusDashboard'),
     CeceliaRuns: () => import('../execution/pages/CeceliaRuns'),
     RunDetail: () => import('../execution/pages/RunDetail'),
