@@ -4,6 +4,23 @@
 
 ---
 
+### [2026-03-01] memory-retriever 结构化 log + fetchStatus 分类 (v1.141.6)
+
+**变更**：
+1. `memory-retriever.js`：5 个 fetch 函数（searchSemanticMemory / loadRecentEvents / loadConversationHistory / loadActiveProfile / searchEpisodicMemory）改为返回 `{ entries, meta }` / `{ snippet, meta }`
+2. `meta.fetchStatus` 枚举：`'ok' | 'no_results' | 'pool_exhausted' | 'db_error' | 'fallback_jaccard' | 'disabled'`
+3. `buildMemoryContext` 末尾打一条 `console.log('[memory]', JSON.stringify({tag:'memory_selection',...}))` 结构化日志
+4. `memory-selection-log.test.js`：16 个新测试覆盖全部 DoD 项
+5. `memory-retriever.test.js`：更新 70 个现有测试以适配新返回类型
+
+**教训**：
+1. **函数签名变更必须同步更新所有现有测试**：改 `loadActiveProfile` 返回 `{ snippet, meta }` 后，原来直接对字符串 assert 的测试全部失败 → 需要把 `expect(result)` 改为 `expect(result.snippet)`
+2. **trace.test.js 是预存的环境问题**：SASL DB 密码认证失败，与本次改动无关，CI 环境有 PostgreSQL 所以会通过
+3. **pool_exhausted 的分类逻辑**：`err.message.includes('too many clients')` 很脆弱（依赖 pg driver 错误文本），但足够用，未来可补充更多 pattern
+4. **errors 数组只收集真正失败**：`fallback_jaccard` 是降级而非失败，不应出现在 errors 里；只有 `pool_exhausted` / `db_error` 才报警
+
+---
+
 ### [2026-03-01] account-usage 新字段 + Brain CI schema version 全局同步 (v1.140.0)
 
 **变更**：
