@@ -251,6 +251,20 @@ export default function BrainLayerConfig() {
       allowed_models: agentModels('mouth', ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6']),
       currentModel: cfg.mouth?.model || MOUTH_FALLBACK,
     },
+    {
+      id: 'memory',
+      name: '记忆打分',
+      description: '为感知观察打重要性分（批量）',
+      allowed_models: agentModels('memory', ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5']),
+      currentModel: cfg.memory?.model || 'claude-haiku-4-5-20251001',
+    },
+    {
+      id: 'rumination',
+      name: '反刍消化',
+      description: '深度思考 · 模式发现 · 跨知识关联',
+      allowed_models: agentModels('rumination', ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']),
+      currentModel: cfg.rumination?.model || 'claude-opus-4-6',
+    },
   ];
 
   return (
