@@ -168,13 +168,14 @@ describe('cecelia-unified-path', () => {
   // ─── D4: buildUnifiedSystemPrompt 验证 ─────────────────
 
   describe('buildUnifiedSystemPrompt', () => {
-    it('包含 MOUTH_SYSTEM_PROMPT 和"说你真实有的"', async () => {
+    it('包含 MOUTH_SYSTEM_PROMPT 和鼓励真实思考的指令', async () => {
       pool.query.mockResolvedValue({ rows: [] });
 
       const prompt = await buildUnifiedSystemPrompt('测试消息', []);
 
       expect(prompt).toContain('Cecelia');
-      expect(prompt).toContain('说你真实有的');
+      expect(prompt).toContain('沉默不是诚实');
+      expect(prompt).not.toContain('说你真实有的');
       expect(prompt).not.toContain('文字传递器');
     });
 
