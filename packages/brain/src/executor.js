@@ -1798,7 +1798,7 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at
+    SELECT id, title, payload, started_at, task_type
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -1841,10 +1841,13 @@ async function probeTaskLiveness() {
       continue;
     }
 
-    // Decomposition tasks (/decomp) run for 3-10 minutes — apply extended grace period
-    // to avoid false-positive failures before the process fully starts or completes
+    // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
+    // 3-10+ minutes — apply extended grace period to avoid false-positive failures.
+    // initiative_plan/initiative_verify are always dispatched via bridge where task_id
+    // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
-    if (task.payload?.decomposition === 'true') {
+    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify';
+    if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
       if (triggeredAt) {
         const elapsedMin = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
