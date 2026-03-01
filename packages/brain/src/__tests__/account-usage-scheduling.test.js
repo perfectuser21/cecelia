@@ -25,11 +25,11 @@ vi.mock('../db.js', () => ({
 }));
 
 // 构建 DB 查询结果行
-function makeRow(accountId, fivePct, resetsInMin) {
+function makeRow(accountId, fivePct, resetsInMin, sevenDayPct = 0) {
   return {
     account_id: accountId,
     five_hour_pct: fivePct,
-    seven_day_pct: 0,
+    seven_day_pct: sevenDayPct,
     resets_at: minutesFromNow(resetsInMin),
     extra_used: false,
     fetched_at: new Date(),
@@ -120,5 +120,23 @@ describe('S: selectBestAccount reset-aware 调度', () => {
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount();
     expect(result).toBeNull();
+  });
+
+  // ============================================================
+  // S5: 5h ePct 相同时，按 seven_day_pct 升序（周用量低的优先）
+  // ============================================================
+  it('S5: 5h 用量相同时，按 seven_day_pct 升序选择（account3 优先于 account2）', async () => {
+    // account1: 55%, 重置在 2h 后  → effectivePct=55 → 末选
+    // account2: 0%,  重置在 2h 后  → effectivePct=0, seven_day_pct=37 → 次选
+    // account3: 0%,  重置在 2h 后  → effectivePct=0, seven_day_pct=0  → 应被选中（7d 最低）
+    await setupMockUsage([
+      makeRow('account1', 55, 120, 53),
+      makeRow('account2', 0, 120, 37),
+      makeRow('account3', 0, 120, 0),
+    ]);
+
+    const { selectBestAccount } = await import('../account-usage.js');
+    const result = await selectBestAccount();
+    expect(result).toBe('account3');
   });
 });

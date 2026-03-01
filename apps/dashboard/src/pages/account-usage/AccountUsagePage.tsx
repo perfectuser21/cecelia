@@ -16,6 +16,11 @@ interface AccountUsage {
 }
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
+const ACCOUNT_LABELS: Record<string, string> = {
+  account1: 'AP01',  // alexperfectapi01@gmail.com
+  account2: 'LCH',   // chalexlch@gmail.com
+  account3: 'ZJ',    // zenithjoy21xx@gmail.com
+};
 
 // 颜色规范
 const COLOR_5H = '#58a6ff';      // 蓝
@@ -163,7 +168,7 @@ export default function AccountUsagePage() {
               >
                 {/* 账号名 */}
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#8b949e', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 1 }}>
-                  {id.replace('account', 'Account ')}
+                  {ACCOUNT_LABELS[id] ?? id.replace('account', 'Account ')}
                 </div>
 
                 {/* 5h 指标 */}

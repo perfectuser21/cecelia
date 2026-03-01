@@ -206,15 +206,17 @@ export async function selectBestAccount() {
     const usage = await getAccountUsage();
 
     // 按有效用量排序：30min 内重置的账号 effectivePct=0 优先；过滤掉实际用量 >= 80% 的账号
+    // 次级排序：5h ePct 相同时，按 seven_day_pct 升序（周用量低的优先，确保所有账号均被使用）
     const available = ACCOUNTS
       .map(id => {
         const u = usage[id];
         const pct = u?.five_hour_pct ?? 0;
         const ePct = effectivePct(pct, u?.resets_at);
-        return { id, pct, ePct };
+        const sevenDayPct = u?.seven_day_pct ?? 0;
+        return { id, pct, ePct, sevenDayPct };
       })
       .filter(a => a.pct < USAGE_THRESHOLD)
-      .sort((a, b) => a.ePct - b.ePct);
+      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (available.length === 0) {
       // 所有账号满载
