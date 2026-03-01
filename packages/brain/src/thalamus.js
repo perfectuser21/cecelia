@@ -129,6 +129,8 @@ const EVENT_TYPES = {
   // 认知闭环事件
   GOAL_STALLED: 'goal_stalled',
   RUMINATION_RESULT: 'rumination_result',
+  DESIRE_ACTION: 'desire_action',
+  OWNER_INTENT: 'owner_intent',
 
   // 系统相关
   TICK: 'tick',
@@ -1019,17 +1021,84 @@ function quickRoute(event) {
     };
   }
 
+  // DESIRE_ACTION：欲望系统信号，直接创建任务
+  if (event.type === EVENT_TYPES.DESIRE_ACTION) {
+    const desireTaskType = event.desire_type === 'explore' ? 'research' : 'initiative_plan';
+    const priority = event.urgency >= 8 ? 'P0' : event.urgency >= 5 ? 'P1' : 'P2';
+    return {
+      level: 0,
+      actions: [
+        {
+          type: 'create_task',
+          params: {
+            title: event.title || `[欲望] ${(event.content || '').slice(0, 80)}`,
+            description: event.description || event.content || '',
+            task_type: desireTaskType,
+            priority,
+          }
+        },
+        { type: 'log_event', params: { event_type: 'desire_action', desire_type: event.desire_type } },
+      ],
+      rationale: `欲望系统 ${event.desire_type} 信号，创建 ${desireTaskType} 任务`,
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // OWNER_INTENT：主人意图信号，直接创建任务
+  if (event.type === EVENT_TYPES.OWNER_INTENT) {
+    return {
+      level: 0,
+      actions: [
+        {
+          type: 'create_task',
+          params: {
+            title: `[主人请求] ${(event.message || '').slice(0, 80)}`,
+            description: `来自对话的主人意图：${event.message || ''}\n\n意图类型：${event.intent_type || 'unknown'}`,
+            task_type: 'initiative_plan',
+            priority: 'P1',
+          }
+        },
+        { type: 'log_event', params: { event_type: 'owner_intent', intent_type: event.intent_type } },
+      ],
+      rationale: `主人意图 ${event.intent_type} 信号，创建 initiative_plan 任务`,
+      confidence: 0.9,
+      safety: false
+    };
+  }
+
   // RUMINATION_RESULT：反刍结果，丘脑决定写入哪些内容
   if (event.type === EVENT_TYPES.RUMINATION_RESULT) {
     // 有 self_updates → 需要 L1 判断写入哪些 self_model
     if (Array.isArray(event.self_updates) && event.self_updates.length > 0) {
       return null; // 交 L1 LLM 处理
     }
-    // 仅有 learnings/actions → L0 直接处理
+    // 有可执行行动 → L0 直接创建 research 任务
+    if (Array.isArray(event.actions) && event.actions.length > 0) {
+      return {
+        level: 0,
+        actions: [
+          ...event.actions.map(actionTitle => ({
+            type: 'create_task',
+            params: {
+              title: actionTitle,
+              description: `反刍洞察自动创建：${(event.learnings || []).map(l => l.title).join(', ').slice(0, 400)}`,
+              task_type: 'research',
+              priority: 'P2',
+            }
+          })),
+          { type: 'log_event', params: { event_type: 'rumination_result', has_actions: true } },
+        ],
+        rationale: `反刍有 ${event.actions.length} 个可执行行动，创建 research 任务`,
+        confidence: 0.85,
+        safety: false
+      };
+    }
+    // 仅有 learnings 无 actions → L0 记录即可
     return {
       level: 0,
-      actions: [{ type: 'log_event', params: { event_type: 'rumination_result', has_actions: Array.isArray(event.actions) } }],
-      rationale: '反刍结果无 self_updates，记录即可',
+      actions: [{ type: 'log_event', params: { event_type: 'rumination_result', has_actions: false } }],
+      rationale: '反刍结果无可执行行动，记录即可',
       confidence: 0.8,
       safety: false
     };

@@ -26,8 +26,6 @@ import { triggerDailyReview } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
-import { executeTriage, cleanupExpiredSuggestions, getTopPrioritySuggestions } from './suggestion-triage.js';
-import { dispatchPendingSuggestions } from './suggestion-dispatcher.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
 
@@ -1310,47 +1308,6 @@ async function executeTick() {
     } catch (expireErr) {
       console.error('[tick] Proposal expiry check failed (non-fatal):', expireErr.message);
     }
-  }
-
-  // 0.5.3. Suggestion Triage: 每 tick 执行 triage 评估，每小时清理过期建议
-  try {
-    // 每个 tick 都执行 triage 处理
-    const processedSuggestions = await executeTriage(20); // 限制处理20条建议
-    if (processedSuggestions.length > 0) {
-      console.log(`[tick] Processed ${processedSuggestions.length} suggestions in triage`);
-      actionsTaken.push({
-        action: 'suggestion_triage',
-        processed_count: processedSuggestions.length
-      });
-    }
-
-    // 每小时清理过期建议
-    if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
-      const cleanedUpCount = await cleanupExpiredSuggestions();
-      if (cleanedUpCount > 0) {
-        console.log(`[tick] Cleaned up ${cleanedUpCount} expired suggestions`);
-        actionsTaken.push({
-          action: 'suggestion_cleanup',
-          cleanup_count: cleanedUpCount
-        });
-      }
-    }
-  } catch (suggestionErr) {
-    console.error('[tick] Suggestion processing failed (non-fatal):', suggestionErr.message);
-  }
-
-  // 0.5.3b. Suggestion Dispatcher: 将高分 pending suggestions 转换为 suggestion_plan 任务
-  try {
-    const dispatchedCount = await dispatchPendingSuggestions(pool, 2);
-    if (dispatchedCount > 0) {
-      console.log(`[tick] Dispatched ${dispatchedCount} suggestion_plan tasks`);
-      actionsTaken.push({
-        action: 'suggestion_dispatch',
-        dispatched_count: dispatchedCount
-      });
-    }
-  } catch (dispatchErr) {
-    console.error('[tick] Suggestion dispatch failed (non-fatal):', dispatchErr.message);
   }
 
   // 0.5.4. Progress Ledger 进展评估：与 periodic cleanup 同频（每小时）

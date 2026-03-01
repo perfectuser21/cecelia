@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 四信号源直接接 L1 丘脑：suggestion 派发路径废弃 (PR #252, Brain v1.144.0)
+
+**背景**: rumination / desire / owner_input / goal_evaluator 四个信号源有的绕过 L1 直接建 task，有的走 suggestion → suggestion_plan → /plan 派发链，架构不统一。正确架构：L1（丘脑）是唯一枢纽，所有信号都进 L1，L1 路由到 /dev / /research / /decomp / L2。
+
+- **vi.mock 在错误 worktree 跑测试不报错但结果完全错误**: `npx vitest run` 不带 `cd` 会在当前 shell 工作目录运行，Claude Code session 的 `$PWD` 不一定是目标 worktree。所有测试命令必须先 `cd <worktree>` 或用 `npm run test --workspace` 从 worktree 根执行，否则测试结果对应的是错误分支的文件
+- **processEvent L0 处理器模式**: thalamus.js quickRoute 中，L0 处理器直接 return `{ level: 0, actions: [...], rationale, confidence, safety }` 而不调用 LLM；对已知结构化事件（RUMINATION_RESULT、DESIRE_ACTION、OWNER_INTENT）适合 L0 快速处理，对不确定意图适合 L1 分析
+- **测试文件 vitest 缓存失效**: 重写测试文件后 vitest 可能仍运行旧版本（来自 `.vite/vitest` 缓存）。症状是测试名与文件内容不符。解决：`rm -rf packages/brain/node_modules/.vite/vitest` 清除缓存后重跑
+- **baseline 对比方法**: 改动前必须先 `git stash` 从同一 worktree 跑测试记录 baseline，再 `git stash pop` 跑改动后的测试，两次对比才有意义。不同 worktree 的 test 结果不可比
+- **suggestion 表保留历史记录但不作派发路径**: `suggestion-triage.js` 和 `suggestion-dispatcher.js` 模块保留（未删除），tick.js 停止调用，四个信号源不再写 suggestions 表。suggestion 表变成只读历史档案，不影响新流程
+
 ### [2026-03-01] 飞书私信 Bot 集成 (PR #239, Brain v1.141.13)
 
 **背景**: 用户希望在飞书手机 App 直接发私信给 Cecelia，不经过 n8n 中继，直达 Brain。

@@ -192,7 +192,7 @@ describe('evaluateGoal', () => {
     expect(['goal_stalled_event_sent', 'initiative_plan_created_fallback']).toContain(result.action_taken);
   });
 
-  it('creates suggestion for needs_attention goal', async () => {
+  it('sends GOAL_STALLED event to thalamus for needs_attention goal', async () => {
     // getGoalMetrics
     mockPool.query.mockResolvedValueOnce({
       rows: [{
@@ -202,18 +202,19 @@ describe('evaluateGoal', () => {
         last_completed_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
       }],
     });
-    // INSERT into suggestions
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'sug-1' }] });
     // INSERT into goal_evaluations
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await evaluateGoal({ id: 'goal-attn', title: 'Attention KR' });
 
     expect(result.verdict).toBe('needs_attention');
-    expect(result.action_taken).toBe('suggestion_created');
+    expect(result.action_taken).toBe('goal_health_event_sent');
+    expect(mockRouteEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'goal_stalled', goal_id: 'goal-attn' })
+    );
   });
 
-  it('needs_attention suggestion has priority_score 0.75 (≥ dispatcher threshold)', async () => {
+  it('needs_attention 不再写 suggestions 表', async () => {
     // getGoalMetrics
     mockPool.query.mockResolvedValueOnce({
       rows: [{
@@ -223,20 +224,15 @@ describe('evaluateGoal', () => {
         last_completed_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
       }],
     });
-    // INSERT into suggestions (capture the call)
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'sug-2' }] });
     // INSERT into goal_evaluations
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     await evaluateGoal({ id: 'goal-score', title: 'Score KR' });
 
-    // Find the suggestions INSERT call
     const suggestionCall = mockPool.query.mock.calls.find(
       call => typeof call[0] === 'string' && call[0].includes('INSERT INTO suggestions')
     );
-    expect(suggestionCall).toBeDefined();
-    // priority_score 0.75 is a literal in the SQL (not a param), verify SQL string
-    expect(suggestionCall[0]).toContain('0.75');
+    expect(suggestionCall).toBeUndefined();
   });
 });
 

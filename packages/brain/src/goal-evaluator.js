@@ -217,10 +217,18 @@ export async function evaluateGoal(goal) {
       }
     }
   } else if (verdict === 'needs_attention') {
-    const suggestionId = await createAttentionSuggestion(goal.id, goal.title, metrics);
-    if (suggestionId) {
-      actionTaken = 'suggestion_created';
-      actionDetail = { suggestion_id: suggestionId };
+    try {
+      await routeEvent({
+        type: EVENT_TYPES.GOAL_STALLED,
+        goal_id: goal.id,
+        goal_title: goal.title,
+        days_stalled: metrics.days_since_last_progress ?? 0,
+        metrics,
+      });
+      actionTaken = 'goal_health_event_sent';
+      actionDetail = { completion_rate: metrics.task_completion_rate };
+    } catch (err) {
+      console.warn('[goal-evaluator] routeEvent for needs_attention failed:', err.message);
     }
   }
 
