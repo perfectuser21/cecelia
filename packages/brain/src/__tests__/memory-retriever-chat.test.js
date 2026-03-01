@@ -66,12 +66,12 @@ describe('memory-retriever chat 模式', () => {
       }),
     };
 
-    const results = await _loadConversationHistory(mockPool, 5);
-    expect(results).toHaveLength(1);
-    expect(results[0].source).toBe('conversation');
-    expect(results[0].text).toContain('Alex:');
-    expect(results[0].text).toContain('Cecelia:');
-    expect(results[0].title).toContain('[对话]');
+    const result = await _loadConversationHistory(mockPool, 5);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].source).toBe('conversation');
+    expect(result.entries[0].text).toContain('Alex:');
+    expect(result.entries[0].text).toContain('Cecelia:');
+    expect(result.entries[0].title).toContain('[对话]');
   });
 
   it('buildMemoryContext chat 模式加载对话历史', async () => {
@@ -112,7 +112,7 @@ describe('memory-retriever chat 模式', () => {
       query: vi.fn().mockRejectedValue(new Error('DB error')),
     };
 
-    const results = await _loadConversationHistory(mockPool);
-    expect(results).toEqual([]);
+    const result = await _loadConversationHistory(mockPool);
+    expect(result.entries).toEqual([]);
   });
 });
