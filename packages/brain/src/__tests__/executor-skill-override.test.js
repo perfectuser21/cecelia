@@ -124,7 +124,7 @@ describe('executor preparePrompt - skill_override', () => {
     };
 
     const prompt = await preparePrompt(task);
-    // null → ?? 触发默认映射，task_type='review' → /review
-    expect(prompt).toMatch(/^\/review/);
+    // null → ?? 触发默认映射，task_type='review' → /code-review
+    expect(prompt).toMatch(/^\/code-review/);
   });
 });

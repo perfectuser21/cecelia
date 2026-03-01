@@ -18,8 +18,8 @@ describe('executor: getSkillForTaskType', () => {
     expect(getSkillForTaskType('dev')).toBe('/dev');
   });
 
-  it('should still return /review for review tasks', () => {
-    expect(getSkillForTaskType('review')).toBe('/review');
+  it('should return /code-review for review tasks', () => {
+    expect(getSkillForTaskType('review')).toBe('/code-review');
   });
 
   it('should return /dev as fallback for unknown task types', () => {
