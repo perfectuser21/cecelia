@@ -2,13 +2,11 @@ import { useEffect, useState, useCallback } from 'react';
 import { Bot, AlertCircle, Loader2, Brain, Building2, Users, X, ChevronRight, Check } from 'lucide-react';
 import {
   fetchStaff,
-  fetchSkillsRegistry,
   fetchModels,
   fetchCredentials,
   updateWorker,
   type Team,
   type AreaConfig,
-  type SkillItem,
   type Worker,
   type ModelEntry,
   type CredentialEntry,
@@ -64,52 +62,18 @@ function WorkerCard({ worker, onClick }: { worker: Worker; onClick: () => void }
   );
 }
 
-// ── Skills 分组 ───────────────────────────────────────────────
-
-const SKILL_GROUPS: Record<string, string[]> = {
-  '开发': ['dev', 'review', 'code-review', 'plan', 'frontend-design', 'chrome', 'dashboard-debug', 'feature-map', 'canvas-project', 'repo-visualizer', 'headless-deploy'],
-  '管理': ['okr', 'autumnrice', 'cecelia', 'cecelia-brain', 'credentials', 'versioning', 'nobel', 'repo-lead'],
-  '内容': ['content-analyzer', 'content-creator', 'content-rewriter', 'batch-notion-analyzer', 'two-layer-parallel-analyzer', 'claude-work-summarizer', 'notebooklm', 'quote-card-generator', 'luxury-card-generator', 'batch-luxury-card-generator', 'image-gen-workflow'],
-  '发布': ['douyin-publisher', 'toutiao-publisher'],
-  '数据': ['platform-scraper', 'social-media-analysis', 'media-scraping'],
-};
-
-// 每个 area 显示哪些分组
-const AREA_SKILL_GROUPS: Record<string, string[]> = {
-  cecelia:   ['开发', '管理'],
-  zenithjoy: ['内容', '发布', '数据'],
-};
-
-function groupSkills(skills: SkillItem[], areaId: string) {
-  const allowedGroups = AREA_SKILL_GROUPS[areaId] || ['开发', '管理'];
-  const grouped: Record<string, SkillItem[]> = {};
-  const used = new Set<string>();
-  for (const [group, ids] of Object.entries(SKILL_GROUPS)) {
-    if (!allowedGroups.includes(group)) continue;
-    const items = skills.filter(s => ids.includes(s.id));
-    if (items.length > 0) {
-      grouped[group] = items;
-      items.forEach(s => used.add(s.id));
-    }
-  }
-  return grouped;
-}
-
 // ── Worker detail panel ───────────────────────────────────────
 
 interface WorkerPanelProps {
   worker: Worker;
-  areaId: string;
-  skills: SkillItem[];
   models: ModelEntry[];
   onClose: () => void;
 }
 
-function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelProps) {
+function WorkerPanel({ worker, models, onClose }: WorkerPanelProps) {
   const [savingField, setSavingField] = useState<string | null>(null);
   const [savedField, setSavedField] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [skill, setSkill] = useState(worker.skill || '');
   const [modelName, setModelName] = useState(worker.model.name || '');
   const [credAccount, setCredAccount] = useState(
     worker.model.credentials_file || worker.model.provider || 'account1'
@@ -122,21 +86,15 @@ function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelPro
 
   const providerFromAccount = credentials.find(c => c.name === credAccount)?.provider || 'anthropic';
   const modelsForProvider = models.filter(m => m.provider === providerFromAccount);
-  const skillGroups = groupSkills(skills, areaId);
 
-  const doSave = async (
-    newSkill: string,
-    newModel: string,
-    newCred: string,
-    field: string
-  ) => {
+  const doSave = async (newModel: string, newCred: string, field: string) => {
     setSavingField(field);
     setSavedField(null);
     setError(null);
     try {
       const provider = credentials.find(c => c.name === newCred)?.provider || 'anthropic';
       await updateWorker(worker.id, {
-        skill: newSkill || null,
+        skill: worker.skill || null,
         model: newModel ? { provider, name: newModel } : null,
         credentials_file: newCred || null,
       });
@@ -152,20 +110,15 @@ function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelPro
   const selectAccount = (name: string) => {
     setCredAccount(name);
     setModelName('');
-    doSave(skill, '', name, 'account');
+    doSave('', name, 'account');
   };
 
   const selectModel = (name: string) => {
     setModelName(name);
-    doSave(skill, name, credAccount, 'model');
+    doSave(name, credAccount, 'model');
   };
 
-  const selectSkill = (s: string) => {
-    setSkill(s);
-    doSave(s, modelName, credAccount, 'skill');
-  };
-
-  // 未选中按钮样式（有可见边框）
+  // 未选中按钮样式（可见边框）
   const idleBtn = 'bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700 hover:border-slate-500';
   // 选中按钮样式
   const activeBtn = 'bg-blue-500/20 border border-blue-500/50 text-blue-200';
@@ -202,6 +155,16 @@ function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelPro
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 min-h-0">
           <p className="text-xs text-slate-400 leading-relaxed">{worker.description}</p>
+
+          {/* Skill（只读展示） */}
+          {worker.skill && (
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">Skill</div>
+              <div className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-slate-300">
+                {worker.skill}
+              </div>
+            </div>
+          )}
 
           {/* 账户 */}
           <div>
@@ -249,32 +212,6 @@ function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelPro
                   </button>
                 ))
               )}
-            </div>
-          </div>
-
-          {/* Skill */}
-          <div>
-            <SectionHeader label="Skill" field="skill" />
-            <div className="space-y-3">
-              {Object.entries(skillGroups).map(([group, items]) => (
-                <div key={group}>
-                  <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-1 px-1">{group}</div>
-                  <div className="space-y-1.5">
-                    {items.map(s => (
-                      <button
-                        key={s.id}
-                        onClick={() => selectSkill(`/${s.id}`)}
-                        disabled={savingField !== null}
-                        className={`w-full flex items-center px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                          skill === `/${s.id}` ? activeBtn : idleBtn
-                        }`}
-                      >
-                        <span className="font-mono">/{s.id}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
 
@@ -335,47 +272,38 @@ const TABS: TabDef[] = [
   },
 ];
 
-// ── Selected worker state ─────────────────────────────────────
-
-interface SelectedWorker {
-  worker: Worker;
-  areaId: string;
-}
-
 // ── Main page ─────────────────────────────────────────────────
 
 export default function TeamPage() {
   const [teams, setTeams]               = useState<Team[]>([]);
   const [areas, setAreas]               = useState<Record<string, AreaConfig>>({});
   const [totalWorkers, setTotalWorkers] = useState(0);
-  const [skills, setSkills]             = useState<SkillItem[]>([]);
   const [models, setModels]             = useState<ModelEntry[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
-  const [selected, setSelected]         = useState<SelectedWorker | null>(null);
+  const [selected, setSelected]         = useState<Worker | null>(null);
   const [activeTab, setActiveTab]       = useState('cecelia');
 
   void areas;
 
-  const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([fetchStaff(), fetchSkillsRegistry(), fetchModels()])
-      .then(([staff, registry, modelList]) => {
+  const load = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    Promise.all([fetchStaff(), fetchModels()])
+      .then(([staff, modelList]) => {
         setTeams(staff.teams);
         setAreas(staff.areas || {});
         setTotalWorkers(staff.total_workers);
-        setSkills(registry.skills);
         setModels(modelList);
       })
       .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const handleClose = () => {
     setSelected(null);
-    load();
+    load(true); // 静默刷新，不触发 loading spinner
   };
 
   if (loading) return (
@@ -423,7 +351,7 @@ export default function TeamPage() {
                   <WorkerCard
                     key={w.id}
                     worker={w}
-                    onClick={() => setSelected({ worker: w, areaId })}
+                    onClick={() => setSelected(w)}
                   />
                 ))}
               </div>
@@ -445,7 +373,7 @@ export default function TeamPage() {
           <Brain size={22} className="text-slate-500" />
           <div>
             <h2 className="text-lg font-bold text-slate-100">LM 配置</h2>
-            <p className="text-xs text-slate-500">{totalWorkers} workers · 点击卡片查看/编辑</p>
+            <p className="text-xs text-slate-500">{totalWorkers} workers · 点击卡片配置账户/模型</p>
           </div>
         </div>
 
@@ -477,9 +405,7 @@ export default function TeamPage() {
       {/* ── Detail panel ──────────────────────────────── */}
       {selected && (
         <WorkerPanel
-          worker={selected.worker}
-          areaId={selected.areaId}
-          skills={skills}
+          worker={selected}
           models={models}
           onClose={handleClose}
         />
