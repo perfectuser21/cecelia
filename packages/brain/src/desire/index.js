@@ -141,17 +141,40 @@ export async function runDesireSystem(pool) {
       const taskType = desire.type === 'follow_up' ? 'review' : 'initiative_plan';
       const priority = desire.urgency >= 8 ? 'P0' : desire.urgency >= 5 ? 'P1' : 'P2';
 
+      // ★去重：act 类欲望每次只允许存在 1 个 queued/in_progress 的 desire_system initiative_plan 任务
+      // 若已有活跃任务，mark desire as acted 后直接跳过，避免垃圾任务积压
+      if (desire.type === 'act') {
+        const { rows: existing } = await pool.query(`
+          SELECT id FROM tasks
+          WHERE trigger_source = 'desire_system'
+            AND task_type = 'initiative_plan'
+            AND status IN ('queued', 'in_progress')
+          LIMIT 1
+        `);
+        if (existing.length > 0) {
+          await pool.query("UPDATE desires SET status = 'acted' WHERE id = $1", [desire.id]);
+          console.log(`[desire] act desire skipped (dedup): active initiative_plan task ${existing[0].id} already exists`);
+          result.expression = { triggered: false, skipped: 'dedup', existing_task: existing[0].id };
+          return result;
+        }
+      }
+
       // act 类任务：给秋米足够的上下文来拆解
       const description = desire.type === 'act'
         ? `## 欲望驱动任务（来源：desire_system）\n\n**欲望内容**：${desire.content}\n\n**提议行动**：${desire.proposed_action}\n\n**目标仓库**：cecelia\n\n**洞察**：${desire.insight || '无'}\n\n**来源 desire ID**：${desire.id}`
         : `${desire.proposed_action}\n\n来源：desire ${desire.id}\n洞察：${desire.insight || '无'}`;
+
+      // ★标题规范化：act 类欲望任务加 [欲望建议] 前缀，与正经 PRD 任务区分
+      const title = desire.type === 'act'
+        ? `[欲望建议] ${desire.content.slice(0, 120)}`
+        : desire.content.slice(0, 200);
 
       const { rows } = await pool.query(`
         INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
         VALUES ($1, $2, $3, $4, 'queued', 'desire_system')
         RETURNING id
       `, [
-        desire.content.slice(0, 200),
+        title,
         description,
         priority,
         taskType,
