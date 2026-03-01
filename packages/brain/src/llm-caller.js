@@ -16,6 +16,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getActiveProfile } from './model-profile.js';
+import { selectBestAccount } from './account-usage.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -87,9 +88,21 @@ export async function callLLM(agentId, prompt, options = {}) {
 
 /**
  * 通过 cecelia-bridge 调用 claude -p（走订阅，不需要 API key）
+ * 自动选择配额最优账号（通过 configDir 传给 bridge）
  */
 async function callClaudeViaBridge(prompt, model, timeout) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
+
+  // 账号轮换：选配额最优的账号
+  let configDir;
+  try {
+    const bestAccount = await selectBestAccount();
+    if (bestAccount) {
+      configDir = join(homedir(), `.claude-${bestAccount}`);
+    }
+  } catch (err) {
+    console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);
+  }
 
   const response = await fetch(`${BRIDGE_URL}/llm-call`, {
     method: 'POST',
@@ -98,6 +111,7 @@ async function callClaudeViaBridge(prompt, model, timeout) {
       prompt,
       model: claudeModel,
       timeout,
+      ...(configDir ? { configDir } : {}),
     }),
     signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
   });
