@@ -12,6 +12,7 @@
  */
 
 import pool from './db.js';
+import { routeEvent, EVENT_TYPES } from './thalamus.js';
 
 const EVAL_WINDOW_DAYS = 7;           // 评估窗口：7天
 const STALL_THRESHOLD_DAYS = 7;       // 停滞判定：7天无进展
@@ -194,10 +195,26 @@ export async function evaluateGoal(goal) {
   let actionDetail = {};
 
   if (verdict === 'stalled') {
-    const taskId = await createInitiativePlanForStall(goal.id, goal.title);
-    if (taskId) {
-      actionTaken = 'initiative_plan_created';
-      actionDetail = { task_id: taskId };
+    // 发 GOAL_STALLED 事件给丘脑（不再直接创建任务）
+    const daysSinceLast = metrics.days_since_last_progress ?? 0;
+    try {
+      await routeEvent({
+        type: EVENT_TYPES.GOAL_STALLED,
+        goal_id: goal.id,
+        goal_title: goal.title,
+        days_stalled: daysSinceLast,
+        metrics,
+      });
+      actionTaken = 'goal_stalled_event_sent';
+      actionDetail = { days_stalled: daysSinceLast };
+    } catch (err) {
+      // 降级：丘脑失败时直接创建任务
+      console.warn('[goal-evaluator] routeEvent failed, falling back to createInitiativePlanForStall:', err.message);
+      const taskId = await createInitiativePlanForStall(goal.id, goal.title);
+      if (taskId) {
+        actionTaken = 'initiative_plan_created_fallback';
+        actionDetail = { task_id: taskId };
+      }
     }
   } else if (verdict === 'needs_attention') {
     const suggestionId = await createAttentionSuggestion(goal.id, goal.title, metrics);
