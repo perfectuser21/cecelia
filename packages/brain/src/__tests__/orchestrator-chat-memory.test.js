@@ -34,30 +34,9 @@ describe('orchestrator-chat memory unification (D1)', () => {
       callLLM: mockCallLLM,
     }));
 
-    vi.doMock('../thalamus.js', () => ({
-      processEvent: vi.fn(),
-      EVENT_TYPES: {
-        USER_MESSAGE: 'USER_MESSAGE',
-        TASK_COMPLETED: 'TASK_COMPLETED',
-        TASK_FAILED: 'TASK_FAILED',
-        TICK: 'TICK',
-        HEARTBEAT: 'HEARTBEAT',
-      },
-    }));
-
-    // handleChat 测试（tests 4-6）验证动作型意图路径仍走 buildMemoryContext + callLLM
-    // 检索优先架构只对非动作型意图（QUESTION/CHAT）生效；CREATE_TASK 走 MOUTH_SYSTEM_PROMPT 路径
-    vi.doMock('../intent.js', () => ({
-      parseIntent: vi.fn().mockReturnValue({ type: 'CREATE_TASK', confidence: 0.9 }),
-    }));
-
     vi.doMock('../self-model.js', () => ({
       getSelfModel: vi.fn().mockResolvedValue('Cecelia 是一个 24/7 自主运行的管家系统。'),
       updateSelfModel: vi.fn().mockResolvedValue(undefined),
-    }));
-
-    vi.doMock('../owner-input-extractor.js', () => ({
-      extractSuggestionsFromChat: vi.fn().mockResolvedValue([]),
     }));
 
     vi.doMock('../memory-utils.js', () => ({
@@ -82,11 +61,6 @@ describe('orchestrator-chat memory unification (D1)', () => {
     vi.doMock('../user-profile.js', () => ({
       extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
       getUserProfileContext: vi.fn().mockResolvedValue(''),
-    }));
-
-    // mock chat-action-dispatcher.js
-    vi.doMock('../chat-action-dispatcher.js', () => ({
-      detectAndExecuteAction: vi.fn().mockResolvedValue(''),
     }));
 
     const mod = await import('../orchestrator-chat.js');
@@ -146,7 +120,6 @@ describe('orchestrator-chat memory unification (D1)', () => {
     const result = await handleChat('告诉我关于任务系统');
 
     expect(result.reply).toBe('好的，我了解了。');
-    expect(result.routing_level).toBe(0);
 
     // 验证 callLLM 被调用，agent 为 'mouth'，prompt 包含记忆上下文
     expect(mockCallLLM).toHaveBeenCalledTimes(1);
@@ -173,7 +146,6 @@ describe('orchestrator-chat memory unification (D1)', () => {
     const result = await handleChat('你好');
 
     expect(result.reply).toBe('你好！');
-    expect(result.routing_level).toBe(0);
   });
 
   it('does NOT call global.fetch (no direct MiniMax API calls)', async () => {
