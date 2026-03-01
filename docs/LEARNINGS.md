@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] desire/index.js act 欲望去重 + 标题规范化 (PR #218, Brain v1.141.3)
+
+**背景**: act 类欲望每次 tick 被 expression-decision 选中（对 act 跳过门槛），导致每个 tick 都创建一个 initiative_plan 任务，同一话题积累 4+ 个几乎相同的垃圾任务。
+
+- **版本 bump 被合并 "吃掉" 的问题**: 合并 origin/main 后，main 版本可能已包含相同版本号（其他 PR 也 bump 了），导致 Version Check BASE==CURRENT 失败。解决方案：合并 main 后重新检查 `git show origin/main:packages/brain/package.json | jq .version`，如相同则再 bump 一次
+- **测试 mock 要路由到不同 SQL**: dedup 查询（含 `trigger_source` 和 `initiative_plan`）必须返回 `{ rows: [] }` 才能让 act 逻辑继续，否则 mock 全返回 task id 会触发 dedup 的早期 return，导致 createSuggestion 相关测试失败
+- **desire 去重策略**: 检查 `WHERE trigger_source='desire_system' AND task_type='initiative_plan' AND status IN ('queued','in_progress')`，有则 mark desire as acted 直接返回，防止垃圾积压同时保持 desire 状态干净
+- **标题规范化意义**: `[欲望建议]` 前缀让秋米能区分"欲望驱动的建议任务"（低优先级参考）和正经 PRD 任务，避免混淆优先级
+
+### [2026-03-01] 记忆检索配额约束 + 动态权重 + token 预算提升 (PR #216, Brain v1.141.2)
+
+**背景**: 实测 47 候选只注入 12 个且全是 conversation 类型，tasks/learnings/OKR 完全被挤出。根因：token 预算 1000 太小 + 无 source 配额限制，conversation 文档短分数高占满全部 slot。
+
+- **Root Cause 分析方法**: 查看 `meta.sources` 数组，如果全是 'conversation' 说明其他 source 被挤出；`meta.candidates` vs `meta.injected` 差值大说明 token 预算不足
+- **quota-aware MMR 两阶段选择**: Phase 1 先从所有 scored 候选中保证每个 source 的最小配额（task≥2, learning≥2），Phase 2 再按 finalScore 排序填充剩余，conversation 做上限约束（max 4）
+- **动态权重叠加在 MODE_WEIGHT 上**: 不是替换而是 `modeW × dynW`，任务类关键词触发 task×1.5，情绪类触发 conversation×1.5，学习类触发 learning×2.0，保持向后兼容
+- **`classifyQueryIntent` 的关键词覆盖范围**: 中文同义词要列全（如"进展/目标/工作/完成/派发/执行"都是任务类），否则常见问法触发不了正确 intent
+- **mock 必须导出新增常量**: `orchestrator-chat.js` import 了 `CHAT_TOKEN_BUDGET`，所有 mock `memory-retriever.js` 的测试文件（orchestrator-chat.test.js, orchestrator-chat-intent.test.js, cecelia-voice-retrieval.test.js）都必须在 mock 工厂里加 `CHAT_TOKEN_BUDGET: 2500`，否则 vitest 报 "No export defined"
+- **提前返回路径要带上新增 meta 字段**: `buildMemoryContext` 在无候选时有提前返回（injectedCount=0 && !profileSnippet），这条路径没有 `tokenBudget`/`intentType` 会导致测试 meta 字段为 undefined
+- **合并冲突 + 版本 bump 策略**: main 版本 1.141.1（别人的 PR），我们的 patch 从 1.140.0→1.140.1，合并后应取 1.141.2（而非 1.141.1+1=1.141.2），三处同步：package.json / .brain-versions / DEFINITION.md
+- **DoD Test 格式关键点**: 不用反引号包裹命令，不用 `- Test:` 前缀（直接 `  Test:`），用 `[x]` 标记已验证
+
 ### [2026-03-01] decomp SKILL.md known vs exploratory 明确判定规则 (PR #215, decomp v1.5.0)
 
 **背景**: SKILL.md 只有一句「不确定的先创建 exploratory」，没有判定标准，秋米完全靠感觉选模式，导致拆解质量不稳定。
