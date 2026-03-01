@@ -1,9 +1,10 @@
 ---
 name: decomp
-version: 1.4.0
+version: 1.5.0
 created: 2026-02-27
-updated: 2026-02-27
+updated: 2026-03-01
 changelog:
+  - 1.5.0: Stage 2/3 写入 known vs exploratory 明确判定规则，含判定表格、强制声明要求和灰色地带案例
   - 1.4.0: Phase 2 Step 1 补充读取 parent Project 描述（北极星），initiative_plan session 有完整全局上下文
   - 1.3.0: 加入 Phase 2 initiative_plan 模式，打通 Initiative → PR 执行循环
   - 1.2.0: 加入 Stage 0.5 - 上次审查反馈读取（rejected 重拆时必须针对性修正）
@@ -284,9 +285,78 @@ curl -X POST localhost:5221/api/brain/projects \
 
 ### Project → Initiative
 
+#### ⚠️ 必须显式声明：每个 Initiative 的 decomposition_mode
+
+**秋米每次创建 Initiative 时，必须在输出中明确声明选用哪个模式，并给出理由。**
+
+格式（不可省略）：
+
+```
+[模式声明] Initiative "XXX"
+  选择模式：known / exploratory
+  理由：[1-2 句说明为什么]
+```
+
+不声明 = Decomp-Check 自动 rejected。
+
+---
+
+#### 判定规则：known vs exploratory
+
+**核心问题**：拆解时，你对"完成这个 Initiative 需要几个 PR、改哪些文件、架构怎么走"是否有把握？
+
+| 条件 | 选 known | 选 exploratory |
+|------|---------|----------------|
+| **方案清晰度** | 实现方案明确，能列出 PR 序列 | 方案未知，需要先调研或试错 |
+| **文件依赖** | 涉及文件 < 5 个，已知具体文件名 | 5+ 文件，或不知道要改哪些 |
+| **根因是否明确** | 明确 bug 修复（有具体报错/复现路径） | 根因未知，需先诊断 |
+| **模块状态** | 改造/扩展现有模块 | 新模块从 0 到 1 |
+| **架构影响** | 不影响整体架构 | 需要探索架构设计 |
+| **依赖外部** | 依赖关系已知、稳定 | 依赖第三方 API/行为不确定 |
+
+**简记口诀**：
+- **known** = 知道怎么做，列得出 PR 清单
+- **exploratory** = 不知道怎么做，先探索再规划
+
+---
+
+#### 灰色地带判定（边界案例）
+
+以下是 3 个常见灰色地带及正确判断：
+
+**案例 1：优化性能，但不知道瓶颈在哪**
+
+> "优化 tick 循环性能，目标从 200ms 降到 50ms"
+
+- 看似明确（有具体指标）→ 但根因未知（不知道瓶颈在哪里）
+- **选 exploratory**：先创建"性能分析和诊断"Initiative，找到瓶颈后再创建 known 的优化 Initiative
+
+---
+
+**案例 2：加一个新 API 端点**
+
+> "新增 /api/brain/intent-router 端点，支持统一意图路由"
+
+- 已知要加哪个端点，但"统一意图路由"涉及架构设计（24 个入口点的整合）
+- **看具体工作量**：
+  - 如果只是加端点 + 路由逻辑（<5 文件）→ **known**
+  - 如果需要重新设计意图识别框架、整合多模块 → **exploratory**
+
+---
+
+**案例 3：修复一个已知 bug**
+
+> "修复 liveness probe 把 bridge 任务误杀的 bug"
+
+- 根因明确（ps aux grep 找不到 bridge 进程 pid）
+- 改动范围明确（executor.js 的 probeTaskLiveness 函数）
+- **选 known**：直接规划修复 PR
+
+---
+
 1. 3-8 个 Initiative per Project
 2. 每个 Initiative 独立可部署（不依赖其他 Initiative 才能运行）
-3. 不确定的先创建 exploratory Initiative
+3. **模式选择（必须显式声明，见上方判定规则）**：方案清晰 → known；不确定/需探索 → exploratory
 4. **写入后触发 Decomp-Check**（自动审查）
 
 ```bash
@@ -314,7 +384,7 @@ curl -X POST localhost:5221/api/brain/projects \
 | KR → Project | 这些 Project 完成后，指标真的会从 X 到 Y 吗？为什么？ |
 | Project → Initiative | 这些 Initiative 全做完，Project 的验收标准都能过吗？ |
 
-如果回答"不确定" → 先创建 exploratory Initiative 调研，再继续。
+如果回答"不确定" → 先创建 **exploratory** Initiative 调研，再继续（参见 Stage 2 known vs exploratory 判定规则）。
 
 ---
 
