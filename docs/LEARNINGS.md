@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] 飞书私信 Bot 集成 (PR #239, Brain v1.141.13)
+
+**背景**: 用户希望在飞书手机 App 直接发私信给 Cecelia，不经过 n8n 中继，直达 Brain。
+
+- **Cloudflare Tunnel 添加 ingress 路由**: 通过 API PUT `/cfd_tunnel/{id}/configurations` 可以动态添加 `{hostname → service}` 映射，实现在运行中的 tunnel 上增加新域名路由（cecelia.zenjoymedia.media → Brain:5221）；同时需要 POST DNS CNAME 记录指向 `{tunnel_id}.cfargotunnel.com`
+- **飞书 challenge 验证必须同步返回**: 飞书配置事件订阅 URL 时发 `{challenge:"xxx"}`，必须在 3 秒内返回 `{challenge:"xxx"}`，所以 challenge 检测放在最前面且同步 `res.json()` 返回
+- **飞书业务响应必须先 200 再异步**: 飞书事件处理超过 3 秒会重试，因此正确模式是：先 `res.json({ok:true})` 返回 200，再 `(async () => { ... })()` 异步执行 Cecelia + 飞书 API 调用
+- **Node.js v20 内置 fetch 可直接调用飞书 API**: 无需 node-fetch/axios，`fetch('https://open.feishu.cn/...')` 直接使用
+- **Brain Docker 环境变量须加入 .env.docker**: docker-compose.yml 的 env_file 加载 .env.docker，新增的 `FEISHU_APP_ID`/`FEISHU_APP_SECRET` 必须写入这个文件，重建 image 后才能在容器内访问
+
 ### [2026-03-01] LEARNINGS 路由架构修正 + vi.hoisted mock 隔离 (PR #235, Brain v1.141.11)
 
 **背景**: PR #228 将 LEARNINGS 直接写入 suggestions 表，完全绕过丘脑路由，架构错误。正确路径应通过 LEARNINGS_RECEIVED 事件分拣：有 bug 的问题 → fix task（task line）；经验/预防措施 → learnings 表（growth line）→ 反刍消化 → NotebookLM（持久化知识飞轮）。
