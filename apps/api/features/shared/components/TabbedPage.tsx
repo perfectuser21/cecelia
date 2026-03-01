@@ -48,8 +48,8 @@ export default function TabbedPage({ tabs, basePath }: TabbedPageProps) {
   const ActiveComponent = activeTab ? lazyComponents[activeTab] : null;
 
   return (
-    <div className="flex flex-col bg-slate-900 text-white">
-      <div className="border-b border-slate-700 bg-slate-800 sticky top-0 z-10">
+    <div className="h-full flex flex-col bg-slate-900 text-white">
+      <div className="border-b border-slate-700 bg-slate-800 shrink-0">
         <div className="flex space-x-1 p-1 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -72,9 +72,11 @@ export default function TabbedPage({ tabs, basePath }: TabbedPageProps) {
         </div>
       </div>
 
-      <Suspense fallback={<LoadingFallback />}>
-        {ActiveComponent && <ActiveComponent />}
-      </Suspense>
+      <div className="flex-1 overflow-y-auto">
+        <Suspense fallback={<LoadingFallback />}>
+          {ActiveComponent && <ActiveComponent />}
+        </Suspense>
+      </div>
     </div>
   );
 }

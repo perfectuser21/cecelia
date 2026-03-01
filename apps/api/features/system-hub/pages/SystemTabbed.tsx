@@ -55,7 +55,7 @@ const tabs: TabConfig[] = [
   },
   {
     id: 'team',
-    label: 'Team',
+    label: 'LM 配置',
     icon: Users,
     path: '/system/team',
     component: () => import('../../system/pages/TeamPage'),
