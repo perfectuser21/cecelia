@@ -201,6 +201,36 @@ function effectivePct(pct, resetsAt) {
   return minutesUntilReset <= RESET_SOON_MINUTES ? 0 : pct;
 }
 
+/**
+ * 为 Haiku 选择最优账号：只过滤 5h 超载和 extra_used，不限制 sonnet 配额
+ * （Haiku 使用独立配额池，sonnet 满额不影响 haiku 可用性）
+ */
+export async function selectBestAccountForHaiku() {
+  try {
+    const usage = await getAccountUsage();
+    const available = ACCOUNTS
+      .map(id => {
+        const u = usage[id];
+        const pct = u?.five_hour_pct ?? 0;
+        const ePct = effectivePct(pct, u?.resets_at);
+        const sevenDayPct = u?.seven_day_pct ?? 0;
+        const extraUsed = u?.extra_used ?? false;
+        return { id, pct, ePct, sevenDayPct, extraUsed };
+      })
+      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
+      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+
+    if (available.length === 0) {
+      console.log('[account-usage] selectBestAccountForHaiku: 所有账号 5h 满载 → 降级');
+      return null;
+    }
+    return available[0].id;
+  } catch (err) {
+    console.error(`[account-usage] selectBestAccountForHaiku 异常: ${err.message}`);
+    return null;
+  }
+}
+
 export async function selectBestAccount() {
   try {
     const usage = await getAccountUsage();
