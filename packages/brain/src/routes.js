@@ -2865,46 +2865,34 @@ router.post('/execution-callback', async (req, res) => {
 
     }
 
-    // 5. Rollup progress to KR and O
+    // 5. Update KR progress based on Initiative completion (RNA 闭环)
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
-        // Get the task's goal_id (which is a KR)
-        const taskRow = await pool.query('SELECT goal_id FROM tasks WHERE id = $1', [task_id]);
-        const krId = taskRow.rows[0]?.goal_id;
+        // Get the task's project_id (Initiative)
+        const taskRow = await pool.query('SELECT project_id FROM tasks WHERE id = $1', [task_id]);
+        const initiativeId = taskRow.rows[0]?.project_id;
 
-        if (krId) {
-          // Calculate KR progress from its tasks
-          const krTasks = await pool.query(
-            "SELECT COUNT(*) as total, COUNT(CASE WHEN status='completed' THEN 1 END) as done FROM tasks WHERE goal_id = $1",
-            [krId]
-          );
-          const { total, done } = krTasks.rows[0];
-          const krProgress = total > 0 ? Math.round((parseInt(done) / parseInt(total)) * 100) : 0;
+        if (initiativeId) {
+          // Get all KRs linked to this Initiative's parent Project
+          const krLinks = await pool.query(`
+            SELECT pkl.kr_id
+            FROM projects init
+            JOIN projects proj ON proj.id = init.parent_id
+            JOIN project_kr_links pkl ON pkl.project_id = proj.id
+            WHERE init.id = $1
+              AND init.type = 'initiative'
+              AND proj.type = 'project'
+          `, [initiativeId]);
 
-          await pool.query('UPDATE goals SET progress = $1 WHERE id = $2', [krProgress, krId]);
-          console.log(`[execution-callback] KR ${krId} progress → ${krProgress}%`);
-
-          // Get parent O and rollup from all KRs
-          const krRow = await pool.query('SELECT parent_id FROM goals WHERE id = $1', [krId]);
-          const oId = krRow.rows[0]?.parent_id;
-
-          if (oId) {
-            const allKRs = await pool.query(
-              'SELECT progress, weight FROM goals WHERE parent_id = $1',
-              [oId]
-            );
-            const totalWeight = allKRs.rows.reduce((s, r) => s + parseFloat(r.weight || 1), 0);
-            const weightedProgress = allKRs.rows.reduce(
-              (s, r) => s + (r.progress || 0) * parseFloat(r.weight || 1), 0
-            );
-            const oProgress = totalWeight > 0 ? Math.round(weightedProgress / totalWeight) : 0;
-
-            await pool.query('UPDATE goals SET progress = $1 WHERE id = $2', [oProgress, oId]);
-            console.log(`[execution-callback] O ${oId} progress → ${oProgress}%`);
+          // Update progress for all linked KRs
+          const { updateKrProgress } = await import('./kr-progress.js');
+          for (const link of krLinks.rows) {
+            const result = await updateKrProgress(pool, link.kr_id);
+            console.log(`[execution-callback] KR ${result.krId} progress → ${result.progress}% (${result.completed}/${result.total} initiatives)`);
           }
         }
       } catch (rollupErr) {
-        console.error(`[execution-callback] Progress rollup error: ${rollupErr.message}`);
+        console.error(`[execution-callback] KR progress update error: ${rollupErr.message}`);
       }
     }
 
