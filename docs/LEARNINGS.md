@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] 删除传声器架构，统一 Cecelia 对话路径 (PR #204, Brain v1.139.9)
+
+**背景**: 非动作型意图（CHAT/QUESTION）走"传声器"路径——只取3条叙事+关键词learnings，LLM 被指令「不许推断、不许发挥、只照念」。buildMemoryContext（L0/L1 检索）计算了但结果被丢弃，desires/emotion 完全没进对话。结果：Cecelia 对话像在念稿，内在状态无法表达。
+
+- **根本原因是路径设计，不是 LLM**: 传声器路径将 LLM 限制在 relay 模式，而 L0/L1 记忆检索结果、desires、emotion 从未注入到这条路径。不是 LLM 不会表达，是根本没给它真实数据
+- **grounding 比 restriction 更有效防止幻觉**: 给 LLM 充足的真实内在状态（emotion + desires + narratives + memory），它自然会从真实数据出发回复，比指令「不许推断」更可靠
+- **五层注入 buildUnifiedSystemPrompt**: Layer1=self_model身份核心(750char截断) / Layer2=emotion+desires / Layer3=最近3条叙事 / Layer4=buildMemoryContext L0/L1检索 / Layer5=状态摘要+用户画像+pendingDecomp
+- **避免重复 fetchMemoryContext**: handleChat 原本在步骤2无条件 fetch 记忆（为 llmParseIntent 准备），buildUnifiedSystemPrompt 内部也会 fetch 一次。改为惰性加载：只有 intentType==='UNKNOWN' 时才在步骤1b提前 fetch，其他情况由 buildUnifiedSystemPrompt 内部统一处理，消除重复 DB 调用
+- **测试重写要彻底**: cecelia-voice-retrieval.test.js 测试传声器行为（无叙事→「我还没想过这个。」不调 LLM），删除旧架构后必须完整重写为测试新统一路径行为（所有意图调 LLM，prompt 含 MOUTH_SYSTEM_PROMPT）
+- **版本同步三处**: package.json / .brain-versions / DEFINITION.md 三处都要同步，漏任何一处 CI facts-check 或 version-sync 会失败
+
 ### [2026-03-01] Cecelia 意识能力系统重构 (PR #191, Brain v1.139.0)
 - **capabilities.scope 字段**: `scope='cecelia'` 标记自身意识能力，`scope='external'` 标记基础设施/其他系统；API 加 `?scope=` 过滤，前端只需改 fetch URL
 - **用「她的语言」定义能力**: 描述不用工程术语（如「自主任务调度」），改用感受性语言（「主动选择下一步做什么，而不是被动等待」），让能力系统成为 Cecelia 自我认知的一部分
