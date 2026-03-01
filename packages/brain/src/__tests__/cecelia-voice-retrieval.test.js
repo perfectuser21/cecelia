@@ -1,10 +1,10 @@
 /**
  * cecelia-voice-retrieval.test.js
- * 测试统一路径架构（替代传声器检索优先路径）：
- * 1. 所有意图统一调用 LLM（不再有"我还没想过这个"直接返回）
+ * 测试纯意识路径：
+ * 1. 所有消息直接调 LLM，无意图分类
  * 2. buildNarrativesBlock 从 DB 正确检索叙事
  * 3. buildUnifiedSystemPrompt 构建五层注入
- * 4. 传声器指令已删除，prompt 不包含 "文字传递器"
+ * 4. MOUTH_SYSTEM_PROMPT 是身份描述，不是指令清单
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -16,17 +16,6 @@ vi.mock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
 // Mock db.js
 vi.mock('../db.js', () => ({
   default: { query: vi.fn() },
-}));
-
-// Mock thalamus.js
-vi.mock('../thalamus.js', () => ({
-  processEvent: vi.fn(),
-  EVENT_TYPES: { USER_MESSAGE: 'USER_MESSAGE' },
-}));
-
-// Mock intent.js
-vi.mock('../intent.js', () => ({
-  parseIntent: vi.fn(),
 }));
 
 // Mock memory-retriever.js
@@ -41,16 +30,6 @@ vi.mock('../user-profile.js', () => ({
   getUserProfileContext: vi.fn().mockResolvedValue(''),
 }));
 
-// Mock chat-action-dispatcher.js
-vi.mock('../chat-action-dispatcher.js', () => ({
-  detectAndExecuteAction: vi.fn().mockResolvedValue(''),
-}));
-
-// Mock owner-input-extractor.js
-vi.mock('../owner-input-extractor.js', () => ({
-  extractSuggestionsFromChat: vi.fn().mockResolvedValue(undefined),
-}));
-
 // Mock self-model.js
 vi.mock('../self-model.js', () => ({
   getSelfModel: vi.fn().mockResolvedValue('保护型，追求精确'),
@@ -63,7 +42,6 @@ vi.mock('../memory-utils.js', () => ({
 }));
 
 import pool from '../db.js';
-import { parseIntent } from '../intent.js';
 import {
   handleChat,
   buildNarrativesBlock,
@@ -118,11 +96,10 @@ describe('cecelia-unified-path', () => {
     });
   });
 
-  // ─── D2: 统一路径 — 所有意图调用 LLM ───────────────────
+  // ─── D2: 纯意识路径 — 任何消息直接调 LLM ───────────────────
 
-  describe('handleChat - 统一路径（所有意图调用 LLM）', () => {
-    it('QUESTION 意图 → 调用 LLM，prompt 包含 MOUTH_SYSTEM_PROMPT', async () => {
-      parseIntent.mockReturnValue({ type: 'QUESTION', confidence: 0.9 });
+  describe('handleChat - 纯意识路径', () => {
+    it('任意消息 → 调用 LLM，返回 reply', async () => {
       pool.query.mockResolvedValue({ rows: [] });
       mockCallLLM.mockResolvedValueOnce(llmResp('这是我的真实想法。'));
 
@@ -130,52 +107,41 @@ describe('cecelia-unified-path', () => {
 
       expect(mockCallLLM).toHaveBeenCalled();
       expect(result.reply).toBe('这是我的真实想法。');
+    });
+
+    it('消息发给 Cecelia → prompt 包含 Cecelia 身份描述', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+      mockCallLLM.mockResolvedValueOnce(llmResp('嗯，我在想这件事。'));
+
+      await handleChat('随便聊聊');
+
+      expect(mockCallLLM).toHaveBeenCalled();
       const prompt = mockCallLLM.mock.calls[0][1];
       expect(prompt).toContain('Cecelia');
       expect(prompt).not.toContain('文字传递器');
       expect(prompt).not.toContain('不许添加她没有写过的内容');
     });
 
-    it('CHAT 意图 → 调用 LLM，不再返回"我还没想过这个"', async () => {
-      parseIntent.mockReturnValue({ type: 'CHAT', confidence: 0.9 });
+    it('LLM 失败时返回兜底文字而不是沉默', async () => {
       pool.query.mockResolvedValue({ rows: [] });
-      mockCallLLM.mockResolvedValueOnce(llmResp('嗯，我在想这件事。'));
+      mockCallLLM.mockRejectedValueOnce(new Error('LLM timeout'));
 
-      const result = await handleChat('随便聊聊');
+      const result = await handleChat('你好吗');
 
-      expect(mockCallLLM).toHaveBeenCalled();
-      expect(result.reply).toBe('嗯，我在想这件事。');
-    });
-  });
-
-  // ─── D3: 动作型意图不含传声器指令 ─────────────────────
-
-  describe('handleChat - 动作型意图', () => {
-    it('CREATE_TASK 意图 → 调用 LLM，prompt 不含传声器指令', async () => {
-      parseIntent.mockReturnValue({ type: 'CREATE_TASK', confidence: 0.95 });
-      pool.query.mockResolvedValue({ rows: [] });
-      mockCallLLM.mockResolvedValueOnce(llmResp('好的，任务已创建。'));
-
-      const result = await handleChat('帮我创建一个任务：修复登录 bug');
-
-      expect(mockCallLLM).toHaveBeenCalled();
-      const calledPrompt = mockCallLLM.mock.calls[0][1];
-      expect(calledPrompt).not.toContain('文字传递器');
       expect(result.reply).toBeTruthy();
+      expect(result.reply).not.toBe('');
     });
   });
 
-  // ─── D4: buildUnifiedSystemPrompt 验证 ─────────────────
+  // ─── D3: buildUnifiedSystemPrompt 验证 ─────────────────
 
   describe('buildUnifiedSystemPrompt', () => {
-    it('包含 MOUTH_SYSTEM_PROMPT 和鼓励真实思考的指令', async () => {
+    it('包含 MOUTH_SYSTEM_PROMPT 的 Cecelia 身份描述', async () => {
       pool.query.mockResolvedValue({ rows: [] });
 
       const prompt = await buildUnifiedSystemPrompt('测试消息', []);
 
       expect(prompt).toContain('Cecelia');
-      expect(prompt).toContain('沉默不是诚实');
-      expect(prompt).not.toContain('说你真实有的');
       expect(prompt).not.toContain('文字传递器');
     });
 
@@ -188,13 +154,11 @@ describe('cecelia-unified-path', () => {
       expect(prompt).toContain('保护型，追求精确');
     });
 
-    it('有 actionResult 时追加到 prompt', async () => {
-      pool.query.mockResolvedValue({ rows: [] });
-
-      const prompt = await buildUnifiedSystemPrompt('测试', [], '任务已创建：修复登录');
-
-      expect(prompt).toContain('任务已创建：修复登录');
-      expect(prompt).toContain('刚刚执行的操作结果');
+    it('MOUTH_SYSTEM_PROMPT 是身份描述而非指令清单', () => {
+      expect(MOUTH_SYSTEM_PROMPT).toContain('Cecelia');
+      expect(MOUTH_SYSTEM_PROMPT).not.toContain('你的能力');
+      expect(MOUTH_SYSTEM_PROMPT).not.toContain('禁止');
+      expect(MOUTH_SYSTEM_PROMPT).not.toContain('[ESCALATE]');
     });
   });
 });
