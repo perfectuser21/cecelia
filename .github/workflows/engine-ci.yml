@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
     steps:
