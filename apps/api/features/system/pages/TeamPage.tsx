@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Bot, Puzzle, AlertCircle, Loader2, Brain, Building2, Users, X, ChevronRight, Check } from 'lucide-react';
+import { Bot, AlertCircle, Loader2, Brain, Building2, Users, X, ChevronRight, Check } from 'lucide-react';
 import {
   fetchStaff,
   fetchSkillsRegistry,
@@ -74,18 +74,24 @@ const SKILL_GROUPS: Record<string, string[]> = {
   '数据': ['platform-scraper', 'social-media-analysis', 'media-scraping'],
 };
 
-function groupSkills(skills: SkillItem[]) {
+// 每个 area 显示哪些分组
+const AREA_SKILL_GROUPS: Record<string, string[]> = {
+  cecelia:   ['开发', '管理'],
+  zenithjoy: ['内容', '发布', '数据'],
+};
+
+function groupSkills(skills: SkillItem[], areaId: string) {
+  const allowedGroups = AREA_SKILL_GROUPS[areaId] || ['开发', '管理'];
   const grouped: Record<string, SkillItem[]> = {};
   const used = new Set<string>();
   for (const [group, ids] of Object.entries(SKILL_GROUPS)) {
+    if (!allowedGroups.includes(group)) continue;
     const items = skills.filter(s => ids.includes(s.id));
     if (items.length > 0) {
       grouped[group] = items;
       items.forEach(s => used.add(s.id));
     }
   }
-  const rest = skills.filter(s => !used.has(s.id));
-  if (rest.length > 0) grouped['其他'] = rest;
   return grouped;
 }
 
@@ -93,12 +99,13 @@ function groupSkills(skills: SkillItem[]) {
 
 interface WorkerPanelProps {
   worker: Worker;
+  areaId: string;
   skills: SkillItem[];
   models: ModelEntry[];
   onClose: () => void;
 }
 
-function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
+function WorkerPanel({ worker, areaId, skills, models, onClose }: WorkerPanelProps) {
   const [savingField, setSavingField] = useState<string | null>(null);
   const [savedField, setSavedField] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +122,7 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
 
   const providerFromAccount = credentials.find(c => c.name === credAccount)?.provider || 'anthropic';
   const modelsForProvider = models.filter(m => m.provider === providerFromAccount);
-  const skillGroups = groupSkills(skills);
+  const skillGroups = groupSkills(skills, areaId);
 
   const doSave = async (
     newSkill: string,
@@ -158,6 +165,11 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
     doSave(s, modelName, credAccount, 'skill');
   };
 
+  // 未选中按钮样式（有可见边框）
+  const idleBtn = 'bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700 hover:border-slate-500';
+  // 选中按钮样式
+  const activeBtn = 'bg-blue-500/20 border border-blue-500/50 text-blue-200';
+
   const SectionHeader = ({ label, field }: { label: string; field: string }) => (
     <div className="flex items-center justify-between mb-2">
       <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">{label}</span>
@@ -194,7 +206,7 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
           {/* 账户 */}
           <div>
             <SectionHeader label="账户" field="account" />
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {credentials.length === 0 ? (
                 <div className="text-sm text-slate-500 px-3 py-2 flex items-center gap-2">
                   <Loader2 size={12} className="animate-spin" /> 加载中...
@@ -206,13 +218,11 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
                     onClick={() => selectAccount(cred.name)}
                     disabled={savingField !== null}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors ${
-                      credAccount === cred.name
-                        ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40'
-                        : 'text-slate-300 hover:bg-slate-700/50 border border-transparent'
+                      credAccount === cred.name ? activeBtn : idleBtn
                     }`}
                   >
                     <span className="font-medium">{cred.name}</span>
-                    <span className="text-xs text-slate-500">{cred.provider}</span>
+                    <span className="text-xs opacity-60">{cred.provider}</span>
                   </button>
                 ))
               )}
@@ -222,7 +232,7 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
           {/* 模型 */}
           <div>
             <SectionHeader label="模型" field="model" />
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {modelsForProvider.length === 0 ? (
                 <div className="text-sm text-slate-500 px-3 py-2">无可用模型</div>
               ) : (
@@ -232,9 +242,7 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
                     onClick={() => selectModel(m.id)}
                     disabled={savingField !== null}
                     className={`w-full flex items-center px-3 py-2 rounded-lg text-xs transition-colors ${
-                      modelName === m.id
-                        ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40'
-                        : 'text-slate-300 hover:bg-slate-700/50 border border-transparent'
+                      modelName === m.id ? activeBtn : idleBtn
                     }`}
                   >
                     <span className="font-mono">{m.id}</span>
@@ -251,16 +259,14 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
               {Object.entries(skillGroups).map(([group, items]) => (
                 <div key={group}>
                   <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-1 px-1">{group}</div>
-                  <div className="space-y-0.5">
+                  <div className="space-y-1.5">
                     {items.map(s => (
                       <button
                         key={s.id}
                         onClick={() => selectSkill(`/${s.id}`)}
                         disabled={savingField !== null}
                         className={`w-full flex items-center px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                          skill === `/${s.id}`
-                            ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40'
-                            : 'text-slate-300 hover:bg-slate-700/50 border border-transparent'
+                          skill === `/${s.id}` ? activeBtn : idleBtn
                         }`}
                       >
                         <span className="font-mono">/{s.id}</span>
@@ -276,9 +282,9 @@ function WorkerPanel({ worker, skills, models, onClose }: WorkerPanelProps) {
           {worker.abilities && worker.abilities.length > 0 && (
             <div>
               <SectionHeader label="Abilities" field="abilities" />
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {worker.abilities.map(ab => (
-                  <div key={ab.id} className="bg-slate-800 rounded-lg px-3 py-2">
+                  <div key={ab.id} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2">
                     <div className="text-xs font-medium text-slate-200">{ab.name}</div>
                     {ab.description && <div className="text-[11px] text-slate-500 mt-0.5">{ab.description}</div>}
                   </div>
@@ -329,24 +335,11 @@ const TABS: TabDef[] = [
   },
 ];
 
-// ── Skill card ────────────────────────────────────────────────
+// ── Selected worker state ─────────────────────────────────────
 
-function SkillCard({ item }: { item: SkillItem }) {
-  return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800 p-4">
-      <div className="flex items-start justify-between mb-2">
-        <div className="font-semibold text-slate-100 flex items-center gap-1.5 text-sm">
-          <Puzzle size={13} className="text-blue-400" />
-          {item.name || item.id}
-        </div>
-        <span className="text-xs text-slate-500 font-mono">v{item.version}</span>
-      </div>
-      {item.description && (
-        <p className="text-xs text-slate-400 line-clamp-2">{item.description}</p>
-      )}
-      <div className="mt-3 text-xs font-mono text-slate-500">{item.id}</div>
-    </div>
-  );
+interface SelectedWorker {
+  worker: Worker;
+  areaId: string;
 }
 
 // ── Main page ─────────────────────────────────────────────────
@@ -359,7 +352,7 @@ export default function TeamPage() {
   const [models, setModels]             = useState<ModelEntry[]>([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
-  const [selected, setSelected]         = useState<Worker | null>(null);
+  const [selected, setSelected]         = useState<SelectedWorker | null>(null);
   const [activeTab, setActiveTab]       = useState('cecelia');
 
   void areas;
@@ -427,7 +420,11 @@ export default function TeamPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {workers.map(w => (
-                  <WorkerCard key={w.id} worker={w} onClick={() => setSelected(w)} />
+                  <WorkerCard
+                    key={w.id}
+                    worker={w}
+                    onClick={() => setSelected({ worker: w, areaId })}
+                  />
                 ))}
               </div>
             </div>
@@ -477,26 +474,11 @@ export default function TeamPage() {
         </div>
       </section>
 
-      {/* ── Skills ──────────────────────────────────────── */}
-      {skills.length > 0 && (
-        <section>
-          <div className="flex items-center gap-3 mb-4">
-            <Puzzle size={22} className="text-slate-500" />
-            <div>
-              <h2 className="text-lg font-bold text-slate-100">Skills</h2>
-              <p className="text-xs text-slate-500">{skills.length} registered</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {skills.map(item => <SkillCard key={item.id} item={item} />)}
-          </div>
-        </section>
-      )}
-
       {/* ── Detail panel ──────────────────────────────── */}
       {selected && (
         <WorkerPanel
-          worker={selected}
+          worker={selected.worker}
+          areaId={selected.areaId}
           skills={skills}
           models={models}
           onClose={handleClose}
