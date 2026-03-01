@@ -71,9 +71,15 @@ function makeDesire(type, overrides = {}) {
 }
 
 function makePool() {
-  return {
-    query: vi.fn().mockResolvedValue({ rows: [{ id: 'task-created-001' }] }),
-  };
+  // act desire 去重查询（SELECT ... WHERE trigger_source = 'desire_system'）返回空
+  // 其他查询（INSERT INTO tasks, UPDATE desires）返回正常结果
+  const queryMock = vi.fn().mockImplementation((sql) => {
+    if (typeof sql === 'string' && sql.includes('trigger_source') && sql.includes('initiative_plan')) {
+      return Promise.resolve({ rows: [] }); // 无活跃任务，允许创建
+    }
+    return Promise.resolve({ rows: [{ id: 'task-created-001' }] });
+  });
+  return { query: queryMock };
 }
 
 // ── 测试 ──────────────────────────────────────────────────
