@@ -9054,4 +9054,97 @@ router.get('/learnings/stats', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/brain/feishu/event
+ * 飞书私信 Bot 事件接收端点
+ *
+ * 功能：
+ * 1. Challenge 验证（飞书配置事件订阅 URL 时使用）
+ * 2. 接收 im.message.receive_v1 私信事件 → 调用 Cecelia → 回复用户
+ *
+ * 环境变量：FEISHU_APP_ID, FEISHU_APP_SECRET
+ */
+router.post('/feishu/event', async (req, res) => {
+  const body = req.body;
+
+  // 1. Challenge 验证（飞书配置事件订阅 URL 时）
+  if (body.challenge) {
+    return res.json({ challenge: body.challenge });
+  }
+
+  // 2. 只处理 im.message.receive_v1 事件
+  const eventType = body?.header?.event_type;
+  if (eventType !== 'im.message.receive_v1') {
+    return res.json({ ok: true });
+  }
+
+  const msgEvent = body.event;
+  const message = msgEvent?.message;
+  const sender = msgEvent?.sender;
+
+  // 只处理文本类型的私聊消息
+  if (!message || message.message_type !== 'text' || message.chat_type !== 'p2p') {
+    return res.json({ ok: true });
+  }
+
+  const openId = sender?.sender_id?.open_id;
+  if (!openId) {
+    return res.json({ ok: true });
+  }
+
+  // 立即返回 200（飞书要求 3 秒内响应，否则会重试）
+  res.json({ ok: true });
+
+  // 异步处理：调用 Cecelia + 回复飞书
+  (async () => {
+    try {
+      // 提取消息文本
+      const contentStr = message.content || '{}';
+      const contentObj = JSON.parse(contentStr);
+      const text = contentObj.text || contentStr;
+
+      if (!text.trim()) return;
+
+      // 调用 Cecelia
+      const result = await handleChat(text, {}, []);
+      const reply = result?.reply;
+      if (!reply) return;
+
+      // 获取飞书 tenant_access_token
+      const tokenResp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_id: process.env.FEISHU_APP_ID,
+          app_secret: process.env.FEISHU_APP_SECRET,
+        }),
+      });
+      const tokenData = await tokenResp.json();
+      if (tokenData.code !== 0) {
+        console.error('[feishu/event] 获取 token 失败:', tokenData.msg);
+        return;
+      }
+      const accessToken = tokenData.tenant_access_token;
+
+      // 发送私信回复
+      await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          receive_id: openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: reply }),
+        }),
+      });
+
+      console.log(`[feishu/event] 回复用户 ${openId}：${reply.slice(0, 50)}...`);
+    } catch (err) {
+      console.error('[feishu/event] 处理失败:', err.message);
+    }
+  })();
+});
+
 export default router;
