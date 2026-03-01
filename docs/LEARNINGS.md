@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] decomp SKILL.md known vs exploratory 明确判定规则 (PR #215, decomp v1.5.0)
+
+**背景**: SKILL.md 只有一句「不确定的先创建 exploratory」，没有判定标准，秋米完全靠感觉选模式，导致拆解质量不稳定。
+
+- **判定本质是一个问题**: "你现在对'完成这个 Initiative 需要几个 PR、改哪些文件、架构怎么走'是否有把握？" 有把握=known，没有=exploratory
+- **6 个维度判定**: 方案清晰度 / 文件依赖数量(<5=known) / 根因是否明确 / 模块状态(改造=known, 0到1=exploratory) / 架构影响 / 外部依赖稳定性
+- **强制显式声明**: 秋米每次创建 Initiative 必须输出 `[模式声明]` 格式，不声明 = Decomp-Check rejected（规则写进 SKILL.md）
+- **灰色地带口诀**: 性能优化但不知瓶颈→先探索(exploratory)找瓶颈再 known 优化；新API端点但架构复杂→看文件数；明确bug修复→always known
+- **DoD grep 测试要与实际文本匹配**: 计划写"架构探索"但实际写"探索架构设计"，导致 DoD grep 测试失败。写 DoD 时要先确认实际写入的措辞，再写 grep 命令
+
 ### [2026-03-01] 删除传声器架构，统一 Cecelia 对话路径 (PR #204, Brain v1.139.9)
 
 **背景**: 非动作型意图（CHAT/QUESTION）走"传声器"路径——只取3条叙事+关键词learnings，LLM 被指令「不许推断、不许发挥、只照念」。buildMemoryContext（L0/L1 检索）计算了但结果被丢弃，desires/emotion 完全没进对话。结果：Cecelia 对话像在念稿，内在状态无法表达。
