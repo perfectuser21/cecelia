@@ -12,6 +12,7 @@
 
 import pool from './db.js';
 import { renderPrd, renderTrd } from './templates.js';
+import { identifyTaskLayer, routeByTaskLayer } from './unified-intent-router.js';
 
 /**
  * Intent types that can be recognized
@@ -795,7 +796,10 @@ async function parseIntent(input) {
     params: buildActionParams(classification.type, trimmedInput, entities, projectName)
   } : null;
 
-  // Step 6: Build parsed intent object
+  // Step 6: Identify task layer (统一意图路由)
+  const taskLayer = await identifyTaskLayer(trimmedInput);
+
+  // Step 7: Build parsed intent object
   const parsedIntent = {
     originalInput: trimmedInput,
     intentType: classification.type,
@@ -807,11 +811,19 @@ async function parseIntent(input) {
     projectName,
     tasks,
     suggestedAction,
+    taskLayer, // 新增：层级识别结果
     prdDraft: null
   };
 
-  // Step 6: Generate PRD draft
+  // Step 8: Generate PRD draft
   parsedIntent.prdDraft = generatePrdDraft(parsedIntent);
+
+  // Step 9: Route by task layer (统一路由)
+  parsedIntent.routing = await routeByTaskLayer({
+    task_layer: taskLayer,
+    content: trimmedInput,
+    source: 'chat'
+  });
 
   return parsedIntent;
 }

@@ -397,6 +397,15 @@ describe('Intent Recognition Module', () => {
 
       expect(result.originalInput).toBe('做一个测试项目');
     });
+
+    it('includes task_layer and routing in result', async () => {
+      const result = await parseIntent('修复登录 bug');
+
+      expect(result.taskLayer).toBeDefined();
+      expect(result.routing).toBeDefined();
+      expect(result.routing.action).toBeDefined();
+      expect(result.routing.skill).toBeDefined();
+    });
   });
 
   describe('parseAndCreate', () => {
