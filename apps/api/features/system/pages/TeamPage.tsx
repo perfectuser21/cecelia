@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Bot, Users, Puzzle, AlertCircle, Loader2, Brain, Building2, X, ChevronRight, Check } from 'lucide-react';
+import { Bot, Puzzle, AlertCircle, Loader2, Brain, Building2, Users, X, ChevronRight, Check } from 'lucide-react';
 import {
   fetchStaff,
   fetchSkillsRegistry,
@@ -14,7 +14,6 @@ import {
   type CredentialEntry,
 } from '../api/staffApi';
 import BrainLayerConfig from '../components/BrainLayerConfig';
-
 
 
 // ── Model badge ───────────────────────────────────────────────
@@ -262,6 +261,36 @@ function WorkerPanel({ worker, skills, models, onClose, onSaved }: WorkerPanelPr
   );
 }
 
+// ── Tab 定义 ──────────────────────────────────────────────────
+
+interface TabDef {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  areaId: string | null; // null = 不按 area 渲染（Cecelia 大脑层）
+}
+
+const TABS: TabDef[] = [
+  {
+    id: 'cecelia',
+    label: 'Cecelia',
+    icon: <Brain size={16} className="text-purple-500" />,
+    areaId: null,
+  },
+  {
+    id: 'core',
+    label: '核心团队',
+    icon: <Users size={16} className="text-blue-500" />,
+    areaId: 'cecelia',
+  },
+  {
+    id: 'zenithjoy',
+    label: 'ZenithJoy',
+    icon: <Building2 size={16} className="text-emerald-500" />,
+    areaId: 'zenithjoy',
+  },
+];
+
 // ── Skill card ────────────────────────────────────────────────
 
 function SkillCard({ item }: { item: SkillItem }) {
@@ -294,6 +323,9 @@ export default function TeamPage() {
   const [error, setError]               = useState<string | null>(null);
   const [selected, setSelected]         = useState<Worker | null>(null);
   const [activeTab, setActiveTab]       = useState('cecelia');
+
+  // suppress unused warning for areas (kept for future use)
+  void areas;
 
   const load = useCallback(() => {
     setLoading(true);
@@ -328,11 +360,7 @@ export default function TeamPage() {
     </div>
   );
 
-  const areaIds = Object.keys(areas).length > 0
-    ? Object.keys(areas)
-    : [...new Set(teams.map(t => t.area).filter(Boolean) as string[])];
-
-  const groupByDept = (areaId: string) => {
+  const getAreaWorkers = (areaId: string) => {
     const areaTeams = teams.filter(t => t.area === areaId);
     const map: Record<string, Team[]> = {};
     for (const t of areaTeams) {
@@ -343,16 +371,11 @@ export default function TeamPage() {
     return map;
   };
 
-  const areaIcon = (id: string) =>
-    id === 'cecelia'
-      ? <Brain size={18} className="text-purple-500" />
-      : <Building2 size={18} className="text-blue-500" />;
-
-  const areaLabel = (id: string) => areas[id]?.name || (id === 'cecelia' ? 'Cecelia' : id === 'zenithjoy' ? 'ZenithJoy' : id);
-
   const renderWorkers = (areaId: string) => {
-    const deptMap = groupByDept(areaId);
-    if (!Object.keys(deptMap).length) return null;
+    const deptMap = getAreaWorkers(areaId);
+    if (!Object.keys(deptMap).length) return (
+      <div className="text-sm text-gray-400 text-center py-8">暂无成员</div>
+    );
     return (
       <div className="space-y-6">
         {Object.entries(deptMap).map(([dept, deptTeams]) => {
@@ -377,60 +400,64 @@ export default function TeamPage() {
     );
   };
 
+  const currentTab = TABS.find(t => t.id === activeTab) || TABS[0];
+
   return (
     <div className="p-6 space-y-8">
 
       {/* ── Header + Tab Bar ─────────────────────────────── */}
       <section>
         <div className="flex items-center gap-3 mb-5">
-          <Users size={22} className="text-gray-500" />
+          <Brain size={22} className="text-gray-500" />
           <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Team</h2>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">LM 配置</h2>
             <p className="text-xs text-gray-500">{totalWorkers} workers · 点击卡片查看/编辑</p>
           </div>
         </div>
 
-        {/* Area Tab Bar */}
+        {/* Tab Bar */}
         <div className="flex gap-1 p-1 rounded-lg bg-gray-100 dark:bg-gray-800/60 w-fit mb-6">
-          {areaIds.map(areaId => (
+          {TABS.map(tab => (
             <button
-              key={areaId}
-              onClick={() => setActiveTab(areaId)}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                activeTab === areaId
+                activeTab === tab.id
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
               }`}
             >
-              {areaIcon(areaId)}
-              {areaLabel(areaId)}
+              {tab.icon}
+              {tab.label}
             </button>
           ))}
         </div>
 
         {/* ── Tab Content ────────────────────────────────── */}
         <div className="space-y-6">
-          {/* Brain Layer Config — only for Cecelia tab */}
+          {/* Cecelia Tab: 只显示大脑层级配置 */}
           {activeTab === 'cecelia' && <BrainLayerConfig />}
 
-          {/* Workers for active tab */}
-          {renderWorkers(activeTab)}
+          {/* 核心团队 / ZenithJoy: 显示对应 area 的 workers */}
+          {currentTab.areaId !== null && renderWorkers(currentTab.areaId)}
         </div>
       </section>
 
       {/* ── Skills（所有 tab 共享）──────────────────────── */}
-      <section>
-        <div className="flex items-center gap-3 mb-4">
-          <Puzzle size={22} className="text-gray-500" />
-          <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Skills</h2>
-            <p className="text-xs text-gray-500">{skills.length} registered</p>
+      {skills.length > 0 && (
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Puzzle size={22} className="text-gray-500" />
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Skills</h2>
+              <p className="text-xs text-gray-500">{skills.length} registered</p>
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {skills.map(item => <SkillCard key={item.id} item={item} />)}
-        </div>
-      </section>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {skills.map(item => <SkillCard key={item.id} item={item} />)}
+          </div>
+        </section>
+      )}
 
       {/* ── Detail panel ──────────────────────────────── */}
       {selected && (

@@ -7717,7 +7717,7 @@ router.get('/skills-registry', async (_req, res) => {
     const fs = await import('fs');
     const path = await import('path');
 
-    const WORKFLOWS_BASE = '/home/xx/perfect21/cecelia/workflows';
+    const WORKFLOWS_BASE = '/home/xx/perfect21/cecelia/packages/workflows';
 
     function parseSkillMd(filePath) {
       try {
