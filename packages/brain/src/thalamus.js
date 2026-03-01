@@ -1232,6 +1232,19 @@ async function processEvent(event) {
       const { analyzeDeep } = await import('./cortex.js');
       const cortexDecision = await analyzeDeep(event, decision);
       console.log(`[thalamus] Cortex decision: actions=${(cortexDecision.actions || []).map(a => a.type).join(',')}, confidence=${cortexDecision.confidence}`);
+
+      // L2 结论 → self_model 沉淀（闭环线 4）
+      if (cortexDecision.analysis || cortexDecision.rationale) {
+        const selfModelContent = typeof cortexDecision.analysis === 'object'
+          ? `[L2 战略洞察] ${cortexDecision.analysis.root_cause || ''} | ${(cortexDecision.analysis.contributing_factors || []).join(', ')}`
+          : `[L2 战略洞察] ${String(cortexDecision.rationale || '').slice(0, 500)}`;
+        pool.query(
+          `INSERT INTO memory_stream (content, importance, memory_type, source_type, expires_at)
+           VALUES ($1, 9, 'long', 'self_model', NOW() + INTERVAL '90 days')`,
+          [selfModelContent.slice(0, 2000)]
+        ).catch(err => console.warn('[thalamus] L2 self_model write failed (non-blocking):', err.message));
+      }
+
       recordRoutingDecision('cortex_route', event, cortexDecision, Date.now() - startMs);
       return cortexDecision;
     } catch (err) {
@@ -1333,9 +1346,13 @@ async function observeChat(signal, context = {}) {
 // Exports
 // ============================================================
 
+// routeEvent 别名（goal-evaluator 等外部模块使用）
+const routeEvent = processEvent;
+
 export {
   // 主入口
   processEvent,
+  routeEvent,
 
   // 嘴巴→丘脑信号入口
   observeChat,

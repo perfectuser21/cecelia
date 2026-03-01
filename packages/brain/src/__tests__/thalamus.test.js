@@ -13,7 +13,8 @@ import {
   EVENT_TYPES,
   ACTION_WHITELIST,
   parseDecisionFromResponse,
-  processEvent
+  processEvent,
+  routeEvent,
 } from '../thalamus.js';
 
 describe('thalamus', () => {
@@ -693,6 +694,13 @@ describe('thalamus', () => {
       expect(ACTION_WHITELIST['suggest_task_type']).toBeDefined();
       expect(ACTION_WHITELIST['suggest_task_type'].dangerous).toBe(false);
       expect(ACTION_WHITELIST['suggest_task_type'].description).toBe('建议 task_type 修正（只警告记录，不自动修改）');
+    });
+  });
+
+  describe('routeEvent alias', () => {
+    it('routeEvent should be same function as processEvent', () => {
+      expect(routeEvent).toBe(processEvent);
+      expect(typeof routeEvent).toBe('function');
     });
   });
 
