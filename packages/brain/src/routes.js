@@ -8431,6 +8431,13 @@ router.get('/learnings', async (req, res) => {
       conditions.push(`(archived = false OR archived IS NULL)`);
     }
 
+    // 日期过滤（YYYY-MM-DD，Asia/Shanghai 时区）
+    if (req.query.date) {
+      conditions.push(`DATE(created_at AT TIME ZONE 'Asia/Shanghai') = $${paramIdx++}`);
+      params.push(req.query.date);
+    }
+
+    const orderDir = req.query.date ? 'ASC' : 'DESC';
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const countResult = await pool.query(
@@ -8443,7 +8450,7 @@ router.get('/learnings', async (req, res) => {
     const dataResult = await pool.query(
       `SELECT id, title, content, category, digested, archived, created_at
        FROM learnings ${where}
-       ORDER BY created_at DESC
+       ORDER BY created_at ${orderDir}
        LIMIT $${paramIdx++} OFFSET $${paramIdx}`,
       params
     );
