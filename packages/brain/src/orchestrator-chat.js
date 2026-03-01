@@ -686,15 +686,15 @@ export async function handleChatStream(message, context = {}, messages = [], onC
       return;
     }
 
-    // 流式传声器调用
+    // 流式传声器调用（timeout 25s，避免高负载下用户长等）
     try {
       const { callLLMStream } = await import('./llm-caller.js');
-      await callLLMStream('mouth', transmitterPrompt, { maxTokens: 2048 }, onChunk);
+      await callLLMStream('mouth', transmitterPrompt, { maxTokens: 2048, timeout: 25000 }, onChunk);
     } catch (err) {
       console.error('[orchestrator-chat] stream transmitter failed:', err.message);
       // 降级到非流式
       try {
-        const result = await callWithHistory(message, transmitterPrompt, {}, messages);
+        const result = await callWithHistory(message, transmitterPrompt, { timeout: 25000 }, messages);
         onChunk(result.reply, true);
       } catch {
         onChunk('我还没想过这个。', true);
@@ -734,7 +734,7 @@ export async function handleChatStream(message, context = {}, messages = [], onC
 
     try {
       const { callLLMStream } = await import('./llm-caller.js');
-      await callLLMStream('mouth', `${systemPrompt}\n\nAlex：${message}`, { maxTokens: 2048 }, onChunk);
+      await callLLMStream('mouth', `${systemPrompt}\n\nAlex：${message}`, { maxTokens: 2048, timeout: 25000 }, onChunk);
     } catch (err) {
       console.error('[orchestrator-chat] stream action intent failed:', err.message);
       onChunk('处理请求时出现问题，请稍后再试。', true);
