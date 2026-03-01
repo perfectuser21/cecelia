@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.10.0"
+version: "3.11.0"
 updated: "2026-03-01"
 changelog:
+  - "3.11.0: v12.35.4 - 打通 /dev LEARNINGS → Brain DB 管道（新增 extract-learnings.sh 从 incident-log + LEARNINGS.md 提取结构化知识；generate-feedback-report.sh 合并 .dev-learnings-extracted.json；10-learning.md 新增 Step 3.5 调用提取脚本）"
   - "3.10.0: v12.35.3 - 修复 /dev LEARNINGS 写入时机（09-ci.md CI 通过后不立刻合并，先执行 Step 10；10-learning.md push LEARNINGS 到功能分支后再合并 PR，确保 LEARNINGS 包含在同一 PR 中）"
   - "3.9.0: v12.35.1 - 修复 cecelia branch protection（移除 Dashboard Build required check，只保留 ci-passed；setup-branch-protection.sh 加入 cecelia + check_branch 支持不存在分支跳过）"
   - "3.8.0: v12.35.0 - 修复前端 DoD 视觉验证盲区（05-dod.md 新增 manual:chrome 格式 + 07-verify.md 新增截图验证分支 + check-dod-mapping.cjs 接受 manual:chrome 类型）"
