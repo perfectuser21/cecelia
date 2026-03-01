@@ -7,6 +7,7 @@
  */
 
 import { callLLM } from '../llm-caller.js';
+import { identifyTaskLayer } from '../unified-intent-router.js';
 
 const VALID_TYPES = ['inform', 'propose', 'warn', 'celebrate', 'question', 'act', 'follow_up', 'explore'];
 
@@ -85,12 +86,15 @@ export async function runDesireFormation(pool, insight) {
 
   const desire = await generateDesireFromInsight(insight);
 
+  // 识别任务层级
+  const taskLayer = await identifyTaskLayer(desire.content);
+
   const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 
   try {
     const { rows } = await pool.query(`
-      INSERT INTO desires (type, content, insight, proposed_action, urgency, evidence, expires_at, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+      INSERT INTO desires (type, content, insight, proposed_action, urgency, evidence, expires_at, status, task_layer)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)
       RETURNING id
     `, [
       desire.type,
@@ -99,7 +103,8 @@ export async function runDesireFormation(pool, insight) {
       desire.proposed_action,
       desire.urgency,
       JSON.stringify({ source: 'reflection', timestamp: new Date().toISOString() }),
-      expiresAt
+      expiresAt,
+      taskLayer
     ]);
 
     // 广播 WebSocket 事件到前端
