@@ -661,3 +661,51 @@ Bug 2 被 Bug 1 掩盖——因为 act/follow_up 欲望根本无法插入，永�
 6. facts-check 会自动检查"无重复编号"和"最高编号与 EXPECTED 一致"，可用于验证
 
 **预防**：并行任务开始前在 Brain DB 查当前最高 migration 编号，预留不同编号段。
+
+---
+
+## Express SSE req.on('close') 陷阱（PR #194 + #198，2026-03-01）
+
+### 现象
+
+`/api/brain/orchestrator/chat/stream` SSE 端点对用户**完全无响应**——发送消息后永远卡住，没有任何输出。
+调试发现 `handleChatStream` 执行正常（10-12 秒内正确回调 `onChunk`），bridge 也正常（4.6 秒响应）。
+
+### 根本原因
+
+在 Express.js 中，`req.on('close', callback)` **不等待客户端真正断开**。
+`express.json()` 中间件读取完请求体后立即触发 `req close` 事件——通常在请求到达后 1-2ms。
+
+```
+用户发请求 → express.json() 解析 body（~1ms）
+→ req.on('close') 立即触发 → closed = true
+→ 等待 LLM 响应（10-12 秒）
+→ onChunk 回调被调用
+→ if (closed) return;  ← 直接跳过！
+→ res.write() 永远不执行
+→ 用户看到：永远卡住
+```
+
+### 修复
+
+```js
+// ❌ bug: req.on('close') 在 express.json() 读完 body 后立即触发
+req.on('close', () => { closed = true; });
+
+// ✅ fix: res.on('close') 在客户端真正断开 TCP 时才触发
+res.on('close', () => { closed = true; });
+```
+
+文件：`packages/brain/src/routes.js`
+
+### 为什么难以发现
+
+- `handleChatStream` 函数本身完全正常（直接调用 + docker exec 测试都成功）
+- curl 不报错，只是卡住等待——看起来像超时，实际是 closed=true 导致数据从未写入
+- PR #194 的"修复"（修改 handleChatStream timeout）解决了表面的超时问题，但真正的 bug（closed 检测）没有改变
+
+### 教训
+
+1. **Express SSE 必须用 `res.on('close')`，绝不用 `req.on('close')`**
+2. SSE/长连接调试时，先隔离每层（handleChatStream 独立测试 → bridge 独立测试 → HTTP 端到端测试）
+3. 如果 onChunk 能被正确调用但 HTTP 客户端看不到数据，检查 closed 标志 / res.write 是否被调用
