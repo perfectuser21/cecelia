@@ -52,7 +52,8 @@ services:
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
       - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
+      # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
