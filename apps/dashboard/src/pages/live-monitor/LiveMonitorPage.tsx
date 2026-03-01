@@ -481,10 +481,11 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
 // ── Account Usage Rings ────────────────────────────────────────
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
-const usageColor = (pct: number) => pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#10b981';
+const usageColor = (pct: number) => pct >= 80 ? '#f85149' : pct >= 50 ? '#f59e0b' : '#10b981';
 
 function AccUsageRings() {
   const [usage, setUsage] = useState<Record<string, AccountUsage> | null>(null);
+  const navigate = useNavigate();
 
   const fetchUsage = useCallback(async () => {
     try {
@@ -517,26 +518,27 @@ function AccUsageRings() {
         const color = isBest ? '#818cf8' : usageColor(pct);
         const label = id.replace('account', 'ACC');
         const fiveHrResets = u?.resets_at
-          ? new Date(u.resets_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-          : null;
-        const sevenDayResets = u?.seven_day_resets_at
           ? (() => {
-              const d = new Date(u.seven_day_resets_at);
-              return `${d.getMonth() + 1}/${d.getDate()}`;
+              const now = Date.now();
+              const resetMs = new Date(u.resets_at).getTime();
+              const diffMs = resetMs - now;
+              if (diffMs <= 0) return null;
+              const diffMin = Math.floor(diffMs / 60000);
+              const h = Math.floor(diffMin / 60);
+              const m = diffMin % 60;
+              return h > 0 ? `${h}:${String(m).padStart(2, '0')}` : `${m}m`;
             })()
           : null;
-        const sonnetPct = u?.seven_day_sonnet_pct ?? 0;
         return (
-          <div key={id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+          <div
+            key={id}
+            onClick={() => navigate('/account-usage')}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, cursor: 'pointer' }}
+            title="查看账号用量详情"
+          >
             <Ring pct={pct} color={color} label={label} value={`${pct}%`} />
             <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
-              5h:{pct}%{fiveHrResets ? ` ↺${fiveHrResets}` : ''}
-            </div>
-            <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
-              7d:{u?.seven_day_pct ?? 0}%{sevenDayResets ? ` ↺${sevenDayResets}` : ''}
-            </div>
-            <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
-              son:{sonnetPct}%
+              {pct}%{fiveHrResets ? ` ↺${fiveHrResets}` : ''}
             </div>
           </div>
         );
