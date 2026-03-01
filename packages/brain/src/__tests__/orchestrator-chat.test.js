@@ -44,6 +44,7 @@ vi.mock('../intent.js', () => ({
 // Mock memory-retriever.js (fetchMemoryContext now uses buildMemoryContext directly)
 vi.mock('../memory-retriever.js', () => ({
   buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
+  CHAT_TOKEN_BUDGET: 2500,
 }));
 
 // Mock user-profile.js — 阻止副作用，getUserProfileContext 默认返回 ''
