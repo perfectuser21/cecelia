@@ -7337,7 +7337,7 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
   res.flushHeaders();
 
   let closed = false;
-  req.on('close', () => { closed = true; });
+  res.on('close', () => { closed = true; });
 
   try {
     await handleChatStream(
