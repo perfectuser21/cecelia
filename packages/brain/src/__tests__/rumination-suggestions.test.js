@@ -1,7 +1,9 @@
 /**
- * rumination.js → suggestion 管道测试（PR-D: self_loop 渠道）
+ * rumination.js → L1 丘脑信号测试
  *
- * 覆盖：DOD-1（[ACTION:] → suggestion）、DOD-2（limit=2）、DOD-3（失败不影响消化）
+ * 覆盖：DOD-1（[ACTION:] → RUMINATION_RESULT 事件含 actions）、
+ *       DOD-2（processEvent 被调用，不再直接创建任务/suggestion）、
+ *       DOD-3（processEvent 失败不影响消化流程）
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,9 +15,7 @@ const mockCallLLM = vi.hoisted(() => vi.fn());
 const mockBuildMemoryContext = vi.hoisted(() => vi.fn());
 const mockQueryNotebook = vi.hoisted(() => vi.fn());
 const mockAddTextSource = vi.hoisted(() => vi.fn());
-const mockCreateTask = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
-const mockCreateSuggestion = vi.hoisted(() => vi.fn());
 const mockProcessEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('../db.js', () => ({
@@ -36,16 +36,8 @@ vi.mock('../notebook-adapter.js', () => ({
   addTextSource: mockAddTextSource,
 }));
 
-vi.mock('../actions.js', () => ({
-  createTask: mockCreateTask,
-}));
-
 vi.mock('../self-model.js', () => ({
   updateSelfModel: mockUpdateSelfModel,
-}));
-
-vi.mock('../suggestion-triage.js', () => ({
-  createSuggestion: mockCreateSuggestion,
 }));
 
 vi.mock('../thalamus.js', () => ({
@@ -65,9 +57,6 @@ function createMockPool() {
   return { query: mockQuery };
 }
 
-/**
- * 设置 mock 链（idle check + learnings + memory_stream INSERT + N×UPDATE）
- */
 function setupIdleAndLearnings(learnings) {
   mockQuery
     .mockResolvedValueOnce({ rows: [{ in_progress: '0', queued: '0' }] }) // idle check
@@ -83,7 +72,7 @@ function setupIdleAndLearnings(learnings) {
 
 // ── 测试 ──────────────────────────────────────────────────
 
-describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
+describe('rumination → L1 丘脑信号', () => {
   let pool;
 
   beforeEach(() => {
@@ -93,14 +82,12 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
     mockBuildMemoryContext.mockResolvedValue({ block: '', meta: {} });
     mockQueryNotebook.mockResolvedValue({ ok: false });
     mockAddTextSource.mockResolvedValue({ ok: true });
-    mockCreateTask.mockResolvedValue({ id: 'task-001' });
     mockUpdateSelfModel.mockResolvedValue(undefined);
-    mockCreateSuggestion.mockResolvedValue({ id: 'sug-001', priority_score: 0.75 });
     mockProcessEvent.mockResolvedValue({ level: 0, actions: [], rationale: 'ok', confidence: 0.8, safety: false });
   });
 
-  describe('DOD-1: [ACTION:] 洞察 → createSuggestion', () => {
-    it('DOD-1: 有 [ACTION:] 标记时调用 createSuggestion(source=rumination, type=insight_action)', async () => {
+  describe('DOD-1: [ACTION:] 洞察 → RUMINATION_RESULT 事件含 actions', () => {
+    it('DOD-1: 有 [ACTION:] 标记时，processEvent 的 event.actions 包含行动标题', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '深度分析结论 [ACTION: 研究 React Server Components]',
       });
@@ -111,30 +98,13 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
 
       await runRumination(pool);
 
-      expect(mockCreateSuggestion).toHaveBeenCalledWith(expect.objectContaining({
-        source: 'rumination',
-        suggestion_type: 'insight_action',
-        content: expect.stringContaining('研究 React Server Components'),
+      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'rumination_result',
+        actions: expect.arrayContaining(['研究 React Server Components']),
       }));
     });
 
-    it('DOD-1: suggestion content 包含行动标题和来源洞察', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '模式发现 [ACTION: 优化任务调度器]',
-      });
-
-      setupIdleAndLearnings([
-        { id: 'l1', title: '调度优化', content: '任务调度器分析', category: 'tech' },
-      ]);
-
-      await runRumination(pool);
-
-      const call = mockCreateSuggestion.mock.calls[0][0];
-      expect(call.content).toContain('优化任务调度器');
-      expect(call.content).toContain('模式发现');
-    });
-
-    it('DOD-1: 无 [ACTION:] 标记时不调用 createSuggestion', async () => {
+    it('DOD-1: 无 [ACTION:] 标记时，event.actions 为空数组', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '这是一条普通洞察，没有行动建议',
       });
@@ -145,12 +115,15 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
 
       await runRumination(pool);
 
-      expect(mockCreateSuggestion).not.toHaveBeenCalled();
+      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'rumination_result',
+        actions: [],
+      }));
     });
   });
 
-  describe('DOD-2: limit=2（最多 2 条 suggestion）', () => {
-    it('DOD-2: 3 个 [ACTION:] 标记 → 只创建 2 条 suggestion', async () => {
+  describe('DOD-2: 不再直接调用 createTask 或 createSuggestion', () => {
+    it('DOD-2: 3 个 [ACTION:] 标记 → processEvent 收到 3 个 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '分析结论 [ACTION: 行动一] 另外 [ACTION: 行动二] 还有 [ACTION: 行动三]',
       });
@@ -161,13 +134,14 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
 
       await runRumination(pool);
 
-      // createTask 仍然调用 3 次（无 limit）
-      expect(mockCreateTask).toHaveBeenCalledTimes(3);
-      // createSuggestion 只调用 2 次（limit=2）
-      expect(mockCreateSuggestion).toHaveBeenCalledTimes(2);
+      const callArgs = mockProcessEvent.mock.calls[0][0];
+      expect(callArgs.actions).toHaveLength(3);
+      expect(callArgs.actions).toContain('行动一');
+      expect(callArgs.actions).toContain('行动二');
+      expect(callArgs.actions).toContain('行动三');
     });
 
-    it('DOD-2: 恰好 2 个 [ACTION:] → 创建 2 条 suggestion', async () => {
+    it('DOD-2: 恰好 2 个 [ACTION:] → processEvent 收到 2 个 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '洞察 [ACTION: 第一行动] 以及 [ACTION: 第二行动]',
       });
@@ -178,30 +152,17 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
 
       await runRumination(pool);
 
-      expect(mockCreateSuggestion).toHaveBeenCalledTimes(2);
-    });
-
-    it('DOD-2: 1 个 [ACTION:] → 创建 1 条 suggestion', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '洞察内容 [ACTION: 唯一行动]',
-      });
-
-      setupIdleAndLearnings([
-        { id: 'l1', title: '测试', content: '内容', category: 'tech' },
-      ]);
-
-      await runRumination(pool);
-
-      expect(mockCreateSuggestion).toHaveBeenCalledTimes(1);
+      const callArgs = mockProcessEvent.mock.calls[0][0];
+      expect(callArgs.actions).toHaveLength(2);
     });
   });
 
-  describe('DOD-3: createSuggestion 失败不影响消化流程', () => {
-    it('DOD-3: createSuggestion 抛出异常时消化仍成功', async () => {
+  describe('DOD-3: processEvent 失败不影响消化流程', () => {
+    it('DOD-3: processEvent 抛出异常时消化仍成功', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '洞察 [ACTION: 测试行动]',
       });
-      mockCreateSuggestion.mockRejectedValueOnce(new Error('DB error'));
+      mockProcessEvent.mockRejectedValueOnce(new Error('thalamus error'));
 
       setupIdleAndLearnings([
         { id: 'l1', title: '测试', content: '内容', category: 'tech' },
@@ -211,22 +172,6 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
 
       expect(result.digested).toBe(1);
       expect(result.insights).toHaveLength(1);
-    });
-
-    it('DOD-3: createTask 失败时 createSuggestion 仍可被调用', async () => {
-      mockCallLLM.mockResolvedValueOnce({
-        text: '洞察 [ACTION: 测试行动]',
-      });
-      mockCreateTask.mockRejectedValueOnce(new Error('task DB error'));
-
-      setupIdleAndLearnings([
-        { id: 'l1', title: '测试', content: '内容', category: 'tech' },
-      ]);
-
-      await runRumination(pool);
-
-      // 即使 createTask 失败，createSuggestion 也应该被尝试
-      expect(mockCreateSuggestion).toHaveBeenCalledTimes(1);
     });
   });
 });

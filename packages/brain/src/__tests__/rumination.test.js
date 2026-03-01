@@ -258,7 +258,7 @@ describe('rumination', () => {
   });
 
   describe('actionable 洞察', () => {
-    it('检测 [ACTION:] 标记 → 自动创建 task', async () => {
+    it('检测 [ACTION:] 标记 → processEvent 发 RUMINATION_RESULT 含 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '这个技术值得深入研究 [ACTION: 研究 React Server Components]',
       });
@@ -268,11 +268,9 @@ describe('rumination', () => {
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
 
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: '研究 React Server Components',
-        priority: 'P2',
-        task_type: 'research',
-        trigger_source: 'rumination',
+      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'rumination_result',
+        actions: expect.arrayContaining(['研究 React Server Components']),
       }));
     });
 
@@ -285,7 +283,7 @@ describe('rumination', () => {
       expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
-    it('多个 [ACTION:] 标记 → 每个都创建 task', async () => {
+    it('多个 [ACTION:] 标记 → processEvent 收到全部 actions', async () => {
       mockCallLLM.mockResolvedValueOnce({
         text: '深度分析结论 [ACTION: 调研 React Server Components] 另外 [ACTION: 升级 Vite 到 v5] 还有 [ACTION: 编写性能基准测试]',
       });
@@ -295,19 +293,13 @@ describe('rumination', () => {
       const result = await runRumination(pool);
       expect(result.digested).toBe(1);
 
-      // 3 个 [ACTION:] 标记 → 3 次 createTask 调用
-      expect(mockCreateTask).toHaveBeenCalledTimes(3);
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: '调研 React Server Components',
-        task_type: 'research',
-        trigger_source: 'rumination',
+      // 3 个 [ACTION:] 标记 → processEvent 收到 3 个 actions
+      expect(mockProcessEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'rumination_result',
+        actions: expect.arrayContaining(['调研 React Server Components', '升级 Vite 到 v5', '编写性能基准测试']),
       }));
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: '升级 Vite 到 v5',
-      }));
-      expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-        title: '编写性能基准测试',
-      }));
+      const callArgs = mockProcessEvent.mock.calls[0][0];
+      expect(callArgs.actions).toHaveLength(3);
     });
 
     it('createTask 失败不影响消化', async () => {
