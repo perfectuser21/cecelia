@@ -7457,6 +7457,42 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/diary
+ * 废书端点 — 将用户的日记/碎碎念写入 memory_stream
+ *
+ * Request: { content: string }
+ * Response: { ok: true, id: uuid }
+ *
+ * source_type='diary', importance=6, memory_type='reflection'
+ * 使用 content_hash 去重（同一内容不重复写入）
+ */
+router.post('/diary', async (req, res) => {
+  const { content } = req.body;
+
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    res.status(400).json({ error: 'content is required' });
+    return;
+  }
+
+  const text = content.trim();
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO memory_stream (content, importance, memory_type, source_type)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [text, 6, 'reflection', 'diary']
+    );
+
+    console.log(`[diary] Saved to memory_stream id=${result.rows[0].id} len=${text.length}`);
+    res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error('[diary] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/orchestrator/chat/history
  * 返回最近 N 条对话历史（从 cecelia_events 重建消息对）
  *
