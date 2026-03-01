@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] Initiative 直连 kr_id 扫描修复 (PR #222, Brain v1.141.4)
+
+**背景**: `checkReadyKRInitiatives` 用 INNER JOIN 查 Initiative，导致直接设置 `kr_id`（无 `parent_id`）的 Initiative 被排除，永远不会触发 initiative_plan 任务。
+
+- **根因是 INNER JOIN 的语义**: `INNER JOIN parent ON p.parent_id = parent.id` — Initiative 无 parent 时 join 失败，整行被过滤；改 LEFT JOIN + `OR p.kr_id = $1` 同时覆盖两种链接方式，不影响原有逻辑
+- **Initiative 链接有两种合法结构**: (1) Initiative → parent Project → project_kr_links → KR（标准层级）；(2) Initiative.kr_id 直接指向 KR（扁平结构，秋米早期拆解会产生这种结构）
+- **SQL 修改最小化原则**: 只改 JOIN 类型 + WHERE 子句，不改 SELECT 列、不动其他逻辑；老测试 14 个全部 pass，新测试 3 个覆盖直连场景
+
 ### [2026-03-01] desire/index.js act 欲望去重 + 标题规范化 (PR #218, Brain v1.141.3)
 
 **背景**: act 类欲望每次 tick 被 expression-decision 选中（对 act 跳过门槛），导致每个 tick 都创建一个 initiative_plan 任务，同一话题积累 4+ 个几乎相同的垃圾任务。
