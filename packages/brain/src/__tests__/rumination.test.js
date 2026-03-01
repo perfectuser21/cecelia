@@ -17,6 +17,7 @@ const mockAddSource = vi.hoisted(() => vi.fn());
 const mockAddTextSource = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
+const mockProcessEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
@@ -42,6 +43,13 @@ vi.mock('../actions.js', () => ({
 
 vi.mock('../self-model.js', () => ({
   updateSelfModel: mockUpdateSelfModel,
+}));
+
+vi.mock('../thalamus.js', () => ({
+  processEvent: mockProcessEvent,
+  EVENT_TYPES: {
+    RUMINATION_RESULT: 'rumination_result',
+  },
 }));
 
 // ── 导入被测模块 ──────────────────────────────────────────
@@ -103,6 +111,7 @@ describe('rumination', () => {
     mockAddTextSource.mockResolvedValue({ ok: true });
     mockCreateTask.mockResolvedValue({ success: true });
     mockUpdateSelfModel.mockResolvedValue('演化后的 self-model');
+    mockProcessEvent.mockResolvedValue({ level: 0, actions: [], rationale: 'ok', confidence: 0.8, safety: false });
   });
 
   describe('条件检查', () => {

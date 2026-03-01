@@ -18,6 +18,7 @@ import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { createTask } from './actions.js';
 import { updateSelfModel } from './self-model.js';
 import { createSuggestion } from './suggestion-triage.js';
+import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 export const DAILY_BUDGET = 20;
@@ -124,6 +125,7 @@ ${learningsList}
  */
 async function digestLearnings(db, learnings) {
   const insights = [];
+  let selfInsightText = '';
 
   try {
     // 1. 获取相关记忆上下文（用第一条 learning 的标题作为查询）
@@ -252,7 +254,8 @@ ${insight.trim().slice(0, 800)}
 
         const { text: selfInsight } = await callLLM('rumination', selfReflectPrompt, { maxTokens: 200 });
         if (selfInsight && selfInsight.trim()) {
-          await updateSelfModel(selfInsight.trim(), db);
+          selfInsightText = selfInsight.trim();
+          await updateSelfModel(selfInsightText, db);
         }
       } catch (selfErr) {
         console.warn('[rumination] self-model update failed (non-blocking):', selfErr.message);
@@ -268,6 +271,24 @@ ${insight.trim().slice(0, 800)}
     }
 
     _dailyCount += learnings.length;
+
+    // 7. 发 RUMINATION_RESULT 事件给丘脑（闭环线 1）
+    if (insights.length > 0) {
+      const actionMatches = [...(insights[0] || '').matchAll(/\[ACTION:\s*(.+?)\]/g)];
+      const ruminationSignal = {
+        type: EVENT_TYPES.RUMINATION_RESULT,
+        learnings: learnings.map(l => ({ id: l.id, title: l.title, category: l.category })),
+        self_updates: selfInsightText ? [selfInsightText] : [],
+        actions: actionMatches.map(m => m[1]),
+        insight_count: insights.length,
+      };
+      try {
+        await processEvent(ruminationSignal);
+        console.log('[rumination] RUMINATION_RESULT event sent to thalamus');
+      } catch (routeErr) {
+        console.warn('[rumination] thalamus routing failed (DB writes already done as fallback):', routeErr.message);
+      }
+    }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);
   }

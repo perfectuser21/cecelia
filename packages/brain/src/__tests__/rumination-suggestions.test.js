@@ -16,6 +16,7 @@ const mockAddTextSource = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
 const mockCreateSuggestion = vi.hoisted(() => vi.fn());
+const mockProcessEvent = vi.hoisted(() => vi.fn());
 
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
@@ -45,6 +46,13 @@ vi.mock('../self-model.js', () => ({
 
 vi.mock('../suggestion-triage.js', () => ({
   createSuggestion: mockCreateSuggestion,
+}));
+
+vi.mock('../thalamus.js', () => ({
+  processEvent: mockProcessEvent,
+  EVENT_TYPES: {
+    RUMINATION_RESULT: 'rumination_result',
+  },
 }));
 
 // ── 导入被测模块 ──────────────────────────────────────────
@@ -88,6 +96,7 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
     mockCreateTask.mockResolvedValue({ id: 'task-001' });
     mockUpdateSelfModel.mockResolvedValue(undefined);
     mockCreateSuggestion.mockResolvedValue({ id: 'sug-001', priority_score: 0.75 });
+    mockProcessEvent.mockResolvedValue({ level: 0, actions: [], rationale: 'ok', confidence: 0.8, safety: false });
   });
 
   describe('DOD-1: [ACTION:] 洞察 → createSuggestion', () => {
