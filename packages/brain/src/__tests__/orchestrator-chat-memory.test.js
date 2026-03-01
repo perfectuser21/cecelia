@@ -27,6 +27,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
 
     vi.doMock('../memory-retriever.js', () => ({
       buildMemoryContext: mockBuildMemoryContext,
+      CHAT_TOKEN_BUDGET: 2500,
     }));
 
     vi.doMock('../llm-caller.js', () => ({
@@ -108,7 +109,7 @@ describe('orchestrator-chat memory unification (D1)', () => {
     expect(mockBuildMemoryContext).toHaveBeenCalledWith({
       query: '任务管理',
       mode: 'chat',
-      tokenBudget: 1000,
+      tokenBudget: 2500,
       pool: mockPool,
     });
     expect(block).toContain('相关历史上下文');

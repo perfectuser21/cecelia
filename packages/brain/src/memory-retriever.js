@@ -45,6 +45,112 @@ export const MODE_WEIGHT = {
 /** 默认 token 预算 */
 const DEFAULT_TOKEN_BUDGET = 800;
 
+/** Chat 模式 token 预算（对话场景需要更丰富的上下文） */
+export const CHAT_TOKEN_BUDGET = 2500;
+
+/**
+ * Source 配额约束
+ * - min: 至少注入 N 条（有候选时保证）
+ * - max: 最多注入 N 条（防止某一类型占满）
+ */
+export const SOURCE_QUOTA = {
+  conversation: { max: 4 },
+  task:         { min: 2 },
+  learning:     { min: 2 },
+};
+
+/**
+ * 意图类型 → 动态权重倍数（叠加在 MODE_WEIGHT 之上）
+ * 消息关键词分类后，对应 source 的 finalScore 乘以该倍数
+ */
+export const INTENT_WEIGHT_MULTIPLIER = {
+  task_focused: {
+    task: 1.5, okr: 1.5, conversation: 0.6,
+  },
+  emotion_focused: {
+    conversation: 1.5, learning: 1.2, task: 0.6,
+  },
+  learning_focused: {
+    learning: 2.0, conversation: 0.8,
+  },
+  default: {},
+};
+
+/**
+ * 意图分类关键词
+ */
+const INTENT_KEYWORDS = {
+  task_focused: ['任务', 'kr', 'okr', '进展', '目标', '工作', '完成', '派发', '执行', '进度', '截止', '计划', '项目', '开发', '实现'],
+  emotion_focused: ['感受', '情绪', '想法', '心情', '觉得', '开心', '难过', '压力', '焦虑', '高兴', '失落', '担心', '开心', '疲惫'],
+  learning_focused: ['学到', '记录', '经验', '总结', '教训', '发现', '洞察', '反思', '收获', '体会', '学习', '成长'],
+};
+
+/**
+ * 根据查询文本分类意图
+ * @param {string} query - 查询文本
+ * @returns {'task_focused'|'emotion_focused'|'learning_focused'|'default'} 意图类型
+ */
+export function classifyQueryIntent(query) {
+  if (!query) return 'default';
+  const lower = query.toLowerCase();
+
+  for (const [intent, keywords] of Object.entries(INTENT_KEYWORDS)) {
+    if (keywords.some(kw => lower.includes(kw))) {
+      return intent;
+    }
+  }
+  return 'default';
+}
+
+/**
+ * Quota-aware 候选选择
+ *
+ * 两阶段选择：
+ * 1. 保证每个 source 的最小配额（从原始 scored 列表中补充）
+ * 2. 剩余空间按 finalScore 填充，但 conversation 不超过 max
+ *
+ * @param {Array} deduped - MMR 重排后的候选（多样性最优）
+ * @param {Array} scored - 所有评分候选（用于补充最小配额）
+ * @returns {Array} 经过配额约束的候选列表
+ */
+export function quotaAwareSelect(deduped, scored) {
+  const quotaCount = {};
+  const selectedIds = new Set();
+  const result = [];
+
+  // Phase 1: 从 deduped 列表依次添加，跳过超 max 配额的
+  for (const item of deduped) {
+    const src = item.source;
+    const count = quotaCount[src] || 0;
+    const quota = SOURCE_QUOTA[src];
+    if (quota && quota.max !== undefined && count >= quota.max) continue;
+    quotaCount[src] = count + 1;
+    selectedIds.add(item.id);
+    result.push(item);
+  }
+
+  // Phase 2: 检查每个有最小配额的 source 是否已满足
+  for (const [source, quota] of Object.entries(SOURCE_QUOTA)) {
+    if (!quota.min) continue;
+    const current = quotaCount[source] || 0;
+    if (current >= quota.min) continue;
+
+    // 需要从 scored 里补充
+    const needed = quota.min - current;
+    const extras = scored
+      .filter(s => s.source === source && !selectedIds.has(s.id))
+      .sort((a, b) => b.finalScore - a.finalScore)
+      .slice(0, needed);
+
+    for (const item of extras) {
+      selectedIds.add(item.id);
+      result.push(item);
+    }
+  }
+
+  return result;
+}
+
 /** 事件记忆中感兴趣的 event types */
 const RELEVANT_EVENT_TYPES = [
   'task_failed',
@@ -581,20 +687,32 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     ...(conversationResults || []),
     ...(episodicResults || []),
   ];
+
+  // 2a. 意图分类 → 动态权重倍数
+  const intentType = classifyQueryIntent(query);
+  const dynamicMultipliers = INTENT_WEIGHT_MULTIPLIER[intentType] || {};
+
   const scored = candidates.map(c => {
     const source = c.source || 'task';
     const halfLife = HALF_LIFE[source] || 30;
-    const weight = (MODE_WEIGHT[source] && MODE_WEIGHT[source][mode]) || 1.0;
+    const modeW = (MODE_WEIGHT[source] && MODE_WEIGHT[source][mode]) || 1.0;
+    const dynW = dynamicMultipliers[source] || 1.0;
     return {
       ...c,
-      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * weight,
+      finalScore: c.relevance * timeDecay(c.created_at, halfLife) * modeW * dynW,
     };
   });
 
   // 3. MMR 重排（平衡相关性与多样性，替代简单去重）
   const deduped = mmrRerank(scored, Math.min(scored.length, 20));
 
-  // 4. Token 预算截断
+  // 3a. Quota-aware 选择（保证 source 最小配额，限制 conversation 上限）
+  const quotaSelected = quotaAwareSelect(deduped, scored);
+
+  // 4. Token 预算截断（按 finalScore 从高到低填充，配额内的优先）
+  // 先对结果按 finalScore 排序（quota 补充的可能是低分的）
+  quotaSelected.sort((a, b) => b.finalScore - a.finalScore);
+
   let block = '';
   let tokenUsed = 0;
 
@@ -610,7 +728,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   tokenUsed += 10;
 
   let injectedCount = 0;
-  for (const item of deduped) {
+  for (const item of quotaSelected) {
     const line = formatItem(item);
     const lineTokens = estimateTokens(line);
     if (tokenUsed + lineTokens > tokenBudget) break;
@@ -621,7 +739,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
 
   // 如果没有注入任何记忆，返回空 block
   if (injectedCount === 0 && !profileSnippet) {
-    return { block: '', meta: { candidates: candidates.length, injected: 0, tokenUsed: 0 } };
+    return { block: '', meta: { candidates: candidates.length, injected: 0, tokenUsed: 0, tokenBudget, intentType } };
   }
 
   return {
@@ -631,7 +749,8 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
       injected: injectedCount,
       tokenUsed,
       tokenBudget,
-      sources: deduped.slice(0, injectedCount).map(i => i.source),
+      intentType,
+      sources: quotaSelected.slice(0, injectedCount).map(i => i.source),
     },
   };
 }

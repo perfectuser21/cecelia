@@ -14,7 +14,7 @@
 import pool from './db.js';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { parseIntent } from './intent.js';
-import { buildMemoryContext } from './memory-retriever.js';
+import { buildMemoryContext, CHAT_TOKEN_BUDGET } from './memory-retriever.js';
 import { extractAndSaveUserFacts, getUserProfileContext } from './user-profile.js';
 import { detectAndExecuteAction } from './chat-action-dispatcher.js';
 import { callLLM } from './llm-caller.js';
@@ -71,7 +71,7 @@ async function fetchMemoryContext(query) {
     const { block } = await buildMemoryContext({
       query,
       mode: 'chat',
-      tokenBudget: 1000,
+      tokenBudget: CHAT_TOKEN_BUDGET,
       pool,
     });
     return block || '';
