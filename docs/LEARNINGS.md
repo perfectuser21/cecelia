@@ -736,3 +736,40 @@ res.on('close', () => { closed = true; });
 1. **Express SSE 必须用 `res.on('close')`，绝不用 `req.on('close')`**
 2. SSE/长连接调试时，先隔离每层（handleChatStream 独立测试 → bridge 独立测试 → HTTP 端到端测试）
 3. 如果 onChunk 能被正确调用但 HTTP 客户端看不到数据，检查 closed 标志 / res.write 是否被调用
+
+---
+
+## 2026-03-01 - 更新 RNA KR 进度到实际值（26%）
+
+**CI 失败统计**：2 次（Brain CI）
+
+**CI 失败记录**：
+- **失败 #1**：Version Check 误报（认为版本未更新）
+  - **根本原因**：CI checkout 缓存或时序问题，读取到旧版本
+  - **修复方式**：空 commit 重新触发 CI
+  - **预防**：无法预防（GitHub Actions 缓存问题），但可快速识别
+
+- **失败 #2**：Facts Consistency 检查失败
+  - **根本原因**：`npm version minor` 只更新了 package.json，忘记同步 DEFINITION.md 和 .brain-versions
+  - **修复方式**：手动更新 DEFINITION.md Brain 版本（1.140.0 → 1.141.0）+ .brain-versions
+  - **预防措施**：
+    - **创建 `scripts/sync-brain-version.sh` 统一更新脚本**（待实现）
+    - 或在 DevGate 增加检查：Brain 版本更新时验证 DEFINITION.md、.brain-versions 是否同步
+
+**错误判断记录**：
+- 误以为 `npm version minor` 会自动同步所有版本相关文件
+- **正确认知**：npm version 只更新 package.json 和 package-lock.json，DEFINITION.md、.brain-versions 需要手动同步
+
+**影响程度**：Medium（CI 2 次失败，有明确根因，修复后通过）
+
+**预防措施**（下次开发）：
+1. **Brain 版本更新 Checklist**：
+   - [ ] `packages/brain/package.json` (npm version 自动)
+   - [ ] `DEFINITION.md` (手动：Brain 版本 + 最后更新时间)
+   - [ ] `.brain-versions` (手动：单行版本号)
+2. **优先级 P1**：创建 `scripts/sync-brain-version.sh` 脚本，一键同步 3 处版本号
+3. **优先级 P2**：DevGate 增加 Brain 版本一致性检查（PR 前检查）
+
+**关键收获**：
+- Facts Consistency 检查是有价值的门禁，成功拦截了版本不一致问题
+- Brain 版本管理存在 3 处 SSOT，需要工具化同步流程
