@@ -779,6 +779,98 @@ router.post('/tasks/:task_id/feedback', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/learnings-received
+ *
+ * LEARNINGS 路由入口：dev workflow 将 LEARNINGS.md 提取内容发送到此处。
+ * 丘脑分拣：
+ *   - issues_found（已知 bug）→ 创建 fix task（任务线）
+ *   - next_steps_suggested（经验/预防措施）→ 写 learnings 表（成长线 → 反刍 → NotebookLM）
+ */
+router.post('/learnings-received', async (req, res) => {
+  try {
+    const {
+      issues_found = [],
+      next_steps_suggested = [],
+      branch_name,
+      pr_number,
+      task_id,
+    } = req.body;
+
+    const results = { tasks_created: [], learnings_inserted: [] };
+
+    // 1. issues_found → 创建 fix task（任务线）
+    for (const issue of issues_found) {
+      if (!issue || typeof issue !== 'string') continue;
+      try {
+        const taskResult = await createTask({
+          title: `Fix: ${issue.slice(0, 120)}`,
+          description: `来源：LEARNINGS_RECEIVED（分支 ${branch_name || 'unknown'}${pr_number ? ` / PR #${pr_number}` : ''}）\n\n${issue}`,
+          task_type: 'dev',
+          priority: 'P1',
+          trigger_source: 'learnings_received',
+          payload: { branch_name, pr_number, task_id, source: 'learnings_received' },
+        });
+        if (taskResult?.task?.id) {
+          results.tasks_created.push(taskResult.task.id);
+        }
+      } catch (taskErr) {
+        console.warn(`[learnings-received] createTask failed for issue: ${taskErr.message}`);
+      }
+    }
+
+    // 2. next_steps_suggested → 写 learnings 表（成长线）
+    for (const step of next_steps_suggested) {
+      if (!step || typeof step !== 'string') continue;
+      try {
+        const title = step.slice(0, 120);
+        const { rows } = await pool.query(
+          `INSERT INTO learnings
+             (title, category, content, trigger_source, trigger_event, digested)
+           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false)
+           RETURNING id`,
+          [title, step]
+        );
+        if (rows[0]?.id) {
+          results.learnings_inserted.push(rows[0].id);
+        }
+      } catch (dbErr) {
+        console.warn(`[learnings-received] learnings INSERT failed: ${dbErr.message}`);
+      }
+    }
+
+    // 3. 触发丘脑事件（记录、可见性）
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+        ['learnings_received', 'dev_workflow', JSON.stringify({
+          issues_count: issues_found.length,
+          steps_count: next_steps_suggested.length,
+          tasks_created: results.tasks_created.length,
+          learnings_inserted: results.learnings_inserted.length,
+          branch_name,
+          pr_number,
+        })]
+      );
+    } catch (evtErr) {
+      console.warn('[learnings-received] event log failed (non-fatal):', evtErr.message);
+    }
+
+    console.log(`[learnings-received] issues=${issues_found.length} → ${results.tasks_created.length} tasks, steps=${next_steps_suggested.length} → ${results.learnings_inserted.length} learnings`);
+
+    res.json({
+      success: true,
+      tasks_created: results.tasks_created.length,
+      learnings_inserted: results.learnings_inserted.length,
+      task_ids: results.tasks_created,
+      learning_ids: results.learnings_inserted,
+    });
+  } catch (err) {
+    console.error('[learnings-received] failed:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * PATCH /api/brain/tasks/:task_id
  * 更新任务状态（Engine 调用）
  */

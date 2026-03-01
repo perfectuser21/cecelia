@@ -14,7 +14,7 @@
 import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
-import { queryNotebook } from './notebook-adapter.js';
+import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { createTask } from './actions.js';
 import { updateSelfModel } from './self-model.js';
 import { createSuggestion } from './suggestion-triage.js';
@@ -164,6 +164,14 @@ async function digestLearnings(db, learnings) {
         [`[反刍洞察] ${insight.trim()}`]
       );
       insights.push(insight.trim());
+
+      // 4.0 写洞察回 NotebookLM（持久化知识飞轮，fire-and-forget）
+      // 下次反刍查询时可复用这些洞察，形成累积学习效果
+      const topicTitle = learnings.map(l => l.title).join(' / ').slice(0, 100);
+      addTextSource(
+        `[反刍洞察 ${new Date().toISOString().slice(0, 10)}] ${insight.trim()}`,
+        `反刍洞察: ${topicTitle}`
+      ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
       // 4.1 检测 actionable 洞察 → 自动创建 task + suggestion（支持多个 [ACTION:] 标记）
       const actionMatches = insight.matchAll(/\[ACTION:\s*(.+?)\]/g);

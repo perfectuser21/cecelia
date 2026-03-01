@@ -12,6 +12,7 @@ const mockQuery = vi.hoisted(() => vi.fn());
 const mockCallLLM = vi.hoisted(() => vi.fn());
 const mockBuildMemoryContext = vi.hoisted(() => vi.fn());
 const mockQueryNotebook = vi.hoisted(() => vi.fn());
+const mockAddTextSource = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
 const mockCreateSuggestion = vi.hoisted(() => vi.fn());
@@ -31,6 +32,7 @@ vi.mock('../memory-retriever.js', () => ({
 vi.mock('../notebook-adapter.js', () => ({
   queryNotebook: mockQueryNotebook,
   addSource: vi.fn(),
+  addTextSource: mockAddTextSource,
 }));
 
 vi.mock('../actions.js', () => ({
@@ -82,6 +84,7 @@ describe('rumination → suggestion（PR-D: self_loop 渠道）', () => {
     pool = createMockPool();
     mockBuildMemoryContext.mockResolvedValue({ block: '', meta: {} });
     mockQueryNotebook.mockResolvedValue({ ok: false });
+    mockAddTextSource.mockResolvedValue({ ok: true });
     mockCreateTask.mockResolvedValue({ id: 'task-001' });
     mockUpdateSelfModel.mockResolvedValue(undefined);
     mockCreateSuggestion.mockResolvedValue({ id: 'sug-001', priority_score: 0.75 });
