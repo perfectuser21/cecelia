@@ -142,23 +142,48 @@ fi
 
 2. **追加到对应的 LEARNINGS.md**
 
-### 3. **提交 Learning（注意：PR 已合并分支已删，必须推到 base branch）**
+### 3. **提交 Learning（push 到功能分支，PR 自动包含 LEARNINGS）**
+
+   **⚠️ 注意：此时 PR 尚未合并，仍在功能分支上**
+
    ```bash
-   # 读取 base branch（Step 3 保存在 git config）
-   BASE_BRANCH=$(git config branch."$BRANCH_NAME".base-branch 2>/dev/null || echo "main")
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
 
-   # 切到 base branch 并拉取最新
-   git checkout "$BASE_BRANCH"
-   git pull origin "$BASE_BRANCH"
-
-   # 编辑 LEARNINGS.md 后提交
+   # 直接在功能分支提交（PR 还开着）
    git add docs/LEARNINGS.md
-   git commit -m "docs: 记录 <任务简述> 的开发经验"
-   git push origin "$BASE_BRANCH"
+   git commit -m "docs: 记录 <任务简述> 的开发经验
+
+   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+
+   git push origin HEAD
+   echo "✅ LEARNINGS.md 已推送到功能分支（PR 已自动更新）"
    ```
 
-   **原因**：Step 9 合并 PR 时用了 `--delete-branch`，远端功能分支已不存在。
-   Learning 是项目知识积累，直接进 main 不需要走 PR 流程。
+   **好处**：
+   - LEARNINGS.md 包含在同一个 PR 中（有完整 CI 历史）
+   - 不需要另开单独的 docs PR
+   - 合并后 LEARNINGS 直接进入 base branch，无需手动操作
+
+### 4. **合并 PR（LEARNINGS 已包含在 PR diff 中）**
+
+   ```bash
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number')
+
+   echo "📋 PR #$PR_NUMBER 将包含："
+   echo "  - 代码变更"
+   echo "  - LEARNINGS.md"
+
+   gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+   echo "✅ PR #$PR_NUMBER 已合并（代码 + LEARNINGS 一次入库）"
+   ```
+
+   **合并后标记 Step 9 完成**：
+   ```bash
+   sed -i 's/^step_9_ci: pending/step_9_ci: done/' .dev-mode
+   echo "✅ Step 9 完成标记已写入 .dev-mode"
+   ```
 
 ---
 
