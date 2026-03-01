@@ -47,10 +47,10 @@ describe('L1 middle layer - vector path', () => {
       }],
     });
 
-    const results = await searchEpisodicMemory(mockPool, '记忆 L1 层');
-    expect(results).toHaveLength(1);
-    expect(results[0].description).toBe(l1);
-    expect(results[0].text).toBe('这是一段很长的记忆内容，超过200字会被截断，但 l1_content 应该优先使用。');
+    const result = await searchEpisodicMemory(mockPool, '记忆 L1 层');
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].description).toBe(l1);
+    expect(result.entries[0].text).toBe('这是一段很长的记忆内容，超过200字会被截断，但 l1_content 应该优先使用。');
   });
 
   it('L1-2: 无 l1_content 时 description 降级到 content.slice(0,200)', async () => {
@@ -68,10 +68,10 @@ describe('L1 middle layer - vector path', () => {
       }],
     });
 
-    const results = await searchEpisodicMemory(mockPool, '测试降级');
-    expect(results).toHaveLength(1);
-    expect(results[0].description).toBe(longContent.slice(0, 200));
-    expect(results[0].text).toBe(longContent);
+    const result = await searchEpisodicMemory(mockPool, '测试降级');
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].description).toBe(longContent.slice(0, 200));
+    expect(result.entries[0].text).toBe(longContent);
   });
 
   it('L1-3: 向量搜索 LIMIT 参数为 20', async () => {
@@ -104,10 +104,10 @@ describe('L1 middle layer - Jaccard fallback path', () => {
       }],
     });
 
-    const results = await searchEpisodicMemory(mockPool, 'Jaccard 记忆');
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].description).toBe(l1);
-    expect(results[0].text).toBe(content);
+    const result = await searchEpisodicMemory(mockPool, 'Jaccard 记忆');
+    expect(result.entries.length).toBeGreaterThan(0);
+    expect(result.entries[0].description).toBe(l1);
+    expect(result.entries[0].text).toBe(content);
   });
 
   it('L1-4: Jaccard 路径无 l1_content 时 description 降级到 content.slice(0,200)', async () => {
@@ -124,8 +124,8 @@ describe('L1 middle layer - Jaccard fallback path', () => {
       }],
     });
 
-    const results = await searchEpisodicMemory(mockPool, 'Y'.repeat(10));
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].description).toBe(longContent.slice(0, 200));
+    const result = await searchEpisodicMemory(mockPool, 'Y'.repeat(10));
+    expect(result.entries.length).toBeGreaterThan(0);
+    expect(result.entries[0].description).toBe(longContent.slice(0, 200));
   });
 });

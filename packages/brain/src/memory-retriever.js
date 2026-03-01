@@ -151,6 +151,32 @@ export function quotaAwareSelect(deduped, scored) {
   return result;
 }
 
+// ============================================================
+// 内部辅助：错误分类 + 禁用占位
+// ============================================================
+
+/**
+ * 根据错误信息分类 fetchStatus
+ * @param {Error} err
+ * @returns {'pool_exhausted'|'db_error'}
+ */
+function _classifyError(err) {
+  const msg = (err && err.message) || '';
+  if (msg.includes('too many clients')) return 'pool_exhausted';
+  return 'db_error';
+}
+
+/**
+ * 当某路查询被 strategy 禁用时返回的占位结果
+ * @returns {{ entries: Array, meta: Object }}
+ */
+function _disabledResult() {
+  return {
+    entries: [],
+    meta: { requestedLimit: 0, fetchedCount: 0, fetchStatus: 'disabled', candidateCount: 0 },
+  };
+}
+
 /** 事件记忆中感兴趣的 event types */
 const RELEVANT_EVENT_TYPES = [
   'task_failed',
@@ -310,10 +336,11 @@ function formatItem(item) {
  * @param {Object} pool - pg pool
  * @param {string} query - 搜索文本
  * @param {string} mode - 模式
- * @returns {Promise<Array>} 候选列表
+ * @returns {Promise<{entries: Array, meta: Object}>}
  */
 async function searchSemanticMemory(pool, query, mode) {
   const candidates = [];
+  const meta = { requestedLimit: 30, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 
   // 1. 搜索 tasks + capabilities（向量搜索）
   try {
@@ -334,8 +361,10 @@ async function searchSemanticMemory(pool, query, mode) {
         status: m.status,
       });
     }
+    meta.fetchedCount += (results.matches || []).length;
   } catch (err) {
     console.warn('[memory-retriever] Semantic search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
   }
 
   // 2. 搜索 learnings（当前关键词匹配，Phase 2 升级为向量）
@@ -353,15 +382,19 @@ async function searchSemanticMemory(pool, query, mode) {
         title: l.title || '',
         description: (typeof l.content === 'string' ? l.content : JSON.stringify(l.content || '')).slice(0, 300),
         text: `${l.title || ''} ${l.content || ''}`,
-        relevance: (l.relevance_score || 0) / 30, // 归一化到 0-1 范围（max score ≈ 30）
+        relevance: (l.relevance_score || 0) / 30,
         created_at: l.created_at || null,
       });
     }
+    meta.fetchedCount += learnings.length;
   } catch (err) {
     console.warn('[memory-retriever] Learnings search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
   }
 
-  return candidates;
+  if (meta.fetchedCount === 0 && meta.fetchStatus === 'ok') meta.fetchStatus = 'no_results';
+  meta.candidateCount = candidates.length;
+  return { entries: candidates, meta };
 }
 
 // ============================================================
@@ -389,17 +422,17 @@ export { generateL0Summary };
  * @returns {Promise<Array>} 候选列表（source='episodic'）
  */
 export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
-  if (!pool || !query) return [];
+  if (!pool || !query) return _disabledResult();
+
+  const meta = { requestedLimit: 20, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 
   try {
     // ── 向量路径（OPENAI_API_KEY 存在时尝试）──────────────────
     if (process.env.OPENAI_API_KEY) {
       try {
-        // 1. 生成 query embedding
         const queryEmbedding = await generateEmbedding(query.substring(0, 2000));
         const embStr = '[' + queryEmbedding.join(',') + ']';
 
-        // 2. pgvector cosine 检索（只取有 embedding 的记录，TOP 20 候选）
         const vectorResult = await pool.query(`
           SELECT id, content, summary, l1_content, importance, memory_type, created_at,
                  1 - (embedding <=> $1::vector) AS vector_score
@@ -412,11 +445,9 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
         `, [embStr]);
 
         if (vectorResult.rows.length > 0) {
-          // 3. L1 决策层：有 l1_content 用结构化摘要，否则降级到 content 前200字
           const results = [];
           let usedTokens = 0;
           for (const row of vectorResult.rows) {
-            // 向量相似度低于 0.3 的忽略（避免完全不相关）
             if ((row.vector_score || 0) < 0.3) continue;
             const description = row.l1_content || (row.content || '').slice(0, 200);
             const lineTokens = estimateTokens(description);
@@ -433,16 +464,22 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
             });
             usedTokens += lineTokens;
           }
-          if (results.length > 0) return results;
+          if (results.length > 0) {
+            meta.fetchedCount = vectorResult.rows.length;
+            meta.fetchStatus = 'ok';
+            meta.candidateCount = results.length;
+            return { entries: results, meta };
+          }
           // 向量结果为空（所有分数 < 0.3）→ 继续降级到 Jaccard
         }
       } catch (_embErr) {
-        // embedding 生成失败（网络/quota）→ 降级到 Jaccard
         console.warn('[memory-retriever] Episodic vector search failed, falling back to Jaccard:', _embErr.message);
+        // 降级继续，fetchStatus 后续由 Jaccard 路径决定
       }
     }
 
     // ── Jaccard 降级路径（无 API key 或向量路径失败/无数据）──
+    meta.fetchStatus = 'fallback_jaccard';
     const result = await pool.query(`
       SELECT id, content, summary, l1_content, importance, memory_type, created_at
       FROM memory_stream
@@ -453,11 +490,14 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
     `);
 
     const rows = result.rows;
-    if (rows.length === 0) return [];
+    meta.fetchedCount = rows.length;
+    if (rows.length === 0) {
+      meta.fetchStatus = 'no_results';
+      return { entries: [], meta };
+    }
 
     const queryTokens = new Set(query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1));
 
-    // L0 过滤：有 summary 就用 summary，否则用 content 前 100 字符
     const relevant = [];
     for (const row of rows) {
       const l0Text = row.summary || generateL0Summary(row.content);
@@ -481,12 +521,11 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
     }
 
     relevant.sort((a, b) => b.l0Score - a.l0Score);
-    const candidates = relevant.slice(0, 10);
+    const topCandidates = relevant.slice(0, 10);
 
-    // L1 决策层：有 l1_content 用结构化摘要，否则降级到 content 前200字
     const results = [];
     let usedTokens = 0;
-    for (const row of candidates) {
+    for (const row of topCandidates) {
       const description = row.l1_content || (row.content || '').slice(0, 200);
       const lineTokens = estimateTokens(description);
       if (usedTokens + lineTokens > tokenBudget) break;
@@ -503,10 +542,12 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
       usedTokens += lineTokens;
     }
 
-    return results;
+    meta.candidateCount = results.length;
+    return { entries: results, meta };
   } catch (err) {
     console.warn('[memory-retriever] Episodic memory search failed (graceful fallback):', err.message);
-    return [];
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
   }
 }
 
@@ -515,10 +556,11 @@ export async function searchEpisodicMemory(pool, query, tokenBudget = 300) {
  * @param {Object} pool - pg pool
  * @param {string} _query - 搜索文本（暂未使用，预留）
  * @param {string} mode - 模式
- * @returns {Promise<Array>} 候选列表
+ * @returns {Promise<{entries: Array, meta: Object}>}
  */
 async function loadRecentEvents(pool, _query, mode) {
   const hours = (mode === 'debug' || mode === 'chat') ? 72 : 24;
+  const meta = { requestedLimit: 10, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
 
   try {
     const result = await pool.query(`
@@ -530,7 +572,7 @@ async function loadRecentEvents(pool, _query, mode) {
       LIMIT 10
     `, [RELEVANT_EVENT_TYPES]);
 
-    return result.rows.map(r => {
+    const entries = result.rows.map(r => {
       const payloadStr = typeof r.payload === 'string' ? r.payload : JSON.stringify(r.payload || {});
       return {
         id: r.id,
@@ -542,9 +584,14 @@ async function loadRecentEvents(pool, _query, mode) {
         created_at: r.created_at,
       };
     });
+    meta.fetchedCount = entries.length;
+    meta.fetchStatus = entries.length === 0 ? 'no_results' : 'ok';
+    meta.candidateCount = entries.length;
+    return { entries, meta };
   } catch (err) {
     console.warn('[memory-retriever] Events search failed (graceful fallback):', err.message);
-    return [];
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
   }
 }
 
@@ -552,9 +599,11 @@ async function loadRecentEvents(pool, _query, mode) {
  * 对话历史检索：从 cecelia_events 查最近的 orchestrator_chat 事件
  * @param {Object} pool - pg pool
  * @param {number} [limit=15] - 最多返回条数
- * @returns {Promise<Array>} 候选列表（source='conversation'）
+ * @returns {Promise<{entries: Array, meta: Object}>}
  */
 async function loadConversationHistory(pool, limit = 15) {
+  const meta = { requestedLimit: limit, fetchedCount: 0, fetchStatus: 'ok', candidateCount: 0 };
+
   try {
     const result = await pool.query(`
       SELECT id, payload, created_at
@@ -564,7 +613,7 @@ async function loadConversationHistory(pool, limit = 15) {
       LIMIT $1
     `, [limit]);
 
-    return result.rows.map(r => {
+    const entries = result.rows.map(r => {
       const payload = typeof r.payload === 'string' ? JSON.parse(r.payload) : (r.payload || {});
       const userMsg = (payload.user_message || '').slice(0, 150);
       const replyMsg = (payload.reply || '').slice(0, 150);
@@ -579,9 +628,14 @@ async function loadConversationHistory(pool, limit = 15) {
         created_at: r.created_at,
       };
     });
+    meta.fetchedCount = entries.length;
+    meta.fetchStatus = entries.length === 0 ? 'no_results' : 'ok';
+    meta.candidateCount = entries.length;
+    return { entries, meta };
   } catch (err) {
     console.warn('[memory-retriever] Conversation history load failed (graceful fallback):', err.message);
-    return [];
+    meta.fetchStatus = _classifyError(err);
+    return { entries: [], meta };
   }
 }
 
@@ -589,17 +643,14 @@ async function loadConversationHistory(pool, limit = 15) {
  * 画像配置加载：主人 Facts（第0层）+ 当前 OKR 焦点（不参与评分排序）
  * @param {Object} pool - pg pool
  * @param {string} mode - 模式
- * @returns {Promise<string>} 格式化的 profile 片段
+ * @returns {Promise<{snippet: string, meta: Object}>}
  */
 async function loadActiveProfile(pool, mode) {
-  // chat 模式也注入 OKR 焦点（让 Cecelia 知道自己在帮谁干活）
-  // mode 参数保留用于未来区分注入深度
   void mode;
 
   const snippets = [];
+  const meta = { fetchStatus: 'ok' };
 
-  // 第0层：主人 Facts（user_profile_facts，精确查询，不走语义，约200 tokens）
-  // 修复：原来查询不存在的 user_profiles 表，永远返回 null
   try {
     const factsResult = await pool.query(`
       SELECT content FROM user_profile_facts
@@ -613,9 +664,9 @@ async function loadActiveProfile(pool, mode) {
     }
   } catch (err) {
     console.warn('[memory-retriever] Owner facts load failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
   }
 
-  // OKR 焦点
   try {
     const goals = await pool.query(`
       SELECT title, status, progress FROM goals
@@ -633,9 +684,12 @@ async function loadActiveProfile(pool, mode) {
     }
   } catch (err) {
     console.warn('[memory-retriever] Profile load failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
   }
 
-  return snippets.join('\n');
+  const snippet = snippets.join('\n');
+  if (!snippet && meta.fetchStatus === 'ok') meta.fetchStatus = 'no_results';
+  return { snippet, meta };
 }
 
 // ============================================================
@@ -662,30 +716,35 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     ? routeMemory(query, mode)
     : { strategy: { semantic: true, episodic: false, events: true, episodicBudget: 0, semanticBudget: tokenBudget * 0.7, eventsBudget: tokenBudget * 0.3 } };
 
-  // 1. 并行检索多路数据（根据路由策略）
-  const fetches = [
-    strategy.semantic !== false ? searchSemanticMemory(dbPool, query, mode) : Promise.resolve([]),
-    strategy.events !== false ? loadRecentEvents(dbPool, query, mode) : Promise.resolve([]),
-    loadActiveProfile(dbPool, mode),
-  ];
-  if (mode === 'chat') {
-    fetches.push(loadConversationHistory(dbPool));
-    // 片段记忆（episodic）：仅 chat 模式按路由策略加载
-    if (strategy.episodic) {
-      fetches.push(searchEpisodicMemory(dbPool, query, strategy.episodicBudget || 300));
-    } else {
-      fetches.push(Promise.resolve([]));
-    }
-  }
-  const [semanticResults, eventResults, profileSnippet, conversationResults, episodicResults] =
-    await Promise.all(fetches);
+  // 1. 并行检索多路数据（统一 5 路，按 strategy 决定是否禁用）
+  const [semanticResult, eventResult, profileResult, convResult, episodicResult] =
+    await Promise.all([
+      strategy.semantic !== false ? searchSemanticMemory(dbPool, query, mode) : _disabledResult(),
+      strategy.events  !== false ? loadRecentEvents(dbPool, query, mode)      : _disabledResult(),
+      loadActiveProfile(dbPool, mode),
+      mode === 'chat' ? loadConversationHistory(dbPool) : _disabledResult(),
+      mode === 'chat' && strategy.episodic
+        ? searchEpisodicMemory(dbPool, query, strategy.episodicBudget || 300)
+        : _disabledResult(),
+    ]);
+
+  const semanticResults     = semanticResult.entries;
+  const semanticMeta        = semanticResult.meta;
+  const eventResults        = eventResult.entries;
+  const eventsMeta          = eventResult.meta;
+  const profileSnippet      = profileResult.snippet || '';
+  const profileMeta         = profileResult.meta;
+  const conversationResults = convResult.entries;
+  const convMeta            = convResult.meta;
+  const episodicResults     = episodicResult.entries;
+  const episodicMeta        = episodicResult.meta;
 
   // 2. 统一评分（语义 + 事件 + 对话 + 片段记忆混合，profile 不参与）
   const candidates = [
     ...semanticResults,
     ...eventResults,
-    ...(conversationResults || []),
-    ...(episodicResults || []),
+    ...conversationResults,
+    ...episodicResults,
   ];
 
   // 2a. 意图分类 → 动态权重倍数
@@ -703,31 +762,29 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     };
   });
 
-  // 3. MMR 重排（平衡相关性与多样性，替代简单去重）
+  // 3. MMR 重排（平衡相关性与多样性）
   const deduped = mmrRerank(scored, Math.min(scored.length, 20));
 
   // 3a. Quota-aware 选择（保证 source 最小配额，限制 conversation 上限）
   const quotaSelected = quotaAwareSelect(deduped, scored);
 
-  // 4. Token 预算截断（按 finalScore 从高到低填充，配额内的优先）
-  // 先对结果按 finalScore 排序（quota 补充的可能是低分的）
+  // 4. Token 预算截断，同时按 source 统计注入量
   quotaSelected.sort((a, b) => b.finalScore - a.finalScore);
 
   let block = '';
   let tokenUsed = 0;
 
-  // Profile 优先放入
   if (profileSnippet) {
-    const profileTokens = estimateTokens(profileSnippet);
     block += profileSnippet + '\n';
-    tokenUsed += profileTokens;
+    tokenUsed += estimateTokens(profileSnippet);
   }
 
-  // 记忆条目按 score 从高到低填入
   block += '\n## 相关历史上下文\n';
   tokenUsed += 10;
 
   let injectedCount = 0;
+  const sourceStats = {};
+
   for (const item of quotaSelected) {
     const line = formatItem(item);
     const lineTokens = estimateTokens(line);
@@ -735,7 +792,43 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
     block += line + '\n';
     tokenUsed += lineTokens;
     injectedCount++;
+
+    // 按 source 统计注入量
+    const src = item.source;
+    if (!sourceStats[src]) sourceStats[src] = { selectedCount: 0, selectedTokens: 0 };
+    sourceStats[src].selectedCount++;
+    sourceStats[src].selectedTokens += lineTokens;
   }
+
+  // 5. 构建 errors 列表（仅记录真正的失败，排除 ok / no_results / disabled）
+  const errors = [];
+  const fetchMetas = { semantic: semanticMeta, events: eventsMeta, conversation: convMeta, episodic: episodicMeta };
+  for (const [name, fm] of Object.entries(fetchMetas)) {
+    if (fm && fm.fetchStatus !== 'ok' && fm.fetchStatus !== 'no_results' && fm.fetchStatus !== 'disabled' && fm.fetchStatus !== 'fallback_jaccard') {
+      errors.push(`${name}:${fm.fetchStatus}`);
+    }
+  }
+
+  // 6. 结构化 log —— 每次对话的记忆检索仪表盘
+  const logMeta = {
+    tag: 'memory_selection',
+    intentType,
+    tokenBudget,
+    tokenUsed,
+    candidateTotal: candidates.length,
+    injectedTotal: injectedCount,
+    embeddingMode: process.env.OPENAI_API_KEY ? 'openai' : 'jaccard',
+    fetch: {
+      semantic:     semanticMeta,
+      events:       eventsMeta,
+      conversation: convMeta,
+      episodic:     episodicMeta,
+      profile:      { fetchStatus: profileMeta.fetchStatus },
+    },
+    selected: sourceStats,
+    errors,
+  };
+  console.log('[memory]', JSON.stringify(logMeta));
 
   // 如果没有注入任何记忆，返回空 block
   if (injectedCount === 0 && !profileSnippet) {

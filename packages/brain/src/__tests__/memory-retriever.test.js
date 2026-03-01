@@ -265,8 +265,8 @@ describe('loadActiveProfile', () => {
       ]
     });
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
-    expect(result).toContain('OKR 焦点');
-    expect(result).toContain('Cecelia 管家系统');
+    expect(result.snippet).toContain('OKR 焦点');
+    expect(result.snippet).toContain('Cecelia 管家系统');
     expect(mockQuery).toHaveBeenCalled();
   });
 
@@ -275,7 +275,7 @@ describe('loadActiveProfile', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
-    expect(result).toBe('');
+    expect(result.snippet).toBe('');
   });
 
   it('有 goals 时返回 OKR 焦点', async () => {
@@ -289,15 +289,15 @@ describe('loadActiveProfile', () => {
       ]
     });
     const result = await _loadActiveProfile({ query: mockQuery }, 'plan');
-    expect(result).toContain('OKR 焦点');
-    expect(result).toContain('Task Intelligence');
+    expect(result.snippet).toContain('OKR 焦点');
+    expect(result.snippet).toContain('Task Intelligence');
   });
 
   it('无 goals 无 facts 时返回空', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // user_profile_facts
     mockQuery.mockResolvedValueOnce({ rows: [] }); // goals
     const result = await _loadActiveProfile({ query: mockQuery }, 'execute');
-    expect(result).toBe('');
+    expect(result.snippet).toBe('');
   });
 
   it('DB 查询失败时优雅降级', async () => {
@@ -305,7 +305,7 @@ describe('loadActiveProfile', () => {
     mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
     mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
     const result = await _loadActiveProfile({ query: mockQuery }, 'plan');
-    expect(result).toBe('');
+    expect(result.snippet).toBe('');
   });
 });
 
@@ -327,9 +327,9 @@ describe('loadActiveProfile — user_profile_facts 注入', () => {
 
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
 
-    expect(result).toContain('关于主人（Alex）');
-    expect(result).toContain('徐啸 / Alex Xu');
-    expect(result).toContain('Cecelia AI 管家系统');
+    expect(result.snippet).toContain('关于主人（Alex）');
+    expect(result.snippet).toContain('徐啸 / Alex Xu');
+    expect(result.snippet).toContain('Cecelia AI 管家系统');
     // 确认不再查询不存在的 user_profiles 表（通过 query 调用次数验证）
     expect(mockQuery).toHaveBeenCalledTimes(2);
   });
@@ -340,8 +340,8 @@ describe('loadActiveProfile — user_profile_facts 注入', () => {
 
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
 
-    expect(result).not.toContain('关于主人');
-    expect(result).toBe('');
+    expect(result.snippet).not.toContain('关于主人');
+    expect(result.snippet).toBe('');
   });
 
   it('D3-3: 有 facts 且有 OKR 时两者都注入', async () => {
@@ -354,8 +354,8 @@ describe('loadActiveProfile — user_profile_facts 注入', () => {
 
     const result = await _loadActiveProfile({ query: mockQuery }, 'chat');
 
-    expect(result).toContain('徐啸');
-    expect(result).toContain('OKR 焦点');
+    expect(result.snippet).toContain('徐啸');
+    expect(result.snippet).toContain('OKR 焦点');
   });
 });
 
@@ -371,8 +371,8 @@ describe('loadRecentEvents', () => {
       ]
     });
     const result = await _loadRecentEvents({ query: mockQuery }, 'test query', 'execute');
-    expect(result.length).toBe(1);
-    expect(result[0].source).toBe('event');
+    expect(result.entries.length).toBe(1);
+    expect(result.entries[0].source).toBe('event');
     // 验证 SQL 中包含 24 hours
     const sqlCall = mockQuery.mock.calls[0][0];
     expect(sqlCall).toContain('24 hours');
@@ -388,7 +388,7 @@ describe('loadRecentEvents', () => {
   it('DB 失败时返回空数组', async () => {
     mockQuery.mockRejectedValueOnce(new Error('DB error'));
     const result = await _loadRecentEvents({ query: mockQuery }, 'test', 'execute');
-    expect(result).toEqual([]);
+    expect(result.entries).toEqual([]);
   });
 });
 
@@ -599,13 +599,13 @@ describe('generateL0Summary', () => {
 describe('searchEpisodicMemory', () => {
   it('D10-1: pool 为 null 返回空数组', async () => {
     const result = await searchEpisodicMemory(null, '任务状态');
-    expect(result).toEqual([]);
+    expect(result.entries).toEqual([]);
   });
 
   it('D10-2: query 为空返回空数组', async () => {
     const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     const result = await searchEpisodicMemory(mockPool, '');
-    expect(result).toEqual([]);
+    expect(result.entries).toEqual([]);
   });
 
   it('D10-3: 正常返回片段记忆记录', async () => {
@@ -633,9 +633,9 @@ describe('searchEpisodicMemory', () => {
     };
 
     const result = await searchEpisodicMemory(mockPool, 'CI 失败', 500);
-    expect(Array.isArray(result)).toBe(true);
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[0].source).toBe('episodic');
+    expect(Array.isArray(result.entries)).toBe(true);
+    expect(result.entries.length).toBeGreaterThan(0);
+    expect(result.entries[0].source).toBe('episodic');
   });
 
   it('D10-4: DB 错误时 graceful fallback 返回空数组', async () => {
@@ -643,7 +643,7 @@ describe('searchEpisodicMemory', () => {
       query: vi.fn().mockRejectedValue(new Error('DB connection error')),
     };
     const result = await searchEpisodicMemory(mockPool, '任务');
-    expect(result).toEqual([]);
+    expect(result.entries).toEqual([]);
   });
 
   it('D10-5: token 预算控制（小预算只返回少量记录）', async () => {
@@ -659,7 +659,7 @@ describe('searchEpisodicMemory', () => {
 
     // 极小 token 预算
     const result = await searchEpisodicMemory(mockPool, '反思', 50);
-    expect(result.length).toBeLessThan(10);
+    expect(result.entries.length).toBeLessThan(10);
   });
 
   it('D10-6: 有 OPENAI_API_KEY 时走向量搜索路径', async () => {
@@ -690,11 +690,11 @@ describe('searchEpisodicMemory', () => {
       // 应调用 generateEmbedding
       expect(mockGenerateEmbedding).toHaveBeenCalledOnce();
       // 应返回向量搜索结果
-      expect(result.length).toBe(1);
-      expect(result[0].source).toBe('episodic');
-      expect(result[0].id).toBe('vec-uuid-1');
+      expect(result.entries.length).toBe(1);
+      expect(result.entries[0].source).toBe('episodic');
+      expect(result.entries[0].id).toBe('vec-uuid-1');
       // relevance 应基于 vector_score 计算
-      expect(result[0].relevance).toBeGreaterThan(0.5);
+      expect(result.entries[0].relevance).toBeGreaterThan(0.5);
     } finally {
       if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = originalKey;
@@ -726,7 +726,7 @@ describe('searchEpisodicMemory', () => {
       const result = await searchEpisodicMemory(mockPool, '系统诊断', 500);
 
       // 向量失败后应走 Jaccard 路径，也能返回结果
-      expect(Array.isArray(result)).toBe(true);
+      expect(Array.isArray(result.entries)).toBe(true);
       // pool.query 被调用（Jaccard 路径的查询）
       expect(mockPool.query).toHaveBeenCalled();
     } finally {
