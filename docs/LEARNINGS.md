@@ -622,3 +622,42 @@ WHERE id='profile-anthropic';
 合并 main 时 DEFINITION.md 出现冲突标记，version-sync 检查不识别冲突标记，找到 1.136.4（来自 HEAD 侧）而 package.json 是 1.137.0，导致失败。
 
 解法：解决合并冲突后手动删除冲突标记 `<<<<<<`/`=======`/`>>>>>>>` 行，保留目标版本号，再 version bump。
+
+---
+
+## desires 系统 DB 约束与代码不同步 —— 双重陷阱（2026-03-01）
+
+**背景**：三环意识架构（PR #189）新增欲望系统，但 migration 073 建表时约束与代码不对齐，导致连续两个隐藏 bug：
+
+**Bug 1 —— desires_type_check 缺少 act/follow_up/explore（PR #192）**
+
+代码 `VALID_TYPES` 有 8 种类型，DB CHECK 约束只有 5 种，缺少 `act`/`follow_up`/`explore`。
+欲望系统每次尝试生成这三种类型时直接报 constraint violation，环2好奇心闭环完全失效。
+
+**Bug 2 —— desires_status_check 缺少 acted（PR #195）**
+
+代码在执行 act/follow_up 欲望后写 `UPDATE desires SET status = 'acted'`，但 `desires_status_check` 约束不包含 `'acted'`。
+Bug 2 被 Bug 1 掩盖——因为 act/follow_up 欲望根本无法插入，永远到不了 UPDATE status 那行。PR #192 修复 type_check 后，status_check 才浮出水面。
+
+**修复**：migration 095（type_check）+ migration 096（status_check）。
+
+**教训**：
+- 新增 DB 枚举类型/状态时，必须同时审查所有相关 CHECK 约束
+- 被上游 bug 遮蔽的下游 bug，在修复上游后会立即暴露
+- migration 编号在并行 PR 开发时容易冲突：PR #192 和 #191 都用了 094，须重编为 095
+
+---
+
+## migration 编号并行冲突处理（2026-03-01）
+
+两个 PR 同时开发时，各自都认领了下一个空闲编号（如 094），合并时产生冲突。
+
+**处理方式**：
+1. 后合并的 PR merge main 时，发现 migration 目录已有同编号文件
+2. 将本 PR 的 migration 重命名（094 → 095）
+3. 同步更新 SQL 内 `INSERT INTO schema_version VALUES ('094', ...)` → `'095'`
+4. 更新 `selfcheck.js` EXPECTED_SCHEMA_VERSION 和 3 个测试文件
+5. 更新 DEFINITION.md Schema 版本
+6. facts-check 会自动检查"无重复编号"和"最高编号与 EXPECTED 一致"，可用于验证
+
+**预防**：并行任务开始前在 Brain DB 查当前最高 migration 编号，预留不同编号段。
