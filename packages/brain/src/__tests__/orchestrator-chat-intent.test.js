@@ -40,6 +40,7 @@ vi.mock('../intent.js', () => ({
 
 vi.mock('../memory-retriever.js', () => ({
   buildMemoryContext: vi.fn().mockResolvedValue({ block: '', meta: {} }),
+  CHAT_TOKEN_BUDGET: 2500,
 }));
 
 vi.mock('../user-profile.js', () => ({
