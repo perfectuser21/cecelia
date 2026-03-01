@@ -876,7 +876,7 @@ function getSkillForTaskType(taskType, payload) {
 
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
-    'review': '/review',     // 审查：Sonnet，Plan Mode
+    'review': '/code-review', // 审查：已迁移到 /code-review
     'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
     'talk': '/talk',         // 对话：写文档，不改代码
     'research': null,        // 研究：完全只读
@@ -888,9 +888,9 @@ function getSkillForTaskType(taskType, payload) {
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
-    // 兼容旧类型
-    'qa': '/review',
-    'audit': '/review',
+    // 旧类型向后兼容 → 统一走 /code-review
+    'qa': '/code-review',
+    'audit': '/code-review',
   };
   return skillMap[taskType] || '/dev';
 }
@@ -968,13 +968,13 @@ function getPermissionModeForTaskType(taskType) {
   // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
   const modeMap = {
     'dev': 'bypassPermissions',        // 写代码
-    'review': 'plan',                  // 只读分析
+    'review': 'bypassPermissions',     // 已迁移到 /code-review，需写报告
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
     'code_review': 'bypassPermissions', // 需要写报告文件到 docs/reviews/
-    // 兼容旧类型
-    'qa': 'plan',
-    'audit': 'plan',
+    // 旧类型向后兼容 → 统一走 /code-review
+    'qa': 'bypassPermissions',
+    'audit': 'bypassPermissions',
   };
   return modeMap[taskType] || 'bypassPermissions';
 }
@@ -1316,26 +1316,12 @@ ${task.description || ''}
 - 将结果写入适当的 markdown 文件`;
   }
 
-  // Review 类型：Plan Mode，统一代码审查（合并 QA + Audit）
+  // review / qa / audit 类型：统一路由到 /code-review
   if (taskType === 'review' || taskType === 'qa' || taskType === 'audit') {
-    return `/review
-
-# 代码审查任务 - ${task.title}
-
-${task.description || ''}
-
-你是代码审查员，请以 Plan Mode 运行：
-1. 只读取和分析代码，不要修改任何文件
-2. 从 QA 视角检查测试覆盖、回归契约、风险评估
-3. 从 Audit 视角检查代码问题（L1阻塞/L2功能/L3最佳实践）
-4. 输出 REVIEW-REPORT.md 报告
-5. 如果发现需要修复的 L1/L2 问题，在报告中附带 PRD
-
-权限约束：
-- ✅ 可以读取所有代码和文档
-- ✅ 输出 REVIEW-REPORT.md
-- ❌ 不能修改任何代码文件
-- ❌ 不能直接修复问题（输出 PRD 让 /dev 去修）`;
+    const repoPath = task.payload?.repo_path || '';
+    const since = task.payload?.since_hours ? `--since=${task.payload.since_hours}h` : '';
+    const repoArg = repoPath ? `${repoPath}` : '';
+    return `/code-review ${repoArg} ${since}`.trim();
   }
 
   // Research 类型：完全只读
