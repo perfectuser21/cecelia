@@ -4,6 +4,21 @@
 
 ---
 
+### [2026-03-01] account-usage 新字段 + Brain CI schema version 全局同步 (v1.140.0)
+
+**变更**：
+1. `packages/brain/migrations/097_account_usage_sonnet.sql`：`account_usage_cache` 新增 `seven_day_sonnet_pct` 和 `seven_day_resets_at`
+2. `account-usage.js`：缓存 TTL 10m→3m，解析 `seven_day_sonnet` 数据
+3. `LiveMonitorPage.tsx`：每账号三行显示：`5h:XX% ↺HH:MM` / `7d:XX% ↺M/D` / `son:XX%`
+
+**教训**：
+1. **schema version 全局搜索**：修改 `EXPECTED_SCHEMA_VERSION` 必须搜索所有 test 文件（`desire-system.test.js`、`learnings-vectorize.test.js` 也硬编码了版本号）
+2. **`.brain-versions` 同步**：brain-deploy.sh 会自动写入，PR 合并后用 `brain-deploy.sh` 而非 `docker restart`
+3. **DoD Test 格式**：`manual:` 命令必须含 `node/npm/npx/psql/curl/bash`，`grep/ls` 不在白名单
+4. **Docker 容器更新**：`docker restart` 不切换镜像版本，需要 `docker-compose up --force-recreate` 或 `brain-deploy.sh`
+
+---
+
 ### [2026-02-24] code-review 权限隔离 + Brain pm2→Docker 迁移 (v1.90.0)
 
 **变更**：
