@@ -30,6 +30,7 @@ set -euo pipefail
 REPORT_FILE=".dev-feedback-report.json"
 DEV_MODE_FILE=".dev-mode"
 QUALITY_SUMMARY="quality-summary.json"
+LEARNINGS_EXTRACTED=".dev-learnings-extracted.json"
 
 # ============================================================================
 # 工具函数
@@ -92,9 +93,11 @@ generate_summary() {
 }
 
 # 从 .dev-incident-log.json 提取真实问题（优先）
+# 合并 .dev-learnings-extracted.json（extract-learnings.sh 的输出）
 # 降级：从 quality-summary.json 关键词提取（兼容旧流程）
 extract_issues() {
     local INCIDENT_FILE=".dev-incident-log.json"
+    local base_issues="[]"
 
     # 优先从 incident log 读取真实数据
     if [[ -f "$INCIDENT_FILE" ]]; then
@@ -102,31 +105,36 @@ extract_issues() {
         count=$(jq 'length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
 
         if [[ "$count" -gt 0 ]]; then
-            # 将每条 incident 转成可读字符串
-            jq -r '[.[] | "[" + .step + "] " + .description + (if .resolution != "" then " → 修复: " + .resolution else " → 未记录修复" end)]' \
-                "$INCIDENT_FILE" 2>/dev/null || echo "[]"
-            return
+            base_issues=$(jq -r '[.[] | "[" + .step + "] " + .description + (if .resolution != "" then " → 修复: " + .resolution else " → 未记录修复" end)]' \
+                "$INCIDENT_FILE" 2>/dev/null || echo "[]")
         fi
     fi
 
-    # 降级：从 quality-summary.json 关键词提取
-    local issues=()
-    if [[ -f "$QUALITY_SUMMARY" ]]; then
+    # 若 incident log 为空，降级：从 quality-summary.json 关键词提取
+    if [[ "$base_issues" == "[]" && -f "$QUALITY_SUMMARY" ]]; then
         local changes
         changes=$(jq -r '.changes // {}' "$QUALITY_SUMMARY" 2>/dev/null || echo "{}")
         if echo "$changes" | grep -qiE '修复|fix|bug'; then
-            issues+=("代码中存在需要修复的问题（来源：quality-summary 关键词）")
+            base_issues='["代码中存在需要修复的问题（来源：quality-summary 关键词）"]'
         fi
     fi
 
-    if [[ ${#issues[@]} -eq 0 ]]; then
-        echo "[]"
-    else
-        printf '%s\n' "${issues[@]}" | jq -R . | jq -s .
+    # 合并 .dev-learnings-extracted.json 中的 issues_found
+    if [[ -f "$LEARNINGS_EXTRACTED" ]]; then
+        local extracted_issues
+        extracted_issues=$(jq -r '.issues_found // []' "$LEARNINGS_EXTRACTED" 2>/dev/null || echo "[]")
+        local extracted_count
+        extracted_count=$(echo "$extracted_issues" | jq 'length' 2>/dev/null || echo "0")
+        if [[ "$extracted_count" -gt 0 ]]; then
+            base_issues=$(jq -n --argjson a "$base_issues" --argjson b "$extracted_issues" '$a + $b | unique')
+        fi
     fi
+
+    echo "$base_issues"
 }
 
 # 生成下一步建议
+# 合并 .dev-learnings-extracted.json 中的 next_steps_suggested
 generate_next_steps() {
     local steps=()
 
@@ -144,7 +152,21 @@ generate_next_steps() {
         steps+=("继续后续功能开发")
     fi
 
-    printf '%s\n' "${steps[@]}" | jq -R . | jq -s .
+    local base_steps
+    base_steps=$(printf '%s\n' "${steps[@]}" | jq -R . | jq -s .)
+
+    # 合并 .dev-learnings-extracted.json 中的 next_steps_suggested（预防措施）
+    if [[ -f "$LEARNINGS_EXTRACTED" ]]; then
+        local extracted_steps
+        extracted_steps=$(jq -r '.next_steps_suggested // []' "$LEARNINGS_EXTRACTED" 2>/dev/null || echo "[]")
+        local extracted_count
+        extracted_count=$(echo "$extracted_steps" | jq 'length' 2>/dev/null || echo "0")
+        if [[ "$extracted_count" -gt 0 ]]; then
+            base_steps=$(jq -n --argjson a "$base_steps" --argjson b "$extracted_steps" '$a + $b | unique')
+        fi
+    fi
+
+    echo "$base_steps"
 }
 
 # 生成技术笔记
