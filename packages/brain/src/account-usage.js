@@ -213,10 +213,12 @@ export async function selectBestAccount() {
         const pct = u?.five_hour_pct ?? 0;
         const ePct = effectivePct(pct, u?.resets_at);
         const sevenDayPct = u?.seven_day_pct ?? 0;
+        const sevenDaySonnetPct = u?.seven_day_sonnet_pct ?? 0;
         const extraUsed = u?.extra_used ?? false;
-        return { id, pct, ePct, sevenDayPct, extraUsed };
+        return { id, pct, ePct, sevenDayPct, sevenDaySonnetPct, extraUsed };
       })
-      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
+      // 过滤：5h 超载 | extra_used | 7天 sonnet 满额（>=100% 时 sonnet 不可用）
+      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed && a.sevenDaySonnetPct < 100)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (available.length === 0) {
