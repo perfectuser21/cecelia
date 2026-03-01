@@ -803,3 +803,16 @@ res.on('close', () => { closed = true; });
 **关键收获**：
 - Facts Consistency 检查是有价值的门禁，成功拦截了版本不一致问题
 - Brain 版本管理存在 3 处 SSOT，需要工具化同步流程
+## PR #221 - 修复 Staff API 500（v1.141.5, 2026-03-01）
+
+**问题**：`GET /api/brain/staff` 返回 500，`ENOENT: no such file or directory`
+
+**根本原因**：`packages/brain/src/routes.js` 中两处硬编码路径缺少 `packages/` 层级：
+```
+错误：/home/xx/perfect21/cecelia/workflows/staff/workers.config.json
+正确：/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json
+```
+
+**教训**：硬编码绝对路径时必须基于实际仓库结构验证。文件搬迁后（`workflows/` → `packages/workflows/`）路径未同步更新，导致运行时读取失败。
+
+**版本追踪**：main 频繁并发合并（同日多 PR），version bump 需要多次追赶（1.141.3 → 4 → 5），考虑在 PR review 时先 fetch main 确认最新版本号。
