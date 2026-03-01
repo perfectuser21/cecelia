@@ -3,8 +3,9 @@
  *
  * 所有 Brain 组件的 LLM 调用都通过这个模块。
  * 根据 model-profile 配置决定用哪个模型和 provider：
- *   - Anthropic 模型 → 通过 cecelia-bridge /llm-call 调用 claude -p（走订阅）
- *   - MiniMax 模型 → 直接调用 MiniMax API
+ *   - anthropic-api → 直接调用 Anthropic REST API（走 API key，快 5-8x）
+ *   - anthropic     → 通过 cecelia-bridge /llm-call 调用 claude -p（走订阅，降级用）
+ *   - minimax       → 直接调用 MiniMax API
  *
  * 使用方式：
  *   import { callLLM } from './llm-caller.js';
@@ -29,6 +30,8 @@ const CLAUDE_MODEL_FLAG = {
 
 // MiniMax credentials cache
 let _minimaxKey = null;
+// Anthropic API key cache
+let _anthropicKey = null;
 
 function getMinimaxKey() {
   if (_minimaxKey) return _minimaxKey;
@@ -39,6 +42,19 @@ function getMinimaxKey() {
     return _minimaxKey;
   } catch (err) {
     console.error('[llm-caller] Failed to load MiniMax credentials:', err.message);
+    return null;
+  }
+}
+
+function getAnthropicKey() {
+  if (_anthropicKey) return _anthropicKey;
+  try {
+    const credPath = join(homedir(), '.credentials', 'anthropic.json');
+    const cred = JSON.parse(readFileSync(credPath, 'utf-8'));
+    _anthropicKey = cred.api_key;
+    return _anthropicKey;
+  } catch (err) {
+    console.error('[llm-caller] Failed to load Anthropic credentials:', err.message);
     return null;
   }
 }
@@ -86,7 +102,9 @@ export async function callLLM(agentId, prompt, options = {}) {
 
     try {
       let text;
-      if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
+      if (provider === 'anthropic-api') {
+        text = await callAnthropicAPI(prompt, model, timeout, maxTokens);
+      } else if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
         text = await callClaudeViaBridge(prompt, model, timeout, model);
       } else if (provider === 'minimax') {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
@@ -105,6 +123,40 @@ export async function callLLM(agentId, prompt, options = {}) {
   }
 
   throw lastError || new Error(`[llm-caller] ${agentId}: 所有候选模型均失败`);
+}
+
+/**
+ * 直接调用 Anthropic REST API（走 API key，速度快 5-8x，无并发限制）
+ * 读取 ~/.credentials/anthropic.json 中的 api_key
+ */
+async function callAnthropicAPI(prompt, model, timeout, maxTokens) {
+  const apiKey = getAnthropicKey();
+  if (!apiKey) throw new Error('Anthropic API key not available');
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    signal: AbortSignal.timeout(timeout),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'unknown');
+    throw new Error(`Anthropic API error: ${response.status} - ${errText.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const text = data.content?.[0]?.text || '';
+  if (!text) throw new Error('Anthropic API returned empty content');
+  return text;
 }
 
 /**
@@ -280,3 +332,4 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
 
 // 测试辅助：重置缓存
 export function _resetMinimaxKey() { _minimaxKey = null; }
+export function _resetAnthropicKey() { _anthropicKey = null; }
