@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] 清理旧 task_type：review/qa/audit → /code-review (PR #223, Brain v1.141.6)
+
+**背景**: Brain 中存在 `review`/`qa`/`audit` 三个旧 task_type，历史上分别调用 `/review`、`/qa`、`/audit` skill，但这些 skill 已被 `/code-review` 取代，且 `executor.js` 与 `task-router.js` 的映射不一致。
+
+- **清理范围**: `executor.js` skillMap + permission mode + buildPromptForTask、`task-router.js` SKILL_WHITELIST + FALLBACK_STRATEGIES、`tick.js` TASK_TYPE_AGENT_MAP、`model-registry.js` 删除 review/audit 条目
+- **`research` 不动**: `rumination.js` 和 `chat-action-dispatcher.js` 仍主动创建此类型，语义不同（调研分析，非代码审查）
+- **VALID_TASK_TYPES 保留旧类型名**: 向后兼容 DB 历史任务，避免 isValidTaskType 检查失败
+- **版本冲突陷阱**: 并行 PR 合并频繁导致 main 版本追上功能分支版本 → Version Check 失败；解法：每次重新 merge main 后检查 `git show origin/main:packages/brain/package.json | jq -r .version` 是否 >= 自己，如果相同需再 bump 一次
+- **model-registry 删除 agent 后要检查测试**: `isModelAllowedForAgent('review', ...)` 的测试会失败 → 改用仍存在的 agent（如 `autumnrice`）
+- **`.brain-versions` 是版本四处同步之一**: 不能漏，否则 Facts Consistency 失败
+
 ### [2026-03-01] Initiative 直连 kr_id 扫描修复 (PR #222, Brain v1.141.4)
 
 **背景**: `checkReadyKRInitiatives` 用 INNER JOIN 查 Initiative，导致直接设置 `kr_id`（无 `parent_id`）的 Initiative 被排除，永远不会触发 initiative_plan 任务。
