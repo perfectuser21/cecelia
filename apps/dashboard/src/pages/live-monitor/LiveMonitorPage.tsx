@@ -481,6 +481,11 @@ function AgentRow({ type, pid, cpu, mem, startTime, title, skill, accent, onKill
 // ── Account Usage Rings ────────────────────────────────────────
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
+const ACCOUNT_LABELS: Record<string, string> = {
+  account1: 'AP01',  // alexperfectapi01@gmail.com
+  account2: 'LCH',   // chalexlch@gmail.com
+  account3: 'ZJ',    // zenithjoy21xx@gmail.com
+};
 const usageColor = (pct: number) => pct >= 80 ? '#f85149' : pct >= 50 ? '#f59e0b' : '#10b981';
 
 function AccUsageRings() {
@@ -516,7 +521,7 @@ function AccUsageRings() {
         const pct = u?.five_hour_pct ?? 0;
         const isBest = id === bestId;
         const color = isBest ? '#818cf8' : usageColor(pct);
-        const label = id.replace('account', 'ACC');
+        const label = ACCOUNT_LABELS[id] ?? id.replace('account', 'ACC');
         const fiveHrResets = u?.resets_at
           ? (() => {
               const now = Date.now();
@@ -537,9 +542,11 @@ function AccUsageRings() {
             title="查看账号用量详情"
           >
             <Ring pct={pct} color={color} label={label} value={`${pct}%`} />
-            <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
-              {pct}%{fiveHrResets ? ` ↺${fiveHrResets}` : ''}
-            </div>
+            {fiveHrResets && (
+              <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
+                ↺{fiveHrResets}
+              </div>
+            )}
           </div>
         );
       })}
