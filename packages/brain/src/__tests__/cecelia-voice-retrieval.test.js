@@ -1,10 +1,10 @@
 /**
  * cecelia-voice-retrieval.test.js
- * 测试检索优先架构：
- * 1. retrieveCeceliaVoice 从 DB 正确检索
- * 2. buildTransmitterPrompt 行为
- * 3. CHAT 意图 + 无内容 → "我还没想过这个"（不调 LLM）
- * 4. 动作型意图 → 不走检索优先，调用 LLM（不含传声器 prompt）
+ * 测试统一路径架构（替代传声器检索优先路径）：
+ * 1. 所有意图统一调用 LLM（不再有"我还没想过这个"直接返回）
+ * 2. buildNarrativesBlock 从 DB 正确检索叙事
+ * 3. buildUnifiedSystemPrompt 构建五层注入
+ * 4. 传声器指令已删除，prompt 不包含 "文字传递器"
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -65,149 +65,134 @@ import pool from '../db.js';
 import { parseIntent } from '../intent.js';
 import {
   handleChat,
-  retrieveCeceliaVoice,
-  buildTransmitterPrompt,
+  buildNarrativesBlock,
+  buildUnifiedSystemPrompt,
+  MOUTH_SYSTEM_PROMPT,
 } from '../orchestrator-chat.js';
 
 function llmResp(text) {
   return { text, model: 'minimax', provider: 'minimax', elapsed_ms: 10 };
 }
 
-// pool.query mock 通用行：满足所有可能的查询
-const GENERIC_ROW = { content: '叙事内容', id: '1', value_json: 'focused', status: 'in_progress', cnt: 1 };
-
-describe('cecelia-voice-retrieval', () => {
+describe('cecelia-unified-path', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // 默认所有 DB 查询返回空
+    mockCallLLM.mockReset();
+    pool.query.mockReset();
     pool.query.mockResolvedValue({ rows: [] });
   });
 
-  // ─── D1: retrieveCeceliaVoice ───────────────────────────
+  // ─── D1: buildNarrativesBlock ───────────────────────────
 
-  describe('retrieveCeceliaVoice', () => {
-    it('fetches narratives, self_model, learnings, emotion from DB', async () => {
-      pool.query
-        .mockResolvedValueOnce({ rows: [{ content: '今天我感到专注' }] })     // narratives
-        .mockResolvedValueOnce({ rows: [{ content: '我是一个保护型AI' }] })  // self_model
-        .mockResolvedValueOnce({ rows: [{ content: '学习记录1' }] })          // learnings
-        .mockResolvedValueOnce({ rows: [{ value_json: 'focused' }] });         // emotion
+  describe('buildNarrativesBlock', () => {
+    it('加载最近3条叙事并格式化', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { content: '今天我感到专注' },
+          { content: '学习了新知识' },
+        ],
+      });
 
-      const result = await retrieveCeceliaVoice('你今天感觉怎么样');
+      const result = await buildNarrativesBlock();
 
-      expect(result.narratives).toContain('今天我感到专注');
-      expect(result.selfModel).toBe('我是一个保护型AI');
-      expect(result.learnings).toContain('学习记录1');
-      expect(result.emotion).toBe('focused');
+      expect(result).toContain('今天我感到专注');
+      expect(result).toContain('学习了新知识');
+      expect(result).toContain('## 我最近写的叙事');
     });
 
-    it('returns empty data when DB returns nothing', async () => {
+    it('无叙事时返回空字符串', async () => {
       pool.query.mockResolvedValue({ rows: [] });
 
-      const result = await retrieveCeceliaVoice('什么都没有');
+      const result = await buildNarrativesBlock();
 
-      expect(result.narratives).toHaveLength(0);
-      expect(result.selfModel).toBe('');
-      expect(result.learnings).toHaveLength(0);
-      expect(result.emotion).toBe('');
+      expect(result).toBe('');
     });
 
-    it('gracefully handles DB errors', async () => {
+    it('DB 错误时优雅返回空字符串', async () => {
       pool.query.mockRejectedValue(new Error('DB error'));
 
-      const result = await retrieveCeceliaVoice('test');
+      const result = await buildNarrativesBlock();
 
-      expect(result.narratives).toHaveLength(0);
-      expect(result.selfModel).toBe('');
+      expect(result).toBe('');
     });
   });
 
-  // ─── D2: buildTransmitterPrompt ────────────────────────
+  // ─── D2: 统一路径 — 所有意图调用 LLM ───────────────────
 
-  describe('buildTransmitterPrompt', () => {
-    it('returns null when no voice content found', () => {
-      const result = buildTransmitterPrompt('你怎么看？', {
-        narratives: [], selfModel: '', learnings: [], emotion: '',
-      });
-      expect(result).toBeNull();
-    });
-
-    it('includes transmitter instruction and "我还没想过这个" when content found', () => {
-      const result = buildTransmitterPrompt('你怎么看？', {
-        narratives: ['今天我写了一段话'],
-        selfModel: '', learnings: [], emotion: '',
-      });
-      expect(result).not.toBeNull();
-      expect(result).toContain('文字传递器');
-      expect(result).toContain('不许添加她没有写过的内容');
-      expect(result).toContain('我还没想过这个');
-      expect(result).toContain('你怎么看？');
-      expect(result).toContain('今天我写了一段话');
-    });
-
-    it('includes self_model when available', () => {
-      const result = buildTransmitterPrompt('问题', {
-        narratives: [], selfModel: '我是保护型', learnings: [], emotion: '',
-      });
-      expect(result).not.toBeNull();
-      expect(result).toContain('我对自己的认知');
-      expect(result).toContain('我是保护型');
-    });
-
-    it('includes emotion when available', () => {
-      const result = buildTransmitterPrompt('问题', {
-        narratives: ['内容'], selfModel: '', learnings: [], emotion: 'focused',
-      });
-      expect(result).not.toBeNull();
-      expect(result).toContain('情绪状态');
-      expect(result).toContain('focused');
-    });
-  });
-
-  // ─── D3: CHAT/QUESTION 意图 + 无内容 → 不调 LLM ────────
-
-  describe('handleChat - no content returns default', () => {
-    it('QUESTION 意图 + 无叙事 → 返回 "我还没想过这个"，不调用 LLM', async () => {
+  describe('handleChat - 统一路径（所有意图调用 LLM）', () => {
+    it('QUESTION 意图 → 调用 LLM，prompt 包含 MOUTH_SYSTEM_PROMPT', async () => {
       parseIntent.mockReturnValue({ type: 'QUESTION', confidence: 0.9 });
-      // 所有 DB 查询返回空（narratives/self_model/learnings/emotion 都没有）
       pool.query.mockResolvedValue({ rows: [] });
+      mockCallLLM.mockResolvedValueOnce(llmResp('这是我的真实想法。'));
 
       const result = await handleChat('你对未来有什么看法？');
 
-      expect(result.reply).toBe('我还没想过这个。');
-      // LLM 不应该被调用
-      expect(mockCallLLM).not.toHaveBeenCalled();
+      expect(mockCallLLM).toHaveBeenCalled();
+      expect(result.reply).toBe('这是我的真实想法。');
+      const prompt = mockCallLLM.mock.calls[0][1];
+      expect(prompt).toContain('Cecelia');
+      expect(prompt).not.toContain('文字传递器');
+      expect(prompt).not.toContain('不许添加她没有写过的内容');
     });
 
-    it('CHAT 意图 + 无内容 → 同样返回默认回复', async () => {
+    it('CHAT 意图 → 调用 LLM，不再返回"我还没想过这个"', async () => {
       parseIntent.mockReturnValue({ type: 'CHAT', confidence: 0.9 });
       pool.query.mockResolvedValue({ rows: [] });
+      mockCallLLM.mockResolvedValueOnce(llmResp('嗯，我在想这件事。'));
 
       const result = await handleChat('随便聊聊');
 
-      expect(result.reply).toBe('我还没想过这个。');
-      expect(mockCallLLM).not.toHaveBeenCalled();
+      expect(mockCallLLM).toHaveBeenCalled();
+      expect(result.reply).toBe('嗯，我在想这件事。');
     });
   });
 
-  // ─── D4: 动作型意图不走检索优先 ────────────────────────
+  // ─── D3: 动作型意图不含传声器指令 ─────────────────────
 
-  describe('handleChat - action intents bypass retrieval-first', () => {
-    it('CREATE_TASK 意图 → 调用 LLM，prompt 含 MOUTH_SYSTEM_PROMPT，不含传声器指令', async () => {
+  describe('handleChat - 动作型意图', () => {
+    it('CREATE_TASK 意图 → 调用 LLM，prompt 不含传声器指令', async () => {
       parseIntent.mockReturnValue({ type: 'CREATE_TASK', confidence: 0.95 });
-      // 所有 DB 查询返回空
       pool.query.mockResolvedValue({ rows: [] });
       mockCallLLM.mockResolvedValueOnce(llmResp('好的，任务已创建。'));
 
       const result = await handleChat('帮我创建一个任务：修复登录 bug');
 
-      // LLM 应该被调用
       expect(mockCallLLM).toHaveBeenCalled();
-      // prompt 不包含传声器指令（使用 MOUTH_SYSTEM_PROMPT）
       const calledPrompt = mockCallLLM.mock.calls[0][1];
       expect(calledPrompt).not.toContain('文字传递器');
-      // 有回复
       expect(result.reply).toBeTruthy();
+    });
+  });
+
+  // ─── D4: buildUnifiedSystemPrompt 验证 ─────────────────
+
+  describe('buildUnifiedSystemPrompt', () => {
+    it('包含 MOUTH_SYSTEM_PROMPT 和"说你真实有的"', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const prompt = await buildUnifiedSystemPrompt('测试消息', []);
+
+      expect(prompt).toContain('Cecelia');
+      expect(prompt).toContain('说你真实有的');
+      expect(prompt).not.toContain('文字传递器');
+    });
+
+    it('包含 self_model 内容', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const prompt = await buildUnifiedSystemPrompt('测试', []);
+
+      expect(prompt).toContain('我对自己的认知');
+      expect(prompt).toContain('保护型，追求精确');
+    });
+
+    it('有 actionResult 时追加到 prompt', async () => {
+      pool.query.mockResolvedValue({ rows: [] });
+
+      const prompt = await buildUnifiedSystemPrompt('测试', [], '任务已创建：修复登录');
+
+      expect(prompt).toContain('任务已创建：修复登录');
+      expect(prompt).toContain('刚刚执行的操作结果');
     });
   });
 });
