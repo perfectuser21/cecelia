@@ -213,9 +213,10 @@ export async function selectBestAccount() {
         const pct = u?.five_hour_pct ?? 0;
         const ePct = effectivePct(pct, u?.resets_at);
         const sevenDayPct = u?.seven_day_pct ?? 0;
-        return { id, pct, ePct, sevenDayPct };
+        const extraUsed = u?.extra_used ?? false;
+        return { id, pct, ePct, sevenDayPct, extraUsed };
       })
-      .filter(a => a.pct < USAGE_THRESHOLD)
+      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (available.length === 0) {
