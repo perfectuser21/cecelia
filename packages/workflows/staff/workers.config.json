@@ -31,62 +31,58 @@
       "department": "核心团队",
       "level": "management",
       "icon": "Brain",
-      "description": "管理层，负责入口、调度、编程、质量、N8N 管理",
+      "description": "管理层，负责 OKR 拆解、编程、代码审查",
       "workers": [
-        {
-          "id": "cecelia",
-          "name": "Cecelia",
-          "alias": null,
-          "icon": "Mic",
-          "type": "llm-skill",
-          "role": "入口",
-          "description": "接收语音/文本/CLI 输入，解析意图，写 Request，激活管家",
-          "abilities": [
-            {
-              "id": "intent-parse",
-              "name": "意图解析",
-              "description": "解析用户输入的意图"
-            },
-            {
-              "id": "request-write",
-              "name": "Request 生成",
-              "description": "将意图转化为结构化 Request"
-            }
-          ],
-          "gradient": {
-            "from": "from-purple-500",
-            "to": "to-pink-500"
-          }
-        },
         {
           "id": "autumnrice",
           "name": "Autumnrice",
-          "alias": null,
+          "alias": "秋米",
           "icon": "Workflow",
           "type": "llm-skill",
-          "role": "调度",
-          "skill": "/orchestrator",
-          "description": "接收 Request，拆解 TRD → Tasks，调度派发给 Caramel 或 Nobel",
+          "role": "OKR 拆解",
+          "skill": "/decomp",
+          "description": "OKR 拆解专家，将 KR/Project 拆解为可执行 Initiative 和 Task",
           "abilities": [
             {
-              "id": "task-decompose",
-              "name": "任务拆解",
-              "description": "将 TRD 拆解为可执行 Tasks"
+              "id": "okr-decomp",
+              "name": "OKR 拆解",
+              "description": "将高层目标拆解为可执行任务"
             },
             {
-              "id": "dispatch",
-              "name": "调度派发",
-              "description": "将任务分配给 Caramel（编程）或 Nobel（自动化）"
-            },
-            {
-              "id": "tick",
-              "name": "状态推进",
-              "description": "tick 推进状态机，重试、解锁、检查"
+              "id": "initiative-plan",
+              "name": "Initiative 规划",
+              "description": "规划下一个 PR 的具体实现方案"
             }
           ],
           "gradient": {
             "from": "from-amber-500",
             "to": "to-yellow-500"
+          }
+        },
+        {
+          "id": "vivian",
+          "name": "Vivian",
+          "alias": null,
+          "icon": "CheckCircle",
+          "type": "llm-skill",
+          "role": "拆解审查",
+          "skill": "/decomp-check",
+          "description": "OKR 拆解质检，审查秋米的拆解产出，给出 approved / needs_revision / rejected 裁决",
+          "abilities": [
+            {
+              "id": "decomp-review",
+              "name": "拆解审查",
+              "description": "审查拆解产出质量"
+            },
+            {
+              "id": "quality-gate",
+              "name": "质量门控",
+              "description": "approved / needs_revision / rejected 三态裁决"
+            }
+          ],
+          "gradient": {
+            "from": "from-violet-500",
+            "to": "to-purple-500"
           }
         },
         {
@@ -121,87 +117,29 @@
           }
         },
         {
-          "id": "nobel",
-          "name": "Nobel",
-          "alias": null,
-          "icon": "Cog",
-          "type": "llm-skill",
-          "role": "N8N 管理",
-          "skill": "/n8n-manage",
-          "description": "管理和调度所有 N8N workflow 员工，决定调用哪个 workflow",
-          "manages": ["media", "ops", "integration"],
-          "abilities": [
-            {
-              "id": "workflow-dispatch",
-              "name": "Workflow 调度",
-              "description": "根据任务类型选择合适的 N8N workflow"
-            },
-            {
-              "id": "workflow-monitor",
-              "name": "执行监控",
-              "description": "监控 N8N workflow 执行状态"
-            },
-            {
-              "id": "workflow-manage",
-              "name": "Workflow 管理",
-              "description": "创建、更新、删除 N8N workflows"
-            }
-          ],
-          "gradient": {
-            "from": "from-blue-500",
-            "to": "to-indigo-500"
-          }
-        },
-        {
           "id": "xiaojian",
-          "name": "Inspector",
+          "name": "Iris",
           "alias": null,
-          "icon": "Search",
+          "icon": "Eye",
           "type": "llm-skill",
-          "role": "QA",
-          "skill": "/qa",
-          "description": "跨仓库 QA 总控，管理测试决策、回归契约、Golden Paths",
+          "role": "代码审查",
+          "skill": "/code-review",
+          "description": "代码巡检与审查，扫描最近代码变更，发现未知问题，输出 L1/L2 bug 报告",
           "abilities": [
             {
-              "id": "qa-test",
-              "name": "QA 测试",
-              "description": "执行质量测试和验证"
+              "id": "code-scan",
+              "name": "代码扫描",
+              "description": "扫描最近 N 小时的代码变更"
             },
             {
-              "id": "regression",
-              "name": "回归测试",
-              "description": "管理回归契约和 Golden Paths"
+              "id": "bug-report",
+              "name": "Bug 报告",
+              "description": "输出 L1/L2 严重度分级的 bug 报告"
             }
           ],
           "gradient": {
-            "from": "from-green-500",
-            "to": "to-emerald-500"
-          }
-        },
-        {
-          "id": "xiaoshen",
-          "name": "Auditor",
-          "alias": null,
-          "icon": "FileSearch",
-          "type": "llm-skill",
-          "role": "审计",
-          "skill": "/audit",
-          "description": "有边界的代码审计与修复，分层标准 L1-L4",
-          "abilities": [
-            {
-              "id": "code-audit",
-              "name": "代码审计",
-              "description": "审计代码质量和安全性"
-            },
-            {
-              "id": "auto-fix",
-              "name": "自动修复",
-              "description": "自动修复 L1/L2 级别问题"
-            }
-          ],
-          "gradient": {
-            "from": "from-red-500",
-            "to": "to-orange-500"
+            "from": "from-cyan-500",
+            "to": "to-sky-500"
           }
         }
       ]
