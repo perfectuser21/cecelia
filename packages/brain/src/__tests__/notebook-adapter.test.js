@@ -104,4 +104,34 @@ describe('notebook-adapter', () => {
       expect(result.error).toBe('ECONNREFUSED');
     });
   });
+
+  describe('addTextSource', () => {
+    it('通过 bridge 添加内联文本源成功', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ ok: true, elapsed_ms: 300 }),
+      });
+
+      const { addTextSource } = await import('../notebook-adapter.js');
+      const result = await addTextSource('反刍洞察内容...', '反刍洞察: React 18 / Next.js 14');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notebook/add-text-source'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ text: '反刍洞察内容...', title: '反刍洞察: React 18 / Next.js 14' }),
+        }),
+      );
+      expect(result).toEqual({ ok: true, elapsed_ms: 300 });
+    });
+
+    it('fetch 失败时安全降级（不抛出异常）', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('bridge unavailable'));
+
+      const { addTextSource } = await import('../notebook-adapter.js');
+      const result = await addTextSource('some insight text', 'Title');
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe('bridge unavailable');
+    });
+  });
 });

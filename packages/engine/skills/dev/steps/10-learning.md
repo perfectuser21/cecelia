@@ -164,27 +164,28 @@ fi
    - 不需要另开单独的 docs PR
    - 合并后 LEARNINGS 直接进入 base branch，无需手动操作
 
-### 3.5. **提取 LEARNINGS 结构化内容 → feedback report**
+### 3.5. **触发 LEARNINGS_RECEIVED 事件 → 丘脑分拣**
 
-   **将 LEARNINGS.md 中的知识提取并写入 `.dev-learnings-extracted.json`**：
-
-   ```bash
-   # 提取根因 → issues_found，预防措施 → next_steps_suggested
-   bash skills/dev/scripts/extract-learnings.sh
-   echo "✅ LEARNINGS 已提取到 .dev-learnings-extracted.json"
-   ```
-
-   **然后生成最终反馈报告（合并 LEARNINGS 内容）**：
+   **将 LEARNINGS.md 中的知识发送给 Brain，经丘脑分拣走不同路径**：
 
    ```bash
-   bash skills/dev/scripts/generate-feedback-report.sh
-   echo "✅ 反馈报告已生成（已包含 LEARNINGS 知识）"
+   # 从 .dev-mode 读取分支和任务信息
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+   TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+
+   # 触发 LEARNINGS_RECEIVED 事件（丘脑分拣两条路径）
+   bash skills/dev/scripts/fire-learnings-event.sh \
+     --branch "$BRANCH_NAME" \
+     --pr "$PR_NUMBER" \
+     --task-id "$TASK_ID"
    ```
 
-   **用途**：
-   - `upload-feedback.sh` 会把 `issues_found` / `next_steps_suggested` POST 到 Brain
-   - Brain 把这些内容转成 `suggestions` 表条目，Cecelia 后续决策可利用这些知识
-   - 形成"开发失败 → LEARNINGS → Brain suggestions → 下次改善"闭环
+   **两条路径**：
+   - `issues_found`（CI/测试失败记录）→ 创建 **fix task**（任务线，不让 bug 跑掉）
+   - `next_steps_suggested`（预防措施/经验）→ 写 **learnings 表**（成长线 → 反刍 → NotebookLM 持久化）
+
+   **降级策略**：Brain 不可用时跳过（`|| true`），不阻塞流程。
 
 ### 4. **合并 PR（LEARNINGS 已包含在 PR diff 中）**
 

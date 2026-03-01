@@ -147,6 +147,9 @@ const EVENT_TYPES = {
   SCHEDULED_TASK: 'scheduled_task',
   BATCH_COMPLETED: 'batch_completed',
   DEPENDENCY_COMPLETED: 'dependency_completed',
+
+  // 学习相关
+  LEARNINGS_RECEIVED: 'learnings_received',
 };
 
 // ============================================================
@@ -841,6 +844,24 @@ function quickRoute(event) {
       actions: [{ type: 'log_event', params: { event_type: 'department_report' } }],
       rationale: '部门报告，记录并归档即可',
       confidence: 0.9,
+      safety: false
+    };
+  }
+
+  // LEARNINGS_RECEIVED：路由在 routes.js 中同步执行，丘脑仅记录事件
+  if (event.type === EVENT_TYPES.LEARNINGS_RECEIVED) {
+    const issueCount = Array.isArray(event.issues_found) ? event.issues_found.length : 0;
+    const stepCount = Array.isArray(event.next_steps_suggested) ? event.next_steps_suggested.length : 0;
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: {
+        event_type: 'learnings_received',
+        issues_count: issueCount,
+        steps_count: stepCount,
+        branch: event.branch_name || null,
+      } }],
+      rationale: `LEARNINGS 已接收：${issueCount} 个问题 → fix tasks，${stepCount} 条经验 → learnings 表`,
+      confidence: 0.95,
       safety: false
     };
   }

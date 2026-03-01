@@ -14,6 +14,7 @@ const mockCallLLM = vi.hoisted(() => vi.fn());
 const mockBuildMemoryContext = vi.hoisted(() => vi.fn());
 const mockQueryNotebook = vi.hoisted(() => vi.fn());
 const mockAddSource = vi.hoisted(() => vi.fn());
+const mockAddTextSource = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
 
@@ -32,6 +33,7 @@ vi.mock('../memory-retriever.js', () => ({
 vi.mock('../notebook-adapter.js', () => ({
   queryNotebook: mockQueryNotebook,
   addSource: mockAddSource,
+  addTextSource: mockAddTextSource,
 }));
 
 vi.mock('../actions.js', () => ({
@@ -98,6 +100,7 @@ describe('rumination', () => {
     mockCallLLM.mockResolvedValue({ text: '这是一条测试洞察' });
     mockBuildMemoryContext.mockResolvedValue({ block: '相关记忆', meta: {} });
     mockQueryNotebook.mockResolvedValue({ ok: true, text: 'NotebookLM 补充' });
+    mockAddTextSource.mockResolvedValue({ ok: true });
     mockCreateTask.mockResolvedValue({ success: true });
     mockUpdateSelfModel.mockResolvedValue('演化后的 self-model');
   });

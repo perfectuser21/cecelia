@@ -30,7 +30,8 @@ set -euo pipefail
 REPORT_FILE=".dev-feedback-report.json"
 DEV_MODE_FILE=".dev-mode"
 QUALITY_SUMMARY="quality-summary.json"
-LEARNINGS_EXTRACTED=".dev-learnings-extracted.json"
+# LEARNINGS_EXTRACTED 已移除：LEARNINGS 内容改由 fire-learnings-event.sh 处理
+# 路径：LEARNINGS.md → POST /api/brain/learnings-received → 丘脑分拣
 
 # ============================================================================
 # 工具函数
@@ -119,17 +120,6 @@ extract_issues() {
         fi
     fi
 
-    # 合并 .dev-learnings-extracted.json 中的 issues_found
-    if [[ -f "$LEARNINGS_EXTRACTED" ]]; then
-        local extracted_issues
-        extracted_issues=$(jq -r '.issues_found // []' "$LEARNINGS_EXTRACTED" 2>/dev/null || echo "[]")
-        local extracted_count
-        extracted_count=$(echo "$extracted_issues" | jq 'length' 2>/dev/null || echo "0")
-        if [[ "$extracted_count" -gt 0 ]]; then
-            base_issues=$(jq -n --argjson a "$base_issues" --argjson b "$extracted_issues" '$a + $b | unique')
-        fi
-    fi
-
     echo "$base_issues"
 }
 
@@ -154,17 +144,6 @@ generate_next_steps() {
 
     local base_steps
     base_steps=$(printf '%s\n' "${steps[@]}" | jq -R . | jq -s .)
-
-    # 合并 .dev-learnings-extracted.json 中的 next_steps_suggested（预防措施）
-    if [[ -f "$LEARNINGS_EXTRACTED" ]]; then
-        local extracted_steps
-        extracted_steps=$(jq -r '.next_steps_suggested // []' "$LEARNINGS_EXTRACTED" 2>/dev/null || echo "[]")
-        local extracted_count
-        extracted_count=$(echo "$extracted_steps" | jq 'length' 2>/dev/null || echo "0")
-        if [[ "$extracted_count" -gt 0 ]]; then
-            base_steps=$(jq -n --argjson a "$base_steps" --argjson b "$extracted_steps" '$a + $b | unique')
-        fi
-    fi
 
     echo "$base_steps"
 }
