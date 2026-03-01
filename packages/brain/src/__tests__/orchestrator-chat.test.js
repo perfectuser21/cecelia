@@ -356,7 +356,7 @@ describe('orchestrator-chat', () => {
       expect(mockCallLLM).toHaveBeenCalledWith(
         'mouth',
         expect.stringContaining('系统提示'),
-        expect.objectContaining({ maxTokens: 2048 }),
+        expect.objectContaining({ maxTokens: 300 }),
       );
       const prompt = mockCallLLM.mock.calls[0][1];
       expect(prompt).toContain('Alex：你好');
