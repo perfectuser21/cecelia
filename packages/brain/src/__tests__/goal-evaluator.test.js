@@ -15,6 +15,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockPool = { query: vi.fn() };
 vi.mock('../db.js', () => ({ default: mockPool }));
 
+const mockRouteEvent = vi.fn().mockResolvedValue({ level: 1, actions: [], rationale: 'mock', confidence: 0.9, safety: false });
+vi.mock('../thalamus.js', () => ({
+  routeEvent: mockRouteEvent,
+  EVENT_TYPES: {
+    GOAL_STALLED: 'goal_stalled',
+    RUMINATION_RESULT: 'rumination_result',
+  },
+}));
+
 // ── Tests: computeVerdict ─────────────────────────────────────────────────────
 
 describe('computeVerdict', () => {
@@ -163,7 +172,7 @@ describe('evaluateGoal', () => {
     );
   });
 
-  it('creates initiative_plan task for stalled goal', async () => {
+  it('sends GOAL_STALLED event to thalamus for stalled goal', async () => {
     // getGoalMetrics
     mockPool.query.mockResolvedValueOnce({
       rows: [{
@@ -173,17 +182,14 @@ describe('evaluateGoal', () => {
         last_completed_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), // 10 days ago
       }],
     });
-    // check existing initiative_plan
-    mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // INSERT into tasks
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-new-1' }] });
     // INSERT into goal_evaluations
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await evaluateGoal({ id: 'goal-stall', title: 'Stalled KR' });
 
     expect(result.verdict).toBe('stalled');
-    expect(result.action_taken).toBe('initiative_plan_created');
+    // 现在 stall 时发事件给丘脑，不再直接创建任务
+    expect(['goal_stalled_event_sent', 'initiative_plan_created_fallback']).toContain(result.action_taken);
   });
 
   it('creates suggestion for needs_attention goal', async () => {

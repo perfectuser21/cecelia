@@ -126,6 +126,10 @@ const EVENT_TYPES = {
   USER_MESSAGE: 'user_message',
   USER_COMMAND: 'user_command',
 
+  // 认知闭环事件
+  GOAL_STALLED: 'goal_stalled',
+  RUMINATION_RESULT: 'rumination_result',
+
   // 系统相关
   TICK: 'tick',
   HEARTBEAT: 'heartbeat',
@@ -202,6 +206,12 @@ const ACTION_WHITELIST = {
   // 系统操作
   'no_action': { dangerous: false, description: '不需要操作' },
   'fallback_to_tick': { dangerous: false, description: '降级到纯代码 Tick' },
+
+  // 认知闭环操作（v1.142.0）
+  'invoke_skill': { dangerous: false, description: '调用 Skill（/plan, /dev, /okr 等），传入 skill 名和参数' },
+  'kr_replan': { dangerous: false, description: '触发 KR 重新规划（KR停滞/失败率高时）' },
+  'write_self_model': { dangerous: false, description: '将洞察写入 memory_stream（type=self_model）' },
+  'escalate_to_cortex': { dangerous: false, description: '升级到 L2 Opus 皮层做深度战略分析' },
 
   // 提案操作（Inbox 系统，全部 dangerous → 进 pending_actions）
   'propose_decomposition': { dangerous: true, description: 'OKR/Initiative 拆解结果确认' },
@@ -385,17 +395,38 @@ function recordRoutingDecision(routeType, event, decision, latencyMs) {
 // Thalamus (MiniMax M2.1 调用)
 // ============================================================
 
-const THALAMUS_PROMPT = `你是 Cecelia 的丘脑（Thalamus），负责事件路由和决策。
+const THALAMUS_PROMPT = `你是 Cecelia 的丘脑（Thalamus），负责统一事件路由和认知决策。
 
 ## 你的职责
-1. 接收事件，分析复杂度
-2. 决定唤醒级别
-3. 输出结构化 Decision
+1. 接收所有信号（任务事件、用户消息、内部状态变化）
+2. 结合记忆上下文（brain_context）做出有记忆的判断
+3. 决定唤醒级别，路由到正确的行动
 
 ## 唤醒级别
 - level 0: 脑干反射（简单、常规、可用代码规则处理）
 - level 1: 快速判断（需要一点思考，但不复杂）
-- level 2: 深度思考（复杂决策、异常分析、战略规划）
+- level 2: 深度战略思考（KR停滞、失败率高、方向冲突 → escalate_to_cortex）
+
+## 用户意图路由（USER_MESSAGE 事件专用）
+当 event.type = "user_message" 时，根据意图路由：
+
+| 意图类型 | invoke_skill | 说明 |
+|---------|-------------|------|
+| coding / dev | /dev | 编程任务、功能开发、bug修复 |
+| research / explore | /research | 调研、分析、查找信息 |
+| remember / note | /remember | 记录想法、保存认知 |
+| automate / n8n | /n8n-manage | 自动化流程、工作流 |
+| kr_replan / strategy | /okr | KR重规划、战略调整 |
+| okr / goals | /okr | OKR拆解、目标设定 |
+
+路由方式：actions 中使用 invoke_skill，params 包含 skill 名和原始内容。
+
+## L2 触发条件（需要 escalate_to_cortex）
+以下情况应升级到 Opus 皮层深度分析：
+- KR 连续停滞 > 14 天（event.type = "goal_stalled" 且 days_stalled > 14）
+- 任务失败率 > 60%（近7天）
+- 检测到方向冲突（同一 KR 下多个矛盾任务）
+- 用户明确要求战略复盘
 
 ## 可用 Actions（白名单）
 ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.description}`).join('\n')}
@@ -406,7 +437,7 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
   "actions": [
     {"type": "action_type", "params": {...}}
   ],
-  "rationale": "决策原因",
+  "rationale": "决策原因（结合 brain_context 说明为何这样路由）",
   "confidence": 0.0-1.0,
   "safety": false
 }
@@ -416,8 +447,9 @@ ${Object.entries(ACTION_WHITELIST).map(([type, config]) => `- ${type}: ${config.
 2. 不确定时，升级到 brain (escalate_to_brain)
 3. 危险操作必须 safety: true
 4. 简单事件尽量 level: 0，不要过度思考
+5. USER_MESSAGE 意图不明确时，默认路由到 invoke_skill(/dev)
 
-请分析以下事件并输出 Decision：`;
+请结合上方 brain_context 分析以下事件并输出 Decision：`;
 
 /**
  * 从 event payload 提取 Memory 搜索 query
@@ -954,8 +986,53 @@ function quickRoute(event) {
         safety: false
       };
     }
-    // 其他意图（命令式、请求式等）→ 交给 L1 LLM 决策
+    // 其他意图（命令式、请求式等）→ 交给 L1 LLM 决策（带 brain_context）
     return null;
+  }
+
+  // GOAL_STALLED：KR 停滞事件，判断是否需要升级 L2
+  if (event.type === EVENT_TYPES.GOAL_STALLED) {
+    const daysStalledNum = parseInt(event.days_stalled || '0', 10);
+    if (daysStalledNum >= 14) {
+      // 长期停滞 → 升级到 L2 Opus 皮层战略分析
+      return {
+        level: 2,
+        actions: [
+          { type: 'escalate_to_cortex', params: { goal_id: event.goal_id, reason: 'kr_stalled_14d', days_stalled: daysStalledNum } },
+          { type: 'log_event', params: { event_type: 'goal_stalled', goal_id: event.goal_id, days_stalled: daysStalledNum } },
+        ],
+        rationale: `KR 停滞 ${daysStalledNum} 天，需要 Opus 皮层深度战略分析`,
+        confidence: 0.9,
+        safety: false
+      };
+    }
+    // 短期停滞（< 14天）→ L1 重新规划
+    return {
+      level: 1,
+      actions: [
+        { type: 'kr_replan', params: { goal_id: event.goal_id, days_stalled: daysStalledNum } },
+        { type: 'log_event', params: { event_type: 'goal_stalled', goal_id: event.goal_id } },
+      ],
+      rationale: `KR 停滞 ${daysStalledNum} 天，触发重新规划`,
+      confidence: 0.85,
+      safety: false
+    };
+  }
+
+  // RUMINATION_RESULT：反刍结果，丘脑决定写入哪些内容
+  if (event.type === EVENT_TYPES.RUMINATION_RESULT) {
+    // 有 self_updates → 需要 L1 判断写入哪些 self_model
+    if (Array.isArray(event.self_updates) && event.self_updates.length > 0) {
+      return null; // 交 L1 LLM 处理
+    }
+    // 仅有 learnings/actions → L0 直接处理
+    return {
+      level: 0,
+      actions: [{ type: 'log_event', params: { event_type: 'rumination_result', has_actions: Array.isArray(event.actions) } }],
+      rationale: '反刍结果无 self_updates，记录即可',
+      confidence: 0.8,
+      safety: false
+    };
   }
 
   // 扩展快速路由场景 v1.121.0
