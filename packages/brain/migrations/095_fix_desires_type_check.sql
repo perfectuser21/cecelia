@@ -1,4 +1,4 @@
--- Migration 094: 修复 desires_type_check 约束
+-- Migration 095: 修复 desires_type_check 约束
 --
 -- 问题：desires 表的 CHECK 约束只有 5 种类型（inform/propose/warn/celebrate/question），
 --       但代码 VALID_TYPES 有 8 种（额外的 act/follow_up/explore 均缺失）。
@@ -24,5 +24,5 @@ ALTER TABLE desires ADD CONSTRAINT desires_type_check
 
 -- 记录 schema 版本
 INSERT INTO schema_version (version, description)
-VALUES ('094', '修复 desires_type_check 约束：补充 act/follow_up/explore 三种类型')
+VALUES ('095', '修复 desires_type_check 约束：补充 act/follow_up/explore 三种类型')
 ON CONFLICT (version) DO NOTHING;

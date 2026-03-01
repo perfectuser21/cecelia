@@ -5713,7 +5713,7 @@ router.get('/stats/overview', async (req, res) => {
  */
 router.get('/capabilities', async (req, res) => {
   try {
-    const { current_stage, owner } = req.query;
+    const { current_stage, owner, scope } = req.query;
 
     let query = 'SELECT * FROM capabilities WHERE 1=1';
     const params = [];
@@ -5726,6 +5726,11 @@ router.get('/capabilities', async (req, res) => {
     if (owner) {
       params.push(owner);
       query += ` AND owner = $${params.length}`;
+    }
+
+    if (scope) {
+      params.push(scope);
+      query += ` AND scope = $${params.length}`;
     }
 
     query += ' ORDER BY id ASC';

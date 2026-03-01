@@ -85,7 +85,7 @@ export default function GrowthProfilePage() {
     try {
       const [statsRes, capsRes] = await Promise.all([
         fetch('/api/brain/stats/overview'),
-        fetch('/api/brain/capabilities'),
+        fetch('/api/brain/capabilities?scope=cecelia'),
       ]);
       if (!statsRes.ok || !capsRes.ok) throw new Error('API error');
       const statsData: StatsOverview = await statsRes.json();
@@ -193,7 +193,7 @@ export default function GrowthProfilePage() {
               />
               <StatCard
                 icon={<Zap className="w-4 h-4 text-amber-400" />}
-                label="能力数量"
+                label="意识能力"
                 value={capabilities.length}
                 unit="项"
               />
@@ -203,7 +203,7 @@ export default function GrowthProfilePage() {
             <section>
               <div className="flex items-center gap-2 mb-5">
                 <div className="h-px flex-1 bg-white/[0.05]" />
-                <span className="text-xs text-slate-500 font-medium tracking-widest uppercase">Capability Map</span>
+                <span className="text-xs text-slate-500 font-medium tracking-widest uppercase">意识能力</span>
                 <div className="h-px flex-1 bg-white/[0.05]" />
               </div>
 
