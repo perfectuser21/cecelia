@@ -12,7 +12,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Brain, Cpu, Zap, MessageSquare, Send, Plus, Activity,
   Loader2, Eye, Layers, ChevronRight, History, BookOpen,
-  Radio, ListChecks, Clock,
+  Radio, ListChecks, Clock, PenLine, CheckCircle2,
 } from 'lucide-react';
 import { useCecelia } from '@/contexts/CeceliaContext';
 import { useCeceliaWS, WS_EVENTS } from '../hooks/useCeceliaWS';
@@ -490,6 +490,10 @@ export default function ConsciousnessChat() {
 
   // ── Chat send ─────────────────────────────────────────
   const [processingStage, setProcessingStage] = useState<string | null>(null);
+  const [chatMode, setChatMode] = useState<'chat' | 'diary'>('chat');
+  const [diaryText, setDiaryText] = useState('');
+  const [diarySending, setDiarySending] = useState(false);
+  const [diaryConfirmed, setDiaryConfirmed] = useState(false);
 
   // ── Scroll ────────────────────────────────────────────
   useEffect(() => {
@@ -633,22 +637,6 @@ export default function ConsciousnessChat() {
     setProcessingStage('L1 丘脑 路由中...');
 
     try {
-      const lower = text.toLowerCase();
-      if (/打开|去|进入|切换|navigate|open|go/i.test(lower)) {
-        const ROUTE_ALIASES: Record<string, string> = {
-          'okr': '/okr', '目标': '/okr', 'projects': '/projects', '项目': '/projects',
-          'brain': '/brain', '大脑': '/brain', 'cecelia': '/cecelia', '意识': '/cecelia/chat',
-        };
-        for (const [alias, route] of Object.entries(ROUTE_ALIASES).sort((a, b) => b[0].length - a[0].length)) {
-          if (lower.includes(alias)) {
-            setProcessingStage(null);
-            navigate(route);
-            addMessage({ id: generateId(), role: 'assistant', content: `正在前往「${alias}」` });
-            return;
-          }
-        }
-      }
-
       setProcessingStage('检索意识...');
       await new Promise(r => setTimeout(r, 200));
 
@@ -725,6 +713,28 @@ export default function ConsciousnessChat() {
     }
   }, [viewMode, input, sending, messages, currentRoute, frontendTools, getPageContext,
     addMessage, updateMessage, setInput, setSending, generateId, navigate]);
+
+  // ── Diary send ────────────────────────────────────────
+  const handleDiarySend = useCallback(async () => {
+    const text = diaryText.trim();
+    if (!text || diarySending) return;
+    setDiarySending(true);
+    setDiaryConfirmed(false);
+    try {
+      const r = await fetch('/api/brain/diary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      });
+      if (r.ok) {
+        setDiaryText('');
+        setDiaryConfirmed(true);
+        setTimeout(() => setDiaryConfirmed(false), 3000);
+      }
+    } finally {
+      setDiarySending(false);
+    }
+  }, [diaryText, diarySending]);
 
   // ── Derived ───────────────────────────────────────────
   const alertColor = ALERTNESS_COLOR[brain.alertness] ?? '#3b82f6';
@@ -916,13 +926,33 @@ export default function ConsciousnessChat() {
             background: 'rgba(255,255,255,0.01)',
             flexShrink: 0,
           }}>
-            <MessageSquare size={11} color="rgba(255,255,255,0.2)" />
+            {chatMode === 'chat' ? (
+              <MessageSquare size={11} color="rgba(255,255,255,0.2)" />
+            ) : (
+              <PenLine size={11} color="rgba(167,139,250,0.5)" />
+            )}
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
-              {viewMode === 'history' ? '历史对话（只读）' : '当前对话'}
+              {chatMode === 'diary' ? '废书' : viewMode === 'history' ? '历史对话（只读）' : '当前对话'}
             </span>
             <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)' }}>
-              {displayMessages.length > 0 ? `${displayMessages.length} 条` : ''}
+              {chatMode === 'chat' && displayMessages.length > 0 ? `${displayMessages.length} 条` : ''}
             </span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              {(['chat', 'diary'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setChatMode(mode)}
+                  style={{
+                    padding: '2px 8px', borderRadius: 5, border: 'none', cursor: 'pointer', fontSize: 10,
+                    background: chatMode === mode ? 'rgba(167,139,250,0.15)' : 'transparent',
+                    color: chatMode === mode ? '#a78bfa' : 'rgba(255,255,255,0.25)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {mode === 'chat' ? '对话' : '废书'}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Messages */}
@@ -1008,46 +1038,97 @@ export default function ConsciousnessChat() {
             padding: '10px 16px', borderTop: '1px solid rgba(255,255,255,0.05)',
             flexShrink: 0, background: 'rgba(255,255,255,0.01)',
           }}>
-            {viewMode === 'history' && (
-              <div style={{
-                marginBottom: 8, padding: '6px 10px', borderRadius: 6,
-                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
-                fontSize: 11, color: '#f59e0b',
-              }}>
-                正在查看历史对话 · 点击"返回当前对话"继续聊天
+            {chatMode === 'diary' ? (
+              /* ── 废书模式 ── */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <textarea
+                  value={diaryText}
+                  onChange={e => setDiaryText(e.target.value)}
+                  placeholder={'写下今天的想法、感受、碎碎念……\nCecelia 会记住这些，不需要等回复。'}
+                  disabled={diarySending}
+                  rows={5}
+                  style={{
+                    width: '100%', padding: '10px 13px', boxSizing: 'border-box',
+                    background: 'rgba(167,139,250,0.04)',
+                    border: '1px solid rgba(167,139,250,0.15)',
+                    borderRadius: 9, color: 'rgba(255,255,255,0.8)',
+                    fontSize: 13, outline: 'none', resize: 'none',
+                    lineHeight: 1.6, transition: 'border-color 0.2s',
+                  }}
+                  onFocus={e => { e.target.style.borderColor = 'rgba(167,139,250,0.4)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'rgba(167,139,250,0.15)'; }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  {diaryConfirmed ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#10b981' }}>
+                      <CheckCircle2 size={12} /> 已收到，Cecelia 会记住这些
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.15)' }}>
+                      {diaryText.length > 0 ? `${diaryText.length} 字` : ''}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleDiarySend}
+                    disabled={!diaryText.trim() || diarySending}
+                    style={{
+                      padding: '6px 14px', borderRadius: 9, border: 'none',
+                      background: diaryText.trim() && !diarySending ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.04)',
+                      color: diaryText.trim() && !diarySending ? '#a78bfa' : 'rgba(255,255,255,0.15)',
+                      cursor: diaryText.trim() && !diarySending ? 'pointer' : 'not-allowed',
+                      fontSize: 12, display: 'flex', alignItems: 'center', gap: 5, transition: 'all 0.2s',
+                    }}
+                  >
+                    {diarySending ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <PenLine size={12} />}
+                    写入
+                  </button>
+                </div>
               </div>
+            ) : (
+              /* ── 对话模式 ── */
+              <>
+                {viewMode === 'history' && (
+                  <div style={{
+                    marginBottom: 8, padding: '6px 10px', borderRadius: 6,
+                    background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
+                    fontSize: 11, color: '#f59e0b',
+                  }}>
+                    正在查看历史对话 · 点击"返回当前对话"继续聊天
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                    placeholder={viewMode === 'history' ? '按 Enter 返回当前对话' : '说点什么...'}
+                    disabled={sending}
+                    style={{
+                      flex: 1, padding: '8px 13px',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 9, color: 'rgba(255,255,255,0.8)',
+                      fontSize: 13, outline: 'none', transition: 'border-color 0.2s',
+                    }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(167,139,250,0.4)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={(!input.trim() && viewMode !== 'history') || sending}
+                    style={{
+                      padding: '8px 13px', borderRadius: 9, border: 'none',
+                      background: (input.trim() || viewMode === 'history') && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
+                      color: (input.trim() || viewMode === 'history') && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
+                      cursor: (input.trim() || viewMode === 'history') && !sending ? 'pointer' : 'not-allowed',
+                      display: 'flex', alignItems: 'center', transition: 'all 0.2s',
+                    }}
+                  >
+                    <Send size={14} />
+                  </button>
+                </div>
+              </>
             )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                placeholder={viewMode === 'history' ? '按 Enter 返回当前对话' : '说点什么...'}
-                disabled={sending}
-                style={{
-                  flex: 1, padding: '8px 13px',
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: 9, color: 'rgba(255,255,255,0.8)',
-                  fontSize: 13, outline: 'none', transition: 'border-color 0.2s',
-                }}
-                onFocus={e => { e.target.style.borderColor = 'rgba(167,139,250,0.4)'; }}
-                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.08)'; }}
-              />
-              <button
-                onClick={handleSend}
-                disabled={(!input.trim() && viewMode !== 'history') || sending}
-                style={{
-                  padding: '8px 13px', borderRadius: 9, border: 'none',
-                  background: (input.trim() || viewMode === 'history') && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
-                  color: (input.trim() || viewMode === 'history') && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
-                  cursor: (input.trim() || viewMode === 'history') && !sending ? 'pointer' : 'not-allowed',
-                  display: 'flex', alignItems: 'center', transition: 'all 0.2s',
-                }}
-              >
-                <Send size={14} />
-              </button>
-            </div>
           </div>
         </div>
 
