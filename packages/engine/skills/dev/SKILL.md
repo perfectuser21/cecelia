@@ -417,7 +417,7 @@ skills/dev/
     ↓
 7-Verify ─→ 本地跑 npm test（省一轮 CI）
     ↓
-8-PR → 9-CI → 10-Learning → 11-Cleanup
+8-PR → 9-CI（等通过）→ 10-Learning（写 LEARNINGS + push + 合并）→ 11-Cleanup
 ```
 
 ### 两层职责分离
@@ -437,7 +437,7 @@ skills/dev/
 | PRD | .prd-*.md | Hook 检查存在 | 写代码前 |
 | DoD | .dod-*.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
-| Learning | docs/LEARNINGS.md | 手动追加后推到 base branch | Step 10 完成时 |
+| Learning | docs/LEARNINGS.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 10 完成时（合并前）|
 
 ---
 
