@@ -252,14 +252,17 @@ async function checkReadyKRInitiatives() {
 
   for (const kr of readyKRs.rows) {
     // 找这个 KR 下的所有 active Initiative
+    // 两种链接方式：
+    //   1. Initiative → 父 Project → project_kr_links → KR（标准层级）
+    //   2. Initiative.kr_id 直接指向 KR（无父 project 的扁平结构）
     const initiatives = await pool.query(`
       SELECT p.id, p.name, p.status,
         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status IN ('queued', 'in_progress')) as active_tasks,
         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'in_progress') as running_tasks
       FROM projects p
-      INNER JOIN projects parent ON p.parent_id = parent.id
-      INNER JOIN project_kr_links pkl ON pkl.project_id = parent.id
-      WHERE pkl.kr_id = $1
+      LEFT JOIN projects parent ON p.parent_id = parent.id
+      LEFT JOIN project_kr_links pkl ON pkl.project_id = parent.id
+      WHERE (pkl.kr_id = $1 OR p.kr_id = $1)
         AND p.type = 'initiative'
         AND p.status IN ('active', 'in_progress')
     `, [kr.id]);
