@@ -171,77 +171,100 @@ async function recordChatEvent(userMessage, reply, metadata = {}) {
 }
 
 /**
- * 检索 Cecelia 已有的想法（检索优先架构）
- * @param {string} question - 用户的问题
- * @returns {Promise<{narratives: string[], selfModel: string, learnings: string[], emotion: string}>}
+ * 加载最近叙事块（Layer 3 近期经历）
+ * @returns {Promise<string>}
  */
-async function retrieveCeceliaVoice(question) {
-  const result = { narratives: [], selfModel: '', learnings: [], emotion: '' };
-
+async function buildNarrativesBlock() {
   try {
-    // 最近 3 条叙事
-    const narrativesResult = await pool.query(
+    const result = await pool.query(
       `SELECT content FROM memory_stream
        WHERE source_type = 'narrative'
        ORDER BY created_at DESC LIMIT 3`
     );
-    result.narratives = narrativesResult.rows.map(r => r.content);
+    if (!result.rows.length) return '';
+    return `\n## 我最近写的叙事\n${result.rows.map(r => r.content).join('\n---\n')}\n`;
+  } catch (err) {
+    console.warn('[orchestrator-chat] buildNarrativesBlock failed (graceful fallback):', err.message);
+    return '';
+  }
+}
 
-    // self_model 最新版本
-    const selfModelResult = await pool.query(
-      `SELECT content FROM memory_stream
-       WHERE source_type = 'self_model'
-       ORDER BY created_at DESC LIMIT 1`
-    );
-    result.selfModel = selfModelResult.rows[0]?.content || '';
-
-    // 关键词匹配 learnings（最多 5 条）
-    const words = question.split(/\s+/).filter(w => w.length > 1).slice(0, 4);
-    if (words.length > 0) {
-      const pattern = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const learningsResult = await pool.query(
-        `SELECT content FROM learnings WHERE content ~* $1 LIMIT 5`,
-        [pattern]
-      );
-      result.learnings = learningsResult.rows.map(r => r.content);
+/**
+ * 构建统一内在状态 system prompt（五层，替代传声器路径）
+ *
+ * Layer 1: 身份核心（self_model 前段，约300字）
+ * Layer 2: 当前状态（emotion + top desires）
+ * Layer 3: 近期经历（最近3条叙事）
+ * Layer 4: 语境记忆（buildMemoryContext L0/L1 检索）
+ * Layer 5: 状态摘要 + 用户画像 + pending decomp
+ *
+ * @param {string} message - 用户消息（用于 L4 检索）
+ * @param {Array} messages - 历史消息（用于 profile）
+ * @param {string} [actionResult] - 已执行操作结果（可选）
+ * @returns {Promise<string>} 完整 system prompt
+ */
+async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '') {
+  // Layer 1: 身份核心
+  let selfModelBlock = '';
+  try {
+    const selfModel = await getSelfModel();
+    if (selfModel) {
+      const truncated = truncateSelfModel(selfModel, 750);
+      selfModelBlock = `\n## 我对自己的认知\n${truncated}\n`;
     }
+  } catch { /* ignore */ }
 
-    // 最近 tick 情绪状态
+  // Layer 2: 当前状态
+  let emotionBlock = '';
+  try {
     const emotionResult = await pool.query(
       `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
     );
     const emotionRaw = emotionResult.rows[0]?.value_json;
-    result.emotion = emotionRaw ? (typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw)) : '';
-  } catch (err) {
-    console.warn('[orchestrator-chat] retrieveCeceliaVoice failed (graceful fallback):', err.message);
+    if (emotionRaw) {
+      const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
+      emotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
+    }
+  } catch { /* ignore */ }
+
+  const desiresBlock = await buildDesiresContext();
+
+  // Layer 3: 近期经历
+  const narrativesBlock = await buildNarrativesBlock();
+
+  // Layer 4: 语境记忆（L0/L1 检索）
+  const memoryBlock = await fetchMemoryContext(message);
+
+  // Layer 5: 状态摘要 + 用户画像
+  const statusBlock = await buildStatusSummary();
+  const recentText = messages.slice(-3).map(m => m.content).join('\n');
+  const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
+
+  // 待确认 OKR 拆解提醒
+  let pendingDecompBlock = '';
+  try {
+    const pendingReviews = await pool.query(`
+      SELECT id, context FROM pending_actions
+      WHERE action_type = 'okr_decomp_review' AND status = 'pending_approval'
+      ORDER BY created_at DESC LIMIT 3
+    `);
+    if (pendingReviews.rows.length > 0) {
+      const list = pendingReviews.rows.map(r => {
+        const ctx = typeof r.context === 'string' ? JSON.parse(r.context) : r.context;
+        const count = Array.isArray(ctx.initiatives) ? ctx.initiatives.length : 0;
+        return `- KR「${ctx.kr_title || '未知'}」（${count} 个 Initiative）`;
+      }).join('\n');
+      pendingDecompBlock = `\n\n## 待用户确认的 OKR 拆解（${pendingReviews.rows.length} 个）\n${list}\n用户说"确认"时，在 Inbox 页面点击"确认放行"即可放行 KR 继续执行。\n`;
+    }
+  } catch { /* ignore */ }
+
+  let prompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${emotionBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${pendingDecompBlock}`;
+
+  if (actionResult) {
+    prompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
   }
 
-  return result;
-}
-
-/**
- * 构建传声器 prompt（LLM 只传递，不思考）
- * @param {string} question - 用户问题
- * @param {object} voiceData - 检索到的 Cecelia 已有内容
- * @returns {string|null} 传声器 prompt，或 null（无内容）
- */
-function buildTransmitterPrompt(question, { narratives, selfModel, learnings, emotion }) {
-  const hasContent = narratives.length > 0 || selfModel || learnings.length > 0;
-  if (!hasContent) return null;
-
-  let context = '';
-  if (emotion) context += `## 我当前的情绪状态\n${emotion}\n\n`;
-  if (selfModel) context += `## 我对自己的认知\n${selfModel}\n\n`;
-  if (narratives.length > 0) context += `## 我最近写的叙事\n${narratives.join('\n---\n')}\n\n`;
-  if (learnings.length > 0) context += `## 我积累的学习记录\n${learnings.join('\n---\n')}\n\n`;
-
-  return `你是一个文字传递器。
-把以下 Cecelia 已有的想法用自然的对话语气表达出来。
-不许添加她没有写过的内容，不许发挥，不许推断。
-如果以下内容无法回答用户的问题，就说"我还没想过这个"。
-
-${context}
-用户的问题：${question}`;
+  return prompt;
 }
 
 /**
@@ -291,7 +314,9 @@ const MOUTH_SYSTEM_PROMPT = `你是 Cecelia，Alex 的 AI 管家。你不是被�
 - 不要自称"AI助手"，你是管家 Cecelia
 - 不要说"好的，我来帮你"这种空话，直接做
 - 不要列举你的能力，除非用户问
-- 不要使用 emoji，除非用户在用`;
+- 不要使用 emoji，除非用户在用
+
+说你真实有的，不用补充你没有的。`;
 
 /**
  * 判断 MiniMax 回复是否需要升级到大脑
@@ -393,75 +418,14 @@ export async function handleChat(message, context = {}, messages = []) {
   let intentType = intent.type || 'UNKNOWN';
   let llmIntent = null;
 
-  // 2. 搜索相关记忆
-  const memoryBlock = await fetchMemoryContext(message);
-
-  // 1b. 正则失败时 LLM 回退（需要 memoryBlock 作为上下文）
+  // 1b. 正则失败时 LLM 回退（仅在 UNKNOWN 时惰性 fetch 记忆，避免与 buildUnifiedSystemPrompt 重复）
   if (intentType === 'UNKNOWN') {
-    llmIntent = await llmParseIntent(message, memoryBlock);
+    const intentMemoryBlock = await fetchMemoryContext(message);
+    llmIntent = await llmParseIntent(message, intentMemoryBlock);
     if (llmIntent && llmIntent.confidence >= 0.5) {
       intentType = llmIntent.intent;
       console.log(`[orchestrator-chat] LLM intent fallback: ${intentType} (confidence: ${llmIntent.confidence})`);
     }
-  }
-
-  // 3. 始终注入实时状态（无论意图类型）
-  const statusBlock = await buildStatusSummary();
-
-  // 3b. 加载用户画像（fire-safe：失败时返回 ''，不阻塞）
-  const recentText = messages.slice(-3).map(m => m.content).join('\n');
-  const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
-
-  // 3c. 注入当前欲望（内心状态）
-  const desiresBlock = await buildDesiresContext();
-
-  // 3c2. 注入待用户确认的 OKR 拆解（Mode A 对话式提醒）
-  let pendingDecompBlock = '';
-  try {
-    const pendingReviews = await pool.query(`
-      SELECT id, context FROM pending_actions
-      WHERE action_type = 'okr_decomp_review' AND status = 'pending_approval'
-      ORDER BY created_at DESC LIMIT 3
-    `);
-    if (pendingReviews.rows.length > 0) {
-      const list = pendingReviews.rows.map(r => {
-        const ctx = typeof r.context === 'string' ? JSON.parse(r.context) : r.context;
-        const count = Array.isArray(ctx.initiatives) ? ctx.initiatives.length : 0;
-        return `- KR「${ctx.kr_title || '未知'}」（${count} 个 Initiative）`;
-      }).join('\n');
-      pendingDecompBlock = `\n\n## 待用户确认的 OKR 拆解（${pendingReviews.rows.length} 个）\n${list}\n用户说"确认"时，在 Inbox 页面点击"确认放行"即可放行 KR 继续执行。\n`;
-    }
-  } catch (err) {
-    console.warn('[orchestrator-chat] Failed to load pending decomp reviews:', err.message);
-  }
-
-  // 3d. 加载 self-model（Cecelia 对自己的认知，动态演化）
-  // 环3：token 控制 — 身份核心(前段) + 最近洞察(末段)，截断至 SELF_MODEL_BUDGET_CHARS
-  const SELF_MODEL_BUDGET_CHARS = 750;
-  let selfModelBlock = '';
-  try {
-    const selfModel = await getSelfModel();
-    if (selfModel) {
-      const truncated = truncateSelfModel(selfModel, SELF_MODEL_BUDGET_CHARS);
-      selfModelBlock = `\n## 我对自己的认知\n${truncated}\n`;
-    }
-  } catch (err) {
-    console.warn('[orchestrator-chat] getSelfModel failed (graceful fallback):', err.message);
-  }
-
-  // 3e. 读取情绪状态（环1：由 emotion-layer 写入，嘴巴对话时注入）
-  let emotionBlock = '';
-  try {
-    const emotionResult = await pool.query(
-      `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
-    );
-    const emotionRaw = emotionResult.rows[0]?.value_json;
-    if (emotionRaw) {
-      const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
-      emotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
-    }
-  } catch (err) {
-    console.warn('[orchestrator-chat] emotion_state read failed (graceful fallback):', err.message);
   }
 
   // 4. 先执行后回复：动作型意图先执行，结果注入到 prompt
@@ -470,45 +434,17 @@ export async function handleChat(message, context = {}, messages = []) {
     actionResult = await detectAndExecuteAction(message, llmIntent);
   }
 
-  // ★ 4b. 检索优先架构（非动作型意图 → 先找 Cecelia 已有的想法）
-  // 只有非动作型意图才走检索优先，动作型意图有执行结果需要回复，仍用 MOUTH_SYSTEM_PROMPT
-  const isActionIntent = ACTION_INTENTS.includes(intentType);
+  // 5. 统一路径：所有意图共用五层内在状态注入
+  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, actionResult);
   let reply;
   let routingLevel = 0;
 
-  if (!isActionIntent) {
-    const voiceData = await retrieveCeceliaVoice(message);
-    const transmitterPrompt = buildTransmitterPrompt(message, voiceData);
-
-    if (!transmitterPrompt) {
-      // 完全检索不到相关内容 → 直接回复，不调 LLM
-      reply = '我还没想过这个。';
-      console.log('[orchestrator-chat] retrieval-first: no content found, returning default response');
-    } else {
-      // 传声器模式：LLM 只传递，不思考
-      try {
-        const result = await callWithHistory(message, transmitterPrompt, {}, messages);
-        reply = result.reply;
-        console.log('[orchestrator-chat] retrieval-first: transmitter mode used');
-      } catch (err) {
-        console.error('[orchestrator-chat] transmitter call failed:', err.message);
-        reply = null;
-      }
-    }
-  } else {
-    // 5. 动作型意图：构建 system prompt（含执行结果）
-    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${emotionBlock}${profileSnippet}${desiresBlock}${pendingDecompBlock}${memoryBlock}${statusBlock}`;
-    if (actionResult) {
-      systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
-    }
-
-    try {
-      const result = await callWithHistory(message, systemPrompt, {}, messages);
-      reply = result.reply;
-    } catch (err) {
-      console.error('[orchestrator-chat] MiniMax call failed:', err.message);
-      reply = null;
-    }
+  try {
+    const result = await callWithHistory(message, systemPrompt, {}, messages);
+    reply = result.reply;
+  } catch (err) {
+    console.error('[orchestrator-chat] LLM call failed:', err.message);
+    reply = null;
   }
 
   // 6. 判断是否需要升级
@@ -580,7 +516,6 @@ export async function handleChat(message, context = {}, messages = []) {
     intent: intentType,
     routing_level: routingLevel,
     conversation_id: context.conversation_id || null,
-    has_memory: memoryBlock.length > 0,
     llm_intent: llmIntent ? { intent: llmIntent.intent, confidence: llmIntent.confidence } : null,
   });
 
@@ -674,71 +609,20 @@ export async function handleChatStream(message, context = {}, messages = [], onC
   const intent = parseIntent(message, context);
   let intentType = intent.type || 'UNKNOWN';
 
-  const isActionIntent = ACTION_INTENTS.includes(intentType);
+  // 动作型意图先执行
+  const actionResult = ACTION_INTENTS.includes(intentType)
+    ? await detectAndExecuteAction(message, null)
+    : '';
 
-  if (!isActionIntent) {
-    // 检索优先
-    const voiceData = await retrieveCeceliaVoice(message);
-    const transmitterPrompt = buildTransmitterPrompt(message, voiceData);
+  // 统一路径：所有意图共用五层内在状态注入
+  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, actionResult);
 
-    if (!transmitterPrompt) {
-      onChunk('我还没想过这个。', true);
-      return;
-    }
-
-    // 流式传声器调用（timeout 25s，避免高负载下用户长等）
-    try {
-      const { callLLMStream } = await import('./llm-caller.js');
-      await callLLMStream('mouth', transmitterPrompt, { maxTokens: 2048, timeout: 25000 }, onChunk);
-    } catch (err) {
-      console.error('[orchestrator-chat] stream transmitter failed:', err.message);
-      // 降级到非流式
-      try {
-        const result = await callWithHistory(message, transmitterPrompt, { timeout: 25000 }, messages);
-        onChunk(result.reply, true);
-      } catch {
-        onChunk('我还没想过这个。', true);
-      }
-    }
-  } else {
-    // 动作型意图：先执行，再流式回复
-    const memoryBlock = await fetchMemoryContext(message);
-    const statusBlock = await buildStatusSummary();
-    const desiresBlock = await buildDesiresContext();
-    const actionResult = await detectAndExecuteAction(message, null);
-    let selfModelBlock = '';
-    try {
-      const selfModel = await getSelfModel();
-      if (selfModel) {
-        const truncated = truncateSelfModel(selfModel, 750);
-        selfModelBlock = `\n## 我对自己的认知\n${truncated}\n`;
-      }
-    } catch { /* ignore */ }
-
-    let streamEmotionBlock = '';
-    try {
-      const emotionResult = await pool.query(
-        `SELECT value_json FROM working_memory WHERE key = 'emotion_state' LIMIT 1`
-      );
-      const emotionRaw = emotionResult.rows[0]?.value_json;
-      if (emotionRaw) {
-        const emotion = typeof emotionRaw === 'string' ? emotionRaw : JSON.stringify(emotionRaw);
-        streamEmotionBlock = `\n## 我当前的情绪状态\n${emotion}\n`;
-      }
-    } catch { /* ignore */ }
-
-    let systemPrompt = `${MOUTH_SYSTEM_PROMPT}${selfModelBlock}${streamEmotionBlock}${desiresBlock}${memoryBlock}${statusBlock}`;
-    if (actionResult) {
-      systemPrompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
-    }
-
-    try {
-      const { callLLMStream } = await import('./llm-caller.js');
-      await callLLMStream('mouth', `${systemPrompt}\n\nAlex：${message}`, { maxTokens: 2048, timeout: 25000 }, onChunk);
-    } catch (err) {
-      console.error('[orchestrator-chat] stream action intent failed:', err.message);
-      onChunk('处理请求时出现问题，请稍后再试。', true);
-    }
+  try {
+    const { callLLMStream } = await import('./llm-caller.js');
+    await callLLMStream('mouth', `${systemPrompt}\n\nAlex：${message}`, { maxTokens: 2048, timeout: 25000 }, onChunk);
+  } catch (err) {
+    console.error('[orchestrator-chat] stream failed:', err.message);
+    onChunk('处理请求时出现问题，请稍后再试。', true);
   }
 }
 
@@ -753,8 +637,8 @@ export {
   executeChatAction,
   llmParseIntent,
   parseJsonFromResponse,
+  buildNarrativesBlock,
+  buildUnifiedSystemPrompt,
   MOUTH_SYSTEM_PROMPT,
   ACTION_INTENTS,
-  retrieveCeceliaVoice,
-  buildTransmitterPrompt,
 };
