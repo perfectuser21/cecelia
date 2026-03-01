@@ -7488,7 +7488,7 @@ router.get('/staff', async (_req, res) => {
     const path = await import('path');
 
     // 1. 读 workers.config.json
-    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersPath = '/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json';
     const workersRaw = fs.readFileSync(workersPath, 'utf-8');
     const workersConfig = JSON.parse(workersRaw);
 
@@ -7567,7 +7567,7 @@ router.put('/staff/workers/:workerId', async (req, res) => {
     const { skill, model, credentials_file } = req.body;
     const fs = await import('fs');
 
-    const workersPath = '/home/xx/perfect21/cecelia/workflows/staff/workers.config.json';
+    const workersPath = '/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json';
     const workersConfig = JSON.parse(fs.readFileSync(workersPath, 'utf-8'));
 
     // 找到 worker
