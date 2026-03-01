@@ -16,7 +16,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getActiveProfile } from './model-profile.js';
-import { selectBestAccount } from './account-usage.js';
+import { selectBestAccount, selectBestAccountForHaiku } from './account-usage.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -65,38 +65,62 @@ export async function callLLM(agentId, prompt, options = {}) {
 
   // 从 profile.config 读取 brain 层 agent 的配置
   const agentConfig = profile?.config?.[agentId] || {};
-  const model = options.model || agentConfig.model || 'claude-haiku-4-5-20251001';
-  const provider = options.provider || agentConfig.provider || 'anthropic';
   const timeout = options.timeout || 90000;
   const maxTokens = options.maxTokens || 1024;
 
-  let text;
+  // 构建候选列表：主模型 + fallbacks（来自 agentConfig 或 options）
+  const primary = {
+    model:    options.model    || agentConfig.model    || 'claude-haiku-4-5-20251001',
+    provider: options.provider || agentConfig.provider || 'anthropic',
+  };
+  const fallbacks = agentConfig.fallbacks || [];   // [{model, provider}, ...]
+  const candidates = [primary, ...fallbacks];
 
-  if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
-    text = await callClaudeViaBridge(prompt, model, timeout);
-  } else if (provider === 'minimax') {
-    text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
-  } else {
-    throw new Error(`[llm-caller] Unsupported provider: ${provider} for agent ${agentId}`);
+  let lastError;
+  for (let i = 0; i < candidates.length; i++) {
+    const { model, provider } = candidates[i];
+    const isFallback = i > 0;
+    if (isFallback) {
+      console.warn(`[llm-caller] ${agentId} fallback #${i}: 尝试 ${model} (${provider})`);
+    }
+
+    try {
+      let text;
+      if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
+        text = await callClaudeViaBridge(prompt, model, timeout, model);
+      } else if (provider === 'minimax') {
+        text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
+      } else {
+        throw new Error(`Unsupported provider: ${provider}`);
+      }
+
+      const elapsed = Date.now() - startTime;
+      const fallbackNote = isFallback ? ` [fallback#${i}]` : '';
+      console.log(`[llm-caller] ${agentId} → ${model} (${provider})${fallbackNote} in ${elapsed}ms`);
+      return { text, model, provider, elapsed_ms: elapsed, attempted_fallback: isFallback };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[llm-caller] ${agentId} ${model} 失败: ${err.message}`);
+    }
   }
 
-  const elapsed = Date.now() - startTime;
-  console.log(`[llm-caller] ${agentId} → ${model} (${provider}) in ${elapsed}ms`);
-
-  return { text, model, provider, elapsed_ms: elapsed };
+  throw lastError || new Error(`[llm-caller] ${agentId}: 所有候选模型均失败`);
 }
 
 /**
  * 通过 cecelia-bridge 调用 claude -p（走订阅，不需要 API key）
  * 自动选择配额最优账号（通过 configDir 传给 bridge）
  */
-async function callClaudeViaBridge(prompt, model, timeout) {
+async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
+  const isHaiku = claudeModel === 'haiku';
 
-  // 账号轮换：选配额最优的账号
+  // 账号轮换：Haiku 用独立选择函数（不受 sonnet 配额限制）
   let configDir;
   try {
-    const bestAccount = await selectBestAccount();
+    const bestAccount = isHaiku
+      ? await selectBestAccountForHaiku()
+      : await selectBestAccount();
     if (bestAccount) {
       configDir = join(homedir(), `.claude-${bestAccount}`);
     }
