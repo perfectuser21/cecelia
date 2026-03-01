@@ -132,8 +132,7 @@ describe('model-registry', () => {
 
     it('R13: 跨 provider 白名单正确（已更新为 4.6）', () => {
       expect(isModelAllowedForAgent('thalamus', 'claude-sonnet-4-6')).toBe(true);
-      expect(isModelAllowedForAgent('review', 'claude-opus-4-6')).toBe(true);
-      expect(isModelAllowedForAgent('audit', 'claude-opus-4-6')).toBe(true);
+      expect(isModelAllowedForAgent('autumnrice', 'claude-opus-4-6')).toBe(true);
       expect(isModelAllowedForAgent('dev', 'claude-opus-4-6')).toBe(true);
     });
   });
