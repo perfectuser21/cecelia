@@ -164,6 +164,28 @@ fi
    - 不需要另开单独的 docs PR
    - 合并后 LEARNINGS 直接进入 base branch，无需手动操作
 
+### 3.5. **提取 LEARNINGS 结构化内容 → feedback report**
+
+   **将 LEARNINGS.md 中的知识提取并写入 `.dev-learnings-extracted.json`**：
+
+   ```bash
+   # 提取根因 → issues_found，预防措施 → next_steps_suggested
+   bash skills/dev/scripts/extract-learnings.sh
+   echo "✅ LEARNINGS 已提取到 .dev-learnings-extracted.json"
+   ```
+
+   **然后生成最终反馈报告（合并 LEARNINGS 内容）**：
+
+   ```bash
+   bash skills/dev/scripts/generate-feedback-report.sh
+   echo "✅ 反馈报告已生成（已包含 LEARNINGS 知识）"
+   ```
+
+   **用途**：
+   - `upload-feedback.sh` 会把 `issues_found` / `next_steps_suggested` POST 到 Brain
+   - Brain 把这些内容转成 `suggestions` 表条目，Cecelia 后续决策可利用这些知识
+   - 形成"开发失败 → LEARNINGS → Brain suggestions → 下次改善"闭环
+
 ### 4. **合并 PR（LEARNINGS 已包含在 PR diff 中）**
 
    ```bash

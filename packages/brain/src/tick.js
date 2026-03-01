@@ -54,8 +54,8 @@ const INIT_RECOVERY_INTERVAL_MS = parseInt(
 const TASK_TYPE_AGENT_MAP = {
   'dev': '/dev',           // Caramel - 编程
   'talk': '/talk',         // 对话任务 → HK MiniMax
-  'qa': '/qa',             // 小检 - QA
-  'audit': '/audit',       // 小审 - 审计
+  'qa': '/code-review',    // 旧类型 → 已迁移到 /code-review
+  'audit': '/code-review', // 旧类型 → 已迁移到 /code-review
   'research': null         // 需要人工/Opus 处理
 };
 

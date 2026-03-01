@@ -105,9 +105,9 @@ describe('getSkillForTaskType: payload.decomposition 路由增强', () => {
   });
 
   // 额外回归：其他 taskType 不受影响
-  it('task_type=review 无 payload 时应路由到 /review', () => {
+  it('task_type=review 无 payload 时应路由到 /code-review', () => {
     const result = getSkillForTaskType('review');
-    expect(result).toBe('/review');
+    expect(result).toBe('/code-review');
   });
 
   it('task_type=talk 无 payload 时应路由到 /talk', () => {

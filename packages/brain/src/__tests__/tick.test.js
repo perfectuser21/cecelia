@@ -17,14 +17,14 @@ describe('routeTask', () => {
     expect(routeTask(task)).toBe('/talk');
   });
 
-  it('should route qa tasks to /qa', () => {
+  it('should route qa tasks to /code-review', () => {
     const task = { task_type: 'qa' };
-    expect(routeTask(task)).toBe('/qa');
+    expect(routeTask(task)).toBe('/code-review');
   });
 
-  it('should route audit tasks to /audit', () => {
+  it('should route audit tasks to /code-review', () => {
     const task = { task_type: 'audit' };
-    expect(routeTask(task)).toBe('/audit');
+    expect(routeTask(task)).toBe('/code-review');
   });
 
   it('should return null for research tasks (requires manual handling)', () => {
@@ -55,8 +55,8 @@ describe('TASK_TYPE_AGENT_MAP', () => {
   it('should map to correct agent skills', () => {
     expect(TASK_TYPE_AGENT_MAP.dev).toBe('/dev');
     expect(TASK_TYPE_AGENT_MAP.talk).toBe('/talk');
-    expect(TASK_TYPE_AGENT_MAP.qa).toBe('/qa');
-    expect(TASK_TYPE_AGENT_MAP.audit).toBe('/audit');
+    expect(TASK_TYPE_AGENT_MAP.qa).toBe('/code-review');
+    expect(TASK_TYPE_AGENT_MAP.audit).toBe('/code-review');
     expect(TASK_TYPE_AGENT_MAP.research).toBeNull();
   });
 });

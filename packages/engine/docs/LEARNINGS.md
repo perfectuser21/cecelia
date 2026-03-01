@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.16.0
+version: 1.17.0
 created: 2026-01-16
-updated: 2026-02-28
+updated: 2026-03-01
 changelog:
+  - 1.17.0: 打通 LEARNINGS → Brain DB 管道（extract-learnings.sh + generate-feedback-report.sh 合并）
   - 1.16.0: Learning/Cleanup 加强；~/.claude/skills/ 是 symlink 不是独立目录
   - 1.15.0: 添加 /dev skill 自修复经验（5 个已知问题 + CI 三连修复）
   - 1.14.0: 添加 OKR 三层拆解集成 PR Plans 经验（CI 系统化修复、版本同步、Feature Registry SSOT）
@@ -2635,3 +2636,15 @@ LEARNINGS 写入时机设计缺陷：Step 9 合并 PR 后，Step 10 只能直推
 **验证**：本次 PR #224 的 diff 即包含代码变更（09-ci.md / 10-learning.md / SKILL.md）+ LEARNINGS.md，证明新流程有效。
 
 **影响程度**：Medium（解决了"LEARNINGS 永远在单独 PR"的结构性问题）
+
+### [2026-03-01] 打通 /dev LEARNINGS → Brain DB 管道
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**预防措施**：
+- extract-learnings.sh 的 `--test-incident` 和 `--test-learnings` 模式务必保持内置测试数据合理（否则 DoD 验证会失败）
+- generate-feedback-report.sh 合并数组时用 `jq unique` 去重，防止重复条目进入 Brain suggestions
+- 10-learning.md 的 Step 3.5 必须放在 push LEARNINGS 之后、合并 PR 之前，顺序不能乱
+- LEARNINGS.md 中"预防措施"段落必须用 `- ` 列表格式，才能被 extract-learnings.sh 解析
+
+**影响程度**: Low（CI 一次通过，实现顺畅）
