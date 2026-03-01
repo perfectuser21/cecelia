@@ -98,7 +98,9 @@ type KillState = 'idle' | 'confirm' | 'killing' | 'sent';
 interface AccountUsage {
   five_hour_pct: number;
   seven_day_pct: number;
+  seven_day_sonnet_pct: number;
   resets_at: string | null;
+  seven_day_resets_at: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -514,22 +516,28 @@ function AccUsageRings() {
         const isBest = id === bestId;
         const color = isBest ? '#818cf8' : usageColor(pct);
         const label = id.replace('account', 'ACC');
-        const resetsAt = u?.resets_at
+        const fiveHrResets = u?.resets_at
           ? new Date(u.resets_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
           : null;
+        const sevenDayResets = u?.seven_day_resets_at
+          ? (() => {
+              const d = new Date(u.seven_day_resets_at);
+              return `${d.getMonth() + 1}/${d.getDate()}`;
+            })()
+          : null;
+        const sonnetPct = u?.seven_day_sonnet_pct ?? 0;
         return (
           <div key={id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
             <Ring pct={pct} color={color} label={label} value={`${pct}%`} />
-            {resetsAt && (
-              <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace', marginTop: -2 }}>
-                ↺{resetsAt}
-              </div>
-            )}
-            {u?.seven_day_pct !== undefined && (
-              <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
-                7d:{u.seven_day_pct}%
-              </div>
-            )}
+            <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
+              5h:{pct}%{fiveHrResets ? ` ↺${fiveHrResets}` : ''}
+            </div>
+            <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
+              7d:{u?.seven_day_pct ?? 0}%{sevenDayResets ? ` ↺${sevenDayResets}` : ''}
+            </div>
+            <div style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>
+              son:{sonnetPct}%
+            </div>
           </div>
         );
       })}

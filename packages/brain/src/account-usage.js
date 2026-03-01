@@ -4,7 +4,7 @@
  *
  * 功能：
  * - 调用 Anthropic OAuth usage API 查询各账号5小时/7天用量
- * - 缓存到 PostgreSQL（TTL 10分钟）
+ * - 缓存到 PostgreSQL（TTL 3分钟）
  * - 选择用量最低的账号进行任务派发
  * - 所有账号满载时自动降级到 MiniMax
  */
@@ -14,7 +14,7 @@ import { homedir } from 'os';
 import pool from './db.js';
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
-const CACHE_TTL_MINUTES = 10;
+const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80; // 超过此百分比则跳过该账号
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 
@@ -76,25 +76,39 @@ async function fetchUsageFromAPI(accountId) {
  * 将用量数据写入缓存
  */
 async function upsertCache(accountId, data) {
-  const five_hour_pct = data.five_hour?.utilization ?? 0;
-  const seven_day_pct = data.seven_day?.utilization ?? 0;
-  const resets_at = data.five_hour?.resets_at || null;
-  const extra_used = (data.extra_usage?.utilization ?? 0) >= 100;
+  const five_hour_pct        = data.five_hour?.utilization ?? 0;
+  const seven_day_pct        = data.seven_day?.utilization ?? 0;
+  const seven_day_sonnet_pct = data.seven_day_sonnet?.utilization ?? 0;
+  const resets_at            = data.five_hour?.resets_at || null;
+  const seven_day_resets_at  = data.seven_day?.resets_at || null;
+  const extra_used           = (data.extra_usage?.utilization ?? 0) >= 100;
 
   await pool.query(
     `INSERT INTO account_usage_cache
-       (account_id, five_hour_pct, seven_day_pct, resets_at, extra_used, fetched_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
+       (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
+        resets_at, seven_day_resets_at, extra_used, fetched_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
      ON CONFLICT (account_id) DO UPDATE SET
-       five_hour_pct = EXCLUDED.five_hour_pct,
-       seven_day_pct = EXCLUDED.seven_day_pct,
-       resets_at     = EXCLUDED.resets_at,
-       extra_used    = EXCLUDED.extra_used,
-       fetched_at    = NOW()`,
-    [accountId, five_hour_pct, seven_day_pct, resets_at, extra_used]
+       five_hour_pct        = EXCLUDED.five_hour_pct,
+       seven_day_pct        = EXCLUDED.seven_day_pct,
+       seven_day_sonnet_pct = EXCLUDED.seven_day_sonnet_pct,
+       resets_at            = EXCLUDED.resets_at,
+       seven_day_resets_at  = EXCLUDED.seven_day_resets_at,
+       extra_used           = EXCLUDED.extra_used,
+       fetched_at           = NOW()`,
+    [accountId, five_hour_pct, seven_day_pct, seven_day_sonnet_pct,
+     resets_at, seven_day_resets_at, extra_used]
   );
 
-  return { account_id: accountId, five_hour_pct, seven_day_pct, resets_at, extra_used };
+  return {
+    account_id: accountId,
+    five_hour_pct,
+    seven_day_pct,
+    seven_day_sonnet_pct,
+    resets_at,
+    seven_day_resets_at,
+    extra_used,
+  };
 }
 
 /**
@@ -156,7 +170,9 @@ export async function getAccountUsage(forceRefresh = false) {
           account_id: accountId,
           five_hour_pct: 0,
           seven_day_pct: 0,
+          seven_day_sonnet_pct: 0,
           resets_at: null,
+          seven_day_resets_at: null,
           extra_used: false,
         };
       }
