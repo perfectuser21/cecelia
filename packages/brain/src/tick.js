@@ -546,7 +546,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
     FROM tasks t
-    WHERE t.goal_id = ANY($1)
+    WHERE (t.goal_id = ANY($1) OR t.goal_id IS NULL)
       AND t.status = 'queued'
       ${excludeClause}
       AND (
@@ -1679,7 +1679,7 @@ async function executeTick() {
   const tasksResult = await pool.query(`
     SELECT id, title, status, priority, started_at, updated_at, payload
     FROM tasks
-    WHERE goal_id = ANY($1)
+    WHERE (goal_id = ANY($1) OR goal_id IS NULL)
       AND status NOT IN ('completed', 'cancelled', 'canceled')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
