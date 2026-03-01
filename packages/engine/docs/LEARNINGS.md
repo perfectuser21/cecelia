@@ -2616,3 +2616,22 @@ PR: #48, v12.30.9
 - 如果是 symlink，找到 target 路径对应的 git 仓库，在那个仓库里走 /dev
 
 **影响程度**：Low（功能正常，只是流程没走对）
+
+### [2026-03-01] 修复 /dev LEARNINGS 写入时机
+
+**失败统计**：CI 失败 1 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：版本文件未完全同步 + feature-registry.yml 未更新
+  - 根本原因：`npm version patch` 只更新 package.json 和 package-lock.json，但 `.hook-core-version`、`regression-contract.yaml`、`feature-registry.yml` 需要手动同步
+  - 修复方式：手动更新这三个文件 + 运行 `generate-path-views.sh`
+  - 预防措施：engine 版本 bump 时，记住需要同步 4 类文件：`.hook-core-version`、`regression-contract.yaml`、`feature-registry.yml`（含 path views）
+
+**核心修复内容**：
+LEARNINGS 写入时机设计缺陷：Step 9 合并 PR 后，Step 10 只能直推 main（被 branch protection 拦），导致每次需要额外的 `docs: 追加 LEARNINGS` PR。
+
+正确流程：Step 9 CI 通过（不合并）→ Step 10 写 LEARNINGS + push 到功能分支 → 合并 PR（LEARNINGS 一起入库）
+
+**验证**：本次 PR #224 的 diff 即包含代码变更（09-ci.md / 10-learning.md / SKILL.md）+ LEARNINGS.md，证明新流程有效。
+
+**影响程度**：Medium（解决了"LEARNINGS 永远在单独 PR"的结构性问题）
