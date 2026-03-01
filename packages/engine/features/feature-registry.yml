@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.11.0"
+version: "3.12.0"
 updated: "2026-03-01"
 changelog:
+  - "3.12.0: v12.35.5 - 修正 LEARNINGS 路由架构（fire-learnings-event.sh 替代 extract-learnings.sh；移除 generate-feedback-report.sh LEARNINGS 合并；10-learning.md Step 3.5 改为通过 Brain API 路由；issues→fix task/next_steps→learnings 表）"
   - "3.11.0: v12.35.4 - 打通 /dev LEARNINGS → Brain DB 管道（新增 extract-learnings.sh 从 incident-log + LEARNINGS.md 提取结构化知识；generate-feedback-report.sh 合并 .dev-learnings-extracted.json；10-learning.md 新增 Step 3.5 调用提取脚本）"
   - "3.10.0: v12.35.3 - 修复 /dev LEARNINGS 写入时机（09-ci.md CI 通过后不立刻合并，先执行 Step 10；10-learning.md push LEARNINGS 到功能分支后再合并 PR，确保 LEARNINGS 包含在同一 PR 中）"
   - "3.9.0: v12.35.1 - 修复 cecelia branch protection（移除 Dashboard Build required check，只保留 ci-passed；setup-branch-protection.sh 加入 cecelia + check_branch 支持不存在分支跳过）"
