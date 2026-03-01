@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] desire/index.js act 欲望去重 + 标题规范化 (PR #218, Brain v1.141.3)
+
+**背景**: act 类欲望每次 tick 被 expression-decision 选中（对 act 跳过门槛），导致每个 tick 都创建一个 initiative_plan 任务，同一话题积累 4+ 个几乎相同的垃圾任务。
+
+- **版本 bump 被合并 "吃掉" 的问题**: 合并 origin/main 后，main 版本可能已包含相同版本号（其他 PR 也 bump 了），导致 Version Check BASE==CURRENT 失败。解决方案：合并 main 后重新检查 `git show origin/main:packages/brain/package.json | jq .version`，如相同则再 bump 一次
+- **测试 mock 要路由到不同 SQL**: dedup 查询（含 `trigger_source` 和 `initiative_plan`）必须返回 `{ rows: [] }` 才能让 act 逻辑继续，否则 mock 全返回 task id 会触发 dedup 的早期 return，导致 createSuggestion 相关测试失败
+- **desire 去重策略**: 检查 `WHERE trigger_source='desire_system' AND task_type='initiative_plan' AND status IN ('queued','in_progress')`，有则 mark desire as acted 直接返回，防止垃圾积压同时保持 desire 状态干净
+- **标题规范化意义**: `[欲望建议]` 前缀让秋米能区分"欲望驱动的建议任务"（低优先级参考）和正经 PRD 任务，避免混淆优先级
+
 ### [2026-03-01] 记忆检索配额约束 + 动态权重 + token 预算提升 (PR #216, Brain v1.141.2)
 
 **背景**: 实测 47 候选只注入 12 个且全是 conversation 类型，tasks/learnings/OKR 完全被挤出。根因：token 预算 1000 太小 + 无 source 配额限制，conversation 文档短分数高占满全部 slot。
