@@ -136,9 +136,15 @@ export async function runDesireSystem(pool) {
     result.expression = { triggered: true, acted: true };
 
     try {
-      // 根据 desire 内容创建任务
-      const taskType = desire.type === 'follow_up' ? 'review' : 'research';
+      // act → initiative_plan（交给秋米 /decomp 拆解成可执行 dev 任务）
+      // follow_up → review（保持原有行为）
+      const taskType = desire.type === 'follow_up' ? 'review' : 'initiative_plan';
       const priority = desire.urgency >= 8 ? 'P0' : desire.urgency >= 5 ? 'P1' : 'P2';
+
+      // act 类任务：给秋米足够的上下文来拆解
+      const description = desire.type === 'act'
+        ? `## 欲望驱动任务（来源：desire_system）\n\n**欲望内容**：${desire.content}\n\n**提议行动**：${desire.proposed_action}\n\n**目标仓库**：cecelia\n\n**洞察**：${desire.insight || '无'}\n\n**来源 desire ID**：${desire.id}`
+        : `${desire.proposed_action}\n\n来源：desire ${desire.id}\n洞察：${desire.insight || '无'}`;
 
       const { rows } = await pool.query(`
         INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
@@ -146,7 +152,7 @@ export async function runDesireSystem(pool) {
         RETURNING id
       `, [
         desire.content.slice(0, 200),
-        `${desire.proposed_action}\n\n来源：desire ${desire.id}\n洞察：${desire.insight || '无'}`,
+        description,
         priority,
         taskType,
       ]);
