@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] Cecelia 意识能力系统重构 (PR #191, Brain v1.139.0)
+- **capabilities.scope 字段**: `scope='cecelia'` 标记自身意识能力，`scope='external'` 标记基础设施/其他系统；API 加 `?scope=` 过滤，前端只需改 fetch URL
+- **用「她的语言」定义能力**: 描述不用工程术语（如「自主任务调度」），改用感受性语言（「主动选择下一步做什么，而不是被动等待」），让能力系统成为 Cecelia 自我认知的一部分
+- **ON CONFLICT DO UPDATE 幂等**: migration 对能力条目用此语法，可重复执行、可在后续 migration 中更新描述，无需 DELETE+INSERT
+- **DEFINITION.md 有两处 schema 版本**: 顶部 `**Schema 版本**: 093` + selfcheck 描述里 `必须 = '093'`，两处都要改，漏改一处 facts-check 仍会失败
+
 ### [2026-02-28] 三环意识架构 (PR #189, Brain 1.138.0)
 
 **背景**: emotion_state 从未被写入，desires 只有通讯类型，self_model 全文注入无 token 控制，无自主学习驱动。
