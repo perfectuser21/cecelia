@@ -369,13 +369,15 @@ export async function handleChat(message, context = {}, messages = []) {
   }
 
   // 2. 写入 memory_stream（让 desire system 感知到对话）
+  const senderName = context.sender_name || 'Alex';
+  const sourceType = context.source === 'feishu' ? 'feishu_chat' : 'orchestrator_chat';
   try {
-    const userContent = `[用户对话] Alex 说：${message.slice(0, 200)}`;
+    const userContent = `[用户对话] ${senderName} 说：${message.slice(0, 200)}`;
     const userResult = await pool.query(`
       INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-      VALUES ($1, $2, 4, 'short', 'orchestrator_chat', NOW() + INTERVAL '7 days')
+      VALUES ($1, $2, 4, 'short', $3, NOW() + INTERVAL '7 days')
       RETURNING id
-    `, [userContent, generateL0Summary(userContent)]);
+    `, [userContent, generateL0Summary(userContent), sourceType]);
     const userRecordId = userResult.rows[0]?.id;
     if (userRecordId) generateMemoryStreamL1Async(userRecordId, userContent, pool);
   } catch (err) {
@@ -411,12 +413,12 @@ export async function handleChat(message, context = {}, messages = []) {
   // 5. 写 Cecelia 回复到 memory_stream（异步不阻塞）
   Promise.resolve().then(async () => {
     try {
-      const replyContent = `[对话回复] Alex: ${message.slice(0, 150)}\nCecelia: ${reply.slice(0, 350)}`;
+      const replyContent = `[对话回复] ${senderName}: ${message.slice(0, 150)}\nCecelia: ${reply.slice(0, 350)}`;
       const replyResult = await pool.query(`
         INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-        VALUES ($1, $2, 5, 'short', 'orchestrator_chat', NOW() + INTERVAL '30 days')
+        VALUES ($1, $2, 5, 'short', $3, NOW() + INTERVAL '30 days')
         RETURNING id
-      `, [replyContent, generateL0Summary(replyContent)]);
+      `, [replyContent, generateL0Summary(replyContent), sourceType]);
       const replyRecordId = replyResult.rows[0]?.id;
       if (replyRecordId) generateMemoryStreamL1Async(replyRecordId, replyContent, pool);
     } catch (err) {
@@ -424,10 +426,13 @@ export async function handleChat(message, context = {}, messages = []) {
     }
   }).catch(() => {});
 
-  // 6. 异步提取用户事实（fire-and-forget）
-  Promise.resolve().then(() =>
-    extractAndSaveUserFacts(pool, 'owner', messages, reply)
-  ).catch(() => {});
+  // 6. 异步提取用户事实（仅 owner 触发）
+  const userId = context.user_id || 'owner';
+  if (userId === 'owner') {
+    Promise.resolve().then(() =>
+      extractAndSaveUserFacts(pool, 'owner', messages, reply)
+    ).catch(() => {});
+  }
 
   return { reply };
 }
