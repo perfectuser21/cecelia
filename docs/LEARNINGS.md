@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] LEARNINGS 路由架构修正 + vi.hoisted mock 隔离 (PR #235, Brain v1.141.11)
+
+**背景**: PR #228 将 LEARNINGS 直接写入 suggestions 表，完全绕过丘脑路由，架构错误。正确路径应通过 LEARNINGS_RECEIVED 事件分拣：有 bug 的问题 → fix task（task line）；经验/预防措施 → learnings 表（growth line）→ 反刍消化 → NotebookLM（持久化知识飞轮）。
+
+- **LEARNINGS 双通道设计**: issues_found（CI/测试失败）→ createTask(P1, dev) 确保 bug 必被修复；next_steps_suggested（预防措施）→ learnings 表 → 反刍摘取洞察 → 写回 NotebookLM；两通道互不干扰，不经过 suggestions 表
+- **丘脑 Level 0 事件是纯代码路由**: LEARNINGS_RECEIVED 在 quickRoute 做 Level 0（log_event only），实际 DB 操作在 routes.js 路由处理器中，丘脑只做"有无"判断，不执行副作用
+- **vi.hoisted vs vi.mock factory 的 vi.fn() 区别（CRITICAL）**: `vi.resetAllMocks()` 会重置所有 mock 包括 `vi.mock()` 工厂内部的 `vi.fn()`；factory-local 的 `vi.fn()` 被重置后返回 undefined，`undefined.catch(...)` 抛 TypeError，被外层 try/catch 捕获导致函数提前退出，使后续断言失败。解决：`const mock = vi.hoisted(() => vi.fn())` + `vi.mock('../x', () => ({ fn: mock }))` + `mock.mockResolvedValue(...)` 在 beforeEach 中设置
+- **fire-and-forget 写回 NotebookLM 需要 Promise chaining 而非 async/await**: `addTextSource(...).catch(err => ...)` 确保不阻塞主流程；但前提是 addTextSource 必须返回 Promise（mock 必须 `mockResolvedValue`，否则 `.catch` 抛 TypeError）
+- **Engine 版本同步的隐藏文件**: `packages/engine/VERSION`、`packages/engine/.hook-core-version`、`packages/engine/regression-contract.yaml` 三处都需同步，`ci-tools/VERSION` 是第四处。遗漏任何一处都会导致 Version Check 失败
+- **Engine 改 skills/ 必须同时更新 feature-registry.yml + 运行 generate-path-views.sh**: Impact Check 检测 `packages/engine/skills/` 有改动但 registry 未更新 → exit 1。更新 changelog 版本后必须运行 `bash scripts/generate-path-views.sh` 同步 docs/paths/ 三个文件
+- **并行 PR 版本冲突的检测时机**: push 前应运行 `git show origin/main:packages/brain/package.json | jq .version` 确认 main 版本，若与本分支相同立即再 bump；PR #234 与本 PR 同时在 1.141.10，合并后需重新 bump 到 1.141.11
+
 ### [2026-03-01] Initiative 直连 kr_id 扫描修复 (PR #222, Brain v1.141.4)
 
 **背景**: `checkReadyKRInitiatives` 用 INNER JOIN 查 Initiative，导致直接设置 `kr_id`（无 `parent_id`）的 Initiative 被排除，永远不会触发 initiative_plan 任务。
@@ -816,3 +828,18 @@ res.on('close', () => { closed = true; });
 **教训**：硬编码绝对路径时必须基于实际仓库结构验证。文件搬迁后（`workflows/` → `packages/workflows/`）路径未同步更新，导致运行时读取失败。
 
 **版本追踪**：main 频繁并发合并（同日多 PR），version bump 需要多次追赶（1.141.3 → 4 → 5），考虑在 PR review 时先 fetch main 确认最新版本号。
+
+## PR #234 — 修复嘴巴兜底逻辑：鼓励真实思考替代沉默 (2026-03-01)
+
+**背景**：Cecelia 对开放性问题（「你在想什么」「你觉得呢」）沉默，前端显示「我还没想过这个。」
+
+**根因**（两处联动）：
+1. `MOUTH_SYSTEM_PROMPT` 末行「说你真实有的，不用补充你没有的。」→ MiniMax LLM 解读为没有存档就保持沉默，返回空流
+2. `ConsciousnessChat.tsx:698` 前端兜底 `accumulated || '我还没想过这个。'` → 空流时硬显示该句话
+
+**教训**：限制型指令（「不用补充你没有的」）会被 LLM 过度解读为沉默命令。正确做法是用鼓励型指令替代——「沉默不是诚实，是关闭」。
+
+**改动**：
+- `orchestrator-chat.js`：MOUTH_SYSTEM_PROMPT 末行改为鼓励基于情绪/自我认知/记忆真实思考
+- `ConsciousnessChat.tsx`：前端兜底 `'我还没想过这个。'` → `'…'`（中性省略）
+- **测试陷阱**：`cecelia-voice-retrieval.test.js` 有断言检查旧文本「说你真实有的」→ 改提示词时必须同步更新测试
