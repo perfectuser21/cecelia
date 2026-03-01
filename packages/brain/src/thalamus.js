@@ -1169,12 +1169,99 @@ async function processEvent(event) {
 }
 
 // ============================================================
+// observeChat — 嘴巴发来的行动信号处理入口
+// ============================================================
+
+/**
+ * 处理嘴巴在对话中检测到的行动信号
+ * 嘴巴是唯一调用者，丘脑是唯一写入者
+ *
+ * @param {Object} signal - { type, title?, description?, priority?, content?, category?, task_id?, task_title?, key?, value? }
+ * @param {Object} context - { user_message?, reply? } 对话上下文（用于日志）
+ */
+async function observeChat(signal, context = {}) {
+  if (!signal || !signal.type) return;
+
+  const type = signal.type;
+  console.log(`[thalamus] observeChat: ${type}`, JSON.stringify(signal).slice(0, 120));
+
+  try {
+    switch (type) {
+      case 'create_task': {
+        await pool.query(`
+          INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
+          VALUES ($1, $2, $3, $4, 'queued', 'chat_mouth')
+        `, [
+          signal.title || '对话中提到的任务',
+          signal.description || context.user_message || '',
+          signal.priority || 'P2',
+          signal.task_type || 'research',
+        ]);
+        console.log(`[thalamus] observeChat: task created — "${signal.title}"`);
+        break;
+      }
+
+      case 'cancel_task': {
+        // 支持 task_id 或 task_title 取消
+        if (signal.task_id) {
+          const r = await pool.query(
+            `UPDATE tasks SET status = 'cancelled' WHERE id = $1 AND status = 'queued' RETURNING id`,
+            [signal.task_id]
+          );
+          if (r.rowCount === 0) {
+            console.warn(`[thalamus] observeChat: cancel_task — task ${signal.task_id} not found or not queued`);
+          }
+        } else if (signal.task_title) {
+          await pool.query(
+            `UPDATE tasks SET status = 'cancelled' WHERE title ILIKE $1 AND status = 'queued'`,
+            [`%${signal.task_title}%`]
+          );
+        }
+        break;
+      }
+
+      case 'save_note': {
+        await pool.query(`
+          INSERT INTO learnings (title, category, content, trigger_event)
+          VALUES ($1, $2, $3, 'chat_mouth')
+        `, [
+          signal.title || '对话笔记',
+          signal.category || 'chat',
+          signal.content || '',
+        ]);
+        console.log(`[thalamus] observeChat: note saved — "${signal.title}"`);
+        break;
+      }
+
+      case 'update_user_profile': {
+        if (signal.key && signal.value) {
+          await pool.query(`
+            UPDATE user_profiles
+            SET raw_facts = raw_facts || $1::jsonb, updated_at = NOW()
+            WHERE user_id = 'owner'
+          `, [JSON.stringify({ [signal.key]: signal.value })]);
+        }
+        break;
+      }
+
+      default:
+        console.warn(`[thalamus] observeChat: unknown signal type: ${type}`);
+    }
+  } catch (err) {
+    console.warn(`[thalamus] observeChat: failed (${type}):`, err.message);
+  }
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
 export {
   // 主入口
   processEvent,
+
+  // 嘴巴→丘脑信号入口
+  observeChat,
 
   // 验证
   validateDecision,
