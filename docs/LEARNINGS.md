@@ -1,5 +1,18 @@
 # Cecelia Core Learnings
 
+### [2026-03-01] 记忆检索配额约束 + 动态权重 + token 预算提升 (PR #216, Brain v1.141.2)
+
+**背景**: 实测 47 候选只注入 12 个且全是 conversation 类型，tasks/learnings/OKR 完全被挤出。根因：token 预算 1000 太小 + 无 source 配额限制，conversation 文档短分数高占满全部 slot。
+
+- **Root Cause 分析方法**: 查看 `meta.sources` 数组，如果全是 'conversation' 说明其他 source 被挤出；`meta.candidates` vs `meta.injected` 差值大说明 token 预算不足
+- **quota-aware MMR 两阶段选择**: Phase 1 先从所有 scored 候选中保证每个 source 的最小配额（task≥2, learning≥2），Phase 2 再按 finalScore 排序填充剩余，conversation 做上限约束（max 4）
+- **动态权重叠加在 MODE_WEIGHT 上**: 不是替换而是 `modeW × dynW`，任务类关键词触发 task×1.5，情绪类触发 conversation×1.5，学习类触发 learning×2.0，保持向后兼容
+- **`classifyQueryIntent` 的关键词覆盖范围**: 中文同义词要列全（如"进展/目标/工作/完成/派发/执行"都是任务类），否则常见问法触发不了正确 intent
+- **mock 必须导出新增常量**: `orchestrator-chat.js` import 了 `CHAT_TOKEN_BUDGET`，所有 mock `memory-retriever.js` 的测试文件（orchestrator-chat.test.js, orchestrator-chat-intent.test.js, cecelia-voice-retrieval.test.js）都必须在 mock 工厂里加 `CHAT_TOKEN_BUDGET: 2500`，否则 vitest 报 "No export defined"
+- **提前返回路径要带上新增 meta 字段**: `buildMemoryContext` 在无候选时有提前返回（injectedCount=0 && !profileSnippet），这条路径没有 `tokenBudget`/`intentType` 会导致测试 meta 字段为 undefined
+- **合并冲突 + 版本 bump 策略**: main 版本 1.141.1（别人的 PR），我们的 patch 从 1.140.0→1.140.1，合并后应取 1.141.2（而非 1.141.1+1=1.141.2），三处同步：package.json / .brain-versions / DEFINITION.md
+- **DoD Test 格式关键点**: 不用反引号包裹命令，不用 `- Test:` 前缀（直接 `  Test:`），用 `[x]` 标记已验证
+
 ### [2026-03-01] decomp SKILL.md known vs exploratory 明确判定规则 (PR #215, decomp v1.5.0)
 
 **背景**: SKILL.md 只有一句「不确定的先创建 exploratory」，没有判定标准，秋米完全靠感觉选模式，导致拆解质量不稳定。
