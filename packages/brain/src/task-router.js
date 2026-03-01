@@ -21,8 +21,8 @@ const SKILL_WHITELIST = {
   'review': '/code-review',
   'talk': '/cecelia',
   'data': '/sync-hk',
-  'qa': '/qa',
-  'audit': '/review',
+  'qa': '/code-review',
+  'audit': '/code-review',
   'research': '/exploratory',
   'codex_qa': '/codex',
   'code_review': '/code-review',
@@ -38,8 +38,8 @@ const FALLBACK_STRATEGIES = {
   // skill fallback: when skill not available, try alternative
   'skill': {
     'dev': 'talk',
-    'review': 'qa',
-    'code_review': 'review'
+    'review': 'code_review',
+    'code_review': 'dev'
   },
   // location fallback: when location not reachable, try alternative
   'location': {
