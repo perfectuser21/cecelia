@@ -8867,4 +8867,63 @@ export async function resolveRelatedFailureMemories(task_id, db) {
   console.log(`[closure] Resolved ${memIds.length} failure memories for task=${task_id} (keywords: ${keywords.join(',')})`);
 }
 
+/**
+ * GET /api/brain/learnings/stats
+ * Get learnings statistics for RNA KR progress calculation
+ */
+router.get('/learnings/stats', async (req, res) => {
+  try {
+    const { getAutoLearningStats } = await import('./auto-learning.js');
+
+    // Get auto-learning runtime stats
+    const runtimeStats = getAutoLearningStats();
+
+    // Get database stats
+    const totalResult = await pool.query('SELECT COUNT(*) as total FROM learnings');
+    const total = parseInt(totalResult.rows[0].total, 10);
+
+    const last7DaysResult = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM learnings
+      WHERE created_at > NOW() - INTERVAL '7 days'
+    `);
+    const last_7_days = parseInt(last7DaysResult.rows[0].count, 10);
+
+    const byCategoryResult = await pool.query(`
+      SELECT category, COUNT(*) as count
+      FROM learnings
+      WHERE created_at > NOW() - INTERVAL '7 days'
+      GROUP BY category
+      ORDER BY count DESC
+    `);
+    const by_category = Object.fromEntries(
+      byCategoryResult.rows.map(r => [r.category || 'unknown', parseInt(r.count, 10)])
+    );
+
+    const byTriggerResult = await pool.query(`
+      SELECT trigger_event, COUNT(*) as count
+      FROM learnings
+      WHERE created_at > NOW() - INTERVAL '7 days'
+      GROUP BY trigger_event
+      ORDER BY count DESC
+    `);
+    const by_trigger = Object.fromEntries(
+      byTriggerResult.rows.map(r => [r.trigger_event || 'unknown', parseInt(r.count, 10)])
+    );
+
+    // Return combined stats
+    res.json({
+      total,
+      last_7_days,
+      by_category,
+      by_trigger,
+      runtime: runtimeStats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[/learnings/stats] Error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch learnings stats' });
+  }
+});
+
 export default router;
