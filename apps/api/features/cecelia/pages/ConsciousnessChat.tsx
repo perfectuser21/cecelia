@@ -695,7 +695,7 @@ export default function ConsciousnessChat() {
             if (!trimmed.startsWith('data: ')) continue;
             const data = trimmed.slice(6);
             if (data === '[DONE]') {
-              updateMessage(streamingMsgId, { content: accumulated || '我还没想过这个。', isStreaming: false });
+              updateMessage(streamingMsgId, { content: accumulated || '…', isStreaming: false });
               setProcessingStage(null);
               break;
             }
