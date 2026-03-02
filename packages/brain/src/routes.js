@@ -9199,6 +9199,7 @@ async function getFeishuUserName(openId, accessToken) {
 
   // 从飞书 API 获取用户信息
   let name = null, en_name = null, user_id = 'guest', relationship = 'guest';
+  let apiSuccess = false;
   try {
     const resp = await fetch(
       `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
@@ -9206,6 +9207,7 @@ async function getFeishuUserName(openId, accessToken) {
     );
     const data = await resp.json();
     if (data.code === 0 && data.data?.user) {
+      apiSuccess = true;
       name = data.data.user.name || null;
       en_name = data.data.user.en_name || null;
       const isOwner = !!(name && (name.includes('徐啸') || (en_name && en_name.toLowerCase().includes('alex'))));
@@ -9218,9 +9220,26 @@ async function getFeishuUserName(openId, accessToken) {
          ON CONFLICT (open_id) DO UPDATE SET name=$2, en_name=$3, user_id=$4, relationship=$5, fetched_at=NOW()`,
         [openId, name, en_name, user_id, relationship]
       );
+    } else {
+      console.warn(`[feishu/event] 联系人 API 返回 code=${data.code}，尝试 staleCache 回退`);
     }
   } catch (err) {
     console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
+  }
+
+  // API 失败时，回退到任何历史缓存记录（ORDER BY fetched_at，忽略 TTL，比默认 guest 更可靠）
+  if (!apiSuccess) {
+    const staleCache = await pool.query(
+      `SELECT name, user_id, relationship FROM feishu_users WHERE open_id = $1 ORDER BY fetched_at DESC LIMIT 1`,
+      [openId]
+    ).catch(() => ({ rows: [] }));
+    if (staleCache.rows[0]) {
+      return {
+        name: staleCache.rows[0].name || '用户',
+        user_id: staleCache.rows[0].user_id || 'guest',
+        relationship: staleCache.rows[0].relationship || 'guest',
+      };
+    }
   }
 
   return { name: name || '用户', user_id, relationship };
@@ -9433,12 +9452,13 @@ router.post('/feishu/event', async (req, res) => {
           if (!decision.should_reply) return;
 
           // Step 2: 调 handleChat 生成有人格的回复（保持 Cecelia 特质，colleague 限工作话题）
-          const permPrefix = relationship === 'colleague'
-            ? '权限：同事，仅讨论工作相关话题'
-            : relationship === 'guest'
-              ? '权限：访客，仅基础帮助，不涉及公司/个人信息'
-              : '';
-          const modeAText = permPrefix ? `[群聊上下文：${permPrefix}] ${text}` : text;
+          const modeParts = [];
+          if (relationship === 'colleague') modeParts.push('权限：同事，仅讨论工作相关话题');
+          else if (relationship === 'guest') modeParts.push('权限：访客，仅基础帮助，不涉及公司/个人信息');
+          // Mode A 也注入群成员名单（memberNames 来自 getGroupMembers）
+          const modeAMemberNames = await getGroupMembers(message.chat_id, accessToken);
+          if (modeAMemberNames.length > 0) modeParts.push(`群成员包括 ${modeAMemberNames.join('、')}`);
+          const modeAText = modeParts.length > 0 ? `[群聊上下文：${modeParts.join('；')}] ${text}` : text;
           const modeAResult = await handleChat(modeAText, {
             source: 'feishu',
             sender_name: senderName,
