@@ -14,6 +14,10 @@
  * - M1 → 'Sonnet 7d 全满时升级 Opus'
  * - M2 → 'Sonnet+Opus 全满时降级 Haiku'
  * - M3 → 'Sonnet 可用时返回 model=sonnet'
+ * - P1 → 'markSpendingCap 触发 DB 写入（fire-and-forget）'
+ * - P2 → 'isSpendingCapped 过期时触发 DB 清除（fire-and-forget）'
+ * - P3 → 'loadSpendingCapsFromDB 恢复未过期记录到内存 Map'
+ * - P4 → 'loadSpendingCapsFromDB 忽略已过期记录'
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -352,5 +356,104 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result?.model).toBe('sonnet');
     expect(result?.accountId).toBe('account2');
+  });
+});
+
+// ============================================================
+// P: Spending Cap 持久化（DB 读写）
+// ============================================================
+describe('P: Spending Cap 持久化', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+  });
+
+  it('P1: markSpendingCap 同时写内存 Map 和 DB', async () => {
+    const { default: pool } = await import('../db.js');
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const { markSpendingCap, isSpendingCapped } = await import('../account-usage.js');
+    const resetTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    markSpendingCap('account1', resetTime);
+
+    // 内存状态立即更新
+    expect(isSpendingCapped('account1')).toBe(true);
+
+    // 等待 fire-and-forget 完成
+    await new Promise(r => setTimeout(r, 10));
+
+    // 验证 DB 写入被调用（INSERT/ON CONFLICT）
+    const dbCalls = pool.query.mock.calls;
+    const capWrite = dbCalls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('is_spending_capped') && sql.includes('INSERT')
+    );
+    expect(capWrite).toBeDefined();
+    expect(capWrite[1]).toContain('account1');
+    expect(capWrite[1]).toContain(resetTime);
+  });
+
+  it('P2: isSpendingCapped 过期时清除内存并触发 DB 清除', async () => {
+    const { default: pool } = await import('../db.js');
+    pool.query.mockResolvedValue({ rows: [] });
+
+    const { markSpendingCap, isSpendingCapped } = await import('../account-usage.js');
+    // 标记一个已过期时间
+    const pastTime = new Date(Date.now() - 1000).toISOString();
+    markSpendingCap('account2', pastTime);
+
+    pool.query.mockClear();
+
+    // 调用 isSpendingCapped，应自动清除并触发 DB 清除
+    const result = isSpendingCapped('account2');
+    expect(result).toBe(false);
+
+    await new Promise(r => setTimeout(r, 10));
+
+    // 验证 DB 清除被调用（UPDATE SET is_spending_capped = false）
+    const dbCalls = pool.query.mock.calls;
+    const capClear = dbCalls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes('is_spending_capped') && sql.includes('UPDATE')
+    );
+    expect(capClear).toBeDefined();
+    expect(capClear[1]).toContain('account2');
+  });
+
+  it('P3: loadSpendingCapsFromDB 恢复未过期记录到内存 Map', async () => {
+    const { default: pool } = await import('../db.js');
+    const futureTime = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    pool.query.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('is_spending_capped = true')) {
+        return Promise.resolve({
+          rows: [{ account_id: 'account1', spending_cap_resets_at: futureTime }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { loadSpendingCapsFromDB, isSpendingCapped } = await import('../account-usage.js');
+    await loadSpendingCapsFromDB();
+
+    // 恢复后内存 Map 中 account1 应处于 capped 状态
+    expect(isSpendingCapped('account1')).toBe(true);
+  });
+
+  it('P4: loadSpendingCapsFromDB 忽略已过期记录（DB 侧 WHERE 过滤）', async () => {
+    const { default: pool } = await import('../db.js');
+    // DB 只返回 spending_cap_resets_at > NOW() 的记录
+    pool.query.mockImplementation((sql) => {
+      if (typeof sql === 'string' && sql.includes('is_spending_capped = true')) {
+        // 模拟 DB 已过滤：返回空（过期记录被 WHERE 排除）
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { loadSpendingCapsFromDB, isSpendingCapped } = await import('../account-usage.js');
+    await loadSpendingCapsFromDB();
+
+    // 无有效记录，账号不应被 cap
+    expect(isSpendingCapped('account1')).toBe(false);
+    expect(isSpendingCapped('account2')).toBe(false);
+    expect(isSpendingCapped('account3')).toBe(false);
   });
 });
