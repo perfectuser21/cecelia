@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 欲望系统升维 + CI runner 迁移 (PR #261, Brain v1.144.0)
+
+**背景**: Cecelia 的 Desire 系统是"工作焦虑系统"，所有信号来自任务/KR。本 PR 扩充灵魂维度：SELF_MODEL_SEED 加工作外身份、perception.js 新增3个非工作信号、rumination.js 闭合自我写回路径。同时解决 Brain CI 从 HK VPS 迁回 GitHub Actions。
+
+- **HK VPS production PostgreSQL 永久占用 5432**: 即使改 CI 端口为 5433，Docker 服务容器内部仍在 5432，但 `vi.stubEnv('DB_PORT', '5432')` 等测试污染导致某些测试连接错误端口后鉴权失败。最终解决方案：brain-ci.yml 改回 `ubuntu-latest`，GitHub Actions 提供干净的虚拟机，没有端口冲突
+- **DoD Test 格式必须紧接 checkbox（lines[i+1]）**: `check-dod-mapping.cjs` 解析器严格要求 `Test:` 行在 checkbox 行的 **紧邻下一行**（`lines[i+1]`），不能有中间行。旧格式把 description 子项放在 Test 前会被解析为"缺少 Test 字段"。正确格式：`- [x] **标题**` → 下一行 `  Test: manual:...` → 再下面才是 description 子项
+- **brain-ci.yml version-check 用 jq**: HK VPS 没有 jq，改用 `node -e "process.stdout.write(require('...').version)"` 可兼容任何 Node.js 环境；但改回 ubuntu-latest 后 jq 自带，不再需要特殊处理
+- **rumination selfReflectPrompt 扩展无需改 DB**: 反刍 prompt 里新增好奇心/审美/存在维度，不影响 `rumination_results` 表结构，只要 `self_updates` 字段的 JSON 包含新键即可，updateSelfModel 会自动 merge patch
+- **updateSelfModel 幂等性**: `self-model.js` 的 `updateSelfModel(insight)` 做 JSON merge，相同 key 会覆盖，新 key 会追加，不会产生重复记录，可以安全地在 rumination 每次运行后调用
+
 ### [2026-03-02] 飞书语音下载 URL fix + HK VPS CI 环境修复 (PR #262, Brain v1.143.5)
 
 **背景**: 飞书语音消息 Bot 发送语音后 Cecelia 一直返回「抱歉没听清楚」，根因是下载语音资源时用了 `?type=file`，正确应为 `?type=audio`。同时本 PR 修复了 HK VPS self-hosted runner 上 Brain CI 的三个基础设施问题。
