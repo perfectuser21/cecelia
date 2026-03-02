@@ -4,6 +4,30 @@
 
 ---
 
+### [2026-03-02] 任务派发优先级动态调整机制 v1.157.0
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**新增功能**：
+1. `task-weight.js`：综合权重计算系统（priority + queued_at 等待时长 + retry_count + task_type 调整）
+2. `tick.js selectNextDispatchableTask`：在 DB 查询结果上应用 `sortTasksByWeight()`，权重排序不改 SQL（向后兼容）
+3. `task-cleanup.js`：`runTaskCleanup()` 清理 >24h queued 的 recurring 任务，归档 >30天 paused 任务
+4. `routes.js`：新增 `/api/brain/dispatch/weights`、`/dispatch/stats`、`/dispatch/cleanup` 三个端点
+
+**架构设计决策**：
+- **权重排序在应用层而非 SQL 层**：DB 仍按 priority+created_at 排序作为粗排，JS 层用 `sortTasksByWeight()` 精排。
+  好处：可以用 JS Date 对象做实时等待时长计算，不需要 SQL EXTRACT，也不需要数据库函数。
+- **getDispatchStats 命名冲突**：已有 `dispatch-stats.js` 使用 `getDispatchStats` 名称（追踪成功率），
+  我们的清理统计改名为 `getCleanupStats` 避免混淆。命名选择要先检查 imports。
+- **task-cleanup.js 使用 mock DB 测试**：传入 pg Pool 接口的 mock 对象，避免真实 DB 依赖，测试更快更稳定。
+
+**影响程度**: Low（CI 一次通过，流程顺畅）
+**预防措施**：
+- 新增功能前先搜索同名导出（`grep -r "getDispatchStats" src/`）避免命名冲突
+- task-weight.js 这类纯函数工具库适合完全 mock-free 单元测试（无 DB、无 LLM 依赖）
+
+---
+
 ### [2026-03-02] Spending Cap 账号级标记 + Sonnet→Opus→Haiku 降级链 (v1.144.2)
 
 **变更**：
