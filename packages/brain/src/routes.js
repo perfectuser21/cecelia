@@ -9143,33 +9143,38 @@ async function getFeishuUserName(openId, accessToken) {
   return { name: name || openId, user_id, relationship };
 }
 
-/** 语音消息转文字（飞书原生 ASR，支持 ≤60s） */
+/** 语音消息转文字（OpenAI Whisper，支持 ≤60s） */
 async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
-  // 1. 下载音频文件
+  // 1. 下载音频文件（飞书资源 API type 只支持 image/file）
+  const dlUrl = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`;
+  console.log(`[feishu/audio] 下载音频: ${dlUrl}`);
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=audio`,
+    dlUrl,
     { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
   );
-  if (!dlResp.ok) throw new Error(`音频下载失败: ${dlResp.status}`);
+  if (!dlResp.ok) {
+    const errText = await dlResp.text().catch(() => '');
+    throw new Error(`音频下载失败: ${dlResp.status} ${errText.slice(0, 200)}`);
+  }
   const audioBuffer = await dlResp.arrayBuffer();
-  const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+  console.log(`[feishu/audio] 下载成功，大小: ${audioBuffer.byteLength} bytes`);
 
-  // 2. 调用飞书 ASR
-  const asrResp = await fetch(
-    'https://open.feishu.cn/open-apis/speech_to_text/v1/speech/file_recognize',
-    {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        speech: { speech: audioBase64 },
-        config: { file_id: fileKey, format: 'opus', engine_type: '16k_auto' },
-      }),
-      signal: AbortSignal.timeout(15000),
-    }
-  );
-  const asrData = await asrResp.json();
-  if (asrData.code !== 0) throw new Error(`ASR 失败: ${asrData.msg}`);
-  return asrData.data?.recognition_text || '';
+  // 2. 调用 OpenAI Whisper（飞书 App 未开通 speech_to_text:speech 权限）
+  const formData = new FormData();
+  formData.append('file', new Blob([audioBuffer], { type: 'audio/ogg' }), 'audio.ogg');
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'zh');
+
+  const whisperResp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+    body: formData,
+    signal: AbortSignal.timeout(30000),
+  });
+  const whisperData = await whisperResp.json();
+  if (!whisperResp.ok) throw new Error(`Whisper 失败: ${whisperData.error?.message || whisperResp.status}`);
+  console.log(`[feishu/audio] Whisper 识别结果: "${whisperData.text}"`);
+  return whisperData.text || '';
 }
 
 /** 加载该用户最近 N 轮对话（作为 messages[]） */
