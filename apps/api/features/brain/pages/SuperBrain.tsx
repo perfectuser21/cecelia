@@ -75,12 +75,32 @@ interface ManifestIssue {
   affected: string[];
 }
 
+interface ManifestAction {
+  name: string;
+  description: string;
+  dangerous: boolean;
+}
+
+interface ManifestSignal {
+  name: string;
+}
+
+interface ManifestSkill {
+  taskType: string;
+  skill: string | null;
+}
+
 interface ManifestData {
   version: string;
   blocks: ManifestBlock[];
   blockConnections: BlockConnection[];
   brokenConnections?: BrokenConnection[];
   issues?: ManifestIssue[];
+  allActions?: Record<string, { description: string; dangerous: boolean }>;
+  allSignals?: string[];
+  allSkills?: Record<string, string | null>;
+  skillWhitelist?: Record<string, string>;
+  generatedAt?: string;
 }
 
 interface PerceptionSignal {
@@ -421,6 +441,261 @@ function DetailPanel({ subsystem }: { subsystem: Subsystem | null }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ============== Level 2 节点钻取面板 ==============
+interface NodeDrillPanelProps {
+  nodeId: string | null;
+  manifest: ManifestData | null;
+  subsystems: Subsystem[];
+  onClose: () => void;
+}
+
+function NodeDrillPanel({ nodeId, manifest, subsystems, onClose }: NodeDrillPanelProps) {
+  if (!nodeId) return null;
+
+  // 从 manifest 中找到对应模块
+  let module: ManifestModule | undefined;
+  let blockColor: string = '#6b7280';
+  if (manifest) {
+    for (const block of manifest.blocks) {
+      const found = block.modules.find(m => m.id === nodeId);
+      if (found) {
+        module = found;
+        blockColor = block.color;
+        break;
+      }
+    }
+  }
+
+  const subsystem = subsystems.find(s => s.id === nodeId);
+  const natureBadge = module?.nature ? NATURE_BADGE[module.nature] : '';
+  const sc = STATUS_COLORS[subsystem?.status || 'dormant'];
+
+  // 从 manifest 中读取 thalamus actions / perception_signals signals / executor skills
+  const actions: ManifestAction[] = (module as (ManifestModule & { actions?: ManifestAction[] }))?.actions || [];
+  const signals: ManifestSignal[] = (module as (ManifestModule & { signals?: ManifestSignal[] }))?.signals || [];
+  const skills: ManifestSkill[] = (module as (ManifestModule & { skills?: ManifestSkill[] }))?.skills || [];
+
+  return (
+    <div style={{
+      padding: '16px 20px',
+      background: 'rgba(255,255,255,0.03)',
+      borderRadius: 12,
+      border: `1px solid ${blockColor}40`,
+      position: 'relative',
+    }}>
+      {/* 关闭按钮 */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'absolute', right: 14, top: 14,
+          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 6, padding: '3px 8px', cursor: 'pointer',
+          color: '#9ca3af', fontSize: 11,
+        }}
+      >
+        ✕ 关闭
+      </button>
+
+      {/* 标题区 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <span style={{
+          display: 'inline-block', width: 12, height: 12, borderRadius: '50%',
+          background: sc, flexShrink: 0,
+        }} />
+        <span style={{ color: '#f3f4f6', fontSize: 16, fontWeight: 700 }}>
+          {module?.label || nodeId}
+        </span>
+        {natureBadge && (
+          <span style={{ fontSize: 14 }}>{natureBadge}</span>
+        )}
+        {subsystem && (
+          <span style={{
+            padding: '2px 8px', borderRadius: 4, fontSize: 10,
+            background: `${sc}20`, color: sc,
+          }}>
+            {subsystem.status}
+          </span>
+        )}
+        <span style={{
+          marginLeft: 'auto', color: '#4b5563', fontSize: 11, fontFamily: 'monospace',
+        }}>
+          {nodeId}
+        </span>
+      </div>
+
+      {/* 描述 */}
+      {module?.desc && (
+        <div style={{
+          color: '#9ca3af', fontSize: 12, marginBottom: 14, lineHeight: 1.5,
+          padding: '8px 12px', background: 'rgba(255,255,255,0.02)',
+          borderRadius: 6, borderLeft: `3px solid ${blockColor}60`,
+        }}>
+          {module.desc}
+        </div>
+      )}
+
+      {/* 基础指标 */}
+      <div style={{ display: 'flex', gap: 24, marginBottom: 14, flexWrap: 'wrap' }}>
+        {subsystem && (
+          <>
+            <div>
+              <span style={{ color: '#6b7280', fontSize: 11 }}>今日次数 </span>
+              <span style={{ color: '#d1d5db', fontSize: 13, fontWeight: 600 }}>
+                {subsystem.metrics.today_count?.toLocaleString() ?? '—'}
+              </span>
+            </div>
+            {subsystem.metrics.last_active_at && (
+              <div>
+                <span style={{ color: '#6b7280', fontSize: 11 }}>最后活跃 </span>
+                <span style={{ color: '#d1d5db', fontSize: 13 }}>
+                  {new Date(subsystem.metrics.last_active_at).toLocaleTimeString('zh-CN')}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+        {module?.file && (
+          <div>
+            <span style={{ color: '#6b7280', fontSize: 11 }}>实现文件 </span>
+            <span style={{
+              color: '#60a5fa', fontSize: 11, fontFamily: 'monospace',
+              padding: '1px 6px', background: 'rgba(96,165,250,0.1)',
+              borderRadius: 4, border: '1px solid rgba(96,165,250,0.2)',
+            }}>
+              src/{module.file}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* 动作列表（仅 thalamus 有）*/}
+      {actions.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            color: '#d1d5db', fontSize: 12, fontWeight: 600, marginBottom: 8,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span>动作白名单</span>
+            <span style={{
+              padding: '1px 7px', borderRadius: 10, fontSize: 10,
+              background: 'rgba(34,197,94,0.15)', color: '#22c55e',
+              border: '1px solid rgba(34,197,94,0.3)',
+            }}>
+              {actions.length}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 5 }}>
+            {actions.map(a => (
+              <div key={a.name} style={{
+                padding: '6px 10px',
+                background: 'rgba(255,255,255,0.025)',
+                borderRadius: 6,
+                border: `1px solid ${a.dangerous ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.07)'}`,
+                display: 'flex', alignItems: 'flex-start', gap: 8,
+              }}>
+                <span style={{
+                  color: a.dangerous ? '#ef4444' : '#6b7280',
+                  fontSize: 12, flexShrink: 0, marginTop: 1,
+                }}>
+                  {a.dangerous ? '🔴' : '●'}
+                </span>
+                <div>
+                  <div style={{ color: '#d1d5db', fontSize: 11, fontFamily: 'monospace', fontWeight: 500 }}>
+                    {a.name}
+                  </div>
+                  <div style={{ color: '#6b7280', fontSize: 10, marginTop: 1 }}>
+                    {a.description}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 信号列表（仅 perception_signals 有）*/}
+      {signals.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            color: '#d1d5db', fontSize: 12, fontWeight: 600, marginBottom: 8,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span>感知信号</span>
+            <span style={{
+              padding: '1px 7px', borderRadius: 10, fontSize: 10,
+              background: 'rgba(99,102,241,0.15)', color: '#818cf8',
+              border: '1px solid rgba(99,102,241,0.3)',
+            }}>
+              {signals.length}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {signals.map(s => (
+              <span key={s.name} style={{
+                padding: '3px 10px', borderRadius: 12, fontSize: 11,
+                fontFamily: 'monospace',
+                background: 'rgba(99,102,241,0.1)',
+                color: '#a5b4fc',
+                border: '1px solid rgba(99,102,241,0.25)',
+              }}>
+                {s.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 技能映射（仅 executor 有）*/}
+      {skills.length > 0 && (
+        <div>
+          <div style={{
+            color: '#d1d5db', fontSize: 12, fontWeight: 600, marginBottom: 8,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span>技能映射</span>
+            <span style={{
+              padding: '1px 7px', borderRadius: 10, fontSize: 10,
+              background: 'rgba(249,115,22,0.15)', color: '#fb923c',
+              border: '1px solid rgba(249,115,22,0.3)',
+            }}>
+              {skills.length}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 5 }}>
+            {skills.map(s => (
+              <div key={s.taskType} style={{
+                padding: '5px 10px',
+                background: 'rgba(255,255,255,0.025)',
+                borderRadius: 6,
+                border: '1px solid rgba(255,255,255,0.07)',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ color: '#fb923c', fontSize: 11, fontFamily: 'monospace', flex: 1 }}>
+                  {s.taskType}
+                </span>
+                <span style={{ color: '#4b5563', fontSize: 10 }}>→</span>
+                <span style={{
+                  color: s.skill ? '#60a5fa' : '#4b5563',
+                  fontSize: 11, fontFamily: 'monospace',
+                }}>
+                  {s.skill || 'null'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 如果什么额外信息都没有 */}
+      {actions.length === 0 && signals.length === 0 && skills.length === 0 && (
+        <div style={{ color: '#4b5563', fontSize: 12, padding: '8px 0' }}>
+          该模块暂无扫描到的动作/信号/技能数据
+        </div>
+      )}
     </div>
   );
 }
@@ -1176,10 +1451,17 @@ export default function SuperBrain() {
             </div>
           )}
 
-          {/* 节点详情面板 */}
-          <div style={{ marginTop: 12 }}>
-            <DetailPanel subsystem={selectedSubsystem} />
-          </div>
+          {/* 节点钻取面板 */}
+          {selected && (
+            <div style={{ marginTop: 12 }}>
+              <NodeDrillPanel
+                nodeId={selected}
+                manifest={manifest}
+                subsystems={data?.subsystems || []}
+                onClose={() => setSelected(null)}
+              />
+            </div>
+          )}
         </>
       )}
     </div>

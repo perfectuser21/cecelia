@@ -101,6 +101,29 @@ jobs:
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
 
+  manifest-sync:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    name: Manifest Sync Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install brain dependencies
+        working-directory: packages/brain
+        run: npm ci
+
+      - name: Check manifest is in sync with source
+        run: node packages/brain/scripts/generate-manifest.mjs --check
+
   brain-test:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
@@ -158,7 +181,7 @@ jobs:
         run: bash scripts/goldenpath-check.sh
 
   ci-passed:
-    needs: [changes, version-check, facts-check, brain-test]
+    needs: [changes, version-check, facts-check, manifest-sync, brain-test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -178,6 +201,11 @@ jobs:
 
           if [ "${{ needs.facts-check.result }}" != "success" ]; then
             echo "FAIL: Facts Consistency (${{ needs.facts-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.manifest-sync.result }}" != "success" ]; then
+            echo "FAIL: Manifest Sync (${{ needs.manifest-sync.result }})"
             FAILED=true
           fi
 
