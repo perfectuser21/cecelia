@@ -4,6 +4,40 @@
 
 ---
 
+### [2026-03-02] 僵尸 Worktree 安全漏洞修复 (v12.35.6)
+
+**问题**：
+已合并分支的 worktree（僵尸 worktree）可绕过 /dev，直接写代码。原因：
+1. 旧 PRD/DoD 文件仍存在（gitignored，hook 找得到）
+2. 分支名格式有效（cp-* regex 通过）
+3. IS_WORKTREE=true（worktree 检测通过）
+→ 所有检查全部放行，不需要运行 /dev
+
+**根本原因**：11 个僵尸 worktree 长期未清理，每个都是现成的"快捷通道"。
+
+**修复（branch-protect.sh v22）**：
+```bash
+# worktree 检测之后，PRD/DoD 检查之前插入：
+COMMITS_AHEAD=$(git log "origin/main..${CURRENT_BRANCH}" --oneline | wc -l)
+if [[ $COMMITS_AHEAD -eq 0 ]]; then
+    REMOTE=$(git ls-remote --heads origin "$CURRENT_BRANCH" 2>/dev/null || echo "FETCH_FAILED")
+    if [[ "$REMOTE" != "FETCH_FAILED" && -n "$REMOTE" ]]; then
+        # 已推送 + 0 ahead = 已合并，阻止
+        exit 2
+    fi
+    # 未推送 = 新分支，放行 | 离线 = 放行
+fi
+```
+
+**注意**：`grep -c . || echo "?"` 的陷阱 — `grep -c` 匹配 0 条时 exit code=1，触发 `||`，
+导致变量同时包含"0"和"?"两段内容。应用 `wc -l` 替代（不会因 0 匹配而非零退出）。
+
+**附带修复**：
+- `known-failures.json` 修改需要 PR 标题含 `[INFRA]` tag（Engine CI 强制规则）
+- 手动触发 CI（`gh workflow run`）不计入 PR required checks，必须通过 push 触发
+
+---
+
 ### [2026-03-02] Spending Cap 账号级标记 + Sonnet→Opus→Haiku 降级链 (v1.144.2)
 
 **变更**：
