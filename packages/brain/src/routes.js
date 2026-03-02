@@ -22,7 +22,7 @@ async function getRecentDecisions(limit = 10) {
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
-import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP } from './task-router.js';
+import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from './task-router.js';
 import { getTaskWeights } from './task-weight.js';
 import { getCleanupStats, runTaskCleanup } from './task-cleanup.js';
 import {
@@ -4408,6 +4408,57 @@ router.post('/plan/next', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/planner/initiatives-without-tasks
+ * 监控端点：返回所有有 active Initiative 但无 queued/in_progress Task 的 KR 及其 Initiative 列表
+ */
+router.get('/planner/initiatives-without-tasks', async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        kr.id AS kr_id,
+        kr.title AS kr_title,
+        kr.priority AS kr_priority,
+        kr.progress AS kr_progress,
+        kr.status AS kr_status,
+        parent_proj.id AS project_id,
+        parent_proj.name AS project_name,
+        json_agg(json_build_object(
+          'id', initiative.id,
+          'name', initiative.name,
+          'status', initiative.status,
+          'created_at', initiative.created_at
+        ) ORDER BY initiative.created_at ASC) AS initiatives_needing_planning
+      FROM project_kr_links pkl
+      INNER JOIN goals kr ON kr.id = pkl.kr_id AND kr.status NOT IN ('completed', 'cancelled')
+      INNER JOIN projects parent_proj ON pkl.project_id = parent_proj.id AND parent_proj.status = 'active'
+      INNER JOIN projects initiative
+        ON initiative.parent_id = parent_proj.id
+        AND initiative.type = 'initiative'
+        AND initiative.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.project_id = initiative.id
+            AND t.status IN ('queued', 'in_progress')
+        )
+      GROUP BY kr.id, kr.title, kr.priority, kr.progress, kr.status, parent_proj.id, parent_proj.name
+      ORDER BY CASE kr.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, kr.id
+    `);
+
+    res.json({
+      success: true,
+      count: result.rows.length,
+      krs_with_unplanned_initiatives: result.rows
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to query initiatives without tasks',
+      details: err.message
+    });
+  }
+});
+
 // ==================== Work Streams API ====================
 
 /**
@@ -5113,6 +5164,37 @@ router.post('/route-task-create', (req, res) => {
     res.json({ success: true, ...routing });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to route task create', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/task-router/diagnose/:kr_id
+ * Diagnose task dispatch status for a specific KR
+ *
+ * Returns a detailed diagnosis:
+ * - KR info (title, status, priority, progress)
+ * - All Projects → Initiatives → Tasks hierarchy
+ * - Dispatch blockers (reasons why tasks are not being queued/dispatched)
+ * - Per-initiative task counts and recent task list with routing info
+ */
+router.get('/task-router/diagnose/:kr_id', async (req, res) => {
+  try {
+    const { kr_id } = req.params;
+
+    if (!kr_id) {
+      return res.status(400).json({ success: false, error: 'kr_id is required' });
+    }
+
+    const diagnosis = await diagnoseKR(kr_id, pool);
+
+    if (!diagnosis) {
+      return res.status(404).json({ success: false, error: `KR not found: ${kr_id}` });
+    }
+
+    res.json({ success: true, ...diagnosis });
+  } catch (err) {
+    console.error(`[task-router/diagnose] error: ${err.message}`);
+    res.status(500).json({ success: false, error: 'Failed to diagnose KR', details: err.message });
   }
 });
 
