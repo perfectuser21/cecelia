@@ -9525,6 +9525,8 @@ router.post('/feishu/event', async (req, res) => {
       let enrichedText = text;
       if (chatType === 'group') {
         const parts = [];
+        // 始终注入发送者姓名，让 LLM 知道"我是谁"的回答对象
+        parts.push(`发送者：${senderName}`);
         // 权限控制（colleague 限工作话题，guest 限基础帮助）
         if (relationship === 'colleague') parts.push('权限：同事，仅讨论工作相关话题');
         else if (relationship === 'guest') parts.push('权限：访客，仅基础帮助，不涉及公司/个人信息');
