@@ -4,6 +4,25 @@
 
 ---
 
+### [2026-03-02] 飞书群聊身份识别 — getGroupMembers 作为 feishu_users 填充源 (v1.149.1)
+
+**问题**：`contact/v3/users/{openId}` API 需要 `contact:user:readonly` scope（code=99991672），Feishu bot 没有此权限，导致 feishu_users 表始终为空，所有群成员被识别为 guest。
+
+**根本修复**：
+1. `getGroupMembers` (`/im/v1/chats/{chat_id}/members`) 作为**主要身份信息来源**——该 API 有效且无需额外权限
+2. 每次调用 `getGroupMembers` 时，将成员 `{member_id, name}` 写入 `feishu_users`（owner=徐啸/Alex，其余=colleague）
+3. 群消息处理流程：先 `getGroupMembers`（填充 DB），再 `getFeishuUserName`（DB staleCache 命中）
+
+**memory_type 踩坑**：`memory_stream` 的 CHECK 约束只允许 `short/mid/long`，不允许 `observation`。群聊相关记忆写入用 `'short'`。
+
+**DoD 格式踩坑**（check-dod-mapping.cjs）：
+- Test 字段必须是 `  Test:` 无 dash（`  - Test:` 不被解析）
+- 禁止在 test 命令中使用 `echo`（detectFakeTest 拦截）
+- `manual:bash -c "..."` 需包含 `bash` 关键词才被识别为 inline command
+- 所有验收项完成后需标记为 `- [x]`
+
+---
+
 ### [2026-03-02] Spending Cap 账号级标记 + Sonnet→Opus→Haiku 降级链 (v1.144.2)
 
 **变更**：
