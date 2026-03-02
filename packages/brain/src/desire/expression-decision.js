@@ -10,13 +10,14 @@
 const EXPRESSION_THRESHOLD = 0.35;
 
 /**
- * 计算综合表达评分（简化版，聚焦紧急度和沉默时长）
+ * 计算综合表达评分（聚焦紧急度、沉默时长和历史效能）
  * @param {Object} desire - desires 表记录
  * @param {number} hoursSinceExpression - 距上次表达的小时数
  * @param {boolean} userOnline - 用户是否在线
+ * @param {number|undefined} avgEffectiveness - 同类欲望的历史平均效能（0-10），undefined 表示无历史
  * @returns {number} 0-1 评分
  */
-function calculateExpressionScore(desire, hoursSinceExpression, userOnline = false) {
+function calculateExpressionScore(desire, hoursSinceExpression, userOnline = false, avgEffectiveness = undefined) {
   // urgency 权重 40%
   const urgencyScore = (desire.urgency / 10) * 0.40;
 
@@ -41,6 +42,12 @@ function calculateExpressionScore(desire, hoursSinceExpression, userOnline = fal
 
   // 用户在线加分（Break 5：Alex 在时更主动）
   if (userOnline) score += 0.15;
+
+  // P0-B：历史效能加权（效能低降权 -0.1，效能高加权 +0.1）
+  if (avgEffectiveness !== undefined) {
+    if (avgEffectiveness < 4) score -= 0.10;
+    else if (avgEffectiveness > 7) score += 0.10;
+  }
 
   return Math.min(score, 1.0);
 }
@@ -104,12 +111,29 @@ export async function runExpressionDecision(pool) {
     return { desire: actDesire, score: 1.0 };
   }
 
+  // P0-B：查询各类型欲望的历史平均效能（近 7 天）
+  const typeEffectiveness = {};
+  try {
+    const { rows: effRows } = await pool.query(`
+      SELECT type, AVG(effectiveness_score) AS avg_score
+      FROM desires
+      WHERE effectiveness_score IS NOT NULL
+        AND completed_at > NOW() - INTERVAL '7 days'
+      GROUP BY type
+    `);
+    for (const row of effRows) {
+      typeEffectiveness[row.type] = parseFloat(row.avg_score);
+    }
+  } catch (err) {
+    console.error('[expression-decision] effectiveness query error:', err.message);
+  }
+
   // 为每个 desire 计算评分，选最高分
   let best = null;
   let bestScore = 0;
 
   for (const desire of desires) {
-    const score = calculateExpressionScore(desire, hoursSinceExpression, userOnline);
+    const score = calculateExpressionScore(desire, hoursSinceExpression, userOnline, typeEffectiveness[desire.type]);
     if (score > bestScore) {
       bestScore = score;
       best = desire;

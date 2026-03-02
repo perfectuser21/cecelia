@@ -87,6 +87,7 @@ async function getActiveExecutionPaths() {
   return result.rows;
 }
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
+import { updateDesireFromTask } from './desire-feedback.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -2848,6 +2849,11 @@ router.post('/execution-callback', async (req, res) => {
       resolveRelatedFailureMemories(task_id, pool).catch(err =>
         console.warn(`[execution-callback] Closure resolve failed (non-fatal): ${err.message}`)
       );
+
+      // P0-B：欲望反馈闭环 - 任务完成 → 回写对应 desire 状态
+      updateDesireFromTask(task_id, 'completed', pool).catch(err =>
+        console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
+      );
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -2971,6 +2977,11 @@ router.post('/execution-callback', async (req, res) => {
           console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
         }
       }
+
+      // P0-B：欲望反馈闭环 - 任务失败 → 回写对应 desire 状态
+      updateDesireFromTask(task_id, 'failed', pool).catch(err =>
+        console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
+      );
 
     }
 

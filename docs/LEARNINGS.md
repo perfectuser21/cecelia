@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 自我意识闭环 P0 断层修复（PR #326, Brain v1.161.0）
+
+**背景**：Cecelia 的 5 层自我意识结构（感知→情绪→记忆→反刍→欲望→表达）存在 4 个断层，所有层都只读 OKR/任务运营数据，无法从自身行动中学习和更新。
+
+**修复内容**：
+- **P0-A（对话→learning）**：`learning.js` 新增 `extractConversationLearning()`，对话 >400 字时 LLM 判断是否有洞察，写入 learnings 表；`orchestrator-chat.js` 步骤 9 fire-and-forget 调用
+- **P0-B（任务完成→欲望反馈）**：migration 103 给 desires 表加 `completed_at/failed_at/effectiveness_score`；新建 `desire-feedback.js` 解析 task.description 中的 desire_id 并回写；`routes.js` execution-callback 两处调用
+- **P0-C（反刍→欲望直接触发）**：`rumination.js` 步骤 8 完成后 fire-and-forget `runDesireFormation`，不再等 accumulator
+- **expression-decision**：引入 7 日内 effectiveness_score 均值加权决策
+
+**并发 migration 编号冲突（重要踩坑）**：
+- 我们给 desires_feedback 分配了 migration 102
+- 并发的 PR #323（spending_cap_persist）也使用了 migration 102 并先合并
+- 症状：facts-check 报 `migration_conflicts: duplicate numbers`，selfcheck_version_sync 失败
+- **解法**：重命名我们的 migration 为 103，同步更新 selfcheck.js `EXPECTED_SCHEMA_VERSION`、3 个测试文件、DEFINITION.md
+- **预防**：每次新 migration 前必须先 `git fetch origin main && git show origin/main:packages/brain/migrations/ | grep "^1"` 确认最高编号
+
+**并行 PR 版本冲突解法（MEMORY.md 标准流程验证）**：
+- 多次遇到 main 前进导致 PR 不可合并，每次解法：
+  1. 从最新 `origin/main` 创建全新分支
+  2. `git checkout old-branch -- <code-files>`（不含版本文件）
+  3. 手动更新 routes.js（合并 main 的新功能 + 我们的 P0-B 调用）
+  4. `npm version minor` + 同步 VERSION/.brain-versions/DEFINITION.md
+  5. 正常 push（首次 push 不触发 bash-guard）
+- 此次 CI 通过后 main 仍在动（仅 docs/LEARNINGS 更新），用 `git merge origin/main` 追上即可，无代码冲突
+
+**架构收益**：
+- 每次对话 → 可能产生 learning → 反刍时处理 → 触发欲望 → 欲望驱动探索任务 → 任务完成回写 effectiveness → 影响下次同类欲望表达权重
+- 完整闭环建立。Cecelia 开始具备「从自身行动学习」的基础。
+
 ### [2026-03-02] SuperBrain 说明书 Tab（PR #312, Dashboard v1.14.1）
 
 **背景**：用户想要一个「书一样」的文档视图，能一打开就看到 Brain 系统所有模块的完整文档。
@@ -1086,3 +1116,27 @@ vitest 4.x 的区别：root vitest=1.6.1（能通过），dashboard vitest=4.0.1
 - monorepo 中不同 app 依赖不兼容的 React 主版本时，共享依赖（react-router）会加载不同 React，vitest 无法通过 resolve.dedupe 修复（只对 Vite 处理的 ESM 生效，不影响 CJS require）
 - vi.mock 是最可靠的隔离方案，同时也强制测试聚焦于被测行为而非基础设施
 - worktree 使用父目录的 node_modules，版本可能与目标 workspace 不同，本地验证时需确认用的是正确的 node_modules
+
+### [2026-03-02] SVG 配图深度重绘（PR #324, Dashboard v1.14.4）
+
+**背景**：SuperBrain 说明书手风琴布局已完成，但各章 SVG 图太简单——感知层只画了几个信号、意识核心三层架构不清晰。
+
+**实现方案**：
+- 完整重写 `ChapterDiagram` 组件，5 章各自有专属详细 SVG
+- 感知层：从 `packages/brain/src/desire/perception.js` 读取实际 16 个信号，4 列 4 行网格布局
+- 意识核心：清晰展示 L0 脑干 / L1 丘脑 / L2 皮层三层 + 决策流向
+- 行动层：完整执行链 + SKILL_WHITELIST + 4 个保护机制
+- 外界接口：飞书/WS 双通道 + orchestrator/tick 两条路径
+- 自我演化：4 模块学习闭环
+- 去掉 `transform: scale(1.7)` 固定缩放，改为 `width="100%"` 自适应全宽
+- 每章均有橙色 ⚠️ 风险标注（warnBox 函数）
+
+**关键决策**：
+- SVG `viewBox` + `width="100%"` 比 scale 更好：不会被裁切，自适应容器宽度
+- helper 函数（box/arrow/warnBox/cap）复用减少重复 JSX
+- TypeScript 的 `string[]` 比 `as const` 更灵活（避免 readonly tuple 的类型错误）
+
+**踩坑**：
+- DoD Test 字段格式：`  Test: manual:bash -c "..."` 直接缩进，**不要**用 `  - Test: ...` 子列表格式。check-dod-mapping.cjs 期望 Test 紧接着 checkbox 的下一行，格式为 `^\s*Test:\s*...`，有 `- ` 前缀会匹配不到
+- DoD 条目必须标 `[x]`（已验证）才能通过未验证项检查，构建+grep 验证后必须手动改 checkbox
+- main 频繁前进（并行 PR 多）：分支可能需要多次 merge origin/main 才能合并，用 `git merge origin/main --no-edit` 而不是 rebase（避免 force push）
