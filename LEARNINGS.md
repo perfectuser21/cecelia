@@ -4,6 +4,32 @@
 
 ---
 
+### [2026-03-02] 增强 Planner 识别有 Initiative 无 Task 的 KR v1.158.1
+
+**失败统计**：CI 失败 1 次（版本冲突），本地测试失败 0 次
+
+**新增功能**：
+1. `getGlobalState()`：新增第 7 个并行查询，找出有 active Initiative 但无 queued Task 的 KR，返回 `initiativeKRIds` Set
+2. `scoreKRs()`：增加 `initiativeKRIds` 参数（默认 `new Set()`，向后兼容），无 queued task 但有 initiative → score += 15
+3. `selectTargetProject()`：新增 `initiativeCountByProject` 统计，无 queued task 但有 initiative 子项目 → +30 分
+4. `generateInitiativePlanTask()`：新函数，查找最旧 active initiative（无 queued task），去重检查，生成 `initiative_plan` 任务
+5. `generateNextTask()`：无 queued task 时调用 `generateInitiativePlanTask()` 尝试解锁 KR
+
+**架构设计决策**：
+- **getGlobalState 单点查询**：将 "有 initiative 无 task 的 KR" 信息在 `getGlobalState` 中异步计算，存入 `state.initiativeKRIds`（Set），保持 `scoreKRs` 作为纯函数的可测试性。
+- **去重保护**：`generateInitiativePlanTask` 在插入前检查是否已有 `status NOT IN ('completed', 'failed', 'cancelled')` 的 initiative_plan 任务，防止重复派发。
+- **dryRun 保护**：`generateNextTask` 在 `options.dryRun=true` 时跳过自动生成，保持干跑测试的幂等性。
+
+**踩坑记录**：
+- **版本冲突**：merge with main 后，`origin/main` 已有 1.158.0（另一个 PR 用了同一版本号），导致 Version Check 失败。解决：再次 `npm version patch` 到 1.158.1。
+  教训：branch 合并前先检查 `git show origin/main:packages/brain/package.json | jq .version`，避免版本号冲突。
+
+**测试覆盖**：
+- `planner-initiative-plan.test.js`：5 个纯函数测试，全部通过，覆盖 scoreKRs 的 initiative bonus 逻辑
+- `planner-area-stream.test.js`：12 个现有测试全部通过（无破坏性变更）
+
+---
+
 ### [2026-03-02] 任务派发优先级动态调整机制 v1.157.0
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
