@@ -8,6 +8,14 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import LiveMonitorPage from './LiveMonitorPage';
 
+// Mock react-router-dom 避免 React 18/19 双实例冲突
+// （monorepo 中 apps/api 依赖 React 19 导致 root node_modules/react 为 v19，
+//   而 react-router 在 root 会加载 React 19，但 react-dom 在 dashboard 本地为 React 18）
+vi.mock('react-router-dom', () => ({
+  MemoryRouter: ({ children }: any) => children,
+  useNavigate: () => vi.fn(),
+}));
+
 // Mock fetch
 beforeEach(() => {
   vi.useFakeTimers();

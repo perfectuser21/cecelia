@@ -5,9 +5,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { recognizeIntent } from '../services/intent-recognition.service.js';
-import { extractIntent, extractPriority, extractStatus, extractTitle, extractEntities } from '../utils/nlp-parser.js';
-import { IntentType } from '../types/intent.types.js';
+import { recognizeIntent } from '../src/services/intent-recognition.service.js';
+import { extractIntent, extractPriority, extractStatus, extractTitle, extractEntities } from '../src/utils/nlp-parser.js';
+import { IntentType } from '../src/types/intent.types.js';
 
 describe('Intent Recognition Service', () => {
   describe('CREATE_TASK intent', () => {

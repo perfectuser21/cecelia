@@ -60,8 +60,55 @@ jobs:
         working-directory: apps/dashboard
         run: npm run build
 
+  api-check:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    name: API Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: npm ci
+
+      - name: API Typecheck
+        working-directory: apps/api
+        run: npm run typecheck
+
+  dashboard-test:
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    name: Dashboard Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install monorepo dependencies
+        run: npm ci
+
+      - name: Dashboard Tests
+        working-directory: apps/dashboard
+        run: npm run test:run
+
   ci-passed:
-    needs: [changes, build]
+    needs: [changes, build, api-check, dashboard-test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -74,6 +121,14 @@ jobs:
           fi
           if [ "${{ needs.build.result }}" != "success" ]; then
             echo "Dashboard Build failed"
+            exit 1
+          fi
+          if [ "${{ needs.api-check.result }}" != "success" ]; then
+            echo "API Typecheck failed"
+            exit 1
+          fi
+          if [ "${{ needs.dashboard-test.result }}" != "success" ]; then
+            echo "Dashboard Tests failed"
             exit 1
           fi
           echo "All Workspace CI checks passed"
