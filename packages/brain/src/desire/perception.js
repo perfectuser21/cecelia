@@ -255,6 +255,55 @@ export async function runPerception(pool) {
     importance: greetingImportance
   });
 
+  // 11. 知识盲点信号（Cecelia 遇到不理解的概念）
+  try {
+    const { rows: gapRows } = await pool.query(`
+      SELECT COUNT(*) AS cnt FROM memory_stream
+      WHERE source_type = 'orchestrator_chat'
+        AND created_at > NOW() - INTERVAL '48 hours'
+        AND (content LIKE '%不确定%' OR content LIKE '%不清楚%'
+             OR content LIKE '%不知道%' OR content LIKE '%不太明白%')
+    `);
+    const gapCount = parseInt(gapRows[0]?.cnt || 0);
+    if (gapCount > 0) {
+      observations.push({
+        signal: 'learning_gap_signal',
+        value: gapCount,
+        context: `发现 ${gapCount} 个未填补的知识盲点（近 48h 对话中遇到不理解的内容）`,
+        importance: Math.min(4 + gapCount, 7),
+      });
+    }
+  } catch (err) {
+    console.error('[perception] learning_gap error:', err.message);
+  }
+
+  // 12. 对话质量信号（深度讨论 vs 纯指令）
+  try {
+    const { rows: convRows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE length(content) > 200) AS deep_count,
+        COUNT(*) AS total_count
+      FROM memory_stream
+      WHERE source_type IN ('orchestrator_chat', 'feishu_chat')
+        AND created_at > NOW() - INTERVAL '24 hours'
+    `);
+    const total = parseInt(convRows[0]?.total_count || 0);
+    const deep = parseInt(convRows[0]?.deep_count || 0);
+    if (total > 0) {
+      const deepRate = deep / total;
+      observations.push({
+        signal: 'conversation_quality',
+        value: { deep_count: deep, total_count: total, deep_rate: deepRate },
+        context: deepRate >= 0.3
+          ? `近 24h 对话质量良好：${deep}/${total} 条为深度讨论（${(deepRate * 100).toFixed(0)}%）`
+          : `近 24h 对话偏指令式：${deep}/${total} 条为深度讨论（${(deepRate * 100).toFixed(0)}%）`,
+        importance: deepRate >= 0.3 ? 6 : 3,
+      });
+    }
+  } catch (err) {
+    console.error('[perception] conversation_quality error:', err.message);
+  }
+
   // 13. 好奇心积累信号（环2：自主学习驱动）
   try {
     const curiosityResult = await pool.query(
@@ -272,6 +321,32 @@ export async function runPerception(pool) {
     }
   } catch (err) {
     console.error('[perception] curiosity check error:', err.message);
+  }
+
+  // 14. 好奇心饥渴信号（距上次自主探索超过 48h）
+  try {
+    const { rows: researchRows } = await pool.query(`
+      SELECT MAX(created_at) AS last_research
+      FROM tasks
+      WHERE task_type = 'research'
+        AND trigger_source IN ('curiosity', 'desire_system')
+    `);
+    const lastResearch = researchRows[0]?.last_research;
+    const hoursSince = lastResearch
+      ? (Date.now() - new Date(lastResearch).getTime()) / (1000 * 3600)
+      : 999;
+    if (hoursSince >= 48) {
+      observations.push({
+        signal: 'intellectual_idle',
+        value: Math.round(hoursSince),
+        context: hoursSince >= 999
+          ? '从未有过自主探索任务，好奇心还没有被激活'
+          : `距上次自主探索已过 ${Math.round(hoursSince)} 小时，好奇心饥渴`,
+        importance: Math.min(5 + Math.floor((hoursSince - 48) / 24), 8),
+      });
+    }
+  } catch (err) {
+    console.error('[perception] intellectual_idle error:', err.message);
   }
 
   return observations;
