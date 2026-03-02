@@ -166,7 +166,7 @@ export function applyContentAwareScore(tasks) {
  * Get global state for planning decisions
  */
 async function getGlobalState() {
-  const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult] = await Promise.all([
+  const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult, initiativeKRResult] = await Promise.all([
     pool.query(`
       SELECT * FROM goals
       WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
@@ -180,8 +180,23 @@ async function getGlobalState() {
     pool.query(`SELECT * FROM projects WHERE status = 'active'`),
     pool.query(`SELECT * FROM tasks WHERE status IN ('queued', 'in_progress') ORDER BY created_at ASC`),
     pool.query(`SELECT * FROM tasks WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 10`),
-    getDailyFocus()
+    getDailyFocus(),
+    // 查询有 active Initiative 但无 queued/in_progress Task 的 KR
+    pool.query(`
+      SELECT DISTINCT pkl.kr_id
+      FROM project_kr_links pkl
+      INNER JOIN projects parent_proj ON pkl.project_id = parent_proj.id AND parent_proj.status = 'active'
+      INNER JOIN projects initiative ON initiative.parent_id = parent_proj.id AND initiative.type = 'initiative' AND initiative.status = 'active'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM tasks t
+        WHERE t.goal_id = pkl.kr_id
+          AND t.status IN ('queued', 'in_progress')
+      )
+    `)
   ]);
+
+  // Build Set of KR ids that have active initiative but no queued task
+  const initiativeKRIds = new Set(initiativeKRResult.rows.map(r => r.kr_id));
 
   return {
     objectives: objectives.rows,
@@ -189,7 +204,8 @@ async function getGlobalState() {
     projects: projects.rows,
     activeTasks: activeTasks.rows,
     recentCompleted: recentCompleted.rows,
-    focus: focusResult
+    focus: focusResult,
+    initiativeKRIds  // KRs with active initiative but no queued task
   };
 }
 
@@ -200,7 +216,7 @@ async function getGlobalState() {
  * @param {Map<string, number>} [insightAdjustments] - Optional kr_id → adjustment from rumination/cortex
  */
 function scoreKRs(state, insightAdjustments = new Map()) {
-  const { keyResults, activeTasks, focus } = state;
+  const { keyResults, activeTasks, focus, initiativeKRIds = new Set() } = state;
   if (keyResults.length === 0) return [];
 
   const focusKRIds = new Set(
@@ -227,6 +243,8 @@ function scoreKRs(state, insightAdjustments = new Map()) {
       if (daysLeft > 0 && daysLeft < 7) score += 20;
     }
     if (queuedByGoal[kr.id]) score += 15;
+    // 有 active Initiative 但无 queued Task → 优先推进（需要生成 initiative_plan 任务）
+    if (!queuedByGoal[kr.id] && initiativeKRIds.has(kr.id)) score += 15;
     // 反刍/皮层洞察调整（方向3：反思闭环流回决策权重）
     const insightAdj = insightAdjustments.get(kr.id) || 0;
     if (insightAdj !== 0) score += insightAdj;
@@ -277,10 +295,20 @@ async function selectTargetProject(kr, state) {
     }
   }
 
+  // 统计各 project 下有多少 active initiative
+  const initiativeCountByProject = {};
+  for (const p of projects) {
+    if (p.type === 'initiative' && p.status === 'active' && p.parent_id) {
+      initiativeCountByProject[p.parent_id] = (initiativeCountByProject[p.parent_id] || 0) + 1;
+    }
+  }
+
   const scored = candidateProjects.map(p => {
     let score = 0;
     if (queuedByProject[p.id]) score += 50;
     if (p.repo_path) score += 20;
+    // 无 queued task 但有 active initiative → 优先选择（可生成 initiative_plan 任务）
+    if (!queuedByProject[p.id] && initiativeCountByProject[p.id]) score += 30;
     return { project: p, score };
   });
 
@@ -312,7 +340,15 @@ async function generateNextTask(kr, project, state, options = {}) {
   `, [project.id, kr.id]);
 
   if (result.rows.length === 0) {
-    // No existing task — return null. Task creation is 秋米's responsibility via /okr.
+    // No existing task — check if project has active initiatives that need planning.
+    // If so, auto-generate an initiative_plan task to unblock the KR.
+    if (!options.dryRun) {
+      const initiativePlanTask = await generateInitiativePlanTask(kr, project);
+      if (initiativePlanTask) {
+        return initiativePlanTask;
+      }
+    }
+    // No initiatives to plan — return null. Task creation is 秋米's responsibility via /okr.
     return null;
   }
 
@@ -379,6 +415,74 @@ async function generateNextTask(kr, project, state, options = {}) {
   scored.sort((a, b) => b.score - a.score);
 
   return scored[0].task;
+}
+
+/**
+ * Generate an initiative_plan task for a project that has active initiatives but no queued tasks.
+ * This task will be picked up by the dispatcher and sent to 秋米 to decompose the initiative.
+ *
+ * @param {Object} kr - Target Key Result
+ * @param {Object} project - Target Project (must have active initiatives)
+ * @returns {Object|null} - Newly created task, or null if no suitable initiative found
+ */
+async function generateInitiativePlanTask(kr, project) {
+  try {
+    // Find the oldest active initiative under this project without queued tasks
+    const initiativeResult = await pool.query(`
+      SELECT i.*
+      FROM projects i
+      WHERE i.parent_id = $1
+        AND i.type = 'initiative'
+        AND i.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.project_id = i.id
+            AND t.status IN ('queued', 'in_progress')
+        )
+      ORDER BY i.created_at ASC
+      LIMIT 1
+    `, [project.id]);
+
+    if (initiativeResult.rows.length === 0) {
+      return null;
+    }
+
+    const initiative = initiativeResult.rows[0];
+
+    // Check if an initiative_plan task already exists for this initiative (any status)
+    const existingResult = await pool.query(`
+      SELECT id FROM tasks
+      WHERE project_id = $1 AND task_type = 'initiative_plan'
+        AND status NOT IN ('completed', 'failed', 'cancelled')
+      LIMIT 1
+    `, [initiative.id]);
+
+    if (existingResult.rows.length > 0) {
+      // Already has an initiative_plan task pending/in_progress, skip
+      return null;
+    }
+
+    // Create initiative_plan task
+    const insertResult = await pool.query(`
+      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
+      VALUES ($1, $2, 'initiative_plan', $3, $4, $5, 'queued', 'brain_auto', $6)
+      RETURNING *
+    `, [
+      `拆解 Initiative: ${initiative.name}`,
+      `该 Initiative「${initiative.name}」下无任务，需要拆解规划。项目 ID: ${initiative.id}`,
+      kr.priority || 'P1',
+      initiative.id,
+      kr.id,
+      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id })
+    ]);
+
+    const newTask = insertResult.rows[0];
+    console.log(`[planner] 自动生成 initiative_plan 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id}`);
+    return newTask;
+  } catch (err) {
+    console.error(`[planner] generateInitiativePlanTask failed: ${err.message}`);
+    return null;
+  }
 }
 
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
@@ -927,6 +1031,7 @@ export {
   selectTargetKR,
   selectTargetProject,
   generateNextTask,
+  generateInitiativePlanTask,
   // Learning penalty
   buildLearningPenaltyMap,
   LEARNING_PENALTY_SCORE,
