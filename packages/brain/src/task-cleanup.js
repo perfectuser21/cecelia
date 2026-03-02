@@ -15,6 +15,10 @@
 const RECURRING_QUEUE_TIMEOUT_HOURS = 24;    // Cancel recurring tasks queued for >24h
 const PAUSED_ARCHIVE_DAYS = 30;              // Archive paused tasks older than 30 days
 
+// In-memory audit log (最多保留 500 条，防止内存泄漏)
+const MAX_AUDIT_LOG_SIZE = 500;
+const _auditLog = [];
+
 // Recurring task types (these should be re-generated periodically, not queued forever)
 const RECURRING_TASK_TYPES = [
   'dept_heartbeat',
@@ -130,11 +134,35 @@ async function runTaskCleanup(db, options = {}) {
 
         for (const task of recurringTasks) {
           console.log(`[task-cleanup] Canceled recurring task: ${task.title} (id=${task.id}, queued_at=${task.queued_at})`);
+          // 写入审计日志
+          _appendAuditLog({
+            action: 'canceled',
+            task_id: task.id,
+            task_title: task.title,
+            task_type: task.task_type || null,
+            reason: 'stale_recurring',
+            detail: `queued_at=${task.queued_at}, threshold=${recurringTimeoutHours}h`,
+            dry_run: false,
+            timestamp: new Date().toISOString()
+          });
         }
       } else {
         stats.canceled = recurringTasks.length;
         stats.canceled_task_ids = recurringTasks.map(t => t.id);
         console.log(`[task-cleanup] [DRY RUN] Would cancel ${recurringTasks.length} recurring tasks`);
+        // 写入 dry_run 审计日志
+        for (const task of recurringTasks) {
+          _appendAuditLog({
+            action: 'canceled',
+            task_id: task.id,
+            task_title: task.title,
+            task_type: task.task_type || null,
+            reason: 'stale_recurring',
+            detail: `queued_at=${task.queued_at}, threshold=${recurringTimeoutHours}h`,
+            dry_run: true,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     }
 
@@ -175,11 +203,35 @@ async function runTaskCleanup(db, options = {}) {
 
         for (const task of pausedTasks) {
           console.log(`[task-cleanup] Archived paused task: ${task.title} (id=${task.id}, updated_at=${task.updated_at})`);
+          // 写入审计日志
+          _appendAuditLog({
+            action: 'archived',
+            task_id: task.id,
+            task_title: task.title,
+            task_type: task.task_type || null,
+            reason: 'stale_paused',
+            detail: `updated_at=${task.updated_at}, threshold=${pausedArchiveDays}d`,
+            dry_run: false,
+            timestamp: new Date().toISOString()
+          });
         }
       } else {
         stats.archived = pausedTasks.length;
         stats.archived_task_ids = pausedTasks.map(t => t.id);
         console.log(`[task-cleanup] [DRY RUN] Would archive ${pausedTasks.length} paused tasks`);
+        // 写入 dry_run 审计日志
+        for (const task of pausedTasks) {
+          _appendAuditLog({
+            action: 'archived',
+            task_id: task.id,
+            task_title: task.title,
+            task_type: task.task_type || null,
+            reason: 'stale_paused',
+            detail: `updated_at=${task.updated_at}, threshold=${pausedArchiveDays}d`,
+            dry_run: true,
+            timestamp: new Date().toISOString()
+          });
+        }
       }
     }
 
@@ -283,9 +335,33 @@ async function getCleanupStats(db) {
   }
 }
 
+/**
+ * 内部函数：向审计日志追加记录（自动 trim 超出限制的旧记录）
+ * @param {Object} entry - 审计记录
+ */
+function _appendAuditLog(entry) {
+  _auditLog.push(entry);
+  // 保持最多 MAX_AUDIT_LOG_SIZE 条记录（删除最旧的）
+  if (_auditLog.length > MAX_AUDIT_LOG_SIZE) {
+    _auditLog.splice(0, _auditLog.length - MAX_AUDIT_LOG_SIZE);
+  }
+}
+
+/**
+ * 获取清理审计日志
+ * @param {number} [limit=100] - 返回最近 N 条记录
+ * @returns {Object[]} 审计日志数组（从新到旧）
+ */
+function getCleanupAuditLog(limit = 100) {
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 100), MAX_AUDIT_LOG_SIZE);
+  // 返回最新的 N 条（倒序）
+  return _auditLog.slice(-safeLimit).reverse();
+}
+
 export {
   runTaskCleanup,
   getCleanupStats,
+  getCleanupAuditLog,
   isRecurringTask,
   RECURRING_TASK_TYPES,
   RECURRING_TITLE_PATTERNS,
