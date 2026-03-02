@@ -75,6 +75,25 @@ describe('scoreKRs - initiative bonus', () => {
     expect(scored[0].kr.id).toBe('kr-1');
   });
 
+  it('should set hasInitiativesNeedingPlanning=true for KR with initiative but no queued task', () => {
+    const state = {
+      keyResults: [
+        { id: 'kr-init', priority: 'P1', progress: 0 },
+        { id: 'kr-no-init', priority: 'P1', progress: 0 }
+      ],
+      activeTasks: [],
+      focus: null,
+      initiativeKRIds: new Set(['kr-init'])
+    };
+
+    const scored = scoreKRs(state);
+    const initEntry = scored.find(s => s.kr.id === 'kr-init');
+    const noInitEntry = scored.find(s => s.kr.id === 'kr-no-init');
+
+    expect(initEntry.hasInitiativesNeedingPlanning).toBe(true);
+    expect(noInitEntry.hasInitiativesNeedingPlanning).toBe(false);
+  });
+
   it('should NOT give initiative bonus to KR that already has queued tasks', () => {
     const kr = { id: 'kr-1', priority: 'P1', progress: 50 };
 
@@ -307,6 +326,15 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     expect(task.goal_id).toBe(kr.id);
     expect(task.title).toContain('Initiative To Plan');
     expect(task.payload).toBeDefined();
+
+    // description should contain Initiative ID and KR ID
+    expect(task.description).toContain(initResult.rows[0].id);
+    expect(task.description).toContain(kr.id);
+
+    // payload should contain kr_id
+    const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
+    expect(payload.kr_id).toBe(kr.id);
+    expect(payload.initiative_id).toBe(initResult.rows[0].id);
 
     // Track for cleanup
     testTaskIds.push(task.id);
