@@ -9278,7 +9278,7 @@ router.post('/feishu/event', async (req, res) => {
     if (!audioFileKey) return res.json({ ok: true });
   }
 
-  // 群聊：检查是否被 @mention
+  // 群聊：检查是否被 @mention（Mode A：不再拦截非 @mention 消息）
   let isGroupMention = false;
   if (chatType === 'group') {
     const mentions = message.mentions || [];
@@ -9289,10 +9289,9 @@ router.post('/feishu/event', async (req, res) => {
       // 没有配置 BOT_OPEN_ID，用名字匹配（兜底）
       isGroupMention = mentions.some(m => m.name === 'Cecelia' || m.name === 'cecelia');
     }
-    if (!isGroupMention) return res.json({ ok: true });
 
-    // 去除 @Cecelia 前缀（仅文本消息）
-    if (msgType === 'text') {
+    // 去除 @Cecelia 前缀（仅 @mention 的文本消息）
+    if (isGroupMention && msgType === 'text') {
       text = text.replace(/@\S+\s*/g, '').trim();
       if (!text) return res.json({ ok: true });
     }
@@ -9327,6 +9326,29 @@ router.post('/feishu/event', async (req, res) => {
 
       // 获取用户信息（含 relationship）
       const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
+
+      // Mode A：群聊非 @mention 消息 → LLM 决策是否回复
+      if (chatType === 'group' && !isGroupMention) {
+        console.log(`[feishu/group] 非@mention，LLM 决策... 发送者: ${senderName}，内容: ${text.slice(0, 60)}`);
+        try {
+          const decisionPrompt = `你是群聊助手 Cecelia，正在监听飞书群聊。\n有人发了一条消息：\n发送者：${senderName}\n消息：${text}\n\n判断这条消息是否需要你（Cecelia）回复？\n判断标准：\n- 消息内容在问 Cecelia 或需要 Cecelia 介入、提供帮助 → 回复\n- 普通成员间的聊天、闲聊、不相关内容 → 不回复（静默）\n\n以 JSON 格式回复，不要有其他内容：\n{ "should_reply": true/false, "reply": "回复内容（should_reply=true时填写，否则空字符串）" }`;
+          const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
+          let decision;
+          try {
+            decision = JSON.parse(decisionText.trim());
+          } catch {
+            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默');
+            return;
+          }
+          console.log(`[feishu/group] LLM 决策: should_reply=${decision.should_reply}`);
+          if (!decision.should_reply) return;
+          await sendFeishuMessage(accessToken, message.chat_id, 'chat_id', decision.reply);
+          console.log(`[feishu/group] Mode A 回复 ${senderName}：${String(decision.reply).slice(0, 60)}`);
+        } catch (err) {
+          console.warn('[feishu/group] LLM 决策失败，静默:', err.message);
+        }
+        return;
+      }
 
       // 加载对话历史（仅 p2p）
       const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
