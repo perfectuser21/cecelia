@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.13.0"
+version: "3.14.0"
 updated: "2026-03-02"
 changelog:
+  - "3.14.0: v12.35.7 - branch-protect.sh v23 活跃 Worktree .dev-mode 强制检查（防止新 Claude 会话绕过 /dev 写代码，H1-012）"
   - "3.13.0: v12.35.6 - branch-protect.sh v22 僵尸 Worktree 检测（已合并分支阻止写代码，git ls-remote 区分新分支/已合并）"
   - "3.12.0: v12.35.5 - 修正 LEARNINGS 路由架构（fire-learnings-event.sh 替代 extract-learnings.sh；移除 generate-feedback-report.sh LEARNINGS 合并；10-learning.md Step 3.5 改为通过 Brain API 路由；issues→fix task/next_steps→learnings 表）"
   - "3.11.0: v12.35.4 - 打通 /dev LEARNINGS → Brain DB 管道（新增 extract-learnings.sh 从 incident-log + LEARNINGS.md 提取结构化知识；generate-feedback-report.sh 合并 .dev-learnings-extracted.json；10-learning.md 新增 Step 3.5 调用提取脚本）"
@@ -141,10 +142,12 @@ platform_features:
     name: Branch Protection
     status: Committed
     priority: P0
-    version: "12.33.3"
-    updated: "2026-02-28"
+    version: "12.35.7"
+    updated: "2026-03-02"
     description: |
       防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
+      v12.35.7: 活跃 Worktree .dev-mode 强制检查（v23）- 非僵尸 worktree 必须有 .dev-mode 才能写代码，防止新 Claude 会话绕过 /dev
+      v12.35.6: 僵尸 Worktree 检测（v22）- 已合并分支阻止写代码
       v12.33.3: 双重修复（v21）- cp-* 分支名正则与 devgate.yml 同步（强制 8 位时间戳）+ worktree 检测加 gitdir 文件检查
       v12.33.2: 强制 worktree 检测（v20）- cp-*/feature/* 分支必须在独立 worktree 中，防止主仓库污染
       v12.8.0: 加强数据库检查（v20）- .dev-mode 存在时优先检查 Brain API 数据库（PRD/DoD 初稿），支持秋米→/dev 工作流
@@ -162,17 +165,18 @@ platform_features:
         file: hooks/branch-protect.sh
 
     golden_path: |
-      检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → PRD/DoD 检测 → exit 0 (放行)
+      检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → .dev-mode 检测 → PRD/DoD 检测 → exit 0 (放行)
 
     minimal_paths:
       - "在 main 分支尝试写代码 → 被阻止"
       - "在 cp-* 分支写代码 → 放行"
       - "在已合并 cp-* 分支（僵尸 worktree）写代码 → 被阻止"
+      - "在活跃 cp-* worktree、无 .dev-mode、新 Claude 会话 → 被阻止"
 
     tests:
       - type: auto
         file: tests/hooks/branch-protect.test.ts
-        coverage: H1-001, H1-002, H1-003, H1-010, H1-011
+        coverage: H1-001, H1-002, H1-003, H1-010, H1-011, H1-012
 
     rcis:
       - H1-001  # 拦截 main/develop 写入
@@ -180,6 +184,7 @@ platform_features:
       - H1-003  # feature/* 分支允许写入
       - H1-010  # JSON 注入防护
       - H1-011  # 路径遍历防护
+      - H1-012  # 活跃 worktree 必须有 .dev-mode
 
   # --------------------------------------------------------------------------
   # H7: Stop Hook Loop Controller - 循环控制器

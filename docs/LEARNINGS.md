@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] branch-protect.sh v23：活跃 Worktree 必须有 .dev-mode (PR #285, Engine v12.35.7)
+
+**背景**: PR #281（v22）修复了僵尸 worktree 漏洞（已合并分支被复用）。但还存在第二个漏洞：活跃的（未合并 PR 的）worktree 被新 Claude 会话打开，不运行 /dev 直接写代码，由于 PRD/DoD 文件存在会被放行。
+
+- **两种 worktree 漏洞需要分别修复**：v22（僵尸检测）和 v23（活跃 + 无会话）是两个独立漏洞，各需一个 PR。僵尸 = 已合并，用 `git ls-remote` 区分；无会话 = `.dev-mode` 缺失，直接检文件。
+- **.dev-mode 是 /dev 会话的唯一标识**：一个 .dev-mode = 一个 /dev 会话；写代码必须在 /dev 会话内；没有 .dev-mode = 没有会话管理 = 阻止。
+- **v23 插入点：僵尸检测之后，PRD/DoD 检测之前**：此时已确认 IS_WORKTREE=true 且非僵尸，只需再检 .dev-mode 存在性，3 行代码完成修复。
+- **.dev-mode 本身写入不触发保护**：`.dev-mode` 文件无代码扩展名（EXT=dev-mode），NEEDS_PROTECTION=false，hook 在 line 144 退出，不会进入 worktree/dev-mode 检查逻辑，避免了引导死锁。
+- **已知剩余漏洞**：同一 worktree 两个并发 Claude 会话（两者都有同一个 .dev-mode）。目前没有针对并发会话的守护，这是 /dev 流程假设单会话的前提。
+
 ### [2026-03-02] 认知地图 v3：brain-manifest 模块注册表 + 双视图架构 (PR #278, Brain v1.148.0)
 
 **背景**: 旧 cognitive-map 只有一个 15 节点的平铺视图，无法表达 5 块意识架构（外界接口→感知层→意识核心→行动层 + 自我演化慢回路）。需要 Level 1 概览（5 块 + 2 反馈弧）+ Level 2 节点详情双视图，且前端能自动扫描新模块无需代码改动。
