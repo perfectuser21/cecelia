@@ -553,142 +553,250 @@ const CHAPTER_EDITORIAL: Record<string, {
 
 // SVG 配图：每章的数据流示意图
 function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) {
-  const W = 260, H = 180;
-  const box = (x: number, y: number, w: number, h: number, label: string, sub?: string, highlight?: boolean) => (
-    <g key={label}>
-      <rect x={x} y={y} width={w} height={h} rx={6}
-        fill={highlight ? `${color}20` : 'rgba(255,255,255,0.04)'}
-        stroke={highlight ? color : 'rgba(255,255,255,0.12)'}
-        strokeWidth={highlight ? 1.5 : 1}
+  const mkId = `arr-${blockId}`;
+  const defs = (
+    <defs>
+      <marker id={mkId} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+      </marker>
+    </defs>
+  );
+
+  const arrow = (x1: number, y1: number, x2: number, y2: number, k?: string) => (
+    <line key={k || `a${x1}${y1}${x2}${y2}`} x1={x1} y1={y1} x2={x2} y2={y2}
+      stroke={`${color}70`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+  );
+
+  const box = (x: number, y: number, w: number, h: number, lbl: string, sub?: string, hi?: boolean) => (
+    <g key={`b-${x}-${y}`}>
+      <rect x={x} y={y} width={w} height={h} rx={5}
+        fill={hi ? `${color}18` : 'rgba(255,255,255,0.04)'}
+        stroke={hi ? color : 'rgba(255,255,255,0.14)'}
+        strokeWidth={hi ? 1.5 : 1}
       />
-      <text x={x + w / 2} y={y + h / 2 - (sub ? 6 : 0)} textAnchor="middle"
-        fill={highlight ? color : '#d1d5db'} fontSize={10} fontWeight={highlight ? 700 : 400}>
-        {label}
-      </text>
-      {sub && <text x={x + w / 2} y={y + h / 2 + 10} textAnchor="middle" fill="#6b7280" fontSize={9}>{sub}</text>}
+      <text x={x+w/2} y={y+h/2-(sub ? 6 : 0)} textAnchor="middle"
+        fill={hi ? color : '#d1d5db'} fontSize={11} fontWeight={hi ? 700 : 400}>{lbl}</text>
+      {sub && <text x={x+w/2} y={y+h/2+10} textAnchor="middle" fill="#9ca3af" fontSize={9}>{sub}</text>}
     </g>
   );
-  const arrow = (x1: number, y1: number, x2: number, y2: number) => (
-    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={`${color}80`} strokeWidth={1.5}
-      markerEnd={`url(#arr-${blockId})`} />
+
+  const warnBox = (x: number, y: number, w: number, h: number, txt: string) => (
+    <g key="warn">
+      <rect x={x} y={y} width={w} height={h} rx={5}
+        fill="rgba(251,146,60,0.07)" stroke="rgba(251,146,60,0.45)" strokeWidth={1} />
+      <text x={x+w/2} y={y+h/2+4} textAnchor="middle" fill="#fb923c" fontSize={9}>{txt}</text>
+    </g>
   );
-  const label = (x: number, y: number, txt: string) => (
-    <text x={x} y={y} textAnchor="middle" fill="#6b7280" fontSize={9}>{txt}</text>
+
+  const cap = (x: number, y: number, s: string, fill = '#6b7280', sz = 9) => (
+    <text key={`c${x}${y}`} x={x} y={y} textAnchor="middle" fill={fill} fontSize={sz}>{s}</text>
+  );
+
+  // ── Chapter 1: 外界接口 ──────────────────────────────────────────
+  const interfaceDiagram = (
+    <svg viewBox="0 0 700 220" width="100%">
+      {defs}
+      {cap(305, 14, '─── 实时路径 ───', '#4b5563', 8.5)}
+      {box(10, 22, 100, 46, '飞书/WebSocket', '外部消息输入')}
+      {arrow(110, 45, 132, 45, 'i1')}
+      {box(132, 18, 130, 54, 'orchestrator-chat', '意图解析 + 上下文', true)}
+      {arrow(262, 45, 282, 45, 'i2')}
+      {box(282, 22, 100, 46, '丘脑 L1', 'Haiku 快速路由', true)}
+      {arrow(382, 45, 402, 45, 'i3')}
+      {box(402, 22, 90, 46, 'Brain', '决策层')}
+      {cap(305, 105, '─── 节律路径 ───', '#4b5563', 8.5)}
+      {box(10, 112, 100, 46, '定时器', '每5分钟触发')}
+      {arrow(110, 135, 132, 135, 'i4')}
+      {box(132, 108, 130, 54, 'Tick 心跳', '5s监测/5min执行', true)}
+      {arrow(262, 135, 282, 135, 'i5')}
+      {box(282, 112, 100, 46, 'executor', '调度 + 执行', true)}
+      {arrow(382, 135, 402, 135, 'i6')}
+      {box(402, 112, 90, 46, 'Claude', '/dev /qa /cecelia')}
+      <line x1={505} y1={10} x2={505} y2={163} stroke="rgba(255,255,255,0.07)" strokeDasharray="3,3" />
+      {cap(603, 55, '外界接口层', '#6b7280', 10)}
+      {cap(603, 70, 'Brain 唯一入口', '#4b5563', 8.5)}
+      {cap(603, 110, '实时 + 节律', '#6b7280', 10)}
+      {cap(603, 125, '两通道并行', '#4b5563', 8.5)}
+      {warnBox(10, 172, 680, 42, '⚠️  飞书断连 → 丢失所有用户意图信号  |  Tick 停止 → Brain 失去节律，任务全部暂停派发')}
+    </svg>
+  );
+
+  // ── Chapter 2: 感知层（16 种信号）──────────────────────────────
+  const gColors: string[] = ['#06b6d4', '#a78bfa', '#f59e0b', '#10b981'];
+  const gNames: string[] = ['工作/任务', 'KR/目标', '用户/社交', '认知/欲望'];
+  const perceptionSignals: Array<{ id: string; label: string; group: number }> = [
+    { id: 'task_fail_rate_24h',    label: '24h任务失败率',   group: 0 },
+    { id: 'queue_buildup',         label: '队列积压',         group: 0 },
+    { id: 'repeated_failures',     label: '重复失败模式',     group: 0 },
+    { id: 'task_completed_today',  label: '今日完成数',       group: 0 },
+    { id: 'kr_stalled',            label: 'KR 停滞',          group: 1 },
+    { id: 'kr_status_snapshot',    label: 'KR 状态快照',      group: 1 },
+    { id: 'task_milestone',        label: '任务里程碑',       group: 1 },
+    { id: 'learning_gap_signal',   label: '学习缺口',         group: 1 },
+    { id: 'hours_since_feishu',    label: '飞书离线时长',     group: 2 },
+    { id: 'user_online',           label: '用户在线状态',     group: 2 },
+    { id: 'time_aware_greeting',   label: '时间感知问候',     group: 2 },
+    { id: 'conversation_quality',  label: '对话质量',         group: 2 },
+    { id: 'system_idle',           label: '系统空闲',         group: 3 },
+    { id: 'undigested_knowledge',  label: '未消化知识',       group: 3 },
+    { id: 'curiosity_accumulated', label: '好奇心积累',       group: 3 },
+    { id: 'intellectual_idle',     label: '智识空闲',         group: 3 },
+  ];
+  const perceptionDiagram = (
+    <svg viewBox="0 0 760 300" width="100%">
+      {defs}
+      {perceptionSignals.map((s, i) => {
+        const col = s.group;
+        const row = i % 4;
+        const x = 8 + col * 128;
+        const y = 38 + row * 28;
+        return (
+          <g key={s.id}>
+            <rect x={x} y={y} width={114} height={21} rx={4}
+              fill={`${gColors[col]}10`} stroke={`${gColors[col]}45`} strokeWidth={0.8} />
+            <text x={x+57} y={y+13} textAnchor="middle" fill={gColors[col]} fontSize={9}>{s.label}</text>
+          </g>
+        );
+      })}
+      {gNames.map((name, gi) => (
+        <text key={`gh-${gi}`} x={8 + gi*128 + 57} y={30} textAnchor="middle"
+          fill={gColors[gi]} fontSize={8.5} fontWeight={700}>{name}</text>
+      ))}
+      {[0, 1, 2, 3].map(gi => (
+        <rect key={`gbr-${gi}`} x={6 + gi*128} y={33} width={118} height={4*28+4}
+          rx={4} fill="none" stroke={`${gColors[gi]}20`} strokeWidth={1} strokeDasharray="4,2" />
+      ))}
+      <line x1={520} y1={130} x2={540} y2={130}
+        stroke={`${color}60`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+      <rect x={542} y={82} width={90} height={96} rx={6}
+        fill={`${color}15`} stroke={color} strokeWidth={1.5} />
+      <text x={587} y={122} textAnchor="middle" fill={color} fontSize={11} fontWeight={700}>感知层</text>
+      <text x={587} y={136} textAnchor="middle" fill="#9ca3af" fontSize={8.5}>汇总信号</text>
+      <circle cx={587} cy={73} r={15} fill={`${color}18`} stroke={`${color}60`} strokeWidth={1.5} />
+      <text x={587} y={70} textAnchor="middle" fill={color} fontSize={14} fontWeight={800}>16</text>
+      <text x={587} y={81} textAnchor="middle" fill="#9ca3af" fontSize={7}>信号</text>
+      <line x1={632} y1={100} x2={650} y2={100} stroke={`${color}60`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+      <line x1={632} y1={130} x2={650} y2={130} stroke={`${color}60`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+      <line x1={632} y1={160} x2={650} y2={160} stroke={`${color}60`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+      {box(652, 84, 100, 32, '情绪状态', '焦虑/满足/平静')}
+      {box(652, 114, 100, 32, '欲望触发', '好奇/探索/休息')}
+      {box(652, 144, 100, 32, '认知快照', '决策输入')}
+      {warnBox(8, 258, 744, 36, '⚠️ 信号缺失 = 感知盲区（飞书断连 → 丢失4个用户/社交信号，Brain 无法判断用户在线状态和需求）')}
+    </svg>
+  );
+
+  // ── Chapter 3: 意识核心 ──────────────────────────────────────────
+  const coreDiagram = (
+    <svg viewBox="0 0 700 260" width="100%">
+      {defs}
+      {box(8, 85, 90, 90, '事件/信号', '感知层输出')}
+      {arrow(98, 100, 120, 73, 'c1')}
+      {arrow(98, 130, 120, 131, 'c2')}
+      {arrow(98, 160, 120, 190, 'c3')}
+      <rect x={120} y={52} width={130} height={42} rx={5}
+        fill={`${color}18`} stroke={color} strokeWidth={1.5} />
+      <text x={185} y={70} textAnchor="middle" fill={color} fontSize={11} fontWeight={700}>L0 脑干（代码）</text>
+      <text x={185} y={84} textAnchor="middle" fill="#9ca3af" fontSize={9}>每次 Tick 必跑，无需 LLM</text>
+      <text x={122} y={48} fill={color} fontSize={7.5} fontWeight={600}>✓ 总是执行</text>
+      <rect x={120} y={110} width={130} height={42} rx={5}
+        fill="rgba(167,139,250,0.15)" stroke="#a78bfa" strokeWidth={1.5} />
+      <text x={185} y={128} textAnchor="middle" fill="#a78bfa" fontSize={11} fontWeight={700}>L1 丘脑（Haiku）</text>
+      <text x={185} y={142} textAnchor="middle" fill="#9ca3af" fontSize={9}>事件路由、快速判断</text>
+      <text x={122} y={106} fill="#a78bfa" fontSize={7.5} fontWeight={600}>有事件时触发</text>
+      <rect x={120} y={168} width={130} height={42} rx={5}
+        fill="rgba(107,114,128,0.12)" stroke="#6b7280" strokeWidth={1} />
+      <text x={185} y={186} textAnchor="middle" fill="#9ca3af" fontSize={11} fontWeight={700}>L2 皮层（Sonnet）</text>
+      <text x={185} y={200} textAnchor="middle" fill="#6b7280" fontSize={9}>深度分析 + RCA</text>
+      <text x={122} y={164} fill="#6b7280" fontSize={7.5} fontWeight={600}>异常/复杂时触发</text>
+      {arrow(250, 73, 285, 73, 'c4')}
+      {arrow(250, 131, 285, 118, 'c5')}
+      {arrow(250, 131, 285, 148, 'c6')}
+      {arrow(250, 189, 285, 175, 'c7')}
+      {box(285, 55, 120, 36, '脑干决策', '调度/执行/保护', true)}
+      {box(285, 100, 120, 34, 'L1 路由结果', '事件分类 → 动作')}
+      {box(285, 142, 120, 34, 'L2 深析结果', 'RCA + 战略调整')}
+      {arrow(405, 73, 430, 105, 'c8')}
+      {arrow(405, 117, 430, 118, 'c9')}
+      {arrow(405, 159, 430, 131, 'c10')}
+      {box(430, 88, 110, 56, '最终决策', '综合三层输出', true)}
+      <line x1={540} y1={116} x2={680} y2={116} stroke={`${color}50`} strokeWidth={1.5} markerEnd={`url(#${mkId})`} />
+      <text x={655} y={111} fill="#9ca3af" fontSize={9}>行动层</text>
+      {warnBox(8, 222, 682, 32, '⚠️ LLM 超时 = 决策瘫痪（L1/L2 调用失败时 Brain 退化为纯 L0 代码模式，失去智能路由和分析能力）')}
+    </svg>
+  );
+
+  // ── Chapter 4: 行动层 ──────────────────────────────────────────
+  const actionDiagram = (
+    <svg viewBox="0 0 720 290" width="100%">
+      {defs}
+      {box(8, 95, 80, 50, '任务队列', 'PostgreSQL')}
+      {arrow(88, 120, 108, 120, 'a1')}
+      {box(108, 88, 92, 64, '调度规划', 'KR轮转评分', true)}
+      {arrow(200, 120, 220, 120, 'a2')}
+      {box(220, 88, 92, 64, '资源检查', 'RSS/Swap/Seats', true)}
+      {arrow(312, 120, 332, 120, 'a3')}
+      {box(332, 88, 92, 64, 'Brain-Bridge', 'PORT:3457', true)}
+      {arrow(424, 120, 444, 120, 'a4')}
+      {box(444, 88, 100, 64, 'Claude Agent', 'claude -p /skill', true)}
+      {arrow(544, 120, 564, 120, 'a5')}
+      {box(564, 103, 72, 34, '执行回调', 'POST /api')}
+      {cap(330, 62, 'Skill 白名单', '#6b7280', 8.5)}
+      <line x1={108} y1={72} x2={544} y2={72} stroke="rgba(255,255,255,0.06)" />
+      {['/dev', '/code-review', '/cecelia', '/research', '/decomp', '/qa'].map((sk, i) => (
+        <g key={`sk-${sk}`}>
+          <rect x={108+i*73} y={52} width={69} height={18} rx={3}
+            fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.12)" />
+          <text x={142+i*73} y={64} textAnchor="middle" fill="#9ca3af" fontSize={8}>{sk}</text>
+        </g>
+      ))}
+      {cap(330, 185, '保护机制', '#6b7280', 8.5)}
+      {box(108, 192, 98, 34, 'MAX_SEATS', '并发上限控制')}
+      {box(216, 192, 98, 34, '失败隔离', '超重试→隔离区')}
+      {box(324, 192, 98, 34, '资源熔断', 'RSS超限停派')}
+      {box(432, 192, 98, 34, '警觉系统', 'CALM→PANIC降速')}
+      <line x1={157} y1={192} x2={157} y2={152} stroke="rgba(251,146,60,0.35)" strokeDasharray="3,2" />
+      <line x1={265} y1={192} x2={265} y2={152} stroke="rgba(251,146,60,0.35)" strokeDasharray="3,2" />
+      <line x1={373} y1={192} x2={373} y2={152} stroke="rgba(251,146,60,0.35)" strokeDasharray="3,2" />
+      {warnBox(8, 238, 700, 44, '⚠️ Bridge 超时 = 任务积压（claude 进程启动失败时任务卡 in_progress，须等看门狗 watchdog 超时处理）')}
+    </svg>
+  );
+
+  // ── Chapter 5: 自我演化 ──────────────────────────────────────────
+  const evolutionDiagram = (
+    <svg viewBox="0 0 680 270" width="100%">
+      {defs}
+      {box(8, 90, 80, 60, '任务结果', '成功 / 失败')}
+      {arrow(88, 105, 112, 80, 'e1')}
+      {arrow(88, 120, 112, 150, 'e2')}
+      {box(112, 55, 120, 55, 'learning.js', '学习记录写入', true)}
+      {box(112, 130, 120, 55, 'memory', 'L0/L1 记忆压缩', true)}
+      {box(300, 55, 120, 55, 'self-model', '能力/偏好认知', true)}
+      {box(300, 130, 120, 55, 'self-report', '内心独白/欲望', true)}
+      {arrow(232, 82, 300, 82, 'e3')}
+      {arrow(232, 157, 300, 157, 'e4')}
+      {arrow(420, 82, 448, 106, 'e5')}
+      {arrow(420, 157, 448, 127, 'e6')}
+      {box(448, 95, 100, 60, '行为调整', '下轮决策优化', true)}
+      {arrow(548, 125, 578, 125, 'e7')}
+      {box(580, 108, 70, 34, '下一 Tick', 'Brain 决策')}
+      <path d="M 615 108 Q 615 36 410 36 Q 212 36 60 36 Q 8 36 8 90"
+        fill="none" stroke={`${color}45`} strokeWidth={1.5} strokeDasharray="5,3"
+        markerEnd={`url(#${mkId})`} />
+      {cap(340, 28, '学习循环：每次经历 → 行为优化', '#6b7280', 8.5)}
+      {cap(172, 50, '任务完成触发', '#6b7280', 7.5)}
+      {cap(172, 125, 'content_hash 去重', '#6b7280', 7.5)}
+      {cap(360, 50, '6h 定期采集', '#6b7280', 7.5)}
+      {cap(360, 125, 'fire-and-forget', '#6b7280', 7.5)}
+      {warnBox(8, 228, 660, 36, '⚠️ 学习循环断裂 = 停止进化（content_hash 去重失效 / memory 写入失败 → 经验无法沉淀积累）')}
+    </svg>
   );
 
   const diagrams: Record<string, React.ReactNode> = {
-    interface: (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-        <defs>
-          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
-          </marker>
-        </defs>
-        {/* 外部 → Tick → Brain */}
-        {box(8, 70, 60, 36, '定时器', '每5分')}
-        {arrow(68, 88, 92, 88)}
-        {box(92, 70, 76, 36, 'Tick 心跳', '节律驱动', true)}
-        {arrow(168, 88, 192, 88)}
-        {box(192, 70, 60, 36, 'Brain', '决策层')}
-        {/* 飞书 → 对话 → Brain */}
-        {box(8, 10, 60, 36, '飞书/用户', '外部消息')}
-        {arrow(68, 28, 92, 28)}
-        {box(92, 10, 76, 36, '对话系统', '解析意图', true)}
-        {arrow(168, 28, 192, 28)}
-        {label(130, 158, '双通道进入 Brain')}
-        {label(130, 170, '定时 + 实时')}
-      </svg>
-    ),
-    perception: (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-        <defs>
-          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
-          </marker>
-        </defs>
-        {box(8, 10, 56, 30, '任务队列', '系统状态')}
-        {box(8, 50, 56, 30, '时间信号', '工作时长')}
-        {box(8, 90, 56, 30, '用户事件', '外部触发')}
-        {arrow(64, 25, 88, 55)}
-        {arrow(64, 65, 88, 65)}
-        {arrow(64, 105, 88, 75)}
-        {box(88, 48, 72, 34, '感知信号', '16种信号', true)}
-        {arrow(160, 65, 178, 48)}
-        {arrow(160, 65, 178, 78)}
-        {box(178, 35, 72, 26, '情绪状态', '焦虑/满足')}
-        {box(178, 68, 72, 26, '记忆检索', '历史经验')}
-        {label(130, 142, '感知 → 情绪 + 记忆')}
-        {label(130, 154, '为决策做准备')}
-      </svg>
-    ),
-    core: (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-        <defs>
-          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
-          </marker>
-        </defs>
-        {box(8, 70, 52, 30, '信号+记忆', '输入')}
-        {arrow(60, 85, 80, 55)}
-        {box(80, 40, 72, 30, '丘脑 L1', 'Haiku 快判', true)}
-        {arrow(152, 55, 172, 38)}
-        {box(172, 24, 72, 28, '认知核心', '最终决策', true)}
-        {arrow(152, 55, 172, 72)}
-        {box(172, 60, 72, 28, '皮层 L2', 'Sonnet 深析', true)}
-        {arrow(172, 88, 172, 108)}
-        {box(80, 100, 72, 30, '欲望/反刍', '主动驱动')}
-        {arrow(80, 115, 60, 115)}
-        {arrow(60, 115, 60, 85)}
-        {label(130, 154, 'L1快→L2慢→决策')}
-        {label(130, 166, '三层递进架构')}
-      </svg>
-    ),
-    action: (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-        <defs>
-          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
-          </marker>
-        </defs>
-        {box(8, 60, 60, 30, '认知核心', '决策输出')}
-        {arrow(68, 75, 88, 75)}
-        {box(88, 58, 68, 30, '调度规划', '选任务', true)}
-        {arrow(88, 88, 72, 110)}
-        {arrow(156, 73, 176, 55)}
-        {box(176, 40, 68, 30, '执行器', '启动Agent', true)}
-        {arrow(176, 70, 176, 100)}
-        {box(176, 100, 68, 30, 'Claude', '/dev /qa')}
-        {box(8, 100, 64, 30, '免疫系统', '保护监控')}
-        {arrow(72, 115, 88, 115)}
-        {box(88, 100, 68, 30, '建议系统', '记录问题')}
-        {label(130, 154, '决策 → 选任务 → 执行')}
-        {label(130, 166, '免疫系统全程守护')}
-      </svg>
-    ),
-    evolution: (
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-        <defs>
-          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
-            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
-          </marker>
-        </defs>
-        {box(8, 50, 60, 30, '任务结果', '成功/失败')}
-        {arrow(68, 65, 88, 45)}
-        {arrow(68, 65, 88, 75)}
-        {box(88, 30, 70, 30, '自我模型', '能力认知', true)}
-        {box(88, 68, 70, 30, '学习记录', '经验积累', true)}
-        {arrow(158, 45, 178, 45)}
-        {arrow(158, 83, 178, 83)}
-        {box(178, 30, 72, 30, '记忆压缩', '长期记忆', true)}
-        {box(178, 68, 72, 30, '自我报告', '内心独白', true)}
-        {/* 循环箭头 */}
-        {arrow(178, 30, 88, 10)}
-        {arrow(88, 10, 8, 10)}
-        {arrow(8, 10, 8, 50)}
-        {label(130, 140, '结果→学习→改进')}
-        {label(130, 152, '每天都在成长')}
-      </svg>
-    ),
+    interface: interfaceDiagram,
+    perception: perceptionDiagram,
+    core: coreDiagram,
+    action: actionDiagram,
+    evolution: evolutionDiagram,
   };
 
   return (
@@ -696,8 +804,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
       background: 'rgba(255,255,255,0.02)',
       borderRadius: 10,
       border: `1px solid ${color}20`,
-      padding: '12px 8px',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '16px 12px',
     }}>
       {diagrams[blockId] || null}
     </div>
@@ -855,21 +962,14 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
                   {editorial?.role || block.desc}
                 </p>
 
-                {/* SVG 配图（居中展示，放大） */}
+                {/* SVG 配图（全宽展示） */}
                 <div style={{
-                  display: 'flex', justifyContent: 'center', alignItems: 'center',
-                  padding: '20px 0 28px',
+                  padding: '24px 0 32px',
                   borderTop: `1px solid rgba(255,255,255,0.05)`,
                   borderBottom: `1px solid rgba(255,255,255,0.05)`,
                   marginBottom: 28,
                 }}>
-                  <div style={{
-                    transform: 'scale(1.7)',
-                    transformOrigin: 'center center',
-                    marginTop: 60, marginBottom: 60,
-                  }}>
-                    <ChapterDiagram blockId={block.id} color={block.color} />
-                  </div>
+                  <ChapterDiagram blockId={block.id} color={block.color} />
                 </div>
 
                 {/* 模块列表 */}
