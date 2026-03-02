@@ -464,12 +464,27 @@ if [[ "$PR_STATE" == "merged" ]]; then
 else
     # PR 未合并
     echo "  ❌ 条件 3: PR 未合并" >&2
+
+    # ===== v12.35.8: 合并前检查 Step 10 LEARNINGS =====
+    # 必须先完成 Step 10（写 LEARNINGS → push 到功能分支），再合并 PR
+    # 否则 AI 合并后功能分支被删，LEARNINGS 无处 push，被迫另开 PR
+    STEP_10_STATUS=$(grep "^step_10_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+    if [[ "$STEP_10_STATUS" != "done" ]]; then
+        echo "  ⚠️  Step 10 LEARNINGS 未完成（不能先合并 PR）" >&2
+        echo "" >&2
+        echo "  下一步: 先执行 Step 10 LEARNINGS" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        save_block_reason "Step 10 LEARNINGS 未完成（合并前必须先写 LEARNINGS）"
+        jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先：1) 读取 skills/dev/steps/10-learning.md 2) 写 docs/LEARNINGS.md 3) git add + commit + push 到功能分支（PR 自动更新）4) 写完后 stop-dev.sh 会自动放行合并。不要跳过 Step 10 直接合并。" '{"decision": "block", "reason": $reason}'
+        exit 2
+    fi
+
     echo "" >&2
-    echo "  下一步: 合并 PR" >&2
+    echo "  下一步: 合并 PR（Step 10 已完成）" >&2
     echo "    gh pr merge $PR_NUMBER --squash --delete-branch" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     save_block_reason "PR 未合并 (#$PR_NUMBER)"
-    jq -n --arg reason "PR #$PR_NUMBER CI 已通过但未合并，执行合并操作" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
+    jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Step 10 LEARNINGS 已完成，执行合并操作：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
     exit 2
 fi

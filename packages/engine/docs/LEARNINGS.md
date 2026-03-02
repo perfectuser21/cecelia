@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.17.0
+version: 1.18.0
 created: 2026-01-16
-updated: 2026-03-01
+updated: 2026-03-02
 changelog:
+  - 1.18.0: stop-dev.sh step_10_learning 检查（LEARNINGS 双 PR 根因修复）
   - 1.17.0: 打通 LEARNINGS → Brain DB 管道（extract-learnings.sh + generate-feedback-report.sh 合并）
   - 1.16.0: Learning/Cleanup 加强；~/.claude/skills/ 是 symlink 不是独立目录
   - 1.15.0: 添加 /dev skill 自修复经验（5 个已知问题 + CI 三连修复）
@@ -27,6 +28,35 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+### [2026-03-02] stop-dev.sh step_10_learning 检查 — LEARNINGS 双 PR 根因修复
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**根本原因**：
+- Stop Hook condition 3（CI 通过，PR 未合并）直接输出「merge PR」指令
+- 没有检查 `step_10_learning` 状态
+- AI 收到 stop hook 的「merge PR」→ 直接合并（`--delete-branch` 删掉功能分支）→ Step 10 LEARNINGS 从未执行
+- AI 后来补 LEARNINGS 时分支已删，被迫另开 cp-* 分支 → 第二个 PR
+
+**修复**：
+- condition 3 `else` 分支插入 step_10_learning 状态检查
+- `pending` → reason 明确指引先做 Step 10（push LEARNINGS → fire-learnings-event.sh），完成后放行
+- `done` → 正常输出 merge 指令
+- 顺带同步 stop-dev.sh 到 `~/.claude/hooks/`（worktree 删除修复也对齐了）
+
+**关键洞察**：
+- PR #224 (v12.35.3) 已修复 step 指令（09-ci.md + 10-learning.md），但 stop-dev.sh 的 reason 会覆盖 step 指令
+- Stop Hook 的 reason 字段是 AI 的"下一条指令"，优先级高于 step 文件的描述性内容
+- 凡是涉及「顺序约束」的流程，必须在 stop hook 里显式检查状态，而不是只靠 step 文件描述
+
+**影响程度**: Medium（流程性问题，LEARNINGS 未丢失只是多了无关 PR）
+
+**预防措施**：
+- 每次在 stop hook 加新的"下一步"指令前，检查是否存在需要先完成的前置步骤
+- step_10_learning 类似的顺序检查，应该在 stop hook 里显式守卫
 
 ---
 
