@@ -4,6 +4,29 @@
 
 ---
 
+### [2026-03-02] Spending Cap 账号级标记 + Sonnet→Opus→Haiku 降级链 (v1.144.2)
+
+**变更**：
+1. `account-usage.js`：新增 `_spendingCapMap` 内存 Map，实现账号级 spending cap 标记（而非全局 billing_pause）
+2. `selectBestAccount()` 从返回 `string|null` 改为 `{accountId, model}|null`，实现三阶段降级链
+3. `executor.js`：读取 `model` 字段，通过 `CECELIA_MODEL` env var 传递 opus/haiku model override
+4. `routes.js`：BILLING_CAP 时调用 `markSpendingCap`（账号级），只有所有账号都 capped 才触发全局 `billing_pause`
+
+**教训 — 多个并行 PR 导致版本号不断冲突**：
+- 本次 PR 经历了 v1→v2→v3→v4 共 4 个版本的分支，根本原因是 main 分支非常活跃（其他 PR 不断合并）
+- **bash-guard 阻止 force push**：rebase 之后无法 force push，必须创建全新分支重新 commit
+- **squash merge 不兼容 merge commit**：用 `git merge origin/main` 解决版本冲突会产生 merge commit，GitHub 无法 squash
+- **正确模式（已验证）**：遇到版本冲突 → 创建新分支（从 origin/main）→ checkout 代码文件 → 重新 commit → 正常 push
+- **无需担心 bash-guard**：从 origin/main 创建的新分支首次 push 不触发 bash-guard（只有 force push 才触发）
+
+**降级链设计**：
+- 阶段1 Sonnet：`seven_day_sonnet < 100% && five_hour < 80% && !spending_cap && !extra_used`
+- 阶段2 Opus：Sonnet 全满 → `seven_day < 95% && five_hour < 80% && !spending_cap`
+- 阶段3 Haiku：Opus 全满 → `five_hour < 80% && !spending_cap`
+- 兜底：null → MiniMax
+
+---
+
 ### [2026-03-01] memory-retriever 结构化 log + fetchStatus 分类 (v1.141.6)
 
 **变更**：
