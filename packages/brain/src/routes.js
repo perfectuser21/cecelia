@@ -2900,10 +2900,25 @@ router.post('/execution-callback', async (req, res) => {
           console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
           failureHandled = true;
 
-          // Billing pause: stop all dispatch until reset
+          // Spending cap：账号级标记，不再全局 billing_pause
+          // 只有所有账号都 spending-capped 时才触发全局 billing_pause
           if (strategy.billing_pause) {
+            const { markSpendingCap, isAllAccountsSpendingCapped } = await import('./account-usage.js');
             const { setBillingPause } = await import('./executor.js');
-            setBillingPause(strategy.next_run_at, `billing_cap (task ${task_id})`);
+            // 从 task payload 获取触发 cap 的账号 ID
+            const dispatchedAccount = taskPayload.dispatched_account || null;
+            if (dispatchedAccount) {
+              markSpendingCap(dispatchedAccount, strategy.next_run_at);
+              console.log(`[execution-callback] Spending cap 标记: ${dispatchedAccount} until ${strategy.next_run_at} (task ${task_id})`);
+            } else {
+              // 无账号信息（旧任务），兜底全局 pause
+              setBillingPause(strategy.next_run_at, `billing_cap_no_account (task ${task_id})`);
+            }
+            // 若所有账号都撞 cap，升级为全局 billing_pause
+            if (isAllAccountsSpendingCapped()) {
+              setBillingPause(strategy.next_run_at, `all_accounts_capped (task ${task_id})`);
+              console.log(`[execution-callback] 所有账号 spending-capped → 全局 billing_pause until ${strategy.next_run_at}`);
+            }
           }
         } else if (strategy && strategy.needs_human_review) {
           // No retry, mark for human review
