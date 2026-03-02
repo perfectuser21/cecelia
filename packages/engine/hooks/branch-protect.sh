@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v22
+# ZenithJoy Engine - 分支保护 Hook v23
+# v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev（PR 未合并但无会话管理）
 # v22: 僵尸 Worktree 检测 — 已合并分支阻止写代码（git ls-remote 区分新/已合并）
 # v21: 分支名正则与 devgate.yml 同步（强制 8 位数字时间戳）+ worktree 检测双重保险
 # v19: 支持 monorepo 子目录的 PRD/DoD 文件（如 apps/core/.prd.md）
@@ -250,6 +251,27 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
             exit 2
         fi
         # 分支不存在于 origin → 新分支，尚未推送，放行
+    fi
+
+    # v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev
+    # 到达此处说明：IS_WORKTREE=true 且分支活跃（非僵尸）
+    # 没有 .dev-mode = 没有活跃的 /dev 会话 = 阻止写代码
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    if [[ ! -f "$DEV_MODE_FILE" ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  ❌ 没有活跃的 /dev 会话（.dev-mode 缺失）" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  当前分支: $CURRENT_BRANCH" >&2
+        echo "  原因：" >&2
+        echo "    1. 新开了 Claude 会话，没有运行 /dev" >&2
+        echo "    2. /dev 执行中断，.dev-mode 被删除" >&2
+        echo "" >&2
+        echo "  请运行 /dev 开始或恢复工作" >&2
+        echo "" >&2
+        echo "[SKILL_REQUIRED: dev]" >&2
+        exit 2
     fi
 
     # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
