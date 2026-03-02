@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.14.0
+version: 3.15.0
 created: 2026-03-02
 updated: 2026-03-02
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.14.0: 从 feature-registry.yml 自动生成
+  - 3.15.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -26,7 +26,7 @@ changelog:
 3. ✅ **在已合并 cp-* 分支（僵尸 worktree）写代码 → 被阻止**
 4. ✅ **在活跃 cp-* worktree、无 .dev-mode、新 Claude 会话 → 被阻止**
 
-**RCI 覆盖**: H1-001,H1-002,H1-003,H1-010,H1-011,H1-012
+**RCI 覆盖**: H1-001,H1-002,H1-003,H1-010,H1-011,H1-012,H1-013
 
 ---
 
@@ -245,5 +245,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.14.0
+**版本**: 3.15.0
 **生成时间**: 2026-03-02
