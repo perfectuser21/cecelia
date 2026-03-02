@@ -9418,23 +9418,40 @@ router.post('/feishu/event', async (req, res) => {
           const recentBlock = recentRows.length
             ? `\n最近群聊历史（从旧到新）：\n${recentRows.join('\n')}\n`
             : '';
-          const decisionPrompt = `你是飞书群聊机器人 Cecelia。群里有人发了一条消息，判断你是否需要回复。${recentBlock}\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 倾向回复\n- 消息内容涉及 Cecelia 的能力、状态、工作 → 必须回复\n- 跟进上文中 Cecelia 回复的追问 → 回复\n- 只是语气词（"哈哈"、"好"、"嗯"、"收到"）→ 不回复\n- 明显是成员间聊天、与 AI 无关 → 不回复\n- 不确定时 → 回复\n\n以纯 JSON 格式回复：\n{"should_reply":true,"reply":"回复内容"}\n或\n{"should_reply":false,"reply":""}`;
-          const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
+          // Step 1: Haiku 只判断 should_reply (bool)，不生成回复内容
+          const decisionPrompt = `群里有人发消息，判断 Cecelia 是否需要回复。${recentBlock}\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 回复\n- 涉及 Cecelia 的能力、状态、工作 → 回复\n- 跟进 Cecelia 上文的追问 → 回复\n- 纯语气词（"哈哈"/"好"/"嗯"/"收到"） → 不回复\n- 明显成员间闲聊、与 AI 无关 → 不回复\n- 不确定 → 回复\n\n只输出 JSON：{"should_reply":true} 或 {"should_reply":false}`;
+          const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 20 });
           let decision;
           try {
-            // 兼容 LLM 在 JSON 外包裹 markdown 代码块或多余文字
             const jsonMatch = decisionText.match(/\{[\s\S]*\}/);
             decision = JSON.parse(jsonMatch ? jsonMatch[0] : decisionText.trim());
           } catch {
-            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默。原始内容:', decisionText.slice(0, 200));
+            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默。原始内容:', decisionText.slice(0, 100));
             return;
           }
           console.log(`[feishu/group] LLM 决策: should_reply=${decision.should_reply}`);
           if (!decision.should_reply) return;
-          await sendFeishuMessage(accessToken, message.chat_id, 'chat_id', decision.reply);
-          console.log(`[feishu/group] Mode A 回复 ${senderName}：${String(decision.reply).slice(0, 60)}`);
+
+          // Step 2: 调 handleChat 生成有人格的回复（保持 Cecelia 特质，colleague 限工作话题）
+          const permPrefix = relationship === 'colleague'
+            ? '权限：同事，仅讨论工作相关话题'
+            : relationship === 'guest'
+              ? '权限：访客，仅基础帮助，不涉及公司/个人信息'
+              : '';
+          const modeAText = permPrefix ? `[群聊上下文：${permPrefix}] ${text}` : text;
+          const modeAResult = await handleChat(modeAText, {
+            source: 'feishu',
+            sender_name: senderName,
+            user_id: userId,
+            relationship,
+          }, []);
+          const reply = modeAResult?.reply;
+          if (!reply) return;
+
+          await sendFeishuMessage(accessToken, message.chat_id, 'chat_id', reply);
+          console.log(`[feishu/group] Mode A 回复 ${senderName}：${reply.slice(0, 60)}`);
           // 回复也写入记忆，importance 升级
-          const replyMemContent = `[飞书群聊] Cecelia 回复 ${senderName}: ${decision.reply}`;
+          const replyMemContent = `[飞书群聊] Cecelia 回复 ${senderName}: ${reply}`;
           pool.query(
             `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
              VALUES ($1, $2, 4, 'observation', 'feishu_group', NOW() + INTERVAL '30 days')`,
@@ -9449,10 +9466,13 @@ router.post('/feishu/event', async (req, res) => {
       // 加载对话历史（仅 p2p）
       const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
 
-      // 群聊 @mention：注入成员名单 + 发送者印象（群成员感知）
+      // 群聊 @mention：注入权限 + 发送者印象 + 成员名单
       let enrichedText = text;
       if (chatType === 'group') {
         const parts = [];
+        // 权限控制（colleague 限工作话题，guest 限基础帮助）
+        if (relationship === 'colleague') parts.push('权限：同事，仅讨论工作相关话题');
+        else if (relationship === 'guest') parts.push('权限：访客，仅基础帮助，不涉及公司/个人信息');
         // 注入发送者 impression
         const impRow = await pool.query(
           `SELECT content FROM user_profile_facts WHERE user_id=$1 AND category='feishu_group_impression' ORDER BY created_at DESC LIMIT 1`,
