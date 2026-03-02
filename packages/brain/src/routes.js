@@ -9097,6 +9097,31 @@ async function getFeishuToken() {
   return data.tenant_access_token;
 }
 
+// 群成员列表内存缓存（chat_id → { names, expiresAt }）
+const groupMembersCache = new Map();
+
+/** 获取群成员名单（内存缓存 1小时）— 调飞书 GET /im/v1/chats/{chat_id}/members */
+async function getGroupMembers(chatId, accessToken) {
+  const now = Date.now();
+  const cached = groupMembersCache.get(chatId);
+  if (cached && cached.expiresAt > now) return cached.names;
+
+  try {
+    const resp = await fetch(
+      `https://open.feishu.cn/open-apis/im/v1/chats/${chatId}/members?member_id_type=open_id&page_size=100`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
+    );
+    const data = await resp.json();
+    if (data.code !== 0) return [];
+    const names = (data.data?.items || []).map(m => m.name).filter(Boolean);
+    groupMembersCache.set(chatId, { names, expiresAt: now + 3600000 });
+    return names;
+  } catch (err) {
+    console.warn('[feishu/group] 获取群成员失败:', err.message);
+    return [];
+  }
+}
+
 // 已知用户关系表（名字关键词 → relationship）
 // owner 单独通过 API 判断，此表用于识别同事/家人
 const FEISHU_KNOWN_RELATIONS = {
@@ -9340,7 +9365,14 @@ router.post('/feishu/event', async (req, res) => {
         ).catch(err => console.warn('[feishu/group] memory_stream 写入失败:', err.message));
 
         try {
-          const decisionPrompt = `你是飞书群聊机器人 Cecelia。群里有人发了一条消息，判断你是否需要回复。\n\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 倾向回复\n- 消息内容涉及 Cecelia 的能力、状态、工作 → 必须回复\n- 只是语气词（"哈哈"、"好"、"嗯"、"收到"）→ 不回复\n- 明显是成员间聊天、与 AI 无关 → 不回复\n- 不确定时 → 回复\n\n以纯 JSON 格式回复：\n{"should_reply":true,"reply":"回复内容"}\n或\n{"should_reply":false,"reply":""}`;
+          // 注入最近群聊历史（对话连续性）
+          const recentRows = await pool.query(
+            `SELECT content FROM memory_stream WHERE source_type='feishu_group' ORDER BY created_at DESC LIMIT 5`
+          ).then(r => r.rows.map(r => r.content).reverse()).catch(() => []);
+          const recentBlock = recentRows.length
+            ? `\n最近群聊历史（从旧到新）：\n${recentRows.join('\n')}\n`
+            : '';
+          const decisionPrompt = `你是飞书群聊机器人 Cecelia。群里有人发了一条消息，判断你是否需要回复。${recentBlock}\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 倾向回复\n- 消息内容涉及 Cecelia 的能力、状态、工作 → 必须回复\n- 跟进上文中 Cecelia 回复的追问 → 回复\n- 只是语气词（"哈哈"、"好"、"嗯"、"收到"）→ 不回复\n- 明显是成员间聊天、与 AI 无关 → 不回复\n- 不确定时 → 回复\n\n以纯 JSON 格式回复：\n{"should_reply":true,"reply":"回复内容"}\n或\n{"should_reply":false,"reply":""}`;
           const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
           let decision;
           try {
@@ -9371,8 +9403,17 @@ router.post('/feishu/event', async (req, res) => {
       // 加载对话历史（仅 p2p）
       const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
 
+      // 群聊 @mention：注入成员名单（群成员感知）
+      let enrichedText = text;
+      if (chatType === 'group') {
+        const memberNames = await getGroupMembers(message.chat_id, accessToken);
+        if (memberNames.length > 0) {
+          enrichedText = `[群聊上下文：群成员包括 ${memberNames.join('、')}] ${text}`;
+        }
+      }
+
       // 调用 Cecelia
-      const result = await handleChat(text, {
+      const result = await handleChat(enrichedText, {
         source: 'feishu',
         sender_name: senderName,
         user_id: userId,
