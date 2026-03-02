@@ -710,6 +710,8 @@ interface ManualViewProps {
 }
 
 function ManualView({ manifest, subsystems }: ManualViewProps) {
+  const [openChapter, setOpenChapter] = useState<string | null>(null);
+
   if (!manifest) {
     return (
       <div style={{ textAlign: 'center', padding: '60px 0', color: '#6b7280' }}>
@@ -783,229 +785,231 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
         </div>
       </div>
 
-      {/* ── 各章节 ── */}
+      {/* ── 各章节（手风琴） ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 48 }}>
       {manifest.blocks.map((block, chIdx) => {
         const chapterNum = chIdx + 1;
         const chapterIcon = CHAPTER_ICONS[chIdx] || '📋';
         const editorial = CHAPTER_EDITORIAL[block.id];
+        const isOpen = openChapter === block.id;
 
         return (
-          <div key={block.id} style={{ marginBottom: 64 }}>
-            {/* 章标题 */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              paddingBottom: 14, marginBottom: 20,
-              borderBottom: `2px solid ${block.color}50`,
-            }}>
+          <div key={block.id} style={{
+            border: `1px solid ${isOpen ? block.color + '60' : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 14,
+            overflow: 'hidden',
+          }}>
+            {/* ── 卡片头部（可点击展开/折叠） ── */}
+            <button
+              onClick={() => setOpenChapter(isOpen ? null : block.id)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 16,
+                padding: '20px 24px', cursor: 'pointer',
+                background: isOpen ? `${block.color}0a` : 'transparent',
+                border: 'none', textAlign: 'left',
+              }}
+            >
               <span style={{
                 fontSize: 11, color: '#6b7280', fontFamily: 'monospace',
-                background: `${block.color}15`, padding: '2px 8px', borderRadius: 4,
-                flexShrink: 0,
+                background: `${block.color}15`, padding: '3px 10px', borderRadius: 4,
+                flexShrink: 0, whiteSpace: 'nowrap',
               }}>
                 第 {chapterNum} 章
               </span>
-              <span style={{ fontSize: 22, fontWeight: 800, color: block.color }}>
-                {chapterIcon} {block.label}
-              </span>
-              {editorial && (
-                <span style={{
-                  fontSize: 13, color: '#6b7280', fontStyle: 'italic',
-                  marginLeft: 4,
-                }}>
-                  —— {editorial.analogy}
-                </span>
-              )}
-            </div>
-
-            {/* 左右布局：左 60% 内容 + 右 40% 配图 */}
-            <div style={{ display: 'flex', flexDirection: 'row', gap: 28, alignItems: 'flex-start' }}>
-
-              {/* 左侧：类比 + 职责 + 模块列表 */}
-              <div style={{ flex: '1 1 0', minWidth: 0 }}>
-
-                {/* 类比框 */}
+              <span style={{ fontSize: 26, lineHeight: 1, flexShrink: 0 }}>{chapterIcon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: block.color, lineHeight: 1.2 }}>
+                  {block.label}
+                </div>
                 {editorial && (
-                  <div style={{
-                    background: `${block.color}0c`,
-                    border: `1px solid ${block.color}30`,
-                    borderLeft: `4px solid ${block.color}`,
-                    borderRadius: '0 8px 8px 0',
-                    padding: '10px 16px',
-                    marginBottom: 14,
-                  }}>
-                    <span style={{ color: block.color, fontWeight: 700, fontSize: 12 }}>
-                      类比
-                    </span>
-                    <span style={{ color: '#d1d5db', fontSize: 13, marginLeft: 10 }}>
-                      {editorial.analogy}
-                    </span>
+                  <div style={{ fontSize: 13, color: '#6b7280', marginTop: 5, fontStyle: 'italic' }}>
+                    {editorial.analogy}
                   </div>
                 )}
+              </div>
+              <span style={{ fontSize: 12, color: '#4b5563', flexShrink: 0 }}>
+                {block.modules.length} 个模块
+              </span>
+              <span style={{
+                fontSize: 14,
+                color: isOpen ? block.color : '#4b5563',
+                transform: isOpen ? 'rotate(90deg)' : 'none',
+                display: 'inline-block',
+                flexShrink: 0,
+              }}>
+                ▶
+              </span>
+            </button>
 
+            {/* ── 展开内容 ── */}
+            {isOpen && (
+              <div style={{
+                padding: '24px 28px 32px',
+                borderTop: `1px solid ${block.color}25`,
+              }}>
                 {/* 职责描述 */}
-                <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
+                <p style={{
+                  color: '#d1d5db', fontSize: 15, lineHeight: 1.9,
+                  margin: '0 0 28px', maxWidth: 740,
+                }}>
                   {editorial?.role || block.desc}
                 </p>
 
-                {/* 该章各模块 */}
-                {block.modules.map((mod, modIdx) => {
-                  const subsystem = subsystems.find(s => s.id === mod.id);
-                  const todayCount = subsystem?.metrics.today_count;
-                  const status = subsystem?.status || 'dormant';
-                  const sc = STATUS_COLORS[status];
-                  const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
-                  const fullDesc = editorial?.modules[mod.id]?.full;
+                {/* SVG 配图（居中展示，放大） */}
+                <div style={{
+                  display: 'flex', justifyContent: 'center', alignItems: 'center',
+                  padding: '20px 0 28px',
+                  borderTop: `1px solid rgba(255,255,255,0.05)`,
+                  borderBottom: `1px solid rgba(255,255,255,0.05)`,
+                  marginBottom: 28,
+                }}>
+                  <div style={{
+                    transform: 'scale(1.7)',
+                    transformOrigin: 'center center',
+                    marginTop: 60, marginBottom: 60,
+                  }}>
+                    <ChapterDiagram blockId={block.id} color={block.color} />
+                  </div>
+                </div>
 
-                  // 丘脑显示动作表，感知层显示信号列表，执行器显示技能表
-                  const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
-                  const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
-                  const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
+                {/* 模块列表 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+                  {block.modules.map((mod, modIdx) => {
+                    const subsystem = subsystems.find(s => s.id === mod.id);
+                    const todayCount = subsystem?.metrics.today_count;
+                    const status = subsystem?.status || 'dormant';
+                    const sc = STATUS_COLORS[status];
+                    const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
+                    const fullDesc = editorial?.modules[mod.id]?.full;
+                    const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
+                    const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
+                    const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
 
-                  return (
-                    <div key={mod.id} style={{
-                      marginBottom: 28,
-                      paddingLeft: 16,
-                      borderLeft: `3px solid ${block.color}30`,
-                      paddingBottom: 4,
-                    }}>
-                      {/* 模块标题行 */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <span style={{
-                          display: 'inline-block', width: 8, height: 8,
-                          borderRadius: '50%', background: sc, flexShrink: 0,
-                        }} />
-                        <span style={{ fontSize: 15, fontWeight: 700, color: '#e5e7eb' }}>
-                          {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
-                        </span>
-                        {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
-                        {todayCount !== null && todayCount !== undefined && (
+                    return (
+                      <div key={mod.id} style={{
+                        paddingLeft: 20,
+                        borderLeft: `3px solid ${block.color}40`,
+                      }}>
+                        {/* 模块标题行 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                           <span style={{
-                            marginLeft: 'auto', fontSize: 12, color: '#6b7280',
-                            fontFamily: 'monospace',
-                          }}>
-                            今日 {todayCount.toLocaleString()} 次
+                            display: 'inline-block', width: 9, height: 9,
+                            borderRadius: '50%', background: sc, flexShrink: 0,
+                          }} />
+                          <span style={{ fontSize: 16, fontWeight: 700, color: '#e5e7eb' }}>
+                            {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
                           </span>
+                          {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
+                          {todayCount !== null && todayCount !== undefined && (
+                            <span style={{
+                              marginLeft: 'auto', fontSize: 12, color: '#6b7280', fontFamily: 'monospace',
+                            }}>
+                              今日 {todayCount.toLocaleString()} 次
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 文件路径 */}
+                        <div style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6,
+                          fontFamily: 'monospace', fontSize: 11,
+                          color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
+                          padding: '3px 10px', borderRadius: 5,
+                          border: '1px solid rgba(96,165,250,0.15)',
+                          marginBottom: 12,
+                        }}>
+                          📄 src/{mod.file}
+                        </div>
+
+                        {/* 深度说明 */}
+                        <p style={{ color: '#9ca3af', fontSize: 14, lineHeight: 1.85, margin: '0 0 14px' }}>
+                          {fullDesc || mod.desc}
+                        </p>
+
+                        {/* 丘脑：动作白名单表 */}
+                        {showActions && (
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                              ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
+                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
+                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Object.entries(allActions).map(([name, info]) => (
+                                  <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>{name}</td>
+                                    <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>{info.dangerous ? '⚠️ 是' : '—'}</td>
+                                    <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {/* 感知层：信号列表 */}
+                        {showSignals && (
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                              📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {allSignals.map(sig => (
+                                <span key={sig} style={{
+                                  fontFamily: 'monospace', fontSize: 11,
+                                  color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
+                                  padding: '3px 8px', borderRadius: 4,
+                                  border: '1px solid rgba(165,180,252,0.2)',
+                                }}>
+                                  {sig}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 执行器：技能映射 */}
+                        {showSkills && (
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                              🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
+                            </div>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
+                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {Object.entries(allSkills).map(([taskType, skill]) => (
+                                  <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
+                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
+                                      {skill || '（无 skill，仅标记）'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
                       </div>
-
-                      {/* 文件路径 */}
-                      <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 6,
-                        fontFamily: 'monospace', fontSize: 11,
-                        color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
-                        padding: '3px 10px', borderRadius: 5,
-                        border: '1px solid rgba(96,165,250,0.15)',
-                        marginBottom: 10,
-                      }}>
-                        📄 src/{mod.file}
-                      </div>
-
-                      {/* 深度说明（优先用 editorial，fallback 到 manifest desc） */}
-                      <p style={{
-                        color: '#9ca3af', fontSize: 13, lineHeight: 1.8,
-                        margin: '0 0 12px 0',
-                      }}>
-                        {fullDesc || mod.desc}
-                      </p>
-
-                      {/* 丘脑：动作白名单表 */}
-                      {showActions && (
-                        <div>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                            ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
-                          </div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
-                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
-                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(allActions).map(([name, info]) => (
-                                <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>
-                                    {name}
-                                  </td>
-                                  <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>
-                                    {info.dangerous ? '⚠️ 是' : '—'}
-                                  </td>
-                                  <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* 感知层：信号列表 */}
-                      {showSignals && (
-                        <div>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                            📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {allSignals.map(sig => (
-                              <span key={sig} style={{
-                                fontFamily: 'monospace', fontSize: 11,
-                                color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
-                                padding: '3px 8px', borderRadius: 4,
-                                border: '1px solid rgba(165,180,252,0.2)',
-                              }}>
-                                {sig}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 执行器：技能映射表 */}
-                      {showSkills && (
-                        <div>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                            🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
-                          </div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
-                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(allSkills).map(([taskType, skill]) => (
-                                <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
-                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
-                                    {skill || '（无 skill，仅标记）'}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* 右侧：SVG 数据流配图 */}
-              <div style={{ flex: '0 0 280px', width: 280, paddingTop: 4 }}>
-                <div style={{
-                  fontSize: 11, color: '#4b5563', textAlign: 'center',
-                  marginBottom: 8, letterSpacing: '0.05em',
-                }}>
-                  数据流示意
+                    );
+                  })}
                 </div>
-                <ChapterDiagram blockId={block.id} color={block.color} />
               </div>
-
-            </div>
+            )}
           </div>
         );
       })}
+      </div>
 
       {/* ── 附录 ── */}
       <div style={{
