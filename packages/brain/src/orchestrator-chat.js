@@ -152,7 +152,7 @@ async function buildNarrativesBlock() {
  * @param {string} [actionResult] - 已执行操作结果（可选）
  * @returns {Promise<string>} 完整 system prompt
  */
-async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '', relationship = 'owner') {
+async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '', relationship = 'owner', senderName = 'Alex') {
   // Layer 1: 身份核心
   let selfModelBlock = '';
   try {
@@ -212,11 +212,11 @@ async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '
   // 对话姿态（按 relationship 调整）
   let relationshipBlock = '';
   if (relationship === 'colleague') {
-    relationshipBlock = `\n\n## 对话姿态\n你现在在和 Alex 的同事说话。温和专业，友好但有边界。不透露 Alex 的私事、个人状态或具体业务细节。可以轻松聊天，但不深入 Alex 的私人领域。\n`;
+    relationshipBlock = `\n\n## 对话姿态\n你现在在和 Alex 的同事 ${senderName} 说话。温和专业，友好但有边界。不透露 Alex 的私事、个人状态或具体业务细节。可以轻松聊天，但不深入 Alex 的私人领域。\n`;
   } else if (relationship === 'family') {
-    relationshipBlock = `\n\n## 对话姿态\n你现在在和 Alex 的家人说话。温暖轻松，像家里的一员。不谈工作，不谈业务。关心对方，自然流畅。\n`;
+    relationshipBlock = `\n\n## 对话姿态\n你现在在和 Alex 的家人 ${senderName} 说话。温暖轻松，像家里的一员。不谈工作，不谈业务。关心对方，自然流畅。\n`;
   } else if (relationship === 'guest') {
-    relationshipBlock = `\n\n## 对话姿态\n你现在在和一位不认识的人说话。礼貌有度，保持距离。不透露 Alex 的任何信息。简短回应，引导对方联系 Alex 本人。\n`;
+    relationshipBlock = `\n\n## 对话姿态\n你现在在和一位访客 ${senderName} 说话。礼貌有度，保持距离。不透露 Alex 的任何信息。简短回应，引导对方联系 Alex 本人。\n`;
   }
 
   let prompt = `${MOUTH_SYSTEM_PROMPT}${relationshipBlock}${selfModelBlock}${emotionBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${recentTasksBlock}${pendingDecompBlock}`;
@@ -411,7 +411,7 @@ export async function handleChat(message, context = {}, messages = []) {
   }
 
   // 3. 加载5层内在状态，直接调 LLM
-  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship);
+  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship, senderName);
   let reply;
   let thalamus_signal = null;
 
@@ -518,7 +518,8 @@ export async function handleChatStream(message, context = {}, messages = [], onC
 
   // 加载5层内在状态，直接调 LLM 流式输出
   const relationship = context.relationship || 'owner';
-  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship);
+  const senderNameStream = context.sender_name || 'Alex';
+  const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship, senderNameStream);
 
   try {
     const { callLLMStream } = await import('./llm-caller.js');
