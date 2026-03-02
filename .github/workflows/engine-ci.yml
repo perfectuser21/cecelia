@@ -435,8 +435,30 @@ jobs:
 
       - name: Install yq
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          YQ_VERSION="v4.44.3"
+          YQ_BINARY="yq_linux_amd64"
+
+          # Download pinned version (not /latest/ — avoids supply chain risk)
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+
+          # Download checksums from same pinned release and verify
+          wget -qO /tmp/yq_checksums.txt \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_checksums.txt"
+
+          EXPECTED=$(grep "^[a-f0-9]*  ${YQ_BINARY}$" /tmp/yq_checksums.txt | awk '{print $1}')
+          if [ -z "$EXPECTED" ]; then
+            echo "ERROR: could not find hash for ${YQ_BINARY} in checksums"
+            exit 1
+          fi
+          ACTUAL=$(sha256sum /usr/local/bin/yq | awk '{print $1}')
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: hash mismatch — expected=$EXPECTED actual=$ACTUAL"
+            exit 1
+          fi
+
           sudo chmod +x /usr/local/bin/yq
+          echo "yq ${YQ_VERSION} installed and verified (sha256: ${ACTUAL})"
           yq --version
 
       - name: Generate path views from registry
