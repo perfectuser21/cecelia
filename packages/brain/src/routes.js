@@ -9113,9 +9113,13 @@ async function getGroupMembers(chatId, accessToken) {
       { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
     );
     const data = await resp.json();
-    if (data.code !== 0) return [];
+    if (data.code !== 0) {
+      console.warn('[feishu/group] 成员列表 API 失败: code=', data.code, 'chatId=', chatId.slice(-8));
+      return [];
+    }
     const items = data.data?.items || [];
     const names = items.map(m => m.name).filter(Boolean);
+    console.log('[feishu/group] 成员列表获取成功:', items.length, '人, chatId=', chatId.slice(-8));
     groupMembersCache.set(chatId, { names, expiresAt: now + 3600000 });
 
     // 写入 feishu_users（await 确保写完再返回，避免 getFeishuUserName 读到旧数据）
@@ -9202,8 +9206,16 @@ function inferRelationship(name, en_name, isOwner) {
   return 'guest';
 }
 
+// FEISHU_OWNER_OPEN_IDS: 逗号分隔的 owner open_id 列表，用于绕过 API 权限不足问题
+const _feishuOwnerOpenIds = (process.env.FEISHU_OWNER_OPEN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+
 /** 获取飞书用户信息（带 DB 缓存，TTL 24小时），返回 name/user_id/relationship */
 async function getFeishuUserName(openId, accessToken) {
+  // 环境变量 hardcoded owner 检查（绕过 API 权限不足）
+  if (_feishuOwnerOpenIds.includes(openId)) {
+    return { name: '徐啸', user_id: 'owner', relationship: 'owner' };
+  }
+
   // 先查缓存
   const cached = await pool.query(
     `SELECT name, user_id, relationship FROM feishu_users WHERE open_id = $1 AND fetched_at > NOW() - INTERVAL '24 hours'`,
@@ -9241,7 +9253,7 @@ async function getFeishuUserName(openId, accessToken) {
         [openId, name, en_name, user_id, relationship]
       );
     } else {
-      console.warn(`[feishu/event] 联系人 API 返回 code=${data.code}，尝试 staleCache 回退`);
+      console.warn(`[feishu/event] 联系人 API 返回 code=${data.code}，openId=${openId}，尝试 staleCache 回退`);
     }
   } catch (err) {
     console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
