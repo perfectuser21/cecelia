@@ -201,12 +201,16 @@ function routeTaskCreate(taskData) {
     is_recurring
   });
 
-  return {
+  const routing = {
     location,
     execution_mode: executionMode,
     task_type,
     routing_reason: `task_type=${task_type} → location=${location}, execution_mode=${executionMode}`
   };
+
+  console.log(`[task-router] routeTaskCreate: task_type=${task_type}, location=${location}, execution_mode=${executionMode}, title="${title?.substring(0, 50)}"`);
+
+  return routing;
 }
 
 /**
@@ -362,6 +366,14 @@ function routeTaskWithFallback(taskData) {
   }
 
   routing.routing_reason = `task_type=${routing.task_type} → location=${routing.location}, skill=${routing.skill}, status=${routing.routing_status}`;
+
+  if (routing.routing_status === 'success') {
+    console.log(`[task-router] routeTaskWithFallback: task_type=${routing.task_type}, location=${routing.location}, skill=${routing.skill}`);
+  } else if (routing.routing_status === 'fallback') {
+    console.warn(`[task-router] routeTaskWithFallback: FALLBACK triggered, reason=${routing.failure_reason}, strategy=${routing.fallback_strategy}, final_location=${routing.location}, final_skill=${routing.skill}`);
+  } else {
+    console.error(`[task-router] routeTaskWithFallback: FAILED, reason=${routing.failure_reason}, using defaults location=${routing.location}, skill=${routing.skill}`);
+  }
 
   return routing;
 }
