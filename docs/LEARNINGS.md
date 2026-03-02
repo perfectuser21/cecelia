@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 丘脑路由表扩展 + task-router 修复（PR #305, Brain v1.154.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**核心改动**：
+- `task-router.js`：修复 `research` → `/research`（原 `/exploratory` skill 已删除，mapping 坏了）
+- 新增 `explore`（HK MiniMax 快速调研）和 `knowledge`（US Claude 知识记录）两个 task_type
+- `THALAMUS_PROMPT` 路由表从 7 行扩展到 9 行，新增 code_review/qa/audit/explore/knowledge 覆盖
+
+**架构洞察**：
+- task_type → skill 的 mapping 与 THALAMUS_PROMPT 路由表必须保持一致，否则意图路由到正确 task_type 但 skill 不存在
+- LOCATION_MAP 也必须同步：新增 task_type 必须在三处同时加（VALID_TASK_TYPES + SKILL_WHITELIST + LOCATION_MAP）
+- facts-check.mjs 会校验 task_types 与 DEFINITION.md 一致性，新增 task_type 必须同步更新 DEFINITION.md
+
+**OpenClaw 参考**：
+- OpenClaw ClawHub 把 skill 分为 12 大类（AI/ML、Dev、DevOps、Security、Research、PKM、Communication、Browser、Productivity、Data、Calendar、Marketing）
+- 我们的 task_type 体系可以对应到：dev/code_review/qa/audit（Dev+Security）、research/explore（Research）、knowledge（PKM）、initiative_plan（Productivity）
+- 每新增一个 OpenClaw 类别的 skill，只需 3 行配置（VALID_TASK_TYPES + SKILL_WHITELIST + LOCATION_MAP）+ 1 行 THALAMUS_PROMPT 路由规则
+
 ### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
