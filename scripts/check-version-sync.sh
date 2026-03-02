@@ -34,7 +34,7 @@ fi
 
 # Check .brain-versions
 if [[ -f ".brain-versions" ]]; then
-    BV_VERSION=$(cat .brain-versions | tr -d '\n')
+    BV_VERSION=$(tail -1 .brain-versions)
     if [[ "$BV_VERSION" != "$BASE_VERSION" ]]; then
         echo "❌ .brain-versions: $BV_VERSION (expected: $BASE_VERSION)"
         ERRORS=$((ERRORS + 1))
