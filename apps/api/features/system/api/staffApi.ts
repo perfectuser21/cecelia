@@ -167,6 +167,27 @@ export async function updateBrainAgent(agentId: string, modelId: string): Promis
   if (!data.success) throw new Error(data.error || '更新失败');
 }
 
+export async function fetchMouthConfig(): Promise<{ model: string | null; provider: string | null }> {
+  try {
+    const res = await fetch(`${BRAIN_URL}/mouth-config`);
+    if (!res.ok) return { model: null, provider: null };
+    const data = await res.json();
+    return { model: data.model || null, provider: data.provider || null };
+  } catch {
+    return { model: null, provider: null };
+  }
+}
+
+export async function updateMouthConfig(model: string, provider: string): Promise<void> {
+  const res = await fetch(`${BRAIN_URL}/mouth-config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, provider }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || '更新失败');
+}
+
 export async function fetchCredentials(): Promise<CredentialEntry[]> {
   try {
     const res = await fetch(`${BRAIN_URL}/credentials`);
