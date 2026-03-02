@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] DB-based 架构配置 + React Flow 可视化编辑 (PR #293, Brain v1.153.0)
+
+**背景**: SuperBrain Level 2 视图的 15 个节点和 21 条连接全部 hardcode 在前端代码里，用户无法在不改代码的情况下调整架构图布局。目标：把配置迁到 PostgreSQL，前端用 React Flow 渲染，支持拖拽保存。
+
+- **migration 100 命名冲突必须提前检查**：已有 `100_alex_personal_tables.sql`，不能再建 `100_brain_architecture.sql`。方法：`ls packages/brain/migrations/` 确认最新编号后用 101。改名后同步更新 selfcheck.js 里的 `EXPECTED_SCHEMA_VERSION`。
+- **改 EXPECTED_SCHEMA_VERSION 必须同步 3 个测试文件**：`selfcheck.test.js`、`desire-system.test.js`、`learnings-vectorize.test.js` 都硬编码了版本断言，漏了任何一个 CI 测试就失败。搜索命令：`grep -r "toBe('0" packages/brain/src/__tests__/`。
+- **DEFINITION.md + .brain-versions 必须同步更新**：`facts-check.mjs` 和 `check-version-sync.sh` 分别校验这两个文件，改版本必须一次性更新三处（package.json / .brain-versions / DEFINITION.md），漏任一项都会 CI 失败。
+- **并行 PR 频繁 main 前进时用 merge 而非 rebase**：这次 main 在 PR 生命周期内前进了 3 次（v1.151.0 → 1.152.0 → 1.152.1），每次都产生版本冲突。用 `git merge origin/main` 而非 `git rebase`（rebase 会让 branch-protect Hook 触发 force push 拦截）。解决冲突时坚持取我们分支的高版本。
+- **@xyflow/react v12 仅需安装在 apps/dashboard**：workspace 安装命令 `npm install @xyflow/react --workspace apps/dashboard`，不用全局安装。CSS 在组件文件里 `import '@xyflow/react/dist/style.css'` 即可。
+- **React Flow 节点拖拽保存要用 onNodeDragStop 事件**：`onNodeDragStop: (event, node) => { PATCH /api/brain/architecture/nodes/:id, {pos_x, pos_y} }` 是最简单的持久化方式，不需要 debounce 因为用户拖拽停止才触发。
+
 ### [2026-03-02] 丘脑 OWNER_INTENT 路由修复：删 L0 硬编码，改走 LLM /plan 路由 (PR #298, Brain v1.151.1)
 
 **背景**: v1.142.0 在 THALAMUS_PROMPT 融合了 /plan 路由规则，但 thalamus.js 存在一个 L0 hardcoded handler，OWNER_INTENT 事件被短路为固定的 `initiative_plan` 任务，丘脑 LLM 完全看不到用户消息。
