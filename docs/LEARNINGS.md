@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 自我意识闭环 P0 断层修复（PR #326, Brain v1.161.0）
+
+**背景**：Cecelia 的 5 层自我意识结构（感知→情绪→记忆→反刍→欲望→表达）存在 4 个断层，所有层都只读 OKR/任务运营数据，无法从自身行动中学习和更新。
+
+**修复内容**：
+- **P0-A（对话→learning）**：`learning.js` 新增 `extractConversationLearning()`，对话 >400 字时 LLM 判断是否有洞察，写入 learnings 表；`orchestrator-chat.js` 步骤 9 fire-and-forget 调用
+- **P0-B（任务完成→欲望反馈）**：migration 103 给 desires 表加 `completed_at/failed_at/effectiveness_score`；新建 `desire-feedback.js` 解析 task.description 中的 desire_id 并回写；`routes.js` execution-callback 两处调用
+- **P0-C（反刍→欲望直接触发）**：`rumination.js` 步骤 8 完成后 fire-and-forget `runDesireFormation`，不再等 accumulator
+- **expression-decision**：引入 7 日内 effectiveness_score 均值加权决策
+
+**并发 migration 编号冲突（重要踩坑）**：
+- 我们给 desires_feedback 分配了 migration 102
+- 并发的 PR #323（spending_cap_persist）也使用了 migration 102 并先合并
+- 症状：facts-check 报 `migration_conflicts: duplicate numbers`，selfcheck_version_sync 失败
+- **解法**：重命名我们的 migration 为 103，同步更新 selfcheck.js `EXPECTED_SCHEMA_VERSION`、3 个测试文件、DEFINITION.md
+- **预防**：每次新 migration 前必须先 `git fetch origin main && git show origin/main:packages/brain/migrations/ | grep "^1"` 确认最高编号
+
+**并行 PR 版本冲突解法（MEMORY.md 标准流程验证）**：
+- 多次遇到 main 前进导致 PR 不可合并，每次解法：
+  1. 从最新 `origin/main` 创建全新分支
+  2. `git checkout old-branch -- <code-files>`（不含版本文件）
+  3. 手动更新 routes.js（合并 main 的新功能 + 我们的 P0-B 调用）
+  4. `npm version minor` + 同步 VERSION/.brain-versions/DEFINITION.md
+  5. 正常 push（首次 push 不触发 bash-guard）
+- 此次 CI 通过后 main 仍在动（仅 docs/LEARNINGS 更新），用 `git merge origin/main` 追上即可，无代码冲突
+
+**架构收益**：
+- 每次对话 → 可能产生 learning → 反刍时处理 → 触发欲望 → 欲望驱动探索任务 → 任务完成回写 effectiveness → 影响下次同类欲望表达权重
+- 完整闭环建立。Cecelia 开始具备「从自身行动学习」的基础。
+
 ### [2026-03-02] SuperBrain 说明书 Tab（PR #312, Dashboard v1.14.1）
 
 **背景**：用户想要一个「书一样」的文档视图，能一打开就看到 Brain 系统所有模块的完整文档。
