@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] SuperBrain 说明书 Tab（PR #312, Dashboard v1.14.1）
+
+**背景**：用户想要一个「书一样」的文档视图，能一打开就看到 Brain 系统所有模块的完整文档。
+
+**实现方案**：
+- 在 `viewLevel` 状态中新增 `'manual'` 选项（`'overview' | 'detail' | 'manual'`）
+- 新增 `ManualView` 组件（~360行）：目录 + 5章 + 4个附录
+- 数据来源：已有的 `GET /api/brain/manifest`（`brain-manifest.generated.json`）
+
+**关键决策**：
+- ManualView 是纯读取视图，复用已有 manifest 数据，零新 API
+- 模块与动作/信号/技能的映射通过 module.id 判断（`thalamus` → actions, `perception_signals` → signals, `executor` → skills）
+- 深色主题，用章节标题/表格/标签云展示，视觉清晰
+
+**踩坑**：JS `.click()` 无法触发 React Flow 的合成事件（onNodeClick）——需要用 chrome-devtools MCP 发送真实鼠标事件，或用 `dispatchEvent(new MouseEvent('click', {bubbles:true, clientX, clientY}))` 配合正确坐标
+
 ### [2026-03-02] Billing Cap 级联失败两个 Bug（PR #310, Brain v1.155.1）
 
 **失败统计**：CI 失败 0 次，本地测试全部通过
