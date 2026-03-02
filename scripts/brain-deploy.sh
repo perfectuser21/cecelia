@@ -39,11 +39,19 @@ echo "[4/7] Running tests... SKIPPED (CI already validated)"
 echo "  All tests pass in CI, skipping local test run to avoid port conflicts"
 echo ""
 
-# 5. Record version (keep last 5)
+# 5. Record version (keep last 5, skip if same as last entry)
 echo "[5/7] Recording version..."
-echo "${VERSION}" >> "$VERSIONS_FILE"
-tail -5 "$VERSIONS_FILE" > "$VERSIONS_FILE.tmp" && mv "$VERSIONS_FILE.tmp" "$VERSIONS_FILE"
-echo "  Stored in .brain-versions"
+LAST_RECORDED=""
+if [[ -f "$VERSIONS_FILE" ]]; then
+  LAST_RECORDED=$(tail -1 "$VERSIONS_FILE" 2>/dev/null || echo "")
+fi
+if [[ "$LAST_RECORDED" == "${VERSION}" ]]; then
+  echo "  Version ${VERSION} already recorded, skipping duplicate write."
+else
+  echo "${VERSION}" >> "$VERSIONS_FILE"
+  tail -5 "$VERSIONS_FILE" > "$VERSIONS_FILE.tmp" && mv "$VERSIONS_FILE.tmp" "$VERSIONS_FILE"
+  echo "  Stored in .brain-versions"
+fi
 echo ""
 
 # 6. Git tag (skip if tag exists)
@@ -59,8 +67,22 @@ echo ""
 
 # 7. Stop old container + start new one
 echo "[7/7] Starting container..."
-BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
+if ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
+  docker compose -f "$ROOT_DIR/docker-compose.yml" up -d; then
+  echo ""
+  echo "[FAIL] docker compose up -d failed. Rolling back..."
+  if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
+    PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
+    echo "  Rolling back to v${PREV_VERSION}..."
+    BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
+      docker compose -f "$ROOT_DIR/docker-compose.yml" up -d || true
+    echo "  Rolled back to v${PREV_VERSION}"
+  else
+    echo "  No previous version found. Stopping container."
+    docker compose -f "$ROOT_DIR/docker-compose.yml" down || true
+  fi
+  exit 1
+fi
 
 # Wait for healthy (max 60s)
 echo ""
