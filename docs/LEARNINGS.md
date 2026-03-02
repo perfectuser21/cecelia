@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 丘脑 OWNER_INTENT 路由修复：删 L0 硬编码，改走 LLM /plan 路由 (PR #298, Brain v1.151.1)
+
+**背景**: v1.142.0 在 THALAMUS_PROMPT 融合了 /plan 路由规则，但 thalamus.js 存在一个 L0 hardcoded handler，OWNER_INTENT 事件被短路为固定的 `initiative_plan` 任务，丘脑 LLM 完全看不到用户消息。
+
+- **L0 短路是架构死角**：L0 handler 在 LLM 调用前返回，任何 prompt 改进对其无效。修复方式：直接删除 handler，加一行注释说明"交 L1 LLM 路由"。
+- **invoke_skill 是遗留噪音**：v1.142.0 加入 ACTION_WHITELIST 但从未有对应 handler，decision-executor.js 遇到时静默 push 到 actions_failed 然后 continue。清理原则：whitelist 里的每个 action 必须有对应 handler，否则是 bug。
+- **路由表 action 类型要对应真实 handler**：THALAMUS_PROMPT 路由表写 `invoke_skill` → LLM 可能输出该 action → 无 handler → 静默失败。改成 `create_task + task_type` 后 LLM 输出的 action 有真实 handler 能执行。
+- **将来扩展路由只需改 THALAMUS_PROMPT**：路由规则完全在 prompt 里，不需要改任何执行层代码，只需在路由表加行即可。
 ### [2026-03-02] 对话深度驱动记忆下钻 — L0→L1→全文 + 嘴巴主动关联叙述 (PR #295, Brain v1.152.0)
 
 **背景**: 记忆系统有三层结构（L0/L1/全文），但每轮对话都返回相同粒度。嘴巴找到相关记忆后习惯问"是这个吗"。目标是实现对话深度感知的分层返回，以及主动关联叙述。
