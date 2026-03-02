@@ -23,6 +23,8 @@ import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, 
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP } from './task-router.js';
+import { getTaskWeights } from './task-weight.js';
+import { getCleanupStats, runTaskCleanup } from './task-cleanup.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
   addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS
@@ -9639,6 +9641,69 @@ router.post('/feishu/event', async (req, res) => {
       console.error('[feishu/event] 处理失败:', err.message);
     }
   })();
+});
+
+/**
+ * GET /api/brain/dispatch/weights
+ * 查看当前 queued 任务的派发权重（用于调试和监控）
+ */
+router.get('/dispatch/weights', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '50', 10);
+    const result = await pool.query(`
+      SELECT id, title, priority, task_type, queued_at, created_at, status, payload, metadata
+      FROM tasks
+      WHERE status = 'queued'
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    const taskWeights = getTaskWeights(result.rows);
+    // Sort by weight descending for readability
+    taskWeights.sort((a, b) => b.weight - a.weight);
+
+    res.json({
+      tasks: taskWeights,
+      count: taskWeights.length,
+      generated_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[API] dispatch/weights error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/dispatch/stats
+ * 获取任务派发统计信息（取消数量、等待时间、积压量等）
+ */
+router.get('/dispatch/stats', async (req, res) => {
+  try {
+    const stats = await getCleanupStats(pool);
+    res.json(stats);
+  } catch (err) {
+    console.error('[API] dispatch/stats error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/dispatch/cleanup
+ * 手动触发任务清理（取消过期 recurring 任务，归档过期 paused 任务）
+ */
+router.post('/dispatch/cleanup', async (req, res) => {
+  try {
+    const dryRun = req.query.dry_run === 'true' || req.body?.dry_run === true;
+    const stats = await runTaskCleanup(pool, { dryRun });
+    res.json({
+      success: true,
+      dry_run: dryRun,
+      ...stats
+    });
+  } catch (err) {
+    console.error('[API] dispatch/cleanup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;
