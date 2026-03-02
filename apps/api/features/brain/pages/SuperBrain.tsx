@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import {
+  ReactFlow, Background, Controls, Handle, Position,
+  useNodesState, useEdgesState, MarkerType,
+  type Node as RFNode, type Edge, type NodeProps,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 
 // ============== 类型 ==============
 interface SubsystemMetrics {
@@ -93,36 +99,31 @@ interface PerceptionSignalsData {
   error?: string;
 }
 
-// ============== Level 2: 5 列布局（左→右信息流）==============
-const COLUMNS = [
-  { label: '信号输入', x: 60 },
-  { label: '感知路由', x: 250 },
-  { label: '认知处理', x: 440 },
-  { label: '记忆学习', x: 630 },
-  { label: '行动输出', x: 820 },
-];
+// ============== Architecture DB 类型 ==============
+interface ArchitectureNode {
+  id: string;
+  block_id: string;
+  label: string;
+  nature: 'dynamic' | 'growing' | 'fixed';
+  pos_x: number;
+  pos_y: number;
+}
 
-const NODE_W = 110;
-const NODE_H = 52;
+interface ArchitectureConnection {
+  id: number;
+  from_node: string;
+  to_node: string;
+  path_type: 'A' | 'B' | 'C' | 'D';
+  is_broken: boolean;
+}
 
-const NODE_LAYOUT: Record<string, { x: number; y: number; col: number }> = {
-  tick:        { x: 60,  y: 120, col: 0 },
-  dialog:      { x: 60,  y: 320, col: 0 },
-  thalamus:    { x: 250, y: 120, col: 1 },
-  emotion:     { x: 250, y: 320, col: 1 },
-  cortex:      { x: 440, y: 80,  col: 2 },
-  cognitive:   { x: 440, y: 220, col: 2 },
-  desire:      { x: 440, y: 360, col: 2 },
-  memory:      { x: 630, y: 80,  col: 3 },
-  rumination:  { x: 630, y: 200, col: 3 },
-  learning:    { x: 630, y: 320, col: 3 },
-  self_model:  { x: 630, y: 440, col: 3 },
-  planner:     { x: 820, y: 80,  col: 4 },
-  executor:    { x: 820, y: 200, col: 4 },
-  suggestion:  { x: 820, y: 340, col: 4 },
-  immune:      { x: 820, y: 460, col: 4 },
-};
+interface ArchitectureData {
+  nodes: ArchitectureNode[];
+  connections: ArchitectureConnection[];
+  snapshot_at: string;
+}
 
+// ============== Level 2: 颜色配置 ==============
 const PATHS: Record<string, { color: string; label: string }> = {
   A: { color: '#3b82f6', label: 'A 自主循环' },
   B: { color: '#a855f7', label: 'B 对话驱动' },
@@ -130,31 +131,10 @@ const PATHS: Record<string, { color: string; label: string }> = {
   D: { color: '#ef4444', label: 'D 防护回路' },
 };
 
-const CONNECTION_PATH: Record<string, string> = {
-  'tick→thalamus': 'A', 'thalamus→cortex': 'A', 'cortex→memory': 'A',
-  'cortex→learning': 'A', 'planner→executor': 'A', 'tick→planner': 'A', 'tick→cognitive': 'A',
-  'dialog→thalamus': 'B', 'dialog→memory': 'B', 'thalamus→emotion': 'B',
-  'emotion→desire': 'B', 'desire→suggestion': 'B', 'desire→executor': 'B', 'suggestion→planner': 'B',
-  'memory→rumination': 'C', 'rumination→learning': 'C', 'learning→self_model': 'C',
-  'self_model→cognitive': 'C', 'cognitive→emotion': 'C',
-  'executor→immune': 'D', 'immune→planner': 'D',
-};
-
-// 模块级别断路连接（来自 manifest.brokenConnections）
-const BROKEN_CONNECTIONS_SET = new Set(['suggestion→planner']);
-
 const STATUS_COLORS: Record<string, string> = {
   active: '#22c55e',
   idle: '#eab308',
   dormant: '#6b7280',
-};
-
-const COL_BG: Record<number, string> = {
-  0: 'rgba(249,115,22,0.06)',
-  1: 'rgba(99,102,241,0.06)',
-  2: 'rgba(168,85,247,0.06)',
-  3: 'rgba(234,179,8,0.06)',
-  4: 'rgba(34,197,94,0.06)',
 };
 
 const NATURE_BADGE: Record<string, string> = {
@@ -163,140 +143,84 @@ const NATURE_BADGE: Record<string, string> = {
   fixed: '🔒',
 };
 
-// ============== Level 2: 连接线 ==============
-function FlowLine({ conn, brokenSet }: { conn: Connection; brokenSet: Set<string> }) {
-  const from = NODE_LAYOUT[conn.from];
-  const to = NODE_LAYOUT[conn.to];
-  if (!from || !to) return null;
+const BLOCK_COLORS: Record<string, string> = {
+  interface:  '#f97316',
+  perception: '#6366f1',
+  core:       '#a855f7',
+  action:     '#22c55e',
+  evolution:  '#ec4899',
+};
 
-  const x1 = from.x + NODE_W;
-  const y1 = from.y + NODE_H / 2;
-  const x2 = to.x;
-  const y2 = to.y + NODE_H / 2;
-
-  const isBackward = to.col <= from.col;
-  const pathKey = `${conn.from}→${conn.to}`;
-  const pathId = CONNECTION_PATH[pathKey];
-  const pathColor = pathId ? PATHS[pathId].color : '#475569';
-  const isActive = conn.status === 'active';
-  const isDormant = conn.status === 'deployed_no_data';
-  const isBroken = brokenSet.has(pathKey);
-
-  let d: string;
-  if (isBackward) {
-    const drop = 30;
-    const cx1x = x1 + 20;
-    const cx2x = x2 - 20;
-    const bottomY = Math.max(y1, y2) + 60;
-    d = `M ${x1} ${y1} C ${cx1x} ${y1 + drop}, ${cx1x} ${bottomY}, ${(x1 + x2) / 2} ${bottomY} C ${cx2x} ${bottomY}, ${cx2x} ${y2 + drop}, ${x2} ${y2}`;
-  } else {
-    const cpx = (x1 + x2) / 2;
-    d = `M ${x1} ${y1} C ${cpx} ${y1}, ${cpx} ${y2}, ${x2} ${y2}`;
-  }
-
-  if (isBroken) {
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
-    return (
-      <g>
-        <path d={d} fill="none" stroke="#ef4444" strokeWidth={2}
-          strokeDasharray="5 3" opacity={0.8} />
-        <text x={midX} y={midY - 8} textAnchor="middle" fill="#ef4444" fontSize={12}>⚠️</text>
-        <text x={midX} y={midY + 4} textAnchor="middle" fill="#ef4444" fontSize={8} opacity={0.8}>断路</text>
-      </g>
-    );
-  }
-
-  return (
-    <g>
-      <path
-        d={d}
-        fill="none"
-        stroke={isActive ? pathColor : isDormant ? 'rgba(107,114,128,0.25)' : 'rgba(107,114,128,0.15)'}
-        strokeWidth={isActive ? 2 : 1}
-        strokeDasharray={isDormant ? '4 4' : 'none'}
-        opacity={isActive ? 0.7 : 0.4}
-        markerEnd={isActive ? `url(#arrow-${pathId || 'default'})` : undefined}
-      />
-      {isActive && (
-        <circle r="3" fill={pathColor} opacity="0.9">
-          <animateMotion
-            dur={`${2.5 + Math.random() * 1.5}s`}
-            repeatCount="indefinite"
-            path={d}
-          />
-        </circle>
-      )}
-    </g>
-  );
+// ============== React Flow 自定义节点 ==============
+interface BrainNodeData {
+  label: string;
+  nature?: 'dynamic' | 'growing' | 'fixed';
+  blockColor?: string;
+  status?: 'active' | 'idle' | 'dormant';
+  todayCount?: number | null;
+  [key: string]: unknown;
 }
 
-// ============== Level 2: 节点 ==============
-function Node({
-  subsystem, onClick, isSelected, blockColor, nature,
-}: { subsystem: Subsystem; onClick: () => void; isSelected: boolean; blockColor?: string; nature?: string }) {
-  const pos = NODE_LAYOUT[subsystem.id];
-  if (!pos) return null;
-
-  const sc = STATUS_COLORS[subsystem.status];
-  const isActive = subsystem.status === 'active';
-  const borderColor = isSelected ? '#e5e7eb' : (blockColor ? `${blockColor}60` : 'rgba(255,255,255,0.12)');
-  const natureBadge = nature ? NATURE_BADGE[nature] : undefined;
+const BrainNodeComponent = memo(({ data, selected }: NodeProps & { data: BrainNodeData }) => {
+  const sc = STATUS_COLORS[data.status || 'dormant'];
+  const isActive = data.status === 'active';
+  const natureBadge = data.nature ? NATURE_BADGE[data.nature] : undefined;
+  const blockColor = data.blockColor;
 
   return (
-    <g onClick={onClick} style={{ cursor: 'pointer' }}>
-      {isActive && (
-        <rect
-          x={pos.x - 3} y={pos.y - 3}
-          width={NODE_W + 6} height={NODE_H + 6}
-          rx={10} fill="none"
-          stroke={sc} strokeWidth={1} opacity={0.3}
-        >
-          <animate attributeName="opacity" values="0.1;0.35;0.1" dur="3s" repeatCount="indefinite" />
-        </rect>
-      )}
+    <div style={{
+      width: 110, height: 52,
+      background: selected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+      borderRadius: 8,
+      border: `1px solid ${selected ? '#e5e7eb' : blockColor ? `${blockColor}60` : 'rgba(255,255,255,0.12)'}`,
+      position: 'relative',
+      cursor: 'pointer',
+      boxShadow: isActive ? `0 0 8px ${sc}30` : 'none',
+      transition: 'box-shadow 0.3s',
+    }}>
       {blockColor && (
-        <rect
-          x={pos.x} y={pos.y}
-          width={4} height={NODE_H}
-          rx={2} fill={blockColor} opacity={0.6}
-        />
+        <div style={{
+          position: 'absolute', left: 0, top: 0, width: 4, height: '100%',
+          borderRadius: '8px 0 0 8px', background: blockColor, opacity: 0.6,
+        }} />
       )}
-      <rect
-        x={pos.x} y={pos.y}
-        width={NODE_W} height={NODE_H}
-        rx={8}
-        fill={isSelected ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)'}
-        stroke={borderColor}
-        strokeWidth={isSelected ? 1.5 : 0.5}
-      />
-      <circle cx={pos.x + 12} cy={pos.y + 12} r={4} fill={sc}>
-        {isActive && (
-          <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" />
-        )}
-      </circle>
+      {/* 状态灯 */}
+      <div style={{
+        position: 'absolute', left: 10, top: 10,
+        width: 8, height: 8, borderRadius: '50%',
+        background: sc,
+        boxShadow: isActive ? `0 0 4px ${sc}` : 'none',
+      }} />
+      {/* nature 徽章 */}
       {natureBadge && (
-        <text x={pos.x + NODE_W - 8} y={pos.y + 14} textAnchor="middle" fontSize={10}>
+        <div style={{ position: 'absolute', right: 6, top: 6, fontSize: 10 }}>
           {natureBadge}
-        </text>
+        </div>
       )}
-      <text
-        x={pos.x + NODE_W / 2} y={pos.y + 26}
-        textAnchor="middle" fill="#e5e7eb" fontSize={11} fontWeight={600}
-      >
-        {subsystem.name}
-      </text>
-      <text
-        x={pos.x + NODE_W / 2} y={pos.y + 42}
-        textAnchor="middle" fill="#9ca3af" fontSize={10}
-      >
-        {subsystem.metrics.today_count !== null && subsystem.metrics.today_count !== undefined
-          ? `${subsystem.metrics.today_count.toLocaleString()} 次`
-          : subsystem.status}
-      </text>
-    </g>
+      {/* 名称 */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, top: 16,
+        textAlign: 'center', color: '#e5e7eb', fontSize: 11, fontWeight: 600,
+      }}>
+        {data.label}
+      </div>
+      {/* 计数 */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 7,
+        textAlign: 'center', color: '#9ca3af', fontSize: 10,
+      }}>
+        {data.todayCount != null
+          ? `${data.todayCount.toLocaleString()} 次`
+          : (data.status || 'dormant')}
+      </div>
+      <Handle type="target" position={Position.Left} style={{ background: 'transparent', border: 'none' }} />
+      <Handle type="source" position={Position.Right} style={{ background: 'transparent', border: 'none' }} />
+    </div>
   );
-}
+});
+BrainNodeComponent.displayName = 'BrainNodeComponent';
+
+const nodeTypes = { brainNode: BrainNodeComponent };
 
 // ============== Level 1: 块健康状态计算 ==============
 function computeBlockHealth(block: ManifestBlock, issues?: ManifestIssue[]) {
@@ -698,11 +622,86 @@ function IssuesPanel({ issues }: { issues?: ManifestIssue[] }) {
   );
 }
 
+// ============== React Flow Level 2 子组件 ==============
+function BrainFlowView({
+  architectureData, subsystems,
+  onNodeClick, onNodeDragStop,
+}: {
+  architectureData: ArchitectureData;
+  subsystems: Subsystem[];
+  onNodeClick: (nodeId: string) => void;
+  onNodeDragStop: (nodeId: string, x: number, y: number) => void;
+}) {
+  const rfNodes: RFNode[] = architectureData.nodes.map(n => {
+    const subsystem = subsystems.find(s => s.id === n.id);
+    return {
+      id: n.id,
+      position: { x: n.pos_x, y: n.pos_y },
+      type: 'brainNode',
+      data: {
+        label: n.label,
+        nature: n.nature,
+        blockColor: BLOCK_COLORS[n.block_id],
+        status: subsystem?.status,
+        todayCount: subsystem?.metrics.today_count,
+      },
+    };
+  });
+
+  const rfEdges: Edge[] = architectureData.connections.map(c => {
+    const pathColor = PATHS[c.path_type]?.color || '#475569';
+    return {
+      id: `${c.from_node}-${c.to_node}`,
+      source: c.from_node,
+      target: c.to_node,
+      animated: !c.is_broken,
+      label: c.is_broken ? '⚠️ 断路' : undefined,
+      style: {
+        stroke: c.is_broken ? '#ef4444' : pathColor,
+        strokeDasharray: c.is_broken ? '5 3' : undefined,
+        strokeWidth: 2,
+      },
+      markerEnd: c.is_broken ? undefined : {
+        type: MarkerType.ArrowClosed,
+        color: pathColor,
+      },
+      labelStyle: { fill: '#ef4444', fontSize: 10 },
+      labelBgStyle: { fill: 'rgba(0,0,0,0.5)' },
+    };
+  });
+
+  const [nodes, , onNodesChange] = useNodesState(rfNodes);
+  const [edges, , onEdgesChange] = useEdgesState(rfEdges);
+
+  return (
+    <div style={{ width: '100%', height: 560, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        onNodeClick={(_, node) => onNodeClick(node.id)}
+        onNodeDragStop={(_, node) => onNodeDragStop(node.id, node.position.x, node.position.y)}
+        fitView
+        fitViewOptions={{ padding: 0.15 }}
+        style={{ background: 'rgba(0,0,0,0.25)' }}
+        minZoom={0.4}
+        maxZoom={2}
+      >
+        <Background color="#1e293b" gap={20} />
+        <Controls style={{ background: 'rgba(30,41,59,0.9)', border: '1px solid rgba(255,255,255,0.08)' }} />
+      </ReactFlow>
+    </div>
+  );
+}
+
 // ============== 主组件 ==============
 export default function SuperBrain() {
   const [data, setData] = useState<CognitiveMapData | null>(null);
   const [manifest, setManifest] = useState<ManifestData | null>(null);
   const [signalsData, setSignalsData] = useState<PerceptionSignalsData | null>(null);
+  const [architectureData, setArchitectureData] = useState<ArchitectureData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [viewLevel, setViewLevel] = useState<'overview' | 'detail'>('overview');
@@ -737,11 +736,41 @@ export default function SuperBrain() {
     }
   }, []);
 
+  const fetchArchitecture = useCallback(async () => {
+    try {
+      const res = await fetch('/api/brain/architecture');
+      if (res.ok) setArchitectureData(await res.json());
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  const handleNodeDragStop = useCallback(async (nodeId: string, x: number, y: number) => {
+    try {
+      await fetch(`/api/brain/architecture/nodes/${nodeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pos_x: Math.round(x), pos_y: Math.round(y) }),
+      });
+      // 更新本地 state
+      setArchitectureData(prev => prev ? {
+        ...prev,
+        nodes: prev.nodes.map(n => n.id === nodeId ? { ...n, pos_x: Math.round(x), pos_y: Math.round(y) } : n),
+      } : prev);
+    } catch {
+      // 静默失败，位置会在下次 fetch 恢复
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    fetchArchitecture();
+  }, [fetchArchitecture]);
 
   // 感知信号每 30s 刷新一次（运行感知需要查 DB，不要太频繁）
   useEffect(() => {
@@ -787,12 +816,10 @@ export default function SuperBrain() {
   const idleCount = data?.subsystems.filter(s => s.status === 'idle').length || 0;
   const dormantCount = data?.subsystems.filter(s => s.status === 'dormant').length || 0;
 
-  // 断路连接集合（Level 2 用）
+  // 断路连接集合（Level 2 用，从 manifest 读取）
   const brokenSet = new Set(
     (manifest?.brokenConnections || []).map(c => `${c.from}→${c.to}`)
   );
-  // 补充静态已知断路
-  BROKEN_CONNECTIONS_SET.forEach(k => brokenSet.add(k));
 
   // ── Level 1 (overview) 布局 ──
   const BW = 180;
@@ -1112,7 +1139,7 @@ export default function SuperBrain() {
         </>
       )}
 
-      {/* ─── Level 2: Detail (现有节点流图) ─── */}
+      {/* ─── Level 2: Detail (React Flow 节点流图) ─── */}
       {viewLevel === 'detail' && (
         <>
           {/* 路径图例 + nature 说明 */}
@@ -1127,77 +1154,27 @@ export default function SuperBrain() {
                 <span style={{ color: '#d1d5db', fontSize: 11 }}>{p.label}</span>
               </span>
             ))}
-            {manifest?.blocks.map(b => (
-              <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: b.color, opacity: 0.8 }} />
-                <span style={{ color: '#d1d5db', fontSize: 11 }}>{b.label}</span>
-              </span>
-            ))}
             <span style={{ color: '#d1d5db', fontSize: 11 }}>🔄 动态  📈 成长</span>
             <span style={{ color: '#ef4444', fontSize: 11 }}>⚠️ 断路连接标红</span>
+            <span style={{ color: '#6b7280', fontSize: 11 }}>拖拽节点自动保存位置</span>
           </div>
 
-          <div style={{
-            background: 'rgba(0,0,0,0.25)', borderRadius: 12,
-            border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
-          }}>
-            <svg viewBox="0 0 1000 560" width="100%" style={{ display: 'block' }}>
-              <defs>
-                {Object.entries(PATHS).map(([id, p]) => (
-                  <marker key={id} id={`arrow-${id}`} viewBox="0 0 10 10" refX="8" refY="5"
-                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill={p.color} opacity="0.6" />
-                  </marker>
-                ))}
-                <marker id="arrow-default" viewBox="0 0 10 10" refX="8" refY="5"
-                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" opacity="0.5" />
-                </marker>
-              </defs>
-
-              {/* 列背景 + 标题 */}
-              {COLUMNS.map((col, i) => (
-                <g key={i}>
-                  <rect
-                    x={col.x - 15} y={30} width={NODE_W + 30} height={510}
-                    rx={8} fill={COL_BG[i]} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5}
-                  />
-                  <text
-                    x={col.x + NODE_W / 2} y={22}
-                    textAnchor="middle" fill="#9ca3af" fontSize={11} fontWeight={600}
-                    letterSpacing="0.05em"
-                  >
-                    {col.label}
-                  </text>
-                  {i < COLUMNS.length - 1 && (
-                    <text
-                      x={(col.x + NODE_W + COLUMNS[i + 1].x) / 2}
-                      y={22} textAnchor="middle" fill="#4b5563" fontSize={14}
-                    >
-                      →
-                    </text>
-                  )}
-                </g>
-              ))}
-
-              {/* 连接线 */}
-              {data?.connections.map((conn, i) => (
-                <FlowLine key={i} conn={conn} brokenSet={brokenSet} />
-              ))}
-
-              {/* 节点（按块着色 + nature 徽章） */}
-              {data?.subsystems.map(subsystem => (
-                <Node
-                  key={subsystem.id}
-                  subsystem={subsystem}
-                  onClick={() => setSelected(selected === subsystem.id ? null : subsystem.id)}
-                  isSelected={selected === subsystem.id}
-                  blockColor={getNodeBlockColor(subsystem.id)}
-                  nature={getNodeNature(subsystem.id)}
-                />
-              ))}
-            </svg>
-          </div>
+          {architectureData ? (
+            <BrainFlowView
+              architectureData={architectureData}
+              subsystems={data?.subsystems || []}
+              onNodeClick={(nodeId) => setSelected(selected === nodeId ? null : nodeId)}
+              onNodeDragStop={handleNodeDragStop}
+            />
+          ) : (
+            <div style={{
+              height: 560, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(0,0,0,0.25)', borderRadius: 12,
+              border: '1px solid rgba(255,255,255,0.06)', color: '#9ca3af', fontSize: 14,
+            }}>
+              加载架构数据中...
+            </div>
+          )}
 
           {/* 节点详情面板 */}
           <div style={{ marginTop: 12 }}>
