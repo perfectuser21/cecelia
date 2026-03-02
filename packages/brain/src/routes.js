@@ -8035,6 +8035,70 @@ router.patch('/model-profiles/active/agents', async (req, res) => {
 });
 
 // ============================================================
+// Mouth Config API（嘴巴模型+调用方式独立切换）
+// ============================================================
+
+/**
+ * GET /api/brain/mouth-config
+ * 返回当前 mouth 的 model + provider
+ */
+router.get('/mouth-config', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT config FROM model_profiles WHERE is_active = true LIMIT 1'
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No active profile' });
+    const cfg = rows[0].config;
+    const mouth = cfg.mouth || {};
+    res.json({ success: true, model: mouth.model || null, provider: mouth.provider || null });
+  } catch (err) {
+    console.error('[API] mouth-config GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/mouth-config
+ * 直接设置 mouth 的 model + provider（不经过 getProviderForModel 自动推导）
+ * Body: { model: string, provider: "anthropic" | "anthropic-api" }
+ */
+router.patch('/mouth-config', async (req, res) => {
+  try {
+    const { model, provider } = req.body;
+    const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'];
+    const ALLOWED_PROVIDERS = ['anthropic', 'anthropic-api'];
+    if (!ALLOWED_MODELS.includes(model)) {
+      return res.status(400).json({ success: false, error: `Invalid model: ${model}` });
+    }
+    if (!ALLOWED_PROVIDERS.includes(provider)) {
+      return res.status(400).json({ success: false, error: `Invalid provider: ${provider}` });
+    }
+
+    const { rows } = await pool.query(
+      'SELECT id, config FROM model_profiles WHERE is_active = true LIMIT 1'
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No active profile' });
+
+    const profile = rows[0];
+    const config = { ...profile.config, mouth: { model, provider } };
+    await pool.query(
+      'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
+      [JSON.stringify(config), profile.id]
+    );
+
+    // 刷新内存缓存
+    const { loadActiveProfile } = await import('./model-profile.js');
+    await loadActiveProfile(pool);
+
+    console.log(`[API] mouth-config updated → model=${model} provider=${provider}`);
+    res.json({ success: true, model, provider });
+  } catch (err) {
+    console.error('[API] mouth-config PATCH error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
 // Device Lock API（部门主管架构 - 脚本员工设备互斥锁）
 // ============================================================
 
