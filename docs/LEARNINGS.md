@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
+
+**失败统计**：CI 失败 1 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：Engine CI version-check 失败，`.hook-core-version` 和 `regression-contract.yaml` 未同步；Config Audit 失败，PR 标题缺少 `[CONFIG]` 标签。
+  - 根本原因 1：改动了 `packages/engine/skills/dev/scripts/cleanup.sh`（属于 `packages/engine/skills/` 路径），Config Audit 要求 PR 标题含 `[CONFIG]` 或 `[INFRA]`，但初始 PR 标题没有加。
+  - 根本原因 2：`packages/engine/.hook-core-version` 和 `packages/engine/regression-contract.yaml` 需要与 `packages/engine/package.json` 版本同步，漏掉了这两个文件。
+  - 修复：PR 标题加 `[CONFIG]` 前缀；补充提交同步 `.hook-core-version` 和 `regression-contract.yaml`。
+  - 下次预防：改 `packages/engine/skills/` 或 `packages/engine/hooks/` 时，PR 标题必须带 `[CONFIG]` 或 `[INFRA]`；version bump 时必须同步全部 4 个文件：`package.json`、`VERSION`、`ci-tools/VERSION`、`.hook-core-version`、`regression-contract.yaml`（5 个，不是 4 个）。
+
+**错误判断记录**：
+- 以为 cleanup.sh 改动只需更新 3 个版本文件（package.json、VERSION、ci-tools/VERSION），忘记了 `.hook-core-version` 和 `regression-contract.yaml` 也要同步。正确答案：engine 版本同步需要 5 个文件全部更新。
+
+**影响程度**: Medium
+
+**预防措施**：
+- 改 `packages/engine/skills/**` 或 `packages/engine/hooks/**` 时，PR 标题加 `[CONFIG]` 前缀（无例外）
+- Engine patch 版本 bump 必须同步：`package.json`、`package-lock.json`、`VERSION`、`ci-tools/VERSION`、`.hook-core-version`、`regression-contract.yaml` 共 6 个文件（用 `bash scripts/check-version-sync.sh` 在 packages/engine 目录下验证）
+
 ### [2026-03-02] CI 门禁漏洞修复：brain-ci version-check gate + devgate 串行化 (PR #301)
 
 **失败统计**：CI 失败 0 次，本地验证失败 0 次

@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.15.0"
+version: "3.16.0"
 updated: "2026-03-02"
 changelog:
+  - "3.16.0: v12.35.9 - 修复 CI/CD 部署集成缺口（cleanup.sh 捕获 CHANGED_FILES 并调用 deploy-local.sh；brain-deploy.sh docker compose 失败回滚；.brain-versions 去重写入）"
   - "3.15.0: v12.35.8 - stop-dev.sh condition 3 合并前检查 step_10_learning（防止 Stop Hook 跳过 Step 10 LEARNINGS 直接合并导致双 PR，H1-013）"
   - "3.14.0: v12.35.7 - branch-protect.sh v23 活跃 Worktree .dev-mode 强制检查（防止新 Claude 会话绕过 /dev 写代码，H1-012）"
   - "3.13.0: v12.35.6 - branch-protect.sh v22 僵尸 Worktree 检测（已合并分支阻止写代码，git ls-remote 区分新分支/已合并）"

@@ -165,6 +165,25 @@ WARNINGS=0
 CHECKOUT_FAILED=0
 
 # ========================================
+# 0.0 捕获 CHANGED_FILES（必须在 checkout 之前）
+# ========================================
+# 在切换到 base 分支之前先记录此次 PR 改动的文件列表。
+# checkout 之后 git diff CP_BRANCH 会返回空，导致 deploy-local.sh 跳过所有部署。
+echo "[0.0] 捕获改动文件列表（checkout 之前）..."
+CHANGED_FILES=""
+if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+    CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null || echo "")
+else
+    CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null || echo "")
+fi
+if [[ -n "$CHANGED_FILES" ]]; then
+    echo -e "   ${GREEN}[OK] 已捕获 $(echo "$CHANGED_FILES" | wc -l | tr -d ' ') 个改动文件${NC}"
+else
+    echo -e "   ${YELLOW}[WARN]  未检测到改动文件（分支已合并或无差异）${NC}"
+fi
+echo ""
+
+# ========================================
 # 0.1 归档 .dev-incident-log.json
 # ========================================
 echo "[0.1] 归档 Incident Log..."
@@ -236,6 +255,36 @@ else
         echo -e "   ${RED}[FAIL] 检测到未完成的合并，需要手动解决${NC}"
         echo -e "   → 运行 'git merge --abort' 取消合并，或手动解决冲突"
         FAILED=1
+    fi
+fi
+
+# ========================================
+# 2.5 触发本地部署（PR 合并后自动重启服务）
+# ========================================
+echo ""
+echo "[2.5] 触发本地部署..."
+SCRIPT_DIR_FOR_DEPLOY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 向上溯源找到仓库根目录（兼容 worktree 和直接调用）
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+if [[ "$GIT_COMMON_DIR" == ".git" ]]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+else
+    REPO_ROOT="$(cd "$(dirname "$GIT_COMMON_DIR")" && pwd)"
+fi
+DEPLOY_LOCAL_SH="$REPO_ROOT/scripts/deploy-local.sh"
+
+if [[ $CHECKOUT_FAILED -eq 1 ]]; then
+    echo -e "   ${YELLOW}[WARN]  跳过（checkout 失败，无法确认代码已同步）${NC}"
+elif [[ ! -f "$DEPLOY_LOCAL_SH" ]]; then
+    echo -e "   ${YELLOW}[WARN]  deploy-local.sh 不存在，跳过部署${NC}"
+    echo "   期望路径: $DEPLOY_LOCAL_SH"
+else
+    # 传入预捕获的 CHANGED_FILES，避免 checkout 后 git diff 返回空
+    if bash "$DEPLOY_LOCAL_SH" "$BASE_BRANCH" --changed="$CHANGED_FILES"; then
+        echo -e "   ${GREEN}[OK] 本地部署完成${NC}"
+    else
+        echo -e "   ${YELLOW}[WARN]  本地部署失败（服务可能需要手动重启）${NC}"
+        WARNINGS=$((WARNINGS + 1))
     fi
 fi
 
