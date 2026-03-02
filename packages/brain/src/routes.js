@@ -9335,9 +9335,11 @@ router.post('/feishu/event', async (req, res) => {
           const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
           let decision;
           try {
-            decision = JSON.parse(decisionText.trim());
+            // 兼容 LLM 在 JSON 外包裹 markdown 代码块或多余文字
+            const jsonMatch = decisionText.match(/\{[\s\S]*\}/);
+            decision = JSON.parse(jsonMatch ? jsonMatch[0] : decisionText.trim());
           } catch {
-            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默');
+            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默。原始内容:', decisionText.slice(0, 200));
             return;
           }
           console.log(`[feishu/group] LLM 决策: should_reply=${decision.should_reply}`);
