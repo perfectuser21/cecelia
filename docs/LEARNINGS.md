@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 丘脑 OWNER_INTENT 路由修复：删 L0 硬编码，改走 LLM /plan 路由 (PR #298, Brain v1.151.1)
+
+**背景**: v1.142.0 在 THALAMUS_PROMPT 融合了 /plan 路由规则，但 thalamus.js 存在一个 L0 hardcoded handler，OWNER_INTENT 事件被短路为固定的 `initiative_plan` 任务，丘脑 LLM 完全看不到用户消息。
+
+- **L0 短路是架构死角**：L0 handler 在 LLM 调用前返回，任何 prompt 改进对其无效。修复方式：直接删除 handler，加一行注释说明"交 L1 LLM 路由"。
+- **invoke_skill 是遗留噪音**：v1.142.0 加入 ACTION_WHITELIST 但从未有对应 handler，decision-executor.js 遇到时静默 push 到 actions_failed 然后 continue。清理原则：whitelist 里的每个 action 必须有对应 handler，否则是 bug。
+- **路由表 action 类型要对应真实 handler**：THALAMUS_PROMPT 路由表写 `invoke_skill` → LLM 可能输出该 action → 无 handler → 静默失败。改成 `create_task + task_type` 后 LLM 输出的 action 有真实 handler 能执行。
+- **将来扩展路由只需改 THALAMUS_PROMPT**：路由规则完全在 prompt 里，不需要改任何执行层代码，只需在路由表加行即可。
+
 ### [2026-03-02] 嘴巴搜索增强：goals/projects 加入 searchSemanticMemory (PR #288, Brain v1.150.0)
 
 **背景**: 用户和嘴巴对话时，记忆检索只覆盖 tasks/learnings/memory_stream，完全漏掉 goals（KR）和 projects（Initiative/Project），导致嘴巴找不到用户提到的 KR 或 Initiative。另外 observeChat 直接 INSERT tasks 没有调 generateTaskEmbeddingAsync，对话创建的 task 永远没有向量，自己也找不到自己。
