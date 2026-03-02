@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 飞书群聊身份识别失败根因 + FEISHU_OWNER_OPEN_IDS 方案 (PR #286, Brain v1.149.3)
+
+**背景**: 飞书 app 没有 `im:chat:readonly` 和 `contact:user:readonly` 权限，两个身份查询 API 都返回 code=99991672。`getGroupMembers` 在 `data.code !== 0` 时静默返回 `[]`（无任何日志），feishu_users 表永远是 0 行，所有成员被识别为"访客"。
+
+- **飞书 app 权限缺失是根本原因**：当 `getGroupMembers` 静默失败（code≠0 无日志）且 `feishu_users` 表为 0 行时，必须先用 `curl` 直接测试 API 确认权限状态，而不是在代码层面反复优化写入逻辑（await vs fire-and-forget）
+- **FEISHU_OWNER_OPEN_IDS 环境变量绕过方案**：当飞书 app 无法获得所需 API 权限时，可通过 hardcoded open_id 环境变量直接识别 owner，完全绕过 API 限制。开启方式：`.env.docker` 加 `FEISHU_OWNER_OPEN_IDS=ou_xxx`
+- **日志中加 openId 是定位问题的关键**：联系人 API 失败的 warn 日志原本不含 openId，导致无法从日志直接找到 Alex 的 open_id。类似的 warn/error 日志应始终包含足够的上下文（如 openId、chatId）便于后续排查
+- **API 静默失败 = 隐形 bug**：`if (data.code !== 0) return []` 无日志是本次调试耗费多轮的直接原因。任何 API 非零返回码都应至少输出一条 warn（含关键 context），否则等于有 bug 无法发现
+
 ### [2026-03-02] branch-protect.sh v23：活跃 Worktree 必须有 .dev-mode (PR #285, Engine v12.35.7)
 
 **背景**: PR #281（v22）修复了僵尸 worktree 漏洞（已合并分支被复用）。但还存在第二个漏洞：活跃的（未合并 PR 的）worktree 被新 Claude 会话打开，不运行 /dev 直接写代码，由于 PRD/DoD 文件存在会被放行。
