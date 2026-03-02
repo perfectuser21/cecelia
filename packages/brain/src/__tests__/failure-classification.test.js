@@ -189,6 +189,35 @@ describe('parseResetTime', () => {
     expect(parseResetTime(null)).toBeNull();
     expect(parseResetTime('')).toBeNull();
   });
+
+  it('parses "resets Mar 6, 3pm" → Mar 6 15:00 local time', () => {
+    const resetTime = parseResetTime('Spending cap reached resets Mar 6, 3pm');
+    expect(resetTime).toBeInstanceOf(Date);
+    // 必须是未来时间（Mar 6 > 今天 Mar 2）
+    expect(resetTime.getTime()).toBeGreaterThan(Date.now());
+    // 月份是 2（March = 2，0-indexed），日期是 6，小时是 15
+    expect(resetTime.getMonth()).toBe(2);
+    expect(resetTime.getDate()).toBe(6);
+    expect(resetTime.getHours()).toBe(15);
+    expect(resetTime.getMinutes()).toBe(0);
+  });
+
+  it('parses "resets Mar 6, 3:30pm" → Mar 6 15:30 local time', () => {
+    const resetTime = parseResetTime('resets Mar 6, 3:30pm');
+    expect(resetTime).toBeInstanceOf(Date);
+    expect(resetTime.getMonth()).toBe(2);
+    expect(resetTime.getDate()).toBe(6);
+    expect(resetTime.getHours()).toBe(15);
+    expect(resetTime.getMinutes()).toBe(30);
+  });
+
+  it('parses "resets Mar 6 3pm" (no comma) → Mar 6 15:00', () => {
+    const resetTime = parseResetTime('resets Mar 6 3pm');
+    expect(resetTime).toBeInstanceOf(Date);
+    expect(resetTime.getMonth()).toBe(2);
+    expect(resetTime.getDate()).toBe(6);
+    expect(resetTime.getHours()).toBe(15);
+  });
 });
 
 // ============================================================

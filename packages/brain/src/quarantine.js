@@ -607,6 +607,8 @@ function checkTimeoutPattern(task) {
  *   "resets 11pm" → 今天 23:00 或明天 23:00（如果已过）
  *   "resets at 11:00 PM" → 同上
  *   "resets in 2 hours" → 当前时间 + 2 小时
+ *   "resets Mar 6, 3pm" → 3月6日 15:00 北京时间
+ *   "resets Mar 6, 3:30pm" → 3月6日 15:30 北京时间
  *
  * 所有时间使用北京时间 (UTC+8)
  * @param {string} errorStr - 错误信息
@@ -614,6 +616,33 @@ function checkTimeoutPattern(task) {
  */
 function parseResetTime(errorStr) {
   if (!errorStr) return null;
+
+  // Pattern 3: "resets MMM D, Hpm" or "resets MMM D, H:MMpm" (带日期，优先匹配)
+  // 例: "resets Mar 6, 3pm" / "resets Mar 6, 3:30pm" / "resets Mar 6 3pm"
+  const MONTHS = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+  const dateMatch = errorStr.match(/resets?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})[,\s]+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (dateMatch) {
+    const monthIdx = MONTHS[dateMatch[1].toLowerCase()];
+    const day = parseInt(dateMatch[2], 10);
+    let hours = parseInt(dateMatch[3], 10);
+    const minutes = parseInt(dateMatch[4] || '0', 10);
+    const ampm = dateMatch[5].toLowerCase();
+
+    if (ampm === 'pm' && hours !== 12) hours += 12;
+    if (ampm === 'am' && hours === 12) hours = 0;
+
+    const now = new Date();
+    const resetTime = new Date(now);
+    resetTime.setMonth(monthIdx, day);
+    resetTime.setHours(hours, minutes, 0, 0);
+
+    // 如果日期已过，设为明年同月同日（跨年边界保护）
+    if (resetTime <= now) {
+      resetTime.setFullYear(resetTime.getFullYear() + 1);
+    }
+
+    return resetTime;
+  }
 
   // Pattern 1: "resets Xpm" or "resets X am/pm" or "resets at X:XX PM"
   const resetMatch = errorStr.match(/resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
