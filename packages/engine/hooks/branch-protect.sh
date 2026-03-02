@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v20
+# ZenithJoy Engine - 分支保护 Hook v22
+# v22: 僵尸 Worktree 检测 — 已合并分支阻止写代码（git ls-remote 区分新/已合并）
 # v21: 分支名正则与 devgate.yml 同步（强制 8 位数字时间戳）+ worktree 检测双重保险
 # v19: 支持 monorepo 子目录的 PRD/DoD 文件（如 apps/core/.prd.md）
 # v18: 放宽 skills 目录保护，只保护 Engine 相关 skills (dev, qa, audit, semver)
@@ -209,6 +210,46 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
         echo "" >&2
         echo "[SKILL_REQUIRED: dev]" >&2
         exit 2
+    fi
+
+    # v22: 僵尸 Worktree 检测 — 已合并分支不允许继续写代码
+    # 场景：旧任务 PR 合并后 worktree 未清理，再次进入可绕过 /dev
+    # 检测方式：
+    #   1. git log origin/main..HEAD 返回 0 → 无新提交
+    #   2. git ls-remote origin 检查分支是否已推送
+    #      - 未推送（新分支）→ 放行
+    #      - 已推送但 0 ahead → 已合并，阻止
+    #   3. 网络失败（离线）→ 放行（不阻止正常开发）
+    COMMITS_AHEAD=0
+    if AHEAD_OUTPUT=$(git log "origin/main..${CURRENT_BRANCH}" --oneline 2>/dev/null); then
+        COMMITS_AHEAD=$(echo "$AHEAD_OUTPUT" | grep -c . 2>/dev/null || echo 0)
+        COMMITS_AHEAD=$(clean_number "$COMMITS_AHEAD")
+    fi
+
+    if [[ "$COMMITS_AHEAD" -eq 0 ]]; then
+        # 检查分支是否已推送到 origin（区分"新分支"和"已合并"）
+        REMOTE_BRANCH=$(git ls-remote --heads origin "$CURRENT_BRANCH" 2>/dev/null || echo "FETCH_FAILED")
+
+        if [[ "$REMOTE_BRANCH" == "FETCH_FAILED" ]]; then
+            # 网络失败，离线模式，放行（不阻止开发）
+            : # 继续执行
+        elif [[ -n "$REMOTE_BRANCH" ]]; then
+            # 分支存在于 origin 且 0 commits ahead → 已合并（僵尸 worktree）
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  ❌ 僵尸 Worktree：分支已合并到 main" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  当前分支: $CURRENT_BRANCH" >&2
+            echo "  状态：该分支已合并到 main，没有未合并的提交" >&2
+            echo "" >&2
+            echo "  这个 worktree 是已完成任务的残留，不能继续使用" >&2
+            echo "  请运行 /dev 开始新任务（会自动创建新 worktree）" >&2
+            echo "" >&2
+            echo "[SKILL_REQUIRED: dev]" >&2
+            exit 2
+        fi
+        # 分支不存在于 origin → 新分支，尚未推送，放行
     fi
 
     # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
