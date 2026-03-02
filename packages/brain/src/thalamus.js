@@ -23,6 +23,7 @@ import pool from './db.js';
 import { getRecentLearnings } from './learning.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { callLLM } from './llm-caller.js';
+import { generateTaskEmbeddingAsync } from './embedding-service.js';
 
 // ============================================================
 // LLM Error Type Classification
@@ -1347,16 +1348,21 @@ async function observeChat(signal, context = {}) {
   try {
     switch (type) {
       case 'create_task': {
-        await pool.query(`
+        const title = signal.title || '对话中提到的任务';
+        const description = signal.description || context.user_message || '';
+        const res = await pool.query(`
           INSERT INTO tasks (title, description, priority, task_type, status, trigger_source)
           VALUES ($1, $2, $3, $4, 'queued', 'chat_mouth')
+          RETURNING id
         `, [
-          signal.title || '对话中提到的任务',
-          signal.description || context.user_message || '',
+          title,
+          description,
           signal.priority || 'P2',
           signal.task_type || 'research',
         ]);
-        console.log(`[thalamus] observeChat: task created — "${signal.title}"`);
+        const taskId = res.rows[0]?.id;
+        console.log(`[thalamus] observeChat: task created — "${title}" (${taskId})`);
+        if (taskId) generateTaskEmbeddingAsync(taskId, title, description);
         break;
       }
 
