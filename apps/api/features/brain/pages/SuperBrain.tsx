@@ -552,7 +552,7 @@ const CHAPTER_EDITORIAL: Record<string, {
 };
 
 // SVG 配图：每章的数据流示意图
-function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) {
+function ChapterDiagram({ blockId, color, height }: { blockId: string; color: string; height?: number }) {
   const mkId = `arr-${blockId}`;
   const defs = (
     <defs>
@@ -594,7 +594,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
 
   // ── Chapter 1: 外界接口 ──────────────────────────────────────────
   const interfaceDiagram = (
-    <svg viewBox="0 0 700 220" width="100%">
+    <svg viewBox="0 0 700 220" width="100%" {...(height ? { height } : {})}>
       {defs}
       {cap(305, 14, '─── 实时路径 ───', '#4b5563', 8.5)}
       {box(10, 22, 100, 46, '飞书/WebSocket', '外部消息输入')}
@@ -643,7 +643,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
     { id: 'intellectual_idle',     label: '智识空闲',         group: 3 },
   ];
   const perceptionDiagram = (
-    <svg viewBox="0 0 760 300" width="100%">
+    <svg viewBox="0 0 760 300" width="100%" {...(height ? { height } : {})}>
       {defs}
       {perceptionSignals.map((s, i) => {
         const col = s.group;
@@ -687,7 +687,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
 
   // ── Chapter 3: 意识核心 ──────────────────────────────────────────
   const coreDiagram = (
-    <svg viewBox="0 0 700 260" width="100%">
+    <svg viewBox="0 0 700 260" width="100%" {...(height ? { height } : {})}>
       {defs}
       {box(8, 85, 90, 90, '事件/信号', '感知层输出')}
       {arrow(98, 100, 120, 73, 'c1')}
@@ -727,7 +727,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
 
   // ── Chapter 4: 行动层 ──────────────────────────────────────────
   const actionDiagram = (
-    <svg viewBox="0 0 720 290" width="100%">
+    <svg viewBox="0 0 720 290" width="100%" {...(height ? { height } : {})}>
       {defs}
       {box(8, 95, 80, 50, '任务队列', 'PostgreSQL')}
       {arrow(88, 120, 108, 120, 'a1')}
@@ -763,7 +763,7 @@ function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) 
 
   // ── Chapter 5: 自我演化 ──────────────────────────────────────────
   const evolutionDiagram = (
-    <svg viewBox="0 0 680 270" width="100%">
+    <svg viewBox="0 0 680 270" width="100%" {...(height ? { height } : {})}>
       {defs}
       {box(8, 90, 80, 60, '任务结果', '成功 / 失败')}
       {arrow(88, 105, 112, 80, 'e1')}
@@ -818,6 +818,7 @@ interface ManualViewProps {
 
 function ManualView({ manifest, subsystems }: ManualViewProps) {
   const [openChapter, setOpenChapter] = useState<string | null>(null);
+  const [detailChapter, setDetailChapter] = useState<string | null>(null);
 
   if (!manifest) {
     return (
@@ -840,11 +841,211 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
 
   const CHAPTER_ICONS: string[] = ['📡', '👁️', '🧠', '⚡', '🌱'];
 
+  // ── 沉浸式章节详情视图 ──
+  if (detailChapter !== null) {
+    const detailIdx = manifest.blocks.findIndex(b => b.id === detailChapter);
+    const detailBlock = detailIdx >= 0 ? manifest.blocks[detailIdx] : null;
+    if (detailBlock) {
+      const chNum = detailIdx + 1;
+      const chIcon = CHAPTER_ICONS[detailIdx] || '📋';
+      const ed = CHAPTER_EDITORIAL[detailBlock.id];
+
+      return (
+        <div style={{
+          maxWidth: 900, margin: '0 auto', padding: '0 4px 60px',
+          fontFamily: '"Inter", system-ui, sans-serif',
+          animation: 'manualFadeIn 0.22s ease',
+        }}>
+          {/* ── 顶部导航栏 ── */}
+          <div style={{
+            position: 'sticky', top: 0, zIndex: 20,
+            display: 'flex', alignItems: 'center', gap: 14,
+            padding: '14px 20px',
+            background: 'rgba(10,14,22,0.92)',
+            backdropFilter: 'blur(12px)',
+            borderBottom: `1px solid ${detailBlock.color}30`,
+            marginBottom: 28,
+          }}>
+            <button
+              onClick={() => setDetailChapter(null)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px', borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.12)',
+                background: 'rgba(255,255,255,0.04)',
+                color: '#9ca3af', fontSize: 13, cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#f3f4f6'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.24)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.12)'; }}
+            >
+              ← 说明书
+            </button>
+            <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 16 }}>/</span>
+            <span style={{
+              fontSize: 11, color: '#6b7280', fontFamily: 'monospace',
+              background: `${detailBlock.color}18`, padding: '3px 10px', borderRadius: 4,
+            }}>
+              第 {chNum} 章
+            </span>
+            <span style={{ fontSize: 22, lineHeight: 1 }}>{chIcon}</span>
+            <span style={{ fontSize: 17, fontWeight: 700, color: detailBlock.color }}>
+              {detailBlock.label}
+            </span>
+          </div>
+
+          {/* ── SVG 配图（全宽 420px）── */}
+          <div style={{
+            borderRadius: 16,
+            border: `1px solid ${detailBlock.color}25`,
+            background: 'rgba(255,255,255,0.015)',
+            padding: '20px 16px',
+            marginBottom: 32,
+          }}>
+            <ChapterDiagram blockId={detailBlock.id} color={detailBlock.color} height={420} />
+          </div>
+
+          {/* ── 职责描述 ── */}
+          {ed && (
+            <p style={{
+              color: '#d1d5db', fontSize: 16, lineHeight: 1.9,
+              margin: '0 0 36px', maxWidth: 820,
+              padding: '0 4px',
+            }}>
+              {ed.role || detailBlock.desc}
+            </p>
+          )}
+
+          {/* ── 模块列表 ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+            {detailBlock.modules.map((mod, modIdx) => {
+              const subsystem = subsystems.find(s => s.id === mod.id);
+              const todayCount = subsystem?.metrics.today_count;
+              const status = subsystem?.status || 'dormant';
+              const sc = STATUS_COLORS[status];
+              const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
+              const fullDesc = ed?.modules[mod.id]?.full;
+              const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
+              const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
+              const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
+
+              return (
+                <div key={mod.id} style={{
+                  paddingLeft: 20,
+                  borderLeft: `3px solid ${detailBlock.color}40`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{
+                      display: 'inline-block', width: 9, height: 9,
+                      borderRadius: '50%', background: sc, flexShrink: 0,
+                    }} />
+                    <span style={{ fontSize: 16, fontWeight: 700, color: '#e5e7eb' }}>
+                      {chNum}.{modIdx + 1} &nbsp;{mod.label}
+                    </span>
+                    {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
+                    {todayCount !== null && todayCount !== undefined && (
+                      <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280', fontFamily: 'monospace' }}>
+                        今日 {todayCount.toLocaleString()} 次
+                      </span>
+                    )}
+                  </div>
+                  <div style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontFamily: 'monospace', fontSize: 11,
+                    color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
+                    padding: '3px 10px', borderRadius: 5,
+                    border: '1px solid rgba(96,165,250,0.15)',
+                    marginBottom: 12,
+                  }}>
+                    📄 src/{mod.file}
+                  </div>
+                  <p style={{ color: '#9ca3af', fontSize: 14, lineHeight: 1.85, margin: '0 0 14px' }}>
+                    {fullDesc || mod.desc}
+                  </p>
+                  {showActions && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(allActions).map(([name, info]) => (
+                            <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>{name}</td>
+                              <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>{info.dangerous ? '⚠️ 是' : '—'}</td>
+                              <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {showSignals && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {allSignals.map(sig => (
+                          <span key={sig} style={{
+                            fontFamily: 'monospace', fontSize: 11,
+                            color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
+                            padding: '3px 8px', borderRadius: 4,
+                            border: '1px solid rgba(165,180,252,0.2)',
+                          }}>
+                            {sig}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {showSkills && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(allSkills).map(([taskType, skill]) => (
+                            <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
+                                {skill || '（无 skill，仅标记）'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+  }
+
   return (
     <div style={{
       maxWidth: 860, margin: '0 auto', padding: '0 4px 60px',
       fontFamily: '"Inter", system-ui, sans-serif',
     }}>
+      <style>{`@keyframes manualFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       {/* ── 书籍标题页 ── */}
       <div style={{
         textAlign: 'center', padding: '36px 24px 28px',
@@ -875,7 +1076,13 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {manifest.blocks.map((block, idx) => (
-            <div key={block.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div
+              key={block.id}
+              onClick={() => setDetailChapter(block.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', borderRadius: 6, padding: '3px 6px', transition: 'background 0.15s' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.04)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+            >
               <span style={{ fontSize: 11, color: '#4b5563', fontFamily: 'monospace', minWidth: 40 }}>第 {idx + 1} 章</span>
               <span style={{ flex: 1, borderBottom: '1px dotted rgba(255,255,255,0.06)', margin: '0 8px' }} />
               <span style={{ fontSize: 14, color: block.color, fontWeight: 600 }}>
@@ -902,19 +1109,22 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
 
         return (
           <div key={block.id} style={{
-            border: `1px solid ${isOpen ? block.color + '60' : 'rgba(255,255,255,0.08)'}`,
+            border: `1px solid rgba(255,255,255,0.08)`,
             borderRadius: 14,
             overflow: 'hidden',
           }}>
-            {/* ── 卡片头部（可点击展开/折叠） ── */}
+            {/* ── 卡片头部（点击进入沉浸式章节视图） ── */}
             <button
-              onClick={() => setOpenChapter(isOpen ? null : block.id)}
+              onClick={() => setDetailChapter(block.id)}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: 16,
                 padding: '20px 24px', cursor: 'pointer',
-                background: isOpen ? `${block.color}0a` : 'transparent',
+                background: 'transparent',
                 border: 'none', textAlign: 'left',
+                transition: 'background 0.15s',
               }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = `${block.color}08`; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
             >
               <span style={{
                 fontSize: 11, color: '#6b7280', fontFamily: 'monospace',
@@ -937,175 +1147,10 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
               <span style={{ fontSize: 12, color: '#4b5563', flexShrink: 0 }}>
                 {block.modules.length} 个模块
               </span>
-              <span style={{
-                fontSize: 14,
-                color: isOpen ? block.color : '#4b5563',
-                transform: isOpen ? 'rotate(90deg)' : 'none',
-                display: 'inline-block',
-                flexShrink: 0,
-              }}>
-                ▶
+              <span style={{ fontSize: 14, color: '#4b5563', display: 'inline-block', flexShrink: 0 }}>
+                →
               </span>
             </button>
-
-            {/* ── 展开内容 ── */}
-            {isOpen && (
-              <div style={{
-                padding: '24px 28px 32px',
-                borderTop: `1px solid ${block.color}25`,
-              }}>
-                {/* 职责描述 */}
-                <p style={{
-                  color: '#d1d5db', fontSize: 15, lineHeight: 1.9,
-                  margin: '0 0 28px', maxWidth: 740,
-                }}>
-                  {editorial?.role || block.desc}
-                </p>
-
-                {/* SVG 配图（全宽展示） */}
-                <div style={{
-                  padding: '24px 0 32px',
-                  borderTop: `1px solid rgba(255,255,255,0.05)`,
-                  borderBottom: `1px solid rgba(255,255,255,0.05)`,
-                  marginBottom: 28,
-                }}>
-                  <ChapterDiagram blockId={block.id} color={block.color} />
-                </div>
-
-                {/* 模块列表 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
-                  {block.modules.map((mod, modIdx) => {
-                    const subsystem = subsystems.find(s => s.id === mod.id);
-                    const todayCount = subsystem?.metrics.today_count;
-                    const status = subsystem?.status || 'dormant';
-                    const sc = STATUS_COLORS[status];
-                    const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
-                    const fullDesc = editorial?.modules[mod.id]?.full;
-                    const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
-                    const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
-                    const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
-
-                    return (
-                      <div key={mod.id} style={{
-                        paddingLeft: 20,
-                        borderLeft: `3px solid ${block.color}40`,
-                      }}>
-                        {/* 模块标题行 */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                          <span style={{
-                            display: 'inline-block', width: 9, height: 9,
-                            borderRadius: '50%', background: sc, flexShrink: 0,
-                          }} />
-                          <span style={{ fontSize: 16, fontWeight: 700, color: '#e5e7eb' }}>
-                            {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
-                          </span>
-                          {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
-                          {todayCount !== null && todayCount !== undefined && (
-                            <span style={{
-                              marginLeft: 'auto', fontSize: 12, color: '#6b7280', fontFamily: 'monospace',
-                            }}>
-                              今日 {todayCount.toLocaleString()} 次
-                            </span>
-                          )}
-                        </div>
-
-                        {/* 文件路径 */}
-                        <div style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 6,
-                          fontFamily: 'monospace', fontSize: 11,
-                          color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
-                          padding: '3px 10px', borderRadius: 5,
-                          border: '1px solid rgba(96,165,250,0.15)',
-                          marginBottom: 12,
-                        }}>
-                          📄 src/{mod.file}
-                        </div>
-
-                        {/* 深度说明 */}
-                        <p style={{ color: '#9ca3af', fontSize: 14, lineHeight: 1.85, margin: '0 0 14px' }}>
-                          {fullDesc || mod.desc}
-                        </p>
-
-                        {/* 丘脑：动作白名单表 */}
-                        {showActions && (
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                              ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
-                            </div>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                              <thead>
-                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
-                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
-                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {Object.entries(allActions).map(([name, info]) => (
-                                  <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>{name}</td>
-                                    <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>{info.dangerous ? '⚠️ 是' : '—'}</td>
-                                    <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-
-                        {/* 感知层：信号列表 */}
-                        {showSignals && (
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                              📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                              {allSignals.map(sig => (
-                                <span key={sig} style={{
-                                  fontFamily: 'monospace', fontSize: 11,
-                                  color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
-                                  padding: '3px 8px', borderRadius: 4,
-                                  border: '1px solid rgba(165,180,252,0.2)',
-                                }}>
-                                  {sig}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 执行器：技能映射 */}
-                        {showSkills && (
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                              🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
-                            </div>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                              <thead>
-                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
-                                  <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {Object.entries(allSkills).map(([taskType, skill]) => (
-                                  <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
-                                    <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
-                                      {skill || '（无 skill，仅标记）'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         );
       })}
