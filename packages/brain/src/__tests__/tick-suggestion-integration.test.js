@@ -1,249 +1,139 @@
 /**
- * Tests for suggestion integration with tick loop
+ * tick.js × suggestion-triage 集成测试（架构迁移后）
+ *
+ * v2（信号源直接接 L1）：suggestion triage/dispatch 已从 tick.js 移除。
+ * 本文件验证：
+ *   - tick.js 不再调用 executeTriage / cleanupExpiredSuggestions
+ *   - tick 仍能正常完成（返回 success: true）
  */
 
 import { vi, describe, test, expect, beforeAll, beforeEach } from 'vitest';
 
-// Mock suggestion-triage module
+// ── Mock ──────────────────────────────────────────────────────────────────────
+
 vi.mock('../suggestion-triage.js', () => ({
   executeTriage: vi.fn(),
-  cleanupExpiredSuggestions: vi.fn()
+  cleanupExpiredSuggestions: vi.fn(),
+  getTopPrioritySuggestions: vi.fn().mockResolvedValue([]),
 }));
 
-// Mock other dependencies to isolate tick logic
 vi.mock('../db.js', () => ({
-  default: {
-    query: vi.fn()
-  }
+  default: { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }) },
 }));
 
 vi.mock('../alertness/index.js', () => ({
-  evaluateAlertness: vi.fn().mockResolvedValue({ level: 1, score: 0.3 }),
-  ALERTNESS_LEVELS: { PANIC: 4, ALERT: 3 },
-  LEVEL_NAMES: ['SLEEPING', 'CALM', 'AWARE', 'ALERT', 'PANIC']
+  evaluateAlertness: vi.fn().mockResolvedValue({ level: 0, score: 0, reasons: [], level_name: 'GREEN' }),
+  initAlertness: vi.fn(),
+  getCurrentAlertness: vi.fn().mockReturnValue({ level: 'GREEN', score: 0 }),
+  canDispatch: vi.fn().mockReturnValue(true),
+  canPlan: vi.fn().mockReturnValue(true),
+  getDispatchRate: vi.fn().mockReturnValue(1),
+  ALERTNESS_LEVELS: { GREEN: 'GREEN' },
+  LEVEL_NAMES: {},
 }));
-
+vi.mock('../alertness/metrics.js', () => ({ recordTickTime: vi.fn(), recordOperation: vi.fn() }));
 vi.mock('../thalamus.js', () => ({
-  processEvent: vi.fn().mockResolvedValue({ actions: [{ type: 'fallback_to_tick' }] }),
-  EVENT_TYPES: { TICK: 'tick' }
+  processEvent: vi.fn().mockResolvedValue({ level: 0, actions: [], rationale: 'ok', confidence: 0.9, safety: false }),
+  EVENT_TYPES: {},
 }));
-
-// Mock other modules that are called during tick
 vi.mock('../executor.js', () => ({
-  cleanupOrphanProcesses: vi.fn(),
-  syncOrphanTasksOnStartup: vi.fn(),
+  cleanupOrphanProcesses: vi.fn().mockResolvedValue([]),
+  syncOrphanTasksOnStartup: vi.fn().mockResolvedValue(0),
   getActiveProcessCount: vi.fn().mockReturnValue(0),
-  MAX_SEATS: 5,
-  INTERACTIVE_RESERVE: 2
+  checkCeceliaRunAvailable: vi.fn().mockResolvedValue(true),
+  checkServerResources: vi.fn().mockResolvedValue({ ok: true }),
+  probeTaskLiveness: vi.fn().mockResolvedValue(null),
+  killProcess: vi.fn(), killProcessTwoStage: vi.fn(), requeueTask: vi.fn(),
+  triggerCeceliaRun: vi.fn(),
+  MAX_SEATS: 4, INTERACTIVE_RESERVE: 1,
+  getBillingPause: vi.fn().mockResolvedValue(false),
 }));
-
 vi.mock('../decision-executor.js', () => ({
-  expireStaleProposals: vi.fn().mockResolvedValue(0)
+  executeDecision: vi.fn(),
+  expireStaleProposals: vi.fn().mockResolvedValue(0),
 }));
+vi.mock('../planner.js', () => ({ planNextTask: vi.fn().mockResolvedValue({ reason: 'no_tasks' }) }));
+vi.mock('../circuit-breaker.js', () => ({
+  isAllowed: vi.fn().mockReturnValue(true), recordSuccess: vi.fn(), recordFailure: vi.fn(), getAllStates: vi.fn().mockReturnValue({}),
+}));
+vi.mock('../slot-allocator.js', () => ({ calculateSlotBudget: vi.fn().mockReturnValue({ available: 4 }) }));
+vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
+vi.mock('../events/taskEvents.js', () => ({
+  publishTaskStarted: vi.fn(), publishExecutorStatus: vi.fn(), publishCognitiveState: vi.fn(),
+}));
+vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }));
+vi.mock('../decision.js', () => ({
+  compareGoalProgress: vi.fn().mockResolvedValue([]),
+  generateDecision: vi.fn().mockResolvedValue(null),
+  executeDecision: vi.fn(),
+  splitActionsBySafety: vi.fn().mockReturnValue({ safe: [], risky: [] }),
+}));
+vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
+vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
+vi.mock('../quarantine.js', () => ({
+  handleTaskFailure: vi.fn(),
+  getQuarantineStats: vi.fn().mockResolvedValue({}),
+  checkExpiredQuarantineTasks: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('../dispatch-stats.js', () => ({
+  recordDispatchResult: vi.fn(), getDispatchStats: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../progress-ledger.js', () => ({ evaluateProgressInTick: vi.fn().mockResolvedValue([]) }));
+vi.mock('../initiative-closer.js', () => ({
+  checkInitiativeCompletion: vi.fn().mockResolvedValue({ closedCount: 0 }),
+  checkProjectCompletion: vi.fn().mockResolvedValue({ closedCount: 0 }),
+  activateNextInitiatives: vi.fn().mockResolvedValue({ activatedCount: 0 }),
+}));
+vi.mock('../goal-evaluator.js', () => ({
+  evaluateGoalOuterLoop: vi.fn().mockResolvedValue([]),
+  _resetGoalEvalTimes: vi.fn(),
+}));
+vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
+vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));
 
-import pool from '../db.js';
-import {
-  executeTriage,
-  cleanupExpiredSuggestions
-} from '../suggestion-triage.js';
-import { evaluateAlertness } from '../alertness/index.js';
+// ── 导入被测函数 ──────────────────────────────────────────────────────────────
 
-describe('Tick Suggestion Integration', () => {
+import { executeTriage, cleanupExpiredSuggestions } from '../suggestion-triage.js';
+
+// ── 测试 ──────────────────────────────────────────────────────────────────────
+
+describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
   let executeTick;
-  let resetLastCleanupTime;
 
   beforeAll(async () => {
-    // Import executeTick after mocks are set up
     const tickModule = await import('../tick.js');
     executeTick = tickModule.executeTick;
-    resetLastCleanupTime = tickModule._resetLastCleanupTime;
   });
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // 重置 cleanup 计时器，确保每个测试从干净状态开始
-    resetLastCleanupTime?.();
-
-    // Default mock implementations
-    pool.query.mockImplementation((query) => {
-      if (query.includes('run_periodic_cleanup')) {
-        return Promise.resolve({ rows: [{ msg: 'cleanup done' }] });
-      }
-      if (query.includes('UPDATE learnings')) {
-        return Promise.resolve({ rowCount: 0 });
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 });
-    });
-
-    // Mock suggestion triage functions
-    executeTriage.mockResolvedValue([]);
-    cleanupExpiredSuggestions.mockResolvedValue(0);
   });
 
-  describe('Suggestion processing in tick loop', () => {
-    test('executes triage on every tick', async () => {
-      await executeTick();
-
-      expect(executeTriage).toHaveBeenCalledWith(20);
-      expect(executeTriage).toHaveBeenCalledTimes(1);
-    });
-
-    test('includes triage results in actions_taken when suggestions processed', async () => {
-      const mockProcessedSuggestions = [
-        { id: '1', priority_score: 0.9 },
-        { id: '2', priority_score: 0.8 }
-      ];
-
-      executeTriage.mockResolvedValue(mockProcessedSuggestions);
-
+  describe('suggestion triage 已从 tick 移除', () => {
+    test('tick 不调用 executeTriage（信号源已直接接 L1）', async () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
-      expect(result.actions_taken).toContainEqual({
-        action: 'suggestion_triage',
-        processed_count: 2
-      });
+      expect(executeTriage).not.toHaveBeenCalled();
     });
 
-    test('does not add action when no suggestions processed', async () => {
-      executeTriage.mockResolvedValue([]);
-
+    test('tick 不调用 cleanupExpiredSuggestions', async () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
-      const suggestionActions = result.actions_taken.filter(
-        action => action.action === 'suggestion_triage'
+      expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
+    });
+
+    test('tick 正常完成（无 suggestion 相关 action）', async () => {
+      const result = await executeTick();
+
+      expect(result.success).toBe(true);
+
+      const suggestionActions = (result.actions_taken || []).filter(
+        a => a.action === 'suggestion_triage' || a.action === 'suggestion_cleanup'
       );
       expect(suggestionActions).toHaveLength(0);
-    });
-
-    test('continues tick execution even if triage fails', async () => {
-      executeTriage.mockRejectedValue(new Error('Triage failed'));
-
-      const result = await executeTick();
-
-      // Tick should still succeed despite triage failure
-      expect(result.success).toBe(true);
-      expect(executeTriage).toHaveBeenCalled();
-    });
-
-    test('executes cleanup during periodic maintenance', async () => {
-      // beforeEach 已调用 _resetLastCleanupTime()，cleanup 必定触发
-      cleanupExpiredSuggestions.mockResolvedValue(3);
-
-      const result = await executeTick();
-
-      expect(cleanupExpiredSuggestions).toHaveBeenCalled();
-      expect(result.actions_taken).toContainEqual({
-        action: 'suggestion_cleanup',
-        cleanup_count: 3
-      });
-    });
-
-    test('does not execute cleanup when interval not elapsed', async () => {
-      // 先 tick 一次：触发 cleanup 并更新 _lastCleanupTime
-      await executeTick();
-      cleanupExpiredSuggestions.mockClear();
-
-      // 立即再 tick：距上次不足 1 小时，cleanup 不应触发
-      const result = await executeTick();
-
-      expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
-      const cleanupActions = result.actions_taken.filter(
-        action => action.action === 'suggestion_cleanup'
-      );
-      expect(cleanupActions).toHaveLength(0);
-    });
-  });
-
-  describe('Error handling and resilience', () => {
-    test('handles triage errors gracefully', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      executeTriage.mockRejectedValue(new Error('Database connection failed'));
-
-      const result = await executeTick();
-
-      expect(result.success).toBe(true);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[tick] Suggestion processing failed'),
-        expect.stringContaining('Database connection failed')
-      );
-
-      consoleErrorSpy.mockRestore();
-    });
-
-    test('handles cleanup errors gracefully', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      // beforeEach 已调用 _resetLastCleanupTime()，cleanup 必定触发
-      cleanupExpiredSuggestions.mockRejectedValue(new Error('Cleanup failed'));
-
-      const result = await executeTick();
-
-      expect(result.success).toBe(true);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[tick] Suggestion processing failed'),
-        expect.stringContaining('Cleanup failed')
-      );
-
-      consoleErrorSpy.mockRestore();
-    });
-
-    test('limits processing to prevent performance impact', async () => {
-      // 确保我们限制处理的建议数量
-      await executeTick();
-
-      expect(executeTriage).toHaveBeenCalledWith(20); // 确认限制为20条
-    });
-
-    test('measures and logs processing time appropriately', async () => {
-      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-      const mockProcessedSuggestions = [{ id: '1' }, { id: '2' }];
-      executeTriage.mockResolvedValue(mockProcessedSuggestions);
-
-      await executeTick();
-
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[tick] Processed 2 suggestions in triage')
-      );
-
-      consoleLogSpy.mockRestore();
-    });
-  });
-
-  describe('Integration with other tick operations', () => {
-    test('runs suggestion processing alongside other periodic tasks', async () => {
-      // Mock other periodic operations
-      pool.query.mockImplementation((query) => {
-        if (query.includes('run_periodic_cleanup')) {
-          return Promise.resolve({ rows: [{ msg: 'cleanup done' }] });
-        }
-        if (query.includes('UPDATE learnings')) {
-          return Promise.resolve({ rowCount: 2 });
-        }
-        return Promise.resolve({ rows: [], rowCount: 0 });
-      });
-
-      executeTriage.mockResolvedValue([{ id: '1' }]);
-
-      const result = await executeTick();
-
-      expect(result.success).toBe(true);
-      expect(executeTriage).toHaveBeenCalled();
-      expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('run_periodic_cleanup')
-      );
-    });
-
-    test('suggestion processing does not interfere with alertness evaluation', async () => {
-      executeTriage.mockResolvedValue([{ id: '1' }]);
-
-      const result = await executeTick();
-
-      expect(evaluateAlertness).toHaveBeenCalled();
-      expect(executeTriage).toHaveBeenCalled();
-      expect(result.success).toBe(true);
     });
   });
 });

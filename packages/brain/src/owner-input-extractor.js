@@ -11,7 +11,7 @@
 
 /* global console */
 
-import { createSuggestion } from './suggestion-triage.js';
+import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 /** 需要生成 suggestion 的意图类型（大写，比较时统一转换） */
 const ACTION_INTENTS = new Set([
@@ -45,19 +45,14 @@ export async function extractSuggestionsFromChat(message, intentType) {
   const content = `owner_request: ${message.slice(0, 200)}`;
 
   try {
-    await createSuggestion({
-      content,
-      source: 'owner_input',
-      agent_id: 'owner-input-extractor',
-      suggestion_type: 'owner_request',
-      metadata: {
-        intent_type: intentType,
-        original_length: message.length,
-      },
+    await processEvent({
+      type: EVENT_TYPES.OWNER_INTENT,
+      message: message.slice(0, 500),
+      intent_type: intentType,
     });
-    console.log(`[owner-input-extractor] 创建 suggestion: intent=${intentType}, length=${message.length}`);
+    console.log(`[owner-input-extractor] 发 OWNER_INTENT 事件给丘脑: intent=${intentType}`);
   } catch (err) {
     // 静默失败，不影响对话回复
-    console.warn('[owner-input-extractor] Failed to create suggestion (ignored):', err.message);
+    console.warn('[owner-input-extractor] Failed to send OWNER_INTENT event (ignored):', err.message);
   }
 }

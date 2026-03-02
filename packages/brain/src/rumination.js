@@ -15,9 +15,7 @@ import pool from './db.js';
 import { callLLM } from './llm-caller.js';
 import { buildMemoryContext } from './memory-retriever.js';
 import { queryNotebook, addTextSource } from './notebook-adapter.js';
-import { createTask } from './actions.js';
 import { updateSelfModel } from './self-model.js';
-import { createSuggestion } from './suggestion-triage.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 // ── 配置 ──────────────────────────────────────────────────
@@ -175,36 +173,8 @@ async function digestLearnings(db, learnings) {
         `反刍洞察: ${topicTitle}`
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
-      // 4.1 检测 actionable 洞察 → 自动创建 task + suggestion（支持多个 [ACTION:] 标记）
-      const actionMatches = insight.matchAll(/\[ACTION:\s*(.+?)\]/g);
-      let suggestionCount = 0; // limit=2 防洪峰
-      for (const match of actionMatches) {
-        try {
-          await createTask({
-            title: match[1],
-            description: `反刍洞察自动创建：${insight.trim().slice(0, 500)}`,
-            priority: 'P2',
-            task_type: 'research',
-            trigger_source: 'rumination',
-          });
-          console.log(`[rumination] actionable insight → task: ${match[1]}`);
-        } catch (taskErr) {
-          console.error('[rumination] create task from insight failed:', taskErr.message);
-        }
-        // ★NEW: 额外创建 suggestion（limit=2，fire-and-forget）
-        if (suggestionCount < 2) {
-          try {
-            await createSuggestion({
-              content: `反刍洞察可执行行动：${match[1]}\n\n来源洞察：${insight.trim().slice(0, 300)}`,
-              source: 'rumination',
-              suggestion_type: 'insight_action',
-            });
-            suggestionCount++;
-          } catch (sugErr) {
-            console.error('[rumination] createSuggestion failed (non-blocking):', sugErr.message);
-          }
-        }
-      }
+      // 4.1 检测 actionable 洞察 → 收集 [ACTION:] 标记，统一发给丘脑 L1 处理
+      // （丘脑 RUMINATION_RESULT L0 handler 会创建 research 任务）
     }
 
     // 4.2 检测好奇心信号 → 写入 working_memory curiosity_topics（环2：自主学习驱动）
