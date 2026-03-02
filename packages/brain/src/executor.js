@@ -1575,13 +1575,26 @@ async function triggerCeceliaRun(task) {
       // Profile 中已固定账号，直接使用
       extraEnv.CECELIA_CREDENTIALS = credentials;
     } else if (provider === 'anthropic') {
-      // 智能账号选择：选用量最低的 Claude Max 账号
-      const bestAccount = await selectBestAccount();
-      if (bestAccount) {
-        extraEnv.CECELIA_CREDENTIALS = bestAccount;
+      // 三阶段降级链：Sonnet → Opus → Haiku → MiniMax
+      // selectBestAccount() 返回 { accountId, model } 或 null（降级 MiniMax）
+      const selection = await selectBestAccount();
+      if (selection) {
+        const { accountId, model: selectedModel } = selection;
+        extraEnv.CECELIA_CREDENTIALS = accountId;
+        // 若模型不是默认 Sonnet，通过 CECELIA_MODEL 传递 override
+        if (selectedModel === 'opus') {
+          extraEnv.CECELIA_MODEL = 'claude-opus-4-6';
+        } else if (selectedModel === 'haiku') {
+          extraEnv.CECELIA_MODEL = 'claude-haiku-4-5-20251001';
+        }
+        // 记录 dispatched_account 到 task payload（供 billing_cap 回调精准标记）
+        pool.query(
+          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+          [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModel })]
+        ).catch(e => console.warn(`[executor] 记录 dispatched_account 失败: ${e.message}`));
       } else {
-        // 所有 Claude Max 账号满载（>=80%），降级到 MiniMax
-        console.log(`[executor] Anthropic 账号全满，自动降级到 MiniMax for task=${task.id}`);
+        // 所有账号满载（5h）或全部 spending-capped → 降级到 MiniMax
+        console.log(`[executor] Anthropic 账号全满/全封，自动降级到 MiniMax for task=${task.id}`);
         provider = 'minimax';
         extraEnv.CECELIA_PROVIDER = 'minimax';
       }
