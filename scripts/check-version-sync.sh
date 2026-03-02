@@ -15,7 +15,7 @@ if [[ ! -f "packages/brain/package.json" ]]; then
     exit 0
 fi
 
-BASE_VERSION=$(jq -r '.version' packages/brain/package.json)
+BASE_VERSION=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
 echo "Base version (packages/brain/package.json): $BASE_VERSION"
 echo ""
 
@@ -23,7 +23,7 @@ ERRORS=0
 
 # Check packages/brain/package-lock.json
 if [[ -f "packages/brain/package-lock.json" ]]; then
-    LOCK_VERSION=$(jq -r '.version' packages/brain/package-lock.json)
+    LOCK_VERSION=$(node -e "process.stdout.write(require('./packages/brain/package-lock.json').version)")
     if [[ "$LOCK_VERSION" != "$BASE_VERSION" ]]; then
         echo "❌ packages/brain/package-lock.json: $LOCK_VERSION (expected: $BASE_VERSION)"
         ERRORS=$((ERRORS + 1))
@@ -65,7 +65,7 @@ if [[ $ERRORS -gt 0 ]]; then
     echo ""
     echo "Fix:"
     echo "  cd packages/brain && npm version patch --no-git-tag-version"
-    echo "  cd .. && jq -r .version packages/brain/package.json > .brain-versions"
+    echo "  node -e \"process.stdout.write(require('./packages/brain/package.json').version)\" > .brain-versions"
     echo "  # Update DEFINITION.md 'Brain 版本' line"
     echo ""
     exit 1
