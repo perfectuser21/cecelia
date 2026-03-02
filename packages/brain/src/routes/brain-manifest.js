@@ -2,20 +2,29 @@
  * Brain Manifest 路由
  *
  * GET /api/brain/manifest
- *   返回：5 块意识架构注册表（静态，模块声明）
- *   前端用于构建 Level 1 概览视图，无需改前端即可新增模块
+ *   返回：brain-manifest.generated.json（自动生成的模块注册表）
+ *   前端用于构建 Level 1/2 视图，包含 allActions/allSignals/allSkills
+ *
+ * 数据来源：packages/brain/scripts/generate-manifest.mjs 自动生成
  */
 
-/* global console */
+/* global console, URL */
 
 import { Router } from 'express';
-import { BRAIN_MANIFEST } from '../brain-manifest.js';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const GENERATED_PATH = join(__dirname, '../brain-manifest.generated.json');
 
 const router = Router();
 
 router.get('/', (_req, res) => {
   try {
-    res.json(BRAIN_MANIFEST);
+    const raw = readFileSync(GENERATED_PATH, 'utf8');
+    const manifest = JSON.parse(raw);
+    res.json(manifest);
   } catch (err) {
     console.error('[API] brain-manifest error:', err.message);
     res.status(500).json({ error: err.message });

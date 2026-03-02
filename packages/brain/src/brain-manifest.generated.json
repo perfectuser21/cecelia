@@ -1,0 +1,848 @@
+{
+  "version": "4.0.0",
+  "blocks": [
+    {
+      "id": "interface",
+      "label": "外界接口",
+      "color": "#f97316",
+      "desc": "信息输入口——对话、飞书事件、任务回调",
+      "nodeIds": [
+        "tick",
+        "dialog"
+      ],
+      "modules": [
+        {
+          "id": "tick",
+          "label": "Tick 心跳",
+          "desc": "5s 循环驱动，Brain 心脏，每 5min 执行一次 tick",
+          "file": "tick.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "dialog",
+          "label": "对话系统",
+          "desc": "orchestrator-chat — 飞书/WebSocket 消息快速处理路径",
+          "file": "orchestrator-chat.js",
+          "nature": "dynamic"
+        }
+      ]
+    },
+    {
+      "id": "perception",
+      "label": "感知层",
+      "color": "#6366f1",
+      "desc": "信号感知——16 个感知信号（工作+非工作）+ 情绪推导 + 记忆检索",
+      "nodeIds": [
+        "emotion"
+      ],
+      "modules": [
+        {
+          "id": "perception_signals",
+          "label": "感知信号",
+          "desc": "16 个感知信号：工作 KR/任务/系统 + 非工作 好奇/对话质量/知识空白（点击查看详情）",
+          "file": "desire/perception.js",
+          "nature": "dynamic",
+          "signals": [
+            {
+              "name": "task_fail_rate_24h"
+            },
+            {
+              "name": "queue_buildup"
+            },
+            {
+              "name": "kr_stalled"
+            },
+            {
+              "name": "kr_status_snapshot"
+            },
+            {
+              "name": "hours_since_feishu"
+            },
+            {
+              "name": "system_idle"
+            },
+            {
+              "name": "user_online"
+            },
+            {
+              "name": "undigested_knowledge"
+            },
+            {
+              "name": "repeated_failures"
+            },
+            {
+              "name": "task_milestone"
+            },
+            {
+              "name": "task_completed_today"
+            },
+            {
+              "name": "time_aware_greeting"
+            },
+            {
+              "name": "learning_gap_signal"
+            },
+            {
+              "name": "conversation_quality"
+            },
+            {
+              "name": "curiosity_accumulated"
+            },
+            {
+              "name": "intellectual_idle"
+            }
+          ]
+        },
+        {
+          "id": "emotion",
+          "label": "情绪层",
+          "desc": "基于感知信号推导当前情绪状态（calm/excited/curious/anxious/tired）",
+          "file": "emotion-layer.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "memory_retriever",
+          "label": "记忆检索",
+          "desc": "从 memory_stream 检索相关情景记忆，注入意识核心上下文",
+          "file": "memory-retriever.js",
+          "nature": "dynamic"
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "label": "意识核心",
+      "color": "#a855f7",
+      "desc": "丘脑路由 + 皮层分析 + 欲望形成 + 反刍洞察",
+      "nodeIds": [
+        "thalamus",
+        "cortex",
+        "cognitive",
+        "desire",
+        "rumination"
+      ],
+      "modules": [
+        {
+          "id": "thalamus",
+          "label": "丘脑 L1",
+          "desc": "快速事件路由，Action 白名单校验，Haiku 模型",
+          "file": "thalamus.js",
+          "nature": "dynamic",
+          "actions": [
+            {
+              "name": "dispatch_task",
+              "description": "派发任务",
+              "dangerous": false
+            },
+            {
+              "name": "create_task",
+              "description": "创建任务",
+              "dangerous": false
+            },
+            {
+              "name": "cancel_task",
+              "description": "取消任务",
+              "dangerous": false
+            },
+            {
+              "name": "retry_task",
+              "description": "重试任务",
+              "dangerous": false
+            },
+            {
+              "name": "reprioritize_task",
+              "description": "调整优先级",
+              "dangerous": false
+            },
+            {
+              "name": "pause_task",
+              "description": "暂停任务",
+              "dangerous": false
+            },
+            {
+              "name": "resume_task",
+              "description": "恢复任务",
+              "dangerous": false
+            },
+            {
+              "name": "mark_task_blocked",
+              "description": "标记任务为阻塞",
+              "dangerous": false
+            },
+            {
+              "name": "quarantine_task",
+              "description": "隔离任务（移入隔离区）",
+              "dangerous": true
+            },
+            {
+              "name": "create_okr",
+              "description": "创建 OKR",
+              "dangerous": false
+            },
+            {
+              "name": "update_okr_progress",
+              "description": "更新 OKR 进度",
+              "dangerous": false
+            },
+            {
+              "name": "assign_to_autumnrice",
+              "description": "交给秋米拆解",
+              "dangerous": false
+            },
+            {
+              "name": "notify_user",
+              "description": "通知用户",
+              "dangerous": false
+            },
+            {
+              "name": "log_event",
+              "description": "记录事件",
+              "dangerous": false
+            },
+            {
+              "name": "escalate_to_brain",
+              "description": "升级到 Brain LLM (Sonnet)",
+              "dangerous": false
+            },
+            {
+              "name": "request_human_review",
+              "description": "请求人工确认",
+              "dangerous": true
+            },
+            {
+              "name": "analyze_failure",
+              "description": "分析失败原因",
+              "dangerous": false
+            },
+            {
+              "name": "predict_progress",
+              "description": "预测进度",
+              "dangerous": false
+            },
+            {
+              "name": "create_proposal",
+              "description": "创建计划提案",
+              "dangerous": false
+            },
+            {
+              "name": "create_learning",
+              "description": "保存经验教训到 learnings 表",
+              "dangerous": false
+            },
+            {
+              "name": "update_learning",
+              "description": "更新已有 learning 记录",
+              "dangerous": false
+            },
+            {
+              "name": "trigger_rca",
+              "description": "触发根因分析 (RCA) 流程",
+              "dangerous": false
+            },
+            {
+              "name": "suggest_task_type",
+              "description": "建议 task_type 修正（只警告记录，不自动修改）",
+              "dangerous": false
+            },
+            {
+              "name": "update_task_prd",
+              "description": "更新任务 PRD 内容",
+              "dangerous": false
+            },
+            {
+              "name": "archive_task",
+              "description": "归档完成/超期任务",
+              "dangerous": false
+            },
+            {
+              "name": "defer_task",
+              "description": "延迟任务到指定时间",
+              "dangerous": false
+            },
+            {
+              "name": "no_action",
+              "description": "不需要操作",
+              "dangerous": false
+            },
+            {
+              "name": "fallback_to_tick",
+              "description": "降级到纯代码 Tick",
+              "dangerous": false
+            },
+            {
+              "name": "kr_replan",
+              "description": "触发 KR 重新规划（KR停滞/失败率高时）",
+              "dangerous": false
+            },
+            {
+              "name": "write_self_model",
+              "description": "将洞察写入 memory_stream（type=self_model）",
+              "dangerous": false
+            },
+            {
+              "name": "escalate_to_cortex",
+              "description": "升级到 L2 Opus 皮层做深度战略分析",
+              "dangerous": false
+            },
+            {
+              "name": "propose_decomposition",
+              "description": "OKR/Initiative 拆解结果确认",
+              "dangerous": true
+            },
+            {
+              "name": "propose_weekly_plan",
+              "description": "本周计划确认",
+              "dangerous": true
+            },
+            {
+              "name": "propose_priority_change",
+              "description": "优先级调整建议",
+              "dangerous": true
+            },
+            {
+              "name": "propose_anomaly_action",
+              "description": "异常处理方案选择",
+              "dangerous": true
+            },
+            {
+              "name": "propose_milestone_review",
+              "description": "Initiative 完成验收",
+              "dangerous": true
+            },
+            {
+              "name": "heartbeat_finding",
+              "description": "巡检发现异常",
+              "dangerous": true
+            },
+            {
+              "name": "reschedule_task",
+              "description": "重新安排任务时间",
+              "dangerous": false
+            },
+            {
+              "name": "aggregate_tasks",
+              "description": "聚合相似任务",
+              "dangerous": false
+            },
+            {
+              "name": "merge_tasks",
+              "description": "合并可合并的任务",
+              "dangerous": false
+            },
+            {
+              "name": "split_task",
+              "description": "拆分大型任务",
+              "dangerous": false
+            },
+            {
+              "name": "notify_oncall",
+              "description": "通知值班人员",
+              "dangerous": false
+            },
+            {
+              "name": "adjust_resource_allocation",
+              "description": "调整资源分配",
+              "dangerous": true
+            },
+            {
+              "name": "trigger_backup",
+              "description": "触发备份",
+              "dangerous": false
+            },
+            {
+              "name": "rotate_credentials",
+              "description": "凭据轮换",
+              "dangerous": true
+            }
+          ]
+        },
+        {
+          "id": "cortex",
+          "label": "皮层 L2",
+          "desc": "深度分析，RCA，战略调整，Sonnet 模型",
+          "file": "cortex.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "cognitive",
+          "label": "认知核心",
+          "desc": "汇总情绪 + 记忆 + 自我模型，生成认知状态快照",
+          "file": "cognitive-core.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "desire",
+          "label": "欲望系统",
+          "desc": "感知→情绪→记忆→反思→欲望形成→表达（6 层管道）",
+          "file": "desire/index.js",
+          "nature": "growing"
+        },
+        {
+          "id": "rumination",
+          "label": "反刍",
+          "desc": "批量深度反思，30min 周期，洞察写回 self_model",
+          "file": "rumination.js",
+          "nature": "growing"
+        }
+      ]
+    },
+    {
+      "id": "action",
+      "label": "行动层",
+      "color": "#22c55e",
+      "desc": "调度执行——规划任务、执行任务、建议路由与防护机制",
+      "nodeIds": [
+        "planner",
+        "executor",
+        "suggestion",
+        "immune"
+      ],
+      "modules": [
+        {
+          "id": "planner",
+          "label": "调度规划",
+          "desc": "选择下一个任务，KR 轮转评分，资源检查",
+          "file": "planner.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "executor",
+          "label": "执行器",
+          "desc": "派发并监控任务，bridge → claude -p /skill 调用链",
+          "file": "executor.js",
+          "nature": "dynamic",
+          "skills": [
+            {
+              "taskType": "dev",
+              "skill": "/dev"
+            },
+            {
+              "taskType": "review",
+              "skill": "/code-review"
+            },
+            {
+              "taskType": "qa_init",
+              "skill": "/review init"
+            },
+            {
+              "taskType": "talk",
+              "skill": "/talk"
+            },
+            {
+              "taskType": "research",
+              "skill": null
+            },
+            {
+              "taskType": "dept_heartbeat",
+              "skill": "/repo-lead heartbeat"
+            },
+            {
+              "taskType": "code_review",
+              "skill": "/code-review"
+            },
+            {
+              "taskType": "initiative_plan",
+              "skill": "/decomp"
+            },
+            {
+              "taskType": "initiative_verify",
+              "skill": "/decomp"
+            },
+            {
+              "taskType": "decomp_review",
+              "skill": "/decomp-check"
+            },
+            {
+              "taskType": "suggestion_plan",
+              "skill": "/plan"
+            },
+            {
+              "taskType": "qa",
+              "skill": "/code-review"
+            },
+            {
+              "taskType": "audit",
+              "skill": "/code-review"
+            }
+          ]
+        },
+        {
+          "id": "suggestion",
+          "label": "建议系统",
+          "desc": "欲望→行动建议评分（score >= 0.7）——⚠️ P0: 下游 planner 路径已废弃（PR #252）",
+          "file": "suggestion-triage.js",
+          "nature": "dynamic"
+        },
+        {
+          "id": "immune",
+          "label": "免疫系统",
+          "desc": "隔离区管理，警觉等级（ALERT_1/2/3），自动熔断",
+          "file": "alertness.js",
+          "nature": "dynamic"
+        }
+      ]
+    },
+    {
+      "id": "evolution",
+      "label": "自我演化",
+      "color": "#ec4899",
+      "desc": "慢回路——自我认知写回，学习沉淀，记忆系统，自我报告",
+      "nodeIds": [
+        "self_model",
+        "learning",
+        "memory"
+      ],
+      "modules": [
+        {
+          "id": "self_model",
+          "label": "自我模型",
+          "desc": "动态自我认知（好奇心/审美/关系感/存在感），rumination 写回",
+          "file": "self-model.js",
+          "nature": "growing"
+        },
+        {
+          "id": "learning",
+          "label": "学习",
+          "desc": "PR 开发洞察 + 系统模式沉淀，content_hash 去重",
+          "file": "learning.js",
+          "nature": "growing"
+        },
+        {
+          "id": "memory",
+          "label": "记忆系统",
+          "desc": "memory_stream L0/L1 + 情景记忆，episodic + working_memory",
+          "file": "memory-retriever.js",
+          "nature": "growing"
+        },
+        {
+          "id": "self_report",
+          "label": "自我报告",
+          "desc": "6h 欲望轨迹采集（⚠️ 待闭环：需要 consumer 分析下游）",
+          "file": "self-report-collector.js",
+          "nature": "growing"
+        }
+      ]
+    }
+  ],
+  "blockConnections": [
+    {
+      "from": "interface",
+      "to": "perception",
+      "label": "外部信号",
+      "type": "primary",
+      "desc": "tick 信号 + 飞书事件 → 感知层量化处理",
+      "broken": false
+    },
+    {
+      "from": "interface",
+      "to": "core",
+      "label": "对话→丘脑",
+      "type": "fast_path",
+      "desc": "orchestrator-chat 快速路径：不走深层感知，直接到丘脑路由",
+      "broken": false
+    },
+    {
+      "from": "perception",
+      "to": "core",
+      "label": "感知→意识",
+      "type": "primary",
+      "desc": "情绪状态 + 记忆检索结果 → 注入意识核心上下文",
+      "broken": false
+    },
+    {
+      "from": "core",
+      "to": "action",
+      "label": "决策→行动",
+      "type": "primary",
+      "desc": "丘脑路由任务 → 调度规划 → 执行器（⚠️ suggestion→planner 子路径已废弃）",
+      "broken": false
+    },
+    {
+      "from": "action",
+      "to": "evolution",
+      "label": "结果→演化",
+      "type": "feedback",
+      "desc": "任务结果 → memory_stream → rumination → self_model 写回",
+      "broken": false
+    },
+    {
+      "from": "evolution",
+      "to": "perception",
+      "label": "自我→感知",
+      "type": "feedback",
+      "desc": "更新的 self_model → 下一 tick 注入 perception 上下文",
+      "broken": false
+    }
+  ],
+  "brokenConnections": [
+    {
+      "from": "suggestion",
+      "to": "planner",
+      "reason": "PR #252 废弃 suggestion-dispatcher.js，欲望信号现在直接到 executor",
+      "severity": "P0"
+    }
+  ],
+  "issues": [
+    {
+      "severity": "P0",
+      "type": "broken_connection",
+      "title": "suggestion→planner 路径断路",
+      "detail": "PR #252 后 suggestion-dispatcher.js 废弃，desire→suggestion→planner 路径不再工作。图上的线已是死路。",
+      "affected": [
+        "suggestion",
+        "planner"
+      ]
+    },
+    {
+      "severity": "P1",
+      "type": "no_consumer",
+      "title": "3 个感知信号无下游消费者",
+      "detail": "task_completed_today / time_aware_greeting / intellectual_idle 信号产生后无人消费，形成信息浪费。",
+      "affected": [
+        "perception_signals"
+      ]
+    }
+  ],
+  "allActions": {
+    "dispatch_task": {
+      "dangerous": false,
+      "description": "派发任务"
+    },
+    "create_task": {
+      "dangerous": false,
+      "description": "创建任务"
+    },
+    "cancel_task": {
+      "dangerous": false,
+      "description": "取消任务"
+    },
+    "retry_task": {
+      "dangerous": false,
+      "description": "重试任务"
+    },
+    "reprioritize_task": {
+      "dangerous": false,
+      "description": "调整优先级"
+    },
+    "pause_task": {
+      "dangerous": false,
+      "description": "暂停任务"
+    },
+    "resume_task": {
+      "dangerous": false,
+      "description": "恢复任务"
+    },
+    "mark_task_blocked": {
+      "dangerous": false,
+      "description": "标记任务为阻塞"
+    },
+    "quarantine_task": {
+      "dangerous": true,
+      "description": "隔离任务（移入隔离区）"
+    },
+    "create_okr": {
+      "dangerous": false,
+      "description": "创建 OKR"
+    },
+    "update_okr_progress": {
+      "dangerous": false,
+      "description": "更新 OKR 进度"
+    },
+    "assign_to_autumnrice": {
+      "dangerous": false,
+      "description": "交给秋米拆解"
+    },
+    "notify_user": {
+      "dangerous": false,
+      "description": "通知用户"
+    },
+    "log_event": {
+      "dangerous": false,
+      "description": "记录事件"
+    },
+    "escalate_to_brain": {
+      "dangerous": false,
+      "description": "升级到 Brain LLM (Sonnet)"
+    },
+    "request_human_review": {
+      "dangerous": true,
+      "description": "请求人工确认"
+    },
+    "analyze_failure": {
+      "dangerous": false,
+      "description": "分析失败原因"
+    },
+    "predict_progress": {
+      "dangerous": false,
+      "description": "预测进度"
+    },
+    "create_proposal": {
+      "dangerous": false,
+      "description": "创建计划提案"
+    },
+    "create_learning": {
+      "dangerous": false,
+      "description": "保存经验教训到 learnings 表"
+    },
+    "update_learning": {
+      "dangerous": false,
+      "description": "更新已有 learning 记录"
+    },
+    "trigger_rca": {
+      "dangerous": false,
+      "description": "触发根因分析 (RCA) 流程"
+    },
+    "suggest_task_type": {
+      "dangerous": false,
+      "description": "建议 task_type 修正（只警告记录，不自动修改）"
+    },
+    "update_task_prd": {
+      "dangerous": false,
+      "description": "更新任务 PRD 内容"
+    },
+    "archive_task": {
+      "dangerous": false,
+      "description": "归档完成/超期任务"
+    },
+    "defer_task": {
+      "dangerous": false,
+      "description": "延迟任务到指定时间"
+    },
+    "no_action": {
+      "dangerous": false,
+      "description": "不需要操作"
+    },
+    "fallback_to_tick": {
+      "dangerous": false,
+      "description": "降级到纯代码 Tick"
+    },
+    "kr_replan": {
+      "dangerous": false,
+      "description": "触发 KR 重新规划（KR停滞/失败率高时）"
+    },
+    "write_self_model": {
+      "dangerous": false,
+      "description": "将洞察写入 memory_stream（type=self_model）"
+    },
+    "escalate_to_cortex": {
+      "dangerous": false,
+      "description": "升级到 L2 Opus 皮层做深度战略分析"
+    },
+    "propose_decomposition": {
+      "dangerous": true,
+      "description": "OKR/Initiative 拆解结果确认"
+    },
+    "propose_weekly_plan": {
+      "dangerous": true,
+      "description": "本周计划确认"
+    },
+    "propose_priority_change": {
+      "dangerous": true,
+      "description": "优先级调整建议"
+    },
+    "propose_anomaly_action": {
+      "dangerous": true,
+      "description": "异常处理方案选择"
+    },
+    "propose_milestone_review": {
+      "dangerous": true,
+      "description": "Initiative 完成验收"
+    },
+    "heartbeat_finding": {
+      "dangerous": true,
+      "description": "巡检发现异常"
+    },
+    "reschedule_task": {
+      "dangerous": false,
+      "description": "重新安排任务时间"
+    },
+    "aggregate_tasks": {
+      "dangerous": false,
+      "description": "聚合相似任务"
+    },
+    "merge_tasks": {
+      "dangerous": false,
+      "description": "合并可合并的任务"
+    },
+    "split_task": {
+      "dangerous": false,
+      "description": "拆分大型任务"
+    },
+    "notify_oncall": {
+      "dangerous": false,
+      "description": "通知值班人员"
+    },
+    "adjust_resource_allocation": {
+      "dangerous": true,
+      "description": "调整资源分配"
+    },
+    "trigger_backup": {
+      "dangerous": false,
+      "description": "触发备份"
+    },
+    "rotate_credentials": {
+      "dangerous": true,
+      "description": "凭据轮换"
+    }
+  },
+  "allSignals": [
+    "task_fail_rate_24h",
+    "queue_buildup",
+    "kr_stalled",
+    "kr_status_snapshot",
+    "hours_since_feishu",
+    "system_idle",
+    "user_online",
+    "undigested_knowledge",
+    "repeated_failures",
+    "task_milestone",
+    "task_completed_today",
+    "time_aware_greeting",
+    "learning_gap_signal",
+    "conversation_quality",
+    "curiosity_accumulated",
+    "intellectual_idle"
+  ],
+  "allSkills": {
+    "dev": "/dev",
+    "review": "/code-review",
+    "qa_init": "/review init",
+    "talk": "/talk",
+    "research": null,
+    "dept_heartbeat": "/repo-lead heartbeat",
+    "code_review": "/code-review",
+    "initiative_plan": "/decomp",
+    "initiative_verify": "/decomp",
+    "decomp_review": "/decomp-check",
+    "suggestion_plan": "/plan",
+    "qa": "/code-review",
+    "audit": "/code-review"
+  },
+  "skillWhitelist": {
+    "dev": "/dev",
+    "review": "/code-review",
+    "talk": "/cecelia",
+    "data": "/sync-hk",
+    "qa": "/code-review",
+    "audit": "/code-review",
+    "research": "/research",
+    "explore": "/explore",
+    "knowledge": "/knowledge",
+    "codex_qa": "/codex",
+    "code_review": "/code-review",
+    "decomp_review": "/decomp-check",
+    "dept_heartbeat": "/cecelia",
+    "initiative_plan": "/decomp",
+    "initiative_verify": "/decomp",
+    "suggestion_plan": "/plan"
+  },
+  "generatedAt": "2026-03-02T11:59:45.954Z",
+  "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
+  "sourceFiles": [
+    "src/brain-manifest.js",
+    "src/thalamus.js",
+    "src/desire/perception.js",
+    "src/executor.js",
+    "src/task-router.js"
+  ]
+}
