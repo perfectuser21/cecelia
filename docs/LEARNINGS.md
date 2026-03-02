@@ -1,5 +1,34 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] CI 安全加固：yq 供应链锁版 + 安全漏洞调查经验 (PR #306)
+
+**失败统计**：CI 失败 0 次，合并前需 update-branch 1 次
+
+**踩坑：PR 创建后 main 前进，需 update-branch**
+
+PR 创建后 PR #304 合并到 main，导致分支落后。`gh pr merge --squash` 报错 "head branch is not up to date"。
+解决：`gh api repos/OWNER/REPO/pulls/N/update-branch -X PUT`（GitHub 服务端 merge，不需要 force push）
+
+**安全扫描误报识别（重要经验）**
+
+收到安全扫描报告「三个漏洞」，探索后实际情况：
+
+| 漏洞 | 实际情况 | 处理 |
+|------|----------|------|
+| engine-ci.yml yq /latest/ 无 hash | **真实漏洞** | 修复：v4.44.3 + sha256sum |
+| docker-compose.yml pid:host | **不可修复** — watchdog.js 依赖 /proc/<hostpid>/statm | 注释记录 |
+| credential-guard.sh grep 路径注入 | **误报** — 使用 stdin 管道，无文件路径参数 | 无需修复 |
+
+**pid:host 不能移除的根因**：watchdog.js 通过 `readFileSync('/proc/${pid}/statm')` 读取宿主上 cecelia-run 进程的 RSS。无 `pid: host` 时容器只能看到自己的 PID namespace，/proc/<hostpid>/ 不存在。
+
+**grep stdin 管道不存在路径注入**：`echo "$text" | grep -qE "$pattern"` — grep 从 stdin 读取，没有文件路径参数，文件名不会被解析为 grep 选项。安全扫描的 `--` 修复建议仅适用于 `grep "$pattern" "$filepath"` 这种用法。
+
+**yq 版本锁定标准做法**：
+1. 锁定具体版本（非 /latest/）
+2. 下载同 release 的 checksums 文件
+3. `EXPECTED=$(grep "^[a-f0-9]*  ${YQ_BINARY}$" checksums.txt | awk '{print $1}')`
+4. `sha256sum | awk '{print $1}'` 对比
+
 ### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
