@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 // ============== 类型 ==============
 interface SubsystemMetrics {
@@ -33,6 +33,7 @@ interface ManifestModule {
   label: string;
   desc: string;
   file: string;
+  nature?: 'dynamic' | 'growing' | 'fixed';
 }
 
 interface ManifestBlock {
@@ -50,12 +51,46 @@ interface BlockConnection {
   label: string;
   type: 'primary' | 'fast_path' | 'feedback';
   desc: string;
+  broken?: boolean;
+}
+
+interface BrokenConnection {
+  from: string;
+  to: string;
+  reason: string;
+  severity: 'P0' | 'P1';
+}
+
+interface ManifestIssue {
+  severity: 'P0' | 'P1';
+  type: string;
+  title: string;
+  detail: string;
+  affected: string[];
 }
 
 interface ManifestData {
   version: string;
   blocks: ManifestBlock[];
   blockConnections: BlockConnection[];
+  brokenConnections?: BrokenConnection[];
+  issues?: ManifestIssue[];
+}
+
+interface PerceptionSignal {
+  id: string;
+  label: string;
+  importance: number;
+  hasConsumer: boolean;
+  value: number | null;
+  context: string | null;
+  observed: boolean;
+}
+
+interface PerceptionSignalsData {
+  signals: PerceptionSignal[];
+  snapshot_at: string;
+  error?: string;
 }
 
 // ============== Level 2: 5 列布局（左→右信息流）==============
@@ -105,6 +140,9 @@ const CONNECTION_PATH: Record<string, string> = {
   'executor→immune': 'D', 'immune→planner': 'D',
 };
 
+// 模块级别断路连接（来自 manifest.brokenConnections）
+const BROKEN_CONNECTIONS_SET = new Set(['suggestion→planner']);
+
 const STATUS_COLORS: Record<string, string> = {
   active: '#22c55e',
   idle: '#eab308',
@@ -119,8 +157,14 @@ const COL_BG: Record<number, string> = {
   4: 'rgba(34,197,94,0.06)',
 };
 
+const NATURE_BADGE: Record<string, string> = {
+  dynamic: '🔄',
+  growing: '📈',
+  fixed: '🔒',
+};
+
 // ============== Level 2: 连接线 ==============
-function FlowLine({ conn }: { conn: Connection }) {
+function FlowLine({ conn, brokenSet }: { conn: Connection; brokenSet: Set<string> }) {
   const from = NODE_LAYOUT[conn.from];
   const to = NODE_LAYOUT[conn.to];
   if (!from || !to) return null;
@@ -136,6 +180,7 @@ function FlowLine({ conn }: { conn: Connection }) {
   const pathColor = pathId ? PATHS[pathId].color : '#475569';
   const isActive = conn.status === 'active';
   const isDormant = conn.status === 'deployed_no_data';
+  const isBroken = brokenSet.has(pathKey);
 
   let d: string;
   if (isBackward) {
@@ -147,6 +192,19 @@ function FlowLine({ conn }: { conn: Connection }) {
   } else {
     const cpx = (x1 + x2) / 2;
     d = `M ${x1} ${y1} C ${cpx} ${y1}, ${cpx} ${y2}, ${x2} ${y2}`;
+  }
+
+  if (isBroken) {
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    return (
+      <g>
+        <path d={d} fill="none" stroke="#ef4444" strokeWidth={2}
+          strokeDasharray="5 3" opacity={0.8} />
+        <text x={midX} y={midY - 8} textAnchor="middle" fill="#ef4444" fontSize={12}>⚠️</text>
+        <text x={midX} y={midY + 4} textAnchor="middle" fill="#ef4444" fontSize={8} opacity={0.8}>断路</text>
+      </g>
+    );
   }
 
   return (
@@ -175,14 +233,15 @@ function FlowLine({ conn }: { conn: Connection }) {
 
 // ============== Level 2: 节点 ==============
 function Node({
-  subsystem, onClick, isSelected, blockColor,
-}: { subsystem: Subsystem; onClick: () => void; isSelected: boolean; blockColor?: string }) {
+  subsystem, onClick, isSelected, blockColor, nature,
+}: { subsystem: Subsystem; onClick: () => void; isSelected: boolean; blockColor?: string; nature?: string }) {
   const pos = NODE_LAYOUT[subsystem.id];
   if (!pos) return null;
 
   const sc = STATUS_COLORS[subsystem.status];
   const isActive = subsystem.status === 'active';
   const borderColor = isSelected ? '#e5e7eb' : (blockColor ? `${blockColor}60` : 'rgba(255,255,255,0.12)');
+  const natureBadge = nature ? NATURE_BADGE[nature] : undefined;
 
   return (
     <g onClick={onClick} style={{ cursor: 'pointer' }}>
@@ -216,14 +275,19 @@ function Node({
           <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite" />
         )}
       </circle>
+      {natureBadge && (
+        <text x={pos.x + NODE_W - 8} y={pos.y + 14} textAnchor="middle" fontSize={10}>
+          {natureBadge}
+        </text>
+      )}
       <text
-        x={pos.x + NODE_W / 2} y={pos.y + 20}
+        x={pos.x + NODE_W / 2} y={pos.y + 26}
         textAnchor="middle" fill="#e5e7eb" fontSize={11} fontWeight={600}
       >
         {subsystem.name}
       </text>
       <text
-        x={pos.x + NODE_W / 2} y={pos.y + 38}
+        x={pos.x + NODE_W / 2} y={pos.y + 42}
         textAnchor="middle" fill="#9ca3af" fontSize={10}
       >
         {subsystem.metrics.today_count !== null && subsystem.metrics.today_count !== undefined
@@ -232,6 +296,20 @@ function Node({
       </text>
     </g>
   );
+}
+
+// ============== Level 1: 块健康状态计算 ==============
+function computeBlockHealth(block: ManifestBlock, issues?: ManifestIssue[]) {
+  if (!issues) return 'ok';
+  const hasP0 = issues.some(
+    iss => iss.severity === 'P0' && iss.affected.some(a => block.modules.some(m => m.id === a) || block.nodeIds.includes(a))
+  );
+  const hasP1 = issues.some(
+    iss => iss.severity === 'P1' && iss.affected.some(a => block.modules.some(m => m.id === a) || block.nodeIds.includes(a))
+  );
+  if (hasP0) return 'broken';
+  if (hasP1) return 'warning';
+  return 'ok';
 }
 
 // ============== Level 1: 块聚合状态计算 ==============
@@ -258,21 +336,22 @@ interface BlockCardProps {
   height: number;
   onClick: () => void;
   isSelected: boolean;
+  health: 'ok' | 'warning' | 'broken';
 }
 
-function BlockCard({ block, subsystems, x, y, width, height, onClick, isSelected }: BlockCardProps) {
+function BlockCard({ block, subsystems, x, y, width, height, onClick, isSelected, health }: BlockCardProps) {
   const { active, idle, dormant, status, total } = computeBlockStatus(block, subsystems);
   const sc = STATUS_COLORS[status];
   const isActive = status === 'active';
 
+  const healthBadge = health === 'broken' ? '🔴' : health === 'warning' ? '⚠️' : '✅';
+
   return (
     <g onClick={onClick} style={{ cursor: 'pointer' }}>
-      {/* 选中光晕 */}
       {isSelected && (
         <rect x={x - 3} y={y - 3} width={width + 6} height={height + 6}
           rx={13} fill="none" stroke={block.color} strokeWidth={1.5} opacity={0.5} />
       )}
-      {/* 背景 */}
       <rect x={x} y={y} width={width} height={height} rx={10}
         fill={`${block.color}08`}
         stroke={isSelected ? block.color : `${block.color}30`}
@@ -281,7 +360,6 @@ function BlockCard({ block, subsystems, x, y, width, height, onClick, isSelected
       {/* 顶部色条 */}
       <rect x={x} y={y} width={width} height={4} rx={0}
         fill={block.color} opacity={0.6}
-        style={{ borderTopLeftRadius: 10, borderTopRightRadius: 10 }}
       />
       {/* 状态灯 */}
       <circle cx={x + 18} cy={y + 22} r={5} fill={sc}>
@@ -289,6 +367,10 @@ function BlockCard({ block, subsystems, x, y, width, height, onClick, isSelected
           <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite" />
         )}
       </circle>
+      {/* 健康徽章 */}
+      <text x={x + width - 10} y={y + 26} textAnchor="end" fontSize={14}>
+        {healthBadge}
+      </text>
       {/* 块名称 */}
       <text x={x + width / 2} y={y + 26}
         textAnchor="middle" fill="#f3f4f6" fontSize={13} fontWeight={700}
@@ -419,8 +501,116 @@ function DetailPanel({ subsystem }: { subsystem: Subsystem | null }) {
   );
 }
 
+// ============== 感知层信号面板 ==============
+function SignalPanel({ signalsData }: { signalsData: PerceptionSignalsData | null }) {
+  if (!signalsData) {
+    return (
+      <div style={{
+        padding: '14px 20px', background: 'rgba(99,102,241,0.06)',
+        borderRadius: 8, border: '1px solid rgba(99,102,241,0.2)',
+        color: '#9ca3af', fontSize: 12,
+      }}>
+        加载感知信号中...
+      </div>
+    );
+  }
+
+  const { signals, snapshot_at } = signalsData;
+  const noConsumerCount = signals.filter(s => !s.hasConsumer).length;
+  const observedCount = signals.filter(s => s.observed).length;
+
+  return (
+    <div style={{
+      padding: '14px 20px',
+      background: 'rgba(99,102,241,0.06)',
+      borderRadius: 8,
+      border: '1px solid rgba(99,102,241,0.2)',
+    }}>
+      {/* 标题 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <span style={{
+          display: 'inline-block', width: 12, height: 12, borderRadius: 3,
+          background: '#6366f1', opacity: 0.8,
+        }} />
+        <span style={{ color: '#f3f4f6', fontSize: 15, fontWeight: 700 }}>感知层 — 16 个信号</span>
+        <span style={{ color: '#9ca3af', fontSize: 12 }}>
+          {observedCount}/16 激活
+          {noConsumerCount > 0 && (
+            <span style={{ color: '#f97316', marginLeft: 8 }}>⚠️ {noConsumerCount} 无消费者</span>
+          )}
+        </span>
+        <span style={{ marginLeft: 'auto', color: '#4b5563', fontSize: 10 }}>
+          {new Date(snapshot_at).toLocaleTimeString('zh-CN')}
+        </span>
+      </div>
+
+      {/* 信号列表 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 6 }}>
+        {signals.map(sig => (
+          <div key={sig.id} style={{
+            padding: '8px 10px',
+            background: 'rgba(255,255,255,0.03)',
+            borderRadius: 6,
+            border: `1px solid ${!sig.hasConsumer ? 'rgba(249,115,22,0.3)' : sig.observed ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)'}`,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+              {/* 激活状态 */}
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                background: sig.observed ? '#22c55e' : '#374151',
+                display: 'inline-block',
+              }} />
+              {/* 信号名 */}
+              <span style={{ color: '#d1d5db', fontSize: 11, fontWeight: 600, fontFamily: 'monospace' }}>
+                {sig.id}
+              </span>
+              {/* 无消费者警告 */}
+              {!sig.hasConsumer && (
+                <span style={{ color: '#f97316', fontSize: 10, marginLeft: 'auto' }}>⚠️ 无消费</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {/* 中文含义 */}
+              <span style={{ color: '#9ca3af', fontSize: 10 }}>{sig.label}</span>
+              {/* 重要性 */}
+              <span style={{ marginLeft: 'auto', color: '#4b5563', fontSize: 9 }}>
+                {'█'.repeat(Math.round(sig.importance / 2))}{'░'.repeat(5 - Math.round(sig.importance / 2))}
+                <span style={{ marginLeft: 3 }}>{sig.importance}/10</span>
+              </span>
+            </div>
+            {/* 当前值 */}
+            {sig.observed && sig.value !== null && (
+              <div style={{ color: '#6366f1', fontSize: 10, marginTop: 3, fontFamily: 'monospace' }}>
+                {typeof sig.value === 'number' ? sig.value.toFixed(3) : String(sig.value)}
+              </div>
+            )}
+            {/* 上下文 */}
+            {sig.observed && sig.context && (
+              <div style={{
+                color: '#4b5563', fontSize: 9, marginTop: 2,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }} title={sig.context}>
+                {sig.context}
+              </div>
+            )}
+            {!sig.observed && (
+              <div style={{ color: '#374151', fontSize: 9, marginTop: 2 }}>本次 tick 未激活</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============== 块详情面板 ==============
-function BlockDetailPanel({ block, subsystems }: { block: ManifestBlock; subsystems: Subsystem[] }) {
+function BlockDetailPanel({
+  block, subsystems, signalsData,
+}: { block: ManifestBlock; subsystems: Subsystem[]; signalsData: PerceptionSignalsData | null }) {
+  if (block.id === 'perception') {
+    return <SignalPanel signalsData={signalsData} />;
+  }
+
   return (
     <div style={{
       padding: '14px 20px',
@@ -440,6 +630,7 @@ function BlockDetailPanel({ block, subsystems }: { block: ManifestBlock; subsyst
         {block.modules.map(mod => {
           const node = subsystems.find(s => s.id === mod.id);
           const status = node?.status || 'dormant';
+          const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
           return (
             <div key={mod.id} style={{
               padding: '8px 12px',
@@ -454,6 +645,9 @@ function BlockDetailPanel({ block, subsystems }: { block: ManifestBlock; subsyst
                   background: STATUS_COLORS[status], display: 'inline-block',
                 }} />
                 <span style={{ color: '#e5e7eb', fontSize: 12, fontWeight: 600 }}>{mod.label}</span>
+                {natureBadge && (
+                  <span style={{ marginLeft: 'auto', fontSize: 11 }}>{natureBadge}</span>
+                )}
               </div>
               <div style={{ color: '#6b7280', fontSize: 10, lineHeight: '14px' }}>{mod.desc}</div>
               <div style={{ color: '#4b5563', fontSize: 9, marginTop: 4 }}>{mod.file}</div>
@@ -465,14 +659,56 @@ function BlockDetailPanel({ block, subsystems }: { block: ManifestBlock; subsyst
   );
 }
 
+// ============== Issues 面板 ==============
+function IssuesPanel({ issues }: { issues?: ManifestIssue[] }) {
+  if (!issues || issues.length === 0) return null;
+
+  return (
+    <div style={{
+      padding: '12px 16px',
+      background: 'rgba(0,0,0,0.3)',
+      borderRadius: 8,
+      border: '1px solid rgba(239,68,68,0.2)',
+      marginTop: 12,
+    }}>
+      <div style={{ color: '#f87171', fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+        已知问题 ({issues.length})
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {issues.map((issue, i) => (
+          <div key={i} style={{
+            display: 'flex', gap: 10, alignItems: 'flex-start',
+          }}>
+            <span style={{
+              padding: '1px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700, flexShrink: 0,
+              background: issue.severity === 'P0' ? 'rgba(239,68,68,0.2)' : 'rgba(249,115,22,0.2)',
+              color: issue.severity === 'P0' ? '#ef4444' : '#f97316',
+              border: `1px solid ${issue.severity === 'P0' ? 'rgba(239,68,68,0.3)' : 'rgba(249,115,22,0.3)'}`,
+            }}>
+              {issue.severity}
+            </span>
+            <div>
+              <div style={{ color: '#d1d5db', fontSize: 12, fontWeight: 600 }}>{issue.title}</div>
+              <div style={{ color: '#6b7280', fontSize: 10, marginTop: 2 }}>{issue.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ============== 主组件 ==============
 export default function SuperBrain() {
   const [data, setData] = useState<CognitiveMapData | null>(null);
   const [manifest, setManifest] = useState<ManifestData | null>(null);
+  const [signalsData, setSignalsData] = useState<PerceptionSignalsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [viewLevel, setViewLevel] = useState<'overview' | 'detail'>('overview');
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -490,17 +726,59 @@ export default function SuperBrain() {
     }
   }, []);
 
+  const fetchSignals = useCallback(async () => {
+    try {
+      const res = await fetch('/api/brain/perception-signals');
+      if (res.ok) {
+        setSignalsData(await res.json());
+      }
+    } catch {
+      // 静默失败，signals 为 null 时 SignalPanel 会显示加载状态
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // 为每个节点查找所属块的颜色
+  // 感知信号每 30s 刷新一次（运行感知需要查 DB，不要太频繁）
+  useEffect(() => {
+    if (selectedBlock === 'perception') {
+      fetchSignals();
+    }
+  }, [selectedBlock, fetchSignals]);
+
+  useEffect(() => {
+    if (selectedBlock !== 'perception') return;
+    const interval = setInterval(fetchSignals, 30000);
+    return () => clearInterval(interval);
+  }, [selectedBlock, fetchSignals]);
+
+  // ESC 退出全屏
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isFullscreen]);
+
+  // 为每个节点查找所属块的颜色和 nature
   const getNodeBlockColor = useCallback((nodeId: string) => {
     if (!manifest) return undefined;
     const block = manifest.blocks.find(b => b.nodeIds.includes(nodeId));
     return block?.color;
+  }, [manifest]);
+
+  const getNodeNature = useCallback((nodeId: string) => {
+    if (!manifest) return undefined;
+    for (const block of manifest.blocks) {
+      const mod = block.modules.find(m => m.id === nodeId);
+      if (mod) return mod.nature;
+    }
+    return undefined;
   }, [manifest]);
 
   const selectedSubsystem = data?.subsystems.find(s => s.id === selected) || null;
@@ -509,10 +787,16 @@ export default function SuperBrain() {
   const idleCount = data?.subsystems.filter(s => s.status === 'idle').length || 0;
   const dormantCount = data?.subsystems.filter(s => s.status === 'dormant').length || 0;
 
+  // 断路连接集合（Level 2 用）
+  const brokenSet = new Set(
+    (manifest?.brokenConnections || []).map(c => `${c.from}→${c.to}`)
+  );
+  // 补充静态已知断路
+  BROKEN_CONNECTIONS_SET.forEach(k => brokenSet.add(k));
+
   // ── Level 1 (overview) 布局 ──
-  // 4 主块 top row + 自我演化 bottom
-  const BW = 180;  // block width
-  const BH = 160;  // block height
+  const BW = 180;
+  const BH = 160;
   const GAP = 18;
   const topY = 40;
   const botY = 250;
@@ -529,15 +813,11 @@ export default function SuperBrain() {
     blockPositions[b.id] = { x: startX + i * (BW + GAP), y: topY };
   });
   if (evolutionBlock) {
-    const evW = totalTopW;
     blockPositions['evolution'] = { x: startX, y: botY };
-    // store width
-    (blockPositions['evolution'] as any).w = evW;
   }
 
   const evolutionW = evolutionBlock ? totalTopW : BW;
 
-  // ── 连接线坐标计算 ──
   function getBlockCenter(id: string, side: 'right' | 'left' | 'top' | 'bottom') {
     const pos = blockPositions[id];
     if (!pos) return { x: 0, y: 0 };
@@ -546,10 +826,9 @@ export default function SuperBrain() {
     if (side === 'right') return { x: pos.x + w, y: pos.y + h / 2 };
     if (side === 'left') return { x: pos.x, y: pos.y + h / 2 };
     if (side === 'top') return { x: pos.x + w / 2, y: pos.y };
-    return { x: pos.x + w / 2, y: pos.y + h }; // bottom
+    return { x: pos.x + w / 2, y: pos.y + h };
   }
 
-  // 计算块的聚合 active 状态（用于箭头激活状态）
   function isBlockActive(id: string) {
     if (!manifest || !data) return false;
     const block = manifest.blocks.find(b => b.id === id);
@@ -557,11 +836,19 @@ export default function SuperBrain() {
     return block.nodeIds.some(nid => data.subsystems.find(s => s.id === nid)?.status === 'active');
   }
 
+  // 全屏容器样式
+  const containerStyle: React.CSSProperties = isFullscreen ? {
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: '#0d1117', color: '#e5e7eb',
+    padding: '20px 24px', overflowY: 'auto',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  } : {
+    minHeight: '100vh', background: '#0d1117', color: '#e5e7eb', padding: '20px 24px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  };
+
   return (
-    <div style={{
-      minHeight: '100vh', background: '#0d1117', color: '#e5e7eb', padding: '20px 24px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
+    <div ref={containerRef} style={containerStyle}>
       {/* 顶栏 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
         <div>
@@ -572,7 +859,7 @@ export default function SuperBrain() {
             </span>}
           </h1>
           <p style={{ margin: '4px 0 0', fontSize: 12, color: '#9ca3af' }}>
-            {data ? `${activeCount} active / ${idleCount} idle / ${dormantCount} dormant` : 'Loading...'}
+            {data ? `${activeCount} active / ${idleCount} idle / ${dormantCount} dormant` : '加载中...'}
             {data?.snapshot_at && (
               <span style={{ marginLeft: 12 }}>
                 {new Date(data.snapshot_at).toLocaleTimeString('zh-CN')}
@@ -581,7 +868,7 @@ export default function SuperBrain() {
           </p>
         </div>
 
-        {/* 视图切换 */}
+        {/* 控制栏 */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {viewLevel === 'detail' && (
             <button
@@ -613,6 +900,19 @@ export default function SuperBrain() {
               </button>
             ))}
           </div>
+          {/* 全屏按钮 */}
+          <button
+            onClick={() => setIsFullscreen(f => !f)}
+            title={isFullscreen ? 'ESC 退出全屏' : '全屏'}
+            style={{
+              padding: '6px 10px', background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 6, color: '#9ca3af', fontSize: 14, cursor: 'pointer',
+              display: 'flex', alignItems: 'center',
+            }}
+          >
+            {isFullscreen ? '⊡' : '⛶'}
+          </button>
           {error && <span style={{ color: '#ef4444', fontSize: 12 }}>Error: {error}</span>}
         </div>
       </div>
@@ -624,7 +924,7 @@ export default function SuperBrain() {
             background: 'rgba(0,0,0,0.25)', borderRadius: 12,
             border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
           }}>
-            <svg viewBox={`0 0 ${svgW} 400`} width="100%" style={{ display: 'block' }}>
+            <svg viewBox={`0 0 ${svgW} 450`} width="100%" style={{ display: 'block' }}>
               <defs>
                 <marker id="arr-primary" viewBox="0 0 10 10" refX="8" refY="5"
                   markerWidth="5" markerHeight="5" orient="auto-start-reverse">
@@ -741,10 +1041,12 @@ export default function SuperBrain() {
               {mainBlocks.map(block => {
                 const pos = blockPositions[block.id];
                 if (!pos) return null;
+                const health = computeBlockHealth(block, manifest.issues);
                 return (
                   <BlockCard key={block.id} block={block}
                     subsystems={data?.subsystems || []}
                     x={pos.x} y={pos.y} width={BW} height={BH}
+                    health={health}
                     onClick={() => {
                       setSelectedBlock(selectedBlock === block.id ? null : block.id);
                     }}
@@ -757,10 +1059,12 @@ export default function SuperBrain() {
               {evolutionBlock && (() => {
                 const pos = blockPositions['evolution'];
                 if (!pos) return null;
+                const health = computeBlockHealth(evolutionBlock, manifest.issues);
                 return (
                   <BlockCard block={evolutionBlock}
                     subsystems={data?.subsystems || []}
                     x={pos.x} y={pos.y} width={evolutionW} height={BH}
+                    health={health}
                     onClick={() => {
                       setSelectedBlock(selectedBlock === 'evolution' ? null : 'evolution');
                     }}
@@ -769,19 +1073,22 @@ export default function SuperBrain() {
                 );
               })()}
 
-              {/* 反馈弧图例 */}
+              {/* 图例 */}
               <g>
-                <line x1={20} y1={388} x2={40} y2={388} stroke="#ec4899" strokeWidth={1.5} opacity={0.6}
+                <line x1={20} y1={438} x2={40} y2={438} stroke="#ec4899" strokeWidth={1.5} opacity={0.6}
                   markerEnd="url(#arr-feedback)" />
-                <text x={44} y={391} fill="#ec4899" fontSize={9} opacity={0.7}>反馈弧</text>
-                <line x1={120} y1={388} x2={140} y2={388} stroke="#94a3b8" strokeWidth={1.5} opacity={0.6}
+                <text x={44} y={441} fill="#ec4899" fontSize={9} opacity={0.7}>反馈弧</text>
+                <line x1={120} y1={438} x2={140} y2={438} stroke="#94a3b8" strokeWidth={1.5} opacity={0.6}
                   markerEnd="url(#arr-primary)" />
-                <text x={144} y={391} fill="#94a3b8" fontSize={9} opacity={0.7}>主流</text>
-                <line x1={220} y1={388} x2={240} y2={388} stroke="#eab308" strokeWidth={1}
+                <text x={144} y={441} fill="#94a3b8" fontSize={9} opacity={0.7}>主流</text>
+                <line x1={220} y1={438} x2={240} y2={438} stroke="#eab308" strokeWidth={1}
                   strokeDasharray="4 2" opacity={0.6} markerEnd="url(#arr-fast_path)" />
-                <text x={244} y={391} fill="#eab308" fontSize={9} opacity={0.7}>快速路径</text>
-                <text x={svgW - 20} y={391} textAnchor="end" fill="#4b5563" fontSize={9}>
-                  点击块查看模块详情 · 切换"详情"看节点流图
+                <text x={244} y={441} fill="#eab308" fontSize={9} opacity={0.7}>快速路径</text>
+                <text x={400} y={441} fill="#22c55e" fontSize={9} opacity={0.7}>✅ 健康</text>
+                <text x={450} y={441} fill="#f97316" fontSize={9} opacity={0.7}>⚠️ 警告</text>
+                <text x={500} y={441} fill="#ef4444" fontSize={9} opacity={0.7}>🔴 断路</text>
+                <text x={svgW - 20} y={441} textAnchor="end" fill="#4b5563" fontSize={9}>
+                  点击感知层查看 16 个信号 · 切换"详情"看节点流图
                 </text>
               </g>
             </svg>
@@ -790,8 +1097,17 @@ export default function SuperBrain() {
           {/* 块详情面板 */}
           {selectedBlockData && data && (
             <div style={{ marginTop: 12 }}>
-              <BlockDetailPanel block={selectedBlockData} subsystems={data.subsystems} />
+              <BlockDetailPanel
+                block={selectedBlockData}
+                subsystems={data.subsystems}
+                signalsData={signalsData}
+              />
             </div>
+          )}
+
+          {/* Issues 面板 */}
+          {manifest.issues && manifest.issues.length > 0 && (
+            <IssuesPanel issues={manifest.issues} />
           )}
         </>
       )}
@@ -799,7 +1115,7 @@ export default function SuperBrain() {
       {/* ─── Level 2: Detail (现有节点流图) ─── */}
       {viewLevel === 'detail' && (
         <>
-          {/* 路径图例 */}
+          {/* 路径图例 + nature 说明 */}
           <div style={{
             display: 'flex', gap: 16, padding: '8px 14px', marginBottom: 12,
             background: 'rgba(255,255,255,0.03)', borderRadius: 8,
@@ -817,13 +1133,15 @@ export default function SuperBrain() {
                 <span style={{ color: '#d1d5db', fontSize: 11 }}>{b.label}</span>
               </span>
             ))}
+            <span style={{ color: '#d1d5db', fontSize: 11 }}>🔄 动态  📈 成长</span>
+            <span style={{ color: '#ef4444', fontSize: 11 }}>⚠️ 断路连接标红</span>
           </div>
 
           <div style={{
             background: 'rgba(0,0,0,0.25)', borderRadius: 12,
             border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden',
           }}>
-            <svg viewBox="0 0 1000 540" width="100%" style={{ display: 'block' }}>
+            <svg viewBox="0 0 1000 560" width="100%" style={{ display: 'block' }}>
               <defs>
                 {Object.entries(PATHS).map(([id, p]) => (
                   <marker key={id} id={`arrow-${id}`} viewBox="0 0 10 10" refX="8" refY="5"
@@ -841,7 +1159,7 @@ export default function SuperBrain() {
               {COLUMNS.map((col, i) => (
                 <g key={i}>
                   <rect
-                    x={col.x - 15} y={30} width={NODE_W + 30} height={490}
+                    x={col.x - 15} y={30} width={NODE_W + 30} height={510}
                     rx={8} fill={COL_BG[i]} stroke="rgba(255,255,255,0.04)" strokeWidth={0.5}
                   />
                   <text
@@ -864,10 +1182,10 @@ export default function SuperBrain() {
 
               {/* 连接线 */}
               {data?.connections.map((conn, i) => (
-                <FlowLine key={i} conn={conn} />
+                <FlowLine key={i} conn={conn} brokenSet={brokenSet} />
               ))}
 
-              {/* 节点（按块着色） */}
+              {/* 节点（按块着色 + nature 徽章） */}
               {data?.subsystems.map(subsystem => (
                 <Node
                   key={subsystem.id}
@@ -875,6 +1193,7 @@ export default function SuperBrain() {
                   onClick={() => setSelected(selected === subsystem.id ? null : subsystem.id)}
                   isSelected={selected === subsystem.id}
                   blockColor={getNodeBlockColor(subsystem.id)}
+                  nature={getNodeNature(subsystem.id)}
                 />
               ))}
             </svg>
