@@ -14,7 +14,7 @@ concurrency:
 jobs:
   verify-dev-workflow:
     name: Verify /dev Workflow (Branch Name Check)
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: 验证分支必须通过 /dev 创建
@@ -35,7 +35,7 @@ jobs:
 
   dod-check:
     name: DoD Verification Gate
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -68,7 +68,7 @@ jobs:
     name: DevGate CI Passed
     needs: [verify-dev-workflow, dod-check]
     if: always()
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: DevGate Gate
