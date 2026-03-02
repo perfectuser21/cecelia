@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.12.0
-created: 2026-03-01
-updated: 2026-03-01
+version: 3.13.0
+created: 2026-03-02
+updated: 2026-03-02
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.12.0: 从 feature-registry.yml 自动生成
+  - 3.13.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -22,7 +22,7 @@ changelog:
 ### H1: Branch Protection
 
 ```
-检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → exit 0 (放行)
+检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → PRD/DoD 检测 → exit 0 (放行)
 ```
 
 ---
@@ -227,5 +227,5 @@ rejected: Brain 打回重拆
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.12.0
-**生成时间**: 2026-03-01
+**版本**: 3.13.0
+**生成时间**: 2026-03-02
