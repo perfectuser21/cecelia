@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] Task Router 诊断 API 开发经验（PR #314, Brain v1.158.0）
+
+**失败统计**：CI 失败 1 次（Version Check - main 版本冲突）
+
+**问题描述**：
+开发过程中 main 分支（另一个 PR）先合并并升级了 Brain 版本到 1.157.0，导致第一次 push 的 Version Check 失败（两个分支版本相同）。
+
+**修复方式**：再次升级版本到 1.158.0，force push rebase 后重新触发 CI。
+
+**关键经验**：
+- **Version Check 失败**：不一定是代码错误，可能是 main 有并发 PR 合并。解决方法：`git show origin/main:packages/brain/package.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['version'])"` 查看 main 当前版本，再决定用什么版本号。
+- **第二次 push 不触发 CI**：GitHub Actions 的 concurrency 配置可能导致第二次 push 的 CI 被跳过（已有 completed run）。解决方法：`gh workflow run brain-ci.yml --repo owner/repo --ref branch` 手动触发，或 force push 触发新 CI。
+- **task-router.js 职责**：task-router.js 只负责 task_type → location + skill 的路由决策，**不负责任务选择/派发**。实际派发逻辑在 tick.js 的 `selectNextDispatchableTask()`，而任务规划在 planner.js。诊断 KR 下任务不派发的原因要去查 tasks 表的 goal_id/project_id/next_run_at/depends_on，而不是 task-router.js。
+- **诊断 API 设计**：用标准路由模式（routes/task-projects.js 参考），通过 `project_kr_links` → `projects` → `tasks` 三层查询汇总状态分布，blockers 分析要覆盖：goal_id 缺失、next_run_at 延迟、depends_on 未完成、Initiative 无任务等场景。
+
 ### [2026-03-02] Billing Cap 级联失败两个 Bug（PR #310, Brain v1.155.1）
 
 **失败统计**：CI 失败 0 次，本地测试全部通过
