@@ -10,7 +10,8 @@
 // Valid task types (for failure detection)
 const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
-  'research', 'codex_qa', 'code_review', 'decomp_review',
+  'research', 'explore', 'knowledge',
+  'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
   'suggestion_plan'
 ];
@@ -23,7 +24,9 @@ const SKILL_WHITELIST = {
   'data': '/sync-hk',
   'qa': '/code-review',
   'audit': '/code-review',
-  'research': '/exploratory',
+  'research': '/research',
+  'explore': '/explore',
+  'knowledge': '/knowledge',
   'codex_qa': '/codex',
   'code_review': '/code-review',
   'decomp_review': '/decomp-check',
@@ -96,8 +99,10 @@ const LOCATION_MAP = {
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
+  'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
+  'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)
-  'research': 'hk',   // 调研 → HK (MiniMax)
+  'research': 'hk',   // 深度调研 → HK (MiniMax)
   'data': 'hk',       // 数据处理 → HK (N8N)
 };
 

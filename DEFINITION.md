@@ -5,7 +5,7 @@
 **最后更新**: 2026-03-01
 
 
-**Brain 版本**: 1.153.1
+**Brain 版本**: 1.154.0
 **Schema 版本**: 101
 
 **状态**: 生产运行中
@@ -402,7 +402,8 @@ queued → in_progress → completed
 | review | US | 审查员 (/review) | Sonnet / M2.5-highspeed | 默认 minimax |
 | qa | US | 小检 (/qa) | Sonnet / M2.5-highspeed | 默认 minimax |
 | audit | US | 小审 (/audit) | Sonnet / M2.5-highspeed | 默认 minimax |
-| exploratory | US | Exploratory | - / M2.1 | 固定 minimax |
+| explore | HK | 快速调研 (/explore) | - / M2.1 | 固定 minimax |
+| knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
@@ -628,9 +629,9 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 │  ├ 开发前端:5212            │     │  └ MiniMax executor         │
 │  └ Claude Code (headed)     │     │                             │
 │                             │     │  任务类型：                 │
-│  任务类型：                 │     │  talk, research, data       │
-│  dev, review, qa, audit,    │     │                             │
-│  exploratory                │     │                             │
+│  任务类型：                 │     │  talk, research, explore,   │
+│  dev, review, qa, audit,    │     │  data                       │
+│  code_review, knowledge     │     │                             │
 │  ENV_REGION=us              │     │  ENV_REGION=hk              │
 └─────────────────────────────┘     └─────────────────────────────┘
 ```
