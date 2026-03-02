@@ -8,7 +8,7 @@ services:
     image: cecelia-brain:${BRAIN_VERSION:-latest}
     container_name: cecelia-node-brain
     network_mode: host
-    pid: host
+    pid: host  # Required: watchdog.js reads /proc/<hostpid>/statm for host process RSS/CPU monitoring
     read_only: true
     tmpfs:
       - /tmp:size=100M
