@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 认知地图 v3：brain-manifest 模块注册表 + 双视图架构 (PR #278, Brain v1.148.0)
+
+**背景**: 旧 cognitive-map 只有一个 15 节点的平铺视图，无法表达 5 块意识架构（外界接口→感知层→意识核心→行动层 + 自我演化慢回路）。需要 Level 1 概览（5 块 + 2 反馈弧）+ Level 2 节点详情双视图，且前端能自动扫描新模块无需代码改动。
+
+- **brain-manifest.js 是静态声明，cognitive-map.js 是动态数据**：两者职责分离——manifest 声明"哪些模块属于哪个块"（结构信息），cognitive-map 提供"各节点当前状态"（运行数据）。前端 merge 两者：manifest 给块结构，cognitive-map 给节点活跃度。新模块在 manifest 注册后自动出现（可能显示为 dormant 直到 cognitive-map.js 加入 DB 查询）
+- **DoD checkbox 必须在 Step 7 验证后打勾**：CI DevGate 的"未验证项检查"会 reject 所有 `- [ ]` 项，即使 Test 格式完全正确。必须在本地验证通过后将 `[ ]` 改为 `[x]` 再提交
+- **manual:grep 被认为是"echo 假测试"**：DevGate 的禁止列表包含 `grep`（被视为无法证明功能正确的假验证）。需改用 `node -e "import(...).then(...)"` 等能真正执行逻辑的命令
+- **parallel PR 版本冲突处理**：CI 运行期间（~3min）main 可能前进，导致 merge 失败。解决：不用 rebase（bash-guard 会拦截 force push），用 `git merge origin/main` 解决冲突再 push，不触发 bash-guard。版本号要 re-bump 到 main+1
+- **5 块意识架构布局**：4 主块横排（interface/perception/core/action），evolution 竖排在底部跨全宽。两条反馈弧：action→evolution（向下曲线），evolution→perception（向上曲线）。SVG 位置计算：`startX = (svgW - totalTopW) / 2`，确保居中对齐
+
 ### [2026-03-02] 飞书语音真正修复：切换 OpenAI Whisper (PR #266, Brain v1.144.1)
 
 **背景**: PR #262 将下载 URL 改为 `?type=audio` 后语音仍然失败（改成了 400 错误）。真正根因是飞书 App 未开通 `speech_to_text:speech` 权限（code 99991672），导致 Feishu 原生 ASR 一直 "Access denied"。
