@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.13.0
+version: 3.14.0
 created: 2026-03-02
 updated: 2026-03-02
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.13.0: 从 feature-registry.yml 自动生成
+  - 3.14.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -25,10 +25,10 @@ changelog:
 ### Golden Path
 
 ```
-检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → PRD/DoD 检测 → exit 0 (放行)
+检测当前分支 → main/develop → exit 2 (阻止) | cp-*/feature/* → worktree 检测 → 僵尸检测 → .dev-mode 检测 → PRD/DoD 检测 → exit 0 (放行)
 ```
 
-**RCI 覆盖**: H1-001,H1-002,H1-003,H1-010,H1-011
+**RCI 覆盖**: H1-001,H1-002,H1-003,H1-010,H1-011,H1-012
 
 ---
 
@@ -356,5 +356,5 @@ rejected: Brain 打回重拆
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.13.0
+**版本**: 3.14.0
 **生成时间**: 2026-03-02
