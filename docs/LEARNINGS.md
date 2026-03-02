@@ -1086,3 +1086,27 @@ vitest 4.x 的区别：root vitest=1.6.1（能通过），dashboard vitest=4.0.1
 - monorepo 中不同 app 依赖不兼容的 React 主版本时，共享依赖（react-router）会加载不同 React，vitest 无法通过 resolve.dedupe 修复（只对 Vite 处理的 ESM 生效，不影响 CJS require）
 - vi.mock 是最可靠的隔离方案，同时也强制测试聚焦于被测行为而非基础设施
 - worktree 使用父目录的 node_modules，版本可能与目标 workspace 不同，本地验证时需确认用的是正确的 node_modules
+
+### [2026-03-02] SVG 配图深度重绘（PR #324, Dashboard v1.14.4）
+
+**背景**：SuperBrain 说明书手风琴布局已完成，但各章 SVG 图太简单——感知层只画了几个信号、意识核心三层架构不清晰。
+
+**实现方案**：
+- 完整重写 `ChapterDiagram` 组件，5 章各自有专属详细 SVG
+- 感知层：从 `packages/brain/src/desire/perception.js` 读取实际 16 个信号，4 列 4 行网格布局
+- 意识核心：清晰展示 L0 脑干 / L1 丘脑 / L2 皮层三层 + 决策流向
+- 行动层：完整执行链 + SKILL_WHITELIST + 4 个保护机制
+- 外界接口：飞书/WS 双通道 + orchestrator/tick 两条路径
+- 自我演化：4 模块学习闭环
+- 去掉 `transform: scale(1.7)` 固定缩放，改为 `width="100%"` 自适应全宽
+- 每章均有橙色 ⚠️ 风险标注（warnBox 函数）
+
+**关键决策**：
+- SVG `viewBox` + `width="100%"` 比 scale 更好：不会被裁切，自适应容器宽度
+- helper 函数（box/arrow/warnBox/cap）复用减少重复 JSX
+- TypeScript 的 `string[]` 比 `as const` 更灵活（避免 readonly tuple 的类型错误）
+
+**踩坑**：
+- DoD Test 字段格式：`  Test: manual:bash -c "..."` 直接缩进，**不要**用 `  - Test: ...` 子列表格式。check-dod-mapping.cjs 期望 Test 紧接着 checkbox 的下一行，格式为 `^\s*Test:\s*...`，有 `- ` 前缀会匹配不到
+- DoD 条目必须标 `[x]`（已验证）才能通过未验证项检查，构建+grep 验证后必须手动改 checkbox
+- main 频繁前进（并行 PR 多）：分支可能需要多次 merge origin/main 才能合并，用 `git merge origin/main --no-edit` 而不是 rebase（避免 force push）
