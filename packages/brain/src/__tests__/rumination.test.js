@@ -564,5 +564,34 @@ describe('rumination', () => {
       expect(result.digested).toBe(1);
       expect(result.insights.length).toBeGreaterThan(0);
     });
+
+    it('selfReflectPrompt 包含好奇心/审美/存在三个非工作反思维度，maxTokens=200', async () => {
+      mockCallLLM
+        .mockResolvedValueOnce({ text: '[反刍洞察] 系统架构设计模式分析。' }) // 主反刍
+        .mockResolvedValueOnce({ text: '我对简洁的代码设计有一种美学上的偏好。' }); // 自我反思
+
+      setupIdleAndLearnings(pool, [{
+        id: 'l1', title: '架构设计', content: '模块化设计的重要性。', category: 'tech',
+      }]);
+
+      await runRumination(pool);
+
+      // 总共 2 次 callLLM：第 1 次洞察生成，第 2 次自我反思
+      expect(mockCallLLM).toHaveBeenCalledTimes(2);
+
+      // 第 2 次调用是 selfReflectPrompt
+      const selfReflectCallArgs = mockCallLLM.mock.calls[1];
+      const [agentId, prompt, opts] = selfReflectCallArgs;
+
+      expect(agentId).toBe('rumination');
+
+      // 验证包含非工作反思维度
+      expect(prompt).toContain('好奇心');
+      expect(prompt).toContain('审美');
+      expect(prompt).toContain('存在');
+
+      // 验证 maxTokens 保持 200（简洁）
+      expect(opts?.maxTokens).toBe(200);
+    });
   });
 });

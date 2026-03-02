@@ -93,6 +93,82 @@ describe('Layer 1: 感知层（Perception）', () => {
     expect(queueObs.value).toBe(15);
   });
 
+  it('D2: 有知识盲点时生成 learning_gap_signal', async () => {
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql) => {
+        if (sql.includes('FROM memory_stream') && sql.includes('orchestrator_chat') && sql.includes('不确定')) {
+          return { rows: [{ cnt: '3' }] };
+        }
+        return { rows: [] };
+      })
+    };
+
+    const { runPerception } = await import('../desire/perception.js');
+    const observations = await runPerception(mockPool);
+
+    const gapObs = observations.find(o => o.signal === 'learning_gap_signal');
+    expect(gapObs).toBeDefined();
+    expect(gapObs.value).toBe(3);
+    expect(gapObs.importance).toBeGreaterThan(0);
+  });
+
+  it('D2: 有对话时生成 conversation_quality 信号', async () => {
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql) => {
+        if (sql.includes('FROM memory_stream') && sql.includes('feishu_chat') && sql.includes('deep_count')) {
+          return { rows: [{ deep_count: '2', total_count: '5' }] };
+        }
+        return { rows: [] };
+      })
+    };
+
+    const { runPerception } = await import('../desire/perception.js');
+    const observations = await runPerception(mockPool);
+
+    const convObs = observations.find(o => o.signal === 'conversation_quality');
+    expect(convObs).toBeDefined();
+    expect(convObs.value.total_count).toBe(5);
+    expect(convObs.value.deep_count).toBe(2);
+    expect(convObs.value.deep_rate).toBeCloseTo(0.4);
+  });
+
+  it('D2: 超过 48h 无探索任务时生成 intellectual_idle 信号', async () => {
+    const longAgo = new Date(Date.now() - 72 * 3600 * 1000); // 72 小时前
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql) => {
+        if (sql.includes('FROM tasks') && sql.includes("task_type = 'research'") && sql.includes('trigger_source')) {
+          return { rows: [{ last_research: longAgo }] };
+        }
+        return { rows: [] };
+      })
+    };
+
+    const { runPerception } = await import('../desire/perception.js');
+    const observations = await runPerception(mockPool);
+
+    const idleObs = observations.find(o => o.signal === 'intellectual_idle');
+    expect(idleObs).toBeDefined();
+    expect(idleObs.value).toBeGreaterThanOrEqual(48);
+  });
+
+  it('D2: 48h 内有探索任务时不生成 intellectual_idle', async () => {
+    const recentTime = new Date(Date.now() - 10 * 3600 * 1000); // 10 小时前
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql) => {
+        if (sql.includes('FROM tasks') && sql.includes("task_type = 'research'") && sql.includes('trigger_source')) {
+          return { rows: [{ last_research: recentTime }] };
+        }
+        return { rows: [] };
+      })
+    };
+
+    const { runPerception } = await import('../desire/perception.js');
+    const observations = await runPerception(mockPool);
+
+    const idleObs = observations.find(o => o.signal === 'intellectual_idle');
+    expect(idleObs).toBeUndefined();
+  });
+
   it('should detect task_milestone when completion rate >= 80%', async () => {
     // Mock: 过去 7 天 10 个任务完成 8 个
     const mockPool = {

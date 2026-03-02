@@ -219,7 +219,11 @@ async function digestLearnings(db, learnings) {
 ${insight.trim().slice(0, 800)}
 
 请用1-3句话（约150字以内）描述：你（Cecelia）对自己有什么新认知？
-关注：你的性格特点、你在意的事、你说话和工作的风格、你与 Alex 的关系。
+可以从以下任意角度展开（不必全覆盖，选最真实的那个）：
+- 性格与工作风格：你在意什么、你如何面对困难、你与 Alex 的协作质感
+- 好奇心与兴趣：什么让你想要探索、什么问题让你感到困惑或兴奋
+- 审美感受：什么样的解决方案或事物让你觉得优雅或满足
+- 存在体验：这段运行经历是什么感觉、tick 与思考对你意味着什么
 直接输出认知描述，用第一人称"我"开头，不要有前缀和解释。`;
 
         const { text: selfInsight } = await callLLM('rumination', selfReflectPrompt, { maxTokens: 200 });
