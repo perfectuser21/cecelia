@@ -5,8 +5,8 @@
  * 功能：
  * - 调用 Anthropic OAuth usage API 查询各账号5小时/7天用量
  * - 缓存到 PostgreSQL（TTL 3分钟）
- * - 选择用量最低的账号进行任务派发
- * - 所有账号满载时自动降级到 MiniMax
+ * - 三阶段降级链：Sonnet → Opus → Haiku → MiniMax(null)
+ * - Spending Cap 账号级标记（不再全局 billing_pause）
  */
 
 import { readFileSync } from 'fs';
@@ -15,8 +15,62 @@ import pool from './db.js';
 
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const CACHE_TTL_MINUTES = 3;
-const USAGE_THRESHOLD = 80; // 超过此百分比则跳过该账号
+const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
+const OPUS_THRESHOLD = 95;        // 7d all-models 超过此百分比视为 Opus 满载
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
+
+// ─── Spending Cap 账号级标记 ────────────────────────────────────────────────
+
+/**
+ * 内存 Map：accountId → { resetTime: ISO string, setAt: ISO string }
+ * 撞 spending cap 的账号在此 Map 中记录，选账号时跳过。
+ */
+const _spendingCapMap = new Map();
+
+/**
+ * 标记账号撞到 spending cap
+ * @param {string} accountId - 账号 ID（如 'account1'）
+ * @param {string|null} resetTimeISO - cap 解除时间（ISO 8601），null 表示 2h 后
+ */
+export function markSpendingCap(accountId, resetTimeISO = null) {
+  const resetTime = resetTimeISO || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  _spendingCapMap.set(accountId, { resetTime, setAt: new Date().toISOString() });
+  console.log(`[account-usage] markSpendingCap: ${accountId} capped until ${resetTime}`);
+}
+
+/**
+ * 检查账号是否处于 spending cap 状态（自动清除过期记录）
+ */
+export function isSpendingCapped(accountId) {
+  const cap = _spendingCapMap.get(accountId);
+  if (!cap) return false;
+  if (new Date(cap.resetTime) <= new Date()) {
+    _spendingCapMap.delete(accountId);
+    console.log(`[account-usage] ${accountId}: spending cap 已过期，自动解除`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 检查是否所有账号都处于 spending cap 状态
+ */
+export function isAllAccountsSpendingCapped() {
+  return ACCOUNTS.every(id => isSpendingCapped(id));
+}
+
+/**
+ * 获取所有账号的 spending cap 状态（用于日志/API）
+ */
+export function getSpendingCapStatus() {
+  return ACCOUNTS.map(id => {
+    const cap = _spendingCapMap.get(id);
+    const capped = isSpendingCapped(id);
+    return { accountId: id, capped, resetTime: capped ? cap?.resetTime : null };
+  });
+}
+
+// ─── OAuth Token ─────────────────────────────────────────────────────────────
 
 /**
  * 读取账号的 OAuth accessToken
@@ -30,7 +84,6 @@ function getAccessToken(accountId) {
       console.warn(`[account-usage] ${accountId}: credentials.json 缺少 accessToken`);
       return null;
     }
-    // 检查是否过期
     const expiresAt = creds.claudeAiOauth?.expiresAt;
     if (expiresAt && Date.now() > expiresAt) {
       console.warn(`[account-usage] ${accountId}: accessToken 已过期`);
@@ -41,6 +94,8 @@ function getAccessToken(accountId) {
     return null;
   }
 }
+
+// ─── Anthropic API ────────────────────────────────────────────────────────────
 
 /**
  * 从 Anthropic API 获取单个账号的用量数据
@@ -57,7 +112,7 @@ async function fetchUsageFromAPI(accountId) {
         'anthropic-beta': 'oauth-2025-04-20',
         'Accept': 'application/json',
       },
-      signal: AbortSignal.timeout(8000), // 8秒超时
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!res.ok) {
@@ -72,9 +127,8 @@ async function fetchUsageFromAPI(accountId) {
   }
 }
 
-/**
- * 将用量数据写入缓存
- */
+// ─── Cache ────────────────────────────────────────────────────────────────────
+
 async function upsertCache(accountId, data) {
   const five_hour_pct        = data.five_hour?.utilization ?? 0;
   const seven_day_pct        = data.seven_day?.utilization ?? 0;
@@ -111,9 +165,6 @@ async function upsertCache(accountId, data) {
   };
 }
 
-/**
- * 获取缓存中的用量（未过期）
- */
 async function getCached(accountId) {
   const res = await pool.query(
     `SELECT * FROM account_usage_cache
@@ -124,9 +175,6 @@ async function getCached(accountId) {
   return res.rows[0] || null;
 }
 
-/**
- * 获取缓存（允许过期）用于降级
- */
 async function getStaleCached(accountId) {
   const res = await pool.query(
     'SELECT * FROM account_usage_cache WHERE account_id = $1',
@@ -137,7 +185,6 @@ async function getStaleCached(accountId) {
 
 /**
  * 查询所有账号用量（带缓存）
- *
  * @param {boolean} forceRefresh - 强制忽略缓存，重新从 API 获取
  * @returns {Object} { account1: {...}, account2: {...}, account3: {...} }
  */
@@ -145,7 +192,6 @@ export async function getAccountUsage(forceRefresh = false) {
   const results = {};
 
   for (const accountId of ACCOUNTS) {
-    // 优先使用有效缓存
     if (!forceRefresh) {
       const cached = await getCached(accountId);
       if (cached) {
@@ -154,18 +200,15 @@ export async function getAccountUsage(forceRefresh = false) {
       }
     }
 
-    // 调用 API 获取最新数据
     const data = await fetchUsageFromAPI(accountId);
     if (data) {
       results[accountId] = await upsertCache(accountId, data);
     } else {
-      // API 失败：使用旧缓存（即使过期）
       const stale = await getStaleCached(accountId);
       if (stale) {
         console.warn(`[account-usage] ${accountId}: 使用过期缓存（API 不可用）`);
         results[accountId] = stale;
       } else {
-        // 完全无数据：默认0%，不阻塞调度
         results[accountId] = {
           account_id: accountId,
           five_hour_pct: 0,
@@ -182,19 +225,11 @@ export async function getAccountUsage(forceRefresh = false) {
   return results;
 }
 
-/**
- * 从 Anthropic 账号中选择用量最低的账号
- *
- * @returns {string|null} 账号 ID（如 'account2'）或 null（所有账号满载，降级 MiniMax）
- */
+// ─── 账号选择 ─────────────────────────────────────────────────────────────────
+
 // 若账号在此分钟数内重置，视其用量为 0（优先消耗即将重置的额度）
 const RESET_SOON_MINUTES = 30;
 
-/**
- * 计算有效用量百分比：
- * - 若账号将在 RESET_SOON_MINUTES 内重置 → effectivePct = 0（优先使用）
- * - 否则 effectivePct = 实际用量
- */
 function effectivePct(pct, resetsAt) {
   if (!resetsAt) return pct;
   const minutesUntilReset = (new Date(resetsAt) - Date.now()) / 60000;
@@ -202,8 +237,9 @@ function effectivePct(pct, resetsAt) {
 }
 
 /**
- * 为 Haiku 选择最优账号：只过滤 5h 超载和 extra_used，不限制 sonnet 配额
- * （Haiku 使用独立配额池，sonnet 满额不影响 haiku 可用性）
+ * 为 Haiku 选择最优账号：只过滤 5h 超载和 spending_cap，不限制 sonnet/opus 配额
+ * （Haiku 使用独立配额池，sonnet/opus 满额不影响 haiku 可用性）
+ * @returns {string|null} 账号 ID 或 null
  */
 export async function selectBestAccountForHaiku() {
   try {
@@ -217,7 +253,7 @@ export async function selectBestAccountForHaiku() {
         const extraUsed = u?.extra_used ?? false;
         return { id, pct, ePct, sevenDayPct, extraUsed };
       })
-      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
+      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed && !isSpendingCapped(a.id))
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (available.length === 0) {
@@ -231,40 +267,87 @@ export async function selectBestAccountForHaiku() {
   }
 }
 
+/**
+ * 三阶段降级链选择最优账号：
+ *
+ * 阶段1 Sonnet：seven_day_sonnet < 100% + five_hour < 80% + !spending_cap + !extra_used
+ *   排序：seven_day_sonnet ASC → ePct ASC → seven_day ASC
+ *
+ * 阶段2 Opus（Sonnet 全满时升级）：seven_day < 95% + five_hour < 80% + !spending_cap
+ *   排序：seven_day ASC → ePct ASC
+ *
+ * 阶段3 Haiku（Opus 全满时降级）：five_hour < 80% + !spending_cap
+ *   排序：ePct ASC
+ *
+ * 兜底：null → MiniMax
+ *
+ * @returns {{ accountId: string, model: string }|null}
+ *   accountId: 选中的账号 ID
+ *   model: 'sonnet'|'opus'|'haiku'（供 executor 传递 CECELIA_MODEL）
+ */
 export async function selectBestAccount() {
   try {
     const usage = await getAccountUsage();
 
-    // 按有效用量排序：30min 内重置的账号 effectivePct=0 优先；过滤掉实际用量 >= 80% 的账号
-    // 次级排序：5h ePct 相同时，按 seven_day_pct 升序（周用量低的优先，确保所有账号均被使用）
-    const available = ACCOUNTS
-      .map(id => {
-        const u = usage[id];
-        const pct = u?.five_hour_pct ?? 0;
-        const ePct = effectivePct(pct, u?.resets_at);
-        const sevenDayPct = u?.seven_day_pct ?? 0;
-        const sevenDaySonnetPct = u?.seven_day_sonnet_pct ?? 0;
-        const extraUsed = u?.extra_used ?? false;
-        return { id, pct, ePct, sevenDayPct, sevenDaySonnetPct, extraUsed };
-      })
-      // 过滤：5h 超载 | extra_used | 7天 sonnet 满额（>=100% 时 sonnet 不可用）
-      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed && a.sevenDaySonnetPct < 100)
-      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+    const mapped = ACCOUNTS.map(id => {
+      const u = usage[id];
+      const pct = u?.five_hour_pct ?? 0;
+      const ePct = effectivePct(pct, u?.resets_at);
+      return {
+        id,
+        pct,
+        ePct,
+        sevenDayPct: u?.seven_day_pct ?? 0,
+        sevenDaySonnetPct: u?.seven_day_sonnet_pct ?? 0,
+        extraUsed: u?.extra_used ?? false,
+        spendingCapped: isSpendingCapped(id),
+      };
+    });
 
-    if (available.length === 0) {
-      // 所有账号满载
-      const usageSummary = ACCOUNTS.map(id => `${id}=${usage[id]?.five_hour_pct ?? '?'}%`).join(', ');
-      console.log(`[account-usage] 所有 Anthropic 账号满载（>=${USAGE_THRESHOLD}%）: ${usageSummary} → 降级到 MiniMax`);
-      return null;
+    const usageSummary = mapped.map(a =>
+      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '[CAP]' : ''}`
+    ).join(', ');
+
+    // ── 阶段1 Sonnet ──
+    const sonnetCandidates = mapped
+      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
+      .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+
+    if (sonnetCandidates.length > 0) {
+      const sel = sonnetCandidates[0];
+      const resetNote = sel.ePct === 0 && sel.pct > 0 ? '（即将重置）' : '';
+      console.log(`[account-usage] Sonnet 阶段: 选 ${sel.id}（5h=${sel.pct}%${resetNote} sonnet7d=${sel.sevenDaySonnetPct}%） | ${usageSummary}`);
+      return { accountId: sel.id, model: 'sonnet' };
     }
 
-    const selected = available[0];
-    const usageSummary = ACCOUNTS.map(id => `${id}=${usage[id]?.five_hour_pct ?? '?'}%`).join(', ');
-    const resetNote = selected.ePct === 0 && selected.pct > 0 ? '（即将重置）' : '';
-    console.log(`[account-usage] 选择 ${selected.id}（${selected.pct}%${resetNote}），当前用量: ${usageSummary}`);
-    return selected.id;
+    // ── 阶段2 Opus（Sonnet 全满，升级 Opus）──
+    // Opus 用 seven_day（all models）作代理指标，阈值 OPUS_THRESHOLD
+    const opusCandidates = mapped
+      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
+      .sort((a, b) => a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct);
+
+    if (opusCandidates.length > 0) {
+      const sel = opusCandidates[0];
+      console.log(`[account-usage] Opus 阶段（Sonnet 全满）: 选 ${sel.id}（5h=${sel.pct}% 7d=${sel.sevenDayPct}%） | ${usageSummary}`);
+      return { accountId: sel.id, model: 'opus' };
+    }
+
+    // ── 阶段3 Haiku（Opus 全满，降级 Haiku）──
+    const haikuCandidates = mapped
+      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD)
+      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+
+    if (haikuCandidates.length > 0) {
+      const sel = haikuCandidates[0];
+      console.log(`[account-usage] Haiku 阶段（Sonnet+Opus 全满）: 选 ${sel.id}（5h=${sel.pct}%） | ${usageSummary}`);
+      return { accountId: sel.id, model: 'haiku' };
+    }
+
+    // ── 兜底 MiniMax ──
+    console.log(`[account-usage] 所有账号 5h 满载或 spending-capped → 降级到 MiniMax | ${usageSummary}`);
+    return null;
   } catch (err) {
     console.error(`[account-usage] selectBestAccount 异常: ${err.message}`);
-    return null; // 降级，不阻塞派发
+    return null;
   }
 }
