@@ -9082,20 +9082,40 @@ async function getFeishuToken() {
   return data.tenant_access_token;
 }
 
-/** 获取飞书用户名（带 DB 缓存，TTL 24小时） */
+// 已知用户关系表（名字关键词 → relationship）
+// owner 单独通过 API 判断，此表用于识别同事/家人
+const FEISHU_KNOWN_RELATIONS = {
+  colleague: ['苏彦卿', '于瑾'],   // 团队成员
+  family:    [],                    // 家人（后续添加）
+};
+
+/** 根据飞书名字推断 relationship */
+function inferRelationship(name, en_name, isOwner) {
+  if (isOwner) return 'owner';
+  const n = (name || '') + (en_name || '');
+  for (const [rel, keywords] of Object.entries(FEISHU_KNOWN_RELATIONS)) {
+    if (keywords.some(k => n.includes(k))) return rel;
+  }
+  return 'guest';
+}
+
+/** 获取飞书用户信息（带 DB 缓存，TTL 24小时），返回 name/user_id/relationship */
 async function getFeishuUserName(openId, accessToken) {
   // 先查缓存
   const cached = await pool.query(
-    `SELECT name, user_id FROM feishu_users WHERE open_id = $1 AND fetched_at > NOW() - INTERVAL '24 hours'`,
+    `SELECT name, user_id, relationship FROM feishu_users WHERE open_id = $1 AND fetched_at > NOW() - INTERVAL '24 hours'`,
     [openId]
   );
   if (cached.rows[0]) {
-    return { name: cached.rows[0].name || openId, user_id: cached.rows[0].user_id || 'guest' };
+    return {
+      name: cached.rows[0].name || openId,
+      user_id: cached.rows[0].user_id || 'guest',
+      relationship: cached.rows[0].relationship || 'guest',
+    };
   }
 
   // 从飞书 API 获取用户信息
-  let name = null;
-  let user_id = 'guest';
+  let name = null, en_name = null, user_id = 'guest', relationship = 'guest';
   try {
     const resp = await fetch(
       `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
@@ -9104,24 +9124,52 @@ async function getFeishuUserName(openId, accessToken) {
     const data = await resp.json();
     if (data.code === 0 && data.data?.user) {
       name = data.data.user.name || null;
-      const en_name = data.data.user.en_name || null;
-      // 判断是否是 owner（Alex 徐啸）
-      if (name && (name.includes('徐啸') || (en_name && en_name.toLowerCase().includes('alex')))) {
-        user_id = 'owner';
-      }
+      en_name = data.data.user.en_name || null;
+      const isOwner = !!(name && (name.includes('徐啸') || (en_name && en_name.toLowerCase().includes('alex'))));
+      if (isOwner) user_id = 'owner';
+      relationship = inferRelationship(name, en_name, isOwner);
       // 写缓存
       await pool.query(
-        `INSERT INTO feishu_users (open_id, name, en_name, user_id, fetched_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (open_id) DO UPDATE SET name=$2, en_name=$3, user_id=$4, fetched_at=NOW()`,
-        [openId, name, en_name, user_id]
+        `INSERT INTO feishu_users (open_id, name, en_name, user_id, relationship, fetched_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (open_id) DO UPDATE SET name=$2, en_name=$3, user_id=$4, relationship=$5, fetched_at=NOW()`,
+        [openId, name, en_name, user_id, relationship]
       );
     }
   } catch (err) {
     console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
   }
 
-  return { name: name || openId, user_id };
+  return { name: name || openId, user_id, relationship };
+}
+
+/** 语音消息转文字（飞书原生 ASR，支持 ≤60s） */
+async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
+  // 1. 下载音频文件
+  const dlResp = await fetch(
+    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
+  );
+  if (!dlResp.ok) throw new Error(`音频下载失败: ${dlResp.status}`);
+  const audioBuffer = await dlResp.arrayBuffer();
+  const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+
+  // 2. 调用飞书 ASR
+  const asrResp = await fetch(
+    'https://open.feishu.cn/open-apis/speech_to_text/v1/speech/file_recognize',
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        speech: { speech: audioBase64 },
+        config: { file_id: fileKey, format: 'opus', engine_type: '16k_auto' },
+      }),
+      signal: AbortSignal.timeout(15000),
+    }
+  );
+  const asrData = await asrResp.json();
+  if (asrData.code !== 0) throw new Error(`ASR 失败: ${asrData.msg}`);
+  return asrData.data?.recognition_text || '';
 }
 
 /** 加载该用户最近 N 轮对话（作为 messages[]） */
@@ -9184,8 +9232,8 @@ router.post('/feishu/event', async (req, res) => {
   const chatType = message.chat_type;   // 'p2p' 或 'group'
   const msgType = message.message_type; // 'text', 'audio', ...
 
-  // 只处理文本消息
-  if (msgType !== 'text') return res.json({ ok: true });
+  // 只处理 text 和 audio
+  if (msgType !== 'text' && msgType !== 'audio') return res.json({ ok: true });
 
   // p2p 或 group（group 需要 @mention）
   if (chatType !== 'p2p' && chatType !== 'group') return res.json({ ok: true });
@@ -9193,15 +9241,27 @@ router.post('/feishu/event', async (req, res) => {
   const openId = sender?.sender_id?.open_id;
   if (!openId) return res.json({ ok: true });
 
-  // 提取文本
-  let text;
-  try {
-    const contentObj = JSON.parse(message.content || '{}');
-    text = contentObj.text || '';
-  } catch {
-    return res.json({ ok: true });
+  // 提取文本或音频 file_key
+  let text = '';
+  let audioFileKey = null;
+
+  if (msgType === 'text') {
+    try {
+      const contentObj = JSON.parse(message.content || '{}');
+      text = contentObj.text || '';
+    } catch {
+      return res.json({ ok: true });
+    }
+    if (!text.trim()) return res.json({ ok: true });
+  } else if (msgType === 'audio') {
+    try {
+      const contentObj = JSON.parse(message.content || '{}');
+      audioFileKey = contentObj.file_key || '';
+    } catch {
+      return res.json({ ok: true });
+    }
+    if (!audioFileKey) return res.json({ ok: true });
   }
-  if (!text.trim()) return res.json({ ok: true });
 
   // 群聊：检查是否被 @mention
   let isGroupMention = false;
@@ -9216,9 +9276,11 @@ router.post('/feishu/event', async (req, res) => {
     }
     if (!isGroupMention) return res.json({ ok: true });
 
-    // 去除 @Cecelia 前缀（飞书格式：@_user_x 或 @名字）
-    text = text.replace(/@\S+\s*/g, '').trim();
-    if (!text) return res.json({ ok: true });
+    // 去除 @Cecelia 前缀（仅文本消息）
+    if (msgType === 'text') {
+      text = text.replace(/@\S+\s*/g, '').trim();
+      if (!text) return res.json({ ok: true });
+    }
   }
 
   // 立即返回 200（飞书要求 3 秒内响应）
@@ -9229,8 +9291,27 @@ router.post('/feishu/event', async (req, res) => {
     try {
       const accessToken = await getFeishuToken();
 
-      // 获取用户名
-      const { name: senderName, user_id: userId } = await getFeishuUserName(openId, accessToken);
+      // 音频消息：转文字
+      if (msgType === 'audio') {
+        try {
+          text = await transcribeFeishuAudio(message.message_id, audioFileKey, accessToken);
+        } catch (err) {
+          console.warn('[feishu/event] 语音转文字失败:', err.message);
+          const errReceiveId = chatType === 'group' ? message.chat_id : openId;
+          const errReceiveIdType = chatType === 'group' ? 'chat_id' : 'open_id';
+          await sendFeishuMessage(accessToken, errReceiveId, errReceiveIdType, '抱歉，没听清楚，可以发文字吗？');
+          return;
+        }
+        if (!text) {
+          const errReceiveId = chatType === 'group' ? message.chat_id : openId;
+          const errReceiveIdType = chatType === 'group' ? 'chat_id' : 'open_id';
+          await sendFeishuMessage(accessToken, errReceiveId, errReceiveIdType, '抱歉，没听清楚，可以发文字吗？');
+          return;
+        }
+      }
+
+      // 获取用户信息（含 relationship）
+      const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
 
       // 加载对话历史（仅 p2p）
       const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
@@ -9240,6 +9321,7 @@ router.post('/feishu/event', async (req, res) => {
         source: 'feishu',
         sender_name: senderName,
         user_id: userId,
+        relationship,
       }, messages);
       const reply = result?.reply;
       if (!reply) return;
