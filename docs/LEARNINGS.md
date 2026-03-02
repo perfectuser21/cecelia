@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] Spending Cap 持久化（PR #323, Brain v1.160.2）
+
+**背景**：`_spendingCapMap` 是内存 Map，Brain 重启后清空，被 cap 的账号立即重被选中，造成短时间内重复撞 cap 失败。
+
+**实现方案**：
+- Migration 102：`account_usage_cache` 加 `is_spending_capped BOOLEAN` + `spending_cap_resets_at TIMESTAMPTZ`
+- `markSpendingCap()`: 内存写入后 fire-and-forget 写 DB（`INSERT ON CONFLICT DO UPDATE`）
+- `isSpendingCapped()`: cap 过期时 fire-and-forget 清除 DB 标记（`UPDATE SET is_spending_capped=false`）
+- `loadSpendingCapsFromDB()`: 新增，Brain 启动时读取 `WHERE is_spending_capped=true AND spending_cap_resets_at > NOW()`，恢复内存 Map
+- `server.js`: model profile 加载后调用 `loadSpendingCapsFromDB()`
+
+**关键决策**：
+- fire-and-forget 模式（`.catch(err => console.warn(...))`）：DB 写入失败不影响主流程，内存状态仍有效
+- DB 侧用 `spending_cap_resets_at > NOW()` 过滤已过期记录，减少恢复错误账号的可能性
+- 过期清除也 fire-and-forget：主要目的是保持 DB 整洁，不是正确性保障（内存过期检测是主防线）
+
+**踩坑**：
+- `.brain-versions` 有两个位置：`packages/brain/.brain-versions`（被 .gitignore 忽略）和根目录 `.brain-versions`（`check-version-sync.sh` 读的）。改根目录，不要改 packages/brain 下面的
+- 合并冲突后 main 版本已跳到 v1.160.1，需用 `git checkout --theirs` + Python 精准 bump patch
+
 ### [2026-03-02] SuperBrain 说明书 Tab（PR #312, Dashboard v1.14.1）
 
 **背景**：用户想要一个「书一样」的文档视图，能一打开就看到 Brain 系统所有模块的完整文档。
