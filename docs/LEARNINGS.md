@@ -1,5 +1,32 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 说明书章节沉浸式视图（PR #331, Workspace v1.15.0）
+
+**背景**：说明书手风琴布局已上线（PR #319），SVG 配图已补充（PR #324），但用户反馈「就地展开不像打开一章」，体验没有进入新页面的感觉。
+
+**实现内容**：
+- `ManualView` 新增 `detailChapter: string | null` state（存 chapter.id）
+- `detailChapter !== null` 时整个区域替换为 `ChapterDetailView`（早 return 模式）
+- 顶部粘性导航栏：「← 说明书」返回按钮 + 面包屑 + 章节图标 + 章节名
+- 目录每行加 `onClick={() => setDetailChapter(block.id)}` + hover 背景
+- 章节卡片 `onClick` 从 `setOpenChapter` 改为 `setDetailChapter`，`▶` 箭头改为 `→`
+- `ChapterDiagram` 接受 `height?: number` 可选 prop，沉浸视图传 `height={420}`
+- CSS `manualFadeIn` keyframe（opacity + translateY 8px）via `<style>` 标签注入
+
+**关键设计决策**：
+- **早 return 而非条件渲染**：在 `return (...)` 前用 `if (detailChapter !== null) return (...)` 实现完全替换，避免 z-index/overflow 干扰
+- **`<style>` 标签注入 keyframe**：直接在 JSX 中 `<style>{\`@keyframes manualFadeIn {...}\`}</style>`，不引入新依赖，不修改全局 CSS
+- **保留 `openChapter` state 兼容性**：state 保留但不再用于触发展开，保持 API 稳定
+
+**DoD 格式踩坑（延续 PR #324 教训）**：
+- DoD 第 2 条检查 `grep -q 'onBack'` 但实现用的是 `setDetailChapter(null)`——及时发现并修改了 grep 条件
+- 每次写 DoD 必须和代码实现对应，不能用预设 prop 名，要用实际变量名
+
+**「不是孤立展开」UX 核心洞察**：
+- 手风琴就地展开（accordion）给用户「还在同一页面」的感觉
+- 全屏替换（early return）+ 粘性导航栏给用户「进入了一章」的感觉
+- 两种模式的心理模型完全不同，即使内容相同，交互形式决定了体验质量
+
 ### [2026-03-02] 任务派发效果监控 + 清理审计日志（PR #325, Brain v1.162.0）
 
 **背景**：Brain 自动调度观察到 KR4 下 12 个 Initiative 全部归档、多个 initiative_plan 任务被 canceled，需要验证派发优化效果并防止过度清理。
