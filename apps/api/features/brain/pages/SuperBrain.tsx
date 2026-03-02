@@ -445,6 +445,354 @@ function DetailPanel({ subsystem }: { subsystem: Subsystem | null }) {
   );
 }
 
+// ============== 说明书视图 ==============
+interface ManualViewProps {
+  manifest: ManifestData | null;
+  subsystems: Subsystem[];
+}
+
+function ManualView({ manifest, subsystems }: ManualViewProps) {
+  if (!manifest) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 0', color: '#6b7280' }}>
+        加载说明书数据中...
+      </div>
+    );
+  }
+
+  const generatedTime = manifest.generatedAt
+    ? new Date(manifest.generatedAt).toLocaleString('zh-CN', { hour12: false })
+    : '—';
+
+  const allActions = manifest.allActions || {};
+  const allSignals = manifest.allSignals || [];
+  const allSkills = manifest.allSkills || {};
+
+  const dangerousActions = Object.entries(allActions).filter(([, v]) => v.dangerous);
+  const safeActions = Object.entries(allActions).filter(([, v]) => !v.dangerous);
+
+  const CHAPTER_ICONS: string[] = ['📡', '👁️', '🧠', '⚡', '🌱'];
+
+  return (
+    <div style={{
+      maxWidth: 860, margin: '0 auto', padding: '0 4px 60px',
+      fontFamily: '"Inter", system-ui, sans-serif',
+    }}>
+      {/* ── 书籍标题页 ── */}
+      <div style={{
+        textAlign: 'center', padding: '36px 24px 28px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)', marginBottom: 40,
+      }}>
+        <div style={{ fontSize: 30, fontWeight: 800, color: '#f3f4f6', letterSpacing: '-0.5px' }}>
+          🧠 Brain 系统说明书
+        </div>
+        <div style={{ color: '#6b7280', fontSize: 12, marginTop: 10 }}>
+          自动生成于 {generatedTime} · {manifest.blocks.length} 章 · {Object.keys(allActions).length} 条动作白名单 · {allSignals.length} 个信号
+        </div>
+        <div style={{
+          color: '#9ca3af', fontSize: 13, lineHeight: 1.7,
+          maxWidth: 520, margin: '14px auto 0',
+          padding: '14px 20px',
+          background: 'rgba(255,255,255,0.02)',
+          borderRadius: 10,
+          border: '1px solid rgba(255,255,255,0.05)',
+        }}>
+          本文档由代码自动生成，是 Brain 系统的「活说明书」。代码是唯一真实源，说明书与代码实时同步。
+        </div>
+      </div>
+
+      {/* ── 目录 ── */}
+      <div style={{ marginBottom: 40 }}>
+        <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>
+          目 录
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {manifest.blocks.map((block, idx) => (
+            <div key={block.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: '#4b5563', fontFamily: 'monospace', minWidth: 40 }}>第 {idx + 1} 章</span>
+              <span style={{ flex: 1, borderBottom: '1px dotted rgba(255,255,255,0.06)', margin: '0 8px' }} />
+              <span style={{ fontSize: 14, color: block.color, fontWeight: 600 }}>
+                {CHAPTER_ICONS[idx] || '📋'} {block.label}
+              </span>
+              <span style={{ fontSize: 11, color: '#4b5563' }}>({block.modules.length} 个模块)</span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <span style={{ fontSize: 11, color: '#4b5563', fontFamily: 'monospace', minWidth: 40 }}>附录</span>
+            <span style={{ flex: 1, borderBottom: '1px dotted rgba(255,255,255,0.06)', margin: '0 8px' }} />
+            <span style={{ fontSize: 14, color: '#9ca3af', fontWeight: 600 }}>完整动作、信号、技能索引</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 各章节 ── */}
+      {manifest.blocks.map((block, chIdx) => {
+        const chapterNum = chIdx + 1;
+        const chapterIcon = CHAPTER_ICONS[chIdx] || '📋';
+
+        return (
+          <div key={block.id} style={{ marginBottom: 56 }}>
+            {/* 章标题 */}
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: 10,
+              paddingBottom: 14, marginBottom: 16,
+              borderBottom: `2px solid ${block.color}50`,
+            }}>
+              <span style={{
+                fontSize: 11, color: '#6b7280', fontFamily: 'monospace',
+                background: `${block.color}15`, padding: '2px 8px', borderRadius: 4,
+                flexShrink: 0,
+              }}>
+                第 {chapterNum} 章
+              </span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: block.color }}>
+                {chapterIcon} {block.label}
+              </span>
+            </div>
+
+            {/* 章描述 */}
+            <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.7, marginBottom: 24, marginLeft: 0 }}>
+              {block.desc}
+            </p>
+
+            {/* 该章各模块 */}
+            {block.modules.map((mod, modIdx) => {
+              const subsystem = subsystems.find(s => s.id === mod.id);
+              const todayCount = subsystem?.metrics.today_count;
+              const status = subsystem?.status || 'dormant';
+              const sc = STATUS_COLORS[status];
+              const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
+
+              // 丘脑显示动作表，感知层显示信号列表，执行器显示技能表
+              const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
+              const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
+              const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
+
+              return (
+                <div key={mod.id} style={{
+                  marginBottom: 28,
+                  paddingLeft: 20,
+                  borderLeft: `3px solid ${block.color}30`,
+                  paddingBottom: 4,
+                }}>
+                  {/* 模块标题行 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{
+                      display: 'inline-block', width: 8, height: 8,
+                      borderRadius: '50%', background: sc, flexShrink: 0,
+                    }} />
+                    <span style={{ fontSize: 16, fontWeight: 700, color: '#e5e7eb' }}>
+                      {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
+                    </span>
+                    {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
+                    {todayCount !== null && todayCount !== undefined && (
+                      <span style={{
+                        marginLeft: 'auto', fontSize: 12, color: '#6b7280',
+                        fontFamily: 'monospace',
+                      }}>
+                        今日 {todayCount.toLocaleString()} 次
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 文件路径 */}
+                  <div style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontFamily: 'monospace', fontSize: 11,
+                    color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
+                    padding: '3px 10px', borderRadius: 5,
+                    border: '1px solid rgba(96,165,250,0.15)',
+                    marginBottom: 10,
+                  }}>
+                    📄 src/{mod.file}
+                  </div>
+
+                  {/* 模块描述 */}
+                  {mod.desc && (
+                    <p style={{
+                      color: '#9ca3af', fontSize: 12, lineHeight: 1.7,
+                      margin: '0 0 12px 0',
+                    }}>
+                      {mod.desc}
+                    </p>
+                  )}
+
+                  {/* 丘脑：动作白名单表 */}
+                  {showActions && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(allActions).map(([name, info]) => (
+                            <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>
+                                {name}
+                              </td>
+                              <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>
+                                {info.dangerous ? '⚠️ 是' : '—'}
+                              </td>
+                              <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* 感知层：信号列表 */}
+                  {showSignals && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {allSignals.map(sig => (
+                          <span key={sig} style={{
+                            fontFamily: 'monospace', fontSize: 11,
+                            color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
+                            padding: '3px 8px', borderRadius: 4,
+                            border: '1px solid rgba(165,180,252,0.2)',
+                          }}>
+                            {sig}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 执行器：技能映射表 */}
+                  {showSkills && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                        🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
+                      </div>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
+                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(allSkills).map(([taskType, skill]) => (
+                            <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
+                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
+                                {skill || '（无 skill，仅标记）'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      {/* ── 附录 ── */}
+      <div style={{
+        borderTop: '1px solid rgba(255,255,255,0.08)',
+        paddingTop: 32, marginTop: 16,
+      }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: '#d1d5db', marginBottom: 24 }}>
+          📎 附录：完整索引
+        </div>
+
+        {/* 附录 A：危险动作 */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#fca5a5', marginBottom: 10 }}>
+            附录 A · 危险动作 ({dangerousActions.length} 条)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {dangerousActions.map(([name]) => (
+              <span key={name} style={{
+                fontFamily: 'monospace', fontSize: 11,
+                color: '#fca5a5', background: 'rgba(252,165,165,0.06)',
+                padding: '3px 8px', borderRadius: 4,
+                border: '1px solid rgba(252,165,165,0.2)',
+              }}>
+                ⚠️ {name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* 附录 B：安全动作 */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#a5f3fc', marginBottom: 10 }}>
+            附录 B · 安全动作 ({safeActions.length} 条)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {safeActions.map(([name]) => (
+              <span key={name} style={{
+                fontFamily: 'monospace', fontSize: 11,
+                color: '#a5f3fc', background: 'rgba(165,243,252,0.04)',
+                padding: '3px 8px', borderRadius: 4,
+                border: '1px solid rgba(165,243,252,0.12)',
+              }}>
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* 附录 C：所有信号 */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#a5b4fc', marginBottom: 10 }}>
+            附录 C · 所有感知信号 ({allSignals.length} 个)
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {allSignals.map(sig => (
+              <span key={sig} style={{
+                fontFamily: 'monospace', fontSize: 11,
+                color: '#a5b4fc', background: 'rgba(165,180,252,0.06)',
+                padding: '3px 8px', borderRadius: 4,
+                border: '1px solid rgba(165,180,252,0.15)',
+              }}>
+                {sig}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* 附录 D：技能 WHITELIST */}
+        {manifest.skillWhitelist && Object.keys(manifest.skillWhitelist).length > 0 && (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#86efac', marginBottom: 10 }}>
+              附录 D · Skill 白名单 ({Object.keys(manifest.skillWhitelist).length} 条)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {Object.keys(manifest.skillWhitelist).map(skill => (
+                <span key={skill} style={{
+                  fontFamily: 'monospace', fontSize: 11,
+                  color: '#86efac', background: 'rgba(134,239,172,0.06)',
+                  padding: '3px 8px', borderRadius: 4,
+                  border: '1px solid rgba(134,239,172,0.15)',
+                }}>
+                  {skill}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============== Level 2 节点钻取面板 ==============
 interface NodeDrillPanelProps {
   nodeId: string | null;
@@ -979,7 +1327,7 @@ export default function SuperBrain() {
   const [architectureData, setArchitectureData] = useState<ArchitectureData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [viewLevel, setViewLevel] = useState<'overview' | 'detail'>('overview');
+  const [viewLevel, setViewLevel] = useState<'overview' | 'detail' | 'manual'>('overview');
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1172,7 +1520,7 @@ export default function SuperBrain() {
 
         {/* 控制栏 */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {viewLevel === 'detail' && (
+          {(viewLevel === 'detail' || viewLevel === 'manual') && (
             <button
               onClick={() => { setViewLevel('overview'); setSelected(null); setSelectedBlock(null); }}
               style={{
@@ -1188,7 +1536,7 @@ export default function SuperBrain() {
             background: 'rgba(255,255,255,0.06)', borderRadius: 8,
             border: '1px solid rgba(255,255,255,0.08)',
           }}>
-            {(['overview', 'detail'] as const).map(level => (
+            {(['overview', 'detail', 'manual'] as const).map(level => (
               <button key={level}
                 onClick={() => { setViewLevel(level); setSelected(null); }}
                 style={{
@@ -1198,7 +1546,7 @@ export default function SuperBrain() {
                   fontSize: 12, cursor: 'pointer',
                 }}
               >
-                {level === 'overview' ? '概览' : '详情'}
+                {level === 'overview' ? '概览' : level === 'detail' ? '详情' : '📖 说明书'}
               </button>
             ))}
           </div>
@@ -1463,6 +1811,11 @@ export default function SuperBrain() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Level 3: 说明书 ── */}
+      {viewLevel === 'manual' && (
+        <ManualView manifest={manifest} subsystems={data?.subsystems || []} />
       )}
     </div>
   );
