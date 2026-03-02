@@ -9100,7 +9100,8 @@ async function getFeishuToken() {
 // 群成员列表内存缓存（chat_id → { names, expiresAt }）
 const groupMembersCache = new Map();
 
-/** 获取群成员名单（内存缓存 1小时）— 调飞书 GET /im/v1/chats/{chat_id}/members */
+/** 获取群成员名单（内存缓存 1小时）— 调飞书 GET /im/v1/chats/{chat_id}/members
+ *  副作用：将成员信息写入 feishu_users，使 getFeishuUserName 的 staleCache 生效 */
 async function getGroupMembers(chatId, accessToken) {
   const now = Date.now();
   const cached = groupMembersCache.get(chatId);
@@ -9113,8 +9114,25 @@ async function getGroupMembers(chatId, accessToken) {
     );
     const data = await resp.json();
     if (data.code !== 0) return [];
-    const names = (data.data?.items || []).map(m => m.name).filter(Boolean);
+    const items = data.data?.items || [];
+    const names = items.map(m => m.name).filter(Boolean);
     groupMembersCache.set(chatId, { names, expiresAt: now + 3600000 });
+
+    // 写入 feishu_users：工作群成员默认 colleague，owner 单独识别
+    items.forEach(member => {
+      if (!member.member_id || !member.name) return;
+      const mName = member.name;
+      const isOwner = mName.includes('徐啸') || mName.toLowerCase().includes('alex');
+      const mRel = isOwner ? 'owner' : 'colleague';
+      const mUserId = isOwner ? 'owner' : 'guest';
+      pool.query(
+        `INSERT INTO feishu_users (open_id, name, relationship, user_id, fetched_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (open_id) DO UPDATE SET name=$2, relationship=$3, user_id=$4, fetched_at=NOW()`,
+        [member.member_id, mName, mRel, mUserId]
+      ).catch(() => {});
+    });
+
     return names;
   } catch (err) {
     console.warn('[feishu/group] 获取群成员失败:', err.message);
@@ -9411,6 +9429,9 @@ router.post('/feishu/event', async (req, res) => {
         }
       }
 
+      // 群聊：预拉取成员信息，填充 feishu_users（使 getFeishuUserName 的 staleCache 生效）
+      if (chatType === 'group') await getGroupMembers(message.chat_id, accessToken).catch(() => {});
+
       // 获取用户信息（含 relationship）
       const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
 
@@ -9422,7 +9443,7 @@ router.post('/feishu/event', async (req, res) => {
         const groupMemoryContent = `[飞书群聊] ${senderName}: ${text}`;
         pool.query(
           `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-           VALUES ($1, $2, 2, 'observation', 'feishu_group', NOW() + INTERVAL '7 days')`,
+           VALUES ($1, $2, 2, 'short', 'feishu_group', NOW() + INTERVAL '7 days')`,
           [groupMemoryContent, groupMemoryContent.slice(0, 100)]
         ).catch(err => console.warn('[feishu/group] memory_stream 写入失败:', err.message));
 
@@ -9474,7 +9495,7 @@ router.post('/feishu/event', async (req, res) => {
           const replyMemContent = `[飞书群聊] Cecelia 回复 ${senderName}: ${reply}`;
           pool.query(
             `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-             VALUES ($1, $2, 4, 'observation', 'feishu_group', NOW() + INTERVAL '30 days')`,
+             VALUES ($1, $2, 4, 'short', 'feishu_group', NOW() + INTERVAL '30 days')`,
             [replyMemContent, replyMemContent.slice(0, 100)]
           ).catch(err => console.warn('[feishu/group] memory_stream 回复写入失败:', err.message));
         } catch (err) {
