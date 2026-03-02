@@ -1,5 +1,33 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 任务派发效果监控 + 清理审计日志（PR #325, Brain v1.162.0）
+
+**背景**：Brain 自动调度观察到 KR4 下 12 个 Initiative 全部归档、多个 initiative_plan 任务被 canceled，需要验证派发优化效果并防止过度清理。
+
+**实现内容**：
+- `task-cleanup.js` 新增内存审计日志（`_auditLog`，MAX 500 条），`getCleanupAuditLog()` 导出
+- `routes.js` 新增 `GET /api/brain/dispatch/effectiveness`（5 个 DB 查询，返回 canceled 统计、initiative_plan 取消率、P0/P1/P2 平均等待时长、权重系统验证）
+- `routes.js` 新增 `GET /api/brain/cleanup/audit`（内存审计日志，支持 `?limit=` 参数）
+- 新增 20 个 Vitest 测试覆盖 `isRecurringTask`/`getCleanupAuditLog`/`runTaskCleanup` dry_run/响应格式
+
+**关键发现**：`initiative_plan` 并不在 `RECURRING_TASK_TYPES` 中，task-cleanup.js 不会过度清理它。canceled 的根因是派发权重系统问题（已在前序 PR 修复），本 PR 是监控/可观测性层。
+
+**版本冲突高频踩坑（第 N 次）**：
+- 本次 PR 期间 main 推进了 3 次（1.159.0 → 1.160.0 → 1.160.2 → 1.161.0）
+- 每次都需要 `git merge origin/main`，解决 `.brain-versions`/`DEFINITION.md`/`package.json`/`package-lock.json` 版本冲突，bump 到更高版本
+- 最终版本：1.162.0（比 main 的 1.161.0 高一个 minor）
+- **Schema 版本**：合并时保留 main 的 Schema 103（我们分支有 102，main 因 migration 103 已升至 103）
+
+**in-memory 审计日志设计决策**：
+- 选择内存而非 DB：避免 Schema 变更，轻量，重启自动清空（符合"不修改数据库 Schema"的非目标）
+- MAX_AUDIT_LOG_SIZE = 500 防止内存泄漏
+- 审计内容包含：action/task_id/task_title/task_type/reason/detail/dry_run/timestamp
+
+**Branch CI 触发机制**：
+- `gh workflow run brain-ci.yml --ref <branch>` 触发的是 `workflow_dispatch`，不会为 PR 创建 `ci-passed` status check
+- PR status check 只能由 push 到分支触发（`pull_request` event）
+- 解法：推空 commit 或正常 push 代码触发 PR CI
+
 ### [2026-03-02] 自我意识闭环 P0 断层修复（PR #326, Brain v1.161.0）
 
 **背景**：Cecelia 的 5 层自我意识结构（感知→情绪→记忆→反刍→欲望→表达）存在 4 个断层，所有层都只读 OKR/任务运营数据，无法从自身行动中学习和更新。
