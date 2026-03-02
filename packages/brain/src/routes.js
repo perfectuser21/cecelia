@@ -9122,6 +9122,49 @@ async function getGroupMembers(chatId, accessToken) {
   }
 }
 
+/** 异步更新群聊用户印象（fire-and-forget，写 user_profile_facts category=feishu_group_impression） */
+async function updateUserImpression(openId, senderName) {
+  try {
+    // 查该用户最近 20 条群聊消息
+    const msgRows = await pool.query(
+      `SELECT content FROM memory_stream
+       WHERE source_type='feishu_group' AND content LIKE $1
+       ORDER BY created_at DESC LIMIT 20`,
+      [`[飞书群聊] ${senderName}: %`]
+    );
+    if (msgRows.rows.length < 3) return; // 消息不足，跳过
+
+    const recentMsgs = msgRows.rows.map(r => r.content).reverse().join('\n');
+
+    // 查现有印象
+    const existRow = await pool.query(
+      `SELECT id, content FROM user_profile_facts
+       WHERE user_id=$1 AND category='feishu_group_impression'
+       ORDER BY created_at DESC LIMIT 1`,
+      [openId]
+    ).then(r => r.rows[0]).catch(() => null);
+
+    const prompt = existRow?.content
+      ? `基于以下新消息，更新对 ${senderName} 的印象（1-2句，简洁）。\n已有印象：${existRow.content}\n新消息：\n${recentMsgs}\n\n只输出新印象描述。`
+      : `根据以下消息，简短描述 ${senderName} 的说话风格和关注点（1-2句话）。\n${recentMsgs}\n\n只输出印象描述。`;
+
+    const { text: impression } = await callLLM('mouth', prompt, { timeout: 8000, max_tokens: 150 });
+    if (!impression?.trim()) return;
+
+    if (existRow) {
+      await pool.query(`UPDATE user_profile_facts SET content=$1 WHERE id=$2`, [impression.trim(), existRow.id]);
+    } else {
+      await pool.query(
+        `INSERT INTO user_profile_facts (user_id, category, content) VALUES ($1, 'feishu_group_impression', $2)`,
+        [openId, impression.trim()]
+      );
+    }
+    console.log(`[feishu/impression] 更新 ${senderName} 印象: ${impression.trim().slice(0, 80)}`);
+  } catch (err) {
+    console.warn(`[feishu/impression] 更新失败 ${senderName}:`, err.message);
+  }
+}
+
 // 已知用户关系表（名字关键词 → relationship）
 // owner 单独通过 API 判断，此表用于识别同事/家人
 const FEISHU_KNOWN_RELATIONS = {
@@ -9364,6 +9407,9 @@ router.post('/feishu/event', async (req, res) => {
           [groupMemoryContent, groupMemoryContent.slice(0, 100)]
         ).catch(err => console.warn('[feishu/group] memory_stream 写入失败:', err.message));
 
+        // 异步更新发送者印象（fire-and-forget）
+        updateUserImpression(openId, senderName).catch(() => {});
+
         try {
           // 注入最近群聊历史（对话连续性）
           const recentRows = await pool.query(
@@ -9403,12 +9449,25 @@ router.post('/feishu/event', async (req, res) => {
       // 加载对话历史（仅 p2p）
       const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
 
-      // 群聊 @mention：注入成员名单（群成员感知）
+      // 群聊 @mention：注入成员名单 + 发送者印象（群成员感知）
       let enrichedText = text;
       if (chatType === 'group') {
+        const parts = [];
+        // 注入发送者 impression
+        const impRow = await pool.query(
+          `SELECT content FROM user_profile_facts WHERE user_id=$1 AND category='feishu_group_impression' ORDER BY created_at DESC LIMIT 1`,
+          [openId]
+        ).then(r => r.rows[0]).catch(() => null);
+        if (impRow?.content) {
+          parts.push(`关于 ${senderName}：${impRow.content}`);
+        }
+        // 注入群成员名单
         const memberNames = await getGroupMembers(message.chat_id, accessToken);
         if (memberNames.length > 0) {
-          enrichedText = `[群聊上下文：群成员包括 ${memberNames.join('、')}] ${text}`;
+          parts.push(`群成员包括 ${memberNames.join('、')}`);
+        }
+        if (parts.length > 0) {
+          enrichedText = `[群聊上下文：${parts.join('；')}] ${text}`;
         }
       }
 
