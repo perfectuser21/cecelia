@@ -1,30 +1,23 @@
 -- Migration 100: Alex 个人数据表
--- 扩展 areas 表，新增 ideas、knowledge 两张表，并为 notes 表加 owner 字段
+-- 新增 areas、ideas、knowledge 三张表，修改 notes 表加 owner 字段
 -- 这些表与 OKR（goals/projects/tasks）共享 cecelia 数据库
+--
+-- 注意：migration 034 曾删除 areas 表（DROP TABLE IF EXISTS areas CASCADE）
+-- 因此这里重新创建带有 Alex 个人字段的 areas 表（含 domain/archived/notion_id）
 
 -- ============================================================
--- 1. areas 表扩展
---    000_base_schema.sql 已建 areas 表（OKR 用途），这里只补 Alex 个人字段
---    domain: 生活领域分类（Study / Life / Work / System）
---    archived: 是否归档
---    notion_id: Notion page ID，用于同步追踪
---    updated_at: 更新时间
+-- 1. areas - 生活领域分类（对应 Notion Areas database）
+--    034 已 DROP 了旧 areas，这里用 CREATE TABLE IF NOT EXISTS 重建
 -- ============================================================
-ALTER TABLE areas
-  ADD COLUMN IF NOT EXISTS domain    VARCHAR(20),
-  ADD COLUMN IF NOT EXISTS archived  BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS notion_id VARCHAR(100),
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
--- UNIQUE 约束（notion_id 不重复），用 DO $$ 保证幂等
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'areas_notion_id_key'
-  ) THEN
-    ALTER TABLE areas ADD CONSTRAINT areas_notion_id_key UNIQUE (notion_id);
-  END IF;
-END $$;
+CREATE TABLE IF NOT EXISTS areas (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        VARCHAR(100) NOT NULL,
+  domain      VARCHAR(20),                -- Study / Life / Work / System
+  archived    BOOLEAN NOT NULL DEFAULT false,
+  notion_id   VARCHAR(100) UNIQUE,        -- Notion page ID，用于同步追踪
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE INDEX IF NOT EXISTS idx_areas_domain   ON areas (domain);
 CREATE INDEX IF NOT EXISTS idx_areas_archived ON areas (archived) WHERE archived = false;
