@@ -9118,20 +9118,22 @@ async function getGroupMembers(chatId, accessToken) {
     const names = items.map(m => m.name).filter(Boolean);
     groupMembersCache.set(chatId, { names, expiresAt: now + 3600000 });
 
-    // 写入 feishu_users：工作群成员默认 colleague，owner 单独识别
-    items.forEach(member => {
-      if (!member.member_id || !member.name) return;
-      const mName = member.name;
-      const isOwner = mName.includes('徐啸') || mName.toLowerCase().includes('alex');
-      const mRel = isOwner ? 'owner' : 'colleague';
-      const mUserId = isOwner ? 'owner' : 'guest';
-      pool.query(
-        `INSERT INTO feishu_users (open_id, name, relationship, user_id, fetched_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (open_id) DO UPDATE SET name=$2, relationship=$3, user_id=$4, fetched_at=NOW()`,
-        [member.member_id, mName, mRel, mUserId]
-      ).catch(() => {});
-    });
+    // 写入 feishu_users（await 确保写完再返回，避免 getFeishuUserName 读到旧数据）
+    await Promise.all(items
+      .filter(m => m.member_id && m.name)
+      .map(member => {
+        const mName = member.name;
+        const isOwner = mName.includes('徐啸') || mName.toLowerCase().includes('alex');
+        const mRel = isOwner ? 'owner' : 'colleague';
+        const mUserId = isOwner ? 'owner' : 'guest';
+        return pool.query(
+          `INSERT INTO feishu_users (open_id, name, relationship, user_id, fetched_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (open_id) DO UPDATE SET name=$2, relationship=$3, user_id=$4, fetched_at=NOW()`,
+          [member.member_id, mName, mRel, mUserId]
+        ).catch(() => {});
+      })
+    );
 
     return names;
   } catch (err) {
