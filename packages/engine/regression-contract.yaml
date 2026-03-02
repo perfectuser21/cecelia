@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.35.7"
+version: "12.35.8"
 updated: "2026-03-02"
 
 # ============================================================================
@@ -141,6 +141,25 @@ hooks:
       file: "hooks/branch-protect.sh"
       contains: "没有活跃的 /dev 会话"
     test: "manual:bash -n packages/engine/hooks/branch-protect.sh"
+
+  - id: H1-013
+    feature: H1
+    name: "Stop Hook 合并前必须完成 Step 10 LEARNINGS（v12.35.8）"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, learnings, step-order, double-pr]
+    owner: infra
+    steps:
+      given: "CI 通过，PR 未合并，step_10_learning=pending"
+      when: "Stop Hook condition 3 触发"
+      then: "阻止合并，reason 指示先执行 Step 10 LEARNINGS"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "Step 10 LEARNINGS 未完成"
+    test: "manual:bash -c \"grep -q 'step_10_learning' packages/engine/hooks/stop-dev.sh\""
 
   # --------------------------------------------------------------------------
   # H7: stop.sh - 循环控制器
