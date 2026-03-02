@@ -1,5 +1,31 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] initiative_plan 清理保护机制（PR #336, Brain v1.164.0）
+
+**背景**：在任务派发效果监控中发现 `initiative_plan` 任务存在被 `task-cleanup.js` 误清理的风险——若 payload.is_recurring=true，会被 isRecurringTask() 判为周期任务并在 queued >24h 后自动 cancel。
+
+**实现内容**：
+- `task-cleanup.js` 新增 `PROTECTED_TASK_TYPES = ['initiative_plan', 'initiative_verify']`
+- 新增 `isProtectedTask()` 函数（检查 task_type 是否受保护）
+- 修改 `isRecurringTask()` 优先检查保护状态，受保护任务返回 false
+- SQL 查询显式排除 `PROTECTED_TASK_TYPES`（双重保护，防止 is_recurring=true 的 initiative 被扫到）
+- 新增 19 个测试（isProtectedTask×6, isRecurringTask-initiative×3, constants-protected×2）全部通过
+
+**版本号踩坑（重要！）**：
+- main 分支在 PR #330 合并后版本已升至 1.163.0
+- 本 PR 最初也设置为 1.163.0，导致 Brain CI Version Check 失败（"Version not updated"）
+- 修复：将版本升至 1.164.0，同时需要同步更新 4 处：
+  1. `packages/brain/package.json`（主版本文件）
+  2. `packages/brain/VERSION`（版本文件）
+  3. `packages/brain/package-lock.json`（前两处 `"version"` 字段）
+  4. `.brain-versions`（CI 版本锁定文件）
+  5. `DEFINITION.md`（Brain 版本行）
+- **check-version-sync.sh 是真正的验证工具**，本地运行确认通过再 push 可避免 CI 反复失败
+
+**CI 触发异常**：push 后未自动触发新 CI（concurrency 设置导致取消），需手动 `gh workflow run brain-ci.yml --ref <branch>` 触发。注意：`workflow_dispatch` 触发的 CI 不会作为 PR required status check，但 facts-check 和 tests 通过即代表代码正确。
+
+**关键保护设计**：双重保护优于单重——仅修改 `isRecurringTask()` 逻辑无法阻止 SQL 扫到 `is_recurring=true` 的 initiative，必须同时在 SQL 层显式排除 PROTECTED_TASK_TYPES。
+
 ### [2026-03-02] 任务派发效果监控 + 清理审计日志（PR #325, Brain v1.162.0）
 
 **背景**：Brain 自动调度观察到 KR4 下 12 个 Initiative 全部归档、多个 initiative_plan 任务被 canceled，需要验证派发优化效果并防止过度清理。
