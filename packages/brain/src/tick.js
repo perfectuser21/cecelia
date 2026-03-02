@@ -28,6 +28,7 @@ import { runRumination } from './rumination.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
+import { sortTasksByWeight } from './task-weight.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -542,7 +543,8 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
     excludeClause = `AND t.id != ALL($${queryParams.length})`;
   }
   const result = await pool.query(`
-    SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload
+    SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
+           t.queued_at, t.task_type, t.created_at, t.metadata
     FROM tasks t
     WHERE (t.goal_id = ANY($1) OR t.goal_id IS NULL)
       AND t.status = 'queued'
@@ -557,7 +559,11 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
       t.created_at ASC
   `, queryParams);
 
-  for (const task of result.rows) {
+  // Apply weight-based sorting on top of the DB result
+  // This allows dynamic adjustment (wait time, retry count, task type) without changing SQL
+  const weightedTasks = sortTasksByWeight(result.rows);
+
+  for (const task of weightedTasks) {
     // Skip P2 tasks if mitigation is active (EMERGENCY+ state)
     if (mitigationState.p2_paused && task.priority === 'P2') {
       console.log(`[tick] Skipping P2 task ${task.id} (alertness mitigation active)`);
