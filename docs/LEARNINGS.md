@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 飞书语音下载 URL fix + HK VPS CI 环境修复 (PR #262, Brain v1.143.5)
+
+**背景**: 飞书语音消息 Bot 发送语音后 Cecelia 一直返回「抱歉没听清楚」，根因是下载语音资源时用了 `?type=file`，正确应为 `?type=audio`。同时本 PR 修复了 HK VPS self-hosted runner 上 Brain CI 的三个基础设施问题。
+
+- **飞书 IM Resource API type 参数**: 下载音频文件必须用 `?type=audio`，下载普通文件才用 `?type=file`。两者 URL 相同，仅 type 参数不同，接口会返回不同内容（错误类型会返回错误或空数据导致 Whisper 转录失败）
+- **vi.stubEnv 必须配套 vi.unstubAllEnvs()**: 在 `singleFork: true` 的 vitest 配置下，`vi.stubEnv()` 不会在 describe 块结束时自动还原，会泄漏到后续 test 文件的新模块实例。`selfcheck.test.js` 的 `vi.stubEnv('DB_PORT', '5432')` 导致后续测试文件（quarantine-auto-release 等）连接到 production PostgreSQL（端口 5432，密码不匹配），产生 "password authentication failed" 错误。修复：在 afterEach 中调用 `vi.unstubAllEnvs()`
+- **HK VPS self-hosted runner 缺 jq**: Brain CI version-check job 需要 jq 解析 package.json，HK VPS 默认不自带，需手动 `sudo apt-get install -y jq`
+- **HK VPS runner 需加入 docker group**: runner 用户不在 docker group 时 service container（pgvector）无法启动，报 "permission denied while trying to connect to the Docker daemon socket"。修复：`sudo usermod -aG docker runner` + 重启 runner service
+- **HK VPS production PostgreSQL 占用 5432**: CI 的 pgvector service container 默认映射 5432:5432 与生产 PostgreSQL 冲突，报 "Bind for 0.0.0.0:5432 failed"。修复：改用 `5433:5432` 映射，CI env 中设置 `DB_PORT: 5433`
+
 ### [2026-03-02] 四信号源直接接 L1 丘脑：suggestion 派发路径废弃 (PR #252, Brain v1.144.0)
 
 **背景**: rumination / desire / owner_input / goal_evaluator 四个信号源有的绕过 L1 直接建 task，有的走 suggestion → suggestion_plan → /plan 派发链，架构不统一。正确架构：L1（丘脑）是唯一枢纽，所有信号都进 L1，L1 路由到 /dev / /research / /decomp / L2。

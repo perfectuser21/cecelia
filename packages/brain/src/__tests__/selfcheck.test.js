@@ -2,7 +2,7 @@
  * Self-Check Unit Tests (mock pool — no real DB needed)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runSelfCheck, EXPECTED_SCHEMA_VERSION } from '../selfcheck.js';
 
 function makeMockPool(overrides = {}) {
@@ -49,6 +49,10 @@ describe('selfcheck', () => {
     vi.stubEnv('DB_HOST', 'localhost');
     vi.stubEnv('DB_PORT', '5432');
     vi.stubEnv('DB_NAME', 'cecelia');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('should pass all checks with correct config', async () => {
