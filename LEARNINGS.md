@@ -4,6 +4,32 @@
 
 ---
 
+### [2026-03-02] Task Router 诊断 API + 日志增强 v1.159.0
+
+**失败统计**：CI 失败 1 次（DevGate DoD 格式），本地测试失败 1 次（jest.fn → vi.fn）
+
+**新增功能**：
+1. `GET /api/brain/task-router/diagnose/:kr_id`：诊断指定 KR 下任务派发阻塞原因
+2. `task-router.js diagnoseKR()`：依赖注入 pool，查询 project_kr_links → projects → tasks 层级
+3. 增强 `routeTaskCreate` 日志：包含 kr_id/initiative_id/project_id/skill 等完整上下文
+
+**架构设计决策**：
+- **diagnoseKR 使用依赖注入 pool**：task-router.js 原本是纯函数模块无 DB 依赖，
+  通过参数传入 pool 保持模块测试友好性，mock pool 即可单元测试。
+- **检测 5 种派发阻塞场景**：no_tasks_created / all_tasks_completed_initiative_still_active /
+  all_tasks_failed / no_active_tasks / no_initiatives，覆盖常见卡住情况。
+
+**踩坑记录**：
+1. **测试框架误用 jest.fn()**：项目使用 Vitest，应用 `vi.fn()`。
+   解决：从 `'vitest'` import `vi`，替换 `jest.fn` → `vi.fn`。
+2. **DoD Test 字段格式错误**：CI DevGate 要求 `Test:` 紧跟 checkbox 下一行，
+   且文件路径必须以 `tests/` 开头，或用 `manual:` / `contract:` 前缀。
+   `packages/brain/src/__tests__/...` 路径不符合 `tests/` 正则，需改为 `manual:npx vitest...`。
+3. **rebase 冲突处理**：多个 PR 同时改版本号导致冲突，需手动解决 .brain-versions/DEFINITION.md/
+   package.json/package-lock.json 中的版本冲突，保持 semver 正确递增。
+
+---
+
 ### [2026-03-02] 任务派发优先级动态调整机制 v1.157.0
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
