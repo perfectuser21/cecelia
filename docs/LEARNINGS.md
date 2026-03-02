@@ -1,5 +1,30 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] Dashboard Mouth 模型切换器（API/无头 × Haiku/Sonnet）(PR #308, Brain v1.156.0)
+
+**失败统计**：CI 失败 1 次（版本冲突），合并冲突 1 次
+
+**CI 失败记录**：
+- 失败 #1：Brain CI version-check 失败。PR #307 在本 PR 之前合并，main 已到 1.155.0，本 PR 第一次 push 也是 1.155.0 → 冲突。
+  - 修复：再 bump 一次到 1.156.0，push 第二个 commit。
+  - 但第二次 push 没有自动触发 PR CI（原因不明，可能 GitHub 延迟），需手动 `gh workflow run brain-ci.yml --ref <branch>`。
+
+**合并冲突记录**：
+- GitHub 报 "merge commit cannot be cleanly created"：main 有新 commit（PR #307），版本文件冲突（.brain-versions, DEFINITION.md, package.json, package-lock.json）。
+- 解决：`git merge origin/main` → `git checkout --ours` 保留版本文件（1.156.0）→ 手动修 DEFINITION.md 冲突 → commit + push → CI 全过 → squash merge。
+
+**正确做法**：
+- 并行 PR 时 push 前必须 `git show origin/main:packages/brain/package.json | jq .version` 确认 main 版本，若已达到我们的目标版本则再 bump 一次。
+- 第二次 push 后若 CI 未自动触发，用 `gh workflow run` 手动触发，等通过后再尝试 merge。
+
+**架构决策**：
+- 嘴巴模型切换需要新的 `/api/brain/mouth-config` 端点（GET + PATCH），因为现有 `updateAgentModel` 的 `getProviderForModel` 只会返回 `anthropic`，无法区分 `anthropic-api`。
+- 前端用 2×2 grid（API/无头 × Haiku/Sonnet），provider 字段是 `anthropic-api`（REST API）或 `anthropic`（headless claude -p via bridge）。
+
+**影响程度**: Low（纯版本冲突，无功能 bug）
+
+
+
 ### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
