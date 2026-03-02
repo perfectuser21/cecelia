@@ -16,7 +16,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-quality PRs
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -37,7 +37,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.quality == 'true'
     name: Quality Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -161,7 +161,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.quality == 'true'
     name: Quality Tests
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -186,7 +186,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.quality == 'true'
     name: Shell Lint
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -262,7 +262,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.quality == 'true'
     name: Docs Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -316,7 +316,7 @@ jobs:
   ci-passed:
     needs: [changes, quality-check, test, lint, docs]
     if: always()
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Quality CI Gate

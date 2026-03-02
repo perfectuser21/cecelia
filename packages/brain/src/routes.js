@@ -9162,7 +9162,7 @@ async function getFeishuUserName(openId, accessToken) {
 async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
   // 1. 下载音频文件
   const dlResp = await fetch(
-    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=file`,
+    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=audio`,
     { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
   );
   if (!dlResp.ok) throw new Error(`音频下载失败: ${dlResp.status}`);
