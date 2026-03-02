@@ -1,5 +1,32 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 每日合并循环（PR #334, Brain v1.163.0）
+
+**背景**：Cecelia 有 memory_stream、learnings、tasks 三类当日数据，但每天结束时没有任何综合机制——碎片记忆永远是碎片，self-model 得不到当日洞察的滋养。P1 目标：实现每日一次的夜间综合，把今日数据→情节记忆 + self-model 演化。
+
+**实现内容**：
+- 新增 `consolidation.js` 模块（4 个公开函数 + 内部流程）
+- `shouldRunConsolidation(now)` — UTC 19:00–19:05（北京凌晨 3:00），5分钟窗口
+- `hasTodayConsolidation(pool)` — 查 daily_logs type='consolidation' 防重复
+- `runDailyConsolidation(pool, opts)` — gatherTodayData → callLLM → INSERT memory_stream → updateSelfModel → markConsolidationDone
+- tick.js 步骤 10.9：fire-and-forget 调用 `runDailyConsolidationIfNeeded(pool)`
+- 12 个单元测试全覆盖
+
+**关键设计决策**：
+- **daily_logs 防重复而非 brain_config**：daily_logs 有 date 字段，天然适合按日查重；brain_config 是 KV 表不适合时序数据
+- **callLLM('cortex', ...)**：合并是深度综合任务，用皮层（Sonnet）而非丘脑（Haiku）
+- **90 天 expires_at**：情节记忆保留时间比短期记忆（7天）长得多；long memory_type 适合跨越多次对话的参考
+- **graceful fallback**：LLM 失败时仍写入 memory_stream（带 note: 'LLM 调用失败'）并 markConsolidationDone，避免当天多次重试
+
+**版本冲突解法（第三次遇到，确认标准流程）**：
+- 并行 PR 同时抢到 v1.162.0（PR #325 先合并）→ 我们的 PR #333 CONFLICTING
+- 标准流程：`git checkout -b new-branch origin/main` → checkout 代码文件（不含版本文件）→ `npm version minor` bump → 同步 VERSION/.brain-versions/DEFINITION.md → 正常 push → 关旧 PR → 开新 PR
+- 关键：checkout tick.js 前先 `git diff origin/main old-branch -- tick.js` 确认无代码冲突，再直接 checkout
+
+**vi.hoisted() 是 mock 的正确写法（延续已知教训）**：
+- 本次测试用 `vi.hoisted(() => vi.fn())` + `beforeEach` 设置 mockResolvedValue 全部通过
+- factory-local `vi.fn()` 被 `resetAllMocks()` 重置后返回 undefined，破坏调用链
+
 ### [2026-03-03] 说明书章节沉浸式视图（PR #331, Workspace v1.15.0）
 
 **背景**：说明书手风琴布局已上线（PR #319），SVG 配图已补充（PR #324），但用户反馈「就地展开不像打开一章」，体验没有进入新页面的感觉。
