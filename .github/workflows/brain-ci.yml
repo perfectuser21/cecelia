@@ -118,7 +118,7 @@ jobs:
           POSTGRES_USER: cecelia
           POSTGRES_PASSWORD: cecelia_ci
         ports:
-          - 5432:5432
+          - 5433:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -127,7 +127,7 @@ jobs:
 
     env:
       DB_HOST: localhost
-      DB_PORT: 5432
+      DB_PORT: 5433
       DB_NAME: cecelia
       DB_USER: cecelia
       DB_PASSWORD: cecelia_ci
