@@ -863,3 +863,32 @@ res.on('close', () => { closed = true; });
 - `orchestrator-chat.js`：MOUTH_SYSTEM_PROMPT 末行改为鼓励基于情绪/自我认知/记忆真实思考
 - `ConsciousnessChat.tsx`：前端兜底 `'我还没想过这个。'` → `'…'`（中性省略）
 - **测试陷阱**：`cecelia-voice-retrieval.test.js` 有断言检查旧文本「说你真实有的」→ 改提示词时必须同步更新测试
+
+## PR #254 — Workspace CI 补检查 + Brain 热重载脚本 (2026-03-02)
+
+**背景**：workspace-ci 只有 Dashboard Build，没有测试或 typecheck，导致回归无法被 CI 拦截。
+
+**问题1: dorny/paths-filter 需要 pull-requests: read 权限**
+所有 CI workflow 的 `changes` job 只有 `contents: read`。`pull_request` 事件（而非 `push`/`workflow_dispatch`）下，`dorny/paths-filter@v3` 调用 GitHub API 列出文件需要 `pull-requests: read`。
+**修复**：所有 5 个 CI workflow 的 `changes` job 补上 `pull-requests: read`。
+
+**问题2: brain-ci 被非 Brain 脚本触发**
+`scripts/**` 在 brain-ci 的 paths filter 里，新增 `scripts/brain-reload.sh` 导致 Brain Version Check 失败（Brain 代码未改动，版本未 bump）。
+**修复**：从 brain-ci.yml 的 paths filter 移除 `scripts/**`。
+
+**问题3: React 18/19 双实例导致 vitest 4.x 测试失败**
+根本原因链条：
+1. `apps/api/package.json` 依赖 `react: ^19.2.4`
+2. npm workspace 把 react v19 安装到 root node_modules
+3. react-router（在 root）通过 CJS require('react') 加载 React 19
+4. react-dom（在 dashboard local）加载 React 18
+5. react-dom 18 设置 React 18 dispatcher，react-router 用 React 19 API 调用 useRef → ReactSharedInternals.H 为 null → TypeError
+
+vitest 4.x 的区别：root vitest=1.6.1（能通过），dashboard vitest=4.0.18（CI 用这个），4.x 对 root 级别 CJS 包作为 external 处理，resolve.dedupe 无法拦截。
+
+**修复**：在测试文件加 `vi.mock('react-router-dom', () => ({ MemoryRouter: ..., useNavigate: ... }))`，完全绕过有版本冲突的真实模块。这也是正确的测试设计——渲染测试不应依赖真实路由实现。
+
+**教训**：
+- monorepo 中不同 app 依赖不兼容的 React 主版本时，共享依赖（react-router）会加载不同 React，vitest 无法通过 resolve.dedupe 修复（只对 Vite 处理的 ESM 生效，不影响 CJS require）
+- vi.mock 是最可靠的隔离方案，同时也强制测试聚焦于被测行为而非基础设施
+- worktree 使用父目录的 node_modules，版本可能与目标 workspace 不同，本地验证时需确认用的是正确的 node_modules
