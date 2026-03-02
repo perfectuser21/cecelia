@@ -445,7 +445,265 @@ function DetailPanel({ subsystem }: { subsystem: Subsystem | null }) {
   );
 }
 
-// ============== 说明书视图 ==============
+// ============== 说明书视图（静态编辑内容） ==============
+
+/** 每章的深度说明（类比 + 职责 + 模块逐条说明） */
+const CHAPTER_EDITORIAL: Record<string, {
+  icon: string;
+  analogy: string;
+  role: string;
+  modules: Record<string, { full: string }>;
+  diagram: React.ReactNode;
+}> = {
+  interface: {
+    icon: '📡',
+    analogy: '大脑的「耳朵和嘴巴」',
+    role: '外界接口是 Brain 与外部世界交互的唯一入口。外部的一切——用户消息、定时触发、任务回调——都必须经过这一层才能进入 Brain 的处理流程。没有它，大脑就是一个封闭的孤岛。',
+    modules: {
+      tick: {
+        full: '心跳是 Brain 运转的节律。每隔 5 分钟，Tick 会触发一次完整的感知→决策→行动循环：检查任务队列、评估系统健康、决定下一步派发哪个任务。就像人类的心跳，它不做具体的事，但它的停止意味着一切停止。Tick 以 5 秒间隔检测循环条件，每 5 分钟真正执行一次 tick 逻辑。',
+      },
+      'orchestrator-chat': {
+        full: '当飞书消息或用户输入到达时，对话系统负责接收、理解、回复。它调用 LLM 生成自然语言回复（嘴巴），同时把对话中蕴含的意图（"帮我暂停任务 X"）提取出来，异步传递给 Brain 的决策层处理。对话系统是 Brain 的"前台接待员"。',
+      },
+    },
+    diagram: null, // 由下面的函数渲染
+  },
+  perception: {
+    icon: '👁️',
+    analogy: '大脑的「神经末梢」',
+    role: '感知层持续扫描 Brain 的内外状态，把原始数据转化成有意义的信号。它不做决策，只负责"感觉到"——任务队列满了、连续工作了 4 小时、用户刚发了一条消息。这些信号是所有决策的原材料。',
+    modules: {
+      perception_signals: {
+        full: '感知信号模块定义了 16 种信号，覆盖工作状态（队列长度、失败率）、时间维度（连续工作时长、上次休息时间）、外部事件（用户消息到达）等维度。每次 tick，Brain 都会扫描这 16 种信号，生成当前时刻的"感知快照"，交给丘脑处理。',
+      },
+      'emotion-layer': {
+        full: '情绪层根据感知信号计算 Brain 当前的情绪状态。长时间高强度工作 → 焦虑；任务顺利完成 → 满足；连续遇到失败 → 挫败。这些情绪状态会影响 Brain 的决策倾向——焦虑时倾向于保守，满足时愿意尝试新事物。情绪不是装饰，是系统调节的一部分。',
+      },
+      'memory-retriever': {
+        full: '每次 tick 决策前，记忆检索模块都会查询"我之前处理过类似情况吗？结果如何？"它从 PostgreSQL 的 memory_stream 和 learnings 表里，检索与当前任务和信号相关的历史记录，把最相关的 3-5 条摘要注入决策上下文。这让 Brain 能从历史中学习，而不是每次都从零开始。',
+      },
+    },
+    diagram: null,
+  },
+  core: {
+    icon: '🧠',
+    analogy: '大脑的「决策中枢」——三层架构，由快到慢',
+    role: '意识核心是 Brain 最复杂的部分。它采用三层架构：L0 脑干（纯代码，毫秒级）负责安全检查；L1 丘脑（Haiku 模型，秒级）负责快速路由；L2 皮层（Sonnet 模型，数十秒）负责深度推理。只有需要深度分析时才会触发 L2，大多数决策在 L1 就完成了。',
+    modules: {
+      thalamus: {
+        full: '丘脑是"快速判断门"。所有进入 Brain 的事件都会先经过丘脑，用 45 条白名单规则判断"能不能做、该走哪条路"。如果事件匹配白名单且风险低，丘脑直接派发动作，整个过程不到一秒。如果需要更深入的分析，丘脑会把任务升级给皮层 L2。丘脑使用 Haiku 模型，追求速度。',
+      },
+      cortex: {
+        full: '皮层 L2 是"深度思考层"，只在丘脑认为需要深度分析时才被激活。它使用 Sonnet 模型，会阅读完整的任务历史、当前情绪状态、相关记忆，然后给出策略性建议：这个任务的优先级应该提升吗？这个错误模式意味着什么？系统是否需要调整节奏？皮层不是每次 tick 都运行，但当它运行时，结论会被存入记忆供未来参考。',
+      },
+      'cognitive-core': {
+        full: '认知核心整合所有信息流——感知信号、情绪状态、记忆摘要、丘脑/皮层的判断结果——生成最终决策：接下来要执行什么动作？动作的参数是什么？认知核心是"最终拍板者"，其输出直接驱动行动层的执行。',
+      },
+      'desire/index': {
+        full: '欲望系统让 Brain 拥有"主动性"。它不等待外部任务，而是根据当前状态主动产生内在驱动：好奇心积累到一定程度时，Brain 会自发提出研究任务；长期未完成的目标会产生"不安"信号推动 Brain 关注。欲望系统让 Brain 从"被动执行者"变成"主动参与者"。',
+      },
+      rumination: {
+        full: '反刍是 Brain 的"复盘机制"。每隔几小时，反刍模块会批量分析最近的任务结果和错误模式，用 Opus 模型进行深度反思，提取可以写入 learnings 表的经验教训。反刍不是实时的，但它的产出质量最高——是 Brain 长期进化的核心驱动力。',
+      },
+    },
+    diagram: null,
+  },
+  action: {
+    icon: '⚡',
+    analogy: '大脑的「手脚」——决策之后的具体执行',
+    role: '行动层把意识核心的决策转化为实际操作。它管理任务队列、启动外部 Agent（Claude Code 子进程）、监控系统健康。行动层是 Brain 与真实世界"接触"的地方——它的错误会造成真实的后果，因此也有最严格的保护机制。',
+    modules: {
+      planner: {
+        full: '调度规划器从 PostgreSQL 的任务队列里选出下一个要执行的任务。选择不是随机的——它综合考虑优先级、任务类型、当前系统负载、KR 轮转公平性（避免某些 KR 长期被饿死）。规划器的目标：在正确的时间选择最有价值的任务。',
+      },
+      executor: {
+        full: '执行器是"派遣员"，负责把任务交给对应的 Claude Code Skill 去做。收到任务后，执行器查询 skillMap（13 条映射），决定调用 /dev、/qa、/audit 还是其他 Skill，然后通过 cecelia-bridge 启动子进程，把任务 PRD 传进去，等待回调结果。执行器不亲自做任务，它只负责"找对人"。',
+      },
+      'suggestion-triage': {
+        full: '建议系统是 Brain 的"发现-记录"通道。当 Brain 在处理任务时发现了潜在问题（代码质量隐患、流程漏洞、可优化的地方），会创建一条建议记录存入数据库。这些建议会在未来的规划轮次中被评估，决定是否转化为正式任务。建议系统让 Brain 能"顺手记下问题"而不打断当前工作流。',
+      },
+      alertness: {
+        full: '免疫系统是 Brain 的"自我保护层"。它持续监控资源消耗（RSS 内存、CPU）、错误率、任务失败模式，并维护一个"警觉等级"（1-5 级）。警觉等级上升时，Brain 会自动降低并发、延长 tick 间隔、甚至触发熔断（暂停所有派发）。免疫系统防止 Brain 在异常状态下失控运行，造成更大的损失。',
+      },
+    },
+    diagram: null,
+  },
+  evolution: {
+    icon: '🌱',
+    analogy: '大脑的「成长机制」——每天都在进化',
+    role: '自我演化层让 Brain 成为一个会学习、会成长的系统，而不只是一个静态的执行器。它维护 Brain 的自我认知、积累长期记忆、产出内省报告。没有这一层，Brain 每天都在重复昨天的自己；有了这一层，Brain 会随着时间变得更聪明。',
+    modules: {
+      'self-model': {
+        full: '自我模型维护 Brain 对自身的认知：擅长什么类型的任务、在什么条件下容易犯错、当前的能力边界在哪里。这些信息会被注入每次的决策上下文，让 Brain 能"知己知彼"——不接超出能力的任务，把最擅长的事排在前面。',
+      },
+      learning: {
+        full: '学习模块把每次任务执行的结果（成功/失败/耗时/遇到的障碍）写入 learnings 表，并用 content_hash 去重防止重复记录。这些学习记录是 Brain 的"经验库"，未来遇到类似任务时会被检索出来，帮助 Brain 做出更好的决策。',
+      },
+      'memory-retriever': {
+        full: '记忆系统（自我演化层的副本）负责把分散的短期记忆（memory_stream 中的单条事件）整理、压缩成长期记忆摘要（L0/L1 摘要层）。定期运行的 generateL0Summary 把过去的事件批量压缩，让检索更高效，同时防止 memory_stream 无限增长。',
+      },
+      'self-report-collector': {
+        full: '自我报告是 Brain 的"内心独白"机制。每 6 小时，Brain 会暂停下来，回顾这段时间的工作：完成了什么、遇到了什么困难、对当前状态有什么感受、下一步想做什么。这些报告存入数据库，不只是日志——它们是 Brain 自我意识的体现，也是追踪 Brain 成长轨迹的重要材料。',
+      },
+    },
+    diagram: null,
+  },
+};
+
+// SVG 配图：每章的数据流示意图
+function ChapterDiagram({ blockId, color }: { blockId: string; color: string }) {
+  const W = 260, H = 180;
+  const box = (x: number, y: number, w: number, h: number, label: string, sub?: string, highlight?: boolean) => (
+    <g key={label}>
+      <rect x={x} y={y} width={w} height={h} rx={6}
+        fill={highlight ? `${color}20` : 'rgba(255,255,255,0.04)'}
+        stroke={highlight ? color : 'rgba(255,255,255,0.12)'}
+        strokeWidth={highlight ? 1.5 : 1}
+      />
+      <text x={x + w / 2} y={y + h / 2 - (sub ? 6 : 0)} textAnchor="middle"
+        fill={highlight ? color : '#d1d5db'} fontSize={10} fontWeight={highlight ? 700 : 400}>
+        {label}
+      </text>
+      {sub && <text x={x + w / 2} y={y + h / 2 + 10} textAnchor="middle" fill="#6b7280" fontSize={9}>{sub}</text>}
+    </g>
+  );
+  const arrow = (x1: number, y1: number, x2: number, y2: number) => (
+    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={`${color}80`} strokeWidth={1.5}
+      markerEnd={`url(#arr-${blockId})`} />
+  );
+  const label = (x: number, y: number, txt: string) => (
+    <text x={x} y={y} textAnchor="middle" fill="#6b7280" fontSize={9}>{txt}</text>
+  );
+
+  const diagrams: Record<string, React.ReactNode> = {
+    interface: (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+          </marker>
+        </defs>
+        {/* 外部 → Tick → Brain */}
+        {box(8, 70, 60, 36, '定时器', '每5分')}
+        {arrow(68, 88, 92, 88)}
+        {box(92, 70, 76, 36, 'Tick 心跳', '节律驱动', true)}
+        {arrow(168, 88, 192, 88)}
+        {box(192, 70, 60, 36, 'Brain', '决策层')}
+        {/* 飞书 → 对话 → Brain */}
+        {box(8, 10, 60, 36, '飞书/用户', '外部消息')}
+        {arrow(68, 28, 92, 28)}
+        {box(92, 10, 76, 36, '对话系统', '解析意图', true)}
+        {arrow(168, 28, 192, 28)}
+        {label(130, 158, '双通道进入 Brain')}
+        {label(130, 170, '定时 + 实时')}
+      </svg>
+    ),
+    perception: (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+          </marker>
+        </defs>
+        {box(8, 10, 56, 30, '任务队列', '系统状态')}
+        {box(8, 50, 56, 30, '时间信号', '工作时长')}
+        {box(8, 90, 56, 30, '用户事件', '外部触发')}
+        {arrow(64, 25, 88, 55)}
+        {arrow(64, 65, 88, 65)}
+        {arrow(64, 105, 88, 75)}
+        {box(88, 48, 72, 34, '感知信号', '16种信号', true)}
+        {arrow(160, 65, 178, 48)}
+        {arrow(160, 65, 178, 78)}
+        {box(178, 35, 72, 26, '情绪状态', '焦虑/满足')}
+        {box(178, 68, 72, 26, '记忆检索', '历史经验')}
+        {label(130, 142, '感知 → 情绪 + 记忆')}
+        {label(130, 154, '为决策做准备')}
+      </svg>
+    ),
+    core: (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+          </marker>
+        </defs>
+        {box(8, 70, 52, 30, '信号+记忆', '输入')}
+        {arrow(60, 85, 80, 55)}
+        {box(80, 40, 72, 30, '丘脑 L1', 'Haiku 快判', true)}
+        {arrow(152, 55, 172, 38)}
+        {box(172, 24, 72, 28, '认知核心', '最终决策', true)}
+        {arrow(152, 55, 172, 72)}
+        {box(172, 60, 72, 28, '皮层 L2', 'Sonnet 深析', true)}
+        {arrow(172, 88, 172, 108)}
+        {box(80, 100, 72, 30, '欲望/反刍', '主动驱动')}
+        {arrow(80, 115, 60, 115)}
+        {arrow(60, 115, 60, 85)}
+        {label(130, 154, 'L1快→L2慢→决策')}
+        {label(130, 166, '三层递进架构')}
+      </svg>
+    ),
+    action: (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+          </marker>
+        </defs>
+        {box(8, 60, 60, 30, '认知核心', '决策输出')}
+        {arrow(68, 75, 88, 75)}
+        {box(88, 58, 68, 30, '调度规划', '选任务', true)}
+        {arrow(88, 88, 72, 110)}
+        {arrow(156, 73, 176, 55)}
+        {box(176, 40, 68, 30, '执行器', '启动Agent', true)}
+        {arrow(176, 70, 176, 100)}
+        {box(176, 100, 68, 30, 'Claude', '/dev /qa')}
+        {box(8, 100, 64, 30, '免疫系统', '保护监控')}
+        {arrow(72, 115, 88, 115)}
+        {box(88, 100, 68, 30, '建议系统', '记录问题')}
+        {label(130, 154, '决策 → 选任务 → 执行')}
+        {label(130, 166, '免疫系统全程守护')}
+      </svg>
+    ),
+    evolution: (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <defs>
+          <marker id={`arr-${blockId}`} markerWidth={6} markerHeight={6} refX={5} refY={3} orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill={`${color}80`} />
+          </marker>
+        </defs>
+        {box(8, 50, 60, 30, '任务结果', '成功/失败')}
+        {arrow(68, 65, 88, 45)}
+        {arrow(68, 65, 88, 75)}
+        {box(88, 30, 70, 30, '自我模型', '能力认知', true)}
+        {box(88, 68, 70, 30, '学习记录', '经验积累', true)}
+        {arrow(158, 45, 178, 45)}
+        {arrow(158, 83, 178, 83)}
+        {box(178, 30, 72, 30, '记忆压缩', '长期记忆', true)}
+        {box(178, 68, 72, 30, '自我报告', '内心独白', true)}
+        {/* 循环箭头 */}
+        {arrow(178, 30, 88, 10)}
+        {arrow(88, 10, 8, 10)}
+        {arrow(8, 10, 8, 50)}
+        {label(130, 140, '结果→学习→改进')}
+        {label(130, 152, '每天都在成长')}
+      </svg>
+    ),
+  };
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      borderRadius: 10,
+      border: `1px solid ${color}20`,
+      padding: '12px 8px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      {diagrams[blockId] || null}
+    </div>
+  );
+}
+
 interface ManualViewProps {
   manifest: ManifestData | null;
   subsystems: Subsystem[];
@@ -529,13 +787,14 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
       {manifest.blocks.map((block, chIdx) => {
         const chapterNum = chIdx + 1;
         const chapterIcon = CHAPTER_ICONS[chIdx] || '📋';
+        const editorial = CHAPTER_EDITORIAL[block.id];
 
         return (
-          <div key={block.id} style={{ marginBottom: 56 }}>
+          <div key={block.id} style={{ marginBottom: 64 }}>
             {/* 章标题 */}
             <div style={{
-              display: 'flex', alignItems: 'baseline', gap: 10,
-              paddingBottom: 14, marginBottom: 16,
+              display: 'flex', alignItems: 'center', gap: 10,
+              paddingBottom: 14, marginBottom: 20,
               borderBottom: `2px solid ${block.color}50`,
             }}>
               <span style={{
@@ -548,156 +807,202 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
               <span style={{ fontSize: 22, fontWeight: 800, color: block.color }}>
                 {chapterIcon} {block.label}
               </span>
+              {editorial && (
+                <span style={{
+                  fontSize: 13, color: '#6b7280', fontStyle: 'italic',
+                  marginLeft: 4,
+                }}>
+                  —— {editorial.analogy}
+                </span>
+              )}
             </div>
 
-            {/* 章描述 */}
-            <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.7, marginBottom: 24, marginLeft: 0 }}>
-              {block.desc}
-            </p>
+            {/* 左右布局：左 60% 内容 + 右 40% 配图 */}
+            <div style={{ display: 'flex', flexDirection: 'row', gap: 28, alignItems: 'flex-start' }}>
 
-            {/* 该章各模块 */}
-            {block.modules.map((mod, modIdx) => {
-              const subsystem = subsystems.find(s => s.id === mod.id);
-              const todayCount = subsystem?.metrics.today_count;
-              const status = subsystem?.status || 'dormant';
-              const sc = STATUS_COLORS[status];
-              const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
+              {/* 左侧：类比 + 职责 + 模块列表 */}
+              <div style={{ flex: '1 1 0', minWidth: 0 }}>
 
-              // 丘脑显示动作表，感知层显示信号列表，执行器显示技能表
-              const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
-              const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
-              const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
-
-              return (
-                <div key={mod.id} style={{
-                  marginBottom: 28,
-                  paddingLeft: 20,
-                  borderLeft: `3px solid ${block.color}30`,
-                  paddingBottom: 4,
-                }}>
-                  {/* 模块标题行 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <span style={{
-                      display: 'inline-block', width: 8, height: 8,
-                      borderRadius: '50%', background: sc, flexShrink: 0,
-                    }} />
-                    <span style={{ fontSize: 16, fontWeight: 700, color: '#e5e7eb' }}>
-                      {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
-                    </span>
-                    {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
-                    {todayCount !== null && todayCount !== undefined && (
-                      <span style={{
-                        marginLeft: 'auto', fontSize: 12, color: '#6b7280',
-                        fontFamily: 'monospace',
-                      }}>
-                        今日 {todayCount.toLocaleString()} 次
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 文件路径 */}
+                {/* 类比框 */}
+                {editorial && (
                   <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    fontFamily: 'monospace', fontSize: 11,
-                    color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
-                    padding: '3px 10px', borderRadius: 5,
-                    border: '1px solid rgba(96,165,250,0.15)',
-                    marginBottom: 10,
+                    background: `${block.color}0c`,
+                    border: `1px solid ${block.color}30`,
+                    borderLeft: `4px solid ${block.color}`,
+                    borderRadius: '0 8px 8px 0',
+                    padding: '10px 16px',
+                    marginBottom: 14,
                   }}>
-                    📄 src/{mod.file}
+                    <span style={{ color: block.color, fontWeight: 700, fontSize: 12 }}>
+                      类比
+                    </span>
+                    <span style={{ color: '#d1d5db', fontSize: 13, marginLeft: 10 }}>
+                      {editorial.analogy}
+                    </span>
                   </div>
+                )}
 
-                  {/* 模块描述 */}
-                  {mod.desc && (
-                    <p style={{
-                      color: '#9ca3af', fontSize: 12, lineHeight: 1.7,
-                      margin: '0 0 12px 0',
+                {/* 职责描述 */}
+                <p style={{ color: '#9ca3af', fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
+                  {editorial?.role || block.desc}
+                </p>
+
+                {/* 该章各模块 */}
+                {block.modules.map((mod, modIdx) => {
+                  const subsystem = subsystems.find(s => s.id === mod.id);
+                  const todayCount = subsystem?.metrics.today_count;
+                  const status = subsystem?.status || 'dormant';
+                  const sc = STATUS_COLORS[status];
+                  const natureBadge = mod.nature ? NATURE_BADGE[mod.nature] : '';
+                  const fullDesc = editorial?.modules[mod.id]?.full;
+
+                  // 丘脑显示动作表，感知层显示信号列表，执行器显示技能表
+                  const showActions = mod.id === 'thalamus' && Object.keys(allActions).length > 0;
+                  const showSignals = mod.id === 'perception_signals' && allSignals.length > 0;
+                  const showSkills = mod.id === 'executor' && Object.keys(allSkills).length > 0;
+
+                  return (
+                    <div key={mod.id} style={{
+                      marginBottom: 28,
+                      paddingLeft: 16,
+                      borderLeft: `3px solid ${block.color}30`,
+                      paddingBottom: 4,
                     }}>
-                      {mod.desc}
-                    </p>
-                  )}
-
-                  {/* 丘脑：动作白名单表 */}
-                  {showActions && (
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                        ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
-                      </div>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                        <thead>
-                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
-                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
-                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(allActions).map(([name, info]) => (
-                            <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>
-                                {name}
-                              </td>
-                              <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>
-                                {info.dangerous ? '⚠️ 是' : '—'}
-                              </td>
-                              <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-
-                  {/* 感知层：信号列表 */}
-                  {showSignals && (
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                        📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {allSignals.map(sig => (
-                          <span key={sig} style={{
-                            fontFamily: 'monospace', fontSize: 11,
-                            color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
-                            padding: '3px 8px', borderRadius: 4,
-                            border: '1px solid rgba(165,180,252,0.2)',
+                      {/* 模块标题行 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{
+                          display: 'inline-block', width: 8, height: 8,
+                          borderRadius: '50%', background: sc, flexShrink: 0,
+                        }} />
+                        <span style={{ fontSize: 15, fontWeight: 700, color: '#e5e7eb' }}>
+                          {chapterNum}.{modIdx + 1} &nbsp;{mod.label}
+                        </span>
+                        {natureBadge && <span style={{ fontSize: 14 }}>{natureBadge}</span>}
+                        {todayCount !== null && todayCount !== undefined && (
+                          <span style={{
+                            marginLeft: 'auto', fontSize: 12, color: '#6b7280',
+                            fontFamily: 'monospace',
                           }}>
-                            {sig}
+                            今日 {todayCount.toLocaleString()} 次
                           </span>
-                        ))}
+                        )}
                       </div>
-                    </div>
-                  )}
 
-                  {/* 执行器：技能映射表 */}
-                  {showSkills && (
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
-                        🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
+                      {/* 文件路径 */}
+                      <div style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        fontFamily: 'monospace', fontSize: 11,
+                        color: '#60a5fa', background: 'rgba(96,165,250,0.06)',
+                        padding: '3px 10px', borderRadius: 5,
+                        border: '1px solid rgba(96,165,250,0.15)',
+                        marginBottom: 10,
+                      }}>
+                        📄 src/{mod.file}
                       </div>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                        <thead>
-                          <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
-                            <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(allSkills).map(([taskType, skill]) => (
-                            <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
-                              <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
-                                {skill || '（无 skill，仅标记）'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+
+                      {/* 深度说明（优先用 editorial，fallback 到 manifest desc） */}
+                      <p style={{
+                        color: '#9ca3af', fontSize: 13, lineHeight: 1.8,
+                        margin: '0 0 12px 0',
+                      }}>
+                        {fullDesc || mod.desc}
+                      </p>
+
+                      {/* 丘脑：动作白名单表 */}
+                      {showActions && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                            ⚡ 动作白名单 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allActions).length} 条)</span>
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '30%' }}>动作名</th>
+                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '10%' }}>危险</th>
+                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>描述</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(allActions).map(([name, info]) => (
+                                <tr key={name} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: info.dangerous ? '#fca5a5' : '#a5f3fc' }}>
+                                    {name}
+                                  </td>
+                                  <td style={{ padding: '5px 10px', color: info.dangerous ? '#ef4444' : '#4b5563' }}>
+                                    {info.dangerous ? '⚠️ 是' : '—'}
+                                  </td>
+                                  <td style={{ padding: '5px 10px', color: '#9ca3af' }}>{info.description}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* 感知层：信号列表 */}
+                      {showSignals && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                            📡 信号列表 <span style={{ color: '#6b7280', fontWeight: 400 }}>({allSignals.length} 个)</span>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {allSignals.map(sig => (
+                              <span key={sig} style={{
+                                fontFamily: 'monospace', fontSize: 11,
+                                color: '#a5b4fc', background: 'rgba(165,180,252,0.08)',
+                                padding: '3px 8px', borderRadius: 4,
+                                border: '1px solid rgba(165,180,252,0.2)',
+                              }}>
+                                {sig}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 执行器：技能映射表 */}
+                      {showSkills && (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#d1d5db', marginBottom: 8 }}>
+                            🎯 技能映射 <span style={{ color: '#6b7280', fontWeight: 400 }}>({Object.keys(allSkills).length} 条)</span>
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500, width: '40%' }}>任务类型</th>
+                                <th style={{ textAlign: 'left', padding: '5px 10px', color: '#6b7280', fontWeight: 500 }}>Skill</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(allSkills).map(([taskType, skill]) => (
+                                <tr key={taskType} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#fcd34d' }}>{taskType}</td>
+                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: skill ? '#86efac' : '#4b5563' }}>
+                                    {skill || '（无 skill，仅标记）'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  );
+                })}
+              </div>
+
+              {/* 右侧：SVG 数据流配图 */}
+              <div style={{ flex: '0 0 280px', width: 280, paddingTop: 4 }}>
+                <div style={{
+                  fontSize: 11, color: '#4b5563', textAlign: 'center',
+                  marginBottom: 8, letterSpacing: '0.05em',
+                }}>
+                  数据流示意
                 </div>
-              );
-            })}
+                <ChapterDiagram blockId={block.id} color={block.color} />
+              </div>
+
+            </div>
           </div>
         );
       })}
