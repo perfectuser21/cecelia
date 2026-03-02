@@ -25,6 +25,7 @@ import pool from './src/db.js';
 import { initNarrativeTimer } from './src/cognitive-core.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
+import { loadSpendingCapsFromDB } from './src/account-usage.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
@@ -149,6 +150,9 @@ try {
 } catch (err) {
   console.warn('[Server] Failed to load model profile, using fallback:', err.message);
 }
+
+// Restore spending cap state from DB (survives Brain restarts)
+await loadSpendingCapsFromDB();
 
 // Realtime WebSocket server (noServer mode, manually handle upgrade)
 const realtimeWss = new WebSocketServer({ noServer: true });
