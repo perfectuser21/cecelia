@@ -9123,7 +9123,7 @@ async function getFeishuUserName(openId, accessToken) {
   );
   if (cached.rows[0]) {
     return {
-      name: cached.rows[0].name || openId,
+      name: cached.rows[0].name || '用户',
       user_id: cached.rows[0].user_id || 'guest',
       relationship: cached.rows[0].relationship || 'guest',
     };
@@ -9155,7 +9155,7 @@ async function getFeishuUserName(openId, accessToken) {
     console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
   }
 
-  return { name: name || openId, user_id, relationship };
+  return { name: name || '用户', user_id, relationship };
 }
 
 /** 语音消息转文字（飞书原生 ASR，支持 ≤60s） */
@@ -9331,7 +9331,7 @@ router.post('/feishu/event', async (req, res) => {
       if (chatType === 'group' && !isGroupMention) {
         console.log(`[feishu/group] 非@mention，LLM 决策... 发送者: ${senderName}，内容: ${text.slice(0, 60)}`);
         try {
-          const decisionPrompt = `你是群聊助手 Cecelia，正在监听飞书群聊。\n有人发了一条消息：\n发送者：${senderName}\n消息：${text}\n\n判断这条消息是否需要你（Cecelia）回复？\n判断标准：\n- 消息内容在问 Cecelia 或需要 Cecelia 介入、提供帮助 → 回复\n- 普通成员间的聊天、闲聊、不相关内容 → 不回复（静默）\n\n以 JSON 格式回复，不要有其他内容：\n{ "should_reply": true/false, "reply": "回复内容（should_reply=true时填写，否则空字符串）" }`;
+          const decisionPrompt = `你是飞书群聊机器人 Cecelia。群里有人发了一条消息，判断你是否需要回复。\n\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 倾向回复\n- 消息内容涉及 Cecelia 的能力、状态、工作 → 必须回复\n- 只是语气词（"哈哈"、"好"、"嗯"、"收到"）→ 不回复\n- 明显是成员间聊天、与 AI 无关 → 不回复\n- 不确定时 → 回复\n\n以纯 JSON 格式回复：\n{"should_reply":true,"reply":"回复内容"}\n或\n{"should_reply":false,"reply":""}`;
           const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
           let decision;
           try {
