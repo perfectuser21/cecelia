@@ -9327,9 +9327,18 @@ router.post('/feishu/event', async (req, res) => {
       // 获取用户信息（含 relationship）
       const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
 
-      // Mode A：群聊非 @mention 消息 → LLM 决策是否回复
+      // Mode A：群聊非 @mention 消息 → LLM 决策是否回复 + 写入 memory_stream
       if (chatType === 'group' && !isGroupMention) {
         console.log(`[feishu/group] 非@mention，LLM 决策... 发送者: ${senderName}，内容: ${text.slice(0, 60)}`);
+
+        // 无论是否回复，都记录到 memory_stream（以人为中心的统一记忆）
+        const groupMemoryContent = `[飞书群聊] ${senderName}: ${text}`;
+        pool.query(
+          `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
+           VALUES ($1, $2, 2, 'observation', 'feishu_group', NOW() + INTERVAL '7 days')`,
+          [groupMemoryContent, groupMemoryContent.slice(0, 100)]
+        ).catch(err => console.warn('[feishu/group] memory_stream 写入失败:', err.message));
+
         try {
           const decisionPrompt = `你是飞书群聊机器人 Cecelia。群里有人发了一条消息，判断你是否需要回复。\n\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 倾向回复\n- 消息内容涉及 Cecelia 的能力、状态、工作 → 必须回复\n- 只是语气词（"哈哈"、"好"、"嗯"、"收到"）→ 不回复\n- 明显是成员间聊天、与 AI 无关 → 不回复\n- 不确定时 → 回复\n\n以纯 JSON 格式回复：\n{"should_reply":true,"reply":"回复内容"}\n或\n{"should_reply":false,"reply":""}`;
           const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 300 });
@@ -9346,6 +9355,13 @@ router.post('/feishu/event', async (req, res) => {
           if (!decision.should_reply) return;
           await sendFeishuMessage(accessToken, message.chat_id, 'chat_id', decision.reply);
           console.log(`[feishu/group] Mode A 回复 ${senderName}：${String(decision.reply).slice(0, 60)}`);
+          // 回复也写入记忆，importance 升级
+          const replyMemContent = `[飞书群聊] Cecelia 回复 ${senderName}: ${decision.reply}`;
+          pool.query(
+            `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
+             VALUES ($1, $2, 4, 'observation', 'feishu_group', NOW() + INTERVAL '30 days')`,
+            [replyMemContent, replyMemContent.slice(0, 100)]
+          ).catch(err => console.warn('[feishu/group] memory_stream 回复写入失败:', err.message));
         } catch (err) {
           console.warn('[feishu/group] LLM 决策失败，静默:', err.message);
         }
