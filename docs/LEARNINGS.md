@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 飞书语音真正修复：切换 OpenAI Whisper (PR #266, Brain v1.144.1)
+
+**背景**: PR #262 将下载 URL 改为 `?type=audio` 后语音仍然失败（改成了 400 错误）。真正根因是飞书 App 未开通 `speech_to_text:speech` 权限（code 99991672），导致 Feishu 原生 ASR 一直 "Access denied"。
+
+- **飞书资源 API `type` 参数只有两个有效值**：`image` 和 `file`。音频文件下载必须用 `type=file`，不存在 `type=audio`。`type=audio` 会返回 400。
+- **先测试权限，再假设根因**：遇到"总是失败"问题，应先 `curl` 验证相关 API 的权限是否存在，而不是猜测 URL 参数。一行 curl 就能确认 ASR 权限缺失（code 99991672 = 无权限）。
+- **OpenAI Whisper 替代飞书 ASR 的优势**：不依赖飞书 App 权限配置，识别准确率更高；飞书音频是 Ogg/Opus 容器格式，Whisper 支持 `audio/ogg`，直接发送即可，无需格式转换。
+- **PR #262 的经验**：LEARNINGS 应在真正验证功能可用之后才写入，而不是在 CI 通过后就认为"已完成"。
+
 ### [2026-03-02] 飞书语音下载 URL fix + HK VPS CI 环境修复 (PR #262, Brain v1.143.5)
 
 **背景**: 飞书语音消息 Bot 发送语音后 Cecelia 一直返回「抱歉没听清楚」，根因是下载语音资源时用了 `?type=file`，正确应为 `?type=audio`。同时本 PR 修复了 HK VPS self-hosted runner 上 Brain CI 的三个基础设施问题。
