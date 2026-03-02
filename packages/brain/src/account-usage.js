@@ -28,7 +28,7 @@ const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 const _spendingCapMap = new Map();
 
 /**
- * 标记账号撞到 spending cap
+ * 标记账号撞到 spending cap（内存 + 持久化到 DB）
  * @param {string} accountId - 账号 ID（如 'account1'）
  * @param {string|null} resetTimeISO - cap 解除时间（ISO 8601），null 表示 2h 后
  */
@@ -36,6 +36,15 @@ export function markSpendingCap(accountId, resetTimeISO = null) {
   const resetTime = resetTimeISO || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
   _spendingCapMap.set(accountId, { resetTime, setAt: new Date().toISOString() });
   console.log(`[account-usage] markSpendingCap: ${accountId} capped until ${resetTime}`);
+  // 持久化到 DB（fire-and-forget，不阻塞调用方）
+  pool.query(
+    `INSERT INTO account_usage_cache (account_id, is_spending_capped, spending_cap_resets_at)
+     VALUES ($1, true, $2)
+     ON CONFLICT (account_id) DO UPDATE SET
+       is_spending_capped     = true,
+       spending_cap_resets_at = EXCLUDED.spending_cap_resets_at`,
+    [accountId, resetTime]
+  ).catch(err => console.warn(`[account-usage] markSpendingCap DB 写入失败: ${err.message}`));
 }
 
 /**
@@ -47,9 +56,41 @@ export function isSpendingCapped(accountId) {
   if (new Date(cap.resetTime) <= new Date()) {
     _spendingCapMap.delete(accountId);
     console.log(`[account-usage] ${accountId}: spending cap 已过期，自动解除`);
+    // 清除 DB 标记（fire-and-forget）
+    pool.query(
+      `UPDATE account_usage_cache SET is_spending_capped = false, spending_cap_resets_at = NULL
+       WHERE account_id = $1`,
+      [accountId]
+    ).catch(err => console.warn(`[account-usage] isSpendingCapped DB 清除失败: ${err.message}`));
     return false;
   }
   return true;
+}
+
+/**
+ * Brain 启动时从 DB 恢复 spending cap 状态
+ * 读取所有未过期的 spending cap 记录，恢复内存 Map
+ */
+export async function loadSpendingCapsFromDB() {
+  try {
+    const res = await pool.query(
+      `SELECT account_id, spending_cap_resets_at FROM account_usage_cache
+       WHERE is_spending_capped = true
+         AND spending_cap_resets_at > NOW()`
+    );
+    for (const row of res.rows) {
+      _spendingCapMap.set(row.account_id, {
+        resetTime: new Date(row.spending_cap_resets_at).toISOString(),
+        setAt: new Date().toISOString(),
+      });
+      console.log(`[account-usage] loadSpendingCapsFromDB: 恢复 ${row.account_id} capped until ${row.spending_cap_resets_at}`);
+    }
+    if (res.rows.length === 0) {
+      console.log('[account-usage] loadSpendingCapsFromDB: 无待恢复的 spending cap 记录');
+    }
+  } catch (err) {
+    console.warn(`[account-usage] loadSpendingCapsFromDB 失败: ${err.message}`);
+  }
 }
 
 /**
