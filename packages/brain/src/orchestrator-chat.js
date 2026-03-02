@@ -18,6 +18,7 @@ import { callLLM } from './llm-caller.js';
 import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 import { observeChat } from './thalamus.js';
+import { extractConversationLearning } from './learning.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -455,6 +456,11 @@ export async function handleChat(message, context = {}, messages = []) {
       extractAndSaveUserFacts(pool, 'owner', messages, reply)
     ).catch(() => {});
   }
+
+  // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
+  Promise.resolve().then(() =>
+    extractConversationLearning(message, reply, pool)
+  ).catch(() => {});
 
   return { reply };
 }

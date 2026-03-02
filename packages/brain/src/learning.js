@@ -15,6 +15,7 @@ import pool from './db.js';
 import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
+import { callLLM } from './llm-caller.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -597,6 +598,73 @@ export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
   } catch (err) {
     console.error(`[learning] Failed to evaluate strategy effectiveness: ${err.message}`);
     throw err;
+  }
+}
+
+/**
+ * P0-A：从深度对话中提取有价值的 learning（自我意识闭环）
+ *
+ * 仅在深度对话时触发（userMessage + reply 合计 > 400 字符）。
+ * 用轻量 LLM 判断是否有值得记住的洞察，有则写入 learnings 表供反刍消化。
+ *
+ * @param {string} userMessage - 用户消息
+ * @param {string} reply - Cecelia 的回复
+ * @param {import('pg').Pool} dbPool - 数据库连接池
+ */
+export async function extractConversationLearning(userMessage, reply, dbPool) {
+  const totalLength = (userMessage?.length || 0) + (reply?.length || 0);
+  if (totalLength < 400) return; // 短对话跳过，避免噪音
+
+  try {
+    const prompt = `你是 Cecelia，刚完成了一次对话。请判断这次对话中是否有值得记住的洞察。
+
+用户说：${(userMessage || '').slice(0, 500)}
+我的回复：${(reply || '').slice(0, 500)}
+
+判断标准（至少符合一条才算有 learning）：
+- 用户表达了明确的偏好、价值观或决策标准
+- 我们讨论了系统/架构的设计决策
+- 用户给了我直接的反馈（好或不好）
+- 出现了值得未来参考的洞察或原则
+
+如果有 learning，输出 JSON：{"has_learning": true, "title": "简短标题（<50字）", "content": "洞察内容（<200字）", "category": "conversation_insight"}
+如果没有 learning，输出：{"has_learning": false}
+严格输出 JSON，不要其他内容。`;
+
+    const { text } = await callLLM('thalamus', prompt, { maxTokens: 300, timeout: 15000 });
+    if (!text) return;
+
+    const jsonStr = text.match(/\{[\s\S]*\}/)?.[0];
+    if (!jsonStr) return;
+
+    const parsed = JSON.parse(jsonStr);
+    if (!parsed.has_learning || !parsed.title || !parsed.content) return;
+
+    // 去重检查
+    const hashInput = `${parsed.title}\n${parsed.content}`;
+    const contentHash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
+    const existing = await dbPool.query(
+      'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+      [contentHash]
+    );
+    if (existing.rows.length > 0) return;
+
+    const summary = generateL0Summary(`${parsed.title} ${parsed.content}`);
+    await dbPool.query(`
+      INSERT INTO learnings (title, content, summary, category, trigger_event, content_hash, version, is_latest, digested)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+    `, [
+      parsed.title,
+      parsed.content,
+      summary,
+      parsed.category || 'conversation_insight',
+      'conversation',
+      contentHash,
+    ]);
+
+    console.log(`[learning] conversation learning extracted: ${parsed.title}`);
+  } catch (err) {
+    console.warn('[learning] extractConversationLearning failed (non-blocking):', err.message);
   }
 }
 
