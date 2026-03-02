@@ -7808,6 +7808,27 @@ router.post('/account-usage/refresh', async (_req, res) => {
   }
 });
 
+// ==================== Account Best API ====================
+
+/**
+ * GET /api/brain/account/best
+ * 返回当前最优可用账号（供 cecelia-claude wrapper 和外部工具调用）
+ * 响应: { ok: true, account: "account2", model: "sonnet" }
+ *       { ok: true, account: null, model: "minimax" }  当所有账号不可用时
+ */
+router.get('/account/best', async (_req, res) => {
+  try {
+    const best = await selectBestAccount();
+    if (best) {
+      res.json({ ok: true, account: best.accountId, model: best.model });
+    } else {
+      res.json({ ok: true, account: null, model: 'minimax' });
+    }
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ==================== Credentials API ====================
 
 /**
