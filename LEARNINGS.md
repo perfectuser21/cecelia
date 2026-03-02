@@ -4,6 +4,27 @@
 
 ---
 
+### [2026-03-02] 飞书群聊 Mode A：全量监听 + LLM 决策回复 (v1.145.0)
+
+**变更**：
+- 移除群聊 @mention 门槛（删除 `if (!isGroupMention) return`）
+- 非 @mention 消息走 LLM 决策：`callLLM('mouth', decisionPrompt, {timeout:5000})`→ JSON `{should_reply, reply}`
+- should_reply=false → 静默；true → `sendFeishuMessage` 直接回复
+- @mention 消息继续走 `handleChat` orchestrator 完整流程
+
+**关键设计**：
+- LLM 决策超时 5 秒（群消息实时性要求不高）
+- 失败/JSON 解析错误 → 静默（catch 吞掉，不崩溃）
+- 决策在异步块里（`res.json({ ok: true })` 已先于 3s 返回）
+- 使用 `mouth` agent（轻量 Haiku，不用 Sonnet 浪费配额）
+
+**坑**：
+- Feishu `type=audio` 返回 400，必须用 `type=file`（PR #266 教训）
+- 飞书 App 需要 `im:message:readonly` 权限才能下载资源文件
+- 群聊收消息还需在飞书订阅 "获取群中所有消息" 事件
+
+---
+
 ### [2026-03-02] Spending Cap 账号级标记 + Sonnet→Opus→Haiku 降级链 (v1.144.2)
 
 **变更**：
