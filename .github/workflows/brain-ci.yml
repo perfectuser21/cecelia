@@ -169,12 +169,28 @@ jobs:
             echo "No brain changes detected, skipping checks"
             exit 0
           fi
+          FAILED=false
+
           if [ "${{ needs.brain-test.result }}" != "success" ]; then
-            echo "Brain Tests failed"
-            exit 1
+            echo "FAIL: Brain Tests (${{ needs.brain-test.result }})"
+            FAILED=true
           fi
+
           if [ "${{ needs.facts-check.result }}" != "success" ]; then
-            echo "Facts Consistency failed"
+            echo "FAIL: Facts Consistency (${{ needs.facts-check.result }})"
+            FAILED=true
+          fi
+
+          # version-check may be skipped on non-brain PRs
+          if [ "${{ needs.version-check.result }}" != "success" ] && [ "${{ needs.version-check.result }}" != "skipped" ]; then
+            echo "FAIL: Version Check (${{ needs.version-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "Brain CI Gate FAILED"
             exit 1
           fi
+
           echo "All Brain CI checks passed"

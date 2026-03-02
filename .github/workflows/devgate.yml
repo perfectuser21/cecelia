@@ -35,6 +35,7 @@ jobs:
 
   dod-check:
     name: DoD Verification Gate
+    needs: verify-dev-workflow
     runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     permissions:

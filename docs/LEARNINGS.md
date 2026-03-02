@@ -20,6 +20,29 @@
 - 改 `packages/engine/skills/**` 或 `packages/engine/hooks/**` 时，PR 标题加 `[CONFIG]` 前缀（无例外）
 - Engine patch 版本 bump 必须同步：`package.json`、`package-lock.json`、`VERSION`、`ci-tools/VERSION`、`.hook-core-version`、`regression-contract.yaml` 共 6 个文件（用 `bash scripts/check-version-sync.sh` 在 packages/engine 目录下验证）
 
+### [2026-03-02] CI 门禁漏洞修复：brain-ci version-check gate + devgate 串行化 (PR #301)
+
+**失败统计**：CI 失败 0 次，本地验证失败 0 次
+
+**核心踩坑：rebase 后 bash-guard 阻止 force push，正确解法是 GitHub API update-branch**
+
+问题链条：
+1. PR 创建后 main 有新 commit → PR "head branch not up to date"
+2. 直接 `git rebase origin/main` 成功，但 `git push --force-with-lease` 被 bash-guard 拦截（需交互确认，无头环境失败）
+3. `git reset --hard` 也被 bash-guard 阻止
+4. 正确解法：`gh api repos/OWNER/REPO/pulls/N/update-branch -X PUT`（GitHub 服务端 merge main into PR branch，不影响本地，不需要 force push）
+
+**结论**：
+- 遇到"head branch not up to date"时，**优先用 `gh api .../pulls/N/update-branch -X PUT`**，让 GitHub 服务端处理
+- 不要 rebase + force push（bash-guard 阻止，worktree 无头环境无法通过交互确认）
+- `gh pr merge --auto` 是另一个选项，但需要 PR 满足所有 required checks 才会自动触发
+
+**影响程度**：Low（最终一次通过，但 rebase 绕路耽误了时间）
+
+**预防措施**：
+- 创建 PR 后立即查看是否 up to date，如果不是，用 `update-branch` API 解决
+- 不要在 worktree 中使用 rebase + force push（bash-guard 会拦截）
+
 ### [2026-03-02] 丘脑 OWNER_INTENT 路由修复：删 L0 硬编码，改走 LLM /plan 路由 (PR #298, Brain v1.151.1)
 
 **背景**: v1.142.0 在 THALAMUS_PROMPT 融合了 /plan 路由规则，但 thalamus.js 存在一个 L0 hardcoded handler，OWNER_INTENT 事件被短路为固定的 `initiative_plan` 任务，丘脑 LLM 完全看不到用户消息。
