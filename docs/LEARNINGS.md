@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] 嘴巴搜索增强：goals/projects 加入 searchSemanticMemory (PR #288, Brain v1.150.0)
+
+**背景**: 用户和嘴巴对话时，记忆检索只覆盖 tasks/learnings/memory_stream，完全漏掉 goals（KR）和 projects（Initiative/Project），导致嘴巴找不到用户提到的 KR 或 Initiative。另外 observeChat 直接 INSERT tasks 没有调 generateTaskEmbeddingAsync，对话创建的 task 永远没有向量，自己也找不到自己。
+
+- **entity-linker.js 是孤岛**：`entity-linker.js` 虽然实现了 goals/projects 的关键字搜索，但只有自己的测试文件 import 它，主流程（memory-retriever/orchestrator-chat）从未用到。发现孤岛的方法：`grep -r "entity-linker" packages/brain/src/` 只命中 test 文件。
+- **Jaccard 搜索不需要向量**：goals/projects 表无 embedding 列，用 Jaccard tokenization（query tokens ∩ 内容 tokens / 并集）实现 fallback 搜索，与 tasks/capabilities 的向量搜索并联，graceful fallback 处理 DB 错误。
+- **observeChat RETURNING id 是修复 embedding 的关键**：原来的 INSERT 无 RETURNING，不知道 taskId，无法调 generateTaskEmbeddingAsync。修复只需两处：SQL 加 `RETURNING id`，INSERT 后取 `res.rows[0]?.id` 然后 fire-and-forget 调 embedding。
+- **MOUTH_SYSTEM_PROMPT 指令比代码更直接**：让嘴巴"先呈现结构化对象给用户再委托"不需要改任何路由逻辑，只需在 System Prompt 加清晰的指令段，说明什么时候呈现、怎么呈现。LLM 本来就擅长意图识别，无需额外分类器。
+- **版本并行冲突处理（MEMORY 已有但再次验证）**：rebase 产生冲突 → `git rebase --abort` → 从 origin/main 新建分支 → `git checkout <old-branch> -- <code-files>` → `npm version minor` → 正常 push。永远不 `git merge`（产生 merge commit，squash 失败）。
+
 ### [2026-03-02] 飞书群聊身份识别失败根因 + FEISHU_OWNER_OPEN_IDS 方案 (PR #286, Brain v1.149.3)
 
 **背景**: 飞书 app 没有 `im:chat:readonly` 和 `contact:user:readonly` 权限，两个身份查询 API 都返回 code=99991672。`getGroupMembers` 在 `data.code !== 0` 时静默返回 `[]`（无任何日志），feishu_users 表永远是 0 行，所有成员被识别为"访客"。
