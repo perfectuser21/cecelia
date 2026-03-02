@@ -9056,122 +9056,25 @@ router.get('/learnings/stats', async (req, res) => {
 
 /**
  * POST /api/brain/feishu/event
- * 飞书 Bot 事件接收端点（增强 v1）
+ * 飞书私信 Bot 事件接收端点
  *
  * 功能：
- * 1. Challenge 验证
- * 2. p2p 私信：滚动上下文 + 多用户识别 → 调用 Cecelia → 回复
- * 3. group 群聊：仅当 @mention Bot 时回复
+ * 1. Challenge 验证（飞书配置事件订阅 URL 时使用）
+ * 2. 接收 im.message.receive_v1 私信事件 → 调用 Cecelia → 回复用户
  *
- * 环境变量：FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_BOT_OPEN_ID（可选）
+ * 环境变量：FEISHU_APP_ID, FEISHU_APP_SECRET
  */
-
-/** 获取飞书 tenant_access_token（每次请求均获取，飞书 token 有效期2小时） */
-async function getFeishuToken() {
-  const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      app_id: process.env.FEISHU_APP_ID,
-      app_secret: process.env.FEISHU_APP_SECRET,
-    }),
-    signal: AbortSignal.timeout(6000),
-  });
-  const data = await resp.json();
-  if (data.code !== 0) throw new Error(`飞书 token 失败: ${data.msg}`);
-  return data.tenant_access_token;
-}
-
-/** 获取飞书用户名（带 DB 缓存，TTL 24小时） */
-async function getFeishuUserName(openId, accessToken) {
-  // 先查缓存
-  const cached = await pool.query(
-    `SELECT name, user_id FROM feishu_users WHERE open_id = $1 AND fetched_at > NOW() - INTERVAL '24 hours'`,
-    [openId]
-  );
-  if (cached.rows[0]) {
-    return { name: cached.rows[0].name || openId, user_id: cached.rows[0].user_id || 'guest' };
-  }
-
-  // 从飞书 API 获取用户信息
-  let name = null;
-  let user_id = 'guest';
-  try {
-    const resp = await fetch(
-      `https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`,
-      { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(5000) }
-    );
-    const data = await resp.json();
-    if (data.code === 0 && data.data?.user) {
-      name = data.data.user.name || null;
-      const en_name = data.data.user.en_name || null;
-      // 判断是否是 owner（Alex 徐啸）
-      if (name && (name.includes('徐啸') || (en_name && en_name.toLowerCase().includes('alex')))) {
-        user_id = 'owner';
-      }
-      // 写缓存
-      await pool.query(
-        `INSERT INTO feishu_users (open_id, name, en_name, user_id, fetched_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (open_id) DO UPDATE SET name=$2, en_name=$3, user_id=$4, fetched_at=NOW()`,
-        [openId, name, en_name, user_id]
-      );
-    }
-  } catch (err) {
-    console.warn(`[feishu/event] 获取用户名失败 ${openId}:`, err.message);
-  }
-
-  return { name: name || openId, user_id };
-}
-
-/** 加载该用户最近 N 轮对话（作为 messages[]） */
-async function getFeishuHistory(openId, rounds = 10) {
-  const res = await pool.query(
-    `SELECT role, content FROM feishu_conversations
-     WHERE open_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [openId, rounds * 2]
-  );
-  // 倒序返回（时间正序）
-  return res.rows.reverse().map(r => ({ role: r.role, content: r.content }));
-}
-
-/** 保存本轮对话到 feishu_conversations */
-async function saveFeishuConversation(openId, userText, assistantReply) {
-  await pool.query(
-    `INSERT INTO feishu_conversations (open_id, role, content) VALUES ($1, 'user', $2), ($1, 'assistant', $3)`,
-    [openId, userText, assistantReply]
-  );
-}
-
-/** 发送飞书消息 */
-async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
-  await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      receive_id: receiveId,
-      msg_type: 'text',
-      content: JSON.stringify({ text }),
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-}
-
 router.post('/feishu/event', async (req, res) => {
   const body = req.body;
 
-  // 1. Challenge 验证
+  // 1. Challenge 验证（飞书配置事件订阅 URL 时）
   if (body.challenge) {
     return res.json({ challenge: body.challenge });
   }
 
-  // 2. 只处理 im.message.receive_v1
-  if (body?.header?.event_type !== 'im.message.receive_v1') {
+  // 2. 只处理 im.message.receive_v1 事件
+  const eventType = body?.header?.event_type;
+  if (eventType !== 'im.message.receive_v1') {
     return res.json({ ok: true });
   }
 
@@ -9179,84 +9082,70 @@ router.post('/feishu/event', async (req, res) => {
   const message = msgEvent?.message;
   const sender = msgEvent?.sender;
 
-  if (!message) return res.json({ ok: true });
+  // DEBUG: 记录所有消息类型（临时，调试语音消息格式）
+  if (message) {
+    console.log(`[feishu/debug] type=${message.message_type} chat=${message.chat_type} content=${message.content?.slice(0, 300)}`);
+  }
 
-  const chatType = message.chat_type;   // 'p2p' 或 'group'
-  const msgType = message.message_type; // 'text', 'audio', ...
-
-  // 只处理文本消息
-  if (msgType !== 'text') return res.json({ ok: true });
-
-  // p2p 或 group（group 需要 @mention）
-  if (chatType !== 'p2p' && chatType !== 'group') return res.json({ ok: true });
-
-  const openId = sender?.sender_id?.open_id;
-  if (!openId) return res.json({ ok: true });
-
-  // 提取文本
-  let text;
-  try {
-    const contentObj = JSON.parse(message.content || '{}');
-    text = contentObj.text || '';
-  } catch {
+  // 只处理文本类型的私聊消息
+  if (!message || message.message_type !== 'text' || message.chat_type !== 'p2p') {
     return res.json({ ok: true });
   }
-  if (!text.trim()) return res.json({ ok: true });
 
-  // 群聊：检查是否被 @mention
-  let isGroupMention = false;
-  if (chatType === 'group') {
-    const mentions = message.mentions || [];
-    const botOpenId = process.env.FEISHU_BOT_OPEN_ID;
-    if (botOpenId) {
-      isGroupMention = mentions.some(m => m.id?.open_id === botOpenId);
-    } else {
-      // 没有配置 BOT_OPEN_ID，用名字匹配（兜底）
-      isGroupMention = mentions.some(m => m.name === 'Cecelia' || m.name === 'cecelia');
-    }
-    if (!isGroupMention) return res.json({ ok: true });
-
-    // 去除 @Cecelia 前缀（飞书格式：@_user_x 或 @名字）
-    text = text.replace(/@\S+\s*/g, '').trim();
-    if (!text) return res.json({ ok: true });
+  const openId = sender?.sender_id?.open_id;
+  if (!openId) {
+    return res.json({ ok: true });
   }
 
-  // 立即返回 200（飞书要求 3 秒内响应）
+  // 立即返回 200（飞书要求 3 秒内响应，否则会重试）
   res.json({ ok: true });
 
-  // 异步处理
+  // 异步处理：调用 Cecelia + 回复飞书
   (async () => {
     try {
-      const accessToken = await getFeishuToken();
+      // 提取消息文本
+      const contentStr = message.content || '{}';
+      const contentObj = JSON.parse(contentStr);
+      const text = contentObj.text || contentStr;
 
-      // 获取用户名
-      const { name: senderName, user_id: userId } = await getFeishuUserName(openId, accessToken);
-
-      // 加载对话历史（仅 p2p）
-      const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
+      if (!text.trim()) return;
 
       // 调用 Cecelia
-      const result = await handleChat(text, {
-        source: 'feishu',
-        sender_name: senderName,
-        user_id: userId,
-      }, messages);
+      const result = await handleChat(text, {}, []);
       const reply = result?.reply;
       if (!reply) return;
 
-      // 保存对话历史（仅 p2p）
-      if (chatType === 'p2p') {
-        saveFeishuConversation(openId, text, reply).catch(err =>
-          console.warn('[feishu/event] 保存历史失败:', err.message)
-        );
+      // 获取飞书 tenant_access_token
+      const tokenResp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_id: process.env.FEISHU_APP_ID,
+          app_secret: process.env.FEISHU_APP_SECRET,
+        }),
+      });
+      const tokenData = await tokenResp.json();
+      if (tokenData.code !== 0) {
+        console.error('[feishu/event] 获取 token 失败:', tokenData.msg);
+        return;
       }
+      const accessToken = tokenData.tenant_access_token;
 
-      // 发送回复
-      const receiveId = chatType === 'group' ? message.chat_id : openId;
-      const receiveIdType = chatType === 'group' ? 'chat_id' : 'open_id';
-      await sendFeishuMessage(accessToken, receiveId, receiveIdType, reply);
+      // 发送私信回复
+      await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          receive_id: openId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: reply }),
+        }),
+      });
 
-      console.log(`[feishu/event] 回复 ${senderName}(${chatType})：${reply.slice(0, 60)}...`);
+      console.log(`[feishu/event] 回复用户 ${openId}：${reply.slice(0, 50)}...`);
     } catch (err) {
       console.error('[feishu/event] 处理失败:', err.message);
     }

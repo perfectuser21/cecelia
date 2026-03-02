@@ -22,6 +22,9 @@ services:
       - /home/xx/.claude-account1:/home/cecelia/.claude-account1:ro
       - /home/xx/.claude-account2:/home/cecelia/.claude-account2:ro
       - /home/xx/.claude-account3:/home/cecelia/.claude-account3:ro
+      - /home/xx/.claude-account1:/home/xx/.claude-account1:ro
+      - /home/xx/.claude-account2:/home/xx/.claude-account2:ro
+      - /home/xx/.claude-account3:/home/xx/.claude-account3:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /home/xx/perfect21/cecelia/packages/workflows:/home/xx/perfect21/cecelia/packages/workflows:ro
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
@@ -51,6 +54,7 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      - CLAUDE_ACCOUNTS_BASE=/home/xx
       - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
