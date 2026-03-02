@@ -1,5 +1,37 @@
 # Cecelia Core Learnings
 
+### [2026-03-02] Billing Cap 级联失败两个 Bug（PR #310, Brain v1.155.1）
+
+**失败统计**：CI 失败 0 次，本地测试全部通过
+
+**问题描述**：
+Anthropic CLI 返回 `"Spending cap reached resets Mar 6, 3pm"` 时，Brain 产生两个 bug 导致 KR1=0%（initiative_plan 连续失败 11 次，无法创建 dev 任务）：
+
+**Bug 1：parseResetTime 无法解析 "Mar 6, 3pm" 日期格式**
+- 根本原因：`quarantine.js` 的 `parseResetTime` 只有两个 Pattern：`resets Hpm`（时间） 和 `resets in N hours`（相对时间），无法处理 `resets Mar 6, 3pm`（月+日+时间）格式。
+- 结果：fallback 到默认 2 小时重试，而不是到 3月6日15:00；spending cap 每 2 小时触发一次，循环 11 次。
+- 修复：在 Pattern 1 之前加 Pattern 3（优先级最高），用正则 `/resets?\s+(jan|feb|...)\s+(\d{1,2})[,\s]+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i` 解析月+日+时间格式。
+- 预防：每次遇到新的错误消息格式，先用 `node -e "require('./quarantine.js').parseResetTime('...')` 验证是否能正确解析，若返回 2 小时则说明 pattern 没匹配到。
+
+**Bug 2：executor 硬编码账号不检查 spending cap**
+- 根本原因：`executor.js` 的 `getCredentialsForTask()` 从 model profile 读取固定账号（如 `account3`），直接注入 `CECELIA_CREDENTIALS` 而不调用 `isSpendingCapped()`；`selectBestAccount()` 有 spending cap 感知但被绕过了。
+- 结果：initiative_plan 始终被派发到 account3（已 spending-capped），每次立即失败。
+- 修复：在使用 profile 固定账号前，先调用 `isSpendingCapped(credentials)` 检查；若已 cap，则清空固定账号、让后续逻辑走 `selectBestAccount()`。
+- 预防：任何向 `extraEnv.CECELIA_CREDENTIALS` 写入账号的路径，都必须先经过 spending cap 检查。凡是 "profile 固定账号" 概念，都是潜在的 spending cap 盲区。
+
+**诊断方法**：
+- 查看 cecelia-run 日志：`grep "CECELIA_CREDENTIALS" /tmp/cecelia-<task_id>.log` 确认注入了哪个账号
+- 查看账号 billing 状态：`curl -s localhost:5221/api/brain/status/full | jq '.accounts'`
+- 查看 billing_pause：`curl -s localhost:5221/api/brain/status/full | jq '.billingPause'`
+
+**影响程度**: High（initiative_plan 连续失败 11 次，KR1=0%）
+
+**预防措施**：
+- 写新的 pattern 前，先在命令行验证 `parseResetTime()` 是否正确解析真实错误消息
+- 任何绕过 `selectBestAccount()` 的路径，加 spending cap 检查
+
+---
+
 ### [2026-03-02] 修复 CI/CD 部署集成缺口（cleanup.sh + brain-deploy.sh）(PR #302, Engine v12.35.9)
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
