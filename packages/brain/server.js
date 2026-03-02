@@ -14,6 +14,7 @@ import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
 import narrativesRoutes from './src/routes/narratives.js';
 import cognitiveMapRoutes from './src/routes/cognitive-map.js';
+import brainManifestRoutes from './src/routes/brain-manifest.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -86,6 +87,7 @@ app.use('/api/brain/intent', intentMatchRoutes);
 app.use('/api/brain/self-reports', selfReportsRoutes);
 app.use('/api/brain/narratives', narrativesRoutes);
 app.use('/api/brain/cognitive-map', cognitiveMapRoutes);
+app.use('/api/brain/manifest', brainManifestRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
