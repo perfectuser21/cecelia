@@ -263,6 +263,22 @@ ${insight.trim().slice(0, 800)}
         console.warn('[rumination] thalamus routing failed (DB writes already done as fallback):', routeErr.message);
       }
     }
+
+    // 8. P0-C：反刍洞察直接触发欲望形成（不等 accumulator）
+    if (insights.length > 0 && insights[0]) {
+      const mainInsight = insights[0];
+      Promise.resolve().then(async () => {
+        try {
+          const { runDesireFormation } = await import('./desire/desire-formation.js');
+          const result = await runDesireFormation(db, mainInsight);
+          if (result.created) {
+            console.log(`[rumination] desire created from insight: ${result.desire_id}`);
+          }
+        } catch (desireErr) {
+          console.warn('[rumination] desire formation from rumination failed (non-blocking):', desireErr.message);
+        }
+      }).catch(() => {});
+    }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);
   }
