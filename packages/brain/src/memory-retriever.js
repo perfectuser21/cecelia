@@ -111,7 +111,12 @@ export function computeTopicDepth(query, conversationEntries) {
   let matchCount = 0;
 
   for (const entry of recent) {
-    const entryText = entry.text || `${entry.title || ''} ${entry.description || ''}`;
+    // 只比对用户消息部分（entry.title 是 "[对话] userMsg前60字"，去掉前缀）
+    // 不含 Cecelia 回复，避免回复文本撑大 union 导致 Jaccard 偏低
+    const userPart = entry.title
+      ? entry.title.replace(/^\[对话\]\s*/, '')
+      : (entry.text || '').split('\nCecelia:')[0].replace(/^Alex:\s*/, '');
+    const entryText = userPart || `${entry.title || ''} ${entry.description || ''}`;
     const entryTokens = new Set(tokenize(entryText));
     if (entryTokens.size === 0) continue;
 
@@ -333,10 +338,21 @@ export function jaccardSimilarity(textA, textB) {
  */
 function tokenize(text) {
   if (!text) return [];
-  return text.toLowerCase()
-    .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 1);
+  const cleaned = text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+  const tokens = [];
+  // 英文/数字：按空格切分，过滤长度 > 1
+  for (const word of cleaned.split(/\s+/)) {
+    if (!word) continue;
+    if (/[\u4e00-\u9fa5]/.test(word)) {
+      // 中文：逐字符切分（避免整段变一个大 token 导致 Jaccard 退化）
+      for (const ch of word) {
+        if (/[\u4e00-\u9fa5]/.test(ch)) tokens.push(ch);
+      }
+    } else if (word.length > 1) {
+      tokens.push(word);
+    }
+  }
+  return tokens;
 }
 
 /**
