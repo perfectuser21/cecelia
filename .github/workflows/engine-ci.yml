@@ -276,6 +276,8 @@ jobs:
           !startsWith(github.event.pull_request.title, 'test:') &&
           !startsWith(github.event.pull_request.title, 'release:')
         working-directory: packages/engine
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate checks"
@@ -316,7 +318,6 @@ jobs:
           if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
             echo ""
             echo "  [P0/P1 RCI update check]"
-            export PR_TITLE="${{ github.event.pull_request.title }}"
             export BASE_REF="origin/${{ github.base_ref || 'main' }}"
             bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
           fi
@@ -354,6 +355,8 @@ jobs:
           fetch-depth: 0
 
       - name: Check known-failures.json modification
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Known-Failures Protection (P0)"
@@ -366,7 +369,6 @@ jobs:
             echo "detected: $KF_PATH was modified"
             echo ""
 
-            PR_TITLE="${{ github.event.pull_request.title }}"
             if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "known-failures.json modified but PR title missing [INFRA] tag"
               echo ""
@@ -486,6 +488,8 @@ jobs:
           fetch-depth: 0
 
       - name: Check critical config modifications
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Config Audit (P1)"
@@ -517,7 +521,6 @@ jobs:
             done
             echo ""
 
-            PR_TITLE="${{ github.event.pull_request.title }}"
             if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "PR title must contain [CONFIG] or [INFRA] tag"
               echo "Suggested: [CONFIG] $PR_TITLE"
