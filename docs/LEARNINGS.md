@@ -8,6 +8,15 @@
 - **invoke_skill 是遗留噪音**：v1.142.0 加入 ACTION_WHITELIST 但从未有对应 handler，decision-executor.js 遇到时静默 push 到 actions_failed 然后 continue。清理原则：whitelist 里的每个 action 必须有对应 handler，否则是 bug。
 - **路由表 action 类型要对应真实 handler**：THALAMUS_PROMPT 路由表写 `invoke_skill` → LLM 可能输出该 action → 无 handler → 静默失败。改成 `create_task + task_type` 后 LLM 输出的 action 有真实 handler 能执行。
 - **将来扩展路由只需改 THALAMUS_PROMPT**：路由规则完全在 prompt 里，不需要改任何执行层代码，只需在路由表加行即可。
+### [2026-03-02] 对话深度驱动记忆下钻 — L0→L1→全文 + 嘴巴主动关联叙述 (PR #295, Brain v1.152.0)
+
+**背景**: 记忆系统有三层结构（L0/L1/全文），但每轮对话都返回相同粒度。嘴巴找到相关记忆后习惯问"是这个吗"。目标是实现对话深度感知的分层返回，以及主动关联叙述。
+
+- **`tokenize` 返回数组，不是 Set**：`computeTopicDepth` 里用 `entryTokens.has(t)` 直接报错 `is not a function`。修复：`new Set(tokenize(text))`。写 Jaccard 时一定要 `new Set()` 包装再用 `.has()`。
+- **stash + rebase 后必须立即 stash pop**：`git rebase` 前 stash 保存改动，rebase 后要立即 pop，切换分支前更要 pop，否则改动消失（测试会重新回到修复前状态）。
+- **depth 计算位置：并行加载完成后，不要在 searchSemanticMemory 内部**：enrichment 需要 conversationResults（用于 computeTopicDepth），而 conversationResults 是和 semanticResults 并行加载的。正确位置是 `Promise.all([...])` 完成后。
+- **goals/projects 没有 l1_content 字段**：不同于 learnings/memory_stream，只能靠 description 截断 + 批量 enrichment（task_count/parent_kr_title）实现 L1 层感觉。depth=2 的"全文"用完整 description（不截断）。
+- **MOUTH_SYSTEM_PROMPT 指令比路由更直接**：主动关联叙述 vs "是这个吗"的切换，只需改 system prompt 里的规则，不需要任何代码分支，LLM 会自然按指令执行。
 
 ### [2026-03-02] 嘴巴搜索增强：goals/projects 加入 searchSemanticMemory (PR #288, Brain v1.150.0)
 
