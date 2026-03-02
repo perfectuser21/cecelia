@@ -30,6 +30,9 @@ export const HALF_LIFE = {
   conversation: 7,
   okr: Infinity,
   capability: Infinity,
+  kr: Infinity,
+  initiative: 180,
+  project: Infinity,
 };
 
 /** 各模式下各数据源的权重 */
@@ -40,6 +43,9 @@ export const MODE_WEIGHT = {
   conversation: { plan: 0.3, execute: 0.3, debug: 0.3, chat: 1.5 },
   okr:          { plan: 1.5, execute: 0.5, debug: 0.3, chat: 1.0 },
   capability:   { plan: 1.0, execute: 0.8, debug: 0.5, chat: 0.5 },
+  kr:           { plan: 1.5, execute: 0.8, debug: 0.3, chat: 1.2 },
+  initiative:   { plan: 1.2, execute: 1.5, debug: 0.5, chat: 1.3 },
+  project:      { plan: 1.3, execute: 0.6, debug: 0.3, chat: 1.0 },
 };
 
 /** 默认 token 预算 */
@@ -57,6 +63,9 @@ export const SOURCE_QUOTA = {
   conversation: { max: 4 },
   task:         { min: 2 },
   learning:     { min: 2 },
+  kr:           { max: 3 },
+  initiative:   { max: 3 },
+  project:      { max: 2 },
 };
 
 /**
@@ -65,7 +74,7 @@ export const SOURCE_QUOTA = {
  */
 export const INTENT_WEIGHT_MULTIPLIER = {
   task_focused: {
-    task: 1.5, okr: 1.5, conversation: 0.6,
+    task: 1.5, okr: 1.5, kr: 1.5, initiative: 1.5, project: 1.2, conversation: 0.6,
   },
   emotion_focused: {
     conversation: 1.5, learning: 1.2, task: 0.6,
@@ -320,11 +329,16 @@ function formatItem(item) {
     learning: '经验',
     event: '事件',
     capability: '能力',
+    kr: 'KR目标',
+    initiative: 'Initiative',
+    project: '项目容器',
+    okr: 'OKR',
   };
   const label = sourceLabel[item.source] || item.source;
   const title = (item.title || '').slice(0, 80);
+  const statusHint = item.status ? ` (${item.status})` : '';
   const preview = (item.description || item.text || '').slice(0, 120);
-  return `- [${label}] **${title}**: ${preview}`;
+  return `- [${label}] **${title}**${statusHint}: ${preview}`;
 }
 
 // ============================================================
@@ -389,6 +403,84 @@ async function searchSemanticMemory(pool, query, mode) {
     meta.fetchedCount += learnings.length;
   } catch (err) {
     console.warn('[memory-retriever] Learnings search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  // 3. 搜索 goals（KR/OKR）— Jaccard 关键词匹配
+  try {
+    const queryTokens = new Set(
+      query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
+    );
+    if (queryTokens.size > 0) {
+      const goalResults = await pool.query(
+        `SELECT id, title, description, type, status, created_at
+         FROM goals
+         WHERE status NOT IN ('completed', 'cancelled')
+         ORDER BY created_at DESC
+         LIMIT 30`
+      );
+      for (const g of goalResults.rows) {
+        const text = `${g.title || ''} ${g.description || ''}`.toLowerCase()
+          .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+        const textTokens = new Set(text.split(/\s+/).filter(t => t.length > 1));
+        const intersection = [...queryTokens].filter(t => textTokens.has(t)).length;
+        if (intersection > 0) {
+          const union = new Set([...queryTokens, ...textTokens]).size;
+          candidates.push({
+            id: g.id,
+            source: (g.type === 'kr' || g.type === 'area_okr') ? 'kr' : 'okr',
+            title: g.title || '',
+            description: (g.description || '').slice(0, 300),
+            text: `${g.title || ''} ${g.description || ''}`,
+            relevance: intersection / union,
+            created_at: g.created_at || null,
+            status: g.status,
+          });
+        }
+      }
+      meta.fetchedCount += goalResults.rows.length;
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Goals search failed (graceful fallback):', err.message);
+    if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
+  }
+
+  // 4. 搜索 projects（Project/Initiative）— Jaccard 关键词匹配
+  try {
+    const queryTokens = new Set(
+      query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
+    );
+    if (queryTokens.size > 0) {
+      const projectResults = await pool.query(
+        `SELECT id, name, description, type, created_at
+         FROM projects
+         WHERE type IN ('project', 'initiative')
+         ORDER BY created_at DESC
+         LIMIT 30`
+      );
+      for (const p of projectResults.rows) {
+        const text = `${p.name || ''} ${p.description || ''}`.toLowerCase()
+          .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+        const textTokens = new Set(text.split(/\s+/).filter(t => t.length > 1));
+        const intersection = [...queryTokens].filter(t => textTokens.has(t)).length;
+        if (intersection > 0) {
+          const union = new Set([...queryTokens, ...textTokens]).size;
+          candidates.push({
+            id: p.id,
+            source: p.type === 'initiative' ? 'initiative' : 'project',
+            title: p.name || '',
+            description: (p.description || '').slice(0, 300),
+            text: `${p.name || ''} ${p.description || ''}`,
+            relevance: intersection / union,
+            created_at: p.created_at || null,
+            status: null,
+          });
+        }
+      }
+      meta.fetchedCount += projectResults.rows.length;
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Projects search failed (graceful fallback):', err.message);
     if (meta.fetchStatus === 'ok') meta.fetchStatus = _classifyError(err);
   }
 
