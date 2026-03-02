@@ -921,3 +921,18 @@ vitest 4.x 的区别：root vitest=1.6.1（能通过），dashboard vitest=4.0.1
 - monorepo 中不同 app 依赖不兼容的 React 主版本时，共享依赖（react-router）会加载不同 React，vitest 无法通过 resolve.dedupe 修复（只对 Vite 处理的 ESM 生效，不影响 CJS require）
 - vi.mock 是最可靠的隔离方案，同时也强制测试聚焦于被测行为而非基础设施
 - worktree 使用父目录的 node_modules，版本可能与目标 workspace 不同，本地验证时需确认用的是正确的 node_modules
+
+## 认知地图 v4 — 脑科诊断仪表盘（PR #283，2026-03-02）
+
+**场景**：从"好看但没用"的架构图升级为真正可诊断的脑科仪表盘
+
+**关键实现**：
+- `brain-manifest.js` 统一是模块元数据的 SSOT：`nature`（dynamic/growing/fixed）、`issues`（P0/P1 问题列表）、`brokenConnections` 三个新字段直接驱动前端可视化，前端无硬编码
+- `GET /api/brain/perception-signals`：直接调用 `runPerception(pool)` 实时返回 16 个信号值，降级设计（catch 后返回空值列表）避免阻断前端
+- 感知层专用 `SignalPanel`：点击感知层块才触发 fetch（lazy），每 30s 刷新一次，不影响主轮询（5s）性能
+- `suggestion→planner` 断路：通过 `brokenConnections` 数组 + 前端 `brokenSet` 集合匹配，在 Level 2 渲染红色虚线，与主流连接共存
+- 全屏模式：`position: fixed; inset: 0; z-index: 9999` 最简实现，ESC 通过 `window.addEventListener('keydown')` 监听
+
+**踩坑**：
+- `git stash` 确认预存在测试失败（端口 5221 占用）后必须 `git stash pop` 恢复改动
+- merge main 后 `package-lock.json` 会有轻微变化，需要单独 commit
