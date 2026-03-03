@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] consolidation.js 两个查询 bug（PR #341, Brain v1.163.3）
+
+**Bug 1: tasks 表无 failed_at 字段**：`gatherTodayData` 里查 tasks 用了 `COALESCE(completed_at, failed_at)`，但 tasks 表只有 `completed_at` 和 `updated_at`，没有 `failed_at`。执行时报 `column "failed_at" does not exist`。修复：改为 `COALESCE(completed_at, updated_at)`，失败任务通过 `status = 'failed' AND updated_at >= $1::date` 过滤。
+
+**Bug 2: memory_stream source_type 过滤遗漏主力数据**：原始过滤列表 `'chat', 'task_reflection', 'conversation_insight', 'failure_record', 'user_fact'` 全都不存在于生产数据库。实际每天有 `feishu_chat`（130条）、`orchestrator_chat`（38条）、`narrative`（情绪叙事），导致 memories 永远为 0，consolidation 每次认为"今日无活动"直接跳过。
+
+**教训**：写 source_type 过滤列表前必须先查数据库：`SELECT DISTINCT source_type FROM memory_stream ORDER BY 1`。想当然写过滤条件是隐形 bug——代码能跑，但逻辑上永远 empty。
+
+**版本冲突解法（第 N 次）**：并行 PR 导致 main 抢先合并同版本（PR #339 也用了 1.163.2）→ 用标准三步：新建分支 from origin/main → checkout 代码文件（不含版本文件）→ npm version patch 再 bump，正常 push，不触发 bash-guard force push 限制。
+
 ### [2026-03-03] migration 约束遗漏旧状态值（PR #337, Brain v1.163.1）
 
 **根本原因**：migration 103 重建 desires_status_check 约束时，只考虑了"我们需要加的新状态"（completed/failed），没有先查数据库里实际存在哪些状态值。数据库中有 `expressed`（941行）和 `acknowledged`（1行）是历史状态，约束里漏了它们，migration 一执行就直接失败，Brain 无法启动。
