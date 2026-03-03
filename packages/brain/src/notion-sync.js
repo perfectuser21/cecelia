@@ -232,12 +232,12 @@ async function resolveAreaId(client, areaName) {
   );
   if (rows.length > 0) return rows[0].id;
 
-  // area 不存在时创建
+  // area 不存在时创建（areas 表无 description 列，仅插入 name）
   const ins = await client.query(
-    `INSERT INTO areas (name, description, created_at, updated_at)
-     VALUES ($1, $2, NOW(), NOW())
+    `INSERT INTO areas (name, created_at, updated_at)
+     VALUES ($1, NOW(), NOW())
      RETURNING id`,
-    [areaName, `由 Notion 同步自动创建（${new Date().toISOString().slice(0, 10)}）`]
+    [areaName]
   );
   return ins.rows[0].id;
 }
