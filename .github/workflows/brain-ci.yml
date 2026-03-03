@@ -19,7 +19,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-brain PRs
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
