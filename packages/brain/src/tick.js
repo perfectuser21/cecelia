@@ -33,6 +33,7 @@ import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
+import { checkReportSchedule } from './report-scheduler.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1995,6 +1996,17 @@ async function executeTick() {
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
+  // 10.13 48h 系统简报定时检查（每次 tick 调用，内部判断是否需要生成）
+  let reportScheduleResult = null;
+  try {
+    reportScheduleResult = await checkReportSchedule(pool);
+    if (reportScheduleResult && !reportScheduleResult.skipped) {
+      console.log(`[tick] 系统简报生成完成: report_id=${reportScheduleResult.report_id}, notion_pushed=${reportScheduleResult.notion_pushed}`);
+    }
+  } catch (reportErr) {
+    console.warn('[tick] 简报调度失败（non-critical）:', reportErr.message);
+  }
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
@@ -2052,6 +2064,7 @@ async function executeTick() {
     daily_review: dailyReviewResult,
     rumination: ruminationResult,
     desire_system: desireResult,
+    report_schedule: reportScheduleResult,
     cognition: cognitionSnapshot,
     actions_taken: actionsTaken,
     summary: {

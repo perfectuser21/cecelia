@@ -788,6 +788,21 @@ async function performRCA(failedTask, history = []) {
 }
 
 // ============================================================
+// System Brief Generation (via report-scheduler)
+// ============================================================
+
+/**
+ * 生成系统简报（委托给 report-scheduler 模块）
+ * 提供给外部调用者的 Cortex 接口，实际逻辑在 report-scheduler.js 中
+ * @param {import('pg').Pool} [dbPool]
+ * @returns {Promise<Object>}
+ */
+async function generateSystemBrief(dbPool) {
+  const { checkReportSchedule } = await import('./report-scheduler.js');
+  return checkReportSchedule(dbPool);
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -809,6 +824,9 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // System Brief
+  generateSystemBrief,
 
   // 常量
   CORTEX_ACTION_WHITELIST,
