@@ -15,7 +15,7 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.16.0"
+version: 12.35.10
 updated: "2026-03-02"
 changelog:
   - "3.16.0: v12.35.9 - 修复 CI/CD 部署集成缺口（cleanup.sh 捕获 CHANGED_FILES 并调用 deploy-local.sh；brain-deploy.sh docker compose 失败回滚；.brain-versions 去重写入）"
