@@ -597,9 +597,10 @@ describe('D10: Reflection 去重机制', () => {
     const { callLLM } = await import('../llm-caller.js');
     const { runReflection } = await import('../desire/reflection.js');
 
-    // Mock LLM 返回新洞察
+    // Mock LLM 返回新洞察（使用空格分隔词确保 Jaccard 分词有效）
+    // 注：Jaccard 按空格分词，中文无空格整句为单 token，相似度永远=0
     callLLM.mockResolvedValue({
-      text: '反思循环已成为执行瓶颈。我将立即实施三层止血',
+      text: 'reflection loop bottleneck execute three layer solution implement',
       model: 'test',
       provider: 'test',
       elapsed_ms: 10
@@ -608,13 +609,15 @@ describe('D10: Reflection 去重机制', () => {
     let accumulatorResetCount = 0;
     const mockPool = {
       query: vi.fn().mockImplementation((sql, params) => {
-        // 返回 accumulator 值
+        // 读取 accumulator：SQL 字面包含 key 名（单引号字符串）
         if (sql.includes('desire_importance_accumulator')) {
-          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
-            accumulatorResetCount++;
-            return { rows: [] };
-          }
           return { rows: [{ value_json: 15 }] };
+        }
+
+        // 写入 accumulator：参数化查询，key 在 params[0]（SQL 本身不含 key 名）
+        if (sql.includes('INSERT INTO working_memory') && params && params[0] === 'desire_importance_accumulator') {
+          accumulatorResetCount++;
+          return { rows: [] };
         }
 
         // 返回最近 50 条记忆（reflection 的第一步）
@@ -628,10 +631,11 @@ describe('D10: Reflection 去重机制', () => {
         }
 
         // 返回最近的 memory_stream（包含相似洞察）- 去重查询
+        // 使用英文空格分词确保 Jaccard 相似度计算有意义（7/9 ≈ 0.78 > 0.75）
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
             rows: [
-              { content: '[反思洞察] 反思循环已成为执行瓶颈。建议实施三层止血方案' },
+              { content: '[反思洞察] reflection loop bottleneck execute three layer solution suggest' },
               { content: '[反思洞察] 其他不相关的洞察内容 ABCDEFG HIJKLMN' }
             ]
           };
