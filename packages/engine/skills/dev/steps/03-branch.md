@@ -152,8 +152,9 @@ else
     PRD_FILE=".prd.md"
 fi
 
-# ===== 创建 .dev-lock（硬钥匙，必须成功）=====
-echo "🔒 创建 .dev-lock..."
+# ===== 创建 .dev-lock.<branch>（硬钥匙，必须成功）=====
+# v12.36.0: per-branch 文件命名，多 Terminal 并行不串线
+echo "🔒 创建 .dev-lock.${BRANCH_NAME}..."
 
 # 原子写入：先写临时文件，再 mv（防止竞态）
 DEV_LOCK_TMP="$(mktemp .dev-lock.XXXXXX)"
@@ -161,16 +162,17 @@ DEV_LOCK_TMP="$(mktemp .dev-lock.XXXXXX)"
   echo "dev_lock"
   echo "branch: $BRANCH_NAME"
   echo "session_id: ${SESSION_ID}"
+  echo "tty: $CURRENT_TTY"
   echo "created_at: $(date -Iseconds)"
 } > "$DEV_LOCK_TMP"
 
-# 原子移动（覆盖旧文件，即使 git 中存在也能成功）
-mv -f "$DEV_LOCK_TMP" .dev-lock
+# 原子移动：写 per-branch 格式（.dev-lock.<branch>）
+mv -f "$DEV_LOCK_TMP" ".dev-lock.${BRANCH_NAME}"
 
-if [[ -f .dev-lock ]]; then
-    echo "✅ .dev-lock 创建成功（硬钥匙已设置）"
+if [[ -f ".dev-lock.${BRANCH_NAME}" ]]; then
+    echo "✅ .dev-lock.${BRANCH_NAME} 创建成功（硬钥匙已设置）"
 else
-    echo "❌ .dev-lock 创建失败，无法继续" >&2
+    echo "❌ .dev-lock.${BRANCH_NAME} 创建失败，无法继续" >&2
     exit 1
 fi
 
@@ -183,16 +185,16 @@ SENTINEL_TMP="$(mktemp .dev-sentinel.XXXXXX)"
   echo "branch: $BRANCH_NAME"
   echo "started: $(date -Iseconds)"
 } > "$SENTINEL_TMP"
-mv -f "$SENTINEL_TMP" .dev-sentinel
+mv -f "$SENTINEL_TMP" ".dev-sentinel.${BRANCH_NAME}"
 
-if [[ -f .dev-sentinel ]]; then
+if [[ -f ".dev-sentinel.${BRANCH_NAME}" ]]; then
     echo "✅ Sentinel 创建成功（三重保险）"
 else
     echo "⚠️  Sentinel 创建失败，但可以继续" >&2
 fi
 
-# ===== 创建 .dev-mode（软状态，允许失败）=====
-echo "📝 创建 .dev-mode..."
+# ===== 创建 .dev-mode.<branch>（软状态，允许失败）=====
+echo "📝 创建 .dev-mode.${BRANCH_NAME}..."
 
 # 原子写入（同样方式）
 DEV_MODE_TMP="$(mktemp .dev-mode.XXXXXX)"
@@ -221,20 +223,20 @@ DEV_MODE_TMP="$(mktemp .dev-mode.XXXXXX)"
   fi
 } > "$DEV_MODE_TMP"
 
-mv -f "$DEV_MODE_TMP" .dev-mode
+mv -f "$DEV_MODE_TMP" ".dev-mode.${BRANCH_NAME}"
 
-if [[ -f .dev-mode ]]; then
-    echo "✅ .dev-mode 创建成功（软状态已设置）"
+if [[ -f ".dev-mode.${BRANCH_NAME}" ]]; then
+    echo "✅ .dev-mode.${BRANCH_NAME} 创建成功（软状态已设置）"
 else
-    echo "⚠️  .dev-mode 创建失败，但 .dev-lock 已设置，可以继续" >&2
+    echo "⚠️  .dev-mode.${BRANCH_NAME} 创建失败，但 .dev-lock 已设置，可以继续" >&2
     echo "   Stop Hook 会检测到这个情况并阻止退出" >&2
 fi
 
 echo ""
-echo "✅ 双钥匙状态机已初始化"
-echo "   .dev-lock: 硬钥匙（不可绕过）"
-echo "   .dev-mode: 软状态（11 步 checklist）"
-echo "   sentinel: 三重保险（防止同时删除）"
+echo "✅ 双钥匙状态机已初始化（per-branch 格式）"
+echo "   .dev-lock.${BRANCH_NAME}: 硬钥匙（不可绕过，含 tty/session_id）"
+echo "   .dev-mode.${BRANCH_NAME}: 软状态（11 步 checklist）"
+echo "   .dev-sentinel.${BRANCH_NAME}: 三重保险（防止同时删除）"
 echo "   session_id: $SESSION_ID"
 
 # 注册会话到 /tmp/claude-engine-sessions/（多会话检测）

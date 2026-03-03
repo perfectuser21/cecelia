@@ -118,7 +118,7 @@ bash scripts/post-pr-checklist.sh
 
 **⚠️ 重要顺序**：`.dev-mode` 必须在 Step 11 的**最后一步**才能删除，不是开始时。
 
-原因：`sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' .dev-mode` 需要文件存在才能写入完成标记；Stop Hook 检测到这个标记后才允许退出，然后才删除 `.dev-mode`。
+原因：`sed -i "s/^step_11_cleanup: pending/step_11_cleanup: done/" "$DEV_MODE_FILE"` 需要文件存在才能写入完成标记；Stop Hook 检测到这个标记后才允许退出，然后才删除 `.dev-mode`。
 
 **正确顺序**：
 ```
@@ -131,7 +131,10 @@ bash scripts/post-pr-checklist.sh
 
 ```bash
 # 读取 session_id（用于清理会话注册）
-SESSION_ID=$(grep "^session_id:" ".dev-mode" 2>/dev/null | awk '{print $2}' || echo "")
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+[[ -f "$DEV_MODE_FILE" ]] || DEV_MODE_FILE=".dev-mode"
+SESSION_ID=$(grep "^session_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
 
 # 清理会话注册（多会话检测）
 if [[ -n "$SESSION_ID" ]]; then
@@ -232,7 +235,7 @@ tasks.forEach(task => {
 
 ```bash
 # 标记 Step 11 完成（最后一步）
-sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' .dev-mode
+sed -i "s/^step_11_cleanup: pending/step_11_cleanup: done/" "$DEV_MODE_FILE"
 echo "✅ Step 11 完成标记已写入 .dev-mode"
 ```
 
