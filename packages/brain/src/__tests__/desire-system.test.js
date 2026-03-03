@@ -45,7 +45,7 @@ describe('Layer 1: 感知层（Perception）', () => {
     expect(hasTaskSignal).toBe(true);
   });
 
-  it('D2: 无 last_feishu_at 时报告 hours_since_feishu = 999', async () => {
+  it('D2: 无 Alex 联系记录时报告 hours_since_alex_contact = 999', async () => {
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {
         if (sql.includes('FROM tasks') && sql.includes('COUNT')) {
@@ -54,7 +54,7 @@ describe('Layer 1: 感知层（Perception）', () => {
         if (sql.includes('FROM goals')) {
           return { rows: [] };
         }
-        if (sql.includes("key = 'last_feishu_at'")) {
+        if (sql.includes("last_alex_chat_at") || sql.includes("last_feishu_at")) {
           return { rows: [] };
         }
         if (sql.includes('GROUP BY task_type')) {
@@ -67,9 +67,9 @@ describe('Layer 1: 感知层（Perception）', () => {
     const { runPerception } = await import('../desire/perception.js');
     const observations = await runPerception(mockPool);
 
-    const feishuObs = observations.find(o => o.signal === 'hours_since_feishu');
-    expect(feishuObs).toBeDefined();
-    expect(feishuObs.value).toBe(999);
+    const contactObs = observations.find(o => o.signal === 'hours_since_alex_contact');
+    expect(contactObs).toBeDefined();
+    expect(contactObs.value).toBe(999);
   });
 
   it('D2: 队列积压 > 10 时生成 queue_buildup 信号', async () => {

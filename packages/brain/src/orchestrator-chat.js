@@ -379,13 +379,19 @@ export async function handleChat(message, context = {}, messages = []) {
     throw new Error('message is required and must be a string');
   }
 
-  // 1. 标记用户在线
+  // 1. 标记用户在线（user_last_seen = 实时在场；last_alex_chat_at = 今天来过）
   try {
+    const nowIso = JSON.stringify(new Date().toISOString());
     await pool.query(`
       INSERT INTO working_memory (key, value_json, updated_at)
       VALUES ('user_last_seen', $1, NOW())
       ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
-    `, [JSON.stringify(new Date().toISOString())]);
+    `, [nowIso]);
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ('last_alex_chat_at', $1, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()
+    `, [nowIso]);
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to update user_last_seen:', err.message);
   }
