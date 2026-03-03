@@ -24,7 +24,7 @@ import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
 import notionSyncRoutes from './src/routes/notion-sync.js';
 import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
-import reportsRoutes from './src/routes/reports.js';
+import systemReportsRoutes from './src/routes/system-reports.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -108,7 +108,7 @@ app.use('/api/brain/task-router', taskRouterDiagnoseRoutes);
 app.use('/api/brain/notion-sync', notionSyncRoutes);
 app.use('/api/brain/notebook-audit', notebookAuditRoutes);
 app.use('/api/brain/alerting', alertingRoutes);
-app.use('/api/brain/reports', reportsRoutes);
+app.use('/api/brain/reports', systemReportsRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);

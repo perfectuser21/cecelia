@@ -788,6 +788,210 @@ async function performRCA(failedTask, history = []) {
 }
 
 // ============================================================
+// System Report Generation (48h 定时简报)
+// ============================================================
+
+const SYSTEM_REPORT_PROMPT = `你是 Cecelia 的皮层（Cortex），现在需要生成一份系统简报。
+
+请基于提供的系统数据，生成一份全面的简报，格式如下（严格 JSON）：
+
+{
+  "title": "简报标题（包含时间范围）",
+  "summary": "2-3 句话的摘要，高亮最重要的发现",
+  "kr_progress": {
+    "overview": "KR 整体状态描述",
+    "highlights": ["亮点1", "亮点2"],
+    "concerns": ["关注点1", "关注点2"]
+  },
+  "task_stats": {
+    "analysis": "任务执行质量分析",
+    "bottlenecks": ["瓶颈1", "瓶颈2"]
+  },
+  "system_health": {
+    "status": "healthy|degraded|critical",
+    "assessment": "系统健康评估"
+  },
+  "risks": ["风险1", "风险2"],
+  "recommendations": ["建议1", "建议2"],
+  "confidence": 0.0
+}
+
+请深度分析以下系统数据：`;
+
+/**
+ * 生成系统简报（48h 定时触发）
+ * @param {Object} options - 配置项
+ * @param {number} [options.timeRangeHours=48] - 时间范围（小时）
+ * @returns {Promise<Object>} - 简报 ID 和内容
+ */
+async function generateSystemReport({ timeRangeHours = 48 } = {}) {
+  console.log(`[cortex] generateSystemReport: 开始生成 ${timeRangeHours}h 系统简报`);
+
+  const context = {
+    time_range_hours: timeRangeHours,
+    generated_at: new Date().toISOString(),
+  };
+
+  // 1. 收集 KR 进度数据
+  try {
+    const krResult = await pool.query(`
+      SELECT
+        g.id,
+        g.title,
+        g.status,
+        g.progress,
+        g.updated_at,
+        COUNT(t.id) FILTER (WHERE t.status = 'completed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as completed_tasks,
+        COUNT(t.id) FILTER (WHERE t.status = 'failed' AND t.updated_at > NOW() - ($1 || ' hours')::INTERVAL) as failed_tasks,
+        COUNT(t.id) FILTER (WHERE t.status = 'queued') as queued_tasks
+      FROM goals g
+      LEFT JOIN tasks t ON t.goal_id = g.id
+      GROUP BY g.id, g.title, g.status, g.progress, g.updated_at
+      ORDER BY g.updated_at DESC
+      LIMIT 20
+    `, [String(timeRangeHours)]);
+    context.kr_progress = krResult.rows;
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: 获取 KR 进度失败:', err.message);
+    context.kr_progress = [];
+  }
+
+  // 2. 收集任务统计
+  try {
+    const taskResult = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'completed' AND updated_at > NOW() - ($1 || ' hours')::INTERVAL) as completed,
+        COUNT(*) FILTER (WHERE status = 'failed' AND updated_at > NOW() - ($1 || ' hours')::INTERVAL) as failed,
+        COUNT(*) FILTER (WHERE status = 'queued') as queued,
+        COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
+        COUNT(*) FILTER (WHERE status = 'quarantined') as quarantined,
+        ROUND(
+          COUNT(*) FILTER (WHERE status = 'failed' AND updated_at > NOW() - ($1 || ' hours')::INTERVAL)::numeric /
+          NULLIF(COUNT(*) FILTER (WHERE status IN ('completed', 'failed') AND updated_at > NOW() - ($1 || ' hours')::INTERVAL), 0) * 100,
+          1
+        ) as failure_rate_pct
+      FROM tasks
+    `, [String(timeRangeHours)]);
+    context.task_stats = taskResult.rows[0];
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: 获取任务统计失败:', err.message);
+    context.task_stats = {};
+  }
+
+  // 3. 系统健康状态（Tick 循环 + 资源）
+  try {
+    const tickResult = await pool.query(`
+      SELECT key, value_json FROM working_memory
+      WHERE key IN ('tick_enabled', 'tick_last', 'startup_errors')
+    `);
+    const tickMemory = {};
+    for (const row of tickResult.rows) {
+      tickMemory[row.key] = row.value_json;
+    }
+    context.system_health = {
+      tick_enabled: tickMemory.tick_enabled?.enabled ?? false,
+      last_tick: tickMemory.tick_last?.timestamp || null,
+      startup_errors: tickMemory.startup_errors?.total_failures || 0,
+    };
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: 获取系统健康状态失败:', err.message);
+    context.system_health = {};
+  }
+
+  // 4. 最近失败任务分析
+  try {
+    const failedResult = await pool.query(`
+      SELECT title, task_type, error_message, updated_at
+      FROM tasks
+      WHERE status = 'failed'
+        AND updated_at > NOW() - ($1 || ' hours')::INTERVAL
+      ORDER BY updated_at DESC
+      LIMIT 10
+    `, [String(timeRangeHours)]);
+    context.recent_failures = failedResult.rows;
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: 获取失败任务失败:', err.message);
+    context.recent_failures = [];
+  }
+
+  // 5. 最近 Cortex 分析（摘要）
+  try {
+    const analysesResult = await pool.query(`
+      SELECT root_cause, confidence_score, created_at
+      FROM cortex_analyses
+      WHERE created_at > NOW() - ($1 || ' hours')::INTERVAL
+      ORDER BY created_at DESC
+      LIMIT 5
+    `, [String(timeRangeHours)]);
+    context.recent_analyses = analysesResult.rows;
+  } catch (err) {
+    console.warn('[cortex] generateSystemReport: 获取 cortex 分析失败（非致命）:', err.message);
+    context.recent_analyses = [];
+  }
+
+  // 调用 LLM 生成简报
+  const contextJson = JSON.stringify(context, null, 2);
+  const prompt = `${SYSTEM_REPORT_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
+
+  let reportData;
+  try {
+    const response = await callCortexLLM(prompt);
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('LLM response missing JSON');
+    }
+    reportData = JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: LLM 调用失败:', err.message);
+    // 降级：生成基础简报
+    reportData = {
+      title: `系统简报 ${new Date().toLocaleDateString('zh-CN')} (${timeRangeHours}h)`,
+      summary: `过去 ${timeRangeHours} 小时系统简报生成失败，请人工检查。`,
+      kr_progress: { overview: '数据获取失败', highlights: [], concerns: [] },
+      task_stats: {
+        analysis: `完成: ${context.task_stats?.completed || 0}, 失败: ${context.task_stats?.failed || 0}`,
+        bottlenecks: []
+      },
+      system_health: { status: 'unknown', assessment: 'LLM 调用失败，无法评估' },
+      risks: ['简报生成失败，系统状态未知'],
+      recommendations: ['手动检查系统状态'],
+      confidence: 0.1,
+    };
+  }
+
+  // 保存到 system_reports 表（使用 type, content, metadata 表结构）
+  let reportId;
+  try {
+    const metadata = {
+      trigger: 'cortex_api',
+      generated_at: context.generated_at,
+      time_range_hours: timeRangeHours,
+    };
+    const saveResult = await pool.query(`
+      INSERT INTO system_reports (type, content, metadata)
+      VALUES ($1, $2::jsonb, $3::jsonb)
+      RETURNING id
+    `, [
+      '48h_summary',
+      JSON.stringify(reportData),
+      JSON.stringify(metadata),
+    ]);
+    reportId = saveResult.rows[0].id;
+    console.log(`[cortex] generateSystemReport: 简报已保存 id=${reportId}`);
+  } catch (err) {
+    console.error('[cortex] generateSystemReport: 保存简报失败:', err.message);
+    reportId = null;
+  }
+
+  return {
+    id: reportId,
+    ...reportData,
+    time_range_hours: timeRangeHours,
+    generated_at: context.generated_at,
+  };
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -795,6 +999,9 @@ export {
   // 主入口
   analyzeDeep,
   performRCA,
+
+  // 48h 系统简报
+  generateSystemReport,
 
   // Memory
   saveCortexAnalysis,

@@ -38,6 +38,14 @@ export interface BrainDailyReport {
   updated_at: string;
 }
 
+export interface SystemReport {
+  id: string;
+  type: string;
+  content?: any;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
 export interface Reflection {
   id: string;
   type: 'issue' | 'learning' | 'improvement';
@@ -94,6 +102,13 @@ export const brainApi = {
   // Trigger nightly alignment
   triggerNightly: () =>
     apiClient.post('/brain/nightly/trigger'),
+
+  // System Reports (48h 简报)
+  getSystemReports: (params?: { limit?: number; type?: string }) =>
+    apiClient.get<{ reports: SystemReport[]; count: number }>('/brain/reports', { params }),
+
+  getSystemReport: (id: string) =>
+    apiClient.get<{ report: SystemReport }>(`/brain/reports/${id}`),
 
   // Reflections
   getReflections: (params?: { type?: string; project_id?: string; limit?: number }) =>
