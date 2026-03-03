@@ -94,8 +94,8 @@ async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) 
   ].join('\n');
 
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'brain_auto')
+    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, skill, trigger_source)
+    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', '/decomp', 'brain_auto')
     RETURNING id, title
   `, [title, description, krId || null, initiativeId]);
   return result.rows[0];

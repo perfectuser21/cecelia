@@ -3415,8 +3415,8 @@ ${resultStr.substring(0, 2000)}
               ].join('\n');
 
               await pool.query(`
-                INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-                VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'execution_callback')
+                INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, skill, trigger_source)
+                VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', '/decomp', 'execution_callback')
               `, [planTitle, planDescription, krId, initiative.id]);
 
               console.log(`[execution-callback] Initiative ${initiative.id} 执行循环：创建下一轮 initiative_plan 任务`);
