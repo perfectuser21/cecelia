@@ -13,6 +13,11 @@ import { generateMemoryStreamEmbeddingAsync } from '../embedding-service.js';
 
 const REFLECTION_THRESHOLD = 12;
 
+// 熔断机制：检测连续重复内容
+const CIRCUIT_BREAKER_THRESHOLD = 3; // 连续3轮相同内容 → 触发熔断
+let _consecutiveDuplicates = 0;
+let _lastInsightHash = null;
+
 /**
  * 读取当前 accumulator 值
  */
@@ -114,7 +119,45 @@ ${memorySummary}
 
   // 去重检查：防止重复洞察占用系统资源
   try {
-    // 1. 查询最近 7 天的反思洞察
+    // 1. 计算当前洞察的哈希值（简单哈希，用于连续重复检测）
+    const crypto = await import('crypto');
+    const currentHash = crypto.createHash('sha256').update(insight).digest('hex').slice(0, 16);
+
+    // 2. 连续重复检测（熔断机制）
+    if (_lastInsightHash === currentHash) {
+      _consecutiveDuplicates++;
+      console.warn(`[reflection] Consecutive duplicate detected (count=${_consecutiveDuplicates}, hash=${currentHash.slice(0, 8)}...)`);
+
+      if (_consecutiveDuplicates >= CIRCUIT_BREAKER_THRESHOLD) {
+        console.error(`[reflection] ⚠️  Circuit breaker triggered: ${_consecutiveDuplicates} consecutive duplicates, skipping insight`);
+
+        // 重置熔断计数器和哈希（防止永久锁死）
+        _consecutiveDuplicates = 0;
+        _lastInsightHash = null;
+
+        // 重置 accumulator
+        await pool.query(`
+          INSERT INTO working_memory (key, value_json, updated_at)
+          VALUES ($1, $2, NOW())
+          ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+        `, ['desire_importance_accumulator', 0]);
+        console.log(`[reflection] Accumulator reset to 0 (was ${accumulator}) after circuit breaker`);
+
+        // 写入熔断事件到 memory_stream（用于追踪和分析）
+        await pool.query(`
+          INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+          VALUES ($1, 6, 'long', NOW() + INTERVAL '7 days')
+        `, [`[反思熔断] 检测到连续${_consecutiveDuplicates}轮重复内容，已触发熔断机制跳过本次反思。可能原因：输入信号重复、LLM 输出固化、或系统陷入循环状态。`]);
+
+        return { triggered: true, insight: null, skipped: 'circuit_breaker', consecutive_duplicates: _consecutiveDuplicates, accumulator_before: accumulator };
+      }
+    } else {
+      // 内容不同，重置连续重复计数器
+      _consecutiveDuplicates = 0;
+      _lastInsightHash = currentHash;
+    }
+
+    // 3. 查询最近 7 天的反思洞察（原有的相似度检查）
     const { rows: recentInsights } = await pool.query(`
       SELECT content FROM memory_stream
       WHERE content LIKE '[反思洞察]%'
@@ -123,7 +166,7 @@ ${memorySummary}
       LIMIT 20
     `);
 
-    // 2. 计算 Jaccard 相似度（字符级分词，支持中文）
+    // 4. 计算 Jaccard 相似度（字符级分词，支持中文）
     const tokenize = (text) => text.match(/[\u4e00-\u9fa5\u3400-\u4dbf]|[a-zA-Z]{2,}/g) || [];
     const newTokens = new Set(tokenize(insight));
     let maxSimilarity = 0;
@@ -140,7 +183,7 @@ ${memorySummary}
       if (similarity > maxSimilarity) maxSimilarity = similarity;
     }
 
-    // 3. 去重决策
+    // 5. 去重决策（原有逻辑）
     if (maxSimilarity > 0.75) {
       console.log(`[reflection] Insight skipped (duplicate, similarity=${maxSimilarity.toFixed(2)})`);
 
