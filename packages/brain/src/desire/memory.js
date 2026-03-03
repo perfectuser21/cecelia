@@ -34,7 +34,7 @@ ${obsLines}
 ...`;
 
   try {
-    const { text } = await callLLM('memory', prompt, { timeout: 30000 });
+    const { text } = await callLLM('memory', prompt, { timeout: 90000 });
 
     // 解析分数：每行 "N: X" 或纯数字
     const scores = [];
