@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] desire/memory.js + learning.js 漏网超时修复（PR #362, Brain v1.164.5）
+
+**漏网超时**：v1.164.3 修复了 emotion-layer/thalamus/memory-utils/heartbeat 超时，但漏了两处：`desire/memory.js` `batchScoreImportance` 仍用 30s timeout，`learning.js` `extractConversationLearning` 仍用 15s timeout。症状：Brain 日志出现 `exit code 143` 精确在 30s 或 15s 处。**排查方法**：在容器内 `grep -rn "timeout.*0000\|0000.*timeout" /app/src/` 找所有 timeout 配置，统一改为 90000（90s）。
+
+**并行 PR 版本冲突（v1.164.4 被 PR #358 抢占）**：本 PR 开发时 main 已推进到 v1.164.4，需再 bump 到 v1.164.5。标准流程：① `git rebase origin/main` 无冲突（代码 commits 不动 version 文件）② `npm version patch --no-git-tag-version` 在 packages/brain 执行 ③ 同步 VERSION/.brain-versions/DEFINITION.md ④ 单独 `chore(brain): version bump` commit。
+
+**DoD/PRD 文件禁止出现在 PR diff**：cherry-pick 时可能把 `.dod-*.md`/`.prd-*.md` 带入 → `git reset --soft HEAD~N` + `git restore --staged .dod*.md .prd*.md` 移除。worktree 内的 `.prd-<branch>.md` 和 `.dod-<branch>.md` 必须保留为 untracked（不 add 不 commit）。
+
 ### [2026-03-03] manual/ask 端点改用 MiniMax 流式 + merge commit 导致 squash 失败（PR #358, Brain v1.164.4）
 
 **需求**：`POST /api/brain/manual/ask` 原来直接调 Anthropic Haiku（按量计费），改用已包月的 MiniMax（通过 `callLLMStream('mouth', ...)`）。
