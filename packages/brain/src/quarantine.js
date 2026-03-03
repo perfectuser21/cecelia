@@ -200,6 +200,9 @@ async function quarantineTask(taskId, reason, details = {}) {
       failure_class: failureClass,  // 失败类别（用于释放策略）
       details,
       previous_status: task.status,
+      previous_priority: task.priority,     // FIX (v1.171.4): 保存原有 priority
+      previous_assignee: task.assignee,     // FIX (v1.171.4): 保存原有 assignee
+      previous_queued_at: task.queued_at,   // FIX (v1.171.4): 保存原有 queued_at
       failure_count: task.payload?.failure_count || 0,
       ttl_ms: ttlMs,          // P1 FIX: TTL 毫秒数
       release_at: releaseAt,  // P1 FIX: 自动释放时间（null = 永不自动释放）
@@ -269,6 +272,9 @@ async function quarantineTask(taskId, reason, details = {}) {
 
 /**
  * 从隔离区释放任务
+ *
+ * FIX (v1.171.4): 恢复任务原有的 priority/assignee/queued_at 字段
+ *
  * @param {string} taskId - 任务 ID
  * @param {string} action - 审核动作
  * @param {Object} options - 选项
@@ -357,12 +363,20 @@ async function releaseTask(taskId, action, options = {}) {
     // 清理隔离信息
     delete newPayload.quarantine_info;
 
+    // FIX (v1.171.4): 恢复任务原有字段
+    const restorePriority = quarantineInfo.previous_priority || task.priority;
+    const restoreAssignee = quarantineInfo.previous_assignee || null;
+    const restoreQueuedAt = quarantineInfo.previous_queued_at || new Date().toISOString();
+
     await pool.query(`
       UPDATE tasks
       SET status = $2,
-          payload = $3::jsonb
+          payload = $3::jsonb,
+          priority = $4,
+          assignee = $5,
+          queued_at = $6
       WHERE id = $1
-    `, [taskId, newStatus, JSON.stringify(newPayload)]);
+    `, [taskId, newStatus, JSON.stringify(newPayload), restorePriority, restoreAssignee, restoreQueuedAt]);
 
     // 记录事件
     await emit('task_released', 'quarantine', {
@@ -413,6 +427,44 @@ async function getQuarantinedTasks() {
   }
 }
 
+/**
+ * 获取活跃隔离任务（需要人工审核或已ready_for_release的任务）
+ *
+ * FIX (v1.171.4): 新增函数,检测所有需要处理的隔离任务
+ *
+ * @returns {Object[]} - 活跃隔离任务列表
+ */
+async function getActiveQuarantineTasks() {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, status, priority, task_type,
+             payload->>'quarantine_info' as quarantine_info,
+             created_at, updated_at
+      FROM tasks
+      WHERE status = 'quarantined'
+        AND (
+          -- 手动隔离（需要人工审核）
+          payload->'quarantine_info'->'reason' = '"manual"'
+          -- 或标记为 ready_for_release
+          OR (payload->'quarantine_info'->>'ready_for_release')::boolean = true
+          -- 或隔离已到期（release_at < NOW）
+          OR (payload->'quarantine_info'->'release_at' IS NOT NULL
+              AND payload->'quarantine_info'->'release_at' != 'null'
+              AND (payload->'quarantine_info'->>'release_at')::timestamptz < NOW())
+        )
+      ORDER BY updated_at DESC
+    `);
+
+    return result.rows.map(row => ({
+      ...row,
+      quarantine_info: row.quarantine_info ? JSON.parse(row.quarantine_info) : null,
+    }));
+
+  } catch (err) {
+    console.error('[quarantine] Failed to get active quarantine tasks:', err.message);
+    return [];
+  }
+}
 /**
  * 获取隔离区统计
  * @returns {Object} - 统计信息
@@ -1030,6 +1082,7 @@ export {
   quarantineTask,
   releaseTask,
   getQuarantinedTasks,
+  getActiveQuarantineTasks,  // FIX (v1.171.4)
   getQuarantineStats,
   checkExpiredQuarantineTasks,  // P1 FIX #3
 
