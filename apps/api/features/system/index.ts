@@ -49,6 +49,13 @@ const manifest: FeatureManifest = {
     { path: '/ops/devgate', redirect: '/devgate' },
     // Performance
     { path: '/performance', component: 'PerformanceMonitoring' },
+    // System Reports
+    {
+      path: '/reports',
+      component: 'SystemReportsPage',
+      navItem: { label: '系统简报', icon: 'FileText', group: 'system', order: 6 },
+    },
+    { path: '/reports/:id', component: 'SystemReportDetail' },
   ],
 
   components: {
@@ -60,6 +67,8 @@ const manifest: FeatureManifest = {
     DevGateMetrics: () => import('./pages/DevGateMetrics'),
     PerformanceMonitoring: () => import('./pages/PerformanceMonitoring'),
     FeatureMap: () => import('./pages/FeatureMap'),
+    SystemReportsPage: () => import('./pages/SystemReportsPage'),
+    SystemReportDetail: () => import('./pages/SystemReportDetail'),
   },
 };
 
