@@ -58,7 +58,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat, handleChatStream } from './orchestrator-chat.js';
-import { callLLM } from './llm-caller.js';
+import { callLLM, callLLMStream } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
@@ -9970,7 +9970,7 @@ router.get('/cleanup/audit', async (req, res) => {
  * 说明书实时问答端点（SSE）
  * Body: { question: string }
  * Response: text/event-stream — 格式 `data: {"delta":"..."}\n\n`，结束为 `data: [DONE]\n\n`
- * 调用 Haiku 流式回答，以 brain-manifest.generated.json 作为上下文
+ * 调用 MiniMax 流式回答，以 brain-manifest.generated.json 作为上下文
  */
 router.post('/manual/ask', async (req, res) => {
   const { question } = req.body;
@@ -9990,12 +9990,6 @@ router.post('/manual/ask', async (req, res) => {
   res.on('close', () => { closed = true; });
 
   try {
-    // 读取 Anthropic API key
-    const credPath = `${process.env.HOME}/.credentials/anthropic.json`;
-    const cred = JSON.parse(readFileSync(credPath, 'utf8'));
-    const apiKey = cred.api_key;
-    if (!apiKey) throw new Error('Anthropic API key not available');
-
     // 读取 manifest 作为 context
     const manifestRaw = readFileSync(new URL('./brain-manifest.generated.json', import.meta.url), 'utf8');
     const manifest = JSON.parse(manifestRaw);
@@ -10026,68 +10020,21 @@ router.post('/manual/ask', async (req, res) => {
       });
     }
     const contextStr = contextLines.join('\n');
-    const systemPrompt = `你是 Brain 系统的技术说明员。根据以下 Brain manifest 数据，简明扼要地回答关于 Brain 架构的技术问题。使用中文回答，保持简洁专业。\n\n${contextStr}`;
 
-    // 直接调用 Anthropic 流式 API
-    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        stream: true,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: question.trim() }],
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
+    // 合并 system context 与 question（MiniMax 用 user message，无 top-level system 字段）
+    const combinedPrompt = `你是 Brain 系统的技术说明员。根据以下 Brain manifest 数据，简明扼要地回答关于 Brain 架构的技术问题。使用中文回答，保持简洁专业。\n\n${contextStr}\n\n用户问题：${question.trim()}`;
 
-    if (!apiRes.ok) {
-      const errText = await apiRes.text().catch(() => 'unknown');
-      throw new Error(`Anthropic API error: ${apiRes.status} - ${errText.slice(0, 200)}`);
-    }
-
-    const reader = apiRes.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || closed) break;
-
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t.startsWith('data: ')) continue;
-          const data = t.slice(6);
-          if (data === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
-              const delta = parsed.delta.text;
-              if (delta && !closed) {
-                res.write(`data: ${JSON.stringify({ delta })}\n\n`);
-              }
-            }
-          } catch { /* skip malformed chunk */ }
+    // 通过 callLLMStream 调用 MiniMax 流式 API（mouth agentId）
+    await callLLMStream('mouth', combinedPrompt, {}, (delta, isDone) => {
+      if (isDone) {
+        if (!closed) {
+          res.write('data: [DONE]\n\n');
+          res.end();
         }
+      } else if (delta && !closed) {
+        res.write(`data: ${JSON.stringify({ delta })}\n\n`);
       }
-    } finally {
-      reader.releaseLock();
-    }
-
-    if (!closed) {
-      res.write('data: [DONE]\n\n');
-      res.end();
-    }
+    });
   } catch (err) {
     console.error('[API] manual/ask error:', err.message);
     if (!closed) {
