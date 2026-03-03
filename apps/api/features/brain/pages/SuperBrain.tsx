@@ -811,6 +811,164 @@ function ChapterDiagram({ blockId, color, height }: { blockId: string; color: st
   );
 }
 
+// ── 说明书问答组件 ──
+interface QAEntry {
+  question: string;
+  answer: string;
+  streaming?: boolean;
+}
+
+function ManualQA() {
+  const [input, setInput] = useState('');
+  const [history, setHistory] = useState<QAEntry[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const submit = async () => {
+    if (!input.trim() || streaming) return;
+    const q = input.trim();
+    setInput('');
+    setHistory(prev => [...prev, { question: q, answer: '', streaming: true }].slice(-5));
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    try {
+      const res = await fetch('/api/brain/manual/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t.startsWith('data: ')) continue;
+          const data = t.slice(6);
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.delta) {
+              setHistory(prev => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                next[next.length - 1] = { ...last, answer: last.answer + parsed.delta };
+                return next;
+              });
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+      reader.releaseLock();
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setHistory(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { ...next[next.length - 1], answer: `[错误: ${err.message}]` };
+          return next;
+        });
+      }
+    } finally {
+      setHistory(prev => {
+        const next = [...prev];
+        if (next.length > 0) next[next.length - 1] = { ...next[next.length - 1], streaming: false };
+        return next;
+      });
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  };
+
+  const stop = () => { abortRef.current?.abort(); };
+
+  const renderAnswer = (text: string) => text.split('\n').map((line, i) => {
+    const parts = line.split(/(\*\*[^*]+\*\*)/g).map((part, j) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <strong key={j}>{part.slice(2, -2)}</strong>
+        : <span key={j}>{part}</span>
+    );
+    return <div key={i} style={{ minHeight: '1.3em' }}>{parts}</div>;
+  });
+
+  const btnBase: React.CSSProperties = {
+    padding: '9px 18px', borderRadius: 8, fontSize: 13,
+    border: '1px solid rgba(255,255,255,0.12)', cursor: 'pointer', whiteSpace: 'nowrap',
+    transition: 'all 0.15s',
+  };
+
+  return (
+    <div style={{ marginTop: 40, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 28 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#9ca3af', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+        💬 问一问说明书
+        <span style={{ fontSize: 11, color: '#4b5563', fontWeight: 400 }}>（最近 5 轮对话）</span>
+      </div>
+
+      {history.map((entry, idx) => (
+        <div key={idx} style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 13, color: '#d1d5db', marginBottom: 8,
+            padding: '8px 14px', background: 'rgba(129,140,248,0.06)',
+            borderRadius: 8, borderLeft: '3px solid rgba(129,140,248,0.45)',
+          }}>
+            🙋 {entry.question}
+          </div>
+          <div style={{
+            fontSize: 13, color: '#9ca3af', lineHeight: 1.8,
+            padding: '10px 14px', background: 'rgba(0,0,0,0.18)',
+            borderRadius: 8, borderLeft: '3px solid rgba(52,211,153,0.35)',
+            minHeight: 36,
+          }}>
+            {entry.answer
+              ? renderAnswer(entry.answer)
+              : entry.streaming
+                ? <span style={{ opacity: 0.4, fontFamily: 'monospace' }}>▌</span>
+                : null}
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+          placeholder="问任何关于 Brain 架构的问题..."
+          rows={2}
+          style={{
+            flex: 1, background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8,
+            color: '#d1d5db', fontSize: 13, padding: '10px 14px',
+            resize: 'none', fontFamily: 'inherit', outline: 'none',
+          }}
+        />
+        <button
+          onClick={streaming ? stop : submit}
+          disabled={!streaming && !input.trim()}
+          style={{
+            ...btnBase,
+            background: streaming ? 'rgba(239,68,68,0.12)' : 'rgba(129,140,248,0.12)',
+            color: streaming ? '#fca5a5' : '#a5b4fc',
+            opacity: !streaming && !input.trim() ? 0.45 : 1,
+          }}
+        >
+          {streaming ? '停止' : '发送'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ManualViewProps {
   manifest: ManifestData | null;
   subsystems: Subsystem[];
@@ -892,6 +1050,35 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
             <span style={{ fontSize: 17, fontWeight: 700, color: detailBlock.color }}>
               {detailBlock.label}
             </span>
+            {/* ── 章节导航按钮 ── */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              {(['prevChapter', 'nextChapter'] as const).map(dir => {
+                const isPrev = dir === 'prevChapter';
+                const targetIdx = isPrev ? detailIdx - 1 : detailIdx + 1;
+                const disabled = isPrev ? detailIdx === 0 : detailIdx === manifest.blocks.length - 1;
+                return (
+                  <button
+                    key={dir}
+                    onClick={() => !disabled && setDetailChapter(manifest.blocks[targetIdx].id)}
+                    disabled={disabled}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '6px 12px', borderRadius: 7,
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.03)',
+                      color: disabled ? '#374151' : '#9ca3af',
+                      fontSize: 12, cursor: disabled ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.15s',
+                      opacity: disabled ? 0.4 : 1,
+                    }}
+                    onMouseEnter={e => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.color = '#f3f4f6'; }}
+                    onMouseLeave={e => { if (!disabled) (e.currentTarget as HTMLButtonElement).style.color = '#9ca3af'; }}
+                  >
+                    {isPrev ? '← 上章' : '下章 →'}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ── SVG 配图（全宽 420px）── */}
@@ -1243,6 +1430,9 @@ function ManualView({ manifest, subsystems }: ManualViewProps) {
           </div>
         )}
       </div>
+
+      {/* ── 实时问答 ── */}
+      <ManualQA />
     </div>
   );
 }
