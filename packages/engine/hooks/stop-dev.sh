@@ -132,16 +132,75 @@ save_block_reason() {
 
 # ===== 检查 .dev-lock 和 .dev-mode 文件（双钥匙状态机）=====
 # v12.9.0: 双钥匙修复 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险）
+# v12.36.0: 并行会话隔离 - .dev-lock.<branch> 格式，多会话互不干扰
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock"
-DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
-SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel"
+
+# ===== 动态发现当前会话的状态文件 =====
+# 优先查找 per-branch 格式（.dev-lock.<branch>），fallback 到旧格式（.dev-lock）
+_CURRENT_TTY=$(tty 2>/dev/null || echo "")
+_CURRENT_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+DEV_LOCK_FILE=""
+DEV_MODE_FILE=""
+SENTINEL_FILE=""
+
+# 扫描所有 per-branch lock 文件，找属于当前会话的
+for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
+    [[ -f "$_lock_file" ]] || continue
+    _lock_tty=$(grep "^tty:" "$_lock_file" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "")
+    _lock_session=$(grep "^session_id:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
+    _branch_in_lock=$(grep "^branch:" "$_lock_file" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
+    _matched=false
+
+    # TTY 匹配（有头模式首选）
+    if [[ -n "$_lock_tty" && "$_lock_tty" != "not a tty" && -n "$_CURRENT_TTY" && "$_CURRENT_TTY" != "not a tty" ]]; then
+        if [[ "$_lock_tty" == "$_CURRENT_TTY" ]]; then
+            _matched=true
+        fi
+    # session_id 匹配（TTY 不可用时 fallback）
+    elif [[ -n "$_lock_session" && -n "$_CURRENT_SESSION_ID" && "$_lock_session" == "$_CURRENT_SESSION_ID" ]]; then
+        _matched=true
+    fi
+
+    if [[ "$_matched" == "true" && -n "$_branch_in_lock" ]]; then
+        DEV_LOCK_FILE="$_lock_file"
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${_branch_in_lock}"
+        SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel.${_branch_in_lock}"
+        break
+    fi
+done
+
+# 旧格式向后兼容：没有找到 per-branch 文件时，检查 .dev-lock（无后缀）
+if [[ -z "$DEV_LOCK_FILE" && -f "$PROJECT_ROOT/.dev-lock" ]]; then
+    DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock"
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel"
+fi
 
 # Key-1: .dev-lock（硬钥匙）- 只要它在，就必须走 dev 检查
-if [[ ! -f "$DEV_LOCK_FILE" ]]; then
-    # 没有 .dev-lock，检查 .dev-mode 是否泄漏
-    if [[ -f "$DEV_MODE_FILE" ]]; then
-        # .dev-mode 泄漏（.dev-lock 被删除但 .dev-mode 还在）
+if [[ -z "$DEV_LOCK_FILE" ]]; then
+    # 没有匹配的 .dev-lock → 检查孤儿 .dev-mode.* 文件（泄漏清理）
+    for _orphan_mode in "$PROJECT_ROOT"/.dev-mode.*; do
+        [[ -f "$_orphan_mode" ]] || continue
+        _orphan_branch=$(grep "^branch:" "$_orphan_mode" 2>/dev/null | cut -d' ' -f2 || echo "")
+        _orphan_lock="$PROJECT_ROOT/.dev-lock.${_orphan_branch}"
+        if [[ -n "$_orphan_branch" && ! -f "$_orphan_lock" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [Stop Hook: 状态文件泄漏（孤儿 .dev-mode）]" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  ⚠️  .dev-lock.${_orphan_branch} 不存在但 .dev-mode 存在（泄漏）" >&2
+            echo "  清理泄漏文件..." >&2
+            force_cleanup_worktree "$_orphan_mode" || true
+            rm -f "$_orphan_mode" "$PROJECT_ROOT/.dev-sentinel.${_orphan_branch}"
+            echo "  ✅ 已清理" >&2
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        fi
+    done
+
+    # 旧格式泄漏检查
+    if [[ -f "$PROJECT_ROOT/.dev-mode" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  [Stop Hook: 状态文件泄漏]" >&2
@@ -149,16 +208,15 @@ if [[ ! -f "$DEV_LOCK_FILE" ]]; then
         echo "" >&2
         echo "  ⚠️  .dev-lock 不存在但 .dev-mode 存在（泄漏）" >&2
         echo "  清理泄漏的 .dev-mode 文件..." >&2
-        force_cleanup_worktree "$DEV_MODE_FILE" || true
-        rm -f "$DEV_MODE_FILE" "$SENTINEL_FILE"
+        force_cleanup_worktree "$PROJECT_ROOT/.dev-mode" || true
+        rm -f "$PROJECT_ROOT/.dev-mode" "$PROJECT_ROOT/.dev-sentinel"
         echo "  ✅ 已清理" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     fi
 
-    # 检查 sentinel（三重保险）
-    if [[ -f "$SENTINEL_FILE" ]]; then
-        # Sentinel 存在但 .dev-lock 不存在 → 状态文件被删除
+    # 检查 sentinel（三重保险）—— 仅旧格式
+    if [[ -f "$PROJECT_ROOT/.dev-sentinel" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  [Stop Hook: Sentinel 检测到状态丢失]" >&2
@@ -174,7 +232,7 @@ if [[ ! -f "$DEV_LOCK_FILE" ]]; then
         exit 2  # ← 强制阻止退出（三重保险生效）
     fi
 
-    # 没有 .dev-lock 且没有 sentinel → 普通会话，允许结束
+    # 没有任何 dev 状态文件 → 普通会话，允许结束
     exit 0
 fi
 

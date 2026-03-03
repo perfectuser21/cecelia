@@ -256,7 +256,12 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
     # v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev
     # 到达此处说明：IS_WORKTREE=true 且分支活跃（非僵尸）
     # 没有 .dev-mode = 没有活跃的 /dev 会话 = 阻止写代码
-    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    # v12.36.0: 支持 per-branch 格式（.dev-mode.<branch>），fallback 到旧格式
+    if [[ -f "$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}" ]]; then
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+    else
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    fi
     if [[ ! -f "$DEV_MODE_FILE" ]]; then
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
@@ -305,7 +310,12 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
 
     # ===== 数据库检查（新增 v20）=====
     # 检测是否在 /dev 工作流（有 .dev-mode 文件）
-    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    # v12.36.0: 支持 per-branch 格式（.dev-mode.<branch>），fallback 到旧格式
+    if [[ -f "$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}" ]]; then
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+    else
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    fi
 
     if [[ -f "$DEV_MODE_FILE" ]]; then
         # 在 /dev 工作流中，从数据库检查 PRD 和 DoD 初稿
@@ -535,7 +545,12 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
     # gitignored DoD 文件只需存在且内容有效（前面已检查），跳过更新检查
 
     # v18: 检查 Task Checkpoint 是否已创建
-    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    # v12.36.0: 支持 per-branch 格式（.dev-mode.<branch>），fallback 到旧格式
+    if [[ -f "$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}" ]]; then
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+    else
+        DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    fi
     if [[ -f "$DEV_MODE_FILE" ]]; then
         # Bug #6 修复: 检查 Step 3 状态，如果正在执行则允许通过
         # Bug fix: 增加 Step 3 超时检查（防止卡在 in_progress 绕过检查）
