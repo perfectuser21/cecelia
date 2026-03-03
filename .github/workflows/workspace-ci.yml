@@ -110,7 +110,7 @@ jobs:
   ci-passed:
     needs: [changes, build, api-check, dashboard-test]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     steps:
       - name: Workspace CI Gate

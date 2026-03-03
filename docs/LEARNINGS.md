@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 修复自动部署漏检 apps/api/ 导致 dashboard 漏跑（PR #350, Engine v12.35.11 / Brain v1.164.2）
+
+**根因**：`apps/dashboard/vite.config.ts` 用 vite alias `@features/core → apps/api/features` 引用 api 层。改 `apps/api/**` 同样需要重建 dashboard，但 `deploy-local.sh` 和 `cecelia-run.sh` 的检测只认 `apps/dashboard/`，导致 `apps/api/**` 改动后 dashboard 漏部署（PR #344 复现）。
+
+**修复**：两处同时加 `apps/api/*` 判断：
+- `scripts/deploy-local.sh`：`[[ "$file" == apps/dashboard/* || "$file" == apps/api/* ]] && NEED_DASHBOARD=true`
+- `packages/brain/scripts/cecelia-run.sh`：grep 模式加 `\|^apps/api/`
+
+**附带修复：所有 CI ci-passed gate 改用 self-hosted runner**：GitHub Actions ubuntu-latest runner 临时故障（runner 被分配后立即崩溃，无任何步骤输出），所有依赖 ubuntu-latest 的 `ci-passed` job 全部失败，导致 PR 被阻断。ci-passed 逻辑已有"无改动则 exit 0"早退机制，但 gate 本身在 ubuntu-latest 上也崩溃。改为 `self-hosted, hk-vps` 后，ubuntu-latest 崩溃时 Detect Changes 输出为空，ci-passed 触发早退 → exit 0 → 正常通过。**结论：ci-passed gate 不应依赖与被测工具同样的 runner，建议改为轻量 self-hosted runner。**
+
 ### [2026-03-03] cleanup.sh 部署 fire-and-forget + Engine CI yq 安装修复（PR #342, Engine v12.35.10）
 
 **背景**：有头模式下 cleanup.sh [2.5] 同步调用 deploy-local.sh（Docker build 需 2-3 分钟），阻塞 Claude 会话。改为 `setsid bash ... &` fire-and-forget，日志写 `/tmp/cecelia-deploy-<branch>.log`。
