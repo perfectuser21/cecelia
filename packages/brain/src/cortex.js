@@ -959,18 +959,22 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
     };
   }
 
-  // 保存到 system_reports 表
+  // 保存到 system_reports 表（使用 type, content, metadata 表结构）
   let reportId;
   try {
+    const metadata = {
+      trigger: 'cortex_api',
+      generated_at: context.generated_at,
+      time_range_hours: timeRangeHours,
+    };
     const saveResult = await pool.query(`
-      INSERT INTO system_reports (title, summary, content, time_range_hours, report_type, generated_by)
-      VALUES ($1, $2, $3::jsonb, $4, 'system_briefing', 'cortex')
+      INSERT INTO system_reports (type, content, metadata)
+      VALUES ($1, $2::jsonb, $3::jsonb)
       RETURNING id
     `, [
-      reportData.title || `系统简报 ${new Date().toISOString()}`,
-      reportData.summary || '',
+      '48h_summary',
       JSON.stringify(reportData),
-      timeRangeHours,
+      JSON.stringify(metadata),
     ]);
     reportId = saveResult.rows[0].id;
     console.log(`[cortex] generateSystemReport: 简报已保存 id=${reportId}`);
