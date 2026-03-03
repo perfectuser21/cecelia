@@ -357,7 +357,7 @@ jobs:
   ci-passed:
     needs: [changes, validate, structure, gateway-check]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     steps:
       - name: Workflows CI Gate
