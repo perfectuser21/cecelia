@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 前台 Area 关联完整体验修复——两种 Area 概念 + DatabaseView select 编辑（PR #379, Brain v1.164.13）
+
+**场景**：前台 OKR/Area/Projects 相关页面全部报 404，Projects 的 Area 列只读无法编辑，Area 详情页没有关联 Project 展示。
+
+**根因**：
+1. **404 根因**：`frontend-proxy.js` 将 `/api/tasks/goals` → `/api/brain/tasks/goals`，但 Brain 服务器从未注册此路由。同理 `/api/tasks/areas` 也没有路由。
+2. **Area 两种概念混淆**：`goals` 表有 `type='area_okr'`（OKR 层级分组），`areas` 表（migration 100）是真正的 life areas（Study/Life/Work/System）。`projects.area_id` 外键（migration 104）指向 `areas` 表，不是 goals 表。编辑 area 时，选项来自 `areas` 表（UUID），不是 goals 的 area_okr 记录。
+
+**解法**：
+- 新建 `task-goals.js` 路由（GET/GET/:id/PATCH/:id）注册到 `/api/brain/tasks/goals`
+- 新建 `task-areas.js` 路由（GET/GET/:id）注册到 `/api/brain/tasks/areas`
+- `ProjectsDashboard.tsx` Area 列改为 `type: 'select', editable: true`，`options` 来自 `areas` 表，value 存 area UUID
+- `AreaOKRDetail.tsx` 新增关联 Projects 区块，通过 KR set 过滤 `projects.kr_id`
+
+**DatabaseView select 列工作方式**：column 设 `type: 'select', editable: true`，`options: [{ value, label, color }]`，DatabaseView 自动按 value 查 label 展示，点击行内编辑弹出下拉，选择后回调 `onUpdate(id, 'area_id', newValue)`，然后 PATCH 写库。不需要自定义 renderCell。
+
+**口诀**：「前台 Area 选项来自 areas 表（UUID），不是 goals.area_okr」——两种 Area 必须分清，混淆导致关联失效。
+
 ### [2026-03-03] 前端动态扫描模式：API 返回数据驱动 UI 渲染，不依赖硬编码（PR #377, Workspace v1.10.2）
 
 **场景**：`BrainLayerConfig.tsx` 原来硬编码 `layers` 数组（5 个 brain agent），每次在 `model-registry.js` 新增 agent 都需要同步改前端。
