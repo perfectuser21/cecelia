@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] manual/ask 端点改用 MiniMax 流式 + merge commit 导致 squash 失败（PR #358, Brain v1.164.4）
+
+**需求**：`POST /api/brain/manual/ask` 原来直接调 Anthropic Haiku（按量计费），改用已包月的 MiniMax（通过 `callLLMStream('mouth', ...)`）。
+
+**MiniMax 与 Anthropic 的关键差异**：MiniMax 不支持 top-level system 字段，必须把 system context 和 user question 合并成单一 user message。改动：`combinedPrompt = systemPrompt + '\n\n' + question`，传给 `callLLMStream('mouth', combinedPrompt, {}, onChunk)`。SSE 格式（`data: {"delta":"..."}\n\n` → `data: [DONE]\n\n`）保持不变，前端无需改动。
+
+**merge commit 导致 squash merge 失败（CRITICAL）**：PR #352 和 PR #356 都因为用了 `git merge origin/main` 处理版本冲突，产生 merge commit，GitHub squash merge 报错"CONFLICTING"。**铁律：任何需要合并主干的操作，必须用 cherry-pick 或新建分支（从 origin/main）+ 只应用代码文件，绝不能用 `git merge`**。标准解法：关闭 PR → `git checkout -b <new-branch> origin/main` → `git checkout <old-branch> -- <code-files>` → `npm version patch` → 正常 push（首次 push 不触发 bash-guard）。
+
+**并行 PR 版本冲突链**：开发期间 main 连续前进：PR #350 抢占 1.164.2，PR #355 抢占 1.164.3，最终本 PR 升到 1.164.4。每次 push 前必须检查：`git show origin/main:packages/brain/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"`，发现冲突立即在当前分支再 bump 一次。
+
+**ubuntu-latest runner 故障规律**：所有 CI 的 `Detect Changes` job 2s 内失败（`steps: []`），但所有 `ci-passed` job 通过（self-hosted hk-vps），PR 仍可合并。`dorny/paths-filter@v3` 依赖 GitHub API 和 runner 基础设施，在 ubuntu-latest 崩溃时最先挂；git diff 方案更稳定（main 已有此修复）。`ci-passed` 是 required check，它在 self-hosted 上运行，当 ubuntu-latest 崩溃时早退 exit 0，PR 照常通过。
+
+**每次新分支需要重建 PRD/DoD**：因为 branch-protect hook 按分支名匹配 `.prd-<branch>.md` 和 `.dod-<branch>.md`，关闭旧 PR 创建新分支时必须立即重新创建这两个文件，否则一改代码就被 hook 阻断。
+
 ### [2026-03-03] Brain 内部 LLM 调用超时修复 + 并行 PR 版本冲突处理（PR #355, Brain v1.164.3）
 
 **根因**：Brain 内部 LLM 调用超时设置过短（emotion-layer 15s, thalamus/memory 30s, reflection 60s），而实际 Brain prompt 约 3000 tokens，Sonnet 需要 20-30s 才能响应，导致经常超时失败。
