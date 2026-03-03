@@ -81,28 +81,37 @@ export async function runPerception(pool) {
     console.error('[perception] kr progress error:', err.message);
   }
 
-  // 3. 距上次与 Alex 交互时长
+  // 3. 距上次与 Alex 任意渠道联系时长（chat 或 feishu，取最近值）
   try {
     const { rows } = await pool.query(
-      "SELECT value_json FROM working_memory WHERE key = 'last_feishu_at'"
+      "SELECT key, value_json FROM working_memory WHERE key IN ('last_alex_chat_at', 'last_feishu_at')"
     );
-    const lastFeishu = rows[0]?.value_json;
-    if (lastFeishu) {
-      const hoursSince = (Date.now() - new Date(lastFeishu).getTime()) / (1000 * 3600);
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r.value_json]));
+    const timestamps = [byKey.last_alex_chat_at, byKey.last_feishu_at]
+      .filter(Boolean)
+      .map(v => new Date(v).getTime())
+      .filter(t => !isNaN(t));
+    if (timestamps.length > 0) {
+      const lastContactMs = Math.max(...timestamps);
+      const hoursSince = (Date.now() - lastContactMs) / (1000 * 3600);
       observations.push({
-        signal: 'hours_since_feishu',
+        signal: 'hours_since_alex_contact',
         value: Math.round(hoursSince * 10) / 10,
-        context: `距上次向 Alex 汇报已过 ${Math.round(hoursSince)} 小时`
+        context: hoursSince < 1
+          ? `Alex ${Math.round(hoursSince * 60)} 分钟前刚来过`
+          : hoursSince < 24
+          ? `Alex 今天来过，距上次联系 ${Math.round(hoursSince)} 小时`
+          : `距 Alex 上次联系（任意渠道）已过 ${Math.round(hoursSince)} 小时`
       });
     } else {
       observations.push({
-        signal: 'hours_since_feishu',
+        signal: 'hours_since_alex_contact',
         value: 999,
-        context: '从未主动向 Alex 汇报（没有 last_feishu_at 记录）'
+        context: '尚无 Alex 联系记录'
       });
     }
   } catch (err) {
-    console.error('[perception] feishu time error:', err.message);
+    console.error('[perception] alex contact time error:', err.message);
   }
 
   // 4. 系统空闲信号（Break 1 修复：没任务跑时也要产生感知）
@@ -126,24 +135,39 @@ export async function runPerception(pool) {
     console.error('[perception] system idle check error:', err.message);
   }
 
-  // 5. 用户在线信号（Break 5 修复：感知 Alex 的存在）
+  // 5. 用户在场信号（两档：实时在场 vs 今天来过）
   try {
     const { rows } = await pool.query(
-      "SELECT value_json FROM working_memory WHERE key = 'user_last_seen'"
+      "SELECT key, value_json FROM working_memory WHERE key IN ('user_last_seen', 'last_alex_chat_at')"
     );
-    const lastSeen = rows[0]?.value_json;
+    const byKey = Object.fromEntries(rows.map(r => [r.key, r.value_json]));
+    const lastSeen = byKey.user_last_seen;
+    const lastChat = byKey.last_alex_chat_at;
+
     if (lastSeen) {
       const minutesSince = (Date.now() - new Date(lastSeen).getTime()) / (1000 * 60);
       if (minutesSince < 5) {
         observations.push({
           signal: 'user_online',
           value: true,
-          context: `Alex 刚刚在 dashboard 活跃（${Math.round(minutesSince)} 分钟前）`
+          context: `Alex 正在 dashboard（${Math.round(minutesSince)} 分钟前活跃）`
+        });
+      }
+    }
+
+    // 今天来过（通过 chat 渠道，5分钟以上但 24小时以内）
+    if (lastChat) {
+      const minutesSinceChat = (Date.now() - new Date(lastChat).getTime()) / (1000 * 60);
+      if (minutesSinceChat >= 5 && minutesSinceChat < 1440) {
+        observations.push({
+          signal: 'user_visited_today',
+          value: true,
+          context: `Alex 今天来过，${Math.round(minutesSinceChat)} 分钟前在对话中说过话`
         });
       }
     }
   } catch (err) {
-    console.error('[perception] user_last_seen error:', err.message);
+    console.error('[perception] user presence error:', err.message);
   }
 
   // 6. 未消化知识信号（反刍回路感知）
