@@ -182,6 +182,56 @@ describe('UC4: saveUnifiedConversation', () => {
   });
 });
 
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 复制自 routes.js 的 saveUnifiedMessage（Mode A 单条写入）
+ */
+async function saveUnifiedMessage(pool, participantId, channel, groupId, role, content, imageDescription = null) {
+  await pool.query(
+    `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content, image_description)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [participantId, channel, groupId || null, role, content, imageDescription]
+  );
+}
+
+describe('GA1: saveUnifiedMessage - Mode A 单条写入', () => {
+  beforeEach(() => {
+    mockQuery.mockClear();
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('GA1-1: user 行写入正确字段', async () => {
+    await saveUnifiedMessage(mockPool, 'ou_abc', 'feishu_group', 'oc_chat123', 'user', '今天天气不错');
+    const call = mockQuery.mock.calls[0];
+    expect(call[1][0]).toBe('ou_abc');      // participantId
+    expect(call[1][1]).toBe('feishu_group');// channel
+    expect(call[1][2]).toBe('oc_chat123'); // groupId
+    expect(call[1][3]).toBe('user');       // role
+    expect(call[1][4]).toBe('今天天气不错'); // content
+    expect(call[1][5]).toBeNull();         // imageDescription
+  });
+
+  it('GA1-2: assistant 行写入正确字段', async () => {
+    await saveUnifiedMessage(mockPool, 'ou_abc', 'feishu_group', 'oc_chat123', 'assistant', '是啊，不错！', null);
+    const call = mockQuery.mock.calls[0];
+    expect(call[1][3]).toBe('assistant');
+    expect(call[1][4]).toBe('是啊，不错！');
+  });
+
+  it('GA1-3: 单条 INSERT（不批量插入 user+assistant）', async () => {
+    await saveUnifiedMessage(mockPool, 'ou_abc', 'feishu_group', 'oc_chat123', 'user', 'hello');
+    const call = mockQuery.mock.calls[0];
+    // 只有 6 个参数（单行），不含 assistant 数据
+    expect(call[1]).toHaveLength(6);
+  });
+
+  it('GA1-4: groupId 为 null 时存 null', async () => {
+    await saveUnifiedMessage(mockPool, 'ou_abc', 'feishu_group', null, 'user', 'test');
+    expect(mockQuery.mock.calls[0][1][2]).toBeNull();
+  });
+});
+
 describe('UC5: migration 108 SQL 结构验证', () => {
   it('UC5-1: 迁移文件存在', async () => {
     const { existsSync } = await import('fs');

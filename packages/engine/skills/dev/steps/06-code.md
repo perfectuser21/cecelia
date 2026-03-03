@@ -67,7 +67,10 @@ A: 调整方案，重新实现。
 **标记步骤完成**：
 
 ```bash
-sed -i 's/^step_6_code: pending/step_6_code: done/' .dev-mode
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+DEV_MODE_FILE=".dev-mode.${BRANCH_NAME}"
+[[ -f "$DEV_MODE_FILE" ]] || DEV_MODE_FILE=".dev-mode"
+sed -i "s/^step_6_code: pending/step_6_code: done/" "$DEV_MODE_FILE"
 echo "✅ Step 6 完成标记已写入 .dev-mode"
 ```
 
