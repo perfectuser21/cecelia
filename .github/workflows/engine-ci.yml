@@ -16,7 +16,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-engine PRs
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -664,6 +664,10 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # Non-engine changes: skip all checks
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed - cannot determine what changed"
+            exit 1
+          fi
           if [ "${{ needs.changes.outputs.engine }}" != "true" ]; then
             echo "No engine changes detected, all checks skipped"
             exit 0
