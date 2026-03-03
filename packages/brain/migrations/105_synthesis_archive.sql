@@ -20,5 +20,3 @@ CREATE INDEX IF NOT EXISTS idx_synthesis_level_period
 CREATE UNIQUE INDEX IF NOT EXISTS idx_synthesis_level_period_start
   ON synthesis_archive(level, period_start);
 
-INSERT INTO schema_migrations (version, description) VALUES
-  (105, 'synthesis_archive: 分层记忆压缩表（日/周/月）');
