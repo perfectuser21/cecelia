@@ -53,6 +53,8 @@ export const WS_EVENTS = {
   COGNITIVE_STATE: 'cognitive:state',
   // Cecelia 主动推送消息（叙事/情绪变化）
   CECELIA_MESSAGE: 'cecelia:message',
+  // 系统简报（48h 定期自动生成）
+  SYSTEM_REPORT: 'system:report',
 };
 
 /**
