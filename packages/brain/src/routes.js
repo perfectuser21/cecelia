@@ -2854,6 +2854,48 @@ router.post('/execution-callback', async (req, res) => {
       updateDesireFromTask(task_id, 'completed', pool).catch(err =>
         console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
       );
+
+      // 任务完成 → learnings 闭环：把完成结果写入 learnings 表（让反刍系统消化）
+      try {
+        const taskMeta = await pool.query(
+          'SELECT title, task_type, description FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        if (taskMeta.rows[0]) {
+          const { title: taskTitle, task_type: taskType } = taskMeta.rows[0];
+          const findingsSummary = findingsValue ? findingsValue.substring(0, 800) : null;
+          const learningContent = [
+            `任务完成：${taskTitle}`,
+            `类型：${taskType}`,
+            findingsSummary ? `产出摘要：${findingsSummary}` : null,
+            pr_url ? `PR：${pr_url}` : null,
+          ].filter(Boolean).join('\n');
+
+          const crypto = await import('crypto');
+          const contentHash = crypto.createHash('sha256').update(learningContent).digest('hex');
+
+          // 去重：同一 hash 不重复写
+          const existing = await pool.query(
+            'SELECT id FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+            [contentHash]
+          );
+          if (!existing.rows.length) {
+            await pool.query(
+              `INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
+               VALUES ($1, 'task_completion', 'task_completed', $2, $3, $4, 1, true, false)`,
+              [
+                `完成：${taskTitle}`,
+                learningContent,
+                JSON.stringify({ task_id, task_type: taskType, pr_url: pr_url || null }),
+                contentHash
+              ]
+            );
+            console.log(`[execution-callback] 任务完成写入 learnings: ${taskTitle}`);
+          }
+        }
+      } catch (learningErr) {
+        console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
+      }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -9280,6 +9322,10 @@ async function getFeishuToken() {
 // 群成员列表内存缓存（chat_id → { names, expiresAt }）
 const groupMembersCache = new Map();
 
+// 群消息聚合缓冲区（chat_id → { messages: [], timer, accessToken }）
+// 8 秒内同一群的非@mention 消息合并为一次决策
+const groupPendingMessages = new Map();
+
 /** 获取群成员名单（内存缓存 1小时）— 调飞书 GET /im/v1/chats/{chat_id}/members
  *  副作用：将成员信息写入 feishu_users，使 getFeishuUserName 的 staleCache 生效 */
 async function getGroupMembers(chatId, accessToken) {
@@ -9629,11 +9675,11 @@ router.post('/feishu/event', async (req, res) => {
       // 获取用户信息（含 relationship）
       const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
 
-      // Mode A：群聊非 @mention 消息 → LLM 决策是否回复 + 写入 memory_stream
+      // Mode A：群聊非 @mention 消息 → 8秒聚合窗口 → 一次性决策+回复
       if (chatType === 'group' && !isGroupMention) {
-        console.log(`[feishu/group] 非@mention，LLM 决策... 发送者: ${senderName}，内容: ${text.slice(0, 60)}`);
+        console.log(`[feishu/group] 非@mention，加入聚合缓冲... 发送者: ${senderName}，内容: ${text.slice(0, 60)}`);
 
-        // 无论是否回复，都记录到 memory_stream（以人为中心的统一记忆）
+        // 无论是否回复，都立即记录到 memory_stream（以人为中心的统一记忆）
         const groupMemoryContent = `[飞书群聊] ${senderName}: ${text}`;
         pool.query(
           `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
@@ -9641,60 +9687,105 @@ router.post('/feishu/event', async (req, res) => {
           [groupMemoryContent, groupMemoryContent.slice(0, 100)]
         ).catch(err => console.warn('[feishu/group] memory_stream 写入失败:', err.message));
 
+        // Alex 群聊消息也更新 last_alex_chat_at（让感知层知道 Alex 今天来过）
+        if (relationship === 'owner') {
+          const nowIso = JSON.stringify(new Date().toISOString());
+          pool.query(
+            `INSERT INTO working_memory (key, value_json, updated_at)
+             VALUES ('last_alex_chat_at', $1, NOW())
+             ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+            [nowIso]
+          ).catch(err => console.warn('[feishu/group] last_alex_chat_at 写入失败:', err.message));
+        }
+
         // 异步更新发送者印象（fire-and-forget）
         updateUserImpression(openId, senderName).catch(() => {});
 
-        try {
-          // 注入最近群聊历史（对话连续性）
-          const recentRows = await pool.query(
-            `SELECT content FROM memory_stream WHERE source_type='feishu_group' ORDER BY created_at DESC LIMIT 5`
-          ).then(r => r.rows.map(r => r.content).reverse()).catch(() => []);
-          const recentBlock = recentRows.length
-            ? `\n最近群聊历史（从旧到新）：\n${recentRows.join('\n')}\n`
-            : '';
-          // Step 1: Haiku 只判断 should_reply (bool)，不生成回复内容
-          const decisionPrompt = `群里有人发消息，判断 Cecelia 是否需要回复。${recentBlock}\n发送者：${senderName}\n消息：${text}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 回复\n- 涉及 Cecelia 的能力、状态、工作 → 回复\n- 跟进 Cecelia 上文的追问 → 回复\n- 纯语气词（"哈哈"/"好"/"嗯"/"收到"） → 不回复\n- 明显成员间闲聊、与 AI 无关 → 不回复\n- 不确定 → 回复\n\n只输出 JSON：{"should_reply":true} 或 {"should_reply":false}`;
-          const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 5000, max_tokens: 20 });
-          let decision;
-          try {
-            const jsonMatch = decisionText.match(/\{[\s\S]*\}/);
-            decision = JSON.parse(jsonMatch ? jsonMatch[0] : decisionText.trim());
-          } catch {
-            console.warn('[feishu/group] LLM 决策 JSON 解析失败，静默。原始内容:', decisionText.slice(0, 100));
-            return;
-          }
-          console.log(`[feishu/group] LLM 决策: should_reply=${decision.should_reply}`);
-          if (!decision.should_reply) return;
-
-          // Step 2: 调 handleChat 生成有人格的回复（保持 Cecelia 特质，colleague 限工作话题）
-          const modeParts = [];
-          if (relationship === 'colleague') modeParts.push('权限：同事，仅讨论工作相关话题');
-          else if (relationship === 'guest') modeParts.push('权限：访客，仅基础帮助，不涉及公司/个人信息');
-          // Mode A 也注入群成员名单（memberNames 来自 getGroupMembers）
-          const modeAMemberNames = await getGroupMembers(message.chat_id, accessToken);
-          if (modeAMemberNames.length > 0) modeParts.push(`群成员包括 ${modeAMemberNames.join('、')}`);
-          const modeAText = modeParts.length > 0 ? `[群聊上下文：${modeParts.join('；')}] ${text}` : text;
-          const modeAResult = await handleChat(modeAText, {
-            source: 'feishu',
-            sender_name: senderName,
-            user_id: userId,
-            relationship,
-          }, []);
-          const reply = modeAResult?.reply;
-          if (!reply) return;
-
-          await sendFeishuMessage(accessToken, message.chat_id, 'chat_id', reply);
-          console.log(`[feishu/group] Mode A 回复 ${senderName}：${reply.slice(0, 60)}`);
-          // 回复也写入记忆，importance 升级
-          const replyMemContent = `[飞书群聊] Cecelia 回复 ${senderName}: ${reply}`;
-          pool.query(
-            `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
-             VALUES ($1, $2, 4, 'short', 'feishu_group', NOW() + INTERVAL '30 days')`,
-            [replyMemContent, replyMemContent.slice(0, 100)]
-          ).catch(err => console.warn('[feishu/group] memory_stream 回复写入失败:', err.message));
-        } catch (err) {
-          console.warn('[feishu/group] LLM 决策失败，静默:', err.message);
+        // 消息聚合：加入 chat_id 对应的缓冲区，8秒后统一处理
+        const chatId = message.chat_id;
+        if (!groupPendingMessages.has(chatId)) {
+          groupPendingMessages.set(chatId, { messages: [], accessToken });
         }
+        const pending = groupPendingMessages.get(chatId);
+        pending.messages.push({ senderName, text, userId, relationship, openId });
+        // 重置 timer（新消息到来时延后处理时机）
+        if (pending.timer) clearTimeout(pending.timer);
+        pending.timer = setTimeout(async () => {
+          groupPendingMessages.delete(chatId);
+          const batch = pending.messages;
+          if (!batch.length) return;
+
+          // 以最后一条消息的发送者为"主要对话方"
+          const primarySender = batch[batch.length - 1];
+
+          try {
+            // 注入最近群聊历史（对话连续性）
+            const recentRows = await pool.query(
+              `SELECT content FROM memory_stream WHERE source_type='feishu_group' ORDER BY created_at DESC LIMIT 6`
+            ).then(r => r.rows.map(r => r.content).reverse()).catch(() => []);
+            const recentBlock = recentRows.length
+              ? `\n最近群聊历史（从旧到新）：\n${recentRows.join('\n')}\n`
+              : '';
+
+            // 构建本批消息摘要（可能多人）
+            const batchSummary = batch.map(m => `${m.senderName}: ${m.text}`).join('\n');
+
+            // Step 1: Haiku 判断 should_reply（超时 10s，解析失败默认 false）
+            const decisionPrompt = `群里有人发了消息，判断 Cecelia 是否需要回复。${recentBlock}\n本批消息（${batch.length}条）：\n${batchSummary}\n\n判断标准（宽松优先）：\n- 疑问句、"你"开头、含"能/会/可以/多少/几个"等 → 回复\n- 涉及 Cecelia 的能力、状态、工作 → 回复\n- 跟进 Cecelia 上文的追问 → 回复\n- 纯语气词（"哈哈"/"好"/"嗯"/"收到"） → 不回复\n- 明显成员间闲聊、与 AI 无关 → 不回复\n- 不确定 → 回复\n\n只输出 JSON：{"should_reply":true} 或 {"should_reply":false}`;
+            let shouldReply = false;
+            try {
+              const { text: decisionText } = await callLLM('mouth', decisionPrompt, { timeout: 10000, max_tokens: 20 });
+              const jsonMatch = decisionText.match(/\{[\s\S]*\}/);
+              const decision = JSON.parse(jsonMatch ? jsonMatch[0] : decisionText.trim());
+              shouldReply = !!decision.should_reply;
+              console.log(`[feishu/group] LLM 决策: should_reply=${shouldReply}，批次=${batch.length}条`);
+            } catch (decisionErr) {
+              console.warn('[feishu/group] LLM 决策失败，默认不回复:', decisionErr.message);
+              return;
+            }
+            if (!shouldReply) return;
+
+            // Step 2: 调 handleChat 生成回复（工作圈：工作相关话题均可聊）
+            const modeParts = [`回复时在开头用对方名字称呼（直接写名字，如"${primarySender.senderName}，..."）`];
+            if (primarySender.relationship === 'colleague') {
+              modeParts.push('工作圈模式：工作相关话题均可聊，包括项目进展、任务状态、日常协作，保持自然友好');
+            } else if (primarySender.relationship === 'guest') {
+              modeParts.push('权限：访客，仅基础帮助，不涉及公司/个人信息');
+            }
+            const modeAMemberNames = await getGroupMembers(chatId, pending.accessToken);
+            if (modeAMemberNames.length > 0) modeParts.push(`群成员包括 ${modeAMemberNames.join('、')}`);
+            // 如果批次有多条消息，把完整上下文传入
+            const contextPrefix = batch.length > 1
+              ? `[群聊上下文：${modeParts.join('；')}]\n（本批 ${batch.length} 条消息）\n${batchSummary}`
+              : `[群聊上下文：${modeParts.join('；')}] ${primarySender.text}`;
+
+            const modeAResult = await handleChat(contextPrefix, {
+              source: 'feishu',
+              sender_name: primarySender.senderName,
+              user_id: primarySender.userId,
+              relationship: primarySender.relationship,
+            }, []);
+            const reply = modeAResult?.reply;
+            if (!reply) {
+              console.warn('[feishu/group] handleChat 无回复，跳过');
+              return;
+            }
+
+            await sendFeishuMessage(pending.accessToken, chatId, 'chat_id', reply);
+            console.log(`[feishu/group] Mode A 回复（批次 ${batch.length} 条）→ ${primarySender.senderName}：${reply.slice(0, 60)}`);
+
+            // 回复写入记忆
+            const replyMemContent = `[飞书群聊] Cecelia 回复 ${primarySender.senderName}: ${reply}`;
+            pool.query(
+              `INSERT INTO memory_stream (content, summary, importance, memory_type, source_type, expires_at)
+               VALUES ($1, $2, 4, 'short', 'feishu_group', NOW() + INTERVAL '30 days')`,
+              [replyMemContent, replyMemContent.slice(0, 100)]
+            ).catch(err => console.warn('[feishu/group] memory_stream 回复写入失败:', err.message));
+          } catch (err) {
+            console.warn('[feishu/group] Mode A 批处理失败:', err.message);
+          }
+        }, 8000); // 8 秒聚合窗口
+
         return;
       }
 
