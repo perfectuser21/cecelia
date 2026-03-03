@@ -7538,7 +7538,7 @@ export async function triggerAutoRCA({ task_id, errorMsg, classification, should
  */
 router.post('/orchestrator/chat', async (req, res) => {
   try {
-    const { message, context, messages } = req.body;
+    const { message, context, messages, image_base64, image_media_type } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({
@@ -7547,7 +7547,12 @@ router.post('/orchestrator/chat', async (req, res) => {
       });
     }
 
-    const result = await handleChat(message, context || {}, Array.isArray(messages) ? messages : []);
+    // 构建图片 content block（如有）
+    const imageContent = image_base64
+      ? [{ type: 'image', source: { type: 'base64', media_type: image_media_type || 'image/jpeg', data: image_base64 } }]
+      : null;
+
+    const result = await handleChat(message, context || {}, Array.isArray(messages) ? messages : [], imageContent);
     res.json(result);
   } catch (err) {
     console.error('[API] orchestrator/chat error:', err.message);
@@ -7566,12 +7571,17 @@ router.post('/orchestrator/chat', async (req, res) => {
  * Response: text/event-stream — 每行格式 `data: <chunk>\n\n`，结束为 `data: [DONE]\n\n`
  */
 router.post('/orchestrator/chat/stream', async (req, res) => {
-  const { message, context, messages } = req.body;
+  const { message, context, messages, image_base64, image_media_type } = req.body;
 
   if (!message || typeof message !== 'string') {
     res.status(400).json({ error: 'Invalid request', message: 'message is required and must be a string' });
     return;
   }
+
+  // 构建图片 content block（如有）
+  const streamImageContent = image_base64
+    ? [{ type: 'image', source: { type: 'base64', media_type: image_media_type || 'image/jpeg', data: image_base64 } }]
+    : null;
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -7584,6 +7594,16 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
   res.on('close', () => { closed = true; });
 
   try {
+    if (streamImageContent) {
+      // 有图片：stream provider 不支持 vision，降级为非流式 handleChat
+      const result = await handleChat(message, context || {}, Array.isArray(messages) ? messages : [], streamImageContent);
+      if (!closed) {
+        const reply = result?.reply || '';
+        if (reply) res.write(`data: ${JSON.stringify({ delta: reply })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+    } else {
     await handleChatStream(
       message,
       context || {},
@@ -7598,6 +7618,7 @@ router.post('/orchestrator/chat/stream', async (req, res) => {
         }
       }
     );
+    }
   } catch (err) {
     console.error('[API] orchestrator/chat/stream error:', err.message);
     if (!closed) {
@@ -9503,6 +9524,20 @@ async function getFeishuUserName(openId, accessToken) {
   return { name: name || '用户', user_id, relationship };
 }
 
+/** 下载飞书图片并返回 base64 + media_type */
+async function downloadFeishuImage(messageId, imageKey, accessToken) {
+  const dlResp = await fetch(
+    `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) }
+  );
+  if (!dlResp.ok) throw new Error(`图片下载失败: ${dlResp.status}`);
+  const contentType = dlResp.headers.get('content-type') || 'image/jpeg';
+  const mediaType = contentType.split(';')[0].trim(); // 'image/jpeg', 'image/png' etc.
+  const imageBuffer = await dlResp.arrayBuffer();
+  const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+  return { imageBase64, mediaType };
+}
+
 /** 语音消息转文字（飞书原生 ASR，支持 ≤60s） */
 async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
   // 1. 下载音频文件
@@ -9592,8 +9627,8 @@ router.post('/feishu/event', async (req, res) => {
   const chatType = message.chat_type;   // 'p2p' 或 'group'
   const msgType = message.message_type; // 'text', 'audio', ...
 
-  // 只处理 text 和 audio
-  if (msgType !== 'text' && msgType !== 'audio') return res.json({ ok: true });
+  // 只处理 text、audio、image
+  if (msgType !== 'text' && msgType !== 'audio' && msgType !== 'image') return res.json({ ok: true });
 
   // p2p 或 group（group 需要 @mention）
   if (chatType !== 'p2p' && chatType !== 'group') return res.json({ ok: true });
@@ -9601,9 +9636,10 @@ router.post('/feishu/event', async (req, res) => {
   const openId = sender?.sender_id?.open_id;
   if (!openId) return res.json({ ok: true });
 
-  // 提取文本或音频 file_key
+  // 提取文本、音频 file_key 或图片 image_key
   let text = '';
   let audioFileKey = null;
+  let imageKey = null;
 
   if (msgType === 'text') {
     try {
@@ -9621,6 +9657,15 @@ router.post('/feishu/event', async (req, res) => {
       return res.json({ ok: true });
     }
     if (!audioFileKey) return res.json({ ok: true });
+  } else if (msgType === 'image') {
+    try {
+      const contentObj = JSON.parse(message.content || '{}');
+      imageKey = contentObj.image_key || '';
+    } catch {
+      return res.json({ ok: true });
+    }
+    if (!imageKey) return res.json({ ok: true });
+    text = '[图片消息]'; // 占位文字，真正内容由 imageContent 传给 LLM
   }
 
   // 群聊：检查是否被 @mention（Mode A：不再拦截非 @mention 消息）
@@ -9669,6 +9714,19 @@ router.post('/feishu/event', async (req, res) => {
         }
       }
 
+      // 图片消息：下载并构建 imageContent（多模态）
+      let feishuImageContent = null;
+      if (msgType === 'image' && imageKey) {
+        try {
+          const { imageBase64, mediaType } = await downloadFeishuImage(message.message_id, imageKey, accessToken);
+          feishuImageContent = [{ type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } }];
+          console.log(`[feishu/event] 图片下载成功, imageKey=${imageKey}, mediaType=${mediaType}, size=${imageBase64.length}`);
+        } catch (err) {
+          console.warn('[feishu/event] 图片下载失败:', err.message);
+          // 降级：当作纯文字消息处理（text = '[图片消息]'）
+        }
+      }
+
       // 群聊：预拉取成员信息，填充 feishu_users（使 getFeishuUserName 的 staleCache 生效）
       if (chatType === 'group') await getGroupMembers(message.chat_id, accessToken).catch(() => {});
 
@@ -9707,7 +9765,7 @@ router.post('/feishu/event', async (req, res) => {
           groupPendingMessages.set(chatId, { messages: [], accessToken });
         }
         const pending = groupPendingMessages.get(chatId);
-        pending.messages.push({ senderName, text, userId, relationship, openId });
+        pending.messages.push({ senderName, text, userId, relationship, openId, imageContent: feishuImageContent });
         // 重置 timer（新消息到来时延后处理时机）
         if (pending.timer) clearTimeout(pending.timer);
         pending.timer = setTimeout(async () => {
@@ -9759,12 +9817,14 @@ router.post('/feishu/event', async (req, res) => {
               ? `[群聊上下文：${modeParts.join('；')}]\n（本批 ${batch.length} 条消息）\n${batchSummary}`
               : `[群聊上下文：${modeParts.join('；')}] ${primarySender.text}`;
 
+            // 如果批次中有图片，取最后一张
+            const batchImageContent = batch.slice().reverse().find(m => m.imageContent)?.imageContent || null;
             const modeAResult = await handleChat(contextPrefix, {
               source: 'feishu',
               sender_name: primarySender.senderName,
               user_id: primarySender.userId,
               relationship: primarySender.relationship,
-            }, []);
+            }, [], batchImageContent);
             const reply = modeAResult?.reply;
             if (!reply) {
               console.warn('[feishu/group] handleChat 无回复，跳过');
@@ -9819,13 +9879,13 @@ router.post('/feishu/event', async (req, res) => {
         }
       }
 
-      // 调用 Cecelia
+      // 调用 Cecelia（支持图片多模态）
       const result = await handleChat(enrichedText, {
         source: 'feishu',
         sender_name: senderName,
         user_id: userId,
         relationship,
-      }, messages);
+      }, messages, feishuImageContent);
       const reply = result?.reply;
       if (!reply) return;
 

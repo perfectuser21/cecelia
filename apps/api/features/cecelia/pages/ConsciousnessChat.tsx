@@ -402,6 +402,8 @@ export default function ConsciousnessChat() {
 
   const { connected, subscribe } = useCeceliaWS();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null);
 
   // ── Session management ────────────────────────────────
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions()); // localStorage only
@@ -624,16 +626,34 @@ export default function ConsciousnessChat() {
   }, [subscribe, fetchBrain, fetchDesires, addMessage]);
 
   // ── Chat send ─────────────────────────────────────────
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const [header, base64] = dataUrl.split(',');
+      const mediaType = header.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+      setPendingImage({ base64, mediaType, preview: dataUrl });
+    };
+    reader.readAsDataURL(file);
+    // 重置 input 允许重复选同一文件
+    e.target.value = '';
+  }, []);
+
   const handleSend = useCallback(async () => {
     if (viewMode === 'history') {
       setViewMode('live');
       return;
     }
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && !pendingImage) || sending) return;
+    const imageToSend = pendingImage;
     setInput('');
+    setPendingImage(null);
     setSending(true);
-    addMessage({ id: generateId(), role: 'user', content: text });
+    const displayText = text || (imageToSend ? '[图片]' : '');
+    addMessage({ id: generateId(), role: 'user', content: displayText });
     setProcessingStage('L1 丘脑 路由中...');
 
     try {
@@ -649,13 +669,14 @@ export default function ConsciousnessChat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: text || '[图片消息]',
           messages: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
           context: {
             currentRoute,
             availableTools: frontendTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })),
             pageContext: getPageContext(),
           },
+          ...(imageToSend ? { image_base64: imageToSend.base64, image_media_type: imageToSend.mediaType } : {}),
         }),
       });
 
@@ -1096,7 +1117,30 @@ export default function ConsciousnessChat() {
                     正在查看历史对话 · 点击"返回当前对话"继续聊天
                   </div>
                 )}
+                {/* 图片预览 */}
+                {pendingImage && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <img src={pendingImage.preview} alt="preview" style={{ height: 48, borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)' }} />
+                    <button
+                      onClick={() => setPendingImage(null)}
+                      style={{ background: 'rgba(239,68,68,0.7)', border: 'none', borderRadius: 4, color: '#fff', padding: '2px 7px', fontSize: 11, cursor: 'pointer' }}
+                    >✕</button>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8 }}>
+                  {/* 图片上传按钮 */}
+                  <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageSelect} />
+                  <button
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={sending}
+                    title="发送图片"
+                    style={{
+                      padding: '8px 10px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.08)',
+                      background: pendingImage ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.05)',
+                      color: pendingImage ? 'rgba(167,139,250,0.9)' : 'rgba(255,255,255,0.4)',
+                      cursor: 'pointer', fontSize: 14, transition: 'all 0.2s',
+                    }}
+                  >📎</button>
                   <input
                     value={input}
                     onChange={e => setInput(e.target.value)}
@@ -1115,12 +1159,12 @@ export default function ConsciousnessChat() {
                   />
                   <button
                     onClick={handleSend}
-                    disabled={(!input.trim() && viewMode !== 'history') || sending}
+                    disabled={(!input.trim() && !pendingImage && viewMode !== 'history') || sending}
                     style={{
                       padding: '8px 13px', borderRadius: 9, border: 'none',
-                      background: (input.trim() || viewMode === 'history') && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
-                      color: (input.trim() || viewMode === 'history') && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
-                      cursor: (input.trim() || viewMode === 'history') && !sending ? 'pointer' : 'not-allowed',
+                      background: (input.trim() || pendingImage || viewMode === 'history') && !sending ? '#7c3aed' : 'rgba(255,255,255,0.05)',
+                      color: (input.trim() || pendingImage || viewMode === 'history') && !sending ? '#fff' : 'rgba(255,255,255,0.2)',
+                      cursor: (input.trim() || pendingImage || viewMode === 'history') && !sending ? 'pointer' : 'not-allowed',
                       display: 'flex', alignItems: 'center', transition: 'all 0.2s',
                     }}
                   >

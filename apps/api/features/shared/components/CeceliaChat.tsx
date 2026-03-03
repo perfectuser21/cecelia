@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import {
   Brain,
   Send,
@@ -120,6 +120,8 @@ export function CeceliaChat() {
   const isConsciousnessPage = location.pathname === '/cecelia/chat';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImage, setPendingImage] = useState<{ base64: string; mediaType: string; preview: string } | null>(null);
 
   // Try to handle message as a frontend command (defined first so it can be used by handleUserSpeech)
   const tryFrontendCommand = useCallback(async (message: string): Promise<{ handled: boolean; result?: string }> => {
@@ -288,12 +290,28 @@ export function CeceliaChat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const [header, base64] = dataUrl.split(',');
+      const mediaType = header.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+      setPendingImage({ base64, mediaType, preview: dataUrl });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || sending) return;
-    const userMessage = input.trim();
+    if (!input.trim() && !pendingImage || sending) return;
+    const userMessage = input.trim() || '[图片消息]';
+    const imageToSend = pendingImage;
     setInput('');
+    setPendingImage(null);
     setSending(true);
-    addMessage({ id: generateId(), role: 'user', content: userMessage });
+    addMessage({ id: generateId(), role: 'user', content: input.trim() || '[图片]' });
 
     try {
       // First, try to handle as frontend command
@@ -327,7 +345,8 @@ export function CeceliaChat() {
               description: t.description,
               parameters: t.parameters
             }))
-          }
+          },
+          ...(imageToSend ? { image_base64: imageToSend.base64, image_media_type: imageToSend.mediaType } : {}),
         })
       });
       const data = await res.json();
@@ -427,6 +446,12 @@ export function CeceliaChat() {
         </div>
         <div className="p-3 border-t border-slate-700/50 flex-shrink-0 bg-slate-800/30">
           {realtime.error && <p className="text-xs text-red-400 mb-2 truncate">{realtime.error}</p>}
+          {pendingImage && (
+            <div className="flex items-center gap-2 mb-2">
+              <img src={pendingImage.preview} alt="preview" className="h-10 rounded border border-slate-600" />
+              <button onClick={() => setPendingImage(null)} className="text-xs text-red-400 hover:text-red-300">✕</button>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={realtime.isConnected ? realtime.disconnect : realtime.connect}
@@ -434,6 +459,14 @@ export function CeceliaChat() {
             >
               {realtime.isConnected ? <PhoneOff className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
             </button>
+            {/* 图片上传 */}
+            <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+            <button
+              onClick={() => imageInputRef.current?.click()}
+              disabled={realtime.isConnected || sending}
+              className={`p-2 rounded-lg transition-all text-sm ${pendingImage ? 'bg-purple-600/60 text-purple-200' : 'bg-slate-700/60 text-slate-400 hover:text-slate-300'}`}
+              title="发送图片"
+            >📎</button>
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -444,7 +477,7 @@ export function CeceliaChat() {
             />
             <button
               onClick={sendMessage}
-              disabled={!input.trim() || sending || realtime.isConnected}
+              disabled={(!input.trim() && !pendingImage) || sending || realtime.isConnected}
               className="p-2 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-all"
             >
               <Send className="w-4 h-4" />

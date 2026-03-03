@@ -73,6 +73,9 @@ function stripThinking(content) {
  * @param {number} [options.maxTokens] - 最大输出 token 数（默认 1024）
  * @param {string} [options.model] - 覆盖 profile 的模型选择
  * @param {string} [options.provider] - 覆盖 profile 的 provider 选择
+ * @param {Array} [options.imageContent] - 图片 content blocks（Anthropic 多模态格式）
+ *   例: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '...' } }]
+ *   仅 anthropic-api provider 支持，bridge 调用会忽略图片（降级为纯文字）
  * @returns {Promise<{text: string, model: string, provider: string, elapsed_ms: number}>}
  */
 export async function callLLM(agentId, prompt, options = {}) {
@@ -83,6 +86,7 @@ export async function callLLM(agentId, prompt, options = {}) {
   const agentConfig = profile?.config?.[agentId] || {};
   const timeout = options.timeout || 90000;
   const maxTokens = options.maxTokens || 1024;
+  const imageContent = options.imageContent || null;
 
   // 构建候选列表：主模型 + fallbacks（来自 agentConfig 或 options）
   const primary = {
@@ -103,8 +107,9 @@ export async function callLLM(agentId, prompt, options = {}) {
     try {
       let text;
       if (provider === 'anthropic-api') {
-        text = await callAnthropicAPI(prompt, model, timeout, maxTokens);
+        text = await callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent);
       } else if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
+        // bridge 不支持图片，仅传文字 prompt（降级处理）
         text = await callClaudeViaBridge(prompt, model, timeout, model);
       } else if (provider === 'minimax') {
         text = await callMiniMaxAPI(prompt, model, timeout, maxTokens);
@@ -128,10 +133,20 @@ export async function callLLM(agentId, prompt, options = {}) {
 /**
  * 直接调用 Anthropic REST API（走 API key，速度快 5-8x，无并发限制）
  * 读取 ~/.credentials/anthropic.json 中的 api_key
+ * @param {string} prompt - 文字 prompt
+ * @param {string} model - 模型 ID
+ * @param {number} timeout - 超时毫秒
+ * @param {number} maxTokens - 最大 token 数
+ * @param {Array|null} imageContent - 图片 content blocks（多模态），null 表示纯文字
  */
-async function callAnthropicAPI(prompt, model, timeout, maxTokens) {
+async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent = null) {
   const apiKey = getAnthropicKey();
   if (!apiKey) throw new Error('Anthropic API key not available');
+
+  // 构建 user content：有图片时用 content block array，否则用纯文字
+  const userContent = imageContent && imageContent.length > 0
+    ? [{ type: 'text', text: prompt }, ...imageContent]
+    : prompt;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -143,7 +158,7 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens) {
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: userContent }],
     }),
     signal: AbortSignal.timeout(timeout),
   });
