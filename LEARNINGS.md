@@ -4,6 +4,37 @@
 
 ---
 
+### [2026-03-04] 简报 API + Dashboard 展示页 v1.179.0
+
+**失败统计**：CI 失败 1 次（DoD 格式问题），本地测试失败 0 次
+
+**PR**：#450 - feat(brain+dashboard): 系统简报 API + Dashboard 展示页
+
+**背景**：Initiative「48h简报自动化调度集成」第三个（最终）PR，合并后完成完整 initiative。
+
+**关键学习**：
+
+1. **合并时先检查 main 已有什么**：发现 main 分支（PR #1、#2）已实现 `system-reports.js`（GET 列表/详情）和 `frontend/src/pages/Reports.tsx`（Dashboard 页面）。我们的 `reports.js` 与 main 的 `system-reports.js` 功能重复，需要删除自己的文件，采用 main 的实现。
+   - 教训：**merge 之前用 `git show origin/main:path/to/file` 检查 main 的状态**，避免重复实现。
+
+2. **DoD 格式：`Test:` 字段必须是独立行，且用 `manual:curl` 格式**：
+   - 错误格式：`- [ ] 描述 | Test: xxx`（内联）
+   - 正确格式：
+     ```
+     - [x] 描述
+       Test: manual:curl -s localhost:5221/api/brain/xxx | jq .
+     ```
+   - 禁止：`echo "xxx"`（假测试）、`test -f xxx && echo "exists"`（不被接受）
+   - 允许：`curl`、`node`、`npm`、`bash`（真实可执行命令）
+
+3. **合并冲突版本文件用 `--theirs`，业务代码手动合并**：
+   - `.brain-versions`、`DEFINITION.md`、`packages/brain/VERSION`、`packages/brain/package.json` → `git checkout --theirs`（采用 main 最新版本）
+   - `packages/brain/server.js` → 手动合并（需理解两边逻辑）
+
+4. **package-lock.json 版本不会被 `npm install --package-lock-only` 自动更新**：需要手动编辑 `package-lock.json` 的前两处 `"version"` 字段。
+
+---
+
 ### [2026-03-02] 任务派发优先级动态调整机制 v1.157.0
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
