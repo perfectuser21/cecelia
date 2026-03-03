@@ -9,6 +9,8 @@ import profileFactsRoutes from './src/routes/profile-facts.js';
 import clusterRoutes from './src/routes/cluster.js';
 import vpsMonitorRoutes from './src/routes/vps-monitor.js';
 import taskProjectsRoutes from './src/routes/task-projects.js';
+import taskGoalsRoutes from './src/routes/task-goals.js';
+import taskAreasRoutes from './src/routes/task-areas.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
@@ -86,6 +88,8 @@ app.use('/api/brain/cluster', clusterRoutes);
 app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
+app.use('/api/brain/tasks/goals', taskGoalsRoutes);
+app.use('/api/brain/tasks/areas', taskAreasRoutes);
 app.use('/api/brain/inner-life', innerLifeRoutes);
 app.use('/api/brain/intent', intentMatchRoutes);
 app.use('/api/brain/self-reports', selfReportsRoutes);
