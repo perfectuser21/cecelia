@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.19.0
+version: 1.20.0
 created: 2026-01-16
-updated: 2026-03-02
+updated: 2026-03-03
 changelog:
+  - 1.20.0: stop.sh 路由器 Bug（.dev-lock vs .dev-mode 路由条件不一致导致 LEARNINGS 落入单独 PR）
   - 1.19.0: DoD 格式陷阱三连（ls/echo/test -f 禁用模式 + migration 依赖链分析）
   - 1.18.0: stop-dev.sh step_10_learning 检查（LEARNINGS 双 PR 根因修复）
   - 1.17.0: 打通 LEARNINGS → Brain DB 管道（extract-learnings.sh + generate-feedback-report.sh 合并）
@@ -29,6 +30,39 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+### [2026-03-03] stop.sh 路由器 Bug：.dev-lock 与 .dev-mode 路由条件不一致
+
+**失败统计**：CI 失败 2 次（Impact Check + Config Audit 各一次）
+
+**根本原因**：
+- PR #418 (v12.36.0) 将 `/dev` 状态文件改为 per-branch 格式（`.dev-lock.<branch>` + `.dev-mode.<branch>`）
+- `stop-dev.sh` 内部以 `.dev-lock.*` 为主控文件（硬钥匙），扫描 TTY/session_id 匹配会话
+- 但 `stop.sh`（路由器）仍只检查旧格式 `.dev-mode`（软状态文件）
+- 当 cleanup 删除 `.dev-mode.<branch>` 后（或只有 `.dev-lock` 格式时），`stop.sh` 找不到 `.dev-mode` → 直接 `exit 0`
+- `stop-dev.sh` 永远不被调用 → Step 10 LEARNINGS 检查（第 526-536 行）完全失效
+- AI 在未写 LEARNINGS 前就合并 PR，之后被迫创建单独 `cp-*-learnings` 分支补写
+
+**两次 CI 失败**：
+1. Impact Check：`hooks/stop.sh` 属于 core capability，必须同步更新 `feature-registry.yml`
+2. Config Audit：`hooks/` 和 `regression-contract.yaml` 是 critical config，PR 标题必须含 `[CONFIG]` 标签
+
+**修复**：
+- `stop.sh` 路由器增加 `.dev-lock.*` 和 `.dev-lock` 的检测，有即调 `stop-dev.sh`
+- 保留 `.dev-mode` 旧格式兜底（向后兼容）
+- 更新 `feature-registry.yml` + 在 PR 标题加 `[CONFIG]` 标签
+
+**关键洞察**：
+- **路由器和执行器的触发条件必须一致**：`stop.sh`（路由器）和 `stop-dev.sh`（执行器）基于不同文件触发，就形成死角。设计时应用同一个"入口文件"作为触发条件
+- `stop-dev.sh` 内部的 dev-lock 扫描逻辑已正确实现，bug 只在路由层
+- 改 `hooks/` 必须同步：① `feature-registry.yml` 注册（Impact Check）② PR 标题加 `[CONFIG]`（Config Audit）
+
+**影响程度**: Medium（直接导致用户观察到的"LEARNINGS 落入单独 PR"问题）
+
+**预防措施**：
+- 以后引入新状态文件格式时，路由器和执行器必须一起更新
 
 ---
 
