@@ -1546,3 +1546,42 @@ fi
 容器内 `homedir()` = `/home/cecelia`，导致拼出 `/home/cecelia/.claude-accountX` 传给 bridge，宿主机不存在此路径。
 **最终方案**（PR #371）：llm-caller.js 只传 `accountId` 字符串，cecelia-bridge.js 在宿主机侧用 `os.homedir()` 拼正确路径。
 **教训**：凡是跨容器边界的路径，必须在宿主机侧构建，不能在容器内拼接再传出。
+
+---
+
+### [2026-03-03] Rumination v2 NotebookLM 分层记忆压缩（PR #406, Brain v1.168.0）
+
+**功能**：NotebookLM 作为 `digestLearnings` 主路 LLM，新增日/周/月三层滚动合成，`synthesis_archive` 表存储压缩链。
+
+**关键教训**：
+
+### 1. migration 禁止手动 INSERT schema_migrations
+Migration 105 手动加了 `INSERT INTO schema_migrations (version, description) VALUES (...)`。
+CI 报：`relation "schema_migrations" does not exist`。
+**根因**：`migrate.js` 在执行 SQL 后自动写入 `schema_migrations`，手动 INSERT 反而触发时序问题。
+**教训**：migration SQL 文件只写业务 DDL，schema_migrations 的记录由 `migrate.js` 自动管理。
+
+### 2. .brain-versions 位置——检查脚本读根目录，不是 packages/brain/
+`check-version-sync.sh` 第 36 行：`if [[ -f ".brain-versions" ]]; then`（根目录）。
+错误地在 `packages/brain/.brain-versions` 放了版本文件，CI 读到的是根目录旧文件（1.165.4）。
+**教训**：版本文件追加操作必须在根目录 `echo "x.y.z" >> .brain-versions`，不是 packages/brain/ 子目录。
+
+### 3. DEFINITION.md 的 Schema 版本需与 selfcheck.js 一致
+`facts-check.mjs` 同时检查：
+- `code`: `EXPECTED_SCHEMA_VERSION` in `selfcheck.js`
+- `doc`: Schema 版本 in `DEFINITION.md`（第 9 行 `**Schema 版本**: XXX`）
+改了 selfcheck.js 后必须同步更新 DEFINITION.md 的 Schema 版本行。
+
+### 4. migration 编号冲突——并行 PR 抢号（再次）
+同时开发时，main 合并了 PR #403（105_notion_sync.sql），导致我们的 105_synthesis_archive.sql 冲突。
+**防重蹈**：新建 migration 前必须 `git show origin/main:packages/brain/migrations/ 2>/dev/null | sort | tail -3` 确认最高编号。
+
+### 5. pull_request CI 不触发——新建干净分支解决
+旧分支（cp-03031700-rumination-v2-r2）push 后不触发 pull_request CI。
+**解法**：从 origin/main 创建全新分支（cp-03031700-rumination-v2-r3）→ checkout 代码文件 → 版本 bump → 正常 push → 立即触发 pull_request CI。
+**注意**：不要在主 repo 目录运行 git 命令——应在 worktree 目录内操作，否则影响 main 分支。
+
+### 6. vi.clearAllMocks() 不清 mockResolvedValueOnce 队列
+`vi.clearAllMocks()` 只清 call history，不清队列中未消费的 `mockResolvedValueOnce`。
+未消费 mock 会污染后续测试，导致 mock 序列偏移，产生神秘的"wrong return"。
+**解法**：① mock 文本必须满足业务条件（> 50 字符）；② 用 `vi.resetAllMocks()` 或在 `beforeEach` 中 `mock.mockReset()`。
