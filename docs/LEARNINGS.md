@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Workspace 层级体验 + D10-1 修复（PR #388, Brain v1.165.4）
+
+**主要功能**：① AreaDashboard 改为读 areas 表（9 个生活/工作领域）按 domain 分组显示；② OKRDashboard 层级树（area_okr → kr，可折叠）；③ ProjectsDashboard 层级树（project → initiative，可折叠）；④ Brain 新增 `/api/brain/tasks/tasks` 路由，前端 TaskDatabase 终于有数据。
+
+**main 并发版本冲突解法**：PR 等 CI 期间 main 多次前进 → 每次冲突都 `git merge origin/main`（禁止 rebase/force push）→ 需要检测新 main 版本并额外 bump，每次 merge 后都需要重跑 CI。规律：`mergeStateStatus=BEHIND/CONFLICTING` → merge main → bump version → push → 等 CI。
+
+**workflow_dispatch vs pull_request CI 区别**：`gh workflow run brain-ci.yml --ref <branch>` 触发的 workflow_dispatch 不会更新 PR 的 required status checks。必须等待 push 触发的 pull_request 事件 CI 才算数。
+
+**D10-1 测试两处 bug（发现 + 修复）**：
+1. 中文无空格 Jaccard 分词 → 使用英文空格分词内容（7/9 ≈ 0.78 > 0.75）
+2. accumulator 重置 mock 用 `sql.includes()` 无法匹配参数化查询 → 改为检查 `params[0] === 'desire_importance_accumulator'`
+
 ### [2026-03-03] Brain 测试并行化：移除 singleFork + 修复 DB 数据冲突（PR #392, Brain v1.165.2）
 
 **核心改动**：移除 `vitest.config.js` 的 `singleFork: true`（+整个 `poolOptions` 块），让 243 个测试文件在多进程中并行执行，CI 时间从 ~11 分钟降到 ~90 秒。
