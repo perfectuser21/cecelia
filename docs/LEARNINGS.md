@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Brain 内部 LLM 账号轮换路径 Bug 彻底修复——bridge 侧拼路径（PR #371, Brain v1.164.8）
+
+**更彻底的修复**：PR #368 用 `HOST_HOME` 环境变量让容器内可以拼出正确 configDir，PR #371 更进一步：llm-caller.js 完全不在容器侧拼路径，只发 `accountId`（如 `"account3"`），由 bridge 在宿主机侧用 `homedir()` 拼出 `/home/xx/.claude-account3`。**原则：路径必须在路径存在的那一侧拼**——不依赖 HOST_HOME 环境变量，更干净，不会被容器配置影响。
+
+**并行 PR 版本冲突（多次 bump）**：开发期间 main 被多个并行 PR 连续推进（1.164.5→6→7），需多次 `npm version patch` + 同步 `.brain-versions` + `DEFINITION.md`。每次 push 前检查：`git show origin/main:packages/brain/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"`，发现与当前分支相同立即再 bump。用 `git merge origin/main`（不用 rebase，避免 bash-guard 阻止 force push）。
+
+**Runner 等待模式**：self-hosted `hk-cecelia` runner 是单线程，多 PR 并发时 jobs 会排队 5-10 分钟。如果首次 CI 因 runner 不可用（steps=[]，3s fail），不是代码问题，等 runner 空闲后 `gh run rerun --failed` 即可。
+
 ### [2026-03-03] Brain 容器路径映射 HOST_HOME 修复 + Brain CI 全面迁移 self-hosted（PR #368, Brain v1.164.6）
 
 **根本原因**：Brain 容器内 `homedir()` 返回 `/home/cecelia`（容器用户），`callClaudeViaBridge` 用此计算 `configDir=/home/cecelia/.claude-accountN` 传给宿主机 Bridge。Bridge 在宿主机上设置 `CLAUDE_CONFIG_DIR=/home/cecelia/.claude-accountN`，但此路径不存在（真实路径 `/home/xx/.claude-accountN`）。`claude -p` 找不到凭据 → 等待认证 → 90s/150s 后 SIGTERM（exit code 143）。**修复**：① `docker-compose.yml` 添加 `HOST_HOME=/home/xx` 环境变量；② `llm-caller.js` 改用 `process.env.HOST_HOME || homedir()` 计算 configDir。
