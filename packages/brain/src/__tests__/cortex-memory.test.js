@@ -13,7 +13,7 @@ describe('Cortex Memory - Persistent Storage', () => {
 
   beforeEach(async () => {
     // Clean up test data
-    await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE 'Test:%'");
+    await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE 'cortex-mem-test:%'");
   });
 
   afterEach(async () => {
@@ -27,7 +27,7 @@ describe('Cortex Memory - Persistent Storage', () => {
   describe('saveCortexAnalysis', () => {
     it('saves analysis to database with all fields', async () => {
       const analysis = {
-        analysis: 'Test: Network timeout root cause',
+        analysis: 'cortex-mem-test: Network timeout root cause',
         recommended_actions: [{ action: 'retry_with_backoff' }],
         learnings: ['Test learning 1'],
         strategy_adjustments: [{ params: { param: 'retry.max_attempts', new_value: 5 } }],
@@ -56,7 +56,7 @@ describe('Cortex Memory - Persistent Storage', () => {
       expect(saved.task_id).toBeNull();
       expect(saved.event_id).toBeNull();
       expect(saved.trigger_event_type).toBe('systemic_failure');
-      expect(saved.root_cause).toBe('Test: Network timeout root cause');
+      expect(saved.root_cause).toBe('cortex-mem-test: Network timeout root cause');
       expect(parseFloat(saved.confidence_score)).toBe(0.9);
       expect(saved.analyst).toBe('cortex');
 
@@ -68,7 +68,7 @@ describe('Cortex Memory - Persistent Storage', () => {
 
     it('handles missing optional fields gracefully', async () => {
       const analysis = {
-        analysis: 'Test: Minimal analysis',
+        analysis: 'cortex-mem-test: Minimal analysis',
         confidence: 0.5
       };
 
@@ -81,12 +81,12 @@ describe('Cortex Memory - Persistent Storage', () => {
 
       expect(saved.task_id).toBeNull();
       expect(saved.event_id).toBeNull();
-      expect(saved.root_cause).toBe('Test: Minimal analysis');
+      expect(saved.root_cause).toBe('cortex-mem-test: Minimal analysis');
     });
 
     it('saves contributing_factors and mitigations as JSONB', async () => {
       const analysis = {
-        analysis: 'Test: Complex analysis',
+        analysis: 'cortex-mem-test: Complex analysis',
         contributing_factors: [
           { factor: 'High load', impact: 'severe' },
           { factor: 'Network congestion', impact: 'moderate' }
@@ -119,31 +119,31 @@ describe('Cortex Memory - Persistent Storage', () => {
       // Insert test analyses with different characteristics
       const analyses = [
         {
-          root_cause: 'Test: Network failure in dev tasks',
+          root_cause: 'cortex-mem-test: Network failure in dev tasks',
           failure_pattern: { class: 'NETWORK', task_type: 'dev' },
           trigger_event_type: 'systemic_failure',
           created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) // 1 day ago (most recent for exact match)
         },
         {
-          root_cause: 'Test: Billing cap hit',
+          root_cause: 'cortex-mem-test: Billing cap hit',
           failure_pattern: { class: 'BILLING_CAP', task_type: 'review' },
           trigger_event_type: 'systemic_failure',
           created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) // 2 days ago
         },
         {
-          root_cause: 'Test: QA task resource exhaustion',
+          root_cause: 'cortex-mem-test: QA task resource exhaustion',
           failure_pattern: { class: 'RESOURCE', task_type: 'qa' },
           trigger_event_type: 'rca_request',
           created_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) // 10 days ago
         },
         {
-          root_cause: 'Test: Old network issue',
+          root_cause: 'cortex-mem-test: Old network issue',
           failure_pattern: { class: 'NETWORK', task_type: 'dev' },
           trigger_event_type: 'systemic_failure',
           created_at: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) // 40 days ago
         },
         {
-          root_cause: 'Test: Recent dev task learning',
+          root_cause: 'cortex-mem-test: Recent dev task learning',
           failure_pattern: { class: 'NETWORK', task_type: 'dev' },
           trigger_event_type: 'systemic_failure',
           created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000) // 5 days ago (older than exact match)
@@ -268,7 +268,7 @@ describe('Cortex Memory - Persistent Storage', () => {
 
     it('returns empty array if no analyses exist', async () => {
       // Clean up all test analyses
-      await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE 'Test:%'");
+      await pool.query("DELETE FROM cortex_analyses WHERE root_cause LIKE 'cortex-mem-test:%'");
 
       const results = await searchRelevantAnalyses({
         task_type: 'nonexistent'
