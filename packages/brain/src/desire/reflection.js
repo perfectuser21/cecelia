@@ -123,13 +123,14 @@ ${memorySummary}
       LIMIT 20
     `);
 
-    // 2. 计算 Jaccard 相似度
-    const newTokens = new Set(insight.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+    // 2. 计算 Jaccard 相似度（字符级分词，支持中文）
+    const tokenize = (text) => text.match(/[\u4e00-\u9fa5\u3400-\u4dbf]|[a-zA-Z]{2,}/g) || [];
+    const newTokens = new Set(tokenize(insight));
     let maxSimilarity = 0;
 
     for (const old of recentInsights) {
       const oldContent = old.content.replace('[反思洞察] ', '');
-      const oldTokens = new Set(oldContent.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+      const oldTokens = new Set(tokenize(oldContent));
 
       let intersection = 0;
       for (const t of newTokens) { if (oldTokens.has(t)) intersection++; }

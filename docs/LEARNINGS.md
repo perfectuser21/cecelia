@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Workspace 层级体验 + D10-1 修复（PR #388, Brain v1.165.4）
+
+**主要功能**：① AreaDashboard 改为读 areas 表（9 个生活/工作领域）按 domain 分组显示；② OKRDashboard 层级树（area_okr → kr，可折叠）；③ ProjectsDashboard 层级树（project → initiative，可折叠）；④ Brain 新增 `/api/brain/tasks/tasks` 路由，前端 TaskDatabase 终于有数据。
+
+**main 并发版本冲突解法**：PR 等 CI 期间 main 多次前进 → 每次冲突都 `git merge origin/main`（禁止 rebase/force push）→ 需要检测新 main 版本并额外 bump，每次 merge 后都需要重跑 CI。规律：`mergeStateStatus=BEHIND/CONFLICTING` → merge main → bump version → push → 等 CI。
+
+**workflow_dispatch vs pull_request CI 区别**：`gh workflow run brain-ci.yml --ref <branch>` 触发的 workflow_dispatch 不会更新 PR 的 required status checks。必须等待 push 触发的 pull_request 事件 CI 才算数。
+
+**D10-1 测试两处 bug（发现 + 修复）**：
+1. 中文无空格 Jaccard 分词 → 使用英文空格分词内容（7/9 ≈ 0.78 > 0.75）
+2. accumulator 重置 mock 用 `sql.includes()` 无法匹配参数化查询 → 改为检查 `params[0] === 'desire_importance_accumulator'`
+
+### [2026-03-03] Brain 测试并行化：移除 singleFork + 修复 DB 数据冲突（PR #392, Brain v1.165.2）
+
+**核心改动**：移除 `vitest.config.js` 的 `singleFork: true`（+整个 `poolOptions` 块），让 243 个测试文件在多进程中并行执行，CI 时间从 ~11 分钟降到 ~90 秒。
+
+**并行 DB 冲突根因**：原来串行时，测试 A 的 `DELETE WHERE LIKE 'Test%'` 在 B 之前就清完了；并行后，A 清 B 的数据，B 清 A 的数据，断言随机失败。4 个受影响文件的修复模式：
+1. `learning.test.js`：INSERT 用 `lu-test:` 前缀，DELETE WHERE 用 `LIKE 'lu-test:%'`
+2. `learning-search.test.js`：改为 `ls-test:` 前缀（5 处 INSERT + 3 处 WHERE）
+3. `cortex-memory.test.js`：改为 `cortex-mem-test:` 前缀（9 处 INSERT + 1 处 WHERE）
+4. `cortex-quality.test.js`：**关键 bug** — `DELETE FROM cortex_analyses`（无 WHERE）会清除所有并发测试的数据；改为 `DELETE FROM cortex_analyses WHERE root_cause LIKE 'cortex-qual-test:%'`；相关断言改为 `toBeGreaterThanOrEqual` / `toBeLessThanOrEqual` 避免精确计数依赖
+
+**Jaccard 相似度对中文文本退化**：`reflection.js` 用 `split(/\s+/)` 分词，中文无空格时每个字符串只产生 1 个 token，两个不同中文字符串的 Jaccard = 0。`desire-system.test.js` D10-1 测试需要验证去重机制，原来用中文字符串导致相似度恒为 0，测试误判"洞察唯一"而非"洞察重复"。修复：把 LLM mock 返回值和 DB mock 历史洞察均改为英文空格分词（Jaccard = 8/10 = 0.80 > 0.75）。
+
+**accumulator 重置 mock 的隐藏 bug**：`reflection.js` 的 accumulator 重置用参数化查询 `INSERT INTO working_memory ($1, ...)` with `params[0] = 'desire_importance_accumulator'`。旧 mock 用 `sql.includes('desire_importance_accumulator')` 匹配，但 INSERT SQL 字符串里没有这个字符串（key 在 params 里）——所以重置计数器永远为 0。这个 bug 被"洞察不去重时先一步失败"掩盖了。修复：单独用 `sql.includes('working_memory') && sql.includes('INSERT') && params[0] === 'desire_importance_accumulator'` 匹配。
+
+**CI 不触发 → 新建干净分支**：分支有大量 force push 历史后，`pull_request` 事件停止触发 CI。解法：从 `origin/main` 新建干净分支，`git checkout <old-branch> -- <code-files>`（不含版本文件），重新 version bump，正常 push，第一次 push 触发所有 CI。
+
+**两步 PR 策略（并发版本冲突）**：若主干在等待 CI 期间前进多个版本，合并前做 `git merge origin/main`（保留 merge commit，不 rebase/force push），确保版本文件不冲突，push 后 CI 会自动重跑新一轮。
+
 ### [2026-03-03] 修复飞书群聊回复链路 + 任务完成记忆闭环（PR #394, Brain v1.165.1）
 
 **根因**：飞书群 Mode A 逻辑有 4 个静默失败点（超时/JSON解析/handleChat无回复/整体异常），任何一个触发就静默退出不留日志，像"假装没看见"。同时每条消息独立处理，快速多条消息会触发多次 LLM 回复。
