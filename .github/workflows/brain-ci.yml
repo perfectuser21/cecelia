@@ -19,7 +19,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-brain PRs
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -48,7 +48,7 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true'
     name: Version Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -112,7 +112,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Manifest Sync Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -135,7 +135,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Brain Tests
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -190,7 +190,7 @@ jobs:
   ci-passed:
     needs: [changes, version-check, facts-check, manifest-sync, brain-test]
     if: always()
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Brain CI Passed
