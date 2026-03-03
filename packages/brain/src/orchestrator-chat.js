@@ -19,7 +19,7 @@ import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 import { observeChat } from './thalamus.js';
 import { extractConversationLearning } from './learning.js';
-import { extractPersonSignals } from './person-model.js';
+import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
 import { resolveByPersonReply } from './pending-conversations.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
@@ -492,6 +492,24 @@ export async function handleChat(message, context = {}, messages = [], imageCont
   Promise.resolve().then(() =>
     resolveByPersonReply(pool, userId, 'user_reply')
   ).catch(() => {});
+
+  // 10. 对话驱动任务订阅：检测 Alex 是否在询问某个任务，存入 working_memory
+  Promise.resolve().then(() =>
+    detectAndStoreTaskInterest(pool, message)
+  ).catch(() => {});
+
+  // 11. 欲望闭环：Alex 回复时，标记近期表达过的欲望为 acknowledged
+  //     reasoning: Alex 的回复表明他在线且看到了 Cecelia 最近发出的消息
+  Promise.resolve().then(async () => {
+    const { rowCount } = await pool.query(
+      `UPDATE desires SET status = 'acknowledged', updated_at = NOW()
+       WHERE status = 'expressed'
+         AND updated_at > NOW() - INTERVAL '12 hours'`
+    );
+    if (rowCount > 0) {
+      console.log(`[orchestrator-chat] 欲望闭环：${rowCount} 个 desire 已标记为 acknowledged`);
+    }
+  }).catch(() => {});
 
   return { reply };
 }

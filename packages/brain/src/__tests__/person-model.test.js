@@ -19,7 +19,8 @@ import {
   recordSignal,
   getActiveSignals,
   buildPersonContext,
-  extractPersonSignals
+  extractPersonSignals,
+  detectAndStoreTaskInterest
 } from '../person-model.js';
 import {
   recordOutbound,
@@ -379,6 +380,56 @@ describe('extractPersonSignals', () => {
     const callLLM = vi.fn().mockRejectedValue(new Error('LLM error'));
     await expect(
       extractPersonSignals(pool, 'owner', '我现在比较忙', 'OK', callLLM)
+    ).resolves.toBeUndefined();
+  });
+});
+
+// ─── detectAndStoreTaskInterest ──────────────────────────────
+
+describe('detectAndStoreTaskInterest', () => {
+  it('非任务询问文本 → 不查询 DB', async () => {
+    const pool = makePool();
+    await detectAndStoreTaskInterest(pool, '今天天气怎么样');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('太短文本 → 直接返回', async () => {
+    const pool = makePool();
+    await detectAndStoreTaskInterest(pool, 'ok');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('检测到任务询问且有匹配任务 → 写入 working_memory', async () => {
+    const taskId = '550e8400-e29b-41d4-a716-446655440000';
+    const pool = makePool({
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [{ id: taskId, title: '修复登录 bug' }] }) // SELECT tasks
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // INSERT working_memory
+    });
+    await detectAndStoreTaskInterest(pool, '那个修复登录的任务完成了吗');
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    // 第二次调用（INSERT working_memory）的 key 包含 task_interest:
+    const insertCall = pool.query.mock.calls[1];
+    expect(insertCall[1][0]).toBe(`task_interest:${taskId}`);
+  });
+
+  it('检测到任务询问但无匹配任务 → 写入关键词订阅', async () => {
+    const pool = makePool({
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] }) // SELECT tasks（无匹配）
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 }) // INSERT working_memory (kw)
+    });
+    // 使用有实质关键词的消息（"修复认证"不在过滤列表，会被提取为关键词）
+    await detectAndStoreTaskInterest(pool, '那个修复认证的任务完成了吗');
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    const insertCall = pool.query.mock.calls[1];
+    expect(insertCall[1][0]).toMatch(/^task_interest_kw:/);
+  });
+
+  it('DB 查询失败时静默（不抛出）', async () => {
+    const pool = { query: vi.fn().mockRejectedValue(new Error('DB error')) };
+    await expect(
+      detectAndStoreTaskInterest(pool, '那个任务完成了吗')
     ).resolves.toBeUndefined();
   });
 });

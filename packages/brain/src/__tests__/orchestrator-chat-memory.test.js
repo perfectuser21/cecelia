@@ -57,9 +57,10 @@ describe('orchestrator-chat memory unification (D1)', () => {
       return actual;
     });
 
-    // mock person-model.js（避免 extractPersonSignals 调用 callLLM 污染次数统计）
+    // mock person-model.js（避免 extractPersonSignals/detectAndStoreTaskInterest 污染测试）
     vi.doMock('../person-model.js', () => ({
       extractPersonSignals: vi.fn().mockResolvedValue(undefined),
+      detectAndStoreTaskInterest: vi.fn().mockResolvedValue(undefined),
       buildPersonContext: vi.fn().mockResolvedValue('（暂无记录）'),
       recordSignal: vi.fn().mockResolvedValue(undefined),
       getPersonModel: vi.fn().mockResolvedValue(null),
