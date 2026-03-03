@@ -597,10 +597,9 @@ describe('D10: Reflection 去重机制', () => {
     const { callLLM } = await import('../llm-caller.js');
     const { runReflection } = await import('../desire/reflection.js');
 
-    // Mock LLM 返回新洞察（使用空格分隔词确保 Jaccard 分词有效）
-    // 注：Jaccard 按空格分词，中文无空格整句为单 token，相似度永远=0
+    // Mock LLM 返回新洞察（英文空格分词，让 Jaccard 相似度计算正确生效）
     callLLM.mockResolvedValue({
-      text: 'reflection loop bottleneck execute three layer solution implement',
+      text: 'reflection loop bottleneck fix three step performance restore',
       model: 'test',
       provider: 'test',
       elapsed_ms: 10
@@ -609,13 +608,13 @@ describe('D10: Reflection 去重机制', () => {
     let accumulatorResetCount = 0;
     const mockPool = {
       query: vi.fn().mockImplementation((sql, params) => {
-        // 读取 accumulator：SQL 字面包含 key 名（单引号字符串）
+        // 返回 accumulator 值（SELECT 时 key 内联在 SQL 字符串里）
         if (sql.includes('desire_importance_accumulator')) {
           return { rows: [{ value_json: 15 }] };
         }
 
-        // 写入 accumulator：参数化查询，key 在 params[0]（SQL 本身不含 key 名）
-        if (sql.includes('INSERT INTO working_memory') && params && params[0] === 'desire_importance_accumulator') {
+        // accumulator 重置（INSERT INTO working_memory，key 作为参数 $1）
+        if (sql.includes('working_memory') && (sql.includes('INSERT') || sql.includes('UPDATE')) && params && params[0] === 'desire_importance_accumulator') {
           accumulatorResetCount++;
           return { rows: [] };
         }
@@ -631,11 +630,11 @@ describe('D10: Reflection 去重机制', () => {
         }
 
         // 返回最近的 memory_stream（包含相似洞察）- 去重查询
-        // 使用英文空格分词确保 Jaccard 相似度计算有意义（7/9 ≈ 0.78 > 0.75）
+        // 英文空格分词确保 Jaccard 相似度 = 8/10 = 0.80 > 0.75
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
             rows: [
-              { content: '[反思洞察] reflection loop bottleneck execute three layer solution suggest' },
+              { content: '[反思洞察] reflection loop bottleneck fix three step performance restore system' },
               { content: '[反思洞察] 其他不相关的洞察内容 ABCDEFG HIJKLMN' }
             ]
           };
