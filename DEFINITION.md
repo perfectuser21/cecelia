@@ -6,7 +6,7 @@
 
 
 **Brain 版本**: 1.175.0
-**Schema 版本**: 112
+**Schema 版本**: 113
 
 **状态**: 生产运行中
 
@@ -667,7 +667,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '112'
+5. **Schema 版本** — 必须 = '113'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置

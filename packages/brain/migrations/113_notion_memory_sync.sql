@@ -8,5 +8,5 @@ ALTER TABLE memory_stream
   ADD COLUMN IF NOT EXISTS notion_id TEXT;
 
 INSERT INTO schema_version (version, description)
-VALUES ('112', 'Notion Memory 同步 — user_profile_facts + memory_stream 加 notion_id 列')
+VALUES ('113', 'Notion Memory 同步 — user_profile_facts + memory_stream 加 notion_id 列')
 ON CONFLICT (version) DO NOTHING;
