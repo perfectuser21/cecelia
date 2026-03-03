@@ -9,7 +9,7 @@
 
 import pool from './db.js';
 import { emit } from './event-bus.js';
-import { notifyCircuitOpen } from './notifier.js';
+import { raise } from './alerting.js';
 
 const FAILURE_THRESHOLD = 3;
 const OPEN_DURATION_MS = 30 * 60 * 1000; // 30 minutes
@@ -92,7 +92,7 @@ async function recordFailure(key = 'default') {
       reason: 'half_open_probe_failed',
       failures: b.failures
     });
-    notifyCircuitOpen({ key, failures: b.failures, reason: 'half_open_probe_failed' }).catch(() => {});
+    raise('P0', `circuit_open_${key}`, `⚠️ 熔断触发：${key} 连续失败 ${b.failures} 次（半开探针失败），已暂停派发`).catch(() => {});
   } else if (b.failures >= FAILURE_THRESHOLD && b.state === 'CLOSED') {
     b.state = 'OPEN';
     b.openedAt = Date.now();
@@ -101,7 +101,7 @@ async function recordFailure(key = 'default') {
       reason: 'failure_threshold_reached',
       failures: b.failures
     });
-    notifyCircuitOpen({ key, failures: b.failures, reason: 'failure_threshold_reached' }).catch(() => {});
+    raise('P0', `circuit_open_${key}`, `⚠️ 熔断触发：${key} 连续失败 ${b.failures} 次，已暂停派发`).catch(() => {});
   }
 }
 

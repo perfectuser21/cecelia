@@ -32,6 +32,7 @@ import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjective
 import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
+import { flushAlertsIfNeeded } from './alerting.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -1989,6 +1990,10 @@ async function executeTick() {
   // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
   Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
     .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
+
+  // 10.12 分级报警刷新（P1 每小时，P2 每日，fire-and-forget）
+  Promise.resolve().then(() => flushAlertsIfNeeded())
+    .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
