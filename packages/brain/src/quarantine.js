@@ -26,7 +26,7 @@ import { emit } from './event-bus.js';
 // ============================================================
 
 // 失败次数阈值：超过此次数自动隔离
-const FAILURE_THRESHOLD = 3;
+const FAILURE_THRESHOLD = 7;
 
 // 任务最大 PRD 长度（字符）：超过视为可疑
 const MAX_PRD_LENGTH = 50000;
@@ -897,10 +897,10 @@ async function checkExpiredQuarantineTasks() {
     // 动态导入 alertness 模块（避免循环依赖）
     const { getCurrentAlertness, ALERTNESS_LEVELS } = await import('./alertness/index.js');
 
-    // 检查 Alertness 状态：ALERT/PANIC 时不释放
+    // 检查 Alertness 状态：PANIC 时不释放（ALERT 允许释放）
     const currentAlertness = getCurrentAlertness();
-    if (currentAlertness.level >= ALERTNESS_LEVELS.ALERT) {
-      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.levelName} (>=ALERT)`);
+    if (currentAlertness.level >= ALERTNESS_LEVELS.PANIC) {
+      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.levelName} (>=PANIC)`);
       return [];
     }
 
