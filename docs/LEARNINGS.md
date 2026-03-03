@@ -1696,3 +1696,36 @@ fi
   - 支持的格式：`tests/...`, `contract:<RCI_ID>`, `manual:<command>`
   - `manual:` 命令必须是真实可执行的（`node`, `npm`, `curl`, `grep` 等）
   - 不支持 `gh`, `jq`, `echo` 作为主命令
+
+---
+
+## Notion 同步 CHECK 约束 + areas description 列陷阱（2026-03-03，PR #428/#433）
+
+### 背景
+PR #423 实现 Notion 4 表双向同步，PR #428 修复 ON CONFLICT UNIQUE 约束缺失。
+PR #433 修复两个新发现的 CHECK 约束问题（migration 114）。
+
+### Bug 1 — tasks_task_type_check 缺少 notion_synced
+
+**根因**：notion-full-sync.js 的 upsertTask 用 `task_type='notion_synced'`，但 migration 091 的 CHECK 约束没有该值。
+
+**修复**：migration 114 DROP + ADD CONSTRAINT，加入 `notion_synced`。
+
+### Bug 2 — goals_type_check 违反约束
+
+**根因**：upsertGoal INSERT 没有指定 `type`，使用 DEFAULT `'objective'`，但约束只允许 `('global_okr', 'global_kr', 'area_okr', 'area_kr', 'kr')`。
+
+**修复**：在 upsertGoal INSERT 中显式指定 `type='kr'`。
+
+### 陷阱 — migration 编号并行冲突
+
+migration 113 被另一个 PR 占用（113_notion_memory_sync.sql），只有 merge 时才发现冲突。
+
+**教训**：提 PR 前 `ls packages/brain/migrations/` 确认最高编号。重命名后同步 selfcheck.js + 3 个测试文件 + DEFINITION.md (2 处)。
+
+### 后发现的 Bug 3 — notion-sync.js::ensureAreaExists description 列不存在
+
+**根因**：旧的 notion-sync.js 的 ensureAreaExists 函数包含 `INSERT INTO areas (name, description, ...)`，但 areas 表没有 description 列。POST /api/brain/notion-sync/run 调用 runSync()（notion-sync.js），不是 runFullSync()（notion-full-sync.js）。
+
+**修复**：从 notion-sync.js 的 ensureAreaExists INSERT 移除 description 列。
+
