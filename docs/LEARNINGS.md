@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 说明书 SSE 问答端点：用 process.env.HOME 代替 homedir()（PR #344, Brain v1.164.0）
+
+**场景**：`routes.js` 需要读取 `~/.credentials/anthropic.json` 实现流式问答，但 `homedir()` 从 `'os'` 模块未在顶部导入（只有动态 import）。
+
+**解法**：用 `process.env.HOME` 构造路径（`${process.env.HOME}/.credentials/anthropic.json`），在 Node.js Linux/Unix 环境中等效且始终可用，避免修改大文件顶部 imports。
+
+**Anthropic 流式 SSE 解析**：响应 event 格式是 `event: content_block_delta`，JSON 数据中 `parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta'` 时取 `parsed.delta.text`。不同于 MiniMax 格式（`choices[0].delta.content`）。
+
+**manifest 路径**：`routes.js` 是 ESM 文件，`__dirname` 不可用；用 `new URL('../brain-manifest.generated.json', import.meta.url)` 构造路径，与文件中已有的 `new URL('../package.json', import.meta.url)` 模式一致。
+
+**版本冲突 + merge 解决**：并行 PR 导致版本冲突（我的 1.164.0 vs main 的 1.163.3）。用 `git merge origin/main` 后手动解决冲突：package.json/VERSION/.brain-versions/DEFINITION.md 保留我们的 1.164.0，`.brain-versions` 需合并两行（加上 1.163.3 再加 1.164.0 保持历史完整性）。package-lock.json 用 Python re.sub 自动解决冲突标记。
+
 ### [2026-03-03] consolidation.js 两个查询 bug（PR #341, Brain v1.163.3）
 
 **Bug 1: tasks 表无 failed_at 字段**：`gatherTodayData` 里查 tasks 用了 `COALESCE(completed_at, failed_at)`，但 tasks 表只有 `completed_at` 和 `updated_at`，没有 `failed_at`。执行时报 `column "failed_at" does not exist`。修复：改为 `COALESCE(completed_at, updated_at)`，失败任务通过 `status = 'failed' AND updated_at >= $1::date` 过滤。
