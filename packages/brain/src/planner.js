@@ -244,11 +244,12 @@ function scoreKRs(state, insightAdjustments = new Map()) {
     }
     if (queuedByGoal[kr.id]) score += 15;
     // 有 active Initiative 但无 queued Task → 优先推进（需要生成 initiative_plan 任务）
-    if (!queuedByGoal[kr.id] && initiativeKRIds.has(kr.id)) score += 15;
+    const hasInitiativesNeedingPlanning = !queuedByGoal[kr.id] && initiativeKRIds.has(kr.id);
+    if (hasInitiativesNeedingPlanning) score += 15;
     // 反刍/皮层洞察调整（方向3：反思闭环流回决策权重）
     const insightAdj = insightAdjustments.get(kr.id) || 0;
     if (insightAdj !== 0) score += insightAdj;
-    return { kr, score };
+    return { kr, score, hasInitiativesNeedingPlanning };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -469,11 +470,11 @@ async function generateInitiativePlanTask(kr, project) {
       RETURNING *
     `, [
       `拆解 Initiative: ${initiative.name}`,
-      `该 Initiative「${initiative.name}」下无任务，需要拆解规划。项目 ID: ${initiative.id}`,
+      `该 Initiative「${initiative.name}」下无任务，需要拆解规划。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`,
       kr.priority || 'P1',
       initiative.id,
       kr.id,
-      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id })
+      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id })
     ]);
 
     const newTask = insertResult.rows[0];
