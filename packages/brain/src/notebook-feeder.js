@@ -17,6 +17,25 @@
 import pool from './db.js';
 import { addTextSource } from './notebook-adapter.js';
 
+// ── 笔记本 ID 查询 ────────────────────────────────────────
+
+/**
+ * 从 working_memory 获取笔记本 ID 配置
+ * @returns {{ working: string|null, self: string|null, alex: string|null }}
+ */
+async function getNotebookIds(db) {
+  const { rows } = await db.query(
+    `SELECT key, value_json FROM working_memory
+     WHERE key IN ('notebook_id_working', 'notebook_id_self', 'notebook_id_alex')`
+  );
+  const ids = { working: null, self: null, alex: null };
+  for (const row of rows) {
+    const key = row.key.replace('notebook_id_', '');
+    ids[key] = typeof row.value_json === 'string' ? row.value_json : null;
+  }
+  return ids;
+}
+
 // ── 防重复 ────────────────────────────────────────────────
 
 async function getLastFeedDate(db) {
@@ -37,7 +56,7 @@ async function setLastFeedDate(db, date) {
 
 // ── 喂入今日 learnings ────────────────────────────────────
 
-async function feedTodayLearnings(db, today) {
+async function feedTodayLearnings(db, today, notebookId) {
   const { rows } = await db.query(
     `SELECT title, content, category FROM learnings
      WHERE created_at >= $1::date AND created_at < ($1::date + INTERVAL '1 day')
@@ -51,7 +70,7 @@ async function feedTodayLearnings(db, today) {
 ${rows.map(l => `【${l.category || '未分类'}】${l.title}
 ${(l.content || '').slice(0, 300)}`).join('\n\n')}`;
 
-  addTextSource(text, `学习记录: ${today}`)
+  addTextSource(text, `学习记录: ${today}`, notebookId)
     .catch(e => console.warn('[notebook-feeder] learnings feed failed:', e.message));
 
   return rows.length;
@@ -59,7 +78,7 @@ ${(l.content || '').slice(0, 300)}`).join('\n\n')}`;
 
 // ── 喂入高重要度 memory_stream ────────────────────────────
 
-async function feedHighImportanceMemory(db, today) {
+async function feedHighImportanceMemory(db, today, notebookId) {
   const { rows } = await db.query(
     `SELECT content, importance FROM memory_stream
      WHERE created_at >= $1::date AND created_at < ($1::date + INTERVAL '1 day')
@@ -74,7 +93,7 @@ async function feedHighImportanceMemory(db, today) {
   const text = `[高重要度记忆 ${today}]
 ${rows.map(r => `[重要度${r.importance}] ${r.content.slice(0, 300)}`).join('\n\n')}`;
 
-  addTextSource(text, `重要记忆: ${today}`)
+  addTextSource(text, `重要记忆: ${today}`, notebookId)
     .catch(e => console.warn('[notebook-feeder] memory feed failed:', e.message));
 
   return rows.length;
@@ -93,7 +112,7 @@ async function shouldFeedOkr(db) {
   return daysSince >= 7;
 }
 
-async function feedOkr(db, today) {
+async function feedOkr(db, today, notebookId) {
   if (!(await shouldFeedOkr(db))) return 0;
 
   const { rows: goals } = await db.query(
@@ -117,7 +136,7 @@ ${goals.map(g => `- [${g.priority}] ${g.title} (${g.status})`).join('\n')}
 Projects/Initiatives:
 ${projects.map(p => `- [${p.type}] ${p.name} (${p.status || 'active'})`).join('\n')}`;
 
-  addTextSource(text, `OKR状态: ${today}`)
+  addTextSource(text, `OKR状态: ${today}`, notebookId)
     .catch(e => console.warn('[notebook-feeder] OKR feed failed:', e.message));
 
   await db.query(
@@ -148,10 +167,13 @@ export async function feedDailyIfNeeded(dbPool) {
       return { ok: true, skipped: 'already_fed_today', date: today };
     }
 
+    // 查询笔记本 ID（working: learnings/memory, self: OKR）
+    const notebookIds = await getNotebookIds(db).catch(() => ({ working: null, self: null, alex: null }));
+
     const [learningsCount, memoryCount, okrCount] = await Promise.all([
-      feedTodayLearnings(db, today),
-      feedHighImportanceMemory(db, today),
-      feedOkr(db, today),
+      feedTodayLearnings(db, today, notebookIds.working),
+      feedHighImportanceMemory(db, today, notebookIds.working),
+      feedOkr(db, today, notebookIds.self),
     ]);
 
     await setLastFeedDate(db, today);

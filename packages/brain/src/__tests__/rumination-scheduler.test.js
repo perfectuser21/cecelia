@@ -112,6 +112,8 @@ describe('runDailySynthesis', () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ title: '学习A', content: '内容A' }] });
     // getLatestSynthesis(daily) → no prev
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    // getNotebookId(working) → ID
+    mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-working-test' }] });
     // writeSynthesis INSERT
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
@@ -134,6 +136,8 @@ describe('runDailySynthesis', () => {
     // todayLearnings
     mockQuery.mockResolvedValueOnce({ rows: [{ title: '学习A', content: '内容A' }] });
     // getLatestSynthesis → no prev
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // getNotebookId(working) → no ID
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // writeSynthesis
     mockQuery.mockResolvedValueOnce({ rows: [] });
@@ -185,6 +189,8 @@ describe('runWeeklySynthesis', () => {
       { id: 'd2', period_start: '2026-03-02', content: '日摘要2' },
       { id: 'd3', period_start: '2026-03-01', content: '日摘要3' },
     ]});
+    // getNotebookId(working) → ID
+    mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-working-test' }] });
     // writeSynthesis
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
@@ -219,7 +225,11 @@ describe('runMonthlySynthesis', () => {
       { id: 'w1', period_start: '2026-02-24', period_end: '2026-03-02', content: '周摘1' },
       { id: 'w2', period_start: '2026-02-17', period_end: '2026-02-23', content: '周摘2' },
     ]});
-    // writeSynthesis
+    // getNotebookId(working) → ID（Promise.all 第一个）
+    mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-working-test' }] });
+    // getNotebookId(self) → ID（Promise.all 第二个）
+    mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-self-test' }] });
+    // writeSynthesis INSERT
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     mockQueryNotebook.mockResolvedValue({ ok: true, text: '[月摘要] 本月综合洞察超过五十个字的有效输出内容月度演化在这里。本月 Cecelia 系统显著提升了任务调度效率，自我认知在反刍过程中得到深化，下月将重点探索欲望形成机制的优化。' });

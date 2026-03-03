@@ -166,8 +166,18 @@ async function digestLearnings(db, learnings) {
     let insight = '';
     let usedNotebook = false;
     const nbQuery = buildNotebookQuery(learnings);
+
+    // 获取 working notebook ID（反刍洞察 → working knowledge base）
+    let workingNotebookId = null;
     try {
-      const nbResult = await queryNotebook(nbQuery);
+      const { rows: nbRows } = await db.query(
+        `SELECT value_json FROM working_memory WHERE key = 'notebook_id_working' LIMIT 1`
+      );
+      workingNotebookId = nbRows[0]?.value_json || null;
+    } catch { /* notebook ID 不存在时降级 */ }
+
+    try {
+      const nbResult = await queryNotebook(nbQuery, workingNotebookId);
       if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
         insight = nbResult.text.trim();
         usedNotebook = true;
@@ -224,7 +234,8 @@ async function digestLearnings(db, learnings) {
       const topicTitle = learnings.map(l => l.title).join(' / ').slice(0, 100);
       addTextSource(
         `[反刍洞察 ${today}] ${insight.trim()}`,
-        `反刍洞察: ${topicTitle}`
+        `反刍洞察: ${topicTitle}`,
+        workingNotebookId
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
       // 4.1 检测 actionable 洞察 → 收集 [ACTION:] 标记，统一发给丘脑 L1 处理

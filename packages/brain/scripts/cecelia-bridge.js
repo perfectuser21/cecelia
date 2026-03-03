@@ -137,7 +137,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const { query } = JSON.parse(body);
+        const { query, notebook_id } = JSON.parse(body);
         if (!query) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'Missing query' }));
@@ -147,8 +147,9 @@ const server = http.createServer((req, res) => {
         const notebookCli = '/home/xx/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
+        const args = notebook_id ? ['ask', '-n', notebook_id, query] : ['ask', query];
 
-        execFile(notebookCli, ['ask', query], { timeout: 90000 }, (err, stdout, stderr) => {
+        execFile(notebookCli, args, { timeout: 90000 }, (err, stdout, stderr) => {
           const elapsed = Date.now() - startTime;
           if (err) {
             console.warn(`[bridge] /notebook/query failed (${elapsed}ms): ${err.message}`);
@@ -157,7 +158,7 @@ const server = http.createServer((req, res) => {
             return;
           }
           const text = (stdout || '').trim();
-          console.log(`[bridge] /notebook/query → ${text.length} chars in ${elapsed}ms`);
+          console.log(`[bridge] /notebook/query${notebook_id ? ` -n ${notebook_id.slice(0, 8)}` : ''} → ${text.length} chars in ${elapsed}ms`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, text, elapsed_ms: elapsed }));
         });
@@ -168,12 +169,12 @@ const server = http.createServer((req, res) => {
       }
     });
   } else if (req.method === 'POST' && req.url === '/notebook/add-source') {
-    // NotebookLM 添加源 — 容器内 Brain 通过 bridge 调用宿主机 CLI
+    // NotebookLM 添加 URL 源 — 容器内 Brain 通过 bridge 调用宿主机 CLI
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const { url } = JSON.parse(body);
+        const { url, notebook_id } = JSON.parse(body);
         if (!url) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'Missing url' }));
@@ -183,8 +184,9 @@ const server = http.createServer((req, res) => {
         const notebookCli = '/home/xx/.local/bin/notebooklm';
         const { execFile } = require('child_process');
         const startTime = Date.now();
+        const args = notebook_id ? ['source', 'add', '-n', notebook_id, url] : ['source', 'add', url];
 
-        execFile(notebookCli, ['source', 'add', url], { timeout: 60000 }, (err, stdout, stderr) => {
+        execFile(notebookCli, args, { timeout: 60000 }, (err, stdout, stderr) => {
           const elapsed = Date.now() - startTime;
           if (err) {
             console.warn(`[bridge] /notebook/add-source failed (${elapsed}ms): ${err.message}`);
@@ -198,6 +200,45 @@ const server = http.createServer((req, res) => {
         });
       } catch (err) {
         console.error(`[bridge] /notebook/add-source parse error: ${err.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: err.message }));
+      }
+    });
+  } else if (req.method === 'POST' && req.url === '/notebook/add-text-source') {
+    // NotebookLM 添加内联文本源 — 容器内 Brain 通过 bridge 调用宿主机 CLI
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { text, title, notebook_id } = JSON.parse(body);
+        if (!text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Missing text' }));
+          return;
+        }
+
+        const notebookCli = '/home/xx/.local/bin/notebooklm';
+        const { execFile } = require('child_process');
+        const startTime = Date.now();
+        // notebooklm source add "text content" --title "title" [-n notebook_id]
+        const args = ['source', 'add', text];
+        if (title) { args.push('--title', title); }
+        if (notebook_id) { args.push('-n', notebook_id); }
+
+        execFile(notebookCli, args, { timeout: 60000 }, (err, stdout, stderr) => {
+          const elapsed = Date.now() - startTime;
+          if (err) {
+            console.warn(`[bridge] /notebook/add-text-source failed (${elapsed}ms): ${err.message}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: err.message, elapsed_ms: elapsed }));
+            return;
+          }
+          console.log(`[bridge] /notebook/add-text-source → ok in ${elapsed}ms`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, elapsed_ms: elapsed }));
+        });
+      } catch (err) {
+        console.error(`[bridge] /notebook/add-text-source parse error: ${err.message}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: err.message }));
       }

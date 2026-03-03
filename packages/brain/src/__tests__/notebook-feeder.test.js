@@ -46,6 +46,11 @@ describe('feedDailyIfNeeded', () => {
     const pool = createPool();
     // getLastFeedDate → yesterday
     mockQuery.mockResolvedValueOnce({ rows: [{ value_json: { date: '2026-03-02' } }] });
+    // getNotebookIds → working + self IDs
+    mockQuery.mockResolvedValueOnce({ rows: [
+      { key: 'notebook_id_working', value_json: 'nb-working-test' },
+      { key: 'notebook_id_self', value_json: 'nb-self-test' },
+    ]});
     // feedTodayLearnings query → 2 learnings
     mockQuery.mockResolvedValueOnce({ rows: [
       { title: '学习A', content: '内容A', category: 'dev' },
@@ -75,6 +80,8 @@ describe('feedDailyIfNeeded', () => {
   it('无数据时也能正常完成（0条喂入）', async () => {
     const pool = createPool();
     // getLastFeedDate → empty
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // getNotebookIds → no IDs configured
     mockQuery.mockResolvedValueOnce({ rows: [] });
     // feedTodayLearnings → empty
     mockQuery.mockResolvedValueOnce({ rows: [] });

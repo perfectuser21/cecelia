@@ -41,6 +41,22 @@ describe('notebook-adapter', () => {
       expect(result).toEqual({ ok: true, text: '相关知识内容', elapsed_ms: 500 });
     });
 
+    it('传入 notebookId 时包含在请求体中', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ ok: true, text: '工作知识', elapsed_ms: 300 }),
+      });
+
+      const { queryNotebook } = await import('../notebook-adapter.js');
+      await queryNotebook('今日洞察', 'nb-working-123');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/notebook/query'),
+        expect.objectContaining({
+          body: JSON.stringify({ query: '今日洞察', notebook_id: 'nb-working-123' }),
+        }),
+      );
+    });
+
     it('bridge 返回失败时安全传递', async () => {
       mockFetch.mockResolvedValueOnce({
         json: () => Promise.resolve({ ok: false, error: 'CLI not found', elapsed_ms: 100 }),
@@ -83,6 +99,22 @@ describe('notebook-adapter', () => {
       expect(result).toEqual({ ok: true, elapsed_ms: 200 });
     });
 
+    it('传入 notebookId 时包含在请求体中', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ ok: true, elapsed_ms: 100 }),
+      });
+
+      const { addSource } = await import('../notebook-adapter.js');
+      await addSource('https://example.com', 'nb-working-123');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: JSON.stringify({ url: 'https://example.com', notebook_id: 'nb-working-123' }),
+        }),
+      );
+    });
+
     it('bridge 返回失败时安全传递', async () => {
       mockFetch.mockResolvedValueOnce({
         json: () => Promise.resolve({ ok: false, error: 'Invalid URL', elapsed_ms: 50 }),
@@ -122,6 +154,22 @@ describe('notebook-adapter', () => {
         }),
       );
       expect(result).toEqual({ ok: true, elapsed_ms: 300 });
+    });
+
+    it('传入 notebookId 时包含在请求体中', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ ok: true, elapsed_ms: 200 }),
+      });
+
+      const { addTextSource } = await import('../notebook-adapter.js');
+      await addTextSource('洞察内容', '洞察标题', 'nb-self-456');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: JSON.stringify({ text: '洞察内容', title: '洞察标题', notebook_id: 'nb-self-456' }),
+        }),
+      );
     });
 
     it('fetch 失败时安全降级（不抛出异常）', async () => {
