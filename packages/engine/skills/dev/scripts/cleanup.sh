@@ -279,13 +279,14 @@ elif [[ ! -f "$DEPLOY_LOCAL_SH" ]]; then
     echo -e "   ${YELLOW}[WARN]  deploy-local.sh 不存在，跳过部署${NC}"
     echo "   期望路径: $DEPLOY_LOCAL_SH"
 else
-    # 传入预捕获的 CHANGED_FILES，避免 checkout 后 git diff 返回空
-    if bash "$DEPLOY_LOCAL_SH" "$BASE_BRANCH" --changed="$CHANGED_FILES"; then
-        echo -e "   ${GREEN}[OK] 本地部署完成${NC}"
-    else
-        echo -e "   ${YELLOW}[WARN]  本地部署失败（服务可能需要手动重启）${NC}"
-        WARNINGS=$((WARNINGS + 1))
-    fi
+    # fire-and-forget：setsid 新会话后台运行，不阻塞有头/无头会话
+    # 日志写 /tmp/cecelia-deploy-<branch>.log，部署结果不影响 cleanup 流程
+    DEPLOY_LOG="/tmp/cecelia-deploy-${CP_BRANCH}.log"
+    setsid bash "$DEPLOY_LOCAL_SH" "$BASE_BRANCH" --changed="$CHANGED_FILES" \
+        >"$DEPLOY_LOG" 2>&1 &
+    DEPLOY_PID=$!
+    echo -e "   ${GREEN}[OK] 部署已在后台启动 (pid=$DEPLOY_PID)${NC}"
+    echo "   日志: $DEPLOY_LOG"
 fi
 
 # ========================================
