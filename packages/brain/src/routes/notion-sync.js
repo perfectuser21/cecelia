@@ -94,6 +94,12 @@ router.post('/run', async (_req, res) => {
  * Notion 配置：cecelia.zenjoymedia.media/api/brain/notion-sync/webhook
  */
 router.post('/webhook', async (req, res) => {
+  // Notion URL 验证握手（发送 challenge 时必须原样回传）
+  if (req.body?.challenge) {
+    console.log('[notion-webhook] URL verification challenge received');
+    return res.json({ challenge: req.body.challenge });
+  }
+
   // 立即返回 200，异步处理（Notion 要求 <10s 响应）
   res.json({ received: true });
 
