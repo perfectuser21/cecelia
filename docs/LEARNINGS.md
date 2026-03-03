@@ -1351,3 +1351,83 @@ vitest 4.x 的区别：root vitest=1.6.1（能通过），dashboard vitest=4.0.1
 - DoD Test 字段格式：`  Test: manual:bash -c "..."` 直接缩进，**不要**用 `  - Test: ...` 子列表格式。check-dod-mapping.cjs 期望 Test 紧接着 checkbox 的下一行，格式为 `^\s*Test:\s*...`，有 `- ` 前缀会匹配不到
 - DoD 条目必须标 `[x]`（已验证）才能通过未验证项检查，构建+grep 验证后必须手动改 checkbox
 - main 频繁前进（并行 PR 多）：分支可能需要多次 merge origin/main 才能合并，用 `git merge origin/main --no-edit` 而不是 rebase（避免 force push）
+
+## PR #364 — Area 完整双向关联 migration 104（Brain v1.164.9, 2026-03-03）
+
+**背景**：goals 表没有 area_id 字段，projects/tasks 有 area_id 但缺 FK 约束，导致 Area 实体无法做双向关联查询和级联操作。
+
+**实现**：Migration 104 三步走：
+1. `ALTER TABLE goals ADD COLUMN IF NOT EXISTS area_id UUID REFERENCES areas(id) ON DELETE SET NULL`（+ 索引）
+2. `DO $$ IF NOT EXISTS ... ALTER TABLE projects ADD CONSTRAINT projects_area_id_fkey`（幂等）
+3. `DO $$ IF NOT EXISTS ... ALTER TABLE tasks ADD CONSTRAINT tasks_area_id_fkey`（幂等）
+
+用 `DO $$ IF NOT EXISTS` 包裹 FK 约束添加，使 migration 幂等——重复运行不出错。
+
+**关键决策**：FK 用 `ON DELETE SET NULL`（软关联），而非 `ON DELETE CASCADE`。Area 删除时关联对象变为无 Area，不触发级联删除。
+
+**踩坑**：
+- **migration 编号冲突（并行 PR 场景）**：本 PR 和其他并行 PR 同时创建 migration，可能抢用同一编号。检查方式：`git show origin/main:packages/brain/migrations/ 2>/dev/null | grep -E "^[0-9]+" | sort -n | tail -1`，始终用 main 最新编号 +1。本 PR 实际遇到：facts-check 报 `migration_conflicts: duplicate numbers`，通过重命名 migration 文件解决。
+- **版本冲突追赶**：本 PR 开发期间同时有 3 个其他 Brain PR（v1.164.6），每次 main 前进都需要重新 bump。最终通过顺序合并确定版本：PR #371 合并后 main=v1.164.8，本 PR 在 v1.164.9，合并无冲突。
+
+**影响**：所有 OKR 层级对象（goals/projects/tasks）现在对 Area 有真正的 FK 约束，支持 CASCADE/SET NULL 语义。
+
+---
+
+## PR #367 — Brain agent 独立 API/无头调用方式配置（Brain v1.164.10, 2026-03-03）
+
+**背景**：model-profile 只有全局 provider 设置，无法给不同 agent（thalamus、cortex、mouth 等）独立配置调用方式（anthropic-api / anthropic / minimax）和 fallback 链。
+
+**实现**：扩展 `model-profile.js` 的 FALLBACK_PROFILE：
+```javascript
+config: {
+  thalamus: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' },
+  cortex:   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  executor: {
+    default_provider: 'anthropic',
+    model_map: { dev: {...}, review: {...}, ... },
+    fixed_provider: { codex_qa: 'openai' },
+  },
+}
+```
+
+每个 agent 从 `profile.config[agentId]` 读取自己的配置，`llm-caller.js` 的 `callLLM` 已支持此结构。
+
+**关键决策**：executor 用 `model_map + fixed_provider` 双层配置，区分"随 profile 切换的 model"和"始终用指定 provider 的 agent"（如 codex_qa 始终用 openai）。
+
+**踩坑**：
+- **PR 标题 vs 实际版本不一致**：PR 标题含 "v1.164.6"，实际合并时 package.json 已 bump 到 v1.164.10（经过多轮并行冲突解决）。PR 标题不更新是可以接受的，不影响 CI，但会让 git log 误导读者。
+- **并行 PR 合并顺序决定版本链**：5 个 Brain PR 并行时，合并顺序确定了最终版本序列（v1.164.6 → 8 → 9 → 10 → 11...）。不要试图预测最终版本号，push 前先 `git show origin/main:packages/brain/package.json | jq .version` 确认当前 main 版本再 bump。
+
+---
+
+## 会话教训：5-PR 并行合并 CI/版本管理（2026-03-03）
+
+**背景**：单次会话同时处理 5 个并行 PR（#368, #369, #370, #371, #364, #367），均存在版本冲突，且 CI 出现新类型失败。
+
+**关键教训**：
+
+### 1. PostgreSQL 端口冲突（5432 → 5433）
+自托管 runner 上 hk-vps 生产 PostgreSQL 占用 5432，Brain CI 的 service container 绑定 `5432:5432` 时出现 "Initialize containers" 失败。
+**修复**：brain-ci.yml 改为 `5433:5432` + `DB_PORT: 5433`。
+**教训**：新增 CI PostgreSQL service container 时，始终用非标端口（5433）避免与生产服务冲突。
+
+### 2. ci-passed 在 changes 失败时误判为绿
+`changes` job（Detect Changes）失败时，所有下游 job 被 skip，`ci-passed` 没有检查 changes 的 result，直接 exit 0（绿）。
+**修复**（PR #369）：
+```yaml
+if [ "${{ needs.changes.result }}" = "failure" ]; then
+  echo "FAIL: Detect Changes job failed"
+  exit 1
+fi
+```
+**教训**：`ci-passed` 必须显式检查每个强制依赖 job 的 result，skip ≠ pass。
+
+### 3. ubuntu-latest vs self-hosted（仓库公开性改变）
+仓库原为私有 → ubuntu-latest 需要付费（使用 self-hosted）；仓库变为公开 → ubuntu-latest 免费。
+**实际情况**：cecelia 仓库为 public（`isPrivate: false`），所有 CI 已回退到 ubuntu-latest。
+**教训**：切换 runner 类型前先检查仓库可见性：`gh repo view --json isPrivate`。
+
+### 4. llm-caller.js accountId vs configDir 容器路径问题
+容器内 `homedir()` = `/home/cecelia`，导致拼出 `/home/cecelia/.claude-accountX` 传给 bridge，宿主机不存在此路径。
+**最终方案**（PR #371）：llm-caller.js 只传 `accountId` 字符串，cecelia-bridge.js 在宿主机侧用 `os.homedir()` 拼正确路径。
+**教训**：凡是跨容器边界的路径，必须在宿主机侧构建，不能在容器内拼接再传出。
