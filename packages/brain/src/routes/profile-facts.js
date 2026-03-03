@@ -184,7 +184,7 @@ router.get('/', async (req, res) => {
 
     const [rowsResult, countResult] = await Promise.all([
       pool.query(
-        `SELECT id, category, content, (embedding IS NOT NULL) as has_embedding, created_at
+        `SELECT id, category, content, key, source, (embedding IS NOT NULL) as has_embedding, created_at
          FROM user_profile_facts
          WHERE ${where}
          ORDER BY created_at DESC
