@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 修复 Reflection 去重中文字符分词失效（PR #401, Brain v1.165.3）
+
+**根本问题**：`reflection.js` 洞察去重用 `split(/\s+/)` 分词。中文没有空格分隔词语 → 整段变单个 token → 任何两段中文 Jaccard 永远为 0 → 去重完全失效，重复洞察被反复写入。
+
+**修复**：改用字符级 CJK 正则：
+```javascript
+const tokenize = (text) => text.match(/[\u4e00-\u9fa5\u3400-\u4dbf]|[a-zA-Z]{2,}/g) || [];
+```
+中文每字独立成 token，英文保留多字符词，两者互相兼容。
+
+**教训（版本冲突处理）**：
+- 并行 PR 合并后版本号冲突：main 已是 1.165.2（PR #392），我们也 bump 到 1.165.2 → rebase 时测试文件冲突
+- 最佳方案：新建干净分支 + 只移植最小改动（仅 reflection.js）+ bump 到 1.165.3
+- 避免在同一 worktree 上同时改代码和测试文件——版本冲突时 rebase 的冲突面更小越好
+
+**D10-1 测试 workaround 情况**：PR #392 已用英文 mock 内容绕过（英文有空格，旧分词器有效）。本 PR 修复了真正的根因，中英文内容的去重都能正常工作。
+
 ### [2026-03-03] Brain 测试并行化：移除 singleFork + 修复 DB 数据冲突（PR #392, Brain v1.165.2）
 
 **核心改动**：移除 `vitest.config.js` 的 `singleFork: true`（+整个 `poolOptions` 块），让 243 个测试文件在多进程中并行执行，CI 时间从 ~11 分钟降到 ~90 秒。
