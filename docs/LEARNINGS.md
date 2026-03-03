@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] hooks symlink 必须提交到 git + GitHub hosted runner 故障应对（PR #351）
+
+**背景**：全局 `settings.json` 用相对路径 `./hooks/stop.sh`，cecelia monorepo 根目录没有 `hooks/` 目录（实际在 `packages/engine/hooks/`）。每次 fresh checkout 或新 session 后 Stop Hook 报 `./hooks/stop.sh: not found`，用户反映"昨天才修了又坏了"。
+
+**根因**：临时创建的 symlink 未被 git 追踪，重新 checkout 后消失。
+
+**永久修复**：`git add hooks`（`hooks -> packages/engine/hooks`）提交到 git，从此 fresh checkout 自动有 `hooks/`。
+
+**CI 问题（dorny/paths-filter@v3 失效 + GitHub hosted runner 故障）**：
+- PR 提交后发现 `dorny/paths-filter@v3` 持续 2 秒内失败（所有 5 个 CI 的 Detect Changes job），GitHub hosted runner `ubuntu-latest` 无法启动（DevGate 用 self-hosted 正常通过）
+- 两个修复同时应用：① `Detect Changes` 用 `git diff --name-only "origin/${BASE_REF}...HEAD"` 替换 `dorny/paths-filter@v3`（更可靠，不依赖第三方 action）；② `ci-passed` 改为 `[self-hosted, hk-vps]`（规避 GitHub hosted runner 故障，DevGate 已验证 self-hosted 可用）
+
+**教训**：
+- 本地 dev 工具 symlink 要提交到 git，否则反复在 fresh checkout 后丢失
+- 发现 CI 问题时先分类：代码错误 vs 基础设施故障。两者表现相似但修复方向完全不同
+- DevGate 用 self-hosted 通过而其他 CI 用 ubuntu-latest 全挂 = GitHub hosted runner 故障信号
+- `ci-passed` 是 required check，优先保证它跑在稳定的 runner 上；其他 check jobs 挂了但 ci-passed 退出 0（检测到无相关变更时），PR 仍然可以合并
+- `dorny/paths-filter` 依赖 GitHub API + PR 权限，在 runner 基础设施问题时会最先挂；`git diff` 更接地气，只需要代码就能运行
+
 ### [2026-03-03] 修复自动部署漏检 apps/api/ 导致 dashboard 漏跑（PR #350, Engine v12.35.11 / Brain v1.164.2）
 
 **根因**：`apps/dashboard/vite.config.ts` 用 vite alias `@features/core → apps/api/features` 引用 api 层。改 `apps/api/**` 同样需要重建 dashboard，但 `deploy-local.sh` 和 `cecelia-run.sh` 的检测只认 `apps/dashboard/`，导致 `apps/api/**` 改动后 dashboard 漏部署（PR #344 复现）。
