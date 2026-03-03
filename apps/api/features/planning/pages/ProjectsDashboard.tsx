@@ -1,6 +1,6 @@
 /**
  * Projects Dashboard - DatabaseView 表格模式
- * 数据源: /api/tasks/goals + /api/tasks/projects
+ * 数据源: /api/tasks/goals + /api/tasks/projects + /api/tasks/areas
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -14,6 +14,12 @@ interface Goal {
   parent_id: string | null;
 }
 
+interface Area {
+  id: string;
+  name: string;
+  domain: string | null;
+}
+
 interface Project {
   id: string;
   name: string;
@@ -24,6 +30,7 @@ interface Project {
   parent_id: string | null;
   kr_id: string | null;
   goal_id: string | null;
+  area_id: string | null;
   repo_path: string | null;
 }
 
@@ -31,77 +38,74 @@ interface ProjectRow {
   id: string;
   type_label: string;
   name: string;
-  area: string;
-  status: string;
+  area_id: string;
   priority: string;
+  status: string;
   progress: number;
   [key: string]: unknown;
 }
 
-const FIELD_IDS = ['type_label', 'name', 'area', 'priority', 'status', 'progress'];
+const FIELD_IDS = ['type_label', 'name', 'area_id', 'priority', 'status', 'progress'];
 
 export default function ProjectsDashboard() {
   const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [areaNavMap, setAreaNavMap] = useState<Map<string, string>>(new Map());
+  const [areas, setAreas] = useState<Area[]>([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [goalsRes, projectsRes] = await Promise.all([
+      const [goalsRes, projectsRes, areasRes] = await Promise.all([
         fetch('/api/tasks/goals'),
         fetch('/api/tasks/projects'),
+        fetch('/api/tasks/areas'),
       ]);
-      const goals: Goal[] = await goalsRes.json();
-      const projects: Project[] = await projectsRes.json();
 
+      const goals: Goal[] = goalsRes.ok ? await goalsRes.json() : [];
+      const projects: Project[] = projectsRes.ok ? await projectsRes.json() : [];
+      const areaList: Area[] = areasRes.ok ? await areasRes.json() : [];
+      setAreas(areaList);
+
+      // 通过 kr_id → goals → parent_id 推导 area_okr（用于无直接 area_id 的项目显示）
       const areaNameMap = new Map<string, string>();
-      const areaPathMap = new Map<string, string>();
-      goals.filter(g => g.type === 'area_okr').forEach(a => {
-        areaNameMap.set(a.id, a.title);
-        areaPathMap.set(a.id, `/work/okr/area/${a.id}`);
-      });
+      goals.filter(g => g.type === 'area_okr').forEach(a => areaNameMap.set(a.id, a.title));
 
-      const krToArea = new Map<string, { id: string; title: string }>();
+      const krToAreaId = new Map<string, string>();
       goals.filter(g => g.type === 'kr').forEach(k => {
         if (k.parent_id && areaNameMap.has(k.parent_id)) {
-          krToArea.set(k.id, { id: k.parent_id, title: areaNameMap.get(k.parent_id)! });
+          krToAreaId.set(k.id, k.parent_id);
         }
       });
 
-      const projAreaTitle = new Map<string, string>();
-      const projAreaNav = new Map<string, string>();
-      projects.filter(p => p.type === 'project').forEach(p => {
-        const kr = p.kr_id || p.goal_id;
-        if (kr && krToArea.has(kr)) {
-          const area = krToArea.get(kr)!;
-          projAreaTitle.set(p.id, area.title);
-          projAreaNav.set(p.id, areaPathMap.get(area.id) ?? '');
-        }
-      });
+      // areas 表 ID → name（用于显示 area_id 字段）
+      const areaIdToName = new Map<string, string>(areaList.map(a => [a.id, a.name]));
 
-      const navMap = new Map<string, string>();
       const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
 
       const mapped: ProjectRow[] = projects.map(p => {
-        let areaTitle = '—';
-        let nav = '';
-        if (p.type === 'initiative' && p.parent_id) {
-          areaTitle = projAreaTitle.get(p.parent_id) ?? '—';
-          nav = projAreaNav.get(p.parent_id) ?? '';
-        } else {
-          areaTitle = projAreaTitle.get(p.id) ?? '—';
-          nav = projAreaNav.get(p.id) ?? '';
+        // 优先使用 area_id（直接外键），回退到 kr_id 推导
+        let resolvedAreaId = p.area_id ?? '';
+        if (!resolvedAreaId) {
+          const kr = p.kr_id || p.goal_id;
+          if (kr && krToAreaId.has(kr)) {
+            resolvedAreaId = krToAreaId.get(kr) ?? '';
+          } else if (p.type === 'initiative' && p.parent_id) {
+            const parentKr = p.parent_id;
+            if (krToAreaId.has(parentKr)) {
+              resolvedAreaId = krToAreaId.get(parentKr) ?? '';
+            }
+          }
         }
-        if (nav) navMap.set(p.id, nav);
+
         return {
           id: p.id,
           type_label: p.type,
           name: p.name,
-          area: areaTitle,
+          area_id: resolvedAreaId,
           status: p.status,
           priority: p.priority ?? 'P2',
           progress: p.progress ?? 0,
+          _area_name: resolvedAreaId ? (areaIdToName.get(resolvedAreaId) ?? areaNameMap.get(resolvedAreaId) ?? '—') : '—',
         };
       });
 
@@ -110,7 +114,6 @@ export default function ProjectsDashboard() {
         return (po[a.priority] ?? 9) - (po[b.priority] ?? 9);
       });
 
-      setAreaNavMap(navMap);
       setRows(mapped);
     } catch {
       setRows([]);
@@ -129,17 +132,20 @@ export default function ProjectsDashboard() {
       ],
     },
     { id: 'name', label: '名称', type: 'text', sortable: true, width: 300 },
-    { id: 'area', label: 'Area', type: 'relation', editable: false, sortable: true, width: 160,
-      navigateTo: (rowId: string) => areaNavMap.get(rowId) ?? null,
+    { id: 'area_id', label: 'Area', type: 'select', editable: true, sortable: true, width: 160,
+      options: [
+        { value: '', label: '— 未设置 —', color: '#6b7280' },
+        ...areas.map(a => ({ value: a.id, label: a.name, color: '#10b981' })),
+      ],
     },
-    { id: 'priority', label: '优先级', type: 'badge', sortable: true, width: 90,
+    { id: 'priority', label: '优先级', type: 'badge', editable: true, sortable: true, width: 90,
       options: [
         { value: 'P0', label: 'P0', color: '#ef4444' },
         { value: 'P1', label: 'P1', color: '#f59e0b' },
         { value: 'P2', label: 'P2', color: '#6b7280' },
       ],
     },
-    { id: 'status', label: '状态', type: 'badge', sortable: true, width: 110,
+    { id: 'status', label: '状态', type: 'badge', editable: true, sortable: true, width: 110,
       options: [
         { value: 'active', label: '活跃', color: '#10b981' },
         { value: 'in_progress', label: '进行中', color: '#3b82f6' },
@@ -148,8 +154,8 @@ export default function ProjectsDashboard() {
         { value: 'paused', label: '暂停', color: '#f59e0b' },
       ],
     },
-    { id: 'progress', label: '进度 %', type: 'number', sortable: true, width: 90 },
-  ], [areaNavMap]);
+    { id: 'progress', label: '进度 %', type: 'number', editable: true, sortable: true, width: 90 },
+  ], [areas]);
 
   const handleUpdate = async (id: string, field: string, value: unknown) => {
     const isCustom = !FIELD_IDS.includes(field);
@@ -159,7 +165,12 @@ export default function ProjectsDashboard() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+    if (field === 'area_id') {
+      const areaName = areas.find(a => a.id === value)?.name ?? '—';
+      setRows(prev => prev.map(r => r.id === id ? { ...r, area_id: value as string, _area_name: areaName } : r));
+    } else {
+      setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+    }
   };
 
   return (
