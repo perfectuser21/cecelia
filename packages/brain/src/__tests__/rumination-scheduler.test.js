@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockQueryNotebook = vi.hoisted(() => vi.fn());
 const mockAddTextSource = vi.hoisted(() => vi.fn());
+const mockDeleteSource = vi.hoisted(() => vi.fn());
 const mockCallLLM = vi.hoisted(() => vi.fn());
 const mockUpdateSelfModel = vi.hoisted(() => vi.fn());
 const mockGetSelfModel = vi.hoisted(() => vi.fn());
@@ -19,6 +20,7 @@ vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../notebook-adapter.js', () => ({
   queryNotebook: mockQueryNotebook,
   addTextSource: mockAddTextSource,
+  deleteSource: mockDeleteSource,
 }));
 vi.mock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
 vi.mock('../self-model.js', () => ({
@@ -40,7 +42,8 @@ function createPool() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockAddTextSource.mockResolvedValue({ ok: true });
+  mockAddTextSource.mockResolvedValue({ ok: true, sourceId: null });
+  mockDeleteSource.mockResolvedValue({ ok: true });
   mockUpdateSelfModel.mockResolvedValue('updated');
   mockGetSelfModel.mockResolvedValue('我是 Cecelia...');
 });
@@ -182,12 +185,12 @@ describe('runWeeklySynthesis', () => {
     const pool = createPool();
     // getLatestSynthesis(weekly) → no previous weekly，单次调用
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    // getDailies → 3 dailies
+    // getDailies → 3 dailies（含 notebook_source_id）
     const today = new Date().toISOString().slice(0, 10);
     mockQuery.mockResolvedValueOnce({ rows: [
-      { id: 'd1', period_start: today, content: '日摘要1' },
-      { id: 'd2', period_start: '2026-03-02', content: '日摘要2' },
-      { id: 'd3', period_start: '2026-03-01', content: '日摘要3' },
+      { id: 'd1', period_start: today, content: '日摘要1', notebook_source_id: null },
+      { id: 'd2', period_start: '2026-03-02', content: '日摘要2', notebook_source_id: null },
+      { id: 'd3', period_start: '2026-03-01', content: '日摘要3', notebook_source_id: null },
     ]});
     // getNotebookId(working) → ID
     mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-working-test' }] });
@@ -200,6 +203,35 @@ describe('runWeeklySynthesis', () => {
     expect(result.ok).toBe(true);
     expect(result.level).toBe('weekly');
     expect(result.sourceCount).toBe(3);
+  });
+
+  it('周合成完成后删除有 source_id 的日 sources', async () => {
+    const pool = createPool();
+    // getLatestSynthesis(weekly) → no previous
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // getDailies → 3 dailies，其中 2 条有 notebook_source_id
+    const today = new Date().toISOString().slice(0, 10);
+    mockQuery.mockResolvedValueOnce({ rows: [
+      { id: 'd1', period_start: today, content: '日摘要1', notebook_source_id: 'src-daily-aaa' },
+      { id: 'd2', period_start: '2026-03-02', content: '日摘要2', notebook_source_id: 'src-daily-bbb' },
+      { id: 'd3', period_start: '2026-03-01', content: '日摘要3', notebook_source_id: null },
+    ]});
+    // getNotebookId(working) → ID
+    mockQuery.mockResolvedValueOnce({ rows: [{ value_json: 'nb-working-test' }] });
+    // writeSynthesis
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    mockQueryNotebook.mockResolvedValue({ ok: true, text: '[周摘要] 本周综合洞察超过五十个字的有效输出内容在这里。本周 Alex 完成了三个主要功能模块，团队协作顺畅，下周重点关注性能优化工作。' });
+    mockAddTextSource.mockResolvedValue({ ok: true, sourceId: 'src-weekly-new' });
+
+    const result = await runWeeklySynthesis(pool);
+    expect(result.ok).toBe(true);
+    // deleteSource 应被调用 2 次（只有有 source_id 的条目）
+    await vi.waitFor(() => {
+      expect(mockDeleteSource).toHaveBeenCalledTimes(2);
+    });
+    expect(mockDeleteSource).toHaveBeenCalledWith('src-daily-aaa', 'nb-working-test');
+    expect(mockDeleteSource).toHaveBeenCalledWith('src-daily-bbb', 'nb-working-test');
   });
 });
 

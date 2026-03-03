@@ -15,7 +15,7 @@
 /* global console */
 
 import pool from './db.js';
-import { queryNotebook, addTextSource } from './notebook-adapter.js';
+import { queryNotebook, addTextSource, deleteSource } from './notebook-adapter.js';
 import { callLLM } from './llm-caller.js';
 import { updateSelfModel, getSelfModel } from './self-model.js';
 
@@ -64,15 +64,16 @@ async function hasTodaySynthesis(db, level) {
 
 // ── 写入 synthesis_archive ────────────────────────────────
 
-async function writeSynthesis(db, { level, periodStart, periodEnd, content, previousId, sourceCount, notebookQuery }) {
+async function writeSynthesis(db, { level, periodStart, periodEnd, content, previousId, sourceCount, notebookQuery, notebookSourceId }) {
   await db.query(
     `INSERT INTO synthesis_archive
-       (level, period_start, period_end, content, previous_id, source_count, notebook_query)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (level, period_start, period_end, content, previous_id, source_count, notebook_query, notebook_source_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (level, period_start) DO UPDATE
        SET content = EXCLUDED.content, source_count = EXCLUDED.source_count,
-           notebook_query = EXCLUDED.notebook_query`,
-    [level, periodStart, periodEnd, content, previousId || null, sourceCount || 0, notebookQuery || null]
+           notebook_query = EXCLUDED.notebook_query,
+           notebook_source_id = EXCLUDED.notebook_source_id`,
+    [level, periodStart, periodEnd, content, previousId || null, sourceCount || 0, notebookQuery || null, notebookSourceId || null]
   );
 }
 
@@ -163,6 +164,21 @@ ${recentItems.slice(0, 5).map(r => `- ${r.content.slice(0, 150)}`).join('\n')}`;
     }
   }
 
+  // 写回 NotebookLM（知识飞轮），获取 source_id 以便后续生命周期管理
+  let notebookSourceId = null;
+  try {
+    const addResult = await addTextSource(
+      `[日摘要 ${today}] ${content}`,
+      `日级合成: ${today}`,
+      workingNotebookId
+    );
+    if (addResult.ok && addResult.sourceId) {
+      notebookSourceId = addResult.sourceId;
+    }
+  } catch (e) {
+    console.warn('[synthesis-scheduler] daily write-back failed:', e.message);
+  }
+
   await writeSynthesis(db, {
     level: 'daily',
     periodStart: today,
@@ -171,14 +187,8 @@ ${recentItems.slice(0, 5).map(r => `- ${r.content.slice(0, 150)}`).join('\n')}`;
     previousId: prevSynthesis?.id,
     sourceCount,
     notebookQuery: query.slice(0, 500),
+    notebookSourceId,
   });
-
-  // 写回 NotebookLM（知识飞轮，fire-and-forget）
-  addTextSource(
-    `[日摘要 ${today}] ${content}`,
-    `日级合成: ${today}`,
-    workingNotebookId
-  ).catch(e => console.warn('[synthesis-scheduler] daily write-back failed:', e.message));
 
   return { ok: true, level: 'daily', date: today, content, sourceCount };
 }
@@ -200,9 +210,9 @@ export async function runWeeklySynthesis(dbPool) {
     }
   }
 
-  // 取最近 7 条 daily_synthesis（按时间倒序）
+  // 取最近 7 条 daily_synthesis（含 notebook_source_id 用于删除）
   const { rows: dailies } = await db.query(
-    `SELECT id, period_start, content FROM synthesis_archive
+    `SELECT id, period_start, content, notebook_source_id FROM synthesis_archive
      WHERE level = 'daily' ORDER BY period_start DESC LIMIT 7`
   );
 
@@ -257,6 +267,21 @@ ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 300)}`).join('\n')}
     }
   }
 
+  // 写回 NotebookLM，获取 source_id
+  let notebookSourceId = null;
+  try {
+    const addResult = await addTextSource(
+      `[周摘要 ${periodStart}~${periodEnd}] ${content}`,
+      `周级合成: ${periodStart}~${periodEnd}`,
+      workingNotebookId
+    );
+    if (addResult.ok && addResult.sourceId) {
+      notebookSourceId = addResult.sourceId;
+    }
+  } catch (e) {
+    console.warn('[synthesis-scheduler] weekly write-back failed:', e.message);
+  }
+
   await writeSynthesis(db, {
     level: 'weekly',
     periodStart,
@@ -264,13 +289,20 @@ ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 300)}`).join('\n')}
     content,
     previousId: prevWeekly?.id,
     sourceCount: dailies.length,
+    notebookSourceId,
   });
 
-  addTextSource(
-    `[周摘要 ${periodStart}~${periodEnd}] ${content}`,
-    `周级合成: ${periodStart}~${periodEnd}`,
-    workingNotebookId
-  ).catch(e => console.warn('[synthesis-scheduler] weekly write-back failed:', e.message));
+  // 删除已被压缩的日 sources（防污染）
+  const dailySourceIds = dailies.map(d => d.notebook_source_id).filter(Boolean);
+  if (dailySourceIds.length > 0) {
+    Promise.allSettled(
+      dailySourceIds.map(sid =>
+        deleteSource(sid, workingNotebookId)
+          .catch(e => console.warn(`[synthesis-scheduler] weekly: failed to delete daily source ${sid}:`, e.message))
+      )
+    ).catch(e => console.warn('[synthesis-scheduler] weekly: source cleanup error:', e.message));
+    console.log(`[synthesis-scheduler] weekly: scheduled deletion of ${dailySourceIds.length} daily sources`);
+  }
 
   return { ok: true, level: 'weekly', periodStart, periodEnd, content, sourceCount: dailies.length };
 }
@@ -293,9 +325,9 @@ export async function runMonthlySynthesis(dbPool) {
     }
   }
 
-  // 取最近 4 条 weekly_synthesis
+  // 取最近 4 条 weekly_synthesis（含 notebook_source_id 用于删除）
   const { rows: weeklies } = await db.query(
-    `SELECT id, period_start, period_end, content FROM synthesis_archive
+    `SELECT id, period_start, period_end, content, notebook_source_id FROM synthesis_archive
      WHERE level = 'weekly' ORDER BY period_start DESC LIMIT 4`
   );
 
@@ -366,6 +398,21 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 30
     }
   }
 
+  // 月级合成写回 self model notebook，获取 source_id
+  let notebookSourceId = null;
+  try {
+    const addResult = await addTextSource(
+      `[月摘要 ${periodStart}~${periodEnd}] ${content}`,
+      `月级合成: ${periodStart}~${periodEnd}`,
+      selfNotebookId
+    );
+    if (addResult.ok && addResult.sourceId) {
+      notebookSourceId = addResult.sourceId;
+    }
+  } catch (e) {
+    console.warn('[synthesis-scheduler] monthly write-back failed:', e.message);
+  }
+
   await writeSynthesis(db, {
     level: 'monthly',
     periodStart,
@@ -373,6 +420,7 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 30
     content,
     previousId: prevMonthly?.id,
     sourceCount: weeklies.length,
+    notebookSourceId,
   });
 
   // 更新 self_model（月级演化，带上一版）
@@ -384,12 +432,17 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 30
     console.warn('[synthesis-scheduler] self_model update failed (non-blocking):', err.message);
   }
 
-  // 月级合成写回 self model notebook（身份认知库）
-  addTextSource(
-    `[月摘要 ${periodStart}~${periodEnd}] ${content}`,
-    `月级合成: ${periodStart}~${periodEnd}`,
-    selfNotebookId
-  ).catch(e => console.warn('[synthesis-scheduler] monthly write-back failed:', e.message));
+  // 删除已被压缩的周 sources（防污染）
+  const weeklySourceIds = weeklies.map(w => w.notebook_source_id).filter(Boolean);
+  if (weeklySourceIds.length > 0) {
+    Promise.allSettled(
+      weeklySourceIds.map(sid =>
+        deleteSource(sid, workingNotebookId)
+          .catch(e => console.warn(`[synthesis-scheduler] monthly: failed to delete weekly source ${sid}:`, e.message))
+      )
+    ).catch(e => console.warn('[synthesis-scheduler] monthly: source cleanup error:', e.message));
+    console.log(`[synthesis-scheduler] monthly: scheduled deletion of ${weeklySourceIds.length} weekly sources`);
+  }
 
   return { ok: true, level: 'monthly', periodStart, periodEnd, content, sourceCount: weeklies.length };
 }
