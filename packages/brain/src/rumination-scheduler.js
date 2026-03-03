@@ -19,6 +19,16 @@ import { queryNotebook, addTextSource } from './notebook-adapter.js';
 import { callLLM } from './llm-caller.js';
 import { updateSelfModel, getSelfModel } from './self-model.js';
 
+// ── Notebook ID 查询 ──────────────────────────────────────
+
+async function getNotebookId(db, key) {
+  const { rows } = await db.query(
+    `SELECT value_json FROM working_memory WHERE key = $1 LIMIT 1`,
+    [key]
+  );
+  return rows[0]?.value_json || null;
+}
+
 // ── 时间窗口配置 ──────────────────────────────────────────
 
 /** 日级触发小时（UTC），默认 18 = 北京凌晨 2 点 */
@@ -122,9 +132,15 @@ ${recentItems.map(r => `- ${r.content.slice(0, 200)}`).join('\n')}
 
 请输出今日综合洞察（300-500字），重点：跨时间的模式演化、今日新进展、明日关注点。用 [日摘要] 开头。`;
 
+  // 获取 working notebook ID（日级/周级合成 → working knowledge base）
+  let workingNotebookId = null;
+  try {
+    workingNotebookId = await getNotebookId(db, 'notebook_id_working');
+  } catch { /* 降级 */ }
+
   let content = '';
   try {
-    const nbResult = await queryNotebook(query);
+    const nbResult = await queryNotebook(query, workingNotebookId);
     if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
       content = nbResult.text.trim();
       console.log(`[synthesis-scheduler] daily OK via NotebookLM (${content.length} chars)`);
@@ -160,7 +176,8 @@ ${recentItems.slice(0, 5).map(r => `- ${r.content.slice(0, 150)}`).join('\n')}`;
   // 写回 NotebookLM（知识飞轮，fire-and-forget）
   addTextSource(
     `[日摘要 ${today}] ${content}`,
-    `日级合成: ${today}`
+    `日级合成: ${today}`,
+    workingNotebookId
   ).catch(e => console.warn('[synthesis-scheduler] daily write-back failed:', e.message));
 
   return { ok: true, level: 'daily', date: today, content, sourceCount };
@@ -212,9 +229,15 @@ ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 400)}`).join('\n\n'
 
 请输出周级综合洞察（400-600字），重点：跨天的主题演化、本周最重要的洞察、下周关注点。用 [周摘要] 开头。`;
 
+  // 获取 working notebook ID（周级合成 → working knowledge base）
+  let workingNotebookId = null;
+  try {
+    workingNotebookId = await getNotebookId(db, 'notebook_id_working');
+  } catch { /* 降级 */ }
+
   let content = '';
   try {
-    const nbResult = await queryNotebook(query);
+    const nbResult = await queryNotebook(query, workingNotebookId);
     if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
       content = nbResult.text.trim();
       console.log(`[synthesis-scheduler] weekly OK (${content.length} chars)`);
@@ -245,7 +268,8 @@ ${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 300)}`).join('\n')}
 
   addTextSource(
     `[周摘要 ${periodStart}~${periodEnd}] ${content}`,
-    `周级合成: ${periodStart}~${periodEnd}`
+    `周级合成: ${periodStart}~${periodEnd}`,
+    workingNotebookId
   ).catch(e => console.warn('[synthesis-scheduler] weekly write-back failed:', e.message));
 
   return { ok: true, level: 'weekly', periodStart, periodEnd, content, sourceCount: dailies.length };
@@ -310,9 +334,19 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 40
 3. 对下月的关注方向
 用 [月摘要] 开头。`;
 
+  // 获取 notebook IDs（月级：query → working，write-back → self model）
+  let workingNotebookId = null;
+  let selfNotebookId = null;
+  try {
+    [workingNotebookId, selfNotebookId] = await Promise.all([
+      getNotebookId(db, 'notebook_id_working'),
+      getNotebookId(db, 'notebook_id_self'),
+    ]);
+  } catch { /* 降级 */ }
+
   let content = '';
   try {
-    const nbResult = await queryNotebook(query);
+    const nbResult = await queryNotebook(query, workingNotebookId);
     if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
       content = nbResult.text.trim();
       console.log(`[synthesis-scheduler] monthly OK (${content.length} chars)`);
@@ -350,9 +384,11 @@ ${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 30
     console.warn('[synthesis-scheduler] self_model update failed (non-blocking):', err.message);
   }
 
+  // 月级合成写回 self model notebook（身份认知库）
   addTextSource(
     `[月摘要 ${periodStart}~${periodEnd}] ${content}`,
-    `月级合成: ${periodStart}~${periodEnd}`
+    `月级合成: ${periodStart}~${periodEnd}`,
+    selfNotebookId
   ).catch(e => console.warn('[synthesis-scheduler] monthly write-back failed:', e.message));
 
   return { ok: true, level: 'monthly', periodStart, periodEnd, content, sourceCount: weeklies.length };
