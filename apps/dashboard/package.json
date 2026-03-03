@@ -1,6 +1,6 @@
 {
   "name": "@cecelia/dashboard",
-  "version": "1.13.5",
+  "version": "1.15.0",
   "description": "Cecelia Dashboard Frontend",
   "private": true,
   "type": "module",
@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
+    "@xyflow/react": "^12.10.1",
     "axios": "^1.6.2",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.6",

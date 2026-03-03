@@ -168,13 +168,16 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
   const isHaiku = claudeModel === 'haiku';
 
   // 账号轮换：Haiku 用独立选择函数（不受 sonnet 配额限制）
-  let configDir;
+  // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
+  // （容器内 homedir() = /home/cecelia，宿主机实际路径是 /home/xx，不能在容器内拼）
+  let accountId;
   try {
     const bestAccount = isHaiku
       ? await selectBestAccountForHaiku()
       : await selectBestAccount();
     if (bestAccount) {
-      configDir = join(homedir(), `.claude-${bestAccount}`);
+      // selectBestAccountForHaiku 返回 string，selectBestAccount 返回 { accountId, model }
+      accountId = typeof bestAccount === 'string' ? bestAccount : bestAccount.accountId;
     }
   } catch (err) {
     console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);
@@ -187,7 +190,7 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
       prompt,
       model: claudeModel,
       timeout,
-      ...(configDir ? { configDir } : {}),
+      ...(accountId ? { accountId } : {}),
     }),
     signal: AbortSignal.timeout(timeout + 10000), // bridge 自身超时 + 缓冲
   });

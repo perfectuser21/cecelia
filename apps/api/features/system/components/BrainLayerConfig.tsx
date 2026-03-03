@@ -4,6 +4,8 @@ import {
   fetchBrainProfile,
   fetchBrainModels,
   updateBrainAgent,
+  fetchMouthConfig,
+  updateMouthConfig,
   type BrainProfile,
   type BrainAgentInfo,
   type ModelEntry,
@@ -105,39 +107,113 @@ interface LayerDef {
   description: string;
   allowed_models: string[];
   currentModel: string;
+  currentProvider: string;
 }
 
 interface LayerRowProps {
   layer: LayerDef;
   allModels: ModelEntry[];
-  onSave: (layerId: string, modelId: string) => Promise<void>;
+  onSave: (layerId: string, modelId: string, provider: string) => Promise<void>;
+}
+
+// 从 model ID 推断自然 provider
+function naturalProviderForModel(modelId: string): string {
+  if (modelId.startsWith('claude-')) return 'anthropic';
+  if (modelId.startsWith('MiniMax-')) return 'minimax';
+  return 'openai';
+}
+
+// API/无头 切换控件（仅 Anthropic/Claude 模型显示）
+interface ProviderToggleProps {
+  modelId: string;
+  provider: string;
+  saving: boolean;
+  onChange: (provider: string) => void;
+}
+
+function ProviderToggle({ modelId, provider, saving, onChange }: ProviderToggleProps) {
+  const isAnthropic = modelId.startsWith('claude-');
+  if (!isAnthropic) {
+    return (
+      <span className="text-[9px] font-bold tracking-wider px-[5px] py-px rounded bg-blue-500/10 text-blue-400 shrink-0">
+        API
+      </span>
+    );
+  }
+  const isApi = provider === 'anthropic-api';
+  return (
+    <div className="flex items-center rounded-[6px] border border-white/10 overflow-hidden shrink-0">
+      <button
+        onClick={() => !saving && onChange('anthropic-api')}
+        disabled={saving}
+        title="直连 Anthropic API（按量计费，速度快）"
+        className={`px-1.5 py-px text-[9px] font-bold tracking-wider transition-colors cursor-pointer ${
+          isApi
+            ? 'bg-emerald-500/20 text-emerald-400'
+            : 'text-white/25 hover:text-white/50'
+        }`}
+      >
+        API
+      </button>
+      <div className="w-px h-3 bg-white/10" />
+      <button
+        onClick={() => !saving && onChange('anthropic')}
+        disabled={saving}
+        title="无头 claude -p（走 Max订阅，速度稍慢）"
+        className={`px-1.5 py-px text-[9px] font-bold tracking-wider transition-colors cursor-pointer ${
+          !isApi
+            ? 'bg-orange-500/20 text-orange-400'
+            : 'text-white/25 hover:text-white/50'
+        }`}
+      >
+        无头
+      </button>
+    </div>
+  );
 }
 
 function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
   const [model, setModel] = useState(layer.currentModel);
+  const [provider, setProvider] = useState(layer.currentProvider);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { setModel(layer.currentModel); }, [layer.currentModel]);
+  useEffect(() => {
+    setModel(layer.currentModel);
+    setProvider(layer.currentProvider);
+  }, [layer.currentModel, layer.currentProvider]);
 
   const options = allModels.filter(m => layer.allowed_models.includes(m.id));
 
-  async function handleChange(modelId: string) {
-    if (modelId === model) return;
-    setModel(modelId);
+  async function doSave(modelId: string, newProvider: string) {
     setSaving(true);
     setError('');
     try {
-      await onSave(layer.id, modelId);
+      await onSave(layer.id, modelId, newProvider);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e: any) {
       setError(e.message || '保存失败');
       setModel(layer.currentModel);
+      setProvider(layer.currentProvider);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleModelChange(modelId: string) {
+    if (modelId === model) return;
+    const newProvider = naturalProviderForModel(modelId);
+    setModel(modelId);
+    setProvider(newProvider);
+    await doSave(modelId, newProvider);
+  }
+
+  async function handleProviderChange(newProvider: string) {
+    if (newProvider === provider) return;
+    setProvider(newProvider);
+    await doSave(model, newProvider);
   }
 
   return (
@@ -152,11 +228,17 @@ function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
           </div>
         )}
       </div>
+      <ProviderToggle
+        modelId={model}
+        provider={provider}
+        saving={saving}
+        onChange={handleProviderChange}
+      />
       <ModelDropdown
         value={model}
         options={options}
         allModels={allModels}
-        onChange={handleChange}
+        onChange={handleModelChange}
         saving={saving}
         saved={saved}
       />
@@ -164,10 +246,98 @@ function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
   );
 }
 
+// ── MouthModeSelector ────────────────────────────────────────────────────
+
+const MOUTH_OPTIONS = [
+  { label: 'API · Haiku',  model: 'claude-haiku-4-5-20251001', provider: 'anthropic-api', desc: '~3s · 快速 · 按量计费' },
+  { label: 'API · Sonnet', model: 'claude-sonnet-4-6',         provider: 'anthropic-api', desc: '~6s · 高质量 · 按量计费' },
+  { label: '无头 · Haiku',  model: 'claude-haiku-4-5-20251001', provider: 'anthropic',     desc: '~10s · 快速 · Max订阅' },
+  { label: '无头 · Sonnet', model: 'claude-sonnet-4-6',         provider: 'anthropic',     desc: '~15s · 高质量 · Max订阅' },
+] as const;
+
+function MouthModeSelector() {
+  const [current, setCurrent] = useState<{ model: string | null; provider: string | null }>({ model: null, provider: null });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetchMouthConfig().then(setCurrent);
+  }, []);
+
+  const isActive = (opt: typeof MOUTH_OPTIONS[number]) =>
+    opt.model === current.model && opt.provider === current.provider;
+
+  async function handleSelect(opt: typeof MOUTH_OPTIONS[number]) {
+    if (isActive(opt) || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      await updateMouthConfig(opt.model, opt.provider);
+      setCurrent({ model: opt.model, provider: opt.provider });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      setError(e.message || '更新失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 px-3.5 py-2.5 rounded-[10px] bg-white/[0.02] border border-white/5">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-[13px] font-medium text-slate-200">嘴巴</span>
+          <span className="text-[11px] text-white/30">对话生成 · 对外接口</span>
+          {saving && <RefreshCw size={11} className="text-violet-400 animate-spin ml-auto" />}
+          {saved && !saving && <Check size={11} className="text-emerald-400 ml-auto" />}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {MOUTH_OPTIONS.map(opt => {
+            const active = isActive(opt);
+            const isApi = opt.provider === 'anthropic-api';
+            return (
+              <button
+                key={`${opt.provider}-${opt.model}`}
+                onClick={() => handleSelect(opt)}
+                disabled={saving}
+                className={`text-left px-2.5 py-2 rounded-lg border transition-all cursor-pointer ${
+                  active
+                    ? 'bg-violet-500/[0.15] border-violet-500/40 text-violet-300'
+                    : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:border-white/20 hover:text-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className={`text-[9px] font-bold tracking-wider px-1 py-px rounded ${
+                    isApi ? 'bg-emerald-500/20 text-emerald-400' : 'bg-orange-500/20 text-orange-400'
+                  }`}>
+                    {isApi ? 'API' : '无头'}
+                  </span>
+                  <span className="text-[12px] font-medium">
+                    {opt.model.includes('haiku') ? 'Haiku' : 'Sonnet'}
+                  </span>
+                  {active && <Check size={10} className="text-violet-400 ml-auto" />}
+                </div>
+                <div className="text-[10px] text-white/25">{opt.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+        {error && (
+          <div className="flex items-center gap-1 mt-1.5">
+            <AlertCircle size={10} className="text-red-400" />
+            <span className="text-[10px] text-red-400">{error}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── BrainLayerConfig ─────────────────────────────────────────────────────
 
 const REFLECTION_FALLBACK = 'claude-opus-4-6';
-const MOUTH_FALLBACK = 'MiniMax-M2.5-highspeed';
 
 export default function BrainLayerConfig() {
   const [profile, setProfile] = useState<BrainProfile | null>(null);
@@ -191,8 +361,8 @@ export default function BrainLayerConfig() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const handleSave = useCallback(async (agentId: string, modelId: string) => {
-    await updateBrainAgent(agentId, modelId);
+  const handleSave = useCallback(async (agentId: string, modelId: string, provider: string) => {
+    await updateBrainAgent(agentId, modelId, provider);
     const fresh = await fetchBrainProfile();
     if (fresh) setProfile(fresh);
   }, []);
@@ -229,6 +399,7 @@ export default function BrainLayerConfig() {
       description: '事件路由 · 快速判断',
       allowed_models: agentModels('thalamus', ['MiniMax-M2.5-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6']),
       currentModel: cfg.thalamus?.model || 'MiniMax-M2.5-highspeed',
+      currentProvider: cfg.thalamus?.provider || naturalProviderForModel(cfg.thalamus?.model || 'MiniMax-M2.5-highspeed'),
     },
     {
       id: 'cortex',
@@ -236,6 +407,7 @@ export default function BrainLayerConfig() {
       description: '深度分析 · RCA · 战略调整',
       allowed_models: agentModels('cortex', ['claude-opus-4-6', 'claude-sonnet-4-6']),
       currentModel: cfg.cortex?.model || 'claude-opus-4-6',
+      currentProvider: cfg.cortex?.provider || naturalProviderForModel(cfg.cortex?.model || 'claude-opus-4-6'),
     },
     {
       id: 'reflection',
@@ -243,13 +415,7 @@ export default function BrainLayerConfig() {
       description: '定期深度反思 · 生成洞察',
       allowed_models: agentModels('reflection', ['claude-opus-4-6', 'claude-sonnet-4-6']),
       currentModel: cfg.reflection?.model || REFLECTION_FALLBACK,
-    },
-    {
-      id: 'mouth',
-      name: '嘴巴',
-      description: '对话生成 · 对外接口',
-      allowed_models: agentModels('mouth', ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6']),
-      currentModel: cfg.mouth?.model || MOUTH_FALLBACK,
+      currentProvider: cfg.reflection?.provider || naturalProviderForModel(cfg.reflection?.model || REFLECTION_FALLBACK),
     },
     {
       id: 'memory',
@@ -257,6 +423,7 @@ export default function BrainLayerConfig() {
       description: '为感知观察打重要性分（批量）',
       allowed_models: agentModels('memory', ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5']),
       currentModel: cfg.memory?.model || 'claude-haiku-4-5-20251001',
+      currentProvider: cfg.memory?.provider || naturalProviderForModel(cfg.memory?.model || 'claude-haiku-4-5-20251001'),
     },
     {
       id: 'rumination',
@@ -264,6 +431,7 @@ export default function BrainLayerConfig() {
       description: '深度思考 · 模式发现 · 跨知识关联',
       allowed_models: agentModels('rumination', ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']),
       currentModel: cfg.rumination?.model || 'claude-opus-4-6',
+      currentProvider: cfg.rumination?.provider || naturalProviderForModel(cfg.rumination?.model || 'claude-opus-4-6'),
     },
   ];
 
@@ -292,6 +460,7 @@ export default function BrainLayerConfig() {
         {layers.map(layer => (
           <LayerRow key={layer.id} layer={layer} allModels={models} onSave={handleSave} />
         ))}
+        <MouthModeSelector />
       </div>
 
       {/* Legend */}

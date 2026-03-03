@@ -1571,10 +1571,21 @@ async function triggerCeceliaRun(task) {
 
     // Get credentials file for the task (universal, works for all providers)
     const credentials = getCredentialsForTask(task);
-    if (credentials) {
-      // Profile 中已固定账号，直接使用
+    if (credentials && credentials.startsWith('account')) {
+      // Profile 中固定了账号，先检查 spending cap
+      const { isSpendingCapped } = await import('./account-usage.js');
+      if (isSpendingCapped(credentials)) {
+        // 固定账号被 cap，fallback 到动态选择
+        console.log(`[executor] Profile 固定账号 ${credentials} 被 spending-capped，fallback 到 selectBestAccount for task=${task.id}`);
+      } else {
+        extraEnv.CECELIA_CREDENTIALS = credentials;
+      }
+    } else if (credentials) {
+      // 非账号类型凭据（如 minimax key 文件），直接使用
       extraEnv.CECELIA_CREDENTIALS = credentials;
-    } else if (provider === 'anthropic') {
+    }
+
+    if (!extraEnv.CECELIA_CREDENTIALS && provider === 'anthropic') {
       // 三阶段降级链：Sonnet → Opus → Haiku → MiniMax
       // selectBestAccount() 返回 { accountId, model } 或 null（降级 MiniMax）
       const selection = await selectBestAccount();

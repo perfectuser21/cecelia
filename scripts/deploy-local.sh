@@ -78,7 +78,8 @@ NEED_DASHBOARD=false
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     [[ "$file" == packages/brain/* ]] && NEED_BRAIN=true
-    [[ "$file" == apps/dashboard/* ]] && NEED_DASHBOARD=true
+    # apps/dashboard/ 直接改动，或 apps/api/（被 dashboard vite alias 引用）均需重建 dashboard
+    [[ "$file" == apps/dashboard/* || "$file" == apps/api/* ]] && NEED_DASHBOARD=true
 done <<< "$CHANGED_FILES"
 
 # 没有相关改动，跳过

@@ -157,11 +157,32 @@ export async function fetchBrainModels(): Promise<BrainModelsResponse> {
   return { models: data.models || [], agents: data.agents || [] };
 }
 
-export async function updateBrainAgent(agentId: string, modelId: string): Promise<void> {
+export async function updateBrainAgent(agentId: string, modelId: string, provider?: string): Promise<void> {
   const res = await fetch(`${BRAIN_URL}/model-profiles/active/agent`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent_id: agentId, model_id: modelId }),
+    body: JSON.stringify({ agent_id: agentId, model_id: modelId, ...(provider ? { provider } : {}) }),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || '更新失败');
+}
+
+export async function fetchMouthConfig(): Promise<{ model: string | null; provider: string | null }> {
+  try {
+    const res = await fetch(`${BRAIN_URL}/mouth-config`);
+    if (!res.ok) return { model: null, provider: null };
+    const data = await res.json();
+    return { model: data.model || null, provider: data.provider || null };
+  } catch {
+    return { model: null, provider: null };
+  }
+}
+
+export async function updateMouthConfig(model: string, provider: string): Promise<void> {
+  const res = await fetch(`${BRAIN_URL}/mouth-config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, provider }),
   });
   const data = await res.json();
   if (!data.success) throw new Error(data.error || '更新失败');

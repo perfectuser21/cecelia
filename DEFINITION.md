@@ -5,8 +5,8 @@
 **最后更新**: 2026-03-01
 
 
-**Brain 版本**: 1.151.0
-**Schema 版本**: 100
+**Brain 版本**: 1.164.10
+**Schema 版本**: 104
 
 **状态**: 生产运行中
 
@@ -284,7 +284,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**46 个白名单 action**：
+**45 个白名单 action**：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -294,6 +294,7 @@ executeTick() 流程：
 - 任务生命周期：update_task_prd, archive_task, defer_task
 - 控制：no_action, fallback_to_tick
 - 类型建议：suggest_task_type
+- 认知闭环：kr_replan, write_self_model, escalate_to_cortex
 - 提案（Inbox）：propose_decomposition, propose_weekly_plan, propose_priority_change, propose_anomaly_action, propose_milestone_review, heartbeat_finding
 - 扩展（v1.121.0）：reschedule_task, aggregate_tasks, merge_tasks, split_task, notify_oncall, adjust_resource_allocation, trigger_backup, rotate_credentials
 
@@ -401,7 +402,8 @@ queued → in_progress → completed
 | review | US | 审查员 (/review) | Sonnet / M2.5-highspeed | 默认 minimax |
 | qa | US | 小检 (/qa) | Sonnet / M2.5-highspeed | 默认 minimax |
 | audit | US | 小审 (/audit) | Sonnet / M2.5-highspeed | 默认 minimax |
-| exploratory | US | Exploratory | - / M2.1 | 固定 minimax |
+| explore | HK | 快速调研 (/explore) | - / M2.1 | 固定 minimax |
+| knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
@@ -627,9 +629,9 @@ AUTO_DISPATCH_MAX = MAX_SEATS - INTERACTIVE_RESERVE
 │  ├ 开发前端:5212            │     │  └ MiniMax executor         │
 │  └ Claude Code (headed)     │     │                             │
 │                             │     │  任务类型：                 │
-│  任务类型：                 │     │  talk, research, data       │
-│  dev, review, qa, audit,    │     │                             │
-│  exploratory                │     │                             │
+│  任务类型：                 │     │  talk, research, explore,   │
+│  dev, review, qa, audit,    │     │  data                       │
+│  code_review, knowledge     │     │                             │
 │  ENV_REGION=us              │     │  ENV_REGION=hk              │
 └─────────────────────────────┘     └─────────────────────────────┘
 ```
@@ -665,7 +667,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '097'
+5. **Schema 版本** — 必须 = '104'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置

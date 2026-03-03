@@ -95,6 +95,42 @@ const INTENT_KEYWORDS = {
 };
 
 /**
+ * 根据当前查询和最近对话历史，判断话题深度
+ * 0 = 首次提及；1 = 延伸讨论（已聊过）；2 = 深度下钻（多轮连续）
+ * @param {string} query - 当前查询
+ * @param {Array} conversationEntries - loadConversationHistory 返回的 entries
+ * @returns {0|1|2}
+ */
+export function computeTopicDepth(query, conversationEntries) {
+  if (!conversationEntries || conversationEntries.length === 0) return 0;
+
+  const queryTokens = new Set(tokenize(query));
+  if (queryTokens.size === 0) return 0;
+
+  const recent = conversationEntries.slice(0, 5);
+  let matchCount = 0;
+
+  for (const entry of recent) {
+    // 只比对用户消息部分（entry.title 是 "[对话] userMsg前60字"，去掉前缀）
+    // 不含 Cecelia 回复，避免回复文本撑大 union 导致 Jaccard 偏低
+    const userPart = entry.title
+      ? entry.title.replace(/^\[对话\]\s*/, '')
+      : (entry.text || '').split('\nCecelia:')[0].replace(/^Alex:\s*/, '');
+    const entryText = userPart || `${entry.title || ''} ${entry.description || ''}`;
+    const entryTokens = new Set(tokenize(entryText));
+    if (entryTokens.size === 0) continue;
+
+    const intersection = [...queryTokens].filter(t => entryTokens.has(t)).length;
+    const union = new Set([...queryTokens, ...entryTokens]).size;
+    if (intersection / union >= 0.15) matchCount++;
+  }
+
+  if (matchCount >= 3) return 2;
+  if (matchCount >= 1) return 1;
+  return 0;
+}
+
+/**
  * 根据查询文本分类意图
  * @param {string} query - 查询文本
  * @returns {'task_focused'|'emotion_focused'|'learning_focused'|'default'} 意图类型
@@ -302,10 +338,21 @@ export function jaccardSimilarity(textA, textB) {
  */
 function tokenize(text) {
   if (!text) return [];
-  return text.toLowerCase()
-    .replace(/[^\w\s\u4e00-\u9fa5]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 1);
+  const cleaned = text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+  const tokens = [];
+  // 英文/数字：按空格切分，过滤长度 > 1
+  for (const word of cleaned.split(/\s+/)) {
+    if (!word) continue;
+    if (/[\u4e00-\u9fa5]/.test(word)) {
+      // 中文：逐字符切分（避免整段变一个大 token 导致 Jaccard 退化）
+      for (const ch of word) {
+        if (/[\u4e00-\u9fa5]/.test(ch)) tokens.push(ch);
+      }
+    } else if (word.length > 1) {
+      tokens.push(word);
+    }
+  }
+  return tokens;
 }
 
 /**
@@ -319,11 +366,12 @@ export function estimateTokens(text) {
 }
 
 /**
- * 格式化单条记忆项为简短摘要
+ * 格式化单条记忆项
  * @param {Object} item - 候选记忆
+ * @param {0|1|2} [depth=0] - 对话深度：0=L0简短，1=L1详情，2=全文
  * @returns {string}
  */
-function formatItem(item) {
+function formatItem(item, depth = 0) {
   const sourceLabel = {
     task: '任务',
     learning: '经验',
@@ -337,7 +385,27 @@ function formatItem(item) {
   const label = sourceLabel[item.source] || item.source;
   const title = (item.title || '').slice(0, 80);
   const statusHint = item.status ? ` (${item.status})` : '';
-  const preview = (item.description || item.text || '').slice(0, 120);
+
+  let preview;
+  if (depth === 0) {
+    // L0：轻点一下，简短
+    preview = (item.description || item.text || '').slice(0, 80);
+  } else if (depth === 1) {
+    // L1：更多细节 + 关联数量
+    const base = (item.description || item.text || '').slice(0, 250);
+    const extras = [];
+    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
+    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
+    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
+  } else {
+    // depth >= 2：全文
+    const base = item.full_content || item.description || item.text || '';
+    const extras = [];
+    if (item.task_count !== undefined && item.task_count !== null) extras.push(`关联任务 ${item.task_count} 个`);
+    if (item.parent_kr_title) extras.push(`所属KR: ${item.parent_kr_title}`);
+    preview = extras.length > 0 ? `${base} [${extras.join('，')}]` : base;
+  }
+
   return `- [${label}] **${title}**${statusHint}: ${preview}`;
 }
 
@@ -390,11 +458,13 @@ async function searchSemanticMemory(pool, query, mode) {
       event_type: null,
     }, 10);
     for (const l of learnings) {
+      const fullContent = typeof l.content === 'string' ? l.content : JSON.stringify(l.content || '');
       candidates.push({
         id: l.id,
         source: 'learning',
         title: l.title || '',
-        description: (typeof l.content === 'string' ? l.content : JSON.stringify(l.content || '')).slice(0, 300),
+        description: fullContent.slice(0, 300),
+        full_content: fullContent,
         text: `${l.title || ''} ${l.content || ''}`,
         relevance: (l.relevance_score || 0) / 30,
         created_at: l.created_at || null,
@@ -431,6 +501,7 @@ async function searchSemanticMemory(pool, query, mode) {
             source: (g.type === 'kr' || g.type === 'area_okr') ? 'kr' : 'okr',
             title: g.title || '',
             description: (g.description || '').slice(0, 300),
+            full_content: g.description || '',
             text: `${g.title || ''} ${g.description || ''}`,
             relevance: intersection / union,
             created_at: g.created_at || null,
@@ -470,6 +541,7 @@ async function searchSemanticMemory(pool, query, mode) {
             source: p.type === 'initiative' ? 'initiative' : 'project',
             title: p.name || '',
             description: (p.description || '').slice(0, 300),
+            full_content: p.description || '',
             text: `${p.name || ''} ${p.description || ''}`,
             relevance: intersection / union,
             created_at: p.created_at || null,
@@ -487,6 +559,79 @@ async function searchSemanticMemory(pool, query, mode) {
   if (meta.fetchedCount === 0 && meta.fetchStatus === 'ok') meta.fetchStatus = 'no_results';
   meta.candidateCount = candidates.length;
   return { entries: candidates, meta };
+}
+
+// ============================================================
+// 深度感知 enrichment：为 goals/projects 批量补充 task_count / parent_kr_title
+// ============================================================
+
+/**
+ * 批量为 goals/projects 候选补充 task_count 和 parent_kr_title（depth>=1 时调用）
+ * 直接 mutate 传入的 candidates 数组
+ * @param {Object} pool - pg pool
+ * @param {Array} candidates - semanticResults
+ */
+async function _enrichStructuredCandidates(pool, candidates) {
+  const goalIds = candidates.filter(c => c.source === 'kr' || c.source === 'okr').map(c => c.id);
+  const projectIds = candidates.filter(c => c.source === 'initiative' || c.source === 'project').map(c => c.id);
+  const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
+
+  try {
+    // task_count for goals (via projects.kr_id)
+    if (goalIds.length > 0) {
+      const res = await pool.query(
+        `SELECT p.kr_id as goal_id, COUNT(t.id)::int as task_count
+         FROM tasks t
+         JOIN projects p ON t.project_id = p.id
+         WHERE p.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY p.kr_id`,
+        [goalIds]
+      );
+      const countMap = Object.fromEntries(res.rows.map(r => [r.goal_id, r.task_count]));
+      for (const c of candidates) {
+        if ((c.source === 'kr' || c.source === 'okr') && countMap[c.id] !== undefined) {
+          c.task_count = countMap[c.id];
+        }
+      }
+    }
+
+    // task_count for projects/initiatives
+    if (projectIds.length > 0) {
+      const res = await pool.query(
+        `SELECT project_id, COUNT(id)::int as task_count
+         FROM tasks
+         WHERE project_id = ANY($1) AND status NOT IN ('completed','cancelled','quarantined')
+         GROUP BY project_id`,
+        [projectIds]
+      );
+      const countMap = Object.fromEntries(res.rows.map(r => [r.project_id, r.task_count]));
+      for (const c of candidates) {
+        if ((c.source === 'initiative' || c.source === 'project') && countMap[c.id] !== undefined) {
+          c.task_count = countMap[c.id];
+        }
+      }
+    }
+
+    // parent_kr_title for initiatives
+    if (initiativeIds.length > 0) {
+      const res = await pool.query(
+        `SELECT pi.id as initiative_id, g.title as kr_title
+         FROM goals g
+         JOIN projects p ON p.kr_id = g.id
+         JOIN projects pi ON pi.parent_id = p.id
+         WHERE pi.id = ANY($1)`,
+        [initiativeIds]
+      );
+      const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
+      for (const c of candidates) {
+        if (c.source === 'initiative' && krMap[c.id]) {
+          c.parent_kr_title = krMap[c.id];
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[memory-retriever] Enrichment failed (graceful fallback):', err.message);
+  }
 }
 
 // ============================================================
@@ -831,6 +976,14 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   const episodicResults     = episodicResult.entries;
   const episodicMeta        = episodicResult.meta;
 
+  // 1b. 对话深度检测（用于记忆分层返回）
+  const depth = computeTopicDepth(query, conversationResults);
+
+  // 1c. depth >= 1 时为 goals/projects 批量查询 task_count 和父级 KR
+  if (depth >= 1 && semanticResults.length > 0) {
+    await _enrichStructuredCandidates(dbPool, semanticResults);
+  }
+
   // 2. 统一评分（语义 + 事件 + 对话 + 片段记忆混合，profile 不参与）
   const candidates = [
     ...semanticResults,
@@ -878,7 +1031,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   const sourceStats = {};
 
   for (const item of quotaSelected) {
-    const line = formatItem(item);
+    const line = formatItem(item, depth);
     const lineTokens = estimateTokens(line);
     if (tokenUsed + lineTokens > tokenBudget) break;
     block += line + '\n';
@@ -905,6 +1058,7 @@ export async function buildMemoryContext({ query, mode = 'execute', tokenBudget 
   const logMeta = {
     tag: 'memory_selection',
     intentType,
+    topicDepth: depth,
     tokenBudget,
     tokenUsed,
     candidateTotal: candidates.length,

@@ -25,12 +25,21 @@ jobs:
       engine: ${{ steps.filter.outputs.engine }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            engine:
-              - 'packages/engine/**'
+          fetch-depth: 0
+      - name: Detect engine changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "engine=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          BASE_REF="${{ github.base_ref }}"
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -q "^packages/engine/"; then
+            echo "engine=true" >> $GITHUB_OUTPUT
+          else
+            echo "engine=false" >> $GITHUB_OUTPUT
+          fi
 
   version-check:
     needs: changes
@@ -276,6 +285,8 @@ jobs:
           !startsWith(github.event.pull_request.title, 'test:') &&
           !startsWith(github.event.pull_request.title, 'release:')
         working-directory: packages/engine
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate checks"
@@ -316,7 +327,6 @@ jobs:
           if [ -f "scripts/devgate/require-rci-update-if-p0p1.sh" ]; then
             echo ""
             echo "  [P0/P1 RCI update check]"
-            export PR_TITLE="${{ github.event.pull_request.title }}"
             export BASE_REF="origin/${{ github.base_ref || 'main' }}"
             bash scripts/devgate/require-rci-update-if-p0p1.sh || exit 1
           fi
@@ -354,6 +364,8 @@ jobs:
           fetch-depth: 0
 
       - name: Check known-failures.json modification
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Known-Failures Protection (P0)"
@@ -366,7 +378,6 @@ jobs:
             echo "detected: $KF_PATH was modified"
             echo ""
 
-            PR_TITLE="${{ github.event.pull_request.title }}"
             if [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "known-failures.json modified but PR title missing [INFRA] tag"
               echo ""
@@ -432,9 +443,23 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install yq
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          YQ_VERSION="v4.44.3"
+          YQ_BINARY="yq_linux_amd64"
+
+          # Use gh CLI (token-authed) to download — avoids CDN rate limiting
+          # Note: checksums file has custom multi-hash format (not sha256sum compatible),
+          # so we rely on TLS + authenticated API for download integrity
+          gh release download "$YQ_VERSION" \
+            --repo mikefarah/yq \
+            --pattern "$YQ_BINARY" \
+            --dir /tmp
+
+          sudo mv "/tmp/${YQ_BINARY}" /usr/local/bin/yq
           sudo chmod +x /usr/local/bin/yq
+          echo "yq ${YQ_VERSION} installed"
           yq --version
 
       - name: Generate path views from registry
@@ -486,6 +511,8 @@ jobs:
           fetch-depth: 0
 
       - name: Check critical config modifications
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  Config Audit (P1)"
@@ -517,7 +544,6 @@ jobs:
             done
             echo ""
 
-            PR_TITLE="${{ github.event.pull_request.title }}"
             if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
               echo "PR title must contain [CONFIG] or [INFRA] tag"
               echo "Suggested: [CONFIG] $PR_TITLE"
@@ -638,6 +664,10 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # Non-engine changes: skip all checks
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed - cannot determine what changed"
+            exit 1
+          fi
           if [ "${{ needs.changes.outputs.engine }}" != "true" ]; then
             echo "No engine changes detected, all checks skipped"
             exit 0
