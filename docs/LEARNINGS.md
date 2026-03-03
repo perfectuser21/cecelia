@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Notion ↔ Cecelia 双向同步实现（PR #403, Brain v1.167.0）
+
+**核心功能**：migration 105 加 blocks.notion_id + knowledge.notion_synced_at + notion_sync_log 表；新模块 notion-sync.js（syncFromNotion / syncToNotion / runSync）；API 路由 GET /status + POST /run；blocks validParentTypes 加 'knowledge'。
+
+**Notion API 环境变量**：实际有效的 key 是 `NOTION_API_KEY`（非 `NOTION_TOKEN`），通过 `env | grep notion` 未找到是因为变量名含小写 "notion" 但用 grep -i 也未命中——实际需要读 bash env 快照才能看到。
+
+**知识图谱映射**：Notion Database(知识库) → knowledge 表；Notion Page Properties → knowledge 固定列；Notion Page Content Blocks → blocks 表（parent_type='knowledge'）；blocks.content 是 JSONB 存 block 结构化内容，到这里就是终点，不能再往下分 column。
+
+**并行 PR 版本冲突（三轮）**：① 1.165.1→1.166.0 与 main 1.165.4 冲突；② merge 后 main 又推到 1.166.0 冲突；每次：`git merge origin/main` → 手动解 .brain-versions/DEFINITION.md/package.json → npm version minor → 重跑 CI。merge 代替 rebase 避免 bash-guard force push 阻断。
+
+**Notion token 过期处理**：NOTION_API_KEY 在 ~/.credentials/notion.env，但 401。路由层提前检查 getNotionConfig() → 返回 503 而非 500 crash，hint 包含更新路径。
+
 ### [2026-03-03] Workspace 层级体验 + D10-1 修复（PR #388, Brain v1.165.4）
 
 **主要功能**：① AreaDashboard 改为读 areas 表（9 个生活/工作领域）按 domain 分组显示；② OKRDashboard 层级树（area_okr → kr，可折叠）；③ ProjectsDashboard 层级树（project → initiative，可折叠）；④ Brain 新增 `/api/brain/tasks/tasks` 路由，前端 TaskDatabase 终于有数据。
