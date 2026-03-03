@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
+
+**根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
+
+**双重 bug 发现**：代码探索时发现 `notebook-adapter.js` 已有 `addTextSource()` 函数，但 `cecelia-bridge.js` 完全没有 `/notebook/add-text-source` 端点。所有 `addTextSource` 调用都在静默失败（404）。这是个预存在的 bug，本次顺手修复。
+
+**3-笔记本架构**：
+- `cecelia-working-knowledge`（`notebook_id_working`）：learnings、高重要度记忆、日/周合成、反刍洞察
+- `cecelia-self-model`（`notebook_id_self`）：OKR/目标、月合成回写
+- `cecelia-alex-cognitive-map`（`notebook_id_alex`）：预留
+
+**backward-compatibility 设计**：所有 adapter 函数接受可选 `notebookId`，为 null/undefined 时行为完全不变（body 不加 `notebook_id`，CLI 不加 `-n`），降级到激活笔记本。`getNotebookId()` 用 try/catch 包裹，失败静默返回 null。
+
+**CI DevGate test -f 假测试拦截**：`detectFakeTest` 函数专门拦截 `test -f`（空洞文件存在检查），需改用真实命令如 `grep -q 'pattern' file`（检查内容）。`test -x`（检查可执行权限）不被拦截，因为它有业务意义。
+
+**两版 check-dod-mapping.cjs 共存**：`scripts/devgate/check-dod-mapping.cjs`（旧版，markdown 表格格式）和 `packages/engine/scripts/devgate/check-dod-mapping.cjs`（新版，checkbox 格式）。CI 用 Engine 版本，本地 `node scripts/devgate/...` 是旧版会报"No DoD table found"。调试 DoD 映射时必须用 `node packages/engine/scripts/devgate/check-dod-mapping.cjs`。
+
+**Promise.all 中 mock 队列顺序确定性**：`Promise.all([getNotebookId('working'), getNotebookId('self')])` 中两个 DB 调用同步发起，按声明顺序消耗 mock 队列（working 先，self 后）。`mockResolvedValueOnce` 按消耗顺序设置即可。
+
 ### [2026-03-03] 修复图片视觉——bridge 不支持多模态（PR #407, Brain v1.167.1）
 
 **根因**：`mouth` agent 配置 `provider: 'anthropic'`（bridge 模式），bridge 不支持多模态 content array。`llm-caller.js` 在 `provider === 'anthropic'` 分支直接调用 `callClaudeViaBridge(prompt, ...)`，`imageContent` 被完全丢弃，LLM 只收到文字。日志显示"图片下载成功"但 LLM 说"没有图片"就是这个原因。
