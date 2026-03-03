@@ -9653,6 +9653,23 @@ async function saveUnifiedConversation(participantId, channel, groupId, userText
   );
 }
 
+/**
+ * 保存单条消息到 unified_conversations（Mode A 用：user/assistant 分两次写入）
+ * @param {string} participantId - feishu open_id
+ * @param {string} channel - 'feishu_group' 等
+ * @param {string} groupId - 群聊 chat_id
+ * @param {string} role - 'user' | 'assistant'
+ * @param {string} content - 消息内容
+ * @param {string|null} imageDescription - 图片描述（仅图片时传入）
+ */
+async function saveUnifiedMessage(participantId, channel, groupId, role, content, imageDescription = null) {
+  await pool.query(
+    `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content, image_description)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [participantId, channel, groupId || null, role, content, imageDescription]
+  );
+}
+
 /** 发送飞书消息 */
 async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
   await fetch(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
@@ -9821,6 +9838,10 @@ router.post('/feishu/event', async (req, res) => {
           ).catch(err => console.warn('[feishu/group] last_alex_chat_at 写入失败:', err.message));
         }
 
+        // 记录到 unified_conversations（per-person 行为数据，供 person_model 分析）
+        saveUnifiedMessage(openId, 'feishu_group', message.chat_id, 'user', text, null)
+          .catch(err => console.warn('[feishu/group] unified_conversations user 写入失败:', err.message));
+
         // 异步更新发送者印象（fire-and-forget）
         updateUserImpression(openId, senderName).catch(() => {});
 
@@ -9898,6 +9919,10 @@ router.post('/feishu/event', async (req, res) => {
 
             await sendFeishuMessage(pending.accessToken, chatId, 'chat_id', reply);
             console.log(`[feishu/group] Mode A 回复（批次 ${batch.length} 条）→ ${primarySender.senderName}：${reply.slice(0, 60)}`);
+
+            // Mode A 回复写 unified_conversations assistant 行（归属主要对话方）
+            saveUnifiedMessage(primarySender.openId, 'feishu_group', chatId, 'assistant', reply, null)
+              .catch(err => console.warn('[feishu/group] unified_conversations assistant 写入失败:', err.message));
 
             // 回复写入记忆
             const replyMemContent = `[飞书群聊] Cecelia 回复 ${primarySender.senderName}: ${reply}`;
