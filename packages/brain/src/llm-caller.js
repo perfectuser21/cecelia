@@ -106,9 +106,16 @@ export async function callLLM(agentId, prompt, options = {}) {
 
     try {
       let text;
-      if (provider === 'anthropic-api') {
+      // 有图片时 bridge 不支持多模态，自动升级到直连 anthropic-api
+      const effectiveProvider = (imageContent && imageContent.length > 0 && provider === 'anthropic')
+        ? 'anthropic-api'
+        : provider;
+      if (effectiveProvider !== provider) {
+        console.log(`[llm-caller] ${agentId} 有图片内容，bridge 不支持视觉，自动升级到 anthropic-api`);
+      }
+      if (effectiveProvider === 'anthropic-api') {
         text = await callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent);
-      } else if (provider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
+      } else if (effectiveProvider === 'anthropic' || CLAUDE_MODEL_FLAG[model]) {
         // bridge 不支持图片，仅传文字 prompt（降级处理）
         text = await callClaudeViaBridge(prompt, model, timeout, model);
       } else if (provider === 'minimax') {
