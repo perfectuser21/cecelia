@@ -578,9 +578,9 @@ describe('D8: runDesireSystem 集成测试', () => {
 // ============================================================
 
 describe('D9: EXPECTED_SCHEMA_VERSION', () => {
-  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 105', async () => {
+  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 108', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('107');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('108');
   });
 });
 

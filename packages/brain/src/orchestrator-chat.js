@@ -478,6 +478,20 @@ export async function handleChat(message, context = {}, messages = [], imageCont
     ).catch(() => {});
   }
 
+  // 6b. 写 unified_conversations（Dashboard 对话持久化，与飞书历史统一）
+  Promise.resolve().then(async () => {
+    try {
+      const dashParticipantId = userId === 'owner' ? 'owner' : userId;
+      await pool.query(
+        `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content)
+         VALUES ($1, 'dashboard', NULL, 'user', $2), ($1, 'dashboard', NULL, 'assistant', $3)`,
+        [dashParticipantId, message.slice(0, 2000), reply.slice(0, 2000)]
+      );
+    } catch (err) {
+      console.warn('[orchestrator-chat] unified_conversations 写入失败:', err.message);
+    }
+  }).catch(() => {});
+
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
     extractConversationLearning(message, reply, pool)
