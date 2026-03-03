@@ -20,3 +20,4 @@ CREATE INDEX IF NOT EXISTS idx_synthesis_level_period
 CREATE UNIQUE INDEX IF NOT EXISTS idx_synthesis_level_period_start
   ON synthesis_archive(level, period_start);
 
+
