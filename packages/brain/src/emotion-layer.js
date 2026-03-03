@@ -50,7 +50,7 @@ export async function runEmotionLayer(observations, pool) {
 
     const { text: emotionText } = await callLLM('thalamus', prompt, {
       maxTokens: 120,
-      timeout: 15000,
+      timeout: 90000,
     });
 
     if (!emotionText || !emotionText.trim()) return null;

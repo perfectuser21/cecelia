@@ -58,7 +58,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat, handleChatStream } from './orchestrator-chat.js';
-import { callLLM } from './llm-caller.js';
+import { callLLM, callLLMStream } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
@@ -8101,12 +8101,12 @@ router.put('/model-profiles/active', async (req, res) => {
 
 router.patch('/model-profiles/active/agent', async (req, res) => {
   try {
-    const { agent_id, model_id } = req.body;
+    const { agent_id, model_id, provider } = req.body;
     if (!agent_id || !model_id) {
       return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
     }
 
-    const result = await updateAgentModel(pool, agent_id, model_id);
+    const result = await updateAgentModel(pool, agent_id, model_id, { provider });
 
     // WebSocket 广播
     websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
@@ -9962,6 +9962,86 @@ router.get('/cleanup/audit', async (req, res) => {
   } catch (err) {
     console.error('[API] cleanup/audit error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/manual/ask
+ * 说明书实时问答端点（SSE）
+ * Body: { question: string }
+ * Response: text/event-stream — 格式 `data: {"delta":"..."}\n\n`，结束为 `data: [DONE]\n\n`
+ * 调用 MiniMax 流式回答，以 brain-manifest.generated.json 作为上下文
+ */
+router.post('/manual/ask', async (req, res) => {
+  const { question } = req.body;
+  if (!question || typeof question !== 'string' || question.trim().length === 0) {
+    res.status(400).json({ error: 'question is required' });
+    return;
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  let closed = false;
+  res.on('close', () => { closed = true; });
+
+  try {
+    // 读取 manifest 作为 context
+    const manifestRaw = readFileSync(new URL('./brain-manifest.generated.json', import.meta.url), 'utf8');
+    const manifest = JSON.parse(manifestRaw);
+
+    // 构建精简 context（控制 token 量）
+    const contextLines = ['# Brain Manifest 概览\n'];
+    if (manifest.blocks) {
+      manifest.blocks.forEach(b => {
+        contextLines.push(`## ${b.label} (${b.id})`);
+        if (b.desc) contextLines.push(b.desc);
+        if (b.modules) {
+          b.modules.forEach(m => contextLines.push(`  - ${m.id}: ${m.label}${m.desc ? ' — ' + m.desc : ''}`));
+        }
+      });
+    }
+    if (manifest.allActions) {
+      const actionKeys = Object.keys(manifest.allActions);
+      contextLines.push(`\n## Actions 白名单（共 ${actionKeys.length} 条）`);
+      actionKeys.slice(0, 40).forEach(k => {
+        const a = manifest.allActions[k];
+        contextLines.push(`  ${k}: ${a.description || ''}${a.dangerous ? ' [危险]' : ''}`);
+      });
+    }
+    if (manifest.allSignals) {
+      contextLines.push(`\n## 感知信号（共 ${manifest.allSignals.length} 个）`);
+      manifest.allSignals.slice(0, 20).forEach(s => {
+        contextLines.push(`  #${s.id}: ${s.label} — ${s.description || ''}`);
+      });
+    }
+    const contextStr = contextLines.join('\n');
+
+    // 合并 system context 与 question（MiniMax 用 user message，无 top-level system 字段）
+    const combinedPrompt = `你是 Brain 系统的技术说明员。根据以下 Brain manifest 数据，简明扼要地回答关于 Brain 架构的技术问题。使用中文回答，保持简洁专业。\n\n${contextStr}\n\n用户问题：${question.trim()}`;
+
+    // 通过 callLLMStream 调用 MiniMax 流式 API（mouth agentId）
+    await callLLMStream('mouth', combinedPrompt, {}, (delta, isDone) => {
+      if (isDone) {
+        if (!closed) {
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }
+      } else if (delta && !closed) {
+        res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      }
+    });
+  } catch (err) {
+    console.error('[API] manual/ask error:', err.message);
+    if (!closed) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 });
 

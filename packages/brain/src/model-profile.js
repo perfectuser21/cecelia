@@ -145,7 +145,16 @@ export async function listProfiles(pool) {
  * 更新单个 agent 的模型配置
  * 直接修改 active profile 的 config JSONB
  */
-export async function updateAgentModel(pool, agentId, modelId) {
+/**
+ * 更新单个 agent 的模型配置
+ * @param {object} pool - DB pool
+ * @param {string} agentId - agent ID
+ * @param {string} modelId - model ID
+ * @param {object} [options]
+ * @param {string} [options.provider] - brain-layer 专用：覆盖自动推导的 provider
+ *   仅当 model 的自然 provider 是 'anthropic' 时允许覆盖为 'anthropic-api'（反之亦然）
+ */
+export async function updateAgentModel(pool, agentId, modelId, options = {}) {
   // 动态导入避免循环依赖
   const { getAgentById, isModelAllowedForAgent, getProviderForModel } = await import('./model-registry.js');
 
@@ -158,9 +167,23 @@ export async function updateAgentModel(pool, agentId, modelId) {
     throw new Error(`Model ${modelId} is not allowed for agent ${agentId}`);
   }
 
-  const newProvider = getProviderForModel(modelId);
-  if (agent.fixed_provider && newProvider !== agent.fixed_provider) {
-    throw new Error(`Agent ${agentId} is locked to provider ${agent.fixed_provider}, cannot use ${newProvider}`);
+  const naturalProvider = getProviderForModel(modelId);
+  if (agent.fixed_provider && naturalProvider !== agent.fixed_provider) {
+    throw new Error(`Agent ${agentId} is locked to provider ${agent.fixed_provider}, cannot use ${naturalProvider}`);
+  }
+
+  // 确定最终使用的 provider
+  // brain-layer 专用：允许 anthropic ↔ anthropic-api 互相覆盖（同为 Anthropic，区别只在调用方式）
+  let newProvider = naturalProvider;
+  if (options.provider && agent.layer === 'brain') {
+    const ANTHROPIC_VARIANTS = ['anthropic', 'anthropic-api'];
+    if (
+      ANTHROPIC_VARIANTS.includes(naturalProvider) &&
+      ANTHROPIC_VARIANTS.includes(options.provider)
+    ) {
+      newProvider = options.provider;
+    }
+    // 非 Anthropic 模型的 provider 覆盖忽略（minimax/openai 只有一种调用方式）
   }
 
   // 获取 active profile
@@ -203,7 +226,7 @@ export async function updateAgentModel(pool, agentId, modelId) {
 
   // 刷新缓存
   _activeProfile = { ...profile, config, is_active: true };
-  console.log(`[model-profile] Updated agent ${agentId} to model ${modelId}`);
+  console.log(`[model-profile] Updated agent ${agentId} to model ${modelId} (provider: ${newProvider})`);
 
   return {
     agent_id: agentId,

@@ -25,12 +25,21 @@ jobs:
       quality: ${{ steps.filter.outputs.quality }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            quality:
-              - 'packages/quality/**'
+          fetch-depth: 0
+      - name: Detect quality changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "quality=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          BASE_REF="${{ github.base_ref }}"
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -q "^packages/quality/"; then
+            echo "quality=true" >> $GITHUB_OUTPUT
+          else
+            echo "quality=false" >> $GITHUB_OUTPUT
+          fi
 
   # Structure & config validation
   quality-check:
@@ -326,6 +335,10 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
           # Non-quality changes: skip all checks
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed - cannot determine what changed"
+            exit 1
+          fi
           if [ "${{ needs.changes.outputs.quality }}" != "true" ]; then
             echo "No quality changes detected, all checks skipped"
             exit 0
