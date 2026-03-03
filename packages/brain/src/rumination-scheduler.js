@@ -1,0 +1,400 @@
+/**
+ * Rumination Scheduler — 分层记忆压缩调度器
+ *
+ * 三个层级的定时压缩，每级带上"上一版"实现滚动压缩：
+ *
+ *   daily:   recent memory_stream → daily_synthesis（via NotebookLM ask）
+ *   weekly:  previous_weekly + 7个daily → weekly_synthesis（滚动）
+ *   monthly: previous_monthly + 4个weekly → monthly_synthesis（滚动）
+ *            → 触发 updateSelfModel（身份层最终演化）
+ *
+ * 调用方式：由 tick.js fire-and-forget 调用 runSynthesisSchedulerIfNeeded()
+ * 触发条件：各级有独立的时间窗口检查（daily=每天，weekly=每7天，monthly=每30天）
+ */
+
+/* global console */
+
+import pool from './db.js';
+import { queryNotebook, addTextSource } from './notebook-adapter.js';
+import { callLLM } from './llm-caller.js';
+import { updateSelfModel, getSelfModel } from './self-model.js';
+
+// ── 时间窗口配置 ──────────────────────────────────────────
+
+/** 日级触发小时（UTC），默认 18 = 北京凌晨 2 点 */
+const DAILY_HOUR_UTC = parseInt(process.env.SYNTHESIS_DAILY_HOUR_UTC || '18', 10);
+/** 日级触发窗口（分钟） */
+const DAILY_WINDOW_MIN = 5;
+
+// ── 时间检查 ──────────────────────────────────────────────
+
+export function shouldRunDaily(now = new Date()) {
+  return now.getUTCHours() === DAILY_HOUR_UTC && now.getUTCMinutes() < DAILY_WINDOW_MIN;
+}
+
+// ── 防重复检查 ────────────────────────────────────────────
+
+async function getLatestSynthesis(db, level) {
+  const { rows } = await db.query(
+    `SELECT id, content, period_start, period_end FROM synthesis_archive
+     WHERE level = $1 ORDER BY period_start DESC LIMIT 1`,
+    [level]
+  );
+  return rows[0] || null;
+}
+
+async function hasTodaySynthesis(db, level) {
+  const today = new Date().toISOString().slice(0, 10);
+  const { rows } = await db.query(
+    `SELECT 1 FROM synthesis_archive WHERE level = $1 AND period_start = $2 LIMIT 1`,
+    [level, today]
+  );
+  return rows.length > 0;
+}
+
+// ── 写入 synthesis_archive ────────────────────────────────
+
+async function writeSynthesis(db, { level, periodStart, periodEnd, content, previousId, sourceCount, notebookQuery }) {
+  await db.query(
+    `INSERT INTO synthesis_archive
+       (level, period_start, period_end, content, previous_id, source_count, notebook_query)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (level, period_start) DO UPDATE
+       SET content = EXCLUDED.content, source_count = EXCLUDED.source_count,
+           notebook_query = EXCLUDED.notebook_query`,
+    [level, periodStart, periodEnd, content, previousId || null, sourceCount || 0, notebookQuery || null]
+  );
+}
+
+// ── 日级合成 ──────────────────────────────────────────────
+
+/**
+ * 运行日级合成：今日 memory_stream → daily_synthesis（via NotebookLM）
+ * @param {object} [dbPool]
+ * @returns {Promise<{ok: boolean, skipped?: string, content?: string}>}
+ */
+export async function runDailySynthesis(dbPool) {
+  const db = dbPool || pool;
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (await hasTodaySynthesis(db, 'daily')) {
+    return { ok: true, skipped: 'already_done', level: 'daily', date: today };
+  }
+
+  // 取今日高重要度 memory_stream 条目（recent insights）
+  const { rows: recentItems } = await db.query(
+    `SELECT content FROM memory_stream
+     WHERE created_at >= $1::date AND created_at < ($1::date + INTERVAL '1 day')
+       AND importance >= 7
+     ORDER BY importance DESC, created_at DESC LIMIT 20`,
+    [today]
+  );
+
+  // 取今日未消化 + 已消化的 learnings 摘要
+  const { rows: todayLearnings } = await db.query(
+    `SELECT title, content FROM learnings
+     WHERE created_at >= $1::date AND created_at < ($1::date + INTERVAL '1 day')
+     ORDER BY created_at DESC LIMIT 10`,
+    [today]
+  );
+
+  const sourceCount = recentItems.length + todayLearnings.length;
+
+  if (sourceCount === 0) {
+    return { ok: true, skipped: 'no_data', level: 'daily', date: today };
+  }
+
+  // 取上一版日摘要（仅在有数据时才查询，避免无效 DB 调用）
+  const prevSynthesis = await getLatestSynthesis(db, 'daily');
+
+  // 构建 NotebookLM query（带上上一版日摘要，滚动压缩）
+  let query = `今天是 ${today}。请综合你所知道的关于我（Cecelia）和 Alex 工作的所有历史信息，`;
+  if (prevSynthesis) {
+    query += `结合昨天的日摘要（${prevSynthesis.period_start}）：
+"${prevSynthesis.content.slice(0, 500)}"
+以及`;
+  } else {
+    query += `分析`;
+  }
+  query += `今天的新内容：
+${todayLearnings.map(l => `- ${l.title}: ${(l.content || '').slice(0, 200)}`).join('\n')}
+${recentItems.map(r => `- ${r.content.slice(0, 200)}`).join('\n')}
+
+请输出今日综合洞察（300-500字），重点：跨时间的模式演化、今日新进展、明日关注点。用 [日摘要] 开头。`;
+
+  let content = '';
+  try {
+    const nbResult = await queryNotebook(query);
+    if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
+      content = nbResult.text.trim();
+      console.log(`[synthesis-scheduler] daily OK via NotebookLM (${content.length} chars)`);
+    }
+  } catch (err) {
+    console.warn('[synthesis-scheduler] daily NotebookLM failed, using callLLM:', err.message);
+  }
+
+  // Fallback: callLLM
+  if (!content) {
+    try {
+      const prompt = `请对以下今日内容做综合分析（300-500字，[日摘要] 开头）：
+${todayLearnings.map(l => `- ${l.title}`).join('\n')}
+${recentItems.slice(0, 5).map(r => `- ${r.content.slice(0, 150)}`).join('\n')}`;
+      const { text } = await callLLM('rumination', prompt);
+      content = text || '';
+    } catch (err) {
+      console.warn('[synthesis-scheduler] daily callLLM fallback failed:', err.message);
+      return { ok: false, error: 'both_paths_failed', level: 'daily' };
+    }
+  }
+
+  await writeSynthesis(db, {
+    level: 'daily',
+    periodStart: today,
+    periodEnd: today,
+    content,
+    previousId: prevSynthesis?.id,
+    sourceCount,
+    notebookQuery: query.slice(0, 500),
+  });
+
+  // 写回 NotebookLM（知识飞轮，fire-and-forget）
+  addTextSource(
+    `[日摘要 ${today}] ${content}`,
+    `日级合成: ${today}`
+  ).catch(e => console.warn('[synthesis-scheduler] daily write-back failed:', e.message));
+
+  return { ok: true, level: 'daily', date: today, content, sourceCount };
+}
+
+// ── 周级合成 ──────────────────────────────────────────────
+
+/**
+ * 运行周级合成：previous_weekly + 7个daily → weekly_synthesis（滚动）
+ */
+export async function runWeeklySynthesis(dbPool) {
+  const db = dbPool || pool;
+
+  // 单次调用 getLatestSynthesis，同时用于防重复检查和滚动压缩
+  const prevWeekly = await getLatestSynthesis(db, 'weekly');
+  if (prevWeekly) {
+    const daysSince = (Date.now() - new Date(prevWeekly.period_end).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSince < 7) {
+      return { ok: true, skipped: 'already_done', level: 'weekly' };
+    }
+  }
+
+  // 取最近 7 条 daily_synthesis（按时间倒序）
+  const { rows: dailies } = await db.query(
+    `SELECT id, period_start, content FROM synthesis_archive
+     WHERE level = 'daily' ORDER BY period_start DESC LIMIT 7`
+  );
+
+  if (dailies.length === 0) {
+    return { ok: true, skipped: 'no_daily_data', level: 'weekly' };
+  }
+
+  const periodEnd = dailies[0].period_start;
+  const periodStart = dailies[dailies.length - 1].period_start;
+
+  // 构建 query（带上一版 weekly，滚动压缩）
+  let query = `请综合以下最近 ${dailies.length} 天的日摘要，`;
+  if (prevWeekly) {
+    query += `结合上一周摘要（${prevWeekly.period_start} ~ ${prevWeekly.period_end}）：
+"${prevWeekly.content.slice(0, 600)}"
+生成本周（${periodStart} ~ ${periodEnd}）的综合洞察。`;
+  } else {
+    query += `生成本周（${periodStart} ~ ${periodEnd}）的综合洞察。`;
+  }
+  query += `
+
+各日摘要：
+${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 400)}`).join('\n\n')}
+
+请输出周级综合洞察（400-600字），重点：跨天的主题演化、本周最重要的洞察、下周关注点。用 [周摘要] 开头。`;
+
+  let content = '';
+  try {
+    const nbResult = await queryNotebook(query);
+    if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
+      content = nbResult.text.trim();
+      console.log(`[synthesis-scheduler] weekly OK (${content.length} chars)`);
+    }
+  } catch (err) {
+    console.warn('[synthesis-scheduler] weekly NotebookLM failed, using callLLM:', err.message);
+  }
+
+  if (!content) {
+    try {
+      const prompt = `请综合以下 ${dailies.length} 天摘要生成周级洞察（400-600字，[周摘要] 开头）：
+${dailies.map(d => `[${d.period_start}] ${d.content.slice(0, 300)}`).join('\n')}`;
+      const { text } = await callLLM('rumination', prompt);
+      content = text || '';
+    } catch (err) {
+      return { ok: false, error: 'both_paths_failed', level: 'weekly' };
+    }
+  }
+
+  await writeSynthesis(db, {
+    level: 'weekly',
+    periodStart,
+    periodEnd,
+    content,
+    previousId: prevWeekly?.id,
+    sourceCount: dailies.length,
+  });
+
+  addTextSource(
+    `[周摘要 ${periodStart}~${periodEnd}] ${content}`,
+    `周级合成: ${periodStart}~${periodEnd}`
+  ).catch(e => console.warn('[synthesis-scheduler] weekly write-back failed:', e.message));
+
+  return { ok: true, level: 'weekly', periodStart, periodEnd, content, sourceCount: dailies.length };
+}
+
+// ── 月级合成 + self_model 更新 ──────────────────────────────
+
+/**
+ * 运行月级合成：previous_monthly + 4个weekly → monthly_synthesis（滚动）
+ * 完成后更新 self_model（身份层演化）
+ */
+export async function runMonthlySynthesis(dbPool) {
+  const db = dbPool || pool;
+
+  // 单次调用 getLatestSynthesis，同时用于防重复检查和滚动压缩
+  const prevMonthly = await getLatestSynthesis(db, 'monthly');
+  if (prevMonthly) {
+    const daysSince = (Date.now() - new Date(prevMonthly.period_end).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSince < 30) {
+      return { ok: true, skipped: 'already_done', level: 'monthly' };
+    }
+  }
+
+  // 取最近 4 条 weekly_synthesis
+  const { rows: weeklies } = await db.query(
+    `SELECT id, period_start, period_end, content FROM synthesis_archive
+     WHERE level = 'weekly' ORDER BY period_start DESC LIMIT 4`
+  );
+
+  if (weeklies.length === 0) {
+    return { ok: true, skipped: 'no_weekly_data', level: 'monthly' };
+  }
+
+  const periodEnd = weeklies[0].period_end;
+  const periodStart = weeklies[weeklies.length - 1].period_start;
+
+  // 获取当前 self_model（滚动压缩的关键：带上身份认知上一版）
+  let currentSelfModel = '';
+  try {
+    currentSelfModel = await getSelfModel(db);
+  } catch { /* 降级：不带上一版 */ }
+
+  let query = `请综合以下最近 ${weeklies.length} 周的周摘要，`;
+  if (prevMonthly) {
+    query += `结合上月综合（${prevMonthly.period_start} ~ ${prevMonthly.period_end}）：
+"${prevMonthly.content.slice(0, 600)}"
+`;
+  }
+  if (currentSelfModel) {
+    query += `以及 Cecelia 当前的自我认知：
+"${currentSelfModel.slice(0, 500)}"
+`;
+  }
+  query += `生成本月（${periodStart} ~ ${periodEnd}）的综合洞察。
+
+各周摘要：
+${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 400)}`).join('\n\n')}
+
+请输出月级综合洞察（500-700字），重点：
+1. 本月最重要的模式演化
+2. 自我认知的新发现
+3. 对下月的关注方向
+用 [月摘要] 开头。`;
+
+  let content = '';
+  try {
+    const nbResult = await queryNotebook(query);
+    if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
+      content = nbResult.text.trim();
+      console.log(`[synthesis-scheduler] monthly OK (${content.length} chars)`);
+    }
+  } catch (err) {
+    console.warn('[synthesis-scheduler] monthly NotebookLM failed, using callLLM:', err.message);
+  }
+
+  if (!content) {
+    try {
+      const prompt = `请综合以下 ${weeklies.length} 周摘要生成月级洞察（500-700字，[月摘要] 开头）：
+${weeklies.map(w => `[${w.period_start}~${w.period_end}] ${w.content.slice(0, 300)}`).join('\n')}`;
+      const { text } = await callLLM('rumination', prompt);
+      content = text || '';
+    } catch (err) {
+      return { ok: false, error: 'both_paths_failed', level: 'monthly' };
+    }
+  }
+
+  await writeSynthesis(db, {
+    level: 'monthly',
+    periodStart,
+    periodEnd,
+    content,
+    previousId: prevMonthly?.id,
+    sourceCount: weeklies.length,
+  });
+
+  // 更新 self_model（月级演化，带上一版）
+  try {
+    const selfInsight = `[月度演化 ${periodEnd}] ${content.slice(0, 300)}`;
+    await updateSelfModel(selfInsight, db);
+    console.log('[synthesis-scheduler] self_model updated from monthly synthesis');
+  } catch (err) {
+    console.warn('[synthesis-scheduler] self_model update failed (non-blocking):', err.message);
+  }
+
+  addTextSource(
+    `[月摘要 ${periodStart}~${periodEnd}] ${content}`,
+    `月级合成: ${periodStart}~${periodEnd}`
+  ).catch(e => console.warn('[synthesis-scheduler] monthly write-back failed:', e.message));
+
+  return { ok: true, level: 'monthly', periodStart, periodEnd, content, sourceCount: weeklies.length };
+}
+
+// ── 统一入口 ──────────────────────────────────────────────
+
+/**
+ * 按需运行分层合成（由 tick.js fire-and-forget 调用）
+ * 检查时间窗口，按需运行 daily → weekly → monthly
+ * @param {object} [dbPool]
+ * @returns {Promise<object>}
+ */
+export async function runSynthesisSchedulerIfNeeded(dbPool) {
+  const db = dbPool || pool;
+  const results = {};
+
+  // 日级：每天 UTC 18 点触发（北京凌晨 2 点）
+  if (shouldRunDaily()) {
+    try {
+      results.daily = await runDailySynthesis(db);
+    } catch (err) {
+      console.error('[synthesis-scheduler] daily failed:', err.message);
+      results.daily = { ok: false, error: err.message };
+    }
+
+    // 周级：只在日级完成后检查（级联触发）
+    try {
+      results.weekly = await runWeeklySynthesis(db);
+    } catch (err) {
+      console.warn('[synthesis-scheduler] weekly failed:', err.message);
+      results.weekly = { ok: false, error: err.message };
+    }
+
+    // 月级：只在周级完成后检查
+    try {
+      results.monthly = await runMonthlySynthesis(db);
+    } catch (err) {
+      console.warn('[synthesis-scheduler] monthly failed:', err.message);
+      results.monthly = { ok: false, error: err.message };
+    }
+  }
+
+  return results;
+}

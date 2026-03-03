@@ -57,7 +57,7 @@ vi.mock('../thalamus.js', () => ({
 import {
   runRumination, runManualRumination, getRuminationStatus,
   getUndigestedCount, _resetState, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
-  buildRuminationPrompt,
+  buildRuminationPrompt, buildNotebookQuery,
 } from '../rumination.js';
 
 // ── Mock DB pool ──────────────────────────────────────────
@@ -376,6 +376,30 @@ describe('rumination', () => {
 
       const prompt = buildRuminationPrompt(learnings, '', '');
       expect(prompt).toContain('未分类');
+    });
+  });
+
+  describe('buildNotebookQuery', () => {
+    it('包含所有 learning 标题', () => {
+      const learnings = [
+        { title: 'React 18', content: 'x', category: 'tech' },
+        { title: 'Vue 3', content: 'x', category: 'tech' },
+      ];
+      const query = buildNotebookQuery(learnings);
+      expect(query).toContain('React 18');
+      expect(query).toContain('Vue 3');
+    });
+
+    it('包含 ACTION 格式说明', () => {
+      const learnings = [{ title: 'CI Fix', content: 'x', category: 'ci' }];
+      const query = buildNotebookQuery(learnings);
+      expect(query).toContain('[ACTION:');
+    });
+
+    it('类别为空时显示"未分类"', () => {
+      const learnings = [{ title: 'X', content: 'x', category: '' }];
+      const query = buildNotebookQuery(learnings);
+      expect(query).toContain('未分类');
     });
   });
 

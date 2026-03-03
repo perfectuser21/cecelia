@@ -7,6 +7,8 @@
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 const TIMEOUT_MS = 15000;
+// queryNotebook 用更长的超时：notebooklm ask 命令自身需要 ~90s
+export const QUERY_TIMEOUT_MS = 120000;
 
 /**
  * 添加 URL 源到 NotebookLM（fire-and-forget）
@@ -53,7 +55,8 @@ export async function addTextSource(text, title) {
 }
 
 /**
- * 查询 NotebookLM 获取相关知识
+ * 查询 NotebookLM 获取综合知识（主路：反刍深度思考）
+ * 使用 120s 超时，因为 notebooklm ask 命令本身需要 ~90s
  * @param {string} query - 查询内容
  * @returns {Promise<{ok: boolean, text?: string, error?: string}>}
  */
@@ -63,7 +66,7 @@ export async function queryNotebook(query) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
     });
     const data = await response.json();
     return data;
