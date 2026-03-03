@@ -39,7 +39,7 @@ export function stripThinking(content) {
  * @param {Array} historyMessages - [{role, content}]
  * @returns {Promise<{reply: string, usage: Object}>}
  */
-async function callWithHistory(userMessage, systemPrompt, options = {}, historyMessages = []) {
+async function callWithHistory(userMessage, systemPrompt, options = {}, historyMessages = [], imageContent = null) {
   const timeout = options.timeout || 30000;
 
   // 将 system prompt + history + user message 合并为单一 prompt
@@ -49,7 +49,11 @@ async function callWithHistory(userMessage, systemPrompt, options = {}, historyM
 
   const fullPrompt = `${systemPrompt}\n\n${historyBlock ? `## 对话历史\n${historyBlock}\n\n` : ''}Alex：${userMessage}`;
 
-  const { text } = await callLLM('mouth', fullPrompt, { timeout, maxTokens: 300 });
+  const callOptions = { timeout, maxTokens: 300 };
+  if (imageContent && imageContent.length > 0) {
+    callOptions.imageContent = imageContent;
+  }
+  const { text } = await callLLM('mouth', fullPrompt, callOptions);
 
   // 尝试解析 JSON 结构化输出（含 thalamus_signal 时）
   // 格式: {"reply": "...", "thalamus_signal": {...}} 或纯文本
@@ -369,12 +373,13 @@ async function buildRecentTasksBlock() {
 
 /**
  * 主入口：处理对话请求（纯意识模式）
- * @param {string} message - 用户消息
- * @param {Object} context - 上下文 { conversation_id }
+ * @param {string} message - 用户消息（纯文字，图片用 imageContent 单独传）
+ * @param {Object} context - 上下文 { conversation_id, sender_name, relationship, source }
  * @param {Array} messages - 历史消息 [{role, content}]
+ * @param {Array|null} imageContent - 图片 content blocks（多模态），null 表示无图片
  * @returns {Promise<{reply: string}>}
  */
-export async function handleChat(message, context = {}, messages = []) {
+export async function handleChat(message, context = {}, messages = [], imageContent = null) {
   if (!message || typeof message !== 'string') {
     throw new Error('message is required and must be a string');
   }
@@ -419,7 +424,7 @@ export async function handleChat(message, context = {}, messages = []) {
   let thalamus_signal = null;
 
   try {
-    const result = await callWithHistory(message, systemPrompt, {}, messages);
+    const result = await callWithHistory(message, systemPrompt, {}, messages, imageContent);
     reply = result.reply;
     thalamus_signal = result.thalamus_signal || null;
   } catch (err) {

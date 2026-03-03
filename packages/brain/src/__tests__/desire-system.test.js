@@ -629,7 +629,6 @@ describe('D10: Reflection 去重机制', () => {
           };
         }
 
-        // 返回最近的 memory_stream（包含相似洞察）- 去重查询
         // 英文空格分词确保 Jaccard 相似度 = 8/10 = 0.80 > 0.75
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
@@ -661,9 +660,9 @@ describe('D10: Reflection 去重机制', () => {
     const { callLLM } = await import('../llm-caller.js');
     const { runReflection } = await import('../desire/reflection.js');
 
-    // Mock LLM 返回新洞察
+    // Mock LLM 返回新洞察（与旧洞察完全不同的话题，相似度 ≈ 0 < 0.75）
     callLLM.mockResolvedValue({
-      text: '完全不同的新洞察内容 XYZ 123 ABC',
+      text: '量子纠缠实验宇宙暗物质分布规律',
       model: 'test',
       provider: 'test',
       elapsed_ms: 10
@@ -690,11 +689,12 @@ describe('D10: Reflection 去重机制', () => {
           };
         }
 
-        // 返回最近的 memory_stream（包含不相似洞察）- 去重查询
+        // 返回最近的 memory_stream（完全不同话题的旧洞察）- 去重查询
+        // 旧洞察 CJK 字符集与新洞察无重叠，相似度 = 0 < 0.75
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
             rows: [
-              { content: '[反思洞察] 旧的洞察内容完全不同 QWERTY ASDFGH' }
+              { content: '[反思洞察] 反思循环执行效率提升建议方案' }
             ]
           };
         }
@@ -714,7 +714,7 @@ describe('D10: Reflection 去重机制', () => {
 
     // 验证洞察正常写入
     expect(result.triggered).toBe(true);
-    expect(result.insight).toBe('完全不同的新洞察内容 XYZ 123 ABC');
+    expect(result.insight).toBe('量子纠缠实验宇宙暗物质分布规律');
     expect(result.skipped).toBeUndefined();
     expect(insightInserted).toBe(true);
   });
