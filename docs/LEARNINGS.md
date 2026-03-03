@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 并行 /dev 会话隔离——per-branch 状态文件命名（PR #418, Engine v12.36.0）
+
+**根因**：所有 Claude Code 会话共享同一 Project 根目录，`.dev-lock`/`.dev-mode`/`.dev-sentinel` 是固定文件名。第二个 /dev 会话覆盖第一个会话的文件，导致 TTY/session_id 隔离字段丢失。`retry_count` 更新用 `grep -v + mv` 模式，文件损坏时会把错误信息直接写入（如 `.hook-core-version` 出现的 `/bin/bash: line 1: cd: too many arguments`），破坏更多字段。Stop Hook 无法区分不同会话，要么都报错要么互相干扰。
+
+**修复方案**：per-branch 文件命名——`.dev-lock.<branch>`/`.dev-mode.<branch>`/`.dev-sentinel.<branch>`。branch name 是每个 dev 会话的天然唯一键。Stop Hook 动态扫描所有 `.dev-lock.*` 文件，按 TTY 或 session_id 匹配当前会话。向后兼容：检测不到 per-branch 文件时回退到旧格式。
+
+**关键改动**：
+- `stop-dev.sh`：静态文件变量 → 动态扫描 `for _lock_file in "$PROJECT_ROOT"/.dev-lock.*`，TTY 或 session_id 匹配后取该分支的配套文件
+- `branch-protect.sh`：3 处 `DEV_MODE_FILE` 赋值改为先查 `.dev-mode.<branch>` 再 fallback `.dev-mode`
+- `03-branch.md`：写 `.dev-lock.<branch>`（含 `tty: $CURRENT_TTY`）、`.dev-mode.<branch>`、`.dev-sentinel.<branch>`；同步更新 06/08/09/11 步骤的文件解析逻辑
+
+**`.hook-core-version` 损坏场景**：该文件内容是从 `packages/engine/VERSION` 派生的，但手动 npm version patch 时不自动更新。如果之前脚本路径错误（cd 参数过多），shell 错误会写入文件。修复：`echo "12.36.0" > .hook-core-version`，同时同步 `regression-contract.yaml`。
+
+**rebase vs merge 推送策略（bash-guard 约束）**：rebase 改写提交历史，之后必须 force push，但 bash-guard 阻止。正确做法：使用 `git merge origin/main --no-edit` 创建 merge commit，可以正常 push。Engine CI 中 `merge base + pull_request` 场景下的 paths filter 仍然正确检测到 engine 文件变更，Config Audit 正常执行。
+
+**CI trigger 方法**：PR 标题更新不会触发新 CI run，需要 push 新 commit 或 `gh workflow run engine-ci.yml --ref <branch>` 手动触发。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
