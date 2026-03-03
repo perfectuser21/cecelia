@@ -106,7 +106,7 @@ describe('runDailyConsolidation', () => {
     // hasTodayConsolidation = false
     queryMock.mockResolvedValueOnce({ rows: [] });
     // gatherTodayData: memories
-    queryMock.mockResolvedValueOnce({ rows: [{ content: '对话内容', source_type: 'chat', importance: 5, created_at: new Date() }] });
+    queryMock.mockResolvedValueOnce({ rows: [{ content: '对话内容', source_type: 'feishu_chat', importance: 5, created_at: new Date() }] });
     // learnings
     queryMock.mockResolvedValueOnce({ rows: [{ title: '洞察', content: '内容', category: 'code' }] });
     // tasks
@@ -135,7 +135,7 @@ describe('runDailyConsolidation', () => {
     // hasTodayConsolidation = false
     queryMock.mockResolvedValueOnce({ rows: [] });
     // memories
-    queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'chat', importance: 5, created_at: new Date() }] });
+    queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'orchestrator_chat', importance: 5, created_at: new Date() }] });
     // learnings
     queryMock.mockResolvedValueOnce({ rows: [] });
     // tasks
@@ -157,7 +157,7 @@ describe('runDailyConsolidation', () => {
     );
     const { pool, queryMock } = makeMockPool();
     queryMock.mockResolvedValueOnce({ rows: [] }); // hasTodayConsolidation
-    queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'chat', importance: 5, created_at: new Date() }] });
+    queryMock.mockResolvedValueOnce({ rows: [{ content: 'x', source_type: 'feishu_chat', importance: 5, created_at: new Date() }] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] });
     queryMock.mockResolvedValueOnce({ rows: [] }); // INSERT memory_stream
