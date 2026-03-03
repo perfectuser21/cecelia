@@ -34,12 +34,12 @@ export async function addSource(url, notebookId) {
 }
 
 /**
- * 添加内联文本源到 NotebookLM（fire-and-forget）
+ * 添加内联文本源到 NotebookLM
  * 用于反刍洞察写回，形成持久化知识飞轮
  * @param {string} text - 要添加的文本内容
  * @param {string} [title] - 源标题
  * @param {string} [notebookId] - 目标笔记本 ID（不传则使用当前激活笔记本）
- * @returns {Promise<{ok: boolean, error?: string}>}
+ * @returns {Promise<{ok: boolean, sourceId?: string, error?: string}>}
  */
 export async function addTextSource(text, title, notebookId) {
   try {
@@ -51,9 +51,54 @@ export async function addTextSource(text, title, notebookId) {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     const data = await response.json();
-    return data;
+    return data; // { ok, sourceId?, elapsed_ms? }
   } catch (err) {
     console.warn('[notebook-adapter] addTextSource failed:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 删除 NotebookLM 中的指定 source（source 生命周期管理）
+ * @param {string} sourceId - NotebookLM source UUID
+ * @param {string} [notebookId] - 目标笔记本 ID
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function deleteSource(sourceId, notebookId) {
+  try {
+    const body = notebookId ? { source_id: sourceId, notebook_id: notebookId } : { source_id: sourceId };
+    const response = await fetch(`${BRIDGE_URL}/notebook/delete-source`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.warn('[notebook-adapter] deleteSource failed:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 列出 NotebookLM notebook 的所有 sources（对账用）
+ * @param {string} [notebookId] - 目标笔记本 ID
+ * @returns {Promise<{ok: boolean, sources?: Array, error?: string}>}
+ */
+export async function listSources(notebookId) {
+  try {
+    const body = notebookId ? { notebook_id: notebookId } : {};
+    const response = await fetch(`${BRIDGE_URL}/notebook/list-sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.warn('[notebook-adapter] listSources failed:', err.message);
     return { ok: false, error: err.message };
   }
 }
