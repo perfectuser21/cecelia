@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Brain 内部 LLM 调用超时修复 + 并行 PR 版本冲突处理（PR #355, Brain v1.164.3）
+
+**根因**：Brain 内部 LLM 调用超时设置过短（emotion-layer 15s, thalamus/memory 30s, reflection 60s），而实际 Brain prompt 约 3000 tokens，Sonnet 需要 20-30s 才能响应，导致经常超时失败。
+
+**修复**：emotion-layer/thalamus/memory/heartbeat 统一改为 90s，reflection 改为 150s；cecelia-bridge HTTP 代理上限从 120s 改为 180s。
+
+**版本冲突处理（CRITICAL 教训）**：原分支 `cp-03030904-fix-llm-timeouts` 在开发期间，main 从 v1.164.1 推进到 v1.164.2。直接 cherry-pick 到新分支时版本文件产生冲突 → 解决方式：在冲突中将版本设为下一个（1.164.3），而不是 HEAD 版本（1.164.2）。
+
+**DoD/PRD 文件禁止进入 PR diff**：cherry-pick 时意外携带了 `.dod-*.md`/`.prd-*.md` 文件 → `git reset --soft HEAD~N` + `git restore --staged .dod*.md .prd*.md` 移除后重新 commit。
+
+**pr-ci 关系**：原分支 `pull_request` CI 长期不触发（原因未知）→ 新建干净分支 `cp-03030904-fix-llm-timeouts-v2` 后 pull_request CI 正常触发。GitHub hosted runner 问题导致 Detect Changes 2s 内失败，但所有 CI 的 `ci-passed` job 均退出 0（早退机制），PR 仍然成功合并。
+
 ### [2026-03-03] hooks symlink 必须提交到 git + GitHub hosted runner 故障应对（PR #351）
 
 **背景**：全局 `settings.json` 用相对路径 `./hooks/stop.sh`，cecelia monorepo 根目录没有 `hooks/` 目录（实际在 `packages/engine/hooks/`）。每次 fresh checkout 或新 session 后 Stop Hook 报 `./hooks/stop.sh: not found`，用户反映"昨天才修了又坏了"。
