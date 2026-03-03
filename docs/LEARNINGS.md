@@ -1,5 +1,11 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] manual/ask manifest 路径 ../ vs ./ 踩坑 + 先走 /dev 再部署（PR #346 含修复）
+
+**路径 bug**：`routes.js` 在容器内位于 `/app/src/`，`new URL('../brain-manifest.generated.json', import.meta.url)` 的 `../` 向上跳一级到 `/app/`，实际文件在 `/app/src/`（同目录），应用 `'./'`。规律：ESM `import.meta.url` 的相对路径从**调用文件所在目录**算起，`./` = 同目录，`../` = 上一级。
+
+**先部署后走 /dev 的混乱**：bug 出现后直接 build + deploy（绕过 /dev），导致：① main 上代码是错的；② 容器是对的；③ 后续 /dev 补 PR 时版本冲突连环；④ 发现 fix 已经通过 LEARNINGS PR (#346) 意外带进 main，两个补救 PR (#345, #349) 全部废弃关闭。**教训：改代码必须先走 /dev，即使是一行，不管有多急**。紧急 hotfix 的正确做法是 /dev → PR → CI → 合并 → 再 deploy，合并之前如确实需要可以先手动 deploy，但 PR 流程不能省。
+
 ### [2026-03-03] cleanup.sh 部署 fire-and-forget + Engine CI yq 安装修复（PR #342, Engine v12.35.10）
 
 **背景**：有头模式下 cleanup.sh [2.5] 同步调用 deploy-local.sh（Docker build 需 2-3 分钟），阻塞 Claude 会话。改为 `setsid bash ... &` fire-and-forget，日志写 `/tmp/cecelia-deploy-<branch>.log`。
