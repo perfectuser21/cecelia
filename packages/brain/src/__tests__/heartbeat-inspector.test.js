@@ -184,7 +184,7 @@ describe('Heartbeat Inspector', () => {
   });
 
   // callLLM 超时参数验证
-  it('callLLM 被调用时传入 thalamus + 60s 超时参数', async () => {
+  it('callLLM 被调用时传入 thalamus + 90s 超时参数', async () => {
     mockCallLLM.mockResolvedValueOnce({
       text: '{"action": "no_action", "rationale": "ok"}',
       model: 'test', provider: 'test', elapsed_ms: 10,
@@ -204,7 +204,7 @@ describe('Heartbeat Inspector', () => {
     expect(mockCallLLM).toHaveBeenCalledWith(
       'thalamus',
       expect.any(String),
-      { timeout: 60000 },
+      { timeout: 90000 },
     );
   });
 

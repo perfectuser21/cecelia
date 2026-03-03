@@ -101,7 +101,7 @@ ${memorySummary}
   let insight = '';
   try {
     console.log(`[reflection] Calling LLM for deep reflection (accumulator=${accumulator})...`);
-    const result = await callLLM('reflection', prompt, { timeout: 60000 });
+    const result = await callLLM('reflection', prompt, { timeout: 150000 });
     insight = result.text;
   } catch (err) {
     console.error('[reflection] Opus call error:', err.message);

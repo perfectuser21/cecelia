@@ -52,7 +52,7 @@ ${content.slice(0, 1500)}
 要求：简洁、结构化、不超过200字。`;
 
       const result = await callLLM('memory', prompt, {
-        timeout: 30000,
+        timeout: 90000,
         maxTokens: 300,
       });
 
