@@ -57,6 +57,25 @@ describe('orchestrator-chat memory unification (D1)', () => {
       return actual;
     });
 
+    // mock person-model.js（避免 extractPersonSignals 调用 callLLM 污染次数统计）
+    vi.doMock('../person-model.js', () => ({
+      extractPersonSignals: vi.fn().mockResolvedValue(undefined),
+      buildPersonContext: vi.fn().mockResolvedValue('（暂无记录）'),
+      recordSignal: vi.fn().mockResolvedValue(undefined),
+      getPersonModel: vi.fn().mockResolvedValue(null),
+      getActiveSignals: vi.fn().mockResolvedValue([]),
+      computeEffectiveConfidence: vi.fn().mockReturnValue(0.5),
+      upsertPersonModel: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    vi.doMock('../pending-conversations.js', () => ({
+      resolveByPersonReply: vi.fn().mockResolvedValue(undefined),
+      recordOutbound: vi.fn().mockResolvedValue(null),
+      shouldFollowUp: vi.fn().mockReturnValue(false),
+      checkPendingFollowups: vi.fn().mockResolvedValue([]),
+      getOpenConversations: vi.fn().mockResolvedValue([]),
+    }));
+
     // mock user-profile.js
     vi.doMock('../user-profile.js', () => ({
       extractAndSaveUserFacts: vi.fn().mockResolvedValue(undefined),
