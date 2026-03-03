@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 并行 worktree 重复任务：检测已完成 PR 后关闭自己的 PR
+
+**背景**：系统简报展示（PR #452 vs PR #450）。两个 worktree 同时处理同一任务，都创建了 PR。
+
+**坑**：PR 合并前没有检查是否有其他 worktree 正在处理同一任务，导致重复劳动。
+
+**经验**：在开始实现前，检查 Brain 任务是否已有进行中的 dispatch（`curl localhost:5221/api/brain/tasks?status=in_progress`），避免重复派发同一任务。如果发现重复，关闭自己的 PR，保留先完成的那个。
+
+**selfcheck.js EXPECTED_SCHEMA_VERSION 不同步**：当数据库 schema 版本高于代码期望版本时，Brain 无法启动。修复方式：更新 selfcheck.js 的 `EXPECTED_SCHEMA_VERSION` 并添加对应的迁移文件到 migrations/ 目录。
+
+**PRD 文件名需要匹配分支名**：branch-protect Hook 要求 `.prd-{BRANCH_NAME}.md` 和 `.dod-{BRANCH_NAME}.md` 文件存在（分支全名，包含 UUID）。使用 `cp .prd-shortname.md .prd-${BRANCH}.md` 创建。
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
