@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 修复感知层 Alex 在场识别断层（PR #380, Brain v1.164.15）
+
+**场景**：Alex 在前台与 Cecelia 对话后离开，情绪层仍表达"145小时没有回音"——即使刚刚说过话。
+
+**根因**：感知层（perception.js）的两个信号设计错误：
+1. **信号 #3 `hours_since_feishu`**：读的是 `last_feishu_at`（Cecelia 上次**发出**飞书消息的时间），不是 Alex 联系她的时间。飞书出站距今 145 小时，所以误判为"Alex 失联"。
+2. **信号 #5 `user_online`**：仅在 `user_last_seen` < 5 分钟时触发。Alex 聊完离开 5 分钟后，信号消失。没有"今天来过"的持久信号。
+
+**关键区分**：
+- `last_feishu_at` = Cecelia 发给 Alex（出站），不是 Alex 发来（入站）
+- `user_last_seen` = dashboard 活跃（< 5 分钟），不是"说过话"
+- Alex 通过 orchestrator-chat 对话只更新 `user_last_seen`，但没有专门的"对话时间戳"
+
+**修复**：
+1. `orchestrator-chat.js`：Alex 发消息时同时写 `last_alex_chat_at` 到 working_memory
+2. `perception.js` 信号 #3：读取 `last_alex_chat_at` + `last_feishu_at` 取最近值，信号名改为 `hours_since_alex_contact`
+3. `perception.js` 信号 #5：拆成两档——`user_online`（< 5 分钟，实时在场）和 `user_visited_today`（5分钟~24小时，今天来过）
+
+**PR #326 的局限性**：PR #326 修了"输出侧"（对话→learning 提取、任务完成→欲望反馈），但没有修"输入侧"（感知层如何识别 Alex 是否在场）。两者是不同的文件和逻辑，不要混为一谈。
+
+**版本冲突教训**：高频并发 PR 合并时，自己 CI 跑完可能主干版本已被他人 bump。进入 CI 监控后先 `git show origin/main:packages/brain/package.json | jq .version` 确认，若相同则先 bump 再 push。
+
 ### [2026-03-03] 前台 Area 关联完整体验修复——两种 Area 概念 + DatabaseView select 编辑（PR #379, Brain v1.164.13）
 
 **场景**：前台 OKR/Area/Projects 相关页面全部报 404，Projects 的 Area 列只读无法编辑，Area 详情页没有关联 Project 展示。
