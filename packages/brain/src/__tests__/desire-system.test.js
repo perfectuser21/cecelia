@@ -597,9 +597,9 @@ describe('D10: Reflection 去重机制', () => {
     const { callLLM } = await import('../llm-caller.js');
     const { runReflection } = await import('../desire/reflection.js');
 
-    // Mock LLM 返回新洞察（与旧洞察 CJK 字符级 Jaccard 相似度 = 21/25 = 0.84 > 0.75）
+    // Mock LLM 返回新洞察（英文空格分词，让 Jaccard 相似度计算正确生效）
     callLLM.mockResolvedValue({
-      text: '反思循环已成为执行瓶颈我将立即实施三层止血方案',
+      text: 'reflection loop bottleneck fix three step performance restore',
       model: 'test',
       provider: 'test',
       elapsed_ms: 10
@@ -608,15 +608,15 @@ describe('D10: Reflection 去重机制', () => {
     let accumulatorResetCount = 0;
     const mockPool = {
       query: vi.fn().mockImplementation((sql, params) => {
-        // 返回 accumulator 值（SELECT 用硬编码 key；INSERT 用参数化 $1）
-        const isAccumulatorQuery = sql.includes('desire_importance_accumulator') ||
-          (sql.includes('working_memory') && Array.isArray(params) && params[0] === 'desire_importance_accumulator');
-        if (isAccumulatorQuery) {
-          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
-            accumulatorResetCount++;
-            return { rows: [] };
-          }
+        // 返回 accumulator 值（SELECT 时 key 内联在 SQL 字符串里）
+        if (sql.includes('desire_importance_accumulator')) {
           return { rows: [{ value_json: 15 }] };
+        }
+
+        // accumulator 重置（INSERT INTO working_memory，key 作为参数 $1）
+        if (sql.includes('working_memory') && (sql.includes('INSERT') || sql.includes('UPDATE')) && params && params[0] === 'desire_importance_accumulator') {
+          accumulatorResetCount++;
+          return { rows: [] };
         }
 
         // 返回最近 50 条记忆（reflection 的第一步）
@@ -629,13 +629,12 @@ describe('D10: Reflection 去重机制', () => {
           };
         }
 
-        // 返回最近的 memory_stream（包含相似洞察）- 去重查询
-        // 旧洞察 CJK 字符集与新洞察差 2 字（我将 vs 建议），相似度 21/25 = 0.84 > 0.75
+        // 英文空格分词确保 Jaccard 相似度 = 8/10 = 0.80 > 0.75
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
             rows: [
-              { content: '[反思洞察] 反思循环已成为执行瓶颈建议立即实施三层止血方案' },
-              { content: '[反思洞察] 量子纠缠实验宇宙暗物质分布规律' }
+              { content: '[反思洞察] reflection loop bottleneck fix three step performance restore system' },
+              { content: '[反思洞察] 其他不相关的洞察内容 ABCDEFG HIJKLMN' }
             ]
           };
         }
