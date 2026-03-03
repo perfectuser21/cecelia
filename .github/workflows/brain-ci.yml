@@ -19,7 +19,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-brain PRs
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -48,7 +48,7 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true'
     name: Version Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,17 +90,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Check facts consistency
         run: node scripts/facts-check.mjs
@@ -112,17 +107,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Manifest Sync Check
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Install brain dependencies
         working-directory: packages/brain
@@ -135,7 +125,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Brain Tests
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -166,11 +156,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Install dependencies
         working-directory: packages/brain
         run: npm ci
@@ -190,11 +175,15 @@ jobs:
   ci-passed:
     needs: [changes, version-check, facts-check, manifest-sync, brain-test]
     if: always()
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Brain CI Passed
         run: |
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed - cannot determine what changed"
+            exit 1
+          fi
           if [ "${{ needs.changes.outputs.brain }}" != "true" ]; then
             echo "No brain changes detected, skipping checks"
             exit 0

@@ -53,6 +53,7 @@ services:
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
       - FEISHU_OWNER_OPEN_IDS=${FEISHU_OWNER_OPEN_IDS:-}
       - CECELIA_RUN_PATH=/home/xx/bin/cecelia-run
+      - HOST_HOME=/home/xx
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
     restart: unless-stopped
