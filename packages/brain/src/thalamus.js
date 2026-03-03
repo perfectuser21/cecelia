@@ -644,7 +644,7 @@ async function analyzeEvent(event) {
 /**
  * @deprecated 使用 callLLM('thalamus', prompt) 代替
  */
-async function callThalamLLM(prompt, { timeoutMs = 30000 } = {}) {
+async function callThalamLLM(prompt, { timeoutMs = 90000 } = {}) {
   const { text } = await callLLM('thalamus', prompt, { timeout: timeoutMs });
   return { text, usage: null };
 }

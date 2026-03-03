@@ -109,6 +109,34 @@ while [ $TRIES -lt $MAX_TRIES ]; do
       echo "  WARN: $CECELIA_RUN_SRC not found, skipping cecelia-run update"
     fi
 
+    # 9. Update cecelia-bridge on host (self-update: keeps bridge timeout config in sync)
+    echo ""
+    echo "[9/9] Updating cecelia-bridge on host..."
+    BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
+    BRIDGE_DST="/home/xx/bin/cecelia-bridge.js"
+    if [[ -f "$BRIDGE_SRC" ]]; then
+      cp "$BRIDGE_SRC" "$BRIDGE_DST"
+      echo "  Updated $BRIDGE_DST (v${VERSION})"
+      # 重启 bridge（systemd 会自动接管；如无 systemd 则直接杀掉重启）
+      if systemctl is-active cecelia-bridge >/dev/null 2>&1; then
+        # 改 ExecStart 指向可写路径再重启（若失败则 nohup 降级启动）
+        if command -v sudo >/dev/null 2>&1; then
+          SUDO_CMD="sudo -n"
+          # 尝试无密码 sudo 修改 systemd 服务并重启
+          if $SUDO_CMD sed -i "s|ExecStart=.*cecelia-bridge.*|ExecStart=/usr/bin/node $BRIDGE_DST|" /etc/systemd/system/cecelia-bridge.service 2>/dev/null && \
+             $SUDO_CMD systemctl daemon-reload 2>/dev/null && \
+             $SUDO_CMD systemctl restart cecelia-bridge 2>/dev/null; then
+            echo "  Bridge restarted via systemd (now using $BRIDGE_DST)"
+          else
+            echo "  NOTE: sudo unavailable. Bridge will use updated file on next manual restart."
+            echo "  Run: sudo sed -i 's|ExecStart=.*|ExecStart=/usr/bin/node $BRIDGE_DST|' /etc/systemd/system/cecelia-bridge.service && sudo systemctl daemon-reload && sudo systemctl restart cecelia-bridge"
+          fi
+        fi
+      fi
+    else
+      echo "  WARN: $BRIDGE_SRC not found, skipping bridge update"
+    fi
+
     exit 0
   fi
   echo "  Attempt ${TRIES}/${MAX_TRIES}..."
