@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 统一对话历史：三渠道 → 一张表（PR #417, Brain v1.171.0）
+
+**根因（群聊失忆）**：`routes.js` 第 9869 行 `const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : []`——群聊 @mention 永远传空数组，Cecelia 完全没有群聊上下文记忆。
+
+**三分裂问题**：`feishu_conversations`（仅 P2P）、`conversations`（Dashboard）、群聊无表——三套系统造成"你的所有聊天都是一个逻辑"这一合理期望无法实现。
+
+**统一设计**：`unified_conversations` 表核心字段：
+- `participant_id`：说话的人（open_id 或 'owner'）
+- `channel`：feishu_p2p / feishu_group / dashboard
+- `group_id`：群聊 chat_id（P2P/Dashboard 为 NULL）
+- `image_description`：图片消息时 Cecelia 的描述摘要（≤150字）
+
+**群聊历史策略**：P2P 按 `participant_id` 加载（私聊），群聊按 `group_id` 加载（多人上下文）——group_id 是更好的群聊记忆 key，能让 Cecelia 知道群里"最近大家说了什么"。
+
+**跨轮图片失忆根本修复**：`image_description = reply.slice(0, 150)`（Cecelia 自己的描述）存在 user 行，下轮 `getUnifiedHistory` 加载时注入："你之前描述过这张图片：xxx"——比系统提示词更强效，直接从历史数据层修复，不依赖 LLM 自觉查历史。
+
+**测试中 vi.mock() rows 顺序陷阱**：`getUnifiedHistory` 调 DB 后执行 `.reverse()`，所以 mock rows 必须以 DESC 顺序排列（assistant 在前，user 在后），reverse 后才能 user 在前。忘记这点会导致所有 role 断言反向失败。加 `mockQuery.mockClear()` 在 beforeEach 防止跨 describe 块 `mock.calls[0]` 累积串行。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
