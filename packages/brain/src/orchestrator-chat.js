@@ -19,7 +19,7 @@ import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 import { observeChat } from './thalamus.js';
 import { extractConversationLearning } from './learning.js';
-import { extractPersonSignals } from './person-model.js';
+import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
 import { resolveByPersonReply } from './pending-conversations.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
@@ -478,6 +478,20 @@ export async function handleChat(message, context = {}, messages = [], imageCont
     ).catch(() => {});
   }
 
+  // 6b. 写 unified_conversations（Dashboard 对话持久化，与飞书历史统一）
+  Promise.resolve().then(async () => {
+    try {
+      const dashParticipantId = userId === 'owner' ? 'owner' : userId;
+      await pool.query(
+        `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content)
+         VALUES ($1, 'dashboard', NULL, 'user', $2), ($1, 'dashboard', NULL, 'assistant', $3)`,
+        [dashParticipantId, message.slice(0, 2000), reply.slice(0, 2000)]
+      );
+    } catch (err) {
+      console.warn('[orchestrator-chat] unified_conversations 写入失败:', err.message);
+    }
+  }).catch(() => {});
+
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
     extractConversationLearning(message, reply, pool)
@@ -492,6 +506,24 @@ export async function handleChat(message, context = {}, messages = [], imageCont
   Promise.resolve().then(() =>
     resolveByPersonReply(pool, userId, 'user_reply')
   ).catch(() => {});
+
+  // 10. 对话驱动任务订阅：检测 Alex 是否在询问某个任务，存入 working_memory
+  Promise.resolve().then(() =>
+    detectAndStoreTaskInterest(pool, message)
+  ).catch(() => {});
+
+  // 11. 欲望闭环：Alex 回复时，标记近期表达过的欲望为 acknowledged
+  //     reasoning: Alex 的回复表明他在线且看到了 Cecelia 最近发出的消息
+  Promise.resolve().then(async () => {
+    const { rowCount } = await pool.query(
+      `UPDATE desires SET status = 'acknowledged', updated_at = NOW()
+       WHERE status = 'expressed'
+         AND updated_at > NOW() - INTERVAL '12 hours'`
+    );
+    if (rowCount > 0) {
+      console.log(`[orchestrator-chat] 欲望闭环：${rowCount} 个 desire 已标记为 acknowledged`);
+    }
+  }).catch(() => {});
 
   return { reply };
 }

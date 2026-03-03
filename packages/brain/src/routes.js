@@ -2813,8 +2813,23 @@ router.post('/execution-callback', async (req, res) => {
       await cbSuccess('cecelia-run');
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
 
-      // 主动沟通：用 LLM 组织语言，发飞书告知 Alex 任务完成（fire-and-forget）
+      // 主动沟通：对话订阅模式 — 只有 Alex 问过的任务完成才发飞书通知（fire-and-forget）
+      //   触发条件：working_memory 中存在 task_interest:<task_id>（由 orchestrator-chat 在检测到任务询问时写入）
+      //   通知后删除订阅记录，避免重复
       Promise.resolve().then(async () => {
+        // 检查是否有对应任务的订阅
+        const interestRow = await pool.query(
+          `SELECT key FROM working_memory
+           WHERE key = $1
+             AND updated_at > NOW() - INTERVAL '48 hours'
+           LIMIT 1`,
+          [`task_interest:${task_id}`]
+        );
+        if (interestRow.rows.length === 0) {
+          console.log(`[execution-callback] 任务 ${task_id} 无订阅，跳过飞书通知`);
+          return;
+        }
+
         const { notifyTaskCompletion } = await import('./proactive-mouth.js');
         const { callLLM } = await import('./llm-caller.js');
         const taskRow = await pool.query('SELECT title, task_type FROM tasks WHERE id = $1', [task_id]);
@@ -2826,6 +2841,9 @@ router.post('/execution-callback', async (req, res) => {
             duration_ms,
             pr_url
           });
+          // 通知后删除订阅记录
+          await pool.query(`DELETE FROM working_memory WHERE key = $1`, [`task_interest:${task_id}`]);
+          console.log(`[execution-callback] 已通知 Alex 任务 ${task_id} 完成（对话订阅）`);
         }
       }).catch(() => {});
 
@@ -9583,24 +9601,55 @@ async function transcribeFeishuAudio(messageId, fileKey, accessToken) {
   return asrData.data?.recognition_text || '';
 }
 
-/** 加载该用户最近 N 轮对话（作为 messages[]） */
-async function getFeishuHistory(openId, rounds = 10) {
-  const res = await pool.query(
-    `SELECT role, content FROM feishu_conversations
-     WHERE open_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [openId, rounds * 2]
-  );
-  // 倒序返回（时间正序）
-  return res.rows.reverse().map(r => ({ role: r.role, content: r.content }));
+/**
+ * 从 unified_conversations 加载对话历史
+ * @param {string} participantId - feishu open_id 或 'owner'
+ * @param {number} rounds - 轮数（每轮含 user+assistant 两条）
+ * @param {string|null} groupId - 群聊 chat_id（P2P 传 null）
+ */
+async function getUnifiedHistory(participantId, rounds = 10, groupId = null) {
+  let res;
+  if (groupId) {
+    // 群聊：加载该群的所有对话（多人上下文）
+    res = await pool.query(
+      `SELECT role, content, image_description FROM unified_conversations
+       WHERE group_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [groupId, rounds * 2]
+    );
+  } else {
+    // P2P 或 Dashboard：加载该人的私聊历史
+    res = await pool.query(
+      `SELECT role, content, image_description FROM unified_conversations
+       WHERE participant_id = $1 AND group_id IS NULL
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [participantId, rounds * 2]
+    );
+  }
+  return res.rows.reverse().map(r => ({
+    role: r.role,
+    content: r.image_description
+      ? `${r.content}（你之前描述过这张图片：${r.image_description.slice(0, 120)}）`
+      : r.content,
+  }));
 }
 
-/** 保存本轮对话到 feishu_conversations */
-async function saveFeishuConversation(openId, userText, assistantReply) {
+/**
+ * 保存本轮对话到 unified_conversations
+ * @param {string} participantId - feishu open_id 或 'owner'
+ * @param {string} channel - 'feishu_p2p' | 'feishu_group' | 'dashboard'
+ * @param {string|null} groupId - 群聊 chat_id（P2P/Dashboard 传 null）
+ * @param {string} userText - 用户消息
+ * @param {string} assistantReply - Cecelia 回复
+ * @param {string|null} imageDescription - 图片描述摘要（仅图片消息时传入）
+ */
+async function saveUnifiedConversation(participantId, channel, groupId, userText, assistantReply, imageDescription = null) {
   await pool.query(
-    `INSERT INTO feishu_conversations (open_id, role, content) VALUES ($1, 'user', $2), ($1, 'assistant', $3)`,
-    [openId, userText, assistantReply]
+    `INSERT INTO unified_conversations (participant_id, channel, group_id, role, content, image_description)
+     VALUES ($1, $2, $3, 'user', $4, $5), ($1, $2, $3, 'assistant', $6, NULL)`,
+    [participantId, channel, groupId || null, userText, imageDescription, assistantReply]
   );
 }
 
@@ -9865,8 +9914,12 @@ router.post('/feishu/event', async (req, res) => {
         return;
       }
 
-      // 加载对话历史（仅 p2p）
-      const messages = chatType === 'p2p' ? await getFeishuHistory(openId, 10) : [];
+      // 加载对话历史（p2p 按人，群聊按 chat_id）
+      const messages = await getUnifiedHistory(
+        openId,
+        10,
+        chatType === 'group' ? message.chat_id : null
+      );
 
       // 群聊 @mention：注入权限 + 发送者印象 + 成员名单
       let enrichedText = text;
@@ -9905,9 +9958,13 @@ router.post('/feishu/event', async (req, res) => {
       const reply = result?.reply;
       if (!reply) return;
 
-      // 保存对话历史（仅 p2p）
-      if (chatType === 'p2p') {
-        saveFeishuConversation(openId, text, reply).catch(err =>
+      // 保存对话历史到 unified_conversations（p2p 和群聊 @mention 均保存）
+      {
+        const channel = chatType === 'p2p' ? 'feishu_p2p' : 'feishu_group';
+        const groupId = chatType === 'group' ? message.chat_id : null;
+        // 图片消息：将 reply 前 150 字作为 image_description，供下轮注入上下文
+        const imageDesc = msgType === 'image' ? reply.slice(0, 150) : null;
+        saveUnifiedConversation(openId, channel, groupId, text, reply, imageDesc).catch(err =>
           console.warn('[feishu/event] 保存历史失败:', err.message)
         );
       }

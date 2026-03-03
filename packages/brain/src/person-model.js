@@ -291,3 +291,69 @@ Cecelia回复：${ceceliaReply}
     console.warn('[person-model] extractPersonSignals failed:', err.message);
   }
 }
+
+/**
+ * 检测 Alex 是否在询问某个任务，并记录任务关注到 working_memory
+ *
+ * 设计：
+ *   - 通过关键词模式检测"任务查询意图"
+ *   - 查找匹配的进行中/待执行任务
+ *   - 存入 working_memory（key: task_interest:<task_id>，TTL 48h）
+ *   - execution-callback 查此 key 决定是否通知
+ *
+ * @param {Object} pool - pg pool
+ * @param {string} text - Alex 发送的消息内容
+ */
+export async function detectAndStoreTaskInterest(pool, text) {
+  if (!text || text.length < 5) return;
+
+  // 检测任务关注意图的关键词模式（中文自然语言）
+  const taskInquiryPattern = /任务.{0,20}(怎么|完成|好了|怎样|进度|如何|咋样|完了|开始|状态|结果|情况)|那个.{0,10}任务|(完成了吗|完成没|搞完了|做好了)/i;
+  if (!taskInquiryPattern.test(text)) return;
+
+  // 提取搜索关键词（去掉提问词，保留实质名词）
+  const keyword = text
+    .replace(/那个|任务|怎么|完成|好了|怎样|进度|如何|咋样|状态|结果|情况|完了|开始|了吗|没有|完没|搞完|做好/g, ' ')
+    .replace(/[？?。！!，,\s]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(w => w.length >= 2)
+    .join(' ')
+    .slice(0, 30);
+
+  try {
+    // 查找匹配的进行中/待执行任务
+    const { rows: tasks } = await pool.query(
+      `SELECT id, title FROM tasks
+       WHERE status IN ('queued', 'in_progress')
+         AND ($1 = '' OR title ILIKE $2)
+       ORDER BY created_at DESC
+       LIMIT 5`,
+      [keyword, `%${keyword}%`]
+    );
+
+    if (tasks.length > 0) {
+      // 为每个匹配任务存储具体订阅（48h TTL 由 updated_at 控制）
+      for (const task of tasks) {
+        await pool.query(
+          `INSERT INTO working_memory (key, value_json, updated_at)
+           VALUES ($1, $2::jsonb, NOW())
+           ON CONFLICT (key) DO UPDATE SET value_json = $2::jsonb, updated_at = NOW()`,
+          [`task_interest:${task.id}`, JSON.stringify({ task_id: task.id, title: task.title, keyword })]
+        );
+      }
+      console.log(`[person-model] 检测到任务关注，已记录 ${tasks.length} 个订阅（关键词: ${keyword || '无'}）`);
+    } else if (keyword) {
+      // 无精确匹配 → 存通用关键词订阅（1h 内有效）
+      await pool.query(
+        `INSERT INTO working_memory (key, value_json, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (key) DO UPDATE SET value_json = $2::jsonb, updated_at = NOW()`,
+        [`task_interest_kw:${keyword}`, JSON.stringify({ keyword })]
+      );
+      console.log(`[person-model] 任务关注（无匹配任务），已记录关键词: ${keyword}`);
+    }
+  } catch (err) {
+    console.warn('[person-model] detectAndStoreTaskInterest failed:', err.message);
+  }
+}
