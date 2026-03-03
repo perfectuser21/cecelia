@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS person_signals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_person_signals_person_id  ON person_signals(person_id);
-CREATE INDEX IF NOT EXISTS idx_person_signals_active     ON person_signals(person_id, expires_at) WHERE expires_at IS NULL OR expires_at > NOW();
+CREATE INDEX IF NOT EXISTS idx_person_signals_active     ON person_signals(person_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_person_signals_type       ON person_signals(person_id, signal_type);
 
 -- ============================================================
