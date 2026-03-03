@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Brain 内部 LLM 账号轮换路径 Bug 彻底修复——bridge 侧拼路径（PR #371, Brain v1.164.8）
+
+**更彻底的修复**：PR #368 用 `HOST_HOME` 环境变量让容器内可以拼出正确 configDir，PR #371 更进一步：llm-caller.js 完全不在容器侧拼路径，只发 `accountId`（如 `"account3"`），由 bridge 在宿主机侧用 `homedir()` 拼出 `/home/xx/.claude-account3`。**原则：路径必须在路径存在的那一侧拼**——不依赖 HOST_HOME 环境变量，更干净，不会被容器配置影响。
+
+**并行 PR 版本冲突（多次 bump）**：开发期间 main 被多个并行 PR 连续推进（1.164.5→6→7），需多次 `npm version patch` + 同步 `.brain-versions` + `DEFINITION.md`。每次 push 前检查：`git show origin/main:packages/brain/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"`，发现与当前分支相同立即再 bump。用 `git merge origin/main`（不用 rebase，避免 bash-guard 阻止 force push）。
+
+**Runner 等待模式**：self-hosted `hk-cecelia` runner 是单线程，多 PR 并发时 jobs 会排队 5-10 分钟。如果首次 CI 因 runner 不可用（steps=[]，3s fail），不是代码问题，等 runner 空闲后 `gh run rerun --failed` 即可。
+
 ### [2026-03-03] Area 完整双向关联 migration 104 + Cecelia Brain 自动合并导致冲突标记提交（PR #364, Brain v1.164.8）
 
 **需求**：给 goals/projects/tasks 三张表补全 area_id 外键约束（ON DELETE SET NULL），goals 表新增 area_id 字段。实现 Area ↔ OKR/Project/Task 的完整双向关联（Notion Relation 机制的后端基础）。
@@ -11,6 +19,7 @@
 **并行版本碰撞（本 PR 经历 3 轮）**：主线频繁合并（PR #368, #369, #370, #372 等），每次合并后可能版本号与 main 相同。标准处理：① 先检查 `git show origin/main:packages/brain/package.json | jq .version`；② 若我们的版本 ≤ main，在 packages/brain 执行 `npm version patch --no-git-tag-version`；③ 追加 `.brain-versions`、更新 DEFINITION.md Brain 版本行；④ 运行两个 DevGate 脚本确认；⑤ 单独 `chore(brain): version bump` commit 推送。
 
 **Brain CI 自动迁移 self-hosted（PR #370）后的注意事项**：Brain CI `brain-test` job 不再使用 GitHub Actions `services` 容器（因为 self-hosted 已有生产 PostgreSQL），测试直连 hk-vps 本地 DB（port 5433）。数据库环境由 runner 环境变量提供，无需在 CI 中启动容器。
+
 
 ### [2026-03-03] Brain 容器路径映射 HOST_HOME 修复 + Brain CI 全面迁移 self-hosted（PR #368, Brain v1.164.6）
 
