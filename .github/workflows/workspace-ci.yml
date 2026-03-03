@@ -16,7 +16,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-workspace PRs
   changes:
     name: Detect Changes
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -45,7 +45,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: Dashboard Build
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -73,7 +73,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: API Typecheck
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -97,7 +97,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: Dashboard Tests
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -119,11 +119,15 @@ jobs:
   ci-passed:
     needs: [changes, build, api-check, dashboard-test]
     if: always()
-    runs-on: [self-hosted, hk-vps]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Workspace CI Gate
         run: |
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed - cannot determine what changed"
+            exit 1
+          fi
           if [ "${{ needs.changes.outputs.workspace }}" != "true" ]; then
             echo "No workspace changes detected, skipping checks"
             exit 0
