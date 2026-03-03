@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] CI 全面优化：npm 缓存 + PR coverage 移除 + workspace 合并 + pre-push 预检（PR #382）
+
+**场景**：6 个 CI workflow 无缓存、PR 上跑完整 coverage（阈值全 0）、workspace-ci 3 个 job 各自 npm install，导致 CI 慢、成本高。
+
+**改动与经验**：
+1. **PR coverage 是最大浪费**：`vitest.config.js` 的 coverage thresholds 全为 0 意味着 coverage 对 PR 毫无质量收益，但生成 4 种报告会消耗 30-40% 测试时间。区分 `event_name == 'push'` vs PR 是标准做法。
+2. **`actions/setup-node` 内置 cache 最简单**：加 `cache: 'npm'` 和 `cache-dependency-path` 两行即可，不需要手动 `actions/cache`。每个有 `npm ci` 的 job 都要加，否则每次重新下载。
+3. **workspace-ci 合并节省 2 次 npm install**：原 `build` + `api-check` + `dashboard-test` 三个 job 各自安装，合并为单 job 后只装一次。注意 dashboard 没有独立 package-lock.json，用根目录 package-lock.json 缓存。
+4. **pre-push 本地预检是降低 CI 失败率的关键**：版本冲突、migration 冲突、DoD 格式、facts-check 这四类失败在 push 前可以 1 分钟内发现，推迟到 CI 则要等 5-15 分钟。
+5. **`singleFork: true` 问题待处理**：Brain 的 vitest 配置强制所有测试串行，77 个 real-DB 测试文件需要 `beforeEach` DB 隔离才能并行化。这是下一步优化点（参见 P2 方案）。
+6. **CI workflow 改动不触发任何包 CI**：改 `.github/workflows/*.yml` 时，因为没有 `packages/**` 或 `apps/**` 变更，所有包的 `changes` detection 返回 false，CI 全部快速通过。无需版本 bump。
+
 ### [2026-03-03] 前台 Area 关联完整体验修复——两种 Area 概念 + DatabaseView select 编辑（PR #379, Brain v1.164.13）
 
 **场景**：前台 OKR/Area/Projects 相关页面全部报 404，Projects 的 Area 列只读无法编辑，Area 详情页没有关联 Project 展示。
