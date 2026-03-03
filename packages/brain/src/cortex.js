@@ -788,6 +788,226 @@ async function performRCA(failedTask, history = []) {
 }
 
 // ============================================================
+// System Report (48h Summary)
+// ============================================================
+
+/**
+ * 收集过去 48h 的系统统计数据
+ * @returns {Promise<Object>} stats
+ */
+async function collectSystemStats() {
+  const since48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const client = await pool.connect();
+  try {
+    const [
+      taskStatsResult,
+      quarantineResult,
+      resourceResult,
+      okrResult,
+    ] = await Promise.all([
+      // 任务统计
+      client.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'completed' AND updated_at > $1) AS completed,
+          COUNT(*) FILTER (WHERE status = 'failed' AND updated_at > $1) AS failed,
+          COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+          COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+          COUNT(*) FILTER (WHERE task_type = 'dev' AND status = 'completed' AND updated_at > $1) AS dev_completed,
+          COUNT(*) FILTER (WHERE task_type = 'dev' AND status = 'failed' AND updated_at > $1) AS dev_failed
+        FROM tasks
+      `, [since48h]),
+      // 隔离区任务
+      client.query(`
+        SELECT COUNT(*) AS quarantined
+        FROM tasks
+        WHERE status = 'quarantined'
+      `),
+      // 资源使用（最近 48h token 消耗）
+      client.query(`
+        SELECT
+          COALESCE(SUM((payload->>'tokens_used')::int), 0) AS total_tokens,
+          COUNT(*) AS llm_calls
+        FROM cecelia_events
+        WHERE event_type = 'llm_usage'
+          AND created_at > $1
+      `, [since48h]),
+      // OKR 进展
+      client.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'in_progress') AS active_krs,
+          COUNT(*) FILTER (WHERE status = 'completed') AS completed_krs,
+          AVG(CASE WHEN progress IS NOT NULL THEN progress ELSE 0 END)::int AS avg_progress
+        FROM goals
+      `),
+    ]);
+
+    return {
+      period_hours: 48,
+      since: since48h,
+      tasks: {
+        completed: parseInt(taskStatsResult.rows[0].completed) || 0,
+        failed: parseInt(taskStatsResult.rows[0].failed) || 0,
+        queued: parseInt(taskStatsResult.rows[0].queued) || 0,
+        in_progress: parseInt(taskStatsResult.rows[0].in_progress) || 0,
+        dev_completed: parseInt(taskStatsResult.rows[0].dev_completed) || 0,
+        dev_failed: parseInt(taskStatsResult.rows[0].dev_failed) || 0,
+        quarantined: parseInt(quarantineResult.rows[0].quarantined) || 0,
+      },
+      resources: {
+        total_tokens: parseInt(resourceResult.rows[0].total_tokens) || 0,
+        llm_calls: parseInt(resourceResult.rows[0].llm_calls) || 0,
+      },
+      okr: {
+        active_krs: parseInt(okrResult.rows[0].active_krs) || 0,
+        completed_krs: parseInt(okrResult.rows[0].completed_krs) || 0,
+        avg_progress: parseInt(okrResult.rows[0].avg_progress) || 0,
+      },
+    };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 生成 48h 系统简报
+ * 收集过去 48h 的关键数据，使用 Sonnet 生成中文 Markdown 简报，
+ * 并持久化到 system_reports 表
+ * @returns {Promise<{content: string, stats: Object, generated_at: string, id: string}>}
+ */
+async function generateSystemReport() {
+  console.log('[cortex] Generating 48h system report...');
+  const generatedAt = new Date().toISOString();
+
+  let stats;
+  try {
+    stats = await collectSystemStats();
+  } catch (err) {
+    console.error('[cortex] Failed to collect system stats:', err.message);
+    stats = { period_hours: 48, since: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(), tasks: {}, resources: {}, okr: {}, error: err.message };
+  }
+
+  const prompt = `你是 Cecelia 系统的皮层（Cortex），现在需要生成一份 48 小时系统简报。
+
+## 统计数据
+
+\`\`\`json
+${JSON.stringify(stats, null, 2)}
+\`\`\`
+
+## 要求
+
+请用简体中文，以 Markdown 格式生成一份简洁的 48 小时简报，包含：
+1. **执行摘要** - 2-3 句总结系统状态
+2. **任务统计** - 完成/失败/队列中/运行中数量，及 dev 任务细分
+3. **资源状况** - LLM 调用次数和 Token 消耗
+4. **OKR 进展** - 活跃 KR 数量和平均进度
+5. **注意事项** - 如果有异常（高失败率、隔离任务多等）需要特别说明
+
+格式要求：
+- 用 Markdown 标题层级
+- 简洁明了，不超过 300 字
+- 数据直接引用统计数字`;
+
+  let content;
+  try {
+    const { text } = await callLLM('cortex', prompt, { timeout: 60000, maxTokens: 1024 });
+    content = text;
+  } catch (err) {
+    console.error('[cortex] LLM call failed for system report, using fallback:', err.message);
+    const t = stats.tasks || {};
+    content = `# Cecelia 48h 系统简报
+
+**生成时间**: ${generatedAt}
+
+## 执行摘要
+过去 48 小时系统运行数据如下（LLM 生成失败，仅显示原始数据）。
+
+## 任务统计
+- 完成: ${t.completed || 0}，失败: ${t.failed || 0}
+- 队列中: ${t.queued || 0}，运行中: ${t.in_progress || 0}
+- 隔离: ${t.quarantined || 0}
+
+## 资源状况
+- LLM 调用: ${stats.resources?.llm_calls || 0} 次
+
+## OKR 进展
+- 活跃 KR: ${stats.okr?.active_krs || 0}，平均进度: ${stats.okr?.avg_progress || 0}%`;
+  }
+
+  // 持久化到 system_reports 表
+  let reportId;
+  try {
+    const result = await pool.query(`
+      INSERT INTO system_reports (report_type, content, stats, generated_at)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id
+    `, ['48h_summary', content, JSON.stringify(stats), generatedAt]);
+    reportId = result.rows[0].id;
+    console.log(`[cortex] System report saved: ${reportId}`);
+  } catch (err) {
+    console.error('[cortex] Failed to save system report to DB:', err.message);
+    reportId = null;
+  }
+
+  return {
+    id: reportId,
+    content,
+    stats,
+    generated_at: generatedAt,
+  };
+}
+
+/**
+ * 获取最新的系统简报
+ * @param {string} [reportType='48h_summary']
+ * @returns {Promise<Object|null>}
+ */
+async function getLatestSystemReport(reportType = '48h_summary') {
+  try {
+    const result = await pool.query(`
+      SELECT id, report_type, content, stats, generated_at, created_at
+      FROM system_reports
+      WHERE report_type = $1
+      ORDER BY generated_at DESC
+      LIMIT 1
+    `, [reportType]);
+    return result.rows[0] || null;
+  } catch (err) {
+    console.error('[cortex] Failed to get latest system report:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 检查是否需要生成系统简报（距离上次超过 intervalMs）
+ * @param {number} [intervalMs=48*60*60*1000] - 间隔毫秒数
+ * @param {string} [reportType='48h_summary']
+ * @returns {Promise<boolean>}
+ */
+async function shouldGenerateReport(intervalMs = 48 * 60 * 60 * 1000, reportType = '48h_summary') {
+  try {
+    const result = await pool.query(`
+      SELECT generated_at
+      FROM system_reports
+      WHERE report_type = $1
+      ORDER BY generated_at DESC
+      LIMIT 1
+    `, [reportType]);
+
+    if (result.rows.length === 0) {
+      return true; // 从未生成过，立即生成
+    }
+
+    const lastReportTime = new Date(result.rows[0].generated_at).getTime();
+    const elapsed = Date.now() - lastReportTime;
+    return elapsed >= intervalMs;
+  } catch (err) {
+    console.error('[cortex] Failed to check report interval:', err.message);
+    return false; // 出错时不触发生成，避免循环
+  }
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -809,6 +1029,12 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // System Report
+  generateSystemReport,
+  getLatestSystemReport,
+  shouldGenerateReport,
+  collectSystemStats,
 
   // 常量
   CORTEX_ACTION_WHITELIST,

@@ -10291,4 +10291,46 @@ router.post('/manual/ask', async (req, res) => {
   }
 });
 
+// ==================== System Reports API ====================
+
+/**
+ * POST /api/brain/reports/generate
+ * 手动触发生成 48h 系统简报
+ */
+router.post('/reports/generate', async (req, res) => {
+  try {
+    const { generateSystemReport } = await import('./cortex.js');
+    const report = await generateSystemReport();
+    res.json({
+      success: true,
+      id: report.id,
+      generated_at: report.generated_at,
+      stats: report.stats,
+      content: report.content,
+    });
+  } catch (err) {
+    console.error('[API] reports/generate error:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to generate system report', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/reports/latest
+ * 获取最新的系统简报
+ */
+router.get('/reports/latest', async (req, res) => {
+  try {
+    const { getLatestSystemReport } = await import('./cortex.js');
+    const { report_type = '48h_summary' } = req.query;
+    const report = await getLatestSystemReport(report_type);
+    if (!report) {
+      return res.status(404).json({ success: false, error: 'No system report found' });
+    }
+    res.json({ success: true, report });
+  } catch (err) {
+    console.error('[API] reports/latest error:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to get latest system report', details: err.message });
+  }
+});
+
 export default router;

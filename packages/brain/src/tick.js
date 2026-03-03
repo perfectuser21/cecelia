@@ -46,6 +46,7 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
+const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -1995,6 +1996,21 @@ async function executeTick() {
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
+  // 10.13 48h 系统简报（每 48 小时生成一次，fire-and-forget）
+  Promise.resolve().then(async () => {
+    try {
+      const { shouldGenerateReport, generateSystemReport } = await import('./cortex.js');
+      const needed = await shouldGenerateReport(REPORT_INTERVAL_MS);
+      if (needed) {
+        console.log('[tick] Triggering 48h system report generation...');
+        const report = await generateSystemReport();
+        console.log(`[tick] 48h system report generated: ${report.id || 'no-id'}`);
+      }
+    } catch (e) {
+      console.warn('[tick] 48h system report 生成失败:', e.message);
+    }
+  });
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
@@ -2266,6 +2282,7 @@ export {
   AUTO_DISPATCH_MAX,
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
+  REPORT_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
