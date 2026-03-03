@@ -9665,7 +9665,7 @@ router.post('/feishu/event', async (req, res) => {
       return res.json({ ok: true });
     }
     if (!imageKey) return res.json({ ok: true });
-    text = '[图片消息]'; // 占位文字，真正内容由 imageContent 传给 LLM
+    text = '[图片]'; // 保留模态元数据，让对话历史知道这是图片事件
   }
 
   // 群聊：检查是否被 @mention（Mode A：不再拦截非 @mention 消息）
