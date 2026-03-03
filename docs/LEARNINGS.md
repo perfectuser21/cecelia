@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 修复飞书群聊回复链路 + 任务完成记忆闭环（PR #394, Brain v1.165.1）
+
+**根因**：飞书群 Mode A 逻辑有 4 个静默失败点（超时/JSON解析/handleChat无回复/整体异常），任何一个触发就静默退出不留日志，像"假装没看见"。同时每条消息独立处理，快速多条消息会触发多次 LLM 回复。
+
+**消息聚合设计**：用 `groupPendingMessages` Map（per chat_id）+ 8 秒 debounce timer 实现批量处理。消息到达时立即写 memory_stream，timer 到期后把这批消息合并为一个上下文，做一次决策+发一条回复。新消息会重置 timer（延后触发），避免"说了一半就回"。
+
+**工作圈模式**：同事权限不能太保守（"仅工作话题"让对话显得很拘谨），改为"工作相关话题均可聊，包括项目进展、任务状态、日常协作"，同时在 system prompt 中注入"开头用对方名字称呼"，让回复更自然有温度。
+
+**任务完成→learnings 闭环**：在 `execution-callback` 的 completed 分支加 fire-and-forget 写 learnings 记录（title + task_type + findings摘要 + pr_url），用 content_hash 去重。这让反刍系统能处理任务结果，感知层的 `undigested_knowledge` 信号能被触发。
+
+**版本冲突处理（PR并发教训）**：主干 1.165.0 时我们的 1.164.16 冲突 → 新建干净分支 → cherry-pick 代码文件 → npm version patch（得 1.165.1）→ 同步四处版本文件 → 正常 push。DEFINITION.md 里的版本字段用 `python3 -c "..."` 精准替换，避免 sed 正则歧义。
+
 ### [2026-03-03] Agent 配置 UI：折叠展开 + 多维调用方式（PR #389, Workspace v1.11.0）
 
 **调用方式 4 种组合**：Anthropic API / Anthropic 无头 / MiniMax API / MiniMax 无头。"MiniMax 无头"= 走 `claude -p`，但 Claude Code 账号配置使用 MiniMax 作为 LLM provider。需要 Skill 时必须无头，但底层可用 MiniMax 省成本。前端 provider 值：`anthropic-api` / `anthropic` / `minimax` / `minimax-headless`（后者后端待实现）。
