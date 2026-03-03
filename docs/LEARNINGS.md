@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Agent 配置 UI：折叠展开 + 多维调用方式（PR #389, Workspace v1.11.0）
+
+**调用方式 4 种组合**：Anthropic API / Anthropic 无头 / MiniMax API / MiniMax 无头。"MiniMax 无头"= 走 `claude -p`，但 Claude Code 账号配置使用 MiniMax 作为 LLM provider。需要 Skill 时必须无头，但底层可用 MiniMax 省成本。前端 provider 值：`anthropic-api` / `anthropic` / `minimax` / `minimax-headless`（后者后端待实现）。
+
+**折叠展开模式**：多维配置项用"默认折叠显示当前值，点击展开所有选项"比全部平铺更节省空间，选中后自动折叠，交互更自然。适合组合维度多的配置面板。
+
+**选项分组原则**：按 provider 分组（Anthropic / MiniMax），组内只显示该 agent `allowed_models` 里有的模型。避免展示不支持的组合。
+
 ### [2026-03-03] 前台 Area 关联完整体验修复——两种 Area 概念 + DatabaseView select 编辑（PR #379, Brain v1.164.13）
 
 **场景**：前台 OKR/Area/Projects 相关页面全部报 404，Projects 的 Area 列只读无法编辑，Area 详情页没有关联 Project 展示。
