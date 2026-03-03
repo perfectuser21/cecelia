@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 分级报警系统：.dod 被 git add -A 误提交导致 DevGate 失败（PR #427, Brain v1.174.0）
+
+**背景**：新增 alerting.js 分级报警（P0/P1/P2/P3），实现 raise/flushP1/flushP2/flushAlertsIfNeeded/getStatus。
+
+**.dod 文件不能用 git add -A（核心教训）**：
+- merge 冲突时用了 `git add -A` 解决冲突 → `.dod-*.md` 被意外加入 git 追踪
+- DevGate CI 找到 .dod 文件后验证格式，但 DoD 里的验收项缺少 `Test:` 字段 → 报 "缺少 Test 字段"
+- 同时 Engine CI 还有 "Block PRD/DoD in PR to main" 检查 → 双重失败
+- **修复**：`git rm --cached .dod-*.md .prd-*.md`，DevGate 在 CI 找不到 .dod 文件时自动跳过（exit 0）
+
+**merge commit 必须只加代码文件**：
+```bash
+# 正确：指定文件
+git add packages/ .brain-versions DEFINITION.md
+
+# 错误：全量添加（会把 .dod/.prd 一起加进去）
+git add -A
+```
+
+**并行 PR 版本碰撞（本 PR 碰了两次）**：
+1. 第一次：main 上另一 PR 已有 1.173.0 → 我 bump 到 1.174.0
+2. 第二次：还在解决冲突时 Notion webhook fix (1.173.1) 又合入 main → 再次版本冲突
+
+解法：每次 merge 前 `git show origin/main:packages/brain/package.json | jq .version` 确认再 bump。
+
+**Brain CI workflow_dispatch 不等于 PR status check**：
+- `gh workflow run "Brain CI"` 触发的 ci-passed 不会注册为 PR required check
+- 真正的 PR check 是由 push 到 PR 分支触发的 `pull_request` 事件
+- 长时间 force push 后 pull_request 事件可能停止触发（参见 MEMORY）→ 本 PR push 普通提交后自动触发了
+
 ### [2026-03-03] Notion 四表双向同步：migration 编号连续踩三次坑（PR #423, Brain v1.173.0）
 
 **背景**：实现 Areas/Goals/Projects/Tasks 四表与 Notion 的双向同步，包含 webhook 回调端点。
