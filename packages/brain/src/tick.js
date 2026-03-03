@@ -1277,6 +1277,28 @@ async function executeTick() {
     console.error('[tick] Recurring tasks check failed:', recurringErr.message);
   }
 
+  // 0.7. Pending Conversations Check — 检查待回音消息，判断是否跟进
+  try {
+    const { checkPendingFollowups } = await import('./pending-conversations.js');
+    const { callLLM } = await import('./llm-caller.js');
+    const { sendFollowUp } = await import('./proactive-mouth.js');
+    const toFollowUp = await checkPendingFollowups(pool);
+    if (toFollowUp.length > 0) {
+      console.log(`[tick] ${toFollowUp.length} 条待回音消息需要跟进`);
+      for (const conv of toFollowUp) {
+        sendFollowUp(pool, callLLM, conv).catch(err =>
+          console.warn('[tick] sendFollowUp failed:', err.message)
+        );
+      }
+      actionsTaken.push({
+        action: 'pending_followup_check',
+        followup_count: toFollowUp.length
+      });
+    }
+  } catch (followupErr) {
+    console.error('[tick] Pending followup check failed:', followupErr.message);
+  }
+
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
   const cleanupElapsed = Date.now() - _lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
