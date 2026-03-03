@@ -1995,6 +1995,29 @@ async function executeTick() {
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
+  // 10.13 48h 系统简报检查（fire-and-forget）
+  // 每次 tick 检查距上次简报是否超过 48 小时，超过则插入 pending 记录
+  Promise.resolve().then(async () => {
+    try {
+      const REPORT_INTERVAL_MS = 48 * 60 * 60 * 1000; // 48 小时
+      const lastReportRes = await pool.query(
+        "SELECT created_at FROM system_reports WHERE type = '48h_summary' ORDER BY created_at DESC LIMIT 1"
+      );
+      const lastReport = lastReportRes.rows[0];
+      const now48 = Date.now();
+      const shouldGenerate = !lastReport || (now48 - new Date(lastReport.created_at).getTime() > REPORT_INTERVAL_MS);
+      if (shouldGenerate) {
+        await pool.query(
+          `INSERT INTO system_reports (type, content, metadata)
+           VALUES ('48h_summary', '{"status":"pending"}'::jsonb, '{}'::jsonb)`
+        );
+        console.info('[Tick] 触发 48h 简报生成');
+      }
+    } catch (reportErr) {
+      console.warn('[tick] 48h 简报检查失败（non-critical）:', reportErr.message);
+    }
+  }).catch(e => console.warn('[tick] 48h 简报调度失败:', e.message));
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
