@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 群聊全量消息记录 + unified_conversations 写入模式（PR #419, Brain v1.171.2）
+
+**设计决策**：Mode A（非@mention）每条消息到达时立即写 user 行，有回复时再写 assistant 行——两步分开，不能用成对写入的 `saveUnifiedConversation()`，因为"是否回复"要等 8 秒聚合+LLM 决策才知道。
+
+**新函数 `saveUnifiedMessage()`**：单条 INSERT，6 个参数（participantId, channel, groupId, role, content, imageDescription）。与 `saveUnifiedConversation()` 的区别：后者是 user+assistant 同时 INSERT（性能优化），前者是 Mode A 异步两阶段场景的专属方案。
+
+**assistant 行归属**：Mode A 批次可能含多人消息，assistant 的 participant_id 归属 `primarySender.openId`（批次最后一条的发送者）——这是"谁引发了回复"的最佳近似，不完美但实用。
+
+**测试模式**：`saveUnifiedMessage` 的 mock 断言直接检查 `call[1]` 参数数组（长度 6），不检查 SQL 字符串里的字面量（channel 是 `$2`，不是 `'feishu_group'`）——与 PR #417 的教训一致。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
