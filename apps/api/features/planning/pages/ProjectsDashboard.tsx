@@ -1,18 +1,10 @@
 /**
- * Projects Dashboard - DatabaseView 表格模式
- * 数据源: /api/tasks/goals + /api/tasks/projects + /api/tasks/areas
+ * Projects Dashboard - 层级视图：Project → Initiative（可展开/折叠）
+ * 数据源: /api/tasks/projects + /api/tasks/areas
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { DatabaseView } from '../../shared/components/DatabaseView';
-import type { ColumnDef } from '../../shared/components/DatabaseView';
-
-interface Goal {
-  id: string;
-  title: string;
-  type: string;
-  parent_id: string | null;
-}
+import { useState, useEffect, useCallback } from 'react';
+import { ChevronRight, ChevronDown } from 'lucide-react';
 
 interface Area {
   id: string;
@@ -31,92 +23,61 @@ interface Project {
   kr_id: string | null;
   goal_id: string | null;
   area_id: string | null;
-  repo_path: string | null;
 }
 
-interface ProjectRow {
-  id: string;
-  type_label: string;
-  name: string;
-  area_id: string;
-  priority: string;
-  status: string;
-  progress: number;
-  [key: string]: unknown;
-}
+const STATUS_COLORS: Record<string, string> = {
+  active:      'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+  in_progress: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  pending:     'bg-slate-500/20 text-slate-400 border border-slate-500/30',
+  completed:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+  paused:      'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+};
 
-const FIELD_IDS = ['type_label', 'name', 'area_id', 'priority', 'status', 'progress'];
+const STATUS_LABELS: Record<string, string> = {
+  active:      '活跃',
+  in_progress: '进行中',
+  pending:     '待开始',
+  completed:   '已完成',
+  paused:      '暂停',
+};
+
+const PRIORITY_COLORS: Record<string, string> = {
+  P0: 'text-red-400 font-semibold',
+  P1: 'text-amber-400',
+  P2: 'text-slate-500',
+};
+
+function ProgressBar({ value }: { value: number }) {
+  const pct = Math.min(100, Math.max(0, value || 0));
+  return (
+    <div className="flex items-center gap-2 w-24">
+      <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <div className="h-full bg-purple-500 rounded-full" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-slate-400 w-8 text-right">{pct}%</span>
+    </div>
+  );
+}
 
 export default function ProjectsDashboard() {
-  const [rows, setRows] = useState<ProjectRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [goalsRes, projectsRes, areasRes] = await Promise.all([
-        fetch('/api/tasks/goals'),
-        fetch('/api/tasks/projects'),
+      const [projectsRes, areasRes] = await Promise.all([
+        fetch('/api/tasks/projects?limit=2000'),
         fetch('/api/tasks/areas'),
       ]);
-
-      const goals: Goal[] = goalsRes.ok ? await goalsRes.json() : [];
-      const projects: Project[] = projectsRes.ok ? await projectsRes.json() : [];
+      const projectList: Project[] = projectsRes.ok ? await projectsRes.json() : [];
       const areaList: Area[] = areasRes.ok ? await areasRes.json() : [];
+      setProjects(projectList);
       setAreas(areaList);
-
-      // 通过 kr_id → goals → parent_id 推导 area_okr（用于无直接 area_id 的项目显示）
-      const areaNameMap = new Map<string, string>();
-      goals.filter(g => g.type === 'area_okr').forEach(a => areaNameMap.set(a.id, a.title));
-
-      const krToAreaId = new Map<string, string>();
-      goals.filter(g => g.type === 'kr').forEach(k => {
-        if (k.parent_id && areaNameMap.has(k.parent_id)) {
-          krToAreaId.set(k.id, k.parent_id);
-        }
-      });
-
-      // areas 表 ID → name（用于显示 area_id 字段）
-      const areaIdToName = new Map<string, string>(areaList.map(a => [a.id, a.name]));
-
-      const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
-
-      const mapped: ProjectRow[] = projects.map(p => {
-        // 优先使用 area_id（直接外键），回退到 kr_id 推导
-        let resolvedAreaId = p.area_id ?? '';
-        if (!resolvedAreaId) {
-          const kr = p.kr_id || p.goal_id;
-          if (kr && krToAreaId.has(kr)) {
-            resolvedAreaId = krToAreaId.get(kr) ?? '';
-          } else if (p.type === 'initiative' && p.parent_id) {
-            const parentKr = p.parent_id;
-            if (krToAreaId.has(parentKr)) {
-              resolvedAreaId = krToAreaId.get(parentKr) ?? '';
-            }
-          }
-        }
-
-        return {
-          id: p.id,
-          type_label: p.type,
-          name: p.name,
-          area_id: resolvedAreaId,
-          status: p.status,
-          priority: p.priority ?? 'P2',
-          progress: p.progress ?? 0,
-          _area_name: resolvedAreaId ? (areaIdToName.get(resolvedAreaId) ?? areaNameMap.get(resolvedAreaId) ?? '—') : '—',
-        };
-      });
-
-      mapped.sort((a, b) => {
-        if (a.type_label !== b.type_label) return a.type_label === 'project' ? -1 : 1;
-        return (po[a.priority] ?? 9) - (po[b.priority] ?? 9);
-      });
-
-      setRows(mapped);
     } catch {
-      setRows([]);
+      setProjects([]);
     } finally {
       setLoading(false);
     }
@@ -124,68 +85,113 @@ export default function ProjectsDashboard() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const columns = useMemo<ColumnDef[]>(() => [
-    { id: 'type_label', label: '类型', type: 'badge', sortable: true, width: 100,
-      options: [
-        { value: 'project', label: 'Project', color: '#8b5cf6' },
-        { value: 'initiative', label: 'Initiative', color: '#3b82f6' },
-      ],
-    },
-    { id: 'name', label: '名称', type: 'text', sortable: true, width: 300 },
-    { id: 'area_id', label: 'Area', type: 'select', editable: true, sortable: true, width: 160,
-      options: [
-        { value: '', label: '— 未设置 —', color: '#6b7280' },
-        ...areas.map(a => ({ value: a.id, label: a.name, color: '#10b981' })),
-      ],
-    },
-    { id: 'priority', label: '优先级', type: 'badge', editable: true, sortable: true, width: 90,
-      options: [
-        { value: 'P0', label: 'P0', color: '#ef4444' },
-        { value: 'P1', label: 'P1', color: '#f59e0b' },
-        { value: 'P2', label: 'P2', color: '#6b7280' },
-      ],
-    },
-    { id: 'status', label: '状态', type: 'badge', editable: true, sortable: true, width: 110,
-      options: [
-        { value: 'active', label: '活跃', color: '#10b981' },
-        { value: 'in_progress', label: '进行中', color: '#3b82f6' },
-        { value: 'pending', label: '待开始', color: '#6b7280' },
-        { value: 'completed', label: '已完成', color: '#10b981' },
-        { value: 'paused', label: '暂停', color: '#f59e0b' },
-      ],
-    },
-    { id: 'progress', label: '进度 %', type: 'number', editable: true, sortable: true, width: 90 },
-  ], [areas]);
-
-  const handleUpdate = async (id: string, field: string, value: unknown) => {
-    const isCustom = !FIELD_IDS.includes(field);
-    const body = isCustom ? { custom_props: { [field]: value } } : { [field]: value };
-    await fetch(`/api/tasks/projects/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+  const toggleCollapse = (id: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
     });
-    if (field === 'area_id') {
-      const areaName = areas.find(a => a.id === value)?.name ?? '—';
-      setRows(prev => prev.map(r => r.id === id ? { ...r, area_id: value as string, _area_name: areaName } : r));
-    } else {
-      setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
-    }
   };
 
+  const areaMap = new Map(areas.map(a => [a.id, a.name]));
+
+  const parentProjects = projects.filter(p => p.type === 'project');
+  const initiatives    = projects.filter(p => p.type === 'initiative');
+
+  // 排序：P0 → P1 → P2
+  const po: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
+  parentProjects.sort((a, b) => (po[a.priority] ?? 9) - (po[b.priority] ?? 9));
+
+  if (loading) return <div className="h-full flex items-center justify-center text-slate-500 text-sm">加载中…</div>;
+
+  const rowBase = 'flex items-center gap-3 px-4 py-2 border-b border-slate-800/60 hover:bg-slate-800/30 transition-colors text-sm';
+
+  const renderInitiative = (ini: Project) => {
+    const areaName = ini.area_id ? (areaMap.get(ini.area_id) ?? '—') : '—';
+    return (
+      <div key={ini.id} className={`${rowBase} pl-10 bg-slate-900/30`}>
+        <div className="w-4 shrink-0 flex justify-center">
+          <div className="w-1 h-1 rounded-full bg-blue-400/60" />
+        </div>
+        <div className="flex-1 min-w-0 truncate text-gray-300 text-xs">{ini.name}</div>
+        <span className="text-xs text-slate-600 w-24 truncate text-right shrink-0">{areaName}</span>
+        <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${STATUS_COLORS[ini.status] ?? STATUS_COLORS.pending}`}>
+          {STATUS_LABELS[ini.status] ?? ini.status}
+        </span>
+        <span className={`text-xs w-6 text-right shrink-0 ${PRIORITY_COLORS[ini.priority] ?? ''}`}>{ini.priority}</span>
+        <ProgressBar value={ini.progress ?? 0} />
+      </div>
+    );
+  };
+
+  const renderProject = (proj: Project) => {
+    const myInitiatives = initiatives.filter(i => i.parent_id === proj.id);
+    const isCollapsed = collapsed.has(proj.id);
+    const areaName = proj.area_id ? (areaMap.get(proj.area_id) ?? '—') : '—';
+
+    return (
+      <div key={proj.id}>
+        <div
+          className={`${rowBase} bg-slate-800/10 cursor-pointer`}
+          onClick={() => myInitiatives.length > 0 && toggleCollapse(proj.id)}
+        >
+          <span className="w-4 shrink-0 text-slate-500 flex items-center">
+            {myInitiatives.length > 0
+              ? (isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)
+              : <span className="w-3.5 h-3.5 block" />}
+          </span>
+          <div className="flex-1 min-w-0 truncate text-gray-100 font-medium">{proj.name}</div>
+          <span className="text-xs text-slate-500 w-24 truncate text-right shrink-0">{areaName}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${STATUS_COLORS[proj.status] ?? STATUS_COLORS.pending}`}>
+            {STATUS_LABELS[proj.status] ?? proj.status}
+          </span>
+          <span className={`text-xs w-6 text-right shrink-0 ${PRIORITY_COLORS[proj.priority] ?? ''}`}>{proj.priority}</span>
+          <ProgressBar value={proj.progress ?? 0} />
+        </div>
+
+        {!isCollapsed && myInitiatives.map(ini => renderInitiative(ini))}
+      </div>
+    );
+  };
+
+  // 无父项目的 initiatives（孤立）
+  const projectIds = new Set(parentProjects.map(p => p.id));
+  const orphanInitiatives = initiatives.filter(i => !i.parent_id || !projectIds.has(i.parent_id));
+
   return (
-    <DatabaseView
-      data={rows}
-      columns={columns}
-      onUpdate={handleUpdate}
-      loading={loading}
-      defaultView="table"
-      stateKey="initiatives"
-      stats={{ total: rows.length, byStatus: {
-        active: rows.filter(r => r.status === 'active').length || undefined,
-        in_progress: rows.filter(r => r.status === 'in_progress').length || undefined,
-      }}}
-      boardGroupField="status"
-    />
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* 表头 */}
+      <div className="flex items-center gap-3 px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-800 bg-slate-900/50">
+        <span className="w-4 shrink-0" />
+        <span className="flex-1">项目名称</span>
+        <span className="w-24 text-right">Area</span>
+        <span className="w-16 text-right">状态</span>
+        <span className="w-6 text-right">P</span>
+        <span className="w-24 text-right">进度</span>
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        {parentProjects.map(proj => renderProject(proj))}
+
+        {orphanInitiatives.length > 0 && (
+          <>
+            <div className="px-4 py-2 text-xs text-slate-600 uppercase tracking-wider border-b border-slate-800 bg-slate-900/30">
+              独立 Initiatives（未关联 Project）
+            </div>
+            {orphanInitiatives.map(ini => renderInitiative(ini))}
+          </>
+        )}
+
+        {projects.length === 0 && (
+          <div className="flex items-center justify-center h-24 text-slate-500 text-sm">暂无 Project 数据</div>
+        )}
+      </div>
+
+      <div className="shrink-0 px-4 py-2 text-xs text-slate-600 border-t border-slate-800 flex items-center gap-4">
+        <span>{parentProjects.length} 个 Project</span>
+        <span>{initiatives.length} 个 Initiative</span>
+        <span>{initiatives.filter(i => i.status === 'in_progress' || i.status === 'active').length} 个活跃</span>
+      </div>
+    </div>
   );
 }
