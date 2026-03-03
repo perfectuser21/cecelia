@@ -30,15 +30,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+      - name: Detect changed paths
         id: filter
-        with:
-          base: ${{ github.event_name == 'workflow_dispatch' && 'main' || '' }}
-          filters: |
-            brain:
-              - 'packages/brain/**'
-              - 'DEFINITION.md'
-              - '.brain-versions'
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            # workflow_dispatch 无法确定 diff，直接视为有 brain 变更
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only origin/main...HEAD | grep -qE '^(packages/brain/|DEFINITION\.md|\.brain-versions)'; then
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "brain=false" >> "$GITHUB_OUTPUT"
+          fi
 
   version-check:
     needs: changes
