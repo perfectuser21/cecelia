@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, AlertCircle, Zap } from 'lucide-react';
+import { Brain, ChevronDown, Check, RefreshCw, AlertCircle, Zap, CheckCircle, XCircle } from 'lucide-react';
 import {
   fetchBrainProfile,
   fetchBrainModels,
@@ -24,6 +24,29 @@ const TIER_COLORS: Record<string, string> = {
   standard: 'bg-indigo-400',
   fast:     'bg-emerald-400',
 };
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+
+interface ToastProps {
+  message: string;
+  ok: boolean;
+}
+
+function Toast({ message, ok }: ToastProps) {
+  return (
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-all ${
+      ok
+        ? 'bg-emerald-500/[0.12] border-emerald-500/25 text-emerald-300'
+        : 'bg-red-500/[0.12] border-red-500/25 text-red-300'
+    }`}>
+      {ok
+        ? <CheckCircle size={13} className="text-emerald-400 shrink-0" />
+        : <XCircle size={13} className="text-red-400 shrink-0" />
+      }
+      {message}
+    </div>
+  );
+}
 
 // ── ModelDropdown ────────────────────────────────────────────────────────
 
@@ -114,6 +137,8 @@ interface LayerRowProps {
   layer: LayerDef;
   allModels: ModelEntry[];
   onSave: (layerId: string, modelId: string, provider: string) => Promise<void>;
+  onSuccess: (agentName: string, modelId: string, provider: string) => void;
+  onError: (agentName: string, message: string) => void;
 }
 
 // 从 model ID 推断自然 provider
@@ -172,12 +197,11 @@ function ProviderToggle({ modelId, provider, saving, onChange }: ProviderToggleP
   );
 }
 
-function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
+function LayerRow({ layer, allModels, onSave, onSuccess, onError }: LayerRowProps) {
   const [model, setModel] = useState(layer.currentModel);
   const [provider, setProvider] = useState(layer.currentProvider);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     setModel(layer.currentModel);
@@ -188,15 +212,15 @@ function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
 
   async function doSave(modelId: string, newProvider: string) {
     setSaving(true);
-    setError('');
     try {
       await onSave(layer.id, modelId, newProvider);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      onSuccess(layer.name, modelId, newProvider);
     } catch (e: any) {
-      setError(e.message || '保存失败');
       setModel(layer.currentModel);
       setProvider(layer.currentProvider);
+      onError(layer.name, e.message || '保存失败');
     } finally {
       setSaving(false);
     }
@@ -221,12 +245,6 @@ function LayerRow({ layer, allModels, onSave }: LayerRowProps) {
       <div className="flex-1 min-w-0">
         <span className="text-[13px] font-medium text-slate-200">{layer.name}</span>
         <div className="text-[11px] text-white/30 mt-px">{layer.description}</div>
-        {error && (
-          <div className="flex items-center gap-1 mt-1">
-            <AlertCircle size={10} className="text-red-400" />
-            <span className="text-[10px] text-red-400">{error}</span>
-          </div>
-        )}
       </div>
       <ProviderToggle
         modelId={model}
@@ -255,11 +273,15 @@ const MOUTH_OPTIONS = [
   { label: '无头 · Sonnet', model: 'claude-sonnet-4-6',         provider: 'anthropic',     desc: '~15s · 高质量 · Max订阅' },
 ] as const;
 
-function MouthModeSelector() {
+interface MouthModeSelectorProps {
+  onSuccess: (agentName: string, modelId: string, provider: string) => void;
+  onError: (agentName: string, message: string) => void;
+}
+
+function MouthModeSelector({ onSuccess, onError }: MouthModeSelectorProps) {
   const [current, setCurrent] = useState<{ model: string | null; provider: string | null }>({ model: null, provider: null });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     fetchMouthConfig().then(setCurrent);
@@ -271,14 +293,14 @@ function MouthModeSelector() {
   async function handleSelect(opt: typeof MOUTH_OPTIONS[number]) {
     if (isActive(opt) || saving) return;
     setSaving(true);
-    setError('');
     try {
       await updateMouthConfig(opt.model, opt.provider);
       setCurrent({ model: opt.model, provider: opt.provider });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      onSuccess('嘴巴', opt.model, opt.provider);
     } catch (e: any) {
-      setError(e.message || '更新失败');
+      onError('嘴巴', e.message || '更新失败');
     } finally {
       setSaving(false);
     }
@@ -324,12 +346,6 @@ function MouthModeSelector() {
             );
           })}
         </div>
-        {error && (
-          <div className="flex items-center gap-1 mt-1.5">
-            <AlertCircle size={10} className="text-red-400" />
-            <span className="text-[10px] text-red-400">{error}</span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -337,13 +353,26 @@ function MouthModeSelector() {
 
 // ── BrainLayerConfig ─────────────────────────────────────────────────────
 
-const REFLECTION_FALLBACK = 'claude-opus-4-6';
-
 export default function BrainLayerConfig() {
   const [profile, setProfile] = useState<BrainProfile | null>(null);
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [agents, setAgents] = useState<BrainAgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string; ok: boolean } | null>(null);
+
+  const showToast = useCallback((message: string, ok: boolean) => {
+    setToast({ message, ok });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const handleSuccess = useCallback((agentName: string, _modelId: string, provider: string) => {
+    const modeLabel = provider === 'anthropic-api' ? 'API 直连' : '无头模式';
+    showToast(`${agentName} 已切换 → ${modeLabel}`, true);
+  }, [showToast]);
+
+  const handleError = useCallback((agentName: string, message: string) => {
+    showToast(`${agentName} 切换失败：${message}`, false);
+  }, [showToast]);
 
   const loadData = useCallback(async () => {
     try {
@@ -387,53 +416,20 @@ export default function BrainLayerConfig() {
     );
   }
 
-  function agentModels(id: string, fallback: string[]): string[] {
-    return agents.find(a => a.id === id)?.allowed_models || fallback;
-  }
-
   const cfg = profile.config as any;
-  const layers: LayerDef[] = [
-    {
-      id: 'thalamus',
-      name: 'L1 丘脑',
-      description: '事件路由 · 快速判断',
-      allowed_models: agentModels('thalamus', ['MiniMax-M2.5-highspeed', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-6']),
-      currentModel: cfg.thalamus?.model || 'MiniMax-M2.5-highspeed',
-      currentProvider: cfg.thalamus?.provider || naturalProviderForModel(cfg.thalamus?.model || 'MiniMax-M2.5-highspeed'),
-    },
-    {
-      id: 'cortex',
-      name: 'L2 皮层',
-      description: '深度分析 · RCA · 战略调整',
-      allowed_models: agentModels('cortex', ['claude-opus-4-6', 'claude-sonnet-4-6']),
-      currentModel: cfg.cortex?.model || 'claude-opus-4-6',
-      currentProvider: cfg.cortex?.provider || naturalProviderForModel(cfg.cortex?.model || 'claude-opus-4-6'),
-    },
-    {
-      id: 'reflection',
-      name: 'L3 反思层',
-      description: '定期深度反思 · 生成洞察',
-      allowed_models: agentModels('reflection', ['claude-opus-4-6', 'claude-sonnet-4-6']),
-      currentModel: cfg.reflection?.model || REFLECTION_FALLBACK,
-      currentProvider: cfg.reflection?.provider || naturalProviderForModel(cfg.reflection?.model || REFLECTION_FALLBACK),
-    },
-    {
-      id: 'memory',
-      name: '记忆打分',
-      description: '为感知观察打重要性分（批量）',
-      allowed_models: agentModels('memory', ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.5']),
-      currentModel: cfg.memory?.model || 'claude-haiku-4-5-20251001',
-      currentProvider: cfg.memory?.provider || naturalProviderForModel(cfg.memory?.model || 'claude-haiku-4-5-20251001'),
-    },
-    {
-      id: 'rumination',
-      name: '反刍消化',
-      description: '深度思考 · 模式发现 · 跨知识关联',
-      allowed_models: agentModels('rumination', ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']),
-      currentModel: cfg.rumination?.model || 'claude-opus-4-6',
-      currentProvider: cfg.rumination?.provider || naturalProviderForModel(cfg.rumination?.model || 'claude-opus-4-6'),
-    },
-  ];
+
+  // 从 API agents 动态生成 layers，不再硬编码
+  // 过滤 brain 层且排除 mouth（mouth 有独立的 MouthModeSelector）
+  const layers: LayerDef[] = agents
+    .filter(a => a.layer === 'brain' && a.id !== 'mouth')
+    .map(a => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      allowed_models: a.allowed_models,
+      currentModel: (cfg[a.id] as any)?.model || a.recommended_model,
+      currentProvider: (cfg[a.id] as any)?.provider || naturalProviderForModel((cfg[a.id] as any)?.model || a.recommended_model),
+    }));
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 mb-6">
@@ -455,12 +451,26 @@ export default function BrainLayerConfig() {
         )}
       </div>
 
+      {/* Toast */}
+      {toast && (
+        <div className="mb-3">
+          <Toast message={toast.message} ok={toast.ok} />
+        </div>
+      )}
+
       {/* Layers */}
       <div className="flex flex-col gap-1.5 mb-4">
         {layers.map(layer => (
-          <LayerRow key={layer.id} layer={layer} allModels={models} onSave={handleSave} />
+          <LayerRow
+            key={layer.id}
+            layer={layer}
+            allModels={models}
+            onSave={handleSave}
+            onSuccess={handleSuccess}
+            onError={handleError}
+          />
         ))}
-        <MouthModeSelector />
+        <MouthModeSelector onSuccess={handleSuccess} onError={handleError} />
       </div>
 
       {/* Legend */}
