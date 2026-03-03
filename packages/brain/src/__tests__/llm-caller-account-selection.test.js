@@ -111,3 +111,55 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     expect(requestBody.configDir).toBeUndefined();
   });
 });
+
+describe('llm-caller 图片视觉支持（VB 系列）', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // 有图片时走 anthropic-api（直连），返回标准 Anthropic API 格式
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        content: [{ type: 'text', text: '我看到了一张图片' }],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      }),
+      text: async () => JSON.stringify({ ok: true, text: '测试回复' }),
+    });
+    const { getActiveProfile } = await import('../model-profile.js');
+    getActiveProfile.mockReturnValue({
+      config: {
+        mouth: { model: 'claude-sonnet-4-6', provider: 'anthropic' },
+      },
+    });
+    mockSelectBestAccount.mockResolvedValue({ accountId: 'account1', model: 'claude-sonnet-4-6' });
+  });
+
+  it('VB1: imageContent 存在 + provider=anthropic → 调用 anthropic-api 直连（非 bridge）', async () => {
+    const imageContent = [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' } }];
+
+    await callLLM('mouth', '这张图片是什么？', { imageContent });
+
+    expect(mockFetch).toHaveBeenCalled();
+    const calledUrl = mockFetch.mock.calls[0][0];
+    // 应该调用 Anthropic 直连 API（非 bridge localhost）
+    expect(calledUrl).toContain('api.anthropic.com');
+    expect(calledUrl).not.toContain('localhost');
+  });
+
+  it('VB2: 无 imageContent + provider=anthropic → 调用 bridge（原有逻辑不破坏）', async () => {
+    // 无图片时走 bridge，bridge 返回格式
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, text: '纯文字回复' }),
+      text: async () => JSON.stringify({ ok: true, text: '纯文字回复' }),
+    });
+
+    await callLLM('mouth', '你好，世界！');
+
+    expect(mockFetch).toHaveBeenCalled();
+    const calledUrl = mockFetch.mock.calls[0][0];
+    // 应该走 bridge（localhost）
+    expect(calledUrl).toContain('localhost');
+    expect(calledUrl).not.toContain('api.anthropic.com');
+  });
+});
