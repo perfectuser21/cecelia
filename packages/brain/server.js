@@ -11,6 +11,7 @@ import vpsMonitorRoutes from './src/routes/vps-monitor.js';
 import taskProjectsRoutes from './src/routes/task-projects.js';
 import taskGoalsRoutes from './src/routes/task-goals.js';
 import taskAreasRoutes from './src/routes/task-areas.js';
+import taskTasksRoutes from './src/routes/task-tasks.js';
 import innerLifeRoutes from './src/routes/inner-life.js';
 import intentMatchRoutes from './src/routes/intent-match.js';
 import selfReportsRoutes from './src/routes/self-reports.js';
@@ -90,6 +91,7 @@ app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
 app.use('/api/brain/tasks/goals', taskGoalsRoutes);
 app.use('/api/brain/tasks/areas', taskAreasRoutes);
+app.use('/api/brain/tasks/tasks', taskTasksRoutes);
 app.use('/api/brain/inner-life', innerLifeRoutes);
 app.use('/api/brain/intent', intentMatchRoutes);
 app.use('/api/brain/self-reports', selfReportsRoutes);

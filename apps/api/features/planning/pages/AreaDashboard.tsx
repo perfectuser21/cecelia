@@ -1,73 +1,128 @@
 /**
- * Area Dashboard - DatabaseView 展示 Area OKR 数据
+ * Area Dashboard — 展示 areas 表（生活/工作领域）
+ * 数据源: /api/tasks/areas + /api/tasks/projects（统计关联 project 数）
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { DatabaseView } from '../../shared/components/DatabaseView';
-import type { ColumnDef } from '../../shared/components/DatabaseView/types';
 
-interface Goal { id: string; title: string; status: string; priority: string; progress: number; type: string; parent_id: string | null; }
-interface AreaRow { id: string; title: string; priority: string; status: string; progress: number; krCount: number; activeKrCount: number; }
+import { useState, useEffect, useCallback } from 'react';
+import { Layers, Briefcase, BookOpen, Heart, Settings } from 'lucide-react';
 
-const AREA_COLUMNS: ColumnDef[] = [
-  { id: "title", label: "Area 名称", type: "text", editable: true, sortable: true, width: 300 },
-  { id: "priority", label: "Priority", type: "badge", editable: true, filterable: true, width: 90, options: [
-    { value: "P0", label: "P0", color: "red" }, { value: "P1", label: "P1", color: "amber" }, { value: "P2", label: "P2", color: "gray" },
-  ]},
-  { id: "status", label: "Status", type: "select", editable: true, filterable: true, width: 120, options: [
-    { value: "in_progress", label: "进行中" }, { value: "planning", label: "规划中" },
-    { value: "completed", label: "已完成" }, { value: "inactive", label: "暂停" }, { value: "pending", label: "待开始" },
-  ]},
-  { id: "progress", label: "Progress", type: "progress", editable: true, sortable: true, width: 150 },
-  { id: "krCount", label: "KR 数", type: "number", sortable: true, width: 80 },
-  { id: "activeKrCount", label: "进行中 KR", type: "number", sortable: true, width: 100 },
-];
+interface Area {
+  id: string;
+  name: string;
+  domain: string | null;
+  archived: boolean;
+}
+
+interface Project {
+  id: string;
+  area_id: string | null;
+  type: string;
+}
+
+type DomainMeta = { label: string; color: string; bg: string; Icon: React.ComponentType<{className?: string}> };
+
+const DOMAIN_META: Record<string, DomainMeta> = {
+  Work:   { label: '工作', color: 'text-blue-400',   bg: 'bg-blue-500/10',   Icon: Briefcase },
+  Study:  { label: '学习', color: 'text-purple-400', bg: 'bg-purple-500/10', Icon: BookOpen },
+  Life:   { label: '生活', color: 'text-green-400',  bg: 'bg-green-500/10',  Icon: Heart },
+  System: { label: '系统', color: 'text-slate-400',  bg: 'bg-slate-500/10',  Icon: Settings },
+};
 
 export default function AreaDashboard() {
-  const [goals, setGoals] = useState<Goal[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [projectCounts, setProjectCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/tasks/goals");
-      const data = await res.json();
-      setGoals(Array.isArray(data) ? data : []);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+      const [areasRes, projectsRes] = await Promise.all([
+        fetch('/api/tasks/areas'),
+        fetch('/api/tasks/projects?limit=2000'),
+      ]);
+      const areaList: Area[] = areasRes.ok ? await areasRes.json() : [];
+      const projectList: Project[] = projectsRes.ok ? await projectsRes.json() : [];
+
+      setAreas(areaList);
+
+      // 统计每个 area 下的 project 数量
+      const counts: Record<string, number> = {};
+      projectList.filter(p => p.type === 'project' && p.area_id).forEach(p => {
+        counts[p.area_id!] = (counts[p.area_id!] ?? 0) + 1;
+      });
+      setProjectCounts(counts);
+    } catch {
+      setAreas([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const rows = useMemo((): AreaRow[] => {
-    const areas = goals.filter((g) => g.type === "area_okr");
-    const krs = goals.filter((g) => g.type === "kr");
-    return areas.map((area) => {
-      const areaKRs = krs.filter((k) => k.parent_id === area.id);
-      return {
-        id: area.id, title: area.title, priority: area.priority, status: area.status,
-        progress: area.progress ?? 0, krCount: areaKRs.length,
-        activeKrCount: areaKRs.filter((k) => k.status === "in_progress").length,
-      };
-    });
-  }, [goals]);
+  // 按 domain 分组
+  const grouped = areas.reduce<Record<string, Area[]>>((acc, a) => {
+    const d = a.domain ?? 'Other';
+    if (!acc[d]) acc[d] = [];
+    acc[d].push(a);
+    return acc;
+  }, {});
 
-  const stats = useMemo(() => ({
-    total: rows.length, byStatus: { in_progress: rows.filter((r) => r.status === "in_progress").length },
-  }), [rows]);
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        加载中…
+      </div>
+    );
+  }
 
-  const handleUpdate = useCallback(async (id: string, field: string, value: unknown) => {
-    if (field === "krCount" || field === "activeKrCount") return;
-    await fetch(`/api/tasks/goals/${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [field]: value }),
-    });
-    fetchData();
-  }, [fetchData]);
+  if (areas.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        暂无 Area 数据
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <DatabaseView data={rows} columns={AREA_COLUMNS} onUpdate={handleUpdate}
-        loading={loading} stats={stats} defaultView="table" stateKey="areas" />
+    <div className="h-full overflow-auto p-6">
+      <div className="max-w-4xl mx-auto space-y-6">
+        {Object.entries(grouped).map(([domain, domainAreas]) => {
+          const meta: DomainMeta = DOMAIN_META[domain] ?? { label: domain, color: 'text-slate-400', bg: 'bg-slate-500/10', Icon: Layers };
+          const { Icon } = meta;
+          return (
+            <div key={domain}>
+              <div className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-3 ${meta.color}`}>
+                <Icon className="w-3.5 h-3.5" />
+                {meta.label}
+                <span className="text-slate-600 normal-case font-normal ml-1">{domain}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {domainAreas.map(area => {
+                  const projCount = projectCounts[area.id] ?? 0;
+                  return (
+                    <div
+                      key={area.id}
+                      className={`rounded-lg border border-slate-700/60 p-4 hover:border-slate-600 transition-colors cursor-default ${meta.bg}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Icon className={`w-4 h-4 shrink-0 ${meta.color}`} />
+                          <span className="text-sm font-medium text-gray-200 truncate">{area.name}</span>
+                        </div>
+                        {projCount > 0 && (
+                          <span className="text-xs text-slate-400 shrink-0">{projCount} Projects</span>
+                        )}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-500">{domain}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
