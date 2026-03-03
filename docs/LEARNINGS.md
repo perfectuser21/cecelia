@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] cecelia-run 纳入 repo + PR 合并后自动部署闭环（PR #339, Brain v1.163.2）
+
+**问题根因**：无头 /dev 任务经常因超轮次（`error_max_turns`，31 turns）无法跑到 Step 11 cleanup，导致 PR 合并后 Brain 容器没有重新部署，旧版代码一直运行。每次 PR 合并后都要手动重启。
+
+**关键洞察**：
+1. `cecelia-run` 是宿主机脚本，不在 repo 里，Brain 部署不会更新它。
+2. 部署触发挂在 `cleanup.sh [2.5]` 是错误的——任何提前退出都会跳过 cleanup。
+3. **git diff 时机窗口**：在 `send_webhook` 之前，worktree 还未 `git fetch`，本地 `origin/main` 仍指合并前状态，此时 `git diff origin/main..HEAD` 能正确列出本次 PR 改动文件。这是关键的时机窗口，错过（fetch 之后）就没法知道改了什么。
+
+**解法**：
+- `cecelia-run.sh` 纳入 repo（`packages/brain/scripts/`），dev 任务 exit_code=0 时在时机窗口捕获改动文件，`setsid` fire-and-forget 触发 `deploy-local.sh`。
+- `brain-deploy.sh` 健康检查通过后自动 copy `cecelia-run.sh` 到 `/home/xx/bin/cecelia-run`，自我修复闭环。
+
+**铁律**：凡是"有且仅有一个触发点"的自动化，触发点必须尽量靠近"事件发生处"（exit_code=0），不能依赖后续流程能跑完。
+
 ### [2026-03-03] migration 约束遗漏旧状态值（PR #337, Brain v1.163.1）
 
 **根本原因**：migration 103 重建 desires_status_check 约束时，只考虑了"我们需要加的新状态"（completed/failed），没有先查数据库里实际存在哪些状态值。数据库中有 `expressed`（941行）和 `acknowledged`（1行）是历史状态，约束里漏了它们，migration 一执行就直接失败，Brain 无法启动。
