@@ -608,13 +608,15 @@ describe('D10: Reflection 去重机制', () => {
     let accumulatorResetCount = 0;
     const mockPool = {
       query: vi.fn().mockImplementation((sql, params) => {
-        // 返回 accumulator 值
+        // 返回 accumulator 值（SELECT 时 key 内联在 SQL 字符串里）
         if (sql.includes('desire_importance_accumulator')) {
-          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
-            accumulatorResetCount++;
-            return { rows: [] };
-          }
           return { rows: [{ value_json: 15 }] };
+        }
+
+        // accumulator 重置（INSERT INTO working_memory，key 作为参数 $1）
+        if (sql.includes('working_memory') && (sql.includes('INSERT') || sql.includes('UPDATE')) && params && params[0] === 'desire_importance_accumulator') {
+          accumulatorResetCount++;
+          return { rows: [] };
         }
 
         // 返回最近 50 条记忆（reflection 的第一步）
