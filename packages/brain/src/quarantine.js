@@ -26,7 +26,7 @@ import { emit } from './event-bus.js';
 // ============================================================
 
 // 失败次数阈值：超过此次数自动隔离
-const FAILURE_THRESHOLD = 3;
+const FAILURE_THRESHOLD = 7;
 
 // 任务最大 PRD 长度（字符）：超过视为可疑
 const MAX_PRD_LENGTH = 50000;
@@ -455,19 +455,33 @@ async function getQuarantineStats() {
 
 /**
  * 检查任务是否应该被隔离（基于失败次数）
+ * Fix 1: 区分"卡住"和"正常多轮迭代"
+ * - initiative_plan 类任务：容忍更多失败（FAILURE_THRESHOLD * 2）
+ * - 其他任务：使用标准阈值 FAILURE_THRESHOLD
+ *
  * @param {Object} task - 任务对象
  * @returns {{ shouldQuarantine: boolean, reason?: string, details?: Object }}
  */
 function shouldQuarantineOnFailure(task) {
   const failureCount = (task.payload?.failure_count || 0) + 1;
 
-  if (failureCount >= FAILURE_THRESHOLD) {
+  // 根据任务类型确定阈值
+  let threshold = FAILURE_THRESHOLD;
+  const taskType = task.task_type || task.payload?.task_type || '';
+
+  // initiative_plan 类任务允许更多轮迭代（规划/分析任务正常需要多轮调整）
+  if (taskType.includes('initiative_plan') || taskType.includes('planning') || taskType.includes('analysis')) {
+    threshold = FAILURE_THRESHOLD * 2;  // 双倍容忍度（14 次）
+  }
+
+  if (failureCount >= threshold) {
     return {
       shouldQuarantine: true,
       reason: QUARANTINE_REASONS.REPEATED_FAILURE,
       details: {
         failure_count: failureCount,
-        threshold: FAILURE_THRESHOLD,
+        threshold,
+        task_type: taskType,
         last_error: task.payload?.error_details || 'Unknown',
       },
     };
@@ -897,10 +911,10 @@ async function checkExpiredQuarantineTasks() {
     // 动态导入 alertness 模块（避免循环依赖）
     const { getCurrentAlertness, ALERTNESS_LEVELS } = await import('./alertness/index.js');
 
-    // 检查 Alertness 状态：ALERT/PANIC 时不释放
+    // 检查 Alertness 状态：只有 PANIC 时才阻止所有释放
     const currentAlertness = getCurrentAlertness();
-    if (currentAlertness.level >= ALERTNESS_LEVELS.ALERT) {
-      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.levelName} (>=ALERT)`);
+    if (currentAlertness.level >= ALERTNESS_LEVELS.PANIC) {
+      console.log(`[quarantine] Skip auto-release: Alertness=${currentAlertness.levelName} (>=PANIC)`);
       return [];
     }
 
