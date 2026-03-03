@@ -1699,27 +1699,33 @@ fi
 
 ---
 
-## Notion 同步 CHECK 约束 + areas description 列陷阱（2026-03-03，PR #428/#433/#435）
+## Notion 同步 CHECK 约束 + areas description 列陷阱（2026-03-03，PR #428/#433）
 
 ### 背景
-PR #423 实现 Notion 4 表双向同步，PR #428 修复 ON CONFLICT UNIQUE 约束缺失，PR #433 修复 CHECK 约束（migration 114），PR #435 修复 areas description 列。
+PR #423 实现 Notion 4 表双向同步，PR #428 修复 ON CONFLICT UNIQUE 约束缺失。
+PR #433 修复两个新发现的 CHECK 约束问题（migration 114）。
 
-### Bug 1 — tasks_task_type_check 缺少 notion_synced（PR #433）
+### Bug 1 — tasks_task_type_check 缺少 notion_synced
 
-**根因**：notion-full-sync.js 的 upsertTask 用 `task_type='notion_synced'`，但约束没有该值。
+**根因**：notion-full-sync.js 的 upsertTask 用 `task_type='notion_synced'`，但 migration 091 的 CHECK 约束没有该值。
+
 **修复**：migration 114 DROP + ADD CONSTRAINT，加入 `notion_synced`。
 
-### Bug 2 — goals_type_check 违反约束（PR #433）
+### Bug 2 — goals_type_check 违反约束
 
-**根因**：upsertGoal INSERT 没有指定 `type`，使用 DEFAULT `'objective'` 违反约束（只允许 global_okr/global_kr/area_okr/area_kr/kr）。
-**修复**：显式指定 `type='kr'`。
+**根因**：upsertGoal INSERT 没有指定 `type`，使用 DEFAULT `'objective'`，但约束只允许 `('global_okr', 'global_kr', 'area_okr', 'area_kr', 'kr')`。
 
-### Bug 3 — notion-sync.js areas INSERT 包含不存在的 description 列（PR #435）
+**修复**：在 upsertGoal INSERT 中显式指定 `type='kr'`。
 
-**根因**：routes/notion-sync.js POST /run 调用的是 runSync()（notion-sync.js 的双向同步），其中 resolveAreaId() 包含 `INSERT INTO areas (name, description, ...)` 但 areas 表无 description 列。
-**修复**：移除 description，仅插入 name。
+### 陷阱 — migration 编号并行冲突
 
-### migration 编号并行冲突教训（PR #433）
+migration 113 被另一个 PR 占用（113_notion_memory_sync.sql），只有 merge 时才发现冲突。
 
-migration 编号被另一 PR 抢占，仅 merge 时发现。提 PR 前必须 `ls packages/brain/migrations/` 确认最高编号。
+**教训**：提 PR 前 `ls packages/brain/migrations/` 确认最高编号。重命名后同步 selfcheck.js + 3 个测试文件 + DEFINITION.md (2 处)。
+
+### 后发现的 Bug 3 — notion-sync.js::ensureAreaExists description 列不存在
+
+**根因**：旧的 notion-sync.js 的 ensureAreaExists 函数包含 `INSERT INTO areas (name, description, ...)`，但 areas 表没有 description 列。POST /api/brain/notion-sync/run 调用 runSync()（notion-sync.js），不是 runFullSync()（notion-full-sync.js）。
+
+**修复**：从 notion-sync.js 的 ensureAreaExists INSERT 移除 description 列。
 
