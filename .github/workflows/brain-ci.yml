@@ -23,19 +23,30 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            brain:
-              - 'packages/brain/**'
-              - 'DEFINITION.md'
-              - '.brain-versions'
+          fetch-depth: 0
+      - name: Detect brain changes
+        id: filter
+        run: |
+          # For pull_request: compare head with base branch
+          # For push/workflow_dispatch: compare with origin/main
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="origin/main"
+          fi
+          git fetch origin --depth=50 2>/dev/null || true
+          if git diff --name-only "$BASE"..HEAD 2>/dev/null | grep -qE '^(packages/brain/|DEFINITION\.md|\.brain-versions)'; then
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+            echo "Brain changes detected"
+          else
+            echo "brain=false" >> "$GITHUB_OUTPUT"
+            echo "No brain changes detected"
+          fi
 
   version-check:
     needs: changes
