@@ -434,29 +434,36 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install yq
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           YQ_VERSION="v4.44.3"
           YQ_BINARY="yq_linux_amd64"
 
-          # Download pinned version (not /latest/ — avoids supply chain risk)
-          sudo wget -qO /usr/local/bin/yq \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+          # Use gh CLI (token-authed) to download — avoids CDN rate limiting on unauthenticated wget
+          gh release download "$YQ_VERSION" \
+            --repo mikefarah/yq \
+            --pattern "$YQ_BINARY" \
+            --output /tmp/yq_binary
 
           # Download checksums from same pinned release and verify
-          wget -qO /tmp/yq_checksums.txt \
-            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_checksums.txt"
+          gh release download "$YQ_VERSION" \
+            --repo mikefarah/yq \
+            --pattern "yq_checksums.txt" \
+            --output /tmp/yq_checksums.txt
 
           EXPECTED=$(grep "^[a-f0-9]*  ${YQ_BINARY}$" /tmp/yq_checksums.txt | awk '{print $1}')
           if [ -z "$EXPECTED" ]; then
             echo "ERROR: could not find hash for ${YQ_BINARY} in checksums"
             exit 1
           fi
-          ACTUAL=$(sha256sum /usr/local/bin/yq | awk '{print $1}')
+          ACTUAL=$(sha256sum /tmp/yq_binary | awk '{print $1}')
           if [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "ERROR: hash mismatch — expected=$EXPECTED actual=$ACTUAL"
             exit 1
           fi
 
+          sudo mv /tmp/yq_binary /usr/local/bin/yq
           sudo chmod +x /usr/local/bin/yq
           echo "yq ${YQ_VERSION} installed and verified (sha256: ${ACTUAL})"
           yq --version
