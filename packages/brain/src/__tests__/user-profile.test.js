@@ -290,4 +290,50 @@ describe('extractAndSaveUserFacts', () => {
     );
     expect(behaviorCall).toBeDefined();
   });
+
+  it('D3: Cecelia/AI 名字不被存入用户 facts', async () => {
+    mockFetch.mockReset();
+    mockPool.query.mockReset();
+    _setApiKeyForTest('sk-test');
+
+    // MiniMax 错误地提取了 Cecelia 作为用户名字
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"display_name": "Cecelia"}' } }],
+      }),
+    });
+
+    await extractAndSaveUserFacts(
+      mockPool,
+      'owner',
+      [{ role: 'user', content: '你叫什么名字' }],
+      '我叫 Cecelia'
+    );
+
+    // facts 全部被过滤掉，不应有任何 DB 调用
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('D4: Cecelia 大小写变体同样被过滤', async () => {
+    mockFetch.mockReset();
+    mockPool.query.mockReset();
+    _setApiKeyForTest('sk-test');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"display_name": "CECELIA"}' } }],
+      }),
+    });
+
+    await extractAndSaveUserFacts(
+      mockPool,
+      'owner',
+      [{ role: 'user', content: '你叫什么' }],
+      '我是 Cecelia'
+    );
+
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
 });
