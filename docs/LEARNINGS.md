@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] migration 约束遗漏旧状态值（PR #337, Brain v1.163.1）
+
+**根本原因**：migration 103 重建 desires_status_check 约束时，只考虑了"我们需要加的新状态"（completed/failed），没有先查数据库里实际存在哪些状态值。数据库中有 `expressed`（941行）和 `acknowledged`（1行）是历史状态，约束里漏了它们，migration 一执行就直接失败，Brain 无法启动。
+
+**正确流程**：写 ALTER TABLE ... ADD CONSTRAINT ... CHECK 之前，**必须先查 `SELECT DISTINCT status FROM <table>`**，把所有现存状态值全部包含进新约束。这是修改已有表约束的铁律。
+
+**brain-build.sh 是构建入口（CRITICAL）**：修复期间发现，直接用 `docker build -t cecelia-brain:latest packages/brain/` 不能用于正常更新——因为 docker-compose.yml 使用 `cecelia-brain:${BRAIN_VERSION:-latest}` 镜像标签，而 compose 里没有 build 配置，必须用 **`bash scripts/brain-build.sh`** 才能正确构建并打标签 `cecelia-brain:latest` 和 `cecelia-brain:<version>`。`docker compose build` 在这里不可用（compose 里没有 build 字段）。
+
+**DoD 避坑（`echo ok` 是禁止词）**：DoD Test 字段末尾加 `&& echo ok` 会被 detectFakeTest 拦截报错"禁止使用 echo 假测试"。测试命令应直接用 grep/python3 等工具的自然退出码，不需要额外 echo。
+
 ### [2026-03-03] 每日合并循环（PR #334, Brain v1.163.0）
 
 **背景**：Cecelia 有 memory_stream、learnings、tasks 三类当日数据，但每天结束时没有任何综合机制——碎片记忆永远是碎片，self-model 得不到当日洞察的滋养。P1 目标：实现每日一次的夜间综合，把今日数据→情节记忆 + self-model 演化。
