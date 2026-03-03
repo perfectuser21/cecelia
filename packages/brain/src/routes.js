@@ -2813,6 +2813,22 @@ router.post('/execution-callback', async (req, res) => {
       await cbSuccess('cecelia-run');
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
 
+      // 主动沟通：用 LLM 组织语言，发飞书告知 Alex 任务完成（fire-and-forget）
+      Promise.resolve().then(async () => {
+        const { notifyTaskCompletion } = await import('./proactive-mouth.js');
+        const { callLLM } = await import('./llm-caller.js');
+        const taskRow = await pool.query('SELECT title, task_type FROM tasks WHERE id = $1', [task_id]);
+        if (taskRow.rows[0]) {
+          await notifyTaskCompletion(pool, callLLM, {
+            id: task_id,
+            title: taskRow.rows[0].title,
+            task_type: taskRow.rows[0].task_type,
+            duration_ms,
+            pr_url
+          });
+        }
+      }).catch(() => {});
+
       // Publish WebSocket event: task completed
       publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
 

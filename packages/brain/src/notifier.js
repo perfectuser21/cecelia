@@ -1,50 +1,105 @@
 /**
- * Notifier - Feishu webhook push for Cecelia events
+ * Notifier - Feishu push for Cecelia events
  *
- * Sends notifications to Feishu bot webhook for key events:
- * - Task completed / failed
- * - Circuit breaker triggered
- * - Daily summary (called externally)
+ * 双渠道发送策略：
+ * 1. FEISHU_BOT_WEBHOOK 已配置 → 走群机器人 Webhook
+ * 2. 未配置 → 降级到 Open API 发私信给 Alex（FEISHU_APP_ID + FEISHU_APP_SECRET）
  *
  * Errors are caught and logged - never breaks main flow.
  */
 
 const FEISHU_WEBHOOK_URL = process.env.FEISHU_BOT_WEBHOOK || '';
+const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+
+// Alex 的 open_id：从 FEISHU_OWNER_OPEN_IDS 取第一个（逗号分隔），或空
+const FEISHU_ALEX_OPEN_ID = (process.env.FEISHU_OWNER_OPEN_IDS || '').split(',')[0].trim() || '';
 
 // Rate limiting: max 1 message per event type per 60 seconds
 const _lastSent = new Map();
 const RATE_LIMIT_MS = 60 * 1000;
 
 /**
- * Send a message to Feishu bot webhook
- * @param {string} text - Message content (supports markdown)
- * @returns {Promise<boolean>} - Whether the message was sent
+ * 通过飞书 Open API 发私信给 Alex
+ * @param {string} text
+ * @returns {Promise<boolean>}
  */
-async function sendFeishu(text) {
-  if (!FEISHU_WEBHOOK_URL) {
-    console.log('[notifier] FEISHU_BOT_WEBHOOK not configured, skipping');
+async function sendFeishuOpenAPI(text) {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_ALEX_OPEN_ID) {
+    console.log('[notifier] Open API 凭据或 Alex open_id 未配置，跳过');
     return false;
   }
 
   try {
-    const resp = await fetch(FEISHU_WEBHOOK_URL, {
+    // 1. 获取 tenant_access_token
+    const authResp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        msg_type: 'text',
-        content: { text }
-      })
+      body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET }),
+      signal: AbortSignal.timeout(8000)
     });
-
-    if (!resp.ok) {
-      console.error(`[notifier] Feishu webhook returned ${resp.status}`);
+    const auth = await authResp.json();
+    if (auth.code !== 0) {
+      console.error('[notifier] 获取飞书 token 失败:', auth.msg);
       return false;
     }
+
+    // 2. 发私信
+    const sendResp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.tenant_access_token}`
+      },
+      body: JSON.stringify({
+        receive_id: FEISHU_ALEX_OPEN_ID,
+        msg_type: 'text',
+        content: JSON.stringify({ text })
+      }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const sendResult = await sendResp.json();
+    if (sendResult.code !== 0) {
+      console.error('[notifier] 飞书私信发送失败:', sendResult.msg);
+      return false;
+    }
+    console.log('[notifier] 飞书私信发送成功（Open API）');
     return true;
   } catch (err) {
-    console.error(`[notifier] Failed to send Feishu message:`, err.message);
+    console.error('[notifier] Open API 发送异常:', err.message);
     return false;
   }
+}
+
+/**
+ * Send a message to Feishu
+ * 优先走 Webhook；Webhook 未配置时降级到 Open API 私信给 Alex
+ * @param {string} text - Message content
+ * @returns {Promise<boolean>}
+ */
+async function sendFeishu(text) {
+  // 渠道 1：Webhook（群机器人）
+  if (FEISHU_WEBHOOK_URL) {
+    try {
+      const resp = await fetch(FEISHU_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg_type: 'text', content: { text } }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!resp.ok) {
+        console.error(`[notifier] Feishu webhook returned ${resp.status}`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[notifier] Webhook 发送失败:', err.message);
+      return false;
+    }
+  }
+
+  // 渠道 2：Open API 私信（降级）
+  return sendFeishuOpenAPI(text);
 }
 
 /**
