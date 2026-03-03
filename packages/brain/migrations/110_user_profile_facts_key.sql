@@ -1,4 +1,4 @@
--- migration 109: user_profile_facts — 添加 key + source 字段
+-- migration 110: user_profile_facts — 添加 key + source 字段
 -- key:    结构化 fact 的唯一键（'display_name', 'focus_area', 'preferred_style', 'raw.<k>'）
 --         手动添加的 facts key 为 NULL（不参与唯一约束）
 -- source: 来源标记，'auto'（LLM 自动提取）或 'manual'（用户手动添加）
@@ -14,5 +14,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profile_facts_user_key
   WHERE key IS NOT NULL;
 
 INSERT INTO schema_version (version, description)
-VALUES ('109', 'user_profile_facts — 添加 key + source 字段，部分唯一索引防重')
+VALUES ('110', 'user_profile_facts — 添加 key + source 字段，部分唯一索引防重')
 ON CONFLICT (version) DO NOTHING;
