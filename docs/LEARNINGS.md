@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 盲点风险评估文档生成（PR #436）
+
+**背景**：对 14 个知识盲点（10 对话 + 4 系统性）进行结构化风险评估，生成 3 个文档。
+
+**worktree 中文件路径问题**：在 worktree 中执行文档生成时，`Write` 工具使用了主仓库的绝对路径（如 `/home/xx/perfect21/cecelia/docs/`），导致文件写入了主仓库的工作树（main 分支），而非 worktree 分支。解决方式：写完后 `cp` 到 worktree 目录，再在 worktree 中 `git add` 提交。**正确做法**：文档生成时直接使用 worktree 的绝对路径（`/home/xx/perfect21/cecelia/.claude/worktrees/<id>/docs/`）。
+
+**风险评估规则实践**：14 个盲点按影响范围、暴露频率、修复复杂度、紧迫程度、自进化影响五维评估。最高优先级的"知识→行动转化断路"（盲点 C）是 Cecelia 自进化的根本障碍，影响范围 5，必须优先修复。
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
