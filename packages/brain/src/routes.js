@@ -2813,8 +2813,23 @@ router.post('/execution-callback', async (req, res) => {
       await cbSuccess('cecelia-run');
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
 
-      // 主动沟通：用 LLM 组织语言，发飞书告知 Alex 任务完成（fire-and-forget）
+      // 主动沟通：对话订阅模式 — 只有 Alex 问过的任务完成才发飞书通知（fire-and-forget）
+      //   触发条件：working_memory 中存在 task_interest:<task_id>（由 orchestrator-chat 在检测到任务询问时写入）
+      //   通知后删除订阅记录，避免重复
       Promise.resolve().then(async () => {
+        // 检查是否有对应任务的订阅
+        const interestRow = await pool.query(
+          `SELECT key FROM working_memory
+           WHERE key = $1
+             AND updated_at > NOW() - INTERVAL '48 hours'
+           LIMIT 1`,
+          [`task_interest:${task_id}`]
+        );
+        if (interestRow.rows.length === 0) {
+          console.log(`[execution-callback] 任务 ${task_id} 无订阅，跳过飞书通知`);
+          return;
+        }
+
         const { notifyTaskCompletion } = await import('./proactive-mouth.js');
         const { callLLM } = await import('./llm-caller.js');
         const taskRow = await pool.query('SELECT title, task_type FROM tasks WHERE id = $1', [task_id]);
@@ -2826,6 +2841,9 @@ router.post('/execution-callback', async (req, res) => {
             duration_ms,
             pr_url
           });
+          // 通知后删除订阅记录
+          await pool.query(`DELETE FROM working_memory WHERE key = $1`, [`task_interest:${task_id}`]);
+          console.log(`[execution-callback] 已通知 Alex 任务 ${task_id} 完成（对话订阅）`);
         }
       }).catch(() => {});
 
