@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 图片支持（飞书 + Dashboard）（PR #397, Brain v1.166.0）
+
+**核心功能**：① `llm-caller.js` 支持 `imageContent` 选项（多模态 content array）；② `routes.js` 飞书图片消息接收（`downloadFeishuImage` + base64 转换）；③ `orchestrator-chat.js` `handleChat` 支持 `imageContent` 第 4 参数；④ Dashboard `ConsciousnessChat.tsx`/`CeceliaChat.tsx` 图片上传 UI（📎按钮 + 缩略图预览）。
+
+**Anthropic 多模态格式**：`messages[0].content` 需要是 array of content blocks：`[{type:'text',text:prompt}, {type:'image',source:{type:'base64',media_type:'image/jpeg',data:'...'}}]`。单纯 string prompt 不能混用 imageContent，必须整体变成 array。
+
+**飞书图片下载**：`GET /open-apis/im/v1/messages/{message_id}/resources/{image_key}?type=image`，Response 为 binary buffer，转 base64 时 `Buffer.from(arrayBuffer).toString('base64')`，media_type 从 `Content-Type` header 提取。
+
+**多次合并 main 冲突版本管理**：PR 开发期间 main 连续合并了 5+ 个 PR（#388, #392, #398, #399, #401）。每次 `git merge origin/main` 冲突集中在版本文件（`.brain-versions`、`DEFINITION.md`、`packages/brain/VERSION`、`packages/brain/package.json`）。规律：保持我的版本号（minor bump v1.166.0），将 main 新增历史版本追加到 `.brain-versions`。**禁止 rebase**（bash-guard 阻止 force push），只用 merge 提交。
+
+**reflection.js 并发修复**：PR #401 在主分支修复了相同的 CJK Jaccard 分词 bug，和我的本地修复方向相同但实现不同。解决方案：合并时 `git checkout origin/main -- reflection.js` 直接取 main 版本，避免重复修复冲突。
+
+**D10-2 测试文本选取**：去重阴性测试（相似度低于阈值）必须选择**完全不同话题**的文字。之前 D10-2 用了两段都涉及"系统优化"的文本，Jaccard 相似度超阈值导致洞察被误跳过。修改为完全不同主题（"量子纠缠/宇宙暗物质" vs "反思循环效率"）确保相似度低。
+
+
+
 ### [2026-03-03] Workspace 层级体验 + D10-1 修复（PR #388, Brain v1.165.4）
 
 **主要功能**：① AreaDashboard 改为读 areas 表（9 个生活/工作领域）按 domain 分组显示；② OKRDashboard 层级树（area_okr → kr，可折叠）；③ ProjectsDashboard 层级树（project → initiative，可折叠）；④ Brain 新增 `/api/brain/tasks/tasks` 路由，前端 TaskDatabase 终于有数据。
