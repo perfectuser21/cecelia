@@ -22,6 +22,7 @@ import perceptionSignalsRoutes from './src/routes/perception-signals.js';
 import architectureRoutes from './src/routes/architecture.js';
 import taskRouterDiagnoseRoutes from './src/routes/task-router-diagnose.js';
 import notionSyncRoutes from './src/routes/notion-sync.js';
+import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -103,6 +104,7 @@ app.use('/api/brain/perception-signals', perceptionSignalsRoutes);
 app.use('/api/brain/architecture', architectureRoutes);
 app.use('/api/brain/task-router', taskRouterDiagnoseRoutes);
 app.use('/api/brain/notion-sync', notionSyncRoutes);
+app.use('/api/brain/notebook-audit', notebookAuditRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
