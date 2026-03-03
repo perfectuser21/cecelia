@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 修复图片视觉——bridge 不支持多模态（PR #407, Brain v1.167.1）
+
+**根因**：`mouth` agent 配置 `provider: 'anthropic'`（bridge 模式），bridge 不支持多模态 content array。`llm-caller.js` 在 `provider === 'anthropic'` 分支直接调用 `callClaudeViaBridge(prompt, ...)`，`imageContent` 被完全丢弃，LLM 只收到文字。日志显示"图片下载成功"但 LLM 说"没有图片"就是这个原因。
+
+**修复模式**：在候选模型循环中加 `effectiveProvider` 计算——当 `imageContent` 存在且 `provider === 'anthropic'` 时自动改为 `'anthropic-api'`（直连，支持视觉）。这样 agent 配置不需要改，也不需要为"有视觉需求"的 agent 单独建 profile，在调用时动态降级。
+
+**调试关键日志**：图片下载成功日志在 routes.js 里，LLM "看不到" = imageContent 在 llm-caller 里被丢弃。诊断时应该在 llm-caller 里追踪 provider 路由，不是在下载层找问题。
+
+
+
 ### [2026-03-03] Workspace 层级体验 + D10-1 修复（PR #388, Brain v1.165.4）
 
 **主要功能**：① AreaDashboard 改为读 areas 表（9 个生活/工作领域）按 domain 分组显示；② OKRDashboard 层级树（area_okr → kr，可折叠）；③ ProjectsDashboard 层级树（project → initiative，可折叠）；④ Brain 新增 `/api/brain/tasks/tasks` 路由，前端 TaskDatabase 终于有数据。
