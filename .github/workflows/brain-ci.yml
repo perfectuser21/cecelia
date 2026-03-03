@@ -48,7 +48,7 @@ jobs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.brain == 'true'
     name: Version Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -107,7 +107,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Manifest Sync Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -125,7 +125,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Brain Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 30
     permissions:
       contents: read

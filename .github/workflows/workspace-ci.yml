@@ -45,7 +45,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: Dashboard Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -73,7 +73,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: API Typecheck
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -97,7 +97,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.workspace == 'true'
     name: Dashboard Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, hk-vps]
     timeout-minutes: 15
     permissions:
       contents: read
