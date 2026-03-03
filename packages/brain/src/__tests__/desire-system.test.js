@@ -597,9 +597,9 @@ describe('D10: Reflection 去重机制', () => {
     const { callLLM } = await import('../llm-caller.js');
     const { runReflection } = await import('../desire/reflection.js');
 
-    // Mock LLM 返回新洞察
+    // Mock LLM 返回新洞察（英文空格分词，让 Jaccard 相似度计算正确生效）
     callLLM.mockResolvedValue({
-      text: '反思循环已成为执行瓶颈。我将立即实施三层止血',
+      text: 'reflection loop bottleneck fix three step performance restore',
       model: 'test',
       provider: 'test',
       elapsed_ms: 10
@@ -628,10 +628,11 @@ describe('D10: Reflection 去重机制', () => {
         }
 
         // 返回最近的 memory_stream（包含相似洞察）- 去重查询
+        // 英文空格分词确保 Jaccard 相似度 = 8/10 = 0.80 > 0.75
         if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
           return {
             rows: [
-              { content: '[反思洞察] 反思循环已成为执行瓶颈。建议实施三层止血方案' },
+              { content: '[反思洞察] reflection loop bottleneck fix three step performance restore system' },
               { content: '[反思洞察] 其他不相关的洞察内容 ABCDEFG HIJKLMN' }
             ]
           };
