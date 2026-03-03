@@ -96,8 +96,10 @@ let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
+let _lastReportCheckTime = 0; // track last 48h system report check time
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
+const REPORT_CHECK_INTERVAL_MS = 48 * 60 * 60 * 1000; // 48 hours between system reports
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1995,6 +1997,33 @@ async function executeTick() {
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
 
+  // 10.13 48h 系统简报定时检查（每次 tick 内存节流 + DB 验证）
+  const reportCheckElapsed = Date.now() - _lastReportCheckTime;
+  if (reportCheckElapsed >= REPORT_CHECK_INTERVAL_MS) {
+    _lastReportCheckTime = Date.now();
+    try {
+      const lastReportRes = await pool.query(
+        `SELECT generated_at FROM system_reports
+         WHERE report_type = '48h_summary'
+         ORDER BY generated_at DESC LIMIT 1`
+      );
+      const lastReportTime = lastReportRes.rows[0]?.generated_at
+        ? new Date(lastReportRes.rows[0].generated_at).getTime()
+        : 0;
+      const timeSinceLastReport = Date.now() - lastReportTime;
+
+      if (timeSinceLastReport >= REPORT_CHECK_INTERVAL_MS) {
+        await pool.query(
+          `INSERT INTO system_reports (report_type, content, pushed_to_dashboard, pushed_to_notion)
+           VALUES ('48h_summary', '{"status": "pending", "triggered_by": "tick"}', false, false)`
+        );
+        console.info('[Tick] 触发 48h 简报生成');
+      }
+    } catch (reportErr) {
+      console.warn('[tick] 48h 简报检查失败（跳过）:', reportErr.message);
+    }
+  }
+
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
   let desireResult = null;
@@ -2196,6 +2225,8 @@ function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
 function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+/** Reset 48h report check timer — for testing only */
+function _resetLastReportCheckTime() { _lastReportCheckTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -2273,5 +2304,7 @@ export {
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
+  _resetLastReportCheckTime,
+  REPORT_CHECK_INTERVAL_MS,
   GOAL_EVAL_INTERVAL_MS
 };
