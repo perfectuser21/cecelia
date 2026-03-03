@@ -1,5 +1,31 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Notion 四表双向同步：migration 编号连续踩三次坑（PR #423, Brain v1.173.0）
+
+**背景**：实现 Areas/Goals/Projects/Tasks 四表与 Notion 的双向同步，包含 webhook 回调端点。
+
+**Migration 编号三轮冲突（最核心教训）**：
+1. 第一轮：原来用 109，main 的 `109_notebook_source_lifecycle.sql` 合并进来 → 冲突，rename to 110
+2. 第二轮：PR #422 合并了 `110_user_profile_facts_key.sql` → 再次冲突
+3. 第三轮（隐藏坑）：rename 109→110 时，`109_notion_full_sync.sql` 被 git mv 但旧文件仍被 git 追踪（` D` 状态），merge commit 重新引入了该追踪文件，facts-check 报"109 有 2 个文件"。需要 `git rm` 显式删除旧文件。
+4. 最终 migration 编号：111。
+
+**`git ls-tree HEAD` vs `ls` 差异**：working directory 没有文件，但 `git ls-tree HEAD` 显示文件被追踪（` D` = deleted in worktree, tracked in index）。每次 migration rename 后必须 `git rm <old_file>` 而不只是 `mv`。
+
+**每次 migration rename 前必须**：
+```bash
+git show origin/main:packages/brain/migrations/ | grep -E "^[0-9]+" | sort
+# 确认 main 上最高编号，避免冲突
+```
+
+**parallel PR 最终版本决策**：并行 PR 版本碰撞时，先完成 main 合并再 bump（我们的 `1.171.3 → 1.172.0 → 1.173.0`）。每次 main 合并后必须验证：`git show origin/main:packages/brain/package.json | jq .version`。
+
+**webhook 架构**：Notion → `cecelia.zenjoymedia.media/api/brain/notion-sync/webhook` → `handleWebhook()`。Cloudflare Tunnel 已配置，不需额外设置。立即返回 200，异步处理（Notion 要求 < 10s 响应）。
+
+**Task 全量同步范围过滤**：`filter: { property: 'AI Task', checkbox: { equals: true } }` 避免把用户所有个人 Notion 任务导入 Cecelia。实际过滤条件可根据需求调整。
+
+**merge commit 引入版本冲突解决模式**：`git merge origin/main --no-commit` 后手动解析冲突标记，保留我方较高版本（1.173.0 > 1.172.1），然后 `git add` 已解决文件，最后 `git commit` 完成 merge。禁止 `git merge --abort` 后用 force push（bash-guard 阻止）。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
