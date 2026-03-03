@@ -112,6 +112,54 @@ ${memorySummary}
     return { triggered: false };
   }
 
+  // 去重检查：防止重复洞察占用系统资源
+  try {
+    // 1. 查询最近 7 天的反思洞察
+    const { rows: recentInsights } = await pool.query(`
+      SELECT content FROM memory_stream
+      WHERE content LIKE '[反思洞察]%'
+        AND created_at > NOW() - INTERVAL '7 days'
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+
+    // 2. 计算 Jaccard 相似度
+    const newTokens = new Set(insight.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+    let maxSimilarity = 0;
+
+    for (const old of recentInsights) {
+      const oldContent = old.content.replace('[反思洞察] ', '');
+      const oldTokens = new Set(oldContent.toLowerCase().split(/\s+/).filter(t => t.length > 1));
+
+      let intersection = 0;
+      for (const t of newTokens) { if (oldTokens.has(t)) intersection++; }
+      const union = new Set([...newTokens, ...oldTokens]).size;
+      const similarity = union > 0 ? intersection / union : 0;
+
+      if (similarity > maxSimilarity) maxSimilarity = similarity;
+    }
+
+    // 3. 去重决策
+    if (maxSimilarity > 0.75) {
+      console.log(`[reflection] Insight skipped (duplicate, similarity=${maxSimilarity.toFixed(2)})`);
+
+      // 重置 accumulator（与正常流程一致）
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+      `, ['desire_importance_accumulator', 0]);
+      console.log(`[reflection] Accumulator reset to 0 (was ${accumulator}) after dedup`);
+
+      return { triggered: true, insight: null, skipped: 'duplicate', similarity: maxSimilarity, accumulator_before: accumulator };
+    }
+
+    console.log(`[reflection] Insight unique (max similarity=${maxSimilarity.toFixed(2)}), proceeding to write`);
+  } catch (err) {
+    // 去重检查失败不影响主流程，继续写入
+    console.error('[reflection] dedup check error (non-critical):', err.message);
+  }
+
   // 写入 memory_stream（long 类型，高重要性，附带 L0 摘要）
   try {
     const insightContent = `[反思洞察] ${insight}`;
