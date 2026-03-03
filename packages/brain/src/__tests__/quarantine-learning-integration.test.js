@@ -10,7 +10,7 @@ import { QUARANTINE_REASONS, FAILURE_THRESHOLD } from '../quarantine.js';
 describe('隔离学习系统集成测试', () => {
   it('应该正确导出隔离相关常量', () => {
     expect(QUARANTINE_REASONS.REPEATED_FAILURE).toBe('repeated_failure');
-    expect(FAILURE_THRESHOLD).toBe(3);
+    expect(FAILURE_THRESHOLD).toBe(7);
   });
 
   it('buildRuminationPrompt 应该检测隔离模式', () => {

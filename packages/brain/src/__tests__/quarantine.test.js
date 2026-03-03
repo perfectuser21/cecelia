@@ -141,14 +141,14 @@ describe('quarantine', () => {
 
   describe('shouldQuarantineOnFailure', () => {
     it('should quarantine after threshold failures', () => {
-      const task = { payload: { failure_count: 2 } }; // +1 = 3 = threshold
+      const task = { payload: { failure_count: 6 } }; // +1 = 7 = threshold
       const result = shouldQuarantineOnFailure(task);
       expect(result.shouldQuarantine).toBe(true);
       expect(result.reason).toBe(QUARANTINE_REASONS.REPEATED_FAILURE);
     });
 
     it('should not quarantine below threshold', () => {
-      const task = { payload: { failure_count: 1 } }; // +1 = 2 < 3
+      const task = { payload: { failure_count: 5 } }; // +1 = 6 < 7
       const result = shouldQuarantineOnFailure(task);
       expect(result.shouldQuarantine).toBe(false);
     });
@@ -181,7 +181,7 @@ describe('quarantine', () => {
 
   describe('checkShouldQuarantine', () => {
     it('should check failure on on_failure context', () => {
-      const task = { payload: { failure_count: 2 } };
+      const task = { payload: { failure_count: 6 } }; // +1 = 7 = threshold
       const result = checkShouldQuarantine(task, 'on_failure');
       expect(result.shouldQuarantine).toBe(true);
     });
