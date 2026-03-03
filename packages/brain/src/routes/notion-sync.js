@@ -9,6 +9,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { runSync, getNotionConfig } from '../notion-sync.js';
 import { runFullSync, handleWebhook, NOTION_DB_IDS } from '../notion-full-sync.js';
+import { rebuildMemoryDatabases, importAllMemoryData } from '../notion-memory-sync.js';
 
 const router = Router();
 
@@ -146,6 +147,42 @@ router.get('/full-status', async (_req, res) => {
       tables: rows,
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /memory-rebuild
+ * 重建 Memory 数据库结构 + 全量导入数据
+ * （归档旧数据，以正确结构重新创建）
+ */
+router.post('/memory-rebuild', async (_req, res) => {
+  try {
+    if (!process.env.NOTION_API_KEY) {
+      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
+    }
+    const schemaResults = await rebuildMemoryDatabases();
+    const importStats   = await importAllMemoryData();
+    res.json({ success: true, schema: schemaResults, imported: importStats });
+  } catch (err) {
+    console.error('[notion-sync/memory-rebuild]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /memory-sync
+ * 增量同步：将未同步的 facts 和 memories 推送到 Notion
+ */
+router.post('/memory-sync', async (_req, res) => {
+  try {
+    if (!process.env.NOTION_API_KEY) {
+      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
+    }
+    const stats = await importAllMemoryData();
+    res.json({ success: true, stats });
+  } catch (err) {
+    console.error('[notion-sync/memory-sync]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
