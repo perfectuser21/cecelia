@@ -4693,7 +4693,7 @@ router.get('/blocks/:parentType/:parentId', async (req, res) => {
     const { parentType, parentId } = req.params;
 
     // Validate parent type
-    const validTypes = ['goal', 'task', 'project', 'block'];
+    const validTypes = ['goal', 'task', 'project', 'block', 'knowledge'];
     if (!validTypes.includes(parentType)) {
       return res.status(400).json({
         success: false,
@@ -4731,7 +4731,7 @@ router.post('/blocks', async (req, res) => {
     }
 
     // Validate parent type
-    const validParentTypes = ['goal', 'task', 'project', 'block'];
+    const validParentTypes = ['goal', 'task', 'project', 'block', 'knowledge'];
     if (!validParentTypes.includes(parent_type)) {
       return res.status(400).json({
         success: false,
