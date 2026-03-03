@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] NotebookLM source 生命周期管理 + 对账机制（PR #421, Brain v1.172.0）
+
+**需求背景**：合成压缩（日→周→月）后旧的低层级 source 不删除，导致 NotebookLM 重复计算污染；没有 source_id 追踪，无法对账。
+
+**关键实现**：
+1. `synthesis_archive` 表加 `notebook_source_id` 列（migration 109）
+2. `notebooklm source add --json` 返回 `{ source: { id, ... } }`，bridge 解析并回传 sourceId
+3. 周合成完成后 fire-and-forget 删除对应7条日 source（用已存储的 source_id）
+4. 月合成完成后 fire-and-forget 删除对应4条周 source
+5. `GET /api/brain/notebook-audit`：对比 DB 的 source_id 记录 vs NotebookLM 实际 source 列表，返回孤儿 source 并在超阈值时写 working_memory 触发告警
+
+**bridge add-text-source 修复**：原来不传 `--json` flag，无法获取 source_id。现在：`args = ['source', 'add', text, '--json', '--title', title, '-n', notebook_id]`，返回 `{ ok, sourceId, elapsed_ms }`。
+
+**vi.hoisted + beforeEach 最佳实践**：mock 的 `deleteSource` 必须用 `vi.hoisted(() => vi.fn())`，在 `beforeEach` 设置 `mockResolvedValue({ ok: true })`，否则每次测试间 mock 不重置，顺序依赖测试会互相污染。
+
+**异步删除测试**：fire-and-forget 的 `Promise.allSettled(...)` 在 `await` 内部调用后是异步的，测试需要用 `vi.waitFor(() => { expect(mockDeleteSource).toHaveBeenCalledTimes(N); })` 等待完成，不能用同步断言。
+
+**版本冲突解决（main 频繁前进）**：并行开发时 main 可能多次前进。每次 push 前：`git show origin/main:packages/brain/package.json | jq .version` 确认我们版本 > main 版本。如果相等或小于则立即 bump。merge origin/main 产生冲突时：package.json/package-lock.json/VERSION/.brain-versions/DEFINITION.md 全选保留我们（更高）版本；.brain-versions 需要插入 main 的新版本行到我们的版本行之前保持历史连续。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
