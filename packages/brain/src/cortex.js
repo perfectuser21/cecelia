@@ -788,6 +788,175 @@ async function performRCA(failedTask, history = []) {
 }
 
 // ============================================================
+// System Report Generation (48h 简报)
+// ============================================================
+
+/**
+ * 收集过去 48h 系统统计数据
+ * @returns {Promise<Object>} 系统统计摘要
+ */
+async function getSystemStats48h() {
+  const stats = {};
+
+  try {
+    // 任务完成情况
+    const taskStats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+        COUNT(*) FILTER (WHERE status = 'quarantined') AS quarantined
+      FROM tasks
+      WHERE created_at >= NOW() - INTERVAL '48 hours'
+    `);
+    stats.tasks = taskStats.rows[0];
+  } catch (err) {
+    console.warn('[cortex:48h-report] Failed to query task stats:', err.message);
+    stats.tasks = { completed: 0, failed: 0, in_progress: 0, queued: 0, quarantined: 0 };
+  }
+
+  try {
+    // 活跃目标数量
+    const goalStats = await pool.query(`
+      SELECT COUNT(*) AS active_goals
+      FROM goals
+      WHERE status = 'in_progress'
+    `);
+    stats.goals = goalStats.rows[0];
+  } catch (err) {
+    console.warn('[cortex:48h-report] Failed to query goal stats:', err.message);
+    stats.goals = { active_goals: 0 };
+  }
+
+  try {
+    // 最近学习记录
+    const learningStats = await pool.query(`
+      SELECT COUNT(*) AS new_learnings
+      FROM learnings
+      WHERE created_at >= NOW() - INTERVAL '48 hours'
+    `);
+    stats.learnings = learningStats.rows[0];
+  } catch (err) {
+    console.warn('[cortex:48h-report] Failed to query learning stats:', err.message);
+    stats.learnings = { new_learnings: 0 };
+  }
+
+  try {
+    // Cortex 分析次数
+    const cortexStats = await pool.query(`
+      SELECT COUNT(*) AS cortex_analyses
+      FROM cortex_analyses
+      WHERE created_at >= NOW() - INTERVAL '48 hours'
+    `);
+    stats.cortex = cortexStats.rows[0];
+  } catch (err) {
+    console.warn('[cortex:48h-report] Failed to query cortex stats:', err.message);
+    stats.cortex = { cortex_analyses: 0 };
+  }
+
+  return stats;
+}
+
+/**
+ * 生成系统简报（每 48h 自动触发）
+ * 收集系统数据 → 调用 LLM → 写入 system_reports 表
+ * @returns {Promise<{success: boolean, reportId?: string, error?: string}>}
+ */
+async function generateSystemReport() {
+  console.log('[cortex:48h-report] 开始生成系统简报...');
+
+  let stats;
+  try {
+    stats = await getSystemStats48h();
+    console.log('[cortex:48h-report] 系统数据收集完成:', JSON.stringify(stats));
+  } catch (err) {
+    console.error('[cortex:48h-report] 数据收集失败:', err.message);
+    return { success: false, error: `数据收集失败: ${err.message}` };
+  }
+
+  const now = new Date().toISOString();
+  const prompt = `你是 Cecelia 的皮层（Cortex），负责生成系统状态简报。
+
+## 过去 48 小时系统数据
+
+**时间**: ${now}
+
+**任务统计**:
+- 完成: ${stats.tasks.completed} 个
+- 失败: ${stats.tasks.failed} 个
+- 进行中: ${stats.tasks.in_progress} 个
+- 队列中: ${stats.tasks.queued} 个
+- 隔离: ${stats.tasks.quarantined} 个
+
+**目标状态**:
+- 活跃目标: ${stats.goals.active_goals} 个
+
+**学习记录**:
+- 新增学习: ${stats.learnings.new_learnings} 条
+
+**皮层分析**:
+- 深度分析次数: ${stats.cortex.cortex_analyses} 次
+
+## 要求
+
+请生成一份简洁的系统状态简报（200-400 字），包含：
+1. **总体状态评估**：系统运行是否健康，整体效率如何
+2. **关键指标分析**：任务完成率、失败模式（如果有）
+3. **值得关注的趋势**：有无异常或需要注意的情况
+4. **48h 小结**：一句话总结这段时间的系统表现
+
+使用 Markdown 格式，语言简洁专业，使用中文。`;
+
+  let reportContent;
+  try {
+    const { text } = await callLLM('cortex', prompt, {
+      timeout: 60000,
+      maxTokens: 1024
+    });
+    reportContent = text;
+    console.log('[cortex:48h-report] LLM 调用成功，简报已生成');
+  } catch (llmErr) {
+    console.error('[cortex:48h-report] LLM 调用失败，尝试重试:', llmErr.message);
+    // 重试一次
+    try {
+      const { text } = await callLLM('cortex', prompt, {
+        timeout: 60000,
+        maxTokens: 1024
+      });
+      reportContent = text;
+      console.log('[cortex:48h-report] LLM 重试成功');
+    } catch (retryErr) {
+      console.error('[cortex:48h-report] LLM 重试失败:', retryErr.message);
+      return { success: false, error: `LLM 调用失败: ${retryErr.message}` };
+    }
+  }
+
+  try {
+    const result = await pool.query(`
+      INSERT INTO system_reports (report_type, content, generated_at, metadata)
+      VALUES ($1, $2, NOW(), $3)
+      RETURNING id
+    `, [
+      'system_48h',
+      reportContent,
+      JSON.stringify({
+        stats,
+        generated_by: 'cortex',
+        trigger: 'tick_48h_check'
+      })
+    ]);
+
+    const reportId = result.rows[0]?.id;
+    console.log(`[cortex:48h-report] 简报已写入数据库，ID: ${reportId}`);
+    return { success: true, reportId };
+  } catch (dbErr) {
+    console.error('[cortex:48h-report] 写入数据库失败:', dbErr.message);
+    return { success: false, error: `写入数据库失败: ${dbErr.message}` };
+  }
+}
+
+// ============================================================
 // Exports
 // ============================================================
 
@@ -809,6 +978,10 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // 48h 简报
+  generateSystemReport,
+  getSystemStats48h,
 
   // 常量
   CORTEX_ACTION_WHITELIST,

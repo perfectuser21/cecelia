@@ -1399,6 +1399,27 @@ async function executeTick() {
     console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
   }
 
+  // 0.6.1. 48h 系统简报检查：查询上次生成时间，超过 48h 则触发生成
+  try {
+    const { checkAndGenerateSystemReport } = await import('./system-report-scheduler.js');
+    const reportResult = await checkAndGenerateSystemReport(pool);
+    if (reportResult.triggered) {
+      if (reportResult.success) {
+        console.log(`[tick:48h-report] 系统简报已生成，ID: ${reportResult.reportId}`);
+        actionsTaken.push({
+          action: 'system_report_generated',
+          reportId: reportResult.reportId
+        });
+      } else {
+        console.warn(`[tick:48h-report] 系统简报生成失败: ${reportResult.error}`);
+      }
+    } else {
+      console.log(`[tick:48h-report] 距上次简报 ${reportResult.hoursElapsed?.toFixed(1) ?? '?'}h，无需生成`);
+    }
+  } catch (reportErr) {
+    console.error('[tick:48h-report] 简报检查失败 (non-fatal):', reportErr.message);
+  }
+
   // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
   const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
   if (healthCheckElapsed >= CLEANUP_INTERVAL_MS) {
