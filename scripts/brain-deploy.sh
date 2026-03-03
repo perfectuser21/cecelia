@@ -66,7 +66,7 @@ fi
 echo ""
 
 # 7. Stop old container + start new one
-echo "[7/7] Starting container..."
+echo "[7/8] Starting container..."
 if ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
   docker compose -f "$ROOT_DIR/docker-compose.yml" up -d; then
   echo ""
@@ -95,6 +95,20 @@ while [ $TRIES -lt $MAX_TRIES ]; do
   if curl -sf http://localhost:5221/api/brain/tick/status > /dev/null 2>&1; then
     echo ""
     echo "=== Deploy SUCCESS: cecelia-brain v${VERSION} is healthy ==="
+
+    # 8. Update cecelia-run on host (self-update: keeps executor in sync with repo)
+    echo ""
+    echo "[8/8] Updating cecelia-run on host..."
+    CECELIA_RUN_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-run.sh"
+    CECELIA_RUN_DST="/home/xx/bin/cecelia-run"
+    if [[ -f "$CECELIA_RUN_SRC" ]]; then
+      cp "$CECELIA_RUN_SRC" "$CECELIA_RUN_DST"
+      chmod +x "$CECELIA_RUN_DST"
+      echo "  Updated $CECELIA_RUN_DST (v${VERSION})"
+    else
+      echo "  WARN: $CECELIA_RUN_SRC not found, skipping cecelia-run update"
+    fi
+
     exit 0
   fi
   echo "  Attempt ${TRIES}/${MAX_TRIES}..."
