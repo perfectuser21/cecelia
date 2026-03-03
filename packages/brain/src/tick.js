@@ -25,6 +25,8 @@ import { triggerDeptHeartbeats } from './dept-heartbeat.js';
 import { triggerDailyReview } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
+import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
+import { feedDailyIfNeeded } from './notebook-feeder.js';
 import { publishCognitiveState } from './events/taskEvents.js';
 import { evaluateEmotion, getCurrentEmotion, updateSubjectiveTime, getSubjectiveTime, getParallelAwareness, getTrustScores, updateNarrative, recordTickEvent, getCognitiveSnapshot } from './cognitive-core.js';
 import { collectSelfReport } from './self-report-collector.js';
@@ -1957,6 +1959,14 @@ async function executeTick() {
   // 汇总今日对话/learnings/任务 → 情节记忆 + self-model 演化
   Promise.resolve().then(() => runDailyConsolidationIfNeeded(pool))
     .catch(e => console.warn('[tick] 每日合并失败:', e.message));
+
+  // 10.10 NotebookLM 喂入（每天定时喂入 learnings/memory/OKR，fire-and-forget）
+  Promise.resolve().then(() => feedDailyIfNeeded(pool))
+    .catch(e => console.warn('[tick] notebook feeder 失败:', e.message));
+
+  // 10.11 分层记忆压缩调度（daily/weekly/monthly synthesis，fire-and-forget）
+  Promise.resolve().then(() => runSynthesisSchedulerIfNeeded(pool))
+    .catch(e => console.warn('[tick] synthesis scheduler 失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });

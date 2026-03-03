@@ -1,10 +1,10 @@
 /**
- * 反刍回路（Rumination Loop）— v2 深度思考
+ * 反刍回路（Rumination Loop）— v3 NotebookLM 主路
  *
- * 空闲时批量消化知识，用 Opus 做深度思考：
- * - 批量取 N 条相似 learnings 一起分析（发现跨知识模式）
- * - Prompt 要求模式发现 + 关联分析 + 可执行建议
- * - 洞察写入 memory_stream，由 Desire System 自然消费
+ * 空闲时批量消化知识，用 NotebookLM 做深度思考（主路）：
+ * - NotebookLM ask 综合全量历史，callLLM 作为 fallback（notebooklm_primary）
+ * - 批量取 N 条 learnings，构建综合 query 发给 NotebookLM
+ * - 洞察写入 memory_stream + synthesis_archive(daily)，由 Desire System 自然消费
  *
  * 成本控制：每 tick ≤5 条，每日 ≤20 条，30 分钟冷却期
  */
@@ -116,17 +116,37 @@ ${learningsList}
   return prompt;
 }
 
-// ── 消化核心逻辑（v2 批量处理）──────────────────────────────
+// ── NotebookLM 综合 Query 构建 ──────────────────────────────
 
 /**
- * 批量消化 learnings（v2: 一次 LLM 调用处理多条，发现跨知识模式）
+ * 构建发给 NotebookLM 的综合 query
+ * 比 buildRuminationPrompt 更宽泛：让 NotebookLM 从全量历史综合
+ */
+export function buildNotebookQuery(learnings) {
+  const titles = learnings.map(l => l.title).join('、');
+  const categories = [...new Set(learnings.map(l => l.category || '未分类'))].join('、');
+  return `我最近学到了这些内容（主题：${titles}，领域：${categories}）。
+请综合你掌握的关于我（Cecelia）和 Alex 工作模式的所有历史知识，
+对这些新内容进行深度分析：
+1. 发现跨时间的模式或规律
+2. 与 OKR/目标的关联
+3. 可执行的洞察建议（格式：[ACTION: 建议标题]）
+4. 潜在风险或机会
+用 [反刍洞察] 开头，300-500 字，简体中文。`;
+}
+
+// ── 消化核心逻辑（v3 NotebookLM 主路）──────────────────────
+
+/**
+ * 批量消化 learnings（v3: NotebookLM ask 为主路，callLLM 为 fallback）
+ * notebooklm_primary: 先尝试 NotebookLM（全量历史综合），失败则用 callLLM
  */
 async function digestLearnings(db, learnings) {
   const insights = [];
   let selfInsightText = '';
 
   try {
-    // 1. 获取相关记忆上下文（用第一条 learning 的标题作为查询）
+    // 1. 获取相关记忆上下文（fallback 时用）
     let memoryBlock = '';
     try {
       const queryText = learnings.map(l => l.title).join(' ');
@@ -141,22 +161,32 @@ async function digestLearnings(db, learnings) {
       // 记忆检索失败不影响反刍
     }
 
-    // 2. 查询 NotebookLM（可选，降级安全）
-    let notebookContext = '';
+    // 2. 主路：NotebookLM ask（notebooklm_primary，全量历史综合）
+    // Fallback：callLLM（仅看本次 learnings + 记忆上下文）
+    let insight = '';
+    let usedNotebook = false;
+    const nbQuery = buildNotebookQuery(learnings);
     try {
-      const nbResult = await queryNotebook(learnings[0].title);
-      if (nbResult.ok && nbResult.text) {
-        notebookContext = nbResult.text;
+      const nbResult = await queryNotebook(nbQuery);
+      if (nbResult.ok && nbResult.text && nbResult.text.trim().length > 50) {
+        insight = nbResult.text.trim();
+        usedNotebook = true;
+        console.log(`[rumination] notebooklm_primary: OK (${insight.length} chars)`);
+      } else {
+        console.warn('[rumination] notebooklm_primary: empty/short response, falling back to callLLM');
       }
-    } catch {
-      // NotebookLM 不可用，静默降级
+    } catch (nbErr) {
+      console.warn('[rumination] notebooklm_primary failed, falling back to callLLM:', nbErr.message);
     }
 
-    // 3. 调用 LLM 生成深度洞察（一次调用处理所有 learnings）
-    const prompt = buildRuminationPrompt(learnings, memoryBlock, notebookContext);
-    const { text: insight } = await callLLM('rumination', prompt);
+    // Fallback：callLLM
+    if (!insight) {
+      const prompt = buildRuminationPrompt(learnings, memoryBlock, '');
+      const { text: llmInsight } = await callLLM('rumination', prompt);
+      insight = llmInsight || '';
+    }
 
-    // 4. 写入 memory_stream
+    // 4. 写入 memory_stream + synthesis_archive（daily）
     if (insight) {
       await db.query(
         `INSERT INTO memory_stream (content, importance, memory_type, expires_at)
@@ -165,11 +195,35 @@ async function digestLearnings(db, learnings) {
       );
       insights.push(insight.trim());
 
-      // 4.0 写洞察回 NotebookLM（持久化知识飞轮，fire-and-forget）
+      // 4.0 写入 synthesis_archive（daily 层级）
+      // previous_id: 指向当天最新一条（如无则 null）
+      const today = new Date().toISOString().slice(0, 10);
+      try {
+        const { rows: prevRows } = await db.query(
+          `SELECT id FROM synthesis_archive WHERE level = 'daily' AND period_start = $1
+           ORDER BY created_at DESC LIMIT 1`,
+          [today]
+        );
+        const previousId = prevRows[0]?.id || null;
+        await db.query(
+          `INSERT INTO synthesis_archive
+             (level, period_start, period_end, content, previous_id, source_count, notebook_query)
+           VALUES ('daily', $1, $1, $2, $3, $4, $5)
+           ON CONFLICT (level, period_start) DO UPDATE
+             SET content = EXCLUDED.content, source_count = EXCLUDED.source_count,
+                 notebook_query = EXCLUDED.notebook_query`,
+          [today, insight.trim(), previousId, learnings.length, usedNotebook ? nbQuery : null]
+        );
+        console.log(`[rumination] synthesis_archive daily written (notebook=${usedNotebook})`);
+      } catch (archiveErr) {
+        console.warn('[rumination] synthesis_archive write failed (non-blocking):', archiveErr.message);
+      }
+
+      // 4.1 写洞察回 NotebookLM（持久化知识飞轮，fire-and-forget）
       // 下次反刍查询时可复用这些洞察，形成累积学习效果
       const topicTitle = learnings.map(l => l.title).join(' / ').slice(0, 100);
       addTextSource(
-        `[反刍洞察 ${new Date().toISOString().slice(0, 10)}] ${insight.trim()}`,
+        `[反刍洞察 ${today}] ${insight.trim()}`,
         `反刍洞察: ${topicTitle}`
       ).catch(err => console.warn('[rumination] NotebookLM write-back failed (non-blocking):', err.message));
 
