@@ -62,7 +62,7 @@ const server = http.createServer((req, res) => {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const { prompt, model, timeout, configDir } = JSON.parse(body);
+        const { prompt, model, timeout, accountId } = JSON.parse(body);
         if (!prompt) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'Missing prompt' }));
@@ -78,9 +78,12 @@ const server = http.createServer((req, res) => {
         const { spawn } = require('child_process');
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
-        // 账号轮换：如果传入 configDir，覆盖 CLAUDE_CONFIG_DIR
-        if (configDir) {
-          env.CLAUDE_CONFIG_DIR = configDir;
+        // 账号轮换：如果传入 accountId，用宿主机侧 homedir 拼出正确路径
+        // Brain 运行在容器内（homedir=/home/cecelia），必须由 bridge 在宿主机侧拼路径
+        if (accountId) {
+          const { homedir } = require('os');
+          const { join } = require('path');
+          env.CLAUDE_CONFIG_DIR = join(homedir(), '.claude-' + accountId);
         }
 
         const child = spawn(claudeBin, args, {
@@ -110,7 +113,7 @@ const server = http.createServer((req, res) => {
           }
 
           const text = stdout.trim();
-          console.log(`[bridge] /llm-call ${modelArg}${configDir ? ` [${configDir.split('-').pop()}]` : ''} → ${text.length} chars in ${elapsed}ms`);
+          console.log(`[bridge] /llm-call ${modelArg}${accountId ? ` [${accountId}]` : ''} → ${text.length} chars in ${elapsed}ms`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, text, model: modelArg, elapsed_ms: elapsed }));
         });
