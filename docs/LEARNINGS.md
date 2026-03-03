@@ -1,5 +1,9 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] CI Detect Changes 迁移到 self-hosted runner（PR #361）
+
+**问题**：5 个 CI workflow 的 `changes`（Detect Changes）job 运行在 `ubuntu-latest`，GitHub hosted runner 不稳定时 2s 内失败，导致所有下游测试 skip，`ci-passed` 误判为绿（`changes.outputs.X == false` → 认为无变更 → 跳过检查 → 退出 0）。后果是有 brain 代码改动的 PR 整个 Brain Tests 被跳过，没有真正验证代码。**修复**：将所有 `changes` job 改为 `runs-on: [self-hosted, hk-vps]`，与 `ci-passed` 使用同一 self-hosted runner，彻底消除 ubuntu-latest 不稳定影响。`workflow_dispatch` 时 `github.base_ref` 为空 → 在 push/workflow_dispatch 两种情况下直接输出 `X=true` 跳过 git diff。
+
 ### [2026-03-03] desire/memory.js + learning.js 漏网超时修复（PR #362, Brain v1.164.5）
 
 **漏网超时**：v1.164.3 修复了 emotion-layer/thalamus/memory-utils/heartbeat 超时，但漏了两处：`desire/memory.js` `batchScoreImportance` 仍用 30s timeout，`learning.js` `extractConversationLearning` 仍用 15s timeout。症状：Brain 日志出现 `exit code 143` 精确在 30s 或 15s 处。**排查方法**：在容器内 `grep -rn "timeout.*0000\|0000.*timeout" /app/src/` 找所有 timeout 配置，统一改为 90000（90s）。
