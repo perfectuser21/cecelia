@@ -56,13 +56,16 @@
               "name": "kr_status_snapshot"
             },
             {
-              "name": "hours_since_feishu"
+              "name": "hours_since_alex_contact"
             },
             {
               "name": "system_idle"
             },
             {
               "name": "user_online"
+            },
+            {
+              "name": "user_visited_today"
             },
             {
               "name": "undigested_knowledge"
@@ -790,9 +793,10 @@
     "queue_buildup",
     "kr_stalled",
     "kr_status_snapshot",
-    "hours_since_feishu",
+    "hours_since_alex_contact",
     "system_idle",
     "user_online",
+    "user_visited_today",
     "undigested_knowledge",
     "repeated_failures",
     "task_milestone",
@@ -836,7 +840,7 @@
     "initiative_verify": "/decomp",
     "suggestion_plan": "/plan"
   },
-  "generatedAt": "2026-03-03T01:21:52.481Z",
+  "generatedAt": "2026-03-03T06:42:38.400Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
