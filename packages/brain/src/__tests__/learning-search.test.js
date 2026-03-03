@@ -11,29 +11,29 @@ import { searchRelevantLearnings, getRecentLearnings } from '../learning.js';
 describe('Learning Semantic Search', () => {
   beforeAll(async () => {
     // Clean up test data
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'Test:%'");
+    await pool.query("DELETE FROM learnings WHERE title LIKE 'ls-test:%'");
 
     // Insert test learnings with different characteristics
     await pool.query(`
       INSERT INTO learnings (title, category, trigger_event, content, metadata, created_at)
       VALUES
-        ('Test: Network failure in dev tasks', 'failure_pattern', 'systemic_failure',
+        ('ls-test: Network failure in dev tasks', 'failure_pattern', 'systemic_failure',
          '{"root_cause": "network timeout", "contributing_factors": ["high latency", "NETWORK class"]}',
          '{"task_type": "dev"}'::jsonb, NOW() - INTERVAL '5 days'),
 
-        ('Test: Billing cap hit', 'failure_pattern', 'systemic_failure',
+        ('ls-test: Billing cap hit', 'failure_pattern', 'systemic_failure',
          '{"root_cause": "billing cap reached", "contributing_factors": ["BILLING_CAP exceeded"]}',
          '{"task_type": "review"}'::jsonb, NOW() - INTERVAL '2 days'),
 
-        ('Test: QA task resource exhaustion', 'failure_pattern', 'rca_request',
+        ('ls-test: QA task resource exhaustion', 'failure_pattern', 'rca_request',
          '{"root_cause": "memory exhaustion", "contributing_factors": ["RESOURCE limit"]}',
          '{"task_type": "qa"}'::jsonb, NOW() - INTERVAL '10 days'),
 
-        ('Test: Old learning', 'failure_pattern', 'systemic_failure',
+        ('ls-test: Old learning', 'failure_pattern', 'systemic_failure',
          '{"root_cause": "old issue"}',
          '{}'::jsonb, NOW() - INTERVAL '40 days'),
 
-        ('Test: Recent dev task learning', 'failure_pattern', 'systemic_failure',
+        ('ls-test: Recent dev task learning', 'failure_pattern', 'systemic_failure',
          '{"root_cause": "recent dev issue"}',
          '{"task_type": "dev"}'::jsonb, NOW() - INTERVAL '1 day')
     `);
@@ -41,7 +41,7 @@ describe('Learning Semantic Search', () => {
 
   afterAll(async () => {
     // Clean up test data
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'Test:%'");
+    await pool.query("DELETE FROM learnings WHERE title LIKE 'ls-test:%'");
   });
 
   it('returns learnings sorted by relevance score', async () => {
@@ -144,7 +144,7 @@ describe('Learning Semantic Search', () => {
 
   it('returns empty array if no learnings exist', async () => {
     // Clean up all test learnings temporarily
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'Test:%'");
+    await pool.query("DELETE FROM learnings WHERE title LIKE 'ls-test:%'");
 
     const results = await searchRelevantLearnings({
       task_type: 'nonexistent'
@@ -156,7 +156,7 @@ describe('Learning Semantic Search', () => {
     await pool.query(`
       INSERT INTO learnings (title, category, trigger_event, content, metadata, created_at)
       VALUES
-        ('Test: Network failure in dev tasks', 'failure_pattern', 'systemic_failure',
+        ('ls-test: Network failure in dev tasks', 'failure_pattern', 'systemic_failure',
          '{"root_cause": "network timeout"}',
          '{"task_type": "dev"}'::jsonb, NOW() - INTERVAL '5 days')
     `);
