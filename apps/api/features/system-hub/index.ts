@@ -44,6 +44,8 @@ const manifest: FeatureManifest = {
     // Drill-down routes (remain separate)
     { path: '/live-monitor', component: 'LiveMonitor' },
     { path: '/account-usage', component: 'AccountUsagePage' },
+    { path: '/reports', component: 'ReportsListPage' },
+    { path: '/reports/:id', component: 'ReportDetailPage' },
     { path: '/brain-status', component: 'BrainStatusDashboard' },
     { path: '/system/cecelia/runs', component: 'CeceliaRuns' },
     { path: '/system/cecelia/runs/:runId', component: 'RunDetail' },
@@ -137,6 +139,8 @@ const manifest: FeatureManifest = {
     // Drill-down pages
     LiveMonitor: () => import('../../../dashboard/src/pages/live-monitor/LiveMonitorPage'),
     AccountUsagePage: () => import('../../../dashboard/src/pages/account-usage/AccountUsagePage'),
+    ReportsListPage: () => import('../../../dashboard/src/pages/reports/ReportsListPage'),
+    ReportDetailPage: () => import('../../../dashboard/src/pages/reports/ReportDetailPage'),
     BrainStatusDashboard: () => import('../execution/pages/BrainStatusDashboard'),
     CeceliaRuns: () => import('../execution/pages/CeceliaRuns'),
     RunDetail: () => import('../execution/pages/RunDetail'),

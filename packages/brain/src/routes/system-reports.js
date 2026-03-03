@@ -7,6 +7,9 @@
  *
  * GET /api/brain/reports/:id
  *   返回指定简报详情
+ *
+ * POST /api/brain/reports/generate
+ *   手动生成一条测试简报（端到端测试用）
  */
 
 import { Router } from 'express';
@@ -74,6 +77,48 @@ router.get('/:id', async (req, res) => {
     res.json({ report: rows[0] });
   } catch (err) {
     console.error('[system-reports] GET /:id error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /generate
+ * 手动生成一条测试简报（端到端测试 / 调试用）
+ * @body {string} type - 报告类型（默认 '48h_summary'）
+ * @body {string} title - 报告标题（可选）
+ */
+router.post('/generate', async (req, res) => {
+  try {
+    const type = req.body.type || '48h_summary';
+    const title = req.body.title || `手动生成简报 ${new Date().toISOString()}`;
+
+    const content = {
+      title,
+      summary: '手动生成的测试简报，用于端到端验证。',
+      period: '48h',
+      generated_at: new Date().toISOString(),
+      kr_progress: [],
+      task_stats: { completed: 0, failed: 0, in_progress: 0, queued: 0 },
+      health: { status: 'ok', issues: [] },
+      anomalies: [],
+      risks: [],
+    };
+
+    const metadata = {
+      triggered_by: 'api',
+      version: '1.0',
+    };
+
+    const { rows } = await pool.query(
+      `INSERT INTO system_reports (type, content, metadata)
+       VALUES ($1, $2::jsonb, $3::jsonb)
+       RETURNING id, type, metadata, created_at`,
+      [type, JSON.stringify(content), JSON.stringify(metadata)]
+    );
+
+    res.json({ success: true, report: rows[0] });
+  } catch (err) {
+    console.error('[system-reports] POST /generate error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
