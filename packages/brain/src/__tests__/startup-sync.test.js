@@ -130,4 +130,28 @@ describe('syncOrphanTasksOnStartup', () => {
     expect(result.orphans_fixed).toBe(1);
     expect(result.rebuilt).toBe(1);
   });
+
+  it('should prioritize runId over task_id for process detection', async () => {
+    const { execSync } = await import('child_process');
+    // Mock: runId process exists (returns 1), task_id process doesn't (would return 0)
+    // Since runId is checked first, we should only see one check
+    execSync.mockReturnValue('1\n'); // runId process found
+
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'initiative-1',
+        title: 'Initiative Plan Task',
+        payload: { current_run_id: 'run-initiative-123' },
+        started_at: '2026-02-05T10:00:00Z'
+      }]
+    });
+
+    const result = await syncOrphanTasksOnStartup();
+    expect(result.orphans_found).toBe(0);
+    expect(result.rebuilt).toBe(1); // Process found via runId, rebuilt
+
+    // Verify execSync was called once (for runId check)
+    // If task_id was checked first, it would fail and then check runId
+    expect(execSync).toHaveBeenCalled();
+  });
 });

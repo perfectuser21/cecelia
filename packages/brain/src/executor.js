@@ -1290,6 +1290,7 @@ PUT /api/tasks/goals/${krId}
   // initiative_plan / initiative_verify：直接将任务描述作为 /decomp Phase 2 上下文注入
   // 任务描述已包含完整的 Initiative ID、KR ID、历史 PR 等信息，无需额外处理
   if (taskType === 'initiative_plan' || taskType === 'initiative_verify') {
+    console.log(`[executor] Preparing prompt for ${taskType} task: ${task.id} (Initiative: ${task.project_id})`);
     return `/decomp\n\n${task.description || task.title}`;
   }
 
@@ -1852,10 +1853,10 @@ async function probeTaskLiveness() {
     }
 
     // Decomposition tasks (/decomp) and initiative_plan/initiative_verify tasks run for
-    // 3-10+ minutes — apply extended grace period to avoid false-positive failures.
+    // 3-10+ minutes (or longer for complex initiatives) — apply extended grace period to avoid false-positive failures.
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
     // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
-    const DECOMP_LIVENESS_GRACE_MINUTES = 60;
+    const DECOMP_LIVENESS_GRACE_MINUTES = 120; // Extended from 60 to 120 minutes for complex initiatives
     const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify';
     if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
@@ -1940,10 +1941,15 @@ async function syncOrphanTasksOnStartup() {
   for (const task of result.rows) {
     const runId = task.payload?.current_run_id;
 
-    // Check if process exists (task_id is in cecelia-run command line)
-    let processExists = isTaskProcessAlive(task.id);
-    if (!processExists && runId) {
+    // Check if process exists
+    // Priority: runId first (for bridge-dispatched tasks like initiative_plan)
+    // then task_id (for direct-dispatched tasks)
+    let processExists = false;
+    if (runId) {
       processExists = isRunIdProcessAlive(runId);
+    }
+    if (!processExists) {
+      processExists = isTaskProcessAlive(task.id);
     }
 
     if (processExists) {
