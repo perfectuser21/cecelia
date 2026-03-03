@@ -74,10 +74,10 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// PATCH /projects/:id — 更新 project 字段（status / description / name）
+// PATCH /projects/:id — 更新 project 字段（status / description / name / priority / progress / area_id）
 router.patch('/:id', async (req, res) => {
   try {
-    const { status, description, name } = req.body;
+    const { status, description, name, priority, progress, area_id } = req.body;
 
     const setClauses = [];
     const params = [];
@@ -94,6 +94,18 @@ router.patch('/:id', async (req, res) => {
     if (name !== undefined) {
       setClauses.push(`name = $${paramIndex++}`);
       params.push(name);
+    }
+    if (priority !== undefined) {
+      setClauses.push(`priority = $${paramIndex++}`);
+      params.push(priority);
+    }
+    if (progress !== undefined) {
+      setClauses.push(`progress = $${paramIndex++}`);
+      params.push(progress);
+    }
+    if (area_id !== undefined) {
+      setClauses.push(`area_id = $${paramIndex++}`);
+      params.push(area_id);
     }
 
     if (setClauses.length === 0) {
