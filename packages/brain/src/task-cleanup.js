@@ -25,6 +25,13 @@ const RECURRING_TASK_TYPES = [
   'codex_qa'
 ];
 
+// Protected task types (should NEVER be auto-canceled by cleanup)
+// These task types are critical for system operation and must be manually managed
+const PROTECTED_TASK_TYPES = [
+  'initiative_plan',   // Initiative planning tasks - must not be auto-canceled
+  'initiative_verify'  // Initiative verification tasks - must not be auto-canceled
+];
+
 // Recurring task title patterns (fallback detection when task_type not set)
 const RECURRING_TITLE_PATTERNS = [
   /heartbeat/i,
@@ -34,12 +41,33 @@ const RECURRING_TITLE_PATTERNS = [
 ];
 
 /**
+ * Check if a task is protected from automatic cleanup
+ * Protected tasks should never be auto-canceled, even if they've been queued for a long time.
+ * @param {Object} task - Task object with task_type field
+ * @returns {boolean}
+ */
+function isProtectedTask(task) {
+  if (!task) return false;
+
+  if (task.task_type && PROTECTED_TASK_TYPES.includes(task.task_type.toLowerCase())) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Check if a task is considered "recurring" based on task_type or title
  * @param {Object} task - Task object with task_type and title fields
  * @returns {boolean}
  */
 function isRecurringTask(task) {
   if (!task) return false;
+
+  // Protected tasks are never considered "recurring" for cleanup purposes
+  if (isProtectedTask(task)) {
+    return false;
+  }
 
   // Check by task_type
   if (task.task_type && RECURRING_TASK_TYPES.includes(task.task_type.toLowerCase())) {
@@ -101,9 +129,11 @@ async function runTaskCleanup(db, options = {}) {
           task_type = ANY($2::text[])
           OR (payload->>'is_recurring')::boolean = true
         )
+        AND (task_type IS NULL OR task_type != ALL($3::text[]))
     `, [
       staleRecurringCutoff.toISOString(),
-      RECURRING_TASK_TYPES
+      RECURRING_TASK_TYPES,
+      PROTECTED_TASK_TYPES
     ]);
 
     const recurringTasks = staleRecurringResult.rows;
@@ -363,7 +393,9 @@ export {
   getCleanupStats,
   getCleanupAuditLog,
   isRecurringTask,
+  isProtectedTask,
   RECURRING_TASK_TYPES,
+  PROTECTED_TASK_TYPES,
   RECURRING_TITLE_PATTERNS,
   RECURRING_QUEUE_TIMEOUT_HOURS,
   PAUSED_ARCHIVE_DAYS

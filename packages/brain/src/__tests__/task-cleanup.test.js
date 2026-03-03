@@ -9,7 +9,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   runTaskCleanup,
   isRecurringTask,
+  isProtectedTask,
   RECURRING_TASK_TYPES,
+  PROTECTED_TASK_TYPES,
   RECURRING_QUEUE_TIMEOUT_HOURS,
   PAUSED_ARCHIVE_DAYS
 } from '../task-cleanup.js';
@@ -46,6 +48,32 @@ function createMockDb(overrides = {}) {
   };
 }
 
+describe('isProtectedTask', () => {
+  it('initiative_plan should be protected', () => {
+    expect(isProtectedTask({ task_type: 'initiative_plan', title: 'Plan Initiative' })).toBe(true);
+  });
+
+  it('initiative_verify should be protected', () => {
+    expect(isProtectedTask({ task_type: 'initiative_verify', title: 'Verify Initiative' })).toBe(true);
+  });
+
+  it('dev task should NOT be protected', () => {
+    expect(isProtectedTask({ task_type: 'dev', title: 'Implement feature' })).toBe(false);
+  });
+
+  it('dept_heartbeat should NOT be protected', () => {
+    expect(isProtectedTask({ task_type: 'dept_heartbeat', title: 'Heartbeat' })).toBe(false);
+  });
+
+  it('null task should return false', () => {
+    expect(isProtectedTask(null)).toBe(false);
+  });
+
+  it('task without task_type should not be protected', () => {
+    expect(isProtectedTask({ title: 'Some task' })).toBe(false);
+  });
+});
+
 describe('isRecurringTask', () => {
   it('task_type dept_heartbeat should be recurring', () => {
     expect(isRecurringTask({ task_type: 'dept_heartbeat', title: 'Test' })).toBe(true);
@@ -73,6 +101,22 @@ describe('isRecurringTask', () => {
 
   it('null task should return false', () => {
     expect(isRecurringTask(null)).toBe(false);
+  });
+
+  it('initiative_plan should NOT be recurring (protected task)', () => {
+    expect(isRecurringTask({ task_type: 'initiative_plan', title: 'Plan Initiative' })).toBe(false);
+  });
+
+  it('initiative_plan with is_recurring=true should still NOT be recurring (protected overrides)', () => {
+    expect(isRecurringTask({
+      task_type: 'initiative_plan',
+      title: 'Plan Initiative',
+      payload: { is_recurring: true }
+    })).toBe(false);
+  });
+
+  it('initiative_verify should NOT be recurring (protected task)', () => {
+    expect(isRecurringTask({ task_type: 'initiative_verify', title: 'Verify Initiative' })).toBe(false);
   });
 });
 
@@ -283,6 +327,16 @@ describe('constants', () => {
   it('RECURRING_TASK_TYPES should include dept_heartbeat and codex_qa', () => {
     expect(RECURRING_TASK_TYPES).toContain('dept_heartbeat');
     expect(RECURRING_TASK_TYPES).toContain('codex_qa');
+  });
+
+  it('PROTECTED_TASK_TYPES should include initiative_plan and initiative_verify', () => {
+    expect(PROTECTED_TASK_TYPES).toContain('initiative_plan');
+    expect(PROTECTED_TASK_TYPES).toContain('initiative_verify');
+  });
+
+  it('PROTECTED_TASK_TYPES should NOT overlap with RECURRING_TASK_TYPES', () => {
+    const overlap = PROTECTED_TASK_TYPES.filter(t => RECURRING_TASK_TYPES.includes(t));
+    expect(overlap).toHaveLength(0);
   });
 
   it('RECURRING_QUEUE_TIMEOUT_HOURS should be 24', () => {
