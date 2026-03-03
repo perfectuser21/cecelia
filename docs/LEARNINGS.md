@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Brain Agent 独立 API/无头调用方式配置中心（PR #367, Brain v1.164.6）
+
+**需求**：Cecelia Dashboard 的「团队」页面新增所有 LLM agent 的调用方式（API 直连 `anthropic-api` vs 无头 `anthropic`）配置，自动扫描 model-registry.js 中注册的所有 agent，无需手动维护列表。
+
+**实现方案**：扩展 `updateAgentModel` 函数支持 `options.provider` 参数覆盖——仅在 agent 层为 brain 且新旧 provider 都属于 Anthropic 系（`anthropic` / `anthropic-api`）时允许覆盖。前端在 `BrainLayerConfig.tsx` 新增 `ProviderToggle` 组件，Claude 系模型显示 API/无头两键切换，非 Claude 模型只显示静态 API 标签。
+
+**关键架构决策**：provider 覆盖只对 brain 层有意义（executor 层 provider 由模型名自动决定）。`anthropic-api` 和 `anthropic` 都属于 Anthropic provider 的变种，允许在同一模型下切换调用方式，但不允许跨 provider（如 anthropic→minimax）的 provider 覆盖。
+
+**CI runner 端口冲突（self-hosted PostgreSQL 5432）**：Brain Tests 在 self-hosted runner 上用 Docker services 启动 PostgreSQL，若前一个 CI job 遗留容器未清理，会报 `Bind for 0.0.0.0:5432 failed: port is already allocated`。症状：Brain CI 失败，`Initialize containers` 步骤报错。修复：重新 push 空提交重触发 CI（端口冲突通常是瞬态的，下次运行前一个 job 已清理）。长期应考虑将 brain-test 迁移到 port 5433（见 PR #368 注记）。
+
+**PR 头提交包含空 commit**：功能分支 push 了 `chore: 重试 Brain CI（runner port 冲突重试）` 的空提交用于重触发 CI——这是合法的应急手段，不影响 squash merge 质量。
+
+**两步 PR 合并策略**：CI runner 基础设施变更（改 runs-on）和功能代码变更应分两个 PR。先合并 CI fix PR（无 brain/workspace 文件改动 → `brain=false` → 跳过测试 → ci-passed 通过），再对功能分支触发新 CI（有新的 runner 配置），有效避免"CI 修复和功能同时合并导致不确定性"。
+
 ### [2026-03-03] Area 完整双向关联 migration 104 + Cecelia Brain 自动合并导致冲突标记提交（PR #364, Brain v1.164.8）
 
 **需求**：给 goals/projects/tasks 三张表补全 area_id 外键约束（ON DELETE SET NULL），goals 表新增 area_id 字段。实现 Area ↔ OKR/Project/Task 的完整双向关联（Notion Relation 机制的后端基础）。
