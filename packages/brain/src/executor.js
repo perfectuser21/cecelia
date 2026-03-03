@@ -1919,22 +1919,32 @@ async function probeTaskLiveness() {
   return actions;
 }
 
+// Task types that are safe to retry when orphaned
+const RETRYABLE_TASK_TYPES = new Set([
+  'initiative_plan',  // Idempotent: re-plans next PR
+  'suggestion_plan',  // Idempotent: re-generates suggestion
+  'initiative_verify', // Idempotent: re-checks Initiative status
+]);
+
+const MAX_ORPHAN_RETRIES = 2; // Maximum retry attempts for orphaned tasks
+
 /**
  * Synchronize DB state with actual processes on Brain startup.
  * Finds all in_progress tasks and checks if they have matching processes.
- * Tasks without processes are marked as failed (orphan_detected).
+ * Tasks without processes are marked as failed (orphan_detected) or re-queued if retryable.
  *
- * @returns {Object} - { orphans_found, orphans_fixed, rebuilt }
+ * @returns {Object} - { orphans_found, orphans_fixed, orphans_retried, rebuilt }
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at
+    SELECT id, title, task_type, payload, started_at
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   let orphansFound = 0;
   let orphansFixed = 0;
+  let orphansRetried = 0;
   let rebuilt = 0;
 
   for (const task of result.rows) {
@@ -1975,21 +1985,52 @@ async function syncOrphanTasksOnStartup() {
         diagnostic_info: diagnostic_info,
       };
 
-      await pool.query(
-        `UPDATE tasks SET
-          status = 'failed',
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1`,
-        [task.id, JSON.stringify({ error_details: errorDetails })]
-      );
+      // Check if task should be retried
+      const orphanRetryCount = task.payload?.orphan_retry_count || 0;
+      const isRetryable = RETRYABLE_TASK_TYPES.has(task.task_type);
+      const canRetry = isRetryable && orphanRetryCount < MAX_ORPHAN_RETRIES;
 
-      orphansFixed++;
-      console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);
+      if (canRetry) {
+        // Re-queue the task for retry
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'queued',
+            started_at = NULL,
+            payload = COALESCE(payload, '{}'::jsonb)
+              || $2::jsonb
+              || jsonb_build_object('orphan_retry_count', $3)
+          WHERE id = $1`,
+          [task.id, JSON.stringify({ last_orphan: errorDetails }), orphanRetryCount + 1]
+        );
+
+        orphansRetried++;
+        console.log(`[startup-sync] Orphan retried: task=${task.id} task_type=${task.task_type} retry_count=${orphanRetryCount + 1} reason=${reason}`);
+      } else {
+        // Mark as failed (either not retryable or max retries reached)
+        await pool.query(
+          `UPDATE tasks SET
+            status = 'failed',
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          WHERE id = $1`,
+          [task.id, JSON.stringify({ error_details: errorDetails })]
+        );
+
+        orphansFixed++;
+        const failReason = isRetryable
+          ? `max_retries_reached (${orphanRetryCount})`
+          : 'not_retryable';
+        console.log(`[startup-sync] Orphan failed: task=${task.id} task_type=${task.task_type} title="${task.title}" reason=${reason} fail_reason=${failReason}`);
+      }
     }
   }
 
-  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
-  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, rebuilt };
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_retried=${orphansRetried} orphans_fixed=${orphansFixed} rebuilt=${rebuilt}`);
+  return {
+    orphans_found: orphansFound,
+    orphans_fixed: orphansFixed,
+    orphans_retried: orphansRetried,
+    rebuilt,
+  };
 }
 
 /**

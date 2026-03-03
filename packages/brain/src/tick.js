@@ -39,7 +39,35 @@ const TICK_INTERVAL_MINUTES = 2;
 const TICK_LOOP_INTERVAL_MS = parseInt(process.env.CECELIA_TICK_INTERVAL_MS || '5000', 10); // 5 seconds between loop ticks
 const TICK_TIMEOUT_MS = 60 * 1000; // 60 seconds max execution time
 const STALE_THRESHOLD_HOURS = 24; // Tasks in_progress for more than 24h are stale
-const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min
+const DISPATCH_TIMEOUT_MINUTES = parseInt(process.env.DISPATCH_TIMEOUT_MINUTES || '60', 10); // Auto-fail dispatched tasks after 60 min (default)
+
+// Task-specific timeout overrides (in minutes)
+const TASK_TIMEOUT_OVERRIDES = (() => {
+  try {
+    // Support env var: TASK_TIMEOUT_OVERRIDES='{"initiative_plan":120,"suggestion_plan":90}'
+    return process.env.TASK_TIMEOUT_OVERRIDES
+      ? JSON.parse(process.env.TASK_TIMEOUT_OVERRIDES)
+      : {
+          'initiative_plan': 120,  // Initiative planning needs more time
+          'suggestion_plan': 90,   // Suggestion planning also needs more time
+        };
+  } catch (err) {
+    console.error('[tick] Failed to parse TASK_TIMEOUT_OVERRIDES, using defaults:', err);
+    return {
+      'initiative_plan': 120,
+      'suggestion_plan': 90,
+    };
+  }
+})();
+
+/**
+ * Get timeout limit for a specific task type
+ * @param {string} taskType - Task type
+ * @returns {number} - Timeout in minutes
+ */
+function getTimeoutForTaskType(taskType) {
+  return TASK_TIMEOUT_OVERRIDES[taskType] || DISPATCH_TIMEOUT_MINUTES;
+}
 // MAX_SEATS imported from executor.js — calculated from actual resource capacity
 const MAX_CONCURRENT_TASKS = MAX_SEATS;
 // INTERACTIVE_RESERVE imported from executor.js (also used for threshold calculation)
@@ -963,15 +991,19 @@ async function autoFailTimedOutTasks(inProgressTasks) {
     if (!triggeredAt) continue;
 
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
-    if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
+    const timeoutLimit = getTimeoutForTaskType(task.task_type);
+
+    if (elapsed > timeoutLimit) {
+      console.log(`[tick] Task timeout detected: task_id=${task.id}, type=${task.task_type}, elapsed=${Math.round(elapsed)}min, limit=${timeoutLimit}min`);
+
       // Kill the actual process before marking failed to prevent orphans
       killProcess(task.id);
       // Write structured error details for retry-analyzer
       const errorDetails = {
         type: 'timeout',
-        message: `Task timed out after ${Math.round(elapsed)} minutes (limit: ${DISPATCH_TIMEOUT_MINUTES}min)`,
+        message: `Task timed out after ${Math.round(elapsed)} minutes (limit: ${timeoutLimit}min)`,
         elapsed_minutes: Math.round(elapsed),
-        timeout_limit: DISPATCH_TIMEOUT_MINUTES,
+        timeout_limit: timeoutLimit,
       };
       await pool.query(
         `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
