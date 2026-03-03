@@ -24,7 +24,7 @@ import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from './task-router.js';
 import { getTaskWeights } from './task-weight.js';
-import { getCleanupStats, runTaskCleanup } from './task-cleanup.js';
+import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from './task-cleanup.js';
 import {
   executeOkrTick, runOkrTickSafe, startOkrTickLoop, stopOkrTickLoop, getOkrTickStatus,
   addQuestionToGoal, answerQuestionForGoal, getPendingQuestions, OKR_STATUS
@@ -58,7 +58,7 @@ import { executeDecision as executeThalamusDecision, getPendingActions, approveP
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat, handleChatStream } from './orchestrator-chat.js';
-import { callLLM } from './llm-caller.js';
+import { callLLM, callLLMStream } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
 import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
@@ -87,6 +87,7 @@ async function getActiveExecutionPaths() {
   return result.rows;
 }
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
+import { updateDesireFromTask } from './desire-feedback.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -2848,6 +2849,11 @@ router.post('/execution-callback', async (req, res) => {
       resolveRelatedFailureMemories(task_id, pool).catch(err =>
         console.warn(`[execution-callback] Closure resolve failed (non-fatal): ${err.message}`)
       );
+
+      // P0-B：欲望反馈闭环 - 任务完成 → 回写对应 desire 状态
+      updateDesireFromTask(task_id, 'completed', pool).catch(err =>
+        console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
+      );
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
       await cbFailure('cecelia-run');
@@ -2971,6 +2977,11 @@ router.post('/execution-callback', async (req, res) => {
           console.error(`[execution-callback] Thalamus error on failure: ${thalamusErr.message}`);
         }
       }
+
+      // P0-B：欲望反馈闭环 - 任务失败 → 回写对应 desire 状态
+      updateDesireFromTask(task_id, 'failed', pool).catch(err =>
+        console.warn(`[execution-callback] desire feedback failed (non-fatal): ${err.message}`)
+      );
 
     }
 
@@ -8090,12 +8101,12 @@ router.put('/model-profiles/active', async (req, res) => {
 
 router.patch('/model-profiles/active/agent', async (req, res) => {
   try {
-    const { agent_id, model_id } = req.body;
+    const { agent_id, model_id, provider } = req.body;
     if (!agent_id || !model_id) {
       return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
     }
 
-    const result = await updateAgentModel(pool, agent_id, model_id);
+    const result = await updateAgentModel(pool, agent_id, model_id, { provider });
 
     // WebSocket 广播
     websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
@@ -9806,6 +9817,231 @@ router.post('/dispatch/cleanup', async (req, res) => {
   } catch (err) {
     console.error('[API] dispatch/cleanup error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/dispatch/effectiveness
+ * 派发效果监控端点
+ *
+ * 返回：
+ * - canceled_by_type: 24h 内 canceled 任务按 task_type 分组统计
+ * - initiative_plan_cancel_rate: initiative_plan 任务的取消率
+ * - avg_wait_by_priority: 各优先级的平均等待时长（分钟）
+ * - weight_system_active: 权重系统是否生效（队列中有任务且能按权重排序）
+ * - queued_snapshot: 当前队列快照（按权重排序的前 10 个任务）
+ */
+router.get('/dispatch/effectiveness', async (req, res) => {
+  try {
+    // 1. 24h 内 canceled 任务按 task_type 分组
+    const canceledByTypeResult = await pool.query(`
+      SELECT
+        COALESCE(task_type, 'unknown') as task_type,
+        COUNT(*) as count
+      FROM tasks
+      WHERE status IN ('canceled', 'cancelled')
+        AND updated_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY task_type
+      ORDER BY count DESC
+    `);
+
+    const canceledByType = {};
+    let totalCanceled24h = 0;
+    for (const row of canceledByTypeResult.rows) {
+      canceledByType[row.task_type] = parseInt(row.count);
+      totalCanceled24h += parseInt(row.count);
+    }
+
+    // 2. initiative_plan 取消率（24h 内完成 + 取消 的比例）
+    const initiativePlanStatsResult = await pool.query(`
+      SELECT
+        status,
+        COUNT(*) as count
+      FROM tasks
+      WHERE task_type = 'initiative_plan'
+        AND updated_at >= NOW() - INTERVAL '24 hours'
+        AND status IN ('canceled', 'cancelled', 'completed', 'failed')
+      GROUP BY status
+    `);
+
+    let initiativePlanCanceled = 0;
+    let initiativePlanCompleted = 0;
+    for (const row of initiativePlanStatsResult.rows) {
+      const count = parseInt(row.count);
+      if (row.status === 'canceled' || row.status === 'cancelled') {
+        initiativePlanCanceled += count;
+      } else if (row.status === 'completed') {
+        initiativePlanCompleted += count;
+      }
+    }
+
+    const initiativePlanTotal = initiativePlanCanceled + initiativePlanCompleted;
+    const initiativePlanCancelRate = initiativePlanTotal > 0
+      ? Math.round((initiativePlanCanceled / initiativePlanTotal) * 100 * 10) / 10
+      : 0;
+
+    // 3. 平均等待时长（按优先级）
+    const avgWaitResult = await pool.query(`
+      SELECT priority,
+             ROUND(AVG(EXTRACT(EPOCH FROM (NOW() - queued_at)) / 60)::numeric, 1) as avg_wait_minutes
+      FROM tasks
+      WHERE status = 'queued'
+        AND queued_at IS NOT NULL
+      GROUP BY priority
+    `);
+
+    const avgWaitByPriority = {};
+    for (const row of avgWaitResult.rows) {
+      avgWaitByPriority[row.priority] = parseFloat(row.avg_wait_minutes) || 0;
+    }
+
+    // 4. 权重系统验证：获取队列中的任务并计算权重
+    const queuedTasksResult = await pool.query(`
+      SELECT id, title, priority, task_type, queued_at, created_at, status, payload, metadata
+      FROM tasks
+      WHERE status = 'queued'
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const weightSystemActive = queuedTasksResult.rows.length > 0;
+    const taskWeights = weightSystemActive ? getTaskWeights(queuedTasksResult.rows) : [];
+    taskWeights.sort((a, b) => b.weight - a.weight);
+
+    // 5. 构造响应
+    res.json({
+      canceled_by_type: canceledByType,
+      total_canceled_24h: totalCanceled24h,
+      initiative_plan_cancel_rate: initiativePlanCancelRate,
+      initiative_plan_stats: {
+        canceled_24h: initiativePlanCanceled,
+        completed_24h: initiativePlanCompleted,
+        total_24h: initiativePlanTotal,
+        cancel_rate_percent: initiativePlanCancelRate
+      },
+      avg_wait_by_priority: avgWaitByPriority,
+      weight_system_active: weightSystemActive,
+      queued_snapshot: taskWeights.slice(0, 10).map(t => ({
+        id: t.id,
+        title: t.title,
+        priority: t.priority,
+        task_type: t.task_type,
+        weight: t.weight
+      })),
+      generated_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[API] dispatch/effectiveness error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cleanup/audit
+ * 获取任务清理审计日志（内存中的最近操作记录）
+ *
+ * Query params:
+ * - limit: 返回条数（默认 100，最大 500）
+ *
+ * 返回：
+ * - audit_log: 审计记录数组（从新到旧）
+ * - count: 实际返回条数
+ * - note: 说明（内存日志，重启后清空）
+ */
+router.get('/cleanup/audit', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '100', 10);
+    const auditLog = getCleanupAuditLog(limit);
+
+    res.json({
+      audit_log: auditLog,
+      count: auditLog.length,
+      note: 'In-memory audit log. Cleared on Brain restart.',
+      generated_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[API] cleanup/audit error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/manual/ask
+ * 说明书实时问答端点（SSE）
+ * Body: { question: string }
+ * Response: text/event-stream — 格式 `data: {"delta":"..."}\n\n`，结束为 `data: [DONE]\n\n`
+ * 调用 MiniMax 流式回答，以 brain-manifest.generated.json 作为上下文
+ */
+router.post('/manual/ask', async (req, res) => {
+  const { question } = req.body;
+  if (!question || typeof question !== 'string' || question.trim().length === 0) {
+    res.status(400).json({ error: 'question is required' });
+    return;
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  let closed = false;
+  res.on('close', () => { closed = true; });
+
+  try {
+    // 读取 manifest 作为 context
+    const manifestRaw = readFileSync(new URL('./brain-manifest.generated.json', import.meta.url), 'utf8');
+    const manifest = JSON.parse(manifestRaw);
+
+    // 构建精简 context（控制 token 量）
+    const contextLines = ['# Brain Manifest 概览\n'];
+    if (manifest.blocks) {
+      manifest.blocks.forEach(b => {
+        contextLines.push(`## ${b.label} (${b.id})`);
+        if (b.desc) contextLines.push(b.desc);
+        if (b.modules) {
+          b.modules.forEach(m => contextLines.push(`  - ${m.id}: ${m.label}${m.desc ? ' — ' + m.desc : ''}`));
+        }
+      });
+    }
+    if (manifest.allActions) {
+      const actionKeys = Object.keys(manifest.allActions);
+      contextLines.push(`\n## Actions 白名单（共 ${actionKeys.length} 条）`);
+      actionKeys.slice(0, 40).forEach(k => {
+        const a = manifest.allActions[k];
+        contextLines.push(`  ${k}: ${a.description || ''}${a.dangerous ? ' [危险]' : ''}`);
+      });
+    }
+    if (manifest.allSignals) {
+      contextLines.push(`\n## 感知信号（共 ${manifest.allSignals.length} 个）`);
+      manifest.allSignals.slice(0, 20).forEach(s => {
+        contextLines.push(`  #${s.id}: ${s.label} — ${s.description || ''}`);
+      });
+    }
+    const contextStr = contextLines.join('\n');
+
+    // 合并 system context 与 question（MiniMax 用 user message，无 top-level system 字段）
+    const combinedPrompt = `你是 Brain 系统的技术说明员。根据以下 Brain manifest 数据，简明扼要地回答关于 Brain 架构的技术问题。使用中文回答，保持简洁专业。\n\n${contextStr}\n\n用户问题：${question.trim()}`;
+
+    // 通过 callLLMStream 调用 MiniMax 流式 API（mouth agentId）
+    await callLLMStream('mouth', combinedPrompt, {}, (delta, isDone) => {
+      if (isDone) {
+        if (!closed) {
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }
+      } else if (delta && !closed) {
+        res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      }
+    });
+  } catch (err) {
+    console.error('[API] manual/ask error:', err.message);
+    if (!closed) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 });
 
