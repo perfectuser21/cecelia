@@ -5922,6 +5922,47 @@ router.post('/cortex/feedback', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/cortex/generate-report
+ * 手动触发 Cortex 生成系统简报
+ *
+ * Body: { time_range_hours?: number (default: 48) }
+ */
+router.post('/cortex/generate-report', async (req, res) => {
+  try {
+    const { time_range_hours = 48 } = req.body || {};
+    const timeRangeHours = Math.max(1, Math.min(168, Number(time_range_hours) || 48));
+
+    const { generateSystemReport } = await import('./cortex.js');
+    const report = await generateSystemReport({ timeRangeHours });
+
+    res.json({ success: true, report });
+  } catch (err) {
+    console.error('[API] cortex/generate-report failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/reports
+ * 获取最近的系统简报列表
+ */
+router.get('/cortex/reports', async (req, res) => {
+  try {
+    const limit = Math.min(20, parseInt(req.query.limit) || 10);
+    const result = await pool.query(`
+      SELECT id, type, content, metadata, created_at
+      FROM system_reports
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({ success: true, reports: result.rows });
+  } catch (err) {
+    console.error('[API] cortex/reports failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/learning/evaluate-strategy
  * Evaluate strategy adjustment effectiveness
  *
