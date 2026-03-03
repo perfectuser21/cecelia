@@ -96,8 +96,10 @@ let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
+let _lastSystemReportTime = 0; // track last cortex system report generation time
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
+const SYSTEM_REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_SYSTEM_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1994,6 +1996,17 @@ async function executeTick() {
   // 10.12 分级报警刷新（P1 每小时，P2 每日，fire-and-forget）
   Promise.resolve().then(() => flushAlertsIfNeeded())
     .catch(e => console.warn('[tick] alerting flush 失败:', e.message));
+
+  // 10.13 48h 系统简报（每 48 小时自动生成一次，fire-and-forget）
+  const systemReportElapsed = Date.now() - _lastSystemReportTime;
+  if (_lastSystemReportTime === 0 || systemReportElapsed >= SYSTEM_REPORT_INTERVAL_MS) {
+    _lastSystemReportTime = Date.now();
+    Promise.resolve().then(async () => {
+      const { generateSystemReport } = await import('./cortex.js');
+      const report = await generateSystemReport({ timeRangeHours: 48 });
+      console.log(`[tick] 48h 系统简报生成完成 id=${report.id}`);
+    }).catch(e => console.warn('[tick] 48h 系统简报生成失败（non-critical）:', e.message));
+  }
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
