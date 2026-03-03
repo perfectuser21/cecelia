@@ -281,18 +281,29 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
 
     if (Object.keys(facts).length === 0) return;
 
+    // 过滤：AI 自身名字不能被存为用户事实
+    const AI_NAMES = ['cecelia', 'cecilia'];
+    if (facts.display_name && AI_NAMES.includes(facts.display_name.trim().toLowerCase())) {
+      delete facts.display_name;
+    }
+
+    if (Object.keys(facts).length === 0) return;
+
     await upsertUserProfile(pool, userId, facts);
 
-    // 将 raw_facts 中每条 KV 存入 user_profile_facts（向量化存储）
+    // 将 raw_facts 中每条 KV 存入 user_profile_facts（UPSERT by key 防重）
     if (facts.raw_facts && typeof facts.raw_facts === 'object') {
-      for (const [key, value] of Object.entries(facts.raw_facts)) {
-        const content = `${key}: ${value}`;
+      for (const [k, value] of Object.entries(facts.raw_facts)) {
+        const factKey = `raw.${k}`;
+        const content = `${k}: ${value}`;
         try {
           const result = await pool.query(
-            `INSERT INTO user_profile_facts (user_id, category, content)
-             VALUES ($1, 'raw', $2)
+            `INSERT INTO user_profile_facts (user_id, category, content, key, source)
+             VALUES ($1, 'raw', $2, $3, 'auto')
+             ON CONFLICT (user_id, key) WHERE key IS NOT NULL
+             DO UPDATE SET content = EXCLUDED.content
              RETURNING id`,
-            [userId, content]
+            [userId, content, factKey]
           );
           const factId = result.rows[0]?.id;
           if (factId) {
@@ -307,19 +318,21 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
       }
     }
 
-    // 结构化字段也存一份（display_name, focus_area 等）
+    // 结构化字段也存一份（display_name, focus_area 等），UPSERT by key 防重
     const structuredFacts = [];
-    if (facts.display_name) structuredFacts.push({ category: 'background', content: `名字: ${facts.display_name}` });
-    if (facts.focus_area) structuredFacts.push({ category: 'behavior', content: `当前重点方向: ${facts.focus_area}` });
-    if (facts.preferred_style) structuredFacts.push({ category: 'preference', content: `回答风格偏好: ${facts.preferred_style}` });
+    if (facts.display_name) structuredFacts.push({ category: 'background', content: `名字: ${facts.display_name}`, key: 'display_name' });
+    if (facts.focus_area) structuredFacts.push({ category: 'behavior', content: `当前重点方向: ${facts.focus_area}`, key: 'focus_area' });
+    if (facts.preferred_style) structuredFacts.push({ category: 'preference', content: `回答风格偏好: ${facts.preferred_style}`, key: 'preferred_style' });
 
-    for (const { category, content } of structuredFacts) {
+    for (const { category, content, key: factKey } of structuredFacts) {
       try {
         const result = await pool.query(
-          `INSERT INTO user_profile_facts (user_id, category, content)
-           VALUES ($1, $2, $3)
+          `INSERT INTO user_profile_facts (user_id, category, content, key, source)
+           VALUES ($1, $2, $3, $4, 'auto')
+           ON CONFLICT (user_id, key) WHERE key IS NOT NULL
+           DO UPDATE SET content = EXCLUDED.content
            RETURNING id`,
-          [userId, category, content]
+          [userId, category, content, factKey]
         );
         const factId = result.rows[0]?.id;
         if (factId) {
