@@ -583,3 +583,192 @@ describe('D9: EXPECTED_SCHEMA_VERSION', () => {
     expect(EXPECTED_SCHEMA_VERSION).toBe('104');
   });
 });
+
+// ============================================================
+// D10: Reflection 去重机制测试
+// ============================================================
+
+describe('D10: Reflection 去重机制', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('D10-1: 相似度 > 0.75 的洞察被跳过', async () => {
+    const { callLLM } = await import('../llm-caller.js');
+    const { runReflection } = await import('../desire/reflection.js');
+
+    // Mock LLM 返回新洞察
+    callLLM.mockResolvedValue({
+      text: '反思循环已成为执行瓶颈。我将立即实施三层止血',
+      model: 'test',
+      provider: 'test',
+      elapsed_ms: 10
+    });
+
+    let accumulatorResetCount = 0;
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql, params) => {
+        // 返回 accumulator 值
+        if (sql.includes('desire_importance_accumulator')) {
+          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
+            accumulatorResetCount++;
+            return { rows: [] };
+          }
+          return { rows: [{ value_json: 15 }] };
+        }
+
+        // 返回最近 50 条记忆（reflection 的第一步）
+        if (sql.includes('FROM memory_stream') && sql.includes('ORDER BY created_at DESC') && sql.includes('LIMIT 50') && !sql.includes('content LIKE')) {
+          return {
+            rows: [
+              { content: '观察 1', importance: 5, memory_type: 'short', created_at: new Date() },
+              { content: '观察 2', importance: 6, memory_type: 'short', created_at: new Date() }
+            ]
+          };
+        }
+
+        // 返回最近的 memory_stream（包含相似洞察）- 去重查询
+        if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
+          return {
+            rows: [
+              { content: '[反思洞察] 反思循环已成为执行瓶颈。建议实施三层止血方案' },
+              { content: '[反思洞察] 其他不相关的洞察内容 ABCDEFG HIJKLMN' }
+            ]
+          };
+        }
+
+        // 其他查询返回空
+        return { rows: [] };
+      })
+    };
+
+    const result = await runReflection(mockPool);
+
+    // 验证去重生效
+    expect(result.triggered).toBe(true);
+    expect(result.insight).toBeNull();
+    expect(result.skipped).toBe('duplicate');
+    expect(result.similarity).toBeGreaterThan(0.75);
+
+    // 验证 accumulator 被重置
+    expect(accumulatorResetCount).toBe(1);
+  });
+
+  it('D10-2: 相似度 <= 0.75 的洞察正常写入', async () => {
+    const { callLLM } = await import('../llm-caller.js');
+    const { runReflection } = await import('../desire/reflection.js');
+
+    // Mock LLM 返回新洞察
+    callLLM.mockResolvedValue({
+      text: '完全不同的新洞察内容 XYZ 123 ABC',
+      model: 'test',
+      provider: 'test',
+      elapsed_ms: 10
+    });
+
+    let insightInserted = false;
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql, params) => {
+        // 返回 accumulator 值
+        if (sql.includes('desire_importance_accumulator')) {
+          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
+            return { rows: [] };
+          }
+          return { rows: [{ value_json: 15 }] };
+        }
+
+        // 返回最近 50 条记忆（reflection 的第一步）
+        if (sql.includes('FROM memory_stream') && sql.includes('ORDER BY created_at DESC') && sql.includes('LIMIT 50') && !sql.includes('content LIKE')) {
+          return {
+            rows: [
+              { content: '观察 1', importance: 5, memory_type: 'short', created_at: new Date() },
+              { content: '观察 2', importance: 6, memory_type: 'short', created_at: new Date() }
+            ]
+          };
+        }
+
+        // 返回最近的 memory_stream（包含不相似洞察）- 去重查询
+        if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
+          return {
+            rows: [
+              { content: '[反思洞察] 旧的洞察内容完全不同 QWERTY ASDFGH' }
+            ]
+          };
+        }
+
+        // 洞察写入 memory_stream
+        if (sql.includes('INSERT INTO memory_stream')) {
+          insightInserted = true;
+          return { rows: [{ id: 'test-id-123' }] };
+        }
+
+        // 其他查询返回空
+        return { rows: [] };
+      })
+    };
+
+    const result = await runReflection(mockPool);
+
+    // 验证洞察正常写入
+    expect(result.triggered).toBe(true);
+    expect(result.insight).toBe('完全不同的新洞察内容 XYZ 123 ABC');
+    expect(result.skipped).toBeUndefined();
+    expect(insightInserted).toBe(true);
+  });
+
+  it('D10-3: 去重检查失败不影响主流程', async () => {
+    const { callLLM } = await import('../llm-caller.js');
+    const { runReflection } = await import('../desire/reflection.js');
+
+    callLLM.mockResolvedValue({
+      text: '新的洞察内容',
+      model: 'test',
+      provider: 'test',
+      elapsed_ms: 10
+    });
+
+    let insightInserted = false;
+    const mockPool = {
+      query: vi.fn().mockImplementation((sql, params) => {
+        // 返回 accumulator 值
+        if (sql.includes('desire_importance_accumulator')) {
+          if (sql.includes('INSERT') || sql.includes('UPDATE')) {
+            return { rows: [] };
+          }
+          return { rows: [{ value_json: 15 }] };
+        }
+
+        // 返回最近 50 条记忆（reflection 的第一步）
+        if (sql.includes('FROM memory_stream') && sql.includes('ORDER BY created_at DESC') && sql.includes('LIMIT 50') && !sql.includes('content LIKE')) {
+          return {
+            rows: [
+              { content: '观察 1', importance: 5, memory_type: 'short', created_at: new Date() },
+              { content: '观察 2', importance: 6, memory_type: 'short', created_at: new Date() }
+            ]
+          };
+        }
+
+        // 去重查询失败
+        if (sql.includes('content LIKE') && sql.includes('反思洞察') && sql.includes('INTERVAL')) {
+          throw new Error('Database query error');
+        }
+
+        // 洞察写入 memory_stream
+        if (sql.includes('INSERT INTO memory_stream')) {
+          insightInserted = true;
+          return { rows: [{ id: 'test-id-456' }] };
+        }
+
+        // 其他查询返回空
+        return { rows: [] };
+      })
+    };
+
+    const result = await runReflection(mockPool);
+
+    // 验证去重失败后仍然写入洞察
+    expect(result.triggered).toBe(true);
+    expect(result.insight).toBe('新的洞察内容');
+    expect(insightInserted).toBe(true);
+  });
+});

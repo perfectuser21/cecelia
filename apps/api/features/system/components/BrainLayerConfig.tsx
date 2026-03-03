@@ -1,36 +1,83 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, AlertCircle, Zap, CheckCircle, XCircle } from 'lucide-react';
+import { Brain, ChevronDown, ChevronUp, Check, RefreshCw, AlertCircle, Zap, CheckCircle, XCircle } from 'lucide-react';
 import {
   fetchBrainProfile,
   fetchBrainModels,
   updateBrainAgent,
-  fetchMouthConfig,
-  updateMouthConfig,
   type BrainProfile,
   type BrainAgentInfo,
   type ModelEntry,
 } from '../api/staffApi';
 
-// ── Styles ───────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
 
-const PROVIDER_COLORS: Record<string, { badge: string; text: string }> = {
-  anthropic: { badge: 'bg-orange-500/[0.12]', text: 'text-orange-400' },
-  minimax:   { badge: 'bg-blue-500/[0.12]',   text: 'text-blue-400' },
-  openai:    { badge: 'bg-emerald-500/[0.12]', text: 'text-emerald-400' },
-};
+type CallProvider = 'anthropic-api' | 'anthropic' | 'minimax' | 'minimax-headless';
 
-const TIER_COLORS: Record<string, string> = {
-  premium:  'bg-amber-500',
-  standard: 'bg-indigo-400',
-  fast:     'bg-emerald-400',
-};
+interface CallOption {
+  modelId: string;
+  modelName: string;
+  provider: CallProvider;
+  providerGroup: 'anthropic' | 'minimax';
+  callMethod: 'API' | '无头';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function getProviderGroup(modelId: string): 'anthropic' | 'minimax' {
+  return modelId.startsWith('MiniMax-') ? 'minimax' : 'anthropic';
+}
+
+function getProviderForOption(modelId: string, callMethod: 'API' | '无头'): CallProvider {
+  if (modelId.startsWith('MiniMax-')) {
+    return callMethod === 'API' ? 'minimax' : 'minimax-headless';
+  }
+  return callMethod === 'API' ? 'anthropic-api' : 'anthropic';
+}
+
+function getCallMethod(provider: CallProvider): '无头' | 'API' {
+  return provider === 'anthropic' || provider === 'minimax-headless' ? '无头' : 'API';
+}
+
+function modelShortName(modelId: string): string {
+  if (modelId.includes('haiku')) return 'Haiku';
+  if (modelId.includes('sonnet')) return 'Sonnet';
+  if (modelId.includes('opus')) return 'Opus';
+  if (modelId === 'MiniMax-M2.5-highspeed') return 'M2.5 Fast';
+  if (modelId === 'MiniMax-M2.5') return 'M2.5';
+  if (modelId === 'MiniMax-M2') return 'M2';
+  if (modelId === 'MiniMax-M2.1') return 'M2.1';
+  return modelId;
+}
+
+function buildCallOptions(allowedModels: string[], allModels: ModelEntry[]): CallOption[] {
+  const options: CallOption[] = [];
+  for (const modelId of allowedModels) {
+    const m = allModels.find(x => x.id === modelId);
+    const modelName = m?.name || modelShortName(modelId);
+    const group = getProviderGroup(modelId);
+    for (const method of (['API', '无头'] as const)) {
+      options.push({
+        modelId,
+        modelName: modelShortName(modelId),
+        provider: getProviderForOption(modelId, method),
+        providerGroup: group,
+        callMethod: method,
+      });
+    }
+  }
+  return options;
+}
+
+function currentLabel(model: string, provider: CallProvider): string {
+  const group = getProviderGroup(model);
+  const providerTag = group === 'minimax' ? 'MM' : 'AN';
+  const method = getCallMethod(provider);
+  return `${providerTag} · ${modelShortName(model)} · ${method}`;
+}
 
 // ── Toast ─────────────────────────────────────────────────────────────────
 
-interface ToastProps {
-  message: string;
-  ok: boolean;
-}
+interface ToastProps { message: string; ok: boolean }
 
 function Toast({ message, ok }: ToastProps) {
   return (
@@ -41,317 +88,164 @@ function Toast({ message, ok }: ToastProps) {
     }`}>
       {ok
         ? <CheckCircle size={13} className="text-emerald-400 shrink-0" />
-        : <XCircle size={13} className="text-red-400 shrink-0" />
-      }
+        : <XCircle size={13} className="text-red-400 shrink-0" />}
       {message}
     </div>
   );
 }
 
-// ── ModelDropdown ────────────────────────────────────────────────────────
+// ── OptionButton ──────────────────────────────────────────────────────────
 
-interface ModelDropdownProps {
-  value: string;
-  options: ModelEntry[];
-  allModels: ModelEntry[];
-  onChange: (modelId: string) => void;
-  saving?: boolean;
-  saved?: boolean;
+interface OptionButtonProps {
+  opt: CallOption;
+  isActive: boolean;
+  saving: boolean;
+  onSelect: (opt: CallOption) => void;
 }
 
-function ModelDropdown({ value, options, allModels, onChange, saving, saved }: ModelDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const current = allModels.find(m => m.id === value);
-  const ps = current ? PROVIDER_COLORS[current.provider] : PROVIDER_COLORS.anthropic;
+const METHOD_STYLES: Record<string, { active: string; base: string; badge: string }> = {
+  'API':  {
+    active: 'bg-emerald-500/[0.18] border-emerald-500/40 text-emerald-200',
+    base:   'bg-white/[0.02] border-white/[0.07] text-slate-400 hover:border-white/20 hover:text-slate-300',
+    badge:  'bg-emerald-500/20 text-emerald-400',
+  },
+  '无头': {
+    active: 'bg-orange-500/[0.18] border-orange-500/40 text-orange-200',
+    base:   'bg-white/[0.02] border-white/[0.07] text-slate-400 hover:border-white/20 hover:text-slate-300',
+    badge:  'bg-orange-500/20 text-orange-400',
+  },
+};
+
+function OptionButton({ opt, isActive, saving, onSelect }: OptionButtonProps) {
+  const styles = METHOD_STYLES[opt.callMethod];
+  return (
+    <button
+      onClick={() => !saving && onSelect(opt)}
+      disabled={saving}
+      className={`relative text-left px-2.5 py-2 rounded-lg border transition-all cursor-pointer ${
+        isActive ? styles.active : styles.base
+      } ${saving ? 'opacity-50 cursor-not-allowed' : ''}`}
+    >
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <span className={`text-[9px] font-bold tracking-wider px-1 py-px rounded shrink-0 ${styles.badge}`}>
+          {opt.callMethod}
+        </span>
+        <span className="text-[11px] font-medium truncate">{opt.modelName}</span>
+        {isActive && <Check size={9} className="ml-auto shrink-0 text-current opacity-70" />}
+      </div>
+    </button>
+  );
+}
+
+// ── AgentCard ─────────────────────────────────────────────────────────────
+
+interface AgentCardProps {
+  agent: BrainAgentInfo;
+  allModels: ModelEntry[];
+  currentModel: string;
+  currentProvider: CallProvider;
+  onSave: (agentId: string, modelId: string, provider: string) => Promise<void>;
+  onSuccess: (agentName: string, modelId: string, provider: string) => void;
+  onError: (agentName: string, message: string) => void;
+}
+
+function AgentCard({ agent, allModels, currentModel, currentProvider, onSave, onSuccess, onError }: AgentCardProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const options = buildCallOptions(agent.allowed_models, allModels);
+  const anthropicOptions = options.filter(o => o.providerGroup === 'anthropic');
+  const minimaxOptions = options.filter(o => o.providerGroup === 'minimax');
+
+  const isActive = (opt: CallOption) =>
+    opt.modelId === currentModel && opt.provider === currentProvider;
+
+  async function handleSelect(opt: CallOption) {
+    if (isActive(opt) || saving) return;
+    setSaving(true);
+    try {
+      await onSave(agent.id, opt.modelId, opt.provider);
+      onSuccess(agent.name, opt.modelId, opt.provider);
+      setIsOpen(false);
+    } catch (e: any) {
+      onError(agent.name, e.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
-    <div className="relative">
+    <div className="rounded-[10px] border border-white/[0.07] overflow-hidden">
+      {/* 折叠态 Header */}
       <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg min-w-[200px] bg-white/5 border border-white/10 cursor-pointer transition-all hover:border-white/20"
+        onClick={() => setIsOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-3.5 py-2.5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors cursor-pointer text-left"
       >
-        {current && (
-          <span className={`text-[10px] font-semibold tracking-wider px-1.5 py-0.5 rounded ${ps.badge} ${ps.text} shrink-0`}>
-            {current.provider.toUpperCase()}
+        <div className="flex-1 min-w-0">
+          <span className="text-[13px] font-medium text-slate-200">{agent.name}</span>
+          <span className="text-[11px] text-white/25 ml-2">{agent.description}</span>
+        </div>
+        {saving && <RefreshCw size={11} className="text-violet-400 animate-spin shrink-0" />}
+        {!saving && (
+          <span className="text-[10px] text-white/35 font-mono shrink-0">
+            {currentLabel(currentModel, currentProvider)}
           </span>
         )}
-        <span className="text-xs text-slate-200 flex-1 text-left">
-          {current?.name || value || '—'}
-        </span>
-        {current && (
-          <div className={`w-1.5 h-1.5 rounded-full ${TIER_COLORS[current.tier || ''] || 'bg-gray-500'} shrink-0`} />
-        )}
-        {saving ? (
-          <RefreshCw size={11} className="text-violet-400 animate-spin shrink-0" />
-        ) : saved ? (
-          <Check size={11} className="text-emerald-400 shrink-0" />
-        ) : (
-          <ChevronDown size={11} className="text-white/30 shrink-0" />
-        )}
+        {isOpen
+          ? <ChevronUp size={13} className="text-white/30 shrink-0" />
+          : <ChevronDown size={13} className="text-white/30 shrink-0" />
+        }
       </button>
 
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} className="fixed inset-0 z-[9]" />
-          <div className="absolute top-full left-0 mt-1 z-10 bg-slate-900 border border-white/10 rounded-[10px] overflow-hidden min-w-full shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
-            {options.filter(m => !(m as any).deprecated).map(m => {
-              const mps = PROVIDER_COLORS[m.provider] || PROVIDER_COLORS.anthropic;
-              const isSelected = m.id === value;
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => { onChange(m.id); setOpen(false); }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 border-none cursor-pointer border-b border-b-white/[0.04] transition-colors ${
-                    isSelected ? 'bg-violet-500/[0.12]' : 'hover:bg-white/[0.04]'
-                  }`}
-                >
-                  <span className={`text-[9px] font-semibold tracking-wider px-[5px] py-0.5 rounded-[3px] shrink-0 ${mps.badge} ${mps.text}`}>
-                    {m.provider.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className={`text-xs flex-1 text-left ${isSelected ? 'text-violet-300' : 'text-slate-300'}`}>
-                    {m.name || m.id}
-                  </span>
-                  <div className={`w-1.5 h-1.5 rounded-full ${TIER_COLORS[m.tier || ''] || 'bg-gray-500'} shrink-0`} />
-                </button>
-              );
-            })}
-          </div>
-        </>
+      {/* 展开态 */}
+      {isOpen && (
+        <div className="px-3.5 py-3 border-t border-white/[0.05] bg-black/20 flex flex-col gap-3">
+          {/* Anthropic 分组 */}
+          {anthropicOptions.length > 0 && (
+            <div>
+              <div className="text-[9px] font-bold tracking-wider text-orange-400/60 uppercase mb-1.5 px-0.5">
+                Anthropic
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
+                {anthropicOptions.map(opt => (
+                  <OptionButton
+                    key={`${opt.provider}-${opt.modelId}`}
+                    opt={opt}
+                    isActive={isActive(opt)}
+                    saving={saving}
+                    onSelect={handleSelect}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* MiniMax 分组 */}
+          {minimaxOptions.length > 0 && (
+            <div>
+              <div className="text-[9px] font-bold tracking-wider text-blue-400/60 uppercase mb-1.5 px-0.5">
+                MiniMax
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-4">
+                {minimaxOptions.map(opt => (
+                  <OptionButton
+                    key={`${opt.provider}-${opt.modelId}`}
+                    opt={opt}
+                    isActive={isActive(opt)}
+                    saving={saving}
+                    onSelect={handleSelect}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-// ── LayerRow ─────────────────────────────────────────────────────────────
-
-interface LayerDef {
-  id: string;
-  name: string;
-  description: string;
-  allowed_models: string[];
-  currentModel: string;
-  currentProvider: string;
-}
-
-interface LayerRowProps {
-  layer: LayerDef;
-  allModels: ModelEntry[];
-  onSave: (layerId: string, modelId: string, provider: string) => Promise<void>;
-  onSuccess: (agentName: string, modelId: string, provider: string) => void;
-  onError: (agentName: string, message: string) => void;
-}
-
-// 从 model ID 推断自然 provider
-function naturalProviderForModel(modelId: string): string {
-  if (modelId.startsWith('claude-')) return 'anthropic';
-  if (modelId.startsWith('MiniMax-')) return 'minimax';
-  return 'openai';
-}
-
-// API/无头 切换控件（仅 Anthropic/Claude 模型显示）
-interface ProviderToggleProps {
-  modelId: string;
-  provider: string;
-  saving: boolean;
-  onChange: (provider: string) => void;
-}
-
-function ProviderToggle({ modelId, provider, saving, onChange }: ProviderToggleProps) {
-  const isAnthropic = modelId.startsWith('claude-');
-  if (!isAnthropic) {
-    return (
-      <span className="text-[9px] font-bold tracking-wider px-[5px] py-px rounded bg-blue-500/10 text-blue-400 shrink-0">
-        API
-      </span>
-    );
-  }
-  const isApi = provider === 'anthropic-api';
-  return (
-    <div className="flex items-center rounded-[6px] border border-white/10 overflow-hidden shrink-0">
-      <button
-        onClick={() => !saving && onChange('anthropic-api')}
-        disabled={saving}
-        title="直连 Anthropic API（按量计费，速度快）"
-        className={`px-1.5 py-px text-[9px] font-bold tracking-wider transition-colors cursor-pointer ${
-          isApi
-            ? 'bg-emerald-500/20 text-emerald-400'
-            : 'text-white/25 hover:text-white/50'
-        }`}
-      >
-        API
-      </button>
-      <div className="w-px h-3 bg-white/10" />
-      <button
-        onClick={() => !saving && onChange('anthropic')}
-        disabled={saving}
-        title="无头 claude -p（走 Max订阅，速度稍慢）"
-        className={`px-1.5 py-px text-[9px] font-bold tracking-wider transition-colors cursor-pointer ${
-          !isApi
-            ? 'bg-orange-500/20 text-orange-400'
-            : 'text-white/25 hover:text-white/50'
-        }`}
-      >
-        无头
-      </button>
-    </div>
-  );
-}
-
-function LayerRow({ layer, allModels, onSave, onSuccess, onError }: LayerRowProps) {
-  const [model, setModel] = useState(layer.currentModel);
-  const [provider, setProvider] = useState(layer.currentProvider);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    setModel(layer.currentModel);
-    setProvider(layer.currentProvider);
-  }, [layer.currentModel, layer.currentProvider]);
-
-  const options = allModels.filter(m => layer.allowed_models.includes(m.id));
-
-  async function doSave(modelId: string, newProvider: string) {
-    setSaving(true);
-    try {
-      await onSave(layer.id, modelId, newProvider);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      onSuccess(layer.name, modelId, newProvider);
-    } catch (e: any) {
-      setModel(layer.currentModel);
-      setProvider(layer.currentProvider);
-      onError(layer.name, e.message || '保存失败');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleModelChange(modelId: string) {
-    if (modelId === model) return;
-    const newProvider = naturalProviderForModel(modelId);
-    setModel(modelId);
-    setProvider(newProvider);
-    await doSave(modelId, newProvider);
-  }
-
-  async function handleProviderChange(newProvider: string) {
-    if (newProvider === provider) return;
-    setProvider(newProvider);
-    await doSave(model, newProvider);
-  }
-
-  return (
-    <div className="flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] bg-white/[0.02] border border-white/5">
-      <div className="flex-1 min-w-0">
-        <span className="text-[13px] font-medium text-slate-200">{layer.name}</span>
-        <div className="text-[11px] text-white/30 mt-px">{layer.description}</div>
-      </div>
-      <ProviderToggle
-        modelId={model}
-        provider={provider}
-        saving={saving}
-        onChange={handleProviderChange}
-      />
-      <ModelDropdown
-        value={model}
-        options={options}
-        allModels={allModels}
-        onChange={handleModelChange}
-        saving={saving}
-        saved={saved}
-      />
-    </div>
-  );
-}
-
-// ── MouthModeSelector ────────────────────────────────────────────────────
-
-const MOUTH_OPTIONS = [
-  { label: 'API · Haiku',  model: 'claude-haiku-4-5-20251001', provider: 'anthropic-api', desc: '~3s · 快速 · 按量计费' },
-  { label: 'API · Sonnet', model: 'claude-sonnet-4-6',         provider: 'anthropic-api', desc: '~6s · 高质量 · 按量计费' },
-  { label: '无头 · Haiku',  model: 'claude-haiku-4-5-20251001', provider: 'anthropic',     desc: '~10s · 快速 · Max订阅' },
-  { label: '无头 · Sonnet', model: 'claude-sonnet-4-6',         provider: 'anthropic',     desc: '~15s · 高质量 · Max订阅' },
-] as const;
-
-interface MouthModeSelectorProps {
-  onSuccess: (agentName: string, modelId: string, provider: string) => void;
-  onError: (agentName: string, message: string) => void;
-}
-
-function MouthModeSelector({ onSuccess, onError }: MouthModeSelectorProps) {
-  const [current, setCurrent] = useState<{ model: string | null; provider: string | null }>({ model: null, provider: null });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    fetchMouthConfig().then(setCurrent);
-  }, []);
-
-  const isActive = (opt: typeof MOUTH_OPTIONS[number]) =>
-    opt.model === current.model && opt.provider === current.provider;
-
-  async function handleSelect(opt: typeof MOUTH_OPTIONS[number]) {
-    if (isActive(opt) || saving) return;
-    setSaving(true);
-    try {
-      await updateMouthConfig(opt.model, opt.provider);
-      setCurrent({ model: opt.model, provider: opt.provider });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      onSuccess('嘴巴', opt.model, opt.provider);
-    } catch (e: any) {
-      onError('嘴巴', e.message || '更新失败');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="flex items-start gap-3 px-3.5 py-2.5 rounded-[10px] bg-white/[0.02] border border-white/5">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-[13px] font-medium text-slate-200">嘴巴</span>
-          <span className="text-[11px] text-white/30">对话生成 · 对外接口</span>
-          {saving && <RefreshCw size={11} className="text-violet-400 animate-spin ml-auto" />}
-          {saved && !saving && <Check size={11} className="text-emerald-400 ml-auto" />}
-        </div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {MOUTH_OPTIONS.map(opt => {
-            const active = isActive(opt);
-            const isApi = opt.provider === 'anthropic-api';
-            return (
-              <button
-                key={`${opt.provider}-${opt.model}`}
-                onClick={() => handleSelect(opt)}
-                disabled={saving}
-                className={`text-left px-2.5 py-2 rounded-lg border transition-all cursor-pointer ${
-                  active
-                    ? 'bg-violet-500/[0.15] border-violet-500/40 text-violet-300'
-                    : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:border-white/20 hover:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className={`text-[9px] font-bold tracking-wider px-1 py-px rounded ${
-                    isApi ? 'bg-emerald-500/20 text-emerald-400' : 'bg-orange-500/20 text-orange-400'
-                  }`}>
-                    {isApi ? 'API' : '无头'}
-                  </span>
-                  <span className="text-[12px] font-medium">
-                    {opt.model.includes('haiku') ? 'Haiku' : 'Sonnet'}
-                  </span>
-                  {active && <Check size={10} className="text-violet-400 ml-auto" />}
-                </div>
-                <div className="text-[10px] text-white/25">{opt.desc}</div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── BrainLayerConfig ─────────────────────────────────────────────────────
+// ── BrainLayerConfig ──────────────────────────────────────────────────────
 
 export default function BrainLayerConfig() {
   const [profile, setProfile] = useState<BrainProfile | null>(null);
@@ -359,20 +253,6 @@ export default function BrainLayerConfig() {
   const [agents, setAgents] = useState<BrainAgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; ok: boolean } | null>(null);
-
-  const showToast = useCallback((message: string, ok: boolean) => {
-    setToast({ message, ok });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
-
-  const handleSuccess = useCallback((agentName: string, _modelId: string, provider: string) => {
-    const modeLabel = provider === 'anthropic-api' ? 'API 直连' : '无头模式';
-    showToast(`${agentName} 已切换 → ${modeLabel}`, true);
-  }, [showToast]);
-
-  const handleError = useCallback((agentName: string, message: string) => {
-    showToast(`${agentName} 切换失败：${message}`, false);
-  }, [showToast]);
 
   const loadData = useCallback(async () => {
     try {
@@ -389,6 +269,22 @@ export default function BrainLayerConfig() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const showToast = useCallback((message: string, ok: boolean) => {
+    setToast({ message, ok });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const handleSuccess = useCallback((agentName: string, _modelId: string, provider: string) => {
+    const method = getCallMethod(provider as CallProvider);
+    const group = getProviderGroup(_modelId);
+    const providerLabel = group === 'minimax' ? 'MiniMax' : 'Anthropic';
+    showToast(`${agentName} 已切换 → ${providerLabel} ${method}`, true);
+  }, [showToast]);
+
+  const handleError = useCallback((agentName: string, message: string) => {
+    showToast(`${agentName} 切换失败：${message}`, false);
+  }, [showToast]);
 
   const handleSave = useCallback(async (agentId: string, modelId: string, provider: string) => {
     await updateBrainAgent(agentId, modelId, provider);
@@ -417,19 +313,16 @@ export default function BrainLayerConfig() {
   }
 
   const cfg = profile.config as any;
+  const brainAgents = agents.filter(a => a.layer === 'brain');
 
-  // 从 API agents 动态生成 layers，不再硬编码
-  // 过滤 brain 层且排除 mouth（mouth 有独立的 MouthModeSelector）
-  const layers: LayerDef[] = agents
-    .filter(a => a.layer === 'brain' && a.id !== 'mouth')
-    .map(a => ({
-      id: a.id,
-      name: a.name,
-      description: a.description,
-      allowed_models: a.allowed_models,
-      currentModel: (cfg[a.id] as any)?.model || a.recommended_model,
-      currentProvider: (cfg[a.id] as any)?.provider || naturalProviderForModel((cfg[a.id] as any)?.model || a.recommended_model),
-    }));
+  function agentCurrentModel(id: string, agent: BrainAgentInfo): string {
+    return cfg[id]?.model || agent.recommended_model;
+  }
+
+  function agentCurrentProvider(id: string, model: string): CallProvider {
+    if (cfg[id]?.provider) return cfg[id].provider as CallProvider;
+    return getProviderForOption(model, 'API');
+  }
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 mb-6">
@@ -442,7 +335,7 @@ export default function BrainLayerConfig() {
           </div>
         </div>
         <div className="text-sm font-semibold text-slate-100">大脑层级</div>
-        <div className="text-[11px] text-white/30 ml-0.5">· {layers.length} 层</div>
+        <div className="text-[11px] text-white/30 ml-0.5">· {brainAgents.length} 层</div>
         {profile.name && (
           <div className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/[0.08] border border-violet-500/15">
             <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
@@ -458,47 +351,51 @@ export default function BrainLayerConfig() {
         </div>
       )}
 
-      {/* Layers */}
+      {/* Agents */}
       <div className="flex flex-col gap-1.5 mb-4">
-        {layers.map(layer => (
-          <LayerRow
-            key={layer.id}
-            layer={layer}
-            allModels={models}
-            onSave={handleSave}
-            onSuccess={handleSuccess}
-            onError={handleError}
-          />
-        ))}
-        <MouthModeSelector onSuccess={handleSuccess} onError={handleError} />
+        {brainAgents.map(agent => {
+          const model = agentCurrentModel(agent.id, agent);
+          const provider = agentCurrentProvider(agent.id, model);
+          return (
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              allModels={models}
+              currentModel={model}
+              currentProvider={provider}
+              onSave={handleSave}
+              onSuccess={handleSuccess}
+              onError={handleError}
+            />
+          );
+        })}
       </div>
 
       {/* Legend */}
       <div className="px-3.5 py-2.5 rounded-[10px] bg-white/[0.02] border border-white/[0.04]">
-        <div className="flex flex-wrap gap-3">
-          {[
-            { color: 'bg-amber-500', label: 'Premium' },
-            { color: 'bg-indigo-400', label: 'Standard' },
-            { color: 'bg-emerald-400', label: 'Fast' },
-          ].map(({ color, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${color}`} />
-              <span className="text-[10px] text-white/30">{label}</span>
-            </div>
-          ))}
-          {Object.entries(PROVIDER_COLORS).map(([p, s]) => (
-            <div key={p} className="flex items-center gap-1.5">
-              <span className={`text-[9px] font-semibold px-[5px] py-px rounded-[3px] tracking-wider ${s.badge} ${s.text}`}>
-                {p.toUpperCase()}
-              </span>
-            </div>
-          ))}
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-bold tracking-wider px-1 py-px rounded bg-emerald-500/20 text-emerald-400">API</span>
+            <span className="text-[10px] text-white/30">直连 REST API</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-bold tracking-wider px-1 py-px rounded bg-orange-500/20 text-orange-400">无头</span>
+            <span className="text-[10px] text-white/30">claude -p（Max 订阅 / Skills）</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-bold tracking-wider px-1 py-px rounded bg-orange-400/15 text-orange-400/70">AN</span>
+            <span className="text-[10px] text-white/30">Anthropic</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-bold tracking-wider px-1 py-px rounded bg-blue-400/15 text-blue-400/70">MM</span>
+            <span className="text-[10px] text-white/30">MiniMax</span>
+          </div>
         </div>
       </div>
 
       <div className="flex items-center gap-1.5 mt-3">
         <Zap size={11} className="text-violet-400/40 shrink-0" />
-        <span className="text-[11px] text-white/25">选择模型后立即生效</span>
+        <span className="text-[11px] text-white/25">点击 agent 展开选项，选择后立即生效</span>
       </div>
     </div>
   );
