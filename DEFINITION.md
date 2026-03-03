@@ -5,8 +5,8 @@
 **最后更新**: 2026-03-01
 
 
-**Brain 版本**: 1.175.3
-**Schema 版本**: 114
+**Brain 版本**: 1.176.0
+**Schema 版本**: 115
 
 **状态**: 生产运行中
 
@@ -211,6 +211,7 @@ executeTick() 流程：
   0.3. PR Plans 完成检查（纯 SQL）
   0.4. 反串清理（清理孤儿任务引用）
   0.5. Pre-flight 检查（资源/熔断）
+  0.5.6. 定期简报检查（每小时检查，满足 REPORT_INTERVAL_HOURS=48h 时生成系统简报，存入 reports 表并推送 WebSocket）
   0.6. Codex 免疫检查（每 20h 一次，确保 codex_qa 任务存在）
   0.7. 统一拆解检查（七层架构，decomposition-checker.js）
   0.7. Layer 2 运行健康监控（每小时一次，health-monitor.js）

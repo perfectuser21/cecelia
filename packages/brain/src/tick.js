@@ -96,8 +96,11 @@ let _lastHealthCheckTime = 0; // track last Layer 2 health check time
 let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
+let _lastReportCheckTime = 0; // track last 48h report check time (avoid duplicate checks within same tick)
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
+// 简报检查与 cleanup 同频（每小时检查一次，实际触发由 checkScheduledReport 内部判断 48h 阈值）
+const REPORT_CHECK_INTERVAL_MS = CLEANUP_INTERVAL_MS;
 
 // Recovery state (in-memory) — 后台恢复 timer
 let _recoveryTimer = null;
@@ -1392,6 +1395,22 @@ async function executeTick() {
     }
   }
 
+  // 0.5.6. 定期简报检查：每小时检查一次，满足 48h（REPORT_INTERVAL_HOURS）时生成简报
+  const reportCheckElapsed = Date.now() - _lastReportCheckTime;
+  if (reportCheckElapsed >= REPORT_CHECK_INTERVAL_MS) {
+    _lastReportCheckTime = Date.now();
+    try {
+      const { checkScheduledReport } = await import('./report-scheduler.js');
+      const reportGenerated = await checkScheduledReport(pool);
+      if (reportGenerated) {
+        console.log('[tick] Scheduled report generated');
+        actionsTaken.push({ action: 'scheduled_report_generated' });
+      }
+    } catch (reportErr) {
+      console.error('[tick] Scheduled report check failed (non-fatal):', reportErr.message);
+    }
+  }
+
   // 0.6. Codex 免疫检查：每 20 小时自动创建一次 codex_qa 任务
   try {
     await ensureCodexImmune(pool);
@@ -2196,6 +2215,8 @@ function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
 function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+/** Reset report check timer — for testing only */
+function _resetLastReportCheckTime() { _lastReportCheckTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -2273,5 +2294,8 @@ export {
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
-  GOAL_EVAL_INTERVAL_MS
+  GOAL_EVAL_INTERVAL_MS,
+  // Test helpers for report scheduler
+  _resetLastReportCheckTime,
+  REPORT_CHECK_INTERVAL_MS
 };
