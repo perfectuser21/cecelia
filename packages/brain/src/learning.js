@@ -631,7 +631,7 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
 如果没有 learning，输出：{"has_learning": false}
 严格输出 JSON，不要其他内容。`;
 
-    const { text } = await callLLM('thalamus', prompt, { maxTokens: 300, timeout: 15000 });
+    const { text } = await callLLM('thalamus', prompt, { maxTokens: 300, timeout: 90000 });
     if (!text) return;
 
     const jsonStr = text.match(/\{[\s\S]*\}/)?.[0];
