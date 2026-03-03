@@ -19,6 +19,8 @@ import { getSelfModel } from './self-model.js';
 import { generateL0Summary, generateMemoryStreamL1Async } from './memory-utils.js';
 import { observeChat } from './thalamus.js';
 import { extractConversationLearning } from './learning.js';
+import { extractPersonSignals } from './person-model.js';
+import { resolveByPersonReply } from './pending-conversations.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -479,6 +481,16 @@ export async function handleChat(message, context = {}, messages = [], imageCont
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
     extractConversationLearning(message, reply, pool)
+  ).catch(() => {});
+
+  // 8. 异步提取人物信号 → person_signals（个人认知表更新）
+  Promise.resolve().then(() =>
+    extractPersonSignals(pool, userId, message, reply, callLLM)
+  ).catch(() => {});
+
+  // 9. 收到回复 → 标记 pending_conversations 已解决（Alex 说话了，不再待回音）
+  Promise.resolve().then(() =>
+    resolveByPersonReply(pool, userId, 'user_reply')
   ).catch(() => {});
 
   return { reply };
