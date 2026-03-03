@@ -36,9 +36,16 @@ Thumbs.db
 *.bak
 *.backup
 
-# Dev workflow
+# Dev workflow state files（绝对不允许进 git）
 .dev-mode
+.dev-mode.*
 .dev-mode.lock
+.dev-lock
+.dev-lock.*
+.dev-sentinel
+.dev-sentinel.*
+.dev-runs/
+.dev-failure*
 .gate-*
 .quality-gate-passed
 

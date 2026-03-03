@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.19.0"
-updated: "2026-03-03"
+version: "3.20.0"
+updated: "2026-03-04"
 changelog:
+  - "3.20.0: v12.37.0 - 修复 .gitignore dev state 文件泄漏（补全 .dev-lock*/.dev-sentinel*/.dev-mode.*/.dev-runs/），移除 PR #427 意外追踪的 6 个 dev state 文件；PRD 模板新增强制异常处理 & 报警规范表"
   - "3.19.0: v12.36.1 - stop.sh 路由器修复（Bug：检测 .dev-lock 而非 .dev-mode，防止 .dev-mode 被 cleanup 删除后 LEARNINGS 检查被绕过，LEARNINGS 落入单独 PR）"
   - "3.18.0: v12.36.0 - 并行会话隔离：.dev-lock/.dev-mode 改为 per-branch 文件命名（.dev-lock.<branch>），stop-dev.sh 动态扫描匹配当前 TTY/session_id，多 Terminal 同仓库并行不串线"
   - "3.17.0: v12.35.10 - cleanup.sh [2.5] 部署改为 fire-and-forget（setsid 后台运行，不阻塞有头模式会话，日志写 /tmp/cecelia-deploy-<branch>.log）"
