@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] 前端动态扫描模式：API 返回数据驱动 UI 渲染，不依赖硬编码（PR #377, Workspace v1.10.2）
+
+**场景**：`BrainLayerConfig.tsx` 原来硬编码 `layers` 数组（5 个 brain agent），每次在 `model-registry.js` 新增 agent 都需要同步改前端。
+
+**解法**：`fetchBrainModels()` 已经返回 `agents` 数组（含 name/description/allowed_models 全部字段），只需一行 filter 即可动态生成：
+```tsx
+const layers = agents
+  .filter(a => a.layer === 'brain' && a.id !== 'mouth')
+  .map(a => ({ id: a.id, name: a.name, description: a.description, ... }));
+```
+此后 `model-registry.js` 增删 brain agent → 前端刷新自动同步，无需改前端。
+
+**口诀**：UI 列表来自 API，不来自代码。只要后端数据结构稳定，前端永远不需要为"新增实体"做改动。
+
+**Toast 组件注意点**：Toast 放在列表层级（`BrainLayerConfig`），不放在每行（`LayerRow`）。子组件通过 `onSuccess/onError` 回调上报结果，父组件统一显示。这样避免多行同时触发多个 Toast 互相覆盖。
+
 ### [2026-03-03] Brain 内部 LLM 账号轮换路径 Bug 彻底修复——bridge 侧拼路径（PR #371, Brain v1.164.8）
 
 **更彻底的修复**：PR #368 用 `HOST_HOME` 环境变量让容器内可以拼出正确 configDir，PR #371 更进一步：llm-caller.js 完全不在容器侧拼路径，只发 `accountId`（如 `"account3"`），由 bridge 在宿主机侧用 `homedir()` 拼出 `/home/xx/.claude-account3`。**原则：路径必须在路径存在的那一侧拼**——不依赖 HOST_HOME 环境变量，更干净，不会被容器配置影响。
