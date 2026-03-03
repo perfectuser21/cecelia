@@ -9997,7 +9997,7 @@ router.post('/manual/ask', async (req, res) => {
     if (!apiKey) throw new Error('Anthropic API key not available');
 
     // 读取 manifest 作为 context
-    const manifestRaw = readFileSync(new URL('../brain-manifest.generated.json', import.meta.url), 'utf8');
+    const manifestRaw = readFileSync(new URL('./brain-manifest.generated.json', import.meta.url), 'utf8');
     const manifest = JSON.parse(manifestRaw);
 
     // 构建精简 context（控制 token 量）

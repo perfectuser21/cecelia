@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] cleanup.sh 部署 fire-and-forget + Engine CI yq 安装修复（PR #342, Engine v12.35.10）
+
+**背景**：有头模式下 cleanup.sh [2.5] 同步调用 deploy-local.sh（Docker build 需 2-3 分钟），阻塞 Claude 会话。改为 `setsid bash ... &` fire-and-forget，日志写 `/tmp/cecelia-deploy-<branch>.log`。
+
+**Engine CI yq 安装三重 bug（历史遗留，本 PR 顺带修复）**：
+1. **CDN 速率限制**：原 `wget` 直接下载 GitHub releases，被 CDN 以 exit 8（Server error / rate limit）拒绝。改用 `gh release download`（带 GH_TOKEN）走 API 认证，避开 CDN 速率限制。
+2. **--output 与 --pattern 不兼容**：`gh release download` 同时用 `--output file` 和 `--pattern` 会报 "no assets match the file pattern"。改用 `--dir /tmp`（下载到目录）。
+3. **checksums 文件名和格式均错误**：原代码下载 `yq_checksums.txt`（不存在，实际叫 `checksums`），且 checksums 文件格式是自定义多哈希格式（`filename  hash1 hash2...`），非 sha256sum 标准格式（`hash  filename`）。grep 永远找不到匹配。最终移除 checksum 校验，由 TLS + 认证 API 保证完整性。
+
+**rebase 后 bash-guard 阻止 force push 标准解法**：`git reset --hard <pre-rebase-sha>`（reflog 找）→ `git merge origin/main` → 正常 push。
+
 ### [2026-03-03] consolidation.js 两个查询 bug（PR #341, Brain v1.163.3）
 
 **Bug 1: tasks 表无 failed_at 字段**：`gatherTodayData` 里查 tasks 用了 `COALESCE(completed_at, failed_at)`，但 tasks 表只有 `completed_at` 和 `updated_at`，没有 `failed_at`。执行时报 `column "failed_at" does not exist`。修复：改为 `COALESCE(completed_at, updated_at)`，失败任务通过 `status = 'failed' AND updated_at >= $1::date` 过滤。
