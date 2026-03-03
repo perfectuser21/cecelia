@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Brain 容器路径映射 HOST_HOME 修复 + Brain CI 全面迁移 self-hosted（PR #368, Brain v1.164.6）
+
+**根本原因**：Brain 容器内 `homedir()` 返回 `/home/cecelia`（容器用户），`callClaudeViaBridge` 用此计算 `configDir=/home/cecelia/.claude-accountN` 传给宿主机 Bridge。Bridge 在宿主机上设置 `CLAUDE_CONFIG_DIR=/home/cecelia/.claude-accountN`，但此路径不存在（真实路径 `/home/xx/.claude-accountN`）。`claude -p` 找不到凭据 → 等待认证 → 90s/150s 后 SIGTERM（exit code 143）。**修复**：① `docker-compose.yml` 添加 `HOST_HOME=/home/xx` 环境变量；② `llm-caller.js` 改用 `process.env.HOST_HOME || homedir()` 计算 configDir。
+
+**验证方式**：`docker exec cecelia-node-brain printenv HOST_HOME` 应返回 `/home/xx`；LLM 调用日志应显示合理耗时（thalamus 10-40s，reflection 20-60s），不再精确在 90s/150s 出现 exit code 143。
+
+**Brain CI ubuntu-latest 全面失效（PR #368 附带发现）**：PR #361 将 `Detect Changes` 迁移到 self-hosted 后，brain=true 被正确检测，但 Brain CI 的 `version-check/facts-check/manifest-sync/brain-test` 4 个 job 仍在 `ubuntu-latest` 上运行 → 2-3s 内失败（无 runner 分配，steps=[]，log not found）。修复：将这 4 个 job 也改为 `[self-hosted, hk-vps]`，移除 `setup-node` 步骤（self-hosted 已有 Node 20），PostgreSQL 服务端口改为 5433（避免与生产 5432 冲突）。Brain CI 全面迁移后，所有 job 正常运行（Brain Tests 实际跑 2 分钟，不再 2s 失败）。
+
+**部署陷阱**：`brain-deploy.sh` 从当前工作目录构建。若主项目目录停在功能分支（如 v1.164.8），会构建错误版本。排查：`docker exec cecelia-node-brain printenv HOST_HOME` 确认环境变量；修复方法：在主项目目录 `git checkout origin/main -- packages/brain/src/llm-caller.js docker-compose.yml` 单独取修复文件后重新部署（保持功能分支版本号，只更新代码文件）。
+
 ### [2026-03-03] CI Detect Changes 迁移到 self-hosted runner（PR #361）
 
 **问题**：5 个 CI workflow 的 `changes`（Detect Changes）job 运行在 `ubuntu-latest`，GitHub hosted runner 不稳定时 2s 内失败，导致所有下游测试 skip，`ci-passed` 误判为绿（`changes.outputs.X == false` → 认为无变更 → 跳过检查 → 退出 0）。后果是有 brain 代码改动的 PR 整个 Brain Tests 被跳过，没有真正验证代码。**修复**：将所有 `changes` job 改为 `runs-on: [self-hosted, hk-vps]`，与 `ci-passed` 使用同一 self-hosted runner，彻底消除 ubuntu-latest 不稳定影响。`workflow_dispatch` 时 `github.base_ref` 为空 → 在 push/workflow_dispatch 两种情况下直接输出 `X=true` 跳过 git diff。
