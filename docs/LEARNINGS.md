@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
+
+**背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
+
+**Notion token `ntn_` 前缀截断坑**：`~/.credentials/notion.env` 中 `ntn_` 前缀的 OAuth token 被 shell 读取时被截断，导致所有 POST 操作失败（API token invalid）。正确获取方式：`docker exec cecelia-node-brain env | grep NOTION_API_KEY | cut -d= -f2`（从容器 env 获取完整 token）。
+
+**PostgreSQL 日期返回 JS Date 对象**：用 `::date` 转型后，JavaScript 层拿到的是 Date 对象而非 ISO 字符串。Notion 日期字段只接受 `YYYY-MM-DD` 格式。修复：`const fmtDate = d => (d instanceof Date ? d : new Date(d)).toISOString().split('T')[0]`。
+
+**Notion DB PATCH 属性改名**：用 `PATCH /databases/:id` 时，`properties: { '旧名': { name: '新名' } }` 可以改字段名（保留数据）。添加新字段用 `{ rich_text: {} }` 等类型声明。同一请求可以同时 rename + add。
+
+**Cecelia 日记 page body**：Notion 页面正文通过 `children` 数组传入，不在 `properties` 里。格式：`children: [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [...] } }]`。
+
+**fire-and-forget 模式**：`Promise.resolve().then(() => asyncFn()).catch(() => {})` 不等待、不阻塞、静默失败。适用于 Notion 同步这类"写完数据库后顺手同步"的场景。
+
+**增量同步 notion_id 追踪**：在 `user_profile_facts` 和 `memory_stream` 加 `notion_id TEXT` 列，INSERT 后异步写回 page id，实现增量同步（已同步的 row 有 notion_id）。
+
 ### [2026-03-03] Notion 四表双向同步：migration 编号连续踩三次坑（PR #423, Brain v1.173.0）
 
 **背景**：实现 Areas/Goals/Projects/Tasks 四表与 Notion 的双向同步，包含 webhook 回调端点。
