@@ -487,7 +487,8 @@ main() {
   # git diff origin/main..HEAD 能正确得到本次 PR 的改动文件列表。
   if [[ $exit_code -eq 0 && "${TASK_TYPE:-dev}" == "dev" ]]; then
     DEPLOY_CHANGED=$(cd "$ACTUAL_WORK_DIR" && git diff --name-only "origin/main..HEAD" 2>/dev/null || echo "")
-    if echo "$DEPLOY_CHANGED" | grep -q "^packages/brain/\|^apps/dashboard/"; then
+    # apps/api/** 被 dashboard vite alias 引用，改动同样需要重建 dashboard
+    if echo "$DEPLOY_CHANGED" | grep -q "^packages/brain/\|^apps/dashboard/\|^apps/api/"; then
       # 找主仓库根目录（worktree 的 git-common-dir 指向主仓库 .git）
       GIT_COMMON=$(cd "$ACTUAL_WORK_DIR" && git rev-parse --git-common-dir 2>/dev/null || echo ".git")
       if [[ "$GIT_COMMON" == ".git" ]]; then
