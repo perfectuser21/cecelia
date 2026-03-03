@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] user_profile_facts UPSERT + Cecelia 名字过滤（PR #422, Brain v1.172.1）
+
+**根因**：`user_profile_facts` 表无 `key` 字段，`extractAndSaveUserFacts` 每次对话都做原始 INSERT，导致 "名字: Alex" 重复 N 条；且 LLM 偶尔把 AI 名字 "Cecelia" 提取为 owner 的 display_name 存进去。
+
+**修复**：migration 110 添加 `key TEXT` + `source TEXT DEFAULT 'manual'`，部分唯一索引 `UNIQUE (user_id, key) WHERE key IS NOT NULL`。结构化 facts 改为 `ON CONFLICT (user_id, key) DO UPDATE SET content = EXCLUDED.content`（UPSERT）。代码层过滤 `AI_NAMES = ['cecelia', 'cecilia']`，大小写不敏感。
+
+**教训 1 — .brain-versions 换行符**：`echo "x.y.z" >> .brain-versions` 在 main 末尾没有换行时会产生 `1.171.31.172.0` 拼串。正确方式：`printf '\n1.172.0\n'` 或先 `cat origin/main:...` 再追加新版本。
+
+**教训 2 — migration 编号冲突（再次确认）**：新 PR 开始前必须 `ls packages/brain/migrations/ | sort | tail -5` 确认最高编号，并行 PR 可能抢用同一编号。本次 PR #421 和 PR #422 都用了 109，我们被迫改为 110。
+
+**教训 3 — package-lock.json 版本需手动同步**：`git merge origin/main` 后，origin/main 的 package-lock.json（版本 1.172.0 来自 #421）覆盖了我们的更新。`replace_all` 直接更新两处 `"version"` 字段最可靠。
+
+**发现**：Dashboard 记忆页面（ProfileFactsPage）和后端 API（routes/profile-facts.js）早已完整实现，路由在 `/knowledge/memory`。本 PR 只修复了数据层。
+
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
 **根因**：所有 NotebookLM 调用缺少 `-n <notebook_id>` 参数，内容全部打到默认笔记本（"帖子文案"），Cecelia 的工作知识、自我模型、每日反刍洞察都混入错误笔记本。
