@@ -176,7 +176,8 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
     if (bestAccount) {
       // selectBestAccountForHaiku 返回 string，selectBestAccount 返回 { accountId, model }
       const accountId = typeof bestAccount === 'string' ? bestAccount : bestAccount.accountId;
-      configDir = join(homedir(), `.claude-${accountId}`);
+      const hostHome = process.env.HOST_HOME || homedir();
+      configDir = join(hostHome, `.claude-${accountId}`);
     }
   } catch (err) {
     console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);
