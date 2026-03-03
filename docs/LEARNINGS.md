@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-03] notion_id ON CONFLICT 需要 UNIQUE 约束而非普通 INDEX（PR #428, Brain v1.174.1）
+
+**根因**：migration 111 为 goals/projects/tasks 的 `notion_id` 列创建了 `CREATE INDEX`（普通索引），
+但 `notion-full-sync.js` upsert 用的是 `ON CONFLICT (notion_id) DO UPDATE`。
+PostgreSQL 要求 ON CONFLICT target 列必须有 UNIQUE 约束或非分区 UNIQUE 索引（`indpred IS NULL`）。
+运行全量同步时报：`there is no unique or exclusion constraint matching the ON CONFLICT specification`。
+
+**修复**：migration 112 先 `DROP INDEX` 旧普通索引，再 `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE`：
+```sql
+DROP INDEX IF EXISTS idx_goals_notion_id;
+ALTER TABLE goals ADD CONSTRAINT goals_notion_id_unique UNIQUE (notion_id);
+-- 对 projects、tasks 同理
+```
+
+**注意**：`areas.notion_id` 在 migration 100 就以 `VARCHAR(100) UNIQUE` 创建，本次不受影响。
+
+**Notion webhook 验证流程（PR #426 经验）**：
+1. 第一步：Notion 发 `{ "challenge": "xxx" }` → 必须原样返回 `{ "challenge": "xxx" }`（不能返回 `{ "received": true }`）
+2. 第二步：Notion 发 `{ "verification_token": "secret_xxx" }` → 用户需在 Notion UI 填入该 token
+3. 必须在 `challenge` 分支前不做任何其他处理，立即 return
+
 ### [2026-03-03] Notion 四表双向同步：migration 编号连续踩三次坑（PR #423, Brain v1.173.0）
 
 **背景**：实现 Areas/Goals/Projects/Tasks 四表与 Notion 的双向同步，包含 webhook 回调端点。
