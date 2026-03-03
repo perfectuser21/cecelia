@@ -8101,12 +8101,12 @@ router.put('/model-profiles/active', async (req, res) => {
 
 router.patch('/model-profiles/active/agent', async (req, res) => {
   try {
-    const { agent_id, model_id } = req.body;
+    const { agent_id, model_id, provider } = req.body;
     if (!agent_id || !model_id) {
       return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
     }
 
-    const result = await updateAgentModel(pool, agent_id, model_id);
+    const result = await updateAgentModel(pool, agent_id, model_id, { provider });
 
     // WebSocket 广播
     websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
