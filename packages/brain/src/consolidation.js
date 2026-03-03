@@ -139,7 +139,8 @@ async function gatherTodayData(pool) {
      FROM memory_stream
      WHERE created_at >= $1::date
        AND source_type IN (
-         'chat', 'task_reflection', 'conversation_insight',
+         'chat', 'feishu_chat', 'orchestrator_chat', 'narrative',
+         'task_reflection', 'conversation_insight',
          'failure_record', 'user_fact'
        )
      ORDER BY created_at ASC
@@ -157,14 +158,14 @@ async function gatherTodayData(pool) {
     [today]
   );
 
-  // 今日完成/失败任务
+  // 今日完成/失败任务（tasks 表无 failed_at，失败任务用 updated_at）
   const { rows: tasks } = await pool.query(
     `SELECT title, task_type, status,
-            COALESCE(completed_at, failed_at) AS ended_at
+            COALESCE(completed_at, updated_at) AS ended_at
      FROM tasks
-     WHERE (completed_at >= $1::date OR failed_at >= $1::date)
+     WHERE (completed_at >= $1::date OR (status = 'failed' AND updated_at >= $1::date))
        AND status IN ('completed', 'failed')
-     ORDER BY COALESCE(completed_at, failed_at) ASC
+     ORDER BY COALESCE(completed_at, updated_at) ASC
      LIMIT 20`,
     [today]
   );
