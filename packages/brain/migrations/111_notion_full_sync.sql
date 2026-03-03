@@ -1,4 +1,4 @@
--- Migration 109: Notion 四表双向同步字段
+-- Migration 111: Notion 四表双向同步字段
 -- 为 areas/goals/projects/tasks 四张表添加 notion_id + notion_synced_at
 -- areas 已有 notion_id（migration 104），补充 notion_synced_at
 
