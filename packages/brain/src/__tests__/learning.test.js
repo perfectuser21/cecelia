@@ -38,8 +38,8 @@ describe('Learning Loop', () => {
       ALTER TABLE brain_config ADD COLUMN IF NOT EXISTS metadata JSONB
     `);
 
-    // Clean up test data
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'Test%' OR title LIKE 'RCA Learning:%'");
+    // Clean up test data (use file-specific prefix to avoid parallel test conflicts)
+    await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
     await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
     await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
     await pool.query("DELETE FROM brain_config WHERE key = 'alertness.emergency_threshold'");
@@ -47,7 +47,7 @@ describe('Learning Loop', () => {
 
   afterAll(async () => {
     // Clean up test data
-    await pool.query("DELETE FROM learnings WHERE title LIKE 'Test%' OR title LIKE 'RCA Learning:%'");
+    await pool.query("DELETE FROM learnings WHERE title LIKE 'lu-test:%' OR title LIKE 'RCA Learning:%'");
     await pool.query("DELETE FROM tasks WHERE title LIKE 'Learning -%'");
     await pool.query("DELETE FROM brain_config WHERE key LIKE 'test.%'");
   });
@@ -163,8 +163,8 @@ describe('Learning Loop', () => {
       await pool.query(`
         INSERT INTO learnings (title, category, trigger_event, content)
         VALUES
-          ('Test Learning 1', 'failure_pattern', 'systemic_failure', 'Content 1'),
-          ('Test Learning 2', 'optimization', 'performance_issue', 'Content 2')
+          ('lu-test: Learning 1', 'failure_pattern', 'systemic_failure', 'Content 1'),
+          ('lu-test: Learning 2', 'optimization', 'performance_issue', 'Content 2')
       `);
     });
 
