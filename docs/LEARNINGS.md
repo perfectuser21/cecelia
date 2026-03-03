@@ -8,6 +8,19 @@
 
 **Runner 等待模式**：self-hosted `hk-cecelia` runner 是单线程，多 PR 并发时 jobs 会排队 5-10 分钟。如果首次 CI 因 runner 不可用（steps=[]，3s fail），不是代码问题，等 runner 空闲后 `gh run rerun --failed` 即可。
 
+### [2026-03-03] Area 完整双向关联 migration 104 + Cecelia Brain 自动合并导致冲突标记提交（PR #364, Brain v1.164.8）
+
+**需求**：给 goals/projects/tasks 三张表补全 area_id 外键约束（ON DELETE SET NULL），goals 表新增 area_id 字段。实现 Area ↔ OKR/Project/Task 的完整双向关联（Notion Relation 机制的后端基础）。
+
+**Migration 写法**：goals 用 `ADD COLUMN IF NOT EXISTS area_id UUID REFERENCES areas(id) ON DELETE SET NULL`；projects/tasks 已有 area_id 列但无 FK → 用 `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE ...) THEN ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY; END IF; END$$;` 幂等添加。Migration 必须幂等（可重复执行不报错），避免 CI PostgreSQL 环境重试时失败。
+
+**Cecelia Brain 自动合并的陷阱（关键教训）**：Brain 系统 24/7 运行，会自动在功能分支创建合并提交。当 Brain 合并时遇到冲突（本 PR 的 DEFINITION.md Schema 版本 104 vs main 的 103），Brain 直接把**冲突标记提交进去**（`<<<<<<< HEAD / ======= / >>>>>>>`），而不是解决冲突。症状：`git log` 出现 `chore(merge): 合并 main...` 提交，DEFINITION.md 出现 `grep -c "<<<<<<"` > 0。处理：① `git grep "<<<<<<< HEAD"` 定位冲突文件；② 手动解决（保留我们的版本：Schema=104，更新 Brain 版本号）；③ `bash scripts/facts-check.mjs` + `bash scripts/check-version-sync.sh` 验证；④ 提交并推送。
+
+**并行版本碰撞（本 PR 经历 3 轮）**：主线频繁合并（PR #368, #369, #370, #372 等），每次合并后可能版本号与 main 相同。标准处理：① 先检查 `git show origin/main:packages/brain/package.json | jq .version`；② 若我们的版本 ≤ main，在 packages/brain 执行 `npm version patch --no-git-tag-version`；③ 追加 `.brain-versions`、更新 DEFINITION.md Brain 版本行；④ 运行两个 DevGate 脚本确认；⑤ 单独 `chore(brain): version bump` commit 推送。
+
+**Brain CI 自动迁移 self-hosted（PR #370）后的注意事项**：Brain CI `brain-test` job 不再使用 GitHub Actions `services` 容器（因为 self-hosted 已有生产 PostgreSQL），测试直连 hk-vps 本地 DB（port 5433）。数据库环境由 runner 环境变量提供，无需在 CI 中启动容器。
+
+
 ### [2026-03-03] Brain 容器路径映射 HOST_HOME 修复 + Brain CI 全面迁移 self-hosted（PR #368, Brain v1.164.6）
 
 **根本原因**：Brain 容器内 `homedir()` 返回 `/home/cecelia`（容器用户），`callClaudeViaBridge` 用此计算 `configDir=/home/cecelia/.claude-accountN` 传给宿主机 Bridge。Bridge 在宿主机上设置 `CLAUDE_CONFIG_DIR=/home/cecelia/.claude-accountN`，但此路径不存在（真实路径 `/home/xx/.claude-accountN`）。`claude -p` 找不到凭据 → 等待认证 → 90s/150s 后 SIGTERM（exit code 143）。**修复**：① `docker-compose.yml` 添加 `HOST_HOME=/home/xx` 环境变量；② `llm-caller.js` 改用 `process.env.HOST_HOME || homedir()` 计算 configDir。
