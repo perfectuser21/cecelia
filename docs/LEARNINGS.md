@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Cortex 48h 系统简报接口 + 并行 PR 冲突解决（PR #447, Brain v1.177.0）
+
+**背景**：为 cortex.js 添加 `generateSystemReport()` 函数，暴露 API 端点 `POST /api/brain/cortex/generate-report`。
+
+**并行 PR 表结构冲突**：同一 initiative 的两个 PR（#441 和 #447）同时开发，PR #441 先合并，定义了 `system_reports` 表（`type, content, metadata`），而 PR #447 自己设计了不兼容的表结构（`title, summary, content, time_range_hours, report_type, generated_by`）。**解决**：合并时采用已落地的 PR #441 表结构，修改 cortex.js 的 INSERT 语句适配 `type, content, metadata`。
+
+**版本号 double-bump**：PR #441 已将版本从 1.175.x bump 到 1.176.0 并合并到 main。PR #447 原本也 bump 到 1.176.0，但 CI Version Check 比较的是 `origin/main`（已是 1.176.0），因此报 "Version not updated"。**修复**：再次 bump 到 1.177.0。教训：并行 PR 合并后，后续 PR 必须相对于合并后的 main 版本再次 bump。
+
+**CI 慢启动**：自托管 runner push 后不立即出现 CI 运行记录，等 30 秒后再查才出现。不是 bug，是正常启动延迟。
+
+**tick.js 变量名冲突**：PR #441 用 `_lastReportTime`/`REPORT_INTERVAL_MS`，PR #447 用 `_lastSystemReportTime`/`SYSTEM_REPORT_INTERVAL_MS`。合并后统一使用 PR #441 的命名（已落地的优先）。
+
+**cortex 接口的 tick 调度分层**：tick.js 中调度逻辑（`check48hReport`）和 cortex.js 中的 LLM 增强逻辑（`generateSystemReport`）分属两层。tick 只负责"什么时候触发"，cortex 负责"生成什么内容"。未来可在 `check48hReport` 内部升级为调用 `generateSystemReport`。
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
