@@ -181,6 +181,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/quality/package-lock.json
 
       - name: Install dependencies
         working-directory: packages/quality
