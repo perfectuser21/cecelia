@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
     steps:
@@ -33,15 +32,25 @@ jobs:
       - name: Detect brain changes
         id: filter
         run: |
+          # For pull_request: compare head with base branch
+          # For push/workflow_dispatch: compare with origin/main
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "brain=true" >> $GITHUB_OUTPUT
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+            echo "Push to main: assuming brain changes"
             exit 0
           fi
-          BASE_REF="${{ github.base_ref }}"
-          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
-            echo "brain=true" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
           else
-            echo "brain=false" >> $GITHUB_OUTPUT
+            BASE="origin/main"
+          fi
+          git fetch origin --depth=50 2>/dev/null || true
+          if git diff --name-only "$BASE"..HEAD 2>/dev/null | grep -qE '^(packages/brain/|DEFINITION\.md|\.brain-versions)'; then
+            echo "brain=true" >> "$GITHUB_OUTPUT"
+            echo "Brain changes detected"
+          else
+            echo "brain=false" >> "$GITHUB_OUTPUT"
+            echo "No brain changes detected"
           fi
 
   version-check:
