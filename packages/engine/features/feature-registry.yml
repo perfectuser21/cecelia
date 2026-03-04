@@ -149,7 +149,7 @@ platform_features:
     name: Branch Protection
     status: Committed
     priority: P0
-    version: "12.35.8"
+    version: "12.38.1"
     updated: "2026-03-02"
     description: |
       防止在 main/develop 分支直接写代码，强制使用 cp-*/feature/* 工作分支
