@@ -10629,4 +10629,148 @@ router.post('/reports/trigger', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/pr-progress/:kr_id
+ * 获取指定 KR 的 PR 进度数据
+ *
+ * Query params:
+ *   - month: string (YYYY-MM) 指定月份，默认当前月
+ *
+ * Response:
+ *   {
+ *     kr_id, kr_title, target_count, completed_count, in_progress_count,
+ *     failed_count, progress_percentage, time_range, daily_breakdown, last_updated
+ *   }
+ */
+router.get('/pr-progress/:kr_id', async (req, res) => {
+  try {
+    const { kr_id } = req.params;
+    const { month } = req.query;
+
+    // 解析月份参数
+    let year, monthNum;
+    if (month) {
+      const monthMatch = /^(\d{4})-(\d{2})$/.exec(month);
+      if (!monthMatch) {
+        return res.status(400).json({
+          success: false,
+          error: 'month 参数格式错误，请使用 YYYY-MM 格式（例：2026-03）'
+        });
+      }
+      year = parseInt(monthMatch[1], 10);
+      monthNum = parseInt(monthMatch[2], 10);
+      if (monthNum < 1 || monthNum > 12) {
+        return res.status(400).json({
+          success: false,
+          error: 'month 参数月份值无效（1-12）'
+        });
+      }
+    } else {
+      const now = new Date();
+      year = now.getUTCFullYear();
+      monthNum = now.getUTCMonth() + 1;
+    }
+
+    // 计算时间范围（月份首日 UTC 00:00:00 ~ 末日 UTC 23:59:59）
+    const rangeStart = new Date(Date.UTC(year, monthNum - 1, 1));
+    const rangeEnd = new Date(Date.UTC(year, monthNum, 1) - 1); // 月末最后一毫秒
+
+    // 查询 KR 信息
+    const goalResult = await pool.query(
+      `SELECT id, title, metadata FROM goals WHERE id = $1 LIMIT 1`,
+      [kr_id]
+    );
+
+    if (goalResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: `KR ID ${kr_id} 不存在`
+      });
+    }
+
+    const goal = goalResult.rows[0];
+    const targetCount = parseInt(
+      (goal.metadata?.target_pr_count) ||
+      (goal.metadata?.custom_props?.target_pr_count) ||
+      30,
+      10
+    );
+
+    // 统计各状态任务数量（只统计 task_type = 'dev' 的任务）
+    const statsResult = await pool.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress_count,
+        COUNT(*) FILTER (WHERE status IN ('failed', 'quarantined')) AS failed_count
+       FROM tasks
+       WHERE goal_id = $1
+         AND task_type = 'dev'
+         AND created_at >= $2
+         AND created_at <= $3`,
+      [kr_id, rangeStart.toISOString(), rangeEnd.toISOString()]
+    );
+
+    const stats = statsResult.rows[0];
+    const completedCount = parseInt(stats.completed_count, 10);
+    const inProgressCount = parseInt(stats.in_progress_count, 10);
+    const failedCount = parseInt(stats.failed_count, 10);
+
+    // 计算进度百分比（保留 1 位小数）
+    const progressPercentage = targetCount > 0
+      ? Math.round((completedCount / targetCount) * 1000) / 10
+      : 0;
+
+    // 每日完成数量（按 completed_at UTC 日期分组）
+    const dailyResult = await pool.query(
+      `SELECT
+        DATE(completed_at AT TIME ZONE 'UTC') AS date,
+        COUNT(*) AS completed
+       FROM tasks
+       WHERE goal_id = $1
+         AND task_type = 'dev'
+         AND status = 'completed'
+         AND completed_at >= $2
+         AND completed_at <= $3
+       GROUP BY DATE(completed_at AT TIME ZONE 'UTC')
+       ORDER BY date`,
+      [kr_id, rangeStart.toISOString(), rangeEnd.toISOString()]
+    );
+
+    // 构建每日明细（填充空值为 0）
+    const dailyMap = new Map();
+    for (const row of dailyResult.rows) {
+      const dateStr = row.date instanceof Date
+        ? row.date.toISOString().slice(0, 10)
+        : String(row.date).slice(0, 10);
+      dailyMap.set(dateStr, parseInt(row.completed, 10));
+    }
+
+    const daysInMonth = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+    const dailyBreakdown = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      dailyBreakdown.push({ date: dateStr, completed: dailyMap.get(dateStr) || 0 });
+    }
+
+    res.json({
+      kr_id,
+      kr_title: goal.title,
+      target_count: targetCount,
+      completed_count: completedCount,
+      in_progress_count: inProgressCount,
+      failed_count: failedCount,
+      progress_percentage: progressPercentage,
+      time_range: {
+        start: rangeStart.toISOString(),
+        end: rangeEnd.toISOString()
+      },
+      daily_breakdown: dailyBreakdown,
+      last_updated: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('[API] pr-progress GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
