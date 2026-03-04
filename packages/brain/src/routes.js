@@ -74,6 +74,7 @@ import {
   cleanupExpiredSuggestions,
   getTriageStats
 } from './suggestion-triage.js';
+import { getExecutionStatus, retryTask } from './task-retry.js';
 
 // Inventory config for decomposition routes (moved here after decomp-checker simplification)
 const INVENTORY_CONFIG = { LOW_WATERMARK: 3, TARGET_READY_TASKS: 9, BATCH_SIZE: 3 };
@@ -10511,6 +10512,67 @@ router.post('/reports/trigger', async (req, res) => {
   } catch (err) {
     console.error('[API] reports/trigger error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tasks/:id/execution-status
+ * 查询任务的详细执行状态（执行阶段、重试历史、最后错误）
+ */
+router.get('/tasks/:id/execution-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ error: 'task id is required' });
+    }
+
+    const result = await getExecutionStatus(id);
+
+    if (!result.success) {
+      const isNotFound = result.error && result.error.includes('not found');
+      return res.status(isNotFound ? 404 : 500).json({ error: result.error });
+    }
+
+    res.json(result.execution_status);
+  } catch (err) {
+    console.error('[API] tasks/:id/execution-status error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/retry
+ * 手动触发任务重试
+ * Body: { reason?: string }
+ */
+router.post('/tasks/:id/retry', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason = '' } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({ error: 'task id is required' });
+    }
+
+    const result = await retryTask(id, reason);
+
+    if (!result.success) {
+      const isNotFound = result.error && result.error.includes('not found');
+      return res.status(isNotFound ? 404 : 409).json({ error: result.error });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      retry_count: result.task.retry_count,
+      max_retries: result.task.max_retries,
+      new_status: result.task.status,
+      message: `任务已重新入队（第 ${result.task.retry_count}/${result.task.max_retries} 次重试）`,
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/retry error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
