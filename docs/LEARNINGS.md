@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
+
+**背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
+
+**parseContactContent 正则**：`/([^\s:：，,]+)[：:]\s*([^：:\n]+?)(?=\s+[^\s:：，,]+[：:]|$)/g` 可正确解析 `"姓名:张三 职业:律师 分类:朋友"` 格式。如果无冒号整体作为备注，保证健壮性。
+
+**contactFieldsToNotionProps 设计**：用 Set 做字段名查找（O(1)），末尾做值内容自动检测（email/phone/url/date 格式）。姓名字段跳过（单独作为 title 处理）。source/updatedAt 单独传入避免字段名冲突。
+
+**PR CI 不触发的根本原因**：PR 的 `mergeable` 状态为 `CONFLICTING` 时，GitHub Actions 可能不触发 pull_request CI。解决：先 merge origin/main 解决冲突，推送 merge commit，CI 才正常触发。
+
+**merge commit 中的 .dod/.prd 文件**：从 origin/main 合并进来的 `.dod-*.md`/`.prd-*.md` 文件会出现在 merge commit 中，但不会出现在 `git diff origin/main...HEAD` 的结果里（merge base = origin/main 本身），Engine CI Block PRD/DoD 检查不受影响。
+
+**分支重命名教训**：新分支名 `cp-MMDDHHNN-xxx` 中的 `NN`（HH=小时，NN=分钟）部分必须是 2 位数字，整体 `MMDDHHNN` 恰好 8 位。`cp-03040934v2-xxx` 中 `03040934v2` 不是 8 位数字，会破坏 DevGate branch name regex。正确做法：直接用不同时间码 `cp-03040950-xxx`。
+
 ### [2026-03-04] Brain tick 48h 简报 cortex 对接（PR #460, Brain v1.181.0）
 
 **背景**：tick.js 已有 `check48hReport()` 但用的是 mock 实现；cortex.js 已有真实 `generateSystemReport()`。需要将两者对接，并补充缺失的 API 端点。
