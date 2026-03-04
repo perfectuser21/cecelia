@@ -10369,6 +10369,63 @@ router.get('/reports', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/reports/latest
+ * 获取最新的系统简报
+ * Query params: ?type=48h_summary（可选，默认返回最新任意类型）
+ */
+router.get('/reports/latest', async (req, res) => {
+  try {
+    const type = req.query.type || null;
+
+    let query = `
+      SELECT id, type, content, metadata, created_at
+      FROM system_reports
+    `;
+    const params = [];
+
+    if (type) {
+      query += ' WHERE type = $1';
+      params.push(type);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT 1';
+
+    const result = await pool.query(query, params);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: '暂无系统简报' });
+    }
+
+    res.json({ success: true, report: result.rows[0] });
+  } catch (err) {
+    console.error('[API] reports/latest error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/reports/generate
+ * 手动触发 cortex 生成系统简报（使用 LLM 深度分析）
+ * Body: { time_range_hours: 48 }（可选）
+ */
+router.post('/reports/generate', async (req, res) => {
+  try {
+    const timeRangeHours = Math.max(1, Math.min(168, Number(req.body?.time_range_hours) || 48));
+    const { generateSystemReport } = await import('./cortex.js');
+    const report = await generateSystemReport({ timeRangeHours });
+    res.json({
+      success: true,
+      report_id: report.id,
+      generated_at: report.generated_at,
+      time_range_hours: timeRangeHours,
+      message: `${timeRangeHours}h 系统简报已成功生成`
+    });
+  } catch (err) {
+    console.error('[API] reports/generate error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/reports/trigger
  * 手动触发 48h 简报生成（强制，忽略时间检查）
  */

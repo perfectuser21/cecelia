@@ -2155,12 +2155,12 @@ async function generate48hReport(dbPool) {
 }
 
 /**
- * 检查是否需要生成 48h 简报，如需要则生成并写入 system_reports 表
+ * 检查是否需要生成 48h 简报，如需要则调用 cortex.generateSystemReport() 生成
  * 检查时间间隔（REPORT_INTERVAL_MS，默认 48h），满足条件则触发生成
- * @param {Pool} dbPool - PostgreSQL 连接池
+ * @param {Pool} dbPool - PostgreSQL 连接池（接口兼容性保留，cortex 使用自己的 pool）
  * @param {Object} options - 选项
  * @param {boolean} [options.force=false] - 强制触发（忽略时间检查）
- * @returns {Object|null} 生成的简报记录，或 null（未触发）
+ * @returns {Object|null} 生成的简报记录（含 id, created_at），或 null（未触发）
  */
 async function check48hReport(dbPool, { force = false } = {}) {
   const elapsed = Date.now() - _lastReportTime;
@@ -2172,22 +2172,17 @@ async function check48hReport(dbPool, { force = false } = {}) {
   console.log(`[tick] 触发 48h 系统简报生成（elapsed: ${Math.round(elapsed / 3600000)}h, force: ${force}）`);
 
   try {
-    const content = await generate48hReport(dbPool);
-    const metadata = {
-      trigger: force ? 'manual' : 'auto',
-      generated_at: new Date().toISOString(),
-      elapsed_hours: Math.round(elapsed / 3600000)
-    };
+    // 调用 cortex.generateSystemReport() 生成真实 AI 简报（含 LLM 深度分析）
+    // cortex 内部使用自己的 pool 实例，并负责写入 system_reports 表
+    const { generateSystemReport } = await import('./cortex.js');
+    const report = await generateSystemReport({ timeRangeHours: 48 });
 
-    const result = await dbPool.query(`
-      INSERT INTO system_reports (type, content, metadata)
-      VALUES ($1, $2, $3)
-      RETURNING id, created_at
-    `, ['48h_summary', JSON.stringify(content), JSON.stringify(metadata)]);
+    if (!report || !report.id) {
+      throw new Error('cortex.generateSystemReport 返回无效结果');
+    }
 
-    const record = result.rows[0];
-    console.log(`[tick] 48h 简报已生成，id: ${record.id}，健康状态: ${content.system_health.status}`);
-    return record;
+    console.log(`[tick] 48h 简报已生成（by cortex），id: ${report.id}`);
+    return { id: report.id, created_at: report.generated_at };
   } catch (err) {
     console.error('[tick] 48h 简报生成失败（non-critical）:', err.message);
     _lastReportTime = 0; // 重置时间，允许下次 tick 重试
