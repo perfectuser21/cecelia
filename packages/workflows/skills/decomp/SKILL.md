@@ -216,9 +216,12 @@ type: initiative
 parent_id: "<project_id>"
 产出: "[代码/配置/数据，具体说]"
 dod:
-  - "[完成条件1]"
-  - "[完成条件2]"
-  - "[测试通过]"
+  - item: "调用 POST /api/<endpoint> 返回 200 且包含 <字段>"
+    test: "manual:curl -s -X POST http://localhost:5221/api/<endpoint> | jq -e '.<字段>'"
+  - item: "DB 中有对应记录且状态正确"
+    test: "manual:psql cecelia -c "SELECT count(*) FROM <table> WHERE <condition>" | grep -v ' 0'"
+  - item: "CI 全部通过"
+    test: "contract:C2-001"
 task_type: "[dev / exploratory / review / qa]"
 ```
 
