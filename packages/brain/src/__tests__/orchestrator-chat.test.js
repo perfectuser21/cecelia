@@ -740,6 +740,56 @@ describe('orchestrator-chat', () => {
     });
   });
 
+  // ===================== D17: callWithHistory ```json 代码块包裹 JSON 解析 =====================
+
+  describe('callWithHistory - ```json 代码块包裹 JSON 解析', () => {
+    it('LLM 输出 ```json...``` 包裹时正确提取 reply 和 thalamus_signal', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '```json\n{"reply": "好，这就去。", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/send", "body": {"open_id": "ou_123", "msg": "hi"}}}\n```'
+      ));
+
+      const result = await handleChat('去和苏彦卿打个招呼');
+
+      expect(result.reply).toBe('好，这就去。');
+      expect(result.reply).not.toContain('thalamus_signal');
+      expect(result.reply).not.toContain('```');
+    });
+
+    it('LLM 输出 ```json...``` 时 thalamus_signal 被正确提取（直接测 callWithHistory 解析层）', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '```json\n{"reply": "收到。", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/send"}}\n```'
+      ));
+
+      const result = await callWithHistory('发消息', '系统提示');
+
+      expect(result.thalamus_signal).not.toBeNull();
+      expect(result.thalamus_signal.type).toBe('call_brain_api');
+    });
+
+    it('LLM 输出裸 ``` 结尾（无 json 标记）时也能正确解析', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "明白了。", "thalamus_signal": null}\n```'
+      ));
+
+      const result = await handleChat('明白了吗');
+
+      expect(result.reply).toBe('明白了。');
+      expect(result.reply).not.toContain('```');
+    });
+
+    it('文字前缀 + ```json 包裹 JSON 时正确提取 reply', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '我来帮你发消息。\n```json\n{"reply": "已发送。", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/send"}}\n```'
+      ));
+
+      const result = await handleChat('帮我发消息');
+
+      expect(result.reply).toBe('已发送。');
+      expect(result.reply).not.toContain('```');
+      expect(result.thalamus_signal).not.toBeNull();
+    });
+  });
+
   // ===================== D16: buildManifestBlock 飞书成员注入 =====================
 
   describe('buildManifestBlock - 飞书成员 open_id 注入', () => {
