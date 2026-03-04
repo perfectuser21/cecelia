@@ -201,8 +201,20 @@ export async function checkRecurringTasks(now = new Date()) {
 
     // Create task instance from template
     const template = rt.template || {};
-    const taskType = template.task_type || rt.task_type || 'dev';
     const priority = template.priority || rt.priority || 'P1';
+
+    // Executor → task_type 映射
+    const executor = rt.executor || 'cecelia';
+    const EXECUTOR_SKILL_MAP = {
+      cecelia:  null,             // 内置：直接创建 task，不路由外部 skill
+      qiumi:    '/okr',
+      vivian:   '/decomp-check',
+      nobel:    '/n8n-manage',
+      caramel:  '/dev',
+      qa:       '/qa',
+    };
+    const skill = EXECUTOR_SKILL_MAP[executor] ?? null;
+    const taskType = skill ? 'skill' : (template.task_type || rt.task_type || 'dev');
 
     const insertResult = await pool.query(`
       INSERT INTO tasks (
@@ -225,6 +237,8 @@ export async function checkRecurringTasks(now = new Date()) {
       JSON.stringify({
         recurring_task_id: rt.id,
         recurring_title: rt.title,
+        executor,
+        ...(skill ? { skill } : {}),
         ...(template.payload || {})
       })
     ]);
@@ -232,11 +246,11 @@ export async function checkRecurringTasks(now = new Date()) {
     const createdTask = insertResult.rows[0];
     console.log(`[recurring] Created task instance: ${createdTask.title} (id=${createdTask.id}) from recurring=${rt.id}`);
 
-    // Update recurring task with last_run_at and next_run_at
+    // Update recurring task with last_run_at, next_run_at, last_run_status
     const nextRunAt = calculateNextRunAt(rt, now);
     await pool.query(
-      'UPDATE recurring_tasks SET last_run_at = $1, next_run_at = $2 WHERE id = $3',
-      [now.toISOString(), nextRunAt ? nextRunAt.toISOString() : null, rt.id]
+      'UPDATE recurring_tasks SET last_run_at = $1, next_run_at = $2, last_run_status = $3 WHERE id = $4',
+      [now.toISOString(), nextRunAt ? nextRunAt.toISOString() : null, '运行中', rt.id]
     );
 
     created.push({

@@ -1,5 +1,34 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Recurring Tasks × Notion 双向同步（PR #493, Brain v1.188.0）
+
+**背景**：`recurring_tasks` 表已有 cron 引擎，但无前台界面、无 Notion 同步、无 executor 字段。此 PR 实现完整的 Notion→DB 双向同步。
+
+**关键教训**：
+- **migration 不要 INSERT schema_migrations**：`migrate.js` 使用 `schema_version` 表（自动管理），migration SQL 里不应手动 INSERT。写了 `INSERT INTO schema_migrations` → CI 报 "relation does not exist"。修复：删掉这行即可
+- **partial unique index 不支持 ON CONFLICT 简写**：`WHERE notion_page_id IS NOT NULL` 的部分索引，PostgreSQL 要求 `ON CONFLICT (col) WHERE condition`，但实际写代码时更简单的方式是 SELECT + INSERT/UPDATE 分支
+- **executor 路由设计**：`recurring.js` 中通过 `payload.skill` 区分内置（cecelia）和外部 skill，task_type 设为 'skill' 让 executor 路由到对应 agent
+- **tick fire-and-forget 模式**：每日门控用 `working_memory` key，值存 `{ date: today }` JSON，读取时比较 `.date === today`
+- **`[CONFIG]` PR 标题规则**：修改 skills/ 或 hooks/ 时，PR 标题需含 `[CONFIG]`。此 PR 不改 engine 配置，但预防性加了 `[CONFIG]` 前缀避免误判
+
+### [2026-03-04] 进化日志接入 Tick — 自动扫描与合成（PR #491, Brain v1.187.0）
+
+**背景**：`component_evolutions` 和 `component_evolution_summaries` 表已手动回填了 1530 条历史记录（monorepo + 5 个旧独立仓库），但无自动化。此 PR 将两个操作接入 Brain Tick 循环。
+
+**Fire-and-forget 模式**：Tick 步骤 10.14/10.15 使用 `Promise.resolve().then(() => fn(pool)).catch(e => console.warn(...))` 模式，不 await，不阻塞 tick 主循环。
+
+**时间门控 working_memory 模式**：`evolution_last_scan_date` 和 `evolution_last_synthesis_date` 两个 key 存入 `working_memory`，用 `ON CONFLICT (key) DO UPDATE` 原子 upsert，防止重复执行。
+
+**GitHub REST API vs GraphQL**：小量 PR（per_page=50）用 REST API 直接 fetch 即可。大量分页（300-500 PR）用 GraphQL 可能超时 502/504，应改用 REST API per-PR + 本地 JSON 缓存。
+
+**pull_request CI 不触发（已知问题）**：分支推送后 PR 的 pull_request CI 有时不触发，原因不明。解决：关闭旧 PR，创建全新分支，从 origin/main 开始，`git checkout <commit> -- <files>` 迁移代码，再 push 新分支 + 创建新 PR。新分支首次推送必然触发 CI。
+
+**bash-guard 阻止 force push**：已有提交的 cp-* 分支被 force push 时被 bash-guard 拦截。此情况下不要尝试绕过，直接创建新分支即可（`git checkout origin/main -b cp-MMDDHHNN-new-name`）。
+
+**版本冲突 merge 解法**：main 持续前进时，分支的 package.json 版本（1.187.0）比 main（1.186.6）更高，merge 产生冲突时保留 HEAD（我们的更高版本），用 `python3 re.sub` 批量处理。
+
+**GITHUB_TOKEN 可选**：公开仓库无 token 也能使用 GitHub REST API，限额 60 req/h，足够每日扫描（每次 50 PR）。建议将 `GITHUB_TOKEN` 加入 `.env.docker` 提高限额到 5000 req/h。
+
 ### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
 
 **背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。

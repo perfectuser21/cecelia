@@ -22,6 +22,7 @@ import { observeChat } from './thalamus.js';
 import { extractConversationLearning } from './learning.js';
 import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
 import { resolveByPersonReply } from './pending-conversations.js';
+import { processMessageFacts } from './fact-extractor.js';
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -655,6 +656,11 @@ export async function handleChat(message, context = {}, messages = [], imageCont
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
     extractConversationLearning(message, reply, pool)
+  ).catch(() => {});
+
+  // 7b. 脚本事实捕获（无门槛、无 LLM）：偏好/习惯 → person_signals，纠正 → learnings
+  Promise.resolve().then(() =>
+    processMessageFacts(pool, userId, message)
   ).catch(() => {});
 
   // 8. 异步提取人物信号 → person_signals（个人认知表更新）
