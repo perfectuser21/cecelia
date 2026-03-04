@@ -658,9 +658,9 @@ export async function handleChat(message, context = {}, messages = [], imageCont
     extractConversationLearning(message, reply, pool)
   ).catch(() => {});
 
-  // 7b. 脚本事实捕获（无门槛、无 LLM）：偏好/习惯 → person_signals，纠正 → learnings
+  // 7b. 混合事实捕获（正则 + Haiku 反哺进化）：偏好/习惯 → person_signals，纠正 → learnings
   Promise.resolve().then(() =>
-    processMessageFacts(pool, userId, message)
+    processMessageFacts(pool, userId, message, callLLM)
   ).catch(() => {});
 
   // 8. 异步提取人物信号 → person_signals（个人认知表更新）

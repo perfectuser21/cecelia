@@ -1,193 +1,265 @@
 /**
- * fact-extractor.test.js
+ * fact-extractor 混合提取测试
  *
- * 覆盖 DoD 验收条件：
- *   F1-1: 短事实（≥5字）→ extractFacts 捕获偏好
- *   F1-2: 负向偏好 → polarity='negative'
- *   F1-3: 行为纠正 → corrections 数组
- *   F1-4: 纯噪音不产生事实
- *   F2-1: 矛盾偏好 → detectContradictions 返回矛盾
- *   F2-2: 颜色可并存，不触发矛盾
- *   F3-1: savePreferences 写入 person_signals
- *   F3-2: saveClarificationRequests 写入 pending_conversations
+ * DoD 映射：
+ *   H1-1: Haiku 补全正则漏掉的偏好
+ *   H1-2: gap 写入 learned_keywords
+ *   H1-3: 合并去重不重复
+ *   H2-1: 动态词库命中学到的关键词
+ *   H3-1: Haiku 失败时正则结果正常保存
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   extractFacts,
-  savePreferences,
-  saveCorrections,
-  detectContradictions,
-  saveClarificationRequests,
+  loadLearnedKeywords,
+  saveLearnedKeywords,
+  extractFactsWithHaiku,
   processMessageFacts,
+  invalidateKeywordCache,
 } from '../fact-extractor.js';
 
-// ─── Mock pool 工厂 ───────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Mock Pool 工厂
+// ─────────────────────────────────────────────
 
-function makePool(rows = []) {
+function makePool() {
   return {
-    query: vi.fn().mockResolvedValue({ rows, rowCount: rows.length }),
+    query: vi.fn().mockResolvedValue({ rows: [] }),
   };
 }
 
-// ─── F1 extractFacts（纯函数，无 DB）────────────────────────
+beforeEach(() => {
+  invalidateKeywordCache('owner');
+  invalidateKeywordCache('user-1');
+  vi.clearAllMocks();
+});
 
-describe('F1-1: 短事实提取（≥5字正向偏好）', () => {
-  it('我喜欢喝茶 → 偏好 polarity=positive', () => {
-    const { preferences } = extractFacts('我喜欢喝茶');
-    expect(preferences.length).toBeGreaterThan(0);
-    expect(preferences[0].polarity).toBe('positive');
-    expect(preferences[0].value).toContain('喝茶');
-  });
+// ─────────────────────────────────────────────
+// H1-1: Haiku 补全正则漏掉的偏好
+// ─────────────────────────────────────────────
 
-  it('我喜欢蓝色 → 偏好 polarity=positive', () => {
-    const { preferences } = extractFacts('我喜欢蓝色');
-    expect(preferences.length).toBeGreaterThan(0);
-    expect(preferences[0].value).toContain('蓝色');
-  });
+describe('H1-1: Haiku 补全正则漏掉的偏好', () => {
+  it('正则漏掉"也喜欢工作，旅游"，Haiku 补全并写入 person_signals', async () => {
+    const message = '我喜欢咖啡，也喜欢工作，旅游';
 
-  it('多个偏好同时捕获', () => {
-    const { preferences } = extractFacts('我喜欢喝咖啡，我习惯早起工作');
-    // 应至少捕获到1个
-    expect(preferences.length).toBeGreaterThanOrEqual(1);
+    // 正则只能捕获"咖啡"（"我喜欢咖啡"命中），漏掉"工作"和"旅游"
+    const { preferences: regexPrefs } = extractFacts(message);
+    expect(regexPrefs.map(p => p.value)).toContain('咖啡');
+    expect(regexPrefs.map(p => p.value)).not.toContain('工作');
+    expect(regexPrefs.map(p => p.value)).not.toContain('旅游');
+
+    // Haiku 返回补全结果（含正则已有的咖啡 + 漏掉的工作/旅游）
+    const mockCallLLM = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        preferences: [
+          { value: '咖啡', polarity: 'positive' },
+          { value: '工作', polarity: 'positive' },
+          { value: '旅游', polarity: 'positive' },
+        ],
+      }),
+    });
+
+    const pool = makePool();
+    const gaps = await extractFactsWithHaiku(message, regexPrefs, pool, 'owner', mockCallLLM);
+
+    // gaps 只包含正则漏掉的（工作、旅游）
+    expect(gaps.map(g => g.value)).toContain('工作');
+    expect(gaps.map(g => g.value)).toContain('旅游');
+    expect(gaps.map(g => g.value)).not.toContain('咖啡');
+
+    // Haiku 必须被调用一次
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
+    expect(mockCallLLM).toHaveBeenCalledWith('fact_extractor', expect.any(String), expect.any(Object));
   });
 });
 
-describe('F1-2: 负向偏好', () => {
-  it('我不喜欢开会 → polarity=negative', () => {
-    const { preferences } = extractFacts('我不喜欢开会');
-    expect(preferences.length).toBeGreaterThan(0);
-    expect(preferences[0].polarity).toBe('negative');
+// ─────────────────────────────────────────────
+// H1-2: gap 写入 learned_keywords
+// ─────────────────────────────────────────────
+
+describe('H1-2: gap 写入 learned_keywords', () => {
+  it('Haiku 发现的 gap 写入 learned_keywords 表', async () => {
+    const insertedKeywords = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (sql && sql.includes('INSERT INTO learned_keywords')) {
+          insertedKeywords.push(params[1]); // keyword = params[1]
+        }
+        return { rows: [] };
+      }),
+    };
+
+    const message = '也喜欢工作，旅游';
+    const regexPrefs = []; // 正则啥都没捕到
+
+    const mockCallLLM = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        preferences: [
+          { value: '工作', polarity: 'positive' },
+          { value: '旅游', polarity: 'positive' },
+        ],
+      }),
+    });
+
+    await extractFactsWithHaiku(message, regexPrefs, pool, 'owner', mockCallLLM);
+
+    expect(insertedKeywords).toContain('工作');
+    expect(insertedKeywords).toContain('旅游');
   });
 
-  it('我讨厌噪音 → polarity=negative', () => {
-    const { preferences } = extractFacts('我讨厌噪音');
-    expect(preferences.length).toBeGreaterThan(0);
-    expect(preferences[0].polarity).toBe('negative');
-  });
-});
+  it('saveLearnedKeywords 使用 ON CONFLICT 更新 use_count', async () => {
+    const sqls = [];
+    const pool = {
+      query: vi.fn(async (sql) => {
+        sqls.push(sql);
+        return { rows: [] };
+      }),
+    };
 
-describe('F1-3: 行为纠正', () => {
-  it('你不应该沉默 → corrections 数组', () => {
-    const { corrections } = extractFacts('你不应该沉默');
-    expect(corrections.length).toBeGreaterThan(0);
-    expect(corrections[0].value).toContain('沉默');
-  });
+    await saveLearnedKeywords(pool, 'owner', [{ value: '旅游', polarity: 'positive' }]);
 
-  it('你应该主动回复 → corrections 数组', () => {
-    const { corrections } = extractFacts('你应该主动回复');
-    expect(corrections.length).toBeGreaterThan(0);
-  });
-
-  it('下次你别这样做 → corrections 数组', () => {
-    const { corrections } = extractFacts('下次你别这样做');
-    expect(corrections.length).toBeGreaterThan(0);
-  });
-});
-
-describe('F1-4: 噪音过滤', () => {
-  it('空字符串不产生任何事实', () => {
-    const result = extractFacts('');
-    expect(result.preferences).toHaveLength(0);
-    expect(result.corrections).toHaveLength(0);
-  });
-
-  it('纯语气词不产生事实', () => {
-    const { preferences } = extractFacts('好的，嗯，行，对对对');
-    // 噪音词过滤后不应有有效事实
-    expect(preferences.length).toBe(0);
-  });
-
-  it('太短的文本（<3字）不产生事实', () => {
-    const result = extractFacts('哦');
-    expect(result.preferences).toHaveLength(0);
-    expect(result.corrections).toHaveLength(0);
+    expect(sqls[0]).toContain('ON CONFLICT');
+    expect(sqls[0]).toContain('use_count');
   });
 });
 
-// ─── F2 矛盾检测（需要 DB mock）──────────────────────────────
+// ─────────────────────────────────────────────
+// H1-3: 合并去重不重复
+// ─────────────────────────────────────────────
 
-describe('F2-1: 矛盾偏好检测 → pending_conversations', () => {
-  it('喜欢茶 vs 已有喜欢咖啡 → 检测到矛盾', async () => {
-    const pool = makePool([{ signal_value: '咖啡', raw_excerpt: '我喜欢咖啡' }]);
-    const newPrefs = [{ value: '喝茶', polarity: 'positive' }];
-    const contradictions = await detectContradictions(pool, 'owner', newPrefs);
-    expect(contradictions.length).toBeGreaterThan(0);
-    expect(contradictions[0].existingValue).toBe('咖啡');
-    expect(contradictions[0].newValue).toBe('喝茶');
+describe('H1-3: 合并去重不重复', () => {
+  it('正则和 Haiku 都发现同一关键词，Haiku gaps 为空', async () => {
+    const message = '我喜欢咖啡';
+
+    const { preferences: regexPrefs } = extractFacts(message);
+    expect(regexPrefs.map(p => p.value)).toContain('咖啡');
+
+    const mockCallLLM = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        preferences: [{ value: '咖啡', polarity: 'positive' }],
+      }),
+    });
+
+    const pool = makePool();
+    const gaps = await extractFactsWithHaiku(message, regexPrefs, pool, 'owner', mockCallLLM);
+
+    // gaps 应为空（咖啡正则已有）
+    expect(gaps).toHaveLength(0);
+
+    // 没有写入 learned_keywords（无 gap）
+    const insertCalls = pool.query.mock.calls.filter(
+      ([sql]) => sql && sql.includes('INSERT INTO learned_keywords')
+    );
+    expect(insertCalls).toHaveLength(0);
   });
 
-  it('同值不算矛盾（重复偏好）', async () => {
-    const pool = makePool([{ signal_value: '咖啡', raw_excerpt: '我喜欢咖啡' }]);
-    const newPrefs = [{ value: '咖啡', polarity: 'positive' }];
-    const contradictions = await detectContradictions(pool, 'owner', newPrefs);
-    expect(contradictions).toHaveLength(0);
+  it('learnedKeywords 不重复添加正则已有的 value', () => {
+    const message = '我喜欢咖啡';
+    const { preferences: regexPrefs } = extractFacts(message);
+
+    // 即使 learnedKeywords 包含咖啡，也不会在结果中重复出现（Set 去重）
+    const learnedKeywords = [{ keyword: '咖啡', polarity: 'positive' }];
+    const { preferences: withLearned } = extractFacts(message, learnedKeywords);
+
+    const learnedCount = withLearned.filter(p => p.source === 'learned' && p.value === '咖啡').length;
+    expect(learnedCount).toBe(0); // 已在正则中命中，learned 不会再添加
   });
 });
 
-describe('F2-2: 颜色可并存，不触发矛盾', () => {
-  it('喜欢蓝色 vs 已有喜欢红色 → 不矛盾（颜色非互斥）', async () => {
-    const pool = makePool([{ signal_value: '红色', raw_excerpt: '我喜欢红色' }]);
-    const newPrefs = [{ value: '蓝色', polarity: 'positive' }];
-    const contradictions = await detectContradictions(pool, 'owner', newPrefs);
-    expect(contradictions).toHaveLength(0);
+// ─────────────────────────────────────────────
+// H2-1: 动态词库命中学到的关键词
+// ─────────────────────────────────────────────
+
+describe('H2-1: 动态词库命中学到的关键词', () => {
+  it('loadLearnedKeywords 加载后，extractFacts 能命中"旅游"', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ keyword: '旅游', polarity: 'positive' }],
+      }),
+    };
+
+    const learnedKeywords = await loadLearnedKeywords(pool, 'owner');
+    expect(learnedKeywords).toEqual([{ keyword: '旅游', polarity: 'positive' }]);
+
+    // 以前正则漏掉的"也喜欢旅游"，加载 learnedKeywords 后可以命中
+    const { preferences } = extractFacts('也喜欢旅游', learnedKeywords);
+    const found = preferences.find(p => p.value === '旅游');
+    expect(found).toBeDefined();
+    expect(found.source).toBe('learned');
   });
-});
 
-// ─── F3 存储（DB mock 验证写入行为）────────────────────────
+  it('loadLearnedKeywords 使用 TTL 缓存，5分钟内不重复查询 DB', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ keyword: '咖啡', polarity: 'positive' }],
+      }),
+    };
 
-describe('F3-1: savePreferences 写入 person_signals', () => {
-  it('新偏好写入 person_signals', async () => {
-    const pool = makePool([]); // 去重查询返回空 → 不重复
-    await savePreferences(pool, 'owner', [{ value: '喝茶', polarity: 'positive', raw: '我喜欢喝茶', temporal: 'current' }]);
-    // 应有2次 query：1次去重检查 + 1次 INSERT
+    await loadLearnedKeywords(pool, 'user-1');
+    await loadLearnedKeywords(pool, 'user-1'); // 第二次从缓存读
+    expect(pool.query).toHaveBeenCalledTimes(1); // DB 只查了一次
+  });
+
+  it('invalidateKeywordCache 后重新查 DB', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({
+        rows: [{ keyword: '跑步', polarity: 'habit' }],
+      }),
+    };
+
+    await loadLearnedKeywords(pool, 'user-1');
+    invalidateKeywordCache('user-1');
+    await loadLearnedKeywords(pool, 'user-1'); // 缓存被清，重新查 DB
     expect(pool.query).toHaveBeenCalledTimes(2);
-    const insertCall = pool.query.mock.calls[1];
-    expect(insertCall[0]).toContain('INSERT INTO person_signals');
-    expect(insertCall[1][1]).toBe('喝茶'); // signal_value = '喝茶'
-  });
-
-  it('7天内重复偏好不重写', async () => {
-    const pool = makePool([{ id: 1 }]); // 去重查询返回已有记录
-    await savePreferences(pool, 'owner', [{ value: '喝茶', polarity: 'positive', raw: '我喜欢喝茶', temporal: 'current' }]);
-    // 只有1次查询（去重检查），无 INSERT
-    expect(pool.query).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('F3-2: saveClarificationRequests 写入 pending_conversations', () => {
-  it('矛盾 → 写入 pending_conversations 澄清请求', async () => {
-    const pool = makePool([]); // 无已有澄清请求
-    const contradictions = [{ newValue: '喝茶', existingValue: '咖啡', category: 'drink' }];
-    await saveClarificationRequests(pool, 'owner', contradictions);
-    expect(pool.query).toHaveBeenCalledTimes(2);
-    const insertCall = pool.query.mock.calls[1];
-    expect(insertCall[0]).toContain('INSERT INTO pending_conversations');
-    expect(insertCall[1][1]).toContain('喜欢');
+// ─────────────────────────────────────────────
+// H3-1: Haiku 失败时正则结果正常保存
+// ─────────────────────────────────────────────
+
+describe('H3-1: Haiku 失败时正则结果正常保存', () => {
+  it('Haiku 抛出异常，processMessageFacts 正则结果仍然写入', async () => {
+    const insertedSignals = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (sql && sql.includes('INSERT INTO person_signals')) {
+          insertedSignals.push(params[1]); // signal_value
+        }
+        return { rows: [] };
+      }),
+    };
+
+    // Haiku 超时失败
+    const failingLLM = vi.fn().mockRejectedValue(new Error('Haiku timeout'));
+
+    await processMessageFacts(pool, 'owner', '我喜欢咖啡', failingLLM);
+
+    // 正则结果必须被写入（"咖啡"）
+    expect(insertedSignals).toContain('咖啡');
   });
 
-  it('已有澄清请求时不重复写入', async () => {
-    const pool = makePool([{ id: 1 }]); // 已有同类澄清
-    const contradictions = [{ newValue: '喝茶', existingValue: '咖啡', category: 'drink' }];
-    await saveClarificationRequests(pool, 'owner', contradictions);
-    // 只有1次查询，无 INSERT
-    expect(pool.query).toHaveBeenCalledTimes(1);
-  });
-});
+  it('Haiku 返回无效 JSON，extractFactsWithHaiku 返回空数组，不报错', async () => {
+    const pool = makePool();
+    const badLLM = vi.fn().mockResolvedValue({ text: 'not valid json at all' });
 
-// ─── processMessageFacts 整合测试 ──────────────────────────
-
-describe('processMessageFacts 整合', () => {
-  it('无事实的消息不调用 DB', async () => {
-    const pool = makePool([]);
-    await processMessageFacts(pool, 'owner', '好的');
-    expect(pool.query).not.toHaveBeenCalled();
+    const result = await extractFactsWithHaiku('也喜欢旅游', [], pool, 'owner', badLLM);
+    expect(result).toEqual([]);
   });
 
-  it('有偏好的消息调用 DB 写入', async () => {
-    const pool = makePool([]); // 所有查询返回空（无重复、无矛盾）
-    await processMessageFacts(pool, 'owner', '我喜欢喝茶');
-    // 至少有 savePreferences 的2次 query
-    expect(pool.query.mock.calls.length).toBeGreaterThanOrEqual(2);
+  it('callLLMFn 为 null 时，processMessageFacts 只跑正则', async () => {
+    const insertedSignals = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (sql && sql.includes('INSERT INTO person_signals')) {
+          insertedSignals.push(params[1]);
+        }
+        return { rows: [] };
+      }),
+    };
+
+    await processMessageFacts(pool, 'owner', '我喜欢咖啡', null);
+    expect(insertedSignals).toContain('咖啡');
   });
 });

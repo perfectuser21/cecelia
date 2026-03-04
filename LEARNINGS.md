@@ -4,6 +4,29 @@
 
 ---
 
+### [2026-03-04] 混合事实提取：正则 + Haiku + 反哺进化 v1.189.1
+
+**失败统计**：CI 失败 0 次（解决了 migration 编号冲突 + 版本合并冲突）
+
+**新增功能**：
+1. `fact-extractor.js`：混合提取系统（正则 + Haiku 并行，learned_keywords 反哺词库）
+2. `migration 121_learned_keywords.sql`：新表 + 修复 chk_signal_type 约束（migration 119 遗留 bug）
+3. `model-profile.js`：新增 `fact_extractor` agent 配置（anthropic-api, Haiku）
+4. `orchestrator-chat.js`：传递 callLLM 给 processMessageFacts，启用 Haiku 层
+
+**架构设计决策**：
+- **Haiku fire-and-forget**：Haiku 调用不阻塞正则结果写入，失败时正则数据照常保存（静默降级）
+- **learned_keywords 作为词库反哺**：Haiku gap → learned_keywords（ON CONFLICT 更新 use_count）→ 下次正则 loadLearnedKeywords() 命中，系统自我进化
+- **in-memory TTL 缓存（5分钟）**：loadLearnedKeywords 用 Map 缓存，避免每条消息都查 DB
+- **extractFacts 接受可选 learnedKeywords 参数**：向后兼容，不传时纯正则模式
+
+**踩坑记录**：
+- **migration 编号冲突**：并行 PR（notion-dynamic-schema）抢先合并了 120_notion_props.sql，我们的 120_learned_keywords.sql 冲突 → 重命名为 121，同步更新 selfcheck.js + 3个测试文件 + DEFINITION.md（2处）
+- **PR mergeable=CONFLICTING 导致 CI 不触发**：先 push 再查 CI，发现 `statusCheckRollup: []` 且 `mergeable: CONFLICTING`，需要先合并 main 解决冲突再 push，CI 才触发
+- **版本合并冲突（main 已到 1.189.0）**：用 `git checkout --theirs` 接受 main 版本文件，再手动 patch bump（1.189.0 → 1.189.1）
+
+---
+
 ### [2026-03-02] 任务派发优先级动态调整机制 v1.157.0
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
