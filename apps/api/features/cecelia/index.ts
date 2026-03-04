@@ -23,12 +23,14 @@ const manifest: FeatureManifest = {
           { path: '/cecelia/chat', label: '意识', icon: 'Eye', order: 1 },
           { path: '/cecelia/diary', label: '日记', icon: 'BookOpen', order: 2 },
           { path: '/cecelia/growth', label: '成长档案', icon: 'Sprout', order: 3 },
+          { path: '/cecelia/evolution', label: '进化日志', icon: 'TrendingUp', order: 4 },
         ],
       },
     },
     { path: '/cecelia/chat', component: 'ConsciousnessChat' },
     { path: '/cecelia/diary', component: 'DiaryPage' },
     { path: '/cecelia/growth', component: 'GrowthProfilePage' },
+    { path: '/cecelia/evolution', component: 'EvolutionPage' },
     { path: '/cecelia/config', redirect: '/system/team' },
   ],
 
@@ -37,6 +39,7 @@ const manifest: FeatureManifest = {
     ConsciousnessChat: () => import('./pages/ConsciousnessChat'),
     DiaryPage: () => import('./pages/DiaryPage'),
     GrowthProfilePage: () => import('./pages/GrowthProfilePage'),
+    EvolutionPage: () => import('./pages/EvolutionPage'),
   },
 };
 

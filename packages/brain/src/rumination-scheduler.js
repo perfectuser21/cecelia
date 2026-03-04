@@ -18,6 +18,7 @@ import pool from './db.js';
 import { queryNotebook, addTextSource, deleteSource } from './notebook-adapter.js';
 import { callLLM } from './llm-caller.js';
 import { updateSelfModel, getSelfModel } from './self-model.js';
+import { runEvolutionSynthesis } from './evolution-synthesizer.js';
 
 // ── Notebook ID 查询 ──────────────────────────────────────
 
@@ -483,6 +484,11 @@ export async function runSynthesisSchedulerIfNeeded(dbPool) {
       console.warn('[synthesis-scheduler] monthly failed:', err.message);
       results.monthly = { ok: false, error: err.message };
     }
+
+    // 进化日志合成（周级，fire-and-forget）
+    runEvolutionSynthesis(db).catch(e =>
+      console.warn('[synthesis-scheduler] evolution synthesis failed:', e.message)
+    );
   }
 
   return results;
