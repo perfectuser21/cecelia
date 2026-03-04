@@ -107,7 +107,7 @@ export default function ReportDetailPage() {
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
-        setReport(json);
+        setReport(json.report ?? json);
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败');
       } finally {
