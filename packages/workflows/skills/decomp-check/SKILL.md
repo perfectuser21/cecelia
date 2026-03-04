@@ -1,10 +1,11 @@
 ---
 name: decomp-check
-version: 1.1.0
+version: 1.2.0
 model: claude-sonnet-4-6
 created: 2026-02-27
-updated: 2026-02-27
+updated: 2026-03-04
 changelog:
+  - 1.2.0: 对齐产能模型 — Initiative 数量改为动态范围、新增 Initiative→Task 和 KR→Project 数量检查、修正 Initiative 内部串联依赖定义
   - 1.1.0: 加入 type 字段验证和层级跳跃检测，rejected 条件加入层级跳跃
   - 1.0.0: 从 /vivian 重写。改名 decomp-check，升级为 Sonnet，覆盖所有层，加入打回重拆机制
 description: |
@@ -64,6 +65,7 @@ Brain 传入：
 
 | 检查项 | 通过条件 | 失败信号 |
 |--------|----------|----------|
+| **数量** | 1 个 KR → 3-4 个 Project（以周为单位） | < 3 → **needs_revision**（拆解不够，无法覆盖 KR 指标）；> 6 → **needs_revision**（过度拆解，Project 粒度太细） |
 | **因果链** | 每个 Project 有具体"推动方式"说明 | "有助于提升"等空洞描述 |
 | **覆盖度** | 所有 Project 加起来能推动指标 from→to | 做完这些明显不够达到目标值 |
 | **命名具体** | 名称是可交付的功能模块 | "研究XXX"、"优化YYY"等模糊名称 |
@@ -74,8 +76,10 @@ Brain 传入：
 
 | 检查项 | 通过条件 | 失败信号 |
 |--------|----------|----------|
-| **数量** | 3-8 个 Initiative | < 3 或 > 8 |
-| **独立可部署** | 每个 Initiative 单独部署后有价值 | Initiative 之间强依赖，顺序不对就无法运行 |
+| **数量（初始拆解）** | >= 10 个 Initiative（首次拆解） | < 10 个（拆解粒度不够，无法支撑 Project 周期） |
+| **数量（Project 总周期）** | 40-70 个 Initiative（Project 全生命周期累计） | < 40（覆盖不足）或 > 70（过度拆解） |
+| **内部串联依赖** | Initiative 内的 Task 有顺序依赖（Task 1→2→3→4），形成完整闭环 | Task 之间无依赖关系（说明不是一个完整工作包） |
+| **Initiative 间可并行** | 不同 Initiative 之间可以并行执行 | Initiative 之间强串联依赖，无法并行（应合并为一个更大的 Initiative） |
 | **DoD 明确** | 每个 Initiative 有清晰完成定义 | DoD 是"做完XXX"这种无法验证的描述 |
 | **Test 字段** | 每个 DoD 条目有 `test:` 字段（可执行验证命令） | DoD 纯文字描述，无 test 字段，无法自动验证 |
 | **覆盖度** | 所有 Initiative 做完 → Project 验收条件全过 | 明显遗漏关键步骤（如没有测试、没有部署） |
@@ -83,6 +87,14 @@ Brain 传入：
 | **层级正确** | Initiative 下是 Task，不是另一个 Initiative | 层级错误（Initiative 嵌套） |
 | **type 字段正确** | 每个 child 的 `type` 字段为 `'initiative'` | `type` 为 `'task'`、`'project'` 或其他错误值 |
 | **无层级跳跃** | children 中不存在 `type='task'` 的记录 | 出现 `type='task'` 说明 decomp 误写了 tasks 表，跳过了 Initiative 层级 |
+
+### Initiative → Task（Initiative 内 Task 数量检查）
+
+| 检查项 | 通过条件 | 失败信号 |
+|--------|----------|----------|
+| **Task 数量下限** | 每个 Initiative 至少 4 个 Task（min_tasks: 4） | < 4 个 Task → **rejected**（不算 Initiative，应并入其他 Initiative 或升级为独立 Task） |
+| **Task 数量上限** | 每个 Initiative 最多 8 个 Task（max_tasks: 8） | > 8 个 Task → **needs_revision**（应拆成两个 Initiative） |
+| **Task 串联依赖** | Task 之间有明确的顺序依赖（Task 1→2→3→4） | Task 之间完全独立无依赖（说明不是一个完整工作包） |
 
 ---
 
@@ -95,8 +107,10 @@ Brain 传入：
 1-2 个轻微问题，秋米可以在原基础上修正：
 - 某个 KR 缺少度量方式但格式正确
 - 某个 Initiative 命名模糊但逻辑正确
-- 数量轻微超出范围（如 9 个 Initiative）
+- Initiative 数量轻微不足（如 8-9 个，接近 10 的下限）
 - 某个 Initiative DoD 缺少 test 字段但逻辑正确（1-2 个）
+- 某个 Initiative 的 Task 超过 8 个（应拆成两个 Initiative）
+- KR→Project 数量超过 6 个（过度拆解）或不足 3 个（拆解不够）
 
 ### rejected ❌
 以下任一情况立即 rejected：
@@ -107,6 +121,7 @@ Brain 传入：
 - 子项全是空洞名称，无法执行
 - **DoD 无 Test 字段**（所有 Initiative 的 DoD 都是纯文字，无法验证）
 - **层级跳跃**（children 中出现 `type='task'`，说明 decomp 误写了 tasks 表，直接打回重拆）
+- **Initiative Task 不足**（某个 Initiative 的 Task < 4，不算 Initiative，应并入其他或升级为独立 Task）
 
 ---
 
