@@ -9,5 +9,3 @@ ALTER TABLE recurring_tasks
 CREATE UNIQUE INDEX IF NOT EXISTS recurring_tasks_notion_page_id_idx
   ON recurring_tasks (notion_page_id)
   WHERE notion_page_id IS NOT NULL;
-
-INSERT INTO schema_migrations (version) VALUES ('118') ON CONFLICT DO NOTHING;
