@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 清理 model-registry 废弃 Agent 条目（PR #505, Brain v1.189.5）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**背景**：model-registry.js 中存在三类错误注册：(1) autumnrice（秋米）被错误注册为 executor 可配置 LLM，但秋米实际是外部 headless agent；(2) talk/research 两个已废弃任务类型仍占据注册表；(3) rumination 描述未说明 NotebookLM 是主路径。
+
+**关键决策**：
+- autumnrice 删除而非改造：秋米通过 `/decomp` skill（cecelia-bridge → claude -p）运行，不经过 Brain llm-caller，在 model-registry 注册毫无意义
+- rumination 描述更新：明确"主路径：NotebookLM；LLM 为 NotebookLM 不可用时的 fallback"，避免误导后续开发者配置 Opus 以为能影响主路径
+- 测试更新：model-registry.test.js 中引用 autumnrice 的 R13 测试改为 decomp_review
+
+**踩坑**：
+- `git checkout --ours` 在错误 worktree 中执行，导致 package.json 被覆盖为旧版本（需 git merge --abort 恢复）
+- 并行 CI 期间 main 被两个 PR (#504, #506) 推进，需要两轮 merge + push 才能满足"分支已更新"要求
+
 ### [2026-03-04] GTD System 导航重构 + Notion 风格数据库视图（PR #504, Workspace v1.173.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
