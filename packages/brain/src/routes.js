@@ -6101,6 +6101,45 @@ router.get('/stats/pr-trend', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/stats/autonomous-prs
+ * 当月自主 PR 计数统计（Dashboard 进度条专用）
+ * Query params:
+ *   month: YYYY-MM（可选，默认当月）
+ * Returns: { completed_count, target, month, percentage }
+ */
+router.get('/stats/autonomous-prs', async (req, res) => {
+  try {
+    const { month } = req.query;
+
+    // 解析月份（默认当月）
+    let targetMonth;
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      targetMonth = month;
+    } else {
+      const now = new Date();
+      targetMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const [year, mon] = targetMonth.split('-').map(Number);
+
+    // 复用 stats.js 的 getMonthlyPRCount
+    const completedCount = await getMonthlyPRCount(pool, mon, year);
+    const target = 50; // 月目标：50 个自主 PR
+    const percentage = target > 0 ? Math.min(100, Math.round((completedCount / target) * 100)) : 0;
+
+    res.json({
+      completed_count: completedCount,
+      target,
+      month: targetMonth,
+      percentage,
+    });
+  } catch (err) {
+    console.error('[API] Failed to get autonomous-prs stats:', err.message);
+    res.status(500).json({ error: 'Failed to get autonomous-prs stats', details: err.message });
+  }
+});
+
 // ==================== Capabilities API ====================
 
 /**
