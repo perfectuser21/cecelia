@@ -6,8 +6,8 @@
  * - 右侧：合成叙事（周期性） + 原始 PR 记录时间线
  */
 
-import { useState, useEffect } from 'react';
-import { TrendingUp, GitMerge, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { TrendingUp, GitMerge, Sparkles, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -161,31 +161,30 @@ export default function EvolutionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedSummaries, setExpandedSummaries] = useState<Set<number>>(new Set());
+  const [synthesizing, setSynthesizing] = useState(false);
+  const [synthResult, setSynthResult] = useState<string | null>(null);
 
-  const BRAIN_BASE = 'http://localhost:5221';
-
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const compParam = selectedComponent !== 'all' ? `component=${selectedComponent}&` : '';
-        const [recRes, sumRes] = await Promise.all([
-          fetch(`${BRAIN_BASE}/api/brain/evolution/records?${compParam}limit=100`),
-          fetch(`${BRAIN_BASE}/api/brain/evolution/summaries?${compParam}limit=20`),
-        ]);
-        if (!recRes.ok || !sumRes.ok) throw new Error('API 请求失败');
-        const [rec, sum] = await Promise.all([recRes.json(), sumRes.json()]);
-        setRecords(rec);
-        setSummaries(sum);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '加载失败');
-      } finally {
-        setLoading(false);
-      }
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const compParam = selectedComponent !== 'all' ? `component=${selectedComponent}&` : '';
+      const [recRes, sumRes] = await Promise.all([
+        fetch(`/api/brain/evolution/records?${compParam}limit=100`),
+        fetch(`/api/brain/evolution/summaries?${compParam}limit=20`),
+      ]);
+      if (!recRes.ok || !sumRes.ok) throw new Error('API 请求失败');
+      const [rec, sum] = await Promise.all([recRes.json(), sumRes.json()]);
+      setRecords(rec);
+      setSummaries(sum);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setLoading(false);
     }
-    load();
   }, [selectedComponent]);
+
+  useEffect(() => { load(); }, [load]);
 
   const toggleSummary = (id: number) => {
     setExpandedSummaries(prev => {
@@ -193,6 +192,22 @@ export default function EvolutionPage() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+
+  const triggerSynthesis = async () => {
+    setSynthesizing(true);
+    setSynthResult(null);
+    try {
+      const res = await fetch('/api/brain/evolution/synthesize', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '合成失败');
+      setSynthResult(`完成：${data.components_processed ?? 0} 个组件`);
+      await load();
+    } catch (err) {
+      setSynthResult(err instanceof Error ? err.message : '合成失败');
+    } finally {
+      setSynthesizing(false);
+    }
   };
 
   return (
@@ -219,6 +234,21 @@ export default function EvolutionPage() {
             </li>
           ))}
         </ul>
+
+        {/* 触发合成 */}
+        <div className="mt-6 pt-4 border-t border-slate-800/60">
+          <button
+            onClick={triggerSynthesis}
+            disabled={synthesizing}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs text-violet-400 border border-violet-800/40 hover:bg-violet-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={11} className={synthesizing ? 'animate-spin' : ''} />
+            {synthesizing ? '合成中…' : '触发合成'}
+          </button>
+          {synthResult && (
+            <p className="text-xs text-slate-500 mt-2 text-center leading-relaxed">{synthResult}</p>
+          )}
+        </div>
       </aside>
 
       {/* 右侧：内容 */}
@@ -266,10 +296,13 @@ export default function EvolutionPage() {
                   PR 记录 ({records.length})
                 </h2>
                 {records.length === 0 ? (
-                  <div className="text-center py-12 text-slate-600">
-                    <TrendingUp size={32} className="mx-auto mb-3 opacity-30" />
-                    <p className="text-sm">暂无进化记录</p>
-                    <p className="text-xs mt-1">每次 PR 合并后自动记录</p>
+                  <div className="text-center py-12">
+                    <TrendingUp size={32} className="mx-auto mb-3 text-slate-700 opacity-50" />
+                    <p className="text-sm text-slate-500">暂无进化记录</p>
+                    <p className="text-xs mt-2 text-slate-600 leading-relaxed max-w-xs mx-auto">
+                      进化记录在每次 PR 合并后自动写入。<br />
+                      点击左侧「触发合成」可立即生成已有记录的叙事摘要。
+                    </p>
                   </div>
                 ) : (
                   <div className="rounded-xl border border-slate-800/60 bg-slate-900/30 px-4">
