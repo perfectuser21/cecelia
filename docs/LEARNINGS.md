@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] dev 任务执行成功率统计 API（PR #517, Brain v1.193.0）
+
+**失败统计**：CI 失败 2 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：DEFINITION.md Brain 版本格式不匹配 → `check-version-sync.sh` 用正则 `Brain\s+版本[^:]*:\s*\K\S+` 查找，必须有冒号分隔（`**Brain 版本**: 1.x.y`），而旧格式 `**Brain 版本 1.x.y**` 无冒号无法匹配 → 修复：统一使用 `**Brain 版本**: x.y.z` 格式
+- 失败 #2：Rebase 后 package-lock.json 和 .brain-versions 未同步 → 每次 rebase 到 main 后必须手动更新 package-lock.json 的 version 字段（两处）和 .brain-versions（追加新版本行）
+
+**关键踩坑**：
+- **测试文件命名冲突**：新建 `packages/brain/src/__tests__/stats.test.js` 时 main 上已有同名文件（测试不同功能），rebase 产生 add/add 冲突 → 预防：新建测试文件时先检查 `git ls-tree -r origin/main --name-only | grep test` 是否有同名文件，选择更具体的名字（如 `routes-stats.test.js`）
+- **多次 rebase 冲突循环**：每次 main 有新提交就需要 rebase，版本文件每次都冲突 → 下次在所有版本文件改动里只保留一个 commit，减少 rebase 复杂度
+
+**影响程度**: Medium
+
+**预防措施**：
+- 新增路由文件时，测试文件用 `routes-<module>.test.js` 命名避免冲突
+- 版本更新后立刻运行 `bash scripts/check-version-sync.sh` 本地验证
+- 修改 DEFINITION.md 时注意使用正确格式 `**Brain 版本**: x.y.z`（有冒号）
+
 ### [2026-03-04] CI Fitness Functions 系统一致性自动检查（PR #515, Brain v1.192.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
