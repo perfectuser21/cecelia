@@ -127,7 +127,7 @@ export const AGENTS = [
   {
     id: 'rumination',
     name: '反刍消化',
-    description: '深度思考：模式发现、跨知识关联、可执行洞察',
+    description: '深度思考：模式发现、跨知识关联、可执行洞察（主路径：NotebookLM；LLM 为 NotebookLM 不可用时的 fallback）',
     layer: 'brain',
     allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     recommended_model: 'claude-opus-4-6',
@@ -153,24 +153,6 @@ export const AGENTS = [
     fixed_provider: null,
   },
   {
-    id: 'talk',
-    name: '对话',
-    description: '日常对话',
-    layer: 'executor',
-    allowed_models: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'MiniMax-M2.5-highspeed',
-    fixed_provider: 'minimax',
-  },
-  {
-    id: 'research',
-    name: '研究',
-    description: '调研分析',
-    layer: 'executor',
-    allowed_models: ['MiniMax-M2.5-highspeed', 'MiniMax-M2.5'],
-    recommended_model: 'MiniMax-M2.5-highspeed',
-    fixed_provider: 'minimax',
-  },
-  {
     id: 'decomp_review',
     name: '拆解审查 Vivian',
     description: 'OKR 拆解审查',
@@ -187,15 +169,6 @@ export const AGENTS = [
     allowed_models: ['codex-mini-latest', 'o3-mini', 'o4-mini'],
     recommended_model: 'codex-mini-latest',
     fixed_provider: 'openai',
-  },
-  {
-    id: 'autumnrice',
-    name: '秋米',
-    description: 'OKR 拆解专家，直接与用户对话讨论拆解结果',
-    layer: 'executor',
-    allowed_models: ['claude-sonnet-4-6', 'claude-opus-4-6'],
-    recommended_model: 'claude-sonnet-4-6',
-    fixed_provider: null,
   },
 ];
 
