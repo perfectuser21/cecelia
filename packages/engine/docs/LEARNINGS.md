@@ -2,7 +2,7 @@
 id: engine-learnings
 version: 1.20.0
 created: 2026-01-16
-updated: 2026-03-03
+updated: 2026-03-04
 changelog:
   - 1.20.0: stop.sh 路由器 Bug（.dev-lock vs .dev-mode 路由条件不一致导致 LEARNINGS 落入单独 PR）
   - 1.19.0: DoD 格式陷阱三连（ls/echo/test -f 禁用模式 + migration 依赖链分析）
@@ -2753,3 +2753,17 @@ LEARNINGS 写入时机设计缺陷：Step 9 合并 PR 后，Step 10 只能直推
 - LEARNINGS.md 中"预防措施"段落必须用 `- ` 列表格式，才能被 extract-learnings.sh 解析
 
 **影响程度**: Low（CI 一次通过，实现顺畅）
+
+### [2026-03-04] SKILL.md 顶部描述顺序错误导致反复产生第二个 Learning PR
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**错误判断记录**：
+- SKILL.md 行10写的是 "合并 → Learning → 清理"，但 09-ci.md 和 10-learning.md 中已有正确逻辑（CI 通过不合并，Learning 先 push）。文档不一致导致 AI 读 SKILL.md 顶部描述后遵循错误顺序。
+
+**预防措施**：
+- SKILL.md 顶部描述是最高频率被读取的部分，必须与具体步骤文件保持严格一致
+- 任何涉及 PR 合并时机的描述，必须在修改步骤文件的同时同步修改 SKILL.md 顶部描述
+- "合并"二字在顺序描述中必须出现在"Learning"之后，不允许提前
+
+**影响程度**: Medium（用户多次手动修复才发现根因是文档顺序描述错误）
