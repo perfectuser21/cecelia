@@ -54,6 +54,7 @@ import {
   fetchMemoryContext,
   recordChatEvent,
   buildStatusSummary,
+  buildRuntimeStateBlock,
   buildDesiresContext,
   _resetApiKey,
 } from '../orchestrator-chat.js';
@@ -306,6 +307,42 @@ describe('orchestrator-chat', () => {
 
       const summary = await buildStatusSummary();
       expect(summary).toBe('');
+    });
+  });
+
+  describe('buildRuntimeStateBlock', () => {
+    it('返回包含飞书发送时间的运行状态块', async () => {
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { key: 'last_feishu_at', value_json: '2026-02-25T05:13:14.958Z' },
+          { key: 'dispatch_ramp_state', value_json: { current_rate: 0 } },
+          { key: 'tick_actions_today', value_json: { count: 62 } },
+        ],
+      });
+
+      const block = await buildRuntimeStateBlock();
+
+      expect(block).toContain('实时运行状态');
+      expect(block).toContain('飞书最近发送时间');
+      expect(block).toContain('2026');
+      expect(block).toContain('今日已执行');
+      expect(block).toContain('62');
+    });
+
+    it('last_feishu_at 为空时显示"从未"', async () => {
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const block = await buildRuntimeStateBlock();
+
+      expect(block).toContain('从未');
+    });
+
+    it('DB 查询失败时静默返回空字符串', async () => {
+      pool.query.mockRejectedValueOnce(new Error('DB error'));
+
+      const block = await buildRuntimeStateBlock();
+
+      expect(block).toBe('');
     });
   });
 
