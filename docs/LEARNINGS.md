@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Notion Execution Mode 同步 + Cecelia 项目筛选（PR #470, Brain v1.185.0）
+
+**背景**：Notion Projects DB 新增 "Execution Mode" select 列（Cecelia/XX），用于区分"谁来执行"。需要将其同步到 PostgreSQL 并让 planner 按此筛选。
+
+**parseProject 扩展**：在 `notion-full-sync.js` 的 `parseProject()` 末尾加一行：`execution_mode: p['Execution Mode']?.select?.name?.toLowerCase() || null`。Notion select 的 `name` 字段大小写原样返回，`.toLowerCase()` 标准化为 `'cecelia'`/`'xx'`。
+
+**upsertProject 加列**：INSERT 语句同步加 `execution_mode`（第 8 个参数），ON CONFLICT DO UPDATE 也要加 `execution_mode=EXCLUDED.execution_mode`，否则 Notion 更新时字段不会刷新。
+
+**planner 筛选策略**：`WHERE (p.execution_mode = 'cecelia' OR p.execution_mode IS NULL)` — NULL 保持向后兼容，旧项目默认由 Cecelia 处理。未来如需严格模式可改为 `= 'cecelia'`。
+
+**migration 编号冲突（再次）**：我们的 116 与 origin/main 合并进来的 `116_component_evolutions.sql` 重复。排查流程：`facts-check.mjs` 报 `migration_conflicts: number 116 has 2 files`；解法：`mv 116_xxx.sql 117_xxx.sql` + `git rm` 旧文件 + 更新 selfcheck.js + 3 个测试文件（desire-system/learnings-vectorize/selfcheck）。
+
+**schema 版本测试 3 处联动**：`EXPECTED_SCHEMA_VERSION` 变化必须同步更新 `desire-system.test.js`/`learnings-vectorize.test.js`/`selfcheck.test.js` 的 `toBe('xxx')` 期望值，否则 Brain CI 3 个文件失败。
+
+**导出内部函数以便测试**：`parseProject` 原为 `function parseProject`（未导出），加 `export` 后可在测试中直接测试解析逻辑，无需通过 `handleWebhook` 间接触达。
+
 ### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
 
 **背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
