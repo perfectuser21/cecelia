@@ -50,22 +50,26 @@ const mockGoal = {
 
 // ── mock fetch 工具 ────────────────────────────────────────────────────────────
 
-function makeFetchResponse(ok: boolean, data: unknown): Promise<Response> {
-  return Promise.resolve({
+function makeMockResponse(ok: boolean, data: unknown): Response {
+  return {
     ok,
     status: ok ? 200 : 500,
     json: () => Promise.resolve(data),
-  } as Response);
+  } as Response;
 }
 
-function setupMockFetch(opts: {
+interface SetupFetchOpts {
   completedTasks?: object[];
   failedTasks?: object[];
   goal?: object | null;
   completedOk?: boolean;
   failedOk?: boolean;
   goalOk?: boolean;
-}) {
+}
+
+let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+function setupMockFetch(opts: SetupFetchOpts = {}) {
   const {
     completedTasks = mockCompletedTasks,
     failedTasks = mockFailedTasks,
@@ -75,18 +79,19 @@ function setupMockFetch(opts: {
     goalOk = true,
   } = opts;
 
-  global.fetch = vi.fn().mockImplementation((url: string): Promise<Response> => {
-    if (url.includes('status=completed')) {
-      return makeFetchResponse(completedOk, completedOk ? completedTasks : {});
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url: string | URL | Request): Promise<Response> => {
+    const urlStr = url.toString();
+    if (urlStr.includes('status=completed')) {
+      return Promise.resolve(makeMockResponse(completedOk, completedOk ? completedTasks : {}));
     }
-    if (url.includes('status=failed')) {
-      return makeFetchResponse(failedOk, failedOk ? failedTasks : {});
+    if (urlStr.includes('status=failed')) {
+      return Promise.resolve(makeMockResponse(failedOk, failedOk ? failedTasks : {}));
     }
-    if (url.includes('/api/brain/goals/')) {
-      return makeFetchResponse(goalOk, goalOk ? goal : {});
+    if (urlStr.includes('/api/brain/goals/')) {
+      return Promise.resolve(makeMockResponse(goalOk, goalOk ? goal : {}));
     }
-    return Promise.reject(new Error('Unknown URL'));
-  }) as unknown as typeof fetch;
+    return Promise.reject(new Error(`Unknown URL: ${urlStr}`));
+  });
 }
 
 beforeEach(() => {
@@ -101,7 +106,9 @@ afterEach(() => {
 
 describe('PRProgressDashboard', () => {
   it('加载时显示加载状态', () => {
-    global.fetch = vi.fn().mockReturnValue(new Promise(() => {})) as unknown as typeof fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () => new Promise(() => {}) as Promise<Response>
+    );
 
     render(<PRProgressDashboard />);
 
@@ -137,9 +144,9 @@ describe('PRProgressDashboard', () => {
     await waitFor(() => {
       const bars = screen.getAllByRole('progressbar');
       expect(bars.length).toBeGreaterThan(0);
-      // 2/30 = 6%
+      // 2/30 = 6.666...% → Math.round = 7
       const prBar = bars[0];
-      expect(Number(prBar.getAttribute('aria-valuenow'))).toBe(7); // Math.round(2/30*100) = 7
+      expect(Number(prBar.getAttribute('aria-valuenow'))).toBe(7);
     });
   });
 
@@ -226,8 +233,7 @@ describe('PRProgressDashboard', () => {
     });
 
     // 初始加载：3 次 API 调用（completed、failed、goal）
-    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
-    const initialCalls = mockFetch.mock.calls.length;
+    const initialCalls = fetchSpy.mock.calls.length;
     expect(initialCalls).toBe(3);
 
     await act(async () => {
@@ -236,7 +242,7 @@ describe('PRProgressDashboard', () => {
     });
 
     // 再次刷新：又 3 次 API 调用
-    expect(mockFetch.mock.calls.length).toBe(6);
+    expect(fetchSpy.mock.calls.length).toBe(6);
 
     vi.useRealTimers();
   });
