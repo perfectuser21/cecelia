@@ -152,7 +152,9 @@ async function callWithHistory(userMessage, systemPrompt, options = {}, historyM
   const jsonStart = text.lastIndexOf('{"reply"');
   if (jsonStart !== -1) {
     try {
-      const parsed = JSON.parse(text.slice(jsonStart));
+      // Strip trailing Markdown code fence (```json...``` or ```) before parsing
+      const jsonStr = text.slice(jsonStart).replace(/```\s*$/, '').trim();
+      const parsed = JSON.parse(jsonStr);
       if (parsed.reply) {
         reply = parsed.reply;
         thalamus_signal = parsed.thalamus_signal || null;
