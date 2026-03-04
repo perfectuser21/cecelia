@@ -1,6 +1,6 @@
 ---
 id: decomp-skill
-version: 1.8.0
+version: 1.9.0
 created: 2026-01-01
 updated: 2026-03-04
 changelog:
@@ -13,6 +13,7 @@ changelog:
   - 1.6.0: 添加 decomp-check 联动
   - 1.7.0: 完善 HARD RULE 表格
   - 1.8.0: 全面重写以反映 24/7×10 slot 产能模型；Initiative 重定义为系统性子功能（≥4 PR）；新增 Phase 3 project_plan 飞轮机制；Project→Initiative 动态规划（初始10个，动态扩展到40-70个）
+  - 1.9.0: 产能数据修正（PR 35-40min、~8600 PR/月）；补充 KR→Project 定义（3-4个/KR、周期1周）；OKR 并行说明（2 OKR × 3-4 KR）；Initiative 内 Task 串联定义；多机路由概念
 ---
 
 # /decomp — 全链路 Project Management 拆解引擎
@@ -45,17 +46,22 @@ changelog:
 | Claude Max 账号 | 3 个 | 多账号并发，零额外费用 |
 | MiniMax 包月 | 1 个 | 轻量任务备选 |
 | 并发 Agent 上限 | 10 个 | 同时运行 10 个 Caramel |
-| 每 PR 耗时 | 15-30 min | 含 CI 流程 |
-| 日产能 | ~336 PR/day | 10 slot × 48 PR/slot × 70% 效率 |
-| 月产能 | ≥10,000 PR/month | 336 × 30 天 |
-| 每个 Initiative | 4-8 PRs × 20-25min | 1.5-3.5 小时完成 |
-| 每个 Project/周 | 40-70 Initiatives | 10 slot × 24h/2.5h × 7天 ÷ 10 project |
+| 每 PR 耗时 | 35-40 min | 含 CI 流程（代码 15-20min + CI 15-20min） |
+| 日产能 | ~287 PR/day | 10 slot × 41 PR/slot/day × 70% 效率 |
+| 月产能 | ~8,600 PR/month | 287 × 30 天 |
+| 每个 Initiative | 4-8 PRs × 35-40min | 2.5-5.5 小时完成 |
+| 每个 Project/周 | 40-70 Initiatives | 10 slot × 24h/4h × 7天 ÷ 10 project |
 
 **产能原则**：
-- 野心要大（10,000 PR/月是现实可达的）
+- ~8,600 PR/月是基于实测数据的现实产能（含 CI 35-40min/PR）
 - Initiative 要够系统性（≥4 PR，不能是单函数改动）
 - Project 要持续有料（初始 10 个 Initiative，动态扩展到 40-70 个）
 - 飞轮机制：每个 Initiative 完成后自动规划下一个，保持 Pipeline 永不断流
+
+**多机路由**：
+- Claude Code 研发任务：只在美国 VPS（8核16G）执行
+- 生产任务：香港 VPS + MiniMax API
+- 其他轻量任务：Mac mini / 办公室 PC
 
 ---
 
@@ -87,10 +93,26 @@ Global OKR（全局目标，1个）
   └── Global KR（关键结果，3-5个）
         └── Area OKR（领域目标，可选）
               └── Area KR（领域 KR）
-                    └── Project（目标型工作容器，3-8个/KR）
+                    └── Project（目标型工作容器，3-4 个 Project/KR，周期 1 周）
                           └── Initiative（系统性子功能，40-70个/Project）
-                                └── Task（最小 PR 单元，4-8个/Initiative）
+                                └── Task（最小 PR 单元，4-8个/Initiative，串联执行）
 ```
+
+**KR→Project 定义**：
+- 每个 KR 拆解为 3-4 个 Project
+- 每个 Project 周期 = 1 周
+- 每个 KR 约占 1 个 slot，串行完成 3-4 个 Project
+
+**OKR 并行说明**：
+- 系统同时支持 2 个 Area OKR 并行
+- 2 OKR × 3 KR = 6 slot（舒服运行）
+- 2 OKR × 4 KR = 8 slot（刚好饱和）
+- 留 2 slot 余量给非开发任务（反刍、规划、监控等）
+
+**Initiative 执行模型**：
+- Initiative 内的 Task 是串联的（有顺序依赖，前一个 PR 合并后才开始下一个）
+- Initiative 之间可以并行（不同 Initiative 分配到不同 slot）
+- 这意味着单个 Initiative 的完成时间 = sum(所有 Task 耗时)，不可压缩
 
 ### Stage 1：输入识别
 

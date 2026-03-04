@@ -1,9 +1,10 @@
 ---
 name: plan
-version: 1.4.0
+version: 1.5.0
 created: 2026-02-17
-updated: 2026-02-28
+updated: 2026-03-04
 changelog:
+  - 1.5.0: 对齐 OKR 层级（加周期/产能）、修正 Layer 4 路由、新增产能感知和多机路由
   - 1.4.0: 新增无头 Suggestion 模式（[SUGGESTION_MODE]），Magentic-One 第5步
   - 1.3.0: 修复旧 skill 名残留，/okr 后台 → /decomp 后台；修复注意项末尾拆解 skill 名
   - 1.2.0: 重构层级识别框架——以规模/范围为主信号，时间为辅助信号，加入多维评估矩阵
@@ -36,12 +37,12 @@ description: |
 ### 6 层层级
 
 ```
-Layer 1: Global OKR   — 跨多个 Area 的全平台战略目标
-Layer 2: Area OKR     — 单 Area 内的方向性目标（无具体度量）
-Layer 3: KR           — 关键结果（有可量化的度量指标）
-Layer 4: Project      — 跨多 repo 或多 Initiative 的工作包
-Layer 5: Initiative   — 单 repo 单功能，一个 PR 大小 ★ 最常见
-Layer 6: Task         — 单一操作，明确且极小
+Layer 1: Global OKR   — 跨多个 Area 的全平台战略目标 | 季度（3个月）
+Layer 2: Area OKR     — 单 Area 内的方向性目标（无具体度量）| 月度（1个月），2个可并行
+Layer 3: KR           — 关键结果（有可量化的度量指标）| 3-5个/OKR
+Layer 4: Project      — 目标型工作容器，周（1周）| 3-4个/KR
+Layer 5: Initiative   — 串联任务包，min_tasks:4 | 40-70个/Project
+Layer 6: Task         — 最小执行单元，1 PR | 4-8个/Initiative
 ```
 
 ---
@@ -197,7 +198,7 @@ curl -s http://localhost:5221/api/brain/capabilities | jq
 | Layer 1: Global OKR | 讨论澄清 → 存入 DB | 太大，需要先讨论全局方向 |
 | Layer 2: Area OKR | 讨论澄清 → 存入 DB | 需要明确 Area 目标 |
 | Layer 3: KR | 触发秋米（`/decomp` 后台） | 先收集信息 → 确认 → 拆解到 Initiative |
-| Layer 4: Project | `/dev` + 多 PR 规划 | 创建 Initiative + 拆 PR |
+| Layer 4: Project | **`/decomp` 拆成 Initiative** | 先拆解，每个 Initiative 分别 `/dev` |
 | Layer 5: Initiative ★ | **直接 `/dev`** | 最常见路径 |
 | Layer 6: Task | **直接 `/dev`** | 小改动，直接做 |
 
@@ -241,6 +242,33 @@ OKR Tick 自动检测 → 触发秋米调用 /decomp 后台拆解
     ↓
 秋米调用 /decomp 拆解到 Initiative（Brain 自动创建 Task）
 ```
+
+---
+
+## 产能感知
+
+识别到 Layer 1-3 时，需考虑当前系统产能：
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 并行 OKR | 2 个 | 系统同时支持 2 个 OKR 并行 |
+| 研发 slot | 10 个 | 美国 VPS，每 KR 约占 1 slot |
+| 月产能 | ~8,600 PR | 基于 10 slot 全速运转估算 |
+
+**提示**：识别到高层级（Layer 1-3）时，查询当前 slot 负载再建议下一步。
+
+---
+
+## 多机路由
+
+不同类型的任务路由到不同机器：
+
+| 任务类型 | 目标机器 | 说明 |
+|----------|----------|------|
+| 开发任务（Claude Code） | 美国 VPS | 10 slot 研发环境 |
+| 生产任务（MiniMax） | 香港 VPS | 生产部署 + 低延迟 |
+| 视频/内容生成 | Mac mini | GPU 加速 |
+| 数据处理 | 办公室 PC | 大内存 + 本地存储 |
 
 ---
 
