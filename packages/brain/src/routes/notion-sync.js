@@ -54,80 +54,26 @@ router.get('/status', async (_req, res) => {
 
 /**
  * POST /run
- * 触发双向同步
+ * 触发双向同步 — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/run', async (_req, res) => {
-  try {
-    // 检查配置（提前返回 503 而不是 500）
-    try {
-      getNotionConfig();
-    } catch (err) {
-      return res.status(503).json({
-        error: 'Notion 未配置',
-        detail: err.message,
-        hint: '请设置 NOTION_API_KEY 和 NOTION_KNOWLEDGE_DB_ID 环境变量',
-      });
-    }
-
-    const result = await runSync();
-    res.json({
-      success: true,
-      fromNotion: result.fromNotion,
-      toNotion: result.toNotion,
-    });
-  } catch (err) {
-    // 区分 Notion API 错误（401/403）和内部错误
-    if (err.status === 401 || err.status === 403) {
-      return res.status(503).json({
-        error: 'Notion API Token 无效或已过期',
-        detail: err.message,
-        hint: '请更新 ~/.credentials/notion.env 中的 NOTION_API_KEY',
-      });
-    }
-    console.error('[notion-sync/run]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/run', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 /**
  * POST /webhook
- * 接收 Notion Webhook 回调（页面创建/更新/删除）
- * Notion 配置：cecelia.zenjoymedia.media/api/brain/notion-sync/webhook
+ * 接收 Notion Webhook 回调 — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/webhook', async (req, res) => {
-  // Notion URL 验证握手（发送 challenge 时必须原样回传）
-  if (req.body?.challenge) {
-    console.log('[notion-webhook] URL verification challenge received');
-    return res.json({ challenge: req.body.challenge });
-  }
-
-  // 立即返回 200，异步处理（Notion 要求 <10s 响应）
-  res.json({ received: true });
-
-  try {
-    const result = await handleWebhook(req.body);
-    console.log('[notion-webhook]', JSON.stringify(result));
-  } catch (err) {
-    console.error('[notion-webhook] 处理失败:', err.message);
-  }
+router.post('/webhook', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 /**
  * POST /full-sync
- * 触发四表全量同步（Areas/Goals/Projects/Tasks）
+ * 触发四表全量同步 — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/full-sync', async (_req, res) => {
-  try {
-    const token = process.env.NOTION_API_KEY;
-    if (!token) {
-      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
-    }
-    const stats = await runFullSync();
-    res.json({ success: true, stats });
-  } catch (err) {
-    console.error('[notion-sync/full-sync]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/full-sync', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 /**
@@ -153,57 +99,26 @@ router.get('/full-status', async (_req, res) => {
 
 /**
  * POST /memory-rebuild
- * 重建 Memory 数据库结构 + 全量导入数据
- * （归档旧数据，以正确结构重新创建）
+ * 重建 Memory 数据库 — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/memory-rebuild', async (_req, res) => {
-  try {
-    if (!process.env.NOTION_API_KEY) {
-      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
-    }
-    const schemaResults = await rebuildMemoryDatabases();
-    const importStats   = await importAllMemoryData();
-    res.json({ success: true, schema: schemaResults, imported: importStats });
-  } catch (err) {
-    console.error('[notion-sync/memory-rebuild]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/memory-rebuild', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 /**
  * POST /memory-sync
- * 增量同步：将未同步的 facts 和 memories 推送到 Notion
+ * 增量同步 Memory — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/memory-sync', async (_req, res) => {
-  try {
-    if (!process.env.NOTION_API_KEY) {
-      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
-    }
-    const stats = await importAllMemoryData();
-    res.json({ success: true, stats });
-  } catch (err) {
-    console.error('[notion-sync/memory-sync]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/memory-sync', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 /**
  * POST /push-all
- * 将 DB 中未同步的数据批量推送到 Notion（DB → Notion 方向）
- * 推送范围：Areas（全部）、Goals（全部）、Projects（仅 type='project'）
- * 已有 notion_id 的记录不会重复推送。
+ * 批量推送 DB → Notion — [NOTION_SYNC_DISABLED] Brain 已回归本地 DB，此端点停用
  */
-router.post('/push-all', async (_req, res) => {
-  try {
-    if (!process.env.NOTION_API_KEY) {
-      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
-    }
-    const stats = await pushAllToNotion();
-    res.json({ success: true, stats });
-  } catch (err) {
-    console.error('[notion-sync/push-all]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+router.post('/push-all', (_req, res) => {
+  return res.status(503).json({ disabled: true, message: 'Notion 同步已停用，Brain 回归本地 DB' });
 });
 
 export default router;
