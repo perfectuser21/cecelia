@@ -246,9 +246,9 @@ describe('execution-callback atomicity', () => {
     const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
     expect(updateCall).toBeDefined();
 
-    // Should have 7 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue]
+    // Should have 8 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue, prNumber]
     const params = updateCall[1];
-    expect(params).toHaveLength(7);
+    expect(params).toHaveLength(8);
 
     // $6 (isCompleted) must be a boolean true for 'AI Done'
     expect(typeof params[5]).toBe('boolean');
@@ -274,7 +274,7 @@ describe('execution-callback atomicity', () => {
     expect(updateCall).toBeDefined();
 
     const params = updateCall[1];
-    expect(params).toHaveLength(7);
+    expect(params).toHaveLength(8);
     // $6 must be false for failed tasks
     expect(params[5]).toBe(false);
     expect(params[1]).toBe('failed');
@@ -396,5 +396,64 @@ describe('execution-callback findings storage (D1/D2/D3)', () => {
     expect(updateCall[0]).toContain('findings');
     expect(updateCall[0]).toContain('CASE WHEN');
     expect(updateCall[0]).toContain('jsonb_build_object');
+  });
+});
+
+describe('execution-callback pr_number 提取 (DoD-4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+  });
+
+  it('从 pr_url 提取 pr_number 并作为 $8 参数传给 SQL', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-pr-number',
+      run_id: 'run-pr-number',
+      status: 'AI Done',
+      pr_url: 'https://github.com/perfectuser21/cecelia/pull/123',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    // $8 (prNumber) must be 123
+    expect(params[7]).toBe(123);
+    // SQL must include metadata merge with pr_number
+    expect(updateCall[0]).toContain('metadata');
+    expect(updateCall[0]).toContain('pr_number');
+  });
+
+  it('无 pr_url 时 $8 (prNumber) 为 null', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-no-pr',
+      run_id: 'run-no-pr',
+      status: 'AI Done',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    expect(params[7]).toBeNull();
+  });
+
+  it('pr_url 格式异常时 $8 (prNumber) 为 null', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-bad-url',
+      run_id: 'run-bad-url',
+      status: 'AI Done',
+      pr_url: 'https://github.com/owner/repo/issues/456', // issue 不是 pull
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    expect(params[7]).toBeNull();
   });
 });
