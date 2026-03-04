@@ -169,10 +169,10 @@ export default function EvolutionPage() {
       setLoading(true);
       setError(null);
       try {
-        const compParam = selectedComponent !== 'all' ? `?component=${selectedComponent}` : '';
+        const compParam = selectedComponent !== 'all' ? `component=${selectedComponent}&` : '';
         const [recRes, sumRes] = await Promise.all([
-          fetch(`${BRAIN_BASE}/api/brain/evolution/records${compParam}&limit=100`),
-          fetch(`${BRAIN_BASE}/api/brain/evolution/summaries${compParam}&limit=20`),
+          fetch(`${BRAIN_BASE}/api/brain/evolution/records?${compParam}limit=100`),
+          fetch(`${BRAIN_BASE}/api/brain/evolution/summaries?${compParam}limit=20`),
         ]);
         if (!recRes.ok || !sumRes.ok) throw new Error('API 请求失败');
         const [rec, sum] = await Promise.all([recRes.json(), sumRes.json()]);
