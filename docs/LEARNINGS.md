@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] CI → CD 闭环：GitHub Actions 自动部署（PR #462）
+
+**背景**：PR 合并后容器跑旧代码，需要手动 `brain-deploy.sh`。用户诉求：有 CI 就应该有 CD，自动闭环。
+
+**核心设计**：
+- `deploy-brain` job 加在 `brain-ci.yml` 末尾，`needs: [ci-passed, changes]`
+- `if: github.event_name == 'push' && ... && needs.ci-passed.result == 'success' && needs.changes.outputs.brain == 'true'`
+- SSH 到 US VPS，执行 `git pull origin main && bash scripts/brain-deploy.sh`
+- `DEPLOY_SSH_KEY` GitHub Secret 未配置时输出 `::error::` 格式错误，清晰指引
+
+**路径 filter 陷阱**：`.github/workflows/` 变更不在 brain-ci 的 `on.push.paths` 里，所以纯 CI 配置变更合并到 main 后不会触发 brain-ci，也不会触发 deploy。这是**正确行为**（不部署代码没变的版本）。Deploy 只在真正有 brain 代码变更时触发。
+
+**SSH 选 ubuntu-latest 而非 self-hosted 的原因**：self-hosted runner 2026-03-03 已因并发问题迁移到 ubuntu-latest。部署通过 SSH 连接到 VPS 本地执行 brain-deploy.sh，`.env.docker` 直接读取服务器本地文件，不需要 CI secrets 传递。
+
+**需要人工一次性设置**：
+```bash
+ssh-keygen -t ed25519 -C "cecelia-deploy" -f ~/.ssh/cecelia_deploy -N ""
+ssh-copy-id -i ~/.ssh/cecelia_deploy.pub xx@146.190.52.84
+gh secret set DEPLOY_SSH_KEY < ~/.ssh/cecelia_deploy
+```
+
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
