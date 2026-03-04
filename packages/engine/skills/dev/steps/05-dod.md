@@ -9,10 +9,51 @@
 ## 流程（简化版）
 
 ```
-探索结果 + PRD → DoD 草稿 → DoD 定稿 → 继续
+检查 DoD 文件是否已存在？
+  ├─ 已存在（来自 Brain Task Initiative DoD）→ 只追加，不覆盖
+  └─ 不存在 → 探索结果 + PRD → DoD 草稿 → DoD 定稿
 ```
 
 **CI 会检查**：每条 DoD 条目是否有 Test 字段（check-dod-mapping.cjs）
+
+---
+
+## 🚨 尊重已有 DoD（CRITICAL）
+
+**如果 `.dod-<branch>.md` 已存在且非空，说明来自 Brain Task 的 Initiative DoD，禁止覆盖。**
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+DOD_FILE=".dod-${BRANCH}.md"
+# 兼容 task-id 路径：.dod-task-<id>.md
+if [[ ! -f "$DOD_FILE" ]]; then
+    # 查找 task-id 格式
+    if ls .dod-task-*.md 2>/dev/null | head -1 | grep -q .; then
+        DOD_FILE=$(ls .dod-task-*.md | head -1)
+    fi
+fi
+
+if [[ -f "$DOD_FILE" ]]; then
+    DOD_LINES=$(wc -l < "$DOD_FILE")
+    if [[ "$DOD_LINES" -gt 3 ]]; then
+        echo "✅ DoD 文件已存在（$DOD_LINES 行），来自 Initiative DoD，只追加不覆盖"
+        echo "   文件: $DOD_FILE"
+        echo ""
+        echo "📋 当前 DoD 内容预览："
+        head -20 "$DOD_FILE"
+        echo ""
+        echo "▶ 跳到 Step 5.2（DoD 定稿）：确认/补充内容，不重写"
+        # → 直接跳到 Step 5.2，只补充缺失内容
+    fi
+fi
+```
+
+**有 DoD 时行动**：
+- 只追加 CI 验收（如 contract:C2-001）或补充探索中发现的遗漏条目
+- **绝不清空重写**
+
+**无 DoD 时行动**：
+- 继续正常 Step 5.1 草稿 → Step 5.2 定稿
 
 ---
 

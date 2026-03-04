@@ -37,6 +37,8 @@ Thumbs.db
 *.backup
 
 # Dev workflow state files（绝对不允许进 git）
+.prd-*.md
+.dod-*.md
 .dev-mode
 .dev-mode.*
 .dev-mode.lock

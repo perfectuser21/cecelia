@@ -633,4 +633,37 @@ describe('orchestrator-chat', () => {
       expect(result.reply.length).toBeGreaterThan(0);
     });
   });
+
+  // ===================== D14: callWithHistory 文字+JSON 解析 =====================
+  describe('callWithHistory - 文字+JSON 混合格式解析', () => {
+    it('LLM 输出"文字\\nJSON"时正确提取 reply，不把 JSON 原文发给用户', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '让我换个角度直接查。\n{"reply": "查询发出去了，稍等。", "thalamus_signal": {"type": "create_task", "title": "test"}}'
+      ));
+
+      const result = await handleChat('帮我查一下状态');
+
+      expect(result.reply).toBe('查询发出去了，稍等。');
+      expect(result.reply).not.toContain('{');
+      expect(result.reply).not.toContain('thalamus_signal');
+    });
+
+    it('LLM 输出纯 JSON 时仍正常解析', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "好的，已收到。", "thalamus_signal": null}'
+      ));
+
+      const result = await handleChat('收到了吗？');
+
+      expect(result.reply).toBe('好的，已收到。');
+    });
+
+    it('LLM 输出纯文本（无 JSON）时全文作为 reply', async () => {
+      mockCallLLM.mockResolvedValueOnce(llmResp('这是一段普通回复，没有 JSON。'));
+
+      const result = await handleChat('随便问一下');
+
+      expect(result.reply).toBe('这是一段普通回复，没有 JSON。');
+    });
+  });
 });
