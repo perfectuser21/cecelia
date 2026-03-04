@@ -7,31 +7,21 @@ const manifest: FeatureManifest = {
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'planning', label: '规划', order: 2 },
-  ],
+  navGroups: [],
 
   routes: [
-    // Brain
+    // Brain (保留，不属于 GTD)
     {
       path: '/brain',
       component: 'BrainDashboard',
-      navItem: { label: 'Brain', icon: 'Brain', group: 'planning', order: 1 },
+      navItem: { label: 'Brain', icon: 'Brain', group: 'execution', order: 0 },
     },
-    // OKR
-    {
-      path: '/okr',
-      component: 'OKRPage',
-      navItem: { label: 'OKR', icon: 'Target', group: 'planning', order: 2 },
-    },
-    // Tasks
-    { path: '/tasks', component: 'Tasks' },
-    // Projects
-    {
-      path: '/projects',
-      component: 'ProjectsDashboard',
-      navItem: { label: 'Projects', icon: 'FolderKanban', group: 'planning', order: 3 },
-    },
+    // OKR → 重定向到 GTD
+    { path: '/okr', redirect: '/gtd/okr' },
+    // Tasks → 重定向到 GTD
+    { path: '/tasks', redirect: '/gtd/tasks' },
+    // Projects → 重定向到 GTD
+    { path: '/projects', redirect: '/gtd/projects' },
     { path: '/projects/:projectId', component: 'ProjectDetail' },
     // Initiatives (Three-layer decomposition)
     { path: '/initiatives/:id', component: 'InitiativeDetail' },
