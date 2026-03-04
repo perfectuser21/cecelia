@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 嘴巴 call_brain_api 工具循环 + brain-manifest 注入（PR #467, Brain v1.183.0）
+
+**背景**：Cecelia 嘴巴只有 4 个硬编码 action，不知道自己有哪些能力，也无法主动查询 Brain API 获取实时数据（如飞书群列表、任务队列等）。
+
+**call_brain_api 工具循环设计**：在 handleChat 中实现手动 tool-use 循环（最多 3 轮）。LLM 返回 `{"thalamus_signal": {"type": "call_brain_api", "path": "..."}}` 时，同步执行 HTTP 请求（localhost:5221），将结果追加到 system prompt 后重新调用 LLM，最终返回基于实时数据的答复。用户只看到最终答复，感知不到中间查询过程。
+
+**buildManifestBlock**：读取 `brain-manifest.generated.json`（allActions/allSkills），注入 system prompt 让嘴巴了解自身能力边界。用 `import.meta.url` + `readFile` 读取同目录文件，测试用 `vi.hoisted(() => vi.fn())` mock `node:fs/promises`。
+
+**fetch mock 在 Vitest**：用 `vi.stubGlobal('fetch', mockFn)` stub 全局 fetch；在 describe 块的 afterEach 里 `vi.unstubAllGlobals()` 清理，避免污染其他测试。
+
+**DoD 验收项必须立即打 `[x]`**：CI 的 DoD Verification 会检查所有验收项是否都已勾选，`- [ ]` 会直接 fail。写完代码后立即 `sed -i 's/^- \[ \]/- [x]/g'` 更新 DoD。
+
+**并行 PR 版本冲突（本 PR 经历 2 轮）**：Push 前先 `git show origin/main:packages/brain/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"` 确认 main 版本。本 PR bump 到 1.182.0 时 main 也在 1.182.0（另一 PR 抢先合并），再 bump 到 1.183.0。解决合并冲突时用 Python regex 逐文件处理（`.brain-versions` 冲突标记可能残留在文件末尾，需额外清理）。
+
+**Brain CI 手动触发**：`gh workflow run brain-ci.yml --repo perfectuser21/cecelia --ref <branch>` 可手动触发 Brain CI（适用于版本 bump commit 没自动触发 CI 的场景）。
+
 ### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
 
 **背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
