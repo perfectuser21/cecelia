@@ -6139,8 +6139,6 @@ router.get('/stats/autonomous-prs', async (req, res) => {
     res.status(500).json({ error: 'Failed to get autonomous-prs stats', details: err.message });
   }
 });
-  }
-});
 
 // ==================== Capabilities API ====================
 
