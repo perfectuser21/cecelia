@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Recurring Tasks × Notion 双向同步（PR #493, Brain v1.188.0）
+
+**背景**：`recurring_tasks` 表已有 cron 引擎，但无前台界面、无 Notion 同步、无 executor 字段。此 PR 实现完整的 Notion→DB 双向同步。
+
+**关键教训**：
+- **migration 不要 INSERT schema_migrations**：`migrate.js` 使用 `schema_version` 表（自动管理），migration SQL 里不应手动 INSERT。写了 `INSERT INTO schema_migrations` → CI 报 "relation does not exist"。修复：删掉这行即可
+- **partial unique index 不支持 ON CONFLICT 简写**：`WHERE notion_page_id IS NOT NULL` 的部分索引，PostgreSQL 要求 `ON CONFLICT (col) WHERE condition`，但实际写代码时更简单的方式是 SELECT + INSERT/UPDATE 分支
+- **executor 路由设计**：`recurring.js` 中通过 `payload.skill` 区分内置（cecelia）和外部 skill，task_type 设为 'skill' 让 executor 路由到对应 agent
+- **tick fire-and-forget 模式**：每日门控用 `working_memory` key，值存 `{ date: today }` JSON，读取时比较 `.date === today`
+- **`[CONFIG]` PR 标题规则**：修改 skills/ 或 hooks/ 时，PR 标题需含 `[CONFIG]`。此 PR 不改 engine 配置，但预防性加了 `[CONFIG]` 前缀避免误判
+
 ### [2026-03-04] 进化日志接入 Tick — 自动扫描与合成（PR #491, Brain v1.187.0）
 
 **背景**：`component_evolutions` 和 `component_evolution_summaries` 表已手动回填了 1530 条历史记录（monorepo + 5 个旧独立仓库），但无自动化。此 PR 将两个操作接入 Brain Tick 循环。
