@@ -137,6 +137,17 @@ while [ $TRIES -lt $MAX_TRIES ]; do
       echo "  WARN: $BRIDGE_SRC not found, skipping bridge update"
     fi
 
+    # 10. Trigger Notion sync to catch missed webhook events during restart
+    echo ""
+    echo "[10/10] Triggering post-deploy Notion sync..."
+    SYNC_RESPONSE=$(curl -sf --max-time 30 -X POST http://localhost:5221/api/brain/notion-sync/run 2>&1) || true
+    if [[ -n "$SYNC_RESPONSE" ]]; then
+      SYNCED=$(echo "$SYNC_RESPONSE" | node -e "try{const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const f=r.fromNotion||{};const t=r.toNotion||{};console.log('fromNotion synced='+( f.synced||0)+' toNotion synced='+(t.synced||0)+' failed='+(t.failed||0))}catch(e){console.log('(parse error)'+ e.message)}" 2>/dev/null || echo "$SYNC_RESPONSE" | head -c 200)
+      echo "  Notion sync triggered: $SYNCED"
+    else
+      echo "  WARN: Notion sync call failed or timed out (non-blocking)"
+    fi
+
     exit 0
   fi
   echo "  Attempt ${TRIES}/${MAX_TRIES}..."
