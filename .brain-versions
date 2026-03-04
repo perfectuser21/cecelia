@@ -24,3 +24,4 @@
 1.186.4 sed -i s/\*\*Brain 版本\*\*: 1\.186\.3/**Brain 版本**: 1.186.4/ DEFINITION.md grep Brain.*版本 DEFINITION.md
 1.186.4
 1.186.5
+1.186.6
