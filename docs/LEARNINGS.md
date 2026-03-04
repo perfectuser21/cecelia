@@ -1,5 +1,43 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 自主 PR 计数器可视化组件（PR #510, Workspace v1.174.0, Brain v1.191.1）
+
+**失败统计**：CI 失败 4 次（routes.js 语法错误 × 2、版本冲突 × 2）
+
+**背景**：为 Cecelia Dashboard 主页添加自主 PR 计数器，实时展示当月完成的 dev 任务进度。
+
+**关键决策**：
+- 复用 PR #508 已添加的 `getMonthlyPRCount(pool, month, year)` 函数，避免重复 SQL
+- 目标值 `target: 50` 硬编码在 API 层（可配置化留作未来优化）
+- 颜色规则：0-30% 红、30-70% 黄、70-100% 绿，与 CSS Tailwind 类直接对应
+
+**踩的坑**：
+
+1. **Vitest + fake timers 导致全部测试 timeout**
+   - `vi.useFakeTimers()` 放在 `beforeEach` 会阻止 `waitFor` 解析 async fetch
+   - 解决：只在单个 refresh interval 测试中使用 `vi.useFakeTimers({ shouldAdvanceTime: true })`
+
+2. **Python 冲突解决脚本留下多余括号**
+   - 用 Python 逐行比较/合并 routes.js 冲突后，多了 `  }\n});\n`（两行）
+   - 解决：`node --check src/routes.js` 快速定位语法错误，Python 脚本删除多余行
+   - **教训**：合并冲突后必须运行 `node --check` 验证语法
+
+3. **Brain CI rerun 使用旧 commit**
+   - `gh run rerun <id>` 会复用原始 commit 的代码，不会用最新 commit
+   - 解决：`gh workflow run brain-ci.yml --ref <branch>` 手动触发在最新 commit 上
+
+4. **rebase 时多个版本 commit 冲突**
+   - main 合并了 PR #507（版本跳到 `1.191.0`），与我们的 `1.190.1` 冲突
+   - `git rebase --skip` 跳过已被前一 commit 覆盖的纯版本同步 commit
+   - 解决后手动修正 DEFINITION.md + package-lock.json，`check-version-sync.sh` 验证
+
+**有效工具**：
+- `node --check src/routes.js` — 语法检查，快速定位 Parse Error
+- `gh workflow run brain-ci.yml --ref <branch>` — 在指定 ref 手动触发 CI
+- `bash scripts/check-version-sync.sh` — 版本四处同步验证
+
+---
+
 ### [2026-03-04] GTD System 导航重构 + Notion 风格数据库视图（PR #504, Workspace v1.173.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
