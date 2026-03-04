@@ -185,3 +185,68 @@ describe('pushMemoryToNotion', () => {
     delete process.env.NOTION_API_KEY;
   });
 });
+
+describe('rebuildMemoryDatabases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.NOTION_API_KEY = 'test-key';
+  });
+
+  afterEach(() => {
+    delete process.env.NOTION_API_KEY;
+  });
+
+  it('先 GET 获取 title 属性名，再 PATCH 添加缺失属性', async () => {
+    // 每个 DB 的 GET 返回：title 属性叫 '名称'，没有其他属性
+    const dbGetResponse = {
+      properties: {
+        '名称': { type: 'title', title: {} },
+      },
+    };
+    // GET → dbGetResponse, PATCH → ok
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET ownerProfile
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-1' }) }) // PATCH ownerProfile
+      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET contacts
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-2' }) }) // PATCH contacts
+      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET diary
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-3' }) }); // PATCH diary
+
+    const results = await rebuildMemoryDatabases();
+
+    expect(results.ownerProfile).toBe('ok');
+    expect(results.contacts).toBe('ok');
+    expect(results.diary).toBe('ok');
+
+    // 验证第 2 次调用（第 1 个 PATCH）包含正确的属性重命名和新属性
+    const patchCall = mockFetch.mock.calls[1];
+    const patchBody = JSON.parse(patchCall[1].body);
+    // 旧 title 属性 '名称' 应被 rename 到 '键'
+    expect(patchBody.properties['名称']).toEqual({ name: '键' });
+    // 新属性应被添加
+    expect(patchBody.properties['值']).toEqual({ rich_text: {} });
+    expect(patchBody.properties['更新时间']).toEqual({ date: {} });
+  });
+
+  it('title 属性名已经是目标名时不 rename', async () => {
+    // ownerProfile DB 的 title 已经叫 '键'，且 '值' 等已存在
+    const dbGetResponse = {
+      properties: {
+        '键':       { type: 'title', title: {} },
+        '值':       { type: 'rich_text', rich_text: {} },
+        '类别':     { type: 'select', select: {} },
+        '来源':     { type: 'select', select: {} },
+        '更新时间': { type: 'date', date: {} },
+      },
+    };
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => dbGetResponse }) // GET
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'db-1' }) }); // PATCH
+
+    await rebuildMemoryDatabases().catch(() => {}); // 可能3个DB都需要mock
+
+    // 第 2 次调用（第 1 个 PATCH）- properties 应为空对象（无需改动）
+    const patchBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(patchBody.properties).toEqual({});
+  });
+});

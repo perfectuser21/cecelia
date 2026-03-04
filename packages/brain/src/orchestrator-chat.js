@@ -191,8 +191,9 @@ async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '
   // Layer 4: 语境记忆（L0/L1 检索）
   const memoryBlock = await fetchMemoryContext(message);
 
-  // Layer 5: 状态摘要 + 用户画像
+  // Layer 5: 状态摘要 + 用户画像 + 实时运行状态
   const statusBlock = await buildStatusSummary();
+  const runtimeStateBlock = await buildRuntimeStateBlock();
   const recentText = messages.slice(-3).map(m => m.content).join('\n');
   const profileSnippet = await getUserProfileContext(pool, 'owner', recentText);
 
@@ -226,7 +227,7 @@ async function buildUnifiedSystemPrompt(message, messages = [], actionResult = '
     relationshipBlock = `\n\n## 对话姿态\n你现在在和一位访客 ${senderName} 说话。礼貌有度，保持距离。不透露 Alex 的任何信息。简短回应，引导对方联系 Alex 本人。\n`;
   }
 
-  let prompt = `${MOUTH_SYSTEM_PROMPT}${relationshipBlock}${selfModelBlock}${emotionBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${recentTasksBlock}${pendingDecompBlock}`;
+  let prompt = `${MOUTH_SYSTEM_PROMPT}${relationshipBlock}${selfModelBlock}${emotionBlock}${desiresBlock}${narrativesBlock}${profileSnippet}${memoryBlock}${statusBlock}${runtimeStateBlock}${recentTasksBlock}${pendingDecompBlock}`;
 
   if (actionResult) {
     prompt += `\n\n## 刚刚执行的操作结果\n${actionResult}\n请在回复中自然地告知用户这些操作已完成。`;
@@ -352,6 +353,52 @@ async function buildStatusSummary() {
     return `\n当前系统状态:\n- 任务: ${JSON.stringify(taskStats)}\n- 目标: ${JSON.stringify(goalStats)}\n`;
   } catch (err) {
     console.warn('[orchestrator-chat] Failed to build status summary:', err.message);
+    return '';
+  }
+}
+
+/**
+ * 构建实时运行状态块（让嘴巴对自身能力和状态有准确的实时认知）
+ * 从 working_memory 读取关键运行状态，防止用旧的 self_model 数据回答
+ */
+async function buildRuntimeStateBlock() {
+  try {
+    const keys = ['last_feishu_at', 'dispatch_ramp_state', 'tick_actions_today'];
+    const result = await pool.query(
+      `SELECT key, value_json FROM working_memory WHERE key = ANY($1)`,
+      [keys]
+    );
+    const wm = {};
+    for (const row of result.rows) wm[row.key] = row.value_json;
+
+    const lines = [];
+
+    const lastFeishu = wm.last_feishu_at;
+    if (lastFeishu) {
+      const d = new Date(String(lastFeishu).replace(/^"|"$/g, ''));
+      const label = isNaN(d.getTime()) ? String(lastFeishu) : d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      lines.push(`- 飞书最近发送时间: ${label}`);
+    } else {
+      lines.push('- 飞书最近发送时间: 从未（通道未启用或未发送过）');
+    }
+
+    if (wm.dispatch_ramp_state) {
+      const rate = typeof wm.dispatch_ramp_state === 'object'
+        ? wm.dispatch_ramp_state.current_rate
+        : wm.dispatch_ramp_state;
+      lines.push(`- 当前派发速率: ${rate === 0 ? '0（暂停中）' : rate}`);
+    }
+
+    if (wm.tick_actions_today) {
+      const count = typeof wm.tick_actions_today === 'object'
+        ? wm.tick_actions_today.count
+        : wm.tick_actions_today;
+      lines.push(`- 今日已执行: ${count} 次`);
+    }
+
+    return `\n\n## 我的实时运行状态（来自运行时，优先于记忆）\n${lines.join('\n')}\n`;
+  } catch (err) {
+    console.warn('[orchestrator-chat] buildRuntimeStateBlock failed:', err.message);
     return '';
   }
 }
@@ -601,6 +648,7 @@ export {
   fetchMemoryContext,
   recordChatEvent,
   buildStatusSummary,
+  buildRuntimeStateBlock,
   buildRecentTasksBlock,
   buildDesiresContext,
   buildNarrativesBlock,
