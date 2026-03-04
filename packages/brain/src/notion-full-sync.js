@@ -599,3 +599,109 @@ export async function runFullSync(dbOverride = null) {
 
   return stats;
 }
+
+// ─── 全量推送 DB → Notion ─────────────────────────────────────
+
+/**
+ * 批量将 DB 数据推送到 Notion（DB → Notion 方向）
+ * 推送范围：
+ *   - Areas：所有无 notion_id 的记录
+ *   - Goals：所有无 notion_id 的记录（含 area 关联）
+ *   - Projects：仅 type='project'（不含 initiative）且无 notion_id 的记录
+ *              （含 area/goal 关联 + execution_mode）
+ *
+ * 已推送过（有 notion_id）的记录不会重复推送。
+ */
+export async function pushAllToNotion(dbOverride = null) {
+  const token = getToken();
+  const db    = dbOverride || pool;
+
+  const stats = {
+    areas:    { pushed: 0, errors: [] },
+    goals:    { pushed: 0, errors: [] },
+    projects: { pushed: 0, errors: [] },
+  };
+
+  // 1. 推送未同步的 areas（无关联，直接复用 pushToNotion）
+  try {
+    const { rows: areas } = await db.query(
+      `SELECT id FROM areas WHERE notion_id IS NULL`
+    );
+    for (const { id } of areas) {
+      try {
+        await pushToNotion('area', id, db);
+        stats.areas.pushed++;
+      } catch (e) {
+        stats.areas.errors.push(`${id}: ${e.message}`);
+      }
+    }
+  } catch (e) { stats.areas.errors.push(`query: ${e.message}`); }
+
+  // 2. 推送未同步的 goals（含 area 关联）
+  try {
+    const { rows: goals } = await db.query(`
+      SELECT g.id, g.title, g.status, g.target_date,
+             a.notion_id AS area_notion_id
+      FROM goals g
+      LEFT JOIN areas a ON g.area_id = a.id
+      WHERE g.notion_id IS NULL
+    `);
+    for (const row of goals) {
+      try {
+        const props = buildGoalProperties(row);
+        if (row.area_notion_id) {
+          props.Area = { relation: [{ id: row.area_notion_id }] };
+        }
+        const page = await notionReq(token, '/pages', 'POST', {
+          parent:     { database_id: NOTION_DB_IDS.goals },
+          properties: props,
+        });
+        await db.query(
+          `UPDATE goals SET notion_id=$1, notion_synced_at=NOW(), updated_at=NOW() WHERE id=$2`,
+          [page.id, row.id]
+        );
+        stats.goals.pushed++;
+      } catch (e) {
+        stats.goals.errors.push(`${row.id}: ${e.message}`);
+      }
+    }
+  } catch (e) { stats.goals.errors.push(`query: ${e.message}`); }
+
+  // 3. 推送未同步的 projects（仅 type='project'，含 area/goal 关联 + execution_mode）
+  const executionModeMap = { cecelia: 'Cecelia', xx: 'XX' };
+  try {
+    const { rows: projects } = await db.query(`
+      SELECT p.id, p.name, p.status, p.priority, p.description,
+             p.deadline, p.archived, p.execution_mode,
+             a.notion_id AS area_notion_id,
+             g.notion_id AS goal_notion_id
+      FROM projects p
+      LEFT JOIN areas a ON p.area_id = a.id
+      LEFT JOIN goals g ON p.goal_id = g.id
+      WHERE p.notion_id IS NULL AND p.type = 'project'
+    `);
+    for (const row of projects) {
+      try {
+        const props = buildProjectProperties(row);
+        if (row.area_notion_id) props.Area  = { relation: [{ id: row.area_notion_id }] };
+        if (row.goal_notion_id) props.Goals = { relation: [{ id: row.goal_notion_id }] };
+        if (row.execution_mode && executionModeMap[row.execution_mode]) {
+          props['Execution Mode'] = { select: { name: executionModeMap[row.execution_mode] } };
+        }
+        const page = await notionReq(token, '/pages', 'POST', {
+          parent:     { database_id: NOTION_DB_IDS.projects },
+          properties: props,
+        });
+        await db.query(
+          `UPDATE projects SET notion_id=$1, notion_synced_at=NOW(), updated_at=NOW() WHERE id=$2`,
+          [page.id, row.id]
+        );
+        stats.projects.pushed++;
+      } catch (e) {
+        stats.projects.errors.push(`${row.id}: ${e.message}`);
+      }
+    }
+  } catch (e) { stats.projects.errors.push(`query: ${e.message}`); }
+
+  return stats;
+}

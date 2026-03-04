@@ -18,7 +18,7 @@ vi.mock('../db.js', () => ({
 }));
 
 // ─── Import under test ────────────────────────────────────────
-import { runFullSync, pushToNotion, handleWebhook, NOTION_DB_IDS, parseProject } from '../notion-full-sync.js';
+import { runFullSync, pushToNotion, handleWebhook, NOTION_DB_IDS, parseProject, pushAllToNotion } from '../notion-full-sync.js';
 
 // ─── 工具函数 ────────────────────────────────────────────────
 
@@ -188,6 +188,128 @@ describe('runFullSync', () => {
     const stats = await runFullSync(mockDb);
     expect(stats.errors.length).toBeGreaterThan(0);
     expect(stats.errors[0]).toContain('network error');
+  });
+});
+
+// ─── pushAllToNotion ──────────────────────────────────────────
+
+describe('pushAllToNotion', () => {
+  it('推送未同步的 area（无 notion_id）', async () => {
+    // areas query → 1 row without notion_id
+    const mockDb = {
+      query: vi.fn()
+        // areas WHERE notion_id IS NULL
+        .mockResolvedValueOnce({ rows: [{ id: 'area-id-1' }] })
+        // pushToNotion: SELECT * FROM areas WHERE id=$1
+        .mockResolvedValueOnce({ rows: [{ id: 'area-id-1', name: '工作区', domain: null, archived: false, notion_id: null }] })
+        // pushToNotion: UPDATE areas SET notion_id=...
+        .mockResolvedValueOnce({ rows: [] })
+        // goals WHERE notion_id IS NULL
+        .mockResolvedValueOnce({ rows: [] })
+        // projects WHERE notion_id IS NULL AND type='project'
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+
+    mockFetch.mockResolvedValueOnce(notionOkResponse({ id: 'new-area-notion-id' }));
+
+    const stats = await pushAllToNotion(mockDb);
+    expect(stats.areas.pushed).toBe(1);
+    expect(stats.areas.errors).toHaveLength(0);
+    expect(stats.goals.pushed).toBe(0);
+    expect(stats.projects.pushed).toBe(0);
+  });
+
+  it('推送未同步的 goal 并包含 area 关联', async () => {
+    const mockDb = {
+      query: vi.fn()
+        // areas WHERE notion_id IS NULL → 空
+        .mockResolvedValueOnce({ rows: [] })
+        // goals JOIN areas WHERE notion_id IS NULL
+        .mockResolvedValueOnce({ rows: [{ id: 'goal-id-1', title: 'KR1', status: 'pending', target_date: null, area_notion_id: 'area-notion-001' }] })
+        // UPDATE goals SET notion_id
+        .mockResolvedValueOnce({ rows: [] })
+        // projects WHERE notion_id IS NULL AND type='project' → 空
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+
+    mockFetch.mockResolvedValueOnce(notionOkResponse({ id: 'new-goal-notion-id' }));
+
+    const stats = await pushAllToNotion(mockDb);
+    expect(stats.goals.pushed).toBe(1);
+    expect(stats.goals.errors).toHaveLength(0);
+
+    // 验证 Notion API 调用包含 Area relation
+    const fetchCall = mockFetch.mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    expect(body.properties.Area).toEqual({ relation: [{ id: 'area-notion-001' }] });
+  });
+
+  it('推送 type=project 的 projects（含关联），跳过 initiative', async () => {
+    const mockDb = {
+      query: vi.fn()
+        // areas → 空
+        .mockResolvedValueOnce({ rows: [] })
+        // goals → 空
+        .mockResolvedValueOnce({ rows: [] })
+        // projects WHERE notion_id IS NULL AND type='project'
+        // (initiative 被 SQL 过滤掉，不返回)
+        .mockResolvedValueOnce({ rows: [{
+          id: 'proj-id-1', name: '项目A', status: 'in_progress', priority: 'P1',
+          description: null, deadline: null, archived: false, execution_mode: 'cecelia',
+          area_notion_id: 'area-notion-001', goal_notion_id: 'goal-notion-001',
+        }] })
+        // UPDATE projects SET notion_id
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+
+    mockFetch.mockResolvedValueOnce(notionOkResponse({ id: 'new-proj-notion-id' }));
+
+    const stats = await pushAllToNotion(mockDb);
+    expect(stats.projects.pushed).toBe(1);
+    expect(stats.projects.errors).toHaveLength(0);
+
+    // 验证包含 Area、Goals、Execution Mode 属性
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.properties.Area).toEqual({ relation: [{ id: 'area-notion-001' }] });
+    expect(body.properties.Goals).toEqual({ relation: [{ id: 'goal-notion-001' }] });
+    expect(body.properties['Execution Mode']).toEqual({ select: { name: 'Cecelia' } });
+  });
+
+  it('单条失败不影响其他记录推送', async () => {
+    const mockDb = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] }) // areas
+        .mockResolvedValueOnce({ rows: [
+          { id: 'goal-id-1', title: 'KR1', status: 'pending', target_date: null, area_notion_id: null },
+          { id: 'goal-id-2', title: 'KR2', status: 'in_progress', target_date: null, area_notion_id: null },
+        ] })
+        .mockResolvedValueOnce({ rows: [] }) // UPDATE goal-id-2
+        .mockResolvedValueOnce({ rows: [] }), // projects
+    };
+
+    // 第一次 Notion 调用失败，第二次成功
+    mockFetch
+      .mockRejectedValueOnce(new Error('rate limit'))
+      .mockResolvedValueOnce(notionOkResponse({ id: 'goal-notion-2' }));
+
+    const stats = await pushAllToNotion(mockDb);
+    expect(stats.goals.pushed).toBe(1);
+    expect(stats.goals.errors).toHaveLength(1);
+    expect(stats.goals.errors[0]).toContain('goal-id-1');
+  });
+
+  it('返回 stats 结构包含 areas/goals/projects', async () => {
+    const mockDb = {
+      query: vi.fn()
+        .mockResolvedValue({ rows: [] }),
+    };
+
+    const stats = await pushAllToNotion(mockDb);
+    expect(stats).toHaveProperty('areas');
+    expect(stats).toHaveProperty('goals');
+    expect(stats).toHaveProperty('projects');
+    expect(stats.areas).toHaveProperty('pushed');
+    expect(stats.areas).toHaveProperty('errors');
   });
 });
 
