@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 自主 PR 计数器基础设施（PR #508, Brain v1.190.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次，rebase 冲突 1 次
+
+**背景**：为 PR 进度看板 Initiative 建立后端数据统计能力，支持追踪当月自主 PR 数量。
+
+**关键决策**：
+- 新建独立 `stats.js` 模块（而不是内联在 routes.js）：职责清晰，便于单独测试
+- tasks 表的 KR 关联字段是 `goal_id`（goals 表存储 KR），`getMonthlyPRsByKR` 通过此字段过滤
+- API 路由加入 `/stats/` 命名空间，与现有的 `/dispatch/stats`、`/quarantine/stats` 保持一致性
+- `getPRSuccessRate` 用 `FILTER (WHERE ...)` 的 SQL 聚合语法，一次查询同时统计 completed 和 failed
+
+**工程经验**：
+- Vitest 框架（不是 Jest）：import 方式为 `import { describe, it, expect, vi, beforeEach } from 'vitest'`
+- mock pool 模式：`{ query: vi.fn(async () => ({ rows: [...] })) }` 简洁高效
+- 分支 PRD 文件命名必须匹配 `branch-protect.sh` 要求：`.prd-{branch}.md`（不是通用名），但 `.gitignore` 已配置忽略，只需文件存在不需提交
+- `npm version minor` 会自动更新 package.json 和 package-lock.json，但 VERSION 和 DEFINITION.md 需要手动同步
+- rebase 冲突发生在版本文件（package.json/.brain-versions/DEFINITION.md），用 `--theirs` 获取 main 最新版本后手动设置目标版本最简洁
+
 ### [2026-03-04] GTD System 导航重构 + Notion 风格数据库视图（PR #504, Workspace v1.173.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
