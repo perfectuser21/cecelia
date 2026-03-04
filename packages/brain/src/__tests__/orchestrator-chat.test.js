@@ -739,4 +739,57 @@ describe('orchestrator-chat', () => {
       expect(result.reply).toBe('消息已发送到群里。');
     });
   });
+
+  // ===================== D16: buildManifestBlock 飞书成员注入 =====================
+
+  describe('buildManifestBlock - 飞书成员 open_id 注入', () => {
+    it('DB 有用户记录时，manifest block 包含 open_id 和姓名', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+
+      // 第一次 pool.query：groups（无群）
+      pool.query.mockResolvedValueOnce({ rows: [] });
+      // 第二次 pool.query：users（有用户）
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { open_id: 'ou_test_colleague', name: '苏彦卿', relationship: 'colleague' },
+          { open_id: 'ou_test_owner', name: '徐啸', relationship: 'owner' },
+        ],
+      });
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('ou_test_colleague');
+      expect(block).toContain('苏彦卿');
+      expect(block).toContain('已知飞书成员');
+    });
+
+    it('DB 无用户记录时，manifest block 正常返回（不含私信成员列表）', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+      // 第一次：groups（无）
+      pool.query.mockResolvedValueOnce({ rows: [] });
+      // 第二次：users（无）
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('Brain 能力清单');
+      expect(block).not.toContain('可用 open_id 发私信');
+    });
+
+    it('users DB 查询异常时静默降级，仍返回 manifest block', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+      // 第一次：groups 正常
+      pool.query.mockResolvedValueOnce({ rows: [] });
+      // 第二次：users 抛异常
+      pool.query.mockRejectedValueOnce(new Error('feishu_users table not found'));
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('Brain 能力清单');
+      expect(block.length).toBeGreaterThan(0);
+    });
+  });
 });

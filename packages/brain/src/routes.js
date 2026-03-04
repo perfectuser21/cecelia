@@ -2737,10 +2737,6 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
-      // Extract pr_number from pr_url (e.g. https://github.com/owner/repo/pull/123 → 123)
-      const prNumberMatch = pr_url ? pr_url.match(/\/pull\/(\d+)/) : null;
-      const prNumber = prNumberMatch ? parseInt(prNumberMatch[1], 10) : null;
-
       await client.query(`
         UPDATE tasks
         SET
@@ -2750,10 +2746,9 @@ router.post('/execution-callback', async (req, res) => {
             'run_status', $4::text,
             'pr_url', $5::text
           ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END,
-          metadata = COALESCE(metadata, '{}'::jsonb) || CASE WHEN $8::int IS NOT NULL THEN jsonb_build_object('pr_number', $8::int, 'pr_url', $5::text) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue]);
 
       // Log the execution result
       await client.query(`
@@ -9729,6 +9724,21 @@ async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
     signal: AbortSignal.timeout(8000),
   });
 }
+
+/** GET /api/brain/feishu/users — 查询已知飞书用户（嘴巴 call_brain_api 用） */
+router.get('/feishu/users', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT open_id, name, relationship
+      FROM feishu_users
+      ORDER BY relationship, name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[feishu/users] 查询失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /** GET /api/brain/feishu/groups — 查询已知飞书群（嘴巴 call_brain_api 用） */
 router.get('/feishu/groups', async (req, res) => {
