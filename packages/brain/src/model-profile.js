@@ -43,7 +43,7 @@ export const FALLBACK_PROFILE = {
       model: 'claude-haiku-4-5-20251001',
     },
     fact_extractor: {
-      provider: 'anthropic-api',
+      provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
     },
     executor: {
