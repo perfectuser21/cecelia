@@ -17,17 +17,6 @@
 - 每条对话消息 fire-and-forget 调用 `processMessageFacts`，失败静默不影响响应
 - 阈值 400→150 使更多对话进入 behavior_correction 学习路径
 
-### [2026-03-04] Recurring Tasks × Notion 双向同步（PR #493, Brain v1.188.0）
-
-**背景**：`recurring_tasks` 表已有 cron 引擎，但无前台界面、无 Notion 同步、无 executor 字段。此 PR 实现完整的 Notion→DB 双向同步。
-
-**关键教训**：
-- **migration 不要 INSERT schema_migrations**：`migrate.js` 使用 `schema_version` 表（自动管理），migration SQL 里不应手动 INSERT。写了 `INSERT INTO schema_migrations` → CI 报 "relation does not exist"。修复：删掉这行即可
-- **partial unique index 不支持 ON CONFLICT 简写**：`WHERE notion_page_id IS NOT NULL` 的部分索引，PostgreSQL 要求 `ON CONFLICT (col) WHERE condition`，但实际写代码时更简单的方式是 SELECT + INSERT/UPDATE 分支
-- **executor 路由设计**：`recurring.js` 中通过 `payload.skill` 区分内置（cecelia）和外部 skill，task_type 设为 'skill' 让 executor 路由到对应 agent
-- **tick fire-and-forget 模式**：每日门控用 `working_memory` key，值存 `{ date: today }` JSON，读取时比较 `.date === today`
-- **`[CONFIG]` PR 标题规则**：修改 skills/ 或 hooks/ 时，PR 标题需含 `[CONFIG]`。此 PR 不改 engine 配置，但预防性加了 `[CONFIG]` 前缀避免误判
-
 ### [2026-03-04] 进化日志接入 Tick — 自动扫描与合成（PR #491, Brain v1.187.0）
 
 **背景**：`component_evolutions` 和 `component_evolution_summaries` 表已手动回填了 1530 条历史记录（monorepo + 5 个旧独立仓库），但无自动化。此 PR 将两个操作接入 Brain Tick 循环。
@@ -46,20 +35,6 @@
 
 **GITHUB_TOKEN 可选**：公开仓库无 token 也能使用 GitHub REST API，限额 60 req/h，足够每日扫描（每次 50 PR）。建议将 `GITHUB_TOKEN` 加入 `.env.docker` 提高限额到 5000 req/h。
 
-### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
-
-**背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
-
-**parseContactContent 正则**：`/([^\s:：，,]+)[：:]\s*([^：:\n]+?)(?=\s+[^\s:：，,]+[：:]|$)/g` 可正确解析 `"姓名:张三 职业:律师 分类:朋友"` 格式。如果无冒号整体作为备注，保证健壮性。
-
-**contactFieldsToNotionProps 设计**：用 Set 做字段名查找（O(1)），末尾做值内容自动检测（email/phone/url/date 格式）。姓名字段跳过（单独作为 title 处理）。source/updatedAt 单独传入避免字段名冲突。
-
-**PR CI 不触发的根本原因**：PR 的 `mergeable` 状态为 `CONFLICTING` 时，GitHub Actions 可能不触发 pull_request CI。解决：先 merge origin/main 解决冲突，推送 merge commit，CI 才正常触发。
-
-**merge commit 中的 .dod/.prd 文件**：从 origin/main 合并进来的 `.dod-*.md`/`.prd-*.md` 文件会出现在 merge commit 中，但不会出现在 `git diff origin/main...HEAD` 的结果里（merge base = origin/main 本身），Engine CI Block PRD/DoD 检查不受影响。
-
-**分支重命名教训**：新分支名 `cp-MMDDHHNN-xxx` 中的 `NN`（HH=小时，NN=分钟）部分必须是 2 位数字，整体 `MMDDHHNN` 恰好 8 位。`cp-03040934v2-xxx` 中 `03040934v2` 不是 8 位数字，会破坏 DevGate branch name regex。正确做法：直接用不同时间码 `cp-03040950-xxx`。
-
 ### [2026-03-04] Brain tick 48h 简报 cortex 对接（PR #460, Brain v1.181.0）
 
 **背景**：tick.js 已有 `check48hReport()` 但用的是 mock 实现；cortex.js 已有真实 `generateSystemReport()`。需要将两者对接，并补充缺失的 API 端点。
@@ -71,70 +46,6 @@
 **push 不触发新 CI run 的情况**：只改了 .brain-versions、DEFINITION.md、.dod.md 等非 Brain 源码文件时，`brain-ci.yml` 的 `paths` filter 可能不匹配，不会自动触发。可用 `gh workflow run brain-ci.yml --ref <branch>` 手动触发验证。
 
 **dynamic import 在 tick.js 中的使用**：`check48hReport()` 用 `await import('./cortex.js')` 动态导入而非顶层 import，避免 cortex 初始化（数据库连接）与 tick 模块耦合，单测中更容易 mock。
-
-### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
-
-**背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
-
-**Notion token `ntn_` 前缀截断坑**：`~/.credentials/notion.env` 中 `ntn_` 前缀的 OAuth token 被 shell 读取时被截断，导致所有 POST 操作失败（API token invalid）。正确获取方式：`docker exec cecelia-node-brain env | grep NOTION_API_KEY | cut -d= -f2`（从容器 env 获取完整 token）。
-
-**PostgreSQL 日期返回 JS Date 对象**：用 `::date` 转型后，JavaScript 层拿到的是 Date 对象而非 ISO 字符串。Notion 日期字段只接受 `YYYY-MM-DD` 格式。修复：`const fmtDate = d => (d instanceof Date ? d : new Date(d)).toISOString().split('T')[0]`。
-
-**Notion DB PATCH 属性改名**：用 `PATCH /databases/:id` 时，`properties: { '旧名': { name: '新名' } }` 可以改字段名（保留数据）。添加新字段用 `{ rich_text: {} }` 等类型声明。同一请求可以同时 rename + add。
-
-**Cecelia 日记 page body**：Notion 页面正文通过 `children` 数组传入，不在 `properties` 里。格式：`children: [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [...] } }]`。
-
-**fire-and-forget 模式**：`Promise.resolve().then(() => asyncFn()).catch(() => {})` 不等待、不阻塞、静默失败。适用于 Notion 同步这类"写完数据库后顺手同步"的场景。
-
-**增量同步 notion_id 追踪**：在 `user_profile_facts` 和 `memory_stream` 加 `notion_id TEXT` 列，INSERT 后异步写回 page id，实现增量同步（已同步的 row 有 notion_id）。
-
-### [2026-03-03] notion_id ON CONFLICT 需要 UNIQUE 约束而非普通 INDEX（PR #428, Brain v1.174.1）
-
-**根因**：migration 111 为 goals/projects/tasks 的 `notion_id` 列创建了 `CREATE INDEX`（普通索引），
-但 `notion-full-sync.js` upsert 用的是 `ON CONFLICT (notion_id) DO UPDATE`。
-PostgreSQL 要求 ON CONFLICT target 列必须有 UNIQUE 约束或非分区 UNIQUE 索引（`indpred IS NULL`）。
-运行全量同步时报：`there is no unique or exclusion constraint matching the ON CONFLICT specification`。
-
-**修复**：migration 112 先 `DROP INDEX` 旧普通索引，再 `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE`：
-```sql
-DROP INDEX IF EXISTS idx_goals_notion_id;
-ALTER TABLE goals ADD CONSTRAINT goals_notion_id_unique UNIQUE (notion_id);
--- 对 projects、tasks 同理
-```
-
-**注意**：`areas.notion_id` 在 migration 100 就以 `VARCHAR(100) UNIQUE` 创建，本次不受影响。
-
-**Notion webhook 验证流程（PR #426 经验）**：
-1. 第一步：Notion 发 `{ "challenge": "xxx" }` → 必须原样返回 `{ "challenge": "xxx" }`（不能返回 `{ "received": true }`）
-2. 第二步：Notion 发 `{ "verification_token": "secret_xxx" }` → 用户需在 Notion UI 填入该 token
-3. 必须在 `challenge` 分支前不做任何其他处理，立即 return
-
-
-### [2026-03-03] Notion 四表双向同步：migration 编号连续踩三次坑（PR #423, Brain v1.173.0）
-
-**背景**：实现 Areas/Goals/Projects/Tasks 四表与 Notion 的双向同步，包含 webhook 回调端点。
-
-**Migration 编号三轮冲突（最核心教训）**：
-1. 第一轮：原来用 109，main 的 `109_notebook_source_lifecycle.sql` 合并进来 → 冲突，rename to 110
-2. 第二轮：PR #422 合并了 `110_user_profile_facts_key.sql` → 再次冲突
-3. 第三轮（隐藏坑）：rename 109→110 时，`109_notion_full_sync.sql` 被 git mv 但旧文件仍被 git 追踪（` D` 状态），merge commit 重新引入了该追踪文件，facts-check 报"109 有 2 个文件"。需要 `git rm` 显式删除旧文件。
-4. 最终 migration 编号：111。
-
-**`git ls-tree HEAD` vs `ls` 差异**：working directory 没有文件，但 `git ls-tree HEAD` 显示文件被追踪（` D` = deleted in worktree, tracked in index）。每次 migration rename 后必须 `git rm <old_file>` 而不只是 `mv`。
-
-**每次 migration rename 前必须**：
-```bash
-git show origin/main:packages/brain/migrations/ | grep -E "^[0-9]+" | sort
-# 确认 main 上最高编号，避免冲突
-```
-
-**parallel PR 最终版本决策**：并行 PR 版本碰撞时，先完成 main 合并再 bump（我们的 `1.171.3 → 1.172.0 → 1.173.0`）。每次 main 合并后必须验证：`git show origin/main:packages/brain/package.json | jq .version`。
-
-**webhook 架构**：Notion → `cecelia.zenjoymedia.media/api/brain/notion-sync/webhook` → `handleWebhook()`。Cloudflare Tunnel 已配置，不需额外设置。立即返回 200，异步处理（Notion 要求 < 10s 响应）。
-
-**Task 全量同步范围过滤**：`filter: { property: 'AI Task', checkbox: { equals: true } }` 避免把用户所有个人 Notion 任务导入 Cecelia。实际过滤条件可根据需求调整。
-
-**merge commit 引入版本冲突解决模式**：`git merge origin/main --no-commit` 后手动解析冲突标记，保留我方较高版本（1.173.0 > 1.172.1），然后 `git add` 已解决文件，最后 `git commit` 完成 merge。禁止 `git merge --abort` 后用 force push（bash-guard 阻止）。
 
 ### [2026-03-03] NotebookLM 多笔记本架构：-n 参数分流 + bridge 缺失端点修复（PR #411, Brain v1.169.0）
 
