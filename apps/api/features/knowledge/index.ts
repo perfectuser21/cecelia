@@ -7,24 +7,11 @@ const manifest: FeatureManifest = {
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'knowledge', label: 'Knowledge', icon: 'BookOpen', order: 4 },
-  ],
+  // Knowledge 导航已合并到 GTD System
+  navGroups: [],
 
   routes: [
-    {
-      path: '/knowledge',
-      component: 'KnowledgeHome',
-      navItem: {
-        label: 'Knowledge', icon: 'BookOpen', group: 'knowledge',
-        children: [
-          { path: '/knowledge', label: 'Home', icon: 'BookOpen', order: 1 },
-          { path: '/knowledge/content', label: 'Content Studio', icon: 'PenTool', order: 2 },
-          { path: '/knowledge/brain', label: 'Super Brain', icon: 'Brain', order: 3 },
-          { path: '/knowledge/digestion', label: '知识消化', icon: 'Sparkles', order: 4 },
-        ],
-      },
-    },
+    { path: '/knowledge', component: 'KnowledgeHome' },
     { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },

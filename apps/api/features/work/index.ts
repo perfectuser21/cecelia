@@ -3,60 +3,45 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'work',
   name: 'Work',
-  version: '1.0.0',
+  version: '1.1.0',
   source: 'core',
   instances: ['core'],
 
-  navGroups: [
-    { id: 'work', label: 'Work', icon: 'Briefcase', order: 3 },
-  ],
+  // Work 导航组已被 GTD System 取代
+  navGroups: [],
 
   routes: [
-    // Tab routes
-    {
-      path: '/work',
-      component: 'WorkTabbed',
-      navItem: {
-        label: 'Work', icon: 'Briefcase', group: 'work',
-        children: [
-          { path: '/work/okr', label: 'OKR', icon: 'GitBranch', order: 1 },
-          { path: '/work', label: 'Area', icon: 'Layers', order: 2 },
-          { path: '/work/projects', label: 'Projects', icon: 'FolderKanban', order: 3 },
-          { path: '/work/tasks', label: 'Tasks', icon: 'ListTodo', order: 4 },
-          { path: '/work/roadmap', label: 'Roadmap', icon: 'Map', order: 5 },
-          { path: '/work/streams', label: 'Streams', icon: 'Zap', order: 6 },
-        ],
-      },
-    },
-    { path: '/work/okr', component: 'WorkTabbed' },
-    { path: '/work/projects', component: 'WorkTabbed' },
-    { path: '/work/tasks', component: 'WorkTabbed' },
-    { path: '/work/roadmap', component: 'WorkTabbed' },
-    { path: '/work/streams', component: 'WorkTabbed' },
-    // Drill-down routes
+    // 所有 /work/* 路由重定向到 /gtd/*
+    { path: '/work', redirect: '/gtd/area' },
+    { path: '/work/okr', redirect: '/gtd/okr' },
+    { path: '/work/projects', redirect: '/gtd/projects' },
+    { path: '/work/tasks', redirect: '/gtd/tasks' },
+    { path: '/work/roadmap', component: 'RoadmapView' },
+    { path: '/work/streams', component: 'WorkStreams' },
+    // Drill-down routes (保留)
     { path: '/work/projects/:projectId', component: 'ProjectDetail' },
     { path: '/work/project-panorama', component: 'ProjectPanorama' },
     { path: '/work/whiteboard', component: 'Whiteboard' },
     { path: '/work/okr/area/:areaId', component: 'AreaOKRDetail' },
     // Legacy redirects
-    { path: '/work/dev-tasks', redirect: '/work' },
+    { path: '/work/dev-tasks', redirect: '/gtd/tasks' },
     { path: '/work/panorama', redirect: '/dashboard/panorama' },
-    { path: '/tasks', redirect: '/work/tasks' },
-    { path: '/projects', redirect: '/work/projects' },
-    { path: '/okr', redirect: '/work/okr' },
+    { path: '/tasks', redirect: '/gtd/tasks' },
+    { path: '/projects', redirect: '/gtd/projects' },
+    { path: '/okr', redirect: '/gtd/okr' },
     { path: '/roadmap', redirect: '/work/roadmap' },
     { path: '/whiteboard', redirect: '/work/whiteboard' },
-    { path: '/portfolio', redirect: '/work' },
-    { path: '/company', redirect: '/work' },
+    { path: '/portfolio', redirect: '/gtd/area' },
+    { path: '/company', redirect: '/gtd/area' },
     { path: '/company/tasks', redirect: '/today/schedule' },
-    { path: '/company/media', redirect: '/work' },
-    { path: '/company/team', redirect: '/work' },
-    { path: '/company/finance', redirect: '/work' },
+    { path: '/company/media', redirect: '/gtd/area' },
+    { path: '/company/team', redirect: '/gtd/area' },
+    { path: '/company/finance', redirect: '/gtd/area' },
   ],
 
   components: {
-    WorkTabbed: () => import('./pages/WorkTabbed'),
     WorkStreams: () => import('./pages/WorkStreams'),
+    RoadmapView: () => import('../planning/pages/RoadmapView'),
     ProjectDetail: () => import('../planning/pages/ProjectDetail'),
     ProjectPanorama: () => import('../planning/pages/ProjectPanorama'),
     Whiteboard: () => import('../planning/pages/Whiteboard'),
