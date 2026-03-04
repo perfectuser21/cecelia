@@ -81,7 +81,7 @@ cat ~/.claude/skills/dev/steps/00-worktree-auto.md
 ### 完成条件
 
 ```
-开始 → ... → PR 创建 → CI 通过 → PR 合并 ✅ 完成
+开始 → ... → PR 创建 → CI 通过 → Learning（push 到功能分支）→ PR 合并 ✅ 完成
 ```
 
 **只有一个完成标志**：PR 已合并到目标分支（动态检测：`git rev-parse --verify develop` 成功则用 develop，否则 main）
@@ -331,7 +331,7 @@ TaskList()
 ### 1. 统一流程
 
 ```
-开始 → Step 0-11 → PR 创建 → CI 监控 → PR 合并 → 完成
+开始 → Step 0-11 → PR 创建 → CI 监控 → Learning → PR 合并 → 完成
 ```
 
 ### 2. Task Checkpoint 追踪
