@@ -1,9 +1,10 @@
 ---
 name: decomp
-version: 1.6.0
+version: 1.7.0
 created: 2026-02-27
 updated: 2026-03-04
 changelog:
+  - 1.7.0: 修正 OKR 层级类型（global_kr/area_kr），Initiative 模板加 lead_agent/skill，Phase 2 支持批量任务创建
   - 1.6.0: 删除 exploratory 概念，Initiative 统一为 known 模式（agent 自主探索）
   - 1.5.0: Stage 2/3 写入 known vs exploratory 明确判定规则，含判定表格、强制声明要求和灰色地带案例
   - 1.4.0: Phase 2 Step 1 补充读取 parent Project 描述（北极星），initiative_plan session 有完整全局上下文
@@ -37,9 +38,10 @@ description: |
 
 | 层级流向 | 写入表 | type 字段 |
 |---------|-------|-----------|
-| Global OKR → Area OKR | goals | area_okr |
-| Area OKR → KR | goals | kr |
-| KR → Project | projects | project |
+| Global OKR → Global KR | goals | global_kr |
+| Global KR → Area OKR | goals | area_okr |
+| Area OKR → Area KR | goals | area_kr |
+| Area KR → Project | projects | project |
 | Project → Initiative | projects | initiative |
 
 **Phase 2 写入规则（只写一条 dev task）**：
@@ -95,12 +97,16 @@ description: |
 
 ```
 goals 表（type 字段值）：
-  global_okr  — 全平台季度 Objective
-  area_okr    — 单 Area 月度 Objective
-  kr          — Key Result（parent_id → global_okr 或 area_okr）
+  global_okr  — 全平台战略 Objective（季度+）
+  global_kr   — 全平台 Key Result（parent_id → global_okr）
+  area_okr    — 单 Area Objective（parent_id → global_kr）
+  area_kr     — 单 Area Key Result（parent_id → area_okr）
+  （kr 类型向后兼容保留，新建时不再使用）
+
+完整层级链：global_okr → global_kr → area_okr → area_kr → project → initiative → task
 
 projects 表（type 字段值）：
-  project     — 功能模块（kr_id → 关联 KR）
+  project     — 功能模块（kr_id → 关联 area_kr）
   initiative  — 子功能（parent_id → project）
 
 tasks 表：
@@ -153,32 +159,48 @@ type: global_okr
 
 ---
 
-### 模板 B — Area OKR（月度 Objective）
+### 模板 B — Global KR（全平台关键结果）
 
 ```yaml
-title: "[单 Area 月度激进目标]"
-type: area_okr
+title: "[动词 + 全平台对象 + 从 X 到 Y]"
+type: global_kr
 parent_id: "<global_okr_id>"
-所属 Area: "[Cecelia / ZenithJoy / ...]"
-成功画面: "[月底达成时，这个 Area 变成什么样]"
-```
-
-**拆解到**：2-5 个 KR（月底可验收）
-
----
-
-### 模板 C — KR（Key Result）
-
-```yaml
-title: "[动词 + 对象 + 从 X 到 Y]"
-type: kr
-parent_id: "<okr_id>"
 metric_from: X
 metric_to: Y
 metric_unit: "[% / 次 / 个 / ms ...]"
 measure: "[具体怎么测：SQL / API / 日志查询]"
-验收时间: "[月底 / 季度末]"
-推动逻辑: "[为什么做下面这些 Project，指标会从 X 到 Y]"
+推动逻辑: "[完成这个 KR 后，全平台 OKR 如何推进]"
+```
+
+**拆解到**：每个 Global KR 对应的 Area OKR（各 Area 的月度目标）
+
+---
+
+### 模板 C — Area OKR（月度 Objective）
+
+```yaml
+title: "[单 Area 月度激进目标]"
+type: area_okr
+parent_id: "<global_kr_id>"
+所属 Area: "[Cecelia / ZenithJoy / ...]"
+成功画面: "[月底达成时，这个 Area 变成什么样]"
+```
+
+**拆解到**：2-5 个 Area KR（月底可验收）
+
+---
+
+### 模板 D — Area KR（单 Area 关键结果）
+
+```yaml
+title: "[动词 + 对象 + 从 X 到 Y]"
+type: area_kr
+parent_id: "<area_okr_id>"
+metric_from: X
+metric_to: Y
+metric_unit: "[% / 次 / 个 / ms ...]"
+measure: "[具体怎么测：SQL / API / 日志查询]"
+推动逻辑: "[完成这个 KR 后，Area OKR 如何推进]"
 ```
 
 **拆解到**：Project（数量不限，按 KR 复杂度决定）
@@ -190,7 +212,7 @@ measure: "[具体怎么测：SQL / API / 日志查询]"
 
 ---
 
-### 模板 D — Project（功能模块）
+### 模板 E — Project（功能模块）
 
 ```yaml
 name: "[完整可交付的功能模块名称]"
@@ -209,12 +231,14 @@ kr_id: "<kr_id>"
 
 ---
 
-### 模板 E — Initiative（独立子功能）
+### 模板 F — Initiative（独立子功能）
 
 ```yaml
 name: "[独立可部署的子功能名称]"
 type: initiative
 parent_id: "<project_id>"
+lead_agent: "[caramel / autumnrice / reviewer]"
+skill: "[/dev]"
 产出: "[代码/配置/数据，具体说]"
 dod:
   - item: "调用 POST /api/<endpoint> 返回 200 且包含 <字段>"
@@ -232,31 +256,54 @@ task_type: "[dev / review / qa]"
 
 ## Stage 2：拆解规则
 
-### Global OKR → Area OKR
+### Global OKR → Global KR
 
-1. 按 Area 拆分，每个 Area 一个月度 Objective
+1. 每个 Global OKR 的每个可量化关键结果 → 一个 global_kr
+2. 2-5 个 Global KR per OKR（硬上限）
+3. **写入时 status='reviewing'**（需人工在 Dashboard 确认）
+
+```bash
+curl -X POST localhost:5221/api/brain/goals \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "title": "全平台任务成功率从60%提升到90%",
+    "type": "global_kr",
+    "parent_id": "<global_okr_id>",
+    "status": "reviewing",
+    "metadata": {
+      "metric_from": 60,
+      "metric_to": 90,
+      "metric_unit": "%",
+      "measure": "SELECT succeeded/total FROM task_runs"
+    }
+  }'
+```
+
+### Global KR → Area OKR
+
+1. 每个 Global KR 按 Area 拆分，每个 Area 一个月度 Objective
 2. Area OKR 各自独立可验收（月底）
-3. 所有 Area OKR 加起来能推动 Global OKR
+3. 所有该 Global KR 下的 Area OKR 加起来能推动 Global KR
 4. **写入时 status='reviewing'**（需人工在 Dashboard 确认）
 
 ```bash
 curl -X POST localhost:5221/api/brain/goals \
   -H 'Content-Type: application/json' \
-  -d '{"title":"...","type":"area_okr","parent_id":"<global_id>","status":"reviewing"}'
+  -d '{"title":"...","type":"area_okr","parent_id":"<global_kr_id>","status":"reviewing"}'
 ```
 
-### Area OKR → KR
+### Area OKR → Area KR
 
-1. 每个 KR 必须有 from/to 数字和度量方式
-2. 2-5 个 KR per Objective（硬上限）
+1. 每个 Area KR 必须有 from/to 数字和度量方式
+2. 2-5 个 Area KR per Objective（硬上限）
 3. **写入时 status='reviewing'**（需人工确认）
 
 ```bash
 curl -X POST localhost:5221/api/brain/goals \
   -H 'Content-Type: application/json' \
   -d '{
-    "title": "任务成功率从60%提升到90%",
-    "type": "kr",
+    "title": "Cecelia 任务成功率从60%提升到90%",
+    "type": "area_kr",
     "parent_id": "<area_okr_id>",
     "status": "reviewing",
     "metadata": {
@@ -268,7 +315,7 @@ curl -X POST localhost:5221/api/brain/goals \
   }'
 ```
 
-### KR → Project
+### Area KR → Project
 
 1. **先问自己**："哪些 Project 能真正把指标从 X 推到 Y？"
 2. 数量不限——复杂 KR 可能需要 10-20 个 Project，简单 KR 可能 2-3 个
@@ -281,7 +328,7 @@ curl -X POST localhost:5221/api/brain/projects \
   -d '{
     "name": "...",
     "type": "project",
-    "kr_id": "<kr_id>",
+    "kr_id": "<area_kr_id>",
     "description": "...",
     "metadata": {"push_mechanism": "..."}
   }'
@@ -462,9 +509,18 @@ curl -s -X POST "localhost:5221/api/brain/tasks" \
 }
 ```
 
+**批量模式 vs 顺序模式**：
+
+| 模式 | 适用场景 | 创建方式 |
+|------|---------|---------|
+| **顺序模式**（默认）| Initiative 目标明确但实现路径渐进 | 每次只创建下一个 PR 的任务 |
+| **批量模式** | Initiative 描述中明确列出所有子任务，任务间无依赖 | 一次性创建全部任务 |
+
+**批量模式触发规则**：如果 Initiative description 中包含明确的"任务列表"（如 `- [ ] 任务A`、`- [ ] 任务B`），使用批量模式一次性创建所有任务；否则使用顺序模式。批量写入后，Brain tick 会按优先级自动派发任务。
+
 ### 规划原则
 
-- **边做边拆**：只规划下一个 PR，不要提前规划全部 PR
+- **边做边拆**：顺序模式下只规划下一个 PR；批量模式下一次规划全部（仅当任务已明确且无依赖）
 - **基于结果**：每次规划时参考已完成 PR 的实际情况，不要按原计划盲目执行
 - **最小可交付**：每个 PR 应该是独立可部署的功能单元
 - **完成即止**：一旦 Initiative 目标达成就停止，不要多做
