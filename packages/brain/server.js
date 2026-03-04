@@ -26,6 +26,7 @@ import notebookAuditRoutes from './src/routes/notebook-audit.js';
 import alertingRoutes from './src/routes/alerting.js';
 import systemReportsRoutes from './src/routes/system-reports.js';
 import evolutionRoutes from './src/routes/evolution.js';
+import recurringRoutes from './src/routes/recurring.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -111,6 +112,7 @@ app.use('/api/brain/notebook-audit', notebookAuditRoutes);
 app.use('/api/brain/alerting', alertingRoutes);
 app.use('/api/brain/reports', systemReportsRoutes);
 app.use('/api/brain/evolution', evolutionRoutes);
+app.use('/api/brain/recurring-tasks', recurringRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);

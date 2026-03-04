@@ -34,6 +34,7 @@ import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
+import { syncRecurringFromNotion } from './recurring-notion-sync.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2032,6 +2033,23 @@ async function executeTick() {
   // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
   Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
     .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
+
+  // 10.16 定时任务 Notion 同步（每日一次，拉取 Notion "定时任务" DB → recurring_tasks，fire-and-forget）
+  Promise.resolve().then(async () => {
+    const today = now.toISOString().split('T')[0];
+    const key = 'recurring_notion_sync_last_date';
+    const wmRes = await pool.query(
+      'SELECT value FROM working_memory WHERE key = $1', [key]
+    );
+    if (wmRes.rows.length > 0 && wmRes.rows[0].value?.date === today) return;
+    await syncRecurringFromNotion(pool);
+    await pool.query(
+      `INSERT INTO working_memory (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, JSON.stringify({ date: today })]
+    );
+    console.log('[tick] 定时任务 Notion 同步完成');
+  }).catch(e => console.warn('[tick] 定时任务 Notion 同步失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
