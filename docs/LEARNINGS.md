@@ -1,5 +1,32 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 动态 Notion Schema 同步：notion_props JSONB + 每小时全量同步（PR #497, Brain v1.189.0）
+
+**背景**：notion-full-sync.js 原来硬编码字段名，每次 Notion 端新增/删除字段都要改代码。用户要求 Notion 为 SSOT，Brain 动态适配。
+
+**核心设计**：
+- `extractNotionProps(page)` — 将 Notion page.properties 全量序列化为 JSONB，支持 15 种 property 类型（title/rich_text/select/multi_select/status/checkbox/number/date/relation/people/url/email/phone_number/files/formula/rollup/created_time/last_edited_time）
+- 核心索引字段（title/status/project_id 等）保留硬编码解析（向后兼容），`notion_props` 存全量原始属性供动态读取
+- 所有 4 个 parseX() 函数返回 `notion_props`，所有 4 个 upsertX() 函数写入 DB
+- 从此 Notion 端加/删字段，Brain 自动同步，无需改代码
+
+**每小时全量同步**：
+- tick.js 步骤 10.17：每小时 `runFullSync()`，门控 key = `notion_full_sync_last_hour`，值 = `YYYY-MM-DDTHH`
+- 作用：修复延迟造成的 null 外键（Areas 先同步，Goals 后同步，Tasks 最后）
+- 通过 `NOTION_API_KEY` 检测自动跳过未配置环境
+
+**教训：migration 编号冲突**：
+- 开始时以为是 119，但 119 已被 `119_person_signal_preference_type.sql` 占用
+- 解决：检查 `ls packages/brain/migrations/ | sort -n | tail -5`，确认最高编号再创建 migration
+- 本次用 120，facts-check 验证 `selfcheck_version_sync: EXPECTED_SCHEMA_VERSION = '120' matches highest migration`
+
+**状态映射补充**：
+- parseTask() statusMap 原缺 `AI Done`/`AI Failed`/`Completed`
+- 补充：`'AI Done'→'completed'`, `'AI Failed'→'failed'`, `'Completed'→'completed'`
+- 对齐用户实际 Notion Tasks DB 中的 Status select 选项值
+
+
+
 ### [2026-03-04] 事实捕获系统：脚本级偏好/纠正捕获 + 矛盾检测（PR #495, Brain v1.188.1）
 
 **背景**：Alex 希望 Cecelia 从对话中自然学习，而不是靠硬编码 prompt 来告知 AI 行为规则。短事实（"我喜欢蓝色"、5字）之前完全漏掉（400字阈值），行为纠正无处记录。
