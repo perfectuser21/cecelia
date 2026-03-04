@@ -672,7 +672,7 @@ export async function pushAllToNotion(dbOverride = null) {
   try {
     const { rows: projects } = await db.query(`
       SELECT p.id, p.name, p.status, p.description,
-             p.deadline, p.archived, p.execution_mode,
+             p.deadline, p.execution_mode,
              a.notion_id AS area_notion_id,
              g.notion_id AS goal_notion_id
       FROM projects p
