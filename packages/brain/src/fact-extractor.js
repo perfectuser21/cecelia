@@ -1,15 +1,18 @@
 /**
- * fact-extractor.js — 脚本级事实捕获（无 LLM，无门槛）
+ * fact-extractor.js — 混合事实捕获（正则 + Haiku + 反哺进化）
  *
  * 职责：
- *   1. 从每条对话消息里用正则捕获显式事实
- *   2. 用户偏好/习惯 → person_signals (signal_type='preference', decay_tier='permanent')
- *   3. 对 Cecelia 的行为纠正 → learnings (category='behavior_correction')
- *   4. 新事实与已有同类比对，发现矛盾 → pending_conversations 请求澄清
+ *   1. 正则快速提取显式事实（零延迟、零成本）
+ *   2. Haiku 补全正则漏掉的内容（fire-and-forget 并行）
+ *   3. Haiku 发现的 gap → 写入 learned_keywords 表，下次正则加载后自动命中
+ *   4. 用户偏好/习惯 → person_signals (signal_type='preference', decay_tier='permanent')
+ *   5. 对 Cecelia 的行为纠正 → learnings (category='behavior_correction')
+ *   6. 新事实与已有同类比对，发现矛盾 → pending_conversations 请求澄清
  *
  * 设计原则：
- *   - 只用正则，不调 LLM（零延迟、零成本）
- *   - 宁可漏掉，不要误报（conservative 模式）
+ *   - 正则宁可漏掉，不要误报（conservative 模式）
+ *   - Haiku 覆盖正则盲区，gap 反哺词库
+ *   - Haiku 失败不影响正则结果（静默降级）
  *   - fire-and-forget 调用，失败静默
  */
 
@@ -58,15 +61,61 @@ const MIN_VALUE_LENGTH = 2;
 const MAX_VALUE_LENGTH = 20;
 
 // ─────────────────────────────────────────────
-// 2. 提取函数
+// 2. 动态词库缓存
+// ─────────────────────────────────────────────
+
+// personId → { keywords: [{keyword, polarity}], loadedAt: Date }
+const _keywordCache = new Map();
+const KEYWORD_CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+
+/**
+ * 从 learned_keywords 表加载动态词库（内存缓存，5分钟 TTL）
+ * @param {Object} pool
+ * @param {string} personId
+ * @returns {Promise<Array<{keyword: string, polarity: string}>>}
+ */
+export async function loadLearnedKeywords(pool, personId) {
+  const cached = _keywordCache.get(personId);
+  if (cached && (Date.now() - cached.loadedAt) < KEYWORD_CACHE_TTL_MS) {
+    return cached.keywords;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT keyword, polarity FROM learned_keywords
+       WHERE person_id = $1
+       ORDER BY use_count DESC, last_seen_at DESC
+       LIMIT 200`,
+      [personId]
+    );
+    const keywords = rows.map(r => ({ keyword: r.keyword, polarity: r.polarity }));
+    _keywordCache.set(personId, { keywords, loadedAt: Date.now() });
+    return keywords;
+  } catch (err) {
+    console.warn('[fact-extractor] loadLearnedKeywords failed:', err.message);
+    return [];
+  }
+}
+
+/**
+ * 刷新指定 person 的词库缓存（Haiku 写入新词后调用）
+ * @param {string} personId
+ */
+export function invalidateKeywordCache(personId) {
+  _keywordCache.delete(personId);
+}
+
+// ─────────────────────────────────────────────
+// 3. 提取函数
 // ─────────────────────────────────────────────
 
 /**
- * 从消息文本中提取事实
+ * 从消息文本中提取事实（正则 + 动态词库）
  * @param {string} message
+ * @param {Array<{keyword: string, polarity: string}>} [learnedKeywords=[]] - 从 DB 加载的动态词库
  * @returns {{ preferences: Array, corrections: Array }}
  */
-export function extractFacts(message) {
+export function extractFacts(message, learnedKeywords = []) {
   if (!message || message.trim().length < 3) {
     return { preferences: [], corrections: [] };
   }
@@ -75,7 +124,7 @@ export function extractFacts(message) {
   const preferences = [];
   const corrections = [];
 
-  // 提取偏好/习惯
+  // 提取偏好/习惯（静态正则）
   for (const { re, polarity } of PREFERENCE_PATTERNS) {
     re.lastIndex = 0;
     let match;
@@ -88,6 +137,24 @@ export function extractFacts(message) {
           polarity,
           raw: match[0].trim(),
           temporal: detectTemporal(text),
+          source: 'regex',
+        });
+      }
+    }
+  }
+
+  // 动态词库匹配（learned_keywords 加速命中）
+  if (learnedKeywords.length > 0) {
+    const existingValues = new Set(preferences.map(p => p.value));
+    for (const { keyword, polarity } of learnedKeywords) {
+      if (text.includes(keyword) && !existingValues.has(keyword)) {
+        existingValues.add(keyword);
+        preferences.push({
+          value: keyword,
+          polarity,
+          raw: keyword,
+          temporal: detectTemporal(text),
+          source: 'learned',
         });
       }
     }
@@ -127,7 +194,126 @@ function detectTemporal(text) {
 }
 
 // ─────────────────────────────────────────────
-// 3. 存储函数
+// 4. Haiku 提取层
+// ─────────────────────────────────────────────
+
+/**
+ * 用 Haiku 提取消息中的偏好，找到正则漏掉的 gap，写入 learned_keywords
+ * @param {string} message
+ * @param {Array} regexPrefs - 正则已提取的偏好列表
+ * @param {Object} pool
+ * @param {string} personId
+ * @param {Function} callLLMFn - callLLM(agentId, prompt, options) 函数
+ * @returns {Promise<Array>} - Haiku 补充的额外偏好（不含正则已有的）
+ */
+export async function extractFactsWithHaiku(message, regexPrefs, pool, personId, callLLMFn) {
+  const prompt = `从以下消息中提取用户的偏好、习惯和当前状态。
+
+消息："${message}"
+
+请以 JSON 格式返回，格式如下：
+{
+  "preferences": [
+    {"value": "咖啡", "polarity": "positive"},
+    {"value": "早起", "polarity": "habit"}
+  ]
+}
+
+规则：
+- polarity 只能是: "positive"（喜欢）, "negative"（不喜欢）, "habit"（习惯）, "recent"（最近状态）
+- value 只保留核心关键词（2-10字），不含"喜欢"、"我"等结构词
+- 如果没有发现任何偏好，返回 {"preferences": []}
+- 只返回 JSON，不要其他文字`;
+
+  let haikuPrefs = [];
+  try {
+    const { text } = await callLLMFn('fact_extractor', prompt, { timeout: 15000, maxTokens: 256 });
+    const parsed = parseHaikuJSON(text);
+    haikuPrefs = (parsed?.preferences || []).filter(p =>
+      p && p.value && isValidValue(p.value) &&
+      ['positive', 'negative', 'habit', 'recent'].includes(p.polarity)
+    );
+  } catch (err) {
+    console.warn('[fact-extractor] Haiku 提取失败，降级到正则结果:', err.message);
+    return [];
+  }
+
+  // 找到 gap：Haiku 有但正则没有的 keywords
+  const regexValueSet = new Set(regexPrefs.map(p => p.value));
+  const gaps = haikuPrefs.filter(p => !regexValueSet.has(p.value));
+
+  // 写入 learned_keywords（反哺词库）
+  if (gaps.length > 0) {
+    await saveLearnedKeywords(pool, personId, gaps).catch(err =>
+      console.warn('[fact-extractor] saveLearnedKeywords failed:', err.message)
+    );
+    invalidateKeywordCache(personId);
+  }
+
+  // 保存 Haiku 找到的额外偏好到 person_signals
+  if (gaps.length > 0) {
+    const extraPrefs = gaps.map(p => ({
+      value: p.value,
+      polarity: p.polarity,
+      raw: p.value,
+      temporal: detectTemporal(message),
+      source: 'haiku',
+    }));
+    await savePreferences(pool, personId, extraPrefs).catch(err =>
+      console.warn('[fact-extractor] savePreferences(haiku) failed:', err.message)
+    );
+  }
+
+  return gaps;
+}
+
+/**
+ * 解析 Haiku 返回的 JSON（容错处理）
+ */
+function parseHaikuJSON(text) {
+  if (!text) return null;
+  // 尝试直接解析
+  try {
+    return JSON.parse(text.trim());
+  } catch { /* continue */ }
+  // 尝试提取 JSON block
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch { /* continue */ }
+  }
+  return null;
+}
+
+/**
+ * 将 gap keywords 写入 learned_keywords（ON CONFLICT 更新 use_count + last_seen_at）
+ * @param {Object} pool
+ * @param {string} personId
+ * @param {Array<{value: string, polarity: string}>} keywords
+ */
+export async function saveLearnedKeywords(pool, personId, keywords) {
+  if (!keywords || keywords.length === 0) return;
+
+  for (const kw of keywords) {
+    try {
+      await pool.query(
+        `INSERT INTO learned_keywords (person_id, keyword, polarity, source, use_count, last_seen_at)
+         VALUES ($1, $2, $3, 'haiku', 1, NOW())
+         ON CONFLICT (person_id, keyword) DO UPDATE
+           SET use_count    = learned_keywords.use_count + 1,
+               last_seen_at = NOW()`,
+        [personId, kw.value, kw.polarity]
+      );
+      console.log(`[fact-extractor] 学习关键词: "${kw.value}" (${kw.polarity})`);
+    } catch (err) {
+      console.warn('[fact-extractor] saveLearnedKeywords row failed:', err.message);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// 5. 存储函数
 // ─────────────────────────────────────────────
 
 /**
@@ -210,7 +396,7 @@ export async function saveCorrections(pool, corrections, rawMessage) {
 }
 
 // ─────────────────────────────────────────────
-// 4. 矛盾检测
+// 6. 矛盾检测
 // ─────────────────────────────────────────────
 
 /**
@@ -308,7 +494,7 @@ export async function saveClarificationRequests(pool, personId, contradictions) 
 }
 
 // ─────────────────────────────────────────────
-// 5. 类别推断（用于矛盾检测）
+// 7. 类别推断（用于矛盾检测）
 // ─────────────────────────────────────────────
 
 const CATEGORY_MAP = [
@@ -335,32 +521,43 @@ function inferCategory(value) {
 }
 
 // ─────────────────────────────────────────────
-// 6. 主入口（orchestrator-chat.js 调用）
+// 8. 主入口（orchestrator-chat.js 调用）
 // ─────────────────────────────────────────────
 
 /**
- * 处理一条用户消息，完成事实捕获 + 矛盾检测
+ * 处理一条用户消息，完成混合事实捕获 + 矛盾检测
  * fire-and-forget，失败静默
  *
  * @param {Object} pool
  * @param {string} personId
  * @param {string} message - 用户消息原文
+ * @param {Function|null} [callLLMFn=null] - callLLM 函数（提供则启用 Haiku 层）
  */
-export async function processMessageFacts(pool, personId, message) {
+export async function processMessageFacts(pool, personId, message, callLLMFn = null) {
   try {
-    const { preferences, corrections } = extractFacts(message);
+    // 1. 加载动态词库（Haiku 之前反哺的 learned keywords）
+    const learnedKeywords = await loadLearnedKeywords(pool, personId);
 
-    if (preferences.length === 0 && corrections.length === 0) return;
+    // 2. 正则提取（含动态词库加速）
+    const { preferences: regexPrefs, corrections } = extractFacts(message, learnedKeywords);
 
-    // 并行：保存偏好 + 矛盾检测 + 保存纠正
-    const [contradictions] = await Promise.all([
-      detectContradictions(pool, personId, preferences),
-      savePreferences(pool, personId, preferences),
-      saveCorrections(pool, corrections, message),
-    ]);
+    // 3. 并行：保存正则偏好 + 矛盾检测 + 保存纠正
+    if (regexPrefs.length > 0 || corrections.length > 0) {
+      const [contradictions] = await Promise.all([
+        detectContradictions(pool, personId, regexPrefs),
+        savePreferences(pool, personId, regexPrefs),
+        saveCorrections(pool, corrections, message),
+      ]);
 
-    if (contradictions.length > 0) {
-      await saveClarificationRequests(pool, personId, contradictions);
+      if (contradictions.length > 0) {
+        await saveClarificationRequests(pool, personId, contradictions);
+      }
+    }
+
+    // 4. Haiku 层（fire-and-forget，不等待）
+    if (callLLMFn) {
+      extractFactsWithHaiku(message, regexPrefs, pool, personId, callLLMFn)
+        .catch(err => console.warn('[fact-extractor] Haiku layer error:', err.message));
     }
   } catch (err) {
     console.warn('[fact-extractor] processMessageFacts failed:', err.message);
