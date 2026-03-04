@@ -284,6 +284,13 @@ describe('system task type exemption', () => {
     expect(result.passed).toBe(true);
   });
 
+  it('initiative_plan passes pre-flight without description', async () => {
+    const task = { title: 'Initiative 规划: PR 进度看板与 KR 追踪', priority: 'P1', task_type: 'initiative_plan' };
+    const result = await preFlightCheck(task);
+    expect(result.passed).toBe(true);
+    expect(result.issues).not.toContain('Task description is empty');
+  });
+
   it('dept_heartbeat with empty title still fails', async () => {
     const task = { title: '', priority: 'P1', task_type: 'dept_heartbeat' };
     const result = await preFlightCheck(task);
