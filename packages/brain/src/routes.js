@@ -9725,6 +9725,50 @@ async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
   });
 }
 
+/** GET /api/brain/feishu/groups — 查询已知飞书群（嘴巴 call_brain_api 用） */
+router.get('/feishu/groups', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT group_id,
+             COUNT(*) AS msg_count,
+             MAX(created_at) AS last_active_at
+      FROM unified_conversations
+      WHERE group_id IS NOT NULL AND channel = 'feishu_group'
+      GROUP BY group_id
+      ORDER BY last_active_at DESC
+    `);
+    res.json(result.rows.map(r => ({
+      group_id: r.group_id,
+      msg_count: parseInt(r.msg_count),
+      last_active_at: r.last_active_at,
+    })));
+  } catch (err) {
+    console.error('[feishu/groups] 查询失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/brain/feishu/send — 主动发飞书消息（嘴巴 call_brain_api 用）
+ *  body: { group_id?: string, open_id?: string, text: string }
+ */
+router.post('/feishu/send', async (req, res) => {
+  const { group_id, open_id, text } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'text 必填' });
+  if (!group_id && !open_id) return res.status(400).json({ error: 'group_id 或 open_id 必填一个' });
+
+  try {
+    const accessToken = await getFeishuToken();
+    const receiveId = group_id || open_id;
+    const receiveIdType = group_id ? 'chat_id' : 'open_id';
+    await sendFeishuMessage(accessToken, receiveId, receiveIdType, text);
+    console.log(`[feishu/send] 已发送到 ${receiveIdType}=${receiveId.slice(-8)}: ${text.slice(0, 60)}`);
+    res.json({ success: true, receiveId, receiveIdType });
+  } catch (err) {
+    console.error('[feishu/send] 发送失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/feishu/event', async (req, res) => {
   const body = req.body;
 
