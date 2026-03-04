@@ -239,8 +239,8 @@ jobs:
           echo "All Brain CI checks passed"
 
   deploy-brain:
-    needs: [ci-passed, changes]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success' && needs.changes.outputs.brain == 'true'
+    needs: [ci-passed]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success'
     name: Deploy Brain
     runs-on: ubuntu-latest
     timeout-minutes: 15
