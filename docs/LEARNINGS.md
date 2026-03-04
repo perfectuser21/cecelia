@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 事实捕获系统：脚本级偏好/纠正捕获 + 矛盾检测（PR #495, Brain v1.188.1）
+
+**背景**：Alex 希望 Cecelia 从对话中自然学习，而不是靠硬编码 prompt 来告知 AI 行为规则。短事实（"我喜欢蓝色"、5字）之前完全漏掉（400字阈值），行为纠正无处记录。
+
+**关键决策**：
+- 两层架构：脚本层（无 LLM，每条消息，零延迟）+ LLM 层（Haiku，150字以上）
+- 矛盾检测的类别模型：饮品/食物是互斥的，颜色/音乐可以并存 → NON_EXCLUSIVE_CATEGORIES
+- 矛盾的处理路径：不自动覆盖，写入 pending_conversations 让 Cecelia 在下次对话时主动问 Alex
+
+**工程踩坑**：
+- Migration 冲突：并行 PR (#493) 已占用 migration 118，我们需要改为 119（检测到时已在 CI 前）
+- pull_request CI 不触发：旧分支 (cp-03041559-fact-learning-system) 完全不触发 CI，创建干净新分支 (cp-03041559-fact-v2) 解决
+
+**效果**：
+- 每条对话消息 fire-and-forget 调用 `processMessageFacts`，失败静默不影响响应
+- 阈值 400→150 使更多对话进入 behavior_correction 学习路径
+
 ### [2026-03-04] Recurring Tasks × Notion 双向同步（PR #493, Brain v1.188.0）
 
 **背景**：`recurring_tasks` 表已有 cron 引擎，但无前台界面、无 Notion 同步、无 executor 字段。此 PR 实现完整的 Notion→DB 双向同步。
