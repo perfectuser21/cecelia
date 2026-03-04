@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] LLM Provider 选择原则：Bridge 优先，API Key 末选（PR #502, Brain v1.189.3）
+
+**背景**：fact_extractor agent 在 PR #498 中被配置为 `provider: 'anthropic-api'`（直连 API Key），违反了 Cecelia 内部 Agent 的 provider 选择原则。
+
+**核心原则（已写入 CLAUDE.md 第 6 节）**：
+- ① 首选 `anthropic`（无头 Bridge）— 使用 Claude Max 账号，零额外费用，与账号轮换机制集成
+- ② 次选 `minimax`（MiniMax API）— 轻量快速时的替代
+- ③ 末选 `anthropic-api`（直连 Anthropic API Key）— 消耗 API Key 配额，成本更高
+
+**测试结论**：MiniMax-M2.5-highspeed 可以完成 JSON 事实提取，结果质量与 Haiku 相当，可作为备用 provider。
+
+**工程踩坑**：
+- 版本冲突双重：第一次推送时 main 已是 1.189.2（我们也是 1.189.2），CI Version Check 失败；bump 到 1.189.3 后 main 再次前进导致 CONFLICTING，需要 `git merge origin/main` 解决
+
+**经验**：在并行开发活跃时，push 前必须先 `git show origin/main:packages/brain/package.json | jq .version` 确认 main 版本，再决定 bump 到哪个版本。
+
 ### [2026-03-04] 事实捕获系统：脚本级偏好/纠正捕获 + 矛盾检测（PR #495, Brain v1.188.1）
 
 **背景**：Alex 希望 Cecelia 从对话中自然学习，而不是靠硬编码 prompt 来告知 AI 行为规则。短事实（"我喜欢蓝色"、5字）之前完全漏掉（400字阈值），行为纠正无处记录。
