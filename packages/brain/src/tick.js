@@ -33,6 +33,7 @@ import { collectSelfReport } from './self-report-collector.js';
 import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
+import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 
 // Tick configuration
 const TICK_INTERVAL_MINUTES = 2;
@@ -2023,6 +2024,14 @@ async function executeTick() {
   // 10.13 48h 系统简报检查（每 48h 生成一次，fire-and-forget）
   Promise.resolve().then(() => check48hReport(pool))
     .catch(e => console.warn('[tick] 48h 简报检查失败:', e.message));
+
+  // 10.14 进化日志扫描（每日一次，自动记录 cecelia repo 新 PR，fire-and-forget）
+  Promise.resolve().then(() => scanEvolutionIfNeeded(pool))
+    .catch(e => console.warn('[tick] 进化日志扫描失败:', e.message));
+
+  // 10.15 进化叙事合成（每 7 天一次，更新各器官叙事摘要，fire-and-forget）
+  Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
+    .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
 
   // 11. 欲望系统（六层主动意识）
   publishCognitiveState({ phase: 'desire', detail: '感知与表达…' });
