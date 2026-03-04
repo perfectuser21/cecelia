@@ -467,10 +467,6 @@ echo "[8]  删除运行时文件..."
 # W8: .dev-mode 需要特殊处理（删除后验证）
 RUNTIME_FILES=(
     ".quality-report.json"
-    ".prd.md"
-    ".dod.md"
-    ".prd-${CP_BRANCH}.md"
-    ".dod-${CP_BRANCH}.md"
     ".quality-gate-passed"
     ".quality-gate-passed-${CP_BRANCH}"
     ".cecelia-run-id"
@@ -493,6 +489,22 @@ for FILE in "${RUNTIME_FILES[@]}"; do
         fi
     fi
 done
+
+# v1.10: 通配符删除所有 .prd-* 和 .dod-* 文件（包括自定义命名）
+# 不使用 RUNTIME_FILES 数组，直接 glob 删除
+echo "🧹 清理 .prd-*/.dod-* 临时文件..."
+PRD_DOD_COUNT=0
+for f in .prd-*.md .dod-*.md .prd.md .dod.md; do
+    if [[ -f "$f" ]]; then
+        if rm -f "$f" 2>/dev/null; then
+            PRD_DOD_COUNT=$((PRD_DOD_COUNT + 1))
+        fi
+    fi
+done
+if [[ "$PRD_DOD_COUNT" -gt 0 ]]; then
+    DELETED_COUNT=$((DELETED_COUNT + PRD_DOD_COUNT))
+    echo -e "   ${GREEN}[OK] 已删除 $PRD_DOD_COUNT 个 prd/dod 文件${NC}"
+fi
 
 if [[ $DELETED_COUNT -gt 0 ]]; then
     echo -e "   ${GREEN}[OK] 已删除 $DELETED_COUNT 个运行时文件${NC}"

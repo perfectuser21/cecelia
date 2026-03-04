@@ -444,12 +444,75 @@ if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "develop" ]]; then
         echo "✅ 已在功能分支: $CURRENT_BRANCH（worktree 中）"
 
         # 读取保存的状态
-        BASE_BRANCH=$(git config branch.$CURRENT_BRANCH.base-branch)
+        BASE_BRANCH=$(git config branch.$CURRENT_BRANCH.base-branch 2>/dev/null || echo "main")
 
         echo "   Base: $BASE_BRANCH"
         echo ""
-        echo "🔄 继续开发"
 
+        # 恢复模式：检查 .dev-mode.<branch> 是否存在
+        DEV_MODE_FILE=".dev-mode.${CURRENT_BRANCH}"
+        DEV_LOCK_FILE=".dev-lock.${CURRENT_BRANCH}"
+
+        if [[ ! -f "$DEV_MODE_FILE" ]]; then
+            echo "⚠️  检测到新 session（.dev-mode.$CURRENT_BRANCH 缺失）"
+            echo "   这是正常现象——上次 session 已结束，PR 尚未合并"
+            echo "   进入恢复模式：重建状态文件..."
+            echo ""
+
+            # 重建 .dev-lock（硬钥匙）
+            SESSION_ID=$(head -c 6 /dev/urandom | od -An -tx1 | tr -d " \n")
+            CURRENT_TTY=$(tty 2>/dev/null || echo "not a tty")
+
+            {
+              echo "dev_lock"
+              echo "branch: $CURRENT_BRANCH"
+              echo "session_id: $SESSION_ID"
+              echo "tty: $CURRENT_TTY"
+              echo "created_at: $(date -Iseconds)"
+              echo "resumed: true"
+            } > "$DEV_LOCK_FILE"
+            echo "✅ .dev-lock.$CURRENT_BRANCH 重建成功（恢复模式）"
+
+            # 检测 PRD 文件
+            PRD_FILE=""
+            if ls .prd-task-*.md 2>/dev/null | head -1 | grep -q .; then
+                PRD_FILE=$(ls .prd-task-*.md | head -1)
+            elif [[ -f ".prd-${CURRENT_BRANCH}.md" ]]; then
+                PRD_FILE=".prd-${CURRENT_BRANCH}.md"
+            else
+                PRD_FILE=".prd.md"
+            fi
+
+            # 重建 .dev-mode（软状态）
+            {
+              echo "dev"
+              echo "branch: $CURRENT_BRANCH"
+              echo "session_id: $SESSION_ID"
+              echo "tty: $CURRENT_TTY"
+              echo "prd: $PRD_FILE"
+              echo "started: $(date -Iseconds)"
+              echo "resumed: true"
+              echo "step_1_prd: done"
+              echo "step_2_detect: done"
+              echo "step_3_branch: done"
+              echo "step_4_explore: done"
+              echo "step_5_dod: done"
+              echo "step_6_code: pending"
+              echo "step_7_verify: pending"
+              echo "step_8_pr: pending"
+              echo "step_9_ci: pending"
+              echo "step_10_learning: pending"
+              echo "step_11_cleanup: pending"
+              echo "tasks_created: true"
+            } > "$DEV_MODE_FILE"
+            echo "✅ .dev-mode.$CURRENT_BRANCH 重建成功（恢复模式）"
+            echo ""
+            echo "🔄 恢复模式完成，继续开发（从 Step 6 继续）"
+        else
+            echo "🔄 继续开发（.dev-mode 已存在）"
+        fi
+
+        exit 0
         exit 0
     fi
 fi

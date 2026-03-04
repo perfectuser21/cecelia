@@ -77,6 +77,7 @@ Brain 传入：
 | **数量** | 3-8 个 Initiative | < 3 或 > 8 |
 | **独立可部署** | 每个 Initiative 单独部署后有价值 | Initiative 之间强依赖，顺序不对就无法运行 |
 | **DoD 明确** | 每个 Initiative 有清晰完成定义 | DoD 是"做完XXX"这种无法验证的描述 |
+| **Test 字段** | 每个 DoD 条目有 `test:` 字段（可执行验证命令） | DoD 纯文字描述，无 test 字段，无法自动验证 |
 | **覆盖度** | 所有 Initiative 做完 → Project 验收条件全过 | 明显遗漏关键步骤（如没有测试、没有部署） |
 | **命名可执行** | 名称明确说明交付什么 | "处理"、"完善"、"优化"等无内容词 |
 | **层级正确** | Initiative 下是 Task，不是另一个 Initiative | 层级错误（Initiative 嵌套） |
@@ -95,6 +96,7 @@ Brain 传入：
 - 某个 KR 缺少度量方式但格式正确
 - 某个 Initiative 命名模糊但逻辑正确
 - 数量轻微超出范围（如 9 个 Initiative）
+- 某个 Initiative DoD 缺少 test 字段但逻辑正确（1-2 个）
 
 ### rejected ❌
 以下任一情况立即 rejected：
@@ -103,6 +105,7 @@ Brain 传入：
 - 拆解与父层目标完全不相关
 - 层级错误（Initiative 下嵌套 Initiative）
 - 子项全是空洞名称，无法执行
+- **DoD 无 Test 字段**（所有 Initiative 的 DoD 都是纯文字，无法验证）
 - **层级跳跃**（children 中出现 `type='task'`，说明 decomp 误写了 tasks 表，直接打回重拆）
 
 ---

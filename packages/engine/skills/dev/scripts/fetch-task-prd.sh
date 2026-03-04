@@ -55,7 +55,21 @@ fetch_feature_tasks() {
     fi
 }
 
+# 从 Brain 读取 Initiative（Project）的 DoD
+fetch_initiative_dod() {
+    local project_id="$1"
+    [[ -z "$project_id" || "$project_id" == "null" ]] && return 0
+
+    local url="$BRAIN_URL/api/brain/projects/$project_id"
+    local project_json
+    project_json=$(curl --fail --silent --max-time "$TIMEOUT" "$url" 2>/dev/null) || return 0
+
+    # 提取 metadata.dod 字段（数组）
+    echo "$project_json" | jq -r '.metadata.dod // empty' 2>/dev/null
+}
+
 # 生成 PRD 文件
+
 generate_prd() {
     local task_id="$1"
     local task_json="$2"
@@ -136,48 +150,77 @@ EOF
 }
 
 # 生成 DoD 文件
+# $3: initiative_dod_json — Initiative 的 DoD（JSON 数组，每项含 item+test），可为空
 generate_dod() {
     local task_id="$1"
     local task_json="$2"
+    local initiative_dod_json="${3:-}"
 
     local dod_file=".dod-task-${task_id}.md"
     local title
 
     title=$(echo "$task_json" | jq -r '.title // "未命名任务"')
 
+    # 有 Initiative DoD 时：用行为级条目生成 DoD
+    if [[ -n "$initiative_dod_json" && "$initiative_dod_json" != "null" && "$initiative_dod_json" != "[]" ]]; then
+        echo "📋 使用 Initiative DoD 生成行为级验收标准..."
+
+        cat > "$dod_file" <<EOF
+# DoD: $title
+
+## 验收标准
+
+### 功能验收
+EOF
+
+        # 遍历每个 DoD 条目，生成带 Test 字段的 checkbox
+        local item_count
+        item_count=$(echo "$initiative_dod_json" | jq 'length' 2>/dev/null || echo 0)
+
+        for i in $(seq 0 $((item_count - 1))); do
+            local item test_cmd
+            item=$(echo "$initiative_dod_json" | jq -r ".[$i].item // .[$i] // "条目 $((i+1))"")
+            test_cmd=$(echo "$initiative_dod_json" | jq -r ".[$i].test // "manual:TODO"")
+            cat >> "$dod_file" <<EOF
+- [ ] $item
+      Test: $test_cmd
+EOF
+        done
+
+        cat >> "$dod_file" <<EOF
+
+### 测试验收
+- [ ] CI 全部通过
+      Test: contract:C2-001
+EOF
+        echo "✅ 已生成 DoD（来源：Initiative DoD，$item_count 条）: $dod_file"
+        return 0
+    fi
+
+    # 无 Initiative DoD 时：使用通用模板
+    echo "ℹ️  无 Initiative DoD，使用通用模板..."
     cat > "$dod_file" <<EOF
 # DoD: $title
 
 ## 功能验收
 
 - [ ] 功能按 PRD 实现
+      Test: manual:TODO
 - [ ] 手动测试通过
+      Test: manual:TODO
 
 ## 测试验收
 
-- [ ] 测试脚本存在
-- [ ] 所有测试通过
+- [ ] 测试脚本存在且通过
+      Test: manual:TODO
 
 ## 质量验收
 
-- [ ] 代码符合规范
-- [ ] 无明显 bug
 - [ ] CI 全部通过
-
-## CI/CD 验收
-
-- [ ] 版本号更新
-- [ ] RCI 覆盖率添加
-- [ ] Feature Registry 更新
-
-## 最终验收
-
-- [ ] PR 创建
-- [ ] CI 通过
-- [ ] PR 合并
+      Test: contract:C2-001
 EOF
 
-    echo "✅ 已生成 DoD: $dod_file"
+    echo "✅ 已生成 DoD（通用模板）: $dod_file"
 }
 
 # ============================================================================
@@ -249,9 +292,24 @@ main() {
         echo ""
     fi
 
-    # 3. 生成 PRD 和 DoD
+    # 3. 读取 Initiative DoD（如有）
+    local project_id
+    project_id=$(echo "$task_json" | jq -r '.project_id // ""')
+    local initiative_dod_json=""
+    if [[ -n "$project_id" && "$project_id" != "null" ]]; then
+        echo "📥 读取 Initiative DoD（project_id: $project_id）..."
+        initiative_dod_json=$(fetch_initiative_dod "$project_id") || true
+        if [[ -n "$initiative_dod_json" ]]; then
+            echo "✅ 找到 Initiative DoD"
+        else
+            echo "ℹ️  Initiative 无 DoD，使用模板"
+        fi
+        echo ""
+    fi
+
+    # 4. 生成 PRD 和 DoD
     generate_prd "$TASK_ID" "$task_json" "$prev_feedback"
-    generate_dod "$TASK_ID" "$task_json"
+    generate_dod "$TASK_ID" "$task_json" "$initiative_dod_json"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
