@@ -242,7 +242,7 @@ tasks_created: true
    - SUCCESS → 继续下一步
 
 3. PR 已合并？
-   ❌ → exit 2 → 合并 PR
+   ❌ → exit 2 → 执行 Step 10 (Learning → push → 合并 PR)
    ✅ → 删除 .dev-mode → exit 0 → 完成
 ```
 

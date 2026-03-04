@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.20.0
+version: 1.21.0
 created: 2026-01-16
 updated: 2026-03-04
 changelog:
+  - 1.21.0: SKILL.md Stop Hook 第3步遗漏 Learning 路由（三次修复后找到最后一个矛盾点）
   - 1.20.0: stop.sh 路由器 Bug（.dev-lock vs .dev-mode 路由条件不一致导致 LEARNINGS 落入单独 PR）
   - 1.19.0: DoD 格式陷阱三连（ls/echo/test -f 禁用模式 + migration 依赖链分析）
   - 1.18.0: stop-dev.sh step_10_learning 检查（LEARNINGS 双 PR 根因修复）
@@ -30,6 +31,31 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+### [2026-03-04] SKILL.md Stop Hook 第3步遗漏 Learning 路由
+
+**背景**：Learning 双 PR 问题已被修复三次（PR #522, #524, #525），但每次修复后问题依然出现。
+
+**最终根因定位（第3次审查）**：
+- SKILL.md 共有 6 处描述流程顺序的文本
+- PR #524 只改了 line 10（流程总览）
+- PR #525 改了 09-ci.md 5个矛盾点 + SKILL.md 的完成条件流程图
+- 遗漏了 **Stop Hook 统一完成条件** 第3步（SKILL.md line 245）：
+  ```
+  3. PR 已合并？
+     ❌ → exit 2 → 合并 PR   ← 没有 Learning！
+  ```
+- Stop Hook 触发时，AI 会重新读取 SKILL.md，看到这行直接去合并，完全跳过 Step 10
+
+**修复**：
+- 改为 `❌ → exit 2 → 执行 Step 10 (Learning → push → 合并 PR)`
+
+**经验教训**：
+1. **文档一致性扫描要穷举**：`grep "合并 PR\|合并 PR"` 搜索所有出现位置，逐一确认是否需要加 Learning 前置
+2. **Stop Hook 触发时重读 SKILL.md**：SKILL.md 是 AI 的"状态机说明"，Stop Hook 弹回来时 AI 会重新从 SKILL.md 的完成条件推断下一步动作
+3. **每处流程描述都是独立的行为触发器**：不能假设 AI 会"综合全局理解"，每处描述必须自洽且正确
 
 ---
 
