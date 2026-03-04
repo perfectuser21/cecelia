@@ -8,7 +8,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { runSync, getNotionConfig } from '../notion-sync.js';
-import { runFullSync, handleWebhook, NOTION_DB_IDS } from '../notion-full-sync.js';
+import { runFullSync, handleWebhook, NOTION_DB_IDS, pushAllToNotion } from '../notion-full-sync.js';
 import { rebuildMemoryDatabases, importAllMemoryData } from '../notion-memory-sync.js';
 
 const router = Router();
@@ -183,6 +183,25 @@ router.post('/memory-sync', async (_req, res) => {
     res.json({ success: true, stats });
   } catch (err) {
     console.error('[notion-sync/memory-sync]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /push-all
+ * 将 DB 中未同步的数据批量推送到 Notion（DB → Notion 方向）
+ * 推送范围：Areas（全部）、Goals（全部）、Projects（仅 type='project'）
+ * 已有 notion_id 的记录不会重复推送。
+ */
+router.post('/push-all', async (_req, res) => {
+  try {
+    if (!process.env.NOTION_API_KEY) {
+      return res.status(503).json({ error: 'NOTION_API_KEY 未配置' });
+    }
+    const stats = await pushAllToNotion();
+    res.json({ success: true, stats });
+  } catch (err) {
+    console.error('[notion-sync/push-all]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
