@@ -332,7 +332,7 @@ async function generateNextTask(kr, project, state, options = {}) {
   // V4: Phase-aware task selection — dev tasks first.
   const result = await pool.query(`
     SELECT * FROM tasks
-    WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress')
+    WHERE project_id = $1 AND goal_id = $2 AND status IN ('queued', 'in_progress') AND status != 'quarantined'
     ORDER BY
       CASE phase WHEN 'dev' THEN 0 ELSE 1 END,
       CASE status WHEN 'queued' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
