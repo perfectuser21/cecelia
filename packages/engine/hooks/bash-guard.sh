@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bash Guard Hook - 凭据泄露 + 代码写入保护 + HK 部署防护
+# Bash Guard Hook - 凭据泄露 + 代码写入保护 + Skill 文件保护 + HK 部署防护
 #
 # 性能模型：
 #   - 99% 的命令：3 次字符串匹配 (~3ms) → 放行
@@ -136,6 +136,45 @@ if [[ "$BASH_WRITES_CODE" == "true" ]]; then
         echo "当前分支: $CURRENT_BRANCH" >&2
         echo "禁止在 '$CURRENT_BRANCH' 分支用 Bash 直接写代码文件。" >&2
         echo "代码变更必须在功能分支（cp-* / feature/*）中进行。" >&2
+        echo "" >&2
+        echo "[SKILL_REQUIRED: dev]" >&2
+        echo "" >&2
+        exit 2
+    fi
+fi
+
+# ─── 规则 4: Skill 文件写入保护（~3ms）─────────────────────
+# SKILL.md 通过 symlink 链条指向 git 仓库，修改 = 改 git tracked 代码
+# 路径链: ~/.claude-account*/skills/ → ~/.claude/skills/ → packages/*/skills/
+# 拦截所有包含 SKILL.md 路径的写入操作（python/redirect/tee/cp/mv）
+SKILL_PATH_PATTERN='(\.claude(/|-account[0-9]*/)skills/|packages/(workflows|engine)/skills/)[^[:space:]]*SKILL\.md'
+BASH_WRITES_SKILL=false
+
+if echo "$CMD" | grep -Eq "$SKILL_PATH_PATTERN"; then
+    # 放行只读操作: head/cat/grep/diff/ls/wc/file/stat 且无重定向
+    if echo "$CMD" | grep -Eq '^[[:space:]]*(head|cat|grep|diff|ls|wc|file|stat|md5sum)\b' && \
+       ! echo "$CMD" | grep -Eq '>>?\s|[|]\s*tee\s'; then
+        : # 只读，放行
+    else
+        BASH_WRITES_SKILL=true
+    fi
+fi
+
+if [[ "$BASH_WRITES_SKILL" == "true" ]]; then
+    CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    if [[ -z "$CURRENT_BRANCH" ]] || [[ "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
+        : # 功能分支，放行
+    else
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] Skill 文件写入被拦截" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "当前分支: $CURRENT_BRANCH" >&2
+        echo "SKILL.md 通过 symlink 指向 git 仓库，修改必须走 /dev。" >&2
+        echo "" >&2
+        echo "路径链:" >&2
+        echo "  ~/.claude-account*/skills/ → ~/.claude/skills/ → packages/*/skills/" >&2
         echo "" >&2
         echo "[SKILL_REQUIRED: dev]" >&2
         echo "" >&2
