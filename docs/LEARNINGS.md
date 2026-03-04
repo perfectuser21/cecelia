@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Brain tick 48h 简报 cortex 对接（PR #460, Brain v1.181.0）
+
+**背景**：tick.js 已有 `check48hReport()` 但用的是 mock 实现；cortex.js 已有真实 `generateSystemReport()`。需要将两者对接，并补充缺失的 API 端点。
+
+**DoD grep 命令 detectFakeTest 陷阱**：`manual:grep -q ...` 在 `check-dod-mapping.cjs` 中会失败，因为 `detectFakeTest()` 的 `hasRealExecution` 正则只认 `node|npm|npx|psql|curl|bash|python|pytest|jest|mocha|vitest`，`grep` 不在列表中。正确写法：`manual:bash -c "grep -q '...' file"`，用 `bash -c` 包裹即可通过校验。
+
+**Version Check 与 main 版本追踪**：若之前的 PR 已将 main 推进到 1.180.0，而新 PR 从旧 worktree 出发仍是 1.180.0，会导致 Brain CI Version Check 失败（要求 current != base）。解决：先 `git show origin/main:packages/brain/package.json | jq -r .version` 确认 main 当前版本，再 bump 到更高版本，并同步 package-lock.json、.brain-versions、DEFINITION.md。
+
+**push 不触发新 CI run 的情况**：只改了 .brain-versions、DEFINITION.md、.dod.md 等非 Brain 源码文件时，`brain-ci.yml` 的 `paths` filter 可能不匹配，不会自动触发。可用 `gh workflow run brain-ci.yml --ref <branch>` 手动触发验证。
+
+**dynamic import 在 tick.js 中的使用**：`check48hReport()` 用 `await import('./cortex.js')` 动态导入而非顶层 import，避免 cortex 初始化（数据库连接）与 tick 模块耦合，单测中更容易 mock。
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
