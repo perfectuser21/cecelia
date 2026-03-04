@@ -780,6 +780,7 @@ async function planNextTask(scopeKRIds = null, options = {}) {
     SELECT DISTINCT p.* FROM projects p
     INNER JOIN pr_plans pp ON p.id = pp.project_id
     WHERE pp.status IN ('planning', 'in_progress')
+      AND (p.execution_mode = 'cecelia' OR p.execution_mode IS NULL)
     ORDER BY p.created_at ASC
   `);
 

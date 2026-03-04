@@ -18,7 +18,7 @@ vi.mock('../db.js', () => ({
 }));
 
 // ─── Import under test ────────────────────────────────────────
-import { runFullSync, pushToNotion, handleWebhook, NOTION_DB_IDS } from '../notion-full-sync.js';
+import { runFullSync, pushToNotion, handleWebhook, NOTION_DB_IDS, parseProject } from '../notion-full-sync.js';
 
 // ─── 工具函数 ────────────────────────────────────────────────
 
@@ -188,5 +188,82 @@ describe('runFullSync', () => {
     const stats = await runFullSync(mockDb);
     expect(stats.errors.length).toBeGreaterThan(0);
     expect(stats.errors[0]).toContain('network error');
+  });
+});
+
+// ─── parseProject（Execution Mode）──────────────────────────
+
+describe('parseProject', () => {
+  it('解析 Execution Mode = Cecelia → execution_mode = "cecelia"', () => {
+    const page = {
+      id: 'proj-001',
+      properties: {
+        Name:             { title: [{ plain_text: '测试项目' }] },
+        Status:           { status: { name: 'In Progress' } },
+        Priority:         { select: { name: 'High' } },
+        'Execution Mode': { select: { name: 'Cecelia' } },
+      },
+    };
+    const result = parseProject(page);
+    expect(result.execution_mode).toBe('cecelia');
+  });
+
+  it('解析 Execution Mode = XX → execution_mode = "xx"', () => {
+    const page = {
+      id: 'proj-002',
+      properties: {
+        Name:             { title: [{ plain_text: '用户项目' }] },
+        'Execution Mode': { select: { name: 'XX' } },
+      },
+    };
+    const result = parseProject(page);
+    expect(result.execution_mode).toBe('xx');
+  });
+
+  it('未设置 Execution Mode → execution_mode = null', () => {
+    const page = {
+      id: 'proj-003',
+      properties: {
+        Name: { title: [{ plain_text: '无归属项目' }] },
+      },
+    };
+    const result = parseProject(page);
+    expect(result.execution_mode).toBeNull();
+  });
+
+  it('handleWebhook project page upsert 包含 execution_mode 参数', async () => {
+    const client = {
+      query:   vi.fn().mockResolvedValue({ rows: [{ id: 'proj-db-id' }] }),
+      release: vi.fn(),
+    };
+    mockConnect.mockResolvedValue(client);
+    mockQuery.mockResolvedValue({ rows: [] }); // findDbIdByNotionId
+
+    mockFetch.mockResolvedValueOnce(notionOkResponse({
+      id: 'proj-notion-id',
+      parent: { database_id: NOTION_DB_IDS.projects.replace(/-/g, '') },
+      properties: {
+        Name:             { title: [{ plain_text: '测试项目' }] },
+        Status:           { status: { name: 'Not Started' } },
+        Priority:         { select: { name: 'High' } },
+        'Execution Mode': { select: { name: 'Cecelia' } },
+      },
+    }));
+
+    const mockDb = { query: mockQuery, connect: mockConnect };
+    const result = await handleWebhook(
+      { entity: { id: 'proj-notion-id' } },
+      mockDb
+    );
+
+    expect(result.synced).toBe(true);
+    expect(result.table).toBe('project');
+
+    // 验证 upsertProject 调用中包含 execution_mode = 'cecelia'
+    const insertCall = client.query.mock.calls.find(c =>
+      typeof c[0] === 'string' && c[0].includes('execution_mode')
+    );
+    expect(insertCall).toBeTruthy();
+    expect(insertCall[1]).toContain('cecelia');
   });
 });
