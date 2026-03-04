@@ -1722,3 +1722,19 @@ fi
   - 支持的格式：`tests/...`, `contract:<RCI_ID>`, `manual:<command>`
   - `manual:` 命令必须是真实可执行的（`node`, `npm`, `curl`, `grep` 等）
   - 不支持 `gh`, `jq`, `echo` 作为主命令
+
+---
+
+## PR #469 — 进化日志系统 v1.184.0 (2026-03-04)
+
+### 架构决策
+
+- **两张表分工清晰**：`component_evolutions`（原始记录，由 /dev 写入）vs `component_evolution_summaries`（合成叙事，由皮层生成）
+- **依赖注入代替 vi.mock**：`runEvolutionSynthesis(dbPool, llmCaller = callLLM)` 让测试更干净，避免 ESM mock 引用问题
+- **file-to-component 映射**：COMPONENT_RULES 数组，按优先级匹配文件路径，避免 hardcode
+
+### 踩坑
+
+- **中文文本 `.length < 50` 阈值**：中文字符在 JS 中计 1，"这周我的欲望系统...突破。" 只有 49 字符，刚好低于阈值导致 `llm_empty_response`。测试文本必须用超过 50 字节的内容（非字符数）。修复：给测试文本加一句话凑够 52 chars。
+- **vi.mock factory vi.fn() ESM 引用问题**：即使用 `vi.hoisted`，测试 mock 和模块内的 `callLLM` 可能不是同一引用。最终改用依赖注入完全规避。
+- **版本冲突 1.183.0 > 1.180.0**：并行开发时 main 前进，合并前必须 `git show origin/main:packages/brain/package.json | jq .version` 确认最新版本，然后 bump 到 max+1。
