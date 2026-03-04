@@ -1,5 +1,13 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] 新页面必须用相对路径调 Brain API（PR #475, Workspace v1.11.3）
+
+**问题**：EvolutionPage.tsx 硬编码 `const BRAIN_BASE = 'http://localhost:5221'`，浏览器从 5211 访问 5221 触发 CORS，"API 请求失败"。
+
+**规律**：前端页面调 Brain API 必须用**相对路径**（`/api/brain/...`），经 frontend-proxy（5211）代理。绝对不能硬编码端口。其他所有页面都是这样做的，新建页面时直接参照 GrowthProfilePage / DiaryPage 的模式。
+
+**检查命令**：`grep -rn "localhost:5221" apps/api/features/` 发现硬编码即为 bug。
+
 ### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
 
 **背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
