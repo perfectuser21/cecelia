@@ -99,8 +99,8 @@ jobs:
           echo "All Workspace CI checks passed"
 
   deploy-workspace:
-    needs: [ci-passed, changes]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success' && needs.changes.outputs.workspace == 'true'
+    needs: [ci-passed]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success'
     name: Deploy Workspace
     runs-on: ubuntu-latest
     timeout-minutes: 15
