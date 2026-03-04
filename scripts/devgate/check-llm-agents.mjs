@@ -101,10 +101,19 @@ if (missing.length > 0) {
   for (const { agentId, usedIn } of missing) {
     console.log(`  ❌ callLLM('${agentId}', ...) 未在 model-registry.js 注册`);
     console.log(`     使用位置: ${usedIn.join(', ')}`);
+    console.log('');
+    console.log(`  修复：在 packages/brain/src/model-registry.js AGENTS[] 添加：`);
+    console.log(`  {`);
+    console.log(`    id: '${agentId}',`);
+    console.log(`    name: '显示名称',           // ← 在前端 LM配置 页面显示`);
+    console.log(`    description: '职责描述',     // ← 一句话说明这个 agent 做什么`);
+    console.log(`    layer: 'brain',              // ← 大脑内部用 'brain'，派发任务用 'executor'`);
+    console.log(`    allowed_models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'],`);
+    console.log(`    recommended_model: 'claude-haiku-4-5-20251001', // ← 快速任务用 Haiku`);
+    console.log(`    fixed_provider: null,`);
+    console.log(`  },`);
+    console.log('');
   }
-  console.log('');
-  console.log('  修复方法：在 packages/brain/src/model-registry.js 的 AGENTS 数组中');
-  console.log('  添加对应条目，参考现有 brain layer agent 格式。');
   process.exit(1);
 }
 
