@@ -121,7 +121,7 @@ function parseGoal(page) {
 }
 
 /** 解析 Notion Project page → DB row */
-function parseProject(page) {
+export function parseProject(page) {
   const p = page.properties || {};
 
   const notionStatus = p.Status?.status?.name || 'pending';
@@ -151,6 +151,7 @@ function parseProject(page) {
     notion_area_id:     p.Area?.relation?.[0]?.id || null,
     notion_goal_id:     p.Goals?.relation?.[0]?.id || null,
     archived:           p.Archive?.checkbox || false,
+    execution_mode:     p['Execution Mode']?.select?.name?.toLowerCase() || null,
   };
 }
 
@@ -287,16 +288,17 @@ async function upsertGoal(client, data, areaDbId) {
 
 async function upsertProject(client, data, areaDbId, goalDbId) {
   const { rows } = await client.query(
-    `INSERT INTO projects (notion_id, name, status, description, deadline, area_id, goal_id, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),NOW())
+    `INSERT INTO projects (notion_id, name, status, description, deadline, area_id, goal_id, execution_mode, notion_synced_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        name=EXCLUDED.name, status=EXCLUDED.status, description=EXCLUDED.description,
        deadline=EXCLUDED.deadline,
        area_id=COALESCE(EXCLUDED.area_id, projects.area_id),
        goal_id=COALESCE(EXCLUDED.goal_id, projects.goal_id),
+       execution_mode=EXCLUDED.execution_mode,
        notion_synced_at=NOW(), updated_at=NOW()
      RETURNING id`,
-    [data.notion_id, data.name, data.status, data.description, data.deadline || null, areaDbId, goalDbId]
+    [data.notion_id, data.name, data.status, data.description, data.deadline || null, areaDbId, goalDbId, data.execution_mode || null]
   );
   return rows[0].id;
 }
