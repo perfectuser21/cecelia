@@ -50,59 +50,84 @@ const truncate = (s, n) => (String(s || '')).slice(0, n);
 // ─── 重建数据库结构 ────────────────────────────────────────────
 
 /**
+ * 动态查找 DB 当前的 title 属性名
+ */
+async function getTitlePropName(dbId) {
+  const db = await notionReq(`/databases/${dbId}`);
+  for (const [name, prop] of Object.entries(db.properties || {})) {
+    if (prop.type === 'title') return { name, existing: db.properties };
+  }
+  return { name: null, existing: db.properties || {} };
+}
+
+/**
  * 更新 3 个 Notion 数据库为正确结构
+ * 策略：先 GET 获取当前 title 属性名，再 PATCH（只改名 + 只加缺失属性）
+ * 不操作 Notion 内置属性（created_time 等）
  */
 export async function rebuildMemoryDatabases() {
   const results = {};
 
-  // 主人档案 — Title=键, 值=rich_text, 类别/来源/更新时间
+  // ── 主人档案 —— Title=键, 值/类别/来源/更新时间 ──
   try {
+    const { name: titleName, existing } = await getTitlePropName(NOTION_MEMORY_DB_IDS.ownerProfile);
+    const patchProps = {};
+    if (titleName && titleName !== '键') patchProps[titleName] = { name: '键' };
+    if (!existing['值'])       patchProps['值']       = { rich_text: {} };
+    if (!existing['类别'])     patchProps['类别']     = { select: { options: [] } };
+    if (!existing['来源'])     patchProps['来源']     = { select: { options: [] } };
+    if (!existing['更新时间']) patchProps['更新时间'] = { date: {} };
     await notionReq(`/databases/${NOTION_MEMORY_DB_IDS.ownerProfile}`, 'PATCH', {
       title: [{ text: { content: '👤 主人档案' } }],
-      properties: {
-        '内容':     { name: '键' },
-        '创建时间': { name: '更新时间' },
-        '值':       { rich_text: {} },
-      },
+      properties: patchProps,
     });
     results.ownerProfile = 'ok';
   } catch (e) {
     results.ownerProfile = e.message.slice(0, 100);
   }
 
-  // 人脉网络 — Title=姓名, 关系/联系方式/备注/来源/更新时间
+  // ── 人脉网络 —— Title=姓名, 关系/联系方式/备注/来源/更新时间 ──
   try {
+    const { name: titleName, existing } = await getTitlePropName(NOTION_MEMORY_DB_IDS.contacts);
+    const patchProps = {};
+    if (titleName && titleName !== '姓名') patchProps[titleName] = { name: '姓名' };
+    if (!existing['关系'])     patchProps['关系']     = { select: { options: [
+      { name: 'colleague', color: 'blue' },
+      { name: 'friend',    color: 'green' },
+      { name: 'family',    color: 'orange' },
+      { name: 'client',    color: 'purple' },
+      { name: 'other',     color: 'gray' },
+    ]}};
+    if (!existing['联系方式']) patchProps['联系方式'] = { rich_text: {} };
+    if (!existing['备注'])     patchProps['备注']     = { rich_text: {} };
+    if (!existing['来源'])     patchProps['来源']     = { select: { options: [] } };
+    if (!existing['更新时间']) patchProps['更新时间'] = { date: {} };
     await notionReq(`/databases/${NOTION_MEMORY_DB_IDS.contacts}`, 'PATCH', {
       title: [{ text: { content: '👥 人脉网络' } }],
-      properties: {
-        '创建时间': { name: '更新时间' },
-        '联系方式': { rich_text: {} },
-        '关系': {
-          select: {
-            options: [
-              { name: 'colleague', color: 'blue' },
-              { name: 'friend',    color: 'green' },
-              { name: 'family',    color: 'orange' },
-              { name: 'client',    color: 'purple' },
-              { name: 'other',     color: 'gray' },
-            ],
-          },
-        },
-      },
+      properties: patchProps,
     });
     results.contacts = 'ok';
   } catch (e) {
     results.contacts = e.message.slice(0, 100);
   }
 
-  // Cecelia 日记 — Title=摘要, 类型/重要性/日期
+  // ── Cecelia 日记 —— Title=摘要, 类型/重要性/日期 ──
   try {
+    const { name: titleName, existing } = await getTitlePropName(NOTION_MEMORY_DB_IDS.diary);
+    const patchProps = {};
+    if (titleName && titleName !== '摘要') patchProps[titleName] = { name: '摘要' };
+    if (!existing['类型'])   patchProps['类型']   = { select: { options: [
+      { name: 'episodic',   color: 'blue' },
+      { name: 'reflection', color: 'purple' },
+      { name: 'desire',     color: 'red' },
+      { name: 'learning',   color: 'green' },
+      { name: 'self_model', color: 'orange' },
+    ]}};
+    if (!existing['重要性']) patchProps['重要性'] = { number: { format: 'number' } };
+    if (!existing['日期'])   patchProps['日期']   = { date: {} };
     await notionReq(`/databases/${NOTION_MEMORY_DB_IDS.diary}`, 'PATCH', {
       title: [{ text: { content: '📖 Cecelia 日记' } }],
-      properties: {
-        '内容':     { name: '摘要' },
-        '创建时间': { name: '日期' },
-      },
+      properties: patchProps,
     });
     results.diary = 'ok';
   } catch (e) {
@@ -169,6 +194,7 @@ export async function importAllMemoryData() {
       await sleep(300);
     } catch (e) {
       stats.errors++;
+      console.error(`[notion-memory] ownerProfile 导入失败 id=${row.id}: ${e.message}`);
     }
   }
 
@@ -194,6 +220,7 @@ export async function importAllMemoryData() {
       await sleep(300);
     } catch (e) {
       stats.errors++;
+      console.error(`[notion-memory] contacts 导入失败 id=${row.id}: ${e.message}`);
     }
   }
 
@@ -226,6 +253,7 @@ export async function importAllMemoryData() {
       await sleep(300);
     } catch (e) {
       stats.errors++;
+      console.error(`[notion-memory] diary 导入失败 id=${row.id}: ${e.message}`);
     }
   }
 
