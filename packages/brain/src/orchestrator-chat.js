@@ -63,7 +63,29 @@ export async function buildManifestBlock() {
     const manifest = JSON.parse(raw);
     const actions = Array.from(manifest.allActions || []).join(', ');
     const skills = Array.from(manifest.allSkills || []).join(', ');
-    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}\n- 用 call_brain_api 可实时查询任意 Brain API 端点，例如：\n  - GET /api/brain/tasks?status=queued — 查任务队列\n  - GET /api/brain/feishu/groups — 查已知飞书群\n  - POST /api/brain/feishu/send — 主动发飞书消息（body: {group_id或open_id, text}）\n  - GET /api/brain/status/full — 查系统状态\n`;
+
+    // 从 DB 查询已知飞书群，直接注入 group_id，让 LLM 无需先 GET 再 POST
+    let feishuGroupsBlock = '';
+    try {
+      const groupResult = await pool.query(`
+        SELECT group_id, COUNT(*) AS msg_count, MAX(created_at) AS last_active_at
+        FROM unified_conversations
+        WHERE group_id IS NOT NULL AND channel = 'feishu_group'
+        GROUP BY group_id
+        ORDER BY last_active_at DESC
+        LIMIT 5
+      `);
+      if (groupResult.rows.length > 0) {
+        const groupLines = groupResult.rows.map(r =>
+          `    - group_id: ${r.group_id}（${r.msg_count} 条消息，最近: ${new Date(r.last_active_at).toLocaleDateString('zh-CN')}）`
+        ).join('\n');
+        feishuGroupsBlock = `\n- **已知飞书群**（可直接用 group_id 发消息，无需先查）：\n${groupLines}`;
+      }
+    } catch (dbErr) {
+      console.warn('[orchestrator-chat] buildManifestBlock: feishu groups query failed:', dbErr.message);
+    }
+
+    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}${feishuGroupsBlock}\n- 用 call_brain_api 可实时查询任意 Brain API 端点，例如：\n  - GET /api/brain/tasks?status=queued — 查任务队列\n  - GET /api/brain/feishu/groups — 查已知飞书群\n  - POST /api/brain/feishu/send — 主动发飞书消息（body: {group_id或open_id, text}）\n  - GET /api/brain/status/full — 查系统状态\n`;
   } catch (err) {
     console.warn('[orchestrator-chat] buildManifestBlock failed:', err.message);
     return '';
@@ -549,7 +571,7 @@ export async function handleChat(message, context = {}, messages = [], imageCont
       thalamus_signal.body || null
     );
     const resultData = apiResult.success ? apiResult.data : { error: apiResult.error };
-    const toolResultBlock = `\n\n## Brain API 查询结果（${thalamus_signal.path}）\n${JSON.stringify(resultData, null, 2)}\n请直接基于上述实时数据回答用户，不要再调用 call_brain_api 了。`;
+    const toolResultBlock = `\n\n## Brain API 查询结果（${thalamus_signal.path}）\n${JSON.stringify(resultData, null, 2)}\n如果已获得所需数据，请直接回答用户；如果需要继续操作（如先查到 group_id 再发消息），可以再调用一次 call_brain_api。`;
     try {
       const result2 = await callWithHistory(message, systemPrompt + toolResultBlock, {}, messages, imageContent);
       reply = result2.reply;
