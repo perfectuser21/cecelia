@@ -56,6 +56,80 @@ async function notionReq(token, path, method = 'GET', body = null) {
   return data;
 }
 
+/**
+ * 将 Notion page.properties 序列化为可存入 JSONB 的简化对象
+ * 只提取每种 property 类型的核心值，保留原始结构用于动态读取
+ */
+function extractNotionProps(page) {
+  const p = page.properties || {};
+  const result = {};
+  for (const [key, val] of Object.entries(p)) {
+    if (!val || !val.type) {
+      result[key] = val;
+      continue;
+    }
+    switch (val.type) {
+      case 'title':
+        result[key] = { type: 'title', value: val.title?.map(t => t.plain_text).join('') || '' };
+        break;
+      case 'rich_text':
+        result[key] = { type: 'rich_text', value: val.rich_text?.map(t => t.plain_text).join('') || '' };
+        break;
+      case 'select':
+        result[key] = { type: 'select', value: val.select?.name || null };
+        break;
+      case 'multi_select':
+        result[key] = { type: 'multi_select', value: val.multi_select?.map(s => s.name) || [] };
+        break;
+      case 'status':
+        result[key] = { type: 'status', value: val.status?.name || null };
+        break;
+      case 'checkbox':
+        result[key] = { type: 'checkbox', value: !!val.checkbox };
+        break;
+      case 'number':
+        result[key] = { type: 'number', value: val.number ?? null };
+        break;
+      case 'date':
+        result[key] = { type: 'date', value: val.date?.start || null, end: val.date?.end || null };
+        break;
+      case 'relation':
+        result[key] = { type: 'relation', value: val.relation?.map(r => r.id) || [] };
+        break;
+      case 'people':
+        result[key] = { type: 'people', value: val.people?.map(p => p.id || p.name) || [] };
+        break;
+      case 'url':
+        result[key] = { type: 'url', value: val.url || null };
+        break;
+      case 'email':
+        result[key] = { type: 'email', value: val.email || null };
+        break;
+      case 'phone_number':
+        result[key] = { type: 'phone_number', value: val.phone_number || null };
+        break;
+      case 'files':
+        result[key] = { type: 'files', value: val.files?.map(f => f.name || f.external?.url || '') || [] };
+        break;
+      case 'formula':
+        result[key] = { type: 'formula', value: val.formula?.string || val.formula?.number || val.formula?.boolean || null };
+        break;
+      case 'rollup':
+        result[key] = { type: 'rollup', value: val.rollup?.number ?? null };
+        break;
+      case 'created_time':
+        result[key] = { type: 'created_time', value: val.created_time || null };
+        break;
+      case 'last_edited_time':
+        result[key] = { type: 'last_edited_time', value: val.last_edited_time || null };
+        break;
+      default:
+        result[key] = { type: val.type, raw: val };
+    }
+  }
+  return result;
+}
+
 function plainText(richText) {
   if (!Array.isArray(richText)) return '';
   return richText.map(t => t.plain_text || '').join('');
@@ -90,10 +164,11 @@ async function queryDB(token, dbId, filter = null) {
 function parseArea(page) {
   const p = page.properties || {};
   return {
-    notion_id: page.id,
-    name:      titleText(p, 'Name', 'name'),
-    domain:    p.Domain?.select?.name || null,
-    archived:  p.Archive?.checkbox || false,
+    notion_id:    page.id,
+    name:         titleText(p, 'Name', 'name'),
+    domain:       p.Domain?.select?.name || null,
+    archived:     p.Archive?.checkbox || false,
+    notion_props: extractNotionProps(page),
   };
 }
 
@@ -111,12 +186,13 @@ function parseGoal(page) {
   };
 
   return {
-    notion_id:     page.id,
-    title:         titleText(p, 'Name', 'name'),
-    status:        statusMap[notionStatus] || 'pending',
-    target_date:   p['Due Date']?.date?.start || null,
-    notion_area_id: areaRelation,  // notion page id of related area
-    archived:      p.Archive?.checkbox || false,
+    notion_id:      page.id,
+    title:          titleText(p, 'Name', 'name'),
+    status:         statusMap[notionStatus] || 'pending',
+    target_date:    p['Due Date']?.date?.start || null,
+    notion_area_id: areaRelation,
+    archived:       p.Archive?.checkbox || false,
+    notion_props:   extractNotionProps(page),
   };
 }
 
@@ -152,6 +228,7 @@ export function parseProject(page) {
     notion_goal_id:     p.Goals?.relation?.[0]?.id || null,
     archived:           p.Archive?.checkbox || false,
     execution_mode:     p['Execution Mode']?.select?.name?.toLowerCase() || null,
+    notion_props:       extractNotionProps(page),
   };
 }
 
@@ -167,6 +244,9 @@ function parseTask(page) {
     'Next Action': 'queued',
     'In Progress': 'in_progress',
     'Done':        'completed',
+    'Completed':   'completed',
+    'AI Done':     'completed',
+    'AI Failed':   'failed',
   };
 
   const priorityMap = {
@@ -177,16 +257,17 @@ function parseTask(page) {
   };
 
   return {
-    notion_id:        page.id,
-    title:            titleText(p, 'Name', 'name'),
-    status:           statusMap[p.Status?.status?.name] || 'queued',
-    priority:         priorityMap[p.Priority?.select?.name] || 'P2',
-    description:      plainText(p.Description?.rich_text) || null,
-    due_at:           p.PD?.date?.start || null,
+    notion_id:         page.id,
+    title:             titleText(p, 'Name', 'name'),
+    status:            statusMap[p.Status?.status?.name] || 'queued',
+    priority:          priorityMap[p.Priority?.select?.name] || 'P2',
+    description:       plainText(p.Description?.rich_text) || null,
+    due_at:            p.PD?.date?.start || null,
     notion_project_id: p.Project?.relation?.[0]?.id || null,
     notion_goal_id:    p.Goal?.relation?.[0]?.id || null,
     notion_area_id:    p.Area?.relation?.[0]?.id || null,
     archived:          p.Archived?.checkbox || false,
+    notion_props:      extractNotionProps(page),
   };
 }
 
@@ -261,61 +342,65 @@ function buildTaskProperties(row) {
 
 async function upsertArea(client, data) {
   const { rows } = await client.query(
-    `INSERT INTO areas (notion_id, name, domain, archived, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,NOW(),NOW(),NOW())
+    `INSERT INTO areas (notion_id, name, domain, archived, notion_props, notion_synced_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        name=EXCLUDED.name, domain=EXCLUDED.domain,
-       archived=EXCLUDED.archived, notion_synced_at=NOW(), updated_at=NOW()
+       archived=EXCLUDED.archived, notion_props=EXCLUDED.notion_props,
+       notion_synced_at=NOW(), updated_at=NOW()
      RETURNING id`,
-    [data.notion_id, data.name, data.domain, data.archived]
+    [data.notion_id, data.name, data.domain, data.archived, data.notion_props ? JSON.stringify(data.notion_props) : null]
   );
   return rows[0].id;
 }
 
 async function upsertGoal(client, data, areaDbId) {
   const { rows } = await client.query(
-    `INSERT INTO goals (notion_id, title, status, target_date, area_id, type, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,'kr',NOW(),NOW(),NOW())
+    `INSERT INTO goals (notion_id, title, status, target_date, area_id, type, notion_props, notion_synced_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,'kr',$6,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        title=EXCLUDED.title, status=EXCLUDED.status, target_date=EXCLUDED.target_date,
        area_id=COALESCE(EXCLUDED.area_id, goals.area_id),
+       notion_props=EXCLUDED.notion_props,
        notion_synced_at=NOW(), updated_at=NOW()
      RETURNING id`,
-    [data.notion_id, data.title, data.status, data.target_date || null, areaDbId]
+    [data.notion_id, data.title, data.status, data.target_date || null, areaDbId, data.notion_props ? JSON.stringify(data.notion_props) : null]
   );
   return rows[0].id;
 }
 
 async function upsertProject(client, data, areaDbId, goalDbId) {
   const { rows } = await client.query(
-    `INSERT INTO projects (notion_id, name, status, description, deadline, area_id, goal_id, execution_mode, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),NOW())
+    `INSERT INTO projects (notion_id, name, status, description, deadline, area_id, goal_id, execution_mode, notion_props, notion_synced_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        name=EXCLUDED.name, status=EXCLUDED.status, description=EXCLUDED.description,
        deadline=EXCLUDED.deadline,
        area_id=COALESCE(EXCLUDED.area_id, projects.area_id),
        goal_id=COALESCE(EXCLUDED.goal_id, projects.goal_id),
        execution_mode=EXCLUDED.execution_mode,
+       notion_props=EXCLUDED.notion_props,
        notion_synced_at=NOW(), updated_at=NOW()
      RETURNING id`,
-    [data.notion_id, data.name, data.status, data.description, data.deadline || null, areaDbId, goalDbId, data.execution_mode || null]
+    [data.notion_id, data.name, data.status, data.description, data.deadline || null, areaDbId, goalDbId, data.execution_mode || null, data.notion_props ? JSON.stringify(data.notion_props) : null]
   );
   return rows[0].id;
 }
 
 async function upsertTask(client, data, projectDbId, areaDbId) {
   const { rows } = await client.query(
-    `INSERT INTO tasks (notion_id, title, status, priority, description, due_at, project_id, area_id, task_type, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'notion_synced',NOW(),NOW(),NOW())
+    `INSERT INTO tasks (notion_id, title, status, priority, description, due_at, project_id, area_id, task_type, notion_props, notion_synced_at, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'notion_synced',$9,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        title=EXCLUDED.title, status=EXCLUDED.status, priority=EXCLUDED.priority,
        description=EXCLUDED.description, due_at=EXCLUDED.due_at,
        project_id=COALESCE(EXCLUDED.project_id, tasks.project_id),
        area_id=COALESCE(EXCLUDED.area_id, tasks.area_id),
+       notion_props=EXCLUDED.notion_props,
        notion_synced_at=NOW(), updated_at=NOW()
      RETURNING id`,
     [data.notion_id, data.title, data.status, data.priority, data.description,
-     data.due_at || null, projectDbId, areaDbId]
+     data.due_at || null, projectDbId, areaDbId, data.notion_props ? JSON.stringify(data.notion_props) : null]
   );
   return rows[0].id;
 }
