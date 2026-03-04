@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] CI Fitness Functions 系统一致性自动检查（PR #515, Brain v1.192.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**背景**：Brain 存在"千疮百孔"式配置漂移问题 —— `callLLM()` 调用、`model-registry.js`、前端 LM配置 三处必须手动保持同步，无任何自动化机制检测漂移。
+
+**关键决策**：
+- CI Fitness Functions（软件架构领域术语）= 用 CI 验证系统级一致性，不只是代码质量
+- 硬失败 vs 软警告原则：LLM agent 缺注册直接影响配置可见性 → 硬失败；executor/skill 缺注册只是 UI 看不到 → 软警告
+- `check-llm-agents.mjs` 用正则 `callLLM(?:Fn|Stream)?\s*\(\s*['"]([a-z_]+)['"]` 扫描所有调用，与 model-registry AGENTS[] 比对
+- `check-skills-registry.mjs` 读取 manifest 的 `allSkills` 时注意：格式是 `{taskType: skillPath}` 对象，不是数组
+
+**工程经验**：
+- **pull_request CI 不触发（经典坑）**：新建 PR 后 CI 未启动，空 commit/关闭再重开均无效。根本解决：新建干净分支（`cp-xxx-v2`）从 origin/main 出发，重新 checkout 代码，新 PR 正常触发
+- **工作树中合并版本文件冲突**：直接 checkout 非版本文件（`git checkout origin/<old-branch> -- <files>`），版本文件从 origin/main 重置后手动 bump
+- **workflow_dispatch 触发 CI 时 `brain=false`**：`github.base_ref` 为空，changes job 找不到 diff base → 所有下游 jobs 被跳过，无法真正验证，必须用 pull_request 事件
+
 ### [2026-03-04] GTD System 导航重构 + Notion 风格数据库视图（PR #504, Workspace v1.173.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
