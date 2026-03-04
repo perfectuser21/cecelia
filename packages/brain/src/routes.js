@@ -1,5 +1,6 @@
  
 import { Router } from 'express';
+import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from './stats.js';
 // Inlined from deleted orchestrator.js / perception.js (1/31 migration remnants replaced by three-layer brain)
 async function getActivePolicy() {
   const result = await pool.query(`SELECT id, version, name, content_json FROM policy WHERE active = true ORDER BY version DESC LIMIT 1`);
@@ -6022,6 +6023,81 @@ router.get('/stats/overview', async (req, res) => {
   } catch (err) {
     console.error('[API] Failed to get stats overview:', err.message);
     res.status(500).json({ error: 'Failed to get stats overview', details: err.message });
+  }
+});
+
+// ==================== PR Stats API ====================
+
+/**
+ * GET /api/brain/stats/pr-count
+ * 查询当月或指定月份自主完成的 PR 数量
+ *
+ * Query params:
+ *   month  {number} 月份 (1-12)，默认当月
+ *   year   {number} 年份，默认当年
+ *   kr_id  {string} 可选，KR 的 UUID，过滤特定 KR 下的 PR
+ */
+router.get('/stats/pr-count', async (req, res) => {
+  try {
+    const now = new Date();
+    const month = parseInt(req.query.month, 10) || (now.getMonth() + 1);
+    const year = parseInt(req.query.year, 10) || now.getFullYear();
+    const kr_id = req.query.kr_id || null;
+
+    if (month < 1 || month > 12 || isNaN(month)) {
+      return res.status(400).json({ error: 'Invalid month parameter (must be 1-12)' });
+    }
+    if (year < 2020 || year > 2100 || isNaN(year)) {
+      return res.status(400).json({ error: 'Invalid year parameter' });
+    }
+
+    let count;
+    if (kr_id) {
+      count = await getMonthlyPRsByKR(pool, kr_id, month, year);
+    } else {
+      count = await getMonthlyPRCount(pool, month, year);
+    }
+
+    const successRate = await getPRSuccessRate(pool, month, year);
+
+    res.json({
+      month,
+      year,
+      kr_id: kr_id || null,
+      count,
+      success_rate: successRate,
+    });
+  } catch (err) {
+    console.error('[API] stats/pr-count error:', err.message);
+    res.status(500).json({ error: 'Failed to get PR count', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/stats/pr-trend
+ * 获取最近 N 天每日 PR 完成趋势
+ *
+ * Query params:
+ *   days  {number} 天数 (1-365)，默认 30
+ */
+router.get('/stats/pr-trend', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days, 10) || 30;
+
+    if (isNaN(days) || days < 1 || days > 365) {
+      return res.status(400).json({ error: 'Invalid days parameter (must be 1-365)' });
+    }
+
+    const trend = await getPRTrend(pool, days);
+
+    res.json({
+      days,
+      trend,
+      total: trend.reduce((sum, d) => sum + d.count, 0),
+    });
+  } catch (err) {
+    console.error('[API] stats/pr-trend error:', err.message);
+    res.status(500).json({ error: 'Failed to get PR trend', details: err.message });
   }
 });
 
