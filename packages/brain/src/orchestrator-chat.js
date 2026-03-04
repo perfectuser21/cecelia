@@ -63,7 +63,7 @@ export async function buildManifestBlock() {
     const manifest = JSON.parse(raw);
     const actions = Array.from(manifest.allActions || []).join(', ');
     const skills = Array.from(manifest.allSkills || []).join(', ');
-    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}\n- 用 call_brain_api 可实时查询任意 Brain API 端点（如 /api/brain/tasks、/api/brain/feishu/groups 等）\n`;
+    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}\n- 用 call_brain_api 可实时查询任意 Brain API 端点，例如：\n  - GET /api/brain/tasks?status=queued — 查任务队列\n  - GET /api/brain/feishu/groups — 查已知飞书群\n  - POST /api/brain/feishu/send — 主动发飞书消息（body: {group_id或open_id, text}）\n  - GET /api/brain/status/full — 查系统状态\n`;
   } catch (err) {
     console.warn('[orchestrator-chat] buildManifestBlock failed:', err.message);
     return '';
@@ -103,14 +103,16 @@ async function callWithHistory(userMessage, systemPrompt, options = {}, historyM
   const { text } = await callLLM('mouth', fullPrompt, callOptions);
 
   // 尝试解析 JSON 结构化输出（含 thalamus_signal 时）
-  // 格式: {"reply": "...", "thalamus_signal": {...}} 或纯文本
+  // 支持两种格式：
+  //   纯 JSON:  {"reply": "...", "thalamus_signal": {...}}
+  //   文字+JSON: "自然语言文字\n{"reply": "...", "thalamus_signal": {...}}"
   let reply = text;
   let thalamus_signal = null;
 
-  const trimmed = text.trim();
-  if (trimmed.startsWith('{') && trimmed.includes('"reply"')) {
+  const jsonStart = text.lastIndexOf('{"reply"');
+  if (jsonStart !== -1) {
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed = JSON.parse(text.slice(jsonStart));
       if (parsed.reply) {
         reply = parsed.reply;
         thalamus_signal = parsed.thalamus_signal || null;
