@@ -666,4 +666,77 @@ describe('orchestrator-chat', () => {
       expect(result.reply).toBe('这是一段普通回复，没有 JSON。');
     });
   });
+
+  // ===================== D15: buildManifestBlock 飞书群注入 =====================
+
+  describe('buildManifestBlock - 飞书群 ID 注入', () => {
+    it('DB 有群记录时，manifest block 包含 group_id', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+
+      // 注入 pool.query 返回群数据
+      pool.query.mockResolvedValueOnce({
+        rows: [
+          { group_id: 'oc_test123', msg_count: '5', last_active_at: new Date('2026-03-04') },
+        ],
+      });
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('oc_test123');
+      expect(block).toContain('已知飞书群');
+    });
+
+    it('DB 无群记录时，manifest block 正常返回（不含群 group_id 列表）', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('Brain 能力清单');
+      // 无群记录时不应出现"可直接用 group_id 发消息"的已知群列表段落
+      expect(block).not.toContain('可直接用 group_id');
+    });
+
+    it('DB 查询异常时静默降级，仍返回 manifest block', async () => {
+      const manifest = { allActions: ['create_task'], allSkills: ['dev'], allSignals: [] };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+      pool.query.mockRejectedValueOnce(new Error('DB timeout'));
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('Brain 能力清单');
+      expect(block.length).toBeGreaterThan(0);
+    });
+
+    it('工具链结果注入提示允许继续调用，不含"不要再调用"硬性限制', async () => {
+      vi.stubGlobal('fetch', vi.fn()
+        .mockResolvedValueOnce({
+          ok: true, status: 200,
+          json: () => Promise.resolve([{ group_id: 'oc_abc', msg_count: 1, last_active_at: new Date() }]),
+          text: () => Promise.resolve(''),
+        })
+        .mockResolvedValueOnce({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ success: true }),
+          text: () => Promise.resolve(''),
+        })
+      );
+
+      // 第一次：LLM 返回 call_brain_api（GET groups）
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "查一下群", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/groups"}}'
+      ));
+      // 第二次：LLM 基于结果继续发消息（POST send）
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "发出去了！", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/send", "method": "POST", "body": {"group_id": "oc_abc", "text": "大家好"}}}'
+      ));
+      // 第三次：LLM 确认完成
+      mockCallLLM.mockResolvedValueOnce(llmResp('消息已发送到群里。'));
+
+      const result = await handleChat('给群里打个招呼');
+      expect(result.reply).toBe('消息已发送到群里。');
+    });
+  });
 });
