@@ -613,7 +613,7 @@ export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
  */
 export async function extractConversationLearning(userMessage, reply, dbPool) {
   const totalLength = (userMessage?.length || 0) + (reply?.length || 0);
-  if (totalLength < 400) return; // 短对话跳过，避免噪音
+  if (totalLength < 150) return; // 短对话跳过，避免噪音（150字，原400字已降低）
 
   try {
     const prompt = `你是 Cecelia，刚完成了一次对话。请判断这次对话中是否有值得记住的洞察。
@@ -626,8 +626,10 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
 - 我们讨论了系统/架构的设计决策
 - 用户给了我直接的反馈（好或不好）
 - 出现了值得未来参考的洞察或原则
+- 用户直接纠正了 Cecelia 的行为或方式（如"你不应该X"、"你下次要Y"）
 
 如果有 learning，输出 JSON：{"has_learning": true, "title": "简短标题（<50字）", "content": "洞察内容（<200字）", "category": "conversation_insight"}
+如果是行为纠正，category 用 "behavior_correction"
 如果没有 learning，输出：{"has_learning": false}
 严格输出 JSON，不要其他内容。`;
 
