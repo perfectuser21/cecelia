@@ -9725,6 +9725,21 @@ async function sendFeishuMessage(accessToken, receiveId, receiveIdType, text) {
   });
 }
 
+/** GET /api/brain/feishu/users — 查询已知飞书用户（嘴巴 call_brain_api 用） */
+router.get('/feishu/users', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT open_id, name, relationship
+      FROM feishu_users
+      ORDER BY relationship, name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[feishu/users] 查询失败:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /** GET /api/brain/feishu/groups — 查询已知飞书群（嘴巴 call_brain_api 用） */
 router.get('/feishu/groups', async (req, res) => {
   try {

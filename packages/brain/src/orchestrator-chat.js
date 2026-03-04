@@ -85,7 +85,25 @@ export async function buildManifestBlock() {
       console.warn('[orchestrator-chat] buildManifestBlock: feishu groups query failed:', dbErr.message);
     }
 
-    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}${feishuGroupsBlock}\n- 用 call_brain_api 可实时查询任意 Brain API 端点，例如：\n  - GET /api/brain/tasks?status=queued — 查任务队列\n  - GET /api/brain/feishu/groups — 查已知飞书群\n  - POST /api/brain/feishu/send — 主动发飞书消息（body: {group_id或open_id, text}）\n  - GET /api/brain/status/full — 查系统状态\n`;
+    // 从 DB 查询已知飞书用户，让 LLM 可直接发私信给特定成员
+    let feishuUsersBlock = '';
+    try {
+      const userResult = await pool.query(`
+        SELECT open_id, name, relationship
+        FROM feishu_users
+        ORDER BY relationship, name
+      `);
+      if (userResult.rows.length > 0) {
+        const userLines = userResult.rows.map(r =>
+          `    - ${r.name}（${r.relationship}）open_id: ${r.open_id}`
+        ).join('\n');
+        feishuUsersBlock = `\n- **已知飞书成员**（可用 open_id 发私信）：\n${userLines}`;
+      }
+    } catch (dbErr) {
+      console.warn('[orchestrator-chat] buildManifestBlock: feishu users query failed:', dbErr.message);
+    }
+
+    return `\n\n## 我的 Brain 能力清单（自动生成，实时同步）\n- **可执行 Actions**（Brain 内置，create_task 等）: ${actions || '无'}\n- **可派发 Skills**（给 Claude Code 执行，/dev 等）: ${skills || '无'}${feishuGroupsBlock}${feishuUsersBlock}\n- 用 call_brain_api 可实时查询任意 Brain API 端点，例如：\n  - GET /api/brain/tasks?status=queued — 查任务队列\n  - GET /api/brain/feishu/groups — 查已知飞书群\n  - GET /api/brain/feishu/users — 查已知飞书成员\n  - POST /api/brain/feishu/send — 主动发飞书消息（body: {group_id或open_id, text}）\n  - GET /api/brain/status/full — 查系统状态\n`;
   } catch (err) {
     console.warn('[orchestrator-chat] buildManifestBlock failed:', err.message);
     return '';
