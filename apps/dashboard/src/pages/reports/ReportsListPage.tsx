@@ -21,7 +21,7 @@ interface Report {
 }
 
 interface ReportsResponse {
-  records: Report[];
+  reports: Report[];
   count: number;
   total: number;
   limit: number;
@@ -185,7 +185,7 @@ export default function ReportsListPage() {
       )}
 
       {/* 简报列表 */}
-      {data && data.records.length === 0 && !loading && (
+      {data && data.reports.length === 0 && !loading && (
         <div style={{
           textAlign: 'center',
           color: '#8b949e',
@@ -202,9 +202,9 @@ export default function ReportsListPage() {
         </div>
       )}
 
-      {data && data.records.length > 0 && (
+      {data && data.reports.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {data.records.map((report) => (
+          {data.reports.map((report) => (
             <div
               key={report.id}
               onClick={() => navigate(`/reports/${report.id}`)}
