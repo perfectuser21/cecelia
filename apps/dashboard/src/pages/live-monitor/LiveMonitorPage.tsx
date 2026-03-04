@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AutonomousPRCounter } from '../../components/AutonomousPRCounter';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -1010,6 +1011,11 @@ export default function LiveMonitorPage() {
               </span>
             </>
           )}
+        </div>
+
+        {/* ══ AUTONOMOUS PR COUNTER ══ */}
+        <div style={{ padding: '12px 20px 0' }}>
+          <AutonomousPRCounter refreshInterval={60000} />
         </div>
 
         <div style={{ padding: '16px 20px 24px' }}>
