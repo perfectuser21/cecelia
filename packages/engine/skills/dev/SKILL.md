@@ -7,7 +7,10 @@ description: |
   不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
 
   自动完成完整闭环：Worktree 隔离 → PRD → 探索架构 → DoD 定稿
-  → 写代码 → 本地验证 → PR → CI 监控 → 合并 → Learning → 清理。
+  → 写代码 → 本地验证 → PR → CI 监控 → Learning → 合并 → 清理。
+
+  ⚠️ 顺序铁律：Learning 必须在合并 PR 之前完成（先 push Learning 到功能分支，再合并）。
+  CI 通过后禁止立即合并——必须先执行 Step 10 写 LEARNINGS。
 
   触发词（凡用户意图涉及代码改动，必须触发）：
   开始开发、加功能、修 bug、修复 bug、实现 XXX、改代码、改配置、
@@ -417,7 +420,10 @@ skills/dev/
     ↓
 7-Verify ─→ 本地跑 npm test（省一轮 CI）
     ↓
-8-PR → 9-CI（等通过）→ 10-Learning（写 LEARNINGS + push + 合并）→ 11-Cleanup
+8-PR → 9-CI（等通过，⚠️ 不在此处合并！）→ 10-Learning（写 LEARNINGS → push 到功能分支 → 合并 PR）→ 11-Cleanup
+
+❌ 严禁：CI 通过后立即合并 PR（会导致 Learning 产生第二个 PR）
+✅ 必须：CI 通过 → Step 10 写 Learning → push → 合并 → Cleanup
 ```
 
 ### 两层职责分离
