@@ -454,7 +454,7 @@ async function generateInitiativePlanTask(kr, project) {
     const existingResult = await pool.query(`
       SELECT id FROM tasks
       WHERE project_id = $1 AND task_type = 'initiative_plan'
-        AND status NOT IN ('completed', 'failed', 'cancelled')
+        AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined')
       LIMIT 1
     `, [initiative.id]);
 
