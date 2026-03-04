@@ -2737,6 +2737,13 @@ router.post('/execution-callback', async (req, res) => {
         console.warn(`[execution-callback] Task ${task_id} completed with empty findings/result`);
       }
 
+      // Extract pr_number from pr_url for metadata tracking ($8)
+      let prNumber = null;
+      if (pr_url) {
+        const prMatch = pr_url.match(/\/pull\/(\d+)/);
+        prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+      }
+
       await client.query(`
         UPDATE tasks
         SET
@@ -2745,10 +2752,11 @@ router.post('/execution-callback', async (req, res) => {
             'last_run_result', $3::jsonb,
             'run_status', $4::text,
             'pr_url', $5::text
-          ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END,
+          ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
+            || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
 
       // Log the execution result
       await client.query(`
