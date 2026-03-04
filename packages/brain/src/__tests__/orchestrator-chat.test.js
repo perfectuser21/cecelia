@@ -3,7 +3,13 @@
  * 测试 Cecelia 嘴巴对话链路（纯意识模式）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock node:fs/promises（用于 buildManifestBlock 测试）
+const mockReadFile = vi.hoisted(() => vi.fn());
+vi.mock('node:fs/promises', () => ({
+  readFile: mockReadFile,
+}));
 
 // Mock 统一 LLM 调用层 — callWithHistory 内部调用 callLLM('mouth', ...)
 const mockCallLLM = vi.hoisted(() => vi.fn());
@@ -56,6 +62,8 @@ import {
   buildStatusSummary,
   buildRuntimeStateBlock,
   buildDesiresContext,
+  callBrainApi,
+  buildManifestBlock,
   _resetApiKey,
 } from '../orchestrator-chat.js';
 
@@ -499,6 +507,130 @@ describe('orchestrator-chat', () => {
       const prompt = mockCallLLM.mock.calls[0][1];
       expect(prompt).toContain('你是 Cecelia');
       expect(prompt).not.toContain('## 主人信息');
+    });
+  });
+
+  // ===================== D11: callBrainApi =====================
+
+  describe('callBrainApi', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('成功调用 GET 端点返回数据', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ tasks: [] }),
+        text: () => Promise.resolve(''),
+      }));
+
+      const result = await callBrainApi('/api/brain/tasks');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual({ tasks: [] });
+    });
+
+    it('HTTP 错误时返回 success: false 含状态码', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ error: 'not found' }),
+        text: () => Promise.resolve(''),
+      }));
+
+      const result = await callBrainApi('/api/brain/missing');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('404');
+    });
+
+    it('网络异常时返回 success: false（不抛异常）', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection refused')));
+
+      const result = await callBrainApi('/api/brain/test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('connection refused');
+    });
+  });
+
+  // ===================== D12: buildManifestBlock =====================
+
+  describe('buildManifestBlock', () => {
+    it('读取 manifest 返回包含 Actions 和 Skills 的清单块', async () => {
+      const manifest = {
+        allActions: ['dispatch_task', 'create_task', 'cancel_task'],
+        allSkills: ['dev', 'review', 'qa'],
+        allSignals: ['task_fail_rate_24h'],
+      };
+      mockReadFile.mockResolvedValueOnce(JSON.stringify(manifest));
+
+      const block = await buildManifestBlock();
+
+      expect(block).toContain('Brain 能力清单');
+      expect(block).toContain('dispatch_task');
+      expect(block).toContain('create_task');
+      expect(block).toContain('dev');
+      expect(block).toContain('review');
+    });
+
+    it('文件不存在时静默返回空字符串', async () => {
+      mockReadFile.mockRejectedValueOnce(new Error('ENOENT: no such file or directory'));
+
+      const block = await buildManifestBlock();
+
+      expect(block).toBe('');
+    });
+  });
+
+  // ===================== D13: call_brain_api 工具循环 =====================
+
+  describe('handleChat - call_brain_api tool loop', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('LLM 返回 call_brain_api 信号时执行 API 调用并用结果重新问 LLM', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([{ chat_id: 'chat_abc', name: '团队群' }]),
+        text: () => Promise.resolve(''),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      // 第一次 LLM 调用：返回 call_brain_api 信号
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "让我查一下群列表", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/groups"}}'
+      ));
+      // 第二次 LLM 调用：基于 API 结果回答
+      mockCallLLM.mockResolvedValueOnce(llmResp('找到了，团队群的 chat_id 是 chat_abc。'));
+
+      const result = await handleChat('能不能在群里打招呼？');
+
+      // fetch 被调用（Brain API 查询）
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5221/api/brain/feishu/groups',
+        expect.objectContaining({ method: 'GET' })
+      );
+      // 最终 reply 来自第二次 LLM 调用
+      expect(result.reply).toBe('找到了，团队群的 chat_id 是 chat_abc。');
+    });
+
+    it('call_brain_api 网络失败时仍返回 reply（不崩溃）', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection refused')));
+
+      mockCallLLM.mockResolvedValueOnce(llmResp(
+        '{"reply": "让我查一下", "thalamus_signal": {"type": "call_brain_api", "path": "/api/brain/feishu/groups"}}'
+      ));
+      mockCallLLM.mockResolvedValueOnce(llmResp('查询失败了，不过我记录下来了。'));
+
+      const result = await handleChat('能不能发消息？');
+
+      expect(result).toHaveProperty('reply');
+      expect(typeof result.reply).toBe('string');
+      expect(result.reply.length).toBeGreaterThan(0);
     });
   });
 });
