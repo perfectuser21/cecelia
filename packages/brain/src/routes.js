@@ -1955,8 +1955,8 @@ ${okrCtxBlock}
 
     const fullPrompt = `${systemPrompt}${historyBlock}\n## 用户最新消息\n${message.trim()}\n\n请回复用户（直接输出回复内容，不要输出"秋米："前缀）：`;
 
-    // 调用 LLM（秋米使用 claude-sonnet-4-6，含历史对话，timeout 90s）
-    const { text: reply } = await callLLM('autumnrice', fullPrompt, {
+    // 调用 LLM（/autumnrice/chat 是对话接口，走 mouth 的模型配置）
+    const { text: reply } = await callLLM('mouth', fullPrompt, {
       model: 'claude-sonnet-4-6',
       timeout: 90000,
       maxTokens: 800,
