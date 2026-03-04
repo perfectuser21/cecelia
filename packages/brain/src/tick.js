@@ -550,7 +550,7 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
   }
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
-           t.queued_at, t.task_type, t.created_at, t.metadata
+           t.queued_at, t.task_type, t.created_at, t.metadata, t.project_id
     FROM tasks t
     WHERE (t.goal_id = ANY($1) OR t.goal_id IS NULL)
       AND t.status = 'queued'
@@ -559,6 +559,15 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
         t.payload->>'next_run_at' IS NULL
         OR t.payload->>'next_run_at' = ''
         OR (t.payload->>'next_run_at')::timestamptz <= NOW()
+      )
+      AND (
+        t.project_id IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM tasks t2
+          WHERE t2.project_id = t.project_id
+            AND t2.status = 'in_progress'
+            AND t2.id != t.id
+        )
       )
     ORDER BY
       CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -825,6 +834,20 @@ async function dispatchNextTask(goalIds) {
 
   if (!nextTask) {
     return { dispatched: false, reason: 'all_candidates_failed_pre_flight', skipped: preFlightFailedIds.length, actions };
+  }
+
+  // 3c. Initiative-level lock: double-check before marking in_progress (guard against race)
+  if (nextTask.project_id) {
+    const lockCheck = await pool.query(
+      "SELECT id, title FROM tasks WHERE project_id = $1 AND status = 'in_progress' AND id != $2 LIMIT 1",
+      [nextTask.project_id, nextTask.id]
+    );
+    if (lockCheck.rows.length > 0) {
+      const blocker = lockCheck.rows[0];
+      console.log(`[dispatch] Initiative 已有进行中任务 (task_id: ${blocker.id})，跳过派发: ${nextTask.title}`);
+      await recordDispatchResult(pool, false, 'initiative_locked');
+      return { dispatched: false, reason: 'initiative_locked', blocking_task_id: blocker.id, task_id: nextTask.id, actions };
+    }
   }
 
   // 4. Update task status to in_progress
