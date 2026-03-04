@@ -21,7 +21,7 @@ async function getRecentDecisions(limit = 10) {
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
-import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors } from './tick.js';
+import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors, check48hReport } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from './task-router.js';
 import { getTaskWeights } from './task-weight.js';
 import { getCleanupStats, runTaskCleanup, getCleanupAuditLog } from './task-cleanup.js';
@@ -5922,6 +5922,47 @@ router.post('/cortex/feedback', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/cortex/generate-report
+ * 手动触发 Cortex 生成系统简报
+ *
+ * Body: { time_range_hours?: number (default: 48) }
+ */
+router.post('/cortex/generate-report', async (req, res) => {
+  try {
+    const { time_range_hours = 48 } = req.body || {};
+    const timeRangeHours = Math.max(1, Math.min(168, Number(time_range_hours) || 48));
+
+    const { generateSystemReport } = await import('./cortex.js');
+    const report = await generateSystemReport({ timeRangeHours });
+
+    res.json({ success: true, report });
+  } catch (err) {
+    console.error('[API] cortex/generate-report failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/cortex/reports
+ * 获取最近的系统简报列表
+ */
+router.get('/cortex/reports', async (req, res) => {
+  try {
+    const limit = Math.min(20, parseInt(req.query.limit) || 10);
+    const result = await pool.query(`
+      SELECT id, type, content, metadata, created_at
+      FROM system_reports
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    res.json({ success: true, reports: result.rows });
+  } catch (err) {
+    console.error('[API] cortex/reports failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/learning/evaluate-strategy
  * Evaluate strategy adjustment effectiveness
  *
@@ -10288,6 +10329,64 @@ router.post('/manual/ask', async (req, res) => {
       res.write('data: [DONE]\n\n');
       res.end();
     }
+  }
+});
+
+/**
+ * GET /api/brain/reports
+ * 查询 system_reports 历史简报
+ * Query params: ?type=48h_summary&limit=10
+ */
+router.get('/reports', async (req, res) => {
+  try {
+    const type = req.query.type || null;
+    const limit = Math.min(parseInt(req.query.limit || '10', 10), 100);
+
+    let query = `
+      SELECT id, type, content, metadata, created_at
+      FROM system_reports
+    `;
+    const params = [];
+
+    if (type) {
+      query += ' WHERE type = $1';
+      params.push(type);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1);
+    params.push(limit);
+
+    const result = await pool.query(query, params);
+    res.json({
+      success: true,
+      reports: result.rows,
+      count: result.rows.length
+    });
+  } catch (err) {
+    console.error('[API] reports GET error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/reports/trigger
+ * 手动触发 48h 简报生成（强制，忽略时间检查）
+ */
+router.post('/reports/trigger', async (req, res) => {
+  try {
+    const record = await check48hReport(pool, { force: true });
+    if (!record) {
+      return res.status(500).json({ success: false, error: '简报生成失败，请查看服务器日志' });
+    }
+    res.json({
+      success: true,
+      report_id: record.id,
+      created_at: record.created_at,
+      message: '48h 简报已成功生成'
+    });
+  } catch (err) {
+    console.error('[API] reports/trigger error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

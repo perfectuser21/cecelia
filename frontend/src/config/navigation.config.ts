@@ -49,6 +49,8 @@ export interface RouteConfig {
 export const autopilotPageComponents: Record<string, () => Promise<{ default: ComponentType }>> = {
   'Dashboard': () => import('../pages/Dashboard'),
   'StatsDashboard': () => import('../pages/StatsDashboard'),
+  'Reports': () => import('../pages/Reports'),
+  'ReportDetail': () => import('../pages/ReportDetail'),
   'ContentData': () => import('../pages/ContentData'),
   'ContentPublish': () => import('../pages/ContentPublish'),
   'ExecutionStatus': () => import('../pages/ExecutionStatus'),
@@ -123,6 +125,10 @@ export const autopilotNavGroups: NavGroup[] = [
 // ============ 额外路由配置（不在菜单显示） ============
 
 export const additionalRoutes: RouteConfig[] = [
+  // === 系统简报路由 ===
+  { path: '/reports', component: 'Reports', requireAuth: true },
+  { path: '/reports/:id', component: 'ReportDetail', requireAuth: true },
+
   // === AI 员工详情页路由 ===
   { path: '/ai-employees/:employeeId', component: 'AiEmployeeDetailPage', requireAuth: true },
   { path: '/ai-employees/:employeeId/abilities/:abilityId', component: 'AiAbilityDetailPage', requireAuth: true },
