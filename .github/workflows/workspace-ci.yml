@@ -100,7 +100,7 @@ jobs:
 
   deploy-workspace:
     needs: [ci-passed]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-passed.result == 'success'
     name: Deploy Workspace
     runs-on: ubuntu-latest
     timeout-minutes: 15
