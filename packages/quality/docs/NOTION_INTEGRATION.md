@@ -1,3 +1,5 @@
+> ⚠️ **[已废弃 / DEPRECATED]** Brain 已于 PR #501 完全断开 Notion 同步。本文档仅作历史参考，不再维护。
+
 # Notion Integration Guide
 
 > 单向同步 - VPS → Notion（展示层）
