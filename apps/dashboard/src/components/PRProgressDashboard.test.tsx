@@ -3,9 +3,21 @@
  * 验证：PR 计数器显示、KR 进度、失败任务列表、加载/错误状态
  */
 
+import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { PRProgressDashboard } from './PRProgressDashboard';
+
+// mock recharts 以避免 happy-dom 中 SVG/ResizeObserver 兼容问题
+vi.mock('recharts', () => ({
+  LineChart: ({ children }: { children: React.ReactNode }) => React.createElement('div', { 'data-testid': 'line-chart' }, children),
+  Line: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  CartesianGrid: () => null,
+  Tooltip: () => null,
+  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => React.createElement('div', { 'data-testid': 'responsive-container' }, children),
+}));
 
 // ── mock 数据 ──────────────────────────────────────────────────────────────────
 
