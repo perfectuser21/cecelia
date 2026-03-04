@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] GTD System 导航重构 + Notion 风格数据库视图（PR #504, Workspace v1.173.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**背景**：前端侧边栏存在 Work 和 Planning 两组重复的 OKR/Projects/Tasks 入口，用户希望统一为 Notion 风格的 GTD System。
+
+**关键决策**：
+- 新建 `gtd` feature，通过 navGroups 的 `order: 2.5` 精确插入到 Inbox 和 Execution 之间
+- `DatabaseView<T>` 泛型组件支持排序/筛选/搜索/层级展开，复用性高
+- 旧 feature（planning/work/knowledge）的 navGroups 全部清空但保留路由（重定向到 /gtd/*）
+- Brain 路由从 planning 组移到 execution 组，保持可访问性
+
+**工程经验**：
+- 配置驱动架构的优势：新增 feature 只需声明 manifest，不需要改 App.tsx 路由配置
+- `children` navItem 在折叠侧边栏中自动渲染为 `CollapsibleNavItem`（App.tsx:173-182）
+- `isFullHeightRoute` 必须包含新路由前缀（/gtd），否则页面会被套上额外 padding
+- pull_request CI 未自动触发（已知问题），手动 `gh workflow run workspace-ci.yml --ref <branch>` 解决
+
+**影响程度**: Low（流程顺畅，一次构建通过）
+
 ### [2026-03-04] LLM Provider 选择原则：Bridge 优先，API Key 末选（PR #502, Brain v1.189.3）
 
 **背景**：fact_extractor agent 在 PR #498 中被配置为 `provider: 'anthropic-api'`（直连 API Key），违反了 Cecelia 内部 Agent 的 provider 选择原则。
