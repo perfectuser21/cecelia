@@ -133,6 +133,24 @@ export const AGENTS = [
     recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
+  {
+    id: 'narrative',
+    name: '叙事合成',
+    description: '生成每周进化叙事（进化日志摘要）',
+    layer: 'brain',
+    allowed_models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'MiniMax-M2.5-highspeed'],
+    recommended_model: 'claude-sonnet-4-6',
+    fixed_provider: null,
+  },
+  {
+    id: 'fact_extractor',
+    name: '事实提取',
+    description: '从对话和事件中提取结构化事实（混合正则+LLM）',
+    layer: 'brain',
+    allowed_models: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'MiniMax-M2.5-highspeed'],
+    recommended_model: 'claude-haiku-4-5-20251001',
+    fixed_provider: null,
+  },
   // ---- 执行层 ----
   {
     id: 'dev',
