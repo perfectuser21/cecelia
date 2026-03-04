@@ -26,29 +26,44 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
     const type = req.query.type;
 
-    let queryText = `
+    const whereClause = type ? `WHERE type = $1` : '';
+    const params = type ? [type, limit, offset] : [limit, offset];
+    const limitParam = type ? '$2' : '$1';
+    const offsetParam = type ? '$3' : '$2';
+
+    const queryText = `
       SELECT
         id,
         type,
+        content->>'title' AS title,
+        content->>'summary' AS summary,
         metadata,
         created_at
       FROM system_reports
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
     `;
-    const params = [];
 
-    if (type) {
-      params.push(type);
-      queryText += ` WHERE type = $${params.length}`;
-    }
+    const countParams = type ? [type] : [];
+    const countWhere = type ? `WHERE type = $1` : '';
+    const countQuery = `SELECT COUNT(*) FROM system_reports ${countWhere}`;
 
-    queryText += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
-    params.push(limit);
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(queryText, params),
+      pool.query(countQuery, countParams),
+    ]);
 
-    const { rows } = await pool.query(queryText, params);
-
-    res.json({ reports: rows, count: rows.length });
+    res.json({
+      reports: rows,
+      count: rows.length,
+      total: parseInt(countRows[0].count),
+      limit,
+      offset,
+    });
   } catch (err) {
     console.error('[system-reports] GET / error:', err.message);
     res.status(500).json({ error: err.message });
