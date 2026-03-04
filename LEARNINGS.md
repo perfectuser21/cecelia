@@ -4,6 +4,41 @@
 
 ---
 
+### [2026-03-04] PR 进度计数器 API 端点 v1.192.1
+
+**失败统计**：CI 失败 2 次（版本文件未同步）
+
+**新增功能**：
+- `GET /api/brain/pr-progress/:kr_id` 端点：查询指定 KR 的 dev 任务 PR 进度
+- 支持 `?month=YYYY-MM` 参数，返回每日完成明细（空日期填 0）
+- 从 `goals.metadata.target_pr_count` 读取目标数量（默认 30）
+- 12 个单元测试（mock 数据库）覆盖完整的正/异常路径
+
+**踩坑 1：版本文件四处要同步**
+
+改 `packages/brain/package.json` 版本时，以下文件必须同步更新：
+1. `packages/brain/package.json` - npm 包版本
+2. `packages/brain/package-lock.json` - 版本字段（`version` + `packages[""].version`）
+3. `.brain-versions` - 每行追加新版本号
+4. `DEFINITION.md` - `**Brain 版本 X.Y.Z**` 行
+
+漏掉任何一个都会导致 `Facts Consistency` 或 `Version Check` CI 失败。
+
+**踩坑 2：rebase 冲突后 package-lock.json 的版本字段**
+
+`git checkout --theirs packages/brain/package-lock.json` 会拉回 main 的旧版本号。
+需要手动用 Python 更新 `package-lock.json` 的 `version` 和 `packages[""].version` 字段。
+
+**踩坑 3：mock 测试中 routes.js 的路径匹配**
+
+测试中用 `layer.route.path === path` 做精确匹配，但 `/pr-progress/:kr_id` 是带参数的路由。
+需要实现带 `:param` 的路径匹配逻辑，逐段比较。
+
+**API 实现位置**：`packages/brain/src/routes.js`（末尾追加）
+**测试位置**：`packages/brain/src/__tests__/pr-progress.test.js`
+
+---
+
 ### [2026-03-04] 混合事实提取：正则 + Haiku + 反哺进化 v1.189.1
 
 **失败统计**：CI 失败 0 次（解决了 migration 编号冲突 + 版本合并冲突）
