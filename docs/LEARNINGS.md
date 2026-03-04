@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] URL 拼接：前缀 vs 后缀参数（PR #473, Workspace v1.11.2）
+
+**问题**：`selectedComponent='all'` 时 `compParam=''`，URL 变成 `/records&limit=100`（缺 `?`）→ 404。
+
+**错误模式**（`?` 前置到 compParam）：
+```js
+const compParam = condition ? `?component=x` : '';
+fetch(`${base}/records${compParam}&limit=100`)
+// '' 时 → /records&limit=100  ← 错！
+```
+
+**正确模式**（`?` 固定在 URL，compParam 做 key=val& 中缀）：
+```js
+const compParam = condition ? `component=x&` : '';
+fetch(`${base}/records?${compParam}limit=100`)
+// '' 时 → /records?limit=100  ✅
+// 有值时 → /records?component=x&limit=100  ✅
+```
+
+**规律**：有多个 query param 需要条件组合时，统一用 URLSearchParams 或 `?` 固定，param 作 key=val& 中缀。
+
 ### [2026-03-04] Notion property 类型全覆盖（PR #464, Brain v1.182.0）
 
 **背景**：notion-memory-sync.js push cycle 只支持 5 种 Notion property 类型（title/rich_text/select/number/date）。新增 email/phone_number/url/checkbox/status/multi_select 支持，使 Notion 成为完整记忆 UI 层。
