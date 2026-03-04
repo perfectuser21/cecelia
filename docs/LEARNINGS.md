@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-04] Brain tick 48h 简报 cortex 对接（PR #460, Brain v1.181.0）
+
+**背景**：tick.js 已有 `check48hReport()` 但用的是 mock 实现；cortex.js 已有真实 `generateSystemReport()`。需要将两者对接，并补充缺失的 API 端点。
+
+**DoD grep 命令 detectFakeTest 陷阱**：`manual:grep -q ...` 在 `check-dod-mapping.cjs` 中会失败，因为 `detectFakeTest()` 的 `hasRealExecution` 正则只认 `node|npm|npx|psql|curl|bash|python|pytest|jest|mocha|vitest`，`grep` 不在列表中。正确写法：`manual:bash -c "grep -q '...' file"`，用 `bash -c` 包裹即可通过校验。
+
+**Version Check 与 main 版本追踪**：若之前的 PR 已将 main 推进到 1.180.0，而新 PR 从旧 worktree 出发仍是 1.180.0，会导致 Brain CI Version Check 失败（要求 current != base）。解决：先 `git show origin/main:packages/brain/package.json | jq -r .version` 确认 main 当前版本，再 bump 到更高版本，并同步 package-lock.json、.brain-versions、DEFINITION.md。
+
+**push 不触发新 CI run 的情况**：只改了 .brain-versions、DEFINITION.md、.dod.md 等非 Brain 源码文件时，`brain-ci.yml` 的 `paths` filter 可能不匹配，不会自动触发。可用 `gh workflow run brain-ci.yml --ref <branch>` 手动触发验证。
+
+**dynamic import 在 tick.js 中的使用**：`check48hReport()` 用 `await import('./cortex.js')` 动态导入而非顶层 import，避免 cortex 初始化（数据库连接）与 tick 模块耦合，单测中更容易 mock。
+
 ### [2026-03-03] Notion Memory 系统重建 + 双向同步（PR #430, Brain v1.175.0）
 
 **背景**：建立 3 个 Notion 数据库（主人档案/人脉网络/Cecelia 日记）作为 Memory 系统的主 UI，PostgreSQL → Notion 增量同步。
@@ -1696,30 +1708,3 @@ fi
   - 支持的格式：`tests/...`, `contract:<RCI_ID>`, `manual:<command>`
   - `manual:` 命令必须是真实可执行的（`node`, `npm`, `curl`, `grep` 等）
   - 不支持 `gh`, `jq`, `echo` 作为主命令
-
----
-
-## Notion 同步 CHECK 约束 + areas description 列陷阱（2026-03-03，PR #428/#433/#435）
-
-### 背景
-PR #423 实现 Notion 4 表双向同步，PR #428 修复 ON CONFLICT UNIQUE 约束缺失，PR #433 修复 CHECK 约束（migration 114），PR #435 修复 areas description 列。
-
-### Bug 1 — tasks_task_type_check 缺少 notion_synced（PR #433）
-
-**根因**：notion-full-sync.js 的 upsertTask 用 `task_type='notion_synced'`，但约束没有该值。
-**修复**：migration 114 DROP + ADD CONSTRAINT，加入 `notion_synced`。
-
-### Bug 2 — goals_type_check 违反约束（PR #433）
-
-**根因**：upsertGoal INSERT 没有指定 `type`，使用 DEFAULT `'objective'` 违反约束（只允许 global_okr/global_kr/area_okr/area_kr/kr）。
-**修复**：显式指定 `type='kr'`。
-
-### Bug 3 — notion-sync.js areas INSERT 包含不存在的 description 列（PR #435）
-
-**根因**：routes/notion-sync.js POST /run 调用的是 runSync()（notion-sync.js 的双向同步），其中 resolveAreaId() 包含 `INSERT INTO areas (name, description, ...)` 但 areas 表无 description 列。
-**修复**：移除 description，仅插入 name。
-
-### migration 编号并行冲突教训（PR #433）
-
-migration 编号被另一 PR 抢占，仅 merge 时发现。提 PR 前必须 `ls packages/brain/migrations/` 确认最高编号。
-
