@@ -10773,4 +10773,29 @@ router.get('/pr-progress/:kr_id', async (req, res) => {
   }
 });
 
+// ==================== KR Progress Sync API ====================
+
+router.post('/kr/sync-all-progress', async (req, res) => {
+  try {
+    const { syncAllKrProgress } = await import('./kr-progress.js');
+    const result = await syncAllKrProgress(pool);
+    res.json({ success: true, updated: result.updated, results: result.results });
+  } catch (err) {
+    console.error('[API] kr/sync-all-progress error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/kr/:kr_id/update-progress', async (req, res) => {
+  try {
+    const { kr_id } = req.params;
+    const { updateKrProgress } = await import('./kr-progress.js');
+    const result = await updateKrProgress(pool, kr_id);
+    res.json({ success: true, kr_id: result.krId, progress: result.progress, completed: result.completed, total: result.total });
+  } catch (err) {
+    console.error(`[API] kr/${req.params.kr_id}/update-progress error:`, err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
