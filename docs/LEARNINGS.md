@@ -1,5 +1,61 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] GitHub Webhook PR 合并回调（PR #533, Brain v1.194.0）
+
+**失败统计**：CI 失败 4 次（facts-check 2次、.brain-versions 遗漏 1次、rebase 冲突 1次）
+
+**根因分析**：
+
+1. **`express.raw()` 必须在路由级别而非全局**
+   - GitHub Webhook HMAC-SHA256 验证要求访问原始 Buffer（`req.body`）
+   - `express.json()` 全局中间件会将 body 解析为对象，破坏签名验证
+   - **正确做法**：对 `/webhook/github` 路由单独使用 `express.raw({ type: 'application/json' })`，然后手动 `JSON.parse(req.body.toString('utf8'))`
+   - 关键：`express.raw()` 必须在 `express.json()` 之前或作为路由级中间件
+
+2. **`express` 本体未导入但使用了 `express.raw()`**
+   - `import { Router } from 'express'` 只导入了 Router，`express.raw` 不可用
+   - **修复**：`import express, { Router } from 'express'`
+
+3. **facts-check 检查链**：版本号同步需要更新 4 处
+   - `packages/brain/package.json` — 主版本文件
+   - `packages/brain/package-lock.json` — lockfile
+   - `DEFINITION.md` — Brain 版本行（`**Brain 版本**: X.Y.Z`）
+   - `.brain-versions` — **容易遗漏！** 每次版本 bump 必须追加新版本号
+
+4. **`gh run rerun` 不等于新 CI**
+   - `gh run rerun` 使用旧 commit 的代码重跑，不会用新 commit 的文件
+   - 修了代码后必须 push 新 commit，才能触发基于新代码的 CI
+   - workflow_dispatch 触发的 CI 中 `pull_request` event 相关 job 会 skip
+
+5. **Rebase 冲突解决**
+   - 并发 PR 合并到 main 会导致 `dirty` 状态（mergeable_state = dirty）
+   - 需要 `git rebase origin/main` + 解决冲突 + `git push --force-with-lease`
+   - package-lock.json 冲突：保留我方版本（更高版本号）
+
+**教训**：
+- **版本 bump checklist**：`package.json` + `package-lock.json` + `DEFINITION.md` + `.brain-versions` — 4 个文件缺一不可
+- **Webhook HMAC 验证**：必须在 JSON 解析之前验证 raw body，路由级 `express.raw()` 是唯一正确方式
+- **CI 触发**：push 新 commit 后 GitHub Actions 才会重新对 PR 运行检查，`gh run rerun` 只是重跑旧 commit
+
+---
+
+### [2026-03-05] cecelia-run 孤儿 claude 进程修复（PR #532, Brain v1.193.2）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**根因分析**：
+- `setsid bash -c "... claude -p ..."` 创建新进程组，`$!` 拿到 `bash -c` 的 PID
+- `wait $CHILD_PID` 只等 `bash -c`，claude 进程在 setsid 进程组中继续存活
+- wait 返回后立即 `CHILD_PID=""; CHILD_PGID=""` 清空了 PID
+- `trap cleanup EXIT` 看到空 PID 就跳过 kill，claude 变成孤儿
+- 11 个孤儿进程累计 ~3GB 内存 + 6.4GB Swap → SSH 掉线
+
+**修复**：wait 返回后、清空 PID 之前，用 `ps -o pid= -g $PGID` 检测残留进程，SIGTERM → 2s → SIGKILL 清理整个进程组。
+
+**教训**：`setsid` + `&` + `wait` 模式下，wait 只等直接子进程，不等进程组内其他进程。正常退出路径必须显式清理进程组，不能只依赖 trap。
+
+---
+
 ### [2026-03-04] Dashboard PR 进度可视化组件（PR #519, Dashboard v1.175.0）
 
 **失败统计**：CI 失败 2 次，本地测试失败 0 次
