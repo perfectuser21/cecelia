@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [12.40.1] - 2026-03-05
+
+### Fixed
+- stop-dev.sh: PR 已合并时跳过 CI 检查（合并后分支被删导致 CI 返回 unknown → 永远卡死）
+- cleanup.sh Section 10: .dev-mode 支持 per-branch 格式（.dev-mode.${branch}），fallback 旧格式
+- cleanup.sh Section 7.6: 验证步骤同上，支持 per-branch 格式
+- cleanup.sh Section 9: 用 `gh pr list --state merged` 替换 `git branch --merged`（squash merge 下失效）
+- cleanup.sh Section 4.5: 移除 fire-and-forget GC 启动（竞态：GC 可能在 cleanup 运行时删除当前 worktree）
+
+### Added
+- tests/scripts/stop-cleanup-bugfixes.test.ts: 18 个测试覆盖全部 5 个修复点
+
 ## [12.34.1] - 2026-02-28
 
 ### Docs

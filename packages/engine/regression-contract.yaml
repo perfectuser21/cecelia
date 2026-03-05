@@ -411,6 +411,82 @@ hooks:
       not_contains: "CECELIA_HEADLESS"
     test: "tests/hooks/stop-hook.test.ts"
 
+  - id: H7-015
+    feature: H7
+    name: "Stop Hook 已合并 PR 跳过 CI 检查"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, ci-check, merged-pr, bug-fix]
+    owner: infra
+    steps:
+      given: "PR 已合并（PR_STATE=merged），分支可能已被删除"
+      when: "Stop Hook 检查 CI 条件"
+      then: "跳过 CI 查询（合并意味着 CI 必然已通过），不卡死"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "PR_STATE.*merged"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-016
+    feature: H7
+    name: "Cleanup .dev-mode 支持 per-branch 格式"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [cleanup, dev-mode, per-branch, bug-fix]
+    owner: infra
+    steps:
+      given: "per-branch 格式 .dev-mode.${branch} 存在"
+      when: "cleanup.sh Section 10 和 Section 7.6 操作 .dev-mode"
+      then: "优先使用 per-branch 格式，fallback 到旧格式"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      contains: "dev-mode.${CP_BRANCH}"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-017
+    feature: H7
+    name: "Cleanup 分支检测不使用 git branch --merged"
+    scope: script
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [cleanup, squash-merge, branch-detection, bug-fix]
+    owner: infra
+    steps:
+      given: "cp-* 分支通过 squash merge 合并"
+      when: "cleanup.sh Section 9 检测已合并分支"
+      then: "使用 gh pr list --state merged 而非 git branch --merged"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      contains: "gh pr list"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-018
+    feature: H7
+    name: "Cleanup 不在 worktree 内启动 GC"
+    scope: script
+    priority: P2
+    trigger: [PR, Release]
+    method: auto
+    tags: [cleanup, worktree-gc, race-condition, bug-fix]
+    owner: infra
+    steps:
+      given: "cleanup.sh 在 worktree 内部运行"
+      when: "Section 4.5 Worktree 清理"
+      then: "不 fire-and-forget 启动 GC（由 stop hook 在 cleanup 完成后触发）"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      not_contains: "(bash.*worktree-gc.*&)"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
   # --------------------------------------------------------------------------
   # H2: pr-gate-v2
   # --------------------------------------------------------------------------

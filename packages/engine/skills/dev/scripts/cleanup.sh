@@ -338,9 +338,9 @@ echo "[4.5] Worktree 清理..."
 SCRIPT_DIR_FOR_GC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GC_SCRIPT="$SCRIPT_DIR_FOR_GC/worktree-gc.sh"
 if [[ -f "$GC_SCRIPT" ]]; then
-    echo "   → 触发外部 Worktree GC（fire-and-forget）..."
-    (bash "$GC_SCRIPT" 2>/dev/null &)
-    echo -e "   ${GREEN}[OK] GC 已在后台启动${NC}"
+    # v12.40.1: 不再 fire-and-forget 启动 GC（竞态：GC 可能在 cleanup 还在运行时删除当前 worktree）
+    # GC 应由 stop-dev.sh 在 cleanup 完成后、从主仓库触发，或由用户手动运行
+    echo -e "   ${GREEN}[OK] Worktree GC 将在 cleanup 完成后由 stop hook 触发${NC}"
 else
     echo -e "   ${YELLOW}[WARN] worktree-gc.sh 不存在，跳过${NC}"
 fi
@@ -409,7 +409,11 @@ echo ""
 echo "[7.6] 验证所有步骤完成..."
 
 PROJECT_ROOT_FOR_VALIDATION=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode"
+# v12.40.1: 支持 per-branch 格式（.dev-mode.${branch}），fallback 到旧格式（.dev-mode）
+DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode.${CP_BRANCH}"
+if [[ ! -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
+    DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode"
+fi
 
 if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
     INCOMPLETE_STEPS=""
@@ -499,10 +503,14 @@ if [[ -n "$OTHER_CP" ]]; then
 
     while IFS= read -r branch; do
         [[ -z "$branch" ]] && continue
-        # 检查是否已合并到 base 分支（develop 或 main）
-        if git branch --merged "$BASE_BRANCH" 2>/dev/null | grep -qx "  $branch\|* $branch\|+ $branch\| $branch"; then
+        # v12.40.1: 用 gh pr list 检测是否已合并（squash merge 下 git branch --merged 失效）
+        PR_MERGED=""
+        if command -v gh &>/dev/null; then
+            PR_MERGED=$(gh pr list --state merged --head "$branch" --json number --jq '.[0].number' 2>/dev/null || true)
+        fi
+        if [[ -n "$PR_MERGED" ]]; then
             if git branch -D "$branch" 2>/dev/null; then
-                echo -e "   ${GREEN}[OK] 已删除已合并分支: $branch${NC}"
+                echo -e "   ${GREEN}[OK] 已删除已合并分支: $branch (PR #$PR_MERGED)${NC}"
                 MERGED_COUNT=$((MERGED_COUNT + 1))
             else
                 echo -e "   ${YELLOW}[WARN]  删除失败: $branch${NC}"
@@ -556,7 +564,11 @@ echo -e "   ${GREEN}[OK] 所有清理步骤完成${NC}"
 
 # 标记 cleanup 完成（让 Stop Hook 知道可以退出了）
 PROJECT_ROOT_FOR_DEVMODE=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+# v12.40.1: 支持 per-branch 格式（.dev-mode.${branch}），fallback 到旧格式（.dev-mode）
+DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode.${CP_BRANCH}"
+if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+fi
 
 # v1.9: 加载 lock-utils 并使用原子追加 + 协调信号
 LOCK_UTILS=""
