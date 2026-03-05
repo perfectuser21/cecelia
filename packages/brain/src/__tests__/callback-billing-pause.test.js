@@ -252,9 +252,10 @@ describe('execution-callback billing pause', () => {
   });
 
   /**
-   * DoD 2: result 为对象且 result.result 含 Spending cap 文本时，setBillingPause 被调用
+   * DoD 2: result 为对象且 result.result 含 Spending cap 文本时
+   * v1.196.0: 不再调用 setBillingPause，由降级链自动处理
    */
-  it('should call setBillingPause when result.result contains Spending cap reached', async () => {
+  it('should NOT call setBillingPause for spending cap (deprecated, handled by degradation chain)', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-billing-obj-result',
       run_id: 'run-billing-3',
@@ -263,15 +264,15 @@ describe('execution-callback billing pause', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    // setBillingPause 应被调用（通过 dynamic import('./executor.js')）
-    // 注意：由于 vi.mock 和 dynamic import 的交互，setBillingPause 通过 mock 验证
-    expect(setBillingPauseMock).toHaveBeenCalled();
+    // v1.196.0: spending_cap 不再设置全局 billing_pause
+    expect(setBillingPauseMock).not.toHaveBeenCalled();
   });
 
   /**
    * DoD 2b: result 为对象且 result.error 含 Spending cap 文本时
+   * v1.196.0: 不再调用 setBillingPause
    */
-  it('should call setBillingPause when result.error contains Spending cap reached', async () => {
+  it('should NOT call setBillingPause for spending cap in error field', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-billing-obj-error',
       run_id: 'run-billing-4',
@@ -280,13 +281,14 @@ describe('execution-callback billing pause', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    expect(setBillingPauseMock).toHaveBeenCalled();
+    expect(setBillingPauseMock).not.toHaveBeenCalled();
   });
 
   /**
-   * DoD 3: result 为字符串含 Spending cap 文本时，setBillingPause 被调用
+   * DoD 3: result 为字符串含 Spending cap 文本时
+   * v1.196.0: 不再调用 setBillingPause
    */
-  it('should call setBillingPause when result is a string containing Spending cap', async () => {
+  it('should NOT call setBillingPause for spending cap string result', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-billing-str-result',
       run_id: 'run-billing-5',
@@ -295,7 +297,7 @@ describe('execution-callback billing pause', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    expect(setBillingPauseMock).toHaveBeenCalled();
+    expect(setBillingPauseMock).not.toHaveBeenCalled();
   });
 
   /**
