@@ -83,7 +83,7 @@ export function StatsCard({
         {trend && (
           <div
             className={`
-              text-xs font-medium
+              text-xs font-medium flex items-center
               ${
                 trend.direction === 'up'
                   ? 'text-green-600 dark:text-green-400'
@@ -93,9 +93,9 @@ export function StatsCard({
               }
             `}
           >
-            {trend.direction === 'up' && '↑'}
-            {trend.direction === 'down' && '↓'}
-            {trend.value}
+            {trend.direction === 'up' && <span>↑</span>}
+            {trend.direction === 'down' && <span>↓</span>}
+            <span>{trend.value}</span>
           </div>
         )}
       </div>

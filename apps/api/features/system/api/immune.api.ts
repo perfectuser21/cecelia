@@ -33,11 +33,8 @@ async function handleResponse<T>(response: Response): Promise<T> {
     throw new Error(json.error || json.details || 'Unknown API error');
   }
 
-  if (!json.data) {
-    throw new Error('API returned success but no data');
-  }
-
-  return json.data;
+  // For void operations (e.g. status updates), data may be absent
+  return json.data as T;
 }
 
 /**

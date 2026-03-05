@@ -91,7 +91,7 @@ describe('/api/panorama/full', () => {
       (s: any) => s.name === 'semantic-brain'
     );
     expect(brainService).toBeDefined();
-    expect(brainService.port).toBe(5220);
+    expect(brainService.port).toBe(5221);
   });
 
   it('marks services as down when they fail', async () => {

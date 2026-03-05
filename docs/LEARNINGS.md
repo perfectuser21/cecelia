@@ -1,5 +1,43 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 修复 apps/api 49 个测试失败（PR #540, @cecelia/core v1.11.4）
+
+**失败统计**：CI 失败 0 次，本地测试修复过程中多轮迭代
+
+**根因分析**：
+
+1. **happy-dom 不转换 hex → rgb**
+   - jsdom 会自动把 `style.color = '#64748b'` 转为 `rgb(100, 116, 139)`
+   - happy-dom 不做转换，测试期望的 `rgb(...)` 格式失败
+   - 修复：测试直接用 hex 值 `'#64748b'`
+
+2. **同一 div 里的两个 JSX 表达式合并成单 text node**
+   - `{condition && '↑'}{trend.value}` 在渲染后是 `"↑+5%"` 整体
+   - `getByText('↑')` 无法 exact match，因为找不到只含 '↑' 的元素
+   - 修复：用独立 `<span>` 包裹每个文本 → `<span>↑</span><span>+5%</span>`
+
+3. **vi.mock('child_process') 缺少 default export 导致 import 报错**
+   - `vi.mock('child_process', () => ({ spawn: ... }))` 不加 default
+   - 模块里 `import { spawn } from 'child_process'` 会报 "No default export"
+   - 修复：用 `importOriginal` 展开实际模块加 default，再覆盖需要 mock 的方法
+
+4. **useApi hook 在测试 render 时发出相对 URL fetch，happy-dom 报 Invalid URL**
+   - `useApi('/api/brain/health')` 在 happy-dom 里 fetch 相对路径失败（unhandled rejection）
+   - vitest 把 unhandled rejection 计入 errors → exit 1
+   - 修复：在测试文件顶部 `vi.mock('../../shared/hooks/useApi', ...)` 拦截所有 API 调用
+
+5. **nlp-parser 置信度算法：明确意图词得分不足**
+   - "创建一个任务" 只匹配 1/14 patterns → 0.38，低于 0.5 高置信度阈值
+   - 修复：增加 EXPLICIT_PATTERNS 高置信度列表，匹配时直接提升到 0.75
+
+**影响程度**: Medium
+
+**预防措施**：
+- 写 React 组件测试时，用 happy-dom 而非 jsdom，颜色值直接用 hex 不依赖浏览器转换
+- 组件需要精确文本匹配时，用独立元素包裹每个文本节点
+- 任何 fetch 相对路径的组件，测试时必须 mock useApi 或 fetch
+- vi.mock 外部模块时，始终用 `importOriginal` 确保 default export 存在
+
 ### [2026-03-05] GitHub Webhook PR 合并回调（PR #533, Brain v1.194.0）
 
 **失败统计**：CI 失败 4 次（facts-check 2次、.brain-versions 遗漏 1次、rebase 冲突 1次）
@@ -1912,3 +1950,15 @@ GITHUB_HEAD_REF=<branch-name> node packages/engine/scripts/devgate/check-dod-map
 - `min_tasks: 4`（至少 4 个 PR 才算 Initiative）
 - 必须是系统性子功能，不能是单函数改动
 
+
+---
+
+### [2026-03-05] 修复 cortex-quality 测试本地 DB 数据干扰
+
+**失败统计**：CI 失败 0 次，本地测试失败 1 次（PR #539）
+
+**根因**：`should return zero stats when no analyses exist` 调用 `getQualityStats(7)` 查询最近 7 天记录，本地 DB 有 102 条真实数据导致 `total_rcas` 不为 0。
+
+**修复**：传入 `-365` 天（`cutoff = today + 365`，未来一年），`WHERE created_at >= cutoff` 返回 0 条。不依赖清空 DB，CI 和本地行为一致。
+
+**模式**：测试"无数据返回 0"的场景，用未来日期比清空 DB 更健壮。
