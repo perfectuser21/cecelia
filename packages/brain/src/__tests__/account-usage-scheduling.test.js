@@ -9,8 +9,8 @@
  * - S3 → '无即将重置账号时，按实际用量升序选择'
  * - S4 → '所有账号满载时返回 null'
  * - S5 → '5h ePct 相同时，按 seven_day_pct 升序'
- * - SC1 → 'spending cap 账号被跳过，其他账号可用'
- * - SC2 → '所有账号 spending-capped 时返回 null'
+ * - SC1 → 'spending cap 不再阻塞派发，纯用量驱动选择'
+ * - SC2 → '所有账号 spending-capped 时仍按用量选择（不再返回 null）'
  * - M1 → 'Sonnet 7d 全满时升级 Opus'
  * - M2 → 'Sonnet+Opus 全满时降级 Haiku'
  * - M3 → 'Sonnet 可用时返回 model=sonnet'
@@ -211,15 +211,16 @@ describe('S: selectBestAccount reset-aware 调度', () => {
   });
 });
 
-describe('SC: Spending Cap 账号级标记', () => {
+describe('SC: Spending Cap 不再阻塞派发（v1.196.0）', () => {
   beforeEach(() => {
     vi.resetModules();
   });
 
   // ============================================================
-  // SC1: spending cap 账号被跳过，选其他可用账号
+  // SC1: spending cap 不再阻塞，纯用量驱动选择
+  // v1.196.0: spending_cap 标记仍存在但不影响 selectBestAccount
   // ============================================================
-  it('SC1: spending-capped 账号被跳过，选其他可用账号', async () => {
+  it('SC1: spending-capped 账号不再被跳过，按用量选最优', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
@@ -236,19 +237,20 @@ describe('SC: Spending Cap 账号级标记', () => {
     });
 
     const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
-    // account3（本来最优）撞了 spending cap
+    // account3 标记了 spending cap，但不再影响选择
     markSpendingCap('account3', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
 
     const result = await selectBestAccount();
-    // account3 被过滤，选 account1（sonnet 7d=0 ePct=20，排 account2 前面，ePct 一样取七天 sonnet）
-    expect(result?.accountId).not.toBe('account3');
+    // v1.196.0: spending cap 不阻塞，account3（ePct=10 最低）仍被选中
+    expect(result?.accountId).toBe('account3');
     expect(result?.model).toBe('sonnet');
   });
 
   // ============================================================
-  // SC2: 所有账号 spending-capped → null
+  // SC2: 所有账号 spending-capped 时仍按用量选择
+  // v1.196.0: 不再返回 null，降级链根据实时用量路由
   // ============================================================
-  it('SC2: 所有账号 spending-capped 时返回 null', async () => {
+  it('SC2: 所有账号 spending-capped 时仍按用量选择（不再返回 null）', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
@@ -271,7 +273,10 @@ describe('SC: Spending Cap 账号级标记', () => {
     markSpendingCap('account3', future);
 
     const result = await selectBestAccount();
-    expect(result).toBeNull();
+    // v1.196.0: spending cap 不阻塞派发，按用量选最优
+    expect(result).not.toBeNull();
+    expect(result?.accountId).toBe('account3'); // ePct=10 最低
+    expect(result?.model).toBe('sonnet');
   });
 });
 

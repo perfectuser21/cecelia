@@ -6,7 +6,7 @@
  * - 调用 Anthropic OAuth usage API 查询各账号5小时/7天用量
  * - 缓存到 PostgreSQL（TTL 3分钟）
  * - 三阶段降级链：Sonnet → Opus → Haiku → MiniMax(null)
- * - Spending Cap 账号级标记（不再全局 billing_pause）
+ * - Spending Cap 已废弃：三阶段降级链根据实时用量数据自己路由，不再需要 spending_cap 阻塞
  */
 
 import { readFileSync } from 'fs';
@@ -278,7 +278,7 @@ function effectivePct(pct, resetsAt) {
 }
 
 /**
- * 为 Haiku 选择最优账号：只过滤 5h 超载和 spending_cap，不限制 sonnet/opus 配额
+ * 为 Haiku 选择最优账号：只过滤 5h 超载，不限制 sonnet/opus 配额
  * （Haiku 使用独立配额池，sonnet/opus 满额不影响 haiku 可用性）
  * @returns {string|null} 账号 ID 或 null
  */
@@ -294,7 +294,7 @@ export async function selectBestAccountForHaiku() {
         const extraUsed = u?.extra_used ?? false;
         return { id, pct, ePct, sevenDayPct, extraUsed };
       })
-      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed && !isSpendingCapped(a.id))
+      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (available.length === 0) {
@@ -309,18 +309,20 @@ export async function selectBestAccountForHaiku() {
 }
 
 /**
- * 三阶段降级链选择最优账号：
+ * 三阶段降级链选择最优账号（纯用量驱动，无 spending_cap 阻塞）：
  *
- * 阶段1 Sonnet：seven_day_sonnet < 100% + five_hour < 80% + !spending_cap + !extra_used
+ * 阶段1 Sonnet：seven_day_sonnet < 100% + five_hour < 80% + !extra_used
  *   排序：seven_day_sonnet ASC → ePct ASC → seven_day ASC
  *
- * 阶段2 Opus（Sonnet 全满时升级）：seven_day < 95% + five_hour < 80% + !spending_cap
+ * 阶段2 Opus（Sonnet 全满时升级）：seven_day < 95% + five_hour < 80%
  *   排序：seven_day ASC → ePct ASC
  *
- * 阶段3 Haiku（Opus 全满时降级）：five_hour < 80% + !spending_cap
+ * 阶段3 Haiku（Opus 全满时降级）：five_hour < 80%
  *   排序：ePct ASC
  *
  * 兜底：null → MiniMax
+ *
+ * 两个 7d reset 时间线独立：7d_all reset 但 7d_sonnet 还 100% → 只能用 Opus
  *
  * @returns {{ accountId: string, model: string }|null}
  *   accountId: 选中的账号 ID
@@ -341,17 +343,16 @@ export async function selectBestAccount() {
         sevenDayPct: u?.seven_day_pct ?? 0,
         sevenDaySonnetPct: u?.seven_day_sonnet_pct ?? 0,
         extraUsed: u?.extra_used ?? false,
-        spendingCapped: isSpendingCapped(id),
       };
     });
 
     const usageSummary = mapped.map(a =>
-      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '[CAP]' : ''}`
+      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%`
     ).join(', ');
 
     // ── 阶段1 Sonnet ──
     const sonnetCandidates = mapped
-      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
+      .filter(a => !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
       .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (sonnetCandidates.length > 0) {
@@ -364,7 +365,7 @@ export async function selectBestAccount() {
     // ── 阶段2 Opus（Sonnet 全满，升级 Opus）──
     // Opus 用 seven_day（all models）作代理指标，阈值 OPUS_THRESHOLD
     const opusCandidates = mapped
-      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
+      .filter(a => a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
       .sort((a, b) => a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct);
 
     if (opusCandidates.length > 0) {
@@ -375,7 +376,7 @@ export async function selectBestAccount() {
 
     // ── 阶段3 Haiku（Opus 全满，降级 Haiku）──
     const haikuCandidates = mapped
-      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD)
+      .filter(a => a.pct < USAGE_THRESHOLD)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (haikuCandidates.length > 0) {
@@ -385,7 +386,7 @@ export async function selectBestAccount() {
     }
 
     // ── 兜底 MiniMax ──
-    console.log(`[account-usage] 所有账号 5h 满载或 spending-capped → 降级到 MiniMax | ${usageSummary}`);
+    console.log(`[account-usage] 所有账号 5h 满载 → 降级到 MiniMax | ${usageSummary}`);
     return null;
   } catch (err) {
     console.error(`[account-usage] selectBestAccount 异常: ${err.message}`);

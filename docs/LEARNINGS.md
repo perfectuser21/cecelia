@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 废弃 spending_cap 一刀切逻辑 + schema_version 防污染（PR #545, Brain v1.195.1）
+
+**根因分析**：
+- spending_cap 是一刀切逻辑：1个账号撞 cap → 标记 `is_spending_capped=true` → `selectBestAccount` 过滤掉 → 所有账号都 capped 时返回 null → `billing_pause` 全局阻塞 → 所有模型所有账号全停
+- 实际上3个账号 7d 分别 74%/82%/93%，总剩余约 30%，明天旧用量滚出7天窗口就恢复
+- schema_version 表被 backfill 脚本插入日期字符串 `'20260305'`，`MAX(version)` 返回它导致 selfcheck 永远失败
+
+**架构决策**：
+- 降级链（Sonnet→Opus→Haiku→MiniMax）完全用量驱动，spending_cap 标记保留但不再影响选择
+- `billing_pause` 全局阻塞从 tick.js 派发路径移除
+- selfcheck 查询加 `WHERE version ~ '^[0-9]{1,4}$'` 过滤非 migration 条目
+
+**关键认知**：
+- 7d_all 和 7d_sonnet 有独立 reset 时间线：7d_all reset 但 7d_sonnet 还 100% → 只能用 Opus
+- spending_cap 作为"事后标记"没有意义 — 用量数据已经包含了所有信息
+
 ### [2026-03-05] 契约系统升级 — CI 合并闸门 + 签名变更检测（PR #543, Brain v1.195.0）
 
 **架构决策**：
