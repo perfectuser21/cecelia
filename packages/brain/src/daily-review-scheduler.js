@@ -110,6 +110,82 @@ export function isInDailyWindow(now = new Date()) {
   return utcHour === DAILY_REVIEW_HOUR_UTC && utcMinute < 5;
 }
 
+// 契约扫描触发时间（UTC 小时）— 03:00，错开 code-review 的 02:00
+const CONTRACT_SCAN_HOUR_UTC = 3;
+
+/** @module daily-review-scheduler
+ * 判断当前 UTC 时间是否在契约扫描触发窗口内（03:00-03:05）
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @returns {boolean}
+ */
+export function isInContractScanWindow(now = new Date()) {
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  return utcHour === CONTRACT_SCAN_HOUR_UTC && utcMinute < 5;
+}
+
+/** @module daily-review-scheduler
+ * 检查今天是否已经触发过契约扫描（去重，避免同一天多次运行）
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<boolean>}
+ */
+export async function hasTodayContractScan(pool) {
+  const { rows } = await pool.query(
+    `SELECT id FROM tasks
+     WHERE task_type = 'dev'
+       AND created_by = 'contract-scan'
+       AND created_at >= CURRENT_DATE::timestamptz
+       AND created_at < (CURRENT_DATE + INTERVAL '1 day')::timestamptz
+     LIMIT 1`
+  );
+  return rows.length > 0;
+}
+
+/** @module daily-review-scheduler
+ * 每日契约扫描调度入口（Tick 末尾调用，fire-and-forget）
+ * 非触发时间直接跳过；触发时间异步运行 run-contract-scan.mjs
+ * 结果（未覆盖的契约）由脚本直接写回 Brain 任务队列，无需等待。
+ * @param {import('pg').Pool} pool
+ * @param {Date} [now] - 可注入时间（测试用）
+ * @param {Function} [spawnFn] - 可注入 spawn 函数（测试用）
+ * @returns {Promise<{ skipped_window: boolean, skipped_today: boolean, triggered: boolean }>}
+ */
+export async function triggerContractScan(pool, now = new Date(), spawnFn = null) {
+  if (!isInContractScanWindow(now)) {
+    return { skipped_window: true, skipped_today: false, triggered: false };
+  }
+
+  try {
+    const alreadyRan = await hasTodayContractScan(pool);
+    if (alreadyRan) {
+      return { skipped_window: false, skipped_today: true, triggered: false };
+    }
+  } catch (err) {
+    console.warn('[contract-scan] 去重检查失败（继续执行）:', err.message);
+  }
+
+  // fire-and-forget：异步启动扫描脚本，不阻塞 tick
+  const { fileURLToPath } = await import('url');
+  const { dirname, resolve } = await import('path');
+  const { spawn } = await import('child_process');
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const scriptPath = resolve(__dirname, '../../scripts/run-contract-scan.mjs');
+
+  const spawnImpl = spawnFn || spawn;
+  const child = spawnImpl('node', [scriptPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+  });
+
+  if (child.unref) child.unref();
+
+  console.log(`[contract-scan] 启动每日契约扫描（fire-and-forget），script=${scriptPath}`);
+  return { skipped_window: false, skipped_today: false, triggered: true };
+}
+
 /** @module daily-review-scheduler
  * 每日代码审查调度入口（Tick 末尾调用）
  * 非触发时间直接跳过，触发时间为每个活跃 repo 创建 code_review task
