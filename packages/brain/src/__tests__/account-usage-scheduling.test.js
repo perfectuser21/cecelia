@@ -288,7 +288,7 @@ describe('M: 三阶段模型降级链', () => {
   // ============================================================
   // M1: 所有账号 Sonnet 7d 满 → 升级 Opus
   // ============================================================
-  it('M1: 所有账号 seven_day_sonnet >= 100% → 升级 Opus (model=opus)', async () => {
+  it('M1: 所有账号 seven_day_sonnet >= 95% → 升级 Opus (model=opus)', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
@@ -361,6 +361,61 @@ describe('M: 三阶段模型降级链', () => {
     const result = await selectBestAccount();
     expect(result?.model).toBe('sonnet');
     expect(result?.accountId).toBe('account2');
+  });
+
+  // ============================================================
+  // M4: 所有账号 Sonnet 7d 接近满（95-99%）→ 降级 Opus
+  // 复现日志中的实际场景：sonnet 7d = 100%, 100%, 98%
+  // ============================================================
+  it('M4: 所有账号 seven_day_sonnet 在 95-99% 范围（未达100%）→ 降级 Opus', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+    const { default: pool } = await import('../db.js');
+    pool.query.mockReset();
+    pool.query.mockImplementation((sql, params) => {
+      const rows = [
+        makeRow('account1', 0, 120, 75, 100),  // sonnet=100% >= 95%
+        makeRow('account2', 10, 120, 89, 100),  // sonnet=100% >= 95%
+        makeRow('account3', 18, 120, 93, 98),   // sonnet=98% >= 95% → 也应排除
+      ];
+      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
+        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { selectBestAccount } = await import('../account-usage.js');
+    const result = await selectBestAccount();
+    expect(result).not.toBeNull();
+    // 所有账号 sonnet >= 95%，Sonnet 阶段无候选 → 降级到 Opus
+    expect(result?.model).toBe('opus');
+    // account1 seven_day_pct=75% 最低 → 应选中
+    expect(result?.accountId).toBe('account1');
+  });
+
+  // ============================================================
+  // M5: Sonnet 7d 刚好在阈值边界（94% < 95%）→ 仍选 Sonnet
+  // ============================================================
+  it('M5: 有账号 seven_day_sonnet=94%（< 95%阈值）→ 仍走 Sonnet 阶段', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+    const { default: pool } = await import('../db.js');
+    pool.query.mockReset();
+    pool.query.mockImplementation((sql, params) => {
+      const rows = [
+        makeRow('account1', 0, 120, 75, 100),  // sonnet=100% >= 95%
+        makeRow('account2', 10, 120, 89, 100),  // sonnet=100% >= 95%
+        makeRow('account3', 18, 120, 50, 94),   // sonnet=94% < 95% → Sonnet 候选！
+      ];
+      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
+        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { selectBestAccount } = await import('../account-usage.js');
+    const result = await selectBestAccount();
+    expect(result).not.toBeNull();
+    expect(result?.model).toBe('sonnet');
+    expect(result?.accountId).toBe('account3');
   });
 });
 
