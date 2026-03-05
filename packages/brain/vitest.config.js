@@ -36,12 +36,6 @@ export default defineConfig({
     hookTimeout: 30000,
     teardownTimeout: 30000,
     isolate: true,
-    pool: 'forks',
-    poolOptions: {
-      forks: {
-        minForks: 1,
-        maxForks: 2,
-      },
-    }
+    pool: 'forks'
   }
 });

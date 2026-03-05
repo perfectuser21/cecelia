@@ -205,11 +205,13 @@ jobs:
 
       - name: Run Brain tests
         working-directory: packages/brain
+        env:
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            NODE_OPTIONS="--max-old-space-size=3072" npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage
+            npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage
           else
-            NODE_OPTIONS="--max-old-space-size=3072" npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
+            npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose
           fi
 
       - name: GoldenPath E2E
