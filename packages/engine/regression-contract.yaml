@@ -18,8 +18,8 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.41.0"
-updated: "2026-03-03"
+version: "12.42.0"
+updated: "2026-03-05"
 
 # ============================================================================
 # Hooks 回归契约
@@ -581,6 +581,101 @@ hooks:
       type: code
       file: "lib/lock-utils.sh"
       contains: "_LU_DEV_MODE_FILE"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-024
+    feature: H7
+    name: "lock-utils.sh worktree .git 文件检测"
+    scope: library
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [lock-utils, worktree, bug-fix]
+    owner: infra
+    steps:
+      given: "在 worktree 中运行（.git 是文件非目录）"
+      when: "_get_lock_paths 检测锁目录"
+      then: "使用 git rev-parse --git-dir 获取真正的 git 目录"
+    evidence:
+      type: code
+      file: "lib/lock-utils.sh"
+      contains: "git rev-parse --git-dir"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-025
+    feature: H7
+    name: "cleanup.sh worktree 感知"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [cleanup, worktree, bug-fix]
+    owner: infra
+    steps:
+      given: "cleanup.sh 在 worktree 内部运行"
+      when: "执行分支切换步骤"
+      then: "检测到 worktree 后跳过 checkout，不导致失败"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      contains: "IS_WORKTREE"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-026
+    feature: H7
+    name: "stop-dev.sh FD 冲突修复"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, fd-conflict, bug-fix]
+    owner: infra
+    steps:
+      given: "stop-dev.sh 使用 flock 更新 retry_count"
+      when: "同时 lock-utils.sh 也使用 flock"
+      then: "使用不同的 FD（202 vs 200），不冲突"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "flock -x 202"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-027
+    feature: H7
+    name: "worktree-gc.sh 路径安全精确匹配"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [worktree-gc, path-safety, bug-fix]
+    owner: infra
+    steps:
+      given: "worktree-gc.sh 需要 rm -rf fallback 清理"
+      when: "执行路径安全检查"
+      then: "使用 .claude/worktrees 或同父目录精确匹配，不用 dirname 过宽匹配"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/worktree-gc.sh"
+      contains: "worktree_dir"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-028
+    feature: H7
+    name: "stop-dev.sh orphan retry 分离 + 清理"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, orphan, cleanup, bug-fix]
+    owner: infra
+    steps:
+      given: "sentinel 和 lock 孤儿各自触发重试"
+      when: "使用独立计数器文件追踪重试次数"
+      then: "正常退出时清理所有 orphan retry 文件"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: ".dev-orphan-retry-sentinel"
     test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   # --------------------------------------------------------------------------

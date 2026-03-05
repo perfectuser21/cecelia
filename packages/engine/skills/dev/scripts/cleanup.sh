@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Cleanup 脚本
+# v2.0: R2 全面修复 - worktree 感知、grep 精确匹配、safe_rm_rf 精确前缀
 # v1.9: 使用 lib/lock-utils.sh 原子操作 + 协调信号
 # v1.8: PRD/DoD 归档到 .history/ 目录（而非直接删除）
 # v1.7: rm -rf 安全验证
@@ -53,7 +54,7 @@ safe_rm_rf() {
     local real_parent
     real_parent=$(realpath "$allowed_parent" 2>/dev/null) || real_parent="$allowed_parent"
 
-    if [[ "$real_path" != "$real_parent"* ]]; then
+    if [[ "$real_path" != "$real_parent/"* && "$real_path" != "$real_parent" ]]; then
         echo -e "${RED}错误: 路径 $path 不在允许范围 $allowed_parent 内，拒绝删除${NC}" >&2
         return 1
     fi
@@ -164,6 +165,15 @@ FAILED=0
 WARNINGS=0
 CHECKOUT_FAILED=0
 
+# v2.0 P0-1 修复：检测是否在 worktree 中运行
+# worktree 内 `git checkout main` 必定失败（main 被主仓库锁定）
+# worktree 清理由 worktree-gc.sh 负责，此脚本只做状态文件/config 清理
+IS_WORKTREE=false
+_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo "")
+if [[ "$_GIT_DIR" == *"worktrees"* ]]; then
+    IS_WORKTREE=true
+fi
+
 # ========================================
 # 0.0 捕获 CHANGED_FILES（必须在 checkout 之前）
 # ========================================
@@ -191,7 +201,7 @@ INCIDENT_FILE=".dev-incident-log.json"
 RUNS_DIR=".dev-runs"
 mkdir -p "$RUNS_DIR"
 if [[ -f "$INCIDENT_FILE" ]]; then
-    INCIDENT_COUNT=$(jq 'length' "$INCIDENT_FILE" 2>/dev/null || echo "0")
+    INCIDENT_COUNT=$( (command -v jq &>/dev/null && jq 'length' "$INCIDENT_FILE" 2>/dev/null) || grep -c '"' "$INCIDENT_FILE" 2>/dev/null || echo "0")
     ARCHIVE_NAME="${RUNS_DIR}/${CP_BRANCH}-incident-log.json"
     cp "$INCIDENT_FILE" "$ARCHIVE_NAME"
     rm -f "$INCIDENT_FILE"
@@ -223,7 +233,14 @@ echo ""
 echo "[1]  检查当前分支..."
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-if [[ "$CURRENT_BRANCH" == "$CP_BRANCH" ]]; then
+if [[ "$IS_WORKTREE" == "true" ]]; then
+    # worktree 内不能 checkout 到 main/develop（被主仓库锁定）
+    # 分支清理由 worktree-gc.sh 从主仓库执行
+    echo -e "   ${GREEN}[OK] 在 worktree 中运行（$CURRENT_BRANCH），跳过分支切换${NC}"
+    echo -e "   ${YELLOW}     分支/worktree 清理将由 worktree-gc.sh 从主仓库执行${NC}"
+    # 标记跳过 checkout 相关步骤，但不设 FAILED
+    CHECKOUT_FAILED=1
+elif [[ "$CURRENT_BRANCH" == "$CP_BRANCH" ]]; then
     echo -e "   ${YELLOW}[WARN]  还在 $CP_BRANCH 分支，需要切换${NC}"
     echo "   → 切换到 $BASE_BRANCH..."
     if git checkout "$BASE_BRANCH" 2>/dev/null; then
@@ -417,17 +434,28 @@ fi
 
 if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
     INCOMPLETE_STEPS=""
+    # v2.0 P1-5 修复：step_PATTERN 映射表，防止 step_1_ 匹配 step_10_/step_11_
+    declare -a STEP_PATTERNS=(
+        "" # 0 placeholder
+        "step_1_prd" "step_2_detect" "step_3_branch" "step_4_explore"
+        "step_5_dod" "step_6_code" "step_7_verify" "step_8_pr"
+        "step_9_ci" "step_10_learning" "step_11_cleanup"
+    )
     for step in {1..11}; do
-        STEP_STATUS=$(grep "^step_${step}_" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
+        STEP_KEY="${STEP_PATTERNS[$step]}"
+        STEP_STATUS=$(grep "^${STEP_KEY}:" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
         if [[ "$STEP_STATUS" != "done" ]]; then
-            INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"
+            INCOMPLETE_STEPS="$INCOMPLETE_STEPS ${STEP_KEY}"
         fi
     done
 
+    # v2.0 P1-6 修复：验证失败时设置标志，阻止后续 cleanup_done 写入
+    VALIDATION_PASSED=true
     if [[ -n "$INCOMPLETE_STEPS" ]]; then
         echo -e "   ${RED}[FAIL] 不能删除 .dev-mode，以下步骤未完成: $INCOMPLETE_STEPS${NC}"
         echo -e "   ${YELLOW}提示: 确保所有步骤都已标记为 done${NC}"
         FAILED=$((FAILED + 1))
+        VALIDATION_PASSED=false
     else
         echo -e "   ${GREEN}[OK] 所有 11 步已完成${NC}"
     fi
@@ -549,7 +577,11 @@ GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}')
 if [[ -n "$GONE_BRANCHES" ]]; then
     GONE_COUNT=$(echo "$GONE_BRANCHES" | wc -l)
     echo "   → 发现 $GONE_COUNT 个远程已删除的分支"
-    echo "$GONE_BRANCHES" | xargs -r git branch -D
+    # v2.0 P1-8 修复：逐个删除而非 xargs（set -e 下 xargs 任一失败会终止脚本）
+    while IFS= read -r gone_branch; do
+        [[ -z "$gone_branch" ]] && continue
+        git branch -D "$gone_branch" 2>/dev/null || echo -e "   ${YELLOW}[WARN] 删除 $gone_branch 失败${NC}"
+    done <<< "$GONE_BRANCHES"
     echo -e "   ${GREEN}[OK] 已清理 $GONE_COUNT 个分支${NC}"
 else
     echo -e "   ${GREEN}[OK] 无需清理${NC}"
@@ -572,7 +604,8 @@ fi
 
 # v1.9: 加载 lock-utils 并使用原子追加 + 协调信号
 LOCK_UTILS=""
-for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
+# v2.0 P1-4 修复：搜索路径加入 packages/engine/lib/（monorepo 结构）
+for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$PROJECT_ROOT_FOR_DEVMODE/packages/engine/lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
     if [[ -f "$candidate" ]]; then
         # shellcheck disable=SC1090
         source "$candidate"
@@ -581,7 +614,7 @@ for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/li
     fi
 done
 
-if [[ -f "$DEV_MODE_FILE" ]]; then
+if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; then
     # W8: 统一标记方式（使用 step_11_cleanup: done）
     # v12.41.0 P0-1 修复：sed 替换后验证结果，若行不存在则追加
     # （sed 's/A/B/' 在目标行不存在时静默成功，返回 exit 0，不做任何修改）
@@ -603,7 +636,7 @@ if [[ -f "$DEV_MODE_FILE" ]]; then
         if acquire_dev_mode_lock 2; then
             DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             _mark_cleanup_done "$DEV_MODE_FILE"
-            create_cleanup_signal "$CP_BRANCH"
+            # v2.0 P1-16: 移除 create_cleanup_signal（stop-dev.sh 通过 grep .dev-mode 检查，不读信号文件）
             release_dev_mode_lock
             echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done（原子写入）${NC}"
         else

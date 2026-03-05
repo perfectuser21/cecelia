@@ -4,6 +4,7 @@ version: 1.26.0
 created: 2026-01-16
 updated: 2026-03-05
 changelog:
+  - 1.27.0: 深度 Bug 修复 Round 2 — 30+ 全面修复（worktree 感知、FD 冲突、路径安全、跨平台兼容）
   - 1.26.0: Stop Hook + Cleanup 5 bug 一次性修复（squash merge 检测、per-branch .dev-mode、GC 竞态、CI 卡死）
   - 1.25.0: Worktree GC 外部清理者架构（55 次修补失败的根因分析 + 三条铁律 + 测试技巧）
   - 1.24.0: Stop Hook 安全默认修复 + CI 测试门禁（.dev-mode 损坏时 exit 0 → exit 2，11 项行为测试）
@@ -38,6 +39,28 @@ changelog:
 ### [2026-03-05] Stop Hook + Cleanup 5 Bug 一次性修复 (PR #552)
 
 **失败统计**：CI 失败 1 次（版本/Config Audit/Impact Check 不同步）
+
+## v12.42.0: 深度 Bug 修复 Round 2（2P0 + 15P1 + 8P2 = 25 修复）
+
+**PR**: #554 | **分支**: cp-03052300-deep-fix-engine-r2
+
+**触发原因**：4 个并行子代理深度审计发现 PR #553 后仍有 30+ Bug
+
+### 关键教训
+
+1. **worktree 中 `git checkout main` 永远失败**：worktree 的 main 被主仓库锁定。cleanup.sh 必须检测 IS_WORKTREE 并跳过 checkout，不能把这当成错误。
+
+2. **FD（File Descriptor）冲突是隐蔽的 Bug**：lock-utils.sh 用 FD 200 → stop-dev.sh 的 retry_count 也用 FD 200 → 互相干扰。修复：lock-utils 用可配置 FD（LOCK_UTILS_FD 环境变量），retry_count 用 FD 202，fallback 锁用 FD 201。
+
+3. **`.git` 在 worktree 中是文件不是目录**：`[[ ! -d .git ]]` 在 worktree 中总为 true → 锁文件落入 /tmp → 跨仓库冲突。正确做法：`git rev-parse --git-dir`。
+
+4. **grep 模糊匹配是定时炸弹**：`grep "step_1_"` 匹配 step_1_prd 也匹配 step_10_learning 和 step_11_cleanup → 验证永远报假失败。修复：STEP_PATTERNS 精确映射数组。
+
+5. **字符串前缀匹配必须加 `/` 分隔符**：`[[ "$path" == "$parent"* ]]` 中 `/home/xx/cecelia-evil` 能匹配 `/home/xx/cecelia`。加 `"$parent/"*` 修复。
+
+6. **CI 的 Config Audit 要求 PR 标题含 `[CONFIG]` 标签**：修改 hooks/skills/regression-contract 时必须在标题加 `[CONFIG]`。Contract Drift Check 要求 feature-registry 变更后重新生成 path views。
+
+**失败统计**：CI 失败 1 次（Contract Drift + Config Audit 标题标签）
 
 **5 个 Bug 及修复**：
 
