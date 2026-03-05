@@ -135,13 +135,12 @@ test_incident_mode() {
     # 创建临时测试 incident log
     local tmp_incident
     tmp_incident=$(mktemp /tmp/test-incident-XXXXXX.json)
-    cat > "$tmp_incident" << 'EOF'
-[
+    printf '%s' '[
   {
     "step": "07-verify",
     "type": "test_failure",
     "description": "单元测试 TypeScript 类型错误",
-    "error": "Type 'string' is not assignable to type 'number'",
+    "error": "Type '\''string'\'' is not assignable to type '\''number'\''",
     "resolution": "修正参数类型为 string"
   },
   {
@@ -151,8 +150,7 @@ test_incident_mode() {
     "error": "version mismatch in .hook-core-version",
     "resolution": "手动更新 .hook-core-version"
   }
-]
-EOF
+]' > "$tmp_incident"
 
     # 临时替换 INCIDENT_FILE
     local orig_incident="$INCIDENT_FILE"
@@ -185,23 +183,7 @@ test_learnings_mode() {
     local tmp_dir
     tmp_dir=$(mktemp -d /tmp/test-learnings-XXXXXX)
     local tmp_learnings="$tmp_dir/LEARNINGS.md"
-    cat > "$tmp_learnings" << 'EOF'
-# Engine LEARNINGS
-
-### [2026-02-28] 测试任务
-
-**失败统计**：CI 失败 2 次，本地测试失败 1 次
-
-**CI 失败记录**：
-- 失败 #1：版本文件未同步 → 更新 .hook-core-version → 下次先检查版本文件
-
-**预防措施**：
-- 改 engine 版本时，同步检查 .hook-core-version 和 regression-contract.yaml
-- 运行 `bash scripts/generate-path-views.sh` 确保路径视图一致
-- 提交前用 `bash scripts/check-version-sync.sh` 验证版本
-
-**影响程度**: Medium
-EOF
+    printf '%s\n' '# Engine LEARNINGS' '' '### [2026-02-28] 测试任务' '' '**失败统计**：CI 失败 2 次，本地测试失败 1 次' '' '**CI 失败记录**：' '- 失败 #1：版本文件未同步 → 更新 .hook-core-version → 下次先检查版本文件' '' '**预防措施**：' '- 改 engine 版本时，同步检查 .hook-core-version 和 regression-contract.yaml' '- 运行 `bash scripts/generate-path-views.sh` 确保路径视图一致' '- 提交前用 `bash scripts/check-version-sync.sh` 验证版本' '' '**影响程度**: Medium' > "$tmp_learnings"
 
     # 临时添加到候选列表
     LEARNINGS_CANDIDATES=("$tmp_learnings")

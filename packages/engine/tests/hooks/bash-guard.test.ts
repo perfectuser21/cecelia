@@ -9,12 +9,42 @@
  * 性能要求：未命中时 < 5ms
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { existsSync, mkdtempSync, copyFileSync, readdirSync, mkdirSync, lstatSync, readFileSync, writeFileSync, rmSync } from "fs";
+import { resolve, join } from "path";
+import { tmpdir } from "os";
 
-const HOOK_PATH = resolve(__dirname, "../../hooks/bash-guard.sh");
+const ENGINE_ROOT = resolve(__dirname, "../..");
+const ORIG_HOOK_PATH = resolve(ENGINE_ROOT, "hooks/bash-guard.sh");
+
+// vitest worker thread 中 stdin pipe 不工作，使用 HOOK_INPUT env var
+let HOOK_PATH: string;
+let tempDir: string;
+
+/** 递归复制目录 */
+function copyDir(src: string, dst: string): void {
+  mkdirSync(dst, { recursive: true });
+  for (const entry of readdirSync(src)) {
+    const srcPath = join(src, entry);
+    const dstPath = join(dst, entry);
+    if (lstatSync(srcPath).isDirectory()) {
+      copyDir(srcPath, dstPath);
+    } else {
+      copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
+function patchHookStdin(hookPath: string): void {
+  let content = readFileSync(hookPath, "utf-8");
+  // bash-guard.sh uses: INPUT="$(cat)"
+  content = content.replace(
+    /^INPUT="\$\(cat\)"$/m,
+    'INPUT="${HOOK_INPUT:-$(cat)}"'
+  );
+  writeFileSync(hookPath, content);
+}
 
 function runHook(command: string): { exitCode: number; stderr: string } {
   const input = JSON.stringify({
@@ -23,9 +53,10 @@ function runHook(command: string): { exitCode: number; stderr: string } {
   });
 
   try {
-    execSync(`echo '${input.replace(/'/g, "'\\''")}' | bash "${HOOK_PATH}"`, {
+    execSync(`bash "${HOOK_PATH}"`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, HOOK_INPUT: input },
     });
     return { exitCode: 0, stderr: "" };
   } catch (err: any) {
@@ -35,18 +66,33 @@ function runHook(command: string): { exitCode: number; stderr: string } {
 
 describe("bash-guard.sh", () => {
   beforeAll(() => {
-    expect(existsSync(HOOK_PATH)).toBe(true);
+    expect(existsSync(ORIG_HOOK_PATH)).toBe(true);
+    // 在临时目录重建 hooks/ + lib/ 目录结构，以保证 hook 能找到 hook-utils.sh
+    tempDir = mkdtempSync(join(tmpdir(), "bash-guard-test-"));
+    const hooksDir = join(tempDir, "hooks");
+    const libDir = join(tempDir, "lib");
+    mkdirSync(hooksDir);
+    copyDir(join(ENGINE_ROOT, "lib"), libDir);
+    HOOK_PATH = join(hooksDir, "bash-guard.sh");
+    copyFileSync(ORIG_HOOK_PATH, HOOK_PATH);
+    patchHookStdin(HOOK_PATH);
+  });
+
+  afterAll(() => {
+    if (tempDir && existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("should exist and be executable", () => {
-    const stat = execSync(`stat -c %a "${HOOK_PATH}"`, { encoding: "utf-8" });
+    const stat = execSync(`stat -c %a "${ORIG_HOOK_PATH}"`, { encoding: "utf-8" });
     const mode = parseInt(stat.trim(), 8);
     expect(mode & 0o111).toBeGreaterThan(0);
   });
 
   it("should pass syntax check", () => {
     expect(() => {
-      execSync(`bash -n "${HOOK_PATH}"`, { encoding: "utf-8" });
+      execSync(`bash -n "${ORIG_HOOK_PATH}"`, { encoding: "utf-8" });
     }).not.toThrow();
   });
 
@@ -240,9 +286,10 @@ describe("bash-guard.sh", () => {
         tool_input: { command: "" },
       });
       try {
-        execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
+        execSync(`bash "${HOOK_PATH}"`, {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, HOOK_INPUT: input },
         });
       } catch {
         // empty command might exit 0 or non-zero, just shouldn't crash
@@ -251,9 +298,10 @@ describe("bash-guard.sh", () => {
 
     it("handles invalid JSON gracefully", () => {
       try {
-        execSync(`echo 'not json' | bash "${HOOK_PATH}"`, {
+        execSync(`bash "${HOOK_PATH}"`, {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, HOOK_INPUT: "not json" },
         });
         // Should exit 0 (graceful pass-through)
       } catch {

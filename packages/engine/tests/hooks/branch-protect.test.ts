@@ -8,16 +8,63 @@
  * 4. step >= 4 才能写代码
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readdirSync, lstatSync, readFileSync, writeFileSync, rmSync } from "fs";
+import { resolve, join } from "path";
+import { tmpdir } from "os";
 
-const HOOK_PATH = resolve(__dirname, "../../hooks/branch-protect.sh");
+const ENGINE_ROOT = resolve(__dirname, "../..");
+const ORIG_HOOK_PATH = resolve(ENGINE_ROOT, "hooks/branch-protect.sh");
+
+// vitest worker thread 中 stdin pipe 不工作，使用 HOOK_INPUT env var（仅用于 skills protection 测试）
+let PATCHED_HOOK_PATH: string;
+let tempDir: string;
+
+/** 递归复制目录 */
+function copyDir(src: string, dst: string): void {
+  mkdirSync(dst, { recursive: true });
+  for (const entry of readdirSync(src)) {
+    const srcPath = join(src, entry);
+    const dstPath = join(dst, entry);
+    if (lstatSync(srcPath).isDirectory()) {
+      copyDir(srcPath, dstPath);
+    } else {
+      copyFileSync(srcPath, dstPath);
+    }
+  }
+}
+
+function patchHookStdin(hookPath: string): void {
+  let content = readFileSync(hookPath, "utf-8");
+  // branch-protect.sh uses: INPUT=$(cat)
+  content = content.replace(
+    /^INPUT=\$\(cat\)$/m,
+    'INPUT="${HOOK_INPUT:-$(cat)}"'
+  );
+  writeFileSync(hookPath, content);
+}
+
+const HOOK_PATH = ORIG_HOOK_PATH;
 
 describe("branch-protect.sh", () => {
   beforeAll(() => {
-    expect(existsSync(HOOK_PATH)).toBe(true);
+    expect(existsSync(ORIG_HOOK_PATH)).toBe(true);
+    // 在临时目录重建 hooks/ + lib/ 目录结构，以保证 hook 能找到依赖
+    tempDir = mkdtempSync(join(tmpdir(), "branch-protect-test-"));
+    const hooksDir = join(tempDir, "hooks");
+    const libDir = join(tempDir, "lib");
+    mkdirSync(hooksDir);
+    copyDir(join(ENGINE_ROOT, "lib"), libDir);
+    PATCHED_HOOK_PATH = join(hooksDir, "branch-protect.sh");
+    copyFileSync(ORIG_HOOK_PATH, PATCHED_HOOK_PATH);
+    patchHookStdin(PATCHED_HOOK_PATH);
+  });
+
+  afterAll(() => {
+    if (tempDir && existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("should exist and be executable", () => {
@@ -134,9 +181,10 @@ describe("branch-protect.sh", () => {
         // Engine skills should be blocked (exit 2)
         let exitCode = 0;
         try {
-          execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
+          execSync(`bash "${PATCHED_HOOK_PATH}"`, {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, HOOK_INPUT: input },
           });
         } catch (e: unknown) {
           const err = e as { status?: number };
@@ -190,9 +238,10 @@ describe("branch-protect.sh", () => {
         // Hooks should be blocked (exit 2)
         let exitCode = 0;
         try {
-          execSync(`echo '${input}' | bash "${HOOK_PATH}"`, {
+          execSync(`bash "${PATCHED_HOOK_PATH}"`, {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, HOOK_INPUT: input },
           });
         } catch (e: unknown) {
           const err = e as { status?: number };
