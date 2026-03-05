@@ -426,6 +426,23 @@ main() {
     wait "$CHILD_PID"
     exit_code=$?
     echo "[cecelia-run] DEBUG: 进程退出，exit_code=$exit_code" >&2
+
+    # 清理 setsid 进程组中残留的子进程（防止 claude 变成孤儿进程）
+    if [[ -n "$CHILD_PGID" ]]; then
+      local remaining
+      remaining=$(ps -o pid= -g "$CHILD_PGID" 2>/dev/null | wc -l)
+      if [[ "$remaining" -gt 0 ]]; then
+        echo "[cecelia-run] 清理进程组 PGID=$CHILD_PGID 中 $remaining 个残留进程" >&2
+        kill -TERM -"$CHILD_PGID" 2>/dev/null || true
+        sleep 2
+        remaining=$(ps -o pid= -g "$CHILD_PGID" 2>/dev/null | wc -l)
+        if [[ "$remaining" -gt 0 ]]; then
+          echo "[cecelia-run] SIGTERM 未生效，发送 SIGKILL" >&2
+          kill -9 -"$CHILD_PGID" 2>/dev/null || true
+        fi
+      fi
+    fi
+
     CHILD_PID=""
     CHILD_PGID=""
     set -e
