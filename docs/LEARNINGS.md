@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 契约系统升级 — CI 合并闸门 + 签名变更检测（PR #543, Brain v1.195.0）
+
+**架构决策**：
+- 从"定时体检"升级到"合并闸门"：每个 PR 自动检测是否触及模块边界契约
+- P0 契约无测试 → 硬失败（阻止合并）；P1/P2 → 软警告（不阻塞）
+- signature_file 变更但 test_file 未更新 → 警告（接口变了测试没跟上）
+- 脚本放 `scripts/devgate/` 目录，复用 fitness-check CI job
+
+**关键修复**：
+- `run-contract-scan.mjs` API 端点：`/api/brain/tasks`(404) → `/api/brain/action/create-task`
+- `run-contract-scan.mjs` 必须传 `goal_id`（`brain_auto` 触发源要求）
+- `cecelia-module-boundaries.yaml` v2.0.0：所有契约添加 `signature_file` 字段
+
+**CI 坑**：
+- fitness-check job 没有 `npm ci`，其他 devgate 脚本都是纯 Node.js 无外部依赖
+- `check-contract-drift.mjs` 用了 `js-yaml` → CI 报 `ERR_MODULE_NOT_FOUND`
+- 修复：在 run step 前加 `npm install --no-save js-yaml`（最轻量，避免给整个 job 加 npm ci）
+
 ### [2026-03-05] 每日契约自动扫描系统（PR #542, Brain v1.194.5）
 
 **架构决策**：
