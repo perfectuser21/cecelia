@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 修复 WORK_DIR 默认路径 cecelia/core → cecelia（PR #531, Brain v1.193.1）
+
+**失败统计**：CI 失败 0 次
+
+**根本原因**：
+1. **旧路径遗留**：架构迁移前 Brain 在 `cecelia/core/brain` 目录，迁移后路径变为 `packages/brain`，但 3 处硬编码的旧默认路径未更新
+2. **DB 数据空缺**：`projects` 表所有 47 条记录 `repo_path = null`，`resolveRepoPath()` 返回 null，bridge 不设置 `CECELIA_WORK_DIR`，`cecelia-run.sh` 回退到错误默认值
+
+**修复方案**：
+1. **代码**（PR #531）：3 处硬编码路径 `cecelia/core` → `cecelia`
+2. **数据**（直接 SQL）：`UPDATE projects SET repo_path = '/home/xx/perfect21/cecelia' WHERE repo_path IS NULL` 更新 47 条记录
+
+**关键经验**：
+- 架构迁移后必须检查所有硬编码路径（用 `grep -r "cecelia/core"` 全局扫描）
+- `resolveRepoPath` 返回 null 时应有合理 fallback（而非依赖 `cecelia-run.sh` 的错误默认值）
+- 路径类 bug 导致任务静默失败（60min 后才超时），诊断困难；建议 `cecelia-run.sh` 在 `WORK_DIR` 不是 git repo 时立即失败并报错
+
+
+
 ### [2026-03-04] Dashboard PR 进度可视化组件（PR #519, Dashboard v1.175.0）
 
 **失败统计**：CI 失败 2 次，本地测试失败 0 次
