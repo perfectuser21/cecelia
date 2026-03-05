@@ -1,5 +1,5 @@
  
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from './stats.js';
 // Inlined from deleted orchestrator.js / perception.js (1/31 migration remnants replaced by three-layer brain)
 async function getActivePolicy() {
@@ -90,6 +90,7 @@ async function getActiveExecutionPaths() {
 }
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 import { updateDesireFromTask } from './desire-feedback.js';
+import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from './pr-callback-handler.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -10770,6 +10771,95 @@ router.get('/pr-progress/:kr_id', async (req, res) => {
   } catch (err) {
     console.error('[API] pr-progress GET error:', err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/webhook/github
+ * GitHub Webhook 接收端点 - 处理 PR 合并事件
+ *
+ * 验证 X-Hub-Signature-256 header（HMAC SHA-256）。
+ * 处理 pull_request 事件（action: closed + merged: true）。
+ *
+ * 环境变量：
+ *   GITHUB_WEBHOOK_SECRET - Webhook secret（必填）
+ *
+ * 请求 Headers：
+ *   X-GitHub-Event: pull_request
+ *   X-Hub-Signature-256: sha256=<hex>
+ *   Content-Type: application/json
+ *
+ * 请求体（GitHub pull_request 事件格式）：
+ *   {
+ *     action: "closed",
+ *     pull_request: { merged: true, head: { ref: "cp-xxx" }, ... },
+ *     repository: { full_name: "owner/repo" }
+ *   }
+ */
+router.post('/webhook/github', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const signature = req.headers['x-hub-signature-256'];
+    const event = req.headers['x-github-event'];
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+
+    // 1. Secret 验证（HMAC SHA-256）
+    if (!secret) {
+      console.error('[webhook/github] GITHUB_WEBHOOK_SECRET 未配置');
+      return res.status(500).json({ success: false, error: 'Webhook secret not configured' });
+    }
+
+    if (!verifyWebhookSignature(secret, signature, req.body)) {
+      console.warn('[webhook/github] 签名验证失败（可能是未授权请求）');
+      return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
+    }
+
+    // 2. 只处理 pull_request 事件
+    if (event !== 'pull_request') {
+      return res.status(200).json({ success: true, message: `Event ${event} ignored` });
+    }
+
+    // 3. 解析 payload（req.body 是 Buffer，需要 parse）
+    let payload;
+    try {
+      payload = JSON.parse(req.body.toString('utf8'));
+    } catch (parseErr) {
+      console.error('[webhook/github] Payload 解析失败:', parseErr.message);
+      return res.status(400).json({ success: false, error: 'Invalid JSON payload' });
+    }
+
+    // 4. 提取 PR 信息（只处理合并事件）
+    const prInfo = extractPrInfo(payload);
+    if (!prInfo) {
+      return res.status(200).json({ success: true, message: 'Not a merged PR event, ignored' });
+    }
+
+    console.log(`[webhook/github] PR 合并: repo=${prInfo.repo} pr=#${prInfo.prNumber} branch=${prInfo.branchName}`);
+
+    // 5. 处理任务状态更新
+    const result = await handlePrMerged(pool, prInfo);
+
+    if (!result.matched) {
+      console.warn(`[webhook/github] 未找到匹配任务: branch=${prInfo.branchName}`);
+      return res.status(200).json({
+        success: true,
+        matched: false,
+        message: `No in_progress task found for branch: ${prInfo.branchName}`
+      });
+    }
+
+    console.log(`[webhook/github] 任务状态已更新: taskId=${result.taskId} krProgress=${result.krProgressUpdated}`);
+
+    return res.status(200).json({
+      success: true,
+      matched: true,
+      taskId: result.taskId,
+      taskTitle: result.taskTitle,
+      krProgressUpdated: result.krProgressUpdated
+    });
+
+  } catch (err) {
+    console.error('[webhook/github] 处理失败:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
