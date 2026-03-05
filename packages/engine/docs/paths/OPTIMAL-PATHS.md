@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.27.0
-created: 2026-03-05
-updated: 2026-03-05
+version: 3.28.0
+created: 2026-03-06
+updated: 2026-03-06
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.27.0: 从 feature-registry.yml 自动生成
+  - 3.28.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -27,7 +27,7 @@ changelog:
 
 ---
 
-### H7: Stop Hook Router (v13.0.0)
+### H7: Stop Hook Router (v13.3.0)
 
 ```
 会话结束 → 检测 .dev-mode → 检查完成条件 → exit 2 (继续) | exit 0 (结束)
@@ -227,5 +227,5 @@ rejected: Brain 打回重拆
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.27.0
-**生成时间**: 2026-03-05
+**版本**: 3.28.0
+**生成时间**: 2026-03-06
