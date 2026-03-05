@@ -3,12 +3,12 @@
  *
  * 测试 callClaudeViaBridge 正确传递 accountId 给 bridge：
  *  - selectBestAccount() 返回 { accountId, model } 时，提取 accountId（修复容器内 homedir 路径 bug）
- *  - selectBestAccountForHaiku() 返回 string 时，直接使用
+ *  - selectBestAccount({ model: 'haiku' }) 统一选账号（PR #547 统一入口）
  *  - bridge 在宿主机侧用 accountId 拼出正确 CLAUDE_CONFIG_DIR（不在容器内拼）
  *
  * DoD 映射：
  *  - ACS1 → 'selectBestAccount 返回 {accountId} 对象时，requestBody.accountId 为正确 accountId 字符串'
- *  - ACS2 → 'selectBestAccountForHaiku 返回 string 时，requestBody.accountId 为正确账号'
+ *  - ACS2 → 'Haiku 模型走 selectBestAccount({ model: "haiku" })，requestBody.accountId 为正确账号'
  *  - ACS3 → 'selectBestAccount 返回 null 时，不传 accountId'
  */
 
@@ -76,8 +76,8 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     expect(requestBody.configDir).toBeUndefined();
   });
 
-  it('ACS2: selectBestAccountForHaiku 返回 string 时，requestBody.accountId 为正确账号', async () => {
-    // 当 model 是 haiku，使用 selectBestAccountForHaiku（返回 string）
+  it('ACS2: Haiku 模型走 selectBestAccount({ model: "haiku" })，requestBody.accountId 为正确账号', async () => {
+    // PR #547: Haiku 模型统一走 selectBestAccount({ model: 'haiku' })
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
       config: {
@@ -85,10 +85,11 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
       },
     });
 
-    mockSelectBestAccountForHaiku.mockResolvedValue('account3');
+    mockSelectBestAccount.mockResolvedValue({ accountId: 'account3', model: 'haiku' });
 
     await callLLM('thalamus', '测试 prompt');
 
+    expect(mockSelectBestAccount).toHaveBeenCalledWith({ model: 'haiku' });
     expect(mockFetch).toHaveBeenCalled();
     const callArgs = mockFetch.mock.calls[0];
     const requestBody = JSON.parse(callArgs[1].body);
