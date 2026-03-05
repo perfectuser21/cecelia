@@ -54,6 +54,13 @@ done
 # shellcheck disable=SC1090
 [[ -n "$CI_STATUS_LIB" ]] && source "$CI_STATUS_LIB"
 
+# v12.41.0 P1-3 修复：jq 不存在时提供极简 shim
+# 防止 set -e 下 jq 命令找不到导致整个脚本崩溃（exit 127）
+# 流程控制只依赖 exit code（0/2），jq 输出是给 Claude Code 的提示信息
+if ! command -v jq &>/dev/null; then
+    jq() { cat >/dev/null 2>&1; echo '{}'; }
+fi
+
 # ===== P0-2 修复：获取并发锁，防止多个会话同时操作 =====
 if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
     if ! acquire_dev_mode_lock 2; then
@@ -150,6 +157,13 @@ for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
     # session_id 匹配（TTY 不可用时 fallback）
     elif [[ -n "$_lock_session" && -n "$_CURRENT_SESSION_ID" && "$_lock_session" == "$_CURRENT_SESSION_ID" ]]; then
         _matched=true
+    # v12.41.0 P0-2 修复：TTY 和 session_id 都为空（纯无头模式）→ 用当前分支名匹配
+    # 无头模式下 tty="" 且 CLAUDE_SESSION_ID="" 时，上面两个条件都不满足，
+    # 导致扫描循环匹配不到任何 lock → DEV_LOCK_FILE="" → exit 0（Stop Hook 失效）
+    elif [[ -z "$_CURRENT_TTY" || "$_CURRENT_TTY" == "not a tty" ]] && [[ -z "$_CURRENT_SESSION_ID" ]]; then
+        if [[ -n "$_branch_in_lock" && "$_branch_in_lock" == "$CURRENT_BRANCH" ]]; then
+            _matched=true
+        fi
     fi
 
     if [[ "$_matched" == "true" && -n "$_branch_in_lock" ]]; then
@@ -208,9 +222,28 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
 
     # 检查 sentinel（三重保险）—— 仅旧格式
     if [[ -f "$PROJECT_ROOT/.dev-sentinel" ]]; then
+        # v12.41.0 P1-1 修复：用 .dev-orphan-retry 文件追踪重试次数
+        # sentinel/lock 缺失路径没有 .dev-mode 可写 retry_count，需要独立计数器
+        _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry"
+        _ORPHAN_COUNT=0
+        if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
+            _ORPHAN_COUNT=$(cat "$_ORPHAN_RETRY_FILE" 2>/dev/null || echo "0")
+            _ORPHAN_COUNT=${_ORPHAN_COUNT//[^0-9]/}
+            _ORPHAN_COUNT=${_ORPHAN_COUNT:-0}
+        fi
+        _ORPHAN_COUNT=$((_ORPHAN_COUNT + 1))
+        echo "$_ORPHAN_COUNT" > "$_ORPHAN_RETRY_FILE"
+
+        if [[ $_ORPHAN_COUNT -gt 5 ]]; then
+            # 超过 5 次 → 清理孤儿 sentinel，允许退出
+            echo "  ⚠️  Sentinel 孤儿重试 $_ORPHAN_COUNT 次，强制清理" >&2
+            rm -f "$PROJECT_ROOT/.dev-sentinel" "$_ORPHAN_RETRY_FILE"
+            exit 0
+        fi
+
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [Stop Hook: Sentinel 检测到状态丢失]" >&2
+        echo "  [Stop Hook: Sentinel 检测到状态丢失 (${_ORPHAN_COUNT}/5)]" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "" >&2
         echo "  ⚠️  Sentinel 存在但 .dev-lock 和 .dev-mode 都不存在" >&2
@@ -219,7 +252,7 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
         echo "  下一步：重建状态文件或检查清理脚本" >&2
         echo "" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        jq -n --arg reason "Sentinel 存在但状态文件丢失，判定为误删，阻止退出" '{"decision": "block", "reason": $reason}'
+        jq -n --arg reason "Sentinel 存在但状态文件丢失，判定为误删，阻止退出（${_ORPHAN_COUNT}/5）" '{"decision": "block", "reason": $reason}'
         exit 2  # ← 强制阻止退出（三重保险生效）
     fi
 
@@ -229,10 +262,28 @@ fi
 
 # .dev-lock 存在，检查 .dev-mode（软状态）
 if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    # v12.41.0 P1-2 修复：与 P1-1 相同逻辑，用 .dev-orphan-retry 追踪重试
+    _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry"
+    _ORPHAN_COUNT=0
+    if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
+        _ORPHAN_COUNT=$(cat "$_ORPHAN_RETRY_FILE" 2>/dev/null || echo "0")
+        _ORPHAN_COUNT=${_ORPHAN_COUNT//[^0-9]/}
+        _ORPHAN_COUNT=${_ORPHAN_COUNT:-0}
+    fi
+    _ORPHAN_COUNT=$((_ORPHAN_COUNT + 1))
+    echo "$_ORPHAN_COUNT" > "$_ORPHAN_RETRY_FILE"
+
+    if [[ $_ORPHAN_COUNT -gt 5 ]]; then
+        # 超过 5 次 → 清理孤儿 lock，允许退出
+        echo "  ⚠️  .dev-lock 孤儿重试 $_ORPHAN_COUNT 次，强制清理" >&2
+        rm -f "$DEV_LOCK_FILE" "$SENTINEL_FILE" "$_ORPHAN_RETRY_FILE"
+        exit 0
+    fi
+
     # .dev-lock 在但 .dev-mode 不在 → 状态丢失/创建失败/被删除
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 状态文件丢失]" >&2
+    echo "  [Stop Hook: 状态文件丢失 (${_ORPHAN_COUNT}/5)]" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
     echo "  ⚠️  .dev-lock 存在但 .dev-mode 缺失" >&2
@@ -243,7 +294,7 @@ if [[ ! -f "$DEV_MODE_FILE" ]]; then
     echo "  下一步：重建 .dev-mode 或执行最小检查" >&2
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    jq -n --arg reason ".dev-lock 存在但 .dev-mode 缺失，阻止退出（状态丢失或创建失败）" '{"decision": "block", "reason": $reason}'
+    jq -n --arg reason ".dev-lock 存在但 .dev-mode 缺失，阻止退出（${_ORPHAN_COUNT}/5）" '{"decision": "block", "reason": $reason}'
     exit 2  # ← 强制阻止退出（双钥匙核心机制）
 fi
 

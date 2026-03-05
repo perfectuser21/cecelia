@@ -2,8 +2,8 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 2.71.0 (Contract Rebase - 对齐两阶段工作流)
-# 更新: 2026-01-24
+# 版本: 3.27.0
+# 更新: 2026-03-05
 #
 # 核心原则:
 # - Feature Registry 回答"系统有什么能力"（What）
@@ -18,6 +18,7 @@
 version: "3.26.0"
 updated: "2026-03-05"
 changelog:
+  - "3.27.0: v12.41.0 - 深度 Bug 修复（3P0+6P1）：cleanup.sh sed step_11_cleanup 静默失败修复（验证后追加）；stop-dev.sh 无头模式锁匹配分支名 fallback（防 exit 0 泄漏）；worktree-gc.sh 脏状态检查（防数据丢失）；孤儿 sentinel/.dev-lock 重试上限（防无限循环）；jq shim（防 set -e 崩溃）；lock-utils.sh 变量隔离（_LU_ 前缀防覆写）；worktree-gc --state all 改 merged+closed；rm -rf 路径安全验证"
   - "3.26.0: v12.40.1 - Stop Hook + Cleanup 5 bug 修复：stop-dev.sh merged PR 跳过 CI 检查（防卡死）；cleanup.sh .dev-mode per-branch 格式支持（Section 10+7.6）；Section 9 用 gh pr list 替换 git branch --merged（squash merge 兼容）；Section 4.5 移除 fire-and-forget GC（竞态修复）；新增 18 个 CI 测试"
   - "3.25.0: v12.40.0 - Worktree 外部清理者架构重构：新增 worktree-gc.sh（从主仓库运行，用 gh API 检测已合并 PR，不用 git branch --merged）；stop-dev.sh force_cleanup_worktree 不再自删 worktree；cleanup.sh 委托外部 GC；worktree-manage.sh cleanup 委托外部 GC；新增 worktree-gc.test.ts 行为测试"
   - "3.24.0: v12.39.0 - Stop Hook 安全默认修复 + 状态完整性测试门禁：.dev-mode 首行损坏时从 exit 0 改为 exit 2（PR #549 根因修复）；03-branch.md Task Checkpoint 文件名 bug 修复；新增 stop-hook-state-integrity.test.ts（11 项行为测试）"

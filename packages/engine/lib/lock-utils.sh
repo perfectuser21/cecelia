@@ -4,6 +4,7 @@
 # ============================================================================
 # 提供原子操作和锁机制，防止多会话竞态条件
 #
+# v1.1.0: P1-4 修复 - _get_lock_paths 不再覆写调用者的 DEV_MODE_FILE
 # v1.0.0: 初始版本
 #   - acquire_dev_mode_lock / release_dev_mode_lock: 写锁
 #   - atomic_write_dev_mode / atomic_append_dev_mode: 原子操作
@@ -12,17 +13,18 @@
 # ============================================================================
 
 # 获取项目根目录和锁文件路径（内部使用）
+# v1.1.0: 使用 _LU_ 前缀的内部变量，避免覆写调用者的 DEV_MODE_FILE
 _get_lock_paths() {
     local project_root
     project_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-    DEV_MODE_FILE="$project_root/.dev-mode"
-    LOCK_DIR="$project_root/.git"
-    LOCK_FILE="$LOCK_DIR/dev-mode.lock"
+    _LU_DEV_MODE_FILE="$project_root/.dev-mode"
+    _LU_LOCK_DIR="$project_root/.git"
+    _LU_LOCK_FILE="$_LU_LOCK_DIR/dev-mode.lock"
 
-    if [[ ! -d "$LOCK_DIR" ]]; then
-        LOCK_DIR="/tmp"
-        LOCK_FILE="$LOCK_DIR/zenithjoy-dev-mode.lock"
+    if [[ ! -d "$_LU_LOCK_DIR" ]]; then
+        _LU_LOCK_DIR="/tmp"
+        _LU_LOCK_FILE="$_LU_LOCK_DIR/zenithjoy-dev-mode.lock"
     fi
 }
 
@@ -40,21 +42,21 @@ get_session_id() {
 # 读取 .dev-mode 中的 session_id
 get_dev_mode_session_id() {
     _get_lock_paths
-    if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    if [[ ! -f "$_LU_DEV_MODE_FILE" ]]; then
         echo ""
         return 0
     fi
-    grep "^session_id:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo ""
+    grep "^session_id:" "$_LU_DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo ""
 }
 
 # 读取 .dev-mode 中的分支名
 get_dev_mode_branch() {
     _get_lock_paths
-    if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    if [[ ! -f "$_LU_DEV_MODE_FILE" ]]; then
         echo ""
         return 0
     fi
-    grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo ""
+    grep "^branch:" "$_LU_DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo ""
 }
 
 # 获取 .dev-mode 写锁
@@ -64,7 +66,7 @@ acquire_dev_mode_lock() {
     local timeout="${1:-2}"
     _get_lock_paths
 
-    exec 200>"$LOCK_FILE"
+    exec 200>"$_LU_LOCK_FILE"
     if ! flock -w "$timeout" 200; then
         return 1
     fi
@@ -83,10 +85,10 @@ atomic_write_dev_mode() {
     _get_lock_paths
 
     local temp_file
-    temp_file=$(mktemp "${DEV_MODE_FILE}.XXXXXX") || return 1
+    temp_file=$(mktemp "${_LU_DEV_MODE_FILE}.XXXXXX") || return 1
 
     echo "$content" > "$temp_file" || { rm -f "$temp_file"; return 1; }
-    mv "$temp_file" "$DEV_MODE_FILE" || { rm -f "$temp_file"; return 1; }
+    mv "$temp_file" "$_LU_DEV_MODE_FILE" || { rm -f "$temp_file"; return 1; }
     return 0
 }
 
@@ -96,16 +98,16 @@ atomic_append_dev_mode() {
     local line="$1"
     _get_lock_paths
 
-    if [[ ! -f "$DEV_MODE_FILE" ]]; then
-        echo "$line" > "$DEV_MODE_FILE"
+    if [[ ! -f "$_LU_DEV_MODE_FILE" ]]; then
+        echo "$line" > "$_LU_DEV_MODE_FILE"
         return $?
     fi
 
     local temp_file
-    temp_file=$(mktemp "${DEV_MODE_FILE}.XXXXXX") || return 1
+    temp_file=$(mktemp "${_LU_DEV_MODE_FILE}.XXXXXX") || return 1
 
-    { cat "$DEV_MODE_FILE"; echo "$line"; } > "$temp_file" || { rm -f "$temp_file"; return 1; }
-    mv "$temp_file" "$DEV_MODE_FILE" || { rm -f "$temp_file"; return 1; }
+    { cat "$_LU_DEV_MODE_FILE"; echo "$line"; } > "$temp_file" || { rm -f "$temp_file"; return 1; }
+    mv "$temp_file" "$_LU_DEV_MODE_FILE" || { rm -f "$temp_file"; return 1; }
     return 0
 }
 
@@ -129,19 +131,19 @@ check_session_match() {
 create_cleanup_signal() {
     local branch_name="$1"
     _get_lock_paths
-    touch "$LOCK_DIR/cleanup-complete-${branch_name}"
+    touch "$_LU_LOCK_DIR/cleanup-complete-${branch_name}"
 }
 
 # 检查协调信号是否存在
 check_cleanup_signal() {
     local branch_name="$1"
     _get_lock_paths
-    [[ -f "$LOCK_DIR/cleanup-complete-${branch_name}" ]]
+    [[ -f "$_LU_LOCK_DIR/cleanup-complete-${branch_name}" ]]
 }
 
 # 删除协调信号
 remove_cleanup_signal() {
     local branch_name="$1"
     _get_lock_paths
-    /bin/rm -f "$LOCK_DIR/cleanup-complete-${branch_name}"
+    /bin/rm -f "$_LU_LOCK_DIR/cleanup-complete-${branch_name}"
 }

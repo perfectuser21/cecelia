@@ -583,21 +583,38 @@ done
 
 if [[ -f "$DEV_MODE_FILE" ]]; then
     # W8: 统一标记方式（使用 step_11_cleanup: done）
+    # v12.41.0 P0-1 修复：sed 替换后验证结果，若行不存在则追加
+    # （sed 's/A/B/' 在目标行不存在时静默成功，返回 exit 0，不做任何修改）
+    _mark_cleanup_done() {
+        local target_file="$1"
+        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$target_file"
+        # 验证：sed 可能没有匹配到（行不存在或格式不同）
+        if ! grep -q "^step_11_cleanup: done" "$target_file" 2>/dev/null; then
+            # 先删除可能存在的其他格式（如 step_11_cleanup: in_progress）
+            sed -i '/^step_11_cleanup:/d' "$target_file"
+            echo "step_11_cleanup: done" >> "$target_file"
+        fi
+    }
+
     if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then
+        # P1-4 修复：保存 DEV_MODE_FILE（acquire_dev_mode_lock 调用 _get_lock_paths 会覆写）
+        _SAVED_DEV_MODE_FILE="$DEV_MODE_FILE"
         # 使用原子操作：获取锁 → 更新 → 释放锁
         if acquire_dev_mode_lock 2; then
-            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+            DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
+            _mark_cleanup_done "$DEV_MODE_FILE"
             create_cleanup_signal "$CP_BRANCH"
             release_dev_mode_lock
             echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done（原子写入）${NC}"
         else
+            DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             # Fallback: 直接修改
-            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+            _mark_cleanup_done "$DEV_MODE_FILE"
             echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
         fi
     else
         # Fallback: 无共享库时直接修改
-        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+        _mark_cleanup_done "$DEV_MODE_FILE"
         echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
     fi
 
