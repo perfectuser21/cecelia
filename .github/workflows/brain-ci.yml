@@ -206,7 +206,7 @@ jobs:
       - name: Run Brain tests
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=3072"
+          NODE_OPTIONS: "--max-old-space-size=1536"
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage
