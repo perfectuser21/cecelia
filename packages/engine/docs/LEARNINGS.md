@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.25.0
+version: 1.26.0
 created: 2026-01-16
 updated: 2026-03-05
 changelog:
+  - 1.26.0: Stop Hook + Cleanup 5 bug 一次性修复（squash merge 检测、per-branch .dev-mode、GC 竞态、CI 卡死）
   - 1.25.0: Worktree GC 外部清理者架构（55 次修补失败的根因分析 + 三条铁律 + 测试技巧）
   - 1.24.0: Stop Hook 安全默认修复 + CI 测试门禁（.dev-mode 损坏时 exit 0 → exit 2，11 项行为测试）
   - 1.23.0: vitest worker 三大陷阱全集（stdin pipe + heredoc + process.chdir 全部失效）10 文件修复
@@ -33,6 +34,28 @@ changelog:
 ---
 
 # Engine 开发经验记录
+
+### [2026-03-05] Stop Hook + Cleanup 5 Bug 一次性修复 (PR #552)
+
+**失败统计**：CI 失败 1 次（版本/Config Audit/Impact Check 不同步）
+
+**5 个 Bug 及修复**：
+
+| Bug | 严重度 | 根因 | 修复 |
+|-----|--------|------|------|
+| stop-dev.sh merged PR CI 卡死 | P0 | PR 合并后分支被删 → CI 查询返回 unknown → 永远 exit 2 | merged 时跳过 CI 检查 |
+| cleanup.sh Section 10 .dev-mode | P0 | 硬编码 `.dev-mode`，per-branch 格式下写不进 `step_11_cleanup: done` | 优先 `.dev-mode.${CP_BRANCH}`，fallback 旧格式 |
+| cleanup.sh Section 7.6 验证 | P1 | 同上 | 同上 |
+| cleanup.sh Section 9 分支检测 | P1 | `git branch --merged` squash merge 下失效 | 改用 `gh pr list --state merged --head $branch` |
+| cleanup.sh Section 4.5 GC 竞态 | P2 | fire-and-forget 后台启动 GC，可能在 cleanup 还运行时删 worktree | 移除，由 stop hook 在 cleanup 完成后触发 |
+
+**关键教训**：
+- **squash merge 让 `git branch --merged` 失效**：GitHub squash merge 创建全新 commit，原分支 commit 不在 main 历史中。必须用 GitHub API 检测
+- **per-branch .dev-mode 要全链路一致**：写入/读取/验证/删除所有地方都要支持 per-branch 格式，否则一处硬编码就打断整个链路
+- **fire-and-forget 有 CWD 锁死风险**：cleanup.sh 在 worktree 内运行，后台启动的 GC 可能删除自己脚下的 worktree
+- **CI 版本同步 6 处**：package.json, package-lock.json, VERSION, regression-contract.yaml, .hook-core-version, ci-tools/VERSION, hooks/VERSION
+
+**预防措施**：18 个 CI 测试 + 4 个回归契约（H7-015 ~ H7-018）
 
 ### [2026-03-05] Stop Hook 安全默认修复 + CI 测试门禁 (PR #550)
 
