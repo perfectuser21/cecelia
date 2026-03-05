@@ -1599,10 +1599,16 @@ async function triggerCeceliaRun(task) {
           extraEnv.CECELIA_MODEL = 'claude-haiku-4-5-20251001';
         }
         // 记录 dispatched_account 到 task payload（供 billing_cap 回调精准标记）
-        pool.query(
-          `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-          [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModel })]
-        ).catch(e => console.warn(`[executor] 记录 dispatched_account 失败: ${e.message}`));
+        // 必须 await：若 fire-and-forget 则 cecelia-run 秒失败时 execution-callback 先到达，
+        // payload 尚未写入 dispatched_account → 无法精准标记 spending cap 账号
+        try {
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModel })]
+          );
+        } catch (e) {
+          console.warn(`[executor] 记录 dispatched_account 失败: ${e.message}`);
+        }
       } else {
         // 所有账号满载（5h）或全部 spending-capped → 降级到 MiniMax
         console.log(`[executor] Anthropic 账号全满/全封，自动降级到 MiniMax for task=${task.id}`);
