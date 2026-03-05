@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] cecelia-run 孤儿 claude 进程修复（PR #532, Brain v1.193.2）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**根因分析**：
+- `setsid bash -c "... claude -p ..."` 创建新进程组，`$!` 拿到 `bash -c` 的 PID
+- `wait $CHILD_PID` 只等 `bash -c`，claude 进程在 setsid 进程组中继续存活
+- wait 返回后立即 `CHILD_PID=""; CHILD_PGID=""` 清空了 PID
+- `trap cleanup EXIT` 看到空 PID 就跳过 kill，claude 变成孤儿
+- 11 个孤儿进程累计 ~3GB 内存 + 6.4GB Swap → SSH 掉线
+
+**修复**：wait 返回后、清空 PID 之前，用 `ps -o pid= -g $PGID` 检测残留进程，SIGTERM → 2s → SIGKILL 清理整个进程组。
+
+**教训**：`setsid` + `&` + `wait` 模式下，wait 只等直接子进程，不等进程组内其他进程。正常退出路径必须显式清理进程组，不能只依赖 trap。
+
+---
+
 ### [2026-03-04] Dashboard PR 进度可视化组件（PR #519, Dashboard v1.175.0）
 
 **失败统计**：CI 失败 2 次，本地测试失败 0 次
