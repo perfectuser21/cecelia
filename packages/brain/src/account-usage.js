@@ -16,6 +16,7 @@ import pool from './db.js';
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
+const SONNET_THRESHOLD = 95;      // sonnet 7d 超过此百分比视为 Sonnet 满载，降级到 Opus
 const OPUS_THRESHOLD = 95;        // 7d all-models 超过此百分比视为 Opus 满载
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 
@@ -335,7 +336,7 @@ export async function selectBestAccount(options = {}) {
 
     // 阶段1 Sonnet
     const sonnetCandidates = mapped
-      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
+      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < SONNET_THRESHOLD)
       .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (sonnetCandidates.length > 0) {
