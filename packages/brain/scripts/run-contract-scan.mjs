@@ -96,15 +96,17 @@ async function createDevTask(contract) {
     `参考已有契约测试：\`packages/engine/tests/integration/hook-contracts.test.ts\``,
   ].join('\n');
 
+  // goal_id: 免疫系统成熟化 KR（契约扫描属于系统自修能力）
+  const IMMUNITY_GOAL_ID = process.env.CONTRACT_SCAN_GOAL_ID || '4f1f47be-8792-4858-8e59-b5ab550ea712';
+
   const payload = {
     title,
     description,
     task_type: 'dev',
     priority: contract.priority === 'P0' ? 'P0' : 'P1',
-    created_by: 'contract-scan',
     trigger_source: 'brain_auto',
     location: 'us',
-    execution_mode: 'cecelia',
+    goal_id: IMMUNITY_GOAL_ID,
     payload: JSON.stringify({
       contract_id: contract.id,
       test_file: contract.test_file,
@@ -117,7 +119,7 @@ async function createDevTask(contract) {
   }
 
   try {
-    const res = await fetch(`${BRAIN_API_URL}/api/brain/tasks`, {
+    const res = await fetch(`${BRAIN_API_URL}/api/brain/action/create-task`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

@@ -148,6 +148,9 @@ jobs:
       - name: Check skills registry completeness
         run: node scripts/devgate/check-skills-registry.mjs
 
+      - name: Check contract drift (module boundary protection)
+        run: node scripts/devgate/check-contract-drift.mjs --base=origin/main
+
   brain-test:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
