@@ -199,23 +199,21 @@ else
         echo -e "  ${YELLOW}[SKIP]${NC} $SETTINGS_FILE (already exists)"
         echo -e "  ${YELLOW}       Add hooks configuration manually if needed${NC}"
     else
-        cat > "$SETTINGS_FILE" << 'EOF'
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "./hooks/branch-protect.sh \"$TOOL_INPUT\""
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
+        printf '%s\n' '{' \
+          '  "hooks": {' \
+          '    "PreToolUse": [' \
+          '      {' \
+          '        "matcher": "Write|Edit",' \
+          '        "hooks": [' \
+          '          {' \
+          '            "type": "command",' \
+          '            "command": "./hooks/branch-protect.sh \"$TOOL_INPUT\""' \
+          '          }' \
+          '        ]' \
+          '      }' \
+          '    ]' \
+          '  }' \
+          '}' > "$SETTINGS_FILE"
         echo -e "  ${GREEN}[OK]${NC} $SETTINGS_FILE"
     fi
 fi

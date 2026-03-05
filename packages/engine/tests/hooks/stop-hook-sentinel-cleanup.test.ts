@@ -2,15 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execSync } from 'child_process'
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
+import os from 'os'
 
 describe('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
-  const testDir = resolve(__dirname, '../.test-stop-sentinel')
+  let testDir: string
   const stopHookScript = resolve(__dirname, '../../hooks/stop-dev.sh')
 
   beforeEach(() => {
-    // 创建测试目录
+    // 创建测试目录（使用唯一的临时目录，避免 process.chdir）
+    testDir = `${os.tmpdir()}/test-stop-sentinel-${Date.now()}-${Math.random().toString(36).slice(2)}`
     mkdirSync(testDir, { recursive: true })
-    process.chdir(testDir)
 
     // 初始化 git repo
     execSync('git init -q', { cwd: testDir })
@@ -31,8 +32,9 @@ describe('Stop Hook - Sentinel 文件清理（修复 .git 保护）', () => {
   })
 
   it('sentinel 文件应该在项目根目录（不在 .git/hooks/）', () => {
-    // 验证 Stop Hook 使用的是根目录路径
-    const hookContent = execSync(`cat "${stopHookScript}"`, { encoding: 'utf-8' })
+    // 验证 Stop Hook 使用的是根目录路径（通过读取脚本内容）
+    const { execSync: execSyncLocal } = require('child_process')
+    const hookContent = execSyncLocal(`cat "${stopHookScript}"`, { encoding: 'utf-8' })
     expect(hookContent).toContain('SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel"')
     expect(hookContent).not.toContain('.git/hooks/cecelia-dev.sentinel')
   })

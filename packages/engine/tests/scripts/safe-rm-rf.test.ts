@@ -19,16 +19,12 @@ import os from 'os'
  */
 describe('safe_rm_rf', () => {
   let testDir: string
-  let originalCwd: string
 
   beforeEach(() => {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'safe-rm-test-'))
-    originalCwd = process.cwd()
-    process.chdir(testDir)
   })
 
   afterEach(() => {
-    process.chdir(originalCwd)
     fs.rmSync(testDir, { recursive: true, force: true })
   })
 
