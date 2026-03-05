@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.21.0
+version: 1.22.0
 created: 2026-01-16
-updated: 2026-03-04
+updated: 2026-03-05
 changelog:
+  - 1.22.0: hook 契约集成测试（vitest 子进程 bash 管道不可用 + 环境变量 workaround）
   - 1.21.0: SKILL.md Stop Hook 第3步遗漏 Learning 路由（三次修复后找到最后一个矛盾点）
   - 1.20.0: stop.sh 路由器 Bug（.dev-lock vs .dev-mode 路由条件不一致导致 LEARNINGS 落入单独 PR）
   - 1.19.0: DoD 格式陷阱三连（ls/echo/test -f 禁用模式 + migration 依赖链分析）
@@ -31,6 +32,36 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+### [2026-03-05] Hook 契约集成测试：vitest 子进程 bash 管道不可用
+
+**背景**：branch-protect、stop-dev、ci-status 之间通过文件系统共享隐式状态，缺少集成测试导致"改了一个坏另一个"的循环问题。
+
+**核心坑：vitest 子进程中 bash 管道完全不工作**
+
+- `spawnSync("/bin/bash", [script], { input: jsonString })` → stdin 为空
+- `cat file | bash script` → cat 的输出为空
+- `bash script < file` → stdin 为空
+- `cat <<< "heredoc"` → 空
+- **只有 `cat file`（直接参数）和环境变量有效**
+
+根因：vitest worker thread 某种 fd 封锁，导致所有 pipe/stdin 相关操作失效。
+
+**解决方案**：通过 `HOOK_INPUT` 环境变量注入 JSON，hook 中 patch `INPUT=$(cat)` → `INPUT="${HOOK_INPUT:-$(cat)}"` (生产环境 fallback 到 cat，测试环境读 env var)。
+
+**契约测试 vs 功能测试的区别**：
+- 功能测试：测 hook 的每个功能点（太多了，难以维护）
+- 契约测试：测 hook 之间**共享的隐式接口**（.dev-mode 格式、CI JSON 格式、worktree 检测）
+- 契约数量很少且稳定，新功能不需要加测试，只有改共享接口才需要——而改共享接口正是出 bug 的地方
+
+**测试基础设施要点**：
+- 每个 describe 创建独立 git repo + worktree (`mkdtemp` + `git worktree add`)
+- mock `gh` CLI：在 mockBin 目录创建可执行 shell 脚本，prepend 到 PATH
+- 测试结束后必须 `git worktree remove --force` 再 `rmSync`，否则 git 状态泄漏
+
+**PRD 验证关键词**：branch-protect.sh 要求 PRD 包含 `功能描述|成功标准|需求来源|描述|标准` 中至少一个，测试用 PRD 必须用中文。
 
 ---
 
