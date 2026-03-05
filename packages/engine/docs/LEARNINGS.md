@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.24.0
+version: 1.25.0
 created: 2026-01-16
 updated: 2026-03-05
 changelog:
+  - 1.25.0: Worktree GC 外部清理者架构（55 次修补失败的根因分析 + 三条铁律 + 测试技巧）
   - 1.24.0: Stop Hook 安全默认修复 + CI 测试门禁（.dev-mode 损坏时 exit 0 → exit 2，11 项行为测试）
   - 1.23.0: vitest worker 三大陷阱全集（stdin pipe + heredoc + process.chdir 全部失效）10 文件修复
   - 1.22.0: hook 契约集成测试（vitest 子进程 bash 管道不可用 + 环境变量 workaround）
@@ -2932,3 +2933,34 @@ LEARNINGS 写入时机设计缺陷：Step 9 合并 PR 后，Step 10 只能直推
 - DoD 测试项要覆盖旧错误字符串的 grep 验证，修完即可扫描确认
 
 **影响程度**: Medium（反复出现说明文档冗余度高，需要系统性清理而非单点修补）
+
+### [2026-03-05] Worktree GC 外部清理者架构 — 终结 55 次修补循环
+
+**失败统计**：CI 失败 1 次（Contract Drift + Config Audit tag），本地测试失败 4/14 → 修复后 14/14
+
+**根因分析（55 次修补全失败的三个根因）**：
+1. **CWD 锁**：OS 禁止删除当前工作目录 → `git worktree remove` 从 worktree 内部执行必然失败。stop-dev.sh/cleanup.sh 都在 worktree 内运行，天然不可能自删
+2. **squash merge 破坏 git branch --merged**：GitHub squash merge 创建全新 commit SHA → `git branch --merged` 永远检测不到合并状态。worktree-manage.sh cleanup 用的就是这个命令
+3. **状态文件依赖脆弱**：force_cleanup_worktree 依赖 .dev-mode 的 branch: 字段，但 .dev-mode 经常损坏/缺失/格式错误
+
+**解法（外部清理者模式）**：
+- 新建 `worktree-gc.sh`：从主仓库 `cd "$MAIN_WT"` 后执行删除（绕过 CWD 锁）
+- 用 `gh pr list --state merged` 检测合并状态（绕过 squash merge 问题）
+- 不依赖任何状态文件（直接查 GitHub API）
+
+**三条铁律（写入 CI 测试永久验证）**：
+1. stop-dev.sh `force_cleanup_worktree` 函数体的非注释行不含 `worktree remove`
+2. cleanup.sh 4.5 节不含 `git worktree remove` 或 `safe_rm_rf`
+3. worktree-manage.sh `cmd_cleanup` 非注释行不含 `branch --merged`
+
+**测试技巧（4 个失败修复）**：
+1. bash 脚本注释中提到旧方法名 → `not.toContain` 误报。**解法**：过滤注释行（`!l.trim().startsWith("#")`）后再检查
+2. `git worktree remove` 从内部执行在某些 git 版本上可能成功 → 不要测"从内部删一定失败"。**解法**：只测"从主仓库删一定成功"
+3. bash 函数体提取 `indexOf("}")` 会命中内层 if/for 的 `}` → 函数体截断。**解法**：用大括号深度计数找匹配的闭合 `}`
+
+**预防措施**：
+- 14 个行为测试写入 Engine CI，任何回退都会被拦截
+- 三个旧清理路径（stop-dev.sh、cleanup.sh、worktree-manage.sh）全部简化为委托调用
+- worktree-gc.sh 是唯一的清理入口，单点维护
+
+**影响程度**: High（55 次修补浪费大量时间，根因是架构问题不是代码 bug）
