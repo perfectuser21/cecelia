@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 新建 /architect skill（PR #556, Brain v1.197.0）
+
+**失败统计**：CI 失败 0 次（GitHub Actions 平台故障，非代码原因），本地测试失败 0 次
+
+**错误判断记录**：
+- branch-protect Hook 检查 `.prd.md`（而非 `.prd-<branch>.md`），首次 Write 被拦截 → 需同时准备两种命名格式的 PRD/DoD
+- sed 替换 DEFINITION.md 含 `**` markdown 粗体的行时失败（asterisks 被 shell glob 解释）→ 使用 Edit 工具替代 sed 操作 markdown 文件
+- `.brain-versions` 文件尾部空行导致 `tail -1` 返回空字符串，version-sync 永远不匹配 → 追加版本前先 `sed -i '/^$/d'` 清理空行
+
+**GitHub Actions 平台故障（关键记录）**：
+- 2026-03-05 16:35 UTC 起 GitHub Actions 大规模故障
+- 症状：PR push 不触发 CI、workflow_dispatch 返回 HTTP 500、check-suites 为空
+- 应对：close+reopen PR 无效、空 commit 无效、新分支+新 PR 无效 → 等待 GitHub 恢复
+- 诊断方法：`gh run list` 返回空 + `WebFetch githubstatus.com` 确认故障
+
+**影响程度**: Low（代码本身无问题，仅 CI 平台故障）
+**预防措施**：
+- 遇到 CI 不触发时先检查 githubstatus.com
+- Brain 注册新 task type 需同步 4+ 文件（executor.js/task-router.js 3处/model-registry.js），使用 /brain-register skill 防漏改
+
 ### [2026-03-05] 资源管理 5 件套（PR #544, Brain v1.196.0）
 
 **实现内容**：
