@@ -17,7 +17,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { getActiveProfile } from './model-profile.js';
-import { selectBestAccount, selectBestAccountForHaiku } from './account-usage.js';
+import { selectBestAccount } from './account-usage.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -189,17 +189,13 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
   const claudeModel = CLAUDE_MODEL_FLAG[model] || 'haiku';
   const isHaiku = claudeModel === 'haiku';
 
-  // 账号轮换：Haiku 用独立选择函数（不受 sonnet 配额限制）
+  // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
-  // （容器内 homedir() = /home/cecelia，宿主机实际路径是 /home/xx，不能在容器内拼）
   let accountId;
   try {
-    const bestAccount = isHaiku
-      ? await selectBestAccountForHaiku()
-      : await selectBestAccount();
-    if (bestAccount) {
-      // selectBestAccountForHaiku 返回 string，selectBestAccount 返回 { accountId, model }
-      accountId = typeof bestAccount === 'string' ? bestAccount : bestAccount.accountId;
+    const selection = await selectBestAccount({ model: claudeModel });
+    if (selection) {
+      accountId = selection.accountId;
     }
   } catch (err) {
     console.warn('[llm-caller] selectBestAccount failed, using default account:', err.message);

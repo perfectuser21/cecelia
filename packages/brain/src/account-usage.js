@@ -278,57 +278,22 @@ function effectivePct(pct, resetsAt) {
 }
 
 /**
- * 为 Haiku 选择最优账号：只过滤 5h 超载，不限制 sonnet/opus 配额
- * （Haiku 使用独立配额池，sonnet/opus 满额不影响 haiku 可用性）
- * @returns {string|null} 账号 ID 或 null
- */
-export async function selectBestAccountForHaiku() {
-  try {
-    const usage = await getAccountUsage();
-    const available = ACCOUNTS
-      .map(id => {
-        const u = usage[id];
-        const pct = u?.five_hour_pct ?? 0;
-        const ePct = effectivePct(pct, u?.resets_at);
-        const sevenDayPct = u?.seven_day_pct ?? 0;
-        const extraUsed = u?.extra_used ?? false;
-        return { id, pct, ePct, sevenDayPct, extraUsed };
-      })
-      .filter(a => a.pct < USAGE_THRESHOLD && !a.extraUsed)
-      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
-
-    if (available.length === 0) {
-      console.log('[account-usage] selectBestAccountForHaiku: 所有账号 5h 满载 → 降级');
-      return null;
-    }
-    return available[0].id;
-  } catch (err) {
-    console.error(`[account-usage] selectBestAccountForHaiku 异常: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * 三阶段降级链选择最优账号（纯用量驱动，无 spending_cap 阻塞）：
+ * 统一账号选择入口（唯一入口，所有 LLM 调用共用）
  *
- * 阶段1 Sonnet：seven_day_sonnet < 100% + five_hour < 80% + !extra_used
- *   排序：seven_day_sonnet ASC → ePct ASC → seven_day ASC
+ * @param {Object} options
+ * @param {string} options.model - 请求的模型类型：'haiku'|'sonnet'|'opus'|undefined
+ *   - 'haiku': Haiku 独立配额模式（只看 5h，不看 sonnet/opus 7d）
+ *   - undefined/其他: 三阶段降级链（Sonnet → Opus → Haiku → MiniMax）
  *
- * 阶段2 Opus（Sonnet 全满时升级）：seven_day < 95% + five_hour < 80%
- *   排序：seven_day ASC → ePct ASC
- *
- * 阶段3 Haiku（Opus 全满时降级）：five_hour < 80%
- *   排序：ePct ASC
- *
- * 兜底：null → MiniMax
- *
- * 两个 7d reset 时间线独立：7d_all reset 但 7d_sonnet 还 100% → 只能用 Opus
+ * 所有模式统一过滤 spending cap（账号级限制，跟模型无关）。
  *
  * @returns {{ accountId: string, model: string }|null}
  *   accountId: 选中的账号 ID
- *   model: 'sonnet'|'opus'|'haiku'（供 executor 传递 CECELIA_MODEL）
+ *   model: 'sonnet'|'opus'|'haiku'
+ *   null → 所有账号不可用，调用方降级到 MiniMax
  */
-export async function selectBestAccount() {
+export async function selectBestAccount(options = {}) {
+  const requestedModel = options.model;
   try {
     const usage = await getAccountUsage();
 
@@ -351,7 +316,24 @@ export async function selectBestAccount() {
       `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}`
     ).join(', ');
 
-    // ── 阶段1 Sonnet ──
+    // ── Haiku 独立模式：只看 5h + spending cap ──
+    if (requestedModel === 'haiku') {
+      const haikuCandidates = mapped
+        .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD)
+        .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+
+      if (haikuCandidates.length > 0) {
+        const sel = haikuCandidates[0];
+        console.log(`[account-usage] Haiku 独立模式: 选 ${sel.id}（5h=${sel.pct}%） | ${usageSummary}`);
+        return { accountId: sel.id, model: 'haiku' };
+      }
+      console.log(`[account-usage] Haiku 独立模式: 所有账号不可用 → null | ${usageSummary}`);
+      return null;
+    }
+
+    // ── 三阶段降级链（默认模式）──
+
+    // 阶段1 Sonnet
     const sonnetCandidates = mapped
       .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
       .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
@@ -363,8 +345,7 @@ export async function selectBestAccount() {
       return { accountId: sel.id, model: 'sonnet' };
     }
 
-    // ── 阶段2 Opus（Sonnet 全满，升级 Opus）──
-    // Opus 用 seven_day（all models）作代理指标，阈值 OPUS_THRESHOLD
+    // 阶段2 Opus
     const opusCandidates = mapped
       .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
       .sort((a, b) => a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct);
@@ -375,22 +356,31 @@ export async function selectBestAccount() {
       return { accountId: sel.id, model: 'opus' };
     }
 
-    // ── 阶段3 Haiku（Opus 全满，降级 Haiku）──
-    const haikuCandidates = mapped
+    // 阶段3 Haiku
+    const haikuFallback = mapped
       .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
-    if (haikuCandidates.length > 0) {
-      const sel = haikuCandidates[0];
+    if (haikuFallback.length > 0) {
+      const sel = haikuFallback[0];
       console.log(`[account-usage] Haiku 阶段（Sonnet+Opus 全满）: 选 ${sel.id}（5h=${sel.pct}%） | ${usageSummary}`);
       return { accountId: sel.id, model: 'haiku' };
     }
 
-    // ── 兜底 MiniMax ──
-    console.log(`[account-usage] 所有账号 5h 满载 → 降级到 MiniMax | ${usageSummary}`);
+    // 兜底 MiniMax
+    console.log(`[account-usage] 所有账号不可用 → 降级到 MiniMax | ${usageSummary}`);
     return null;
   } catch (err) {
     console.error(`[account-usage] selectBestAccount 异常: ${err.message}`);
     return null;
   }
+}
+
+/**
+ * @deprecated 使用 selectBestAccount({ model: 'haiku' }) 代替
+ * 兼容别名，返回格式保持 string|null（向后兼容）
+ */
+export async function selectBestAccountForHaiku() {
+  const result = await selectBestAccount({ model: 'haiku' });
+  return result ? result.accountId : null;
 }
