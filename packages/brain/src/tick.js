@@ -22,7 +22,7 @@ import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } fr
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
-import { triggerDailyReview } from './daily-review-scheduler.js';
+import { triggerDailyReview, triggerContractScan } from './daily-review-scheduler.js';
 import { runDesireSystem } from './desire/index.js';
 import { runRumination } from './rumination.js';
 import { runSynthesisSchedulerIfNeeded } from './rumination-scheduler.js';
@@ -2035,7 +2035,11 @@ async function executeTick() {
   Promise.resolve().then(() => synthesizeEvolutionIfNeeded(pool))
     .catch(e => console.warn('[tick] 进化叙事合成失败:', e.message));
 
-  // [NOTION_SYNC_DISABLED] 10.16 定时任务 Notion 同步 — 已停用，Brain 回归本地 DB
+  // 10.16 每日契约扫描（UTC 03:00，检查模块边界是否有测试覆盖，fire-and-forget）
+  Promise.resolve().then(() => triggerContractScan(pool))
+    .catch(e => console.warn('[tick] 契约扫描失败:', e.message));
+
+  // [NOTION_SYNC_DISABLED] 10.16-old 定时任务 Notion 同步 — 已停用，Brain 回归本地 DB
   // Promise.resolve().then(async () => {
   //   const today = now.toISOString().split('T')[0];
   //   const key = 'recurring_notion_sync_last_date';

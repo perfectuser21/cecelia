@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 每日契约自动扫描系统（PR #542, Brain v1.194.5）
+
+**架构决策**：
+- 契约扫描复用 `daily-review-scheduler.js`，避免新增文件
+- 触发窗口 03:00 UTC（错开 02:00 的 code-review）
+- fire-and-forget 模式：`spawn('node', [script], { detached: true, stdio: 'ignore' })` + `child.unref()`
+- 去重：`hasTodayContractScan` 查 `tasks WHERE created_by='contract-scan'`
+
+**关键设计**：
+- `cecelia-module-boundaries.yaml` 定义契约，每条有 `test_file` 字段
+- 扫描脚本直接 POST Brain API 创建 dev 任务（不需要新 task_type）
+- `spawnFn` 参数注入让测试可以 mock spawn，不实际启动子进程
+
+**经验**：
+- `workflow_dispatch` 触发的 CI 不关联到 PR status checks，需要 push 事件触发 `pull_request` event
+- monorepo 第一次 push 如果 PR 还没创建，`pull_request` event 不触发，需要 PR 创建后再 push
+
 ### [2026-03-05] 修复 apps/api 49 个测试失败（PR #540, @cecelia/core v1.11.4）
 
 **失败统计**：CI 失败 0 次，本地测试修复过程中多轮迭代
