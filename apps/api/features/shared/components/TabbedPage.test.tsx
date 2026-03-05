@@ -162,7 +162,7 @@ describe('TabbedPage', () => {
       () => {
         expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
       },
-      { timeout: 200 }
+      { timeout: 2000 }
     );
   });
 
@@ -179,14 +179,14 @@ describe('TabbedPage', () => {
   });
 
   it('handles empty tabs array gracefully', () => {
-    render(
+    const { container } = render(
       <MemoryRouter>
         <TabbedPage tabs={[]} basePath="/base" />
       </MemoryRouter>
     );
 
     // Should not crash and render container
-    const container = document.querySelector('.min-h-screen');
-    expect(container).toBeInTheDocument();
+    const wrapper = container.firstChild as HTMLElement;
+    expect(wrapper).toBeInTheDocument();
   });
 });

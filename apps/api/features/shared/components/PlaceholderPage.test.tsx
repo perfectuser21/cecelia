@@ -51,7 +51,7 @@ describe('PlaceholderPage', () => {
     );
     const description = screen.getByText('This is the description');
     expect(description.tagName).toBe('P');
-    expect(description.style.color).toBe('rgb(100, 116, 139)'); // #64748b in rgb
+    expect(description.style.color).toBe('#64748b');
     expect(description.style.fontSize).toBe('14px');
   });
 

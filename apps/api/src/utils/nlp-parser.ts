@@ -122,6 +122,15 @@ export function extractIntent(text: string): {
     'UPDATE_TASK': IntentType.UPDATE_TASK,
   };
 
+  // High-confidence explicit patterns that unambiguously indicate intent
+  const EXPLICIT_PATTERNS: Record<string, RegExp[]> = {
+    CREATE_TASK: [/^创建.*任务/i, /创建一个任务/i, /新建.*任务/i],
+    CREATE_GOAL: [/^创建.*目标/i, /新建.*目标/i],
+    CREATE_PROJECT: [/^创建.*项目/i, /新建.*项目/i],
+    QUERY_TASKS: [/^查看.*任务/i, /^列出.*任务/i, /^查询.*任务/i],
+    UPDATE_TASK: [/^更新.*任务/i, /^标记.*为.*完成/i],
+  };
+
   // Check each intent type
   for (const [intentName, patterns] of Object.entries(INTENT_PATTERNS)) {
     const matchedPhrases: string[] = [];
@@ -139,7 +148,14 @@ export function extractIntent(text: string): {
 
     if (matchCount > 0) {
       // Calculate confidence based on number of matching patterns
-      const confidence = Math.min(matchCount / patterns.length + 0.3, 1.0);
+      let confidence = Math.min(matchCount / patterns.length + 0.3, 1.0);
+
+      // Boost confidence for explicit high-confidence patterns
+      const explicitPatterns = EXPLICIT_PATTERNS[intentName] || [];
+      const hasExplicitMatch = explicitPatterns.some(p => p.test(normalizedText));
+      if (hasExplicitMatch) {
+        confidence = Math.max(confidence, 0.75);
+      }
 
       if (confidence > bestMatch.confidence) {
         bestMatch = {
