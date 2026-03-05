@@ -127,13 +127,13 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(3); // 4 - 1
+    expect(result).toBe(2); // floor(4/2) = 2 (exponential decay)
   });
 
-  it('should not reduce below 1 when pressure > 0.8', async () => {
+  it('should force rate to 1 when pressure > 0.9', async () => {
     checkServerResources.mockReturnValue({
       ok: true,
-      metrics: { max_pressure: 0.9 }
+      metrics: { max_pressure: 0.95 }
     });
 
     pool.query.mockResolvedValueOnce({
@@ -163,7 +163,7 @@ describe('getRampedDispatchMax', () => {
 
   it('should treat current_rate=0 as full speed (cold start behavior)', async () => {
     // current_rate=0 is treated as effectiveDispatchMax via || fallback
-    // ALERT + rate=6: max(0, 6-1) = 5
+    // ALERT + rate=6: floor(6/2) = 3
     getCurrentAlertness.mockReturnValue({
       level: ALERTNESS_LEVELS.ALERT,
       levelName: 'ALERT'
@@ -175,7 +175,7 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(5); // current_rate=0 → 6 (fallback), ALERT: 6-1=5
+    expect(result).toBe(3); // current_rate=0 → 6 (fallback), ALERT: floor(6/2)=3
   });
 
   it('should hold rate steady when pressure is moderate (0.5-0.8) and CALM', async () => {
@@ -257,7 +257,7 @@ describe('getRampedDispatchMax', () => {
   });
 
   it('should reduce under high pressure then recover', async () => {
-    // Tick 1: rate=4, pressure=0.85 -> 3
+    // Tick 1: rate=4, pressure=0.85 -> floor(4/2) = 2
     pool.query.mockResolvedValueOnce({
       rows: [{ value_json: { current_rate: 4 } }]
     });
@@ -266,17 +266,17 @@ describe('getRampedDispatchMax', () => {
     getCurrentAlertness.mockReturnValue({ level: ALERTNESS_LEVELS.CALM, levelName: 'CALM' });
 
     const r1 = await getRampedDispatchMax(6);
-    expect(r1).toBe(3);
+    expect(r1).toBe(2);
 
-    // Tick 2: rate=3, pressure back to low -> 4
+    // Tick 2: rate=2, pressure back to low -> 3
     pool.query.mockResolvedValueOnce({
-      rows: [{ value_json: { current_rate: 3 } }]
+      rows: [{ value_json: { current_rate: 2 } }]
     });
     pool.query.mockResolvedValueOnce({ rows: [] });
     checkServerResources.mockReturnValue({ ok: true, metrics: { max_pressure: 0.3 } });
 
     const r2 = await getRampedDispatchMax(6);
-    expect(r2).toBe(4);
+    expect(r2).toBe(3);
   });
 
   it('should handle PANIC alertness (also >= ALERT)', async () => {
@@ -291,7 +291,7 @@ describe('getRampedDispatchMax', () => {
     pool.query.mockResolvedValueOnce({ rows: [] });
 
     const result = await getRampedDispatchMax(6);
-    expect(result).toBe(4); // 5 - 1
+    expect(result).toBe(2); // floor(5/2) = 2 (exponential decay)
   });
 
   describe('current_rate=0 treated as full speed (cold start fallback)', () => {
@@ -323,7 +323,7 @@ describe('getRampedDispatchMax', () => {
 
     it('should treat current_rate=0 with ALERT as reduced from full speed', async () => {
       // current_rate=0 → 6 via fallback
-      // ALERT: max(0, 6-1) = 5
+      // ALERT: floor(6/2) = 3
       getCurrentAlertness.mockReturnValue({
         level: ALERTNESS_LEVELS.ALERT,
         levelName: 'ALERT'
@@ -339,12 +339,12 @@ describe('getRampedDispatchMax', () => {
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await getRampedDispatchMax(6);
-      expect(result).toBe(5); // 0 → 6 (fallback), ALERT: 6-1=5
+      expect(result).toBe(3); // 0 → 6 (fallback), ALERT: floor(6/2)=3
     });
 
     it('should treat current_rate=0 with PANIC as reduced from full speed', async () => {
       // current_rate=0 → 6 via fallback
-      // PANIC (>= ALERT): max(0, 6-1) = 5
+      // PANIC (>= ALERT): floor(6/2) = 3
       getCurrentAlertness.mockReturnValue({
         level: ALERTNESS_LEVELS.PANIC,
         levelName: 'PANIC'
@@ -360,12 +360,12 @@ describe('getRampedDispatchMax', () => {
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await getRampedDispatchMax(6);
-      expect(result).toBe(5); // 0 → 6 (fallback), PANIC: 6-1=5
+      expect(result).toBe(3); // 0 → 6 (fallback), PANIC: floor(6/2)=3
     });
 
     it('should treat current_rate=0 with high pressure as reduced from full speed', async () => {
       // current_rate=0 → 6 via fallback
-      // pressure > 0.8: max(1, 6-1) = 5
+      // pressure > 0.8: floor(6/2) = 3
       getCurrentAlertness.mockReturnValue({
         level: ALERTNESS_LEVELS.AWARE,
         levelName: 'AWARE'
@@ -381,7 +381,7 @@ describe('getRampedDispatchMax', () => {
       pool.query.mockResolvedValueOnce({ rows: [] });
 
       const result = await getRampedDispatchMax(6);
-      expect(result).toBe(5); // 0 → 6 (fallback), pressure: max(1, 6-1)=5
+      expect(result).toBe(3); // 0 → 6 (fallback), pressure: floor(6/2)=3
     });
 
     it('should ramp up non-zero rates when AWARE and low pressure', async () => {

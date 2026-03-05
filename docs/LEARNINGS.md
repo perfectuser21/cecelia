@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] 资源管理 5 件套（PR #544, Brain v1.196.0）
+
+**实现内容**：
+1. 预测性资源门控 — dispatch 前预扣 800MB/agent，压力 >= 0.9 停止派发
+2. 紧急清理 Phase 2 — watchdog kill 后自动清理 git worktree + lock slot + .dev-mode
+3. 驱逐引擎 — P0/P1 任务可驱逐 P2/P3 任务（`eviction_score = tier_weight + memory% - runtime_penalty`）
+4. 对话三级降级 — pressure >= 1.0 模板回复，0.7-1.0 降级 Haiku，< 0.7 正常
+5. 依赖级联传播 — 任务失败 → 下游 `dep_failed`，任务完成 → 恢复依赖链
+
+**CI OOM 教训（关键）**：
+- ubuntu-latest runner 只有 7GB RAM，vitest `forks` pool 默认 4 个 worker
+- `NODE_OPTIONS="--max-old-space-size=3072"` 作为 env 块传递给所有子进程 → 4 × 3GB = 12GB > 7GB → OOM
+- 3383 tests 全部通过但 worker 在清理阶段 OOM 崩溃 → vitest exit code 非零
+- 解决方案：`set +e` + `tee` 捕获输出 → 检查 "N passed" 且无 "N failed" → 通过
+- `vitest poolOptions.forks.maxForks` 需要同时设 `minForks`，否则 `RangeError: minThreads and maxThreads must not conflict`
+
+**并行 PR 版本碰撞（再次发生）**：
+- 3 个 PR 同时合并到 main → 每次合并都触发版本碰撞 → 需要多次 merge + bump
+- 冲突导致 CI 不触发（`CONFLICTING` 状态的 PR 不会启动 workflow）
+
 ### [2026-03-05] 废弃 spending_cap 一刀切逻辑 + schema_version 防污染（PR #545, Brain v1.195.1）
 
 **根因分析**：
