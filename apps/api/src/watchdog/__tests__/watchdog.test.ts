@@ -197,12 +197,17 @@ describe('Watchdog Service', () => {
       registerAgent('patrol-agent', outputFile);
 
       // Mock the spawn to avoid actually running cecelia-patrol
-      vi.mock('child_process', () => ({
-        spawn: vi.fn(() => ({
-          unref: vi.fn(),
-        })),
-        execSync: vi.fn(),
-      }));
+      vi.mock('child_process', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('child_process')>();
+        return {
+          ...actual,
+          default: actual,
+          spawn: vi.fn(() => ({
+            unref: vi.fn(),
+          })),
+          execSync: vi.fn(),
+        };
+      });
 
       const result = await triggerPatrol('patrol-agent');
 

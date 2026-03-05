@@ -54,8 +54,8 @@ describe('StatsCard', () => {
       />
     );
 
-    let trendElement = screen.getByText('+10%');
-    expect(trendElement.className).toContain('text-green-600');
+    let trendElement = screen.getByText('+10%').closest('div');
+    expect(trendElement?.className).toContain('text-green-600');
 
     rerender(
       <StatsCard
@@ -66,8 +66,8 @@ describe('StatsCard', () => {
       />
     );
 
-    trendElement = screen.getByText('-5%');
-    expect(trendElement.className).toContain('text-red-600');
+    trendElement = screen.getByText('-5%').closest('div');
+    expect(trendElement?.className).toContain('text-red-600');
 
     rerender(
       <StatsCard
@@ -78,8 +78,8 @@ describe('StatsCard', () => {
       />
     );
 
-    trendElement = screen.getByText('0%');
-    expect(trendElement.className).toContain('text-gray-500');
+    trendElement = screen.getByText('0%').closest('div');
+    expect(trendElement?.className).toContain('text-gray-500');
   });
 
   it('handles click events when onClick is provided', () => {
