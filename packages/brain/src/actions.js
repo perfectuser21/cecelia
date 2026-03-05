@@ -133,7 +133,7 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
     decomposition_mode || 'known',
     description || '',
     plan_content || null,
-    execution_mode || 'simple',
+    execution_mode || 'cecelia',
     isOrchestrated ? 'plan' : null,
     dod_content ? JSON.stringify(dod_content) : null
   ]);

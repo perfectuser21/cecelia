@@ -25,12 +25,12 @@ import { reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } f
  * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}>, activatedCount: number }>}
  */
 async function checkInitiativeCompletion(pool) {
-  // 查所有 in_progress 的 initiatives
+  // 查所有 in_progress 或 active 的 initiatives（active = 已激活但首个任务尚未开始）
   const initiativesResult = await pool.query(`
     SELECT id, name
     FROM projects
     WHERE type = 'initiative'
-      AND status = 'in_progress'
+      AND status IN ('in_progress', 'active')
   `);
 
   const initiatives = initiativesResult.rows;

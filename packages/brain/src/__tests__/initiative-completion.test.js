@@ -20,8 +20,8 @@ function makeMockPool(initiatives = [], taskStats = {}) {
     query: vi.fn().mockImplementation(async (sql, params) => {
       const s = sql.trim();
 
-      // 查 in_progress initiatives
-      if (s.includes("type = 'initiative'") && s.includes("status = 'in_progress'")) {
+      // 查 in_progress 或 active 的 initiatives
+      if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
         return { rows: initiatives };
       }
 
@@ -187,7 +187,7 @@ describe('D5: 已 completed 的 initiative 不重复处理', () => {
     // 确认只调用了一次 query（查 initiatives 列表）
     expect(pool.query).toHaveBeenCalledOnce();
     const [sql] = pool.query.mock.calls[0];
-    expect(sql).toContain("status = 'in_progress'");
+    expect(sql).toMatch(/status (= 'in_progress'|IN \('in_progress', 'active'\))/);
   });
 
   it('多个 initiatives 中只有满足条件的被关闭', async () => {

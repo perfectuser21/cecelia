@@ -173,13 +173,8 @@ function determineExecutionMode({ input, feature_id, is_recurring }) {
 
   const workType = identifyWorkType(input);
 
-  // If it's clearly a single task, return single
-  if (workType === 'single') {
-    return 'single';
-  }
-
-  // For feature or uncertain, default to single (user can upgrade to feature later)
-  return 'single';
+  // All tasks dispatched by Cecelia use 'cecelia' execution_mode
+  return 'cecelia';
 }
 
 /**

@@ -219,8 +219,8 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
       query: vi.fn().mockImplementation(async (sql, params) => {
         const s = sql.trim();
 
-        // 查 in_progress initiatives
-        if (s.includes("status = 'in_progress'") && s.includes("type = 'initiative'")) {
+        // 查 in_progress/active initiatives
+        if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
           return { rows: [{ id: 'init-close-001', name: 'Closing Initiative' }] };
         }
 
@@ -276,8 +276,8 @@ describe('Q5: checkInitiativeCompletion 完成后返回 activatedCount', () => {
     const mockPool = {
       query: vi.fn().mockImplementation(async (sql, params) => {
         const s = sql.trim();
-        if (s.includes("status = 'in_progress'") && s.includes("type = 'initiative'")) {
-          return { rows: [] }; // 没有 in_progress
+        if (s.includes("type = 'initiative'") && (s.includes("status = 'in_progress'") || s.includes("status IN ('in_progress', 'active')"))) {
+          return { rows: [] }; // 没有可关闭的
         }
         return { rows: [], rowCount: 0 };
       }),
