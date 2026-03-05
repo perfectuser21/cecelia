@@ -106,9 +106,9 @@ describe("Worktree path migration", () => {
       }).not.toThrow();
     });
 
-    it("should support .claude/worktrees/ path in safe_rm_rf", () => {
+    it("should delegate worktree cleanup to external worktree-gc.sh", () => {
       const content = readFileSync(CLEANUP, "utf-8");
-      expect(content).toContain('/.claude/worktrees/');
+      expect(content).toContain('worktree-gc.sh');
     });
   });
 

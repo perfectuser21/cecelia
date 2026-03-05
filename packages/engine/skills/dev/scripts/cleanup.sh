@@ -329,46 +329,20 @@ else
 fi
 
 # ========================================
-# 4.5. 检查并移除关联的 worktree
+# 4.5. Worktree 清理（委托给外部 GC）
 # ========================================
 echo ""
-echo "[4.5] 检查关联的 worktree..."
-WORKTREE_PATH=$(git worktree list 2>/dev/null | grep "\[$CP_BRANCH\]" | awk '{print $1}')
-if [[ -n "$WORKTREE_PATH" ]]; then
-    echo "   → 发现关联的 worktree: $WORKTREE_PATH"
-    # 检查是否有未提交的改动
-    if [[ -d "$WORKTREE_PATH" ]]; then
-        WORKTREE_UNCOMMITTED=$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null | grep -v "node_modules" || true)
-        if [[ -n "$WORKTREE_UNCOMMITTED" ]]; then
-            echo -e "   ${YELLOW}[WARN]  worktree 有未提交的改动:${NC}"
-            echo "$WORKTREE_UNCOMMITTED" | head -3 | sed 's/^/      /'
-            echo -e "   ${YELLOW}→ 跳过 worktree 清理，请手动处理${NC}"
-            WARNINGS=$((WARNINGS + 1))
-        else
-            # 安全移除 worktree
-            if git worktree remove "$WORKTREE_PATH" --force 2>/dev/null; then
-                echo -e "   ${GREEN}[OK] 已移除 worktree${NC}"
-            else
-                echo -e "   ${YELLOW}[WARN]  worktree 移除失败，尝试强制清理...${NC}"
-                # v1.9.1: 支持新路径（.claude/worktrees/）和旧路径（仓库外）
-                local ALLOWED_PARENT
-                if [[ "$WORKTREE_PATH" == *"/.claude/worktrees/"* ]]; then
-                    ALLOWED_PARENT="$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')/.claude/worktrees"
-                else
-                    ALLOWED_PARENT=$(dirname "$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')")
-                fi
-                if safe_rm_rf "$WORKTREE_PATH" "$ALLOWED_PARENT"; then
-                    git worktree prune 2>/dev/null || true
-                    echo -e "   ${GREEN}[OK] 已强制清理${NC}"
-                else
-                    echo -e "   ${RED}[FAIL] 安全检查失败，请手动删除: $WORKTREE_PATH${NC}"
-                    WARNINGS=$((WARNINGS + 1))
-                fi
-            fi
-        fi
-    fi
+echo "[4.5] Worktree 清理..."
+# v12.39.1: 不再在 worktree 内部自删（CWD 锁死导致失败）
+# 委托给外部 worktree-gc.sh，从主仓库运行
+SCRIPT_DIR_FOR_GC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GC_SCRIPT="$SCRIPT_DIR_FOR_GC/worktree-gc.sh"
+if [[ -f "$GC_SCRIPT" ]]; then
+    echo "   → 触发外部 Worktree GC（fire-and-forget）..."
+    (bash "$GC_SCRIPT" 2>/dev/null &)
+    echo -e "   ${GREEN}[OK] GC 已在后台启动${NC}"
 else
-    echo -e "   ${GREEN}[OK] 无关联的 worktree${NC}"
+    echo -e "   ${YELLOW}[WARN] worktree-gc.sh 不存在，跳过${NC}"
 fi
 
 # ========================================

@@ -317,45 +317,20 @@ cmd_remove() {
 }
 
 # 清理已合并的 worktree
+# v1.3.0: 委托给 worktree-gc.sh（用 gh pr list 检测，不用 git branch --merged）
 cmd_cleanup() {
     echo -e "${BLUE}清理已合并的 Worktree...${NC}"
     echo ""
 
-    local main_wt
-    main_wt=$(get_main_worktree)
-    local cleaned=0
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local gc_script="$script_dir/worktree-gc.sh"
 
-    git worktree list 2>/dev/null | while read -r line; do
-        local path branch
-        path=$(echo "$line" | awk '{print $1}')
-        branch=$(echo "$line" | awk '{print $3}' | tr -d '[]')
-
-        # 跳过主工作区
-        [[ "$path" == "$main_wt" ]] && continue
-
-        # 检查分支是否已合并
-        # 动态检测 base branch（有 develop 用 develop，否则 main）
-        local cleanup_base
-        if git rev-parse --verify develop &>/dev/null 2>&1; then
-            cleanup_base="develop"
-        else
-            cleanup_base="main"
-        fi
-        if git branch --merged "$cleanup_base" 2>/dev/null | grep -q "$branch"; then
-            echo "  移除已合并的 worktree: $path ($branch)"
-            git worktree remove "$path" --force 2>/dev/null || true
-            ((cleaned++))
-        fi
-    done
-
-    # 清理 stale worktree
-    git worktree prune
-
-    if [[ $cleaned -eq 0 ]]; then
-        echo -e "${GREEN}✅ 无需清理${NC}"
+    if [[ -f "$gc_script" ]]; then
+        bash "$gc_script" "$@"
     else
-        echo ""
-        echo -e "${GREEN}✅ 已清理 $cleaned 个 worktree${NC}"
+        echo -e "${RED}错误: worktree-gc.sh 不存在${NC}" >&2
+        exit 1
     fi
 }
 

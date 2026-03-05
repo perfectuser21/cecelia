@@ -91,23 +91,14 @@ HOOK_INPUT=$(cat)
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# ===== Helper: 强制清理 worktree（兜底）=====
+# ===== Helper: 清理状态文件（不删 worktree 目录）=====
+# v12.39.1: worktree 目录删除改由外部 worktree-gc.sh 负责（从主仓库运行）
+# 此函数只负责删除 .dev-mode/.dev-lock/.dev-sentinel 状态文件
 force_cleanup_worktree() {
     local mode_file="$1"
-    local branch
-    branch=$(grep "^branch:" "$mode_file" 2>/dev/null | awk '{print $2}')
-    if [[ -z "$branch" ]]; then
-        return 0
-    fi
-    local wt_path
-    wt_path=$(git worktree list 2>/dev/null | grep "\[$branch\]" | awk '{print $1}')
-    local main_wt
-    main_wt=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
-    if [[ -n "$wt_path" && "$wt_path" != "$main_wt" ]]; then
-        # cd 到主仓库再删除，避免 git 拒绝删除当前 CWD 所在的 worktree
-        (cd "$main_wt" && git worktree remove "$wt_path" --force 2>/dev/null) || true
-        (cd "$main_wt" && git worktree prune 2>/dev/null) || true
-    fi
+    # 只删状态文件，worktree 目录由外部 GC 清理
+    # 不再尝试 git worktree remove（在 worktree 内部执行会失败）
+    return 0
 }
 
 # ===== Helper: 保存阻塞原因到 .dev-mode =====
