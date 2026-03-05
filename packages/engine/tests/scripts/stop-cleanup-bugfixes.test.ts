@@ -327,12 +327,13 @@ describe("P1-4b: lock-utils.sh 不覆写调用者 DEV_MODE_FILE", () => {
     expect(funcBody).not.toMatch(/^\s+LOCK_DIR=/m);
   });
 
-  it("acquire_dev_mode_lock 使用 _LU_LOCK_FILE", () => {
-    const funcBody = content.slice(
-      content.indexOf("acquire_dev_mode_lock()"),
-      content.indexOf("}", content.indexOf("acquire_dev_mode_lock()") + 80) + 1
-    );
-    expect(funcBody).toContain("$_LU_LOCK_FILE");
+  it("acquire_dev_mode_lock 使用 _LU_LOCK_FILE 或 _LU_FD", () => {
+    const funcStart = content.indexOf("acquire_dev_mode_lock()");
+    // 找到函数的最后一个 } (跳过内部 if 块的 })
+    const releaseStart = content.indexOf("release_dev_mode_lock()", funcStart);
+    const funcBody = content.slice(funcStart, releaseStart);
+    // 使用 _LU_LOCK_FILE 或通过 _LU_FD 间接引用
+    expect(funcBody).toMatch(/_LU_LOCK_FILE|_LU_FD/);
     expect(funcBody).not.toContain('"$LOCK_FILE"');
   });
 
@@ -374,5 +375,320 @@ describe("P1-6b: worktree-gc.sh rm -rf 路径安全验证", () => {
 
   it("路径安全检查失败时输出警告并跳过", () => {
     expect(content).toMatch(/路径安全检查失败.*跳过/);
+  });
+});
+
+// ============================================================================
+// v12.42.0 Round 2 深度修复测试
+// ============================================================================
+
+describe("R2-lock: lock-utils.sh worktree .git 文件检测", () => {
+  const content = readFileSync(LOCK_UTILS, "utf-8");
+
+  it("使用 git rev-parse --git-dir 获取真正的 git 目录", () => {
+    expect(content).toContain("git rev-parse --git-dir");
+  });
+
+  it("不再仅用 -d .git 检测（worktree 中 .git 是文件）", () => {
+    const funcBody = content.slice(
+      content.indexOf("_get_lock_paths()"),
+      content.indexOf("}", content.indexOf("_LU_LOCK_FILE=") + 10) + 1
+    );
+    expect(funcBody).not.toMatch(/\[\[.*!.*-d.*"\$project_root\/\.git"/);
+  });
+
+  it("FD 可通过 LOCK_UTILS_FD 环境变量配置", () => {
+    expect(content).toContain("LOCK_UTILS_FD");
+    expect(content).toContain("_LU_FD");
+  });
+
+  it("flock 缺失时静默跳过（macOS 兼容）", () => {
+    const acquireBody = content.slice(
+      content.indexOf("acquire_dev_mode_lock()"),
+      content.indexOf("}", content.indexOf("acquire_dev_mode_lock()") + 200) + 1
+    );
+    expect(acquireBody).toMatch(/command.*-v\s+flock/);
+  });
+
+  it("sha256sum 有跨平台 fallback", () => {
+    expect(content).toMatch(/shasum|md5sum/);
+  });
+
+  it("atomic_append_dev_mode 文件不存在时也使用 temp+mv", () => {
+    const funcBody = content.slice(
+      content.indexOf("atomic_append_dev_mode()"),
+      content.indexOf("}", content.indexOf("atomic_append_dev_mode()") + 300) + 1
+    );
+    expect(funcBody).toContain("mktemp");
+    expect(funcBody).not.toMatch(
+      /if.*!.*-f.*\n\s+echo.*>.*_LU_DEV_MODE_FILE.*\n\s+return/
+    );
+  });
+});
+
+describe("R2-cleanup-P0: cleanup.sh worktree 感知", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("检测是否在 worktree 中运行", () => {
+    expect(content).toContain("IS_WORKTREE=false");
+    expect(content).toMatch(/git rev-parse --git-dir/);
+    expect(content).toMatch(/worktrees.*IS_WORKTREE=true/s);
+  });
+
+  it("worktree 中跳过 checkout 但不设 FAILED", () => {
+    const section1 = extractSection(content, "1");
+    expect(section1).toContain("IS_WORKTREE");
+    expect(section1).toMatch(/worktree.*跳过分支切换/s);
+    // worktree 分支中不应有独立的 FAILED=1（CHECKOUT_FAILED=1 是可以的）
+    const wtBlock = section1.slice(
+      section1.indexOf("IS_WORKTREE"),
+      section1.indexOf("elif")
+    );
+    // 检查没有单独设置 FAILED=1（CHECKOUT_FAILED=1 可以有）
+    const failedLines = wtBlock.split("\n").filter(
+      (l) => l.match(/^\s+FAILED=1/) && !l.includes("CHECKOUT_FAILED")
+    );
+    expect(failedLines.length).toBe(0);
+  });
+});
+
+describe("R2-cleanup-P1: cleanup.sh 搜索路径修复", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("lock-utils.sh 搜索路径包含 packages/engine/lib/", () => {
+    expect(content).toContain("packages/engine/lib/lock-utils.sh");
+  });
+});
+
+describe("R2-cleanup-P1: cleanup.sh step 验证 grep 精确匹配", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("使用 STEP_PATTERNS 数组精确匹配步骤名", () => {
+    expect(content).toContain("STEP_PATTERNS");
+    expect(content).toContain("step_1_prd");
+    expect(content).toContain("step_10_learning");
+    expect(content).toContain("step_11_cleanup");
+  });
+
+  it("不使用 step_${step}_ 模糊 grep", () => {
+    const section76 = extractSection(content, "7.6");
+    const code = codeOnly(section76);
+    expect(code).not.toMatch(/grep.*\^step_\$\{step\}_/);
+  });
+});
+
+describe("R2-cleanup-P1: cleanup.sh 验证失败阻止 cleanup_done 写入", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("设置 VALIDATION_PASSED 标志", () => {
+    expect(content).toContain("VALIDATION_PASSED=true");
+    expect(content).toContain("VALIDATION_PASSED=false");
+  });
+
+  it("cleanup_done 写入前检查 VALIDATION_PASSED", () => {
+    expect(content).toMatch(/VALIDATION_PASSED.*true.*_mark_cleanup_done/s);
+  });
+});
+
+describe("R2-cleanup-P1: cleanup.sh safe_rm_rf 精确前缀匹配", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("前缀匹配包含 / 分隔符", () => {
+    expect(content).toContain('"$real_parent/"');
+  });
+});
+
+describe("R2-cleanup-P1: cleanup.sh xargs 错误保护", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+  const section95 = extractSection(content, "9.5");
+
+  it("不使用 xargs git branch -D（set -e 下不安全）", () => {
+    const code = codeOnly(section95);
+    expect(code).not.toContain("xargs");
+  });
+
+  it("使用 while 循环逐个删除分支", () => {
+    expect(section95).toMatch(/while.*read.*gone_branch/s);
+    expect(section95).toMatch(/git branch -D.*2>\/dev\/null.*\|\| /);
+  });
+});
+
+describe("R2-stop: stop-dev.sh FD 冲突修复", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("retry_count 块不使用 FD 200", () => {
+    const retryBlock = content.slice(
+      content.indexOf("更新重试次数"),
+      content.indexOf("读取 .dev-mode 内容")
+    );
+    expect(retryBlock).not.toMatch(/\b200\b.*>"?\$DEV_MODE_FILE/);
+  });
+
+  it("fallback 锁不使用 FD 200", () => {
+    const fallbackBlock = content.slice(
+      content.indexOf("Fallback: 内联锁"),
+      content.indexOf("读取 Hook 输入")
+    );
+    expect(fallbackBlock).not.toMatch(/exec\s+200>/);
+  });
+});
+
+describe("R2-stop: stop-dev.sh orphan retry 分离 + 清理", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("sentinel 和 lock 孤儿使用不同计数器文件", () => {
+    expect(content).toContain(".dev-orphan-retry-sentinel");
+    expect(content).toContain(".dev-orphan-retry-lock");
+  });
+
+  it("正常退出时清理 orphan retry 文件", () => {
+    const cleanupDoneBlock = content.slice(
+      content.indexOf("cleanup_done: true"),
+      content.indexOf("cleanup_done: true") + 500
+    );
+    expect(cleanupDoneBlock).toContain(".dev-orphan-retry-sentinel");
+    expect(cleanupDoneBlock).toContain(".dev-orphan-retry-lock");
+  });
+
+  it("工作流完成时清理 orphan retry 文件", () => {
+    const doneBlock = content.slice(
+      content.indexOf("工作流完成"),
+      content.indexOf("工作流完成") + 500
+    );
+    expect(doneBlock).toContain(".dev-orphan-retry-sentinel");
+  });
+});
+
+describe("R2-stop: stop-dev.sh macOS flock 兼容", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("fallback 锁检测 flock 可用性", () => {
+    const fallbackBlock = content.slice(
+      content.indexOf("Fallback: 内联锁"),
+      content.indexOf("读取 Hook 输入")
+    );
+    expect(fallbackBlock).toMatch(/command.*-v\s+flock/);
+  });
+});
+
+describe("R2-stop: stop-dev.sh save_block_reason 换行过滤", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("reason 参数过滤换行符", () => {
+    const funcBody = content.slice(
+      content.indexOf("save_block_reason()"),
+      content.indexOf("}", content.indexOf("save_block_reason()") + 300) + 1
+    );
+    expect(funcBody).toMatch(/\\n/);
+  });
+});
+
+describe("R2-stop: stop-dev.sh 无重复 CURRENT_BRANCH 声明", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("P0-3 修复处不再重复声明 CURRENT_BRANCH", () => {
+    const p03Section = content.slice(
+      content.indexOf("P0-3 修复：会话隔离"),
+      content.indexOf("P0-3 修复：会话隔离") + 200
+    );
+    expect(p03Section).not.toContain(
+      'CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD'
+    );
+  });
+});
+
+describe("R2-stop: stop-dev.sh lock-utils 搜索路径修复", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("搜索路径包含 packages/engine/lib/", () => {
+    expect(content).toContain("packages/engine/lib/lock-utils.sh");
+    expect(content).toContain("packages/engine/lib/ci-status.sh");
+  });
+});
+
+describe("R2-gc: worktree-gc.sh 路径安全精确匹配", () => {
+  const content = readFileSync(WORKTREE_GC, "utf-8");
+
+  it("使用 .claude/worktrees 或同父目录校验，不用 dirname 过宽匹配", () => {
+    expect(content).toContain("worktree_dir");
+    expect(content).toContain(".claude/worktrees");
+    expect(content).toContain("wt_parent");
+    expect(content).toContain("main_parent");
+  });
+
+  it("路径长度最小限制（防止短路径误删）", () => {
+    expect(content).toMatch(/\$\{#real_wt\}.*-gt\s+10/);
+  });
+});
+
+describe("R2-gc: worktree-gc.sh macOS stat 兼容", () => {
+  const content = readFileSync(WORKTREE_GC, "utf-8");
+
+  it("同时支持 Linux stat -c 和 macOS stat -f", () => {
+    expect(content).toContain("stat -c %Y");
+    expect(content).toContain("stat -f %m");
+  });
+});
+
+describe("R2-gc: worktree-gc.sh API 限流检测", () => {
+  const content = readFileSync(WORKTREE_GC, "utf-8");
+
+  it("API 调用失败时输出警告并跳过", () => {
+    expect(content).toContain("API_FAILED");
+    expect(content).toMatch(/WARN.*API.*失败.*限流/);
+  });
+});
+
+describe("R2-gc: worktree-gc.sh 并发锁保护", () => {
+  const content = readFileSync(WORKTREE_GC, "utf-8");
+
+  it("使用 flock 防止并发运行", () => {
+    expect(content).toContain("worktree-gc.lock");
+    expect(content).toMatch(/flock.*-n/);
+  });
+
+  it("另一实例运行时退出", () => {
+    expect(content).toMatch(/另一个.*worktree-gc.*运行/);
+  });
+});
+
+describe("R2-gc: worktree-gc.sh Check 3 不重复 API 调用", () => {
+  const content = readFileSync(WORKTREE_GC, "utf-8");
+
+  it("Check 3 复用 Check 1/2 的结果", () => {
+    // 检查 3 内不应有额外的 gh pr list 调用
+    const check3Start = content.indexOf("检查 3:");
+    const check4Start = content.indexOf("检查 4:");
+    const check3Block = content.slice(check3Start, check4Start);
+    const code = check3Block
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toContain("gh pr list");
+    expect(code).toContain("MERGED_PR");
+  });
+});
+
+describe("R2-cross: cleanup.sh 移除 cleanup-complete 死代码", () => {
+  const content = readFileSync(CLEANUP_SH, "utf-8");
+
+  it("不再调用 create_cleanup_signal", () => {
+    const code = content
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"))
+      .join("\n");
+    expect(code).not.toContain("create_cleanup_signal");
+  });
+});
+
+describe("R2-cross: stop-dev.sh 清理 .dev-failure.log", () => {
+  const content = readFileSync(STOP_DEV, "utf-8");
+
+  it("工作流完成时清理 .dev-failure.log", () => {
+    const doneBlock = content.slice(
+      content.indexOf("工作流完成"),
+      content.indexOf("工作流完成") + 500
+    );
+    expect(doneBlock).toContain(".dev-failure.log");
   });
 });

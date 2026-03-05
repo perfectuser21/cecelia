@@ -15,7 +15,7 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.26.0"
+version: "3.27.0"
 updated: "2026-03-05"
 changelog:
   - "3.27.0: v12.41.0 - 深度 Bug 修复（3P0+6P1）：cleanup.sh sed step_11_cleanup 静默失败修复（验证后追加）；stop-dev.sh 无头模式锁匹配分支名 fallback（防 exit 0 泄漏）；worktree-gc.sh 脏状态检查（防数据丢失）；孤儿 sentinel/.dev-lock 重试上限（防无限循环）；jq shim（防 set -e 崩溃）；lock-utils.sh 变量隔离（_LU_ 前缀防覆写）；worktree-gc --state all 改 merged+closed；rm -rf 路径安全验证"

@@ -33,7 +33,8 @@ PROJECT_ROOT_EARLY="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 # 尝试加载 lock-utils（项目内 > 全局）
 LOCK_UTILS=""
-for candidate in "$PROJECT_ROOT_EARLY/lib/lock-utils.sh" "$SCRIPT_DIR/../lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
+# v2.0: 搜索路径加入 packages/engine/lib/（monorepo 结构）
+for candidate in "$PROJECT_ROOT_EARLY/lib/lock-utils.sh" "$PROJECT_ROOT_EARLY/packages/engine/lib/lock-utils.sh" "$SCRIPT_DIR/../lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
     if [[ -f "$candidate" ]]; then
         LOCK_UTILS="$candidate"
         break
@@ -42,7 +43,7 @@ done
 
 # 尝试加载 ci-status（项目内 > 全局）
 CI_STATUS_LIB=""
-for candidate in "$PROJECT_ROOT_EARLY/lib/ci-status.sh" "$SCRIPT_DIR/../lib/ci-status.sh" "$HOME/.claude/lib/ci-status.sh"; do
+for candidate in "$PROJECT_ROOT_EARLY/lib/ci-status.sh" "$PROJECT_ROOT_EARLY/packages/engine/lib/ci-status.sh" "$SCRIPT_DIR/../lib/ci-status.sh" "$HOME/.claude/lib/ci-status.sh"; do
     if [[ -f "$candidate" ]]; then
         CI_STATUS_LIB="$candidate"
         break
@@ -76,20 +77,24 @@ if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
         exit 2
     fi
 else
-    # Fallback: 内联锁
-    LOCK_DIR="$(git rev-parse --show-toplevel 2>/dev/null)/.git" || LOCK_DIR="/tmp"
-    LOCK_FILE="$LOCK_DIR/cecelia-stop.lock"
-    exec 200>"$LOCK_FILE"
-    if ! flock -w 2 200; then
-        echo "" >&2
-        echo "  [Stop Hook: 并发锁获取失败]" >&2
-        jq -n --arg reason "并发锁获取失败，等待锁释放后继续" '{"decision": "block", "reason": $reason}'
-        exit 2
+    # Fallback: 内联锁（v2.0: flock 缺失检测 + FD 201 避免与 retry_count 块的 FD 200 冲突）
+    if command -v flock &>/dev/null; then
+        LOCK_DIR="$(git rev-parse --git-dir 2>/dev/null)" || LOCK_DIR="/tmp"
+        LOCK_FILE="$LOCK_DIR/cecelia-stop.lock"
+        exec 201>"$LOCK_FILE"
+        if ! flock -w 2 201; then
+            echo "" >&2
+            echo "  [Stop Hook: 并发锁获取失败]" >&2
+            jq -n --arg reason "并发锁获取失败，等待锁释放后继续" '{"decision": "block", "reason": $reason}'
+            exit 2
+        fi
     fi
+    # macOS 无 flock → 跳过锁（best-effort，单用户场景竞态概率极低）
 fi
 
 # ===== 读取 Hook 输入（JSON） =====
-HOOK_INPUT=$(cat)
+# v2.0 P2-18 修复：加超时防止 stdin 阻塞（1 秒超时）
+HOOK_INPUT=$(timeout 1 cat 2>/dev/null || echo "{}")
 
 # ===== 15 次重试计数器（替代旧的 stop_hook_active 检查）=====
 # 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
@@ -109,8 +114,9 @@ force_cleanup_worktree() {
 }
 
 # ===== Helper: 保存阻塞原因到 .dev-mode =====
+# v2.0 P2-19 修复：过滤换行符防止注入多行到 .dev-mode
 save_block_reason() {
-    local reason="$1"
+    local reason="${1//$'\n'/ }"
     local mode_file="$DEV_MODE_FILE"
     [[ -n "$mode_file" && -f "$mode_file" ]] || return 0
     {
@@ -222,9 +228,9 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
 
     # 检查 sentinel（三重保险）—— 仅旧格式
     if [[ -f "$PROJECT_ROOT/.dev-sentinel" ]]; then
-        # v12.41.0 P1-1 修复：用 .dev-orphan-retry 文件追踪重试次数
-        # sentinel/lock 缺失路径没有 .dev-mode 可写 retry_count，需要独立计数器
-        _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry"
+        # v12.41.0 P1-1 修复：用独立文件追踪重试次数
+        # v2.0 P1-11 修复：sentinel 和 lock 孤儿使用不同计数器
+        _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry-sentinel"
         _ORPHAN_COUNT=0
         if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
             _ORPHAN_COUNT=$(cat "$_ORPHAN_RETRY_FILE" 2>/dev/null || echo "0")
@@ -262,8 +268,9 @@ fi
 
 # .dev-lock 存在，检查 .dev-mode（软状态）
 if [[ ! -f "$DEV_MODE_FILE" ]]; then
-    # v12.41.0 P1-2 修复：与 P1-1 相同逻辑，用 .dev-orphan-retry 追踪重试
-    _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry"
+    # v12.41.0 P1-2 修复：与 P1-1 相同逻辑
+    # v2.0 P1-11 修复：lock 孤儿使用独立计数器（与 sentinel 孤儿分开）
+    _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry-lock"
     _ORPHAN_COUNT=0
     if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
         _ORPHAN_COUNT=$(cat "$_ORPHAN_RETRY_FILE" 2>/dev/null || echo "0")
@@ -302,7 +309,10 @@ fi
 # 优先检查 cleanup_done: true（向后兼容旧版本）
 if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
     force_cleanup_worktree "$DEV_MODE_FILE"
-    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
+    # v2.0 P1-10 修复：正常退出时清理 orphan retry 计数器 + P2-28: .dev-failure.log
+    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+          "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+          "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
     exit 0
 fi
 
@@ -358,8 +368,10 @@ if [[ $RETRY_COUNT -gt 15 ]]; then
     # 强制清理 worktree（兜底）
     force_cleanup_worktree "$DEV_MODE_FILE"
 
-    # 删除 .dev-mode, .dev-lock, sentinel 文件
-    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
+    # 删除 .dev-mode, .dev-lock, sentinel 文件 + orphan retry 计数器
+    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+          "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+          "$PROJECT_ROOT/.dev-orphan-retry"
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     exit 0  # 允许会话结束（失败退出）
@@ -367,12 +379,13 @@ fi
 
 # 更新重试次数（Bug fix: 原子更新 + 跨平台 sed 兼容）
 # 注意: RETRY_COUNT 已在上面递增，这里直接写入当前值
+# v2.0 P1-9 修复：使用 FD 202（避免与 lock-utils FD 和 fallback FD 201 冲突）
 {
-    flock -x 200
+    flock -x 202
     grep -v "^retry_count:" "$DEV_MODE_FILE" > "$DEV_MODE_FILE.tmp" 2>/dev/null || true
     echo "retry_count: $RETRY_COUNT" >> "$DEV_MODE_FILE.tmp"
     mv "$DEV_MODE_FILE.tmp" "$DEV_MODE_FILE"
-} 200>"$DEV_MODE_FILE.lock" 2>/dev/null || {
+} 202>"$DEV_MODE_FILE.lock" 2>/dev/null || {
     # flock 失败时的 fallback（不中断流程）
     # Bug fix: 使用跨平台兼容的 sed 语法（macOS 和 Linux）
     # macOS sed -i 需要 '' 参数，Linux 不需要
@@ -411,8 +424,7 @@ if [[ "$DEV_MODE" != "dev" ]]; then
 fi
 
 # ===== P0-3 修复：会话隔离 - 检查分支是否匹配 =====
-# 获取当前分支
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+# CURRENT_BRANCH 已在 line 134 获取，无需重复声明
 
 # 如果 .dev-mode 中的分支与当前分支不匹配，删除泄漏的 .dev-mode 文件
 # 这防止多个 Claude 会话"串线"（一个会话被迫接手另一个会话的任务）
@@ -568,7 +580,10 @@ if [[ "$PR_STATE" == "merged" ]]; then
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         echo "  🎉 工作流完成！正在清理..." >&2
         force_cleanup_worktree "$DEV_MODE_FILE"
-        rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE"
+        # v2.0 P2-28: 同时清理 .dev-failure.log
+        rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+              "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+              "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
         exit 0  # 允许结束
     else

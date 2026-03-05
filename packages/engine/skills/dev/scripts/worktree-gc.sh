@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Worktree GC（Garbage Collection）— 外部清理者
+# v1.1.0: R2 修复 - 路径安全精确匹配、macOS stat 兼容、API 限流检测、并发锁
 # v1.0.0: 从主仓库运行，用 GitHub API 检测已合并 PR，清理残留 worktree
 #
 # 设计原则：
@@ -36,6 +37,16 @@ fi
 
 # 切到主仓库执行（关键：避免 CWD 在要删除的 worktree 内）
 cd "$MAIN_WT"
+
+# v1.1.0 P1-15: 并发锁保护（防止多 GC 实例同时运行）
+GC_LOCK_FILE="$(git rev-parse --git-dir 2>/dev/null || echo "/tmp")/worktree-gc.lock"
+if command -v flock &>/dev/null; then
+    exec 203>"$GC_LOCK_FILE"
+    if ! flock -n 203; then
+        echo "WARN: 另一个 worktree-gc 正在运行，退出" >&2
+        exit 0
+    fi
+fi
 
 # ===== 检测 gh CLI =====
 if ! command -v gh &>/dev/null; then
@@ -82,33 +93,46 @@ for i in "${!WT_PATHS[@]}"; do
     SHOULD_CLEAN=false
     REASON=""
 
+    # v1.1.0 P1-14: API 限流检测（每个 worktree 最多 2 次 API 调用）
+    API_FAILED=false
+
     # 检查 1: PR 已合并（最可靠，通过 GitHub API）
-    MERGED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+    MERGED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null) || {
+        API_FAILED=true
+        MERGED_PR=""
+    }
     if [[ -n "$MERGED_PR" ]]; then
         SHOULD_CLEAN=true
         REASON="PR #$MERGED_PR 已合并"
     fi
 
     # 检查 2: PR 已关闭（非合并关闭）
-    if [[ "$SHOULD_CLEAN" == "false" ]]; then
-        CLOSED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state closed --json number,mergedAt -q '.[] | select(.mergedAt == null) | .number' 2>/dev/null | head -1 || echo "")
+    CLOSED_PR=""
+    if [[ "$SHOULD_CLEAN" == "false" && "$API_FAILED" == "false" ]]; then
+        CLOSED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state closed --json number,mergedAt -q '.[] | select(.mergedAt == null) | .number' 2>/dev/null | head -1) || {
+            API_FAILED=true
+            CLOSED_PR=""
+        }
         if [[ -n "$CLOSED_PR" ]]; then
             SHOULD_CLEAN=true
             REASON="PR #$CLOSED_PR 已关闭"
         fi
     fi
 
-    # 检查 3: 远程分支已删除 + PR 已完结（merged 或 closed）
-    # v12.41.0 P1-5 修复：原来用 --state all 会返回 open 状态的 PR，
-    # 导致远程分支被 GitHub 自动删除但 PR 还在 open 时误删活跃 worktree
+    # v1.1.0 P1-14: API 限流时发出警告（不静默跳过）
+    if [[ "$API_FAILED" == "true" && "$SHOULD_CLEAN" == "false" ]]; then
+        echo "WARN: GitHub API 调用失败（可能限流），跳过 $WT_BRANCH" >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    # 检查 3: 远程分支已删除 + PR 已完结
+    # v2.0 P2-23 修复：复用 Check 1/2 的结果而非重复 API 调用
     if [[ "$SHOULD_CLEAN" == "false" ]]; then
         REMOTE_EXISTS=$(git ls-remote --heads origin "$WT_BRANCH" 2>/dev/null | grep -c "$WT_BRANCH" || echo "0")
         if [[ "$REMOTE_EXISTS" == "0" ]]; then
-            # 只检查已合并或已关闭的 PR（排除 open 状态）
-            FINISHED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
-            if [[ -z "$FINISHED_PR" ]]; then
-                FINISHED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state closed --json number -q '.[0].number' 2>/dev/null || echo "")
-            fi
+            # 复用已有结果：MERGED_PR 或 CLOSED_PR
+            FINISHED_PR="${MERGED_PR:-$CLOSED_PR}"
             if [[ -n "$FINISHED_PR" ]]; then
                 SHOULD_CLEAN=true
                 REASON="远程分支已删除（PR #$FINISHED_PR）"
@@ -118,7 +142,9 @@ for i in "${!WT_PATHS[@]}"; do
 
     # 检查 4: --force 模式下，超时的 worktree
     if [[ "$SHOULD_CLEAN" == "false" && "$FORCE" == "true" && -d "$WT_PATH" ]]; then
-        WT_AGE_MINUTES=$(( ($(date +%s) - $(stat -c %Y "$WT_PATH" 2>/dev/null || echo "$(date +%s)")) / 60 ))
+        # v1.1.0 P1-13 修复：macOS stat 兼容（-c %Y 是 Linux，-f %m 是 macOS）
+        WT_MTIME=$(stat -c %Y "$WT_PATH" 2>/dev/null || stat -f %m "$WT_PATH" 2>/dev/null || echo "$(date +%s)")
+        WT_AGE_MINUTES=$(( ($(date +%s) - WT_MTIME) / 60 ))
         TIMEOUT_MINUTES=$((TIMEOUT_HOURS * 60))
         if [[ $WT_AGE_MINUTES -gt $TIMEOUT_MINUTES ]]; then
             SHOULD_CLEAN=true
@@ -145,14 +171,18 @@ for i in "${!WT_PATHS[@]}"; do
             echo "清理: $WT_PATH ($WT_BRANCH) — $REASON"
             # 从主仓库执行删除（关键！CWD 已在 MAIN_WT）
             git worktree remove "$WT_PATH" --force 2>/dev/null || {
-                # v12.41.0 P1-6 修复：rm -rf fallback 加路径安全验证
+                # v1.1.0 P0-2 修复：精确路径安全验证（不再用 dirname 过宽匹配）
                 real_wt=$(realpath "$WT_PATH" 2>/dev/null || echo "$WT_PATH")
                 real_main=$(realpath "$MAIN_WT" 2>/dev/null || echo "$MAIN_WT")
-                if [[ "$real_wt" == "$real_main"* || "$real_wt" == "$(dirname "$real_main")"* ]] && \
-                   [[ "$real_wt" != "/" && "$real_wt" != "$HOME" && "$real_wt" != "$real_main" ]]; then
+                # 允许条件：worktree 路径在 .claude/worktrees/ 下，或与主仓库共享同一父目录
+                wt_parent=$(dirname "$real_wt")
+                main_parent=$(dirname "$real_main")
+                worktree_dir="${real_main}/.claude/worktrees"
+                if [[ "$real_wt" == "$worktree_dir/"* || "$wt_parent" == "$main_parent" ]] && \
+                   [[ "$real_wt" != "/" && "$real_wt" != "$HOME" && "$real_wt" != "$real_main" && ${#real_wt} -gt 10 ]]; then
                     rm -rf "$WT_PATH" 2>/dev/null || true
                 else
-                    echo "WARN: 路径安全检查失败，跳过 rm -rf: $WT_PATH" >&2
+                    echo "WARN: 路径安全检查失败，跳过 rm -rf: $WT_PATH (parent=$wt_parent, expected=$main_parent or $worktree_dir)" >&2
                 fi
             }
             git branch -D "$WT_BRANCH" 2>/dev/null || true
