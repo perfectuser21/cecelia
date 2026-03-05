@@ -9,8 +9,11 @@
  * - S3 → '无即将重置账号时，按实际用量升序选择'
  * - S4 → '所有账号满载时返回 null'
  * - S5 → '5h ePct 相同时，按 seven_day_pct 升序'
- * - SC1 → 'spending cap 不再阻塞派发，纯用量驱动选择'
- * - SC2 → '所有账号 spending-capped 时仍按用量选择（不再返回 null）'
+ * - SC1 → 'spending-capped 账号被跳过，选未 cap 的最优'
+ * - SC2 → '所有账号 spending-capped 时返回 null（降级 MiniMax）'
+ * - H1 → 'Haiku 独立模式只看 5h，过滤 spending cap'
+ * - H2 → 'Haiku 独立模式返回 { accountId, model: haiku }'
+ * - H3 → 'selectBestAccountForHaiku 兼容别名返回 string'
  * - M1 → 'Sonnet 7d 全满时升级 Opus'
  * - M2 → 'Sonnet+Opus 全满时降级 Haiku'
  * - M3 → 'Sonnet 可用时返回 model=sonnet'
@@ -457,5 +460,84 @@ describe('P: Spending Cap 持久化', () => {
     expect(isSpendingCapped('account1')).toBe(false);
     expect(isSpendingCapped('account2')).toBe(false);
     expect(isSpendingCapped('account3')).toBe(false);
+  });
+});
+
+// ============================================================
+// H: Haiku 独立模式（selectBestAccount({ model: 'haiku' })）
+// ============================================================
+describe('H: Haiku 独立模式', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('H1: Haiku 模式只看 5h + spending cap，不看 sonnet 7d', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+    const { default: pool } = await import('../db.js');
+    pool.query.mockReset();
+    pool.query.mockImplementation((sql, params) => {
+      const rows = [
+        makeRow('account1', 20, 120, 90, 100),  // sonnet 7d=100%，但 haiku 不管
+        makeRow('account2', 10, 120, 95, 100),  // sonnet 7d=100%，5h=10% 最低
+        makeRow('account3', 30, 120, 50, 50),
+      ];
+      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
+        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
+    // account2 用量最低但被 cap
+    markSpendingCap('account2', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
+
+    const result = await selectBestAccount({ model: 'haiku' });
+    // account2 被 cap 跳过 → account1（5h=20%）
+    expect(result?.accountId).toBe('account1');
+    expect(result?.model).toBe('haiku');
+  });
+
+  it('H2: Haiku 模式返回 { accountId, model: haiku }', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+    const { default: pool } = await import('../db.js');
+    pool.query.mockReset();
+    pool.query.mockImplementation((sql, params) => {
+      const rows = [
+        makeRow('account1', 50, 120),
+        makeRow('account2', 10, 120),
+        makeRow('account3', 30, 120),
+      ];
+      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
+        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { selectBestAccount } = await import('../account-usage.js');
+    const result = await selectBestAccount({ model: 'haiku' });
+    expect(result).toEqual({ accountId: 'account2', model: 'haiku' });
+  });
+
+  it('H3: selectBestAccountForHaiku 兼容别名返回 string', async () => {
+    vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+    const { default: pool } = await import('../db.js');
+    pool.query.mockReset();
+    pool.query.mockImplementation((sql, params) => {
+      const rows = [
+        makeRow('account1', 50, 120),
+        makeRow('account2', 10, 120),
+        makeRow('account3', 30, 120),
+      ];
+      if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
+        return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { selectBestAccountForHaiku } = await import('../account-usage.js');
+    const result = await selectBestAccountForHaiku();
+    // 兼容别名：返回 string（不是对象）
+    expect(typeof result).toBe('string');
+    expect(result).toBe('account2');
   });
 });
