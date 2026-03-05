@@ -436,71 +436,73 @@ fi
 
 echo "  ✅ 条件 1: PR 已创建 (#$PR_NUMBER)" >&2
 
-# ===== 不再提前退出，即使 PR 已合并也继续检查 cleanup_done =====
-# 删除了原来的 PR 合并提前退出逻辑（Line 217-253）
-# 现在即使 PR 合并，也必须等待 Step 11 Cleanup 完成并设置 cleanup_done: true
-
-# ===== 条件 2: CI 状态？（PR 未合并时检查） =====
-CI_STATUS="unknown"
-CI_CONCLUSION=""
-CI_RUN_ID=""
-
-# P0-4: 使用统一 CI 查询库（带重试），fallback 到内联查询
-if [[ -n "$CI_STATUS_LIB" ]] && type get_ci_status &>/dev/null; then
-    CI_RESULT=$(CI_MAX_RETRIES=2 CI_RETRY_DELAY=3 get_ci_status "$BRANCH_NAME") || true
-    CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status // "unknown"')
-    CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion // ""')
-    CI_RUN_ID=$(echo "$CI_RESULT" | jq -r '.run_id // ""')
+# ===== 条件 2: CI 状态？=====
+# v12.40.1: PR 已合并时跳过 CI 检查（合并意味着 CI 必然已通过，
+# 且合并后分支可能被删除导致 CI 查询返回 unknown → 永远卡死）
+if [[ "$PR_STATE" == "merged" ]]; then
+    echo "  ✅ 条件 2: CI 通过（PR 已合并，CI 必然已通过）" >&2
 else
-    # Fallback: 内联查询
-    RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
-    if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
-        CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
-        CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
-        CI_RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
-    fi
-fi
+    CI_STATUS="unknown"
+    CI_CONCLUSION=""
+    CI_RUN_ID=""
 
-case "$CI_STATUS" in
-    "completed")
-        if [[ "$CI_CONCLUSION" == "success" ]]; then
-            echo "  ✅ 条件 2: CI 通过" >&2
-        else
-            echo "  ❌ 条件 2: CI 失败 ($CI_CONCLUSION)" >&2
-            echo "" >&2
-            echo "  下一步: 查看 CI 日志并修复" >&2
-            if [[ -n "$CI_RUN_ID" ]]; then
-                echo "    gh run view $CI_RUN_ID --log-failed" >&2
+    # P0-4: 使用统一 CI 查询库（带重试），fallback 到内联查询
+    if [[ -n "$CI_STATUS_LIB" ]] && type get_ci_status &>/dev/null; then
+        CI_RESULT=$(CI_MAX_RETRIES=2 CI_RETRY_DELAY=3 get_ci_status "$BRANCH_NAME") || true
+        CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status // "unknown"')
+        CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion // ""')
+        CI_RUN_ID=$(echo "$CI_RESULT" | jq -r '.run_id // ""')
+    else
+        # Fallback: 内联查询
+        RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+        if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
+            CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
+            CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
+            CI_RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
+        fi
+    fi
+
+    case "$CI_STATUS" in
+        "completed")
+            if [[ "$CI_CONCLUSION" == "success" ]]; then
+                echo "  ✅ 条件 2: CI 通过" >&2
+            else
+                echo "  ❌ 条件 2: CI 失败 ($CI_CONCLUSION)" >&2
+                echo "" >&2
+                echo "  下一步: 查看 CI 日志并修复" >&2
+                if [[ -n "$CI_RUN_ID" ]]; then
+                    echo "    gh run view $CI_RUN_ID --log-failed" >&2
+                fi
+                echo "" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                save_block_reason "CI 失败 ($CI_CONCLUSION)"
+                jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
+                exit 2
             fi
+            ;;
+        "in_progress"|"queued"|"waiting"|"pending")
+            echo "  ⏳ 条件 2: CI 进行中 ($CI_STATUS)" >&2
+            echo "" >&2
+            echo "  下一步: 等待 CI 完成" >&2
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            save_block_reason "CI 失败 ($CI_CONCLUSION)"
-            jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
+            save_block_reason "CI 进行中 ($CI_STATUS)"
+            jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
             exit 2
-        fi
-        ;;
-    "in_progress"|"queued"|"waiting"|"pending")
-        echo "  ⏳ 条件 2: CI 进行中 ($CI_STATUS)" >&2
-        echo "" >&2
-        echo "  下一步: 等待 CI 完成" >&2
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        save_block_reason "CI 进行中 ($CI_STATUS)"
-        jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
-        exit 2
-        ;;
-    *)
-        echo "  ⚠️  条件 2: CI 状态未知 ($CI_STATUS)" >&2
-        echo "" >&2
-        echo "  下一步: 检查 CI 状态" >&2
-        echo "    gh run list --branch $BRANCH_NAME --limit 1" >&2
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        save_block_reason "CI 状态未知 ($CI_STATUS)"
-        jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
-        exit 2
-        ;;
-esac
+            ;;
+        *)
+            echo "  ⚠️  条件 2: CI 状态未知 ($CI_STATUS)" >&2
+            echo "" >&2
+            echo "  下一步: 检查 CI 状态" >&2
+            echo "    gh run list --branch $BRANCH_NAME --limit 1" >&2
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            save_block_reason "CI 状态未知 ($CI_STATUS)"
+            jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
+            exit 2
+            ;;
+    esac
+fi
 
 # ===== 条件 3: PR 已合并？（CI 通过后检查） =====
 if [[ "$PR_STATE" == "merged" ]]; then
