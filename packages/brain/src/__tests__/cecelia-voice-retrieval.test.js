@@ -41,6 +41,15 @@ vi.mock('../memory-utils.js', () => ({
   generateMemoryStreamL1Async: vi.fn(),
 }));
 
+// Mock executor.js（低压力模式，防止 CI 低内存环境触发 mouth 降级）
+vi.mock('../executor.js', () => ({
+  checkServerResources: vi.fn().mockReturnValue({
+    ok: true,
+    effectiveSlots: 5,
+    metrics: { max_pressure: 0.3 },
+  }),
+}));
+
 import pool from '../db.js';
 import {
   handleChat,
