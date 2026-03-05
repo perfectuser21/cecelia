@@ -1,5 +1,47 @@
 # Cecelia Core Learnings
 
+### [2026-03-05] Cecelia 全链路断层修复（PR #537, Brain v1.194.1）
+
+**失败统计**：CI 失败 1 次（测试断言未同步新行为）
+
+**根因：三处系统性断层同时存在**
+
+1. **`actions.js` 默认 `execution_mode='simple'`**（最严重）
+   - `planNextTask()` 在 PR Plan 查询中过滤 `execution_mode = 'cecelia' OR IS NULL`
+   - 所有 Initiative 被创建为 `'simple'`→ 对 planNextTask 完全不可见
+   - 修复：`execution_mode || 'simple'` → `execution_mode || 'cecelia'`
+
+2. **`initiative-closer.js` 只检查 `status='in_progress'`**（KR 0% 根因）
+   - Initiative 创建时 `status='active'`，不是 `'in_progress'`
+   - 任务全部完成后，Initiative 永远不被关闭 → KR 进度永远 0%
+   - 修复：`status = 'in_progress'` → `status IN ('in_progress', 'active')`
+
+3. **`task-router.js` 返回 `execution_mode='single'`**
+   - 不是阻塞派发的直接原因（selectNextDispatchableTask 不过滤 execution_mode）
+   - 但数据不一致，埋坑
+   - 修复：`determineExecutionMode` 统一返回 `'cecelia'`
+
+4. **积压任务关联 cancelled KR**（no_dispatchable_task 根因）
+   - `selectNextDispatchableTask` 过滤 `goal_id = ANY(allGoalIds)`
+   - cancelled KR 不在 allGoalIds 中 → 关联任务永远不被选中
+   - 修复：migration 123 清空这些任务的 goal_id
+
+5. **`pre-flight-check.js` 未豁免 `code_review` 类型**
+   - code_review 任务由 Brain 自动生成，无 description → 每次被拦截
+   - 修复：加入 SYSTEM_TASK_TYPES
+
+**CI 第一轮失败原因**：
+- 修改了生产代码行为，但未同步测试中的 mock 条件和断言
+- `initiative-completion.test.js`：mock SQL 条件只匹配旧的 `status='in_progress'`，不匹配新的 `IN ('in_progress', 'active')`
+- `actions-initiative-orchestration.test.js`：断言 `toBe('simple')` 未改为 `toBe('cecelia')`
+- 教训：**改 SQL 条件时，同步检查所有测试文件的 mock 字符串匹配**
+
+**Migration 123 教训**：
+- 历史存量数据（`execution_mode='simple'/'single'`）需要 migration 清理，光改代码不够
+- 任务关联 cancelled KR 时，清空 `goal_id`（设 NULL）比取消任务更安全——保留任务价值
+
+**调试流程**：诊断思路：先 tick 状态 → 看 dispatch reason → 查 goal_id → 查 KR status → 找代码过滤条件 → 找默认值来源
+
 ### [2026-03-05] GitHub Webhook PR 合并回调（PR #533, Brain v1.194.0）
 
 **失败统计**：CI 失败 4 次（facts-check 2次、.brain-versions 遗漏 1次、rebase 冲突 1次）
