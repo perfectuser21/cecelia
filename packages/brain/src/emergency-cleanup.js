@@ -1,5 +1,5 @@
 /**
- * Emergency Cleanup - Brain 应激机制 Phase 2
+ * Emergency Cleanup — Brain 应激机制 Phase 2
  *
  * Watchdog kill 进程后（Phase 1），立即调用此模块清理残留：
  *   - git worktree remove（防止磁盘占用累积）
