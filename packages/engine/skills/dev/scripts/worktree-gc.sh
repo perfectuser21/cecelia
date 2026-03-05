@@ -98,14 +98,20 @@ for i in "${!WT_PATHS[@]}"; do
         fi
     fi
 
-    # 检查 3: 远程分支已删除 + 有关联 PR
+    # 检查 3: 远程分支已删除 + PR 已完结（merged 或 closed）
+    # v12.41.0 P1-5 修复：原来用 --state all 会返回 open 状态的 PR，
+    # 导致远程分支被 GitHub 自动删除但 PR 还在 open 时误删活跃 worktree
     if [[ "$SHOULD_CLEAN" == "false" ]]; then
         REMOTE_EXISTS=$(git ls-remote --heads origin "$WT_BRANCH" 2>/dev/null | grep -c "$WT_BRANCH" || echo "0")
         if [[ "$REMOTE_EXISTS" == "0" ]]; then
-            ANY_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state all --json number -q '.[0].number' 2>/dev/null || echo "")
-            if [[ -n "$ANY_PR" ]]; then
+            # 只检查已合并或已关闭的 PR（排除 open 状态）
+            FINISHED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+            if [[ -z "$FINISHED_PR" ]]; then
+                FINISHED_PR=$(gh pr list --repo "$REPO" --head "$WT_BRANCH" --state closed --json number -q '.[0].number' 2>/dev/null || echo "")
+            fi
+            if [[ -n "$FINISHED_PR" ]]; then
                 SHOULD_CLEAN=true
-                REASON="远程分支已删除（PR #$ANY_PR）"
+                REASON="远程分支已删除（PR #$FINISHED_PR）"
             fi
         fi
     fi
@@ -122,13 +128,32 @@ for i in "${!WT_PATHS[@]}"; do
 
     # 执行清理
     if [[ "$SHOULD_CLEAN" == "true" ]]; then
+        # v12.41.0 P0-3 修复：删除前检查未提交改动（防止数据丢失）
+        if [[ -d "$WT_PATH" ]]; then
+            DIRTY=$(git -C "$WT_PATH" status --porcelain 2>/dev/null | grep -v "node_modules" | head -5 || true)
+            if [[ -n "$DIRTY" ]]; then
+                echo "WARN: $WT_PATH ($WT_BRANCH) 有未提交改动，跳过:"
+                echo "$DIRTY" | sed 's/^/  /'
+                SKIPPED=$((SKIPPED + 1))
+                continue
+            fi
+        fi
+
         if [[ "$DRY_RUN" == "true" ]]; then
             echo "[dry-run] 会清理: $WT_PATH ($WT_BRANCH) — $REASON"
         else
             echo "清理: $WT_PATH ($WT_BRANCH) — $REASON"
             # 从主仓库执行删除（关键！CWD 已在 MAIN_WT）
             git worktree remove "$WT_PATH" --force 2>/dev/null || {
-                rm -rf "$WT_PATH" 2>/dev/null || true
+                # v12.41.0 P1-6 修复：rm -rf fallback 加路径安全验证
+                real_wt=$(realpath "$WT_PATH" 2>/dev/null || echo "$WT_PATH")
+                real_main=$(realpath "$MAIN_WT" 2>/dev/null || echo "$MAIN_WT")
+                if [[ "$real_wt" == "$real_main"* || "$real_wt" == "$(dirname "$real_main")"* ]] && \
+                   [[ "$real_wt" != "/" && "$real_wt" != "$HOME" && "$real_wt" != "$real_main" ]]; then
+                    rm -rf "$WT_PATH" 2>/dev/null || true
+                else
+                    echo "WARN: 路径安全检查失败，跳过 rm -rf: $WT_PATH" >&2
+                fi
             }
             git branch -D "$WT_BRANCH" 2>/dev/null || true
         fi

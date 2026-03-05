@@ -18,7 +18,7 @@
 
 # NOTE: version 需要与 package.json 保持同步
 # 更新 package.json 时同步更新此处
-version: "12.40.1"
+version: "12.41.0"
 updated: "2026-03-03"
 
 # ============================================================================
@@ -485,6 +485,102 @@ hooks:
       type: code
       file: "skills/dev/scripts/cleanup.sh"
       not_contains: "(bash.*worktree-gc.*&)"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  # v12.41.0: Deep Bug Fixes
+  - id: H7-019
+    feature: H7
+    name: "cleanup.sh sed step_11_cleanup 验证后追加"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [cleanup, sed, silent-failure, bug-fix]
+    owner: infra
+    steps:
+      given: "cleanup.sh 标记 step_11_cleanup: done"
+      when: "sed 替换目标行不存在（首次运行或格式不同）"
+      then: "验证 grep 后追加行，不静默失败"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/cleanup.sh"
+      contains: "_mark_cleanup_done"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-020
+    feature: H7
+    name: "stop-dev.sh 无头模式分支名 fallback"
+    scope: hook
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, headless, lock-matching, bug-fix]
+    owner: infra
+    steps:
+      given: "stop-dev.sh 扫描 per-branch lock 文件"
+      when: "TTY 和 session_id 都为空（纯无头模式）"
+      then: "用当前分支名匹配 lock 中的 branch 字段"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: "_branch_in_lock\" == \"$CURRENT_BRANCH\""
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-021
+    feature: H7
+    name: "worktree-gc.sh 删除前检查脏状态"
+    scope: script
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    tags: [worktree-gc, data-loss, dirty-check, bug-fix]
+    owner: infra
+    steps:
+      given: "worktree-gc.sh 要删除一个 worktree"
+      when: "worktree 有未提交的改动"
+      then: "跳过删除，输出警告"
+    evidence:
+      type: code
+      file: "skills/dev/scripts/worktree-gc.sh"
+      contains: "git -C \"$WT_PATH\" status --porcelain"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-022
+    feature: H7
+    name: "stop-dev.sh 孤儿状态重试上限"
+    scope: hook
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [stop-hook, infinite-loop, orphan, bug-fix]
+    owner: infra
+    steps:
+      given: "sentinel 或 .dev-lock 孤儿存在"
+      when: "重试超过 5 次"
+      then: "清理孤儿文件并 exit 0（防止无限循环）"
+    evidence:
+      type: code
+      file: "hooks/stop-dev.sh"
+      contains: ".dev-orphan-retry"
+    test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
+
+  - id: H7-023
+    feature: H7
+    name: "lock-utils.sh 不覆写调用者 DEV_MODE_FILE"
+    scope: library
+    priority: P1
+    trigger: [PR, Release]
+    method: auto
+    tags: [lock-utils, variable-collision, bug-fix]
+    owner: infra
+    steps:
+      given: "调用者设置了 DEV_MODE_FILE 为 per-branch 路径"
+      when: "调用 acquire_dev_mode_lock（内部调用 _get_lock_paths）"
+      then: "调用者的 DEV_MODE_FILE 不被覆写"
+    evidence:
+      type: code
+      file: "lib/lock-utils.sh"
+      contains: "_LU_DEV_MODE_FILE"
     test: "tests/scripts/stop-cleanup-bugfixes.test.ts"
 
   # --------------------------------------------------------------------------
