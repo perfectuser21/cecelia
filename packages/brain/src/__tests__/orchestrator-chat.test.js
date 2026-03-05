@@ -50,6 +50,15 @@ vi.mock('../memory-utils.js', () => ({
   generateMemoryStreamL1Async: vi.fn(),
 }));
 
+// Mock executor.js — checkServerResources 返回低压力（默认正常模式）
+vi.mock('../executor.js', () => ({
+  checkServerResources: vi.fn().mockReturnValue({
+    ok: true,
+    effectiveSlots: 5,
+    metrics: { max_pressure: 0.3 },
+  }),
+}));
+
 // Import after mocks
 import pool from '../db.js';
 import { buildMemoryContext } from '../memory-retriever.js';

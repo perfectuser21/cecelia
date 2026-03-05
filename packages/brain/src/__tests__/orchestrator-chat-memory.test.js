@@ -83,6 +83,15 @@ describe('orchestrator-chat memory unification (D1)', () => {
       getUserProfileContext: vi.fn().mockResolvedValue(''),
     }));
 
+    // mock executor.js — 低压力（正常模式）
+    vi.doMock('../executor.js', () => ({
+      checkServerResources: vi.fn().mockReturnValue({
+        ok: true,
+        effectiveSlots: 5,
+        metrics: { max_pressure: 0.3 },
+      }),
+    }));
+
     const mod = await import('../orchestrator-chat.js');
     handleChat = mod.handleChat;
     fetchMemoryContext = mod.fetchMemoryContext;
