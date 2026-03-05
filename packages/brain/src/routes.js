@@ -2943,8 +2943,6 @@ router.post('/execution-callback', async (req, res) => {
       }
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
-      await cbFailure('cecelia-run');
-      raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
 
       // Publish WebSocket event: task failed
       publishTaskFailed(task_id, run_id, status);
@@ -2952,6 +2950,7 @@ router.post('/execution-callback', async (req, res) => {
       // === Failure Classification & Smart Retry ===
       let failureHandled = false;
       let quarantined = false;
+      let isBillingCap = false;
       try {
         // Extract error message from result
         // Note: typeof null === 'object', so we must check result !== null first
@@ -2965,6 +2964,7 @@ router.post('/execution-callback', async (req, res) => {
         const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]);
         const taskPayload = taskRow.rows[0]?.payload || {};
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
+        isBillingCap = classification.class === 'billing_cap';
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
@@ -2995,10 +2995,16 @@ router.post('/execution-callback', async (req, res) => {
           console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
           failureHandled = true;
 
-          // Spending cap / billing_pause — 已废弃（v1.196.0）
-          // 三阶段降级链根据实时用量数据自己路由，不再需要标记 spending_cap
+          // Spending cap: 标记账号级 spending cap（不全局阻塞，降级链自动换号）
           if (strategy.billing_pause) {
-            console.log(`[execution-callback] Billing cap 检测到（task=${task_id}），但不再设置全局阻塞，由降级链自动处理`);
+            const { markSpendingCap } = await import('./account-usage.js');
+            const cappedAccount = taskPayload.dispatched_account;
+            if (cappedAccount) {
+              markSpendingCap(cappedAccount, strategy.next_run_at);
+              console.log(`[execution-callback] Billing cap: 标记 ${cappedAccount} capped until ${strategy.next_run_at}，下次派发自动换号`);
+            } else {
+              console.warn(`[execution-callback] Billing cap 检测到但 task payload 缺少 dispatched_account，无法精准标记`);
+            }
           }
         } else if (strategy && strategy.needs_human_review) {
           // No retry, mark for human review
@@ -3010,6 +3016,14 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (classifyErr) {
         console.error(`[execution-callback] Classification error: ${classifyErr.message}`);
+      }
+
+      // Circuit breaker: billing_cap 不计入熔断（是账号限制，不是系统故障）
+      if (isBillingCap) {
+        console.log(`[execution-callback] Billing cap: 跳过熔断计数（task=${task_id}）`);
+      } else {
+        await cbFailure('cecelia-run');
+        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
       }
 
       // Check if task should be quarantined (only if not already handled by smart retry)
