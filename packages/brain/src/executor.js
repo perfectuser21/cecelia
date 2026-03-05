@@ -61,7 +61,7 @@ function assertSafePid(value, label = 'pid') {
 // Configuration
 const CECELIA_RUN_PATH = process.env.CECELIA_RUN_PATH || '/home/xx/bin/cecelia-run';
 const PROMPT_DIR = '/tmp/cecelia-prompts';
-const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia/core';
+const WORK_DIR = process.env.CECELIA_WORK_DIR || '/home/xx/perfect21/cecelia';
 
 // ==================== Diagnostic Functions ====================
 
