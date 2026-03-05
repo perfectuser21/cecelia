@@ -1,21 +1,22 @@
 /**
- * Callback Billing Pause Tests
+ * Callback Billing Cap Tests
  *
- * 验证 execution-callback 在收到 Spending cap reached 错误时，
- * 正确调用 setBillingPause()，避免因 result=null 导致的 TypeError。
+ * 验证 execution-callback 在收到 Spending cap reached 错误时：
+ * 1. 调用 markSpendingCap() 标记账号级 spending cap
+ * 2. 不调用 cbFailure()（不计入熔断，billing cap 不是系统故障）
+ * 3. result=null 时不抛 TypeError
  *
- * Bug: typeof null === 'object' → null.result 抛出 TypeError → catch 捕获 → setBillingPause 未触发
- * Fix: 加 result !== null 检查
- *
- * 对应 DoD:
- * 1. result=null 时，errorMsg 不抛出 TypeError，setBillingPause 被调用
- * 2. result={result:'Spending cap...'} 时，setBillingPause 被调用
- * 3. result='Spending cap...' (string) 时，setBillingPause 被调用
+ * v1.197.0: spending cap 闭环 — 标记账号 → 换号重试 → 避免熔断
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Track setBillingPause calls
+// Track markSpendingCap and circuit-breaker calls
+const markSpendingCapMock = vi.fn();
+const cbFailureMock = vi.fn();
+const cbSuccessMock = vi.fn();
+
+// Legacy: setBillingPause (deprecated but still in executor mock)
 const setBillingPauseMock = vi.fn();
 
 // Mock client for transactions
@@ -137,8 +138,18 @@ vi.mock('../circuit-breaker.js', () => ({
   getState: vi.fn(),
   reset: vi.fn(),
   getAllStates: vi.fn(),
-  recordSuccess: vi.fn(),
-  recordFailure: vi.fn(),
+  recordSuccess: cbSuccessMock,
+  recordFailure: cbFailureMock,
+}));
+vi.mock('../account-usage.js', () => ({
+  markSpendingCap: markSpendingCapMock,
+  isSpendingCapped: vi.fn(() => false),
+  selectBestAccount: vi.fn(async () => ({ accountId: 'account1', model: 'sonnet' })),
+  selectBestAccountForHaiku: vi.fn(async () => 'account1'),
+  getAccountUsage: vi.fn(async () => ({})),
+  getSpendingCapStatus: vi.fn(() => []),
+  isAllAccountsSpendingCapped: vi.fn(() => false),
+  loadSpendingCapsFromDB: vi.fn(async () => {}),
 }));
 vi.mock('../notifier.js', () => ({
   notifyTaskCompleted: vi.fn(async () => {}),
@@ -179,31 +190,30 @@ function mockReqRes(method, path, body = {}) {
   });
 }
 
-describe('execution-callback billing pause', () => {
+describe('execution-callback billing cap handling (v1.197.0)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    markSpendingCapMock.mockClear();
+    cbFailureMock.mockClear();
+    cbSuccessMock.mockClear();
     setBillingPauseMock.mockClear();
     // Setup mock client to return task payload
     mockClient.query.mockImplementation((sql) => {
       if (typeof sql === 'string' && sql.includes('BEGIN')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('COMMIT')) return Promise.resolve({});
       if (typeof sql === 'string' && sql.includes('ROLLBACK')) return Promise.resolve({});
-      // SELECT tasks for update
       if (typeof sql === 'string' && sql.includes('UPDATE tasks SET status')) {
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
     });
     mockPool.query.mockImplementation((sql) => {
-      // SELECT payload FROM tasks
       if (typeof sql === 'string' && sql.includes('SELECT payload FROM tasks')) {
-        return Promise.resolve({ rows: [{ payload: {} }], rowCount: 1 });
+        return Promise.resolve({ rows: [{ payload: { dispatched_account: 'account2' } }], rowCount: 1 });
       }
-      // UPDATE tasks for billing cap classification storage
       if (typeof sql === 'string' && sql.includes('UPDATE tasks SET payload')) {
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
-      // UPDATE tasks for smart retry requeue
       if (typeof sql === 'string' && sql.includes("status = 'queued'")) {
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
@@ -213,49 +223,22 @@ describe('execution-callback billing pause', () => {
 
   /**
    * DoD 1: result=null 时不应抛出 TypeError
-   * Bug: typeof null === 'object' → null.result → TypeError → catch → setBillingPause 未触发
-   * Fix: result !== null 检查
    */
-  it('should call setBillingPause when result=null and status contains Spending cap', async () => {
+  it('should not throw TypeError when result=null', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-billing-null-result',
       run_id: 'run-billing-1',
       status: 'AI Failed',
-      result: null,  // ← 关键：null 触发 bug
-    });
-
-    // 请求应成功（不是 500 TypeError）
-    expect(result.statusCode).toBe(200);
-
-    // setBillingPause 不会被调用，因为 status='AI Failed' 不含 spending cap 文本
-    // 但关键是：不应抛出 TypeError
-    // （null.result 以前会抛 TypeError 导致整个分类流程跳过）
-    // 测试通过代表 null check 生效，不再有 TypeError
-  });
-
-  /**
-   * DoD 1b: result=null 但通过 status 传入 spending cap 文本时
-   * 注意：当前 fix 中，result=null 时 errorMsg = String(null || status)
-   * 如果 status 包含 'Spending cap reached'，则分类为 BILLING_CAP
-   */
-  it('should call setBillingPause when result=null and raw status contains spending cap text', async () => {
-    // 注意：实际 cecelia-run 可能不这样传，但我们验证代码路径正确
-    const result = await mockReqRes('POST', '/execution-callback', {
-      task_id: 'task-billing-null-status',
-      run_id: 'run-billing-2',
-      status: 'AI Failed',
       result: null,
     });
 
-    // 验证不会抛出 TypeError
     expect(result.statusCode).toBe(200);
   });
 
   /**
-   * DoD 2: result 为对象且 result.result 含 Spending cap 文本时
-   * v1.196.0: 不再调用 setBillingPause，由降级链自动处理
+   * DoD 2: spending cap 时调用 markSpendingCap 标记账号
    */
-  it('should NOT call setBillingPause for spending cap (deprecated, handled by degradation chain)', async () => {
+  it('should call markSpendingCap when billing cap detected with dispatched_account', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-billing-obj-result',
       run_id: 'run-billing-3',
@@ -264,46 +247,30 @@ describe('execution-callback billing pause', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    // v1.196.0: spending_cap 不再设置全局 billing_pause
-    expect(setBillingPauseMock).not.toHaveBeenCalled();
+    // v1.197.0: spending cap 标记账号级 cap
+    expect(markSpendingCapMock).toHaveBeenCalledWith('account2', expect.any(String));
   });
 
   /**
-   * DoD 2b: result 为对象且 result.error 含 Spending cap 文本时
-   * v1.196.0: 不再调用 setBillingPause
+   * DoD 3: spending cap 时不调用 cbFailure（不计入熔断）
    */
-  it('should NOT call setBillingPause for spending cap in error field', async () => {
+  it('should NOT call cbFailure for billing cap failures', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
-      task_id: 'task-billing-obj-error',
+      task_id: 'task-billing-no-cb',
       run_id: 'run-billing-4',
       status: 'AI Failed',
-      result: { error: 'Spending cap reached, resets at 3pm' },
+      result: { result: 'Spending cap reached resets 11pm' },
     });
 
     expect(result.statusCode).toBe(200);
-    expect(setBillingPauseMock).not.toHaveBeenCalled();
+    // billing cap 不是系统故障，不计入熔断
+    expect(cbFailureMock).not.toHaveBeenCalled();
   });
 
   /**
-   * DoD 3: result 为字符串含 Spending cap 文本时
-   * v1.196.0: 不再调用 setBillingPause
+   * DoD 4: 正常失败应调用 cbFailure（计入熔断）
    */
-  it('should NOT call setBillingPause for spending cap string result', async () => {
-    const result = await mockReqRes('POST', '/execution-callback', {
-      task_id: 'task-billing-str-result',
-      run_id: 'run-billing-5',
-      status: 'AI Failed',
-      result: 'Spending cap reached resets 11pm',
-    });
-
-    expect(result.statusCode).toBe(200);
-    expect(setBillingPauseMock).not.toHaveBeenCalled();
-  });
-
-  /**
-   * 回归：正常失败（非 billing cap）不应触发 setBillingPause
-   */
-  it('should NOT call setBillingPause for normal task failures', async () => {
+  it('should call cbFailure for normal task failures', async () => {
     const result = await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-normal-failure',
       run_id: 'run-normal-1',
@@ -312,6 +279,23 @@ describe('execution-callback billing pause', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    expect(setBillingPauseMock).not.toHaveBeenCalled();
+    expect(cbFailureMock).toHaveBeenCalledWith('cecelia-run');
+    expect(markSpendingCapMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * DoD 5: spending cap string result 时也应标记账号
+   */
+  it('should call markSpendingCap for spending cap string result', async () => {
+    const result = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-billing-str-result',
+      run_id: 'run-billing-5',
+      status: 'AI Failed',
+      result: 'Spending cap reached resets 11pm',
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(markSpendingCapMock).toHaveBeenCalledWith('account2', expect.any(String));
+    expect(cbFailureMock).not.toHaveBeenCalled();
   });
 });

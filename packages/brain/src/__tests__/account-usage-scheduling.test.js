@@ -211,16 +211,16 @@ describe('S: selectBestAccount reset-aware 调度', () => {
   });
 });
 
-describe('SC: Spending Cap 不再阻塞派发（v1.196.0）', () => {
+describe('SC: Spending Cap 账号级过滤（v1.197.0）', () => {
   beforeEach(() => {
     vi.resetModules();
   });
 
   // ============================================================
-  // SC1: spending cap 不再阻塞，纯用量驱动选择
-  // v1.196.0: spending_cap 标记仍存在但不影响 selectBestAccount
+  // SC1: spending-capped 账号被跳过，选未 cap 的最优账号
+  // v1.197.0: 恢复 spending cap 过滤，避免同一 capped 账号反复失败触发熔断
   // ============================================================
-  it('SC1: spending-capped 账号不再被跳过，按用量选最优', async () => {
+  it('SC1: spending-capped 账号被跳过，选未 cap 的最优', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
@@ -228,7 +228,7 @@ describe('SC: Spending Cap 不再阻塞派发（v1.196.0）', () => {
       const rows = [
         makeRow('account1', 20, 120, 0, 0),
         makeRow('account2', 30, 120, 0, 0),
-        makeRow('account3', 10, 120, 0, 0),
+        makeRow('account3', 10, 120, 0, 0),  // 用量最低但被 cap
       ];
       if (typeof sql === 'string' && sql.includes('account_usage_cache') && params?.[0]) {
         return Promise.resolve({ rows: rows.filter(r => r.account_id === params[0]) });
@@ -237,20 +237,19 @@ describe('SC: Spending Cap 不再阻塞派发（v1.196.0）', () => {
     });
 
     const { markSpendingCap, selectBestAccount } = await import('../account-usage.js');
-    // account3 标记了 spending cap，但不再影响选择
     markSpendingCap('account3', new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString());
 
     const result = await selectBestAccount();
-    // v1.196.0: spending cap 不阻塞，account3（ePct=10 最低）仍被选中
-    expect(result?.accountId).toBe('account3');
+    // account3 被 cap，跳过 → 选 account1（ePct=20 次低）
+    expect(result?.accountId).toBe('account1');
     expect(result?.model).toBe('sonnet');
   });
 
   // ============================================================
-  // SC2: 所有账号 spending-capped 时仍按用量选择
-  // v1.196.0: 不再返回 null，降级链根据实时用量路由
+  // SC2: 所有账号 spending-capped → 返回 null（降级 MiniMax）
+  // v1.197.0: 三阶段全部过滤 capped 账号，全 cap 时返回 null
   // ============================================================
-  it('SC2: 所有账号 spending-capped 时仍按用量选择（不再返回 null）', async () => {
+  it('SC2: 所有账号 spending-capped 时返回 null（降级 MiniMax）', async () => {
     vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
     const { default: pool } = await import('../db.js');
     pool.query.mockReset();
@@ -273,10 +272,8 @@ describe('SC: Spending Cap 不再阻塞派发（v1.196.0）', () => {
     markSpendingCap('account3', future);
 
     const result = await selectBestAccount();
-    // v1.196.0: spending cap 不阻塞派发，按用量选最优
-    expect(result).not.toBeNull();
-    expect(result?.accountId).toBe('account3'); // ePct=10 最低
-    expect(result?.model).toBe('sonnet');
+    // 全部 capped → null → MiniMax 兜底
+    expect(result).toBeNull();
   });
 });
 

@@ -343,16 +343,17 @@ export async function selectBestAccount() {
         sevenDayPct: u?.seven_day_pct ?? 0,
         sevenDaySonnetPct: u?.seven_day_sonnet_pct ?? 0,
         extraUsed: u?.extra_used ?? false,
+        spendingCapped: isSpendingCapped(id),
       };
     });
 
     const usageSummary = mapped.map(a =>
-      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%`
+      `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}`
     ).join(', ');
 
     // ── 阶段1 Sonnet ──
     const sonnetCandidates = mapped
-      .filter(a => !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
+      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < 100)
       .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (sonnetCandidates.length > 0) {
@@ -365,7 +366,7 @@ export async function selectBestAccount() {
     // ── 阶段2 Opus（Sonnet 全满，升级 Opus）──
     // Opus 用 seven_day（all models）作代理指标，阈值 OPUS_THRESHOLD
     const opusCandidates = mapped
-      .filter(a => a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
+      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
       .sort((a, b) => a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct);
 
     if (opusCandidates.length > 0) {
@@ -376,7 +377,7 @@ export async function selectBestAccount() {
 
     // ── 阶段3 Haiku（Opus 全满，降级 Haiku）──
     const haikuCandidates = mapped
-      .filter(a => a.pct < USAGE_THRESHOLD)
+      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD)
       .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
     if (haikuCandidates.length > 0) {
