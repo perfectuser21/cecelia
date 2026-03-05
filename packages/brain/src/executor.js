@@ -199,7 +199,7 @@ function setBudgetCap(n) {
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
-const SWAP_USED_MAX_PCT = 70;
+const SWAP_USED_MAX_PCT = 50;  // 降低到 50% 让 Brain 更早踩刹车，避免深度换页导致 SSH 掉线
 
 // ============================================================
 // CPU Sampler — real CPU% from /proc/stat (replaces load average)
