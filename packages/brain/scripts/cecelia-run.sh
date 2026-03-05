@@ -25,7 +25,7 @@ LOCK_DIR="${LOCK_DIR:-/tmp/cecelia-locks}"
 WEBHOOK_URL="http://localhost:5221/api/brain/execution-callback"
 WEBHOOK_TOKEN="${CECELIA_WEBHOOK_TOKEN:-}"
 LOG_FILE="${CECELIA_LOG_FILE:-$HOME/logs/cecelia-run.log}"
-WORK_DIR="${CECELIA_WORK_DIR:-/home/xx/perfect21/cecelia/core}"
+WORK_DIR="${CECELIA_WORK_DIR:-/home/xx/perfect21/cecelia}"
 MAX_RETRIES="${CECELIA_MAX_RETRIES:-5}"
 
 # 确保日志目录存在
