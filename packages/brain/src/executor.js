@@ -260,9 +260,9 @@ async function resolveRepoPath(projectId) {
  * Check server resource availability before spawning.
  * Returns { ok, reason, metrics } — ok=false means don't spawn.
  */
-function checkServerResources() {
+function checkServerResources(memReservedMb = 0) {
   const loadAvg1 = os.loadavg()[0];
-  const freeMem = Math.round(os.freemem() / 1024 / 1024);
+  const freeMem = Math.round(os.freemem() / 1024 / 1024) - memReservedMb;
   const dynMaxSeats = getEffectiveMaxSeats();
 
   // Read swap from /proc/meminfo (Linux)

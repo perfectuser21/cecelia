@@ -3440,6 +3440,24 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5b. Dependency cascade: propagate failure or recover chain
+    try {
+      const { propagateDependencyFailure, recoverDependencyChain } = await import('./dep-cascade.js');
+      if (newStatus === 'failed' || newStatus === 'quarantined') {
+        const cascade = await propagateDependencyFailure(task_id);
+        if (cascade.affected.length > 0) {
+          console.log(`[execution-callback] Dependency cascade: ${cascade.affected.length} tasks marked dep_failed`);
+        }
+      } else if (newStatus === 'completed') {
+        const recovery = await recoverDependencyChain(task_id);
+        if (recovery.recovered.length > 0) {
+          console.log(`[execution-callback] Dependency recovery: ${recovery.recovered.length} tasks restored`);
+        }
+      }
+    } catch (depErr) {
+      console.error(`[execution-callback] Dependency cascade error (non-fatal): ${depErr.message}`);
+    }
+
     // 6. Event-driven: Trigger next task after completion (with short cooldown to avoid burst refill)
     let nextTickResult = null;
     if (newStatus === 'completed') {

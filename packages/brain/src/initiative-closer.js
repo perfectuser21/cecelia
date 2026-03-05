@@ -41,12 +41,13 @@ async function checkInitiativeCompletion(pool) {
   const closed = [];
 
   for (const initiative of initiatives) {
-    // 查该 initiative 下的 tasks 状态分布
+    // 查该 initiative 下的 tasks 状态分布（排除 dep_failed：它们被阻塞，不算活跃）
     const statsResult = await pool.query(`
       SELECT
-        COUNT(*)                                        AS total,
-        COUNT(*) FILTER (WHERE status = 'queued')      AS queued,
-        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress
+        COUNT(*) FILTER (WHERE status != 'dep_failed')  AS total,
+        COUNT(*) FILTER (WHERE status = 'queued')        AS queued,
+        COUNT(*) FILTER (WHERE status = 'in_progress')   AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'dep_failed')    AS dep_failed
       FROM tasks
       WHERE project_id = $1
     `, [initiative.id]);

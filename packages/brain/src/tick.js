@@ -777,15 +777,52 @@ async function dispatchNextTask(goalIds) {
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
   if (!slotBudget.dispatchAllowed) {
-    const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
-                       slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
-    await recordDispatchResult(pool, false, slotReason);
-    return {
-      dispatched: false,
-      reason: slotReason,
-      budget: slotBudget,
-      actions,
-    };
+    // Eviction: if a high-priority task is waiting, try to evict a low-priority one
+    try {
+      // Peek at the next queued task to check its priority
+      const peekResult = await pool.query(`
+        SELECT priority FROM tasks WHERE status = 'queued'
+        ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
+        LIMIT 1
+      `);
+      const nextPriority = peekResult.rows[0]?.priority;
+      if (nextPriority === 'P0' || nextPriority === 'P1') {
+        const { findEvictionCandidate, requeueEvictedTask } = await import('./eviction.js');
+        const candidate = await findEvictionCandidate(nextPriority);
+        if (candidate) {
+          console.log(`[tick] Eviction: ${nextPriority} task waiting, evicting ${candidate.priority} task=${candidate.taskId} (score=${candidate.score.toFixed(1)})`);
+          const evictKill = await killProcessTwoStage(candidate.taskId, candidate.pgid);
+          if (evictKill.killed) {
+            // Emergency cleanup for evicted task
+            try {
+              const { emergencyCleanup } = await import('./emergency-cleanup.js');
+              if (candidate.slot) emergencyCleanup(candidate.taskId, candidate.slot);
+            } catch { /* non-fatal */ }
+            await requeueEvictedTask(candidate.taskId, candidate.priority, `evicted_for_${nextPriority}`);
+            const { cleanupMetrics } = await import('./watchdog.js');
+            cleanupMetrics(candidate.taskId);
+            actions.push({ action: 'eviction', evicted_task: candidate.taskId, evicted_priority: candidate.priority, for_priority: nextPriority });
+            // Don't return - fall through to re-check budget and continue dispatch
+          }
+        }
+      }
+    } catch (evictionErr) {
+      console.error(`[tick] Eviction error (non-fatal): ${evictionErr.message}`);
+    }
+
+    // Re-check budget after potential eviction
+    const slotBudgetAfter = await calculateSlotBudget();
+    if (!slotBudgetAfter.dispatchAllowed) {
+      const slotReason = slotBudget.user.mode === 'team' ? 'user_team_mode' :
+                         slotBudget.taskPool.budget === 0 ? 'pool_exhausted' : 'pool_c_full';
+      await recordDispatchResult(pool, false, slotReason);
+      return {
+        dispatched: false,
+        reason: slotReason,
+        budget: slotBudgetAfter,
+        actions,
+      };
+    }
   }
 
   // 2. Circuit breaker check
@@ -1075,12 +1112,16 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
   let reason = 'stable';
 
   if (alertness.level >= ALERTNESS_LEVELS.ALERT) {
-    // High alertness - slow down or stop
-    newRate = Math.max(0, currentRate - 1);
+    // High alertness - exponential decay (/2 instead of -1)
+    newRate = Math.max(0, Math.floor(currentRate / 2));
     reason = `alertness=${alertness.levelName}`;
+  } else if (pressure > 0.9) {
+    // Critical pressure - force to 1
+    newRate = 1;
+    reason = `pressure_critical=${pressure.toFixed(2)}`;
   } else if (pressure > 0.8) {
-    // High pressure - slow down
-    newRate = Math.max(1, currentRate - 1);
+    // High pressure - exponential decay
+    newRate = Math.max(1, Math.floor(currentRate / 2));
     reason = `pressure=${pressure.toFixed(2)}`;
   } else if (pressure < 0.5 && alertness.level <= ALERTNESS_LEVELS.AWARE) {
     // Low pressure and calm - speed up
@@ -1733,6 +1774,18 @@ async function executeTick() {
         console.log(`[tick] Watchdog kill: task=${action.taskId} reason=${action.reason}`);
         const killResult = await killProcessTwoStage(action.taskId, action.pgid);
         if (killResult.killed) {
+          // Phase 2: Emergency cleanup (worktree, lock slot, .dev-mode)
+          try {
+            const { emergencyCleanup } = await import('./emergency-cleanup.js');
+            const slot = action.slot || (pidMap && pidMap.get?.(action.taskId)?.slot);
+            if (slot) {
+              const cleanupResult = emergencyCleanup(action.taskId, slot);
+              console.log(`[tick] Emergency cleanup: wt=${cleanupResult.worktree} lock=${cleanupResult.lock}`);
+            }
+          } catch (cleanupErr) {
+            console.error(`[tick] Emergency cleanup failed (non-fatal): ${cleanupErr.message}`);
+          }
+
           const requeueResult = await requeueTask(action.taskId, action.reason, action.evidence);
           cleanupMetrics(action.taskId);
           await emit('watchdog_kill', 'watchdog', {
@@ -1914,7 +1967,25 @@ async function executeTick() {
   const rampedDispatchMax = await getRampedDispatchMax(effectiveDispatchMax);
 
   // 7a. Fill slots from focused objective's tasks
+  // Predictive resource gate: pre-deduct estimated memory per dispatched agent
+  const ESTIMATED_AGENT_MEM_MB = 800;
+  let memReservedMb = 0;
   for (let i = 0; i < rampedDispatchMax; i++) {
+    // Re-check resources with predicted memory usage
+    if (memReservedMb > 0) {
+      const predictedResources = checkServerResources(memReservedMb);
+      if (!predictedResources.ok || predictedResources.metrics.max_pressure >= 0.9) {
+        console.log(`[tick] Predictive gate: stopping dispatch (reserved=${memReservedMb}MB, predicted_pressure=${predictedResources.metrics.max_pressure})`);
+        await logTickDecision(
+          'tick',
+          `Predictive gate: reserved ${memReservedMb}MB would exceed threshold`,
+          { action: 'predictive_gate', reserved_mb: memReservedMb, predicted_pressure: predictedResources.metrics.max_pressure },
+          { success: true }
+        );
+        break;
+      }
+    }
+
     const dispatchResult = await dispatchNextTask(allGoalIds);
     actionsTaken.push(...dispatchResult.actions);
     lastDispatchResult = dispatchResult;
@@ -1931,6 +2002,7 @@ async function executeTick() {
       break;
     }
     dispatched++;
+    memReservedMb += ESTIMATED_AGENT_MEM_MB;
   }
 
   // 7b. If focus objective has no more tasks, fill remaining slots from ready KRs only

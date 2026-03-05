@@ -23,6 +23,11 @@ import { extractConversationLearning } from './learning.js';
 import { extractPersonSignals, detectAndStoreTaskInterest } from './person-model.js';
 import { resolveByPersonReply } from './pending-conversations.js';
 import { processMessageFacts } from './fact-extractor.js';
+import { checkServerResources } from './executor.js';
+
+// Mouth concurrency limiter
+const MAX_MOUTH_CONCURRENT = 3;
+let _mouthConcurrent = 0;
 
 // 导出用于测试（重置缓存，已不需要但保留兼容）
 export function _resetApiKey() { /* no-op */ }
@@ -137,11 +142,14 @@ async function callWithHistory(userMessage, systemPrompt, options = {}, historyM
 
   const fullPrompt = `${systemPrompt}\n\n${historyBlock ? `## 对话历史\n${historyBlock}\n\n` : ''}Alex：${userMessage}`;
 
-  const callOptions = { timeout, maxTokens: 300 };
+  const callOpts = { timeout, maxTokens: 300 };
   if (imageContent && imageContent.length > 0) {
-    callOptions.imageContent = imageContent;
+    callOpts.imageContent = imageContent;
   }
-  const { text } = await callLLM('mouth', fullPrompt, callOptions);
+  if (options.preferModel) {
+    callOpts.model = options.preferModel;
+  }
+  const { text } = await callLLM('mouth', fullPrompt, callOpts);
 
   // 尝试解析 JSON 结构化输出（含 thalamus_signal 时）
   // 支持两种格式：
@@ -533,6 +541,32 @@ export async function handleChat(message, context = {}, messages = [], imageCont
     throw new Error('message is required and must be a string');
   }
 
+  // 0. Three-tier resource degradation for mouth
+  const resources = checkServerResources();
+  const pressure = resources.metrics.max_pressure;
+
+  // Tier 3: High pressure (>= 1.0) — template message, no LLM call
+  if (pressure >= 1.0) {
+    console.log(`[orchestrator-chat] Mouth tier 3: pressure=${pressure}, returning template`);
+    return { reply: '现在手头有点忙，稍后再聊好吗？' };
+  }
+
+  // Concurrency limit
+  if (_mouthConcurrent >= MAX_MOUTH_CONCURRENT) {
+    console.log(`[orchestrator-chat] Mouth concurrency limit: ${_mouthConcurrent}/${MAX_MOUTH_CONCURRENT}`);
+    return { reply: '稍等一下，我正在处理几件事。' };
+  }
+
+  _mouthConcurrent++;
+  try {
+    return await _handleChatInner(message, context, messages, imageContent, pressure);
+  } finally {
+    _mouthConcurrent--;
+  }
+}
+
+/** @internal */
+async function _handleChatInner(message, context, messages, imageContent, pressure) {
   // 1. 标记用户在线（user_last_seen = 实时在场；last_alex_chat_at = 今天来过）
   try {
     const nowIso = JSON.stringify(new Date().toISOString());
@@ -568,12 +602,18 @@ export async function handleChat(message, context = {}, messages = [], imageCont
   }
 
   // 3. 加载5层内在状态，直接调 LLM
+  // Tier 2: Medium pressure (0.7~1.0) — use haiku model
+  const callOptions = {};
+  if (pressure >= 0.7) {
+    callOptions.preferModel = 'claude-haiku-4-5-20251001';
+    console.log(`[orchestrator-chat] Mouth tier 2: pressure=${pressure}, using haiku`);
+  }
   const systemPrompt = await buildUnifiedSystemPrompt(message, messages, '', relationship, senderName);
   let reply;
   let thalamus_signal = null;
 
   try {
-    const result = await callWithHistory(message, systemPrompt, {}, messages, imageContent);
+    const result = await callWithHistory(message, systemPrompt, callOptions, messages, imageContent);
     reply = result.reply;
     thalamus_signal = result.thalamus_signal || null;
   } catch (err) {
