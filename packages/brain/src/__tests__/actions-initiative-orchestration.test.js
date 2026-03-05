@@ -33,7 +33,7 @@ describe('createInitiative - orchestration support', () => {
     }
   });
 
-  it('D4: default execution_mode is simple', async () => {
+  it('D4: default execution_mode is cecelia', async () => {
     const parentId = await createTestProject();
     const result = await createInitiative({
       name: 'Simple Initiative',
@@ -41,7 +41,7 @@ describe('createInitiative - orchestration support', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.initiative.execution_mode).toBe('simple');
+    expect(result.initiative.execution_mode).toBe('cecelia');
     expect(result.initiative.current_phase).toBeNull();
     expect(result.initiative.dod_content).toBeNull();
     testProjectIds.push(result.initiative.id);
@@ -98,7 +98,7 @@ describe('createInitiative - orchestration support', () => {
     testProjectIds.push(result.initiative.id);
   });
 
-  it('D4: backward compat - no execution_mode defaults to simple', async () => {
+  it('D4: backward compat - no execution_mode defaults to cecelia', async () => {
     const parentId = await createTestProject();
     const result = await createInitiative({
       name: 'Legacy Initiative',
@@ -107,7 +107,7 @@ describe('createInitiative - orchestration support', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.initiative.execution_mode).toBe('simple');
+    expect(result.initiative.execution_mode).toBe('cecelia');
     expect(result.initiative.current_phase).toBeNull();
     expect(result.initiative.status).toBe('active');
     testProjectIds.push(result.initiative.id);
