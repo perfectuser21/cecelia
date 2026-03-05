@@ -331,3 +331,4 @@ Initiative 完成
 - 不跳过影响分析直接设计
 - 不产出没有 Tasks 的 architecture.md
 - 不在 Mode 2 中跳过 system_modules 检查
+# /architect skill
