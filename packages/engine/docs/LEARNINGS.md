@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.22.0
+version: 1.23.0
 created: 2026-01-16
 updated: 2026-03-05
 changelog:
+  - 1.23.0: vitest worker 三大陷阱全集（stdin pipe + heredoc + process.chdir 全部失效）10 文件修复
   - 1.22.0: hook 契约集成测试（vitest 子进程 bash 管道不可用 + 环境变量 workaround）
   - 1.21.0: SKILL.md Stop Hook 第3步遗漏 Learning 路由（三次修复后找到最后一个矛盾点）
   - 1.20.0: stop.sh 路由器 Bug（.dev-lock vs .dev-mode 路由条件不一致导致 LEARNINGS 落入单独 PR）
@@ -32,6 +33,73 @@ changelog:
 # Engine 开发经验记录
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
+
+---
+
+### [2026-03-05] vitest worker 线程三大陷阱：stdin/heredoc/chdir 全部失效（62 测试修复）
+
+**背景**：62 个测试失败，跨 10 个文件。vitest 用 `pool: 'threads'`（worker threads）运行，导致三类 bash 操作全部失效。
+
+**陷阱 1：stdin pipe 写入（之前已知，但未全面修复）**
+
+`echo '...' | bash hook.sh` → stdin 空。worker thread 的 fd0 是 IPC socket 而非管道。
+- 解决：`HOOK_INPUT` env var + 在 hook 中 patch `INPUT=$(cat)` → `INPUT="${HOOK_INPUT:-$(cat)}"`
+- 注意：复制 hook 到 tempdir 时，如果 hook 内有 `source "$SCRIPT_DIR/../lib/hook-utils.sh"`，必须重建 `hooks/` + `lib/` 目录结构，否则 source 失败
+
+**陷阱 2：bash heredoc 写入 0 字节（新发现）**
+
+```bash
+cat > "$file" << 'EOF'
+content
+EOF
+```
+在 worker thread 中写入 0 字节。原因：bash heredoc 同样依赖 fd0（stdin），worker thread 的 fd0 是 IPC socket。
+
+解决方案：用 `printf '%s\n'` 替代：
+```bash
+printf '%s\n' 'line1' 'line2' > "$file"
+# 或多行块：
+{ printf '%s\n' '{'; printf '%s\n' '  "key": "val"'; printf '%s\n' '}'; } > "$file"
+```
+
+**陷阱 3：printf 的 `-` 前缀问题（bash built-in）**
+
+bash 内置 printf（不是 `/usr/bin/printf`）会把字符串开头的 `-` 解析为选项：
+```bash
+printf '---\n\n'  # 报错：invalid option
+printf '- text\n' # 报错：invalid option
+```
+
+修复：用 `%s` 格式字符串：
+```bash
+printf '%s\n\n' '---'
+printf '%s\n' "- $variable"
+```
+
+**陷阱 4：process.chdir() 在 worker thread 中不支持**
+
+`process.chdir(testDir)` 抛出异常或影响其他并行测试（线程共享进程状态）。
+
+解决：所有路径改用绝对路径 + `{ cwd: testDir }` 传给 execSync：
+```typescript
+// 错误
+process.chdir(testDir)
+execSync('git add README.md')
+fs.existsSync('.cecelia-run-id')
+
+// 正确
+execSync('git add README.md', { cwd: testDir })
+fs.existsSync(path.join(testDir, '.cecelia-run-id'))
+```
+
+**CI 门禁联动（修复之外要注意的）**
+
+修改 `features/feature-registry.yml` 会触发 3 个 CI 检查：
+1. Config Audit：PR 标题必须含 `[CONFIG]`（修改 regression-contract.yaml 或 skills/ 时）
+2. Impact Check：修改 skills/ 时必须同步更新 feature-registry.yml
+3. Contract Drift Check：更新 feature-registry.yml 后必须运行 `scripts/generate-path-views.sh` 同步 docs/paths/
+
+正确流程：改 skills/ → 更新 feature-registry.yml → 运行 generate-path-views.sh → PR 标题加 [CONFIG]
 
 ---
 
