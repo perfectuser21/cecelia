@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook 路由器 v13.2.0
+# Stop Hook 路由器 v13.3.0
 # ============================================================================
 # 检查不同的 mode 文件，调用对应的检查脚本
 #
 # 支持的模式：
 # - .dev-lock.<branch> 或 .dev-lock → stop-dev.sh    (/dev 工作流，per-branch 格式优先)
 # - .dev-mode          → stop-dev.sh    (/dev 工作流，旧格式兜底)
+# - .architect-lock.*  → stop-architect.sh (/architect 架构设计)
 # - .decomp-mode       → stop-decomp.sh (/decomp 拆解流程)
 # - .quality-mode      → stop-quality.sh (/quality 质检流程) [将来]
 #
@@ -47,6 +48,17 @@ fi
 # ===== 旧格式兜底：.dev-mode（无 .dev-lock 时）→ 调用 stop-dev.sh =====
 if [[ -f "$PROJECT_ROOT/.dev-mode" ]]; then
     bash "$SCRIPT_DIR/stop-dev.sh"
+    exit $?
+fi
+
+# ===== 检查 .architect-lock.* → 调用 stop-architect.sh =====
+_ARCHITECT_LOCK_FOUND=false
+for _f in "$PROJECT_ROOT"/.architect-lock.*; do
+    [[ -f "$_f" ]] && _ARCHITECT_LOCK_FOUND=true && break
+done
+
+if [[ "$_ARCHITECT_LOCK_FOUND" == "true" ]]; then
+    bash "$SCRIPT_DIR/stop-architect.sh"
     exit $?
 fi
 

@@ -460,6 +460,10 @@
               "skill": "/plan"
             },
             {
+              "taskType": "architecture_design",
+              "skill": "/architect"
+            },
+            {
               "taskType": "qa",
               "skill": "/code-review"
             },
@@ -819,6 +823,7 @@
     "initiative_verify": "/decomp",
     "decomp_review": "/decomp-check",
     "suggestion_plan": "/plan",
+    "architecture_design": "/architect",
     "qa": "/code-review",
     "audit": "/code-review"
   },
@@ -838,9 +843,10 @@
     "dept_heartbeat": "/cecelia",
     "initiative_plan": "/decomp",
     "initiative_verify": "/decomp",
-    "suggestion_plan": "/plan"
+    "suggestion_plan": "/plan",
+    "architecture_design": "/architect"
   },
-  "generatedAt": "2026-03-03T06:42:38.400Z",
+  "generatedAt": "2026-03-05T16:26:11.593Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

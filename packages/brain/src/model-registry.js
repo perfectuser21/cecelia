@@ -188,6 +188,15 @@ export const AGENTS = [
     recommended_model: 'codex-mini-latest',
     fixed_provider: 'openai',
   },
+  {
+    id: 'architect',
+    name: '架构师 Architect',
+    description: 'Initiative 级架构设计 + 系统说明书生成',
+    layer: 'executor',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    recommended_model: 'claude-opus-4-6',
+    fixed_provider: null,
+  },
 ];
 
 // ============================================================

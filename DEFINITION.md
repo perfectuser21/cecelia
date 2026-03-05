@@ -5,8 +5,8 @@
 **最后更新**: 2026-03-05
 
 
-**Brain 版本**: 1.196.4
-**Schema 版本**: 123
+**Brain 版本**: 1.197.0
+**Schema 版本**: 124
 
 **状态**: 生产运行中
 
@@ -414,6 +414,7 @@ queued → in_progress → completed
 | data | HK | N8N | - | - |
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
+| architecture_design | US | 架构师 (/architect) | Opus / - | 默认 anthropic |
 
 ---
 
@@ -667,7 +668,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '123'
+5. **Schema 版本** — 必须 = '124'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
