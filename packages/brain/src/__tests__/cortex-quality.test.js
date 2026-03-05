@@ -249,7 +249,7 @@ describe('Cortex Quality Assessment', () => {
     });
 
     it('should return zero stats when no analyses exist', async () => {
-      const stats = await getQualityStats(7);
+      const stats = await getQualityStats(-365); // 使用未来日期确保无真实数据干扰
 
       expect(stats.total_rcas).toBe(0);
       expect(stats.avg_quality_score).toBe(0);

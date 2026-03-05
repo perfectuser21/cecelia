@@ -1950,3 +1950,15 @@ GITHUB_HEAD_REF=<branch-name> node packages/engine/scripts/devgate/check-dod-map
 - `min_tasks: 4`（至少 4 个 PR 才算 Initiative）
 - 必须是系统性子功能，不能是单函数改动
 
+
+---
+
+### [2026-03-05] 修复 cortex-quality 测试本地 DB 数据干扰
+
+**失败统计**：CI 失败 0 次，本地测试失败 1 次（PR #539）
+
+**根因**：`should return zero stats when no analyses exist` 调用 `getQualityStats(7)` 查询最近 7 天记录，本地 DB 有 102 条真实数据导致 `total_rcas` 不为 0。
+
+**修复**：传入 `-365` 天（`cutoff = today + 365`，未来一年），`WHERE created_at >= cutoff` 返回 0 条。不依赖清空 DB，CI 和本地行为一致。
+
+**模式**：测试"无数据返回 0"的场景，用未来日期比清空 DB 更健壮。
