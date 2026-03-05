@@ -2,20 +2,22 @@
 # Cecelia Monorepo 模块边界契约定义
 # ============================================================================
 #
-# 用途：contract-scan-scheduler 每天 03:00 UTC 自动扫描此文件，
-#       检查每个契约是否有对应的测试保护，未覆盖则自动创建 dev 任务。
+# 用途：
+#   1. contract-scan-scheduler 每天 03:00 UTC 自动扫描（定时体检）
+#   2. check-contract-drift.mjs 在每个 PR CI 中运行（合并闸门）
 #
 # 字段说明：
-#   id          - 唯一标识符（snake_case）
-#   description - 契约说明（人类可读）
-#   consumer    - 消费方（调用方）
-#   provider    - 提供方（被调用方）
-#   test_file   - 验证此契约的测试文件路径（相对仓库根）
-#   priority    - P0/P1/P2
+#   id             - 唯一标识符（snake_case）
+#   description    - 契约说明（人类可读）
+#   consumer       - 消费方路径前缀（调用方）
+#   provider       - 提供方路径前缀（被调用方）
+#   test_file      - 验证此契约的测试文件路径（相对仓库根）
+#   signature_file - 提供方核心接口文件（用于变更检测）
+#   priority       - P0/P1/P2
 #
 # ============================================================================
 
-version: "1.0.0"
+version: "2.0.0"
 repo: cecelia-monorepo
 updated: "2026-03-05"
 description: Cecelia Monorepo 所有高风险模块边界的契约定义
@@ -23,7 +25,7 @@ description: Cecelia Monorepo 所有高风险模块边界的契约定义
 contracts:
 
   # --------------------------------------------------------------------------
-  # 已有测试保护的契约（扫描确认持续存在）
+  # 已有测试保护的契约
   # --------------------------------------------------------------------------
 
   - id: hooks_worktree_format
@@ -32,6 +34,7 @@ contracts:
       共享字段：active, branch, path。改任一侧必须同步更新另一侧。
     consumer: packages/engine/hooks/stop-dev.sh
     provider: packages/engine/hooks/worktree-manage.sh
+    signature_file: packages/engine/hooks/worktree-manage.sh
     test_file: packages/engine/tests/integration/hook-contracts.test.ts
     priority: P0
 
@@ -41,6 +44,7 @@ contracts:
       EXPECTED_SCHEMA_VERSION 在 selfcheck.js 中定义。
     consumer: packages/brain/src/selfcheck.js
     provider: packages/brain/migrations/
+    signature_file: packages/brain/src/selfcheck.js
     test_file: packages/brain/src/__tests__/selfcheck.test.js
     priority: P0
 
@@ -50,6 +54,7 @@ contracts:
       fitness-check CI 已强制验证。
     consumer: packages/brain/src/
     provider: packages/brain/src/model-registry.js
+    signature_file: packages/brain/src/model-registry.js
     test_file: scripts/devgate/check-llm-agents.mjs
     priority: P0
 
@@ -62,8 +67,9 @@ contracts:
       前端 apps/api 调用 GET /api/brain/tasks 获取任务列表。
       响应必须包含字段：id, title, status, project_id, task_type, priority。
       Brain 改返回结构时前端可能静默失效。
-    consumer: apps/api/src/
-    provider: packages/brain/src/routes/
+    consumer: apps/api/
+    provider: packages/brain/src/routes.js
+    signature_file: packages/brain/src/routes.js
     test_file: packages/brain/src/__tests__/api-routes-tasks-contract.test.js
     priority: P1
 
@@ -74,6 +80,7 @@ contracts:
       改 executor.js 参数传递方式时 skill 可能收不到必要信息。
     consumer: packages/brain/src/executor.js
     provider: packages/workflows/skills/
+    signature_file: packages/brain/src/executor.js
     test_file: packages/brain/src/__tests__/executor-skill-format-contract.test.js
     priority: P1
 
@@ -82,8 +89,9 @@ contracts:
       无头 agent 完成后 POST /api/brain/execution-callback 的 payload 格式。
       必须包含：task_id, status（completed/failed），可选 pr_url, output。
       Brain 和 executor 都依赖此格式。
-    consumer: packages/brain/src/routes/execution-callback.js
+    consumer: packages/brain/src/routes.js
     provider: packages/brain/scripts/cecelia-bridge.js
+    signature_file: packages/brain/scripts/cecelia-bridge.js
     test_file: packages/brain/src/__tests__/execution-callback-contract.test.js
     priority: P1
 
@@ -91,7 +99,8 @@ contracts:
     description: >
       POST /api/brain/tick 触发调度后返回 dispatch 结果格式。
       响应结构改变会影响前端状态展示。
-    consumer: apps/api/src/
-    provider: packages/brain/src/routes/brain-dispatch.js
+    consumer: apps/api/
+    provider: packages/brain/src/tick.js
+    signature_file: packages/brain/src/tick.js
     test_file: packages/brain/src/__tests__/dispatch-result-contract.test.js
     priority: P2
