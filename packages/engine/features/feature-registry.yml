@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.23.0"
+version: "3.24.0"
 updated: "2026-03-05"
 changelog:
+  - "3.24.0: v12.39.0 - Stop Hook 安全默认修复 + 状态完整性测试门禁：.dev-mode 首行损坏时从 exit 0 改为 exit 2（PR #549 根因修复）；03-branch.md Task Checkpoint 文件名 bug 修复；新增 stop-hook-state-integrity.test.ts（11 项行为测试）"
   - "3.23.0: v12.38.5 - 修复 vitest worker 线程中 62 个测试失败：stdin pipe 改 HOOK_INPUT env var，heredoc 改 printf，process.chdir() 改绝对路径"
   - "3.22.0: v12.38.4 - 修复 SKILL.md Stop Hook 第3步遗漏 Learning 路由（PR 未合并时引导执行 Step 10 Learning → push → 合并 PR，而非直接合并，防止双 PR 问题）"
   - "3.21.0: v12.38.0 - 行为级 DoD 全链路修复：decomp 模板 E 行为级 DoD+Test 字段；decomp-check 加 Test 字段验证；fetch-task-prd.sh 读 Initiative DoD；05-dod.md 尊重已有 DoD；03-branch.md 新 session 恢复模式；.gitignore/.cleanup.sh 修复 prd/dod 文件泄漏"

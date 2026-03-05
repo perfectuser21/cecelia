@@ -346,9 +346,26 @@ fi
 DEV_MODE=$(head -1 "$DEV_MODE_FILE" 2>/dev/null || echo "")
 BRANCH_IN_FILE=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "")
 
-# 如果不是 dev 模式，直接退出
+# 如果不是 dev 模式 — .dev-lock 存在但 .dev-mode 首行被损坏
+# 安全默认：阻止退出（exit 2），不能静默放行
+# PR #550 修复：之前 exit 0 导致状态文件写坏时 Stop Hook 完全失效
 if [[ "$DEV_MODE" != "dev" ]]; then
-    exit 0
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  [Stop Hook: .dev-mode 首行损坏]" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  期望首行: dev" >&2
+    echo "  实际首行: $DEV_MODE" >&2
+    echo "  文件: $DEV_MODE_FILE" >&2
+    echo "" >&2
+    echo "  .dev-lock 存在说明 /dev 在运行中" >&2
+    echo "  .dev-mode 首行损坏 → 安全默认阻止退出" >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    save_block_reason ".dev-mode 首行损坏（期望 dev，实际 $DEV_MODE）"
+    jq -n --arg reason ".dev-mode 首行损坏（期望 'dev'，实际 '$DEV_MODE'）。.dev-lock 存在说明 /dev 在运行中，安全默认阻止退出。请重建 .dev-mode 文件：第一行必须是 'dev'，后跟 branch/session_id 等字段。" '{"decision": "block", "reason": $reason}'
+    exit 2
 fi
 
 # ===== P0-3 修复：会话隔离 - 检查分支是否匹配 =====
