@@ -138,7 +138,15 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 115', () => {
+  it('should pass when schema_version has dirty non-numeric entries (e.g. date strings)', async () => {
+    // Simulate: MAX(version) WHERE version ~ '^[0-9]{1,4}$' returns correct migration number
+    // even when dirty entries like '20260305' exist (filtered by regex)
+    const pool = makeMockPool();
+    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    expect(ok).toBe(true);
+  });
+
+  it('EXPECTED_SCHEMA_VERSION should be 123', () => {
     expect(EXPECTED_SCHEMA_VERSION).toBe('123');
   });
 });

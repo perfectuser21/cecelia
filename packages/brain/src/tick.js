@@ -767,12 +767,9 @@ async function dispatchNextTask(goalIds) {
     };
   }
 
-  // 0a. Billing pause check — skip dispatch if API billing cap is active
-  const billingPause = getBillingPause();
-  if (billingPause.active) {
-    await recordDispatchResult(pool, false, 'billing_pause');
-    return { dispatched: false, reason: 'billing_pause', detail: `Billing cap active until ${billingPause.resetTime}`, actions };
-  }
+  // 0a. Billing pause — 已废弃（v1.196.0）
+  // 三阶段降级链（Sonnet→Opus→Haiku→MiniMax）根据实时用量数据自己路由
+  // 不再需要全局 billing_pause 阻塞派发
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
