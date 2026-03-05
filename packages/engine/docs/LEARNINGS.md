@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.23.0
+version: 1.24.0
 created: 2026-01-16
 updated: 2026-03-05
 changelog:
+  - 1.24.0: Stop Hook 安全默认修复 + CI 测试门禁（.dev-mode 损坏时 exit 0 → exit 2，11 项行为测试）
   - 1.23.0: vitest worker 三大陷阱全集（stdin pipe + heredoc + process.chdir 全部失效）10 文件修复
   - 1.22.0: hook 契约集成测试（vitest 子进程 bash 管道不可用 + 环境变量 workaround）
   - 1.21.0: SKILL.md Stop Hook 第3步遗漏 Learning 路由（三次修复后找到最后一个矛盾点）
@@ -31,6 +32,31 @@ changelog:
 ---
 
 # Engine 开发经验记录
+
+### [2026-03-05] Stop Hook 安全默认修复 + CI 测试门禁 (PR #550)
+
+**失败统计**：CI 失败 1 次，本地测试失败 1 次
+
+**CI 失败记录**：
+- 失败 #1：Engine CI Version Check — `regression-contract.yaml`(12.38.5) 和 `.hook-core-version`(12.38.5) 未同步到 12.39.0 → 手动同步两个文件 → 下次 `npm version` 后用脚本同步全部 4 个版本文件（package.json, package-lock.json, VERSION, regression-contract.yaml, .hook-core-version）
+
+**本地测试失败记录**：
+- 失败 #1：Stop Hook 测试 6/11 failed — per-branch lock 匹配需要 `CLAUDE_SESSION_ID` 环境变量，测试初版未设置 → 在 `runStopHook()` 中传 `CLAUDE_SESSION_ID="test-session"` 环境变量 → 写 Shell 子进程测试时必须复现完整环境
+
+**根因分析（PR #549 /dev 失败的真正原因）**：
+1. `03-branch.md` Task Checkpoint 追加到裸 `.dev-mode` 而非 `.dev-mode.${BRANCH_NAME}`，导致 per-branch 状态文件首行被污染
+2. `stop-dev.sh` 第 349 行在 `.dev-mode` 首行不是 "dev" 时 `exit 0`（放行），而安全默认应该是 `exit 2`（阻止）
+3. 两个 bug 叠加：状态文件损坏 + 损坏时放行 = /dev 静默结束
+
+**关键教训**：
+- **安全默认原则**：有 `.dev-lock` 存在 = /dev 活跃中，任何异常情况的默认动作必须是 exit 2（阻止），绝不能 exit 0（放行）
+- **Engine 版本同步要同步 5 处**：package.json, package-lock.json, VERSION, regression-contract.yaml, .hook-core-version
+- **Shell 行为测试策略**：在 tmpdir 创建真实 git repo + 状态文件，用 `execSync` 执行 bash 脚本并检查 exit code，比 mock 更可靠
+
+**影响程度**: High（Stop Hook 失效导致 /dev 无法完成闭环）
+**预防措施**：
+- 11 项行为测试挂到 Engine CI，`npm test` 自动执行
+- 测试覆盖正确格式、损坏格式、空文件、cleanup_done、retry 超限、文件缺失、旧格式兼容、03-branch.md 回归
 
 > 记录开发 zenithjoy-engine 过程中学到的经验和踩的坑
 

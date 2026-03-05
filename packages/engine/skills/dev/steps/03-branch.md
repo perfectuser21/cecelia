@@ -330,7 +330,7 @@ TaskCreate({ subject: "清理", description: "清理临时文件", activeForm: "
 
 ```bash
 # 添加 tasks_created 标记
-echo "tasks_created: true" >> .dev-mode
+echo "tasks_created: true" >> ".dev-mode.${BRANCH_NAME}"
 
 echo "✅ Task Checkpoint 已创建（11 个步骤）"
 ```
