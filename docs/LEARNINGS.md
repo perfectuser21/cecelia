@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 修复 activateNextInitiatives 双重调用 Race Condition（PR #589, Brain v1.200.2）
+
+**根本原因**：`checkInitiativeCompletion()` 在关闭 initiative 后立刻调用 `activateNextInitiatives(pool)`，而 `tick.js` Section 0.10 也会在每次 tick 调用同一函数。两次调用都用 `maxActive - currentActive` 计算空位，但第一次调用后 DB 中 currentActive 已经增加，第二次查询拿到的空位数偏高（旧快照），可能超容量激活过多 initiatives。
+
+**修复方式**：从 `checkInitiativeCompletion()` 中删除 `activateNextInitiatives(pool)` 调用，函数只做"关闭"职责。激活逻辑统一由 tick.js Section 0.10 管理（单一职责原则）。KR 进度更新逻辑保留，`activatedCount` 固定返回 0。
+
+**规律**：当同一函数被多处以不同时机调用，且该函数的副作用（DB 写入）会影响后续调用的读取结果时，必须识别 race condition。解法通常是合并到唯一调用点（tick），消除第二次调用。
+
+**测试**：57 个 initiative-closer 测试全部通过，CI 失败 0 次。
+
+---
+
+### [2026-03-06] code-review-trigger P1 Bug 修复（PR #588, Brain v1.199.2）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**Bug A：fire-and-forget 块 task 不存在时的处理模式**
+- 问题：`taskMeta.rows[0] || {}` 解构，task 不存在时变量均为 undefined，条件判断 `taskType === 'dev'` 恰好为 false，静默跳过，没有任何日志，难以排查
+- 正确模式：先取出行对象，用 `if (!task) return;` 提前退出，语义更明确
+- 经验：fire-and-forget 块中查询 DB 后，总应先检查行是否存在再解构
+
+**Bug B：去重查询用 NOT IN 覆盖全部非终态**
+- 问题：`status IN ('queued', 'in_progress')` 漏掉 `pending` 状态，并行 tick 可能创建重复任务
+- 正确模式：去重类查询优先用 `status NOT IN (终态列表)`，前者对新增中间状态天然免疫
+- 终态列表（tasks 表）：`completed`、`failed`、`cancelled`、`completed_no_pr`
+
+**影响程度**: Low
+**预防措施**：
+- fire-and-forget DB 查询后，总是先做 `if (!row) return;` 守卫，再解构
+- 去重/幂等查询一律用 `NOT IN (终态)`，枚举活跃状态容易遗漏
+
 ### [2026-03-06] POST /api/brain/tasks 三个 P1 Bug 修复（PR #585, Brain v1.199.1）
 
 **失败统计**：CI 失败 0 次，本地测试失败 1 次（测试断言过严，修复后通过）
