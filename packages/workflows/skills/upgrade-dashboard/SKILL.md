@@ -86,7 +86,7 @@ workspace/
 ### 服务架构
 
 ```
-🇭🇰 香港服务器（43.154.85.217 / hk / 100.86.118.99）
+🇭🇰 香港服务器（124.156.138.116 / hk / 100.86.118.99）
 ├── 520: ZenithJoy 研发环境（Docker nginx: autopilot-dev）
 ├── 521: ZenithJoy 正式环境（Docker nginx: autopilot-prod）
 │         → 域名：autopilot.zenjoymedia.media
