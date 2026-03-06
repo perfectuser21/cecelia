@@ -144,6 +144,48 @@ describe('task-tasks routes', () => {
       expect(params).toContain('proj-123');
     });
 
+    // ── 回归测试：Bug1/Bug2/Bug3 修复验证 ──
+
+    it('[Bug1] 传 payload 字段 → INSERT params 包含 payload JSON', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
+      });
+
+      await request(app).post('/tasks').send({
+        title: 'T',
+        payload: { depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' },
+      });
+
+      const [, params] = mockPool.query.mock.calls[0];
+      const payloadParam = params.find(p => typeof p === 'string' && p.includes('depends_on'));
+      expect(payloadParam).toBeDefined();
+      expect(JSON.parse(payloadParam)).toEqual({ depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' });
+    });
+
+    it('[Bug2] 不传 location → INSERT params 第8个参数为 "us"（不是 null）', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
+      });
+
+      await request(app).post('/tasks').send({ title: 'T' });
+
+      // params 顺序：title, description, priority, task_type, project_id, area_id, goal_id, location, payload, trigger_source
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params[7]).toBe('us'); // location 在第8个位置（index 7）
+    });
+
+    it('[Bug3] 不传 trigger_source → INSERT params 包含 "auto"（不是 "api"）', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
+      });
+
+      await request(app).post('/tasks').send({ title: 'T' });
+
+      const [, params] = mockPool.query.mock.calls[0];
+      expect(params).toContain('auto');
+      expect(params).not.toContain('api');
+    });
+
     it('returns 400 for DB check constraint violation (23514)', async () => {
       const err = new Error('check constraint violated');
       err.code = '23514';
