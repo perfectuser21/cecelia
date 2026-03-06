@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] REST 端点设计：在大 router 后加 fallback 挂载补齐缺口（PR #576, Brain v1.198.0）
+
+**背景**：`GET/PATCH /api/brain/tasks` 在 brainRoutes（routes.js）里，`POST /api/brain/tasks` 从未实现。直接向 routes.js（8000+ 行）追加路由风险高、测试难。
+
+**解法**：在 `app.use('/api/brain', brainRoutes)` 之后追加 `app.use('/api/brain/tasks', taskTasksRoutes)`。
+Express router 对无匹配路由调用 `next()`，POST 请求自动 fall through 到新的 fallback 挂载。
+
+**关键原则**：
+- Express router 无匹配时一定 `next()`，可以利用中间件链做 fallback 路由
+- 新功能放在专属资源文件（task-tasks.js）而非大 router 文件（routes.js）
+- DB check constraint 违反（`err.code === '23514'`）应转为 400 而非 500
+
+**教训**：`/architect` SKILL.md 中文档描述的 API 是 SSOT——每次新增 API 设计必须立即实现，否则就是断链的 Passway。
+
 ### [2026-03-06] migration 顺序铁律：先 DROP 约束再 UPDATE 数据（PR #574, Brain v1.197.16）
 
 **失败统计**：0 次 CI 失败，但 deploy 连续 3 次失败（08:54、09:08、10:50）。
