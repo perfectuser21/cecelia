@@ -669,14 +669,14 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     } catch (err) {
       console.warn('[orchestrator-chat] Failed to write reply to memory_stream:', err.message);
     }
-  }).catch(() => {});
+  }).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 6. 异步提取用户事实（仅 owner 触发）
   const userId = context.user_id || 'owner';
   if (userId === 'owner') {
     Promise.resolve().then(() =>
       extractAndSaveUserFacts(pool, 'owner', messages, reply)
-    ).catch(() => {});
+    ).catch(err => console.error('[orchestrator-chat] silent error:', err));
   }
 
   // 6b. 写 unified_conversations（Dashboard 对话持久化，与飞书历史统一）
@@ -691,32 +691,32 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     } catch (err) {
       console.warn('[orchestrator-chat] unified_conversations 写入失败:', err.message);
     }
-  }).catch(() => {});
+  }).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 7. P0-A：异步提取对话 learning（深度对话 → learning → 反刍 → self-model 闭环）
   Promise.resolve().then(() =>
     extractConversationLearning(message, reply, pool)
-  ).catch(() => {});
+  ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 7b. 混合事实捕获（正则 + Haiku 反哺进化）：偏好/习惯 → person_signals，纠正 → learnings
   Promise.resolve().then(() =>
     processMessageFacts(pool, userId, message, callLLM)
-  ).catch(() => {});
+  ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 8. 异步提取人物信号 → person_signals（个人认知表更新）
   Promise.resolve().then(() =>
     extractPersonSignals(pool, userId, message, reply, callLLM)
-  ).catch(() => {});
+  ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 9. 收到回复 → 标记 pending_conversations 已解决（Alex 说话了，不再待回音）
   Promise.resolve().then(() =>
     resolveByPersonReply(pool, userId, 'user_reply')
-  ).catch(() => {});
+  ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 10. 对话驱动任务订阅：检测 Alex 是否在询问某个任务，存入 working_memory
   Promise.resolve().then(() =>
     detectAndStoreTaskInterest(pool, message)
-  ).catch(() => {});
+  ).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   // 11. 欲望闭环：Alex 回复时，标记近期表达过的欲望为 acknowledged
   //     reasoning: Alex 的回复表明他在线且看到了 Cecelia 最近发出的消息
@@ -729,7 +729,7 @@ async function _handleChatInner(message, context, messages, imageContent, pressu
     if (rowCount > 0) {
       console.log(`[orchestrator-chat] 欲望闭环：${rowCount} 个 desire 已标记为 acknowledged`);
     }
-  }).catch(() => {});
+  }).catch(err => console.error('[orchestrator-chat] silent error:', err));
 
   return { reply };
 }
