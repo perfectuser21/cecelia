@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 测试加固 Phase 1（PR #558, Brain v1.197.1）
+
+**失败统计**：CI 1 次通过（0 失败）
+
+**关键决策**：
+- Smoke Test 用 `describe.skip` 机制在本地跳过（需 DB_HOST 或 CI env），CI 中自动运行
+- Contract Tests 测试纯函数导出（不 mock 被测模块），验证函数签名+返回值格式
+- 16 个裸奔模块用 `async import()` 验证可加载性。需 DB 的用 `vi.mock('../../db.js')` 隔离
+- 覆盖率阈值 0→20/10（实际 64.8%/74.5%）
+
+**踩坑记录**：
+- `buildTimeContext()` 是 async 函数 → 测试需 `await`
+- `routeTaskWithFallback` 返回 `routing_status` 不是 `fallback_used` → 读真实代码再写断言
+- `MODE_WEIGHT` 值是嵌套对象不是纯数字
+- `getMaxActiveInitiatives(0)` 返回 1 不是 >= 9 → 读 `computeCapacity` 逻辑
+
 ### [2026-03-06] 新建 /architect skill（PR #556, Brain v1.197.0）
 
 **失败统计**：CI 失败 0 次（GitHub Actions 平台故障，非代码原因），本地测试失败 0 次
