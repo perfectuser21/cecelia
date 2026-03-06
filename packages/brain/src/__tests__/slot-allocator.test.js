@@ -1,10 +1,18 @@
 /**
  * Slot Allocator Tests
  *
- * Tests for the three-pool slot allocation system:
- *   Pool A (Cecelia Reserved): Internal tasks
- *   Pool B (User Reserved): Headed sessions + headroom
- *   Pool C (Dynamic Task Pool): Auto-dispatched tasks
+ * 三池 Slot 分配系统的完整单元测试:
+ *   Pool A (Cecelia Reserved): 内部任务（OKR 分解、cortex RCA）
+ *   Pool B (User Reserved): 有头会话 + 余量
+ *   Pool C (Dynamic Task Pool): 自动派发任务，压力缩放
+ *
+ * 覆盖范围:
+ *   - 常量导出验证
+ *   - detectUserSessions: 进程分类、TTL 过滤、异常处理
+ *   - detectUserMode: absent / interactive / team 模式判定
+ *   - DB 查询函数: hasPendingInternalTasks, countCeceliaInProgress, countAutoDispatchInProgress
+ *   - calculateSlotBudget: 三池数学计算、压力节流、边界条件
+ *   - getSlotStatus: API 格式化输出
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -35,7 +43,7 @@ vi.mock('../db.js', () => ({
 }));
 
 import { execSync } from 'child_process';
-import { checkServerResources } from '../executor.js';
+import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
 import pool from '../db.js';
 import {
   TOTAL_CAPACITY,
@@ -530,5 +538,288 @@ describe('getSlotStatus', () => {
     expect(status.pools.user.sessions).toEqual([
       { pid: 12345, type: 'headed' },
     ]);
+  });
+
+  it('headless_count 应正确反映无头进程数', async () => {
+    execSync.mockReturnValue(
+      '100 300 claude claude -p "task1"\n' +
+      '200 300 claude claude -p "task2"\n' +
+      '300 300 claude claude -p "task3"\n'
+    );
+    const status = await getSlotStatus();
+    expect(status.headless_count).toBe(3);
+  });
+
+  it('pressure 字段应包含 max 和 effective_slots', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 6,
+      metrics: { max_pressure: 0.55 },
+    });
+    const status = await getSlotStatus();
+    expect(status.pressure.max).toBe(0.55);
+    expect(status.pressure.effective_slots).toBe(6);
+  });
+
+  it('团队模式下 user.mode 应为 team', async () => {
+    execSync.mockReturnValue(
+      '100 300 claude claude\n200 300 claude claude\n300 300 claude claude\n'
+    );
+    const status = await getSlotStatus();
+    expect(status.pools.user.mode).toBe('team');
+    expect(status.pools.cecelia.budget).toBe(1); // 团队模式下 Cecelia 保留 1
+  });
+
+  it('多个有头会话应全部出现在 sessions 列表', async () => {
+    execSync.mockReturnValue(
+      '111 300 claude claude --resume a\n' +
+      '222 300 claude claude --resume b\n'
+    );
+    const status = await getSlotStatus();
+    expect(status.pools.user.sessions).toHaveLength(2);
+    expect(status.pools.user.sessions.map(s => s.pid)).toContain(111);
+    expect(status.pools.user.sessions.map(s => s.pid)).toContain(222);
+  });
+
+  it('capacity 应包含 dual-layer 容量模型', async () => {
+    getBudgetCap.mockReturnValue({ budget: 8, physical: 12, effective: 8 });
+    getEffectiveMaxSeats.mockReturnValue(8);
+    const status = await getSlotStatus();
+    expect(status.capacity).toEqual({ budget: 8, physical: 12, effective: 8 });
+    // 恢复默认
+    getBudgetCap.mockReturnValue({ budget: null, physical: 12, effective: 12 });
+    getEffectiveMaxSeats.mockReturnValue(12);
+  });
+});
+
+// ============================================================
+// 边界条件测试
+// ============================================================
+
+describe('边界条件', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    execSync.mockReturnValue('');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+  });
+
+  it('0 effectiveSlots（极端资源压力）: Pool C = 0, 禁止派发', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 0,
+      metrics: { max_pressure: 1.0 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.taskPool.budget).toBe(0);
+    expect(budget.taskPool.available).toBe(0);
+    expect(budget.dispatchAllowed).toBe(false);
+  });
+
+  it('动态容量降为最小值（2 slot）', async () => {
+    getEffectiveMaxSeats.mockReturnValue(2);
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 2,
+      metrics: { max_pressure: 0.3 },
+    });
+    const budget = await calculateSlotBudget();
+    // total=2, userBudget=2(absent base), ceceliaNeeded=2 → Pool C raw = max(0, 2-2-2) = 0
+    expect(budget.total).toBe(2);
+    expect(budget.taskPool.budget).toBe(0);
+    expect(budget.dispatchAllowed).toBe(false);
+    // 恢复
+    getEffectiveMaxSeats.mockReturnValue(12);
+  });
+
+  it('极大容量（100 slot）: Pool C 应正确计算', async () => {
+    getEffectiveMaxSeats.mockReturnValue(100);
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 100,
+      metrics: { max_pressure: 0.0 },
+    });
+    const budget = await calculateSlotBudget();
+    // absent: userBudget=2, ceceliaNeeded=2 → Pool C = 96
+    expect(budget.total).toBe(100);
+    expect(budget.taskPool.budget).toBe(96);
+    // 恢复
+    getEffectiveMaxSeats.mockReturnValue(12);
+  });
+
+  it('autoDispatchUsed 超过 Pool C budget 时 available 不为负', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // countCeceliaInProgress
+      .mockResolvedValueOnce({ rows: [{ count: '20' }] }); // countAutoDispatchInProgress >> budget
+
+    const budget = await calculateSlotBudget();
+    // Pool C budget = 8, used = 20 → available = max(0, 8-20) = 0
+    expect(budget.taskPool.available).toBe(0);
+    expect(budget.dispatchAllowed).toBe(false);
+  });
+
+  it('ceceliaUsed 正确反映到返回值', async () => {
+    pool.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] }) // hasPendingInternalTasks
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // countCeceliaInProgress = 2
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] }); // countAutoDispatchInProgress = 3
+
+    const budget = await calculateSlotBudget();
+    expect(budget.cecelia.used).toBe(2);
+    expect(budget.taskPool.used).toBe(3);
+  });
+
+  it('effectiveSlots 小于 Pool C raw 时取较小值', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 3,
+      metrics: { max_pressure: 0.8 },
+    });
+    const budget = await calculateSlotBudget();
+    // Pool C raw = 12 - 2 - 2 = 8, effectiveSlots = 3 → min(8,3) = 3
+    expect(budget.taskPool.budget).toBe(3);
+  });
+
+  it('effectiveSlots 大于 Pool C raw 时取 raw 值', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 100, // 远大于 raw
+      metrics: { max_pressure: 0.0 },
+    });
+    const budget = await calculateSlotBudget();
+    // Pool C raw = 12 - 2 - 2 = 8, effectiveSlots = 100 → min(8,100) = 8
+    expect(budget.taskPool.budget).toBe(8);
+  });
+});
+
+// ============================================================
+// detectUserSessions 额外边界测试
+// ============================================================
+
+describe('detectUserSessions 额外边界', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('仅空白行应返回空结果', () => {
+    execSync.mockReturnValue('   \n   \n');
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(0);
+    expect(result.headless).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('-p 在行首（无前缀空格）应识别为 headless', () => {
+    // args = "-p something" (行首)
+    execSync.mockReturnValue('555 300 claude -p something\n');
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(1);
+    expect(result.headed).toHaveLength(0);
+  });
+
+  it('PID 不是数字的行应被跳过', () => {
+    execSync.mockReturnValue('abc 300 claude claude --resume x\n');
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(0);
+    expect(result.headless).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('恰好在 TTL 边界（等于 TTL）的会话应被保留', () => {
+    // elapsedSec === SESSION_TTL_SECONDS → 不大于 TTL，应保留
+    execSync.mockReturnValue(`888 ${SESSION_TTL_SECONDS} claude claude\n`);
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(1);
+  });
+
+  it('大量进程（20个）应全部正确分类', () => {
+    const lines = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push(`${1000 + i} 300 claude claude --resume s${i}`);  // headed
+    }
+    for (let i = 0; i < 10; i++) {
+      lines.push(`${2000 + i} 300 claude claude -p "task${i}"`);   // headless
+    }
+    execSync.mockReturnValue(lines.join('\n') + '\n');
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(10);
+    expect(result.headless).toHaveLength(10);
+    expect(result.total).toBe(20);
+  });
+});
+
+// ============================================================
+// calculateSlotBudget 三池模型验证
+// ============================================================
+
+describe('calculateSlotBudget 三池模型完整性', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    execSync.mockReturnValue('');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+    getEffectiveMaxSeats.mockReturnValue(12);
+    getBudgetCap.mockReturnValue({ budget: null, physical: 12, effective: 12 });
+  });
+
+  it('capacity 字段应包含 physical / budget / effective', async () => {
+    const budget = await calculateSlotBudget();
+    expect(budget.capacity).toEqual({
+      physical: 12,
+      budget: null,
+      effective: 12,
+    });
+  });
+
+  it('budget cap 生效时 capacity.effective 应等于 budget', async () => {
+    getBudgetCap.mockReturnValue({ budget: 6, physical: 12, effective: 6 });
+    getEffectiveMaxSeats.mockReturnValue(6);
+    const budget = await calculateSlotBudget();
+    expect(budget.total).toBe(6);
+    expect(budget.capacity.effective).toBe(6);
+    expect(budget.capacity.budget).toBe(6);
+    // 恢复
+    getBudgetCap.mockReturnValue({ budget: null, physical: 12, effective: 12 });
+    getEffectiveMaxSeats.mockReturnValue(12);
+  });
+
+  it('user.headroom 计算正确（budget - used）', async () => {
+    execSync.mockReturnValue('100 300 claude claude\n');
+    const budget = await calculateSlotBudget();
+    // interactive: budget = 1+2=3, used=1 → headroom=2
+    expect(budget.user.headroom).toBe(2);
+  });
+
+  it('absent 模式下 headroom = USER_RESERVED_BASE（因 used=0）', async () => {
+    const budget = await calculateSlotBudget();
+    // absent: budget=2, used=0 → headroom = max(0, 2-0) = 2
+    expect(budget.user.headroom).toBe(2);
+  });
+
+  it('resources 字段应包含 effectiveSlots 和 maxPressure', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 7,
+      metrics: { max_pressure: 0.42 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.resources.effectiveSlots).toBe(7);
+    expect(budget.resources.maxPressure).toBe(0.42);
+  });
+
+  it('三个池的预算之和不超过 total', async () => {
+    execSync.mockReturnValue('100 300 claude claude\n200 300 claude claude\n');
+    const budget = await calculateSlotBudget();
+    const poolSum = budget.user.budget + budget.cecelia.budget + budget.taskPool.budget;
+    expect(poolSum).toBeLessThanOrEqual(budget.total);
+  });
+
+  it('团队模式下三个池的预算之和不超过 total', async () => {
+    execSync.mockReturnValue(
+      '100 300 claude claude\n200 300 claude claude\n300 300 claude claude\n400 300 claude claude\n500 300 claude claude\n'
+    );
+    const budget = await calculateSlotBudget();
+    const poolSum = budget.user.budget + budget.cecelia.budget + budget.taskPool.budget;
+    expect(poolSum).toBeLessThanOrEqual(budget.total);
   });
 });
