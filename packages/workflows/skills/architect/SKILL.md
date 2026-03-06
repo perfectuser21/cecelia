@@ -248,30 +248,66 @@ Task 3: [标题] -- 依赖: Task 1
 - 每个 Task 有独立的验收标准
 - 总 Task 数 3-7 个
 
-#### Phase 5: 注册到 Brain
+#### Phase 5: 注册到 Brain（强制，不可跳过）
 
-通过 Brain API 注册所有 Tasks：
+**必须为每个 Task 调用 Brain API。不调用 = Phase 5 未完成 = Mode 2 失败。**
+
+执行流程：
+
+1. 先注册无依赖的 Task，记录返回的 `task_id`
+2. 再注册有依赖的 Task，在 `payload.depends_on` 中填入上一步的 `task_id`
+3. 每个 curl 调用必须检查 HTTP 状态码（201 = 成功，其他 = 重试或报错）
 
 ```bash
-curl -X POST http://localhost:5221/api/brain/tasks \
+# Task 1（无依赖）
+TASK1_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "Task 标题",
-    "description": "Task 描述 + architecture.md 引用",
+    "title": "Task 1 标题",
+    "description": "Task 描述，引用 architecture.md 对应章节",
     "priority": "P1",
     "project_id": "<initiative_id>",
     "task_type": "dev",
-    "metadata": {
-      "architecture_ref": "architecture.md",
-      "depends_on": ["task_id_1"]
+    "goal_id": "<kr_id>",
+    "payload": {
+      "architecture_ref": "architecture.md"
     }
-  }'
+  }' | jq -r '.id')
+
+echo "Task 1 注册成功: $TASK1_ID"
+
+# Task 2（依赖 Task 1）
+TASK2_ID=$(curl -s -X POST http://localhost:5221/api/brain/tasks \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"title\": \"Task 2 标题\",
+    \"description\": \"Task 描述\",
+    \"priority\": \"P1\",
+    \"project_id\": \"<initiative_id>\",
+    \"task_type\": \"dev\",
+    \"goal_id\": \"<kr_id>\",
+    \"payload\": {
+      \"architecture_ref\": \"architecture.md\",
+      \"depends_on\": [\"$TASK1_ID\"]
+    }
+  }" | jq -r '.id')
+
+echo "Task 2 注册成功: $TASK2_ID"
+```
+
+**注册后验证**：
+
+```bash
+# 确认所有 Task 已在 Brain 中
+curl -s "http://localhost:5221/api/brain/tasks?project_id=<initiative_id>&status=queued" | jq 'length'
+# 输出应等于注册的 Task 数量
 ```
 
 ### 完成条件
 
 - `architecture.md` 文件存在
-- 所有 Tasks 已注册到 Brain
+- 所有 Tasks 已注册到 Brain（每个 Task curl 返回成功且有 task_id）
+- depends_on 依赖链正确（后续 Task 引用前置 Task 的 task_id）
 - 创建 `.architect-design-done` 文件
 
 ---

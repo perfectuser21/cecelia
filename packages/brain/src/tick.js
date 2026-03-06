@@ -591,9 +591,9 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
 
     const dependsOn = task.payload?.depends_on;
     if (Array.isArray(dependsOn) && dependsOn.length > 0) {
-      // Check if all dependencies are completed
+      // Check if all dependencies are resolved (completed or cancelled — both unblock downstream)
       const depResult = await pool.query(
-        "SELECT COUNT(*) FROM tasks WHERE id = ANY($1) AND status != 'completed'",
+        "SELECT COUNT(*) FROM tasks WHERE id = ANY($1) AND status NOT IN ('completed', 'cancelled', 'canceled')",
         [dependsOn]
       );
       if (parseInt(depResult.rows[0].count) > 0) {

@@ -1,5 +1,34 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] Coding 闭环修复 - planner→architect→dev 链路打通（PR #573, Brain v1.197.15）
+
+**失败统计**：2 次 CI 失败。原因均为编码前未发现的约束问题。
+
+**坑1：改函数名忘了同步集成测试文件**
+
+`generateInitiativePlanTask` → `generateArchitectureDesignTask` 改名后，本地 unit tests 跑不到 `planner-initiative-plan.test.js`（集成测试，需要真实 PostgreSQL DB）。CI 才发现这个文件仍 import 旧函数名，导致 4 个测试全部 `ReferenceError` 失败。
+
+**解法**：改函数名时，必须同时 `grep -r "旧函数名" __tests__/` 找到所有引用，不能只看 unit test 结果。集成测试在 CI 才跑，本地不报错不代表没问题。
+
+**坑2：新 task_type 没加进 DB 约束**
+
+`tasks_task_type_check` 是 PostgreSQL CHECK 约束，枚举了所有合法的 `task_type` 值。新增 `architecture_design` 类型后，没有同步更新约束，导致 `INSERT INTO tasks ... task_type='architecture_design'` 违反约束报错。
+
+**解法**：每次新增 `task_type` 值，必须同时：
+1. 新建 migration（`127_xxx.sql`）更新 `tasks_task_type_check` 约束
+2. 更新 `selfcheck.js` `EXPECTED_SCHEMA_VERSION`
+3. 同步更新 3 个测试文件（`selfcheck.test.js`、`learnings-vectorize.test.js`、`desire-system.test.js`）的 `toBe('N')` 断言
+4. 更新 `DEFINITION.md` 两处 Schema 版本（第 9 行 + 第 671 行）
+
+**核心修复内容**：
+- `planner.js`：`generateInitiativePlanTask` → `generateArchitectureDesignTask`，task_type `initiative_plan` → `architecture_design`
+- `executor.js`：`preparePrompt()` 新增 `architecture_design` 分支，`isInitiativeTask` 加入该类型（享受 liveness grace period）
+- `initiative-closer.js`：新增 `quarantine > 0` 检查，有隔离任务时不关闭 Initiative
+- `tick.js`：`depends_on` 检查从 `status != 'completed'` 改为 `NOT IN ('completed', 'cancelled', 'canceled')`，cancelled 依赖不再阻塞下游
+- `/architect SKILL.md` Phase 5：标注"强制，不可跳过"，补充 depends_on 示例和注册后验证步骤
+
+---
+
 ### [2026-03-06] /architect SKILL.md 流程图 - 区分主流程与增量更新（PR #572, Workflows）
 
 **失败统计**：0 次 CI 失败。主要挑战在于 branch-protect hook 找到了 `packages/workflows/.prd.md`（旧文件），而非我在根目录创建的 `.prd-*.md`。

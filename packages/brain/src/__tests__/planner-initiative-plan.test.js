@@ -1,13 +1,13 @@
 /**
  * Planner Initiative Plan Tests
  * Tests for the enhanced Planner that detects "KR with active Initiative but no Task"
- * and auto-generates initiative_plan tasks.
+ * and auto-generates architecture_design tasks.
  */
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../db-config.js';
-import { scoreKRs, selectTargetProject, generateInitiativePlanTask } from '../planner.js';
+import { scoreKRs, selectTargetProject, generateArchitectureDesignTask } from '../planner.js';
 
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
@@ -290,11 +290,11 @@ describe('selectTargetProject - initiative priority', () => {
 });
 
 // ============================================================
-// generateInitiativePlanTask - 自动生成 initiative_plan 任务
+// generateArchitectureDesignTask - 自动生成 architecture_design 任务
 // ============================================================
 
-describe('generateInitiativePlanTask - auto task generation', () => {
-  it('should generate initiative_plan task for project with active initiative and no tasks', async () => {
+describe('generateArchitectureDesignTask - auto task generation', () => {
+  it('should generate architecture_design task for project with active initiative and no tasks', async () => {
     // Create a KR
     const krResult = await pool.query(
       "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
@@ -316,10 +316,10 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     );
     testProjectIds.push(initResult.rows[0].id);
 
-    const task = await generateInitiativePlanTask(kr, project);
+    const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('architecture_design');
     expect(task.status).toBe('queued');
     expect(task.priority).toBe(kr.priority);
     expect(task.project_id).toBe(initResult.rows[0].id); // task belongs to initiative
@@ -340,7 +340,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     testTaskIds.push(task.id);
   });
 
-  it('should return null when no active initiative exists under project', async () => {
+  it('should return null when no active initiative exists under project (no task generated)', async () => {
     // Create a KR
     const krResult = await pool.query(
       "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR no initiative', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
@@ -355,12 +355,12 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     const project = projResult.rows[0];
     testProjectIds.push(project.id);
 
-    const task = await generateInitiativePlanTask(kr, project);
+    const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).toBeNull();
   });
 
-  it('should not create duplicate initiative_plan task if one already exists', async () => {
+  it('should not create duplicate architecture_design task if one already exists', async () => {
     // Create a KR
     const krResult = await pool.query(
       "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
@@ -383,12 +383,12 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     testProjectIds.push(initResult.rows[0].id);
 
     // First call - should create task
-    const task1 = await generateInitiativePlanTask(kr, project);
+    const task1 = await generateArchitectureDesignTask(kr, project);
     expect(task1).not.toBeNull();
     testTaskIds.push(task1.id);
 
     // Second call - should NOT create duplicate (task already exists)
-    const task2 = await generateInitiativePlanTask(kr, project);
+    const task2 = await generateArchitectureDesignTask(kr, project);
     expect(task2).toBeNull();
   });
 
@@ -414,7 +414,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
     );
     testProjectIds.push(initResult.rows[0].id);
 
-    const task = await generateInitiativePlanTask(kr, project);
+    const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
     expect(task.priority).toBe('P0'); // Inherits KR priority

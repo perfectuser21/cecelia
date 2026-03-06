@@ -1295,6 +1295,11 @@ PUT /api/tasks/goals/${krId}
     return `/decomp\n\n${task.description || task.title}`;
   }
 
+  // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入
+  if (taskType === 'architecture_design') {
+    return `/architect\n\n${task.description || task.title}`;
+  }
+
   // decomp_review：将任务描述传给 /decomp-check 做拆解质检
   if (taskType === 'decomp_review') {
     return `/decomp-check\n\n${task.description || task.title}`;
@@ -1864,7 +1869,7 @@ async function probeTaskLiveness() {
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
     // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
-    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify';
+    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design';
     if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
       if (triggeredAt) {
