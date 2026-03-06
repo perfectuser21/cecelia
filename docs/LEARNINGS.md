@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] POST /api/brain/tasks 三个 P1 Bug 修复（PR #585, Brain v1.199.1）
+
+**失败统计**：CI 失败 0 次，本地测试失败 1 次（测试断言过严，修复后通过）
+
+**根本原因**：
+1. **metadata vs payload 字段名不匹配**：POST handler 解构 `metadata`，但 `/architect` SKILL.md curl 传 `payload`。Express 解构时 `payload` 字段被忽略，`metadata` 为 undefined，导致 `metadata ? ... : null` 始终返回 null，DB payload 列为 null。
+2. **location 默认值陷阱**：代码写 `location = null` 作为解构默认值，再显式传入 INSERT，PostgreSQL 收到显式 null，不触发 `DEFAULT 'us'`。任务 location=null → task-router LOCATION_MAP 返回 undefined → 任务永远不被 dispatch。
+3. **trigger_source 语义错误**：默认 'api' 意味着外部调用，Brain 自动创建任务应标记 'auto'。
+
+**修复方式**：
+- 同时解构 `payload` 和 `metadata`（payload 优先），`(payload ?? metadata) ? JSON.stringify(...) : null`
+- `location` 默认值改为 `'us'`（与 DB DEFAULT 语义一致）
+- `trigger_source` 默认值改为 `'auto'`
+
+**验证方法**：CTO 建议"先实验验证再修复"。通过 curl POST + psql 查询 DB 实际存储值，30 分钟内确认两个 Bug。比猜测更高效，避免修错地方。
+
+**测试 Bug2 陷阱**：`expect(params).not.toContain(null)` 断言过严——params 数组里其他字段（description、project_id 等）也是合法的 null。改为 `expect(params[7]).toBe('us')` 精确断言 location 所在的索引位置（index 7，对应第8个参数）。
+
 ### [2026-03-06] 小任务积累触发 code_review（PR #579, Brain v1.199.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
