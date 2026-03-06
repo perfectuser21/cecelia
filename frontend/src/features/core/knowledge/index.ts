@@ -19,6 +19,7 @@ const manifest: FeatureManifest = {
     },
     { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
+    { path: '/knowledge/thinking', component: 'ThinkingLog' },
     // Legacy redirects
     { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
@@ -28,6 +29,7 @@ const manifest: FeatureManifest = {
     KnowledgeHome: () => import('./pages/KnowledgeHome'),
     ContentStudio: () => import('../content/pages/ContentStudio'),
     SuperBrain: () => import('../brain/pages/SuperBrain'),
+    ThinkingLog: () => import('./pages/ThinkingLog'),
   },
 };
 

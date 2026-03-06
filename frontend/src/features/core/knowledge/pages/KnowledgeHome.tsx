@@ -1,9 +1,10 @@
-import { BookOpen, PenTool, Brain } from 'lucide-react';
+import { BookOpen, PenTool, Brain, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const sections = [
   { id: 'content', label: 'Content Studio', icon: PenTool, path: '/knowledge/content', desc: 'Content & media assets' },
   { id: 'brain', label: 'Super Brain', icon: Brain, path: '/knowledge/brain', desc: 'Knowledge base & notes' },
+  { id: 'thinking', label: 'Thinking Log', icon: FileText, path: '/knowledge/thinking', desc: 'Rich-text thinking records' },
 ] as const;
 
 export default function KnowledgeHome() {
