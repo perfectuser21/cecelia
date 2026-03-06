@@ -117,6 +117,10 @@ app.use('/api/brain/stats', statsRoutes);
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
 
+// POST /api/brain/tasks fallback: brainRoutes 无 POST /tasks handler，此处补齐
+// 必须在 brainRoutes 之后，避免干扰已有 GET/PATCH /api/brain/tasks
+app.use('/api/brain/tasks', taskTasksRoutes);
+
 // Mount cecelia task execution routes
 app.use('/api/cecelia', ceceliaRoutes);
 

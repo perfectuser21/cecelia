@@ -80,6 +80,87 @@ describe('task-tasks routes', () => {
     });
   });
 
+  describe('POST /tasks', () => {
+    it('creates task with title only → 201', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: 'new-uuid',
+          title: 'New Task',
+          status: 'queued',
+          task_type: 'dev',
+          priority: 'P2',
+          project_id: null,
+          created_at: '2026-03-06T00:00:00Z',
+        }],
+      });
+
+      const res = await request(app).post('/tasks').send({ title: 'New Task' });
+      expect(res.status).toBe(201);
+      expect(res.body.title).toBe('New Task');
+      expect(res.body.status).toBe('queued');
+    });
+
+    it('returns 400 when title is missing', async () => {
+      const res = await request(app).post('/tasks').send({ task_type: 'dev' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/title/);
+    });
+
+    it('returns 400 when title is empty string', async () => {
+      const res = await request(app).post('/tasks').send({ title: '' });
+      expect(res.status).toBe(400);
+    });
+
+    it('passes all optional fields to INSERT', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{
+          id: 'arch-uuid',
+          title: 'Architecture Task',
+          status: 'queued',
+          task_type: 'architecture_design',
+          priority: 'P1',
+          project_id: 'proj-123',
+          created_at: '2026-03-06T00:00:00Z',
+        }],
+      });
+
+      const res = await request(app).post('/tasks').send({
+        title: 'Architecture Task',
+        description: 'Design the new flow',
+        priority: 'P1',
+        task_type: 'architecture_design',
+        project_id: 'proj-123',
+        trigger_source: 'architect',
+        metadata: { architecture_ref: 'architecture.md' },
+      });
+
+      expect(res.status).toBe(201);
+      const [sql, params] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('INSERT INTO tasks');
+      expect(params).toContain('Architecture Task');
+      expect(params).toContain('architecture_design');
+      expect(params).toContain('P1');
+      expect(params).toContain('architect');
+      expect(params).toContain('proj-123');
+    });
+
+    it('returns 400 for DB check constraint violation (23514)', async () => {
+      const err = new Error('check constraint violated');
+      err.code = '23514';
+      mockPool.query.mockRejectedValueOnce(err);
+
+      const res = await request(app).post('/tasks').send({ title: 'Bad', task_type: 'invalid_type' });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 500 on generic DB error', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('connection reset'));
+
+      const res = await request(app).post('/tasks').send({ title: 'Task' });
+      expect(res.status).toBe(500);
+    });
+  });
+
   describe('PATCH /tasks/:id', () => {
     it('returns 400 when no fields provided', async () => {
       const res = await request(app).patch('/tasks/t1').send({});
