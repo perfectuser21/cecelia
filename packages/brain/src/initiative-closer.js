@@ -44,10 +44,11 @@ async function checkInitiativeCompletion(pool) {
     // 查该 initiative 下的 tasks 状态分布（排除 dep_failed：它们被阻塞，不算活跃）
     const statsResult = await pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE status != 'dep_failed')  AS total,
-        COUNT(*) FILTER (WHERE status = 'queued')        AS queued,
-        COUNT(*) FILTER (WHERE status = 'in_progress')   AS in_progress,
-        COUNT(*) FILTER (WHERE status = 'dep_failed')    AS dep_failed
+        COUNT(*) FILTER (WHERE status != 'dep_failed')    AS total,
+        COUNT(*) FILTER (WHERE status = 'queued')          AS queued,
+        COUNT(*) FILTER (WHERE status = 'in_progress')     AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'dep_failed')      AS dep_failed,
+        COUNT(*) FILTER (WHERE status = 'quarantined')     AS quarantine
       FROM tasks
       WHERE project_id = $1
     `, [initiative.id]);
@@ -56,9 +57,11 @@ async function checkInitiativeCompletion(pool) {
     const total = parseInt(stats.total, 10);
     const queued = parseInt(stats.queued, 10);
     const inProgress = parseInt(stats.in_progress, 10);
+    const quarantine = parseInt(stats.quarantine, 10);
 
-    // 关闭条件：有任务 + 没有飞行中的任务
-    if (total === 0 || queued > 0 || inProgress > 0) {
+    // 关闭条件：有任务 + 没有飞行中的任务 + 没有隔离中的任务
+    // quarantine > 0 表示有任务被隔离，需要人工介入，不自动关闭
+    if (total === 0 || queued > 0 || inProgress > 0 || quarantine > 0) {
       continue;
     }
 

@@ -80,13 +80,14 @@ function makeMockPool(opts = {}) {
       // 查某 initiative 下的 tasks 统计
       if (s.includes('COUNT(*)') && s.includes('FROM tasks') && s.includes('project_id = $1')) {
         const id = params?.[0];
-        const stats = taskStats[id] || { total: '0', queued: '0', in_progress: '0', dep_failed: '0' };
+        const stats = taskStats[id] || { total: '0', queued: '0', in_progress: '0', dep_failed: '0', quarantine: '0' };
         return {
           rows: [{
             total: String(stats.total ?? 0),
             queued: String(stats.queued ?? 0),
             in_progress: String(stats.in_progress ?? 0),
             dep_failed: String(stats.dep_failed ?? 0),
+            quarantine: String(stats.quarantine ?? 0),
           }],
         };
       }
@@ -303,6 +304,49 @@ describe('checkInitiativeCompletion - dep_failed 排除逻辑', () => {
     const statsQuery = calls.find(s => s.includes('FROM tasks') && s.includes('COUNT(*)'));
     expect(statsQuery).toBeDefined();
     expect(statsQuery).toContain('dep_failed');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// checkInitiativeCompletion - quarantine 阻止关闭
+// ────────────────────────────────────────────────────────────────────────────
+describe('checkInitiativeCompletion - quarantine 阻止关闭', () => {
+  it('有 quarantine tasks 时不关闭 initiative', async () => {
+    const pool = makeMockPool({
+      initiatives: [{ id: 'init-quar', name: 'Quarantined Initiative' }],
+      taskStats: { 'init-quar': { total: 5, queued: 0, in_progress: 0, dep_failed: 0, quarantine: 2 } },
+    });
+
+    const result = await checkInitiativeCompletion(pool);
+
+    expect(result.closedCount).toBe(0);
+    expect(result.closed).toHaveLength(0);
+  });
+
+  it('SQL 查询中包含 quarantine 统计列', async () => {
+    const pool = makeMockPool({
+      initiatives: [{ id: 'init-quar2', name: 'Quarantined Initiative 2' }],
+      taskStats: { 'init-quar2': { total: 3, queued: 0, in_progress: 0, quarantine: 1 } },
+    });
+
+    await checkInitiativeCompletion(pool);
+
+    const calls = pool.query.mock.calls.map(c => c[0]);
+    const statsQuery = calls.find(s => s.includes('FROM tasks') && s.includes('COUNT(*)'));
+    expect(statsQuery).toBeDefined();
+    expect(statsQuery).toContain('quarantine');
+  });
+
+  it('quarantine=0 时正常关闭 initiative', async () => {
+    const pool = makeMockPool({
+      initiatives: [{ id: 'init-clean', name: 'Clean Initiative' }],
+      taskStats: { 'init-clean': { total: 4, queued: 0, in_progress: 0, dep_failed: 0, quarantine: 0 } },
+    });
+
+    const result = await checkInitiativeCompletion(pool);
+
+    expect(result.closedCount).toBe(1);
+    expect(result.closed[0]).toEqual({ id: 'init-clean', name: 'Clean Initiative' });
   });
 });
 

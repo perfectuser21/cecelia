@@ -341,10 +341,10 @@ async function generateNextTask(kr, project, state, options = {}) {
   `, [project.id, kr.id]);
 
   if (result.rows.length === 0) {
-    // No existing task — check if project has active initiatives that need planning.
-    // If so, auto-generate an initiative_plan task to unblock the KR.
+    // No existing task — check if project has active initiatives that need architecture design.
+    // If so, auto-generate an architecture_design task to unblock the KR.
     if (!options.dryRun) {
-      const initiativePlanTask = await generateInitiativePlanTask(kr, project);
+      const initiativePlanTask = await generateArchitectureDesignTask(kr, project);
       if (initiativePlanTask) {
         return initiativePlanTask;
       }
@@ -419,14 +419,15 @@ async function generateNextTask(kr, project, state, options = {}) {
 }
 
 /**
- * Generate an initiative_plan task for a project that has active initiatives but no queued tasks.
- * This task will be picked up by the dispatcher and sent to 秋米 to decompose the initiative.
+ * Generate an architecture_design task for a project that has active initiatives but no queued tasks.
+ * This task will be picked up by the dispatcher and sent to /architect (Mode 2) to produce
+ * architecture.md and register dev Tasks into Brain.
  *
  * @param {Object} kr - Target Key Result
  * @param {Object} project - Target Project (must have active initiatives)
  * @returns {Object|null} - Newly created task, or null if no suitable initiative found
  */
-async function generateInitiativePlanTask(kr, project) {
+async function generateArchitectureDesignTask(kr, project) {
   try {
     // Find the oldest active initiative under this project without queued tasks
     const initiativeResult = await pool.query(`
@@ -450,27 +451,27 @@ async function generateInitiativePlanTask(kr, project) {
 
     const initiative = initiativeResult.rows[0];
 
-    // Check if an initiative_plan task already exists for this initiative (any status)
+    // Check if an architecture_design task already exists for this initiative (any active status)
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = 'initiative_plan'
+      WHERE project_id = $1 AND task_type = 'architecture_design'
         AND status NOT IN ('completed', 'failed', 'cancelled')
       LIMIT 1
     `, [initiative.id]);
 
     if (existingResult.rows.length > 0) {
-      // Already has an initiative_plan task pending/in_progress, skip
+      // Already has an architecture_design task pending/in_progress, skip
       return null;
     }
 
-    // Create initiative_plan task
+    // Create architecture_design task → dispatched to /architect Mode 2
     const insertResult = await pool.query(`
       INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
-      VALUES ($1, $2, 'initiative_plan', $3, $4, $5, 'queued', 'brain_auto', $6)
+      VALUES ($1, $2, 'architecture_design', $3, $4, $5, 'queued', 'brain_auto', $6)
       RETURNING *
     `, [
-      `拆解 Initiative: ${initiative.name}`,
-      `该 Initiative「${initiative.name}」下无任务，需要拆解规划。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`,
+      `架构设计 Initiative: ${initiative.name}`,
+      `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`,
       kr.priority || 'P1',
       initiative.id,
       kr.id,
@@ -478,10 +479,10 @@ async function generateInitiativePlanTask(kr, project) {
     ]);
 
     const newTask = insertResult.rows[0];
-    console.log(`[planner] 自动生成 initiative_plan 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id}`);
+    console.log(`[planner] 自动生成 architecture_design 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id}`);
     return newTask;
   } catch (err) {
-    console.error(`[planner] generateInitiativePlanTask failed: ${err.message}`);
+    console.error(`[planner] generateArchitectureDesignTask failed: ${err.message}`);
     return null;
   }
 }
@@ -1033,7 +1034,7 @@ export {
   selectTargetKR,
   selectTargetProject,
   generateNextTask,
-  generateInitiativePlanTask,
+  generateArchitectureDesignTask,
   // Learning penalty
   buildLearningPenaltyMap,
   LEARNING_PENALTY_SCORE,
