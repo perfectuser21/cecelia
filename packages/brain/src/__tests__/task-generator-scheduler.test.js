@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 
 // ─── vi.hoisted：在 vi.mock factory 里用到的 mock 必须用 hoisted 声明 ────────
 const mockRunScan = vi.hoisted(() => vi.fn());
@@ -13,6 +14,12 @@ const mockGenerateTasks = vi.hoisted(() => vi.fn());
 const mockGetScanners = vi.hoisted(() => vi.fn());
 const mockGetLastScanTime = vi.hoisted(() => vi.fn());
 const mockShouldScan = vi.hoisted(() => vi.fn());
+
+// child_process.exec mock（callback 风格，promisify 可以正常包装它）
+const mockExecCb = vi.hoisted(() => vi.fn((cmd, opts, cb) => {
+  const callback = typeof opts === 'function' ? opts : cb;
+  callback(null, { stdout: '', stderr: '' });
+}));
 
 // Mock task-generators/index.js 中的 getScheduler
 vi.mock('../task-generators/index.js', () => ({
@@ -23,6 +30,11 @@ vi.mock('../task-generators/index.js', () => ({
     getLastScanTime: mockGetLastScanTime,
     shouldScan: mockShouldScan,
   })),
+}));
+
+// Mock child_process
+vi.mock('child_process', () => ({
+  exec: mockExecCb,
 }));
 
 // 被测模块：动态 import，每次 beforeEach 重新加载以重置模块级 lastScanDate 状态
@@ -60,6 +72,12 @@ describe('task-generator-scheduler', () => {
     mockGetScanners.mockReset();
     mockGetLastScanTime.mockReset();
     mockShouldScan.mockReset();
+    mockExecCb.mockReset();
+    // 默认 exec 成功
+    mockExecCb.mockImplementation((cmd, opts, cb) => {
+      const callback = typeof opts === 'function' ? opts : cb;
+      callback(null, { stdout: '', stderr: '' });
+    });
 
     // 使用假定时器，并固定 Date 为 "今天"
     vi.useFakeTimers({
@@ -305,6 +323,90 @@ describe('task-generator-scheduler', () => {
       expect(result.triggered).toBe(true);
       expect(result.issues).toBe(2);
       expect(result.tasks).toBe(2);
+    });
+
+    // ── coverage 自动生成 ──────────────────────────────────────────
+
+    it('扫描前先调用 npx vitest run --coverage 生成 coverage 报告', async () => {
+      vi.setSystemTime(new Date('2026-03-12T10:00:00Z'));
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([]);
+
+      await triggerCodeQualityScan(pool);
+
+      expect(mockExecCb).toHaveBeenCalledOnce();
+      const [cmd] = mockExecCb.mock.calls[0];
+      expect(cmd).toBe('npx vitest run --coverage');
+    });
+
+    it('coverage 生成时 cwd 为 packages/brain 绝对路径', async () => {
+      vi.setSystemTime(new Date('2026-03-13T10:00:00Z'));
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([]);
+
+      await triggerCodeQualityScan(pool);
+
+      const [, opts] = mockExecCb.mock.calls[0];
+      expect(opts.cwd).toContain('packages/brain');
+      expect(path.isAbsolute(opts.cwd)).toBe(true);
+    });
+
+    it('coverage 生成失败时扫描仍然继续（降级策略）', async () => {
+      vi.setSystemTime(new Date('2026-03-14T10:00:00Z'));
+      const pool = makePool();
+
+      // exec 失败
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(new Error('vitest exited with code 1'));
+      });
+
+      mockRunScan.mockResolvedValue([]);
+
+      const result = await triggerCodeQualityScan(pool);
+
+      // 扫描仍然执行
+      expect(mockRunScan).toHaveBeenCalledOnce();
+      expect(result.triggered).toBe(true);
+    });
+
+    it('coverage 生成超时后扫描仍然继续', async () => {
+      vi.setSystemTime(new Date('2026-03-15T10:00:00Z'));
+      const pool = makePool();
+
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        const err = new Error('Command timed out');
+        err.killed = true;
+        callback(err);
+      });
+
+      mockRunScan.mockResolvedValue([]);
+
+      const result = await triggerCodeQualityScan(pool);
+
+      expect(mockRunScan).toHaveBeenCalledOnce();
+      expect(result.triggered).toBe(true);
+    });
+
+    it('coverage 生成成功后才调用 runScan（顺序正确）', async () => {
+      vi.setSystemTime(new Date('2026-03-16T10:00:00Z'));
+      const pool = makePool();
+      const callOrder = [];
+
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        callOrder.push('exec');
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(null, { stdout: '', stderr: '' });
+      });
+      mockRunScan.mockImplementation(async () => {
+        callOrder.push('runScan');
+        return [];
+      });
+
+      await triggerCodeQualityScan(pool);
+
+      expect(callOrder).toEqual(['exec', 'runScan']);
     });
   });
 

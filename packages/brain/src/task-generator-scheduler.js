@@ -3,6 +3,16 @@
  * 负责在 Brain tick 中触发代码质量扫描
  */
 import { getScheduler } from './task-generators/index.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const execAsync = promisify(exec);
+
+// packages/brain/ 目录的绝对路径（不依赖进程 CWD）
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const BRAIN_PKG_DIR = path.resolve(__dirname, '..');
 
 // 扫描状态
 let lastScanDate = null;
@@ -25,6 +35,18 @@ export async function triggerCodeQualityScan(pool) {
 
   try {
     console.log('[task-generator] Starting code quality scan...');
+
+    // 先生成最新的 coverage 报告
+    console.log('[task-generator] Generating coverage report...');
+    try {
+      await execAsync('npx vitest run --coverage', {
+        cwd: BRAIN_PKG_DIR,
+        timeout: 3 * 60 * 1000, // 3 分钟超时
+      });
+      console.log('[task-generator] Coverage report generated');
+    } catch (coverageErr) {
+      console.warn('[task-generator] Coverage generation failed, using existing file:', coverageErr.message);
+    }
 
     const scheduler = getScheduler();
 
