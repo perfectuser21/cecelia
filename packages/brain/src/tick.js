@@ -34,6 +34,7 @@ import { runDailyConsolidationIfNeeded } from './consolidation.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
+import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
 // [NOTION_SYNC_DISABLED] import { syncRecurringFromNotion } from './recurring-notion-sync.js';
 // [NOTION_SYNC_DISABLED] import { runFullSync } from './notion-full-sync.js';
 
@@ -2128,6 +2129,17 @@ async function executeTick() {
     desireResult = await runDesireSystem(pool);
   } catch (desireErr) {
     console.error('[tick] desire system error:', desireErr.message);
+  }
+
+  // 11.5 代码质量扫描（每天首次 tick 时触发）
+  let scanResult = null;
+  try {
+    scanResult = await triggerCodeQualityScan(pool);
+    if (scanResult?.triggered) {
+      console.log('[tick] Code quality scan triggered:', scanResult);
+    }
+  } catch (scanErr) {
+    console.error('[tick] code quality scan error:', scanErr.message);
   }
 
   // 12. 广播 tick:executed WebSocket 事件
