@@ -88,12 +88,8 @@ async function checkInitiativeCompletion(pool) {
     closed.push({ id: initiative.id, name: initiative.name });
   }
 
-  // D7: initiative 完成后立刻激活下一批 pending，补充空位
-  let activatedCount = 0;
+  // KR 进度更新：initiative 关闭后自动重算关联 KR 的 progress
   if (closed.length > 0) {
-    activatedCount = await activateNextInitiatives(pool);
-
-    // KR 进度更新：initiative 关闭后自动重算关联 KR 的 progress
     try {
       // 获取关闭的 initiatives 关联的 KR IDs（通过 parent project 的 project_kr_links）
       const closedIds = closed.map(c => c.id);
@@ -116,7 +112,8 @@ async function checkInitiativeCompletion(pool) {
     }
   }
 
-  return { closedCount: closed.length, closed, activatedCount };
+  // 注意：activateNextInitiatives 由 tick.js Section 0.10 统一调用，此处不重复调用（避免 race condition）
+  return { closedCount: closed.length, closed, activatedCount: 0 };
 }
 
 /**
@@ -226,8 +223,7 @@ async function checkProjectCompletion(pool) {
  *   4. 返回激活数量
  *
  * 触发位置：
- *   - tick.js Section 0.10（每次 tick）
- *   - checkInitiativeCompletion() 关闭 initiative 后（保证有空位就填上）
+ *   - tick.js Section 0.10（每次 tick，统一管理激活逻辑）
  */
 
 /**

@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 修复 activateNextInitiatives 双重调用 Race Condition（PR #589, Brain v1.200.2）
+
+**根本原因**：`checkInitiativeCompletion()` 在关闭 initiative 后立刻调用 `activateNextInitiatives(pool)`，而 `tick.js` Section 0.10 也会在每次 tick 调用同一函数。两次调用都用 `maxActive - currentActive` 计算空位，但第一次调用后 DB 中 currentActive 已经增加，第二次查询拿到的空位数偏高（旧快照），可能超容量激活过多 initiatives。
+
+**修复方式**：从 `checkInitiativeCompletion()` 中删除 `activateNextInitiatives(pool)` 调用，函数只做"关闭"职责。激活逻辑统一由 tick.js Section 0.10 管理（单一职责原则）。KR 进度更新逻辑保留，`activatedCount` 固定返回 0。
+
+**规律**：当同一函数被多处以不同时机调用，且该函数的副作用（DB 写入）会影响后续调用的读取结果时，必须识别 race condition。解法通常是合并到唯一调用点（tick），消除第二次调用。
+
+**测试**：57 个 initiative-closer 测试全部通过，CI 失败 0 次。
+
+---
+
 ### [2026-03-06] code-review-trigger P1 Bug 修复（PR #588, Brain v1.199.2）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
