@@ -1,5 +1,33 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 小任务积累触发 code_review（PR #579, Brain v1.199.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**架构决策**：
+- 新模块 code-review-trigger.js 接口设计为 `(pool, projectId)` 而非 `(pool, taskId)`，保持职责单一（触发逻辑只关心 project）
+- routes.js 注入点：在 execution-callback `newStatus === 'completed'` 块末尾，learnings 写入之后，使用 `Promise.resolve().then(async () => {...}).catch(...)` 模式
+- branch-protect.sh 要求 PRD 文件名为 `.prd-{BRANCH_NAME}.md`，不能用自定义名称（踩坑：创建了 `.prd-code-review-trigger.md` 被拒绝，需重命名）
+
+**影响程度**: Low
+**预防措施**：
+- PRD 文件名必须匹配 `.prd-{CURRENT_BRANCH}.md` 格式，Step 1 创建时直接用分支名
+- fire-and-forget 注入点应在同类操作（desire-feedback、learnings）之后，保持一致的代码顺序
+
+### [2026-03-06] Migration 128 修复 NULL task_type 脏数据（PR #578, Brain v1.198.1）
+
+**CI 失败次数**: 0，**本地测试失败次数**: 0（全量测试的 EADDRINUSE port:5221 是已知问题，与本次改动无关）
+
+**踩坑：PRD 文件命名格式**
+- 问题：初始创建 PRD 文件用 `.prd-fix-null-task-type.md`（任务名），branch-protect hook 需要 `.prd-cp-{branch}.md`（分支名格式）才能找到文件
+- 修复：重命名为 `.prd-cp-03062101-fix-null-task-type.md` 后 hook 通过
+- 预防：下次 /dev 创建 PRD 文件时直接用分支格式：`.prd-${BRANCH_NAME}.md`，worktree-manage.sh 返回的分支名就是 `cp-MMDDHHNN-task-name`
+
+**影响程度**: Low（CI 一次通过，只需要重命名文件）
+
+**预防措施**:
+- 创建 PRD 文件时，先 `git rev-parse --abbrev-ref HEAD` 获取分支名，直接使用 `.prd-${BRANCH_NAME}.md` 命名
+
 ### [2026-03-06] REST 端点设计：在大 router 后加 fallback 挂载补齐缺口（PR #576, Brain v1.198.0）
 
 **背景**：`GET/PATCH /api/brain/tasks` 在 brainRoutes（routes.js）里，`POST /api/brain/tasks` 从未实现。直接向 routes.js（8000+ 行）追加路由风险高、测试难。
@@ -13,6 +41,31 @@ Express router 对无匹配路由调用 `next()`，POST 请求自动 fall throug
 - DB check constraint 违反（`err.code === '23514'`）应转为 400 而非 500
 
 **教训**：`/architect` SKILL.md 中文档描述的 API 是 SSOT——每次新增 API 设计必须立即实现，否则就是断链的 Passway。
+
+### [2026-03-06] 新 migration 后必须同步 4 处版本信息（PR #575, Brain v1.198.0）
+
+**失败统计**：2 次 CI 失败（Facts Consistency + Brain Tests 各一次）。
+
+**根因**：添加 migration 128 时，只更新了 `selfcheck.js` 的 `EXPECTED_SCHEMA_VERSION`，但以下 4 处都需要同步：
+
+| 文件 | 字段 | 更新内容 |
+|------|------|----------|
+| `packages/brain/src/selfcheck.js` | `EXPECTED_SCHEMA_VERSION` | `'127'` → `'128'` |
+| `DEFINITION.md` | `Schema 版本` | `127` → `128` |
+| `packages/brain/src/__tests__/selfcheck.test.js` | 测试断言 | `'127'` → `'128'` |
+| `packages/brain/src/__tests__/desire-system.test.js` | 测试断言 | `'127'` → `'128'` |
+| `packages/brain/src/__tests__/learnings-vectorize.test.js` | 测试断言 | `'127'` → `'128'` |
+
+**新 migration 版本号铁律（checklist）**：
+1. 新建 `{N}_xxx.sql` migration 文件
+2. `selfcheck.js` → `EXPECTED_SCHEMA_VERSION = '{N}'`
+3. `DEFINITION.md` → `Schema 版本: {N}` + `必须 = '{N}'`
+4. 所有含版本断言的测试文件 → `toBe('{N}')`
+5. `packages/brain/package.json` → `npm version {patch/minor/major}`
+6. `.brain-versions` → 追加新版本号
+7. `DEFINITION.md` → `Brain 版本: x.y.z`
+
+**另一个教训**：`.brain-versions` 的变更不会自动触发 Brain CI（GitHub Actions path filter 在 PR 上有 bug），需要手动 `gh workflow run brain-ci.yml` 触发。
 
 ### [2026-03-06] migration 顺序铁律：先 DROP 约束再 UPDATE 数据（PR #574, Brain v1.197.16）
 

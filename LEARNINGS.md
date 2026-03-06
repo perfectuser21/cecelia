@@ -4,6 +4,27 @@
 
 ---
 
+### [2026-03-06] ThinkingLog 页面：TipTap 富文本编辑器集成 v1.176.0
+
+**失败统计**：CI 失败 0 次
+
+**新增功能**：
+1. `ThinkingLog.tsx`：Thinking Log 列表视图 + TipTap 富文本编辑器页面
+2. `@tiptap/react @tiptap/starter-kit @tiptap/extension-image`：已安装到 frontend/package.json
+3. 注册 `/knowledge/thinking` 路由，KnowledgeHome 添加入口卡片
+
+**关键发现**：
+- **tiptap 在 package-lock.json 已存在但 package.json 未声明**：因为某些间接依赖拉入了 tiptap，但正式安装后才会出现在 dependencies 中
+- **ExecutionLogsPage.tsx 有预存 TS 错误**：是 binary 文件误识别问题，属于已有 bug，不影响本次开发
+- **KnowledgeHome 用 inline style 而非 Tailwind**：新页面跟随相同风格保持一致性
+
+**架构设计决策**：
+- **前端纯内存存储**：T2 任务不接后端 API，使用 useState 管理条目列表，样例数据预填充
+- **EditorToolbar 独立组件**：工具栏抽取为独立组件，接收 `editor: ReturnType<typeof useEditor>` 类型
+- **ProseMirror 样式注入**：TipTap 编辑器内容样式通过 `<style>` 标签内联注入（避免全局污染）
+
+---
+
 ### [2026-03-04] 混合事实提取：正则 + Haiku + 反哺进化 v1.189.1
 
 **失败统计**：CI 失败 0 次（解决了 migration 编号冲突 + 版本合并冲突）
