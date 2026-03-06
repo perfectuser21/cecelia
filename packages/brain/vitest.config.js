@@ -18,10 +18,10 @@ export default defineConfig({
         'coverage/**'
       ],
       thresholds: {
-        statements: 20,
-        branches: 10,
-        functions: 0,
-        lines: 0,
+        statements: 40,
+        branches: 25,
+        functions: 20,
+        lines: 20,
         perFile: false
       },
       // Specific files we're tracking closely

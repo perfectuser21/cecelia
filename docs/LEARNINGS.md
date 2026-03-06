@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 测试加固 Phase 2（PR #559, Brain v1.197.2）
+
+**失败统计**：CI 1 次通过（0 失败）
+
+**关键决策**：
+- Integration Test 用 vi.mock 隔离 focus.js（内部有多次 DB 查询），保持 planner 核心逻辑真实运行
+- Routes 测试用 supertest + express mock pool 模式，不启动真实 server（避免 EADDRINUSE）
+- notion-sync.js 有 4 个 disabled 路由（返回 503），最容易测试，覆盖率从 0%→100%
+
+**踩坑记录**：
+- Monorepo worktree 不含 node_modules → 需要在 monorepo 根目录运行 `npm install`
+- planNextTask 中 getGlobalState 使用 Promise.all 运行 6 个并行查询 + getDailyFocus → getDailyFocus 内部调用 getReadyKRs 也需要 DB → 必须 mock focus.js
+- PR 合并冲突会导致 GitHub Actions 不触发 CI → 必须先解决冲突再推送
+
 ### [2026-03-06] 测试加固 Phase 1（PR #558, Brain v1.197.1）
 
 **失败统计**：CI 1 次通过（0 失败）
