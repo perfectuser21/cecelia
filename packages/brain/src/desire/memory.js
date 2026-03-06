@@ -69,6 +69,7 @@ export async function runMemory(pool, observations) {
 
   let totalImportance = 0;
   let written = 0;
+  let skipped = 0;
 
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i];
@@ -79,16 +80,29 @@ export async function runMemory(pool, observations) {
       : new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 
     try {
+      // 去重检查：24小时内是否已有相同内容（逐字匹配）
+      const { rows: duplicates } = await pool.query(`
+        SELECT id FROM memory_stream
+        WHERE content = $1
+          AND created_at > NOW() - INTERVAL '24 hours'
+        LIMIT 1
+      `, [obs.context]);
+
+      if (duplicates.length > 0) {
+        console.log(`[memory] Duplicate observation skipped (24h window): "${obs.context.slice(0, 50)}..."`);
+        skipped++;
+        continue; // 跳过写入和 importance 累积
+      }
+
       await pool.query(`
         INSERT INTO memory_stream (content, importance, memory_type, expires_at)
         VALUES ($1, $2, $3, $4)
       `, [obs.context, importance, memoryType, expiresAt]);
       written++;
+      totalImportance += importance; // 只有写入成功才累积
     } catch (err) {
       console.error('[memory] memory_stream insert error:', err.message);
     }
-
-    totalImportance += importance;
   }
 
   // 累积到 desire_importance_accumulator
@@ -110,5 +124,9 @@ export async function runMemory(pool, observations) {
     }
   }
 
-  return { written, total_importance: totalImportance };
+  if (skipped > 0) {
+    console.log(`[memory] Dedup summary: written=${written}, skipped=${skipped} (24h duplicates)`);
+  }
+
+  return { written, skipped, total_importance: totalImportance };
 }
