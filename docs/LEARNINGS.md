@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] /plan 层级重命名 + /architect 路由（PR #570, Workflows v1.6.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**背景**：用户确认新层级体系：Global OKR→Mission、Area OKR→Vision、KR→Area OKR。修正 /plan routing 加入 /architect 路径。
+
+**架构决策（关键）**：
+- **Mode 1 必须在 /decomp 之前**：Mode 1 建立 system_modules 知识库，/decomp 基于此做有依据的拆解
+- **两种触发场景**：① 首次/手动（主流程最前面）；② PR merge 后增量更新（自动）
+- **正确主流程**：`/plan → Mode 1 → /decomp → /decomp-check → [每个 Initiative] Mode 2 → /dev`
+
+**错误判断记录**：
+- 从 /architect SKILL.md 底部流程图推断"Mode 1 在最后"→ 错。那个图是增量更新场景，不是主流程
+
+**影响程度**: Low
+
+**预防措施**：/architect SKILL.md 底部流程图需单独修正，区分"主流程"和"增量更新"两个视图
+
+---
+
 ### [2026-03-06] 代码质量扫描管道 Bug 修复（PR #568, Brain v1.197.12）
 
 **背景**：CTO 诊断管道接入 tick.js 后从未实际工作，用户问"开始了吗"，排查发现 3 个静默 Bug。
