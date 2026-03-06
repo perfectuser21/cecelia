@@ -23,9 +23,10 @@ router.post('/', async (req, res) => {
       project_id = null,
       area_id = null,
       goal_id = null,
-      location = null,
+      location = 'us',
+      payload = null,
       metadata = null,
-      trigger_source = 'api',
+      trigger_source = 'auto',
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -49,7 +50,7 @@ router.post('/', async (req, res) => {
         area_id,
         goal_id,
         location,
-        metadata ? JSON.stringify(metadata) : null,
+        (payload ?? metadata) ? JSON.stringify(payload ?? metadata) : null,
         trigger_source,
       ]
     );
