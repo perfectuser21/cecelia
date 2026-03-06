@@ -63,7 +63,7 @@ describe('planner contract', () => {
 
     it('returns empty for no active areas', () => {
       const state = {
-        objectives: [{ id: '1', type: 'area_okr', status: 'completed' }],
+        objectives: [{ id: '1', type: 'vision', status: 'completed' }],
         keyResults: [],
         activeTasks: [],
       };
@@ -73,8 +73,8 @@ describe('planner contract', () => {
     it('returns areas with queued tasks first', () => {
       const state = {
         objectives: [
-          { id: 'area-1', type: 'area_okr', status: 'active', priority: 'P0' },
-          { id: 'area-2', type: 'area_okr', status: 'active', priority: 'P1' },
+          { id: 'area-1', type: 'vision', status: 'active', priority: 'P0' },
+          { id: 'area-2', type: 'vision', status: 'active', priority: 'P1' },
         ],
         keyResults: [
           { id: 'kr-1', parent_id: 'area-1', status: 'in_progress' },
@@ -91,9 +91,9 @@ describe('planner contract', () => {
     it('respects count limit', () => {
       const state = {
         objectives: [
-          { id: 'a1', type: 'area_okr', status: 'active', priority: 'P0' },
-          { id: 'a2', type: 'area_okr', status: 'active', priority: 'P1' },
-          { id: 'a3', type: 'area_okr', status: 'active', priority: 'P2' },
+          { id: 'a1', type: 'vision', status: 'active', priority: 'P0' },
+          { id: 'a2', type: 'vision', status: 'active', priority: 'P1' },
+          { id: 'a3', type: 'vision', status: 'active', priority: 'P2' },
         ],
         keyResults: [
           { id: 'kr1', parent_id: 'a1', status: 'in_progress' },

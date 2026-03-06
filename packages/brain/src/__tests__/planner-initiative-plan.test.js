@@ -199,7 +199,7 @@ describe('selectTargetProject - initiative priority', () => {
   it('should prefer project with active initiative when no queued tasks exist', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for select', 'kr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR for select', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -242,7 +242,7 @@ describe('selectTargetProject - initiative priority', () => {
   it('should prefer project with queued tasks over project with only initiative', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for project comparison', 'kr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for project comparison', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -297,7 +297,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
   it('should generate initiative_plan task for project with active initiative and no tasks', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'kr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR for initiative plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -343,7 +343,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
   it('should return null when no active initiative exists under project', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR no initiative', 'kr', 'P1', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR no initiative', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -363,7 +363,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
   it('should not create duplicate initiative_plan task if one already exists', async () => {
     // Create a KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup test', 'kr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);
@@ -395,7 +395,7 @@ describe('generateInitiativePlanTask - auto task generation', () => {
   it('should inherit KR priority for the generated task', async () => {
     // Create a P0 KR
     const krResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('P0 KR priority test', 'kr', 'P0', 'in_progress', 0) RETURNING *"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('P0 KR priority test', 'area_okr', 'P0', 'in_progress', 0) RETURNING *"
     );
     const kr = krResult.rows[0];
     testKRIds.push(kr.id);

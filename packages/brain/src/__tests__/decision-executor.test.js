@@ -296,7 +296,7 @@ describe('decision-executor', () => {
         const result = await actionHandlers.create_okr({
           title: 'Test OKR',
           description: 'Test description',
-          type: 'global_okr',
+          type: 'mission',
           priority: 'P0'
         }, {});
 

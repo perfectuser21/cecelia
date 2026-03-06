@@ -37,9 +37,9 @@ describe('D1: okr-validation-spec.yml 加载', () => {
   it('包含 goals 定义（4 种类型）', () => {
     const spec = loadSpec(SPEC_PATH);
     expect(spec.goals).toBeDefined();
-    expect(spec.goals.global_okr).toBeDefined();
+    expect(spec.goals.mission).toBeDefined();
     expect(spec.goals.global_kr).toBeDefined();
-    expect(spec.goals.area_okr).toBeDefined();
+    expect(spec.goals.vision).toBeDefined();
     expect(spec.goals.area_kr).toBeDefined();
   });
 

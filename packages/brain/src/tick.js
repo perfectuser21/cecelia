@@ -1694,7 +1694,7 @@ async function executeTick() {
   // Ready KRs = KRs that have been decomposed, reviewed, and approved by user
   // Also include 'decomposing' KRs so their decomp tasks (created by okr-tick) can be dispatched
   const readyKRsResult = await pool.query(`
-    SELECT id FROM goals WHERE type = 'kr' AND status IN ('ready', 'in_progress', 'decomposing')
+    SELECT id FROM goals WHERE type = 'area_okr' AND status IN ('ready', 'in_progress', 'decomposing')
   `);
   const readyKrIds = readyKRsResult.rows.map(r => r.id);
 

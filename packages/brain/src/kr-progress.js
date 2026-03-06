@@ -75,7 +75,7 @@ export async function syncAllKrProgress(pool) {
   const krsResult = await pool.query(`
     SELECT id, title
     FROM goals
-    WHERE type IN ('kr', 'area_kr', 'global_kr', 'key_result')
+    WHERE type IN ('area_okr', 'area_kr', 'global_kr', 'key_result')
       AND status NOT IN ('completed', 'cancelled')
   `);
 

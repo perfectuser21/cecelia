@@ -156,7 +156,7 @@ const actionHandlers = {
     `, [
       params.title,
       params.description || '',
-      params.type || 'global_okr',
+      params.type || 'mission',
       params.priority || 'P1',
       params.project_id || null
     ]);
@@ -633,7 +633,7 @@ const actionHandlers = {
 
     const result = await pool.query(
       `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'kr' AND status = 'reviewing'
+       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
     );

@@ -14,7 +14,7 @@ describe('createTask - goal_id validation', () => {
     // Create a test goal for valid tasks
     const goalResult = await pool.query(`
       INSERT INTO goals (title, description, status, priority, type)
-      VALUES ('Test Goal', 'Test goal for validation tests', 'pending', 'P1', 'kr')
+      VALUES ('Test Goal', 'Test goal for validation tests', 'pending', 'P1', 'area_okr')
       RETURNING id
     `);
     testGoalId = goalResult.rows[0].id;

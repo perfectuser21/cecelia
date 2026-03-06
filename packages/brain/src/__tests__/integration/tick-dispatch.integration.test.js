@@ -86,8 +86,8 @@ describe('Tick-Planner Integration', () => {
       const { planNextTask } = await import('../../planner.js');
 
       // getGlobalState: Promise.all runs 6 pool.query calls (getDailyFocus is mocked)
-      // 1. objectives (global_okr, area_okr)
-      // 2. keyResults (kr, global_kr, area_kr)
+      // 1. objectives (mission, vision)
+      // 2. keyResults (area_okr, global_kr, area_kr)
       // 3. projects (active)
       // 4. activeTasks (queued, in_progress)
       // 5. recentCompleted

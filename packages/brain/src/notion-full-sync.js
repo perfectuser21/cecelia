@@ -357,7 +357,7 @@ async function upsertArea(client, data) {
 async function upsertGoal(client, data, areaDbId) {
   const { rows } = await client.query(
     `INSERT INTO goals (notion_id, title, status, target_date, area_id, type, notion_props, notion_synced_at, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,'kr',$6,NOW(),NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,'area_okr',$6,NOW(),NOW(),NOW())
      ON CONFLICT (notion_id) DO UPDATE SET
        title=EXCLUDED.title, status=EXCLUDED.status, target_date=EXCLUDED.target_date,
        area_id=COALESCE(EXCLUDED.area_id, goals.area_id),

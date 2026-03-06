@@ -163,7 +163,7 @@ async function checkPendingKRs() {
   const result = await pool.query(`
     SELECT g.id, g.title, g.description, g.priority, g.parent_id
     FROM goals g
-    WHERE g.type = 'kr'
+    WHERE g.type = 'area_okr'
       AND g.status = 'pending'
   `);
 
@@ -246,7 +246,7 @@ async function checkReadyKRInitiatives() {
   const readyKRs = await pool.query(`
     SELECT g.id, g.title, g.status
     FROM goals g
-    WHERE g.type = 'kr'
+    WHERE g.type = 'area_okr'
       AND g.status IN ('ready', 'in_progress')
   `);
 

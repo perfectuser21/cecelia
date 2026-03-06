@@ -86,8 +86,8 @@ router.post('/match', async (req, res) => {
     let layerGuess = layer_hint || 'unknown';
     if (!layer_hint) {
       const types = allGoals.map(g => g.type).filter(Boolean);
-      if (types.includes('kr')) layerGuess = 'kr';
-      else if (types.includes('okr') || types.includes('global_okr')) layerGuess = 'okr';
+      if (types.includes('area_okr')) layerGuess = 'kr';
+      else if (types.includes('okr') || types.includes('mission')) layerGuess = 'okr';
       else if (projectsResult.rows.length > 0) layerGuess = 'project';
     }
 

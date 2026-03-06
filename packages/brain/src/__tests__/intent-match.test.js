@@ -66,7 +66,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: '提升任务成功率',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P0',
             metadata: null,
@@ -99,7 +99,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: '提升任务成功率',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P0',
             metadata: null,
@@ -118,7 +118,7 @@ describe('POST /api/brain/intent/match', () => {
     const goal = res.body.matched_goals[0];
     expect(goal).toHaveProperty('id', 'goal-1');
     expect(goal).toHaveProperty('title', '提升任务成功率');
-    expect(goal).toHaveProperty('type', 'kr');
+    expect(goal).toHaveProperty('type', 'area_okr');
     expect(goal).toHaveProperty('status', 'in_progress');
     expect(goal).toHaveProperty('priority', 'P0');
     expect(goal).toHaveProperty('score');
@@ -131,7 +131,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: '任务成功率指标',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P1',
             metadata: null,
@@ -156,7 +156,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: '优化系统任务成功率',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P1',
             metadata: null,
@@ -174,7 +174,7 @@ describe('POST /api/brain/intent/match', () => {
     expect(res.body.matched_goals[0].score).toBe(0.6);
   });
 
-  it('type=kr 时 layer_guess 为 kr', async () => {
+  it('type=area_okr 时 layer_guess 为 kr', async () => {
     // 主查询返回 kr 类型
     pool.query
       .mockResolvedValueOnce({
@@ -182,7 +182,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: 'KR 目标',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P0',
             metadata: null,
@@ -300,7 +300,7 @@ describe('POST /api/brain/intent/match', () => {
           {
             id: 'goal-1',
             title: '目标 A',
-            type: 'kr',
+            type: 'area_okr',
             status: 'in_progress',
             priority: 'P0',
             metadata: null,

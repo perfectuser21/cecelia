@@ -169,12 +169,12 @@ async function getGlobalState() {
   const [objectives, keyResults, projects, activeTasks, recentCompleted, focusResult, initiativeKRResult] = await Promise.all([
     pool.query(`
       SELECT * FROM goals
-      WHERE type IN ('global_okr', 'area_okr') AND status NOT IN ('completed', 'cancelled')
+      WHERE type IN ('mission', 'vision') AND status NOT IN ('completed', 'cancelled')
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`
       SELECT * FROM goals
-      WHERE type IN ('kr', 'global_kr', 'area_kr') AND status NOT IN ('completed', 'cancelled')
+      WHERE type IN ('area_okr', 'global_kr', 'area_kr') AND status NOT IN ('completed', 'cancelled')
       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END
     `),
     pool.query(`SELECT * FROM projects WHERE status = 'active'`),
@@ -515,7 +515,7 @@ export function selectTopAreas(state, count) {
   const { objectives, keyResults, activeTasks } = state;
 
   const areas = objectives.filter(
-    g => g.type === 'area_okr' && g.status !== 'completed' && g.status !== 'cancelled'
+    g => g.type === 'vision' && g.status !== 'completed' && g.status !== 'cancelled'
   );
 
   if (areas.length === 0) return [];
@@ -939,11 +939,11 @@ async function handlePlanInput(input, dryRun = false) {
   };
 
   if (input.objective) {
-    result.level = 'global_okr';
+    result.level = 'mission';
     if (!dryRun) {
       const oResult = await pool.query(`
         INSERT INTO goals (title, description, priority, type, status, progress)
-        VALUES ($1, $2, $3, 'global_okr', 'pending', 0) RETURNING *
+        VALUES ($1, $2, $3, 'mission', 'pending', 0) RETURNING *
       `, [input.objective.title, input.objective.description || '', input.objective.priority || 'P1']);
       result.created.goals.push(oResult.rows[0]);
 
@@ -951,7 +951,7 @@ async function handlePlanInput(input, dryRun = false) {
         for (const krInput of input.objective.key_results) {
           const krResult = await pool.query(`
             INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-            VALUES ($1, $2, $3, 'kr', $4, $5, 'pending', 0, $6) RETURNING *
+            VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
           `, [
             krInput.title, krInput.description || '', krInput.priority || input.objective.priority || 'P1',
             oResult.rows[0].id, krInput.weight || 1.0,
@@ -962,11 +962,11 @@ async function handlePlanInput(input, dryRun = false) {
       }
     }
   } else if (input.key_result) {
-    result.level = 'kr';
+    result.level = 'area_okr';
     if (!dryRun) {
       const krResult = await pool.query(`
         INSERT INTO goals (title, description, priority, type, parent_id, weight, status, progress, metadata)
-        VALUES ($1, $2, $3, 'kr', $4, $5, 'pending', 0, $6) RETURNING *
+        VALUES ($1, $2, $3, 'area_okr', $4, $5, 'pending', 0, $6) RETURNING *
       `, [
         input.key_result.title, input.key_result.description || '', input.key_result.priority || 'P1',
         input.key_result.objective_id || null, input.key_result.weight || 1.0,

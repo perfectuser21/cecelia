@@ -165,14 +165,14 @@ describe('Planner Agent', () => {
         }
       });
 
-      expect(result.level).toBe('global_okr');
+      expect(result.level).toBe('mission');
       expect(result.created.goals).toHaveLength(3); // 1 O + 2 KRs
-      expect(result.created.goals[0].type).toBe('global_okr');
-      expect(result.created.goals[1].type).toBe('kr');
+      expect(result.created.goals[0].type).toBe('mission');
+      expect(result.created.goals[1].type).toBe('area_okr');
 
       // Cleanup
       for (const g of result.created.goals) {
-        if (['kr', 'global_kr', 'area_kr'].includes(g.type)) testKRIds.push(g.id);
+        if (['area_okr', 'global_kr', 'area_kr'].includes(g.type)) testKRIds.push(g.id);
         else testObjectiveIds.push(g.id);
       }
     });
@@ -180,7 +180,7 @@ describe('Planner Agent', () => {
     it('should create project with KR links', async () => {
       // Create a KR first
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR', 'kr', 'P1', 'pending', 0) RETURNING id"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Test KR', 'area_okr', 'P1', 'pending', 0) RETURNING id"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -236,7 +236,7 @@ describe('Planner Agent', () => {
         objective: { title: 'Dry Run Objective', priority: 'P2' }
       }, true);
 
-      expect(result.level).toBe('global_okr');
+      expect(result.level).toBe('mission');
       expect(result.created.goals).toHaveLength(0); // Nothing created
     });
   });
@@ -261,7 +261,7 @@ describe('Planner Agent', () => {
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Link KR', 'kr', 'P1', 'pending', 0) RETURNING id"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Link KR', 'area_okr', 'P1', 'pending', 0) RETURNING id"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -290,7 +290,7 @@ describe('Planner Agent', () => {
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Empty KR', 'kr', 'P0', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Empty KR', 'area_okr', 'P0', 'pending', 0) RETURNING *"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -311,7 +311,7 @@ describe('Planner Agent', () => {
       testProjectIds.push(projResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Queued KR', 'kr', 'P0', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Queued KR', 'area_okr', 'P0', 'pending', 0) RETURNING *"
       );
       testKRIds.push(krResult.rows[0].id);
 
@@ -355,20 +355,20 @@ describe('Planner Agent', () => {
 
       // Create 2 KRs under one objective
       const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Rotation Test Obj', 'global_okr', 'P0', 'in_progress', 0) RETURNING id"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Rotation Test Obj', 'mission', 'P0', 'in_progress', 0) RETURNING id"
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
       // KR1: no queued tasks
       const kr1Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'kr', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Empty KR', 'area_okr', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr1Result.rows[0].id);
 
       // KR2: has a queued task
       const kr2Result = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'kr', 'P1', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Active KR', 'area_okr', 'P1', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(kr2Result.rows[0].id);
@@ -404,12 +404,12 @@ describe('Planner Agent', () => {
       const { planNextTask } = await import('../planner.js');
 
       const objResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Empty Obj', 'global_okr', 'P0', 'in_progress', 0) RETURNING id"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('All Empty Obj', 'mission', 'P0', 'in_progress', 0) RETURNING id"
       );
       testObjectiveIds.push(objResult.rows[0].id);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'kr', 'P0', 'pending', 0, $1) RETURNING id",
+        "INSERT INTO goals (title, type, priority, status, progress, parent_id) VALUES ('Solo Empty KR', 'area_okr', 'P0', 'pending', 0, $1) RETURNING id",
         [objResult.rows[0].id]
       );
       testKRIds.push(krResult.rows[0].id);

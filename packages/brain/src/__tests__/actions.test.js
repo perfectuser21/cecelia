@@ -520,31 +520,31 @@ describe('actions.js', () => {
   // ========== createGoal ==========
   describe('createGoal', () => {
     it('正常创建目标（指定 type）', async () => {
-      const fakeGoal = { id: 'goal-1', title: '目标', type: 'kr' };
+      const fakeGoal = { id: 'goal-1', title: '目标', type: 'area_okr' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       const result = await createGoal({
         title: '目标',
-        type: 'kr',
+        type: 'area_okr',
       });
 
       expect(result.success).toBe(true);
       expect(result.goal).toEqual(fakeGoal);
     });
 
-    it('无 type 无 parent 默认为 global_okr', async () => {
-      const fakeGoal = { id: 'goal-okr', title: '顶级', type: 'global_okr' };
+    it('无 type 无 parent 默认为 mission', async () => {
+      const fakeGoal = { id: 'goal-okr', title: '顶级', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '顶级' });
 
       const params = mockQuery.mock.calls[0][1];
-      expect(params[6]).toBe('global_okr'); // goalType
+      expect(params[6]).toBe('mission'); // goalType
     });
 
-    it('有 parent_id 时自动推断 type（global_okr -> global_kr）', async () => {
+    it('有 parent_id 时自动推断 type（mission -> global_kr）', async () => {
       // 查询父级 type
-      mockQuery.mockResolvedValueOnce({ rows: [{ type: 'global_okr' }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ type: 'mission' }] });
       // INSERT
       const fakeGoal = { id: 'goal-child', title: '子级', type: 'global_kr' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
@@ -555,8 +555,8 @@ describe('actions.js', () => {
       expect(insertParams[6]).toBe('global_kr');
     });
 
-    it('有 parent_id 时自动推断 type（area_okr -> area_kr）', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [{ type: 'area_okr' }] });
+    it('有 parent_id 时自动推断 type（vision -> area_kr）', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ type: 'vision' }] });
       const fakeGoal = { id: 'goal-akr', title: '区域KR', type: 'area_kr' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
@@ -577,15 +577,15 @@ describe('actions.js', () => {
       expect(insertParams[6]).toBe('area_okr');
     });
 
-    it('有 parent_id 但父级类型未知时默认 kr', async () => {
+    it('有 parent_id 但父级类型未知时默认 area_okr', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ type: 'area_kr' }] });
-      const fakeGoal = { id: 'goal-kr', title: '默认KR', type: 'kr' };
+      const fakeGoal = { id: 'goal-kr', title: '默认KR', type: 'area_okr' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '默认KR', parent_id: 'parent-4' });
 
       const insertParams = mockQuery.mock.calls[1][1];
-      expect(insertParams[6]).toBe('kr');
+      expect(insertParams[6]).toBe('area_okr');
     });
 
     it('有 parent_id 但父级不存在时默认 kr（parent 查询返回空）', async () => {
@@ -620,7 +620,7 @@ describe('actions.js', () => {
     });
 
     it('默认值：priority=P1, status=pending, progress=0', async () => {
-      const fakeGoal = { id: 'goal-def', title: '默认', type: 'global_okr' };
+      const fakeGoal = { id: 'goal-def', title: '默认', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: '默认' });

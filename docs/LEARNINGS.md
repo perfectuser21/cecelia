@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] goals.type 层级值重命名（PR #571, Brain v1.197.14）
+
+**失败统计**：Brain CI 失败 1 次（漏改测试文件的 'kr' → 'area_okr'）
+
+**背景**：DB migration 126 将 goals_type_check 约束更新，`kr` 不再合法，改为 `area_okr`。Agent 修改了大量测试文件，但 `planner-initiative-plan.test.js` 中 6 处 INSERT SQL 的 `'kr'` 遗漏了修改，导致 CI 报 constraint violation `goals_type_check`。
+
+**坑**：先用 grep 确认需要修改的 6 行都是 `'kr'`，但 CI 日志对应的是旧 commit（Agent 已在本地修复但未 push）。重新 push 后新 CI 全绿。
+
+**经验**：migration 更改 CHECK 约束后，必须全局 grep `'旧值'` 覆盖所有测试文件，包括 integration test 里的 raw INSERT SQL。`grep -r "'kr'" packages/brain/src/__tests__/` 是标准验证动作。
+
+**影响程度**: Low
+
+---
+
 ### [2026-03-06] /plan 层级重命名 + /architect 路由（PR #570, Workflows v1.6.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
