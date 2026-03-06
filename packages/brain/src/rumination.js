@@ -342,7 +342,7 @@ ${insight.trim().slice(0, 800)}
         } catch (desireErr) {
           console.warn('[rumination] desire formation from rumination failed (non-blocking):', desireErr.message);
         }
-      }).catch(() => {});
+      }).catch(err => console.error('[rumination] silent error:', err));
     }
   } catch (err) {
     console.error(`[rumination] batch digest failed:`, err.message);
