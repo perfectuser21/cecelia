@@ -1,5 +1,48 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 代码质量扫描管道 Bug 修复（PR #568, Brain v1.197.12）
+
+**背景**：CTO 诊断管道接入 tick.js 后从未实际工作，用户问"开始了吗"，排查发现 3 个静默 Bug。
+
+**Bug 1 - sourceDir 相对路径不匹配绝对路径**：
+```js
+// 错误：'./packages/brain/src' 的 './' 前缀导致绝对路径永远不匹配
+if (!filePath.includes('./packages/brain/src')) continue;
+
+// 修复：去掉 './'，纯子串匹配对相对/绝对路径都有效
+if (!filePath.includes('packages/brain/src')) continue;
+```
+教训：**路径过滤器不要用 `./` 前缀**，coverage-summary.json 记录的是绝对路径。
+
+**Bug 2 - coverageDir 依赖进程 CWD**：
+```js
+// 错误：相对路径，Brain 从不同目录启动会解析到不同位置
+coverageDir: options.coverageDir || './coverage'
+
+// 修复：import.meta.url 计算绝对路径
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const DEFAULT_COVERAGE_DIR = path.resolve(__dirname, '../../coverage');
+```
+教训：**库文件的默认路径用 `import.meta.url` 而非相对路径**。
+
+**Bug 3 - createTaskFn 从未被调用**：
+```js
+// 错误：接收了 createTaskFn 参数，但 generateTask() 后没有调用它
+const task = await scanner.generateTask(issue);
+tasks.push(task); // 任务不写 DB！
+
+// 修复：
+const task = await scanner.generateTask(issue);
+if (createTaskFn) {
+  const taskId = await createTaskFn(task);
+  task.id = taskId;
+}
+tasks.push(task);
+```
+教训：**测试要验证副作用（DB 写入）**，不只验证返回值。现有测试传了 `vi.fn()` 但从不断言它被调用，导致 Bug 潜伏。
+
+**诊断方法**：用户反映"管道没开始"→ 读 tick.js 确认调用点存在 → 追踪 scheduler → 发现 3 个静默失败路径（早返回/路径不匹配/回调未调用）。
+
 ### [2026-03-06] 测试加固 Phase 4（PR #564, Brain v1.197.8）
 
 **失败统计**：CI 手动触发（PR CI 未自动触发），0 失败预期

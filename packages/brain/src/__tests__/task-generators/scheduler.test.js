@@ -342,6 +342,59 @@ describe('ScannerScheduler', () => {
       expect(tasks[0].title).toBe('OK task');
     });
 
+    it('generateTasks 调用 createTaskFn 将任务写入 DB', async () => {
+      const scheduler = new ScannerScheduler();
+
+      const mockScanner = {
+        getName: () => 'test',
+        generateTask: vi.fn().mockResolvedValue({ title: 'Fix foo' }),
+      };
+      scheduler.registerScanner(mockScanner);
+
+      const createTaskFn = vi.fn().mockResolvedValue('task-id-123');
+      const issues = [{ module_path: 'a.js', severity: 'high', scanner: 'test' }];
+
+      await scheduler.generateTasks(issues, createTaskFn);
+
+      expect(createTaskFn).toHaveBeenCalledTimes(1);
+      expect(createTaskFn).toHaveBeenCalledWith(expect.objectContaining({ title: 'Fix foo' }));
+    });
+
+    it('createTaskFn 返回的 id 挂载到 task.id', async () => {
+      const scheduler = new ScannerScheduler();
+
+      const mockScanner = {
+        getName: () => 'test',
+        generateTask: vi.fn().mockResolvedValue({ title: 'Fix bar' }),
+      };
+      scheduler.registerScanner(mockScanner);
+
+      const createTaskFn = vi.fn().mockResolvedValue('db-id-456');
+      const issues = [{ module_path: 'b.js', severity: 'medium', scanner: 'test' }];
+
+      const tasks = await scheduler.generateTasks(issues, createTaskFn);
+
+      expect(tasks[0].id).toBe('db-id-456');
+    });
+
+    it('createTaskFn 抛出异常时任务仍被收集', async () => {
+      const scheduler = new ScannerScheduler();
+
+      const mockScanner = {
+        getName: () => 'test',
+        generateTask: vi.fn().mockResolvedValue({ title: 'Fix baz' }),
+      };
+      scheduler.registerScanner(mockScanner);
+
+      const createTaskFn = vi.fn().mockRejectedValue(new Error('DB write failed'));
+      const issues = [{ module_path: 'c.js', severity: 'high', scanner: 'test' }];
+
+      const tasks = await scheduler.generateTasks(issues, createTaskFn);
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].title).toBe('Fix baz');
+    });
+
     it('severity 缺失时按 low 处理', async () => {
       const scheduler = new ScannerScheduler({ maxTasksPerScan: 3 });
 

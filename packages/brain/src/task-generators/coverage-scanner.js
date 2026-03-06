@@ -7,8 +7,14 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const execAsync = promisify(exec);
+
+// 使用 import.meta.url 计算绝对路径，不依赖进程 CWD
+// task-generators/ → packages/brain/coverage/
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const DEFAULT_COVERAGE_DIR = path.resolve(__dirname, '../../coverage');
 
 class CoverageScanner extends BaseScanner {
   constructor(options = {}) {
@@ -17,8 +23,8 @@ class CoverageScanner extends BaseScanner {
         minCoverage: options.minCoverage || 70, // 默认 70%
         ...options.threshold
       },
-      coverageDir: options.coverageDir || './coverage',
-      sourceDir: options.sourceDir || './packages/brain/src'
+      coverageDir: options.coverageDir || DEFAULT_COVERAGE_DIR,
+      sourceDir: options.sourceDir || 'packages/brain/src'
     });
   }
 
