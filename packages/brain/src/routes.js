@@ -3664,7 +3664,7 @@ router.get('/cluster/status', async (req, res) => {
       id: 'hk',
       name: 'HK VPS',
       location: '🇭🇰 香港',
-      ip: '43.154.85.217',
+      ip: '124.156.138.116',
       status: 'offline',
       resources: null,
       slots: {

@@ -256,7 +256,7 @@ describe("bash-guard.sh", () => {
   // ─── HK 部署拦截 ──────────────────────────────────────────
   describe("should block HK deploy when git is dirty", () => {
     it("blocks rsync to HK public IP", () => {
-      const result = runHook("rsync -avz dist/ user@43.154.85.217:/srv/app/");
+      const result = runHook("rsync -avz dist/ user@124.156.138.116:/srv/app/");
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("BASH GUARD");
     });
@@ -268,7 +268,7 @@ describe("bash-guard.sh", () => {
     });
 
     it("does not block ssh to HK (read-only allowed)", () => {
-      const result = runHook("ssh user@43.154.85.217 uptime");
+      const result = runHook("ssh user@124.156.138.116 uptime");
       expect(result.exitCode).toBe(0);
     });
 
