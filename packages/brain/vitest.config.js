@@ -18,13 +18,10 @@ export default defineConfig({
         'coverage/**'
       ],
       thresholds: {
-        // TODO: Enable these thresholds after coverage improvements
-        // Currently set to 0 to establish baseline
-        statements: 0,
-        branches: 0,
+        statements: 20,
+        branches: 10,
         functions: 0,
         lines: 0,
-        // Will enable perFile thresholds when we reach target coverage
         perFile: false
       },
       // Specific files we're tracking closely
