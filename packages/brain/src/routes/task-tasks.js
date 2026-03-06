@@ -1,6 +1,7 @@
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
  *
+ * POST /   — 创建新任务（供 /architect Phase 5 和外部 agent 注册任务）
  * GET /    — 列出任务（支持 status, area_id, project_id, task_type, limit 过滤）
  * GET /:id — 获取单个 task
  * PATCH /:id — 更新 status/priority/title
@@ -10,6 +11,57 @@ import { Router } from 'express';
 import pool from '../db.js';
 
 const router = Router();
+
+// POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
+router.post('/', async (req, res) => {
+  try {
+    const {
+      title,
+      description = null,
+      priority = 'P2',
+      task_type = 'dev',
+      project_id = null,
+      area_id = null,
+      goal_id = null,
+      location = null,
+      metadata = null,
+      trigger_source = 'api',
+    } = req.body;
+
+    if (!title || title.trim() === '') {
+      return res.status(400).json({ error: 'title is required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO tasks (
+         title, description, priority, task_type, status,
+         project_id, area_id, goal_id, location,
+         payload, trigger_source
+       )
+       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10)
+       RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, created_at`,
+      [
+        title.trim(),
+        description,
+        priority,
+        task_type,
+        project_id,
+        area_id,
+        goal_id,
+        location,
+        metadata ? JSON.stringify(metadata) : null,
+        trigger_source,
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23514') {
+      return res.status(400).json({ error: 'Invalid field value', details: err.message });
+    }
+    res.status(500).json({ error: 'Failed to create task', details: err.message });
+  }
+});
 
 // GET /tasks — 列出任务
 router.get('/', async (req, res) => {
