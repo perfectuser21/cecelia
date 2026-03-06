@@ -2375,3 +2375,16 @@ const mockExecCb = vi.hoisted(() => vi.fn((cmd, opts, cb) => {
 vi.mock('child_process', () => ({ exec: mockExecCb }));
 // promisify(exec) 自动包装 callback mock → execAsync 可测试
 ```
+
+---
+
+### [2026-03-06] Coding Passway 链路集成测试（coding-passway.test.js）
+
+**CI 失败次数**：0
+**本地测试失败次数**：0
+
+**流程顺畅，无问题记录**。
+
+**唯一注意点**：worktree 中创建 PRD 文件时，必须使用分支格式名 `.prd-{branch}.md`（如 `.prd-cp-03062101-xxx.md`），不能使用自定义名（如 `.prd-xxx.md`）。branch-protect.sh 只识别 `.prd-${CURRENT_BRANCH}.md` 格式。
+
+**影响程度**：Low
