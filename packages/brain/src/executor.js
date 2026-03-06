@@ -1561,6 +1561,22 @@ async function triggerCeceliaRun(task) {
     // Update task with run info before execution
     await updateTaskRunInfo(task.id, runId, 'triggered');
 
+    // 记录执行尝试次数（用于成功率统计）
+    try {
+      await pool.query(
+        `UPDATE tasks
+         SET
+           execution_attempts = COALESCE(execution_attempts, 0) + 1,
+           last_attempt_at = NOW(),
+           updated_at = NOW()
+         WHERE id = $1`,
+        [task.id]
+      );
+    } catch (attemptErr) {
+      // P3 级别：不影响主派发流程
+      console.warn(`[executor] execution_attempt_record_failed task=${task.id}: ${attemptErr.message}`);
+    }
+
     // Resolve repo_path from task's project (traverse parent chain for Features)
     let repoPath = null;
     if (task.project_id) {
