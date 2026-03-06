@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 测试加固 Phase 3（PR #561, Brain v1.197.3）
+
+**失败统计**：CI 2 次（1次 DoD checkbox 未勾选，修复后 1 次全通过）
+
+**规模**：18 个并行 agent 同时写 17 个测试文件，新增约 350+ 测试用例（总计 798 个），覆盖率阈值 40/25/20/20 → 45/30/25/25
+
+**关键发现**：
+- `vi.mock` 工厂函数引用顶层变量必须用 `vi.hoisted()`，否则报 `Cannot access before initialization`
+- `trace.js sanitize()` 的 SENSITIVE_KEYS 包含驼峰 `'apiKey'`，但 `lowerKey.includes('apiKey')` 对全小写 key 不匹配（`'apikey'.includes('apiKey')` = false）
+- `classifyError()` 中 `"not found"` 分支比 `"selector not found"` 更早匹配（CONFIG 优先于 PERSISTENT），测试断言必须反映代码实际分支顺序
+- `EXECUTOR_HOSTS` 有 `'hk-n8n'`（含数字），regex 需 `[a-z0-9]` 而非 `[a-z]`
+- DoD 文件中 `- [ ]` checkbox 未勾选会导致 DevGate CI 失败
+
+**并行 agent 模式经验**：
+- 18 个 agent 同时写测试高效但需要人工检查断言正确性（2/17 文件有断言错误）
+- agent 在 worktree A 写文件 → 需要手动复制到 worktree B（worktree 不共享 working tree）
+- 已有测试文件被 agent "扩展"（12 个）时，agent 倾向于重写整个文件而非追加
+
 ### [2026-03-06] 测试加固 Phase 2（PR #559, Brain v1.197.2）
 
 **失败统计**：CI 1 次通过（0 失败）
