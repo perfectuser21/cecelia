@@ -14,6 +14,20 @@
 - PRD 文件名必须匹配 `.prd-{CURRENT_BRANCH}.md` 格式，Step 1 创建时直接用分支名
 - fire-and-forget 注入点应在同类操作（desire-feedback、learnings）之后，保持一致的代码顺序
 
+### [2026-03-06] Migration 128 修复 NULL task_type 脏数据（PR #578, Brain v1.198.1）
+
+**CI 失败次数**: 0，**本地测试失败次数**: 0（全量测试的 EADDRINUSE port:5221 是已知问题，与本次改动无关）
+
+**踩坑：PRD 文件命名格式**
+- 问题：初始创建 PRD 文件用 `.prd-fix-null-task-type.md`（任务名），branch-protect hook 需要 `.prd-cp-{branch}.md`（分支名格式）才能找到文件
+- 修复：重命名为 `.prd-cp-03062101-fix-null-task-type.md` 后 hook 通过
+- 预防：下次 /dev 创建 PRD 文件时直接用分支格式：`.prd-${BRANCH_NAME}.md`，worktree-manage.sh 返回的分支名就是 `cp-MMDDHHNN-task-name`
+
+**影响程度**: Low（CI 一次通过，只需要重命名文件）
+
+**预防措施**:
+- 创建 PRD 文件时，先 `git rev-parse --abbrev-ref HEAD` 获取分支名，直接使用 `.prd-${BRANCH_NAME}.md` 命名
+
 ### [2026-03-06] REST 端点设计：在大 router 后加 fallback 挂载补齐缺口（PR #576, Brain v1.198.0）
 
 **背景**：`GET/PATCH /api/brain/tasks` 在 brainRoutes（routes.js）里，`POST /api/brain/tasks` 从未实现。直接向 routes.js（8000+ 行）追加路由风险高、测试难。
