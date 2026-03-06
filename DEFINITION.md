@@ -973,3 +973,4 @@ bash brain/scripts/goldenpath-check.sh
 | MiniMax M2.1 | $0.15/M | $1.20/M | L1 丘脑（事件路由）、exploratory |
 
 每次 L1/L2 调用记录 token 使用到 cecelia_events 表。
+
