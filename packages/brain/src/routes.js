@@ -90,6 +90,7 @@ async function getActiveExecutionPaths() {
 }
 import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 import { updateDesireFromTask } from './desire-feedback.js';
+import { checkAndCreateCodeReviewTrigger } from './code-review-trigger.js';
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from './pr-callback-handler.js';
 
 const router = Router();
@@ -2941,6 +2942,15 @@ router.post('/execution-callback', async (req, res) => {
       } catch (learningErr) {
         console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
       }
+
+      // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
+      Promise.resolve().then(async () => {
+        const taskMeta = await pool.query('SELECT task_type, project_id FROM tasks WHERE id = $1', [task_id]);
+        const { task_type: taskType, project_id: projectId } = taskMeta.rows[0] || {};
+        if (taskType === 'dev' && projectId) {
+          await checkAndCreateCodeReviewTrigger(pool, projectId);
+        }
+      }).catch(err => console.warn(`[execution-callback] code-review-trigger 失败（非致命）: ${err.message}`));
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
 

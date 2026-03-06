@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 小任务积累触发 code_review（PR #579, Brain v1.199.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**架构决策**：
+- 新模块 code-review-trigger.js 接口设计为 `(pool, projectId)` 而非 `(pool, taskId)`，保持职责单一（触发逻辑只关心 project）
+- routes.js 注入点：在 execution-callback `newStatus === 'completed'` 块末尾，learnings 写入之后，使用 `Promise.resolve().then(async () => {...}).catch(...)` 模式
+- branch-protect.sh 要求 PRD 文件名为 `.prd-{BRANCH_NAME}.md`，不能用自定义名称（踩坑：创建了 `.prd-code-review-trigger.md` 被拒绝，需重命名）
+
+**影响程度**: Low
+**预防措施**：
+- PRD 文件名必须匹配 `.prd-{CURRENT_BRANCH}.md` 格式，Step 1 创建时直接用分支名
+- fire-and-forget 注入点应在同类操作（desire-feedback、learnings）之后，保持一致的代码顺序
+
 ### [2026-03-06] Migration 128 修复 NULL task_type 脏数据（PR #578, Brain v1.198.1）
 
 **CI 失败次数**: 0，**本地测试失败次数**: 0（全量测试的 EADDRINUSE port:5221 是已知问题，与本次改动无关）
