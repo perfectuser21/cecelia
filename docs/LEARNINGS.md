@@ -2220,3 +2220,26 @@ GITHUB_HEAD_REF=<branch-name> node packages/engine/scripts/devgate/check-dod-map
 **修复**：传入 `-365` 天（`cutoff = today + 365`，未来一年），`WHERE created_at >= cutoff` 返回 0 条。不依赖清空 DB，CI 和本地行为一致。
 
 **模式**：测试"无数据返回 0"的场景，用未来日期比清空 DB 更健壮。
+
+### [2026-03-06] CTO 诊断管道激活 — 自动生成 coverage 报告（PR #569, Brain v1.197.13）
+
+**场景**：扫描器 Bug 修复后（PR #568），管道仍不工作，因为 `coverage-summary.json` 不存在。
+
+**根因**：CI 生成 coverage 文件后留在 runner 上，不持久化到服务器。服务器上文件不存在 → scanner early return。
+
+**解法**：在 `triggerCodeQualityScan` 调用 `runScan()` 之前先执行 `npx vitest run --coverage`，让 scanner 读到最新数据。
+
+**关键设计原则**：
+- **不要假设文件存在** — 任何依赖外部生成文件的功能，要么自己生成，要么明确文档说明前置条件
+- **降级优于失败** — coverage 生成失败 → warn + 继续（用已有文件），不抛异常
+- **超时保护** — 3 分钟超时防止 tick 被卡住
+
+**child_process mock 模式**（vitest）：
+```js
+const mockExecCb = vi.hoisted(() => vi.fn((cmd, opts, cb) => {
+  const callback = typeof opts === 'function' ? opts : cb;
+  callback(null, { stdout: '', stderr: '' });
+}));
+vi.mock('child_process', () => ({ exec: mockExecCb }));
+// promisify(exec) 自动包装 callback mock → execAsync 可测试
+```
