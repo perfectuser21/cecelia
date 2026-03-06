@@ -16,6 +16,30 @@
 - `MODE_WEIGHT` 值是嵌套对象不是纯数字
 - `getMaxActiveInitiatives(0)` 返回 1 不是 >= 9 → 读 `computeCapacity` 逻辑
 
+### [2026-03-06] /dev skill subagent 并行升级（PR #557, Engine v12.44.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**改动内容**：
+- Step 4 (04-explore.md)：加入 2-3 个 Explore subagent 并行代码探索，复杂度判断门控
+- Step 7 (07-verify.md)：新增 7.4 节 3 个 code-reviewer subagent 并行代码审查
+- 对齐 Anthropic 官方 feature-dev 插件的 code-explorer + code-reviewer 模式
+
+**设计决策**：
+- 使用 `subagent_type=Explore`（只读权限）而非 `general-purpose`，reviewer 不需要写权限
+- 置信度 ≥80 才报为问题，避免低信号噪声
+- 保留简单任务快速路径：1-2 个文件直接 Glob+Read，跳过 subagent 开销
+- 7.4 代码审查在 DoD 全部 [x] 后才执行，确保功能正确性优先
+- 跳过条件：纯文档、纯配置、≤2 文件且 ≤30 行
+
+**Engine CI 6 文件联动（确认有效）**：改 `packages/engine/skills/` 需同步：
+1. `[CONFIG]` PR 标题标签
+2. `package.json` 版本 bump
+3. `VERSION` + `.hook-core-version` + `regression-contract.yaml` 版本同步
+4. `feature-registry.yml` 更新 + `bash scripts/generate-path-views.sh` 重生成
+
+**影响程度**: Low（纯 Skill 文档改动，不影响运行时）
+
 ### [2026-03-06] 新建 /architect skill（PR #556, Brain v1.197.0）
 
 **失败统计**：CI 失败 0 次（GitHub Actions 平台故障，非代码原因），本地测试失败 0 次
