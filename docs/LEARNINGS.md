@@ -14,6 +14,31 @@ Express router 对无匹配路由调用 `next()`，POST 请求自动 fall throug
 
 **教训**：`/architect` SKILL.md 中文档描述的 API 是 SSOT——每次新增 API 设计必须立即实现，否则就是断链的 Passway。
 
+### [2026-03-06] 新 migration 后必须同步 4 处版本信息（PR #575, Brain v1.198.0）
+
+**失败统计**：2 次 CI 失败（Facts Consistency + Brain Tests 各一次）。
+
+**根因**：添加 migration 128 时，只更新了 `selfcheck.js` 的 `EXPECTED_SCHEMA_VERSION`，但以下 4 处都需要同步：
+
+| 文件 | 字段 | 更新内容 |
+|------|------|----------|
+| `packages/brain/src/selfcheck.js` | `EXPECTED_SCHEMA_VERSION` | `'127'` → `'128'` |
+| `DEFINITION.md` | `Schema 版本` | `127` → `128` |
+| `packages/brain/src/__tests__/selfcheck.test.js` | 测试断言 | `'127'` → `'128'` |
+| `packages/brain/src/__tests__/desire-system.test.js` | 测试断言 | `'127'` → `'128'` |
+| `packages/brain/src/__tests__/learnings-vectorize.test.js` | 测试断言 | `'127'` → `'128'` |
+
+**新 migration 版本号铁律（checklist）**：
+1. 新建 `{N}_xxx.sql` migration 文件
+2. `selfcheck.js` → `EXPECTED_SCHEMA_VERSION = '{N}'`
+3. `DEFINITION.md` → `Schema 版本: {N}` + `必须 = '{N}'`
+4. 所有含版本断言的测试文件 → `toBe('{N}')`
+5. `packages/brain/package.json` → `npm version {patch/minor/major}`
+6. `.brain-versions` → 追加新版本号
+7. `DEFINITION.md` → `Brain 版本: x.y.z`
+
+**另一个教训**：`.brain-versions` 的变更不会自动触发 Brain CI（GitHub Actions path filter 在 PR 上有 bug），需要手动 `gh workflow run brain-ci.yml` 触发。
+
 ### [2026-03-06] migration 顺序铁律：先 DROP 约束再 UPDATE 数据（PR #574, Brain v1.197.16）
 
 **失败统计**：0 次 CI 失败，但 deploy 连续 3 次失败（08:54、09:08、10:50）。
