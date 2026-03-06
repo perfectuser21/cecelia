@@ -311,11 +311,11 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
             // fire-and-forget embedding
             Promise.resolve().then(() =>
               generateProfileFactEmbeddingAsync(factId, content)
-            ).catch(() => {});
+            ).catch(err => console.error('[user-profile] silent error:', err));
             // fire-and-forget notion sync
             Promise.resolve().then(() =>
               pushFactToNotion({ id: factId, category: 'raw', content, key: factKey, source: 'auto', created_at: new Date() })
-            ).catch(() => {});
+            ).catch(err => console.error('[user-profile] silent error:', err));
           }
         } catch {
           // 静默失败，不影响主流程
@@ -343,11 +343,11 @@ export async function extractAndSaveUserFacts(pool, userId = 'owner', messages =
         if (factId) {
           Promise.resolve().then(() =>
             generateProfileFactEmbeddingAsync(factId, content)
-          ).catch(() => {});
+          ).catch(err => console.error('[user-profile] silent error:', err));
           // fire-and-forget notion sync
           Promise.resolve().then(() =>
             pushFactToNotion({ id: factId, category, content, key: factKey, source: 'auto', created_at: new Date() })
-          ).catch(() => {});
+          ).catch(err => console.error('[user-profile] silent error:', err));
         }
       } catch {
         // 静默失败

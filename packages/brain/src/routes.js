@@ -2822,7 +2822,7 @@ router.post('/execution-callback', async (req, res) => {
     if (newStatus === 'completed') {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
       await cbSuccess('cecelia-run');
-      notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(() => {});
+      notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(err => console.error('[routes] silent error:', err));
 
       // 主动沟通：对话订阅模式 — 只有 Alex 问过的任务完成才发飞书通知（fire-and-forget）
       //   触发条件：working_memory 中存在 task_interest:<task_id>（由 orchestrator-chat 在检测到任务询问时写入）
@@ -2856,7 +2856,7 @@ router.post('/execution-callback', async (req, res) => {
           await pool.query(`DELETE FROM working_memory WHERE key = $1`, [`task_interest:${task_id}`]);
           console.log(`[execution-callback] 已通知 Alex 任务 ${task_id} 完成（对话订阅）`);
         }
-      }).catch(() => {});
+      }).catch(err => console.error('[routes] silent error:', err));
 
       // Publish WebSocket event: task completed
       publishTaskCompleted(task_id, run_id, { pr_url, duration_ms, iterations });
@@ -2886,7 +2886,7 @@ router.post('/execution-callback', async (req, res) => {
       {
         const taskRow = await pool.query('SELECT title, description FROM tasks WHERE id = $1', [task_id]);
         if (taskRow.rows[0]) {
-          generateTaskEmbeddingAsync(task_id, taskRow.rows[0].title, taskRow.rows[0].description).catch(() => {});
+          generateTaskEmbeddingAsync(task_id, taskRow.rows[0].title, taskRow.rows[0].description).catch(err => console.error('[routes] silent error:', err));
         }
       }
 
@@ -3023,7 +3023,7 @@ router.post('/execution-callback', async (req, res) => {
         console.log(`[execution-callback] Billing cap: 跳过熔断计数（task=${task_id}）`);
       } else {
         await cbFailure('cecelia-run');
-        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(() => {});
+        raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
       }
 
       // Check if task should be quarantined (only if not already handled by smart retry)
@@ -3033,7 +3033,7 @@ router.post('/execution-callback', async (req, res) => {
           if (quarantineResult.quarantined) {
             quarantined = true;
             console.log(`[execution-callback] Task ${task_id} quarantined: ${quarantineResult.result?.reason}`);
-            raise('P1', 'task_quarantined', `任务隔离：${task_id}（${quarantineResult.result?.reason || '反复失败'}）`).catch(() => {});
+            raise('P1', 'task_quarantined', `任务隔离：${task_id}（${quarantineResult.result?.reason || '反复失败'}）`).catch(err => console.error('[routes] silent error:', err));
           }
         } catch (quarantineErr) {
           console.error(`[execution-callback] Quarantine check error: ${quarantineErr.message}`);
@@ -9595,7 +9595,7 @@ async function getGroupMembers(chatId, accessToken) {
            VALUES ($1, $2, $3, $4, NOW())
            ON CONFLICT (open_id) DO UPDATE SET name=$2, relationship=$3, user_id=$4, fetched_at=NOW()`,
           [member.member_id, mName, mRel, mUserId]
-        ).catch(() => {});
+        ).catch(err => console.error('[routes] silent error:', err));
       })
     );
 
@@ -10048,7 +10048,7 @@ router.post('/feishu/event', async (req, res) => {
       }
 
       // 群聊：预拉取成员信息，填充 feishu_users（使 getFeishuUserName 的 staleCache 生效）
-      if (chatType === 'group') await getGroupMembers(message.chat_id, accessToken).catch(() => {});
+      if (chatType === 'group') await getGroupMembers(message.chat_id, accessToken).catch(err => console.error('[routes] silent error:', err));
 
       // 获取用户信息（含 relationship）
       const { name: senderName, user_id: userId, relationship } = await getFeishuUserName(openId, accessToken);
@@ -10081,7 +10081,7 @@ router.post('/feishu/event', async (req, res) => {
           .catch(err => console.warn('[feishu/group] unified_conversations user 写入失败:', err.message));
 
         // 异步更新发送者印象（fire-and-forget）
-        updateUserImpression(openId, senderName).catch(() => {});
+        updateUserImpression(openId, senderName).catch(err => console.error('[routes] silent error:', err));
 
         // 消息聚合：加入 chat_id 对应的缓冲区，8秒后统一处理
         const chatId = message.chat_id;
