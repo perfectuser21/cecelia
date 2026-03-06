@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] /architect SKILL.md 流程图 - 区分主流程与增量更新（PR #572, Workflows）
+
+**失败统计**：0 次 CI 失败。主要挑战在于 branch-protect hook 找到了 `packages/workflows/.prd.md`（旧文件），而非我在根目录创建的 `.prd-*.md`。
+
+**坑：`find_prd_dod_dir` 会在中间目录找到旧的 `.prd.md`**：
+
+hook 从被编辑文件 (`packages/workflows/skills/architect/SKILL.md`) 的 dirname 往上遍历，找到第一个包含 `.prd*.md` 的目录就停止。`packages/workflows/.prd.md` 是老 PR 的 PRD，一直留在 git 中，导致 hook 误判这是当前 PRD（而非根目录的 `.prd-branch.md`）。
+
+**解法**：在 `packages/workflows/` 目录下也创建对应的 `.prd-{branch}.md` 和 `.dod-{branch}.md`（这些文件 gitignored，不会提交）。
+
+**架构澄清**：
+- `/architect Mode 1` 必须在 `/decomp` 之前运行（建立 system_modules 知识库）
+- 增量更新（PR merge 后 Brain 自动触发）是独立的后台场景
+- 原流程图将两个场景混淆、且把 Mode 1 错误放在流程最后
+
+---
+
 ### [2026-03-06] goals.type 层级值重命名（PR #571, Brain v1.197.14）
 
 **失败统计**：Brain CI 失败 1 次（漏改测试文件的 'kr' → 'area_okr'）

@@ -306,21 +306,40 @@ curl -X POST http://localhost:5221/api/brain/tasks \
 
 ## 与其他 Skill 的关系
 
+### 场景一：主流程（新项目 / 首次）
+
+Mode 1 必须在 /decomp 之前运行——它建立的 system_modules 知识库是 /decomp 有依据拆解的前提。
+
 ```
-/decomp → 拆出 Project/Initiative
+/plan 识别层级（Area OKR / Project / Initiative）
     |
-/architect Mode 2 → 为 Initiative 做技术设计
+/architect Mode 1 → 扫描代码库，建立 system_modules 知识库
     |
-    +-- architecture.md（技术方案）
-    +-- Task 1, 2, 3...（注册到 Brain）
-          |
+/decomp → 基于 system_modules 拆 OKR → Initiative（有依据的拆解）
+    |
+/decomp-check → 审查拆解质量
+    |
+[每个 Initiative 独立执行]
+    |
+/architect Mode 2 → 读 system_modules，产出 architecture.md + Tasks
+    |
 /dev Task 1 → PR → merge
 /dev Task 2 → PR → merge
 /dev Task 3 → PR → merge
     |
 Initiative 完成
+```
+
+### 场景二：增量更新（PR merge 后自动触发）
+
+每次 /dev PR 合并后，Brain 自动派发增量 Mode 1 扫描被改动的模块：
+
+```
+/dev PR → merge
     |
-/architect Mode 1 → 更新系统说明书（增量）
+Brain 自动派发 architecture_design 任务（type=scan）
+    |
+/architect Mode 1（增量）→ 只更新被改动的 system_modules 条目
 ```
 
 ---
