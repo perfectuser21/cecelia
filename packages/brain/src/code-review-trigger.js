@@ -35,12 +35,12 @@ export async function checkAndCreateCodeReviewTrigger(pool, projectId) {
     const count = parseInt(countResult.rows[0]?.cnt ?? '0', 10);
     if (count < ACCUMULATION_THRESHOLD) return null;
 
-    // 检查是否已有活跃的 code_review 任务
+    // 检查是否已有活跃的 code_review 任务（覆盖所有非终态状态，含 pending）
     const existingResult = await pool.query(
       `SELECT id FROM tasks
        WHERE project_id = $1
          AND task_type = 'code_review'
-         AND status IN ('queued', 'in_progress')
+         AND status NOT IN ('completed', 'failed', 'cancelled', 'completed_no_pr')
        LIMIT 1`,
       [projectId]
     );

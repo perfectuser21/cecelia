@@ -2946,7 +2946,9 @@ router.post('/execution-callback', async (req, res) => {
       // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
       Promise.resolve().then(async () => {
         const taskMeta = await pool.query('SELECT task_type, project_id FROM tasks WHERE id = $1', [task_id]);
-        const { task_type: taskType, project_id: projectId } = taskMeta.rows[0] || {};
+        const task = taskMeta.rows[0];
+        if (!task) return; // task 已不存在（已被清理或 DB 异常），静默跳过
+        const { task_type: taskType, project_id: projectId } = task;
         if (taskType === 'dev' && projectId) {
           await checkAndCreateCodeReviewTrigger(pool, projectId);
         }

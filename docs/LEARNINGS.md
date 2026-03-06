@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] code-review-trigger P1 Bug 修复（PR #588, Brain v1.199.2）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**Bug A：fire-and-forget 块 task 不存在时的处理模式**
+- 问题：`taskMeta.rows[0] || {}` 解构，task 不存在时变量均为 undefined，条件判断 `taskType === 'dev'` 恰好为 false，静默跳过，没有任何日志，难以排查
+- 正确模式：先取出行对象，用 `if (!task) return;` 提前退出，语义更明确
+- 经验：fire-and-forget 块中查询 DB 后，总应先检查行是否存在再解构
+
+**Bug B：去重查询用 NOT IN 覆盖全部非终态**
+- 问题：`status IN ('queued', 'in_progress')` 漏掉 `pending` 状态，并行 tick 可能创建重复任务
+- 正确模式：去重类查询优先用 `status NOT IN (终态列表)`，前者对新增中间状态天然免疫
+- 终态列表（tasks 表）：`completed`、`failed`、`cancelled`、`completed_no_pr`
+
+**影响程度**: Low
+**预防措施**：
+- fire-and-forget DB 查询后，总是先做 `if (!row) return;` 守卫，再解构
+- 去重/幂等查询一律用 `NOT IN (终态)`，枚举活跃状态容易遗漏
+
 ### [2026-03-06] POST /api/brain/tasks 三个 P1 Bug 修复（PR #585, Brain v1.199.1）
 
 **失败统计**：CI 失败 0 次，本地测试失败 1 次（测试断言过严，修复后通过）
