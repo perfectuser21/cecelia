@@ -64,8 +64,8 @@ function buildState({ objectives = [], keyResults = [], projects = [], activeTas
   return { objectives, keyResults, projects, activeTasks, recentCompleted, focus };
 }
 
-const AREA_A = { id: 'area-a', type: 'area_okr', title: 'Cecelia AI', priority: 'P0', status: 'in_progress', progress: 45 };
-const AREA_B = { id: 'area-b', type: 'area_okr', title: 'ZenithJoy', priority: 'P1', status: 'in_progress', progress: 20 };
+const AREA_A = { id: 'area-a', type: 'vision', title: 'Cecelia AI', priority: 'P0', status: 'in_progress', progress: 45 };
+const AREA_B = { id: 'area-b', type: 'vision', title: 'ZenithJoy', priority: 'P1', status: 'in_progress', progress: 20 };
 const KR_A = { id: 'kr-a', type: 'area_kr', title: 'KR A', parent_id: 'area-a', priority: 'P0', status: 'in_progress', progress: 40 };
 const INITIATIVE_A = { id: 'init-a', name: '实现 Parser API', status: 'active', created_at: '2026-01-01T00:00:00Z' };
 
@@ -133,7 +133,7 @@ describe('GET /work/streams', () => {
   });
 
   it('最多返回 ACTIVE_AREA_COUNT 个 streams', async () => {
-    const areas = [1,2,3].map(i => ({ id: `a-${i}`, type: 'area_okr', title: `A${i}`, priority: 'P1', status: 'in_progress', progress: 0 }));
+    const areas = [1,2,3].map(i => ({ id: `a-${i}`, type: 'vision', title: `A${i}`, priority: 'P1', status: 'in_progress', progress: 0 }));
     getGlobalState.mockResolvedValue(buildState({ objectives: areas }));
     selectTopAreas.mockReturnValue(areas);
     selectActiveInitiativeForArea.mockReturnValue(null);

@@ -30,7 +30,7 @@ describe('task-goals routes', () => {
   describe('GET /goals', () => {
     it('lists all goals without filters', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'g1', title: 'Goal 1', type: 'kr' }],
+        rows: [{ id: 'g1', title: 'Goal 1', type: 'area_okr' }],
       });
 
       const res = await request(app).get('/goals');
@@ -43,11 +43,11 @@ describe('task-goals routes', () => {
     it('filters by type and status', async () => {
       mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await request(app).get('/goals?type=kr&status=active');
+      await request(app).get('/goals?type=area_okr&status=active');
       const [sql, params] = mockPool.query.mock.calls[0];
       expect(sql).toContain('type = $1');
       expect(sql).toContain('status = $2');
-      expect(params).toEqual(['kr', 'active']);
+      expect(params).toEqual(['area_okr', 'active']);
     });
 
     it('supports limit and offset', async () => {

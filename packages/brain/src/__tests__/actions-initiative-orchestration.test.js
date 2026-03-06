@@ -128,7 +128,7 @@ describe('createInitiative - orchestration support', () => {
     // Create a KR goal
     const goalResult = await pool.query(`
       INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('Test KR', 'kr', 'P0', 'pending', 0)
+      VALUES ('Test KR', 'area_okr', 'P0', 'pending', 0)
       RETURNING id
     `);
     const krId = goalResult.rows[0].id;

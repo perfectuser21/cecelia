@@ -46,7 +46,7 @@ describe('createTask() Dedup', () => {
   it('should dedup when queued task with same title+goal+project exists', async () => {
     // Setup: create goal + project
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup test goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup test goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -80,7 +80,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup when in_progress task with same title+goal+project exists', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup inprog goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup inprog goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -108,7 +108,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow different titles even with same goal+project', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup diff title goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup diff title goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -135,7 +135,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow re-creation after 24h completed window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup 24h goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup 24h goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -162,7 +162,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup completed task within 24h window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup recent goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup recent goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -215,7 +215,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup when canceled task exists', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup canceled goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup canceled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -250,7 +250,7 @@ describe('createTask() Dedup', () => {
 
   it('should dedup cancelled task within time window', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup cancelled goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup cancelled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -279,7 +279,7 @@ describe('createTask() Dedup', () => {
 
   it('should allow re-creation after canceled task expires', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup expired canceled goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup expired canceled goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;
@@ -306,7 +306,7 @@ describe('createTask() Dedup', () => {
 
   it('should handle both canceled and cancelled spellings', async () => {
     const goalResult = await pool.query(
-      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup spelling goal', 'kr', 'P0', 'pending', 0) RETURNING id"
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Dedup spelling goal', 'area_okr', 'P0', 'pending', 0) RETURNING id"
     );
     testGoalIds.push(goalResult.rows[0].id);
     const goalId = goalResult.rows[0].id;

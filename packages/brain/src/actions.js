@@ -260,19 +260,19 @@ async function createGoal({ title, description, priority, project_id, target_dat
     if (parentResult.rows.length > 0) {
       const parentType = parentResult.rows[0].type;
       // Map parent type to child type
-      if (parentType === 'global_okr') {
+      if (parentType === 'mission') {
         goalType = 'global_kr';
-      } else if (parentType === 'area_okr') {
+      } else if (parentType === 'vision') {
         goalType = 'area_kr';
       } else if (parentType === 'global_kr') {
         goalType = 'area_okr';
       } else {
-        goalType = 'kr'; // Default to kr for other cases
+        goalType = 'area_okr'; // Default to area_okr for other cases
       }
     }
   } else if (!goalType) {
-    // No parent and no type specified - assume it's a top-level global_okr
-    goalType = 'global_okr';
+    // No parent and no type specified - assume it's a top-level mission
+    goalType = 'mission';
   }
 
   const result = await pool.query(`

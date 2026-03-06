@@ -498,7 +498,7 @@ async function searchSemanticMemory(pool, query, mode) {
           const union = new Set([...queryTokens, ...textTokens]).size;
           candidates.push({
             id: g.id,
-            source: (g.type === 'kr' || g.type === 'area_okr') ? 'kr' : 'okr',
+            source: (g.type === 'area_okr' || g.type === 'global_kr' || g.type === 'area_kr') ? 'kr' : 'okr',
             title: g.title || '',
             description: (g.description || '').slice(0, 300),
             full_content: g.description || '',

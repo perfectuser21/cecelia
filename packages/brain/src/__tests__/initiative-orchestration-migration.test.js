@@ -61,7 +61,7 @@ describe('Migration 057 - initiative_orchestration', () => {
     // Need a goal for non-system task type
     const goalResult = await pool.query(`
       INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal', 'kr', 'P1', 'pending', 0)
+      VALUES ('mig057_test_goal', 'area_okr', 'P1', 'pending', 0)
       RETURNING id
     `);
     const goalId = goalResult.rows[0].id;
@@ -82,7 +82,7 @@ describe('Migration 057 - initiative_orchestration', () => {
   it('D1: tasks.task_type accepts initiative_verify', async () => {
     const goalResult = await pool.query(`
       INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal_v', 'kr', 'P1', 'pending', 0)
+      VALUES ('mig057_test_goal_v', 'area_okr', 'P1', 'pending', 0)
       RETURNING id
     `);
     const goalId = goalResult.rows[0].id;
@@ -130,7 +130,7 @@ describe('Migration 057 - initiative_orchestration', () => {
   it('D1: existing task types still accepted', async () => {
     const goalResult = await pool.query(`
       INSERT INTO goals (title, type, priority, status, progress)
-      VALUES ('mig057_test_goal_existing', 'kr', 'P1', 'pending', 0)
+      VALUES ('mig057_test_goal_existing', 'area_okr', 'P1', 'pending', 0)
       RETURNING id
     `);
     const goalId = goalResult.rows[0].id;

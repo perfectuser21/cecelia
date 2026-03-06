@@ -82,7 +82,7 @@ describe('D3: 必须字段检查', () => {
   it('goals 缺 title → BLOCK', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: null,
+        id: uuid(1), type: 'mission', title: null,
         status: 'pending', priority: 'P0', parent_id: null,
       }],
     });
@@ -97,11 +97,11 @@ describe('D3: 必须字段检查', () => {
   it('goals 缺 type → BLOCK', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: '有效标题测试',
+        id: uuid(1), type: 'mission', title: '有效标题测试',
         status: 'pending', priority: 'P0', parent_id: null,
       }],
     });
-    // type 字段有值（'global_okr'），不应报错
+    // type 字段有值（'mission'），不应报错
     const result = await validateOkrStructure(pool, { scope: 'full', specPath: SPEC_PATH });
     const block = result.issues.find(i =>
       i.level === 'BLOCK' && i.rule === 'required_field' && i.message.includes('type')
@@ -112,7 +112,7 @@ describe('D3: 必须字段检查', () => {
   it('goals 缺 status → BLOCK', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: '有效标题测试',
+        id: uuid(1), type: 'mission', title: '有效标题测试',
         status: '', priority: 'P0', parent_id: null,
       }],
     });
@@ -157,10 +157,10 @@ describe('D3: 必须字段检查', () => {
 // ────────────────────────────────────────────────────────────────────
 
 describe('D4: parent 存在性检查', () => {
-  it('area_okr.parent_id 指向不存在 goal → BLOCK', async () => {
+  it('vision.parent_id 指向不存在 goal → BLOCK', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(3), type: 'area_okr', title: '领域目标测试',
+        id: uuid(3), type: 'vision', title: '领域目标测试',
         status: 'pending', priority: 'P1',
         parent_id: uuid(99), // 不存在
       }],
@@ -187,17 +187,17 @@ describe('D4: parent 存在性检查', () => {
     expect(block).toBeDefined();
   });
 
-  it('area_okr.parent_id 指向存在的 global_kr → 无报错', async () => {
+  it('vision.parent_id 指向存在的 global_kr → 无报错', async () => {
     const gkr = {
       id: uuid(2), type: 'global_kr', title: '全局关键结果测试标题',
       status: 'pending', priority: 'P0', parent_id: uuid(1),
     };
     const gokr = {
-      id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+      id: uuid(1), type: 'mission', title: '全局目标测试标题题',
       status: 'pending', priority: 'P0', parent_id: null,
     };
     const aokr = {
-      id: uuid(3), type: 'area_okr', title: '领域目标测试标题题',
+      id: uuid(3), type: 'vision', title: '领域目标测试标题题',
       status: 'pending', priority: 'P1', parent_id: uuid(2),
     };
     const pool = makeMockPool({ goals: [gokr, gkr, aokr] });
@@ -214,14 +214,14 @@ describe('D4: parent 存在性检查', () => {
 // ────────────────────────────────────────────────────────────────────
 
 describe('D5: parent type 一致性', () => {
-  it('area_okr.parent type 不是 global_kr → BLOCK', async () => {
-    // area_okr 的 parent 指向另一个 area_okr（应该是 global_kr）
+  it('vision.parent type 不是 global_kr → BLOCK', async () => {
+    // vision 的 parent 指向另一个 vision（应该是 global_kr）
     const wrongParent = {
-      id: uuid(2), type: 'area_okr', title: '错误的父节点测试',
+      id: uuid(2), type: 'vision', title: '错误的父节点测试',
       status: 'pending', priority: 'P1', parent_id: null,
     };
     const aokr = {
-      id: uuid(3), type: 'area_okr', title: '领域目标测试标题题',
+      id: uuid(3), type: 'vision', title: '领域目标测试标题题',
       status: 'pending', priority: 'P1', parent_id: uuid(2),
     };
     const pool = makeMockPool({ goals: [wrongParent, aokr] });
@@ -233,7 +233,7 @@ describe('D5: parent type 一致性', () => {
     expect(mismatch.message).toContain('global_kr');
   });
 
-  it('global_kr.parent type 不是 global_okr → BLOCK', async () => {
+  it('global_kr.parent type 不是 mission → BLOCK', async () => {
     const wrongParent = {
       id: uuid(1), type: 'area_kr', title: '不是全局目标的测试',
       status: 'pending', priority: 'P0', parent_id: null,
@@ -248,7 +248,7 @@ describe('D5: parent type 一致性', () => {
       i.rule === 'parent_type_mismatch' && i.entityId === uuid(2)
     );
     expect(mismatch).toBeDefined();
-    expect(mismatch.message).toContain('global_okr');
+    expect(mismatch.message).toContain('mission');
   });
 
   it('initiative.parent type 不是 project → BLOCK', async () => {
@@ -277,7 +277,7 @@ describe('D5: parent type 一致性', () => {
 describe('D6: children 数量范围', () => {
   it('area_kr 有 0 个关联 project → WARNING', async () => {
     const gokr = {
-      id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+      id: uuid(1), type: 'mission', title: '全局目标测试标题题',
       status: 'pending', priority: 'P0', parent_id: null,
     };
     const gkr = {
@@ -285,7 +285,7 @@ describe('D6: children 数量范围', () => {
       status: 'pending', priority: 'P0', parent_id: uuid(1),
     };
     const aokr = {
-      id: uuid(3), type: 'area_okr', title: '领域目标测试标题题',
+      id: uuid(3), type: 'vision', title: '领域目标测试标题题',
       status: 'pending', priority: 'P1', parent_id: uuid(2),
     };
     const akr = {
@@ -304,9 +304,9 @@ describe('D6: children 数量范围', () => {
     expect(warn.level).toBe('WARNING');
   });
 
-  it('global_okr 有 0 个 global_kr → WARNING', async () => {
+  it('mission 有 0 个 global_kr → WARNING', async () => {
     const gokr = {
-      id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+      id: uuid(1), type: 'mission', title: '全局目标测试标题题',
       status: 'pending', priority: 'P0', parent_id: null,
     };
     const pool = makeMockPool({ goals: [gokr] });
@@ -324,7 +324,7 @@ describe('D6: children 数量范围', () => {
       status: 'pending', priority: 'P1', parent_id: uuid(3),
     };
     const aokr = {
-      id: uuid(3), type: 'area_okr', title: '领域目标测试标题题',
+      id: uuid(3), type: 'vision', title: '领域目标测试标题题',
       status: 'pending', priority: 'P1', parent_id: uuid(2),
     };
     const gkr = {
@@ -332,7 +332,7 @@ describe('D6: children 数量范围', () => {
       status: 'pending', priority: 'P0', parent_id: uuid(1),
     };
     const gokr = {
-      id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+      id: uuid(1), type: 'mission', title: '全局目标测试标题题',
       status: 'pending', priority: 'P0', parent_id: null,
     };
     const pool = makeMockPool({
@@ -464,7 +464,7 @@ describe('D9: 文本规则', () => {
   it('goals.title 长度不足 → WARNING', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: '短',
+        id: uuid(1), type: 'mission', title: '短',
         status: 'pending', priority: 'P0', parent_id: null,
       }],
     });
@@ -496,14 +496,14 @@ describe('D9: 文本规则', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────
-// global_okr 的 parent_id must_be_null
+// mission 的 parent_id must_be_null
 // ────────────────────────────────────────────────────────────────────
 
-describe('global_okr parent_id 检查', () => {
-  it('global_okr 有 parent_id → BLOCK', async () => {
+describe('mission parent_id 检查', () => {
+  it('mission 有 parent_id → BLOCK', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+        id: uuid(1), type: 'mission', title: '全局目标测试标题题',
         status: 'pending', priority: 'P0', parent_id: uuid(99),
       }],
     });
@@ -515,10 +515,10 @@ describe('global_okr parent_id 检查', () => {
     expect(block.level).toBe('BLOCK');
   });
 
-  it('global_okr parent_id=null → 无报错', async () => {
+  it('mission parent_id=null → 无报错', async () => {
     const pool = makeMockPool({
       goals: [{
-        id: uuid(1), type: 'global_okr', title: '全局目标测试标题题',
+        id: uuid(1), type: 'mission', title: '全局目标测试标题题',
         status: 'pending', priority: 'P0', parent_id: null,
       }],
     });

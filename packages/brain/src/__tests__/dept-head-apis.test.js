@@ -83,8 +83,8 @@ describe('GET /api/brain/goals', () => {
 
   it('should return all goals when no dept filter', async () => {
     const rows = [
-      { id: 'g1', title: 'ZenithJoy OKR', type: 'area_okr', status: 'in_progress', metadata: { dept: 'zenithjoy' } },
-      { id: 'g2', title: 'Global OKR', type: 'global_okr', status: 'in_progress', metadata: {} },
+      { id: 'g1', title: 'ZenithJoy OKR', type: 'vision', status: 'in_progress', metadata: { dept: 'zenithjoy' } },
+      { id: 'g2', title: 'Global OKR', type: 'mission', status: 'in_progress', metadata: {} },
     ];
     mockPool.query.mockResolvedValue({ rows });
 
@@ -102,7 +102,7 @@ describe('GET /api/brain/goals', () => {
 
   it('should filter goals by dept when ?dept= is provided', async () => {
     const rows = [
-      { id: 'g1', title: 'ZenithJoy OKR', type: 'area_okr', status: 'in_progress', metadata: { dept: 'zenithjoy' } },
+      { id: 'g1', title: 'ZenithJoy OKR', type: 'vision', status: 'in_progress', metadata: { dept: 'zenithjoy' } },
     ];
     mockPool.query.mockResolvedValue({ rows });
 

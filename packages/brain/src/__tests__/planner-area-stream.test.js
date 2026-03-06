@@ -11,7 +11,7 @@ import { selectTopAreas, selectActiveInitiativeForArea } from '../planner.js';
 // ============================================================
 
 describe('selectTopAreas', () => {
-  it('should return empty array when no area_okr objectives', () => {
+  it('should return empty array when no vision objectives', () => {
     const state = {
       objectives: [],
       keyResults: [],
@@ -23,7 +23,7 @@ describe('selectTopAreas', () => {
   it('should return empty array when areas have no queued tasks', () => {
     const state = {
       objectives: [
-        { id: 'area-1', type: 'area_okr', priority: 'P0', status: 'active' }
+        { id: 'area-1', type: 'vision', priority: 'P0', status: 'active' }
       ],
       keyResults: [
         { id: 'kr-1', parent_id: 'area-1', status: 'ready' }
@@ -36,8 +36,8 @@ describe('selectTopAreas', () => {
   it('should only return areas with queued tasks', () => {
     const state = {
       objectives: [
-        { id: 'area-1', type: 'area_okr', priority: 'P1', status: 'active' },
-        { id: 'area-2', type: 'area_okr', priority: 'P1', status: 'active' }
+        { id: 'area-1', type: 'vision', priority: 'P1', status: 'active' },
+        { id: 'area-2', type: 'vision', priority: 'P1', status: 'active' }
       ],
       keyResults: [
         { id: 'kr-1', parent_id: 'area-1', status: 'ready' },
@@ -56,8 +56,8 @@ describe('selectTopAreas', () => {
   it('should prefer P0 area over P1', () => {
     const state = {
       objectives: [
-        { id: 'area-p1', type: 'area_okr', priority: 'P1', status: 'active' },
-        { id: 'area-p0', type: 'area_okr', priority: 'P0', status: 'active' }
+        { id: 'area-p1', type: 'vision', priority: 'P1', status: 'active' },
+        { id: 'area-p0', type: 'vision', priority: 'P0', status: 'active' }
       ],
       keyResults: [
         { id: 'kr-p1', parent_id: 'area-p1', status: 'ready' },
@@ -75,9 +75,9 @@ describe('selectTopAreas', () => {
   it('should respect count limit', () => {
     const state = {
       objectives: [
-        { id: 'area-1', type: 'area_okr', priority: 'P1', status: 'active' },
-        { id: 'area-2', type: 'area_okr', priority: 'P1', status: 'active' },
-        { id: 'area-3', type: 'area_okr', priority: 'P1', status: 'active' }
+        { id: 'area-1', type: 'vision', priority: 'P1', status: 'active' },
+        { id: 'area-2', type: 'vision', priority: 'P1', status: 'active' },
+        { id: 'area-3', type: 'vision', priority: 'P1', status: 'active' }
       ],
       keyResults: [
         { id: 'kr-1', parent_id: 'area-1', status: 'ready' },
@@ -97,9 +97,9 @@ describe('selectTopAreas', () => {
   it('should exclude completed and cancelled areas', () => {
     const state = {
       objectives: [
-        { id: 'area-done', type: 'area_okr', priority: 'P0', status: 'completed' },
-        { id: 'area-cancel', type: 'area_okr', priority: 'P0', status: 'cancelled' },
-        { id: 'area-active', type: 'area_okr', priority: 'P1', status: 'active' }
+        { id: 'area-done', type: 'vision', priority: 'P0', status: 'completed' },
+        { id: 'area-cancel', type: 'vision', priority: 'P0', status: 'cancelled' },
+        { id: 'area-active', type: 'vision', priority: 'P1', status: 'active' }
       ],
       keyResults: [
         { id: 'kr-done', parent_id: 'area-done', status: 'ready' },
@@ -123,7 +123,7 @@ describe('selectTopAreas', () => {
 // ============================================================
 
 describe('selectActiveInitiativeForArea', () => {
-  const area = { id: 'area-1', type: 'area_okr', priority: 'P1' };
+  const area = { id: 'area-1', type: 'vision', priority: 'P1' };
 
   it('should return null when area has no KRs', () => {
     const state = {

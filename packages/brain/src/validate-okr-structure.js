@@ -207,7 +207,7 @@ async function fetchKrScope(pool, krId, goalFilter, projectFilter, taskFilter) {
   `, [krId]);
 
   // 通过 project_kr_links 找关联 projects
-  const krIds = goalsRes.rows.filter(g => g.type === 'area_kr' || g.type === 'kr').map(g => g.id);
+  const krIds = goalsRes.rows.filter(g => g.type === 'area_kr' || g.type === 'area_okr').map(g => g.id);
   let projects = [];
   let krLinks = [];
   if (krIds.length > 0) {
@@ -294,7 +294,7 @@ function checkParentRules(issues, entity, row, parentRules, data, subtype) {
       continue;
     }
 
-    // must_be_null 检查（global_okr 不应有 parent）
+    // must_be_null 检查（mission 不应有 parent）
     if (rule.must_be_null) {
       if (row[field] !== null && row[field] !== undefined) {
         issues.push(issue(
@@ -355,7 +355,7 @@ function checkChildrenCount(issues, entity, row, childrenRules, data, subtype) {
   for (const [childType, rule] of Object.entries(childrenRules)) {
     let count = 0;
 
-    if (childType === 'global_kr' || childType === 'area_okr' || childType === 'area_kr') {
+    if (childType === 'global_kr' || childType === 'vision' || childType === 'area_kr') {
       count = data.goals.filter(g => g.parent_id === row.id && g.type === childType).length;
     } else if (childType === 'project') {
       count = data.krLinks.filter(l => l.kr_id === row.id).length;

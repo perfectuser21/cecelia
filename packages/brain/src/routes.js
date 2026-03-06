@@ -504,7 +504,7 @@ router.get('/goals', async (req, res) => {
 /**
  * POST /api/brain/goals/:id/approve
  * 用户放行 KR（reviewing → ready）。
- * 只有 type='kr' 且 status='reviewing' 的 goal 可以被放行。
+ * 只有 type='area_okr' 且 status='reviewing' 的 goal 可以被放行。
  */
 router.post('/goals/:id/approve', async (req, res) => {
   try {
@@ -512,7 +512,7 @@ router.post('/goals/:id/approve', async (req, res) => {
 
     const result = await pool.query(
       `UPDATE goals SET status = 'ready', updated_at = NOW()
-       WHERE id = $1 AND type = 'kr' AND status = 'reviewing'
+       WHERE id = $1 AND type = 'area_okr' AND status = 'reviewing'
        RETURNING id, title, status`,
       [id]
     );
@@ -562,10 +562,10 @@ router.get('/goals/:id/okr-context', async (req, res) => {
       objective = obj.rows[0] || null;
     }
 
-    // 3. 取同级 KR（同一 parent_id，type='kr'，排除自身）
+    // 3. 取同级 KR（同一 parent_id，type='area_okr'，排除自身）
     const siblings = kr.parent_id ? (await pool.query(
       `SELECT id, title, type, status, priority, progress FROM goals
-       WHERE parent_id = $1 AND type = 'kr' AND id != $2 ORDER BY priority ASC, created_at ASC`,
+       WHERE parent_id = $1 AND type = 'area_okr' AND id != $2 ORDER BY priority ASC, created_at ASC`,
       [kr.parent_id, id]
     )).rows : [];
 
@@ -576,7 +576,7 @@ router.get('/goals/:id/okr-context', async (req, res) => {
       const likeClause = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
       similarKrs = (await pool.query(
         `SELECT id, title, type, status, progress, created_at FROM goals
-         WHERE type = 'kr' AND id != $1 AND (${likeClause})
+         WHERE type = 'area_okr' AND id != $1 AND (${likeClause})
          ORDER BY created_at DESC LIMIT 5`,
         [id, ...words.map(w => `%${w}%`)]
       )).rows;
@@ -1901,7 +1901,7 @@ router.post('/autumnrice/chat', async (req, res) => {
           if (words.length > 0) {
             const lc = words.map((_, i) => `title ILIKE $${i + 2}`).join(' OR ');
             const sims = (await pool.query(
-              `SELECT title, status, progress FROM goals WHERE type='kr' AND id!=$1 AND (${lc}) ORDER BY created_at DESC LIMIT 3`,
+              `SELECT title, status, progress FROM goals WHERE type='area_okr' AND id!=$1 AND (${lc}) ORDER BY created_at DESC LIMIT 3`,
               [krId, ...words.map(w => `%${w}%`)]
             )).rows;
             if (sims.length > 0) simBlock = `\n**历史相似 KR**：\n${sims.map(s => `  - ${s.title}（${s.status}，${s.progress ?? 0}%）`).join('\n')}`;
@@ -1983,14 +1983,14 @@ ${okrCtxBlock}
       let resolvedKrId = ctx.kr_id || null;
       if (!resolvedKrId && ctx.kr_title) {
         const krResult = await pool.query(
-          `SELECT id FROM goals WHERE title = $1 AND type = 'kr' LIMIT 1`,
+          `SELECT id FROM goals WHERE title = $1 AND type = 'area_okr' LIMIT 1`,
           [ctx.kr_title]
         );
         if (krResult.rows.length > 0) resolvedKrId = krResult.rows[0].id;
       }
       if (resolvedKrId) {
         await pool.query(
-          `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='kr'`,
+          `UPDATE goals SET status='ready', updated_at=NOW() WHERE id=$1 AND type='area_okr'`,
           [resolvedKrId]
         );
         redecompTriggered = true;

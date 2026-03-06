@@ -232,7 +232,7 @@ describe('Planner Learning Penalty', () => {
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('LP Test KR', 'kr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('LP Test KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);
@@ -272,7 +272,7 @@ describe('Planner Learning Penalty', () => {
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Only Penalized KR', 'kr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('Only Penalized KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);
@@ -305,7 +305,7 @@ describe('Planner Learning Penalty', () => {
       testProjectIds.push(projectId);
 
       const krResult = await pool.query(
-        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('No Penalty KR', 'kr', 'P1', 'pending', 0) RETURNING *"
+        "INSERT INTO goals (title, type, priority, status, progress) VALUES ('No Penalty KR', 'area_okr', 'P1', 'pending', 0) RETURNING *"
       );
       const kr = krResult.rows[0];
       testKRIds.push(kr.id);

@@ -42,7 +42,7 @@ const makeObjective = (id, opts = {}) => ({
   priority: opts.priority || 'P0',
   progress: opts.progress ?? 50,
   status: opts.status || 'in_progress',
-  type: opts.type || 'area_okr',
+  type: opts.type || 'vision',
 });
 
 // ---------- 测试 ----------
@@ -66,7 +66,7 @@ describe('focus', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       // 确认 SQL 包含正确的查询条件
       const sql = mockQuery.mock.calls[0][0];
-      expect(sql).toContain("type = 'kr'");
+      expect(sql).toContain("type = 'area_okr'");
       expect(sql).toContain("'ready'");
       expect(sql).toContain("'in_progress'");
     });
@@ -90,7 +90,7 @@ describe('focus', () => {
 
   describe('selectDailyFocus', () => {
     it('有手动覆盖时优先返回手动焦点', async () => {
-      const objective = makeObjective('okr-manual', { type: 'global_okr' });
+      const objective = makeObjective('okr-manual', { type: 'mission' });
 
       // 1. 查 working_memory 手动覆盖
       mockQuery.mockResolvedValueOnce({
@@ -278,7 +278,7 @@ describe('focus', () => {
     });
 
     it('手动覆盖焦点时正确返回', async () => {
-      const objective = makeObjective('okr-manual', { type: 'global_okr' });
+      const objective = makeObjective('okr-manual', { type: 'mission' });
       const krs = [{ id: 'kr-m', title: 'Manual KR', progress: 10, weight: 1, status: 'ready' }];
       const tasks = [{ id: 'task-m', title: 'Manual Task', status: 'queued', priority: 'P1' }];
 
@@ -326,15 +326,15 @@ describe('focus', () => {
         .rejects.toThrow('Objective not found');
     });
 
-    it('查询 objective 时只接受 global_okr/area_okr 类型', async () => {
+    it('查询 objective 时只接受 mission/vision 类型', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ id: 'okr-1' }] });
       mockQuery.mockResolvedValueOnce({ rows: [] });
 
       await setDailyFocus('okr-1');
 
       const selectParams = mockQuery.mock.calls[0][1];
-      expect(selectParams).toContain('global_okr');
-      expect(selectParams).toContain('area_okr');
+      expect(selectParams).toContain('mission');
+      expect(selectParams).toContain('vision');
     });
 
     it('数据库写入失败时抛出错误', async () => {
@@ -416,7 +416,7 @@ describe('focus', () => {
     });
 
     it('手动覆盖时返回正确摘要', async () => {
-      const objective = makeObjective('okr-m', { type: 'global_okr', priority: 'P1' });
+      const objective = makeObjective('okr-m', { type: 'mission', priority: 'P1' });
       const krs = [{ id: 'kr-m1', title: 'KR M1', progress: 80 }];
 
       // selectDailyFocus: 手动覆盖

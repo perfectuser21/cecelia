@@ -18,8 +18,8 @@ severity_levels:
 
 goals:
 
-  global_okr:
-    description: "全局目标（顶层，parent_id = NULL）"
+  mission:
+    description: "使命（Alex 级别，顶层，parent_id = NULL）"
     required_fields:
       - title
       - type
@@ -29,7 +29,7 @@ goals:
       parent_id:
         must_be_null: true
         severity: BLOCK
-        message: "global_okr 不应有 parent"
+        message: "mission 不应有 parent"
     children:
       global_kr:
         query: "goals WHERE parent_id = $id AND type = 'global_kr'"
@@ -43,7 +43,7 @@ goals:
         severity: WARNING
 
   global_kr:
-    description: "全局关键结果（parent = global_okr）"
+    description: "全局关键结果（parent = mission）"
     required_fields:
       - title
       - type
@@ -53,12 +53,12 @@ goals:
     parent_rules:
       parent_id:
         must_exist_in_goals: true
-        parent_type: global_okr
+        parent_type: mission
         severity: BLOCK
-        message: "global_kr.parent_id 必须指向 global_okr"
+        message: "global_kr.parent_id 必须指向 mission"
     children:
-      area_okr:
-        query: "goals WHERE parent_id = $id AND type = 'area_okr'"
+      vision:
+        query: "goals WHERE parent_id = $id AND type = 'vision'"
         min: 1
         max: 5
         severity: WARNING
@@ -68,8 +68,8 @@ goals:
         max_length: 200
         severity: WARNING
 
-  area_okr:
-    description: "领域目标（parent = global_kr）"
+  vision:
+    description: "愿景（每个 Area 方向性愿景，parent = global_kr）"
     required_fields:
       - title
       - type
@@ -81,7 +81,7 @@ goals:
         must_exist_in_goals: true
         parent_type: global_kr
         severity: BLOCK
-        message: "area_okr.parent_id 必须指向 global_kr"
+        message: "vision.parent_id 必须指向 global_kr"
     children:
       area_kr:
         query: "goals WHERE parent_id = $id AND type = 'area_kr'"
@@ -95,7 +95,7 @@ goals:
         severity: WARNING
 
   area_kr:
-    description: "领域关键结果（parent = area_okr）"
+    description: "领域关键结果（parent = vision）"
     required_fields:
       - title
       - type
@@ -105,9 +105,9 @@ goals:
     parent_rules:
       parent_id:
         must_exist_in_goals: true
-        parent_type: area_okr
+        parent_type: vision
         severity: BLOCK
-        message: "area_kr.parent_id 必须指向 area_okr"
+        message: "area_kr.parent_id 必须指向 vision"
     children:
       project:
         query: "project_kr_links WHERE kr_id = $id → projects"

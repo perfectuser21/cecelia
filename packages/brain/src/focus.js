@@ -19,7 +19,7 @@ async function getReadyKRs() {
   const result = await pool.query(`
     SELECT id, title, description, priority, progress, status, parent_id
     FROM goals
-    WHERE type = 'kr'
+    WHERE type = 'area_okr'
       AND status IN ('ready', 'in_progress')
     ORDER BY
       CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
@@ -44,7 +44,7 @@ async function selectDailyFocus() {
     const manualObjectiveId = overrideResult.rows[0].value_json.objective_id;
     const objResult = await pool.query(
       'SELECT * FROM goals WHERE id = $1 AND type IN ($2, $3)',
-      [manualObjectiveId, 'global_okr', 'area_okr']
+      [manualObjectiveId, 'mission', 'vision']
     );
 
     if (objResult.rows.length > 0) {
@@ -162,7 +162,7 @@ async function getDailyFocus() {
 async function setDailyFocus(objectiveId) {
   const objResult = await pool.query(
     'SELECT id FROM goals WHERE id = $1 AND type IN ($2, $3)',
-    [objectiveId, 'global_okr', 'area_okr']
+    [objectiveId, 'mission', 'vision']
   );
 
   if (objResult.rows.length === 0) {
