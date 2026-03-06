@@ -28,6 +28,7 @@ import evolutionRoutes from './src/routes/evolution.js';
 import recurringRoutes from './src/routes/recurring.js';
 import statsRoutes from './src/routes/stats.js';
 import alexPagesRoutes from './src/routes/alex-pages.js';
+import metricsRoutes from './src/routes/metrics.js';
 import { initTickLoop } from './src/tick.js';
 import { runSelfCheck } from './src/selfcheck.js';
 import { runMigrations } from './src/migrate.js';
@@ -115,6 +116,7 @@ app.use('/api/brain/evolution', evolutionRoutes);
 app.use('/api/brain/recurring-tasks', recurringRoutes);
 app.use('/api/brain/stats', statsRoutes);
 app.use('/api/brain/alex-pages', alexPagesRoutes);
+app.use('/api/brain/metrics', metricsRoutes);
 
 // Mount brain routes
 app.use('/api/brain', brainRoutes);
