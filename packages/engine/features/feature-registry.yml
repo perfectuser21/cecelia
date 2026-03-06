@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.27.0"
-updated: "2026-03-05"
+version: "3.28.0"
+updated: "2026-03-06"
 changelog:
+  - "3.28.0: v12.43.0 - 新增 /architect skill Stop Hook 支持：stop.sh 路由器 v13.3.0 新增 .architect-lock.* 检测 → stop-architect.sh；新增 stop-architect.sh（Mode 1 scan / Mode 2 design 完成条件检查）"
   - "3.27.0: v12.41.0 - 深度 Bug 修复（3P0+6P1）：cleanup.sh sed step_11_cleanup 静默失败修复（验证后追加）；stop-dev.sh 无头模式锁匹配分支名 fallback（防 exit 0 泄漏）；worktree-gc.sh 脏状态检查（防数据丢失）；孤儿 sentinel/.dev-lock 重试上限（防无限循环）；jq shim（防 set -e 崩溃）；lock-utils.sh 变量隔离（_LU_ 前缀防覆写）；worktree-gc --state all 改 merged+closed；rm -rf 路径安全验证"
   - "3.26.0: v12.40.1 - Stop Hook + Cleanup 5 bug 修复：stop-dev.sh merged PR 跳过 CI 检查（防卡死）；cleanup.sh .dev-mode per-branch 格式支持（Section 10+7.6）；Section 9 用 gh pr list 替换 git branch --merged（squash merge 兼容）；Section 4.5 移除 fire-and-forget GC（竞态修复）；新增 18 个 CI 测试"
   - "3.25.0: v12.40.0 - Worktree 外部清理者架构重构：新增 worktree-gc.sh（从主仓库运行，用 gh API 检测已合并 PR，不用 git branch --merged）；stop-dev.sh force_cleanup_worktree 不再自删 worktree；cleanup.sh 委托外部 GC；worktree-manage.sh cleanup 委托外部 GC；新增 worktree-gc.test.ts 行为测试"
@@ -204,18 +205,20 @@ platform_features:
   # H7: Stop Hook Loop Controller - 循环控制器
   # --------------------------------------------------------------------------
   - id: H7
-    name: Stop Hook Router (v13.0.0)
+    name: Stop Hook Router (v13.3.0)
     status: Committed
     priority: P0
-    version: "12.32.1"
-    updated: "2026-02-27"
+    version: "12.43.0"
+    updated: "2026-03-06"
     description: |
       Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
-      - 路由器：stop.sh（~46 lines）检测 .dev-mode/.decomp-mode 等，调用对应 handler
+      - 路由器：stop.sh（~80 lines）检测 .dev-lock/.dev-mode/.architect-lock/.decomp-mode 等，调用对应 handler
       - stop-dev.sh：/dev 工作流完成条件检查（PR 创建 + CI 通过 + PR 合并）
+      - stop-architect.sh：/architect 架构设计完成条件检查（Mode 1 scan / Mode 2 design）
       - stop-decomp.sh：/decomp 工作流完成条件检查（output.json + DB 写入）
       - 职责分离：路由器只负责分发，具体逻辑在 handler 中
       - 写死逻辑：有 .dev-mode 时，任何情况（包括 headless、锁失败）都必须 exit 2，只有真正完成才 exit 0
+      v12.43.0: 新增 .architect-lock.* 路由 → stop-architect.sh（/architect skill Stop Hook 支持）
       v12.32.1: 修复 force_cleanup_worktree 无法删除当前 CWD 所在 worktree 的 Bug（子 shell cd 到 main_wt 再执行 git worktree remove，彻底解决 worktree 残留问题）
       v12.32.0: 清理 /okr 残留 - stop-okr.sh → stop-decomp.sh，.okr-mode → .decomp-mode，删除 skills/okr/
       v12.30.3: 修复泄漏路径 - .dev-lock 丢失但 .dev-mode 存在时，先调 force_cleanup_worktree() 再删 .dev-mode，防止孤立 worktree（W6-006）

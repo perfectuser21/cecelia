@@ -888,6 +888,8 @@ function getSkillForTaskType(taskType, payload) {
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
+    // Architecture 设计
+    'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
