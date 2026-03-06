@@ -1,5 +1,29 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] migration 顺序铁律：先 DROP 约束再 UPDATE 数据（PR #574, Brain v1.197.16）
+
+**失败统计**：0 次 CI 失败，但 deploy 连续 3 次失败（08:54、09:08、10:50）。
+
+**根因**：migration 126 先 UPDATE 数据，再 DROP 约束。新值（'mission'、'vision'）不在旧约束允许列表中，`UPDATE` 被旧 `goals_type_check` 拦截。
+
+**铁律（适用所有 DB 约束变更场景）**：
+
+```sql
+-- ✅ 正确顺序
+ALTER TABLE xxx DROP CONSTRAINT IF EXISTS xxx_check;  -- 1. 先删旧约束
+UPDATE xxx SET col = 'new_value' WHERE col = 'old';   -- 2. 再迁移数据
+ALTER TABLE xxx ADD CONSTRAINT xxx_check CHECK (...); -- 3. 再加新约束
+
+-- ❌ 错误顺序（migration 126 的 bug）
+UPDATE xxx SET col = 'new_value' ...;  -- 被旧约束拦截！
+ALTER TABLE xxx DROP CONSTRAINT ...;
+ALTER TABLE xxx ADD CONSTRAINT ...;
+```
+
+**连锁影响**：migration 126 失败导致 migration 127 也没跑，PR #573（Coding Passway 修复）代码未部署。修复 126 后两个 migration 一起成功部署。
+
+---
+
 ### [2026-03-06] Coding 闭环修复 - planner→architect→dev 链路打通（PR #573, Brain v1.197.15）
 
 **失败统计**：2 次 CI 失败。原因均为编码前未发现的约束问题。
