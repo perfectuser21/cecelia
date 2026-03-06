@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.29.0"
+version: "3.30.0"
 updated: "2026-03-06"
 changelog:
+  - "3.30.0: v12.44.2 - 配置更新：bash-guard.sh HK 部署拦截正则更新新 IP (43.154.85.217 → 124.156.138.116)"
   - "3.29.0: v12.44.0 - /dev skill subagent 并行升级：Step 4 (Explore) 加入 2-3 个 Explore subagent 并行代码探索（对齐 Anthropic feature-dev 插件 code-explorer 模式）；Step 7 (Verify) 新增 7.4 节 3 个 code-reviewer subagent 并行代码审查（simplicity/DRY、bugs/correctness、conventions 三维度）"
   - "3.28.0: v12.43.0 - 新增 /architect skill Stop Hook 支持：stop.sh 路由器 v13.3.0 新增 .architect-lock.* 检测 → stop-architect.sh；新增 stop-architect.sh（Mode 1 scan / Mode 2 design 完成条件检查）"
   - "3.27.0: v12.41.0 - 深度 Bug 修复（3P0+6P1）：cleanup.sh sed step_11_cleanup 静默失败修复（验证后追加）；stop-dev.sh 无头模式锁匹配分支名 fallback（防 exit 0 泄漏）；worktree-gc.sh 脏状态检查（防数据丢失）；孤儿 sentinel/.dev-lock 重试上限（防无限循环）；jq shim（防 set -e 崩溃）；lock-utils.sh 变量隔离（_LU_ 前缀防覆写）；worktree-gc --state all 改 merged+closed；rm -rf 路径安全验证"
