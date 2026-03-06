@@ -88,8 +88,18 @@ class ScannerScheduler {
 
       try {
         const task = await scanner.generateTask(issue);
-        tasks.push(task);
 
+        // 调用 createTaskFn 将任务写入 DB
+        if (createTaskFn) {
+          try {
+            const taskId = await createTaskFn(task);
+            task.id = taskId;
+          } catch (createErr) {
+            console.error(`[ScannerScheduler] Error creating task for ${issue.module_path}:`, createErr.message);
+          }
+        }
+
+        tasks.push(task);
         console.log(`[ScannerScheduler] Generated task: ${task.title}`);
       } catch (error) {
         console.error(`[ScannerScheduler] Error generating task for ${issue.module_path}:`, error.message);
