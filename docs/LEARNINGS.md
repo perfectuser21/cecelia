@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-06] 小任务积累触发 code_review（PR #579, Brain v1.199.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**架构决策**：
+- 新模块 code-review-trigger.js 接口设计为 `(pool, projectId)` 而非 `(pool, taskId)`，保持职责单一（触发逻辑只关心 project）
+- routes.js 注入点：在 execution-callback `newStatus === 'completed'` 块末尾，learnings 写入之后，使用 `Promise.resolve().then(async () => {...}).catch(...)` 模式
+- branch-protect.sh 要求 PRD 文件名为 `.prd-{BRANCH_NAME}.md`，不能用自定义名称（踩坑：创建了 `.prd-code-review-trigger.md` 被拒绝，需重命名）
+
+**影响程度**: Low
+**预防措施**：
+- PRD 文件名必须匹配 `.prd-{CURRENT_BRANCH}.md` 格式，Step 1 创建时直接用分支名
+- fire-and-forget 注入点应在同类操作（desire-feedback、learnings）之后，保持一致的代码顺序
+
 ### [2026-03-06] REST 端点设计：在大 router 后加 fallback 挂载补齐缺口（PR #576, Brain v1.198.0）
 
 **背景**：`GET/PATCH /api/brain/tasks` 在 brainRoutes（routes.js）里，`POST /api/brain/tasks` 从未实现。直接向 routes.js（8000+ 行）追加路由风险高、测试难。
