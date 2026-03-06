@@ -104,7 +104,7 @@ State Management (PostgreSQL) - Jobs, records, credentials
 | Monitoring | Prometheus + Grafana | Open-source, industry standard |
 | Logging | Winston + Loki | Lightweight, easy deployment |
 
-**Deployment**: Docker Compose on Hong Kong VPS (43.154.85.217)
+**Deployment**: Docker Compose on Hong Kong VPS (124.156.138.116)
 
 ### 5. Implementation Roadmap
 
