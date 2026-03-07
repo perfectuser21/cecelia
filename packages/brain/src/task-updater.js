@@ -6,6 +6,7 @@
 
 import pool from './db.js';
 import { publishTaskStarted, publishTaskCompleted, publishTaskFailed, publishTaskProgress } from './events/taskEvents.js';
+import { emit } from './event-bus.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id'];
@@ -159,6 +160,138 @@ function broadcastTaskUpdate(task) {
         }
         publishTaskProgress(task.id, runId, progress);
       }
+  }
+}
+
+/**
+ * Block a task temporarily (e.g. billing cap, rate limit, dependency not ready)
+ * Sets status='blocked' and writes blocked_at/blocked_reason/blocked_detail/blocked_until.
+ * Emits 'task:blocked' event.
+ *
+ * @param {string} taskId - Task ID
+ * @param {Object} options
+ * @param {string} options.reason - Short reason code (e.g. 'billing_cap', 'rate_limit')
+ * @param {string} [options.detail] - Human-readable detail / raw error string
+ * @param {Date|string|null} [options.until] - When to auto-unblock (null = manual only)
+ * @returns {Promise<Object>} - { success, task? }
+ */
+export async function blockTask(taskId, { reason, detail = null, until = null } = {}) {
+  try {
+    const blockedUntil = until ? (until instanceof Date ? until.toISOString() : until) : null;
+    // blocked_detail is JSONB — serialize string details as { message: "..." }
+    const blockedDetail = detail != null
+      ? JSON.stringify(typeof detail === 'string' ? { message: detail } : detail)
+      : null;
+
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'blocked',
+          blocked_at = NOW(),
+          blocked_reason = $2,
+          blocked_detail = $3::jsonb,
+          blocked_until = $4,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [taskId, reason || null, blockedDetail, blockedUntil]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const task = result.rows[0];
+
+    await emit('task:blocked', 'task-updater', {
+      task_id: taskId,
+      task_title: task.title,
+      reason,
+      detail,
+      blocked_until: blockedUntil,
+    });
+
+    console.log(`[task-updater] Task ${taskId} blocked: reason=${reason}, until=${blockedUntil || 'manual'}`);
+    return { success: true, task };
+  } catch (err) {
+    console.error(`[task-updater] Failed to block task ${taskId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Unblock a task and return it to the queued state.
+ * Clears blocked_at/blocked_reason/blocked_detail/blocked_until.
+ * Emits 'task:unblocked' event.
+ *
+ * @param {string} taskId - Task ID
+ * @returns {Promise<Object>} - { success, task? }
+ */
+export async function unblockTask(taskId) {
+  try {
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'queued',
+          blocked_at = NULL,
+          blocked_reason = NULL,
+          blocked_detail = NULL,
+          blocked_until = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [taskId]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const task = result.rows[0];
+
+    await emit('task:unblocked', 'task-updater', {
+      task_id: taskId,
+      task_title: task.title,
+    });
+
+    console.log(`[task-updater] Task ${taskId} unblocked, status → queued`);
+    return { success: true, task };
+  } catch (err) {
+    console.error(`[task-updater] Failed to unblock task ${taskId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Auto-recover expired blocked tasks (blocked_until < now()).
+ * Called by tick.js on each execution.
+ *
+ * @returns {Promise<Array>} - List of recovered tasks { task_id, title }
+ */
+export async function unblockExpiredTasks() {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, blocked_reason
+      FROM tasks
+      WHERE status = 'blocked'
+        AND blocked_until IS NOT NULL
+        AND blocked_until < NOW()
+    `);
+
+    if (result.rows.length === 0) return [];
+
+    const recovered = [];
+    for (const task of result.rows) {
+      const r = await unblockTask(task.id);
+      if (r.success) {
+        recovered.push({ task_id: task.id, title: task.title, blocked_reason: task.blocked_reason });
+      }
+    }
+
+    if (recovered.length > 0) {
+      console.log(`[task-updater] Auto-unblocked ${recovered.length} expired blocked task(s)`);
+    }
+
+    return recovered;
+  } catch (err) {
+    console.error('[task-updater] unblockExpiredTasks error:', err.message);
+    return [];
   }
 }
 
