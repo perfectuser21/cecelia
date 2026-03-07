@@ -45,7 +45,7 @@
     },
     {
       "parameters": {
-        "url": "http://146.190.52.84:9876/execute",
+        "url": "http://134.199.234.147:9876/execute",
         "method": "POST",
         "sendBody": true,
         "specifyBody": "json",
@@ -80,7 +80,7 @@
     },
     {
       "parameters": {
-        "url": "=http://146.190.52.84:9876/result/{{ $json.taskId }}",
+        "url": "=http://134.199.234.147:9876/result/{{ $json.taskId }}",
         "options": {
           "timeout": 10000
         }
@@ -131,7 +131,7 @@
     },
     {
       "parameters": {
-        "url": "=http://146.190.52.84:9876/result/{{ $('提交任务到 Claude').item.json.taskId }}",
+        "url": "=http://134.199.234.147:9876/result/{{ $('提交任务到 Claude').item.json.taskId }}",
         "options": {
           "timeout": 10000
         }

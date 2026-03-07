@@ -41,7 +41,7 @@
     {
       "parameters": {
         "authentication": "privateKey",
-        "host": "146.190.52.84",
+        "host": "134.199.234.147",
         "port": 22,
         "user": "xx",
         "command": "source ~/.credentials/devgate.env && cd /home/xx/dev/zenithjoy-engine && bash scripts/devgate/push-metrics.sh 2>&1"
