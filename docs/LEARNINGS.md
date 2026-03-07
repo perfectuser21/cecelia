@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 资源免疫系统 Phase 1：僵尸 slot 清理 + 孤儿任务检测（PR #662, Brain v1.206.0）
+
+**失败统计**：CI 失败 0 次（一次过）
+
+**背景**：watchdog.resolveTaskPids() 检测到 staleSlots 但 tick.js 没有消费，导致 lock dir 堆积、worktree 残留、DB 中 in_progress 任务永远卡住。
+
+**实现要点**：
+
+1. **zombie-cleaner.js**：新建独立模块，封装三个功能：`cleanZombieSlots(staleSlots)` / `detectOrphanTasks(pidMap)` / `getZombieStats()`。每步独立 try/catch，不影响主 tick 流程
+2. **tick.js 5c 阶段重构**：调用 `resolveTaskPids()` 一次（而不是隐藏在 checkRunaways 内部），得到 pidMap + staleSlots，供 watchdog 和 zombie-cleaner 共用，避免重复扫描
+3. **孤儿判断阈值**：4h 无进程 → failed（zombie_process_gone / orphan_no_process），8h 有进程 → warn（watchdog 负责 kill）
+4. **统计机制**：`_cleanHistory[]` 时间戳数组 + 24h 滑动窗口，getZombieStats() 实时聚合，immune/dashboard API 直接读取，无 DB 开销
+5. **测试 pattern**：`expect(arr).toContain(expect.stringContaining(...))` 在 Vitest 中不工作（需要 `toEqual(expect.arrayContaining([...]))`）
+
+**Worktree 重建（本次再次遇到）**：worktree 目录消失但 .git/worktrees 元数据也不存在。按 MEMORY.md 方法重建 4 个文件，git checkout HEAD -- . 还原代码，再重新应用 PRD/DoD。checkout 会覆盖 PRD/DoD 文件，必须在 checkout 之后重新创建。
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
