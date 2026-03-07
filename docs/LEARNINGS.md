@@ -44,6 +44,28 @@
 - 活跃任务去重用 `IN ('queued', 'in_progress')`（枚举需要拦截的状态）
 - 历史去重用 `NOT IN ('completed', 'failed', 'cancelled')`（排除终态）—— 两种场景语义不同，前者是"现在正在处理的"，后者是"还没结束的"
 
+### [2026-03-07] PR 生命周期追踪 + EXPECTED_SCHEMA_VERSION 测试同步（PR #601, Brain v1.202.0）
+
+**失败统计**：CI 失败 1 次（Brain Tests），本地测试失败 0 次
+
+**问题根因**：
+- 新增 migration 132（`tasks.pr_status`），更新了 `selfcheck.js` 的 `EXPECTED_SCHEMA_VERSION` 从 `'131'` 改为 `'132'`
+- 但项目中有 3 个测试文件硬编码了期望值 `'131'`：`desire-system.test.js`、`selfcheck.test.js`、`learnings-vectorize.test.js`
+- CI 失败信息：`expect(EXPECTED_SCHEMA_VERSION).toBe('131')` → 实际值是 `'132'`
+
+**修复方式**：
+- 同步更新三个测试文件中的断言：`'131'` → `'132'`，同时更新测试描述字符串
+
+**经验教训**：
+- 每次修改 `EXPECTED_SCHEMA_VERSION` 必须同步搜索所有 `__tests__` 文件中的版本硬编码，命令：`grep -rn "Schema_VERSION.*'1[0-9][0-9]'" packages/brain/src/__tests__/`
+- 下次新增 migration 时在 DoD 里明确加入「更新所有测试文件中的版本断言」
+
+**孤儿 Worktree 教训（本次任务发现）**：
+- 初始 worktree 被 Cecelia Brain cleanupOrphanProcesses 清理后，目录残留但 `.git` 文件被删除
+- 症状：Edit/Write 工具看似成功，但文件实际写到孤儿目录、不进 git 追踪
+- 诊断：`git -C <dir> rev-parse --abbrev-ref HEAD` 返回 `main`（继承主仓库）说明 worktree 已失效
+- 修复：`git worktree add <new-path> <branch>` 创建全新 worktree，重写所有文件
+
 ### [2026-03-07] task-generator INSERT 缺字段导致孤儿任务（PR #597, Brain v1.201.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
