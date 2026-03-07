@@ -64,16 +64,7 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
-  // domain 明确传入时 auto-infer owner_role；否则两者均为 null（向后兼容）
-  const domain = domainInput ?? null;
-  const owner_role = domain ? (ownerRoleInput ?? getDomainRole(domain)) : (ownerRoleInput ?? null);
-
-  const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
-    ON CONFLICT DO NOTHING
-    RETURNING *
-  `, [
+  const commonParams = [
     title,
     description || context || '',
     priority || 'P1',
@@ -85,9 +76,34 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     execution_profile || null,
     payload ? JSON.stringify(payload) : null,
     trigger_source || 'brain_auto',
-    domain,
-    owner_role,
-  ]);
+  ];
+
+  let insertSql, insertParams;
+  if (domainInput !== undefined) {
+    // 明确传入 domain：包含 owner_role（$12, $13）
+    const domain = domainInput;
+    const owner_role = ownerRoleInput ?? getDomainRole(domain);
+    insertSql = `
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `;
+    insertParams = [...commonParams, domain, owner_role];
+  } else {
+    // 未传 domain：从 title+description 自动检测，不写 owner_role
+    const detected = detectDomain(`${title} ${description || context || ''}`);
+    const domain = detected.confidence > 0 ? detected.domain : null;
+    insertSql = `
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `;
+    insertParams = [...commonParams, domain];
+  }
+
+  const result = await pool.query(insertSql, insertParams);
 
   // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
   if (result.rows.length === 0) {
@@ -302,9 +318,21 @@ async function createGoal({ title, description, priority, project_id, target_dat
     goalType = 'mission';
   }
 
-  // domain 明确传入时 auto-infer owner_role；否则两者均为 null（向后兼容）
-  const domain = domainInput ?? null;
-  const owner_role = domain ? (ownerRoleInput ?? getDomainRole(domain)) : (ownerRoleInput ?? null);
+  // domain 明确传入时使用，否则从 title+description 自动检测
+  let domain, owner_role;
+  if (domainInput !== undefined) {
+    domain = domainInput;
+    owner_role = ownerRoleInput ?? getDomainRole(domain);
+  } else {
+    const detected = detectDomain(`${title} ${description || ''}`);
+    if (detected.confidence > 0) {
+      domain = detected.domain;
+      owner_role = ownerRoleInput ?? detected.owner_role;
+    } else {
+      domain = null;
+      owner_role = ownerRoleInput ?? null;
+    }
+  }
 
   const result = await pool.query(`
     INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)

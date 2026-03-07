@@ -39,35 +39,43 @@
 
 ---
 
+### [2026-03-07] planner domain 路由：SQL 字符串断言陷阱 (PR #655)
+
+**背景**：`generateArchitectureDesignTask()` 改造为参数化 INSERT（`task_type` 由 `$3` 传入），`coding-passway.test.js` 的断言 `expect(insertCall[0]).toContain('architecture_design')` 立刻失败。
+
+**根本原因**：原 SQL 把 `'architecture_design'` 硬编码在 INSERT 语句中，所以检查 SQL 字符串有效。改为参数化后，`task_type` 在参数数组 `insertCall[1][2]` 中，SQL 字符串里只剩 `$3`。
+
+**解法**：检查参数数组，不检查 SQL 字符串：
+```javascript
+// ❌ 旧断言（检查 SQL 字符串）
+expect(insertCall[0]).toContain('architecture_design');
+
+// ✅ 新断言（检查参数数组）
+expect(insertCall[1][2]).toBe('architecture_design'); // $3 = taskType
+```
+
+**规律**：参数化 SQL 单元测试，应检查 `mockQuery.mock.calls[N][1]`（参数数组），而非 `mockQuery.mock.calls[N][0]`（SQL 字符串）。SQL 字符串检查只适用于硬编码字面量，一旦参数化就会失效。
+
+---
+
+### [2026-03-07] Worktree 目录丢失恢复（Bash CWD 损坏）
+
+**症状**：Worktree 目录被删除后，Bash 工具报 "Working directory no longer exists"，所有命令失败。
+
+**修复步骤**：
+1. 用 Write 工具写入 4 个 git 元数据文件（不依赖 CWD）：
+   - `{worktree}/.git` → `gitdir: {main}/.git/worktrees/{id}`
+   - `{main}/.git/worktrees/{id}/HEAD` → `ref: refs/heads/{branch}`
+   - `{main}/.git/worktrees/{id}/gitdir` → `{worktree}/.git`
+   - `{main}/.git/worktrees/{id}/commondir` → `../..`
+2. Bash 恢复（目录存在了），运行 `git -C {worktree} checkout HEAD -- .` 恢复所有文件
+3. 重建 .dev-mode / .dev-lock / .dev-sentinel / PRD / DoD 文件
+
+**注意**：`git checkout HEAD -- .` 会覆盖所有文件（包括之前写的 .dev-mode），必须在 checkout **之后**重新创建这些文件。
+
+---
+
 ### [2026-03-07] 主动僵尸巡检模块 zombie-sweep.js (v1.211.0)
-
-**背景**：Brain 生产环境积累了大量 stale worktree（17 个），缺少主动清理机制，新增 zombie-sweep.js 三维清理模块。
-
-**架构决策**：
-- `zombie-sweep.js` 导出 `zombieSweep()` + `getZombieSweepStatus()`，不依赖 Brain 内部状态（只依赖 pool/executor/event-bus）
-- tick.js 用 `.then().catch()` 非阻塞调用（30 分钟间隔），异常不影响主 tick 流程
-- 结果写入 `working_memory` key=`zombie_sweep_result` 供 dashboard 展示
-
-**踩坑 1：`sweepOrphanProcesses` 测试 timeout（5 秒 setTimeout）**：
-- 根因：`sweepOrphanProcesses()` 在孤儿进程 SIGTERM 后有 `await new Promise(resolve => setTimeout(resolve, 5000))` 等待
-- 解决：用 `vi.useFakeTimers()` + `vi.runAllTimersAsync()` 快进定时器，测试完成后 `vi.useRealTimers()` 恢复
-
-**踩坑 2：working_memory 断言格式**：
-- 错误：`expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('zombie_sweep_result'), ...)`
-- 根因：SQL 字符串是 `INSERT INTO working_memory ... VALUES ($1, $2, ...)` 不含 'zombie_sweep_result'，它在参数数组里
-- 正确：`expect.stringContaining('working_memory')` 检查 SQL，`expect.arrayContaining(['zombie_sweep_result'])` 检查参数
-
-**踩坑 3：tick-goal-eval 测试预先失败**：
-- 验证方式：`git stash` 后重跑，确认失败早于本次变更（使用 root vitest 配置 5s timeout）
-- 根因：这些测试设计在 brain 包的 30s timeout 下运行，root 配置 5s 不够
-- 结论：非本次引入，可忽略
-
-**版本同步（5 文件）**：
-1. `packages/brain/package.json` → `npm version minor`
-2. `packages/brain/package-lock.json` → 自动更新
-3. `package-lock.json`（root）→ `packages/brain` 段自动更新
-4. `.brain-versions` → `echo "X.Y.Z" >` 写入
-5. `DEFINITION.md` → `**Brain 版本**: X.Y.Z` 行
 
 ---
 
