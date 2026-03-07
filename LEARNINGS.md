@@ -4,6 +4,27 @@
 
 ---
 
+### [2026-03-07] goals/projects/tasks 添加 domain + owner_role 字段 (Migration 134)
+
+**背景**：Cecelia 从单一 Coding 系统进化为多领域管家，需要给 OKR 层级加上领域标签和角色归属。
+
+**关键变更**：
+- Migration 134: goals/projects 加 `domain` + `owner_role`，tasks 加 `domain`
+- selfcheck.js `EXPECTED_SCHEMA_VERSION` 从 '133' → '134'
+- DEFINITION.md 同步 schema 版本
+
+**踩坑：evolution-scanner.test.js 测试隔离 bug（预先存在）**：
+- 根因：`beforeEach` 用 `vi.clearAllMocks()` 不会清除 `mockResolvedValueOnce/mockRejectedValueOnce` 队列
+- 前一个测试未消费的 mock 泄漏到下一个测试，导致 5 个测试级联失败
+- 修复：改为 `vi.resetAllMocks()` + 设置默认 reject 兜底
+- 另外修复一个硬编码日期 `'2026-03-05T14:30:00Z'` 超出 2 天 since 窗口的问题
+
+**教训**：vitest 中 `clearAllMocks` vs `resetAllMocks` 行为差异很大。`clear` 只清调用记录，`reset` 还清 mock 实现队列。测试用 `mockResolvedValueOnce` 时必须用 `resetAllMocks`。
+
+**失败统计**：CI 失败 1 次（evolution-scanner 测试隔离 bug，非本 PR 引入）
+
+---
+
 ### [2026-03-07] 微博发布器（weibo-publisher）验证码接通 + Worktree 重建
 
 **背景**：KR1「8平台发布全自动化」中微博发布器需要接通验证码识别模块。

@@ -740,7 +740,6 @@ describe('scanEvolutionIfNeeded', () => {
           .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       };
 
-      // 要让 pr 在 since 范围内（2天内）
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(prs),
