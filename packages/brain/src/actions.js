@@ -1,6 +1,7 @@
 /* global console */
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
+import { getDomainRole } from './role-registry.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -35,8 +36,10 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.prd_content - PRD content (秋米写的)
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
  * @param {Object} params.payload - Additional payload (initiative_id, kr_goal)
+ * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
+ * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain, owner_role }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -60,9 +63,14 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
+  // Auto-infer owner_role from domain if domain provided but owner_role omitted
+  const resolvedOwnerRole = domain
+    ? (owner_role || getDomainRole(domain))
+    : (owner_role || null);
+
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11)
+    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
     ON CONFLICT DO NOTHING
     RETURNING *
   `, [
@@ -76,7 +84,9 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     prd_content || null,
     execution_profile || null,
     payload ? JSON.stringify(payload) : null,
-    trigger_source || 'brain_auto'
+    trigger_source || 'brain_auto',
+    domain || null,
+    resolvedOwnerRole
   ]);
 
   // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
@@ -114,17 +124,23 @@ async function createTask({ title, description, priority, project_id, goal_id, t
  * @param {string} params.decomposition_mode - 'known'
  * @param {string} params.description - Initiative description
  * @param {string} params.plan_content - Plan document content
+ * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
+ * @param {string} params.owner_role - Role owning this initiative (auto-inferred from domain if omitted)
  */
-async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content, execution_mode, dod_content }) {
+async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content, execution_mode, dod_content, domain, owner_role }) {
   if (!name || !parent_id) {
     return { success: false, error: 'name and parent_id are required' };
   }
 
   const isOrchestrated = execution_mode === 'orchestrated';
 
+  const resolvedOwnerRole = domain
+    ? (owner_role || getDomainRole(domain))
+    : (owner_role || null);
+
   const result = await pool.query(`
-    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status, execution_mode, current_phase, dod_content)
-    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active', $7, $8, $9)
+    INSERT INTO projects (name, parent_id, kr_id, decomposition_mode, description, type, plan_content, status, execution_mode, current_phase, dod_content, domain, owner_role)
+    VALUES ($1, $2, $3, $4, $5, 'initiative', $6, 'active', $7, $8, $9, $10, $11)
     RETURNING *
   `, [
     name,
@@ -135,7 +151,9 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
     plan_content || null,
     execution_mode || 'cecelia',
     isOrchestrated ? 'plan' : null,
-    dod_content ? JSON.stringify(dod_content) : null
+    dod_content ? JSON.stringify(dod_content) : null,
+    domain || null,
+    resolvedOwnerRole
   ]);
 
   const initiative = result.rows[0];
@@ -251,8 +269,10 @@ async function updateTask({ task_id, status, priority }) {
 
 /**
  * Create a new goal
+ * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
+ * @param {string} params.owner_role - Role owning this goal (auto-inferred from domain if omitted)
  */
-async function createGoal({ title, description, priority, project_id, target_date, parent_id, type }) {
+async function createGoal({ title, description, priority, project_id, target_date, parent_id, type, domain, owner_role }) {
   // Auto-determine type based on parent if not provided
   let goalType = type;
   if (!goalType && parent_id) {
@@ -275,9 +295,13 @@ async function createGoal({ title, description, priority, project_id, target_dat
     goalType = 'mission';
   }
 
+  const resolvedOwnerRole = domain
+    ? (owner_role || getDomainRole(domain))
+    : (owner_role || null);
+
   const result = await pool.query(`
-    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0)
+    INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, $8, $9)
     RETURNING *
   `, [
     title,
@@ -286,7 +310,9 @@ async function createGoal({ title, description, priority, project_id, target_dat
     project_id || null,
     target_date || null,
     parent_id || null,
-    goalType
+    goalType,
+    domain || null,
+    resolvedOwnerRole
   ]);
 
   console.log(`[Action] Created goal: ${result.rows[0].id} - ${title} (type: ${goalType})`);
