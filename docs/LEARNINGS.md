@@ -1,5 +1,32 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] domain-detector 模块 + 任务创建自动填充 domain/owner_role（PR #634, Brain v1.207.0）
+
+**失败统计**：CI 失败 1 次（版本冲突），本地测试失败 2 次（关键词误匹配），CI 未自动触发 1 次（需 workflow_dispatch）
+
+**本地测试失败记录**：
+
+- 失败 #1：`'pr'` 是 coding 关键词，但 `'pr'` 是 `'prd'` 的子串，导致含 `'prd'` 的文本被误判为 coding 而非 product → 移除 `'pr'`；同理 `'dev'` 是 `'devops'` 子串，移除 `'dev'` → 下次：**短关键词（2-3 字符）容易成为子串陷阱，不要放入关键词列表**
+- 失败 #2：同上（operations 测试中 `'devops'` 被误命中 coding）
+
+**CI 失败记录**：
+
+- 失败 #1：版本 bump 到 1.206.0 后，CI Version Check 报 `version not bumped`（main 已合并另一 PR 并已是 1.206.0）→ 再次 bump 到 1.207.0 同步 4 文件 → 下次：bump 前先查 `git fetch origin main && git show origin/main:packages/brain/package.json | grep version`
+
+**CI 未自动触发**：force push 后 GitHub 未产生新 `pull_request synchronize` 事件，`gh run list` 显示 CI 仍用旧 commit。解决方案：`gh workflow run brain-ci.yml --ref {branch}` 手动触发 workflow_dispatch，`ci-passed` 允许 Version Check 为 skipped（workflow_dispatch 模式）→ 下次：push 后等 30s，若 `gh run list` 无新 run，立即用 workflow_dispatch
+
+**错误判断记录**：
+
+- `npm version minor` 在 worktree 根目录执行，错误地 bump 了根 `package.json`（v1.200.x）而非 `packages/brain/package.json` → 正确：必须 `cd packages/brain && npm version minor`
+- Worktree 重建后 `git checkout HEAD -- .` 会覆盖已存在的 `.dev-mode`/`.prd`/`.dod` 文件 → 必须在 checkout **之后**重新创建这些文件
+
+**影响程度**: High
+
+**预防措施**：
+- 关键词列表禁止放入 ≤3 字符的英文缩写（`'pr'`、`'dev'`、`'ui'` 等）；改用完整词或更长的上下文词
+- 版本 bump 前必须 fetch origin/main 并对比版本号
+- Worktree 重建步骤：(1) 写 4 个 git 元数据文件 (2) `git checkout HEAD -- .` (3) **重新创建** `.dev-mode`/`.prd`/`.dod`（checkout 会覆盖）
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
