@@ -2980,3 +2980,45 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 **预防措施**：
 - workflows 技能测试优先使用 `node:test`，无需新增依赖
 - 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
+
+---
+
+## [2026-03-07] domain 感知路由 + Initiative domain 继承（Brain v1.206.1，PR #632）
+
+**功能**：task-router.js domain 感知路由、decomposition-checker.js domain 继承、executor.js domain 上下文注入
+
+**关键经验**：
+
+**1. 修改已有函数新增 DB 查询时必须同步更新现有测试的 mock 序列**
+
+`createInitiativePlanTask()` 新增 `SELECT domain FROM projects` 查询后，`decomposition-checker.test.js` 和 `decomp-checker-direct-kr.test.js` 原有的 4 个 mock 调用无法覆盖新增查询，INSERT 拿到 `undefined`，导致 `TypeError: Cannot read properties of undefined (reading 'rows')`。
+
+**诊断方法**：CI 日志中 `createInitiativePlanTask src/decomposition-checker.js:116` 的 TypeError → 是 mock 序列不匹配，而非代码逻辑错误。
+
+**修复方式**：在 `hasExistingInitiativePlanTask` mock 和 INSERT mock 之间插入新的 domain 查询 mock：
+```javascript
+// hasExistingInitiativePlanTask: no existing task
+pool.query.mockResolvedValueOnce({ rows: [] });
+
+// createInitiativePlanTask: SELECT domain FROM projects（domain 继承查询）
+pool.query.mockResolvedValueOnce({ rows: [{ domain: null }] });
+
+// createInitiativePlanTask: INSERT returns new task
+pool.query.mockResolvedValueOnce({ rows: [{ id: '...', title: '...' }] });
+```
+
+**预防措施**：修改现有函数增加 DB 调用时，搜索所有调用该函数的测试文件（`grep -r "createInitiativePlanTask\|functionName" src/__tests__/`），逐一检查 mock 调用数量是否与实际查询数量一致。
+
+**2. domain 查询降级设计**
+
+domain 查询用 try/catch 包裹，失败时 fallback 到 `null`，确保任务仍能创建。这是正确的健壮性设计——domain 是增强信息，不是必要依赖。
+
+**3. DOMAIN_TO_ROLE 映射依赖 role-registry.js**
+
+`getDomainSkillOverride()` 从 `role-registry.js` 的 `DOMAIN_TO_ROLE` 和 `ROLES` 读取映射，coding domain 直接返回 null（走 task_type 默认路由），其他 domain 按角色首选 skill 路由。未知 domain 也返回 null（向后兼容）。
+
+**影响程度**：Medium（两个现有测试文件受影响，CI 第一轮失败）
+
+**预防措施**：
+- 为现有函数新增 DB 查询时，立即检查该函数的所有测试文件并补充 mock
+- 用 `grep -rn "functionName\|ImportedFunction" src/__tests__/` 找到所有受影响测试
