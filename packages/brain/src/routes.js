@@ -1,6 +1,7 @@
  
 import express, { Router } from 'express';
 import { getMonthlyPRCount, getMonthlyPRsByKR, getPRSuccessRate, getPRTrend } from './stats.js';
+import { blockTask, blockTaskWithDetail, unblockTask } from './task-updater.js';
 // Inlined from deleted orchestrator.js / perception.js (1/31 migration remnants replaced by three-layer brain)
 async function getActivePolicy() {
   const result = await pool.query(`SELECT id, version, name, content_json FROM policy WHERE active = true ORDER BY version DESC LIMIT 1`);
@@ -604,6 +605,58 @@ router.get('/goals/:id/okr-context', async (req, res) => {
 });
 
 // ==================== Task Feedback & Status API (Phase 4b) ====================
+
+/**
+ * POST /api/brain/tasks/:id/block
+ * Block a task with a structured reason.
+ * Body: { type: 'dependency'|'pr_review'|'resource'|'manual', blocker_id?, reason, auto_resolve? }
+ */
+router.post('/tasks/:id/block', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { type, blocker_id, reason, auto_resolve } = req.body;
+
+    if (!type || !reason) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: type, reason'
+      });
+    }
+
+    const validTypes = ['dependency', 'pr_review', 'resource', 'manual'];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid type. Allowed: ${validTypes.join(', ')}`
+      });
+    }
+
+    const result = await blockTaskWithDetail(id, { type, blocker_id, reason, auto_resolve });
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/unblock
+ * Unblock a task, returning it to queued status.
+ */
+router.post('/tasks/:id/unblock', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await unblockTask(id);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    return res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 /**
  * POST /api/brain/tasks/:task_id/feedback
@@ -2895,6 +2948,31 @@ router.post('/execution-callback', async (req, res) => {
       } catch (rescheduleErr) {
         console.error(`[execution-callback] reschedule error (non-fatal): ${rescheduleErr.message}`);
       }
+    }
+
+    // Auto-unblock tasks blocked on this task's completion (fire-and-forget)
+    if (newStatus === 'completed') {
+      Promise.resolve().then(async () => {
+        try {
+          const blockedResult = await pool.query(`
+            SELECT id, title FROM tasks
+            WHERE status = 'blocked'
+              AND blocked_detail IS NOT NULL
+              AND blocked_detail->>'type' = 'dependency'
+              AND blocked_detail->>'blocker_id' = $1
+              AND (blocked_detail->>'auto_resolve')::boolean = true
+          `, [task_id]);
+
+          for (const blockedTask of blockedResult.rows) {
+            const unblockResult = await unblockTask(blockedTask.id);
+            if (unblockResult.success) {
+              console.log(`[execution-callback] Auto-unblocked task ${blockedTask.id} (${blockedTask.title}) — dependency ${task_id} completed`);
+            }
+          }
+        } catch (depErr) {
+          console.warn(`[execution-callback] Dependency unblock failed (non-fatal): ${depErr.message}`);
+        }
+      }).catch(err => console.warn(`[execution-callback] dependency-unblock promise error: ${err.message}`));
     }
 
     // Record to EventBus, Circuit Breaker, and Notifier

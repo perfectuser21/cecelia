@@ -9,7 +9,7 @@ import { publishTaskStarted, publishTaskCompleted, publishTaskFailed, publishTas
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id'];
-const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed'];
+const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed', 'blocked'];
 
 /**
  * Update task status and broadcast to WebSocket clients
@@ -194,9 +194,59 @@ export async function blockTask(taskId, reason, blockedUntil) {
 }
 
 /**
- * Unblock a task (手动解除阻塞，释放回 queued)
+ * Block a task with a structured reason (dependency-based auto-unblocking).
+ * Valid state transitions: in_progress -> blocked, queued -> blocked (manual)
  * @param {string} taskId - Task ID
- * @returns {Promise<Object>} - Update result
+ * @param {Object} reason - Blocking reason object
+ * @param {string} reason.type - 'dependency' | 'pr_review' | 'resource' | 'manual'
+ * @param {string} [reason.blocker_id] - ID of the blocking entity (task uuid, PR url, etc.)
+ * @param {string} reason.reason - Human-readable reason string
+ * @param {boolean} [reason.auto_resolve] - Whether to auto-unblock when condition clears
+ * @returns {Promise<Object>} - Operation result
+ */
+export async function blockTaskWithDetail(taskId, reason) {
+  try {
+    const blockedDetail = {
+      type: reason.type,
+      blocker_id: reason.blocker_id || null,
+      reason: reason.reason,
+      blocked_at: new Date().toISOString(),
+      auto_resolve: reason.auto_resolve !== false, // default true
+    };
+
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'blocked',
+          blocked_at = NOW(),
+          blocked_reason = $2,
+          blocked_detail = $3::jsonb,
+          updated_at = NOW()
+      WHERE id = $1
+        AND status IN ('in_progress', 'queued')
+      RETURNING *
+    `, [taskId, reason.reason || reason.type, JSON.stringify(blockedDetail)]);
+
+    if (result.rows.length === 0) {
+      const exists = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [taskId]);
+      if (exists.rows.length === 0) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+      throw new Error(`Task ${taskId} cannot be blocked from status '${exists.rows[0].status}'`);
+    }
+
+    const updatedTask = result.rows[0];
+    broadcastTaskUpdate(updatedTask);
+    return { success: true, task: updatedTask };
+  } catch (err) {
+    console.error(`[task-updater] Failed to block task ${taskId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Unblock a task, returning it to queued status.
+ * @param {string} taskId - Task ID
+ * @returns {Promise<Object>} - Operation result
  */
 export async function unblockTask(taskId) {
   try {
@@ -205,6 +255,7 @@ export async function unblockTask(taskId) {
       SET status = 'queued',
           blocked_at = NULL,
           blocked_reason = NULL,
+          blocked_detail = NULL,
           blocked_until = NULL,
           started_at = NULL,
           updated_at = NOW()
@@ -213,10 +264,16 @@ export async function unblockTask(taskId) {
     `, [taskId]);
 
     if (result.rows.length === 0) {
-      throw new Error(`Task ${taskId} not found or not in blocked state`);
+      const exists = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [taskId]);
+      if (exists.rows.length === 0) {
+        throw new Error(`Task ${taskId} not found`);
+      }
+      throw new Error(`Task ${taskId} is not blocked (status: '${exists.rows[0].status}')`);
     }
 
-    return { success: true, task: result.rows[0] };
+    const updatedTask = result.rows[0];
+    broadcastTaskUpdate(updatedTask);
+    return { success: true, task: updatedTask };
   } catch (err) {
     console.error(`[task-updater] Failed to unblock task ${taskId}:`, err.message);
     return { success: false, error: err.message };

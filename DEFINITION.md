@@ -6,8 +6,7 @@
 
 
 
-**Brain 版本**: 1.210.0
-
+**Brain 版本**: 1.210.1
 **状态**: 生产运行中
 
 ---
@@ -382,16 +381,28 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 137 |
-| **blocks** | 通用 block 存储 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 138 || **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
 
 ```
 queued → in_progress → completed
                     → failed → (retry) → queued
+                    → blocked → (auto/manual unblock) → queued
                     → quarantined → (release) → queued
                                  → (cancel) → cancelled
+queued → blocked (manual)
+```
+
+**blocked_reason JSONB 结构**：
+```json
+{
+  "type": "dependency | pr_review | resource | manual",
+  "blocker_id": "uuid | null",
+  "reason": "human-readable string",
+  "blocked_at": "ISO timestamp",
+  "auto_resolve": true
+}
 ```
 
 ### 4.6 任务类型与路由

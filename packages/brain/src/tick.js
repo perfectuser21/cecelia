@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
+import { unblockTask } from './task-updater.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
@@ -1169,6 +1170,54 @@ async function getRampedDispatchMax(effectiveDispatchMax) {
 }
 
 /**
+ * Auto-unblock tasks whose blocking conditions have been resolved.
+ * Called each tick to scan blocked tasks with auto_resolve=true.
+ * Currently supports: type='dependency' — unblock when blocker_id task is completed.
+ * @returns {Promise<string[]>} - List of unblocked task ids
+ */
+async function autoUnblockBlockedTasks() {
+  const unblocked = [];
+  try {
+    const result = await pool.query(`
+      SELECT id, title, blocked_detail
+      FROM tasks
+      WHERE status = 'blocked'
+        AND blocked_detail IS NOT NULL
+        AND (blocked_detail->>'auto_resolve')::boolean = true
+    `);
+
+    for (const task of result.rows) {
+      const reason = task.blocked_detail;
+      if (!reason) continue;
+
+      let shouldUnblock = false;
+
+      if (reason.type === 'dependency' && reason.blocker_id) {
+        const blockerResult = await pool.query(
+          `SELECT status FROM tasks WHERE id = $1`,
+          [reason.blocker_id]
+        );
+        // Unblock if blocker task is completed or no longer exists
+        if (blockerResult.rows.length === 0 || blockerResult.rows[0].status === 'completed') {
+          shouldUnblock = true;
+        }
+      }
+
+      if (shouldUnblock) {
+        const unblockResult = await unblockTask(task.id);
+        if (unblockResult.success) {
+          console.log(`[tick] Auto-unblocked task ${task.id} (${task.title}) — blocker resolved`);
+          unblocked.push(task.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[tick] autoUnblockBlockedTasks error:', err.message);
+  }
+  return unblocked;
+}
+
+/**
  * Execute a tick - the core self-driving loop
  *
  * 0. Evaluate alertness level
@@ -1900,7 +1949,7 @@ async function executeTick() {
     console.error('[tick] Quarantine check error:', quarantineErr.message);
   }
 
-  // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队
+  // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队（time-based）
   try {
     const blockedReleased = await releaseBlockedTasks();
     for (const r of blockedReleased) {
@@ -1917,6 +1966,16 @@ async function executeTick() {
     }
   } catch (blockedErr) {
     console.error('[tick] Blocked task release error:', blockedErr.message);
+  }
+
+  // Dependency-based auto-unblock: tasks whose blocker dependency completed
+  try {
+    const unblockedIds = await autoUnblockBlockedTasks();
+    for (const taskId of unblockedIds) {
+      actionsTaken.push({ action: 'auto_unblock_dependency', task_id: taskId });
+    }
+  } catch (unblockErr) {
+    console.error('[tick] Dependency auto-unblock error:', unblockErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)
@@ -2582,6 +2641,7 @@ export {
   processCortexTask,
   selectNextDispatchableTask,
   autoFailTimedOutTasks,
+  autoUnblockBlockedTasks,
   routeTask,
   // Drain mode
   drainTick,

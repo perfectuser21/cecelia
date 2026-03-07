@@ -618,8 +618,8 @@ describe('task-updater', () => {
       vi.restoreAllMocks();
     });
 
-    it('所有 VALID_STATUSES 都应被接受（不包含 blocked，blocked 由 blockTask 单独处理）', async () => {
-      const validStatuses = ['queued', 'in_progress', 'completed', 'failed'];
+    it('所有 VALID_STATUSES 都应被接受（包括 blocked）', async () => {
+      const validStatuses = ['queued', 'in_progress', 'completed', 'failed', 'blocked'];
       for (const status of validStatuses) {
         vi.clearAllMocks();
         const task = makeTask({ status });
@@ -651,6 +651,156 @@ describe('task-updater', () => {
           expect(sql).toContain(`${col} = $`);
         }
       }
+    });
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // blockTask
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  describe('blockTask', () => {
+    beforeEach(() => {
+      mockPool.query.mockReset();
+    });
+
+    it('应当成功阻塞 in_progress 任务', async () => {
+      const task = makeTask({ status: 'blocked', blocked_reason: { type: 'dependency', blocker_id: 'dep-001', reason: '等待依赖', blocked_at: new Date().toISOString(), auto_resolve: true } });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      const result = await blockTask('task-001', {
+        type: 'dependency',
+        blocker_id: 'dep-001',
+        reason: '等待依赖',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('blocked');
+      const sql = mockPool.query.mock.calls[0][0];
+      expect(sql).toContain("status = 'blocked'");
+      expect(sql).toContain('blocked_reason = $2::jsonb');
+      // 验证 reason 参数包含必要字段
+      const reasonParam = JSON.parse(mockPool.query.mock.calls[0][1][1]);
+      expect(reasonParam.type).toBe('dependency');
+      expect(reasonParam.blocker_id).toBe('dep-001');
+      expect(reasonParam.auto_resolve).toBe(true);
+      expect(reasonParam.blocked_at).toBeDefined();
+    });
+
+    it('应当在任务不在合法状态时返回错误', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // UPDATE 返回空行（状态不对）
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // EXISTS 查询返回 completed 状态
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-001', status: 'completed' }] });
+
+      const result = await blockTask('task-001', { type: 'manual', reason: '测试' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("cannot be blocked from status 'completed'");
+      errorSpy.mockRestore();
+    });
+
+    it('应当在任务不存在时返回错误', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE 空
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // EXISTS 空
+
+      const result = await blockTask('nonexistent', { type: 'manual', reason: '测试' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found');
+      errorSpy.mockRestore();
+    });
+
+    it('应当默认 auto_resolve=true 当未提供时', async () => {
+      const task = makeTask({ status: 'blocked' });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      await blockTask('task-001', { type: 'manual', reason: '手动阻塞' });
+
+      const reasonParam = JSON.parse(mockPool.query.mock.calls[0][1][1]);
+      expect(reasonParam.auto_resolve).toBe(true);
+    });
+
+    it('应当在 auto_resolve=false 时正确存储', async () => {
+      const task = makeTask({ status: 'blocked' });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      await blockTask('task-001', { type: 'pr_review', reason: '等待 Review', auto_resolve: false });
+
+      const reasonParam = JSON.parse(mockPool.query.mock.calls[0][1][1]);
+      expect(reasonParam.auto_resolve).toBe(false);
+    });
+
+    it('应当处理数据库异常', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockRejectedValueOnce(new Error('DB error'));
+
+      const result = await blockTask('task-001', { type: 'manual', reason: '测试' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('DB error');
+      errorSpy.mockRestore();
+    });
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // unblockTask
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  describe('unblockTask', () => {
+    beforeEach(() => {
+      mockPool.query.mockReset();
+    });
+
+    it('应当成功解除阻塞并将状态改为 queued', async () => {
+      const task = makeTask({ status: 'queued', blocked_reason: null });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('queued');
+      const sql = mockPool.query.mock.calls[0][0];
+      expect(sql).toContain("status = 'queued'");
+      expect(sql).toContain('blocked_reason = NULL');
+      // 验证 WHERE 子句确保只解除 blocked 状态的任务
+      expect(sql).toContain("status = 'blocked'");
+    });
+
+    it('应当在任务不在 blocked 状态时返回错误', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE 空
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-001', status: 'queued' }] }); // EXISTS
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("is not blocked");
+      errorSpy.mockRestore();
+    });
+
+    it('应当在任务不存在时返回错误', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // UPDATE 空
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // EXISTS 空
+
+      const result = await unblockTask('nonexistent');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found');
+      errorSpy.mockRestore();
+    });
+
+    it('应当处理数据库异常', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockRejectedValueOnce(new Error('connection lost'));
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('connection lost');
+      errorSpy.mockRestore();
     });
   });
 });
