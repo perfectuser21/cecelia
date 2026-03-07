@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Brain 启动恢复：孤儿任务重入队（PR #595, Brain v1.200.6）
+
+**失败统计**：CI 失败 2 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：Version Check 失败 — 原因：rebase 后分支的 `packages/brain/package.json` 版本与 main 相同（main 在 rebase 期间被另一 PR 合并，已含 1.200.5），需要再次 bump 到 1.200.6 → 修复：手动 Edit package.json + 同步 VERSION/.brain-versions/package-lock.json → 预防：rebase 后先 check `git diff origin/main -- packages/brain/package.json | grep version`，为空则立即 bump
+- 失败 #2：Facts Consistency 失败 — 原因：DEFINITION.md 的 `**Brain 版本**` 字段未更新（facts-check.mjs 要求 DEFINITION.md 版本号与 package.json 一致）→ 修复：更新 DEFINITION.md Brain 版本行 → 预防：每次 bump 版本后同步检查 DEFINITION.md
+
+**架构知识**：
+- `server.js` `server.listen` 回调是加入启动副作用的正确位置（在 initTickLoop 之前），因为：(1) 端口已就绪，DB 已初始化；(2) tick loop 开始前完成恢复，确保首次 tick 就能派发
+- 孤儿任务判定标准：`status='in_progress' AND updated_at < NOW() - 5 minutes`（用 tasks.updated_at 而非 run_events.heartbeat_ts，因为部分孤儿可能根本没有 run_events 记录）
+- 恢复时同步将对应 run_events 标记为 `cancelled`，防止 monitor-loop 把已恢复的任务当作"stuck"重复处理
+
+**影响程度**: Medium（根本原因修复，防止任务因 Brain 重启长期卡死）
+
+**预防措施**：
+- rebase 后检查版本是否与 main 相同，相同则立即 bump
+- bump 版本同时必须同步 DEFINITION.md（facts-check 强制约束）
+- `check-version-sync.sh` 会发现 package-lock.json 不同步，需一并更新
+
 ### [2026-03-07] cortex.js 反思熔断 - 内容哈希去重 + 重复次数计数器（PR #592, Brain v1.200.4）
 
 **背景**：`analyzeDeep` 没有重复调用防护，thalamus 每次检测到 Level-2 事件都触发一次 Opus LLM 调用。同一告警连续 6 轮产生完全相同的输出，填满告警信道，浪费算力。
