@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] blocked 状态生命周期管理（PR #658, Brain v1.211.0）
+
+**背景**：tasks 表早已有 `blocked_at/blocked_reason/blocked_detail/blocked_until` 4 个字段，但没有任何业务逻辑使用它们。遇到 billing cap/rate limit 只能被 quarantine，无「暂停等待自动恢复」能力。
+
+**实现要点**：
+
+1. **blocked_detail 是 JSONB**：字段类型是 `jsonb` 而非 `text`，直接插入字符串会报 `invalid input syntax for type json`。修复：字符串 detail 统一序列化为 `{ "message": "<str>" }` 再传入，对象直接 `JSON.stringify`。SQL 中用 `$3::jsonb` 显式 cast。
+2. **tick early-return 陷阱**：`unblockExpiredTasks` 必须在 `if (allGoalIds.length === 0)` early return **之前**执行，否则无活跃目标时自动恢复根本跑不到。
+3. **quarantine 循环依赖**：`quarantine.js` 和 `task-updater.js` 如果互相静态 import 会报循环依赖。用 `await import('./task-updater.js')` 动态导入，仅在 BILLING_CAP/RATE_LIMIT 分支执行时导入，避免循环。
+4. **测试 mock 策略**：tick.js 测试用深度 mock（mock task-updater.js 整个模块），验证 `unblockExpiredTasks` 被调用而非实际执行 DB 操作。
+5. **RATE_LIMIT block_until = now + 5min**：`new Date(Date.now() + 5 * 60 * 1000)`；BILLING_CAP 尝试解析 error 字符串中的重置时间，fallback 为 2h。
+
+**Worktree 残留问题（本次再次遇到）**：分配的 worktree 路径 `.claude/worktrees/{id}` 有 git 元数据但无源文件。用 `git worktree add /tmp/cecelia-blocked-lifecycle <branch>` 在新路径创建干净 worktree，所有工作在 `/tmp/` 下完成。
+
+**CI 未自动触发**：push 后 `gh run list` 返回空数组，手动 `gh workflow run brain-ci.yml --ref <branch>` 触发，一次通过。
 ### [2026-03-07] strategy_session 注册 + actions-domain-role 测试修复（PR #654, Brain v1.210.1）
 
 **CI 失败次数**：1（Brain CI，actions-domain-role 预存测试错误）

@@ -1772,6 +1772,26 @@ async function executeTick() {
     allGoalIds = allGoalsResult.rows.map(r => r.id);
   }
 
+  // Auto-recover expired blocked tasks (blocked_until < now → queued)
+  // 无条件执行，不依赖 allGoalIds
+  try {
+    const { unblockExpiredTasks } = await import('./task-updater.js');
+    const recovered = await unblockExpiredTasks();
+    if (recovered.length > 0) {
+      console.log(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
+      for (const r of recovered) {
+        actionsTaken.push({
+          action: 'auto_unblock',
+          task_id: r.task_id,
+          title: r.title,
+          blocked_reason: r.blocked_reason || 'unknown',
+        });
+      }
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task recovery error:', blockedErr.message);
+  }
+
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
     console.log('[tick] No active goals found, skipping tick');
