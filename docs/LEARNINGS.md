@@ -1,5 +1,76 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
+
+**失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
+
+**背景**：planner.js 在 `KR 无 Project` 和 `Objective 无 KR` 时会返回异常 reason，但没有任何补救机制。
+
+**实现要点**：
+
+1. **Check C (checkKRWithoutProject)**：用 `NOT EXISTS (SELECT 1 FROM project_kr_links...)` 直接在 SQL 中过滤无 Project 的 KR，复用 `hasExistingDecompositionTask` 和 `canCreateDecompositionTask` 幂等+WIP 检查
+2. **Check D (checkObjectiveWithoutKR)**：新增独立 `hasExistingStrategicMeetingTask` 函数，使用 `task_type = 'strategic_meeting'` 而非 decomposition 类型，不需要 quality gate
+3. **tick.js 日志**：仅加日志 + actionsTaken，不在 tick 里创建任务，职责分离
+4. **测试**：每个 Check 覆盖正常流程 + 幂等 + WIP/dedup 三个场景
+
+**版本冲突**：rebase 后 package.json 被 main 的 1.204.0 覆盖（与 main 相同），需 bump 到 1.205.0，同步 4 个文件：`package.json`、`packages/brain/package-lock.json`、`package-lock.json`（根级别 packages/brain 条目）、`.brain-versions`、`DEFINITION.md`
+
+**Worktree 重建经历（本次再次触发）**：Worktree 被后台进程删除，`.git/worktrees/` 中无元数据。用 Write 工具重建 4 个文件后 Bash 恢复，再 `git checkout HEAD -- .` 还原所有文件，然后重新应用 Edit 变更。
+
+### [2026-03-07] Migration 134: goals/projects/tasks 多领域 domain + owner_role 字段（PR #616, Brain v1.204.0）
+
+**失败统计**：CI 失败 2 次（版本冲突 × 2）
+
+**背景**：OKR 多领域路由需要按 domain（coding/product/growth 等）和 owner_role（cto/coo/cpo 等）对 goals、projects、tasks 进行分类。
+
+**实现要点**：
+
+1. **Migration SQL**：`ADD COLUMN IF NOT EXISTS` 幂等写法；schema_version INSERT 同步到 `'134'`
+2. **selfcheck.js `EXPECTED_SCHEMA_VERSION`**：从 `'133'` → `'134'`，三处测试断言（desire-system、selfcheck、learnings-vectorize）必须同步更新
+3. **DEFINITION.md 双处同步**：`schema_version` 表数据行 + `Self-check` 规则行，facts-check.mjs 会同时校验两处，漏一处 CI 失败
+
+**版本冲突与 rebase 陷阱**：
+
+- 多个 PR 并发合并时，rebase 后 package.json/DEFINITION.md 会被对方版本覆盖，`.brain-versions` 却还是旧 bump 值，导致 check-version-sync 报 mismatch
+- **必须重新 bump** 到比当前 main 更高的版本，5 个文件必须同步：`package.json`、`package-lock.json`、`VERSION`、`.brain-versions`、`DEFINITION.md`
+- check-version-sync.sh 以 `package.json` 为基准，其余 4 个必须与它完全一致
+
+**vi.clearAllMocks() 不清除 mockResolvedValueOnce 队列**：
+
+- 症状：evolution-scanner 测试中，硬编码日期 `'2026-03-05T14:30:00Z'` 超出 2 天窗口导致测试失败，其 mockFetch 的第二个 `mockResolvedValueOnce` 未被消费
+- 未消费队列泄漏到后续测试，造成 4 个额外测试失败
+- `vi.clearAllMocks()` 只清除调用记录，不清除队列；需用 `vi.resetAllMocks()` 或在 beforeEach 重新 mock
+- 修复：将硬编码日期改为 `new Date(Date.now() - 60 * 60 * 1000).toISOString()`
+
+### [2026-03-07] dev 流水线成功率 API + 端到端健康检查（PR #606, Brain v1.202.3）
+
+**失败统计**：CI 失败 0 次（本地测试 + rebase 解决冲突后 CI 一次通过）
+
+**背景**：`GET /api/brain/dev-pipeline/success-rate` 返回 404，缺少 dev 任务历史成功率 API；也没有统一的端到端健康检查入口。
+
+**实现要点**：
+
+1. **success-rate 路由**：复用现有 `getDispatchStats(pool)` 取 1h 滚动窗口；再用 SQL FILTER 聚合 tasks 表历史数据，`pr_merged_at IS NOT NULL` 作为成功标准
+2. **health 路由**：四路检查各自 try/catch 独立降级，任意 fail 时 `healthy=false`；executor 检查复用已有 `getAllCBStates()`；retry 检查用动态 import 验证模块可加载性
+3. **executor.js 防御性修正**：task_type=null + skill=/dev 时 `task = { ...task, task_type: 'dev' }` 不可变修改，不影响原对象
+
+**测试策略**：
+- 只 mock `db.js` 和 `dispatch-stats.js`，不 mock thalamus/model-profile 等（过度 mock 导致缺失导出错误）
+- 遵循 routes.test.js 的极简策略：mock 工厂内部直接定义 mockPool，避免 vi.hoisted 提升问题
+
+**PR 未触发 CI 的排查**：
+- 初次推送 PR 后 CI 未触发，原因是存在 merge conflict（CONFLICTING）
+- 症状：`gh pr view --json mergeable` 返回 `CONFLICTING`，statusCheckRollup 为空数组
+- 修复：rebase 解决冲突，force push，PR 立即触发 CI
+
+**rebase 冲突要点**：
+- 版本文件（package.json / package-lock.json / .brain-versions / DEFINITION.md）都有冲突时，取 max(HEAD, ours) + 1，统一升到 1.202.3
+- root package-lock.json 中 `packages/brain` 版本字段格式有逗号（`"1.202.x",`），sed 正则需加逗号
+
+**brain-ci.yml workflow_dispatch 陷阱**：
+- 手动触发的 workflow_dispatch 没有 `base_ref`，`Detect Changes` job 检测不到文件变更，所有 Brain Tests 被 skip
+- 解决：不要用 workflow_dispatch 做测试，必须通过 PR 触发（pull_request 事件）
+
 ### [2026-03-07] Worktree 目录删除后 Bash CWD 损坏，Write 工具可绕过（PR #614）
 
 **问题**：worktree 目录被后台进程清理后，Bash 工具 CWD 损坏（"Working directory no longer exists"），所有 bash 命令失败。
