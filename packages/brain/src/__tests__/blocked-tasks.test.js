@@ -187,7 +187,7 @@ describe('unblockExpiredTasks', () => {
 // 枚举完整性
 // ======================================================================
 describe('blocked_reason 枚举完整性', () => {
-  const validReasons = ['dependency', 'resource', 'auth', 'manual', 'rate_limit', 'other'];
+  const validReasons = ['dependency', 'resource', 'auth', 'manual', 'rate_limit', 'billing_cap', 'network', 'other'];
   beforeEach(() => { vi.clearAllMocks(); });
 
   it.each(validReasons)('valid reason: %s', async (reason) => {
@@ -200,7 +200,7 @@ describe('blocked_reason 枚举完整性', () => {
 
   it('无效 reason 拒绝', async () => {
     await expect(blockTask('x', { reason: 'unknown' })).rejects.toThrow('Invalid blocked_reason');
-    await expect(blockTask('x', { reason: 'billing_cap' })).rejects.toThrow('Invalid blocked_reason');
+    await expect(blockTask('x', { reason: 'bad_reason' })).rejects.toThrow('Invalid blocked_reason');
     await expect(blockTask('x', { reason: '' })).rejects.toThrow('Invalid blocked_reason');
   });
 });

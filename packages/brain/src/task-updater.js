@@ -12,7 +12,7 @@ import { emit } from './event-bus.js';
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id'];
 const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed'];
 
-const VALID_BLOCKED_REASONS = ['dependency', 'resource', 'auth', 'manual', 'rate_limit', 'other'];
+const VALID_BLOCKED_REASONS = ['dependency', 'resource', 'auth', 'manual', 'rate_limit', 'billing_cap', 'network', 'other'];
 
 /**
  * Update task status and broadcast to WebSocket clients
