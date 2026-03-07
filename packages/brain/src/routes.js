@@ -3365,6 +3365,63 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
       }
 
+      // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
+      try {
+        const ssTaskResult = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const ssTaskRow = ssTaskResult.rows[0];
+
+        if (ssTaskRow?.task_type === 'strategy_session') {
+          console.log(`[execution-callback] strategy_session task completed, parsing KR JSON...`);
+
+          const outputStr = typeof result === 'string' ? result
+            : (result?.result || result?.output || JSON.stringify(result || ''));
+
+          let parsedOutput = null;
+          const jsonMatch = outputStr.match(/\{[\s\S]*"krs"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              parsedOutput = JSON.parse(jsonMatch[0]);
+            } catch (jsonParseErr) {
+              console.error(`[execution-callback] strategy_session JSON parse error: ${jsonParseErr.message}`);
+            }
+          }
+
+          if (parsedOutput && Array.isArray(parsedOutput.krs) && parsedOutput.krs.length > 0) {
+            const meetingSummary = parsedOutput.meeting_summary || '';
+            const krs = parsedOutput.krs;
+
+            await pool.query(
+              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{meeting_summary}', $1::jsonb) WHERE id = $2`,
+              [JSON.stringify(meetingSummary), task_id]
+            );
+
+            for (const kr of krs) {
+              const krTitle = kr.title || '(untitled KR)';
+              const krDomain = kr.domain || null;
+              const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
+              const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
+
+              await pool.query(
+                `INSERT INTO goals (title, priority, status, progress, domain, owner_role, type)
+                 VALUES ($1, $2, 'pending', 0, $3, $4, 'area_okr')`,
+                [krTitle, krPriority, krDomain, krOwnerRole]
+              );
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
+            }
+
+            console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
+          } else {
+            console.warn(`[execution-callback] strategy_session: no valid krs found in output`);
+            await pool.query(
+              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{strategy_raw_output}', $1::jsonb) WHERE id = $2`,
+              [JSON.stringify(outputStr.slice(0, 2000)), task_id]
+            );
+          }
+        }
+      } catch (strategySessionErr) {
+        console.error(`[execution-callback] strategy_session handling error: ${strategySessionErr.message}`);
+      }
+
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
       try {
         const taskResult = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
