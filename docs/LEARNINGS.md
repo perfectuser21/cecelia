@@ -1,5 +1,79 @@
 # Cecelia Core Learnings
 
+---
+
+## [2026-03-07] initiative_plan domain-aware routing（Brain v1.209.3，PR #644）
+
+**功能**：`getInitiativeSkill(domain)` + `routeTaskCreate` + `getSkillForTaskType` domain 感知路由，initiative_plan 按 domain 分发到对应角色 Skill
+
+**CI 失败次数**：3（mergeStateStatus DIRTY × 2 + task-router-domain.test.js 旧测试冲突 × 1）
+
+**关键经验**：
+
+**1. PR mergeStateStatus=DIRTY 导致 pull_request CI 不触发**
+
+早期 push 后 GitHub CI 完全不起动，排查了很长时间。根本原因：PR 与 main 有 merge conflict，GitHub 无法创建 merge commit，所以不触发 `pull_request` 事件的 CI。
+
+**诊断方法**：
+```bash
+gh pr view <number> --json mergeStateStatus
+# → "DIRTY" 表示有冲突
+# → "UNSTABLE" 表示无冲突但 CI 不全绿
+# → "BEHIND" 表示落后 main 但无冲突
+```
+
+**修复方式**：`git merge origin/main --no-edit` 解决冲突 → push → PR 变为 UNSTABLE → CI 触发。
+
+**2. 并行 PR 造成版本号追尾**
+
+merge 后版本设为 1.209.2，但 CI 运行期间另一个 PR (#641) 也合并到 main 并使用了 1.209.2。Version Check 报 `Base version == Current version`。
+
+**修复方式**：再 merge 一次 main，把版本 bump 到 1.209.3（比 main 1.209.2 高一个 patch）。
+
+**3. 上游 PR 的旧测试与当前 PR DoD 直接冲突**
+
+PR #632 合并了 `task-router-domain.test.js`，其中有一个测试：
+```js
+it('domain 不影响 non-dev task_type 路由（initiative_plan 保持 /decomp）', () => {
+  expect(result.skill).toBe('/decomp');  // 旧行为
+})
+```
+
+但我们的 DoD D6 要求 `initiative_plan + coding → /architect`。这两个期望直接矛盾。
+
+**修复方式**：将该测试更新为验证新行为，并更新测试描述：
+```js
+it('initiative_plan + coding domain → skill=/architect（domain-aware routing via getInitiativeSkill）', () => {
+  expect(result.skill).toBe('/architect');  // 新正确行为
+})
+```
+
+**经验**：当新功能改变已有测试期望时，测试本身就是需要更新的 specification，不是 bug。
+
+**4. 两个 domain 路由函数共存设计**
+
+PR #632 的 `getDomainSkillOverride(taskType, domain)` 和本 PR 的 `getInitiativeSkill(domain)` 设计目标不同：
+- `getDomainSkillOverride`：通用 domain 覆盖，`coding` 返回 null（走默认路由），适用于 dev 等 task_type
+- `getInitiativeSkill`：专用于 initiative_plan，`coding → /architect`，null/unknown → `/decomp`
+
+在 `routeTaskCreate` 中按 task_type 分派：
+```js
+const domainSkill = task_type?.toLowerCase() === 'initiative_plan' && domain
+  ? getInitiativeSkill(domain)
+  : getDomainSkillOverride(task_type, domain);
+```
+
+这种设计保持了两个函数各自的语义纯粹性。
+
+**影响程度**：Medium（3 轮 CI 失败，但每次失败原因不同、可解释）
+
+**预防措施**：
+- 开发前用 `gh pr view <pr> --json mergeStateStatus` 检查 PR 是否 DIRTY
+- 新增 domain 路由功能前，搜索 `task-router-domain.test.js` 检查是否有期望相反行为的旧测试
+- 版本 bump 后立即 push，减少并行 PR 追尾窗口
+
+---
+
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
 **CI 失败次数**：0
