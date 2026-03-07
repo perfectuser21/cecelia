@@ -329,6 +329,57 @@ describe('handlePrMerged', () => {
     expect(clientCalls[2]).toBe('ROLLBACK');
   });
 
+  it('应该在 SQL UPDATE 中直接写入 pr_url 和 pr_merged_at 列', async () => {
+    const mockTask = {
+      id: 'task-uuid-1',
+      title: '实现 GitHub Webhook',
+      status: 'in_progress',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: 'cp-03050939-task-name' },
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 'task-uuid-1',
+            goal_id: 'goal-1',
+            project_id: 'proj-1',
+            pr_url: prInfo.prUrl,
+            pr_merged_at: prInfo.mergedAt
+          }],
+          rowCount: 1
+        }) // UPDATE RETURNING
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // COMMIT
+      release: vi.fn()
+    };
+
+    const mockPool = {
+      query: vi.fn().mockResolvedValueOnce({ rows: [mockTask], rowCount: 1 }),
+      connect: vi.fn(async () => mockClient)
+    };
+
+    await handlePrMerged(mockPool, prInfo);
+
+    // 验证 UPDATE SQL 包含 pr_url 和 pr_merged_at 直接列
+    const updateSql = mockClient.query.mock.calls[1][0];
+    expect(updateSql).toContain('pr_url = $5');
+    expect(updateSql).toContain('pr_merged_at = COALESCE($6::timestamp, NOW())');
+    expect(updateSql).toContain('RETURNING');
+    expect(updateSql).toContain('pr_url');
+    expect(updateSql).toContain('pr_merged_at');
+
+    // 验证参数：$5 = prUrl, $6 = mergedAt
+    const updateParams = mockClient.query.mock.calls[1][1];
+    expect(updateParams).toHaveLength(6);
+    expect(updateParams[4]).toBe(prInfo.prUrl);
+    expect(updateParams[5]).toBe(prInfo.mergedAt);
+  });
+
   it('当 goal_id 为空时应该尝试通过 project_id 查找 KR', async () => {
     const mockTask = {
       id: 'task-uuid-2',
