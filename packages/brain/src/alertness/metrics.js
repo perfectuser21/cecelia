@@ -12,7 +12,7 @@
 /* global console, process */
 
 import os from 'os';
-import pool from '../db.js';
+import pool, { getPoolHealth } from '../db.js';
 
 // ============================================================
 // 阈值定义
@@ -43,6 +43,11 @@ const THRESHOLDS = {
     normal: 10,     // < 10
     warning: 20,    // 10-20
     danger: 50      // > 50
+  },
+  poolWaiting: {
+    normal: 2,      // < 2 waiting connections
+    warning: 5,     // 2-5 waiting
+    danger: 10      // > 10 waiting
   }
 };
 
@@ -55,7 +60,8 @@ let metricsCache = {
   cpu: { value: 0, status: 'normal', timestamp: Date.now() },
   responseTime: { value: 0, status: 'normal', timestamp: Date.now() },
   errorRate: { value: 0, status: 'normal', timestamp: Date.now() },
-  queueDepth: { value: 0, status: 'normal', timestamp: Date.now() }
+  queueDepth: { value: 0, status: 'normal', timestamp: Date.now() },
+  poolHealth: { waiting: 0, idle: 0, total: 0, activeCount: 0, status: 'normal', timestamp: Date.now() }
 };
 
 // 响应时间历史（用于计算平均值）
@@ -94,6 +100,9 @@ export async function collectMetrics() {
 
   // 5. 队列深度
   metrics.queueDepth = await collectQueueDepthMetric();
+
+  // 6. DB 连接池健康（R3）
+  metrics.poolHealth = collectPoolHealthMetric();
 
   // 更新缓存
   metricsCache = metrics;
@@ -218,6 +227,43 @@ async function collectQueueDepthMetric() {
   };
 }
 
+/**
+ * 收集 DB 连接池健康指标（R3）
+ * waiting > 5 或 idle === 0 时告警
+ */
+function collectPoolHealthMetric() {
+  try {
+    const health = getPoolHealth();
+    // waiting > THRESHOLDS.poolWaiting.danger → danger
+    // waiting > THRESHOLDS.poolWaiting.warning → warning
+    // idle === 0 且 total > 0 → warning（所有连接都被占用）
+    let status = 'normal';
+    if (health.waiting >= THRESHOLDS.poolWaiting.danger) {
+      status = 'danger';
+    } else if (health.waiting >= THRESHOLDS.poolWaiting.warning || (health.idle === 0 && health.total > 0)) {
+      status = 'warning';
+    }
+
+    if (status !== 'normal') {
+      console.warn(`[Metrics] DB pool health ${status}: waiting=${health.waiting} idle=${health.idle} total=${health.total}`);
+    }
+
+    return {
+      value: health.waiting,    // waiting 连接数作为主指标值（与其他指标结构对齐）
+      unit: 'connections',
+      waiting: health.waiting,
+      idle: health.idle,
+      total: health.total,
+      activeCount: health.activeCount,
+      status,
+      timestamp: Date.now(),
+    };
+  } catch (error) {
+    console.error('[Metrics] Failed to get pool health:', error);
+    return { value: 0, unit: 'connections', waiting: 0, idle: 0, total: 0, activeCount: 0, status: 'normal', timestamp: Date.now() };
+  }
+}
+
 // ============================================================
 // 辅助函数
 // ============================================================
@@ -318,6 +364,7 @@ export function calculateHealthScore(metrics) {
     responseTime: 0.20,
     errorRate: 0.20,
     queueDepth: 0.10
+    // poolHealth 不参与健康分数（独立告警，不改变现有权重体系）
   };
 
   let totalScore = 0;
