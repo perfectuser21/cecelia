@@ -114,11 +114,10 @@ describe('routeTaskCreate - domain 路由', () => {
     expect(result.domain).toBeNull();
   });
 
-  it('domain 不影响 non-dev task_type 路由（initiative_plan 保持 /decomp）', () => {
+  it('initiative_plan + coding domain → skill=/architect（domain-aware routing via getInitiativeSkill）', () => {
     const result = routeTaskCreate({ title: 'init plan', task_type: 'initiative_plan', domain: 'coding' });
-    // getDomainSkillOverride 仅对 dev task_type 有意义，但 coding domain → null
-    // 所以 initiative_plan 仍然用 SKILL_WHITELIST['initiative_plan'] = /decomp
-    expect(result.skill).toBe('/decomp');
+    // initiative_plan uses getInitiativeSkill: coding → /architect
+    expect(result.skill).toBe('/architect');
   });
 
   it('routing_reason 包含 domain 信息（当 domain 存在时）', () => {
