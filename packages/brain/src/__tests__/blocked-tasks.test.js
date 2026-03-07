@@ -17,6 +17,9 @@ vi.mock('../events/taskEvents.js', () => ({
   publishTaskProgress: vi.fn(),
 }));
 
+// Mock event-bus（blockTask/unblockTask 调用 emit）
+vi.mock('../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
+
 const { blockTask, unblockTask, unblockExpiredTasks } = await import('../task-updater.js');
 
 // ======================================================================
@@ -72,17 +75,18 @@ describe('blockTask', () => {
       .rejects.toThrow('Invalid blocked_reason');
   });
 
-  it('任务不存在或状态不可 block 时抛出错误', async () => {
+  it('任务不存在或状态不可 block 时返回 success:false', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    await expect(blockTask('not-exist', { reason: 'manual' }))
-      .rejects.toThrow('not found or not in a blockable state');
+    const result = await blockTask('not-exist', { reason: 'manual' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found or not in blockable state');
   });
 
-  it('已是 blocked 状态无法再次 block（WHERE 条件过滤）', async () => {
+  it('已是 blocked 状态无法再次 block（WHERE 条件过滤，返回 success:false）', async () => {
     // DB 返回空行（因为 status = 'blocked' 不满足 WHERE IN ('queued','in_progress','failed')）
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    await expect(blockTask('task-blocked', { reason: 'manual' }))
-      .rejects.toThrow();
+    const result = await blockTask('task-blocked', { reason: 'manual' });
+    expect(result.success).toBe(false);
   });
 
   it('detail 为对象时直接序列化', async () => {
@@ -122,16 +126,17 @@ describe('unblockTask', () => {
     expect(sql).toContain("AND status = 'blocked'");
   });
 
-  it('非 blocked 状态任务调用 unblock 抛出错误', async () => {
+  it('非 blocked 状态任务调用 unblock 返回 success:false', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    await expect(unblockTask('task-queued'))
-      .rejects.toThrow("not in 'blocked' status");
+    const result = await unblockTask('task-queued');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found or not in blocked state');
   });
 
-  it('任务不存在时抛出错误', async () => {
+  it('任务不存在时返回 success:false', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    await expect(unblockTask('not-exist'))
-      .rejects.toThrow();
+    const result = await unblockTask('not-exist');
+    expect(result.success).toBe(false);
   });
 });
 
@@ -141,11 +146,21 @@ describe('unblockTask', () => {
 describe('unblockExpiredTasks', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('解除过期 blocked 任务，返回解除数量', async () => {
-    mockQuery.mockResolvedValueOnce({ rowCount: 3, rows: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
+  it('解除过期 blocked 任务，返回解除任务数组', async () => {
+    // 第一个 query: SELECT 过期任务
+    mockQuery.mockResolvedValueOnce({ rows: [
+      { id: 'a', title: 'Task A', blocked_reason: 'rate_limit' },
+      { id: 'b', title: 'Task B', blocked_reason: 'manual' },
+    ] });
+    // 第二、三个 query: unblockTask 的 UPDATE（每个任务一次）
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a', status: 'queued', title: 'Task A' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'b', status: 'queued', title: 'Task B' }] });
 
-    const count = await unblockExpiredTasks();
-    expect(count).toBe(3);
+    const recovered = await unblockExpiredTasks();
+    expect(Array.isArray(recovered)).toBe(true);
+    expect(recovered.length).toBe(2);
+    expect(recovered[0].task_id).toBe('a');
+    expect(recovered[0].blocked_reason).toBe('rate_limit');
 
     const [sql] = mockQuery.mock.calls[0];
     expect(sql).toContain("status = 'blocked'");
@@ -153,16 +168,18 @@ describe('unblockExpiredTasks', () => {
     expect(sql).toContain('blocked_until < NOW()');
   });
 
-  it('无过期任务时返回 0', async () => {
-    mockQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
-    const count = await unblockExpiredTasks();
-    expect(count).toBe(0);
+  it('无过期任务时返回空数组', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const recovered = await unblockExpiredTasks();
+    expect(Array.isArray(recovered)).toBe(true);
+    expect(recovered.length).toBe(0);
   });
 
-  it('DB 报错时静默返回 0（不抛出）', async () => {
+  it('DB 报错时静默返回空数组（不抛出）', async () => {
     mockQuery.mockRejectedValueOnce(new Error('DB connection lost'));
-    const count = await unblockExpiredTasks();
-    expect(count).toBe(0);
+    const recovered = await unblockExpiredTasks();
+    expect(Array.isArray(recovered)).toBe(true);
+    expect(recovered.length).toBe(0);
   });
 });
 
