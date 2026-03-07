@@ -32,13 +32,6 @@ import {
 import { validatePolicyJson } from './policy-validator.js';
 
 // ============================================================
-// 重复告警熔断
-// ============================================================
-
-const _cortexDedupCache = new Map();
-const CORTEX_DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 分钟内同一告警只分析一次
-
-// ============================================================
 // Cortex Prompt
 // ============================================================
 
@@ -328,17 +321,6 @@ async function analyzeDeep(event, thalamusDecision = null) {
   }
 
   console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
-
-  // 重复告警熔断：同一事件内容 30 分钟内跳过
-  const dedupKey = `${event.type}:${JSON.stringify(event).slice(0, 300)}`;
-  const dedupHash = crypto.createHash('sha256').update(dedupKey).digest('hex').slice(0, 16);
-  const lastSeen = _cortexDedupCache.get(dedupHash);
-  if (lastSeen && Date.now() - lastSeen < CORTEX_DEDUP_WINDOW_MS) {
-    console.log(`[cortex] 重复告警熔断 (hash=${dedupHash.slice(0, 8)}, ${Math.round((Date.now() - lastSeen) / 60000)}min ago)`);
-    return createCortexFallback(event, 'duplicate alert within 30min window');
-  }
-  _cortexDedupCache.set(dedupHash, Date.now());
-  for (const [k, ts] of _cortexDedupCache) { if (Date.now() - ts > CORTEX_DEDUP_WINDOW_MS) _cortexDedupCache.delete(k); }
 
   // 构建上下文
   const context = {
