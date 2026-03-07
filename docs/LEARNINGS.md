@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] domain/owner_role 自动填充 + 路由集成（PR #623, Brain v1.205.1）
+
+**失败统计**：CI 首次触发失败（pull_request 事件未触发），手动 workflow_dispatch 替代
+
+**背景**：Stage 0.5 领域判断实现——从任务 title/description 关键词推断 domain（10 个领域）和 owner_role，并在 task-router.js 中 domain 优先于 task_type 路由。
+
+**实现要点**：
+
+1. **domain-map.js**：纯关键词匹配，`DOMAIN_PRIORITY` 数组控制优先级（高 index 高优先级），避免 "整理"/"文档" 类泛词加入 knowledge 关键词（会误匹配 product 类任务）
+2. **actions.js**：`createTask()` 在 dedup 检查前自动 detectDomain + getDomainOwnerRole，外部显式传值优先
+3. **task-router.js**：`DOMAIN_LOCATION_MAP` 覆盖 `LOCATION_MAP`，growth/finance/research → hk，其余 → us
+4. **Migration 重命名**：开发时命名为 134，rebase 后 main 已有 schema 135，重命名为 136
+
+**DoD Test 字段格式**：`check-dod-mapping.cjs` 解析器只接受 `tests/...`、`contract:<ID>`、`manual:<cmd>` 三种格式。路径必须以 `tests/` 开头（不接受 `packages/brain/src/__tests__/`），`manual:` 前缀可用任意可执行命令，但禁止 `test -f`（视为假测试），需用 `node -e "..."` 或 `npx vitest run` 替代。
+
+**pull_request CI 未触发问题**：本次 PR 的 pull_request 事件触发 CI 失败（原因未知）。通过 `workflow_dispatch` 手动触发 Brain CI、Engine CI、Quality CI、Workspace CI、Workflows CI，DevGate 不支持 dispatch，依靠 Brain CI 的 `ci-passed` job 满足分支保护要求。
+
+**rebase 冲突文件**：`.brain-versions`、`DEFINITION.md`、`packages/brain/package.json`、`packages/brain/VERSION`、`packages/brain/package-lock.json`、`package-lock.json`（根）、3 个 test 文件（schema version 断言）、`selfcheck.js`（schema version 常量）— 共 10 个文件冲突，均需手动用 node 脚本解决。
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
