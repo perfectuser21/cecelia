@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Worktree 目录删除后 Bash CWD 损坏，Write 工具可绕过（PR #614）
+
+**问题**：worktree 目录被后台进程清理后，Bash 工具 CWD 损坏（"Working directory no longer exists"），所有 bash 命令失败。
+
+**根因**：Bash 工具在执行前检查 CWD 是否存在，目录不存在时拒绝运行任何命令，包括带 `cd` 的命令。
+
+**解决**：用 Write 工具（不依赖 CWD）在 worktree 路径手动创建 4 个文件重建 git worktree 结构：
+1. `.git/worktrees/{id}/HEAD` → `ref: refs/heads/{branch}`
+2. `.git/worktrees/{id}/gitdir` → `{worktree_dir}/.git`
+3. `.git/worktrees/{id}/commondir` → `../..`
+4. `{worktree_dir}/.git` → `gitdir: {main_repo}/.git/worktrees/{id}`
+
+创建目录后 Bash 工具即可恢复，然后 `git checkout HEAD -- .` 还原所有文件。
+
+---
+
 ### [2026-03-07] N8N platform_scrape.sh 调度脚本（PR #612）
 
 **背景**：N8N 单元工作流已在 main 分支（JSON 文件存在，SKILL.md 已标记 ✅），但调用入口 `platform_scrape.sh` 不在版本控制中。
