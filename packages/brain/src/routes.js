@@ -3004,8 +3004,9 @@ router.post('/execution-callback', async (req, res) => {
 
         // Classify the failure
         const { classifyFailure } = await import('./quarantine.js');
-        const taskRow = await pool.query('SELECT payload FROM tasks WHERE id = $1', [task_id]);
+        const taskRow = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
         const taskPayload = taskRow.rows[0]?.payload || {};
+        const taskType = taskRow.rows[0]?.task_type;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
         isBillingCap = classification.class === 'billing_cap';
 
@@ -3056,6 +3057,44 @@ router.post('/execution-callback', async (req, res) => {
             [task_id, JSON.stringify({ needs_human_review: true })]
           );
           console.log(`[execution-callback] Needs human review: task=${task_id} class=${classification.class}`);
+        }
+
+        // === Dev 任务失败智能重试（补充 quarantine 未处理的 code_error / transient）===
+        // 仅当 quarantine 未处理（failureHandled=false）且 task_type=dev 时触发
+        // 注：taskType 和 taskPayload 在此 try 块内有效
+        if (!failureHandled && taskType === 'dev') {
+          try {
+            const { classifyDevFailure } = await import('./dev-failure-classifier.js');
+            const retryCount = taskPayload.retry_count || 0;
+            const devClassification = classifyDevFailure(result, status, { retryCount });
+
+            console.log(`[execution-callback] Dev failure classified: task=${task_id} class=${devClassification.class} retryable=${devClassification.retryable} retry=${retryCount}`);
+
+            if (devClassification.retryable) {
+              await pool.query(
+                `UPDATE tasks SET status = 'queued', started_at = NULL,
+                 payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+                 WHERE id = $1 AND status = 'failed'`,
+                [task_id, JSON.stringify({
+                  next_run_at: devClassification.next_run_at,
+                  retry_count: retryCount + 1,
+                  retry_reason: devClassification.retry_reason,
+                  previous_failure: devClassification.previous_failure,
+                  dev_retry: {
+                    class: devClassification.class,
+                    attempt: retryCount + 1,
+                    scheduled_at: devClassification.next_run_at,
+                  },
+                })]
+              );
+              console.log(`[execution-callback] Dev smart retry: task=${task_id} class=${devClassification.class} attempt=${retryCount + 1} next_run_at=${devClassification.next_run_at}`);
+              failureHandled = true;
+            } else {
+              console.log(`[execution-callback] Dev failure not retryable: task=${task_id} class=${devClassification.class} reason=${devClassification.reason}`);
+            }
+          } catch (devClassifyErr) {
+            console.error(`[execution-callback] Dev classification error: ${devClassifyErr.message}`);
+          }
         }
       } catch (classifyErr) {
         console.error(`[execution-callback] Classification error: ${classifyErr.message}`);
