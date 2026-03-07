@@ -49,10 +49,10 @@ describe('Coding Passway: generateArchitectureDesignTask', () => {
     expect(result.task_type).toBe('architecture_design');
     expect(result.status).toBe('queued');
 
-    // 验证 INSERT 查询被调用，且包含 architecture_design task_type
+    // 验证 INSERT 查询被调用，且 task_type 参数为 architecture_design
     const insertCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks'));
     expect(insertCall).toBeDefined();
-    expect(insertCall[0]).toContain('architecture_design');
+    expect(insertCall[1][2]).toBe('architecture_design'); // $3 = taskType
     // 验证 INSERT 参数包含 initiative.name
     expect(insertCall[1][0]).toContain('Test Initiative');
   });
