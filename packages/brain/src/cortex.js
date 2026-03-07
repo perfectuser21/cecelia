@@ -336,7 +336,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
       FROM decision_log
       WHERE created_at > NOW() - INTERVAL '24 hours'
       ORDER BY created_at DESC
-      LIMIT 10
+      LIMIT 5
     `);
     context.recent_decisions = historyResult.rows;
   } catch (err) {
@@ -362,7 +362,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
     task_type: event.failed_task?.task_type || event.task?.task_type,
     failure_class: event.failure_history?.[0]?.failure_classification?.class,
     event_type: event.type
-  }, 10);
+  }, 5);
 
   if (learnings.length > 0) {
     context.historical_learnings = learnings.map((l, i) => ({
