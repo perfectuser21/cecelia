@@ -252,6 +252,136 @@ describe('decomposition-checker v2.0', () => {
     });
   });
 
+  // ─── Check C: checkReadyKRsWithoutProject ───
+
+  describe('Check C: checkReadyKRsWithoutProject', () => {
+    it('should create decomposition task for ready KR without project', async () => {
+      const { checkReadyKRsWithoutProject } = await import('../decomposition-checker.js');
+
+      // Find ready KRs without project (NOT EXISTS subquery)
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P1' }]
+      });
+
+      // hasExistingDecompositionTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // canCreateDecompositionTask → under WIP limit
+      pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
+
+      // createDecompositionTask INSERT
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-c1', title: 'KR 拆解: Orphan KR' }]
+      });
+
+      const actions = await checkReadyKRsWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('create_decomposition_kr_no_project');
+      expect(actions[0].goal_id).toBe('kr-1');
+      expect(actions[0].task_id).toBe('task-c1');
+    });
+
+    it('should skip KR that has existing decomposition task (dedup)', async () => {
+      const { checkReadyKRsWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P1' }]
+      });
+
+      // hasExistingDecompositionTask → existing found
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-task' }] });
+
+      const actions = await checkReadyKRsWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_dedup');
+      expect(actions[0].check).toBe('kr_no_project');
+    });
+
+    it('should skip when WIP limit reached', async () => {
+      const { checkReadyKRsWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P1' }]
+      });
+
+      // hasExistingDecompositionTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // canCreateDecompositionTask → at WIP limit
+      pool.query.mockResolvedValueOnce({ rows: [{ count: '3' }] });
+
+      const actions = await checkReadyKRsWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_wip');
+    });
+
+    it('should return empty when no ready KRs without project', async () => {
+      const { checkReadyKRsWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const actions = await checkReadyKRsWithoutProject();
+      expect(actions.length).toBe(0);
+    });
+  });
+
+  // ─── Check D: checkObjectivesWithoutKR ───
+
+  describe('Check D: checkObjectivesWithoutKR', () => {
+    it('should create strategy_session task for objective without KR', async () => {
+      const { checkObjectivesWithoutKR } = await import('../decomposition-checker.js');
+
+      // Find objectives without KR
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'obj-1', title: 'Grand Vision', description: 'vision desc', priority: 'P0' }]
+      });
+
+      // hasExistingStrategySessionTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // INSERT strategy_session task
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-d1', title: '战略会议: Grand Vision 无 KR 待拆解' }]
+      });
+
+      const actions = await checkObjectivesWithoutKR();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('create_strategy_session');
+      expect(actions[0].goal_id).toBe('obj-1');
+      expect(actions[0].task_id).toBe('task-d1');
+    });
+
+    it('should skip objective that already has a strategy_session task (dedup)', async () => {
+      const { checkObjectivesWithoutKR } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'obj-1', title: 'Grand Vision', description: 'desc', priority: 'P0' }]
+      });
+
+      // hasExistingStrategySessionTask → existing found
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-session' }] });
+
+      const actions = await checkObjectivesWithoutKR();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_dedup');
+      expect(actions[0].check).toBe('objective_no_kr');
+    });
+
+    it('should return empty when all objectives have KRs', async () => {
+      const { checkObjectivesWithoutKR } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const actions = await checkObjectivesWithoutKR();
+      expect(actions.length).toBe(0);
+    });
+  });
+
   // ─── createDecompositionTask ───
 
   describe('createDecompositionTask', () => {

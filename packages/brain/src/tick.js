@@ -1903,6 +1903,13 @@ async function executeTick() {
           project: planned.project,
           note: 'waiting_for_decomposition_checker'
         });
+      } else if (planned.reason === 'no_project_for_kr') {
+        // KR exists but has no Project — decomposition-checker.js Check C will handle it
+        actionsTaken.push({
+          action: 'no_project_for_kr',
+          kr: planned.kr,
+          note: 'waiting_for_decomp_checker_check_c'
+        });
       }
     } catch (planErr) {
       console.error('[tick-loop] Planner error:', planErr.message);

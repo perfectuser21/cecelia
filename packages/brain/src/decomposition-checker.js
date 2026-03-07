@@ -329,6 +329,197 @@ async function checkReadyKRInitiatives() {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// Check C: Ready/InProgress KR 无 Project → 触发秋米拆解
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * 检测 ready/in_progress 状态但没有关联 Project 的 KR。
+ * 若无 Project，创建秋米拆解任务（KR → Project → Initiative）。
+ *
+ * 触发条件：
+ *   - KR status IN ('ready', 'in_progress')
+ *   - 通过 project_kr_links 没有关联的活跃 Project
+ *   - 没有已存在的拆解任务（去重）
+ *   - 未达 WIP 上限
+ */
+async function checkReadyKRsWithoutProject() {
+  const actions = [];
+
+  const result = await pool.query(`
+    SELECT g.id, g.title, g.description, g.priority
+    FROM goals g
+    WHERE g.type = 'area_okr'
+      AND g.status IN ('ready', 'in_progress')
+      AND NOT EXISTS (
+        SELECT 1 FROM project_kr_links pkl
+        JOIN projects p ON pkl.project_id = p.id
+        WHERE pkl.kr_id = g.id
+          AND p.type = 'project'
+          AND p.status NOT IN ('completed', 'archived')
+      )
+  `);
+
+  for (const kr of result.rows) {
+    // 去重检查
+    if (await hasExistingDecompositionTask(kr.id)) {
+      actions.push({ action: 'skip_dedup', check: 'kr_no_project', goal_id: kr.id, title: kr.title });
+      continue;
+    }
+
+    // WIP 限制
+    if (!(await canCreateDecompositionTask())) {
+      actions.push({ action: 'skip_wip', check: 'kr_no_project', goal_id: kr.id, title: kr.title });
+      break;
+    }
+
+    // 创建拆解任务
+    const task = await createDecompositionTask({
+      title: `KR 拆解: ${kr.title}`,
+      description: [
+        `KR「${kr.title}」已处于 ready/in_progress 状态，但尚未关联 Project，无法执行。`,
+        '',
+        '请为该 KR 拆解出 Project 和 Initiative：',
+        '1. 分析 KR，拆解为 1-2 个 Project（目标型工作容器）',
+        '2. 每个 Project 下创建 2-3 个 Initiative（一组 PR 的闭环工作包）',
+        '3. 每个 Initiative 需要：方向描述 + 成功标准',
+        '4. 不需要创建 Task — Task 由 planner 按需创建',
+        '',
+        '调用 Brain API 创建：',
+        '  创建 Project: POST http://localhost:5221/api/brain/action/create-project',
+        `    Body: { "name": "...", "type": "project", "status": "active" }`,
+        '',
+        '  关联 KR: POST http://localhost:5221/api/brain/action/link-project-kr',
+        `    Body: { "project_id": "...", "kr_id": "${kr.id}" }`,
+        '',
+        '  创建 Initiative: POST http://localhost:5221/api/brain/action/create-project',
+        `    Body: { "name": "...", "type": "initiative", "parent_id": "<project_id>", "status": "active" }`,
+        '',
+        `KR ID: ${kr.id}`,
+        `KR 标题: ${kr.title}`,
+        `KR 描述: ${kr.description || '(无)'}`,
+        `优先级: ${kr.priority}`,
+      ].join('\n'),
+      goalId: kr.id,
+      payload: { level: 'kr', kr_id: kr.id, reason: 'no_project' }
+    });
+
+    if (task && !task.rejected) {
+      console.log(`[decomp-checker] Check C: KR ${kr.id} has no project, created decomp task: ${task.title}`);
+      actions.push({
+        action: 'create_decomposition_kr_no_project',
+        check: 'kr_no_project',
+        goal_id: kr.id,
+        task_id: task.id,
+        title: kr.title,
+      });
+    } else {
+      actions.push({ action: 'skip_rejected', check: 'kr_no_project', goal_id: kr.id, title: kr.title });
+    }
+  }
+
+  return actions;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Check D: Objective 无子 KR → 触发战略会议
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * 检测是否已有 strategy_session 任务关联该 Objective（去重）。
+ */
+async function hasExistingStrategySessionTask(objectiveId) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE goal_id = $1
+      AND task_type = 'strategy_session'
+      AND status IN ('queued', 'in_progress')
+    LIMIT 1
+  `, [objectiveId]);
+  return result.rows.length > 0;
+}
+
+/**
+ * 检测 pending/in_progress 状态但没有子 KR 的 Objective（mission/vision）。
+ * 若无 KR → 创建 strategy_session 类型任务，触发战略会议拆解方向。
+ *
+ * 触发条件：
+ *   - Objective type IN ('mission', 'vision')
+ *   - status IN ('pending', 'in_progress')
+ *   - 没有子 KR（goals.parent_id = objective.id AND type = 'area_okr'）
+ *   - 没有已存在的 strategy_session 任务（去重）
+ */
+async function checkObjectivesWithoutKR() {
+  const actions = [];
+
+  const result = await pool.query(`
+    SELECT g.id, g.title, g.description, g.priority
+    FROM goals g
+    WHERE g.type IN ('mission', 'vision')
+      AND g.status IN ('pending', 'in_progress')
+      AND NOT EXISTS (
+        SELECT 1 FROM goals kr
+        WHERE kr.parent_id = g.id
+          AND kr.type = 'area_okr'
+          AND kr.status NOT IN ('completed', 'cancelled')
+      )
+  `);
+
+  for (const objective of result.rows) {
+    // 去重检查
+    if (await hasExistingStrategySessionTask(objective.id)) {
+      actions.push({
+        action: 'skip_dedup',
+        check: 'objective_no_kr',
+        goal_id: objective.id,
+        title: objective.title,
+      });
+      continue;
+    }
+
+    // 创建战略会议任务
+    const description = [
+      `Objective「${objective.title}」尚无子 KR，无法推进。`,
+      '',
+      '请召开战略会议，为该 Objective 拆解 KR：',
+      '1. 分析 Objective 的愿景和目标',
+      '2. 制定 2-4 个关键结果（KR），每个 KR 需要：',
+      '   - 明确的可量化指标',
+      '   - 优先级（P0/P1/P2）',
+      '   - 时间周期',
+      '3. 通过 Brain API 创建 KR：',
+      '   POST http://localhost:5221/api/brain/goals',
+      `   Body: { "title": "...", "type": "area_okr", "parent_id": "${objective.id}", "priority": "P1", "status": "pending" }`,
+      '',
+      `Objective ID: ${objective.id}`,
+      `Objective 标题: ${objective.title}`,
+      `Objective 描述: ${objective.description || '(无)'}`,
+    ].join('\n');
+
+    const insertResult = await pool.query(`
+      INSERT INTO tasks (title, description, status, priority, goal_id, task_type, trigger_source)
+      VALUES ($1, $2, 'queued', 'P0', $3, 'strategy_session', 'brain_auto')
+      RETURNING id, title
+    `, [
+      `战略会议: ${objective.title} 无 KR 待拆解`,
+      description,
+      objective.id,
+    ]);
+
+    const task = insertResult.rows[0];
+    console.log(`[decomp-checker] Check D: Objective ${objective.id} has no KR, created strategy_session task: ${task.title}`);
+    actions.push({
+      action: 'create_strategy_session',
+      check: 'objective_no_kr',
+      goal_id: objective.id,
+      task_id: task.id,
+      title: objective.title,
+    });
+  }
+
+  return actions;
+}
+
+// ───────────────────────────────────────────────────────────────────
 // Main entry point
 // ───────────────────────────────────────────────────────────────────
 
@@ -356,19 +547,39 @@ async function runDecompositionChecks() {
       console.error('[decomp-checker] Check B (ready KR initiatives) failed:', err.message);
     }
 
+    // Check C: ready/in_progress KR 无 Project → 秋米拆解
+    try {
+      const noProjectActions = await checkReadyKRsWithoutProject();
+      allActions.push(...noProjectActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check C (ready KRs without project) failed:', err.message);
+    }
+
+    // Check D: Objective 无子 KR → 战略会议
+    try {
+      const noKRActions = await checkObjectivesWithoutKR();
+      allActions.push(...noKRActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check D (objectives without KR) failed:', err.message);
+    }
+
     // Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
+    const krNoProjectCreated = allActions.filter(a => a.action === 'create_decomposition_kr_no_project').length;
+    const strategySessionsCreated = allActions.filter(a => a.action === 'create_strategy_session').length;
     const initiativePlansCreated = allActions.filter(a => a.action === 'create_initiative_plan').length;
     const statusChanges = allActions.filter(a => a.action === 'status_change').length;
 
-    if (totalCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0) {
-      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes`);
+    if (totalCreated > 0 || krNoProjectCreated > 0 || strategySessionsCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0) {
+      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${krNoProjectCreated} kr_no_project tasks, ${strategySessionsCreated} strategy_session tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes`);
     }
 
     return {
       actions: allActions,
       summary: {
         created: totalCreated,
+        kr_no_project_created: krNoProjectCreated,
+        strategy_sessions_created: strategySessionsCreated,
         initiative_plans_created: initiativePlansCreated,
         status_changes: statusChanges,
       },
@@ -388,9 +599,12 @@ export {
   runDecompositionChecks,
   checkPendingKRs,
   checkReadyKRInitiatives,
+  checkReadyKRsWithoutProject,
+  checkObjectivesWithoutKR,
   // Shared helpers (exported for testing)
   hasExistingDecompositionTask,
   hasExistingInitiativePlanTask,
+  hasExistingStrategySessionTask,
   canCreateDecompositionTask,
   createDecompositionTask,
   createInitiativePlanTask,
