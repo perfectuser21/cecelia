@@ -138,6 +138,9 @@ describe('decomposition-checker v2.0', () => {
       // hasExistingInitiativePlanTask: no existing task
       pool.query.mockResolvedValueOnce({ rows: [] });
 
+      // createInitiativePlanTask: SELECT domain FROM projects（domain 继承查询）
+      pool.query.mockResolvedValueOnce({ rows: [{ domain: null }] });
+
       // createInitiativePlanTask: INSERT returns new task
       pool.query.mockResolvedValueOnce({ rows: [{ id: 'task-new', title: 'Initiative 规划: Test Initiative' }] });
 

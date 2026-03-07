@@ -8,6 +8,7 @@
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { getDomainRole, ROLES } from './role-registry.js';
+import { detectDomain } from './domain-detector.js';
 
 // Learning penalty configuration
 const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
@@ -452,8 +453,12 @@ async function generateArchitectureDesignTask(kr, project) {
 
     const initiative = initiativeResult.rows[0];
 
-    // Determine domain: Initiative.domain → Project.domain → KR.domain → default 'coding'
-    const domain = initiative.domain || project.domain || kr.domain || 'coding';
+    // Determine domain: Initiative.domain → Project.domain → KR.domain → detectDomain fallback → default 'coding'
+    const detectedKRDomain = (() => {
+      const detected = detectDomain(`${kr.title || ''} ${kr.description || ''}`);
+      return detected.confidence > 0 ? detected.domain : null;
+    })();
+    const domain = initiative.domain || project.domain || kr.domain || detectedKRDomain || 'coding';
     const isCodingDomain = domain === 'coding';
 
     // Determine task_type and payload based on domain
@@ -494,10 +499,10 @@ async function generateArchitectureDesignTask(kr, project) {
       ...extraPayload
     });
 
-    // Create planning task
+    // Create planning task with domain/owner_role propagation
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
-      VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7)
+      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
       RETURNING *
     `, [
       taskTitle,
@@ -506,7 +511,9 @@ async function generateArchitectureDesignTask(kr, project) {
       kr.priority || 'P1',
       initiative.id,
       kr.id,
-      payload
+      payload,
+      domain,
+      getDomainRole(domain)
     ]);
 
     const newTask = insertResult.rows[0];

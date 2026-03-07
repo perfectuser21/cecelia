@@ -14,8 +14,11 @@ const mockClientQuery = vi.hoisted(() => vi.fn());
 const mockLoadavg = vi.hoisted(() => vi.fn(() => [1.0]));
 const mockCpus = vi.hoisted(() => vi.fn(() => [1, 2, 3, 4])); // 4核
 
+const mockGetPoolHealth = vi.hoisted(() => vi.fn(() => ({ total: 0, idle: 0, waiting: 0, activeCount: 0 })));
+
 vi.mock('../../db.js', () => ({
-  default: { connect: mockConnect }
+  default: { connect: mockConnect },
+  getPoolHealth: mockGetPoolHealth
 }));
 
 vi.mock('os', () => ({
@@ -45,7 +48,8 @@ describe('alertness/metrics', () => {
     vi.resetModules();
 
     vi.mock('../../db.js', () => ({
-      default: { connect: mockConnect }
+      default: { connect: mockConnect },
+      getPoolHealth: mockGetPoolHealth
     }));
     vi.mock('os', () => ({
       default: {
