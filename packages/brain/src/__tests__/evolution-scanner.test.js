@@ -53,6 +53,8 @@ function makePR(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // mockFetch 需要 reset 而不只是 clear，否则未消耗的 mockResolvedValueOnce 会泄漏到下一个测试
+  mockFetch.mockReset();
   delete process.env.GITHUB_TOKEN;
 });
 
@@ -721,7 +723,9 @@ describe('scanEvolutionIfNeeded', () => {
     });
 
     it('merged_at 日期正确提取为 date 字段', async () => {
-      const mergedAt = '2026-03-05T14:30:00Z';
+      // 使用相对时间（1小时前），确保始终在 2 天窗口内
+      const mergedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const expectedDate = mergedAt.slice(0, 10);
       const prs = [makePR({ number: 42, merged_at: mergedAt })];
 
       const insertArgs = [];
@@ -736,7 +740,6 @@ describe('scanEvolutionIfNeeded', () => {
           .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       };
 
-      // 要让 pr 在 since 范围内（2天内）
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(prs),
@@ -748,7 +751,7 @@ describe('scanEvolutionIfNeeded', () => {
 
       await scanEvolutionIfNeeded(pool);
       // date 是第 1 个参数（index 0）
-      expect(insertArgs[0]?.[0]).toBe('2026-03-05');
+      expect(insertArgs[0]?.[0]).toBe(expectedDate);
     });
   });
 

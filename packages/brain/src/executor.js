@@ -1614,6 +1614,12 @@ async function triggerCeceliaRun(task) {
     // 检查 task_type 合理性（warning 级别，不阻塞执行）
     checkTaskTypeMatch(task);
 
+    // 防御性修正：task_type=null 但 skill=/dev 时自动填充 task_type=dev
+    if (!task.task_type && task.payload?.skill === '/dev') {
+      console.warn(`[executor] task_type=null but skill=/dev for task ${task.id}, auto-filling task_type=dev`);
+      task = { ...task, task_type: 'dev' };
+    }
+
     // Prepare prompt content, permission mode, extra env, and model based on task_type
     const taskType = task.task_type || 'dev';
     const promptContent = await preparePrompt(task);

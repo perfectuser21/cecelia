@@ -4,6 +4,51 @@
 
 ---
 
+### [2026-03-07] goals/projects/tasks 添加 domain + owner_role 字段 (Migration 134)
+
+**背景**：Cecelia 从单一 Coding 系统进化为多领域管家，需要给 OKR 层级加上领域标签和角色归属。
+
+**关键变更**：
+- Migration 134: goals/projects 加 `domain` + `owner_role`，tasks 加 `domain`
+- selfcheck.js `EXPECTED_SCHEMA_VERSION` 从 '133' → '134'
+- DEFINITION.md 同步 schema 版本
+
+**踩坑：evolution-scanner.test.js 测试隔离 bug（预先存在）**：
+- 根因：`beforeEach` 用 `vi.clearAllMocks()` 不会清除 `mockResolvedValueOnce/mockRejectedValueOnce` 队列
+- 前一个测试未消费的 mock 泄漏到下一个测试，导致 5 个测试级联失败
+- 修复：改为 `vi.resetAllMocks()` + 设置默认 reject 兜底
+- 另外修复一个硬编码日期 `'2026-03-05T14:30:00Z'` 超出 2 天 since 窗口的问题
+
+**教训**：vitest 中 `clearAllMocks` vs `resetAllMocks` 行为差异很大。`clear` 只清调用记录，`reset` 还清 mock 实现队列。测试用 `mockResolvedValueOnce` 时必须用 `resetAllMocks`。
+
+**失败统计**：CI 失败 1 次（evolution-scanner 测试隔离 bug，非本 PR 引入）
+
+---
+
+### [2026-03-07] goals 表 domain/owner_role 索引 + 角色注册表（PR #618）
+
+**背景**：Initiative 1 补充 goals 表索引 + 代码级角色注册表。Migration 134 已由同期 PR 添加字段，本 PR 补充索引（135）和 role-registry.js 模块。
+
+**关键经验**：
+
+1. **PRD 迁移编号需实地确认**：PRD 中写的编号与实际最新 migration 不符，写代码前必须 `ls migrations/ | sort | tail` 确认真实编号。
+
+2. **Phantom Worktree 陷阱**：
+   - 触发条件：worktree 目录存在但无 `.git` 文件、未在 worktree list 注册。
+   - 症状：Write 工具返回 "File created successfully" 但文件不存在。
+   - 修复：`git -C /main/repo worktree add <新路径> <分支名>`。
+   - 诊断：`git -C /main/repo worktree list | grep <branch>`。
+
+3. **版本管理层级**：monorepo 有根 `package.json` 和 `packages/brain/package.json` 两层，Brain CI 只看后者，不要误 bump 根目录。
+
+4. **facts-check schema_version 双处同步**：DEFINITION.md 中 schema_version 在表格行和自检描述两处，新增 migration 时都要更新。
+
+5. **并行 PR 版本冲突**：当多个 PR 同时 bump brain 版本时，rebase 时需要在对方版本基础上再 +1 patch。
+
+**失败统计**：CI 失败 0 次（本地全部通过后才 push）
+
+---
+
 ### [2026-03-07] 微博发布器（weibo-publisher）验证码接通 + Worktree 重建
 
 **背景**：KR1「8平台发布全自动化」中微博发布器需要接通验证码识别模块。
