@@ -464,6 +464,10 @@
               "skill": "/architect"
             },
             {
+              "taskType": "strategy_session",
+              "skill": "/strategy-session"
+            },
+            {
               "taskType": "qa",
               "skill": "/code-review"
             },
@@ -824,6 +828,7 @@
     "decomp_review": "/decomp-check",
     "suggestion_plan": "/plan",
     "architecture_design": "/architect",
+    "strategy_session": "/strategy-session",
     "qa": "/code-review",
     "audit": "/code-review"
   },
@@ -844,9 +849,10 @@
     "initiative_plan": "/decomp",
     "initiative_verify": "/decomp",
     "suggestion_plan": "/plan",
-    "architecture_design": "/architect"
+    "architecture_design": "/architect",
+    "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-05T16:26:11.593Z",
+  "generatedAt": "2026-03-07T16:55:16.642Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
