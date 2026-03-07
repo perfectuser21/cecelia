@@ -33,6 +33,29 @@
 
 **测试结果**：45 passed, 17 skipped（Linux-only tests on Darwin）
 
+---
+
+### [2026-03-07] 启动僵尸清理增强 + emergency-cleanup 重试机制（PR #642, Brain v1.210.0）
+
+**失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
+
+**关键实现要点**：
+
+- `cleanupStaleLockSlots()` 用 `process.kill(pid, 0)` 检查进程存活（跨平台，macOS/Linux 均可用），`EPERM` = 进程存活但无权限 → 保留 slot，`ESRCH` = 进程不存在 → 删除 slot
+- `emergencyCleanup` 同步重试用 `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)` 实现，零子进程开销，在 Node.js 主线程可用
+- emit 参数可注入（`{ emit = null }`），便于测试和 event-bus 集成，emit 本身抛出时 catch 忽略不影响主流程
+- `.dev-mode.` 前缀文件扫描 — 只清理有分支后缀的（`.dev-mode.cp-xxx`），裸的 `.dev-mode` 跳过（可能是当前活跃会话）
+
+**Worktree 元数据恢复**：
+
+- `git checkout HEAD -- .` 会删除所有未追踪文件（包括 `.dev-mode`），恢复后需重建 `.dev-mode`、PRD、DoD
+- Bash 工具 CWD 损坏时：用 Write 工具写4个文件重建 worktree 元数据（HEAD/gitdir/commondir + worktree .git 文件），然后 `git checkout HEAD -- .` 恢复源文件
+
+**测试设计**：
+
+- `process.kill` 在测试中用 `vi.spyOn(process, 'kill').mockImplementation(...)` mock
+- 累计统计 `_stats` 跨测试用例共享（ES 模块单例），测试中用 `statsBefore/statsAfter` 对比 delta，不假设绝对值
+
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
 **CI 失败次数**：0
@@ -45,7 +68,6 @@
 2. **clearTimeout 修复**：原始代码中 `send()` 的 60s 超时计时器不会被清除，导致测试套件运行 60s。修复：在回调消费时调用 `clearTimeout(timer)`，测试从 60s 缩短到 105ms
 3. **孤儿 Promise 陷阱**：测试 `send()` 时若不响应请求，60s 计时器在测试结束后触发，导致 `unhandledRejection`。解决：每个 `send()` 调用必须配套响应消息，消费 callback 同时取消 timer
 4. **packages/workflows PRD 优先级陷阱（再次遇到）**：`packages/workflows/.prd.md` 旧残留导致 hook 匹配错误 PRD。需在 `packages/workflows/` 目录下创建分支专用 `.prd-<branch>.md` 和 `.dod-<branch>.md`（同 PR #609 经验）
-5. **Worktree 重建**：同之前 PR 经验，Write 工具写 4 个元数据文件重建 worktree，Bash CWD 恢复后 `git checkout HEAD -- .` 还原文件
 
 **测试结果**：35 个测试全部通过（utils: 21 + cdp-client: 14）
 
