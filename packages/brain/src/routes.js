@@ -46,6 +46,7 @@ import { getCurrentAlertness, setManualOverride, clearManualOverride, evaluateAl
 // Constants previously in old alertness.js, kept for hardening status route
 const EVENT_BACKLOG_THRESHOLD = 50;
 import { handleTaskFailure, getQuarantinedTasks, getQuarantineStats, releaseTask, quarantineTask, QUARANTINE_REASONS, REVIEW_ACTIONS, classifyFailure } from './quarantine.js';
+import { getDispatchStats } from './dispatch-stats.js';
 import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './events/taskEvents.js';
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
@@ -11005,6 +11006,140 @@ router.post('/webhook/github', express.raw({ type: 'application/json' }), async 
     console.error('[webhook/github] 处理失败:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
+});
+
+/**
+ * GET /api/brain/dev-pipeline/success-rate
+ * dev 流水线成功率统计
+ *
+ * 返回：
+ *   window_1h  - 最近 1 小时派发窗口统计（来自 dispatch-stats）
+ *   lifetime   - 历史 dev 任务统计（来自 DB）
+ */
+router.get('/dev-pipeline/success-rate', async (req, res) => {
+  try {
+    // 1h 窗口统计（dispatch-stats）
+    const dispatchStats = await getDispatchStats(pool);
+
+    // 历史统计：dev 任务总数 / 已完成 / 有 PR 合并
+    const lifetimeResult = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE pr_merged_at IS NOT NULL) AS with_pr
+      FROM tasks
+      WHERE task_type = 'dev'
+    `);
+    const row = lifetimeResult.rows[0];
+    const total = parseInt(row.total, 10);
+    const completed = parseInt(row.completed, 10);
+    const withPr = parseInt(row.with_pr, 10);
+    const successRate = total > 0 ? withPr / total : null;
+
+    return res.json({
+      window_1h: dispatchStats.window_1h,
+      lifetime: {
+        total,
+        completed,
+        with_pr: withPr,
+        success_rate: successRate,
+      },
+    });
+  } catch (err) {
+    console.error('[API] dev-pipeline/success-rate error:', err.message);
+    return res.status(500).json({ error: 'Failed to get dev pipeline success rate', details: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/dev-pipeline/health
+ * dev 流水线端到端健康检查
+ *
+ * 检查每个环节：
+ *   task_generator - 最近生成的任务是否有 task_type 字段
+ *   executor       - cecelia-run 熔断器状态
+ *   pr_callback    - 近期是否有成功的 PR 合并回调
+ *   retry          - dev-failure-classifier 是否可正常加载
+ */
+router.get('/dev-pipeline/health', async (req, res) => {
+  const checks = {};
+  let allOk = true;
+
+  // 1. task_generator：检查最近 10 个任务是否有 task_type
+  try {
+    const recentResult = await pool.query(`
+      SELECT COUNT(*) FILTER (WHERE task_type IS NOT NULL) AS typed,
+             COUNT(*) AS total
+      FROM (SELECT task_type FROM tasks ORDER BY created_at DESC LIMIT 10) t
+    `);
+    const typed = parseInt(recentResult.rows[0].typed, 10);
+    const total = parseInt(recentResult.rows[0].total, 10);
+    if (total === 0) {
+      checks.task_generator = { status: 'warn', detail: 'no tasks found' };
+    } else if (typed === 0) {
+      checks.task_generator = { status: 'fail', detail: `0/${total} recent tasks have task_type` };
+      allOk = false;
+    } else if (typed < total) {
+      checks.task_generator = { status: 'warn', detail: `${typed}/${total} recent tasks have task_type` };
+    } else {
+      checks.task_generator = { status: 'ok', detail: `${typed}/${total} recent tasks have task_type` };
+    }
+  } catch (err) {
+    checks.task_generator = { status: 'fail', detail: err.message };
+    allOk = false;
+  }
+
+  // 2. executor：cecelia-run 熔断器状态
+  try {
+    const cbState = getAllCBStates();
+    const ceceliaRunState = cbState['cecelia-run'];
+    if (!ceceliaRunState || ceceliaRunState.state === 'CLOSED') {
+      checks.executor = { status: 'ok', detail: ceceliaRunState ? `state=${ceceliaRunState.state}` : 'no circuit breaker (never failed)' };
+    } else if (ceceliaRunState.state === 'HALF_OPEN') {
+      checks.executor = { status: 'warn', detail: `state=HALF_OPEN failures=${ceceliaRunState.failures}` };
+    } else {
+      checks.executor = { status: 'fail', detail: `state=OPEN failures=${ceceliaRunState.failures}` };
+      allOk = false;
+    }
+  } catch (err) {
+    checks.executor = { status: 'fail', detail: err.message };
+    allOk = false;
+  }
+
+  // 3. pr_callback：近 7 天内是否有 PR 合并回调
+  try {
+    const callbackResult = await pool.query(`
+      SELECT COUNT(*) AS cnt
+      FROM tasks
+      WHERE pr_merged_at IS NOT NULL
+        AND pr_merged_at > NOW() - INTERVAL '7 days'
+    `);
+    const cnt = parseInt(callbackResult.rows[0].cnt, 10);
+    if (cnt > 0) {
+      checks.pr_callback = { status: 'ok', detail: `${cnt} PR merges in last 7 days` };
+    } else {
+      checks.pr_callback = { status: 'warn', detail: 'no PR merges in last 7 days' };
+    }
+  } catch (err) {
+    checks.pr_callback = { status: 'fail', detail: err.message };
+    allOk = false;
+  }
+
+  // 4. retry：dev-failure-classifier 是否可正常加载
+  try {
+    const mod = await import('./dev-failure-classifier.js');
+    if (typeof mod.classifyDevFailure === 'function') {
+      checks.retry = { status: 'ok', detail: 'dev-failure-classifier loaded' };
+    } else {
+      checks.retry = { status: 'fail', detail: 'classifyDevFailure not exported' };
+      allOk = false;
+    }
+  } catch (err) {
+    checks.retry = { status: 'fail', detail: err.message };
+    allOk = false;
+  }
+
+  return res.json({ healthy: allOk, checks });
 });
 
 export default router;
