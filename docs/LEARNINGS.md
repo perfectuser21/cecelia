@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] tasks blocked 状态 + API 支持（PR #639, Brain v1.209.3）
+
+**CI 失败次数**：3（Version Check ×3，均因 main 并行 PR 版本追赶）
+
+**背景**：main 已有 migration 137（blocked_at/blocked_reason），本 PR 只补充 blocked_by 字段（migration 138），并补充 decision-executor mark_task_blocked 写 DB 逻辑 + POST /block /unblock 端点。
+
+**实现要点**：
+
+1. **并行 PR 版本追赶地狱**：本次 CI 因版本冲突失败 3 次：main 先后合并到 1.209.1 → 1.209.2，每次都需要再 bump。解决思路：每次 `git fetch origin main` 检查最新版本，立即再 +0.0.1 重新推送
+2. **merge 代替 rebase 解决版本冲突**：在 detached HEAD（rebase 中）时 branch-protect hook 拦截编辑。改用 `git merge origin/main --no-edit`，保持在功能分支，hook 正常放行
+3. **CI 不触发问题**：对已有 PR 分支的 push 有时不触发 CI（statusCheckRollup 为空）。解决：`gh pr close && gh pr reopen` 触发 synchronized 事件，或 merge main 后 push 新提交
+4. **migration 编号冲突**：并行 PR 导致两个分支均使用同号 migration。规则：开发前先 `ls packages/brain/migrations/ | sort | tail -5` 检查最大编号，取 +1 编号
+5. **main 已有实现 → 只补缺失**：main 已通过 migration 137 添加了 blocked_at/blocked_reason/blocked_until，本 PR 只需添加 blocked_by（migration 138），并同步更新 selfcheck.js EXPECTED_SCHEMA_VERSION
+
+**版本同步 5 个文件**：packages/brain/package.json → packages/brain/package-lock.json（2处）→ package-lock.json（root，packages/brain 条目）→ .brain-versions → DEFINITION.md
+
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
 **CI 失败次数**：0
