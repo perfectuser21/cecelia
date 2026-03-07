@@ -167,6 +167,49 @@ const CORTEX_ACTION_WHITELIST = {
 };
 
 // ============================================================
+// 反思熔断（Reflection Circuit Breaker）
+// ============================================================
+
+const REFLECTION_WINDOW_MS = 30 * 60 * 1000; // 30 分钟窗口
+const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
+
+/** 内存状态：eventHash → { count, firstSeen, lastSeen } */
+const _reflectionState = new Map();
+
+/**
+ * 计算事件内容哈希（type + failure_class + task_type）
+ * @param {Object} event
+ * @returns {string} 16字符 hex
+ */
+function _computeEventHash(event) {
+  const key = JSON.stringify({
+    type: event.type,
+    failure_class: event.failure_history?.[0]?.failure_classification?.class ?? null,
+    task_type: event.failed_task?.task_type ?? event.task?.task_type ?? null,
+  });
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/**
+ * 检查并更新反思熔断器
+ * @param {string} hash
+ * @returns {{ open: boolean, count: number }}
+ */
+function _checkReflectionBreaker(hash) {
+  const now = Date.now();
+  const state = _reflectionState.get(hash);
+
+  if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
+    _reflectionState.set(hash, { count: 1, firstSeen: now, lastSeen: now });
+    return { open: false, count: 1 };
+  }
+
+  state.count += 1;
+  state.lastSeen = now;
+  return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
+}
+
+// ============================================================
 // Cortex LLM 调用（通过统一 callLLM 层）
 // ============================================================
 
@@ -269,7 +312,15 @@ function createCortexFallback(event, reason) {
  * @returns {Promise<Object>} - Cortex Decision
  */
 async function analyzeDeep(event, thalamusDecision = null) {
-  console.log(`[cortex] Deep analysis triggered for event: ${event.type}`);
+  // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
+  const _eventHash = _computeEventHash(event);
+  const _breaker = _checkReflectionBreaker(_eventHash);
+  if (_breaker.open) {
+    console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
+    return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
+  }
+
+  console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
 
   // 构建上下文
   const context = {
