@@ -277,3 +277,44 @@ describe('GET /dev-success-rate', () => {
     });
   });
 });
+
+// ===== D4/D5: GET /dev-pipeline 端到端成功率 =====
+
+describe('GET /dev-pipeline', () => {
+  const handler = getHandler('/dev-pipeline');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('D4: 正常返回端到端成功率（pr_merged / total_dev）', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [{ total_dev: '10', pr_merged: '7' }],
+    });
+
+    const { req, res } = mockReqRes();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    const data = res._data;
+    expect(data.total_dev).toBe(10);
+    expect(data.pr_merged).toBe(7);
+    expect(data.end_to_end_success_rate).toBe(0.7); // 7/10
+    expect(data.target).toBe(0.70);
+  });
+
+  it('D5: total_dev=0 时 end_to_end_success_rate=0，不报错', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [{ total_dev: '0', pr_merged: '0' }],
+    });
+
+    const { req, res } = mockReqRes();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    expect(res._data.total_dev).toBe(0);
+    expect(res._data.pr_merged).toBe(0);
+    expect(res._data.end_to_end_success_rate).toBe(0);
+    expect(res._data.target).toBe(0.70);
+  });
+});

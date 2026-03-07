@@ -153,4 +153,31 @@ router.get('/dev-success-rate', async (req, res) => {
   }
 });
 
+// GET /dev-pipeline — dev 任务端到端成功率（pr_merged / total_dev）
+router.get('/dev-pipeline', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE payload->>'decomposition' IS DISTINCT FROM 'true') AS total_dev,
+        COUNT(*) FILTER (WHERE pr_merged_at IS NOT NULL AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_merged
+      FROM tasks
+      WHERE task_type = 'dev'
+    `);
+
+    const totalDev = parseInt(result.rows[0]?.total_dev ?? '0', 10);
+    const prMerged = parseInt(result.rows[0]?.pr_merged ?? '0', 10);
+    const endToEndSuccessRate = totalDev > 0 ? Math.round((prMerged / totalDev) * 1000) / 1000 : 0;
+
+    return res.json({
+      end_to_end_success_rate: endToEndSuccessRate,
+      pr_merged: prMerged,
+      total_dev: totalDev,
+      target: 0.70,
+    });
+  } catch (err) {
+    console.error('[stats] dev-pipeline query failed:', err.message);
+    return res.status(500).json({ error: 'Failed to query dev pipeline stats', details: err.message });
+  }
+});
+
 export default router;

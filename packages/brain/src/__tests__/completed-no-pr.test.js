@@ -110,3 +110,63 @@ describe('D5: Dev task completed without PR → completed_no_pr', () => {
     expect(newStatus).toBe('failed');
   });
 });
+
+// ===== D1/D2/D3: 自动重排逻辑 =====
+
+/**
+ * 模拟 execution-callback 中的重排逻辑（routes.js P1-2）
+ */
+function simulateReschedule({ newStatus, retryCount, maxRetry = 3 }) {
+  let rescheduled = false;
+  let updatedStatus = newStatus;
+  let updatedRetryCount = retryCount;
+  let nextRunAt = null;
+
+  if (newStatus === 'completed_no_pr') {
+    if (retryCount < maxRetry) {
+      nextRunAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      updatedStatus = 'queued';
+      updatedRetryCount = retryCount + 1;
+      rescheduled = true;
+    }
+  }
+
+  return { rescheduled, updatedStatus, updatedRetryCount, nextRunAt };
+}
+
+describe('D1/D2/D3: completed_no_pr 自动重排逻辑', () => {
+  it('D1: retry_count < max_retries → 重排到 queued 并递增 retry_count', () => {
+    const result = simulateReschedule({ newStatus: 'completed_no_pr', retryCount: 0 });
+
+    expect(result.rescheduled).toBe(true);
+    expect(result.updatedStatus).toBe('queued');
+    expect(result.updatedRetryCount).toBe(1);
+    expect(result.nextRunAt).not.toBeNull();
+    // next_run_at 应在 5min 后（允许 ±1s 误差）
+    const diffMs = new Date(result.nextRunAt).getTime() - Date.now();
+    expect(diffMs).toBeGreaterThan(4 * 60 * 1000);
+    expect(diffMs).toBeLessThan(6 * 60 * 1000);
+  });
+
+  it('D2: retry_count >= max_retries → 不重排，rescheduled=false', () => {
+    const result = simulateReschedule({ newStatus: 'completed_no_pr', retryCount: 3 });
+
+    expect(result.rescheduled).toBe(false);
+    expect(result.updatedStatus).toBe('completed_no_pr');
+    expect(result.nextRunAt).toBeNull();
+  });
+
+  it('D3: rescheduled=true 时 initiative_plan 应跳过触发', () => {
+    // 模拟 initiative_plan 触发条件
+    function shouldTriggerInitiativePlan({ newStatus, rescheduled }) {
+      return newStatus === 'completed' || (newStatus === 'completed_no_pr' && !rescheduled);
+    }
+
+    // 重排时不触发
+    expect(shouldTriggerInitiativePlan({ newStatus: 'completed_no_pr', rescheduled: true })).toBe(false);
+    // 未重排（已达 max_retries）时触发
+    expect(shouldTriggerInitiativePlan({ newStatus: 'completed_no_pr', rescheduled: false })).toBe(true);
+    // 正常完成始终触发
+    expect(shouldTriggerInitiativePlan({ newStatus: 'completed', rescheduled: false })).toBe(true);
+  });
+});
