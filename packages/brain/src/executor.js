@@ -23,7 +23,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
 import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
-import { getTaskLocation } from './task-router.js';
+import { getTaskLocation, getInitiativeSkill } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount } from './account-usage.js';
@@ -874,6 +874,13 @@ function getSkillForTaskType(taskType, payload) {
     // payload.decomposition === 'known' 或其他值 → 继续走 taskType 映射
   }
 
+  // initiative_plan + domain → domain-aware routing
+  if (taskType === 'initiative_plan' && payload?.domain) {
+    const skill = getInitiativeSkill(payload.domain);
+    console.log(`[executor] getSkillForTaskType: initiative_plan domain="${payload.domain}" → skill="${skill}"`);
+    return skill;
+  }
+
   const skillMap = {
     'dev': '/dev',           // 写代码：Opus
     'review': '/code-review', // 审查：已迁移到 /code-review
@@ -883,7 +890,7 @@ function getSkillForTaskType(taskType, payload) {
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // Initiative 执行循环
-    'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
+    'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：无 domain 时回退到 /decomp
     'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划

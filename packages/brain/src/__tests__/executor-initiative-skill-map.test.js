@@ -32,9 +32,13 @@ vi.mock('fs', () => ({
   readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0')
 }));
 
-vi.mock('../task-router.js', () => ({
-  getTaskLocation: vi.fn(() => 'us')
-}));
+vi.mock('../task-router.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getTaskLocation: vi.fn(() => 'us')
+  };
+});
 
 vi.mock('../task-updater.js', () => ({
   updateTaskStatus: vi.fn(),
@@ -75,6 +79,27 @@ describe('executor getSkillForTaskType — initiative 映射', () => {
 
   it('未知类型 fallback → /dev（回归）', () => {
     expect(getSkillForTaskType('unknown_xyz')).toBe('/dev');
+  });
+
+  // D7: domain-aware routing
+  it('initiative_plan + domain=coding → /architect', () => {
+    expect(getSkillForTaskType('initiative_plan', { domain: 'coding' })).toBe('/architect');
+  });
+
+  it('initiative_plan + domain=product → /plan', () => {
+    expect(getSkillForTaskType('initiative_plan', { domain: 'product' })).toBe('/plan');
+  });
+
+  it('initiative_plan + domain=quality → /qa', () => {
+    expect(getSkillForTaskType('initiative_plan', { domain: 'quality' })).toBe('/qa');
+  });
+
+  it('initiative_plan + unknown domain → /decomp (fallback)', () => {
+    expect(getSkillForTaskType('initiative_plan', { domain: 'unknown_xyz' })).toBe('/decomp');
+  });
+
+  it('initiative_plan + no domain in payload → /decomp (backward compat)', () => {
+    expect(getSkillForTaskType('initiative_plan', {})).toBe('/decomp');
   });
 });
 

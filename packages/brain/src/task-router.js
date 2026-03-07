@@ -6,7 +6,10 @@
  * 2. Location routing based on task_type (US/HK)
  * 3. Routing failure detection and fallback strategies
  * 4. KR dispatch diagnostics (diagnoseKR)
+ * 5. Domain-aware initiative_plan routing (getInitiativeSkill)
  */
+
+import { ROLES, DOMAIN_TO_ROLE } from './role-registry.js';
 
 // Valid task types (for failure detection)
 const VALID_TASK_TYPES = [
@@ -180,6 +183,41 @@ function determineExecutionMode({ input, feature_id, is_recurring }) {
 }
 
 /**
+ * Get skill for initiative_plan task based on domain.
+ *
+ * Routing rules:
+ * - coding → /architect (CTO 架构设计，不同于 CTO 的首选 /dev)
+ * - other known domains → ROLES[DOMAIN_TO_ROLE[domain]].skills[0]（角色首选 skill）
+ * - null / undefined / unknown domain → /decomp（回退，保持现有行为）
+ *
+ * @param {string|null|undefined} domain
+ * @returns {string} skill path
+ */
+function getInitiativeSkill(domain) {
+  if (!domain) return '/decomp';
+
+  // coding domain 特判：initiative_plan 走架构设计而非写代码
+  if (domain === 'coding') return '/architect';
+
+  // 其他已知 domain：查 role-registry 取角色首选 skill
+  const roleId = DOMAIN_TO_ROLE[domain];
+  if (!roleId) {
+    console.log(`[task-router] getInitiativeSkill: unknown domain="${domain}", fallback to /decomp`);
+    return '/decomp';
+  }
+
+  const roleConfig = ROLES[roleId];
+  const firstSkill = roleConfig?.skills?.[0];
+  if (!firstSkill) {
+    console.log(`[task-router] getInitiativeSkill: role="${roleId}" has no skills, fallback to /decomp`);
+    return '/decomp';
+  }
+
+  console.log(`[task-router] getInitiativeSkill: domain="${domain}" → role="${roleId}" → skill="${firstSkill}"`);
+  return firstSkill;
+}
+
+/**
  * Route task to appropriate location and execution mode
  * @param {Object} taskData - Task data
  * @returns {Object} - Routing decision
@@ -193,7 +231,8 @@ function routeTaskCreate(taskData) {
     kr_id,
     initiative_id,
     project_id,
-    task_id
+    task_id,
+    domain
   } = taskData;
 
   const location = getTaskLocation(task_type);
@@ -202,14 +241,17 @@ function routeTaskCreate(taskData) {
     feature_id,
     is_recurring
   });
-  const skill = SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
+  // initiative_plan + domain → domain-aware routing
+  const skill = (task_type?.toLowerCase() === 'initiative_plan' && domain)
+    ? getInitiativeSkill(domain)
+    : (SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev');
 
   const routing = {
     location,
     execution_mode: executionMode,
     task_type,
     skill,
-    routing_reason: `task_type=${task_type} → location=${location}, execution_mode=${executionMode}`
+    routing_reason: `task_type=${task_type}${domain ? ` domain=${domain}` : ''} → location=${location}, execution_mode=${executionMode}`
   };
 
   // Enhanced log: include all available context for traceability
@@ -600,6 +642,7 @@ export {
   getValidTaskTypes,
   getLocationsForTaskTypes,
   diagnoseKR,
+  getInitiativeSkill,
   LOCATION_MAP,
   SINGLE_TASK_PATTERNS,
   FEATURE_PATTERNS,
