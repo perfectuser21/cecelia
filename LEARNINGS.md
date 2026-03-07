@@ -4,6 +4,42 @@
 
 ---
 
+### [2026-03-07] planner domain 路由：SQL 字符串断言陷阱 (PR #655)
+
+**背景**：`generateArchitectureDesignTask()` 改造为参数化 INSERT（`task_type` 由 `$3` 传入），`coding-passway.test.js` 的断言 `expect(insertCall[0]).toContain('architecture_design')` 立刻失败。
+
+**根本原因**：原 SQL 把 `'architecture_design'` 硬编码在 INSERT 语句中，所以检查 SQL 字符串有效。改为参数化后，`task_type` 在参数数组 `insertCall[1][2]` 中，SQL 字符串里只剩 `$3`。
+
+**解法**：检查参数数组，不检查 SQL 字符串：
+```javascript
+// ❌ 旧断言（检查 SQL 字符串）
+expect(insertCall[0]).toContain('architecture_design');
+
+// ✅ 新断言（检查参数数组）
+expect(insertCall[1][2]).toBe('architecture_design'); // $3 = taskType
+```
+
+**规律**：参数化 SQL 单元测试，应检查 `mockQuery.mock.calls[N][1]`（参数数组），而非 `mockQuery.mock.calls[N][0]`（SQL 字符串）。SQL 字符串检查只适用于硬编码字面量，一旦参数化就会失效。
+
+---
+
+### [2026-03-07] Worktree 目录丢失恢复（Bash CWD 损坏）
+
+**症状**：Worktree 目录被删除后，Bash 工具报 "Working directory no longer exists"，所有命令失败。
+
+**修复步骤**：
+1. 用 Write 工具写入 4 个 git 元数据文件（不依赖 CWD）：
+   - `{worktree}/.git` → `gitdir: {main}/.git/worktrees/{id}`
+   - `{main}/.git/worktrees/{id}/HEAD` → `ref: refs/heads/{branch}`
+   - `{main}/.git/worktrees/{id}/gitdir` → `{worktree}/.git`
+   - `{main}/.git/worktrees/{id}/commondir` → `../..`
+2. Bash 恢复（目录存在了），运行 `git -C {worktree} checkout HEAD -- .` 恢复所有文件
+3. 重建 .dev-mode / .dev-lock / .dev-sentinel / PRD / DoD 文件
+
+**注意**：`git checkout HEAD -- .` 会覆盖所有文件（包括之前写的 .dev-mode），必须在 checkout **之后**重新创建这些文件。
+
+---
+
 ### [2026-03-07] goals/projects/tasks 添加 domain + owner_role 字段 (Migration 134)
 
 **背景**：Cecelia 从单一 Coding 系统进化为多领域管家，需要给 OKR 层级加上领域标签和角色归属。
