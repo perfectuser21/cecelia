@@ -112,6 +112,21 @@ const LOCATION_MAP = {
 // Default location
 const DEFAULT_LOCATION = 'us';
 
+// Domain → location mapping (domain takes priority over task_type when present)
+// Mirrors the routing intent from /plan SKILL.md Stage 0.5
+const DOMAIN_LOCATION_MAP = {
+  coding: 'us',       // cto → Claude Code (Opus/Sonnet)
+  product: 'us',      // cpo → Claude Code
+  growth: 'hk',       // cmo → MiniMax (content/marketing)
+  finance: 'hk',      // cfo → MiniMax
+  research: 'hk',     // vp_research → MiniMax (deep research)
+  knowledge: 'us',    // vp_knowledge → Claude Code
+  operations: 'us',   // coo → Claude Code
+  security: 'us',     // cto → Claude Code
+  quality: 'us',      // vp_qa → Claude Code
+  agent_ops: 'us',    // vp_agent_ops → Claude Code (Opus)
+};
+
 /**
  * Identify work type: single task or feature
  * @param {string} input - User input or task description
@@ -143,11 +158,18 @@ function identifyWorkType(input) {
 }
 
 /**
- * Get task location based on task_type
+ * Get task location based on domain (preferred) or task_type (fallback)
  * @param {string} taskType - Task type (dev, review, talk, data, etc.)
+ * @param {string} [domain] - Domain from domain-map.js (takes priority over task_type)
  * @returns {'us' | 'hk'} - Location
  */
-function getTaskLocation(taskType) {
+function getTaskLocation(taskType, domain) {
+  // Domain takes priority over task_type when present
+  if (domain && typeof domain === 'string') {
+    const domainLocation = DOMAIN_LOCATION_MAP[domain.toLowerCase()];
+    if (domainLocation) return domainLocation;
+  }
+
   if (!taskType || typeof taskType !== 'string') {
     return DEFAULT_LOCATION;
   }
@@ -193,10 +215,11 @@ function routeTaskCreate(taskData) {
     kr_id,
     initiative_id,
     project_id,
-    task_id
+    task_id,
+    domain
   } = taskData;
 
-  const location = getTaskLocation(task_type);
+  const location = getTaskLocation(task_type, domain);
   const executionMode = determineExecutionMode({
     input: title,
     feature_id,
@@ -331,11 +354,12 @@ function routeTaskWithFallback(taskData) {
     title,
     task_type = 'dev',
     feature_id,
-    is_recurring
+    is_recurring,
+    domain
   } = taskData;
 
-  // Initial routing
-  let location = getTaskLocation(task_type);
+  // Initial routing (domain takes priority over task_type)
+  let location = getTaskLocation(task_type, domain);
   let executionMode = determineExecutionMode({
     input: title,
     feature_id,

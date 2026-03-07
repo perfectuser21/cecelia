@@ -1,6 +1,7 @@
 /* global console */
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
+import { detectDomain, getDomainOwnerRole } from './domain-map.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -35,8 +36,14 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.prd_content - PRD content (秋米写的)
  * @param {string} params.execution_profile - US_CLAUDE_OPUS/US_CLAUDE_SONNET/etc
  * @param {Object} params.payload - Additional payload (initiative_id, kr_goal)
+ * @param {string} [params.domain] - Domain (auto-detected if not provided)
+ * @param {string} [params.owner_role] - Owner role (derived from domain if not provided)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain, owner_role }) {
+  // Auto-detect domain from title + description if not explicitly provided
+  const resolvedDomain = domain || detectDomain(`${title || ''} ${description || context || ''}`);
+  const resolvedOwnerRole = owner_role || getDomainOwnerRole(resolvedDomain);
+
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -61,8 +68,8 @@ async function createTask({ title, description, priority, project_id, goal_id, t
   }
 
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11)
+    INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
     ON CONFLICT DO NOTHING
     RETURNING *
   `, [
@@ -76,7 +83,9 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     prd_content || null,
     execution_profile || null,
     payload ? JSON.stringify(payload) : null,
-    trigger_source || 'brain_auto'
+    trigger_source || 'brain_auto',
+    resolvedDomain,
+    resolvedOwnerRole
   ]);
 
   // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
