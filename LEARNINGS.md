@@ -4,6 +4,23 @@
 
 ---
 
+### [2026-03-07] 移除 initTickLoop 启动时 cleanupOrphanProcesses 调用 v1.201.2
+
+**问题**：Brain 重启后 `cleanupOrphanProcesses()` 杀死所有正在运行的 claude 任务进程，导致 exit_code=143 级联故障（熔断器打开 → Tick 禁用 → 派发停止）。
+
+**根因**：`cleanupOrphanProcesses()` 假设 `activeProcesses` Map 有数据，但 Brain 重启后为空；setsid 断开 ppid 链，ppid 检查也失败。所有进程被误判为孤儿。
+
+**修复**：移除 `tick.js:initTickLoop()` 中的启动调用（5 行 → 0 行）。`syncOrphanTasksOnStartup()` 已正确处理 DB 级恢复。函数本身保留供 alertness-actions 手动触发。
+
+**教训**：
+1. 启动时清理逻辑要考虑"重启后状态为空"的场景，不能假设内存状态持续
+2. Bridge 模式下 setsid 会破坏进程父子关系链，ppid 追踪不可靠
+3. DB 级恢复（syncOrphanTasksOnStartup）比进程级清理（cleanupOrphanProcesses）更可靠
+
+**失败统计**：CI 失败 0 次
+
+---
+
 ### [2026-03-07] completed_no_pr 自动重排 + dev-pipeline 成功率 API v1.201.1
 
 **失败统计**：CI 失败 0 次
