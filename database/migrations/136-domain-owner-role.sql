@@ -1,4 +1,4 @@
--- Migration 134: Add domain and owner_role to tasks, goals, projects
+-- Migration 136: Add domain and owner_role to tasks, goals, projects
 -- Implements Stage 0.5 domain detection from /plan SKILL.md
 
 -- ============================================================
