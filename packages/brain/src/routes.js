@@ -93,6 +93,7 @@ import { triggerCeceliaRun, checkCeceliaRunAvailable } from './executor.js';
 import { updateDesireFromTask } from './desire-feedback.js';
 import { checkAndCreateCodeReviewTrigger } from './code-review-trigger.js';
 import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from './pr-callback-handler.js';
+import { handleStrategySessionCompletion } from './strategy-session-callback.js';
 
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
@@ -3031,6 +3032,11 @@ router.post('/execution-callback', async (req, res) => {
           await checkAndCreateCodeReviewTrigger(pool, projectId);
         }
       }).catch(err => console.warn(`[execution-callback] code-review-trigger 失败（非致命）: ${err.message}`));
+
+      // strategy_session 闭环：解析 KR 输出写入 goals 表（fire-and-forget）
+      handleStrategySessionCompletion(pool, task_id, result).catch(err =>
+        console.warn(`[execution-callback] strategy_session 闭环处理失败（非致命）: ${err.message}`)
+      );
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
 
