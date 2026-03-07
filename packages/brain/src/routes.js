@@ -3093,6 +3093,24 @@ router.post('/execution-callback', async (req, res) => {
               failureHandled = true;
             } else {
               console.log(`[execution-callback] Dev failure not retryable: task=${task_id} class=${devClassification.class} reason=${devClassification.reason}`);
+
+              // CI 诊断：非重试性失败时，用 gh 获取真实 CI 日志并分类
+              try {
+                const { diagnoseCiFailure } = await import('./ci-diagnostics.js');
+                const ciDiagnosis = await diagnoseCiFailure(
+                  { prUrl: pr_url, taskId: task_id },
+                  {} // 使用默认 execFn（真实 gh 命令）
+                );
+                if (ciDiagnosis) {
+                  await pool.query(
+                    `UPDATE tasks SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+                    [task_id, JSON.stringify({ ci_diagnosis: ciDiagnosis })]
+                  );
+                  console.log(`[execution-callback] CI diagnosis stored: task=${task_id} class=${ciDiagnosis.failure_class} retryable=${ciDiagnosis.retryable}`);
+                }
+              } catch (ciDiagErr) {
+                console.warn(`[execution-callback] CI diagnosis failed (non-fatal): ${ciDiagErr.message}`);
+              }
             }
           } catch (devClassifyErr) {
             console.error(`[execution-callback] Dev classification error: ${devClassifyErr.message}`);
@@ -8828,6 +8846,31 @@ router.post('/desires/:id/respond', async (req, res) => {
   } catch (err) {
     console.error('[API] desires/:id/respond error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tasks/:id/ci-diagnosis
+ * 返回任务最近一次 CI 失败的自动诊断结果
+ */
+router.get('/tasks/:id/ci-diagnosis', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT metadata->>'ci_diagnosis' AS ci_diagnosis FROM tasks WHERE id = $1`,
+      [id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'task not found' });
+    }
+    const raw = result.rows[0].ci_diagnosis;
+    if (!raw) {
+      return res.status(404).json({ error: 'no CI diagnosis available for this task' });
+    }
+    return res.json(JSON.parse(raw));
+  } catch (err) {
+    console.error('[GET /tasks/:id/ci-diagnosis] error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 });
 
