@@ -495,6 +495,108 @@ describe('task-updater', () => {
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // blockTask
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  describe('blockTask', () => {
+    it('应当将 in_progress 任务改为 blocked 并设置 blocked 字段', async () => {
+      const until = new Date(Date.now() + 30 * 60 * 1000);
+      const task = makeTask({ status: 'blocked', blocked_reason: 'rate_limit', blocked_until: until.toISOString() });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      const result = await blockTask('task-001', { reason: 'rate_limit', until });
+
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('blocked');
+      const sql = mockPool.query.mock.calls[0][0];
+      expect(sql).toContain("status = 'blocked'");
+      expect(sql).toContain('blocked_at = NOW()');
+      expect(sql).toContain('blocked_reason = $2');
+      expect(sql).toContain('blocked_until = $4');
+      expect(sql).toContain("status IN ('queued', 'in_progress', 'failed')");
+    });
+
+    it('应当将 failed 任务改为 blocked', async () => {
+      const until = new Date(Date.now() + 60 * 60 * 1000);
+      const task = makeTask({ status: 'blocked', blocked_reason: 'network' });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      const result = await blockTask('task-001', { reason: 'network', until });
+
+      expect(result.success).toBe(true);
+    });
+
+    it('应当在任务不存在或状态不合法时返回失败', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await blockTask('task-001', { reason: 'rate_limit', until: new Date() });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found or not in blockable state');
+      errorSpy.mockRestore();
+    });
+
+    it('应当在数据库异常时返回失败', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockRejectedValueOnce(new Error('db error'));
+
+      const result = await blockTask('task-001', { reason: 'rate_limit', until: new Date() });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('db error');
+      errorSpy.mockRestore();
+    });
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // unblockTask
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  describe('unblockTask', () => {
+    it('应当将 blocked 任务改为 queued 并清空 blocked 字段', async () => {
+      const task = makeTask({ status: 'queued', blocked_at: null, blocked_reason: null, blocked_until: null });
+      mockPool.query.mockResolvedValueOnce({ rows: [task] });
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('queued');
+      const sql = mockPool.query.mock.calls[0][0];
+      expect(sql).toContain("status = 'queued'");
+      expect(sql).toContain('blocked_at = NULL');
+      expect(sql).toContain('blocked_reason = NULL');
+      expect(sql).toContain('blocked_until = NULL');
+      // WHERE 子句确保只有 blocked 状态可被释放
+      expect(sql).toContain("status = 'blocked'");
+      const params = mockPool.query.mock.calls[0][1];
+      expect(params[0]).toBe('task-001');
+    });
+
+    it('应当在任务不在 blocked 状态时返回失败', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not in blocked state');
+      errorSpy.mockRestore();
+    });
+
+    it('应当在数据库异常时返回失败', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockPool.query.mockRejectedValueOnce(new Error('connection lost'));
+
+      const result = await unblockTask('task-001');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('connection lost');
+      errorSpy.mockRestore();
+    });
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // 安全性测试
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -513,7 +615,7 @@ describe('task-updater', () => {
       vi.restoreAllMocks();
     });
 
-    it('所有 VALID_STATUSES 都应被接受', async () => {
+    it('所有 VALID_STATUSES 都应被接受（不包含 blocked，blocked 由 blockTask 单独处理）', async () => {
       const validStatuses = ['queued', 'in_progress', 'completed', 'failed'];
       for (const status of validStatuses) {
         vi.clearAllMocks();

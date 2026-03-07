@@ -191,12 +191,12 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
           blocked_detail = $3::jsonb,
           blocked_until = $4,
           updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND status IN ('queued', 'in_progress', 'failed')
       RETURNING *
     `, [taskId, reason || null, blockedDetail, blockedUntil]);
 
     if (result.rows.length === 0) {
-      throw new Error(`Task ${taskId} not found`);
+      throw new Error(`Task ${taskId} not found or not in blockable state`);
     }
 
     const task = result.rows[0];
@@ -234,13 +234,14 @@ export async function unblockTask(taskId) {
           blocked_reason = NULL,
           blocked_detail = NULL,
           blocked_until = NULL,
+          started_at = NULL,
           updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND status = 'blocked'
       RETURNING *
     `, [taskId]);
 
     if (result.rows.length === 0) {
-      throw new Error(`Task ${taskId} not found`);
+      throw new Error(`Task ${taskId} not found or not in blocked state`);
     }
 
     const task = result.rows[0];
