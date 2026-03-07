@@ -7818,6 +7818,55 @@ router.get('/immune/dashboard', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/brain/immune/sweep - Manually trigger zombie sweep
+// GET /api/brain/immune/status - Return last zombie sweep result
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/immune/sweep
+ * Manually trigger a zombie sweep across all three dimensions.
+ */
+router.post('/immune/sweep', async (req, res) => {
+  try {
+    const { zombieSweep } = await import('./zombie-sweep.js');
+    const result = await zombieSweep();
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (err) {
+    console.error('[API] Failed to run zombie sweep:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run zombie sweep',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/immune/status
+ * Return the last zombie sweep result from working_memory.
+ */
+router.get('/immune/status', async (req, res) => {
+  try {
+    const { getZombieSweepStatus } = await import('./zombie-sweep.js');
+    const status = await getZombieSweepStatus();
+    res.json({
+      success: true,
+      data: status
+    });
+  } catch (err) {
+    console.error('[API] Failed to get zombie sweep status:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get zombie sweep status',
+      details: err.message
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/brain/routing/decisions - Thalamus routing decision history
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/routing/decisions', async (req, res) => {

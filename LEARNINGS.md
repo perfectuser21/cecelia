@@ -25,6 +25,38 @@
 
 ---
 
+### [2026-03-07] 主动僵尸巡检模块 zombie-sweep.js (v1.211.0)
+
+**背景**：Brain 生产环境积累了大量 stale worktree（17 个），缺少主动清理机制，新增 zombie-sweep.js 三维清理模块。
+
+**架构决策**：
+- `zombie-sweep.js` 导出 `zombieSweep()` + `getZombieSweepStatus()`，不依赖 Brain 内部状态（只依赖 pool/executor/event-bus）
+- tick.js 用 `.then().catch()` 非阻塞调用（30 分钟间隔），异常不影响主 tick 流程
+- 结果写入 `working_memory` key=`zombie_sweep_result` 供 dashboard 展示
+
+**踩坑 1：`sweepOrphanProcesses` 测试 timeout（5 秒 setTimeout）**：
+- 根因：`sweepOrphanProcesses()` 在孤儿进程 SIGTERM 后有 `await new Promise(resolve => setTimeout(resolve, 5000))` 等待
+- 解决：用 `vi.useFakeTimers()` + `vi.runAllTimersAsync()` 快进定时器，测试完成后 `vi.useRealTimers()` 恢复
+
+**踩坑 2：working_memory 断言格式**：
+- 错误：`expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('zombie_sweep_result'), ...)`
+- 根因：SQL 字符串是 `INSERT INTO working_memory ... VALUES ($1, $2, ...)` 不含 'zombie_sweep_result'，它在参数数组里
+- 正确：`expect.stringContaining('working_memory')` 检查 SQL，`expect.arrayContaining(['zombie_sweep_result'])` 检查参数
+
+**踩坑 3：tick-goal-eval 测试预先失败**：
+- 验证方式：`git stash` 后重跑，确认失败早于本次变更（使用 root vitest 配置 5s timeout）
+- 根因：这些测试设计在 brain 包的 30s timeout 下运行，root 配置 5s 不够
+- 结论：非本次引入，可忽略
+
+**版本同步（5 文件）**：
+1. `packages/brain/package.json` → `npm version minor`
+2. `packages/brain/package-lock.json` → 自动更新
+3. `package-lock.json`（root）→ `packages/brain` 段自动更新
+4. `.brain-versions` → `echo "X.Y.Z" >` 写入
+5. `DEFINITION.md` → `**Brain 版本**: X.Y.Z` 行
+
+---
+
 ### [2026-03-07] tasks 表添加 blocked 状态 + tick 自动释放循环 (Migration 137, v1.207.0)
 
 **关键实现要点**：
