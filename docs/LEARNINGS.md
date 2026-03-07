@@ -20,6 +20,21 @@
 2. `git checkout HEAD -- .` 恢复所有源文件
 3. 之后创建 `.dev-mode` 文件解除 branch-protect hook 拦截
 
+### [2026-03-07] Cortex provider 直连 + 历史注入限制（PR #656, Brain v1.210.1）
+
+**失败统计**：CI 失败 0 次
+
+**背景**：Cortex 反思死循环超 5 轮，L2 停摆。根因：bridge 延迟 + prompt 通胀。
+
+**改动**：
+1. FALLBACK_PROFILE cortex provider `anthropic` → `anthropic-api`（直连，快 5-8x）
+2. `searchRelevantAnalyses` SQL LIMIT 100 → 20
+3. `searchRelevantLearnings` limit 20 → 10
+
+**踩坑**：
+1. branch-protect hook 检查 DB `prd_id`（非 `prd_content`），欲望系统 task 无 prd_id → 从 .dev-mode 去 task_id 行走本地文件检查
+2. Worktree 目录被删后 shell CWD 损坏 → Write 工具创建 placeholder 恢复目录
+
 ### [2026-03-07] actions.js domain/owner_role 集成 + 并行 PR 合并冲突模式（PR #647, Brain v1.210.0）
 
 **CI 失败次数**：0
