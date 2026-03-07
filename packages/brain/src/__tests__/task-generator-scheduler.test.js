@@ -140,8 +140,9 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      expect(pool.query).toHaveBeenCalledOnce();
-      const [sql, params] = pool.query.mock.calls[0];
+      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      expect(insertCall).toBeDefined();
+      const [sql, params] = insertCall;
       expect(sql).toContain('INSERT INTO tasks');
       expect(params[0]).toBe('Fix coverage');
       expect(params[1]).toBe('Increase test coverage');
@@ -164,7 +165,8 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      const params = insertCall[1];
       expect(params[2]).toBe('P1');
     });
 
@@ -181,7 +183,8 @@ describe('task-generator-scheduler', () => {
 
       await triggerCodeQualityScan(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      const params = insertCall[1];
       expect(params[4]).toEqual([]);
       expect(params[5]).toEqual({});
     });
@@ -528,7 +531,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const [sql] = pool.query.mock.calls[0];
+      const [sql] = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'));
       expect(sql).toContain('project_id');
       expect(sql).toContain('goal_id');
       expect(sql).toContain('task_type');
@@ -544,7 +547,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
       expect(params[6]).toBe('690c2874-d6e9-4ecc-8e55-37d349790afb');
     });
 
@@ -558,7 +561,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
       expect(params[7]).toBe('e5ec0510-d7b2-4ee7-99f6-314aac55b3f6');
     });
 
@@ -572,7 +575,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
       expect(params[8]).toBe('dev');
     });
 
@@ -595,7 +598,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerNoEnv(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
       expect(params[6]).toBeNull();
       expect(params[7]).toBeNull();
       expect(params[8]).toBe('dev');
@@ -619,7 +622,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanWithEnv(pool);
 
-      const params = pool.query.mock.calls[0][1];
+      const params = pool.query.mock.calls.find(([s]) => s.includes('INSERT INTO tasks'))[1];
       expect(params[0]).toBe('My Title');
       expect(params[1]).toBe('My Description');
       expect(params[2]).toBe('P0');
