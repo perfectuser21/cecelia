@@ -1,4 +1,4 @@
--- Migration 132: tasks 表添加 pr_status 字段
+-- Migration 133: tasks 表添加 pr_status 字段
 -- 追踪 PR 生命周期：open → ci_pending → ci_passed/ci_failed → merged/closed
 -- 配合 PR Shepherd（牧羊人）机制实现 CI 通过后自动合并
 
@@ -25,4 +25,4 @@ UPDATE tasks
 CREATE INDEX IF NOT EXISTS idx_tasks_pr_status ON tasks (pr_status) WHERE pr_status IS NOT NULL;
 
 INSERT INTO schema_version (version, description)
-  VALUES ('132', 'tasks.pr_status: PR 生命周期追踪字段');
+  VALUES ('133', 'tasks.pr_status: PR 生命周期追踪字段');
