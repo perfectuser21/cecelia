@@ -251,6 +251,61 @@ describe('alertness/healing', () => {
   });
 
   // ============================================================
+  // findOrphanProcesses - vitest/node 孤儿检测
+  // ============================================================
+
+  describe('findOrphanProcesses (vitest/node 孤儿检测)', () => {
+    it('ppid=1 且内存>500MB 的 node 进程被识别为孤儿', async () => {
+      // pgrep 无匹配
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(new Error('no match'), '', ''));
+      // ps 输出含 ppid=1 大内存 node 进程
+      const psOutput = 'PID  PPID    RSS COMM\n9999     1 600000 node\n';
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(null, psOutput, ''));
+
+      await startRecovery(['zombie_processes']);
+      // 触发 kill_orphan_processes
+      await vi.runAllTimersAsync();
+
+      // 验证 ps 被调用
+      const psCalled = mockExec.mock.calls.some(c => c[0].includes('ps -eo pid,ppid,rss,comm'));
+      expect(psCalled).toBe(true);
+    });
+
+    it('ppid≠1 的大内存 node 进程不被视为孤儿', async () => {
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(new Error('no match'), '', ''));
+      // ppid=1234（非 init），不应被识别为孤儿
+      const psOutput = 'PID  PPID    RSS COMM\n8888  1234 700000 node\n';
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(null, psOutput, ''));
+
+      await startRecovery(['zombie_processes']);
+      await vi.runAllTimersAsync();
+
+      const psCalled = mockExec.mock.calls.some(c => c[0].includes('ps -eo pid,ppid,rss,comm'));
+      expect(psCalled).toBe(true);
+    });
+
+    it('ppid=1 但内存≤500MB 的进程不被视为孤儿', async () => {
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(new Error('no match'), '', ''));
+      // rss = 100000 KB (约 97MB)，低于阈值
+      const psOutput = 'PID  PPID    RSS COMM\n7777     1 100000 node\n';
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(null, psOutput, ''));
+
+      await startRecovery(['zombie_processes']);
+      await vi.runAllTimersAsync();
+
+      const psCalled = mockExec.mock.calls.some(c => c[0].includes('ps -eo pid,ppid,rss,comm'));
+      expect(psCalled).toBe(true);
+    });
+
+    it('ps 命令失败时不影响函数正常返回', async () => {
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(new Error('no match'), '', ''));
+      mockExec.mockImplementationOnce((_cmd, cb) => cb(new Error('ps error'), '', ''));
+
+      await expect(startRecovery(['zombie_processes'])).resolves.not.toThrow();
+    });
+  });
+
+  // ============================================================
   // 策略选择逻辑（通过 startRecovery 间接测试）
   // ============================================================
 

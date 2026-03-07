@@ -447,11 +447,13 @@ async function executeAction(action) {
 // ============================================================
 
 async function findOrphanProcesses() {
+  const orphans = new Set();
+
+  // 1. 检测 claude 孤儿进程（对比 DB 中活跃任务 PID）
   try {
     const { stdout } = await execAsync('pgrep -f "claude.*-p"');
     const pids = stdout.split('\n').filter(p => p).map(p => parseInt(p, 10));
 
-    // 检查哪些是孤儿进程（没有对应的 task）
     const client = await pool.connect();
     try {
       const result = await client.query(`
@@ -461,13 +463,37 @@ async function findOrphanProcesses() {
       `);
 
       const activePids = new Set(result.rows.map(r => r.pid));
-      return pids.filter(pid => !activePids.has(pid));
+      for (const pid of pids) {
+        if (!activePids.has(pid)) orphans.add(pid);
+      }
     } finally {
       client.release();
     }
-  } catch (error) {
-    return [];
+  } catch {
+    // pgrep 无匹配时退出码非零，正常忽略
   }
+
+  // 2. 检测 vitest/node 孤儿进程（ppid=1 且内存 > 500MB）
+  // ppid=1 意味着父进程已退出，被 init/launchd 收养，无需对照 DB
+  const MEMORY_THRESHOLD_KB = 500 * 1024; // 500MB
+  try {
+    const { stdout: psOut } = await execAsync('ps -eo pid,ppid,rss,comm');
+    for (const line of psOut.split('\n').slice(1)) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 4) continue;
+      const pid = parseInt(parts[0], 10);
+      const ppid = parseInt(parts[1], 10);
+      const rss = parseInt(parts[2], 10);
+      const comm = parts[3];
+      if (ppid === 1 && rss > MEMORY_THRESHOLD_KB && /^(node|vitest)/.test(comm)) {
+        orphans.add(pid);
+      }
+    }
+  } catch {
+    // ps 失败时忽略
+  }
+
+  return Array.from(orphans);
 }
 
 async function redistributeTasks() {
