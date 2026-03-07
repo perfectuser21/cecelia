@@ -7692,6 +7692,13 @@ router.get('/immune/dashboard', async (req, res) => {
       LIMIT 5
     `);
 
+    // Zombie cleaner stats (in-memory, 24h window)
+    let zombieStats = { last_cleanup_at: null, zombies_cleaned_24h: 0, orphans_fixed_24h: 0 };
+    try {
+      const { getZombieStats } = await import('./zombie-cleaner.js');
+      zombieStats = getZombieStats();
+    } catch { /* zombie-cleaner may not have run yet */ }
+
     res.json({
       success: true,
       data: {
@@ -7700,7 +7707,8 @@ router.get('/immune/dashboard', async (req, res) => {
         failures: {
           top_signatures: topSignatures.rows
         },
-        recent_promotions: recentPromotions.rows
+        recent_promotions: recentPromotions.rows,
+        zombie_stats: zombieStats,
       }
     });
   } catch (err) {

@@ -1773,9 +1773,17 @@ async function executeTick() {
   }
 
   // 5c. Watchdog: resource monitoring — detect and kill runaway processes
+  let _watchdogPidMap = null;
+  let _watchdogStaleSlots = null;
   try {
-    const { checkRunaways, cleanupMetrics } = await import('./watchdog.js');
+    const { checkRunaways, cleanupMetrics, resolveTaskPids } = await import('./watchdog.js');
     const resources = checkServerResources();
+
+    // Resolve pidMap + staleSlots once (shared with zombie cleaner below)
+    const resolved = resolveTaskPids();
+    _watchdogPidMap = resolved.pidMap;
+    _watchdogStaleSlots = resolved.staleSlots;
+
     const watchdogResult = checkRunaways(resources.metrics.max_pressure);
 
     for (const action of watchdogResult.actions) {
@@ -1786,7 +1794,7 @@ async function executeTick() {
           // Phase 2: Emergency cleanup (worktree, lock slot, .dev-mode)
           try {
             const { emergencyCleanup } = await import('./emergency-cleanup.js');
-            const slot = action.slot || (pidMap && pidMap.get?.(action.taskId)?.slot);
+            const slot = action.slot || (_watchdogPidMap && _watchdogPidMap.get?.(action.taskId)?.slot);
             if (slot) {
               const cleanupResult = emergencyCleanup(action.taskId, slot);
               console.log(`[tick] Emergency cleanup: wt=${cleanupResult.worktree} lock=${cleanupResult.lock}`);
@@ -1819,6 +1827,33 @@ async function executeTick() {
     }
   } catch (watchdogErr) {
     console.error('[tick] Watchdog error:', watchdogErr.message);
+  }
+
+  // 5c-2. Zombie cleaner: clean stale slots + detect orphan in_progress tasks
+  try {
+    const { cleanZombieSlots, detectOrphanTasks } = await import('./zombie-cleaner.js');
+
+    // Clean zombie slots (process gone, lock dir still present)
+    if (_watchdogStaleSlots && _watchdogStaleSlots.length > 0) {
+      console.log(`[tick] Zombie cleaner: ${_watchdogStaleSlots.length} stale slot(s) to clean`);
+      const zombieResults = await cleanZombieSlots(_watchdogStaleSlots);
+      const cleaned = zombieResults.filter(r => r.cleaned || r.dbUpdated).length;
+      if (cleaned > 0) {
+        actionsTaken.push({ action: 'zombie_slots_cleaned', count: cleaned });
+      }
+    }
+
+    // Detect orphan in_progress tasks (no live process, stuck > 4h)
+    const orphanStats = await detectOrphanTasks(_watchdogPidMap || new Map());
+    if (orphanStats.orphans_fixed > 0) {
+      console.log(`[tick] Zombie cleaner: ${orphanStats.orphans_fixed} orphan task(s) fixed`);
+      actionsTaken.push({ action: 'orphan_tasks_fixed', count: orphanStats.orphans_fixed });
+    }
+    if (orphanStats.warnings > 0) {
+      console.log(`[tick] Zombie cleaner: ${orphanStats.warnings} long-running task(s) warned`);
+    }
+  } catch (zombieErr) {
+    console.error('[tick] Zombie cleaner error:', zombieErr.message);
   }
 
   // 5d. Idle session cleanup — kill interactive Claude sessions idle > 2h
