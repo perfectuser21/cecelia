@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
-import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, cleanupOrphanProcesses, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
+import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
 import { planNextTask } from './planner.js';
@@ -392,12 +392,6 @@ async function initTickLoop() {
       console.log(`[tick-loop] Alertness system initialized`);
     } catch (alertErr) {
       console.error('[tick-loop] Alertness init failed:', alertErr.message);
-    }
-
-    // Clean up orphan processes from previous server runs
-    const orphansKilled = cleanupOrphanProcesses();
-    if (orphansKilled > 0) {
-      console.log(`[tick-loop] Cleaned up ${orphansKilled} orphan processes on startup`);
     }
 
     // Sync DB state with actual processes (fix orphan in_progress tasks)
