@@ -1,5 +1,30 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Migration 134: goals/projects/tasks 多领域 domain + owner_role 字段（PR #616, Brain v1.204.0）
+
+**失败统计**：CI 失败 2 次（版本冲突 × 2）
+
+**背景**：OKR 多领域路由需要按 domain（coding/product/growth 等）和 owner_role（cto/coo/cpo 等）对 goals、projects、tasks 进行分类。
+
+**实现要点**：
+
+1. **Migration SQL**：`ADD COLUMN IF NOT EXISTS` 幂等写法；schema_version INSERT 同步到 `'134'`
+2. **selfcheck.js `EXPECTED_SCHEMA_VERSION`**：从 `'133'` → `'134'`，三处测试断言（desire-system、selfcheck、learnings-vectorize）必须同步更新
+3. **DEFINITION.md 双处同步**：`schema_version` 表数据行 + `Self-check` 规则行，facts-check.mjs 会同时校验两处，漏一处 CI 失败
+
+**版本冲突与 rebase 陷阱**：
+
+- 多个 PR 并发合并时，rebase 后 package.json/DEFINITION.md 会被对方版本覆盖，`.brain-versions` 却还是旧 bump 值，导致 check-version-sync 报 mismatch
+- **必须重新 bump** 到比当前 main 更高的版本，5 个文件必须同步：`package.json`、`package-lock.json`、`VERSION`、`.brain-versions`、`DEFINITION.md`
+- check-version-sync.sh 以 `package.json` 为基准，其余 4 个必须与它完全一致
+
+**vi.clearAllMocks() 不清除 mockResolvedValueOnce 队列**：
+
+- 症状：evolution-scanner 测试中，硬编码日期 `'2026-03-05T14:30:00Z'` 超出 2 天窗口导致测试失败，其 mockFetch 的第二个 `mockResolvedValueOnce` 未被消费
+- 未消费队列泄漏到后续测试，造成 4 个额外测试失败
+- `vi.clearAllMocks()` 只清除调用记录，不清除队列；需用 `vi.resetAllMocks()` 或在 beforeEach 重新 mock
+- 修复：将硬编码日期改为 `new Date(Date.now() - 60 * 60 * 1000).toISOString()`
+
 ### [2026-03-07] dev 流水线成功率 API + 端到端健康检查（PR #606, Brain v1.202.3）
 
 **失败统计**：CI 失败 0 次（本地测试 + rebase 解决冲突后 CI 一次通过）
