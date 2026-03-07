@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 注册 strategy_session task_type（PR #637, Brain v1.205.1）
+
+**失败统计**：CI 尚待观察（本地 40 个新增测试全部通过）
+
+**背景**：Initiative 4「战略会议能力」— `/strategy-session` Skill 已定义，但 Brain 路由/执行/模型体系未注册该 task_type。
+
+**实现要点**：
+
+1. **task-router.js 三处**：`VALID_TASK_TYPES` 数组、`SKILL_WHITELIST`、`LOCATION_MAP` 均需同步添加，缺一处会导致 `invalid_task_type` 或路由失败
+2. **executor.js skillMap**：独立维护，与 task-router 的 SKILL_WHITELIST 内容相同但代码不共享，必须两处都加
+3. **model-registry.js AGENTS**：新增 executor 层 agent，`allowed_models` 必须是 MODELS 表里已有的模型（R3 测试校验），否则测试报错
+4. **测试文件命名**：Brain 测试按功能分文件（`task-router-xxx.test.js`、`executor-xxx.test.js`），model-registry 统一在一个文件，新增测试追加到文件末尾
+
+**Worktree 元数据残留（本次再次触发）**：
+
+- 问题：分配到已损坏的 worktree（只有 `packages/brain/node_modules`，无源码，无 `.git` 文件）
+- 症状：Read 工具读主仓库文件（路径穿透），Edit 工具"成功"但写入后文件不存在；`test -f` 返回 NOT EXIST
+- 修复：`git worktree prune && git worktree add /tmp/new-path <branch>`，在 `/tmp` 路径重新工作
+- **新 CWD 陷阱**：`git worktree prune` 删除了 `.git/worktrees/<id>` 元数据后，原 worktree 目录（`.claude/worktrees/<id>/`）也不再存在；Bash 工具 CWD 失效，所有后续 shell 命令报 "Working directory does not exist"。必须在 prune 之前先 `cd /tmp/new-path`，或接受后续只能用 Read/Write/Edit 工具
+
+**版本同步**（4+1 个文件）：`packages/brain/package.json`、`packages/brain/package-lock.json`、`package-lock.json`（根级 packages/brain 条目）、`.brain-versions`、`DEFINITION.md`
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
