@@ -728,4 +728,312 @@ describe('task-generator-scheduler', () => {
       expect(status.today_generated_count).toBe(2);
     });
   });
+
+  // ============================================================
+  // 去重逻辑（createTaskFn dedup）
+  // ============================================================
+
+  describe('去重逻辑（dedup）', () => {
+    let triggerScanFn;
+
+    const makeScannerTaskData = (modulePath = 'src/tick.js', issueType = 'low_coverage') => ({
+      title: `Fix ${modulePath}`,
+      description: 'desc',
+      priority: 'P1',
+      tags: ['coverage'],
+      metadata: {
+        scanner: 'coverage',
+        module_path: modulePath,
+        issue_type: issueType,
+        current_value: 30,
+        target_value: 70,
+      },
+    });
+
+    beforeEach(async () => {
+      mockRunScan.mockReset();
+      mockGenerateTasks.mockReset();
+      mockExecCb.mockReset();
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      vi.useFakeTimers({
+        toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
+      });
+      vi.setSystemTime(new Date('2026-04-01T10:00:00Z'));
+
+      vi.resetModules();
+      const mod = await import('../task-generator-scheduler.js');
+      triggerScanFn = mod.triggerCodeQualityScan;
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('已有 queued 任务时：dedup SELECT 被调用，INSERT INTO tasks 不被调用', async () => {
+      const taskData = makeScannerTaskData();
+      const existingId = 'existing-task-uuid';
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT
+          .mockResolvedValue({ rows: [] }), // scan_results INSERT
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        const id = await createTaskFn(taskData);
+        return [{ id }];
+      });
+
+      await triggerScanFn(pool);
+
+      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT') && sql.includes('module_path'));
+      expect(selectCall).toBeDefined();
+      expect(selectCall[1]).toEqual(['src/tick.js', 'low_coverage']);
+
+      const insertTaskCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      expect(insertTaskCall).toBeUndefined();
+    });
+
+    it('已有 queued 任务时：返回现有 task id', async () => {
+      const taskData = makeScannerTaskData();
+      const existingId = 'existing-uuid-abc';
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT
+          .mockResolvedValue({ rows: [] }), // scan_results INSERT
+      };
+
+      let capturedId;
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        capturedId = await createTaskFn(taskData);
+        return [{ id: capturedId }];
+      });
+
+      await triggerScanFn(pool);
+
+      expect(capturedId).toBe(existingId);
+    });
+
+    it('dedup SELECT 返回空（无活跃任务）时：正常 INSERT INTO tasks', async () => {
+      const taskData = makeScannerTaskData();
+      const newId = 'new-task-uuid';
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
+          .mockResolvedValueOnce({ rows: [{ id: newId }] }) // INSERT INTO tasks
+          .mockResolvedValue({ rows: [] }), // scan_results INSERT
+      };
+
+      let capturedId;
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        capturedId = await createTaskFn(taskData);
+        return [{ id: capturedId }];
+      });
+
+      await triggerScanFn(pool);
+
+      const insertTaskCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      expect(insertTaskCall).toBeDefined();
+      expect(capturedId).toBe(newId);
+    });
+
+    it("dedup SELECT 的 WHERE 子句只检查 queued/in_progress，不检查 completed", async () => {
+      const taskData = makeScannerTaskData();
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
+          .mockResolvedValueOnce({ rows: [{ id: 'new-id' }] }) // INSERT INTO tasks
+          .mockResolvedValue({ rows: [] }),
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn(taskData);
+        return [{ id: 'new-id' }];
+      });
+
+      await triggerScanFn(pool);
+
+      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT') && sql.includes('module_path'));
+      expect(selectCall[0]).toContain("status IN ('queued', 'in_progress')");
+      expect(selectCall[0]).not.toContain('completed');
+    });
+
+    it('dedup 查询失败时降级：INSERT INTO tasks 仍然执行', async () => {
+      const taskData = makeScannerTaskData();
+
+      const pool = {
+        query: vi.fn()
+          .mockRejectedValueOnce(new Error('DB connection lost')) // dedup SELECT 失败
+          .mockResolvedValueOnce({ rows: [{ id: 'fallback-id' }] }) // INSERT INTO tasks
+          .mockResolvedValue({ rows: [] }),
+      };
+
+      let capturedId;
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        capturedId = await createTaskFn(taskData);
+        return [{ id: capturedId }];
+      });
+
+      await triggerScanFn(pool);
+
+      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      expect(insertCall).toBeDefined();
+      expect(capturedId).toBe('fallback-id');
+    });
+
+    it('metadata 无 module_path/issue_type 时：不做 dedup SELECT，直接 INSERT', async () => {
+      const taskData = { title: 'No dedup task', description: 'desc', metadata: {} };
+
+      const pool = makePool('simple-id');
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn(taskData);
+        return [{ id: 'simple-id' }];
+      });
+
+      await triggerScanFn(pool);
+
+      // pool.query 只被调用一次（INSERT INTO tasks），无 dedup SELECT，无 scan_results
+      expect(pool.query).toHaveBeenCalledOnce();
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toContain('INSERT INTO tasks');
+    });
+  });
+
+  // ============================================================
+  // scan_results 持久化
+  // ============================================================
+
+  describe('scan_results 持久化', () => {
+    let triggerScanFn;
+
+    const makeScannerTaskData = (modulePath = 'src/executor.js', issueType = 'high_complexity') => ({
+      title: `Fix ${modulePath}`,
+      description: 'desc',
+      priority: 'P1',
+      tags: ['complexity'],
+      metadata: {
+        scanner: 'complexity',
+        module_path: modulePath,
+        issue_type: issueType,
+        current_value: 15,
+        target_value: 10,
+      },
+    });
+
+    beforeEach(async () => {
+      mockRunScan.mockReset();
+      mockGenerateTasks.mockReset();
+      mockExecCb.mockReset();
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      vi.useFakeTimers({
+        toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
+      });
+      vi.setSystemTime(new Date('2026-04-02T10:00:00Z'));
+
+      vi.resetModules();
+      const mod = await import('../task-generator-scheduler.js');
+      triggerScanFn = mod.triggerCodeQualityScan;
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('新任务创建后：INSERT INTO scan_results 被调用，关联新 task id', async () => {
+      const taskData = makeScannerTaskData();
+      const newTaskId = 'new-task-for-scan-result';
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
+          .mockResolvedValueOnce({ rows: [{ id: newTaskId }] }) // INSERT INTO tasks
+          .mockResolvedValue({ rows: [] }), // scan_results INSERT
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn(taskData);
+        return [{ id: newTaskId }];
+      });
+
+      await triggerScanFn(pool);
+
+      const scanResultCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO scan_results'));
+      expect(scanResultCall).toBeDefined();
+
+      const [sql, params] = scanResultCall;
+      expect(sql).toContain('scanner_name');
+      expect(sql).toContain('module_path');
+      expect(sql).toContain('issue_type');
+      expect(params[0]).toBe('complexity');        // scanner_name
+      expect(params[1]).toBe('src/executor.js');   // module_path
+      expect(params[2]).toBe('high_complexity');   // issue_type
+      expect(params[3]).toBe(15);                  // current_value
+      expect(params[4]).toBe(10);                  // target_value
+      expect(params[5]).toBe(newTaskId);           // task_id
+    });
+
+    it('dedup 命中时：scan_results 仍然写入，关联现有 task id', async () => {
+      const taskData = makeScannerTaskData();
+      const existingId = 'existing-for-scan-result';
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT → 命中
+          .mockResolvedValue({ rows: [] }), // scan_results INSERT
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn(taskData);
+        return [{ id: existingId }];
+      });
+
+      await triggerScanFn(pool);
+
+      const scanResultCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO scan_results'));
+      expect(scanResultCall).toBeDefined();
+      expect(scanResultCall[1][5]).toBe(existingId); // task_id = 现有 id
+    });
+
+    it('scan_results INSERT 失败时：不影响返回结果（triggered:true）', async () => {
+      const taskData = makeScannerTaskData();
+
+      const pool = {
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
+          .mockResolvedValueOnce({ rows: [{ id: 'task-xyz' }] }) // INSERT INTO tasks
+          .mockRejectedValue(new Error('scan_results write failed')), // scan_results 失败
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        const id = await createTaskFn(taskData);
+        return [{ id }];
+      });
+
+      const result = await triggerScanFn(pool);
+
+      expect(result.triggered).toBe(true);
+      expect(result.tasks).toBe(1);
+    });
+  });
 });
