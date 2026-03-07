@@ -515,6 +515,55 @@ describe('actions.js', () => {
       const sql = mockQuery.mock.calls[0][0];
       expect(sql).toContain('started_at = NOW()');
     });
+
+    it('blocked 状态设置 blocked_at', async () => {
+      const fakeTask = { id: 'task-blocked', status: 'blocked' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      const result = await updateTask({
+        task_id: 'task-blocked',
+        status: 'blocked',
+        blocked_reason: 'CI failure',
+        blocked_by: 'error:ci_failure',
+      });
+
+      const sql = mockQuery.mock.calls[0][0];
+      const params = mockQuery.mock.calls[0][1];
+      expect(sql).toContain('blocked_at = NOW()');
+      expect(params).toContain('CI failure');
+      expect(params).toContain('error:ci_failure');
+      expect(result.success).toBe(true);
+    });
+
+    it('queued 状态清除 blocked 字段（解除阻塞）', async () => {
+      const fakeTask = { id: 'task-unblock', status: 'queued' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      const result = await updateTask({
+        task_id: 'task-unblock',
+        status: 'queued',
+      });
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('blocked_reason = NULL');
+      expect(sql).toContain('blocked_at = NULL');
+      expect(sql).toContain('blocked_by = NULL');
+      expect(result.success).toBe(true);
+    });
+
+    it('blocked 状态不含 status=queued 守卫（blocked 任务可直接更新）', async () => {
+      const fakeTask = { id: 'task-blocked2', status: 'blocked' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await updateTask({
+        task_id: 'task-blocked2',
+        status: 'blocked',
+        blocked_reason: 'dependency not ready',
+      });
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).not.toContain("AND status = 'queued'");
+    });
   });
 
   // ========== createGoal ==========

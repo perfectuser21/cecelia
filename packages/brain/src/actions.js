@@ -199,7 +199,7 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids 
 /**
  * Update task status/priority
  */
-async function updateTask({ task_id, status, priority }) {
+async function updateTask({ task_id, status, priority, blocked_reason, blocked_by }) {
   const updates = [];
   const values = [];
   let idx = 1;
@@ -213,8 +213,26 @@ async function updateTask({ task_id, status, priority }) {
       updates.push(`started_at = NOW()`);
     } else if (status === 'completed') {
       updates.push(`completed_at = NOW()`);
+    } else if (status === 'blocked') {
+      updates.push(`blocked_at = NOW()`);
+    } else if (status === 'queued') {
+      // Unblock: clear blocked fields when returning to queued
+      updates.push(`blocked_reason = NULL`);
+      updates.push(`blocked_at = NULL`);
+      updates.push(`blocked_by = NULL`);
     }
   }
+
+  if (blocked_reason !== undefined) {
+    updates.push(`blocked_reason = $${idx++}`);
+    values.push(blocked_reason);
+  }
+
+  if (blocked_by !== undefined) {
+    updates.push(`blocked_by = $${idx++}`);
+    values.push(blocked_by);
+  }
+
   if (priority) {
     updates.push(`priority = $${idx++}`);
     values.push(priority);

@@ -606,6 +606,65 @@ router.get('/goals/:id/okr-context', async (req, res) => {
 // ==================== Task Feedback & Status API (Phase 4b) ====================
 
 /**
+ * POST /api/brain/tasks/:task_id/block
+ * 主动标记任务为 blocked 状态
+ */
+router.post('/tasks/:task_id/block', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { reason, blocked_by } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: reason',
+        code: 'MISSING_FIELD'
+      });
+    }
+
+    const { updateTask } = await import('./actions.js');
+    const result = await updateTask({
+      task_id,
+      status: 'blocked',
+      blocked_reason: reason,
+      blocked_by: blocked_by || 'api'
+    });
+
+    if (!result.success) {
+      return res.status(404).json({ success: false, error: result.error });
+    }
+
+    res.json({ success: true, task: result.task });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to block task', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:task_id/unblock
+ * 解除任务阻塞，回到 queued 状态
+ */
+router.post('/tasks/:task_id/unblock', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+
+    const { updateTask } = await import('./actions.js');
+    const result = await updateTask({
+      task_id,
+      status: 'queued'
+    });
+
+    if (!result.success) {
+      return res.status(404).json({ success: false, error: result.error });
+    }
+
+    res.json({ success: true, task: result.task });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to unblock task', details: err.message });
+  }
+});
+
+/**
  * POST /api/brain/tasks/:task_id/feedback
  * 接收 Engine 上传的任务执行反馈
  */

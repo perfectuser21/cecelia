@@ -129,7 +129,9 @@ const actionHandlers = {
   async mark_task_blocked(params, context) {
     const result = await updateTask({
       task_id: params.task_id,
-      status: 'blocked'
+      status: 'blocked',
+      blocked_reason: params.reason || params.blocked_reason,
+      blocked_by: params.blocked_by
     });
     return { success: result.success, reason: params.reason };
   },
