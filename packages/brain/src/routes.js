@@ -2157,7 +2157,7 @@ router.post('/action/create-task', async (req, res) => {
  */
 router.post('/action/create-initiative', async (req, res) => {
   try {
-    const { name, parent_id, kr_id, decomposition_mode, description, plan_content } = req.body;
+    const { name, parent_id, kr_id, decomposition_mode, description, plan_content, domain, owner_role } = req.body;
 
     if (!name || !parent_id) {
       return res.status(400).json({
@@ -2173,7 +2173,9 @@ router.post('/action/create-initiative', async (req, res) => {
       kr_id,
       decomposition_mode: decomposition_mode || 'known',
       description,
-      plan_content
+      plan_content,
+      domain,
+      owner_role
     });
 
     res.status(result.success ? 200 : 400).json(result);
