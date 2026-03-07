@@ -53,6 +53,8 @@ function makePR(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // mockFetch 需要 reset 而不只是 clear，否则未消耗的 mockResolvedValueOnce 会泄漏到下一个测试
+  mockFetch.mockReset();
   delete process.env.GITHUB_TOKEN;
 });
 
@@ -722,8 +724,7 @@ describe('scanEvolutionIfNeeded', () => {
 
     it('merged_at 日期正确提取为 date 字段', async () => {
       // 使用相对时间（1小时前），确保始终在 2 天窗口内
-      const mergedAtDate = new Date(Date.now() - 60 * 60 * 1000);
-      const mergedAt = mergedAtDate.toISOString();
+      const mergedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const expectedDate = mergedAt.slice(0, 10);
       const prs = [makePR({ number: 42, merged_at: mergedAt })];
 
