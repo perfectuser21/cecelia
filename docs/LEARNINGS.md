@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 启动僵尸清理增强 + emergency-cleanup 重试机制（PR #642, Brain v1.210.0）
+
+**失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
+
+**关键实现要点**：
+
+- `cleanupStaleLockSlots()` 用 `process.kill(pid, 0)` 检查进程存活（跨平台，macOS/Linux 均可用），`EPERM` = 进程存活但无权限 → 保留 slot，`ESRCH` = 进程不存在 → 删除 slot
+- `emergencyCleanup` 同步重试用 `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)` 实现，零子进程开销，在 Node.js 主线程可用
+- emit 参数可注入（`{ emit = null }`），便于测试和 event-bus 集成，emit 本身抛出时 catch 忽略不影响主流程
+- `.dev-mode.` 前缀文件扫描 — 只清理有分支后缀的（`.dev-mode.cp-xxx`），裸的 `.dev-mode` 跳过（可能是当前活跃会话）
+
+**Worktree 元数据恢复**：
+
+- `git checkout HEAD -- .` 会删除所有未追踪文件（包括 `.dev-mode`），恢复后需重建 `.dev-mode`、PRD、DoD
+- Bash 工具 CWD 损坏时：用 Write 工具写4个文件重建 worktree 元数据（HEAD/gitdir/commondir + worktree .git 文件），然后 `git checkout HEAD -- .` 恢复源文件
+
+**测试设计**：
+
+- `process.kill` 在测试中用 `vi.spyOn(process, 'kill').mockImplementation(...)` mock
+- 累计统计 `_stats` 跨测试用例共享（ES 模块单例），测试中用 `statsBefore/statsAfter` 对比 delta，不假设绝对值
+
 ### [2026-03-07] 僵尸资源清理：zombie-cleaner 模块 + DB 连接池健康监控（PR #636, Brain v1.208.0）
 
 **失败统计**：CI Version Check 失败 1 次（版本未更新），合并冲突 2 次（并行 PR 导致）
