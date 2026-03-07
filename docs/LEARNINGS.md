@@ -1,108 +1,33 @@
 # Cecelia Core Learnings
 
-### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
+### [2026-03-07] Worktree 元数据和目录被清理后的恢复方法（PR #627）
 
-**失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
+**问题**：worktree 目录的 `.git/worktrees/{id}` 元数据和 `.git` 文件都被后台进程清理，导致 `git worktree list` 不显示该 worktree，worktree 目录只剩 `node_modules`。
 
-**本地测试失败记录**：
-- 失败 #1：`detectDomain("梳理一下 PRD 流程")` 期望 `product`，实际返回 `coding`
-  - 根因：coding 关键词列表含 `'PR'`，用 `includes()` 匹配时 `'PR'` 是 `'PRD'` 的子串，误命中
-  - 修复：添加 `matchKeyword()` 函数，对全大写 2-5 字符缩写（如 `PR`、`CI`、`API`）使用 `\bKW\b` 正则边界匹配，普通词继续用 `includes()`
-  - 预防：凡关键词列表含英文大写缩写，必须用词边界匹配，绝不用简单 substring
+**症状**：Read/Edit 工具访问 worktree 路径的文件"成功"，但实际文件不存在（Read 工具在元数据被清理前读取，之后 git 找不到该 worktree）。
 
-- 失败 #2：`agent_ops wins over coding when both match` 期望 `agent_ops`，实际返回 `coding`
-  - 根因：优先级逻辑按"匹配词数量最多者胜"，coding 匹配 3 词（代码/架构/API）> agent_ops 匹配 1 词（Brain）
-  - 修复：完全重写优先级逻辑：`agent_ops > quality > security` 三者只要有任何匹配，立即返回，不比数量；其余 domain 按数量竞争，coding 作为兜底
-  - 预防：高优先级 domain 应用"存在即覆盖"语义，不能参与数量比较竞争
+**解决**：在新路径创建 worktree：
+```bash
+git -C /path/to/main worktree add /tmp/new-path branch-name
+```
+然后在新路径应用所有修改，完成后 PR 提交。
 
-**错误判断记录**：
-- 以为 `DOMAIN_PRIORITY` 数组控制顺序（coding→security→quality→agent_ops），结果逻辑是"tie-break"而不是"任意匹配即优先"
-  - 正确答案：重新设计为两阶段——第一阶段检查高优先级 domain（存在即返回），第二阶段按数量比较其余 domain
-
-**CI 失败记录**：
-- PR 创建后 `pull_request` 触发的 brain-ci.yml 未出现在 `gh run list`（GitHub 有时不自动触发）
-- 修复：手动 `gh workflow run brain-ci.yml --ref <branch>` 触发
-- 预防：创建 PR 后如 30s 内 `gh run list` 看不到新 run，立即手动触发
-
-**影响程度**: Medium（本地测试失败 2 次，需要重新设计算法，但架构无变化）
-
-**预防措施**：
-1. 关键词包含英文大写缩写时，必须用 `\bKW\b` 正则，不能用 `includes()`
-2. 优先级"覆盖"与"竞争"要明确区分；高优先级 domain 应使用"存在即返回"模式
-3. PR 创建后如 CI 未自动触发，手动 `gh workflow run` 比等待更高效
+**预防**：在 /dev 流程开始时先 `git worktree list` 确认当前 worktree 真实存在，不要假设 CWD 一定是有效 worktree。
 
 ---
 
-### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
+### [2026-03-07] CI 不自动触发时的手动触发方法（PR #627）
 
-**失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
+**问题**：PR 创建后 CI 没有自动触发（0 checks），即使关闭再重开 PR 也无效。
 
-**背景**：planner.js 在 `KR 无 Project` 和 `Objective 无 KR` 时会返回异常 reason，但没有任何补救机制。
+**原因**：可能是 GitHub 对同一分支重复推送的去重、或 PR 创建时序问题。
 
-**实现要点**：
+**解决**：对有 `workflow_dispatch` 触发器的 workflow，用 `gh workflow run` 手动触发：
+```bash
+gh workflow run "Brain CI" --repo owner/repo --ref branch-name
+```
 
-1. **Check C (checkKRWithoutProject)**：用 `NOT EXISTS (SELECT 1 FROM project_kr_links...)` 直接在 SQL 中过滤无 Project 的 KR，复用 `hasExistingDecompositionTask` 和 `canCreateDecompositionTask` 幂等+WIP 检查
-2. **Check D (checkObjectiveWithoutKR)**：新增独立 `hasExistingStrategicMeetingTask` 函数，使用 `task_type = 'strategic_meeting'` 而非 decomposition 类型，不需要 quality gate
-3. **tick.js 日志**：仅加日志 + actionsTaken，不在 tick 里创建任务，职责分离
-4. **测试**：每个 Check 覆盖正常流程 + 幂等 + WIP/dedup 三个场景
-
-**版本冲突**：rebase 后 package.json 被 main 的 1.204.0 覆盖（与 main 相同），需 bump 到 1.205.0，同步 4 个文件：`package.json`、`packages/brain/package-lock.json`、`package-lock.json`（根级别 packages/brain 条目）、`.brain-versions`、`DEFINITION.md`
-
-**Worktree 重建经历（本次再次触发）**：Worktree 被后台进程删除，`.git/worktrees/` 中无元数据。用 Write 工具重建 4 个文件后 Bash 恢复，再 `git checkout HEAD -- .` 还原所有文件，然后重新应用 Edit 变更。
-
-### [2026-03-07] Migration 134: goals/projects/tasks 多领域 domain + owner_role 字段（PR #616, Brain v1.204.0）
-
-**失败统计**：CI 失败 2 次（版本冲突 × 2）
-
-**背景**：OKR 多领域路由需要按 domain（coding/product/growth 等）和 owner_role（cto/coo/cpo 等）对 goals、projects、tasks 进行分类。
-
-**实现要点**：
-
-1. **Migration SQL**：`ADD COLUMN IF NOT EXISTS` 幂等写法；schema_version INSERT 同步到 `'134'`
-2. **selfcheck.js `EXPECTED_SCHEMA_VERSION`**：从 `'133'` → `'134'`，三处测试断言（desire-system、selfcheck、learnings-vectorize）必须同步更新
-3. **DEFINITION.md 双处同步**：`schema_version` 表数据行 + `Self-check` 规则行，facts-check.mjs 会同时校验两处，漏一处 CI 失败
-
-**版本冲突与 rebase 陷阱**：
-
-- 多个 PR 并发合并时，rebase 后 package.json/DEFINITION.md 会被对方版本覆盖，`.brain-versions` 却还是旧 bump 值，导致 check-version-sync 报 mismatch
-- **必须重新 bump** 到比当前 main 更高的版本，5 个文件必须同步：`package.json`、`package-lock.json`、`VERSION`、`.brain-versions`、`DEFINITION.md`
-- check-version-sync.sh 以 `package.json` 为基准，其余 4 个必须与它完全一致
-
-**vi.clearAllMocks() 不清除 mockResolvedValueOnce 队列**：
-
-- 症状：evolution-scanner 测试中，硬编码日期 `'2026-03-05T14:30:00Z'` 超出 2 天窗口导致测试失败，其 mockFetch 的第二个 `mockResolvedValueOnce` 未被消费
-- 未消费队列泄漏到后续测试，造成 4 个额外测试失败
-- `vi.clearAllMocks()` 只清除调用记录，不清除队列；需用 `vi.resetAllMocks()` 或在 beforeEach 重新 mock
-- 修复：将硬编码日期改为 `new Date(Date.now() - 60 * 60 * 1000).toISOString()`
-
-### [2026-03-07] dev 流水线成功率 API + 端到端健康检查（PR #606, Brain v1.202.3）
-
-**失败统计**：CI 失败 0 次（本地测试 + rebase 解决冲突后 CI 一次通过）
-
-**背景**：`GET /api/brain/dev-pipeline/success-rate` 返回 404，缺少 dev 任务历史成功率 API；也没有统一的端到端健康检查入口。
-
-**实现要点**：
-
-1. **success-rate 路由**：复用现有 `getDispatchStats(pool)` 取 1h 滚动窗口；再用 SQL FILTER 聚合 tasks 表历史数据，`pr_merged_at IS NOT NULL` 作为成功标准
-2. **health 路由**：四路检查各自 try/catch 独立降级，任意 fail 时 `healthy=false`；executor 检查复用已有 `getAllCBStates()`；retry 检查用动态 import 验证模块可加载性
-3. **executor.js 防御性修正**：task_type=null + skill=/dev 时 `task = { ...task, task_type: 'dev' }` 不可变修改，不影响原对象
-
-**测试策略**：
-- 只 mock `db.js` 和 `dispatch-stats.js`，不 mock thalamus/model-profile 等（过度 mock 导致缺失导出错误）
-- 遵循 routes.test.js 的极简策略：mock 工厂内部直接定义 mockPool，避免 vi.hoisted 提升问题
-
-**PR 未触发 CI 的排查**：
-- 初次推送 PR 后 CI 未触发，原因是存在 merge conflict（CONFLICTING）
-- 症状：`gh pr view --json mergeable` 返回 `CONFLICTING`，statusCheckRollup 为空数组
-- 修复：rebase 解决冲突，force push，PR 立即触发 CI
-
-**rebase 冲突要点**：
-- 版本文件（package.json / package-lock.json / .brain-versions / DEFINITION.md）都有冲突时，取 max(HEAD, ours) + 1，统一升到 1.202.3
-- root package-lock.json 中 `packages/brain` 版本字段格式有逗号（`"1.202.x",`），sed 正则需加逗号
-
-**brain-ci.yml workflow_dispatch 陷阱**：
-- 手动触发的 workflow_dispatch 没有 `base_ref`，`Detect Changes` job 检测不到文件变更，所有 Brain Tests 被 skip
-- 解决：不要用 workflow_dispatch 做测试，必须通过 PR 触发（pull_request 事件）
+---
 
 ### [2026-03-07] Worktree 目录删除后 Bash CWD 损坏，Write 工具可绕过（PR #614）
 
@@ -2855,29 +2780,3 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 
 **影响程度**：High（worktree 重建流程复杂，容易出错）
 
-
----
-
-### [2026-03-07] 微博发布器单元测试基础设施 [R22]
-
-**失败统计**：CI 失败 0 次，本地测试失败 0 次
-
-**关键经验**：
-
-**1. Node.js 内置 test runner 是 workflows 测试的最佳选择**
-
-`node:test`（Node 18+）和 `node:assert/strict` 无需任何 npm 依赖，可直接用 `node --test <file>` 运行。对于 `packages/workflows` 这种没有 `package.json` 的目录，比 vitest 更适合。CI 中也不需要 `npm install` 步骤。
-
-**2. packages/workflows/.prd.md 遗留陷阱（再次确认）**
-
-`packages/workflows/.prd.md` 存在时，branch-protect.sh 的 `find_prd_dod_dir` 在向上遍历目录时会优先匹配它，而不是项目根目录的 `.prd-<branch>.md`。修复：在 `packages/workflows/` 下也创建 `.prd-<branch>.md`（同 PR #609 的解决方案）。
-
-**3. Worktree 首次创建时缺少 .git 文件**
-
-本次 worktree 虽已在 git branch 中注册，但目录本身没有 `.git` 文件且未在 `git worktree list` 中出现。需手动写入 4 个元数据文件（HEAD/gitdir/commondir + worktree/.git）后再 `git checkout HEAD -- .` 恢复文件。恢复后需重新创建 PRD/DoD/.dev-mode 等非 git 追踪文件。
-
-**影响程度**：Low（测试全部通过，CI 一次过）
-
-**预防措施**：
-- workflows 技能测试优先使用 `node:test`，无需新增依赖
-- 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
