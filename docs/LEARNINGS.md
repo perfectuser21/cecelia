@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] N8N platform_scrape.sh 调度脚本（PR #612）
+
+**背景**：N8N 单元工作流已在 main 分支（JSON 文件存在，SKILL.md 已标记 ✅），但调用入口 `platform_scrape.sh` 不在版本控制中。
+
+**方案**：在 `packages/workflows/n8n/scripts/platform_scrape.sh` 中创建统一调度脚本，通过 case 语句映射 8 个平台参数到对应 scraper v3 脚本。toutiao-2（小号）通过 `CDP_PORT=19226` 区分大小号。
+
+**踩坑 1 — 前一个 worktree 被后台进程删除**：Bash CWD 损坏（原 worktree 目录不存在），即使 `dangerouslyDisableSandbox` 也无法运行命令。用 `EnterWorktree` 工具创建新 worktree 后重新开始。
+
+**踩坑 2 — EnterWorktree 创建的分支名不符合 cp-* 规范**：`EnterWorktree` 创建 `worktree-xxx` 格式分支名，需立即 `git branch -m` 重命名为 `cp-MMDDHHNN-xxx`。
+
+**规律**：Brain 自动生成的任务可能在任务入队后已被部分完成（SKILL.md 超前更新），但具体代码（如辅助脚本）未提交。遇到此类情况，检查 git 状态确认实际缺失内容。
+
+---
+
 ### [2026-03-07] N8N 工作流映射：packages/workflows/.prd.md 会拦截子目录 hook 检查（PR #609）
 
 **问题**：branch-protect.sh 的 `find_prd_dod_dir` 函数从被编辑文件向上走目录树。
