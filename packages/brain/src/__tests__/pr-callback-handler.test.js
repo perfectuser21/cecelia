@@ -3,7 +3,7 @@
  *
  * 测试 GitHub Webhook 处理逻辑：
  *   - verifyWebhookSignature: HMAC SHA-256 验证
- *   - matchTaskByBranch: 根据分支名匹配任务
+ *   - matchTaskByBranchOrUrl: 根据分支名匹配任务（in_progress 优先，其次 completed）
  *   - handlePrMerged: 完整 PR 合并处理流程
  *   - extractPrInfo: 从 GitHub payload 提取 PR 信息
  */
@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import crypto from 'crypto';
 import {
   verifyWebhookSignature,
-  matchTaskByBranch,
+  matchTaskByBranchOrUrl,
   handlePrMerged,
   extractPrInfo
 } from '../pr-callback-handler.js';
@@ -165,9 +165,9 @@ describe('extractPrInfo', () => {
   });
 });
 
-// ===== matchTaskByBranch 测试 =====
-describe('matchTaskByBranch', () => {
-  it('应该根据 branch name 匹配 in_progress 任务', async () => {
+// ===== matchTaskByBranchOrUrl 测试 =====
+describe('matchTaskByBranchOrUrl', () => {
+  it('应该根据 branch name 优先匹配 in_progress 任务', async () => {
     const mockTask = {
       id: 'task-uuid-1',
       title: '实现 GitHub Webhook',
@@ -183,13 +183,41 @@ describe('matchTaskByBranch', () => {
       query: vi.fn(async () => ({ rows: [mockTask], rowCount: 1 }))
     };
 
-    const result = await matchTaskByBranch(mockPool, 'cp-03050939-task-name');
+    const result = await matchTaskByBranchOrUrl(mockPool, 'cp-03050939-task-name');
 
     expect(result).toEqual(mockTask);
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining("status = 'in_progress'"),
       ['cp-03050939-task-name']
     );
+  });
+
+  it('当 in_progress 无匹配时应该查 completed 任务（by pr_url）', async () => {
+    const mockCompletedTask = {
+      id: 'task-uuid-completed',
+      title: '已完成的任务',
+      status: 'completed',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: 'cp-03050939-task-name' },
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // in_progress 查询无结果
+        .mockResolvedValueOnce({ rows: [mockCompletedTask], rowCount: 1 }) // completed 查询有结果
+    };
+
+    const result = await matchTaskByBranchOrUrl(mockPool, 'cp-03050939-task-name');
+
+    expect(result).toEqual(mockCompletedTask);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    // 第二次查询应包含 completed 和 pr_merged_at IS NULL
+    expect(mockPool.query.mock.calls[1][0]).toContain("status = 'completed'");
+    expect(mockPool.query.mock.calls[1][0]).toContain('pr_merged_at IS NULL');
+    expect(mockPool.query.mock.calls[1][0]).toContain("pr_url LIKE");
   });
 
   it('当无匹配任务时应该返回 null 并记录警告', async () => {
@@ -199,7 +227,7 @@ describe('matchTaskByBranch', () => {
       query: vi.fn(async () => ({ rows: [], rowCount: 0 }))
     };
 
-    const result = await matchTaskByBranch(mockPool, 'cp-no-match');
+    const result = await matchTaskByBranchOrUrl(mockPool, 'cp-no-match');
 
     expect(result).toBeNull();
     expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -212,7 +240,7 @@ describe('matchTaskByBranch', () => {
   it('当 branchName 为空时应该返回 null', async () => {
     const mockPool = { query: vi.fn() };
 
-    const result = await matchTaskByBranch(mockPool, '');
+    const result = await matchTaskByBranchOrUrl(mockPool, '');
     expect(result).toBeNull();
     expect(mockPool.query).not.toHaveBeenCalled();
   });
@@ -220,7 +248,7 @@ describe('matchTaskByBranch', () => {
   it('当 branchName 为 null 时应该返回 null', async () => {
     const mockPool = { query: vi.fn() };
 
-    const result = await matchTaskByBranch(mockPool, null);
+    const result = await matchTaskByBranchOrUrl(mockPool, null);
     expect(result).toBeNull();
     expect(mockPool.query).not.toHaveBeenCalled();
   });
@@ -378,6 +406,140 @@ describe('handlePrMerged', () => {
     expect(updateParams).toHaveLength(6);
     expect(updateParams[4]).toBe(prInfo.prUrl);
     expect(updateParams[5]).toBe(prInfo.mergedAt);
+  });
+
+  it('应该通过 pr_url 匹配 completed 任务并只更新 pr_merged_at（不改 status）', async () => {
+    const mockCompletedTask = {
+      id: 'task-uuid-completed',
+      title: '已完成的任务',
+      status: 'completed',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: 'cp-03050939-task-name' },
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 'task-uuid-completed' }], rowCount: 1 }) // UPDATE pr_merged_at
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // COMMIT
+      release: vi.fn()
+    };
+
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // matchTaskByBranchOrUrl: in_progress 无结果
+        .mockResolvedValueOnce({ rows: [mockCompletedTask], rowCount: 1 }), // matchTaskByBranchOrUrl: completed 有结果
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+
+    expect(result.matched).toBe(true);
+    expect(result.taskId).toBe('task-uuid-completed');
+    expect(result.krProgressUpdated).toBe(false); // 不触发 KR 进度
+
+    // 验证 UPDATE SQL 只更新 pr_url 和 pr_merged_at（SET 中无 status 赋值）
+    const updateSql = mockClient.query.mock.calls[1][0];
+    expect(updateSql).toContain('pr_url = COALESCE(pr_url, $2)');
+    expect(updateSql).toContain('pr_merged_at = $3');
+    // 参数只有 3 个（taskId, prUrl, mergedAt），没有新 status 值
+    const updateParams = mockClient.query.mock.calls[1][1];
+    expect(updateParams).toHaveLength(3);
+    expect(updateParams[0]).toBe('task-uuid-completed');
+    expect(updateParams[1]).toBe(prInfo.prUrl);
+    expect(updateParams[2]).toBe(prInfo.mergedAt);
+  });
+
+  it('应该幂等处理 - completed 任务 pr_merged_at 已有值时不重复更新', async () => {
+    const mockCompletedTask = {
+      id: 'task-uuid-completed',
+      title: '已完成的任务',
+      status: 'completed',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: {},
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // UPDATE（rowCount=0 表示 pr_merged_at 已有值）
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // ROLLBACK
+      release: vi.fn()
+    };
+
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // matchTaskByBranchOrUrl: in_progress 无结果
+        .mockResolvedValueOnce({ rows: [mockCompletedTask], rowCount: 1 }), // matchTaskByBranchOrUrl: completed 有结果
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await handlePrMerged(mockPool, prInfo);
+
+    expect(result.matched).toBe(true);
+    expect(result.taskId).toBe('task-uuid-completed');
+    expect(result.krProgressUpdated).toBe(false);
+
+    // 验证使用了 ROLLBACK（幂等）
+    const clientCalls = mockClient.query.mock.calls.map(c => c[0]);
+    expect(clientCalls[2]).toBe('ROLLBACK');
+
+    consoleSpy.mockRestore();
+  });
+
+  it('in_progress 任务仍走完整更新路径（status → completed + KR 进度）', async () => {
+    const mockInProgressTask = {
+      id: 'task-uuid-inprogress',
+      title: '进行中的任务',
+      status: 'in_progress',
+      project_id: 'proj-1',
+      goal_id: 'goal-1',
+      metadata: { branch: 'cp-03050939-task-name' },
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: 'task-uuid-inprogress', goal_id: 'goal-1', project_id: 'proj-1', pr_url: prInfo.prUrl, pr_merged_at: prInfo.mergedAt }],
+          rowCount: 1
+        }) // UPDATE status → completed
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // COMMIT
+      release: vi.fn()
+    };
+
+    const mockPool = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [mockInProgressTask], rowCount: 1 }), // matchTaskByBranchOrUrl: in_progress 命中
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+
+    expect(result.matched).toBe(true);
+    expect(result.taskId).toBe('task-uuid-inprogress');
+    expect(result.krProgressUpdated).toBe(true); // KR 进度已触发
+
+    // 验证 UPDATE SQL 包含 status = 'completed'
+    const updateSql = mockClient.query.mock.calls[1][0];
+    expect(updateSql).toContain("status = 'completed'");
+    expect(updateSql).toContain('pr_url = $5');
+    expect(updateSql).toContain('pr_merged_at = COALESCE($6::timestamp, NOW())');
+
+    // 验证事务序列
+    const clientCalls = mockClient.query.mock.calls.map(c => c[0]);
+    expect(clientCalls[0]).toBe('BEGIN');
+    expect(clientCalls[2]).toBe('COMMIT');
   });
 
   it('当 goal_id 为空时应该尝试通过 project_id 查找 KR', async () => {
