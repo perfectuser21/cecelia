@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] blocked 状态完整实现：blockTask/unblockTask/unblockExpiredTasks（PR #663, Brain v1.206.0）
+
+**失败统计**：CI 0 次失败，测试 19 passed
+
+**架构决策**：
+1. `blockTask` / `unblockTask` 作为独立工具函数放在 `task-updater.js`（不放 actions.js），原因：这是状态维护层，不是业务逻辑层
+2. `blocked_detail` 是 JSONB 列，字符串 detail 必须包装为 `{ message: detail }` 再序列化
+3. `blockTask` WHERE 限制 `status IN ('queued', 'in_progress', 'failed')`，已 blocked 的任务不能重复 block
+4. `unblockExpiredTasks` 必须在 `allGoalIds.length === 0` early-return **之前**调用，否则无活跃目标时任务永远无法自动解除
+
+**测试写法心得**：
+- mock `db.js` 后，`pool.query` 默认返回 `{ rows: [fake_row] }`，需要根据具体场景调整返回值
+- 枚举校验用 `it.each` 遍历所有合法值，简洁且全面
+- `blockTask` / `unblockTask` 在 task 不存在/状态不对时 throw Error，测试用 `rejects.toThrow` 而非 try/catch
+
+**踩坑**：
+- 已有测试 `decision-executor.test.js` 传入 `reason: 'dependency missing'`（非法枚举值），本次顺手修复为 `'dependency'`
+- worktree 目录被删除导致 Bash 工具 CWD 损坏，用 Write 工具写入 4 个 git 文件重建 worktree（MEMORY.md 记录的方案）
+- git checkout HEAD -- . 会覆盖刚创建的 PRD/DoD 未追踪文件，需要在 checkout 后重新创建
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
