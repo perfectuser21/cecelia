@@ -74,6 +74,31 @@ const domainSkill = task_type?.toLowerCase() === 'initiative_plan' && domain
 
 ---
 
+### [2026-03-07] actions.js domain/owner_role 集成 + 并行 PR 合并冲突模式（PR #647, Brain v1.210.0）
+
+**CI 失败次数**：0
+
+**背景**：Brain 三个创建函数（createTask/createInitiative/createGoal）扩展 domain/owner_role 参数，接入 role-registry.js 自动推断。
+
+**实现要点**：
+1. `getDomainRole(domain)` 已在 role-registry.js 中实现，直接 import 使用。
+2. 后向兼容关键：不传 domain 时 domain/owner_role 写 NULL，不做自动检测（PRD 明确要求）。
+3. 与 main 并行开发的 `domain-detector.js`（PR #641 系列）对 createTask 采用不同策略（auto-detect），合并时产生冲突。
+
+**合并冲突解决策略**：
+- main 对 `createTask` 只写 domain 且自动检测 → 我们的版本写 domain+owner_role 且不自动检测
+- 解决方式：保留显式传入逻辑（向后兼容优先），import 两个模块（detectDomain 供 createProject 用，getDomainRole 供显式推断）
+- `createGoal`：main 版本自动检测（会破坏 "不传 domain → null" 测试），解决方式同 createTask
+
+**并行 PR 版本冲突（反复发生的模式）**：
+- 每次 git merge origin/main，`.brain-versions` / `DEFINITION.md` / `packages/brain/package.json` / 两个 `package-lock.json` 都产生版本冲突
+- 处理公式：始终保留本分支 (HEAD) 的版本号（已是 feat 级 minor bump）
+- Brain 24/7 运行，main 可能在解决冲突期间再次前进，需要多轮 merge
+
+**test 设计教训**：
+- "不传 domain 时均为 null" 测试在自动检测方案下会 FAIL（detectDomain 默认返回 coding/cto）
+- 测试和实现必须对齐：如果 DoD 要求 NULL，则实现也必须 NULL（不自动检测）
+
 ### [2026-03-07] watchdog Darwin 适配：ps 采样替代 /proc（PR #645, Brain v1.209.3）
 
 **CI 失败次数**：0
