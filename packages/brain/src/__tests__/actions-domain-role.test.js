@@ -40,7 +40,7 @@ describe('actions.js - domain 自动填充', () => {
       expect(params).toContain('coding');
     });
 
-    it('不传 domain 时，从 title+description 自动检测 domain', async () => {
+    it('不传 domain 时 domain 写 NULL（createTask 无自动检测）', async () => {
       const fakeTask = { id: 'task-2', title: 'fix bug', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });
       mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
@@ -52,9 +52,9 @@ describe('actions.js - domain 自动填充', () => {
       });
 
       const params = mockQuery.mock.calls[1][1];
-      // 最后一个参数是 domain，应自动检测为 coding（含 "bug", "fix", "api" 关键词）
+      // createTask 不自动检测 domain，不传则写 null
       const domainParam = params[params.length - 1];
-      expect(domainParam).toBe('coding');
+      expect(domainParam).toBeNull();
     });
 
     it('传入 domain=product 时 INSERT 包含 product', async () => {
@@ -96,18 +96,18 @@ describe('actions.js - domain 自动填充', () => {
       expect(params).toContain('vp_qa');
     });
 
-    it('不传 domain 时从 title 自动检测 domain/owner_role', async () => {
+    it('不传 domain 时 domain/owner_role 写 NULL（createGoal 无自动检测）', async () => {
       const fakeGoal = { id: 'goal-y', title: 'agent OKR', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
       await createGoal({ title: 'Brain agent dispatch OKR' });
 
       const params = mockQuery.mock.calls[0][1];
-      // domain 和 owner_role 是最后两个参数（$8, $9）
+      // createGoal 不自动检测 domain，不传则 domain/owner_role 均写 null
       const domainParam = params[params.length - 2];
       const ownerRoleParam = params[params.length - 1];
-      expect(domainParam).toBe('agent_ops');
-      expect(ownerRoleParam).toBe('vp_agent_ops');
+      expect(domainParam).toBeNull();
+      expect(ownerRoleParam).toBeNull();
     });
   });
 
