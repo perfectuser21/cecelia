@@ -220,7 +220,19 @@ ${memorySummary}
     `);
 
     // 4. 计算 Jaccard 相似度（字符级分词，支持中文）
-    const tokenize = (text) => text.match(/[\u4e00-\u9fa5\u3400-\u4dbf]|[a-zA-Z]{2,}/g) || [];
+    const tokenize = (text) => {
+      const tokens = [];
+      const segs = text.match(/[\u4e00-\u9fa5\u3400-\u4dbf]+|[a-zA-Z]{2,}/g) || [];
+      for (const s of segs) {
+        if (/[\u4e00-\u9fa5]/.test(s)) {
+          for (let i = 0; i < s.length - 1; i++) tokens.push(s.slice(i, i + 2));
+          if (s.length === 1) tokens.push(s); // 单字 fallback
+        } else {
+          tokens.push(s.toLowerCase());
+        }
+      }
+      return tokens;
+    };
     const newTokens = new Set(tokenize(insight));
     let maxSimilarity = 0;
 
