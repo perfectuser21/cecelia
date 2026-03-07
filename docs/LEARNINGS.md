@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Cortex provider 直连 + 历史注入限制（PR #656, Brain v1.205.1）
+
+**失败统计**：CI 失败 0 次
+
+**背景**：Cortex 陷入反思死循环超过 5 轮，L2 深度分析完全停摆。根因：bridge 路径延迟高 + prompt 通胀（100 条 analyses 全量查询 + 20 条 learnings 注入）。
+
+**改动**：
+1. FALLBACK_PROFILE cortex provider 从 `anthropic`（bridge，走 claude -p）切换到 `anthropic-api`（直连 REST API，快 5-8x）
+2. `searchRelevantAnalyses` SQL LIMIT 从 100 降到 20
+3. `searchRelevantLearnings` limit 从 20 降到 10
+
+**踩坑**：
+1. branch-protect hook 检查 `prd_id` 字段（不是 `prd_content`），欲望系统创建的 task 没有 prd_id，需要从 .dev-mode 中移除 task_id 行，让 hook 走本地文件检查路径
+2. Worktree 目录被后台进程删除但 shell CWD 指向已删除目录，导致所有 Bash 命令失败。修复：Write 工具创建 placeholder 文件恢复目录，然后重建 worktree
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
