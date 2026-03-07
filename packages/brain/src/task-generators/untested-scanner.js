@@ -138,10 +138,27 @@ class UntestedScanner extends BaseScanner {
    */
   async generateTask(issue) {
     const moduleName = path.basename(issue.module_path, '.js');
+    const testFileName = `${moduleName}.test.js`;
+    const severityText = issue.severity === 'high' ? '高（关键业务模块，影响调度/决策/执行）' : '低（辅助模块）';
+
+    const description = [
+      `未测试模块检测发现 ${moduleName} 缺少对应测试文件，需要创建测试以保障代码质量。`,
+      ``,
+      `模块路径：${issue.module_path}`,
+      `严重程度：${severityText}`,
+      ``,
+      `建议实现：`,
+      `1. 分析模块导出：识别 ${moduleName} 的关键导出函数/类及其参数签名`,
+      `2. 创建测试文件：${testFileName}（放在 src/__tests__/ 目录下）`,
+      `3. 覆盖核心功能：至少验证主要导出函数的正常路径和边界情况`,
+      `4. 使用 vi.mock() 隔离外部依赖（DB、文件系统、网络请求）`,
+      ``,
+      `验收标准：${testFileName} 存在且 npm test 通过，${moduleName} 行覆盖率达到 70% 以上。`,
+    ].join('\n');
 
     return {
-      title: `为 ${moduleName} 模块添加测试`,
-      description: `未测试模块检测发现：${issue.module_path}\n\n当前状态: 无测试文件\n目标: 至少有一个测试文件\n\n严重程度: ${issue.severity === 'high' ? '高（关键业务模块）' : '低'}\n\n请为该模块添加单元测试。`,
+      title: `为 ${moduleName} 模块添加单元测试（${issue.severity === 'high' ? 'P0 关键模块' : 'P2 辅助模块'}）`,
+      description,
       priority: issue.severity === 'high' ? 'P0' : 'P2',
       tags: ['quality', 'test', 'untested'],
       metadata: {

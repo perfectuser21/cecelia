@@ -40,6 +40,7 @@ import { loadSpendingCapsFromDB } from './src/account-usage.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
+import { getScanStatus } from './src/task-generator-scheduler.js';
 
 const app = express();
 const server = createServer(app);
@@ -130,6 +131,16 @@ app.use('/api/cecelia', ceceliaRoutes);
 
 // Mount trace observability routes
 app.use('/api/brain/trace', traceRoutes);
+
+// GET /api/brain/scan-status
+app.get('/api/brain/scan-status', (_req, res) => {
+  try {
+    res.json(getScanStatus());
+  } catch (err) {
+    console.error('[scan-status]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // POST /api/brain/orchestrator/chat
 app.post('/api/brain/orchestrator/chat', async (req, res) => {

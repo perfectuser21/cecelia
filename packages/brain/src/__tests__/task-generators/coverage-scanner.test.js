@@ -294,5 +294,37 @@ describe('CoverageScanner', () => {
 
       expect(task.description).toContain('46%');
     });
+
+    it('description 长度 >= 100 字符（通过 task-quality-gate 最低要求）', async () => {
+      const scanner = new CoverageScanner();
+      const issue = {
+        module_path: '/packages/brain/src/tick.js',
+        issue_type: 'low_coverage',
+        current_value: 30,
+        target_value: 70,
+        severity: 'high',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      expect(task.description.length).toBeGreaterThanOrEqual(100);
+    });
+
+    it('description 包含行动关键词（测试/添加/验收等）', async () => {
+      const scanner = new CoverageScanner();
+      const issue = {
+        module_path: '/packages/brain/src/executor.js',
+        issue_type: 'low_coverage',
+        current_value: 40,
+        target_value: 70,
+        severity: 'medium',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      const actionKeywords = ['测试', '添加', '验收', '覆盖', '运行'];
+      const hasActionKeyword = actionKeywords.some(kw => task.description.includes(kw));
+      expect(hasActionKeyword).toBe(true);
+    });
   });
 });

@@ -430,5 +430,37 @@ describe('UntestedScanner', () => {
       const task = await scanner.generateTask(issueHigh);
       expect(task.description).toContain('高');
     });
+
+    it('description 长度 >= 100 字符（通过 task-quality-gate 最低要求）', async () => {
+      const scanner = new UntestedScanner();
+      const issue = {
+        module_path: 'src/executor.js',
+        issue_type: 'no_test',
+        current_value: 0,
+        target_value: 1,
+        severity: 'high',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      expect(task.description.length).toBeGreaterThanOrEqual(100);
+    });
+
+    it('description 包含行动关键词（创建/覆盖/验收等）', async () => {
+      const scanner = new UntestedScanner();
+      const issue = {
+        module_path: 'src/learning.js',
+        issue_type: 'no_test',
+        current_value: 0,
+        target_value: 1,
+        severity: 'low',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      const actionKeywords = ['创建', '覆盖', '验收', '分析', '测试'];
+      const hasActionKeyword = actionKeywords.some(kw => task.description.includes(kw));
+      expect(hasActionKeyword).toBe(true);
+    });
   });
 });

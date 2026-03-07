@@ -408,5 +408,41 @@ describe('ComplexityScanner', () => {
       expect(task.metadata.line_number).toBe(100);
       expect(task.metadata.scanner).toBe('complexity');
     });
+
+    it('description 长度 >= 100 字符（通过 task-quality-gate 最低要求）', async () => {
+      const scanner = new ComplexityScanner();
+      const issue = {
+        module_path: 'src/tick.js',
+        issue_type: 'high_complexity',
+        current_value: 15,
+        target_value: 10,
+        function_name: 'processEvent',
+        line_number: 50,
+        severity: 'medium',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      expect(task.description.length).toBeGreaterThanOrEqual(100);
+    });
+
+    it('description 包含行动关键词（重构/降低/验收等）', async () => {
+      const scanner = new ComplexityScanner();
+      const issue = {
+        module_path: 'src/executor.js',
+        issue_type: 'high_complexity',
+        current_value: 12,
+        target_value: 10,
+        function_name: 'execute',
+        line_number: 30,
+        severity: 'medium',
+      };
+
+      const task = await scanner.generateTask(issue);
+
+      const actionKeywords = ['重构', '降低', '验收', '提取', '拆分'];
+      const hasActionKeyword = actionKeywords.some(kw => task.description.includes(kw));
+      expect(hasActionKeyword).toBe(true);
+    });
   });
 });

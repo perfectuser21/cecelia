@@ -481,4 +481,248 @@ describe('task-generator-scheduler', () => {
       expect(r2.scanners[0].name).toBe('S2');
     });
   });
+
+  // ============================================================
+  // project_id / goal_id / task_type 注入
+  // ============================================================
+
+  describe('project_id/goal_id/task_type 注入', () => {
+    let triggerScanWithEnv;
+
+    beforeEach(async () => {
+      mockRunScan.mockReset();
+      mockGenerateTasks.mockReset();
+      mockExecCb.mockReset();
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      vi.useFakeTimers({
+        toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
+      });
+      vi.setSystemTime(new Date('2026-03-20T10:00:00Z'));
+
+      // 设置环境变量（必须在 import 之前）
+      process.env.TASK_GENERATOR_PROJECT_ID = '690c2874-d6e9-4ecc-8e55-37d349790afb';
+      process.env.TASK_GENERATOR_GOAL_ID = 'e5ec0510-d7b2-4ee7-99f6-314aac55b3f6';
+
+      vi.resetModules();
+      const mod = await import('../task-generator-scheduler.js');
+      triggerScanWithEnv = mod.triggerCodeQualityScan;
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      delete process.env.TASK_GENERATOR_PROJECT_ID;
+      delete process.env.TASK_GENERATOR_GOAL_ID;
+    });
+
+    it('INSERT SQL 包含 project_id、goal_id、task_type 列', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn({ title: 'T', description: 'D' });
+        return [{ id: 'task-1' }];
+      });
+
+      await triggerScanWithEnv(pool);
+
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toContain('project_id');
+      expect(sql).toContain('goal_id');
+      expect(sql).toContain('task_type');
+    });
+
+    it('INSERT 参数 project_id 来自 TASK_GENERATOR_PROJECT_ID 环境变量', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn({ title: 'T', description: 'D' });
+        return [{ id: 'task-1' }];
+      });
+
+      await triggerScanWithEnv(pool);
+
+      const params = pool.query.mock.calls[0][1];
+      expect(params[6]).toBe('690c2874-d6e9-4ecc-8e55-37d349790afb');
+    });
+
+    it('INSERT 参数 goal_id 来自 TASK_GENERATOR_GOAL_ID 环境变量', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn({ title: 'T', description: 'D' });
+        return [{ id: 'task-1' }];
+      });
+
+      await triggerScanWithEnv(pool);
+
+      const params = pool.query.mock.calls[0][1];
+      expect(params[7]).toBe('e5ec0510-d7b2-4ee7-99f6-314aac55b3f6');
+    });
+
+    it('INSERT 参数 task_type 始终为 dev', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn({ title: 'Coverage task', description: 'Fix coverage', tags: ['coverage'] });
+        return [{ id: 'id-1' }];
+      });
+
+      await triggerScanWithEnv(pool);
+
+      const params = pool.query.mock.calls[0][1];
+      expect(params[8]).toBe('dev');
+    });
+
+    it('env 未配置时 project_id/goal_id 为 null，task_type 仍为 dev', async () => {
+      delete process.env.TASK_GENERATOR_PROJECT_ID;
+      delete process.env.TASK_GENERATOR_GOAL_ID;
+
+      vi.resetModules();
+      const modNoEnv = await import('../task-generator-scheduler.js');
+      const triggerNoEnv = modNoEnv.triggerCodeQualityScan;
+
+      vi.setSystemTime(new Date('2026-03-21T10:00:00Z'));
+
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn({ title: 'T', description: 'D' });
+        return [{ id: 'task-x' }];
+      });
+
+      await triggerNoEnv(pool);
+
+      const params = pool.query.mock.calls[0][1];
+      expect(params[6]).toBeNull();
+      expect(params[7]).toBeNull();
+      expect(params[8]).toBe('dev');
+    });
+
+    it('原有字段位置不变（title/description/priority/status/tags/metadata）', async () => {
+      const pool = makePool();
+      const taskData = {
+        title: 'My Title',
+        description: 'My Description',
+        priority: 'P0',
+        tags: ['tag1'],
+        metadata: { key: 'val' },
+      };
+
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockImplementation(async (_issues, createTaskFn) => {
+        await createTaskFn(taskData);
+        return [{ id: 'task-ok' }];
+      });
+
+      await triggerScanWithEnv(pool);
+
+      const params = pool.query.mock.calls[0][1];
+      expect(params[0]).toBe('My Title');
+      expect(params[1]).toBe('My Description');
+      expect(params[2]).toBe('P0');
+      expect(params[3]).toBe('queued');
+      expect(params[4]).toEqual(['tag1']);
+      expect(params[5]).toEqual({ key: 'val' });
+    });
+  });
+
+  // ============================================================
+  // getScanStatus
+  // ============================================================
+
+  describe('getScanStatus', () => {
+    let getScanStatusFn;
+    let triggerScanFn;
+
+    beforeEach(async () => {
+      mockRunScan.mockReset();
+      mockGenerateTasks.mockReset();
+      mockExecCb.mockReset();
+      mockExecCb.mockImplementation((cmd, opts, cb) => {
+        const callback = typeof opts === 'function' ? opts : cb;
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      vi.useFakeTimers({
+        toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'],
+      });
+      vi.setSystemTime(new Date('2026-03-22T10:00:00Z'));
+
+      vi.resetModules();
+      const mod = await import('../task-generator-scheduler.js');
+      getScanStatusFn = mod.getScanStatus;
+      triggerScanFn = mod.triggerCodeQualityScan;
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('初始状态：last_scan_time=null，其余字段为 0', () => {
+      const status = getScanStatusFn();
+      expect(status.last_scan_time).toBeNull();
+      expect(status.issues_found).toBe(0);
+      expect(status.tasks_generated).toBe(0);
+      expect(status.today_generated_count).toBe(0);
+    });
+
+    it('返回的对象包含 4 个规范字段名', () => {
+      const status = getScanStatusFn();
+      expect(Object.keys(status)).toEqual([
+        'last_scan_time',
+        'issues_found',
+        'tasks_generated',
+        'today_generated_count',
+      ]);
+    });
+
+    it('扫描后 last_scan_time 更新为 Date 实例', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockResolvedValue([{ id: 'id-1' }]);
+
+      await triggerScanFn(pool);
+
+      const status = getScanStatusFn();
+      expect(status.last_scan_time).toBeInstanceOf(Date);
+    });
+
+    it('扫描后 issues_found 和 tasks_generated 正确更新', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1), makeIssue(2), makeIssue(3)]);
+      mockGenerateTasks.mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+
+      await triggerScanFn(pool);
+
+      const status = getScanStatusFn();
+      expect(status.issues_found).toBe(3);
+      expect(status.tasks_generated).toBe(2);
+    });
+
+    it('issues 为空时 last_scan_time 也更新，issues_found=0', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([]);
+
+      await triggerScanFn(pool);
+
+      const status = getScanStatusFn();
+      expect(status.last_scan_time).toBeInstanceOf(Date);
+      expect(status.issues_found).toBe(0);
+      expect(status.tasks_generated).toBe(0);
+    });
+
+    it('today_generated_count 当天累计任务数', async () => {
+      const pool = makePool();
+      mockRunScan.mockResolvedValue([makeIssue(1)]);
+      mockGenerateTasks.mockResolvedValue([{ id: 'x1' }, { id: 'x2' }]);
+
+      await triggerScanFn(pool);
+
+      const status = getScanStatusFn();
+      expect(status.today_generated_count).toBe(2);
+    });
+  });
 });
