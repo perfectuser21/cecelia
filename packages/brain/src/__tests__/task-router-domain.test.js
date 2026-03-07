@@ -1,75 +1,149 @@
 /**
- * Task Router - Domain-aware skill override 路由测试
+ * task-router-domain.test.js
  *
- * DoD 覆盖: coding domain initiative_plan → /architect
+ * 测试 getDomainSkillOverride 和 routeTaskCreate 的 domain 感知路由逻辑。
  */
 
 import { describe, it, expect } from 'vitest';
+import {
+  getDomainSkillOverride,
+  routeTaskCreate,
+} from '../task-router.js';
 
-describe('task-router domain skill override', () => {
-  it('getDomainSkillOverride: coding + initiative_plan → /architect', async () => {
-    const mod = await import('../task-router.js');
-    expect(mod.getDomainSkillOverride('initiative_plan', 'coding')).toBe('/architect');
+// ============================================================
+// getDomainSkillOverride
+// ============================================================
+
+describe('getDomainSkillOverride - null/undefined domain', () => {
+  it('null domain → null（向后兼容）', () => {
+    expect(getDomainSkillOverride('dev', null)).toBeNull();
   });
 
-  it('getDomainSkillOverride: coding + dev → null (no override)', async () => {
-    const mod = await import('../task-router.js');
-    expect(mod.getDomainSkillOverride('dev', 'coding')).toBeNull();
+  it('undefined domain → null', () => {
+    expect(getDomainSkillOverride('dev', undefined)).toBeNull();
   });
 
-  it('getDomainSkillOverride: coding + review → null (no override)', async () => {
-    const mod = await import('../task-router.js');
-    expect(mod.getDomainSkillOverride('review', 'coding')).toBeNull();
+  it('空字符串 domain → null', () => {
+    expect(getDomainSkillOverride('dev', '')).toBeNull();
+  });
+});
+
+describe('getDomainSkillOverride - coding domain', () => {
+  it('coding + initiative_plan → /architect（架构设计优先）', () => {
+    expect(getDomainSkillOverride('initiative_plan', 'coding')).toBe('/architect');
   });
 
-  it('getDomainSkillOverride: null domain → null', async () => {
-    const mod = await import('../task-router.js');
-    expect(mod.getDomainSkillOverride('initiative_plan', null)).toBeNull();
+  it('coding + dev → null（使用默认 /dev，无覆盖）', () => {
+    expect(getDomainSkillOverride('dev', 'coding')).toBeNull();
   });
 
-  it('getDomainSkillOverride: null taskType → null', async () => {
-    const mod = await import('../task-router.js');
-    expect(mod.getDomainSkillOverride(null, 'coding')).toBeNull();
+  it('coding + review → null（无覆盖）', () => {
+    expect(getDomainSkillOverride('review', 'coding')).toBeNull();
   });
 
-  it('routeTaskCreate: coding + initiative_plan → skill=/architect', async () => {
-    const mod = await import('../task-router.js');
-    const routing = mod.routeTaskCreate({
-      title: '拆解 coding Initiative',
-      task_type: 'initiative_plan',
-      domain: 'coding'
-    });
-    expect(routing.skill).toBe('/architect');
-    expect(routing.task_type).toBe('initiative_plan');
+  it('coding 大小写不敏感 + initiative_plan → /architect', () => {
+    expect(getDomainSkillOverride('initiative_plan', 'CODING')).toBe('/architect');
   });
 
-  it('routeTaskCreate: coding + dev → skill=/dev (no override)', async () => {
-    const mod = await import('../task-router.js');
-    const routing = mod.routeTaskCreate({
-      title: '写代码任务',
-      task_type: 'dev',
-      domain: 'coding'
-    });
-    expect(routing.skill).toBe('/dev');
+  it('coding 大小写不敏感 + dev → null', () => {
+    expect(getDomainSkillOverride('dev', 'CODING')).toBeNull();
+  });
+});
+
+describe('getDomainSkillOverride - non-coding domains', () => {
+  it('product domain → CPO 首选 skill /plan', () => {
+    const result = getDomainSkillOverride('dev', 'product');
+    expect(result).toBe('/plan');
   });
 
-  it('routeTaskCreate: no domain + initiative_plan → skill=/decomp (default)', async () => {
-    const mod = await import('../task-router.js');
-    const routing = mod.routeTaskCreate({
-      title: '无 domain Initiative 拆解',
-      task_type: 'initiative_plan'
-    });
-    expect(routing.skill).toBe('/decomp');
+  it('quality domain → VP QA 首选 skill /qa', () => {
+    const result = getDomainSkillOverride('dev', 'quality');
+    expect(result).toBe('/qa');
   });
 
-  it('existing product domain is not affected (no regression)', async () => {
-    const mod = await import('../task-router.js');
-    // product domain 没有 override，应走默认 SKILL_WHITELIST
-    const routing = mod.routeTaskCreate({
-      title: '产品 Initiative 拆解',
-      task_type: 'initiative_plan',
-      domain: 'product'
-    });
-    expect(routing.skill).toBe('/decomp');
+  it('research domain → VP Research 首选 skill /research', () => {
+    const result = getDomainSkillOverride('dev', 'research');
+    expect(result).toBe('/research');
+  });
+
+  it('knowledge domain → VP Knowledge 首选 skill /knowledge', () => {
+    const result = getDomainSkillOverride('dev', 'knowledge');
+    expect(result).toBe('/knowledge');
+  });
+
+  it('growth domain → CMO 首选 skill /research', () => {
+    const result = getDomainSkillOverride('dev', 'growth');
+    expect(result).toBe('/research');
+  });
+});
+
+describe('getDomainSkillOverride - unknown/empty roles', () => {
+  it('未知 domain → null', () => {
+    expect(getDomainSkillOverride('dev', 'unknown_domain_xyz')).toBeNull();
+  });
+
+  it('finance domain（CFO skills 为空）→ null', () => {
+    expect(getDomainSkillOverride('dev', 'finance')).toBeNull();
+  });
+
+  it('operations domain（COO skills 为空）→ null', () => {
+    expect(getDomainSkillOverride('dev', 'operations')).toBeNull();
+  });
+});
+
+// ============================================================
+// routeTaskCreate - domain 参数
+// ============================================================
+
+describe('routeTaskCreate - domain 路由', () => {
+  it('coding domain + initiative_plan → skill=/architect', () => {
+    const result = routeTaskCreate({ title: 'coding init plan', task_type: 'initiative_plan', domain: 'coding' });
+    expect(result.skill).toBe('/architect');
+    expect(result.domain).toBe('coding');
+  });
+
+  it('coding domain + dev → skill=/dev（与无 domain 行为一致）', () => {
+    const result = routeTaskCreate({ title: 'coding task', task_type: 'dev', domain: 'coding' });
+    expect(result.skill).toBe('/dev');
+    expect(result.domain).toBe('coding');
+  });
+
+  it('product domain + dev → skill=/plan', () => {
+    const result = routeTaskCreate({ title: 'product task', task_type: 'dev', domain: 'product' });
+    expect(result.skill).toBe('/plan');
+    expect(result.domain).toBe('product');
+  });
+
+  it('quality domain + dev → skill=/qa', () => {
+    const result = routeTaskCreate({ title: 'quality task', task_type: 'dev', domain: 'quality' });
+    expect(result.skill).toBe('/qa');
+    expect(result.domain).toBe('quality');
+  });
+
+  it('null domain → skill=/dev（向后兼容，domain 字段为 null）', () => {
+    const result = routeTaskCreate({ title: 'no domain task', task_type: 'dev', domain: null });
+    expect(result.skill).toBe('/dev');
+    expect(result.domain).toBeNull();
+  });
+
+  it('无 domain 参数 → skill=/dev（向后兼容）', () => {
+    const result = routeTaskCreate({ title: 'legacy task', task_type: 'dev' });
+    expect(result.skill).toBe('/dev');
+    expect(result.domain).toBeNull();
+  });
+
+  it('无 domain + initiative_plan → skill=/decomp（默认）', () => {
+    const result = routeTaskCreate({ title: 'init plan', task_type: 'initiative_plan' });
+    expect(result.skill).toBe('/decomp');
+  });
+
+  it('routing_reason 包含 domain 信息（当 domain 存在时）', () => {
+    const result = routeTaskCreate({ title: 'domain task', task_type: 'dev', domain: 'product' });
+    expect(result.routing_reason).toContain('domain=product');
+  });
+
+  it('routing_reason 不包含 domain（当 domain 为 null 时）', () => {
+    const result = routeTaskCreate({ title: 'no domain', task_type: 'dev' });
+    expect(result.routing_reason).not.toContain('domain=');
   });
 });

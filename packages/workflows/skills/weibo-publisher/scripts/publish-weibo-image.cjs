@@ -13,10 +13,12 @@
  *   NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
  */
 
-const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+
+const { CDPClient } = require('./cdp-client.cjs');
+const { findImages: findImagesUtil } = require('./utils.cjs');
 
 const CDP_PORT = 19227;
 const WINDOWS_IP = '100.97.242.124';
@@ -57,17 +59,7 @@ const contentText = fs.existsSync(contentFile)
   ? fs.readFileSync(contentFile, 'utf8').trim()
   : '';
 
-// 收集图片文件
-function findImages(dir) {
-  const files = fs.readdirSync(dir);
-  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-  return files
-    .filter(f => imageExts.some(ext => f.toLowerCase().endsWith(ext)))
-    .sort()
-    .map(f => path.join(dir, f));
-}
-
-const localImages = findImages(contentDir);
+const localImages = findImagesUtil(contentDir);
 if (localImages.length === 0) {
   console.error('❌ 错误：内容目录中没有图片文件');
   process.exit(1);
@@ -93,61 +85,6 @@ if (windowsImages.length > 0) {
 console.log('');
 
 // CDP 客户端
-class CDPClient {
-  constructor(wsUrl) {
-    this.wsUrl = wsUrl;
-    this.ws = null;
-    this.msgId = 0;
-    this.callbacks = {};
-    this.events = {};
-  }
-
-  connect() {
-    return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.wsUrl);
-      this.ws.on('open', () => resolve());
-      this.ws.on('error', reject);
-      this.ws.on('message', data => {
-        const msg = JSON.parse(data);
-        if (msg.id && this.callbacks[msg.id]) {
-          this.callbacks[msg.id](msg);
-          delete this.callbacks[msg.id];
-        }
-        // 处理事件
-        if (msg.method && this.events[msg.method]) {
-          this.events[msg.method].forEach(cb => cb(msg.params));
-        }
-      });
-    });
-  }
-
-  on(event, callback) {
-    if (!this.events[event]) this.events[event] = [];
-    this.events[event].push(callback);
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolve, reject) => {
-      const id = ++this.msgId;
-      this.callbacks[id] = msg => {
-        if (msg.error) reject(new Error(msg.error.message));
-        else resolve(msg.result);
-      };
-      this.ws.send(JSON.stringify({ id, method, params }));
-      setTimeout(() => {
-        if (this.callbacks[id]) {
-          delete this.callbacks[id];
-          reject(new Error(`CDP timeout: ${method}`));
-        }
-      }, 60000);
-    });
-  }
-
-  close() {
-    if (this.ws) this.ws.close();
-  }
-}
-
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
