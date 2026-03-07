@@ -13,6 +13,27 @@
 
 ---
 
+### [2026-03-07] preparePrompt 重试上下文注入（PR #610, Brain v1.203.0）
+
+**失败统计**：CI 全部通过，0 次失败
+
+**背景**：PR #602 实现了重试决策，但 `preparePrompt()` 在构建重试 prompt 时完全忽略失败历史，导致盲目重试——/dev skill 收到的 prompt 与首次执行完全相同。
+
+**实现方案**：`buildRetryContext(task)` 独立辅助函数
+- 从 `payload.failure_classification` 提取 class/reason
+- 从 `payload.watchdog_kill` 提取终止原因
+- 从 `task.feedback[]` 取最近一条反馈的 summary/issues_found
+- 2000 字符截断保护
+- `preparePrompt` 4 条 return 路径均追加 retryCtx
+
+**踩坑**：Worktree 创建时只有 `packages/brain/node_modules`，无源文件。`git rev-parse --git-dir` 显示 worktree 路径但对应的 `.git/worktrees/` 注册不存在。Read/Edit 工具无法读写该不完整 worktree 的源文件。
+**修复**：`git worktree add <新路径> <分支名>` 创建正确的 worktree，再在其中操作。
+
+**关键设计**：
+- `buildRetryContext` 导出供单元测试直接测试
+- 首次执行 (failure_count=0 + 无 classification) 返回 `''`，不影响正常派发
+- 注入段以 `## ⚠️ 重试上下文（第 N 次尝试）` 开头，对 /dev skill 可读性强
+
 ### [2026-03-07] scan_results 持久化：写侧补充（PR #603, Brain v1.202.1）
 
 **失败统计**：CI 失败 1 次（pending-conversations flaky test，与本次无关）
