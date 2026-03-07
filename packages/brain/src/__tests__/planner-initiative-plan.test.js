@@ -420,4 +420,174 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     expect(task.priority).toBe('P0'); // Inherits KR priority
     testTaskIds.push(task.id);
   });
+
+  it('should write owner_role into payload', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR owner_role payload test', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-owner-role-test', '/tmp/owner-role', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    // Initiative with owner_role set
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, owner_role) VALUES ('Owner Role Initiative', 'initiative', $1, 'active', 'cto') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    testTaskIds.push(task.id);
+    const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
+    expect(payload.owner_role).toBe('cto');
+    expect(payload.initiative_id).toBe(initResult.rows[0].id);
+    expect(payload.kr_id).toBe(kr.id);
+  });
+});
+
+// ============================================================
+// generateArchitectureDesignTask - domain routing
+// ============================================================
+
+describe('generateArchitectureDesignTask - domain routing', () => {
+  it('should generate architecture_design for domain=coding', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain coding', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-coding', '/tmp/domain-coding', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Coding Initiative', 'initiative', $1, 'active', 'coding') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('architecture_design');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate architecture_design for domain=null (backward compat)', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain null', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-null', '/tmp/domain-null', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    // No domain field → NULL
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Null Domain Initiative', 'initiative', $1, 'active') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('architecture_design');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate initiative_plan for domain=content', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain content', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-content', '/tmp/domain-content', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Content Initiative', 'initiative', $1, 'active', 'content') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('initiative_plan');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate initiative_plan for domain=operations', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain operations', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-operations', '/tmp/domain-ops', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Operations Initiative', 'initiative', $1, 'active', 'operations') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('initiative_plan');
+    testTaskIds.push(task.id);
+  });
+
+  it('should not create duplicate initiative_plan when one already exists for content domain', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR content dedup', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-content-dedup', '/tmp/content-dedup', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Content Dedup Initiative', 'initiative', $1, 'active', 'content') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task1 = await generateArchitectureDesignTask(kr, project);
+    expect(task1).not.toBeNull();
+    expect(task1.task_type).toBe('initiative_plan');
+    testTaskIds.push(task1.id);
+
+    // Second call should return null (duplicate prevention)
+    const task2 = await generateArchitectureDesignTask(kr, project);
+    expect(task2).toBeNull();
+  });
 });

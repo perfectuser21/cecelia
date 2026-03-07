@@ -450,36 +450,54 @@ async function generateArchitectureDesignTask(kr, project) {
     }
 
     const initiative = initiativeResult.rows[0];
+    const domain = initiative.domain || null;
+    const ownerRole = initiative.owner_role || null;
 
-    // Check if an architecture_design task already exists for this initiative (any active status)
+    // Domain → task_type routing
+    // coding / null → architecture_design (/architect, backward compat)
+    // content / operations → initiative_plan (/decomp)
+    let taskType, taskTitle, taskDescription;
+    if (domain === 'content' || domain === 'operations') {
+      taskType = 'initiative_plan';
+      taskTitle = `规划 Initiative: ${initiative.name}`;
+      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要规划拆解 (domain=${domain}): 由 /decomp 拆解 Initiative 任务。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
+    } else {
+      // coding or null/undefined → architecture_design (backward compat)
+      taskType = 'architecture_design';
+      taskTitle = `架构设计 Initiative: ${initiative.name}`;
+      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
+    }
+
+    // Check if a planning task of the determined type already exists for this initiative
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = 'architecture_design'
+      WHERE project_id = $1 AND task_type = $2
         AND status NOT IN ('completed', 'failed', 'cancelled')
       LIMIT 1
-    `, [initiative.id]);
+    `, [initiative.id, taskType]);
 
     if (existingResult.rows.length > 0) {
-      // Already has an architecture_design task pending/in_progress, skip
+      // Already has a pending/in_progress planning task, skip
       return null;
     }
 
-    // Create architecture_design task → dispatched to /architect Mode 2
+    // Create planning task → dispatched based on domain routing
     const insertResult = await pool.query(`
       INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
-      VALUES ($1, $2, 'architecture_design', $3, $4, $5, 'queued', 'brain_auto', $6)
+      VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7)
       RETURNING *
     `, [
-      `架构设计 Initiative: ${initiative.name}`,
-      `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`,
+      taskTitle,
+      taskDescription,
+      taskType,
       kr.priority || 'P1',
       initiative.id,
       kr.id,
-      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id })
+      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id, owner_role: ownerRole })
     ]);
 
     const newTask = insertResult.rows[0];
-    console.log(`[planner] 自动生成 architecture_design 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id}`);
+    console.log(`[planner] 自动生成 ${taskType} 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id} (domain=${domain})`);
     return newTask;
   } catch (err) {
     console.error(`[planner] generateArchitectureDesignTask failed: ${err.message}`);
