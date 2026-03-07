@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../db-config.js';
-import { scoreKRs, selectTargetProject, generateArchitectureDesignTask } from '../planner.js';
+import { scoreKRs, selectTargetProject, generateArchitectureDesignTask, resolveInitiativeDomain } from '../planner.js';
 
 const { Pool } = pg;
 const pool = new Pool(DB_DEFAULTS);
@@ -419,5 +419,190 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     expect(task).not.toBeNull();
     expect(task.priority).toBe('P0'); // Inherits KR priority
     testTaskIds.push(task.id);
+  });
+});
+
+// ============================================================
+// resolveInitiativeDomain - domain 继承链
+// ============================================================
+
+describe('resolveInitiativeDomain - domain inheritance', () => {
+  it('should return initiative.domain when set', () => {
+    const initiative = { domain: 'product' };
+    const project = { domain: 'coding' };
+    const kr = { domain: 'growth' };
+    expect(resolveInitiativeDomain(initiative, project, kr)).toBe('product');
+  });
+
+  it('should fallback to parentProject.domain when initiative.domain is null', () => {
+    const initiative = { domain: null };
+    const project = { domain: 'growth' };
+    const kr = { domain: 'quality' };
+    expect(resolveInitiativeDomain(initiative, project, kr)).toBe('growth');
+  });
+
+  it('should fallback to kr.domain when initiative and project domain are null', () => {
+    const initiative = { domain: null };
+    const project = { domain: null };
+    const kr = { domain: 'quality' };
+    expect(resolveInitiativeDomain(initiative, project, kr)).toBe('quality');
+  });
+
+  it('should return null when all domain fields are null', () => {
+    const initiative = { domain: null };
+    const project = { domain: null };
+    const kr = { domain: null };
+    expect(resolveInitiativeDomain(initiative, project, kr)).toBeNull();
+  });
+
+  it('should return null when domain fields are empty strings', () => {
+    const initiative = { domain: '' };
+    const project = { domain: '' };
+    const kr = { domain: '' };
+    expect(resolveInitiativeDomain(initiative, project, kr)).toBeNull();
+  });
+});
+
+// ============================================================
+// generateArchitectureDesignTask - domain routing
+// ============================================================
+
+describe('generateArchitectureDesignTask - domain routing', () => {
+  it('should generate architecture_design task when domain is null (fallback)', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain null', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-null', '/tmp/domain-null', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Init No Domain', 'initiative', $1, 'active') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('architecture_design');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate architecture_design task when domain is coding', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress, domain) VALUES ('KR domain coding', 'area_okr', 'P1', 'in_progress', 0, 'coding') RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status, domain) VALUES ('proj-domain-coding', '/tmp/domain-coding', 'active', 'coding') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Init Coding Domain', 'initiative', $1, 'active') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('architecture_design');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate initiative_plan task when domain is product', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain product', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-domain-product', '/tmp/domain-product', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Init Product Domain', 'initiative', $1, 'active', 'product') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('initiative_plan');
+    const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
+    expect(payload.domain).toBe('product');
+    testTaskIds.push(task.id);
+  });
+
+  it('should generate initiative_plan task when domain inherited from parent project (growth)', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR domain growth inherited', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status, domain) VALUES ('proj-domain-growth', '/tmp/domain-growth', 'active', 'growth') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status) VALUES ('Init Inherits Growth', 'initiative', $1, 'active') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    const task = await generateArchitectureDesignTask(kr, project);
+
+    expect(task).not.toBeNull();
+    expect(task.task_type).toBe('initiative_plan');
+    const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
+    expect(payload.domain).toBe('growth');
+    testTaskIds.push(task.id);
+  });
+
+  it('should not create duplicate when initiative_plan task already exists', async () => {
+    const krResult = await pool.query(
+      "INSERT INTO goals (title, type, priority, status, progress) VALUES ('KR dedup initiative_plan', 'area_okr', 'P1', 'in_progress', 0) RETURNING *"
+    );
+    const kr = krResult.rows[0];
+    testKRIds.push(kr.id);
+
+    const projResult = await pool.query(
+      "INSERT INTO projects (name, repo_path, status) VALUES ('proj-dedup-initplan', '/tmp/dedup-initplan', 'active') RETURNING *"
+    );
+    const project = projResult.rows[0];
+    testProjectIds.push(project.id);
+
+    const initResult = await pool.query(
+      "INSERT INTO projects (name, type, parent_id, status, domain) VALUES ('Dedup Init Plan', 'initiative', $1, 'active', 'product') RETURNING *",
+      [project.id]
+    );
+    testProjectIds.push(initResult.rows[0].id);
+
+    // First call
+    const task1 = await generateArchitectureDesignTask(kr, project);
+    expect(task1).not.toBeNull();
+    expect(task1.task_type).toBe('initiative_plan');
+    testTaskIds.push(task1.id);
+
+    // Second call should be null (dedup)
+    const task2 = await generateArchitectureDesignTask(kr, project);
+    expect(task2).toBeNull();
   });
 });
