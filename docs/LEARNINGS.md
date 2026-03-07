@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] cortex prompt 通胀治理（PR #661, Brain v1.211.1）
+
+**背景**：Cortex L2 皮层反复超时，desire_system 经 13 轮诊断锁定两个根因：(1) provider 路由走 bridge 被 90s 超时限制，(2) prompt 注入历史过多导致通胀。
+
+**实现要点**：
+
+1. **provider 路由已在 main 修复**：开始本次 /dev 时发现 model-profile.js 的 cortex provider `anthropic→anthropic-api` 已被其他 PR 合并到 main，不需要重复修改。开始前检查 main 状态非常重要。
+2. **main 上 learnings 已降半**：learnings 参数从 20→10 也已在 main 完成，本 PR 进一步降到 5。decision_log LIMIT 10→5 是本 PR 的核心改动。
+3. **Worktree 被 OOM 摧毁**：vitest 全量跑测试 OOM（4GB 堆不够），进程崩溃后 worktree 目录被清空。恢复方法：Write 工具写 4 个 git 元数据文件（HEAD/gitdir/commondir/.git），然后 `git checkout HEAD -- .` 恢复源码。
+4. **cortex performRCA 超时是 pre-existing**：main 上也超时（需要 DB），不是本次修改引起的，CI 中这些测试正常通过（CI 有 DB 环境）。
+
 ### [2026-03-07] blocked 状态生命周期管理（PR #658, Brain v1.211.0）
 
 **背景**：tasks 表早已有 `blocked_at/blocked_reason/blocked_detail/blocked_until` 4 个字段，但没有任何业务逻辑使用它们。遇到 billing cap/rate limit 只能被 quarantine，无「暂停等待自动恢复」能力。
