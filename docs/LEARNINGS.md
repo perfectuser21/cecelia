@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] coding domain initiative_plan 路由到 /architect（PR #646, Brain v1.209.3）
+
+**CI 失败次数**：0
+
+**背景**：coding domain 的 Initiative 拆解应走 CTO /architect（架构设计优先），而 main 的 `getDomainSkillOverride` 对 coding domain 统一返回 null（fallback 到 /decomp）。
+
+**实现要点**：
+
+1. **基于 main 而非 HEAD 实现**：开始时 main 尚未有 `getDomainSkillOverride`，但 push 后发现冲突——main 已有基于 `DOMAIN_TO_ROLE` 的完整实现。正确做法是在 main 实现基础上添加 `coding + initiative_plan → /architect` 特例，而非替换整个函数
+2. **冲突解决策略**：main 的 `getDomainSkillOverride` 有 `if (domainLower === 'coding') return null`，在此行之前加 `if (domainLower === 'coding' && typeLower === 'initiative_plan') return '/architect'`，最小化侵入
+3. **测试文件 add/add 冲突**：两个分支同时创建了 `task-router-domain.test.js`，合并时保留 main 的综合测试结构，更新 `coding + initiative_plan → /decomp` 的期望为 `/architect`
+4. **Worktree 被清除恢复**：Brain tick 清理了 worktree 目录，用 Write 工具重建 4 个 git 元数据文件，Bash CWD 恢复，`git checkout HEAD -- .` 还原所有源文件
+5. **版本冲突处理**：我的分支从 1.205.0 bump 到 1.206.0，main 已到 1.209.2，合并后正确设置为 1.209.3（+patch）
+
+**测试结果**：211 个测试全部通过
+
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
 **CI 失败次数**：0
