@@ -2,6 +2,7 @@
  * task-router-initiative-domain.test.js
  *
  * Tests for domain-aware initiative_plan routing.
+ * Domain → role → firstSkill mapping via role-registry.
  *
  * DoD coverage: D1-D6
  */
