@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] cortex.js 反思熔断 - 内容哈希去重 + 重复次数计数器（PR #592, Brain v1.200.4）
+
+**背景**：`analyzeDeep` 没有重复调用防护，thalamus 每次检测到 Level-2 事件都触发一次 Opus LLM 调用。同一告警连续 6 轮产生完全相同的输出，填满告警信道，浪费算力。
+
+**解决方案**：在 `analyzeDeep` 入口增加 Reflection Circuit Breaker（反思熔断）：
+- `_computeEventHash`：SHA256(`{type, failure_class, task_type}`) → 取前 16 字符
+- `_checkReflectionBreaker`：30 分钟时间窗口内的调用计数，超过阈值（3次）返回 `open: true`
+- 熔断时跳过 LLM 调用，直接返回 `createCortexFallback()`，日志含「反思熔断」关键词
+- 时间窗口（30分钟）超时后，计数归零，允许重新分析
+
+**测试设计**：`vi.resetModules()` + `vi.doMock()` 在每个 describe 块的 `beforeEach` 中重新导入 cortex.js，确保模块级 Map（`_reflectionState`）状态从头开始。`vi.spyOn(Date, 'now')` 模拟时间流逝，测试 30 分钟窗口重置。
+
+**版本同步陷阱**：Brain 版本更新时需同步 4 处：`packages/brain/package.json`、`packages/brain/package-lock.json`、`packages/brain/VERSION`（已废弃但 facts-check.mjs 未检查）、`DEFINITION.md`、**`.brain-versions`**（根目录隐藏文件，check-version-sync.sh 检查）。漏了 `.brain-versions` 会导致 CI Facts Consistency 失败。
+
+**Worktree 基础设施**：session worktree（`.claude/worktrees/<uuid>`）只是挂载点，没有实际源文件。需要用 `git worktree add /tmp/wt-<name> <branch>` 创建真实 worktree，所有文件操作在 `/tmp/wt-<name>/` 进行。`npm version` 会触发 `npm install`，可能删除手动创建的 `node_modules` 软链接。
+
+**影响**：消除重复告警，cortex 对相同模式的事件仅深度分析 3 次，之后降级为 fallback，不再浪费 Opus token。
+
+---
+
 ### [2026-03-06] 修复 activateNextInitiatives 双重调用 Race Condition（PR #589, Brain v1.200.2）
 
 **根本原因**：`checkInitiativeCompletion()` 在关闭 initiative 后立刻调用 `activateNextInitiatives(pool)`，而 `tick.js` Section 0.10 也会在每次 tick 调用同一函数。两次调用都用 `maxActive - currentActive` 计算空位，但第一次调用后 DB 中 currentActive 已经增加，第二次查询拿到的空位数偏高（旧快照），可能超容量激活过多 initiatives。
