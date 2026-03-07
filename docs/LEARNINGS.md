@@ -1,6 +1,6 @@
 # Cecelia Core Learnings
 
-### [2026-03-07] Initiative→Task domain-aware 路由（PR #622, Brain v1.206.0）
+### [2026-03-07] Initiative→Task domain-aware 路由（PR #622, Brain v1.207.0）
 
 **失败统计**：CI 失败 4 次（migration 命名冲突 × 3 轮，测试断言 × 1 轮）
 
@@ -10,12 +10,12 @@
 
 1. **DOMAIN_TO_TASK_TYPE 映射**：定义在 `planner.js` 顶部，export `resolveTaskTypeByDomain(domain)` 纯函数。finance 域返回 null（不自动派任务）。
 2. **generateArchitectureDesignTask 重构**：SELECT 时取 `i.domain`；调用 `resolveTaskTypeByDomain` 确定 `taskType`；dedup 查询的 `WHERE task_type = $2` 改为动态参数；INSERT 的 task_type 改为 `$3` 参数而非 SQL 字面量。
-3. **Migration 136**：新增 `'knowledge'` 到 `tasks.task_type` CHECK 约束。
+3. **Migration 137**：新增 `'knowledge'` 到 `tasks.task_type` CHECK 约束。
 
 **migration 命名冲突连环陷阱**：
 
-- 开发期间 main 持续有 PR 合并，migration 编号不断被占用：134（PR #616 占用）→ 改 135 → 135（goals_domain_indexes 占用）→ 改 136。
-- **规则**：push 前必须 `git show origin/main:packages/brain/migrations/ | grep 13X` 验证目标编号未被占用。
+- 开发期间 main 持续有 PR 合并，migration 编号不断被占用：134（PR #616）→ 135（goals_domain_indexes）→ 136（tasks_owner_role）→ 改 137。
+- **规则**：每次 merge main 前必须 `git show origin/main:packages/brain/migrations/ | grep 13X` 验证目标编号未被占用。
 
 **rebase vs merge 在 detached HEAD 下的 hook 阻断**：
 
@@ -34,6 +34,28 @@
 - 重构前：`task_type` 硬编码在 SQL 字符串，`expect(insertCall[0]).toContain('architecture_design')` 成立。
 - 重构后：`task_type` 改为 `$3` 参数，SQL 字符串不再包含字面量。正确断言：`expect(insertCall[1][2]).toBe('architecture_design')`（第 3 个参数，对应 INSERT VALUES 的 $3）。
 - **规则**：每次将 SQL 字面量改为参数化时，检查相关测试中的 SQL 字符串断言。
+
+### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
+
+**失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
+
+**本地测试失败记录**：
+- 失败 #1：`detectDomain("梳理一下 PRD 流程")` 期望 `product`，实际返回 `coding`
+  - 根因：coding 关键词列表含 `'PR'`，用 `includes()` 匹配时 `'PR'` 是 `'PRD'` 的子串，误命中
+  - 修复：添加 `matchKeyword()` 函数，对全大写 2-5 字符缩写（如 `PR`、`CI`、`API`）使用 `\bKW\b` 正则边界匹配，普通词继续用 `includes()`
+  - 预防：凡关键词列表含英文大写缩写，必须用词边界匹配，绝不用简单 substring
+
+- 失败 #2：`agent_ops wins over coding when both match` 期望 `agent_ops`，实际返回 `coding`
+  - 根因：优先级逻辑按"匹配词数量最多者胜"，coding 匹配 3 词（代码/架构/API）> agent_ops 匹配 1 词（Brain）
+  - 修复：完全重写优先级逻辑：`agent_ops > quality > security` 三者只要有任何匹配，立即返回，不比数量；其余 domain 按数量竞争，coding 作为兜底
+  - 预防：高优先级 domain 应用"存在即覆盖"语义，不能参与数量比较竞争
+
+**CI 失败记录**：
+- PR 创建后 `pull_request` 触发的 brain-ci.yml 未出现在 `gh run list`（GitHub 有时不自动触发）
+- 修复：手动 `gh workflow run brain-ci.yml --ref <branch>` 触发
+- 预防：创建 PR 后如 30s 内 `gh run list` 看不到新 run，立即手动触发
+
+---
 
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
@@ -2857,3 +2879,29 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 
 **影响程度**：High（worktree 重建流程复杂，容易出错）
 
+
+---
+
+### [2026-03-07] 微博发布器单元测试基础设施 [R22]
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**关键经验**：
+
+**1. Node.js 内置 test runner 是 workflows 测试的最佳选择**
+
+`node:test`（Node 18+）和 `node:assert/strict` 无需任何 npm 依赖，可直接用 `node --test <file>` 运行。对于 `packages/workflows` 这种没有 `package.json` 的目录，比 vitest 更适合。CI 中也不需要 `npm install` 步骤。
+
+**2. packages/workflows/.prd.md 遗留陷阱（再次确认）**
+
+`packages/workflows/.prd.md` 存在时，branch-protect.sh 的 `find_prd_dod_dir` 在向上遍历目录时会优先匹配它，而不是项目根目录的 `.prd-<branch>.md`。修复：在 `packages/workflows/` 下也创建 `.prd-<branch>.md`（同 PR #609 的解决方案）。
+
+**3. Worktree 首次创建时缺少 .git 文件**
+
+本次 worktree 虽已在 git branch 中注册，但目录本身没有 `.git` 文件且未在 `git worktree list` 中出现。需手动写入 4 个元数据文件（HEAD/gitdir/commondir + worktree/.git）后再 `git checkout HEAD -- .` 恢复文件。恢复后需重新创建 PRD/DoD/.dev-mode 等非 git 追踪文件。
+
+**影响程度**：Low（测试全部通过，CI 一次过）
+
+**预防措施**：
+- workflows 技能测试优先使用 `node:test`，无需新增依赖
+- 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
