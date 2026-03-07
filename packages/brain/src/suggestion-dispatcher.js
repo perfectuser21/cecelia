@@ -6,6 +6,7 @@
  */
 
 import pool from './db.js';
+import { detectDomain } from './domain-detector.js';
 
 /**
  * 将高分 pending suggestions 分派为 suggestion_plan 任务
@@ -75,12 +76,20 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
 请识别此 Suggestion 的层级（Layer 3 KR / Layer 4 Project / Layer 5 Initiative / Layer 6 Task），
 找到最合适的挂载点，并调用对应的 Brain API 创建结构。`;
 
+      const contentStr = typeof suggestion.content === 'string'
+        ? suggestion.content
+        : JSON.stringify(suggestion.content);
+      const detected = detectDomain(contentStr);
+      // confidence=0 表示无匹配关键词（detectDomain 默认返回 coding），此时不填入 domain
+      const inferredDomain = detected.confidence > 0 ? detected.domain : null;
+      const inferredOwnerRole = detected.confidence > 0 ? detected.owner_role : null;
+
       const insertResult = await client.query(`
         INSERT INTO tasks (
           title, description, task_type, status, priority,
-          payload, created_at, updated_at
+          payload, domain, owner_role, created_at, updated_at
         )
-        VALUES ($1, $2, 'suggestion_plan', 'queued', 'P2', $3, NOW(), NOW())
+        VALUES ($1, $2, 'suggestion_plan', 'queued', 'P2', $3, $4, $5, NOW(), NOW())
         RETURNING id
       `, [
         taskTitle,
@@ -90,7 +99,9 @@ ${typeof suggestion.content === 'string' ? suggestion.content : JSON.stringify(s
           suggestion_score: suggestion.priority_score,
           source: suggestion.source || null,
           agent_id: suggestion.agent_id || null,
-        })
+        }),
+        inferredDomain,
+        inferredOwnerRole
       ]);
 
       const newTaskId = insertResult.rows[0].id;

@@ -42,7 +42,7 @@ describe('quarantine-classification (P1 Fix #2)', () => {
     expect(payload.failure_classification.retry_strategy).toBeDefined();
   });
 
-  it('should classify BILLING_CAP errors correctly', async () => {
+  it('should block task on BILLING_CAP errors (not quarantine)', async () => {
     // Update task with billing cap error
     await pool.query(`
       UPDATE tasks
@@ -52,12 +52,13 @@ describe('quarantine-classification (P1 Fix #2)', () => {
 
     const result = await handleTaskFailure(testTaskId);
 
-    expect(result.classification.class).toBe(FAILURE_CLASS.BILLING_CAP);
-    expect(result.classification.retry_strategy.billing_pause).toBe(true);
-    expect(result.classification.retry_strategy.next_run_at).toBeDefined();
+    // BILLING_CAP → blockTask (not quarantine), returns { blocked, reason, blocked_until }
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toBe('billing_cap');
+    expect(result.blocked_until).toBeDefined();
   });
 
-  it('should classify RATE_LIMIT errors correctly', async () => {
+  it('should block task on RATE_LIMIT errors for 5min (not quarantine)', async () => {
     await pool.query(`
       UPDATE tasks
       SET payload = $1::jsonb
@@ -66,9 +67,10 @@ describe('quarantine-classification (P1 Fix #2)', () => {
 
     const result = await handleTaskFailure(testTaskId);
 
-    expect(result.classification.class).toBe(FAILURE_CLASS.RATE_LIMIT);
-    expect(result.classification.retry_strategy.should_retry).toBe(true);
-    expect(result.classification.retry_strategy.next_run_at).toBeDefined();
+    // RATE_LIMIT → blockTask (not quarantine), returns { blocked, reason, blocked_until }
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toBe('rate_limit');
+    expect(result.blocked_until).toBeDefined();
   });
 
   it('should increment failure_count on each handleTaskFailure call', async () => {

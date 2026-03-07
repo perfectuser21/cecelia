@@ -138,7 +138,7 @@ describe('decomposition-checker v2.0', () => {
       // hasExistingInitiativePlanTask: no existing task
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // createInitiativePlanTask: INSERT returns new task
+      // createInitiativePlanTask: INSERT returns new task (domain passed as param, no extra SELECT)
       pool.query.mockResolvedValueOnce({ rows: [{ id: 'task-new', title: 'Initiative 规划: Test Initiative' }] });
 
       const actions = await checkReadyKRInitiatives();

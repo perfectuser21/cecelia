@@ -88,7 +88,7 @@ async function createInitiativePlanTask({ initiativeId, krId, initiativeName, do
   }
 
   const title = `Initiative 规划: ${initiativeName}`;
-  const description = [
+  const descriptionLines = [
     `请为 Initiative「${initiativeName}」规划下一个 PR。`,
     '',
     ...(targetSkill ? [`目标 Skill: ${targetSkill}（domain: ${domain} → 角色路由）`, ''] : []),
@@ -106,18 +106,20 @@ async function createInitiativePlanTask({ initiativeId, krId, initiativeName, do
     `  - goal_id: ${krId || 'null'}（所属 KR）`,
     '  - task_type: dev',
     '  - priority: P1',
+    domain ? `  - domain: ${domain}（继承自 Initiative）` : null,
     '',
     `Initiative ID: ${initiativeId}`,
     `Initiative 名称: ${initiativeName}`,
     `所属 KR ID: ${krId || '(未知)'}`,
-    ...(domain ? [`Domain: ${domain}`] : []),
-  ].join('\n');
+    domain ? `Domain: ${domain}` : null,
+  ].filter(line => line !== null);
+  const description = descriptionLines.join('\n');
 
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', $3, $4, $5, 'brain_auto')
+    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source, domain)
+    VALUES ($1, $2, 'queued', 'P1', $3, $4, $5, 'brain_auto', $6)
     RETURNING id, title
-  `, [title, description, krId || null, initiativeId, taskType]);
+  `, [title, description, krId || null, initiativeId, taskType, domain || null]);
   return result.rows[0];
 }
 

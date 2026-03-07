@@ -24,6 +24,11 @@ import {
   IDLE_CPU_PCT_THRESHOLD,
   _taskMetrics,
   _idleMetrics,
+  IS_DARWIN,
+  isProcessAlive,
+  parseDarwinCpuTime,
+  sampleProcessDarwin,
+  scanInteractiveClaudeDarwin,
 } from '../watchdog.js';
 
 // Mock fs functions
@@ -37,7 +42,20 @@ vi.mock('fs', async () => {
   };
 });
 
+// Mock child_process (used by Darwin helpers and PAGE_SIZE detection)
+vi.mock('child_process', async () => {
+  const actual = await vi.importActual('child_process');
+  return {
+    ...actual,
+    execSync: vi.fn((cmd) => {
+      if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+      return '';
+    }),
+  };
+});
+
 import { readFileSync, readdirSync, existsSync } from 'fs';
+import { execSync } from 'child_process';
 
 describe('watchdog', () => {
   beforeEach(() => {
@@ -115,11 +133,12 @@ describe('watchdog', () => {
 
   describe('sampleProcess', () => {
     it('should return null when process does not exist', () => {
+      // Linux: readFileSync throws. Darwin: execSync returns empty (process gone).
       readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
       expect(sampleProcess(99999)).toBeNull();
     });
 
-    it('should parse /proc correctly (P0 #3: comm with spaces)', () => {
+    it.skipIf(IS_DARWIN)('should parse /proc correctly (P0 #3: comm with spaces)', () => {
       // statm: pages[1] = RSS
       readFileSync.mockImplementation((path) => {
         if (path.includes('statm')) {
@@ -158,7 +177,7 @@ describe('watchdog', () => {
       expect(pidMap.size).toBe(0);
     });
 
-    it('should detect stale slots where process is gone', () => {
+    it.skipIf(IS_DARWIN)('should detect stale slots where process is gone', () => {
       readdirSync.mockReturnValue([
         { name: 'slot-1', isDirectory: () => true },
       ]);
@@ -178,7 +197,7 @@ describe('watchdog', () => {
       expect(staleSlots).toEqual([{ slot: 'slot-1', taskId: 'task-123' }]);
     });
 
-    it('should resolve live processes with child_pid and pgid', () => {
+    it.skipIf(IS_DARWIN)('should resolve live processes with child_pid and pgid', () => {
       readdirSync.mockReturnValue([
         { name: 'slot-1', isDirectory: () => true },
       ]);
@@ -200,7 +219,7 @@ describe('watchdog', () => {
     });
   });
 
-  describe('checkRunaways', () => {
+  describe.skipIf(IS_DARWIN)('checkRunaways (Linux /proc path)', () => {
     // Helper: mock resolveTaskPids results via fs mocks + sampleProcess via /proc mocks
     function setupTask(taskId, pid, pgid, startedSecsAgo, rssMb, cpuTicks) {
       // Set up resolveTaskPids to find this task
@@ -411,7 +430,7 @@ describe('watchdog', () => {
       expect(result).toEqual([]);
     });
 
-    it('should detect bare `claude` process', () => {
+    it.skipIf(IS_DARWIN)('should detect bare `claude` process', () => {
       readdirSync.mockReturnValue([
         { name: '12345', isDirectory: () => true },
       ]);
@@ -424,7 +443,7 @@ describe('watchdog', () => {
       expect(result[0].pid).toBe(12345);
     });
 
-    it('should detect claude with full path', () => {
+    it.skipIf(IS_DARWIN)('should detect claude with full path', () => {
       readdirSync.mockReturnValue([
         { name: '11111', isDirectory: () => true },
       ]);
@@ -484,7 +503,7 @@ describe('watchdog', () => {
     });
   });
 
-  describe('checkIdleSessions', () => {
+  describe.skipIf(IS_DARWIN)('checkIdleSessions (Linux /proc path)', () => {
     beforeEach(() => {
       _idleMetrics.clear();
       // Default: no Brain-managed slots
@@ -613,6 +632,186 @@ describe('watchdog', () => {
       checkIdleSessions();
       // 99005 is managed by Brain (in managedPids), should not be in _idleMetrics
       expect(_idleMetrics.has(99005)).toBe(false);
+    });
+  });
+
+  describe('IS_DARWIN', () => {
+    it('should be a boolean', () => {
+      expect(typeof IS_DARWIN).toBe('boolean');
+    });
+  });
+
+  describe('Darwin-specific paths', () => {
+    beforeEach(() => {
+      execSync.mockReset();
+      execSync.mockImplementation((cmd) => {
+        if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+        return '';
+      });
+    });
+
+    describe('parseDarwinCpuTime', () => {
+      it('should return 0 for zero time', () => {
+        expect(parseDarwinCpuTime('0:00.00')).toBe(0);
+      });
+
+      it('should parse MM:SS.ss format (1 min 23.45 sec = 8345 centisecs)', () => {
+        expect(parseDarwinCpuTime('1:23.45')).toBe(Math.round(83.45 * 100));
+      });
+
+      it('should parse HH:MM:SS format (1:00:00 = 3600 sec = 360000 centisecs)', () => {
+        expect(parseDarwinCpuTime('1:00:00')).toBe(360000);
+      });
+
+      it('should parse SS.ss format (bare seconds)', () => {
+        expect(parseDarwinCpuTime('5.00')).toBe(500);
+      });
+
+      it('should return 0 for empty string', () => {
+        expect(parseDarwinCpuTime('')).toBe(0);
+      });
+
+      it('should return 0 for undefined', () => {
+        expect(parseDarwinCpuTime(undefined)).toBe(0);
+      });
+    });
+
+    describe('sampleProcessDarwin', () => {
+      it('should parse ps output and return rss_mb and cpu_ticks', () => {
+        // ps -o rss=,time= output: "204800 1:23.45" (RSS in KB, time MM:SS.ss)
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd.startsWith('ps -o rss=,time= -p')) return '204800 1:23.45\n';
+          return '';
+        });
+        const result = sampleProcessDarwin(1234);
+        expect(result).not.toBeNull();
+        expect(result.rss_mb).toBe(200); // 204800 KB / 1024 = 200 MB
+        expect(result.cpu_ticks).toBe(Math.round(83.45 * 100));
+        expect(result.timestamp).toBeGreaterThan(0);
+      });
+
+      it('should return null when ps output is empty (process gone)', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd.startsWith('ps -o rss=,time= -p')) return '';
+          return '';
+        });
+        expect(sampleProcessDarwin(99999)).toBeNull();
+      });
+
+      it('should return null when ps throws (process does not exist)', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd.startsWith('ps -o rss=,time= -p')) throw new Error('ps: illegal pid value');
+          return '';
+        });
+        expect(sampleProcessDarwin(99999)).toBeNull();
+      });
+
+      it('should handle 0 RSS correctly', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd.startsWith('ps -o rss=,time= -p')) return '0 0:00.00\n';
+          return '';
+        });
+        const result = sampleProcessDarwin(1);
+        expect(result).not.toBeNull();
+        expect(result.rss_mb).toBe(0);
+        expect(result.cpu_ticks).toBe(0);
+      });
+    });
+
+    describe('scanInteractiveClaudeDarwin', () => {
+      it('should detect interactive claude process', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o command=') {
+            return '  1234 /opt/homebrew/bin/claude\n  5678 node server.js\n';
+          }
+          return '';
+        });
+        const result = scanInteractiveClaudeDarwin(new Set());
+        expect(result).toHaveLength(1);
+        expect(result[0].pid).toBe(1234);
+        expect(result[0].cmdline).toBe('/opt/homebrew/bin/claude');
+      });
+
+      it('should exclude claude -p background tasks', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o command=') {
+            return '  1234 claude -p /dev skill\n';
+          }
+          return '';
+        });
+        const result = scanInteractiveClaudeDarwin(new Set());
+        expect(result).toHaveLength(0);
+      });
+
+      it('should exclude PIDs in managedPids', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o command=') {
+            return '  9999 claude\n';
+          }
+          return '';
+        });
+        const result = scanInteractiveClaudeDarwin(new Set([9999]));
+        expect(result).toHaveLength(0);
+      });
+
+      it('should return empty array when ps fails', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o command=') throw new Error('ps failed');
+          return '';
+        });
+        const result = scanInteractiveClaudeDarwin(new Set());
+        expect(result).toHaveLength(0);
+      });
+
+      it('should handle multiple claude processes (one interactive, one background)', () => {
+        execSync.mockImplementation((cmd) => {
+          if (cmd === 'getconf PAGE_SIZE') return '4096\n';
+          if (cmd === 'ps -ax -o pid= -o command=') {
+            return [
+              '  1111 /opt/homebrew/bin/claude',
+              '  2222 claude -p /dev',
+              '  3333 /opt/homebrew/bin/claude --help',
+            ].join('\n') + '\n';
+          }
+          return '';
+        });
+        const result = scanInteractiveClaudeDarwin(new Set());
+        // Only the ones without -p
+        expect(result.map(r => r.pid).sort()).toEqual([1111, 3333]);
+      });
+    });
+
+    describe('isProcessAlive', () => {
+      it('should return true for an existing process', () => {
+        if (IS_DARWIN) {
+          const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+          expect(isProcessAlive(1234)).toBe(true);
+          killSpy.mockRestore();
+        } else {
+          existsSync.mockReturnValueOnce(true);
+          expect(isProcessAlive(1234)).toBe(true);
+        }
+      });
+
+      it('should return false when process does not exist', () => {
+        if (IS_DARWIN) {
+          const err = Object.assign(new Error('No such process'), { code: 'ESRCH' });
+          const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => { throw err; });
+          expect(isProcessAlive(99999)).toBe(false);
+          killSpy.mockRestore();
+        } else {
+          existsSync.mockReturnValueOnce(false);
+          expect(isProcessAlive(99999)).toBe(false);
+        }
+      });
     });
   });
 });
