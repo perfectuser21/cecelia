@@ -453,12 +453,9 @@ async function generateArchitectureDesignTask(kr, project) {
 
     const initiative = initiativeResult.rows[0];
 
-    // Determine domain: Initiative.domain → Project.domain → KR.domain → detectDomain fallback → default 'coding'
-    const detectedKRDomain = (() => {
-      const detected = detectDomain(`${kr.title || ''} ${kr.description || ''}`);
-      return detected.confidence > 0 ? detected.domain : null;
-    })();
-    const domain = initiative.domain || project.domain || kr.domain || detectedKRDomain || 'coding';
+    // Determine domain: Initiative.domain → Project.domain → KR.domain → default 'coding'
+    // Per DoD-4: use explicit domain fields only, no text detection fallback
+    const domain = initiative.domain || project.domain || kr.domain || 'coding';
     const isCodingDomain = domain === 'coding';
 
     // Determine task_type and payload based on domain
