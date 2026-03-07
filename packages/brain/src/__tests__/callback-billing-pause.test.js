@@ -208,8 +208,8 @@ describe('execution-callback billing cap handling (v1.197.0)', () => {
       return Promise.resolve({ rows: [], rowCount: 0 });
     });
     mockPool.query.mockImplementation((sql) => {
-      if (typeof sql === 'string' && sql.includes('SELECT payload FROM tasks')) {
-        return Promise.resolve({ rows: [{ payload: { dispatched_account: 'account2' } }], rowCount: 1 });
+      if (typeof sql === 'string' && sql.includes('payload FROM tasks')) {
+        return Promise.resolve({ rows: [{ task_type: 'dev', payload: { dispatched_account: 'account2' } }], rowCount: 1 });
       }
       if (typeof sql === 'string' && sql.includes('UPDATE tasks SET payload')) {
         return Promise.resolve({ rows: [], rowCount: 1 });
