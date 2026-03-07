@@ -32,7 +32,23 @@
 **关键设计**：
 - `buildRetryContext` 导出供单元测试直接测试
 - 首次执行 (failure_count=0 + 无 classification) 返回 `''`，不影响正常派发
-- 注入段以 `## ⚠️ 重试上下文（第 N 次尝试）` 开头，对 /dev skill 可读性强
+- 注入段以 `## 重试上下文（第 N 次尝试）` 开头，对 /dev skill 可读性强
+
+### [2026-03-07] 反思去重机制强化（PR #608, Brain v1.203.1）
+
+**问题**：反思系统陷入死循环 — 同样的洞察重复 4 次以上，desire_system 自检发现后创建修复任务。
+
+**根因**：
+1. 熔断器状态（`_lastInsightHash`、`_consecutiveDuplicates`、`_consecutiveSkips`）是内存变量，Brain 重启后丢失归零
+2. Jaccard 相似度阈值 0.75 过高，LLM 同义改写（措辞不同但语义相同）轻松绕过
+3. 重复洞察被静默丢弃，无折叠计数，无法观测重复频率
+
+**修复**：
+- 熔断器状态持久化到 `working_memory` 表（key: `reflection_breaker_state`），Brain 重启后自动恢复
+- Jaccard 阈值 0.75 → 0.6（常量化为 `SIMILARITY_THRESHOLD`）
+- 重复洞察写入 `[反思折叠]` 记录到 `memory_stream`（importance=4, short 类型, 3天过期）
+
+**Worktree CWD 损坏再现**：删除 worktree 目录后 Bash shell CWD 失效，所有命令报 "Path does not exist"。解法：用 Write 工具先创建 `.placeholder` 文件重建目录，然后 Bash 恢复正常。
 
 ### [2026-03-07] scan_results 持久化：写侧补充（PR #603, Brain v1.202.1）
 
