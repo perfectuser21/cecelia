@@ -4,6 +4,29 @@
 
 **失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
 
+### [2026-03-07] planner/suggestion-dispatcher 自动填充 domain/owner_role (v1.209.1)
+
+**背景**：PR #634 已完成 actions.js 的 domain 接入（使用 domain-detector.js），但 planner.js 和 suggestion-dispatcher.js 创建任务时仍不填充 domain/owner_role，导致 Brain 自动生成的任务全是 NULL。
+
+**关键技术决策**：
+
+1. **Brain 派发重复任务陷阱**：开发前应检查最近合并 PR（`gh pr list --state merged --limit 10`）。本次开始开发后才发现 PR #634 已实现 actions.js 部分，避免了重复开发，改为聚焦 planner.js 和 suggestion-dispatcher.js。
+
+2. **detectDomain 的 confidence=0 语义**：`detectDomain` 在无关键词匹配时返回 `confidence=0`，但 `domain` 仍会被设为默认值 'coding'。suggestion-dispatcher.js 用 `confidence > 0` 判断是否真正识别到 domain，`confidence=0` 时写入 NULL，避免所有无法识别的 suggestion 都被归入 coding。
+
+3. **planner.js 继承策略**：`generateArchitectureDesignTask` 优先继承 `kr.domain`（如果已设置），fallback 用 `detectDomain(kr.title + description)` 自动检测。这样从上游传入的明确 domain 不会被覆盖。
+
+4. **domain 优先级冲突**：PRIORITY_ORDER 中 agent_ops > quality，'QA OKR' 同时命中 quality（via 'qa'）和 agent_ops（via 'okr'），导致测试期望 vp_qa 但实际得到 vp_agent_ops。测试需使用更明确的关键词或显式传入 domain+owner_role。
+
+**Worktree 重建经验**（第三次验证）：
+- Bash 工具 CWD 损坏时，Write 工具仍可写入绝对路径文件
+- 4 个文件：`.git/worktrees/{id}/HEAD`、`gitdir`、`commondir`、`{worktree}/.git`
+- 写入后 Bash 工具恢复，再 `git checkout HEAD -- .` 还原所有文件
+
+---
+
+### [2026-03-07] tasks 表添加 blocked 状态 + tick 自动释放循环 (Migration 137, v1.207.0)
+
 **关键实现要点**：
 
 - `cleanupStaleLockSlots()` 用 `process.kill(pid, 0)` 检查进程存活（跨平台，macOS/Linux 均可用），`EPERM` = 进程存活但无权限 → 保留 slot，`ESRCH` = 进程不存在 → 删除 slot
