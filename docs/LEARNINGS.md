@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] strategy_session 注册 + actions-domain-role 测试修复（PR #654, Brain v1.210.1）
+
+**CI 失败次数**：1（Brain CI，actions-domain-role 预存测试错误）
+
+**背景**：Brain 任务要求注册 strategy_session task_type。origin/main 已有完整实现，但缺少 task-router 侧专门单元测试。
+
+**关键发现**：
+1. 开始开发前先检查 open PR 和 origin/main 实现状态（避免重复工作）
+2. `createTask`/`createGoal` 设计上不自动检测 domain（写 NULL），仅 `createProject` 有 `detectDomain()` 自动检测
+3. 测试用例期望必须与实现行为对齐（memory 中记录设计决策 = 测试写法的参考）
+
+**踩坑**：
+- Brain CI 在 main 分支也在持续失败（actions-domain-role 测试），说明这是预存问题而非我的 PR 引入
+- 修复方向：测试期望 `'coding'`/`'agent_ops'` → 改为 `null`（与 `domainInput ?? null` 实现一致）
+
+**Worktree 重建流程**（再次验证，PR #654）：
+1. 写 `.git/worktrees/{id}/HEAD, gitdir, commondir` + `{worktree}/.git` 四个文件
+2. `git checkout HEAD -- .` 恢复所有源文件
+3. 之后创建 `.dev-mode` 文件解除 branch-protect hook 拦截
+
 ### [2026-03-07] Cortex provider 直连 + 历史注入限制（PR #656, Brain v1.210.1）
 
 **失败统计**：CI 失败 0 次
