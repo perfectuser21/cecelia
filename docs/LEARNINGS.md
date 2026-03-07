@@ -54,7 +54,7 @@ it('initiative_plan + coding domain → skill=/architect（domain-aware routing 
 
 PR #632 的 `getDomainSkillOverride(taskType, domain)` 和本 PR 的 `getInitiativeSkill(domain)` 设计目标不同：
 - `getDomainSkillOverride`：通用 domain 覆盖，`coding` 返回 null（走默认路由），适用于 dev 等 task_type
-- `getInitiativeSkill`：专用于 initiative_plan，`coding → /architect`，null/unknown → `/decomp`
+- `getInitiativeSkill`：専用于 initiative_plan，`coding → /architect`，null/unknown → `/decomp`
 
 在 `routeTaskCreate` 中按 task_type 分派：
 ```js
@@ -73,6 +73,24 @@ const domainSkill = task_type?.toLowerCase() === 'initiative_plan' && domain
 - 版本 bump 后立即 push，减少并行 PR 追尾窗口
 
 ---
+
+### [2026-03-07] watchdog Darwin 适配：ps 采样替代 /proc（PR #645, Brain v1.209.3）
+
+**CI 失败次数**：0
+
+**背景**：Brain 的 watchdog.js 全部依赖 Linux /proc 文件系统，在 Mac mini (Darwin) 生产环境完全失效。
+
+**实现要点**：
+
+1. **平台分支模式**：`const IS_DARWIN = process.platform === 'darwin'`，在每个函数入口用 `if (IS_DARWIN) return darwinFn()` 路由。Linux 路径零修改，Darwin 路径独立实现，互不干扰
+2. **进程存活检测**：`process.kill(pid, 0)` 发送 null 信号 —— 不实际发送信号，只检查进程是否存在。ESRCH 错误 = 不存在，无错误 = 存在
+3. **ps 时间格式解析**：macOS `ps -o time=` 输出 `MM:SS.ss` 或 `HH:MM:SS` 格式。统一转为厘秒（centiseconds = secs * 100），与 Linux USER_HZ (100 Hz) ticks 单位等价，`calcCpuPct` 可以直接复用
+4. **RSS 单位差异**：Linux /proc/statm 是"页数 × PAGE_SIZE"，而 macOS `ps -o rss=` 直接是 KB。Darwin 实现直接 KB/1024 = MB，更简洁
+5. **测试平台隔离策略**：Darwin-specific 函数（sampleProcessDarwin、scanInteractiveClaudeDarwin 等）直接导出供测试，mock execSync 即可测试。Linux /proc 测试用 `it.skipIf(IS_DARWIN)` 标记，CI (Linux) 完整运行，Mac 本地验证自动跳过
+6. **child_process mock 陷阱**：模块初始化时有 `execSync('getconf PAGE_SIZE')`，vi.mock('child_process') 时必须让工厂处理这个调用（返回 '4096\n'），否则 PAGE_SIZE = NaN
+7. **execSync 跨 describe mock 隔离**：Darwin describe 的 `beforeEach` 需调用 `execSync.mockReset()` 而非 `mockClear()`，前者清除实现，后者只清调用历史
+
+**测试结果**：45 passed, 17 skipped（Linux-only tests on Darwin）
 
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
