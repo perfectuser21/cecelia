@@ -988,6 +988,119 @@ router.patch('/tasks/:task_id', async (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/brain/tasks/:task_id/block
+ * 将任务设为 blocked 状态（因外部依赖暂时无法执行）
+ * Body: { reason: string, blocked_by?: string[] }
+ */
+router.patch('/tasks/:task_id/block', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+    const { reason, blocked_by } = req.body;
+
+    if (!reason || typeof reason !== 'string' || reason.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field: reason',
+        code: 'MISSING_REASON'
+      });
+    }
+
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found', code: 'TASK_NOT_FOUND' });
+    }
+
+    const currentStatus = taskResult.rows[0].status;
+    const blockableStatuses = ['queued', 'in_progress'];
+    if (!blockableStatuses.includes(currentStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot block task in status: ${currentStatus}`,
+        code: 'INVALID_TRANSITION',
+        current_status: currentStatus,
+        allowed_from: blockableStatuses
+      });
+    }
+
+    const blockedAt = new Date().toISOString();
+    const updateResult = await pool.query(`
+      UPDATE tasks
+      SET
+        status = 'blocked',
+        blocked_reason = $1,
+        blocked_at = $2,
+        blocked_by = $3,
+        updated_at = NOW()
+      WHERE id = $4
+      RETURNING id, status, blocked_reason, blocked_at, blocked_by, updated_at
+    `, [reason.trim(), blockedAt, blocked_by || null, task_id]);
+
+    await emitEvent('task_blocked', {
+      task_id,
+      from: currentStatus,
+      reason: reason.trim(),
+      blocked_by: blocked_by || null,
+      timestamp: blockedAt
+    });
+
+    res.json({ success: true, task: updateResult.rows[0] });
+  } catch (err) {
+    console.error('[API] block task error:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to block task', details: err.message });
+  }
+});
+
+/**
+ * PATCH /api/brain/tasks/:task_id/unblock
+ * 解除任务 blocked 状态，回到 queued
+ */
+router.patch('/tasks/:task_id/unblock', async (req, res) => {
+  try {
+    const { task_id } = req.params;
+
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [task_id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Task not found', code: 'TASK_NOT_FOUND' });
+    }
+
+    const currentStatus = taskResult.rows[0].status;
+    if (currentStatus !== 'blocked') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot unblock task in status: ${currentStatus}`,
+        code: 'INVALID_TRANSITION',
+        current_status: currentStatus
+      });
+    }
+
+    const unblockedAt = new Date().toISOString();
+    const updateResult = await pool.query(`
+      UPDATE tasks
+      SET
+        status = 'queued',
+        blocked_reason = NULL,
+        blocked_at = NULL,
+        blocked_by = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, status, updated_at
+    `, [task_id]);
+
+    await emitEvent('task_unblocked', {
+      task_id,
+      from: 'blocked',
+      to: 'queued',
+      timestamp: unblockedAt
+    });
+
+    res.json({ success: true, task: updateResult.rows[0] });
+  } catch (err) {
+    console.error('[API] unblock task error:', err.message);
+    res.status(500).json({ success: false, error: 'Failed to unblock task', details: err.message });
+  }
+});
+
 // ==================== Briefing API ====================
 
 /**
