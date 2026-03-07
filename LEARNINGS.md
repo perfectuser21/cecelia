@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] initiative_plan 域感知路由：参数化 vs DB 查询冲突解决（PR #659, Brain v1.211.1）
+
+**背景**：两条独立分支分别实现 domain-aware routing，合并时产生代码冲突。
+
+**关键技术决策**：
+
+1. **两种实现策略的取舍**：main 在 `createInitiativePlanTask` 内部做额外 `SELECT domain FROM projects WHERE id = $1` 查询；我的分支在 `checkReadyKRInitiatives` 读 `p.domain` 后作为参数传入。参数传递方案更优（减少一次 DB 往返，职责清晰），合并时保留参数化方案。
+
+2. **vi.clearAllMocks 陷阱（再次触发）**：`vi.clearAllMocks()` 只清除 `.mock.calls`/`.mock.instances`，不清除 `mockResolvedValueOnce` 队列。当 vi.fn() 对象被复用（`vi.resetModules()` 不一定创建新实例），一个测试中多余的 mock 会泄漏到下一个测试，导致所有后续测试的 mock 序列整体偏移一位。诊断方法：先隔离运行单个失败测试（`npx vitest run -t "test name"`）——若隔离通过说明是跨测试污染。
+
+3. **合并冲突引入的多余 Mock**：main 的测试为额外 SELECT domain 查询添加了 `mockResolvedValueOnce`，但合并后保留了我的参数化代码（无额外 SELECT），导致 mock 队列多出一个条目污染后续 8 个测试。修复：删除多余 mock。
+
+4. **mock 精确计数原则**：每个测试的 `mockResolvedValueOnce` 数量必须精确等于代码实际执行的 `pool.query` 调用次数。合并冲突时两边代码路径不同，必须重新核对 mock 计数。
+
 ### [2026-03-07] 启动僵尸清理增强 + emergency-cleanup 重试机制（PR #642, Brain v1.210.0）
 
 **失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
