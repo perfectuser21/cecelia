@@ -2850,6 +2850,61 @@ router.post('/execution-callback', async (req, res) => {
       }
     }
 
+    // P1-3: dev 任务失败智能重试（transient/code_error → 重排，auth/resource → 不重试）
+    const MAX_DEV_RETRY = 3;
+    if (newStatus === 'failed') {
+      try {
+        const taskMetaRow = await pool.query(
+          'SELECT task_type, retry_count FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const taskType = taskMetaRow.rows[0]?.task_type;
+        const currentRetry = taskMetaRow.rows[0]?.retry_count ?? 0;
+
+        if (taskType === 'dev') {
+          const { classifyDevFailure } = await import('./dev-failure-classifier.js');
+          const classification = classifyDevFailure(result, status);
+          console.log(`[execution-callback] dev failure classified: task=${task_id} class=${classification.class} retryable=${classification.retryable} retry=${currentRetry}/${MAX_DEV_RETRY}`);
+
+          if (classification.retryable && currentRetry < MAX_DEV_RETRY) {
+            // 指数退避：retry 1→5min, retry 2→10min, retry 3→15min
+            const delayMs = (currentRetry + 1) * 5 * 60 * 1000;
+            const nextRunAt = new Date(Date.now() + delayMs).toISOString();
+            const previousFailure = {
+              class: classification.class,
+              reason: classification.reason,
+              result_summary: typeof result === 'string'
+                ? result.substring(0, 300)
+                : (result?.result || result?.error || result?.message || '').toString().substring(0, 300),
+              failed_at: new Date().toISOString(),
+            };
+
+            await pool.query(
+              `UPDATE tasks
+               SET status = 'queued',
+                   retry_count = retry_count + 1,
+                   completed_at = NULL,
+                   payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+                     'next_run_at', $2::text,
+                     'previous_failure', $3::jsonb,
+                     'retry_reason', $4::text
+                   )
+               WHERE id = $1`,
+              [task_id, nextRunAt, JSON.stringify(previousFailure), classification.reason]
+            );
+            rescheduled = true;
+            console.log(`[execution-callback] dev task rescheduled: task=${task_id} class=${classification.class} retry=${currentRetry + 1}/${MAX_DEV_RETRY} next_run_at=${nextRunAt}`);
+          } else if (!classification.retryable) {
+            console.log(`[execution-callback] dev task not retryable: task=${task_id} class=${classification.class} (requires human intervention)`);
+          } else {
+            console.log(`[execution-callback] dev task max retries reached: task=${task_id} retry_count=${currentRetry}`);
+          }
+        }
+      } catch (devRetryErr) {
+        console.error(`[execution-callback] dev retry error (non-fatal): ${devRetryErr.message}`);
+      }
+    }
+
     // Record to EventBus, Circuit Breaker, and Notifier
     if (newStatus === 'completed') {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
