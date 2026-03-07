@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] strategy_session task_type 注册 + C-Suite Skill（PR #619, Brain v1.206.0）
+
+**失败统计**：CI 失败 0 次（本地测试通过），rebase 冲突 2 次（version 冲突，main 并发合并 PR #618 / #620）
+
+**背景**：新增 `strategy_session` task_type，让 Brain 能派发 C-Suite 战略会议任务，输出 KR JSON。
+
+**实现要点**：
+
+1. **四文件联动注册**：`executor.js` skillMap + permissionMode、`task-router.js` LOCATION_MAP、`model-profile.js` FALLBACK_PROFILE、`DEFINITION.md` task_type 表
+2. **strategy_session 不是 callLLM**：它是 Executor 派发给外部 Skill 的 task_type，`model-registry.js` AGENTS[] **不需要**更新（check-llm-agents.mjs 只检查 callLLM 内部调用）
+3. **Skill 放在 ~/.claude-account1/skills/**：Brain Skills 路径在 account1，不在项目内；`brain-manifest.generated.json` 需要 `node packages/brain/scripts/generate-manifest.mjs` 重新生成
+
+**双重 rebase 版本冲突**：
+
+- 第一次 rebase（onto `af56add1e`）：PR #618 已合并，版本 1.204.1 → 我 bump 到 1.205.0 ✅
+- 第二次 rebase（onto `8e9c9789d`）：PR #620 也用了 1.205.0 → 需再 bump 到 1.206.0
+- **规律**：rebase 后必须立刻 `git show origin/main:packages/brain/package.json | jq .version` 确认 main 最新版本，若与自己版本相同必须再 bump
+
+**GitHub DIRTY 陷阱**：force-push 后 GitHub 的 `mergeable` 字段可能延迟更新，仍显示 `CONFLICTING`；但 `git merge-base HEAD origin/main` 验证 rebase 正确后，可忽略 GitHub 缓存，直接触发 CI（close + reopen PR）。
+
+**worktree CWD 陷阱**：`cd "$WORKTREE" && git ...` 在多条命令链时报 "too many arguments"（变量中含空格）；改用 `git -C "$WORKTREE" ...` 全程避免 CWD 依赖。
+
 ### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
 
 **失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
