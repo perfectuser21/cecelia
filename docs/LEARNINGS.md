@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] findOrphanProcesses 扩展：vitest/node 僵尸清理（PR #629, Brain v1.205.1）
+
+**失败统计**：CI 失败 0 次（rebase 解决版本冲突后一次过）
+
+**背景**：`findOrphanProcesses` 只检测 claude 进程，无法发现因父进程退出留下的 vitest/node 僵尸进程。这类进程 ppid=1（被 init/launchd 收养），内存通常 >500MB。
+
+**实现要点**：
+- `pgrep -f "claude.*-p"` 对照 DB（原有逻辑保留）
+- 新增：`ps -eo pid,ppid,rss,comm` 扫描 ppid=1 且 rss>512000KB 的 node/vitest 进程
+- 两路检测结果合并为 `Set` 去重，返回 `Array.from(orphans)`
+- 任一路失败（pgrep/ps 报错）用 catch 静默忽略，不影响另一路
+
+**坑**：主分支并行 PR 导致版本冲突，rebase 后需从 main 版本（1.205.0）+1 得到 1.205.1，并同步 5 个文件（package.json、package-lock.json×2、.brain-versions、DEFINITION.md）
+
+**测试覆盖**：4 个新测试：ppid=1 大内存识别、ppid≠1 不误杀、小内存不误杀、ps 失败安全忽略
 ### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
 
 **失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
