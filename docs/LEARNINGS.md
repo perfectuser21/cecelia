@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] cortex prompt 通胀治理（PR #661, Brain v1.211.1）
+
+**背景**：Cortex L2 皮层反复超时，desire_system 经 13 轮诊断锁定两个根因：(1) provider 路由走 bridge 被 90s 超时限制，(2) prompt 注入历史过多导致通胀。
+
+**实现要点**：
+
+1. **provider 路由已在 main 修复**：开始本次 /dev 时发现 model-profile.js 的 cortex provider `anthropic→anthropic-api` 已被其他 PR 合并到 main，不需要重复修改。开始前检查 main 状态非常重要。
+2. **main 上 learnings 已降半**：learnings 参数从 20→10 也已在 main 完成，本 PR 进一步降到 5。decision_log LIMIT 10→5 是本 PR 的核心改动。
+3. **Worktree 被 OOM 摧毁**：vitest 全量跑测试 OOM（4GB 堆不够），进程崩溃后 worktree 目录被清空。恢复方法：Write 工具写 4 个 git 元数据文件（HEAD/gitdir/commondir/.git），然后 `git checkout HEAD -- .` 恢复源码。
+4. **cortex performRCA 超时是 pre-existing**：main 上也超时（需要 DB），不是本次修改引起的，CI 中这些测试正常通过（CI 有 DB 环境）。
+
 ### [2026-03-07] blocked 状态完整实现：blockTask/unblockTask/unblockExpiredTasks（PR #663, Brain v1.212.0）
 
 **失败统计**：CI 0 次失败，测试 19 passed
@@ -10,6 +21,7 @@
 3. `blockTask` WHERE 限制 `status IN ('queued', 'in_progress', 'failed')`，已 blocked 的任务不能重复 block
 4. `unblockExpiredTasks` 必须在 `allGoalIds.length === 0` early-return **之前**调用，否则无活跃目标时任务永远无法自动解除
 5. merge 后发现 main 已有 `blockTask/unblockTask/unblockExpiredTasks` 完整实现（PR #658），只需在 `blockTask` 加枚举校验，删除重复代码
+6. `VALID_BLOCKED_REASONS` 必须包含 `billing_cap` 和 `network`（quarantine.js/executor.js 实际使用），否则枚举校验过严导致 CI 失败
 
 **测试写法心得**：
 - mock `db.js` 后，`pool.query` 默认返回 `{ rows: [fake_row] }`，需要根据具体场景调整返回值
@@ -20,6 +32,7 @@
 - 已有测试 `decision-executor.test.js` 传入 `reason: 'dependency missing'`（非法枚举值），本次顺手修复为 `'dependency'`
 - worktree 目录被删除导致 Bash 工具 CWD 损坏，用 Write 工具写入 4 个 git 文件重建 worktree（MEMORY.md 记录的方案）
 - git checkout HEAD -- . 会覆盖刚创建的 PRD/DoD 未追踪文件，需要在 checkout 后重新创建
+- packages/brain/node_modules symlink 被 merge 错误地 git track，导致 CI ENOTDIR 错误
 
 ### [2026-03-07] blocked 状态生命周期管理（PR #658, Brain v1.211.0）
 
