@@ -35,6 +35,7 @@ import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
+import { zombieSweep } from './zombie-sweep.js';
 // [NOTION_SYNC_DISABLED] import { syncRecurringFromNotion } from './recurring-notion-sync.js';
 // [NOTION_SYNC_DISABLED] import { runFullSync } from './notion-full-sync.js';
 
@@ -50,6 +51,7 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
+const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -101,6 +103,10 @@ let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 let _lastReportTime = 0; // track last 48h system report generation time
+let _lastZombieSweepTime = 0; // track last zombie sweep time
+let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
+
+const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1013,6 +1019,25 @@ async function dispatchNextTask(goalIds) {
  * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
  * @returns {Object[]} - Actions taken
  */
+/**
+ * 自动释放 blocked_until 已到期的 blocked 任务，将其状态改回 queued
+ * @returns {Promise<Array<{task_id, title, blocked_reason, blocked_duration_ms}>>}
+ */
+async function releaseBlockedTasks() {
+  const result = await pool.query(`
+    UPDATE tasks
+    SET status = 'queued',
+        blocked_at = NULL,
+        blocked_reason = NULL,
+        blocked_until = NULL,
+        updated_at = NOW()
+    WHERE status = 'blocked' AND blocked_until <= NOW()
+    RETURNING id AS task_id, title, blocked_reason,
+              EXTRACT(EPOCH FROM (NOW() - blocked_at)) * 1000 AS blocked_duration_ms
+  `);
+  return result.rows;
+}
+
 async function autoFailTimedOutTasks(inProgressTasks) {
   const actions = [];
   for (const task of inProgressTasks) {
@@ -1361,6 +1386,21 @@ async function executeTick() {
     console.error('[tick] Pending followup check failed:', followupErr.message);
   }
 
+  // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
+  const zombieElapsed = Date.now() - _lastZombieCleanupTime;
+  if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
+    try {
+      const { runZombieCleanup } = await import('./zombie-cleaner.js');
+      const zombieResult = await runZombieCleanup(pool);
+      _lastZombieCleanupTime = Date.now();
+      if (zombieResult.slotsReclaimed > 0 || zombieResult.worktreesRemoved > 0) {
+        console.log(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
+      }
+    } catch (zombieErr) {
+      console.error('[tick] Zombie cleanup failed (non-fatal):', zombieErr.message);
+    }
+  }
+
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
   const cleanupElapsed = Date.now() - _lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
@@ -1453,12 +1493,17 @@ async function executeTick() {
     }
   }
 
-  // 0.6. Codex 免疫检查：已禁用（run-codex-immune.sh 脚本不存在）
-  // try {
-  //   await ensureCodexImmune(pool);
-  // } catch (immuneErr) {
-  //   console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
-  // }
+  // 0.6. 僵尸巡检：每 30 分钟清理 stale worktree / orphan process / stale lock slot
+  const zombieSweepElapsed = Date.now() - _lastZombieSweepTime;
+  if (zombieSweepElapsed >= ZOMBIE_SWEEP_INTERVAL_MS) {
+    _lastZombieSweepTime = Date.now();
+    zombieSweep().then(r => {
+      const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
+      console.log(`[tick] Zombie sweep done. ${summary}`);
+    }).catch(err => {
+      console.error('[tick] Zombie sweep failed (non-fatal):', err.message);
+    });
+  }
 
   // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
   const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
@@ -1727,6 +1772,26 @@ async function executeTick() {
     allGoalIds = allGoalsResult.rows.map(r => r.id);
   }
 
+  // Auto-recover expired blocked tasks (blocked_until < now → queued)
+  // 无条件执行，不依赖 allGoalIds
+  try {
+    const { unblockExpiredTasks } = await import('./task-updater.js');
+    const recovered = await unblockExpiredTasks();
+    if (recovered.length > 0) {
+      console.log(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
+      for (const r of recovered) {
+        actionsTaken.push({
+          action: 'auto_unblock',
+          task_id: r.task_id,
+          title: r.title,
+          blocked_reason: r.blocked_reason || 'unknown',
+        });
+      }
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task recovery error:', blockedErr.message);
+  }
+
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
     console.log('[tick] No active goals found, skipping tick');
@@ -1897,6 +1962,25 @@ async function executeTick() {
     }
   } catch (quarantineErr) {
     console.error('[tick] Quarantine check error:', quarantineErr.message);
+  }
+
+  // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队
+  try {
+    const blockedReleased = await releaseBlockedTasks();
+    for (const r of blockedReleased) {
+      actionsTaken.push({
+        action: 'auto_release_blocked',
+        task_id: r.task_id,
+        title: r.title,
+        blocked_reason: r.blocked_reason || 'unknown',
+        blocked_duration_ms: r.blocked_duration_ms,
+      });
+    }
+    if (blockedReleased.length > 0) {
+      console.log(`[tick] Released ${blockedReleased.length} blocked task(s) back to queued`);
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task release error:', blockedErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)
@@ -2500,6 +2584,7 @@ async function getStartupErrors() {
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
+function _resetLastZombieCleanupTime() { _lastZombieCleanupTime = 0; }
 /** Reset Layer 2 health check timer — for testing only */
 function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
 /** Reset KR progress sync timer — for testing only */
@@ -2508,6 +2593,8 @@ function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
 function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+/** Reset zombie sweep timer — for testing only */
+function _resetLastZombieSweepTime() { _lastZombieSweepTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -2578,13 +2665,17 @@ export {
   AUTO_DISPATCH_MAX,
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
+  ZOMBIE_SWEEP_INTERVAL_MS,
+  ZOMBIE_CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
+  _resetLastZombieCleanupTime,
   _resetLastHealthCheckTime,
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
+  _resetLastZombieSweepTime,
   GOAL_EVAL_INTERVAL_MS,
   // 48h 简报
   check48hReport,

@@ -9,6 +9,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { detectDomain } from '../domain-detector.js';
 
 const router = Router();
 
@@ -27,19 +28,23 @@ router.post('/', async (req, res) => {
       payload = null,
       metadata = null,
       trigger_source = 'auto',
+      domain: domainInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
     }
 
+    // 未提供 domain 时自动检测
+    const domain = domainInput ?? detectDomain(`${title} ${description ?? ''}`).domain;
+
     const result = await pool.query(
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
          project_id, area_id, goal_id, location,
-         payload, trigger_source
+         payload, trigger_source, domain
        )
-       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10)
+       VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, title, status, task_type, priority, project_id, area_id, goal_id, created_at`,
       [
         title.trim(),
@@ -52,6 +57,7 @@ router.post('/', async (req, res) => {
         location,
         (payload ?? metadata) ? JSON.stringify(payload ?? metadata) : null,
         trigger_source,
+        domain,
       ]
     );
 

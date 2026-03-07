@@ -23,7 +23,7 @@ export const FALLBACK_PROFILE = {
       model: 'claude-haiku-4-5-20251001',
     },
     cortex: {
-      provider: 'anthropic',
+      provider: 'anthropic-api',
       model: 'claude-sonnet-4-6',
     },
     reflection: {
