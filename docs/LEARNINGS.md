@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] strategy_session task_type 注册：四文件联动 + Worktree 残留陷阱（PR #633, Brain v1.206.1）
+
+**失败统计**：CI 未自动触发 1 次（PR mergeable_state: dirty），需合并 main 后才触发
+
+**关键实现要点**：
+
+- `strategy_session` 注册需同步修改 **4 个文件**：`executor.js`（skillMap）、`task-router.js`（VALID_TASK_TYPES / SKILL_WHITELIST / LOCATION_MAP）、`model-registry.js`（AGENTS）、`routes.js`（execution-callback 闭环）
+- `facts-check.mjs` 从 `task-router.js` 读取 `task_types`，不是从 `executor.js`，因此 `task-router.js` 必须同步添加
+- `generate-manifest.mjs --check` 会在 CI 中强制校验 manifest 与代码一致，修改 skillMap 后必须重新生成
+
+**Worktree 元数据残留陷阱（第三次遇到）**：
+
+- 症状：`.git/worktrees/{id}/` 元数据存在，`git worktree list` 不显示，worktree 目录只有 `node_modules`，Read/Edit 工具报告"成功"但文件不存在
+- 根因：Brain 后台进程（worktree 清理逻辑）删除了源文件，但 `.git/worktrees/` 元数据残留
+- **修复流程**（已固化）：
+  1. `git -C /path/to/main worktree prune`
+  2. `git -C /path/to/main worktree add /tmp/new-path <branch-name>`
+  3. 在 `/tmp/new-path` 完成所有工作
+  4. 完成后 `git -C /path/to/main worktree remove /tmp/new-path --force`
+- 注意：`/tmp` worktree 没有 `node_modules`，需要 `npm install` 后才能运行测试；但如果根目录已有 `node_modules`，可以直接引用 `/tmp/{worktree}/node_modules/.bin/vitest`
+
+**PR 不触发 CI 的原因**：
+
+- PR 的 `mergeable_state: dirty`（与 main 有冲突）时，GitHub 可能不自动触发 `pull_request` CI
+- 解决：在功能分支执行 `git fetch origin main && git merge origin/main --no-edit`，解决冲突后 push，CI 自动启动
+
+**并行 PR 版本冲突处理（复习）**：
+
+- main 合并后版本比我的功能分支高（1.206.0 > 1.205.1），最终版本取两者更高值再 +1 patch → 1.206.1
+- `packages/brain/VERSION` 文件也需要同步更新（npm version 不更新它）
+
 ### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
 
 **失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
