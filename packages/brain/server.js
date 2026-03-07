@@ -205,6 +205,10 @@ server.listen(PORT, async () => {
   await initNarrativeTimer(pool);
   console.log('[Server] Narrative timer initialized from DB');
 
+  // Startup recovery: re-queue orphaned in_progress tasks from previous Brain instance
+  const { runStartupRecovery } = await import('./src/startup-recovery.js');
+  await runStartupRecovery(pool);
+
   // Initialize tick loop if enabled in DB
   await initTickLoop();
 
