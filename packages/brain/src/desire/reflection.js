@@ -15,13 +15,75 @@ const REFLECTION_THRESHOLD = 12;
 
 // 熔断机制：检测连续重复内容
 const CIRCUIT_BREAKER_THRESHOLD = 3; // 连续3轮相同内容 → 触发熔断
-let _consecutiveDuplicates = 0;
-let _lastInsightHash = null;
 
 // 静默期机制：连续N轮跳过后进入静默期，避免无限循环
-const SILENCE_SKIP_THRESHOLD = 3; // 连续3轮跳过（重复或相似度>0.75）→ 进入静默期
+const SILENCE_SKIP_THRESHOLD = 3; // 连续3轮跳过（重复或相似度>0.6）→ 进入静默期
 const SILENCE_DURATION_HOURS = 24; // 静默期时长（小时）
-let _consecutiveSkips = 0; // 跟踪连续跳过次数（包括熔断和相似度去重）
+
+// Jaccard 相似度阈值（降低以捕获更多语义重复）
+const SIMILARITY_THRESHOLD = 0.6;
+
+// 内存缓存（启动时从 DB 加载，运行时同步写入 DB）
+let _consecutiveDuplicates = 0;
+let _lastInsightHash = null;
+let _consecutiveSkips = 0;
+let _breakerStateLoaded = false;
+
+/**
+ * 从 DB 加载熔断器状态（启动后首次调用时执行）
+ */
+async function _loadBreakerState(pool) {
+  if (_breakerStateLoaded) return;
+  try {
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'reflection_breaker_state'"
+    );
+    if (rows[0]?.value_json) {
+      const state = typeof rows[0].value_json === 'string'
+        ? JSON.parse(rows[0].value_json)
+        : rows[0].value_json;
+      _consecutiveDuplicates = state.consecutiveDuplicates ?? 0;
+      _lastInsightHash = state.lastInsightHash ?? null;
+      _consecutiveSkips = state.consecutiveSkips ?? 0;
+      console.log(`[reflection] Breaker state loaded from DB: dups=${_consecutiveDuplicates}, skips=${_consecutiveSkips}, hash=${_lastInsightHash?.slice(0, 8) ?? 'null'}`);
+    }
+  } catch (err) {
+    console.error('[reflection] Failed to load breaker state from DB (using defaults):', err.message);
+  }
+  _breakerStateLoaded = true;
+}
+
+/**
+ * 将熔断器状态持久化到 DB
+ */
+async function _saveBreakerState(pool) {
+  try {
+    const state = {
+      consecutiveDuplicates: _consecutiveDuplicates,
+      lastInsightHash: _lastInsightHash,
+      consecutiveSkips: _consecutiveSkips,
+      updatedAt: new Date().toISOString(),
+    };
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['reflection_breaker_state', JSON.stringify(state)]);
+  } catch (err) {
+    console.error('[reflection] Failed to save breaker state to DB:', err.message);
+  }
+}
+
+// 导出内部函数供测试使用
+export { _loadBreakerState, _saveBreakerState };
+
+// 导出重置函数供测试使用
+export function _resetBreakerStateForTest() {
+  _consecutiveDuplicates = 0;
+  _lastInsightHash = null;
+  _consecutiveSkips = 0;
+  _breakerStateLoaded = false;
+}
 
 /**
  * 读取当前 accumulator 值
@@ -40,6 +102,9 @@ async function getAccumulator(pool) {
  * @returns {Promise<{triggered: boolean, insight?: string, accumulator_before?: number}>}
  */
 export async function runReflection(pool) {
+  // 0. 从 DB 加载熔断器状态（首次调用时）
+  await _loadBreakerState(pool);
+
   // 1. 检查静默期（连续跳过导致的熔断静默）
   try {
     const { rows } = await pool.query(
@@ -56,6 +121,7 @@ export async function runReflection(pool) {
         // 静默期已结束，清除记录
         await pool.query("DELETE FROM working_memory WHERE key = 'reflection_silence_until'");
         _consecutiveSkips = 0; // 重置跳过计数器
+        await _saveBreakerState(pool);
         console.log('[reflection] 静默期已结束，恢复正常反思');
       }
     }
@@ -159,11 +225,17 @@ ${memorySummary}
       console.warn(`[reflection] Consecutive duplicate detected (count=${_consecutiveDuplicates}, hash=${currentHash.slice(0, 8)}...)`);
 
       if (_consecutiveDuplicates >= CIRCUIT_BREAKER_THRESHOLD) {
-        console.error(`[reflection] ⚠️  Circuit breaker triggered: ${_consecutiveDuplicates} consecutive duplicates, skipping insight`);
+        console.error(`[reflection] Circuit breaker triggered: ${_consecutiveDuplicates} consecutive duplicates, skipping insight`);
 
         // 增加连续跳过计数
         _consecutiveSkips++;
         console.log(`[reflection] 连续跳过次数: ${_consecutiveSkips}/${SILENCE_SKIP_THRESHOLD}`);
+
+        // 写入折叠记录（可追溯，而非完全丢弃）
+        await pool.query(`
+          INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+          VALUES ($1, 4, 'short', NOW() + INTERVAL '3 days')
+        `, [`[反思折叠] 第${_consecutiveDuplicates}次完全相同的洞察，已自动折叠。hash=${currentHash.slice(0, 8)}`]);
 
         // 重置熔断计数器和哈希（防止永久锁死）
         _consecutiveDuplicates = 0;
@@ -185,7 +257,7 @@ ${memorySummary}
             VALUES ($1, $2, NOW())
             ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
           `, ['reflection_silence_until', silenceUntil]);
-          console.warn(`[reflection] ⚠️  进入静默期 ${SILENCE_DURATION_HOURS} 小时（至 ${silenceUntil}），连续 ${_consecutiveSkips} 轮跳过`);
+          console.warn(`[reflection] 进入静默期 ${SILENCE_DURATION_HOURS} 小时（至 ${silenceUntil}），连续 ${_consecutiveSkips} 轮跳过`);
 
           // 写入静默期事件到 memory_stream
           await pool.query(`
@@ -194,13 +266,10 @@ ${memorySummary}
           `, [`[反思静默] 连续${_consecutiveSkips}轮反思被跳过（重复/相似度过高），已进入${SILENCE_DURATION_HOURS}小时静默期。静默期至 ${silenceUntil}。`]);
 
           _consecutiveSkips = 0; // 重置计数器（已进入静默期）
-        } else {
-          // 未达到静默阈值，写入普通熔断事件
-          await pool.query(`
-            INSERT INTO memory_stream (content, importance, memory_type, expires_at)
-            VALUES ($1, 6, 'long', NOW() + INTERVAL '7 days')
-          `, [`[反思熔断] 检测到连续${_consecutiveDuplicates}轮重复内容，已触发熔断机制跳过本次反思。连续跳过次数: ${_consecutiveSkips}/${SILENCE_SKIP_THRESHOLD}。`]);
         }
+
+        // 持久化熔断器状态
+        await _saveBreakerState(pool);
 
         return { triggered: true, insight: null, skipped: 'circuit_breaker', consecutive_duplicates: _consecutiveDuplicates, accumulator_before: accumulator };
       }
@@ -248,13 +317,19 @@ ${memorySummary}
       if (similarity > maxSimilarity) maxSimilarity = similarity;
     }
 
-    // 5. 去重决策（原有逻辑）
-    if (maxSimilarity > 0.75) {
-      console.log(`[reflection] Insight skipped (duplicate, similarity=${maxSimilarity.toFixed(2)})`);
+    // 5. 去重决策（阈值从 0.75 降低到 0.6）
+    if (maxSimilarity > SIMILARITY_THRESHOLD) {
+      console.log(`[reflection] Insight skipped (duplicate, similarity=${maxSimilarity.toFixed(2)}, threshold=${SIMILARITY_THRESHOLD})`);
 
       // 增加连续跳过计数
       _consecutiveSkips++;
       console.log(`[reflection] 连续跳过次数: ${_consecutiveSkips}/${SILENCE_SKIP_THRESHOLD}`);
+
+      // 写入折叠记录（可追溯）
+      await pool.query(`
+        INSERT INTO memory_stream (content, importance, memory_type, expires_at)
+        VALUES ($1, 4, 'short', NOW() + INTERVAL '3 days')
+      `, [`[反思折叠] 与近7天洞察相似度${maxSimilarity.toFixed(2)}，已自动折叠。连续跳过: ${_consecutiveSkips}/${SILENCE_SKIP_THRESHOLD}`]);
 
       // 重置 accumulator（与正常流程一致）
       await pool.query(`
@@ -272,7 +347,7 @@ ${memorySummary}
           VALUES ($1, $2, NOW())
           ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
         `, ['reflection_silence_until', silenceUntil]);
-        console.warn(`[reflection] ⚠️  进入静默期 ${SILENCE_DURATION_HOURS} 小时（至 ${silenceUntil}），连续 ${_consecutiveSkips} 轮跳过`);
+        console.warn(`[reflection] 进入静默期 ${SILENCE_DURATION_HOURS} 小时（至 ${silenceUntil}），连续 ${_consecutiveSkips} 轮跳过`);
 
         // 写入静默期事件到 memory_stream
         await pool.query(`
@@ -283,10 +358,16 @@ ${memorySummary}
         _consecutiveSkips = 0; // 重置计数器（已进入静默期）
       }
 
+      // 持久化熔断器状态
+      await _saveBreakerState(pool);
+
       return { triggered: true, insight: null, skipped: 'duplicate', similarity: maxSimilarity, accumulator_before: accumulator };
     }
 
-    console.log(`[reflection] Insight unique (max similarity=${maxSimilarity.toFixed(2)}), proceeding to write`);
+    console.log(`[reflection] Insight unique (max similarity=${maxSimilarity.toFixed(2)}, threshold=${SIMILARITY_THRESHOLD}), proceeding to write`);
+
+    // 持久化熔断器状态（更新 hash）
+    await _saveBreakerState(pool);
   } catch (err) {
     // 去重检查失败不影响主流程，继续写入
     console.error('[reflection] dedup check error (non-critical):', err.message);
@@ -310,6 +391,7 @@ ${memorySummary}
 
     // 成功写入洞察，重置跳过计数器
     _consecutiveSkips = 0;
+    await _saveBreakerState(pool);
     console.log('[reflection] 洞察已成功写入，跳过计数器已重置');
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);
@@ -329,3 +411,4 @@ ${memorySummary}
 
   return { triggered: true, insight, accumulator_before: accumulator };
 }
+
