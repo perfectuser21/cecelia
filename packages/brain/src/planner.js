@@ -7,6 +7,8 @@
 
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
+import { getDomainRole, ROLES } from './role-registry.js';
+import { detectDomain } from './domain-detector.js';
 
 // Learning penalty configuration
 const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
@@ -451,35 +453,68 @@ async function generateArchitectureDesignTask(kr, project) {
 
     const initiative = initiativeResult.rows[0];
 
-    // Check if an architecture_design task already exists for this initiative (any active status)
+    // Determine domain: Initiative.domain → Project.domain → KR.domain → default 'coding'
+    // Per DoD-4: use explicit domain fields only, no text detection fallback
+    const domain = initiative.domain || project.domain || kr.domain || 'coding';
+    const isCodingDomain = domain === 'coding';
+
+    // Determine task_type and payload based on domain
+    let taskType, taskTitle, taskDescription, extraPayload;
+    if (isCodingDomain) {
+      // coding domain: existing behavior → architecture_design → /architect
+      taskType = 'architecture_design';
+      taskTitle = `架构设计 Initiative: ${initiative.name}`;
+      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
+      extraPayload = {};
+    } else {
+      // non-coding domain: initiative_plan with skill_override from role-registry
+      const role = getDomainRole(domain);
+      const skillOverride = ROLES[role]?.skills?.[0] ?? '/dev';
+      taskType = 'initiative_plan';
+      taskTitle = `Initiative 规划 [${domain}]: ${initiative.name}`;
+      taskDescription = `该 Initiative「${initiative.name}」下无任务，需要按 ${domain} 领域规划。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
+      extraPayload = { skill_override: skillOverride, domain };
+    }
+
+    // Check if a planning task already exists for this initiative (any active status)
     const existingResult = await pool.query(`
       SELECT id FROM tasks
-      WHERE project_id = $1 AND task_type = 'architecture_design'
+      WHERE project_id = $1 AND task_type = $2
         AND status NOT IN ('completed', 'failed', 'cancelled')
       LIMIT 1
-    `, [initiative.id]);
+    `, [initiative.id, taskType]);
 
     if (existingResult.rows.length > 0) {
-      // Already has an architecture_design task pending/in_progress, skip
+      // Already has a planning task pending/in_progress, skip
       return null;
     }
 
-    // Create architecture_design task → dispatched to /architect Mode 2
+    const payload = JSON.stringify({
+      initiative_id: initiative.id,
+      parent_project_id: project.id,
+      kr_id: kr.id,
+      ...extraPayload
+    });
+
+    // Create planning task with domain/owner_role propagation
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
-      VALUES ($1, $2, 'architecture_design', $3, $4, $5, 'queued', 'brain_auto', $6)
+      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      VALUES ($1, $2, $3, $4, $5, $6, 'queued', 'brain_auto', $7, $8, $9)
       RETURNING *
     `, [
-      `架构设计 Initiative: ${initiative.name}`,
-      `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`,
+      taskTitle,
+      taskDescription,
+      taskType,
       kr.priority || 'P1',
       initiative.id,
       kr.id,
-      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id })
+      payload,
+      domain,
+      getDomainRole(domain)
     ]);
 
     const newTask = insertResult.rows[0];
-    console.log(`[planner] 自动生成 architecture_design 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id}`);
+    console.log(`[planner] 自动生成 ${taskType} 任务: ${newTask.title} (${newTask.id}) for initiative ${initiative.id} (domain=${domain})`);
     return newTask;
   } catch (err) {
     console.error(`[planner] generateArchitectureDesignTask failed: ${err.message}`);

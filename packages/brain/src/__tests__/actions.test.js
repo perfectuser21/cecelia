@@ -2,6 +2,7 @@
  * actions.js 单元测试
  * 覆盖所有导出函数：createTask, createInitiative, createProject,
  * updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks
+ * 以及 domain/owner_role 自动推断（role-registry 集成）
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -225,6 +226,66 @@ describe('actions.js', () => {
       const params = insertCall[1];
       expect(params[9]).toBeNull(); // payload
     });
+
+    it('传 domain 时 SQL 包含 domain 字段，owner_role 自动推断', async () => {
+      const fakeTask = { id: 'task-domain', title: 'domain任务', status: 'queued' };
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await createTask({
+        title: 'domain任务',
+        goal_id: 'goal-1',
+        task_type: 'dev',
+        domain: 'coding',
+      });
+
+      const insertCall = mockQuery.mock.calls[1];
+      const sql = insertCall[0];
+      const params = insertCall[1];
+      expect(sql).toContain('domain');
+      expect(sql).toContain('owner_role');
+      expect(params[11]).toBe('coding');    // domain
+      expect(params[12]).toBe('cto');       // owner_role 自动推断
+    });
+
+    it('同时传 domain 和 owner_role 时使用传入的 owner_role', async () => {
+      const fakeTask = { id: 'task-explicit-role', title: '显式角色', status: 'queued' };
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await createTask({
+        title: '显式角色',
+        goal_id: 'goal-1',
+        task_type: 'dev',
+        domain: 'quality',
+        owner_role: 'vp_qa',
+      });
+
+      const insertCall = mockQuery.mock.calls[1];
+      const params = insertCall[1];
+      expect(params[11]).toBe('quality');
+      expect(params[12]).toBe('vp_qa');
+    });
+
+    it('不传 domain 时，无匹配关键词则 domain 为 null，不写 owner_role（12 个参数）', async () => {
+      const fakeTask = { id: 'task-nodomain', title: '无领域', status: 'queued' };
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+
+      await createTask({
+        title: '无领域',
+        goal_id: 'goal-1',
+        task_type: 'dev',
+      });
+
+      const insertCall = mockQuery.mock.calls[1];
+      const sql = insertCall[0];
+      const params = insertCall[1];
+      // 无匹配关键词时 domain=null，owner_role 列不写入（12 个参数）
+      expect(params.length).toBe(12);
+      expect(params[11]).toBeNull(); // domain is last, null when undetected
+      expect(sql).not.toContain('owner_role'); // no owner_role when auto-detecting
+    });
   });
 
   // ========== createInitiative ==========
@@ -316,6 +377,38 @@ describe('actions.js', () => {
       const params = mockQuery.mock.calls[0][1];
       expect(params[3]).toBe('known');   // decomposition_mode
       expect(params[6]).toBe('cecelia'); // execution_mode
+    });
+
+    it('传 domain 时 SQL 包含 domain 字段，owner_role 自动推断', async () => {
+      const fakeInit = { id: 'init-domain', name: 'agent ops init', type: 'initiative' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeInit] });
+
+      await createInitiative({
+        name: 'agent ops init',
+        parent_id: 'proj-1',
+        domain: 'agent_ops',
+      });
+
+      const sql = mockQuery.mock.calls[0][0];
+      const params = mockQuery.mock.calls[0][1];
+      expect(sql).toContain('domain');
+      expect(sql).toContain('owner_role');
+      expect(params[9]).toBe('agent_ops');      // domain（$10 = index 9）
+      expect(params[10]).toBe('vp_agent_ops');  // owner_role 自动推断
+    });
+
+    it('不传 domain 时 domain/owner_role 均为 null', async () => {
+      const fakeInit = { id: 'init-nodomain', name: '无领域', type: 'initiative' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeInit] });
+
+      await createInitiative({
+        name: '无领域',
+        parent_id: 'proj-1',
+      });
+
+      const params = mockQuery.mock.calls[0][1];
+      expect(params[9]).toBeNull();  // domain
+      expect(params[10]).toBeNull(); // owner_role
     });
   });
 
@@ -629,6 +722,36 @@ describe('actions.js', () => {
       expect(sql).toContain("'pending'");
       const params = mockQuery.mock.calls[0][1];
       expect(params[2]).toBe('P1'); // priority
+    });
+
+    it('传 domain 时 SQL 包含 domain 字段，owner_role 自动推断', async () => {
+      const fakeGoal = { id: 'goal-domain', title: 'quality目标', type: 'mission' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
+
+      await createGoal({
+        title: 'quality目标',
+        domain: 'quality',
+      });
+
+      const sql = mockQuery.mock.calls[0][0];
+      const params = mockQuery.mock.calls[0][1];
+      expect(sql).toContain('domain');
+      expect(sql).toContain('owner_role');
+      expect(params[7]).toBe('quality'); // domain（$8 = index 7）
+      expect(params[8]).toBe('vp_qa');   // owner_role 自动推断
+    });
+
+    it('不传 domain 时 domain/owner_role 均为 null', async () => {
+      const fakeGoal = { id: 'goal-nodomain', title: '无领域目标', type: 'mission' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
+
+      await createGoal({ title: '无领域目标' });
+
+      const sql = mockQuery.mock.calls[0][0];
+      const allParams = mockQuery.mock.calls[0][1];
+      expect(sql).toContain('domain');
+      expect(allParams[7]).toBeNull(); // domain
+      expect(allParams[8]).toBeNull(); // owner_role
     });
   });
 
