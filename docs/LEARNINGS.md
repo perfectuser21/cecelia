@@ -1,5 +1,34 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] dev 流水线成功率 API + 端到端健康检查（PR #606, Brain v1.202.3）
+
+**失败统计**：CI 失败 0 次（本地测试 + rebase 解决冲突后 CI 一次通过）
+
+**背景**：`GET /api/brain/dev-pipeline/success-rate` 返回 404，缺少 dev 任务历史成功率 API；也没有统一的端到端健康检查入口。
+
+**实现要点**：
+
+1. **success-rate 路由**：复用现有 `getDispatchStats(pool)` 取 1h 滚动窗口；再用 SQL FILTER 聚合 tasks 表历史数据，`pr_merged_at IS NOT NULL` 作为成功标准
+2. **health 路由**：四路检查各自 try/catch 独立降级，任意 fail 时 `healthy=false`；executor 检查复用已有 `getAllCBStates()`；retry 检查用动态 import 验证模块可加载性
+3. **executor.js 防御性修正**：task_type=null + skill=/dev 时 `task = { ...task, task_type: 'dev' }` 不可变修改，不影响原对象
+
+**测试策略**：
+- 只 mock `db.js` 和 `dispatch-stats.js`，不 mock thalamus/model-profile 等（过度 mock 导致缺失导出错误）
+- 遵循 routes.test.js 的极简策略：mock 工厂内部直接定义 mockPool，避免 vi.hoisted 提升问题
+
+**PR 未触发 CI 的排查**：
+- 初次推送 PR 后 CI 未触发，原因是存在 merge conflict（CONFLICTING）
+- 症状：`gh pr view --json mergeable` 返回 `CONFLICTING`，statusCheckRollup 为空数组
+- 修复：rebase 解决冲突，force push，PR 立即触发 CI
+
+**rebase 冲突要点**：
+- 版本文件（package.json / package-lock.json / .brain-versions / DEFINITION.md）都有冲突时，取 max(HEAD, ours) + 1，统一升到 1.202.3
+- root package-lock.json 中 `packages/brain` 版本字段格式有逗号（`"1.202.x",`），sed 正则需加逗号
+
+**brain-ci.yml workflow_dispatch 陷阱**：
+- 手动触发的 workflow_dispatch 没有 `base_ref`，`Detect Changes` job 检测不到文件变更，所有 Brain Tests 被 skip
+- 解决：不要用 workflow_dispatch 做测试，必须通过 PR 触发（pull_request 事件）
+
 ### [2026-03-07] Worktree 目录删除后 Bash CWD 损坏，Write 工具可绕过（PR #614）
 
 **问题**：worktree 目录被后台进程清理后，Bash 工具 CWD 损坏（"Working directory no longer exists"），所有 bash 命令失败。
