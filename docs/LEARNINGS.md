@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] strategy_session 注册 + execution-callback 闭环（PR #660, Brain v1.205.1）
+
+**背景**：Initiative 4「战略会议能力」要求 Brain 派发 strategy_session 类型任务。
+
+**实现要点**：
+- 注册 5 文件联动（task-router / executor / model-registry / routes / DEFINITION.md）
+- 新增 `strategy-session-parser.js` 独立解析模块，支持 ```json 块和纯 JSON
+- execution-callback 采用 fire-and-forget 模式，写入 goals 表时逐条处理，单个 KR 失败不中断整体
+- `domain → owner_role` 通过 role-registry.js 的 `getDomainRole()` 推断
+
+**Worktree 重建陷阱**（本次遇到）：
+- worktree 目录被后台进程删除后，Read/Write 工具先报成功再报文件不存在
+- 重建步骤：用 Write 写 4 个 git 元数据文件 → `git checkout HEAD -- .` 还原 → 重建 PRD/.dev-mode（checkout 后它们会消失）
+- PRD/.dev-mode 是 untracked 文件，但若 worktree 目录不存在时写入，目录恢复后这些文件并不在里面
+
+**CI workflow_dispatch**：手动 `gh workflow run brain-ci.yml --ref {branch}` 触发时，Detect Changes 判断无变更会跳过测试 job，但 ci-passed 仍为 ✓，PR 可合并。
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
