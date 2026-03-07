@@ -17,8 +17,8 @@ import { existsSync, readFileSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
 
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
-const WORKTREE_BASE = process.env.WORKTREE_BASE || '/home/xx/perfect21/cecelia/.claude/worktrees';
-const REPO_ROOT = process.env.REPO_ROOT || '/home/xx/perfect21/cecelia';
+const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
+const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 
 /**
  * Phase 2 emergency cleanup after watchdog kills a task process.

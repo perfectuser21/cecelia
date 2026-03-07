@@ -71,7 +71,7 @@ const server = http.createServer((req, res) => {
 
         const modelArg = model || 'haiku';
         const timeoutMs = Math.min(timeout || 90000, 180000);
-        const claudeBin = '/Users/administrator/.local/bin/claude';
+        const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
         const startTime = Date.now();
@@ -144,7 +144,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['ask', '-n', notebook_id, query] : ['ask', query];
@@ -181,7 +181,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = notebook_id ? ['source', 'add', '-n', notebook_id, url] : ['source', 'add', url];
@@ -217,7 +217,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
         const { execFile } = require('child_process');
         const startTime = Date.now();
         // notebooklm source add "text content" --title "title" [-n notebook_id] --json
@@ -260,7 +260,7 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'Missing source_id' }));
           return;
         }
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
         const { execFile } = require('child_process');
         const startTime = Date.now();
         const args = ['source', 'delete', source_id, '-y'];
@@ -291,7 +291,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const { notebook_id } = JSON.parse(body);
-        const notebookCli = '/Users/administrator/.local/bin/notebooklm';
+        const notebookCli = (process.env.NOTEBOOKLM_BIN || '/opt/homebrew/bin/notebooklm');
         const { execFile } = require('child_process');
         const args = ['source', 'list', '--json'];
         if (notebook_id) { args.push('-n', notebook_id); }
