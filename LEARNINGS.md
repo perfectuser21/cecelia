@@ -4,6 +4,29 @@
 
 ---
 
+### [2026-03-07] 微博发布器（weibo-publisher）验证码接通 + Worktree 重建
+
+**背景**：KR1「8平台发布全自动化」中微博发布器需要接通验证码识别模块。
+
+**关键发现**：微博发布采用与快手相同的 CDP 直连架构（Mac mini → Windows PC:19227），发布页面 `https://weibo.com/p/publish/`。
+
+**验证码模块设计**：微博使用天鉴（GeeTest）滑块验证码，`handleCaptcha()` 函数实现：
+1. 多选择器检测验证码容器（`[class*="geetest"]`、`[class*="tc-9bad"]` 等）
+2. 查找滑块元素并计算容器宽度 × 0.78 的拖动距离
+3. `simulateDrag()` 用 easeOutQuart 缓动 + Y 轴抖动模拟人手动作
+4. 拖动失败后以容器宽度 × 0.65 重试一次
+
+**Worktree 被后台进程删除时的恢复**：
+- 症状：Bash 工具报 "Working directory no longer exists"，所有命令失败
+- 临时解法：用 Write 工具写一个文件到 worktree 路径可重建目录；再复制 PRD/DoD 到 /tmp，rm -rf worktree，再 `git worktree add` 正式重建
+- 完整重建：`cp PRD/DOD → /tmp → rm worktree dir → git worktree add → cp PRD/DOD back`
+
+**branch-protect Hook 路径搜索陷阱**（同快手经验）：`packages/workflows/` 中旧 `.prd.md` 会被优先找到，需在子目录也创建 `.prd-{branch}.md`（`.prd-*.md` 在 gitignore，自动跳过 update check）。
+
+**失败统计**：CI 失败 0 次
+
+---
+
 ### [2026-03-07] 快手发布器（kuaishou-publisher）CDP 直连架构
 
 **背景**：KR1「8平台发布全自动化」中快手发布框架有 bug，需要重新实现。
