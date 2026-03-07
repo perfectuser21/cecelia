@@ -153,6 +153,7 @@ export async function handlePrMerged(pool, prInfo) {
         SET
           pr_url = COALESCE(pr_url, $2),
           pr_merged_at = $3,
+          pr_status = 'merged',
           updated_at = NOW()
         WHERE id = $1
           AND status = 'completed'
@@ -216,6 +217,7 @@ export async function handlePrMerged(pool, prInfo) {
         updated_at = NOW(),
         pr_url = $5,
         pr_merged_at = COALESCE($6::timestamp, NOW()),
+        pr_status = 'merged',
         metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
         payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb
       WHERE id = $1

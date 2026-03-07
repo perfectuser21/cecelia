@@ -2757,7 +2757,9 @@ router.post('/execution-callback', async (req, res) => {
             'pr_url', $5::text
           ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
             || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
-          completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END
+          completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
+          pr_url = COALESCE($5::text, pr_url),
+          pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END
         WHERE id = $1 AND status = 'in_progress'
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
 
