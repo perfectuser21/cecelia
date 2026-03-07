@@ -4,6 +4,53 @@
 
 ---
 
+### [2026-03-07] planner/suggestion-dispatcher 自动填充 domain/owner_role (v1.209.1)
+
+**背景**：PR #634 已完成 actions.js 的 domain 接入（使用 domain-detector.js），但 planner.js 和 suggestion-dispatcher.js 创建任务时仍不填充 domain/owner_role，导致 Brain 自动生成的任务全是 NULL。
+
+**关键技术决策**：
+
+1. **Brain 派发重复任务陷阱**：开发前应检查最近合并 PR（`gh pr list --state merged --limit 10`）。本次开始开发后才发现 PR #634 已实现 actions.js 部分，避免了重复开发，改为聚焦 planner.js 和 suggestion-dispatcher.js。
+
+2. **detectDomain 的 confidence=0 语义**：`detectDomain` 在无关键词匹配时返回 `confidence=0`，但 `domain` 仍会被设为默认值 'coding'。suggestion-dispatcher.js 用 `confidence > 0` 判断是否真正识别到 domain，`confidence=0` 时写入 NULL，避免所有无法识别的 suggestion 都被归入 coding。
+
+3. **planner.js 继承策略**：`generateArchitectureDesignTask` 优先继承 `kr.domain`（如果已设置），fallback 用 `detectDomain(kr.title + description)` 自动检测。这样从上游传入的明确 domain 不会被覆盖。
+
+4. **domain 优先级冲突**：PRIORITY_ORDER 中 agent_ops > quality，'QA OKR' 同时命中 quality（via 'qa'）和 agent_ops（via 'okr'），导致测试期望 vp_qa 但实际得到 vp_agent_ops。测试需使用更明确的关键词或显式传入 domain+owner_role。
+
+**Worktree 重建经验**（第三次验证）：
+- Bash 工具 CWD 损坏时，Write 工具仍可写入绝对路径文件
+- 4 个文件：`.git/worktrees/{id}/HEAD`、`gitdir`、`commondir`、`{worktree}/.git`
+- 写入后 Bash 工具恢复，再 `git checkout HEAD -- .` 还原所有文件
+
+---
+
+### [2026-03-07] tasks 表添加 blocked 状态 + tick 自动释放循环 (Migration 137, v1.207.0)
+
+**背景**：quarantined 状态职责过载，无法区分"临时阻塞等待恢复"与"需要人工审查"两种场景。blocked 状态专门处理前者。
+
+**关键设计决策**：
+1. **blocked 与 quarantined 的职责分离**：`should_retry=true` → blocked（TTL 自动释放）；`should_retry=false` → quarantined（人工审查）。改变了 routes.js execution-callback 中的分流逻辑。
+2. **releaseBlockedTasks 是内联函数**：不导出，由 executeTick 直接调用，避免循环依赖。
+3. **blockTask/unblockTask 独立于 updateTaskStatus**：`blocked` 不加入 `VALID_STATUSES`，而是用单独函数处理，保持 updateTaskStatus 的简洁性和安全性。
+
+**版本冲突处理**：
+- 开发时 main 是 1.205.0 / schema 135；merge 时 main 已合并 PR #630（1.206.0 / schema 136）
+- 我的 migration 用 137（正确跳过了 136），但 Brain 版本从 1.206.0 必须再 bump 到 1.207.0
+- 处理流程：`git merge origin/main --no-edit` → 解决冲突（保留 137）→ `npm version minor` → 重新提交
+
+**CI 未自动触发问题**：
+- PR 创建后 CI 长时间未启动（statusCheckRollup 为空）
+- 原因：可能是 GitHub Actions 队列延迟或 Mergeable:false 状态
+- 解决：`git merge origin/main` 解决冲突后重新 push，PR 的 `synchronize` 事件触发了 CI
+
+**测试策略**：
+- `releaseBlockedTasks` 是内部函数，无法直接导入测试
+- 用 SQL 断言测试（验证 SQL 包含正确的 WHERE/SET 子句）代替行为测试
+- `blockTask` 的 WHERE 子句同时包含 `status IN ('in_progress', 'failed')`，状态转换规则在 SQL 层强制
+
+---
+
 ### [2026-03-07] goals/projects/tasks 添加 domain + owner_role 字段 (Migration 134)
 
 **背景**：Cecelia 从单一 Coding 系统进化为多领域管家，需要给 OKR 层级加上领域标签和角色归属。

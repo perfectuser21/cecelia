@@ -1,6 +1,7 @@
 /* global console */
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
+import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
@@ -39,7 +40,7 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain, owner_role }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -63,10 +64,9 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     return { success: true, task: existing, deduplicated: true };
   }
 
-  // Auto-infer owner_role from domain if domain provided but owner_role omitted
-  const resolvedOwnerRole = domain
-    ? (owner_role || getDomainRole(domain))
-    : (owner_role || null);
+  // domain 明确传入时 auto-infer owner_role；否则两者均为 null（向后兼容）
+  const domain = domainInput ?? null;
+  const owner_role = domain ? (ownerRoleInput ?? getDomainRole(domain)) : (ownerRoleInput ?? null);
 
   const result = await pool.query(`
     INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
@@ -85,8 +85,8 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     execution_profile || null,
     payload ? JSON.stringify(payload) : null,
     trigger_source || 'brain_auto',
-    domain || null,
-    resolvedOwnerRole
+    domain,
+    owner_role,
   ]);
 
   // ON CONFLICT DO NOTHING returns 0 rows on race condition duplicate
@@ -173,19 +173,26 @@ async function createInitiative({ name, parent_id, kr_id, decomposition_mode, de
  * @param {string[]} params.repo_paths - Multiple repository paths
  * @param {string[]} params.kr_ids - Associated KR IDs
  */
-async function createProject({ name, description, repo_path, repo_paths, kr_ids }) {
+async function createProject({ name, description, repo_path, repo_paths, kr_ids, domain: domainInput, owner_role: ownerRoleInput }) {
   if (!name) {
     return { success: false, error: 'name is required' };
   }
 
+  // 未提供 domain/owner_role 时自动检测
+  const detected = detectDomain(`${name} ${description || ''}`);
+  const domain = domainInput ?? detected.domain;
+  const owner_role = ownerRoleInput ?? detected.owner_role;
+
   const result = await pool.query(`
-    INSERT INTO projects (name, description, repo_path, type, status)
-    VALUES ($1, $2, $3, 'project', 'active')
+    INSERT INTO projects (name, description, repo_path, type, status, domain, owner_role)
+    VALUES ($1, $2, $3, 'project', 'active', $4, $5)
     RETURNING *
   `, [
     name,
     description || '',
-    repo_path || (repo_paths?.[0]) || null
+    repo_path || (repo_paths?.[0]) || null,
+    domain,
+    owner_role,
   ]);
 
   const project = result.rows[0];
@@ -272,7 +279,7 @@ async function updateTask({ task_id, status, priority }) {
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this goal (auto-inferred from domain if omitted)
  */
-async function createGoal({ title, description, priority, project_id, target_date, parent_id, type, domain, owner_role }) {
+async function createGoal({ title, description, priority, project_id, target_date, parent_id, type, domain: domainInput, owner_role: ownerRoleInput }) {
   // Auto-determine type based on parent if not provided
   let goalType = type;
   if (!goalType && parent_id) {
@@ -295,9 +302,9 @@ async function createGoal({ title, description, priority, project_id, target_dat
     goalType = 'mission';
   }
 
-  const resolvedOwnerRole = domain
-    ? (owner_role || getDomainRole(domain))
-    : (owner_role || null);
+  // domain 明确传入时 auto-infer owner_role；否则两者均为 null（向后兼容）
+  const domain = domainInput ?? null;
+  const owner_role = domain ? (ownerRoleInput ?? getDomainRole(domain)) : (ownerRoleInput ?? null);
 
   const result = await pool.query(`
     INSERT INTO goals (title, description, priority, project_id, target_date, parent_id, type, status, progress, domain, owner_role)
@@ -311,8 +318,8 @@ async function createGoal({ title, description, priority, project_id, target_dat
     target_date || null,
     parent_id || null,
     goalType,
-    domain || null,
-    resolvedOwnerRole
+    domain,
+    owner_role,
   ]);
 
   console.log(`[Action] Created goal: ${result.rows[0].id} - ${title} (type: ${goalType})`);

@@ -7,6 +7,8 @@
 
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
+import { getDomainRole } from './role-registry.js';
+import { detectDomain } from './domain-detector.js';
 
 // Learning penalty configuration
 const LEARNING_PENALTY_SCORE = -20;       // 惩罚分数（可配置）
@@ -465,9 +467,15 @@ async function generateArchitectureDesignTask(kr, project) {
     }
 
     // Create architecture_design task → dispatched to /architect Mode 2
+    // Inherit domain/owner_role from KR if available; fall back to detectDomain from KR title
+    const krDomain = kr.domain || (() => {
+      const detected = detectDomain(`${kr.title || ''} ${kr.description || ''}`);
+      return detected.confidence > 0 ? detected.domain : null;
+    })();
+    const krOwnerRole = krDomain ? getDomainRole(krDomain) : null;
     const insertResult = await pool.query(`
-      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload)
-      VALUES ($1, $2, 'architecture_design', $3, $4, $5, 'queued', 'brain_auto', $6)
+      INSERT INTO tasks (title, description, task_type, priority, project_id, goal_id, status, trigger_source, payload, domain, owner_role)
+      VALUES ($1, $2, 'architecture_design', $3, $4, $5, 'queued', 'brain_auto', $6, $7, $8)
       RETURNING *
     `, [
       `架构设计 Initiative: ${initiative.name}`,
@@ -475,7 +483,9 @@ async function generateArchitectureDesignTask(kr, project) {
       kr.priority || 'P1',
       initiative.id,
       kr.id,
-      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id })
+      JSON.stringify({ initiative_id: initiative.id, parent_project_id: project.id, kr_id: kr.id }),
+      krDomain,
+      krOwnerRole
     ]);
 
     const newTask = insertResult.rows[0];

@@ -1422,6 +1422,46 @@ router.get('/alertness/healing', async (req, res) => {
   }
 });
 
+// ==================== Blocked Tasks API ====================
+
+/**
+ * GET /api/brain/tasks/blocked
+ * 查询当前所有 blocked 任务
+ */
+router.get('/tasks/blocked', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, status, task_type, priority,
+             blocked_at, blocked_reason, blocked_until,
+             updated_at
+      FROM tasks
+      WHERE status = 'blocked'
+      ORDER BY blocked_until ASC NULLS LAST
+    `);
+    res.json({ success: true, tasks: result.rows, count: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get blocked tasks', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:taskId/unblock
+ * 手动解除任务阻塞，释放回 queued
+ */
+router.post('/tasks/:taskId/unblock', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { unblockTask } = await import('./task-updater.js');
+    const result = await unblockTask(taskId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json({ success: true, task: result.task });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unblock task', details: err.message });
+  }
+});
+
 // ==================== Quarantine API ====================
 
 /**
@@ -2154,7 +2194,7 @@ router.post('/action/create-initiative', async (req, res) => {
  */
 router.post('/action/create-project', async (req, res) => {
   try {
-    const { name, description, repo_path, repo_paths, kr_ids } = req.body;
+    const { name, description, repo_path, repo_paths, kr_ids, domain, owner_role } = req.body;
 
     if (!name) {
       return res.status(400).json({
@@ -2169,7 +2209,9 @@ router.post('/action/create-project', async (req, res) => {
       description,
       repo_path,
       repo_paths,
-      kr_ids
+      kr_ids,
+      domain,
+      owner_role,
     });
 
     res.status(result.success ? 200 : 400).json(result);
@@ -3032,19 +3074,22 @@ router.post('/execution-callback', async (req, res) => {
         const strategy = classification.retry_strategy;
 
         if (strategy && strategy.should_retry) {
-          // Smart retry: requeue with next_run_at
+          // Smart retry: 标记为 blocked（等待 TTL 自动释放），而非立即重入队列
           const retryCount = (taskPayload.failure_count || 0) + 1;
           await pool.query(
-            `UPDATE tasks SET status = 'queued', started_at = NULL,
-             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+            `UPDATE tasks SET status = 'blocked',
+             blocked_at = NOW(),
+             blocked_reason = $2,
+             blocked_until = $3,
+             started_at = NULL,
+             payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb
              WHERE id = $1 AND status = 'failed'`,
-            [task_id, JSON.stringify({
-              next_run_at: strategy.next_run_at,
+            [task_id, classification.class, strategy.next_run_at, JSON.stringify({
               failure_count: retryCount,
               smart_retry: { class: classification.class, attempt: retryCount, scheduled_at: strategy.next_run_at },
             })]
           );
-          console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
+          console.log(`[execution-callback] Task blocked: task=${task_id} class=${classification.class} blocked_until=${strategy.next_run_at}`);
           failureHandled = true;
 
           // Spending cap: 标记账号级 spending cap（不全局阻塞，降级链自动换号）
@@ -3365,6 +3410,63 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (decompTriggerErr) {
         console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
+      }
+
+      // 5c-strategy. strategy_session 闭环：解析 KR JSON → 写入 goals 表
+      try {
+        const ssTaskResult = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const ssTaskRow = ssTaskResult.rows[0];
+
+        if (ssTaskRow?.task_type === 'strategy_session') {
+          console.log(`[execution-callback] strategy_session task completed, parsing KR JSON...`);
+
+          const outputStr = typeof result === 'string' ? result
+            : (result?.result || result?.output || JSON.stringify(result || ''));
+
+          let parsedOutput = null;
+          const jsonMatch = outputStr.match(/\{[\s\S]*"krs"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              parsedOutput = JSON.parse(jsonMatch[0]);
+            } catch (jsonParseErr) {
+              console.error(`[execution-callback] strategy_session JSON parse error: ${jsonParseErr.message}`);
+            }
+          }
+
+          if (parsedOutput && Array.isArray(parsedOutput.krs) && parsedOutput.krs.length > 0) {
+            const meetingSummary = parsedOutput.meeting_summary || '';
+            const krs = parsedOutput.krs;
+
+            await pool.query(
+              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{meeting_summary}', $1::jsonb) WHERE id = $2`,
+              [JSON.stringify(meetingSummary), task_id]
+            );
+
+            for (const kr of krs) {
+              const krTitle = kr.title || '(untitled KR)';
+              const krDomain = kr.domain || null;
+              const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
+              const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
+
+              await pool.query(
+                `INSERT INTO goals (title, priority, status, progress, domain, owner_role, type)
+                 VALUES ($1, $2, 'pending', 0, $3, $4, 'area_okr')`,
+                [krTitle, krPriority, krDomain, krOwnerRole]
+              );
+              console.log(`[execution-callback] strategy_session KR created: "${krTitle}" domain=${krDomain} owner=${krOwnerRole}`);
+            }
+
+            console.log(`[execution-callback] strategy_session: ${krs.length} KRs written to goals`);
+          } else {
+            console.warn(`[execution-callback] strategy_session: no valid krs found in output`);
+            await pool.query(
+              `UPDATE tasks SET payload = jsonb_set(COALESCE(payload, '{}'), '{strategy_raw_output}', $1::jsonb) WHERE id = $2`,
+              [JSON.stringify(outputStr.slice(0, 2000)), task_id]
+            );
+          }
+        }
+      } catch (strategySessionErr) {
+        console.error(`[execution-callback] strategy_session handling error: ${strategySessionErr.message}`);
       }
 
       // 5c. Review 闭环：发现问题 → 自动创建修复 Task
@@ -10439,6 +10541,21 @@ router.post('/dispatch/cleanup', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] dispatch/cleanup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/zombie-cleanup
+ * 手动触发僵尸资源清理（stale slots + 孤儿 worktrees）
+ */
+router.post('/zombie-cleanup', async (req, res) => {
+  try {
+    const { runZombieCleanup } = await import('./zombie-cleaner.js');
+    const report = await runZombieCleanup(pool);
+    res.json({ success: true, ...report });
+  } catch (err) {
+    console.error('[API] zombie-cleanup error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
