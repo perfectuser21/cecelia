@@ -1,29 +1,22 @@
 # Cecelia Core Learnings
 
-### [2026-03-07] actions.js domain/owner_role 集成 + 并行 PR 合并冲突模式（PR #647, Brain v1.210.0）
+### [2026-03-07] strategy_session 回调闭环：独立模块 + 直接测试（PR #648, Brain v1.209.4）
 
 **CI 失败次数**：0
 
-**背景**：Brain 三个创建函数（createTask/createInitiative/createGoal）扩展 domain/owner_role 参数，接入 role-registry.js 自动推断。
+**背景**：execution-callback 只处理 dev/code_review 等任务类型，strategy_session 完成后 KR JSON 被丢弃，战略会议产出无法落地。
 
 **实现要点**：
-1. `getDomainRole(domain)` 已在 role-registry.js 中实现，直接 import 使用。
-2. 后向兼容关键：不传 domain 时 domain/owner_role 写 NULL，不做自动检测（PRD 明确要求）。
-3. 与 main 并行开发的 `domain-detector.js`（PR #641 系列）对 createTask 采用不同策略（auto-detect），合并时产生冲突。
+- 将 strategy_session 处理逻辑提取为 `strategy-session-callback.js` 独立模块，而非直接写在 routes.js 的大 handler 里。好处：可以不经过 express 路由直接单元测试，避免了复杂的 pool.query 调用序列模拟。
+- routes.js 只调用 `handleStrategySessionCompletion(pool, task_id, result).catch(...)` 一行，fire-and-forget 模式，不阻塞主流程。
+- result 字段容错：Skill 可能输出纯字符串 JSON、对象、或 `{ result: "json string" }` 封装格式，三种都处理。
 
-**合并冲突解决策略**：
-- main 对 `createTask` 只写 domain 且自动检测 → 我们的版本写 domain+owner_role 且不自动检测
-- 解决方式：保留显式传入逻辑（向后兼容优先），import 两个模块（detectDomain 供 createProject 用，getDomainRole 供显式推断）
-- `createGoal`：main 版本自动检测（会破坏 "不传 domain → null" 测试），解决方式同 createTask
+**Worktree 问题（本次踩坑）**：
+- 初始 worktree（`.claude/worktrees/09bc4f7b-87cc-44f5-8f1e-4dbc1d`）在 git worktree list 中不存在，没有 `.git` 文件，只有新建文件。Edit 工具报成功但文件实际不存在。
+- 诊断：`ls worktree/` 只有1个文件（`strategy-session-callback.js`）→ worktree 未初始化。
+- 修复：`git worktree prune && git worktree add /tmp/cecelia-strategy-session-cb <branch>` 重建，在 /tmp 工作。
 
-**并行 PR 版本冲突（反复发生的模式）**：
-- 每次 git merge origin/main，`.brain-versions` / `DEFINITION.md` / `packages/brain/package.json` / 两个 `package-lock.json` 都产生版本冲突
-- 处理公式：始终保留本分支 (HEAD) 的版本号（已是 feat 级 minor bump）
-- Brain 24/7 运行，main 可能在解决冲突期间再次前进，需要多轮 merge
-
-**test 设计教训**：
-- "不传 domain 时均为 null" 测试在自动检测方案下会 FAIL（detectDomain 默认返回 coding/cto）
-- 测试和实现必须对齐：如果 DoD 要求 NULL，则实现也必须 NULL（不自动检测）
+**版本冲突**：rebase 时 main 已到 1.209.3，在此基础上 +1 设置为 1.209.4。需要更新 5 个文件：brain/package.json、brain/package-lock.json、.brain-versions、DEFINITION.md、root/package-lock.json。rebase 中 `--ours` = main，`--theirs` = feature branch（与 merge 时相反）。
 
 ### [2026-03-07] watchdog Darwin 适配：ps 采样替代 /proc（PR #645, Brain v1.209.3）
 
@@ -43,29 +36,6 @@
 
 **测试结果**：45 passed, 17 skipped（Linux-only tests on Darwin）
 
----
-
-### [2026-03-07] 启动僵尸清理增强 + emergency-cleanup 重试机制（PR #642, Brain v1.210.0）
-
-**失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
-
-**关键实现要点**：
-
-- `cleanupStaleLockSlots()` 用 `process.kill(pid, 0)` 检查进程存活（跨平台，macOS/Linux 均可用），`EPERM` = 进程存活但无权限 → 保留 slot，`ESRCH` = 进程不存在 → 删除 slot
-- `emergencyCleanup` 同步重试用 `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)` 实现，零子进程开销，在 Node.js 主线程可用
-- emit 参数可注入（`{ emit = null }`），便于测试和 event-bus 集成，emit 本身抛出时 catch 忽略不影响主流程
-- `.dev-mode.` 前缀文件扫描 — 只清理有分支后缀的（`.dev-mode.cp-xxx`），裸的 `.dev-mode` 跳过（可能是当前活跃会话）
-
-**Worktree 元数据恢复**：
-
-- `git checkout HEAD -- .` 会删除所有未追踪文件（包括 `.dev-mode`），恢复后需重建 `.dev-mode`、PRD、DoD
-- Bash 工具 CWD 损坏时：用 Write 工具写4个文件重建 worktree 元数据（HEAD/gitdir/commondir + worktree .git 文件），然后 `git checkout HEAD -- .` 恢复源文件
-
-**测试设计**：
-
-- `process.kill` 在测试中用 `vi.spyOn(process, 'kill').mockImplementation(...)` mock
-- 累计统计 `_stats` 跨测试用例共享（ES 模块单例），测试中用 `statsBefore/statsAfter` 对比 delta，不假设绝对值
-
 ### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
 
 **CI 失败次数**：0
@@ -78,6 +48,7 @@
 2. **clearTimeout 修复**：原始代码中 `send()` 的 60s 超时计时器不会被清除，导致测试套件运行 60s。修复：在回调消费时调用 `clearTimeout(timer)`，测试从 60s 缩短到 105ms
 3. **孤儿 Promise 陷阱**：测试 `send()` 时若不响应请求，60s 计时器在测试结束后触发，导致 `unhandledRejection`。解决：每个 `send()` 调用必须配套响应消息，消费 callback 同时取消 timer
 4. **packages/workflows PRD 优先级陷阱（再次遇到）**：`packages/workflows/.prd.md` 旧残留导致 hook 匹配错误 PRD。需在 `packages/workflows/` 目录下创建分支专用 `.prd-<branch>.md` 和 `.dod-<branch>.md`（同 PR #609 经验）
+5. **Worktree 重建**：同之前 PR 经验，Write 工具写 4 个元数据文件重建 worktree，Bash CWD 恢复后 `git checkout HEAD -- .` 还原文件
 
 **测试结果**：35 个测试全部通过（utils: 21 + cdp-client: 14）
 
