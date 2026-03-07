@@ -353,9 +353,50 @@ jobs:
           echo ""
           echo "Gateway syntax check passed"
 
+  # Unit tests for publisher skills
+  unit-tests:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    name: Publisher Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run weibo-publisher unit tests
+        working-directory: packages/workflows
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  weibo-publisher Unit Tests"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          TEST_FILE="skills/weibo-publisher/scripts/__tests__/utils.test.cjs"
+
+          if [ ! -f "$TEST_FILE" ]; then
+            echo "  [SKIP] $TEST_FILE not found"
+            exit 0
+          fi
+
+          if node --test "$TEST_FILE"; then
+            echo ""
+            echo "  [OK] weibo-publisher tests passed"
+          else
+            echo ""
+            echo "  [FAIL] weibo-publisher tests failed"
+            exit 1
+          fi
+
   # Gate job: non-workflows PRs fast-pass
   ci-passed:
-    needs: [changes, validate, structure, gateway-check]
+    needs: [changes, validate, structure, gateway-check, unit-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -390,6 +431,11 @@ jobs:
 
           if [ "${{ needs.gateway-check.result }}" != "success" ]; then
             echo "FAIL: Gateway Check (${{ needs.gateway-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.unit-tests.result }}" != "success" ] && [ "${{ needs.unit-tests.result }}" != "skipped" ]; then
+            echo "FAIL: Publisher Unit Tests (${{ needs.unit-tests.result }})"
             FAILED=true
           fi
 
