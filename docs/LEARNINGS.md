@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
+
+**失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
+
+**背景**：planner.js 在 `KR 无 Project` 和 `Objective 无 KR` 时会返回异常 reason，但没有任何补救机制。
+
+**实现要点**：
+
+1. **Check C (checkKRWithoutProject)**：用 `NOT EXISTS (SELECT 1 FROM project_kr_links...)` 直接在 SQL 中过滤无 Project 的 KR，复用 `hasExistingDecompositionTask` 和 `canCreateDecompositionTask` 幂等+WIP 检查
+2. **Check D (checkObjectiveWithoutKR)**：新增独立 `hasExistingStrategicMeetingTask` 函数，使用 `task_type = 'strategic_meeting'` 而非 decomposition 类型，不需要 quality gate
+3. **tick.js 日志**：仅加日志 + actionsTaken，不在 tick 里创建任务，职责分离
+4. **测试**：每个 Check 覆盖正常流程 + 幂等 + WIP/dedup 三个场景
+
+**版本冲突**：rebase 后 package.json 被 main 的 1.204.0 覆盖（与 main 相同），需 bump 到 1.205.0，同步 4 个文件：`package.json`、`packages/brain/package-lock.json`、`package-lock.json`（根级别 packages/brain 条目）、`.brain-versions`、`DEFINITION.md`
+
+**Worktree 重建经历（本次再次触发）**：Worktree 被后台进程删除，`.git/worktrees/` 中无元数据。用 Write 工具重建 4 个文件后 Bash 恢复，再 `git checkout HEAD -- .` 还原所有文件，然后重新应用 Edit 变更。
+
 ### [2026-03-07] Migration 134: goals/projects/tasks 多领域 domain + owner_role 字段（PR #616, Brain v1.204.0）
 
 **失败统计**：CI 失败 2 次（版本冲突 × 2）
