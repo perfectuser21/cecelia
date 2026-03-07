@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Cortex 诊断输出去重熔断（PR #651, Brain v1.205.1）
+
+**失败统计**：CI 失败 0 次（一次通过）
+
+**背景**：L2 Cortex 反思模块产出 14 条重复诊断（都是"重启系统"），现有输入侧熔断器（type+failure_class+task_type 哈希）无法拦截不同事件产生相同诊断的场景。
+
+**实现要点**：
+
+1. **双层去重架构**：输入侧（已有）捕捉相同事件重复触发；输出侧（新增）捕捉不同事件产生相同诊断
+2. **输出哈希设计**：仅哈希 `root_cause` 字段（诊断核心），忽略时间戳等动态字段，避免误判
+3. **缓存策略**：数组 + shift 淘汰（FIFO），最多 50 条，配合 30 分钟时间窗口过滤
+4. **检查时机**：在 LLM 调用前检查输出去重（省 token），在 LLM 调用后记录诊断
+
+**Worktree 教训**：worktree 被后台进程删除后，`git checkout HEAD -- .` 会覆盖 `.dev-mode`/`.prd`/`.dod` 等临时文件，必须在 checkout 之后重新创建。
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
