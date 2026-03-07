@@ -1,19 +1,201 @@
 # Cecelia Core Learnings
 
-### [2026-03-07] Cortex provider 直连 + 历史注入限制（PR #656, Brain v1.205.1）
+### [2026-03-07] actions.js domain/owner_role 集成 + 并行 PR 合并冲突模式（PR #647, Brain v1.210.0）
 
-**失败统计**：CI 失败 0 次
+**CI 失败次数**：0
 
-**背景**：Cortex 陷入反思死循环超过 5 轮，L2 深度分析完全停摆。根因：bridge 路径延迟高 + prompt 通胀（100 条 analyses 全量查询 + 20 条 learnings 注入）。
+**背景**：Brain 三个创建函数（createTask/createInitiative/createGoal）扩展 domain/owner_role 参数，接入 role-registry.js 自动推断。
 
-**改动**：
-1. FALLBACK_PROFILE cortex provider 从 `anthropic`（bridge，走 claude -p）切换到 `anthropic-api`（直连 REST API，快 5-8x）
-2. `searchRelevantAnalyses` SQL LIMIT 从 100 降到 20
-3. `searchRelevantLearnings` limit 从 20 降到 10
+**实现要点**：
+1. `getDomainRole(domain)` 已在 role-registry.js 中实现，直接 import 使用。
+2. 后向兼容关键：不传 domain 时 domain/owner_role 写 NULL，不做自动检测（PRD 明确要求）。
+3. 与 main 并行开发的 `domain-detector.js`（PR #641 系列）对 createTask 采用不同策略（auto-detect），合并时产生冲突。
 
-**踩坑**：
-1. branch-protect hook 检查 `prd_id` 字段（不是 `prd_content`），欲望系统创建的 task 没有 prd_id，需要从 .dev-mode 中移除 task_id 行，让 hook 走本地文件检查路径
-2. Worktree 目录被后台进程删除但 shell CWD 指向已删除目录，导致所有 Bash 命令失败。修复：Write 工具创建 placeholder 文件恢复目录，然后重建 worktree
+**合并冲突解决策略**：
+- main 对 `createTask` 只写 domain 且自动检测 → 我们的版本写 domain+owner_role 且不自动检测
+- 解决方式：保留显式传入逻辑（向后兼容优先），import 两个模块（detectDomain 供 createProject 用，getDomainRole 供显式推断）
+- `createGoal`：main 版本自动检测（会破坏 "不传 domain → null" 测试），解决方式同 createTask
+
+**并行 PR 版本冲突（反复发生的模式）**：
+- 每次 git merge origin/main，`.brain-versions` / `DEFINITION.md` / `packages/brain/package.json` / 两个 `package-lock.json` 都产生版本冲突
+- 处理公式：始终保留本分支 (HEAD) 的版本号（已是 feat 级 minor bump）
+- Brain 24/7 运行，main 可能在解决冲突期间再次前进，需要多轮 merge
+
+**test 设计教训**：
+- "不传 domain 时均为 null" 测试在自动检测方案下会 FAIL（detectDomain 默认返回 coding/cto）
+- 测试和实现必须对齐：如果 DoD 要求 NULL，则实现也必须 NULL（不自动检测）
+
+### [2026-03-07] watchdog Darwin 适配：ps 采样替代 /proc（PR #645, Brain v1.209.3）
+
+**CI 失败次数**：0
+
+**背景**：Brain 的 watchdog.js 全部依赖 Linux /proc 文件系统，在 Mac mini (Darwin) 生产环境完全失效。
+
+**实现要点**：
+
+1. **平台分支模式**：`const IS_DARWIN = process.platform === 'darwin'`，在每个函数入口用 `if (IS_DARWIN) return darwinFn()` 路由。Linux 路径零修改，Darwin 路径独立实现，互不干扰
+2. **进程存活检测**：`process.kill(pid, 0)` 发送 null 信号 —— 不实际发送信号，只检查进程是否存在。ESRCH 错误 = 不存在，无错误 = 存在
+3. **ps 时间格式解析**：macOS `ps -o time=` 输出 `MM:SS.ss` 或 `HH:MM:SS` 格式。统一转为厘秒（centiseconds = secs * 100），与 Linux USER_HZ (100 Hz) ticks 单位等价，`calcCpuPct` 可以直接复用
+4. **RSS 单位差异**：Linux /proc/statm 是"页数 × PAGE_SIZE"，而 macOS `ps -o rss=` 直接是 KB。Darwin 实现直接 KB/1024 = MB，更简洁
+5. **测试平台隔离策略**：Darwin-specific 函数（sampleProcessDarwin、scanInteractiveClaudeDarwin 等）直接导出供测试，mock execSync 即可测试。Linux /proc 测试用 `it.skipIf(IS_DARWIN)` 标记，CI (Linux) 完整运行，Mac 本地验证自动跳过
+6. **child_process mock 陷阱**：模块初始化时有 `execSync('getconf PAGE_SIZE')`，vi.mock('child_process') 时必须让工厂处理这个调用（返回 '4096\n'），否则 PAGE_SIZE = NaN
+7. **execSync 跨 describe mock 隔离**：Darwin describe 的 `beforeEach` 需调用 `execSync.mockReset()` 而非 `mockClear()`，前者清除实现，后者只清调用历史
+
+**测试结果**：45 passed, 17 skipped（Linux-only tests on Darwin）
+
+---
+
+### [2026-03-07] 启动僵尸清理增强 + emergency-cleanup 重试机制（PR #642, Brain v1.210.0）
+
+**失败统计**：合并冲突 1 次（并行 PR 导致版本冲突，main 已到 1.209.0）
+
+**关键实现要点**：
+
+- `cleanupStaleLockSlots()` 用 `process.kill(pid, 0)` 检查进程存活（跨平台，macOS/Linux 均可用），`EPERM` = 进程存活但无权限 → 保留 slot，`ESRCH` = 进程不存在 → 删除 slot
+- `emergencyCleanup` 同步重试用 `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)` 实现，零子进程开销，在 Node.js 主线程可用
+- emit 参数可注入（`{ emit = null }`），便于测试和 event-bus 集成，emit 本身抛出时 catch 忽略不影响主流程
+- `.dev-mode.` 前缀文件扫描 — 只清理有分支后缀的（`.dev-mode.cp-xxx`），裸的 `.dev-mode` 跳过（可能是当前活跃会话）
+
+**Worktree 元数据恢复**：
+
+- `git checkout HEAD -- .` 会删除所有未追踪文件（包括 `.dev-mode`），恢复后需重建 `.dev-mode`、PRD、DoD
+- Bash 工具 CWD 损坏时：用 Write 工具写4个文件重建 worktree 元数据（HEAD/gitdir/commondir + worktree .git 文件），然后 `git checkout HEAD -- .` 恢复源文件
+
+**测试设计**：
+
+- `process.kill` 在测试中用 `vi.spyOn(process, 'kill').mockImplementation(...)` mock
+- 累计统计 `_stats` 跨测试用例共享（ES 模块单例），测试中用 `statsBefore/statsAfter` 对比 delta，不假设绝对值
+
+### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
+
+**CI 失败次数**：0
+
+**背景**：微博发布器核心逻辑 `CDPClient` 类内联在 `publish-weibo-image.cjs` 中，无法单元测试。
+
+**实现要点**：
+
+1. **依赖注入模式**：`CDPClient` 构造器接受 `WsClass` 参数，测试时传入 `MockWsClass`，生产时使用 `ws` 库。无需任何 mock 框架，纯 `node:test`
+2. **clearTimeout 修复**：原始代码中 `send()` 的 60s 超时计时器不会被清除，导致测试套件运行 60s。修复：在回调消费时调用 `clearTimeout(timer)`，测试从 60s 缩短到 105ms
+3. **孤儿 Promise 陷阱**：测试 `send()` 时若不响应请求，60s 计时器在测试结束后触发，导致 `unhandledRejection`。解决：每个 `send()` 调用必须配套响应消息，消费 callback 同时取消 timer
+4. **packages/workflows PRD 优先级陷阱（再次遇到）**：`packages/workflows/.prd.md` 旧残留导致 hook 匹配错误 PRD。需在 `packages/workflows/` 目录下创建分支专用 `.prd-<branch>.md` 和 `.dod-<branch>.md`（同 PR #609 经验）
+
+**测试结果**：35 个测试全部通过（utils: 21 + cdp-client: 14）
+
+### [2026-03-07] 僵尸资源清理：zombie-cleaner 模块 + DB 连接池健康监控（PR #636, Brain v1.208.0）
+
+**失败统计**：CI Version Check 失败 1 次（版本未更新），合并冲突 2 次（并行 PR 导致）
+
+**关键实现要点**：
+
+- `zombie-cleaner.js` 依赖 `resolveTaskPids()` 返回 `{ pidMap, staleSlots }`——staleSlots 是 slot 目录存在但 pid 已死的槽，直接拿来清理
+- `getPoolHealth()` 从 `pg.Pool` 实例读取 `totalCount / idleCount / waitingCount`——不需要额外配置，Pool 自动暴露这三个属性
+- `metrics.js` 集成 poolHealth 时，**不能修改 calculateHealthScore 的权重**（不加 poolHealth 到权重），否则权重不足 1.0 导致健康分 < 100，破坏现有测试
+
+**测试断言教训**：
+
+- SQL 断言用 `toContain("status = 'completed'")` 会同时命中 WHERE 子句和 SET 子句，改为检查**参数数量/内容**验证 SET 无 status 赋值
+- `vi.clearAllMocks()` 只清调用历史，不清 `mockResolvedValueOnce` 实现队列；共享 mock 必须 `mockFetch.mockReset()` 防止泄漏
+- 测试 stale slot 年龄边界：保护期"严格大于 60s 才清理"，测试用 `Date.now() - MIN_AGE + 1000`（59s）验证不清理
+
+**版本冲突处理**：
+
+- 本次 main 在并行 PR 期间从 1.206.0 → 1.207.0，合并后我的版本取 1.208.0（高于两者）
+- CI 未自动触发原因：`push` 到 PR 分支后，若 GitHub 未检测到 `pull_request synchronize` 事件，需手动通过 `workflow_dispatch` 触发，或 merge main 后 push 触发
+
+**DB 连接池配置**：
+
+- `pg.Pool` 推荐配置：`max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000`
+- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`
+- 健康告警阈值：`waiting > 5 || idle === 0` → AWARE 级别
+
+### [2026-03-07] domain-detector 模块 + 任务创建自动填充 domain/owner_role（PR #634, Brain v1.207.0）
+
+**失败统计**：CI 失败 1 次（版本冲突），本地测试失败 2 次（关键词误匹配），CI 未自动触发 1 次（需 workflow_dispatch）
+
+**本地测试失败记录**：
+
+- 失败 #1：`'pr'` 是 coding 关键词，但 `'pr'` 是 `'prd'` 的子串，导致含 `'prd'` 的文本被误判为 coding 而非 product → 移除 `'pr'`；同理 `'dev'` 是 `'devops'` 子串，移除 `'dev'` → 下次：**短关键词（2-3 字符）容易成为子串陷阱，不要放入关键词列表**
+- 失败 #2：同上（operations 测试中 `'devops'` 被误命中 coding）
+
+**CI 失败记录**：
+
+- 失败 #1：版本 bump 到 1.206.0 后，CI Version Check 报 `version not bumped`（main 已合并另一 PR 并已是 1.206.0）→ 再次 bump 到 1.207.0 同步 4 文件 → 下次：bump 前先查 `git fetch origin main && git show origin/main:packages/brain/package.json | grep version`
+
+**CI 未自动触发**：force push 后 GitHub 未产生新 `pull_request synchronize` 事件，`gh run list` 显示 CI 仍用旧 commit。解决方案：`gh workflow run brain-ci.yml --ref {branch}` 手动触发 workflow_dispatch，`ci-passed` 允许 Version Check 为 skipped（workflow_dispatch 模式）→ 下次：push 后等 30s，若 `gh run list` 无新 run，立即用 workflow_dispatch
+
+**错误判断记录**：
+
+- `npm version minor` 在 worktree 根目录执行，错误地 bump 了根 `package.json`（v1.200.x）而非 `packages/brain/package.json` → 正确：必须 `cd packages/brain && npm version minor`
+- Worktree 重建后 `git checkout HEAD -- .` 会覆盖已存在的 `.dev-mode`/`.prd`/`.dod` 文件 → 必须在 checkout **之后**重新创建这些文件
+
+**预防措施**：
+- 关键词列表禁止放入 ≤3 字符的英文缩写（`'pr'`、`'dev'`、`'ui'` 等）；改用完整词或更长的上下文词
+- 版本 bump 前必须 fetch origin/main 并对比版本号
+- Worktree 重建步骤：(1) 写 4 个 git 元数据文件 (2) `git checkout HEAD -- .` (3) **重新创建** `.dev-mode`/`.prd`/`.dod`（checkout 会覆盖）
+
+### [2026-03-07] strategy_session task_type 注册：四文件联动 + Worktree 残留陷阱（PR #633, Brain v1.206.1）
+
+**失败统计**：CI 未自动触发 1 次（PR mergeable_state: dirty），需合并 main 后才触发
+
+**关键实现要点**：
+
+- `strategy_session` 注册需同步修改 **4 个文件**：`executor.js`（skillMap）、`task-router.js`（VALID_TASK_TYPES / SKILL_WHITELIST / LOCATION_MAP）、`model-registry.js`（AGENTS）、`routes.js`（execution-callback 闭环）
+- `facts-check.mjs` 从 `task-router.js` 读取 `task_types`，不是从 `executor.js`，因此 `task-router.js` 必须同步添加
+- `generate-manifest.mjs --check` 会在 CI 中强制校验 manifest 与代码一致，修改 skillMap 后必须重新生成
+
+**Worktree 元数据残留陷阱（第三次遇到）**：
+
+- 症状：`.git/worktrees/{id}/` 元数据存在，`git worktree list` 不显示，worktree 目录只有 `node_modules`，Read/Edit 工具报告"成功"但文件不存在
+- 根因：Brain 后台进程（worktree 清理逻辑）删除了源文件，但 `.git/worktrees/` 元数据残留
+- **修复流程**（已固化）：
+  1. `git -C /path/to/main worktree prune`
+  2. `git -C /path/to/main worktree add /tmp/new-path <branch-name>`
+  3. 在 `/tmp/new-path` 完成所有工作
+  4. 完成后 `git -C /path/to/main worktree remove /tmp/new-path --force`
+- 注意：`/tmp` worktree 没有 `node_modules`，需要 `npm install` 后才能运行测试；但如果根目录已有 `node_modules`，可以直接引用 `/tmp/{worktree}/node_modules/.bin/vitest`
+
+**PR 不触发 CI 的原因**：
+
+- PR 的 `mergeable_state: dirty`（与 main 有冲突）时，GitHub 可能不自动触发 `pull_request` CI
+- 解决：在功能分支执行 `git fetch origin main && git merge origin/main --no-edit`，解决冲突后 push，CI 自动启动
+
+**并行 PR 版本冲突处理（复习）**：
+
+- main 合并后版本比我的功能分支高（1.206.0 > 1.205.1），最终版本取两者更高值再 +1 patch → 1.206.1
+- `packages/brain/VERSION` 文件也需要同步更新（npm version 不更新它）
+
+### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
+
+**失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
+
+**本地测试失败记录**：
+- 失败 #1：`detectDomain("梳理一下 PRD 流程")` 期望 `product`，实际返回 `coding`
+  - 根因：coding 关键词列表含 `'PR'`，用 `includes()` 匹配时 `'PR'` 是 `'PRD'` 的子串，误命中
+  - 修复：添加 `matchKeyword()` 函数，对全大写 2-5 字符缩写（如 `PR`、`CI`、`API`）使用 `\bKW\b` 正则边界匹配，普通词继续用 `includes()`
+  - 预防：凡关键词列表含英文大写缩写，必须用词边界匹配，绝不用简单 substring
+
+- 失败 #2：`agent_ops wins over coding when both match` 期望 `agent_ops`，实际返回 `coding`
+  - 根因：优先级逻辑按"匹配词数量最多者胜"，coding 匹配 3 词（代码/架构/API）> agent_ops 匹配 1 词（Brain）
+  - 修复：完全重写优先级逻辑：`agent_ops > quality > security` 三者只要有任何匹配，立即返回，不比数量；其余 domain 按数量竞争，coding 作为兜底
+  - 预防：高优先级 domain 应用"存在即覆盖"语义，不能参与数量比较竞争
+
+**错误判断记录**：
+- 以为 `DOMAIN_PRIORITY` 数组控制顺序（coding→security→quality→agent_ops），结果逻辑是"tie-break"而不是"任意匹配即优先"
+  - 正确答案：重新设计为两阶段——第一阶段检查高优先级 domain（存在即返回），第二阶段按数量比较其余 domain
+
+**CI 失败记录**：
+- PR 创建后 `pull_request` 触发的 brain-ci.yml 未出现在 `gh run list`（GitHub 有时不自动触发）
+- 修复：手动 `gh workflow run brain-ci.yml --ref <branch>` 触发
+- 预防：创建 PR 后如 30s 内 `gh run list` 看不到新 run，立即手动触发
+
+**影响程度**: Medium（本地测试失败 2 次，需要重新设计算法，但架构无变化）
+
+**预防措施**：
+1. 关键词包含英文大写缩写时，必须用 `\bKW\b` 正则，不能用 `includes()`
+2. 优先级"覆盖"与"竞争"要明确区分；高优先级 domain 应使用"存在即返回"模式
+3. PR 创建后如 CI 未自动触发，手动 `gh workflow run` 比等待更高效
+
+---
 
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
@@ -2863,3 +3045,45 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 **预防措施**：
 - workflows 技能测试优先使用 `node:test`，无需新增依赖
 - 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
+
+---
+
+## [2026-03-07] domain 感知路由 + Initiative domain 继承（Brain v1.206.1，PR #632）
+
+**功能**：task-router.js domain 感知路由、decomposition-checker.js domain 继承、executor.js domain 上下文注入
+
+**关键经验**：
+
+**1. 修改已有函数新增 DB 查询时必须同步更新现有测试的 mock 序列**
+
+`createInitiativePlanTask()` 新增 `SELECT domain FROM projects` 查询后，`decomposition-checker.test.js` 和 `decomp-checker-direct-kr.test.js` 原有的 4 个 mock 调用无法覆盖新增查询，INSERT 拿到 `undefined`，导致 `TypeError: Cannot read properties of undefined (reading 'rows')`。
+
+**诊断方法**：CI 日志中 `createInitiativePlanTask src/decomposition-checker.js:116` 的 TypeError → 是 mock 序列不匹配，而非代码逻辑错误。
+
+**修复方式**：在 `hasExistingInitiativePlanTask` mock 和 INSERT mock 之间插入新的 domain 查询 mock：
+```javascript
+// hasExistingInitiativePlanTask: no existing task
+pool.query.mockResolvedValueOnce({ rows: [] });
+
+// createInitiativePlanTask: SELECT domain FROM projects（domain 继承查询）
+pool.query.mockResolvedValueOnce({ rows: [{ domain: null }] });
+
+// createInitiativePlanTask: INSERT returns new task
+pool.query.mockResolvedValueOnce({ rows: [{ id: '...', title: '...' }] });
+```
+
+**预防措施**：修改现有函数增加 DB 调用时，搜索所有调用该函数的测试文件（`grep -r "createInitiativePlanTask\|functionName" src/__tests__/`），逐一检查 mock 调用数量是否与实际查询数量一致。
+
+**2. domain 查询降级设计**
+
+domain 查询用 try/catch 包裹，失败时 fallback 到 `null`，确保任务仍能创建。这是正确的健壮性设计——domain 是增强信息，不是必要依赖。
+
+**3. DOMAIN_TO_ROLE 映射依赖 role-registry.js**
+
+`getDomainSkillOverride()` 从 `role-registry.js` 的 `DOMAIN_TO_ROLE` 和 `ROLES` 读取映射，coding domain 直接返回 null（走 task_type 默认路由），其他 domain 按角色首选 skill 路由。未知 domain 也返回 null（向后兼容）。
+
+**影响程度**：Medium（两个现有测试文件受影响，CI 第一轮失败）
+
+**预防措施**：
+- 为现有函数新增 DB 查询时，立即检查该函数的所有测试文件并补充 mock
+- 用 `grep -rn "functionName\|ImportedFunction" src/__tests__/` 找到所有受影响测试
