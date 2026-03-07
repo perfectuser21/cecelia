@@ -18,6 +18,7 @@
 import pool from './db.js';
 import { computeCapacity, isAtCapacity } from './capacity.js';
 import { validateTaskDescription } from './task-quality-gate.js';
+import { getDomainRole, ROLES } from './role-registry.js';
 
 // Dedup window: skip if decomposition task completed within this period
 const DEDUP_WINDOW_HOURS = 24;
@@ -57,7 +58,7 @@ async function hasExistingInitiativePlanTask(initiativeId) {
   const result = await pool.query(`
     SELECT id FROM tasks
     WHERE project_id = $1
-      AND task_type = 'initiative_plan'
+      AND task_type IN ('initiative_plan', 'architecture_design')
       AND status IN ('queued', 'in_progress')
     LIMIT 1
   `, [initiativeId]);
@@ -65,14 +66,32 @@ async function hasExistingInitiativePlanTask(initiativeId) {
 }
 
 /**
- * Create an initiative_plan task to kick off the Initiative → PR execution loop.
+ * Create an initiative_plan (or architecture_design) task to kick off the Initiative → PR execution loop.
  * Called by Check B when an Initiative has no active tasks.
+ *
+ * Domain routing:
+ *   - domain = 'coding'  → task_type = 'architecture_design' (routes to /architect)
+ *   - domain non-null    → task_type = 'initiative_plan', description includes target skill
+ *   - domain = null      → task_type = 'initiative_plan' (default /decomp behavior)
  */
-async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) {
+async function createInitiativePlanTask({ initiativeId, krId, initiativeName, domain }) {
+  // Determine task type and optional target skill based on domain
+  let taskType = 'initiative_plan';
+  let targetSkill = null;
+
+  if (domain === 'coding') {
+    taskType = 'architecture_design';
+  } else if (domain) {
+    const role = getDomainRole(domain);
+    const roleSkills = ROLES[role]?.skills ?? [];
+    targetSkill = roleSkills[0] ?? null;
+  }
+
   const title = `Initiative 规划: ${initiativeName}`;
   const description = [
     `请为 Initiative「${initiativeName}」规划下一个 PR。`,
     '',
+    ...(targetSkill ? [`目标 Skill: ${targetSkill}（domain: ${domain} → 角色路由）`, ''] : []),
     '你的任务（initiative_plan 模式）：',
     '1. 读取 Initiative 描述（GET /api/brain/projects/<initiative_id>）',
     '2. 读取已完成的 PR 列表（GET /api/brain/tasks?project_id=<initiative_id>&status=completed）',
@@ -91,13 +110,14 @@ async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) 
     `Initiative ID: ${initiativeId}`,
     `Initiative 名称: ${initiativeName}`,
     `所属 KR ID: ${krId || '(未知)'}`,
+    ...(domain ? [`Domain: ${domain}`] : []),
   ].join('\n');
 
   const result = await pool.query(`
     INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'brain_auto')
+    VALUES ($1, $2, 'queued', 'P1', $3, $4, $5, 'brain_auto')
     RETURNING id, title
-  `, [title, description, krId || null, initiativeId]);
+  `, [title, description, krId || null, initiativeId, taskType]);
   return result.rows[0];
 }
 
@@ -256,7 +276,7 @@ async function checkReadyKRInitiatives() {
     //   1. Initiative → 父 Project → project_kr_links → KR（标准层级）
     //   2. Initiative.kr_id 直接指向 KR（无父 project 的扁平结构）
     const initiatives = await pool.query(`
-      SELECT p.id, p.name, p.status,
+      SELECT p.id, p.name, p.status, p.domain,
         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status IN ('queued', 'in_progress')) as active_tasks,
         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'in_progress') as running_tasks
       FROM projects p
@@ -308,6 +328,7 @@ async function checkReadyKRInitiatives() {
           initiativeId: init.id,
           krId: kr.id,
           initiativeName: init.name,
+          domain: init.domain ?? null,
         });
 
         if (task) {
