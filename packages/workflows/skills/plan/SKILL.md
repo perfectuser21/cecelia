@@ -1,9 +1,10 @@
 ---
 name: plan
-version: 1.6.0
+version: 1.7.0
 created: 2026-02-17
-updated: 2026-03-06
+updated: 2026-03-07
 changelog:
+  - 1.7.0: 加入 Stage 0.5 领域判断（domain detection）+ owner_role 匹配，输出格式增加 domain/owner_role，路由表按 domain 分流
   - 1.6.0: 层级重命名 Mission/Vision/Area OKR + /architect 加入路由
   - 1.5.0: 对齐 OKR 层级（加周期/产能）、修正 Layer 4 路由、新增产能感知和多机路由
   - 1.4.0: 新增无头 Suggestion 模式（[SUGGESTION_MODE]），Magentic-One 第5步
@@ -30,6 +31,46 @@ description: |
 /plan 这个季度要把任务成功率提到 85%
 /plan 给 cecelia-core 加一个健康检查 API
 ```
+
+---
+
+## Stage 0.5: 领域判断（Domain Detection）
+
+**在层级识别之前运行**，判断用户输入属于哪个业务领域，匹配对应 owner_role，用于后续路由和任务归属。
+
+### Domain → Owner Role 映射
+
+| Domain | Owner Role | 关键词信号 |
+|--------|-----------|-----------|
+| coding | cto | 代码、开发、bug、CI、工程、架构、API、重构、测试、PR、依赖 |
+| product | cpo | 产品、需求、PRD、用户体验、功能设计、交互、流程设计 |
+| growth | cmo | 增长、营销、SEO、运营、推广、用户增长、转化、内容 |
+| finance | cfo | 财务、预算、成本、收入、报表、账单 |
+| research | vp_research | 调研、分析、研究、市场调查、竞品、数据分析 |
+| quality | vp_qa | 质量、QA、测试覆盖、回归、稳定性、CI 稳定性 |
+| security | cto | 安全、漏洞、权限、认证、加密、合规 |
+| operations | coo | 运维、部署、监控、日志、告警、DevOps、基础设施 |
+| knowledge | vp_knowledge | 知识、文档、笔记、整理、总结、知识库 |
+| agent_ops | vp_agent_ops | Agent、LLM、调度、任务派发、Cecelia、Brain、自动化 |
+
+**默认值**：无明确信号 → `coding`（最常见，大多数任务都是开发任务）
+
+### 判断规则
+
+1. **关键词匹配**：从用户输入中提取关键词，对照上表匹配 domain
+2. **优先级**：agent_ops > quality > security > coding（有多个匹配时选更具体的）
+3. **不确定时默认 coding**：不要过度判断，开发相关任务统一归 coding
+
+### 判断示例
+
+| 用户说 | Domain | Owner Role |
+|--------|--------|-----------|
+| "给 brain 加个健康检查 API" | coding | cto |
+| "调整 Cecelia 的任务调度逻辑" | agent_ops | vp_agent_ops |
+| "这个季度任务成功率要到 85%" | quality | vp_qa |
+| "梳理一下 PRD 流程" | product | cpo |
+| "把部署脚本改成幂等的" | operations | coo |
+| "做个竞品分析" | research | vp_research |
 
 ---
 
@@ -150,6 +191,8 @@ Step 3: 不确定时，默认 Initiative，问用户确认
 [Plan 识别]
 ━━━━━━━━━━━━━━━━━━━━━━
 输入："{用户原话}"
+领域：{domain}（coding/product/growth/finance/research/quality/security/operations/knowledge/agent_ops）
+负责人：{owner_role}（cto/cpo/cmo/cfo/vp_qa/vp_research/coo/vp_knowledge/vp_agent_ops）
 层级：{层级名}（Mission/Vision/Area OKR/Project/Initiative/Task）
 依据：{识别理由，说明哪个维度的信号起决定作用}
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -268,7 +311,24 @@ curl -s http://localhost:5221/api/brain/capabilities | jq
 
 ## 多机路由
 
-不同类型的任务路由到不同机器：
+不同类型的任务路由到不同机器和负责人：
+
+### 按 Domain 路由
+
+| Domain | Owner Role | 目标机器 | Skill |
+|--------|-----------|----------|-------|
+| coding | cto | 美国 VPS | `/dev` |
+| agent_ops | vp_agent_ops | 美国 VPS | `/dev` |
+| quality | vp_qa | 美国 VPS | `/qa` |
+| security | cto | 美国 VPS | `/audit` |
+| product | cpo | 美国 VPS | `/decomp` |
+| research | vp_research | 美国 VPS | `/research` |
+| operations | coo | 美国 VPS | `/dev` |
+| knowledge | vp_knowledge | 美国 VPS | `/knowledge` |
+| growth | cmo | 香港 VPS | `/dev` |
+| finance | cfo | 美国 VPS | 人工处理 |
+
+### 按机器路由（原有）
 
 | 任务类型 | 目标机器 | 说明 |
 |----------|----------|------|
