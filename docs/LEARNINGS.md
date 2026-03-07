@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] webhook pr_url 匹配设计：两步查询（PR #596, Brain v1.200.8）
+
+**失败统计**：CI 失败 0 次，本地测试失败 1 次
+
+**本地测试失败记录**：
+- 失败 #1：测试断言 `not.toContain("status = 'completed'")` 误命中 WHERE 子句中的条件 → 修复：改为检查参数数量 `expect(updateParams).toHaveLength(3)` 验证 SET 中无 status 赋值 → 预防：SQL 中 SET 和 WHERE 都可能含同一字段值，用参数数量而非字符串匹配来验证"未修改 status"
+
+**关键决策**：
+- `matchTaskByBranchOrUrl` 两步查询：先 in_progress、再 completed（pr_merged_at IS NULL）
+- completed 分支只写 pr_url + pr_merged_at，不触发 updateKrProgress（避免双计）
+- 幂等判断：UPDATE WHERE pr_merged_at IS NULL，rowCount=0 时直接 ROLLBACK
+
+**Worktree 环境问题（重要经验）**：
+- 本次 worktree 目录缺少 git 初始化，导致前半段的 Edit 操作写入了错误路径的虚拟文件
+- 症状：Edit 工具"成功"但 Bash grep 找不到文件；git diff 显示 0 变更
+- 修复：`rm -rf worktree_dir && git worktree add <path> <branch>` 重建 worktree
+- 预防：/dev 启动时验证 `git rev-parse --git-dir` 是否真正指向 worktrees 元数据，且 `git worktree list` 包含该路径
+
 ### [2026-03-07] Brain 启动恢复：孤儿任务重入队（PR #595, Brain v1.200.6）
 
 **失败统计**：CI 失败 2 次，本地测试失败 0 次
