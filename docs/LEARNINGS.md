@@ -20,6 +20,16 @@
 
 ---
 
+### [2026-03-07] 修复 reflection.js 去重失效（PR #593, Brain v1.200.5）
+
+**根本原因**：`reflection.js:223` 的 `tokenize` 用单字正则匹配中文（`/[\u4e00-\u9fa5]/g`），中文句子中高频单字（"的"、"是"、"有"等）在不同文本中大量共现，导致 Jaccard 相似度虚高（往往 > 0.75），不同内容的洞察被误判为重复，去重机制形同虚设。同时 cortex `analyzeDeep` 无事件级别熔断，同一告警每轮 tick 都触发完整 LLM 调用。
+
+**修复方式**：
+1. `tokenize` 改为 bigram 分词：中文字符序列按 2 字滑窗切割（"内存不足" → ["内存","存不","不足"]），单字 fallback；英文保持整词。bigram 比单字更有区分度，Jaccard 相似度能正确反映语义相近程度。
+2. `cortex.js` 加模块级 `_cortexDedupCache`（Map），30 分钟内同一事件哈希再次触发 `analyzeDeep` 直接返回 fallback，节省 LLM token。
+
+**规律**：中文 NLP 分词必须用 bigram/trigram 而非单字，否则高频字会让所有中文文本看起来"相似"。去重机制应在信号入口（reflection 去重）和处理入口（cortex 熔断）双重防守。
+
 ### [2026-03-06] 修复 activateNextInitiatives 双重调用 Race Condition（PR #589, Brain v1.200.2）
 
 **根本原因**：`checkInitiativeCompletion()` 在关闭 initiative 后立刻调用 `activateNextInitiatives(pool)`，而 `tick.js` Section 0.10 也会在每次 tick 调用同一函数。两次调用都用 `maxActive - currentActive` 计算空位，但第一次调用后 DB 中 currentActive 已经增加，第二次查询拿到的空位数偏高（旧快照），可能超容量激活过多 initiatives。
