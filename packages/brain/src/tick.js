@@ -51,6 +51,7 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
+const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -103,6 +104,7 @@ let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 let _lastReportTime = 0; // track last 48h system report generation time
 let _lastZombieSweepTime = 0; // track last zombie sweep time
+let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 
 const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
@@ -1017,6 +1019,25 @@ async function dispatchNextTask(goalIds) {
  * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
  * @returns {Object[]} - Actions taken
  */
+/**
+ * 自动释放 blocked_until 已到期的 blocked 任务，将其状态改回 queued
+ * @returns {Promise<Array<{task_id, title, blocked_reason, blocked_duration_ms}>>}
+ */
+async function releaseBlockedTasks() {
+  const result = await pool.query(`
+    UPDATE tasks
+    SET status = 'queued',
+        blocked_at = NULL,
+        blocked_reason = NULL,
+        blocked_until = NULL,
+        updated_at = NOW()
+    WHERE status = 'blocked' AND blocked_until <= NOW()
+    RETURNING id AS task_id, title, blocked_reason,
+              EXTRACT(EPOCH FROM (NOW() - blocked_at)) * 1000 AS blocked_duration_ms
+  `);
+  return result.rows;
+}
+
 async function autoFailTimedOutTasks(inProgressTasks) {
   const actions = [];
   for (const task of inProgressTasks) {
@@ -1363,6 +1384,21 @@ async function executeTick() {
     }
   } catch (followupErr) {
     console.error('[tick] Pending followup check failed:', followupErr.message);
+  }
+
+  // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
+  const zombieElapsed = Date.now() - _lastZombieCleanupTime;
+  if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
+    try {
+      const { runZombieCleanup } = await import('./zombie-cleaner.js');
+      const zombieResult = await runZombieCleanup(pool);
+      _lastZombieCleanupTime = Date.now();
+      if (zombieResult.slotsReclaimed > 0 || zombieResult.worktreesRemoved > 0) {
+        console.log(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
+      }
+    } catch (zombieErr) {
+      console.error('[tick] Zombie cleanup failed (non-fatal):', zombieErr.message);
+    }
   }
 
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
@@ -1871,6 +1907,25 @@ async function executeTick() {
     }
   } catch (quarantineErr) {
     console.error('[tick] Quarantine check error:', quarantineErr.message);
+  }
+
+  // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队
+  try {
+    const blockedReleased = await releaseBlockedTasks();
+    for (const r of blockedReleased) {
+      actionsTaken.push({
+        action: 'auto_release_blocked',
+        task_id: r.task_id,
+        title: r.title,
+        blocked_reason: r.blocked_reason || 'unknown',
+        blocked_duration_ms: r.blocked_duration_ms,
+      });
+    }
+    if (blockedReleased.length > 0) {
+      console.log(`[tick] Released ${blockedReleased.length} blocked task(s) back to queued`);
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task release error:', blockedErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)
@@ -2474,6 +2529,7 @@ async function getStartupErrors() {
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
+function _resetLastZombieCleanupTime() { _lastZombieCleanupTime = 0; }
 /** Reset Layer 2 health check timer — for testing only */
 function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
 /** Reset KR progress sync timer — for testing only */
@@ -2555,9 +2611,11 @@ export {
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
   ZOMBIE_SWEEP_INTERVAL_MS,
+  ZOMBIE_CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
+  _resetLastZombieCleanupTime,
   _resetLastHealthCheckTime,
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,

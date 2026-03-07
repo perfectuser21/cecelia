@@ -163,6 +163,67 @@ function broadcastTaskUpdate(task) {
 }
 
 /**
+ * Block a task (临时阻塞，等待自动恢复)
+ * @param {string} taskId - Task ID
+ * @param {string} reason - Blocked reason (e.g. 'rate_limit', 'network')
+ * @param {string} blockedUntil - ISO timestamp when task can be retried
+ * @returns {Promise<Object>} - Update result
+ */
+export async function blockTask(taskId, reason, blockedUntil) {
+  try {
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'blocked',
+          blocked_at = NOW(),
+          blocked_reason = $2,
+          blocked_until = $3,
+          updated_at = NOW()
+      WHERE id = $1 AND status IN ('in_progress', 'failed')
+      RETURNING *
+    `, [taskId, reason, blockedUntil]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Task ${taskId} not found or not in blockable state (must be in_progress or failed)`);
+    }
+
+    return { success: true, task: result.rows[0] };
+  } catch (err) {
+    console.error(`[task-updater] Failed to block task ${taskId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Unblock a task (手动解除阻塞，释放回 queued)
+ * @param {string} taskId - Task ID
+ * @returns {Promise<Object>} - Update result
+ */
+export async function unblockTask(taskId) {
+  try {
+    const result = await pool.query(`
+      UPDATE tasks
+      SET status = 'queued',
+          blocked_at = NULL,
+          blocked_reason = NULL,
+          blocked_until = NULL,
+          started_at = NULL,
+          updated_at = NOW()
+      WHERE id = $1 AND status = 'blocked'
+      RETURNING *
+    `, [taskId]);
+
+    if (result.rows.length === 0) {
+      throw new Error(`Task ${taskId} not found or not in blocked state`);
+    }
+
+    return { success: true, task: result.rows[0] };
+  } catch (err) {
+    console.error(`[task-updater] Failed to unblock task ${taskId}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Fetch task and broadcast current state (useful for manual triggers)
  * @param {string} taskId - Task ID
  * @returns {Promise<void>}
