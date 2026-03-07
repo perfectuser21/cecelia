@@ -101,7 +101,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url))
 let _decompSkillContent = '';
 try {
   _decompSkillContent = readFileSync(
-    '/home/xx/perfect21/cecelia/packages/workflows/skills/decomp/SKILL.md', 'utf-8'
+    '/Users/administrator/perfect21/cecelia/packages/workflows/skills/decomp/SKILL.md', 'utf-8'
   );
   console.log('[autumnrice] decomp SKILL.md loaded:', _decompSkillContent.length, 'chars');
 } catch (e) {
@@ -8014,7 +8014,7 @@ router.get('/staff', async (_req, res) => {
     const path = await import('path');
 
     // 1. 读 workers.config.json
-    const workersPath = '/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json';
+    const workersPath = '/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json';
     const workersRaw = fs.readFileSync(workersPath, 'utf-8');
     const workersConfig = JSON.parse(workersRaw);
 
@@ -8093,7 +8093,7 @@ router.put('/staff/workers/:workerId', async (req, res) => {
     const { skill, model, credentials_file } = req.body;
     const fs = await import('fs');
 
-    const workersPath = '/home/xx/perfect21/cecelia/packages/workflows/staff/workers.config.json';
+    const workersPath = '/Users/administrator/perfect21/cecelia/packages/workflows/staff/workers.config.json';
     const workersConfig = JSON.parse(fs.readFileSync(workersPath, 'utf-8'));
 
     // 找到 worker
@@ -8220,7 +8220,7 @@ router.get('/credentials', async (_req, res) => {
   const credentials = [];
 
   // 1. Anthropic OAuth accounts: ~/.claude/.account*.json
-  const claudeDir = '/home/xx/.claude';
+  const claudeDir = '/Users/administrator/.claude';
   try {
     const files = readdirSync(claudeDir);
     files.filter(f => /^\.account\d+\.json$/.test(f)).sort().forEach(file => {
@@ -8264,7 +8264,7 @@ router.get('/skills-registry', async (_req, res) => {
     const fs = await import('fs');
     const path = await import('path');
 
-    const WORKFLOWS_BASE = '/home/xx/perfect21/cecelia/packages/workflows';
+    const WORKFLOWS_BASE = '/Users/administrator/perfect21/cecelia/packages/workflows';
 
     function parseSkillMd(filePath) {
       try {

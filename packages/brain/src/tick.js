@@ -1459,12 +1459,12 @@ async function executeTick() {
     }
   }
 
-  // 0.6. Codex 免疫检查：每 20 小时自动创建一次 codex_qa 任务
-  try {
-    await ensureCodexImmune(pool);
-  } catch (immuneErr) {
-    console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
-  }
+  // 0.6. Codex 免疫检查：已禁用（run-codex-immune.sh 脚本不存在）
+  // try {
+  //   await ensureCodexImmune(pool);
+  // } catch (immuneErr) {
+  //   console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
+  // }
 
   // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
   const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
@@ -2485,7 +2485,7 @@ export async function ensureCodexImmune(dbPool) {
     VALUES ($1, $2, 'queued', 'P1', 'codex_qa', 'brain_auto')
   `, [
     'Codex 免疫检查 - cecelia-core',
-    '/home/xx/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
+    '/Users/administrator/perfect21/cecelia/quality/scripts/run-codex-immune.sh'
   ]);
 
   console.log('[tick] Codex immune task created (last check: ' +

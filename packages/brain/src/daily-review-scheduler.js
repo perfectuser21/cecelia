@@ -18,12 +18,12 @@ const DAILY_REVIEW_HOUR_UTC = 2;
 
 // Fallback repo 列表（DB 不可用时使用）
 const FALLBACK_REPOS = [
-  '/home/xx/perfect21/cecelia',
-  '/home/xx/perfect21/cecelia/workspace',
-  '/home/xx/perfect21/cecelia/engine',
-  '/home/xx/perfect21/zenithjoy/workspace',
-  '/home/xx/perfect21/zenithjoy/creator',
-  '/home/xx/perfect21/toutiao-publisher-system',
+  '/Users/administrator/perfect21/cecelia',
+  '/Users/administrator/perfect21/cecelia/workspace',
+  '/Users/administrator/perfect21/cecelia/engine',
+  '/Users/administrator/perfect21/zenithjoy/workspace',
+  '/Users/administrator/perfect21/zenithjoy/creator',
+  '/Users/administrator/perfect21/toutiao-publisher-system',
 ];
 
 /** @module daily-review-scheduler
