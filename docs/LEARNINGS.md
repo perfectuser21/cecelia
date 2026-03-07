@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Migration 136: tasks blocked 状态 + block/unblock API（PR #652, Brain v1.206.0）
+
+**失败统计**：CI 一次通过（手动触发，PR 推送后 CI 未自动启动）
+
+**实现要点**：
+
+1. **tasks 表无 status CHECK 约束**：项目中没有 `tasks_status_check` 约束，status 校验完全在代码层，所以添加 blocked 状态只需加 3 列，无需修改 DB 约束
+2. **tick 天然排除 blocked**：`selectNextDispatchableTask` 用 `WHERE t.status = 'queued'`，blocked 任务自然不出现，无需改 tick.js
+3. **event-bus.js 导入命名**：routes.js 使用 `import { emit as emitEvent }` 而非 `import { emitEvent }`，测试 mock 必须暴露 `emit` 而非 `emitEvent`，否则 emitEvent 调用报错导致 500
+4. **selfcheck EXPECTED_SCHEMA_VERSION + DEFINITION.md 双处 schema_version**：facts-check.mjs 检查 selfcheck.js 的 EXPECTED_SCHEMA_VERSION，同时 DEFINITION.md 中有两处 `Schema 版本: 135`（表格 + 自检说明），都要更新
+5. **Worktree 再次被删（第 N 次）**：worktree 目录消失，Bash CWD 报错。用 Write 工具重建 4 个 git 元数据文件后恢复。`git checkout HEAD -- .` 会覆盖 PRD/DoD 和 dev-mode 文件，必须在 checkout 之后重新创建这些文件
+
+**CI 未自动触发**：push 后 `gh run list` 返回空数组，用 `gh workflow run brain-ci.yml --ref <branch>` 手动触发解决
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
