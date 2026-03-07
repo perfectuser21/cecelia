@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 微博发布器 CDPClient 提取与单元测试（PR #640）
+
+**CI 失败次数**：0
+
+**背景**：微博发布器核心逻辑 `CDPClient` 类内联在 `publish-weibo-image.cjs` 中，无法单元测试。
+
+**实现要点**：
+
+1. **依赖注入模式**：`CDPClient` 构造器接受 `WsClass` 参数，测试时传入 `MockWsClass`，生产时使用 `ws` 库。无需任何 mock 框架，纯 `node:test`
+2. **clearTimeout 修复**：原始代码中 `send()` 的 60s 超时计时器不会被清除，导致测试套件运行 60s。修复：在回调消费时调用 `clearTimeout(timer)`，测试从 60s 缩短到 105ms
+3. **孤儿 Promise 陷阱**：测试 `send()` 时若不响应请求，60s 计时器在测试结束后触发，导致 `unhandledRejection`。解决：每个 `send()` 调用必须配套响应消息，消费 callback 同时取消 timer
+4. **packages/workflows PRD 优先级陷阱（再次遇到）**：`packages/workflows/.prd.md` 旧残留导致 hook 匹配错误 PRD。需在 `packages/workflows/` 目录下创建分支专用 `.prd-<branch>.md` 和 `.dod-<branch>.md`（同 PR #609 经验）
+5. **Worktree 重建**：同之前 PR 经验，Write 工具写 4 个元数据文件重建 worktree，Bash CWD 恢复后 `git checkout HEAD -- .` 还原文件
+
+**测试结果**：35 个测试全部通过（utils: 21 + cdp-client: 14）
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
