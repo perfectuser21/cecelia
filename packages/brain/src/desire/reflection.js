@@ -411,3 +411,4 @@ ${memorySummary}
 
   return { triggered: true, insight, accumulator_before: accumulator };
 }
+
