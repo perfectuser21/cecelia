@@ -779,6 +779,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: history
           .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
       };
@@ -791,7 +793,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT') && sql.includes('module_path'));
+      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT id FROM tasks') && sql.includes('issue_type'));
       expect(selectCall).toBeDefined();
       expect(selectCall[1]).toEqual(['src/tick.js', 'low_coverage']);
 
@@ -805,6 +807,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: history
           .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
       };
@@ -827,6 +831,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
           .mockResolvedValueOnce({ rows: [{ id: newId }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
@@ -851,6 +857,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT → 无重复
           .mockResolvedValueOnce({ rows: [{ id: 'new-id' }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }),
@@ -864,7 +872,7 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT') && sql.includes('module_path'));
+      const selectCall = pool.query.mock.calls.find(([sql]) => sql.includes('SELECT id FROM tasks') && sql.includes('issue_type'));
       expect(selectCall[0]).toContain("status IN ('queued', 'in_progress')");
       expect(selectCall[0]).not.toContain('completed');
     });
@@ -874,6 +882,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockRejectedValueOnce(new Error('DB connection lost')) // dedup SELECT 失败
           .mockResolvedValueOnce({ rows: [{ id: 'fallback-id' }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }),
@@ -906,10 +916,10 @@ describe('task-generator-scheduler', () => {
 
       await triggerScanFn(pool);
 
-      // pool.query 只被调用一次（INSERT INTO tasks），无 dedup SELECT，无 scan_results
-      expect(pool.query).toHaveBeenCalledOnce();
-      const [sql] = pool.query.mock.calls[0];
-      expect(sql).toContain('INSERT INTO tasks');
+      // pool.query 被调用 3 次：2 次 pre-filter + 1 次 INSERT INTO tasks，无 dedup SELECT，无 scan_results
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      const insertCall = pool.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO tasks'));
+      expect(insertCall).toBeDefined();
     });
   });
 
@@ -963,6 +973,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
           .mockResolvedValueOnce({ rows: [{ id: newTaskId }] }) // INSERT INTO tasks
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
@@ -997,6 +1009,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] })                    // pre-filter: history
           .mockResolvedValueOnce({ rows: [{ id: existingId }] }) // dedup SELECT → 命中
           .mockResolvedValue({ rows: [] }), // scan_results INSERT
       };
@@ -1019,6 +1033,8 @@ describe('task-generator-scheduler', () => {
 
       const pool = {
         query: vi.fn()
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: existingTasks
+          .mockResolvedValueOnce({ rows: [] }) // pre-filter: history
           .mockResolvedValueOnce({ rows: [] }) // dedup SELECT
           .mockResolvedValueOnce({ rows: [{ id: 'task-xyz' }] }) // INSERT INTO tasks
           .mockRejectedValue(new Error('scan_results write failed')), // scan_results 失败
