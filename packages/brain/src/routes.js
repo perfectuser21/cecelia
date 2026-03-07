@@ -7818,6 +7818,55 @@ router.get('/immune/dashboard', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/brain/immune/sweep - Manually trigger zombie sweep
+// GET /api/brain/immune/status - Return last zombie sweep result
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/brain/immune/sweep
+ * Manually trigger a zombie sweep across all three dimensions.
+ */
+router.post('/immune/sweep', async (req, res) => {
+  try {
+    const { zombieSweep } = await import('./zombie-sweep.js');
+    const result = await zombieSweep();
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (err) {
+    console.error('[API] Failed to run zombie sweep:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to run zombie sweep',
+      details: err.message
+    });
+  }
+});
+
+/**
+ * GET /api/brain/immune/status
+ * Return the last zombie sweep result from working_memory.
+ */
+router.get('/immune/status', async (req, res) => {
+  try {
+    const { getZombieSweepStatus } = await import('./zombie-sweep.js');
+    const status = await getZombieSweepStatus();
+    res.json({
+      success: true,
+      data: status
+    });
+  } catch (err) {
+    console.error('[API] Failed to get zombie sweep status:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get zombie sweep status',
+      details: err.message
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/brain/routing/decisions - Thalamus routing decision history
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/routing/decisions', async (req, res) => {
@@ -8982,6 +9031,62 @@ router.get('/tasks/:id/ci-diagnosis', async (req, res) => {
   } catch (err) {
     console.error('[GET /tasks/:id/ci-diagnosis] error:', err.message);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/block
+ * 手动阻塞任务（临时暂停调度，等待条件就绪后自动或手动恢复）
+ * 请求体：{ reason, detail, until }
+ */
+router.post('/tasks/:id/block', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason = 'manual', detail = null, until = null } = req.body || {};
+
+    const { blockTask } = await import('./task-updater.js');
+    const result = await blockTask(id, { reason, detail, until: until ? new Date(until) : null });
+
+    if (!result.success) {
+      return res.status(404).json({ error: result.error });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      status: 'blocked',
+      reason,
+      blocked_until: result.task?.blocked_until || null,
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/block error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/unblock
+ * 手动解除任务阻塞，状态回 queued
+ */
+router.post('/tasks/:id/unblock', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { unblockTask } = await import('./task-updater.js');
+    const result = await unblockTask(id);
+
+    if (!result.success) {
+      return res.status(404).json({ error: result.error });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      status: 'queued',
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/unblock error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

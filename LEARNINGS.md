@@ -61,6 +61,10 @@ expect(insertCall[1][2]).toBe('architecture_design'); // $3 = taskType
 
 ---
 
+### [2026-03-07] 主动僵尸巡检模块 zombie-sweep.js (v1.211.0)
+
+---
+
 ### [2026-03-07] tasks 表添加 blocked 状态 + tick 自动释放循环 (Migration 137, v1.207.0)
 
 **关键实现要点**：

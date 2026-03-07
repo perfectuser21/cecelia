@@ -35,6 +35,7 @@ import { sortTasksByWeight } from './task-weight.js';
 import { flushAlertsIfNeeded } from './alerting.js';
 import { scanEvolutionIfNeeded, synthesizeEvolutionIfNeeded } from './evolution-scanner.js';
 import { triggerCodeQualityScan, getScannerStatus } from './task-generator-scheduler.js';
+import { zombieSweep } from './zombie-sweep.js';
 // [NOTION_SYNC_DISABLED] import { syncRecurringFromNotion } from './recurring-notion-sync.js';
 // [NOTION_SYNC_DISABLED] import { runFullSync } from './notion-full-sync.js';
 
@@ -102,7 +103,10 @@ let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 let _lastReportTime = 0; // track last 48h system report generation time
+let _lastZombieSweepTime = 0; // track last zombie sweep time
 let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
+
+const ZOMBIE_SWEEP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_SWEEP_INTERVAL_MS || String(30 * 60 * 1000), 10); // 30 minutes
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1489,12 +1493,17 @@ async function executeTick() {
     }
   }
 
-  // 0.6. Codex 免疫检查：已禁用（run-codex-immune.sh 脚本不存在）
-  // try {
-  //   await ensureCodexImmune(pool);
-  // } catch (immuneErr) {
-  //   console.error('[tick] Codex immune check failed (non-fatal):', immuneErr.message);
-  // }
+  // 0.6. 僵尸巡检：每 30 分钟清理 stale worktree / orphan process / stale lock slot
+  const zombieSweepElapsed = Date.now() - _lastZombieSweepTime;
+  if (zombieSweepElapsed >= ZOMBIE_SWEEP_INTERVAL_MS) {
+    _lastZombieSweepTime = Date.now();
+    zombieSweep().then(r => {
+      const summary = `worktrees:${r.worktrees.removed} processes:${r.processes.killed} locks:${r.lock_slots.removed}`;
+      console.log(`[tick] Zombie sweep done. ${summary}`);
+    }).catch(err => {
+      console.error('[tick] Zombie sweep failed (non-fatal):', err.message);
+    });
+  }
 
   // 0.7. Layer 2 运行健康监控：每小时一次，纯 SQL，无 LLM
   const healthCheckElapsed = Date.now() - _lastHealthCheckTime;
@@ -1761,6 +1770,26 @@ async function executeTick() {
       SELECT id FROM goals WHERE status NOT IN ('completed', 'cancelled', 'canceled')
     `);
     allGoalIds = allGoalsResult.rows.map(r => r.id);
+  }
+
+  // Auto-recover expired blocked tasks (blocked_until < now → queued)
+  // 无条件执行，不依赖 allGoalIds
+  try {
+    const { unblockExpiredTasks } = await import('./task-updater.js');
+    const recovered = await unblockExpiredTasks();
+    if (recovered.length > 0) {
+      console.log(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
+      for (const r of recovered) {
+        actionsTaken.push({
+          action: 'auto_unblock',
+          task_id: r.task_id,
+          title: r.title,
+          blocked_reason: r.blocked_reason || 'unknown',
+        });
+      }
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task recovery error:', blockedErr.message);
   }
 
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
@@ -2529,6 +2558,8 @@ function _resetLastKrProgressSyncTime() { _lastKrProgressSyncTime = 0; }
 function _resetLastHeartbeatTime() { _lastHeartbeatTime = 0; }
 
 function _resetLastGoalEvalTime() { _lastGoalEvalTime = 0; }
+/** Reset zombie sweep timer — for testing only */
+function _resetLastZombieSweepTime() { _lastZombieSweepTime = 0; }
 
 /**
  * 确保每 20 小时触发一次 Codex 免疫检查
@@ -2599,6 +2630,7 @@ export {
   AUTO_DISPATCH_MAX,
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
+  ZOMBIE_SWEEP_INTERVAL_MS,
   ZOMBIE_CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
@@ -2608,6 +2640,7 @@ export {
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,
   _resetLastGoalEvalTime,
+  _resetLastZombieSweepTime,
   GOAL_EVAL_INTERVAL_MS,
   // 48h 简报
   check48hReport,
