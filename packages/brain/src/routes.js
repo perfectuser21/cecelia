@@ -2997,6 +2997,7 @@ router.post('/execution-callback', async (req, res) => {
       let failureHandled = false;
       let quarantined = false;
       let isBillingCap = false;
+      let isTransientApiError = false;
       try {
         // Extract error message from result
         // Note: typeof null === 'object', so we must check result !== null first
@@ -3012,6 +3013,8 @@ router.post('/execution-callback', async (req, res) => {
         const taskType = taskRow.rows[0]?.task_type;
         const classification = classifyFailure(errorMsg, { payload: taskPayload });
         isBillingCap = classification.class === 'billing_cap';
+        // rate_limit / network 是外部 API 瞬时错误，不代表 cecelia-run 系统故障
+        isTransientApiError = classification.class === 'rate_limit' || classification.class === 'network';
 
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
@@ -3121,9 +3124,12 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] Classification error: ${classifyErr.message}`);
       }
 
-      // Circuit breaker: billing_cap 不计入熔断（是账号限制，不是系统故障）
-      if (isBillingCap) {
-        console.log(`[execution-callback] Billing cap: 跳过熔断计数（task=${task_id}）`);
+      // Circuit breaker 旁路：以下失败类型不计入熔断，属于外部/API 瞬时错误而非 cecelia-run 系统故障
+      //   billing_cap  — 账号费用上限，等 reset 时间
+      //   rate_limit   — 429 限流，指数退避后自动恢复
+      //   network      — 网络抖动，与 cecelia-run 健康状况无关
+      if (isBillingCap || isTransientApiError) {
+        console.log(`[execution-callback] 瞬时外部错误（${isBillingCap ? 'billing_cap' : 'rate_limit/network'}）：跳过熔断计数（task=${task_id}）`);
       } else {
         await cbFailure('cecelia-run');
         raise('P2', 'task_failed', `任务失败：${task_id}（${status}）`).catch(err => console.error('[routes] silent error:', err));
