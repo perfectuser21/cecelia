@@ -2822,3 +2822,29 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 
 **影响程度**：High（worktree 重建流程复杂，容易出错）
 
+
+---
+
+### [2026-03-07] 微博发布器单元测试基础设施 [R22]
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**关键经验**：
+
+**1. Node.js 内置 test runner 是 workflows 测试的最佳选择**
+
+`node:test`（Node 18+）和 `node:assert/strict` 无需任何 npm 依赖，可直接用 `node --test <file>` 运行。对于 `packages/workflows` 这种没有 `package.json` 的目录，比 vitest 更适合。CI 中也不需要 `npm install` 步骤。
+
+**2. packages/workflows/.prd.md 遗留陷阱（再次确认）**
+
+`packages/workflows/.prd.md` 存在时，branch-protect.sh 的 `find_prd_dod_dir` 在向上遍历目录时会优先匹配它，而不是项目根目录的 `.prd-<branch>.md`。修复：在 `packages/workflows/` 下也创建 `.prd-<branch>.md`（同 PR #609 的解决方案）。
+
+**3. Worktree 首次创建时缺少 .git 文件**
+
+本次 worktree 虽已在 git branch 中注册，但目录本身没有 `.git` 文件且未在 `git worktree list` 中出现。需手动写入 4 个元数据文件（HEAD/gitdir/commondir + worktree/.git）后再 `git checkout HEAD -- .` 恢复文件。恢复后需重新创建 PRD/DoD/.dev-mode 等非 git 追踪文件。
+
+**影响程度**：Low（测试全部通过，CI 一次过）
+
+**预防措施**：
+- workflows 技能测试优先使用 `node:test`，无需新增依赖
+- 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
