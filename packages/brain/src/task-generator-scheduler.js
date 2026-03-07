@@ -105,6 +105,44 @@ export async function triggerCodeQualityScan(pool) {
 
     // 生成任务
     const tasks = await scheduler.generateTasks(issues, async (taskData) => {
+      const metadata = taskData.metadata || {};
+      const { module_path, issue_type, scanner: scannerName, current_value, target_value } = metadata;
+      const hasDeupKey = !!(module_path && issue_type);
+
+      // 去重检查：只有 metadata 中含 module_path + issue_type 时才执行
+      if (hasDeupKey) {
+        try {
+          const dupCheck = await pool.query(
+            `SELECT id FROM tasks
+             WHERE metadata->>'module_path' = $1
+               AND metadata->>'issue_type' = $2
+               AND status IN ('queued', 'in_progress')
+             LIMIT 1`,
+            [module_path, issue_type]
+          );
+
+          if (dupCheck.rows.length > 0) {
+            const existingId = dupCheck.rows[0].id;
+            console.log(`[task-generator] Dedup: skipping task for ${module_path}/${issue_type}, existing task ${existingId}`);
+
+            // 持久化扫描结果（关联现有任务）
+            try {
+              await pool.query(
+                `INSERT INTO scan_results (scanner_name, module_path, issue_type, current_value, target_value, task_id, scanned_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+                [scannerName || null, module_path, issue_type, current_value ?? null, target_value ?? null, existingId]
+              );
+            } catch (persistErr) {
+              console.warn(`[task-generator] scan_result persist failed (dedup): ${persistErr.message}`);
+            }
+
+            return existingId;
+          }
+        } catch (dedupErr) {
+          console.warn(`[task-generator] Dedup query failed, proceeding with task creation: ${dedupErr.message}`);
+        }
+      }
+
       // 创建任务到数据库，补充 project_id / goal_id / task_type
       const result = await pool.query(
         `INSERT INTO tasks (title, description, priority, status, tags, metadata, project_id, goal_id, task_type, created_at, updated_at)
@@ -116,14 +154,29 @@ export async function triggerCodeQualityScan(pool) {
           taskData.priority || 'P1',
           'queued',
           taskData.tags || [],
-          taskData.metadata || {},
+          metadata,
           TASK_GENERATOR_PROJECT_ID,
           TASK_GENERATOR_GOAL_ID,
           'dev',
         ]
       );
 
-      return result.rows[0]?.id;
+      const newTaskId = result.rows[0]?.id;
+
+      // 持久化扫描结果（关联新任务）
+      if (hasDeupKey) {
+        try {
+          await pool.query(
+            `INSERT INTO scan_results (scanner_name, module_path, issue_type, current_value, target_value, task_id, scanned_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            [scannerName || null, module_path, issue_type, current_value ?? null, target_value ?? null, newTaskId]
+          );
+        } catch (persistErr) {
+          console.warn(`[task-generator] scan_result persist failed: ${persistErr.message}`);
+        }
+      }
+
+      return newTaskId;
     }, existingTasks);
 
     console.log(`[task-generator] Generated ${tasks.length} tasks from ${issues.length} issues`);
