@@ -1,5 +1,121 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 僵尸资源清理：zombie-cleaner 模块 + DB 连接池健康监控（PR #636, Brain v1.208.0）
+
+**失败统计**：CI Version Check 失败 1 次（版本未更新），合并冲突 2 次（并行 PR 导致）
+
+**关键实现要点**：
+
+- `zombie-cleaner.js` 依赖 `resolveTaskPids()` 返回 `{ pidMap, staleSlots }`——staleSlots 是 slot 目录存在但 pid 已死的槽，直接拿来清理
+- `getPoolHealth()` 从 `pg.Pool` 实例读取 `totalCount / idleCount / waitingCount`——不需要额外配置，Pool 自动暴露这三个属性
+- `metrics.js` 集成 poolHealth 时，**不能修改 calculateHealthScore 的权重**（不加 poolHealth 到权重），否则权重不足 1.0 导致健康分 < 100，破坏现有测试
+
+**测试断言教训**：
+
+- SQL 断言用 `toContain("status = 'completed'")` 会同时命中 WHERE 子句和 SET 子句，改为检查**参数数量/内容**验证 SET 无 status 赋值
+- `vi.clearAllMocks()` 只清调用历史，不清 `mockResolvedValueOnce` 实现队列；共享 mock 必须 `mockFetch.mockReset()` 防止泄漏
+- 测试 stale slot 年龄边界：保护期"严格大于 60s 才清理"，测试用 `Date.now() - MIN_AGE + 1000`（59s）验证不清理
+
+**版本冲突处理**：
+
+- 本次 main 在并行 PR 期间从 1.206.0 → 1.207.0，合并后我的版本取 1.208.0（高于两者）
+- CI 未自动触发原因：`push` 到 PR 分支后，若 GitHub 未检测到 `pull_request synchronize` 事件，需手动通过 `workflow_dispatch` 触发，或 merge main 后 push 触发
+
+**DB 连接池配置**：
+
+- `pg.Pool` 推荐配置：`max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000`
+- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`
+- 健康告警阈值：`waiting > 5 || idle === 0` → AWARE 级别
+
+### [2026-03-07] domain-detector 模块 + 任务创建自动填充 domain/owner_role（PR #634, Brain v1.207.0）
+
+**失败统计**：CI 失败 1 次（版本冲突），本地测试失败 2 次（关键词误匹配），CI 未自动触发 1 次（需 workflow_dispatch）
+
+**本地测试失败记录**：
+
+- 失败 #1：`'pr'` 是 coding 关键词，但 `'pr'` 是 `'prd'` 的子串，导致含 `'prd'` 的文本被误判为 coding 而非 product → 移除 `'pr'`；同理 `'dev'` 是 `'devops'` 子串，移除 `'dev'` → 下次：**短关键词（2-3 字符）容易成为子串陷阱，不要放入关键词列表**
+- 失败 #2：同上（operations 测试中 `'devops'` 被误命中 coding）
+
+**CI 失败记录**：
+
+- 失败 #1：版本 bump 到 1.206.0 后，CI Version Check 报 `version not bumped`（main 已合并另一 PR 并已是 1.206.0）→ 再次 bump 到 1.207.0 同步 4 文件 → 下次：bump 前先查 `git fetch origin main && git show origin/main:packages/brain/package.json | grep version`
+
+**CI 未自动触发**：force push 后 GitHub 未产生新 `pull_request synchronize` 事件，`gh run list` 显示 CI 仍用旧 commit。解决方案：`gh workflow run brain-ci.yml --ref {branch}` 手动触发 workflow_dispatch，`ci-passed` 允许 Version Check 为 skipped（workflow_dispatch 模式）→ 下次：push 后等 30s，若 `gh run list` 无新 run，立即用 workflow_dispatch
+
+**错误判断记录**：
+
+- `npm version minor` 在 worktree 根目录执行，错误地 bump 了根 `package.json`（v1.200.x）而非 `packages/brain/package.json` → 正确：必须 `cd packages/brain && npm version minor`
+- Worktree 重建后 `git checkout HEAD -- .` 会覆盖已存在的 `.dev-mode`/`.prd`/`.dod` 文件 → 必须在 checkout **之后**重新创建这些文件
+
+**预防措施**：
+- 关键词列表禁止放入 ≤3 字符的英文缩写（`'pr'`、`'dev'`、`'ui'` 等）；改用完整词或更长的上下文词
+- 版本 bump 前必须 fetch origin/main 并对比版本号
+- Worktree 重建步骤：(1) 写 4 个 git 元数据文件 (2) `git checkout HEAD -- .` (3) **重新创建** `.dev-mode`/`.prd`/`.dod`（checkout 会覆盖）
+
+### [2026-03-07] strategy_session task_type 注册：四文件联动 + Worktree 残留陷阱（PR #633, Brain v1.206.1）
+
+**失败统计**：CI 未自动触发 1 次（PR mergeable_state: dirty），需合并 main 后才触发
+
+**关键实现要点**：
+
+- `strategy_session` 注册需同步修改 **4 个文件**：`executor.js`（skillMap）、`task-router.js`（VALID_TASK_TYPES / SKILL_WHITELIST / LOCATION_MAP）、`model-registry.js`（AGENTS）、`routes.js`（execution-callback 闭环）
+- `facts-check.mjs` 从 `task-router.js` 读取 `task_types`，不是从 `executor.js`，因此 `task-router.js` 必须同步添加
+- `generate-manifest.mjs --check` 会在 CI 中强制校验 manifest 与代码一致，修改 skillMap 后必须重新生成
+
+**Worktree 元数据残留陷阱（第三次遇到）**：
+
+- 症状：`.git/worktrees/{id}/` 元数据存在，`git worktree list` 不显示，worktree 目录只有 `node_modules`，Read/Edit 工具报告"成功"但文件不存在
+- 根因：Brain 后台进程（worktree 清理逻辑）删除了源文件，但 `.git/worktrees/` 元数据残留
+- **修复流程**（已固化）：
+  1. `git -C /path/to/main worktree prune`
+  2. `git -C /path/to/main worktree add /tmp/new-path <branch-name>`
+  3. 在 `/tmp/new-path` 完成所有工作
+  4. 完成后 `git -C /path/to/main worktree remove /tmp/new-path --force`
+- 注意：`/tmp` worktree 没有 `node_modules`，需要 `npm install` 后才能运行测试；但如果根目录已有 `node_modules`，可以直接引用 `/tmp/{worktree}/node_modules/.bin/vitest`
+
+**PR 不触发 CI 的原因**：
+
+- PR 的 `mergeable_state: dirty`（与 main 有冲突）时，GitHub 可能不自动触发 `pull_request` CI
+- 解决：在功能分支执行 `git fetch origin main && git merge origin/main --no-edit`，解决冲突后 push，CI 自动启动
+
+**并行 PR 版本冲突处理（复习）**：
+
+- main 合并后版本比我的功能分支高（1.206.0 > 1.205.1），最终版本取两者更高值再 +1 patch → 1.206.1
+- `packages/brain/VERSION` 文件也需要同步更新（npm version 不更新它）
+
+### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
+
+**失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
+
+**本地测试失败记录**：
+- 失败 #1：`detectDomain("梳理一下 PRD 流程")` 期望 `product`，实际返回 `coding`
+  - 根因：coding 关键词列表含 `'PR'`，用 `includes()` 匹配时 `'PR'` 是 `'PRD'` 的子串，误命中
+  - 修复：添加 `matchKeyword()` 函数，对全大写 2-5 字符缩写（如 `PR`、`CI`、`API`）使用 `\bKW\b` 正则边界匹配，普通词继续用 `includes()`
+  - 预防：凡关键词列表含英文大写缩写，必须用词边界匹配，绝不用简单 substring
+
+- 失败 #2：`agent_ops wins over coding when both match` 期望 `agent_ops`，实际返回 `coding`
+  - 根因：优先级逻辑按"匹配词数量最多者胜"，coding 匹配 3 词（代码/架构/API）> agent_ops 匹配 1 词（Brain）
+  - 修复：完全重写优先级逻辑：`agent_ops > quality > security` 三者只要有任何匹配，立即返回，不比数量；其余 domain 按数量竞争，coding 作为兜底
+  - 预防：高优先级 domain 应用"存在即覆盖"语义，不能参与数量比较竞争
+
+**错误判断记录**：
+- 以为 `DOMAIN_PRIORITY` 数组控制顺序（coding→security→quality→agent_ops），结果逻辑是"tie-break"而不是"任意匹配即优先"
+  - 正确答案：重新设计为两阶段——第一阶段检查高优先级 domain（存在即返回），第二阶段按数量比较其余 domain
+
+**CI 失败记录**：
+- PR 创建后 `pull_request` 触发的 brain-ci.yml 未出现在 `gh run list`（GitHub 有时不自动触发）
+- 修复：手动 `gh workflow run brain-ci.yml --ref <branch>` 触发
+- 预防：创建 PR 后如 30s 内 `gh run list` 看不到新 run，立即手动触发
+
+**影响程度**: Medium（本地测试失败 2 次，需要重新设计算法，但架构无变化）
+
+**预防措施**：
+1. 关键词包含英文大写缩写时，必须用 `\bKW\b` 正则，不能用 `includes()`
+2. 优先级"覆盖"与"竞争"要明确区分；高优先级 domain 应使用"存在即返回"模式
+3. PR 创建后如 CI 未自动触发，手动 `gh workflow run` 比等待更高效
+
+---
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
