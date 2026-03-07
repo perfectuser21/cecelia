@@ -51,7 +51,7 @@
       },
       "parameters": {
         "authentication": "privateKey",
-        "host": "146.190.52.84",
+        "host": "134.199.234.147",
         "port": 22,
         "user": "xx",
         "command": "cd /home/xx/dev/n8n-workflows && claude -p \"读取 workflows-snapshot.json，用 MCP 查询当前 n8n workflows，对比差异写入 CHANGELOG.md，更新 snapshot，git commit\" --allowedTools \"Edit,Write,Read,Bash,Glob,Grep,mcp__n8n__search_workflows\" 2>&1"
