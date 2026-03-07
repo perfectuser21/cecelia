@@ -1090,6 +1090,68 @@ async function buildTimeContext(krId) {
  * Prepare prompt content from task
  * Routes to different skills based on task.task_type
  */
+/**
+ * Build retry context string to append to prompts on retry attempts.
+ * Returns empty string on first execution or when no failure info is available.
+ *
+ * @param {Object} task - Task object from database (includes payload and feedback[])
+ * @returns {string} Retry context block (max 2000 chars) or ''
+ */
+function buildRetryContext(task) {
+  const payload = task.payload || {};
+  const failureCount = payload.failure_count || 0;
+  const classification = payload.failure_classification;
+  const watchdogKill = payload.watchdog_kill;
+
+  // No retry context on first execution
+  if (failureCount === 0 && !classification) {
+    return '';
+  }
+
+  const parts = [];
+
+  // Failure classification block
+  if (classification) {
+    const cls = classification.class || 'unknown';
+    const reason = classification.retry_strategy?.reason || watchdogKill?.reason || '';
+    parts.push(`上次执行失败，原因分类：${cls}${reason ? `\n失败详情：${reason}` : ''}`);
+  } else if (watchdogKill?.reason) {
+    parts.push(`上次执行被 Watchdog 终止：${watchdogKill.reason}`);
+  }
+
+  // Feedback block (most recent entry)
+  const feedbackArr = Array.isArray(task.feedback) ? task.feedback : [];
+  const lastFeedback = feedbackArr.length > 0 ? feedbackArr[feedbackArr.length - 1] : null;
+  if (lastFeedback) {
+    if (lastFeedback.summary) {
+      parts.push(`### 上次反馈摘要\n${lastFeedback.summary}`);
+    }
+    const issuesFound = lastFeedback.issues_found;
+    if (Array.isArray(issuesFound) && issuesFound.length > 0) {
+      parts.push(`### 发现的问题\n${issuesFound.map(i => `- ${i}`).join('\n')}`);
+    } else if (typeof issuesFound === 'string' && issuesFound.trim()) {
+      parts.push(`### 发现的问题\n${issuesFound}`);
+    }
+  }
+
+  if (parts.length === 0) {
+    return '';
+  }
+
+  const MAX_RETRY_CONTEXT_LENGTH = 2000;
+  const header = `\n\n## ⚠️ 重试上下文（第 ${failureCount} 次尝试）\n\n`;
+  const footer = '\n\n请在本次执行中重点关注以上问题，避免重复失败。';
+  const body = parts.join('\n\n');
+  let full = header + body + footer;
+
+  if (full.length > MAX_RETRY_CONTEXT_LENGTH) {
+    const allowedBody = MAX_RETRY_CONTEXT_LENGTH - header.length - footer.length - 12; // 12 for '...[已截断]'
+    full = header + body.slice(0, Math.max(0, allowedBody)) + '...[已截断]' + footer;
+  }
+
+  return full;
+}
+
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
   const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
@@ -1354,14 +1416,15 @@ ${task.description || ''}
   }
 
   // 有明确 PRD 内容的任务
+  const retryCtx = buildRetryContext(task);
   if (task.prd_content) {
-    return `${skill}\n\n${task.prd_content}`;
+    return `${skill}\n\n${task.prd_content}${retryCtx}`;
   }
   if (task.payload?.prd_content) {
-    return `${skill}\n\n${task.payload.prd_content}`;
+    return `${skill}\n\n${task.payload.prd_content}${retryCtx}`;
   }
   if (task.payload?.prd_path) {
-    return `${skill} ${task.payload.prd_path}`;
+    return `${skill} ${task.payload.prd_path}${retryCtx}`;
   }
 
   // 自动生成 PRD
@@ -1378,7 +1441,7 @@ ${task.description || task.title}
 - [ ] 任务完成
 `;
 
-  return `${skill}\n\n${prd}`;
+  return `${skill}\n\n${prd}${retryCtx}`;
 }
 
 /**
@@ -2054,6 +2117,7 @@ export {
   getTaskExecutionStatus,
   updateTaskRunInfo,
   preparePrompt,
+  buildRetryContext,
   buildTimeContext,
   generateRunId,
   getSkillForTaskType,
