@@ -15,6 +15,7 @@ const mockUnblockTask = vi.fn();
 vi.mock('../task-updater.js', () => ({
   unblockTask: mockUnblockTask,
   blockTask: vi.fn(),
+  blockTaskWithDetail: vi.fn(),
   updateTaskStatus: vi.fn(),
   updateTaskProgress: vi.fn(),
   broadcastTaskState: vi.fn(),
@@ -75,7 +76,7 @@ function makeBlockedTask(overrides = {}) {
   return {
     id: 'blocked-task-001',
     title: '等待依赖任务',
-    blocked_reason: {
+    blocked_detail: {
       type: 'dependency',
       blocker_id: 'dep-task-001',
       reason: '依赖任务尚未完成',
@@ -220,7 +221,7 @@ describe('autoUnblockBlockedTasks', () => {
   it('应当忽略非 dependency 类型的 blocked 任务', async () => {
     const prReviewTask = makeBlockedTask({
       id: 'task-pr',
-      blocked_reason: {
+      blocked_detail: {
         type: 'pr_review',
         blocker_id: null,
         reason: '等待 Code Review',
