@@ -1,5 +1,32 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 僵尸资源清理：zombie-cleaner 模块 + DB 连接池健康监控（PR #636, Brain v1.207.0）
+
+**失败统计**：CI Version Check 失败 1 次（版本未更新），合并冲突 1 次（并行 PR 导致）
+
+**关键实现要点**：
+
+- `zombie-cleaner.js` 依赖 `resolveTaskPids()` 返回 `{ pidMap, staleSlots }`——staleSlots 是 slot 目录存在但 pid 已死的槽，直接拿来清理
+- `getPoolHealth()` 从 `pg.Pool` 实例读取 `totalCount / idleCount / waitingCount`——不需要额外配置，Pool 自动暴露这三个属性
+- `metrics.js` 集成 poolHealth 时，**不能修改 calculateHealthScore 的权重**（不加 poolHealth 到权重），否则权重不足 1.0 导致健康分 < 100，破坏现有测试
+
+**测试断言教训**：
+
+- SQL 断言用 `toContain("status = 'completed'")` 会同时命中 WHERE 子句和 SET 子句，改为检查**参数数量/内容**验证 SET 无 status 赋值
+- `vi.clearAllMocks()` 只清调用历史，不清 `mockResolvedValueOnce` 实现队列；共享 mock 必须 `mockFetch.mockReset()` 防止泄漏
+- 测试 stale slot 年龄边界：保护期"严格大于 60s 才清理"，测试用 `Date.now() - MIN_AGE + 1000`（59s）验证不清理
+
+**版本冲突处理**：
+
+- 本次 main 在并行 PR 期间从 1.206.0 → 1.206.1，合并后我的版本取 1.207.0（高于两者）
+- CI 未自动触发原因：`push` 到 PR 分支后，若 GitHub 未检测到 `pull_request synchronize` 事件，需手动通过 `workflow_dispatch` 触发，或 merge main 后 push 触发
+
+**DB 连接池配置**：
+
+- `pg.Pool` 推荐配置：`max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000`
+- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`
+- 健康告警阈值：`waiting > 5 || idle === 0` → AWARE 级别
+
 ### [2026-03-07] strategy_session task_type 注册：四文件联动 + Worktree 残留陷阱（PR #633, Brain v1.206.1）
 
 **失败统计**：CI 未自动触发 1 次（PR mergeable_state: dirty），需合并 main 后才触发
