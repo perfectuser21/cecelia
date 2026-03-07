@@ -21,6 +21,7 @@ async function getRecentDecisions(limit = 10) {
   return result.rows;
 }
 import { createTask, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } from './actions.js';
+import { parseStrategySessionOutput } from './strategy-session-parser.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from './focus.js';
 import { getTickStatus, enableTick, disableTick, executeTick, runTickSafe, routeTask, drainTick, getDrainStatus, cancelDrain, TASK_TYPE_AGENT_MAP, getStartupErrors, check48hReport } from './tick.js';
 import { identifyWorkType, getTaskLocation, routeTaskCreate, getValidTaskTypes, LOCATION_MAP, diagnoseKR } from './task-router.js';
@@ -2976,6 +2977,59 @@ router.post('/execution-callback', async (req, res) => {
       } catch (learningErr) {
         console.warn(`[execution-callback] learnings 写入失败（非致命）: ${learningErr.message}`);
       }
+
+      // strategy_session 闭环：解析 C-Suite 会议产出 → 写入 goals 表（fire-and-forget）
+      Promise.resolve().then(async () => {
+        const taskMeta = await pool.query('SELECT task_type FROM tasks WHERE id = $1', [task_id]);
+        const task = taskMeta.rows[0];
+        if (!task || task.task_type !== 'strategy_session') return;
+
+        const output = (result !== null && typeof result === 'object')
+          ? (result.result || result.findings || '')
+          : String(result || '');
+        const parsed = parseStrategySessionOutput(output);
+
+        if (!parsed) {
+          console.warn(`[execution-callback] strategy_session ${task_id}: 无法解析会议产出 JSON`);
+          return;
+        }
+
+        const { meeting_summary, krs = [] } = parsed;
+
+        // 将 meeting_summary 存入任务 payload
+        if (meeting_summary) {
+          await pool.query(
+            `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+            [task_id, JSON.stringify({ meeting_summary: meeting_summary.substring(0, 2000) })]
+          );
+        }
+
+        if (krs.length === 0) {
+          console.warn(`[execution-callback] strategy_session ${task_id}: krs 数组为空`);
+          return;
+        }
+
+        // 写入 KRs 到 goals 表
+        const { getDomainRole } = await import('./role-registry.js');
+        let writtenCount = 0;
+        for (const kr of krs) {
+          try {
+            const { title, domain, priority = 'P1' } = kr;
+            if (!title) continue;
+            const owner_role = domain ? getDomainRole(domain) : null;
+            await pool.query(
+              `INSERT INTO goals (title, priority, status, progress, domain, owner_role)
+               VALUES ($1, $2, 'pending', 0, $3, $4)`,
+              [title, priority, domain || null, owner_role]
+            );
+            writtenCount++;
+            console.log(`[execution-callback] strategy_session: 写入 KR "${title}" (domain=${domain}, owner_role=${owner_role})`);
+          } catch (goalErr) {
+            console.error(`[execution-callback] strategy_session KR 写入失败: ${goalErr.message}`);
+          }
+        }
+        console.log(`[execution-callback] strategy_session ${task_id}: 完成，写入 ${writtenCount}/${krs.length} 个 KR`);
+      }).catch(err => console.warn(`[execution-callback] strategy_session 处理失败（非致命）: ${err.message}`));
 
       // 小任务积累触发：dev 任务完成后检查是否需要触发 code_review（fire-and-forget）
       Promise.resolve().then(async () => {
