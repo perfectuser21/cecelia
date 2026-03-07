@@ -287,9 +287,9 @@ describe('GET /dev-pipeline', () => {
     vi.clearAllMocks();
   });
 
-  it('D4: 正常返回端到端成功率（pr_merged / total_dev）', async () => {
+  it('D4: 正常返回端到端成功率及 PR 生命周期字段', async () => {
     pool.query.mockResolvedValueOnce({
-      rows: [{ total_dev: '10', pr_merged: '7' }],
+      rows: [{ total_dev: '10', pr_merged: '7', pr_created: '9', pr_ci_passed: '7', pr_ci_failed: '1', pr_pending: '1' }],
     });
 
     const { req, res } = mockReqRes();
@@ -299,22 +299,42 @@ describe('GET /dev-pipeline', () => {
     const data = res._data;
     expect(data.total_dev).toBe(10);
     expect(data.pr_merged).toBe(7);
-    expect(data.end_to_end_success_rate).toBe(0.7); // 7/10
+    expect(data.end_to_end_success_rate).toBe(0.7);
     expect(data.target).toBe(0.70);
+    expect(data.pr_created).toBe(9);
+    expect(data.pr_ci_passed).toBe(7);
+    expect(data.pr_ci_failed).toBe(1);
+    expect(data.pr_pending).toBe(1);
   });
 
-  it('D5: total_dev=0 时 end_to_end_success_rate=0，不报错', async () => {
+  it('D5: total_dev=0 时 end_to_end_success_rate=0，新字段均为 0', async () => {
     pool.query.mockResolvedValueOnce({
-      rows: [{ total_dev: '0', pr_merged: '0' }],
+      rows: [{ total_dev: '0', pr_merged: '0', pr_created: '0', pr_ci_passed: '0', pr_ci_failed: '0', pr_pending: '0' }],
     });
 
     const { req, res } = mockReqRes();
     await handler(req, res);
 
     expect(res._status).toBe(200);
-    expect(res._data.total_dev).toBe(0);
-    expect(res._data.pr_merged).toBe(0);
     expect(res._data.end_to_end_success_rate).toBe(0);
-    expect(res._data.target).toBe(0.70);
+    expect(res._data.pr_created).toBe(0);
+    expect(res._data.pr_ci_passed).toBe(0);
+    expect(res._data.pr_ci_failed).toBe(0);
+    expect(res._data.pr_pending).toBe(0);
+  });
+
+  it('D6: 新字段缺失时回退为 0', async () => {
+    pool.query.mockResolvedValueOnce({
+      rows: [{ total_dev: '5', pr_merged: '3', pr_created: undefined, pr_ci_passed: undefined, pr_ci_failed: undefined, pr_pending: undefined }],
+    });
+
+    const { req, res } = mockReqRes();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    expect(res._data.pr_created).toBe(0);
+    expect(res._data.pr_ci_passed).toBe(0);
+    expect(res._data.pr_ci_failed).toBe(0);
+    expect(res._data.pr_pending).toBe(0);
   });
 });

@@ -5,7 +5,7 @@
 **最后更新**: 2026-03-05
 
 
-**Brain 版本**: 1.202.1
+**Brain 版本**: 1.202.2
 
 **状态**: 生产运行中
 
@@ -381,7 +381,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 132 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 133 |
 | **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
@@ -667,7 +667,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '131'
+5. **Schema 版本** — 必须 = '133'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置

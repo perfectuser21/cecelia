@@ -1577,6 +1577,23 @@ async function executeTick() {
     }
   }
 
+  // 0.14. PR Shepherd：每次 tick 检查 open/ci_pending PR，自动合并或重排
+  try {
+    const { shepherdOpenPRs } = await import('./shepherd.js');
+    const shepherdResult = await shepherdOpenPRs(pool);
+    if (shepherdResult.processed > 0) {
+      actionsTaken.push({
+        action: 'pr_shepherd',
+        processed: shepherdResult.processed,
+        merged: shepherdResult.merged,
+        failed: shepherdResult.failed,
+        pending: shepherdResult.pending,
+      });
+    }
+  } catch (shepherdErr) {
+    console.error('[tick] PR shepherd failed (non-fatal):', shepherdErr.message);
+  }
+
   // 1. Decision Engine: Compare goal progress
   try {
     const comparison = await compareGoalProgress();

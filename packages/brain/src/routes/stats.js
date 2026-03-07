@@ -159,13 +159,21 @@ router.get('/dev-pipeline', async (req, res) => {
     const result = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE payload->>'decomposition' IS DISTINCT FROM 'true') AS total_dev,
-        COUNT(*) FILTER (WHERE pr_merged_at IS NOT NULL AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_merged
+        COUNT(*) FILTER (WHERE pr_merged_at IS NOT NULL AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_merged,
+        COUNT(*) FILTER (WHERE pr_url IS NOT NULL AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_created,
+        COUNT(*) FILTER (WHERE pr_status = 'ci_passed' AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_ci_passed,
+        COUNT(*) FILTER (WHERE pr_status = 'ci_failed' AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_ci_failed,
+        COUNT(*) FILTER (WHERE pr_status IN ('open', 'ci_pending') AND payload->>'decomposition' IS DISTINCT FROM 'true') AS pr_pending
       FROM tasks
       WHERE task_type = 'dev'
     `);
 
     const totalDev = parseInt(result.rows[0]?.total_dev ?? '0', 10);
     const prMerged = parseInt(result.rows[0]?.pr_merged ?? '0', 10);
+    const prCreated = parseInt(result.rows[0]?.pr_created ?? '0', 10);
+    const prCiPassed = parseInt(result.rows[0]?.pr_ci_passed ?? '0', 10);
+    const prCiFailed = parseInt(result.rows[0]?.pr_ci_failed ?? '0', 10);
+    const prPending = parseInt(result.rows[0]?.pr_pending ?? '0', 10);
     const endToEndSuccessRate = totalDev > 0 ? Math.round((prMerged / totalDev) * 1000) / 1000 : 0;
 
     return res.json({
@@ -173,6 +181,10 @@ router.get('/dev-pipeline', async (req, res) => {
       pr_merged: prMerged,
       total_dev: totalDev,
       target: 0.70,
+      pr_created: prCreated,
+      pr_ci_passed: prCiPassed,
+      pr_ci_failed: prCiFailed,
+      pr_pending: prPending,
     });
   } catch (err) {
     console.error('[stats] dev-pipeline query failed:', err.message);
