@@ -208,10 +208,146 @@ describe('decomposition-checker v2.0', () => {
     });
   });
 
+  // ─── Check C: checkKRWithoutProject ───
+
+  describe('Check C: checkKRWithoutProject', () => {
+    it('should create decomposition task and roll back KR to decomposing when KR has no project', async () => {
+      const { checkKRWithoutProject } = await import('../decomposition-checker.js');
+
+      // Find ready/in_progress KRs with no project_kr_links
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P0', parent_id: null }]
+      });
+
+      // hasExistingDecompositionTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // canCreateDecompositionTask → under WIP limit
+      pool.query.mockResolvedValueOnce({ rows: [{ count: '0' }] });
+
+      // createDecompositionTask INSERT
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-c1', title: 'KR 拆解（修复）: Orphan KR' }]
+      });
+
+      // UPDATE goals status → decomposing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const actions = await checkKRWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('create_decomposition');
+      expect(actions[0].check).toBe('kr_without_project');
+      expect(actions[0].goal_id).toBe('kr-1');
+      expect(actions[0].task_id).toBe('task-c1');
+    });
+
+    it('should skip when decomposition task already exists (dedup)', async () => {
+      const { checkKRWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P0', parent_id: null }]
+      });
+
+      // hasExistingDecompositionTask → found
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-task' }] });
+
+      const actions = await checkKRWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_dedup');
+      expect(actions[0].check).toBe('kr_without_project');
+    });
+
+    it('should skip when WIP limit reached', async () => {
+      const { checkKRWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Orphan KR', description: 'desc', priority: 'P0', parent_id: null }]
+      });
+
+      // hasExistingDecompositionTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // canCreateDecompositionTask → at WIP limit (3)
+      pool.query.mockResolvedValueOnce({ rows: [{ count: '3' }] });
+
+      const actions = await checkKRWithoutProject();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_wip');
+      expect(actions[0].check).toBe('kr_without_project');
+    });
+
+    it('should handle no orphan KRs gracefully', async () => {
+      const { checkKRWithoutProject } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const actions = await checkKRWithoutProject();
+      expect(actions.length).toBe(0);
+    });
+  });
+
+  // ─── Check D: checkObjectiveWithoutKR ───
+
+  describe('Check D: checkObjectiveWithoutKR', () => {
+    it('should create strategic_meeting task when Objective has no KR', async () => {
+      const { checkObjectiveWithoutKR } = await import('../decomposition-checker.js');
+
+      // Find objectives without KR
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'obj-1', title: 'Big Vision', description: 'grow fast', priority: 'P0', type: 'vision' }]
+      });
+
+      // hasExistingStrategicMeetingTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // INSERT strategic_meeting task
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-d1', title: '战略会议: 为「Big Vision」制定 KR' }]
+      });
+
+      const actions = await checkObjectiveWithoutKR();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('create_strategic_meeting');
+      expect(actions[0].check).toBe('objective_without_kr');
+      expect(actions[0].goal_id).toBe('obj-1');
+      expect(actions[0].task_id).toBe('task-d1');
+    });
+
+    it('should skip when strategic_meeting task already exists (dedup)', async () => {
+      const { checkObjectiveWithoutKR } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'obj-1', title: 'Big Vision', description: 'grow', priority: 'P0', type: 'mission' }]
+      });
+
+      // hasExistingStrategicMeetingTask → found
+      pool.query.mockResolvedValueOnce({ rows: [{ id: 'existing-meeting' }] });
+
+      const actions = await checkObjectiveWithoutKR();
+
+      expect(actions.length).toBe(1);
+      expect(actions[0].action).toBe('skip_dedup');
+      expect(actions[0].check).toBe('objective_without_kr');
+    });
+
+    it('should handle no objectives without KR gracefully', async () => {
+      const { checkObjectiveWithoutKR } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      const actions = await checkObjectiveWithoutKR();
+      expect(actions.length).toBe(0);
+    });
+  });
+
   // ─── runDecompositionChecks ───
 
   describe('runDecompositionChecks', () => {
-    it('should return summary with counts', async () => {
+    it('should return summary with counts including strategic_meetings_created', async () => {
       const { runDecompositionChecks } = await import('../decomposition-checker.js');
 
       // Mock all queries to return empty (no work to do)
@@ -223,6 +359,8 @@ describe('decomposition-checker v2.0', () => {
       expect(result).toHaveProperty('summary');
       expect(result).toHaveProperty('total_created');
       expect(result.total_created).toBe(0);
+      expect(result.summary).toHaveProperty('strategic_meetings_created');
+      expect(result.summary.strategic_meetings_created).toBe(0);
     });
 
     it('should not throw on internal errors', async () => {

@@ -329,6 +329,178 @@ async function checkReadyKRInitiatives() {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// Check C: ready/in_progress KR 无 Project → 回退拆解
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * 检测 ready/in_progress 状态的 KR 是否缺少 Project 链接。
+ * 这种情况通常由数据不一致或手动操作导致，规划链会断裂（planner 返回 no_project_for_kr）。
+ *
+ * 处理：将 KR 状态回退到 decomposing，创建秋米拆解任务。
+ *
+ * 触发条件：
+ *   - KR status IN ('ready', 'in_progress')
+ *   - project_kr_links 表中无对应 project 关联
+ *   - 没有已存在的拆解任务（去重）
+ *   - 未达 WIP 上限
+ */
+async function checkKRWithoutProject() {
+  const actions = [];
+
+  const result = await pool.query(`
+    SELECT g.id, g.title, g.description, g.priority, g.parent_id
+    FROM goals g
+    WHERE g.type = 'area_okr'
+      AND g.status IN ('ready', 'in_progress')
+      AND NOT EXISTS (
+        SELECT 1 FROM project_kr_links pkl WHERE pkl.kr_id = g.id
+      )
+  `);
+
+  for (const kr of result.rows) {
+    if (await hasExistingDecompositionTask(kr.id)) {
+      actions.push({ action: 'skip_dedup', check: 'kr_without_project', goal_id: kr.id, title: kr.title });
+      continue;
+    }
+
+    if (!(await canCreateDecompositionTask())) {
+      actions.push({ action: 'skip_wip', check: 'kr_without_project', goal_id: kr.id, title: kr.title });
+      break;
+    }
+
+    const task = await createDecompositionTask({
+      title: `KR 拆解（修复）: ${kr.title}`,
+      description: [
+        `请为 KR「${kr.title}」拆解出 Project 和 Initiative（修复断点）。`,
+        '',
+        '背景：此 KR 已处于 ready/in_progress 状态但缺少 Project 链接，导致规划链断裂，需要重新拆解。',
+        '',
+        '你的任务：',
+        '1. 分析 KR，拆解为 1-2 个 Project（目标型工作容器）',
+        '2. 每个 Project 下创建 2-3 个 Initiative（一组 PR 的闭环工作包）',
+        '3. 每个 Initiative 需要：方向描述 + 成功标准',
+        '4. 不需要创建 Task — Task 由 planner 按需创建',
+        '',
+        '调用 Brain API 创建：',
+        '  创建 Project: POST http://localhost:5221/api/brain/action/create-project',
+        `    Body: { "name": "...", "type": "project", "status": "active" }`,
+        '',
+        '  关联 KR: POST http://localhost:5221/api/brain/action/link-project-kr',
+        `    Body: { "project_id": "...", "kr_id": "${kr.id}" }`,
+        '',
+        '  创建 Initiative: POST http://localhost:5221/api/brain/action/create-project',
+        `    Body: { "name": "...", "type": "initiative", "parent_id": "<project_id>", "status": "active" }`,
+        '',
+        `KR ID: ${kr.id}`,
+        `KR 标题: ${kr.title}`,
+        `KR 描述: ${kr.description || '(无)'}`,
+        `优先级: ${kr.priority}`,
+      ].join('\n'),
+      goalId: kr.id,
+      payload: { level: 'kr', kr_id: kr.id, repair: true }
+    });
+
+    if (task && !task.rejected) {
+      await pool.query(
+        `UPDATE goals SET status = 'decomposing', updated_at = NOW() WHERE id = $1`,
+        [kr.id]
+      );
+      console.log(`[decomp-checker] Check C: KR ${kr.id} (${kr.title}) has no project, rolled back to decomposing`);
+      actions.push({ action: 'create_decomposition', check: 'kr_without_project', goal_id: kr.id, task_id: task.id, title: kr.title });
+    } else {
+      actions.push({ action: 'skip_rejected', check: 'kr_without_project', goal_id: kr.id, title: kr.title });
+    }
+  }
+
+  return actions;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Check D: Objective 无 KR → 创建战略会议任务
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * 检测是否有 strategic_meeting 任务已存在于指定 goal 下。
+ */
+async function hasExistingStrategicMeetingTask(goalId) {
+  const result = await pool.query(`
+    SELECT id FROM tasks
+    WHERE goal_id = $1
+      AND task_type = 'strategic_meeting'
+      AND status IN ('queued', 'in_progress')
+    LIMIT 1
+  `, [goalId]);
+  return result.rows.length > 0;
+}
+
+/**
+ * 检测 pending/in_progress 状态的 Objective 是否缺少子 KR。
+ * 无子 KR 时整个规划链根本不启动，需要人工制定 KR。
+ *
+ * 处理：创建 strategic_meeting 任务，提示需要为该 Objective 制定 KR。
+ *
+ * 触发条件：
+ *   - Objective status IN ('pending', 'in_progress')
+ *   - 无活跃子 KR（goals 表，parent_id = objective.id，status NOT IN ('completed', 'cancelled')）
+ *   - 没有已存在的 strategic_meeting 任务（幂等）
+ */
+async function checkObjectiveWithoutKR() {
+  const actions = [];
+
+  const result = await pool.query(`
+    SELECT g.id, g.title, g.description, g.priority, g.type
+    FROM goals g
+    WHERE g.type IN ('vision', 'mission')
+      AND g.status IN ('pending', 'in_progress')
+      AND NOT EXISTS (
+        SELECT 1 FROM goals kr
+        WHERE kr.parent_id = g.id
+          AND kr.type = 'area_okr'
+          AND kr.status NOT IN ('completed', 'cancelled')
+      )
+  `);
+
+  for (const objective of result.rows) {
+    if (await hasExistingStrategicMeetingTask(objective.id)) {
+      actions.push({ action: 'skip_dedup', check: 'objective_without_kr', goal_id: objective.id, title: objective.title });
+      continue;
+    }
+
+    const title = `战略会议: 为「${objective.title}」制定 KR`;
+    const description = [
+      `Objective「${objective.title}」下没有任何活跃的 KR，规划链无法启动。`,
+      '',
+      '请召开战略会议，为该 Objective 制定关键结果（Key Results）：',
+      '',
+      '1. 分析 Objective 的核心目标和当前进展',
+      '2. 制定 2-4 个可量化的 KR（关键结果）',
+      '3. 每个 KR 需要：标题、描述、优先级、可量化的成功标准',
+      '4. 通过 Brain API 创建 KR：',
+      '   POST http://localhost:5221/api/brain/action/create-okr',
+      `   Body: { "objective_id": "${objective.id}", "key_results": [...] }`,
+      '',
+      `Objective ID: ${objective.id}`,
+      `Objective 标题: ${objective.title}`,
+      `Objective 描述: ${objective.description || '(无)'}`,
+      `类型: ${objective.type}`,
+      `优先级: ${objective.priority}`,
+    ].join('\n');
+
+    const taskResult = await pool.query(`
+      INSERT INTO tasks (title, description, status, priority, goal_id, task_type, trigger_source)
+      VALUES ($1, $2, 'queued', $3, $4, 'strategic_meeting', 'brain_auto')
+      RETURNING id, title
+    `, [title, description, objective.priority || 'P1', objective.id]);
+
+    const task = taskResult.rows[0];
+    console.log(`[decomp-checker] Check D: Objective ${objective.id} (${objective.title}) has no KR, created strategic_meeting task`);
+    actions.push({ action: 'create_strategic_meeting', check: 'objective_without_kr', goal_id: objective.id, task_id: task.id, title: objective.title });
+  }
+
+  return actions;
+}
+
+// ───────────────────────────────────────────────────────────────────
 // Main entry point
 // ───────────────────────────────────────────────────────────────────
 
@@ -356,13 +528,30 @@ async function runDecompositionChecks() {
       console.error('[decomp-checker] Check B (ready KR initiatives) failed:', err.message);
     }
 
+    // Check C: ready/in_progress KR 无 Project → 回退拆解
+    try {
+      const checkCActions = await checkKRWithoutProject();
+      allActions.push(...checkCActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check C (KR without project) failed:', err.message);
+    }
+
+    // Check D: Objective 无 KR → 战略会议
+    try {
+      const checkDActions = await checkObjectiveWithoutKR();
+      allActions.push(...checkDActions);
+    } catch (err) {
+      console.error('[decomp-checker] Check D (objective without KR) failed:', err.message);
+    }
+
     // Summary
     const totalCreated = allActions.filter(a => a.action === 'create_decomposition').length;
     const initiativePlansCreated = allActions.filter(a => a.action === 'create_initiative_plan').length;
     const statusChanges = allActions.filter(a => a.action === 'status_change').length;
+    const strategicMeetingsCreated = allActions.filter(a => a.action === 'create_strategic_meeting').length;
 
-    if (totalCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0) {
-      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes`);
+    if (totalCreated > 0 || initiativePlansCreated > 0 || statusChanges > 0 || strategicMeetingsCreated > 0) {
+      console.log(`[decomp-checker] Created ${totalCreated} decomp tasks, ${initiativePlansCreated} initiative_plan tasks, ${statusChanges} status changes, ${strategicMeetingsCreated} strategic_meeting tasks`);
     }
 
     return {
@@ -371,6 +560,7 @@ async function runDecompositionChecks() {
         created: totalCreated,
         initiative_plans_created: initiativePlansCreated,
         status_changes: statusChanges,
+        strategic_meetings_created: strategicMeetingsCreated,
       },
       total_created: totalCreated,
     };
@@ -388,9 +578,12 @@ export {
   runDecompositionChecks,
   checkPendingKRs,
   checkReadyKRInitiatives,
+  checkKRWithoutProject,
+  checkObjectiveWithoutKR,
   // Shared helpers (exported for testing)
   hasExistingDecompositionTask,
   hasExistingInitiativePlanTask,
+  hasExistingStrategicMeetingTask,
   canCreateDecompositionTask,
   createDecompositionTask,
   createInitiativePlanTask,
