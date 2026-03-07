@@ -1429,13 +1429,19 @@ ${task.description || ''}
     return `${skill} ${task.payload.prd_path}${retryCtx}`;
   }
 
-  // 自动生成 PRD
+  // 自动生成 PRD（注入 domain/owner_role 上下文）
+  const domain = task.domain || null;
+  const ownerRole = task.owner_role || null;
+  const domainCtx = (domain || ownerRole)
+    ? `\n## 业务领域上下文\n任务所属领域：${domain || '(未指定)'}\n负责角色：${ownerRole || '(未指定)'}\n`
+    : '';
+
   const prd = `# PRD - ${task.title}
 
 ## 背景
 任务来自 Brain 自动调度。
 任务类型：${taskType}
-
+${domainCtx}
 ## 功能描述
 ${task.description || task.title}
 

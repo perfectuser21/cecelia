@@ -50,7 +50,10 @@ describe('checkReadyKRInitiatives — 直连 kr_id Initiative', () => {
     // 3. hasExistingInitiativePlanTask → 无已有任务（允许创建）
     pool.query.mockResolvedValueOnce({ rows: [] });
 
-    // 4. createInitiativePlanTask INSERT
+    // 4. createInitiativePlanTask: SELECT domain FROM projects（domain 继承查询）
+    pool.query.mockResolvedValueOnce({ rows: [{ domain: null }] });
+
+    // 5. createInitiativePlanTask INSERT
     pool.query.mockResolvedValueOnce({
       rows: [{ id: 'task-plan-001', title: 'Initiative 规划: 优化 KR4 任务派发策略' }]
     });
