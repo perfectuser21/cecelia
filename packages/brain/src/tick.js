@@ -1015,6 +1015,25 @@ async function dispatchNextTask(goalIds) {
  * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
  * @returns {Object[]} - Actions taken
  */
+/**
+ * 自动释放 blocked_until 已到期的 blocked 任务，将其状态改回 queued
+ * @returns {Promise<Array<{task_id, title, blocked_reason, blocked_duration_ms}>>}
+ */
+async function releaseBlockedTasks() {
+  const result = await pool.query(`
+    UPDATE tasks
+    SET status = 'queued',
+        blocked_at = NULL,
+        blocked_reason = NULL,
+        blocked_until = NULL,
+        updated_at = NOW()
+    WHERE status = 'blocked' AND blocked_until <= NOW()
+    RETURNING id AS task_id, title, blocked_reason,
+              EXTRACT(EPOCH FROM (NOW() - blocked_at)) * 1000 AS blocked_duration_ms
+  `);
+  return result.rows;
+}
+
 async function autoFailTimedOutTasks(inProgressTasks) {
   const actions = [];
   for (const task of inProgressTasks) {
@@ -1879,6 +1898,25 @@ async function executeTick() {
     }
   } catch (quarantineErr) {
     console.error('[tick] Quarantine check error:', quarantineErr.message);
+  }
+
+  // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队
+  try {
+    const blockedReleased = await releaseBlockedTasks();
+    for (const r of blockedReleased) {
+      actionsTaken.push({
+        action: 'auto_release_blocked',
+        task_id: r.task_id,
+        title: r.title,
+        blocked_reason: r.blocked_reason || 'unknown',
+        blocked_duration_ms: r.blocked_duration_ms,
+      });
+    }
+    if (blockedReleased.length > 0) {
+      console.log(`[tick] Released ${blockedReleased.length} blocked task(s) back to queued`);
+    }
+  } catch (blockedErr) {
+    console.error('[tick] Blocked task release error:', blockedErr.message);
   }
 
   // Check for stale tasks (long-running, not dispatched)
