@@ -1,5 +1,18 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] selfcheck EXPECTED_SCHEMA_VERSION 与 DB 不同步（PR #630, Brain v1.206.1）
+
+**失败统计**：CI 失败 0 次
+
+**背景**：并行 PR 各自添加 migration 并应用到共享 PostgreSQL，但 selfcheck.js 的 `EXPECTED_SCHEMA_VERSION` 没有同步更新。Brain 重启时 selfcheck 检测到 DB 版本 136 > 代码期望 135，FATAL 退出。
+
+**教训**：
+- 每个添加 migration 的 PR 必须同步更新 `EXPECTED_SCHEMA_VERSION` 和相关测试断言
+- 主仓库 main 可能落后于 origin/main，`git pull` 前先确认差距
+- 并行 agent 可能在不同 worktree 创建同编号 migration，先到先得
+
+**修复模式**：检查 `schema_version` 表最大版本 → 对齐 selfcheck → 补录缺失的 migration 文件
+
 ### [2026-03-07] detectDomain：大写缩写词边界匹配 + 优先级覆盖逻辑（PR #625, Brain v1.204.0）
 
 **失败统计**：CI 手动触发 2 次（PR 未自动触发 pull_request 事件），本地测试失败 2 次
