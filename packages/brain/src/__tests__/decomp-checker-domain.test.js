@@ -1,8 +1,9 @@
 /**
  * decomp-checker-domain.test.js
  *
- * 测试 createInitiativePlanTask 的 domain 继承逻辑。
- * Initiative.domain → initiative_plan task.domain
+ * 测试 createInitiativePlanTask 的 domain 参数传递逻辑。
+ * domain 由 checkReadyKRInitiatives 从 p.domain 读取后作为参数传入，
+ * 不在函数内部做额外 SELECT 查询。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -40,108 +41,92 @@ describe('createInitiativePlanTask - domain 继承', () => {
   });
 
   it('Initiative domain=coding → 创建的 task.domain=coding', async () => {
-    // 第 1 次调用：SELECT domain FROM projects → coding
-    mockQuery.mockResolvedValueOnce({ rows: [{ domain: 'coding' }] });
-    // 第 2 次调用：INSERT tasks → 返回带 domain 的任务
+    // 只有 1 次 INSERT 调用（domain 作为参数传入，不做额外 SELECT）
     mockQuery.mockResolvedValueOnce(makeInsertResult('coding'));
 
     const task = await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: 'coding',
     });
 
     expect(task.domain).toBe('coding');
 
-    // 验证 INSERT 调用中包含 domain 参数（$5 = 'coding'）
-    const insertCall = mockQuery.mock.calls[1];
+    // 验证 INSERT 调用中包含 domain 参数（$6 = domain）
+    const insertCall = mockQuery.mock.calls[0];
     expect(insertCall[1]).toContain('coding'); // params array contains 'coding'
   });
 
   it('Initiative domain=product → task.domain=product', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ domain: 'product' }] });
     mockQuery.mockResolvedValueOnce(makeInsertResult('product'));
 
     const task = await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: 'product',
     });
 
     expect(task.domain).toBe('product');
   });
 
   it('Initiative domain=null → task.domain=null', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ domain: null }] });
     mockQuery.mockResolvedValueOnce(makeInsertResult(null));
 
     const task = await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: null,
     });
 
     expect(task.domain).toBeNull();
   });
 
   it('Initiative 不存在（空行）→ domain=null，任务仍创建', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // no initiative found
+    // domain=null 传入时直接创建任务，不依赖 SELECT 查询
     mockQuery.mockResolvedValueOnce(makeInsertResult(null));
 
     const task = await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: null,
     });
 
     expect(task).toBeDefined();
     expect(task.domain).toBeNull();
   });
 
-  it('domain 查询报错时 → 降级为 null，任务仍创建', async () => {
-    mockQuery.mockRejectedValueOnce(new Error('DB connection failed'));
-    mockQuery.mockResolvedValueOnce(makeInsertResult(null));
-
-    const task = await createInitiativePlanTask({
-      initiativeId: INITIATIVE_ID,
-      krId: KR_ID,
-      initiativeName: INITIATIVE_NAME,
-    });
-
-    expect(task).toBeDefined();
-    // domain 查询失败时 fallback 为 null
-    const insertParams = mockQuery.mock.calls[1][1];
-    expect(insertParams[4]).toBeNull(); // $5 parameter = domain
-  });
-
   it('task description 包含 domain 上下文（当 domain 有值时）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ domain: 'quality' }] });
     mockQuery.mockResolvedValueOnce(makeInsertResult('quality'));
 
     await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: 'quality',
     });
 
     // description 参数（$2）应包含 domain 信息
-    const insertParams = mockQuery.mock.calls[1][1];
+    const insertParams = mockQuery.mock.calls[0][1];
     const description = insertParams[1];
     expect(description).toContain('quality');
     expect(description).toContain('domain');
   });
 
   it('INSERT SQL 包含 domain 列', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ domain: 'coding' }] });
     mockQuery.mockResolvedValueOnce(makeInsertResult('coding'));
 
     await createInitiativePlanTask({
       initiativeId: INITIATIVE_ID,
       krId: KR_ID,
       initiativeName: INITIATIVE_NAME,
+      domain: 'coding',
     });
 
-    const insertSql = mockQuery.mock.calls[1][0];
+    const insertSql = mockQuery.mock.calls[0][0];
     expect(insertSql).toContain('domain');
     expect(insertSql).toContain('RETURNING id, title, domain');
   });

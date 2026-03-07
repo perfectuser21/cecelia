@@ -40,19 +40,19 @@ describe('actions.js - domain 自动填充', () => {
       expect(params).toContain('coding');
     });
 
-    it('不传 domain 时 domain 写 NULL（createTask 无自动检测）', async () => {
-      const fakeTask = { id: 'task-2', title: 'fix bug', status: 'queued' };
+    it('不传 domain 时标题无匹配关键词则 domain 写 NULL', async () => {
+      const fakeTask = { id: 'task-2', title: '随机任务', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });
       mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
 
       await createTask({
-        title: 'fix bug in API',
+        title: '随机任务名称无关键词',
         goal_id: 'goal-1',
         task_type: 'dev',
       });
 
       const params = mockQuery.mock.calls[1][1];
-      // createTask 不自动检测 domain，不传则写 null
+      // 标题无 domain 关键词时 detectDomain confidence=0，domain 写 null
       const domainParam = params[params.length - 1];
       expect(domainParam).toBeNull();
     });
@@ -96,11 +96,11 @@ describe('actions.js - domain 自动填充', () => {
       expect(params).toContain('vp_qa');
     });
 
-    it('不传 domain 时 domain/owner_role 写 NULL（createGoal 无自动检测）', async () => {
-      const fakeGoal = { id: 'goal-y', title: 'agent OKR', type: 'mission' };
+    it('不传 domain 时标题无匹配关键词则 domain/owner_role 写 NULL', async () => {
+      const fakeGoal = { id: 'goal-y', title: '通用规划', type: 'mission' };
       mockQuery.mockResolvedValueOnce({ rows: [fakeGoal] });
 
-      await createGoal({ title: 'Brain agent dispatch OKR' });
+      await createGoal({ title: '通用年度规划目标' });
 
       const params = mockQuery.mock.calls[0][1];
       // createGoal 不自动检测 domain，不传则 domain/owner_role 均写 null

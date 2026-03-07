@@ -127,21 +127,18 @@ describe('decomposition-checker v2.0', () => {
         rows: [{ id: 'kr-1', title: 'Ready KR', status: 'ready' }]
       });
 
-      // Find initiatives under this KR
+      // Find initiatives under this KR (no domain)
       pool.query.mockResolvedValueOnce({
         rows: [{
           id: 'init-1', name: 'Test Initiative', status: 'active',
-          active_tasks: '0', running_tasks: '0'
+          active_tasks: '0', running_tasks: '0', domain: null
         }]
       });
 
       // hasExistingInitiativePlanTask: no existing task
       pool.query.mockResolvedValueOnce({ rows: [] });
 
-      // createInitiativePlanTask: SELECT domain FROM projects（domain 继承查询）
-      pool.query.mockResolvedValueOnce({ rows: [{ domain: null }] });
-
-      // createInitiativePlanTask: INSERT returns new task
+      // createInitiativePlanTask: INSERT returns new task (domain passed as param, no extra SELECT)
       pool.query.mockResolvedValueOnce({ rows: [{ id: 'task-new', title: 'Initiative 规划: Test Initiative' }] });
 
       const actions = await checkReadyKRInitiatives();
@@ -208,6 +205,102 @@ describe('decomposition-checker v2.0', () => {
 
       const actions = await checkReadyKRInitiatives();
       expect(actions.length).toBe(0);
+    });
+  });
+
+  // ─── domain-aware routing: createInitiativePlanTask ───
+
+  describe('domain-aware routing: createInitiativePlanTask', () => {
+    it('domain=coding → creates architecture_design task type', async () => {
+      const { createInitiativePlanTask } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-arch', title: 'Initiative 规划: Coding Init' }]
+      });
+
+      await createInitiativePlanTask({
+        initiativeId: 'init-coding',
+        krId: 'kr-1',
+        initiativeName: 'Coding Init',
+        domain: 'coding',
+      });
+
+      const insertCall = pool.query.mock.calls[0];
+      // $5 in the VALUES tuple is task_type
+      expect(insertCall[1][4]).toBe('architecture_design');
+    });
+
+    it('domain=research → creates initiative_plan with target skill in description', async () => {
+      const { createInitiativePlanTask } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-research', title: 'Initiative 规划: Research Init' }]
+      });
+
+      await createInitiativePlanTask({
+        initiativeId: 'init-research',
+        krId: 'kr-1',
+        initiativeName: 'Research Init',
+        domain: 'research',
+      });
+
+      const insertCall = pool.query.mock.calls[0];
+      // task_type stays initiative_plan
+      expect(insertCall[1][4]).toBe('initiative_plan');
+      // description ($2) should contain the skill hint
+      const description = insertCall[1][1];
+      expect(description).toContain('/research');
+    });
+
+    it('domain=null → creates initiative_plan, no skill injected', async () => {
+      const { createInitiativePlanTask } = await import('../decomposition-checker.js');
+
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-null', title: 'Initiative 规划: Plain Init' }]
+      });
+
+      await createInitiativePlanTask({
+        initiativeId: 'init-plain',
+        krId: 'kr-1',
+        initiativeName: 'Plain Init',
+        domain: null,
+      });
+
+      const insertCall = pool.query.mock.calls[0];
+      expect(insertCall[1][4]).toBe('initiative_plan');
+      const description = insertCall[1][1];
+      expect(description).not.toContain('目标 Skill');
+    });
+
+    it('Check B passes domain from initiative row', async () => {
+      const { checkReadyKRInitiatives } = await import('../decomposition-checker.js');
+
+      // Find ready KRs
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'kr-1', title: 'Coding KR', status: 'ready' }]
+      });
+
+      // Find initiatives with domain=coding
+      pool.query.mockResolvedValueOnce({
+        rows: [{
+          id: 'init-coding', name: 'Coding Init', status: 'active',
+          active_tasks: '0', running_tasks: '0', domain: 'coding'
+        }]
+      });
+
+      // hasExistingInitiativePlanTask → no existing
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // INSERT returns new task
+      pool.query.mockResolvedValueOnce({
+        rows: [{ id: 'task-arch', title: 'Initiative 规划: Coding Init' }]
+      });
+
+      await checkReadyKRInitiatives();
+
+      // The INSERT call should use architecture_design task type
+      const insertCall = pool.query.mock.calls[3];
+      expect(insertCall[1][4]).toBe('architecture_design');
     });
   });
 
