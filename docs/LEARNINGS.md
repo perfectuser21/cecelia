@@ -1,5 +1,28 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] task-generator 去重机制：避免重复生成已有任务（PR #604, Brain v1.202.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**背景**：每日代码质量扫描触发后，若上轮生成的任务仍在 queued/in_progress，新一轮会重复生成相同任务，浪费资源且造成 task 表冗余。
+
+**实现方案**：两层去重
+
+1. **活跃任务去重**（`tasks` 表）：查询 `status IN ('queued', 'in_progress')` 且 `metadata->>'module_path' IS NOT NULL` 的任务
+2. **7 天历史去重**（`scan_results JOIN tasks`）：联查 7 天内已创建且 `status NOT IN ('completed', 'failed', 'cancelled')` 的记录
+3. 两者合并为 `existingTasks` 列表，传入 `generateTasks(issues, fn, existingTasks)` 第三参数
+4. `ScannerScheduler.generateTasks` 用 `Set<module_path:issue_type>` 在排序前过滤，DB 失败时降级（空 existingTasks 继续执行）
+
+**测试设计经验**：
+
+- `makePool(responses=[])` 辅助函数，按顺序为多次 `pool.query()` 返回不同值，避免多次 `mockReturnValueOnce` 链式调用
+- `makeIssue` 的 `scanner` 字段必须与 `ScannerScheduler` 中注册的 scanner 名字一致（例 `'coverage'`），否则 `scanners.find(s => s.getName() === issue.scanner)` 返回 undefined，`generateTask` 永远不会被调用，任务为空
+- 更新现有测试时，新增 DB 查询改变了 `pool.query.mock.calls` 的索引：用 `calls.find(([sql]) => sql.includes('INSERT INTO tasks'))` 动态定位，比 `calls[0]` / `calls[2]` 硬编码更健壮
+
+**关于 NOT IN vs IN 用法**：
+- 活跃任务去重用 `IN ('queued', 'in_progress')`（枚举需要拦截的状态）
+- 历史去重用 `NOT IN ('completed', 'failed', 'cancelled')`（排除终态）—— 两种场景语义不同，前者是"现在正在处理的"，后者是"还没结束的"
+
 ### [2026-03-07] task-generator INSERT 缺字段导致孤儿任务（PR #597, Brain v1.201.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
