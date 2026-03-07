@@ -1422,6 +1422,46 @@ router.get('/alertness/healing', async (req, res) => {
   }
 });
 
+// ==================== Blocked Tasks API ====================
+
+/**
+ * GET /api/brain/tasks/blocked
+ * 查询当前所有 blocked 任务
+ */
+router.get('/tasks/blocked', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, status, task_type, priority,
+             blocked_at, blocked_reason, blocked_until,
+             updated_at
+      FROM tasks
+      WHERE status = 'blocked'
+      ORDER BY blocked_until ASC NULLS LAST
+    `);
+    res.json({ success: true, tasks: result.rows, count: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get blocked tasks', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:taskId/unblock
+ * 手动解除任务阻塞，释放回 queued
+ */
+router.post('/tasks/:taskId/unblock', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { unblockTask } = await import('./task-updater.js');
+    const result = await unblockTask(taskId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json({ success: true, task: result.task });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unblock task', details: err.message });
+  }
+});
+
 // ==================== Quarantine API ====================
 
 /**
@@ -3032,19 +3072,22 @@ router.post('/execution-callback', async (req, res) => {
         const strategy = classification.retry_strategy;
 
         if (strategy && strategy.should_retry) {
-          // Smart retry: requeue with next_run_at
+          // Smart retry: 标记为 blocked（等待 TTL 自动释放），而非立即重入队列
           const retryCount = (taskPayload.failure_count || 0) + 1;
           await pool.query(
-            `UPDATE tasks SET status = 'queued', started_at = NULL,
-             payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+            `UPDATE tasks SET status = 'blocked',
+             blocked_at = NOW(),
+             blocked_reason = $2,
+             blocked_until = $3,
+             started_at = NULL,
+             payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb
              WHERE id = $1 AND status = 'failed'`,
-            [task_id, JSON.stringify({
-              next_run_at: strategy.next_run_at,
+            [task_id, classification.class, strategy.next_run_at, JSON.stringify({
               failure_count: retryCount,
               smart_retry: { class: classification.class, attempt: retryCount, scheduled_at: strategy.next_run_at },
             })]
           );
-          console.log(`[execution-callback] Smart retry: task=${task_id} class=${classification.class} next_run_at=${strategy.next_run_at}`);
+          console.log(`[execution-callback] Task blocked: task=${task_id} class=${classification.class} blocked_until=${strategy.next_run_at}`);
           failureHandled = true;
 
           // Spending cap: 标记账号级 spending cap（不全局阻塞，降级链自动换号）
