@@ -14,6 +14,7 @@
 /* global console */
 import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
+import { blockTask } from './task-updater.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
 import { broadcast } from './websocket.js';
@@ -124,14 +125,16 @@ const actionHandlers = {
   },
 
   /**
-   * 标记任务为阻塞（记录阻塞原因）
+   * 标记任务为阻塞（记录阻塞原因及所有 blocked_* 字段）
    */
   async mark_task_blocked(params, context) {
-    const result = await updateTask({
-      task_id: params.task_id,
-      status: 'blocked'
+    const reason = params.reason || 'other';
+    const result = await blockTask(params.task_id, {
+      reason,
+      detail: params.detail || null,
+      until: params.until || null,
     });
-    return { success: result.success, reason: params.reason };
+    return { success: result.success, reason };
   },
 
   /**

@@ -58,6 +58,7 @@ import crypto from 'crypto';
 import { readFileSync, readdirSync } from 'fs';
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, getPendingActions, approvePendingAction, rejectPendingAction, addProposalComment, selectProposalOption, expireStaleProposals } from './decision-executor.js';
+import { blockTask, unblockTask } from './task-updater.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from './proposal.js';
 import { generateTaskEmbeddingAsync } from './embedding-service.js';
 import { handleChat, handleChatStream } from './orchestrator-chat.js';
@@ -349,7 +350,8 @@ router.get('/status/full', async (req, res) => {
           COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = $1::date) AS completed_today,
           COUNT(*) FILTER (WHERE status = 'failed' AND updated_at::date = $1::date) AS failed_today,
           COUNT(*) FILTER (WHERE status = 'queued') AS queued,
-          COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress
+          COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+          COUNT(*) FILTER (WHERE status = 'blocked') AS blocked
         FROM tasks
       `, [today])
     ]);
@@ -375,7 +377,8 @@ router.get('/status/full', async (req, res) => {
         completed_today: parseInt(taskRow.completed_today || 0),
         failed_today: parseInt(taskRow.failed_today || 0),
         queued: parseInt(taskRow.queued || 0),
-        in_progress: parseInt(taskRow.in_progress || 0)
+        in_progress: parseInt(taskRow.in_progress || 0),
+        blocked_tasks_count: parseInt(taskRow.blocked || 0)
       },
       task_queue: {
         queued: parseInt(taskRow.queued || 0)
@@ -8853,6 +8856,51 @@ router.post('/desires/:id/respond', async (req, res) => {
   } catch (err) {
     console.error('[API] desires/:id/respond error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/tasks/blocked
+ * 返回所有 blocked 状态任务，含 blocked_* 字段
+ */
+router.get('/tasks/blocked', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, title, status, priority, task_type,
+             blocked_at, blocked_reason, blocked_detail, blocked_until,
+             created_at, updated_at
+      FROM tasks
+      WHERE status = 'blocked'
+      ORDER BY blocked_at DESC NULLS LAST
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get blocked tasks', details: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/unblock
+ * 手动解除任务阻塞状态，恢复为 queued
+ */
+router.post('/tasks/:id/unblock', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const taskResult = await pool.query('SELECT id, status FROM tasks WHERE id = $1', [id]);
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'task not found' });
+    }
+    const task = taskResult.rows[0];
+    if (task.status !== 'blocked') {
+      return res.status(400).json({
+        error: `task status is '${task.status}', only 'blocked' tasks can be unblocked`,
+        current_status: task.status
+      });
+    }
+    const result = await unblockTask(id);
+    res.json({ success: true, task_id: id, previous_status: 'blocked', task: result.task });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unblock task', details: err.message });
   }
 });
 

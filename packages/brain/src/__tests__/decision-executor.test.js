@@ -207,9 +207,9 @@ describe('decision-executor', () => {
 
     describe('mark_task_blocked', () => {
       it('should update task status to blocked', async () => {
-        const result = await actionHandlers.mark_task_blocked({ task_id: 'test-id', reason: 'dependency missing' }, {});
+        const result = await actionHandlers.mark_task_blocked({ task_id: 'test-id', reason: 'dependency' }, {});
         expect(result.success).toBe(true);
-        expect(result.reason).toBe('dependency missing');
+        expect(result.reason).toBe('dependency');
       });
     });
 

@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask } from './actions.js';
+import { unblockExpiredTasks } from './task-updater.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
@@ -1726,6 +1727,9 @@ async function executeTick() {
     `);
     allGoalIds = allGoalsResult.rows.map(r => r.id);
   }
+
+  // 自动解除过期 blocked 任务（必须在 early-return 之前，即使无活跃目标也要执行）
+  await unblockExpiredTasks();
 
   // Fix: 无活跃目标时直接返回，避免 SQL OR '{}' 条件导致返回全部任务
   if (allGoalIds.length === 0) {
