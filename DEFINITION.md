@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.205.0
+**Brain 版本**: 1.205.1
 
 **状态**: 生产运行中
 
@@ -415,6 +415,7 @@ queued → in_progress → completed
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构师 (/architect) | Opus / - | 默认 anthropic |
+| strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
 
 ---
 
