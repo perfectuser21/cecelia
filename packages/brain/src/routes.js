@@ -8986,6 +8986,62 @@ router.get('/tasks/:id/ci-diagnosis', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/tasks/:id/block
+ * 手动阻塞任务（临时暂停调度，等待条件就绪后自动或手动恢复）
+ * 请求体：{ reason, detail, until }
+ */
+router.post('/tasks/:id/block', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason = 'manual', detail = null, until = null } = req.body || {};
+
+    const { blockTask } = await import('./task-updater.js');
+    const result = await blockTask(id, { reason, detail, until: until ? new Date(until) : null });
+
+    if (!result.success) {
+      return res.status(404).json({ error: result.error });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      status: 'blocked',
+      reason,
+      blocked_until: result.task?.blocked_until || null,
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/block error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/tasks/:id/unblock
+ * 手动解除任务阻塞，状态回 queued
+ */
+router.post('/tasks/:id/unblock', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { unblockTask } = await import('./task-updater.js');
+    const result = await unblockTask(id);
+
+    if (!result.success) {
+      return res.status(404).json({ error: result.error });
+    }
+
+    res.json({
+      success: true,
+      task_id: id,
+      status: 'queued',
+    });
+  } catch (err) {
+    console.error('[API] tasks/:id/unblock error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/tasks/:id/dispatch
  * 手动派发单个任务（用户从前端点击"派发"按钮）
  * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
