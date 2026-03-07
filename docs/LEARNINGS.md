@@ -1,5 +1,29 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] task-generator INSERT 缺字段导致孤儿任务（PR #597, Brain v1.201.0）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**问题根因**：
+- `task-generator-scheduler.js` INSERT 语句只有 6 个参数（title/desc/priority/status/tags/metadata）
+- 缺少 `project_id`/`goal_id`/`task_type` 三列，导致这些列为 NULL
+- `planNextTask()` 按 `project_id` 过滤任务，NULL project_id 的任务永远不会被选中
+- 扫描器产物进入数据库后从未被调度，是"隐形孤儿任务"
+
+**修复方案**：
+- INSERT 新增 `$7/$8/$9` = `TASK_GENERATOR_PROJECT_ID`/`TASK_GENERATOR_GOAL_ID`/`'dev'`
+- 环境变量缺失时传 null（打警告日志），task_type 始终为 `'dev'`
+- 新增 `getScanStatus()` 追踪扫描统计，暴露为 `GET /api/brain/scan-status`
+
+**测试陷阱**：
+- `TASK_GENERATOR_PROJECT_ID` 是模块级常量（import 时读取），必须在 `vi.resetModules()` + 动态 `import()` **之前**设置 `process.env`
+- `vi.hoisted()` 只能用于 mock，不能用于环境变量设置
+
+**worktree 恢复教训**：
+- worktree 被意外删除后，EnterWorktree 工具可以在新路径重建
+- 所有代码修改必须在 worktree 内完成，主仓库保持干净
+- .brain-versions 格式是纯文本（最后一行是版本号），不是 JSON
+
 ### [2026-03-07] webhook pr_url 匹配设计：两步查询（PR #596, Brain v1.200.8）
 
 **失败统计**：CI 失败 0 次，本地测试失败 1 次
