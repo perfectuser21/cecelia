@@ -50,6 +50,7 @@ const MAX_CONCURRENT_TASKS = MAX_SEATS;
 const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
+const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -101,6 +102,7 @@ let _lastKrProgressSyncTime = 0; // track last KR progress sync time
 let _lastHeartbeatTime = 0; // track last heartbeat inspection time
 let _lastGoalEvalTime = 0; // track last goal outer loop evaluation time
 let _lastReportTime = 0; // track last 48h system report generation time
+let _lastZombieCleanupTime = 0; // track last zombie resource cleanup time
 
 const GOAL_EVAL_INTERVAL_MS = parseInt(process.env.CECELIA_GOAL_EVAL_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10); // 24 hours
 const REPORT_INTERVAL_MS = parseInt(process.env.CECELIA_REPORT_INTERVAL_MS || String(48 * 60 * 60 * 1000), 10); // 48 hours
@@ -1361,6 +1363,21 @@ async function executeTick() {
     console.error('[tick] Pending followup check failed:', followupErr.message);
   }
 
+  // 0.4.5. Zombie resource cleanup: 每 20 分钟清理一次 stale slots + 孤儿 worktrees
+  const zombieElapsed = Date.now() - _lastZombieCleanupTime;
+  if (zombieElapsed >= ZOMBIE_CLEANUP_INTERVAL_MS) {
+    try {
+      const { runZombieCleanup } = await import('./zombie-cleaner.js');
+      const zombieResult = await runZombieCleanup(pool);
+      _lastZombieCleanupTime = Date.now();
+      if (zombieResult.slotsReclaimed > 0 || zombieResult.worktreesRemoved > 0) {
+        console.log(`[tick] Zombie cleanup: slots=${zombieResult.slotsReclaimed} worktrees=${zombieResult.worktreesRemoved}`);
+      }
+    } catch (zombieErr) {
+      console.error('[tick] Zombie cleanup failed (non-fatal):', zombieErr.message);
+    }
+  }
+
   // 0.5. Periodic cleanup: run once per CLEANUP_INTERVAL_MS (default 1 hour)
   const cleanupElapsed = Date.now() - _lastCleanupTime;
   if (cleanupElapsed >= CLEANUP_INTERVAL_MS) {
@@ -2465,6 +2482,7 @@ async function getStartupErrors() {
 function _resetLastExecuteTime() { _lastExecuteTime = 0; }
 /** Reset cleanup timer — for testing only */
 function _resetLastCleanupTime() { _lastCleanupTime = 0; }
+function _resetLastZombieCleanupTime() { _lastZombieCleanupTime = 0; }
 /** Reset Layer 2 health check timer — for testing only */
 function _resetLastHealthCheckTime() { _lastHealthCheckTime = 0; }
 /** Reset KR progress sync timer — for testing only */
@@ -2543,9 +2561,11 @@ export {
   AUTO_DISPATCH_MAX,
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
+  ZOMBIE_CLEANUP_INTERVAL_MS,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
+  _resetLastZombieCleanupTime,
   _resetLastHealthCheckTime,
   _resetLastKrProgressSyncTime,
   _resetLastHeartbeatTime,
