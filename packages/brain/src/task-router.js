@@ -6,7 +6,10 @@
  * 2. Location routing based on task_type (US/HK)
  * 3. Routing failure detection and fallback strategies
  * 4. KR dispatch diagnostics (diagnoseKR)
+ * 5. Domain-aware skill routing via getDomainSkillOverride
  */
+
+import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
 
 // Valid task types (for failure detection)
 const VALID_TASK_TYPES = [
@@ -14,8 +17,7 @@ const VALID_TASK_TYPES = [
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'suggestion_plan', 'architecture_design',
-  'strategy_session'
+  'suggestion_plan', 'architecture_design', 'strategy_session'
 ];
 
 // Skill whitelist based on task type
@@ -104,7 +106,7 @@ const LOCATION_MAP = {
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
   'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect)
-  'strategy_session': 'us',   // C-Suite 战略会议 → US (Opus + /strategy-session)
+  'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)
@@ -183,6 +185,41 @@ function determineExecutionMode({ input, feature_id, is_recurring }) {
 }
 
 /**
+ * Get domain-based skill override for a task type.
+ *
+ * When a task has a known domain, this function returns the primary skill
+ * for that domain's owner role, overriding the default task_type routing.
+ *
+ * Rules:
+ * - null/undefined domain → null (fallback to task_type routing)
+ * - domain=coding + task_type=dev → null (use default /dev, no override)
+ * - other domain → look up DOMAIN_TO_ROLE → ROLES[role].skills[0]
+ * - unknown domain or role with no skills → null
+ *
+ * @param {string} taskType - Task type (e.g. 'dev', 'review')
+ * @param {string|null} domain - Business domain (e.g. 'coding', 'product', 'quality')
+ * @returns {string|null} - Skill override (e.g. '/plan', '/qa') or null
+ */
+function getDomainSkillOverride(taskType, domain) {
+  if (!domain || typeof domain !== 'string') return null;
+
+  const domainLower = domain.toLowerCase();
+
+  // coding domain: use default task_type routing (no override)
+  if (domainLower === 'coding') return null;
+
+  // Look up the owner role for this domain
+  const roleId = DOMAIN_TO_ROLE[domainLower];
+  if (!roleId) return null;
+
+  const role = ROLES[roleId];
+  if (!role || !Array.isArray(role.skills) || role.skills.length === 0) return null;
+
+  // Return the primary skill for this domain's role
+  return role.skills[0];
+}
+
+/**
  * Route task to appropriate location and execution mode
  * @param {Object} taskData - Task data
  * @returns {Object} - Routing decision
@@ -196,7 +233,8 @@ function routeTaskCreate(taskData) {
     kr_id,
     initiative_id,
     project_id,
-    task_id
+    task_id,
+    domain
   } = taskData;
 
   const location = getTaskLocation(task_type);
@@ -205,19 +243,26 @@ function routeTaskCreate(taskData) {
     feature_id,
     is_recurring
   });
-  const skill = SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
+
+  // Domain-aware skill routing: override if domain provides a specific skill
+  const domainSkill = getDomainSkillOverride(task_type, domain);
+  const skill = domainSkill || SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
 
   const routing = {
     location,
     execution_mode: executionMode,
     task_type,
     skill,
-    routing_reason: `task_type=${task_type} → location=${location}, execution_mode=${executionMode}`
+    domain: domain || null,
+    routing_reason: domain
+      ? `domain=${domain} → skill=${skill}, task_type=${task_type} → location=${location}`
+      : `task_type=${task_type} → location=${location}, execution_mode=${executionMode}`
   };
 
   // Enhanced log: include all available context for traceability
   const logCtx = [
     `task_type=${task_type}`,
+    domain ? `domain=${domain}` : null,
     `location=${location}`,
     `skill=${skill}`,
     `execution_mode=${executionMode}`,
@@ -594,6 +639,7 @@ export {
   identifyWorkType,
   getTaskLocation,
   determineExecutionMode,
+  getDomainSkillOverride,
   routeTaskCreate,
   routeTaskWithFallback,
   detectRoutingFailure,

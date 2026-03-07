@@ -199,8 +199,8 @@ export const AGENTS = [
   },
   {
     id: 'strategy_session',
-    name: 'C-Suite 战略会议',
-    description: 'C-Suite 角色模拟战略讨论，产出 KR 并写入 goals 表',
+    name: '战略会议',
+    description: 'C-Suite 模拟讨论，输出带 domain 的 KR',
     layer: 'executor',
     allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
     recommended_model: 'claude-opus-4-6',

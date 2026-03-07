@@ -1,11 +1,12 @@
 ---
 name: weibo-publisher
-description: 微博自动发布工具 - 图文发布（CDP 直连方式，含验证码处理）
+description: 微博自动发布工具 - 图文发布（生产就绪）
 trigger: 发布微博、weibo、微博发布
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-07
 updated: 2026-03-07
 changelog:
+  - 1.1.0: 提取 CDPClient 为独立可测试模块，增加单元测试覆盖率
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式，含滑块验证码自动处理
 ---
 

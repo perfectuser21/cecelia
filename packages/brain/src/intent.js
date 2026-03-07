@@ -194,6 +194,115 @@ const INTENT_PHRASES = {
 };
 
 /**
+ * Domain keywords for Stage 0.5 domain detection
+ * Maps domain names to their associated keywords
+ */
+const DOMAIN_KEYWORDS = {
+  coding: ['代码', '开发', 'bug', 'CI', '工程', '架构', 'API', '重构', '测试', 'PR', '依赖'],
+  product: ['产品', '需求', 'PRD', '用户体验', '功能设计', '交互'],
+  growth: ['增长', '营销', 'SEO', '运营', '推广', '转化', '内容'],
+  finance: ['财务', '预算', '成本', '收入', '报表'],
+  research: ['调研', '分析', '研究', '市场调查', '竞品', '数据分析'],
+  quality: ['质量', 'QA', '测试覆盖', '回归', '稳定性'],
+  security: ['安全', '漏洞', '权限', '认证', '加密', '合规'],
+  operations: ['运维', '部署', '监控', '日志', '告警', 'DevOps', '基础设施'],
+  knowledge: ['知识', '文档', '笔记', '整理', '总结', '知识库'],
+  agent_ops: ['Agent', 'LLM', '调度', '任务派发', 'Cecelia', 'Brain', '自动化']
+};
+
+/**
+ * Domain to owner_role mapping
+ */
+const DOMAIN_OWNER_MAP = {
+  coding: 'cto',
+  product: 'cpo',
+  growth: 'cmo',
+  finance: 'cfo',
+  research: 'vp_research',
+  quality: 'vp_qa',
+  security: 'cto',
+  operations: 'coo',
+  knowledge: 'vp_knowledge',
+  agent_ops: 'vp_agent_ops'
+};
+
+/**
+ * Priority order for domain resolution when multiple domains match
+ * When any domain in this list matches, it overrides lower-priority domains.
+ * Order: agent_ops beats all listed below, quality beats security+coding, etc.
+ */
+const DOMAIN_PRIORITY = ['coding', 'security', 'quality', 'agent_ops'];
+
+/**
+ * Match a single keyword against input.
+ * All-uppercase English abbreviations (PR, CI, API...) use word-boundary matching
+ * to avoid false substring matches (e.g. 'PR' must not match inside 'PRD').
+ * @param {string} input
+ * @param {string} kw
+ * @returns {boolean}
+ */
+function matchKeyword(input, kw) {
+  if (/^[A-Z]{2,5}$/.test(kw)) {
+    return new RegExp(`\\b${kw}\\b`).test(input);
+  }
+  return input.includes(kw);
+}
+
+/**
+ * Detect domain from natural language input (Stage 0.5)
+ *
+ * Priority rule: agent_ops > quality > security > coding.
+ * When any higher-priority domain has a keyword match, it wins regardless of count.
+ * Non-priority domains win over 'coding' when they match.
+ *
+ * @param {string} input - Natural language input
+ * @returns {{ domain: string, owner_role: string, matchedKeywords: string[] }}
+ */
+function detectDomain(input) {
+  const domainMatches = {};
+
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    const matched = keywords.filter(kw => matchKeyword(input, kw));
+    if (matched.length > 0) {
+      domainMatches[domain] = matched;
+    }
+  }
+
+  if (Object.keys(domainMatches).length === 0) {
+    return { domain: 'coding', owner_role: DOMAIN_OWNER_MAP['coding'], matchedKeywords: [] };
+  }
+
+  // Apply priority: agent_ops > quality > security (any match overrides everything below)
+  for (const p of ['agent_ops', 'quality', 'security']) {
+    if (domainMatches[p]) {
+      return { domain: p, owner_role: DOMAIN_OWNER_MAP[p], matchedKeywords: domainMatches[p] };
+    }
+  }
+
+  // Among non-priority domains (excluding coding), pick by highest match count
+  let winner = null;
+  let maxCount = 0;
+  for (const [domain, matched] of Object.entries(domainMatches)) {
+    if (DOMAIN_PRIORITY.includes(domain)) continue; // skip priority domains (handled above)
+    if (matched.length > maxCount) {
+      maxCount = matched.length;
+      winner = domain;
+    }
+  }
+
+  // Fall back to coding if no non-priority domain won
+  if (!winner) {
+    winner = 'coding';
+  }
+
+  return {
+    domain: winner,
+    owner_role: DOMAIN_OWNER_MAP[winner],
+    matchedKeywords: domainMatches[winner] || []
+  };
+}
+
+/**
  * Intent to Brain Action mapping
  * Maps each intent type to the corresponding brain action
  */
@@ -795,7 +904,10 @@ async function parseIntent(input) {
     params: buildActionParams(classification.type, trimmedInput, entities, projectName)
   } : null;
 
-  // Step 6: Build parsed intent object
+  // Step 6: Detect domain (Stage 0.5)
+  const domainResult = detectDomain(trimmedInput);
+
+  // Step 7: Build parsed intent object
   const parsedIntent = {
     originalInput: trimmedInput,
     intentType: classification.type,
@@ -807,10 +919,13 @@ async function parseIntent(input) {
     projectName,
     tasks,
     suggestedAction,
+    domain: domainResult.domain,
+    ownerRole: domainResult.owner_role,
+    domainKeywords: domainResult.matchedKeywords,
     prdDraft: null
   };
 
-  // Step 6: Generate PRD draft
+  // Step 8: Generate PRD draft
   parsedIntent.prdDraft = generatePrdDraft(parsedIntent);
 
   return parsedIntent;
@@ -876,8 +991,8 @@ async function parseAndCreate(input, options = {}) {
   if (createTasks) {
     for (const task of parsedIntent.tasks) {
       const newTask = await pool.query(`
-        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, trigger_source)
-        VALUES ($1, $2, $3, $4, $5, 'queued', 'user_headed')
+        INSERT INTO tasks (title, description, priority, project_id, goal_id, status, trigger_source, domain, owner_role)
+        VALUES ($1, $2, $3, $4, $5, 'queued', 'user_headed', $6, $7)
         ON CONFLICT DO NOTHING
         RETURNING *
       `, [
@@ -885,7 +1000,9 @@ async function parseAndCreate(input, options = {}) {
         task.description,
         task.priority,
         targetProjectId,
-        goalId
+        goalId,
+        parsedIntent.domain,
+        parsedIntent.ownerRole
       ]);
 
       if (newTask.rows.length > 0) {
@@ -914,6 +1031,9 @@ export {
   generateTrdDraft,
   buildActionParams,
   getSuggestedAction,
+  detectDomain,
+  DOMAIN_KEYWORDS,
+  DOMAIN_OWNER_MAP,
   parseIntent,
   parseAndCreate
 };

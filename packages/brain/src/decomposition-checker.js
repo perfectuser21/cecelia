@@ -69,8 +69,20 @@ async function hasExistingInitiativePlanTask(initiativeId) {
  * Called by Check B when an Initiative has no active tasks.
  */
 async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) {
+  // Inherit domain from the parent Initiative for domain-aware routing
+  let initiativeDomain = null;
+  try {
+    const initResult = await pool.query(
+      `SELECT domain FROM projects WHERE id = $1`,
+      [initiativeId]
+    );
+    initiativeDomain = initResult.rows[0]?.domain || null;
+  } catch (err) {
+    console.warn(`[decomp-checker] Failed to query initiative domain for ${initiativeId}:`, err.message);
+  }
+
   const title = `Initiative 规划: ${initiativeName}`;
-  const description = [
+  const descriptionLines = [
     `请为 Initiative「${initiativeName}」规划下一个 PR。`,
     '',
     '你的任务（initiative_plan 模式）：',
@@ -87,17 +99,20 @@ async function createInitiativePlanTask({ initiativeId, krId, initiativeName }) 
     `  - goal_id: ${krId || 'null'}（所属 KR）`,
     '  - task_type: dev',
     '  - priority: P1',
+    initiativeDomain ? `  - domain: ${initiativeDomain}（继承自 Initiative）` : null,
     '',
     `Initiative ID: ${initiativeId}`,
     `Initiative 名称: ${initiativeName}`,
     `所属 KR ID: ${krId || '(未知)'}`,
-  ].join('\n');
+    initiativeDomain ? `Initiative domain: ${initiativeDomain}` : null,
+  ].filter(line => line !== null);
+  const description = descriptionLines.join('\n');
 
   const result = await pool.query(`
-    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'brain_auto')
-    RETURNING id, title
-  `, [title, description, krId || null, initiativeId]);
+    INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source, domain)
+    VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'brain_auto', $5)
+    RETURNING id, title, domain
+  `, [title, description, krId || null, initiativeId, initiativeDomain]);
   return result.rows[0];
 }
 

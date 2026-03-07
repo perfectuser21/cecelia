@@ -362,7 +362,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
     task_type: event.failed_task?.task_type || event.task?.task_type,
     failure_class: event.failure_history?.[0]?.failure_classification?.class,
     event_type: event.type
-  }, 20);
+  }, 10);
 
   if (learnings.length > 0) {
     context.historical_learnings = learnings.map((l, i) => ({
@@ -678,7 +678,7 @@ async function searchRelevantAnalyses(context = {}, limit = 5) {
       analysis_depth, confidence_score, created_at, metadata
     FROM cortex_analyses
     ORDER BY created_at DESC
-    LIMIT 100
+    LIMIT 20
   `);
 
   // Score each analysis

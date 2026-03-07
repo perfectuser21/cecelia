@@ -998,6 +998,33 @@ async function handleTaskFailure(taskId) {
     // 更新本地对象
     task.payload = { ...task.payload, failure_count: newFailureCount, failure_classification: classification };
 
+    // 临时阻塞：BILLING_CAP → blockTask；RATE_LIMIT → blockTask 5min
+    if (classification.class === FAILURE_CLASS.BILLING_CAP) {
+      const { blockTask } = await import('./task-updater.js');
+      const errorStr = String(task.payload?.error_details || '');
+      const resetTime = parseResetTime(errorStr) || new Date(Date.now() + 2 * 60 * 60 * 1000);
+      const r = await blockTask(taskId, {
+        reason: 'billing_cap',
+        detail: errorStr.slice(0, 500),
+        until: resetTime,
+      });
+      console.log(`[quarantine] Task ${taskId} blocked (billing_cap) until ${resetTime.toISOString()}`);
+      return { blocked: true, reason: 'billing_cap', blocked_until: resetTime.toISOString(), result: r };
+    }
+
+    if (classification.class === FAILURE_CLASS.RATE_LIMIT) {
+      const { blockTask } = await import('./task-updater.js');
+      const errorStr = String(task.payload?.error_details || '');
+      const until = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      const r = await blockTask(taskId, {
+        reason: 'rate_limit',
+        detail: errorStr.slice(0, 500),
+        until,
+      });
+      console.log(`[quarantine] Task ${taskId} blocked (rate_limit) for 5min`);
+      return { blocked: true, reason: 'rate_limit', blocked_until: until.toISOString(), result: r };
+    }
+
     // 检查是否需要隔离
     const check = checkShouldQuarantine(task, 'on_failure');
 
