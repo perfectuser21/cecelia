@@ -721,7 +721,10 @@ describe('scanEvolutionIfNeeded', () => {
     });
 
     it('merged_at 日期正确提取为 date 字段', async () => {
-      const mergedAt = '2026-03-05T14:30:00Z';
+      // 使用相对时间（1小时前），确保始终在 2 天窗口内
+      const mergedAtDate = new Date(Date.now() - 60 * 60 * 1000);
+      const mergedAt = mergedAtDate.toISOString();
+      const expectedDate = mergedAt.slice(0, 10);
       const prs = [makePR({ number: 42, merged_at: mergedAt })];
 
       const insertArgs = [];
@@ -748,7 +751,7 @@ describe('scanEvolutionIfNeeded', () => {
 
       await scanEvolutionIfNeeded(pool);
       // date 是第 1 个参数（index 0）
-      expect(insertArgs[0]?.[0]).toBe('2026-03-05');
+      expect(insertArgs[0]?.[0]).toBe(expectedDate);
     });
   });
 
