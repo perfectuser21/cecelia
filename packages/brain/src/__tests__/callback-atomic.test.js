@@ -457,3 +457,81 @@ describe('execution-callback pr_number 提取 (DoD-4)', () => {
     expect(params[7]).toBeNull();
   });
 });
+
+describe('execution-callback failure_class 映射 (migration-134)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockPool.query.mockResolvedValue({ rows: [{ goal_id: null }], rowCount: 1 });
+  });
+
+  it('有效 failure_class=resource_killed 作为 $9 参数传给 SQL', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-fc-1',
+      run_id: 'run-fc-1',
+      status: 'AI Failed',
+      failure_class: 'resource_killed',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    expect(updateCall).toBeDefined();
+
+    const params = updateCall[1];
+    // $9 (failureClassValue) must be 'resource_killed'
+    expect(params[8]).toBe('resource_killed');
+    // SQL must include failure_class column update
+    expect(updateCall[0]).toContain('failure_class');
+  });
+
+  it('有效 failure_class=env_setup 作为 $9 参数传给 SQL', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-fc-2',
+      status: 'AI Failed',
+      failure_class: 'env_setup',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    const params = updateCall[1];
+    expect(params[8]).toBe('env_setup');
+  });
+
+  it('有效 failure_class=code_error 作为 $9 参数传给 SQL', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-fc-3',
+      status: 'AI Failed',
+      failure_class: 'code_error',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    const params = updateCall[1];
+    expect(params[8]).toBe('code_error');
+  });
+
+  it('无效 failure_class 值时 $9 为 null（防注入）', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-fc-bad',
+      status: 'AI Failed',
+      failure_class: 'invalid_value',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    const params = updateCall[1];
+    expect(params[8]).toBeNull();
+  });
+
+  it('failure_class 缺失时 $9 为 null', async () => {
+    await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-fc-missing',
+      status: 'AI Done',
+    });
+
+    const calls = mockClient.query.mock.calls;
+    const updateCall = calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
+    const params = updateCall[1];
+    expect(params[8]).toBeNull();
+  });
+});

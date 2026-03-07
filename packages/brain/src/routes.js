@@ -2665,7 +2665,8 @@ router.post('/execution-callback', async (req, res) => {
       result,
       pr_url,
       duration_ms,
-      iterations
+      iterations,
+      failure_class
     } = req.body;
 
     if (!task_id) {
@@ -2747,6 +2748,12 @@ router.post('/execution-callback', async (req, res) => {
         prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
       }
 
+      // Validate failure_class against allowed values
+      const VALID_FAILURE_CLASSES = ['resource_killed', 'env_setup', 'code_error'];
+      const failureClassValue = (failure_class && VALID_FAILURE_CLASSES.includes(failure_class))
+        ? failure_class
+        : null;
+
       await client.query(`
         UPDATE tasks
         SET
@@ -2759,9 +2766,10 @@ router.post('/execution-callback', async (req, res) => {
             || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
           pr_url = COALESCE($5::text, pr_url),
-          pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END
+          pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
+          failure_class = COALESCE($9::text, failure_class)
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, failureClassValue]);
 
       // Log the execution result
       await client.query(`
