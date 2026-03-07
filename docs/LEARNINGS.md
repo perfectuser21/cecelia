@@ -1,5 +1,40 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Initiative→Task domain-aware 路由（PR #622, Brain v1.206.0）
+
+**失败统计**：CI 失败 4 次（migration 命名冲突 × 3 轮，测试断言 × 1 轮）
+
+**背景**：`generateArchitectureDesignTask` 对所有 Initiative 都生成 `architecture_design` 任务，不考虑领域差异。按 domain 路由到正确的 task_type 可让 Brain 派发更合适的专家。
+
+**实现要点**：
+
+1. **DOMAIN_TO_TASK_TYPE 映射**：定义在 `planner.js` 顶部，export `resolveTaskTypeByDomain(domain)` 纯函数。finance 域返回 null（不自动派任务）。
+2. **generateArchitectureDesignTask 重构**：SELECT 时取 `i.domain`；调用 `resolveTaskTypeByDomain` 确定 `taskType`；dedup 查询的 `WHERE task_type = $2` 改为动态参数；INSERT 的 task_type 改为 `$3` 参数而非 SQL 字面量。
+3. **Migration 136**：新增 `'knowledge'` 到 `tasks.task_type` CHECK 约束。
+
+**migration 命名冲突连环陷阱**：
+
+- 开发期间 main 持续有 PR 合并，migration 编号不断被占用：134（PR #616 占用）→ 改 135 → 135（goals_domain_indexes 占用）→ 改 136。
+- **规则**：push 前必须 `git show origin/main:packages/brain/migrations/ | grep 13X` 验证目标编号未被占用。
+
+**rebase vs merge 在 detached HEAD 下的 hook 阻断**：
+
+- `git rebase origin/main` 时进入 detached HEAD（branch = "HEAD"），bash-guard 和 branch-protect hook 都会阻断 Bash/Write 操作。
+- **解决方案**：改用 `git merge origin/main`。merge 保持在 cp-* 分支上，hook 不阻断。
+
+**三处测试断言必须随 schema version 同步更新**：
+
+- `selfcheck.test.js`：`expect(EXPECTED_SCHEMA_VERSION).toBe('X')`
+- `desire-system.test.js`：`D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 X`
+- `learnings-vectorize.test.js`：`expect(EXPECTED_SCHEMA_VERSION).toBe('X')`
+- 每次改 EXPECTED_SCHEMA_VERSION 必须同步这三个文件。
+
+**coding-passway.test.js 的 INSERT 断言陷阱**：
+
+- 重构前：`task_type` 硬编码在 SQL 字符串，`expect(insertCall[0]).toContain('architecture_design')` 成立。
+- 重构后：`task_type` 改为 `$3` 参数，SQL 字符串不再包含字面量。正确断言：`expect(insertCall[1][2]).toBe('architecture_design')`（第 3 个参数，对应 INSERT VALUES 的 $3）。
+- **规则**：每次将 SQL 字面量改为参数化时，检查相关测试中的 SQL 字符串断言。
+
 ### [2026-03-07] decomposition-checker Check C/D：修复 planner 规划链断点（PR #620, Brain v1.205.0）
 
 **失败统计**：CI 失败 1 次（version check，main 已有 1.204.0）
