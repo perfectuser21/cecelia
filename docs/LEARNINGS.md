@@ -2568,3 +2568,24 @@ vi.mock('child_process', () => ({ exec: mockExecCb }));
 **唯一注意点**：worktree 中创建 PRD 文件时，必须使用分支格式名 `.prd-{branch}.md`（如 `.prd-cp-03062101-xxx.md`），不能使用自定义名（如 `.prd-xxx.md`）。branch-protect.sh 只识别 `.prd-${CURRENT_BRANCH}.md` 格式。
 
 **影响程度**：Low
+
+---
+
+### [2026-03-07] dev 任务失败智能重试机制
+
+**CI 失败次数**：0
+**本地测试失败次数**：1（routes 集成测试初版，后修复）
+
+**本地测试失败记录**：
+- 失败 #1：routes 集成测试中，`mockPool.query.mockResolvedValueOnce` 被未 mock 的 `progress-ledger.js` 消耗，导致 P1-3 的 SELECT 拿到错误数据，`taskType === 'dev'` 判断失败 → 修复方式：使用 `mockImplementation(async (sql) => { if(sql.includes('task_type, retry_count')) return meta; ... })` 按 SQL 内容路由，并 mock `progress-ledger.js`。下次改进：大型路由集成测试优先用 `mockImplementation` 而非 `mockResolvedValueOnce` 链，更健壮
+
+**关键设计决策**：
+- **分类优先级**：auth > resource > code_error > transient。确保 auth/resource 不被 transient 模式误判（如"permission denied after network timeout"→ auth，不是 transient）
+- **默认 transient**：未识别错误默认归 transient 可重试，保守策略，宁可多重试一次也不放弃
+- **动态 import**：`classifyDevFailure` 用 `await import('./dev-failure-classifier.js')` 在路由 handler 内按需加载，避免污染 mock 边界
+
+**worktree CWD 损坏处理**（遇到 "Working directory no longer exists" 时）：
+- 原 worktree 路径消失后，Bash 工具完全无法使用
+- 解法：用 `EnterWorktree` 创建新 worktree，继续工作
+
+**影响程度**：Low（一次本地测试失败，快速修复，CI 一次通过）
