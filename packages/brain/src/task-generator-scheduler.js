@@ -74,6 +74,35 @@ export async function triggerCodeQualityScan(pool) {
       return { triggered: true, issues: 0, tasks: 0 };
     }
 
+    // 查询已有活跃任务（去重）
+    let existingTasks = [];
+    try {
+      // 1. 从 tasks 表查询 queued/in_progress 状态的任务 metadata
+      const activeResult = await pool.query(
+        `SELECT metadata FROM tasks
+         WHERE status IN ('queued', 'in_progress')
+           AND metadata IS NOT NULL
+           AND metadata->>'module_path' IS NOT NULL`
+      );
+      existingTasks = activeResult.rows.map(r => r.metadata);
+
+      // 2. 从 scan_results 表查询过去 7 天内生成过任务且任务未完成的记录
+      const historyResult = await pool.query(
+        `SELECT DISTINCT sr.module_path, sr.issue_type
+         FROM scan_results sr
+         JOIN tasks t ON t.id = sr.task_id
+         WHERE sr.scanned_at > NOW() - INTERVAL '7 days'
+           AND sr.task_id IS NOT NULL
+           AND t.status NOT IN ('completed', 'failed', 'cancelled')`
+      );
+      // 将历史记录也加入去重集合
+      for (const row of historyResult.rows) {
+        existingTasks.push({ module_path: row.module_path, issue_type: row.issue_type });
+      }
+    } catch (dedupErr) {
+      console.warn('[task-generator] Failed to query existing tasks for dedup, skipping dedup:', dedupErr.message);
+    }
+
     // 生成任务
     const tasks = await scheduler.generateTasks(issues, async (taskData) => {
       // 创建任务到数据库，补充 project_id / goal_id / task_type
@@ -95,7 +124,7 @@ export async function triggerCodeQualityScan(pool) {
       );
 
       return result.rows[0]?.id;
-    });
+    }, existingTasks);
 
     console.log(`[task-generator] Generated ${tasks.length} tasks from ${issues.length} issues`);
 

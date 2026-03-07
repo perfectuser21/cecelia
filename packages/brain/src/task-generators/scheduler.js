@@ -67,14 +67,32 @@ class ScannerScheduler {
    * 将扫描问题转换为任务
    * @param {Array} issues 扫描问题列表
    * @param {Function} createTaskFn 创建任务的回调函数
+   * @param {Array} existingTasks 已有活跃任务的 metadata 列表（用于去重），每项含 module_path + issue_type
    * @returns {Promise<Array>} 生成的任务列表
    */
-  async generateTasks(issues, createTaskFn) {
+  async generateTasks(issues, createTaskFn, existingTasks = []) {
     const tasks = [];
     const maxTasks = this.options.maxTasksPerScan;
 
+    // 构建去重 Set：module_path:issue_type
+    const existingSet = new Set(
+      existingTasks
+        .filter(m => m && m.module_path && m.issue_type)
+        .map(m => `${m.module_path}:${m.issue_type}`)
+    );
+
+    // 过滤掉已有活跃任务的 issues
+    const dedupedIssues = issues.filter(issue => {
+      const key = `${issue.module_path}:${issue.issue_type}`;
+      if (existingSet.has(key)) {
+        console.log(`[task-generator] Skipping duplicate: ${issue.module_path} (${issue.issue_type})`);
+        return false;
+      }
+      return true;
+    });
+
     // 按优先级排序（high > medium > low）
-    const sortedIssues = [...issues].sort((a, b) => {
+    const sortedIssues = [...dedupedIssues].sort((a, b) => {
       const priority = { high: 0, medium: 1, low: 2 };
       return priority[a.severity || 'low'] - priority[b.severity || 'low'];
     });
