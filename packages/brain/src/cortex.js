@@ -176,6 +176,62 @@ const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
 /** 内存状态：eventHash → { count, firstSeen, lastSeen } */
 const _reflectionState = new Map();
 
+// ============================================================
+// 诊断输出去重（Diagnosis Output Dedup）
+// ============================================================
+
+const DIAGNOSIS_DEDUP_THRESHOLD = 3;   // 相同诊断出现 3 次后熔断
+const DIAGNOSIS_CACHE_SIZE = 50;       // 最多保留 50 条记录
+
+/** 最近诊断记录：[{ hash, timestamp }] */
+const _recentDiagnoses = [];
+
+/**
+ * 计算诊断输出哈希（root_cause 内容）
+ * @param {Object} decision - LLM 返回的决策
+ * @returns {string} 16字符 hex
+ */
+function _computeDiagnosisHash(decision) {
+  const key = String(decision.analysis?.root_cause ?? '');
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/**
+ * 记录一次诊断输出
+ * @param {Object} decision
+ * @returns {string} hash
+ */
+function _recordDiagnosis(decision) {
+  const hash = _computeDiagnosisHash(decision);
+  _recentDiagnoses.push({ hash, timestamp: Date.now() });
+  while (_recentDiagnoses.length > DIAGNOSIS_CACHE_SIZE) {
+    _recentDiagnoses.shift();
+  }
+  return hash;
+}
+
+/**
+ * 检查是否存在重复诊断输出（在时间窗口内同一诊断 >= 阈值次）
+ * @returns {{ repeated: boolean, hash?: string, count?: number }}
+ */
+function _isDiagnosisOutputRepeated() {
+  const now = Date.now();
+  const recent = _recentDiagnoses.filter(d => now - d.timestamp <= REFLECTION_WINDOW_MS);
+  if (recent.length < DIAGNOSIS_DEDUP_THRESHOLD) return { repeated: false };
+
+  const counts = {};
+  for (const d of recent) {
+    counts[d.hash] = (counts[d.hash] || 0) + 1;
+  }
+
+  for (const [hash, count] of Object.entries(counts)) {
+    if (count >= DIAGNOSIS_DEDUP_THRESHOLD) {
+      return { repeated: true, hash, count };
+    }
+  }
+  return { repeated: false };
+}
+
 /**
  * 计算事件内容哈希（type + failure_class + task_type）
  * @param {Object} event
@@ -320,6 +376,13 @@ async function analyzeDeep(event, thalamusDecision = null) {
     return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
   }
 
+  // 诊断输出去重：不同输入事件产生相同诊断时，跳过 LLM 调用
+  const _diagCheck = _isDiagnosisOutputRepeated();
+  if (_diagCheck.repeated) {
+    console.log(`[cortex] 诊断去重熔断：相同诊断输出已出现 ${_diagCheck.count} 次，跳过 LLM 调用 (hash=${_diagCheck.hash})`);
+    return createCortexFallback(event, `诊断去重：相同结论已出现 ${_diagCheck.count} 次，停止重复分析`);
+  }
+
   console.log(`[cortex] Deep analysis triggered for event: ${event.type} (hash=${_eventHash}, count=${_breaker.count})`);
 
   // 构建上下文
@@ -419,6 +482,9 @@ async function analyzeDeep(event, thalamusDecision = null) {
       console.error('[cortex] Invalid decision:', validation.errors);
       return createCortexFallback(event, validation.errors.join('; '));
     }
+
+    // 记录诊断输出（用于输出去重）
+    _recordDiagnosis(decision);
 
     // 记录到决策日志
     await logCortexDecision(event, decision);
