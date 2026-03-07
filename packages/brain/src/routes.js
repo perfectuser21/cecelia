@@ -2192,7 +2192,7 @@ router.post('/action/create-initiative', async (req, res) => {
  */
 router.post('/action/create-project', async (req, res) => {
   try {
-    const { name, description, repo_path, repo_paths, kr_ids } = req.body;
+    const { name, description, repo_path, repo_paths, kr_ids, domain, owner_role } = req.body;
 
     if (!name) {
       return res.status(400).json({
@@ -2207,7 +2207,9 @@ router.post('/action/create-project', async (req, res) => {
       description,
       repo_path,
       repo_paths,
-      kr_ids
+      kr_ids,
+      domain,
+      owner_role,
     });
 
     res.status(result.success ? 200 : 400).json(result);
