@@ -4,6 +4,29 @@
 
 ---
 
+### [2026-03-07] completed_no_pr 自动重排 + dev-pipeline 成功率 API v1.201.1
+
+**失败统计**：CI 失败 0 次
+
+**背景**：dev 任务完成但未创建 PR 时（completed_no_pr），原来没有自动重排机制，任务会永久停在该状态或触发 initiative_plan。
+
+**实现要点**：
+1. **重排逻辑位置**：在事务 COMMIT 后、EventBus 发布前插入（`routes.js:2820` 之后），避免影响主流程
+2. **initiative_plan 跳过**：条件改为 `newStatus === 'completed' || (newStatus === 'completed_no_pr' && !rescheduled)`，重排时不触发
+3. **新 API**：加在 `routes/stats.js`，复用已有的 Router 模式和 mock db 测试模式
+
+**陷阱：Worktree 孤立目录问题（再次触发）**：
+- worktree 元数据（`/Users/administrator/perfect21/cecelia/.git/worktrees/<id>/`）被清理后，目录变为孤立，Edit 工具写到的路径不被 git 追踪
+- 诊断：`git worktree list` 不包含该路径
+- 修复：`rm -rf <worktree_dir> && git worktree add <path> <branch>`
+- 教训：每次 /dev 开始前应主动验证 worktree 元数据完整性
+
+**测试模式**：
+- `simulateReschedule()` 纯函数模拟 DB 写入前的逻辑，无需 mock pool，测试清晰
+- `getHandler('/dev-pipeline')` 从 Express Router 提取处理器，与 `/dev-success-rate` 保持一致
+
+---
+
 ### [2026-03-06] ThinkingLog 页面：TipTap 富文本编辑器集成 v1.176.0
 
 **失败统计**：CI 失败 0 次

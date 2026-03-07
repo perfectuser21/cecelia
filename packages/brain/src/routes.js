@@ -2819,6 +2819,37 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
 
+    // P1-2: completed_no_pr 自动重排（retry_count < MAX_NO_PR_RETRY 时重新入队）
+    const MAX_NO_PR_RETRY = 3;
+    let rescheduled = false;
+    if (newStatus === 'completed_no_pr') {
+      try {
+        const retryRow = await pool.query(
+          'SELECT retry_count FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const currentRetry = retryRow.rows[0]?.retry_count ?? 0;
+        if (currentRetry < MAX_NO_PR_RETRY) {
+          const nextRunAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+          await pool.query(
+            `UPDATE tasks
+             SET status = 'queued',
+                 retry_count = retry_count + 1,
+                 completed_at = NULL,
+                 payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('next_run_at', $2::text)
+             WHERE id = $1`,
+            [task_id, nextRunAt]
+          );
+          rescheduled = true;
+          console.log(`[execution-callback] completed_no_pr rescheduled: task=${task_id} retry=${currentRetry + 1}/${MAX_NO_PR_RETRY} next_run_at=${nextRunAt}`);
+        } else {
+          console.log(`[execution-callback] completed_no_pr max retries reached: task=${task_id} retry_count=${currentRetry}`);
+        }
+      } catch (rescheduleErr) {
+        console.error(`[execution-callback] reschedule error (non-fatal): ${rescheduleErr.message}`);
+      }
+    }
+
     // Record to EventBus, Circuit Breaker, and Notifier
     if (newStatus === 'completed') {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
@@ -3380,8 +3411,8 @@ ${resultStr.substring(0, 2000)}
     }
 
     // 5e. Initiative 执行循环：dev 任务完成 → 触发下一轮 initiative_plan
-    // completed_no_pr（无 PR 的完成）同样需要触发，避免循环中断
-    if (newStatus === 'completed' || newStatus === 'completed_no_pr') {
+    // completed_no_pr 且已重排时跳过（任务会重新执行，不应中断循环）
+    if (newStatus === 'completed' || (newStatus === 'completed_no_pr' && !rescheduled)) {
       try {
         const devTaskRow = await pool.query(
           'SELECT task_type, project_id, payload FROM tasks WHERE id = $1',
