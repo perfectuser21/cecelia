@@ -9,6 +9,8 @@ import { DB_DEFAULTS } from '../db-config.js';
 import {
   INTENT_TYPES,
   INTENT_ACTION_MAP,
+  DOMAIN_KEYWORDS,
+  DOMAIN_OWNER_MAP,
   classifyIntent,
   extractEntities,
   extractProjectName,
@@ -18,6 +20,7 @@ import {
   generateTrdDraft,
   buildActionParams,
   getSuggestedAction,
+  detectDomain,
   parseIntent,
   parseAndCreate
 } from '../intent.js';
@@ -1011,5 +1014,84 @@ describe('extractEntities - expanded dependency', () => {
   it('extracts "requires...first"', () => {
     const entities = extractEntities('requires database setup first');
     expect(entities.dependency).toBeTruthy();
+  });
+});
+
+// ==================== Stage 0.5: detectDomain Tests ====================
+
+describe('detectDomain - basic cases', () => {
+  it('detects coding domain for "给 brain 加个健康检查 API"', () => {
+    const result = detectDomain('给 brain 加个健康检查 API');
+    expect(result.domain).toBe('coding');
+    expect(result.owner_role).toBe('cto');
+  });
+
+  it('detects agent_ops domain for "调整 Cecelia 的任务调度逻辑"', () => {
+    const result = detectDomain('调整 Cecelia 的任务调度逻辑');
+    expect(result.domain).toBe('agent_ops');
+    expect(result.owner_role).toBe('vp_agent_ops');
+  });
+
+  it('detects product domain for "梳理一下 PRD 流程"', () => {
+    const result = detectDomain('梳理一下 PRD 流程');
+    expect(result.domain).toBe('product');
+    expect(result.owner_role).toBe('cpo');
+  });
+
+  it('detects research domain for "做个竞品分析"', () => {
+    const result = detectDomain('做个竞品分析');
+    expect(result.domain).toBe('research');
+    expect(result.owner_role).toBe('vp_research');
+  });
+
+  it('returns coding as default when no keywords match', () => {
+    const result = detectDomain('随便聊聊');
+    expect(result.domain).toBe('coding');
+    expect(result.owner_role).toBe('cto');
+    expect(result.matchedKeywords).toHaveLength(0);
+  });
+});
+
+describe('detectDomain - priority rules', () => {
+  it('agent_ops wins over coding when both match', () => {
+    const result = detectDomain('给 Brain 加一个代码架构分析 API');
+    expect(result.domain).toBe('agent_ops');
+    expect(result.owner_role).toBe('vp_agent_ops');
+  });
+
+  it('returns matchedKeywords for matched domain', () => {
+    const result = detectDomain('做个竞品分析');
+    expect(Array.isArray(result.matchedKeywords)).toBe(true);
+    expect(result.matchedKeywords.length).toBeGreaterThan(0);
+  });
+});
+
+describe('detectDomain - DOMAIN_KEYWORDS and DOMAIN_OWNER_MAP exports', () => {
+  it('DOMAIN_KEYWORDS has 10 domains', () => {
+    expect(Object.keys(DOMAIN_KEYWORDS)).toHaveLength(10);
+  });
+
+  it('DOMAIN_OWNER_MAP has 10 entries', () => {
+    expect(Object.keys(DOMAIN_OWNER_MAP)).toHaveLength(10);
+  });
+
+  it('every domain in DOMAIN_KEYWORDS has an entry in DOMAIN_OWNER_MAP', () => {
+    for (const domain of Object.keys(DOMAIN_KEYWORDS)) {
+      expect(DOMAIN_OWNER_MAP[domain]).toBeTruthy();
+    }
+  });
+});
+
+describe('parseIntent - domain fields', () => {
+  it('includes domain, ownerRole, domainKeywords in result', async () => {
+    const result = await parseIntent('给 Brain 调度逻辑加个自动化任务');
+    expect(result.domain).toBeDefined();
+    expect(result.ownerRole).toBeDefined();
+    expect(Array.isArray(result.domainKeywords)).toBe(true);
+  });
+
+  it('domain is one of the 10 known domains', async () => {
+    const result = await parseIntent('修复登录 bug');
+    expect(Object.keys(DOMAIN_KEYWORDS)).toContain(result.domain);
   });
 });
