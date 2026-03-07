@@ -58,6 +58,7 @@ export const FALLBACK_PROFILE = {
         decomp_review: { anthropic: 'claude-haiku-4-5-20251001', minimax: null },
         dept_heartbeat:{ anthropic: 'claude-haiku-4-5-20251001', minimax: null },
         codex_qa:      { anthropic: null, minimax: null },
+        strategy_session: { anthropic: 'claude-opus-4-6', minimax: null },
       },
       fixed_provider: {
         codex_qa:        'openai',

@@ -890,6 +890,8 @@ function getSkillForTaskType(taskType, payload) {
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
     // Architecture 设计
     'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
+    // Strategy 战略会议
+    'strategy_session': '/strategy-session', // C-Suite 战略讨论：Opus
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
@@ -974,6 +976,7 @@ function getPermissionModeForTaskType(taskType) {
     'talk': 'bypassPermissions',       // 要调 API 写数据库
     'research': 'bypassPermissions',   // 要调 API
     'code_review': 'bypassPermissions', // 需要写报告文件到 docs/reviews/
+    'strategy_session': 'bypassPermissions', // C-Suite 战略讨论，输出 KR JSON
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': 'bypassPermissions',
     'audit': 'bypassPermissions',
