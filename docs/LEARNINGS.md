@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] scan_results 持久化：写侧补充（PR #603, Brain v1.202.1）
+
+**失败统计**：CI 失败 1 次（pending-conversations flaky test，与本次无关）
+
+**背景**：PR #604 已建立去重查询机制（读 scan_results 做历史去重），但 scan_results 表缺乏写侧逻辑——任务创建后从不写入 scan_results，导致历史去重依赖空表，7 天历史查询始终返回 0 行。
+
+**实现方案**：在 createTaskFn 内补充写侧逻辑
+- 成功创建任务后，INSERT 一条 scan_results 记录（关联新 task_id）
+- 写入失败时 warn 日志降级，不阻塞主流程
+- 新增 migration 132：为 scan_results(scanner_name, module_path, issue_type) 添加复合索引
+- 更新 EXPECTED_SCHEMA_VERSION 至 132
+
+**rebase 冲突处理**：
+- PR #604 修改了 task-generator-scheduler.js，本 PR 在同一区域添加写侧逻辑
+- 冲突解决：保留 #604 的 existingTasks 参数传递 + 合入本 PR 的 scan_results INSERT
+- 合并后两层去重均生效：#604 的前置过滤 + 本 PR 的写侧持久化
+
+**并发 PR 版本碰撞教训**：
+- 同一仓库并发开发时，rebase 后版本号可能与 main 相同（另一 PR 同时 bump patch）
+- 必须检查 ，为空则再次 bump
+
 ### [2026-03-07] task-generator 去重机制：避免重复生成已有任务（PR #604, Brain v1.202.0）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
