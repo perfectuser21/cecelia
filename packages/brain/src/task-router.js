@@ -180,6 +180,25 @@ function determineExecutionMode({ input, feature_id, is_recurring }) {
 }
 
 /**
+ * Get domain-specific skill override for a task type
+ * @param {string} taskType - Task type
+ * @param {string} domain - Domain (coding, product, etc.)
+ * @returns {string|null} - Override skill path, or null if no override
+ */
+function getDomainSkillOverride(taskType, domain) {
+  if (!taskType || !domain) return null;
+
+  const type = taskType.toLowerCase();
+  const dom = domain.toLowerCase();
+
+  if (dom === 'coding' && type === 'initiative_plan') {
+    return '/architect';
+  }
+
+  return null;
+}
+
+/**
  * Route task to appropriate location and execution mode
  * @param {Object} taskData - Task data
  * @returns {Object} - Routing decision
@@ -188,6 +207,7 @@ function routeTaskCreate(taskData) {
   const {
     title,
     task_type = 'dev',
+    domain,
     feature_id,
     is_recurring,
     kr_id,
@@ -202,7 +222,8 @@ function routeTaskCreate(taskData) {
     feature_id,
     is_recurring
   });
-  const skill = SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
+  const domainOverride = getDomainSkillOverride(task_type, domain);
+  const skill = domainOverride || SKILL_WHITELIST[task_type?.toLowerCase()] || '/dev';
 
   const routing = {
     location,
@@ -595,6 +616,7 @@ export {
   routeTaskWithFallback,
   detectRoutingFailure,
   getFallbackStrategy,
+  getDomainSkillOverride,
   isValidTaskType,
   isValidLocation,
   getValidTaskTypes,
