@@ -16,6 +16,33 @@
 
 **测试结果**：35 个测试全部通过（utils: 21 + cdp-client: 14）
 
+### [2026-03-07] 僵尸资源清理：zombie-cleaner 模块 + DB 连接池健康监控（PR #636, Brain v1.208.0）
+
+**失败统计**：CI Version Check 失败 1 次（版本未更新），合并冲突 2 次（并行 PR 导致）
+
+**关键实现要点**：
+
+- `zombie-cleaner.js` 依赖 `resolveTaskPids()` 返回 `{ pidMap, staleSlots }`——staleSlots 是 slot 目录存在但 pid 已死的槽，直接拿来清理
+- `getPoolHealth()` 从 `pg.Pool` 实例读取 `totalCount / idleCount / waitingCount`——不需要额外配置，Pool 自动暴露这三个属性
+- `metrics.js` 集成 poolHealth 时，**不能修改 calculateHealthScore 的权重**（不加 poolHealth 到权重），否则权重不足 1.0 导致健康分 < 100，破坏现有测试
+
+**测试断言教训**：
+
+- SQL 断言用 `toContain("status = 'completed'")` 会同时命中 WHERE 子句和 SET 子句，改为检查**参数数量/内容**验证 SET 无 status 赋值
+- `vi.clearAllMocks()` 只清调用历史，不清 `mockResolvedValueOnce` 实现队列；共享 mock 必须 `mockFetch.mockReset()` 防止泄漏
+- 测试 stale slot 年龄边界：保护期"严格大于 60s 才清理"，测试用 `Date.now() - MIN_AGE + 1000`（59s）验证不清理
+
+**版本冲突处理**：
+
+- 本次 main 在并行 PR 期间从 1.206.0 → 1.207.0，合并后我的版本取 1.208.0（高于两者）
+- CI 未自动触发原因：`push` 到 PR 分支后，若 GitHub 未检测到 `pull_request synchronize` 事件，需手动通过 `workflow_dispatch` 触发，或 merge main 后 push 触发
+
+**DB 连接池配置**：
+
+- `pg.Pool` 推荐配置：`max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000`
+- 通过环境变量覆盖：`DB_POOL_MAX`, `DB_IDLE_TIMEOUT_MS`, `DB_CONN_TIMEOUT_MS`
+- 健康告警阈值：`waiting > 5 || idle === 0` → AWARE 级别
+
 ### [2026-03-07] domain-detector 模块 + 任务创建自动填充 domain/owner_role（PR #634, Brain v1.207.0）
 
 **失败统计**：CI 失败 1 次（版本冲突），本地测试失败 2 次（关键词误匹配），CI 未自动触发 1 次（需 workflow_dispatch）
@@ -35,8 +62,6 @@
 
 - `npm version minor` 在 worktree 根目录执行，错误地 bump 了根 `package.json`（v1.200.x）而非 `packages/brain/package.json` → 正确：必须 `cd packages/brain && npm version minor`
 - Worktree 重建后 `git checkout HEAD -- .` 会覆盖已存在的 `.dev-mode`/`.prd`/`.dod` 文件 → 必须在 checkout **之后**重新创建这些文件
-
-**影响程度**: High
 
 **预防措施**：
 - 关键词列表禁止放入 ≤3 字符的英文缩写（`'pr'`、`'dev'`、`'ui'` 等）；改用完整词或更长的上下文词

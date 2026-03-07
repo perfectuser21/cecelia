@@ -10544,6 +10544,21 @@ router.post('/dispatch/cleanup', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/zombie-cleanup
+ * 手动触发僵尸资源清理（stale slots + 孤儿 worktrees）
+ */
+router.post('/zombie-cleanup', async (req, res) => {
+  try {
+    const { runZombieCleanup } = await import('./zombie-cleaner.js');
+    const report = await runZombieCleanup(pool);
+    res.json({ success: true, ...report });
+  } catch (err) {
+    console.error('[API] zombie-cleanup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/brain/dispatch/effectiveness
  * 派发效果监控端点
  *
