@@ -19,6 +19,9 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import os from 'os';
 
+// === Platform detection ===
+const IS_DARWIN = process.platform === 'darwin';
+
 // === Page size (read from system, fallback 4096) ===
 let PAGE_SIZE = 4096;
 try {
@@ -46,6 +49,88 @@ const _taskMetrics = new Map();
 // In-memory idle session store: pid -> { lastHighCpuTs, prevSample }
 const _idleMetrics = new Map();
 
+// === Darwin-compatible process helpers ===
+
+/**
+ * Check if a process is alive.
+ * Darwin: uses process.kill(pid, 0) (signal 0 = existence probe, no signal sent).
+ * Linux: uses existsSync(/proc/{pid}).
+ */
+function isProcessAlive(pid) {
+  if (IS_DARWIN) {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+  return existsSync(`/proc/${pid}`);
+}
+
+/**
+ * Parse Darwin ps time string (HH:MM:SS or MM:SS.ss) into centiseconds.
+ * Centiseconds are compatible with Linux USER_HZ ticks for calcCpuPct.
+ */
+function parseDarwinCpuTime(timeStr) {
+  if (!timeStr) return 0;
+  const parts = timeStr.split(':');
+  let secs = 0;
+  if (parts.length === 3) {
+    secs = parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseFloat(parts[2]);
+  } else if (parts.length === 2) {
+    secs = parseInt(parts[0], 10) * 60 + parseFloat(parts[1]);
+  } else {
+    secs = parseFloat(parts[0]) || 0;
+  }
+  return Math.round(secs * 100);
+}
+
+/**
+ * Sample RSS and CPU for a single PID on Darwin using `ps`.
+ * `ps -o rss=,time= -p <pid>` returns RSS in KB and CPU time as HH:MM:SS or MM:SS.ss.
+ * Returns { rss_mb, cpu_ticks, timestamp } or null if process gone / ps failed.
+ */
+function sampleProcessDarwin(pid) {
+  try {
+    const out = execSync(`ps -o rss=,time= -p ${pid}`, { encoding: 'utf-8', timeout: 2000 }).trim();
+    if (!out) return null;
+    const parts = out.split(/\s+/);
+    const rssKb = parseInt(parts[0], 10);
+    if (!Number.isFinite(rssKb) || rssKb < 0) return null;
+    return {
+      rss_mb: Math.round(rssKb / 1024),
+      cpu_ticks: parseDarwinCpuTime(parts[1] || '0:00.00'),
+      timestamp: Date.now(),
+    };
+  } catch {
+    return null; // process gone or ps failed
+  }
+}
+
+/**
+ * Scan for interactive Claude Code processes on Darwin using `ps`.
+ * `ps -ax -o pid= -o command=` lists all processes with PID and full command.
+ * Filters same as Linux version: excludes -p (background), excludes managedPids.
+ */
+function scanInteractiveClaudeDarwin(managedPids) {
+  const result = [];
+  try {
+    const out = execSync('ps -ax -o pid= -o command=', { encoding: 'utf-8', timeout: 2000 });
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const spIdx = trimmed.indexOf(' ');
+      if (spIdx < 0) continue;
+      const pid = parseInt(trimmed.slice(0, spIdx), 10);
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      if (managedPids.has(pid)) continue;
+      const cmdline = trimmed.slice(spIdx + 1).trim();
+      const args = cmdline.split(' ').filter(Boolean);
+      const bin = args[0];
+      if (!bin || (!bin.endsWith('/claude') && bin !== 'claude')) continue;
+      if (args.includes('-p')) continue;
+      result.push({ pid, cmdline });
+    }
+  } catch { /* ps failed */ }
+  return result;
+}
+
 /**
  * Read lock slot info.json files to resolve task → pid/pgid mappings.
  * Returns { pidMap: Map<taskId, {pid, pgid, started, slot}>, staleSlots: [] }
@@ -65,8 +150,8 @@ function resolveTaskPids() {
         const info = JSON.parse(readFileSync(infoPath, 'utf-8'));
         if (!info.task_id || !info.pid) continue;
 
-        // Check if main process still exists
-        if (!existsSync(`/proc/${info.pid}`)) {
+        // Check if main process still exists (Darwin: process.kill(0), Linux: /proc)
+        if (!isProcessAlive(info.pid)) {
           staleSlots.push({ slot: entry.name, taskId: info.task_id });
           continue;
         }
@@ -92,6 +177,7 @@ function resolveTaskPids() {
  * and parentheses, so find last ')' before splitting.
  */
 function sampleProcess(pid) {
+  if (IS_DARWIN) return sampleProcessDarwin(pid);
   try {
     // RSS from /proc/{pid}/statm (field 1 = resident pages)
     const statm = readFileSync(`/proc/${pid}/statm`, 'utf-8').trim().split(' ');
@@ -133,6 +219,7 @@ function calcCpuPct(prev, curr) {
  * @returns {Array<{pid: number, cmdline: string}>}
  */
 function scanInteractiveClaude(managedPids) {
+  if (IS_DARWIN) return scanInteractiveClaudeDarwin(managedPids);
   const result = [];
   let entries;
   try {
@@ -413,4 +500,10 @@ export {
   IDLE_CPU_PCT_THRESHOLD,
   _taskMetrics,
   _idleMetrics,
+  // Darwin-specific (exposed for testing)
+  IS_DARWIN,
+  isProcessAlive,
+  parseDarwinCpuTime,
+  sampleProcessDarwin,
+  scanInteractiveClaudeDarwin,
 };
