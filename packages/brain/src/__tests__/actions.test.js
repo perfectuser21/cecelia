@@ -267,7 +267,7 @@ describe('actions.js', () => {
       expect(params[12]).toBe('vp_qa');
     });
 
-    it('不传 domain 时 domain/owner_role 均为 null', async () => {
+    it('不传 domain 时，无匹配关键词则 domain 为 null，不写 owner_role（12 个参数）', async () => {
       const fakeTask = { id: 'task-nodomain', title: '无领域', status: 'queued' };
       mockQuery.mockResolvedValueOnce({ rows: [] });
       mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
@@ -279,9 +279,12 @@ describe('actions.js', () => {
       });
 
       const insertCall = mockQuery.mock.calls[1];
+      const sql = insertCall[0];
       const params = insertCall[1];
-      expect(params[11]).toBeNull(); // domain
-      expect(params[12]).toBeNull(); // owner_role
+      // 无匹配关键词时 domain=null，owner_role 列不写入（12 个参数）
+      expect(params.length).toBe(12);
+      expect(params[11]).toBeNull(); // domain is last, null when undetected
+      expect(sql).not.toContain('owner_role'); // no owner_role when auto-detecting
     });
   });
 
