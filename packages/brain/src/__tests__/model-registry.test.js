@@ -135,6 +135,22 @@ describe('model-registry', () => {
       expect(isModelAllowedForAgent('decomp_review', 'claude-sonnet-4-6')).toBe(true);
       expect(isModelAllowedForAgent('dev', 'claude-opus-4-6')).toBe(true);
     });
+
+    it('R14: strategy_session agent 存在且配置正确', () => {
+      const agent = getAgentById('strategy_session');
+      expect(agent).not.toBeNull();
+      expect(agent.name).toBe('战略会议');
+      expect(agent.layer).toBe('executor');
+      expect(agent.recommended_model).toBe('claude-opus-4-6');
+      expect(agent.allowed_models).toContain('claude-opus-4-6');
+      expect(agent.allowed_models).toContain('claude-sonnet-4-6');
+      expect(agent.fixed_provider).toBeNull();
+    });
+
+    it('R15: strategy_session recommended_model 在 allowed_models 中', () => {
+      const agent = getAgentById('strategy_session');
+      expect(agent.allowed_models).toContain(agent.recommended_model);
+    });
   });
 
   describe('辅助函数', () => {

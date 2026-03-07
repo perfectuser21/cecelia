@@ -890,6 +890,8 @@ function getSkillForTaskType(taskType, payload) {
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
     // Architecture 设计
     'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
+    // C-Suite 战略会议
+    'strategy_session': '/strategy-session', // 战略会议 → Opus + /strategy-session skill
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
