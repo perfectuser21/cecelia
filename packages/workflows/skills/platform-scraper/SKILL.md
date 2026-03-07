@@ -2,9 +2,10 @@
 name: platform-scraper
 description: 管理所有媒体平台的数据采集配置和采集器
 trigger: 当需要采集平台数据、修复采集器、或查看平台配置时
-version: 3.1.0
-updated: 2026-01-30
+version: 3.2.0
+updated: 2026-03-07
 changelog:
+  - 3.2.0: N8N 工作流映射完成，cron 配置文档化，抖音单元工作流补全
   - 3.1.0: 8平台全部可用，视频号/公众号采集器修复完成
   - 3.0.0: 全平台 v3 采集器完成，API+DOM 双重采集
   - 2.0.0: 完成所有平台采集器开发
@@ -98,7 +99,22 @@ done
 | 视频号 | API 拦截 (post_list) |
 | 公众号 | DOM 文本解析 |
 
+## N8N 自动化状态 (2026-03-07)
+
+| 工作流 | N8N ID | 状态 |
+|--------|--------|------|
+| 调度器 (每日 21:00) | flow-data-collection | ✅ 运行中 |
+| 抖音单元 | wxYIxt8paRz82lbW | ✅ 就绪 |
+| 快手单元 | 8YC1JuIKo0aytgQz | ✅ 就绪 |
+| 小红书单元 | I5It7tSAT7HadXYJ | ✅ 就绪 |
+| 今日头条单元(大号) | SmJ3WIeVmR69l2dF | ✅ 就绪 |
+| 今日头条单元(小号) | BLVEVjzdtjAPEblg | ✅ 就绪 |
+| 微博单元 | VMS9m7rubG5zvyla | ✅ 就绪 |
+| 视频号单元 | MnrpR0zzCaQvJ9yJ | ✅ 就绪 |
+| 公众号单元 | HegJi0788KPG1Bqh | ✅ 就绪 |
+| 知乎单元 | RDlBd8MRjDSICfRf | ✅ 就绪 |
+
 ## 下一步
-- [ ] 接入 N8N 定时调度
-- [ ] 每日自动采集
+- [x] 接入 N8N 定时调度
+- [x] 每日自动采集（每天 21:00 自动触发）
 - [ ] 数据趋势分析

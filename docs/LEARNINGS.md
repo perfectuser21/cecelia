@@ -1,5 +1,18 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] N8N 工作流映射：packages/workflows/.prd.md 会拦截子目录 hook 检查（PR #609）
+
+**问题**：branch-protect.sh 的 `find_prd_dod_dir` 函数从被编辑文件向上走目录树。
+`packages/workflows/.prd.md`（旧任务遗留）比项目根目录更近，被优先匹配导致 hook 报 "PRD 文件未更新"。
+
+**根因**：projects/workflows/ 中残留了 `.prd.md`（旧格式），hook 匹配到它而不是项目根目录的 `.prd-<branch>.md`。
+
+**修复**：在 `packages/workflows/` 同级目录创建当前分支的 `.prd-<branch>.md` 和 `.dod-<branch>.md`，覆盖旧文件的优先级。
+
+**规律**：凡编辑 `packages/workflows/` 或 `packages/quality/` 子目录下的 skills 文件时，必须在 `packages/workflows/` 或 `packages/quality/` 里创建分支级 PRD/DoD，而不仅仅在项目根目录。
+
+---
+
 ### [2026-03-07] scan_results 持久化：写侧补充（PR #603, Brain v1.202.1）
 
 **失败统计**：CI 失败 1 次（pending-conversations flaky test，与本次无关）
