@@ -1,6 +1,6 @@
 {
   "name": "cecelia",
-  "version": "1.200.5",
+  "version": "1.201.0",
   "private": true,
   "description": "Cecelia - AI Virtual Butler System (Monorepo)",
   "workspaces": [
