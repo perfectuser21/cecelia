@@ -2987,6 +2987,48 @@ router.post('/execution-callback', async (req, res) => {
           await checkAndCreateCodeReviewTrigger(pool, projectId);
         }
       }).catch(err => console.warn(`[execution-callback] code-review-trigger 失败（非致命）: ${err.message}`));
+
+      // strategy_session 闭环：解析输出中的 KR JSON，写入 goals 表（fire-and-forget）
+      Promise.resolve().then(async () => {
+        const taskMeta = await pool.query('SELECT task_type, payload FROM tasks WHERE id = $1', [task_id]);
+        const task = taskMeta.rows[0];
+        if (!task || task.task_type !== 'strategy_session') return;
+
+        // 尝试从 findingsValue 中解析 KR JSON 数组
+        if (!findingsValue) {
+          console.log(`[execution-callback] strategy_session ${task_id}: 无 findings，跳过 KR 写入`);
+          return;
+        }
+
+        let krs = [];
+        try {
+          // /strategy-session skill 输出格式：JSON 数组，每项含 title, domain 等字段
+          const parsed = JSON.parse(findingsValue);
+          krs = Array.isArray(parsed) ? parsed : (parsed.krs || []);
+        } catch {
+          // findings 不是 JSON，忽略
+          console.log(`[execution-callback] strategy_session ${task_id}: findings 非 JSON，跳过 KR 写入`);
+          return;
+        }
+
+        for (const kr of krs) {
+          if (!kr.title) continue;
+          try {
+            await pool.query(
+              `INSERT INTO goals (title, domain, status, priority, progress, metadata)
+               VALUES ($1, $2, 'pending', 'P2', 0, $3)`,
+              [
+                kr.title,
+                kr.domain || null,
+                JSON.stringify({ source: 'strategy_session', task_id, generated_at: new Date().toISOString() })
+              ]
+            );
+            console.log(`[execution-callback] strategy_session KR 写入: ${kr.title}`);
+          } catch (krErr) {
+            console.warn(`[execution-callback] strategy_session KR 写入失败（非致命）: ${krErr.message}`);
+          }
+        }
+      }).catch(err => console.warn(`[execution-callback] strategy_session 闭环失败（非致命）: ${err.message}`));
     } else if (newStatus === 'failed') {
       await emitEvent('task_failed', 'executor', { task_id, run_id, status });
 

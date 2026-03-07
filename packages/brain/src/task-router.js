@@ -14,7 +14,8 @@ const VALID_TASK_TYPES = [
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'suggestion_plan', 'architecture_design'
+  'suggestion_plan', 'architecture_design',
+  'strategy_session'
 ];
 
 // Skill whitelist based on task type
@@ -35,7 +36,8 @@ const SKILL_WHITELIST = {
   'initiative_plan': '/decomp',
   'initiative_verify': '/decomp',
   'suggestion_plan': '/plan',
-  'architecture_design': '/architect'
+  'architecture_design': '/architect',
+  'strategy_session': '/strategy-session'
 };
 
 // Fallback strategies when primary routing fails
@@ -102,6 +104,7 @@ const LOCATION_MAP = {
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
   'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect)
+  'strategy_session': 'us',   // C-Suite 战略会议 → US (Opus + /strategy-session)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)

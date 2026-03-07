@@ -197,6 +197,15 @@ export const AGENTS = [
     recommended_model: 'claude-opus-4-6',
     fixed_provider: null,
   },
+  {
+    id: 'strategy-session',
+    name: '战略会议 Strategy Session',
+    description: 'C-Suite 四角色战略会议模拟，输出带 domain 的 KR',
+    layer: 'executor',
+    allowed_models: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    recommended_model: 'claude-opus-4-6',
+    fixed_provider: null,
+  },
 ];
 
 // ============================================================
