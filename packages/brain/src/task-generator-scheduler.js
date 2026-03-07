@@ -17,6 +17,19 @@ const BRAIN_PKG_DIR = path.resolve(__dirname, '..');
 // 扫描状态
 let lastScanDate = null;
 
+// 扫描统计（用于 /api/brain/scan-status 端点）
+const scanStats = {
+  lastScanTime: null,
+  issuesFound: 0,
+  tasksGenerated: 0,
+  todayGeneratedCount: 0,
+  todayCountDate: null,
+};
+
+// 配置：从环境变量读取任务生成的 Initiative/KR 关联 ID
+const TASK_GENERATOR_PROJECT_ID = process.env.TASK_GENERATOR_PROJECT_ID || null;
+const TASK_GENERATOR_GOAL_ID = process.env.TASK_GENERATOR_GOAL_ID || null;
+
 /**
  * 触发代码质量扫描（每天首次 tick 时执行）
  * @param {Object} pool 数据库连接池
@@ -55,15 +68,18 @@ export async function triggerCodeQualityScan(pool) {
 
     if (issues.length === 0) {
       console.log('[task-generator] No issues found');
+      scanStats.lastScanTime = new Date();
+      scanStats.issuesFound = 0;
+      scanStats.tasksGenerated = 0;
       return { triggered: true, issues: 0, tasks: 0 };
     }
 
     // 生成任务
     const tasks = await scheduler.generateTasks(issues, async (taskData) => {
-      // 创建任务到数据库
+      // 创建任务到数据库，补充 project_id / goal_id / task_type
       const result = await pool.query(
-        `INSERT INTO tasks (title, description, priority, status, tags, metadata, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        `INSERT INTO tasks (title, description, priority, status, tags, metadata, project_id, goal_id, task_type, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
          RETURNING id`,
         [
           taskData.title,
@@ -71,7 +87,10 @@ export async function triggerCodeQualityScan(pool) {
           taskData.priority || 'P1',
           'queued',
           taskData.tags || [],
-          taskData.metadata || {}
+          taskData.metadata || {},
+          TASK_GENERATOR_PROJECT_ID,
+          TASK_GENERATOR_GOAL_ID,
+          'dev',
         ]
       );
 
@@ -79,6 +98,17 @@ export async function triggerCodeQualityScan(pool) {
     });
 
     console.log(`[task-generator] Generated ${tasks.length} tasks from ${issues.length} issues`);
+
+    // 更新扫描统计
+    const nowDate = new Date().toISOString().split('T')[0];
+    scanStats.lastScanTime = new Date();
+    scanStats.issuesFound = issues.length;
+    scanStats.tasksGenerated = tasks.length;
+    if (scanStats.todayCountDate !== nowDate) {
+      scanStats.todayGeneratedCount = 0;
+      scanStats.todayCountDate = nowDate;
+    }
+    scanStats.todayGeneratedCount += tasks.length;
 
     return {
       triggered: true,
@@ -102,5 +132,18 @@ export function getScannerStatus() {
     scanners: scheduler.getScanners(),
     lastScanTime: scheduler.getLastScanTime(),
     shouldScan: scheduler.shouldScan()
+  };
+}
+
+/**
+ * 获取扫描状态（用于 /api/brain/scan-status 端点）
+ * @returns {Object} {last_scan_time, issues_found, tasks_generated, today_generated_count}
+ */
+export function getScanStatus() {
+  return {
+    last_scan_time: scanStats.lastScanTime,
+    issues_found: scanStats.issuesFound,
+    tasks_generated: scanStats.tasksGenerated,
+    today_generated_count: scanStats.todayGeneratedCount,
   };
 }

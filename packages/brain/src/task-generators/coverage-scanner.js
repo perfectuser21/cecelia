@@ -83,10 +83,26 @@ class CoverageScanner extends BaseScanner {
     const moduleName = path.basename(issue.module_path, '.js');
     const currentCoverage = Math.round(issue.current_value);
     const targetCoverage = issue.target_value;
+    const gap = targetCoverage - currentCoverage;
+
+    const description = [
+      `代码覆盖率扫描发现 ${moduleName} 模块覆盖率不足，需要添加测试用例。`,
+      ``,
+      `文件路径：${issue.module_path}`,
+      `当前覆盖率：${currentCoverage}%（目标：${targetCoverage}%，差距：${gap}%）`,
+      ``,
+      `建议操作：`,
+      `1. 运行 npx vitest run --coverage 确认当前覆盖情况`,
+      `2. 分析 ${moduleName} 的核心导出函数，针对每个函数添加测试用例`,
+      `3. 重点覆盖分支路径（if/else）、错误处理（try/catch）和边界情况`,
+      `4. 测试文件命名：${moduleName}.test.js，放在 src/__tests__/ 目录下`,
+      ``,
+      `验收标准：${moduleName} 模块行覆盖率达到 ${targetCoverage}% 及以上，npm test 全部通过。`,
+    ].join('\n');
 
     return {
-      title: `提高 ${moduleName} 模块覆盖率`,
-      description: `代码覆盖率扫描发现：${issue.module_path}\n\n当前覆盖率: ${currentCoverage}%\n目标覆盖率: ${targetCoverage}%\n\n请添加或完善测试以提高覆盖率。`,
+      title: `提高 ${moduleName} 模块覆盖率（当前 ${currentCoverage}% → 目标 ${targetCoverage}%）`,
+      description,
       priority: issue.severity === 'high' ? 'P0' : 'P1',
       tags: ['quality', 'coverage', 'test'],
       metadata: {

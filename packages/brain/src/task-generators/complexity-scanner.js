@@ -165,9 +165,24 @@ class ComplexityScanner extends BaseScanner {
   async generateTask(issue) {
     const moduleName = path.basename(issue.module_path, '.js');
 
+    const description = [
+      `代码复杂度扫描发现 ${moduleName} 中的 ${issue.function_name} 函数圈复杂度过高，需要重构以降低复杂度。`,
+      ``,
+      `文件：${issue.module_path}（第 ${issue.line_number} 行）`,
+      `函数名：${issue.function_name}`,
+      `当前圈复杂度：${issue.current_value}（阈值：${issue.target_value}）`,
+      ``,
+      `重构建议：`,
+      `1. 提取子函数：将复杂条件分支拆分为独立的命名函数`,
+      `2. 简化条件：合并相似条件逻辑，使用早返回（early return）减少嵌套`,
+      `3. 拆分模块：若函数职责混杂，考虑拆分为独立模块或类`,
+      ``,
+      `验收标准：${issue.function_name} 函数圈复杂度降至 ${issue.target_value} 以下，修改后 npm test 全部通过。`,
+    ].join('\n');
+
     return {
-      title: `简化 ${moduleName} 中 ${issue.function_name} 函数复杂度`,
-      description: `代码复杂度扫描发现：${issue.module_path}\n\n函数名: ${issue.function_name}\n行号: ${issue.line_number}\n当前圈复杂度: ${issue.current_value}\n目标圈复杂度: ${issue.target_value}\n\n请重构函数以降低复杂度。`,
+      title: `重构 ${moduleName}.${issue.function_name}（复杂度 ${issue.current_value} → ${issue.target_value}）`,
+      description,
       priority: issue.severity === 'high' ? 'P0' : 'P1',
       tags: ['quality', 'complexity', 'refactor'],
       metadata: {
