@@ -154,16 +154,20 @@ export async function handlePrMerged(pool, prInfo) {
         status = 'completed',
         completed_at = $2,
         updated_at = NOW(),
+        pr_url = $5,
+        pr_merged_at = COALESCE($6::timestamp, NOW()),
         metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
         payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb
       WHERE id = $1
         AND status = 'in_progress'
-      RETURNING id, goal_id, project_id
+      RETURNING id, goal_id, project_id, pr_url, pr_merged_at
     `, [
       taskId,
       mergedAt,
       JSON.stringify(prMeta),
-      JSON.stringify(payloadUpdate)
+      JSON.stringify(payloadUpdate),
+      prUrl,
+      mergedAt
     ]);
 
     if (updateResult.rowCount === 0) {

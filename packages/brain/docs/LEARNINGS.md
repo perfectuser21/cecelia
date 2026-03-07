@@ -1,5 +1,19 @@
 # Development Learnings
 
+## [2026-03-07] pr-callback-handler 同步更新 pr_url 和 pr_merged_at 列 (PR #594)
+
+### Bug
+- **新增列未写入**：migration 130 为 tasks 表新增了 `pr_url` 和 `pr_merged_at` 直接列，但 `handlePrMerged` SQL UPDATE 写于 migration 之前，只更新了 `metadata`/`payload` 中的 JSON 值，未更新直接列。导致 `GET /api/brain/metrics/success-rate` 通过 `pr_merged_at IS NOT NULL` 判断时永远返回 `success_rate: 0`。
+
+### Fix
+- 在 `handlePrMerged` SQL UPDATE 中增加 `pr_url = $5` 和 `pr_merged_at = COALESCE($6::timestamp, NOW())`
+- `RETURNING` 子句增加 `pr_url, pr_merged_at`
+- 参数列表扩展为 6 个：`[taskId, mergedAt, prMeta, payloadUpdate, prUrl, mergedAt]`
+
+### CI 坑
+- version-check CI 在 rebase 后发现 `origin/main` 已有相同版本号（另一个 PR 并行合并）→ 需再次 bump 版本。模式：**版本 bump 要紧接在 PR 创建后、不能假设 main 版本不变**。
+- `workflow_dispatch` 触发的 CI run 不与 PR checks 关联，需要通过实际 push 触发 PR event。
+
 ## [2026-03-05] 统一账号选择入口 (PR #547)
 
 ### Bug
