@@ -64,11 +64,12 @@ if (localImages.length === 0) {
 }
 
 // 转换图片路径为 Windows 绝对路径
+// 目录结构：WINDOWS_BASE_DIR/{date}/{image-dir}/{filename}
 const dateDir = path.basename(path.dirname(contentDir)); // 提取日期目录名
 const contentDirName = path.basename(contentDir);
 const windowsImages = localImages.map(img => {
   const filename = path.basename(img);
-  return path.join(WINDOWS_BASE_DIR, dateDir, contentDirName, 'images', filename).replace(/\//g, '\\');
+  return path.join(WINDOWS_BASE_DIR, dateDir, contentDirName, filename).replace(/\//g, '\\');
 });
 
 console.log('\n========================================');
@@ -193,8 +194,8 @@ async function main() {
     const currentUrl = urlResult.result.value;
     console.log(`   当前 URL: ${currentUrl}\n`);
 
-    if (!currentUrl.includes('kuaishou.com')) {
-      throw new Error(`导航失败，当前页面: ${currentUrl}`);
+    if (!currentUrl.includes('cp.kuaishou.com')) {
+      throw new Error(`导航失败或未登录，当前页面: ${currentUrl}（需要先登录快手创作者中心）`);
     }
     console.log('   ✅ 导航完成\n');
 
@@ -332,8 +333,8 @@ async function main() {
       await screenshot(cdp, '03-images-uploaded');
       console.log('   ✅ 图片已上传\n');
     } else {
-      console.log('   ❌ 未找到文件上传输入框\n');
       await screenshot(cdp, '03-no-file-input');
+      throw new Error('未找到文件上传输入框，无法上传图片（页面可能未加载完成或结构已变更）');
     }
 
     // ========== 步骤4: 发布 ==========
