@@ -244,8 +244,39 @@ async function resolveRepoPath(projectId) {
   return null;
 }
 
+// ============================================================
+// Sliding Window — smooth CPU/MEM readings to avoid jitter
+// ============================================================
+const _cpuHistory = [];    // last N CPU readings
+const _memHistory = [];    // last N memory pressure readings
+const HISTORY_SIZE_CPU = 5;
+const HISTORY_SIZE_MEM = 3;
+const SAFETY_MARGIN = 0.85; // effectiveSlots safety headroom
+
+function _pushHistory(arr, value, maxSize) {
+  arr.push(value);
+  if (arr.length > maxSize) arr.shift();
+}
+
+function _avgHistory(arr) {
+  if (arr.length === 0) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function _maxHistory(arr) {
+  if (arr.length === 0) return 0;
+  return Math.max(...arr);
+}
+
+/** Reset sliding window state (for testing) */
+function _resetResourceHistory() {
+  _cpuHistory.length = 0;
+  _memHistory.length = 0;
+}
+
 /**
  * Check server resource availability before spawning.
+ * Uses sliding window to smooth CPU (avg of last 5) and memory (max of last 3) readings.
  * Returns { ok, reason, metrics } — ok=false means don't spawn.
  */
 function checkServerResources(memReservedMb = 0) {
@@ -257,9 +288,17 @@ function checkServerResources(memReservedMb = 0) {
   const swapUsedPct = getSwapUsedPct();
 
   // CPU pressure from real CPU% (replaces load average)
-  const cpuPct = sampleCpuUsage();
-  const cpuPressure = cpuPct !== null ? cpuPct / CPU_THRESHOLD_PCT : 0;
-  const memPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+  const rawCpuPct = sampleCpuUsage();
+  const rawCpuPressure = rawCpuPct !== null ? rawCpuPct / CPU_THRESHOLD_PCT : 0;
+  const rawMemPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+
+  // Push raw readings into sliding window
+  if (rawCpuPct !== null) _pushHistory(_cpuHistory, rawCpuPressure, HISTORY_SIZE_CPU);
+  _pushHistory(_memHistory, rawMemPressure, HISTORY_SIZE_MEM);
+
+  // Smoothed values: CPU = avg of last 5, MEM = max of last 3 (conservative)
+  const cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
+  const memPressure = _memHistory.length > 0 ? _maxHistory(_memHistory) : rawMemPressure;
   const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
   const maxPressure = Math.max(cpuPressure, Math.max(memPressure, swapPressure));
 
@@ -275,9 +314,12 @@ function checkServerResources(memReservedMb = 0) {
     effectiveSlots = Math.max(Math.round(dynMaxSeats * 2 / 3), 1);
   }
 
+  // Apply safety margin: never use 100% of effective capacity
+  effectiveSlots = Math.floor(effectiveSlots * SAFETY_MARGIN);
+
   const metrics = {
     load_avg_1m: loadAvg1,
-    cpu_usage_pct: cpuPct,
+    cpu_usage_pct: rawCpuPct,
     cpu_threshold_pct: CPU_THRESHOLD_PCT,
     cpu_pressure: Math.round(cpuPressure * 100) / 100,
     free_mem_mb: freeMem,
@@ -297,7 +339,7 @@ function checkServerResources(memReservedMb = 0) {
 
   if (effectiveSlots === 0) {
     const reasons = [];
-    if (cpuPressure >= 1.0) reasons.push(`CPU ${cpuPct}% > ${CPU_THRESHOLD_PCT}%`);
+    if (cpuPressure >= 1.0) reasons.push(`CPU ${rawCpuPct}% > ${CPU_THRESHOLD_PCT}%`);
     if (freeMem < MEM_AVAILABLE_MIN_MB) reasons.push(`Memory ${freeMem}MB < ${MEM_AVAILABLE_MIN_MB}MB`);
     if (swapUsedPct > SWAP_USED_MAX_PCT) reasons.push(`Swap ${swapUsedPct}% > ${SWAP_USED_MAX_PCT}%`);
     return { ok: false, reason: `Server overloaded: ${reasons.join(', ')}`, effectiveSlots: 0, metrics };
@@ -2230,6 +2272,8 @@ export {
   setBudgetCap,
   sampleCpuUsage,
   _resetCpuSampler,
+  _resetResourceHistory,
+  SAFETY_MARGIN,
   // v13: code-review env isolation
   getExtraEnvForTaskType,
   // v14: Input validation for shell commands
