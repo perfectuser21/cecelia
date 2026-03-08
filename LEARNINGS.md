@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] 小红书 CDP Publisher — require 路径层级陷阱（PR #679, v1.202.0）
+
+**背景**：新增 xiaohongshu-publisher skill（CDP 直连，复用 weibo-publisher CDPClient + utils）。
+
+**关键教训**：
+
+1. **`require` 路径层级陷阱**：测试文件在 `scripts/__tests__/` 目录，比发布脚本（`scripts/`）深一层。要引用同级 skill 的 utils，路径需要从 `__dirname` 计算：
+   - 发布脚本（`scripts/`）→ `../../weibo-publisher/scripts/utils.cjs` ✓
+   - 测试文件（`scripts/__tests__/`）→ `../../../weibo-publisher/scripts/utils.cjs` ✓
+   - 错误写法：`../../weibo-publisher/...`（少一层，解析到 skill 目录内而非 skills 目录）
+
+2. **CDP publisher 统一架构**：小红书与微博/快手完全一致（CDP 直连，Windows 媒体目录映射），只需修改 3 个常量：`CDP_PORT`、`WINDOWS_BASE_DIR`、`PUBLISH_URL`。XHS 额外支持 title.txt（≤20字）和 hashtag 格式（`#话题#`）。
+
+3. **Shell CWD 死锁问题**：当 session 的 CWD 目录被删除（worktree 清理后），bash 工具完全无法运行。解决方案：
+   - Read/Write/Glob/Grep 工具仍然可用（基于绝对路径）
+   - 用 `isolation: "worktree"` 的 Agent 创建新环境运行 bash
+   - 测试文件用绝对路径运行（`node --test /abs/path/test.cjs`），Node.js require 仍按文件 `__dirname` 解析相对路径
+
+4. **XHS 图片上传差异**：小红书最多 9 张图片（硬限制），需在脚本层面截断（`slice(0, 9)`），并警告用户。批量发布间隔设为 10 秒（比微博 8 秒保守）。
+
+
+
 ### [2026-03-07] initiative_plan 域感知路由：参数化 vs DB 查询冲突解决（PR #659, Brain v1.211.1）
 
 **背景**：两条独立分支分别实现 domain-aware routing，合并时产生代码冲突。
