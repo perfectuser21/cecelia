@@ -13,23 +13,23 @@
 #   channels      视频号
 #   gongzhonghao  公众号
 #
-# 输出: JSON 格式，包含 success/count/platform 字段
+# 输出: JSON 格式，包含 success/count/platform/duration_ms 字段
 # 部署: 复制到 VPS scraper 服务器 ~/platform_scrape.sh
 #
 # 注意: 知乎使用独立脚本 ~/.zhihu/vnc_scrape.sh，不经过本脚本
 
-set -euo pipefail
+set -uo pipefail
 
 PLATFORM="${1:-}"
 SCRAPER_DIR="${SCRAPER_DIR:-${HOME}}"
 
-# 输出 JSON 错误并退出
+# 输出 JSON 错误并退出（含 duration_ms，exit 0 让 N8N 通过 JSON 判断成功）
 error_json() {
     local msg="$1"
-    local code="${2:-1}"
-    printf '{"success":false,"error":"%s","platform":"%s","count":0}\n' \
-        "$msg" "$PLATFORM" >&1
-    exit "$code"
+    local dur="${2:-0}"
+    printf '{"success":false,"error":"%s","platform":"%s","count":0,"duration_ms":%d}\n' \
+        "$msg" "$PLATFORM" "$dur" >&1
+    exit 0
 }
 
 # 参数校验
@@ -80,5 +80,46 @@ if [[ ! -f "$SCRAPER" ]]; then
     error_json "scraper not found: ${SCRAPER}"
 fi
 
-# 执行采集（stdout 透传给 N8N 解析节点）
-node "$SCRAPER"
+# 执行采集，记录耗时，注入 duration_ms 到输出 JSON
+START_MS=$(date +%s%3N)
+
+set +e
+SCRAPER_OUTPUT=$(node "$SCRAPER" 2>&1)
+SCRAPER_EXIT=$?
+set -e
+
+END_MS=$(date +%s%3N)
+DURATION_MS=$((END_MS - START_MS))
+
+# 采集失败：输出错误 JSON
+if [[ "$SCRAPER_EXIT" -ne 0 ]] || [[ -z "$SCRAPER_OUTPUT" ]]; then
+    ERR_MSG="scraper failed (exit ${SCRAPER_EXIT})"
+    if [[ -n "$SCRAPER_OUTPUT" ]]; then
+        FIRST_LINE=$(echo "$SCRAPER_OUTPUT" | head -c 200 | tr '"' "'")
+        ERR_MSG="${ERR_MSG}: ${FIRST_LINE}"
+    fi
+    error_json "$ERR_MSG" "$DURATION_MS"
+fi
+
+# 将 duration_ms 注入采集器输出 JSON
+echo "$SCRAPER_OUTPUT" | node -e "
+const chunks = [];
+process.stdin.on('data', c => chunks.push(c));
+process.stdin.on('end', () => {
+    const durMs = parseInt(process.argv[1]);
+    try {
+        const d = JSON.parse(chunks.join('').trim());
+        d.duration_ms = durMs;
+        process.stdout.write(JSON.stringify(d) + '\n');
+    } catch (e) {
+        const raw = chunks.join('').trim().slice(0, 100).replace(/\"/g, \"'\");
+        process.stdout.write(JSON.stringify({
+            success: false,
+            error: 'output parse failed: ' + e.message,
+            raw_output: raw,
+            count: 0,
+            duration_ms: durMs
+        }) + '\n');
+    }
+});
+" "$DURATION_MS"

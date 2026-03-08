@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] N8N 采集工作流缺陷修复 + platform_scrape.sh 计时增强（PR #692）
+
+**失败统计**：CI 失败 0 次，本地验证全通过
+
+**关键设计决策**：
+
+1. **set -e 与 N8N SSH 节点的冲突**：原脚本用 `set -euo pipefail`，Node.js 采集器失败时脚本直接退出（非零码），N8N SSH 节点收到非零退出码认为命令失败。修复：去掉 `-e`，改为手动检测 `$?`，失败时输出标准错误 JSON（exit 0），让 N8N 通过 JSON 的 `success` 字段判断结果。
+
+2. **duration_ms 注入方式**：不修改各平台采集器（scraper-xxx-v3.js），而是在 platform_scrape.sh 的 wrapper 层用 `date +%s%3N` 记录前后时间，通过 `node -e` 的 stdin 方式注入 `duration_ms` 到输出 JSON。这样不耦合到具体采集器实现。
+
+3. **continueOnFail 在哪层配置**：单元工作流的 SSH 节点失败 → 如果没有 `continueOnFail`，整个单元 workflow 失败 → 母调度器的 `executeWorkflow` 节点虽然有 `continueOnFail: true`，但返回的是 n8n 错误格式（没有 `success`/`count` 字段）→ `汇总` 节点必须 try/catch。两层保护都需要。
+
+4. **branch-protect.sh 的 find_prd_dod_dir 陷阱**：Hook 从被编辑文件的目录向上查找 `.prd-{branch}.md` 或 `.prd.md`。如果中间目录（如 `packages/workflows/`）有旧的 `.prd.md`，Hook 会停在那里并使用旧文件。修复：在该目录也创建 `.prd-{branch}.md` 文件取得优先级。
+
+5. **Worktree 被 Janitor 清理**：开发过程中 Worktree 被自动清理，导致 Bash 工具的 cwd 失效（所有命令报 "Working directory no longer exists"）。解决：使用 `EnterWorktree` 工具创建新 Worktree，用 `git branch -m` 重命名为 `cp-*` 格式满足 branch-protect 要求。
+
+**影响程度**: Medium（采集系统功能完整但日志不完整）
+**预防措施**：
+- N8N 采集脚本：永远不要依赖 set -e，采用 `|| true` 或手动检测 `$?`
+- 母调度器的汇总节点：必须 try/catch 每个 `$('NodeName').item` 调用，防止子 workflow 失败导致异常
+- SSH 节点：`continueOnFail: true` 是标配，不可省略
+
 ### [2026-03-08] migration 文件丢失 + node_modules symlink 被 git 追踪（PR #689）
 
 **失败统计**：CI 失败 1 次，本地测试失败 0 次
