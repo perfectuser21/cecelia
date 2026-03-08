@@ -171,7 +171,7 @@ const CORTEX_ACTION_WHITELIST = {
 // ============================================================
 
 const REFLECTION_WINDOW_MS = 30 * 60 * 1000; // 30 分钟窗口
-const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
+const REFLECTION_BREAK_THRESHOLD = 2;          // 连续 2 次相似即熔断（降低阈值阻断反思死循环）
 
 /** 内存缓存：eventHash → { count, firstSeen, lastSeen } */
 const _reflectionState = new Map();
@@ -276,7 +276,7 @@ async function _checkReflectionBreaker(hash) {
   state.count += 1;
   state.lastSeen = now;
   await _persistReflectionEntry(hash, state);
-  return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
+  return { open: state.count >= REFLECTION_BREAK_THRESHOLD, count: state.count };
 }
 
 // ============================================================
