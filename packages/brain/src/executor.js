@@ -27,6 +27,14 @@ import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { selectBestAccount, getAccountUsage } from './account-usage.js';
+import {
+  sampleCpuUsage as platformSampleCpuUsage,
+  _resetCpuSampler as platformResetCpuSampler,
+  getSwapUsedPct,
+  getDmesgInfo as platformGetDmesgInfo,
+  countClaudeProcesses,
+  calculatePhysicalCapacity,
+} from './platform-utils.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -68,20 +76,12 @@ const WORK_DIR = process.env.CECELIA_WORK_DIR || '/Users/administrator/perfect21
 /**
  * Get system dmesg information (last 100 lines).
  * Used to check for OOM Killer events.
+ * Delegates to platform-utils (macOS: returns null, Linux: reads dmesg).
  *
  * @returns {string|null} - dmesg output or null on error
  */
 function getDmesgInfo() {
-  try {
-    const output = execSync('dmesg | tail -100', {
-      timeout: 5000,
-      encoding: 'utf-8'
-    });
-    return output;
-  } catch (err) {
-    console.warn('[diagnostic] Failed to read dmesg:', err.message);
-    return null;
-  }
+  return platformGetDmesgInfo();
 }
 
 /**
@@ -156,16 +156,15 @@ async function checkExitReason(pid, taskId) {
 // Resource thresholds — dynamic seat scaling based on actual load
 const CPU_CORES = os.cpus().length;
 const TOTAL_MEM_MB = Math.round(os.totalmem() / 1024 / 1024);
-const MEM_PER_TASK_MB = 500;                      // ~500MB avg per claude process (200-850MB observed)
+const MEM_PER_TASK_MB = 350;                      // ~350MB avg per claude process (measured avg 264MB, with headroom)
 const CPU_PER_TASK = 0.5;                         // ~0.5 core avg per claude process (20-30% bursts, often idle waiting API)
 const INTERACTIVE_RESERVE = 2;                    // Reserve 2 seats for user's headed Claude sessions
-const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
-const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
 // ============================================================
-// Dual-Layer Capacity Model (v1.73.0)
+// Dual-Layer Capacity Model (v1.73.0, updated for Darwin compat)
 // ============================================================
 // Layer 1: PHYSICAL_CAPACITY — hardware ceiling (CPU + Memory)
-const PHYSICAL_CAPACITY = Math.max(Math.floor(Math.min(USABLE_MEM_MB / MEM_PER_TASK_MB, USABLE_CPU / CPU_PER_TASK)), 2);
+// Uses platform-aware calculation with SYSTEM_RESERVED_MB=5000 and MAX_PHYSICAL_CAP=10
+const PHYSICAL_CAPACITY = calculatePhysicalCapacity(TOTAL_MEM_MB, CPU_CORES, MEM_PER_TASK_MB, CPU_PER_TASK);
 
 // Layer 2: Budget Cap — user-controlled API spend limit (env or runtime API)
 const _envBudget = process.env.CECELIA_BUDGET_SLOTS
@@ -195,35 +194,24 @@ function setBudgetCap(n) {
   return getBudgetCap();
 }
 
-// Auto-dispatch thresholds
+// Auto-dispatch thresholds (derived from constants above)
+const USABLE_MEM_MB = TOTAL_MEM_MB * 0.8;        // 80% of total memory is usable (keep 20% headroom)
+const USABLE_CPU = CPU_CORES * 0.8;              // 80% of CPU is usable (keep 20% headroom)
 const RESERVE_CPU = INTERACTIVE_RESERVE * CPU_PER_TASK;
 const RESERVE_MEM_MB = INTERACTIVE_RESERVE * MEM_PER_TASK_MB;
 const MEM_AVAILABLE_MIN_MB = TOTAL_MEM_MB * 0.15 + RESERVE_MEM_MB;
 const SWAP_USED_MAX_PCT = 50;  // 降低到 50% 让 Brain 更早踩刹车，避免深度换页导致 SSH 掉线
 
 // ============================================================
-// CPU Sampler — real CPU% from /proc/stat (replaces load average)
+// CPU Sampler — delegates to platform-utils (Darwin: loadavg proxy, Linux: /proc/stat)
 // ============================================================
 const CPU_THRESHOLD_PCT = 80;
-let _prevCpuTimes = null;
 
 function sampleCpuUsage() {
-  try {
-    const line = readFileSync('/proc/stat', 'utf-8').split('\n')[0];
-    const parts = line.split(/\s+/).slice(1).map(Number);
-    if (parts.length < 4) return null;
-    const idle = parts[3] + (parts[4] || 0);  // idle + iowait
-    const total = parts.reduce((a, b) => a + b, 0);
-    if (!_prevCpuTimes) { _prevCpuTimes = { idle, total }; return null; }
-    const diffIdle = idle - _prevCpuTimes.idle;
-    const diffTotal = total - _prevCpuTimes.total;
-    _prevCpuTimes = { idle, total };
-    if (diffTotal === 0) return 0;
-    return Math.round((1 - diffIdle / diffTotal) * 100);
-  } catch { return null; }
+  return platformSampleCpuUsage();
 }
 
-function _resetCpuSampler() { _prevCpuTimes = null; }
+function _resetCpuSampler() { platformResetCpuSampler(); }
 
 /**
  * Resolve repo_path from a project, checking project_repos first, then parent chain.
@@ -265,18 +253,8 @@ function checkServerResources(memReservedMb = 0) {
   const freeMem = Math.round(os.freemem() / 1024 / 1024) - memReservedMb;
   const dynMaxSeats = getEffectiveMaxSeats();
 
-  // Read swap from /proc/meminfo (Linux)
-  let swapUsedPct = 0;
-  try {
-    const meminfo = readFileSync('/proc/meminfo', 'utf-8');
-    const swapTotal = parseInt(meminfo.match(/SwapTotal:\s+(\d+)/)?.[1] || '0', 10);
-    const swapFree = parseInt(meminfo.match(/SwapFree:\s+(\d+)/)?.[1] || '0', 10);
-    if (swapTotal > 0) {
-      swapUsedPct = Math.round(((swapTotal - swapFree) / swapTotal) * 100);
-    }
-  } catch {
-    // Not Linux or no /proc — skip swap check
-  }
+  // Read swap usage (platform-aware: Darwin uses sysctl, Linux uses /proc/meminfo)
+  const swapUsedPct = getSwapUsedPct();
 
   // CPU pressure from real CPU% (replaces load average)
   const cpuPct = sampleCpuUsage();
@@ -546,13 +524,8 @@ function getActiveProcessCount() {
   }
 
   // Count ALL claude processes on the system (headed + headless)
-  let systemClaudeCount = 0;
-  try {
-    const result = execSync('pgrep -xc claude 2>/dev/null || echo 0', { encoding: 'utf-8' });
-    systemClaudeCount = parseInt(result.trim(), 10) || 0;
-  } catch {
-    systemClaudeCount = 0;
-  }
+  // Platform-aware: Darwin uses ps | grep, Linux uses pgrep
+  const systemClaudeCount = countClaudeProcesses();
 
   // Return the higher of: tracked processes vs system claude count
   const trackedCount = activeProcesses.size;

@@ -16,6 +16,14 @@ vi.mock('child_process', () => ({
   execSync: (...args) => mockExecSync(...args),
 }));
 
+// Mock platform-utils (getTopCpuUsage, getNetworkStats)
+const mockGetTopCpuUsage = vi.fn(() => 0);
+const mockGetNetworkStats = vi.fn(() => ({ bytesReceived: 0, bytesSent: 0, packetsReceived: 0, packetsSent: 0 }));
+vi.mock('../../platform-utils.js', () => ({
+  getTopCpuUsage: (...args) => mockGetTopCpuUsage(...args),
+  getNetworkStats: (...args) => mockGetNetworkStats(...args),
+}));
+
 // Mock os 模块（保留部分真实实现，覆盖需要控制的部分）
 const mockOs = {
   cpus: vi.fn(() => [
@@ -68,6 +76,9 @@ describe('vps-monitor routes', () => {
     });
     // 默认 execSync 行为：返回空字符串
     mockExecSync.mockReturnValue('');
+    // 默认 platform-utils mock 返回值
+    mockGetTopCpuUsage.mockReturnValue(0);
+    mockGetNetworkStats.mockReturnValue({ bytesReceived: 0, bytesSent: 0, packetsReceived: 0, packetsSent: 0 });
     app = createApp();
   });
 
@@ -76,14 +87,16 @@ describe('vps-monitor routes', () => {
   // ============================================================
   describe('GET /stats', () => {
     it('返回完整的系统统计信息', async () => {
-      // 模拟各种 safeExec 调用
-      mockExecSync
-        .mockReturnValueOnce('25.3')            // top CPU
-        .mockReturnValueOnce('50G 20G 28G 40%') // df 磁盘
-        .mockReturnValueOnce('123456789')        // eth0 rx_bytes
-        .mockReturnValueOnce('987654321')        // eth0 tx_bytes
-        .mockReturnValueOnce('100000')           // eth0 rx_packets
-        .mockReturnValueOnce('80000');            // eth0 tx_packets
+      // Mock platform-utils functions
+      mockGetTopCpuUsage.mockReturnValue(25.3);
+      mockGetNetworkStats.mockReturnValue({
+        bytesReceived: 123456789,
+        bytesSent: 987654321,
+        packetsReceived: 100000,
+        packetsSent: 80000,
+      });
+      // Mock safeExec for df
+      mockExecSync.mockReturnValueOnce('50G 20G 28G 40%'); // df 磁盘
 
       const res = await request(app).get('/vps/stats');
 
@@ -93,7 +106,7 @@ describe('vps-monitor routes', () => {
       expect(res.body).toHaveProperty('uptime', 86400);
       expect(res.body).toHaveProperty('timestamp');
 
-      // CPU
+      // CPU (now via platform-utils getTopCpuUsage)
       expect(res.body.cpu).toHaveProperty('model', 'Intel Xeon E5-2680 v4');
       expect(res.body.cpu).toHaveProperty('cores', 2);
       expect(res.body.cpu.usage).toBeCloseTo(25.3, 1);
@@ -112,7 +125,7 @@ describe('vps-monitor routes', () => {
       expect(res.body.disk).toHaveProperty('available', '28G');
       expect(res.body.disk.usagePercent).toBe(40);
 
-      // 网络（lo 被过滤，只剩 eth0）
+      // 网络（lo 被过滤，只剩 eth0, via platform-utils getNetworkStats）
       expect(res.body.network).toHaveLength(1);
       expect(res.body.network[0]).toMatchObject({
         interface: 'eth0',
@@ -161,23 +174,25 @@ describe('vps-monitor routes', () => {
     });
 
     it('execSync 抛异常时 safeExec 返回 fallback', async () => {
-      // 所有 execSync 调用都抛异常
+      // All execSync calls throw (covers safeExec for df etc.)
       mockExecSync.mockImplementation(() => {
         throw new Error('Command not found');
       });
+      // Platform-utils functions return defaults
+      mockGetTopCpuUsage.mockReturnValue(0);
+      mockGetNetworkStats.mockReturnValue({ bytesReceived: 0, bytesSent: 0, packetsReceived: 0, packetsSent: 0 });
 
       const res = await request(app).get('/vps/stats');
 
       expect(res.status).toBe(200);
-      // safeExec 内部已 catch，返回空字符串 fallback
-      // parseFloat('') = NaN, NaN || 0 = 0，外层 catch 不会被触发
+      // CPU via getTopCpuUsage mock returns 0
       expect(res.body.cpu.usage).toBe(0);
       // 磁盘信息使用 N/A fallback
       expect(res.body.disk.total).toBe('N/A');
       expect(res.body.disk.used).toBe('N/A');
       expect(res.body.disk.available).toBe('N/A');
       expect(res.body.disk.usagePercent).toBe(0);
-      // 网络使用 0 fallback
+      // 网络 via getNetworkStats mock returns 0
       expect(res.body.network[0].bytesReceived).toBe(0);
       expect(res.body.network[0].bytesSent).toBe(0);
     });

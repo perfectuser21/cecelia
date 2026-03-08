@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import os from 'os';
 import { execSync } from 'child_process';
+import { getTopCpuUsage, getNetworkStats } from '../platform-utils.js';
 
 const router = Router();
 
@@ -29,13 +30,8 @@ router.get('/stats', (_req, res) => {
     const freeMem = os.freemem();
     const loadAvg = os.loadavg();
 
-    let cpuUsage = 0;
-    try {
-      const stat = safeExec("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'");
-      cpuUsage = parseFloat(stat) || 0;
-    } catch {
-      cpuUsage = Math.min(100, (loadAvg[0] / cpus.length) * 100);
-    }
+    // Platform-aware CPU usage (Darwin: top -l 1, Linux: top -bn1)
+    const cpuUsage = getTopCpuUsage();
 
     const diskOutput = safeExec("df -h / | tail -1 | awk '{print $2,$3,$4,$5}'");
     const diskParts = diskOutput.split(' ');
@@ -45,16 +41,14 @@ router.get('/stats', (_req, res) => {
       .filter(([name]) => !name.startsWith('lo') && !name.startsWith('docker') && !name.startsWith('br-') && !name.startsWith('veth'))
       .slice(0, 3)
       .map(([name]) => {
-        const rxBytes = safeExec(`cat /sys/class/net/${name}/statistics/rx_bytes 2>/dev/null`, '0');
-        const txBytes = safeExec(`cat /sys/class/net/${name}/statistics/tx_bytes 2>/dev/null`, '0');
-        const rxPackets = safeExec(`cat /sys/class/net/${name}/statistics/rx_packets 2>/dev/null`, '0');
-        const txPackets = safeExec(`cat /sys/class/net/${name}/statistics/tx_packets 2>/dev/null`, '0');
+        // Platform-aware: Darwin uses netstat -bi, Linux uses /sys/class/net/
+        const stats = getNetworkStats(name);
         return {
           interface: name,
-          bytesReceived: parseInt(rxBytes) || 0,
-          bytesSent: parseInt(txBytes) || 0,
-          packetsReceived: parseInt(rxPackets) || 0,
-          packetsSent: parseInt(txPackets) || 0,
+          bytesReceived: stats.bytesReceived,
+          bytesSent: stats.bytesSent,
+          packetsReceived: stats.packetsReceived,
+          packetsSent: stats.packetsSent,
         };
       });
 
