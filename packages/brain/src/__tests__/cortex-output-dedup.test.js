@@ -486,3 +486,86 @@ describe('D6: 30 分钟窗口过期重置', () => {
     vi.useRealTimers();
   }, 30000);
 });
+
+// ── D5: autoCreateTaskFromCortex 闭环机制 ─────────────────────────────────────
+
+describe('D5: autoCreateTaskFromCortex 闭环机制', () => {
+  let autoCreateTaskFromCortex;
+
+  function setupMocks() {
+    vi.doMock('../db.js', () => ({ default: mockPool }));
+    vi.doMock('../thalamus.js', () => ({
+      ACTION_WHITELIST: {
+        request_human_review: { dangerous: false, description: 'Request human review' },
+      },
+      validateDecision: vi.fn(),
+      recordLLMError: vi.fn(),
+      recordTokenUsage: vi.fn(),
+    }));
+    vi.doMock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
+    vi.doMock('../learning.js', () => ({
+      searchRelevantLearnings: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock('../cortex-quality.js', () => ({
+      evaluateQualityInitial: vi.fn().mockResolvedValue(null),
+      generateSimilarityHash: vi.fn().mockReturnValue('abc123'),
+      checkShouldCreateRCA: vi.fn().mockResolvedValue({ should_create: true }),
+    }));
+    vi.doMock('../policy-validator.js', () => ({
+      validatePolicyJson: vi.fn().mockReturnValue({ valid: false, errors: ['test'] }),
+    }));
+    vi.doMock('../self-model.js', () => ({
+      getSelfModel: vi.fn().mockResolvedValue('test self model'),
+    }));
+    vi.doMock('../memory-utils.js', () => ({
+      generateL0Summary: vi.fn().mockReturnValue('test summary'),
+    }));
+  }
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    setupMocks();
+    const mod = await import('../cortex.js');
+    autoCreateTaskFromCortex = mod.autoCreateTaskFromCortex;
+  });
+
+  it('confidence >= 0.7 + strategy_updates → 创建 task', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })                         // SELECT working_memory（无记录）
+      .mockResolvedValueOnce({ rows: [{ id: 'new-task-id' }] })   // INSERT tasks
+      .mockResolvedValueOnce({ rows: [] });                        // INSERT working_memory
+
+    const decision = {
+      confidence: 0.85,
+      analysis: { root_cause: 'Connection pool exhausted due to memory leak' },
+      strategy_updates: [{ key: 'resource.max_concurrent', new_value: 5, reason: 'reduce load' }],
+    };
+    await autoCreateTaskFromCortex(decision, { type: 'resource_overload' });
+
+    const insertCall = mockPool.query.mock.calls.find(c =>
+      typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks')
+    );
+    expect(insertCall).toBeDefined();
+    const insertTitle = insertCall[1][0];
+    expect(insertTitle).toContain('[皮层建议]');
+    expect(insertTitle).toContain('Connection pool');
+  }, 30000);
+
+  it('相同 root_cause 24h 内 → 跳过（去重）', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ key: 'cortex_task_created:abc' }] });
+
+    const decision = {
+      confidence: 0.9,
+      analysis: { root_cause: 'Same root cause as before' },
+      strategy_updates: [{ key: 'retry.max_attempts', new_value: 3, reason: 'stability' }],
+    };
+    await autoCreateTaskFromCortex(decision, { type: 'recurring_failure' });
+
+    const insertCall = mockPool.query.mock.calls.find(c =>
+      typeof c[0] === 'string' && c[0].includes('INSERT INTO tasks')
+    );
+    expect(insertCall).toBeUndefined();
+  }, 30000);
+});

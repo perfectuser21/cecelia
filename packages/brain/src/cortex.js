@@ -644,6 +644,11 @@ async function analyzeDeep(event, thalamusDecision = null) {
       }
     }
 
+    // 皮层建议自动转 Brain task（闭环止血）
+    await autoCreateTaskFromCortex(decision, event).catch(err => {
+      console.error('[cortex] autoCreateTaskFromCortex failed (non-blocking):', err.message);
+    });
+
     return decision;
 
   } catch (err) {
@@ -782,6 +787,74 @@ async function storeAbsorptionPolicy(policyJson, context = {}) {
     })]).catch(() => {});
     return null;
   }
+}
+
+// ============================================================
+// 皮层建议自动转 Brain Task（闭环止血）
+// ============================================================
+
+/**
+ * 当皮层输出高置信度 strategy_updates 时，自动写入 Brain tasks 表。
+ * 去重：相同 root_cause 24h 内只创建一次 task。
+ * 非阻塞：调用者 catch 错误，不影响主流程。
+ *
+ * @param {Object} decision - Cortex 决策对象
+ * @param {Object} event - 触发事件
+ */
+async function autoCreateTaskFromCortex(decision, event) {
+  // 触发条件：高置信度 + 有 strategy_updates（说明有具体可操作建议）
+  if (!Array.isArray(decision.strategy_updates) || decision.strategy_updates.length === 0) return;
+  if (typeof decision.confidence !== 'number' || decision.confidence < 0.7) return;
+
+  const rootCause = decision.analysis?.root_cause || '';
+  if (!rootCause) return;
+
+  // 去重 key：复用 _computeOutputHash 的归一化逻辑
+  const hash = crypto.createHash('sha256')
+    .update(rootCause.toLowerCase().trim())
+    .digest('hex')
+    .slice(0, 16);
+  const wmKey = `cortex_task_created:${hash}`;
+
+  // 24h 去重：已存在则跳过
+  const existing = await pool.query(
+    `SELECT key FROM working_memory WHERE key = $1 AND updated_at > NOW() - INTERVAL '24 hours'`,
+    [wmKey]
+  );
+  if (existing.rows.length > 0) {
+    console.log(`[cortex] autoCreateTask 跳过（24h 内已创建）: ${wmKey}`);
+    return;
+  }
+
+  // 创建 Brain task
+  const title = `[皮层建议] ${rootCause.slice(0, 80)}`;
+  const description = JSON.stringify({
+    source: 'cortex_auto',
+    root_cause: rootCause,
+    strategy_updates: decision.strategy_updates,
+    event_type: event.type,
+    confidence: decision.confidence,
+    analysis: decision.analysis,
+    generated_at: new Date().toISOString(),
+  });
+
+  const result = await pool.query(
+    `INSERT INTO tasks (title, task_type, priority, status, trigger_source, description)
+     VALUES ($1, 'dev', 'P1', 'queued', 'cortex_auto', $2)
+     RETURNING id`,
+    [title, description]
+  );
+  const taskId = result.rows[0]?.id;
+
+  // 记录去重标记（ON CONFLICT 支持幂等写）
+  await pool.query(
+    `INSERT INTO working_memory (key, value_json, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW()`,
+    [wmKey, JSON.stringify({ task_id: taskId, created_at: new Date().toISOString() })]
+  );
+
+  console.log(`[cortex] 自动创建 Brain task: "${title}" (${taskId})`);
 }
 
 // ============================================================
@@ -1295,6 +1368,9 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // 皮层建议自动转 Brain task（测试用）
+  autoCreateTaskFromCortex,
 
   // 报告级语义去重（测试用）
   _computeObservationKey,
