@@ -74,6 +74,7 @@ describe('反思静默期机制', () => {
       .mockResolvedValueOnce({ rows: [{ value_json: silenceUntil }] }) // silence check (expired)
       .mockResolvedValueOnce({ rows: [] }) // DELETE silence
       .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator
 
     const result = await runReflection(pool);
@@ -89,6 +90,7 @@ describe('反思静默期机制', () => {
     mockBreakerStateEmpty(); // _loadBreakerState
     mockQuery
       .mockRejectedValueOnce(new Error('DB connection failed')) // silence check fails
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator
 
     const result = await runReflection(pool);
@@ -111,6 +113,7 @@ describe('反思模块-基础功能', () => {
     mockBreakerStateEmpty(); // _loadBreakerState
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator
 
     const result = await runReflection(pool);
@@ -123,6 +126,7 @@ describe('反思模块-基础功能', () => {
     mockBreakerStateEmpty(); // _loadBreakerState
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
       .mockResolvedValueOnce({ rows: [] }); // no memories
 
@@ -152,6 +156,7 @@ describe('反思熔断器持久化', () => {
     mockBreakerStateLoaded(savedState); // _loadBreakerState: has state
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
 
     const result = await runReflection(pool);
@@ -167,6 +172,7 @@ describe('反思熔断器持久化', () => {
     mockQuery.mockRejectedValueOnce(new Error('DB down')); // _loadBreakerState fails
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
 
     const result = await runReflection(pool);
@@ -179,6 +185,7 @@ describe('反思熔断器持久化', () => {
     mockBreakerStateEmpty();
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
       .mockResolvedValueOnce({ rows: [ // memories
         { content: '系统正常运行', importance: 5, memory_type: 'short', created_at: new Date() },
@@ -213,6 +220,7 @@ describe('反思熔断器持久化', () => {
     mockBreakerStateEmpty();
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [] }) // daily_limit check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
       .mockResolvedValueOnce({ rows: [ // memories
         { content: '完全不同的新内容', importance: 5, memory_type: 'short', created_at: new Date() },
@@ -225,6 +233,7 @@ describe('反思熔断器持久化', () => {
       .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState (after dedup pass)
       .mockResolvedValueOnce({ rows: [{ id: 42 }] }) // insight INSERT RETURNING
       .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState (after write)
+      .mockResolvedValueOnce({ rows: [] }) // reflection_last_triggered_at
       .mockResolvedValueOnce({ rows: [] }); // accumulator reset
 
     const result = await runReflection(pool);
@@ -237,5 +246,59 @@ describe('反思熔断器持久化', () => {
       call[1]?.[0] === 'reflection_breaker_state'
     );
     expect(saveCalls.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('反思每日频率限制', () => {
+  let pool;
+
+  beforeEach(() => {
+    pool = { query: mockQuery };
+    vi.clearAllMocks();
+    _resetBreakerStateForTest();
+  });
+
+  it('24小时内已触发过反思时跳过', async () => {
+    const lastTriggered = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // 6 小时前
+
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: lastTriggered }] }); // daily_limit check
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBe('daily_limit');
+    expect(result.hours_since).toBeLessThan(24);
+  });
+
+  it('24小时前触发的反思不受限制', async () => {
+    const lastTriggered = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25 小时前
+
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: lastTriggered }] }) // daily_limit check (passed)
+      .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.accumulator).toBe(5);
+  });
+
+  it('DB 查询失败时降级继续', async () => {
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockRejectedValueOnce(new Error('DB error')) // daily_limit check fails
+      .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.accumulator).toBe(5);
   });
 });

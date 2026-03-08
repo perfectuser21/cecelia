@@ -130,6 +130,24 @@ export async function runReflection(pool) {
     console.error('[reflection] 静默期检查失败（降级继续）:', err.message);
   }
 
+  // 1.5. 每日频率限制：最多每 24 小时触发一次反思
+  try {
+    const { rows: lastRows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'reflection_last_triggered_at'"
+    );
+    if (lastRows[0]?.value_json) {
+      const lastTriggered = new Date(lastRows[0].value_json);
+      const hoursSince = (Date.now() - lastTriggered.getTime()) / (1000 * 60 * 60);
+      if (hoursSince < 24) {
+        const remainingHours = Math.round(24 - hoursSince);
+        console.log(`[reflection] 每日频率限制：距上次反思 ${hoursSince.toFixed(1)} 小时，剩余 ${remainingHours} 小时`);
+        return { triggered: false, reason: 'daily_limit', hours_since: hoursSince };
+      }
+    }
+  } catch (err) {
+    console.error('[reflection] 每日频率限制检查失败（降级继续）:', err.message);
+  }
+
   // 2. 检查 accumulator 阈值
   let accumulator = 0;
   try {
@@ -392,6 +410,14 @@ ${memorySummary}
     // 成功写入洞察，重置跳过计数器
     _consecutiveSkips = 0;
     await _saveBreakerState(pool);
+
+    // 记录本次反思时间（每日频率限制用）
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['reflection_last_triggered_at', JSON.stringify(new Date().toISOString())]);
+
     console.log('[reflection] 洞察已成功写入，跳过计数器已重置');
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);

@@ -175,6 +175,65 @@ const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
 
 /** 内存状态：eventHash → { count, firstSeen, lastSeen } */
 const _reflectionState = new Map();
+let _breakerStateLoaded = false;
+
+/**
+ * 从 PostgreSQL 加载熔断器状态（启动后首次调用时执行）
+ */
+async function _loadBreakerState() {
+  if (_breakerStateLoaded) return;
+  try {
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'cortex_breaker_state'"
+    );
+    if (rows[0]?.value_json) {
+      const saved = typeof rows[0].value_json === 'string'
+        ? JSON.parse(rows[0].value_json)
+        : rows[0].value_json;
+      if (saved.entries && Array.isArray(saved.entries)) {
+        for (const entry of saved.entries) {
+          _reflectionState.set(entry.hash, {
+            count: entry.count,
+            firstSeen: entry.firstSeen,
+            lastSeen: entry.lastSeen,
+          });
+        }
+      }
+      console.log(`[cortex] Breaker state loaded from DB: ${_reflectionState.size} entries`);
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to load breaker state from DB (using defaults):', err.message);
+  }
+  _breakerStateLoaded = true;
+}
+
+/**
+ * 将熔断器状态持久化到 PostgreSQL
+ */
+async function _saveBreakerState() {
+  try {
+    const entries = [];
+    for (const [hash, state] of _reflectionState) {
+      entries.push({ hash, count: state.count, firstSeen: state.firstSeen, lastSeen: state.lastSeen });
+    }
+    const payload = { entries, updatedAt: new Date().toISOString() };
+    await pool.query(`
+      INSERT INTO working_memory (key, value_json, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+    `, ['cortex_breaker_state', JSON.stringify(payload)]);
+  } catch (err) {
+    console.error('[cortex] Failed to save breaker state to DB:', err.message);
+  }
+}
+
+/**
+ * 重置熔断器状态（测试用）
+ */
+function _resetBreakerStateForTest() {
+  _reflectionState.clear();
+  _breakerStateLoaded = false;
+}
 
 /**
  * 计算事件内容哈希（type + failure_class + task_type）
@@ -193,19 +252,23 @@ function _computeEventHash(event) {
 /**
  * 检查并更新反思熔断器
  * @param {string} hash
- * @returns {{ open: boolean, count: number }}
+ * @returns {Promise<{ open: boolean, count: number }>}
  */
-function _checkReflectionBreaker(hash) {
+async function _checkReflectionBreaker(hash) {
+  await _loadBreakerState();
+
   const now = Date.now();
   const state = _reflectionState.get(hash);
 
   if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
     _reflectionState.set(hash, { count: 1, firstSeen: now, lastSeen: now });
+    await _saveBreakerState();
     return { open: false, count: 1 };
   }
 
   state.count += 1;
   state.lastSeen = now;
+  await _saveBreakerState();
   return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
 }
 
@@ -314,7 +377,7 @@ function createCortexFallback(event, reason) {
 async function analyzeDeep(event, thalamusDecision = null) {
   // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
   const _eventHash = _computeEventHash(event);
-  const _breaker = _checkReflectionBreaker(_eventHash);
+  const _breaker = await _checkReflectionBreaker(_eventHash);
   if (_breaker.open) {
     console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
     return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);
@@ -1070,4 +1133,7 @@ export {
 
   // 常量
   CORTEX_ACTION_WHITELIST,
+
+  // 测试用
+  _resetBreakerStateForTest,
 };
