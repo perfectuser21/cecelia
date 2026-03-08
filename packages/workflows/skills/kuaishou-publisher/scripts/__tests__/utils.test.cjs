@@ -24,6 +24,8 @@ const {
   extractDirNames,
   isLoginRedirect,
   isPublishPageReached,
+  formatSessionStatus,
+  extractPublishId,
 } = require('../utils.cjs');
 
 // ============================================================
@@ -227,5 +229,106 @@ describe('isLoginRedirect（OAuth 登录重定向检测）', () => {
     assert.equal(isLoginRedirect(''), false);
     assert.equal(isLoginRedirect(null), false);
     assert.equal(isLoginRedirect(undefined), false);
+  });
+});
+
+// ============================================================
+// Test 8: formatSessionStatus — 会话状态格式化
+// ============================================================
+describe('formatSessionStatus（会话状态格式化）', () => {
+  test('ok 状态返回 [SESSION_OK] 和 exitCode 0', () => {
+    const result = formatSessionStatus('ok');
+    assert.equal(result.tag, '[SESSION_OK]');
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.message.length > 0, 'message 不应为空');
+  });
+
+  test('expired 状态返回 [SESSION_EXPIRED] 和 exitCode 2', () => {
+    const result = formatSessionStatus('expired');
+    assert.equal(result.tag, '[SESSION_EXPIRED]');
+    assert.equal(result.exitCode, 2);
+  });
+
+  test('cdp_error 状态返回 [CDP_ERROR] 和 exitCode 1', () => {
+    const result = formatSessionStatus('cdp_error');
+    assert.equal(result.tag, '[CDP_ERROR]');
+    assert.equal(result.exitCode, 1);
+  });
+
+  test('timeout 状态返回 [TIMEOUT] 和 exitCode 1', () => {
+    const result = formatSessionStatus('timeout');
+    assert.equal(result.tag, '[TIMEOUT]');
+    assert.equal(result.exitCode, 1);
+  });
+
+  test('url 参数附加到 message 中', () => {
+    const url = 'https://passport.kuaishou.com/login';
+    const result = formatSessionStatus('expired', url);
+    assert.ok(result.message.includes(url), 'message 应包含 url');
+  });
+
+  test('无 url 时 message 不包含括号', () => {
+    const result = formatSessionStatus('ok');
+    assert.ok(!result.message.includes('(https'), 'message 不应含 url 括号');
+  });
+
+  test('未知状态返回 [UNKNOWN] 和 exitCode 1', () => {
+    const result = formatSessionStatus('whatever');
+    assert.equal(result.tag, '[UNKNOWN]');
+    assert.equal(result.exitCode, 1);
+  });
+});
+
+// ============================================================
+// Test 9: extractPublishId — 发布 ID 提取
+// ============================================================
+describe('extractPublishId（发布 ID 提取）', () => {
+  test('从 URL query 参数 photoId 提取', () => {
+    const result = extractPublishId(
+      'https://cp.kuaishou.com/article/manage/photo-video?photoId=1234567890'
+    );
+    assert.equal(result, '1234567890');
+  });
+
+  test('从 URL query 参数 id 提取', () => {
+    const result = extractPublishId(
+      'https://cp.kuaishou.com/article/manage/photo-video?id=9876543210'
+    );
+    assert.equal(result, '9876543210');
+  });
+
+  test('从 URL query 参数 photo_id 提取', () => {
+    const result = extractPublishId(
+      'https://cp.kuaishou.com/article/manage?photo_id=11223344556'
+    );
+    assert.equal(result, '11223344556');
+  });
+
+  test('从 URL 路径片段提取数字 ID', () => {
+    const result = extractPublishId(
+      'https://cp.kuaishou.com/photo/detail/98765432100'
+    );
+    assert.equal(result, '98765432100');
+  });
+
+  test('从页面正文 JSON 字段提取 photoId', () => {
+    const body = 'some text "photoId":"1122334455" more text';
+    assert.equal(extractPublishId(null, body), '1122334455');
+  });
+
+  test('从中文提示文本提取作品 ID', () => {
+    const body = '发布成功！作品ID：55667788990';
+    assert.equal(extractPublishId(null, body), '55667788990');
+  });
+
+  test('无法提取时返回 null', () => {
+    assert.equal(extractPublishId('https://cp.kuaishou.com/article/publish/photo-video'), null);
+    assert.equal(extractPublishId(null, '发布成功'), null);
+    assert.equal(extractPublishId(null, null), null);
+    assert.equal(extractPublishId('', ''), null);
+  });
+
+  test('URL 和 bodyText 均为空时返回 null', () => {
+    assert.equal(extractPublishId(undefined, undefined), null);
   });
 });

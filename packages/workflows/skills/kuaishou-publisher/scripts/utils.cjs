@@ -114,6 +114,94 @@ function isPublishPageReached(url, targetUrl) {
   return url.includes('cp.kuaishou.com') && url.includes(targetPath);
 }
 
+/**
+ * 将会话检查结果格式化为标准化输出对象。
+ * 退出码语义：0=OK, 1=错误/超时, 2=过期。
+ *
+ * @param {'ok' | 'expired' | 'cdp_error' | 'timeout'} status - 会话状态
+ * @param {string} [url] - 当前页面 URL（可选，附加上下文）
+ * @returns {{ tag: string, message: string, exitCode: number }}
+ */
+function formatSessionStatus(status, url) {
+  const urlInfo = url ? ` (${url})` : '';
+  switch (status) {
+    case 'ok':
+      return {
+        tag: '[SESSION_OK]',
+        message: `快手会话有效${urlInfo}`,
+        exitCode: 0,
+      };
+    case 'expired':
+      return {
+        tag: '[SESSION_EXPIRED]',
+        message: `快手 OAuth 会话已过期，请重新登录创作者中心${urlInfo}`,
+        exitCode: 2,
+      };
+    case 'cdp_error':
+      return {
+        tag: '[CDP_ERROR]',
+        message: `无法连接 CDP（Windows PC 可能未开机或浏览器未启动）${urlInfo}`,
+        exitCode: 1,
+      };
+    case 'timeout':
+      return {
+        tag: '[TIMEOUT]',
+        message: `页面加载超时${urlInfo}`,
+        exitCode: 1,
+      };
+    default:
+      return {
+        tag: '[UNKNOWN]',
+        message: `未知状态: ${status}`,
+        exitCode: 1,
+      };
+  }
+}
+
+/**
+ * 从发布成功后的页面 URL 或正文中提取发布 ID。
+ *
+ * 快手发布成功后 URL 模式（已知）：
+ *   - https://cp.kuaishou.com/article/manage/photo-video?photoId=1234567890
+ *   - https://cp.kuaishou.com/photo/detail/1234567890
+ *
+ * 页面正文中可能出现的 ID 模式：
+ *   - "photoId":"1234567890"  /  "photo_id":"1234567890"
+ *   - "作品ID：1234567890"
+ *
+ * @param {string} url - 发布成功后的页面 URL
+ * @param {string} [bodyText] - 页面正文（可选，用于从 DOM 中提取 ID）
+ * @returns {string|null} 发布 ID，无法提取时返回 null
+ */
+function extractPublishId(url, bodyText) {
+  if (url && typeof url === 'string') {
+    // 1. 从 URL query 参数提取（photoId、id、photo_id）
+    try {
+      const parsed = new URL(url);
+      for (const param of ['photoId', 'id', 'photo_id']) {
+        const val = parsed.searchParams.get(param);
+        if (val && /^\d+$/.test(val)) return val;
+      }
+      // 2. 从 URL 路径片段提取（如 /photo/detail/1234567890）
+      const pathMatch = parsed.pathname.match(/\/(\d{8,20})(?:\/|$)/);
+      if (pathMatch) return pathMatch[1];
+    } catch (_) {
+      // URL 解析失败，继续尝试正文
+    }
+  }
+
+  if (bodyText && typeof bodyText === 'string') {
+    // 3. 从 JSON 字段提取（JSON 格式的 photoId / photo_id）
+    const jsonMatch = bodyText.match(/"(?:photoId|photo_id|id)"\s*:\s*"(\d{8,20})"/);
+    if (jsonMatch) return jsonMatch[1];
+    // 4. 从中文提示文本提取（"作品ID：数字" 或 "视频ID：数字"）
+    const cnMatch = bodyText.match(/(?:作品|视频|图文)\s*ID[：:]\s*(\d{8,20})/);
+    if (cnMatch) return cnMatch[1];
+  }
+
+  return null;
+}
+
 module.exports = {
   PUBLISH_URLS,
   findImages,
@@ -123,4 +211,6 @@ module.exports = {
   extractDirNames,
   isLoginRedirect,
   isPublishPageReached,
+  formatSessionStatus,
+  extractPublishId,
 };

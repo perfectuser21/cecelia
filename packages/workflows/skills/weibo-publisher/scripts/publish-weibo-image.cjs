@@ -18,7 +18,17 @@ const fs = require('fs');
 const path = require('path');
 
 const { CDPClient } = require('./cdp-client.cjs');
-const { findImages, readContent, convertToWindowsPaths, escapeForJS, extractDirNames } = require('./utils.cjs');
+const {
+  PUBLISH_URL,
+  findImages,
+  readContent,
+  convertToWindowsPaths,
+  escapeForJS,
+  extractDirNames,
+  isLoginRedirect,
+  isPublishPageReached,
+  withRetry,
+} = require('./utils.cjs');
 
 const CDP_PORT = 19227;
 const WINDOWS_IP = '100.97.242.124';
@@ -321,17 +331,24 @@ async function main() {
   let cdp;
 
   try {
-    // 获取 CDP 连接
+    // 获取 CDP 连接（带重试，处理网络抖动）
     console.log('🔌 连接 CDP...\n');
-    const pagesData = await new Promise((resolve, reject) => {
-      http.get(`http://${WINDOWS_IP}:${CDP_PORT}/json`, res => {
-        let data = '';
-        res.on('data', chunk => (data += chunk));
-        res.on('end', () => resolve(JSON.parse(data)));
-      }).on('error', err => {
-        reject(new Error(`CDP 连接失败 (${WINDOWS_IP}:${CDP_PORT}): ${err.message}\n排查命令：curl http://${WINDOWS_IP}:${CDP_PORT}/json`));
-      });
-    });
+    const pagesData = await withRetry(
+      () => new Promise((resolve, reject) => {
+        http.get(`http://${WINDOWS_IP}:${CDP_PORT}/json`, res => {
+          let data = '';
+          res.on('data', chunk => (data += chunk));
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); }
+            catch (e) { reject(new Error(`CDP 响应解析失败: ${e.message}`)); }
+          });
+        }).on('error', err => {
+          reject(new Error(`CDP 连接失败 (${WINDOWS_IP}:${CDP_PORT}): ${err.message}\n排查命令：curl http://${WINDOWS_IP}:${CDP_PORT}/json`));
+        });
+      }),
+      3,
+      2000
+    );
 
     // 找到微博页面
     const weiboPage = pagesData.find(
@@ -354,9 +371,7 @@ async function main() {
 
     // ========== 步骤1: 导航到微博发布页 ==========
     console.log('1️⃣  导航到微博发布页...\n');
-    await cdp.send('Page.navigate', {
-      url: 'https://weibo.com/p/publish/'
-    });
+    await cdp.send('Page.navigate', { url: PUBLISH_URL });
     await sleep(5000);
     await screenshot(cdp, '01-initial');
 
@@ -371,12 +386,17 @@ async function main() {
     if (!currentUrl.includes('weibo.com')) {
       throw new Error(`导航失败，当前页面: ${currentUrl}`);
     }
-    console.log('   ✅ 导航完成\n');
 
-    // 检测并处理登录页面跳转
-    if (currentUrl.includes('passport.weibo.com') || currentUrl.includes('login')) {
+    // 使用 isLoginRedirect 检测登录跳转（覆盖所有登录页 URL 模式）
+    if (isLoginRedirect(currentUrl)) {
       throw new Error('微博未登录，请在 Windows PC Chrome (19227) 上先登录微博账号');
     }
+
+    // 使用 isPublishPageReached 验证成功到达发布页
+    if (!isPublishPageReached(currentUrl)) {
+      throw new Error(`未到达发布页，当前页面: ${currentUrl}，请检查账号状态`);
+    }
+    console.log('   ✅ 已到达发布页\n');
 
     // 检测验证码（导航后可能触发）
     await handleCaptcha(cdp);
@@ -609,8 +629,36 @@ async function main() {
     const successVal = successCheck.result.value;
     console.log(`   结果检查: ${JSON.stringify(successVal)}`);
 
+    // 检测限频（微博对高频发帖的限制）
+    const rateLimitResult = await cdp.send('Runtime.evaluate', {
+      expression: `(function() {
+        const body = document.body.textContent || '';
+        return body.includes('发帖太频繁') || body.includes('操作太频繁') ||
+               body.includes('频率限制') || body.includes('限制发言') ||
+               body.includes('操作过于频繁');
+      })()`,
+      returnByValue: true
+    });
+    if (rateLimitResult.result.value) {
+      await screenshot(cdp, '06-rate-limited');
+      throw new Error('微博限频：发帖太频繁，请等待后重试');
+    }
+
+    // 提取微博发布信息（ID 和链接）
+    const postInfoResult = await cdp.send('Runtime.evaluate', {
+      expression: `(function() {
+        const url = window.location.href;
+        const match = url.match(/weibo\\.com\\/(?:detail\\/)?([A-Za-z0-9]{10,})/);
+        return { postUrl: url, weiboId: match ? match[1] : null };
+      })()`,
+      returnByValue: true
+    });
+    const { postUrl, weiboId } = postInfoResult.result.value;
+
     if (successVal.hasSuccess || successVal.urlChanged) {
       console.log('\n✅ 微博发布成功！');
+      if (weiboId) console.log(`   微博 ID: ${weiboId}`);
+      if (postUrl && !postUrl.includes('/p/publish')) console.log(`   链接: ${postUrl}`);
       console.log(`   截图目录: ${SCREENSHOTS_DIR}`);
     } else if (successVal.hasError) {
       throw new Error('发布失败，请查看截图了解详情');
