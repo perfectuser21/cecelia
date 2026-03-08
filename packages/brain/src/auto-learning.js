@@ -127,6 +127,46 @@ function extractTaskSummary(result, maxLength = 500) {
 }
 
 /**
+ * 用 task payload 中已分类的错误信息丰富 result
+ * execution-callback 在失败时会把 failure_class + error_excerpt 写入 tasks.payload，
+ * 但 result 本身可能为空或缺乏可读的错误信息。此函数在 result 缺乏错误字段时注入 payload 数据。
+ */
+export function enrichResultWithPayload(result, payload) {
+  if (!payload) return result;
+
+  const errorExcerpt = payload.failure_detail?.error_excerpt;
+  const failureClass = payload.failure_class;
+  const errorDetails = payload.error_details;
+
+  // 如果 payload 没有任何错误信息，直接返回原 result
+  if (!errorExcerpt && !failureClass && !errorDetails) return result;
+
+  // 如果 result 已有可用的错误字段，不覆盖
+  if (result && typeof result === 'object') {
+    if (result.error_details || result.error || result.message) {
+      return result;
+    }
+    // result 是对象但缺乏错误字段 → 注入
+    return {
+      ...result,
+      error_details: errorDetails || errorExcerpt,
+      failure_class: failureClass,
+    };
+  }
+
+  // result 为空/null/非对象 → 构造新对象
+  if (result == null || typeof result !== 'object') {
+    return {
+      original_result: result != null ? result : null,
+      error_details: errorDetails || errorExcerpt,
+      failure_class: failureClass,
+    };
+  }
+
+  return result;
+}
+
+/**
  * 处理任务完成的自动学习
  */
 export async function handleTaskCompletedLearning(task_id, taskType, status, result, metadata = {}) {
@@ -192,8 +232,8 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
  */
 export async function processExecutionAutoLearning(task_id, newStatus, result, options = {}) {
   try {
-    // 获取任务信息
-    const taskResult = await pool.query('SELECT task_type, title FROM tasks WHERE id = $1', [task_id]);
+    // 获取任务信息（含 payload，用于提取已分类的错误信息）
+    const taskResult = await pool.query('SELECT task_type, title, payload FROM tasks WHERE id = $1', [task_id]);
     const taskRow = taskResult.rows[0];
 
     if (!taskRow) {
@@ -201,9 +241,15 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
       return null;
     }
 
-    const { task_type: taskType, title: taskTitle } = taskRow;
+    const { task_type: taskType, title: taskTitle, payload: taskPayload } = taskRow;
 
     console.log(`[auto-learning] Processing task ${task_id} (type: ${taskType}, status: ${newStatus})`);
+
+    // 失败时：从 payload 注入错误信息到 result（如果 result 缺乏错误字段）
+    let enrichedResult = result;
+    if (newStatus === 'failed' && taskPayload) {
+      enrichedResult = enrichResultWithPayload(result, taskPayload);
+    }
 
     const metadata = {
       trigger_source: options.trigger_source || 'execution_callback',
@@ -212,10 +258,10 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
     };
 
     if (newStatus === 'completed') {
-      return await handleTaskCompletedLearning(task_id, taskType, newStatus, result, metadata);
+      return await handleTaskCompletedLearning(task_id, taskType, newStatus, enrichedResult, metadata);
     } else if (newStatus === 'failed') {
       const retryCount = options.retry_count || options.iterations || 0;
-      return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata);
+      return await handleTaskFailedLearning(task_id, taskType, newStatus, enrichedResult, retryCount, metadata);
     }
 
     console.log(`[auto-learning] Status ${newStatus} not handled for auto-learning`);

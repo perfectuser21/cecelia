@@ -67,7 +67,7 @@ describe('Auto Learning Module', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(3);
       expect(mockPool.query).toHaveBeenNthCalledWith(
         1,
-        'SELECT task_type, title FROM tasks WHERE id = $1',
+        'SELECT task_type, title, payload FROM tasks WHERE id = $1',
         ['test-task']
       );
       expect(mockPool.query).toHaveBeenNthCalledWith(
@@ -483,6 +483,180 @@ describe('Auto Learning Module', () => {
         retry_count: 3,
         auto_generated: true
       });
+    });
+  });
+
+  describe('enrichResultWithPayload', () => {
+    it('should inject error_excerpt when result is null', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const payload = {
+        failure_class: 'network',
+        failure_detail: { error_excerpt: 'Connection refused to localhost:5432' }
+      };
+
+      const enriched = enrichResultWithPayload(null, payload);
+
+      expect(enriched).toEqual({
+        original_result: null,
+        error_details: 'Connection refused to localhost:5432',
+        failure_class: 'network',
+      });
+    });
+
+    it('should inject error_excerpt when result is empty string', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const payload = {
+        failure_class: 'billing_cap',
+        failure_detail: { error_excerpt: 'Spending cap reached' }
+      };
+
+      const enriched = enrichResultWithPayload('', payload);
+
+      expect(enriched).toEqual({
+        original_result: '',
+        error_details: 'Spending cap reached',
+        failure_class: 'billing_cap',
+      });
+    });
+
+    it('should not overwrite existing error field in result', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const result = { error: 'Original error from agent' };
+      const payload = {
+        failure_class: 'network',
+        failure_detail: { error_excerpt: 'Different error from payload' }
+      };
+
+      const enriched = enrichResultWithPayload(result, payload);
+
+      expect(enriched).toEqual({ error: 'Original error from agent' });
+    });
+
+    it('should not overwrite existing error_details in result', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const result = { error_details: 'Existing details' };
+      const payload = {
+        failure_class: 'transient',
+        failure_detail: { error_excerpt: 'Payload details' }
+      };
+
+      const enriched = enrichResultWithPayload(result, payload);
+
+      expect(enriched).toEqual({ error_details: 'Existing details' });
+    });
+
+    it('should inject into object result lacking error fields', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const result = { result: 'some output', code: 1 };
+      const payload = {
+        failure_class: 'code_error',
+        failure_detail: { error_excerpt: 'Exit code 1: test failed' }
+      };
+
+      const enriched = enrichResultWithPayload(result, payload);
+
+      expect(enriched).toEqual({
+        result: 'some output',
+        code: 1,
+        error_details: 'Exit code 1: test failed',
+        failure_class: 'code_error',
+      });
+    });
+
+    it('should return original result when payload has no error info', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const result = { result: 'output' };
+      const payload = { dispatched_account: 'acc1' };
+
+      const enriched = enrichResultWithPayload(result, payload);
+
+      expect(enriched).toEqual({ result: 'output' });
+    });
+
+    it('should return original result when payload is null', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const result = { error: 'some error' };
+      const enriched = enrichResultWithPayload(result, null);
+
+      expect(enriched).toEqual({ error: 'some error' });
+    });
+
+    it('should prefer error_details from payload over error_excerpt', async () => {
+      const { enrichResultWithPayload } = await import('../auto-learning.js');
+
+      const payload = {
+        error_details: 'Detailed error from error-report API',
+        failure_class: 'permanent',
+        failure_detail: { error_excerpt: 'Short excerpt' }
+      };
+
+      const enriched = enrichResultWithPayload(null, payload);
+
+      expect(enriched.error_details).toBe('Detailed error from error-report API');
+    });
+  });
+
+  describe('payload enrichment integration', () => {
+    it('should use payload error_excerpt in learning content when result is empty', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            task_type: 'dev',
+            title: 'Fix auth',
+            payload: {
+              failure_class: 'network',
+              failure_detail: { error_excerpt: 'ECONNREFUSED 127.0.0.1:5432' }
+            }
+          }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-payload', title: '任务失败：payload-task' }]
+        });
+
+      await processExecutionAutoLearning('payload-task', 'failed', null, { retry_count: 1 });
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('ECONNREFUSED 127.0.0.1:5432');
+    });
+
+    it('should not enrich result for completed tasks', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            task_type: 'dev',
+            title: 'Complete task',
+            payload: {
+              failure_class: 'stale',
+              failure_detail: { error_excerpt: 'Old error from previous run' }
+            }
+          }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-ok', title: '任务完成：ok-task' }]
+        });
+
+      await processExecutionAutoLearning('ok-task', 'completed', 'Success!');
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('Success!');
+      expect(content).not.toContain('Old error');
     });
   });
 });
