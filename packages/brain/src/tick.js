@@ -17,6 +17,7 @@ import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.j
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
+import { getRecoveryStatus } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
@@ -52,6 +53,11 @@ const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
 const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
+// 自愈恢复期间派发速率上限（50%），防止恢复期加剧系统过载
+const RECOVERY_DISPATCH_CAP = 0.5;
+// 每次 tick 批量释放上限（流量控制，防止瞬间大量任务入队）
+const BLOCKED_RELEASE_LIMIT = 5;   // blocked → queued 每 tick 最多 5 个
+const QUARANTINE_RELEASE_LIMIT = 2; // quarantine → queued 每 tick 最多 2 个
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -1021,9 +1027,12 @@ async function dispatchNextTask(goalIds) {
  */
 /**
  * 自动释放 blocked_until 已到期的 blocked 任务，将其状态改回 queued
+ * @param {Object} opts
+ * @param {number} [opts.limit=Infinity] - 每次最多释放的任务数（流量控制）
  * @returns {Promise<Array<{task_id, title, blocked_reason, blocked_duration_ms}>>}
  */
-async function releaseBlockedTasks() {
+async function releaseBlockedTasks({ limit = Infinity } = {}) {
+  const sqlLimit = Number.isFinite(limit) ? limit : 1000000;
   const result = await pool.query(`
     UPDATE tasks
     SET status = 'queued',
@@ -1031,10 +1040,15 @@ async function releaseBlockedTasks() {
         blocked_reason = NULL,
         blocked_until = NULL,
         updated_at = NOW()
-    WHERE status = 'blocked' AND blocked_until <= NOW()
+    WHERE id IN (
+      SELECT id FROM tasks
+      WHERE status = 'blocked' AND blocked_until <= NOW()
+      ORDER BY blocked_until ASC
+      LIMIT $1
+    )
     RETURNING id AS task_id, title, blocked_reason,
               EXTRACT(EPOCH FROM (NOW() - blocked_at)) * 1000 AS blocked_duration_ms
-  `);
+  `, [sqlLimit]);
   return result.rows;
 }
 
@@ -1914,7 +1928,7 @@ async function executeTick() {
 
   // P1 FIX #3: Check for expired quarantine tasks and auto-release
   try {
-    const released = await checkExpiredQuarantineTasks();
+    const released = await checkExpiredQuarantineTasks({ limit: QUARANTINE_RELEASE_LIMIT });
     for (const r of released) {
       actionsTaken.push({
         action: 'auto_release_quarantine',
@@ -1931,7 +1945,7 @@ async function executeTick() {
 
   // Blocked 任务自动释放：blocked_until <= NOW() 的任务重新入队
   try {
-    const blockedReleased = await releaseBlockedTasks();
+    const blockedReleased = await releaseBlockedTasks({ limit: BLOCKED_RELEASE_LIMIT });
     for (const r of blockedReleased) {
       actionsTaken.push({
         action: 'auto_release_blocked',
@@ -2027,7 +2041,18 @@ async function executeTick() {
   }
 
   // Apply dispatch rate limit based on alertness level
-  const dispatchRate = getDispatchRate();
+  let dispatchRate = getDispatchRate();
+
+  // 自愈恢复期间额外限速：isRecovering=true 时上限 50%，防止恢复期加剧过载
+  try {
+    const healingStatus = getRecoveryStatus();
+    if (healingStatus.isRecovering && dispatchRate > RECOVERY_DISPATCH_CAP) {
+      console.log(`[tick] Healing recovery active (phase=${healingStatus.phase}): capping dispatch rate ${Math.round(dispatchRate * 100)}% → ${Math.round(RECOVERY_DISPATCH_CAP * 100)}%`);
+      dispatchRate = RECOVERY_DISPATCH_CAP;
+    }
+  } catch (healingErr) {
+    console.warn('[tick] getRecoveryStatus error (non-fatal):', healingErr.message);
+  }
 
   // 情绪门禁：过载状态跳过本轮派发
   const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
