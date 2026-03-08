@@ -11,6 +11,23 @@
 4. **同步→异步的连锁反应**：`_checkReflectionBreaker` 改 async 后，所有依赖它的测试中 `mockPool.query.mockResolvedValueOnce` 顺序都要调整（新增 2 个 mock：load + persist）
 5. **版本四文件同步**：`package.json` + `package-lock.json` + `DEFINITION.md` + `.brain-versions`，漏任何一个 CI 都会失败
 
+### [2026-03-08] 孤儿进程泄漏修复：PGID vs 进程树（PR #683）
+
+**问题**：cecelia-run 任务完成后，claude subagent 进程变成孤儿（ppid=1），持续消耗 token 和内存。实测 9 个孤儿进程，最老跑了 35 小时。
+
+**根因**：
+1. `cecelia-run` 的 cleanup 用 `kill -TERM -PGID` 只杀同一进程组，但 claude 的 subagent 和 Bash tool 启动的子进程会创建新的 process group（`setsid`），不在 PGID 范围内
+2. `zombie-sweep.js` 用 `pgrep -f 'claude.*-p'` 搜索，只匹配带 `-p` 参数的主进程，subagent 的命令行是光秃秃的 `claude`，被漏掉
+
+**修复**：
+- `cecelia-run`：cleanup 从 `kill -TERM -PGID` 改为递归 `kill_tree()`，用 `pgrep -P` 遍历整个进程树
+- `zombie-sweep.js`：从 `pgrep -f 'claude.*-p'` 改为 `ps -eo pid=,ppid=,args=` 搜索所有 claude 进程，通过 `isDescendantOfTracked()` 祖先链判断是否属于活跃任务
+
+**关键教训**：
+- `kill -TERM -PGID` 不等于杀进程树 — 子进程可能在不同的进程组
+- 孤儿进程（ppid=1）仍然持有 TCP 连接，会持续调 API 消耗 token
+- 搜索进程时不能只匹配特定命令行参数，要覆盖所有变体
+
 ### [2026-03-08] tick 集成自修复闭环（PR #674）
 
 **背景**：Brain 已有 `startRecovery`（alertness/index.js）、`checkExpiredQuarantineTasks`（quarantine.js）、`unblockExpiredTasks`（task-updater.js），但缺少流控和事件记录。
