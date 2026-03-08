@@ -43,6 +43,16 @@ const IDLE_KILL_HOURS = parseFloat(process.env.IDLE_KILL_HOURS || '2');
 const IDLE_KILL_MS = IDLE_KILL_HOURS * 60 * 60 * 1000;
 const IDLE_CPU_PCT_THRESHOLD = parseFloat(process.env.IDLE_CPU_PCT_THRESHOLD || '1');
 
+// === Trend analysis thresholds (memory-aware v2) ===
+const TREND_WINDOW_SIZE = parseInt(process.env.TREND_WINDOW_SIZE || '12'); // 12 samples = 5 min (12 * 5s)
+const TREND_SLOPE_THRESHOLD = parseFloat(process.env.TREND_SLOPE_THRESHOLD || '10'); // MB per minute
+const PREDICTION_WINDOW_MINUTES = 5;
+const PREDICTION_ALERT_THRESHOLD = 0.8; // Alert when predicted to reach 80% of warn threshold
+const HEALING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between healing triggers
+
+// Track last healing trigger time per task
+const _lastHealingTrigger = new Map();
+
 // In-memory metrics store: taskId -> { samples: [], pid, pgid }
 const _taskMetrics = new Map();
 
@@ -207,6 +217,101 @@ function calcCpuPct(prev, curr) {
   const wallSec = (curr.timestamp - prev.timestamp) / 1000;
   if (wallSec <= 0) return 0;
   return Math.round((tickDelta / 100 / wallSec) * 100);
+}
+
+/**
+ * Calculate RSS trend slope using linear regression on the sample window.
+ * Returns slope in MB per minute.
+ * Positive slope = memory growing, negative slope = memory shrinking.
+ */
+function calcRssTrend(samples) {
+  if (!samples || samples.length < 2) return 0;
+
+  // Use last TREND_WINDOW_SIZE samples
+  const window = samples.slice(-TREND_WINDOW_SIZE);
+  if (window.length < 2) return 0;
+
+  // Linear regression: y = mx + b
+  // x = timestamp (in minutes from start), y = rss_mb
+  const n = window.length;
+  const firstTs = window[0].timestamp;
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    const x = (window[i].timestamp - firstTs) / 60000; // minutes from start
+    const y = window[i].rss_mb;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+
+  const denominator = n * sumXX - sumX * sumX;
+  if (denominator === 0) return 0;
+
+  // Slope (m) = (n * sumXY - sumX * sumY) / denominator
+  const slope = (n * sumXY - sumX * sumY) / denominator;
+  return Math.round(slope * 100) / 100; // Round to 2 decimal places
+}
+
+/**
+ * Predict RSS after PREDICTION_WINDOW_MINUTES based on current trend.
+ * Returns predicted RSS in MB.
+ */
+function predictRss(samples) {
+  if (!samples || samples.length < 2) return null;
+
+  const slope = calcRssTrend(samples);
+  const lastSample = samples[samples.length - 1];
+  if (!lastSample) return null;
+
+  // Predicted RSS = current + (slope * prediction window)
+  const predicted = lastSample.rss_mb + (slope * PREDICTION_WINDOW_MINUTES);
+  return Math.round(predicted);
+}
+
+/**
+ * Check if memory is in rapid growth (slope > threshold).
+ */
+function isRapidGrowth(samples) {
+  const slope = calcRssTrend(samples);
+  return slope > TREND_SLOPE_THRESHOLD;
+}
+
+/**
+ * Check if predicted RSS will exceed warn threshold.
+ */
+function willExceedWarnThreshold(samples) {
+  const predicted = predictRss(samples);
+  if (predicted === null) return false;
+  return predicted >= (RSS_WARN_MB * PREDICTION_ALERT_THRESHOLD);
+}
+
+/**
+ * Get current trend data for a task.
+ */
+function getTaskTrend(taskId) {
+  const metrics = _taskMetrics.get(taskId);
+  if (!metrics || !metrics.samples || metrics.samples.length < 2) {
+    return null;
+  }
+
+  const samples = metrics.samples;
+  const slope = calcRssTrend(samples);
+  const predicted = predictRss(samples);
+  const lastSample = samples[samples.length - 1];
+
+  return {
+    task_id: taskId,
+    current_rss_mb: lastSample?.rss_mb || 0,
+    slope_mb_per_min: slope,
+    predicted_rss_mb: predicted,
+    is_rapid_growth: isRapidGrowth(samples),
+    will_exceed_threshold: willExceedWarnThreshold(samples),
+    samples_count: samples.length,
+    window_size: TREND_WINDOW_SIZE,
+    threshold: TREND_SLOPE_THRESHOLD,
+  };
 }
 
 /**
@@ -472,10 +577,101 @@ function getWatchdogStatus() {
 }
 
 /**
+ * Get watchdog trends for all tasks (for API endpoint).
+ * Returns trend data including slope, prediction, and alerts.
+ */
+function getWatchdogTrends() {
+  const { pidMap } = resolveTaskPids();
+  const trends = [];
+  const alerts = [];
+
+  for (const [taskId] of pidMap) {
+    const trend = getTaskTrend(taskId);
+    if (trend) {
+      trends.push(trend);
+
+      // Add to alerts if predicted to exceed threshold
+      if (trend.will_exceed_threshold) {
+        alerts.push({
+          task_id: taskId,
+          type: 'predicted_memory_exceeded',
+          severity: 'warning',
+          message: `预测 5 分钟内达到 ${trend.predicted_rss_mb}MB（当前 ${trend.current_rss_mb}MB）`,
+          current_rss_mb: trend.current_rss_mb,
+          predicted_rss_mb: trend.predicted_rss_mb,
+          slope_mb_per_min: trend.slope_mb_per_min,
+          threshold_mb: RSS_WARN_MB,
+        });
+      }
+
+      // Add alert for rapid growth
+      if (trend.is_rapid_growth && !trend.will_exceed_threshold) {
+        alerts.push({
+          task_id: taskId,
+          type: 'rapid_memory_growth',
+          severity: 'info',
+          message: `内存快速增长：${trend.slope_mb_per_min}MB/分钟`,
+          slope_mb_per_min: trend.slope_mb_per_min,
+          threshold_mb_per_min: TREND_SLOPE_THRESHOLD,
+        });
+      }
+    }
+  }
+
+  return {
+    trends,
+    alerts,
+    thresholds: {
+      rss_warn_mb: RSS_WARN_MB,
+      trend_slope_threshold: TREND_SLOPE_THRESHOLD,
+      prediction_window_minutes: PREDICTION_WINDOW_MINUTES,
+      alert_threshold_pct: PREDICTION_ALERT_THRESHOLD * 100,
+    },
+  };
+}
+
+/**
+ * Check if healing should be triggered for memory pressure.
+ * Returns true if healing was triggered, false otherwise.
+ */
+async function checkAndTriggerHealing(taskId) {
+  const now = Date.now();
+  const lastTrigger = _lastHealingTrigger.get(taskId) || 0;
+
+  // Check cooldown
+  if (now - lastTrigger < HEALING_COOLDOWN_MS) {
+    return false;
+  }
+
+  const trend = getTaskTrend(taskId);
+  if (!trend) return false;
+
+  // Trigger healing if rapid growth + predicted to exceed threshold
+  if (trend.is_rapid_growth && trend.will_exceed_threshold) {
+    _lastHealingTrigger.set(taskId, now);
+
+    // Try to import healing and call clear_expired_cache
+    try {
+      const healing = await import('./alertness/healing.js');
+      if (healing.clearExpiredCache) {
+        await healing.clearExpiredCache();
+        console.log(`[Watchdog] Triggered healing for memory pressure on task: ${taskId}`);
+        return true;
+      }
+    } catch (err) {
+      console.log(`[Watchdog] Could not trigger healing: ${err.message}`);
+    }
+  }
+
+  return false;
+}
+
+/**
  * Clean up metrics for a task (after kill/completion).
  */
 function cleanupMetrics(taskId) {
   _taskMetrics.delete(taskId);
+  _lastHealingTrigger.delete(taskId);
 }
 
 export {
@@ -484,9 +680,17 @@ export {
   calcCpuPct,
   checkRunaways,
   getWatchdogStatus,
+  getWatchdogTrends,
   cleanupMetrics,
+  checkAndTriggerHealing,
   scanInteractiveClaude,
   checkIdleSessions,
+  // Trend analysis functions
+  calcRssTrend,
+  predictRss,
+  isRapidGrowth,
+  willExceedWarnThreshold,
+  getTaskTrend,
   // Expose for testing
   RSS_KILL_MB,
   RSS_WARN_MB,
@@ -498,8 +702,14 @@ export {
   IDLE_KILL_HOURS,
   IDLE_KILL_MS,
   IDLE_CPU_PCT_THRESHOLD,
+  TREND_WINDOW_SIZE,
+  TREND_SLOPE_THRESHOLD,
+  PREDICTION_WINDOW_MINUTES,
+  PREDICTION_ALERT_THRESHOLD,
+  HEALING_COOLDOWN_MS,
   _taskMetrics,
   _idleMetrics,
+  _lastHealingTrigger,
   // Darwin-specific (exposed for testing)
   IS_DARWIN,
   isProcessAlive,
