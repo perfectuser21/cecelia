@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] weibo-publisher 缺少 MAX_IMAGES=9 平台限制（PR #694）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**问题**：
+- Python 原版脚本有 `MAX_IMAGES = 9` 限制，但 Node.js 重写版（publish-weibo-image.cjs）漏掉了这个边界检查
+- 微博平台最多支持 9 张图片，超出会导致上传失败
+
+**修复**：
+- 新增 `MAX_IMAGES = 9` 常量，`allImages.length > MAX_IMAGES` 时 slice 并打印 `⚠️` 警告
+- 新建 `publish-weibo-image.test.cjs`（18 个测试），覆盖：截断逻辑 × 5、Windows 路径转换 × 3、内容读取 × 3、escapeForJS × 3、批量队列 × 4
+
+**经验**：
+- 迁移平台脚本时，应逐行对比原版与新版的"平台约束"（字数/图片数/格式），这类硬约束容易在重写时遗漏
+- packages/workflows 的测试用 `node --test <file>.test.cjs`（CommonJS），无需 vitest/jest 依赖
+- xiaohongshu-publisher 共享 weibo-publisher 的 `utils.cjs` 和 `cdp-client.cjs`，修改时需同时运行两者测试套件做回归
+
 ### [2026-03-08] N8N 采集工作流缺陷修复 + platform_scrape.sh 计时增强（PR #692）
 
 **失败统计**：CI 失败 0 次，本地验证全通过

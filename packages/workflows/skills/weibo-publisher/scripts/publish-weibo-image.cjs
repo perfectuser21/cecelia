@@ -24,6 +24,7 @@ const CDP_PORT = 19227;
 const WINDOWS_IP = '100.97.242.124';
 const SCREENSHOTS_DIR = '/tmp/weibo-publish-screenshots';
 const WINDOWS_BASE_DIR = 'C:\\Users\\xuxia\\weibo-media';
+const MAX_IMAGES = 9; // 微博平台最多 9 张图片
 
 // 验证码相关选择器（微博使用天鉴/GeeTest 验证）
 const CAPTCHA_SELECTORS = [
@@ -56,10 +57,18 @@ const contentDir = path.resolve(contentDirArg);
 // 读取内容
 const contentText = readContent(contentDir);
 
-const localImages = findImages(contentDir);
-if (localImages.length === 0) {
+const allImages = findImages(contentDir);
+if (allImages.length === 0) {
   console.error('❌ 错误：内容目录中没有图片文件');
   process.exit(1);
+}
+
+// 微博平台限制：最多 9 张图片
+const localImages = allImages.length > MAX_IMAGES
+  ? allImages.slice(0, MAX_IMAGES)
+  : allImages;
+if (allImages.length > MAX_IMAGES) {
+  console.warn(`⚠️  图片数量 ${allImages.length} 超过微博限制 ${MAX_IMAGES} 张，已截断为前 ${MAX_IMAGES} 张`);
 }
 
 // 转换图片路径为 Windows 绝对路径
@@ -71,7 +80,7 @@ console.log('微博图文发布');
 console.log('========================================\n');
 console.log(`📁 内容目录: ${contentDir}`);
 console.log(`📝 文案长度: ${contentText.length} 字符`);
-console.log(`🖼️  图片数量: ${localImages.length}`);
+console.log(`🖼️  图片数量: ${localImages.length}${allImages.length > MAX_IMAGES ? ` (截断自 ${allImages.length})` : ''}`);
 if (windowsImages.length > 0) {
   console.log(`📁 Windows 路径: ${windowsImages[0]}`);
 }
