@@ -52,6 +52,7 @@ vi.mock('../db.js', () => ({
 import {
   sampleCpuUsage,
   _resetCpuSampler,
+  _resetResourceHistory,
   checkServerResources,
   CPU_THRESHOLD_PCT,
   PHYSICAL_CAPACITY,
@@ -121,6 +122,7 @@ describe('sampleCpuUsage — D1', () => {
 describe('checkServerResources CPU 压力 — D1-4/D1-5', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetResourceHistory();
   });
 
   it('D1-4: cpuPressure 使用真实 CPU%（非 load average）', () => {
