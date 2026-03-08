@@ -19,7 +19,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-brain PRs
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -48,7 +48,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -65,7 +65,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Manifest Sync Check
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Fitness Functions (System Consistency)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -115,36 +115,46 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Brain Tests
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 30
     permissions:
       contents: read
 
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_DB: cecelia
-          POSTGRES_USER: cecelia
-          POSTGRES_PASSWORD: cecelia_ci
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
       DB_HOST: localhost
-      DB_PORT: 5433
+      DB_PORT: 5432
       DB_NAME: cecelia
       DB_USER: cecelia
       DB_PASSWORD: cecelia_ci
       ENV_REGION: us
+      PGPASSWORD: cecelia_ci
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up PostgreSQL
+        run: |
+          brew install postgresql@17
+          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          # Initialize and start PostgreSQL
+          initdb -D /tmp/pgdata --username=$(whoami) 2>/dev/null || true
+          pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
+          # Wait for PostgreSQL to be ready
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 2>/dev/null; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 1
+          done
+          # Create CI user and database (connect as current OS user which is the superuser)
+          createuser --superuser cecelia 2>/dev/null || true
+          psql -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
+          createdb -U cecelia cecelia 2>/dev/null || true
+          # Install pgvector extension
+          brew install pgvector
+          psql -U cecelia -d cecelia -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -190,7 +200,7 @@ jobs:
   ci-passed:
     needs: [changes, facts-check, manifest-sync, fitness-check, brain-test]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 5
     steps:
       - name: Brain CI Passed
