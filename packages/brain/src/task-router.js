@@ -16,7 +16,7 @@ const VALID_TASK_TYPES = [
   'dev', 'review', 'talk', 'data', 'qa', 'audit',
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
-  'dept_heartbeat', 'initiative_plan', 'initiative_verify',
+  'dept_heartbeat', 'domain_plan', 'initiative_plan', 'initiative_verify',
   'suggestion_plan', 'architecture_design', 'strategy_session'
 ];
 
@@ -35,6 +35,7 @@ const SKILL_WHITELIST = {
   'code_review': '/code-review',
   'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
+  'domain_plan': '/decomp',
   'initiative_plan': '/decomp',
   'initiative_verify': '/decomp',
   'suggestion_plan': '/plan',
@@ -102,6 +103,7 @@ const LOCATION_MAP = {
   'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
+  'domain_plan': 'us',     // Domain-aware planning → US (Opus + /decomp)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)

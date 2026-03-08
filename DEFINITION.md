@@ -406,6 +406,7 @@ queued → in_progress → completed
 | knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
+| domain_plan | US | 领域规划 (/decomp) | Opus / - | 默认 anthropic |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 | Opus / - | 默认 anthropic |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |

@@ -883,6 +883,7 @@ function getSkillForTaskType(taskType, payload) {
     'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // Initiative 执行循环
+    'domain_plan': '/decomp',     // Domain-aware planning: /decomp
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
@@ -1357,6 +1358,15 @@ PUT /api/tasks/goals/${krId}
   // 任务描述已包含完整的 Initiative ID、KR ID、历史 PR 等信息，无需额外处理
   if (taskType === 'initiative_plan' || taskType === 'initiative_verify') {
     return `/decomp\n\n${task.description || task.title}`;
+  }
+
+  // domain_plan：非 coding domain 的 Initiative 规划，传递 domain 上下文
+  // payload 包含 domain 和 owner_role，由 planner.js 设置
+  if (taskType === 'domain_plan') {
+    const domain = task.payload?.domain || task.domain || 'unknown';
+    const ownerRole = task.payload?.skill_override || task.owner_role || '/dev';
+    const domainCtx = `## 业务领域上下文\n- 领域: ${domain}\n- 负责角色: ${ownerRole}\n`;
+    return `/decomp\n\n${domainCtx}${task.description || task.title}`;
   }
 
   // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入
