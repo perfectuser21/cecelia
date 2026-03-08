@@ -18,6 +18,17 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+const {
+  PUBLISH_URLS,
+  findImages,
+  readContent,
+  convertToWindowsPaths,
+  escapeForJS,
+  extractDirNames,
+  isLoginRedirect,
+  isPublishPageReached,
+} = require('./utils.cjs');
+
 const CDP_PORT = 19223;
 const WINDOWS_IP = '100.97.242.124';
 const SCREENSHOTS_DIR = '/tmp/kuaishou-publish-screenshots';
@@ -39,38 +50,16 @@ if (!contentDirArg || !fs.existsSync(contentDirArg)) {
 }
 
 const contentDir = path.resolve(contentDirArg);
-
-// 读取内容
-const contentFile = path.join(contentDir, 'content.txt');
-const contentText = fs.existsSync(contentFile)
-  ? fs.readFileSync(contentFile, 'utf8').trim()
-  : '';
-
-// 收集图片文件
-function findImages(dir) {
-  const files = fs.readdirSync(dir);
-  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-  const images = files
-    .filter(f => imageExts.some(ext => f.toLowerCase().endsWith(ext)))
-    .sort()
-    .map(f => path.join(dir, f));
-  return images;
-}
-
+const contentText = readContent(contentDir);
 const localImages = findImages(contentDir);
+
 if (localImages.length === 0) {
   console.error('❌ 错误：内容目录中没有图片文件');
   process.exit(1);
 }
 
-// 转换图片路径为 Windows 绝对路径
-// 目录结构：WINDOWS_BASE_DIR/{date}/{image-dir}/{filename}
-const dateDir = path.basename(path.dirname(contentDir)); // 提取日期目录名
-const contentDirName = path.basename(contentDir);
-const windowsImages = localImages.map(img => {
-  const filename = path.basename(img);
-  return path.join(WINDOWS_BASE_DIR, dateDir, contentDirName, filename).replace(/\//g, '\\');
-});
+const { dateDir, contentDirName } = extractDirNames(contentDir);
+const windowsImages = convertToWindowsPaths(localImages, WINDOWS_BASE_DIR, dateDir, contentDirName);
 
 console.log('\n========================================');
 console.log('快手图文发布');
@@ -144,6 +133,48 @@ async function screenshot(cdp, name) {
   }
 }
 
+async function navigateToPublishPage(cdp) {
+  for (const targetUrl of PUBLISH_URLS) {
+    console.log(`   尝试导航到: ${targetUrl}`);
+    await cdp.send('Page.navigate', { url: targetUrl });
+    await sleep(5000);
+
+    const urlResult = await cdp.send('Runtime.evaluate', {
+      expression: 'window.location.href',
+      returnByValue: true,
+    });
+    const currentUrl = urlResult.result.value;
+    console.log(`   当前 URL: ${currentUrl}`);
+
+    if (isLoginRedirect(currentUrl)) {
+      console.error('\n[SESSION_EXPIRED] 快手会话已过期，需要重新登录');
+      console.error(`重定向到: ${currentUrl}`);
+      throw new Error('[SESSION_EXPIRED] 快手 OAuth 会话已过期，请重新登录创作者中心');
+    }
+
+    if (isPublishPageReached(currentUrl, targetUrl)) {
+      console.log(`   ✅ 成功到达发布页面\n`);
+      return currentUrl;
+    }
+
+    console.log(`   ⚠️  URL 不匹配，尝试下一个候选 URL...`);
+  }
+
+  // 所有候选 URL 均失败，取当前 URL 做最后检查
+  const urlResult = await cdp.send('Runtime.evaluate', {
+    expression: 'window.location.href',
+    returnByValue: true,
+  });
+  const currentUrl = urlResult.result.value;
+
+  if (isLoginRedirect(currentUrl)) {
+    console.error('\n[SESSION_EXPIRED] 快手会话已过期，需要重新登录');
+    throw new Error('[SESSION_EXPIRED] 快手 OAuth 会话已过期，请重新登录创作者中心');
+  }
+
+  throw new Error(`所有候选发布 URL 均导航失败，当前页面: ${currentUrl}`);
+}
+
 async function main() {
   let cdp;
 
@@ -178,37 +209,16 @@ async function main() {
     await cdp.send('DOM.enable');
     console.log('✅ CDP 已连接\n');
 
-    // ========== 步骤1: 导航到图文发布页 ==========
+    // ========== 步骤1: 导航到图文发布页（多 URL 降级 + OAuth 检测）==========
     console.log('1️⃣  导航到快手图文发布页...\n');
-    await cdp.send('Page.navigate', {
-      url: 'https://cp.kuaishou.com/article/publish/photo-video'
-    });
-    await sleep(5000);
     await screenshot(cdp, '01-initial');
-
-    // 检查当前 URL
-    const urlResult = await cdp.send('Runtime.evaluate', {
-      expression: 'window.location.href',
-      returnByValue: true
-    });
-    const currentUrl = urlResult.result.value;
-    console.log(`   当前 URL: ${currentUrl}\n`);
-
-    if (!currentUrl.includes('cp.kuaishou.com')) {
-      throw new Error(`导航失败或未登录，当前页面: ${currentUrl}（需要先登录快手创作者中心）`);
-    }
-    console.log('   ✅ 导航完成\n');
+    await navigateToPublishPage(cdp);
 
     // ========== 步骤2: 填写文案 ==========
     if (contentText) {
       console.log('2️⃣  填写文案...\n');
 
-      const escapedContent = contentText
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, '\\n')
-        .replace(/\r/g, '\\r');
+      const escapedContent = escapeForJS(contentText);
 
       const fillResult = await cdp.send('Runtime.evaluate', {
         expression: `(function() {
