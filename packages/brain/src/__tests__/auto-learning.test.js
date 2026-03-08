@@ -67,7 +67,7 @@ describe('Auto Learning Module', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(3);
       expect(mockPool.query).toHaveBeenNthCalledWith(
         1,
-        'SELECT task_type, title FROM tasks WHERE id = $1',
+        'SELECT task_type, title, error_message, metadata FROM tasks WHERE id = $1',
         ['test-task']
       );
       expect(mockPool.query).toHaveBeenNthCalledWith(
@@ -411,6 +411,58 @@ describe('Auto Learning Module', () => {
 
       expect(content).toContain('ECONNREFUSED');
       expect(content).toContain('localhost');
+    });
+
+    it('should fallback to DB error_message when result is null', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Null result task', error_message: 'Task timed out after 600s' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-fallback', title: '任务失败：null-result-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'null-result-task',
+        'failed',
+        null
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('Task timed out after 600s');
+    });
+
+    it('should fallback to DB error_message when result is empty object', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Empty result task', error_message: 'CI pipeline failed: exit code 1' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-empty', title: '任务失败：empty-result-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'empty-result-task',
+        'failed',
+        {}
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('CI pipeline failed: exit code 1');
     });
   });
 
