@@ -179,28 +179,48 @@ let _reflectionStateLoaded = false;
 
 /**
  * 从 working_memory 加载已持久化的熔断状态（启动时调用一次）
+ * 自动清理过期条目（超过 30 分钟窗口）
  */
 async function _loadReflectionStateFromDB() {
   if (_reflectionStateLoaded) return;
+  _reflectionStateLoaded = true;
   try {
     const result = await pool.query(
       `SELECT key, value_json FROM working_memory WHERE key LIKE 'cortex_reflection:%'`
     );
+    const now = Date.now();
+    const expiredKeys = [];
+    let loaded = 0;
     for (const row of result.rows) {
       const hash = row.key.replace('cortex_reflection:', '');
       const val = row.value_json;
       if (val && typeof val.count === 'number') {
-        _reflectionState.set(hash, {
-          count: val.count,
-          firstSeen: val.firstSeen,
-          lastSeen: val.lastSeen,
-        });
+        if (now - val.firstSeen > REFLECTION_WINDOW_MS) {
+          expiredKeys.push(row.key);
+        } else {
+          _reflectionState.set(hash, {
+            count: val.count,
+            firstSeen: val.firstSeen,
+            lastSeen: val.lastSeen,
+          });
+          loaded++;
+        }
       }
+    }
+    if (loaded > 0) {
+      console.log(`[cortex] 从 DB 恢复 ${loaded} 条反思去重状态`);
+    }
+    if (expiredKeys.length > 0) {
+      pool.query(
+        'DELETE FROM working_memory WHERE key = ANY($1)',
+        [expiredKeys]
+      ).catch(err => {
+        console.error('[cortex] Failed to clean expired reflection entries:', err.message);
+      });
     }
   } catch (err) {
     console.error('[cortex] Failed to load reflection state from DB:', err.message);
   }
-  _reflectionStateLoaded = true;
 }
 
 /**
@@ -1094,6 +1114,14 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
 // Exports
 // ============================================================
 
+/**
+ * 重置反思去重状态（仅供测试使用）
+ */
+function _resetReflectionState() {
+  _reflectionState.clear();
+  _reflectionStateLoaded = false;
+}
+
 export {
   // 主入口
   analyzeDeep,
@@ -1115,6 +1143,11 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // 反思去重（测试用）
+  _resetReflectionState,
+  _checkReflectionBreaker,
+  _computeEventHash,
 
   // 常量
   CORTEX_ACTION_WHITELIST,
