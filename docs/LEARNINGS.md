@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] N8N 调度器告警分支 + 并发 PR 合并冲突（PR #695）
+
+**失败统计**：CI 失败 0 次，合并冲突 1 次
+
+**合并冲突记录**：
+- PR #695 和并发 PR 同时修改了 `flow-数据采集调度器.json` 的汇总节点
+- 并发 PR 改进了汇总节点（try/catch 防守、per-platform duration_ms、严格 `success===true`）
+- 本 PR 添加了 `duration_seconds` 总耗时和失败告警分支（IF 节点 + 飞书告警）
+- 解决：合并两者——取并发 PR 更健壮的汇总逻辑 + 保留本 PR 的 IF/alert 节点
+
+**经验教训**：
+1. **N8N 并行分支**：同一 output port 数组里放多个 connection，实现主流程 + 告警并行，互不阻塞
+2. **Worktree 被 janitor 删除**：分支仍存在，用 `git worktree prune && git worktree add <path> <branch>` 重建
+3. **双转义节点名**：`flow-数据采集调度器.json` 用 `\\uXXXX` 双转义，connections key 必须同格式，不可混用实际汉字
+4. **per-platform vs 总耗时**：per-platform `duration_ms` 来自单元工作流（更精准），总 `duration_seconds` 从 `初始化.startTime` 计算
+
 ### [2026-03-08] weibo-publisher 缺少 MAX_IMAGES=9 平台限制（PR #694）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次

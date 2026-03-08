@@ -47,6 +47,12 @@
               "name": "failed",
               "value": "=[]",
               "type": "array"
+            },
+            {
+              "id": "ts",
+              "name": "startTime",
+              "value": "={{ Date.now() }}",
+              "type": "number"
             }
           ]
         }
@@ -224,7 +230,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const platforms = ['抖音','快手','小红书','头条','头条2','微博','视频号','公众号','知乎'];\nconst results = [];\nconst failed = [];\n\nfor (let i = 0; i < platforms.length; i++) {\n  const name = platforms[i];\n  let data = {};\n  try {\n    const item = $(`${i+1}-${name}`).item;\n    data = (item && item.json) ? item.json : {};\n  } catch (e) {\n    data = { success: false, error: 'workflow_failed: ' + e.message, count: 0, duration_ms: 0 };\n  }\n  const success = data.success === true && (data.count || 0) >= 3;\n  results.push({\n    platform: name,\n    success,\n    count: data.count || 0,\n    error: data.error || null,\n    duration_ms: data.duration_ms || 0\n  });\n  if (!success) failed.push(name);\n}\n\nreturn { results, failed, total: platforms.length, successCount: results.filter(r => r.success).length };"
+        "jsCode": "const platforms = ['抖音','快手','小红书','头条','头条2','微博','视频号','公众号','知乎'];\nconst results = [];\nconst failed = [];\n\nfor (let i = 0; i < platforms.length; i++) {\n  const name = platforms[i];\n  let data = {};\n  try {\n    const item = $(`${i+1}-${name}`).item;\n    data = (item && item.json) ? item.json : {};\n  } catch (e) {\n    data = { success: false, error: 'workflow_failed: ' + e.message, count: 0, duration_ms: 0 };\n  }\n  const success = data.success === true && (data.count || 0) >= 3;\n  results.push({\n    platform: name,\n    success,\n    count: data.count || 0,\n    error: data.error || null,\n    duration_ms: data.duration_ms || 0\n  });\n  if (!success) failed.push(name);\n}\n\nconst startTime = $('\\u521d\\u59cb\\u5316').item.json.startTime || Date.now();\nconst durationMs = Date.now() - startTime;\nreturn { results, failed, total: platforms.length, successCount: results.filter(r => r.success).length, duration_seconds: Math.round(durationMs / 1000) };"
       },
       "id": "summary",
       "name": "\\u6c47\\u603b",
@@ -237,6 +243,55 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "fail-check",
+              "leftValue": "={{ $json.failed.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-failed",
+      "name": "\\u68c0\\u67e5\\u5931\\u8d25",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"msg_type\": \"text\", \"content\": { \"text\": \"\\ud83d\\udea8 \\u91c7\\u96c6\\u544a\\u8b66\\n\\n\" + $('\\u6c47\\u603b').item.json.failed.length + \" \\u4e2a\\u5e73\\u53f0\\u91c7\\u96c6\\u5931\\u8d25: \" + $('\\u6c47\\u603b').item.json.failed.join(', ') + \"\\n\\n\\u8bf7\\u68c0\\u67e5\\u91c7\\u96c6\\u7cfb\\u7edf\\uff01\" } } }}"
+      },
+      "id": "alert",
+      "name": "\\u53d1\\u9001\\u544a\\u8b66",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2550,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
         "jsCode": "const r = $json;\nconst runDate = new Date().toISOString().split('T')[0];\n\nlet sql = `CREATE SCHEMA IF NOT EXISTS zenithjoy;\nCREATE TABLE IF NOT EXISTS zenithjoy.data_sources (\n  id SERIAL PRIMARY KEY,\n  run_date DATE NOT NULL,\n  platform VARCHAR(50) NOT NULL,\n  success BOOLEAN NOT NULL,\n  record_count INTEGER DEFAULT 0,\n  error_message TEXT,\n  duration_ms INTEGER DEFAULT 0,\n  scraped_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(run_date, platform)\n);\n`;\n\nif (r.results && r.results.length > 0) {\n  const values = r.results.map(p => {\n    const safeP = p.platform.replace(/'/g, \"''\");\n    const safeErr = p.error ? `'${String(p.error).replace(/'/g, \"''\")}'` : 'NULL';\n    const durMs = p.duration_ms || 0;\n    return `('${runDate}', '${safeP}', ${p.success ? 'true' : 'false'}, ${p.count || 0}, ${safeErr}, ${durMs}, NOW())`;\n  }).join(',\\n');\n  sql += `INSERT INTO zenithjoy.data_sources (run_date, platform, success, record_count, error_message, duration_ms, scraped_at) VALUES\\n${values}\\nON CONFLICT (run_date, platform) DO UPDATE SET\\n  success=EXCLUDED.success,\\n  record_count=EXCLUDED.record_count,\\n  error_message=EXCLUDED.error_message,\\n  duration_ms=EXCLUDED.duration_ms,\\n  scraped_at=NOW();\\n`;\n}\n\nconst sqlBase64 = Buffer.from(sql).toString('base64');\nreturn { ...r, sqlBase64 };"
       },
       "id": "gendb",
@@ -245,7 +300,7 @@
       "typeVersion": 2,
       "position": [
         2350,
-        400
+        500
       ]
     },
     {
@@ -253,8 +308,7 @@
         "command": "echo \"{{ $json.sqlBase64 }}\" | base64 -d > /tmp/ds_insert_$(date +%s).sql && docker exec -i cecelia-postgres psql -U cecelia -d timescaledb < /tmp/ds_insert_*.sql && rm -f /tmp/ds_insert_*.sql && echo '{\"db_write\":\"ok\"}'",
         "host": "134.199.234.147",
         "port": 22,
-        "user": "root",
-        "authentication": "privateKey"
+        "username": "root"
       },
       "id": "writedb",
       "name": "\\u5199\\u5165data_sources",
@@ -262,7 +316,7 @@
       "typeVersion": 1,
       "position": [
         2500,
-        400
+        500
       ],
       "continueOnFail": true,
       "credentials": {
@@ -274,7 +328,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const r = $json;\\nlet msg = '\\ud83d\\udcca \\u6570\\u636e\\u91c7\\u96c6\\u62a5\\u544a\\\\n\\\\n';\\nmsg += '\\u65f6\\u95f4: ' + new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}) + '\\\\n';\\nmsg += '\\u72b6\\u6001: ' + (r.failed.length===0 ? '\\u2705 \\u5168\\u90e8\\u6210\\u529f' : '\\u26a0\\ufe0f \\u90e8\\u5206\\u5931\\u8d25') + '\\\\n\\\\n';\\nfor (const p of r.results) {\\n  msg += (p.success ? '\\u2705 ' : '\\u274c ') + p.platform + ': ' + p.count + ' \\u6761\\\\n';\\n}\\nif (r.failed.length > 0) msg += '\\\\n\\u9700\\u767b\\u5f55: ' + r.failed.join(', ');\\nreturn { msg_type: 'text', content: { text: msg } };"
+        "jsCode": "const r = $json;\nlet msg = '\\ud83d\\udcca \\u6570\\u636e\\u91c7\\u96c6\\u62a5\\u544a\\n\\n';\nmsg += '\\u65f6\\u95f4: ' + new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}) + '\\n';\nmsg += '\\u72b6\\u6001: ' + (r.failed.length===0 ? '\\u2705 \\u5168\\u90e8\\u6210\\u529f' : '\\u26a0\\ufe0f \\u90e8\\u5206\\u5931\\u8d25') + '\\n\\n';\nfor (const p of r.results) {\n  msg += (p.success ? '\\u2705 ' : '\\u274c ') + p.platform + ': ' + p.count + ' \\u6761';\n  if (p.duration_ms) msg += ' (' + Math.round(p.duration_ms/1000) + 's)';\n  msg += '\\n';\n}\nif (r.failed.length > 0) msg += '\\n\\u9700\\u767b\\u5f55: ' + r.failed.join(', ');\nif (r.duration_seconds !== undefined) msg += '\\n\\u603b\\u8017\\u65f6: ' + r.duration_seconds + 's';\nreturn { msg_type: 'text', content: { text: msg } };"
       },
       "id": "format",
       "name": "\\u683c\\u5f0f\\u5316",
@@ -282,7 +336,7 @@
       "typeVersion": 2,
       "position": [
         2650,
-        400
+        500
       ]
     },
     {
@@ -299,7 +353,7 @@
       "typeVersion": 4.2,
       "position": [
         2800,
-        400
+        500
       ]
     }
   ],
@@ -443,8 +497,25 @@
             "node": "\\u751f\\u6210DB\\u8bed\\u53e5",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "\\u68c0\\u67e5\\u5931\\u8d25",
+            "type": "main",
+            "index": 0
           }
         ]
+      ]
+    },
+    "\\u68c0\\u67e5\\u5931\\u8d25": {
+      "main": [
+        [
+          {
+            "node": "\\u53d1\\u9001\\u544a\\u8b66",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     },
     "\\u751f\\u6210DB\\u8bed\\u53e5": {
