@@ -68,11 +68,8 @@ describe('Cortex Dedup Persistence', () => {
     it('DoD-2: persists state to DB after update', async () => {
       const hash = 'test_hash_002';
 
-      // 调用一次
+      // 调用一次（persist 现在是 await，无需额外等待）
       await _checkReflectionBreaker(hash);
-
-      // 等待 fire-and-forget 写入完成
-      await new Promise(r => setTimeout(r, 200));
 
       // 检查 DB
       const result = await pool.query(
@@ -101,12 +98,9 @@ describe('Cortex Dedup Persistence', () => {
         JSON.stringify({ count: 5, firstSeen: now - 35 * 60 * 1000, lastSeen: now - 31 * 60 * 1000 }),
       ]);
 
-      // 调用时加载 → 过期条目被清理
+      // 调用时加载 → 过期条目被清理（persist 现在是 await，无需额外等待）
       const freshResult = await _checkReflectionBreaker(freshHash);
       expect(freshResult.count).toBe(3); // 2 + 1
-
-      // 等待过期清理完成
-      await new Promise(r => setTimeout(r, 200));
 
       // 验证过期条目已从 DB 删除
       const expiredInDB = await pool.query(
@@ -149,13 +143,10 @@ describe('Cortex Dedup Persistence', () => {
     it('state survives simulated restart', async () => {
       const hash = 'test_restart';
 
-      // 模拟进程 1：连续调用 3 次
+      // 模拟进程 1：连续调用 3 次（persist 现在是 await，无需额外等待）
       await _checkReflectionBreaker(hash);
       await _checkReflectionBreaker(hash);
       await _checkReflectionBreaker(hash);
-
-      // 等待 persist 完成
-      await new Promise(r => setTimeout(r, 200));
 
       // 模拟进程重启：清空内存
       _resetReflectionState();
