@@ -37,7 +37,7 @@ for content_dir in "${QUEUE_DIR}"/*/; do
   echo "发布 ($count): $(basename "$content_dir")"
   echo ""
 
-  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${SCRIPT_DIR}/publish-xhs-image.cjs" --content "$content_dir"; then
+  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${SCRIPT_DIR}/publish-xiaohongshu-image.cjs" --content "$content_dir"; then
     success=$((success + 1))
     echo ""
     echo "成功: $(basename "$content_dir")"
