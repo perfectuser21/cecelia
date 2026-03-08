@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # ZenithJoy Engine - Cleanup 脚本
+# v2.0: R2 全面修复 - worktree 感知、grep 精确匹配、safe_rm_rf 精确前缀
 # v1.9: 使用 lib/lock-utils.sh 原子操作 + 协调信号
 # v1.8: PRD/DoD 归档到 .history/ 目录（而非直接删除）
 # v1.7: rm -rf 安全验证
@@ -53,7 +54,7 @@ safe_rm_rf() {
     local real_parent
     real_parent=$(realpath "$allowed_parent" 2>/dev/null) || real_parent="$allowed_parent"
 
-    if [[ "$real_path" != "$real_parent"* ]]; then
+    if [[ "$real_path" != "$real_parent/"* && "$real_path" != "$real_parent" ]]; then
         echo -e "${RED}错误: 路径 $path 不在允许范围 $allowed_parent 内，拒绝删除${NC}" >&2
         return 1
     fi
@@ -164,13 +165,82 @@ FAILED=0
 WARNINGS=0
 CHECKOUT_FAILED=0
 
+# v2.0 P0-1 修复：检测是否在 worktree 中运行
+# worktree 内 `git checkout main` 必定失败（main 被主仓库锁定）
+# worktree 清理由 worktree-gc.sh 负责，此脚本只做状态文件/config 清理
+IS_WORKTREE=false
+_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo "")
+if [[ "$_GIT_DIR" == *"worktrees"* ]]; then
+    IS_WORKTREE=true
+fi
+
+# ========================================
+# 0.0 捕获 CHANGED_FILES（必须在 checkout 之前）
+# ========================================
+# 在切换到 base 分支之前先记录此次 PR 改动的文件列表。
+# checkout 之后 git diff CP_BRANCH 会返回空，导致 deploy-local.sh 跳过所有部署。
+echo "[0.0] 捕获改动文件列表（checkout 之前）..."
+CHANGED_FILES=""
+if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+    CHANGED_FILES=$(git diff --name-only "origin/$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null || echo "")
+else
+    CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"..."$CP_BRANCH" 2>/dev/null || echo "")
+fi
+if [[ -n "$CHANGED_FILES" ]]; then
+    echo -e "   ${GREEN}[OK] 已捕获 $(echo "$CHANGED_FILES" | wc -l | tr -d ' ') 个改动文件${NC}"
+else
+    echo -e "   ${YELLOW}[WARN]  未检测到改动文件（分支已合并或无差异）${NC}"
+fi
+echo ""
+
+# ========================================
+# 0.1 归档 .dev-incident-log.json
+# ========================================
+echo "[0.1] 归档 Incident Log..."
+INCIDENT_FILE=".dev-incident-log.json"
+RUNS_DIR=".dev-runs"
+mkdir -p "$RUNS_DIR"
+if [[ -f "$INCIDENT_FILE" ]]; then
+    INCIDENT_COUNT=$( (command -v jq &>/dev/null && jq 'length' "$INCIDENT_FILE" 2>/dev/null) || grep -c '"' "$INCIDENT_FILE" 2>/dev/null || echo "0")
+    ARCHIVE_NAME="${RUNS_DIR}/${CP_BRANCH}-incident-log.json"
+    cp "$INCIDENT_FILE" "$ARCHIVE_NAME"
+    rm -f "$INCIDENT_FILE"
+    echo -e "   ${GREEN}[OK] Incident Log 已归档（${INCIDENT_COUNT} 条）→ $ARCHIVE_NAME${NC}"
+else
+    echo -e "   ${GREEN}[OK] 无 Incident Log（本次开发无失败记录）${NC}"
+fi
+echo ""
+
+# ========================================
+# 0.2 清理 .dev-feedback-report.json
+# ========================================
+echo "[0.2] 清理反馈报告..."
+FEEDBACK_FILE=".dev-feedback-report.json"
+if [[ -f "$FEEDBACK_FILE" ]]; then
+    # 归档到 .dev-runs/ 而非直接删除（保留记录）
+    FEEDBACK_ARCHIVE="${RUNS_DIR}/${CP_BRANCH}-feedback-report.json"
+    cp "$FEEDBACK_FILE" "$FEEDBACK_ARCHIVE"
+    rm -f "$FEEDBACK_FILE"
+    echo -e "   ${GREEN}[OK] 反馈报告已归档 → $FEEDBACK_ARCHIVE${NC}"
+else
+    echo -e "   ${GREEN}[OK] 无反馈报告文件${NC}"
+fi
+echo ""
+
 # ========================================
 # 1. 检查当前分支
 # ========================================
 echo "[1]  检查当前分支..."
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-if [[ "$CURRENT_BRANCH" == "$CP_BRANCH" ]]; then
+if [[ "$IS_WORKTREE" == "true" ]]; then
+    # worktree 内不能 checkout 到 main/develop（被主仓库锁定）
+    # 分支清理由 worktree-gc.sh 从主仓库执行
+    echo -e "   ${GREEN}[OK] 在 worktree 中运行（$CURRENT_BRANCH），跳过分支切换${NC}"
+    echo -e "   ${YELLOW}     分支/worktree 清理将由 worktree-gc.sh 从主仓库执行${NC}"
+    # 标记跳过 checkout 相关步骤，但不设 FAILED
+    CHECKOUT_FAILED=1
+elif [[ "$CURRENT_BRANCH" == "$CP_BRANCH" ]]; then
     echo -e "   ${YELLOW}[WARN]  还在 $CP_BRANCH 分支，需要切换${NC}"
     echo "   → 切换到 $BASE_BRANCH..."
     if git checkout "$BASE_BRANCH" 2>/dev/null; then
@@ -203,6 +273,37 @@ else
         echo -e "   → 运行 'git merge --abort' 取消合并，或手动解决冲突"
         FAILED=1
     fi
+fi
+
+# ========================================
+# 2.5 触发本地部署（PR 合并后自动重启服务）
+# ========================================
+echo ""
+echo "[2.5] 触发本地部署..."
+SCRIPT_DIR_FOR_DEPLOY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 向上溯源找到仓库根目录（兼容 worktree 和直接调用）
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+if [[ "$GIT_COMMON_DIR" == ".git" ]]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+else
+    REPO_ROOT="$(cd "$(dirname "$GIT_COMMON_DIR")" && pwd)"
+fi
+DEPLOY_LOCAL_SH="$REPO_ROOT/scripts/deploy-local.sh"
+
+if [[ $CHECKOUT_FAILED -eq 1 ]]; then
+    echo -e "   ${YELLOW}[WARN]  跳过（checkout 失败，无法确认代码已同步）${NC}"
+elif [[ ! -f "$DEPLOY_LOCAL_SH" ]]; then
+    echo -e "   ${YELLOW}[WARN]  deploy-local.sh 不存在，跳过部署${NC}"
+    echo "   期望路径: $DEPLOY_LOCAL_SH"
+else
+    # fire-and-forget：setsid 新会话后台运行，不阻塞有头/无头会话
+    # 日志写 /tmp/cecelia-deploy-<branch>.log，部署结果不影响 cleanup 流程
+    DEPLOY_LOG="/tmp/cecelia-deploy-${CP_BRANCH}.log"
+    setsid bash "$DEPLOY_LOCAL_SH" "$BASE_BRANCH" --changed="$CHANGED_FILES" \
+        >"$DEPLOY_LOG" 2>&1 &
+    DEPLOY_PID=$!
+    echo -e "   ${GREEN}[OK] 部署已在后台启动 (pid=$DEPLOY_PID)${NC}"
+    echo "   日志: $DEPLOY_LOG"
 fi
 
 # ========================================
@@ -245,46 +346,20 @@ else
 fi
 
 # ========================================
-# 4.5. 检查并移除关联的 worktree
+# 4.5. Worktree 清理（委托给外部 GC）
 # ========================================
 echo ""
-echo "[4.5] 检查关联的 worktree..."
-WORKTREE_PATH=$(git worktree list 2>/dev/null | grep "\[$CP_BRANCH\]" | awk '{print $1}')
-if [[ -n "$WORKTREE_PATH" ]]; then
-    echo "   → 发现关联的 worktree: $WORKTREE_PATH"
-    # 检查是否有未提交的改动
-    if [[ -d "$WORKTREE_PATH" ]]; then
-        WORKTREE_UNCOMMITTED=$(git -C "$WORKTREE_PATH" status --porcelain 2>/dev/null | grep -v "node_modules" || true)
-        if [[ -n "$WORKTREE_UNCOMMITTED" ]]; then
-            echo -e "   ${YELLOW}[WARN]  worktree 有未提交的改动:${NC}"
-            echo "$WORKTREE_UNCOMMITTED" | head -3 | sed 's/^/      /'
-            echo -e "   ${YELLOW}→ 跳过 worktree 清理，请手动处理${NC}"
-            WARNINGS=$((WARNINGS + 1))
-        else
-            # 安全移除 worktree
-            if git worktree remove "$WORKTREE_PATH" --force 2>/dev/null; then
-                echo -e "   ${GREEN}[OK] 已移除 worktree${NC}"
-            else
-                echo -e "   ${YELLOW}[WARN]  worktree 移除失败，尝试强制清理...${NC}"
-                # v1.9.1: 支持新路径（.claude/worktrees/）和旧路径（仓库外）
-                local ALLOWED_PARENT
-                if [[ "$WORKTREE_PATH" == *"/.claude/worktrees/"* ]]; then
-                    ALLOWED_PARENT="$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')/.claude/worktrees"
-                else
-                    ALLOWED_PARENT=$(dirname "$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')")
-                fi
-                if safe_rm_rf "$WORKTREE_PATH" "$ALLOWED_PARENT"; then
-                    git worktree prune 2>/dev/null || true
-                    echo -e "   ${GREEN}[OK] 已强制清理${NC}"
-                else
-                    echo -e "   ${RED}[FAIL] 安全检查失败，请手动删除: $WORKTREE_PATH${NC}"
-                    WARNINGS=$((WARNINGS + 1))
-                fi
-            fi
-        fi
-    fi
+echo "[4.5] Worktree 清理..."
+# v12.39.1: 不再在 worktree 内部自删（CWD 锁死导致失败）
+# 委托给外部 worktree-gc.sh，从主仓库运行
+SCRIPT_DIR_FOR_GC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GC_SCRIPT="$SCRIPT_DIR_FOR_GC/worktree-gc.sh"
+if [[ -f "$GC_SCRIPT" ]]; then
+    # v12.40.1: 不再 fire-and-forget 启动 GC（竞态：GC 可能在 cleanup 还在运行时删除当前 worktree）
+    # GC 应由 stop-dev.sh 在 cleanup 完成后、从主仓库触发，或由用户手动运行
+    echo -e "   ${GREEN}[OK] Worktree GC 将在 cleanup 完成后由 stop hook 触发${NC}"
 else
-    echo -e "   ${GREEN}[OK] 无关联的 worktree${NC}"
+    echo -e "   ${YELLOW}[WARN] worktree-gc.sh 不存在，跳过${NC}"
 fi
 
 # ========================================
@@ -351,21 +426,36 @@ echo ""
 echo "[7.6] 验证所有步骤完成..."
 
 PROJECT_ROOT_FOR_VALIDATION=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode"
+# v12.40.1: 支持 per-branch 格式（.dev-mode.${branch}），fallback 到旧格式（.dev-mode）
+DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode.${CP_BRANCH}"
+if [[ ! -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
+    DEV_MODE_FILE_FOR_VALIDATION="$PROJECT_ROOT_FOR_VALIDATION/.dev-mode"
+fi
 
 if [[ -f "$DEV_MODE_FILE_FOR_VALIDATION" ]]; then
     INCOMPLETE_STEPS=""
+    # v2.0 P1-5 修复：step_PATTERN 映射表，防止 step_1_ 匹配 step_10_/step_11_
+    declare -a STEP_PATTERNS=(
+        "" # 0 placeholder
+        "step_1_prd" "step_2_detect" "step_3_branch" "step_4_explore"
+        "step_5_dod" "step_6_code" "step_7_verify" "step_8_pr"
+        "step_9_ci" "step_10_learning" "step_11_cleanup"
+    )
     for step in {1..11}; do
-        STEP_STATUS=$(grep "^step_${step}_" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
+        STEP_KEY="${STEP_PATTERNS[$step]}"
+        STEP_STATUS=$(grep "^${STEP_KEY}:" "$DEV_MODE_FILE_FOR_VALIDATION" 2>/dev/null | cut -d':' -f2 | xargs || echo "")
         if [[ "$STEP_STATUS" != "done" ]]; then
-            INCOMPLETE_STEPS="$INCOMPLETE_STEPS step_$step"
+            INCOMPLETE_STEPS="$INCOMPLETE_STEPS ${STEP_KEY}"
         fi
     done
 
+    # v2.0 P1-6 修复：验证失败时设置标志，阻止后续 cleanup_done 写入
+    VALIDATION_PASSED=true
     if [[ -n "$INCOMPLETE_STEPS" ]]; then
         echo -e "   ${RED}[FAIL] 不能删除 .dev-mode，以下步骤未完成: $INCOMPLETE_STEPS${NC}"
         echo -e "   ${YELLOW}提示: 确保所有步骤都已标记为 done${NC}"
         FAILED=$((FAILED + 1))
+        VALIDATION_PASSED=false
     else
         echo -e "   ${GREEN}[OK] 所有 11 步已完成${NC}"
     fi
@@ -383,10 +473,6 @@ echo "[8]  删除运行时文件..."
 # W8: .dev-mode 需要特殊处理（删除后验证）
 RUNTIME_FILES=(
     ".quality-report.json"
-    ".prd.md"
-    ".dod.md"
-    ".prd-${CP_BRANCH}.md"
-    ".dod-${CP_BRANCH}.md"
     ".quality-gate-passed"
     ".quality-gate-passed-${CP_BRANCH}"
     ".cecelia-run-id"
@@ -410,6 +496,22 @@ for FILE in "${RUNTIME_FILES[@]}"; do
     fi
 done
 
+# v1.10: 通配符删除所有 .prd-* 和 .dod-* 文件（包括自定义命名）
+# 不使用 RUNTIME_FILES 数组，直接 glob 删除
+echo "🧹 清理 .prd-*/.dod-* 临时文件..."
+PRD_DOD_COUNT=0
+for f in .prd-*.md .dod-*.md .prd.md .dod.md; do
+    if [[ -f "$f" ]]; then
+        if rm -f "$f" 2>/dev/null; then
+            PRD_DOD_COUNT=$((PRD_DOD_COUNT + 1))
+        fi
+    fi
+done
+if [[ "$PRD_DOD_COUNT" -gt 0 ]]; then
+    DELETED_COUNT=$((DELETED_COUNT + PRD_DOD_COUNT))
+    echo -e "   ${GREEN}[OK] 已删除 $PRD_DOD_COUNT 个 prd/dod 文件${NC}"
+fi
+
 if [[ $DELETED_COUNT -gt 0 ]]; then
     echo -e "   ${GREEN}[OK] 已删除 $DELETED_COUNT 个运行时文件${NC}"
 else
@@ -417,49 +519,17 @@ else
 fi
 
 # ========================================
-# 9. 检查是否有其他 cp-* 分支遗留（自动删除已合并的）
+# 9. 清理其他遗留 cp-*/worktree-* 分支（委托 branch-gc.sh）
 # ========================================
 echo ""
-echo "[9]  检查其他遗留的 cp-* 分支..."
-# 排除当前检出分支（* 开头）和带 + 标记的 worktree 分支
-OTHER_CP=$(git branch --list "cp-*" 2>/dev/null | grep -v "^\*" | grep -v "^+" | tr -d ' ' || true)
-if [[ -n "$OTHER_CP" ]]; then
-    MERGED_COUNT=0
-    UNMERGED_BRANCHES=()
-
-    while IFS= read -r branch; do
-        [[ -z "$branch" ]] && continue
-        # 检查是否已合并到 base 分支（develop 或 main）
-        if git branch --merged "$BASE_BRANCH" 2>/dev/null | grep -qx "  $branch\|* $branch\|+ $branch\| $branch"; then
-            if git branch -D "$branch" 2>/dev/null; then
-                echo -e "   ${GREEN}[OK] 已删除已合并分支: $branch${NC}"
-                MERGED_COUNT=$((MERGED_COUNT + 1))
-            else
-                echo -e "   ${YELLOW}[WARN]  删除失败: $branch${NC}"
-                UNMERGED_BRANCHES+=("$branch")
-            fi
-        else
-            UNMERGED_BRANCHES+=("$branch")
-        fi
-    done <<< "$OTHER_CP"
-
-    if [[ $MERGED_COUNT -gt 0 ]]; then
-        echo -e "   ${GREEN}[OK] 已自动删除 $MERGED_COUNT 个已合并的 cp-* 分支${NC}"
-    fi
-
-    if [[ ${#UNMERGED_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "   ${YELLOW}[WARN]  以下 cp-* 分支未合并到 $BASE_BRANCH，请手动处理:${NC}"
-        for b in "${UNMERGED_BRANCHES[@]}"; do
-            echo "      $b"
-        done
-        WARNINGS=$((WARNINGS + 1))
-    fi
-
-    if [[ $MERGED_COUNT -eq 0 && ${#UNMERGED_BRANCHES[@]} -eq 0 ]]; then
-        echo -e "   ${GREEN}[OK] 无其他 cp-* 分支${NC}"
-    fi
+echo "[9]  清理其他遗留分支..."
+# v2.1: 委托给 branch-gc.sh 统一清理（覆盖已合并、已关闭、无 PR 超时三种情况）
+BRANCH_GC_SCRIPT="$SCRIPT_DIR/branch-gc.sh"
+if [[ -f "$BRANCH_GC_SCRIPT" ]]; then
+    echo "   → 调用 branch-gc.sh 清理孤儿分支..."
+    bash "$BRANCH_GC_SCRIPT" 2>&1 | sed 's/^/   /' || true
 else
-    echo -e "   ${GREEN}[OK] 无其他 cp-* 分支${NC}"
+    echo -e "   ${YELLOW}[WARN] branch-gc.sh 不存在，跳过孤儿分支清理${NC}"
 fi
 
 # ========================================
@@ -471,7 +541,11 @@ GONE_BRANCHES=$(git branch -vv | grep ': gone]' | awk '{print $1}')
 if [[ -n "$GONE_BRANCHES" ]]; then
     GONE_COUNT=$(echo "$GONE_BRANCHES" | wc -l)
     echo "   → 发现 $GONE_COUNT 个远程已删除的分支"
-    echo "$GONE_BRANCHES" | xargs -r git branch -D
+    # v2.0 P1-8 修复：逐个删除而非 xargs（set -e 下 xargs 任一失败会终止脚本）
+    while IFS= read -r gone_branch; do
+        [[ -z "$gone_branch" ]] && continue
+        git branch -D "$gone_branch" 2>/dev/null || echo -e "   ${YELLOW}[WARN] 删除 $gone_branch 失败${NC}"
+    done <<< "$GONE_BRANCHES"
     echo -e "   ${GREEN}[OK] 已清理 $GONE_COUNT 个分支${NC}"
 else
     echo -e "   ${GREEN}[OK] 无需清理${NC}"
@@ -486,11 +560,16 @@ echo -e "   ${GREEN}[OK] 所有清理步骤完成${NC}"
 
 # 标记 cleanup 完成（让 Stop Hook 知道可以退出了）
 PROJECT_ROOT_FOR_DEVMODE=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+# v12.40.1: 支持 per-branch 格式（.dev-mode.${branch}），fallback 到旧格式（.dev-mode）
+DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode.${CP_BRANCH}"
+if [[ ! -f "$DEV_MODE_FILE" ]]; then
+    DEV_MODE_FILE="$PROJECT_ROOT_FOR_DEVMODE/.dev-mode"
+fi
 
 # v1.9: 加载 lock-utils 并使用原子追加 + 协调信号
 LOCK_UTILS=""
-for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
+# v2.0 P1-4 修复：搜索路径加入 packages/engine/lib/（monorepo 结构）
+for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$PROJECT_ROOT_FOR_DEVMODE/packages/engine/lib/lock-utils.sh" "$HOME/.claude/lib/lock-utils.sh"; do
     if [[ -f "$candidate" ]]; then
         # shellcheck disable=SC1090
         source "$candidate"
@@ -499,23 +578,40 @@ for candidate in "$PROJECT_ROOT_FOR_DEVMODE/lib/lock-utils.sh" "$HOME/.claude/li
     fi
 done
 
-if [[ -f "$DEV_MODE_FILE" ]]; then
+if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; then
     # W8: 统一标记方式（使用 step_11_cleanup: done）
+    # v12.41.0 P0-1 修复：sed 替换后验证结果，若行不存在则追加
+    # （sed 's/A/B/' 在目标行不存在时静默成功，返回 exit 0，不做任何修改）
+    _mark_cleanup_done() {
+        local target_file="$1"
+        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$target_file"
+        # 验证：sed 可能没有匹配到（行不存在或格式不同）
+        if ! grep -q "^step_11_cleanup: done" "$target_file" 2>/dev/null; then
+            # 先删除可能存在的其他格式（如 step_11_cleanup: in_progress）
+            sed -i '/^step_11_cleanup:/d' "$target_file"
+            echo "step_11_cleanup: done" >> "$target_file"
+        fi
+    }
+
     if [[ -n "$LOCK_UTILS" ]] && type atomic_append_dev_mode &>/dev/null; then
+        # P1-4 修复：保存 DEV_MODE_FILE（acquire_dev_mode_lock 调用 _get_lock_paths 会覆写）
+        _SAVED_DEV_MODE_FILE="$DEV_MODE_FILE"
         # 使用原子操作：获取锁 → 更新 → 释放锁
         if acquire_dev_mode_lock 2; then
-            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
-            create_cleanup_signal "$CP_BRANCH"
+            DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
+            _mark_cleanup_done "$DEV_MODE_FILE"
+            # v2.0 P1-16: 移除 create_cleanup_signal（stop-dev.sh 通过 grep .dev-mode 检查，不读信号文件）
             release_dev_mode_lock
             echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done（原子写入）${NC}"
         else
+            DEV_MODE_FILE="$_SAVED_DEV_MODE_FILE"
             # Fallback: 直接修改
-            sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+            _mark_cleanup_done "$DEV_MODE_FILE"
             echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
         fi
     else
         # Fallback: 无共享库时直接修改
-        sed -i 's/^step_11_cleanup: pending/step_11_cleanup: done/' "$DEV_MODE_FILE"
+        _mark_cleanup_done "$DEV_MODE_FILE"
         echo -e "   ${GREEN}[OK] 已标记 step_11_cleanup: done${NC}"
     fi
 
