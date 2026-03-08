@@ -1600,6 +1600,20 @@ router.get('/watchdog', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brain/watchdog/trends
+ * 资源趋势分析 - RSS 趋势、预测告警、快速增长标记
+ */
+router.get('/watchdog/trends', async (req, res) => {
+  try {
+    const { getWatchdogTrends } = await import('./watchdog.js');
+    const trends = getWatchdogTrends();
+    res.json({ success: true, ...trends });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get watchdog trends', details: err.message });
+  }
+});
+
 // ==================== Session Tracking API ====================
 
 /**
