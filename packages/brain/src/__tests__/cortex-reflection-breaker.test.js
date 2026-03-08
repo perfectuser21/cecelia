@@ -64,7 +64,7 @@ function setupMockPool() {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-describe('Cortex 反思熔断 - D3: 第 4 次相同事件跳过 LLM', () => {
+describe('Cortex 反思熔断 - D3: 第 2 次相同事件跳过 LLM', () => {
   let analyzeDeep;
 
   beforeEach(async () => {
@@ -104,21 +104,19 @@ describe('Cortex 反思熔断 - D3: 第 4 次相同事件跳过 LLM', () => {
     analyzeDeep = mod.analyzeDeep;
   });
 
-  it('前 3 次正常调用 LLM，第 4 次触发熔断不调用 LLM', async () => {
+  it('第 1 次正常调用 LLM，第 2 次触发熔断不调用 LLM', async () => {
     setupMockPool();
     mockCallLLM.mockClear();
 
     const event = { type: 'rca_breaker_d3_test' };
 
-    // 前 3 次正常
+    // 第 1 次正常
     await analyzeDeep(event);
-    await analyzeDeep(event);
-    await analyzeDeep(event);
-    expect(mockCallLLM).toHaveBeenCalledTimes(3);
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
 
-    // 第 4 次熔断，LLM 不应被调用
+    // 第 2 次熔断，LLM 不应被调用
     const result = await analyzeDeep(event);
-    expect(mockCallLLM).toHaveBeenCalledTimes(3); // 不增加
+    expect(mockCallLLM).toHaveBeenCalledTimes(1); // 不增加
     expect(result._fallback).toBe(true);
   }, 30000);
 });
@@ -169,8 +167,8 @@ describe('Cortex 反思熔断 - D4: 熔断日志包含 "反思熔断"', () => {
 
     const event = { type: 'rca_breaker_d4_test' };
 
-    // 触发 4 次
-    for (let i = 0; i < 4; i++) {
+    // 触发 2 次（第 2 次即熔断）
+    for (let i = 0; i < 2; i++) {
       await analyzeDeep(event);
     }
 
@@ -440,16 +438,14 @@ describe('Cortex 反思熔断 - D6: 30 分钟窗口超时后 count 重置', () =
 
     const event = { type: 'rca_breaker_d6_test' };
 
-    // T=0: 触发 3 次填满窗口
+    // T=0: 第 1 次正常
     await analyzeDeep(event);
-    await analyzeDeep(event);
-    await analyzeDeep(event);
-    expect(mockCallLLM).toHaveBeenCalledTimes(3);
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
 
-    // T=4: 第 4 次应熔断
+    // T=0: 第 2 次应熔断（阈值 ≥2）
     const blocked = await analyzeDeep(event);
     expect(blocked._fallback).toBe(true);
-    expect(mockCallLLM).toHaveBeenCalledTimes(3);
+    expect(mockCallLLM).toHaveBeenCalledTimes(1);
 
     // T=31min: 窗口超时
     timeOffset = 31 * 60 * 1000;
