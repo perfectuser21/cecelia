@@ -129,15 +129,12 @@ describe('Cortex Dedup Persistence', () => {
       const r1 = await _checkReflectionBreaker(hash);
       expect(r1).toEqual({ open: false, count: 1 });
 
+      // 第 2 次达到阈值 2 → 熔断（REFLECTION_BREAK_THRESHOLD = 2）
       const r2 = await _checkReflectionBreaker(hash);
-      expect(r2).toEqual({ open: false, count: 2 });
+      expect(r2).toEqual({ open: true, count: 2 });
 
       const r3 = await _checkReflectionBreaker(hash);
-      expect(r3).toEqual({ open: false, count: 3 });
-
-      // 第 4 次超过阈值 3 → 熔断
-      const r4 = await _checkReflectionBreaker(hash);
-      expect(r4).toEqual({ open: true, count: 4 });
+      expect(r3).toEqual({ open: true, count: 3 });
     });
 
     it('state survives simulated restart', async () => {
