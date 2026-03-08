@@ -19,6 +19,7 @@ QUEUE_DIR="${HOME}/.kuaishou-queue"
 DATE=${1:-$(date +%Y-%m-%d)}
 TARGET_DIR="${QUEUE_DIR}/${DATE}"
 NODE_SCRIPT="${SCRIPT_DIR}/publish-kuaishou-image.cjs"
+SESSION_CHECK_SCRIPT="${SCRIPT_DIR}/check-kuaishou-session.cjs"
 EXPORT_NODE_PATH="/Users/administrator/perfect21/cecelia/node_modules"
 
 echo "========================================="
@@ -27,6 +28,37 @@ echo "========================================="
 echo ""
 echo "日期: ${DATE}"
 echo "队列目录: ${TARGET_DIR}"
+echo ""
+
+# ========== 前置检查：OAuth 会话状态 ==========
+echo "🔐 检查快手 OAuth 会话..."
+SESSION_OUTPUT=$(NODE_PATH="${EXPORT_NODE_PATH}" node "${SESSION_CHECK_SCRIPT}" 2>&1 || true)
+echo "${SESSION_OUTPUT}"
+echo ""
+
+if echo "${SESSION_OUTPUT}" | grep -q '\[SESSION_EXPIRED\]'; then
+  echo "❌ 快手会话已过期，无法批量发布"
+  echo "请在 Windows PC 浏览器中重新登录快手创作者中心，然后重试"
+  exit 1
+fi
+
+if echo "${SESSION_OUTPUT}" | grep -q '\[CDP_ERROR\]'; then
+  echo "❌ 无法连接 Windows PC CDP，请检查："
+  echo "  1. Windows PC (100.97.242.124) 是否开机"
+  echo "  2. Chrome 调试端口 19223 是否已启动"
+  exit 1
+fi
+
+if echo "${SESSION_OUTPUT}" | grep -q '\[TIMEOUT\]'; then
+  echo "❌ 会话检查超时，Windows PC 响应缓慢，请稍后重试"
+  exit 1
+fi
+
+if ! echo "${SESSION_OUTPUT}" | grep -q '\[SESSION_OK\]'; then
+  echo "⚠️  会话状态未知，继续发布（谨慎）"
+fi
+
+echo "✅ 会话有效，开始批量发布..."
 echo ""
 
 if [ ! -d "${TARGET_DIR}" ]; then

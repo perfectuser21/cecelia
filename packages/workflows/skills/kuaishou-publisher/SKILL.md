@@ -2,11 +2,12 @@
 name: kuaishou-publisher
 description: 快手自动发布工具 - 图文发布（CDP 直连方式）
 trigger: 发布快手、kuaishou、快手发布
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-07
-updated: 2026-03-07
+updated: 2026-03-08
 changelog:
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
+  - 1.1.0: OAuth 会话检查脚本 + 批量发布前置防护
 ---
 
 # Kuaishou Publisher
@@ -33,8 +34,21 @@ Windows PC (100.97.242.124:19223)
 | 类型 | 脚本 | 状态 |
 |------|------|------|
 | 图文 | `scripts/publish-kuaishou-image.cjs` | ✅ |
+| 会话检查 | `scripts/check-kuaishou-session.cjs` | ✅ |
 
 ## 使用方式
+
+### 会话状态检查（推荐发布前先运行）
+
+```bash
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/kuaishou-publisher/scripts/check-kuaishou-session.cjs
+```
+
+**输出示例**：
+- `[SESSION_OK]` — 会话有效，可以发布（exit 0）
+- `[SESSION_EXPIRED]` — 需要重新登录（exit 2）
+- `[CDP_ERROR]` — Windows PC 未连接（exit 1）
 
 ### 单条发布
 
@@ -87,6 +101,6 @@ export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
 
 ---
 
-**版本**: 1.0.0
-**状态**: ✅ 图文发布已实现
+**版本**: 1.1.0
+**状态**: ✅ 图文发布 + OAuth 会话检查
 **架构**: Mac mini → CDP → Windows PC 浏览器 → 快手
