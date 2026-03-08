@@ -97,6 +97,43 @@ function extractDirNames(contentDir) {
 const PUBLISH_URL = 'https://weibo.com/p/publish/';
 
 /**
+ * 限频重试默认参数
+ */
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 2000;
+
+/**
+ * 指数退避重试包装器
+ *
+ * @param {function} fn - 返回 Promise 的异步函数
+ * @param {number} [maxAttempts=3] - 最大尝试次数
+ * @param {number} [baseDelayMs=2000] - 基础延迟毫秒（每次翻倍：2s、4s、8s）
+ * @param {function} [isRetryable] - 判断错误是否可重试，默认全部重试
+ * @returns {Promise<any>}
+ */
+async function withRetry(fn, maxAttempts, baseDelayMs, isRetryable) {
+  const attempts = typeof maxAttempts === 'number' ? maxAttempts : MAX_RETRY_ATTEMPTS;
+  const delay = typeof baseDelayMs === 'number' ? baseDelayMs : RETRY_BASE_DELAY_MS;
+  const retryCheck = typeof isRetryable === 'function' ? isRetryable : () => true;
+
+  let lastError;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts && retryCheck(err)) {
+        const waitMs = delay * Math.pow(2, i - 1);
+        await new Promise(r => setTimeout(r, waitMs));
+      } else {
+        break;
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
  * 检测 URL 是否为微博登录跳转页（会话失效时触发）。
  *
  * 微博会话过期后，导航到 weibo.com/p/publish/ 会被重定向到登录页。
@@ -128,6 +165,9 @@ function isPublishPageReached(url) {
 
 module.exports = {
   PUBLISH_URL,
+  MAX_RETRY_ATTEMPTS,
+  RETRY_BASE_DELAY_MS,
+  withRetry,
   findImages,
   readContent,
   convertToWindowsPaths,
