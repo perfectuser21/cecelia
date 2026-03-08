@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { CDPClient } = require('./cdp-client.cjs');
-const { findImages: findImagesUtil } = require('./utils.cjs');
+const { findImages, readContent, convertToWindowsPaths, escapeForJS, extractDirNames } = require('./utils.cjs');
 
 const CDP_PORT = 19227;
 const WINDOWS_IP = '100.97.242.124';
@@ -54,24 +54,17 @@ if (!contentDirArg || !fs.existsSync(contentDirArg)) {
 const contentDir = path.resolve(contentDirArg);
 
 // 读取内容
-const contentFile = path.join(contentDir, 'content.txt');
-const contentText = fs.existsSync(contentFile)
-  ? fs.readFileSync(contentFile, 'utf8').trim()
-  : '';
+const contentText = readContent(contentDir);
 
-const localImages = findImagesUtil(contentDir);
+const localImages = findImages(contentDir);
 if (localImages.length === 0) {
   console.error('❌ 错误：内容目录中没有图片文件');
   process.exit(1);
 }
 
 // 转换图片路径为 Windows 绝对路径
-const dateDir = path.basename(path.dirname(contentDir));
-const contentDirName = path.basename(contentDir);
-const windowsImages = localImages.map(img => {
-  const filename = path.basename(img);
-  return path.join(WINDOWS_BASE_DIR, dateDir, contentDirName, 'images', filename).replace(/\//g, '\\');
-});
+const { dateDir, contentDirName } = extractDirNames(contentDir);
+const windowsImages = convertToWindowsPaths(localImages, WINDOWS_BASE_DIR, dateDir, contentDirName);
 
 console.log('\n========================================');
 console.log('微博图文发布');
@@ -383,12 +376,7 @@ async function main() {
     if (contentText) {
       console.log('2️⃣  填写文案...\n');
 
-      const escapedContent = contentText
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, '\\n')
-        .replace(/\r/g, '\\r');
+      const escapedContent = escapeForJS(contentText);
 
       const fillResult = await cdp.send('Runtime.evaluate', {
         expression: `(function() {

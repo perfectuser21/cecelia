@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 21 * * *"
+              "expression": "0 16 * * *"
             }
           ]
         }
@@ -237,6 +237,42 @@
     },
     {
       "parameters": {
+        "jsCode": "const r = $json;\\nconst runDate = new Date().toISOString().split('T')[0];\\n\\nlet sql = `CREATE SCHEMA IF NOT EXISTS zenithjoy;\\nCREATE TABLE IF NOT EXISTS zenithjoy.data_sources (\\n  id SERIAL PRIMARY KEY,\\n  run_date DATE NOT NULL,\\n  platform VARCHAR(50) NOT NULL,\\n  success BOOLEAN NOT NULL,\\n  record_count INTEGER DEFAULT 0,\\n  error_message TEXT,\\n  scraped_at TIMESTAMPTZ DEFAULT NOW(),\\n  UNIQUE(run_date, platform)\\n);\\n`;\\n\\nif (r.results && r.results.length > 0) {\\n  const values = r.results.map(p => {\\n    const safeP = p.platform.replace(/'/g, \\\"''\\\");\\n    return `('${runDate}', '${safeP}', ${p.success ? 'true' : 'false'}, ${p.count || 0}, NOW())`;\\n  }).join(',\\\\n');\\n  sql += `INSERT INTO zenithjoy.data_sources (run_date, platform, success, record_count, scraped_at) VALUES\\\\n${values}\\\\nON CONFLICT (run_date, platform) DO UPDATE SET\\\\n  success=EXCLUDED.success,\\\\n  record_count=EXCLUDED.record_count,\\\\n  scraped_at=NOW();\\\\n`;\\n}\\n\\nconst sqlBase64 = Buffer.from(sql).toString('base64');\\nreturn { ...r, sqlBase64 };"
+      },
+      "id": "gendb",
+      "name": "\\u751f\\u6210DB\\u8bed\\u53e5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2350,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "command": "echo \"{{ $json.sqlBase64 }}\" | base64 -d > /tmp/ds_insert_$(date +%s).sql && docker exec -i cecelia-postgres psql -U cecelia -d timescaledb < /tmp/ds_insert_*.sql && rm -f /tmp/ds_insert_*.sql && echo '{\"db_write\":\"ok\"}'",
+        "host": "134.199.234.147",
+        "port": 22,
+        "username": "root"
+      },
+      "id": "writedb",
+      "name": "\\u5199\\u5165data_sources",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        2500,
+        400
+      ],
+      "continueOnFail": true,
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "hk-vps-ssh",
+          "name": "HK VPS SSH"
+        }
+      }
+    },
+    {
+      "parameters": {
         "jsCode": "const r = $json;\\nlet msg = '\\ud83d\\udcca \\u6570\\u636e\\u91c7\\u96c6\\u62a5\\u544a\\\\n\\\\n';\\nmsg += '\\u65f6\\u95f4: ' + new Date().toLocaleString('zh-CN', {timeZone:'Asia/Shanghai'}) + '\\\\n';\\nmsg += '\\u72b6\\u6001: ' + (r.failed.length===0 ? '\\u2705 \\u5168\\u90e8\\u6210\\u529f' : '\\u26a0\\ufe0f \\u90e8\\u5206\\u5931\\u8d25') + '\\\\n\\\\n';\\nfor (const p of r.results) {\\n  msg += (p.success ? '\\u2705 ' : '\\u274c ') + p.platform + ': ' + p.count + ' \\u6761\\\\n';\\n}\\nif (r.failed.length > 0) msg += '\\\\n\\u9700\\u767b\\u5f55: ' + r.failed.join(', ');\\nreturn { msg_type: 'text', content: { text: msg } };"
       },
       "id": "format",
@@ -244,7 +280,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2400,
+        2650,
         400
       ]
     },
@@ -261,7 +297,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2600,
+        2800,
         400
       ]
     }
@@ -400,6 +436,28 @@
       ]
     },
     "\\u6c47\\u603b": {
+      "main": [
+        [
+          {
+            "node": "\\u751f\\u6210DB\\u8bed\\u53e5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\\u751f\\u6210DB\\u8bed\\u53e5": {
+      "main": [
+        [
+          {
+            "node": "\\u5199\\u5165data_sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\\u5199\\u5165data_sources": {
       "main": [
         [
           {

@@ -3191,6 +3191,14 @@ domain 查询用 try/catch 包裹，失败时 fallback 到 `null`，确保任务
 - 为现有函数新增 DB 查询时，立即检查该函数的所有测试文件并补充 mock
 - 用 `grep -rn "functionName\|ImportedFunction" src/__tests__/` 找到所有受影响测试
 
+## 2026-03-07: 微博发布 API 接通 — Windows 路径 Bug 修复
+
+**问题**: publish-weibo-image.cjs 路径构造有多余的 images/ 子目录，与 utils.cjs 的 convertToWindowsPaths 不一致，导致 DOM.setFileInputFiles 找不到文件。
+
+**解决**: 使用 convertToWindowsPaths（无 images/ subdir），统一使用 readContent/escapeForJS/extractDirNames 工具函数。
+
+**原则**: 提取工具函数时要确保主脚本同步更新，否则会留下不一致的内联实现。
+
 ---
 
 ## 2026-03-08 xiaohongshu-publisher — 小红书图文发布 CDP 接通
