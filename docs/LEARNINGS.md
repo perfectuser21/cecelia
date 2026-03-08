@@ -1,5 +1,27 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] worktree 重建 + branch-protect PRD 查找陷阱（PR #711）
+
+**背景**：Brain 自动派发质量任务，工作在重建的 worktree 中添加微博发布器稳定性契约测试。
+
+**worktree 元数据重建方法**：
+当 `.git/worktrees/UUID/` 目录被删除（Brain 清理进程），worktree 内 Bash 命令全部失败。恢复步骤：
+1. 在 worktree root 写 `.git` 文件：`gitdir: /path/to/main/.git/worktrees/UUID`
+2. 在 `.git/worktrees/UUID/` 写 `gitdir`（反向）、`commondir: ../..`、`HEAD: ref: refs/heads/cp-*`
+3. `git -C worktree restore --staged . && git restore .` 恢复工作树文件
+
+**branch-protect PRD 查找陷阱**：
+`find_prd_dod_dir` 从被写入文件的目录向上查找，一旦在中间目录发现 `.prd.md` 就停止。
+- 如 `packages/workflows/.prd.md` 是 git 追踪的旧文件，路径下的任何写操作都会把 `packages/workflows/` 当做 PRD 目录
+- 只在 worktree root 创建 `.prd-{branch}.md` 是不够的，**必须也在被 find_prd_dod_dir 找到的目录创建**
+- 正确做法：`packages/workflows/.prd-{branch}.md` 和 `.dod-{branch}.md`（gitignored，跳过更新检查）
+
+**稳定性契约测试模式**：
+用 `fs.readFileSync` 读取源文件文本做断言是验证关键常量的轻量方案：
+- 零外部依赖（node:test + assert）
+- 不运行真实代码，不需要 CDP/网络环境
+- 验证常量格式（如 Tailscale IP 用正则 `/^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/`）
+
 ### [2026-03-08] initiative_plan 完成自动触发 Vivian 质检（PR #708）
 
 **失败统计**：CI 失败 1 次（预存失败，非本次引入）
