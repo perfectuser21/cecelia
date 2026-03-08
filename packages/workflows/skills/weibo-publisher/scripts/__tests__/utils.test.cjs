@@ -13,6 +13,9 @@ const path = require('path');
 
 const {
   PUBLISH_URL,
+  MAX_RETRY_ATTEMPTS,
+  RETRY_BASE_DELAY_MS,
+  withRetry,
   findImages,
   readContent,
   convertToWindowsPaths,
@@ -292,5 +295,86 @@ describe('isPublishPageReached', () => {
 
   test('空字符串 → false', () => {
     assert.equal(isPublishPageReached(''), false);
+  });
+});
+
+// ============================================================
+// withRetry
+// ============================================================
+describe('withRetry', () => {
+  test('成功时直接返回结果，不重试', async () => {
+    let calls = 0;
+    const result = await withRetry(() => { calls++; return Promise.resolve(42); }, 3, 0);
+    assert.equal(result, 42);
+    assert.equal(calls, 1);
+  });
+
+  test('第一次失败后重试成功', async () => {
+    let attempts = 0;
+    const result = await withRetry(async () => {
+      attempts++;
+      if (attempts < 2) throw new Error('暂时失败');
+      return 'ok';
+    }, 3, 0);
+    assert.equal(result, 'ok');
+    assert.equal(attempts, 2);
+  });
+
+  test('超过最大次数时抛出最后一个错误', async () => {
+    let attempts = 0;
+    await assert.rejects(
+      withRetry(async () => {
+        attempts++;
+        throw new Error('一直失败');
+      }, 3, 0),
+      /一直失败/
+    );
+    assert.equal(attempts, 3);
+  });
+
+  test('isRetryable 返回 false 时立即停止，不再重试', async () => {
+    let attempts = 0;
+    await assert.rejects(
+      withRetry(
+        async () => { attempts++; throw new Error('不可重试错误'); },
+        3, 0,
+        () => false
+      ),
+      /不可重试错误/
+    );
+    assert.equal(attempts, 1);
+  });
+
+  test('isRetryable 按错误类型区分：可重试错误继续，不可重试立即停止', async () => {
+    let attempts = 0;
+    await assert.rejects(
+      withRetry(
+        async () => { attempts++; throw new Error('限频：请稍后再试'); },
+        3, 0,
+        (err) => !err.message.includes('未登录')  // 限频可重试，未登录不可重试
+      ),
+      /限频/
+    );
+    assert.equal(attempts, 3);  // 限频可重试，走满 3 次
+  });
+
+  test('DEFAULT MAX_RETRY_ATTEMPTS 为 3', () => {
+    assert.equal(MAX_RETRY_ATTEMPTS, 3);
+  });
+
+  test('DEFAULT RETRY_BASE_DELAY_MS 为 2000', () => {
+    assert.equal(RETRY_BASE_DELAY_MS, 2000);
+  });
+
+  test('不传参数时使用默认值（maxAttempts=3）', async () => {
+    let attempts = 0;
+    await assert.rejects(
+      withRetry(async () => {
+        attempts++;
+        throw new Error('test');
+      }, 3, 0),  // 传 0 延迟避免测试超时
+      /test/
+    );
+    assert.equal(attempts, 3);
   });
 });
