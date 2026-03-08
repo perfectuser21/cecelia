@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] tick 集成自修复闭环（PR #674）
+
+**背景**：Brain 已有 `startRecovery`（alertness/index.js）、`checkExpiredQuarantineTasks`（quarantine.js）、`unblockExpiredTasks`（task-updater.js），但缺少流控和事件记录。
+
+**实现要点**：
+1. **已有实现不需要重做**：探索阶段发现 P0 的「调用 healing」和「调用 checkExpiredQuarantineTasks」已存在，只需加流控和事件写入
+2. **DEFINITION.md 版本同步**：facts-check.mjs 会比较 `packages/brain/package.json` 与 `DEFINITION.md` 里的 `**Brain 版本**`，本地通过 ≠ CI 通过，必须两者同步
+3. **batch limit 实现模式**：`limit = Infinity` 作默认参数，`Number.isFinite(limit)` 判断，`rows.slice(0, limit)` 截取 — 向后兼容无参数调用
+4. **cecelia_events 而非 run_events**：`run_events` 是 task-trace 表（span_id、task_id），`cecelia_events` 才是通用系统事件表（event_type、source、payload）
+5. **`const` → `let` dispatchRate**：recovery cap 需要条件修改 dispatchRate，必须从 `const` 改为 `let`
+
+**CI 陷阱**：
+- 本地 `check-version-sync.sh` 只检 4 个文件（包含 DEFINITION.md），但 grep 用了 `-P` 选项在 macOS 会报错，导致 DEFINITION.md 检查被跳过（`⚠️ skipping`）
+- CI 用 Linux grep 支持 `-P`，能正确检测到版本不匹配 → 本地 pass，CI fail
+- **修复**：每次 bump 版本后，必须手动更新 DEFINITION.md 第 9 行的 `**Brain 版本**`
+
+**测试策略**：
+- 15 个纯单元测试，无真实 DB 依赖，把业务逻辑提取为纯函数验证
+- D4/D5 用 mockClient 模拟 `client.query`，捕获 SQL+params 断言
+
 ### [2026-03-08] /dev 效率优化：版本号 + BEHIND 循环修复（PR #673）
 
 **问题**：每个 PR 平均 42 分钟，其中 27 分钟浪费在版本号和 BEHIND 循环上。
@@ -3190,3 +3210,37 @@ domain 查询用 try/catch 包裹，失败时 fallback 到 `null`，确保任务
 **预防措施**：
 - 为现有函数新增 DB 查询时，立即检查该函数的所有测试文件并补充 mock
 - 用 `grep -rn "functionName\|ImportedFunction" src/__tests__/` 找到所有受影响测试
+
+## 2026-03-07: 微博发布 API 接通 — Windows 路径 Bug 修复
+
+**问题**: publish-weibo-image.cjs 路径构造有多余的 images/ 子目录，与 utils.cjs 的 convertToWindowsPaths 不一致，导致 DOM.setFileInputFiles 找不到文件。
+
+**解决**: 使用 convertToWindowsPaths（无 images/ subdir），统一使用 readContent/escapeForJS/extractDirNames 工具函数。
+
+**原则**: 提取工具函数时要确保主脚本同步更新，否则会留下不一致的内联实现。
+
+---
+
+## 2026-03-08 xiaohongshu-publisher — 小红书图文发布 CDP 接通
+
+**PR**: #678
+**分支**: cp-03072055-55e7f21d-b681-4644-9246-c05a77
+
+### 关键发现
+
+1. **Windows PC 端口分配**: 小红书已分配专用 CDP 端口 19224，与微博(19227)、快手(19223)、抖音(19222)互不干扰
+2. **小红书特殊要求**: 标题为必填项（与微博/快手不同），增加了 `title.txt` 文件规范
+3. **发布流程**: 导航 → 选类型 → 上传图片 → 填标题 → 填正文 → 点发布
+4. **worktree 消失陷阱**: 本次遇到 worktree 目录被清理导致 Bash 工具锁死的问题，解决方案是通过 Agent 在主仓库 checkout 现有分支继续工作
+
+### 架构一致性
+
+xiaohongshu-publisher 与 weibo-publisher、kuaishou-publisher 保持相同架构：
+- Mac mini → CDP → Windows PC（无需 SSH）
+- 依赖注入 fs 模块，utils.cjs 可完全单元测试
+- node --test 运行测试（无 vitest 依赖）
+- done.txt 标记已完成发布
+
+### 坑：branch-protect hook PRD 检查
+
+hook 检查 `.prd-{fullBranchName}.md`，名字必须完全匹配分支名（包括 UUID 后缀）。简写名会导致 hook 找不到并报错。
