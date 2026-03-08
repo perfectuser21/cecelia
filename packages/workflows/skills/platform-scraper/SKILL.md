@@ -103,7 +103,7 @@ done
 
 | 工作流 | N8N ID | 状态 |
 |--------|--------|------|
-| 调度器 (每日 21:00) | flow-data-collection | ✅ 运行中 |
+| 调度器 (每日 00:00 上海时间) | flow-data-collection | ✅ 运行中 |
 | 抖音单元 | wxYIxt8paRz82lbW | ✅ 就绪 |
 | 快手单元 | 8YC1JuIKo0aytgQz | ✅ 就绪 |
 | 小红书单元 | I5It7tSAT7HadXYJ | ✅ 就绪 |
@@ -116,5 +116,5 @@ done
 
 ## 下一步
 - [x] 接入 N8N 定时调度
-- [x] 每日自动采集（每天 21:00 自动触发）
+- [x] 每日自动采集（每天 00:00 自动触发，上海时间 Asia/Shanghai）
 - [ ] 数据趋势分析
