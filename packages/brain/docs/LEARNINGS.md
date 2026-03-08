@@ -1,5 +1,25 @@
 # Development Learnings
 
+## [2026-03-08] cortex 输出去重熔断 — 阻断皮层回声室 (PR #700)
+
+### Problem
+皮层连续 8 轮输出同一份 root_cause 诊断，反思系统退化为回声室。现有 `_reflectionState` 是输入级去重（基于事件哈希 type+failure_class+task_type），无法拦截"输入不同但 LLM 输出相同"的回声。
+
+### Solution
+在 `analyzeDeep` 中新增 `_outputDedupState`（输出级去重）：
+- 对 LLM 返回的 `decision.analysis.root_cause` 做 SHA256 内容哈希
+- 相同诊断 ≥2 次自动熔断（比输入级阈值 3 更严格）
+- 独立 Map + 独立持久化（`cortex_output_dedup:*` key in working_memory）
+- 复用 30 分钟时间窗口
+
+### Architecture Pattern
+**双层去重架构**：输入级（事件特征）+ 输出级（诊断内容），两层独立管理。输入级防止重复分析同类事件，输出级防止 LLM 陷入固定模式输出。阈值不同（输入 3，输出 2）因为输出相同 = 确定无新信息。
+
+### Key Decision
+- 输出去重放在 LLM 调用**之后**（而非之前），因为需要先拿到 LLM 输出才能比较
+- 第 1 次调用正常返回并记录 hash，第 2 次相同输出直接 fallback
+- 这意味着最多浪费 1 次 LLM 调用就能检测到回声
+
 ## [2026-03-07] pr-callback-handler 同步更新 pr_url 和 pr_merged_at 列 (PR #594)
 
 ### Bug

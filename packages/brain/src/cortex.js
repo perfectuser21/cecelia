@@ -278,6 +278,94 @@ async function _checkReflectionBreaker(hash) {
 }
 
 // ============================================================
+// 输出去重熔断（Output Dedup Circuit Breaker）
+// ============================================================
+
+const OUTPUT_DEDUP_THRESHOLD = 2; // 相同输出 ≥2 次即熔断（比输入级更严格）
+
+/** 内存缓存：outputHash → { count, firstSeen, lastSeen } */
+const _outputDedupState = new Map();
+let _outputDedupStateLoaded = false;
+
+async function _loadOutputDedupStateFromDB() {
+  if (_outputDedupStateLoaded) return;
+  _outputDedupStateLoaded = true;
+  try {
+    const result = await pool.query(
+      `SELECT key, value_json FROM working_memory WHERE key LIKE 'cortex_output_dedup:%'`
+    );
+    const now = Date.now();
+    const expiredKeys = [];
+    let loaded = 0;
+    for (const row of result.rows) {
+      const hash = row.key.replace('cortex_output_dedup:', '');
+      const val = row.value_json;
+      if (val && typeof val.count === 'number') {
+        if (now - val.firstSeen > REFLECTION_WINDOW_MS) {
+          expiredKeys.push(row.key);
+        } else {
+          _outputDedupState.set(hash, {
+            count: val.count,
+            firstSeen: val.firstSeen,
+            lastSeen: val.lastSeen,
+          });
+          loaded++;
+        }
+      }
+    }
+    if (loaded > 0) {
+      console.log(`[cortex] 从 DB 恢复 ${loaded} 条输出去重状态`);
+    }
+    if (expiredKeys.length > 0) {
+      pool.query(
+        'DELETE FROM working_memory WHERE key = ANY($1)',
+        [expiredKeys]
+      ).catch(err => {
+        console.error('[cortex] Failed to clean expired output dedup entries:', err.message);
+      });
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to load output dedup state from DB:', err.message);
+  }
+}
+
+function _persistOutputDedupEntry(hash, state) {
+  pool.query(
+    `INSERT INTO working_memory (key, value_json, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+    [`cortex_output_dedup:${hash}`, JSON.stringify(state)]
+  ).catch(err => {
+    console.error('[cortex] Failed to persist output dedup state:', err.message);
+  });
+}
+
+function _computeOutputHash(decision) {
+  const rootCause = decision?.analysis?.root_cause || '';
+  const normalized = rootCause.toLowerCase().trim();
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
+async function _checkOutputDedup(hash) {
+  await _loadOutputDedupStateFromDB();
+
+  const now = Date.now();
+  const state = _outputDedupState.get(hash);
+
+  if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
+    const newState = { count: 1, firstSeen: now, lastSeen: now };
+    _outputDedupState.set(hash, newState);
+    _persistOutputDedupEntry(hash, newState);
+    return { duplicate: false, count: 1 };
+  }
+
+  state.count += 1;
+  state.lastSeen = now;
+  _persistOutputDedupEntry(hash, state);
+  return { duplicate: state.count >= OUTPUT_DEDUP_THRESHOLD, count: state.count };
+}
+
+// ============================================================
 // Cortex LLM 调用（通过统一 callLLM 层）
 // ============================================================
 
@@ -486,6 +574,14 @@ async function analyzeDeep(event, thalamusDecision = null) {
     if (!validation.valid) {
       console.error('[cortex] Invalid decision:', validation.errors);
       return createCortexFallback(event, validation.errors.join('; '));
+    }
+
+    // 输出去重熔断：检查 LLM 输出的 root_cause 是否与近期诊断重复
+    const _outputHash = _computeOutputHash(decision);
+    const _outputDedup = await _checkOutputDedup(_outputHash);
+    if (_outputDedup.duplicate) {
+      console.log(`[cortex] 输出去重熔断：root_cause 相同诊断已出现 ${_outputDedup.count} 次，停止回声 (hash=${_outputHash})`);
+      return createCortexFallback(event, `输出去重熔断：相同诊断已输出 ${_outputDedup.count} 次，皮层回声已阻断`);
     }
 
     // 记录到决策日志
@@ -1122,6 +1218,14 @@ function _resetReflectionState() {
   _reflectionStateLoaded = false;
 }
 
+/**
+ * 重置输出去重状态（仅供测试使用）
+ */
+function _resetOutputDedupState() {
+  _outputDedupState.clear();
+  _outputDedupStateLoaded = false;
+}
+
 export {
   // 主入口
   analyzeDeep,
@@ -1149,6 +1253,12 @@ export {
   _checkReflectionBreaker,
   _computeEventHash,
 
+  // 输出去重（测试用）
+  _checkOutputDedup,
+  _computeOutputHash,
+  _resetOutputDedupState,
+
   // 常量
   CORTEX_ACTION_WHITELIST,
+  OUTPUT_DEDUP_THRESHOLD,
 };
