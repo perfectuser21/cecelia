@@ -1050,6 +1050,8 @@ export function getRecoveryStatus() {
 // 导出
 // ============================================================
 
+export { executeAction };
+
 export default {
   startRecovery,
   applySelfHealing,
