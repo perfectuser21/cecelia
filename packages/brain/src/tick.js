@@ -17,6 +17,7 @@ import { publishTaskStarted, publishExecutorStatus } from './events/taskEvents.j
 import { processEvent as thalamusProcessEvent, EVENT_TYPES } from './thalamus.js';
 import { executeDecision as executeThalamusDecision, expireStaleProposals } from './decision-executor.js';
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
+import { getRecoveryStatus } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
 import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
@@ -52,6 +53,11 @@ const AUTO_DISPATCH_MAX = Math.max(MAX_SEATS - INTERACTIVE_RESERVE, 1);
 const AUTO_EXECUTE_CONFIDENCE = 0.8; // Auto-execute decisions with confidence >= this
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_CLEANUP_INTERVAL_MS || String(60 * 60 * 1000), 10); // 1 hour
 const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_INTERVAL_MS || String(20 * 60 * 1000), 10); // 20 minutes
+
+// 恢复流控：每次 tick 批量释放上限，防止瞬间释放大量任务导致系统过载
+const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
+const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
+const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -1776,7 +1782,7 @@ async function executeTick() {
   // 无条件执行，不依赖 allGoalIds
   try {
     const { unblockExpiredTasks } = await import('./task-updater.js');
-    const recovered = await unblockExpiredTasks();
+    const recovered = await unblockExpiredTasks({ limit: UNBLOCK_BATCH_LIMIT });
     if (recovered.length > 0) {
       console.log(`[tick] Auto-unblocked ${recovered.length} expired blocked task(s)`);
       for (const r of recovered) {
@@ -1912,9 +1918,9 @@ async function executeTick() {
     console.error('[tick] Idle session check error:', idleErr.message);
   }
 
-  // P1 FIX #3: Check for expired quarantine tasks and auto-release
+  // P1 FIX #3: Check for expired quarantine tasks and auto-release (limit=2/tick)
   try {
-    const released = await checkExpiredQuarantineTasks();
+    const released = await checkExpiredQuarantineTasks({ limit: QUARANTINE_RELEASE_LIMIT });
     for (const r of released) {
       actionsTaken.push({
         action: 'auto_release_quarantine',
@@ -2027,7 +2033,14 @@ async function executeTick() {
   }
 
   // Apply dispatch rate limit based on alertness level
-  const dispatchRate = getDispatchRate();
+  let dispatchRate = getDispatchRate();
+
+  // 自愈恢复期间额外限速：isRecovering=true 时上限 50%，防止恢复期加剧过载
+  const healingStatus = getRecoveryStatus();
+  if (healingStatus.isRecovering && dispatchRate > RECOVERY_DISPATCH_CAP) {
+    console.log(`[tick] Healing recovery active (phase=${healingStatus.phase}): capping dispatch rate ${Math.round(dispatchRate * 100)}% → ${Math.round(RECOVERY_DISPATCH_CAP * 100)}%`);
+    dispatchRate = RECOVERY_DISPATCH_CAP;
+  }
 
   // 情绪门禁：过载状态跳过本轮派发
   const emotionState = cognitionSnapshot?.emotion?.state ?? 'calm';
