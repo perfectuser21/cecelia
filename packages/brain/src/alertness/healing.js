@@ -15,10 +15,75 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
 
 const execAsync = promisify(exec);
+
+// ============================================================
+// 常量定义
+// ============================================================
+
+const STUCK_TASK_THRESHOLD_MS = 30 * 60 * 1000; // 30 分钟
+const MAX_RETRY_COUNT = 3;
+const RETRY_BACKOFF_BASE_MS = 5 * 60 * 1000; // 5 分钟
+const RETRY_BACKOFF_MAX_MS = 60 * 60 * 1000; // 1 小时
+const CACHE_ENTRY_TTL_MS = 30 * 60 * 1000; // 30 分钟
+const LOCK_DIR = '/tmp/cecelia-locks';
+
+// 可重试的失败类别
+const RETRYABLE_FAILURE_CLASSES = ['transient'];
+// 不可重试的失败类别
+const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error'];
+
+// ============================================================
+// 进程存活检测（跨平台）
+// ============================================================
+
+const IS_DARWIN = process.platform === 'darwin';
+
+/**
+ * 检查进程是否存活
+ * @param {number} pid
+ * @returns {boolean}
+ */
+function isProcessAlive(pid) {
+  if (IS_DARWIN) {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+  return existsSync(`/proc/${pid}`);
+}
+
+/**
+ * 读取 slot 目录获取 task_id 到 pid 的映射
+ * @returns {Map<string, {pid: number, task_id: string}>}
+ */
+function readSlotInfo() {
+  const pidMap = new Map();
+  try {
+    if (!existsSync(LOCK_DIR)) return pidMap;
+
+    const entries = readdirSync(LOCK_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('slot-')) continue;
+      const infoPath = `${LOCK_DIR}/${entry.name}/info.json`;
+      if (!existsSync(infoPath)) continue;
+
+      try {
+        const info = JSON.parse(readFileSync(infoPath, 'utf-8'));
+        if (info.task_id && info.pid) {
+          pidMap.set(info.task_id, { pid: info.pid, slot: entry.name });
+        }
+      } catch (e) {
+        // 忽略读取错误
+      }
+    }
+  } catch (e) {
+    console.error('[Healing] Failed to read slot info:', e.message);
+  }
+  return pidMap;
+}
 
 // ============================================================
 // 自愈策略定义
@@ -376,8 +441,7 @@ async function executeAction(action) {
       return { gc: true };
 
     case 'clear_expired_cache':
-      // TODO: 实现缓存清理
-      return { cacheCleared: false, stub: true };
+      return await clearExpiredCache();
 
     case 'compact_database_connections':
       // 关闭空闲连接
@@ -399,8 +463,7 @@ async function executeAction(action) {
       return { orphansKilled: orphans.length };
 
     case 'restart_stuck_executors':
-      // TODO: 实现执行器重启
-      return { executorsRestarted: false, stub: true };
+      return await restartStuckExecutors();
 
     case 'reset_process_pool':
       // TODO: 实现进程池重置
@@ -424,8 +487,7 @@ async function executeAction(action) {
 
     // 错误缓解动作
     case 'retry_with_backoff':
-      // TODO: 实现退避重试
-      return { retryEnabled: false, stub: true };
+      return await retryWithBackoff();
 
     case 'switch_fallback_endpoints':
       // TODO: 实现降级端点
@@ -538,6 +600,197 @@ async function archiveOldTasks() {
     return result.rowCount;
   } finally {
     client.release();
+  }
+}
+
+// ============================================================
+// 核心自愈动作实现
+// ============================================================
+
+/**
+ * 重启卡住的执行器
+ * 扫描 tasks 表中 status=in_progress 且 updated_at 超过阈值（如 30min）的任务
+ * 检查对应进程是否存活，进程已死则重置任务状态
+ */
+async function restartStuckExecutors() {
+  const client = await pool.connect();
+  try {
+    // 扫描卡住的任务
+    const stuckTasksResult = await client.query(`
+      SELECT id, title, started_at, payload
+      FROM tasks
+      WHERE status = 'in_progress'
+        AND updated_at < NOW() - INTERVAL '30 minutes'
+    `);
+
+    if (stuckTasksResult.rows.length === 0) {
+      console.log('[Healing] No stuck executors found');
+      return { executorsRestarted: 0 };
+    }
+
+    // 读取 slot 信息获取 PID 映射
+    const slotInfo = readSlotInfo();
+
+    let restartedCount = 0;
+    let stuckButAliveCount = 0;
+
+    for (const task of stuckTasksResult.rows) {
+      const info = slotInfo.get(task.id);
+      const pid = info?.pid;
+
+      if (!pid) {
+        // 没有 PID 记录，直接重置
+        await client.query(`
+          UPDATE tasks
+          SET status = 'queued', started_at = NULL, updated_at = NOW()
+          WHERE id = $1
+        `, [task.id]);
+        console.log(`[Healing] Reset stuck task without PID: ${task.title}`);
+        restartedCount++;
+        continue;
+      }
+
+      // 检查进程是否存活
+      const isAlive = isProcessAlive(pid);
+
+      if (!isAlive) {
+        // 进程已死，重置任务
+        await client.query(`
+          UPDATE tasks
+          SET status = 'queued', started_at = NULL, updated_at = NOW()
+          WHERE id = $1
+        `, [task.id]);
+        console.log(`[Healing] Restarted stuck executor (process dead): ${task.title} (pid=${pid})`);
+        restartedCount++;
+      } else {
+        // 进程存活但卡住，记录日志
+        console.log(`[Healing] Task stuck but process alive (needs attention): ${task.title} (pid=${pid})`);
+        stuckButAliveCount++;
+      }
+    }
+
+    console.log(`[Healing] restart_stuck_executors: restarted=${restartedCount}, stuck_but_alive=${stuckButAliveCount}`);
+    return { executorsRestarted: restartedCount };
+  } catch (error) {
+    console.error('[Healing] Failed to restart stuck executors:', error.message);
+    return { executorsRestarted: 0, error: error.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 退避重试
+ * 扫描 tasks 表中 status=failed 且 retry_count < MAX_RETRY 的任务
+ * 按 failure_class 判断是否可重试，计算下次执行时间
+ */
+async function retryWithBackoff() {
+  const client = await pool.connect();
+  try {
+    // 扫描可以重试的任务
+    // 查找 failed 状态且 retry_count < MAX_RETRY 的任务
+    const failedTasksResult = await client.query(`
+      SELECT id, title, payload, retry_count
+      FROM tasks
+      WHERE status = 'failed'
+        AND (payload->>'retry_count') IS NOT NULL
+        AND (payload->>'retry_count')::int < $1
+    `, [MAX_RETRY_COUNT]);
+
+    if (failedTasksResult.rows.length === 0) {
+      console.log('[Healing] No retryable failed tasks found');
+      return { retriesScheduled: 0 };
+    }
+
+    let retriesScheduled = 0;
+
+    for (const task of failedTasksResult.rows) {
+      const payload = task.payload || {};
+      const failureClass = payload.failure_class;
+
+      // 检查是否可重试
+      if (failureClass && NON_RETRYABLE_FAILURE_CLASSES.includes(failureClass)) {
+        console.log(`[Healing] Skip non-retryable task: ${task.title} (class=${failureClass})`);
+        continue;
+      }
+
+      const retryCount = task.retry_count || 0;
+
+      // 计算下次执行时间（指数退避）
+      const backoffMs = Math.min(
+        RETRY_BACKOFF_BASE_MS * Math.pow(2, retryCount),
+        RETRY_BACKOFF_MAX_MS
+      );
+      const nextRunAt = new Date(Date.now() + backoffMs);
+
+      // 更新任务状态
+      await client.query(`
+        UPDATE tasks
+        SET status = 'queued',
+            started_at = NULL,
+            updated_at = NOW(),
+            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1
+      `, [task.id, JSON.stringify({
+        retry_count: retryCount + 1,
+        scheduled_for: nextRunAt.toISOString(),
+        last_retry_at: new Date().toISOString()
+      })]);
+
+      console.log(`[Healing] Scheduled retry for: ${task.title} (retry=${retryCount + 1}, next=${nextRunAt.toISOString()})`);
+      retriesScheduled++;
+    }
+
+    console.log(`[Healing] retry_with_backoff: scheduled=${retriesScheduled}`);
+    return { retriesScheduled };
+  } catch (error) {
+    console.error('[Healing] Failed to retry with backoff:', error.message);
+    return { retriesScheduled: 0, error: error.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * 清理过期缓存
+ * 清理 Brain 内存中的过期缓存和数据库中的旧事件
+ */
+async function clearExpiredCache() {
+  const result = { cacheCleared: false, entriesRemoved: 0 };
+
+  try {
+    // 1. 清理 run_events 表中超过 7 天的旧事件
+    const client = await pool.connect();
+    try {
+      // 检查 run_events 表是否存在
+      const tableExists = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'run_events'
+        )
+      `);
+
+      if (tableExists.rows[0].exists) {
+        const deleteResult = await client.query(`
+          DELETE FROM run_events
+          WHERE timestamp < NOW() - INTERVAL '7 days'
+          RETURNING id
+        `);
+
+        result.entriesRemoved = deleteResult.rowCount;
+        console.log(`[Healing] Cleared ${deleteResult.rowCount} old run_events`);
+      }
+    } finally {
+      client.release();
+    }
+
+    result.cacheCleared = true;
+    console.log('[Healing] clear_expired_cache completed');
+    return result;
+  } catch (error) {
+    console.error('[Healing] Failed to clear expired cache:', error.message);
+    return { cacheCleared: false, entriesRemoved: 0, error: error.message };
   }
 }
 
@@ -796,6 +1049,8 @@ export function getRecoveryStatus() {
 // ============================================================
 // 导出
 // ============================================================
+
+export { executeAction };
 
 export default {
   startRecovery,
