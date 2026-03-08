@@ -1,5 +1,5 @@
 /**
- * 反思模块测试 - 静默期 + 持久化熔断器 + 折叠记录
+ * 反思模块测试 - 静默期 + 持久化熔断器 + 折叠记录 + 每日限制
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -31,7 +31,7 @@ vi.mock('../embedding-service.js', () => ({
 
 // ────────────────────────────────────────────────────────────
 
-import { runReflection, _resetBreakerStateForTest } from '../desire/reflection.js';
+import { runReflection, _resetBreakerStateForTest, REFLECTION_DAILY_LIMIT } from '../desire/reflection.js';
 
 // Helper: mock breaker state not found in DB (first load)
 function mockBreakerStateEmpty() {
@@ -41,6 +41,11 @@ function mockBreakerStateEmpty() {
 // Helper: mock breaker state loaded from DB
 function mockBreakerStateLoaded(state) {
   mockQuery.mockResolvedValueOnce({ rows: [{ value_json: state }] });
+}
+
+// Helper: mock daily limit not reached
+function mockDailyLimitNotReached() {
+  mockQuery.mockResolvedValueOnce({ rows: [] }); // daily limit check: no record
 }
 
 describe('反思静默期机制', () => {
@@ -57,6 +62,7 @@ describe('反思静默期机制', () => {
     const silenceUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     mockBreakerStateEmpty(); // _loadBreakerState
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery.mockResolvedValueOnce({ rows: [{ value_json: silenceUntil }] }); // silence check
 
     const result = await runReflection(pool);
@@ -70,6 +76,7 @@ describe('反思静默期机制', () => {
     const silenceUntil = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
 
     mockBreakerStateEmpty(); // _loadBreakerState
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [{ value_json: silenceUntil }] }) // silence check (expired)
       .mockResolvedValueOnce({ rows: [] }) // DELETE silence
@@ -87,6 +94,7 @@ describe('反思静默期机制', () => {
 
   it('静默期-DB错误降级: working_memory 读写失败时降级处理', async () => {
     mockBreakerStateEmpty(); // _loadBreakerState
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockRejectedValueOnce(new Error('DB connection failed')) // silence check fails
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator
@@ -109,6 +117,7 @@ describe('反思模块-基础功能', () => {
 
   it('accumulator 低于阈值时不触发', async () => {
     mockBreakerStateEmpty(); // _loadBreakerState
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator
@@ -121,6 +130,7 @@ describe('反思模块-基础功能', () => {
 
   it('无记忆时不触发', async () => {
     mockBreakerStateEmpty(); // _loadBreakerState
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
@@ -150,6 +160,7 @@ describe('反思熔断器持久化', () => {
     };
 
     mockBreakerStateLoaded(savedState); // _loadBreakerState: has state
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
@@ -165,6 +176,7 @@ describe('反思熔断器持久化', () => {
 
   it('DB 加载失败时降级为默认值（不抛异常）', async () => {
     mockQuery.mockRejectedValueOnce(new Error('DB down')); // _loadBreakerState fails
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
@@ -177,6 +189,7 @@ describe('反思熔断器持久化', () => {
 
   it('相似度去重时写入折叠记录到 memory_stream', async () => {
     mockBreakerStateEmpty();
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
@@ -211,6 +224,7 @@ describe('反思熔断器持久化', () => {
 
   it('成功写入洞察后重置跳过计数器并持久化', async () => {
     mockBreakerStateEmpty();
+    mockDailyLimitNotReached(); // daily limit check
     mockQuery
       .mockResolvedValueOnce({ rows: [] }) // silence check
       .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
@@ -225,6 +239,8 @@ describe('反思熔断器持久化', () => {
       .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState (after dedup pass)
       .mockResolvedValueOnce({ rows: [{ id: 42 }] }) // insight INSERT RETURNING
       .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState (after write)
+      .mockResolvedValueOnce({ rows: [] }) // daily count read
+      .mockResolvedValueOnce({ rows: [] }) // daily count write
       .mockResolvedValueOnce({ rows: [] }); // accumulator reset
 
     const result = await runReflection(pool);
@@ -237,5 +253,60 @@ describe('反思熔断器持久化', () => {
       call[1]?.[0] === 'reflection_breaker_state'
     );
     expect(saveCalls.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('反思每日限制 (D4)', () => {
+  let pool;
+
+  beforeEach(() => {
+    pool = { query: mockQuery };
+    vi.clearAllMocks();
+    _resetBreakerStateForTest();
+  });
+
+  it('每日限制已达时返回 daily_limit_reached', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ value_json: { date: today, count: REFLECTION_DAILY_LIMIT } }],
+    }); // daily limit check — already reached
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBe('daily_limit_reached');
+  });
+
+  it('昨天的计数不影响今天', async () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{ value_json: { date: yesterday, count: 5 } }],
+      }) // daily limit check — yesterday's count
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.reason).toBeUndefined();
+    expect(result.accumulator).toBe(5);
+  });
+
+  it('每日限制检查 DB 失败时降级继续', async () => {
+    mockBreakerStateEmpty(); // _loadBreakerState
+    mockQuery
+      .mockRejectedValueOnce(new Error('DB error')) // daily limit check fails
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: 5 }] }); // accumulator < 12
+
+    const result = await runReflection(pool);
+
+    expect(result.triggered).toBe(false);
+    expect(result.accumulator).toBe(5);
   });
 });

@@ -175,6 +175,58 @@ const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
 
 /** 内存状态：eventHash → { count, firstSeen, lastSeen } */
 const _reflectionState = new Map();
+let _reflectionStateLoaded = false;
+
+/**
+ * 从 DB 加载 Cortex 熔断器状态（启动后首次调用时执行）
+ */
+async function _loadReflectionState() {
+  if (_reflectionStateLoaded) return;
+  try {
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'cortex_reflection_breaker_state'"
+    );
+    if (rows[0]?.value_json) {
+      const data = typeof rows[0].value_json === 'string'
+        ? JSON.parse(rows[0].value_json)
+        : rows[0].value_json;
+      if (data.entries && Array.isArray(data.entries)) {
+        for (const entry of data.entries) {
+          _reflectionState.set(entry.hash, {
+            count: entry.count,
+            firstSeen: entry.firstSeen,
+            lastSeen: entry.lastSeen,
+          });
+        }
+      }
+      console.log(`[cortex] Breaker state loaded from DB: ${_reflectionState.size} entries`);
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to load breaker state from DB (using defaults):', err.message);
+  }
+  _reflectionStateLoaded = true;
+}
+
+/**
+ * 将 Cortex 熔断器状态持久化到 DB（fire-and-forget）
+ */
+function _saveReflectionState() {
+  const entries = [];
+  const now = Date.now();
+  for (const [hash, state] of _reflectionState.entries()) {
+    if (now - state.firstSeen <= REFLECTION_WINDOW_MS) {
+      entries.push({ hash, count: state.count, firstSeen: state.firstSeen, lastSeen: state.lastSeen });
+    }
+  }
+  pool.query(`
+    INSERT INTO working_memory (key, value_json, updated_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+  `, ['cortex_reflection_breaker_state', JSON.stringify({ entries, updatedAt: new Date().toISOString() })])
+    .catch(err => {
+      console.error('[cortex] Failed to save breaker state to DB:', err.message);
+    });
+}
 
 /**
  * 计算事件内容哈希（type + failure_class + task_type）
@@ -201,11 +253,13 @@ function _checkReflectionBreaker(hash) {
 
   if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
     _reflectionState.set(hash, { count: 1, firstSeen: now, lastSeen: now });
+    _saveReflectionState();
     return { open: false, count: 1 };
   }
 
   state.count += 1;
   state.lastSeen = now;
+  _saveReflectionState();
   return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
 }
 
@@ -312,6 +366,9 @@ function createCortexFallback(event, reason) {
  * @returns {Promise<Object>} - Cortex Decision
  */
 async function analyzeDeep(event, thalamusDecision = null) {
+  // 从 DB 加载熔断器状态（首次调用时）
+  await _loadReflectionState();
+
   // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
   const _eventHash = _computeEventHash(event);
   const _breaker = _checkReflectionBreaker(_eventHash);

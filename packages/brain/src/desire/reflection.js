@@ -12,6 +12,7 @@ import { generateL0Summary, generateMemoryStreamL1Async } from '../memory-utils.
 import { generateMemoryStreamEmbeddingAsync } from '../embedding-service.js';
 
 const REFLECTION_THRESHOLD = 12;
+export const REFLECTION_DAILY_LIMIT = 1; // 每日最多反思 1 次
 
 // 熔断机制：检测连续重复内容
 const CIRCUIT_BREAKER_THRESHOLD = 3; // 连续3轮相同内容 → 触发熔断
@@ -104,6 +105,24 @@ async function getAccumulator(pool) {
 export async function runReflection(pool) {
   // 0. 从 DB 加载熔断器状态（首次调用时）
   await _loadBreakerState(pool);
+
+  // 0.5 每日限制检查：反思频率降为每日一次
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows } = await pool.query(
+      "SELECT value_json FROM working_memory WHERE key = 'reflection_daily_count'"
+    );
+    const dailyData = rows[0]?.value_json;
+    if (dailyData) {
+      const parsed = typeof dailyData === 'string' ? JSON.parse(dailyData) : dailyData;
+      if (parsed.date === today && parsed.count >= REFLECTION_DAILY_LIMIT) {
+        console.log(`[reflection] 每日限制已达 (${parsed.count}/${REFLECTION_DAILY_LIMIT})，跳过`);
+        return { triggered: false, reason: 'daily_limit_reached' };
+      }
+    }
+  } catch (err) {
+    console.error('[reflection] 每日限制检查失败（降级继续）:', err.message);
+  }
 
   // 1. 检查静默期（连续跳过导致的熔断静默）
   try {
@@ -393,6 +412,24 @@ ${memorySummary}
     _consecutiveSkips = 0;
     await _saveBreakerState(pool);
     console.log('[reflection] 洞察已成功写入，跳过计数器已重置');
+
+    // 递增每日反思计数
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const { rows: countRows } = await pool.query(
+        "SELECT value_json FROM working_memory WHERE key = 'reflection_daily_count'"
+      );
+      const existing = countRows[0]?.value_json;
+      const parsed = existing ? (typeof existing === 'string' ? JSON.parse(existing) : existing) : null;
+      const newCount = (parsed?.date === today ? parsed.count : 0) + 1;
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
+      `, ['reflection_daily_count', JSON.stringify({ date: today, count: newCount })]);
+    } catch (countErr) {
+      console.error('[reflection] 每日计数更新失败（非致命）:', countErr.message);
+    }
   } catch (err) {
     console.error('[reflection] insight insert error:', err.message);
   }
