@@ -182,7 +182,8 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
       task_type: taskType,
       retry_count: retryCount,
       auto_generated: true,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      ...metadata
     }
   });
 }
@@ -192,8 +193,11 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
  */
 export async function processExecutionAutoLearning(task_id, newStatus, result, options = {}) {
   try {
-    // 获取任务信息
-    const taskResult = await pool.query('SELECT task_type, title FROM tasks WHERE id = $1', [task_id]);
+    // 获取任务信息（含 error_message 和 payload 用于错误可见性）
+    const taskResult = await pool.query(
+      'SELECT task_type, title, error_message, payload FROM tasks WHERE id = $1',
+      [task_id]
+    );
     const taskRow = taskResult.rows[0];
 
     if (!taskRow) {
@@ -201,7 +205,7 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
       return null;
     }
 
-    const { task_type: taskType, title: taskTitle } = taskRow;
+    const { task_type: taskType, title: taskTitle, error_message: errorMessage, payload: taskPayload } = taskRow;
 
     console.log(`[auto-learning] Processing task ${task_id} (type: ${taskType}, status: ${newStatus})`);
 
@@ -215,6 +219,18 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
       return await handleTaskCompletedLearning(task_id, taskType, newStatus, result, metadata);
     } else if (newStatus === 'failed') {
       const retryCount = options.retry_count || options.iterations || 0;
+      // 注入 error_message 和 payload 摘要到 metadata，恢复错误可见性
+      if (errorMessage) {
+        metadata.error_message = errorMessage;
+      }
+      if (taskPayload) {
+        try {
+          const payloadObj = typeof taskPayload === 'string' ? JSON.parse(taskPayload) : taskPayload;
+          metadata.payload_summary = JSON.stringify(payloadObj).slice(0, 500);
+        } catch {
+          metadata.payload_summary = String(taskPayload).slice(0, 500);
+        }
+      }
       return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata);
     }
 

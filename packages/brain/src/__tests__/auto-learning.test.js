@@ -43,7 +43,7 @@ describe('Auto Learning Module', () => {
       // Mock database responses
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Fix bug' }]
+          rows: [{ task_type: 'dev', title: 'Fix bug', error_message: null, payload: null }]
         }) // Task query
         .mockResolvedValueOnce({
           rows: []
@@ -67,7 +67,7 @@ describe('Auto Learning Module', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(3);
       expect(mockPool.query).toHaveBeenNthCalledWith(
         1,
-        'SELECT task_type, title FROM tasks WHERE id = $1',
+        'SELECT task_type, title, error_message, payload FROM tasks WHERE id = $1',
         ['test-task']
       );
       expect(mockPool.query).toHaveBeenNthCalledWith(
@@ -91,7 +91,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'feature', title: 'New feature' }]
+          rows: [{ task_type: 'feature', title: 'New feature', error_message: 'Network timeout', payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -127,7 +127,7 @@ describe('Auto Learning Module', () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ task_type: 'code_review', title: 'Review PR' }]
+        rows: [{ task_type: 'code_review', title: 'Review PR', error_message: null, payload: null }]
       });
 
       const result = await processExecutionAutoLearning(
@@ -145,7 +145,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Test task' }]
+          rows: [{ task_type: 'dev', title: 'Test task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: [{ id: 'existing-learning' }] // Duplicate found
@@ -227,7 +227,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'research', title: 'Research task' }]
+          rows: [{ task_type: 'research', title: 'Research task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -254,7 +254,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Dev task' }]
+          rows: [{ task_type: 'dev', title: 'Dev task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -286,7 +286,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Long task' }]
+          rows: [{ task_type: 'dev', title: 'Long task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -313,7 +313,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Failed task' }]
+          rows: [{ task_type: 'dev', title: 'Failed task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -339,7 +339,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Error task' }]
+          rows: [{ task_type: 'dev', title: 'Error task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -365,7 +365,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Msg task' }]
+          rows: [{ task_type: 'dev', title: 'Msg task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -391,7 +391,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Obj err task' }]
+          rows: [{ task_type: 'dev', title: 'Obj err task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -420,7 +420,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'dev', title: 'Test task' }]
+          rows: [{ task_type: 'dev', title: 'Test task', error_message: null, payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -457,7 +457,7 @@ describe('Auto Learning Module', () => {
 
       mockPool.query
         .mockResolvedValueOnce({
-          rows: [{ task_type: 'feature', title: 'Failed feature' }]
+          rows: [{ task_type: 'feature', title: 'Failed feature', error_message: 'timeout', payload: null }]
         })
         .mockResolvedValueOnce({
           rows: []
@@ -481,8 +481,76 @@ describe('Auto Learning Module', () => {
         task_id: 'retry-task',
         task_type: 'feature',
         retry_count: 3,
-        auto_generated: true
+        auto_generated: true,
+        error_message: 'timeout'
       });
+    });
+
+    it('should include error_message in metadata for failed task (D1)', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'DB error task', error_message: 'ECONNREFUSED localhost:5432', payload: null }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-err', title: 'test' }]
+        });
+
+      await processExecutionAutoLearning('err-task', 'failed', 'error');
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const metadata = JSON.parse(insertCall[1][4]);
+
+      expect(metadata.error_message).toBe('ECONNREFUSED localhost:5432');
+    });
+
+    it('should include payload_summary in metadata for failed task (D2)', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            task_type: 'dev',
+            title: 'Payload task',
+            error_message: 'failed',
+            payload: { skill: '/dev', repo: 'cecelia', branch: 'cp-test' }
+          }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-payload', title: 'test' }]
+        });
+
+      await processExecutionAutoLearning('payload-task', 'failed', 'error');
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const metadata = JSON.parse(insertCall[1][4]);
+
+      expect(metadata.payload_summary).toContain('/dev');
+      expect(metadata.payload_summary).toContain('cecelia');
+    });
+
+    it('should not include error_message in metadata when null', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'No error', error_message: null, payload: null }]
+        })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-no-err', title: 'test' }]
+        });
+
+      await processExecutionAutoLearning('no-err-task', 'failed', 'error');
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const metadata = JSON.parse(insertCall[1][4]);
+
+      expect(metadata.error_message).toBeUndefined();
+      expect(metadata.payload_summary).toBeUndefined();
     });
   });
 });
