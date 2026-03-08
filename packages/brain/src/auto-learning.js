@@ -109,7 +109,7 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
 /**
  * 提取任务摘要
  */
-function extractTaskSummary(result, maxLength = 200) {
+function extractTaskSummary(result, maxLength = 500) {
   if (!result) return 'No details available';
 
   if (typeof result === 'string') {
@@ -117,9 +117,10 @@ function extractTaskSummary(result, maxLength = 200) {
   }
 
   if (typeof result === 'object') {
-    // 提取有用的信息
-    const summary = result.result || result.findings || result.summary || JSON.stringify(result);
-    return summary.toString().slice(0, maxLength);
+    // 优先提取错误信息，再提取正常结果
+    const summary = result.error_details || result.error || result.message ||
+      result.result || result.findings || result.summary || JSON.stringify(result);
+    return (typeof summary === 'object' ? JSON.stringify(summary) : summary.toString()).slice(0, maxLength);
   }
 
   return 'Unknown result format';

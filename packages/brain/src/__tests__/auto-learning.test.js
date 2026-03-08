@@ -282,7 +282,7 @@ describe('Auto Learning Module', () => {
     it('should truncate long content', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
-      const longResult = 'A'.repeat(300);
+      const longResult = 'A'.repeat(600);
 
       mockPool.query
         .mockResolvedValueOnce({
@@ -304,8 +304,113 @@ describe('Auto Learning Module', () => {
       const insertCall = mockPool.query.mock.calls[2];
       const content = insertCall[1][3];
 
-      expect(content.length).toBeLessThan(300);
+      expect(content.length).toBeLessThan(600);
       expect(content).toContain('任务成功完成。类型：dev');
+    });
+
+    it('should extract error_details from failed task result', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Failed task' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-err', title: '任務失敗：err-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'err-task',
+        'failed',
+        { error_details: 'Connection refused to localhost:5432' }
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('Connection refused to localhost:5432');
+    });
+
+    it('should extract error field when error_details is absent', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Error task' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-e2', title: '任務失敗：e2-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'e2-task',
+        'failed',
+        { error: 'Network timeout after 30s' }
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('Network timeout after 30s');
+    });
+
+    it('should extract message field as fallback', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Msg task' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-msg', title: '任務失敗：msg-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'msg-task',
+        'failed',
+        { message: 'Disk full on /dev/sda1' }
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('Disk full on /dev/sda1');
+    });
+
+    it('should handle object error_details by stringifying', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ task_type: 'dev', title: 'Obj err task' }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-oe', title: '任務失敗：oe-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'oe-task',
+        'failed',
+        { error_details: { code: 'ECONNREFUSED', host: 'localhost', port: 5432 } }
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      expect(content).toContain('ECONNREFUSED');
+      expect(content).toContain('localhost');
     });
   });
 
