@@ -90,10 +90,49 @@ function extractDirNames(contentDir) {
   return { dateDir, contentDirName };
 }
 
+/**
+ * 微博发布页 URL（新接口）
+ * weibo.com/p/publish/ 是微博的专用发布页面，区别于首页发帖方式。
+ */
+const PUBLISH_URL = 'https://weibo.com/p/publish/';
+
+/**
+ * 检测 URL 是否为微博登录跳转页（会话失效时触发）。
+ *
+ * 微博会话过期后，导航到 weibo.com/p/publish/ 会被重定向到登录页。
+ *
+ * @param {string} url - 当前页面 URL
+ * @returns {boolean}
+ */
+function isLoginRedirect(url) {
+  if (!url || typeof url !== 'string') return false;
+  return (
+    url.includes('passport.weibo.com') ||
+    url.includes('login.weibo.com') ||
+    url.includes('weibo.com/login') ||
+    url.includes('/signin') ||
+    url.includes('weibo.com/signup/signup')
+  );
+}
+
+/**
+ * 检测导航后是否真正到达微博发布页（而非被重定向）。
+ *
+ * @param {string} url - 导航后实际 URL
+ * @returns {boolean}
+ */
+function isPublishPageReached(url) {
+  if (!url || typeof url !== 'string') return false;
+  return url.includes('weibo.com') && url.includes('/p/publish');
+}
+
 module.exports = {
+  PUBLISH_URL,
   findImages,
   readContent,
   convertToWindowsPaths,
   escapeForJS,
   extractDirNames,
+  isLoginRedirect,
+  isPublishPageReached,
 };
