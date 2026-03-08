@@ -36,6 +36,7 @@ import {
 } from './nightly-tick.js';
 import { parseIntent, parseAndCreate, INTENT_TYPES, INTENT_ACTION_MAP, extractEntities, classifyIntent, getSuggestedAction } from './intent.js';
 import pool from './db.js';
+import { parseStrategySessionOutput } from './strategy-session-parser.js';
 import { generatePrdFromTask, generatePrdFromGoalKR, generateTrdFromGoal, generateTrdFromGoalKR, validatePrd, validateTrd, prdToJson, trdToJson, PRD_TYPE_MAP } from './templates.js';
 import { compareGoalProgress, generateDecision, executeDecision, rollbackDecision } from './decision.js';
 import { planNextTask, getPlanStatus, handlePlanInput, getGlobalState, selectTopAreas, selectActiveInitiativeForArea, ACTIVE_AREA_COUNT } from './planner.js';
@@ -2908,6 +2909,74 @@ router.post('/execution-callback', async (req, res) => {
         }
       } catch (rescheduleErr) {
         console.error(`[execution-callback] reschedule error (non-fatal): ${rescheduleErr.message}`);
+      }
+    }
+
+    // D4-D7: strategy_session KR 解析 → 写入 goals 表
+    if (newStatus === 'completed') {
+      try {
+        // 查询 task 信息，获取 task_type 和 output
+        const taskInfoRow = await pool.query(
+          'SELECT task_type, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const taskType = taskInfoRow.rows[0]?.task_type;
+        const taskPayload = taskInfoRow.rows[0]?.payload || {};
+
+        // 仅处理 strategy_session 类型的任务
+        if (taskType === 'strategy_session') {
+          console.log(`[execution-callback] Processing strategy_session KR for task ${task_id}`);
+
+          // 从 result 中提取 output 字符串
+          const outputStr = (result !== null && typeof result === 'object')
+            ? (result.result || result.findings || JSON.stringify(result))
+            : (typeof result === 'string' ? result : JSON.stringify(result));
+
+          // 解析 KR JSON
+          const parsed = parseStrategySessionOutput(outputStr);
+          if (!parsed) {
+            console.warn(`[execution-callback] strategy_session: no valid JSON found in output, skipping KR creation`);
+          } else {
+            // D6: 写入 meeting_summary 和 key_tensions 到 task payload
+            const payloadUpdates = {};
+            if (parsed.meeting_summary) {
+              payloadUpdates.meeting_summary = parsed.meeting_summary;
+            }
+            if (parsed.key_tensions && parsed.key_tensions.length > 0) {
+              payloadUpdates.key_tensions = parsed.key_tensions;
+            }
+            if (Object.keys(payloadUpdates).length > 0) {
+              await pool.query(
+                `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+                [task_id, JSON.stringify(payloadUpdates)]
+              );
+              console.log(`[execution-callback] strategy_session: updated task payload with meeting_summary/key_tensions`);
+            }
+
+            // D5: 写入 KR 到 goals 表
+            const projectId = taskPayload.project_id || null;
+            if (parsed.krs && parsed.krs.length > 0) {
+              for (const kr of parsed.krs) {
+                const krTitle = kr.title || 'Untitled KR';
+                const krDomain = kr.domain || null;
+                const krOwnerRole = kr.owner_role ? kr.owner_role.toLowerCase() : null;
+                const krPriority = ['P0', 'P1', 'P2'].includes(kr.priority) ? kr.priority : 'P1';
+
+                await pool.query(
+                  `INSERT INTO goals (title, priority, status, progress, domain, owner_role, type, project_id)
+                   VALUES ($1, $2, 'pending', 0, $3, $4, 'area_okr', $5)`,
+                  [krTitle, krPriority, krDomain, krOwnerRole, projectId]
+                );
+                console.log(`[execution-callback] strategy_session: created KR "${krTitle}" with domain=${krDomain}, owner_role=${krOwnerRole}`);
+              }
+            } else {
+              console.log(`[execution-callback] strategy_session: no KRs in parsed output, skipping goal creation`);
+            }
+          }
+        }
+      } catch (strategyErr) {
+        // D7: 错误处理 - 不抛出，记录警告日志
+        console.error(`[execution-callback] strategy_session KR processing error (non-fatal): ${strategyErr.message}`);
       }
     }
 
