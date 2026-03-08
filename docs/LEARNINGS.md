@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] 快手发布器 OAuth 会话检查：worktree 消失后重建流程（PR #713）
+
+**失败统计**：CI 失败 0 次（本地 29/29 通过后提交）
+
+**背景**：
+- PR #710 已实现 OAuth 会话检测（isLoginRedirect），但仅在发布时才发现过期
+- 本次补全"发布前主动检查"闭环：check-kuaishou-session.cjs + batch 脚本前置防护
+
+**关键陷阱：worktree 被清理后重建**：
+- 会话 cwd 指向已不存在的 worktree 目录（`d5343725-fc0d-404e-9318-39d340`）
+- Bash 工具锁死，所有命令报 "Working directory no longer exists"
+- **解决方案**：`EnterWorktree` 创建新 worktree，`git branch -d` 删除旧空分支，`git branch -m` 重命名
+- **细节**：旧分支虽目录消失，但 git 分支记录仍在；必须先删再改名
+
+**hook 遍历规则（再次确认）**：
+- hook 从被编辑文件目录向上找，遇到含 `.prd.md` 的目录就停止检查 `.prd-{branch}.md`
+- 关键路径：`packages/workflows/` 有 `.prd.md` → hook 在此停止
+- 必须把 `.prd-{branch}.md` 和 `.dod-{branch}.md` 复制到该目录
+
+**架构决策（formatSessionStatus）**：
+- 纯函数返回 `{ tag, message, exitCode }` 对象，不直接调用 `process.exit()`
+- 调用方（check-kuaishou-session.cjs）负责 exit，纯函数层可完全单元测试
+- 退出码语义：0=OK, 1=错误/超时, 2=过期（与 HTTP 2xx/4xx/5xx 类比）
+
+**batch 脚本防护模式**：
+- 头部调用 `node check-kuaishou-session.cjs`，捕获 stdout+stderr 到变量
+- `grep -q '\[SESSION_EXPIRED\]'` 检测标记，而非依赖 exit code（子进程可能被 shell 吞掉）
+- 三种失败标记独立处理：`[SESSION_EXPIRED]` / `[CDP_ERROR]` / `[TIMEOUT]`
+
+---
+
 ### [2026-03-08] 快手发布器 OAuth 重构：hook find_prd_dod_dir 陷阱 + worktree 消失（PR #710）
 
 **失败统计**：CI 失败 0 次（本地测试全部通过后提交）
