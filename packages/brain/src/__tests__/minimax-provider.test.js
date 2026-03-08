@@ -42,6 +42,12 @@ vi.mock('../task-updater.js', () => ({
   updateTaskProgress: vi.fn()
 }));
 
+// Mock platform-utils so checkServerResources reports low CPU (macOS CI 兼容)
+vi.mock('../platform-utils.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, sampleCpuUsage: vi.fn(() => 5) };
+});
+
 // ================================================================
 // T1 + T3 + T4: getProviderForTask 逻辑测试
 // ================================================================

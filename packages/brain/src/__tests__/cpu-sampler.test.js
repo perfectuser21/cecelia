@@ -60,7 +60,7 @@ SwapFree:       ${swapFree} kB
 `;
 }
 
-describe('sampleCpuUsage — D1', () => {
+describe.skipIf(process.platform !== 'linux')('sampleCpuUsage — D1', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetCpuSampler();
@@ -164,7 +164,7 @@ describe('sampleCpuUsage — D1', () => {
   });
 });
 
-describe('checkServerResources CPU 压力 — D1-4/D1-5', () => {
+describe.skipIf(process.platform !== 'linux')('checkServerResources CPU 压力 — D1-4/D1-5', () => {
   // Helper: set up path-aware readFileSync mock
   // checkServerResources reads /proc/meminfo FIRST (swap), then calls sampleCpuUsage → /proc/stat
   function setupFsMock(procStatContent, meminfoContent) {
