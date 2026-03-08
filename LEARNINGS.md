@@ -3111,3 +3111,30 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 **预防措施**：
 - workflows 技能测试优先使用 `node:test`，无需新增依赖
 - 在 `packages/workflows/` 下编辑文件前检查是否有遗留 `.prd.md`（历史任务留下）
+
+### [2026-03-08] Brain Linux->macOS 平台适配 — 统一 platform-utils 层（PR #693）
+
+**问题**：Brain 从 Ubuntu VPS 迁移到 Mac mini (Darwin) 后，20+ 处 Linux-only 代码静默失败：
+- `ps -eo pid,etimes,comm,args --no-headers`：macOS 不支持 `etimes` 和 `--no-headers`
+- `/proc/stat`、`/proc/meminfo`：macOS 无 /proc 文件系统
+- `pgrep -xc claude`：macOS 的 pgrep -xc 组合无效
+- `/proc/{pid}/cmdline`、`readlinkSync(/proc/{pid}/cwd)`：macOS 无 /proc
+- `top -bn1`：macOS top 参数完全不同
+- `/sys/class/net/{name}/statistics/`：macOS 无 /sys
+
+**解决方案**：创建 `platform-utils.js` 统一适配层，参考 watchdog.js 已有的 IS_DARWIN 模式。
+每个函数内部检测平台，分别实现 Darwin/Linux 路径，对外提供统一接口。
+
+**关键技术决策**：
+1. macOS CPU 采样用 `os.loadavg()[0] / cores * 100` 代理（无 /proc/stat）
+2. macOS swap 用 `sysctl vm.swapusage` 解析
+3. macOS 进程 cmdline 用 `ps -o args= -p {pid}`
+4. macOS 进程 cwd 用 `lsof -a -p {pid} -d cwd -Fn`
+5. macOS dmesg 需要 sudo，直接返回 null（优雅降级）
+6. macOS etime 格式 `[[dd-]hh:]mm:ss` 需要手动解析（parseEtime 函数）
+7. PHYSICAL_CAPACITY 加 SYSTEM_RESERVED_MB=5000 和 MAX_PHYSICAL_CAP=10 避免 Mac mini 16GB 分配 16 slots
+
+**踩坑**：
+1. DevGate DoD check-dod-mapping.cjs 要求 Test 字段格式严格：`manual:` 后必须是可执行命令（包含 node/npm/curl 等关键词），禁止 echo/grep
+2. vps-monitor 测试需要同时 mock `platform-utils.js` 的导出函数，否则 Linux CI 上网络统计走 readFileSync 而不是 execSync mock
+3. MEM_PER_TASK_MB 从 500 降到 350（实测均值 264MB），配合 SYSTEM_RESERVED 使 Mac mini 16GB 算出合理 slots
