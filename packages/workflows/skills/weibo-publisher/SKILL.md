@@ -2,10 +2,11 @@
 name: weibo-publisher
 description: 微博自动发布工具 - 图文发布（生产就绪）
 trigger: 发布微博、weibo、微博发布
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-07
 updated: 2026-03-07
 changelog:
+  - 1.2.0: 修复 Windows 路径 Bug（移除多余的 images/ 子目录），使用 utils.cjs 工具函数
   - 1.1.0: 提取 CDPClient 为独立可测试模块，增加单元测试覆盖率
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式，含滑块验证码自动处理
 ---
@@ -68,7 +69,7 @@ bash packages/workflows/skills/weibo-publisher/scripts/batch-publish-weibo.sh 20
 | Windows PC IP | `100.97.242.124` |
 | CDP 端口 | `19227` |
 | 发布页面 | `https://weibo.com/p/publish/` |
-| Windows 图片目录 | `C:\Users\xuxia\weibo-media\{date}\images\` |
+| Windows 图片目录 | `C:\Users\xuxia\weibo-media\{date}\{contentDirName}\{file}` |
 | 截图目录（调试） | `/tmp/weibo-publish-screenshots/` |
 | NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
 
