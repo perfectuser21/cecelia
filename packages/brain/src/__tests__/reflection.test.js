@@ -239,3 +239,65 @@ describe('反思熔断器持久化', () => {
     expect(saveCalls.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('反思输入过滤-自身前缀排除', () => {
+  let pool;
+
+  beforeEach(() => {
+    pool = { query: mockQuery };
+    vi.clearAllMocks();
+    _resetBreakerStateForTest();
+    mockGenerateL0Summary.mockReturnValue('summary');
+  });
+
+  it('memory_stream 查询含 WHERE 过滤三个反思前缀', async () => {
+    mockBreakerStateEmpty();
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
+      .mockResolvedValueOnce({ rows: [] }); // memories (empty, triggers early return)
+
+    await runReflection(pool);
+
+    // 找到 memory_stream SELECT 调用
+    const memoryCalls = mockQuery.mock.calls.filter(call => {
+      const sql = typeof call[0] === 'string' ? call[0] : '';
+      return sql.includes('FROM memory_stream') && sql.includes('ORDER BY created_at DESC');
+    });
+
+    expect(memoryCalls.length).toBe(1);
+    const sql = memoryCalls[0][0];
+    expect(sql).toContain("content NOT LIKE '[反思洞察]%'");
+    expect(sql).toContain("content NOT LIKE '[反思折叠]%'");
+    expect(sql).toContain("content NOT LIKE '[反思静默]%'");
+  });
+
+  it('含 [反思洞察] 前缀的记忆不出现在反思输入中', async () => {
+    mockBreakerStateEmpty();
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // silence check
+      .mockResolvedValueOnce({ rows: [{ value_json: 15 }] }) // accumulator >= 12
+      .mockResolvedValueOnce({ rows: [ // memories returned (no reflection prefixes)
+        { content: '任务完成率下降', importance: 6, memory_type: 'short', created_at: new Date() },
+      ]});
+
+    mockCallLLM.mockResolvedValueOnce({ text: '发现任务完成率异常' });
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] }) // recent insights (none)
+      .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState
+      .mockResolvedValueOnce({ rows: [{ id: 99 }] }) // insight INSERT
+      .mockResolvedValueOnce({ rows: [] }) // _saveBreakerState
+      .mockResolvedValueOnce({ rows: [] }); // accumulator reset
+
+    const result = await runReflection(pool);
+
+    // LLM prompt 不含反思自身前缀
+    expect(mockCallLLM).toHaveBeenCalledOnce();
+    const prompt = mockCallLLM.mock.calls[0][1];
+    expect(prompt).not.toContain('[反思洞察]');
+    expect(prompt).not.toContain('[反思折叠]');
+    expect(prompt).not.toContain('[反思静默]');
+    expect(result.triggered).toBe(true);
+  });
+});

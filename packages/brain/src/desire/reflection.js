@@ -149,6 +149,9 @@ export async function runReflection(pool) {
     const { rows } = await pool.query(`
       SELECT content, importance, memory_type, created_at
       FROM memory_stream
+      WHERE content NOT LIKE '[反思洞察]%'
+        AND content NOT LIKE '[反思折叠]%'
+        AND content NOT LIKE '[反思静默]%'
       ORDER BY created_at DESC
       LIMIT 50
     `);
