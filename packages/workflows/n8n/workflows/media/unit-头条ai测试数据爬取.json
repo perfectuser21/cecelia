@@ -52,7 +52,8 @@
         "port": 22,
         "user": "xx",
         "command": "bash ~/platform_scrape.sh toutiao-2 2>/dev/null"
-      }
+      },
+      "continueOnFail": true
     },
     {
       "id": "code",

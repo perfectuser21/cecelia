@@ -3,7 +3,7 @@
   "nodes": [
     {
       "id": "placeholder-trigger",
-      "name": "\u5360\u4f4d\u89e6\u53d1\u5668",
+      "name": "占位触发器",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -23,7 +23,7 @@
     },
     {
       "id": "manual-trigger",
-      "name": "\u624b\u52a8\u89e6\u53d1",
+      "name": "手动触发",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
@@ -33,7 +33,7 @@
     },
     {
       "id": "ssh-scrape",
-      "name": "\u6267\u884cCDP\u722c\u866b",
+      "name": "执行CDP爬虫",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
       "position": [
@@ -52,11 +52,12 @@
           "id": "vvJsQOZ95sqzemla",
           "name": "VPS SSH Key"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "id": "parse-result",
-      "name": "\u89e3\u6790\u7ed3\u679c",
+      "name": "解析结果",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -69,33 +70,33 @@
     }
   ],
   "connections": {
-    "\u5360\u4f4d\u89e6\u53d1\u5668": {
+    "占位触发器": {
       "main": [
         [
           {
-            "node": "\u6267\u884cCDP\u722c\u866b",
+            "node": "执行CDP爬虫",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\u624b\u52a8\u89e6\u53d1": {
+    "手动触发": {
       "main": [
         [
           {
-            "node": "\u6267\u884cCDP\u722c\u866b",
+            "node": "执行CDP爬虫",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\u6267\u884cCDP\u722c\u866b": {
+    "执行CDP爬虫": {
       "main": [
         [
           {
-            "node": "\u89e3\u6790\u7ed3\u679c",
+            "node": "解析结果",
             "type": "main",
             "index": 0
           }
@@ -109,10 +110,10 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "staticData": {
-    "node:\u5b9a\u65f6\u89e6\u53d1": {
+    "node:定时触发": {
       "recurrenceRules": []
     },
-    "node:\u5360\u4f4d\u89e6\u53d1\u5668": {
+    "node:占位触发器": {
       "recurrenceRules": []
     }
   },
