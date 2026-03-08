@@ -33,6 +33,11 @@ vi.mock('../executor.js', () => ({
     metrics: { max_pressure: 0.1 },
   })),
   getActiveProcessCount: vi.fn(() => 0),
+  getTokenPressure: vi.fn(() => Promise.resolve({
+    token_pressure: 0,
+    available_accounts: 3,
+    details: 'mock',
+  })),
 }));
 
 // Mock db.js
@@ -51,6 +56,7 @@ import {
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
+  _resetSlotBuffer,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
@@ -325,6 +331,7 @@ describe('countAutoDispatchInProgress', () => {
 describe('calculateSlotBudget', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetSlotBuffer();
     // Default: no processes, no pressure, no DB tasks
     execSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
@@ -509,6 +516,7 @@ describe('calculateSlotBudget', () => {
 describe('getSlotStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetSlotBuffer();
     execSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
@@ -598,6 +606,7 @@ describe('getSlotStatus', () => {
 describe('边界条件', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetSlotBuffer();
     execSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
@@ -753,6 +762,7 @@ describe('detectUserSessions 额外边界', () => {
 describe('calculateSlotBudget 三池模型完整性', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _resetSlotBuffer();
     execSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,

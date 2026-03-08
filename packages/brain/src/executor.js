@@ -26,7 +26,7 @@ import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
-import { selectBestAccount } from './account-usage.js';
+import { selectBestAccount, getAccountUsage } from './account-usage.js';
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -326,6 +326,77 @@ function checkServerResources(memReservedMb = 0) {
   }
 
   return { ok: true, reason: null, effectiveSlots, metrics };
+}
+
+// ============================================================
+// Token Pressure — account usage as resource dimension
+// ============================================================
+
+const TOKEN_PRESSURE_THRESHOLD = 80; // 5h usage > 80% = account unavailable
+
+/**
+ * Calculate token pressure from account usage data.
+ * Returns { token_pressure, available_accounts, details }
+ *
+ * Pressure mapping:
+ *   0 available accounts → 1.0 (full pressure, block all dispatch)
+ *   1 available, best 5h > 80% → 0.9
+ *   1 available, best 5h <= 80% → 0.7
+ *   2 available → scale by best account's 5h usage (0.1-0.5)
+ *   3 available → low pressure (0.0-0.3)
+ */
+async function getTokenPressure() {
+  try {
+    const usage = await getAccountUsage();
+    const accounts = Object.values(usage);
+
+    if (accounts.length === 0) {
+      return { token_pressure: 1.0, available_accounts: 0, details: 'no account data' };
+    }
+
+    // An account is "available" if its effective 5h pct < threshold
+    // effectivePct is already applied in account-usage.js cache (resets_at < 30min → 0%)
+    const available = accounts.filter(a => {
+      const pct = a.five_hour_pct ?? 0;
+      // Check if resetting soon (within 30 min) — treat as available
+      if (a.resets_at) {
+        const minutesUntilReset = (new Date(a.resets_at) - Date.now()) / 60000;
+        if (minutesUntilReset <= 30 && minutesUntilReset > 0) return true;
+      }
+      return pct < TOKEN_PRESSURE_THRESHOLD;
+    });
+
+    const availableCount = available.length;
+
+    if (availableCount === 0) {
+      return { token_pressure: 1.0, available_accounts: 0, details: 'all accounts exhausted' };
+    }
+
+    // Sort by 5h usage ascending (best = lowest usage)
+    available.sort((a, b) => (a.five_hour_pct ?? 0) - (b.five_hour_pct ?? 0));
+    const bestPct = available[0].five_hour_pct ?? 0;
+
+    let pressure;
+    if (availableCount === 1) {
+      // Only 1 account: high pressure, scale by usage
+      pressure = bestPct > TOKEN_PRESSURE_THRESHOLD * 0.9 ? 0.9 : 0.7;
+    } else if (availableCount === 2) {
+      // 2 accounts: moderate pressure, scale by best account usage
+      pressure = 0.1 + (bestPct / 100) * 0.4; // 0.1 to 0.5
+    } else {
+      // 3 accounts: low pressure
+      pressure = (bestPct / 100) * 0.3; // 0.0 to 0.3
+    }
+
+    return {
+      token_pressure: Math.round(pressure * 100) / 100,
+      available_accounts: availableCount,
+      details: `${availableCount}/3 accounts available, best 5h=${bestPct}%`,
+    };
+  } catch (err) {
+    console.warn(`[executor] getTokenPressure failed: ${err.message}`);
+    return { token_pressure: 0, available_accounts: 3, details: 'fallback (API error)' };
+  }
 }
 
 // ============================================================
@@ -2191,4 +2262,7 @@ export {
   // v14: Input validation for shell commands
   assertSafeId,
   assertSafePid,
+  // v15: Token-aware slot allocation
+  getTokenPressure,
+  TOKEN_PRESSURE_THRESHOLD,
 };
