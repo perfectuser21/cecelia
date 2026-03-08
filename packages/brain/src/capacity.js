@@ -16,10 +16,12 @@ const MEM_PER_TASK_MB = 500;    // ~500MB avg per claude process
 const CPU_PER_TASK = 0.5;       // ~0.5 core avg per claude process
 const TARGET_UTILIZATION = 0.8; // 80% — 留 20% 给系统
 const USER_RESERVE = 2;         // 保留 2 seat 给用户交互
+const MAX_PHYSICAL_CAP = 8;     // 硬顶：无论 CPU/MEM 多高，最多 8 并行
 
 /**
  * 基于服务器实际 CPU + Memory 计算最大并行流数。
  * 取 CPU 和 Memory 的短板，乘 80%，减去用户保留。
+ * 最终结果不超过 MAX_PHYSICAL_CAP 硬顶，防止备用路径绕过上限。
  */
 export function getMaxStreams() {
   const cpuCount = os.cpus().length;
@@ -28,8 +30,8 @@ export function getMaxStreams() {
   const byCpu = Math.floor(cpuCount * TARGET_UTILIZATION / CPU_PER_TASK);
   const byMem = Math.floor(totalMemMB * TARGET_UTILIZATION / MEM_PER_TASK_MB);
 
-  // 取短板，减用户保留，最少 1
-  return Math.max(1, Math.min(byCpu, byMem) - USER_RESERVE);
+  // 取短板，减用户保留，最少 1，不超过硬顶
+  return Math.min(MAX_PHYSICAL_CAP, Math.max(1, Math.min(byCpu, byMem) - USER_RESERVE));
 }
 
 /**

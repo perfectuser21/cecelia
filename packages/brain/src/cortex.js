@@ -224,19 +224,21 @@ async function _loadReflectionStateFromDB() {
 }
 
 /**
- * 持久化单条熔断状态到 working_memory（fire-and-forget）
+ * 持久化单条熔断状态到 working_memory（async/await，确保写入完成再继续）
  * @param {string} hash
  * @param {Object} state
  */
-function _persistReflectionEntry(hash, state) {
-  pool.query(
-    `INSERT INTO working_memory (key, value_json, updated_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
-    [`cortex_reflection:${hash}`, JSON.stringify(state)]
-  ).catch(err => {
+async function _persistReflectionEntry(hash, state) {
+  try {
+    await pool.query(
+      `INSERT INTO working_memory (key, value_json, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+      [`cortex_reflection:${hash}`, JSON.stringify(state)]
+    );
+  } catch (err) {
     console.error('[cortex] Failed to persist reflection state:', err.message);
-  });
+  }
 }
 
 /**
@@ -267,13 +269,13 @@ async function _checkReflectionBreaker(hash) {
   if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
     const newState = { count: 1, firstSeen: now, lastSeen: now };
     _reflectionState.set(hash, newState);
-    _persistReflectionEntry(hash, newState);
+    await _persistReflectionEntry(hash, newState);
     return { open: false, count: 1 };
   }
 
   state.count += 1;
   state.lastSeen = now;
-  _persistReflectionEntry(hash, state);
+  await _persistReflectionEntry(hash, state);
   return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
 }
 
