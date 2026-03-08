@@ -1050,13 +1050,10 @@ export function getRecoveryStatus() {
 // 导出
 // ============================================================
 
-export {
-  HEALING_STRATEGIES,
-  RECOVERY_PHASES,
-  executeAction
-};
-
 export default {
+  startRecovery,
+  applySelfHealing,
+  getRecoveryStatus,
   HEALING_STRATEGIES,
   RECOVERY_PHASES
 };
