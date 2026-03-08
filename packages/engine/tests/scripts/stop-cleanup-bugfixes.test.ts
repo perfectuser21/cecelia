@@ -144,7 +144,7 @@ describe("P1-3: cleanup.sh Section 7.6 .dev-mode 验证支持 per-branch 格式"
   });
 });
 
-describe("P1-4: cleanup.sh Section 9 不用 git branch --merged", () => {
+describe("P1-4: cleanup.sh Section 9 委托给 branch-gc.sh", () => {
   const content = readFileSync(CLEANUP_SH, "utf-8");
   const section9 = extractSection(content, "9");
 
@@ -157,15 +157,18 @@ describe("P1-4: cleanup.sh Section 9 不用 git branch --merged", () => {
     expect(code).not.toContain("branch --merged");
   });
 
-  it("使用 gh pr list --state merged 检测已合并分支", () => {
+  it("委托给 branch-gc.sh 执行清理", () => {
     const code = codeOnly(section9);
-    expect(code).toContain("gh pr list");
-    expect(code).toMatch(/--state\s+merged/);
+    expect(code).toContain("branch-gc.sh");
   });
 
-  it("使用 --head 参数指定分支名", () => {
-    const code = codeOnly(section9);
-    expect(code).toContain("--head");
+  it("branch-gc.sh 存在且包含三类清理逻辑", () => {
+    const branchGcPath = resolve(PROJECT_ROOT, "skills/dev/scripts/branch-gc.sh");
+    const branchGc = readFileSync(branchGcPath, "utf-8");
+    expect(branchGc).toMatch(/--state\s+merged/);
+    expect(branchGc).toMatch(/--state\s+closed/);
+    expect(branchGc).toContain("STALE_HOURS");
+    expect(branchGc).toContain("--dry-run");
   });
 });
 
