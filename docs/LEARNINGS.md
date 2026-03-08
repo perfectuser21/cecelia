@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] Skill 文件与 CI 自动化不同步导致 /dev 浪费时间（PR #684）
+
+**问题**：PR #673 设置了 auto-version.yml 自动 bump 版本号，但 /dev skill 的 08-pr.md 还在指示手动 bump。导致 PR #683 浪费 12 分钟在版本冲突上。
+
+**根因**：engine 和 workflows 两个包各有一份 skill 文件，且版本不同（v3.2.0 vs v3.4.0）。自动化改动只更新了全局 symlink，没同步回 git 仓库。
+
+**修复**：统一两个包的 SKILL.md 和 08-pr.md，版本号策略改为"禁止手动 bump，auto-version 自动处理"。
+
+**教训**：改了自动化流程后，必须同步更新所有引用该流程的 skill/文档文件，否则 AI 会继续按旧指令操作。
+
 ### [2026-03-08] 孤儿进程泄漏修复：PGID vs 进程树（PR #683）
 
 **问题**：cecelia-run 任务完成后，claude subagent 进程变成孤儿（ppid=1），持续消耗 token 和内存。实测 9 个孤儿进程，最老跑了 35 小时。
