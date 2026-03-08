@@ -17,11 +17,11 @@ const REFLECTION_THRESHOLD = 12;
 const CIRCUIT_BREAKER_THRESHOLD = 3; // 连续3轮相同内容 → 触发熔断
 
 // 静默期机制：连续N轮跳过后进入静默期，避免无限循环
-const SILENCE_SKIP_THRESHOLD = 3; // 连续3轮跳过（重复或相似度>0.6）→ 进入静默期
+const SILENCE_SKIP_THRESHOLD = 2; // 连续2轮跳过（重复或相似度>阈值）→ 进入静默期
 const SILENCE_DURATION_HOURS = 24; // 静默期时长（小时）
 
-// Jaccard 相似度阈值（降低以捕获更多语义重复）
-const SIMILARITY_THRESHOLD = 0.6;
+// Jaccard 相似度阈值（0.75 捕获措辞略有不同但语义相近的重复内容）
+const SIMILARITY_THRESHOLD = 0.75;
 
 // 内存缓存（启动时从 DB 加载，运行时同步写入 DB）
 let _consecutiveDuplicates = 0;

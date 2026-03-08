@@ -344,8 +344,16 @@ function _persistOutputDedupEntry(hash, state) {
 
 function _computeOutputHash(decision) {
   const rootCause = decision?.analysis?.root_cause || '';
-  const normalized = rootCause.toLowerCase().trim();
-  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  // 语义归一化：去除数字和标点，提取关键词集合排序后哈希
+  // 目的：使措辞略有不同但语义相同的 root_cause 产生相同 hash，
+  // 避免 LLM 每次措辞微小变化绕过去重检测
+  const keywords = rootCause
+    .toLowerCase()
+    .replace(/[^\u4e00-\u9fa5a-z\s]/g, ' ')  // 保留中文和英文字母，其余（数字/标点）替换为空格
+    .split(/\s+/)
+    .filter(t => t.length > 0);
+  const uniqueSorted = [...new Set(keywords)].sort().join(' ');
+  return crypto.createHash('sha256').update(uniqueSorted).digest('hex').slice(0, 16);
 }
 
 async function _checkOutputDedup(hash) {

@@ -195,6 +195,20 @@ describe('D2: _computeOutputHash 哈希一致性', () => {
     const d = { analysis: { root_cause: 'test' } };
     expect(_computeOutputHash(d)).toHaveLength(16);
   });
+
+  it('措辞不同但语义相同（仅数字差异）产生相同 hash', () => {
+    // 一句含数字，一句不含——strip 数字后关键词集合相同
+    const d1 = { analysis: { root_cause: 'Database connection pool exhausted after 3 retries' } };
+    const d2 = { analysis: { root_cause: 'Database connection pool exhausted after retries' } };
+    expect(_computeOutputHash(d1)).toBe(_computeOutputHash(d2));
+  });
+
+  it('措辞不同但语义相同（标点/大小写差异）产生相同 hash', () => {
+    // 标点和大小写不同，核心词相同
+    const d1 = { analysis: { root_cause: 'Memory leak in worker thread (critical issue)' } };
+    const d2 = { analysis: { root_cause: 'memory leak in worker thread critical issue' } };
+    expect(_computeOutputHash(d1)).toBe(_computeOutputHash(d2));
+  });
 });
 
 // ── D3: _checkOutputDedup 阈值 ≥2 ─────────────────────────────────────────────
