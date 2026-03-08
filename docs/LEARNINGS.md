@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] tick 集成自修复闭环（PR #674）
+
+**背景**：Brain 已有 `startRecovery`（alertness/index.js）、`checkExpiredQuarantineTasks`（quarantine.js）、`unblockExpiredTasks`（task-updater.js），但缺少流控和事件记录。
+
+**实现要点**：
+1. **已有实现不需要重做**：探索阶段发现 P0 的「调用 healing」和「调用 checkExpiredQuarantineTasks」已存在，只需加流控和事件写入
+2. **DEFINITION.md 版本同步**：facts-check.mjs 会比较 `packages/brain/package.json` 与 `DEFINITION.md` 里的 `**Brain 版本**`，本地通过 ≠ CI 通过，必须两者同步
+3. **batch limit 实现模式**：`limit = Infinity` 作默认参数，`Number.isFinite(limit)` 判断，`rows.slice(0, limit)` 截取 — 向后兼容无参数调用
+4. **cecelia_events 而非 run_events**：`run_events` 是 task-trace 表（span_id、task_id），`cecelia_events` 才是通用系统事件表（event_type、source、payload）
+5. **`const` → `let` dispatchRate**：recovery cap 需要条件修改 dispatchRate，必须从 `const` 改为 `let`
+
+**CI 陷阱**：
+- 本地 `check-version-sync.sh` 只检 4 个文件（包含 DEFINITION.md），但 grep 用了 `-P` 选项在 macOS 会报错，导致 DEFINITION.md 检查被跳过（`⚠️ skipping`）
+- CI 用 Linux grep 支持 `-P`，能正确检测到版本不匹配 → 本地 pass，CI fail
+- **修复**：每次 bump 版本后，必须手动更新 DEFINITION.md 第 9 行的 `**Brain 版本**`
+
+**测试策略**：
+- 15 个纯单元测试，无真实 DB 依赖，把业务逻辑提取为纯函数验证
+- D4/D5 用 mockClient 模拟 `client.query`，捕获 SQL+params 断言
+
 ### [2026-03-08] /dev 效率优化：版本号 + BEHIND 循环修复（PR #673）
 
 **问题**：每个 PR 平均 42 分钟，其中 27 分钟浪费在版本号和 BEHIND 循环上。

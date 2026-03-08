@@ -892,7 +892,7 @@ function checkShouldQuarantine(task, context = 'on_failure') {
  * P1 FIX #3: 检查隔离区到期任务并自动释放
  * @returns {Promise<Array>} - 释放的任务列表
  */
-async function checkExpiredQuarantineTasks() {
+async function checkExpiredQuarantineTasks({ limit = Infinity } = {}) {
   try {
     // 动态导入 alertness 模块（避免循环依赖）
     const { getCurrentAlertness, ALERTNESS_LEVELS } = await import('./alertness/index.js');
@@ -917,10 +917,11 @@ async function checkExpiredQuarantineTasks() {
       return [];
     }
 
-    console.log(`[quarantine] Found ${result.rows.length} expired quarantine task(s), attempting auto-release...`);
+    const tasksToProcess = Number.isFinite(limit) ? result.rows.slice(0, limit) : result.rows;
+    console.log(`[quarantine] Found ${result.rows.length} expired quarantine task(s), processing ${tasksToProcess.length} (limit=${limit})...`);
 
     const released = [];
-    for (const task of result.rows) {
+    for (const task of tasksToProcess) {
       const quarantineInfo = task.payload?.quarantine_info || {};
       const reason = quarantineInfo.reason || 'unknown';
       const failureClass = quarantineInfo.failure_class || 'unknown';

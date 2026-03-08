@@ -972,6 +972,22 @@ async function recordHealingStart(issues, strategies) {
       strategies.map(s => s.key).join(','),
       JSON.stringify({})
     ]);
+
+    // 同时写入 cecelia_events 供 API 查询
+    await client.query(
+      `INSERT INTO cecelia_events (event_type, source, payload, created_at)
+       VALUES ($1, $2, $3::jsonb, NOW())`,
+      [
+        'self_healing_started',
+        'healing',
+        JSON.stringify({
+          issues,
+          strategies: strategies.map(s => s.key),
+          phase: 1,
+          started_at: new Date().toISOString(),
+        }),
+      ]
+    );
   } catch (error) {
     console.error('[Healing] Failed to record start:', error);
   } finally {
@@ -998,6 +1014,25 @@ async function recordHealingComplete(success, duration) {
       JSON.stringify(recoveryState.actionsExecuted),
       JSON.stringify({})
     ]);
+
+    // 同时写入 cecelia_events 供 API 查询
+    const eventType = success ? 'self_healing_completed' : 'self_healing_failed';
+    await client.query(
+      `INSERT INTO cecelia_events (event_type, source, payload, created_at)
+       VALUES ($1, $2, $3::jsonb, NOW())`,
+      [
+        eventType,
+        'healing',
+        JSON.stringify({
+          success,
+          duration_ms: duration,
+          phase: recoveryState.phase,
+          strategies_applied: recoveryState.strategies.map(s => s.key),
+          actions_executed: recoveryState.actionsExecuted.length,
+          completed_at: new Date().toISOString(),
+        }),
+      ]
+    );
   } catch (error) {
     console.error('[Healing] Failed to record complete:', error);
   } finally {

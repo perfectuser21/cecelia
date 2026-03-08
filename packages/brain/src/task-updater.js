@@ -265,7 +265,7 @@ export async function unblockTask(taskId) {
  *
  * @returns {Promise<Array>} - List of recovered tasks { task_id, title }
  */
-export async function unblockExpiredTasks() {
+export async function unblockExpiredTasks({ limit = Infinity } = {}) {
   try {
     const result = await pool.query(`
       SELECT id, title, blocked_reason
@@ -277,8 +277,9 @@ export async function unblockExpiredTasks() {
 
     if (result.rows.length === 0) return [];
 
+    const toProcess = Number.isFinite(limit) ? result.rows.slice(0, limit) : result.rows;
     const recovered = [];
-    for (const task of result.rows) {
+    for (const task of toProcess) {
       const r = await unblockTask(task.id);
       if (r.success) {
         recovered.push({ task_id: task.id, title: task.title, blocked_reason: task.blocked_reason });
