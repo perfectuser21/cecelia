@@ -12,11 +12,14 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const {
+  PUBLISH_URL,
   findImages,
   readContent,
   convertToWindowsPaths,
   escapeForJS,
   extractDirNames,
+  isLoginRedirect,
+  isPublishPageReached,
 } = require('../utils.cjs');
 
 // ============================================================
@@ -197,5 +200,97 @@ describe('extractDirNames', () => {
     const result = extractDirNames('/tmp/queue/2026-01-01/image-5');
     assert.equal(result.dateDir, '2026-01-01');
     assert.equal(result.contentDirName, 'image-5');
+  });
+});
+
+// ============================================================
+// PUBLISH_URL
+// ============================================================
+describe('PUBLISH_URL', () => {
+  test('包含 weibo.com/p/publish/', () => {
+    assert.ok(typeof PUBLISH_URL === 'string');
+    assert.ok(PUBLISH_URL.includes('weibo.com/p/publish'));
+  });
+
+  test('是有效 HTTPS URL', () => {
+    assert.ok(PUBLISH_URL.startsWith('https://'));
+  });
+});
+
+// ============================================================
+// isLoginRedirect
+// ============================================================
+describe('isLoginRedirect', () => {
+  test('passport.weibo.com → true', () => {
+    assert.equal(isLoginRedirect('https://passport.weibo.com/signin/login'), true);
+  });
+
+  test('login.weibo.com → true', () => {
+    assert.equal(isLoginRedirect('https://login.weibo.com/'), true);
+  });
+
+  test('weibo.com/login → true', () => {
+    assert.equal(isLoginRedirect('https://weibo.com/login'), true);
+  });
+
+  test('/signin 路径 → true', () => {
+    assert.equal(isLoginRedirect('https://weibo.com/signin'), true);
+  });
+
+  test('weibo.com/signup/signup → true', () => {
+    assert.equal(isLoginRedirect('https://weibo.com/signup/signup'), true);
+  });
+
+  test('weibo.com/p/publish/ → false（正常发布页，未被重定向）', () => {
+    assert.equal(isLoginRedirect('https://weibo.com/p/publish/'), false);
+  });
+
+  test('weibo.com 首页 → false', () => {
+    assert.equal(isLoginRedirect('https://weibo.com'), false);
+  });
+
+  test('null → false', () => {
+    assert.equal(isLoginRedirect(null), false);
+  });
+
+  test('undefined → false', () => {
+    assert.equal(isLoginRedirect(undefined), false);
+  });
+
+  test('空字符串 → false', () => {
+    assert.equal(isLoginRedirect(''), false);
+  });
+});
+
+// ============================================================
+// isPublishPageReached
+// ============================================================
+describe('isPublishPageReached', () => {
+  test('weibo.com/p/publish/ → true', () => {
+    assert.equal(isPublishPageReached('https://weibo.com/p/publish/'), true);
+  });
+
+  test('weibo.com/p/publish（无尾斜杠）→ true', () => {
+    assert.equal(isPublishPageReached('https://weibo.com/p/publish'), true);
+  });
+
+  test('passport.weibo.com（登录跳转）→ false', () => {
+    assert.equal(isPublishPageReached('https://passport.weibo.com/signin/login'), false);
+  });
+
+  test('weibo.com 首页（未到发布页）→ false', () => {
+    assert.equal(isPublishPageReached('https://weibo.com'), false);
+  });
+
+  test('null → false', () => {
+    assert.equal(isPublishPageReached(null), false);
+  });
+
+  test('undefined → false', () => {
+    assert.equal(isPublishPageReached(undefined), false);
+  });
+
+  test('空字符串 → false', () => {
+    assert.equal(isPublishPageReached(''), false);
   });
 });
