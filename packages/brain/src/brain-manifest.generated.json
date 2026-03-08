@@ -444,6 +444,10 @@
               "skill": "/code-review"
             },
             {
+              "taskType": "domain_plan",
+              "skill": "/decomp"
+            },
+            {
               "taskType": "initiative_plan",
               "skill": "/decomp"
             },
@@ -823,6 +827,7 @@
     "research": null,
     "dept_heartbeat": "/repo-lead heartbeat",
     "code_review": "/code-review",
+    "domain_plan": "/decomp",
     "initiative_plan": "/decomp",
     "initiative_verify": "/decomp",
     "decomp_review": "/decomp-check",
@@ -846,13 +851,14 @@
     "code_review": "/code-review",
     "decomp_review": "/decomp-check",
     "dept_heartbeat": "/cecelia",
+    "domain_plan": "/decomp",
     "initiative_plan": "/decomp",
     "initiative_verify": "/decomp",
     "suggestion_plan": "/plan",
     "architecture_design": "/architect",
     "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-07T16:55:16.642Z",
+  "generatedAt": "2026-03-08T01:31:44.144Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
