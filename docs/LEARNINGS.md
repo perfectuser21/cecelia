@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] migration 文件丢失 + node_modules symlink 被 git 追踪（PR #689）
+
+**失败统计**：CI 失败 1 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：`packages/brain/node_modules` 是指向根 `node_modules` 的 symlink，被意外提交到 git。CI checkout 后变成普通文件，`npm install` 报 ENOTDIR → 从 git 移除 symlink (`git rm --cached`) → `.gitignore` 的 `node_modules/` 只忽略目录不忽略 symlink，需要注意
+
+**根因分析**：
+- migration 138 被某个 PR 直接在数据库执行但没提交对应的 .sql 文件和更新 EXPECTED_SCHEMA_VERSION
+- Brain selfcheck 检测到 DB schema=138 > 代码期望的 137，拒绝启动
+
+**影响程度**: High（Brain 完全无法启动）
+**预防措施**：
+- 任何 migration 必须同时提交 .sql 文件 + 更新 selfcheck.js（facts-check.mjs 会检测）
+- 定期检查 `git ls-files | grep node_modules` 确保没有 symlink 被追踪
+
 ### [2026-03-08] Skill 文件与 CI 自动化不同步导致 /dev 浪费时间（PR #684）
 
 **问题**：PR #673 设置了 auto-version.yml 自动 bump 版本号，但 /dev skill 的 08-pr.md 还在指示手动 bump。导致 PR #683 浪费 12 分钟在版本冲突上。
