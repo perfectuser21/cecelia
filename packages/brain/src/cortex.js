@@ -173,8 +173,51 @@ const CORTEX_ACTION_WHITELIST = {
 const REFLECTION_WINDOW_MS = 30 * 60 * 1000; // 30 分钟窗口
 const REFLECTION_BREAK_THRESHOLD = 3;          // 连续 3 次相似即熔断
 
-/** 内存状态：eventHash → { count, firstSeen, lastSeen } */
+/** 内存缓存：eventHash → { count, firstSeen, lastSeen } */
 const _reflectionState = new Map();
+let _reflectionStateLoaded = false;
+
+/**
+ * 从 working_memory 加载已持久化的熔断状态（启动时调用一次）
+ */
+async function _loadReflectionStateFromDB() {
+  if (_reflectionStateLoaded) return;
+  try {
+    const result = await pool.query(
+      `SELECT key, value_json FROM working_memory WHERE key LIKE 'cortex_reflection:%'`
+    );
+    for (const row of result.rows) {
+      const hash = row.key.replace('cortex_reflection:', '');
+      const val = row.value_json;
+      if (val && typeof val.count === 'number') {
+        _reflectionState.set(hash, {
+          count: val.count,
+          firstSeen: val.firstSeen,
+          lastSeen: val.lastSeen,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to load reflection state from DB:', err.message);
+  }
+  _reflectionStateLoaded = true;
+}
+
+/**
+ * 持久化单条熔断状态到 working_memory（fire-and-forget）
+ * @param {string} hash
+ * @param {Object} state
+ */
+function _persistReflectionEntry(hash, state) {
+  pool.query(
+    `INSERT INTO working_memory (key, value_json, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+    [`cortex_reflection:${hash}`, JSON.stringify(state)]
+  ).catch(err => {
+    console.error('[cortex] Failed to persist reflection state:', err.message);
+  });
+}
 
 /**
  * 计算事件内容哈希（type + failure_class + task_type）
@@ -191,21 +234,26 @@ function _computeEventHash(event) {
 }
 
 /**
- * 检查并更新反思熔断器
+ * 检查并更新反思熔断器（持久化到 PostgreSQL）
  * @param {string} hash
- * @returns {{ open: boolean, count: number }}
+ * @returns {Promise<{ open: boolean, count: number }>}
  */
-function _checkReflectionBreaker(hash) {
+async function _checkReflectionBreaker(hash) {
+  await _loadReflectionStateFromDB();
+
   const now = Date.now();
   const state = _reflectionState.get(hash);
 
   if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
-    _reflectionState.set(hash, { count: 1, firstSeen: now, lastSeen: now });
+    const newState = { count: 1, firstSeen: now, lastSeen: now };
+    _reflectionState.set(hash, newState);
+    _persistReflectionEntry(hash, newState);
     return { open: false, count: 1 };
   }
 
   state.count += 1;
   state.lastSeen = now;
+  _persistReflectionEntry(hash, state);
   return { open: state.count > REFLECTION_BREAK_THRESHOLD, count: state.count };
 }
 
@@ -314,7 +362,7 @@ function createCortexFallback(event, reason) {
 async function analyzeDeep(event, thalamusDecision = null) {
   // 反思熔断：相同事件模式连续触发超过阈值时，跳过 LLM 调用
   const _eventHash = _computeEventHash(event);
-  const _breaker = _checkReflectionBreaker(_eventHash);
+  const _breaker = await _checkReflectionBreaker(_eventHash);
   if (_breaker.open) {
     console.log(`[cortex] 反思熔断：事件 ${event.type} 相似输入已触发 ${_breaker.count} 次，跳过本次分析 (hash=${_eventHash})`);
     return createCortexFallback(event, `反思熔断：相同模式已分析 ${_breaker.count} 次，停止重复告警`);

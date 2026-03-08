@@ -112,18 +112,22 @@ describe('recordLearnings writes to learnings table (FLC-3)', () => {
   });
 
   function setupPoolMocks({ dedupResult = [] } = {}) {
-    // 1. decision_log SELECT (recent decisions)
+    // 0. _loadReflectionStateFromDB → SELECT from working_memory
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 2. system_status SELECT
+    // 1. _persistReflectionEntry → INSERT/UPSERT working_memory (fire-and-forget, called before analyzeDeep body)
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 2. decision_log SELECT (recent decisions)
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 3. system_status SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [{ tasks_in_progress: 0, recent_failures: 0, active_goals: 1 }] });
-    // 3. searchRelevantAnalyses → cortex_analyses SELECT
+    // 4. searchRelevantAnalyses → cortex_analyses SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 4. logCortexDecision → INSERT INTO decision_log
+    // 5. logCortexDecision → INSERT INTO decision_log
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 5. recordLearnings: content_hash dedup check
+    // 6. recordLearnings: content_hash dedup check
     mockPool.query.mockResolvedValueOnce({ rows: dedupResult });
     if (dedupResult.length === 0) {
-      // 6. recordLearnings: INSERT INTO learnings
+      // 7. recordLearnings: INSERT INTO learnings
       mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'learn-1' }] });
     }
   }
@@ -228,13 +232,17 @@ describe('analyzeDeep injects self-model (FLC-2)', () => {
   });
 
   it('injects self_model into LLM prompt context', async () => {
-    // 1. decision_log SELECT
+    // 0. _loadReflectionStateFromDB → SELECT from working_memory
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 2. system_status SELECT
+    // 1. _persistReflectionEntry → INSERT/UPSERT working_memory (fire-and-forget)
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 2. decision_log SELECT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 3. system_status SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [{ tasks_in_progress: 0, recent_failures: 0, active_goals: 1 }] });
-    // 3. searchRelevantAnalyses → cortex_analyses SELECT
+    // 4. searchRelevantAnalyses → cortex_analyses SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    // 4. logCortexDecision → INSERT INTO decision_log
+    // 5. logCortexDecision → INSERT INTO decision_log
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     await analyzeDeep({ type: 'test_event' });
