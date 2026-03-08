@@ -1,7 +1,7 @@
 ---
 name: dev
-version: 3.4.0
-updated: 2026-02-27
+version: 3.4.1
+updated: 2026-03-08
 description: |
   统一开发工作流入口。任何会进 git 的代码变更都必须走 /dev，没有例外。
   不走 /dev 不允许改代码——branch-protect Hook 会强制阻止。
@@ -356,26 +356,22 @@ TaskList()
 
 ---
 
-## 版本号规则 (semver)
+## 版本号规则 (semver) — 自动化
 
-| commit 类型 | 版本变化 |
+**PR 里不要手动 bump 版本号。** 合并到 main 后由 `auto-version.yml` 自动处理。
+
+commit 消息前缀决定 bump 类型：
+
+| commit 前缀 | 版本变化 |
 |-------------|----------|
 | fix: | patch (+0.0.1) |
 | feat: | minor (+0.1.0) |
 | feat!: / BREAKING: | major (+1.0.0) |
+| 其他（docs:、test:、chore:） | 不 bump |
 
-**版本更新流程**：
-```bash
-# 1. 更新 package.json（选择 patch/minor/major）
-npm version patch --no-git-tag-version
+auto-version 自动更新 5 个文件：package.json、package-lock.json、.brain-versions、DEFINITION.md、VERSION。
 
-# 2. 同步 VERSION 文件
-cat package.json | jq -r .version > VERSION
-
-# 3. 验证 package-lock.json 已同步
-# （npm version 会自动更新，但手动改 package.json 时必须运行）
-npm install --package-lock-only
-```
+**禁止在 PR 中**：`npm version`、手动改版本号、运行 `check-version-sync.sh`。
 
 ---
 

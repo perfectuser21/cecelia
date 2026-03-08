@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] Skill 文件与 CI 自动化不同步导致 /dev 浪费时间（PR #684）
+
+**问题**：PR #673 设置了 auto-version.yml 自动 bump 版本号，但 /dev skill 的 08-pr.md 还在指示手动 bump。导致 PR #683 浪费 12 分钟在版本冲突上。
+
+**根因**：engine 和 workflows 两个包各有一份 skill 文件，且版本不同（v3.2.0 vs v3.4.0）。自动化改动只更新了全局 symlink，没同步回 git 仓库。
+
+**修复**：统一两个包的 SKILL.md 和 08-pr.md，版本号策略改为"禁止手动 bump，auto-version 自动处理"。
+
+**教训**：改了自动化流程后，必须同步更新所有引用该流程的 skill/文档文件，否则 AI 会继续按旧指令操作。
+
 ### [2026-03-08] Cortex 熔断器持久化到 PostgreSQL（PR #682）
 
 **背景**：Cortex 反思熔断器 `_reflectionState` 存内存，Brain 重启后丢失，导致同一反思无限重触发（18 轮死循环）。
