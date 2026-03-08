@@ -13,7 +13,7 @@
 /* global console */
 
 import { execSync } from 'child_process';
-import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap } from './executor.js';
+import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
 
 // ============================================================
@@ -152,6 +152,35 @@ async function countAutoDispatchInProgress() {
 // Slot Budget Calculation
 // ============================================================
 
+// Slot change buffer: max ±2 per tick to prevent jumps
+const SLOT_BUFFER_MAX_DELTA = 2;
+let _previousPoolCBudget = null;
+
+/**
+ * Apply buffer to slot changes: limit delta to ±SLOT_BUFFER_MAX_DELTA per tick.
+ * First call (no previous value) passes through without buffering.
+ */
+function applySlotBuffer(newValue) {
+  if (_previousPoolCBudget === null) {
+    _previousPoolCBudget = newValue;
+    return newValue;
+  }
+  const delta = newValue - _previousPoolCBudget;
+  let buffered;
+  if (Math.abs(delta) <= SLOT_BUFFER_MAX_DELTA) {
+    buffered = newValue;
+  } else if (delta > 0) {
+    buffered = _previousPoolCBudget + SLOT_BUFFER_MAX_DELTA;
+  } else {
+    buffered = Math.max(0, _previousPoolCBudget - SLOT_BUFFER_MAX_DELTA);
+  }
+  _previousPoolCBudget = buffered;
+  return buffered;
+}
+
+/** Reset buffer state (for testing) */
+function _resetSlotBuffer() { _previousPoolCBudget = null; }
+
 /**
  * Calculate the slot budget for each pool.
  * Called per-tick to determine how many auto-dispatches are allowed.
@@ -181,9 +210,27 @@ async function calculateSlotBudget() {
   // Pool C: remaining capacity after A and B (uses dynamic capacity)
   const poolCRaw = Math.max(0, dynamicCapacity - userBudget - ceceliaNeeded);
 
-  // Further throttle by resource pressure
+  // Further throttle by resource pressure (CPU/mem/swap)
   const resources = checkServerResources();
-  const poolCBudget = Math.min(poolCRaw, resources.effectiveSlots);
+  let poolCAfterResources = Math.min(poolCRaw, resources.effectiveSlots);
+
+  // Token pressure: further throttle Pool C by account availability
+  let tokenInfo = { token_pressure: 0, available_accounts: 3, details: 'not queried' };
+  try {
+    tokenInfo = await getTokenPressure();
+    if (tokenInfo.token_pressure >= 1.0) {
+      poolCAfterResources = 0;
+    } else if (tokenInfo.token_pressure >= 0.9) {
+      poolCAfterResources = Math.min(poolCAfterResources, 1);
+    } else if (tokenInfo.token_pressure >= 0.7) {
+      poolCAfterResources = Math.min(poolCAfterResources, Math.max(Math.round(poolCAfterResources / 2), 1));
+    }
+  } catch {
+    // Token pressure fetch failed — continue without throttling
+  }
+
+  // Apply slot change buffer (±2 per tick)
+  const poolCBudget = applySlotBuffer(poolCAfterResources);
 
   // Count actual usage
   const ceceliaUsed = await countCeceliaInProgress();
@@ -191,6 +238,9 @@ async function calculateSlotBudget() {
 
   // Capacity info from dual-layer model
   const capInfo = getBudgetCap();
+
+  // Combined pressure: max of hardware pressure and token pressure
+  const combinedPressure = Math.max(resources.metrics.max_pressure, tokenInfo.token_pressure);
 
   return {
     total: dynamicCapacity,
@@ -210,11 +260,12 @@ async function calculateSlotBudget() {
       used: autoDispatchUsed,
       available: Math.max(0, poolCBudget - autoDispatchUsed),
     },
-    pressure: resources.metrics.max_pressure,
+    pressure: combinedPressure,
     resources: {
       effectiveSlots: resources.effectiveSlots,
       maxPressure: resources.metrics.max_pressure,
     },
+    tokenPressure: tokenInfo,
     dispatchAllowed: poolCBudget > autoDispatchUsed,
   };
 }
@@ -254,6 +305,7 @@ async function getSlotStatus() {
     pressure: {
       max: budget.pressure,
       effective_slots: budget.resources.effectiveSlots,
+      token: budget.tokenPressure,
     },
     dispatch_allowed: budget.dispatchAllowed,
     headless_count: sessions.headless.length,
@@ -270,6 +322,7 @@ export {
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
+  SLOT_BUFFER_MAX_DELTA,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
@@ -277,4 +330,6 @@ export {
   countAutoDispatchInProgress,
   calculateSlotBudget,
   getSlotStatus,
+  applySlotBuffer,
+  _resetSlotBuffer,
 };

@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] token-aware slot allocator（PR #670, Brain v1.212.0）
+
+**背景**：slot allocator 只看 CPU/内存/swap 压力，完全忽略 token 使用率。当 3 个 Claude Max 账号 5h token 用完时，系统仍然派发任务导致全部失败。
+
+**实现要点**：
+
+1. **getTokenPressure() 独立于 checkServerResources()**：checkServerResources 是同步函数，被大量调用方同步使用。为避免破坏性改动，token 压力作为独立 async 函数导出，由已经是 async 的 calculateSlotBudget() 调用组合。
+2. **压力映射**：0 可用账号→1.0（全阻止），1 个→0.7-0.9，2 个→0.1-0.5，3 个→0.0-0.3。即将重置（30 分钟内）的账号视为可用（复用已有 effectivePct 逻辑）。
+3. **slot 变化 buffer（±2/tick）**：防止 token 耗尽时 Pool C 从 8 突降到 0。需要 4 个 tick（20 秒）才能完全降为 0，给系统缓冲时间。_previousPoolCBudget 模块级变量跨 tick 保持状态。
+4. **现有测试需同步更新**：slot-allocator.test.js 的 executor mock 必须加 getTokenPressure，否则 calculateSlotBudget 调用时 getTokenPressure 是 undefined。所有 beforeEach 必须调用 _resetSlotBuffer() 防止跨测试 state 污染。
+
 ### [2026-03-08] auto-version：PR 不再手动 bump 版本号（PR #665）
 
 **背景**：并行 Brain PR 在 4 个版本文件（package.json, package-lock.json, .brain-versions, DEFINITION.md）上反复冲突，导致 rebase 循环。极端案例：单个 PR 消耗 240 turns / $17，根因就是版本冲突。
