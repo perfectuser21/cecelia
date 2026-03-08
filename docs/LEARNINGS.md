@@ -1,5 +1,30 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] 快手发布器 OAuth 重构：hook find_prd_dod_dir 陷阱 + worktree 消失（PR #710）
+
+**失败统计**：CI 失败 0 次（本地测试全部通过后提交）
+
+**背景**：
+- 快手 API 改版，发布页面可能重定向，需要 OAuth 会话检测 + 多 URL 降级
+- 按 weibo/xiaohongshu 架构模式提取 utils.cjs 纯函数层 + node:test 单元测试
+
+**关键陷阱：branch-protect hook 的 `find_prd_dod_dir` 遍历行为**：
+- Hook 从被写文件路径向上遍历找最近含 `.prd-{branch}.md` 或 `.prd.md` 的目录
+- `packages/workflows/.prd.md`（旧 PRD 遗留文件）在遍历链中比项目根更近
+- Hook 找到 `packages/workflows/` 后停止，但该目录没有 `.prd-cp-*.md` → 报 "PRD 文件未更新"
+- **修复**：把正确命名的 PRD/DoD 复制到 `packages/workflows/` 满足中间目录的 hook 检查
+
+**worktree 消失问题**：
+- 会话中途 worktree 在另一进程被清理（`0e69c21e-*` 消失）
+- 恢复：`EnterWorktree` 创建新 worktree `kuaishou-oauth`，再 `git branch -m` 重命名为正确格式 `cp-08MMHH-*`
+- 分支命名必须严格匹配 `cp-[0-9]{8}-` 正则，否则 hook 拒绝写文件
+
+**架构模式（Publisher utils.cjs）**：
+- 纯函数层（utils.cjs）+ 主发布脚本 + `__tests__/*.test.cjs`（node:test，无 vitest）
+- `isLoginRedirect()` 检测三类 OAuth 重定向：passport.kuaishou.com / /account/login / /profile
+- `[SESSION_EXPIRED]` 标记便于 batch 脚本检测并触发重新登录流程
+- 多 URL 降级：`PUBLISH_URLS` 数组依次尝试，全失败才报错
+
 ### [2026-03-08] initiative_plan 完成自动触发 Vivian 质检（PR #708）
 
 **失败统计**：CI 失败 1 次（预存失败，非本次引入）
