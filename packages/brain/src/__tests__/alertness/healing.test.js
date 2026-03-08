@@ -11,6 +11,9 @@ const mockPoolQuery = vi.hoisted(() => vi.fn());
 const mockRelease = vi.hoisted(() => vi.fn());
 const mockEmit = vi.hoisted(() => vi.fn());
 const mockExec = vi.hoisted(() => vi.fn());
+const mockReaddirSync = vi.hoisted(() => vi.fn());
+const mockReadFileSync = vi.hoisted(() => vi.fn());
+const mockExistsSync = vi.hoisted(() => vi.fn());
 
 vi.mock('../../db.js', () => ({
   default: {
@@ -39,6 +42,12 @@ vi.mock('util', () => ({
   }
 }));
 
+vi.mock('fs', () => ({
+  readdirSync: mockReaddirSync,
+  readFileSync: mockReadFileSync,
+  existsSync: mockExistsSync
+}));
+
 let applySelfHealing;
 let getRecoveryStatus;
 let startRecovery;
@@ -53,6 +62,11 @@ describe('alertness/healing', () => {
     mockConnect.mockResolvedValue({
       query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
       release: mockRelease
+    });
+    mockExistsSync.mockReturnValue(false);
+    mockReaddirSync.mockReturnValue([]);
+    mockReadFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
     });
 
     vi.resetModules();
@@ -76,6 +90,11 @@ describe('alertness/healing', () => {
           else resolve({ stdout, stderr });
         });
       })
+    }));
+    vi.mock('fs', () => ({
+      readdirSync: mockReaddirSync,
+      readFileSync: mockReadFileSync,
+      existsSync: mockExistsSync
     }));
 
     const mod = await import('../../alertness/healing.js');
@@ -283,6 +302,61 @@ describe('alertness/healing', () => {
       await startRecovery(['high_memory', 'queue_overflow']);
       const status = getRecoveryStatus();
       expect(status.strategiesApplied).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // ============================================================
+  // restart_stuck_executors 测试
+  // ============================================================
+
+  describe('restart_stuck_executors', () => {
+    it('无卡住任务时返回 executorsRestarted: 0', async () => {
+      mockExistsSync.mockReturnValue(false);
+      mockConnect.mockResolvedValue({
+        query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+        release: mockRelease
+      });
+
+      const mod = await import('../../alertness/healing.js');
+      const result = await mod.executeAction('restart_stuck_executors');
+      expect(result.executorsRestarted).toBe(0);
+    });
+  });
+
+  // ============================================================
+  // retry_with_backoff 测试
+  // ============================================================
+
+  describe('retry_with_backoff', () => {
+    it('无失败任务时返回 retriesScheduled: 0', async () => {
+      mockConnect.mockResolvedValue({
+        query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+        release: mockRelease
+      });
+
+      const mod = await import('../../alertness/healing.js');
+      const result = await mod.executeAction('retry_with_backoff');
+      expect(result.retriesScheduled).toBe(0);
+    });
+  });
+
+  // ============================================================
+  // clear_expired_cache 测试
+  // ============================================================
+
+  describe('clear_expired_cache', () => {
+    it('无过期缓存时返回 entriesRemoved: 0', async () => {
+      mockConnect.mockResolvedValue({
+        query: vi.fn()
+          .mockResolvedValueOnce({ rows: [{ exists: true }] })
+          .mockResolvedValueOnce({ rows: [], rowCount: 0 }),
+        release: mockRelease
+      });
+
+      const mod = await import('../../alertness/healing.js');
+      const result = await mod.executeAction('clear_expired_cache');
+      expect(result.cacheCleared).toBe(true);
+      expect(result.entriesRemoved).toBe(0);
     });
   });
 });
