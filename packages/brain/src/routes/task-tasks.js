@@ -10,8 +10,19 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
+import { blockTask } from '../task-updater.js';
+import { classifyFailure, FAILURE_CLASS } from '../quarantine.js';
 
 const router = Router();
+
+// TTL 映射（毫秒）
+const TTL_MAP = {
+  [FAILURE_CLASS.NETWORK]: 5 * 60 * 1000,      // 5 分钟
+  [FAILURE_CLASS.RATE_LIMIT]: 10 * 60 * 1000, // 10 分钟
+  [FAILURE_CLASS.BILLING_CAP]: 30 * 60 * 1000, // 30 分钟
+  [FAILURE_CLASS.AUTH]: 15 * 60 * 1000,       // 15 分钟
+  [FAILURE_CLASS.RESOURCE]: 5 * 60 * 1000,     // 5 分钟
+};
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
@@ -166,6 +177,119 @@ router.patch('/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update task', details: err.message });
+  }
+});
+
+// POST /tasks/:id/error-report — 错误上报端点
+// 根据错误分类自动决定处理方式：blocked（瞬时错误）/ retry（可重试）/ quarantine（永久错误）
+router.post('/:id/error-report', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      error_type,
+      error_message,
+      stack_trace,
+      context = {}
+    } = req.body;
+
+    if (!error_message) {
+      return res.status(400).json({ error: 'error_message is required' });
+    }
+
+    console.log(`[error-report] Received error report for task ${id}: ${error_message.substring(0, 100)}`);
+
+    // 1. 获取任务当前状态
+    const taskResult = await pool.query(
+      'SELECT id, title, status, payload FROM tasks WHERE id = $1',
+      [id]
+    );
+
+    if (taskResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Task not found', id });
+    }
+
+    const task = taskResult.rows[0];
+
+    // 2. 分类错误
+    const classification = classifyFailure(error_message, task);
+
+    console.log(`[error-report] Task ${id} classified as: ${classification.class}`);
+
+    // 3. 根据分类决定处理方式
+    const ttlMs = TTL_MAP[classification.class];
+    const isTransient = ttlMs !== undefined;
+
+    if (isTransient) {
+      // 瞬时错误 → 标记为 blocked（等待 TTL 自动释放）
+      const blockedUntil = new Date(Date.now() + ttlMs).toISOString();
+      const detail = {
+        error_type: error_type || classification.class,
+        error_message,
+        stack_trace,
+        context,
+        failure_classification: classification,
+      };
+
+      await blockTask(id, {
+        reason: `${classification.class} error - auto-blocked`,
+        detail,
+        until: blockedUntil,
+      });
+
+      console.log(`[error-report] Task ${id} blocked until ${blockedUntil}`);
+
+      return res.json({
+        action: 'blocked',
+        task_id: id,
+        failure_class: classification.class,
+        blocked_until: blockedUntil,
+        reason: classification.retry_strategy?.reason || 'Transient error',
+      });
+
+    } else if (classification.class === FAILURE_CLASS.TASK_ERROR) {
+      // 可重试错误 → 正常失败计数，由 execution-callback 的重试逻辑处理
+      await pool.query(
+        `UPDATE tasks SET status = 'failed', updated_at = NOW(),
+         payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+         WHERE id = $1`,
+        [id, JSON.stringify({
+          error_details: error_message,
+          failure_classification: classification,
+          last_error_at: new Date().toISOString(),
+        })]
+      );
+
+      console.log(`[error-report] Task ${id} marked as failed (retryable)`);
+
+      return res.json({
+        action: 'failed',
+        task_id: id,
+        failure_class: classification.class,
+        reason: classification.retry_strategy?.reason || 'Task error - retryable',
+      });
+
+    } else {
+      // 永久错误（其他未知类型）→ 移入 quarantine
+      const { quarantineTask } = await import('../quarantine.js');
+      await quarantineTask(id, 'permanent_error', {
+        failure_class: classification.class,
+        error_message,
+        stack_trace,
+        context,
+      });
+
+      console.log(`[error-report] Task ${id} quarantined`);
+
+      return res.json({
+        action: 'quarantined',
+        task_id: id,
+        failure_class: classification.class,
+        reason: 'Permanent error - requires human review',
+      });
+    }
+  } catch (err) {
+    console.error(`[error-report] Error processing error report:`, err.message);
+    res.status(500).json({ error: 'Failed to process error report', details: err.message });
   }
 });
 
