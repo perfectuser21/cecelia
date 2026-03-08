@@ -1,5 +1,28 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] 微博发布器新接口适配第二阶段：withRetry + 工具函数集成（PR #717）
+
+**失败统计**：CI 失败 0 次（本地 80/80 通过后提交）
+
+**主要变更**：
+- `utils.cjs` 新增 `withRetry` 指数退避重试函数（可配置 maxAttempts/baseDelayMs/isRetryable）
+- `publish-weibo-image.cjs` 使用 `PUBLISH_URL` 常量（PR #715 已加到 utils 但主脚本未用）
+- 登录检测从手写 includes 升级为 `isLoginRedirect` 函数（覆盖更多 URL 模式）
+- 导航验证新增 `isPublishPageReached` 检查
+- CDP 连接包装在 `withRetry`（网络抖动自动重试）
+- 发布后限频检测 + 微博 ID/链接提取
+
+**withRetry 设计要点**：
+- 参数 4：`isRetryable(err)` 控制哪些错误可重试（不传则全部重试）
+- 延迟公式：`delay * 2^(i-1)`（i 从 1 开始）
+- 使用 `typeof maxAttempts === 'number'` 而非 `maxAttempts ||` 以允许传 0（测试用）
+
+**worktree 消失重建流程（再次确认）**：
+- Brain 自动清理 worktree → Bash 工具锁死在消失的 cwd
+- `EnterWorktree` 创建新 worktree → `git branch -m` 重命名分支（从 `worktree-*` 改为 `cp-*`）
+- PRD/DoD 必须用 Bash 创建（Write 工具走 hook 先检查 .dev-mode，而 .dev-mode 也在 hook 检查范围内）
+- .dev-mode 文件用 Bash 先建，再用 Write/Edit 创建 PRD/DoD
+
 ### [2026-03-08] 快手发布器 OAuth 会话检查：worktree 消失后重建流程（PR #713）
 
 **失败统计**：CI 失败 0 次（本地 29/29 通过后提交）
