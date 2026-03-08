@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] auto-version：PR 不再手动 bump 版本号（PR #665）
+
+**背景**：并行 Brain PR 在 4 个版本文件（package.json, package-lock.json, .brain-versions, DEFINITION.md）上反复冲突，导致 rebase 循环。极端案例：单个 PR 消耗 240 turns / $17，根因就是版本冲突。
+
+**实现要点**：
+
+1. **auto-version.yml**：push to main 后自动读最新 commit message 判断 bump 类型（fix→patch, feat→minor, feat!→major），bump 所有 4+1 个版本文件，commit & push。用 `chore(brain): auto-version` 前缀防自触发循环。
+2. **brain-ci.yml 删除 Version Check job**：PR 不再要求版本 bump，消除冲突根源。ci-passed 的 needs 和检查逻辑同步清理。
+3. **check-version-sync.sh 保持不变**：该脚本只检查 4 文件是否一致（不要求 bump），PR 分支上所有文件都是旧版本，天然同步，不会失败。
+4. **selfcheck.js 无需改动**：其 `EXPECTED_SCHEMA_VERSION` 是 DB schema 版本（对应 migrations/），与 app 版本无关。
+
 ### [2026-03-07] cortex prompt 通胀治理（PR #661, Brain v1.211.1）
 
 **背景**：Cortex L2 皮层反复超时，desire_system 经 13 轮诊断锁定两个根因：(1) provider 路由走 bridge 被 90s 超时限制，(2) prompt 注入历史过多导致通胀。
