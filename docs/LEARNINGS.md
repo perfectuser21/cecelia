@@ -3190,3 +3190,29 @@ domain 查询用 try/catch 包裹，失败时 fallback 到 `null`，确保任务
 **预防措施**：
 - 为现有函数新增 DB 查询时，立即检查该函数的所有测试文件并补充 mock
 - 用 `grep -rn "functionName\|ImportedFunction" src/__tests__/` 找到所有受影响测试
+
+---
+
+## 2026-03-08 xiaohongshu-publisher — 小红书图文发布 CDP 接通
+
+**PR**: #678
+**分支**: cp-03072055-55e7f21d-b681-4644-9246-c05a77
+
+### 关键发现
+
+1. **Windows PC 端口分配**: 小红书已分配专用 CDP 端口 19224，与微博(19227)、快手(19223)、抖音(19222)互不干扰
+2. **小红书特殊要求**: 标题为必填项（与微博/快手不同），增加了 `title.txt` 文件规范
+3. **发布流程**: 导航 → 选类型 → 上传图片 → 填标题 → 填正文 → 点发布
+4. **worktree 消失陷阱**: 本次遇到 worktree 目录被清理导致 Bash 工具锁死的问题，解决方案是通过 Agent 在主仓库 checkout 现有分支继续工作
+
+### 架构一致性
+
+xiaohongshu-publisher 与 weibo-publisher、kuaishou-publisher 保持相同架构：
+- Mac mini → CDP → Windows PC（无需 SSH）
+- 依赖注入 fs 模块，utils.cjs 可完全单元测试
+- node --test 运行测试（无 vitest 依赖）
+- done.txt 标记已完成发布
+
+### 坑：branch-protect hook PRD 检查
+
+hook 检查 `.prd-{fullBranchName}.md`，名字必须完全匹配分支名（包括 UUID 后缀）。简写名会导致 hook 找不到并报错。
