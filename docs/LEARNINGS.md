@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] Cortex 熔断器持久化到 PostgreSQL（PR #682）
+
+**背景**：Cortex 反思熔断器 `_reflectionState` 存内存，Brain 重启后丢失，导致同一反思无限重触发（18 轮死循环）。
+
+**实现要点**：
+1. **working_memory 表是 Brain 的通用 KV 存储**：key=`cortex_reflection:{hash}`，支持 `ON CONFLICT (key) DO UPDATE` upsert
+2. **lazy load + write-through**：启动时从 DB 加载到内存 Map（`_reflectionStateLoaded` 标志位），每次更新同时写 DB（fire-and-forget）
+3. **DB 失败自动降级**：`_loadReflectionStateFromDB` 和 `_persistReflectionEntry` 都有 try-catch，失败时退回纯内存模式
+4. **同步→异步的连锁反应**：`_checkReflectionBreaker` 改 async 后，所有依赖它的测试中 `mockPool.query.mockResolvedValueOnce` 顺序都要调整（新增 2 个 mock：load + persist）
+5. **版本四文件同步**：`package.json` + `package-lock.json` + `DEFINITION.md` + `.brain-versions`，漏任何一个 CI 都会失败
+
 ### [2026-03-08] 孤儿进程泄漏修复：PGID vs 进程树（PR #683）
 
 **问题**：cecelia-run 任务完成后，claude subagent 进程变成孤儿（ppid=1），持续消耗 token 和内存。实测 9 个孤儿进程，最老跑了 35 小时。
