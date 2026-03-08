@@ -1,0 +1,123 @@
+name: Auto Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/brain/**'
+
+jobs:
+  bump:
+    name: Auto Bump Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if commit is auto-version
+        id: check
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -q "^chore(brain): auto-version"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine bump type from commit message
+        if: steps.check.outputs.skip == 'false'
+        id: bump
+        run: |
+          MSG=$(git log -1 --pretty=%s)
+          echo "Commit message: $MSG"
+
+          if echo "$MSG" | grep -qE '^feat(\(.+\))?!:|^BREAKING'; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$MSG" | grep -qE '^feat(\(.+\))?:'; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          elif echo "$MSG" | grep -qE '^fix(\(.+\))?:'; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+          else
+            echo "type=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
+        if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
+        run: |
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          echo "Bump type: $BUMP_TYPE"
+
+          # Read current version
+          CURRENT=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
+          echo "Current version: $CURRENT"
+
+          # Split version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Bump
+          case "$BUMP_TYPE" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+
+          # 1. Update packages/brain/package.json
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('packages/brain/package.json', 'utf8'));
+            pkg.version = '$NEW_VERSION';
+            fs.writeFileSync('packages/brain/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # 2. Update packages/brain/package-lock.json (top-level + packages[""] entry)
+          if [ -f "packages/brain/package-lock.json" ]; then
+            node -e "
+              const fs = require('fs');
+              const lock = JSON.parse(fs.readFileSync('packages/brain/package-lock.json', 'utf8'));
+              lock.version = '$NEW_VERSION';
+              if (lock.packages && lock.packages['']) {
+                lock.packages[''].version = '$NEW_VERSION';
+              }
+              fs.writeFileSync('packages/brain/package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+            "
+          fi
+
+          # 3. Update .brain-versions
+          echo "$NEW_VERSION" > .brain-versions
+
+          # 4. Update DEFINITION.md "Brain 版本" line
+          if [ -f "DEFINITION.md" ]; then
+            sed -i "s/\*\*Brain 版本\*\*: .*/\*\*Brain 版本\*\*: $NEW_VERSION/" DEFINITION.md
+          fi
+
+          # 5. Update packages/brain/VERSION
+          if [ -f "packages/brain/VERSION" ]; then
+            echo "$NEW_VERSION" > packages/brain/VERSION
+          fi
+
+      - name: Commit and push
+        if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(brain): auto-version ${{ steps.bump.outputs.type }} bump"
+          git push
