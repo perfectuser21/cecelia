@@ -23,8 +23,8 @@ import { listProcessesWithElapsed } from './platform-utils.js';
 const TOTAL_CAPACITY = MAX_SEATS;           // startup snapshot (backward compat)
 function getTotalCapacity() { return getEffectiveMaxSeats(); }
 const CECELIA_RESERVED = 2;                  // Pool A: 2 slots for internal tasks (OKR decomp + cortex)
-const USER_RESERVED_BASE = 2;                // Pool B: minimum when user absent
-const USER_PRIORITY_HEADROOM = 2;            // Extra free slots when user is active
+const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
+const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
 
 // ============================================================
@@ -148,12 +148,16 @@ async function countAutoDispatchInProgress() {
 // Slot Budget Calculation
 // ============================================================
 
-// Slot change buffer: max ±2 per tick to prevent jumps
-const SLOT_BUFFER_MAX_DELTA = 2;
+// Slot change buffer: asymmetric — fast brake, slow recovery
+const SLOT_BUFFER_DOWN = 3;   // max decrease per tick (fast brake)
+const SLOT_BUFFER_UP = 1;     // max increase per tick (slow recovery)
+const SLOT_BUFFER_MAX_DELTA = SLOT_BUFFER_DOWN; // backward compat export (tests)
 let _previousPoolCBudget = null;
 
 /**
- * Apply buffer to slot changes: limit delta to ±SLOT_BUFFER_MAX_DELTA per tick.
+ * Apply buffer to slot changes: asymmetric limit per tick.
+ * Down (brake): max -SLOT_BUFFER_DOWN per tick.
+ * Up (recovery): max +SLOT_BUFFER_UP per tick.
  * First call (no previous value) passes through without buffering.
  */
 function applySlotBuffer(newValue) {
@@ -163,12 +167,14 @@ function applySlotBuffer(newValue) {
   }
   const delta = newValue - _previousPoolCBudget;
   let buffered;
-  if (Math.abs(delta) <= SLOT_BUFFER_MAX_DELTA) {
+  if (delta >= 0 && delta <= SLOT_BUFFER_UP) {
+    buffered = newValue;
+  } else if (delta < 0 && Math.abs(delta) <= SLOT_BUFFER_DOWN) {
     buffered = newValue;
   } else if (delta > 0) {
-    buffered = _previousPoolCBudget + SLOT_BUFFER_MAX_DELTA;
+    buffered = _previousPoolCBudget + SLOT_BUFFER_UP;
   } else {
-    buffered = Math.max(0, _previousPoolCBudget - SLOT_BUFFER_MAX_DELTA);
+    buffered = Math.max(0, _previousPoolCBudget - SLOT_BUFFER_DOWN);
   }
   _previousPoolCBudget = buffered;
   return buffered;
@@ -319,6 +325,8 @@ export {
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
   SLOT_BUFFER_MAX_DELTA,
+  SLOT_BUFFER_DOWN,
+  SLOT_BUFFER_UP,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,

@@ -44,12 +44,14 @@ import {
   applySlotBuffer,
   _resetSlotBuffer,
   SLOT_BUFFER_MAX_DELTA,
+  SLOT_BUFFER_DOWN,
+  SLOT_BUFFER_UP,
   calculateSlotBudget,
   getSlotStatus,
 } from '../slot-allocator.js';
 
 // ============================================================
-// applySlotBuffer
+// applySlotBuffer (asymmetric: down -3, up +1)
 // ============================================================
 
 describe('applySlotBuffer', () => {
@@ -57,34 +59,44 @@ describe('applySlotBuffer', () => {
     _resetSlotBuffer();
   });
 
-  it('SLOT_BUFFER_MAX_DELTA 应为 2', () => {
-    expect(SLOT_BUFFER_MAX_DELTA).toBe(2);
+  it('SLOT_BUFFER_DOWN 应为 3, SLOT_BUFFER_UP 应为 1', () => {
+    expect(SLOT_BUFFER_DOWN).toBe(3);
+    expect(SLOT_BUFFER_UP).toBe(1);
+    expect(SLOT_BUFFER_MAX_DELTA).toBe(3); // backward compat = DOWN
   });
 
   it('首次调用应直接返回值（无 buffer）', () => {
     expect(applySlotBuffer(8)).toBe(8);
   });
 
-  it('小幅变化 (≤2) 应直接通过', () => {
+  it('小幅下降 (≤3) 应直接通过', () => {
     applySlotBuffer(8);
-    expect(applySlotBuffer(7)).toBe(7);
-    expect(applySlotBuffer(9)).toBe(9);
+    expect(applySlotBuffer(5)).toBe(5); // delta=-3, within DOWN limit
   });
 
-  it('大幅下降应限制为 -2', () => {
+  it('小幅上升 (≤1) 应直接通过', () => {
     applySlotBuffer(8);
-    expect(applySlotBuffer(0)).toBe(6);
-    expect(applySlotBuffer(0)).toBe(4);
-    expect(applySlotBuffer(0)).toBe(2);
-    expect(applySlotBuffer(0)).toBe(0);
+    expect(applySlotBuffer(9)).toBe(9); // delta=+1, within UP limit
+  });
+
+  it('大幅下降应限制为 -3（快刹车）', () => {
+    applySlotBuffer(8);
+    expect(applySlotBuffer(0)).toBe(5);  // 8-3=5
+    expect(applySlotBuffer(0)).toBe(2);  // 5-3=2
+    expect(applySlotBuffer(0)).toBe(0);  // max(0, 2-3)=0
     expect(applySlotBuffer(0)).toBe(0);
   });
 
-  it('大幅上升应限制为 +2', () => {
+  it('大幅上升应限制为 +1（慢恢复）', () => {
     applySlotBuffer(2);
-    expect(applySlotBuffer(10)).toBe(4);
-    expect(applySlotBuffer(10)).toBe(6);
-    expect(applySlotBuffer(10)).toBe(8);
+    expect(applySlotBuffer(10)).toBe(3);  // 2+1=3
+    expect(applySlotBuffer(10)).toBe(4);  // 3+1=4
+    expect(applySlotBuffer(10)).toBe(5);  // 4+1=5
+  });
+
+  it('上升 delta=+2 应限制为 +1', () => {
+    applySlotBuffer(5);
+    expect(applySlotBuffer(7)).toBe(6); // 5+1=6, not 7
   });
 
   it('buffer 不会产生负数', () => {
@@ -117,7 +129,7 @@ describe('calculateSlotBudget token 集成', () => {
 
   it('token_pressure=0 → Pool C 不受 token 限制', async () => {
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(8);
+    expect(budget.taskPool.budget).toBe(9); // 12 - 1(user) - 2(cecelia) = 9
     expect(budget.tokenPressure.token_pressure).toBe(0);
   });
 
@@ -146,7 +158,7 @@ describe('calculateSlotBudget token 集成', () => {
     });
 
     const budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBeLessThanOrEqual(4);
+    expect(budget.taskPool.budget).toBeLessThanOrEqual(5); // 9/2 rounded = 5
     expect(budget.taskPool.budget).toBeGreaterThan(0);
   });
 
@@ -181,20 +193,24 @@ describe('calculateSlotBudget token 集成', () => {
     expect(budget.taskPool.budget).toBeGreaterThan(0);
   });
 
-  it('buffer 平滑：连续两次 token 满载，Pool C 逐步降', async () => {
-    // Tick 1: 正常 (Pool C = 8)
+  it('buffer 平滑：连续 token 满载，Pool C 快刹车(-3)逐步降', async () => {
+    // Tick 1: 正常 (Pool C = 9)
     getTokenPressure.mockResolvedValue({ token_pressure: 0, available_accounts: 3, details: '' });
     let budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(8);
+    expect(budget.taskPool.budget).toBe(9);
 
-    // Tick 2: token 满载 → 目标 0，但 buffer 限制为 8-2=6
+    // Tick 2: token 满载 → 目标 0，但 buffer 限制为 9-3=6
     getTokenPressure.mockResolvedValue({ token_pressure: 1.0, available_accounts: 0, details: '' });
     budget = await calculateSlotBudget();
     expect(budget.taskPool.budget).toBe(6);
 
-    // Tick 3: 继续满载 → 6-2=4
+    // Tick 3: 继续满载 → 6-3=3
     budget = await calculateSlotBudget();
-    expect(budget.taskPool.budget).toBe(4);
+    expect(budget.taskPool.budget).toBe(3);
+
+    // Tick 4: 继续满载 → 3-3=0
+    budget = await calculateSlotBudget();
+    expect(budget.taskPool.budget).toBe(0);
   });
 });
 
