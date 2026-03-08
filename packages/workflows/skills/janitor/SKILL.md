@@ -1,19 +1,21 @@
 ---
 name: janitor
-version: 1.0.0
+version: 2.0.0
 description: |
-  小扫（Janitor）- 每日磁盘清扫员。
-  自动清理 Docker 容器日志、PM2 日志、/tmp 垃圾、旧缓存。
-  每天凌晨 4:00 由 cron 自动运行，无需人工干预。
+  小扫（Janitor）- 系统清扫员（Mac mini 版）。
+  两种模式：daily（磁盘清理，每天 4am）+ frequent（僵尸进程清理，每 30 分钟）。
+  纯 bash 脚本，无需 LLM，cron 自动运行。
   磁盘超 70% 时自动告警到 Cecelia Brain。
 created: 2026-02-24
+updated: 2026-03-08
 changelog:
-  - 1.0.0: 初始版本，覆盖7类清扫任务
+  - 2.0.0: 从 VPS 版重写为 Mac mini v2.0（9 项清扫 + frequent 模式）
+  - 1.0.0: 初始版本（VPS Docker/PM2 清理）
 ---
 
-# /janitor - 小扫（磁盘清扫员）
+# /janitor - 小扫（系统清扫员）
 
-**系统维护角色**，专门负责每日磁盘卫生。
+**系统维护角色**，负责磁盘卫生和僵尸进程清理。
 
 ## 定位
 
@@ -21,31 +23,47 @@ changelog:
 外部专家（自动化）：
 ├── 🍂 秋米 (/autumnrice) - OKR 拆解
 ├── 💻 Caramel (/dev)     - 写代码
-└── 🧹 小扫 (/janitor)   - 每日清扫  ← 这是我
+└── 🧹 小扫 (/janitor)   - 系统清扫  ← 这是我
 ```
 
-**关键**：小扫是纯脚本员工，不用 LLM，每天定时自动执行。
+**关键**：小扫是纯脚本员工，不用 LLM，cron 自动执行。确定性任务不需要大模型。
+
+## 两种运行模式
+
+| 模式 | 频率 | 职责 |
+|------|------|------|
+| `daily` | 每天 4:00 AM | 磁盘清理（9 项任务） |
+| `frequent` | 每 30 分钟 | 僵尸进程清理（vitest/jest/孤儿 node） |
 
 ## 触发方式
 
 | 方式 | 命令 |
 |------|------|
-| 手动触发 | `janitor.sh` |
-| 自动调度 | 每天凌晨 4:00 cron 自动 |
+| 手动 daily | `janitor.sh` 或 `janitor.sh --mode daily` |
+| 手动 frequent | `janitor.sh --mode frequent` |
+| 自动调度 | cron（见下方配置） |
 | 查看日志 | `cat /tmp/janitor-$(date +%Y%m%d).log` |
 
-## 清扫清单（8项）
+## Daily 清扫清单（9 项）
 
-| # | 清扫目标 | 频率 | 大小范围 |
+| # | 清扫目标 | 条件 | 预估大小 |
 |---|---------|------|---------|
-| 1 | Docker 容器日志（>100M 截断） | 每日 | 几百MB/次 |
-| 2 | Docker build cache（>7天） | 每日 | 几十~几百MB |
-| 3 | Docker 已停止容器 | 每日 | 少量 |
-| 4 | PM2 日志 | 每日 | ~50MB |
-| 5 | Cecelia prompts（>7天） | 每日 | ~30MB |
-| 6 | /tmp 旧随机目录（>1天） | 每日 | ~400MB/次 |
-| 7 | VSCode 旧 VSIX 安装包缓存 | 每日 | ~120MB |
-| 8 | Git 孤儿分支（cp-*/worktree-*） | 每日 | N/A（分支清理） |
+| 1 | Brain/Bridge LaunchDaemon 日志截断 | >10MB 保留最后 1000 行 | 几十~几百 MB |
+| 2 | /tmp/cecelia-*.log 旧运行日志 | >3 天删除 | ~100 MB |
+| 3 | Claude JSONL 会话记录 | >7 天删除 | ~1 GB（最大增长源） |
+| 4 | npm cache | 全量清理 | ~1.4 GB |
+| 5 | Homebrew cache | >7 天清理 | ~250 MB |
+| 6 | /tmp 旧随机临时目录 | >1 天删除 | ~400 MB |
+| 7 | .prd/.dod/.dev-mode 残留文件 | >3 天删除 | 少量 |
+| 8 | Git 孤儿分支（cp-*/worktree-*） | 调用 branch-gc.sh | N/A（分支清理） |
+| 9 | 残留 worktree | >24h 且无 open PR | N/A（目录清理） |
+
+## Frequent 清理内容
+
+| 目标 | 条件 | 说明 |
+|------|------|------|
+| vitest/jest 僵尸进程 | 运行 >2 小时 | 先 SIGTERM，1s 后 SIGKILL |
+| 孤儿 node 进程 | 运行 >2 小时 + PPID=1 | 排除 brain/server/n8n/claude/vscode |
 
 ## 告警机制
 
@@ -54,34 +72,35 @@ changelog:
 ## 脚本位置
 
 ```
-/home/xx/bin/janitor.sh
+/Users/administrator/bin/janitor.sh
+```
+
+不在 git 中（系统级工具），由 cron 直接调用。
+
+依赖脚本（git 中）：
+```
+packages/engine/skills/dev/scripts/branch-gc.sh   # 第 8 步调用
 ```
 
 ## Cron 配置
 
 ```cron
-0 4 * * * /home/xx/bin/janitor.sh >> /tmp/janitor-cron.log 2>&1
+# Daily: 每天凌晨 4:00 磁盘清理
+0 4 * * * /Users/administrator/bin/janitor.sh --mode daily >> /tmp/janitor-cron.log 2>&1
+
+# Frequent: 每 30 分钟清理僵尸进程
+*/30 * * * * /Users/administrator/bin/janitor.sh --mode frequent >> /tmp/janitor-cron.log 2>&1
 ```
 
 ## 手动触发
 
 ```bash
-# 立即执行一次
+# 立即执行 daily 清理
 janitor.sh
+
+# 立即执行僵尸进程清理
+janitor.sh --mode frequent
 
 # 查看今天的日志
 cat /tmp/janitor-$(date +%Y%m%d).log
-```
-
-## 需要 sudo 的项（小扫做不了，需人工）
-
-```bash
-# Snap 旧版本（~500M）
-sudo snap remove chromium --revision=3361
-sudo snap remove core20 --revision=2686
-# ... 等（几个月更新一次即可）
-
-# 老系统日志
-sudo rm /var/log/auth.log.1.20250827
-sudo journalctl --vacuum-size=50M
 ```
