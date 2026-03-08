@@ -112,6 +112,10 @@ describe('recordLearnings writes to learnings table (FLC-3)', () => {
   });
 
   function setupPoolMocks({ dedupResult = [] } = {}) {
+    // 0a. _loadBreakerState → working_memory SELECT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 0b. _saveBreakerState → working_memory UPSERT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 1. decision_log SELECT (recent decisions)
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 2. system_status SELECT
@@ -228,6 +232,10 @@ describe('analyzeDeep injects self-model (FLC-2)', () => {
   });
 
   it('injects self_model into LLM prompt context', async () => {
+    // 0a. _loadBreakerState → working_memory SELECT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 0b. _saveBreakerState → working_memory UPSERT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 1. decision_log SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 2. system_status SELECT
