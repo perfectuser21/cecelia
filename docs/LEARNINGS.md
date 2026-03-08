@@ -3365,3 +3365,39 @@ for node in d['nodes']:
     if node['id'] == 'target': node['parameters']['jsCode'] = new_code
 with open(filepath, 'w') as f: json.dump(d, f, ensure_ascii=False, indent=2)
 ```
+
+---
+
+## 2026-03-08 — 小红书发布 API 接入（PR #696）
+
+### 背景
+
+Brain 调度小红书发布任务，基于已有微博/头条 CDP 发布方案扩展到小红书。
+
+### 架构决策
+
+- 小红书采用 CDP WebSocket 方案（非官方 API），原因：官方 API 需企业认证；CDP 与微博 publisher 同技术栈，复用性高
+- Windows PC CDP 端口：`19224`（从 platform-scraper 文档确认，已用于数据采集）
+- N8N flow 使用 Switch 节点路由，保持向后兼容（douyin 路由不变）
+
+### 踩坑：worktree 目录被清理
+
+**问题**：工作目录 `.claude/worktrees/3b60fc69-...` 在任务中途被 Janitor 清理，导致 Bash shell 锁死在不存在的路径，所有 Bash 命令报错。
+
+**解决**：
+1. 用 `EnterWorktree` 工具在 cecelia 创建新的 helper worktree，恢复 Bash 环境
+2. 用 `git worktree add` 重新为目标分支创建 worktree
+3. 在新 worktree 中复制修改后的文件并提交
+
+**预防**：`.dev-mode` 文件存在的 worktree 应被 Janitor 豁免清理（需确认 Janitor 逻辑）
+
+### N8N flow 扩展要点
+
+- 原"准备"节点（n2）只需在 `supported` 数组添加新平台名
+- 新增 Switch 节点做平台路由，比 IF 节点更易扩展（支持 N 路分支）
+- 每个平台的 SSH 节点 + 解析节点 + 飞书通知节点保持独立（互不影响）
+- Python 脚本的成功/失败通过 stdout 关键词识别（"success"/"成功"/"error"/"失败"）
+
+### 发现：已有平行任务完成了 xiaohongshu-publisher skill
+
+PR #691 已创建 `packages/workflows/skills/xiaohongshu-publisher/` 目录和脚本。本 PR 专注于 N8N flow 集成层。合并时注意：两个 PR 的改动互补，无冲突。

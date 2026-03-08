@@ -19,7 +19,7 @@
     },
     {
       "id": "n2",
-      "name": "\\u51c6\\u5907",
+      "name": "\u51c6\u5907",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -27,12 +27,12 @@
         300
       ],
       "parameters": {
-        "jsCode": "const body = $input.first().json.body || $input.first().json;\\nconst taskId = body.taskId || '';\\nconst title = body.title || '(\\u65e0\\u6807\\u9898)';\\nconst platforms = body.targetPlatforms || [];\\n\\nconst supported = ['douyin'];\\nconst valid = platforms.filter(p => supported.includes(p));\\n\\nif (valid.length === 0) {\\n  return [{ json: { skip: true, taskId, title, reason: '\\u6ca1\\u6709\\u652f\\u6301\\u7684\\u5e73\\u53f0' } }];\\n}\\n\\nreturn [{ json: { skip: false, taskId, title, platform: valid[0] } }];"
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst taskId = body.taskId || '';\nconst title = body.title || '(\u65e0\u6807\u9898)';\nconst content = body.content || '';\nconst platforms = body.targetPlatforms || [];\n\nconst supported = ['douyin', 'xiaohongshu'];\nconst valid = platforms.filter(p => supported.includes(p));\n\nif (valid.length === 0) {\n  return [{ json: { skip: true, taskId, title, content, reason: '\u6ca1\u6709\u652f\u6301\u7684\u5e73\u53f0' } }];\n}\n\nreturn [{ json: { skip: false, taskId, title, content, platform: valid[0] } }];"
       }
     },
     {
       "id": "n3",
-      "name": "\\u662f\\u5426\\u8df3\\u8fc7",
+      "name": "\u662f\u5426\u8df3\u8fc7",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -59,13 +59,71 @@
       }
     },
     {
-      "id": "n4",
-      "name": "SSH\\u53d1\\u5e03",
-      "type": "n8n-nodes-base.ssh",
-      "typeVersion": 1,
+      "id": "n10",
+      "name": "\u5e73\u53f0\u8def\u7531",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
       "position": [
         880,
         400
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "douyin"
+                  }
+                ]
+              },
+              "outputIndex": 0
+            },
+            {
+              "conditions": {
+                "options": {
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "xiaohongshu"
+                  }
+                ]
+              },
+              "outputIndex": 1
+            }
+          ]
+        },
+        "fallbackOutput": 0
+      }
+    },
+    {
+      "id": "n4",
+      "name": "SSH\u53d1\u5e03",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
       ],
       "credentials": {
         "sshPrivateKey": {
@@ -82,26 +140,79 @@
       }
     },
     {
+      "id": "n9",
+      "name": "SSH-\u5c0f\u7ea2\u4e66",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        520
+      ],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "vvJsQOZ95sqzemla",
+          "name": "VPS SSH Key"
+        }
+      },
+      "parameters": {
+        "authentication": "privateKey",
+        "host": "100.108.7.63",
+        "port": 22,
+        "user": "administrator",
+        "command": "=cd ~/perfect21/zenithjoy/services/creator/scripts && python3 publish-xiaohongshu.py \"{{ $json.title }}\" \"{{ $json.content }}\" 2>&1"
+      }
+    },
+    {
       "id": "n5",
-      "name": "\\u89e3\\u6790\\u5e76\\u6784\\u5efa\\u901a\\u77e5",
+      "name": "\u89e3\u6790\u5e76\u6784\u5efa\u901a\u77e5",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
-        400
+        1360,
+        300
       ],
       "parameters": {
-        "jsCode": "const stdout = $input.first().json.stdout || '';\\nconst prev = $('\\u51c6\\u5907').first().json;\\n\\nlet success = false;\\nlet error = '';\\n\\ntry {\\n  const m = stdout.match(/\\\\{[\\\\s\\\\S]*?\\\\}/);\\n  if (m) {\\n    const r = JSON.parse(m[0]);\\n    success = r.success === true;\\n    error = r.error || '';\\n  }\\n} catch (e) {\\n  error = '\\u89e3\\u6790\\u5931\\u8d25';\\n}\\n\\nconst emoji = success ? '\\u2705' : '\\u274c';\\nconst status = success ? '\\u53d1\\u5e03\\u6210\\u529f' : '\\u53d1\\u5e03\\u5931\\u8d25';\\nlet text = emoji + ' ' + status + '\\\\n';\\ntext += '\\u5e73\\u53f0: \\u6296\\u97f3\\\\n';\\ntext += '\\u6807\\u9898: ' + prev.title;\\nif (error) text += '\\\\n\\u9519\\u8bef: ' + error;\\n\\nreturn [{\\n  json: {\\n    taskId: prev.taskId,\\n    success,\\n    feishuBody: { msg_type: 'text', content: { text } }\\n  }\\n}];"
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('\u51c6\u5907').first().json;\n\nconst platformNames = { douyin: '\u6296\u97f3', xiaohongshu: '\u5c0f\u7ea2\u4e66' };\nconst platformDisplay = platformNames[prev.platform] || prev.platform;\n\nlet success = false;\nlet error = '';\n\ntry {\n  const m = stdout.match(/\\{[\\s\\S]*?\\}/);\n  if (m) {\n    const r = JSON.parse(m[0]);\n    success = r.success === true;\n    error = r.error || '';\n  }\n} catch (e) {\n  error = '\u89e3\u6790\u5931\u8d25';\n}\n\nconst emoji = success ? '\u2705' : '\u274c';\nconst status = success ? '\u53d1\u5e03\u6210\u529f' : '\u53d1\u5e03\u5931\u8d25';\nlet text = emoji + ' ' + status + '\\n';\ntext += '\u5e73\u53f0: ' + platformDisplay + '\\n';\ntext += '\u6807\u9898: ' + prev.title;\nif (error) text += '\\n\u9519\u8bef: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    success,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "\u89e3\u6790-\u5c0f\u7ea2\u4e66",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        520
+      ],
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('\u51c6\u5907').first().json;\n\nlet success = false;\nlet error = '';\n\nif (stdout.includes('success') || stdout.includes('\u6210\u529f')) {\n  success = true;\n} else if (stdout.includes('error') || stdout.includes('\u5931\u8d25') || stdout.includes('Error')) {\n  success = false;\n  error = stdout.split('\\n').find(l => l.toLowerCase().includes('error')) || '\u672a\u77e5\u9519\u8bef';\n} else {\n  success = stdout.trim().length > 0;\n}\n\ntry {\n  const m = stdout.match(/\\{[\\s\\S]*?\\}/);\n  if (m) {\n    const r = JSON.parse(m[0]);\n    if (typeof r.success === 'boolean') success = r.success;\n    if (r.error) error = r.error;\n  }\n} catch (e) {}\n\nconst emoji = success ? '\u2705' : '\u274c';\nconst status = success ? '\u53d1\u5e03\u6210\u529f' : '\u53d1\u5e03\u5931\u8d25';\nlet text = emoji + ' ' + status + '\\n';\ntext += '\u5e73\u53f0: \u5c0f\u7ea2\u4e66\\n';\ntext += '\u6807\u9898: ' + prev.title;\nif (error) text += '\\n\u9519\u8bef: ' + error;\n\nreturn [{\n  json: {\n    taskId: prev.taskId,\n    success,\n    feishuBody: { msg_type: 'text', content: { text } }\n  }\n}];"
       }
     },
     {
       "id": "n6",
-      "name": "\\u98de\\u4e66\\u901a\\u77e5",
+      "name": "\u98de\u4e66\u901a\u77e5",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1360,
-        400
+        1600,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/5bde68e0-9879-4a45-88ed-461a88229136",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.feishuBody }}"
+      }
+    },
+    {
+      "id": "n12",
+      "name": "\u98de\u4e66-\u5c0f\u7ea2\u4e66",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        520
       ],
       "parameters": {
         "method": "POST",
@@ -113,7 +224,7 @@
     },
     {
       "id": "n7",
-      "name": "\\u8df3\\u8fc7\\u901a\\u77e5",
+      "name": "\u8df3\u8fc7\u901a\u77e5",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -121,12 +232,12 @@
         200
       ],
       "parameters": {
-        "jsCode": "const prev = $input.first().json;\\nreturn [{ json: { feishuBody: { msg_type: 'text', content: { text: '\\u23ed\\ufe0f \\u53d1\\u5e03\\u8df3\\u8fc7\\\\n\\u539f\\u56e0: ' + prev.reason } } } }];"
+        "jsCode": "const prev = $input.first().json;\nreturn [{ json: { feishuBody: { msg_type: 'text', content: { text: '\u23ed\ufe0f \u53d1\u5e03\u8df3\u8fc7\\n\u539f\u56e0: ' + prev.reason } } } }];"
       }
     },
     {
       "id": "n8",
-      "name": "\\u98de\\u4e66-\\u8df3\\u8fc7",
+      "name": "\u98de\u4e66-\u8df3\u8fc7",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -147,69 +258,109 @@
       "main": [
         [
           {
-            "node": "\\u51c6\\u5907",
+            "node": "\u51c6\u5907",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\\u51c6\\u5907": {
+    "\u51c6\u5907": {
       "main": [
         [
           {
-            "node": "\\u662f\\u5426\\u8df3\\u8fc7",
+            "node": "\u662f\u5426\u8df3\u8fc7",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\\u662f\\u5426\\u8df3\\u8fc7": {
+    "\u662f\u5426\u8df3\u8fc7": {
       "main": [
         [
           {
-            "node": "\\u8df3\\u8fc7\\u901a\\u77e5",
+            "node": "\u8df3\u8fc7\u901a\u77e5",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "SSH\\u53d1\\u5e03",
+            "node": "\u5e73\u53f0\u8def\u7531",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "SSH\\u53d1\\u5e03": {
+    "\u5e73\u53f0\u8def\u7531": {
       "main": [
         [
           {
-            "node": "\\u89e3\\u6790\\u5e76\\u6784\\u5efa\\u901a\\u77e5",
+            "node": "SSH\u53d1\u5e03",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SSH-\u5c0f\u7ea2\u4e66",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\\u89e3\\u6790\\u5e76\\u6784\\u5efa\\u901a\\u77e5": {
+    "SSH\u53d1\u5e03": {
       "main": [
         [
           {
-            "node": "\\u98de\\u4e66\\u901a\\u77e5",
+            "node": "\u89e3\u6790\u5e76\u6784\u5efa\u901a\u77e5",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "\\u8df3\\u8fc7\\u901a\\u77e5": {
+    "SSH-\u5c0f\u7ea2\u4e66": {
       "main": [
         [
           {
-            "node": "\\u98de\\u4e66-\\u8df3\\u8fc7",
+            "node": "\u89e3\u6790-\u5c0f\u7ea2\u4e66",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u89e3\u6790\u5e76\u6784\u5efa\u901a\u77e5": {
+      "main": [
+        [
+          {
+            "node": "\u98de\u4e66\u901a\u77e5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u89e3\u6790-\u5c0f\u7ea2\u4e66": {
+      "main": [
+        [
+          {
+            "node": "\u98de\u4e66-\u5c0f\u7ea2\u4e66",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "\u8df3\u8fc7\u901a\u77e5": {
+      "main": [
+        [
+          {
+            "node": "\u98de\u4e66-\u8df3\u8fc7",
             "type": "main",
             "index": 0
           }
