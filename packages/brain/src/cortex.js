@@ -256,6 +256,42 @@ function _computeEventHash(event) {
 }
 
 /**
+ * 计算观测项去重 key（type + failure_class + task_type）
+ * @param {{ type: string, failure_class?: string|null, task_type?: string|null }} params
+ * @returns {string} 16字符 hex
+ */
+function _computeObservationKey({ type, failure_class = null, task_type = null }) {
+  const key = JSON.stringify({ type, failure_class, task_type });
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/**
+ * 对观测列表按 keyFn 去重折叠。相同 key ≥2 条时追加摘要行。
+ * @param {Array} items
+ * @param {(item: any) => string} keyFn
+ * @returns {Array}
+ */
+function _deduplicateObservations(items, keyFn) {
+  const seen = new Map();
+  for (const item of items) {
+    const k = keyFn(item);
+    if (seen.has(k)) {
+      seen.get(k).count++;
+    } else {
+      seen.set(k, { first: item, count: 1 });
+    }
+  }
+  const result = [];
+  for (const { first, count } of seen.values()) {
+    result.push(first);
+    if (count >= 2) {
+      result.push({ _folded: true, count, message: `${count} 条相同诊断，已折叠` });
+    }
+  }
+  return result;
+}
+
+/**
  * 检查并更新反思熔断器（持久化到 PostgreSQL）
  * @param {string} hash
  * @returns {Promise<{ open: boolean, count: number }>}
@@ -1125,7 +1161,10 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
       ORDER BY updated_at DESC
       LIMIT 10
     `, [String(timeRangeHours)]);
-    context.recent_failures = failedResult.rows;
+    context.recent_failures = _deduplicateObservations(
+      failedResult.rows,
+      (row) => _computeObservationKey({ type: 'task_failure', failure_class: null, task_type: row.task_type ?? null })
+    );
   } catch (err) {
     console.error('[cortex] generateSystemReport: 获取失败任务失败:', err.message);
     context.recent_failures = [];
@@ -1134,13 +1173,20 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
   // 5. 最近 Cortex 分析（摘要）
   try {
     const analysesResult = await pool.query(`
-      SELECT root_cause, confidence_score, created_at
+      SELECT root_cause, confidence_score, created_at, failure_pattern
       FROM cortex_analyses
       WHERE created_at > NOW() - ($1 || ' hours')::INTERVAL
       ORDER BY created_at DESC
       LIMIT 5
     `, [String(timeRangeHours)]);
-    context.recent_analyses = analysesResult.rows;
+    context.recent_analyses = _deduplicateObservations(
+      analysesResult.rows,
+      (row) => _computeObservationKey({
+        type: 'rca',
+        failure_class: row.failure_pattern?.class ?? null,
+        task_type: row.failure_pattern?.task_type ?? null,
+      })
+    );
   } catch (err) {
     console.warn('[cortex] generateSystemReport: 获取 cortex 分析失败（非致命）:', err.message);
     context.recent_analyses = [];
@@ -1249,6 +1295,10 @@ export {
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
+
+  // 报告级语义去重（测试用）
+  _computeObservationKey,
+  _deduplicateObservations,
 
   // 反思去重（测试用）
   _resetReflectionState,
