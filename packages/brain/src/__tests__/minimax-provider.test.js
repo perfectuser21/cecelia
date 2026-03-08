@@ -42,6 +42,18 @@ vi.mock('../task-updater.js', () => ({
   updateTaskProgress: vi.fn()
 }));
 
+// Mock platform-utils — ensure checkServerResources returns ok:true on macOS
+vi.mock('../platform-utils.js', () => ({
+  IS_DARWIN: process.platform === 'darwin',
+  IS_LINUX: process.platform === 'linux',
+  sampleCpuUsage: vi.fn(() => 10),
+  _resetCpuSampler: vi.fn(),
+  getSwapUsedPct: vi.fn(() => 5),
+  getDmesgInfo: vi.fn(() => null),
+  countClaudeProcesses: vi.fn(() => 0),
+  calculatePhysicalCapacity: vi.fn(() => 4),
+}));
+
 // ================================================================
 // T1 + T3 + T4: getProviderForTask 逻辑测试
 // ================================================================
