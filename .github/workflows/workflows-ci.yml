@@ -406,6 +406,43 @@ jobs:
           fi
           echo "All weibo-publisher unit tests passed"
 
+      - name: Run xiaohongshu-publisher unit tests
+        working-directory: packages/workflows
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  xiaohongshu-publisher Unit Tests"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          TESTS_DIR="skills/xiaohongshu-publisher/scripts/__tests__"
+          FAILED=false
+
+          for TEST_FILE in \
+            "$TESTS_DIR/utils.test.cjs" \
+            "$TESTS_DIR/publish-xiaohongshu-image.test.cjs"; do
+
+            if [ ! -f "$TEST_FILE" ]; then
+              echo "  [SKIP] $TEST_FILE not found"
+              continue
+            fi
+
+            echo "Running $TEST_FILE..."
+            if node --test "$TEST_FILE"; then
+              echo "  [OK] $TEST_FILE passed"
+            else
+              echo "  [FAIL] $TEST_FILE failed"
+              FAILED=true
+            fi
+            echo ""
+          done
+
+          if [ "$FAILED" = "true" ]; then
+            echo "xiaohongshu-publisher unit tests FAILED"
+            exit 1
+          fi
+          echo "All xiaohongshu-publisher unit tests passed"
+
   # Gate job: non-workflows PRs fast-pass
   ci-passed:
     needs: [changes, validate, structure, gateway-check, unit-tests]
