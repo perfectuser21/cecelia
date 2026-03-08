@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-07] Cortex 反思去重持久化 — 过期清理缺失导致信道饱和（PR #685）
+
+**问题**：cortex.js 的 `_reflectionState` 已有 per-hash key 持久化到 `working_memory`，但 `_loadReflectionStateFromDB` 加载时不检查 30 分钟窗口，过期条目永不清理。
+
+**根因**：持久化实现只写不清理。正常路径下过期条目被无条件加载到内存。
+
+**修复**：加载时检查 `now - val.firstSeen > REFLECTION_WINDOW_MS`，过期条目不加载 + fire-and-forget 从 DB 删除。
+
+**教训**：持久化不仅是"写入"，还必须包含"清理"。任何有 TTL 的内存状态持久化时，加载阶段必须有过期检查。
+
+---
+
 ### [2026-03-07] 小红书 CDP Publisher — require 路径层级陷阱（PR #679, v1.202.0）
 
 **背景**：新增 xiaohongshu-publisher skill（CDP 直连，复用 weibo-publisher CDPClient + utils）。
