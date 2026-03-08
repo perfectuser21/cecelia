@@ -1,9 +1,10 @@
 ---
 id: engine-learnings
-version: 1.26.0
+version: 1.28.0
 created: 2026-01-16
-updated: 2026-03-05
+updated: 2026-03-08
 changelog:
+  - 1.28.0: branch-gc.sh 孤儿分支清理 + Engine 6 文件版本同步踩坑（CI 3 次失败全记录）
   - 1.27.0: 深度 Bug 修复 Round 2 — 30+ 全面修复（worktree 感知、FD 冲突、路径安全、跨平台兼容）
   - 1.26.0: Stop Hook + Cleanup 5 bug 一次性修复（squash merge 检测、per-branch .dev-mode、GC 竞态、CI 卡死）
   - 1.25.0: Worktree GC 外部清理者架构（55 次修补失败的根因分析 + 三条铁律 + 测试技巧）
@@ -35,6 +36,27 @@ changelog:
 ---
 
 # Engine 开发经验记录
+
+### [2026-03-08] branch-gc.sh 孤儿分支清理 + Engine 版本同步 (PR #686)
+
+**失败统计**：CI 失败 3 次，本地测试失败 0 次
+
+**CI 失败记录**：
+- 失败 #1：`ci-tools/VERSION`（12.42.0）未与 `package.json`（12.44.2）同步；`stop-cleanup-bugfixes.test.ts` Section 9 测试期望旧的内联 `gh pr list` 逻辑但已改为委托 `branch-gc.sh`
+  - 修复：更新 `ci-tools/VERSION`；重写测试验证 branch-gc.sh 委托
+- 失败 #2：Engine 版本需要同步 **6 个文件**而非 3 个。遗漏 `.hook-core-version` 和 `regression-contract.yaml`。另外修改 `skills/` 目录需要 PR title 含 `[CONFIG]` 标签，且 `feature-registry.yml` 需更新
+  - 修复：更新遗漏的版本文件；PR title 加 `[CONFIG]`；feature-registry 加条目
+- 失败 #3：更新 `feature-registry.yml` 后未重新生成 `docs/paths/` 派生视图（Contract Drift Check）
+  - 修复：`bash scripts/generate-path-views.sh` 重新生成
+
+**错误判断记录**：
+- 以为 Engine 版本只需更新 3 个文件（package.json + VERSION + package-lock.json），实际是 6 个文件
+
+**影响程度**: Medium
+**预防措施**：
+- Engine 版本 bump 时检查全部 6 个文件：package.json, package-lock.json, VERSION, ci-tools/VERSION, .hook-core-version, regression-contract.yaml
+- 修改 skills/ 或 hooks/ 时，PR title 加 `[CONFIG]`，更新 feature-registry.yml，运行 generate-path-views.sh
+- 根因：307 个残留分支的 78% 是从未创建 PR 的崩溃会话孤儿分支，cleanup.sh Step 9 只清理有已合并 PR 的分支，永远清不掉它们
 
 ### [2026-03-05] Stop Hook + Cleanup 5 Bug 一次性修复 (PR #552)
 
