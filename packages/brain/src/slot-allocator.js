@@ -12,9 +12,9 @@
 
 /* global console */
 
-import { execSync } from 'child_process';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
+import { listProcessesWithElapsed } from './platform-utils.js';
 
 // ============================================================
 // Constants
@@ -38,28 +38,24 @@ const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire
  *
  * Sessions older than SESSION_TTL_SECONDS are excluded from the headed count
  * to prevent orphaned worktree processes from permanently triggering team mode.
+ *
+ * Platform-aware: uses listProcessesWithElapsed() from platform-utils.js
+ * (Darwin: ps -ax -o pid=,etime=,comm=,args= with etime parsing;
+ *  Linux: ps -eo pid,etimes,comm,args --no-headers)
  */
 function detectUserSessions() {
   try {
-    // Include etimes (elapsed time in seconds) for TTL filtering
-    const output = execSync(
-      "ps -eo pid,etimes,comm,args --no-headers 2>/dev/null | awk '$3 == \"claude\" {print}'",
-      { encoding: 'utf-8', timeout: 3000 }
-    ).trim();
+    const allProcs = listProcessesWithElapsed();
+    // Filter to claude processes only
+    const claudeProcs = allProcs.filter(p => p.comm === 'claude');
 
-    if (!output) return { headed: [], headless: [], total: 0 };
+    if (claudeProcs.length === 0) return { headed: [], headless: [], total: 0 };
 
     const headed = [];
     const headless = [];
 
-    for (const line of output.split('\n').filter(Boolean)) {
-      const parts = line.trim().split(/\s+/);
-      const pid = parseInt(parts[0], 10);
-      const elapsedSec = parseInt(parts[1], 10);
-      // parts[2] = "claude" (comm), parts[3+] = args
-      const args = parts.slice(3).join(' ');
-
-      if (isNaN(pid)) continue;
+    for (const proc of claudeProcs) {
+      const { pid, elapsedSec, args } = proc;
 
       // `claude -p "..."` or `claude --print "..."` = headless (Cecelia dispatched)
       if (/ -p /.test(args) || /^-p /.test(args) || / --print /.test(args)) {

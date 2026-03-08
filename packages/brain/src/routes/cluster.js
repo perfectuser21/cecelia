@@ -11,38 +11,14 @@
 
 import { Router } from 'express';
 import { execSync } from 'child_process';
-import { readFileSync, readlinkSync, existsSync } from 'fs';
+import {
+  readCmdline,
+  readProcessEnv,
+  readProcessCwd,
+  processExists,
+} from '../platform-utils.js';
 
 const router = Router();
-
-function readCmdline(pid) {
-  try {
-    const raw = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
-    return raw.split('\0').filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-function readProcessEnv(pid, keys) {
-  const result = {};
-  for (const k of keys) result[k] = null;
-  try {
-    const raw = readFileSync(`/proc/${pid}/environ`, 'utf-8');
-    const entries = raw.split('\0');
-    for (const entry of entries) {
-      const eqIdx = entry.indexOf('=');
-      if (eqIdx === -1) continue;
-      const key = entry.slice(0, eqIdx);
-      if (keys.includes(key)) {
-        result[key] = entry.slice(eqIdx + 1);
-      }
-    }
-  } catch {
-    // cannot read environ
-  }
-  return result;
-}
 
 function isForegroundClaude(args) {
   if (args.length === 0) return false;
@@ -88,7 +64,7 @@ router.get('/session-info/:pid', (req, res) => {
   if (!Number.isFinite(pid) || pid <= 0) {
     return res.status(400).json({ error: 'Invalid PID' });
   }
-  if (!existsSync(`/proc/${pid}`)) {
+  if (!processExists(pid)) {
     return res.status(404).json({ error: 'Process not found' });
   }
 
@@ -97,8 +73,8 @@ router.get('/session-info/:pid', (req, res) => {
     return res.status(404).json({ error: 'Cannot read process info' });
   }
 
-  let cwd = null;
-  try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { cwd = null; }
+  // Platform-aware cwd reading (Darwin: lsof, Linux: /proc/pid/cwd)
+  const cwd = readProcessCwd(pid);
 
   let projectName = null;
   if (cwd) {
@@ -126,7 +102,7 @@ router.get('/session-providers', (req, res) => {
 
   const result = {};
   for (const pid of pids) {
-    if (!existsSync(`/proc/${pid}`)) continue;
+    if (!processExists(pid)) continue;
     const env = readProcessEnv(pid, ['CECELIA_PROVIDER', 'CECELIA_MODEL', 'ANTHROPIC_BASE_URL']);
     let provider = 'anthropic';
     if (env.CECELIA_PROVIDER) {
@@ -145,7 +121,7 @@ router.post('/kill-session', (req, res) => {
   if (!Number.isFinite(pid) || pid <= 0) {
     return res.status(400).json({ error: 'Invalid PID' });
   }
-  if (!existsSync(`/proc/${pid}`)) {
+  if (!processExists(pid)) {
     return res.status(404).json({ error: 'Process not found' });
   }
 

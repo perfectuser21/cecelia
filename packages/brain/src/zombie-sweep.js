@@ -17,6 +17,7 @@ import path from 'path';
 import pool from './db.js';
 import { emit } from './event-bus.js';
 import { getActiveProcesses } from './executor.js';
+import { listProcessesWithPpid } from './platform-utils.js';
 
 const GRACE_PERIOD_MS = 30 * 60 * 1000; // 30 minutes
 const LOCK_SLOT_DIR = '/tmp/cecelia-locks';
@@ -200,21 +201,11 @@ async function sweepStaleWorktrees() {
 async function sweepOrphanProcesses() {
   const result = { checked: 0, killed: 0, errors: [] };
 
-  // 1. 用 ps 获取所有进程信息（pid, ppid, command）
-  let allProcesses;
-  try {
-    const output = execSync('ps -eo pid=,ppid=,args=', {
-      encoding: 'utf8',
-      timeout: 5000
-    }).trim();
-    allProcesses = output.split('\n').map(line => {
-      const trimmed = line.trim();
-      const match = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/);
-      if (!match) return null;
-      return { pid: parseInt(match[1], 10), ppid: parseInt(match[2], 10), cmd: match[3] };
-    }).filter(Boolean);
-  } catch (err) {
-    result.errors.push(`ps failed: ${err.message}`);
+  // 1. 用 platform-utils 获取所有进程信息（pid, ppid, command）
+  // Platform-aware: Darwin uses ps -ax -o, Linux uses ps -eo
+  const allProcesses = listProcessesWithPpid();
+  if (allProcesses.length === 0) {
+    result.errors.push('ps returned no processes');
     return result;
   }
 
