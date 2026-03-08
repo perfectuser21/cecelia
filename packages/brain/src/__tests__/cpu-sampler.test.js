@@ -132,6 +132,9 @@ describe('checkServerResources CPU 压力 — D1-4/D1-5', () => {
     expect(r1.metrics.cpu_usage_pct).toBeNull();
     expect(r1.metrics.cpu_pressure).toBe(0);
 
+    // Reset sliding window to isolate second call from first call's mem readings
+    _resetResourceHistory();
+
     // Second call: sampleCpuUsage returns 33% → cpuPressure = 33/80 ≈ 0.41
     mockSampleCpuUsage.mockReturnValueOnce(33);
     const r2 = checkServerResources();
