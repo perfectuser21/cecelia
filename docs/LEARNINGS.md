@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] /dev 效率优化：版本号 + BEHIND 循环修复（PR #673）
+
+**问题**：每个 PR 平均 42 分钟，其中 27 分钟浪费在版本号和 BEHIND 循环上。
+
+**根因分析**：
+1. `strict: true` 分支保护要求 PR 与 main 同步 → 每次其他 PR 合并后所有 open PR 变 BEHIND → 需要 merge main + 重跑 CI
+2. PR 里手动 bump 5 个版本文件 → 多 PR 并行时版本冲突
+3. `auto-version.yml`（PR #665）从未成功：GITHUB_TOKEN 无法绕过分支保护直推 main
+
+**修复**：
+- 分支保护 `strict: false`：消灭 BEHIND 循环
+- PR 不再 bump 版本：5 个文件保持旧版本（互相一致 → facts-check 和 version-sync 通过）
+- `auto-version.yml` 改为创建 PR + squash auto-merge（而非直推 main）
+- skip 逻辑拦截循环：squash merge 的 commit title 包含 "chore(brain): auto-version"
+
+**关键教训**：
+- GitHub 的 `required_status_checks.strict` 对高并发 PR 仓库是致命的 — 每次合并触发 O(N) 次 CI
+- `GITHUB_TOKEN` 权限比 PAT 小得多 — 不能绕过分支保护、不能写 secrets
+- Rulesets 的 `required_status_checks` 在免费 plan 不可用
+
 ### [2026-03-08] token-aware slot allocator（PR #670, Brain v1.212.0）
 
 **背景**：slot allocator 只看 CPU/内存/swap 压力，完全忽略 token 使用率。当 3 个 Claude Max 账号 5h token 用完时，系统仍然派发任务导致全部失败。
