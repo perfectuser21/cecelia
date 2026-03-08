@@ -114,6 +114,50 @@ function isPublishPageReached(url, targetUrl) {
   return url.includes('cp.kuaishou.com') && url.includes(targetPath);
 }
 
+/**
+ * 将会话检查结果格式化为标准化输出对象。
+ * 退出码语义：0=OK, 1=错误/超时, 2=过期。
+ *
+ * @param {'ok' | 'expired' | 'cdp_error' | 'timeout'} status - 会话状态
+ * @param {string} [url] - 当前页面 URL（可选，附加上下文）
+ * @returns {{ tag: string, message: string, exitCode: number }}
+ */
+function formatSessionStatus(status, url) {
+  const urlInfo = url ? ` (${url})` : '';
+  switch (status) {
+    case 'ok':
+      return {
+        tag: '[SESSION_OK]',
+        message: `快手会话有效${urlInfo}`,
+        exitCode: 0,
+      };
+    case 'expired':
+      return {
+        tag: '[SESSION_EXPIRED]',
+        message: `快手 OAuth 会话已过期，请重新登录创作者中心${urlInfo}`,
+        exitCode: 2,
+      };
+    case 'cdp_error':
+      return {
+        tag: '[CDP_ERROR]',
+        message: `无法连接 CDP（Windows PC 可能未开机或浏览器未启动）${urlInfo}`,
+        exitCode: 1,
+      };
+    case 'timeout':
+      return {
+        tag: '[TIMEOUT]',
+        message: `页面加载超时${urlInfo}`,
+        exitCode: 1,
+      };
+    default:
+      return {
+        tag: '[UNKNOWN]',
+        message: `未知状态: ${status}`,
+        exitCode: 1,
+      };
+  }
+}
+
 module.exports = {
   PUBLISH_URLS,
   findImages,
@@ -123,4 +167,5 @@ module.exports = {
   extractDirNames,
   isLoginRedirect,
   isPublishPageReached,
+  formatSessionStatus,
 };

@@ -24,6 +24,7 @@ const {
   extractDirNames,
   isLoginRedirect,
   isPublishPageReached,
+  formatSessionStatus,
 } = require('../utils.cjs');
 
 // ============================================================
@@ -227,5 +228,52 @@ describe('isLoginRedirect（OAuth 登录重定向检测）', () => {
     assert.equal(isLoginRedirect(''), false);
     assert.equal(isLoginRedirect(null), false);
     assert.equal(isLoginRedirect(undefined), false);
+  });
+});
+
+// ============================================================
+// Test 8: formatSessionStatus — 会话状态格式化
+// ============================================================
+describe('formatSessionStatus（会话状态格式化）', () => {
+  test('ok 状态返回 [SESSION_OK] 和 exitCode 0', () => {
+    const result = formatSessionStatus('ok');
+    assert.equal(result.tag, '[SESSION_OK]');
+    assert.equal(result.exitCode, 0);
+    assert.ok(result.message.length > 0, 'message 不应为空');
+  });
+
+  test('expired 状态返回 [SESSION_EXPIRED] 和 exitCode 2', () => {
+    const result = formatSessionStatus('expired');
+    assert.equal(result.tag, '[SESSION_EXPIRED]');
+    assert.equal(result.exitCode, 2);
+  });
+
+  test('cdp_error 状态返回 [CDP_ERROR] 和 exitCode 1', () => {
+    const result = formatSessionStatus('cdp_error');
+    assert.equal(result.tag, '[CDP_ERROR]');
+    assert.equal(result.exitCode, 1);
+  });
+
+  test('timeout 状态返回 [TIMEOUT] 和 exitCode 1', () => {
+    const result = formatSessionStatus('timeout');
+    assert.equal(result.tag, '[TIMEOUT]');
+    assert.equal(result.exitCode, 1);
+  });
+
+  test('url 参数附加到 message 中', () => {
+    const url = 'https://passport.kuaishou.com/login';
+    const result = formatSessionStatus('expired', url);
+    assert.ok(result.message.includes(url), 'message 应包含 url');
+  });
+
+  test('无 url 时 message 不包含括号', () => {
+    const result = formatSessionStatus('ok');
+    assert.ok(!result.message.includes('(https'), 'message 不应含 url 括号');
+  });
+
+  test('未知状态返回 [UNKNOWN] 和 exitCode 1', () => {
+    const result = formatSessionStatus('whatever');
+    assert.equal(result.tag, '[UNKNOWN]');
+    assert.equal(result.exitCode, 1);
   });
 });
