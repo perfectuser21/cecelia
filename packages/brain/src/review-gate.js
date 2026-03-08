@@ -194,6 +194,43 @@ async function processReviewResult(pool, taskId, verdict, findings) {
     );
     console.log(`[review-gate] Entity ${entityId} activated (approved)`);
 
+    // 断链 #2: entity_type=project 时，为每个 initiative 创建 architecture_design (M2 design) 任务
+    if (entityType === 'project') {
+      try {
+        const initiatives = await pool.query(
+          `SELECT id, name FROM projects WHERE parent_id = $1 AND type = 'initiative' AND status != 'completed'`,
+          [entityId]
+        );
+        const { createTask: createAdM2Task } = await import('./actions.js');
+        for (const initiative of initiatives.rows) {
+          // 幂等检查：initiative 已有 queued/in_progress 的 architecture_design 时跳过
+          const existing = await pool.query(
+            `SELECT id FROM tasks
+             WHERE project_id = $1 AND task_type = 'architecture_design'
+               AND status IN ('queued', 'in_progress')
+             LIMIT 1`,
+            [initiative.id]
+          );
+          if (existing.rows.length > 0) {
+            console.log(`[review-gate] architecture_design(M2) already queued for initiative ${initiative.id}, skip`);
+            continue;
+          }
+          await createAdM2Task({
+            title: `[M2 Design] architecture_design — ${initiative.name}`,
+            description: `Vivian 已 approved，为 Initiative「${initiative.name}」生成技术设计文档 + 拆分 dev Tasks。`,
+            priority: 'P1',
+            project_id: initiative.id,
+            task_type: 'architecture_design',
+            trigger_source: 'review_gate_auto',
+            payload: { mode: 'design', approved_review_task_id: taskId, parent_project_id: entityId }
+          });
+          console.log(`[review-gate] 断链#2 修复: architecture_design(M2 design) created for initiative ${initiative.id}`);
+        }
+      } catch (adM2Err) {
+        console.error(`[review-gate] architecture_design(M2) creation failed (non-fatal): ${adM2Err.message}`);
+      }
+    }
+
   } else if (verdict === 'needs_revision') {
     // 创建修正 decomp task
     const entityRow = await pool.query(

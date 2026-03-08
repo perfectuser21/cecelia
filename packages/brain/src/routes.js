@@ -3571,6 +3571,136 @@ ${resultStr.substring(0, 2000)}
       } catch (reviewErr) {
         console.error(`[execution-callback] Review handling error: ${reviewErr.message}`);
       }
+
+      // 5c6. 断链 #1: suggestion_plan 完成 → 创建 architecture_design (M1 scan) 任务
+      try {
+        const spAdRow = await pool.query(
+          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const spAdTask = spAdRow.rows[0];
+
+        if (spAdTask?.task_type === 'suggestion_plan') {
+          const projectId = spAdTask.project_id;
+          const existing = await pool.query(
+            `SELECT id FROM tasks
+             WHERE project_id = $1 AND task_type = 'architecture_design'
+               AND status IN ('queued', 'in_progress')
+             LIMIT 1`,
+            [projectId]
+          );
+          if (existing.rows.length > 0) {
+            console.log(`[execution-callback] architecture_design already queued for project ${projectId}, skip`);
+          } else {
+            const { createTask: createAdTask } = await import('./actions.js');
+            await createAdTask({
+              title: `[M1 Scan] architecture_design — ${spAdTask.title}`,
+              description: `suggestion_plan「${spAdTask.title}」已完成，开始 M1 全量扫描代码库，建立 system_modules 知识库。\n原始 suggestion_plan task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: projectId,
+              goal_id: spAdTask.goal_id,
+              task_type: 'architecture_design',
+              trigger_source: 'execution_callback_auto',
+              payload: { mode: 'scan', parent_task_id: task_id }
+            });
+            console.log(`[execution-callback] 断链#1 修复: architecture_design (M1 scan) created for suggestion_plan ${task_id}`);
+          }
+        }
+      } catch (spAdErr) {
+        console.error(`[execution-callback] suggestion_plan → architecture_design creation failed (non-fatal): ${spAdErr.message}`);
+      }
+
+      // 5c7. 断链 #3: architecture_design 完成 → M1 创建 initiative_plan / M2 验证 dev 任务
+      try {
+        const adRow = await pool.query(
+          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const adTask = adRow.rows[0];
+
+        if (adTask?.task_type === 'architecture_design') {
+          const mode = adTask.payload?.mode || 'scan';
+          const projectId = adTask.project_id;
+          if (mode === 'scan') {
+            const existingIp = await pool.query(
+              `SELECT id FROM tasks
+               WHERE project_id = $1 AND task_type = 'initiative_plan'
+                 AND status IN ('queued', 'in_progress')
+               LIMIT 1`,
+              [projectId]
+            );
+            if (existingIp.rows.length > 0) {
+              console.log(`[execution-callback] initiative_plan already queued for project ${projectId}, skip`);
+            } else {
+              const { createTask: createIpTask } = await import('./actions.js');
+              await createIpTask({
+                title: `[秋米] initiative_plan — ${adTask.title}`,
+                description: `architecture_design (M1 scan)「${adTask.title}」已完成，秋米开始拆解规划 Initiatives。\n原始 architecture_design task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: projectId,
+                goal_id: adTask.goal_id,
+                task_type: 'initiative_plan',
+                trigger_source: 'execution_callback_auto',
+                payload: { parent_task_id: task_id, architecture_scan_task_id: task_id }
+              });
+              console.log(`[execution-callback] 断链#3 修复: initiative_plan created for architecture_design(scan) ${task_id}`);
+            }
+          } else {
+            // M2 design 完成 → 验证 dev 任务已存在（日志告警）
+            const devTasks = await pool.query(
+              `SELECT COUNT(*) AS cnt FROM tasks
+               WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress')`,
+              [projectId]
+            );
+            const devCnt = parseInt(devTasks.rows[0]?.cnt || 0);
+            if (devCnt === 0) {
+              console.warn(`[execution-callback] 断链#3 警告: architecture_design(design) ${task_id} 完成但 project ${projectId} 无 queued dev 任务，请检查 /architect 是否注册了 Task`);
+            } else {
+              console.log(`[execution-callback] 断链#3: architecture_design(design) ${task_id} 完成，project ${projectId} 有 ${devCnt} 个 dev 任务就绪`);
+            }
+          }
+        }
+      } catch (adErr) {
+        console.error(`[execution-callback] architecture_design callback handling failed (non-fatal): ${adErr.message}`);
+      }
+
+      // 5c8. 断链 #4: code_review 完成 → 创建 initiative_verify 任务
+      try {
+        const crRow = await pool.query(
+          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const crTask = crRow.rows[0];
+
+        if (crTask?.task_type === 'code_review') {
+          const projectId = crTask.project_id;
+          const existingIv = await pool.query(
+            `SELECT id FROM tasks
+             WHERE project_id = $1 AND task_type = 'initiative_verify'
+               AND status IN ('queued', 'in_progress')
+             LIMIT 1`,
+            [projectId]
+          );
+          if (existingIv.rows.length > 0) {
+            console.log(`[execution-callback] initiative_verify already queued for project ${projectId}, skip`);
+          } else {
+            const { createTask: createIvTask } = await import('./actions.js');
+            await createIvTask({
+              title: `[验收] initiative_verify — ${crTask.title}`,
+              description: `code_review「${crTask.title}」已完成，开始 Initiative 验收（DoD 检查）。\n原始 code_review task_id: ${task_id}`,
+              priority: 'P1',
+              project_id: projectId,
+              goal_id: crTask.goal_id,
+              task_type: 'initiative_verify',
+              trigger_source: 'execution_callback_auto',
+              payload: { parent_task_id: task_id, code_review_task_id: task_id }
+            });
+            console.log(`[execution-callback] 断链#4 修复: initiative_verify created for code_review ${task_id}`);
+          }
+        }
+      } catch (crErr) {
+        console.error(`[execution-callback] code_review → initiative_verify creation failed (non-fatal): ${crErr.message}`);
+      }
     }
 
     // 5c5. Suggestion Plan 闭环：suggestion_plan 完成/失败 → 更新 suggestion.status

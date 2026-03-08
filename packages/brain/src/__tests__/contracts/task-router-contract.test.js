@@ -11,6 +11,8 @@ import {
   determineExecutionMode,
   routeTaskCreate,
   routeTaskWithFallback,
+  isValidTaskType,
+  SKILL_WHITELIST,
 } from '../../task-router.js';
 
 describe('task-router contract', () => {
@@ -59,6 +61,31 @@ describe('task-router contract', () => {
     it('returns default location for null/undefined', () => {
       expect(getTaskLocation(null)).toBe('us');
       expect(getTaskLocation(undefined)).toBe('us');
+    });
+
+    it('D5-3: returns "us" for initiative_settle', () => {
+      expect(getTaskLocation('initiative_settle')).toBe('us');
+    });
+  });
+
+  describe('isValidTaskType (D5-1)', () => {
+    it('D5-1: initiative_settle is a valid task type', () => {
+      expect(isValidTaskType('initiative_settle')).toBe(true);
+    });
+
+    it('returns true for known types', () => {
+      expect(isValidTaskType('dev')).toBe(true);
+      expect(isValidTaskType('code_review')).toBe(true);
+    });
+
+    it('returns false for unknown types', () => {
+      expect(isValidTaskType('nonexistent_type')).toBe(false);
+    });
+  });
+
+  describe('SKILL_WHITELIST (D5-2)', () => {
+    it('D5-2: initiative_settle maps to /assurance in SKILL_WHITELIST', () => {
+      expect(SKILL_WHITELIST['initiative_settle']).toBe('/assurance');
     });
   });
 

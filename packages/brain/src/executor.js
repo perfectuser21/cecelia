@@ -978,6 +978,8 @@ function getSkillForTaskType(taskType, payload) {
     'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
     // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
     'strategy_session': '/strategy-session',
+    // Initiative 收尾：注册检查 + 集成测试 + 收尾文件
+    'initiative_settle': '/assurance',
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
@@ -2048,7 +2050,7 @@ async function probeTaskLiveness() {
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
     // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
-    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design';
+    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design' || task.task_type === 'initiative_settle';
     if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
       if (triggeredAt) {
