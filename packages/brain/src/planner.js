@@ -467,10 +467,10 @@ async function generateArchitectureDesignTask(kr, project) {
       taskDescription = `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
       extraPayload = {};
     } else {
-      // non-coding domain: initiative_plan with skill_override from role-registry
+      // non-coding domain: domain_plan with skill_override from role-registry
       const role = getDomainRole(domain);
       const skillOverride = ROLES[role]?.skills?.[0] ?? '/dev';
-      taskType = 'initiative_plan';
+      taskType = 'domain_plan';
       taskTitle = `Initiative 规划 [${domain}]: ${initiative.name}`;
       taskDescription = `该 Initiative「${initiative.name}」下无任务，需要按 ${domain} 领域规划。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
       extraPayload = { skill_override: skillOverride, domain };

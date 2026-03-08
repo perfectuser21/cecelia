@@ -3,7 +3,7 @@
  *
  * Tests for generateArchitectureDesignTask() domain-based routing:
  * - coding domain → architecture_design task → /architect
- * - non-coding domain → initiative_plan task + skill_override from role-registry
+ * - non-coding domain → domain_plan task + skill_override from role-registry
  * - domain inheritance chain: Initiative → Project → KR → default 'coding'
  */
 
@@ -116,11 +116,11 @@ describe('coding domain → architecture_design task', () => {
 });
 
 // ============================================================
-// DoD-2: growth domain → initiative_plan + /research
+// DoD-2: growth domain → domain_plan + /research
 // ============================================================
 
-describe('growth domain → initiative_plan + skill_override=/research', () => {
-  it('should generate initiative_plan task with skill_override=/research for growth domain', async () => {
+describe('growth domain → domain_plan + skill_override=/research', () => {
+  it('should generate domain_plan task with skill_override=/research for growth domain', async () => {
     const kr = await createKR({ title: 'KR growth domain' });
     const project = await createProject({ name: 'proj-growth' });
     await createInitiative({ name: 'Growth Initiative', parentId: project.id, domain: 'growth' });
@@ -128,7 +128,7 @@ describe('growth domain → initiative_plan + skill_override=/research', () => {
     const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('domain_plan');
     expect(task.status).toBe('queued');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
@@ -156,11 +156,11 @@ describe('growth domain → initiative_plan + skill_override=/research', () => {
 });
 
 // ============================================================
-// DoD-3: product domain → initiative_plan + /plan
+// DoD-3: product domain → domain_plan + /plan
 // ============================================================
 
-describe('product domain → initiative_plan + skill_override=/plan', () => {
-  it('should generate initiative_plan task with skill_override=/plan for product domain', async () => {
+describe('product domain → domain_plan + skill_override=/plan', () => {
+  it('should generate domain_plan task with skill_override=/plan for product domain', async () => {
     const kr = await createKR({ title: 'KR product domain' });
     const project = await createProject({ name: 'proj-product' });
     await createInitiative({ name: 'Product Initiative', parentId: project.id, domain: 'product' });
@@ -168,7 +168,7 @@ describe('product domain → initiative_plan + skill_override=/plan', () => {
     const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('domain_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
     expect(payload.skill_override).toBe('/plan');
@@ -192,7 +192,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('domain_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
     expect(payload.skill_override).toBe('/research');
@@ -209,7 +209,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('domain_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
     expect(payload.skill_override).toBe('/research');
@@ -239,7 +239,7 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
     const task = await generateArchitectureDesignTask(kr, project);
 
     expect(task).not.toBeNull();
-    expect(task.task_type).toBe('initiative_plan');
+    expect(task.task_type).toBe('domain_plan');
 
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
     expect(payload.skill_override).toBe('/research');
@@ -253,14 +253,14 @@ describe('domain inheritance chain: Initiative → Project → KR → default co
 // ============================================================
 
 describe('dedup check per task_type', () => {
-  it('should not create duplicate initiative_plan task for same growth initiative', async () => {
+  it('should not create duplicate domain_plan task for same growth initiative', async () => {
     const kr = await createKR({ title: 'KR growth dedup' });
     const project = await createProject({ name: 'proj-growth-dedup' });
     await createInitiative({ name: 'Growth Dedup Initiative', parentId: project.id, domain: 'growth' });
 
     const task1 = await generateArchitectureDesignTask(kr, project);
     expect(task1).not.toBeNull();
-    expect(task1.task_type).toBe('initiative_plan');
+    expect(task1.task_type).toBe('domain_plan');
     testTaskIds.push(task1.id);
 
     const task2 = await generateArchitectureDesignTask(kr, project);

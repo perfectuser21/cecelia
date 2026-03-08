@@ -885,6 +885,7 @@ function getSkillForTaskType(taskType, payload) {
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
     'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
+    'domain_plan': '/decomp',         // 非 coding domain 规划任务：/decomp
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
@@ -1357,6 +1358,13 @@ PUT /api/tasks/goals/${krId}
   // 任务描述已包含完整的 Initiative ID、KR ID、历史 PR 等信息，无需额外处理
   if (taskType === 'initiative_plan' || taskType === 'initiative_verify') {
     return `/decomp\n\n${task.description || task.title}`;
+  }
+
+  // domain_plan：非 coding domain 规划任务，传递 domain 上下文
+  if (taskType === 'domain_plan') {
+    const domain = task.domain || 'unknown';
+    const ownerRole = task.owner_role || 'unknown';
+    return `/decomp\n\n[Domain Context]\n- Domain: ${domain}\n- Owner Role: ${ownerRole}\n\n${task.description || task.title}`;
   }
 
   // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入

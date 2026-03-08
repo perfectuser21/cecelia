@@ -17,7 +17,7 @@ const VALID_TASK_TYPES = [
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'suggestion_plan', 'architecture_design', 'strategy_session'
+  'domain_plan', 'suggestion_plan', 'architecture_design', 'strategy_session'
 ];
 
 // Skill whitelist based on task type
@@ -37,6 +37,7 @@ const SKILL_WHITELIST = {
   'dept_heartbeat': '/cecelia',
   'initiative_plan': '/decomp',
   'initiative_verify': '/decomp',
+  'domain_plan': '/decomp',
   'suggestion_plan': '/plan',
   'architecture_design': '/architect',
   'strategy_session': '/strategy-session'
@@ -104,6 +105,7 @@ const LOCATION_MAP = {
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
   'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
+  'domain_plan': 'us',          // 非 coding domain 规划 → US (Opus + /decomp)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
   'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect)
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
