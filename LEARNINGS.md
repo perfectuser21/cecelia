@@ -1,5 +1,15 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] branch-protect hook 子目录 PRD 查找陷阱（PR #691）
+
+**问题**：当修改 `packages/workflows/` 子目录下的文件时，`branch-protect.sh` 的 `find_prd_dod_dir` 从文件路径向上查找 PRD，途中发现 `packages/workflows/.prd.md`（旧任务遗留）就停止，不会继续找根目录的 `.prd-{branch}.md`。导致 hook 拿到了旧任务的 `.prd.md`，报 "PRD 文件未更新"。
+
+**根因**：`find_prd_dod_dir` 是 "最近的优先" 策略，旧 `.prd.md` 在子目录中挡住了根目录的新格式 PRD。
+
+**修复方案**：在对应子目录（`packages/workflows/`）也放一个新格式 `.prd-{branch}.md`，gitignored，hook 优先匹配新格式，gitignore 后自动跳过更新检查。
+
+**教训**：修改 monorepo 子目录文件时，若子目录有旧 `.prd.md`，必须在该子目录也创建分支格式 PRD/DoD，否则 hook 找错文件。
+
 ### [2026-03-07] Cortex 反思去重持久化 — 过期清理缺失导致信道饱和（PR #685）
 
 **问题**：cortex.js 的 `_reflectionState` 已有 per-hash key 持久化到 `working_memory`，但 `_loadReflectionStateFromDB` 加载时不检查 30 分钟窗口，过期条目永不清理。

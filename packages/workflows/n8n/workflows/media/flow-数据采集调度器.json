@@ -224,7 +224,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const platforms = ['\\u6296\\u97f3','\\u5feb\\u624b','\\u5c0f\\u7ea2\\u4e66','\\u5934\\u6761','\\u5934\\u67612','\\u5fae\\u535a','\\u89c6\\u9891\\u53f7','\\u516c\\u4f17\\u53f7','\\u77e5\\u4e4e'];\\nconst results = [];\\nconst failed = [];\\n\\nfor (let i = 0; i < 9; i++) {\\n  const name = platforms[i];\\n  const data = $(`${i+1}-${name}`).item.json || {};\\n  const success = data.success && (data.count || 0) >= 3;\\n  results.push({ platform: name, success, count: data.count || 0, error: data.error || null });\\n  if (!success) failed.push(name);\\n}\\n\\nreturn { results, failed, total: 9, successCount: results.filter(r=>r.success).length };"
+        "jsCode": "const platforms = ['抖音','快手','小红书','头条','头条2','微博','视频号','公众号','知乎'];\nconst results = [];\nconst failed = [];\n\nfor (let i = 0; i < platforms.length; i++) {\n  const name = platforms[i];\n  let data = {};\n  try {\n    const item = $(`${i+1}-${name}`).item;\n    data = (item && item.json) ? item.json : {};\n  } catch (e) {\n    data = { success: false, error: 'workflow_failed: ' + e.message, count: 0, duration_ms: 0 };\n  }\n  const success = data.success === true && (data.count || 0) >= 3;\n  results.push({\n    platform: name,\n    success,\n    count: data.count || 0,\n    error: data.error || null,\n    duration_ms: data.duration_ms || 0\n  });\n  if (!success) failed.push(name);\n}\n\nreturn { results, failed, total: platforms.length, successCount: results.filter(r => r.success).length };"
       },
       "id": "summary",
       "name": "\\u6c47\\u603b",
@@ -237,7 +237,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const r = $json;\nconst runDate = new Date().toISOString().split('T')[0];\n\nlet sql = `CREATE SCHEMA IF NOT EXISTS zenithjoy;\nCREATE TABLE IF NOT EXISTS zenithjoy.data_sources (\n  id SERIAL PRIMARY KEY,\n  run_date DATE NOT NULL,\n  platform VARCHAR(50) NOT NULL,\n  success BOOLEAN NOT NULL,\n  record_count INTEGER DEFAULT 0,\n  error_message TEXT,\n  scraped_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(run_date, platform)\n);\n`;\n\nif (r.results && r.results.length > 0) {\n  const values = r.results.map(p => {\n    const safeP = p.platform.replace(/'/g, \"''\");\n    const safeErr = p.error ? `'${String(p.error).replace(/'/g, \"''\")}'` : 'NULL';\n    return `('${runDate}', '${safeP}', ${p.success ? 'true' : 'false'}, ${p.count || 0}, ${safeErr}, NOW())`;\n  }).join(',\\n');\n  sql += `INSERT INTO zenithjoy.data_sources (run_date, platform, success, record_count, error_message, scraped_at) VALUES\\n${values}\\nON CONFLICT (run_date, platform) DO UPDATE SET\\n  success=EXCLUDED.success,\\n  record_count=EXCLUDED.record_count,\\n  error_message=EXCLUDED.error_message,\\n  scraped_at=NOW();\\n`;\n}\n\nconst sqlBase64 = Buffer.from(sql).toString('base64');\nreturn { ...r, sqlBase64 };"
+        "jsCode": "const r = $json;\nconst runDate = new Date().toISOString().split('T')[0];\n\nlet sql = `CREATE SCHEMA IF NOT EXISTS zenithjoy;\nCREATE TABLE IF NOT EXISTS zenithjoy.data_sources (\n  id SERIAL PRIMARY KEY,\n  run_date DATE NOT NULL,\n  platform VARCHAR(50) NOT NULL,\n  success BOOLEAN NOT NULL,\n  record_count INTEGER DEFAULT 0,\n  error_message TEXT,\n  duration_ms INTEGER DEFAULT 0,\n  scraped_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(run_date, platform)\n);\n`;\n\nif (r.results && r.results.length > 0) {\n  const values = r.results.map(p => {\n    const safeP = p.platform.replace(/'/g, \"''\");\n    const safeErr = p.error ? `'${String(p.error).replace(/'/g, \"''\")}'` : 'NULL';\n    const durMs = p.duration_ms || 0;\n    return `('${runDate}', '${safeP}', ${p.success ? 'true' : 'false'}, ${p.count || 0}, ${safeErr}, ${durMs}, NOW())`;\n  }).join(',\\n');\n  sql += `INSERT INTO zenithjoy.data_sources (run_date, platform, success, record_count, error_message, duration_ms, scraped_at) VALUES\\n${values}\\nON CONFLICT (run_date, platform) DO UPDATE SET\\n  success=EXCLUDED.success,\\n  record_count=EXCLUDED.record_count,\\n  error_message=EXCLUDED.error_message,\\n  duration_ms=EXCLUDED.duration_ms,\\n  scraped_at=NOW();\\n`;\n}\n\nconst sqlBase64 = Buffer.from(sql).toString('base64');\nreturn { ...r, sqlBase64 };"
       },
       "id": "gendb",
       "name": "\\u751f\\u6210DB\\u8bed\\u53e5",
@@ -253,7 +253,8 @@
         "command": "echo \"{{ $json.sqlBase64 }}\" | base64 -d > /tmp/ds_insert_$(date +%s).sql && docker exec -i cecelia-postgres psql -U cecelia -d timescaledb < /tmp/ds_insert_*.sql && rm -f /tmp/ds_insert_*.sql && echo '{\"db_write\":\"ok\"}'",
         "host": "134.199.234.147",
         "port": 22,
-        "username": "root"
+        "user": "root",
+        "authentication": "privateKey"
       },
       "id": "writedb",
       "name": "\\u5199\\u5165data_sources",
