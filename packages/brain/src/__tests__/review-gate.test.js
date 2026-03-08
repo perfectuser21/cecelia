@@ -16,6 +16,12 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'hk'),
 }));
 
+// Mock actions.js（供 D2 测试追踪 createTask 调用）
+const mockCreateTask = vi.fn(async () => ({ id: 'new-task', title: 'mock task' }));
+vi.mock('../actions.js', () => ({
+  createTask: (...args) => mockCreateTask(...args),
+}));
+
 import { shouldTriggerReview, createReviewTask, processReviewResult } from '../review-gate.js';
 
 function makeMockPool() {
@@ -209,6 +215,7 @@ describe('processReviewResult', () => {
 
   beforeEach(() => {
     pool = makeMockPool();
+    mockCreateTask.mockClear();
   });
 
   it('D5: verdict=approved → 激活实体', async () => {
@@ -290,5 +297,63 @@ describe('processReviewResult', () => {
     // 不应该抛错
     await processReviewResult(pool, 'nonexistent-task', 'approved', {});
     expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('D2-1: approved + entity_type=project → 为每个 initiative 创建 architecture_design (M2)', async () => {
+    pool.query = vi.fn(async (sql, params) => {
+      if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
+        return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
+      }
+      if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
+        return { rows: [] };
+      }
+      if (sql.includes('UPDATE projects') && sql.includes("'active'")) {
+        return { rows: [] };
+      }
+      // initiatives 查询
+      if (sql.includes('parent_id') && sql.includes("type = 'initiative'")) {
+        return { rows: [{ id: 'init-1', name: 'Initiative A' }, { id: 'init-2', name: 'Initiative B' }] };
+      }
+      // 幂等检查：无已有 architecture_design
+      if (sql.includes('architecture_design') && sql.includes("IN ('queued', 'in_progress')")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    await processReviewResult(pool, 'task-1', 'approved', {});
+    // 每个 initiative 应创建一个 architecture_design M2 任务
+    expect(mockCreateTask).toHaveBeenCalledTimes(2);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_type: 'architecture_design',
+      project_id: 'init-1',
+      payload: expect.objectContaining({ mode: 'design' }),
+    }));
+  });
+
+  it('D2-2: approved + initiative 已有 queued architecture_design → 不重复创建', async () => {
+    pool.query = vi.fn(async (sql, params) => {
+      if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
+        return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
+      }
+      if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
+        return { rows: [] };
+      }
+      if (sql.includes('UPDATE projects') && sql.includes("'active'")) {
+        return { rows: [] };
+      }
+      if (sql.includes('parent_id') && sql.includes("type = 'initiative'")) {
+        return { rows: [{ id: 'init-1', name: 'Initiative A' }] };
+      }
+      // 幂等：已有 architecture_design
+      if (sql.includes('architecture_design') && sql.includes("IN ('queued', 'in_progress')")) {
+        return { rows: [{ id: 'existing-ad' }] };
+      }
+      return { rows: [] };
+    });
+
+    await processReviewResult(pool, 'task-1', 'approved', {});
+    // 已有 queued → 不应调用 createTask
+    expect(mockCreateTask).not.toHaveBeenCalled();
   });
 });

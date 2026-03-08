@@ -416,6 +416,7 @@ queued → in_progress → completed
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构师 (/architect) | Opus / - | 默认 anthropic |
 | strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
+| initiative_settle | US | 膳后/收尾 (/assurance) | Opus / - | 默认 anthropic |
 
 ---
 

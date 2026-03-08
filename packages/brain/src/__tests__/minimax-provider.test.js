@@ -16,6 +16,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Mock os — 确保 checkServerResources() 在 CI 低内存环境下始终通过
+vi.mock('os', () => ({
+  default: {
+    freemem:  () => 8  * 1024 * 1024 * 1024,  // 8GB 空闲
+    totalmem: () => 16 * 1024 * 1024 * 1024,  // 16GB 总量
+    loadavg:  () => [0.5, 0.5, 0.5],
+    cpus:     () => new Array(8).fill({ model: 'Mock CPU', speed: 2400, times: { user: 0, nice: 0, sys: 0, idle: 100, irq: 0 } }),
+  }
+}));
+
 // Mock DB
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({

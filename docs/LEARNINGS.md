@@ -1,5 +1,46 @@
 # Cecelia Core Learnings
 
+### [2026-03-08] Brain Coding Pathway 断链修复 + os mock 根治 CI 低内存 flaky（PR #714）
+
+**失败统计**：Brain CI 失败 3 次（均因 minimax-provider T2 低内存 flaky）
+
+**核心问题：checkServerResources() 直接读 os.freemem()**
+- `executor.js` 在 `triggerCeceliaRun` 内调用 `checkServerResources()`
+- `checkServerResources()` 直接使用 `import os from 'os'`，调用 `os.freemem()` / `os.loadavg()`
+- CI Runner 内存 1441MB < 阈值 1775MB，导致函数提前 return `{ok: false, reason: 'server_overloaded'}`
+- 测试的 `platform-utils.js` mock（sampleCpuUsage、calculatePhysicalCapacity）**不覆盖** os 原生调用
+
+**根治方案：`vi.mock('os', ...)`**
+```javascript
+vi.mock('os', () => ({
+  default: {
+    freemem:  () => 8  * 1024 * 1024 * 1024,  // 8GB 空闲
+    totalmem: () => 16 * 1024 * 1024 * 1024,
+    loadavg:  () => [0.5, 0.5, 0.5],
+    cpus:     () => new Array(8).fill({ ... }),
+  }
+}));
+```
+- vitest 的 `vi.mock()` 被 hoisted 到顶层，在 `executor.js` 动态 import 前生效
+- `totalmem` mock 也很关键：模块级 `const TOTAL_MEM_MB = os.totalmem()` 影响阈值计算
+- 必须 mock `default` 属性（executor.js 用默认导入 `import os from 'os'`）
+
+**断链修复原则：幂等性检查必不可少**
+- 每处新建 Task 前先查 `SELECT id FROM tasks WHERE project_id=$1 AND task_type='...' AND status IN ('queued','in_progress') LIMIT 1`
+- execution-callback 会在 retry 时重复执行，没有幂等检查会导致重复 Task 爆炸
+
+**Engine CI 5 个门禁联动（改 hooks/ 必须同时满足）**
+1. Config Audit — PR title 必须含 `[CONFIG]` 或 `[INFRA]`（修改 hooks/ 时）
+2. Version Check — engine package.json 必须 bump
+3. Sync Check — 4 个文件（package.json、package-lock.json、VERSION、.hook-core-version）版本一致
+4. Impact Check — feature-registry.yml 必须更新 changelog
+5. Contract Drift — 改 feature-registry.yml 后必须重跑 `bash scripts/generate-path-views.sh`
+
+**worktree 陷阱：branch-protect.sh 三重检查**
+- 主仓库已 checkout 某分支时，无法在同一路径创建 worktree
+- 需先 `git stash` + `git checkout main` + `git worktree add /tmp/xxx branch-name`
+- worktree 中需手动补 `.dev-mode` 和 PRD/DoD 文件才能通过 branch-protect
+
 ### [2026-03-08] 快手发布 ID 提取 + worktree CWD 死锁恢复方案（PR #718）
 
 **失败统计**：CI 失败 0 次（本地 37/37 测试全通过后提交）

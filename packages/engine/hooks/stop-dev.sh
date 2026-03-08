@@ -62,6 +62,43 @@ if ! command -v jq &>/dev/null; then
     jq() { cat >/dev/null 2>&1; echo '{}'; }
 fi
 
+# ===== D6-1 修复：session 预检查（mutex 之前）— 无匹配则直接 exit 0 =====
+# 先做会话隔离检查，避免无关会话在 mutex 等待队列中阻塞
+_PRE_TTY=$(tty 2>/dev/null || echo "")
+_PRE_SESSION_ID="${CLAUDE_SESSION_ID:-}"
+_PRE_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+_PRE_MATCHED=false
+
+for _pre_lock in "$PROJECT_ROOT_EARLY"/.dev-lock.*; do
+    [[ -f "$_pre_lock" ]] || continue
+    _pre_lock_tty=$(grep "^tty:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2- | xargs 2>/dev/null || echo "")
+    _pre_lock_session=$(grep "^session_id:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
+    _pre_lock_branch=$(grep "^branch:" "$_pre_lock" 2>/dev/null | cut -d' ' -f2 | xargs 2>/dev/null || echo "")
+
+    # TTY 匹配
+    if [[ -n "$_pre_lock_tty" && "$_pre_lock_tty" != "not a tty" && -n "$_PRE_TTY" && "$_PRE_TTY" != "not a tty" ]]; then
+        if [[ "$_pre_lock_tty" == "$_PRE_TTY" ]]; then
+            _PRE_MATCHED=true; break
+        fi
+    # session_id 匹配
+    elif [[ -n "$_pre_lock_session" && -n "$_PRE_SESSION_ID" && "$_pre_lock_session" == "$_PRE_SESSION_ID" ]]; then
+        _PRE_MATCHED=true; break
+    # 无头模式：branch 匹配
+    elif [[ -z "$_PRE_TTY" || "$_PRE_TTY" == "not a tty" ]] && [[ -z "$_PRE_SESSION_ID" ]]; then
+        if [[ -n "$_pre_lock_branch" && "$_pre_lock_branch" == "$_PRE_BRANCH" ]]; then
+            _PRE_MATCHED=true; break
+        fi
+    fi
+done
+
+# 也检查旧格式 .dev-lock（无后缀）
+[[ "$_PRE_MATCHED" == "false" && -f "$PROJECT_ROOT_EARLY/.dev-lock" ]] && _PRE_MATCHED=true
+
+if [[ "$_PRE_MATCHED" == "false" ]]; then
+    # 无任何匹配的 .dev-lock → 此会话无 dev 流程，直接退出，不竞争 mutex
+    exit 0
+fi
+
 # ===== P0-2 修复：获取并发锁，防止多个会话同时操作 =====
 if [[ -n "$LOCK_UTILS" ]] && type acquire_dev_mode_lock &>/dev/null; then
     if ! acquire_dev_mode_lock 2; then
