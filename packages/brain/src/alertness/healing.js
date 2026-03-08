@@ -1053,7 +1053,6 @@ export function getRecoveryStatus() {
 export {
   startRecovery,
   applySelfHealing,
-  getRecoveryStatus,
   HEALING_STRATEGIES,
   RECOVERY_PHASES,
   executeAction
@@ -1062,7 +1061,6 @@ export {
 export default {
   startRecovery,
   applySelfHealing,
-  getRecoveryStatus,
   HEALING_STRATEGIES,
   RECOVERY_PHASES
 };
