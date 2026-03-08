@@ -213,32 +213,34 @@ branch refs/heads/cp-02020000-active-task`;
   // ─── sweepOrphanProcesses ─────────────────────────────────────────────────
 
   describe('sweepOrphanProcesses', () => {
-    it('孤儿进程接收 SIGTERM', async () => {
+    // 模拟 ps -eo pid=,ppid=,args= 的输出
+    const makePsOutput = (procs) =>
+      procs.map(p => `  ${p.pid}   ${p.ppid} ${p.cmd}`).join('\n');
+
+    it('杀死 ppid=1 的孤儿 claude 进程', async () => {
       vi.useFakeTimers();
 
-      // pgrep 返回两个 PID
-      execSync.mockReturnValueOnce('1001\n1002\n');
+      // ps 返回：tracked claude -p 进程 + 孤儿 subagent（ppid=1）
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 1001, ppid: 100, cmd: 'claude -p "do stuff"' },
+        { pid: 1002, ppid: 1, cmd: 'claude' },    // 孤儿 subagent
+        { pid: 100, ppid: 1, cmd: 'bash' },        // 非 claude 进程
+      ]));
 
-      // executor 已追踪 1001
       getActiveProcesses.mockReturnValue([{ pid: 1001, taskId: 'task-1' }]);
-
-      // DB 无其他 PID
       pool.query.mockResolvedValueOnce({ rows: [] });
+      existsSync.mockReturnValue(false); // no lock slot dir
 
-      // kill: SIGTERM succeeds, sig=0 (isPidAlive check) throws → pid 1002 is dead after SIGTERM
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, sig) => {
         if (sig === 0) throw new Error('ESRCH');
-        return undefined; // SIGTERM and SIGKILL succeed
+        return undefined;
       });
 
       const sweepPromise = sweepOrphanProcesses();
-
-      // Advance past the 5-second setTimeout
       await vi.runAllTimersAsync();
-
       const result = await sweepPromise;
 
-      // 1001 tracked, 1002 orphan → 2 checked, 1 killed
+      // 1001 tracked, 1002 孤儿 → 2 checked, 1 killed
       expect(result.checked).toBe(2);
       expect(result.killed).toBe(1);
 
@@ -246,19 +248,76 @@ branch refs/heads/cp-02020000-active-task`;
       vi.useRealTimers();
     });
 
-    it('pgrep 无进程时返回空结果', async () => {
-      const err = new Error('no processes found');
-      err.status = 1;
-      execSync.mockImplementationOnce(() => { throw err; });
+    it('tracked 进程的子进程（subagent）不被杀', async () => {
+      vi.useFakeTimers();
+
+      // ps: tracked 主进程 1001，其 subagent 1002（ppid=1001）
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 1001, ppid: 100, cmd: 'claude -p "task"' },
+        { pid: 1002, ppid: 1001, cmd: 'claude' },   // subagent of tracked
+        { pid: 100, ppid: 1, cmd: 'bash' },
+      ]));
+
+      getActiveProcesses.mockReturnValue([{ pid: 1001, taskId: 'task-1' }]);
+      pool.query.mockResolvedValueOnce({ rows: [] });
+      existsSync.mockReturnValue(false);
+
+      const killSpy = vi.spyOn(process, 'kill').mockReturnValue(undefined);
+
+      const sweepPromise = sweepOrphanProcesses();
+      await vi.runAllTimersAsync();
+      const result = await sweepPromise;
+
+      // 1002 是 1001 的后代，不应被杀
+      expect(result.killed).toBe(0);
+
+      killSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('交互式 claude 会话（非 -p，ppid!=1）不被杀', async () => {
+      vi.useFakeTimers();
+
+      // ps: 用户手动启动的 claude（没有 -p，ppid 不是 1）
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 2001, ppid: 500, cmd: 'claude' },   // 交互式会话
+        { pid: 500, ppid: 1, cmd: 'zsh' },
+      ]));
+
+      getActiveProcesses.mockReturnValue([]);
+      pool.query.mockResolvedValueOnce({ rows: [] });
+      existsSync.mockReturnValue(false);
+
+      const killSpy = vi.spyOn(process, 'kill').mockReturnValue(undefined);
+
+      const sweepPromise = sweepOrphanProcesses();
+      await vi.runAllTimersAsync();
+      const result = await sweepPromise;
+
+      expect(result.killed).toBe(0);
+
+      killSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('ps 无 claude 进程时返回空结果', async () => {
+      // ps 返回非 claude 进程
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 1, ppid: 0, cmd: 'launchd' },
+        { pid: 100, ppid: 1, cmd: 'bash' },
+      ]));
+
+      getActiveProcesses.mockReturnValue([]);
 
       const result = await sweepOrphanProcesses();
       expect(result.checked).toBe(0);
       expect(result.killed).toBe(0);
-      expect(result.errors).toHaveLength(0);
     });
 
     it('DB 失败时不杀任何进程（保守策略）', async () => {
-      execSync.mockReturnValueOnce('5001\n');
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 5001, ppid: 1, cmd: 'claude -p "orphan"' },
+      ]));
       getActiveProcesses.mockReturnValue([]);
       pool.query.mockRejectedValueOnce(new Error('DB error'));
 
@@ -268,6 +327,33 @@ branch refs/heads/cp-02020000-active-task`;
       expect(result.killed).toBe(0);
       expect(result.errors).toHaveLength(1);
       killSpy.mockRestore();
+    });
+
+    it('lock slot 中的 PID 受保护', async () => {
+      vi.useFakeTimers();
+
+      execSync.mockReturnValueOnce(makePsOutput([
+        { pid: 3001, ppid: 1, cmd: 'claude -p "task"' },   // ppid=1 但在 lock slot 中
+      ]));
+
+      getActiveProcesses.mockReturnValue([]);
+      pool.query.mockResolvedValueOnce({ rows: [] });
+
+      // lock slot 包含 pid 3001
+      existsSync.mockImplementation((p) => true);
+      readdirSync.mockReturnValue(['slot-0']);
+      readFileSync.mockReturnValue(JSON.stringify({ pid: 3001, child_pid: 3002 }));
+
+      const killSpy = vi.spyOn(process, 'kill').mockReturnValue(undefined);
+
+      const sweepPromise = sweepOrphanProcesses();
+      await vi.runAllTimersAsync();
+      const result = await sweepPromise;
+
+      expect(result.killed).toBe(0);
+
+      killSpy.mockRestore();
+      vi.useRealTimers();
     });
   });
 
@@ -344,7 +430,7 @@ branch refs/heads/cp-02020000-active-task`;
       execSync.mockImplementation((cmd) => {
         if (cmd.includes('rev-parse --show-toplevel')) return '/repo\n';
         if (cmd.includes('worktree list --porcelain')) return 'worktree /repo\nHEAD abc\nbranch refs/heads/main\n';
-        if (cmd.includes('pgrep')) { const e = new Error('no procs'); e.status = 1; throw e; }
+        if (cmd.includes('ps -eo')) return '    1     0 launchd\n';
         return '';
       });
       existsSync.mockReturnValue(false); // no lock slot dir
@@ -370,7 +456,7 @@ branch refs/heads/cp-02020000-active-task`;
       // git rev-parse 失败 -> worktree sweep 返回 error
       execSync.mockImplementation((cmd) => {
         if (cmd.includes('rev-parse')) throw new Error('git not found');
-        if (cmd.includes('pgrep')) { const e = new Error('no procs'); e.status = 1; throw e; }
+        if (cmd.includes('ps -eo')) return '    1     0 launchd\n';
         return '';
       });
       existsSync.mockReturnValue(false);
