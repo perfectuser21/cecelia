@@ -32,7 +32,7 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: false,   // Batch 2 env 污染修复完成，切换为共享 worker 减少 OOM
+    isolate: true,    // 待全部 Batch 完成后切换为 false（Batch 2 已完成，Batch 3-6 待处理）
     pool: 'forks',
     poolOptions: {
       forks: {
