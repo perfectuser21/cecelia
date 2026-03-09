@@ -33,6 +33,12 @@ export default defineConfig({
     hookTimeout: 30000,
     teardownTimeout: 30000,
     isolate: true,
-    pool: 'forks'
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        minForks: 1,
+        maxForks: 5  // 防止 OOM：默认 10 forks × 6 并发 = 60 进程，限制为 5 × 8 = 40 进程
+      }
+    }
   }
 });
