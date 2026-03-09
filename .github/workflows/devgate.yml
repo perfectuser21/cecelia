@@ -199,9 +199,31 @@ jobs:
         run: |
           bash packages/engine/scripts/devgate/check-prd.sh
 
+  check-learning:
+    name: Learning Format Gate
+    needs: verify-dev-workflow
+    runs-on: [self-hosted, hk]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Check Learning Format
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  DevGate: Learning Format Gate"
+          echo "  Branch: $GITHUB_HEAD_REF"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          bash packages/engine/scripts/devgate/check-learning.sh
+
   ci-passed:
     name: DevGate CI Passed
-    needs: [verify-dev-workflow, dod-check, cleanup-check, check-prd]
+    needs: [verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -231,6 +253,11 @@ jobs:
 
           if [ "${{ needs.check-prd.result }}" = "failure" ] || [ "${{ needs.check-prd.result }}" = "cancelled" ]; then
             echo "FAIL: PRD Success Criteria Check (${{ needs.check-prd.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.check-learning.result }}" = "failure" ] || [ "${{ needs.check-learning.result }}" = "cancelled" ]; then
+            echo "FAIL: Learning Format Gate (${{ needs.check-learning.result }})"
             FAILED=true
           fi
 
