@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] 质量系统元测试实现（PR #742）
+
+**根本原因**：质量系统脚本（check-prd.sh、check-dod-mapping.cjs、cleanup-check）无自动化测试覆盖，修改这些脚本时可能意外破坏门禁行为，而没有任何机制能检测到退化。
+
+**解决方案**：创建 `tests/quality-system/` 目录，为每个关键门禁脚本编写元测试（用真实临时文件+真实脚本运行验证 exit code），并加入 CI。
+
+**关键设计决策**：
+- check-prd.sh 通过 `GITHUB_HEAD_REF` 环境变量决定 PRD 文件名，测试时需在临时目录中运行（`cd $TMPDIR && GITHUB_HEAD_REF=branch-name bash $CHECK_PRD`）
+- cleanup-check 逻辑直接内嵌在 devgate.yml 中，元测试提取核心逻辑为函数进行测试，保持与 YAML 一致
+- check-dod-mapping.cjs 需要临时 git 仓库（需要 `git rev-parse HEAD`），测试时初始化临时 git repo
+
+**下次预防**：
+- [ ] 修改任何 devgate 脚本前，先确认元测试覆盖了对应脚本
+- [ ] 新增质量门禁脚本时，同步在 tests/quality-system/ 中添加对应元测试
+- [ ] quality-meta-tests CI job 失败 → ci-passed 依赖链阻止合并
+
+---
+
 ### [2026-03-09] Initiative Pipeline CTO 审核 5 项修复（PR #731）
 
 **失败统计**：D6 测试调试 1 轮，Brain CI PostgreSQL 失败 6 次（需修复 Homebrew 缓存）
