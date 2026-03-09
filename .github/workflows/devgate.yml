@@ -202,7 +202,7 @@ jobs:
   check-learning:
     name: Learning Format Gate
     needs: verify-dev-workflow
-    runs-on: [self-hosted, hk]
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
       contents: read
