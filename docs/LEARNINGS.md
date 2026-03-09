@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] task_run_metrics 全链路 metrics 采集（PR #745）
+
+#### 根本原因
+Mac mini M4（16GB 统一内存，仅 1GB swap）因 Brain dispatch 6 个并发任务 × vitest `pool: 'forks'` 10 子进程 = 60 node 进程同时存活，导致 OOM，WindowServer 崩溃。根本修复需要动态 dispatch 基于实测内存预算，而此前没有任何 metrics 数据。
+
+**解决方案**：建立全链路 metrics 采集系统（Migration 139）：
+- `task_run_metrics` 表 + `task_run_profiles` 视图（JOIN OKR 层级）
+- watchdog 任务结束时 flush peak/avg RSS/CPU
+- execution-callback 解析 claude CLI result JSON 写 LLM 指标
+- pr-callback-handler 回填 `pr_merged = TRUE`
+
+**关键技术细节**：
+1. **UNIQUE(task_id, run_id) 位置**：PostgreSQL 允许 table constraint 与 column definition 混排，但要确保所在行末尾有逗号，否则语法报错（初版 Migration 缺逗号）
+2. **ON CONFLICT upsert 设计**：watchdog 和 execution-callback 分别写不同字段，COALESCE 保留先写入的值，GREATEST 保留 RSS/CPU 峰值
+3. **schema_version 联动**：更新 selfcheck.js 后，需同步 DEFINITION.md（两处）、desire-system.test.js、selfcheck.test.js、learnings-vectorize.test.js 五处
+4. **flaky CI 处理**：pending-conversations.test.js 概率边界测试 flaky → 推空提交重触发 CI，不要手动 workflow_dispatch（会导致 Detect Changes 无变更，Brain Tests 全 skip，但 ci-passed 有时也 skip 从而 Block PR）
+
+**数据维度设计**（供后续动态 dispatch 使用）：
+- 时间：queued_duration_ms, execution_duration_ms
+- LLM：model_id, num_turns, tokens ×4, cache_hit_rate, cost_usd
+- 资源：peak_rss_mb, avg_rss_mb, peak_cpu_pct, avg_cpu_pct
+- 结果：exit_status, failure_category, retry_count, pr_merged
+
+#### 下次预防
+- [ ] schema_version bump 后检查 5 处：selfcheck.js + DEFINITION.md（×2）+ 三个测试文件
+- [ ] CI flaky test 失败 → 先确认本地是否复现，不复现则推空提交重跑（不要 workflow_dispatch）
+- [ ] 新增 table constraint（UNIQUE/FOREIGN KEY）放在列定义之间时，确认行末有逗号
+
+---
+
 ### [2026-03-09] 质量系统元测试实现（PR #742）
 
 #### 根本原因
