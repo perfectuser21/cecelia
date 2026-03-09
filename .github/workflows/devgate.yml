@@ -182,9 +182,26 @@ jobs:
           echo "  Cleanup Check passed ($DELETED_LINES lines deleted)"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  check-prd:
+    name: PRD Success Criteria Check
+    needs: verify-dev-workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Check PRD has success criteria
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          bash packages/engine/scripts/devgate/check-prd.sh
+
   ci-passed:
     name: DevGate CI Passed
-    needs: [verify-dev-workflow, dod-check, cleanup-check]
+    needs: [verify-dev-workflow, dod-check, cleanup-check, check-prd]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -209,6 +226,11 @@ jobs:
 
           if [ "${{ needs.cleanup-check.result }}" = "failure" ] || [ "${{ needs.cleanup-check.result }}" = "cancelled" ]; then
             echo "FAIL: Cleanup Check (${{ needs.cleanup-check.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.check-prd.result }}" = "failure" ] || [ "${{ needs.check-prd.result }}" = "cancelled" ]; then
+            echo "FAIL: PRD Success Criteria Check (${{ needs.check-prd.result }})"
             FAILED=true
           fi
 
