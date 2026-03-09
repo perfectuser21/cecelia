@@ -130,18 +130,25 @@ jobs:
           echo "Deleted lines in PR diff (code files only): $DELETED_LINES"
           echo ""
 
-          # 如果 DoD 中有重构/清理条目，但 PR 没有任何代码删除，发出警告
+          # DoD 有重构/清理条目，但 PR 无任何代码删除 → 硬失败
           if [ "$DELETED_LINES" -eq 0 ]; then
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ⚠️  WARNING: Cleanup/Refactor items in DoD but no code deletions detected"
+            echo "  ❌ HARD GATE FAILED: Cleanup required but no code deleted"
             echo ""
-            echo "  DoD 中有重构/清理条目，但 PR diff 中没有代码删除。"
-            echo "  请确认："
-            echo "    1. 旧函数/旧变量/死代码是否已删除（Step 6.5 Simplify）"
-            echo "    2. 如果确实无需删除，请在 PR 描述中说明原因"
+            echo "  DoD 中有以下重构/清理条目："
+            echo "$CLEANUP_ITEMS" | sed 's/^/    /'
+            echo ""
+            echo "  但 PR diff 中代码文件删除行数为 0。"
+            echo ""
+            echo "  必须完成 Step 6.5 Simplify："
+            echo "    - 删除被替换的旧函数/旧变量/旧分支"
+            echo "    - 删除未使用的 import/变量"
+            echo "    - 删除矛盾注释和死代码"
+            echo ""
+            echo "  如果本次确实无需删除任何代码，请从 DoD 中移除清理相关条目，"
+            echo "  并在 PR 描述中说明原因。"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            # warning only — 不 fail，让 reviewer 人工确认
-            exit 0
+            exit 1
           fi
 
           # 扫描 PR 改动的文件中是否有死代码标记
