@@ -12,7 +12,7 @@
  *  - ACS3 → 'selectBestAccount 返回 null 时，不传 accountId'
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Mock fs.existsSync (for isSpendingCapped)
 vi.mock('fs', () => ({
@@ -39,8 +39,13 @@ vi.mock('../model-profile.js', () => ({
 }));
 
 // Mock fetch (bridge call)
+// vi.stubGlobal 确保 afterAll 可以通过 vi.unstubAllGlobals() 恢复，不污染后续文件
 const mockFetch = vi.hoisted(() => vi.fn());
-global.fetch = mockFetch;
+vi.stubGlobal('fetch', mockFetch);
+
+afterAll(() => {
+  vi.unstubAllGlobals();
+});
 
 import { callLLM } from '../llm-caller.js';
 

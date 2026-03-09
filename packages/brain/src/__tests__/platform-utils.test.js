@@ -1,30 +1,47 @@
 /**
  * Tests for platform-utils.js
  * Validates platform abstraction layer functions work on the current platform.
+ *
+ * isolate:false 注意：
+ * executor-*.test.js 等文件会 mock child_process，导致 platform-utils.js 以 mocked execSync 加载。
+ * 解决方案：在 beforeAll 中先调用 vi.unmock('child_process')，再动态 import 以获取真实模块。
  */
 
-import { describe, it, expect } from 'vitest';
-import {
-  IS_DARWIN,
-  IS_LINUX,
-  parseEtime,
-  listProcessesWithElapsed,
-  listProcessesWithPpid,
-  countClaudeProcesses,
-  sampleCpuUsage,
-  _resetCpuSampler,
-  getSwapUsedPct,
-  getDmesgInfo,
-  readCmdline,
-  readProcessCwd,
-  readProcessEnv,
-  processExists,
-  getTopCpuUsage,
-  getNetworkStats,
-  calculatePhysicalCapacity,
-  SYSTEM_RESERVED_MB,
-  MAX_PHYSICAL_CAP,
-} from '../platform-utils.js';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+
+// 动态导入所有 platform-utils 导出（在 beforeAll 中解包）
+let IS_DARWIN, IS_LINUX, parseEtime, listProcessesWithElapsed,
+  listProcessesWithPpid, countClaudeProcesses, sampleCpuUsage, _resetCpuSampler,
+  getSwapUsedPct, getDmesgInfo, readCmdline, readProcessCwd, readProcessEnv,
+  processExists, getTopCpuUsage, getNetworkStats, calculatePhysicalCapacity,
+  SYSTEM_RESERVED_MB, MAX_PHYSICAL_CAP;
+
+beforeAll(async () => {
+  // 恢复真实 child_process（executor-*.test.js 可能已 mock 它）
+  vi.unmock('child_process');
+  // 注意：不调用 vi.resetModules()，那会破坏 vitest 的模块追踪
+
+  const mod = await import('../platform-utils.js');
+  IS_DARWIN = mod.IS_DARWIN;
+  IS_LINUX = mod.IS_LINUX;
+  parseEtime = mod.parseEtime;
+  listProcessesWithElapsed = mod.listProcessesWithElapsed;
+  listProcessesWithPpid = mod.listProcessesWithPpid;
+  countClaudeProcesses = mod.countClaudeProcesses;
+  sampleCpuUsage = mod.sampleCpuUsage;
+  _resetCpuSampler = mod._resetCpuSampler;
+  getSwapUsedPct = mod.getSwapUsedPct;
+  getDmesgInfo = mod.getDmesgInfo;
+  readCmdline = mod.readCmdline;
+  readProcessCwd = mod.readProcessCwd;
+  readProcessEnv = mod.readProcessEnv;
+  processExists = mod.processExists;
+  getTopCpuUsage = mod.getTopCpuUsage;
+  getNetworkStats = mod.getNetworkStats;
+  calculatePhysicalCapacity = mod.calculatePhysicalCapacity;
+  SYSTEM_RESERVED_MB = mod.SYSTEM_RESERVED_MB;
+  MAX_PHYSICAL_CAP = mod.MAX_PHYSICAL_CAP;
+});
 
 describe('platform-utils', () => {
 
