@@ -3701,6 +3701,47 @@ ${resultStr.substring(0, 2000)}
       } catch (crErr) {
         console.error(`[execution-callback] code_review → initiative_verify creation failed (non-fatal): ${crErr.message}`);
       }
+
+      // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
+      try {
+        const devRow = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
+        const devTask = devRow.rows[0];
+        if (devTask?.task_type === 'dev' && devTask.project_id) {
+          const projectId = devTask.project_id;
+          // 检查是否还有未完成的 dev task
+          const pendingDev = await pool.query(
+            `SELECT COUNT(*) AS cnt FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined')`,
+            [projectId]
+          );
+          const pendingCnt = parseInt(pendingDev.rows[0]?.cnt || 0);
+          if (pendingCnt === 0) {
+            // 所有 dev 已完成，幂等检查 code_review
+            const existingCr = await pool.query(
+              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'code_review' AND status IN ('queued', 'in_progress') LIMIT 1`,
+              [projectId]
+            );
+            if (existingCr.rows.length > 0) {
+              console.log(`[execution-callback] code_review already queued for project ${projectId}, skip`);
+            } else {
+              const { createTask: createCrTask } = await import('./actions.js');
+              await createCrTask({
+                title: `[Initiative 审查] code_review — ${devTask.title}`,
+                description: `Initiative 级别代码审查。所有 dev task 已完成，运行集成测试 + 代码质量审查。\nproject_id: ${projectId}`,
+                priority: 'P1',
+                project_id: projectId,
+                goal_id: devTask.goal_id,
+                task_type: 'code_review',
+                payload: { scope: 'initiative', initiative_id: projectId, parent_task_id: task_id }
+              });
+              console.log(`[execution-callback] 断链#5 修复: code_review created for project ${projectId} (all dev completed)`);
+            }
+          } else {
+            console.log(`[execution-callback] dev task completed for project ${projectId}, but ${pendingCnt} dev task(s) still pending, skip code_review`);
+          }
+        }
+      } catch (devCrErr) {
+        console.error(`[execution-callback] dev → code_review creation failed (non-fatal): ${devCrErr.message}`);
+      }
     }
 
     // 5c5. Suggestion Plan 闭环：suggestion_plan 完成/失败 → 更新 suggestion.status

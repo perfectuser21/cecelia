@@ -17,8 +17,7 @@ const VALID_TASK_TYPES = [
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'suggestion_plan', 'architecture_design', 'strategy_session',
-  'initiative_settle'
+  'suggestion_plan', 'architecture_design', 'strategy_session'
 ];
 
 // Skill whitelist based on task type
@@ -37,11 +36,10 @@ const SKILL_WHITELIST = {
   'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
   'initiative_plan': '/decomp',
-  'initiative_verify': '/decomp',
+  'initiative_verify': '/architect',
   'suggestion_plan': '/plan',
   'architecture_design': '/architect',
-  'strategy_session': '/strategy-session',
-  'initiative_settle': '/assurance'
+  'strategy_session': '/strategy-session'
 };
 
 // Fallback strategies when primary routing fails
@@ -105,11 +103,10 @@ const LOCATION_MAP = {
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
-  'initiative_verify': 'us',    // Initiative 验收 → US (Opus)
+  'initiative_verify': 'us',    // Initiative 验收收尾 → US (Opus + /architect Mode 3)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
   'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect)
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
-  'initiative_settle': 'us',  // Initiative 膳后/收尾 → US (Opus + /assurance)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)
   'talk': 'hk',       // 对话 → HK (MiniMax)

@@ -30,8 +30,12 @@ describe('executor contract', () => {
       expect(getSkillForTaskType('architecture_design')).toBe('/architect');
     });
 
-    it('D5-4: returns /assurance for "initiative_settle" type', () => {
-      expect(getSkillForTaskType('initiative_settle')).toBe('/assurance');
+    it('D5-4: returns /architect for "initiative_verify" type', () => {
+      expect(getSkillForTaskType('initiative_verify')).toBe('/architect');
+    });
+
+    it('D5-4b: initiative_settle returns /dev (废弃，fallback 默认)', () => {
+      expect(getSkillForTaskType('initiative_settle')).toBe('/dev');
     });
 
     it('returns /dev as default for unknown types', () => {
