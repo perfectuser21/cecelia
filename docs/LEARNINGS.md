@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Initiative Pipeline code_review 隔离 — 积累触发排除 initiative + scope 隔离 + 质量门禁（PR #723）
+
+**失败统计**：Brain CI 失败 1 次（port EADDRINUSE flaky，与改动无关，空 commit 重触发通过）
+
+**两套 code_review 触发器不能共用一个 project 空间**
+- 积累触发（5+ dev → code_review）和断链#5（all dev done → initiative code_review）本是两套独立机制
+- 两者都通过 `project_id` 关联，没有类型区分，导致 initiative 下的 dev task 会被两套都响应
+- 根本修复：先查 `projects.type`，initiative 类型直接 return，不走积累阈值
+
+**断链#4 必须用 payload 字段做 scope 判断**
+- 断链#4 检查 `task_type === 'code_review'` 不够——积累触发和断链#5 创建的 code_review 都是这个类型
+- 断链#5 创建时设置了 `payload.scope = 'initiative'`，这是天然的区分点
+- 修复：SELECT 时加 payload 字段，只对 scope=initiative 的 code_review 触发 initiative_verify
+- **教训**：设计自动触发链时，每个节点必须携带足够的上下文（scope/类型标记），让下游能正确判断
+
+**质量门禁必须在流水线内，不能靠外部干预**
+- code_review 发现 L1 BLOCK 后，initiative_verify 不应该自动创建
+- 直接检查 execution-callback 收到的 result 字符串，查找 `TEST_BLOCK` / `[BLOCK]` 关键词
+- 失败时只 log warning，不阻塞其他逻辑（非致命）
+
+**CI flaky 排查方法**
+```bash
+# 本地全通过但 CI 失败 → 先看失败的测试是否和改动相关
+# 查 main 分支最近的 CI 结果做对比
+gh run view <run_id> --log-failed | grep -E "FAIL|Error:"
+
+# 如果 main 上同样的测试也失败 → 预先存在的 flaky
+# 空 commit 重触发是最快的验证方式
+git commit --allow-empty -m "ci: retrigger" && git push
+```
+
 ### [2026-03-09] Initiative Pipeline 收尾修复 — verify→/architect + 删 settle + dev→code_review 断链（PR #721）
 
 **失败统计**：Brain CI 失败 1 次（executor-initiative-skill-map.test.js 旧断言）
