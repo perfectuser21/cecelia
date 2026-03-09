@@ -1,5 +1,17 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] check-dod-mapping Phase 2 — DoD ↔ PRD 追溯检查（PR #734）
+
+**功能**：在 `check-dod-mapping.cjs` 新增 Phase 2 追溯检查：DoD 条目关键词必须能在 PRD 成功标准章节中找到对应。当前阶段为 warning（不 exit 1），Phase 3 升级为强制错误。
+
+**设计决策**：
+- `extractKeywords()` 过滤常见助词/动词，保留 ≥2 字符的有意义词，减少误报
+- `checkDodTracesToPrd()` 在 PRD 不存在或无成功标准章节时自动跳过，不阻断现有流程
+- `require.main === module` 判断确保 `require()` 时不触发 `main()`，支持导出测试
+- DoD 条目中的 Test 命令不能含 `echo`（被 detectFakeTest 拦截），改用 `node -e` 单行验证
+
+**教训**：DoD 中如果要验证"命令输出"，避免写含 `echo` 的 shell 命令（会被假测试检测拦截），改用 `node -e "..."` 内联 JS 或 `curl`/`node` 等真实执行命令。
+
 ### [2026-03-08] branch-protect hook 子目录 PRD 查找陷阱（PR #691）
 
 **问题**：当修改 `packages/workflows/` 子目录下的文件时，`branch-protect.sh` 的 `find_prd_dod_dir` 从文件路径向上查找 PRD，途中发现 `packages/workflows/.prd.md`（旧任务遗留）就停止，不会继续找根目录的 `.prd-{branch}.md`。导致 hook 拿到了旧任务的 `.prd.md`，报 "PRD 文件未更新"。
