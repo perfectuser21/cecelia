@@ -3697,23 +3697,39 @@ ${resultStr.substring(0, 2000)}
             );
             console.warn(`[execution-callback] 断链#4 ${alertType}: initiative pipeline blocked, project=${projectId}`);
           } else if (decision === 'NEEDS_FIX') {
-            // 代码问题: 创建修复 dev task
-            const existingFix = await pool.query(
-              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修复]%' LIMIT 1`,
+            // 代码问题: 检查修复轮次上限，防止死循环
+            const MAX_FIX_ROUNDS = 3;
+            const fixCountRow = await pool.query(
+              `SELECT COUNT(*)::int as cnt FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND payload->>'fix_type' = 'code_review_issues'`,
               [projectId]
             );
-            if (existingFix.rows.length === 0) {
-              await createCrFollowTask({
-                title: `[修复] code_review 问题修复 — ${crTask.title}`,
-                description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复清单参见 code_review 报告。`,
-                priority: 'P1',
-                project_id: projectId,
-                goal_id: crTask.goal_id,
-                task_type: 'dev',
-                trigger_source: 'execution_callback_auto',
-                payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: 1 }
-              });
-              console.log(`[execution-callback] 断链#4 NEEDS_FIX: 创建修复 dev task project=${projectId}`);
+            const fixRound = fixCountRow.rows[0]?.cnt || 0;
+            if (fixRound >= MAX_FIX_ROUNDS) {
+              await pool.query(
+                `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+                ['initiative_max_fixes_exceeded', 'execution_callback', JSON.stringify({
+                  project_id: projectId, fix_round: fixRound, code_review_task_id: task_id
+                })]
+              );
+              console.warn(`[execution-callback] 断链#4 NEEDS_FIX: 超过 ${MAX_FIX_ROUNDS} 轮修复 → P0告警 project=${projectId}`);
+            } else {
+              const existingFix = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修复]%' LIMIT 1`,
+                [projectId]
+              );
+              if (existingFix.rows.length === 0) {
+                await createCrFollowTask({
+                  title: `[修复] code_review 问题修复 — ${crTask.title}`,
+                  description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复轮次: ${fixRound + 1}/${MAX_FIX_ROUNDS}\n修复清单参见 code_review 报告。`,
+                  priority: 'P1',
+                  project_id: projectId,
+                  goal_id: crTask.goal_id,
+                  task_type: 'dev',
+                  trigger_source: 'execution_callback_auto',
+                  payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: fixRound + 1 }
+                });
+                console.log(`[execution-callback] 断链#4 NEEDS_FIX R${fixRound + 1}: 创建修复 dev task project=${projectId}`);
+              }
             }
           } else {
             // PASS: 创建 initiative_verify
