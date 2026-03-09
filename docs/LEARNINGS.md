@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Dev task 串行调度 + 上下文传递（PR #726）
+
+**串行调度在断链#4 之后、断链#5 之前插入（断链#5c11）**
+- 位置很重要：必须在断链#5（检查 code_review 触发）之前，否则 N+1 任务还是 blocked，断链#5 会错误地认为所有 dev 已完成
+
+**原子 UPDATE：payload 注入 + unblock 合一**
+- `UPDATE tasks SET status='queued', payload=$1::jsonb, blocked_at=NULL... WHERE id=$2 AND status='blocked'`
+- 用单条 SQL 完成，避免 TOCTOU 竞态（先查 blocked 再更新中间被其他进程改掉的情况）
+
+**prev_task_result 字段设计**
+- 包含 `task_id / summary / pr_url / sequence_order`，让下一个 task 知道上一个做了什么
+- 用展开合并（`{...nextTask.payload, prev_task_result: ...}`）保留原有 payload 字段
+
+**独立 task 不受影响**
+- `sequence_order != null` 作判断门槛，没有这个字段的任务直接跳过串行逻辑
+- 不改变断链#5 的任何行为，向后兼容
+
 ### [2026-03-09] 断链#4 decision路由 + 断链#6 initiative_verify结论处理（PR #725）
 
 **NEEDS_FIX 不应进 initiative_verify**
