@@ -3959,3 +3959,24 @@ Brain 24/7 清理进程可能在开发中途删除活跃 worktree（Bash CWD 失
 - [ ] 每 Phase 完成后更新矩阵状态
 - [ ] 任何 exit 1 → warning 的降级必须在 QUALITY_SPEC.md 里有理由记录
 
+
+---
+
+## 2026-03-09 | Quality CI 每 PR 强制运行
+
+**PR**: #746
+**失败统计**：CI 失败 0 次，本地验证失败 0 次
+
+**错误判断记录**：
+- 以为需要跨 workflow 的 needs 依赖（quality-ci → devgate），但 GitHub Actions 不支持跨 workflow 的 needs 链。正确方案是：devgate.yml 内部的 `quality-meta-tests` job 本身就是无路径过滤的，只需将其加入 `ci-passed` 的 needs，即可让每个 PR 都强制经过质量系统 meta tests
+
+**关键决策记录**：
+- `quality-ci.yml` 的 `push` 事件路径过滤去掉（push 到 main 时始终运行），是为了保证 main 分支每次合并都有 quality 记录
+- `pull_request` 事件本来就没有路径过滤（所有 PR 都触发 Quality CI workflow），但 `changes` job 检测 quality=false 时，耗时 job 都跳过，`ci-passed` 直接 exit 0——这是正确设计，非 quality PR 无需跑结构检查
+- `quality-meta-tests` job 在 devgate.yml 里一直存在，只是没加入 `ci-passed` needs，导致它失败不阻止合并
+
+**影响程度**: Medium（修复了 RCI 回归测试对 non-quality PR 无保护的设计缺口）
+
+**预防措施**：
+- 新增 devgate.yml 中的检查 job 时，必须同步加入 `ci-passed` 的 needs 链，否则失败不阻止合并
+- 路径过滤的设计原则：`push` 事件（到 main）的路径过滤决定是否留下 CI 记录；`pull_request` 的 `changes` job 决定是否跑耗时测试——两者独立，别混淆
