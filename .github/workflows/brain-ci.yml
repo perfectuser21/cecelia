@@ -233,28 +233,28 @@ jobs:
             echo "FAIL: Detect Changes job failed - cannot determine what changed"
             exit 1
           fi
-          if [ "${{ needs.changes.outputs.brain }}" != "true" ]; then
-            echo "No brain changes detected, skipping checks"
-            exit 0
-          fi
+
+          # 第一轮：任何 job 明确失败（failure/cancelled）立即拦截
+          # skipped 是合法状态——当 brain=false 时所有检查 job 都会 skip
+          # 旧逻辑用 != "success" 会将 skipped 判定为失败，导致无 brain 改动的 PR 被误拦截
           FAILED=false
 
-          if [ "${{ needs.brain-test.result }}" != "success" ]; then
+          if [ "${{ needs.brain-test.result }}" = "failure" ] || [ "${{ needs.brain-test.result }}" = "cancelled" ]; then
             echo "FAIL: Brain Tests (${{ needs.brain-test.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.facts-check.result }}" != "success" ]; then
+          if [ "${{ needs.facts-check.result }}" = "failure" ] || [ "${{ needs.facts-check.result }}" = "cancelled" ]; then
             echo "FAIL: Facts Consistency (${{ needs.facts-check.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.manifest-sync.result }}" != "success" ]; then
+          if [ "${{ needs.manifest-sync.result }}" = "failure" ] || [ "${{ needs.manifest-sync.result }}" = "cancelled" ]; then
             echo "FAIL: Manifest Sync (${{ needs.manifest-sync.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.fitness-check.result }}" != "success" ]; then
+          if [ "${{ needs.fitness-check.result }}" = "failure" ] || [ "${{ needs.fitness-check.result }}" = "cancelled" ]; then
             echo "FAIL: Fitness Functions (${{ needs.fitness-check.result }})"
             FAILED=true
           fi
@@ -265,7 +265,41 @@ jobs:
             exit 1
           fi
 
-          echo "All Brain CI checks passed"
+          # 第二轮：有 brain 改动时，skipped 不够——必须全部 success
+          # 防止：has-brain-changes 但某个 job 异常跳过（如 if 条件评估错误）
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+            STRICT_FAILED=false
+
+            if [ "${{ needs.brain-test.result }}" != "success" ]; then
+              echo "FAIL: Brain Tests must succeed when brain changes detected (got: ${{ needs.brain-test.result }})"
+              STRICT_FAILED=true
+            fi
+
+            if [ "${{ needs.facts-check.result }}" != "success" ]; then
+              echo "FAIL: Facts Consistency must succeed when brain changes detected (got: ${{ needs.facts-check.result }})"
+              STRICT_FAILED=true
+            fi
+
+            if [ "${{ needs.manifest-sync.result }}" != "success" ]; then
+              echo "FAIL: Manifest Sync must succeed when brain changes detected (got: ${{ needs.manifest-sync.result }})"
+              STRICT_FAILED=true
+            fi
+
+            if [ "${{ needs.fitness-check.result }}" != "success" ]; then
+              echo "FAIL: Fitness Functions must succeed when brain changes detected (got: ${{ needs.fitness-check.result }})"
+              STRICT_FAILED=true
+            fi
+
+            if [ "$STRICT_FAILED" = "true" ]; then
+              echo ""
+              echo "Brain CI Gate FAILED (brain changes require all checks to pass, not just skip)"
+              exit 1
+            fi
+
+            echo "All Brain CI checks passed (brain changes detected)"
+          else
+            echo "No brain changes detected — all checks skipped normally"
+          fi
 
   deploy-brain:
     needs: [ci-passed]
