@@ -1,9 +1,10 @@
 ---
 name: code-review
-version: 1.2.0
+version: 1.3.0
 created: 2026-02-24
 updated: 2026-03-09
 changelog:
+  - 1.3.0: Phase 0 Step 0.3 集成测试执行步骤具体化（owner定位/分支checkout/命令优先级/结果捕获）
   - 1.2.0: 新增 --initiative-id 模式 + Phase 0（Initiative 前置：集成测试 + Golden Path + TEST_BLOCK 门禁）
   - 1.1.0: 修复 --full/--level 旗标被忽视的 bug，去掉 Cecelia 硬编码模块名，优化 description
   - 1.0.0: 初始版本
@@ -76,11 +77,30 @@ Step 0.2  收集所有 PR 的变更文件（合并去重）
           → 去重后形成 initiative 级别的变更文件清单
           → 此清单替代 Phase 1 的 git log 输出，直接进入 Phase 2
 
-Step 0.3  定位集成测试 owner
-          → 查找 payload.integration_test_owner = true 的 task
-          → 找到其对应分支，checkout 到该分支
-          → 运行集成测试套件（npm run test:integration 或 vitest --project integration）
-          → 记录：PASS / FAIL + 失败用例列表
+Step 0.3  定位并执行集成测试
+          a. 查找 integration_test_owner task：
+             OWNER_TASK=$(curl -s "http://localhost:5221/api/brain/tasks?project_id=$INITIATIVE_ID" | \
+               jq -r '[.[] | select(.payload.integration_test_owner == true)] | first')
+             [ "$OWNER_TASK" = "null" ] → 记录"无集成测试 owner，跳过"（不阻塞）
+
+          b. 获取 owner 分支（优先 payload.branch_name，fallback payload.pr_number checkout）：
+             BRANCH=$(echo $OWNER_TASK | jq -r '.payload.branch_name // empty')
+             PR=$(echo $OWNER_TASK | jq -r '.payload.pr_number // empty')
+             [ -n "$BRANCH" ] && git fetch origin "$BRANCH" && git checkout "origin/$BRANCH" -- 2>/dev/null
+             [ -n "$PR" ] && gh pr checkout "$PR" 2>/dev/null
+             [ -z "$BRANCH" -a -z "$PR" ] → 记录"无法定位分支，跳过集成测试"
+
+          c. 确定测试命令（按优先级）：
+             1. 检查 package.json 是否有 test:integration 脚本 → npm run test:integration
+             2. 检查 vitest.config.* 是否有 integration project → npx vitest run --project integration
+             3. 检查 initiative-dod.md 是否有 ## Integration Tests 章节并注明命令
+             4. 以上均无 → 记录"无集成测试套件，跳过"（不阻塞）
+
+          d. 执行测试，捕获 exit code 和失败用例：
+             TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1)
+             TEST_EXIT=$?
+             [ $TEST_EXIT -ne 0 ] → 提取失败用例（grep "FAIL\|Error\|✗" lines）
+             → 记录：PASS（exit 0）/ FAIL（exit ≠ 0）+ 失败列表
 
 Step 0.4  运行 Golden Path 测试
           → 检查 docs/golden-paths/ 是否有 Initiative 对应的 Golden Path 文件
