@@ -84,14 +84,15 @@ fi
 
 # ─────────────────────────────────────────────
 # 场景3：DoD 有 manual: 内联命令 → 应 exit 0
+# 使用不依赖外部服务的 node 命令（CI 安全）
 # ─────────────────────────────────────────────
 cat > "$TMPDIR_PATH/dod-manual-inline.md" << 'EOF'
 # DoD
 
-- [x] 服务健康检查通过
-  Test: manual:curl -s http://localhost:5221/api/brain/health | grep -q ok
-- [x] 任务状态正确
-  Test: manual:curl -s http://localhost:5221/api/brain/tasks | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.exit(Array.isArray(d)?0:1)"
+- [x] Node.js 可用
+  Test: manual:node -e "process.exit(0)"
+- [x] 文件系统可访问
+  Test: manual:node -e "require('fs').readdirSync('.')"
 EOF
 
 if ! run_dod_check "$TMPDIR_PATH/dod-manual-inline.md" "$TMPDIR_PATH" > /dev/null 2>&1; then

@@ -1,13 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import pool from '../db.js';
 
 describe('Migration 018: Feedback and Status History', () => {
   beforeAll(async () => {
     // Migration should have been applied during server startup
-  });
-
-  afterAll(async () => {
-    await pool.end();
   });
 
   it('should have feedback column in tasks table', async () => {

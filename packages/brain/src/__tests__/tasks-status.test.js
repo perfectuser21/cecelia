@@ -19,7 +19,6 @@ describe('PATCH /api/brain/tasks/:task_id (Status Update)', () => {
     if (testTaskId) {
       await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
     }
-    await pool.end();
   });
 
   beforeEach(async () => {

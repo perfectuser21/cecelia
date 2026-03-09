@@ -1,5 +1,35 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] isolate:false Batch 1 — 共享 pool.end() 污染（PR #751）
+
+#### 根本原因
+`isolate: false` 下所有测试文件共享同一个 `db.js` pg.Pool 单例。`migration-018/030`、`tasks-feedback`、`tasks-status` 在 `afterAll` 对共享 pool 调用 `pool.end()`，导致按调度顺序排在后面的文件（`actions-goal-validation` 等）报 "Cannot use a pool after calling end on the pool"。
+
+#### 关键区分
+- **私有 pool**（`const pool = new Pool(DB_DEFAULTS)`）：在 `afterAll` 调用 `pool.end()` 是安全的，只关闭本文件的连接。
+- **共享 pool**（`import pool from '../db.js'`）：在 `afterAll` 调用 `pool.end()` 是**危险的**，会杀死整个进程生命周期内的共享连接池，导致后续文件全部失败。
+
+#### 诊断方法
+```bash
+# 找共享 pool 导入 + 调用 pool.end() 的文件（真正的破坏者）
+comm -12 \
+  <(grep -rln "from.*['\"]\.\.\/db['\"]" src/__tests__/ | sort) \
+  <(grep -rln "pool\.end(" src/__tests__/ | sort)
+```
+注意：看到 "Cannot use a pool" 的文件是**受害者**，不是破坏者。要修复的是破坏者。
+
+#### 修复
+- `migration-018/030`：整个 `afterAll` 只有 `pool.end()`，直接删除整块 + 从 import 移除 `afterAll`。
+- `tasks-feedback/status`：`afterAll` 含 DELETE 清理查询，仅移除最后一行 `pool.end()`。
+
+#### 向后兼容
+`isolate: true`（当前默认）下每个文件在独立 VM 上下文，db.js 每次重新求值，pool 各自独立。删除 `pool.end()` 不影响隔离性，连接随 VM GC 自然回收。
+
+### 下次预防
+- [ ] 新写集成测试时，如果用 `import pool from '../db.js'`，禁止在 afterAll 调用 `pool.end()`（私有 pool = `new Pool()` 才可以 end）
+- [ ] PR Review 中，凡看到 `pool.end()` + `import pool from` 组合，立即标记为 blocking issue
+- [ ] 可运行诊断命令：`comm -12 <(grep -rln "from.*db.js" src/__tests__/ | sort) <(grep -rln "pool.end(" src/__tests__/ | sort)` 确认无共享 pool 被 end
+
 ### [2026-03-09] task_run_metrics 全链路 metrics 采集（PR #745）
 
 #### 根本原因
