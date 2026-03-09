@@ -172,7 +172,7 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
     expect(payload.project_id).toBe(projectId);
   }, 10000);
 
-  it('D4: result 含 TEST_BLOCK → 写入 cecelia_events initiative_pipeline_blocked', async () => {
+  it('D4: result 含 TEST_BLOCK → 创建 integration_test_failure 修复 dev task（不写 P0 告警）', async () => {
     setupCodeReviewMock('PASS');
 
     const res = await request(app)
@@ -180,13 +180,19 @@ describe('断链#4: code_review decision 路由（initiative scope）', () => {
       .send({ task_id: taskId, run_id: 'run-4', status: 'AI Done', result: 'TEST_BLOCK: 集成测试失败' });
 
     expect(res.status).toBe(200);
-    expect(mockCreateTask).not.toHaveBeenCalled();
-    const eventCall = mockPool.query.mock.calls.find(
+    // 应创建集成测试修复 dev task（CTO P0-3 修复：TEST_BLOCK 有修复路径）
+    expect(mockCreateTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_type: 'dev',
+        priority: 'P0',
+        payload: expect.objectContaining({ fix_type: 'integration_test_failure' })
+      })
+    );
+    // 不应写 initiative_pipeline_blocked 告警（P0-3 修复后 TEST_BLOCK 走修复路径而非告警）
+    const pipelineBlockedEvent = mockPool.query.mock.calls.find(
       c => typeof c[0] === 'string' && c[0].includes('INSERT INTO cecelia_events') && c[1]?.[0] === 'initiative_pipeline_blocked'
     );
-    expect(eventCall).toBeDefined();
-    const payload = JSON.parse(eventCall[1][2]);
-    expect(payload.alert_type).toBe('test_block');
+    expect(pipelineBlockedEvent).toBeUndefined();
   }, 10000);
 });
 

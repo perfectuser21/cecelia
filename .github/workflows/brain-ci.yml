@@ -144,7 +144,9 @@ jobs:
             /opt/homebrew/opt/pgvector
             /opt/homebrew/lib/postgresql@17
             /opt/homebrew/include/postgresql@17
-          key: brew-postgresql17-pgvector-${{ runner.os }}-${{ runner.arch }}-v1
+            /opt/homebrew/share/postgresql@17
+            /opt/homebrew/share/pgvector
+          key: brew-postgresql17-pgvector-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Install Homebrew packages (if not cached)
         if: steps.cache-brew.outputs.cache-hit != 'true'
@@ -156,29 +158,40 @@ jobs:
         if: steps.cache-brew.outputs.cache-hit == 'true'
         run: |
           brew link postgresql@17 --force 2>/dev/null || true
+          brew link pgvector --force 2>/dev/null || true
 
       - name: Set up PostgreSQL
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
-          # Initialize and start PostgreSQL
-          initdb -D /tmp/pgdata --username=$(whoami) 2>/dev/null || true
-          pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
-          # Wait for PostgreSQL to be ready
-          for i in $(seq 1 30); do
-            if pg_isready -h localhost -p 5432 2>/dev/null; then
-              echo "PostgreSQL is ready"
-              break
+          echo "initdb path: $(which initdb 2>/dev/null || echo 'NOT FOUND')"
+          echo "pg_ctl path: $(which pg_ctl 2>/dev/null || echo 'NOT FOUND')"
+          # Check if PostgreSQL is already running (e.g. from a cached runner state)
+          if pg_isready -h localhost -p 5432 2>/dev/null; then
+            echo "PostgreSQL already running on port 5432, skipping initialization"
+          else
+            # Initialize new PostgreSQL instance (expose errors, no silent suppression)
+            if [ ! -d /tmp/pgdata ]; then
+              initdb -D /tmp/pgdata --username=$(whoami)
+            else
+              echo "/tmp/pgdata already exists, skipping initdb"
             fi
-            echo "Waiting for PostgreSQL... ($i/30)"
-            sleep 1
-          done
+            pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
+            # Wait for PostgreSQL to be ready
+            for i in $(seq 1 30); do
+              if pg_isready -h localhost -p 5432 2>/dev/null; then
+                echo "PostgreSQL is ready"
+                break
+              fi
+              echo "Waiting for PostgreSQL... ($i/30)"
+              sleep 1
+            done
+          fi
           # Create CI user and database (connect as current OS user which is the superuser)
           createuser --superuser cecelia 2>/dev/null || true
           psql -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
           createdb -U cecelia cecelia 2>/dev/null || true
-          # Install pgvector extension
-          brew install pgvector
-          psql -U cecelia -d cecelia -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          # pgvector extension (installed by previous brew step)
+          psql -U cecelia -d cecelia -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
