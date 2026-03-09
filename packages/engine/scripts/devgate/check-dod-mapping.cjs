@@ -177,6 +177,35 @@ function detectFakeTest(testCommand) {
 }
 
 /**
+ * 在 CI 环境中实际执行 manual: 内联命令，验证命令真正能通过
+ * @param {string} cmd - 要执行的 shell 命令
+ * @param {string} projectRoot - 项目根目录（作为 cwd）
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function executeInlineCommand(cmd, projectRoot) {
+  const { execSync } = require("child_process");
+  try {
+    execSync(cmd, {
+      cwd: projectRoot,
+      timeout: 30000,
+      stdio: "pipe",
+    });
+    return { valid: true };
+  } catch (e) {
+    const exitCode = e.status !== undefined ? e.status : "unknown";
+    const stderr = e.stderr ? e.stderr.toString().slice(0, 500) : "";
+    const stdout = e.stdout ? e.stdout.toString().slice(0, 200) : "";
+    let reason = `命令执行失败: ${cmd}\n     exit code: ${exitCode}`;
+    if (stderr) reason += `\n     stderr: ${stderr}`;
+    if (stdout) reason += `\n     stdout: ${stdout}`;
+    if (e.signal === "SIGTERM" || (e.message && e.message.includes("ETIMEDOUT"))) {
+      reason = `命令执行超时（30秒）: ${cmd}`;
+    }
+    return { valid: false, reason };
+  }
+}
+
+/**
  * 验证 Test 引用是否存在
  * @param {string} testRef - Test 引用
  * @param {string} projectRoot - 项目根目录
@@ -273,6 +302,13 @@ function validateTestRef(testRef, projectRoot) {
       if (!fakeCheck.valid) {
         return fakeCheck;
       }
+
+      // CI 环境中实际执行命令，验证命令真正能通过
+      if (process.env.GITHUB_ACTIONS) {
+        return executeInlineCommand(evidenceContent, projectRoot);
+      }
+
+      // 本地环境：只检查格式，不执行（避免副作用）
       return { valid: true };
     }
 
