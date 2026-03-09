@@ -3,7 +3,6 @@ name: Quality CI
 on:
   push:
     branches: [main]
-    paths: ['packages/quality/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
