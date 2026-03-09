@@ -1,5 +1,47 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Initiative Pipeline 收尾修复 — verify→/architect + 删 settle + dev→code_review 断链（PR #721）
+
+**失败统计**：Brain CI 失败 1 次（executor-initiative-skill-map.test.js 旧断言）
+
+**Initiative 完整流水线设计**
+```
+architecture_design(/architect M2) → dev×N(/dev) → code_review(/code-review --initiative-id) → initiative_verify(/architect M3)
+```
+- `initiative_verify` 原映射 `/decomp` 是错误的，正确是 `/architect`（Mode 3 收尾验收）
+- `initiative_settle` 废弃删除（概念合并入 initiative_verify）
+
+**三文件联动修改（task_type 路由）**
+1. `task-router.js`：`VALID_TASK_TYPES`、`SKILL_WHITELIST`、`LOCATION_MAP` 全部删 initiative_settle、改 initiative_verify→/architect
+2. `executor.js`：`skillMap`、`preparePrompt`、`isInitiativeTask` 同步更新
+3. `DEFINITION.md`：任务类型表同步更新
+
+**executor.js preparePrompt 拆分**（initiative_plan vs initiative_verify 必须分开处理）
+```javascript
+// initiative_plan → /decomp（保持原样）
+if (taskType === 'initiative_plan') {
+  return `/decomp\n\n${task.description || task.title}`;
+}
+// initiative_verify → /architect Mode 3（使用 project_id 作 initiative-id）
+if (taskType === 'initiative_verify') {
+  const initiativeId = task.project_id || task.payload?.initiative_id || '';
+  return `/architect verify --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
+}
+```
+
+**断链#5：dev 全完成 → 自动创建 initiative 级 code_review**
+- 位置：`routes.js` execution-callback，已有 code_review→initiative_verify 块之后
+- 触发条件：`task_type === 'dev'` 且 `project_id` 存在，且同 project 下无剩余 pending dev task
+- 幂等检查：先查 `code_review` 任务是否已 queued/in_progress，避免重复创建
+
+**CI 失败根因：测试断言未随代码同步更新**
+- `executor-initiative-skill-map.test.js` 仍期望旧行为 `initiative_verify → /decomp`
+- 修复原则：改 skill mapping 时，必须同步更新对应的 skill-map 测试，不只是 contract test
+
+**brain-manifest.generated.json 必须重新生成**
+- 删除 task_type 后 skill count 会变（16→15）
+- `node packages/brain/scripts/generate-manifest.mjs` 重新生成，否则 Manifest Sync Check CI 失败
+
 ### [2026-03-08] Brain Coding Pathway 断链修复 + os mock 根治 CI 低内存 flaky（PR #714）
 
 **失败统计**：Brain CI 失败 3 次（均因 minimax-provider T2 低内存 flaky）
