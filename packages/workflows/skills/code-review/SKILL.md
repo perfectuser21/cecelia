@@ -1,9 +1,10 @@
 ---
 name: code-review
-version: 1.1.0
+version: 1.2.0
 created: 2026-02-24
-updated: 2026-02-27
+updated: 2026-03-09
 changelog:
+  - 1.2.0: 新增 --initiative-id 模式 + Phase 0（Initiative 前置：集成测试 + Golden Path + TEST_BLOCK 门禁）
   - 1.1.0: 修复 --full/--level 旗标被忽视的 bug，去掉 Cecelia 硬编码模块名，优化 description
   - 1.0.0: 初始版本
 description: |
@@ -13,7 +14,7 @@ description: |
   perform a security scan on a repo for injection or credential exposure, or invoke /code-review
   directly. Also auto-triggered by Brain task_type=code_review dispatch. Generates formal bug
   reports (L1/L2 severity) and prioritized fix plans. Supports --full (no time limit), --since=Nh,
-  --level 1|2|3.
+  --level 1|2|3. Also supports --initiative-id for initiative-level integration review.
 ---
 
 > **CRITICAL LANGUAGE RULE：所有输出必须使用简体中文。包括步骤说明、审查发现、报告内容、错误信息。**
@@ -33,6 +34,7 @@ description: |
 /code-review --since=48h              # 扩大时间窗口
 /code-review --full                   # 全量扫描（无时间限制，等同于 --level 3）
 /code-review --level 1|2|3            # 显式指定审查深度
+/code-review --initiative-id <id>     # Initiative 级审查（含集成测试，Brain 断链#5 自动触发）
 ```
 
 **深度说明**：
@@ -60,6 +62,51 @@ payload 含 `since_hours` → 时间窗口模式；不含 `since_hours`、不含
 
 ## 执行流程
 
+### ▶ Phase 0：Initiative 前置（仅 --initiative-id 模式）
+
+**目的**：在进入常规代码审查前，先跑 Initiative 级别的集成测试和 Golden Path，作为质量门禁。
+
+```
+Step 0.1  从 Brain API 获取 Initiative 所有已完成 dev tasks
+          GET /api/brain/tasks?project_id=<initiative_id>&task_type=dev&status=completed
+          → 收集所有 task 的 pr_number / branch_name / payload
+
+Step 0.2  收集所有 PR 的变更文件（合并去重）
+          → 对每个 pr_number：gh pr diff <N> --name-only
+          → 去重后形成 initiative 级别的变更文件清单
+          → 此清单替代 Phase 1 的 git log 输出，直接进入 Phase 2
+
+Step 0.3  定位集成测试 owner
+          → 查找 payload.integration_test_owner = true 的 task
+          → 找到其对应分支，checkout 到该分支
+          → 运行集成测试套件（npm run test:integration 或 vitest --project integration）
+          → 记录：PASS / FAIL + 失败用例列表
+
+Step 0.4  运行 Golden Path 测试
+          → 检查 docs/golden-paths/ 是否有 Initiative 对应的 Golden Path 文件
+          → 有 → 运行 Golden Path 测试脚本
+          → 无 → 记录"无 Golden Path，跳过"（不阻塞）
+
+Step 0.5  汇总 Phase 0 结论
+          → 集成测试 FAIL / 未找到 integration_test_owner → 输出 TEST_BLOCK，终止执行
+          → 集成测试 PASS → 继续 Phase 1-4（用 Step 0.2 的变更文件清单）
+```
+
+**TEST_BLOCK 输出格式**：
+
+```
+[BLOCK] Initiative 集成测试失败
+Initiative ID: <id>
+失败原因: <reason>
+失败用例:
+  - <test_name>: <error>
+建议: 修复以上集成测试后重新触发 code_review
+```
+
+> 输出含 `TEST_BLOCK` 或 `[BLOCK]` → Brain 断链#4 质量门禁触发，跳过 initiative_verify
+
+---
+
 ### ▶ Phase 1：Triage（侦察）
 
 **目的**：确定扫描范围和审查深度。
@@ -67,6 +114,8 @@ payload 含 `since_hours` → 时间窗口模式；不含 `since_hours`、不含
 ```
 Step 1.0  解析参数，确定扫描范围
           检查 $ARGUMENTS 中的 flags：
+          - 含 --initiative-id <id> → Phase 0 已完成，变更文件清单已由 Phase 0 Step 0.2 生成
+                                       直接使用该清单，跳过 Step 1.1 的 git log
           - 含 --full 或 --level 3  → 全量模式：git log --all --name-only（无时间限制）
           - 含 --since=Nh           → 时间窗口：git log --since="N hours ago" --name-only
           - 含 --level 1 或 --level 2 → 时间窗口（24h）+ 对应深度
@@ -74,6 +123,7 @@ Step 1.0  解析参数，确定扫描范围
           ⚠️ --full 模式绝不使用时间限制
 
 Step 1.1  执行 Step 1.0 选定的 git log 命令，收集变更文件列表
+          （--initiative-id 模式跳过此步，已有 Phase 0 清单）
 
 Step 1.2  按模块聚合
           → src/ 业务逻辑
@@ -248,6 +298,8 @@ decision: PASS | NEEDS_FIX | CRITICAL_BLOCK
 ❌ 对 L3/L4 问题标记 NEEDS_FIX → 只有 L1/L2/安全才触发 Decision
 ❌ 幻觉出不存在的文件路径 → 读文件前先确认路径存在
 ❌ Phase 2 结束不生成文件 → 报告文件是**必须产物**，不是可选的
+❌ --initiative-id 模式跳过 Phase 0 → Phase 0 是 initiative 模式的核心，不可跳过
+❌ 集成测试失败还继续 Phase 1-4 → TEST_BLOCK 出现即终止，不再生成常规报告
 
 ---
 
