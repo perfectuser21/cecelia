@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Initiative pipeline 4个缺口修复（PR #727）
+
+**NEEDS_FIX 用 COUNT 计历史轮次而非 crTask.payload.fix_round**
+- code_review task 本身不带历史轮次信息（由断链#5 新建，无法携带）
+- 解决：`SELECT COUNT(*) FROM tasks WHERE project_id=? AND fix_type='code_review_issues'` 统计历史轮次
+- 优势：自愈——即使 payload 格式变化，COUNT 依然准确
+
+**SKILL.md 改动陷阱：packages/workflows/ 有旧 .prd.md**
+- hook find_prd_dod_dir 从被编辑文件向上找，packages/workflows/.prd.md 会被优先找到
+- 旧 .prd.md 未在分支中更新 → hook 报"PRD 文件未更新"
+- 解决：在 packages/workflows/ 也放 `.prd-{branch}.md`，同目录新格式优先于旧格式
+
+**verdict machine-readable 格式是断链#6 的唯一依赖**
+- 断链#6 读 `result.verdict`，LLM 自由文本输出会有不一致
+- SKILL.md 里必须明确 JSON 格式 + 三个值域（APPROVED/NEEDS_REVISION/REJECTED）+ 各值对应行为
+
+**集成测试 owner 定位要有 fallback 链**
+- `payload.branch_name` 可能为空（Brain 不一定写入）
+- 顺序：branch_name → pr_number checkout → 都无就跳过（不阻塞，记录原因）
+
 ### [2026-03-09] Dev task 串行调度 + 上下文传递（PR #726）
 
 **串行调度在断链#4 之后、断链#5 之前插入（断链#5c11）**
