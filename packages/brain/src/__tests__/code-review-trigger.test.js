@@ -15,13 +15,19 @@ import { checkAndCreateCodeReviewTrigger } from '../code-review-trigger.js';
  * @param {number} opts.devCount - 窗口内完成的 dev 任务数
  * @param {boolean} opts.hasPendingReview - 是否已有 pending code_review
  * @param {object|null} opts.insertedRow - INSERT 返回的行（null 模拟 INSERT 不执行）
+ * @param {string} opts.projectType - project 类型（'project' 或 'initiative'）
  */
-function makeMockPool({ devCount = 0, hasPendingReview = false, insertedRow = null } = {}) {
+function makeMockPool({ devCount = 0, hasPendingReview = false, insertedRow = null, projectType = 'project' } = {}) {
   const calls = [];
   return {
     calls,
     query: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
+
+      // Fix 1: project type 查询
+      if (sql.includes('SELECT type FROM projects')) {
+        return { rows: [{ type: projectType }] };
+      }
 
       // COUNT 查询
       if (sql.includes('COUNT(*)')) {
@@ -106,6 +112,36 @@ describe('code-review-trigger', () => {
   // ─── 不触发路径 ───
 
   describe('不满足触发条件', () => {
+    it('initiative 类型 project → 不触发积累（有自己的 pipeline）', async () => {
+      const pool = makeMockPool({ devCount: 10, hasPendingReview: false, projectType: 'initiative' });
+
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'init-001');
+
+      expect(result).toBeNull();
+
+      // 验证查了 project type
+      const typeCall = pool.calls.find(c => c.sql.includes('SELECT type FROM projects'));
+      expect(typeCall).toBeDefined();
+      expect(typeCall.params).toContain('init-001');
+
+      // 验证没有 COUNT 查询（提前 return）
+      const countCall = pool.calls.find(c => c.sql.includes('COUNT(*)'));
+      expect(countCall).toBeUndefined();
+
+      // 验证没有 INSERT
+      const insertCall = pool.calls.find(c => c.sql.includes('INSERT INTO tasks'));
+      expect(insertCall).toBeUndefined();
+    });
+
+    it('project 类型 project → 正常走积累触发', async () => {
+      const pool = makeMockPool({ devCount: 5, hasPendingReview: false, projectType: 'project' });
+
+      const result = await checkAndCreateCodeReviewTrigger(pool, 'proj-normal');
+
+      expect(result).not.toBeNull();
+      expect(result.task_type).toBe('code_review');
+    });
+
     it('< 5 dev 任务完成 → 不创建（返回 null）', async () => {
       const pool = makeMockPool({ devCount: 3 });
 
