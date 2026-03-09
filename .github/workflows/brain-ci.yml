@@ -19,7 +19,7 @@ jobs:
   # Detect which paths changed to skip heavy jobs on non-brain PRs
   changes:
     name: Detect Changes
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -48,7 +48,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Facts Consistency
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -65,7 +65,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Manifest Sync Check
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     name: Fitness Functions (System Consistency)
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -132,9 +132,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up PostgreSQL
+      - name: Cache Homebrew packages
+        id: cache-brew
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew/downloads
+            /opt/homebrew/Cellar/postgresql@17
+            /opt/homebrew/Cellar/pgvector
+            /opt/homebrew/opt/postgresql@17
+            /opt/homebrew/opt/pgvector
+            /opt/homebrew/lib/postgresql@17
+            /opt/homebrew/include/postgresql@17
+          key: brew-postgresql17-pgvector-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Install Homebrew packages (if not cached)
+        if: steps.cache-brew.outputs.cache-hit != 'true'
         run: |
           brew install postgresql@17
+          brew install pgvector
+
+      - name: Link Homebrew packages (if cached)
+        if: steps.cache-brew.outputs.cache-hit == 'true'
+        run: |
+          brew link postgresql@17 --force 2>/dev/null || true
+
+      - name: Set up PostgreSQL
+        run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
           # Initialize and start PostgreSQL
           initdb -D /tmp/pgdata --username=$(whoami) 2>/dev/null || true
@@ -200,7 +224,7 @@ jobs:
   ci-passed:
     needs: [changes, facts-check, manifest-sync, fitness-check, brain-test]
     if: always()
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Brain CI Passed

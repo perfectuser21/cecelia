@@ -3713,3 +3713,22 @@ WHERE content NOT LIKE '[反思洞察]%'
 
 Brain 24/7 清理进程可能在开发中途删除活跃 worktree（Bash CWD 失效）。
 应对流程：EnterWorktree → git branch -m worktree-xxx cp-MMDDHHNN-name → 重新应用变更。
+
+### [2026-03-09] brain-ci.yml 优化：ubuntu runner + brew 缓存
+
+**失败统计**：CI 失败 0 次，本地验证 0 次
+
+**根本原因分析**：
+- brain-ci.yml 所有 job 跑在 macos-latest，包括纯 Node.js 的 facts-check/manifest-sync/fitness-check
+- brain-test 每次 brew install postgresql@17 + pgvector（10-15 分钟），无缓存，失败重跑即翻倍
+
+**修复方式**：
+- 纯 Node.js job 换 ubuntu-latest（无质量损失）
+- brain-test 保持 macos-latest（生产 Darwin 路径对齐）
+- 加 actions/cache@v4 缓存 brew 包，缓存命中时秒级完成安装
+
+**陷阱**：DoD Test 字段不能用 echo/grep|wc-l，必须用 node/bash 等真实执行命令
+
+**影响程度**: High（CI 总时长 ~50 分钟 → ~12-15 分钟）
+
+**预防措施**：新增 CI job 默认用 ubuntu-latest，只有需要 macOS 特有行为才用 macos-latest
