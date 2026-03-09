@@ -195,21 +195,23 @@ jobs:
         working-directory: packages/brain
         run: node src/migrate.js
 
-      - name: Run Brain tests
+      - name: Run Brain tests with coverage (HARD GATE)
         working-directory: packages/brain
         env:
           NODE_OPTIONS: "--max-old-space-size=1536"
         run: |
           set +e
-          if [ "${{ github.event_name }}" = "push" ]; then
-            npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage 2>&1 | tee /tmp/test-output.txt
-          else
-            npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/test-output.txt
-          fi
+          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage 2>&1 | tee /tmp/test-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           # If vitest exited non-zero, check if all tests actually passed
           # (worker OOM during cleanup causes exit 1 even when all tests pass)
+          # IMPORTANT: coverage threshold failures must NOT be suppressed — they contain
+          # "Coverage threshold" in output. Only suppress genuine OOM cleanup exits.
           if [ $EXIT_CODE -ne 0 ]; then
+            if grep -q "Coverage threshold" /tmp/test-output.txt; then
+              echo "❌ Coverage threshold not met — failing CI (HARD GATE)"
+              exit 1
+            fi
             if grep -qE "Tests.*[0-9]+ passed" /tmp/test-output.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/test-output.txt; then
               echo "⚠️  vitest exited $EXIT_CODE but all tests passed (likely worker OOM during cleanup)"
               exit 0
