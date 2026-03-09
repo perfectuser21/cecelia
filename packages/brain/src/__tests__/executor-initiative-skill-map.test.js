@@ -3,9 +3,10 @@
  *
  * DoD:
  * - initiative_plan → /decomp（L1-001 修复验证）
- * - initiative_verify → /decomp
+ * - initiative_verify → /architect（Mode 3 verify，原错误映射 /decomp 已修复）
  * - decomp_review → /decomp-check
  * - preparePrompt(initiative_plan) 返回 `/decomp\n\n<task.description>`
+ * - preparePrompt(initiative_verify) 返回 `/architect verify --initiative-id ...`
  * - preparePrompt(decomp_review) 返回 `/decomp-check\n\n<task.description>`
  */
 
@@ -61,8 +62,8 @@ describe('executor getSkillForTaskType — initiative 映射', () => {
     expect(getSkillForTaskType('initiative_plan')).toBe('/decomp');
   });
 
-  it('initiative_verify → /decomp', () => {
-    expect(getSkillForTaskType('initiative_verify')).toBe('/decomp');
+  it('initiative_verify → /architect (Mode 3)', () => {
+    expect(getSkillForTaskType('initiative_verify')).toBe('/architect');
   });
 
   it('decomp_review → /decomp-check', () => {
@@ -102,18 +103,20 @@ describe('executor preparePrompt — initiative_plan / decomp_review 分支', ()
     expect(prompt).not.toMatch(/^\/dev/);
   });
 
-  it('initiative_verify 返回 /decomp + task.description', async () => {
+  it('initiative_verify 返回 /architect verify --initiative-id + task.description', async () => {
     const task = {
       id: 'task-iv-001',
       task_type: 'initiative_verify',
       title: 'Initiative 验证: 测试 Initiative',
       description: 'Initiative ID: abc123\n验证 Initiative 是否已完成。',
+      project_id: 'proj-xyz-789',
       payload: {},
     };
 
     const prompt = await preparePrompt(task);
-    expect(prompt).toMatch(/^\/decomp\n\n/);
-    expect(prompt).toContain('Initiative ID: abc123');
+    expect(prompt).toMatch(/^\/architect verify --initiative-id/);
+    expect(prompt).toContain('proj-xyz-789');
+    expect(prompt).not.toMatch(/^\/decomp/);
   });
 
   it('decomp_review 返回 /decomp-check + task.description', async () => {
