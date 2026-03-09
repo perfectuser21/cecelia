@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] SKILL.md Initiative 设计补全 — /architect Mode 3 + /code-review Phase 0（PR #724）
+
+**SKILL.md 是设计文档，不是代码，但会被 Brain 用于 LLM 推理**
+- SKILL.md 里的 Step 定义直接决定 agent 的行为——漏写等于功能不存在
+- 流水线上的每个 "断链" 都需要在 SKILL 层和代码层同时补齐
+
+**Initiative pipeline 三层门禁设计（最终形态）**
+1. **代码层**（routes.js）：scope=initiative 隔离 + TEST_BLOCK 关键词触发质量门禁
+2. **SKILL 层 /code-review Phase 0**：集成测试 → Golden Path → TEST_BLOCK 决策
+3. **SKILL 层 /architect Mode 3**：DoD 逐条校验 + 架构对齐 + 集成测试回跑 + 质量报告
+
+**integration_test_owner 约定**
+- Mode 2 最后一个 dev task 的 payload 必须携带 `integration_test_owner: true`
+- /code-review Phase 0 通过此字段找到集成测试 owner，定位测试套件
+- 没有这个字段，Phase 0 的 Step 0.3 就无法运行集成测试 → TEST_BLOCK
+
+**initiative-dod.md 是 Mode 2 → Mode 3 的传递介质**
+- Mode 2 生成 `initiative-dod.md`，记录系统边界、API契约、集成测试归属
+- Mode 3 Phase 1 第一步就读取它，作为验收基准
+- 不生成 = Mode 3 无从验收
+
 ### [2026-03-09] Initiative Pipeline code_review 隔离 — 积累触发排除 initiative + scope 隔离 + 质量门禁（PR #723）
 
 **失败统计**：Brain CI 失败 1 次（port EADDRINUSE flaky，与改动无关，空 commit 重触发通过）
