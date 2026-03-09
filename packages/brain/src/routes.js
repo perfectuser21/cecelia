@@ -3708,16 +3708,36 @@ ${resultStr.substring(0, 2000)}
           const hasTestBlock = resultStr.includes('TEST_BLOCK') || resultStr.includes('[BLOCK]');
           const { createTask: createCrFollowTask } = await import('./actions.js');
 
-          if (hasTestBlock || decision === 'CRITICAL_BLOCK') {
-            // 停止 pipeline：写入 P0 告警事件
-            const alertType = hasTestBlock ? 'test_block' : 'critical_block';
+          if (decision === 'CRITICAL_BLOCK') {
+            // 停止 pipeline：写入 P0 告警事件（CRITICAL_BLOCK = L1 安全/架构问题，必须人工介入）
             await pool.query(
               `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
               ['initiative_pipeline_blocked', 'execution_callback', JSON.stringify({
-                project_id: projectId, alert_type: alertType, code_review_task_id: task_id
+                project_id: projectId, alert_type: 'critical_block', code_review_task_id: task_id
               })]
             );
-            console.warn(`[execution-callback] 断链#4 ${alertType}: initiative pipeline blocked, project=${projectId}`);
+            console.warn(`[execution-callback] 断链#4 CRITICAL_BLOCK: initiative pipeline blocked, project=${projectId}`);
+          } else if (hasTestBlock) {
+            // 集成测试失败：创建修复 task（与 NEEDS_FIX 修复 task 独立，不计入轮次）
+            const existingTestFix = await pool.query(
+              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND payload->>'fix_type' = 'integration_test_failure' LIMIT 1`,
+              [projectId]
+            );
+            if (existingTestFix.rows.length === 0) {
+              await createCrFollowTask({
+                title: `[修复] 集成测试失败 — ${crTask.title}`,
+                description: `Initiative 集成测试失败（TEST_BLOCK），需修复集成测试后重新走 code_review。\n原始 code_review task_id: ${task_id}\n请检查最后一个 dev task 的集成测试日志，修复测试失败原因。`,
+                priority: 'P0',
+                project_id: projectId,
+                goal_id: crTask.goal_id,
+                task_type: 'dev',
+                trigger_source: 'execution_callback_auto',
+                payload: { fix_type: 'integration_test_failure', parent_task_id: task_id }
+              });
+              console.log(`[execution-callback] 断链#4 TEST_BLOCK: 创建集成测试修复 dev task project=${projectId}`);
+            } else {
+              console.log(`[execution-callback] 断链#4 TEST_BLOCK: 已有集成测试修复 task，跳过 project=${projectId}`);
+            }
           } else if (decision === 'NEEDS_FIX') {
             // 代码问题: 检查修复轮次上限，防止死循环
             const MAX_FIX_ROUNDS = 3;
@@ -3726,7 +3746,8 @@ ${resultStr.substring(0, 2000)}
               [projectId]
             );
             const fixRound = fixCountRow.rows[0]?.cnt || 0;
-            if (fixRound >= MAX_FIX_ROUNDS) {
+            const nextFixRound = fixRound + 1;
+            if (nextFixRound > MAX_FIX_ROUNDS) {
               await pool.query(
                 `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
                 ['initiative_max_fixes_exceeded', 'execution_callback', JSON.stringify({
@@ -3741,16 +3762,16 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingFix.rows.length === 0) {
                 await createCrFollowTask({
-                  title: `[修复] code_review 问题修复 — ${crTask.title}`,
-                  description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复轮次: ${fixRound + 1}/${MAX_FIX_ROUNDS}\n修复清单参见 code_review 报告。`,
+                  title: `[修复] code_review 问题修复 R${nextFixRound} — ${crTask.title}`,
+                  description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复轮次: ${nextFixRound}/${MAX_FIX_ROUNDS}\n修复清单参见 code_review 报告。`,
                   priority: 'P1',
                   project_id: projectId,
                   goal_id: crTask.goal_id,
                   task_type: 'dev',
                   trigger_source: 'execution_callback_auto',
-                  payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: fixRound + 1 }
+                  payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: nextFixRound }
                 });
-                console.log(`[execution-callback] 断链#4 NEEDS_FIX R${fixRound + 1}: 创建修复 dev task project=${projectId}`);
+                console.log(`[execution-callback] 断链#4 NEEDS_FIX R${nextFixRound}: 创建修复 dev task project=${projectId}`);
               }
             }
           } else {
@@ -3900,7 +3921,8 @@ ${resultStr.substring(0, 2000)}
             );
             console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
           } else if (verdict === 'NEEDS_REVISION') {
-            if (revisionRound >= MAX_REVISION_ROUNDS) {
+            const nextRevisionRound = revisionRound + 1;
+            if (nextRevisionRound > MAX_REVISION_ROUNDS) {
               await pool.query(
                 `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
                 ['initiative_max_revisions_exceeded', 'execution_callback', JSON.stringify({
@@ -3915,16 +3937,16 @@ ${resultStr.substring(0, 2000)}
               );
               if (existingFix.rows.length === 0) {
                 await createIvFollowTask({
-                  title: `[修订] initiative_verify 问题修复 R${revisionRound + 1} — ${ivTask.title}`,
-                  description: `Initiative verify 发现问题（NEEDS_REVISION），第 ${revisionRound + 1} 轮修订。\n修订清单参见 initiative_verify 报告。\n原始 task_id: ${task_id}`,
+                  title: `[修订] initiative_verify 问题修复 R${nextRevisionRound} — ${ivTask.title}`,
+                  description: `Initiative verify 发现问题（NEEDS_REVISION），第 ${nextRevisionRound} 轮修订。\n修订清单参见 initiative_verify 报告。\n原始 task_id: ${task_id}`,
                   priority: 'P1',
                   project_id: projectId,
                   goal_id: ivTask.goal_id,
                   task_type: 'dev',
                   trigger_source: 'execution_callback_auto',
-                  payload: { fix_type: 'initiative_verify_revision', parent_task_id: task_id, revision_round: revisionRound + 1 }
+                  payload: { fix_type: 'initiative_verify_revision', parent_task_id: task_id, revision_round: nextRevisionRound }
                 });
-                console.log(`[execution-callback] 断链#6 NEEDS_REVISION R${revisionRound + 1}: 修订 dev task created project=${projectId}`);
+                console.log(`[execution-callback] 断链#6 NEEDS_REVISION R${nextRevisionRound}: 修订 dev task created project=${projectId}`);
               }
             }
           } else if (verdict === 'REJECTED') {
@@ -3962,6 +3984,37 @@ ${resultStr.substring(0, 2000)}
       } catch (spErr) {
         // best-effort：失败不影响主流程
         console.error(`[execution-callback] Suggestion status update error (non-fatal): ${spErr.message}`);
+      }
+    }
+
+    // 5c12. 串行降级: dev task 失败（有 sequence_order）→ 取消后续所有 blocked 串行 task
+    // 避免后续 task 永久僵尸（blocked 状态无人解锁）
+    // ⚠️ 必须在 if (newStatus === 'completed') 块外面，因为 failed/quarantined 不进 completed 分支
+    if (newStatus === 'failed' || newStatus === 'quarantined') {
+      try {
+        const failedSeqRow = await pool.query(
+          'SELECT task_type, project_id, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const failedSeqTask = failedSeqRow.rows[0];
+        if (failedSeqTask?.task_type === 'dev' && failedSeqTask.project_id && failedSeqTask.payload?.sequence_order != null) {
+          const projectId = failedSeqTask.project_id;
+          const failedSeq = Number(failedSeqTask.payload.sequence_order);
+          // 将所有 sequence_order > failedSeq 的 blocked dev task 标记为 cancelled
+          const cancelResult = await pool.query(
+            `UPDATE tasks SET status = 'cancelled', blocked_reason = 'dependency_failed',
+             updated_at = NOW()
+             WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
+               AND (payload->>'sequence_order')::int > $2
+             RETURNING id`,
+            [projectId, failedSeq]
+          );
+          if (cancelResult.rows.length > 0) {
+            console.warn(`[execution-callback] 断链#5c12: 串行 task ${task_id} (seq=${failedSeq}) 失败，取消后续 ${cancelResult.rows.length} 个 blocked task: [${cancelResult.rows.map(r => r.id).join(', ')}]`);
+          }
+        }
+      } catch (serialFailErr) {
+        console.error(`[execution-callback] 串行失败降级错误 (non-fatal): ${serialFailErr.message}`);
       }
     }
 

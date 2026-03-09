@@ -1,9 +1,10 @@
 ---
 id: architect-skill
-version: 1.3.0
+version: 1.4.0
 created: 2026-03-06
 updated: 2026-03-09
 changelog:
+  - 1.4.0: Mode 2 Phase 1 明确 system_modules 为空时的标准处理（返回失败，Brain 自动创建 Mode 1 scan task）
   - 1.3.0: Mode 2 串行 task 创建规范（sequence_order/blocked/depends_on_prev）；Mode 3 machine-readable verdict JSON 输出规范
   - 1.2.0: Mode 2 新增 initiative-dod.md + 集成测试归属；Mode 3 verify 完整实现（含架构对齐校验）
   - 1.0.0: 初始版本 - Mode 1 系统说明书 + Mode 2 Initiative 设计
@@ -175,7 +176,12 @@ ON CONFLICT (module_id) DO UPDATE SET ...;
 
 1. 读取 Initiative 描述（从 Brain task.description 或用户输入）
 2. 读取系统说明书（从 `system_modules` 表，Mode 1 的产出）
-3. 如果 `system_modules` 表为空 → 先执行 Mode 1 扫描
+3. 如果 `system_modules` 表为空（无记录）→ **立即停止并返回失败**
+   - 不要自行内嵌 Mode 1 逻辑
+   - Brain 的 execution-callback（断链#3）会检测到 architecture_design(design) 失败
+   - Brain 随后自动创建新的 `architecture_design(mode='scan')` task 让 Mode 1 先执行
+   - Mode 1 完成后 Brain 重新派发 `architecture_design(mode='design')` task
+   - **切勿在同一个 task 内嵌套两个 Mode 的逻辑**
 
 #### Phase 2: 影响分析
 
