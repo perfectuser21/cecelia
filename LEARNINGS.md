@@ -1,5 +1,14 @@
 # Cecelia Core Learnings
 
+## QUALITY_SPEC.md Phase 3 完成记录（2026-03-09）
+
+### 根本原因
+质量系统实施完成后（PR #740/#741/#742），SSOT 文档 QUALITY_SPEC.md 的状态矩阵未同步更新，导致文档显示 ❌ 但 CI 中实际已实现，文档与现实脱节。
+
+### 下次预防
+- [ ] 每个 Phase 完成后立即提 PR 更新 QUALITY_SPEC.md 状态矩阵
+- [ ] QUALITY_SPEC.md 是 SSOT，状态必须与 CI 实际状态一致，不允许"文档滞后"
+
 ## check-learning HARD GATE 实现（2026-03-09）
 
 ### 根本原因
