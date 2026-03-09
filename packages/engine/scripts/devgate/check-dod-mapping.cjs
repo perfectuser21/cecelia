@@ -303,6 +303,83 @@ function validateTestRef(testRef, projectRoot) {
 }
 
 /**
+ * 从 DoD 条目文本中提取有意义的关键词（≥2字符，去除助词）
+ * @param {string} text - DoD 条目文本
+ * @returns {string[]}
+ */
+function extractKeywords(text) {
+  return text
+    .replace(/[【】「」『』（）()[\]{}<>]/g, " ")
+    .replace(
+      /\b(the|a|an|is|are|must|should|shall|will|can|be|in|to|of|and|or|not|for|with|that|this|it|has|have|do|does|did|was|were|from|at|by|as|on|all|any)\b/gi,
+      " "
+    )
+    .replace(
+      /\b(可以|应该|必须|需要|进行|实现|功能|正常|工作|通过|验证|检查|保证|确保|支持|提供|包含|完成|执行|运行|使用|设置|配置|更新|修改|添加|删除|返回|输出|输入|处理)\b/g,
+      " "
+    )
+    .split(/[\s,，。！？/\\·—]+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2);
+}
+
+/**
+ * Phase 2: 检查 DoD 条目是否能追溯到 PRD 成功标准章节
+ * @param {Array<{item: string}>} dodItems - DoD 验收项列表
+ * @param {string} prdFile - PRD 文件路径
+ * @returns {{passed: boolean, failures: number}}
+ */
+function checkDodTracesToPrd(dodItems, prdFile) {
+  if (!fs.existsSync(prdFile)) {
+    console.log("  ℹ️  PRD 文件不存在，跳过追溯检查");
+    return { passed: true, failures: 0 };
+  }
+
+  const prdContent = fs.readFileSync(prdFile, "utf-8");
+
+  // 提取 PRD 成功标准章节内容
+  const criteriaMatch = prdContent.match(
+    /^#{1,3}\s*(成功标准|[Ss]uccess\s+[Cc]riteria|验收标准)[^\n]*\n([\s\S]*?)(?=^#{1,3}|\Z)/m
+  );
+
+  if (!criteriaMatch) {
+    console.log(
+      "  ℹ️  PRD 无成功标准章节，跳过 DoD 追溯检查（check-prd 会处理）"
+    );
+    return { passed: true, failures: 0 };
+  }
+
+  const criteriaText = criteriaMatch[2].toLowerCase();
+
+  let failures = 0;
+  const failedItems = [];
+
+  for (const item of dodItems) {
+    const keywords = extractKeywords(item.item);
+
+    // 检查是否至少有一个关键词出现在 PRD 成功标准中
+    const hasMatch =
+      keywords.length === 0 ||
+      keywords.some((kw) => criteriaText.includes(kw.toLowerCase()));
+
+    if (!hasMatch) {
+      failedItems.push({ text: item.item, keywords });
+      failures++;
+    }
+  }
+
+  if (failures > 0) {
+    for (const fi of failedItems) {
+      console.log(`  ${YELLOW}⚠️${RESET}  DoD 条目无法追溯到 PRD 成功标准：`);
+      console.log(`      "${fi.text.substring(0, 80)}"`);
+      console.log(`      关键词：${fi.keywords.join(", ")}`);
+    }
+  }
+
+  return { passed: failures === 0, failures };
+}
+
+/**
  * 获取当前分支名（v1.1: 支持 CI 环境）
  */
 function getCurrentBranch() {
@@ -455,7 +532,30 @@ function main() {
 
   console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项，全部已验证)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  // === Phase 2: DoD ↔ PRD 追溯检查 ===
+  const prdPath = path.join(projectRoot, ".prd.md");
+  console.log("");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("  DoD ↔ PRD 追溯检查（Phase 2）");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  const traceResult = checkDodTracesToPrd(items, prdPath);
+  if (!traceResult.passed) {
+    console.log(
+      `  ${YELLOW}⚠️  ${traceResult.failures} 条 DoD 条目无法追溯到 PRD 成功标准${RESET}`
+    );
+    console.log("  （当前为 warning，Phase 3 将升级为 exit 1）");
+  } else {
+    console.log(`  ${GREEN}✅ 追溯检查通过${RESET}`);
+  }
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
   process.exit(0);
 }
 
-main();
+// 直接运行时执行 main()，被 require() 时只导出函数
+if (require.main === module) {
+  main();
+}
+
+module.exports = { extractKeywords, checkDodTracesToPrd };
