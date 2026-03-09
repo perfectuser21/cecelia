@@ -1,5 +1,30 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] 模型配额瀑布选择 + 梯队设置（PR #729）
+
+**失败统计**：测试调整 3 处，无 CI 失败（Brain CI 是预先存在的基础设施问题）
+
+**根本原因分析**：
+initiative_plan 等任务在 3 天内烧完 70% Opus 配额，是两个 Bug 叠加：
+1. `model-profile.js` 缺少 initiative_plan 配置 → getModelForTask() 返回 null → Max 账户默认 Opus
+2. `executor.js` selectedModel='sonnet' 时未设置 CECELIA_MODEL → cecelia-run 不传 --model → Max 账户默认 Opus
+
+**设计决策**：
+- DEFAULT_CASCADE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']，不含 Opus；Opus 只能通过显式 cascade 配置进入瀑布
+- Sonnet 满载阈值从 95% 调整为 100%，让 Sonnet 用尽后才切换
+- getCascadeForTask() 优先读 profile cascade 字段，无则从天花板（anthropic 模型）自动推导
+- isAccountEligibleForTier() 统一各 tier 配额检查，避免重复逻辑
+
+**测试调整陷阱**：
+- 旧测试基于 SONNET_THRESHOLD=95，新阈值 100% 后需要更新"Sonnet 接近满载"场景期望
+- account-usage-scheduling.test.js M1 场景：sonnet 全满时 DEFAULT_CASCADE 无 Opus，应降级 Haiku（不是 Opus）
+- M4 场景：account3 sonnet=98% < 100%，仍可继续用 Sonnet（期望从 opus 改为 sonnet）
+- 返回值新增 modelId 字段，所有 toEqual 期望都需补充 modelId
+
+**影响程度**：High（直接减少 Opus 非必要消耗，initiative_plan 等现在用 Sonnet/Haiku 瀑布）
+
+**预防措施**：新增任务类型时必须在 FALLBACK_PROFILE.executor.model_map 中配置 cascade，否则走默认 Opus
+
 ### [2026-03-09] Initiative coding pathway 冲突修复与补全（PR #728）
 
 **5e 旧循环与新 pipeline 路由冲突，必须删除**
