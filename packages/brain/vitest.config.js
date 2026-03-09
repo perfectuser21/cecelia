@@ -6,7 +6,7 @@ export default defineConfig({
     environment: 'node',
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'html', 'json'],
+      reporter: ['text', 'lcov', 'html', 'json', 'json-summary'],
       reportsDirectory: './coverage',
       include: [
         'src/**/*.js'
@@ -18,10 +18,10 @@ export default defineConfig({
         'coverage/**'
       ],
       thresholds: {
-        statements: 50,
-        branches: 35,
-        functions: 30,
-        lines: 30,
+        statements: 75,
+        branches: 75,
+        functions: 80,
+        lines: 75,
         perFile: false
       },
       // Specific files we're tracking closely
