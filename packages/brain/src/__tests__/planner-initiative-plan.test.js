@@ -331,10 +331,11 @@ describe('generateArchitectureDesignTask - auto task generation', () => {
     expect(task.description).toContain(initResult.rows[0].id);
     expect(task.description).toContain(kr.id);
 
-    // payload should contain kr_id
+    // payload should contain kr_id and mode: 'design' (Mode 2)
     const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
     expect(payload.kr_id).toBe(kr.id);
     expect(payload.initiative_id).toBe(initResult.rows[0].id);
+    expect(payload.mode).toBe('design'); // planner → architecture_design 必须携带 mode=design
 
     // Track for cleanup
     testTaskIds.push(task.id);

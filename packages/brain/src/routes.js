@@ -3654,7 +3654,29 @@ ${resultStr.substring(0, 2000)}
             );
             const devCnt = parseInt(devTasks.rows[0]?.cnt || 0);
             if (devCnt === 0) {
-              console.warn(`[execution-callback] 断链#3 警告: architecture_design(design) ${task_id} 完成但 project ${projectId} 无 queued dev 任务，请检查 /architect 是否注册了 Task`);
+              // 检查是否已有历史 dev 任务（全部完成则不告警，否则是 pipeline 断链）
+              const histDevRow = await pool.query(
+                `SELECT COUNT(*) AS cnt FROM tasks WHERE project_id = $1 AND task_type = 'dev'`,
+                [projectId]
+              );
+              const histDevCnt = parseInt(histDevRow.rows[0]?.cnt || 0);
+              if (histDevCnt === 0) {
+                // 从未注册过 dev 任务 → architect Mode 2 断链，写 cecelia_events 告警
+                console.warn(`[execution-callback] 断链#3 告警: architecture_design(design) ${task_id} 完成但 project ${projectId} 无任何 dev 任务，创建告警`);
+                const { createTask: createAlertTask } = await import('./actions.js');
+                await createAlertTask({
+                  title: `[告警] Initiative pipeline 断链: architect Mode 2 未注册 Tasks`,
+                  description: `architecture_design(design) task ${task_id} 已完成，但 project ${projectId} 下从未创建过 dev 任务。\n\n可能原因：/architect Mode 2 未正确调用 POST /api/brain/tasks 注册 Tasks 到 Brain。\n\n请检查该 architecture_design task 的执行日志。`,
+                  priority: 'P1',
+                  project_id: projectId,
+                  goal_id: adTask.goal_id,
+                  task_type: 'cecelia_events',
+                  trigger_source: 'execution_callback_断链3',
+                  payload: { event_type: 'pipeline_gap', architecture_design_task_id: task_id, project_id: projectId }
+                });
+              } else {
+                console.log(`[execution-callback] 断链#3: architecture_design(design) ${task_id} 完成，project ${projectId} 所有 dev 任务已完成（共 ${histDevCnt} 个）`);
+              }
             } else {
               console.log(`[execution-callback] 断链#3: architecture_design(design) ${task_id} 完成，project ${projectId} 有 ${devCnt} 个 dev 任务就绪`);
             }
@@ -3964,78 +3986,6 @@ ${resultStr.substring(0, 2000)}
       } catch (autoLearningErr) {
         console.error(`[execution-callback] Auto-learning error (non-fatal): ${autoLearningErr.message}`);
         // Continue with normal flow - auto-learning failure should not affect main functionality
-      }
-    }
-
-    // 5e. Initiative 执行循环：dev 任务完成 → 触发下一轮 initiative_plan
-    // completed_no_pr 且已重排时跳过（任务会重新执行，不应中断循环）
-    if (newStatus === 'completed' || (newStatus === 'completed_no_pr' && !rescheduled)) {
-      try {
-        const devTaskRow = await pool.query(
-          'SELECT task_type, project_id, payload FROM tasks WHERE id = $1',
-          [task_id]
-        );
-        const devTask = devTaskRow.rows[0];
-
-        // 仅处理 dev 类型任务（非拆解任务）
-        const isDevTask = devTask?.task_type === 'dev' && !devTask?.payload?.decomposition;
-
-        if (isDevTask && devTask?.project_id) {
-          // 检查 project 是否为 initiative 且仍然活跃
-          const projectRow = await pool.query(
-            "SELECT id, name, type, status FROM projects WHERE id = $1 AND type = 'initiative' AND status IN ('active', 'in_progress')",
-            [devTask.project_id]
-          );
-          const initiative = projectRow.rows[0];
-
-          if (initiative) {
-            // 幂等检查：已有 queued/in_progress 的 initiative_plan 任务则跳过
-            const existingPlan = await pool.query(
-              "SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'initiative_plan' AND status IN ('queued', 'in_progress') LIMIT 1",
-              [initiative.id]
-            );
-
-            if (existingPlan.rows.length === 0) {
-              // 获取所属 KR（通过 parent project 的 project_kr_links）
-              const krRow = await pool.query(`
-                SELECT pkl.kr_id
-                FROM projects p
-                LEFT JOIN project_kr_links pkl ON pkl.project_id = p.parent_id
-                WHERE p.id = $1
-                LIMIT 1
-              `, [initiative.id]);
-              const krId = krRow.rows[0]?.kr_id || null;
-
-              const planTitle = `Initiative 规划: ${initiative.name}`;
-              const planDescription = [
-                `请为 Initiative「${initiative.name}」规划下一个 PR。`,
-                '',
-                '你的任务（initiative_plan 模式）：',
-                '1. 读取 Initiative 描述（GET /api/brain/projects/' + initiative.id + '）',
-                '2. 读取已完成的 PR 列表（GET /api/brain/tasks?project_id=' + initiative.id + '&status=completed）',
-                '3. 判断 Initiative 目标是否达成',
-                '   - 已达成 → 标记 Initiative completed，结束',
-                '   - 未达成 → 规划下一个 PR，写入 tasks 表一条 dev 任务',
-                '',
-                `Initiative ID: ${initiative.id}`,
-                `Initiative 名称: ${initiative.name}`,
-                `所属 KR ID: ${krId || '(未知)'}`,
-                `触发原因: dev 任务 ${task_id} 已完成，继续执行循环`,
-              ].join('\n');
-
-              await pool.query(`
-                INSERT INTO tasks (title, description, status, priority, goal_id, project_id, task_type, trigger_source)
-                VALUES ($1, $2, 'queued', 'P1', $3, $4, 'initiative_plan', 'execution_callback')
-              `, [planTitle, planDescription, krId, initiative.id]);
-
-              console.log(`[execution-callback] Initiative ${initiative.id} 执行循环：创建下一轮 initiative_plan 任务`);
-            } else {
-              console.log(`[execution-callback] Initiative ${initiative.id} 已有 initiative_plan 任务，跳过创建`);
-            }
-          }
-        }
-      } catch (initiativeLoopErr) {
-        console.error(`[execution-callback] Initiative 执行循环错误（非阻塞）: ${initiativeLoopErr.message}`);
       }
     }
 
