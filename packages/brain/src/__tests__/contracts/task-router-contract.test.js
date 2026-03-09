@@ -63,14 +63,18 @@ describe('task-router contract', () => {
       expect(getTaskLocation(undefined)).toBe('us');
     });
 
-    it('D5-3: returns "us" for initiative_settle', () => {
-      expect(getTaskLocation('initiative_settle')).toBe('us');
+    it('D5-3: returns "us" for initiative_verify', () => {
+      expect(getTaskLocation('initiative_verify')).toBe('us');
     });
   });
 
   describe('isValidTaskType (D5-1)', () => {
-    it('D5-1: initiative_settle is a valid task type', () => {
-      expect(isValidTaskType('initiative_settle')).toBe(true);
+    it('D5-1: initiative_verify is a valid task type', () => {
+      expect(isValidTaskType('initiative_verify')).toBe(true);
+    });
+
+    it('D5-1b: initiative_settle is NOT a valid task type (废弃)', () => {
+      expect(isValidTaskType('initiative_settle')).toBe(false);
     });
 
     it('returns true for known types', () => {
@@ -84,8 +88,12 @@ describe('task-router contract', () => {
   });
 
   describe('SKILL_WHITELIST (D5-2)', () => {
-    it('D5-2: initiative_settle maps to /assurance in SKILL_WHITELIST', () => {
-      expect(SKILL_WHITELIST['initiative_settle']).toBe('/assurance');
+    it('D5-2: initiative_verify maps to /architect in SKILL_WHITELIST', () => {
+      expect(SKILL_WHITELIST['initiative_verify']).toBe('/architect');
+    });
+
+    it('D5-2b: initiative_settle is NOT in SKILL_WHITELIST (废弃)', () => {
+      expect(SKILL_WHITELIST['initiative_settle']).toBeUndefined();
     });
   });
 

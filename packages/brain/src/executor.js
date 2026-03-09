@@ -970,7 +970,7 @@ function getSkillForTaskType(taskType, payload) {
     'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
     // Initiative 执行循环
     'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
-    'initiative_verify': '/decomp',   // Phase 2 验证 Initiative 完成：/decomp
+    'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
     'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
     // Suggestion 驱动的自主规划
     'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
@@ -978,8 +978,6 @@ function getSkillForTaskType(taskType, payload) {
     'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
     // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
     'strategy_session': '/strategy-session',
-    // Initiative 收尾：注册检查 + 集成测试 + 收尾文件
-    'initiative_settle': '/assurance',
     // 旧类型向后兼容 → 统一走 /code-review
     'qa': '/code-review',
     'audit': '/code-review',
@@ -1441,10 +1439,15 @@ PUT /api/tasks/goals/${krId}
 参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
   }
 
-  // initiative_plan / initiative_verify：直接将任务描述作为 /decomp Phase 2 上下文注入
-  // 任务描述已包含完整的 Initiative ID、KR ID、历史 PR 等信息，无需额外处理
-  if (taskType === 'initiative_plan' || taskType === 'initiative_verify') {
+  // initiative_plan：直接将任务描述作为 /decomp Phase 2 上下文注入
+  if (taskType === 'initiative_plan') {
     return `/decomp\n\n${task.description || task.title}`;
+  }
+
+  // initiative_verify：调用 /architect Mode 3 verify，传入 initiative_id
+  if (taskType === 'initiative_verify') {
+    const initiativeId = task.project_id || task.payload?.initiative_id || '';
+    return `/architect verify --initiative-id ${initiativeId}\n\n${task.description || task.title}`;
   }
 
   // architecture_design：调用 /architect Mode 2，将 Initiative 描述和 ID 作为上下文注入
@@ -2050,7 +2053,7 @@ async function probeTaskLiveness() {
     // initiative_plan/initiative_verify are always dispatched via bridge where task_id
     // is NOT in the process cmdline, so isTaskProcessAlive() always returns false for them.
     const DECOMP_LIVENESS_GRACE_MINUTES = 60;
-    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design' || task.task_type === 'initiative_settle';
+    const isInitiativeTask = task.task_type === 'initiative_plan' || task.task_type === 'initiative_verify' || task.task_type === 'architecture_design';
     if (task.payload?.decomposition === 'true' || isInitiativeTask) {
       const triggeredAt = task.payload?.run_triggered_at || task.started_at;
       if (triggeredAt) {

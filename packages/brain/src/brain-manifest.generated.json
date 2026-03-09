@@ -449,7 +449,7 @@
             },
             {
               "taskType": "initiative_verify",
-              "skill": "/decomp"
+              "skill": "/architect"
             },
             {
               "taskType": "decomp_review",
@@ -466,10 +466,6 @@
             {
               "taskType": "strategy_session",
               "skill": "/strategy-session"
-            },
-            {
-              "taskType": "initiative_settle",
-              "skill": "/assurance"
             },
             {
               "taskType": "qa",
@@ -828,12 +824,11 @@
     "dept_heartbeat": "/repo-lead heartbeat",
     "code_review": "/code-review",
     "initiative_plan": "/decomp",
-    "initiative_verify": "/decomp",
+    "initiative_verify": "/architect",
     "decomp_review": "/decomp-check",
     "suggestion_plan": "/plan",
     "architecture_design": "/architect",
     "strategy_session": "/strategy-session",
-    "initiative_settle": "/assurance",
     "qa": "/code-review",
     "audit": "/code-review"
   },
@@ -852,13 +847,12 @@
     "decomp_review": "/decomp-check",
     "dept_heartbeat": "/cecelia",
     "initiative_plan": "/decomp",
-    "initiative_verify": "/decomp",
+    "initiative_verify": "/architect",
     "suggestion_plan": "/plan",
     "architecture_design": "/architect",
-    "strategy_session": "/strategy-session",
-    "initiative_settle": "/assurance"
+    "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-08T15:21:35.341Z",
+  "generatedAt": "2026-03-09T00:12:00.185Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

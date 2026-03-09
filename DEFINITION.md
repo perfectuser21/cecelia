@@ -407,7 +407,7 @@ queued → in_progress → completed
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
-| initiative_verify | US | Initiative 验收 | Opus / - | 默认 anthropic |
+| initiative_verify | US | Initiative 收尾验收 (/architect Mode 3) | Opus / - | 默认 anthropic |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
 | talk | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
@@ -416,7 +416,6 @@ queued → in_progress → completed
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
 | architecture_design | US | 架构师 (/architect) | Opus / - | 默认 anthropic |
 | strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
-| initiative_settle | US | 膳后/收尾 (/assurance) | Opus / - | 默认 anthropic |
 
 ---
 
