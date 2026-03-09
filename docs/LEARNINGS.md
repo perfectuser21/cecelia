@@ -25,6 +25,11 @@ comm -12 \
 #### 向后兼容
 `isolate: true`（当前默认）下每个文件在独立 VM 上下文，db.js 每次重新求值，pool 各自独立。删除 `pool.end()` 不影响隔离性，连接随 VM GC 自然回收。
 
+### 下次预防
+- [ ] 新写集成测试时，如果用 `import pool from '../db.js'`，禁止在 afterAll 调用 `pool.end()`（私有 pool = `new Pool()` 才可以 end）
+- [ ] PR Review 中，凡看到 `pool.end()` + `import pool from` 组合，立即标记为 blocking issue
+- [ ] 可运行诊断命令：`comm -12 <(grep -rln "from.*db.js" src/__tests__/ | sort) <(grep -rln "pool.end(" src/__tests__/ | sort)` 确认无共享 pool 被 end
+
 ### [2026-03-09] task_run_metrics 全链路 metrics 采集（PR #745）
 
 #### 根本原因
