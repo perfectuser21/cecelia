@@ -16,9 +16,47 @@ import pool from './db.js';
 const ACCOUNTS = ['account1', 'account2', 'account3'];
 const CACHE_TTL_MINUTES = 3;
 const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
-const SONNET_THRESHOLD = 95;      // sonnet 7d 超过此百分比视为 Sonnet 满载，降级到 Opus
-const OPUS_THRESHOLD = 95;        // 7d all-models 超过此百分比视为 Opus 满载
+const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
+const OPUS_7D_THRESHOLD = 95;     // 7d all-models Opus 满载阈值（≥ 此值时降级 Haiku）
+const HAIKU_7D_THRESHOLD = 100;   // 7d all-models 完全满载阈值（≥ 此值时跳过账号）
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
+
+// 模型 ID → quota tier 映射
+const MODEL_TIER_MAP = {
+  'claude-opus-4-6':            'opus',
+  'claude-sonnet-4-6':          'sonnet',
+  'claude-haiku-4-5-20251001':  'haiku',
+  'claude-haiku-4-5':           'haiku',
+};
+
+// 默认降级瀑布（无 cascade 时使用 Sonnet→Haiku）
+const DEFAULT_CASCADE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'];
+
+/**
+ * 判断指定账号是否可以为给定 tier 提供服务
+ * @param {Object} account - 账号使用量数据
+ * @param {string} tier - 'sonnet'|'opus'|'haiku'
+ * @returns {boolean}
+ */
+function isAccountEligibleForTier(account, tier) {
+  if (account.spendingCapped) return false;
+  if (account.extraUsed) return false;
+  if (account.pct >= USAGE_THRESHOLD) return false; // 5h 超限
+
+  switch (tier) {
+    case 'sonnet':
+      // Sonnet：7d_Sonnet 未满
+      return account.sevenDaySonnetPct < SONNET_7D_THRESHOLD;
+    case 'opus':
+      // Opus：7d_total < 95%（Opus 耗 token 多，以总量衡量）
+      return account.sevenDayPct < OPUS_7D_THRESHOLD;
+    case 'haiku':
+      // Haiku：7d_total 未完全耗尽
+      return account.sevenDayPct < HAIKU_7D_THRESHOLD;
+    default:
+      return false;
+  }
+}
 
 // ─── Spending Cap 账号级标记 ────────────────────────────────────────────────
 
@@ -282,19 +320,25 @@ function effectivePct(pct, resetsAt) {
  * 统一账号选择入口（唯一入口，所有 LLM 调用共用）
  *
  * @param {Object} options
- * @param {string} options.model - 请求的模型类型：'haiku'|'sonnet'|'opus'|undefined
- *   - 'haiku': Haiku 独立配额模式（只看 5h，不看 sonnet/opus 7d）
- *   - undefined/其他: 三阶段降级链（Sonnet → Opus → Haiku → MiniMax）
+ * @param {string} [options.model] - 旧接口兼容：'haiku' 时走 Haiku 独立模式
+ * @param {string[]} [options.cascade] - 瀑布降级顺序，完整模型 ID 数组
+ *   例：['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']
+ *   未提供时使用 DEFAULT_CASCADE（Sonnet → Haiku）
+ *   cascade 中无 Anthropic 模型时（如只有 MiniMax）返回 null 触发 MiniMax 降级
  *
- * 所有模式统一过滤 spending cap（账号级限制，跟模型无关）。
+ * 配额规则（按 tier）：
+ *   - sonnet：five_hour_pct < 80 AND seven_day_sonnet_pct < 100
+ *   - opus：five_hour_pct < 80 AND seven_day_pct < 95
+ *   - haiku：five_hour_pct < 80 AND seven_day_pct < 100
  *
- * @returns {{ accountId: string, model: string }|null}
+ * @returns {{ accountId: string, model: string, modelId: string }|null}
  *   accountId: 选中的账号 ID
- *   model: 'sonnet'|'opus'|'haiku'
+ *   model: 'sonnet'|'opus'|'haiku'（短名）
+ *   modelId: 完整模型 ID（如 'claude-sonnet-4-6'）
  *   null → 所有账号不可用，调用方降级到 MiniMax
  */
 export async function selectBestAccount(options = {}) {
-  const requestedModel = options.model;
+  const { model: requestedModel, cascade: requestedCascade } = options;
   try {
     const usage = await getAccountUsage();
 
@@ -317,58 +361,54 @@ export async function selectBestAccount(options = {}) {
       `${a.id}=${a.pct}%/sonnet=${a.sevenDaySonnetPct}%/7d=${a.sevenDayPct}%${a.spendingCapped ? '/CAPPED' : ''}`
     ).join(', ');
 
-    // ── Haiku 独立模式：只看 5h + spending cap ──
+    // ── 旧接口：Haiku 独立模式（向后兼容）──
     if (requestedModel === 'haiku') {
-      const haikuCandidates = mapped
-        .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD)
+      const candidates = mapped
+        .filter(a => isAccountEligibleForTier(a, 'haiku'))
         .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
 
-      if (haikuCandidates.length > 0) {
-        const sel = haikuCandidates[0];
+      if (candidates.length > 0) {
+        const sel = candidates[0];
         console.log(`[account-usage] Haiku 独立模式: 选 ${sel.id}（5h=${sel.pct}%） | ${usageSummary}`);
-        return { accountId: sel.id, model: 'haiku' };
+        return { accountId: sel.id, model: 'haiku', modelId: 'claude-haiku-4-5-20251001' };
       }
       console.log(`[account-usage] Haiku 独立模式: 所有账号不可用 → null | ${usageSummary}`);
       return null;
     }
 
-    // ── 三阶段降级链（默认模式）──
+    // ── 瀑布降级链：按 cascade 顺序逐个模型尝试 ──
+    const cascade = requestedCascade || DEFAULT_CASCADE;
 
-    // 阶段1 Sonnet
-    const sonnetCandidates = mapped
-      .filter(a => !a.spendingCapped && !a.extraUsed && a.pct < USAGE_THRESHOLD && a.sevenDaySonnetPct < SONNET_THRESHOLD)
-      .sort((a, b) => a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
+    for (const modelId of cascade) {
+      const tier = MODEL_TIER_MAP[modelId];
+      if (!tier) {
+        // 非 Anthropic 模型（MiniMax 等），返回 null 触发调用方降级
+        console.log(`[account-usage] cascade 中遇到 ${modelId}（非 Anthropic），返回 null | ${usageSummary}`);
+        return null;
+      }
 
-    if (sonnetCandidates.length > 0) {
-      const sel = sonnetCandidates[0];
-      const resetNote = sel.ePct === 0 && sel.pct > 0 ? '（即将重置）' : '';
-      console.log(`[account-usage] Sonnet 阶段: 选 ${sel.id}（5h=${sel.pct}%${resetNote} sonnet7d=${sel.sevenDaySonnetPct}%） | ${usageSummary}`);
-      return { accountId: sel.id, model: 'sonnet' };
+      // 找出所有可用此 tier 的账号，按用量从低到高排序
+      const candidates = mapped
+        .filter(a => isAccountEligibleForTier(a, tier))
+        .sort((a, b) => {
+          if (tier === 'sonnet') return a.sevenDaySonnetPct - b.sevenDaySonnetPct || a.ePct - b.ePct;
+          return a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct;
+        });
+
+      if (candidates.length > 0) {
+        const sel = candidates[0];
+        const resetNote = sel.ePct === 0 && sel.pct > 0 ? '（即将重置）' : '';
+        console.log(
+          `[account-usage] 选 ${sel.id} model=${modelId}（tier=${tier}, 5h=${sel.pct}%${resetNote}, ` +
+          `sonnet7d=${sel.sevenDaySonnetPct}%, 7d=${sel.sevenDayPct}%） | ${usageSummary}`
+        );
+        return { accountId: sel.id, model: tier, modelId };
+      }
+
+      console.log(`[account-usage] ${modelId}（${tier}）全账号不可用，尝试下一梯队 | ${usageSummary}`);
     }
 
-    // 阶段2 Opus
-    const opusCandidates = mapped
-      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD && a.sevenDayPct < OPUS_THRESHOLD)
-      .sort((a, b) => a.sevenDayPct - b.sevenDayPct || a.ePct - b.ePct);
-
-    if (opusCandidates.length > 0) {
-      const sel = opusCandidates[0];
-      console.log(`[account-usage] Opus 阶段（Sonnet 全满）: 选 ${sel.id}（5h=${sel.pct}% 7d=${sel.sevenDayPct}%） | ${usageSummary}`);
-      return { accountId: sel.id, model: 'opus' };
-    }
-
-    // 阶段3 Haiku
-    const haikuFallback = mapped
-      .filter(a => !a.spendingCapped && a.pct < USAGE_THRESHOLD)
-      .sort((a, b) => a.ePct - b.ePct || a.sevenDayPct - b.sevenDayPct);
-
-    if (haikuFallback.length > 0) {
-      const sel = haikuFallback[0];
-      console.log(`[account-usage] Haiku 阶段（Sonnet+Opus 全满）: 选 ${sel.id}（5h=${sel.pct}%） | ${usageSummary}`);
-      return { accountId: sel.id, model: 'haiku' };
-    }
-
-    // 兜底 MiniMax
+    // 全部 cascade 耗尽
     console.log(`[account-usage] 所有账号不可用 → 降级到 MiniMax | ${usageSummary}`);
     return null;
   } catch (err) {

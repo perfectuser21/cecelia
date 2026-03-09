@@ -64,7 +64,7 @@ import { handleChat, handleChatStream } from './orchestrator-chat.js';
 import { callLLM, callLLMStream } from './llm-caller.js';
 import { loadUserProfile, upsertUserProfile } from './user-profile.js';
 import { getRealtimeConfig, handleRealtimeTool } from './orchestrator-realtime.js';
-import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels } from './model-profile.js';
+import { loadActiveProfile, getActiveProfile, switchProfile, listProfiles as listModelProfiles, updateAgentModel, batchUpdateAgentModels, updateAgentCascade } from './model-profile.js';
 import {
   runDecompositionChecks,
 } from './decomposition-checker.js';
@@ -9022,6 +9022,33 @@ router.patch('/model-profiles/active/agents', async (req, res) => {
     const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
       ? 400 : err.message.includes('No active profile') ? 404 : 500;
     res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/model-profiles/active/agent-cascade', async (req, res) => {
+  try {
+    const { agent_id, cascade } = req.body;
+    if (!agent_id) {
+      return res.status(400).json({ success: false, error: 'agent_id is required' });
+    }
+    if (cascade !== null && !Array.isArray(cascade)) {
+      return res.status(400).json({ success: false, error: 'cascade must be an array or null' });
+    }
+
+    const result = await updateAgentCascade(pool, agent_id, cascade);
+
+    websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
+      profile_id: result.profile.id,
+      profile_name: result.profile.name,
+      agent_id: result.agent_id,
+      cascade: result.cascade,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[API] update-agent-cascade error:', err.message);
+    res.status(err.message.includes('No active profile') ? 404 : 500)
+       .json({ success: false, error: err.message });
   }
 });
 

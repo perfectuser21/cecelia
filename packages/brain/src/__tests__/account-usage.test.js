@@ -436,7 +436,7 @@ describe('account-usage', () => {
       });
     }
 
-    describe('Sonnet 阶段（默认模式）', () => {
+    describe('Sonnet 阶段（默认模式 DEFAULT_CASCADE=Sonnet→Haiku）', () => {
       it('应选用量最低的账号（Sonnet 模式）', async () => {
         setupUsageData({
           account1: { five_hour_pct: 50, seven_day_pct: 30, seven_day_sonnet_pct: 40, resets_at: null, extra_used: false },
@@ -445,7 +445,7 @@ describe('account-usage', () => {
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account2', model: 'sonnet' });
+        expect(result).toEqual({ accountId: 'account2', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
       it('5h 用量超过 80% 的账号应被排除', async () => {
@@ -456,10 +456,11 @@ describe('account-usage', () => {
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account3', model: 'sonnet' });
+        expect(result).toEqual({ accountId: 'account3', model: 'sonnet', modelId: 'claude-sonnet-4-6' });
       });
 
-      it('sonnet 7d 超过 95% 应降级到 Opus', async () => {
+      it('sonnet 7d 在 95-99% 时仍选 Sonnet（新阈值 100%）', async () => {
+        // 新逻辑：Sonnet 阈值 100%，96% 仍然可用 Sonnet
         setupUsageData({
           account1: { five_hour_pct: 30, seven_day_pct: 50, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 20, seven_day_pct: 40, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
@@ -468,27 +469,18 @@ describe('account-usage', () => {
 
         const result = await selectBestAccount();
         expect(result).not.toBeNull();
-        expect(result.model).toBe('opus');
-      });
-    });
-
-    describe('Opus 阶段', () => {
-      it('Sonnet 全满时应选 Opus（7d 最低的账号）', async () => {
-        setupUsageData({
-          account1: { five_hour_pct: 30, seven_day_pct: 80, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 20, seven_day_pct: 30, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 40, seven_day_pct: 50, seven_day_sonnet_pct: 98, resets_at: null, extra_used: false },
-        });
-
-        const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account2', model: 'opus' });
+        // 96/97/98 都 < 100，应选 Sonnet（用量最低 account1 sonnet=96）
+        expect(result.model).toBe('sonnet');
+        expect(result.accountId).toBe('account1');
       });
 
-      it('7d 超过 95% 应降级到 Haiku', async () => {
+      it('sonnet 7d 全部 >= 100% 时降级到 Haiku（DEFAULT_CASCADE 无 Opus）', async () => {
+        // DEFAULT_CASCADE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']
+        // 无 Opus → Sonnet 满了直接到 Haiku
         setupUsageData({
-          account1: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 20, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 40, seven_day_pct: 98, seven_day_sonnet_pct: 98, resets_at: null, extra_used: false },
+          account1: { five_hour_pct: 30, seven_day_pct: 50, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 20, seven_day_pct: 40, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 40, seven_day_pct: 60, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
@@ -497,16 +489,48 @@ describe('account-usage', () => {
       });
     });
 
-    describe('Haiku 降级阶段', () => {
-      it('Sonnet+Opus 全满时应选 Haiku（5h 最低的账号）', async () => {
+    describe('Opus 阶段（需显式 cascade 含 Opus）', () => {
+      it('cascade 含 Opus 时，Sonnet 满了应选 Opus', async () => {
         setupUsageData({
-          account1: { five_hour_pct: 50, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
-          account2: { five_hour_pct: 30, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
-          account3: { five_hour_pct: 70, seven_day_pct: 98, seven_day_sonnet_pct: 98, resets_at: null, extra_used: false },
+          account1: { five_hour_pct: 30, seven_day_pct: 80, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 20, seven_day_pct: 30, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 40, seven_day_pct: 50, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+        });
+
+        const result = await selectBestAccount({
+          cascade: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+        });
+        expect(result).not.toBeNull();
+        expect(result.model).toBe('opus');
+        expect(result.accountId).toBe('account2'); // 7d 最低
+      });
+
+      it('cascade 含 Opus 时，7d 超过 95% 应降级到 Haiku', async () => {
+        setupUsageData({
+          account1: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 20, seven_day_pct: 97, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 40, seven_day_pct: 98, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+        });
+
+        const result = await selectBestAccount({
+          cascade: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+        });
+        expect(result).not.toBeNull();
+        expect(result.model).toBe('haiku');
+      });
+    });
+
+    describe('Haiku 降级阶段', () => {
+      it('Sonnet 全满时应选 Haiku（7d 最低的账号）', async () => {
+        // Haiku 排序：sevenDayPct 最低优先，account1(60) < account2(70) < account3(80)
+        setupUsageData({
+          account1: { five_hour_pct: 50, seven_day_pct: 60, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account2: { five_hour_pct: 30, seven_day_pct: 70, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+          account3: { five_hour_pct: 70, seven_day_pct: 80, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
         });
 
         const result = await selectBestAccount();
-        expect(result).toEqual({ accountId: 'account2', model: 'haiku' });
+        expect(result).toEqual({ accountId: 'account1', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
       });
     });
 
@@ -567,20 +591,17 @@ describe('account-usage', () => {
         expect(result.accountId).toBe('account2');
       });
 
-      it('Opus 阶段不过滤 extra_used', async () => {
-        // Sonnet 全满 → 进入 Opus 阶段
-        // Opus 阶段 filter 不含 extraUsed
+      it('所有 tier 都过滤 extra_used（extra_used=true 的账号全被排除）', async () => {
+        // 新逻辑：extra_used 在 isAccountEligibleForTier 中统一过滤
         setupUsageData({
-          account1: { five_hour_pct: 30, seven_day_pct: 40, seven_day_sonnet_pct: 96, resets_at: null, extra_used: true },
-          account2: { five_hour_pct: 20, seven_day_pct: 30, seven_day_sonnet_pct: 97, resets_at: null, extra_used: true },
-          account3: { five_hour_pct: 40, seven_day_pct: 50, seven_day_sonnet_pct: 98, resets_at: null, extra_used: true },
+          account1: { five_hour_pct: 30, seven_day_pct: 40, seven_day_sonnet_pct: 100, resets_at: null, extra_used: true },
+          account2: { five_hour_pct: 20, seven_day_pct: 30, seven_day_sonnet_pct: 100, resets_at: null, extra_used: true },
+          account3: { five_hour_pct: 40, seven_day_pct: 50, seven_day_sonnet_pct: 100, resets_at: null, extra_used: true },
         });
 
         const result = await selectBestAccount();
-        // 虽然 extra_used=true，但 Opus 阶段不过滤 extra_used
-        expect(result).not.toBeNull();
-        expect(result.model).toBe('opus');
-        expect(result.accountId).toBe('account2');
+        // 所有账号 extra_used=true，全被排除 → null
+        expect(result).toBeNull();
       });
     });
 
@@ -619,7 +640,7 @@ describe('account-usage', () => {
     });
 
     describe('Haiku 独立模式', () => {
-      it('model=haiku 应走独立模式（只看 5h）', async () => {
+      it('model=haiku 应走独立模式（只看 5h 和 7d_total）', async () => {
         setupUsageData({
           account1: { five_hour_pct: 30, seven_day_pct: 96, seven_day_sonnet_pct: 96, resets_at: null, extra_used: false },
           account2: { five_hour_pct: 50, seven_day_pct: 97, seven_day_sonnet_pct: 97, resets_at: null, extra_used: false },
@@ -627,7 +648,8 @@ describe('account-usage', () => {
         });
 
         const result = await selectBestAccount({ model: 'haiku' });
-        expect(result).toEqual({ accountId: 'account1', model: 'haiku' });
+        // Haiku 独立模式：seven_day_pct < 100 → 全部可用，按 7d 和 ePct 排序选 account1
+        expect(result).toEqual({ accountId: 'account1', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
       });
 
       it('Haiku 独立模式应排除 extra_used 的账号', async () => {
@@ -775,7 +797,8 @@ describe('account-usage', () => {
       expect(result.accountId).toBe('account1');
     });
 
-    it('sonnet 7d 刚好等于 95% 时不应通过 Sonnet 阶段', async () => {
+    it('sonnet 7d 刚好等于 95% 时应通过 Sonnet 阶段（新阈值 100%）', async () => {
+      // 新逻辑：Sonnet 阈值是 100%，95% < 100 → 仍可用 Sonnet
       setupUsageData({
         account1: { five_hour_pct: 30, seven_day_pct: 30, seven_day_sonnet_pct: 95, resets_at: null, extra_used: false },
         account2: { five_hour_pct: 20, seven_day_pct: 20, seven_day_sonnet_pct: 95, resets_at: null, extra_used: false },
@@ -783,8 +806,21 @@ describe('account-usage', () => {
       });
 
       const result = await selectBestAccount();
-      // sonnet 7d=95 不满足 < 95，所以进入 Opus 阶段
-      expect(result.model).toBe('opus');
+      // 95 < 100 → 所有账号都可用 Sonnet
+      expect(result.model).toBe('sonnet');
+    });
+
+    it('sonnet 7d 刚好等于 100% 时不应通过 Sonnet 阶段', async () => {
+      setupUsageData({
+        account1: { five_hour_pct: 30, seven_day_pct: 50, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+        account2: { five_hour_pct: 20, seven_day_pct: 40, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+        account3: { five_hour_pct: 40, seven_day_pct: 60, seven_day_sonnet_pct: 100, resets_at: null, extra_used: false },
+      });
+
+      const result = await selectBestAccount();
+      // Sonnet 满（= 100），DEFAULT_CASCADE 无 Opus，降级到 Haiku
+      expect(result).not.toBeNull();
+      expect(result.model).toBe('haiku');
     });
 
     it('只有一个账号可用时应选该账号', async () => {
