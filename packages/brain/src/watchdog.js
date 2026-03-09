@@ -667,9 +667,65 @@ async function checkAndTriggerHealing(taskId) {
 }
 
 /**
- * Clean up metrics for a task (after kill/completion).
+ * Flush peak/avg RSS and CPU metrics to task_run_metrics table.
+ * Called before cleanupMetrics() so samples are still available.
+ *
+ * @param {string} taskId
+ * @param {object} pool - pg Pool instance
+ * @param {object} opts - optional overrides: { runId, exitStatus, childProcessCount }
  */
-function cleanupMetrics(taskId) {
+async function flushMetricsToDb(taskId, pool, opts = {}) {
+  const metrics = _taskMetrics.get(taskId);
+  if (!metrics || !metrics.samples || metrics.samples.length === 0) return;
+
+  const samples = metrics.samples;
+  const rssSamples = samples.map(s => s.rss_mb).filter(v => v != null);
+  const cpuSamples = samples.map(s => s.cpu_pct).filter(v => v != null && v >= 0);
+
+  const peakRss = rssSamples.length > 0 ? Math.max(...rssSamples) : null;
+  const avgRss  = rssSamples.length > 0 ? Math.round(rssSamples.reduce((a, b) => a + b, 0) / rssSamples.length) : null;
+  const peakCpu = cpuSamples.length > 0 ? Math.max(...cpuSamples) : null;
+  const avgCpu  = cpuSamples.length > 0 ? parseFloat((cpuSamples.reduce((a, b) => a + b, 0) / cpuSamples.length).toFixed(2)) : null;
+
+  try {
+    // Upsert: INSERT new row or UPDATE existing row (matched by task_id + run_id)
+    await pool.query(`
+      INSERT INTO task_run_metrics (task_id, run_id, peak_rss_mb, avg_rss_mb, peak_cpu_pct, avg_cpu_pct, child_process_count, exit_status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (task_id, run_id) DO UPDATE SET
+        peak_rss_mb        = GREATEST(task_run_metrics.peak_rss_mb, EXCLUDED.peak_rss_mb),
+        avg_rss_mb         = COALESCE(EXCLUDED.avg_rss_mb, task_run_metrics.avg_rss_mb),
+        peak_cpu_pct       = GREATEST(task_run_metrics.peak_cpu_pct, EXCLUDED.peak_cpu_pct),
+        avg_cpu_pct        = COALESCE(EXCLUDED.avg_cpu_pct, task_run_metrics.avg_cpu_pct),
+        child_process_count = COALESCE(EXCLUDED.child_process_count, task_run_metrics.child_process_count),
+        exit_status        = COALESCE(EXCLUDED.exit_status, task_run_metrics.exit_status),
+        updated_at         = NOW()
+    `, [
+      taskId,
+      opts.runId || null,
+      peakRss,
+      avgRss,
+      peakCpu,
+      avgCpu,
+      opts.childProcessCount || null,
+      opts.exitStatus || null,
+    ]);
+  } catch (err) {
+    // Non-fatal: metrics flush failure should not disrupt main flow
+    console.warn(`[Watchdog] flushMetricsToDb failed for task ${taskId}: ${err.message}`);
+  }
+}
+
+/**
+ * Clean up metrics for a task (after kill/completion).
+ * @param {string} taskId
+ * @param {object|null} pool - if provided, flushes RSS/CPU to DB before cleanup
+ * @param {object} opts - passed to flushMetricsToDb
+ */
+async function cleanupMetrics(taskId, pool = null, opts = {}) {
+  if (pool) {
+    await flushMetricsToDb(taskId, pool, opts);
+  }
   _taskMetrics.delete(taskId);
   _lastHealingTrigger.delete(taskId);
 }
@@ -682,6 +738,7 @@ export {
   getWatchdogStatus,
   getWatchdogTrends,
   cleanupMetrics,
+  flushMetricsToDb,
   checkAndTriggerHealing,
   scanInteractiveClaude,
   checkIdleSessions,

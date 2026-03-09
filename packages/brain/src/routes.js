@@ -2880,6 +2880,93 @@ router.post('/execution-callback', async (req, res) => {
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
 
+    // ── task_run_metrics: 从 result JSON 解析 LLM 指标并写入 ──
+    try {
+      const r = (result !== null && typeof result === 'object') ? result : {};
+      const usage = r.usage || {};
+      const modelUsage = r.modelUsage || {};
+
+      // 主模型：cost 最高的那个
+      let primaryModel = null;
+      let maxCost = -1;
+      for (const [modelId, mu] of Object.entries(modelUsage)) {
+        const c = mu.costUSD || 0;
+        if (c > maxCost) { maxCost = c; primaryModel = modelId; }
+      }
+
+      const inputTokens  = usage.input_tokens || 0;
+      const cacheRead    = usage.cache_read_input_tokens || usage.cacheReadInputTokens || 0;
+      const totalInputs  = inputTokens + cacheRead;
+      const cacheHitRate = totalInputs > 0 ? parseFloat((cacheRead / totalInputs).toFixed(4)) : null;
+
+      // 排队时长：从 tasks 表读 queued_at / started_at
+      let queuedDurationMs = null;
+      try {
+        const tRow = await pool.query('SELECT queued_at, started_at FROM tasks WHERE id = $1', [task_id]);
+        const t = tRow.rows[0];
+        if (t?.queued_at && t?.started_at) {
+          queuedDurationMs = new Date(t.started_at) - new Date(t.queued_at);
+        }
+      } catch { /* non-fatal */ }
+
+      const exitStatus = status === 'AI Done' ? 'success' : 'failed';
+
+      await pool.query(`
+        INSERT INTO task_run_metrics (
+          task_id, run_id,
+          execution_duration_ms, queued_duration_ms,
+          model_id, num_turns,
+          input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+          cache_hit_rate, cost_usd,
+          exit_status, failure_category, retry_count
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        ON CONFLICT (task_id, run_id) DO UPDATE SET
+          execution_duration_ms  = COALESCE(EXCLUDED.execution_duration_ms, task_run_metrics.execution_duration_ms),
+          queued_duration_ms     = COALESCE(EXCLUDED.queued_duration_ms, task_run_metrics.queued_duration_ms),
+          model_id               = COALESCE(EXCLUDED.model_id, task_run_metrics.model_id),
+          num_turns              = COALESCE(EXCLUDED.num_turns, task_run_metrics.num_turns),
+          input_tokens           = COALESCE(EXCLUDED.input_tokens, task_run_metrics.input_tokens),
+          output_tokens          = COALESCE(EXCLUDED.output_tokens, task_run_metrics.output_tokens),
+          cache_read_tokens      = COALESCE(EXCLUDED.cache_read_tokens, task_run_metrics.cache_read_tokens),
+          cache_creation_tokens  = COALESCE(EXCLUDED.cache_creation_tokens, task_run_metrics.cache_creation_tokens),
+          cache_hit_rate         = COALESCE(EXCLUDED.cache_hit_rate, task_run_metrics.cache_hit_rate),
+          cost_usd               = COALESCE(EXCLUDED.cost_usd, task_run_metrics.cost_usd),
+          exit_status            = COALESCE(EXCLUDED.exit_status, task_run_metrics.exit_status),
+          failure_category       = COALESCE(EXCLUDED.failure_category, task_run_metrics.failure_category),
+          retry_count            = COALESCE(EXCLUDED.retry_count, task_run_metrics.retry_count),
+          updated_at             = NOW()
+      `, [
+        task_id,
+        run_id || null,
+        duration_ms || null,
+        queuedDurationMs,
+        primaryModel,
+        r.num_turns || null,
+        inputTokens || null,
+        usage.output_tokens || null,
+        cacheRead || null,
+        usage.cache_creation_input_tokens || usage.cacheCreationInputTokens || null,
+        cacheHitRate,
+        r.total_cost_usd || null,
+        exitStatus,
+        req.body.failure_class || null,
+        iterations || 0,
+      ]);
+      console.log(`[execution-callback] task_run_metrics upserted for task ${task_id}`);
+    } catch (metricsErr) {
+      // Non-fatal: metrics write failure should not disrupt main flow
+      console.warn(`[execution-callback] task_run_metrics write failed (non-fatal): ${metricsErr.message}`);
+    }
+
+    // ── watchdog: flush RSS/CPU metrics to DB ──
+    try {
+      const { cleanupMetrics } = await import('./watchdog.js');
+      await cleanupMetrics(task_id, pool, {
+        runId: run_id || null,
+        exitStatus: status === 'AI Done' ? 'success' : 'failed',
+      });
+    } catch { /* ignore */ }
+
     // P1-2: completed_no_pr 自动重排（retry_count < MAX_NO_PR_RETRY 时重新入队）
     const MAX_NO_PR_RETRY = 3;
     let rescheduled = false;

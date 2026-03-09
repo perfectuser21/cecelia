@@ -565,6 +565,7 @@ describe('handlePrMerged', () => {
     const mockPool = {
       query: vi.fn()
         .mockResolvedValueOnce({ rows: [mockTask], rowCount: 1 }) // matchTaskByBranch
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // task_run_metrics UPDATE pr_merged
         .mockResolvedValueOnce({ rows: [{ kr_id: 'kr-via-project' }], rowCount: 1 }), // 通过 project_id 查 KR
       connect: vi.fn(async () => mockClient)
     };
@@ -624,5 +625,110 @@ describe('完整 webhook payload 集成测试', () => {
     expect(prInfo.prUrl).toBe('https://github.com/perfectuser21/cecelia/pull/531');
     expect(prInfo.mergedAt).toBe('2026-03-05T01:40:15Z');
     expect(prInfo.title).toBe('fix(brain): 修复 cecelia-run 和 executor 的 WORK_DIR 默认路径');
+  });
+});
+
+// ===== DoD-4: pr_merged 回填 task_run_metrics =====
+describe('handlePrMerged — task_run_metrics pr_merged 回填', () => {
+  const prInfo = {
+    repo: 'owner/repo',
+    prNumber: 456,
+    branchName: 'cp-03091900-metrics-test',
+    prUrl: 'https://github.com/owner/repo/pull/456',
+    mergedAt: '2026-03-09T19:00:00Z',
+    title: 'feat: metrics test'
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('in_progress 路径：合并后应 UPDATE task_run_metrics SET pr_merged = TRUE', async () => {
+    const mockTask = {
+      id: 'task-metrics-001',
+      title: '测试 metrics 回填',
+      status: 'in_progress',
+      project_id: 'proj-metrics',
+      goal_id: 'goal-metrics',
+      metadata: { branch: 'cp-03091900-metrics-test' },
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{ id: 'task-metrics-001', goal_id: 'goal-metrics', project_id: 'proj-metrics',
+                   pr_url: prInfo.prUrl, pr_merged_at: prInfo.mergedAt }],
+          rowCount: 1
+        }) // UPDATE tasks → completed
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // COMMIT
+      release: vi.fn()
+    };
+
+    const poolQueries = [];
+    const mockPool = {
+      query: vi.fn(async (sql, params) => {
+        poolQueries.push({ sql, params });
+        // First call: matchTaskByBranchOrUrl in_progress
+        if (poolQueries.length === 1) return { rows: [mockTask], rowCount: 1 };
+        // Subsequent calls: task_run_metrics UPDATE, kr lookup etc.
+        return { rows: [], rowCount: 0 };
+      }),
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+    expect(result.matched).toBe(true);
+
+    // 找到 task_run_metrics UPDATE 调用
+    const metricsCall = poolQueries.find(c => c.sql && c.sql.includes('task_run_metrics'));
+    expect(metricsCall).toBeDefined();
+    expect(metricsCall.sql).toContain('pr_merged = TRUE');
+    expect(metricsCall.params[0]).toBe('task-metrics-001');
+  });
+
+  it('completed 路径：回填 pr_merged_at 后也应 UPDATE task_run_metrics SET pr_merged = TRUE', async () => {
+    const completedTask = {
+      id: 'task-metrics-002',
+      title: '已完成的任务',
+      status: 'completed',
+      project_id: 'proj-metrics',
+      goal_id: null,
+      metadata: {},
+      payload: null,
+      task_type: 'dev'
+    };
+
+    const mockClient = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 'task-metrics-002' }], rowCount: 1 }) // UPDATE pr_merged_at
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 }), // COMMIT
+      release: vi.fn()
+    };
+
+    const poolQueries = [];
+    const mockPool = {
+      query: vi.fn(async (sql, params) => {
+        poolQueries.push({ sql, params });
+        if (poolQueries.length === 1) return { rows: [], rowCount: 0 }; // in_progress: no match
+        if (poolQueries.length === 2) return { rows: [completedTask], rowCount: 1 }; // completed: match
+        // task_run_metrics UPDATE
+        return { rows: [], rowCount: 0 };
+      }),
+      connect: vi.fn(async () => mockClient)
+    };
+
+    const result = await handlePrMerged(mockPool, prInfo);
+    expect(result.matched).toBe(true);
+    expect(result.krProgressUpdated).toBe(false); // completed 路径不触发 KR 进度
+
+    // 找到 task_run_metrics UPDATE 调用
+    const metricsCall = poolQueries.find(c => c.sql && c.sql.includes('task_run_metrics'));
+    expect(metricsCall).toBeDefined();
+    expect(metricsCall.sql).toContain('pr_merged = TRUE');
+    expect(metricsCall.params[0]).toBe('task-metrics-002');
   });
 });

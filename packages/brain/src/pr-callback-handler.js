@@ -178,6 +178,18 @@ export async function handlePrMerged(pool, prInfo) {
       client.release();
     }
 
+    // ── task_run_metrics: 回填 pr_merged = true ──
+    try {
+      await pool.query(`
+        UPDATE task_run_metrics SET pr_merged = TRUE, updated_at = NOW()
+        WHERE task_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [taskId]);
+    } catch (metricsErr) {
+      console.warn(`[pr-callback] task_run_metrics pr_merged 回填失败 (non-fatal): ${metricsErr.message}`);
+    }
+
     return { matched: true, taskId, taskTitle, krProgressUpdated: false };
   }
 
@@ -241,6 +253,18 @@ export async function handlePrMerged(pool, prInfo) {
 
     await client.query('COMMIT');
     console.log(`[pr-callback] 任务 ${taskId} 状态更新为 completed（via PR #${prNumber}）`);
+
+    // ── task_run_metrics: 回填 pr_merged = true ──
+    try {
+      await pool.query(`
+        UPDATE task_run_metrics SET pr_merged = TRUE, updated_at = NOW()
+        WHERE task_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [taskId]);
+    } catch (metricsErr) {
+      console.warn(`[pr-callback] task_run_metrics pr_merged 回填失败 (non-fatal): ${metricsErr.message}`);
+    }
 
     // 4. 触发 KR 进度更新（事务外，失败不影响任务更新）
     const updatedRow = updateResult.rows[0];
