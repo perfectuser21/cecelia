@@ -22,6 +22,17 @@ export async function checkAndCreateCodeReviewTrigger(pool, projectId) {
   if (!projectId) return null;
 
   try {
+    // Fix 1: initiative 类型 project 有自己的 pipeline（断链#5），不走积累触发
+    const projectTypeResult = await pool.query(
+      'SELECT type FROM projects WHERE id = $1',
+      [projectId]
+    );
+    const projectType = projectTypeResult.rows[0]?.type;
+    if (projectType === 'initiative') {
+      console.log(`[code-review-trigger] project=${projectId} type=initiative, skip accumulation trigger (use pipeline instead)`);
+      return null;
+    }
+
     // 统计窗口内完成的 dev 任务数
     const countResult = await pool.query(
       `SELECT COUNT(*) AS cnt FROM tasks

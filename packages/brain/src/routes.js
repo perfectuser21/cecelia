@@ -3665,38 +3665,52 @@ ${resultStr.substring(0, 2000)}
       }
 
       // 5c8. 断链 #4: code_review 完成 → 创建 initiative_verify 任务
+      // Fix 2: 只响应 payload.scope === 'initiative' 的 code_review（排除积累触发的小任务 review）
+      // Fix 3: 质量门禁 — result 含 BLOCK 关键词时不创建 initiative_verify
       try {
         const crRow = await pool.query(
-          'SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1',
+          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
           [task_id]
         );
         const crTask = crRow.rows[0];
+        const crPayload = crTask?.payload || {};
+        const isInitiativeCodeReview = crTask?.task_type === 'code_review' && crPayload.scope === 'initiative';
 
-        if (crTask?.task_type === 'code_review') {
+        if (isInitiativeCodeReview) {
           const projectId = crTask.project_id;
-          const existingIv = await pool.query(
-            `SELECT id FROM tasks
-             WHERE project_id = $1 AND task_type = 'initiative_verify'
-               AND status IN ('queued', 'in_progress')
-             LIMIT 1`,
-            [projectId]
-          );
-          if (existingIv.rows.length > 0) {
-            console.log(`[execution-callback] initiative_verify already queued for project ${projectId}, skip`);
+
+          // Fix 3: 质量门禁 — code_review 有 BLOCK 问题时不创建 initiative_verify
+          const resultStr = typeof result === 'string' ? result : JSON.stringify(result || '');
+          const hasBlockingIssue = resultStr.includes('TEST_BLOCK') || resultStr.includes('[BLOCK]');
+          if (hasBlockingIssue) {
+            console.warn(`[execution-callback] 断链#4 质量门禁: code_review=${task_id} has BLOCK issues, skip initiative_verify`);
           } else {
-            const { createTask: createIvTask } = await import('./actions.js');
-            await createIvTask({
-              title: `[验收] initiative_verify — ${crTask.title}`,
-              description: `code_review「${crTask.title}」已完成，开始 Initiative 验收（DoD 检查）。\n原始 code_review task_id: ${task_id}`,
-              priority: 'P1',
-              project_id: projectId,
-              goal_id: crTask.goal_id,
-              task_type: 'initiative_verify',
-              trigger_source: 'execution_callback_auto',
-              payload: { parent_task_id: task_id, code_review_task_id: task_id }
-            });
-            console.log(`[execution-callback] 断链#4 修复: initiative_verify created for code_review ${task_id}`);
+            const existingIv = await pool.query(
+              `SELECT id FROM tasks
+               WHERE project_id = $1 AND task_type = 'initiative_verify'
+                 AND status IN ('queued', 'in_progress')
+               LIMIT 1`,
+              [projectId]
+            );
+            if (existingIv.rows.length > 0) {
+              console.log(`[execution-callback] initiative_verify already queued for project ${projectId}, skip`);
+            } else {
+              const { createTask: createIvTask } = await import('./actions.js');
+              await createIvTask({
+                title: `[验收] initiative_verify — ${crTask.title}`,
+                description: `code_review「${crTask.title}」已完成，开始 Initiative 验收（DoD 检查）。\n原始 code_review task_id: ${task_id}`,
+                priority: 'P1',
+                project_id: projectId,
+                goal_id: crTask.goal_id,
+                task_type: 'initiative_verify',
+                trigger_source: 'execution_callback_auto',
+                payload: { parent_task_id: task_id, code_review_task_id: task_id }
+              });
+              console.log(`[execution-callback] 断链#4 修复: initiative_verify created for code_review ${task_id}`);
+            }
           }
+        } else if (crTask?.task_type === 'code_review') {
+          console.log(`[execution-callback] code_review=${task_id} scope=${crPayload.scope || 'none'}, not initiative-level, skip initiative_verify`);
         }
       } catch (crErr) {
         console.error(`[execution-callback] code_review → initiative_verify creation failed (non-fatal): ${crErr.message}`);
