@@ -3664,9 +3664,11 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] architecture_design callback handling failed (non-fatal): ${adErr.message}`);
       }
 
-      // 5c8. 断链 #4: code_review 完成 → 创建 initiative_verify 任务
-      // Fix 2: 只响应 payload.scope === 'initiative' 的 code_review（排除积累触发的小任务 review）
-      // Fix 3: 质量门禁 — result 含 BLOCK 关键词时不创建 initiative_verify
+      // 5c8. 断链 #4: code_review 完成 → 根据 decision 路由
+      // scope=initiative 的 code_review 根据 decision 决定后续：
+      // - PASS（默认）→ initiative_verify
+      // - NEEDS_FIX → 创建修复 dev task（代码问题，不进 verify）
+      // - CRITICAL_BLOCK / TEST_BLOCK → cecelia_events P0告警，停止 pipeline
       try {
         const crRow = await pool.query(
           'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
@@ -3678,27 +3680,53 @@ ${resultStr.substring(0, 2000)}
 
         if (isInitiativeCodeReview) {
           const projectId = crTask.project_id;
-
-          // Fix 3: 质量门禁 — code_review 有 BLOCK 问题时不创建 initiative_verify
+          const resultObj = typeof result === 'object' && result !== null ? result : {};
+          const decision = resultObj.decision || 'PASS';
           const resultStr = typeof result === 'string' ? result : JSON.stringify(result || '');
-          const hasBlockingIssue = resultStr.includes('TEST_BLOCK') || resultStr.includes('[BLOCK]');
-          if (hasBlockingIssue) {
-            console.warn(`[execution-callback] 断链#4 质量门禁: code_review=${task_id} has BLOCK issues, skip initiative_verify`);
+          const hasTestBlock = resultStr.includes('TEST_BLOCK') || resultStr.includes('[BLOCK]');
+          const { createTask: createCrFollowTask } = await import('./actions.js');
+
+          if (hasTestBlock || decision === 'CRITICAL_BLOCK') {
+            // 停止 pipeline：写入 P0 告警事件
+            const alertType = hasTestBlock ? 'test_block' : 'critical_block';
+            await pool.query(
+              `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+              ['initiative_pipeline_blocked', 'execution_callback', JSON.stringify({
+                project_id: projectId, alert_type: alertType, code_review_task_id: task_id
+              })]
+            );
+            console.warn(`[execution-callback] 断链#4 ${alertType}: initiative pipeline blocked, project=${projectId}`);
+          } else if (decision === 'NEEDS_FIX') {
+            // 代码问题: 创建修复 dev task
+            const existingFix = await pool.query(
+              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修复]%' LIMIT 1`,
+              [projectId]
+            );
+            if (existingFix.rows.length === 0) {
+              await createCrFollowTask({
+                title: `[修复] code_review 问题修复 — ${crTask.title}`,
+                description: `Initiative code_review 发现代码问题（NEEDS_FIX），需修复后重新走 code_review。\n原始 code_review task_id: ${task_id}\n修复清单参见 code_review 报告。`,
+                priority: 'P1',
+                project_id: projectId,
+                goal_id: crTask.goal_id,
+                task_type: 'dev',
+                trigger_source: 'execution_callback_auto',
+                payload: { fix_type: 'code_review_issues', parent_task_id: task_id, revision_round: 1 }
+              });
+              console.log(`[execution-callback] 断链#4 NEEDS_FIX: 创建修复 dev task project=${projectId}`);
+            }
           } else {
+            // PASS: 创建 initiative_verify
             const existingIv = await pool.query(
-              `SELECT id FROM tasks
-               WHERE project_id = $1 AND task_type = 'initiative_verify'
-                 AND status IN ('queued', 'in_progress')
-               LIMIT 1`,
+              `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'initiative_verify' AND status IN ('queued', 'in_progress') LIMIT 1`,
               [projectId]
             );
             if (existingIv.rows.length > 0) {
               console.log(`[execution-callback] initiative_verify already queued for project ${projectId}, skip`);
             } else {
-              const { createTask: createIvTask } = await import('./actions.js');
-              await createIvTask({
+              await createCrFollowTask({
                 title: `[验收] initiative_verify — ${crTask.title}`,
-                description: `code_review「${crTask.title}」已完成，开始 Initiative 验收（DoD 检查）。\n原始 code_review task_id: ${task_id}`,
+                description: `code_review「${crTask.title}」已完成（PASS），开始 Initiative 验收（DoD 检查）。\n原始 code_review task_id: ${task_id}`,
                 priority: 'P1',
                 project_id: projectId,
                 goal_id: crTask.goal_id,
@@ -3706,14 +3734,14 @@ ${resultStr.substring(0, 2000)}
                 trigger_source: 'execution_callback_auto',
                 payload: { parent_task_id: task_id, code_review_task_id: task_id }
               });
-              console.log(`[execution-callback] 断链#4 修复: initiative_verify created for code_review ${task_id}`);
+              console.log(`[execution-callback] 断链#4 PASS: initiative_verify created project=${projectId}`);
             }
           }
         } else if (crTask?.task_type === 'code_review') {
-          console.log(`[execution-callback] code_review=${task_id} scope=${crPayload.scope || 'none'}, not initiative-level, skip initiative_verify`);
+          console.log(`[execution-callback] code_review=${task_id} scope=${crPayload.scope || 'none'}, not initiative-level, skip`);
         }
       } catch (crErr) {
-        console.error(`[execution-callback] code_review → initiative_verify creation failed (non-fatal): ${crErr.message}`);
+        console.error(`[execution-callback] code_review routing failed (non-fatal): ${crErr.message}`);
       }
 
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
@@ -3755,6 +3783,73 @@ ${resultStr.substring(0, 2000)}
         }
       } catch (devCrErr) {
         console.error(`[execution-callback] dev → code_review creation failed (non-fatal): ${devCrErr.message}`);
+      }
+
+      // 5c10. 断链 #6: initiative_verify 完成 → 根据 verdict 处理结论
+      // - APPROVED → project status = 'completed'
+      // - NEEDS_REVISION (≤3轮) → 创建修订 dev task
+      // - NEEDS_REVISION (>3轮) → cecelia_events P0告警
+      // - REJECTED → cecelia_events P0告警
+      try {
+        const ivRow = await pool.query(
+          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const ivTask = ivRow.rows[0];
+        if (ivTask?.task_type === 'initiative_verify') {
+          const projectId = ivTask.project_id;
+          const resultObj = typeof result === 'object' && result !== null ? result : {};
+          const verdict = resultObj.verdict || 'APPROVED';
+          const revisionRound = ivTask.payload?.revision_round || 0;
+          const MAX_REVISION_ROUNDS = 3;
+          const { createTask: createIvFollowTask } = await import('./actions.js');
+
+          if (verdict === 'APPROVED') {
+            await pool.query(
+              `UPDATE projects SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+              [projectId]
+            );
+            console.log(`[execution-callback] 断链#6 APPROVED: initiative ${projectId} → completed`);
+          } else if (verdict === 'NEEDS_REVISION') {
+            if (revisionRound >= MAX_REVISION_ROUNDS) {
+              await pool.query(
+                `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+                ['initiative_max_revisions_exceeded', 'execution_callback', JSON.stringify({
+                  project_id: projectId, revision_round: revisionRound, initiative_verify_task_id: task_id
+                })]
+              );
+              console.warn(`[execution-callback] 断链#6 NEEDS_REVISION: 超过 ${MAX_REVISION_ROUNDS} 轮 → P0告警 project=${projectId}`);
+            } else {
+              const existingFix = await pool.query(
+                `SELECT id FROM tasks WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress') AND title LIKE '[修订]%' LIMIT 1`,
+                [projectId]
+              );
+              if (existingFix.rows.length === 0) {
+                await createIvFollowTask({
+                  title: `[修订] initiative_verify 问题修复 R${revisionRound + 1} — ${ivTask.title}`,
+                  description: `Initiative verify 发现问题（NEEDS_REVISION），第 ${revisionRound + 1} 轮修订。\n修订清单参见 initiative_verify 报告。\n原始 task_id: ${task_id}`,
+                  priority: 'P1',
+                  project_id: projectId,
+                  goal_id: ivTask.goal_id,
+                  task_type: 'dev',
+                  trigger_source: 'execution_callback_auto',
+                  payload: { fix_type: 'initiative_verify_revision', parent_task_id: task_id, revision_round: revisionRound + 1 }
+                });
+                console.log(`[execution-callback] 断链#6 NEEDS_REVISION R${revisionRound + 1}: 修订 dev task created project=${projectId}`);
+              }
+            }
+          } else if (verdict === 'REJECTED') {
+            await pool.query(
+              `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+              ['initiative_rejected', 'execution_callback', JSON.stringify({
+                project_id: projectId, initiative_verify_task_id: task_id
+              })]
+            );
+            console.warn(`[execution-callback] 断链#6 REJECTED: P0告警 project=${projectId}`);
+          }
+        }
+      } catch (ivErr) {
+        console.error(`[execution-callback] initiative_verify 结论处理失败 (non-fatal): ${ivErr.message}`);
       }
     }
 
