@@ -307,8 +307,9 @@ describe('M: 三阶段模型降级链', () => {
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
-    expect(result?.model).toBe('opus');
-    // account3 seven_day_pct=50%，最低 → 应被选中
+    // 新逻辑：DEFAULT_CASCADE=['sonnet','haiku']，无 Opus
+    // Sonnet 全满(100%) → 降级 Haiku；account3 seven_day_pct=50% 最低 → 选中
+    expect(result?.model).toBe('haiku');
     expect(result?.accountId).toBe('account3');
   });
 
@@ -386,10 +387,12 @@ describe('M: 三阶段模型降级链', () => {
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount();
     expect(result).not.toBeNull();
-    // 所有账号 sonnet >= 95%，Sonnet 阶段无候选 → 降级到 Opus
-    expect(result?.model).toBe('opus');
-    // account1 seven_day_pct=75% 最低 → 应选中
-    expect(result?.accountId).toBe('account1');
+    // 新逻辑：Sonnet 阈值 100%
+    // account1 sevenDaySonnetPct=100 → 不可用 Sonnet
+    // account2 sevenDaySonnetPct=100 → 不可用 Sonnet
+    // account3 sevenDaySonnetPct=98 < 100 → 可用 Sonnet → 唯一候选
+    expect(result?.model).toBe('sonnet');
+    expect(result?.accountId).toBe('account3');
   });
 
   // ============================================================
@@ -570,7 +573,7 @@ describe('H: Haiku 独立模式', () => {
 
     const { selectBestAccount } = await import('../account-usage.js');
     const result = await selectBestAccount({ model: 'haiku' });
-    expect(result).toEqual({ accountId: 'account2', model: 'haiku' });
+    expect(result).toEqual({ accountId: 'account2', model: 'haiku', modelId: 'claude-haiku-4-5-20251001' });
   });
 
   it('H3: selectBestAccountForHaiku 兼容别名返回 string', async () => {

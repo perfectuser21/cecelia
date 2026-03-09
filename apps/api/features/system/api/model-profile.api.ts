@@ -5,6 +5,14 @@ export interface ModelLayerConfig {
   model: string;
 }
 
+export interface AgentModelMapEntry {
+  anthropic?: string | null;
+  minimax?: string | null;
+  openai?: string | null;
+  credentials?: string | null;
+  cascade?: string[] | null;
+}
+
 export interface ModelProfile {
   id: string;
   name: string;
@@ -14,7 +22,7 @@ export interface ModelProfile {
     cortex: ModelLayerConfig;
     executor: {
       default_provider: string;
-      model_map?: Record<string, Record<string, string | null>>;
+      model_map?: Record<string, AgentModelMapEntry>;
       fixed_provider?: Record<string, string>;
     };
   };
@@ -121,6 +129,28 @@ export async function batchUpdateAgentModels(
 ): Promise<BatchUpdateResponse> {
   const res = await apiClient.patch<BatchUpdateResponse>('/brain/model-profiles/active/agents', {
     updates,
+  });
+  return res.data;
+}
+
+// ============================================================
+// Cascade Update API
+// ============================================================
+
+export interface CascadeUpdateResponse {
+  success: boolean;
+  agent_id: string;
+  cascade: string[] | null;
+  profile: ModelProfile;
+}
+
+export async function updateAgentCascade(
+  agentId: string,
+  cascade: string[] | null
+): Promise<CascadeUpdateResponse> {
+  const res = await apiClient.patch<CascadeUpdateResponse>('/brain/model-profiles/active/agent-cascade', {
+    agent_id: agentId,
+    cascade,
   });
   return res.data;
 }

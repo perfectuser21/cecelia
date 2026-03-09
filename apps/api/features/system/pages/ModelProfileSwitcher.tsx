@@ -192,6 +192,7 @@ export default function ModelProfileSwitcher() {
             profile={activeProfile}
             pendingChanges={pendingChanges}
             onModelChange={handleModelChange}
+            onProfileRefresh={refreshProfiles}
           />
         )}
       </div>

@@ -22,7 +22,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
-import { getActiveProfile, FALLBACK_PROFILE } from './model-profile.js';
+import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
@@ -1777,25 +1777,22 @@ async function triggerCeceliaRun(task) {
     }
 
     if (!extraEnv.CECELIA_CREDENTIALS && provider === 'anthropic') {
-      // 三阶段降级链：Sonnet → Opus → Haiku → MiniMax
-      // selectBestAccount() 返回 { accountId, model } 或 null（降级 MiniMax）
-      const selection = await selectBestAccount();
+      // 瀑布降级链：按任务 cascade 顺序（Sonnet→Opus→Haiku→MiniMax）
+      // selectBestAccount() 返回 { accountId, model, modelId } 或 null（降级 MiniMax）
+      const taskCascade = getCascadeForTask(task);
+      const selection = await selectBestAccount({ cascade: taskCascade });
       if (selection) {
-        const { accountId, model: selectedModel } = selection;
+        const { accountId, modelId: selectedModelId } = selection;
         extraEnv.CECELIA_CREDENTIALS = accountId;
-        // 若模型不是默认 Sonnet，通过 CECELIA_MODEL 传递 override
-        if (selectedModel === 'opus') {
-          extraEnv.CECELIA_MODEL = 'claude-opus-4-6';
-        } else if (selectedModel === 'haiku') {
-          extraEnv.CECELIA_MODEL = 'claude-haiku-4-5-20251001';
-        }
+        // 始终通过 CECELIA_MODEL 传递选定的模型 ID
+        extraEnv.CECELIA_MODEL = selectedModelId;
         // 记录 dispatched_account 到 task payload（供 billing_cap 回调精准标记）
         // 必须 await：若 fire-and-forget 则 cecelia-run 秒失败时 execution-callback 先到达，
         // payload 尚未写入 dispatched_account → 无法精准标记 spending cap 账号
         try {
           await pool.query(
             `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-            [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModel })]
+            [task.id, JSON.stringify({ dispatched_account: accountId, dispatched_model: selectedModelId })]
           );
         } catch (e) {
           console.warn(`[executor] 记录 dispatched_account 失败: ${e.message}`);
