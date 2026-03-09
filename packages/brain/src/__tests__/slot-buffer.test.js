@@ -9,8 +9,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// vi.hoisted 创建的引用不是 ESM live binding，对 vi.unmock() 免疫
+// platform-utils.test.js 的 beforeAll 会调用 vi.unmock('child_process')，
+// 如果用 import { execSync } from 'child_process' 那 execSync 会变成真实函数
+const mockExecSync = vi.hoisted(() => vi.fn(() => ''));
+
 vi.mock('child_process', () => ({
-  execSync: vi.fn(() => ''),
+  execSync: mockExecSync,
 }));
 
 vi.mock('../executor.js', () => ({
@@ -37,7 +42,6 @@ vi.mock('../db.js', () => ({
   },
 }));
 
-import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap, getTokenPressure } from '../executor.js';
 import pool from '../db.js';
 import {
@@ -114,7 +118,7 @@ describe('calculateSlotBudget token 集成', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetSlotBuffer();
-    execSync.mockReturnValue('');
+    mockExecSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
       metrics: { max_pressure: 0.1 },
@@ -222,7 +226,7 @@ describe('getSlotStatus token 字段', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetSlotBuffer();
-    execSync.mockReturnValue('');
+    mockExecSync.mockReturnValue('');
     checkServerResources.mockReturnValue({
       effectiveSlots: 12,
       metrics: { max_pressure: 0.1 },

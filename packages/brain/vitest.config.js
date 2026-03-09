@@ -32,12 +32,12 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: true,
+    isolate: true,    // 待全部 Batch 完成后切换为 false（Batch 2 已完成，Batch 3-6 待处理）
     pool: 'forks',
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 5  // 防止 OOM：默认 10 forks × 6 并发 = 60 进程，限制为 5 × 8 = 40 进程
+        maxForks: 5  // 防止 OOM：isolate:false 下每个 worker 内部共享，5 个 fork 足够
       }
     }
   }

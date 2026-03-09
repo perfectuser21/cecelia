@@ -13,7 +13,7 @@ describe('db-config', () => {
     expect(DB_DEFAULTS.port).toBe(parseInt(process.env.DB_PORT || '5432', 10));
     expect(DB_DEFAULTS.database).toBe(process.env.DB_NAME || 'cecelia');
     expect(DB_DEFAULTS.user).toBe(process.env.DB_USER || 'cecelia');
-    expect(DB_DEFAULTS.password).toBe(process.env.DB_PASSWORD || 'CeceliaUS2026');
+    expect(DB_DEFAULTS.password).toBe(process.env.DB_PASSWORD || '');
   });
 
   it('has no n8n legacy values', async () => {

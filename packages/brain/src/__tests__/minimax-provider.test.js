@@ -14,7 +14,7 @@
  * - D4 → 'FIXED_PROVIDER overrides default'
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Mock os — 确保 checkServerResources() 在 CI 低内存环境下始终通过
 vi.mock('os', () => ({
@@ -128,8 +128,8 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
     // Mock updateTaskRunInfo query
     mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 
-    // Mock global fetch to capture the request body
-    global.fetch = vi.fn(async (url, opts) => {
+    // vi.stubGlobal 确保 fetch mock 可被 afterAll 中的 vi.unstubAllGlobals() 清理
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
       if (url.includes('/trigger-cecelia')) {
         capturedBody = JSON.parse(opts.body);
         return {
@@ -138,10 +138,14 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
         };
       }
       return { ok: true, json: async () => ({}) };
-    });
+    }));
 
     const executor = await import('../executor.js');
     triggerCeceliaRun = executor.triggerCeceliaRun;
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
   });
 
   it('T2 (D2): bridge 请求 body 包含 provider=anthropic', async () => {
@@ -156,7 +160,7 @@ describe('triggerCeceliaRun - provider 传递给 bridge', () => {
     const result = await triggerCeceliaRun(task);
 
     // 验证 fetch 被调用
-    expect(global.fetch).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalled();
 
     // 验证 body 包含 provider 字段
     expect(capturedBody).toBeDefined();
