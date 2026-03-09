@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Initiative coding pathway 冲突修复与补全（PR #728）
+
+**5e 旧循环与新 pipeline 路由冲突，必须删除**
+- 5e：dev task 完成 → 创建 initiative_plan（旧循环，属于 pre-pipeline 时代的逻辑）
+- 新 pipeline（PR #726 断链#5c11）：dev task 完成 → 解锁下一个串行 task
+- 两者共存时，dev 完成会同时解锁下一个 task + 创建 initiative_plan → 流程分叉
+- 识别原则：凡是"任务完成→创建另一个任务"的逻辑，如果新 pipeline 已经接管，旧循环必须删除
+
+**planner 生成 architecture_design 时必须携带 mode='design'**
+- `generateArchitectureDesignTask` extraPayload 原为空 `{}`
+- architecture_design 回调的 `mode = adTask.payload?.mode || 'scan'` 会 fallback 到 'scan'
+- 'scan' 分支会创建 initiative_plan（触发秋米），而不是验证 dev task 就绪
+- 修复：`extraPayload = { mode: 'design' }` 一行，彻底修正路由
+
+**断链#3 告警需区分"从未注册"和"全部完成"两种 devCnt=0 情况**
+- architecture_design(design) 完成后，活跃 dev task = 0 有两种含义：
+  1. 历史 dev 任务数也 = 0 → architect Mode 2 断链，从未注册 → 发 cecelia_events 告警
+  2. 历史 dev 任务数 > 0 → 所有任务已完成（正常流程结束）→ 不告警
+- 关键查询：先查 `status IN ('queued','in_progress')` 的活跃数，再查全表总数
+
 ### [2026-03-09] Initiative pipeline 4个缺口修复（PR #727）
 
 **NEEDS_FIX 用 COUNT 计历史轮次而非 crTask.payload.fix_round**
