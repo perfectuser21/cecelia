@@ -3744,6 +3744,57 @@ ${resultStr.substring(0, 2000)}
         console.error(`[execution-callback] code_review routing failed (non-fatal): ${crErr.message}`);
       }
 
+      // 5c11. 串行调度: dev task 完成（有 sequence_order）→ 解锁并注入上下文到下一个串行 task
+      // 适用场景：Initiative 内有明确依赖顺序的 dev tasks
+      // 触发条件：payload.sequence_order != null && payload.depends_on_prev = true（由下一个 task 携带）
+      // 独立 task（sequence_order=null）直接走断链#5，不受影响
+      try {
+        const seqRow = await pool.query(
+          'SELECT task_type, project_id, goal_id, title, payload FROM tasks WHERE id = $1',
+          [task_id]
+        );
+        const seqTask = seqRow.rows[0];
+        if (seqTask?.task_type === 'dev' && seqTask.project_id && seqTask.payload?.sequence_order != null) {
+          const projectId = seqTask.project_id;
+          const currentSeq = Number(seqTask.payload.sequence_order);
+          // 找 sequence_order = currentSeq + 1 且 status = 'blocked' 且 depends_on_prev = true 的下一个 task
+          const nextTaskRow = await pool.query(
+            `SELECT id, title, payload FROM tasks
+             WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
+               AND (payload->>'sequence_order')::int = $2
+               AND payload->>'depends_on_prev' = 'true'
+             LIMIT 1`,
+            [projectId, currentSeq + 1]
+          );
+          if (nextTaskRow.rows.length > 0) {
+            const nextTask = nextTaskRow.rows[0];
+            // 构建 prev_task_result 上下文（注入到下一个 task 的 payload）
+            const prevTaskResult = {
+              task_id: task_id,
+              summary: typeof result === 'object' && result !== null
+                ? (result.summary || result.findings || 'completed')
+                : String(result || 'completed'),
+              pr_url: pr_url || null,
+              sequence_order: currentSeq
+            };
+            const newPayload = { ...(nextTask.payload || {}), prev_task_result: prevTaskResult };
+            // 原子性：更新 payload + unblock（blocked → queued）
+            await pool.query(
+              `UPDATE tasks SET status = 'queued', payload = $1::jsonb,
+               blocked_at = NULL, blocked_reason = NULL, blocked_detail = NULL,
+               blocked_until = NULL, started_at = NULL, updated_at = NOW()
+               WHERE id = $2 AND status = 'blocked'`,
+              [JSON.stringify(newPayload), nextTask.id]
+            );
+            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) → 解锁 next=${nextTask.id} (seq=${currentSeq + 1}) with prev_task_result`);
+          } else {
+            console.log(`[execution-callback] 串行调度: task=${task_id} (seq=${currentSeq}) 无下一个串行 task，由断链#5 继续`);
+          }
+        }
+      } catch (serialErr) {
+        console.error(`[execution-callback] dev 串行调度失败 (non-fatal): ${serialErr.message}`);
+      }
+
       // 5c9. 断链 #5: dev 完成 → 检查同 project 所有 dev 是否全完成 → 创建 code_review (Initiative 级别)
       try {
         const devRow = await pool.query('SELECT task_type, project_id, goal_id, title FROM tasks WHERE id = $1', [task_id]);
