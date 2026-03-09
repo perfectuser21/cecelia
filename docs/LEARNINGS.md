@@ -3885,3 +3885,18 @@ Brain 24/7 清理进程可能在开发中途删除活跃 worktree（Bash CWD 失
 **影响程度**: High（CI 总时长 ~50 分钟 → ~12-15 分钟）
 
 **预防措施**：新增 CI job 默认用 ubuntu-latest，只有需要 macOS 特有行为才用 macos-latest
+
+---
+
+## 2026-03-09 | QUALITY_SPEC.md 首次建立
+
+**PR**: #733
+**根本原因**：质量系统被修改数百次，每次修 A 坏 B，根本原因是没有规格文档，所有人（包括 AI）不知道"完整"是什么样子，每次只修一个暴露的漏洞。
+
+**修复**：新增 QUALITY_SPEC.md 作为 SSOT，定义终态、矩阵、Phase 路线图。
+
+**下次预防**：
+- [ ] 改质量系统任何文件前，先对照 QUALITY_SPEC.md 确认改动在哪个 Phase
+- [ ] 每 Phase 完成后更新矩阵状态
+- [ ] 任何 exit 1 → warning 的降级必须在 QUALITY_SPEC.md 里有理由记录
+
