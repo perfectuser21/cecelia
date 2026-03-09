@@ -19,7 +19,6 @@ describe('POST /api/brain/tasks/:task_id/feedback', () => {
     if (testTaskId) {
       await pool.query('DELETE FROM tasks WHERE id = $1', [testTaskId]);
     }
-    await pool.end();
   });
 
   beforeEach(async () => {

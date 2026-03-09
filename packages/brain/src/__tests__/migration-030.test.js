@@ -1,13 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import pool from '../db.js';
 
 describe('Migration 030: Capability-Driven Development', () => {
   beforeAll(async () => {
     // Migration should have been applied during server startup
-  });
-
-  afterAll(async () => {
-    await pool.end();
   });
 
   describe('capabilities table', () => {
