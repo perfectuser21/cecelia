@@ -1,9 +1,10 @@
 ---
 id: architect-skill
-version: 1.0.0
+version: 1.2.0
 created: 2026-03-06
-updated: 2026-03-06
+updated: 2026-03-09
 changelog:
+  - 1.2.0: Mode 2 新增 initiative-dod.md + 集成测试归属；Mode 3 verify 完整实现（含架构对齐校验）
   - 1.0.0: 初始版本 - Mode 1 系统说明书 + Mode 2 Initiative 设计
 ---
 
@@ -17,16 +18,19 @@ changelog:
 
 ## 核心定位
 
-/architect 是 Initiative 级别的架构设计技能。它解决两个问题：
+/architect 是 Initiative 级别的架构设计技能。解决三个问题：
 
 1. **Owner 看不懂系统** - Mode 1 扫描代码，生成人可读的模块说明书
-2. **AI 没有设计就编码** - Mode 2 在 /dev 之前产出技术方案，确保全局一致性
+2. **AI 没有设计就编码** - Mode 2 在 /dev 之前产出技术方案 + Initiative DoD，确保全局一致性
+3. **Initiative 无闭环收尾** - Mode 3 验收 DoD、校验架构对齐、更新文档、标记完成
 
 ```
-层级关系:
-  /decomp  → 拆出 Initiatives
-  /architect → 为 Initiative 做技术设计（本 skill）
-  /dev     → 按设计写代码
+Initiative 完整流水线:
+  /decomp          → 拆出 Initiatives
+  /architect M2    → 技术设计 + Initiative DoD + Tasks 注册
+  /dev × N         → 按设计写代码
+  /code-review     → Initiative 级集成审查（--initiative-id）
+  /architect M3    → 验收收尾（verify 模式）
 ```
 
 ---
@@ -39,6 +43,9 @@ changelog:
 
 # Mode 2: Initiative 技术设计
 /architect design <initiative_description>
+
+# Mode 3: Initiative 验收收尾
+/architect verify --initiative-id <id>
 
 # 从 Brain 自动派发
 /architect --task-id <id>
@@ -231,21 +238,45 @@ ON CONFLICT (module_id) DO UPDATE SET ...;
 [关键测试点]
 ```
 
-#### Phase 4: 拆分 Tasks
+#### Phase 3.5: 产出 initiative-dod.md（强制，不可跳过）
+
+**Mode 3 将逐条对照此文件验收。没有此文件 = Mode 2 失败。**
+
+```markdown
+# Initiative DoD: [Initiative Name]
+
+## 功能验收条件（Mode 3 逐条检查）
+- [ ] F1: [具体功能，可量化] — 验证方式: [如何验证]
+- [ ] F2: [具体功能，可量化] — 验证方式: [如何验证]
+
+## 集成测试通过条件
+- [ ] I1: 集成测试全部通过（最后一个 dev task 的测试套件）
+- [ ] I2: Golden Path 端到端通过
+
+## 架构对齐条件（Mode 3 自动校验）
+- [ ] A1: 数据模型变更按 architecture.md 实现（逐字段）
+- [ ] A2: API 端点按 architecture.md 实现（逐端点）
+- [ ] A3: 关键决策已落地（无偏离）
+
+## 非功能条件
+- [ ] N1: 无新增 L1 bug（code_review 无 BLOCK）
+- [ ] N2: Brain CI 全通过
+```
+
+#### Phase 4: 拆分 Tasks（含集成测试归属）
 
 将 architecture.md 拆成可独立执行的 Tasks：
 
 ```
 Task 1: [标题] -- 依赖: 无
 Task 2: [标题] -- 依赖: Task 1
-Task 3: [标题] -- 依赖: Task 1
-...
+Task N: [标题 + 集成测试] -- 依赖: Task 1, Task 2  ← 集成测试在这里
 ```
 
 拆分原则：
 - 每个 Task = 1 个 PR
 - Task 之间有明确依赖关系
-- 每个 Task 有独立的验收标准
+- **最后一个 dev task 明确承担集成测试职责**（description 注明，payload 含 `integration_test_owner: true`）
 - 总 Task 数 3-7 个
 
 #### Phase 5: 注册到 Brain（强制，不可跳过）
@@ -306,9 +337,113 @@ curl -s "http://localhost:5221/api/brain/tasks?project_id=<initiative_id>&status
 ### 完成条件
 
 - `architecture.md` 文件存在
-- 所有 Tasks 已注册到 Brain（每个 Task curl 返回成功且有 task_id）
-- depends_on 依赖链正确（后续 Task 引用前置 Task 的 task_id）
+- `initiative-dod.md` 文件存在（至少 3 条功能验收条件）
+- 所有 Tasks 已注册到 Brain，最后一个 dev task payload 含 `integration_test_owner: true`
+- depends_on 依赖链正确
 - 创建 `.architect-design-done` 文件
+
+---
+
+## Mode 3: Initiative 验收收尾（verify）
+
+### 目标
+
+Initiative 所有 dev tasks 完成、code_review PASS 后，执行功能验收 + 架构对齐校验 + 文档更新 + 标记完成。
+
+Brain 自动触发：`task_type = 'initiative_verify'` → executor 生成 `/architect verify --initiative-id <project_id>`
+
+### Phase 1: 验收检查
+
+#### Step 1.1 流程验收
+
+```bash
+INITIATIVE_ID="<id>"
+
+# 所有 dev tasks 已完成？
+PENDING_DEV=$(curl -s "http://localhost:5221/api/brain/tasks?project_id=$INITIATIVE_ID" | \
+  jq '[.[] | select(.task_type=="dev" and (.status | IN("queued","in_progress","blocked")))] | length')
+[ "$PENDING_DEV" -gt 0 ] && echo "BLOCK: $PENDING_DEV dev tasks 未完成" && exit 1
+
+# code_review PASS（scope=initiative）？
+CR_STATUS=$(curl -s "http://localhost:5221/api/brain/tasks?project_id=$INITIATIVE_ID" | \
+  jq -r '[.[] | select(.task_type=="code_review" and .payload.scope=="initiative")] | last | .status')
+[ "$CR_STATUS" != "completed" ] && echo "BLOCK: initiative code_review 未完成" && exit 1
+echo "✅ 流程验收通过"
+```
+
+#### Step 1.2 功能 DoD 验收
+
+读取 `initiative-dod.md`，逐条验证 F1/F2... 条件，记录 PASS / FAIL。
+
+#### Step 1.3 架构对齐校验
+
+对照 `architecture.md` 逐条校验：
+
+**数据模型对齐**：查询实际 DB schema，确认 architecture.md 中描述的新增字段/表是否存在。
+
+**API 端点对齐**：grep routes.js 确认 architecture.md 中描述的新增端点是否存在。
+
+**关键决策对齐**：逐条读"关键决策"表，判断代码实现是否符合选定方案。不可自动校验的 → 标注"需人工确认"。
+
+#### Step 1.4 汇总报告
+
+```markdown
+## Initiative 验收报告
+
+### 流程验收
+- ✅ 所有 dev tasks 完成 / ✅ code_review PASS
+
+### 功能 DoD
+- ✅/❌ F1: ...
+- ✅/❌ F2: ...
+
+### 架构对齐
+- ✅/❌ A1: 数据模型 — [字段] 存在
+- ✅/❌ A2: API — [端点] 存在
+- ⚠️  A3: 需人工确认 — [决策描述]
+
+### 总体裁决
+PASS / PARTIAL（可接受）/ BLOCK（不可接受，停止后续 Phase）
+```
+
+**BLOCK 时**：停止，不进入 Phase 2/3，不标记 completed。
+
+### Phase 2: 文档更新
+
+1. **更新 architecture.md**：追加实施记录（完成时间、实际偏差、验收结果）
+2. **增量扫描 system_modules**：对本 Initiative 改动的模块，运行 Mode 1 增量扫描
+3. **更新 DEFINITION.md**（若有架构层面变更）：新增 task_type、Brain 器官、端口等
+4. **更新 LEARNINGS.md**：记录关键决策回顾、踩的坑、下次改进建议
+
+### Phase 3: 标记完成
+
+```bash
+# PATCH initiative 状态
+curl -s -X PATCH http://localhost:5221/api/brain/projects/$INITIATIVE_ID \
+  -H "Content-Type: application/json" \
+  -d '{"status": "completed"}'
+
+# 关闭剩余 queued tasks（防御性清理）
+curl -s "http://localhost:5221/api/brain/tasks?project_id=$INITIATIVE_ID&status=queued" | \
+  jq -r '.[].id' | while read tid; do
+    curl -s -X PATCH "http://localhost:5221/api/brain/tasks/$tid" \
+      -H "Content-Type: application/json" \
+      -d '{"status": "cancelled", "result": "initiative_verify 完成，剩余任务关闭"}'
+  done
+
+# 创建完成标志
+echo "verified_at=$(TZ=Asia/Shanghai date +%Y-%m-%dT%H:%M:%S+08:00)" > .architect-verify-done
+echo "initiative_id=$INITIATIVE_ID" >> .architect-verify-done
+echo "verdict=PASS" >> .architect-verify-done
+```
+
+### 完成条件（Mode 3）
+
+- Phase 1 验收报告产出，裁决为 PASS 或 PARTIAL
+- `architecture.md` 追加实施记录
+- `LEARNINGS.md` 更新
+- initiative status = completed
+- 创建 `.architect-verify-done`
 
 ---
 
@@ -324,19 +459,17 @@ curl -s "http://localhost:5221/api/brain/tasks?project_id=<initiative_id>&status
 | Mode | 检查文件 | 完成标志 |
 |------|---------|---------|
 | Mode 1 (scan) | `.architect-scan-done` | system_modules 有数据 |
-| Mode 2 (design) | `.architect-design-done` | architecture.md + Tasks 注册 |
+| Mode 2 (design) | `.architect-design-done` | architecture.md + initiative-dod.md + Tasks 注册 |
+| Mode 3 (verify) | `.architect-verify-done` | 验收报告 + initiative completed |
 
 ---
 
 ## Brain 注册
 
-| 项 | 值 |
-|----|---|
-| task_type | `architecture_design` |
-| skill_path | `/architect` |
-| location | `us` |
-| model | Opus |
-| agent_id | `architect` |
+| task_type | skill 参数 | 说明 |
+|-----------|-----------|------|
+| `architecture_design` | `/architect design ...` | Mode 2 — 技术设计 |
+| `initiative_verify` | `/architect verify --initiative-id <project_id>` | Mode 3 — 验收收尾 |
 
 ---
 
@@ -347,23 +480,29 @@ curl -s "http://localhost:5221/api/brain/tasks?project_id=<initiative_id>&status
 Mode 1 必须在 /decomp 之前运行——它建立的 system_modules 知识库是 /decomp 有依据拆解的前提。
 
 ```
-/plan 识别层级（Area OKR / Project / Initiative）
-    |
-/architect Mode 1 → 扫描代码库，建立 system_modules 知识库
-    |
-/decomp → 基于 system_modules 拆 OKR → Initiative（有依据的拆解）
-    |
-/decomp-check → 审查拆解质量
-    |
+/plan 识别层级
+    ↓
+/architect M1 → 建立 system_modules 知识库
+    ↓
+/decomp → 拆 OKR → Initiative
+    ↓
 [每个 Initiative 独立执行]
-    |
-/architect Mode 2 → 读 system_modules，产出 architecture.md + Tasks
-    |
+    ↓
+/architect M2 → architecture.md + initiative-dod.md + Tasks 注册（含集成测试归属）
+    ↓
 /dev Task 1 → PR → merge
 /dev Task 2 → PR → merge
-/dev Task 3 → PR → merge
-    |
-Initiative 完成
+/dev Task N → PR → merge（含集成测试）
+    ↓
+Brain 断链#5: 所有 dev 完成 → code_review(scope=initiative)
+    ↓
+/code-review --initiative-id <id>（集成测试 + 代码质量）
+    ↓ PASS
+Brain 断链#4: initiative_verify 创建
+    ↓
+/architect M3 verify → 功能 DoD + 架构对齐 + 文档更新 + 标记完成
+    ↓
+Initiative ✅ 完成
 ```
 
 ### 场景二：增量更新（PR merge 后自动触发）
@@ -385,5 +524,8 @@ Brain 自动派发 architecture_design 任务（type=scan）
 - 不直接改代码（那是 /dev 的事）
 - 不跳过影响分析直接设计
 - 不产出没有 Tasks 的 architecture.md
+- Mode 2 不产出 initiative-dod.md = 失败（DoD 是 Mode 3 验收的唯一依据）
 - 不在 Mode 2 中跳过 system_modules 检查
+- Mode 3 跳过架构对齐校验 = 失败
+- Mode 3 裁决 BLOCK 时标记 initiative completed = 严重错误
 # /architect skill
