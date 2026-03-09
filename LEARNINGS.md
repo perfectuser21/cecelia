@@ -1,5 +1,16 @@
 # Cecelia Core Learnings
 
+## check-learning HARD GATE 实现（2026-03-09）
+
+### 根本原因
+Learning 条目无格式约束，导致无意义内容（"注意 XXX"）通过 CI，失去知识沉淀价值。
+DevGate CI 只检查 PRD/DoD/Cleanup，没有对 LEARNINGS.md 的格式做任何强制。
+
+### 下次预防
+- [ ] 所有新增的 LEARNINGS.md 条目必须包含"根本原因"和"下次预防"章节
+- [ ] "下次预防"章节必须有至少 1 条 `- [ ]` checklist 条目
+- [ ] check-learning.sh 会在 CI 阶段自动检查，格式不对直接 exit 1（HARD GATE）
+
 ### [2026-03-09] vitest 覆盖率门槛 HARD GATE + OOM workaround 修复（PR #738）
 
 **功能**：在 `packages/brain/vitest.config.js` 添加覆盖率门槛（statements/lines/branches ≥ 75%, functions ≥ 80%），并更新 `brain-ci.yml`：PR 和 push 都运行 `--coverage`，覆盖率不足时 exit 1。
