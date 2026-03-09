@@ -522,6 +522,67 @@ async function generateArchitectureDesignTask(kr, project) {
   }
 }
 
+/**
+ * Proactive scan: find all active coding-domain Initiatives without a queued/in_progress
+ * architecture_design task, and auto-create one for each.
+ *
+ * Called by planNextTask() every tick to ensure the pipeline never stalls due to a missing
+ * architecture_design trigger.
+ *
+ * @returns {Promise<Array>} - Array of created task objects (may be empty)
+ */
+async function scanInitiativesForArchDesign() {
+  const created = [];
+  try {
+    // Find active initiatives (coding domain or NULL) that have no queued/in_progress arch_design task
+    const result = await pool.query(`
+      SELECT i.id, i.name, i.domain, i.kr_id,
+        parent_proj.id AS parent_project_id,
+        pkl.kr_id AS linked_kr_id
+      FROM projects i
+      LEFT JOIN projects parent_proj ON i.parent_id = parent_proj.id
+      LEFT JOIN project_kr_links pkl ON pkl.project_id = parent_proj.id
+      WHERE i.type = 'initiative'
+        AND i.status = 'active'
+        AND (i.domain = 'coding' OR i.domain IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.project_id = i.id
+            AND t.task_type = 'architecture_design'
+            AND t.status NOT IN ('completed', 'failed', 'cancelled')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM tasks t
+          WHERE t.project_id = i.id
+            AND t.status IN ('queued', 'in_progress')
+        )
+    `);
+
+    for (const initiative of result.rows) {
+      const krId = initiative.kr_id || initiative.linked_kr_id;
+
+      // Build a minimal KR/project object for generateArchitectureDesignTask
+      const krObj = krId
+        ? { id: krId, priority: 'P1', domain: initiative.domain || 'coding' }
+        : { id: null, priority: 'P1', domain: initiative.domain || 'coding' };
+
+      // Use a synthetic parent project so generateArchitectureDesignTask can find the initiative
+      const parentProjectObj = initiative.parent_project_id
+        ? { id: initiative.parent_project_id, domain: null }
+        : { id: initiative.id, domain: initiative.domain }; // fallback: initiative itself as project
+
+      const task = await generateArchitectureDesignTask(krObj, parentProjectObj);
+      if (task) {
+        created.push(task);
+        console.log(`[planner] scanInitiativesForArchDesign: created architecture_design for initiative ${initiative.id} (${initiative.name})`);
+      }
+    }
+  } catch (err) {
+    console.error(`[planner] scanInitiativesForArchDesign failed: ${err.message}`);
+  }
+  return created;
+}
+
 // autoGenerateTask, KR_STRATEGIES, getFallbackTasks, generateTaskFromKR, generateTaskPRD
 // — all removed. Task creation is now 秋米's responsibility via /okr skill.
 
@@ -807,6 +868,12 @@ async function checkPrPlansCompletion() {
 async function planNextTask(scopeKRIds = null, options = {}) {
   const state = await getGlobalState();
 
+  // Proactive scan: auto-create architecture_design tasks for initiatives missing one.
+  // Can be skipped via options.skipArchScan (used in tests where DB state must be controlled).
+  if (!options.skipArchScan) {
+    await scanInitiativesForArchDesign();
+  }
+
   // V3: Check for PR Plans first (三层拆解优先)
   // Can be skipped via options.skipPrPlans (used by KR rotation tests)
   if (!options.skipPrPlans) {
@@ -1070,6 +1137,7 @@ export {
   selectTargetProject,
   generateNextTask,
   generateArchitectureDesignTask,
+  scanInitiativesForArchDesign,
   // Learning penalty
   buildLearningPenaltyMap,
   LEARNING_PENALTY_SCORE,

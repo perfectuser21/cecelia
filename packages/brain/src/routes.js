@@ -3733,7 +3733,33 @@ ${resultStr.substring(0, 2000)}
               console.log(`[execution-callback] 断链#3 修复: initiative_plan created for architecture_design(scan) ${task_id}`);
             }
           } else {
-            // M2 design 完成 → 验证 dev 任务已存在（日志告警）
+            // M2 design 完成 → 1) unblock 第一个 blocked dev task；2) 验证 dev 任务已存在（日志告警）
+
+            // Step 1: unblock 该 initiative 下第一个 blocked dev task（architecture_design 完成后解锁 pipeline）
+            try {
+              const blockedDevRow = await pool.query(
+                `SELECT id, title FROM tasks
+                 WHERE project_id = $1 AND task_type = 'dev' AND status = 'blocked'
+                 ORDER BY created_at ASC LIMIT 1`,
+                [projectId]
+              );
+              if (blockedDevRow.rows.length > 0) {
+                const blockedTask = blockedDevRow.rows[0];
+                const { unblockTask } = await import('./task-updater.js');
+                const unblockResult = await unblockTask(blockedTask.id);
+                if (unblockResult.success) {
+                  console.log(`[execution-callback] 断链#3: architecture_design(design) ${task_id} 完成，已 unblock dev task ${blockedTask.id}「${blockedTask.title}」`);
+                } else {
+                  console.warn(`[execution-callback] 断链#3: unblock dev task ${blockedTask.id} 失败: ${unblockResult.error}`);
+                }
+              } else {
+                console.log(`[execution-callback] 断链#3: architecture_design(design) ${task_id} 完成，project ${projectId} 无 blocked dev task 需要 unblock`);
+              }
+            } catch (unblockErr) {
+              console.error(`[execution-callback] 断链#3 unblock dev task 失败（非致命）: ${unblockErr.message}`);
+            }
+
+            // Step 2: 验证 dev 任务已存在（日志告警）
             const devTasks = await pool.query(
               `SELECT COUNT(*) AS cnt FROM tasks
                WHERE project_id = $1 AND task_type = 'dev' AND status IN ('queued', 'in_progress')`,
