@@ -370,7 +370,7 @@ function checkDodTracesToPrd(dodItems, prdFile) {
 
   if (failures > 0) {
     for (const fi of failedItems) {
-      console.log(`  ${YELLOW}⚠️${RESET}  DoD 条目无法追溯到 PRD 成功标准：`);
+      console.log(`  ${RED}❌${RESET}  DoD 条目无法追溯到 PRD 成功标准：`);
       console.log(`      "${fi.text.substring(0, 80)}"`);
       console.log(`      关键词：${fi.keywords.join(", ")}`);
     }
@@ -533,18 +533,20 @@ function main() {
   console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项，全部已验证)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-  // === Phase 2: DoD ↔ PRD 追溯检查 ===
+  // === Phase 3: DoD ↔ PRD 追溯检查（HARD GATE） ===
   const prdPath = path.join(projectRoot, ".prd.md");
   console.log("");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("  DoD ↔ PRD 追溯检查（Phase 2）");
+  console.log("  DoD ↔ PRD 追溯检查（HARD GATE）");
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   const traceResult = checkDodTracesToPrd(items, prdPath);
   if (!traceResult.passed) {
     console.log(
-      `  ${YELLOW}⚠️  ${traceResult.failures} 条 DoD 条目无法追溯到 PRD 成功标准${RESET}`
+      `  ${RED}❌ ${traceResult.failures} 条 DoD 条目无法追溯到 PRD 成功标准${RESET}`
     );
-    console.log("  （当前为 warning，Phase 3 将升级为 exit 1）");
+    console.log("  请确保每条 DoD 条目的关键词出现在 PRD 成功标准章节中。");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    process.exit(1);
   } else {
     console.log(`  ${GREEN}✅ 追溯检查通过${RESET}`);
   }

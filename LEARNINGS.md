@@ -1,5 +1,18 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] vitest 覆盖率门槛 HARD GATE + OOM workaround 修复（PR #738）
+
+**功能**：在 `packages/brain/vitest.config.js` 添加覆盖率门槛（statements/lines/branches ≥ 75%, functions ≥ 80%），并更新 `brain-ci.yml`：PR 和 push 都运行 `--coverage`，覆盖率不足时 exit 1。
+
+**OOM workaround 陷阱**：CI 原有逻辑：测试全部通过但 vitest 退出非零时，直接 exit 0（应对 macOS worker OOM cleanup）。此逻辑会把覆盖率门槛失败也吞掉，因为覆盖率失败时"测试全部通过但退出非零"也成立。修复方式：先检查输出是否含 "Coverage threshold"，若是则强制 exit 1（HARD GATE），再走 OOM 判断。
+
+**关键决策**：
+- 门槛基于实测覆盖率（statements 78%, functions 86%, branches 80%）减去约 3-5% 余量设置
+- branches 门槛设为 75% 而非 65%（因为实测 80%，有 5% 余量足够）
+- `perFile: false`：整体门槛，不要求每个文件都达标（避免工具性辅助文件拉低）
+
+**教训**：在 CI 中添加新的失败条件时，必须检查现有的 workaround/bypass 逻辑，确保新条件不被旧 bypass 吞掉。
+
 ### [2026-03-09] check-dod-mapping Phase 2 — DoD ↔ PRD 追溯检查（PR #734）
 
 **功能**：在 `check-dod-mapping.cjs` 新增 Phase 2 追溯检查：DoD 条目关键词必须能在 PRD 成功标准章节中找到对应。当前阶段为 warning（不 exit 1），Phase 3 升级为强制错误。
