@@ -249,7 +249,7 @@ jobs:
 
   ci-passed:
     name: DevGate CI Passed
-    needs: [verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning]
+    needs: [verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -287,6 +287,10 @@ jobs:
             FAILED=true
           fi
 
+          if [ "${{ needs.quality-meta-tests.result }}" = "failure" ] || [ "${{ needs.quality-meta-tests.result }}" = "cancelled" ]; then
+            echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
+            FAILED=true
+          fi
 
           if [ "$FAILED" = "true" ]; then
             echo ""
