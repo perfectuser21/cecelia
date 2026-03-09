@@ -9,6 +9,7 @@ import {
   checkRunaways,
   getWatchdogStatus,
   cleanupMetrics,
+  flushMetricsToDb,
   resolveTaskPids,
   scanInteractiveClaude,
   checkIdleSessions,
@@ -812,6 +813,96 @@ describe('watchdog', () => {
           expect(isProcessAlive(99999)).toBe(false);
         }
       });
+    });
+  });
+
+  // ── DoD-3: flushMetricsToDb — peak/avg RSS/CPU 计算正确 ──
+  describe('flushMetricsToDb', () => {
+    const makePool = () => {
+      const calls = [];
+      return {
+        query: vi.fn(async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; }),
+        _calls: calls,
+      };
+    };
+
+    beforeEach(() => {
+      _taskMetrics.clear();
+    });
+
+    it('should upsert peak/avg RSS/CPU correctly from samples', async () => {
+      const taskId = 'task-flush-001';
+      // 手动注入 samples（模拟 watchdog 采样结果）
+      _taskMetrics.set(taskId, {
+        pid: 1234,
+        startedAt: Date.now(),
+        samples: [
+          { rss_mb: 200, cpu_pct: 10, timestamp: Date.now() },
+          { rss_mb: 400, cpu_pct: 50, timestamp: Date.now() },
+          { rss_mb: 300, cpu_pct: 30, timestamp: Date.now() },
+        ],
+      });
+
+      const pool = makePool();
+      await flushMetricsToDb(taskId, pool, { runId: 'run-abc', exitStatus: 'success' });
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(sql).toMatch(/INSERT INTO task_run_metrics/);
+      expect(params[0]).toBe(taskId);          // task_id
+      expect(params[1]).toBe('run-abc');        // run_id
+      expect(params[2]).toBe(400);              // peak_rss_mb = max(200,400,300)
+      expect(params[3]).toBe(300);              // avg_rss_mb = round((200+400+300)/3)
+      expect(params[4]).toBeCloseTo(50, 1);     // peak_cpu_pct = max(10,50,30)
+      expect(params[5]).toBeCloseTo(30, 1);     // avg_cpu_pct = (10+50+30)/3 ≈ 30
+      expect(params[7]).toBe('success');        // exit_status
+    });
+
+    it('should return early when no samples exist', async () => {
+      const pool = makePool();
+      await flushMetricsToDb('task-no-samples', pool);
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('should not throw when pool.query fails (non-fatal)', async () => {
+      const taskId = 'task-flush-fail';
+      _taskMetrics.set(taskId, {
+        pid: 1234,
+        startedAt: Date.now(),
+        samples: [{ rss_mb: 100, cpu_pct: 5, timestamp: Date.now() }],
+      });
+
+      const pool = { query: vi.fn().mockRejectedValue(new Error('DB down')) };
+      await expect(flushMetricsToDb(taskId, pool)).resolves.toBeUndefined();
+    });
+
+    it('cleanupMetrics with pool should flush then delete samples', async () => {
+      const taskId = 'task-cleanup-001';
+      _taskMetrics.set(taskId, {
+        pid: 999,
+        startedAt: Date.now(),
+        samples: [{ rss_mb: 512, cpu_pct: 80, timestamp: Date.now() }],
+      });
+
+      const pool = makePool();
+      await cleanupMetrics(taskId, pool, { runId: 'run-xyz' });
+
+      // DB 应被调用
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      // metrics 应被删除
+      expect(_taskMetrics.has(taskId)).toBe(false);
+    });
+
+    it('cleanupMetrics without pool should just delete samples', async () => {
+      const taskId = 'task-cleanup-002';
+      _taskMetrics.set(taskId, {
+        pid: 888,
+        startedAt: Date.now(),
+        samples: [{ rss_mb: 100, cpu_pct: 10, timestamp: Date.now() }],
+      });
+
+      await cleanupMetrics(taskId);
+      expect(_taskMetrics.has(taskId)).toBe(false);
     });
   });
 });
