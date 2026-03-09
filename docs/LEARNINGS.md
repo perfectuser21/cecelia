@@ -1,5 +1,45 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] Initiative Pipeline CTO 审核 5 项修复（PR #731）
+
+**失败统计**：D6 测试调试 1 轮，Brain CI PostgreSQL 失败 6 次（需修复 Homebrew 缓存）
+
+**根本原因分析（5 个 Bug）**：
+
+**P0-1/P0-2（off-by-one）**：`fixRound >= MAX` 与 `revisionRound >= MAX` 应为 `nextRound > MAX`。
+原来第 MAX 轮时就触发告警，合法的第 MAX 轮 task 永远不被创建。
+
+**P0-3（TEST_BLOCK 死锁）**：TEST_BLOCK 只写 P0 告警事件 → pipeline 卡死无出路。
+修复：TEST_BLOCK 创建 `fix_type=integration_test_failure` dev task，与 CRITICAL_BLOCK 分开处理。
+
+**P1（断链#5c12 失效）**：5c12 串行失败降级代码错放在 `if (newStatus === 'completed')` 块内。
+`AI Failed` → `newStatus = 'failed'` 永远不进 completed 块，5c12 永不执行。
+修复：将 5c12 移出 completed 块（6 空格 → 4 空格缩进），置于顶层流程。
+
+**P2（SKILL.md 模糊）**：architect Mode 2 失败时应明确说明"直接 return 失败，不内嵌 Mode 1 逻辑"。
+
+**Brain CI PostgreSQL Homebrew 缓存 Bug**：
+- 旧缓存 key `v1` 未包含 `/opt/homebrew/share/postgresql@17/` 目录
+- `initdb` 需要 `share/postgresql@17/postgres.bki` 才能初始化
+- 缓存命中时有 `initdb` 二进制但缺失 BKI 文件 → initdb 报错
+- 旧代码 `initdb ... 2>/dev/null || true` 静默吞掉错误，导致现象看起来像"随机 flaky"
+- 实际是 **确定性失败**（每次 cache-hit 都失败）
+
+**修复方案**：
+1. 添加 `/opt/homebrew/share/postgresql@17` 和 `/opt/homebrew/share/pgvector` 到缓存路径
+2. 升级缓存 key 到 `v2` 强制重建
+3. 移除 `initdb` 的 `2>/dev/null` 静默吞错
+4. 添加 `pg_isready` 预检：PostgreSQL 已运行时跳过初始化
+
+**测试陷阱**：
+- D6 setup 中 `status: 'Failed'` → `newStatus = 'in_progress'`（未知状态 fallback），应用 `'AI Failed'`
+- cecelia_events 的 event_type 在 SQL 参数 `call[1][0]` 中，不在 SQL 字符串 `call[0]` 中
+- P0 测试 D4 在修复 TEST_BLOCK 后需同步更新（旧期望：写告警；新期望：创建修复 task）
+
+**影响程度**：High（P0-3 修复防止 initiative pipeline 因集成测试失败而永久死锁；P1 防止串行 task 失败时后续 blocked tasks 成僵尸）
+
+---
+
 ### [2026-03-09] 模型配额瀑布选择 + 梯队设置（PR #729）
 
 **失败统计**：测试调整 3 处，无 CI 失败（Brain CI 是预先存在的基础设施问题）
