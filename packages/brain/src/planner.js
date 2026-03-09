@@ -461,11 +461,11 @@ async function generateArchitectureDesignTask(kr, project) {
     // Determine task_type and payload based on domain
     let taskType, taskTitle, taskDescription, extraPayload;
     if (isCodingDomain) {
-      // coding domain: existing behavior → architecture_design → /architect
+      // coding domain: existing behavior → architecture_design → /architect Mode 2
       taskType = 'architecture_design';
       taskTitle = `架构设计 Initiative: ${initiative.name}`;
       taskDescription = `该 Initiative「${initiative.name}」下无任务，需要架构设计 (Mode 2): 读取 system_modules → 产出 architecture.md → 注册 /dev Tasks 到 Brain。Initiative ID: ${initiative.id}，所属 KR ID: ${kr.id}`;
-      extraPayload = {};
+      extraPayload = { mode: 'design' };
     } else {
       // non-coding domain: initiative_plan with skill_override from role-registry
       const role = getDomainRole(domain);
