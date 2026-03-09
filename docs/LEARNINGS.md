@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-09] 断链#4 decision路由 + 断链#6 initiative_verify结论处理（PR #725）
+
+**NEEDS_FIX 不应进 initiative_verify**
+- code_review 发现代码问题（NEEDS_FIX）→ 直接送 initiative_verify 会造成 Mode 3 也说 NEEDS_REVISION → 死循环
+- 正确路由：PASS → verify；NEEDS_FIX → 修复 dev task → 重新走 code_review；BLOCK → 停止
+
+**用 cecelia_events 代替新 task_type 记录告警**
+- P0 告警创建新 task_type（initiative_alert）需要同步 5 个文件（task-router, executor, DEFINITION.md 等）
+- 简单写入 `cecelia_events` 更干净，事件可被 alertness 系统捕获，不需要被 dispatch
+
+**断链#6 revision_round 追踪防无限循环**
+- 每次 NEEDS_REVISION 创建 dev task 时在 payload 写入 `revision_round: N+1`
+- 下次 initiative_verify 从 `ivTask.payload.revision_round` 读取轮次，≥3 时改为 P0 告警
+
+**routes.js 5000ms cooldown 导致测试超时**
+- `await new Promise(resolve => setTimeout(resolve, CALLBACK_COOLDOWN_MS))` 是真实 5000ms 等待
+- vitest 默认超时 5000ms → 恰好超时；解法：给每个 callback route 测试设 `timeout: 10000`
+- 这是所有 callback 测试（vivian、tick-recovery 等）的共同问题，是已知 pre-existing 失败
+
 ### [2026-03-09] SKILL.md Initiative 设计补全 — /architect Mode 3 + /code-review Phase 0（PR #724）
 
 **SKILL.md 是设计文档，不是代码，但会被 Brain 用于 LLM 推理**
