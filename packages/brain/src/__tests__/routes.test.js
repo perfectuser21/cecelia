@@ -6,25 +6,31 @@
  *       迁移到 routes.js 内部定义，测试通过 pool.query mock 控制行为。
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock dependencies
-vi.mock('../db.js', () => {
-  const mockPool = {
-    query: vi.fn(),
-  };
-  return { default: mockPool };
-});
+// Mock dependencies — mockPool hoisted so routes.js 总能获得这个 pool 实例
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+
+vi.mock('../db.js', () => ({ default: mockPool }));
 
 vi.mock('../decomposition-checker.js', () => ({
   runDecompositionChecks: vi.fn(),
 }));
 
-import pool from '../db.js';
 import { runDecompositionChecks } from '../decomposition-checker.js';
 
-// Import after mocking to avoid module loading issues
-const { default: router } = await import('../routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+// 每次测试文件运行时都重新加载 routes.js，避免跨文件模块缓存污染
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
+
+// 用 pool 引用时直接用 mockPool（不再 static import pool from db.js）
+const pool = mockPool;
 
 // Helper: create mock req/res
 function mockReqRes(params = {}, query = {}, body = {}) {
@@ -53,7 +59,8 @@ describe('Decomposition API Routes', () => {
   });
 
   describe('GET /decomposition/missing', () => {
-    const handler = getHandler('get', '/decomposition/missing');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/decomposition/missing'); });
 
     it('should return missing initiatives list', async () => {
       // pool.query call 1: getActiveExecutionPaths → returns initiatives
@@ -111,7 +118,8 @@ describe('Decomposition API Routes', () => {
   });
 
   describe('POST /decomposition/create-missing', () => {
-    const handler = getHandler('post', '/decomposition/create-missing');
+    let handler;
+    beforeAll(() => { handler = getHandler('post', '/decomposition/create-missing'); });
 
     it('should trigger decomposition check and return results', async () => {
       const mockResult = {
@@ -149,7 +157,8 @@ describe('Decomposition API Routes', () => {
   });
 
   describe('GET /decomposition/stats', () => {
-    const handler = getHandler('get', '/decomposition/stats');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/decomposition/stats'); });
 
     it('should return comprehensive decomposition statistics', async () => {
       pool.query

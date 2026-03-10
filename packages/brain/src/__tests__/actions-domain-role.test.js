@@ -3,15 +3,25 @@
  * 验证 createTask/createGoal/createProject 通过 domain-detector.js 自动填充 domain
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-const mockQuery = vi.fn();
+// hoisted 确保 actions.js 加载时获得同一 pool 实例
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
-const mockBroadcast = vi.fn().mockResolvedValue(undefined);
+const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../task-updater.js', () => ({ broadcastTaskState: mockBroadcast }));
 
-const { createTask, createGoal, createProject } = await import('../actions.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let createTask, createGoal, createProject;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../actions.js');
+  createTask = mod.createTask;
+  createGoal = mod.createGoal;
+  createProject = mod.createProject;
+});
 
 describe('actions.js - domain 自动填充', () => {
   beforeEach(() => {

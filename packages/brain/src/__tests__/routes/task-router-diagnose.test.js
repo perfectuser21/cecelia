@@ -3,16 +3,21 @@
  *
  * 诊断 KR 下所有 Initiative 的任务状态，分析派发阻塞原因
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mockPool = {
-  query: vi.fn(),
-};
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
-const { default: router } = await import('../../routes/task-router-diagnose.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../../routes/task-router-diagnose.js');
+  router = mod.default;
+});
 
 function createApp() {
   const app = express();

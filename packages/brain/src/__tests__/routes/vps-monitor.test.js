@@ -6,7 +6,7 @@
  * GET /services    — Docker 容器 + PM2 服务
  * GET /history     — 简易历史指标
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -44,7 +44,14 @@ const mockOs = {
 };
 vi.mock('os', () => ({ default: mockOs, ...mockOs }));
 
-const { default: router } = await import('../../routes/vps-monitor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../../routes/vps-monitor.js');
+  router = mod.default;
+});
 
 function createApp() {
   const app = express();

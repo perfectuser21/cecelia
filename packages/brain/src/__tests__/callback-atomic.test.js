@@ -3,19 +3,16 @@
  * Tests that execution-callback uses DB transactions for atomic updates
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock client for transactions
-const mockClient = {
-  query: vi.fn(),
-  release: vi.fn(),
-};
+// Mock client for transactions — hoisted 确保 routes.js 加载时获得同一实例
+const mockClient = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn() }));
 
-// Mock pool
-const mockPool = {
+// Mock pool — hoisted 确保 routes.js 加载时获得同一实例
+const mockPool = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(() => mockClient),
-};
+}));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // Mock executor
@@ -129,8 +126,14 @@ vi.mock('../notifier.js', () => ({
   notifyTaskCompleted: vi.fn(async () => {}),
   notifyTaskFailed: vi.fn(async () => {}),
 }));
-// Import router after mocks
-const { default: router } = await import('../routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
 
 // Helper to simulate express request/response
 function mockReqRes(method, path, body = {}) {

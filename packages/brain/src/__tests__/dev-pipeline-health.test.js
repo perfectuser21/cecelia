@@ -6,13 +6,12 @@
  * 遵循 routes.test.js 的极简 mock 策略：只 mock db.js + dispatch-stats.js
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // 只 mock 必要的依赖（参考 routes.test.js 的极简策略）
-vi.mock('../db.js', () => {
-  const mockPool = { query: vi.fn() };
-  return { default: mockPool };
-});
+// hoisted 确保 routes.js 加载时获得同一 mockPool 实例
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../db.js', () => ({ default: mockPool }));
 
 vi.mock('../dispatch-stats.js', () => ({
   getDispatchStats: vi.fn(),
@@ -23,11 +22,19 @@ vi.mock('../dispatch-stats.js', () => ({
   DISPATCH_MIN_SAMPLE: 10,
 }));
 
-import pool from '../db.js';
 import { getDispatchStats } from '../dispatch-stats.js';
 
-// 导入 router（在 mock 设置后）
-const { default: router } = await import('../routes.js');
+// pool 引用直接用 mockPool（不再 static import）
+const pool = mockPool;
+
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
@@ -52,7 +59,8 @@ function makeMockRes() {
 // ─── 测试：success-rate ───────────────────────────────────────────────────────
 
 describe('GET /dev-pipeline/success-rate', () => {
-  const handler = getHandler('get', '/dev-pipeline/success-rate');
+  let handler;
+  beforeAll(() => { handler = getHandler('get', '/dev-pipeline/success-rate'); });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -109,7 +117,8 @@ describe('GET /dev-pipeline/success-rate', () => {
 // ─── 测试：health ─────────────────────────────────────────────────────────────
 
 describe('GET /dev-pipeline/health', () => {
-  const handler = getHandler('get', '/dev-pipeline/health');
+  let handler;
+  beforeAll(() => { handler = getHandler('get', '/dev-pipeline/health'); });
 
   beforeEach(() => {
     vi.clearAllMocks();

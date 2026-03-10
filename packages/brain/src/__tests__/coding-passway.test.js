@@ -5,16 +5,23 @@
  * 使用 vi.fn() mock db.js，避免依赖真实数据库。
  * 补充 planner-initiative-plan.test.js（后者使用真实 DB 做集成测试）。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// mock db pool
-const mockQuery = vi.fn();
+// mock db pool — hoisted 确保 planner.js 加载时获得同一 pool 实例
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
 // mock focus.js（planner.js 在 getGlobalState 中使用，单元测试不需要真实 focus）
 vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn().mockResolvedValue(null) }));
 
-const { generateArchitectureDesignTask } = await import('../planner.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let generateArchitectureDesignTask;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../planner.js');
+  generateArchitectureDesignTask = mod.generateArchitectureDesignTask;
+});
 
 describe('Coding Passway: generateArchitectureDesignTask', () => {
   beforeEach(() => vi.clearAllMocks());

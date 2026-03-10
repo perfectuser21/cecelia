@@ -8,7 +8,7 @@
  * - 统计 total_calls / success / failed 累计
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 vi.mock('fs', () => ({
   existsSync: vi.fn(),
@@ -24,8 +24,15 @@ vi.mock('child_process', () => ({
 import { existsSync, readFileSync, rmSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 
-// Import after mocks are established
-const { emergencyCleanup, getCleanupStats } = await import('../emergency-cleanup.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let emergencyCleanup, getCleanupStats;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../emergency-cleanup.js');
+  emergencyCleanup = mod.emergencyCleanup;
+  getCleanupStats = mod.getCleanupStats;
+});
 
 describe('getCleanupStats', () => {
   it('返回包含 total_calls, success, failed, retried 的对象', () => {

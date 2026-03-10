@@ -5,21 +5,36 @@
  * 以及 domain/owner_role 自动推断（role-registry 集成）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock pool
-const mockQuery = vi.fn();
+// Mock pool — hoisted 确保 actions.js 加载时获得同一 pool 实例
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
 // Mock broadcastTaskState
-const mockBroadcast = vi.fn().mockResolvedValue(undefined);
+const mockBroadcast = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../task-updater.js', () => ({ broadcastTaskState: mockBroadcast }));
 
 // Mock fetch (用于 triggerN8n)
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { createTask, createInitiative, createProject, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks } = await import('../actions.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let createTask, createInitiative, createProject, updateTask, createGoal, updateGoal, triggerN8n, setMemory, batchUpdateTasks;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../actions.js');
+  createTask = mod.createTask;
+  createInitiative = mod.createInitiative;
+  createProject = mod.createProject;
+  updateTask = mod.updateTask;
+  createGoal = mod.createGoal;
+  updateGoal = mod.updateGoal;
+  triggerN8n = mod.triggerN8n;
+  setMemory = mod.setMemory;
+  batchUpdateTasks = mod.batchUpdateTasks;
+});
 
 describe('actions.js', () => {
   beforeEach(() => {
