@@ -478,15 +478,17 @@ function main() {
   console.log("");
 
   if (!fs.existsSync(dodPath)) {
-    // CI 环境中 DoD 不提交到仓库（在 .gitignore 中），跳过检查
-    if (process.env.GITHUB_ACTIONS) {
-      console.log(`${YELLOW}⚠️ [CI 模式] DoD 文件不存在，跳过检查${RESET}`);
-      console.log(`   DoD 是本地工作文档，不提交到 develop/main`);
-      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-      process.exit(0);
-    }
-    console.error(`${RED}❌ DoD 文件不存在: ${dodPath}${RESET}`);
-    process.exit(2);
+    // DoD 文件不存在 = 流程不完整 = HARD GATE FAIL
+    // （A+ 方案：DoD 已从 .gitignore 移除，必须随 PR 提交）
+    console.error(`${RED}❌ HARD GATE FAILED: DoD 文件缺失${RESET}`);
+    console.log("");
+    console.log("  走 /dev 工作流的 PR 必须包含 DoD 文件。");
+    console.log(`  期望文件: .dod-{branch}.md 或 .dod.md`);
+    console.log("");
+    console.log("  DoD 文件必须随 PR 提交到仓库（已从 .gitignore 移除）。");
+    console.log("  请运行 /dev 创建 DoD 文件，并 git add + commit。");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    process.exit(1);
   }
 
   const content = fs.readFileSync(dodPath, "utf-8");

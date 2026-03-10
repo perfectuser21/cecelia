@@ -85,14 +85,14 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# 场景4：PRD 文件不存在 → 应 exit 0（skip）
+# 场景4：PRD 文件不存在 → 应 exit 1（A+ 方案：缺失 = 流程不完整 = FAIL）
 # ─────────────────────────────────────────────
 BRANCH4="meta-test-no-prd-file-$(date +%s)"
-if ! (cd "$TMPDIR_PATH" && GITHUB_HEAD_REF="$BRANCH4" bash "$CHECK_PRD" 2>/dev/null); then
-  echo "❌ 场景4失败：期望 exit 0（PRD 不存在应跳过），实际 exit 1"
+if (cd "$TMPDIR_PATH" && GITHUB_HEAD_REF="$BRANCH4" bash "$CHECK_PRD" 2>/dev/null); then
+  echo "❌ 场景4失败：期望 exit 1（PRD 不存在应失败），实际 exit 0（存在 skipped 漏洞！）"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-  echo "✅ 场景4通过：PRD 文件不存在 → exit 0（正确跳过）"
+  echo "✅ 场景4通过：PRD 文件不存在 → exit 1（A+ 强制证据，正确拦截）"
   PASS_COUNT=$((PASS_COUNT + 1))
 fi
 
