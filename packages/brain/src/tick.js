@@ -59,6 +59,9 @@ const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
 const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
 const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
 
+// Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
+const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '30', 10);
+
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
   process.env.CECELIA_INIT_RECOVERY_INTERVAL_MS || String(5 * 60 * 1000),
@@ -433,7 +436,37 @@ async function initTickLoop() {
       console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
       startTickLoop();
     } else {
-      console.log('[tick-loop] Tick is disabled in DB, not starting loop');
+      // Check if tick has been disabled for too long — auto-recover
+      const tickMem = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = $1`,
+        [TICK_ENABLED_KEY]
+      );
+      const tickData = tickMem.rows[0]?.value_json || {};
+      const disabledAt = tickData.disabled_at ? new Date(tickData.disabled_at) : null;
+      const minutesDisabled = disabledAt
+        ? (Date.now() - disabledAt.getTime()) / (1000 * 60)
+        : Infinity; // no timestamp = unknown, treat as expired
+
+      if (minutesDisabled >= TICK_AUTO_RECOVER_MINUTES) {
+        console.warn(`[tick-loop] Tick disabled for ${Math.round(minutesDisabled)}min (>= ${TICK_AUTO_RECOVER_MINUTES}min threshold), auto-recovering`);
+        await enableTick();
+        // Write P1 alert event
+        try {
+          await pool.query(
+            `INSERT INTO cecelia_events (event_type, source, payload)
+             VALUES ('tick_auto_recover', 'tick', $1)`,
+            [JSON.stringify({
+              reason: 'tick_was_disabled_too_long',
+              disabled_at: disabledAt?.toISOString() || null,
+              minutes_disabled: Math.round(minutesDisabled),
+              auto_recovered: true,
+            })]
+          );
+        } catch { /* event logging is best-effort */ }
+        console.log('[tick-loop] tick_auto_recover: tick re-enabled after extended disable period');
+      } else {
+        console.log(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
+      }
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
@@ -473,7 +506,7 @@ async function disableTick() {
     INSERT INTO working_memory (key, value_json, updated_at)
     VALUES ($1, $2, NOW())
     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ENABLED_KEY, { enabled: false }]);
+  `, [TICK_ENABLED_KEY, { enabled: false, disabled_at: new Date().toISOString() }]);
 
   stopTickLoop();
 
