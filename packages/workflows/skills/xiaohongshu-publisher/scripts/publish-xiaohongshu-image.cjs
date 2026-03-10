@@ -10,16 +10,28 @@
  *   title.txt     - 笔记标题（可选，不超过 20 字，无则用正文前 20 字）
  *   image.jpg     - 图片（支持 image1.jpg, image2.jpg 等，最多 9 张）
  *
+ * --dry-run 模式（不实际连接 CDP，仅打印参数）：
+ *   node publish-xiaohongshu-image.cjs --content /path/to/image-1/ --dry-run
+ *
  * 环境要求：
  *   NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
  */
+
+'use strict';
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
 const { CDPClient } = require('../../weibo-publisher/scripts/cdp-client.cjs');
-const { findImages: findImagesUtil } = require('../../weibo-publisher/scripts/utils.cjs');
+const {
+  findImages,
+  readTitle,
+  readContent,
+  convertToWindowsPaths,
+  extractDirNames,
+  escapeForJS,
+} = require('./utils.cjs');
 
 const CDP_PORT = 19225;
 const WINDOWS_IP = '100.97.242.124';
@@ -28,85 +40,29 @@ const WINDOWS_BASE_DIR = 'C:\\Users\\xuxia\\xiaohongshu-media';
 const PUBLISH_URL = 'https://creator.xiaohongshu.com/publish/publish';
 const XHS_DOMAIN = 'creator.xiaohongshu.com';
 
-// 创建截图目录
-if (!fs.existsSync(SCREENSHOTS_DIR)) {
-  fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
-}
-
 // ============================================================
-// 命令行参数解析
+// 纯函数（可导出测试）
 // ============================================================
-const args = process.argv.slice(2);
 
-if (args.includes('--help') || args.includes('-h')) {
-  console.log('用法：node publish-xiaohongshu-image.cjs --content /path/to/image-xxx/');
-  console.log('');
-  console.log('选项：');
-  console.log('  --content <dir>   图文目录（必须包含至少一张图片）');
-  console.log('  --help, -h        显示帮助');
-  process.exit(0);
+/**
+ * 判断是否为登录错误（URL 包含 login 或 passport）
+ */
+function isLoginError(url) {
+  if (!url) return false;
+  return url.includes('login') || url.includes('passport');
 }
 
-const contentDirArg = args[args.indexOf('--content') + 1];
-
-if (!contentDirArg) {
-  console.error('❌ 错误：必须提供 --content 参数');
-  console.error('使用方式：node publish-xiaohongshu-image.cjs --content /path/to/image-xxx/');
-  process.exit(1);
+/**
+ * 判断是否发布成功
+ * - 页面文本包含"发布成功"/"笔记已发布"/"创作成功"
+ * - 或 URL 已跳离发布页
+ */
+function isPublishSuccess(url, bodyText) {
+  const successKeywords = ['发布成功', '笔记已发布', '创作成功'];
+  const hasKeyword = successKeywords.some(kw => (bodyText || '').includes(kw));
+  const urlChanged = url ? !url.includes('/publish/') : false;
+  return hasKeyword || urlChanged;
 }
-
-if (!fs.existsSync(contentDirArg)) {
-  console.error(`❌ 错误：内容目录不存在: ${contentDirArg}`);
-  process.exit(1);
-}
-
-const contentDir = path.resolve(contentDirArg);
-
-// 读取正文
-const contentFile = path.join(contentDir, 'content.txt');
-const contentText = fs.existsSync(contentFile)
-  ? fs.readFileSync(contentFile, 'utf8').trim()
-  : '';
-
-// 读取标题（可选）
-const titleFile = path.join(contentDir, 'title.txt');
-const titleText = fs.existsSync(titleFile)
-  ? fs.readFileSync(titleFile, 'utf8').trim().slice(0, 20)
-  : contentText.replace(/#[^#]+#/g, '').trim().slice(0, 20);
-
-// 读取图片
-const localImages = findImagesUtil(contentDir);
-if (localImages.length === 0) {
-  console.error('❌ 错误：内容目录中没有图片文件');
-  process.exit(1);
-}
-
-// 小红书最多支持 9 张图片
-const MAX_IMAGES = 9;
-const imagesToUpload = localImages.slice(0, MAX_IMAGES);
-if (localImages.length > MAX_IMAGES) {
-  console.warn(`⚠️  图片数量超过限制（${localImages.length} > 9），仅上传前 9 张`);
-}
-
-// 转换图片路径为 Windows 绝对路径
-const dateDir = path.basename(path.dirname(contentDir));
-const contentDirName = path.basename(contentDir);
-const windowsImages = imagesToUpload.map(img => {
-  const filename = path.basename(img);
-  return path.join(WINDOWS_BASE_DIR, dateDir, contentDirName, filename).replace(/\//g, '\\');
-});
-
-console.log('\n[XHS] ========================================');
-console.log('[XHS] 小红书图文发布');
-console.log('[XHS] ========================================\n');
-console.log(`[XHS] 📁 内容目录: ${contentDir}`);
-console.log(`[XHS] 📝 标题: ${titleText || '（无标题）'}`);
-console.log(`[XHS] 📝 正文长度: ${contentText.length} 字符`);
-console.log(`[XHS] 🖼️  图片数量: ${imagesToUpload.length}`);
-if (windowsImages.length > 0) {
-  console.log(`[XHS] 📁 Windows 路径示例: ${windowsImages[0]}`);
-}
-console.log('');
 
 // ============================================================
 // 工具函数
@@ -128,22 +84,33 @@ async function screenshot(cdp, name) {
   }
 }
 
-/**
- * 转义字符串，用于 CDP Runtime.evaluate 的 JS 注入
- */
-function escapeForJS(text) {
-  return text
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r');
-}
-
 // ============================================================
 // 主流程
 // ============================================================
-async function main() {
+async function main(contentDir, titleText, contentText, windowsImages, isDryRun) {
+  // 创建截图目录
+  if (!fs.existsSync(SCREENSHOTS_DIR)) {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  }
+
+  console.log('\n[XHS] ========================================');
+  console.log('[XHS] 小红书图文发布');
+  console.log('[XHS] ========================================\n');
+  console.log(`[XHS] 📁 内容目录: ${contentDir}`);
+  console.log(`[XHS] 📝 标题: ${titleText || '（无标题）'}`);
+  console.log(`[XHS] 📝 正文长度: ${contentText.length} 字符`);
+  console.log(`[XHS] 🖼️  图片数量: ${windowsImages.length}`);
+  if (windowsImages.length > 0) {
+    console.log(`[XHS] 📁 Windows 路径示例: ${windowsImages[0]}`);
+  }
+  console.log('');
+
+  if (isDryRun) {
+    console.log('[XHS] 🔶 dry-run 模式，跳过 CDP 连接');
+    console.log('[XHS] ✅ dry-run 完成');
+    return;
+  }
+
   let cdp;
 
   try {
@@ -209,7 +176,7 @@ async function main() {
     if (!currentUrl.includes('xiaohongshu.com')) {
       throw new Error(`导航失败，当前页面: ${currentUrl}`);
     }
-    if (currentUrl.includes('login') || currentUrl.includes('passport')) {
+    if (isLoginError(currentUrl)) {
       throw new Error(
         `小红书未登录，请在 Chrome (端口 ${CDP_PORT}) 上先登录小红书创作者账号\n` +
         `访问 ${PUBLISH_URL} 并完成登录`
@@ -223,7 +190,6 @@ async function main() {
 
     const typeResult = await cdp.send('Runtime.evaluate', {
       expression: `(function() {
-        // 尝试点击「图文」类型选项
         const selectors = [
           '[class*="tab"][class*="image"]',
           '[class*="image-text"]',
@@ -238,7 +204,6 @@ async function main() {
             return { clicked: true, selector: sel };
           }
         }
-        // 查找包含"图文"文字的可点击元素
         const allEls = Array.from(document.querySelectorAll('div, span, button, a'));
         const imageTextEl = allEls.find(el =>
           el.textContent.trim() === '图文' &&
@@ -260,7 +225,6 @@ async function main() {
     // ===== 步骤3: 上传图片 =====
     console.log(`[XHS] 3️⃣  上传图片（${windowsImages.length} 张）...\n`);
 
-    // 先点击上传区域以触发 file input 显示
     await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const uploadSelectors = [
@@ -284,7 +248,6 @@ async function main() {
     });
     await sleep(1000);
 
-    // 获取 file input 并设置文件
     const { root } = await cdp.send('DOM.getDocument', { depth: -1, pierce: true });
     const { nodeIds } = await cdp.send('DOM.querySelectorAll', {
       nodeId: root.nodeId,
@@ -303,7 +266,6 @@ async function main() {
       files: windowsImages
     });
 
-    // 触发 change 事件
     await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const inputs = document.querySelectorAll('input[type="file"]');
@@ -313,7 +275,6 @@ async function main() {
       })()`
     });
 
-    // 等待图片上传（XHS 上传可能较慢）
     console.log('[XHS]    等待图片上传...');
     await sleep(8000);
     await screenshot(cdp, '03-images-uploaded');
@@ -387,7 +348,6 @@ async function main() {
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
               } else {
-                // contenteditable div
                 el.focus();
                 document.execCommand('selectAll', false, null);
                 document.execCommand('insertText', false, '${escapedContent}');
@@ -415,7 +375,6 @@ async function main() {
     const publishResult = await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const buttons = Array.from(document.querySelectorAll('button, div[role="button"], span[role="button"]'));
-        // 优先找精确匹配"发布"的按钮
         const publishBtn = buttons.find(b =>
           b.textContent &&
           (b.textContent.trim() === '发布' || b.textContent.trim() === '确认发布') &&
@@ -427,7 +386,6 @@ async function main() {
           publishBtn.click();
           return { clicked: true, text: publishBtn.textContent.trim() };
         }
-        // 备选：class 中包含 submit 或 publish
         const submitBtn = document.querySelector(
           'button[class*="submit"]:not([disabled]), button[class*="publish"]:not([disabled])'
         );
@@ -451,7 +409,6 @@ async function main() {
       throw new Error(`未能点击发布按钮: ${JSON.stringify(publishResult.result.value)}`);
     }
 
-    // 等待发布完成
     await sleep(5000);
     await screenshot(cdp, '06-after-publish');
 
@@ -470,26 +427,25 @@ async function main() {
     const successCheck = await cdp.send('Runtime.evaluate', {
       expression: `(function() {
         const bodyText = document.body.textContent || '';
-        const bodyInner = document.body.innerHTML || '';
         return {
-          hasSuccess: bodyText.includes('发布成功') || bodyText.includes('笔记已发布') ||
-                      bodyText.includes('创作成功') || bodyInner.includes('success'),
+          bodyText: bodyText.slice(0, 200),
           hasError: bodyText.includes('发布失败') || bodyText.includes('发布错误') ||
-                    bodyText.includes('内容违规'),
-          urlChanged: !window.location.href.includes('/publish/')
+                    bodyText.includes('内容违规')
         };
       })()`,
       returnByValue: true
     });
 
-    const result = successCheck.result.value;
-    console.log(`[XHS]    结果检查: ${JSON.stringify(result)}`);
+    const checkResult = successCheck.result.value;
+    console.log(`[XHS]    结果检查: ${JSON.stringify({ url: finalUrlValue, hasError: checkResult.hasError })}`);
 
-    if (result.hasSuccess || result.urlChanged) {
+    if (checkResult.hasError) {
+      throw new Error('发布失败（内容违规或其他错误），请查看截图');
+    }
+
+    if (isPublishSuccess(finalUrlValue, checkResult.bodyText)) {
       console.log('\n[XHS] ✅ 小红书笔记发布成功！');
       console.log(`[XHS]    截图目录: ${SCREENSHOTS_DIR}`);
-    } else if (result.hasError) {
-      throw new Error('发布失败（内容违规或其他错误），请查看截图');
     } else {
       console.log('\n[XHS] ⚠️  发布状态不确定，请查看截图确认');
       console.log(`[XHS]    截图目录: ${SCREENSHOTS_DIR}`);
@@ -506,4 +462,69 @@ async function main() {
   }
 }
 
-main();
+// ============================================================
+// CLI 入口（仅直接运行时执行）
+// ============================================================
+if (require.main === module) {
+  const args = process.argv.slice(2);
+
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('用法：node publish-xiaohongshu-image.cjs --content /path/to/image-xxx/');
+    console.log('');
+    console.log('选项：');
+    console.log('  --content <dir>   图文目录（必须包含至少一张图片）');
+    console.log('  --dry-run         仅打印参数，不实际连接 CDP');
+    console.log('  --help, -h        显示帮助');
+    process.exit(0);
+  }
+
+  const isDryRun = args.includes('--dry-run');
+  const contentDirArg = args[args.indexOf('--content') + 1];
+
+  if (!contentDirArg) {
+    console.error('❌ 错误：必须提供 --content 参数');
+    console.error('使用方式：node publish-xiaohongshu-image.cjs --content /path/to/image-xxx/');
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(contentDirArg)) {
+    console.error(`❌ 错误：内容目录不存在: ${contentDirArg}`);
+    process.exit(1);
+  }
+
+  const contentDir = path.resolve(contentDirArg);
+
+  // 读取内容
+  const contentText = readContent(contentDir);
+  const rawTitle = readTitle(contentDir);
+  const titleText = rawTitle
+    ? rawTitle.slice(0, 20)
+    : contentText.replace(/#[^#]+#/g, '').trim().slice(0, 20);
+
+  // 读取图片
+  const localImages = findImages(contentDir);
+  if (localImages.length === 0) {
+    console.error('❌ 错误：内容目录中没有图片文件');
+    process.exit(1);
+  }
+
+  const MAX_IMAGES = 9;
+  const imagesToUpload = localImages.slice(0, MAX_IMAGES);
+  if (localImages.length > MAX_IMAGES) {
+    console.warn(`⚠️  图片数量超过限制（${localImages.length} > 9），仅上传前 9 张`);
+  }
+
+  const { dateDir, contentDirName } = extractDirNames(contentDir);
+  const windowsImages = convertToWindowsPaths(imagesToUpload, WINDOWS_BASE_DIR, dateDir, contentDirName);
+
+  main(contentDir, titleText, contentText, windowsImages, isDryRun).catch(err => {
+    console.error(`\n[XHS] ❌ 发布失败: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+// 导出纯函数供单元测试
+module.exports = {
+  isLoginError,
+  isPublishSuccess,
+};
