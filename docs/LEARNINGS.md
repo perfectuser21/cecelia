@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] vitest isolate:false 模块缓存污染 — focus + pr-progress mock 修复（PR #771）
+
+**失败统计**：L4 CI 失败 23 次（focus 16 次 + pr-progress 7 次），本地单独运行均通过
+
+### 根本原因
+
+`vitest.config.js` 中 `isolate: false` + `pool: forks`，所有测试文件在同一进程中顺序运行，共享模块缓存。
+`desire-system.test.js` 等真实 DB 测试文件使用 `vi.resetModules()` 加载了真实的 `db.js`，
+之后 `focus.test.js` 中的静态 `vi.mock('../db.js')` 无法覆盖已缓存的真实模块（缓存优先）。
+
+关键行为：`vi.mock` 的 hoisting 在模块已缓存时无效；只有 `vi.resetModules()` 后 + `vi.doMock()` 才能绕过缓存。
+
+### 下次预防
+
+- [ ] 所有依赖 mock db.js 的测试文件，统一使用 `beforeAll + vi.resetModules() + vi.doMock + dynamic import` 模式
+- [ ] 不要在 isolate:false 环境中混用静态 `vi.mock` 和 `vi.resetModules`（在不同文件中）
+- [ ] DoD `Test:` 字段中不要用 `npx vitest run ... | grep` 命令（CI 无 DB 时 grep 会因测试失败返回 exit 1）；改用 `grep -q` 验证源文件内容
+- [ ] DoD 的 `manual:` 命令必须在 CI 环境（无 PostgreSQL）也能 exit 0；只用 grep/ls/cat 验证静态内容
+
 ### [2026-03-10] CI 治理补洞 — frontend 注册 + taxonomy 精化（PR #763）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次

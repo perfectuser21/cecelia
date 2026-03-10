@@ -130,13 +130,17 @@ vi.mock('../briefing.js', () => ({
 }));
 
 // ---- 导入被测试模块 ----
+// isolate:false 修复：每次在全套测试前 resetModules，确保 vi.mock 工厂生效
+// 不用 !router 的懒加载，因为缓存可能是上一个测试文件的真实实现
 let router;
-beforeEach(async () => {
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
+
+beforeEach(() => {
   vi.clearAllMocks();
-  if (!router) {
-    const mod = await import('../routes.js');
-    router = mod.default;
-  }
 });
 
 // ---- 辅助函数：模拟 Express 请求/响应 ----

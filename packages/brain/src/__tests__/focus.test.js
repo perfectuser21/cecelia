@@ -4,24 +4,27 @@
  * 覆盖所有导出函数：
  *   getReadyKRs, selectDailyFocus, getDailyFocus,
  *   setDailyFocus, clearDailyFocus, getFocusSummary
+ *
+ * isolate:false 修复：用 beforeAll + vi.resetModules() + vi.doMock + 动态 import
+ * 防止其他真实 DB 测试文件污染 focus.js 的模块缓存
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock db 模块
-const mockQuery = vi.fn();
-vi.mock('../db.js', () => ({
-  default: { query: (...args) => mockQuery(...args) },
-}));
+// isolate:false 模式下，静态 vi.mock 可能被真实 DB 测试缓存覆盖
+// 改用 beforeAll + vi.resetModules() + vi.doMock + 动态 import 确保隔离
+let mockQuery;
+let getReadyKRs, selectDailyFocus, getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary;
 
-import {
-  getReadyKRs,
-  selectDailyFocus,
-  getDailyFocus,
-  setDailyFocus,
-  clearDailyFocus,
-  getFocusSummary,
-} from '../focus.js';
+beforeAll(async () => {
+  mockQuery = vi.fn();
+  vi.resetModules();
+  vi.doMock('../db.js', () => ({
+    default: { query: (...args) => mockQuery(...args) },
+  }));
+  ({ getReadyKRs, selectDailyFocus, getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary }
+    = await import('../focus.js'));
+});
 
 // ---------- 辅助数据 ----------
 
@@ -48,6 +51,10 @@ const makeObjective = (id, opts = {}) => ({
 // ---------- 测试 ----------
 
 describe('focus', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
   beforeEach(() => {
     mockQuery.mockReset();
   });
