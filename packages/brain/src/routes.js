@@ -4698,6 +4698,28 @@ router.post('/projects/compare/report', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/projects/compare
+ * 跨项目对比指标（含 KR 进度 + 历史趋势）
+ * Query: ids=uuid1,uuid2[,...] &format=json|markdown &trend_weeks=4
+ */
+router.get('/projects/compare', async (req, res) => {
+  try {
+    const { ids, format = 'json', trend_weeks = '4' } = req.query;
+    const project_ids = ids ? ids.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (project_ids.length < 2) {
+      return res.status(400).json({ success: false, error: 'ids must contain at least 2 project UUIDs' });
+    }
+    const weeks = Math.min(Math.max(parseInt(trend_weeks, 10) || 4, 1), 12);
+    const { getCompareMetrics } = await import('./project-compare.js');
+    const result = await getCompareMetrics({ project_ids, format, trend_weeks: weeks });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/decide
  * Generate decision based on current state
  */
