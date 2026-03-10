@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] Dashboard 白屏修复（PR #788）
+
+**失败统计**：CI 失败 1 次（Learning 缺失 + DoD D5 用了 `echo` 假测试）
+
+### 根本原因
+
+1. **Service Worker 缓存是白屏根本原因**：`APP_VERSION` 自 2026-01-18 起未更新，即使服务端 dist 重建，浏览器 SW 仍缓存旧 bundle，`clearStaleCache()` 检测到版本一致便跳过清除。
+2. **InstructionBook 目录错误**：PR #779 将文件写入 `frontend/src/features/core/knowledge/`，但 vite.config.ts 的 `@features/core` 别名指向 `apps/api/features/`，导致页面完全不存在。
+3. **DoD `test -x ... && echo ok` 被判假测试**：`echo` 命令是假测试标志，检测器拒绝。应改用 `bash -n`（语法检查）+ `ls` 组合替代。
+
+### 下次预防
+
+- [ ] 每次部署新 dist 后，同步更新 `APP_VERSION` 到新日期，确保浏览器会清除旧 SW 缓存
+- [ ] 前端文件必须写到 `apps/api/features/`，不要写 `frontend/src/`——vite 别名只认前者
+- [ ] DoD 可执行性检查用 `bash -n script.sh && ls script.sh`，不用 `test -x ... && echo ok`
+
 ### [2026-03-10] instruction-book Dashboard 页面（PR #779）
 
 **失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）
