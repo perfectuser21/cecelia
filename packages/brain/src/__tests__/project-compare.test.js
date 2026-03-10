@@ -10,7 +10,7 @@ const { mockPool } = vi.hoisted(() => ({
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-import { generateCompareReport } from '../project-compare.js';
+import { generateCompareReport, getCompareMetrics } from '../project-compare.js';
 
 const PROJECT_A = {
   id: 'aaaaaaaa-0000-0000-0000-000000000001',
@@ -173,5 +173,99 @@ describe('generateCompareReport', () => {
     });
 
     expect(report.summary).toContain(report.projects[0].name);
+  });
+});
+
+// ─── getCompareMetrics ───────────────────────────────────────────────────────
+
+const PROJECT_A_WITH_KR = {
+  id: 'aaaaaaaa-0000-0000-0000-000000000001',
+  name: 'Project Alpha',
+  type: 'initiative',
+  status: 'active',
+  kr_id: 'krrrrrr-0000-0000-0000-000000000001',
+  kr_goal_id: 'krrrrrr-0000-0000-0000-000000000001',
+  kr_title: 'KR: 达成50任务/天',
+  kr_progress: '72',
+};
+
+const PROJECT_B_NO_KR = {
+  id: 'bbbbbbbb-0000-0000-0000-000000000002',
+  name: 'Project Beta',
+  type: 'project',
+  status: 'active',
+  kr_id: null,
+  kr_goal_id: null,
+  kr_title: null,
+  kr_progress: null,
+};
+
+const TREND_ROWS_A = [
+  { project_id: PROJECT_A_WITH_KR.id, week: '2026-W09', completed: '3' },
+  { project_id: PROJECT_A_WITH_KR.id, week: '2026-W10', completed: '5' },
+];
+
+describe('getCompareMetrics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('正常路径：kr.progress 是整数，trend 含 week 和 completed', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [PROJECT_A_WITH_KR, PROJECT_B_NO_KR] }) // 查询A: 项目+KR
+      .mockResolvedValueOnce({ rows: [TASK_STATS_A, TASK_STATS_B] })          // 查询B: 任务统计
+      .mockResolvedValueOnce({ rows: TREND_ROWS_A });                          // 查询C: 趋势
+
+    const result = await getCompareMetrics({
+      project_ids: [PROJECT_A_WITH_KR.id, PROJECT_B_NO_KR.id],
+    });
+
+    expect(result.projects).toHaveLength(2);
+
+    const alpha = result.projects.find(p => p.id === PROJECT_A_WITH_KR.id);
+    expect(alpha.kr).not.toBeNull();
+    expect(alpha.kr.progress).toBe(72);
+    expect(Number.isInteger(alpha.kr.progress)).toBe(true);
+    expect(alpha.trend).toHaveLength(2);
+    expect(alpha.trend[0]).toMatchObject({ week: '2026-W09', completed: 3 });
+    expect(alpha.trend[1]).toMatchObject({ week: '2026-W10', completed: 5 });
+  });
+
+  it('kr_id=null 时 kr 字段为 null', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [PROJECT_A_WITH_KR, PROJECT_B_NO_KR] })
+      .mockResolvedValueOnce({ rows: [TASK_STATS_A, TASK_STATS_B] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await getCompareMetrics({
+      project_ids: [PROJECT_A_WITH_KR.id, PROJECT_B_NO_KR.id],
+    });
+
+    const beta = result.projects.find(p => p.id === PROJECT_B_NO_KR.id);
+    expect(beta.kr).toBeNull();
+    expect(beta.trend).toEqual([]);
+  });
+
+  it('project_ids 少于 2 个时抛出 status:400 错误', async () => {
+    await expect(
+      getCompareMetrics({ project_ids: ['only-one'] })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('format=markdown 时结果包含 markdown 字段', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [PROJECT_A_WITH_KR, PROJECT_B_NO_KR] })
+      .mockResolvedValueOnce({ rows: [TASK_STATS_A, TASK_STATS_B] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await getCompareMetrics({
+      project_ids: [PROJECT_A_WITH_KR.id, PROJECT_B_NO_KR.id],
+      format: 'markdown',
+    });
+
+    expect(result.format).toBe('markdown');
+    expect(result.markdown).toBeTruthy();
+    expect(result.markdown).toContain('# 项目对比报告');
   });
 });
