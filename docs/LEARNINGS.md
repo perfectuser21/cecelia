@@ -4723,3 +4723,20 @@ CI 失败 1 次（Learning Format Gate — 未提交 LEARNINGS.md）。
 - [ ] 知乎/微博等使用 CSRF 签名的平台，优先使用 in-browser fetch 而非 Cookie 提取
 - [ ] 新建 PRD 文件时，文件名必须是 `.prd-${BRANCH_NAME}.md`（完整分支名），不能用简短别名
 - [ ] Step 10 Learning 记录是阻塞 CI 的硬门禁，必须在 push PR 之前完成，不能留到 CI 失败后补
+
+## PR #805 /projects/compare 项目并排对比页面（2026-03-10）
+
+CI 一次通过，无返工。
+
+### 根本原因
+
+本次无重大技术踩坑。简单记录关键设计决策：
+
+1. **路由顺序决定匹配优先级**：`/projects/compare` 必须注册在 `/projects/:projectId` 之前，否则 React Router 会将 "compare" 当成 projectId 匹配，导致路由无法到达正确页面。
+2. **多选下拉最多 4 个的 UX 处理**：通过 `disabled` + 视觉灰化实现（不弹 toast），简洁清晰。
+3. **CI filter 路径**：workspace 改动（`apps/api/`）触发 workspace-l3 job，仅做 TypeScript typecheck 和 build，不需要数据库，所以 CI 速度快。
+
+### 下次预防
+
+- [ ] 在 planning/index.ts 注册路由时，所有带参数的通配路由（`:id`、`:projectId`）必须排在具体路径之后
+- [ ] 纯前端页面开发（无 Brain 改动）CI 最快，优先本地 `tsc --noEmit` 验证再 push
