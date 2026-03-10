@@ -1,5 +1,38 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI 体系重构 V2+V3 — engine-ci 逻辑分层 + brain-ci brain-test 拆分（PR #755）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**重构要点**：
+
+#### V2 engine-ci 分层原则
+原 `test` job（30min）混合了 L1/L2/L3 三层逻辑，拆分后：
+- `l1-process`（PR-only, 10min）：Config Audit + Known-Failures Protection + PRD/DoD Gate + DevGate checks
+- `l2-consistency`（10min）：Version Check + Contract Drift + Impact Check
+- `l3-code`（30min）：TypeCheck + Unit Tests + Build + Shell Check + Evidence
+
+**关键点**：`version-check` / `known-failures-protection` / `contract-drift-check` / `config-audit` / `impact-check` 这些旧的独立 job 被吸收进 L1/L2，`ci-passed` gate 依赖由 7 个 job 简化为 3 个。
+
+#### V3 brain-ci 拆分原则
+`brain-unit`（ubuntu-latest）运行所有 vitest 单元测试，**不起 PostgreSQL**。
+这可行的原因：brain 测试文件均用 `vi.mock('../../src/db.js')` 替换真实 DB 访问，unit job 里 vitest 不会触碰真实连接池。
+`brain-integration`（macos-latest）保留完整流程：PostgreSQL + migrations + coverage + GoldenPath E2E。
+
+#### ci-passed gate 设计
+engine-ci gate 需处理 L1 在非 PR 场景（push to main）时被 skipped 的情况：
+```bash
+# 正确：skipped 是合法状态（push 时 L1 不跑）
+if [ "${{ needs.l1-process.result }}" != "success" ] && [ "${{ needs.l1-process.result }}" != "skipped" ]; then
+  FAILED=true
+fi
+```
+
+**影响程度**: Low（顺畅，无 CI 失败）
+**预防措施**：
+- CI 结构拆分后，config-audit 的路径检测（`CRITICAL_CONFIGS` 数组）需要包含 `.github/workflows/engine-ci.yml` 本身，否则 CI 改动不会触发审计
+- brain-unit 不带 `--coverage` flag（避免覆盖率检查在无 DB 环境下干扰结果）
+
 ### [2026-03-10] isolate:false Batch 1 — 共享 pool.end() 污染（PR #751）
 
 #### 根本原因
