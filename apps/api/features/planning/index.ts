@@ -22,6 +22,7 @@ const manifest: FeatureManifest = {
     { path: '/tasks', redirect: '/gtd/tasks' },
     // Projects → 重定向到 GTD
     { path: '/projects', redirect: '/gtd/projects' },
+    { path: '/projects/compare', component: 'ProjectCompare' },
     { path: '/projects/:projectId', component: 'ProjectDetail' },
     // Initiatives (Three-layer decomposition)
     { path: '/initiatives/:id', component: 'InitiativeDetail' },
@@ -60,6 +61,7 @@ const manifest: FeatureManifest = {
     Tasks: () => import('./pages/Tasks'),
     CompanyTasks: () => import('./pages/Tasks'),
     ProjectsDashboard: () => import('./pages/ProjectsDashboard'),
+    ProjectCompare: () => import('./pages/ProjectCompare'),
     ProjectDetail: () => import('./pages/ProjectDetail'),
     InitiativeDetail: () => import('./pages/InitiativeDetail'),
     Scheduler: () => import('./pages/Scheduler'),

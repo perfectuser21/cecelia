@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, GitCompare } from 'lucide-react';
 
 interface Area {
   id: string;
@@ -168,6 +168,12 @@ export default function ProjectsDashboard() {
         <span className="w-16 text-right">状态</span>
         <span className="w-6 text-right">P</span>
         <span className="w-24 text-right">进度</span>
+        <a
+          href="/projects/compare"
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-700/60 text-slate-400 hover:text-purple-300 hover:border-purple-500/40 transition-colors normal-case tracking-normal font-normal ml-2"
+        >
+          <GitCompare className="w-3 h-3" /> 对比项目
+        </a>
       </div>
 
       <div className="flex-1 overflow-auto">
