@@ -272,6 +272,69 @@ jobs:
       - name: Run quality system meta tests
         run: bash tests/quality-system/run-all.sh
 
+  # ─── CI Config Audit (triggered when .github/workflows/** changes) ────────
+
+  ci-config-audit:
+    name: CI Config Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Audit CI config changes
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  CI Config Audit"
+          echo "  Branch: ${{ github.head_ref }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          CI_CHANGED=$(echo "$CHANGED" | grep "^\.github/workflows/" || true)
+
+          if [ -z "$CI_CHANGED" ]; then
+            echo "No CI workflow files changed — audit not required"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ CI Config Audit PASSED (no CI changes)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          echo "CI workflow files changed:"
+          echo "$CI_CHANGED" | sed 's/^/  - /'
+          echo ""
+
+          if [[ ! "$PR_TITLE" =~ \[CONFIG\] ]] && [[ ! "$PR_TITLE" =~ \[INFRA\] ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ CI Config Audit FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "  .github/workflows/** was modified but PR title is missing [CONFIG] or [INFRA] tag."
+            echo "  CI config changes are high-risk and require explicit labeling."
+            echo ""
+            echo "  Fix: update PR title to include [CONFIG] or [INFRA]"
+            echo "  Example: [CONFIG] fix(ci): update L3 brain-unit timeout"
+            echo ""
+            exit 1
+          fi
+
+          echo "PR title contains [CONFIG] or [INFRA] tag — audit passed"
+          echo ""
+          echo "Changed files summary:"
+          git diff --stat "origin/${BASE_REF}...HEAD" -- '.github/workflows/' | tail -5
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ CI Config Audit PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
   # ─── Engine-conditional checks ────────────────────────────────────────
 
   engine-l1:
@@ -521,7 +584,7 @@ jobs:
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, engine-l1]
+    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, ci-config-audit, engine-l1]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -561,6 +624,11 @@ jobs:
 
           if [ "${{ needs.quality-meta-tests.result }}" = "failure" ] || [ "${{ needs.quality-meta-tests.result }}" = "cancelled" ]; then
             echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.ci-config-audit.result }}" = "failure" ] || [ "${{ needs.ci-config-audit.result }}" = "cancelled" ]; then
+            echo "FAIL: CI Config Audit (${{ needs.ci-config-audit.result }})"
             FAILED=true
           fi
 
