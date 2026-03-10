@@ -4723,3 +4723,21 @@ CI 失败 1 次（Learning Format Gate — 未提交 LEARNINGS.md）。
 - [ ] 知乎/微博等使用 CSRF 签名的平台，优先使用 in-browser fetch 而非 Cookie 提取
 - [ ] 新建 PRD 文件时，文件名必须是 `.prd-${BRANCH_NAME}.md`（完整分支名），不能用简短别名
 - [ ] Step 10 Learning 记录是阻塞 CI 的硬门禁，必须在 push PR 之前完成，不能留到 CI 失败后补
+
+---
+
+## PR #809 对比报告 Notion 导出 — exportToNotion（2026-03-10）
+
+CI 失败 1 次（Learning Format Gate — 未提前写 LEARNINGS.md）。
+
+### 根本原因
+
+1. **Learning 必须在 push 前完成**：L1 Learning Format Gate 在 CI 第一次运行时就检查 LEARNINGS.md 是否有新增内容。若在 PR 创建前未写 Learning，CI 必然首次失败，需额外一轮 push。
+2. **Notion 创建 Page 需要 parent**：Notion API 创建 Page 必须指定 `parent`（`page_id` 或 `database_id`），不能在 workspace 根目录直接创建。引入了 `NOTION_REPORTS_PAGE_ID` 环境变量，未配置时降级处理（返回 `notion_export_error`），避免阻塞主报告流程。
+3. **export 是 JS 保留字**：在解构时用 `export: exportTarget` 重命名，函数签名中必须处理 `export` 作为参数名的冲突。
+
+### 下次预防
+
+- [ ] Learning 必须在 Step 8（push PR）之前写好并 commit，不能等 CI 失败后补
+- [ ] 新增 Notion Page 创建功能时，必须同时暴露 parent 配置（env var），并做缺失时的降级处理
+- [ ] JS 解构含保留字（`export`、`delete`、`import`）时，用别名格式 `{ export: exportTarget }` 处理
