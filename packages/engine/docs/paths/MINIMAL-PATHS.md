@@ -240,6 +240,13 @@ changelog:
 
 ---
 
+### S6: Delivery Type + PR Behavior Declaration
+
+1. ✅ **code-only 任务: delivery_type 默认值，无额外验证**
+2. ✅ **behavior-change 任务: 必须有测试文件 + PR body 声明**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

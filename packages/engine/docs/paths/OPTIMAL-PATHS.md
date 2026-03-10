@@ -225,6 +225,17 @@ Step 7.4 代码审查 → push → CI 直通
 
 ---
 
+### S6: Delivery Type + PR Behavior Declaration
+
+```
+createTask({ delivery_type: 'behavior-change' }) →
+PR body 包含 SYSTEM BEHAVIOR CHANGE →
+check-delivery-type.sh 验证测试文件存在 →
+CI 通过
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

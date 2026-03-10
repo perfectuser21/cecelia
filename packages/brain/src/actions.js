@@ -40,7 +40,7 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
@@ -78,29 +78,31 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     trigger_source || 'brain_auto',
   ];
 
+  const deliveryType = delivery_type || 'code-only';
+
   let insertSql, insertParams;
   if (domainInput !== undefined) {
-    // 明确传入 domain：包含 owner_role（$12, $13）
+    // 明确传入 domain：包含 owner_role（$12, $13）+ delivery_type（$14）
     const domain = domainInput;
     const owner_role = ownerRoleInput ?? getDomainRole(domain);
     insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role)
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role, delivery_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `;
+    insertParams = [...commonParams, domain, owner_role, deliveryType];
+  } else {
+    // 未传 domain：从 title+description 自动检测，不写 owner_role，写 delivery_type（$13）
+    const detected = detectDomain(`${title} ${description || context || ''}`);
+    const domain = detected.confidence > 0 ? detected.domain : null;
+    insertSql = `
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, delivery_type)
       VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
       ON CONFLICT DO NOTHING
       RETURNING *
     `;
-    insertParams = [...commonParams, domain, owner_role];
-  } else {
-    // 未传 domain：从 title+description 自动检测，不写 owner_role
-    const detected = detectDomain(`${title} ${description || context || ''}`);
-    const domain = detected.confidence > 0 ? detected.domain : null;
-    insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12)
-      ON CONFLICT DO NOTHING
-      RETURNING *
-    `;
-    insertParams = [...commonParams, domain];
+    insertParams = [...commonParams, domain, deliveryType];
   }
 
   const result = await pool.query(insertSql, insertParams);
