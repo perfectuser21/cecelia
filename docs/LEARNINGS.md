@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] tick 超时任务 requeue + Migration 号冲突处理（PR #780）
+
+**失败统计**：CI 失败 1 次（Learning Gate + DoD 格式问题 + migration 号冲突）
+
+### 根本原因
+
+1. **Migration 号并发冲突**：两个 PR 同时基于 main 开发，都打算使用 migration 142。合并 main 时发现 `142_tasks_error_message.sql` 已存在，需将自己的 migration 重命名为 143 并同步更新 selfcheck.js 和 DEFINITION.md。
+2. **DoD `Test:` 命令含 `echo OK` 被拒**：`check-dod-mapping.cjs` 会检测 `grep ... && echo OK` 模式并拒绝（视为假测试）。测试命令应让 grep/ls 自然的 exit code 表达结果，不需要 `echo OK`。
+3. **worktree 目录被 Brain 自动清理**：`startup-recovery.cleanupStaleWorktrees` 会删除不在 `git worktree list` 中的目录。开发 worktree 必须通过 `git worktree add` 正式注册，否则会被定期清理，导致 Bash CWD 失效。
+
+### 下次预防
+
+- [ ] 开始开发前先 `ls packages/brain/migrations/*.sql | sort | tail -1` 查看最新 migration 号，避免与并行 PR 冲突
+- [ ] DoD `Test:` 命令不能含 `&& echo OK`，用 `grep -q`、`ls`、`node` 等自然 exit code 的命令
+- [ ] 使用 `git worktree add <path> <branch>` 创建 worktree，不能手动 mkdir
+
 ### [2026-03-10] execution-callback 静默失败 → error_message/blocked_detail 写入（PR #775）
 
 **失败统计**：L4 CI 失败 0 次（新增 migration + 扩参，本地 OOM 已知问题，CI 通过）

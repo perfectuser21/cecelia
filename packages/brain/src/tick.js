@@ -19,7 +19,7 @@ import { executeDecision as executeThalamusDecision, expireStaleProposals } from
 import { initAlertness, evaluateAlertness, getCurrentAlertness, canDispatch, canPlan, getDispatchRate, ALERTNESS_LEVELS, LEVEL_NAMES } from './alertness/index.js';
 import { getRecoveryStatus } from './alertness/healing.js';
 import { recordTickTime, recordOperation } from './alertness/metrics.js';
-import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks } from './quarantine.js';
+import { handleTaskFailure, getQuarantineStats, checkExpiredQuarantineTasks, quarantineTask } from './quarantine.js';
 import { recordDispatchResult, getDispatchStats } from './dispatch-stats.js';
 import { runLayer2HealthCheck } from './health-monitor.js';
 import { triggerDeptHeartbeats } from './dept-heartbeat.js';
@@ -1098,13 +1098,6 @@ async function dispatchNextTask(goalIds) {
 }
 
 /**
- * Auto-fail tasks that have been in_progress longer than DISPATCH_TIMEOUT_MINUTES.
- * Checks if task should be quarantined after failure.
- *
- * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at)
- * @returns {Object[]} - Actions taken
- */
-/**
  * 自动释放 blocked_until 已到期的 blocked 任务，将其状态改回 queued
  * @returns {Promise<Array<{task_id, title, blocked_reason, blocked_duration_ms}>>}
  */
@@ -1123,6 +1116,14 @@ async function releaseBlockedTasks() {
   return result.rows;
 }
 
+/**
+ * Auto-requeue tasks that have been in_progress longer than DISPATCH_TIMEOUT_MINUTES.
+ * retry_count < 3: requeue (status=queued, retry_count+1, started_at=NULL)
+ * retry_count >= 3: quarantine directly (no more retries)
+ *
+ * @param {Object[]} inProgressTasks - Tasks currently in_progress (must include payload, started_at, retry_count)
+ * @returns {Object[]} - Actions taken
+ */
 async function autoFailTimedOutTasks(inProgressTasks) {
   const actions = [];
   for (const task of inProgressTasks) {
@@ -1131,24 +1132,58 @@ async function autoFailTimedOutTasks(inProgressTasks) {
 
     const elapsed = (Date.now() - new Date(triggeredAt).getTime()) / (1000 * 60);
     if (elapsed > DISPATCH_TIMEOUT_MINUTES) {
-      // Kill the actual process before marking failed to prevent orphans
+      // Kill the actual process before any state change to prevent orphans
       killProcess(task.id);
-      // Write structured error details for retry-analyzer
+
+      const retryCount = task.retry_count ?? 0;
       const errorDetails = {
         type: 'timeout',
         message: `Task timed out after ${Math.round(elapsed)} minutes (limit: ${DISPATCH_TIMEOUT_MINUTES}min)`,
         elapsed_minutes: Math.round(elapsed),
         timeout_limit: DISPATCH_TIMEOUT_MINUTES,
+        retry_count: retryCount,
       };
-      await pool.query(
-        `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
-        [task.id, JSON.stringify({ error_details: errorDetails })]
-      );
 
-      // Check if task should be quarantined
-      const quarantineResult = await handleTaskFailure(task.id);
-      if (quarantineResult.quarantined) {
-        console.log(`[tick] Task ${task.id} quarantined: ${quarantineResult.result?.reason}`);
+      if (retryCount < 3) {
+        // Requeue with incremented retry_count
+        await pool.query(
+          `UPDATE tasks
+           SET status = 'queued',
+               retry_count = retry_count + 1,
+               started_at = NULL,
+               updated_at = NOW(),
+               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+           WHERE id = $1`,
+          [task.id, JSON.stringify({ error_details: errorDetails })]
+        );
+        console.log(`[tick] Task ${task.id} requeued after timeout (retry ${retryCount + 1}/3): ${task.title}`);
+        actions.push({
+          action: 'auto-requeue-timeout',
+          task_id: task.id,
+          title: task.title,
+          elapsed_minutes: Math.round(elapsed),
+          retry_count: retryCount + 1,
+        });
+        await logTickDecision(
+          'tick',
+          `Auto-requeued timed-out task: ${task.title} (retry ${retryCount + 1}/3, ${Math.round(elapsed)}min)`,
+          { action: 'auto-requeue-timeout', task_id: task.id, retry_count: retryCount + 1 },
+          { success: true, elapsed_minutes: Math.round(elapsed) }
+        );
+      } else {
+        // retry_count >= 3: quarantine directly
+        await pool.query(
+          `UPDATE tasks
+           SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+           WHERE id = $1`,
+          [task.id, JSON.stringify({ error_details: errorDetails })]
+        );
+        const quarantineResult = await quarantineTask(
+          task.id,
+          `timeout_max_retries`,
+          { elapsed_minutes: Math.round(elapsed), retry_count: retryCount }
+        );
+        console.log(`[tick] Task ${task.id} quarantined after ${retryCount} retries: ${task.title}`);
         actions.push({
           action: 'quarantine',
           task_id: task.id,
@@ -1171,6 +1206,13 @@ async function autoFailTimedOutTasks(inProgressTasks) {
           failure_count: quarantineResult.failure_count,
           retry_attempt: quarantineResult.failure_count
         });
+        await logTickDecision(
+          'tick',
+          `Quarantined task after max retries: ${task.title} (retry_count=${retryCount}, ${Math.round(elapsed)}min)`,
+          { action: 'quarantine', task_id: task.id, retry_count: retryCount },
+          { success: true, elapsed_minutes: Math.round(elapsed) }
+        );
+        void quarantineResult; // silence unused warning
       }
 
       await recordFailure('cecelia-run');
@@ -1899,7 +1941,7 @@ async function executeTick() {
   }
 
   const tasksResult = await pool.query(`
-    SELECT id, title, status, priority, started_at, updated_at, payload
+    SELECT id, title, status, priority, started_at, updated_at, payload, COALESCE(retry_count, 0) AS retry_count
     FROM tasks
     WHERE (goal_id = ANY($1) OR goal_id IS NULL)
       AND status NOT IN ('completed', 'cancelled', 'canceled')
