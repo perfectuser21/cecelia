@@ -382,7 +382,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 139 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 140 |
 | **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
@@ -407,14 +407,16 @@ queued → in_progress → completed
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
-| initiative_verify | US | Initiative 收尾验收 (/architect Mode 3) | Opus / - | 默认 anthropic |
+| initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
 | talk | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | research | HK | MiniMax | - / M2.5-highspeed | 固定 minimax |
 | data | HK | N8N | - | - |
 | dept_heartbeat | US | 部门主管 (repo-lead) | - / M2.5-highspeed | 固定 minimax |
 | code_review | US | 代码审查 (/code-review) | Sonnet / - | 默认 anthropic |
-| architecture_design | US | 架构师 (/architect) | Opus / - | 默认 anthropic |
+| architecture_design | US | 架构设计 (/architect design) | Opus / - | 默认 anthropic |
+| architecture_scan | US | 系统扫描 (/architect scan) | Opus / - | 默认 anthropic |
+| arch_review | US | 架构巡检 (/arch-review review) | Sonnet / - | 默认 anthropic |
 | strategy_session | US | 战略会议 (/strategy-session) | Opus / - | 默认 anthropic |
 
 ---
@@ -669,7 +671,7 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '139'
+5. **Schema 版本** — 必须 = '140'
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置
