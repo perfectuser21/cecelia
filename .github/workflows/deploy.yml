@@ -3,16 +3,57 @@ name: Deploy
 # 合并到 main 后自动部署（Brain + Workspace）
 # 触发：push to main only（PR 合并通过 CI 检查后自动触发）
 # 迁移自：brain-ci.yml (deploy-brain) + workspace-ci.yml (deploy-workspace)
+# Phase 3: 加入路径过滤，只在相关文件变更时触发对应部署
 
 on:
   push:
     branches: [main]
 
 jobs:
+  # ─── Detect Changes ───────────────────────────────────────────────────────
+
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+      workspace: ${{ steps.filter.outputs.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Detect changed paths
+        id: filter
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+          # If this is the first commit (before is all zeros), treat as full change
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+            echo "workspace=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          if echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+          else
+            echo "brain=false" >> $GITHUB_OUTPUT
+          fi
+          if echo "$CHANGED" | grep -qE "^apps/"; then
+            echo "workspace=true" >> $GITHUB_OUTPUT
+          else
+            echo "workspace=false" >> $GITHUB_OUTPUT
+          fi
+
   # ─── Deploy Brain to VPS ───────────────────────────────────────────────
 
   deploy-brain:
     name: Deploy Brain
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,6 +79,8 @@ jobs:
 
   deploy-workspace:
     name: Deploy Workspace
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
