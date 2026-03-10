@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+## PR #804 slot-allocator PPID 检测修复 — macOS 进程标题覆盖导致 headless 误判（2026-03-10）
+
+CI 失败 1 次（Learning Format Gate — 未在第一次 push 前提交 LEARNINGS.md）。
+
+### 根本原因
+
+1. **macOS 进程标题覆盖**：`claude` 二进制在 macOS 上启动后会覆盖自身进程标题（argv[0]），导致 `ps -o args=` 只显示 `claude`，不含 `-p` 参数。`detectUserSessions()` 用 `/ -p /.test(args)` 判断 headless，结果 4 个无头任务全被误归类为 headed，触发 team 模式，taskPool.budget 被压缩为 0，派发积压持续增长（正反馈循环）。
+2. **Learning 未在首次 push 前提交**：Step 10 必须在 Step 8/9 之前完成（Learning 要先 push 到功能分支，再合并 PR）。本次在 CI 失败后才补写 Learning，导致额外一次 CI 循环。
+
+### 下次预防
+
+- [ ] macOS 上检测进程是否为 headless，不能只依赖 args 中的 `-p` 标志；需通过 PPID 链接检查父进程环境变量（`CECELIA_HEADLESS=true`）
+- [ ] `buildHeadlessParentPidSet(ppidProcs)` 模式：调用 `listProcessesWithPpid()` 构建 pid→cmd 映射，对目标进程查父进程 cmd 是否含关键标识
+- [ ] Learning 记录（Step 10）必须在首次 `git push` 之前完成，和 PRD/DoD 一起随代码 commit 推送，否则 Learning Format Gate 一定失败
+
 ### [2026-03-10] 小红书脚本清理 — worktree vs 主仓库操作陷阱（PR #798）
 
 **失败统计**：L1 CI 失败 2 次（PRD 格式错误 + Learning 缺失）
