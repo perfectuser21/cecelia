@@ -164,6 +164,7 @@ const CORTEX_ACTION_WHITELIST = {
   'adjust_strategy': { dangerous: true, description: '调整系统策略参数' },
   'record_learning': { dangerous: false, description: '记录学习到的经验' },
   'create_rca_report': { dangerous: false, description: '创建根因分析报告' },
+  'create_task': { dangerous: false, description: '创建 Brain 任务（皮层建议）' },
 };
 
 // ============================================================

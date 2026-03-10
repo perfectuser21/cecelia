@@ -6,7 +6,7 @@
 import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
-import { updateTask } from './actions.js';
+import { updateTask, createTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
@@ -612,6 +612,39 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
 }
 
 /**
+ * 从皮层 RCA 结果中自动创建建议任务
+ * @param {Object} rcaResult - performRCA 返回的分析结果
+ * @param {Object} context - { goal_id, project_id } 继承自失败任务（可选）
+ * @returns {Promise<Array>} - 创建的任务列表（含 deduplicated 字段）
+ */
+async function autoCreateTasksFromCortex(rcaResult, context = {}) {
+  const createTaskActions = (rcaResult.recommended_actions || [])
+    .filter(a => a.type === 'create_task' && a.params?.title);
+
+  if (createTaskActions.length === 0) return [];
+
+  const created = [];
+  for (const action of createTaskActions) {
+    try {
+      const result = await createTask({
+        title: action.params.title,
+        description: action.params.description || '',
+        priority: action.params.priority || 'P1',
+        task_type: action.params.task_type || 'dev',
+        trigger_source: 'cortex',
+        goal_id: action.params.goal_id || context.goal_id || null,
+        project_id: action.params.project_id || context.project_id || null,
+      });
+      created.push({ title: action.params.title, deduplicated: result.deduplicated || false });
+      console.log(`[tick] autoCreateTasksFromCortex: "${action.params.title}" created (dedup=${result.deduplicated || false})`);
+    } catch (err) {
+      console.error(`[tick] autoCreateTasksFromCortex: failed to create "${action.params.title}": ${err.message}`);
+    }
+  }
+  return created;
+}
+
+/**
  * Process Cortex task (Brain-internal RCA analysis)
  * @param {Object} task - Task requiring Cortex processing
  * @param {Array} actions - Actions array to append to
@@ -651,6 +684,19 @@ async function processCortexTask(task, actions) {
       confidence: rcaResult.confidence,
       completed_at: new Date().toISOString()
     })]);
+
+    // Auto-create tasks from cortex create_task recommendations
+    try {
+      const createdTasks = await autoCreateTasksFromCortex(rcaResult, {
+        goal_id: task.payload.goal_id || null,
+        project_id: task.payload.project_id || null,
+      });
+      if (createdTasks.length > 0) {
+        actions.push({ action: 'cortex-tasks-created', count: createdTasks.length });
+      }
+    } catch (autoCreateErr) {
+      console.error(`[tick] autoCreateTasksFromCortex error: ${autoCreateErr.message}`);
+    }
 
     // If this is a learning task, record learning and apply strategy adjustments
     if (task.payload.requires_learning === true) {

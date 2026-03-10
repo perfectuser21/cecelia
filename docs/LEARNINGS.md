@@ -19,6 +19,21 @@
 - [ ] DoD `Test:` 字段中不要用 `npx vitest run ... | grep` 命令（CI 无 DB 时 grep 会因测试失败返回 exit 1）；改用 `grep -q` 验证源文件内容
 - [ ] DoD 的 `manual:` 命令必须在 CI 环境（无 PostgreSQL）也能 exit 0；只用 grep/ls/cat 验证静态内容
 
+### [2026-03-10] autoCreateTasksFromCortex — 皮层建议自动转 Brain 任务（PR #772）
+
+**失败统计**：CI 失败 2 次（L1 Learning + L2 DEFINITION.md 未同步），本地测试 7/7 通过
+
+### 根本原因
+
+1. **DEFINITION.md 未同步**：`facts-check.mjs` 的 `cortex_extra_actions` 检查代码行中条目数量（正则 `{dangerous:...}`），新增 `create_task` 使计数从 3 变 4，但 DEFINITION.md 仍写 "3 个 action"。每次改 `CORTEX_ACTION_WHITELIST` 必须同步更新 DEFINITION.md。
+2. **本地 facts-check 未检出**：本地跑 `facts-check.mjs` 通过是因为本地已有 PR #771 的 merged 状态，CI 跑的是 base main（稍旧）。实际上 facts-check.mjs 直接对比代码计数与 DEFINITION.md，本地也应该失败，需要确认本地环境一致性。
+
+### 下次预防
+
+- [ ] 修改 `CORTEX_ACTION_WHITELIST` 时必须同步更新 DEFINITION.md 第 310 行的 action 数量和列表
+- [ ] 每次 PR 前检查：`grep 'extra.*action' DEFINITION.md` 与 `grep -c "dangerous:" src/cortex.js`（CORTEX_ACTION_WHITELIST 中 extra 的计数）是否一致
+- [ ] Learning 条目必须在 push 之前加好，不要等 CI 提醒
+
 ### [2026-03-10] CI 治理补洞 — frontend 注册 + taxonomy 精化（PR #763）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
