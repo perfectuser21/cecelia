@@ -18,8 +18,10 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, rmSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { quarantineTask } from './quarantine.js';
 
 const ORPHAN_THRESHOLD_MINUTES = 5;
+const ORPHAN_MAX_RETRIES = 3; // retry_count >= this → quarantine instead of requeue
 const REPO_ROOT = process.env.REPO_ROOT || '/Users/administrator/perfect21/cecelia';
 const WORKTREE_BASE = process.env.WORKTREE_BASE || '/Users/administrator/perfect21/cecelia/.claude/worktrees';
 const LOCK_DIR = process.env.LOCK_DIR || '/tmp/cecelia-locks';
@@ -203,9 +205,13 @@ export async function cleanupStaleDevModeFiles({ repoRoot = REPO_ROOT } = {}) {
 }
 
 /**
- * 扫描并重置孤儿 in_progress 任务为 queued，并执行环境清理
+ * 扫描孤儿 in_progress 任务并按 retry_count 处理：
+ *   retry_count < ORPHAN_MAX_RETRIES → requeue（status=queued, retry_count+1）
+ *   retry_count >= ORPHAN_MAX_RETRIES → quarantine
+ * 同时执行环境清理（worktree / lock / dev-mode）。
+ *
  * @param {import('pg').Pool} pool - pg Pool 实例
- * @returns {Promise<{ requeued: Array<{id:string, title:string}>, worktrees_pruned: number, slots_freed: number, devmode_cleaned: number, error?: string }>}
+ * @returns {Promise<{ requeued: Array<{id:string, title:string}>, quarantined: Array<{id:string, title:string}>, worktrees_pruned: number, slots_freed: number, devmode_cleaned: number, error?: string }>}
  */
 export async function runStartupRecovery(pool) {
   // Environment cleanup (non-blocking, errors don't stop DB recovery)
@@ -225,38 +231,71 @@ export async function runStartupRecovery(pool) {
 
   // DB orphan task recovery
   try {
-    // 找出孤儿任务：in_progress 且 updated_at 超过阈值（进程已死）
-    const resetResult = await pool.query(`
-      UPDATE tasks
-      SET status = 'queued', updated_at = NOW()
+    // 找出所有孤儿任务（含 retry_count）
+    const orphanResult = await pool.query(`
+      SELECT id, title, COALESCE(retry_count, 0) AS retry_count
+      FROM tasks
       WHERE status = 'in_progress'
         AND updated_at < NOW() - INTERVAL '${ORPHAN_THRESHOLD_MINUTES} minutes'
-      RETURNING id, title
     `);
 
-    const requeued = resetResult.rows;
+    const orphans = orphanResult.rows;
 
-    if (requeued.length === 0) {
+    if (orphans.length === 0) {
       console.log('[StartupRecovery] No orphaned tasks found');
-      return { requeued: [], ...summary };
+      return { requeued: [], quarantined: [], ...summary };
     }
 
-    const ids = requeued.map(t => t.id);
+    const toRequeue = orphans.filter(t => t.retry_count < ORPHAN_MAX_RETRIES);
+    const toQuarantine = orphans.filter(t => t.retry_count >= ORPHAN_MAX_RETRIES);
 
-    // 同步取消对应的僵尸 run_events 记录，防止 monitor-loop 重复检测
-    await pool.query(`
-      UPDATE run_events
-      SET status = 'cancelled', updated_at = NOW()
-      WHERE task_id = ANY($1::uuid[])
-        AND status = 'running'
-    `, [ids]);
+    // Requeue eligible orphans
+    let requeued = [];
+    if (toRequeue.length > 0) {
+      const requeueIds = toRequeue.map(t => t.id);
+      const requeueResult = await pool.query(`
+        UPDATE tasks
+        SET status = 'queued',
+            retry_count = retry_count + 1,
+            started_at = NULL,
+            updated_at = NOW()
+        WHERE id = ANY($1::uuid[])
+        RETURNING id, title, retry_count
+      `, [requeueIds]);
+      requeued = requeueResult.rows;
 
-    console.log(`[StartupRecovery] Re-queued ${requeued.length} orphaned tasks:`, ids);
-    return { requeued, ...summary };
+      // Cancel corresponding zombie run_events
+      await pool.query(`
+        UPDATE run_events
+        SET status = 'cancelled', updated_at = NOW()
+        WHERE task_id = ANY($1::uuid[])
+          AND status = 'running'
+      `, [requeueIds]);
+
+      console.log(`[StartupRecovery] Re-queued ${requeued.length} orphaned tasks:`, requeueIds);
+    }
+
+    // Quarantine max-retry orphans
+    const quarantined = [];
+    for (const task of toQuarantine) {
+      try {
+        await quarantineTask(
+          task.id,
+          'startup_orphan_max_retries',
+          { retry_count: task.retry_count }
+        );
+        quarantined.push({ id: task.id, title: task.title });
+        console.log(`[StartupRecovery] Quarantined orphan (max retries=${task.retry_count}): ${task.id}`);
+      } catch (qErr) {
+        console.error(`[StartupRecovery] Failed to quarantine orphan ${task.id}:`, qErr.message);
+      }
+    }
+
+    return { requeued, quarantined, ...summary };
 
   } catch (err) {
     // 恢复失败不能阻塞 Brain 启动
     console.error('[StartupRecovery] ERROR: DB query failed, skipping recovery:', err.message);
-    return { requeued: [], error: err.message, ...summary };
+    return { requeued: [], quarantined: [], error: err.message, ...summary };
   }
 }
