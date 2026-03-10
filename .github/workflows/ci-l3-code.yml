@@ -37,12 +37,29 @@ jobs:
       - name: Detect changes per subsystem
         id: filter
         run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "brain=true" >> $GITHUB_OUTPUT
-            echo "engine=true" >> $GITHUB_OUTPUT
-            echo "workspace=true" >> $GITHUB_OUTPUT
-            echo "quality=true" >> $GITHUB_OUTPUT
-            echo "workflows=true" >> $GITHUB_OUTPUT
+            # R2: push 事件用实际 diff（不再全量 true）
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "brain=true" >> $GITHUB_OUTPUT
+              echo "engine=true" >> $GITHUB_OUTPUT
+              echo "workspace=true" >> $GITHUB_OUTPUT
+              echo "quality=true" >> $GITHUB_OUTPUT
+              echo "workflows=true" >> $GITHUB_OUTPUT
+            else
+              CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+              echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
+                && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -q "^packages/engine/" \
+                && echo "engine=true" >> $GITHUB_OUTPUT || echo "engine=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -q "^apps/" \
+                && echo "workspace=true" >> $GITHUB_OUTPUT || echo "workspace=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -q "^packages/quality/" \
+                && echo "quality=true" >> $GITHUB_OUTPUT || echo "quality=false" >> $GITHUB_OUTPUT
+              echo "$CHANGED" | grep -q "^packages/workflows/" \
+                && echo "workflows=true" >> $GITHUB_OUTPUT || echo "workflows=false" >> $GITHUB_OUTPUT
+            fi
             exit 0
           fi
           BASE_REF="${{ github.base_ref }}"
