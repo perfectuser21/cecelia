@@ -4263,3 +4263,24 @@ DevGate 系统存在系统性绕过路径：(1) `.gitignore` 把 `.prd-*.md`/`.d
 - `docs/gaps/`：authority: GAP_REPORT — 缺口和待办，不能当 instruction book 用
 
 维护节奏：每累计 5~10 个 PR 或每周一次，Architect/Documentation Agent 重新审计并更新 docs/current/。
+
+---
+
+## 2026-03-10 /architect 拆分注册：arch_review + architecture_scan task_type（PR #767）
+
+### 根本原因
+
+/architect skill 承担了三种认知模式（CTO扫描 / 架构设计 / Initiative验收），导致 SKILL.md 超过 600 行，提示词视角互相干扰。拆分为 /architect（设计）+ /arch-review（审查）后，需要同步更新 Brain 的 task_type 路由和数据库约束。
+
+### 下次预防
+
+- [ ] 新增 skill 时，必须同步更新 5 个地方：VALID_TASK_TYPES、SKILL_WHITELIST、LOCATION_MAP、Migration SQL、DEFINITION.md
+- [ ] skill fallback 配置要定期审查：`dev→talk` 这类静默降级在代码库中潜伏了很长时间才被发现
+- [ ] PRD/DoD 文件必须在第一个 commit 就包含（不能 PR 创建后再补），CI 的 L1 Process Gate 会立即拦截
+- [ ] recurring_tasks 通过 Migration SQL 而非 API 注册，可保证服务重启后幂等恢复
+
+### 决策记录
+
+- `initiative_verify` 路由从 `/architect` 改为 `/arch-review verify`（Sonnet 够用，不需要 Opus）
+- `dev→talk` skill fallback 删除：编码任务失败应进隔离区，不应静默降级为对话
+- 每日 arch_review 定为 08:00（`0 8 * * *`），每周完整版定为周一 09:00（`0 9 * * 1`）
