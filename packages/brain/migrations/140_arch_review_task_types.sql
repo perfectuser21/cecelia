@@ -22,7 +22,7 @@ INSERT INTO recurring_tasks (
   recurrence_type,
   cron_expression,
   priority,
-  enabled,
+  is_active,
   template
 ) VALUES (
   '每日架构巡检 (4A Drift + 轻量 4B)',
@@ -41,7 +41,7 @@ INSERT INTO recurring_tasks (
   recurrence_type,
   cron_expression,
   priority,
-  enabled,
+  is_active,
   template
 ) VALUES (
   '每周完整架构巡检 (4A + 完整 4B)',
