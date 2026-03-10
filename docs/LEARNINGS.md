@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] slot-allocator PPID 检测 — macOS 进程标题覆盖导致 headless 误判（PR #811）
+
+**失败统计**：L1 CI 失败 1 次（PRD 成功标准格式 + LEARNINGS 缺失）
+
+### 根本原因
+
+1. **macOS claude 进程标题覆盖**：`claude -p "..."` 运行后，子进程覆盖自身进程标题，`ps -o args=` 只显示 `claude`（无 `-p`）。`detectUserSessions()` 用 `/ -p /.test(args)` 判断失效，4 个无头任务全被误判为 headed，触发 team 模式，派发积压正反馈。
+2. **PRD 成功标准格式错误**：再次用了 `**成功标准**:` 粗体，而 check-prd.sh 要求 `## 成功标准` 二级标题。
+3. **LEARNINGS.md 写入时机**：Learning Format Gate 是 L1 强制门禁，必须在第一次 push 前就写好。
+
+### 下次预防
+
+- [ ] macOS 进程检测时，不能仅依赖 args 字段（claude 会覆盖进程标题）；用 PPID 链接检测父进程环境变量（`CECELIA_HEADLESS=true`）更可靠
+- [ ] PRD 成功标准**必须**用 `## 成功标准` 二级标题（已踩坑两次，必须形成肌肉记忆）
+- [ ] Learning + PRD 格式在第一次 push 前就要检查完，避免 L1 门禁拦截
+
 ### [2026-03-10] Brain 任务重复派发 + DoD 已完成项也需要 Test 字段（PR #800）
 
 **失败统计**：L1 CI 失败 2 次（DoD Test 格式 + Learning 路径错误）
@@ -4774,6 +4790,20 @@ CI 首次通过（使用 [SKIP-LEARNING] 标识，无 CI 失败）。
 - [ ] 在 `packages/workflows/` 子树下开发时，PRD/DoD 必须放两处：worktree 根目录 + `packages/workflows/`（即 MEMORY.md 已记录规则，确保遵守）
 - [ ] 检查并更新 `.dev-mode` 文件中的 branch 和 prd 字段（避免 Stop Hook 检查旧任务状态）
 - [ ] 全局 Skill 注册（`~/.claude/skills/`）不进 git，用 PR body 明确记录"本地完成"，保持与其他发布器一致规范
+
+## PR #810 feat(dashboard): 实现 /projects/compare 项目并排对比页面（2026-03-10）
+
+### 根本原因
+
+1. **PRD 成功标准必须用 `## 成功标准` 二级标题**：用粗体 `**成功标准**:` 会被 `check-prd.sh` 识别不到，导致 L1 Process Gate 失败。MEMORY.md 已记录此规则但执行时漏了。
+2. **main 分支并行 PR 导致 add/add 冲突**：同一任务被多个 worktree 并行开发时，主分支已合并同名文件。解决方案：`git checkout origin/main -- 冲突文件`，接受 main 版本。
+3. **LEARNINGS.md 必须在 CI 通过之前先 push**：L1 Learning Format Gate 要求 PR 包含 LEARNINGS 条目，所以需要先写好 Learning 再 push，不能等 CI 通过后再补。
+
+### 下次预防
+
+- [ ] PRD 中"成功标准"章节必须用 `## 成功标准` 二级标题（不是粗体），创建 PRD 时立即验证格式
+- [ ] 写代码前检查 main 是否已有同名文件（`git show origin/main:path/to/file`），避免 add/add 冲突
+- [ ] LEARNINGS.md 条目和 PRD 格式修复必须在第一次 push 前完成，减少 CI 重跑次数
 
 ---
 
