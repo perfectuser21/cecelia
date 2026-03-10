@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] cortex _reflectionState 过期条目单测补充 — DoD echo 假测试 + 未勾选验收项（PR #796）
+
+**失败统计**：L1 CI 失败 1 次（D5 Test 用 `ls && echo OK` 假测试 + D3/D4/D5 未勾选 + LEARNINGS 缺失）
+
+### 根本原因
+
+1. **D5 Test 用了 `ls ... && echo OK`**：CI `check-dod-mapping.cjs` 检测到 `echo` 关键词，识别为假测试直接拒绝，应改用 `grep -c 'pattern' file`
+2. **D3/D4/D5 未勾选 [x]**：验证已通过但 DoD 条目没有从 `- [ ]` 改为 `- [x]`，CI 报"此项未验证"
+3. **LEARNINGS.md 未随代码 push**：Learning Format Gate 在 L1，push 前必须提交 LEARNINGS 新增内容
+
+### 下次预防
+
+- [ ] DoD Test 命令禁止 `echo`/`ls`/`test -f`：改用 `grep -c 'pattern' file`（输出数字，非零即通过）
+- [ ] 本地验证通过后立即将 `- [ ]` 改为 `- [x]`，commit 时一并提交 DoD 文件
+- [ ] LEARNINGS.md 必须在 push 前写入并提交，不能留到 CI 报错后再补
+
 ### [2026-03-10] 公众号发布 API 接通 — branch-protect hook 搜索路径陷阱（PR #792）
 
 **失败统计**：L1 CI 失败 1 次（PRD/DoD 未提交根目录 + LEARNINGS 缺失）
