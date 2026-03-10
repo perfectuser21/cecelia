@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] 公众号发布 API 接通 — branch-protect hook 搜索路径陷阱（PR #792）
+
+**失败统计**：L1 CI 失败 1 次（PRD/DoD 未提交根目录 + LEARNINGS 缺失）
+
+### 根本原因
+
+`branch-protect.sh` 的 `find_prd_dod_dir()` 函数从被写文件路径向上搜索，**遇到第一个含 `.prd.md` 的目录就返回**。
+`packages/workflows/` 残留了旧任务的 `.prd.md`，导致 hook 用旧文件判断"PRD 是否新增"而不是根目录的新 PRD。
+CI 的 `check-prd.sh` 和 `check-dod-mapping.cjs` 只看 **repo 根目录**，不认 `packages/workflows/.prd-{branch}.md`。
+
+### 下次预防
+
+- [ ] 写 `packages/workflows/skills/` 下文件时，先检查父目录是否有旧 `.prd.md`：`find packages -name ".prd.md" -maxdepth 2`
+- [ ] PRD/DoD 文件必须提交到 **repo 根目录**（`.prd-{branch}.md`），同时也放一份在 `packages/workflows/` 以通过 hook 搜索
+- [ ] commit 时用 `git add .prd-*.md .dod-*.md` 确保根目录文件也入库
+- [ ] LEARNINGS.md 需在 CI 通过之前加入，不能留到 CI 运行后再加（Learning Format Gate 是 L1 强制门禁）
+
 ### [2026-03-10] cortex _reflectionState 恢复改用 lastSeen 滑动窗口（PR #791）
 
 **失败统计**：CI 失败 1 次（L1 DoD Gate），本地测试失败 1 次（DoD-5 竞态）
