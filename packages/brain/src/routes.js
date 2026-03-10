@@ -2724,7 +2724,9 @@ router.post('/execution-callback', async (req, res) => {
       result,
       pr_url,
       duration_ms,
-      iterations
+      iterations,
+      exit_code,
+      stderr
     } = req.body;
 
     if (!task_id) {
@@ -2806,6 +2808,30 @@ router.post('/execution-callback', async (req, res) => {
         prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
       }
 
+      // Extract error info for failure path ($9 errorMessage, $10 blockedDetail)
+      // Only populated when task fails; null on success so DB keeps existing values.
+      const isFailed = newStatus === 'failed';
+      let errorMessage = null;
+      let blockedDetail = null;
+      if (isFailed) {
+        // Build human-readable error message from result payload
+        errorMessage = (result !== null && typeof result === 'object')
+          ? (result.result || result.error || result.stderr || JSON.stringify(result))
+          : String(result || status);
+        errorMessage = errorMessage.slice(0, 2000); // cap at 2000 chars
+
+        // Build structured blocked_detail: { exit_code, stderr_tail, timestamp }
+        const stderrSource = stderr
+          || (result !== null && typeof result === 'object' ? result.stderr : null)
+          || (typeof result === 'string' ? result : '');
+        const blockedDetailObj = {
+          exit_code: exit_code != null ? exit_code : (isFailed ? 1 : 0),
+          stderr_tail: String(stderrSource || '').slice(-500),
+          timestamp: new Date().toISOString(),
+        };
+        blockedDetail = JSON.stringify(blockedDetailObj);
+      }
+
       await client.query(`
         UPDATE tasks
         SET
@@ -2818,9 +2844,11 @@ router.post('/execution-callback', async (req, res) => {
             || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
           pr_url = COALESCE($5::text, pr_url),
-          pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END
+          pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
+          error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
+          blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail]);
 
       // Log the execution result
       await client.query(`

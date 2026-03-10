@@ -249,9 +249,9 @@ describe('execution-callback atomicity', () => {
     const updateCall = clientCalls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE tasks'));
     expect(updateCall).toBeDefined();
 
-    // Should have 8 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue, prNumber]
+    // Should have 10 params: [task_id, newStatus, lastRunResult, status, pr_url, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail]
     const params = updateCall[1];
-    expect(params).toHaveLength(8);
+    expect(params).toHaveLength(10);
 
     // $6 (isCompleted) must be a boolean true for 'AI Done'
     expect(typeof params[5]).toBe('boolean');
@@ -259,6 +259,11 @@ describe('execution-callback atomicity', () => {
 
     // $2 (newStatus) must be 'completed'
     expect(params[1]).toBe('completed');
+
+    // $9 (errorMessage) must be null for successful tasks
+    expect(params[8]).toBeNull();
+    // $10 (blockedDetail) must be null for successful tasks
+    expect(params[9]).toBeNull();
   });
 
   it('isCompleted should be false for AI Failed status', async () => {
@@ -277,7 +282,7 @@ describe('execution-callback atomicity', () => {
     expect(updateCall).toBeDefined();
 
     const params = updateCall[1];
-    expect(params).toHaveLength(8);
+    expect(params).toHaveLength(10);
     // $6 must be false for failed tasks
     expect(params[5]).toBe(false);
     expect(params[1]).toBe('failed');
