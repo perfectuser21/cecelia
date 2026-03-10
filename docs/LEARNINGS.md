@@ -4551,3 +4551,4 @@ branch-protect.sh 和 CI check-prd.sh 策略不同：前者就近找，后者只
 - [ ] 每次 /dev 流程，在 Step 3 创建分支时立即 `git add .prd-*.md .dod-*.md`（哪怕文件已 stage，先 add 再 commit 绑定到功能分支第一次提交里）
 - [ ] CI L1 失败的第一反应：检查根目录 PRD/DoD 文件是否在 git 里（`git ls-files .prd-*.md .dod-*.md`）
 - [ ] 新建脚本文件时同步写单元测试，保证 `parseXxxResponse`、`isLoginError` 等纯函数均有覆盖
+
