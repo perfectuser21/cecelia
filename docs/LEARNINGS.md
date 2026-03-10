@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] 小红书脚本清理 — worktree vs 主仓库操作陷阱（PR #798）
+
+**失败统计**：L1 CI 失败 2 次（PRD 格式错误 + Learning 缺失）
+
+### 根本原因
+
+1. **rm 操作了主仓库而非 worktree**：`rm /project/packages/...` 路径指向主仓库，worktree 路径应为 `/project/.claude/worktrees/{id}/packages/...`。删错了地方，需要 `git checkout HEAD -- file` 恢复主仓库。
+2. **PRD 成功标准格式错误**：使用 `**成功标准**:` 粗体格式，check-prd.sh 只匹配 `## 成功标准` 二级标题。
+3. **[SKIP-LEARNING] 标签时机**：PR title 更新后 CI 不自动重跑，必须 push 新 commit 触发新的 L1 run。
+
+### 下次预防
+
+- [ ] worktree 中操作文件时，始终用相对路径（在 worktree root `cd` 后操作）而非绝对路径
+- [ ] PRD 成功标准必须用 `## 成功标准` 二级标题，不能用粗体
+- [ ] 更新 PR title 后，必须 push 新 commit 才能触发 CI 读取新 title（或直接在 commit 前更新好）
+
 ### [2026-03-10] 公众号发布 API 接通 — branch-protect hook 搜索路径陷阱（PR #792）
 
 **失败统计**：L1 CI 失败 1 次（PRD/DoD 未提交根目录 + LEARNINGS 缺失）
