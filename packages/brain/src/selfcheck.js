@@ -113,16 +113,18 @@ export async function runSelfCheck(pool, opts = {}) {
     record('Core Tables', false, err.message);
   }
 
-  // 5. Schema version matches expected (only pure numeric migration versions, ignore dirty data)
+  // 5. Schema version must be >= expected (only pure numeric migration versions, ignore dirty data)
+  //    Using >= instead of === allows DB to have newer migrations without crashing Brain.
   try {
     const { rows } = await pool.query(
       `SELECT MAX(version) AS max_ver FROM schema_version WHERE version ~ '^[0-9]{1,4}$'`
     );
     const maxVer = rows[0]?.max_ver;
+    const versionOk = maxVer != null && parseInt(maxVer, 10) >= parseInt(EXPECTED_SCHEMA_VERSION, 10);
     record(
       'Schema Version',
-      maxVer === EXPECTED_SCHEMA_VERSION,
-      `DB="${maxVer}" expected="${EXPECTED_SCHEMA_VERSION}"`
+      versionOk,
+      `DB="${maxVer}" expected>="${EXPECTED_SCHEMA_VERSION}"`
     );
   } catch (err) {
     record('Schema Version', false, err.message);

@@ -115,6 +115,16 @@ describe('selfcheck', () => {
     expect(ok).toBe(false);
   });
 
+  it('should pass when schema version is ahead of expected (>= check)', async () => {
+    // DB may have newer migrations applied; Brain should still start
+    const aheadVersion = String(parseInt(EXPECTED_SCHEMA_VERSION, 10) + 1);
+    const pool = makeMockPool({
+      'schema_version': { rows: [{ max_ver: aheadVersion }] },
+    });
+    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    expect(ok).toBe(true);
+  });
+
   it('should pass with fingerprint match', async () => {
     // Compute expected fingerprint
     const crypto = await import('crypto');
