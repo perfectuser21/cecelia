@@ -5,7 +5,7 @@ import App from './App'
 import './index.css'
 
 // 强制刷新 Service Worker 缓存
-const APP_VERSION = '2026-01-18-v1';
+const APP_VERSION = '2026-03-10-v1';
 const CACHE_VERSION_KEY = 'app-cache-version';
 
 async function clearStaleCache() {
