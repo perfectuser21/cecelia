@@ -4394,3 +4394,16 @@ selfcheck.js 用精确匹配（`===`）检查 DB schema version。每当有新 m
 - [ ] EXPECTED_SCHEMA_VERSION 含义改为"最低可接受版本"，注释需反映这一点
 - [ ] 新增 migration 文件时务必立即检查主仓库状态（`git status packages/brain/migrations/`），防止 untracked migration 文件流入 DB 但不进 git
 - [ ] DEFINITION.md 中 schema_version 有两处引用，新增 migration 时两处都要同步
+
+## PR #781 超时任务自动 requeue（2026-03-10）
+
+### 根本原因
+
+`autoFailTimedOutTasks()` 在任务超时（>60min）后直接标记 `status=failed`，导致任务永远卡在 failed 状态，不会重试。Brain 系统已经有 `FAILURE_THRESHOLD=3` 的隔离机制（在 `handleTaskFailure()` 中），但 `autoFailTimedOutTasks` 绕过了这个机制——直接 fail 而不是让 quarantine 系统决定是否需要重试。
+根因：`autoFailTimedOutTasks` 的"不隔离"分支使用了 `updateTask({status:'failed'})`，而正确行为应是 `status='queued'`（重排队重试）。
+
+### 下次预防
+
+- [ ] 任何"任务失败处理"代码必须经过 `handleTaskFailure()` 判断，不要直接 `status=failed`
+- [ ] 修改任务状态逻辑时，检查是否清空了 `started_at`——不清空会导致重排队后立即被判为超时
+- [ ] 超时处理的 action 名称要能区分"失败"和"重排队"（`auto-fail-timeout` vs `auto-requeue-timeout`）
