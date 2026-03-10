@@ -1124,14 +1124,19 @@ async function autoFailTimedOutTasks(inProgressTasks) {
           elapsed_minutes: Math.round(elapsed)
         });
       } else {
-        // Not quarantined, mark as failed normally
-        await updateTask({ task_id: task.id, status: 'failed' });
+        // Not quarantined yet — requeue for retry (failure_count already incremented by handleTaskFailure)
+        // Clearing started_at prevents immediate re-timeout on next tick evaluation
+        await pool.query(
+          `UPDATE tasks SET status = 'queued', started_at = NULL, updated_at = NOW() WHERE id = $1`,
+          [task.id]
+        );
         actions.push({
-          action: 'auto-fail-timeout',
+          action: 'auto-requeue-timeout',
           task_id: task.id,
           title: task.title,
           elapsed_minutes: Math.round(elapsed),
-          failure_count: quarantineResult.failure_count
+          failure_count: quarantineResult.failure_count,
+          retry_attempt: quarantineResult.failure_count
         });
       }
 
@@ -1143,8 +1148,8 @@ async function autoFailTimedOutTasks(inProgressTasks) {
       });
       await logTickDecision(
         'tick',
-        `Auto-failed timed-out task: ${task.title} (${Math.round(elapsed)}min)`,
-        { action: 'auto-fail-timeout', task_id: task.id, quarantined: quarantineResult.quarantined },
+        `Auto-requeued timed-out task: ${task.title} (${Math.round(elapsed)}min, attempt ${quarantineResult.failure_count})`,
+        { action: 'auto-requeue-timeout', task_id: task.id, quarantined: quarantineResult.quarantined },
         { success: true, elapsed_minutes: Math.round(elapsed) }
       );
     }
