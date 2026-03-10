@@ -216,6 +216,7 @@ async function _loadReflectionStateFromDB() {
       console.log(`[cortex] 从 DB 恢复 ${loaded} 条反思去重状态`);
     }
     if (expiredKeys.length > 0) {
+      console.log(`[cortex] 启动清理 ${expiredKeys.length} 条过期反思状态（已超过 ${REFLECTION_WINDOW_MS / 60000} 分钟窗口）`);
       pool.query(
         'DELETE FROM working_memory WHERE key = ANY($1)',
         [expiredKeys]
