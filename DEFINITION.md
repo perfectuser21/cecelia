@@ -306,8 +306,9 @@ executeTick() 流程：
 - **战略调整**：adjust_strategy（修改 brain_config，需审批）
 - **经验记录**：record_learning（存入 reflections 表）
 - **RCA 报告**：create_rca_report（存入 decision_log 表）
+- **创建任务**：create_task（皮层建议自动转 Brain 任务）
 
-**皮层额外 3 个 action**：adjust_strategy、record_learning、create_rca_report
+**皮层额外 4 个 action**：adjust_strategy、record_learning、create_rca_report、create_task
 
 ---
 
