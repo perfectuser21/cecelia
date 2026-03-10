@@ -4112,6 +4112,8 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 
 ### [2026-03-10] R7 修复 — 统一分支命名规范（PR #758）
 
+### [2026-03-10] R1 修复 — CI 文件改动触发 Config Audit（PR #759）
+
 **失败统计**：CI 失败 0 次
 
 ### 根本原因
@@ -4124,3 +4126,12 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 
 - [ ] 任何修改 branch-protect.sh 的 PR，必须同步检查 CI L1 verify-dev-workflow 正则是否一致
 - [ ] Hook 和 CI 正则必须保持完全相同的字符集和格式要求
+
+审计发现 `.github/workflows/**` 改动时，`engine-l1` 不触发（因为 engine 路径检测不匹配 CI 文件路径），导致 Config Audit 有真空区——修改 CI 配置无需任何标签就能合并。
+
+修复：在 L1 加入独立的 `ci-config-audit` job，always-on，检测 CI 文件变更，要求 [CONFIG]/[INFRA] 标签。与 engine-l1 的 Config Audit 互补，覆盖全路径。
+
+### 下次预防
+
+- [ ] CI 架构变更时，检查每种文件路径（.github/workflows, packages/*, apps/*）是否都有对应的 Config Audit 覆盖
+- [ ] 新增 always-on job 时，同步更新 l1-passed/l2-passed 等 gate 的 needs 列表
