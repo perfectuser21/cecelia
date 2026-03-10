@@ -37,8 +37,8 @@ Thumbs.db
 *.backup
 
 # Dev workflow state files（绝对不允许进 git）
-.prd-*.md
-.dod-*.md
+# 注意：.prd-*.md 和 .dod-*.md 已从此处移除（A+ 强制开发证据方案）
+# 这两类文件现在必须随 PR 提交到仓库，CI 会验证其存在
 .dev-mode
 .dev-mode.*
 .dev-mode.lock

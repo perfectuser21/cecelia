@@ -4220,6 +4220,24 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 
 ---
 
+### [2026-03-10] A+ 强制开发证据方案 — 消除 PRD/DoD/Learning 绕过漏洞（PR #765）
+
+**失败统计**：CI 失败 1 次（L2 版本未 bump + DoD Test 命令格式错误）
+
+### 根本原因
+
+DevGate 系统存在系统性绕过路径：(1) `.gitignore` 把 `.prd-*.md`/`.dod-*.md` 列入忽略，CI checkout 看不到这两类文件；(2) 所有检查脚本在文件不存在时 `exit 0`（静默跳过）；(3) `l1-passed` gate 只检查 `failure/cancelled`，`skipped` 被视为通过。三层漏洞叠加，任何人可以在完全不走 `/dev` 的情况下通过 CI 合并 PR，质量门禁形同虚设。
+
+### 下次预防
+
+- [ ] 任何 CI gate job 必须用 `!= 'success'` 判断（而非 `== 'failure'`），防止 skipped 绕过
+- [ ] 开发证据文件（.prd-*.md, .dod-*.md）必须从 .gitignore 排除，保证 CI 能看到
+- [ ] DevGate 脚本在文件缺失时必须 `exit 1`，而非静默跳过（`exit 0`）
+- [ ] DoD 的 `Test:` 字段不能用 `echo`/`test -f`，必须用真实可执行命令（`bash -c "..."` 包含 bash 关键字）
+- [ ] Engine 版本 bump 必须同步 5 个文件：package.json, package-lock.json, VERSION, .hook-core-version, regression-contract.yaml
+
+---
+
 ## 2026-03-10 文档治理分层：docs/current/ + docs/gaps/（PR #764）
 
 ### 根本原因

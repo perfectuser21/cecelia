@@ -1,0 +1,28 @@
+# required-dev-paths.yml
+# P2: 高风险路径列表 — 改动这些路径时，CI 自动要求 /dev 工件（PRD + DoD + Learning）
+#
+# 格式：每行一个路径前缀（用于 grep -q "^{pattern}"）
+# 生效逻辑：见 ci-l1-process.yml 的 required-paths-check job
+
+paths:
+  # CI/CD 工作流（改错了所有 PR 受影响）
+  - .github/workflows/
+
+  # 分支保护 Hook（改错了阻止所有本地开发）
+  - packages/engine/hooks/
+
+  # DevGate 核心脚本（改错了质量门禁失效）
+  - packages/engine/scripts/devgate/
+
+  # Brain 核心逻辑（调度/决策/保护）
+  - packages/brain/src/tick.js
+  - packages/brain/src/executor.js
+  - packages/brain/src/thalamus.js
+  - packages/brain/src/cortex.js
+  - packages/brain/src/selfcheck.js
+
+  # 数据库迁移（改错了数据损坏）
+  - packages/brain/src/db/migrations/
+
+  # Engine 版本与合约（改错了 CI 版本检查全挂）
+  - packages/engine/regression-contract.yaml

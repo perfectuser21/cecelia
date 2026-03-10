@@ -239,6 +239,7 @@ jobs:
       - name: Check Learning Format
         env:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  DevGate: Learning Format Gate"
@@ -271,6 +272,86 @@ jobs:
 
       - name: Run quality system meta tests
         run: bash tests/quality-system/run-all.sh
+
+  # ─── Required Paths Check (P2: 高风险路径自动要求 dev 证据) ─────────────
+
+  required-paths-check:
+    name: Required Dev Paths Check
+    needs: verify-dev-workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check high-risk paths require dev evidence
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Required Dev Paths Check (P2)"
+          echo "  Branch: $HEAD_REF"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          CONFIG="packages/engine/config/required-dev-paths.yml"
+          if [ ! -f "$CONFIG" ]; then
+            echo "No required-dev-paths.yml found — check not required"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Required Dev Paths Check PASSED (no config)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          # 读取高风险路径列表（去掉注释和空行）
+          REQUIRED_PATHS=$(grep -E '^\s*-\s+' "$CONFIG" | sed 's/^\s*-\s*//' | grep -v '^#' || true)
+          if [ -z "$REQUIRED_PATHS" ]; then
+            echo "No paths configured — check not required"
+            exit 0
+          fi
+
+          # 获取本 PR 改动的文件
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" 2>/dev/null || true)
+
+          HIT_PATH=""
+          while IFS= read -r path_pattern; do
+            if echo "$CHANGED" | grep -q "^${path_pattern}"; then
+              HIT_PATH="$path_pattern"
+              break
+            fi
+          done <<< "$REQUIRED_PATHS"
+
+          if [ -z "$HIT_PATH" ]; then
+            echo "No high-risk paths changed — check not required"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Required Dev Paths Check PASSED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 0
+          fi
+
+          echo "High-risk path changed: $HIT_PATH"
+          echo ""
+
+          # 验证 PRD 文件存在（double-check，dod-check/check-prd 也会验证）
+          PRD_FILE=".prd-${HEAD_REF}.md"
+          if [ ! -f "$PRD_FILE" ] && ! ls .prd-task-*.md 2>/dev/null | head -1 | grep -q .; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ HARD GATE FAILED: 高风险路径变更但缺少 PRD"
+            echo ""
+            echo "  改动了高风险路径: $HIT_PATH"
+            echo "  此类改动必须经过 /dev 工作流（PRD + DoD + Learning）。"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
+
+          echo "PRD file present — required paths check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ Required Dev Paths Check PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   # ─── CI Config Audit (triggered when .github/workflows/** changes) ────────
 
@@ -361,25 +442,9 @@ jobs:
         working-directory: packages/engine
         run: npm ci
 
-      # PRD/DoD Gate - block working docs from entering main
-      - name: Block PRD/DoD in PR to main
-        if: github.base_ref == 'main'
-        run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  PRD/DoD Gate (PR to main)"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-          PRD_DOD_FILES=$(git diff --diff-filter=AM --name-only origin/${{ github.base_ref }}...HEAD | grep -E '^\.(prd|dod)(-[^/]+)?\.md$' || true)
-
-          if [ -n "$PRD_DOD_FILES" ]; then
-            echo "PRD/DoD files should not appear in PR to main:"
-            echo "$PRD_DOD_FILES" | sed 's/^/  - /'
-            echo ""
-            echo "Please remove before merge: git rm <files>"
-            exit 1
-          fi
-
-          echo "No PRD/DoD files in PR"
+      # P0: PRD/DoD Presence - verify dev evidence exists (A+ plan)
+      # NOTE: PRD/DoD 已从 .gitignore 移除，现在必须随 PR 提交（不再 block，而是 require）
+      # 具体内容验证由 check-prd / dod-check 两个独立 job 负责，此处不重复检查
 
       # P1: Config Audit - critical config file change audit
       - name: Config Audit
@@ -584,7 +649,7 @@ jobs:
 
   l1-passed:
     name: L1 Process Gate Passed
-    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, ci-config-audit, engine-l1]
+    needs: [changes, verify-dev-workflow, dod-check, cleanup-check, check-prd, check-learning, quality-meta-tests, required-paths-check, ci-config-audit, engine-l1]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -607,28 +672,34 @@ jobs:
             FAILED=true
           fi
 
-          if [ "${{ needs.cleanup-check.result }}" = "failure" ] || [ "${{ needs.cleanup-check.result }}" = "cancelled" ]; then
+          # A+ 方案：任何非 success 状态（含 skipped）均视为失败，消除 skipped 漏洞
+          if [ "${{ needs.cleanup-check.result }}" != "success" ]; then
             echo "FAIL: Cleanup Check (${{ needs.cleanup-check.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.check-prd.result }}" = "failure" ] || [ "${{ needs.check-prd.result }}" = "cancelled" ]; then
+          if [ "${{ needs.check-prd.result }}" != "success" ]; then
             echo "FAIL: PRD Success Criteria Check (${{ needs.check-prd.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.check-learning.result }}" = "failure" ] || [ "${{ needs.check-learning.result }}" = "cancelled" ]; then
+          if [ "${{ needs.check-learning.result }}" != "success" ]; then
             echo "FAIL: Learning Format Gate (${{ needs.check-learning.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.quality-meta-tests.result }}" = "failure" ] || [ "${{ needs.quality-meta-tests.result }}" = "cancelled" ]; then
+          if [ "${{ needs.quality-meta-tests.result }}" != "success" ]; then
             echo "FAIL: Quality System Meta Tests (${{ needs.quality-meta-tests.result }})"
             FAILED=true
           fi
 
-          if [ "${{ needs.ci-config-audit.result }}" = "failure" ] || [ "${{ needs.ci-config-audit.result }}" = "cancelled" ]; then
+          if [ "${{ needs.ci-config-audit.result }}" != "success" ]; then
             echo "FAIL: CI Config Audit (${{ needs.ci-config-audit.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.required-paths-check.result }}" != "success" ]; then
+            echo "FAIL: Required Dev Paths Check (${{ needs.required-paths-check.result }})"
             FAILED=true
           fi
 

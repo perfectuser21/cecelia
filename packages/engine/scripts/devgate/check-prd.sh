@@ -11,8 +11,17 @@ if [[ ! -f "$PRD_FILE" ]]; then
 fi
 
 if [[ -z "$PRD_FILE" || ! -f "$PRD_FILE" ]]; then
-  echo "No PRD file found — skipping check"
-  exit 0
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ❌ HARD GATE FAILED: PRD 文件缺失"
+  echo ""
+  echo "  走 /dev 工作流的 PR 必须包含 PRD 文件。"
+  echo "  期望文件: .prd-${BRANCH}.md 或 .prd-task-*.md"
+  echo ""
+  echo "  PRD 文件必须随 PR 提交到仓库（已从 .gitignore 移除）。"
+  echo "  请运行 /dev 创建 PRD 文件，并 git add + commit。"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  exit 1
 fi
 
 echo "PRD file: $PRD_FILE"

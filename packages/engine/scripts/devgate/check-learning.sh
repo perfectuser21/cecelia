@@ -1,33 +1,75 @@
 #!/bin/bash
 # check-learning.sh — 强制 Learning 格式：根本原因 + 下次预防
-# HARD GATE: PR 新增的 LEARNINGS.md 条目必须包含结构化格式
+# HARD GATE: 走 /dev 的 PR 必须包含 LEARNINGS.md 新增内容
+#
+# A+ 方案：Learning 现在是必需品，不是可选附件。
+# 例外：PR title 含 [SKIP-LEARNING] 时跳过（需在 PR description 中说明原因）
 
 set -e
 
 LEARNINGS_FILE="docs/LEARNINGS.md"
+PR_TITLE="${PR_TITLE:-}"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  DevGate: Learning Format Gate"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# 检查 LEARNINGS.md 是否存在
-if [ ! -f "$LEARNINGS_FILE" ]; then
-  echo "ℹ️  $LEARNINGS_FILE 不存在，跳过检查"
+# ─────────────────────────────────────────────
+# [SKIP-LEARNING] 例外机制
+# ─────────────────────────────────────────────
+if echo "$PR_TITLE" | grep -q "\[SKIP-LEARNING\]"; then
+  echo "ℹ️  PR title 含 [SKIP-LEARNING]，跳过 Learning 检查"
+  echo "   请确认 PR description 中已说明跳过原因"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ✅ Learning Format Gate SKIPPED (by [SKIP-LEARNING])"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   exit 0
 fi
 
-# 找到本 PR 新增的行（去掉 diff 头信息）
+# ─────────────────────────────────────────────
+# LEARNINGS.md 必须存在（A+ 方案：不再允许跳过）
+# ─────────────────────────────────────────────
+if [ ! -f "$LEARNINGS_FILE" ]; then
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ❌ HARD GATE FAILED: docs/LEARNINGS.md 不存在"
+  echo ""
+  echo "  走 /dev 工作流的 PR 必须包含 LEARNINGS.md 条目。"
+  echo "  请在 Step 10 完成 Learning 记录。"
+  echo ""
+  echo "  如果本次确实无需 Learning（纯文档/配置修复），"
+  echo "  请在 PR title 中加 [SKIP-LEARNING] 标签并在"
+  echo "  PR description 中说明原因。"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  exit 1
+fi
+
+# ─────────────────────────────────────────────
+# 本 PR 必须新增 LEARNINGS.md 内容（A+ 方案：不再允许跳过）
+# ─────────────────────────────────────────────
 ADDED_LINES=$(git diff "origin/main...HEAD" -- "$LEARNINGS_FILE" | grep '^+' | grep -v '^+++' || true)
 
 if [ -z "$ADDED_LINES" ]; then
-  echo "ℹ️  本 PR 未修改 $LEARNINGS_FILE，跳过检查"
-  exit 0
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ❌ HARD GATE FAILED: 本 PR 未在 LEARNINGS.md 中新增内容"
+  echo ""
+  echo "  走 /dev 工作流的 PR 必须包含 LEARNINGS.md 新增条目。"
+  echo "  请在 Step 10 完成 Learning 记录并 push 到功能分支。"
+  echo ""
+  echo "  如果本次确实无需 Learning（纯文档/配置修复），"
+  echo "  请在 PR title 中加 [SKIP-LEARNING] 标签并在"
+  echo "  PR description 中说明原因。"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  exit 1
 fi
 
 echo "🔍 检测到 LEARNINGS.md 有新增内容，检查格式..."
 echo ""
 
-# 提取新增内容（去掉行首的 + 号）
+# ─────────────────────────────────────────────
+# 格式检查：根本原因 + 下次预防 + checklist
+# ─────────────────────────────────────────────
 NEW_CONTENT=$(git diff "origin/main...HEAD" -- "$LEARNINGS_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//')
 
 HAS_ROOT_CAUSE=false

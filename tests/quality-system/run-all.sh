@@ -28,6 +28,7 @@ echo ""
 run_test "PRD格式检查 (check-prd.sh)" "$SCRIPT_DIR/test-check-prd.sh"
 run_test "Cleanup门禁检查 (cleanup-check)" "$SCRIPT_DIR/test-cleanup-check.sh"
 run_test "DoD映射检查 (check-dod-mapping.cjs)" "$SCRIPT_DIR/test-check-dod-mapping.sh"
+run_test "Learning强制检查 (check-learning.sh)" "$SCRIPT_DIR/test-check-learning.sh"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  结果: $PASSED 通过 / $FAILED 失败"
