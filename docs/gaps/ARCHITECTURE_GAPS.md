@@ -58,36 +58,23 @@ MEMORY.md（PR #755）描述 engine-ci 拆分为 `l1-process / l2-consistency / 
 
 ---
 
-### [P0] 四层 gate CI 架构尚未落地
-
-MEMORY.md 描述的四层 CI gate（ci-l1-process.yml / ci-l2-consistency.yml / ci-l3-code.yml / ci-l4-runtime.yml）**不存在于当前 .github/workflows/**。
-
-**当前影响**：已有文档引用了这套架构（CI_PIPELINE.md 旧版），造成混淆。
-**建议**：若这是规划中架构，应在 `docs/gaps/` 而非 `docs/current/` 中记录。
+~~### [P0] 四层 gate CI 架构尚未落地~~
+**已解决（2026-03-10）**：四层 gate 确认已在 main 分支落地（ci-l1-process.yml 等）。
+初次审计错误地在旧功能分支（cp-03101600-fix-isolate-batch34）上运行，误以为不存在。
+CI_PIPELINE.md v1.1.0 已修正。
 
 ---
 
 ## 二、未完整审计的 CI Workflows
 
-### [P1] quality-ci.yml（11.1KB）内容未审计
+### [P1] deploy.yml 内容未审计
 
-不清楚：quality CI 做了什么检查、触发条件、与 Brain 的集成方式。
+当前四层 gate 已审计完整，但 `deploy.yml` 内容不清楚：部署触发条件、目标环境、回滚机制。
 
-### [P1] workflows-ci.yml（15.5KB）内容未审计
+### [P1] auto-version.yml 详细逻辑未审计
 
-不清楚：54 个 workflow skills 如何被测试、发布流程。
-
-### [P1] workspace-ci.yml（3.7KB）内容未审计
-
-不清楚：apps/api 和 apps/dashboard 的 CI 行为。
-
-### [P1] devgate.yml（12.5KB）内容未审计
-
-不清楚：独立 DevGate workflow 与 engine-ci 内嵌 DevGate checks 的关系和调用场景。
-
-### [P1] auto-version.yml（5KB）内容未审计
-
-不清楚：自动版本管理的触发条件和行为。
+已知：push → main 后根据 commit 前缀 bump 版本，更新 5 个文件。
+不清楚：具体实现、失败处理、版本冲突处理。
 
 ---
 

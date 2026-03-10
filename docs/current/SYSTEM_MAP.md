@@ -144,17 +144,16 @@ packages/engine/
 
 ## 7. CI/CD Workflow 列表（当前实际存在）
 
-| 文件 | 触发路径 | Runner |
+| 文件 | 触发条件 | Runner |
 |------|---------|--------|
-| `brain-ci.yml` | `packages/brain/**`, `DEFINITION.md` | macOS |
-| `engine-ci.yml` | `packages/engine/**` | ubuntu |
-| `quality-ci.yml` | — | ubuntu |
-| `workflows-ci.yml` | — | ubuntu |
-| `workspace-ci.yml` | — | ubuntu |
-| `devgate.yml` | — | ubuntu |
-| `auto-version.yml` | — | ubuntu |
+| `ci-l1-process.yml` | PR → main（所有 PR 必跑） | ubuntu |
+| `ci-l2-consistency.yml` | push + PR → main | ubuntu |
+| `ci-l3-code.yml` | push + PR → main（brain 变更时） | ubuntu |
+| `ci-l4-runtime.yml` | push + PR → main（brain 变更时） | macOS |
+| `deploy.yml` | 部署（详情待审计） | — |
+| `auto-version.yml` | push → main，自动 bump 版本 | ubuntu |
 
-**⚠️ 注**：MEMORY.md 描述的四层 gate（ci-l1-process.yml 等）**尚未落地**，当前仍为子系统独立 CI 架构。
+详细结构见 `docs/current/CI_PIPELINE.md`。
 
 ---
 
