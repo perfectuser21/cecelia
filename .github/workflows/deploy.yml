@@ -1,0 +1,60 @@
+name: Deploy
+
+# 合并到 main 后自动部署（Brain + Workspace）
+# 触发：push to main only（PR 合并通过 CI 检查后自动触发）
+# 迁移自：brain-ci.yml (deploy-brain) + workspace-ci.yml (deploy-workspace)
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ─── Deploy Brain to VPS ───────────────────────────────────────────────
+
+  deploy-brain:
+    name: Deploy Brain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy to US VPS via SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::DEPLOY_SSH_KEY secret not configured."
+            echo "Setup: ssh-keygen -t ed25519 -f ~/.ssh/cecelia_deploy && ssh-copy-id xx@146.190.52.84 && gh secret set DEPLOY_SSH_KEY < ~/.ssh/cecelia_deploy"
+            exit 1
+          fi
+          printf '%s\n' "$DEPLOY_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
+            xx@146.190.52.84 \
+            "cd /home/xx/perfect21/cecelia && git pull origin main && bash scripts/brain-deploy.sh"
+          rm -f /tmp/deploy_key
+
+  # ─── Deploy Workspace (Dashboard) to VPS ──────────────────────────────
+
+  deploy-workspace:
+    name: Deploy Workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy to US VPS via SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::DEPLOY_SSH_KEY secret not configured."
+            echo "Setup: ssh-keygen -t ed25519 -f ~/.ssh/cecelia_deploy && ssh-copy-id xx@146.190.52.84 && gh secret set DEPLOY_SSH_KEY < ~/.ssh/cecelia_deploy"
+            exit 1
+          fi
+          printf '%s\n' "$DEPLOY_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh -i /tmp/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=30 \
+            xx@146.190.52.84 \
+            "cd /home/xx/perfect21/cecelia && git pull origin main && cd apps/dashboard && npm install --prefer-offline && npm run build"
+          rm -f /tmp/deploy_key

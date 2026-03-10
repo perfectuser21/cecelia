@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI 体系 V4 — 四层 Gate 架构物理重构（PR #756）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+现有 6 个按子系统命名的 CI 文件（brain-ci / engine-ci / devgate / workspace-ci / quality-ci / workflows-ci）职责混叠，无法一眼看出检查层级。
+L1（流程合规）、L2（一致性）、L3（代码质量）、L4（运行时集成）四层逻辑分散在多个文件中，维护困难，debug 时不知道该看哪个文件。
+
+通过 Phase 1（只新增，不删除）策略，让新旧两套 CI 并行运行，验证新架构稳定后再 Phase 3 删除旧文件。
+
+### 下次预防
+
+- [ ] 每个 Layer 文件的 gate job ID 必须固定为 `l1-passed`/`l2-passed`/`l3-passed`/`l4-passed`（branch protection 依赖这些稳定名字）
+- [ ] `changes` 检测 job 在 push 事件时全量标记为 `true`（因为 push 只在 CI 通过后发生，直接全跑）
+- [ ] deploy.yml 不依赖其他工作流结果，直接在 push to main 时执行（PR 合并前 CI 必须通过，所以 main 上一定是干净的）
+- [ ] Phase 1 并行策略：新增文件不影响旧 ci-passed 检查，两套并行运行，CI 全绿验证后再 Phase 3 删旧文件
+
 ### [2026-03-10] CI 体系重构 V2+V3 — engine-ci 逻辑分层 + brain-ci brain-test 拆分（PR #755）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
