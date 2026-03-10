@@ -4,34 +4,25 @@
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
 
-**重构要点**：
+### 根本原因
 
-#### V2 engine-ci 分层原则
-原 `test` job（30min）混合了 L1/L2/L3 三层逻辑，拆分后：
-- `l1-process`（PR-only, 10min）：Config Audit + Known-Failures Protection + PRD/DoD Gate + DevGate checks
-- `l2-consistency`（10min）：Version Check + Contract Drift + Impact Check
-- `l3-code`（30min）：TypeCheck + Unit Tests + Build + Shell Check + Evidence
+engine-ci 的 `test` job（30min）混合了 L1（协议检查）、L2（一致性检查）、L3（代码检查）三层逻辑，加上 `version-check`、`known-failures-protection`、`contract-drift-check`、`config-audit`、`impact-check` 5 个分散的独立 job，失败时难以定位到具体层次。
 
-**关键点**：`version-check` / `known-failures-protection` / `contract-drift-check` / `config-audit` / `impact-check` 这些旧的独立 job 被吸收进 L1/L2，`ci-passed` gate 依赖由 7 个 job 简化为 3 个。
+brain-ci 的 `brain-test` job 把无 DB 依赖的单元测试和需要 PostgreSQL 的集成测试全跑在 macos-latest（昂贵），单元测试失败也要等 macos 环境初始化（30s+）才能发现。
 
-#### V3 brain-ci 拆分原则
-`brain-unit`（ubuntu-latest）运行所有 vitest 单元测试，**不起 PostgreSQL**。
-这可行的原因：brain 测试文件均用 `vi.mock('../../src/db.js')` 替换真实 DB 访问，unit job 里 vitest 不会触碰真实连接池。
-`brain-integration`（macos-latest）保留完整流程：PostgreSQL + migrations + coverage + GoldenPath E2E。
+brain-unit（ubuntu-latest）无 DB 可行的原因：所有测试文件用 `vi.mock('../../src/db.js')` 替换真实 DB 访问，vitest 不会创建真实连接池。
 
-#### ci-passed gate 设计
-engine-ci gate 需处理 L1 在非 PR 场景（push to main）时被 skipped 的情况：
+engine-ci L1 的 `ci-passed` gate 需处理 push 事件时 l1-process 被 skipped 的合法情况：
 ```bash
-# 正确：skipped 是合法状态（push 时 L1 不跑）
-if [ "${{ needs.l1-process.result }}" != "success" ] && [ "${{ needs.l1-process.result }}" != "skipped" ]; then
-  FAILED=true
-fi
+if [ "$RESULT" != "success" ] && [ "$RESULT" != "skipped" ]; then FAILED=true; fi
 ```
 
-**影响程度**: Low（顺畅，无 CI 失败）
-**预防措施**：
-- CI 结构拆分后，config-audit 的路径检测（`CRITICAL_CONFIGS` 数组）需要包含 `.github/workflows/engine-ci.yml` 本身，否则 CI 改动不会触发审计
-- brain-unit 不带 `--coverage` flag（避免覆盖率检查在无 DB 环境下干扰结果）
+### 下次预防
+
+- [ ] CI 结构拆分时确认 `ci-passed` gate 里所有旧 job 名已替换为新 job 名（本次 7→3）
+- [ ] engine-ci L1 gate 条件：`needs.l1-process.result` 在 push 时为 skipped，需同时允许 skipped
+- [ ] brain-unit 不带 `--coverage` flag，仅 brain-integration 带（避免覆盖率检查在无 DB 环境干扰）
+- [ ] Learning 格式必须包含 `### 根本原因` 和 `### 下次预防` 章节及 `- [ ]` checklist，否则 DevGate Learning Format Gate 会拦截
 
 ### [2026-03-10] isolate:false Batch 1 — 共享 pool.end() 污染（PR #751）
 
