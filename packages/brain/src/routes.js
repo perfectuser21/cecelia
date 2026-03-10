@@ -2774,6 +2774,27 @@ router.post('/execution-callback', async (req, res) => {
       result_summary: (result !== null && typeof result === 'object') ? result.result : result
     };
 
+    // Extract error message for writing to tasks.error_message on failure.
+    // Priority: result.error > result.stderr > body.stderr > body.failure_class > status
+    // Note: typeof null === 'object', so guard result !== null before accessing fields.
+    let taskErrorMessage = null;
+    if (newStatus === 'failed') {
+      const bodyStderr = req.body.stderr;
+      const bodyFailureClass = req.body.failure_class;
+      if (result !== null && typeof result === 'object') {
+        taskErrorMessage = result.error || result.stderr || null;
+        if (taskErrorMessage && typeof taskErrorMessage !== 'string') {
+          taskErrorMessage = JSON.stringify(taskErrorMessage);
+        }
+      }
+      if (!taskErrorMessage) {
+        taskErrorMessage = (bodyStderr && String(bodyStderr))
+          || (bodyFailureClass && String(bodyFailureClass))
+          || status
+          || null;
+      }
+    }
+
     // 3. ATOMIC: DB update + activeProcess cleanup in a single transaction
     //    This eliminates the race window where tick could see stale state.
     const client = await pool.connect();
@@ -2821,6 +2842,14 @@ router.post('/execution-callback', async (req, res) => {
           pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END
         WHERE id = $1 AND status = 'in_progress'
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber]);
+
+      // Write error_message atomically with status update (so auto-learning reads real error)
+      if (taskErrorMessage) {
+        await client.query(
+          'UPDATE tasks SET error_message = $1 WHERE id = $2',
+          [taskErrorMessage, task_id]
+        );
+      }
 
       // Log the execution result
       await client.query(`
@@ -3149,7 +3178,7 @@ router.post('/execution-callback', async (req, res) => {
         // to avoid TypeError when result is null (e.g. claude CLI fails with Spending cap reached)
         const errorMsg = (result !== null && typeof result === 'object')
           ? (result.result || result.error || result.stderr || JSON.stringify(result))
-          : String(result || status);
+          : String(req.body.stderr || result || status);
 
         // Classify the failure
         const { classifyFailure } = await import('./quarantine.js');

@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] execution-callback 写入 error_message（PR #787）
+
+**失败统计**：CI 失败 1 次（DoD grep 转义 + Learning 缺失）
+
+### 根本原因
+
+1. **DoD Test 命令的 `\$1` 转义**：DoD 文件中用 `grep -c 'error_message.*\\$1'` 匹配 SQL 参数 `$1`，在 CI 执行时 grep 报 "Trailing backslash"。含特殊 shell 字符（`$`、`\`）的字符串不适合直接放在 grep pattern 中，应改为搜索更具体但不含转义的静态字符串（如 `'UPDATE tasks SET error_message'`）。
+2. **Bash 工具 cwd 失效**：会话初始 working directory 为已删除的 worktree 路径，导致后续 Bash 工具无法启动。临时解决：用 Write 工具在该路径创建 placeholder 文件让目录重新存在，再用 `git -C /path/` 绝对路径执行 git 操作。
+
+### 下次预防
+
+- [ ] DoD `Test:` 命令中避免含 `$`、`\` 等特殊字符的 grep pattern，改用不含这些字符的等效搜索
+- [ ] 当 Bash tool 报 "Working directory no longer exists" 时，用 Write 工具在该路径创建 `.placeholder` 文件即可恢复
+- [ ] LEARNINGS.md 应在 CI 通过前就写好并推送到功能分支，不要等到 L1 Learning Gate 失败再补
+
 ### [2026-03-10] instruction-book Dashboard 页面（PR #779）
 
 **失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）
