@@ -2102,6 +2102,14 @@ async function probeTaskLiveness() {
       payload: { error_details: errorDetails }
     });
 
+    // Fire-and-forget auto-learning（liveness probe 路径无 execution-callback，需在此补充）
+    import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+      processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+        trigger_source: 'liveness_probe',
+        metadata: { suspect_since: suspect.firstSeen, pid }
+      })
+    ).catch(() => {/* non-fatal */});
+
     actions.push({
       action: 'liveness_auto_fail',
       task_id: task.id,
@@ -2176,6 +2184,14 @@ async function syncOrphanTasksOnStartup() {
         WHERE id = $1`,
         [task.id, JSON.stringify({ error_details: errorDetails })]
       );
+
+      // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
+      import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
+        processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+          trigger_source: 'orphan_detection',
+          metadata: { run_id: runId }
+        })
+      ).catch(() => {/* non-fatal */});
 
       orphansFixed++;
       console.log(`[startup-sync] Orphan fixed: task=${task.id} title="${task.title}" reason=${reason}`);

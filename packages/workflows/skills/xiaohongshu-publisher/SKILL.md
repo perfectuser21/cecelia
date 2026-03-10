@@ -2,10 +2,11 @@
 name: xiaohongshu-publisher
 description: 小红书自动发布工具 - 图文发布（CDP 直连方式）
 trigger: 发布小红书、xiaohongshu、xhs、小红书发布
-version: 1.1.0
+version: 1.2.0
 created: 2026-03-08
 updated: 2026-03-10
 changelog:
+  - 1.2.0: 清理废弃旧脚本（publish-xhs-image.cjs + batch-publish-xhs.sh）
   - 1.1.0: N8N flow 完整接通 Node.js 脚本，生产就绪
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
 ---

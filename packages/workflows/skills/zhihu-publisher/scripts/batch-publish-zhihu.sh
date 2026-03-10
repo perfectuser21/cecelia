@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# 小红书批量发布脚本
-# 用法: bash batch-publish-xhs.sh YYYY-MM-DD
+# 知乎批量发布脚本
+# 用法: bash batch-publish-zhihu.sh [YYYY-MM-DD]
+#
+# 队列目录结构：
+#   ~/.zhihu-queue/YYYY-MM-DD/
+#   ├── article-1/
+#   │   ├── title.txt     # 标题（必需）
+#   │   ├── content.txt   # 正文（必需）
+#   │   └── cover.jpg     # 封面图（可选）
+#   └── article-2/
+#       └── ...
+#
+# 发布完成后在内容目录写入 done.txt，下次运行跳过。
 
 set -euo pipefail
 
 DATE="${1:-$(date +%Y-%m-%d)}"
-QUEUE_DIR="${HOME}/.xhs-queue/${DATE}"
+QUEUE_DIR="${HOME}/.zhihu-queue/${DATE}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_PATH_OVERRIDE="/Users/administrator/perfect21/cecelia/node_modules"
 
 echo "========================================="
-echo " 小红书批量发布 - ${DATE}"
+echo " 知乎批量发布 - ${DATE}"
 echo "========================================="
 echo ""
 
@@ -37,8 +48,10 @@ for content_dir in "${QUEUE_DIR}"/*/; do
   echo "发布 ($count): $(basename "$content_dir")"
   echo ""
 
-  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${SCRIPT_DIR}/publish-xiaohongshu-image.cjs" --content "$content_dir"; then
+  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${SCRIPT_DIR}/publish-zhihu-article.cjs" --content "$content_dir"; then
     success=$((success + 1))
+    # 标记完成，下次跳过
+    touch "${content_dir}done.txt"
     echo ""
     echo "成功: $(basename "$content_dir")"
   else
@@ -48,7 +61,7 @@ for content_dir in "${QUEUE_DIR}"/*/; do
   fi
 
   # 发布间隔，避免触发限流
-  sleep 5
+  sleep 10
 done
 
 echo ""
