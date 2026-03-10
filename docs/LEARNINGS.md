@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI 治理补洞 — frontend 注册 + taxonomy 精化（PR #763）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+Inventory Audit 扫出两类历史欠账：
+1. `frontend/` 目录存在于仓库根部但未注册，Evolution Gate 真空无感知
+2. `apps/api/features/**` 组件测试不在任何 taxonomy pattern 内（15 个盲区文件）
+
+### 下次预防
+
+- [ ] 新增根目录下的顶级目录时（如 `frontend/`、`mobile/`），同步注册到 routing-map.yml
+- [ ] taxonomy Coverage Score 跌破 98% 时，主动检查新增的组件测试目录是否有对应 pattern
+- [ ] `tests/alertness`、`tests/database`、`tests/frontend` 属于孤立测试（无子系统归属），后续需决策：
+     合并到 brain/quality 子系统 or 建立 shared-tests 子系统
+
 ### [2026-03-10] CI Inventory Audit v1 — 存量测试覆盖盘点（PR #762）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次

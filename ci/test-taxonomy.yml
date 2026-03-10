@@ -68,10 +68,13 @@ test_types:
     patterns:
       - "apps/api/test/**"
       - "apps/api/tests/**"
+      - "apps/api/features/**"
+      - "apps/dashboard/src/**"
       - "apps/dashboard/src/test/**"
       - "apps/dashboard/test/**"
+      - "frontend/src/**"
     layer: l3
-    description: "Workspace 前端单元/组件测试"
+    description: "Workspace 前端单元/组件测试（含 apps/api/features 和 frontend 遗留测试）"
 
   # ── Workflow Scripts Tests ────────────────────────────────────────────────
   # Tests for packages/workflows skill scripts (node:test format, .cjs)
