@@ -4528,3 +4528,26 @@ branch-protect.sh 从被修改的文件目录向上递归搜索，找到**第一
 - [ ] 新建脚本文件作为可执行入口时，必须用 `if (require.main === module) { main(); }` 保护，防止测试 require 时执行
 - [ ] 在 monorepo 子包目录写代码时，如果中间目录已有 `.prd.md`，在那个目录再放分支专属 PRD/DoD
 - [ ] CI 的 PRD/DoD gate 从仓库根目录查找——worktree 根目录的 `.prd-*.md` 必须 git add + commit，不能只在工作目录存在
+
+## PR #793 快手新 API 方案 — CDP Cookie + HTTP 直接调用（2026-03-10）
+
+### 根本原因
+
+快手图文 CDP UI 自动化方案（页面点击填表）受页面结构变动影响，稳定性差。与 PR #784 微博方案一脉相承：CDP 只用于提取已登录的 Cookie，发布动作改为直接调用快手 CP 内部 REST API（`cp.kuaishou.com/rest/cp/works/upload/photo/token` 获取上传 token + `cp.kuaishou.com/rest/cp/works/photo/new` 发布），绕开 UI 自动化的脆弱性。
+
+### 什么有效
+
+- `require.main === module` 保护：防止单元测试 `require('../publish-kuaishou-api.cjs')` 时执行 `main()`
+- 纯函数抽取（`parseCookieHeader`, `isSessionValid`, `isLoginError`, `isRateLimit`, `buildImageUploadForm`, `parseKuaishouResponse`）：46 个单元测试全绿
+- 快手 CP 会话 Cookie 识别：`kuaishou.web.cp.api_st`（短期 token）或 `kuaishou.web.cp.api_ph`（持久 token）二者之一即视为有效会话
+- `parseKuaishouResponse` 同时支持 `result=1`、`code=200`、`code="200"`、`status="success"` 四种响应格式
+
+### 根目录 PRD/DoD 必须 git add
+
+branch-protect.sh 和 CI check-prd.sh 策略不同：前者就近找，后者只认仓库根目录。worktree 根目录的 `.prd-*.md` / `.dod-*.md` **必须 git add + commit** 进功能分支，否则 CI L1 报 "PRD 文件缺失" 和 "DoD 文件缺失"。
+
+### 下次预防
+
+- [ ] 每次 /dev 流程，在 Step 3 创建分支时立即 `git add .prd-*.md .dod-*.md`（哪怕文件已 stage，先 add 再 commit 绑定到功能分支第一次提交里）
+- [ ] CI L1 失败的第一反应：检查根目录 PRD/DoD 文件是否在 git 里（`git ls-files .prd-*.md .dod-*.md`）
+- [ ] 新建脚本文件时同步写单元测试，保证 `parseXxxResponse`、`isLoginError` 等纯函数均有覆盖
