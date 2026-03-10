@@ -2,10 +2,11 @@
 name: weibo-publisher
 description: 微博自动发布工具 - 图文发布（生产就绪）
 trigger: 发布微博、weibo、微博发布
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-07
-updated: 2026-03-07
+updated: 2026-03-10
 changelog:
+  - 1.3.0: 新增 API 方案（publish-weibo-api.cjs）— CDP 提取 Cookie + HTTP 直接调用，不触发验证码
   - 1.2.0: 修复 Windows 路径 Bug（移除多余的 images/ 子目录），使用 utils.cjs 工具函数
   - 1.1.0: 提取 CDPClient 为独立可测试模块，增加单元测试覆盖率
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式，含滑块验证码自动处理
@@ -13,7 +14,16 @@ changelog:
 
 # Weibo Publisher
 
-微博自动发布工具 - 图文内容，Mac mini 直连 CDP 方式，含验证码自动处理
+微博自动发布工具 - 图文内容，支持两种发布方案
+
+## 方案对比
+
+| 方案 | 脚本 | 原理 | 优势 | 劣势 |
+|------|------|------|------|------|
+| CDP 自动化（旧） | `publish-weibo-image.cjs` | CDP 控制浏览器 UI | 不需了解 API | 触发验证码、受页面改版影响 |
+| 新 API 方案 | `publish-weibo-api.cjs` | CDP 提取 Cookie → HTTP 直接调用 | 稳定、快速、不触发验证码 | 依赖内部 API 格式不变 |
+
+**推荐使用新 API 方案**（publish-weibo-api.cjs）。
 
 ## 架构
 
@@ -33,13 +43,23 @@ Windows PC (100.97.242.124:19227)
 
 ## 支持类型
 
-| 类型 | 脚本 | 状态 |
-|------|------|------|
-| 图文 | `scripts/publish-weibo-image.cjs` | ✅ |
+| 类型 | 脚本 | 状态 | 说明 |
+|------|------|------|------|
+| 图文（新 API） | `scripts/publish-weibo-api.cjs` | ✅ 推荐 | Cookie + HTTP API，不触发验证码 |
+| 图文（CDP 旧方案） | `scripts/publish-weibo-image.cjs` | ✅ 备用 | 浏览器 UI 自动化 |
 
 ## 使用方式
 
-### 单条发布
+### 新 API 方案（推荐）
+
+```bash
+# 单条发布
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/weibo-publisher/scripts/publish-weibo-api.cjs \
+  --content ~/.weibo-queue/2026-03-07/image-1/
+```
+
+### 旧 CDP 方案（备用）
 
 ```bash
 NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
