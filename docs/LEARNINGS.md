@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] 快手批量发布接入新 API — PR 合并后任务重派发、DoD 未勾选（PR #799）
+
+**失败统计**：L1 CI 失败 1 次（DoD 未勾选 `[x]` + LEARNINGS 缺失）
+
+### 根本原因
+
+1. **任务重派发**：Brain 调度的任务（cp-03080900-kuaishou-oauth）PR #793 已实现主要功能，但 Brain 因 task status 未更新而重派发。新 worktree 对应任务的实际价值是修复 batch 脚本仍用旧方案的遗漏。
+2. **DoD 未勾选**：本地验证完成后忘记将 `- [ ]` 改为 `- [x]`，CI DoD Gate 报"未验证"错误。
+3. **LEARNINGS 未随首次 push 提交**：Learning Format Gate 在 L1，首次 push 必须包含 LEARNINGS 内容。
+
+### 下次预防
+
+- [ ] 本地验证通过后**立即**将 DoD 中 `- [ ]` 改为 `- [x]`，commit 前检查
+- [ ] LEARNINGS.md 必须在第一次 push 前写入并提交
+- [ ] Brain 重派发检测：执行前先查 `gh pr list --state merged` 确认相关 PR 是否已合并，避免重复开发
+
 ### [2026-03-10] cortex _reflectionState 过期条目单测补充 — DoD echo 假测试 + 未勾选验收项（PR #796）
 
 **失败统计**：L1 CI 失败 1 次（D5 Test 用 `ls && echo OK` 假测试 + D3/D4/D5 未勾选 + LEARNINGS 缺失）
