@@ -1,5 +1,18 @@
 # Development Learnings
 
+## [2026-03-10] Brain 任务重复派发 — 代码已修但任务仍在队列 (PR #800)
+
+### 根本原因
+Brain 在 2026-03-08 生成了「修复 cortex _reflectionState 不检查过期」任务，但 PR #791（代码修复）和 PR #796（D5 单测）已先行合并，任务状态未同步更新。导致 Brain 重新派发时该任务已是 done 状态，但 Brain 队列仍有记录。
+
+### 下次预防
+- [ ] PR 合并后如果对应 Brain 任务存在，自动调用 `PATCH /api/brain/tasks/:id` 将状态更新为 `completed`
+- [ ] Brain 派发任务时检测相关 PR 是否已合并（通过 PR title/branch 比对）
+- [ ] DoD 中已完成的 D1-D6 条目也必须提供 `Test:` 字段（指向对应测试文件路径）
+
+### Technical Note
+`_loadReflectionStateFromDB()` 过期检查逻辑：使用 `lastSeen ?? firstSeen` 作为滑动窗口起点，超过 `REFLECTION_WINDOW_MS`（30 分钟）则跳过加载并 DELETE from DB。本 PR 补充了启动清理时的可观测性日志。
+
 ## [2026-03-08] cortex 输出去重熔断 — 阻断皮层回声室 (PR #700)
 
 ### Problem

@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] Brain 任务重复派发 + DoD 已完成项也需要 Test 字段（PR #800）
+
+**失败统计**：L1 CI 失败 2 次（DoD Test 格式 + Learning 路径错误）
+
+### 根本原因
+
+1. **任务重派发**：Brain 在 PR #791（代码修复）和 #796（D5 单测）合并后仍重派发此任务，因任务状态未同步更新。
+2. **DoD 已完成项也需要 Test 字段**：D1-D6 标注为 `- [x]` 但缺少 `Test:` 字段，CI DoD Gate 报"缺少 Test 字段"错误。
+3. **DoD Test 路径格式**：`tests/packages/brain/src/__tests__/...` 不被识别为有效测试路径（文件不存在），应用 `manual:bash -c "grep -c ..."` 替代。
+4. **Learning 路径错误**：应更新根目录 `docs/LEARNINGS.md`，而非 `packages/brain/docs/LEARNINGS.md`。
+
+### 下次预防
+
+- [ ] DoD 中所有验收项（含 `- [x]` 已完成项）都必须有 `Test:` 字段
+- [ ] `tests/...` 路径格式要求文件必须在 `tests/` 目录下；对于 `__tests__/` 目录下的测试，改用 `manual:bash -c "grep -c 'describe' path/to/test.js"`
+- [ ] LEARNINGS.md 更新路径是根目录 `docs/LEARNINGS.md`，不是子包目录
+- [ ] 首次 push 前检查：`git diff origin/main...HEAD -- docs/LEARNINGS.md | grep '^+'` 确认有内容
 ### [2026-03-10] 小红书脚本清理 — worktree vs 主仓库操作陷阱（PR #798）
 
 **失败统计**：L1 CI 失败 2 次（PRD 格式错误 + Learning 缺失）
