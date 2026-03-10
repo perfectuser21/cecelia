@@ -1,0 +1,87 @@
+---
+# ci/routing-map.yml
+# CI Evolution Gate — Subsystem Routing Registry
+#
+# PURPOSE: Defines every known subsystem and its CI routing.
+# When a new directory appears under packages/ or apps/ that is NOT listed
+# here, the CI Evolution Gate will FAIL with a clear registration error.
+#
+# HOW TO ADD A NEW SUBSYSTEM:
+#   1. Add an entry below with the correct root path
+#   2. Specify which CI layers should cover it (l1/l2/l3/l4)
+#   3. Set deploy: true if it produces a deployable artifact
+#   4. Run: node scripts/ci-evolution-check.mjs to verify locally
+#
+# NEVER set ci_exempt: true unless the directory contains zero executable code.
+
+version: "1.0.0"
+
+subsystems:
+
+  # ── Backend ──────────────────────────────────────────────────────────────
+
+  brain:
+    root: packages/brain
+    paths:
+      - packages/brain/**
+      - DEFINITION.md
+      - .brain-versions
+    layers: [l2, l3, l4]
+    deploy: true
+    local_precheck: true
+    description: "Brain 后端（调度/决策/保护，端口 5221）"
+
+  # ── Development Toolchain ─────────────────────────────────────────────────
+
+  engine:
+    root: packages/engine
+    paths:
+      - packages/engine/**
+    layers: [l1, l2, l3]
+    deploy: false
+    description: "开发工作流引擎（hooks/skills/DevGate）"
+
+  # ── Frontend Applications ─────────────────────────────────────────────────
+  # apps/* subdirectories must be explicitly listed here.
+  # Adding a new app without registering it will fail the Evolution Gate.
+
+  workspace:
+    roots:
+      - apps/api
+      - apps/dashboard
+    paths:
+      - apps/**
+    layers: [l1, l3]
+    deploy: true
+    description: "Workspace 前端（API 层 + React Dashboard）"
+
+  # ── Quality & Testing ─────────────────────────────────────────────────────
+
+  quality:
+    root: packages/quality
+    paths:
+      - packages/quality/**
+    layers: [l1, l3]
+    deploy: false
+    description: "QA 基础设施、回归契约"
+
+  # ── Agent Workflows ───────────────────────────────────────────────────────
+
+  workflows:
+    root: packages/workflows
+    paths:
+      - packages/workflows/**
+    layers: [l1, l3]
+    deploy: false
+    description: "Agent 协议 + N8N 配置"
+
+  # ── Data / Config (CI-exempt) ─────────────────────────────────────────────
+
+  config:
+    root: packages/config
+    paths:
+      - packages/config/**
+    layers: []
+    deploy: false
+    ci_exempt: true
+    description: "纯数据目录（OKR validation spec），无可执行代码，无 CI 路由"
