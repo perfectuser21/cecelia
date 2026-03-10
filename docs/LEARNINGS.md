@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI Inventory Audit v1 — 存量测试覆盖盘点（PR #762）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+Evolution Gate 守住了增量，但没有扫清历史欠账。
+514 个测试文件中有 22 个无 taxonomy 匹配（4%），18 个不在任何注册子系统下。
+主要盲区：`frontend/` 目录（8 个测试）从未注册到 routing-map.yml。
+
+### 下次预防
+
+- [ ] 审计脚本 `node scripts/ci-inventory-audit.mjs` 建议在每次 Sprint 开始前跑一次
+- [ ] `workspace` 子系统的 `apps/api/features/**` 组件测试需在 test-taxonomy 补 pattern
+- [ ] `brain` 声明了 l4 层但无实际 l4 测试文件——属于 routing-map 声明过于乐观，需修订
+- [ ] glob 模式匹配要同时测试直接路径（`foo/bar.test.ts`）和目录前缀（`foo/bar/**`）两种形式
+
 ### [2026-03-10] CI Evolution Gate v1 — 检测未注册子系统和测试分类（PR #761）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
