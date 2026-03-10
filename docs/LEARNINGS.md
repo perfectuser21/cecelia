@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI Evolution Gate v1 — 检测未注册子系统和测试分类（PR #761）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+当开发者新增 `packages/*` 或 `apps/*` 目录时，CI 路由不会自动感知，新子系统可能悄悄绕过 L2/L3/L4 检查，成为"盲点"。
+同理，新增测试目录（如 `tests/performance/`）若无分类，CI 不知道应该在哪层运行它。
+
+### 下次预防
+
+- [ ] 新增 `packages/*` 或 `apps/*` 目录时，**必须先**更新 `ci/routing-map.yml`，否则 L2 Evolution Check 报错拦截
+- [ ] 新增命名测试目录（`tests/`、`e2e/` 等）时，更新 `ci/test-taxonomy.yml` 并指定 l3/l4 层
+- [ ] `config` 类纯数据目录加 `ci_exempt: true` 避免误触发
+- [ ] script 的 `isTestDirCovered` 需剥离 `/**` 后缀后再做 regex 匹配，否则目录本身无法匹配 `foo/**` 模式
+
 ### [2026-03-10] CI V4 审计修复 R2+R3 — push 路由精化 + Engine local-precheck（PR #760）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
