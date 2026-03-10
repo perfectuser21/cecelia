@@ -4640,6 +4640,26 @@ router.post('/goal/compare', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/projects/compare/report
+ * 跨项目对比报告生成
+ * Body: { project_ids: string[], format?: 'json'|'markdown', include_tasks?: boolean }
+ */
+router.post('/projects/compare/report', async (req, res) => {
+  try {
+    const { project_ids, format = 'json', include_tasks = false } = req.body;
+    const { generateCompareReport } = await import('./project-compare.js');
+    const report = await generateCompareReport({ project_ids, format, include_tasks });
+    res.json(report);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({
+      success: false,
+      error: err.message,
+    });
+  }
+});
+
+/**
  * POST /api/brain/decide
  * Generate decision based on current state
  */
