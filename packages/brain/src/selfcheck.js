@@ -14,8 +14,8 @@
 
 import crypto from 'crypto';
 
-/** Must match the highest migration version in migrations/ */
-export const EXPECTED_SCHEMA_VERSION = '141';
+/** Minimum acceptable migration version (DB must be >= this) */
+export const EXPECTED_SCHEMA_VERSION = '142';
 
 const CORE_TABLES = [
   'tasks',
@@ -113,18 +113,21 @@ export async function runSelfCheck(pool, opts = {}) {
     record('Core Tables', false, err.message);
   }
 
-  // 5. Schema version must be >= expected (only pure numeric migration versions, ignore dirty data)
-  //    Using >= instead of === allows DB to have newer migrations without crashing Brain.
+  // 5. Schema version matches expected (only pure numeric migration versions, ignore dirty data)
   try {
     const { rows } = await pool.query(
       `SELECT MAX(version) AS max_ver FROM schema_version WHERE version ~ '^[0-9]{1,4}$'`
     );
     const maxVer = rows[0]?.max_ver;
-    const versionOk = maxVer != null && parseInt(maxVer, 10) >= parseInt(EXPECTED_SCHEMA_VERSION, 10);
+    const dbVerNum = parseInt(maxVer, 10);
+    const expectedVerNum = parseInt(EXPECTED_SCHEMA_VERSION, 10);
+    const versionOk = !isNaN(dbVerNum) && dbVerNum >= expectedVerNum;
     record(
       'Schema Version',
       versionOk,
-      `DB="${maxVer}" expected>="${EXPECTED_SCHEMA_VERSION}"`
+      versionOk
+        ? `DB="${maxVer}" >= expected="${EXPECTED_SCHEMA_VERSION}"`
+        : `DB="${maxVer}" is behind expected="${EXPECTED_SCHEMA_VERSION}" — run migrations`
     );
   } catch (err) {
     record('Schema Version', false, err.message);
