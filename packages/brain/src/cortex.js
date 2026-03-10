@@ -197,7 +197,10 @@ async function _loadReflectionStateFromDB() {
       const hash = row.key.replace('cortex_reflection:', '');
       const val = row.value_json;
       if (val && typeof val.count === 'number') {
-        if (now - val.firstSeen > REFLECTION_WINDOW_MS) {
+        // 使用 lastSeen 作为滑动窗口起点：超过 30min 未活跃则过期
+        // 向下兼容旧 DB 条目（无 lastSeen 字段时 fallback 到 firstSeen）
+        const lastActivity = val.lastSeen ?? val.firstSeen;
+        if (now - lastActivity > REFLECTION_WINDOW_MS) {
           expiredKeys.push(row.key);
         } else {
           _reflectionState.set(hash, {
@@ -304,7 +307,10 @@ async function _checkReflectionBreaker(hash) {
   const now = Date.now();
   const state = _reflectionState.get(hash);
 
-  if (!state || now - state.firstSeen > REFLECTION_WINDOW_MS) {
+  // 使用 lastSeen 作为滑动窗口判断：超过 30min 未活跃则重置熔断器
+  // 向下兼容旧内存条目（无 lastSeen 时 fallback 到 firstSeen）
+  const lastActivity = state?.lastSeen ?? state?.firstSeen ?? 0;
+  if (!state || now - lastActivity > REFLECTION_WINDOW_MS) {
     const newState = { count: 1, firstSeen: now, lastSeen: now };
     _reflectionState.set(hash, newState);
     await _persistReflectionEntry(hash, newState);
