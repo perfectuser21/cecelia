@@ -4112,6 +4112,22 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 
 ### [2026-03-10] R7 修复 — 统一分支命名规范（PR #758）
 
+**失败统计**：CI 失败 3 次（[CONFIG] 标签缺失 + Engine 版本文件未同步 + LEARNINGS 格式）
+
+### 根本原因
+
+本地 branch-protect Hook 接受 `feature/*` 分支（历史遗留），但 CI L1 `verify-dev-workflow` 从未接受 `feature/*`（只接受 `cp-YYYYMMDD-*`）。导致 feature/ 分支本地通过、CI 拒绝的不一致。
+
+修改 `packages/engine/hooks/` 属于 critical config 改动，必须加 [CONFIG] 标签。Engine 版本 bump 需同步 6 个文件。
+
+### 下次预防
+
+- [ ] 修改 branch-protect.sh 必须同时检查 CI L1 正则是否一致
+- [ ] Engine hook 改动 = critical config，PR 标题必须带 [CONFIG] 或 [INFRA]
+- [ ] Engine 版本 bump 必须同步 6 个文件（package.json/lock/VERSION/.hook-core-version/regression-contract.yaml/feature-registry.yml）
+
+---
+
 ### [2026-03-10] R1 修复 — CI 文件改动触发 Config Audit（PR #759）
 
 **失败统计**：CI 失败 0 次
