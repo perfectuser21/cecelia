@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] instruction-book Dashboard 页面（PR #779）
+
+**失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）
+
+### 根本原因
+
+1. **PRD/DoD 文件未提交**：`git add` 时忘记包含 `.prd-*.md` 和 `.dod-*.md` 文件，CI `check-prd.sh` 和 `check-dod-mapping.cjs` 都在 checkout 后的仓库中找不到文件。
+2. **DoD 测试使用 `curl localhost:5221`**：CI runner 没有运行 Brain 服务，curl 返回空响应，JSON.parse 报 `Unexpected end of JSON input`。运行时 API 测试不适合放在 DoD 里，应改为文件存在性或代码内容检查。
+
+### 下次预防
+
+- [ ] PRD/DoD 文件创建后立即 `git add` 并提交，不能留在 untracked 状态
+- [ ] DoD 的 Test: 命令只能用 CI 环境能执行的命令：`grep`、`ls`、`node -e`（读文件）。**不能** 用 `curl localhost:{port}` —— CI 没有运行中的服务
+- [ ] 需要验证 API 返回值的，改为验证代码实现（`grep -q 'function_name' source.js`）
+
 ### [2026-03-10] instruction-book 基础结构建立（PR #776）
 
 **失败统计**：CI 失败 1 次（DoD 格式 + Engine L2 版本检查）
