@@ -17,6 +17,36 @@ Cortex 反思拿到的是 null 字段，RCA 无任何上下文可用。
 - [ ] `blocked_detail` 是 JSONB 列，插入前必须 `JSON.stringify()`，不能直接传 JS 对象（参见 MEMORY 记录）
 - [ ] migration 编号冲突检查：`ls packages/brain/migrations/NNN_*.sql` 确认不重号后再建文件
 
+### [2026-03-10] instruction-book Dashboard 页面（PR #779）
+
+**失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）
+
+### 根本原因
+
+1. **PRD/DoD 文件未提交**：`git add` 时忘记包含 `.prd-*.md` 和 `.dod-*.md` 文件，CI `check-prd.sh` 和 `check-dod-mapping.cjs` 都在 checkout 后的仓库中找不到文件。
+2. **DoD 测试使用 `curl localhost:5221`**：CI runner 没有运行 Brain 服务，curl 返回空响应，JSON.parse 报 `Unexpected end of JSON input`。运行时 API 测试不适合放在 DoD 里，应改为文件存在性或代码内容检查。
+
+### 下次预防
+
+- [ ] PRD/DoD 文件创建后立即 `git add` 并提交，不能留在 untracked 状态
+- [ ] DoD 的 Test: 命令只能用 CI 环境能执行的命令：`grep`、`ls`、`node -e`（读文件）。**不能** 用 `curl localhost:{port}` —— CI 没有运行中的服务
+- [ ] 需要验证 API 返回值的，改为验证代码实现（`grep -q 'function_name' source.js`）
+
+### [2026-03-10] instruction-book 基础结构建立（PR #776）
+
+**失败统计**：CI 失败 1 次（DoD 格式 + Engine L2 版本检查）
+
+### 根本原因
+
+1. **DoD `Test:` 格式**：`check-dod-mapping.cjs` 要求 `Test:` 在验收项的**下一行**，缩进 2 空格。写在同行或缺少正确缩进会被识别为"缺少 Test 字段"。
+2. **修改 `packages/engine/skills/` 触发版本检查**：Engine L2 要求修改 engine 文件时版本要 bump，并且 PR title 需含 `[CONFIG]` 或 `[INFRA]`。纯文档改动应**只放在 `docs/` 目录**，不触碰 `packages/engine/`，避免触发额外 CI 要求。
+
+### 下次预防
+
+- [ ] 如果改动只是 `docs/` 目录的纯文档（不涉及代码/config），不要同时修改 `packages/engine/` 下的文件，避免触发 Engine CI 的版本/[CONFIG] 检查
+- [ ] 修改 `packages/engine/skills/` 时，PR title 必须含 `[CONFIG]`，并同步更新 `feature-registry.yml` + 重新生成 path views
+- [ ] DoD `Test:` 字段必须在验收项下一行，缩进 2 空格，格式：`  Test:\n  manual:bash -c "..."`
+
 ### [2026-03-10] vitest isolate:false 模块缓存污染 — focus + pr-progress mock 修复（PR #771）
 
 **失败统计**：L4 CI 失败 23 次（focus 16 次 + pr-progress 7 次），本地单独运行均通过
@@ -35,6 +65,21 @@ Cortex 反思拿到的是 null 字段，RCA 无任何上下文可用。
 - [ ] 不要在 isolate:false 环境中混用静态 `vi.mock` 和 `vi.resetModules`（在不同文件中）
 - [ ] DoD `Test:` 字段中不要用 `npx vitest run ... | grep` 命令（CI 无 DB 时 grep 会因测试失败返回 exit 1）；改用 `grep -q` 验证源文件内容
 - [ ] DoD 的 `manual:` 命令必须在 CI 环境（无 PostgreSQL）也能 exit 0；只用 grep/ls/cat 验证静态内容
+
+### [2026-03-10] autoCreateTasksFromCortex — 皮层建议自动转 Brain 任务（PR #772）
+
+**失败统计**：CI 失败 2 次（L1 Learning + L2 DEFINITION.md 未同步），本地测试 7/7 通过
+
+### 根本原因
+
+1. **DEFINITION.md 未同步**：`facts-check.mjs` 的 `cortex_extra_actions` 检查代码行中条目数量（正则 `{dangerous:...}`），新增 `create_task` 使计数从 3 变 4，但 DEFINITION.md 仍写 "3 个 action"。每次改 `CORTEX_ACTION_WHITELIST` 必须同步更新 DEFINITION.md。
+2. **本地 facts-check 未检出**：本地跑 `facts-check.mjs` 通过是因为本地已有 PR #771 的 merged 状态，CI 跑的是 base main（稍旧）。实际上 facts-check.mjs 直接对比代码计数与 DEFINITION.md，本地也应该失败，需要确认本地环境一致性。
+
+### 下次预防
+
+- [ ] 修改 `CORTEX_ACTION_WHITELIST` 时必须同步更新 DEFINITION.md 第 310 行的 action 数量和列表
+- [ ] 每次 PR 前检查：`grep 'extra.*action' DEFINITION.md` 与 `grep -c "dangerous:" src/cortex.js`（CORTEX_ACTION_WHITELIST 中 extra 的计数）是否一致
+- [ ] Learning 条目必须在 push 之前加好，不要等 CI 提醒
 
 ### [2026-03-10] CI 治理补洞 — frontend 注册 + taxonomy 精化（PR #763）
 
@@ -4354,3 +4399,81 @@ PR #768 在 createTask() 末尾追加了 delivery_type 参数，导致 `params` 
 - [ ] 在 SQL INSERT params 数组末尾追加新参数时，必须同步搜索 `params.length - 1` / `params[params.length` 相关测试并更新索引
 - [ ] 测试注释应标注参数结构（如 `// [...commonParams(11), domain($12), delivery_type($13)]`），让后续修改者立即看到偏移量
 - [ ] PR #768 的 DoD 条目应加：检查是否有测试用 params.length 索引断言末尾参数
+
+## PR #774 cecelia-bridge 超时配置 + degraded 降级修复（2026-03-10）
+
+### 根本原因
+
+cecelia-bridge 的超时时间硬编码为固定值，无法通过环境变量调整。Brain 在慢任务场景下频繁触发 ETIMEDOUT，但 bridge 返回 HTTP 500，导致 llm-caller.js 将超时误判为普通 LLM 错误而非 degraded 状态，cortex.js 无法正确记录 error_message 并触发合适的重试/降级策略。
+根因：超时处理路径缺乏分层设计——bridge 层、llm-caller 层、cortex 层各自独立，没有统一的 degraded 信号传递机制。
+
+### 下次预防
+
+- [ ] DoD 中 Test 命令不能包含 `echo`（包括 `&& echo OK` 结尾），CI 会拦截，改用 `grep -q` 直接退出码判断
+- [ ] `manual:bash -c "..."` 格式在 CI 实际执行，路径必须用相对于项目根目录的路径，不能用绝对路径（CI 机器路径不同）
+- [ ] 新增跨层功能时，必须在 DoD 中为每一层（bridge/llm-caller/cortex）分别声明 Test，并覆盖信号传递链
+
+## PR #783 新增 POST /api/brain/projects/compare/report（2026-03-10）
+
+### 根本原因
+
+CI 失败 2 次：
+1. **PRD 缺少 `## 成功标准` 章节标题**：check-prd.sh 要求 PRD 必须包含二级标题 `## 成功标准`（而不是粗体 `**成功标准**:`），格式不匹配被拦截。
+2. **DoD Test 命令含 `grep -q ... && echo OK`**：check-dod-mapping.cjs 检测到 `echo OK` 判断为假测试并拦截。`node -e require(...)` 在 CI 无 dotenv 依赖时失败。
+
+### 下次预防
+
+- [ ] PRD 的成功标准必须用二级标题 `## 成功标准`，不能用粗体 `**成功标准**:`
+- [ ] DoD Test 命令禁止 `grep -q ... && echo OK`，改用 `grep -c ...`（grep -c 输出数字，非零即 exit 0）
+- [ ] DoD 中验证"函数被导出"不能用 `node -e require(...)`（CI 无完整依赖），改用 `grep -c 'export.*FunctionName' file.js`
+
+## PR #777 selfcheck >= 版本检查（2026-03-10）
+
+### 根本原因
+
+selfcheck.js 用精确匹配（`===`）检查 DB schema version。每当有新 migration 合并到 DB 后，Brain 就会因 schema version 不匹配而拒绝启动，LaunchDaemon 的 KeepAlive 导致无限重启循环，只能人工干预（直接 sed 修改代码）才能恢复。
+另外：migration 142 文件（142_tasks_error_message.sql）从 worktree 泄漏到主仓库 untracked 状态，被 DB 实际应用但未进入 git，导致代码和 DB 版本长期不一致。
+
+### 下次预防
+
+- [ ] selfcheck 版本检查应始终用 `>=`，不用精确匹配——DB 可以领先代码，代码不应拒绝更新的 DB
+- [ ] EXPECTED_SCHEMA_VERSION 含义改为"最低可接受版本"，注释需反映这一点
+- [ ] 新增 migration 文件时务必立即检查主仓库状态（`git status packages/brain/migrations/`），防止 untracked migration 文件流入 DB 但不进 git
+- [ ] DEFINITION.md 中 schema_version 有两处引用，新增 migration 时两处都要同步
+
+## PR #778 selfcheck schema version >= 检查防崩溃循环（2026-03-10）
+
+### 根本原因
+
+selfcheck.js 用精确匹配（`===`）校验 schema version，只要 DB 已应用比 EXPECTED_SCHEMA_VERSION 更新的 migration，Brain 就拒绝启动并 exit(1)，造成无限崩溃循环。版本比较语义错误：应为"至少达到预期版本"而非"精确等于"。
+
+### 下次预防
+
+- [ ] schema version 检查始终使用 `>=`（parseInt 比较），不用 `===`，允许 DB 超前
+- [ ] selfcheck.test.js 保持"DB 版本超前时仍 PASS"的测试用例，防止回归
+- [ ] DoD Test 命令禁止 `echo`（包括 `&& echo OK`），直接用 `grep -q` 的退出码
+
+## PR #781 超时任务自动 requeue（2026-03-10）
+
+### 根本原因
+
+`autoFailTimedOutTasks()` 在任务超时（>60min）后直接标记 `status=failed`，导致任务永远卡在 failed 状态，不会重试。Brain 系统已经有 `FAILURE_THRESHOLD=3` 的隔离机制（在 `handleTaskFailure()` 中），但 `autoFailTimedOutTasks` 绕过了这个机制——直接 fail 而不是让 quarantine 系统决定是否需要重试。
+根因：`autoFailTimedOutTasks` 的"不隔离"分支使用了 `updateTask({status:'failed'})`，而正确行为应是 `status='queued'`（重排队重试）。
+
+### 下次预防
+
+- [ ] 任何"任务失败处理"代码必须经过 `handleTaskFailure()` 判断，不要直接 `status=failed`
+- [ ] 修改任务状态逻辑时，检查是否清空了 `started_at`——不清空会导致重排队后立即被判为超时
+- [ ] 超时处理的 action 名称要能区分"失败"和"重排队"（`auto-fail-timeout` vs `auto-requeue-timeout`）
+
+## PR #782 Tick 健康监控自动恢复（2026-03-10）
+
+### 根本原因
+
+`initTickLoop()` 启动时若 working_memory 中 `tick_enabled=false`，直接跳过启动。`disableTick()` 没有记录 disabled 的时间戳，Brain 不知道 tick 被关掉了多久。导致任何一次熔断、告警触发 tick disable 之后，Brain 重启后都保持 disabled，需要人工 enable。
+
+### 下次预防
+
+- [ ] `disableTick()` 写入时必须同时记录 `disabled_at` 时间戳，任何 disable 操作都要带时间
+- [ ] `initTickLoop()` 的 disabled 分支必须有超时自动恢复逻辑，不能无限保持 disabled
+- [ ] 自动恢复阈值 `TICK_AUTO_RECOVER_MINUTES` 可通过环境变量覆盖，便于调试

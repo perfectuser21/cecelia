@@ -6,6 +6,7 @@ const { execSync, exec } = require('child_process');
 
 const PORT = process.env.BRIDGE_PORT || 3457;
 const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
+const BRIDGE_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/trigger-cecelia') {
@@ -70,11 +71,12 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        const timeoutMs = Math.min(timeout || 90000, 180000);
+        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, BRIDGE_TIMEOUT_MS);
         const claudeBin = '/Users/administrator/.local/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
         const startTime = Date.now();
+        let timedOut = false;
         const { spawn } = require('child_process');
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
@@ -98,12 +100,20 @@ const server = http.createServer((req, res) => {
         child.stderr.on('data', d => stderr += d);
 
         const timer = setTimeout(() => {
+          timedOut = true;
           child.kill('SIGTERM');
         }, timeoutMs);
 
         child.on('close', (code) => {
           clearTimeout(timer);
           const elapsed = Date.now() - startTime;
+
+          if (timedOut) {
+            console.warn(`[bridge] /llm-call timeout after ${elapsed}ms model=${modelArg} - returning degraded response`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, status: 'timeout', degraded: true, message: 'LLM call timed out', elapsed_ms: elapsed }));
+            return;
+          }
 
           if (code !== 0) {
             console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code}: ${stderr.slice(0, 200)}`);

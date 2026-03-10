@@ -30,6 +30,7 @@ import {
   checkShouldCreateRCA,
 } from './cortex-quality.js';
 import { validatePolicyJson } from './policy-validator.js';
+import { recordFailure } from './circuit-breaker.js';
 
 // ============================================================
 // Cortex Prompt
@@ -164,6 +165,7 @@ const CORTEX_ACTION_WHITELIST = {
   'adjust_strategy': { dangerous: true, description: '调整系统策略参数' },
   'record_learning': { dangerous: false, description: '记录学习到的经验' },
   'create_rca_report': { dangerous: false, description: '创建根因分析报告' },
+  'create_task': { dangerous: false, description: '创建 Brain 任务（皮层建议）' },
 };
 
 // ============================================================
@@ -413,7 +415,8 @@ async function _checkOutputDedup(hash) {
  * @returns {Promise<string>}
  */
 async function callCortexLLM(prompt) {
-  const { text } = await callLLM('cortex', prompt, { timeout: 90000, maxTokens: 4096 });
+  const cortexTimeout = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
+  const { text } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
   return text;
 }
 
@@ -649,6 +652,19 @@ async function analyzeDeep(event, thalamusDecision = null) {
   } catch (err) {
     console.error('[cortex] Deep analysis failed:', err.message);
     await recordLLMError('cortex', err, { event_type: event.type });
+    // 超时事件计入熔断器（防止无效重试）
+    if (err.degraded === true || /timed out/i.test(err.message)) {
+      await recordFailure('cortex-llm').catch(() => {});
+      // 写入任务 error_message（如果事件关联了具体任务）
+      if (event.task_id) {
+        try {
+          await pool.query(
+            `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`,
+            [`Cortex timeout: ${err.message}`, event.task_id]
+          );
+        } catch { /* 非关键路径，忽略错误 */ }
+      }
+    }
     return createCortexFallback(event, err.message);
   }
 }

@@ -6,7 +6,7 @@
 import crypto from 'crypto';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
-import { updateTask } from './actions.js';
+import { updateTask, createTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
 import { calculateSlotBudget } from './slot-allocator.js';
 import { compareGoalProgress, generateDecision, executeDecision, splitActionsBySafety } from './decision.js';
@@ -58,6 +58,9 @@ const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_I
 const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
 const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
 const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
+
+// Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
+const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '30', 10);
 
 // 后台恢复配置（initTickLoop 所有重试耗尽后使用）
 const INIT_RECOVERY_INTERVAL_MS = parseInt(
@@ -433,7 +436,37 @@ async function initTickLoop() {
       console.log('[tick-loop] Tick is enabled in DB, starting loop on startup');
       startTickLoop();
     } else {
-      console.log('[tick-loop] Tick is disabled in DB, not starting loop');
+      // Check if tick has been disabled for too long — auto-recover
+      const tickMem = await pool.query(
+        `SELECT value_json FROM working_memory WHERE key = $1`,
+        [TICK_ENABLED_KEY]
+      );
+      const tickData = tickMem.rows[0]?.value_json || {};
+      const disabledAt = tickData.disabled_at ? new Date(tickData.disabled_at) : null;
+      const minutesDisabled = disabledAt
+        ? (Date.now() - disabledAt.getTime()) / (1000 * 60)
+        : Infinity; // no timestamp = unknown, treat as expired
+
+      if (minutesDisabled >= TICK_AUTO_RECOVER_MINUTES) {
+        console.warn(`[tick-loop] Tick disabled for ${Math.round(minutesDisabled)}min (>= ${TICK_AUTO_RECOVER_MINUTES}min threshold), auto-recovering`);
+        await enableTick();
+        // Write P1 alert event
+        try {
+          await pool.query(
+            `INSERT INTO cecelia_events (event_type, source, payload)
+             VALUES ('tick_auto_recover', 'tick', $1)`,
+            [JSON.stringify({
+              reason: 'tick_was_disabled_too_long',
+              disabled_at: disabledAt?.toISOString() || null,
+              minutes_disabled: Math.round(minutesDisabled),
+              auto_recovered: true,
+            })]
+          );
+        } catch { /* event logging is best-effort */ }
+        console.log('[tick-loop] tick_auto_recover: tick re-enabled after extended disable period');
+      } else {
+        console.log(`[tick-loop] Tick is disabled in DB (${Math.round(minutesDisabled)}min, threshold ${TICK_AUTO_RECOVER_MINUTES}min), not starting loop`);
+      }
     }
   } catch (err) {
     console.error('[tick-loop] Failed to init tick loop:', err.message);
@@ -473,7 +506,7 @@ async function disableTick() {
     INSERT INTO working_memory (key, value_json, updated_at)
     VALUES ($1, $2, NOW())
     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()
-  `, [TICK_ENABLED_KEY, { enabled: false }]);
+  `, [TICK_ENABLED_KEY, { enabled: false, disabled_at: new Date().toISOString() }]);
 
   stopTickLoop();
 
@@ -612,6 +645,39 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
 }
 
 /**
+ * 从皮层 RCA 结果中自动创建建议任务
+ * @param {Object} rcaResult - performRCA 返回的分析结果
+ * @param {Object} context - { goal_id, project_id } 继承自失败任务（可选）
+ * @returns {Promise<Array>} - 创建的任务列表（含 deduplicated 字段）
+ */
+async function autoCreateTasksFromCortex(rcaResult, context = {}) {
+  const createTaskActions = (rcaResult.recommended_actions || [])
+    .filter(a => a.type === 'create_task' && a.params?.title);
+
+  if (createTaskActions.length === 0) return [];
+
+  const created = [];
+  for (const action of createTaskActions) {
+    try {
+      const result = await createTask({
+        title: action.params.title,
+        description: action.params.description || '',
+        priority: action.params.priority || 'P1',
+        task_type: action.params.task_type || 'dev',
+        trigger_source: 'cortex',
+        goal_id: action.params.goal_id || context.goal_id || null,
+        project_id: action.params.project_id || context.project_id || null,
+      });
+      created.push({ title: action.params.title, deduplicated: result.deduplicated || false });
+      console.log(`[tick] autoCreateTasksFromCortex: "${action.params.title}" created (dedup=${result.deduplicated || false})`);
+    } catch (err) {
+      console.error(`[tick] autoCreateTasksFromCortex: failed to create "${action.params.title}": ${err.message}`);
+    }
+  }
+  return created;
+}
+
+/**
  * Process Cortex task (Brain-internal RCA analysis)
  * @param {Object} task - Task requiring Cortex processing
  * @param {Array} actions - Actions array to append to
@@ -651,6 +717,19 @@ async function processCortexTask(task, actions) {
       confidence: rcaResult.confidence,
       completed_at: new Date().toISOString()
     })]);
+
+    // Auto-create tasks from cortex create_task recommendations
+    try {
+      const createdTasks = await autoCreateTasksFromCortex(rcaResult, {
+        goal_id: task.payload.goal_id || null,
+        project_id: task.payload.project_id || null,
+      });
+      if (createdTasks.length > 0) {
+        actions.push({ action: 'cortex-tasks-created', count: createdTasks.length });
+      }
+    } catch (autoCreateErr) {
+      console.error(`[tick] autoCreateTasksFromCortex error: ${autoCreateErr.message}`);
+    }
 
     // If this is a learning task, record learning and apply strategy adjustments
     if (task.payload.requires_learning === true) {
@@ -1078,14 +1157,19 @@ async function autoFailTimedOutTasks(inProgressTasks) {
           elapsed_minutes: Math.round(elapsed)
         });
       } else {
-        // Not quarantined, mark as failed normally
-        await updateTask({ task_id: task.id, status: 'failed' });
+        // Not quarantined yet — requeue for retry (failure_count already incremented by handleTaskFailure)
+        // Clearing started_at prevents immediate re-timeout on next tick evaluation
+        await pool.query(
+          `UPDATE tasks SET status = 'queued', started_at = NULL, updated_at = NOW() WHERE id = $1`,
+          [task.id]
+        );
         actions.push({
-          action: 'auto-fail-timeout',
+          action: 'auto-requeue-timeout',
           task_id: task.id,
           title: task.title,
           elapsed_minutes: Math.round(elapsed),
-          failure_count: quarantineResult.failure_count
+          failure_count: quarantineResult.failure_count,
+          retry_attempt: quarantineResult.failure_count
         });
       }
 
@@ -1097,8 +1181,8 @@ async function autoFailTimedOutTasks(inProgressTasks) {
       });
       await logTickDecision(
         'tick',
-        `Auto-failed timed-out task: ${task.title} (${Math.round(elapsed)}min)`,
-        { action: 'auto-fail-timeout', task_id: task.id, quarantined: quarantineResult.quarantined },
+        `Auto-requeued timed-out task: ${task.title} (${Math.round(elapsed)}min, attempt ${quarantineResult.failure_count})`,
+        { action: 'auto-requeue-timeout', task_id: task.id, quarantined: quarantineResult.quarantined },
         { success: true, elapsed_minutes: Math.round(elapsed) }
       );
     }

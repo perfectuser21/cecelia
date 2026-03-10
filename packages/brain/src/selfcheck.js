@@ -14,7 +14,7 @@
 
 import crypto from 'crypto';
 
-/** Must match the highest migration version in migrations/ */
+/** Minimum acceptable migration version (DB must be >= this) */
 export const EXPECTED_SCHEMA_VERSION = '142';
 
 const CORE_TABLES = [
@@ -119,10 +119,15 @@ export async function runSelfCheck(pool, opts = {}) {
       `SELECT MAX(version) AS max_ver FROM schema_version WHERE version ~ '^[0-9]{1,4}$'`
     );
     const maxVer = rows[0]?.max_ver;
+    const dbVerNum = parseInt(maxVer, 10);
+    const expectedVerNum = parseInt(EXPECTED_SCHEMA_VERSION, 10);
+    const versionOk = !isNaN(dbVerNum) && dbVerNum >= expectedVerNum;
     record(
       'Schema Version',
-      maxVer === EXPECTED_SCHEMA_VERSION,
-      `DB="${maxVer}" expected="${EXPECTED_SCHEMA_VERSION}"`
+      versionOk,
+      versionOk
+        ? `DB="${maxVer}" >= expected="${EXPECTED_SCHEMA_VERSION}"`
+        : `DB="${maxVer}" is behind expected="${EXPECTED_SCHEMA_VERSION}" — run migrations`
     );
   } catch (err) {
     record('Schema Version', false, err.message);

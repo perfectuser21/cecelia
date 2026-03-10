@@ -306,8 +306,9 @@ executeTick() 流程：
 - **战略调整**：adjust_strategy（修改 brain_config，需审批）
 - **经验记录**：record_learning（存入 reflections 表）
 - **RCA 报告**：create_rca_report（存入 decision_log 表）
+- **创建任务**：create_task（皮层建议自动转 Brain 任务）
 
-**皮层额外 3 个 action**：adjust_strategy、record_learning、create_rca_report
+**皮层额外 4 个 action**：adjust_strategy、record_learning、create_rca_report、create_task
 
 ---
 
@@ -671,7 +672,9 @@ docker compose up -d cecelia-node-brain
 2. **DB 连接** — SELECT 1 AS ok
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
-5. **Schema 版本** — 必须 = '142'
+
+5. **Schema 版本** — DB 版本 >= '142'（>= 检查，向前兼容）
+
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 
 ### 8.5 数据库配置

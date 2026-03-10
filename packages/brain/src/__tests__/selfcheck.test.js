@@ -146,7 +146,15 @@ describe('selfcheck', () => {
     expect(ok).toBe(true);
   });
 
-  it('EXPECTED_SCHEMA_VERSION should be 141', () => {
-    expect(EXPECTED_SCHEMA_VERSION).toBe('141');
+  it('EXPECTED_SCHEMA_VERSION should be 142', () => {
+    expect(EXPECTED_SCHEMA_VERSION).toBe('142');
+  });
+
+  it('should pass when DB schema version is ahead of expected (>= check)', async () => {
+    const pool = makeMockPool({
+      'schema_version': { rows: [{ max_ver: '999' }] },
+    });
+    const ok = await runSelfCheck(pool, { envRegion: 'us' });
+    expect(ok).toBe(true);
   });
 });
