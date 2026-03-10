@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v23
+# ZenithJoy Engine - 分支保护 Hook v24
+# v24: 统一分支命名规范 — 删除 feature/* 支持，cp-* 为唯一合法格式（与 CI L1 一致）
 # v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev（PR 未合并但无会话管理）
 # v22: 僵尸 Worktree 检测 — 已合并分支阻止写代码（git ls-remote 区分新/已合并）
 # v21: 分支名正则与 devgate.yml 同步（强制 8 位数字时间戳）+ worktree 检测双重保险
@@ -176,14 +177,13 @@ fi
 
 # ===== 分支检查 =====
 
-# v21: 分支名正则与 devgate.yml 统一
-# cp-* 要求: cp- + 8位数字时间戳 + 小写字母/数字/连字符/下划线（与 devgate.yml 保持一致）
-# feature/* 要求: feature/ 后至少1个字符，允许字母数字、连字符、下划线、斜杠（无时间戳要求）
-if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]] || \
-   [[ "$CURRENT_BRANCH" =~ ^feature/[a-zA-Z0-9][-a-zA-Z0-9_/]*$ ]]; then
+# v24: 分支名规范 — cp-* 为唯一合法格式（与 CI L1 verify-dev-workflow 完全一致）
+# cp-* 格式: cp- + 8位数字时间戳 + 小写字母/数字/连字符/下划线
+# 示例: cp-03101200-fix-login
+if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
     # ===== v21: Worktree 检测（双重保险）=====
-    # 必须在独立 worktree 中开发，不能在主仓库的 cp-*/feature/* 残留分支上写代码
+    # 必须在独立 worktree 中开发，不能在主仓库的 cp-* 残留分支上写代码
     # 原因：主仓库残留分支通过分支名检查，但代码会污染主仓库状态（monorepo 尤其危险）
     # 检测方式（双重保险，满足任一即视为 worktree）：
     #   1. 路径包含 "worktrees"（标准 git worktree 路径特征）
@@ -607,7 +607,7 @@ fi
 # 禁止的分支（main, develop, 其他）
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-echo "  [ERROR] 只能在 cp-* 或 feature/* 分支修改代码" >&2
+echo "  [ERROR] 只能在 cp-YYYYMMDD-task-name 分支修改代码" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 echo "" >&2
 echo "当前分支: $CURRENT_BRANCH" >&2
