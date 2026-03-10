@@ -4684,9 +4684,9 @@ router.post('/goal/compare', async (req, res) => {
  */
 router.post('/projects/compare/report', async (req, res) => {
   try {
-    const { project_ids, format = 'json', include_tasks = false } = req.body;
+    const { project_ids, format = 'json', include_tasks = false, export: exportTarget } = req.body;
     const { generateCompareReport } = await import('./project-compare.js');
-    const report = await generateCompareReport({ project_ids, format, include_tasks });
+    const report = await generateCompareReport({ project_ids, format, include_tasks, export: exportTarget });
     res.json(report);
   } catch (err) {
     const status = err.status || 500;
