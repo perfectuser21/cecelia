@@ -84,7 +84,8 @@ export async function callLLM(agentId, prompt, options = {}) {
 
   // 从 profile.config 读取 brain 层 agent 的配置
   const agentConfig = profile?.config?.[agentId] || {};
-  const timeout = options.timeout || 90000;
+  const DEFAULT_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
+  const timeout = options.timeout || DEFAULT_LLM_TIMEOUT_MS;
   const maxTokens = options.maxTokens || 1024;
   const imageContent = options.imageContent || null;
 
@@ -219,6 +220,12 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
   }
 
   const data = await response.json();
+  if (data.degraded === true) {
+    const err = new Error(`LLM call timed out after ${data.elapsed_ms || timeout}ms`);
+    err.degraded = true;
+    err.status = data.status;
+    throw err;
+  }
   if (!data.text) {
     throw new Error('Bridge /llm-call returned empty text');
   }
