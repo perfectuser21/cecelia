@@ -3,7 +3,7 @@
  * 验证 tick 执行时调用 unblockExpiredTasks 自动恢复过期的 blocked 任务
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // ── mock 区（所有 tick.js 依赖）──────────────────────────
 
@@ -84,8 +84,14 @@ vi.mock('../task-updater.js', () => ({
 }));
 
 // ── 导入被测函数 ──────────────────────────────────────────
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let executeTick;
 
-const { executeTick } = await import('../tick.js');
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../tick.js');
+  executeTick = mod.executeTick;
+});
 
 // ── 测试 ─────────────────────────────────────────────────
 

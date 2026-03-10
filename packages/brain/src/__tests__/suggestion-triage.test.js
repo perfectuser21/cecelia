@@ -2,15 +2,15 @@
  * Tests for suggestion-triage module
  */
 
-import {
-  createSuggestion,
-  executeTriage,
-  getTopPrioritySuggestions,
-  updateSuggestionStatus,
-  cleanupExpiredSuggestions,
-  getTriageStats
-} from '../suggestion-triage.js';
-import pool from '../db.js';
+import { beforeAll, vi } from 'vitest';
+let createSuggestion, executeTriage, getTopPrioritySuggestions, updateSuggestionStatus, cleanupExpiredSuggestions, getTriageStats;
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ createSuggestion, executeTriage, getTopPrioritySuggestions, updateSuggestionStatus, cleanupExpiredSuggestions, getTriageStats } = await import('../suggestion-triage.js'));
+});
 
 describe('Suggestion Triage System', () => {
   beforeEach(async () => {

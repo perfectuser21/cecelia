@@ -4,7 +4,7 @@
  * Verifies that SKILL_CONTEXT is injected for code_review tasks and that
  * other task types are not affected.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Mock heavy dependencies before importing executor
 vi.mock('pg', () => ({
@@ -24,7 +24,14 @@ vi.mock('../model-profile.js', async (importOriginal) => {
   };
 });
 
-const { getExtraEnvForTaskType } = await import('../executor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let getExtraEnvForTaskType;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const executor = await import('../executor.js');
+  getExtraEnvForTaskType = executor.getExtraEnvForTaskType;
+});
 
 describe('getExtraEnvForTaskType', () => {
   it('code_review → 返回 SKILL_CONTEXT=code_review', () => {

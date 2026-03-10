@@ -5,7 +5,7 @@
  * DoD: D1-D4
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 const mockClient = {
   query: vi.fn().mockResolvedValue({ rows: [] }),
@@ -65,6 +65,10 @@ import express from 'express';
 import request from 'supertest';
 
 // === 断链#5c11 测试：dev task 串行调度 ===
+
+beforeAll(() => {
+  vi.resetModules();
+});
 
 describe('断链#5c11: dev task 串行调度', () => {
   let app;

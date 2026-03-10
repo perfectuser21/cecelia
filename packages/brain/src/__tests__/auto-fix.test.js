@@ -3,17 +3,27 @@
  * 覆盖所有导出函数：shouldAutoFix, generateFixPrd, dispatchToDevSkill, getAutoFixStats
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock pg pool
-const mockQuery = vi.fn();
+// Mock pg pool — hoisted
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
 
-// Mock actions.js createTask
-const mockCreateTask = vi.fn();
+// Mock actions.js createTask — hoisted
+const mockCreateTask = vi.hoisted(() => vi.fn());
 vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 
-const { shouldAutoFix, generateFixPrd, dispatchToDevSkill, getAutoFixStats } = await import('../auto-fix.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let shouldAutoFix, generateFixPrd, dispatchToDevSkill, getAutoFixStats;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../auto-fix.js');
+  shouldAutoFix = mod.shouldAutoFix;
+  generateFixPrd = mod.generateFixPrd;
+  dispatchToDevSkill = mod.dispatchToDevSkill;
+  getAutoFixStats = mod.getAutoFixStats;
+});
 
 describe('auto-fix.js', () => {
   beforeEach(() => {

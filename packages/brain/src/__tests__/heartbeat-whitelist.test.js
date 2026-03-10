@@ -2,7 +2,7 @@
  * Heartbeat 白名单硬约束测试
  * 覆盖：D5
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../llm-caller.js', () => ({
@@ -12,7 +12,15 @@ vi.mock('../decision-executor.js', () => ({
   executeDecision: vi.fn(),
 }));
 
-const { enforceWhitelist, HEARTBEAT_ALLOWED_ACTIONS } = await import('../heartbeat-inspector.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let enforceWhitelist, HEARTBEAT_ALLOWED_ACTIONS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../heartbeat-inspector.js');
+  enforceWhitelist = mod.enforceWhitelist;
+  HEARTBEAT_ALLOWED_ACTIONS = mod.HEARTBEAT_ALLOWED_ACTIONS;
+});
 
 describe('Heartbeat 白名单硬约束', () => {
   it('白名单包含 6 个允许的 action', () => {

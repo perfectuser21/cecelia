@@ -5,13 +5,15 @@
  * 进程重启后能恢复去重状态。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import {
-  _resetReflectionState,
-  _checkReflectionBreaker,
-  _computeEventHash,
-} from '../cortex.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+let pool;
+let _resetReflectionState, _checkReflectionBreaker, _computeEventHash;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ _resetReflectionState, _checkReflectionBreaker, _computeEventHash } = await import('../cortex.js'));
+});
 
 const DB_KEY_PREFIX = 'cortex_reflection:';
 

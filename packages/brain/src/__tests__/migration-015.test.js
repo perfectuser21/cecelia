@@ -4,8 +4,13 @@
  * Tests schema changes for Cortex quality assessment system
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
-import pool from '../db.js';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+});
 
 describe('Migration 015 - Cortex Quality System', () => {
   beforeAll(async () => {

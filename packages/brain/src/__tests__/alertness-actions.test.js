@@ -5,18 +5,15 @@
  * Uses unified alertness levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import pool from '../db.js';
-import {
-  executeResponseActions,
-  notifyAlert,
-  escalateToAnalysis,
-  applyMitigation,
-  activateShutdownSafety,
-  recoverFromLevel,
-  getMitigationState,
-  _resetMitigationState,
-} from '../alertness-actions.js';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
+let pool;
+let executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
+});
 
 // New unified levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4
 const CALM = 1;

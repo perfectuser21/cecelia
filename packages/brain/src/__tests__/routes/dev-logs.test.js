@@ -1,16 +1,21 @@
 /**
  * Route tests: /api/brain/dev-logs
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mockPool = {
-  query: vi.fn(),
-};
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
-const { default: router } = await import('../../routes/dev-logs.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../../routes/dev-logs.js');
+  router = mod.default;
+});
 
 function createApp() {
   const app = express();

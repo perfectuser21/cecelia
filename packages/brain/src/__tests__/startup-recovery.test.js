@@ -7,14 +7,20 @@
  * - DB 错误 → 不抛出，返回 error 字段
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // mock pool：两次 query 调用（UPDATE tasks + UPDATE run_events）
 const mockQuery = vi.fn();
 const mockPool = { query: mockQuery };
 
-// 动态 import 避免模块缓存影响 mock
-const { runStartupRecovery } = await import('../startup-recovery.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let runStartupRecovery;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../startup-recovery.js');
+  runStartupRecovery = mod.runStartupRecovery;
+});
 
 describe('startup-recovery.js', () => {
   beforeEach(() => {

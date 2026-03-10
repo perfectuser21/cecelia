@@ -10,12 +10,19 @@
  *   task:started, task:completed, task:failed, task:progress
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import { WebSocket as WS } from 'ws';
 import { createServer } from 'http';
-import pool from '../db.js';
-import websocketService from '../websocket.js';
-import { updateTaskStatus, updateTaskProgress } from '../task-updater.js';
+let pool;
+let websocketService;
+let updateTaskStatus, updateTaskProgress;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  websocketService = (await import('../websocket.js')).default;
+  ({ updateTaskStatus, updateTaskProgress } = await import('../task-updater.js'));
+});
 
 /**
  * Helper: close a WebSocket client and wait for it to finish

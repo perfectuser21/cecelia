@@ -3,12 +3,10 @@
  * Tests for process liveness detection and double-confirm pattern
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 
-// Mock pool
-const mockPool = {
-  query: vi.fn(),
-};
+// Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // Mock child_process
@@ -22,12 +20,18 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'us'),
 }));
 
-const {
-  probeTaskLiveness,
-  isRunIdProcessAlive,
-  suspectProcesses,
-  isProcessAlive,
-} = await import('../executor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+// suspectProcesses 是 executor.js 内部的 Map，必须与 probeTaskLiveness 同一模块实例
+let probeTaskLiveness, isRunIdProcessAlive, suspectProcesses, isProcessAlive;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const executor = await import('../executor.js');
+  probeTaskLiveness = executor.probeTaskLiveness;
+  isRunIdProcessAlive = executor.isRunIdProcessAlive;
+  suspectProcesses = executor.suspectProcesses;
+  isProcessAlive = executor.isProcessAlive;
+});
 
 describe('isRunIdProcessAlive', () => {
   beforeEach(() => {

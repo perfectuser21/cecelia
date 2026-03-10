@@ -1,13 +1,11 @@
 /**
  * Route tests: /api/brain/notion-sync
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mockPool = {
-  query: vi.fn(),
-};
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
 vi.mock('../../notion-sync.js', () => ({
   runSync: vi.fn(),
@@ -24,7 +22,14 @@ vi.mock('../../notion-memory-sync.js', () => ({
   importAllMemoryData: vi.fn(),
 }));
 
-const { default: router } = await import('../../routes/notion-sync.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../../routes/notion-sync.js');
+  router = mod.default;
+});
 
 function createApp() {
   const app = express();

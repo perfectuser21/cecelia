@@ -2,15 +2,15 @@
  * quarantine-release.test.js - 隔离区自动释放机制测试
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import pool from '../db.js';
-import {
-  quarantineTask,
-  checkExpiredQuarantineTasks,
-  getQuarantinedTasks,
-  QUARANTINE_REASONS,
-  FAILURE_CLASS,
-} from '../quarantine.js';
+import { describe, it, expect, beforeEach, vi, beforeAll } from 'vitest';
+let pool;
+let quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS } = await import('../quarantine.js'));
+});
 
 describe('Quarantine Auto-Release', () => {
   let testTaskId;

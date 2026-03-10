@@ -4,9 +4,16 @@
  * DoD 覆盖: D4
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
-import pool from '../db.js';
-import { createInitiative } from '../actions.js';
+import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
+
+// isolate:false 修复：延迟导入，确保获取真实 pool 而非其他文件残留的 mock
+let pool, createInitiative;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  createInitiative = (await import('../actions.js')).createInitiative;
+});
 
 let testProjectIds = [];
 

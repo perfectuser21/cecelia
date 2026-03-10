@@ -11,7 +11,7 @@
  * - GET /artifacts/:id/download（local / s3 / nas / unknown 后端 + 路径穿越防护）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // vi.hoisted 确保 mock 函数在模块提升后仍可访问
 const {
@@ -47,8 +47,14 @@ vi.mock('fs/promises', () => ({
   default: { readFile: mockFsReadFile },
 }));
 
-// 动态 import（在 mock 之后）
-const { default: router } = await import('../trace-routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../trace-routes.js');
+  router = mod.default;
+});
 
 // ==================== 测试工具函数 ====================
 
@@ -106,7 +112,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /runs/active ====================
 
   describe('GET /runs/active', () => {
-    const handler = getHandler('get', '/runs/active');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/runs/active'); });
 
     it('正常返回活跃运行列表', async () => {
       const rows = [
@@ -153,7 +160,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /runs/:run_id ====================
 
   describe('GET /runs/:run_id', () => {
-    const handler = getHandler('get', '/runs/:run_id');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/runs/:run_id'); });
 
     it('找到 run 时返回 summary 数据', async () => {
       const summary = {
@@ -197,7 +205,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /runs/:run_id/last-alive ====================
 
   describe('GET /runs/:run_id/last-alive', () => {
-    const handler = getHandler('get', '/runs/:run_id/last-alive');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/runs/:run_id/last-alive'); });
 
     it('找到最后存活 span 时正常返回', async () => {
       const lastAlive = {
@@ -241,7 +250,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /failures/top ====================
 
   describe('GET /failures/top', () => {
-    const handler = getHandler('get', '/failures/top');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/failures/top'); });
 
     it('正常返回失败原因列表', async () => {
       const failures = [
@@ -287,7 +297,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /stuck ====================
 
   describe('GET /stuck', () => {
-    const handler = getHandler('get', '/stuck');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/stuck'); });
 
     it('正常返回卡住的 run 列表', async () => {
       const stuckRuns = [
@@ -333,7 +344,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /artifacts/:id ====================
 
   describe('GET /artifacts/:id', () => {
-    const handler = getHandler('get', '/artifacts/:id');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/artifacts/:id'); });
 
     it('找到制品时返回元数据', async () => {
       const artifact = {
@@ -379,7 +391,8 @@ describe('trace-routes.js 路由单元测试', () => {
   // ==================== GET /artifacts/:id/download ====================
 
   describe('GET /artifacts/:id/download', () => {
-    const handler = getHandler('get', '/artifacts/:id/download');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/artifacts/:id/download'); });
 
     // ---- 制品不存在 ----
 

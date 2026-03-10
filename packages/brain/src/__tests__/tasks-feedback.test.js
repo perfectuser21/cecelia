@@ -1,5 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import pool from '../db.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+});
 
 describe('POST /api/brain/tasks/:task_id/feedback', () => {
   let testTaskId;

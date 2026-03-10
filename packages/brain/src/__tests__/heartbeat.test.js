@@ -3,12 +3,10 @@
  * Tests for POST /api/brain/heartbeat
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock pool
-const mockPool = {
-  query: vi.fn(),
-};
+// Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // Mock child_process
@@ -22,7 +20,15 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'us'),
 }));
 
-const { recordHeartbeat } = await import('../executor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+// 避免其他测试文件（如 platform-utils.test.js 调用 vi.unmock('child_process')）污染模块缓存
+let recordHeartbeat;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const executor = await import('../executor.js');
+  recordHeartbeat = executor.recordHeartbeat;
+});
 
 describe('recordHeartbeat', () => {
   beforeEach(() => {

@@ -2,11 +2,12 @@
  * task-updater 单元测试（mock pool + mock events — 无需真实 DB）
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // ── mock 区 ──────────────────────────────────────────────
 
-const mockPool = { query: vi.fn() };
+// hoisted 确保 task-updater.js 加载时获得同一 pool 实例
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
@@ -26,8 +27,19 @@ const mockEmit = vi.fn().mockResolvedValue(undefined);
 vi.mock('../event-bus.js', () => ({ emit: mockEmit }));
 
 // ── 导入被测模块（必须在 vi.mock 之后）──────────────────
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let updateTaskStatus, updateTaskProgress, broadcastTaskState, blockTask, unblockTask, unblockExpiredTasks;
 
-const { updateTaskStatus, updateTaskProgress, broadcastTaskState, blockTask, unblockTask, unblockExpiredTasks } = await import('../task-updater.js');
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../task-updater.js');
+  updateTaskStatus = mod.updateTaskStatus;
+  updateTaskProgress = mod.updateTaskProgress;
+  broadcastTaskState = mod.broadcastTaskState;
+  blockTask = mod.blockTask;
+  unblockTask = mod.unblockTask;
+  unblockExpiredTasks = mod.unblockExpiredTasks;
+});
 
 // ── 辅助函数 ────────────────────────────────────────────
 

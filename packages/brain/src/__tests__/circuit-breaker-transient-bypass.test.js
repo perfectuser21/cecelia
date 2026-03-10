@@ -9,23 +9,20 @@
  * 根因：LLM API 429 限流连续触发 3 次 → 误开熔断器 → 派发链路停摆 30 分钟
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Track circuit-breaker calls
 const cbFailureMock = vi.fn();
 const cbSuccessMock = vi.fn();
 
-// Mock client for transactions
-const mockClient = {
-  query: vi.fn(),
-  release: vi.fn(),
-};
+// Mock client for transactions — hoisted
+const mockClient = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn() }));
 
-// Mock pool
-const mockPool = {
+// Mock pool — hoisted
+const mockPool = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(() => mockClient),
-};
+}));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 vi.mock('../executor.js', () => ({
@@ -151,8 +148,14 @@ vi.mock('../notifier.js', () => ({
   notifyTaskFailed: vi.fn(async () => {}),
 }));
 
-// Import router after mocks
-const { default: router } = await import('../routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
 
 // Helper to simulate express request/response
 function mockReqRes(method, path, body = {}) {

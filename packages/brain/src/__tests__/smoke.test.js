@@ -4,8 +4,7 @@
  * 真实启动 Express server（使用 CI PostgreSQL service）
  * 验证：migrate 成功 → health 200 → root 200
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { spawn } from 'child_process';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -43,6 +42,11 @@ describeSmoke('Brain Smoke Test', () => {
   let serverOutput = '';
 
   beforeAll(async () => {
+    // isolate:false 修复：child_process 可能被其他文件（如 heartbeat.test.js）mock 污染
+    vi.unmock('child_process'); // 清除可能残留的 mock 注册
+    vi.resetModules();
+    const { spawn } = await import('child_process');
+
     baseUrl = `http://localhost:${TEST_PORT}`;
 
     serverProcess = spawn('node', [SERVER_PATH], {

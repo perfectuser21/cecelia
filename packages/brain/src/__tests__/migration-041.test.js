@@ -3,8 +3,13 @@
  * Verifies that auto-cleanup SQL functions were created by migration 041.
  */
 
-import { describe, it, expect } from 'vitest';
-import pool from '../db.js';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+});
 
 describe('migration 041: auto-cleanup functions', () => {
   it('cleanup_alertness_metrics function exists', async () => {

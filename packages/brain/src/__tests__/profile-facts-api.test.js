@@ -4,18 +4,18 @@
  * 测试 /api/brain/profile/facts CRUD + import 端点
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
 // Mock pool
-const mockQuery = vi.fn();
+const mockQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
 }));
 
 // Mock embedding-service
-const mockGenerateProfileFactEmbeddingAsync = vi.fn().mockResolvedValue(undefined);
+const mockGenerateProfileFactEmbeddingAsync = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../embedding-service.js', () => ({
   generateProfileFactEmbeddingAsync: (...args) => mockGenerateProfileFactEmbeddingAsync(...args),
 }));
@@ -29,8 +29,14 @@ vi.mock('fs', () => ({
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Import router after mocks
-const { default: profileFactsRoutes } = await import('../routes/profile-facts.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let profileFactsRoutes;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes/profile-facts.js');
+  profileFactsRoutes = mod.default;
+});
 
 function createApp() {
   const app = express();

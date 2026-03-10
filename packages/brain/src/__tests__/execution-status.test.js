@@ -3,26 +3,30 @@
  * Tests for /api/brain/cecelia/overview, /api/brain/dev/tasks, /api/brain/dev/health
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock pool
-const mockPool = {
-  query: vi.fn(),
-};
+// Mock pool — hoisted 确保 routes.js 加载时获得同一 pool 实例
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-// Mock executor
-const mockExecutor = {
+// Mock executor — hoisted
+const mockExecutor = vi.hoisted(() => ({
   getActiveProcesses: vi.fn(() => []),
   getActiveProcessCount: vi.fn(() => 0),
   checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
   MAX_SEATS: 12,
   INTERACTIVE_RESERVE: 2,
-};
+}));
 vi.mock('../executor.js', () => mockExecutor);
 
-// Import router after mocks
-const { default: router } = await import('../routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
 
 // Helper to simulate express request/response
 function mockReqRes(method, path, body = {}, query = {}) {

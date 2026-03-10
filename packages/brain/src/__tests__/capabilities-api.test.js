@@ -3,18 +3,18 @@
  * Tests Capability-Driven Development API endpoints
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+
+// Hoist mockPool so vi.mock factory can reference it
+const mockPool = vi.hoisted(() => ({
+  query: vi.fn(),
+}));
 
 // Mock db.js before importing routes
-vi.mock('../db.js', () => {
-  const mockPool = {
-    query: vi.fn(),
-  };
-  return { default: mockPool };
-});
+vi.mock('../db.js', () => ({ default: mockPool }));
 
-import pool from '../db.js';
-import routes from '../routes.js';
+let pool;
+let routes;
 
 // Helper: create mock req/res
 function mockReqRes(body = {}, params = {}, query = {}) {
@@ -38,12 +38,19 @@ function getHandler(method, path) {
 }
 
 describe('Capabilities API', () => {
+  beforeAll(async () => {
+    vi.resetModules();
+    pool = (await import('../db.js')).default;
+    routes = (await import('../routes.js')).default;
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe('GET /capabilities', () => {
-    const handler = getHandler('get', '/capabilities');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/capabilities'); });
 
     it('should list all capabilities', async () => {
       const mockCapabilities = [
@@ -127,7 +134,8 @@ describe('Capabilities API', () => {
   });
 
   describe('GET /capabilities/:id', () => {
-    const handler = getHandler('get', '/capabilities/:id');
+    let handler;
+    beforeAll(() => { handler = getHandler('get', '/capabilities/:id'); });
 
     it('should get single capability by ID', async () => {
       const mockCapability = {
@@ -168,7 +176,8 @@ describe('Capabilities API', () => {
   });
 
   describe('POST /capabilities', () => {
-    const handler = getHandler('post', '/capabilities');
+    let handler;
+    beforeAll(() => { handler = getHandler('post', '/capabilities'); });
 
     it('should create capability successfully', async () => {
       const mockCapability = {
@@ -300,7 +309,8 @@ describe('Capabilities API', () => {
   });
 
   describe('PATCH /capabilities/:id', () => {
-    const handler = getHandler('patch', '/capabilities/:id');
+    let handler;
+    beforeAll(() => { handler = getHandler('patch', '/capabilities/:id'); });
 
     it('should update capability stage successfully', async () => {
       const mockUpdated = {

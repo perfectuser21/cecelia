@@ -2,24 +2,33 @@
  * desire-respond-api.test.js
  * POST /api/brain/desires/:id/respond 单元测试
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+// Mock pool — hoisted 确保 routes.js 加载时获得同一 pool 实例
+const mockPoolQuery = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({
-  default: { query: vi.fn(), connect: () => ({ query: vi.fn(), release: () => {} }) },
+  default: { query: mockPoolQuery, connect: () => ({ query: vi.fn(), release: () => {} }) },
 }));
 
 vi.mock('../events/taskEvents.js', () => ({
   publishDesireUpdated: vi.fn(),
 }));
 
-const { default: pool } = await import('../db.js');
-const { default: routes } = await import('../routes.js');
+// isolate:false 修复：app 和 pool 在 beforeAll 中初始化，避免顶层模块缓存污染
+let app;
+let pool;
 
-const app = express();
-app.use(express.json());
-app.use('/api/brain', routes);
+beforeAll(async () => {
+  vi.resetModules();
+  const dbMod = await import('../db.js');
+  pool = dbMod.default;
+  const routesMod = await import('../routes.js');
+  app = express();
+  app.use(express.json());
+  app.use('/api/brain', routesMod.default);
+});
 
 describe('POST /api/brain/desires/:id/respond', () => {
   beforeEach(() => {

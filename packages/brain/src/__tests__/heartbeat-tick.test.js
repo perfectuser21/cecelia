@@ -2,7 +2,7 @@
  * Heartbeat tick.js 集成测试
  * 覆盖：D6（时间触发逻辑）
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
 vi.mock('../llm-caller.js', () => ({
@@ -12,7 +12,14 @@ vi.mock('../decision-executor.js', () => ({
   executeDecision: vi.fn(),
 }));
 
-const { HEARTBEAT_INTERVAL_MS } = await import('../heartbeat-inspector.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let HEARTBEAT_INTERVAL_MS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../heartbeat-inspector.js');
+  HEARTBEAT_INTERVAL_MS = mod.HEARTBEAT_INTERVAL_MS;
+});
 
 describe('Heartbeat tick.js 集成', () => {
   it('HEARTBEAT_INTERVAL_MS = 30 分钟 (1800000ms)', () => {

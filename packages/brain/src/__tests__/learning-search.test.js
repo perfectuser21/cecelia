@@ -4,9 +4,15 @@
  * Tests the semantic search functionality for learnings.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import pool from '../db.js';
-import { searchRelevantLearnings, getRecentLearnings } from '../learning.js';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+let pool;
+let searchRelevantLearnings, getRecentLearnings;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ searchRelevantLearnings, getRecentLearnings } = await import('../learning.js'));
+});
 
 describe('Learning Semantic Search', () => {
   beforeAll(async () => {

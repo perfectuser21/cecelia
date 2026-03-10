@@ -32,7 +32,7 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: true,    // 待全部 Batch 完成后切换为 false（Batch 2 已完成，Batch 3-6 待处理）
+    isolate: false,   // isolate:false — Batch 1-4 完成，Batch 5-6 待处理（event-bus/singleton state）
     pool: 'forks',
     poolOptions: {
       forks: {

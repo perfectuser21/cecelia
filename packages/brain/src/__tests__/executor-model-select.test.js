@@ -14,7 +14,7 @@
  * - D1-6 → 'FIXED_PROVIDER 完整'
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 // Mock 所有 executor 依赖
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
@@ -23,7 +23,18 @@ vi.mock('../task-router.js', () => ({ getTaskLocation: vi.fn(() => 'us'), LOCATI
 vi.mock('../task-updater.js', () => ({ updateTask: vi.fn() }));
 vi.mock('../learning.js', () => ({ recordLearning: vi.fn() }));
 
-const { getModelForTask, getProviderForTask, MODELS, MODEL_MAP, FIXED_PROVIDER } = await import('../executor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let getModelForTask, getProviderForTask, MODELS, MODEL_MAP, FIXED_PROVIDER;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const executor = await import('../executor.js');
+  getModelForTask = executor.getModelForTask;
+  getProviderForTask = executor.getProviderForTask;
+  MODELS = executor.MODELS;
+  MODEL_MAP = executor.MODEL_MAP;
+  FIXED_PROVIDER = executor.FIXED_PROVIDER;
+});
 
 describe('D1: 双 Provider 模型路由', () => {
   // ============================================================

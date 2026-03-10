@@ -3,12 +3,10 @@
  * Tests for Brain startup state reconciliation with actual processes
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock pool
-const mockPool = {
-  query: vi.fn(),
-};
+// Mock pool — hoisted so executor.js always gets this mockPool regardless of module cache order
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // Mock child_process
@@ -22,7 +20,14 @@ vi.mock('../task-router.js', () => ({
   getTaskLocation: vi.fn(() => 'us'),
 }));
 
-const { syncOrphanTasksOnStartup } = await import('../executor.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let syncOrphanTasksOnStartup;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const executor = await import('../executor.js');
+  syncOrphanTasksOnStartup = executor.syncOrphanTasksOnStartup;
+});
 
 describe('syncOrphanTasksOnStartup', () => {
   beforeEach(() => {

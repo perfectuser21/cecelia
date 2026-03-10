@@ -3,20 +3,20 @@
  * 验证 BILLING_CAP / RATE_LIMIT 失败时触发 blockTask 而非 quarantine
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // ── mock 区 ──────────────────────────────────────────────
 
-const mockPool = { query: vi.fn() };
+const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-const mockEmit = vi.fn().mockResolvedValue(undefined);
+const mockEmit = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('../event-bus.js', () => ({ emit: mockEmit }));
 
-// task-updater blockTask mock
-const mockBlockTask = vi.fn().mockResolvedValue({ success: true, task: { id: 'task-001', status: 'blocked' } });
-const mockUnblockTask = vi.fn().mockResolvedValue({ success: true, task: { id: 'task-001', status: 'queued' } });
-const mockUnblockExpiredTasks = vi.fn().mockResolvedValue([]);
+// task-updater blockTask mock — hoisted
+const mockBlockTask = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true, task: { id: 'task-001', status: 'blocked' } }));
+const mockUnblockTask = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true, task: { id: 'task-001', status: 'queued' } }));
+const mockUnblockExpiredTasks = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock('../task-updater.js', () => ({
   blockTask: mockBlockTask,
   unblockTask: mockUnblockTask,
@@ -24,8 +24,15 @@ vi.mock('../task-updater.js', () => ({
 }));
 
 // ── 导入被测模块 ──────────────────────────────────────────
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let handleTaskFailure, FAILURE_CLASS;
 
-const { handleTaskFailure, FAILURE_CLASS } = await import('../quarantine.js');
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../quarantine.js');
+  handleTaskFailure = mod.handleTaskFailure;
+  FAILURE_CLASS = mod.FAILURE_CLASS;
+});
 
 // ── 辅助函数 ────────────────────────────────────────────
 

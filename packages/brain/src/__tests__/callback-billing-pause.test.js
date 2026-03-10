@@ -9,7 +9,7 @@
  * v1.197.0: spending cap 闭环 — 标记账号 → 换号重试 → 避免熔断
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // Track markSpendingCap and circuit-breaker calls
 const markSpendingCapMock = vi.fn();
@@ -19,17 +19,14 @@ const cbSuccessMock = vi.fn();
 // Legacy: setBillingPause (deprecated but still in executor mock)
 const setBillingPauseMock = vi.fn();
 
-// Mock client for transactions
-const mockClient = {
-  query: vi.fn(),
-  release: vi.fn(),
-};
+// Mock client for transactions — hoisted
+const mockClient = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn() }));
 
-// Mock pool
-const mockPool = {
+// Mock pool — hoisted
+const mockPool = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(() => mockClient),
-};
+}));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 // Mock executor - expose setBillingPause as a spy
@@ -156,8 +153,14 @@ vi.mock('../notifier.js', () => ({
   notifyTaskFailed: vi.fn(async () => {}),
 }));
 
-// Import router after mocks
-const { default: router } = await import('../routes.js');
+// isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
+let router;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const mod = await import('../routes.js');
+  router = mod.default;
+});
 
 // Helper to simulate express request/response
 function mockReqRes(method, path, body = {}) {
