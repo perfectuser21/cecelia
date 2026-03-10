@@ -3193,3 +3193,17 @@ branch-protect.sh 用 `grep -cE '(功能描述|成功标准|需求来源|描述|
 1. DevGate DoD check-dod-mapping.cjs 要求 Test 字段格式严格：`manual:` 后必须是可执行命令（包含 node/npm/curl 等关键词），禁止 echo/grep
 2. vps-monitor 测试需要同时 mock `platform-utils.js` 的导出函数，否则 Linux CI 上网络统计走 readFileSync 而不是 execSync mock
 3. MEM_PER_TASK_MB 从 500 降到 350（实测均值 264MB），配合 SYSTEM_RESERVED 使 Mac mini 16GB 算出合理 slots
+
+## PR #778 — fix(selfcheck): schema version >= 检查防崩溃循环（Brain v1.216.0, 2026-03-10）
+
+selfcheck.js 用精确匹配 (`===`) 校验 schema version，导致 DB 有比预期更新的 migration 时 Brain 拒绝启动、进入崩溃循环。
+
+### 根本原因
+
+Brain 重启时依赖 selfcheck 通过才能提供服务。如果 DB 已应用了更新的 migration（版本号 > EXPECTED_SCHEMA_VERSION），精确匹配失败，Brain 持续退出，形成死循环。版本比较语义错误：应为"至少达到预期版本"而非"精确等于"。
+
+### 下次预防
+
+- [ ] schema version 检查始终使用 `>=` 而非 `===`，允许 DB 超前
+- [ ] 新增 migration 时，只需更新 EXPECTED_SCHEMA_VERSION，不需要特殊处理 Brain 的版本校验逻辑
+- [ ] selfcheck.test.js 中保持"DB 版本超前时仍 PASS"的测试用例，防止回归

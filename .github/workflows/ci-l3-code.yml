@@ -373,7 +373,7 @@ jobs:
               FAILED=true
             fi
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
           echo "All required directories present"
 
       - name: Check VERSION file format
@@ -402,7 +402,7 @@ jobs:
               FAILED=true
             fi
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
 
       - name: Run tests
         working-directory: packages/quality
@@ -422,7 +422,7 @@ jobs:
               FAILED=1
             fi
           done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
-          [ "$FAILED" -eq 1 ] && exit 1
+          if [ "$FAILED" -eq 1 ]; then exit 1; fi
           echo "All shell scripts passed"
 
       - name: Check required documentation
@@ -434,7 +434,7 @@ jobs:
           done
           DOC_COUNT=$(find docs/ -name "*.md" -type f 2>/dev/null | wc -l)
           [ "$DOC_COUNT" -gt 0 ] && echo "  [OK] docs/ contains $DOC_COUNT md files" || { echo "  [FAIL] docs/ empty"; FAILED=true; }
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
           echo "Documentation check passed"
 
   # ─── Workflows L3: Validate / Structure / Gateway / Unit Tests ─────────
@@ -476,7 +476,7 @@ jobs:
             node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null \
               && echo "  [OK] $f" || { echo "  [FAIL] $f invalid JSON"; FAILED=true; }
           done < <(find n8n/workflows n8n/templates -name "*.json" -type f -print0 2>/dev/null)
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
 
       - name: Validate YAML files
         working-directory: packages/workflows
@@ -492,7 +492,7 @@ jobs:
             python3 -c "import yaml; yaml.safe_load(open('$f'))" 2>/dev/null \
               && echo "  [OK] $f" || { echo "  [FAIL] $f invalid YAML"; FAILED=true; }
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
 
       - name: Check shell scripts syntax
         working-directory: packages/workflows
@@ -508,7 +508,7 @@ jobs:
               FAILED=1
             fi
           done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
-          [ "$FAILED" -eq 1 ] && exit 1
+          if [ "$FAILED" -eq 1 ]; then exit 1; fi
 
       - name: Check required directories and files
         working-directory: packages/workflows
@@ -531,7 +531,7 @@ jobs:
               FAILED=true
             fi
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
           echo "Structure check passed"
 
       - name: Check gateway syntax
@@ -555,7 +555,7 @@ jobs:
             [ -f "$TEST_FILE" ] || continue
             node --test "$TEST_FILE" && echo "  [OK] $TEST_FILE" || { echo "  [FAIL] $TEST_FILE"; FAILED=true; }
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
 
       - name: Run xiaohongshu-publisher unit tests
         working-directory: packages/workflows
@@ -566,7 +566,7 @@ jobs:
             [ -f "$TEST_FILE" ] || continue
             node --test "$TEST_FILE" && echo "  [OK] $TEST_FILE" || { echo "  [FAIL] $TEST_FILE"; FAILED=true; }
           done
-          [ "$FAILED" = "true" ] && exit 1
+          if [ "$FAILED" = "true" ]; then exit 1; fi
 
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
