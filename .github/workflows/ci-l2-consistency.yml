@@ -1,0 +1,340 @@
+name: L2 Consistency Gate
+
+# L2: 一致性检查 — Brain/Engine 变动时必跑（5-10min）
+# 职责：Facts/Version/Manifest/Fitness 检查（Brain）+ Version/Contract/Impact 检查（Engine）
+# 迁移自：brain-ci.yml (facts-check, manifest-sync, fitness-check) + engine-ci.yml (l2-consistency)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: l2-consistency-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+      engine: ${{ steps.filter.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect brain and engine changes
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+            echo "engine=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          BASE_REF="${{ github.base_ref }}"
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+          else
+            echo "brain=false" >> $GITHUB_OUTPUT
+          fi
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -q "^packages/engine/"; then
+            echo "engine=true" >> $GITHUB_OUTPUT
+          else
+            echo "engine=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ─── Brain L2: Facts / Version / Manifest / Fitness ──────────────────
+
+  brain-l2:
+    name: Brain L2 Consistency
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+
+      - name: Install brain dependencies
+        working-directory: packages/brain
+        run: npm ci
+
+      - name: Check facts consistency
+        run: node scripts/facts-check.mjs
+
+      - name: Check version sync
+        run: bash scripts/check-version-sync.sh
+
+      - name: Check manifest is in sync with source
+        run: node packages/brain/scripts/generate-manifest.mjs --check
+
+      - name: Check LLM agent registry completeness
+        run: node scripts/devgate/check-llm-agents.mjs
+
+      - name: Check executor agent registry completeness
+        run: node scripts/devgate/check-executor-agents.mjs
+
+      - name: Check skills registry completeness
+        run: node scripts/devgate/check-skills-registry.mjs
+
+      - name: Check contract drift (module boundary protection)
+        run: |
+          npm install --no-save js-yaml
+          node scripts/devgate/check-contract-drift.mjs --base=origin/main
+
+  # ─── Engine L2: Version / Contract Drift / Impact ─────────────────────
+
+  engine-l2:
+    name: Engine L2 Consistency
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Version Check (PR-only, non-chore/docs/test)
+      - name: Check package.json version updated
+        if: |
+          github.event_name == 'pull_request' &&
+          !startsWith(github.event.pull_request.title, 'chore:') &&
+          !startsWith(github.event.pull_request.title, 'docs:') &&
+          !startsWith(github.event.pull_request.title, 'test:')
+        run: |
+          set -e
+          PKGJSON="packages/engine/package.json"
+
+          if [ ! -f "$PKGJSON" ]; then
+            echo "No $PKGJSON found, skipping"
+            exit 0
+          fi
+
+          BASE_VERSION=$(git show origin/${{ github.base_ref }}:$PKGJSON 2>/dev/null | jq -r '.version' || echo "")
+
+          if [ -z "$BASE_VERSION" ] || [ "$BASE_VERSION" = "null" ]; then
+            echo "Could not read base branch version, skipping"
+            exit 0
+          fi
+
+          CURRENT_VERSION=$(jq -r '.version' "$PKGJSON")
+
+          echo "Base branch version: $BASE_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$CURRENT_VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "Invalid version format: $CURRENT_VERSION"
+            echo "Version must follow semver: MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          if [ "$BASE_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "Version not updated in $PKGJSON"
+            exit 1
+          else
+            echo "Version updated: $BASE_VERSION -> $CURRENT_VERSION"
+          fi
+
+      - name: Check all version files in sync
+        working-directory: packages/engine
+        run: bash ci/scripts/check-version-sync.sh
+
+      # Contract Drift Check
+      - name: Install yq
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          YQ_VERSION="v4.44.3"
+          YQ_BINARY="yq_linux_amd64"
+
+          gh release download "$YQ_VERSION" \
+            --repo mikefarah/yq \
+            --pattern "$YQ_BINARY" \
+            --dir /tmp
+
+          sudo mv "/tmp/${YQ_BINARY}" /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+          echo "yq ${YQ_VERSION} installed"
+          yq --version
+
+      - name: Generate path views from registry
+        working-directory: packages/engine
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Contract Drift Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Checking feature-registry.yml and derived views are in sync"
+          echo ""
+          bash scripts/generate-path-views.sh
+
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code packages/engine/docs/paths/; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Contract Drift detected!"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "feature-registry.yml changed but derived views not updated!"
+            echo ""
+            echo "Fix:"
+            echo "  cd packages/engine && bash scripts/generate-path-views.sh"
+            echo "  git add docs/paths/ && git commit -m 'docs: update derived views'"
+            echo ""
+            git diff --name-only packages/engine/docs/paths/
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Contract Drift Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+      # Impact Check (PR-only)
+      - name: Impact Check
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Impact Check: capability change registration"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+
+          if ! git rev-parse "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base ref not found: $BASE_REF"
+            exit 1
+          fi
+
+          CORE_PATHS=(
+            "packages/engine/hooks/"
+            "packages/engine/skills/"
+            "packages/engine/scripts/qa-with-gate.sh"
+          )
+
+          REGISTRY_PATH="packages/engine/features/feature-registry.yml"
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
+
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "No changed files detected, skipping"
+            exit 0
+          fi
+
+          CORE_CHANGED=false
+          for path in "${CORE_PATHS[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^$path"; then
+              CORE_CHANGED=true
+              echo "Core capability changed: $path"
+            fi
+          done
+
+          REGISTRY_CHANGED=false
+          if echo "$CHANGED_FILES" | grep -q "^${REGISTRY_PATH}$"; then
+            REGISTRY_CHANGED=true
+            echo "feature-registry.yml updated"
+          fi
+
+          echo ""
+
+          if [[ "$CORE_CHANGED" == "true" && "$REGISTRY_CHANGED" == "false" ]]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  Impact Check FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Core capability files changed but feature-registry.yml not updated!"
+            echo ""
+            echo "Fix: update packages/engine/features/feature-registry.yml"
+            exit 1
+          elif [[ "$REGISTRY_CHANGED" == "true" && "$CORE_CHANGED" == "false" ]]; then
+            echo "Registry-only update, allowed"
+          elif [[ "$CORE_CHANGED" == "true" && "$REGISTRY_CHANGED" == "true" ]]; then
+            echo "Core and registry both updated, passed"
+          else
+            echo "No core capability files changed, skipping"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Impact Check passed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ─── Gate job (always runs) ───────────────────────────────────────────
+
+  l2-passed:
+    name: L2 Consistency Gate Passed
+    needs: [changes, brain-l2, engine-l2]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: L2 Consistency Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L2 Consistency Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed"
+            exit 1
+          fi
+
+          FAILED=false
+
+          # Brain L2 (required when brain changes detected)
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+            if [ "${{ needs.brain-l2.result }}" != "success" ]; then
+              echo "FAIL: Brain L2 Consistency (${{ needs.brain-l2.result }})"
+              FAILED=true
+            fi
+          fi
+
+          # Engine L2 (required when engine changes detected)
+          if [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+            if [ "${{ needs.engine-l2.result }}" != "success" ]; then
+              echo "FAIL: Engine L2 Consistency (${{ needs.engine-l2.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ L2 Consistency Gate FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
+
+          if [ "${{ needs.changes.outputs.brain }}" != "true" ] && [ "${{ needs.changes.outputs.engine }}" != "true" ]; then
+            echo "No brain/engine changes detected — L2 fast-pass"
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ L2 Consistency Gate PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,0 +1,601 @@
+name: L3 Code Gate
+
+# L3: 代码质量检查 — 代码包变动时必跑（10-20min）
+# 职责：Brain 单元测试（无DB）/ Engine 代码检查 / Workspace 构建 / Quality / Workflows
+# 迁移自：brain-ci.yml (brain-unit) + engine-ci.yml (l3-code) + workspace-ci.yml (build)
+#        + quality-ci.yml + workflows-ci.yml
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: l3-code-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+      engine: ${{ steps.filter.outputs.engine }}
+      workspace: ${{ steps.filter.outputs.workspace }}
+      quality: ${{ steps.filter.outputs.quality }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changes per subsystem
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "brain=true" >> $GITHUB_OUTPUT
+            echo "engine=true" >> $GITHUB_OUTPUT
+            echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "quality=true" >> $GITHUB_OUTPUT
+            echo "workflows=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          BASE_REF="${{ github.base_ref }}"
+          CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+
+          echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
+            && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
+          echo "$CHANGED" | grep -q "^packages/engine/" \
+            && echo "engine=true" >> $GITHUB_OUTPUT || echo "engine=false" >> $GITHUB_OUTPUT
+          echo "$CHANGED" | grep -q "^apps/" \
+            && echo "workspace=true" >> $GITHUB_OUTPUT || echo "workspace=false" >> $GITHUB_OUTPUT
+          echo "$CHANGED" | grep -q "^packages/quality/" \
+            && echo "quality=true" >> $GITHUB_OUTPUT || echo "quality=false" >> $GITHUB_OUTPUT
+          echo "$CHANGED" | grep -q "^packages/workflows/" \
+            && echo "workflows=true" >> $GITHUB_OUTPUT || echo "workflows=false" >> $GITHUB_OUTPUT
+
+  # ─── Brain L3: Unit tests (ubuntu, no DB) ─────────────────────────────
+
+  brain-unit:
+    name: Brain Unit Tests (No DB)
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/brain
+        run: npm ci
+
+      - name: Run Brain unit tests (no DB, no coverage)
+        working-directory: packages/brain
+        env:
+          NODE_OPTIONS: "--max-old-space-size=1536"
+        run: |
+          set +e
+          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-unit-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/brain-unit-output.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/brain-unit-output.txt; then
+              echo "⚠️  vitest exited $EXIT_CODE but all tests passed (likely worker OOM during cleanup)"
+              exit 0
+            fi
+            exit $EXIT_CODE
+          fi
+
+  # ─── Engine L3: TypeCheck / Tests / Build / Shell / Evidence ──────────
+
+  engine-l3:
+    name: Engine L3 Code
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/engine/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/engine
+        run: npm ci
+
+      # TypeCheck
+      - name: TypeCheck
+        working-directory: packages/engine
+        id: typecheck
+        run: |
+          set -e
+          if npm run typecheck --if-present; then
+            echo "TypeCheck passed"
+            bash ci/scripts/write-check-result.sh typecheck true 0 "npm run typecheck"
+          else
+            EXIT_CODE=$?
+            echo "TypeCheck failed"
+            bash ci/scripts/write-check-result.sh typecheck false $EXIT_CODE "npm run typecheck" "TypeCheck failed"
+            exit $EXIT_CODE
+          fi
+
+      # Unit Tests (with Known-Failures whitelist validation)
+      - name: Unit Tests
+        working-directory: packages/engine
+        id: test
+        run: |
+          set -e
+          if npm run test --if-present; then
+            echo "Tests passed"
+            bash ci/scripts/write-check-result.sh test true 0 "npm run test"
+          else
+            TEST_EXIT_CODE=$?
+            echo "Tests failed (exit: $TEST_EXIT_CODE)"
+
+            if [ -f .quality-evidence.json ] && [ -f ci/known-failures.json ]; then
+              if ! jq -e '.known_failure_keys | type == "array"' .quality-evidence.json >/dev/null 2>&1; then
+                echo "Test failed: .quality-evidence.json missing known_failure_keys array"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "missing known_failure_keys"
+                exit $TEST_EXIT_CODE
+              fi
+
+              REQUESTED_KEYS=$(jq -r '.known_failure_keys[]' .quality-evidence.json 2>/dev/null || echo "")
+              if [ -z "$REQUESTED_KEYS" ]; then
+                echo "Test failed: known_failure_keys is empty"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "known_failure_keys empty"
+                exit $TEST_EXIT_CODE
+              fi
+
+              KEY_COUNT=$(echo "$REQUESTED_KEYS" | wc -l)
+              MAX_SKIP=$(jq -r '.rules.max_skip_count // 3' ci/known-failures.json)
+              if [ "$KEY_COUNT" -gt "$MAX_SKIP" ]; then
+                echo "Test failed: skip count $KEY_COUNT exceeds max $MAX_SKIP"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "skip count $KEY_COUNT > max $MAX_SKIP"
+                exit $TEST_EXIT_CODE
+              fi
+
+              ALLOWED_KEYS=$(jq -r '.allowed | keys[]' ci/known-failures.json)
+              INVALID_KEYS=""
+              while IFS= read -r key; do
+                if ! echo "$ALLOWED_KEYS" | grep -qx "$key"; then
+                  INVALID_KEYS="$INVALID_KEYS $key"
+                fi
+              done <<< "$REQUESTED_KEYS"
+
+              if [ -n "$INVALID_KEYS" ]; then
+                echo "Test failed: unknown known_failure_keys:$INVALID_KEYS"
+                bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "unknown keys:$INVALID_KEYS"
+                exit $TEST_EXIT_CODE
+              fi
+
+              echo "Known failures validated ($KEY_COUNT items registered)"
+              echo "$REQUESTED_KEYS" | sed 's/^/  - /'
+              bash ci/scripts/write-check-result.sh test true 0 "npm run test" "known failures validated ($KEY_COUNT items)"
+            else
+              echo "Test failed with no valid known-failures config"
+              bash ci/scripts/write-check-result.sh test false $TEST_EXIT_CODE "npm run test" "no known-failures config"
+              exit $TEST_EXIT_CODE
+            fi
+          fi
+
+      # Build
+      - name: Build
+        working-directory: packages/engine
+        id: build
+        run: |
+          set -e
+          if npm run build --if-present; then
+            echo "Build passed"
+            bash ci/scripts/write-check-result.sh build true 0 "npm run build"
+          else
+            EXIT_CODE=$?
+            echo "Build failed"
+            bash ci/scripts/write-check-result.sh build false $EXIT_CODE "npm run build" "Build failed"
+            exit $EXIT_CODE
+          fi
+
+      # Shell scripts syntax check
+      - name: Check shell scripts
+        working-directory: packages/engine
+        id: shell_check
+        run: |
+          echo "Checking shell scripts..."
+          FAILED=0
+          FOUND=0
+          FAIL_LIST=""
+          while IFS= read -r -d '' f; do
+            FOUND=1
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+              FAIL_LIST="$FAIL_LIST $f"
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No .sh files found"
+          fi
+
+          if [ "$FAILED" -eq 0 ]; then
+            bash ci/scripts/write-check-result.sh shell-check true 0 "bash -n *.sh"
+          else
+            bash ci/scripts/write-check-result.sh shell-check false 1 "bash -n *.sh" "Failed:$FAIL_LIST"
+            exit 1
+          fi
+
+      # Evidence generation (CI-only, SSOT)
+      - name: Generate Evidence
+        working-directory: packages/engine
+        run: bash ci/scripts/generate-evidence.sh
+
+      - name: Evidence Gate
+        working-directory: packages/engine
+        run: bash ci/scripts/evidence-gate.sh
+
+  # ─── Workspace L3: Typecheck / Build / Tests ──────────────────────────
+
+  workspace-l3:
+    name: Workspace L3 Build & Test
+    needs: changes
+    if: needs.changes.outputs.workspace == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            apps/api/package-lock.json
+
+      - name: Install all dependencies
+        run: npm ci
+
+      - name: API Typecheck
+        working-directory: apps/api
+        run: npm run typecheck
+
+      - name: Build Dashboard
+        working-directory: apps/dashboard
+        run: npm run build
+
+      - name: Dashboard Tests
+        working-directory: apps/dashboard
+        run: npm run test:run
+
+  # ─── Quality L3: Structure / Tests / Lint / Docs ──────────────────────
+
+  quality-l3:
+    name: Quality L3 Checks
+    needs: changes
+    if: needs.changes.outputs.quality == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/quality/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/quality
+        run: npm ci
+
+      - name: Check required directories
+        working-directory: packages/quality
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Quality Structure Check"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          FAILED=false
+          REQUIRED_DIRS=(hooks scripts/devgate skills contracts tests docs)
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ -d "$dir" ]; then
+              echo "  [OK] $dir/"
+            else
+              echo "  [FAIL] $dir/ not found"
+              FAILED=true
+            fi
+          done
+          [ "$FAILED" = "true" ] && exit 1
+          echo "All required directories present"
+
+      - name: Check VERSION file format
+        working-directory: packages/quality
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          SEMVER_REGEX='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if [[ "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "  [OK] VERSION = $VERSION"
+          else
+            echo "  [FAIL] Invalid version format: '$VERSION'"
+            exit 1
+          fi
+
+      - name: Check skills SKILL.md
+        working-directory: packages/quality
+        run: |
+          FAILED=false
+          REQUIRED_SKILLS=(skills/audit/SKILL.md skills/qa/SKILL.md skills/assurance/SKILL.md)
+          for skill in "${REQUIRED_SKILLS[@]}"; do
+            if [ -f "$skill" ]; then
+              LINES=$(wc -l < "$skill")
+              [ "$LINES" -ge 3 ] && echo "  [OK] $skill" || { echo "  [FAIL] $skill too short"; FAILED=true; }
+            else
+              echo "  [FAIL] $skill not found"
+              FAILED=true
+            fi
+          done
+          [ "$FAILED" = "true" ] && exit 1
+
+      - name: Run tests
+        working-directory: packages/quality
+        run: npx vitest run --reporter=verbose
+
+      - name: Check shell scripts syntax
+        working-directory: packages/quality
+        run: |
+          FAILED=0
+          while IFS= read -r -d '' f; do
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+          [ "$FAILED" -eq 1 ] && exit 1
+          echo "All shell scripts passed"
+
+      - name: Check required documentation
+        working-directory: packages/quality
+        run: |
+          FAILED=false
+          for doc in README.md CHANGELOG.md; do
+            [ -f "$doc" ] && echo "  [OK] $doc" || { echo "  [FAIL] $doc not found"; FAILED=true; }
+          done
+          DOC_COUNT=$(find docs/ -name "*.md" -type f 2>/dev/null | wc -l)
+          [ "$DOC_COUNT" -gt 0 ] && echo "  [OK] docs/ contains $DOC_COUNT md files" || { echo "  [FAIL] docs/ empty"; FAILED=true; }
+          [ "$FAILED" = "true" ] && exit 1
+          echo "Documentation check passed"
+
+  # ─── Workflows L3: Validate / Structure / Gateway / Unit Tests ─────────
+
+  workflows-l3:
+    name: Workflows L3 Checks
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate JSON files
+        working-directory: packages/workflows
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  JSON Validation"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          FAILED=false
+          CRITICAL_JSON=(workflow-registry.json n8n/capability_mapping.json staff/workers.config.json)
+          for f in "${CRITICAL_JSON[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "  [FAIL] $f not found"
+              FAILED=true
+              continue
+            fi
+            node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null \
+              && echo "  [OK] $f" || { echo "  [FAIL] $f invalid JSON"; FAILED=true; }
+          done
+          while IFS= read -r -d '' f; do
+            node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))" 2>/dev/null \
+              && echo "  [OK] $f" || { echo "  [FAIL] $f invalid JSON"; FAILED=true; }
+          done < <(find n8n/workflows n8n/templates -name "*.json" -type f -print0 2>/dev/null)
+          [ "$FAILED" = "true" ] && exit 1
+
+      - name: Validate YAML files
+        working-directory: packages/workflows
+        run: |
+          YAML_FILES=(regression-contract.yaml)
+          FAILED=false
+          for f in "${YAML_FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "  [FAIL] $f not found"
+              FAILED=true
+              continue
+            fi
+            python3 -c "import yaml; yaml.safe_load(open('$f'))" 2>/dev/null \
+              && echo "  [OK] $f" || { echo "  [FAIL] $f invalid YAML"; FAILED=true; }
+          done
+          [ "$FAILED" = "true" ] && exit 1
+
+      - name: Check shell scripts syntax
+        working-directory: packages/workflows
+        run: |
+          FAILED=0
+          while IFS= read -r -d '' f; do
+            ERROR_OUTPUT=$(bash -n "$f" 2>&1)
+            if [ $? -eq 0 ]; then
+              echo "  [OK] $f"
+            else
+              echo "  [FAIL] $f"
+              echo "$ERROR_OUTPUT" | sed 's/^/     /'
+              FAILED=1
+            fi
+          done < <(find . -name "*.sh" -type f -not -path "./node_modules/*" -print0)
+          [ "$FAILED" -eq 1 ] && exit 1
+
+      - name: Check required directories and files
+        working-directory: packages/workflows
+        run: |
+          FAILED=false
+          REQUIRED_DIRS=(agents protocols n8n/workflows skills scripts gateway)
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            [ -d "$dir" ] && echo "  [OK] $dir/" || { echo "  [FAIL] $dir/ not found"; FAILED=true; }
+          done
+          REQUIRED_FILES=(workflow-registry.json regression-contract.yaml staff/workers.config.json n8n/capability_mapping.json protocols/README.md)
+          for f in "${REQUIRED_FILES[@]}"; do
+            [ -f "$f" ] && echo "  [OK] $f" || { echo "  [FAIL] $f not found"; FAILED=true; }
+          done
+          for agent_dir in agents/*/; do
+            agent_name=$(basename "$agent_dir")
+            if [ -f "${agent_dir}SKILL.md" ]; then
+              echo "  [OK] agents/$agent_name/SKILL.md"
+            else
+              echo "  [FAIL] agents/$agent_name/SKILL.md not found"
+              FAILED=true
+            fi
+          done
+          [ "$FAILED" = "true" ] && exit 1
+          echo "Structure check passed"
+
+      - name: Check gateway syntax
+        working-directory: packages/workflows
+        run: |
+          if [ -f "gateway/ai-gateway.cjs" ]; then
+            node --check gateway/ai-gateway.cjs 2>&1 && echo "  [OK] gateway/ai-gateway.cjs" || { echo "  [FAIL] gateway/ai-gateway.cjs syntax errors"; exit 1; }
+          fi
+          for f in gateway/*.js gateway/*.cjs; do
+            [ -f "$f" ] || continue
+            [ "$f" = "gateway/ai-gateway.cjs" ] && continue
+            node --check "$f" 2>&1 && echo "  [OK] $f" || { echo "  [FAIL] $f syntax errors"; exit 1; }
+          done
+
+      - name: Run weibo-publisher unit tests
+        working-directory: packages/workflows
+        run: |
+          TESTS_DIR="skills/weibo-publisher/scripts/__tests__"
+          FAILED=false
+          for TEST_FILE in "$TESTS_DIR/utils.test.cjs" "$TESTS_DIR/cdp-client.test.cjs"; do
+            [ -f "$TEST_FILE" ] || continue
+            node --test "$TEST_FILE" && echo "  [OK] $TEST_FILE" || { echo "  [FAIL] $TEST_FILE"; FAILED=true; }
+          done
+          [ "$FAILED" = "true" ] && exit 1
+
+      - name: Run xiaohongshu-publisher unit tests
+        working-directory: packages/workflows
+        run: |
+          TESTS_DIR="skills/xiaohongshu-publisher/scripts/__tests__"
+          FAILED=false
+          for TEST_FILE in "$TESTS_DIR/utils.test.cjs" "$TESTS_DIR/publish-xiaohongshu-image.test.cjs"; do
+            [ -f "$TEST_FILE" ] || continue
+            node --test "$TEST_FILE" && echo "  [OK] $TEST_FILE" || { echo "  [FAIL] $TEST_FILE"; FAILED=true; }
+          done
+          [ "$FAILED" = "true" ] && exit 1
+
+  # ─── Gate job (always runs) ───────────────────────────────────────────
+
+  l3-passed:
+    name: L3 Code Gate Passed
+    needs: [changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: L3 Code Gate
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  L3 Code Gate"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          if [ "${{ needs.changes.result }}" = "failure" ]; then
+            echo "FAIL: Detect Changes job failed"
+            exit 1
+          fi
+
+          FAILED=false
+
+          if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
+            if [ "${{ needs.brain-unit.result }}" != "success" ]; then
+              echo "FAIL: Brain Unit Tests (${{ needs.brain-unit.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "${{ needs.changes.outputs.engine }}" = "true" ]; then
+            if [ "${{ needs.engine-l3.result }}" != "success" ]; then
+              echo "FAIL: Engine L3 Code (${{ needs.engine-l3.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "${{ needs.changes.outputs.workspace }}" = "true" ]; then
+            if [ "${{ needs.workspace-l3.result }}" != "success" ]; then
+              echo "FAIL: Workspace L3 Build & Test (${{ needs.workspace-l3.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "${{ needs.changes.outputs.quality }}" = "true" ]; then
+            if [ "${{ needs.quality-l3.result }}" != "success" ]; then
+              echo "FAIL: Quality L3 Checks (${{ needs.quality-l3.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "${{ needs.changes.outputs.workflows }}" = "true" ]; then
+            if [ "${{ needs.workflows-l3.result }}" != "success" ] && [ "${{ needs.workflows-l3.result }}" != "skipped" ]; then
+              echo "FAIL: Workflows L3 Checks (${{ needs.workflows-l3.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ❌ L3 Code Gate FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            exit 1
+          fi
+
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✅ L3 Code Gate PASSED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
