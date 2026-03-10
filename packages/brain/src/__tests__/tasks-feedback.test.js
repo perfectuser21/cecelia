@@ -2,9 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 let pool;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
 });
 
 describe('POST /api/brain/tasks/:task_id/feedback', () => {

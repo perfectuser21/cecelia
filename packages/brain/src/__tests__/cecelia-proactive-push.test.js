@@ -6,7 +6,7 @@
  * 3. tick step 13 在新叙事时推送
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 // Mock broadcast
 const mockBroadcast = vi.hoisted(() => vi.fn());
@@ -36,6 +36,10 @@ vi.mock('../websocket.js', () => ({
 
 import { WS_EVENTS } from '../websocket.js';
 import { publishCeceliaMessage } from '../events/taskEvents.js';
+
+beforeAll(() => {
+  vi.resetModules();
+});
 
 describe('cecelia-proactive-push', () => {
   beforeEach(() => {

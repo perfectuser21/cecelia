@@ -11,10 +11,9 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vite
 let pool, requeueTask;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    requeueTask = (await import('../executor.js')).requeueTask;
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  requeueTask = (await import('../executor.js')).requeueTask;
 });
 
 describe('tick-watchdog-quarantine (P0 Fix #3)', () => {

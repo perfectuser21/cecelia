@@ -9,10 +9,9 @@ let pool;
 let processCortexTask;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    ({ processCortexTask } = await import('../tick.js'));
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ processCortexTask } = await import('../tick.js'));
 });
 
 describe('Cortex RCA Task Processing', () => {

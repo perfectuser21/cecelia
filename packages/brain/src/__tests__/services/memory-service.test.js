@@ -11,11 +11,10 @@ let SimilarityService;
 vi.mock('../../similarity.js');
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../../db.js')).default;
-    MemoryService = (await import('../../services/memory-service.js')).default;
-    SimilarityService = (await import('../../similarity.js')).default;
-  });
+  vi.resetModules();
+  pool = (await import('../../db.js')).default;
+  MemoryService = (await import('../../services/memory-service.js')).default;
+  SimilarityService = (await import('../../similarity.js')).default;
 });
 
 describe('MemoryService', () => {

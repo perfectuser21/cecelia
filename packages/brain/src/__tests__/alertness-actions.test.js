@@ -10,10 +10,9 @@ let pool;
 let executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ executeResponseActions, notifyAlert, escalateToAnalysis, applyMitigation, activateShutdownSafety, recoverFromLevel, getMitigationState, _resetMitigationState } = await import('../alertness-actions.js'));
 });
 
 // New unified levels: SLEEPING=0, CALM=1, AWARE=2, ALERT=3, PANIC=4

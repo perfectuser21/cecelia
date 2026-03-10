@@ -9,10 +9,9 @@ let pool;
 let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS } = await import('../learning.js'));
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS } = await import('../learning.js'));
 });
 
 describe('Learning Loop', () => {

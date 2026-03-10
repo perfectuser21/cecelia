@@ -7,9 +7,8 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 let pool;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
 });
 
 describe('migration 041: auto-cleanup functions', () => {

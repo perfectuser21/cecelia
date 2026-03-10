@@ -10,10 +10,9 @@ let pool;
 let quarantineTask, checkExpiredQuarantineTasks;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    ({ quarantineTask, checkExpiredQuarantineTasks } = await import('../quarantine.js'));
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ quarantineTask, checkExpiredQuarantineTasks } = await import('../quarantine.js'));
 });
 
 describe('quarantine-auto-release (P1 Fix #3)', () => {

@@ -10,7 +10,7 @@
  * 3. LLM error separation: 429 → API_ERROR, bad JSON → BAD_OUTPUT
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
 // Hoist mock client so vi.mock factory can reference it
 const { mockClient, mockPool } = vi.hoisted(() => {
@@ -36,11 +36,18 @@ vi.mock('../tick.js', () => ({
   dispatchNextTask: vi.fn().mockResolvedValue({ dispatched: true }),
 }));
 
-import { executeDecision, actionHandlers } from '../decision-executor.js';
-import { classifyFailure, FAILURE_CLASS } from '../quarantine.js';
-import { classifyLLMError, LLM_ERROR_TYPE } from '../thalamus.js';
+let executeDecision, actionHandlers;
+let classifyFailure, FAILURE_CLASS;
+let classifyLLMError, LLM_ERROR_TYPE;
 
 describe('chaos-hardening', () => {
+  beforeAll(async () => {
+    vi.resetModules();
+    ({ executeDecision, actionHandlers } = await import('../decision-executor.js'));
+    ({ classifyFailure, FAILURE_CLASS } = await import('../quarantine.js'));
+    ({ classifyLLMError, LLM_ERROR_TYPE } = await import('../thalamus.js'));
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockClient.query.mockReset();

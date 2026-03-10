@@ -18,11 +18,10 @@ let websocketService;
 let updateTaskStatus, updateTaskProgress;
 
 beforeAll(async () => {
-  await vi.isolateModules(async () => {
-    pool = (await import('../db.js')).default;
-    websocketService = (await import('../websocket.js')).default;
-    ({ updateTaskStatus, updateTaskProgress } = await import('../task-updater.js'));
-  });
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  websocketService = (await import('../websocket.js')).default;
+  ({ updateTaskStatus, updateTaskProgress } = await import('../task-updater.js'));
 });
 
 /**
