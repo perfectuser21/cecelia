@@ -2,13 +2,14 @@
 name: kuaishou-publisher
 description: 快手自动发布工具 - 图文发布（支持 API 方案和 CDP 浏览器方案）
 trigger: 发布快手、kuaishou、快手发布
-version: 1.2.0
+version: 1.3.0
 created: 2026-03-07
 updated: 2026-03-10
 changelog:
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
   - 1.1.0: OAuth 会话检查脚本 + 批量发布前置防护
   - 1.2.0: 新增 API 方案（publish-kuaishou-api.cjs）— CDP 提取 Cookie + HTTP 直接调用
+  - 1.3.0: 批量发布脚本（batch-publish-kuaishou.sh）切换为新 API 方案，旧方案保留作备用
 ---
 
 # Kuaishou Publisher
@@ -129,6 +130,6 @@ export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
 
 ---
 
-**版本**: 1.2.0
-**状态**: ✅ 图文发布（新 API 方案 + CDP 旧方案）+ OAuth 会话检查
+**版本**: 1.3.0
+**状态**: ✅ 图文发布（新 API 方案 + CDP 旧方案）+ OAuth 会话检查 + 批量发布默认用新方案
 **架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API

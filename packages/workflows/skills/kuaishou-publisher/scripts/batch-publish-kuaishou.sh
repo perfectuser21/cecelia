@@ -18,7 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 QUEUE_DIR="${HOME}/.kuaishou-queue"
 DATE=${1:-$(date +%Y-%m-%d)}
 TARGET_DIR="${QUEUE_DIR}/${DATE}"
-NODE_SCRIPT="${SCRIPT_DIR}/publish-kuaishou-image.cjs"
+NODE_SCRIPT="${SCRIPT_DIR}/publish-kuaishou-api.cjs"
+NODE_SCRIPT_LEGACY="${SCRIPT_DIR}/publish-kuaishou-image.cjs"
 SESSION_CHECK_SCRIPT="${SCRIPT_DIR}/check-kuaishou-session.cjs"
 EXPORT_NODE_PATH="/Users/administrator/perfect21/cecelia/node_modules"
 
@@ -68,9 +69,16 @@ if [ ! -d "${TARGET_DIR}" ]; then
 fi
 
 if [ ! -f "${NODE_SCRIPT}" ]; then
+  echo "⚠️  新 API 脚本不存在: ${NODE_SCRIPT}，回退到旧 CDP 方案"
+  NODE_SCRIPT="${NODE_SCRIPT_LEGACY}"
+fi
+
+if [ ! -f "${NODE_SCRIPT}" ]; then
   echo "❌ 发布脚本不存在: ${NODE_SCRIPT}"
   exit 1
 fi
+
+echo "📋 使用发布方案: $(basename "${NODE_SCRIPT}")"
 
 # 统计
 TOTAL=0
