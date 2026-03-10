@@ -88,8 +88,8 @@ describe('task-router contract', () => {
   });
 
   describe('SKILL_WHITELIST (D5-2)', () => {
-    it('D5-2: initiative_verify maps to /architect in SKILL_WHITELIST', () => {
-      expect(SKILL_WHITELIST['initiative_verify']).toBe('/architect');
+    it('D5-2: initiative_verify maps to /arch-review verify in SKILL_WHITELIST', () => {
+      expect(SKILL_WHITELIST['initiative_verify']).toBe('/arch-review verify');
     });
 
     it('D5-2b: initiative_settle is NOT in SKILL_WHITELIST (废弃)', () => {

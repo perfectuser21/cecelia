@@ -847,12 +847,14 @@
     "decomp_review": "/decomp-check",
     "dept_heartbeat": "/cecelia",
     "initiative_plan": "/decomp",
-    "initiative_verify": "/architect",
+    "initiative_verify": "/arch-review verify",
     "suggestion_plan": "/plan",
-    "architecture_design": "/architect",
+    "architecture_design": "/architect design",
+    "architecture_scan": "/architect scan",
+    "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-09T00:12:00.185Z",
+  "generatedAt": "2026-03-10T10:28:16.891Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

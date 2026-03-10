@@ -60,11 +60,11 @@ describe('routing failure detection', () => {
 });
 
 describe('fallback strategies', () => {
-  it('getFallbackStrategy - skill fallback exists', () => {
-    const result = getFallbackStrategy('skill', 'dev');
+  it('getFallbackStrategy - skill fallback exists for review', () => {
+    const result = getFallbackStrategy('skill', 'review');
     expect(result).not.toBeNull();
     expect(result.strategy).toBe('skill_fallback');
-    expect(result.fallbackValue).toBe('talk');
+    expect(result.fallbackValue).toBe('code_review');
   });
 
   it('getFallbackStrategy - location fallback exists', () => {
@@ -142,7 +142,9 @@ describe('SKILL_WHITELIST', () => {
 describe('FALLBACK_STRATEGIES', () => {
   it('has skill fallback configured', () => {
     expect(FALLBACK_STRATEGIES.skill).toBeDefined();
-    expect(FALLBACK_STRATEGIES.skill.dev).toBe('talk');
+    // dev→talk fallback removed (silent failure risk: coding task degraded to chat)
+    expect(FALLBACK_STRATEGIES.skill.dev).toBeUndefined();
+    expect(FALLBACK_STRATEGIES.skill.review).toBe('code_review');
   });
 
   it('has location fallback configured', () => {

@@ -17,7 +17,8 @@ const VALID_TASK_TYPES = [
   'research', 'explore', 'knowledge',
   'codex_qa', 'code_review', 'decomp_review',
   'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'suggestion_plan', 'architecture_design', 'strategy_session'
+  'suggestion_plan', 'architecture_design', 'architecture_scan',
+  'arch_review', 'strategy_session'
 ];
 
 // Skill whitelist based on task type
@@ -36,17 +37,19 @@ const SKILL_WHITELIST = {
   'decomp_review': '/decomp-check',
   'dept_heartbeat': '/cecelia',
   'initiative_plan': '/decomp',
-  'initiative_verify': '/architect',
+  'initiative_verify': '/arch-review verify',
   'suggestion_plan': '/plan',
-  'architecture_design': '/architect',
+  'architecture_design': '/architect design',
+  'architecture_scan': '/architect scan',
+  'arch_review': '/arch-review review',
   'strategy_session': '/strategy-session'
 };
 
 // Fallback strategies when primary routing fails
 const FALLBACK_STRATEGIES = {
   // skill fallback: when skill not available, try alternative
+  // NOTE: dev→talk removed (silent failure: coding task degraded to chat)
   'skill': {
-    'dev': 'talk',
     'review': 'code_review',
     'code_review': 'dev'
   },
@@ -103,9 +106,11 @@ const LOCATION_MAP = {
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
   'initiative_plan': 'us',      // Initiative 规划 → US (Opus)
-  'initiative_verify': 'us',    // Initiative 验收收尾 → US (Opus + /architect Mode 3)
+  'initiative_verify': 'us',    // Initiative 验收 → US (Sonnet + /arch-review verify)
   'suggestion_plan': 'us',      // Suggestion 层级识别 → US (Sonnet + /plan)
-  'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect)
+  'architecture_design': 'us', // Architecture 设计 → US (Opus + /architect design)
+  'architecture_scan': 'us',   // 系统扫描 → US (Opus + /architect scan)
+  'arch_review': 'us',         // 架构巡检 → US (Sonnet + /arch-review review)
   'strategy_session': 'us',   // 战略会议 → US (Opus + /strategy-session)
   'explore': 'hk',    // 快速调研 → HK (MiniMax 快速)
   'knowledge': 'us',  // 知识记录 → US (Claude)

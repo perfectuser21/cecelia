@@ -337,7 +337,10 @@ describe('routeTaskCreate - task_type → skill + location 映射', () => {
     { task_type: 'explore',            location: 'hk', skill: '/explore' },
     { task_type: 'knowledge',          location: 'us', skill: '/knowledge' },
     { task_type: 'dept_heartbeat',     location: 'us', skill: '/cecelia' },
-    { task_type: 'architecture_design',location: 'us', skill: '/architect' },
+    { task_type: 'architecture_design',location: 'us', skill: '/architect design' },
+    { task_type: 'architecture_scan',  location: 'us', skill: '/architect scan' },
+    { task_type: 'arch_review',        location: 'us', skill: '/arch-review review' },
+    { task_type: 'initiative_verify',  location: 'us', skill: '/arch-review verify' },
   ];
 
   for (const { task_type, location, skill } of cases) {
@@ -522,8 +525,8 @@ describe('SKILL_WHITELIST 完整性', () => {
     }
   });
 
-  it('architecture_design → /architect', () => {
-    expect(SKILL_WHITELIST.architecture_design).toBe('/architect');
+  it('architecture_design → /architect design', () => {
+    expect(SKILL_WHITELIST.architecture_design).toBe('/architect design');
   });
 
   it('talk → /cecelia', () => {
