@@ -4107,3 +4107,20 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 - [ ] 新 deploy.yml 设计时必须加 changes detection job（用 `git diff --name-only "$BEFORE" "$AFTER"`）
 - [ ] branch protection 更新必须在合并 PR 之前完成，且用 job `name:` 值而非 job ID
 - [ ] 用 `github.event.before/after` diff 代替 `dorny/paths-filter`（无外部依赖更稳定）
+
+---
+
+### [2026-03-10] R7 修复 — 统一分支命名规范（PR #758）
+
+**失败统计**：CI 失败 0 次
+
+### 根本原因
+
+本地 branch-protect Hook 接受 `feature/*` 分支（历史遗留），但 CI L1 `verify-dev-workflow` 从未接受 `feature/*`（只接受 `cp-YYYYMMDD-*`）。导致用 feature/ 分支开发时本地通过、CI 拒绝的不一致，对 AI 开发者造成困惑。
+
+修复：从 hook 中删除 feature/* 支持，cp-* 成为唯一合法格式，本地与 CI 完全一致。
+
+### 下次预防
+
+- [ ] 任何修改 branch-protect.sh 的 PR，必须同步检查 CI L1 verify-dev-workflow 正则是否一致
+- [ ] Hook 和 CI 正则必须保持完全相同的字符集和格式要求
