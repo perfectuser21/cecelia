@@ -1141,3 +1141,34 @@ product_features:
       - "质检驳回: Vivian → /decomp-check → rejected → 秋米重拆"
 
     rcis: []
+
+  - id: S5
+    name: Pipeline Hardening V1
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-10"
+    description: |
+      本地门禁升级 - 将 Step 7 升级为真正的 Pre-Push Gate
+      新增 scripts/local-precheck.sh：Brain 改动时自动运行 facts-check/version-sync/manifest-sync
+      Step 7.1b 插入本地预检步骤，移除 Step 7.4 跳过条件
+      Step 9 CI 失败后强制本地复现，禁止直接 push
+
+    entrypoints:
+      - type: script
+        file: scripts/local-precheck.sh
+        trigger: "bash scripts/local-precheck.sh"
+      - type: dev-step
+        file: skills/dev/steps/07-verify.md
+        trigger: "Step 7: 本地验证"
+
+    golden_path: |
+      代码变更 → Step 7.1 npm test → Step 7.1b local-precheck →
+      facts-check/version-sync/manifest-sync 全绿 → Step 7.2 DoD 验证 →
+      Step 7.4 代码审查 → push → CI 直通
+
+    minimal_paths:
+      - "Brain 改动: 本地预检 → facts/version/manifest 全绿 → push"
+      - "非 Brain 改动: 预检跳过 → DoD 验证 → push"
+
+    rcis: []
