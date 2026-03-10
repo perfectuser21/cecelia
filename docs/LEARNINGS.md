@@ -4107,3 +4107,20 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 - [ ] 新 deploy.yml 设计时必须加 changes detection job（用 `git diff --name-only "$BEFORE" "$AFTER"`）
 - [ ] branch protection 更新必须在合并 PR 之前完成，且用 job `name:` 值而非 job ID
 - [ ] 用 `github.event.before/after` diff 代替 `dorny/paths-filter`（无外部依赖更稳定）
+
+---
+
+### [2026-03-10] R1 修复 — CI 文件改动触发 Config Audit（PR #759）
+
+**失败统计**：CI 失败 0 次
+
+### 根本原因
+
+审计发现 `.github/workflows/**` 改动时，`engine-l1` 不触发（因为 engine 路径检测不匹配 CI 文件路径），导致 Config Audit 有真空区——修改 CI 配置无需任何标签就能合并。
+
+修复：在 L1 加入独立的 `ci-config-audit` job，always-on，检测 CI 文件变更，要求 [CONFIG]/[INFRA] 标签。与 engine-l1 的 Config Audit 互补，覆盖全路径。
+
+### 下次预防
+
+- [ ] CI 架构变更时，检查每种文件路径（.github/workflows, packages/*, apps/*）是否都有对应的 Config Audit 覆盖
+- [ ] 新增 always-on job 时，同步更新 l1-passed/l2-passed 等 gate 的 needs 列表
