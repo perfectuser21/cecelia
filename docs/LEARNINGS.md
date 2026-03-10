@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] execution-callback 静默失败 → error_message/blocked_detail 写入（PR #775）
+
+**失败统计**：L4 CI 失败 0 次（新增 migration + 扩参，本地 OOM 已知问题，CI 通过）
+
+### 根本原因
+
+`execution-callback` 路由的 catch 块只 `console.error`，不写 DB。
+`tasks.error_message` 字段不存在（pre-migration 142），`blocked_detail` 虽存在但 callback 从不填。
+Cortex 反思拿到的是 null 字段，RCA 无任何上下文可用。
+
+### 下次预防
+
+- [ ] 新增 DB 字段时，同步检查所有写入路径是否实际使用该字段（不只是读路径）
+- [ ] UPDATE SQL 扩参时，同步更新所有 `toHaveLength(N)` 测试断言（本次从 8→10）
+- [ ] `blocked_detail` 是 JSONB 列，插入前必须 `JSON.stringify()`，不能直接传 JS 对象（参见 MEMORY 记录）
+- [ ] migration 编号冲突检查：`ls packages/brain/migrations/NNN_*.sql` 确认不重号后再建文件
+
 ### [2026-03-10] vitest isolate:false 模块缓存污染 — focus + pr-progress mock 修复（PR #771）
 
 **失败统计**：L4 CI 失败 23 次（focus 16 次 + pr-progress 7 次），本地单独运行均通过
