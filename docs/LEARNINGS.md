@@ -4581,3 +4581,22 @@ CI 失败 1 次（Learning 格式 + PRD 格式），本地测试失败 0 次。
 - [ ] PRD 成功标准必须用 `## 成功标准` 二级标题（不能用粗体）
 - [ ] DoD Test 禁止 `echo`，使用 `ls`、`grep -c`、`node --test` 等真实命令
 - [ ] 在 monorepo 子包写代码前，检查中间目录是否有 `.prd.md`；如有，在该目录也放分支专属 PRD/DoD
+
+---
+
+### [2026-03-10] 小红书发布脚本重构 — 导出纯函数 + 本地 utils（PR #794）
+
+CI 失败 1 次（Learning Format Gate），其余全通过。
+
+### 根本原因
+
+1. **Node.js 脚本被 require() 时的副作用**：主执行代码（参数解析、process.exit）在 `require()` 时立即运行，导致测试文件无法导入函数。必须用 `if (require.main === module)` 保护。
+2. **跨目录 utils 依赖**：xhs publisher 直接从 `weibo-publisher/scripts/utils.cjs` 导入 `findImages`，而本目录已有独立的 `utils.cjs`。隐式依赖导致测试和代码结构不一致。
+3. **PRD/DoD 放置规则**：在 `packages/workflows/skills/` 下写代码时，hook 向上找到 `packages/workflows/.prd.md`（旧文件），需在 `packages/workflows/` 也放一份当前分支的 PRD/DoD。
+
+### 下次预防
+
+- [ ] 所有可被 `require()` 的 Node.js 脚本，主执行入口必须用 `if (require.main === module)` 保护
+- [ ] `module.exports` 放最末尾，纯函数（`isLoginError`、`isPublishSuccess` 等）供测试导入
+- [ ] 新增平台 publisher 时，utils 优先使用本地 `utils.cjs`，不从其他 publisher 导入相同函数
+- [ ] 在 `packages/workflows/skills/` 写代码前，检查 `packages/workflows/` 是否有旧 `.prd.md`；如有，在该目录也放分支专属 PRD/DoD
