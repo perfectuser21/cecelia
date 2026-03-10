@@ -9,8 +9,9 @@ import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest';
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+  });
 });
 
 describe('Migration 057 - initiative_orchestration', () => {

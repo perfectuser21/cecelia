@@ -10,9 +10,10 @@ let pool;
 let checkSystemicFailurePattern, FAILURE_CLASS;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ checkSystemicFailurePattern, FAILURE_CLASS } = await import('../quarantine.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ checkSystemicFailurePattern, FAILURE_CLASS } = await import('../quarantine.js'));
+  });
 });
 
 describe('quarantine-systemic (P0 Fix #1)', () => {

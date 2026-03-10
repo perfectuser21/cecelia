@@ -9,9 +9,10 @@ let performRCA, validateCortexDecision;
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ performRCA, validateCortexDecision } = await import('../cortex.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ performRCA, validateCortexDecision } = await import('../cortex.js'));
+  });
 });
 
 describe('Cortex Strategy Adjustments', () => {

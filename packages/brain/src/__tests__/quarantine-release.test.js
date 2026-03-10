@@ -7,9 +7,10 @@ let pool;
 let quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS } = await import('../quarantine.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ quarantineTask, checkExpiredQuarantineTasks, getQuarantinedTasks, QUARANTINE_REASONS, FAILURE_CLASS } = await import('../quarantine.js'));
+  });
 });
 
 describe('Quarantine Auto-Release', () => {

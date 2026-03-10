@@ -10,9 +10,10 @@ import { describe, it, expect, afterEach, beforeAll, vi } from 'vitest';
 let pool, createInitiative;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  createInitiative = (await import('../actions.js')).createInitiative;
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    createInitiative = (await import('../actions.js')).createInitiative;
+  });
 });
 
 let testProjectIds = [];

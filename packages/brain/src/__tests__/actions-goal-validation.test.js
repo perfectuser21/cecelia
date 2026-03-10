@@ -9,9 +9,10 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vite
 let pool, createTask;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  createTask = (await import('../actions.js')).createTask;
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    createTask = (await import('../actions.js')).createTask;
+  });
 });
 
 describe('createTask - goal_id validation', () => {

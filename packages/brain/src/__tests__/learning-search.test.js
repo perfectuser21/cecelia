@@ -9,9 +9,10 @@ let pool;
 let searchRelevantLearnings, getRecentLearnings;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ searchRelevantLearnings, getRecentLearnings } = await import('../learning.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ searchRelevantLearnings, getRecentLearnings } = await import('../learning.js'));
+  });
 });
 
 describe('Learning Semantic Search', () => {

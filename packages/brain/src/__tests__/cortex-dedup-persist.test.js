@@ -10,9 +10,10 @@ let pool;
 let _resetReflectionState, _checkReflectionBreaker, _computeEventHash;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ _resetReflectionState, _checkReflectionBreaker, _computeEventHash } = await import('../cortex.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ _resetReflectionState, _checkReflectionBreaker, _computeEventHash } = await import('../cortex.js'));
+  });
 });
 
 const DB_KEY_PREFIX = 'cortex_reflection:';

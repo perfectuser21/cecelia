@@ -7,9 +7,10 @@ let createSuggestion, executeTriage;
 let pool;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ createSuggestion, executeTriage } = await import('../suggestion-triage.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ createSuggestion, executeTriage } = await import('../suggestion-triage.js'));
+  });
 });
 
 describe('Suggestion System Integration', () => {

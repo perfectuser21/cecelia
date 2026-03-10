@@ -7,9 +7,10 @@ let pool;
 let evaluateQualityInitial, generateSimilarityHash, checkShouldCreateRCA, getQualityStats;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ evaluateQualityInitial, generateSimilarityHash, checkShouldCreateRCA, getQualityStats } = await import('../cortex-quality.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ evaluateQualityInitial, generateSimilarityHash, checkShouldCreateRCA, getQualityStats } = await import('../cortex-quality.js'));
+  });
 });
 
 describe('Cortex Quality Assessment', () => {

@@ -10,9 +10,10 @@ let pool;
 let handleTaskFailure, FAILURE_CLASS;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ handleTaskFailure, FAILURE_CLASS } = await import('../quarantine.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ handleTaskFailure, FAILURE_CLASS } = await import('../quarantine.js'));
+  });
 });
 
 describe('quarantine-classification (P1 Fix #2)', () => {

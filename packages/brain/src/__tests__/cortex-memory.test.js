@@ -9,9 +9,10 @@ let pool;
 let saveCortexAnalysis, searchRelevantAnalyses;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ saveCortexAnalysis, searchRelevantAnalyses } = await import('../cortex.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ saveCortexAnalysis, searchRelevantAnalyses } = await import('../cortex.js'));
+  });
 });
 
 describe('Cortex Memory - Persistent Storage', () => {

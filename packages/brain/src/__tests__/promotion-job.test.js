@@ -15,9 +15,10 @@ let pool;
 let runPromotionJob, countPromotionsToday, findPromotionCandidates, promoteToActive, findPoliciesToDisable, disablePolicy;
 
 beforeAll(async () => {
-  vi.resetModules();
-  pool = (await import('../db.js')).default;
-  ({ runPromotionJob, countPromotionsToday, findPromotionCandidates, promoteToActive, findPoliciesToDisable, disablePolicy } = await import('../promotion-job.js'));
+  await vi.isolateModules(async () => {
+    pool = (await import('../db.js')).default;
+    ({ runPromotionJob, countPromotionsToday, findPromotionCandidates, promoteToActive, findPoliciesToDisable, disablePolicy } = await import('../promotion-job.js'));
+  });
 });
 
 describe('Promotion Job (P1)', () => {
