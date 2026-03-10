@@ -4528,3 +4528,21 @@ branch-protect.sh 从被修改的文件目录向上递归搜索，找到**第一
 - [ ] 新建脚本文件作为可执行入口时，必须用 `if (require.main === module) { main(); }` 保护，防止测试 require 时执行
 - [ ] 在 monorepo 子包目录写代码时，如果中间目录已有 `.prd.md`，在那个目录再放分支专属 PRD/DoD
 - [ ] CI 的 PRD/DoD gate 从仓库根目录查找——worktree 根目录的 `.prd-*.md` 必须 git add + commit，不能只在工作目录存在
+
+---
+
+### [2026-03-10] 知乎文章发布 CDP 自动化脚本（PR #790）
+
+CI 失败 1 次（Learning 格式 + PRD 格式），本地测试失败 0 次。
+
+### 根本原因
+
+1. **PRD 格式**：成功标准必须用 `## 成功标准` 二级标题，不能用粗体 `**成功标准**:`
+2. **DoD 假测试**：`test -f xxx && echo 1` 被检测为假测试，改用 `ls xxx`
+3. **branch-protect.sh 路径陷阱**：在 `packages/workflows/skills/` 写代码时，`packages/workflows/` 已有旧 `.prd.md`，hook 就近找到该目录，需额外在中间目录放分支专属 PRD/DoD 文件
+
+### 下次预防
+
+- [ ] PRD 成功标准必须用 `## 成功标准` 二级标题（不能用粗体）
+- [ ] DoD Test 禁止 `echo`，使用 `ls`、`grep -c`、`node --test` 等真实命令
+- [ ] 在 monorepo 子包写代码前，检查中间目录是否有 `.prd.md`；如有，在该目录也放分支专属 PRD/DoD
