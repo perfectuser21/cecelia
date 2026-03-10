@@ -155,5 +155,56 @@ describe('Cortex Dedup Persistence', () => {
       expect(result.open).toBe(true);
       expect(result.count).toBe(4);
     });
+
+    it('DoD-5: 重启后 lastSeen 过期（>30min）的条目不被恢复，count 重置为 1', async () => {
+      const hash = 'test_expired_on_restart';
+      const now = Date.now();
+
+      // 写入 lastSeen 已过期的条目（距今 35min，超过 30min 窗口）
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+      `, [`${DB_KEY_PREFIX}${hash}`, JSON.stringify({
+        count: 5,
+        firstSeen: now - 40 * 60 * 1000,  // 40min ago
+        lastSeen: now - 35 * 60 * 1000,   // 35min ago（已过期）
+      })]);
+
+      // 模拟 Brain 重启后首次调用
+      _resetReflectionState();
+      const result = await _checkReflectionBreaker(hash);
+
+      // count 应重置为 1（过期条目不被恢复，熔断器重置）
+      expect(result.open).toBe(false);
+      expect(result.count).toBe(1);
+
+      // 内存中应有新的 count=1 状态（而不是过期的 count=5）
+      // 注：DELETE 是 fire-and-forget，不检查 DB 状态以避免竞态
+    });
+
+    it('DoD-6: 重启后 lastSeen 未过期（<30min）的活跃条目被正确恢复', async () => {
+      const hash = 'test_active_on_restart';
+      const now = Date.now();
+
+      // 写入 firstSeen 较早但 lastSeen 在 30min 内的条目
+      // 旧行为（检查 firstSeen）：35min > 30min → 误删
+      // 新行为（检查 lastSeen）：10min < 30min → 正确保留
+      await pool.query(`
+        INSERT INTO working_memory (key, value_json, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+      `, [`${DB_KEY_PREFIX}${hash}`, JSON.stringify({
+        count: 2,
+        firstSeen: now - 35 * 60 * 1000,  // 35min ago（在旧代码中会被误删）
+        lastSeen: now - 10 * 60 * 1000,   // 10min ago（仍在窗口内，应保留）
+      })]);
+
+      // 模拟 Brain 重启后首次调用
+      _resetReflectionState();
+      const result = await _checkReflectionBreaker(hash);
+
+      // count 应从 DB 恢复 2 + 1 = 3，且已达阈值 2 → 熔断
+      expect(result.open).toBe(true);
+      expect(result.count).toBe(3);
+    });
   });
 });
