@@ -295,11 +295,30 @@ jobs:
           echo "  Impact Check passed"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  # ─── Evolution Gate (always runs, detects unregistered subsystems) ───────
+
+  evolution-check:
+    name: CI Evolution Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Detect unregistered subsystems and test categories
+        run: node scripts/ci-evolution-check.mjs
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l2-passed:
     name: L2 Consistency Gate Passed
-    needs: [changes, brain-l2, engine-l2]
+    needs: [changes, brain-l2, engine-l2, evolution-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -331,6 +350,14 @@ jobs:
               echo "FAIL: Engine L2 Consistency (${{ needs.engine-l2.result }})"
               FAILED=true
             fi
+          fi
+
+          # Evolution Check (always required — detects unregistered subsystems)
+          if [ "${{ needs.evolution-check.result }}" != "success" ]; then
+            echo "FAIL: CI Evolution Check (${{ needs.evolution-check.result }})"
+            echo "  → A new package/app/test-category was detected without CI registration."
+            echo "  → Register it in ci/routing-map.yml or ci/test-taxonomy.yml."
+            FAILED=true
           fi
 
           if [ "$FAILED" = "true" ]; then

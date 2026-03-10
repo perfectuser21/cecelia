@@ -1,0 +1,83 @@
+---
+# ci/test-taxonomy.yml
+# CI Evolution Gate — Test Type Classification Registry
+#
+# PURPOSE: Maps test directory/file patterns to CI layers.
+# When a new test directory pattern appears that is NOT covered by any entry
+# here, the CI Evolution Gate will WARN with a classification request.
+#
+# HOW TO ADD A NEW TEST CATEGORY:
+#   1. Add an entry below with the patterns that identify the test type
+#   2. Specify which CI layer should run these tests (l3 or l4)
+#   3. Run: node scripts/ci-evolution-check.mjs to verify locally
+#
+# LAYER GUIDE:
+#   l3 = Code quality tests (fast, no external deps) — unit tests
+#   l4 = Runtime tests (macOS + PostgreSQL required) — integration/e2e
+
+version: "1.0.0"
+
+test_types:
+
+  # ── Unit Tests ────────────────────────────────────────────────────────────
+  # Standard __tests__ directories (vitest / node:test pattern)
+
+  unit:
+    patterns:
+      - "**/__tests__/**/*.test.js"
+      - "**/__tests__/**/*.test.ts"
+      - "**/__tests__/**/*.test.mjs"
+      - "**/__tests__/**/*.test.cjs"
+      - "**/*.test.ts"
+      - "**/*.spec.ts"
+    layer: l3
+    description: "单元测试，无外部依赖，快速"
+
+  # ── Integration Tests ─────────────────────────────────────────────────────
+  # Tests requiring database or external services
+
+  integration:
+    patterns:
+      - "packages/quality/tests/**"
+      - "packages/engine/tests/**"
+      - "apps/api/tests/**"
+      - "tests/**"
+      - "**/tests/integration/**"
+      - "**/__tests__/integration/**"
+      - "**/*.integration.test.ts"
+      - "**/*.integration.test.js"
+    layer: l4
+    description: "集成测试，需要 PostgreSQL 或外部服务"
+
+  # ── E2E / Gateway Tests ───────────────────────────────────────────────────
+  # End-to-end tests and contract gateway tests
+
+  e2e:
+    patterns:
+      - "tests/e2e/**"
+      - "playwright/**"
+      - "**/tests/e2e*"
+      - "**/e2e-gateway*"
+    layer: l4
+    description: "E2E 测试和 DevGate 契约测试"
+
+  # ── Workspace Frontend Tests ──────────────────────────────────────────────
+  # Tests for apps/api and apps/dashboard (Vitest / Jest format)
+
+  workspace-unit:
+    patterns:
+      - "apps/api/test/**"
+      - "apps/api/tests/**"
+      - "apps/dashboard/src/test/**"
+      - "apps/dashboard/test/**"
+    layer: l3
+    description: "Workspace 前端单元/组件测试"
+
+  # ── Workflow Scripts Tests ────────────────────────────────────────────────
+  # Tests for packages/workflows skill scripts (node:test format, .cjs)
+
+  workflows-unit:
+    patterns:
+      - "packages/workflows/**/scripts/__tests__/**"
+    layer: l3
+    description: "Workflow skill 脚本单元测试（node:test + .cjs 格式）"
