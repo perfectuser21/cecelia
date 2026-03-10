@@ -4707,3 +4707,19 @@ CI 失败 1 次（PRD/DoD/Learning 未提交 + Required Dev Paths 拦截）。
 - [ ] high-risk 路径（`executor.js` 等）修改时，PRD/DoD/Learning 文件必须在第一次 push 前就 git add + commit，否则 CI 直接拦截
 - [ ] 新增 Brain 内部失败处理路径（updateTaskStatus / pool.query 直接操作）时，必须同时补充 auto-learning 调用
 - [ ] `routes.js` 的 execution-callback 路由：当 result 为空时，应从 exit_code/stderr/failure_class 合成诊断信息，不能直接传 null 给下游分析链
+
+## PR #802 知乎 API 方案 publish-zhihu-api.cjs（2026-03-11）
+
+CI 失败 1 次（Learning Format Gate — 未提交 LEARNINGS.md）。
+
+### 根本原因
+
+1. **知乎 CSRF 机制决定 in-browser fetch 优于 Cookie 提取**：知乎使用 x-zse-93/x-zse-96 签名体系，难以在 Node.js 外部计算。相比 kuaishou-publisher 的 Cookie 提取方案，对知乎改用"CDP 连接 + Runtime.evaluate in-browser fetch"更可靠，浏览器上下文自动处理所有认证头。
+2. **branch-protect.sh PRD 命名规则**：Hook 查找 `.prd-${CURRENT_BRANCH}.md`（完整分支名），而不是自定义短名。之前创建的 `.prd-cp-03101211-zhihu-api.md` 不匹配，需要额外创建正确命名文件。
+3. **Learning 必须在合并前 push**：CI L1 Learning Format Gate 检查 LEARNINGS.md 是否有新增内容，必须在 PR 阶段完成记录（而非合并后）。
+
+### 下次预防
+
+- [ ] 知乎/微博等使用 CSRF 签名的平台，优先使用 in-browser fetch 而非 Cookie 提取
+- [ ] 新建 PRD 文件时，文件名必须是 `.prd-${BRANCH_NAME}.md`（完整分支名），不能用简短别名
+- [ ] Step 10 Learning 记录是阻塞 CI 的硬门禁，必须在 push PR 之前完成，不能留到 CI 失败后补

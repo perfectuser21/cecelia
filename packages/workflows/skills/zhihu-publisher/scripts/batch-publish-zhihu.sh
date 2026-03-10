@@ -12,6 +12,13 @@
 #       └── ...
 #
 # 发布完成后在内容目录写入 done.txt，下次运行跳过。
+#
+# 发布模式切换（环境变量）：
+#   ZHIHU_MODE=cdp   # 旧方案：CDP UI 自动化（默认）
+#   ZHIHU_MODE=api   # 新方案：in-browser fetch 调用知乎 API（推荐）
+#
+# 示例：
+#   ZHIHU_MODE=api bash batch-publish-zhihu.sh 2026-03-11
 
 set -euo pipefail
 
@@ -19,9 +26,10 @@ DATE="${1:-$(date +%Y-%m-%d)}"
 QUEUE_DIR="${HOME}/.zhihu-queue/${DATE}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_PATH_OVERRIDE="/Users/administrator/perfect21/cecelia/node_modules"
+ZHIHU_MODE="${ZHIHU_MODE:-cdp}"
 
 echo "========================================="
-echo " 知乎批量发布 - ${DATE}"
+echo " 知乎批量发布 - ${DATE} [${ZHIHU_MODE}模式]"
 echo "========================================="
 echo ""
 
@@ -48,7 +56,14 @@ for content_dir in "${QUEUE_DIR}"/*/; do
   echo "发布 ($count): $(basename "$content_dir")"
   echo ""
 
-  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${SCRIPT_DIR}/publish-zhihu-article.cjs" --content "$content_dir"; then
+  # 根据 ZHIHU_MODE 选择发布脚本
+  if [[ "$ZHIHU_MODE" == "api" ]]; then
+    PUBLISH_SCRIPT="${SCRIPT_DIR}/publish-zhihu-api.cjs"
+  else
+    PUBLISH_SCRIPT="${SCRIPT_DIR}/publish-zhihu-article.cjs"
+  fi
+
+  if NODE_PATH="$NODE_PATH_OVERRIDE" node "${PUBLISH_SCRIPT}" --content "$content_dir"; then
     success=$((success + 1))
     # 标记完成，下次跳过
     touch "${content_dir}done.txt"
