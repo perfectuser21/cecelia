@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] instruction-book 基础结构建立（PR #776）
+
+**失败统计**：CI 失败 1 次（DoD 格式 + Engine L2 版本检查）
+
+### 根本原因
+
+1. **DoD `Test:` 格式**：`check-dod-mapping.cjs` 要求 `Test:` 在验收项的**下一行**，缩进 2 空格。写在同行或缺少正确缩进会被识别为"缺少 Test 字段"。
+2. **修改 `packages/engine/skills/` 触发版本检查**：Engine L2 要求修改 engine 文件时版本要 bump，并且 PR title 需含 `[CONFIG]` 或 `[INFRA]`。纯文档改动应**只放在 `docs/` 目录**，不触碰 `packages/engine/`，避免触发额外 CI 要求。
+
+### 下次预防
+
+- [ ] 如果改动只是 `docs/` 目录的纯文档（不涉及代码/config），不要同时修改 `packages/engine/` 下的文件，避免触发 Engine CI 的版本/[CONFIG] 检查
+- [ ] 修改 `packages/engine/skills/` 时，PR title 必须含 `[CONFIG]`，并同步更新 `feature-registry.yml` + 重新生成 path views
+- [ ] DoD `Test:` 字段必须在验收项下一行，缩进 2 空格，格式：`  Test:\n  manual:bash -c "..."`
+
 ### [2026-03-10] vitest isolate:false 模块缓存污染 — focus + pr-progress mock 修复（PR #771）
 
 **失败统计**：L4 CI 失败 23 次（focus 16 次 + pr-progress 7 次），本地单独运行均通过
