@@ -4352,3 +4352,16 @@ PR #768 在 createTask() 末尾追加了 delivery_type 参数，导致 `params` 
 - [ ] 在 SQL INSERT params 数组末尾追加新参数时，必须同步搜索 `params.length - 1` / `params[params.length` 相关测试并更新索引
 - [ ] 测试注释应标注参数结构（如 `// [...commonParams(11), domain($12), delivery_type($13)]`），让后续修改者立即看到偏移量
 - [ ] PR #768 的 DoD 条目应加：检查是否有测试用 params.length 索引断言末尾参数
+
+## PR #774 cecelia-bridge 超时配置 + degraded 降级修复（2026-03-10）
+
+### 根本原因
+
+cecelia-bridge 的超时时间硬编码为固定值，无法通过环境变量调整。Brain 在慢任务场景下频繁触发 ETIMEDOUT，但 bridge 返回 HTTP 500，导致 llm-caller.js 将超时误判为普通 LLM 错误而非 degraded 状态，cortex.js 无法正确记录 error_message 并触发合适的重试/降级策略。
+根因：超时处理路径缺乏分层设计——bridge 层、llm-caller 层、cortex 层各自独立，没有统一的 degraded 信号传递机制。
+
+### 下次预防
+
+- [ ] DoD 中 Test 命令不能包含 `echo`（包括 `&& echo OK` 结尾），CI 会拦截，改用 `grep -q` 直接退出码判断
+- [ ] `manual:bash -c "..."` 格式在 CI 实际执行，路径必须用相对于项目根目录的路径，不能用绝对路径（CI 机器路径不同）
+- [ ] 新增跨层功能时，必须在 DoD 中为每一层（bridge/llm-caller/cortex）分别声明 Test，并覆盖信号传递链
