@@ -10,7 +10,7 @@ const { mockPool } = vi.hoisted(() => ({
 
 vi.mock('../db.js', () => ({ default: mockPool }));
 
-import { generateCompareReport } from '../project-compare.js';
+import { generateCompareReport, getCompareMetrics } from '../project-compare.js';
 
 const PROJECT_A = {
   id: 'aaaaaaaa-0000-0000-0000-000000000001',
@@ -173,5 +173,77 @@ describe('generateCompareReport', () => {
     });
 
     expect(report.summary).toContain(report.projects[0].name);
+  });
+});
+
+const PROJECT_A_KR = {
+  id: 'aaaaaaaa-0000-0000-0000-000000000001',
+  name: 'Project Alpha',
+  type: 'initiative',
+  status: 'active',
+  kr_id: 'krrrrrr-0000-0000-0000-000000000010',
+  kr_goal_id: 'krrrrrr-0000-0000-0000-000000000010',
+  kr_title: 'KR: 提升任务完成率',
+  kr_progress: '75',
+};
+
+const PROJECT_B_NOKR = {
+  id: 'bbbbbbbb-0000-0000-0000-000000000002',
+  name: 'Project Beta',
+  type: 'project',
+  status: 'active',
+  kr_id: null,
+  kr_goal_id: null,
+  kr_title: null,
+  kr_progress: null,
+};
+
+describe('getCompareMetrics', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('正常路径：返回含 kr 和 trend 的项目数组', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [PROJECT_A_KR, PROJECT_B_NOKR] }) // 项目+KR
+      .mockResolvedValueOnce({ rows: [TASK_STATS_A, TASK_STATS_B] })   // 任务统计
+      .mockResolvedValueOnce({ rows: [                                  // 趋势
+        { project_id: PROJECT_A_KR.id, week: '2026-W10', completed: '3' },
+        { project_id: PROJECT_A_KR.id, week: '2026-W11', completed: '4' },
+      ] });
+
+    const result = await getCompareMetrics({
+      project_ids: [PROJECT_A_KR.id, PROJECT_B_NOKR.id],
+    });
+
+    expect(result.projects).toHaveLength(2);
+    const alpha = result.projects.find(p => p.id === PROJECT_A_KR.id);
+    expect(alpha.kr).not.toBeNull();
+    expect(alpha.kr.progress).toBe(75);
+    expect(Number.isInteger(alpha.kr.progress)).toBe(true);
+    expect(alpha.trend).toBeInstanceOf(Array);
+    expect(alpha.trend[0]).toMatchObject({ week: '2026-W10', completed: 3 });
+  });
+
+  it('kr_id 为 null 时 kr 字段为 null', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [PROJECT_A_KR, PROJECT_B_NOKR] })
+      .mockResolvedValueOnce({ rows: [TASK_STATS_A, TASK_STATS_B] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await getCompareMetrics({
+      project_ids: [PROJECT_A_KR.id, PROJECT_B_NOKR.id],
+    });
+
+    const beta = result.projects.find(p => p.id === PROJECT_B_NOKR.id);
+    expect(beta.kr).toBeNull();
+    expect(beta.trend).toEqual([]);
+  });
+
+  it('project_ids 少于 2 个时抛出 status:400 错误', async () => {
+    await expect(
+      getCompareMetrics({ project_ids: ['only-one'] })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mockPool.query).not.toHaveBeenCalled();
   });
 });

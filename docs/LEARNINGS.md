@@ -4804,3 +4804,17 @@ CI 首次通过（使用 [SKIP-LEARNING] 标识，无 CI 失败）。
 - [ ] PRD 中"成功标准"章节必须用 `## 成功标准` 二级标题（不是粗体），创建 PRD 时立即验证格式
 - [ ] 写代码前检查 main 是否已有同名文件（`git show origin/main:path/to/file`），避免 add/add 冲突
 - [ ] LEARNINGS.md 条目和 PRD 格式修复必须在第一次 push 前完成，减少 CI 重跑次数
+
+## PR #808 GET /api/brain/projects/compare — KR进度 + 趋势数据（2026-03-10）
+
+CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）。
+
+### 根本原因
+
+`Promise.all` 并行执行3个查询可以在 getCompareMetrics 中安全使用：项目+KR、任务统计、趋势查询互相独立，无数据依赖。但 missingIds 校验必须在 Promise.all 之后（使用 projectResult.rows），不能在 Promise.all 之前做（此时还没有查询结果）。
+
+### 下次预防
+
+- [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
+- [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
+- [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
