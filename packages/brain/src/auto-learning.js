@@ -193,7 +193,7 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
 export async function processExecutionAutoLearning(task_id, newStatus, result, options = {}) {
   try {
     // 获取任务信息
-    const taskResult = await pool.query('SELECT task_type, title FROM tasks WHERE id = $1', [task_id]);
+    const taskResult = await pool.query('SELECT task_type, title, error_message FROM tasks WHERE id = $1', [task_id]);
     const taskRow = taskResult.rows[0];
 
     if (!taskRow) {
