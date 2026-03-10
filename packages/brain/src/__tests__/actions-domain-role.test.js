@@ -63,8 +63,10 @@ describe('actions.js - domain 自动填充', () => {
 
       const params = mockQuery.mock.calls[1][1];
       // 标题无 domain 关键词时 detectDomain confidence=0，domain 写 null
-      const domainParam = params[params.length - 1];
+      // params 结构：[...commonParams(11), domain($12), delivery_type($13)]
+      const domainParam = params[params.length - 2];
       expect(domainParam).toBeNull();
+      expect(params[params.length - 1]).toBe('code-only'); // delivery_type 默认值
     });
 
     it('传入 domain=product 时 INSERT 包含 product', async () => {
