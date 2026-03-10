@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] GET /api/brain/projects/compare — PRD 格式与 Learning 缺失（PR #806）
+
+**失败统计**：L1 CI 失败 1 次（PRD 成功标准格式错误 + Learning 缺失）
+
+### 根本原因
+
+1. **PRD 成功标准格式错误**：PRD 中使用了 `**成功标准**:` 粗体格式，check-prd.sh 只匹配 `## 成功标准` 二级标题，导致 PRD Success Criteria Check 失败。
+2. **Learning 在合并前未写**：按流程应在 CI 通过后、合并前先写 LEARNINGS.md（Step 10），未提前准备导致 Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] PRD 成功标准必须用 `## 成功标准` 二级标题（而非 `**成功标准**:`）
+- [ ] 写 PRD 文件时立即检查格式：`grep "^## 成功标准" .prd-*.md` 确认存在
+- [ ] 提 PR 前同步写好 LEARNINGS.md，避免 Learning Format Gate 失败
+
 ### [2026-03-10] 小红书脚本清理 — worktree vs 主仓库操作陷阱（PR #798）
 
 **失败统计**：L1 CI 失败 2 次（PRD 格式错误 + Learning 缺失）
