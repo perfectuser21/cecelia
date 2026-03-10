@@ -4512,3 +4512,24 @@ branch-protect.sh 从被修改的文件目录向上递归搜索，找到**第一
 - [ ] 新建脚本文件作为可执行入口时，必须用 `if (require.main === module) { main(); }` 保护，防止测试 require 时执行
 - [ ] 在 monorepo 子包目录写代码时，如果中间目录已有 `.prd.md`，在那个目录再放分支专属 PRD/DoD
 - [ ] CI 的 PRD/DoD gate 从仓库根目录查找——worktree 根目录的 `.prd-*.md` 必须 git add + commit，不能只在工作目录存在
+
+---
+
+### [2026-03-10] 知乎文章发布 CDP 自动化脚本（PR #790）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+**根本原因**：
+
+无 CI/测试失败，但遭遇 `branch-protect.sh` PRD 文件路径陷阱：
+- `packages/workflows/` 下已有旧 `.prd.md`，hook 从文件路径向上扫描时先找到了它
+- 需要在 `packages/workflows/` 目录也放置分支专属 `.prd-{branch}.md` 文件才能通过
+
+**错误判断记录**：
+- 以为在 worktree 根目录放 `.prd-{branch}.md` 就够了 → 实际要在中间目录（packages/workflows/）也放，因为 hook 就近原则先找到中间目录的 `.prd.md`
+
+**影响程度**：Low（PRD 路径配置问题，功能本身无影响）
+
+**预防措施**：
+- [ ] 每次在 monorepo 子包（如 packages/workflows/skills/）写代码时，检查中间路径是否有 `.prd.md`
+- [ ] 如有，在那个中间目录也放置分支专属 `.prd-{branch}.md` + `.dod-{branch}.md`
