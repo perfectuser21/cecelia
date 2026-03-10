@@ -4217,3 +4217,31 @@ branch protection 切换关键：GitHub 用 job 的 `name:` 字段（display nam
 
 - [ ] CI 架构变更时，检查每种文件路径（.github/workflows, packages/*, apps/*）是否都有对应的 Config Audit 覆盖
 - [ ] 新增 always-on job 时，同步更新 l1-passed/l2-passed 等 gate 的 needs 列表
+
+---
+
+## 2026-03-10 文档治理分层：docs/current/ + docs/gaps/（PR #764）
+
+### 根本原因
+
+文档审计在错误的分支（`cp-03101600-fix-isolate-batch34`）上执行，而非 main。
+导致初次生成的 CI_PIPELINE.md 记录的是旧版 brain-ci.yml / engine-ci.yml 结构，
+而 main 上早已切换为四层 gate（ci-l1-process.yml 等）。
+同时 docs/SYSTEM_MAP.md / DEV_PIPELINE.md / CI_PIPELINE.md 三份文档在主仓库工作区直接创建，
+没有走 /dev 流程，缺乏分支隔离和 PR 追溯。
+
+### 下次预防
+
+- [ ] 做代码/文档审计前，必须先 `git checkout main && git pull` 确认在 main 分支
+- [ ] 或直接在 worktree 中审计（worktree 从 main 创建，天然是正确基准）
+- [ ] 判断"这个变更应不应该走 /dev"：影响系统理解、影响 AI 行为的文档 = 必须走 /dev
+- [ ] docs/current/ 是 instruction book，只写 main 分支真实代码，不写 MEMORY/计划
+- [ ] docs/gaps/ 是审计报告，不是 instruction book，不混用
+
+### 决策记录
+
+建立文档双层结构：
+- `docs/current/`：authority: CURRENT_STATE — 当前事实，可直接当 instruction book 用
+- `docs/gaps/`：authority: GAP_REPORT — 缺口和待办，不能当 instruction book 用
+
+维护节奏：每累计 5~10 个 PR 或每周一次，Architect/Documentation Agent 重新审计并更新 docs/current/。
