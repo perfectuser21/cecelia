@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] 新增 CECELIA_CORTEX_TIMEOUT_MS 专属超时变量（PR #786）
+
+**失败统计**：CI 失败 1 次（LEARNINGS.md 未更新）
+
+### 根本原因
+
+1. **Worktree 目录在会话中被删除**：当前 Claude Code 会话启动时指向的 worktree 目录在执行过程中消失（可能被其他进程或 worktree prune 清理），导致 Write/Edit 操作看似成功但实际上写入了不存在的路径，后续需要 Agent 子进程重建 worktree 并重新提交。
+2. **Learning 应在 CI 前完成**：按 /dev 规范，Step 10 Learning 应在 CI 通过后、PR 合并前完成，但此次 Learning 在 CI 期间才补充，导致 L1 Process Gate 失败。
+
+### 下次预防
+
+- [ ] 每次 /dev 开始时验证 worktree 目录确实存在（`ls` 或 `pwd`），不要仅凭 git 检测判断
+- [ ] Step 10 Learning 必须在 CI 运行期间（或 CI 通过后）push 到功能分支，不能等到合并后补写
+- [ ] 对于 Cortex 超时问题：`CECELIA_CORTEX_TIMEOUT_MS` 默认 300s，`CECELIA_BRIDGE_TIMEOUT_MS` 默认 120s，两者独立配置
+
 ### [2026-03-10] instruction-book Dashboard 页面（PR #779）
 
 **失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）

@@ -691,6 +691,13 @@ DB_DEFAULTS = {
 
 所有 DB 连接（db.js、migrate.js、selfcheck.js、测试）统一导入此配置。
 
+### 8.6 LLM 超时配置
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `CECELIA_CORTEX_TIMEOUT_MS` | 300000 (300s) | 皮层（Cortex）专属超时，用于 RCA/策略调整等深度分析。优先级高于 CECELIA_BRIDGE_TIMEOUT_MS |
+| `CECELIA_BRIDGE_TIMEOUT_MS` | 120000 (120s) | 全局 LLM 调用默认超时（丘脑/嘴巴/其他 callLLM 调用共用） |
+
 ---
 
 ## 9. API 接口
