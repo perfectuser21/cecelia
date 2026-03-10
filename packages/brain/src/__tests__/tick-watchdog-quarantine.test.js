@@ -5,9 +5,16 @@
  * After fix: Watchdog kill increments both watchdog_retry_count AND failure_count
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import { requeueTask } from '../executor.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+
+// isolate:false 修复：延迟导入，确保获取真实 pool 而非其他文件残留的 mock
+let pool, requeueTask;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  requeueTask = (await import('../executor.js')).requeueTask;
+});
 
 describe('tick-watchdog-quarantine (P0 Fix #3)', () => {
   let testTaskId;

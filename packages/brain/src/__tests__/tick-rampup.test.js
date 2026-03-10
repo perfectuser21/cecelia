@@ -2,16 +2,14 @@
  * Tests for gradual ramp-up dispatch mechanism (PR #302)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
-// Mock dependencies before importing tick.js
-vi.mock('../db.js', () => {
-  const mockQuery = vi.fn();
-  return {
-    default: { query: mockQuery },
-    __mockQuery: mockQuery
-  };
-});
+// isolate:false 修复：vi.hoisted 确保 mockQuery 在 mock 工厂中稳定
+const mockQuery = vi.hoisted(() => vi.fn());
+vi.mock('../db.js', () => ({
+  default: { query: mockQuery },
+  __mockQuery: mockQuery,
+}));
 
 vi.mock('../executor.js', () => ({
   checkServerResources: vi.fn(() => ({
@@ -54,10 +52,18 @@ vi.mock('../slot-allocator.js', () => ({
   })),
 }));
 
-import pool from '../db.js';
-import { checkServerResources } from '../executor.js';
-import { getCurrentAlertness, ALERTNESS_LEVELS } from '../alertness/index.js';
-import { getRampedDispatchMax } from '../tick.js';
+// isolate:false 修复：延迟导入，避免模块缓存污染
+let pool, checkServerResources, getCurrentAlertness, ALERTNESS_LEVELS, getRampedDispatchMax;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  checkServerResources = (await import('../executor.js')).checkServerResources;
+  const alertMod = await import('../alertness/index.js');
+  getCurrentAlertness = alertMod.getCurrentAlertness;
+  ALERTNESS_LEVELS = alertMod.ALERTNESS_LEVELS;
+  getRampedDispatchMax = (await import('../tick.js')).getRampedDispatchMax;
+});
 
 describe('getRampedDispatchMax', () => {
   beforeEach(() => {
