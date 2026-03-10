@@ -57,6 +57,7 @@ import {
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
   _resetSlotBuffer,
+  buildHeadlessParentPidSet,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
@@ -216,6 +217,140 @@ describe('detectUserSessions', () => {
     const result = detectUserSessions();
     expect(result.headed).toHaveLength(1); // only PID 300
     expect(detectUserMode(result)).toBe('interactive'); // not team!
+  });
+});
+
+// ============================================================
+// buildHeadlessParentPidSet + PPID-based headless detection
+// ============================================================
+
+describe('buildHeadlessParentPidSet', () => {
+  it('returns empty set when no processes have CECELIA_HEADLESS=true parent', () => {
+    const procs = [
+      { pid: 100, ppid: 1, cmd: '/bin/bash normal-script.sh' },
+      { pid: 200, ppid: 100, cmd: 'claude' },
+    ];
+    const result = buildHeadlessParentPidSet(procs);
+    expect(result.size).toBe(0);
+  });
+
+  it('returns pid when parent has CECELIA_HEADLESS=true', () => {
+    const procs = [
+      { pid: 99001, ppid: 1, cmd: '/bin/bash /usr/local/bin/cecelia-run CECELIA_HEADLESS=true /task.md' },
+      { pid: 12345, ppid: 99001, cmd: 'claude' },
+    ];
+    const result = buildHeadlessParentPidSet(procs);
+    expect(result.has(12345)).toBe(true);
+    expect(result.size).toBe(1);
+  });
+
+  it('returns multiple pids when multiple claude children share a headless parent', () => {
+    const procs = [
+      { pid: 99001, ppid: 1, cmd: '/bin/bash cecelia-run CECELIA_HEADLESS=true task1.md' },
+      { pid: 11111, ppid: 99001, cmd: 'claude' },
+      { pid: 22222, ppid: 99001, cmd: 'claude --resume abc' },
+    ];
+    const result = buildHeadlessParentPidSet(procs);
+    expect(result.has(11111)).toBe(true);
+    expect(result.has(22222)).toBe(true);
+    expect(result.size).toBe(2);
+  });
+
+  it('does not include pid when parent lacks CECELIA_HEADLESS=true', () => {
+    const procs = [
+      { pid: 99001, ppid: 1, cmd: '/bin/bash some-script.sh' },
+      { pid: 12345, ppid: 99001, cmd: 'claude' },
+    ];
+    const result = buildHeadlessParentPidSet(procs);
+    expect(result.has(12345)).toBe(false);
+  });
+
+  it('handles empty process list', () => {
+    expect(buildHeadlessParentPidSet([]).size).toBe(0);
+  });
+});
+
+describe('detectUserSessions PPID-based headless detection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('classifies claude as headless when parent has CECELIA_HEADLESS=true (macOS title override)', () => {
+    // First call: listProcessesWithElapsed — claude shows no -p (title overwritten)
+    execSync.mockReturnValueOnce('12345 300 claude claude\n');
+    // Second call: listProcessesWithPpid — parent is cecelia-run with CECELIA_HEADLESS=true
+    execSync.mockReturnValueOnce(
+      '99001 1 /bin/bash cecelia-run CECELIA_HEADLESS=true task.md\n' +
+      '12345 99001 claude\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(1);
+    expect(result.headless[0].pid).toBe(12345);
+    expect(result.headed).toHaveLength(0);
+    expect(result.total).toBe(1);
+  });
+
+  it('4 headless tasks via PPID → user.mode absent, not team', () => {
+    // 4 claude processes, none with -p in args (macOS title override)
+    execSync.mockReturnValueOnce(
+      '10001 300 claude claude\n' +
+      '10002 300 claude claude\n' +
+      '10003 300 claude claude\n' +
+      '10004 300 claude claude\n'
+    );
+    // All 4 have a headless parent
+    execSync.mockReturnValueOnce(
+      '99001 1 /bin/bash cecelia-run CECELIA_HEADLESS=true t1.md\n' +
+      '99002 1 /bin/bash cecelia-run CECELIA_HEADLESS=true t2.md\n' +
+      '99003 1 /bin/bash cecelia-run CECELIA_HEADLESS=true t3.md\n' +
+      '99004 1 /bin/bash cecelia-run CECELIA_HEADLESS=true t4.md\n' +
+      '10001 99001 claude\n' +
+      '10002 99002 claude\n' +
+      '10003 99003 claude\n' +
+      '10004 99004 claude\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(4);
+    expect(result.headed).toHaveLength(0);
+    expect(detectUserMode(result)).toBe('absent'); // no headed → absent, not team
+  });
+
+  it('PPID headless detection does not interfere with args-based -p detection', () => {
+    // One session has -p (args-based), another has headless parent (PPID-based)
+    execSync.mockReturnValueOnce(
+      '20001 300 claude claude -p "do task"\n' +
+      '20002 300 claude claude\n'
+    );
+    execSync.mockReturnValueOnce(
+      '88001 1 /bin/bash cecelia-run CECELIA_HEADLESS=true t2.md\n' +
+      '20002 88001 claude\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(2); // both headless
+    expect(result.headed).toHaveLength(0);
+  });
+
+  it('headed user session with unrelated PPID is not incorrectly flagged headless', () => {
+    // Claude opened by user directly — parent is zsh/terminal, no CECELIA_HEADLESS
+    execSync.mockReturnValueOnce('30001 300 claude claude\n');
+    execSync.mockReturnValueOnce(
+      '5000 1 /bin/zsh\n' +
+      '30001 5000 claude\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(1);
+    expect(result.headed[0].pid).toBe(30001);
+    expect(result.headless).toHaveLength(0);
+  });
+
+  it('gracefully returns empty when listProcessesWithPpid throws', () => {
+    execSync.mockReturnValueOnce('12345 300 claude claude\n');
+    execSync.mockImplementationOnce(() => { throw new Error('ps ppid failed'); });
+    // Should not throw; falls back to empty headlessParentPids (args-only detection)
+    const result = detectUserSessions();
+    // claude with no -p and no headless parent → headed
+    expect(result.headed).toHaveLength(1);
+    expect(result.headless).toHaveLength(0);
   });
 });
 

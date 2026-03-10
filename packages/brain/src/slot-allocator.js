@@ -14,7 +14,7 @@
 
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
-import { listProcessesWithElapsed } from './platform-utils.js';
+import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
 
 // ============================================================
 // Constants
@@ -30,6 +30,28 @@ const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire
 // ============================================================
 // Process Detection
 // ============================================================
+
+/**
+ * Build a set of PIDs whose parent process args contain CECELIA_HEADLESS=true.
+ *
+ * On macOS, the claude binary overwrites its own process title, so ps -o args=
+ * shows just "claude" without the -p flag. By checking the parent process
+ * (cecelia-run bash script), we can correctly identify headless dispatches.
+ *
+ * @param {Array<{pid: number, ppid: number, cmd: string}>} ppidProcs - from listProcessesWithPpid()
+ * @returns {Set<number>} PIDs that are headless based on parent process evidence
+ */
+function buildHeadlessParentPidSet(ppidProcs) {
+  const pidToCmd = new Map(ppidProcs.map(p => [p.pid, p.cmd]));
+  const result = new Set();
+  for (const proc of ppidProcs) {
+    const parentCmd = pidToCmd.get(proc.ppid) || '';
+    if (/CECELIA_HEADLESS=true/.test(parentCmd)) {
+      result.add(proc.pid);
+    }
+  }
+  return result;
+}
 
 /**
  * Detect and classify all claude processes on the system.
@@ -51,6 +73,12 @@ function detectUserSessions() {
 
     if (claudeProcs.length === 0) return { headed: [], headless: [], total: 0 };
 
+    // On macOS, the claude binary overwrites its process title, so ps -o args=
+    // shows just "claude" without the -p flag. Use PPID chain as fallback:
+    // cecelia-run bash script has CECELIA_HEADLESS=true in its args.
+    const ppidProcs = listProcessesWithPpid();
+    const headlessParentPids = buildHeadlessParentPidSet(ppidProcs);
+
     const headed = [];
     const headless = [];
 
@@ -58,7 +86,9 @@ function detectUserSessions() {
       const { pid, elapsedSec, args } = proc;
 
       // `claude -p "..."` or `claude --print "..."` = headless (Cecelia dispatched)
-      if (/ -p /.test(args) || /^-p /.test(args) || / --print /.test(args)) {
+      // OR parent process has CECELIA_HEADLESS=true (macOS title override case)
+      if (/ -p /.test(args) || /^-p /.test(args) || / --print /.test(args)
+          || headlessParentPids.has(pid)) {
         headless.push({ pid, args: args.slice(0, 100) });
       } else {
         // Filter out sessions older than TTL — likely orphaned worktree/agent processes
@@ -327,6 +357,7 @@ export {
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
+  buildHeadlessParentPidSet,
   detectUserSessions,
   detectUserMode,
   hasPendingInternalTasks,
