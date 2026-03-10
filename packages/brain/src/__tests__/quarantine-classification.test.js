@@ -5,9 +5,15 @@
  * After fix: handleTaskFailure() stores classification to payload.failure_classification
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import { handleTaskFailure, FAILURE_CLASS } from '../quarantine.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+let pool;
+let handleTaskFailure, FAILURE_CLASS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ handleTaskFailure, FAILURE_CLASS } = await import('../quarantine.js'));
+});
 
 describe('quarantine-classification (P1 Fix #2)', () => {
   let testTaskId;

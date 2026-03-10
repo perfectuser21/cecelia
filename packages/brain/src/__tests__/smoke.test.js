@@ -43,6 +43,7 @@ describeSmoke('Brain Smoke Test', () => {
 
   beforeAll(async () => {
     // isolate:false 修复：child_process 可能被其他文件（如 heartbeat.test.js）mock 污染
+    vi.unmock('child_process'); // 清除可能残留的 mock 注册
     vi.resetModules();
     const { spawn } = await import('child_process');
 

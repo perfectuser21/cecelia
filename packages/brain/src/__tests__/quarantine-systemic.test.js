@@ -5,9 +5,15 @@
  * After fix: Detects same-class failures (NETWORK/RATE_LIMIT/etc) reaching threshold
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import pool from '../db.js';
-import { checkSystemicFailurePattern, FAILURE_CLASS } from '../quarantine.js';
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from 'vitest';
+let pool;
+let checkSystemicFailurePattern, FAILURE_CLASS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ checkSystemicFailurePattern, FAILURE_CLASS } = await import('../quarantine.js'));
+});
 
 describe('quarantine-systemic (P0 Fix #1)', () => {
   beforeEach(async () => {

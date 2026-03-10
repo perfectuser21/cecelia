@@ -4,9 +4,15 @@
  * Tests that Cortex generates strategy_adjustments during RCA analysis.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { performRCA, validateCortexDecision } from '../cortex.js';
-import pool from '../db.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+let performRCA, validateCortexDecision;
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ performRCA, validateCortexDecision } = await import('../cortex.js'));
+});
 
 describe('Cortex Strategy Adjustments', () => {
 

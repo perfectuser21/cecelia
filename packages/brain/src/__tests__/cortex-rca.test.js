@@ -5,8 +5,14 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import pool from '../db.js';
-import { processCortexTask } from '../tick.js';
+let pool;
+let processCortexTask;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ processCortexTask } = await import('../tick.js'));
+});
 
 describe('Cortex RCA Task Processing', () => {
   beforeAll(async () => {

@@ -2,7 +2,13 @@
  * Tests for migration 087: suggestions table
  */
 
-import pool from '../db.js';
+import { beforeAll, vi } from 'vitest';
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+});
 
 describe('Migration 087: Suggestions Table', () => {
   beforeAll(async () => {

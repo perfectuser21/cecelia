@@ -5,15 +5,14 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import pool from '../db.js';
-import {
-  recordLearning,
-  applyStrategyAdjustments,
-  getRecentLearnings,
-  shouldTriggerLearning,
-  createLearningTask,
-  ADJUSTABLE_PARAMS,
-} from '../learning.js';
+let pool;
+let recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ recordLearning, applyStrategyAdjustments, getRecentLearnings, shouldTriggerLearning, createLearningTask, ADJUSTABLE_PARAMS } = await import('../learning.js'));
+});
 
 describe('Learning Loop', () => {
   beforeAll(async () => {

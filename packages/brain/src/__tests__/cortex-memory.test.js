@@ -4,9 +4,15 @@
  * Tests persistent storage and semantic search for Cortex RCA analyses.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import { saveCortexAnalysis, searchRelevantAnalyses } from '../cortex.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+let pool;
+let saveCortexAnalysis, searchRelevantAnalyses;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ saveCortexAnalysis, searchRelevantAnalyses } = await import('../cortex.js'));
+});
 
 describe('Cortex Memory - Persistent Storage', () => {
   const testAnalysisIds = [];

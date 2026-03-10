@@ -10,16 +10,15 @@
  * - runPromotionJob() integration
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import pool from '../db.js';
-import {
-  runPromotionJob,
-  countPromotionsToday,
-  findPromotionCandidates,
-  promoteToActive,
-  findPoliciesToDisable,
-  disablePolicy
-} from '../promotion-job.js';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
+let pool;
+let runPromotionJob, countPromotionsToday, findPromotionCandidates, promoteToActive, findPoliciesToDisable, disablePolicy;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ runPromotionJob, countPromotionsToday, findPromotionCandidates, promoteToActive, findPoliciesToDisable, disablePolicy } = await import('../promotion-job.js'));
+});
 
 describe('Promotion Job (P1)', () => {
   beforeEach(async () => {

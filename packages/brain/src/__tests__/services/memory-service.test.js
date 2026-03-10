@@ -3,12 +3,19 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest';
-import pool from '../../db.js';
-import MemoryService from '../../services/memory-service.js';
-import SimilarityService from '../../similarity.js';
+let pool;
+let MemoryService;
+let SimilarityService;
 
 // Mock SimilarityService
 vi.mock('../../similarity.js');
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../../db.js')).default;
+  MemoryService = (await import('../../services/memory-service.js')).default;
+  SimilarityService = (await import('../../similarity.js')).default;
+});
 
 describe('MemoryService', () => {
   let service;

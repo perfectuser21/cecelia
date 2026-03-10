@@ -5,9 +5,15 @@
  * After fix: Tasks have TTL and are auto-released when expired
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import { quarantineTask, checkExpiredQuarantineTasks } from '../quarantine.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+let pool;
+let quarantineTask, checkExpiredQuarantineTasks;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ quarantineTask, checkExpiredQuarantineTasks } = await import('../quarantine.js'));
+});
 
 describe('quarantine-auto-release (P1 Fix #3)', () => {
   let testTaskId;

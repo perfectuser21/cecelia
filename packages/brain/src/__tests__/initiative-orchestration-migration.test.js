@@ -5,8 +5,13 @@
  * 验证 projects 新列和 tasks.task_type CHECK 扩展
  */
 
-import { describe, it, expect, afterAll } from 'vitest';
-import pool from '../db.js';
+import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest';
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+});
 
 describe('Migration 057 - initiative_orchestration', () => {
   afterAll(async () => {

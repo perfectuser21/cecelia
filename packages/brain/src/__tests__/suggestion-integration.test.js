@@ -2,8 +2,15 @@
  * End-to-end integration tests for the complete suggestion system
  */
 
-import { createSuggestion, executeTriage } from '../suggestion-triage.js';
-import pool from '../db.js';
+import { beforeAll, vi } from 'vitest';
+let createSuggestion, executeTriage;
+let pool;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  ({ createSuggestion, executeTriage } = await import('../suggestion-triage.js'));
+});
 
 describe('Suggestion System Integration', () => {
   beforeAll(async () => {
