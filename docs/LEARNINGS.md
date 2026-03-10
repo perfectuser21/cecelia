@@ -4757,3 +4757,20 @@ CI 一次通过，无返工。
 
 - [ ] 在 planning/index.ts 注册路由时，所有带参数的通配路由（`:id`、`:projectId`）必须排在具体路径之后
 - [ ] 纯前端页面开发（无 Brain 改动）CI 最快，优先本地 `tsc --noEmit` 验证再 push
+
+## PR #807 wechat-publisher 补全批量脚本 + 全局 Skill 注册（2026-03-11）
+
+CI 首次通过（使用 [SKIP-LEARNING] 标识，无 CI 失败）。
+
+### 根本原因
+
+1. **Brain 重复派发同一平台任务**：wechat-publisher 核心实现已在 PR #792 合并，Brain 又派发了同名任务（新分支 cp-03101243）。原因是 Brain planner 可能不检查"相同平台是否已有已合并 PR"。
+2. **packages/workflows/ 子目录写文件被 branch-protect.sh 拦截**：Hook 从被写文件向上扫描，在 `packages/workflows/` 找到旧 `.prd.md`，而非 worktree 根目录的新 PRD，报"PRD 文件未更新"。
+3. **.dev-mode 遗留旧任务信息**：Worktree 复用导致 `.dev-mode` 仍指向前一个任务（zhihu-api），需手动更新为当前分支。
+
+### 下次预防
+
+- [ ] 收到 Brain 派发任务时，先检查 git log 是否已有同平台已合并实现（`git log --all -- packages/workflows/skills/{platform}/` ）
+- [ ] 在 `packages/workflows/` 子树下开发时，PRD/DoD 必须放两处：worktree 根目录 + `packages/workflows/`（即 MEMORY.md 已记录规则，确保遵守）
+- [ ] 检查并更新 `.dev-mode` 文件中的 branch 和 prd 字段（避免 Stop Hook 检查旧任务状态）
+- [ ] 全局 Skill 注册（`~/.claude/skills/`）不进 git，用 PR body 明确记录"本地完成"，保持与其他发布器一致规范
