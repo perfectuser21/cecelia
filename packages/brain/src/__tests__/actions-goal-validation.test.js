@@ -3,9 +3,16 @@
  * Tests for goal_id requirement enforcement in createTask()
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import pool from '../db.js';
-import { createTask } from '../actions.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+
+// isolate:false 修复：延迟导入，确保获取真实 pool 而非其他文件残留的 mock
+let pool, createTask;
+
+beforeAll(async () => {
+  vi.resetModules();
+  pool = (await import('../db.js')).default;
+  createTask = (await import('../actions.js')).createTask;
+});
 
 describe('createTask - goal_id validation', () => {
   let testGoalId;
