@@ -75,6 +75,19 @@ subsystems:
     deploy: false
     description: "Agent 协议 + N8N 配置"
 
+
+  # ── Legacy Frontend ───────────────────────────────────────────────────────
+  # 早期前端目录，现已部分迁移到 apps/。含 React 组件和 Hook 单元测试。
+  # CI Inventory Audit v1（PR #762）发现其 8 个测试文件处于路由真空，故补注册。
+
+  frontend:
+    root: frontend
+    paths:
+      - frontend/**
+    layers: [l3]
+    deploy: false
+    description: "遗留前端（含 React 组件/Hook 单元测试），无 PostgreSQL 依赖"
+
   # ── Data / Config (CI-exempt) ─────────────────────────────────────────────
 
   config:
