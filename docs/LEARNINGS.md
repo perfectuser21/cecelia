@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] 小红书发布集成 — N8N flow 接通 Node.js 脚本（PR #789）
+
+**失败统计**：CI 失败 1 次（Learning 缺失 + DoD 假测试 `test -f` + 未勾选验收项）
+
+### 根本原因
+
+1. **DoD D1 用了禁止的 `test -f`**：CI `check-dod-mapping.cjs` 明确禁止 `test -f` 作为假测试，应改用真实执行命令（如 `grep -c`）
+2. **DoD 条目未勾选 [x]**：本地验证通过后忘记把 `- [ ]` 改为 `- [x]`，CI 检测到未验证项报错
+3. **Learning 缺失**：push 前遗漏了 LEARNINGS.md 更新，Learning Format Gate 直接失败
+
+### 下次预防
+
+- [ ] DoD 模板：禁止 `test -f`/`ls`/`echo ok` 等假测试，改用 `grep -c`/`node -e` 等真实验证
+- [ ] 本地验证完成后，立即把所有 DoD 条目的 `[ ]` 改为 `[x]`，不要等到 push 后
+- [ ] push 前检查：LEARNINGS.md 已更新 → PR 再创建，避免 L1 Gate 失败
+
 ### [2026-03-10] execution-callback 静默失败 → error_message/blocked_detail 写入（PR #775）
 
 **失败统计**：L4 CI 失败 0 次（新增 migration + 扩参，本地 OOM 已知问题，CI 通过）
