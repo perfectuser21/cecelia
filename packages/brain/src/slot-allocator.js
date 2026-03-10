@@ -14,7 +14,7 @@
 
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
-import { listProcessesWithElapsed } from './platform-utils.js';
+import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
 
 // ============================================================
 // Constants
@@ -42,6 +42,11 @@ const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire
  * Platform-aware: uses listProcessesWithElapsed() from platform-utils.js
  * (Darwin: ps -ax -o pid=,etime=,comm=,args= with etime parsing;
  *  Linux: ps -eo pid,etimes,comm,args --no-headers)
+ *
+ * PPID Detection (macOS fix):
+ * On macOS, claude overrides its process title so `-p` flag disappears from ps args.
+ * Solution: check parent process (PPID) args for CECELIA_HEADLESS=true, which
+ * cecelia-run sets when launching headless tasks. Falls back to -p detection on error.
  */
 function detectUserSessions() {
   try {
@@ -51,14 +56,30 @@ function detectUserSessions() {
 
     if (claudeProcs.length === 0) return { headed: [], headless: [], total: 0 };
 
+    // Build pid→ppid and pid→args maps for PPID-based headless detection.
+    // listProcessesWithPpid() returns [] on error (graceful degradation).
+    const ppidProcs = listProcessesWithPpid();
+    const pidToPpid = new Map();
+    const pidToArgs = new Map();
+    for (const p of ppidProcs) {
+      pidToPpid.set(p.pid, p.ppid);
+      pidToArgs.set(p.pid, p.cmd);
+    }
+
     const headed = [];
     const headless = [];
 
     for (const proc of claudeProcs) {
       const { pid, elapsedSec, args } = proc;
 
-      // `claude -p "..."` or `claude --print "..."` = headless (Cecelia dispatched)
-      if (/ -p /.test(args) || /^-p /.test(args) || / --print /.test(args)) {
+      // Primary: PPID detection — parent process args contain CECELIA_HEADLESS=true
+      // (cecelia-run sets this when launching headless tasks via `env CECELIA_HEADLESS=true ...`)
+      // Fallback: -p / --print flag detection (works on Linux, unreliable on macOS)
+      const ppid = pidToPpid.get(pid);
+      const parentArgs = ppid !== undefined ? (pidToArgs.get(ppid) || '') : '';
+      const isHeadlessViaPpid = /CECELIA_HEADLESS=true/.test(parentArgs);
+
+      if (isHeadlessViaPpid || / -p /.test(args) || /^-p /.test(args) || / --print /.test(args)) {
         headless.push({ pid, args: args.slice(0, 100) });
       } else {
         // Filter out sessions older than TTL — likely orphaned worktree/agent processes
