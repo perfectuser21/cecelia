@@ -6,6 +6,103 @@
 
 import pool from './db.js';
 
+const NOTION_API_BASE = 'https://api.notion.com/v1';
+const NOTION_VERSION = '2022-06-28';
+
+/**
+ * 将 Markdown 文本转换为 Notion Block 数组
+ * 支持：# 标题1, ## 标题2, ### 标题3, 普通段落
+ * 每个 block 内容最多 2000 字符
+ */
+export function markdownToBlocks(markdown) {
+  const lines = markdown.split('\n');
+  const blocks = [];
+
+  for (const line of lines) {
+    if (line.trim() === '') continue;
+
+    if (line.startsWith('### ')) {
+      blocks.push({
+        object: 'block',
+        type: 'heading_3',
+        heading_3: { rich_text: [{ type: 'text', text: { content: line.slice(4).trim().slice(0, 2000) } }] },
+      });
+    } else if (line.startsWith('## ')) {
+      blocks.push({
+        object: 'block',
+        type: 'heading_2',
+        heading_2: { rich_text: [{ type: 'text', text: { content: line.slice(3).trim().slice(0, 2000) } }] },
+      });
+    } else if (line.startsWith('# ')) {
+      blocks.push({
+        object: 'block',
+        type: 'heading_1',
+        heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim().slice(0, 2000) } }] },
+      });
+    } else {
+      const content = line.slice(0, 2000);
+      blocks.push({
+        object: 'block',
+        type: 'paragraph',
+        paragraph: { rich_text: [{ type: 'text', text: { content } }] },
+      });
+    }
+  }
+
+  return blocks;
+}
+
+/**
+ * 将对比报告导出到 Notion，创建新 Page
+ * 需要环境变量：
+ *   NOTION_API_KEY          Notion Integration Token（必须）
+ *   NOTION_REPORTS_PAGE_ID  父页面 ID（必须，创建报告 Page 的父节点）
+ *
+ * @param {object} report - generateCompareReport 返回的报告对象
+ * @returns {Promise<string>} Notion 页面 URL
+ */
+export async function exportToNotion(report) {
+  const token = process.env.NOTION_API_KEY;
+  if (!token) {
+    throw new Error('NOTION_API_KEY 未配置，请在 ~/.credentials/notion.env 中设置');
+  }
+
+  const parentPageId = process.env.NOTION_REPORTS_PAGE_ID;
+  if (!parentPageId) {
+    throw new Error('NOTION_REPORTS_PAGE_ID 未配置，请设置用于存放报告的 Notion 父页面 ID');
+  }
+
+  const title = `项目对比报告 - ${report.generated_at}`;
+  const markdown = report.markdown || buildMarkdown(report.projects, report.summary, report.generated_at);
+  const children = markdownToBlocks(markdown);
+
+  const body = {
+    parent: { type: 'page_id', page_id: parentPageId },
+    properties: {
+      title: { title: [{ type: 'text', text: { content: title } }] },
+    },
+    children,
+  };
+
+  const res = await fetch(`${NOTION_API_BASE}/pages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Notion-Version': NOTION_VERSION,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Notion API 创建页面失败 ${res.status}: ${data.message || 'Unknown error'}`);
+  }
+
+  return data.url;
+}
+
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -92,8 +189,9 @@ function buildMarkdown(projects, summary, generated_at) {
  * @param {string[]} project_ids - 至少 2 个项目 UUID
  * @param {string} format - 'json' | 'markdown'
  * @param {boolean} include_tasks - 是否包含子任务统计
+ * @param {string} [exportTarget] - 导出目标：'notion' | undefined
  */
-export async function generateCompareReport({ project_ids, format = 'json', include_tasks = false }) {
+export async function generateCompareReport({ project_ids, format = 'json', include_tasks = false, export: exportTarget } = {}) {
   if (!Array.isArray(project_ids) || project_ids.length < 2) {
     throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
   }
@@ -196,6 +294,15 @@ export async function generateCompareReport({ project_ids, format = 'json', incl
 
   if (format === 'markdown') {
     response.markdown = buildMarkdown(projects, summary, generated_at);
+  }
+
+  if (exportTarget === 'notion') {
+    try {
+      const notionUrl = await exportToNotion(response);
+      response.notion_url = notionUrl;
+    } catch (err) {
+      response.notion_export_error = err.message;
+    }
   }
 
   return response;
