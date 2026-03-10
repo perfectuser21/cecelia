@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] cortex _reflectionState 恢复改用 lastSeen 滑动窗口（PR #791）
+
+**失败统计**：CI 失败 1 次（L1 DoD Gate），本地测试失败 1 次（DoD-5 竞态）
+
+### 根本原因
+
+1. **DoD Test 命令与实现不匹配**：DoD 文件在代码写完前草拟，grep 模式用 `lastSeen.*REFLECTION_WINDOW_MS`，但实现引入了中间变量 `lastActivity`，导致 grep 返回 0（exit 1）。
+2. **DoD Test 格式违规**：第一条 Test 用 `grep | wc -l`，被 CI `check-dod-mapping.cjs` 识别为"假测试"直接拒绝。
+3. **fire-and-forget DELETE 竞态**：DoD-5 初版直接断言 DB `count=1`，但 `_loadReflectionStateFromDB` 的过期条目 DELETE 是 fire-and-forget，后续 `_persistReflectionEntry` 的 UPSERT 可能先于 DELETE 完成又被 DELETE 覆盖，导致 `inDB.rows[0]` 为 undefined。
+4. **LEARNINGS.md 未在 push 前写入**：Learning Format Gate 要求 LEARNINGS.md 有新增内容，而 Learning 写在 PR 创建之后才提交，触发 L1 失败。
+
+### 下次预防
+
+- [ ] **DoD Test 命令在代码实现后再最终确认**：如果实现用了中间变量（如 `lastActivity`），DoD grep 模式必须匹配变量名而非字段名
+- [ ] **禁止用 `grep | wc -l` 或 `grep ... | wc -l` 作为 DoD Test**：改用 `grep -c`（输出数字，非零即通过）或 `grep -q`（用于存在性检查）
+- [ ] **fire-and-forget 操作不要直接检查 DB 状态**：只断言返回值（count/open），不断言 DB 行存在
+- [ ] **LEARNINGS.md 必须在 push 前写入并提交**：Learning Format Gate 在 L1 检查，必须与代码 commit 同批 push 或在 push 前单独提交
+
 ### [2026-03-10] execution-callback 静默失败 → error_message/blocked_detail 写入（PR #775）
 
 **失败统计**：L4 CI 失败 0 次（新增 migration + 扩参，本地 OOM 已知问题，CI 通过）
