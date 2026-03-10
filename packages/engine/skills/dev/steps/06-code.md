@@ -62,49 +62,6 @@ A: 调整方案，重新实现。
 
 ---
 
-## Instruction Book Update
-
-**代码写完后，判断是否新增了用户可见的能力，如果是则更新说明书。**
-
-### 判断标准
-
-| 变更类型 | 是否需要更新 instruction book |
-|---------|-------------------------------|
-| 新增 `/skill` 命令 | ✅ 是 → `docs/instruction-book/skills/<name>.md` |
-| 新增系统自动运行的 feature | ✅ 是 → `docs/instruction-book/features/<name>.md` |
-| 修改已有命令的行为/参数 | ✅ 是 → 更新对应已有 entry |
-| 纯 bug fix（行为不变） | ❌ 否 |
-| 内部重构（用户无感知） | ❌ 否 |
-| 测试/文档改动 | ❌ 否 |
-
-### Entry 格式
-
-```markdown
-## What it is
-（一句话描述功能）
-
-## Trigger
-（什么时候触发 / 如何调用）
-
-## How to use
-（具体用法，命令示例）
-
-## Output
-（会产出什么）
-
-## Added in
-PR #xxx（YYYY-MM-DD）
-```
-
-### 存放位置
-
-- 新 skill → `docs/instruction-book/skills/<skill-name>.md`
-- 新 feature → `docs/instruction-book/features/<feature-name>.md`
-
-**不需要写 CI gate**，这是开发者自律行为。尽量做，做了就有，不做就没有。
-
----
-
 ## 完成后
 
 **标记步骤完成**：
