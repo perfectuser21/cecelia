@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, BarChart2 } from 'lucide-react';
 
 interface Area {
   id: string;
@@ -191,6 +191,13 @@ export default function ProjectsDashboard() {
         <span>{parentProjects.length} 个 Project</span>
         <span>{initiatives.length} 个 Initiative</span>
         <span>{initiatives.filter(i => i.status === 'in_progress' || i.status === 'active').length} 个活跃</span>
+        <a
+          href="/projects/compare"
+          className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 hover:text-purple-300 transition-colors"
+        >
+          <BarChart2 className="w-3 h-3" />
+          <span>对比项目</span>
+        </a>
       </div>
     </div>
   );
