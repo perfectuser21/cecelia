@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] instruction-book Dashboard 页面（PR #779）
+
+**失败统计**：CI 失败 2 次（PRD/DoD 未提交 + DoD 测试用 curl）
+
+### 根本原因
+
+1. **PRD/DoD 文件未提交**：`git add` 时忘记包含 `.prd-*.md` 和 `.dod-*.md` 文件，CI `check-prd.sh` 和 `check-dod-mapping.cjs` 都在 checkout 后的仓库中找不到文件。
+2. **DoD 测试使用 `curl localhost:5221`**：CI runner 没有运行 Brain 服务，curl 返回空响应，JSON.parse 报 `Unexpected end of JSON input`。运行时 API 测试不适合放在 DoD 里，应改为文件存在性或代码内容检查。
+
+### 下次预防
+
+- [ ] PRD/DoD 文件创建后立即 `git add` 并提交，不能留在 untracked 状态
+- [ ] DoD 的 Test: 命令只能用 CI 环境能执行的命令：`grep`、`ls`、`node -e`（读文件）。**不能** 用 `curl localhost:{port}` —— CI 没有运行中的服务
+- [ ] 需要验证 API 返回值的，改为验证代码实现（`grep -q 'function_name' source.js`）
+
 ### [2026-03-10] instruction-book 基础结构建立（PR #776）
 
 **失败统计**：CI 失败 1 次（DoD 格式 + Engine L2 版本检查）
@@ -4394,3 +4409,54 @@ CI 失败 2 次：
 - [ ] PRD 的成功标准必须用二级标题 `## 成功标准`，不能用粗体 `**成功标准**:`
 - [ ] DoD Test 命令禁止 `grep -q ... && echo OK`，改用 `grep -c ...`（grep -c 输出数字，非零即 exit 0）
 - [ ] DoD 中验证"函数被导出"不能用 `node -e require(...)`（CI 无完整依赖），改用 `grep -c 'export.*FunctionName' file.js`
+
+## PR #777 selfcheck >= 版本检查（2026-03-10）
+
+### 根本原因
+
+selfcheck.js 用精确匹配（`===`）检查 DB schema version。每当有新 migration 合并到 DB 后，Brain 就会因 schema version 不匹配而拒绝启动，LaunchDaemon 的 KeepAlive 导致无限重启循环，只能人工干预（直接 sed 修改代码）才能恢复。
+另外：migration 142 文件（142_tasks_error_message.sql）从 worktree 泄漏到主仓库 untracked 状态，被 DB 实际应用但未进入 git，导致代码和 DB 版本长期不一致。
+
+### 下次预防
+
+- [ ] selfcheck 版本检查应始终用 `>=`，不用精确匹配——DB 可以领先代码，代码不应拒绝更新的 DB
+- [ ] EXPECTED_SCHEMA_VERSION 含义改为"最低可接受版本"，注释需反映这一点
+- [ ] 新增 migration 文件时务必立即检查主仓库状态（`git status packages/brain/migrations/`），防止 untracked migration 文件流入 DB 但不进 git
+- [ ] DEFINITION.md 中 schema_version 有两处引用，新增 migration 时两处都要同步
+
+## PR #778 selfcheck schema version >= 检查防崩溃循环（2026-03-10）
+
+### 根本原因
+
+selfcheck.js 用精确匹配（`===`）校验 schema version，只要 DB 已应用比 EXPECTED_SCHEMA_VERSION 更新的 migration，Brain 就拒绝启动并 exit(1)，造成无限崩溃循环。版本比较语义错误：应为"至少达到预期版本"而非"精确等于"。
+
+### 下次预防
+
+- [ ] schema version 检查始终使用 `>=`（parseInt 比较），不用 `===`，允许 DB 超前
+- [ ] selfcheck.test.js 保持"DB 版本超前时仍 PASS"的测试用例，防止回归
+- [ ] DoD Test 命令禁止 `echo`（包括 `&& echo OK`），直接用 `grep -q` 的退出码
+
+## PR #781 超时任务自动 requeue（2026-03-10）
+
+### 根本原因
+
+`autoFailTimedOutTasks()` 在任务超时（>60min）后直接标记 `status=failed`，导致任务永远卡在 failed 状态，不会重试。Brain 系统已经有 `FAILURE_THRESHOLD=3` 的隔离机制（在 `handleTaskFailure()` 中），但 `autoFailTimedOutTasks` 绕过了这个机制——直接 fail 而不是让 quarantine 系统决定是否需要重试。
+根因：`autoFailTimedOutTasks` 的"不隔离"分支使用了 `updateTask({status:'failed'})`，而正确行为应是 `status='queued'`（重排队重试）。
+
+### 下次预防
+
+- [ ] 任何"任务失败处理"代码必须经过 `handleTaskFailure()` 判断，不要直接 `status=failed`
+- [ ] 修改任务状态逻辑时，检查是否清空了 `started_at`——不清空会导致重排队后立即被判为超时
+- [ ] 超时处理的 action 名称要能区分"失败"和"重排队"（`auto-fail-timeout` vs `auto-requeue-timeout`）
+
+## PR #782 Tick 健康监控自动恢复（2026-03-10）
+
+### 根本原因
+
+`initTickLoop()` 启动时若 working_memory 中 `tick_enabled=false`，直接跳过启动。`disableTick()` 没有记录 disabled 的时间戳，Brain 不知道 tick 被关掉了多久。导致任何一次熔断、告警触发 tick disable 之后，Brain 重启后都保持 disabled，需要人工 enable。
+
+### 下次预防
+
+- [ ] `disableTick()` 写入时必须同时记录 `disabled_at` 时间戳，任何 disable 操作都要带时间
+- [ ] `initTickLoop()` 的 disabled 分支必须有超时自动恢复逻辑，不能无限保持 disabled
+- [ ] 自动恢复阈值 `TICK_AUTO_RECOVER_MINUTES` 可通过环境变量覆盖，便于调试
