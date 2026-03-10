@@ -88,6 +88,155 @@ function buildMarkdown(projects, summary, generated_at) {
 }
 
 /**
+ * 获取跨项目对比指标（包含 KR 进度和历史趋势）
+ * GET /api/brain/projects/compare
+ * @param {string[]} project_ids - 至少 2 个项目 UUID
+ * @param {string} format - 'json' | 'markdown'
+ * @param {number} trend_weeks - 趋势周数（1-12，默认 4）
+ */
+export async function getCompareMetrics({ project_ids, format = 'json', trend_weeks = 4 }) {
+  if (!Array.isArray(project_ids) || project_ids.length < 2) {
+    throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
+  }
+
+  // 并行执行 3 个查询
+  const [projectResult, taskResult, trendResult] = await Promise.all([
+    // 查询A：项目基础信息 + KR 信息
+    pool.query(
+      `SELECT p.id, p.name, p.type, p.status, p.kr_id,
+              g.id AS kr_goal_id, g.title AS kr_title, g.progress AS kr_progress
+       FROM projects p
+       LEFT JOIN goals g ON p.kr_id = g.id
+       WHERE p.id = ANY($1::uuid[])`,
+      [project_ids]
+    ),
+    // 查询B：任务统计（复用 generateCompareReport 逻辑）
+    pool.query(
+      `SELECT
+         project_id,
+         COUNT(*) AS total,
+         COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+         COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+         COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+         COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+         COUNT(*) FILTER (WHERE status = 'quarantined') AS quarantined,
+         COUNT(*) FILTER (WHERE priority = 'P0' AND status = 'in_progress') AS p0_in_progress,
+         COUNT(*) FILTER (WHERE updated_at >= now() - interval '7 days') AS recent_active
+       FROM tasks
+       WHERE project_id = ANY($1::uuid[])
+       GROUP BY project_id`,
+      [project_ids]
+    ),
+    // 查询C：历史趋势（按周统计已完成任务数）
+    pool.query(
+      `SELECT project_id,
+              to_char(completed_at AT TIME ZONE 'Asia/Shanghai', 'IYYY-"W"IW') AS week,
+              COUNT(*) AS completed
+       FROM tasks
+       WHERE project_id = ANY($1::uuid[])
+         AND status = 'completed'
+         AND completed_at >= now() - ($2 * interval '1 week')
+       GROUP BY project_id, week
+       ORDER BY project_id, week`,
+      [project_ids, trend_weeks]
+    ),
+  ]);
+
+  // 验证所有 project_id 都存在
+  const foundIds = new Set(projectResult.rows.map(r => r.id));
+  const missingIds = project_ids.filter(id => !foundIds.has(id));
+  if (missingIds.length > 0) {
+    throw Object.assign(
+      new Error(`Projects not found: ${missingIds.join(', ')}`),
+      { status: 400 }
+    );
+  }
+
+  // 任务统计映射
+  const taskStatsByProject = {};
+  for (const row of taskResult.rows) {
+    taskStatsByProject[row.project_id] = {
+      total: parseInt(row.total, 10),
+      completed: parseInt(row.completed, 10),
+      in_progress: parseInt(row.in_progress, 10),
+      queued: parseInt(row.queued, 10),
+      failed: parseInt(row.failed, 10),
+      quarantined: parseInt(row.quarantined, 10),
+      p0_in_progress: parseInt(row.p0_in_progress, 10),
+      recent_active: parseInt(row.recent_active, 10),
+    };
+  }
+
+  // 趋势数据映射
+  const trendByProject = {};
+  for (const row of trendResult.rows) {
+    if (!trendByProject[row.project_id]) {
+      trendByProject[row.project_id] = [];
+    }
+    trendByProject[row.project_id].push({
+      week: row.week,
+      completed: parseInt(row.completed, 10),
+    });
+  }
+
+  // 组装每个项目的指标
+  const projects = projectResult.rows.map(proj => {
+    const raw = taskStatsByProject[proj.id] || {
+      total: 0, completed: 0, in_progress: 0, queued: 0,
+      failed: 0, quarantined: 0, p0_in_progress: 0, recent_active: 0,
+    };
+    const completion_rate = raw.total > 0 ? raw.completed / raw.total : 0;
+    const score = scoreProject(raw);
+
+    return {
+      id: proj.id,
+      name: proj.name,
+      type: proj.type || 'project',
+      status: proj.status,
+      kr: proj.kr_id ? {
+        id: proj.kr_goal_id,
+        title: proj.kr_title,
+        progress: parseInt(proj.kr_progress, 10),
+      } : null,
+      task_stats: {
+        total: raw.total,
+        completed: raw.completed,
+        in_progress: raw.in_progress,
+        queued: raw.queued,
+        completion_rate: parseFloat(completion_rate.toFixed(2)),
+      },
+      trend: trendByProject[proj.id] || [],
+      strengths: buildStrengths(raw, score),
+      weaknesses: buildWeaknesses(raw),
+      score,
+    };
+  });
+
+  // 排序：高分优先
+  projects.sort((a, b) => b.score - a.score);
+
+  const generated_at = new Date().toISOString();
+  const best = projects[0];
+  const summary = projects.length === 2
+    ? `${best.name}（评分 ${best.score}）综合表现最佳，` +
+      `${projects[1].name}（评分 ${projects[1].score}）次之。`
+    : `共对比 ${projects.length} 个项目，${best.name}（评分 ${best.score}）综合表现最佳。`;
+
+  const response = {
+    generated_at,
+    format,
+    projects,
+    summary,
+  };
+
+  if (format === 'markdown') {
+    response.markdown = buildMarkdown(projects, summary, generated_at);
+  }
+
+  return response;
+}
+
+/**
  * 生成跨项目对比报告
  * @param {string[]} project_ids - 至少 2 个项目 UUID
  * @param {string} format - 'json' | 'markdown'
