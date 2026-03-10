@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronRight, ChevronDown, GitCompare } from 'lucide-react';
+import { ChevronRight, ChevronDown, BarChart2 } from 'lucide-react';
 
 interface Area {
   id: string;
@@ -168,12 +168,6 @@ export default function ProjectsDashboard() {
         <span className="w-16 text-right">状态</span>
         <span className="w-6 text-right">P</span>
         <span className="w-24 text-right">进度</span>
-        <a
-          href="/projects/compare"
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-700/60 text-slate-400 hover:text-purple-300 hover:border-purple-500/40 transition-colors normal-case tracking-normal font-normal ml-2"
-        >
-          <GitCompare className="w-3 h-3" /> 对比项目
-        </a>
       </div>
 
       <div className="flex-1 overflow-auto">
@@ -197,6 +191,13 @@ export default function ProjectsDashboard() {
         <span>{parentProjects.length} 个 Project</span>
         <span>{initiatives.length} 个 Initiative</span>
         <span>{initiatives.filter(i => i.status === 'in_progress' || i.status === 'active').length} 个活跃</span>
+        <a
+          href="/projects/compare"
+          className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 hover:text-purple-300 transition-colors"
+        >
+          <BarChart2 className="w-3 h-3" />
+          <span>对比项目</span>
+        </a>
       </div>
     </div>
   );

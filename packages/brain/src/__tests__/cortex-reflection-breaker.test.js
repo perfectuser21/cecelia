@@ -545,4 +545,15 @@ describe('Cortex 反思熔断 - D5(过期): DB 中过期条目不被恢复到内
     expect(Array.isArray(deletedKeys)).toBe(true);
     expect(deletedKeys).toContain('cortex_reflection:expiredHash123');
   }, 30000);
+
+  it('D7: 清理过期条目时日志包含"过期反思状态"', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await _checkReflectionBreaker('expiredHash123');
+
+    const allLogs = logSpy.mock.calls.flat().join(' ');
+    expect(allLogs).toContain('过期反思状态');
+
+    logSpy.mockRestore();
+  }, 30000);
 });
