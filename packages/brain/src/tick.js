@@ -614,8 +614,8 @@ async function selectNextDispatchableTask(goalIds, excludeIds = []) {
 /**
  * 从皮层 RCA 结果中自动创建建议任务
  * @param {Object} rcaResult - performRCA 返回的分析结果
- * @param {Object} context - { goal_id, project_id } 继承自失败任务
- * @returns {Promise<Array>} - 创建的任务列表
+ * @param {Object} context - { goal_id, project_id } 继承自失败任务（可选）
+ * @returns {Promise<Array>} - 创建的任务列表（含 deduplicated 字段）
  */
 async function autoCreateTasksFromCortex(rcaResult, context = {}) {
   const createTaskActions = (rcaResult.recommended_actions || [])
