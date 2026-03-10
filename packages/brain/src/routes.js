@@ -11876,4 +11876,87 @@ router.get('/dev-pipeline/health', async (req, res) => {
   return res.json({ healthy: allOk, checks });
 });
 
+// ─────────────────────────────────────────────────────────────
+// Instruction Book API
+// GET /api/brain/docs/instruction-book
+// 读取 docs/instruction-book/ 目录，返回结构化条目列表
+// ─────────────────────────────────────────────────────────────
+router.get('/docs/instruction-book', async (req, res) => {
+  try {
+    const { readdirSync: rds, readFileSync: rfs } = await import('fs');
+    const { fileURLToPath } = await import('url');
+    const pathMod = await import('path');
+
+    const docsRoot = pathMod.default.join(
+      pathMod.default.dirname(fileURLToPath(import.meta.url)),
+      '../../../docs/instruction-book'
+    );
+
+    function parseEntry(filePath, category) {
+      const raw = rfs(filePath, 'utf-8');
+      const lines = raw.split('\n');
+
+      // 提取 frontmatter id/version
+      let id = '', version = '';
+      let inFrontmatter = false;
+      for (const line of lines) {
+        if (line.trim() === '---') { inFrontmatter = !inFrontmatter; continue; }
+        if (inFrontmatter) {
+          const m = line.match(/^(id|version):\s*(.+)/);
+          if (m) { if (m[1] === 'id') id = m[2].trim(); else version = m[2].trim(); }
+        }
+      }
+
+      // 提取标题（第一个 # 行）
+      const titleLine = lines.find(l => l.startsWith('# ') && !l.startsWith('## '));
+      const title = titleLine ? titleLine.replace(/^# /, '').trim() : pathMod.default.basename(filePath, '.md');
+
+      // 提取各章节内容
+      const sections = {};
+      let currentSection = null;
+      let sectionLines = [];
+      const sectionMap = {
+        'What it is': 'what',
+        'What': 'what',
+        'Trigger': 'trigger',
+        'How to use': 'howToUse',
+        'Output': 'output',
+        'Added in': 'addedIn',
+      };
+
+      for (const line of lines) {
+        if (line.startsWith('## ')) {
+          if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
+          const header = line.replace(/^## /, '').trim();
+          currentSection = sectionMap[header] || null;
+          sectionLines = [];
+        } else if (currentSection) {
+          sectionLines.push(line);
+        }
+      }
+      if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
+
+      return { id, version, title, category, sections };
+    }
+
+    function readCategory(subDir, categoryName) {
+      const dir = pathMod.default.join(docsRoot, subDir);
+      try {
+        return rds(dir)
+          .filter(f => f.endsWith('.md'))
+          .map(f => parseEntry(pathMod.default.join(dir, f), categoryName));
+      } catch {
+        return [];
+      }
+    }
+
+    const skills = readCategory('skills', 'skill');
+    const features = readCategory('features', 'feature');
+
+    res.json({ skills, features });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
