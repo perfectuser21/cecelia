@@ -233,6 +233,13 @@ changelog:
 
 ---
 
+### S5: Pipeline Hardening V1
+
+1. ✅ **Brain 改动: 本地预检 → facts/version/manifest 全绿 → push**
+2. ✅ **非 Brain 改动: 预检跳过 → DoD 验证 → push**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

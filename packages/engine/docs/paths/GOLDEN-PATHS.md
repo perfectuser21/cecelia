@@ -344,6 +344,21 @@ rejected: Brain 打回重拆
 
 ---
 
+## GP-022: Pipeline Hardening V1 (S5)
+
+**Feature**: S5 - Pipeline Hardening V1
+**Priority**: P1
+
+### Golden Path
+
+```
+代码变更 → Step 7.1 npm test → Step 7.1b local-precheck →
+facts-check/version-sync/manifest-sync 全绿 → Step 7.2 DoD 验证 →
+Step 7.4 代码审查 → push → CI 直通
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
