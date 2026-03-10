@@ -4284,3 +4284,23 @@ DevGate 系统存在系统性绕过路径：(1) `.gitignore` 把 `.prd-*.md`/`.d
 - `initiative_verify` 路由从 `/architect` 改为 `/arch-review verify`（Sonnet 够用，不需要 Opus）
 - `dev→talk` skill fallback 删除：编码任务失败应进隔离区，不应静默降级为对话
 - 每日 arch_review 定为 08:00（`0 8 * * *`），每周完整版定为周一 09:00（`0 9 * * 1`）
+
+## PR #768 delivery_type 字段 + PR 行为声明机制（2026-03-10）
+
+### 根本原因
+
+AI 可以通过改文档/改代码来"完成"任务，但系统实际行为未变。CI 只检查代码格式，无法区分 behavior-change 类型的交付是否有真实 runtime evidence。
+
+### 什么有效
+
+- `delivery_type` 字段设计为 VARCHAR(50) DEFAULT 'code-only'，向后兼容（旧任务自动为 code-only）
+- createTask() 两条参数路径（12-param 无 domain / 13-param 有 domain）都加了 delivery_type，测试用参数索引验证
+- PR 模板的 SYSTEM BEHAVIOR CHANGE + UNIMPLEMENTED 两段强制声明，让 PR 描述本身成为行为证据
+- check-delivery-type.sh 检查 behavior-change 类型是否有测试文件 + PR body 关键词
+
+### 下次预防
+
+- [ ] 修改 packages/engine/skills/ 时，必须：(1) PR title 加 [CONFIG]，(2) Engine 版本 bump 6 个文件，(3) LEARNINGS.md 新增条目
+- [ ] DEFINITION.md 的 schema_version 字段有两处（表格行 + 文本描述），修改 selfcheck.js 时两处都要同步
+- [ ] 测试里用参数数量（params.length）做断言时，添加新参数要同步更新测试的期望值和注释
+- [ ] facts-check.mjs 检查 DEFINITION.md 的 schema_version，每次新增 migration 必须同时更新 DEFINITION.md 两处
