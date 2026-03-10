@@ -4676,3 +4676,18 @@ CI 失败 1 次（Learning Format Gate），其余全通过。
 - [ ] `module.exports` 放最末尾，纯函数（`isLoginError`、`isPublishSuccess` 等）供测试导入
 - [ ] 新增平台 publisher 时，utils 优先使用本地 `utils.cjs`，不从其他 publisher 导入相同函数
 - [ ] 在 `packages/workflows/skills/` 写代码前，检查 `packages/workflows/` 是否有旧 `.prd.md`；如有，在该目录也放分支专属 PRD/DoD
+
+## PR #795 executor/routes 错误详情兜底 — 消灭 "No details available"（2026-03-10）
+
+CI 失败 1 次（PRD/DoD/Learning 未提交 + Required Dev Paths 拦截）。
+
+### 根本原因
+
+进程被 kill 或超时时，`cecelia-run` 发送的 webhook `result` 字段为 null，但 `exit_code`、`stderr`、`failure_class` 有值。`routes.js` 的 `processExecutionAutoLearning` 调用直接传递 null result，导致 `extractTaskSummary(null)` 返回 "No details available"。
+此外，Brain 侧的 liveness_probe 和 orphan_detection 路径绕过了 execution-callback 路由，从不触发 auto-learning，形成完全盲区。
+
+### 下次预防
+
+- [ ] high-risk 路径（`executor.js` 等）修改时，PRD/DoD/Learning 文件必须在第一次 push 前就 git add + commit，否则 CI 直接拦截
+- [ ] 新增 Brain 内部失败处理路径（updateTaskStatus / pool.query 直接操作）时，必须同时补充 auto-learning 调用
+- [ ] `routes.js` 的 execution-callback 路由：当 result 为空时，应从 exit_code/stderr/failure_class 合成诊断信息，不能直接传 null 给下游分析链

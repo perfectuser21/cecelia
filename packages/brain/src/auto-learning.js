@@ -117,6 +117,15 @@ function extractTaskSummary(result, maxLength = 500) {
   }
 
   if (typeof result === 'object') {
+    // 支持 cecelia-run 合成结果字段（exit_code/stderr_tail/failure_class）
+    if (result.exit_code != null || result.stderr_tail || result.failure_class) {
+      const parts = [];
+      if (result.error) parts.push(result.error);
+      if (result.failure_class) parts.push(`failure_class=${result.failure_class}`);
+      if (result.exit_code != null) parts.push(`exit_code=${result.exit_code}`);
+      if (result.stderr_tail) parts.push(`stderr=${result.stderr_tail.slice(0, 200)}`);
+      return parts.join(' | ').slice(0, maxLength) || 'Process exited without output';
+    }
     // 优先提取错误信息，再提取正常结果
     const summary = result.error_details || result.error || result.message ||
       result.result || result.findings || result.summary || JSON.stringify(result);
