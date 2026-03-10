@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] slot-allocator PPID 检测 — macOS 进程标题覆盖导致 headless 误判（PR #811）
+
+**失败统计**：L1 CI 失败 1 次（PRD 成功标准格式 + LEARNINGS 缺失）
+
+### 根本原因
+
+1. **macOS claude 进程标题覆盖**：`claude -p "..."` 运行后，子进程覆盖自身进程标题，`ps -o args=` 只显示 `claude`（无 `-p`）。`detectUserSessions()` 用 `/ -p /.test(args)` 判断失效，4 个无头任务全被误判为 headed，触发 team 模式，派发积压正反馈。
+2. **PRD 成功标准格式错误**：再次用了 `**成功标准**:` 粗体，而 check-prd.sh 要求 `## 成功标准` 二级标题。
+3. **LEARNINGS.md 写入时机**：Learning Format Gate 是 L1 强制门禁，必须在第一次 push 前就写好。
+
+### 下次预防
+
+- [ ] macOS 进程检测时，不能仅依赖 args 字段（claude 会覆盖进程标题）；用 PPID 链接检测父进程环境变量（`CECELIA_HEADLESS=true`）更可靠
+- [ ] PRD 成功标准**必须**用 `## 成功标准` 二级标题（已踩坑两次，必须形成肌肉记忆）
+- [ ] Learning + PRD 格式在第一次 push 前就要检查完，避免 L1 门禁拦截
+
 ### [2026-03-10] Brain 任务重复派发 + DoD 已完成项也需要 Test 字段（PR #800）
 
 **失败统计**：L1 CI 失败 2 次（DoD Test 格式 + Learning 路径错误）
