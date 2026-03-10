@@ -4723,3 +4723,17 @@ CI 失败 1 次（Learning Format Gate — 未提交 LEARNINGS.md）。
 - [ ] 知乎/微博等使用 CSRF 签名的平台，优先使用 in-browser fetch 而非 Cookie 提取
 - [ ] 新建 PRD 文件时，文件名必须是 `.prd-${BRANCH_NAME}.md`（完整分支名），不能用简短别名
 - [ ] Step 10 Learning 记录是阻塞 CI 的硬门禁，必须在 push PR 之前完成，不能留到 CI 失败后补
+
+## PR #808 GET /api/brain/projects/compare — KR进度 + 趋势数据（2026-03-10）
+
+CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）。
+
+### 根本原因
+
+`Promise.all` 并行执行3个查询可以在 getCompareMetrics 中安全使用：项目+KR、任务统计、趋势查询互相独立，无数据依赖。但 missingIds 校验必须在 Promise.all 之后（使用 projectResult.rows），不能在 Promise.all 之前做（此时还没有查询结果）。
+
+### 下次预防
+
+- [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
+- [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
+- [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
