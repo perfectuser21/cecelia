@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI V4 审计修复 R2+R3 — push 路由精化 + Engine local-precheck（PR #760）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+审计发现 V4 CI 两个遗漏：
+1. L2/L3/L4 的 `changes` 检测 job 在 push 事件下把所有子系统都标记 `true`，导致文档改动也触发 macOS + PostgreSQL 全量 30min CI（R2）
+2. `scripts/local-precheck.sh` 只检查 Brain，Engine 版本漂移（6 个文件需同步）只在 CI 才发现，如 PR #758 折腾了 3 轮（R3）
+
+### 下次预防
+
+- [ ] CI changes job 在 push 事件用 `github.event.before/after` 做 diff，新分支（before=0000...）才全量标记 true
+- [ ] 修改 packages/engine/ 时，local-precheck.sh 会自动运行 Engine check-version-sync.sh 提前发现版本漂移
+- [ ] CI 改动 PR 标题必须含 [CONFIG] 标签（ci-config-audit + config-impact-check 双重检查）
+
 ### [2026-03-10] CI 体系 V4 — 四层 Gate 架构物理重构（PR #756）
 
 **失败统计**：CI 失败 0 次，本地测试失败 0 次
