@@ -4394,3 +4394,15 @@ selfcheck.js 用精确匹配（`===`）检查 DB schema version。每当有新 m
 - [ ] EXPECTED_SCHEMA_VERSION 含义改为"最低可接受版本"，注释需反映这一点
 - [ ] 新增 migration 文件时务必立即检查主仓库状态（`git status packages/brain/migrations/`），防止 untracked migration 文件流入 DB 但不进 git
 - [ ] DEFINITION.md 中 schema_version 有两处引用，新增 migration 时两处都要同步
+
+## PR #778 selfcheck schema version >= 检查防崩溃循环（2026-03-10）
+
+### 根本原因
+
+selfcheck.js 用精确匹配（`===`）校验 schema version，只要 DB 已应用比 EXPECTED_SCHEMA_VERSION 更新的 migration，Brain 就拒绝启动并 exit(1)，造成无限崩溃循环。版本比较语义错误：应为"至少达到预期版本"而非"精确等于"。
+
+### 下次预防
+
+- [ ] schema version 检查始终使用 `>=`（parseInt 比较），不用 `===`，允许 DB 超前
+- [ ] selfcheck.test.js 保持"DB 版本超前时仍 PASS"的测试用例，防止回归
+- [ ] DoD Test 命令禁止 `echo`（包括 `&& echo OK`），直接用 `grep -q` 的退出码
