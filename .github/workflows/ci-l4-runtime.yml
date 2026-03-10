@@ -33,8 +33,17 @@ jobs:
       - name: Detect brain changes
         id: filter
         run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "brain=true" >> $GITHUB_OUTPUT
+            # R2: push 事件用实际 diff（不再全量 true）
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              echo "brain=true" >> $GITHUB_OUTPUT
+            else
+              CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+              echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
+                && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
+            fi
             exit 0
           fi
           BASE_REF="${{ github.base_ref }}"

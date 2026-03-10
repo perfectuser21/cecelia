@@ -140,6 +140,49 @@ else
 fi
 echo ""
 
+# ── Engine 检查（仅 Engine 改动时触发）────────────────────────────────────────
+if [[ "$FORCE" == "--force" ]]; then
+    ENGINE_CHANGED=99
+else
+    MERGE_BASE_E=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || echo "")
+    if [[ -z "$MERGE_BASE_E" ]]; then
+        ENGINE_CHANGED=0
+    else
+        ENGINE_CHANGED=$(git diff --name-only "$MERGE_BASE_E" HEAD 2>/dev/null \
+            | grep "^packages/engine/" 2>/dev/null \
+            | wc -l | tr -d " ")
+    fi
+    ENGINE_CHANGED=${ENGINE_CHANGED:-0}
+fi
+
+if [[ "$ENGINE_CHANGED" -eq 0 ]]; then
+    echo -e "${GREEN}✅ Engine 无改动，跳过 Engine 预检${RESET}"
+else
+    echo -e "🔍 检测到 Engine 改动 ${BOLD}${ENGINE_CHANGED}${RESET} 个文件，开始 Engine 预检..."
+    echo ""
+
+    # Engine Check: version-sync
+    echo -e "${BOLD}[E/1] engine-version-sync${RESET} — Engine 版本文件同步（package.json / VERSION / .hook-core-version / regression-contract.yaml）"
+    ENGINE_VSYNC="packages/engine/ci/scripts/check-version-sync.sh"
+    if [[ ! -f "$ENGINE_VSYNC" ]]; then
+        echo -e "  ${YELLOW}⚠️  $ENGINE_VSYNC 不存在，跳过${RESET}"
+    else
+        CHECKS_RUN=$((CHECKS_RUN + 1))
+        set +e
+        (cd packages/engine && bash ci/scripts/check-version-sync.sh 2>&1)
+        EV_EXIT=$?
+        set -e
+        if [[ $EV_EXIT -eq 0 ]]; then
+            echo -e "  ${GREEN}✅ engine-version-sync 通过${RESET}"
+        else
+            echo -e "  ${RED}❌ engine-version-sync 失败${RESET}"
+            echo -e "  ${RED}   请同步更新 VERSION / .hook-core-version / regression-contract.yaml${RESET}"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+    echo ""
+fi
+
 # ── 汇总 ──────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 if [[ $ERRORS -eq 0 ]]; then
