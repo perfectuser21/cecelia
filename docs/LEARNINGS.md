@@ -1,5 +1,29 @@
 # Cecelia Core Learnings
 
+### [2026-03-10] CI 体系重构 V2+V3 — engine-ci 逻辑分层 + brain-ci brain-test 拆分（PR #755）
+
+**失败统计**：CI 失败 0 次，本地测试失败 0 次
+
+### 根本原因
+
+engine-ci 的 `test` job（30min）混合了 L1（协议检查）、L2（一致性检查）、L3（代码检查）三层逻辑，加上 `version-check`、`known-failures-protection`、`contract-drift-check`、`config-audit`、`impact-check` 5 个分散的独立 job，失败时难以定位到具体层次。
+
+brain-ci 的 `brain-test` job 把无 DB 依赖的单元测试和需要 PostgreSQL 的集成测试全跑在 macos-latest（昂贵），单元测试失败也要等 macos 环境初始化（30s+）才能发现。
+
+brain-unit（ubuntu-latest）无 DB 可行的原因：所有测试文件用 `vi.mock('../../src/db.js')` 替换真实 DB 访问，vitest 不会创建真实连接池。
+
+engine-ci L1 的 `ci-passed` gate 需处理 push 事件时 l1-process 被 skipped 的合法情况：
+```bash
+if [ "$RESULT" != "success" ] && [ "$RESULT" != "skipped" ]; then FAILED=true; fi
+```
+
+### 下次预防
+
+- [ ] CI 结构拆分时确认 `ci-passed` gate 里所有旧 job 名已替换为新 job 名（本次 7→3）
+- [ ] engine-ci L1 gate 条件：`needs.l1-process.result` 在 push 时为 skipped，需同时允许 skipped
+- [ ] brain-unit 不带 `--coverage` flag，仅 brain-integration 带（避免覆盖率检查在无 DB 环境干扰）
+- [ ] Learning 格式必须包含 `### 根本原因` 和 `### 下次预防` 章节及 `- [ ]` checklist，否则 DevGate Learning Format Gate 会拦截
+
 ### [2026-03-10] isolate:false Batch 1 — 共享 pool.end() 污染（PR #751）
 
 #### 根本原因

@@ -111,10 +111,57 @@ jobs:
           npm install --no-save js-yaml
           node scripts/devgate/check-contract-drift.mjs --base=origin/main
 
-  brain-test:
+  # ─────────────────────────────────────────────────────────────────
+  # L3 Code Gate: Unit tests only, no DB (ubuntu-latest, fast 5-10min)
+  # All brain tests mock the database layer via vi.mock
+  # ─────────────────────────────────────────────────────────────────
+  brain-unit:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    name: Brain Tests
+    name: Brain Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/brain/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/brain
+        run: npm ci
+
+      - name: Run Brain unit tests (no DB)
+        working-directory: packages/brain
+        env:
+          NODE_OPTIONS: "--max-old-space-size=1536"
+        run: |
+          set +e
+          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/test-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            if grep -qE "Tests.*[0-9]+ passed" /tmp/test-output.txt && ! grep -qE "Tests.*[0-9]+ failed" /tmp/test-output.txt; then
+              echo "⚠️  vitest exited $EXIT_CODE but all tests passed (likely worker OOM during cleanup)"
+              exit 0
+            fi
+            exit $EXIT_CODE
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # L4 Runtime Gate: PostgreSQL + coverage + GoldenPath E2E
+  # Full integration tests (macos-latest, 30min)
+  # ─────────────────────────────────────────────────────────────────
+  brain-integration:
+    needs: changes
+    if: needs.changes.outputs.brain == 'true'
+    name: Brain Integration Tests
     runs-on: macos-latest
     timeout-minutes: 30
     permissions:
@@ -165,18 +212,15 @@ jobs:
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
           echo "initdb path: $(which initdb 2>/dev/null || echo 'NOT FOUND')"
           echo "pg_ctl path: $(which pg_ctl 2>/dev/null || echo 'NOT FOUND')"
-          # Check if PostgreSQL is already running (e.g. from a cached runner state)
           if pg_isready -h localhost -p 5432 2>/dev/null; then
             echo "PostgreSQL already running on port 5432, skipping initialization"
           else
-            # Initialize new PostgreSQL instance (expose errors, no silent suppression)
             if [ ! -d /tmp/pgdata ]; then
               initdb -D /tmp/pgdata --username=$(whoami)
             else
               echo "/tmp/pgdata already exists, skipping initdb"
             fi
             pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
-            # Wait for PostgreSQL to be ready
             for i in $(seq 1 30); do
               if pg_isready -h localhost -p 5432 2>/dev/null; then
                 echo "PostgreSQL is ready"
@@ -186,11 +230,9 @@ jobs:
               sleep 1
             done
           fi
-          # Create CI user and database (connect as current OS user which is the superuser)
           createuser --superuser cecelia 2>/dev/null || true
           psql -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
           createdb -U cecelia cecelia 2>/dev/null || true
-          # pgvector extension (installed by previous brew step)
           psql -U cecelia -d cecelia -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
@@ -216,10 +258,6 @@ jobs:
           set +e
           npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage 2>&1 | tee /tmp/test-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
-          # If vitest exited non-zero, check if all tests actually passed
-          # (worker OOM during cleanup causes exit 1 even when all tests pass)
-          # IMPORTANT: coverage threshold failures must NOT be suppressed — they contain
-          # "Coverage threshold" in output. Only suppress genuine OOM cleanup exits.
           if [ $EXIT_CODE -ne 0 ]; then
             if grep -q "Coverage threshold" /tmp/test-output.txt; then
               echo "❌ Coverage threshold not met — failing CI (HARD GATE)"
@@ -237,7 +275,7 @@ jobs:
         run: bash scripts/goldenpath-check.sh
 
   ci-passed:
-    needs: [changes, facts-check, manifest-sync, fitness-check, brain-test]
+    needs: [changes, facts-check, manifest-sync, fitness-check, brain-unit, brain-integration]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -251,11 +289,15 @@ jobs:
 
           # 第一轮：任何 job 明确失败（failure/cancelled）立即拦截
           # skipped 是合法状态——当 brain=false 时所有检查 job 都会 skip
-          # 旧逻辑用 != "success" 会将 skipped 判定为失败，导致无 brain 改动的 PR 被误拦截
           FAILED=false
 
-          if [ "${{ needs.brain-test.result }}" = "failure" ] || [ "${{ needs.brain-test.result }}" = "cancelled" ]; then
-            echo "FAIL: Brain Tests (${{ needs.brain-test.result }})"
+          if [ "${{ needs.brain-unit.result }}" = "failure" ] || [ "${{ needs.brain-unit.result }}" = "cancelled" ]; then
+            echo "FAIL: Brain Unit Tests (${{ needs.brain-unit.result }})"
+            FAILED=true
+          fi
+
+          if [ "${{ needs.brain-integration.result }}" = "failure" ] || [ "${{ needs.brain-integration.result }}" = "cancelled" ]; then
+            echo "FAIL: Brain Integration Tests (${{ needs.brain-integration.result }})"
             FAILED=true
           fi
 
@@ -281,12 +323,16 @@ jobs:
           fi
 
           # 第二轮：有 brain 改动时，skipped 不够——必须全部 success
-          # 防止：has-brain-changes 但某个 job 异常跳过（如 if 条件评估错误）
           if [ "${{ needs.changes.outputs.brain }}" = "true" ]; then
             STRICT_FAILED=false
 
-            if [ "${{ needs.brain-test.result }}" != "success" ]; then
-              echo "FAIL: Brain Tests must succeed when brain changes detected (got: ${{ needs.brain-test.result }})"
+            if [ "${{ needs.brain-unit.result }}" != "success" ]; then
+              echo "FAIL: Brain Unit Tests must succeed when brain changes detected (got: ${{ needs.brain-unit.result }})"
+              STRICT_FAILED=true
+            fi
+
+            if [ "${{ needs.brain-integration.result }}" != "success" ]; then
+              echo "FAIL: Brain Integration Tests must succeed when brain changes detected (got: ${{ needs.brain-integration.result }})"
               STRICT_FAILED=true
             fi
 
