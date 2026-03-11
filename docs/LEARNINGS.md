@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Brain Integration Baseline 归零 — platform-utils mock 必须同步新增导出（PR #819）
+
+**失败统计**：CI L4 剩余 4 个失败（PR #818 修复后），baseline 从 125 降至 0
+
+### 根本原因
+
+1. **源码新增导出函数后，所有相关 mock 必须同步更新**：PR #812 向 `platform-utils.js` 新增了 `getAvailableMemoryMB()`，`executor.js` 开始调用它，但 `cpu-sampler.test.js` 和 `minimax-provider.test.js` 的 mock 没有包含此函数。vitest 的严格 mock 模式抛出 "No getAvailableMemoryMB export is defined on mock"，导致依赖 `checkServerResources()` 的测试全部失败。
+
+2. **Baseline 是债务标签，修完就该归零**：125 的 baseline 在实际只有 4 个失败时，是对测试系统的虚假容忍。正确做法：修完失败 → 立即归零 baseline，不留余地。
+
+### 下次预防
+
+- [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
+- [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
+
 ### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #818）
 
 **失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
