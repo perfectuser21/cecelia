@@ -5,7 +5,7 @@
  *       手动触发、actionable 洞察→task、状态查询
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock 设置（vi.hoisted 避免 hoisting 问题）──────────────
 
@@ -57,7 +57,7 @@ vi.mock('../thalamus.js', () => ({
 import {
   runRumination, runManualRumination, getRuminationStatus,
   getUndigestedCount, _resetState, _setDailyCount, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
-  buildRuminationPrompt, buildNotebookQuery,
+  buildRuminationPrompt, buildNotebookQuery, getDailyBudget,
 } from '../rumination.js';
 
 // ── Mock DB pool ──────────────────────────────────────────
@@ -436,14 +436,14 @@ describe('rumination', () => {
     });
 
     it('force=false 时预算耗尽返回 daily_budget_exhausted', async () => {
-      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      _setDailyCount(getDailyBudget()); // 模拟预算已满（动态值）
       const result = await runManualRumination(pool, { force: false });
       expect(result.skipped).toBe('daily_budget_exhausted');
       expect(result.digested).toBe(0);
     });
 
     it('force=true 时绕过 daily_budget，消化成功', async () => {
-      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      _setDailyCount(getDailyBudget()); // 模拟预算已满（动态值）
       setupLearningsOnly(pool, [{ id: 'f1', title: 'force 测试', content: '强制消化', category: 'test' }]);
 
       const result = await runManualRumination(pool, { force: true });
@@ -471,8 +471,8 @@ describe('rumination', () => {
 
       expect(status).toEqual(expect.objectContaining({
         daily_count: 0,
-        daily_budget: DAILY_BUDGET,
-        remaining: DAILY_BUDGET,
+        daily_budget: getDailyBudget(),
+        remaining: getDailyBudget(),
         undigested_count: 15,
       }));
       expect(status.cooldown_remaining_ms).toBeGreaterThanOrEqual(0);
@@ -489,7 +489,7 @@ describe('rumination', () => {
       const status = await getRuminationStatus(pool);
 
       expect(status.daily_count).toBe(1);
-      expect(status.remaining).toBe(DAILY_BUDGET - 1);
+      expect(status.remaining).toBe(getDailyBudget() - 1);
       expect(status.last_run_at).not.toBeNull();
       expect(status.cooldown_remaining_ms).toBeGreaterThan(0);
     });
@@ -562,6 +562,49 @@ describe('rumination', () => {
 
     it('COOLDOWN_MS = 30 分钟', () => {
       expect(COOLDOWN_MS).toBe(30 * 60 * 1000);
+    });
+  });
+
+  describe('getDailyBudget() — 低峰期动态预算', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('低峰期 00:00 UTC+8 返回 40（DAILY_BUDGET × 2）', () => {
+      // UTC+8 00:00 = UTC 16:00 前一天
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T16:00:00.000Z')); // UTC 16:00 = 上海 00:00
+      expect(getDailyBudget()).toBe(40);
+    });
+
+    it('低峰期 03:30 UTC+8 返回 40', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T19:30:00.000Z')); // UTC 19:30 = 上海 03:30
+      expect(getDailyBudget()).toBe(40);
+    });
+
+    it('低峰期边界 05:59 UTC+8 返回 40', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T21:59:00.000Z')); // UTC 21:59 = 上海 05:59
+      expect(getDailyBudget()).toBe(40);
+    });
+
+    it('正常时段 06:00 UTC+8 返回 20', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T22:00:00.000Z')); // UTC 22:00 = 上海 06:00
+      expect(getDailyBudget()).toBe(20);
+    });
+
+    it('正常时段 12:00 UTC+8 返回 20', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T04:00:00.000Z')); // UTC 04:00 = 上海 12:00
+      expect(getDailyBudget()).toBe(20);
+    });
+
+    it('正常时段 23:59 UTC+8 返回 20', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-10T15:59:00.000Z')); // UTC 15:59 = 上海 23:59
+      expect(getDailyBudget()).toBe(20);
     });
   });
 
