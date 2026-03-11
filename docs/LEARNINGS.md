@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Linux→macOS 全量兼容性修复 — os.freemem() 在 macOS 上永远是 66MB（PR #812）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **`os.freemem()` 在 macOS 上语义不同**：macOS 把所有空闲 RAM 用作 file cache（inactive pages），`os.freemem()` 只返回真正未使用的页面（约 66MB）。Linux 上 `os.freemem()` 对应 `/proc/meminfo` 的 `MemAvailable`，包含可回收缓存，约等于 7GB。Brain 的 `checkServerResources()` 用 `os.freemem()` 计算内存压力，导致 macOS 上始终显示 99%，`effectiveSlots=0`，Cecelia 整夜无法派发任何任务。
+
+2. **`healing.js` 重复实现 `isProcessAlive()`**：`platform-utils.js` 已有 `processExists()`，但 `healing.js` 自己又写了一份，两处不同步。`pgrep -f` 在 macOS 上行为不一致。
+
+3. **Learning 必须在第一次 push 前写入**：Learning Format Gate 是 L1 强制门禁，在 push 之前就要写好，不能留到 CI 失败后补。
+
+### 下次预防
+
+- [ ] macOS 获取可用内存必须用 `getAvailableMemoryMB()`（platform-utils），不直接调 `os.freemem()`
+- [ ] 进程检测统一用 `platform-utils.processExists()`，不在各文件自己实现
+- [ ] 平台相关命令（`grep -P`、`pgrep -f`、`stat -c`、`free`、`/proc/` 等）必须走 `platform-utils` 封装，不直接在业务代码里写
+- [ ] Learning 在创建 PR **之前**写好，随第一次 push 一起进分支，避免 L1 Learning Format Gate 失败
+
 ### [2026-03-10] Dashboard 白屏修复（PR #788）
 
 **失败统计**：CI 失败 1 次（Learning 缺失 + DoD D5 用了 `echo` 假测试）
