@@ -34,6 +34,10 @@ const MAX_PRD_LENGTH = 50000;
 // 任务最大 payload 大小（字符）：超过视为可疑
 const MAX_PAYLOAD_SIZE = 100000;
 
+// 网络错误重试基础延迟（ms）：5 分钟起步，支持环境变量覆盖
+// 短间隔暴力重试会消耗 Claude 额度并产生重复 error learning
+const NETWORK_RETRY_DELAY_MS = parseInt(process.env.NETWORK_RETRY_DELAY_MS) || 5 * 60 * 1000;
+
 // 隔离原因定义
 const QUARANTINE_REASONS = {
   REPEATED_FAILURE: 'repeated_failure',
@@ -51,7 +55,7 @@ const FAILURE_CLASS = {
   BILLING_CAP: 'billing_cap',     // API 账单上限 - 等 reset 时间
   RATE_LIMIT: 'rate_limit',       // 429 限流 - 指数退避
   AUTH: 'auth',                   // 权限/认证 - 不重试，通知人
-  NETWORK: 'network',             // 网络 - 短延迟重试
+  NETWORK: 'network',             // 网络 - 5min+ 延迟重试（避免暴力重试）
   RESOURCE: 'resource',           // 资源不足 - 不重试，通知人
   TASK_ERROR: 'task_error',       // 任务本身问题 - 正常失败计数
   // 向后兼容
@@ -722,12 +726,12 @@ function getRetryStrategy(failureClass, options = {}) {
       if (retryCount >= 3) {
         return { should_retry: false, needs_human_review: true, reason: 'Network retries exhausted (3/3)' };
       }
-      // 短延迟: 30s → 1min → 2min
-      const backoffMs = Math.pow(2, retryCount) * 30 * 1000;
+      // 长延迟: 5min → 10min → 15min（避免短间隔暴力重试消耗 Claude 额度）
+      const backoffMs = (retryCount + 1) * NETWORK_RETRY_DELAY_MS;
       return {
         should_retry: true,
         next_run_at: new Date(Date.now() + backoffMs).toISOString(),
-        reason: `Network error, retry #${retryCount + 1} in ${backoffMs / 1000}s`,
+        reason: `Network error, retry #${retryCount + 1} in ${backoffMs / 60000}min`,
       };
     }
 
