@@ -1,6 +1,6 @@
 # Cecelia Core Learnings
 
-### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #813）
+### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #818）
 
 **失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
 
@@ -17,6 +17,63 @@
 - [ ] 修改 vitest.config.js 时，`isolate: false` 必须有明确的理由和团队共识；否则默认用 `isolate: true`（vitest 默认值）
 - [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
 - [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
+
+
+### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
+
+**失败统计**：L1 CI 失败 1 次（DoD 命令含 `echo` 假测试 + Learning 未 push）
+
+### 根本原因
+
+1. **Express 路由先注册先匹配**：`server.js` 将 `taskProjectsRoutes` 挂载在 `/api/brain/projects`（L100），比 `brainRoutes` 的挂载点 `/api/brain`（L123）更早。当请求 `GET /api/brain/projects/compare` 到来时，`taskProjectsRoutes` 的 `GET /:id` 先匹配，将 `compare` 当作 UUID 处理，返回 `invalid UUID` 错误。
+2. **路由拆分后的一致性责任**：将路由从 `routes.js` 拆分为独立文件（`task-projects.js`）时，必须考虑 `server.js` 的挂载顺序，并在目标文件中确保通配参数路由（`/:id`）在具名路由（`/compare`）之后。
+3. **DoD `|| echo N` 是假测试**：用 `grep -c ... || echo 0` 验证"模式不存在"会被 CI 检测为假测试（含 `echo`）。正确做法：`! grep -q 'pattern' file`。
+
+### 下次预防
+
+- [ ] 向 `routes.js` / 路由文件新增路由时，检查 `server.js` 挂载顺序，确认目标文件不存在会优先拦截新路由的通配参数（`/:id`）。
+- [ ] DoD 验证"不存在"场景时，使用 `! grep -q 'pattern' file`，禁止 `grep -c ... || echo N`。
+- [ ] 新路由必须在通配路由（`/:id`、`/*` 等）**之前**注册，防止被提前拦截。
+
+---
+
+### [2026-03-11] SW 更新白屏根因：缺 controllerchange listener（PR #815）
+
+**失败统计**：0 次 CI 失败
+
+### 根本原因
+
+1. **`registerSW.js` 没有 `controllerchange` 监听器**：VitePWA 生成的 `registerSW.js` 在本项目配置下只包含最简注册逻辑，没有 SW 更新后自动重载的代码。当新 SW 通过 `skipWaiting()` 激活、`clientsClaim()` 接管控制权时，当前页面不知道需要重载，继续运行旧的（可能已损坏的）bundle，导致白屏持续。
+
+2. **`clearStaleCache()` race condition**：调用 `window.location.reload()` 后函数 `return`，但异步函数的 promise 仍 resolve，`.then()` 依然执行，在页面重载过程中挂载 React。理论上不会造成白屏，但是不安全的行为。
+
+3. **SW 更新链路断裂**：新 bundle 上线后，用户需要 **至少两次** 页面访问才能获取新内容：第一次访问安装新 SW，但无 reload；第二次访问新 SW 才服务新文件。若旧 bundle 有 bug，这两次之间用户一直看到白屏。
+
+### 下次预防
+
+- [ ] VitePWA 配置必须验证生成的 `registerSW.js` 包含 `controllerchange` 事件处理（`grep controllerchange dist/registerSW.js`）
+- [ ] 每次 dist 构建后检查：`main.tsx` 的 SW 监听逻辑是否在新 bundle 里出现（`grep controllerchange dist/assets/index-*.js`）
+- [ ] `clearStaleCache()` 改为返回 boolean，调用方根据返回值决定是否挂载 React，避免 reload 后的无效挂载
+
+### [2026-03-11] Linux→macOS 全量兼容性修复 — os.freemem() 在 macOS 上永远是 66MB（PR #812）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **`os.freemem()` 在 macOS 上语义不同**：macOS 把所有空闲 RAM 用作 file cache（inactive pages），`os.freemem()` 只返回真正未使用的页面（约 66MB）。Linux 上 `os.freemem()` 对应 `/proc/meminfo` 的 `MemAvailable`，包含可回收缓存，约等于 7GB。Brain 的 `checkServerResources()` 用 `os.freemem()` 计算内存压力，导致 macOS 上始终显示 99%，`effectiveSlots=0`，Cecelia 整夜无法派发任何任务。
+
+2. **`healing.js` 重复实现 `isProcessAlive()`**：`platform-utils.js` 已有 `processExists()`，但 `healing.js` 自己又写了一份，两处不同步。`pgrep -f` 在 macOS 上行为不一致。
+
+3. **Learning 必须在第一次 push 前写入**：Learning Format Gate 是 L1 强制门禁，在 push 之前就要写好，不能留到 CI 失败后补。
+
+### 下次预防
+
+- [ ] macOS 获取可用内存必须用 `getAvailableMemoryMB()`（platform-utils），不直接调 `os.freemem()`
+- [ ] 进程检测统一用 `platform-utils.processExists()`，不在各文件自己实现
+- [ ] 平台相关命令（`grep -P`、`pgrep -f`、`stat -c`、`free`、`/proc/` 等）必须走 `platform-utils` 封装，不直接在业务代码里写
+- [ ] Learning 在创建 PR **之前**写好，随第一次 push 一起进分支，避免 L1 Learning Format Gate 失败
+
 
 ### [2026-03-10] Dashboard 白屏修复（PR #788）
 
