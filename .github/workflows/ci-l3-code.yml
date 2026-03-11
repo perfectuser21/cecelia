@@ -238,6 +238,17 @@ jobs:
             fi
           fi
 
+      # Changed-line Coverage Gate (feat PR 变更行覆盖率)
+      - name: Coverage Gate
+        working-directory: packages/engine
+        if: always() && steps.test.outcome == 'success'
+        run: |
+          echo "Running coverage with vitest..."
+          npx vitest run --coverage --reporter=verbose 2>&1 || true
+          echo ""
+          echo "Running changed-line coverage gate..."
+          node scripts/devgate/check-changed-coverage.cjs --base origin/main --coverage-dir ./coverage
+
       # Build
       - name: Build
         working-directory: packages/engine

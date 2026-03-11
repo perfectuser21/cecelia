@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #842 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
+
+**失败统计**：待定
+
+### 根本原因
+
+AI-first 开发的自我验证死循环：同一 AI 写 PRD→DoD→Test→Code，所有验证都是自引用。
+PR #841 的 BEHAVIOR 弱测试检测和 Step 7.5 审计员都是 AI 层面的改进（软检查），
+无法从根本上阻止"写了代码没真测"。确定性工具（覆盖率）是唯一不可绕过的验证手段。
+
+### 下次预防
+
+- [ ] vitest `--coverage` 带 thresholds 时会在覆盖率不达标时 exit 非零，CI 中用 `|| true` 避免阻塞
+- [ ] Istanbul JSON 格式用绝对路径作 key，匹配变更文件时需要 `path.resolve()` 转换
+- [ ] CJS 脚本导出函数供测试时用 `if (require.main === module) { main(); }` 模式
+
 ## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
 
 **失败统计**：L1 CI 失败 1 次（DoD Verification Gate：BEHAVIOR Test 的 printf 命令在 CI 执行失败）
