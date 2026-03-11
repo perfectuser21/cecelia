@@ -1,41 +1,22 @@
 # Cecelia Core Learnings
 
-### [2026-03-11] SW 更新白屏根因：缺 controllerchange listener（PR #815）
+### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #813）
 
-**失败统计**：0 次 CI 失败
-
-### 根本原因
-
-1. **`registerSW.js` 没有 `controllerchange` 监听器**：VitePWA 生成的 `registerSW.js` 在本项目配置下只包含最简注册逻辑，没有 SW 更新后自动重载的代码。当新 SW 通过 `skipWaiting()` 激活、`clientsClaim()` 接管控制权时，当前页面不知道需要重载，继续运行旧的（可能已损坏的）bundle，导致白屏持续。
-
-2. **`clearStaleCache()` race condition**：调用 `window.location.reload()` 后函数 `return`，但异步函数的 promise 仍 resolve，`.then()` 依然执行，在页面重载过程中挂载 React。理论上不会造成白屏，但是不安全的行为。
-
-3. **SW 更新链路断裂**：新 bundle 上线后，用户需要 **至少两次** 页面访问才能获取新内容：第一次访问安装新 SW，但无 reload；第二次访问新 SW 才服务新文件。若旧 bundle 有 bug，这两次之间用户一直看到白屏。
-
-### 下次预防
-
-- [ ] VitePWA 配置必须验证生成的 `registerSW.js` 包含 `controllerchange` 事件处理（`grep controllerchange dist/registerSW.js`）
-- [ ] 每次 dist 构建后检查：`main.tsx` 的 SW 监听逻辑是否在新 bundle 里出现（`grep controllerchange dist/assets/index-*.js`）
-- [ ] `clearStaleCache()` 改为返回 boolean，调用方根据返回值决定是否挂载 React，避免 reload 后的无效挂载
-
-### [2026-03-11] Linux→macOS 全量兼容性修复 — os.freemem() 在 macOS 上永远是 66MB（PR #812）
-
-**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+**失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
 
 ### 根本原因
 
-1. **`os.freemem()` 在 macOS 上语义不同**：macOS 把所有空闲 RAM 用作 file cache（inactive pages），`os.freemem()` 只返回真正未使用的页面（约 66MB）。Linux 上 `os.freemem()` 对应 `/proc/meminfo` 的 `MemAvailable`，包含可回收缓存，约等于 7GB。Brain 的 `checkServerResources()` 用 `os.freemem()` 计算内存压力，导致 macOS 上始终显示 99%，`effectiveSlots=0`，Cecelia 整夜无法派发任何任务。
+1. **vitest isolate:false 是跨文件 Mock 污染根因**：`isolate: false` 允许同一 worker fork 内的多个测试文件共享模块注册表。某个文件 `vi.mock('../notifier.js', () => ({ notifyCircuitOpen }))` 后，后续文件的 `sendFeishu` 引用为 undefined，导致 alerting、circuit-breaker 等约 70 个测试在批量运行时失败，但单独运行时全部通过。
 
-2. **`healing.js` 重复实现 `isProcessAlive()`**：`platform-utils.js` 已有 `processExists()`，但 `healing.js` 自己又写了一份，两处不同步。`pgrep -f` 在 macOS 上行为不一致。
+2. **过时断言积累**：migration 142（tasks.error_message）、cortex.js timeout 调整后，相关测试断言未同步，导致 3 个测试文件 4 处断言过时（schema version、SQL 查询、timeout 值）。
 
-3. **Learning 必须在第一次 push 前写入**：Learning Format Gate 是 L1 强制门禁，在 push 之前就要写好，不能留到 CI 失败后补。
+3. **isolate:false 的危险性**：单独运行所有测试通过，给人"测试健康"的错觉。只有批量运行才暴露污染问题，且失败数在不同运行顺序下波动（74-86 个）。
 
 ### 下次预防
 
-- [ ] macOS 获取可用内存必须用 `getAvailableMemoryMB()`（platform-utils），不直接调 `os.freemem()`
-- [ ] 进程检测统一用 `platform-utils.processExists()`，不在各文件自己实现
-- [ ] 平台相关命令（`grep -P`、`pgrep -f`、`stat -c`、`free`、`/proc/` 等）必须走 `platform-utils` 封装，不直接在业务代码里写
-- [ ] Learning 在创建 PR **之前**写好，随第一次 push 一起进分支，避免 L1 Learning Format Gate 失败
+- [ ] 修改 vitest.config.js 时，`isolate: false` 必须有明确的理由和团队共识；否则默认用 `isolate: true`（vitest 默认值）
+- [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
+- [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
 
 ### [2026-03-10] Dashboard 白屏修复（PR #788）
 
@@ -4871,18 +4852,3 @@ CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）
 - [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
 - [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
 - [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
-
-## PR #814 feat(dashboard): ProjectCompare 接入 Brain KR 进度 + 实时刷新（2026-03-11）
-
-CI 失败 1 次（L1 Process Gate — PRD 格式错误 + LEARNINGS 未 push）。
-
-### 根本原因
-
-1. PRD 中"成功标准"用了普通粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 只匹配 `##` 标题格式
-2. LEARNINGS.md 未在第一次 push 前提交，Learning Format Gate 是 L1 硬门禁
-
-### 下次预防
-
-- [ ] 创建 PRD 时立即确认成功标准为 `## 成功标准` 二级标题格式，不用粗体
-- [ ] Step 10 Learning 记录必须在合并 PR 前 push（不能 CI 失败后再补），否则 L1 必失败
-- [ ] React 中多个 `setInterval` 需用 `useRef` 保存 timer ID 避免闭包捕获旧值导致重复创建定时器
