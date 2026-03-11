@@ -1,5 +1,5 @@
 -- Migration: Add root_cause_hash and occurrence_count to learnings table
--- Version: 143
+-- Version: 144
 -- Date: 2026-03-11
 -- Description: Add category classification hash and occurrence counter for dedup/aggregation
 
@@ -17,5 +17,5 @@ CREATE INDEX IF NOT EXISTS idx_learnings_root_cause_hash ON learnings(root_cause
 
 -- Insert schema version
 INSERT INTO schema_version (version, description)
-VALUES ('143', 'Add root_cause_hash and occurrence_count to learnings table')
+VALUES ('144', 'Add root_cause_hash and occurrence_count to learnings table')
 ON CONFLICT (version) DO NOTHING;
