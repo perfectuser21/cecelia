@@ -155,7 +155,7 @@ jobs:
       - name: Run Brain tests — failure detection (sharded, no coverage)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=3072"
+          NODE_OPTIONS: "--max-old-space-size=6144"
         run: |
           set +e
           # Phase 1: Run tests in 3 shards WITHOUT coverage to detect failures.
