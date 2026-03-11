@@ -277,6 +277,76 @@ Reviewer 3 — 项目规范 & 一致性:
 
 ---
 
+### 7.5 独立审计员（语义覆盖审计）
+
+> **目标**：确认代码实际实现了 PRD 承诺，防止"PRD 说了 A，代码实现了 B，DoD 只验证了 C 文件存在"的自引用问题。
+
+**执行时机**：7.4 代码审查结果汇总后，push 之前。
+
+#### 准备审计上下文
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+PRD_FILE=".prd-${BRANCH}.md"
+
+# 如果是 task-id 路径
+if [[ ! -f "$PRD_FILE" ]]; then
+    PRD_FILE=$(ls .prd-task-*.md 2>/dev/null | head -1 || echo ".prd.md")
+fi
+
+git diff main...HEAD -- $(git diff --name-only main...HEAD | grep -v '\.md$' | head -20 | tr '\n' ' ')
+```
+
+#### 启动独立审计员 subagent
+
+```
+审计员 — PRD 语义覆盖验证:
+  subagent_type: Explore
+  prompt: |
+    你是独立代码审计员。以下 PRD 是开发者自己写的，代码也是开发者自己写的。
+    你的任务是：对比 PRD 承诺 vs 实际代码实现，找出语义漏洞。
+
+    ## PRD 成功标准
+    {从 PRD 文件提取 ## 成功标准 章节内容}
+
+    ## 实际代码变更（git diff main...HEAD）
+    {paste 相关 diff}
+
+    ## DoD 验收项
+    {从 DoD 文件提取所有 - [x] 条目和对应 Test}
+
+    ## 审计任务
+
+    逐条检查 PRD 成功标准：
+    1. **是否实现**：代码 diff 中是否有对应的实现逻辑？
+    2. **是否验证**：DoD 的 Test 是否真正验证了这个承诺（不只是验证文件存在）？
+    3. **语义对齐**：实现的行为是否与 PRD 描述一致？
+
+    对每条标准输出：
+    - ✅ 实现且验证充分
+    - ⚠️ 实现了但 Test 是弱测试（[BEHAVIOR] + grep/file-exists）
+    - ❌ PRD 承诺未在代码中找到对应实现
+    - ❓ 无法确认（diff 不足以判断）
+
+    最后给出总结：
+    - 覆盖率：N/M 条 PRD 承诺有充分验证
+    - 最高风险漏洞（如有）
+```
+
+#### 汇总审计结果
+
+等审计员返回后：
+
+1. **❌ 未实现项** → 必须补充代码，返回 Step 6
+2. **⚠️ 弱测试项** → 评估：是否属于 `[BEHAVIOR]` 类？若是，升级 Test 到 curl/chrome 验证
+3. **✅/❓ 项** → 继续
+
+**如果覆盖率 < 80%** → 返回 Step 6 补充实现，不得继续 push。
+
+**⚠️ 审计员是独立角色，不是橡皮图章**：如果审计员说"无法确认 M 条"，必须认真看是否真的有遗漏，不能直接跳过。
+
+---
+
 ## 完成后
 
 **标记步骤完成**：

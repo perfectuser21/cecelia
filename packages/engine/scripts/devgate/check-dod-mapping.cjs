@@ -142,6 +142,59 @@ function parseDodItems(content) {
 }
 
 /**
+ * 从 DoD 条目文本中提取承诺分类标签（[ARTIFACT]/[BEHAVIOR]/[GATE]）
+ * @param {string} itemText - DoD 条目文本
+ * @returns {'ARTIFACT'|'BEHAVIOR'|'GATE'|null}
+ */
+function extractPromiseClass(itemText) {
+  const match = itemText.match(/^\[?(ARTIFACT|BEHAVIOR|GATE)\]?(?:\s|$)/i);
+  if (match) return match[1].toUpperCase();
+  return null;
+}
+
+/**
+ * 检测 BEHAVIOR 类条目是否使用了弱测试（只验证文件/字符串存在，不验证行为）
+ * @param {string} testCommand - Test 字段内容
+ * @returns {{isWeak: boolean, reason?: string}}
+ */
+function detectBehaviorWeakTest(testCommand) {
+  if (!testCommand) return { isWeak: false };
+
+  // 只检查 manual: 格式（tests/ 和 contract: 本身足够强）
+  if (!testCommand.startsWith("manual:")) return { isWeak: false };
+
+  const cmd = testCommand.substring("manual:".length);
+
+  // 弱测试模式 1: 纯 grep 验证（只验证字符串存在，不验证 API 行为）
+  // 弱：manual:bash -c "grep -c 'keyword' file.json"
+  // 强：manual:curl ... | jq -e '.field'
+  if (/^bash\s+-c\s+["']?grep/.test(cmd) && !/curl|jq|psql/.test(cmd)) {
+    return {
+      isWeak: true,
+      reason: "[BEHAVIOR] 条目禁止使用 grep 弱测试（只验证字符串存在，不验证行为）。改用 curl|jq 或 chrome 截图验证实际行为"
+    };
+  }
+
+  // 弱测试模式 2: ls / test -f / file-exists 验证（只验证文件存在）
+  if (/^bash\s+-c\s+["']?\s*(ls\s|test\s+-[fd]|file\s)/.test(cmd)) {
+    return {
+      isWeak: true,
+      reason: "[BEHAVIOR] 条目禁止使用 ls/test -f 弱测试（只验证文件存在，不验证行为）。改用 curl|jq 或 chrome 截图验证实际行为"
+    };
+  }
+
+  // 弱测试模式 3: grep -c 不含行为验证关键词
+  if (/^bash\s+-c\s+["']?grep\s+-c/.test(cmd) && !/curl|jq|psql|node|npm/.test(cmd)) {
+    return {
+      isWeak: true,
+      reason: "[BEHAVIOR] 条目禁止使用 grep -c 弱测试。改用能验证实际行为的命令（curl/psql/node）"
+    };
+  }
+
+  return { isWeak: false };
+}
+
+/**
  * 检查测试命令是否包含假测试模式
  * @param {string} testCommand - 测试命令
  * @returns {{valid: boolean, reason?: string}}
@@ -502,6 +555,7 @@ function main() {
   let hasError = false;
   let passCount = 0;
   let failCount = 0;
+  let behaviorWarnCount = 0;
 
   for (const item of items) {
     const validation = validateTestRef(item.test, projectRoot);
@@ -509,6 +563,17 @@ function main() {
     if (validation.valid) {
       console.log(`  ${GREEN}✅${RESET} L${item.line}: ${item.item}`);
       console.log(`     → Test: ${item.test}`);
+
+      // BEHAVIOR 弱测试检测（WARNING，不阻塞 CI）
+      const promiseClass = extractPromiseClass(item.item);
+      if (promiseClass === "BEHAVIOR" && item.test) {
+        const weakCheck = detectBehaviorWeakTest(item.test);
+        if (weakCheck.isWeak) {
+          console.log(`     ${YELLOW}⚠️  WARNING [BEHAVIOR 弱测试]: ${weakCheck.reason}${RESET}`);
+          behaviorWarnCount++;
+        }
+      }
+
       passCount++;
     } else {
       console.log(`  ${RED}❌${RESET} L${item.line}: ${item.item}`);
@@ -568,6 +633,11 @@ function main() {
     process.exit(1);
   }
 
+  if (behaviorWarnCount > 0) {
+    console.log(`  ${YELLOW}⚠️  ${behaviorWarnCount} 条 [BEHAVIOR] 条目使用了弱测试（仅警告，不阻塞 CI）${RESET}`);
+    console.log(`  ${YELLOW}   建议升级为 curl/psql/chrome 验证以确保语义覆盖${RESET}`);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  }
   console.log(`  ${GREEN}✅ 映射检查通过${RESET} (${passCount} 项，全部已验证)`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
@@ -598,4 +668,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { extractKeywords, checkDodTracesToPrd };
+module.exports = { extractKeywords, checkDodTracesToPrd, extractPromiseClass, detectBehaviorWeakTest };

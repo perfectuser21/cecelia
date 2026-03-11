@@ -121,6 +121,52 @@ DoD 草稿:
       Test: contract:C2-001
 ```
 
+### PRD 承诺分类规则（REQUIRED）
+
+**每条 DoD 条目写 Test 字段之前，先判断它属于哪类 PRD 承诺**。分类决定 Test 的最低要求：
+
+| 分类标签 | 定义 | 允许的 Test 格式 | 禁止的 Test 格式 |
+|----------|------|-----------------|-----------------|
+| `[ARTIFACT]` | 产出物存在性：文件/配置/DB Schema/文档 | `tests/`、`manual:bash -c "grep -c ..."` | 无特殊限制 |
+| `[BEHAVIOR]` | 系统行为：API 响应、UI 交互、业务逻辑、数据流 | `tests/`、`manual:curl ...`、`manual:chrome:...`、`manual:psql ...` | ❌ `grep/ls/test -f/file-exists`（弱测试，不验证行为） |
+| `[GATE]` | 质量门禁：测试通过、CI 绿灯、覆盖率达标 | `contract:`、`tests/` | ❌ `manual:` 命令（门禁必须可重复机器验证） |
+
+**标注方式**：在 DoD 条目文本中以 `[BEHAVIOR]` 等标签开头：
+
+```markdown
+## 验收标准
+
+### 功能验收
+- [ ] [ARTIFACT] Step 5 文档包含承诺分类规则
+      Test: manual:bash -c "grep -c 'ARTIFACT' packages/engine/skills/dev/steps/05-dod.md"
+
+- [ ] [BEHAVIOR] POST /api/brain/tasks 返回 201 且包含 id 字段
+      Test: manual:curl -s -X POST http://localhost:5221/api/brain/tasks -H "Content-Type: application/json" -d '{"title":"test"}' | jq -e '.id'
+
+- [ ] [BEHAVIOR] OKR 页面正常展示目标列表（.okr-list 元素存在且有内容）
+      Test: manual:chrome:screenshot verify .okr-list has items at http://localhost:5211/okr
+
+### 测试验收
+- [ ] [GATE] npm run qa 通过
+      Test: contract:C2-001
+```
+
+**为什么 BEHAVIOR 禁止弱测试？**
+
+```
+❌ BEHAVIOR 用 grep 的问题：
+   - PRD 说"API 返回 id 字段"
+   - DoD 写"grep -c 'id' response.json"（文件存在就能通过）
+   - 代码实际返回 { "error": "no id" } → DoD 依然通过 ← 语义漏洞！
+
+✅ 正确做法：
+   - DoD 写 curl | jq -e '.id'（实际验证 API 行为）
+```
+
+`check-dod-mapping.cjs` 会在 CI 中检测 `[BEHAVIOR]` 条目使用弱测试并报 WARNING。
+
+---
+
 ### Test 字段格式说明
 
 | 格式 | 场景 | 优先级 | 示例 |
