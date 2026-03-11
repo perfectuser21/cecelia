@@ -93,7 +93,26 @@ router.post('/compare/report', async (req, res) => {
   }
 });
 
-// POST /projects/compare/report/push-notion — 推送对比报告到 Notion
+// POST /projects/compare/report/push — 将对比报告推送到 Notion（统一接口，支持 destination 参数）
+// 必须在 /:id 之前注册，避免 "compare" 被当作 UUID 拦截
+router.post('/compare/report/push', async (req, res) => {
+  try {
+    const { project_ids, destination, format = 'markdown', notion_parent_id } = req.body;
+
+    if (destination !== 'notion') {
+      return res.status(400).json({ success: false, error: `不支持的 destination: ${destination}`, code: 'UNSUPPORTED_DESTINATION' });
+    }
+
+    const { pushCompareReportToNotion } = await import('../project-compare.js');
+    const result = await pushCompareReportToNotion({ project_ids, format, notion_parent_id });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
+// POST /projects/compare/report/push-notion — 推送对比报告到 Notion（兼容旧接口）
 // 无 NOTION_API_TOKEN 时返回 501
 router.post('/compare/report/push-notion', async (req, res) => {
   const notionToken = process.env.NOTION_API_TOKEN;
@@ -107,7 +126,6 @@ router.post('/compare/report/push-notion', async (req, res) => {
       return res.status(400).json({ success: false, error: 'project_ids must contain at least 2 UUIDs' });
     }
 
-    // 生成 markdown 格式报告
     const { generateCompareReport } = await import('../project-compare.js');
     const report = await generateCompareReport({ project_ids, format: 'markdown', include_tasks: false });
 
@@ -115,11 +133,10 @@ router.post('/compare/report/push-notion', async (req, res) => {
     const pageTitle = `项目对比报告 ${dateStr}`;
     const markdownContent = report.markdown || report.summary || '';
 
-    // 将 markdown 转换为 Notion blocks（简化版：段落 blocks）
     const blocks = markdownContent
       .split('\n')
       .filter(line => line.trim())
-      .slice(0, 100) // Notion 单次最多 100 blocks
+      .slice(0, 100)
       .map(line => {
         if (line.startsWith('# ')) {
           return { object: 'block', type: 'heading_1', heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim() } }] } };
@@ -136,13 +153,11 @@ router.post('/compare/report/push-notion', async (req, res) => {
         return { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: line.trim() } }] } };
       });
 
-    // 获取父页面：使用 NOTION_PAGE_ID 指定，否则使用 workspace 根
     const parentPageId = process.env.NOTION_PAGE_ID;
     const parent = parentPageId
       ? { type: 'page_id', page_id: parentPageId }
       : { type: 'workspace', workspace: true };
 
-    // 调用 Notion REST API 创建页面
     const response = await fetch('https://api.notion.com/v1/pages', {
       method: 'POST',
       headers: {
