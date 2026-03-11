@@ -2,18 +2,23 @@
 
 ## PR #849 feat: code_review 路由到西安 codex-bridge — 新增 location 'xian' 需同步更新所有 location 验证（2026-03-11）
 
-**失败统计**：L1 CI 失败 0 次
+**失败统计**：L1 CI 失败 3 次（DoD 格式 + PRD 成功标准格式）
 
 ### 根本原因
 
 1. 新增第三个执行位置 'xian'（西安 Mac mini）需要同步更新 task-router.js 的 LOCATION_MAP、isValidLocation、detectRoutingFailure 中的合法 location 列表
 2. 测试中有硬编码的 `['us', 'hk']` 断言和 EXECUTOR_HOSTS toEqual 精确匹配，都需要同步更新
 3. trace.js 的 EXECUTOR_HOSTS 值格式 regex 只允许 `word-word`，不允许 `word-word-word`（如 `xian-mac-mini`），需要放宽
+4. DoD Test 字段必须在 checkbox 行的**下一行**（i+1），中间不能有描述行
+5. PRD 成功标准必须用 `## 成功标准` H2 标题格式，不能用 `**成功标准**:` 加粗格式
+6. DoD manual: 命令必须包含 `node|npm|bash|curl` 等关键词，纯 `grep` 不被 detectFakeTest 认可
 
 ### 下次预防
 
 - [ ] 新增 location 时搜索所有 `['us', 'hk']` 字面量确保全部更新
 - [ ] EXECUTOR_HOSTS 的格式验证 regex 应支持多段连字符
+- [ ] DoD 格式：`- [x] 描述` 下一行紧接 `  Test: manual:bash -c "..."`，不要插入描述行
+- [ ] PRD 成功标准用 `## 成功标准` 作为 H2 标题
 
 ## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
