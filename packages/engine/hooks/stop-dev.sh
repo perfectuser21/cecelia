@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: 循环控制器（官方 JSON API 实现）
+# Stop Hook: 循环控制器（官方 JSON API 实现）v14.0.0
 # ============================================================================
-# 检测 .dev-mode 文件，根据完成条件决定是否允许会话结束：
+# 检测 per-branch 状态文件，根据完成条件决定是否允许会话结束：
 #
-# 无 .dev-mode → exit 0（普通会话，允许结束）
-# 有 .dev-mode → 检查完成条件：
+# 无 .dev-lock.<branch> → exit 0（普通会话，允许结束）
+# 有 .dev-lock.<branch> → 检查完成条件：
 #   - PR 创建？
 #   - CI 通过？
 #   - PR 合并？
-#   全部满足 → 删除 .dev-mode → exit 0
+#   全部满足 → 删除状态文件 → exit 0
 #   未满足 → JSON API + exit 2（强制循环，reason 作为 prompt 继续执行）
 #
-# v11.11.0: P0-2 修复 - 添加 flock 并发锁 + 原子写入防止竞态条件
-# v11.15.0: P0-3 修复 - 会话隔离，检查 .dev-mode 中的分支是否与当前分支匹配
-# v11.16.0: P0-4 修复 - session_id 验证 + 共享锁工具库 + 统一 CI 查询
-# v11.18.0: H7-008 - TTY 会话隔离，有头模式下按 terminal 隔离
-# v11.25.0: H7-009 - JSON API 实现（{"decision": "block", "reason": "..."}），15 次重试上限
+# v14.0.0: 删除所有旧格式（.dev-lock/.dev-mode/.dev-sentinel 无后缀）兼容代码
+#          只保留 per-branch 格式（.dev-lock.<branch> + .dev-mode.<branch> + .dev-sentinel.<branch>）
 # ============================================================================
 
 set -euo pipefail
@@ -90,9 +87,6 @@ for _pre_lock in "$PROJECT_ROOT_EARLY"/.dev-lock.*; do
         fi
     fi
 done
-
-# 也检查旧格式 .dev-lock（无后缀）
-[[ "$_PRE_MATCHED" == "false" && -f "$PROJECT_ROOT_EARLY/.dev-lock" ]] && _PRE_MATCHED=true
 
 if [[ "$_PRE_MATCHED" == "false" ]]; then
     # 无任何匹配的 .dev-lock → 此会话无 dev 流程，直接退出，不竞争 mutex
@@ -171,13 +165,12 @@ save_block_reason() {
     }
 }
 
-# ===== 检查 .dev-lock 和 .dev-mode 文件（双钥匙状态机）=====
-# v12.9.0: 双钥匙修复 - .dev-lock（硬钥匙）+ .dev-mode（软状态）+ sentinel（三重保险）
-# v12.36.0: 并行会话隔离 - .dev-lock.<branch> 格式，多会话互不干扰
+# ===== 检查 per-branch 状态文件（双钥匙状态机）=====
+# .dev-lock.<branch>（硬钥匙）+ .dev-mode.<branch>（软状态）+ .dev-sentinel.<branch>（三重保险）
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 # ===== 动态发现当前会话的状态文件 =====
-# 优先查找 per-branch 格式（.dev-lock.<branch>），fallback 到旧格式（.dev-lock）
+# 查找 per-branch 格式（.dev-lock.<branch>）
 _CURRENT_TTY=$(tty 2>/dev/null || echo "")
 _CURRENT_SESSION_ID="${CLAUDE_SESSION_ID:-}"
 DEV_LOCK_FILE=""
@@ -217,14 +210,7 @@ for _lock_file in "$PROJECT_ROOT"/.dev-lock.*; do
     fi
 done
 
-# 旧格式向后兼容：没有找到 per-branch 文件时，检查 .dev-lock（无后缀）
-if [[ -z "$DEV_LOCK_FILE" && -f "$PROJECT_ROOT/.dev-lock" ]]; then
-    DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock"
-    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
-    SENTINEL_FILE="$PROJECT_ROOT/.dev-sentinel"
-fi
-
-# Key-1: .dev-lock（硬钥匙）- 只要它在，就必须走 dev 检查
+# Key-1: .dev-lock.<branch>（硬钥匙）- 只要它在，就必须走 dev 检查
 if [[ -z "$DEV_LOCK_FILE" ]]; then
     # 没有匹配的 .dev-lock → 检查孤儿 .dev-mode.* 文件（泄漏清理）
     for _orphan_mode in "$PROJECT_ROOT"/.dev-mode.*; do
@@ -247,66 +233,13 @@ if [[ -z "$DEV_LOCK_FILE" ]]; then
         fi
     done
 
-    # 旧格式泄漏检查
-    if [[ -f "$PROJECT_ROOT/.dev-mode" ]]; then
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [Stop Hook: 状态文件泄漏]" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "  ⚠️  .dev-lock 不存在但 .dev-mode 存在（泄漏）" >&2
-        echo "  清理泄漏的 .dev-mode 文件..." >&2
-        force_cleanup_worktree "$PROJECT_ROOT/.dev-mode" || true
-        rm -f "$PROJECT_ROOT/.dev-mode" "$PROJECT_ROOT/.dev-sentinel"
-        echo "  ✅ 已清理" >&2
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    fi
-
-    # 检查 sentinel（三重保险）—— 仅旧格式
-    if [[ -f "$PROJECT_ROOT/.dev-sentinel" ]]; then
-        # v12.41.0 P1-1 修复：用独立文件追踪重试次数
-        # v2.0 P1-11 修复：sentinel 和 lock 孤儿使用不同计数器
-        _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry-sentinel"
-        _ORPHAN_COUNT=0
-        if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
-            _ORPHAN_COUNT=$(cat "$_ORPHAN_RETRY_FILE" 2>/dev/null || echo "0")
-            _ORPHAN_COUNT=${_ORPHAN_COUNT//[^0-9]/}
-            _ORPHAN_COUNT=${_ORPHAN_COUNT:-0}
-        fi
-        _ORPHAN_COUNT=$((_ORPHAN_COUNT + 1))
-        echo "$_ORPHAN_COUNT" > "$_ORPHAN_RETRY_FILE"
-
-        if [[ $_ORPHAN_COUNT -gt 5 ]]; then
-            # 超过 5 次 → 清理孤儿 sentinel，允许退出
-            echo "  ⚠️  Sentinel 孤儿重试 $_ORPHAN_COUNT 次，强制清理" >&2
-            rm -f "$PROJECT_ROOT/.dev-sentinel" "$_ORPHAN_RETRY_FILE"
-            exit 0
-        fi
-
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "  [Stop Hook: Sentinel 检测到状态丢失 (${_ORPHAN_COUNT}/5)]" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "" >&2
-        echo "  ⚠️  Sentinel 存在但 .dev-lock 和 .dev-mode 都不存在" >&2
-        echo "  可能原因：状态文件被误删或同时删除" >&2
-        echo "" >&2
-        echo "  下一步：重建状态文件或检查清理脚本" >&2
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        jq -n --arg reason "Sentinel 存在但状态文件丢失，判定为误删，阻止退出（${_ORPHAN_COUNT}/5）" '{"decision": "block", "reason": $reason}'
-        exit 2  # ← 强制阻止退出（三重保险生效）
-    fi
-
     # 没有任何 dev 状态文件 → 普通会话，允许结束
     exit 0
 fi
 
-# .dev-lock 存在，检查 .dev-mode（软状态）
+# .dev-lock.<branch> 存在，检查 .dev-mode.<branch>（软状态）
 if [[ ! -f "$DEV_MODE_FILE" ]]; then
-    # v12.41.0 P1-2 修复：与 P1-1 相同逻辑
-    # v2.0 P1-11 修复：lock 孤儿使用独立计数器（与 sentinel 孤儿分开）
+    # lock 存在但 mode 不存在 → 状态丢失，用计数器追踪重试次数
     _ORPHAN_RETRY_FILE="$PROJECT_ROOT/.dev-orphan-retry-lock"
     _ORPHAN_COUNT=0
     if [[ -f "$_ORPHAN_RETRY_FILE" ]]; then
