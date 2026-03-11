@@ -122,6 +122,8 @@ describe('recordLearnings writes to learnings table (FLC-3)', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ tasks_in_progress: 0, recent_failures: 0, active_goals: 1 }] });
     // 4. searchRelevantAnalyses → cortex_analyses SELECT
     mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // 4b. Build #4: cross-task failure patterns → SELECT FROM learnings WHERE category='failure_pattern'
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 5. _loadOutputDedupStateFromDB → SELECT from working_memory (output dedup)
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // 6. _persistOutputDedupEntry → INSERT/UPSERT working_memory (fire-and-forget)
