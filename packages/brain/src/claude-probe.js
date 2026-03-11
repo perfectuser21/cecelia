@@ -7,7 +7,7 @@
 
 import { spawn } from 'child_process';
 
-export const PROBE_TIMEOUT_MS = 5000;
+const PROBE_TIMEOUT_MS = 5000;
 const AUTH_ERROR_PATTERNS = [
   'not logged in',
   'please run /login',
