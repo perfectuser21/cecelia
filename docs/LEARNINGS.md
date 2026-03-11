@@ -19,6 +19,38 @@
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
 - [ ] CI grep 失败计数必须限定 vitest 汇总行（`grep "Test Files" | grep "[0-9]+ failed"`），防止测试日志中的 `failed=N` 误触发
 
+## PR #858 fix(brain): 修复 cecelia-bridge Math.min 截断——Cortex Opus 超时不再被 120s 上限阻断（2026-03-11）
+
+CI 失败 0 次。
+
+### 根本原因
+
+1. PR #845 修复了 cortex.js 侧的超时（加入 `CECELIA_CORTEX_TIMEOUT_MS` 独立环境变量，默认 300s），但漏掉了 bridge 侧：`cecelia-bridge.js` line 74 的 `Math.min(timeout || BRIDGE_TIMEOUT_MS, BRIDGE_TIMEOUT_MS)` 把所有 per-request 超时截断到 120s
+2. 结果：llm-caller.js 正确传入 `timeout=300000`，但 bridge 用 `Math.min(300000, 120000)=120000` 忽略了这个值，Opus 在 121s 时收到 SIGTERM → exit 143 → Cortex 离线
+3. 修复方向：引入 `CECELIA_BRIDGE_MAX_TIMEOUT_MS`（默认 600s）作为安全上限，替代原来的 `BRIDGE_TIMEOUT_MS` 上限截断
+
+### 下次预防
+
+- [ ] 超时配置涉及两层：「调用方设置目标超时（cortex.js/llm-caller.js）」和「执行方的 kill 超时（cecelia-bridge.js）」，两层必须同时检查和对齐
+- [ ] `Math.min(timeout, BRIDGE_TIMEOUT_MS)` 模式有歧义：BRIDGE_TIMEOUT_MS 原本是"默认值"，不应同时作为"上限"使用——命名 `MAX_` 明确区分
+- [ ] 新增超时环境变量后，检查 bridge 是否有额外的 Math.min 截断（grep `Math.min.*TIMEOUT`）
+
+## PR #854 feat: Dashboard 添加 Codex 用量展示 — 跨服务代理 API 缓存模式（2026-03-11）
+
+**失败统计**：L1 CI 失败 1 次（DoD 未勾选 + LEARNINGS.md 未更新）
+
+### 根本原因
+
+1. Brain 代理远端服务（codex-bridge）数据时，3 分钟 TTL 缓存 + stale fallback 模式可有效防止远端不可达时前端白屏
+2. 前端新增数据源时，AccountUsagePage 和 LiveMonitorPage 两个页面都需要同步更新，保持风格一致
+3. Codex wham/usage API 返回的字段（primaryUsedPct, secondaryUsedPct, primaryResetSeconds）与 Claude 的不同，需要前端做字段映射
+4. DoD 验收清单在代码完成后必须勾选（`- [ ]` → `- [x]`），否则 CI DoD Verification Gate 会失败
+
+### 下次预防
+
+- [ ] 提交 PR 前检查 DoD 是否全部勾选
+- [ ] 新增代理 API 时确认缓存策略和 fallback 行为
+
 ## PR #852 feat(engine): 统一 stop hook 状态文件格式（2026-03-11）
 
 **失败统计**：CI 失败 0 轮（L1 Learning Format Gate 是预期失败，非代码问题）

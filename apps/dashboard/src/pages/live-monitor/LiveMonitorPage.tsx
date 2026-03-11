@@ -556,6 +556,84 @@ function AccUsageRings() {
   );
 }
 
+// ── Codex Usage Rings ─────────────────────────────────────────────
+
+const CODEX_ACCOUNTS = ['team1', 'team2', 'team3', 'team4', 'team5'];
+const CODEX_LABELS: Record<string, string> = {
+  team1: 'CDX1', team2: 'CDX2', team3: 'CDX3', team4: 'CDX4', team5: 'CDX5',
+};
+
+interface CodexAccountUsage {
+  primaryUsedPct: number;
+  primaryResetSeconds: number;
+  secondaryUsedPct: number;
+  tokenExpired: boolean;
+}
+
+function CodexUsageRings() {
+  const [codexUsage, setCodexUsage] = useState<Record<string, CodexAccountUsage> | null>(null);
+  const navigate = useNavigate();
+
+  const fetchCodex = useCallback(async () => {
+    try {
+      const res = await fetch('/api/brain/codex-usage');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.ok) setCodexUsage(data.usage);
+    } catch { /* 静默 */ }
+  }, []);
+
+  useEffect(() => {
+    fetchCodex();
+    const t = setInterval(fetchCodex, 60000);
+    return () => clearInterval(t);
+  }, [fetchCodex]);
+
+  if (!codexUsage) return null;
+
+  const bestId = Object.entries(codexUsage).reduce<{ id: string; pct: number } | null>((best, [id, u]) => {
+    if (u.tokenExpired) return best;
+    if (!best || u.primaryUsedPct < best.pct) return { id, pct: u.primaryUsedPct };
+    return best;
+  }, null)?.id;
+
+  return (
+    <>
+      {CODEX_ACCOUNTS.map(id => {
+        const u = codexUsage[id];
+        const pct = u?.primaryUsedPct ?? 0;
+        const isBest = id === bestId;
+        const expired = u?.tokenExpired;
+        const color = expired ? '#484f58' : isBest ? '#818cf8' : usageColor(pct);
+        const label = CODEX_LABELS[id] ?? id;
+        const resetSec = u?.primaryResetSeconds;
+        const resetStr = resetSec && resetSec > 0
+          ? (() => {
+              const h = Math.floor(resetSec / 3600);
+              const m = Math.floor((resetSec % 3600) / 60);
+              return h > 0 ? `${h}:${String(m).padStart(2, '0')}` : `${m}m`;
+            })()
+          : null;
+        return (
+          <div
+            key={id}
+            onClick={() => navigate('/account-usage')}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, cursor: 'pointer', opacity: expired ? 0.4 : 1 }}
+            title={expired ? 'Token 已过期' : '查看 Codex 用量详情'}
+          >
+            <Ring pct={pct} color={color} size={44} label={label} value={`${pct}%`} />
+            {resetStr && (
+              <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
+                ↺{resetStr}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 // ── Projects by Area ──────────────────────────────────────────────
 
 const INACTIVE_STATUSES = new Set(['completed', 'archived', 'cancelled', 'done']);
@@ -1089,6 +1167,14 @@ export default function LiveMonitorPage() {
                 <SectionLabel label="ACC" />
                 <div style={{ display: 'flex', justifyContent: 'space-around' }}>
                   <AccUsageRings />
+                </div>
+              </div>
+
+              {/* CDX — Codex Usage */}
+              <div style={cardStyle}>
+                <SectionLabel label="CDX" />
+                <div style={{ display: 'flex', justifyContent: 'space-around' }}>
+                  <CodexUsageRings />
                 </div>
               </div>
 

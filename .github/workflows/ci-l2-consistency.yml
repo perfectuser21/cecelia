@@ -246,6 +246,8 @@ jobs:
             "packages/engine/hooks/"
             "packages/engine/skills/"
             "packages/engine/scripts/qa-with-gate.sh"
+            "packages/engine/scripts/devgate/"
+            "packages/engine/scripts/ci-evolution-check.mjs"
           )
 
           REGISTRY_PATH="packages/engine/features/feature-registry.yml"

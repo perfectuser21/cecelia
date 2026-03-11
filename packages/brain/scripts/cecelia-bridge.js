@@ -71,7 +71,10 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, BRIDGE_TIMEOUT_MS);
+        // MAX_BRIDGE_LLM_TIMEOUT_MS: 每请求超时的安全上限（默认 10 分钟），允许 Cortex Opus 等慢模型
+        // BRIDGE_TIMEOUT_MS 仍作为"未传 timeout 时"的默认值（120s）
+        const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
+        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
         const claudeBin = '/Users/administrator/.local/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 

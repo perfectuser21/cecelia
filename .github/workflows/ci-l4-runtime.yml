@@ -41,13 +41,13 @@ jobs:
               echo "brain=true" >> $GITHUB_OUTPUT
             else
               CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
-              echo "$CHANGED" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$" \
+              echo "$CHANGED" | grep -qE "^packages/brain/|^\.brain-versions$" \
                 && echo "brain=true" >> $GITHUB_OUTPUT || echo "brain=false" >> $GITHUB_OUTPUT
             fi
             exit 0
           fi
           BASE_REF="${{ github.base_ref }}"
-          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "^packages/brain/|^DEFINITION\.md$|^\.brain-versions$"; then
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "^packages/brain/|^\.brain-versions$"; then
             echo "brain=true" >> $GITHUB_OUTPUT
           else
             echo "brain=false" >> $GITHUB_OUTPUT
