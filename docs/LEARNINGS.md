@@ -5143,3 +5143,21 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须在 PR push **同批次**提交，不能先 push 代码再补，Learning Format Gate 会直接失败
 - [ ] result=null 的 fallback 模板：`[callback: result=null] task=<id> exit_code=<code> at <ts> | callback received but result was null`，stderr 尾 300 字符追加到末尾
 - [ ] Mac mini Node.js 25 + vitest 会 segfault（Worker exited unexpectedly），这是预存在问题，CI（Ubuntu）有 baseline 容忍机制，本地 segfault 不影响 PR
+
+## PR #835 fix(brain): execution-callback 全字段皆空时注入 failure_class=no_diagnostic（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + 未标记完成 + LEARNINGS 未推送）。
+
+### 根本原因
+
+1. DoD 中使用 `test -f ... && echo OK` 被 DevGate 检测为假测试（任何含 `echo` 的命令均被拒）
+2. DoD 验收项用 `- [ ]` 而非 `- [x]`，DevGate 会同时报 Test 通过但项目未完成
+3. LEARNINGS.md 未随代码一并提交，L1 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] 文件存在性检查不用 `test -f ... && echo OK`，改用 `wc -l <file>` 或 `grep -c '.' <file>`（无 echo，输出数字，exit 0 表示成功）
+- [ ] DoD 所有已完成验收项必须写 `- [x]`，即使是"已存在/已完成"的条目
+- [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
+- [ ] 全字段皆空兜底位置选在「串行降级（5c12）之后、Auto-Learning（5d）之前」，标号为 5c13
+- [ ] 测试断言：SQL 字符串本身不含参数值，搜索 no_diagnostic 需查 params 或在 SQL 里加注释标识符（`/* no_diagnostic_fallback */`）

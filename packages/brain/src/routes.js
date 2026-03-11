@@ -4146,6 +4146,27 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5c13. 全字段皆空兜底：当 result/exit_code/stderr/failure_class 全部缺失时注入 no_diagnostic
+    // 场景：cecelia-run 异常退出但未提供任何诊断信息，DB 记录零信息无法追踪
+    if (newStatus === 'failed') {
+      const _failureClassFromBody = req.body.failure_class || null;
+      if (!result && exit_code == null && !stderr && !_failureClassFromBody) {
+        try {
+          const noDiagMsg = `callback received with no diagnostic data (task_id: ${task_id})`;
+          await pool.query(
+            `/* no_diagnostic_fallback */ UPDATE tasks SET
+               error_message = $2,
+               payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+             WHERE id = $1`,
+            [task_id, noDiagMsg, JSON.stringify({ failure_class: 'no_diagnostic' })]
+          );
+          console.warn(`[execution-callback] no_diagnostic_fallback: task=${task_id} 全字段皆空，已注入 failure_class=no_diagnostic`);
+        } catch (noDiagErr) {
+          console.error(`[execution-callback] no_diagnostic fallback error (non-fatal): ${noDiagErr.message}`);
+        }
+      }
+    }
+
     // 5d. Auto-Learning: 自动从任务执行结果中学习
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
