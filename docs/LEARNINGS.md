@@ -1,5 +1,28 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] 对比报告 Notion 推送端点实现 — ES 模块同模块 mock 陷阱（PR #823）
+
+**失败统计**：L1 CI 失败 1 次（PRD 缺少 `## 成功标准` 标题 + Learning 未提前写入）
+
+### 根本原因
+
+1. **ES 模块同模块函数不能被外部 mock 拦截**：`pushCompareReportToNotion` 内部调用 `generateCompareReport` 时使用模块内部绑定，`vi.mock('../project-compare.js')` 替换导出对象不影响内部调用。解决方案：`_generateFn` 参数注入（依赖注入，测试时传 mock 函数，生产时不传使用默认实现）。
+
+2. **PRD `成功标准` 必须用 `## 二级标题`**：`check-prd.sh` 按 `##` 标题匹配，用粗体 `**成功标准**:` 会导致 L1 PRD Gate 失败。
+
+3. **合并冲突阻止 CI 触发**：PR 处于 CONFLICTING 状态时 GitHub 不触发 CI。必须 `git fetch origin main && git merge origin/main` 解决冲突后才能重新触发。
+
+4. **并行 PR 实现同功能导致冲突**：main 分支已有 `/compare/report/push-notion` 端点（使用 `NOTION_API_TOKEN`），与本 PR 的 `/compare/report/push` 端点（使用 `NOTION_API_KEY`）冲突。解决方案：保留两个端点共存。
+
+### 下次预防
+
+- [ ] 同模块函数 mock：用 `_xxxFn` 参数注入而非 `vi.mock` 替换模块导出
+- [ ] PRD 成功标准必须用 `## 成功标准` 二级标题，不能用粗体
+- [ ] Learning 在第一次 push 前必须写好（先 push Learning，再触发 CI，或在 push 之前 `git add docs/LEARNINGS.md`）
+- [ ] Push 前先 `git fetch origin main && git merge origin/main` 检查是否有冲突
+
+---
+
 ### [2026-03-11] macOS 内存管理模型全面重构 — vm.memory_pressure + used_ratio（PR #820）
 
 **失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
