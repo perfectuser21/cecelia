@@ -20,6 +20,22 @@
 - [ ] DoD 格式：`- [x] 描述` 下一行紧接 `  Test: manual:bash -c "..."`，不要插入描述行
 - [ ] PRD 成功标准用 `## 成功标准` 作为 H2 标题
 
+## PR #848 fix(brain): migration 143 — 批量修正虚标 KR status（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate）。
+
+### 根本原因
+
+1. DoD L14 `test -f ... && echo OK` 含 `echo` 被 DevGate 判定为假测试，改用 `ls <file>`
+2. DoD L16 `grep -c 'UPDATE goals SET status'` 因 migration SQL 多行写法（UPDATE goals / SET status 分行）返回 0，改用 `grep -c 'UPDATE goals'` 单独匹配首行
+3. LEARNINGS.md 未在首次 push 前写入，触发 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] DoD 文件存在性测试：直接用 `ls <filepath>`，不加 `&& echo` 后缀
+- [ ] 多行 SQL grep：只匹配 UPDATE 的首个关键词（`UPDATE goals`），不要跨行匹配
+- [ ] LEARNINGS.md 必须在第一次 push **之前**写好并加入同一 commit
+
 ## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
 **失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
@@ -36,7 +52,6 @@
 - [ ] DoD BEHAVIOR 条目禁止用 grep/ls/cat 等静态命令，改用 `node -e` 或 `npx vitest` 等运行时验证
 - [ ] 新增 vitest coverage reporter 时同步添加 `@vitest/coverage-v8` 到 devDependencies
 - [ ] Engine 版本 bump 共 6 个文件：package.json、package-lock.json（engine 独立）、root package-lock.json、VERSION、.hook-core-version、regression-contract.yaml
->>>>>>> origin/main
 
 ## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
 
