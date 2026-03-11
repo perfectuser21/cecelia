@@ -630,7 +630,7 @@ jobs:
           fi
 
           if [ "${{ needs.changes.outputs.workflows }}" = "true" ]; then
-            if [ "${{ needs.workflows-l3.result }}" != "success" ] && [ "${{ needs.workflows-l3.result }}" != "skipped" ]; then
+            if [ "${{ needs.workflows-l3.result }}" != "success" ]; then
               echo "FAIL: Workflows L3 Checks (${{ needs.workflows-l3.result }})"
               FAILED=true
             fi
