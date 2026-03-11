@@ -5404,3 +5404,41 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] SQL 参数顺序修改后，用 `grep -n '\$2\|\$3' executor.js` 确认测试期望与源码一致
 - [ ] VITEST 环境 + callLLM.mock === undefined 是"跳过真实 LLM 调用"的标准模式，防止 bridge 超时
 - [ ] 新 migration 后必须同步所有引用旧版本号的测试文件（grep -r 'EXPECTED_SCHEMA_VERSION\|toBe.*142' 全局搜索）
+
+---
+
+## fix(brain): 修复 3 个测试 schema version 硬编码 (#869)
+
+**分支**: cp-03112045-fix-schema-version-tests
+**日期**: 2026-03-11
+**影响程度**: Low
+
+### 根本原因
+
+PR #867 升级 `EXPECTED_SCHEMA_VERSION` 从 `'145'` → `'147'`（新增 migration 144+145），
+但 3 个测试文件中的版本断言硬编码了旧版本号，未随之同步更新：
+- `selfcheck.test.js`
+- `desire-system.test.js`
+- `learnings-vectorize.test.js`
+
+### 下次预防
+
+- [ ] 每次更新 `EXPECTED_SCHEMA_VERSION` 时，必须同时用 `grep -r "toBe.'1[0-9][0-9]'" packages/brain/src/__tests__/` 检查是否有硬编码旧版本的测试
+- [ ] 另外：228 个测试失败主要是因为本地 PostgreSQL 未运行（已通过 `pg_ctl start` 解决），测试通过率恢复正常
+
+---
+
+## chore(brain): baseline 归零 (#871)
+
+**分支**: cp-03112113-reset-test-baseline
+**日期**: 2026-03-11
+**影响程度**: Low
+
+### 根本原因
+
+baseline 文件（235/15）是历史遗留的容忍值，随着测试全部修复（PR #868 + #870），
+实际失败数已降至 0，需要同步归零以恢复 CI 保护效力。
+
+### 下次预防
+
+- [ ] 每次修复测试后，同步更新 baseline → 0，不留历史债务
