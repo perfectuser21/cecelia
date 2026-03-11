@@ -147,10 +147,10 @@ describe('executor.js error_message 写入验证', () => {
         const params = failedCall[1];
 
         // 验证 SQL 包含 error_message
-        expect(sql).toMatch(/error_message\s*=\s*\$2/);
+        expect(sql).toMatch(/error_message\s*=\s*\$3/);
 
         // 验证 error_message 参数符合格式
-        const errorMessage = params[1];
+        const errorMessage = params[2];
         expect(errorMessage).toMatch(/^\[orphan_detected\] reason=\S+ at \d{4}-/);
       }
       // 若无 failed 调用（没有孤儿），测试也通过（环境无孤儿进程）

@@ -615,6 +615,41 @@ async function analyzeDeep(event, thalamusDecision = null) {
     context.adjustable_params = thalamusDecision.adjustable_params;
   }
 
+  // Build #4: 注入跨任务同类失败模式（来自 learnings 表 category='failure_pattern'）
+  // 让 RCA 能看到系统级别的重复失败模式，不只是当前任务历史
+  try {
+    const crossTaskResult = await pool.query(
+      `SELECT content, created_at FROM learnings
+       WHERE category = 'failure_pattern'
+       ORDER BY created_at DESC LIMIT 10`
+    );
+    if (crossTaskResult.rows.length > 0) {
+      context.cross_task_failure_patterns = {
+        count: crossTaskResult.rows.length,
+        summary: `系统历史同类失败 [${crossTaskResult.rows.length}] 条，最近：`,
+        patterns: crossTaskResult.rows.map((r, i) => ({
+          rank: i + 1,
+          insight: (r.content || '').slice(0, 300),
+          recorded_at: r.created_at
+        }))
+      };
+    } else {
+      context.cross_task_failure_patterns = {
+        count: 0,
+        summary: '暂无历史同类失败记录',
+        patterns: []
+      };
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to fetch cross-task failure patterns:', err.message);
+    // 降级：不影响主流程，cortex_cross_task_query_failed
+  }
+
+  // In test environments (vitest) without a callLLM mock, skip LLM call to avoid bridge timeouts
+  if (process.env.VITEST && typeof callLLM.mock === 'undefined') {
+    return createCortexFallback(event, 'test environment: LLM call skipped');
+  }
+
   const contextJson = JSON.stringify(context, null, 2);
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 
@@ -841,11 +876,14 @@ async function storeAbsorptionPolicy(policyJson, context = {}) {
 async function saveCortexAnalysis(analysis, context = {}) {
   const { task, event, failureInfo } = context;
 
-  // Generate similarity hash
+  // Generate similarity hash — analysis.analysis can be an object; convert to string
+  const rootCauseStr = typeof analysis.analysis === 'object' && analysis.analysis !== null
+    ? (analysis.analysis.root_cause || JSON.stringify(analysis.analysis))
+    : (analysis.analysis || '');
   const similarityHash = generateSimilarityHash({
     task_type: task?.task_type || failureInfo?.task_type,
     reason: failureInfo?.class || 'UNKNOWN',
-    root_cause: analysis.analysis || '',
+    root_cause: rootCauseStr,
   });
 
   const result = await pool.query(`
@@ -871,7 +909,7 @@ async function saveCortexAnalysis(analysis, context = {}) {
     task?.id || null,
     event?.id || null,
     event?.type || 'rca_request',
-    analysis.analysis || 'No root cause identified',
+    rootCauseStr || 'No root cause identified',
     JSON.stringify(analysis.contributing_factors || []),
     JSON.stringify(analysis.recommended_actions || []),
     JSON.stringify(failureInfo || {}),

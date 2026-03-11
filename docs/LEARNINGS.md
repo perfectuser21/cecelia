@@ -5392,3 +5392,34 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] Cortex/Thalamus/Bridge 各自使用独立超时环境变量，命名规范：`CECELIA_{ORGAN}_TIMEOUT_MS`
 - [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
 - [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
+
+## PR #862 feat(tick): Burst Limiter MAX_NEW_DISPATCHES_PER_TICK 防雪崩（2026-03-11）
+
+### 根本原因
+
+1. tick Step 7 在队列积压后资源恢复时，会在单次 tick 内尝试填满所有可用 slot，多个 agent 同时启动（启动阶段资源消耗 2-3x）导致峰值叠加，触发资源雪崩
+2. rampedDispatchMax 已有渐进加速，但只控制"当前速率允许开多少"，没有控制"单次 tick 内最多新开多少"——两者是不同维度的限制
+3. 测试策略：复杂内部函数（`executeTick` 含大量 DB 调用）用代码路径验证（`readFileSync` 检查关键字符串）比 full mock 更可靠，不容易因依赖变化而脆断
+
+### 下次预防
+
+- [ ] 流量控制要区分维度：ramp（渐进速率）≠ burst（单次上限），两者互补不替代
+- [ ] 代码路径验证模式：新增关键安全机制时，用 `readFileSync + match` 测试代码结构，比 `executeTick` 全链路 mock 更稳定
+- [ ] 常量命名规范：`MAX_*_PER_TICK` 明确约束粒度（per tick），和 `DISPATCH_MAX`（全局上限）区分
+
+## PR #868 fix(brain): 修复 12 个失败测试（2026-03-11）
+
+### 根本原因
+
+1. executor.js 从 platform-utils 导入了 `getAvailableMemoryMB`/`getMacOSMemoryPressure`，但测试 mock 中未提供这两个导出，导致"No 'X' export is defined on the mock"错误。修复：将这两个函数内联到 executor.js，不再从 platform-utils 导入
+2. `syncOrphanTasksOnStartup` UPDATE SQL 参数顺序错误：$2 是 JSON payload，$3 是 error_message（与测试期望相反）。修复：交换参数顺序
+3. `cortex.js` 在全量测试套件中调用真实 LLM bridge 超时：当 `callLLM` 未被 mock（如 cortex.test.js）时，VITEST 环境下调用真实 bridge 需要 >10s，测试超时。修复：检测 `callLLM.mock === undefined` + `process.env.VITEST` 双重条件，未 mock 时直接返回 fallback
+4. `saveCortexAnalysis` 中 `analysis.analysis` 可能是 object（非 string），调用 `toLowerCase()` 时抛出类型错误
+5. 三个测试文件中 EXPECTED_SCHEMA_VERSION 仍为 '142'，但 selfcheck.js 已更新为 '143'
+
+### 下次预防
+
+- [ ] 新增或修改 platform-utils 导出时，同步检查所有测试 mock（grep "platform-utils" 相关测试）是否包含所有导出
+- [ ] SQL 参数顺序修改后，用 `grep -n '\$2\|\$3' executor.js` 确认测试期望与源码一致
+- [ ] VITEST 环境 + callLLM.mock === undefined 是"跳过真实 LLM 调用"的标准模式，防止 bridge 超时
+- [ ] 新 migration 后必须同步所有引用旧版本号的测试文件（grep -r 'EXPECTED_SCHEMA_VERSION\|toBe.*142' 全局搜索）
