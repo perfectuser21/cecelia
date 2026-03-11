@@ -5257,3 +5257,21 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
 - [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
 - [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
+
+## PR #845 fix(cortex): 实现 CECELIA_CORTEX_TIMEOUT_MS 专属超时（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 必须和代码同批次提交，Learning Format Gate 是 L1 硬门禁，先 push 代码再补 Learning 会导致第一次 CI 失败
+2. `callCortexLLM()` 超时使用 `CECELIA_BRIDGE_TIMEOUT_MS || 120000`（120s），Opus p99=147s 时触发 exit 143（超时被 kill）
+3. `callLLM` 导入路径是 `./llm-caller.js`，不是 `./callLLM.js`；mock 路径写错导致测试无法捕获调用参数
+4. vitest `vi.mock` 被提升（hoist）到文件顶部，factory 中不能引用模块级 `const` 变量（TDZ 错误），必须用 `vi.hoisted()` 定义跨 mock 引用的变量
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
+- [ ] Cortex/Thalamus/Bridge 各自使用独立超时环境变量，命名规范：`CECELIA_{ORGAN}_TIMEOUT_MS`
+- [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
+- [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
