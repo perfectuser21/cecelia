@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BarChart2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { BarChart2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, RefreshCw, Download, Copy, FileJson, Send } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -253,6 +253,17 @@ function ProjectCard({ report, rank, brainItem }: { report: ProjectReport; rank:
   );
 }
 
+// 触发浏览器文件下载
+function triggerDownload(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ProjectCompare() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -260,6 +271,89 @@ export default function ProjectCompare() {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
+
+  // 导出状态
+  const [exportMsg, setExportMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [copyLabel, setCopyLabel] = useState<'复制 Markdown' | '已复制 ✓'>('复制 Markdown');
+  const [notionLoading, setNotionLoading] = useState(false);
+
+  const showExportMsg = useCallback((type: 'success' | 'error', text: string) => {
+    setExportMsg({ type, text });
+    setTimeout(() => setExportMsg(null), 3000);
+  }, []);
+
+  const downloadMarkdown = useCallback(async () => {
+    if (!result) return;
+    try {
+      const res = await fetch('/api/brain/projects/compare/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_ids: result.projects.map(p => p.id), format: 'markdown' }),
+      });
+      if (!res.ok) throw new Error('生成失败');
+      const data = await res.json();
+      const md = data.markdown || data.summary || JSON.stringify(data, null, 2);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      triggerDownload(md, `compare-report-${dateStr}.md`, 'text/markdown');
+      showExportMsg('success', 'Markdown 文件已下载');
+    } catch (e) {
+      showExportMsg('error', e instanceof Error ? e.message : '下载失败');
+    }
+  }, [result, showExportMsg]);
+
+  const downloadJson = useCallback(() => {
+    if (!result) return;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    triggerDownload(JSON.stringify(result, null, 2), `compare-report-${dateStr}.json`, 'application/json');
+    showExportMsg('success', 'JSON 文件已下载');
+  }, [result, showExportMsg]);
+
+  const copyMarkdown = useCallback(async () => {
+    if (!result) return;
+    try {
+      const res = await fetch('/api/brain/projects/compare/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_ids: result.projects.map(p => p.id), format: 'markdown' }),
+      });
+      if (!res.ok) throw new Error('生成失败');
+      const data = await res.json();
+      const md = data.markdown || data.summary || JSON.stringify(data, null, 2);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(md);
+        setCopyLabel('已复制 ✓');
+        setTimeout(() => setCopyLabel('复制 Markdown'), 1500);
+      } else {
+        showExportMsg('error', '剪贴板不可用，请手动复制');
+      }
+    } catch (e) {
+      showExportMsg('error', e instanceof Error ? e.message : '复制失败');
+    }
+  }, [result, showExportMsg]);
+
+  const pushNotion = useCallback(async () => {
+    if (!result) return;
+    setNotionLoading(true);
+    try {
+      const res = await fetch('/api/brain/projects/compare/report/push-notion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_ids: result.projects.map(p => p.id) }),
+      });
+      const data = await res.json();
+      if (res.status === 501) {
+        showExportMsg('error', 'Notion 未配置（501）');
+      } else if (!res.ok || !data.success) {
+        showExportMsg('error', data.error || '推送失败');
+      } else {
+        showExportMsg('success', `已推送到 Notion${data.notion_url ? ' — ' + data.notion_url : ''}`);
+      }
+    } catch (e) {
+      showExportMsg('error', e instanceof Error ? e.message : '推送失败');
+    } finally {
+      setNotionLoading(false);
+    }
+  }, [result, showExportMsg]);
 
   // Brain KR Compare 状态
   const [brainData, setBrainData] = useState<Record<string, BrainCompareItem>>({});
@@ -458,6 +552,45 @@ export default function ProjectCompare() {
 
           {result && (
             <>
+              {/* 导出工具栏 */}
+              <div className="mb-4 flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500 mr-1">导出：</span>
+                <button
+                  onClick={downloadMarkdown}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-600/60 text-slate-300 hover:text-white transition-colors border border-slate-600/40"
+                >
+                  <Download className="w-3 h-3" />
+                  下载 Markdown
+                </button>
+                <button
+                  onClick={downloadJson}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-600/60 text-slate-300 hover:text-white transition-colors border border-slate-600/40"
+                >
+                  <FileJson className="w-3 h-3" />
+                  下载 JSON
+                </button>
+                <button
+                  onClick={copyMarkdown}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-600/60 text-slate-300 hover:text-white transition-colors border border-slate-600/40"
+                >
+                  <Copy className="w-3 h-3" />
+                  {copyLabel}
+                </button>
+                <button
+                  onClick={pushNotion}
+                  disabled={notionLoading}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-600/60 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 hover:text-white transition-colors border border-slate-600/40"
+                >
+                  <Send className="w-3 h-3" />
+                  {notionLoading ? '推送中…' : '推送 Notion'}
+                </button>
+                {exportMsg && (
+                  <span className={`text-xs px-2 py-0.5 rounded-lg ${exportMsg.type === 'success' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                    {exportMsg.text}
+                  </span>
+                )}
+              </div>
+
               {/* 总结 */}
               <div className="mb-5 px-4 py-3 bg-slate-800/60 border border-slate-700/50 rounded-xl text-sm text-slate-300">
                 <span className="text-slate-500 text-xs mr-2">总结</span>
