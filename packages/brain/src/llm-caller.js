@@ -98,8 +98,11 @@ export async function callLLM(agentId, prompt, options = {}) {
   const candidates = [primary, ...fallbacks];
 
   let lastError;
+  let lastModel, lastProvider;
   for (let i = 0; i < candidates.length; i++) {
     const { model, provider } = candidates[i];
+    lastModel = model;
+    lastProvider = provider;
     const isFallback = i > 0;
     if (isFallback) {
       console.warn(`[llm-caller] ${agentId} fallback #${i}: 尝试 ${model} (${provider})`);
@@ -135,6 +138,12 @@ export async function callLLM(agentId, prompt, options = {}) {
     }
   }
 
+  if (lastError) {
+    lastError.llm_model = lastModel;
+    lastError.llm_provider = lastProvider;
+    lastError.elapsed_ms = Date.now() - startTime;
+    lastError.fallback_attempt = candidates.length - 1;
+  }
   throw lastError || new Error(`[llm-caller] ${agentId}: 所有候选模型均失败`);
 }
 
@@ -173,7 +182,9 @@ async function callAnthropicAPI(prompt, model, timeout, maxTokens, imageContent 
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');
-    throw new Error(`Anthropic API error: ${response.status} - ${errText.slice(0, 200)}`);
+    const apiErr = new Error(`Anthropic API error: ${response.status} - ${errText.slice(0, 200)}`);
+    apiErr.status = response.status;
+    throw apiErr;
   }
 
   const data = await response.json();
@@ -216,7 +227,9 @@ async function callClaudeViaBridge(prompt, model, timeout, originalModel) {
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');
-    throw new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
+    const bridgeErr = new Error(`Bridge /llm-call error: ${response.status} - ${errText}`);
+    bridgeErr.status = response.status;
+    throw bridgeErr;
   }
 
   const data = await response.json();
@@ -256,7 +269,9 @@ async function callMiniMaxAPI(prompt, model, timeout, maxTokens) {
 
   if (!response.ok) {
     const errText = await response.text().catch(() => 'unknown');
-    throw new Error(`MiniMax API error: ${response.status} - ${errText}`);
+    const mmErr = new Error(`MiniMax API error: ${response.status} - ${errText}`);
+    mmErr.status = response.status;
+    throw mmErr;
   }
 
   const data = await response.json();
