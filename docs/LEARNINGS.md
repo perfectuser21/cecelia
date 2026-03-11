@@ -20,6 +20,23 @@
 - [ ] DoD 格式：`- [x] 描述` 下一行紧接 `  Test: manual:bash -c "..."`，不要插入描述行
 - [ ] PRD 成功标准用 `## 成功标准` 作为 H2 标题
 
+## PR #850 fix(brain): 网络超时重试延迟调整为 5-10 分钟（2026-03-11）
+
+CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未随代码同批次 push）。
+
+### 根本原因
+
+1. `quarantine.js` 中 `FAILURE_CLASS.NETWORK` 的重试延迟使用 `Math.pow(2, retryCount) * 30 * 1000`，导致重试间隔仅 30s/60s/120s，在网络不稳定时暴力重试消耗 Claude 额度并产生重复 error learning
+2. `dev-failure-classifier.js` 的 `calcNextRunAt` 已经是 5min 起步（`retryCount * 5 * 60 * 1000`），dev 任务的 transient 类重试已合理，只需修 `quarantine.js`
+3. `cecelia-bridge.js` 无重试逻辑（只有超时降级），PRD 描述可能引起误解，实际只需改 quarantine.js
+4. LEARNINGS.md 必须和代码同批次 push 到功能分支，不能先 push 代码再补（Learning Format Gate 是 L1 硬门禁）
+
+### 下次预防
+
+- [ ] 识别网络重试延迟问题时，先找 `quarantine.js` 的 `getRetryStrategy` 函数，这是系统级重试策略的唯一来源
+- [ ] PRD 提到「bridge.js」时，优先搜索 `find . -name "*bridge*"`，确认实际路径（scripts/ vs src/）
+- [ ] LEARNINGS.md 必须随代码同批次 push，先写 Learning 再 push，不能分开
+
 ## PR #848 fix(brain): migration 143 — 批量修正虚标 KR status（2026-03-11）
 
 CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate）。
