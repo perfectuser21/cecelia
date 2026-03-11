@@ -739,17 +739,22 @@ async function requeueTask(taskId, reason, evidence = {}) {
     // Exceeded retry limit → quarantine
     const updateResult = await pool.query(
       `UPDATE tasks SET status = 'quarantined',
-       payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+       error_message = $2,
+       payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
        WHERE id = $1 AND status = 'in_progress'`,
-      [taskId, JSON.stringify({
-        ...watchdogInfo,
-        quarantine_info: {
-          quarantined_at: new Date().toISOString(),
-          reason: 'resource_hog',
-          details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
-          previous_status: 'in_progress',
-        }
-      })]
+      [
+        taskId,
+        `[watchdog] reason=${reason} at ${new Date().toISOString()}`,
+        JSON.stringify({
+          ...watchdogInfo,
+          quarantine_info: {
+            quarantined_at: new Date().toISOString(),
+            reason: 'resource_hog',
+            details: { watchdog_retries: retryCount, kill_reason: reason, total_failures: failureCount },
+            previous_status: 'in_progress',
+          }
+        }),
+      ]
     );
     if (updateResult.rowCount === 0) {
       return { requeued: false, reason: 'status_changed' };
@@ -2119,6 +2124,7 @@ async function probeTaskLiveness() {
 
     // Update task status with WebSocket broadcast
     await updateTaskStatus(task.id, 'failed', {
+      error_message: `[liveness_timeout] reason=${reason} at ${new Date().toISOString()}`,
       payload: { error_details: errorDetails }
     });
 
@@ -2200,9 +2206,14 @@ async function syncOrphanTasksOnStartup() {
       await pool.query(
         `UPDATE tasks SET
           status = 'failed',
-          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+          error_message = $2,
+          payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
         WHERE id = $1`,
-        [task.id, JSON.stringify({ error_details: errorDetails })]
+        [
+          task.id,
+          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
+          JSON.stringify({ error_details: errorDetails }),
+        ]
       );
 
       // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
