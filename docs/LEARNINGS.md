@@ -4853,3 +4853,18 @@ CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）
 - [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
 - [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
 - [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
+
+## PR #814 feat(dashboard): ProjectCompare 接入 Brain KR 进度 + 实时刷新（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — PRD 格式错误 + LEARNINGS 未 push）。
+
+### 根本原因
+
+1. PRD 中"成功标准"用了普通粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 只匹配 `##` 标题格式
+2. LEARNINGS.md 未在第一次 push 前提交，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] 创建 PRD 时立即确认成功标准为 `## 成功标准` 二级标题格式，不用粗体
+- [ ] Step 10 Learning 记录必须在合并 PR 前 push（不能 CI 失败后再补），否则 L1 必失败
+- [ ] React 中多个 `setInterval` 需用 `useRef` 保存 timer ID 避免闭包捕获旧值导致重复创建定时器
