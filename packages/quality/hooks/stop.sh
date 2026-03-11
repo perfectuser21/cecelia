@@ -271,17 +271,17 @@ if command -v gh &>/dev/null; then
         CI_STATUS=$(gh pr checks "$PR_NUMBER" --json state -q '.[].state' 2>/dev/null | head -1 || echo "")
 
         if [[ -z "$CI_STATUS" ]] || [[ "$CI_STATUS" == "PENDING" ]] || [[ "$CI_STATUS" == "QUEUED" ]]; then
-            # pending: 退出，等下次唤醒（事件驱动）
-            echo "  ⏳ Step 9: CI 运行中" >&2
+            # pending: 阻止退出，让 Claude 轮询等 CI（有头/无头统一行为）
+            echo "  ⏳ Step 9: CI 运行中，阻止退出继续等待..." >&2
             echo "" >&2
             echo "  CI 状态: ${CI_STATUS:-PENDING}" >&2
-            echo "  退出，等待下次 CI 结果（事件驱动，不挂着）" >&2
+            echo "  PR 未合并，保持会话活跃" >&2
             echo "" >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            echo "  ⏳ p1 推送完成，等待 CI" >&2
+            echo "  ⏳ 等待 CI 完成..." >&2
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            # exit 0: 允许结束（不挂着等 CI）
-            exit 0
+            # exit 2: 阻止退出，CI pending 时 PR 还没合并，必须继续等
+            exit 2
 
         elif echo "$CI_STATUS" | grep -qi "FAILURE\|ERROR"; then
             # CI fail: 继续修复循环

@@ -35,6 +35,8 @@ import {
   countClaudeProcesses,
   calculatePhysicalCapacity,
   getAvailableMemoryMB,
+  getMacOSMemoryPressure,
+  IS_DARWIN,
 } from './platform-utils.js';
 
 // HK MiniMax Executor URL (via Tailscale)
@@ -291,7 +293,23 @@ function checkServerResources(memReservedMb = 0) {
   // CPU pressure from real CPU% (replaces load average)
   const rawCpuPct = sampleCpuUsage();
   const rawCpuPressure = rawCpuPct !== null ? rawCpuPct / CPU_THRESHOLD_PCT : 0;
-  const rawMemPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+
+  // Memory pressure: on macOS use vm.memory_pressure kernel signal as primary;
+  // on Linux (or macOS fallback) use freeMem-based ratio.
+  // vm.memory_pressure: 0=normal→0.0, 1=warning→0.6, 2=urgent→0.95, 3=critical→1.0
+  let rawMemPressure;
+  let mem_pressure_signal = -1;
+  if (IS_DARWIN) {
+    mem_pressure_signal = getMacOSMemoryPressure();
+    if (mem_pressure_signal >= 0) {
+      rawMemPressure = [0.0, 0.6, 0.95, 1.0][mem_pressure_signal];
+    } else {
+      // Fallback: used_ratio based (getAvailableMemoryMB already returns used_ratio on macOS)
+      rawMemPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+    }
+  } else {
+    rawMemPressure = 1 - (freeMem / (TOTAL_MEM_MB * 0.8));
+  }
 
   // Push raw readings into sliding window
   if (rawCpuPct !== null) _pushHistory(_cpuHistory, rawCpuPressure, HISTORY_SIZE_CPU);
@@ -325,6 +343,7 @@ function checkServerResources(memReservedMb = 0) {
     cpu_pressure: Math.round(cpuPressure * 100) / 100,
     free_mem_mb: freeMem,
     mem_min_mb: MEM_AVAILABLE_MIN_MB,
+    mem_pressure_signal,
     swap_used_pct: swapUsedPct,
     swap_max_pct: SWAP_USED_MAX_PCT,
     cpu_cores: CPU_CORES,

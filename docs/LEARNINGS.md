@@ -10,10 +10,36 @@
 
 2. **Baseline 是债务标签，修完就该归零**：125 的 baseline 在实际只有 4 个失败时，是对测试系统的虚假容忍。正确做法：修完失败 → 立即归零 baseline，不留余地。
 
+3. **OOM 导致 2 次假失败**：isolate:true + coverage 并发 4 fork，macOS CI runner 1.5GB 堆溢出。修复：maxForks 4→2，execArgv 增加 --max-old-space-size=4096。
+
 ### 下次预防
 
 - [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
+- [ ] vitest isolate:true + coverage 并发时，maxForks 不超过 2，防止 CI macOS runner OOM
+
+
+
+### [2026-03-11] macOS 内存管理模型全面重构 — vm.memory_pressure + used_ratio（PR #820）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **macOS 内存压力信号选错**：PR #812 用 `free+inactive` 修复 `os.freemem()=66MB` 的问题，但 `free+inactive` 本质上和 `(total-active-wired)` 等价——当 active 正常（7GB）时都返回大量可用内存（✅），但当 active 飙升到 13GB 时，`free+inactive` 仍接近 `total-active-wired`，两者行为一致。问题根因是：**测量维度本身正确，但 macOS 不提供单一可靠的"可用内存"数字**。内核自己的 `vm.memory_pressure` 才是最权威的信号。
+
+2. **Planner 僵尸循环根因**：`planInitiativeIfNeeded()` 的 dedup SQL 只排除 `completed/failed/cancelled`，不排除 `quarantined`。当一个任务被隔离后，Planner 认为"没有 active 任务"→ 重建新任务 → 新任务也失败 → 也被隔离 → 循环。昨晚 36 个幽灵任务（3 个独立 Initiative × 12 轮循环）均来自此 bug。
+
+3. **PR #812 的 `free+inactive` 方向正确但不够精确**：实测 `getAvailableMemoryMB()` 现在返回 8266MB（used_ratio 方案），而 `free+inactive` 在 active=7GB 时也应返回类似值。用 `used_ratio` 更清晰、语义更准确：它明确说明了"committed memory"的概念。
+
+### 下次预防
+
+- [ ] macOS 上任何内存相关决策必须用 `getMacOSMemoryPressure()`（vm.memory_pressure）而非 os.freemem()
+- [ ] Planner dedup SQL 改动后必须检查所有 status 枚举值是否覆盖完整（含 quarantined）
+- [ ] 每次 Brain 重构后验证：`curl localhost:5221/api/brain/status/full | jq .memory` 中 `mem_pressure_signal` 字段是否合理（0=正常）
+- [ ] Linux 迁移 Mac 后的兼容性检查清单：os.freemem / pgrep / ps / stat -c / /proc/stat 等全部需要平台分支
+
+---
 
 ### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #818）
 
@@ -33,6 +59,21 @@
 - [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
 - [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
 
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+Learning Format Gate 失败（LEARNINGS 未在初始 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 条目未在第一次 git push 之前提交，Learning Format Gate 是 L1 硬门禁，未 push 即报 failure
+2. 提交流程中先走了 git commit/push，再想起 LEARNINGS，导致 CI 已在运行但缺少 Learning
+
+### 下次预防
+
+- [ ] 在 `git add` + `git commit` 之前先写 LEARNINGS.md 条目，和代码一起提交（一次 push 包含 Learning）
+- [ ] LEARNINGS 格式三要素缺一不可：`### 根本原因` + `### 下次预防` + `- [ ]` checklist
+- [ ] 对于 Brain 路由新增端点，注意 POST `/compare/report/push-notion` 必须注册在通配符 `/:id` 之前，否则被当作 UUID 拦截
+- [ ] Notion 无 token 时返回 501（而非 500），前端根据 status 显示不同 toast 文本
 
 ### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
 
@@ -69,6 +110,25 @@
 - [ ] VitePWA 配置必须验证生成的 `registerSW.js` 包含 `controllerchange` 事件处理（`grep controllerchange dist/registerSW.js`）
 - [ ] 每次 dist 构建后检查：`main.tsx` 的 SW 监听逻辑是否在新 bundle 里出现（`grep controllerchange dist/assets/index-*.js`）
 - [ ] `clearStaleCache()` 改为返回 boolean，调用方根据返回值决定是否挂载 React，避免 reload 后的无效挂载
+
+---
+
+### [2026-03-11] cecelia-run 必须在 git 里，运行版本不能是孤岛（PR #817）
+
+**失败统计**：0 次 CI 失败
+
+### 根本原因
+
+1. **运行版本和 git 源文件长期分叉**：`~/bin/cecelia-run`（620行）包含 75 行 Mac 适配代码（root处理、kill_tree、PATH、失败分类），这些代码从未合并回 `packages/brain/scripts/cecelia-run.sh`（545行）。LaunchDaemon plist 硬编码指向 `~/bin/`，导致对运行版本的任何修改都完全绕过 CI 和代码审查。
+
+2. **直接改 git 外文件的诱惑**：当文件不在 git repo 里，branch-protect hook 无法拦截，导致"直接改就好"的捷径看起来合法，实际上是技术债。
+
+### 下次预防
+
+- [ ] 任何影响 Cecelia 运行行为的文件，必须在 git repo 里（`packages/brain/`），不能在 `~/bin/`
+- [ ] LaunchDaemon plist 也要在 git 里（`packages/brain/deploy/`），部署脚本负责安装
+- [ ] `~/bin/cecelia-run` 必须是 symlink 指向 git 源文件，不能是独立文件
+- [ ] 每次发现运行版本和 git 源文件有 diff，立即走 /dev 补上，不能拖
 
 ### [2026-03-11] Linux→macOS 全量兼容性修复 — os.freemem() 在 macOS 上永远是 66MB（PR #812）
 
@@ -4924,3 +4984,48 @@ CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）
 - [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
 - [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
 - [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
+
+## PR #814 feat(dashboard): ProjectCompare 接入 Brain KR 进度 + 实时刷新（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — PRD 格式错误 + LEARNINGS 未 push）。
+
+### 根本原因
+
+1. PRD 中"成功标准"用了普通粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 只匹配 `##` 标题格式
+2. LEARNINGS.md 未在第一次 push 前提交，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] 创建 PRD 时立即确认成功标准为 `## 成功标准` 二级标题格式，不用粗体
+- [ ] Step 10 Learning 记录必须在合并 PR 前 push（不能 CI 失败后再补），否则 L1 必失败
+- [ ] React 中多个 `setInterval` 需用 `useRef` 保存 timer ID 避免闭包捕获旧值导致重复创建定时器
+
+## PR #819 feat(dashboard): ProjectCompare 补充 KR 达成率 + 周趋势迷你图（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + LEARNINGS 未 push）。
+
+### 根本原因
+
+1. DoD 中"无 recharts 等外部图表库引入"的 Test 用了 `grep -c ... || echo 0`，`echo` 被 check-dod-mapping.cjs 识别为假测试（禁止），应改用 `! grep -q ...` 反向断言
+2. LEARNINGS.md 未在 CI 前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] "验证某物不存在"类 DoD Test 不用 `|| echo 0` 兜底，改用 `! grep -q 'pattern' file`（exit 0 表示未找到 = 成功）
+- [ ] 继承 PR #814 的教训：LEARNINGS 必须在 PR 创建时同步 push，不能等 CI 失败后补
+- [ ] GET Brain API 返回 `{ generated_at, projects, summary }` 包装对象，不是直接数组；前端解析时用 `result.projects` 不是 `result`
+
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同步提交，Learning Format Gate 是 L1 硬门禁，在 CI 中直接 exit 1
+2. Step 10 Learning 应在 PR 创建 **之前** 或 **同批次** push，而非 CI 失败后补
+
+### 下次预防
+
+- [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
+- [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
+- [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
