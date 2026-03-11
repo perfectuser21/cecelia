@@ -35,7 +35,7 @@ vi.mock('../platform-utils.js', () => ({
   countClaudeProcesses: mockCountClaudeProcesses,
   calculatePhysicalCapacity: mockCalculatePhysicalCapacity,
   getAvailableMemoryMB: mockGetAvailableMemoryMB,
-  getMacOSMemoryPressure: vi.fn(() => null),
+  getMacOSMemoryPressure: vi.fn(() => 0),
 }));
 
 // Mock fs (executor.js may import readFileSync for other uses)
