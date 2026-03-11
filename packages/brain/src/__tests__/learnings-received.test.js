@@ -17,6 +17,10 @@ import request from 'supertest';
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockCreateTask = vi.hoisted(() => vi.fn());
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 vi.mock('../db.js', () => ({
   default: { query: mockQuery },
 }));

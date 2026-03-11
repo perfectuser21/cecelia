@@ -4,6 +4,7 @@
  */
 
 import crypto from 'crypto';
+import { runClaudeProbe } from './claude-probe.js';
 import pool from './db.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
@@ -126,6 +127,11 @@ let _recoveryTimer = null;
 // Drain state (in-memory)
 let _draining = false;
 let _drainStartedAt = null;
+
+// Claude probe state (in-memory)
+// When _dispatchPaused=true, dispatch is suspended until the next probe passes
+let _dispatchPaused = false;
+let _dispatchPausedReason = null;
 
 /**
  * Get tick status
@@ -835,8 +841,50 @@ async function processCortexTask(task, actions) {
  * @param {string[]} goalIds - Goal IDs to scope the dispatch
  * @returns {Object} - Dispatch result with actions taken
  */
-async function dispatchNextTask(goalIds) {
+async function dispatchNextTask(goalIds, { _probeOverride } = {}) {
   const actions = [];
+
+  // -1. Claude auth probe — skip dispatch if claude CLI is not authenticated
+  const probeResult = _probeOverride ? await _probeOverride() : await runClaudeProbe();
+  if (!probeResult.ok) {
+    if (!_dispatchPaused) {
+      _dispatchPaused = true;
+      _dispatchPausedReason = probeResult.reason || probeResult.eventType;
+      console.warn(`[dispatch] Claude probe failed (${probeResult.eventType}): ${probeResult.reason} — pausing dispatch`);
+      try {
+        await pool.query(
+          `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+          [probeResult.eventType, 'dispatch', JSON.stringify({
+            reason: probeResult.reason,
+            output: (probeResult.output || '').slice(0, 500),
+            paused_at: new Date().toISOString(),
+          })]
+        );
+      } catch (e) {
+        console.error(`[dispatch] Failed to write probe alert event: ${e.message}`);
+      }
+    }
+    await recordDispatchResult(pool, false, 'claude_probe_failed');
+    return { dispatched: false, reason: 'claude_probe_failed', probe: probeResult, actions };
+  }
+
+  // Probe succeeded — if we were previously paused, clear it and emit recovery event
+  if (_dispatchPaused) {
+    _dispatchPaused = false;
+    _dispatchPausedReason = null;
+    console.log('[dispatch] Claude probe recovered — resuming dispatch');
+    try {
+      await pool.query(
+        `INSERT INTO cecelia_events (event_type, source, payload) VALUES ($1, $2, $3)`,
+        ['claude_probe_recovered', 'dispatch', JSON.stringify({
+          recovered_at: new Date().toISOString(),
+          output: (probeResult.output || '').slice(0, 200),
+        })]
+      );
+    } catch (e) {
+      console.error(`[dispatch] Failed to write probe recovery event: ${e.message}`);
+    }
+  }
 
   // 0. Drain check — skip dispatch if draining (let in_progress tasks finish)
   // Also check alertness-requested drain mode
@@ -2621,6 +2669,19 @@ function _resetDrainState() {
   _drainStartedAt = null;
 }
 
+// ==================== Claude Auth Probe State Helpers ====================
+
+/**
+ * Test helpers for dispatch-paused state
+ */
+export function _getDispatchPausedState() {
+  return { paused: _dispatchPaused, reason: _dispatchPausedReason };
+}
+export function _resetDispatchPausedState() {
+  _dispatchPaused = false;
+  _dispatchPausedReason = null;
+}
+
 /**
  * 读取 working_memory 中的 startup_errors 数据
  * 用于 GET /api/brain/tick/startup-errors 端点
@@ -2729,6 +2790,9 @@ export {
   CLEANUP_INTERVAL_MS,
   ZOMBIE_SWEEP_INTERVAL_MS,
   ZOMBIE_CLEANUP_INTERVAL_MS,
+  // Claude probe
+  _getDispatchPausedState,
+  _resetDispatchPausedState,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
