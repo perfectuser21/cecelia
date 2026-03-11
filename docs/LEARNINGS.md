@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+## PR #849 feat: code_review 路由到西安 codex-bridge — 新增 location 'xian' 需同步更新所有 location 验证（2026-03-11）
+
+**失败统计**：L1 CI 失败 0 次
+
+### 根本原因
+
+1. 新增第三个执行位置 'xian'（西安 Mac mini）需要同步更新 task-router.js 的 LOCATION_MAP、isValidLocation、detectRoutingFailure 中的合法 location 列表
+2. 测试中有硬编码的 `['us', 'hk']` 断言和 EXECUTOR_HOSTS toEqual 精确匹配，都需要同步更新
+3. trace.js 的 EXECUTOR_HOSTS 值格式 regex 只允许 `word-word`，不允许 `word-word-word`（如 `xian-mac-mini`），需要放宽
+
+### 下次预防
+
+- [ ] 新增 location 时搜索所有 `['us', 'hk']` 字面量确保全部更新
+- [ ] EXECUTOR_HOSTS 的格式验证 regex 应支持多段连字符
+
 ## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
 
 **失败统计**：L1 CI 失败 1 次（DoD Verification Gate：BEHAVIOR Test 的 printf 命令在 CI 执行失败）
