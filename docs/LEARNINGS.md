@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
+
+**失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
+
+### 根本原因
+
+1. **DoD Test grep 命令跨行匹配失败**：`grep -c 'error_message.*watchdog|watchdog.*error_message'` 期望匹配"同一行同时有 error_message 和 watchdog"，但实际代码中两者在不同行（一行是 `error_message = $2`，另一行是 `` `[watchdog] reason=...` ``）。结果 grep 返回 0，DoD gate 报 exit 1。
+
+2. **复合 OR 模式可读性差且易错**：`A.*B|B.*A` 的意图是"A 和 B 同行"，但在模板字符串中，变量值往往单独成行，导致此类模式必然失败。
+
+3. **正确做法：用具体字面量**：与其断言"error_message 和 watchdog 在同一行"，不如直接断言 watchdog 路径写入了特定格式字符串 `[watchdog]`，这既准确又不受代码格式影响。
+
+### 下次预防
+
+- [ ] DoD Test 中 grep 不要用 `A.*B` 跨字段匹配，除非确认这两个词必然在同一行
+- [ ] 每个 DoD Test 命令在 push 前先本地运行一次确认 exit 0
+- [ ] 验证内容尽量选择格式特征（`\[watchdog\]`、`\[orphan_detected\]`）而非两字段组合
+
+---
+
 ### [2026-03-11] rumination force 模式 + 路由位置决策（PR #824）
 
 **失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
