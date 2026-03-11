@@ -16,6 +16,26 @@ CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未在 push 前提交
 - [ ] DoD 验证文件存在时用 `ls ... | wc -l` 而非 `test -f ... && echo 1`
 - [ ] 文件有重复代码块时改用 `cat >>` 追加或提供更多上下文区分 Edit 位置
 
+### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
+
+**失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
+
+### 根本原因
+
+1. **DoD Test grep 命令跨行匹配失败**：`grep -c 'error_message.*watchdog|watchdog.*error_message'` 期望匹配"同一行同时有 error_message 和 watchdog"，但实际代码中两者在不同行（一行是 `error_message = $2`，另一行是 `` `[watchdog] reason=...` ``）。结果 grep 返回 0，DoD gate 报 exit 1。
+
+2. **复合 OR 模式可读性差且易错**：`A.*B|B.*A` 的意图是"A 和 B 同行"，但在模板字符串中，变量值往往单独成行，导致此类模式必然失败。
+
+3. **正确做法：用具体字面量**：与其断言"error_message 和 watchdog 在同一行"，不如直接断言 watchdog 路径写入了特定格式字符串 `[watchdog]`，这既准确又不受代码格式影响。
+
+### 下次预防
+
+- [ ] DoD Test 中 grep 不要用 `A.*B` 跨字段匹配，除非确认这两个词必然在同一行
+- [ ] 每个 DoD Test 命令在 push 前先本地运行一次确认 exit 0
+- [ ] 验证内容尽量选择格式特征（`\[watchdog\]`、`\[orphan_detected\]`）而非两字段组合
+
+---
+
 ### [2026-03-11] rumination force 模式 + 路由位置决策（PR #824）
 
 **失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
@@ -5045,3 +5065,18 @@ CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
 - [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
 - [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
 - [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
+
+## PR #826 feat(brain): 低峰期动态 DAILY_BUDGET（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同批次提交，Learning Format Gate 是 L1 硬门禁，直接 exit 1
+2. 每次 /dev 流程必须在 PR 创建前先写 LEARNINGS，而不是 CI 失败后补
+
+### 下次预防
+
+- [ ] 每次 PR push 前，先写 LEARNINGS → commit → push，再 gh pr create
+- [ ] `vi.setSystemTime()` 需配合 `vi.useFakeTimers()` 使用——但 rumination.js 用 `new Date().toLocaleString()` 而非 `Date.now()`，`vi.useFakeTimers()` 对 `new Date()` 同样生效，可直接用 `vi.setSystemTime()` + `afterEach(() => vi.useRealTimers())`
+- [ ] 时区判断用 `new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })).getHours()` 而非 UTC 偏移，原因：Node.js 支持 IANA 时区名，Intl API 可靠
