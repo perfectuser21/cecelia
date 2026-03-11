@@ -3043,6 +3043,24 @@ router.post('/execution-callback', async (req, res) => {
     if (newStatus === 'completed') {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
       await cbSuccess('cecelia-run');
+
+      // 好奇心评分：research/curiosity 任务完成后异步重新计算（fire-and-forget）
+      Promise.resolve().then(async () => {
+        try {
+          const taskMeta = await pool.query(
+            'SELECT task_type, trigger_source FROM tasks WHERE id = $1',
+            [task_id]
+          );
+          const t = taskMeta.rows[0];
+          if (t && (t.task_type === 'research' || t.trigger_source === 'curiosity')) {
+            const { calculateCuriosityScore } = await import('./curiosity-scorer.js');
+            await calculateCuriosityScore();
+            console.log(`[execution-callback] curiosity score recalculated after task ${task_id}`);
+          }
+        } catch (csErr) {
+          console.warn('[execution-callback] curiosity score update failed (non-blocking):', csErr.message);
+        }
+      }).catch(err => console.error('[routes] silent error:', err));
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(err => console.error('[routes] silent error:', err));
 
       // 主动沟通：对话订阅模式 — 只有 Alex 问过的任务完成才发飞书通知（fire-and-forget）
