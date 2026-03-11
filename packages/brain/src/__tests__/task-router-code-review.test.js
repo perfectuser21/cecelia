@@ -11,14 +11,13 @@ describe('code_review task type routing', () => {
     expect(isValidTaskType('code_review')).toBe(true);
   });
 
-  it('LOCATION_MAP 中 code_review → us', () => {
-    expect(LOCATION_MAP['code_review']).toBe('us');
+  it('LOCATION_MAP 中 code_review → xian', () => {
+    expect(LOCATION_MAP['code_review']).toBe('xian');
   });
 
-  it('getTaskLocation 路由 code_review 到 us', () => {
-    const task = { task_type: 'code_review' };
-    const result = getTaskLocation(task);
-    expect(result).toBe('us');
+  it('getTaskLocation 路由 code_review 到 xian', () => {
+    const result = getTaskLocation('code_review');
+    expect(result).toBe('xian');
   });
 
   it('code_review 大小写不敏感（isValidTaskType）', () => {
