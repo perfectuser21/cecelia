@@ -143,19 +143,6 @@ describe('execution-callback: quota_exhausted 状态', () => {
   });
 
   it('DB UPDATE 应包含 quota_exhausted_at 字段且 newStatus=quota_exhausted', async () => {
-    let capturedSql = null;
-    let capturedParams = null;
-    mockClient.query.mockImplementation((sql, params) => {
-      if (typeof sql === 'string' && sql.includes('UPDATE tasks') && !sql.includes('decision_log')) {
-        capturedSql = sql;
-        capturedParams = params;
-      }
-      if (typeof sql === 'string' && sql.includes('BEGIN')) return Promise.resolve({});
-      if (typeof sql === 'string' && sql.includes('COMMIT')) return Promise.resolve({});
-      if (typeof sql === 'string' && sql.includes('ROLLBACK')) return Promise.resolve({});
-      return Promise.resolve({ rows: [], rowCount: 1 });
-    });
-
     await mockReqRes('POST', '/execution-callback', {
       task_id: 'task-quota-4',
       run_id: 'run-quota-4',
@@ -163,9 +150,15 @@ describe('execution-callback: quota_exhausted 状态', () => {
       result: null,
     });
 
-    expect(capturedSql).toContain('quota_exhausted_at');
-    expect(capturedParams[1]).toBe('quota_exhausted');
-    // $11 (index 10) is isQuotaExhausted = true
-    expect(capturedParams[10]).toBe(true);
+    // 在 client.query 的所有调用中找含 quota_exhausted_at 的 UPDATE
+    const updateCall = mockClient.query.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('quota_exhausted_at')
+    );
+    expect(updateCall).toBeDefined();
+    const params = updateCall[1];
+    // $2 = newStatus
+    expect(params[1]).toBe('quota_exhausted');
+    // $11 (index 10) = isQuotaExhausted = true
+    expect(params[10]).toBe(true);
   });
 });
