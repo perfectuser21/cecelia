@@ -12074,4 +12074,50 @@ router.get('/docs/instruction-book', async (req, res) => {
   }
 });
 
+// ─── Deploy Webhook ──────────────────────────────────────────────────────────
+// POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
+router.post('/deploy', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+
+  if (!expectedToken) {
+    return res.status(500).json({ error: 'DEPLOY_TOKEN not configured on server' });
+  }
+  if (!token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+
+  const { changed_paths } = req.body || {};
+
+  // 异步执行部署，立即返回 202
+  res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
+
+  const { execSync } = await import('child_process');
+  const startTime = Date.now();
+
+  try {
+    // 构建 deploy-local.sh 参数
+    const scriptDir = new URL('../../../scripts/deploy-local.sh', import.meta.url).pathname;
+    let cmd = `bash "${scriptDir}" main`;
+
+    if (changed_paths && changed_paths.length > 0) {
+      const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
+      cmd = `bash "${scriptDir}" --changed="${escaped}" main`;
+    }
+
+    console.log(`[deploy-webhook] 开始部署: ${cmd}`);
+    execSync(cmd, {
+      cwd: new URL('../../..', import.meta.url).pathname,
+      timeout: 600_000, // 10 分钟超时
+      stdio: 'inherit',
+    });
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[deploy-webhook] ✅ 部署成功 (${elapsed}s)`);
+  } catch (err) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`[deploy-webhook] ❌ 部署失败 (${elapsed}s):`, err.message);
+  }
+});
+
 export default router;
