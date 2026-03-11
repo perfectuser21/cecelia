@@ -67,7 +67,7 @@ describe('Auto Learning Module', () => {
       expect(mockPool.query).toHaveBeenCalledTimes(3);
       expect(mockPool.query).toHaveBeenNthCalledWith(
         1,
-        'SELECT task_type, title FROM tasks WHERE id = $1',
+        'SELECT task_type, title, error_message FROM tasks WHERE id = $1',
         ['test-task']
       );
       expect(mockPool.query).toHaveBeenNthCalledWith(
