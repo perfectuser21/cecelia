@@ -34,10 +34,65 @@ import {
   getDmesgInfo as platformGetDmesgInfo,
   countClaudeProcesses,
   calculatePhysicalCapacity,
-  getAvailableMemoryMB,
-  getMacOSMemoryPressure,
   IS_DARWIN,
 } from './platform-utils.js';
+
+/**
+ * Get macOS memory pressure level via sysctl vm.memory_pressure.
+ * Inlined from platform-utils to avoid vitest mock interference in tests.
+ * Returns 0/1/2/3 or -1 on error.
+ * @returns {number}
+ */
+function getMacOSMemoryPressure() {
+  if (process.platform !== 'darwin') return -1;
+  try {
+    const output = execSync('sysctl vm.memory_pressure', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    }).trim();
+    const match = output.match(/vm\.memory_pressure:\s*(\d+)/);
+    if (match) {
+      const level = parseInt(match[1], 10);
+      return [0, 1, 2, 3].includes(level) ? level : -1;
+    }
+    return -1;
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * Get available memory in MB — platform-aware.
+ * Inlined from platform-utils to avoid vitest mock interference in tests.
+ * @returns {number} Available memory in MB
+ */
+function getAvailableMemoryMB() {
+  if (process.platform === 'darwin') {
+    try {
+      const output = execSync('vm_stat', { encoding: 'utf-8', timeout: 2000 });
+      const pageSizeMatch = output.match(/page size of (\d+) bytes/);
+      const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 16384;
+      const activeMatch = output.match(/Pages active:\s+(\d+)/);
+      const wiredMatch = output.match(/Pages wired down:\s+(\d+)/);
+      const freeMatch = output.match(/Pages free:\s+(\d+)/);
+      const inactiveMatch = output.match(/Pages inactive:\s+(\d+)/);
+      const speculativeMatch = output.match(/Pages speculative:\s+(\d+)/);
+      const activePages = activeMatch ? parseInt(activeMatch[1], 10) : 0;
+      const wiredPages = wiredMatch ? parseInt(wiredMatch[1], 10) : 0;
+      const freePages = freeMatch ? parseInt(freeMatch[1], 10) : 0;
+      const inactivePages = inactiveMatch ? parseInt(inactiveMatch[1], 10) : 0;
+      const speculativePages = speculativeMatch ? parseInt(speculativeMatch[1], 10) : 0;
+      const totalPages = activePages + wiredPages + freePages + inactivePages + speculativePages;
+      if (totalPages === 0) return Math.round(os.freemem() / 1024 / 1024);
+      const usedPages = activePages + wiredPages;
+      const used_ratio = usedPages / totalPages;
+      return Math.round((1 - used_ratio) * totalPages * pageSize / 1024 / 1024);
+    } catch {
+      return Math.round(os.freemem() / 1024 / 1024);
+    }
+  }
+  return Math.round(os.freemem() / 1024 / 1024);
+}
 
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
@@ -2206,13 +2261,13 @@ async function syncOrphanTasksOnStartup() {
       await pool.query(
         `UPDATE tasks SET
           status = 'failed',
-          error_message = $2,
-          payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+          error_message = $3,
+          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
         WHERE id = $1`,
         [
           task.id,
-          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
           JSON.stringify({ error_details: errorDetails }),
+          `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
         ]
       );
 
