@@ -417,14 +417,40 @@ async function _checkOutputDedup(hash) {
 // ============================================================
 
 /**
+ * 写入 cortex_call_log（fire-and-forget，不阻塞主流程）
+ */
+async function _logCortexCall({ trigger, status, duration_ms, http_status, model, error_summary }) {
+  try {
+    await pool.query(
+      `INSERT INTO cortex_call_log (trigger, status, duration_ms, http_status, model, error_summary)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [trigger || 'unknown', status, duration_ms ?? null, http_status ?? null, model ?? null, error_summary ?? null]
+    );
+  } catch (err) {
+    console.warn('[cortex] _logCortexCall write failed:', err.message);
+  }
+}
+
+/**
  * 调用皮层 LLM 进行深度分析（通过统一 callLLM 层）
  * @param {string} prompt
+ * @param {{ trigger?: string }} [opts]
  * @returns {Promise<string>}
  */
-async function callCortexLLM(prompt) {
+async function callCortexLLM(prompt, { trigger } = {}) {
   const cortexTimeout = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
-  const { text } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
-  return text;
+  try {
+    const { text, model, elapsed_ms } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
+    _logCortexCall({ trigger, status: 'success', duration_ms: elapsed_ms, http_status: null, model, error_summary: null })
+      .catch(() => {});
+    return text;
+  } catch (err) {
+    const httpStatus = err.status ?? null;
+    const errorSummary = String(err.message || err).slice(0, 500);
+    _logCortexCall({ trigger, status: 'failed', duration_ms: null, http_status: httpStatus, model: null, error_summary: errorSummary })
+      .catch(() => {});
+    throw err;
+  }
 }
 
 // ============================================================
@@ -614,7 +640,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 
   try {
-    const response = await callCortexLLM(prompt);
+    const response = await callCortexLLM(prompt, { trigger: event.type || 'analyze_deep' });
     const decision = parseCortexDecision(response);
 
     // 验证
@@ -1221,7 +1247,7 @@ async function generateSystemReport({ timeRangeHours = 48 } = {}) {
 
   let reportData;
   try {
-    const response = await callCortexLLM(prompt);
+    const response = await callCortexLLM(prompt, { trigger: 'generate_system_report' });
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('LLM response missing JSON');
