@@ -58,29 +58,34 @@ export async function recordLearning(analysis) {
     // 计算 content_hash 进行去重
     const hashInput = `${title}\n${content}`;
     const contentHash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 16);
+    // root_cause_hash: hash of normalized root_cause text
+    const rootCauseHash = rcaAnalysis.root_cause
+      ? crypto.createHash('sha256').update(String(rcaAnalysis.root_cause).trim()).digest('hex').slice(0, 16)
+      : null;
 
     // 检查是否已存在相同 hash 的记录
     const existing = await pool.query(
-      'SELECT id, version FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
+      'SELECT id, version, occurrence_count FROM learnings WHERE content_hash = $1 AND is_latest = true LIMIT 1',
       [contentHash]
     );
 
     if (existing.rows.length > 0) {
-      // 已存在：更新版本号，不重复插入
+      // 已存在：更新版本号 + occurrence_count，不重复插入
       const existingId = existing.rows[0].id;
       const newVersion = (existing.rows[0].version || 1) + 1;
+      const newCount = (existing.rows[0].occurrence_count || 1) + 1;
       await pool.query(
-        'UPDATE learnings SET version = $1, metadata = metadata || $2, created_at = NOW() WHERE id = $3',
-        [newVersion, JSON.stringify({ last_duplicate_at: new Date().toISOString() }), existingId]
+        'UPDATE learnings SET version = $1, occurrence_count = $2, metadata = metadata || $3, created_at = NOW() WHERE id = $4',
+        [newVersion, newCount, JSON.stringify({ last_duplicate_at: new Date().toISOString() }), existingId]
       );
-      console.log(`[learning] Deduplicated: existing=${existingId} version=${newVersion}`);
+      console.log(`[learning] Deduplicated: existing=${existingId} version=${newVersion} occurrence_count=${newCount}`);
       return existing.rows[0];
     }
 
     const summary = generateL0Summary(`${title} ${content}`);
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, root_cause_hash, occurrence_count, version, is_latest, summary)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 1, true, $9)
       RETURNING *
     `, [
       title,
@@ -90,6 +95,7 @@ export async function recordLearning(analysis) {
       JSON.stringify(strategyAdjustments),
       JSON.stringify({ task_id, confidence: analysis.confidence }),
       contentHash,
+      rootCauseHash,
       summary,
     ]);
 
@@ -124,6 +130,99 @@ export async function recordLearning(analysis) {
     return learning;
   } catch (err) {
     console.error(`[learning] Failed to record learning: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Compute root_cause_hash: SHA-256 of normalized content, first 16 hex chars.
+ * Strips leading/trailing whitespace before hashing to reduce noise.
+ * @param {string} content - Raw content string
+ * @returns {string} 16-char hex hash
+ */
+function computeRootCauseHash(content) {
+  const normalized = String(content || '').trim();
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
+/**
+ * Simple learning recorder — convenience wrapper with explicit category support.
+ *
+ * Unlike recordLearning() (which expects a full RCA analysis object), addLearning()
+ * accepts a plain content string plus an explicit category, suitable for ad-hoc
+ * learning capture from cortex or thalamus without a full RCA context.
+ *
+ * Dedup logic:
+ *   - If root_cause_hash matches an existing record → increment occurrence_count
+ *   - Otherwise → insert new record with occurrence_count = 1
+ *
+ * @param {string} content - Learning text (insight, error pattern, etc.)
+ * @param {string} [category='general'] - Category tag (e.g. 'network_error', 'test_failure',
+ *   'schema_drift', 'ci_failure', 'retry_logic', 'cortex_insight', 'failure_pattern')
+ * @param {Object} [opts={}] - Optional overrides
+ * @param {string} [opts.title] - Custom title (defaults to first 100 chars of content)
+ * @param {string} [opts.triggerEvent='add_learning'] - Event that triggered this learning
+ * @param {Object} [opts.metadata={}] - Extra metadata to store
+ * @returns {Promise<Object>} The inserted or updated learning row
+ */
+export async function addLearning(content, category = 'general', opts = {}) {
+  const {
+    title: customTitle,
+    triggerEvent = 'add_learning',
+    metadata = {},
+  } = opts;
+
+  const contentStr = String(content || '').trim();
+  const title = customTitle || `Learning: ${contentStr.slice(0, 100)}`;
+  const rootCauseHash = computeRootCauseHash(contentStr);
+
+  try {
+    // Check for existing record by root_cause_hash → increment occurrence_count
+    const existing = await pool.query(
+      'SELECT id, occurrence_count FROM learnings WHERE root_cause_hash = $1 AND is_latest = true LIMIT 1',
+      [rootCauseHash]
+    );
+
+    if (existing.rows.length > 0) {
+      const existingId = existing.rows[0].id;
+      const newCount = (existing.rows[0].occurrence_count || 1) + 1;
+      await pool.query(
+        'UPDATE learnings SET occurrence_count = $1, metadata = metadata || $2 WHERE id = $3',
+        [newCount, JSON.stringify({ last_seen_at: new Date().toISOString() }), existingId]
+      );
+      console.log(`[learning] addLearning: dedup occurrence_count=${newCount} id=${existingId}`);
+      return { id: existingId, occurrence_count: newCount, deduplicated: true };
+    }
+
+    // New record
+    const summary = generateL0Summary(`${title} ${contentStr}`);
+    const result = await pool.query(`
+      INSERT INTO learnings
+        (title, category, trigger_event, content, strategy_adjustments, metadata,
+         content_hash, root_cause_hash, occurrence_count, version, is_latest, summary)
+      VALUES ($1, $2, $3, $4, '[]', $5, $6, $7, 1, 1, true, $8)
+      RETURNING *
+    `, [
+      title,
+      category,
+      triggerEvent,
+      contentStr,
+      JSON.stringify({ recorded_at: new Date().toISOString(), ...metadata }),
+      // content_hash: hash of title+content (used by recordLearning dedup path)
+      crypto.createHash('sha256').update(`${title}\n${contentStr}`).digest('hex').slice(0, 16),
+      rootCauseHash,
+      summary,
+    ]);
+
+    const learning = result.rows[0];
+    console.log(`[learning] addLearning: recorded id=${learning.id} category=${category}`);
+
+    // Fire-and-forget embedding generation
+    generateLearningEmbeddingAsync(learning.id, `${title}\n\n${contentStr}`.substring(0, 4000));
+
+    return learning;
+  } catch (err) {
+    console.error(`[learning] addLearning failed: ${err.message}`);
     throw err;
   }
 }
