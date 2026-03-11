@@ -2,8 +2,7 @@ name: Deploy
 
 # 合并到 main 后自动部署（Brain + Workspace）
 # 触发：push to main only（PR 合并通过 CI 检查后自动触发）
-# 迁移自：brain-ci.yml (deploy-brain) + workspace-ci.yml (deploy-workspace)
-# Phase 3: 加入路径过滤，只在相关文件变更时触发对应部署
+# 方案：GitHub Actions → Brain Webhook → 本地部署脚本
 
 on:
   push:
@@ -21,6 +20,7 @@ jobs:
     outputs:
       brain: ${{ steps.filter.outputs.brain }}
       workspace: ${{ steps.filter.outputs.workspace }}
+      changed_paths: ${{ steps.filter.outputs.changed_paths }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +34,7 @@ jobs:
           if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             echo "brain=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
+            echo "changed_paths=packages/brain/ apps/" >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" 2>/dev/null || git diff --name-only HEAD~1 HEAD)
@@ -47,57 +48,54 @@ jobs:
           else
             echo "workspace=false" >> $GITHUB_OUTPUT
           fi
+          # Pass changed paths to webhook
+          PATHS=$(echo "$CHANGED" | tr '\n' ' ')
+          echo "changed_paths=$PATHS" >> $GITHUB_OUTPUT
 
-  # ─── Deploy Brain to VPS ───────────────────────────────────────────────
+  # ─── Trigger Deploy via Brain Webhook ────────────────────────────────────
 
-  deploy-brain:
-    name: Deploy Brain
+  deploy:
+    name: Trigger Deploy
     needs: changes
-    if: needs.changes.outputs.brain == 'true'
+    if: needs.changes.outputs.brain == 'true' || needs.changes.outputs.workspace == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - name: Deploy to US VPS via SSH
+      - name: Call Brain deploy webhook
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'https://dev-autopilot.zenjoymedia.media' }}
         run: |
-          if [ -z "$DEPLOY_SSH_KEY" ]; then
-            echo "::error::DEPLOY_SSH_KEY secret not configured."
-            echo "Setup: ssh-keygen -t ed25519 -f ~/.ssh/cecelia_deploy && ssh-copy-id xx@146.190.52.84 && gh secret set DEPLOY_SSH_KEY < ~/.ssh/cecelia_deploy"
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            echo "::error::DEPLOY_TOKEN secret not configured."
+            echo "Setup: gh secret set DEPLOY_TOKEN --body '<your-token>'"
             exit 1
           fi
-          printf '%s\n' "$DEPLOY_SSH_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          ssh -i /tmp/deploy_key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=30 \
-            xx@146.190.52.84 \
-            "cd /home/xx/perfect21/cecelia && git pull origin main && bash scripts/brain-deploy.sh"
-          rm -f /tmp/deploy_key
 
-  # ─── Deploy Workspace (Dashboard) to VPS ──────────────────────────────
+          CHANGED_PATHS='${{ needs.changes.outputs.changed_paths }}'
 
-  deploy-workspace:
-    name: Deploy Workspace
-    needs: changes
-    if: needs.changes.outputs.workspace == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Deploy to US VPS via SSH
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          if [ -z "$DEPLOY_SSH_KEY" ]; then
-            echo "::error::DEPLOY_SSH_KEY secret not configured."
-            echo "Setup: ssh-keygen -t ed25519 -f ~/.ssh/cecelia_deploy && ssh-copy-id xx@146.190.52.84 && gh secret set DEPLOY_SSH_KEY < ~/.ssh/cecelia_deploy"
+          # Convert space-separated paths to JSON array
+          JSON_PATHS=$(echo "$CHANGED_PATHS" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
+
+          echo "Triggering deploy webhook..."
+          echo "  URL: ${BRAIN_URL}/api/brain/deploy"
+          echo "  Changed paths: $CHANGED_PATHS"
+
+          HTTP_CODE=$(curl -s -o /tmp/deploy_response.txt -w "%{http_code}" \
+            -X POST "${BRAIN_URL}/api/brain/deploy" \
+            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"changed_paths\": ${JSON_PATHS}}" \
+            --connect-timeout 30 \
+            --max-time 60)
+
+          echo "Response code: $HTTP_CODE"
+          cat /tmp/deploy_response.txt
+          echo ""
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Deploy webhook triggered successfully"
+          else
+            echo "::error::Deploy webhook failed with HTTP $HTTP_CODE"
             exit 1
           fi
-          printf '%s\n' "$DEPLOY_SSH_KEY" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
-          ssh -i /tmp/deploy_key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=30 \
-            xx@146.190.52.84 \
-            "cd /home/xx/perfect21/cecelia && git pull origin main && cd apps/dashboard && npm install --prefer-offline && npm run build"
-          rm -f /tmp/deploy_key
