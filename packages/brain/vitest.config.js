@@ -32,12 +32,12 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 30000,
-    isolate: false,   // isolate:false — Batch 1-4 完成，Batch 5-6 待处理（event-bus/singleton state）
+    isolate: true,    // isolate:true — 每个测试文件独立模块注册表，消除跨文件 mock 污染
     pool: 'forks',
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 5  // 防止 OOM：isolate:false 下每个 worker 内部共享，5 个 fork 足够
+        maxForks: 4   // isolate:true 下内存开销更大，限制 4 个 fork 防 OOM
       }
     }
   }
