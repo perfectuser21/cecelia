@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] deploy.yml 废弃 SSH 方案改 webhook — DoD 否定断言不能含 echo（PR #837）
+
+**失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate + Config Audit）
+
+### 根本原因
+
+1. DoD 的 `! grep ... ; test $? -eq 1 && echo 1 || echo 0` 含 `echo`，被 `check-dod-mapping.cjs` 识别为假测试
+2. 改了 `.github/workflows/deploy.yml` 时 PR title 需含 `[CONFIG]` 或 `[INFRA]` 标签
+3. LEARNINGS.md 未在首次 push 中包含
+
+### 下次预防
+
+- [ ] DoD 否定断言用 `! grep -q 'pattern' file`（不含 echo），不用 `grep + test + echo` 组合
+- [ ] 改 CI workflow 文件时 PR title 必须含 `[CONFIG]` 标签
+- [ ] 首次 commit 就包含 LEARNINGS.md 条目
+
 ### [2026-03-11] DoD Test 路径必须用相对路径 — CI 在 Ubuntu 上跑（PR #834）
 
 **失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate）
