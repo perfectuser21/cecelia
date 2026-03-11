@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 # Cecelia-Run: 无头执行器（Stop Hook 驱动）
 #
 # 用法:
@@ -17,6 +18,17 @@
 
 set -euo pipefail
 
+# 如果以 root 运行，重新以 administrator 身份执行（claude 拒绝 root + setsid 下的 --dangerously-skip-permissions）
+if [[ "$(id -u)" == "0" ]]; then
+  echo "[cecelia-run] 检测到 root 运行，切换到 administrator 重新执行..." >&2
+  # 收集所有相关环境变量
+  _env_args=()
+  for _var in $(compgen -v 2>/dev/null | grep -E '^(CECELIA_|WEBHOOK_URL|WORKTREE_BASE|REPO_ROOT|LOCK_DIR|MAX_CONCURRENT)'); do
+    _env_args+=("$_var=${!_var}")
+  done
+  exec sudo -u administrator env HOME=/Users/administrator PATH="$PATH" "${_env_args[@]}" "$0" "$@"
+fi
+
 # 配置
 # 并发槽位数：只看 CECELIA_MAX_CONCURRENT（旧 bridge 可能传 MAX_CONCURRENT=3，忽略）
 MAX_CONCURRENT="${CECELIA_MAX_CONCURRENT:-12}"
@@ -25,7 +37,7 @@ LOCK_DIR="${LOCK_DIR:-/tmp/cecelia-locks}"
 WEBHOOK_URL="http://localhost:5221/api/brain/execution-callback"
 WEBHOOK_TOKEN="${CECELIA_WEBHOOK_TOKEN:-}"
 LOG_FILE="${CECELIA_LOG_FILE:-$HOME/logs/cecelia-run.log}"
-WORK_DIR="${CECELIA_WORK_DIR:-/home/xx/perfect21/cecelia}"
+WORK_DIR="${CECELIA_WORK_DIR:-/Users/administrator/perfect21/cecelia}"
 MAX_RETRIES="${CECELIA_MAX_RETRIES:-5}"
 
 # 确保日志目录存在
@@ -43,9 +55,8 @@ fi
 
 mkdir -p "$LOCK_DIR"
 
-# 清理僵尸任务（闲置超过 10 分钟的）+ 清理空 slot 目录
+# 清理死进程 slot + 空目录（不杀活进程，由 Brain timeout/watchdog/liveness 处理）
 cleanup_zombies() {
-  local idle_threshold=600
   for slot_dir in "$LOCK_DIR"/slot-*/; do
     [[ -d "$slot_dir" ]] || continue
 
@@ -56,26 +67,14 @@ cleanup_zombies() {
     fi
 
     local pid=$(jq -r '.pid' "$slot_dir/info.json" 2>/dev/null)
-    local task_id=$(jq -r '.task_id' "$slot_dir/info.json" 2>/dev/null)
 
-    # 进程已死
+    # 进程已死 → 清理 slot
     if ! kill -0 "$pid" 2>/dev/null; then
       rm -rf "$slot_dir"
       continue
     fi
 
-    # 检查闲置时间
-    local log_file="/tmp/cecelia-${task_id}.log"
-    if [[ -f "$log_file" ]]; then
-      local last_mod=$(stat -c %Y "$log_file" 2>/dev/null)
-      local now=$(date +%s)
-      local idle=$((now - last_mod))
-      local cpu=$(ps -p "$pid" -o %cpu --no-headers 2>/dev/null | tr -d ' ')
-      if [[ "${cpu:-0}" == "0.0" ]] && [[ $idle -gt $idle_threshold ]]; then
-        kill -9 "$pid" 2>/dev/null
-        rm -rf "$slot_dir"
-      fi
-    fi
+    # 进程还活着 → 不动它
   done
 }
 
@@ -158,6 +157,31 @@ log_execution() {
   echo "$log_entry" >> "$LOG_FILE"
 }
 
+# 根据退出码和 stderr 分类失败原因
+# exit 143（SIGTERM/超时）→ resource_killed
+# exit 1 + stderr 含 worktree 错误 → env_setup
+# exit 1 其他 → code_error
+classify_failure_class() {
+  local exit_code="$1"
+  local err_file="$2"
+
+  if [[ $exit_code -eq 143 ]]; then
+    echo "resource_killed"
+    return
+  fi
+
+  if [[ $exit_code -eq 1 ]] && [[ -f "$err_file" ]]; then
+    local stderr_content
+    stderr_content=$(cat "$err_file" 2>/dev/null || echo "")
+    if echo "$stderr_content" | grep -qiE "worktree|env_setup|worktree_script_missing|worktree_creation_failed"; then
+      echo "env_setup"
+      return
+    fi
+  fi
+
+  echo "code_error"
+}
+
 # 发送 webhook 回调
 send_webhook() {
   local status="$1"
@@ -165,6 +189,7 @@ send_webhook() {
   local error_file="$3"
   local duration="$4"
   local attempt="$5"
+  local failure_class="${6:-}"
 
   if [[ -z "$WEBHOOK_URL" ]]; then
     return 0
@@ -184,6 +209,12 @@ send_webhook() {
       stderr_content=$(tail -c 4000 "$error_file" | sed 's/"/\\"/g' | tr '\n' ' ')
     fi
 
+    # 包含 failure_class 字段（仅在 AI Failed 且有分类时）
+    local failure_class_json="null"
+    if [[ "$status" == "AI Failed" && -n "$failure_class" ]]; then
+      failure_class_json="\"$failure_class\""
+    fi
+
     payload=$(jq -n \
       --arg task_id "$TASK_ID" \
       --arg checkpoint_id "$CHECKPOINT_ID" \
@@ -193,6 +224,7 @@ send_webhook() {
       --arg stderr "$stderr_content" \
       --argjson duration "$duration" \
       --argjson attempt "$attempt" \
+      --argjson failure_class "$failure_class_json" \
       '{
         task_id: $task_id,
         checkpoint_id: $checkpoint_id,
@@ -204,7 +236,7 @@ send_webhook() {
         attempt: $attempt,
         coding_type: "cecelia",
         timestamp: now | todate
-      }')
+      } + (if $failure_class != null then {failure_class: $failure_class} else {} end)')
   else
     payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt}"
   fi
@@ -223,10 +255,23 @@ send_webhook() {
   fi
 }
 
+# 递归杀进程树（解决 subagent 创建新 process group 导致 kill -PGID 杀不到的问题）
+kill_tree() {
+  local pid=$1
+  local sig=${2:-TERM}
+  # 先递归杀子进程
+  local children
+  children=$(pgrep -P "$pid" 2>/dev/null) || true
+  for child in $children; do
+    kill_tree "$child" "$sig"
+  done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+
 # 主逻辑
 main() {
   local start_time end_time duration
-  start_time=$(date +%s%3N)
+  start_time=$(python3 -c 'import time; print(int(time.time()*1000))')
 
   # 获取锁
   SLOT="$(get_lock)"
@@ -235,14 +280,16 @@ main() {
 
   CHILD_PGID=""
 
-  # 清理函数：释放锁 + 杀进程组 + 清理 worktree
+  # 清理函数：释放锁 + 递归杀进程树 + 清理 worktree
   cleanup() {
-    local pgid=${CHILD_PGID:-$CHILD_PID}
-    if [[ -n "$pgid" ]] && [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
-      kill -TERM -"$pgid" 2>/dev/null || kill -TERM "$CHILD_PID" 2>/dev/null
+    if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
+      echo "[cecelia-run] cleanup: 递归杀进程树 PID=$CHILD_PID" >&2
+      kill_tree "$CHILD_PID" TERM
       sleep 2
+      # 检查是否还有残留
       if kill -0 "$CHILD_PID" 2>/dev/null; then
-        kill -9 -"$pgid" 2>/dev/null || kill -9 "$CHILD_PID" 2>/dev/null
+        echo "[cecelia-run] cleanup: SIGTERM 未生效，发送 SIGKILL" >&2
+        kill_tree "$CHILD_PID" 9
       fi
     fi
     release_lock "$SLOT"
@@ -263,12 +310,12 @@ main() {
   local PROVIDER_ENV=""
   # CECELIA_CREDENTIALS: 通用账户选择（所有 provider 适用）
   # CECELIA_MINIMAX_CREDENTIALS: 旧版向后兼容
-  local CRED_NAME="${CECELIA_CREDENTIALS:-${CECELIA_MINIMAX_CREDENTIALS:-}}"
+  local CRED_NAME="${CECELIA_CREDENTIALS:-${CECELIA_SKILLENV_CECELIA_CREDENTIALS:-${CECELIA_MINIMAX_CREDENTIALS:-}}}"
 
   if [[ "${CECELIA_PROVIDER:-}" == "minimax" ]]; then
     local MINIMAX_CRED="${CRED_NAME:-minimax}"
     local MINIMAX_KEY
-    MINIMAX_KEY=$(python3 -c "import json; d=json.load(open('/home/xx/.credentials/${MINIMAX_CRED}.json')); print(d['api_key'])" 2>/dev/null)
+    MINIMAX_KEY=$(python3 -c "import json; d=json.load(open('/Users/administrator/.credentials/${MINIMAX_CRED}.json')); print(d['api_key'])" 2>/dev/null)
     if [[ -n "$MINIMAX_KEY" ]]; then
       # 官方文档：所有模型别名均设为 MiniMax-M2.5（https://platform.minimax.io/docs/coding-plan/claude-code）
       local MM_MODEL="MiniMax-M2.5"
@@ -287,10 +334,10 @@ main() {
     else
       echo "[cecelia-run] WARN: 账号目录 ${ACCOUNT_DIR} 不存在，falling back to default" >&2
     fi
-  elif [[ -n "$CRED_NAME" && "$CRED_NAME" != "anthropic" && "$CRED_NAME" != "account1" && -f "/home/xx/.credentials/${CRED_NAME}.json" ]]; then
+  elif [[ -n "$CRED_NAME" && "$CRED_NAME" != "anthropic" && "$CRED_NAME" != "account1" && -f "/Users/administrator/.credentials/${CRED_NAME}.json" ]]; then
     # Anthropic 多账户：从 credentials 文件读取 API key
     local ANTHROPIC_KEY
-    ANTHROPIC_KEY=$(python3 -c "import json; d=json.load(open('/home/xx/.credentials/${CRED_NAME}.json')); print(d['api_key'])" 2>/dev/null)
+    ANTHROPIC_KEY=$(python3 -c "import json; d=json.load(open('/Users/administrator/.credentials/${CRED_NAME}.json')); print(d['api_key'])" 2>/dev/null)
     if [[ -n "$ANTHROPIC_KEY" ]]; then
       PROVIDER_ENV="ANTHROPIC_API_KEY=$ANTHROPIC_KEY"
       echo "[cecelia-run] Provider: Anthropic cred=${CRED_NAME}" >&2
@@ -336,8 +383,8 @@ main() {
 
   # 准备输出文件
   local out_json err_log
-  out_json=$(mktemp "/tmp/cecelia-out.${TASK_ID}.XXXXXX.json")
-  err_log=$(mktemp "/tmp/cecelia-err.${TASK_ID}.XXXXXX.log")
+  out_json=$(mktemp "/tmp/cecelia-out.${TASK_ID}.XXXXXX")
+  err_log=$(mktemp "/tmp/cecelia-err.${TASK_ID}.XXXXXX")
 
   # 自动创建 worktree 隔离（无头模式必须隔离，避免和有头会话冲突）
   # 安全原则：worktree 失败 → 中止任务，绝不降级到主仓库
@@ -352,16 +399,16 @@ main() {
   if [[ ! -f "$WORKTREE_SCRIPT" ]]; then
     echo "[cecelia-run] ❌ worktree-manage.sh 不存在 ($WORKTREE_SCRIPT)，中止任务" >&2
     local abort_end abort_duration
-    abort_end=$(date +%s%3N)
+    abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_script_missing" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
 
   local wt_path wt_stderr_log
-  wt_stderr_log=$(mktemp "/tmp/cecelia-wt-err.${TASK_ID}.XXXXXX.log")
+  wt_stderr_log=$(mktemp "/tmp/cecelia-wt-err.${TASK_ID}.XXXXXX")
   wt_path=$(cd "$WORK_DIR" && bash "$WORKTREE_SCRIPT" create "$task_slug" 2>"$wt_stderr_log" | tail -1) || true
 
   if [[ -n "$wt_path" && -d "$wt_path" ]]; then
@@ -376,10 +423,10 @@ main() {
     cat "$wt_stderr_log" >&2 2>/dev/null || true
     rm -f "$wt_stderr_log" 2>/dev/null || true
     local abort_end abort_duration
-    abort_end=$(date +%s%3N)
+    abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_creation_failed: $(cat "$wt_stderr_log" 2>/dev/null | head -3 || echo 'unknown error')" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
@@ -388,20 +435,33 @@ main() {
   local attempt=1
   local exit_code=0
 
+  # Resume support: 预分配 session ID，失败/超时后可用 --resume 接续（不重头烧 token）
+  local SESSION_UUID
+  SESSION_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+  echo "[cecelia-run] session_id=$SESSION_UUID (resume 支持已启用)" >&2
+
   while [[ $attempt -le $MAX_RETRIES ]]; do
     echo "[cecelia-run] Attempt $attempt/$MAX_RETRIES" >&2
 
     # claude -p 执行，setsid 隔离进程组 + wait 获取 PID
     # CRITICAL: unset CLAUDECODE to allow nested sessions (bypass check)
+    # Resume: attempt=1 用 --session-id 绑定 UUID；后续 attempt 用 --resume 接续（不烧重复 token）
     set +e
+    local CLAUDE_INVOKE
+    if [[ $attempt -eq 1 ]]; then
+      CLAUDE_INVOKE="claude -p \"\$1\" --session-id $SESSION_UUID"
+    else
+      echo "[cecelia-run] 🔄 从 checkpoint resume (attempt=$attempt, session=$SESSION_UUID)" >&2
+      CLAUDE_INVOKE="claude --resume $SESSION_UUID -p \"继续执行，上次因超时/中断未完成，请从中断处继续\""
+    fi
     if [[ "$PERMISSION_MODE" == "plan" ]]; then
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV claude -p \"\$1\" --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --permission-mode plan $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
     else
         echo "[cecelia-run] DEBUG: 启动 claude 进程..." >&2
       echo "[cecelia-run] DEBUG: WORK_DIR=$ACTUAL_WORK_DIR" >&2
       echo "[cecelia-run] DEBUG: MODEL_FLAG=$MODEL_FLAG" >&2
       echo "[cecelia-run] DEBUG: PROMPT=${original_prompt:0:200}..." >&2
-      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV claude -p \"\$1\" --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
+      setsid bash -c "cd '$ACTUAL_WORK_DIR' && unset CLAUDECODE && CECELIA_HEADLESS=true $PROVIDER_ENV $CLAUDE_INVOKE --dangerously-skip-permissions $MODEL_FLAG $MAX_TURNS_FLAG --output-format json >\"$out_json\" 2>\"$err_log\"" _ "$original_prompt" &
     fi
     CHILD_PID=$!
 
@@ -427,18 +487,18 @@ main() {
     exit_code=$?
     echo "[cecelia-run] DEBUG: 进程退出，exit_code=$exit_code" >&2
 
-    # 清理 setsid 进程组中残留的子进程（防止 claude 变成孤儿进程）
-    if [[ -n "$CHILD_PGID" ]]; then
+    # 清理所有残留子进程（递归杀进程树，解决 subagent 跨 PGID 问题）
+    if [[ -n "$CHILD_PID" ]]; then
       local remaining
-      remaining=$(ps -o pid= -g "$CHILD_PGID" 2>/dev/null | wc -l)
+      remaining=$(pgrep -P "$CHILD_PID" 2>/dev/null | wc -l)
       if [[ "$remaining" -gt 0 ]]; then
-        echo "[cecelia-run] 清理进程组 PGID=$CHILD_PGID 中 $remaining 个残留进程" >&2
-        kill -TERM -"$CHILD_PGID" 2>/dev/null || true
+        echo "[cecelia-run] 清理 PID=$CHILD_PID 进程树中 $remaining 个残留子进程" >&2
+        kill_tree "$CHILD_PID" TERM
         sleep 2
-        remaining=$(ps -o pid= -g "$CHILD_PGID" 2>/dev/null | wc -l)
+        remaining=$(pgrep -P "$CHILD_PID" 2>/dev/null | wc -l)
         if [[ "$remaining" -gt 0 ]]; then
           echo "[cecelia-run] SIGTERM 未生效，发送 SIGKILL" >&2
-          kill -9 -"$CHILD_PGID" 2>/dev/null || true
+          kill_tree "$CHILD_PID" 9
         fi
       fi
     fi
@@ -461,12 +521,20 @@ main() {
       continue
     fi
 
+    # exit 143 = SIGTERM/超时被杀，session 已持久化 → resume 重试，不计熔断器
+    if [[ $exit_code -eq 143 ]]; then
+      echo "[cecelia-run] ⚡ 超时被杀 (exit 143)，session 已保存，下次 attempt 将 resume..." >&2
+      attempt=$((attempt + 1))
+      sleep 3
+      continue
+    fi
+
     # 其他错误 = 真正失败
     echo "[cecelia-run] ❌ 执行失败 exit_code=$exit_code" >&2
     break
   done
 
-  end_time=$(date +%s%3N)
+  end_time=$(python3 -c 'import time; print(int(time.time()*1000))')
   duration=$((end_time - start_time))
 
   # 确定最终状态
@@ -525,8 +593,15 @@ main() {
     fi
   fi
 
+  # 分类失败原因（仅在 AI Failed 时）
+  local failure_class_val=""
+  if [[ "$status" == "AI Failed" ]]; then
+    failure_class_val=$(classify_failure_class "$exit_code" "$err_log")
+    echo "[cecelia-run] failure_class=$failure_class_val (exit_code=$exit_code)" >&2
+  fi
+
   # 发送 webhook 回调
-  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt"
+  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt" "$failure_class_val"
 
   # 写入结构化日志
   log_execution "$status" "$exit_code" "$duration" "$SLOT" "$attempt"

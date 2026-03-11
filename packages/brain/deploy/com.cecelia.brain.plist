@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>CECELIA_RUN_PATH</key>
+		<string>/Users/administrator/perfect21/cecelia/packages/brain/scripts/cecelia-run.sh</string>
+		<key>CECELIA_WORK_DIR</key>
+		<string>/Users/administrator/perfect21/cecelia</string>
+		<key>ENV_REGION</key>
+		<string>us</string>
+		<key>HOME</key>
+		<string>/Users/administrator</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>REPO_ROOT</key>
+		<string>/Users/administrator/perfect21/cecelia</string>
+		<key>WORKTREE_BASE</key>
+		<string>/Users/administrator/perfect21/cecelia/.claude/worktrees</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.cecelia.brain</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/Users/administrator/perfect21/cecelia/packages/brain/server.js</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/administrator/perfect21/cecelia/logs/brain-error.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/administrator/perfect21/cecelia/logs/brain.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>UserName</key>
+	<string>administrator</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/administrator/perfect21/cecelia/packages/brain</string>
+</dict>
+</plist>
