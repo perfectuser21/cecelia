@@ -56,7 +56,7 @@ vi.mock('../thalamus.js', () => ({
 
 import {
   runRumination, runManualRumination, getRuminationStatus,
-  getUndigestedCount, _resetState, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
+  getUndigestedCount, _resetState, _setDailyCount, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
   buildRuminationPrompt, buildNotebookQuery,
 } from '../rumination.js';
 
@@ -433,6 +433,33 @@ describe('rumination', () => {
       setupLearningsOnly(pool, []);
       const result = await runManualRumination(pool);
       expect(result.skipped).toBe('no_undigested');
+    });
+
+    it('force=false 时预算耗尽返回 daily_budget_exhausted', async () => {
+      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      const result = await runManualRumination(pool, { force: false });
+      expect(result.skipped).toBe('daily_budget_exhausted');
+      expect(result.digested).toBe(0);
+    });
+
+    it('force=true 时绕过 daily_budget，消化成功', async () => {
+      _setDailyCount(DAILY_BUDGET); // 模拟预算已满
+      setupLearningsOnly(pool, [{ id: 'f1', title: 'force 测试', content: '强制消化', category: 'test' }]);
+
+      const result = await runManualRumination(pool, { force: true });
+      expect(result.skipped).toBeUndefined();
+      expect(result.digested).toBe(1);
+      expect(result.manual).toBe(true);
+    });
+
+    it('force=true 时冷却期仍然生效', async () => {
+      // 先运行一次触发冷却
+      setupLearningsOnly(pool, [{ id: 'l1', title: 'test', content: 'c', category: 'u' }]);
+      await runManualRumination(pool, { force: true });
+
+      // 立即再次运行 — force=true 不绕过冷却期
+      const result = await runManualRumination(pool, { force: true });
+      expect(result.skipped).toBe('cooldown');
     });
   });
 
