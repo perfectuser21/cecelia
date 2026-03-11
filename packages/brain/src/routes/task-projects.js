@@ -93,6 +93,25 @@ router.post('/compare/report', async (req, res) => {
   }
 });
 
+// POST /projects/compare/report/push — 将对比报告推送到 Notion
+// 必须在 /:id 之前注册，避免 "compare" 被当作 UUID 拦截
+router.post('/compare/report/push', async (req, res) => {
+  try {
+    const { project_ids, destination, format = 'markdown', notion_parent_id } = req.body;
+
+    if (destination !== 'notion') {
+      return res.status(400).json({ success: false, error: `不支持的 destination: ${destination}`, code: 'UNSUPPORTED_DESTINATION' });
+    }
+
+    const { pushCompareReportToNotion } = await import('../project-compare.js');
+    const result = await pushCompareReportToNotion({ project_ids, format, notion_parent_id });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
 // GET /projects/:id — 获取单个 project
 router.get('/:id', async (req, res) => {
   try {

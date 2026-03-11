@@ -349,3 +349,93 @@ export async function generateCompareReport({ project_ids, format = 'json', incl
 
   return response;
 }
+
+/**
+ * 将 Markdown 文本拆分为 Notion paragraph blocks
+ * 每段最多 2000 字符
+ */
+function markdownToNotionBlocks(markdown) {
+  const blocks = [];
+  const paragraphs = markdown.split(/\n\n+/);
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+    for (let i = 0; i < trimmed.length; i += 2000) {
+      blocks.push({
+        object: 'block',
+        type: 'paragraph',
+        paragraph: {
+          rich_text: [{ type: 'text', text: { content: trimmed.slice(i, i + 2000) } }],
+        },
+      });
+    }
+  }
+  return blocks;
+}
+
+/**
+ * 将项目对比报告推送到 Notion 页面
+ * @param {{ project_ids: string[], format?: string, notion_parent_id?: string, _generateFn?: Function }} options
+ *   _generateFn: 仅用于单元测试，注入 mock 替换 generateCompareReport
+ * @returns {{ success: true, notion_url: string, page_id: string }}
+ */
+export async function pushCompareReportToNotion({ project_ids, format = 'markdown', notion_parent_id, _generateFn }) {
+  const generate = _generateFn || generateCompareReport;
+  // 1. 生成 Markdown 报告（project_ids 校验由 generate 内部处理）
+  const report = await generate({ project_ids, format: 'markdown' });
+  const markdown = report.markdown || '';
+
+  // 2. 校验 NOTION_API_KEY
+  const token = process.env.NOTION_API_KEY;
+  if (!token) {
+    const err = new Error('NOTION_API_KEY 未配置');
+    err.status = 400;
+    err.code = 'NOTION_CONFIG_MISSING';
+    throw err;
+  }
+
+  // 3. 确定 parent page id
+  const parentId = notion_parent_id || process.env.NOTION_COMPARE_PARENT_ID;
+  if (!parentId) {
+    const err = new Error('notion_parent_id 未提供且 NOTION_COMPARE_PARENT_ID 未配置');
+    err.status = 400;
+    err.code = 'NOTION_PARENT_MISSING';
+    throw err;
+  }
+
+  // 4. 构造标题与 blocks
+  const today = new Date().toISOString().slice(0, 10);
+  const title = `项目对比报告 ${today}`;
+  const body = {
+    parent: { page_id: parentId },
+    properties: {
+      title: { title: [{ type: 'text', text: { content: title } }] },
+    },
+    children: markdownToNotionBlocks(markdown),
+  };
+
+  // 5. 调用 Notion API 创建页面
+  const resp = await fetch('https://api.notion.com/v1/pages', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Notion-Version': '2022-06-28',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    const err = new Error(data.message || 'Notion API 调用失败');
+    err.status = resp.status;
+    err.code = data.code || 'NOTION_API_ERROR';
+    throw err;
+  }
+
+  const page_id = data.id;
+  const notion_url = `https://notion.so/${page_id.replace(/-/g, '')}`;
+
+  return { success: true, notion_url, page_id };
+}
