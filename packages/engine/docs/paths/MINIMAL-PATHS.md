@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.34.0
+version: 3.35.0
 created: 2026-03-11
 updated: 2026-03-11
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.34.0: 从 feature-registry.yml 自动生成
+  - 3.35.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -254,6 +254,13 @@ changelog:
 
 ---
 
+### S8: Changed-Line Coverage Gate
+
+1. ✅ **fix:/docs:/chore: PR: 门禁 1 跳过（不要求新测试），门禁 3 仍检查覆盖率**
+2. ✅ **无源码变更: 全部门禁跳过**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -266,5 +273,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.34.0
+**版本**: 3.35.0
 **生成时间**: 2026-03-11
