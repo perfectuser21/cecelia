@@ -247,7 +247,7 @@ jobs:
           npx vitest run --coverage --reporter=verbose 2>&1 || true
           echo ""
           echo "Running changed-line coverage gate..."
-          node scripts/devgate/check-changed-coverage.cjs --base origin/main --coverage-dir ./coverage
+          node scripts/devgate/check-changed-coverage.cjs --base origin/main --coverage-dir ./coverage --project-root ${{ github.workspace }}
 
       # Build
       - name: Build
