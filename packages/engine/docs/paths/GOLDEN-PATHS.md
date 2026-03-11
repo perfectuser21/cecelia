@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.33.0
-created: 2026-03-10
-updated: 2026-03-10
+version: 3.34.0
+created: 2026-03-11
+updated: 2026-03-11
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.33.0: 从 feature-registry.yml 自动生成
+  - 3.34.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -375,6 +375,22 @@ CI 通过
 
 ---
 
+## GP-024: PRD Semantic Coverage Audit (S7)
+
+**Feature**: S7 - PRD Semantic Coverage Audit
+**Priority**: P0
+
+### Golden Path
+
+```
+PRD 写承诺 → DoD 分类 [ARTIFACT]/[BEHAVIOR]/[GATE] →
+BEHAVIOR 条目 Test 必须用 tests/*.test.ts 或 manual:curl →
+check-dod-mapping.cjs 拒绝 BEHAVIOR 用 grep/ls 弱测试 →
+Step 7.5 独立审计员验证 PRD vs 代码实现
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -387,5 +403,5 @@ CI 通过
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.33.0
-**生成时间**: 2026-03-10
+**版本**: 3.34.0
+**生成时间**: 2026-03-11
