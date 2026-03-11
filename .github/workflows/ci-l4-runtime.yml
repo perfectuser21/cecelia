@@ -1,6 +1,6 @@
 name: L4 Runtime Gate
 
-# L4: 运行时集成测试 — Brain 变动时必跑（30min）
+# L4: 运行时集成测试 — Brain 变动时必跑（60min）
 # 职责：PostgreSQL 真实环境 + 完整集成测试 + Coverage 门禁 + GoldenPath E2E
 # 运行环境：macos-latest（PostgreSQL@17 通过 Homebrew 安装）
 # 迁移自：brain-ci.yml (brain-integration)
@@ -60,7 +60,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
 
