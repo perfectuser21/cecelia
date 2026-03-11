@@ -9041,6 +9041,55 @@ router.get('/account/best', async (_req, res) => {
   }
 });
 
+// ==================== Codex Usage API ====================
+
+/**
+ * GET /api/brain/codex-usage
+ * 代理西安 codex-bridge 的 /accounts 端点，返回 5 个 Codex 账号用量
+ */
+let _codexUsageCache = null;
+let _codexUsageFetchedAt = 0;
+const CODEX_USAGE_TTL_MS = 3 * 60 * 1000; // 3 分钟缓存
+const CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+
+router.get('/codex-usage', async (_req, res) => {
+  try {
+    const now = Date.now();
+    if (_codexUsageCache && (now - _codexUsageFetchedAt) < CODEX_USAGE_TTL_MS) {
+      return res.json({ ok: true, usage: _codexUsageCache, cached: true });
+    }
+    const resp = await fetch(`${CODEX_BRIDGE_URL}/accounts`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`codex-bridge returned ${resp.status}`);
+    const data = await resp.json();
+    _codexUsageCache = data.accounts || {};
+    _codexUsageFetchedAt = now;
+    res.json({ ok: true, usage: _codexUsageCache, cached: false });
+  } catch (err) {
+    // 返回缓存（即使过期）或空对象
+    if (_codexUsageCache) {
+      return res.json({ ok: true, usage: _codexUsageCache, cached: true, stale: true });
+    }
+    res.status(502).json({ ok: false, error: `codex-bridge unreachable: ${err.message}` });
+  }
+});
+
+router.post('/codex-usage/refresh', async (_req, res) => {
+  try {
+    const resp = await fetch(`${CODEX_BRIDGE_URL}/accounts`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`codex-bridge returned ${resp.status}`);
+    const data = await resp.json();
+    _codexUsageCache = data.accounts || {};
+    _codexUsageFetchedAt = Date.now();
+    res.json({ ok: true, usage: _codexUsageCache });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `codex-bridge unreachable: ${err.message}` });
+  }
+});
+
 // ==================== Credentials API ====================
 
 /**
