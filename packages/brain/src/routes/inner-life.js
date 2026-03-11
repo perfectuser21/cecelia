@@ -9,7 +9,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { DAILY_BUDGET } from '../rumination.js';
+import { DAILY_BUDGET, runManualRumination } from '../rumination.js';
 
 const router = Router();
 
@@ -90,6 +90,32 @@ router.get('/', async (_req, res) => {
     });
   } catch (err) {
     console.error('[API] inner-life error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /run
+ * 手动触发反刍，支持 force 模式绕过每日预算
+ * Body: { force?: boolean }  默认 false
+ */
+router.post('/run', async (req, res) => {
+  try {
+    const force = req.body?.force === true;
+    const result = await runManualRumination(undefined, { force });
+
+    // 查询剩余积压数量
+    const { rows } = await pool.query(
+      'SELECT COUNT(*) AS cnt FROM learnings WHERE digested = false AND (archived = false OR archived IS NULL)'
+    );
+    const remainingBacklog = parseInt(rows[0]?.cnt || 0);
+
+    res.json({
+      ...result,
+      remaining_backlog: remainingBacklog,
+    });
+  } catch (err) {
+    console.error('[API] rumination/run error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
