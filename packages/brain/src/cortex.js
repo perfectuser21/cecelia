@@ -422,7 +422,12 @@ async function _checkOutputDedup(hash) {
  * @returns {Promise<string>}
  */
 async function callCortexLLM(prompt) {
-  const cortexTimeout = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
+  const cortexTimeout = parseInt(
+    process.env.CECELIA_CORTEX_TIMEOUT_MS ||
+    process.env.CECELIA_BRIDGE_TIMEOUT_MS ||
+    '300000', // 5 分钟，允许 Opus 慢响应（p99=147s）
+    10
+  );
   const { text } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
   return text;
 }
