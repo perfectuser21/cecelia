@@ -17,6 +17,22 @@ CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未随代码同批次
 - [ ] PRD 提到「bridge.js」时，优先搜索 `find . -name "*bridge*"`，确认实际路径（scripts/ vs src/）
 - [ ] LEARNINGS.md 必须随代码同批次 push，先写 Learning 再 push，不能分开
 
+## PR #848 fix(brain): migration 143 — 批量修正虚标 KR status（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate）。
+
+### 根本原因
+
+1. DoD L14 `test -f ... && echo OK` 含 `echo` 被 DevGate 判定为假测试，改用 `ls <file>`
+2. DoD L16 `grep -c 'UPDATE goals SET status'` 因 migration SQL 多行写法（UPDATE goals / SET status 分行）返回 0，改用 `grep -c 'UPDATE goals'` 单独匹配首行
+3. LEARNINGS.md 未在首次 push 前写入，触发 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] DoD 文件存在性测试：直接用 `ls <filepath>`，不加 `&& echo` 后缀
+- [ ] 多行 SQL grep：只匹配 UPDATE 的首个关键词（`UPDATE goals`），不要跨行匹配
+- [ ] LEARNINGS.md 必须在第一次 push **之前**写好并加入同一 commit
+
 ## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
 **失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
