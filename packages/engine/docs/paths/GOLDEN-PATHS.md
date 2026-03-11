@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.34.0
+version: 3.35.0
 created: 2026-03-11
 updated: 2026-03-11
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.34.0: 从 feature-registry.yml 自动生成
+  - 3.35.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -391,6 +391,21 @@ Step 7.5 独立审计员验证 PRD vs 代码实现
 
 ---
 
+## GP-025: Changed-Line Coverage Gate (S8)
+
+**Feature**: S8 - Changed-Line Coverage Gate
+**Priority**: P0
+
+### Golden Path
+
+```
+feat: PR → CI L3 Unit Tests → Coverage Gate →
+check-changed-coverage.cjs 检查三个门禁 →
+变更行覆盖率 ≥ 60% → 通过
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -403,5 +418,5 @@ Step 7.5 独立审计员验证 PRD vs 代码实现
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.34.0
+**版本**: 3.35.0
 **生成时间**: 2026-03-11
