@@ -152,17 +152,24 @@ jobs:
         working-directory: packages/brain
         run: node src/migrate.js
 
-      - name: Run Brain tests — failure detection (no coverage, no isolate)
+      - name: Run Brain tests — failure detection (sharded, no coverage)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: |
           set +e
-          # Phase 1: Run tests WITHOUT coverage and WITHOUT isolate to detect failures.
-          # isolate:true + 382 files causes OOM even at 8GB (module cache accumulation).
-          # --no-isolate shares module scope — lower memory, sufficient for failure detection.
-          npx vitest run --no-isolate --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-integration-output.txt
-          EXIT_CODE=${PIPESTATUS[0]}
+          # Phase 1: Run tests in 3 shards WITHOUT coverage to detect failures.
+          # 382 test files + isolate:true causes OOM in single fork (even at 8GB).
+          # Sharding splits files across 3 sequential runs, each ~127 files, preventing OOM.
+          TOTAL_FAILED=0
+          for SHARD in 1/3 2/3 3/3; do
+            echo "━━━ Shard $SHARD ━━━"
+            npx vitest run --shard=$SHARD --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-shard-${SHARD//\//-}.txt
+            SHARD_FAILED=$(grep -oE "[0-9]+ failed" /tmp/brain-shard-${SHARD//\//-}.txt | awk '{print $1}' | tail -1)
+            SHARD_FAILED=${SHARD_FAILED:-0}
+            echo "📊 Shard $SHARD: $SHARD_FAILED failures"
+            TOTAL_FAILED=$((TOTAL_FAILED + SHARD_FAILED))
+          done
 
           # Read baseline for pre-existing test failures (not introduced by this PR)
           BASELINE=0
@@ -171,17 +178,14 @@ jobs:
             echo "📋 Brain integration baseline: $BASELINE pre-existing failures allowed"
           fi
 
-          # Count failures from vitest summary line
-          FAILED_COUNT=$(grep -oE "[0-9]+ failed" /tmp/brain-integration-output.txt | awk '{print $1}' | tail -1)
-          FAILED_COUNT=${FAILED_COUNT:-0}
-          echo "📊 Brain integration tests: $FAILED_COUNT failures (baseline: $BASELINE)"
+          echo "📊 Brain integration tests: $TOTAL_FAILED failures (baseline: $BASELINE)"
 
-          if [ "$FAILED_COUNT" -le "$BASELINE" ]; then
-            echo "✅ Failures ($FAILED_COUNT) ≤ baseline ($BASELINE)"
+          if [ "$TOTAL_FAILED" -le "$BASELINE" ]; then
+            echo "✅ Failures ($TOTAL_FAILED) ≤ baseline ($BASELINE)"
             exit 0
           fi
 
-          echo "❌ Failures ($FAILED_COUNT) > baseline ($BASELINE) — new failures detected!"
+          echo "❌ Failures ($TOTAL_FAILED) > baseline ($BASELINE) — new failures detected!"
           exit 1
 
       - name: Run Brain coverage thresholds
