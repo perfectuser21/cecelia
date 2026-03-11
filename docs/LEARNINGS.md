@@ -5029,3 +5029,18 @@ CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
 - [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
 - [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
 - [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
+
+## PR #827 fix(brain): execution-callback result=null 时补 fallback error_message（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同批次提交，L1 Learning Format Gate 是硬门禁，push 后必须包含本 PR 的 LEARNINGS 新增内容
+2. `routes.js` execution-callback 端点在 `result === null` 时，原代码 `String(result || status)` 只写入 `"failed"` 字符串——当 cecelia-run 崩溃/被信号杀死时，DB 中的 error_message 完全没有诊断信息
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须在 PR push **同批次**提交，不能先 push 代码再补，Learning Format Gate 会直接失败
+- [ ] result=null 的 fallback 模板：`[callback: result=null] task=<id> exit_code=<code> at <ts> | callback received but result was null`，stderr 尾 300 字符追加到末尾
+- [ ] Mac mini Node.js 25 + vitest 会 segfault（Worker exited unexpectedly），这是预存在问题，CI（Ubuntu）有 baseline 容忍机制，本地 segfault 不影响 PR
