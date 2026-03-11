@@ -11,6 +11,10 @@ const mockClient = {
   release: vi.fn(),
 };
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 // Mock the database pool
 vi.mock('../db.js', () => ({
   default: {

@@ -13,6 +13,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Bug 1: Check 7 payload has decomposition: 'continue'
 // ─────────────────────────────────────────────────────────────────────────────
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 vi.mock('../db.js', () => ({
   default: {
     query: vi.fn()

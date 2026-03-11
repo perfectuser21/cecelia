@@ -5257,3 +5257,18 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
 - [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
 - [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
+
+## PR #843 feat(brain): claude --version 健康探针（2026-03-11）
+
+### 根本原因
+
+1. DoD 测试命令路径与实际文件位置不符：将 `runClaudeProbe` 提取到 `claude-probe.js` 后，DoD 中仍引用 `tick.js` 的路径（`PROBE_TIMEOUT_MS`）
+2. DoD 内容自描述断言（`grep -c 'dispatch-claude-probe' <file>` 在测试文件自身中查找文件名，文件名不出现在文件内容里）
+3. PR 处于 CONFLICTING 状态时，GitHub 不触发新 CI 运行；需先 merge origin/main 解决冲突
+
+### 下次预防
+
+- [ ] 将逻辑提取到新模块后，立即更新 DoD 中相关 Test 命令的路径
+- [ ] DoD 自检命令避免在文件内部查找文件名；改用描述测试内容的关键词（如 `'claude probe'`、`'describe('`）
+- [ ] 独立探针模块（claude-probe.js）模式：可被 `vi.mock` 独立 mock，无需修改被测模块函数签名；同时保留 `_probeOverride` DI 参数供单测直接注入
+- [ ] CI 不触发时先检查 PR mergeable 状态（`gh pr view --json mergeable`），CONFLICTING → 先 merge main

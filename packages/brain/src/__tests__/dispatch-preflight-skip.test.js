@@ -13,6 +13,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 // Mock DB
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({

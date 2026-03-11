@@ -12,6 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ACTION_WHITELIST } from '../thalamus.js';
 import { actionHandlers } from '../decision-executor.js';
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 // Mock database pool
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({

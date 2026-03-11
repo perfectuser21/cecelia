@@ -25,6 +25,10 @@ const { mockClient, mockPool } = vi.hoisted(() => {
   return { mockClient, mockPool };
 });
 
+vi.mock('../claude-probe.js', () => ({
+  runClaudeProbe: vi.fn().mockResolvedValue({ ok: true, output: 'Claude mock' })
+}));
+
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 vi.mock('../actions.js', () => ({
