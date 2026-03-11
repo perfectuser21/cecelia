@@ -37,8 +37,8 @@ export default defineConfig({
     poolOptions: {
       forks: {
         minForks: 1,
-        maxForks: 2,   // isolate:true + coverage 内存开销大，限制 2 个 fork 防 OOM
-        execArgv: ['--max-old-space-size=4096']  // 每个 fork 最多 4GB，避免 OOM 崩溃
+        maxForks: 1,   // 单 fork 防 OOM：isolate:true+coverage 下 2 fork×4GB > CI runner 7GB
+        execArgv: ['--max-old-space-size=4096']  // 单 fork 4GB 上限，7GB runner 可容纳
       }
     }
   }
