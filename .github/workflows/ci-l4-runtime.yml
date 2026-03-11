@@ -155,7 +155,7 @@ jobs:
       - name: Run Brain tests — failure detection (no coverage, low memory)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=1536"
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           set +e
           # Phase 1: Run tests WITHOUT coverage to accurately detect failures.
