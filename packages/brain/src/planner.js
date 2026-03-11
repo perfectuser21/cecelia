@@ -479,10 +479,12 @@ async function generateArchitectureDesignTask(kr, project) {
     // Check if a planning task already exists for this initiative (any active status).
     // 'quarantined' is explicitly excluded to prevent zombie loops: a quarantined task
     // must not trigger creation of a new task (which would also quarantine, repeat infinitely).
+    // 'quota_exhausted' is excluded for the same reason: it is a terminal state waiting
+    // for quota recovery, not a blocker for new planning.
     const existingResult = await pool.query(`
       SELECT id FROM tasks
       WHERE project_id = $1 AND task_type = $2
-        AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined')
+        AND status NOT IN ('completed', 'failed', 'cancelled', 'quarantined', 'quota_exhausted')
       LIMIT 1
     `, [initiative.id, taskType]);
 

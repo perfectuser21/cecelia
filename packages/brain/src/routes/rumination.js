@@ -13,7 +13,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { runManualRumination, getRuminationStatus, getUndigestedCount } from '../rumination.js';
+import { runManualRumination, runRuminationForce, getRuminationStatus, getUndigestedCount } from '../rumination.js';
 
 const router = Router();
 
@@ -33,6 +33,21 @@ router.post('/run', async (req, res) => {
     });
   } catch (err) {
     console.error('[API] rumination/run error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /force
+ * 强制触发反刍消化，绕过所有限制（isSystemIdle / cooldown / daily_budget）
+ * 一次性消化最多 9 条 digested=false 的 learning
+ */
+router.post('/force', async (_req, res) => {
+  try {
+    const result = await runRuminationForce(pool);
+    res.json(result);
+  } catch (err) {
+    console.error('[API] rumination/force error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
