@@ -19,6 +19,55 @@
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
 - [ ] CI grep 失败计数必须限定 vitest 汇总行（`grep "Test Files" | grep "[0-9]+ failed"`），防止测试日志中的 `failed=N` 误触发
 
+## PR #852 feat(engine): 统一 stop hook 状态文件格式（2026-03-11）
+
+**失败统计**：CI 失败 0 轮（L1 Learning Format Gate 是预期失败，非代码问题）
+
+### 根本原因
+
+1. **双格式共存导致 stop hook 过早退出**：`stop-dev.sh` D6-1 预检只扫描 `.dev-lock.*`（per-branch 格式），旧格式会话（只有 `.dev-mode` 无 `.dev-lock.*`）直接 `exit 0`，导致会话过早退出
+2. **旧格式兼容代码膨胀**：~85 行代码专门处理旧格式 fallback、泄漏检查、sentinel 孤儿恢复，增加维护成本和 bug 面
+3. **hooks/ 硬链接**：根目录 `hooks/` 和 `packages/engine/hooks/` 是硬链接（同 inode），修改一处自动同步，不需要手动 cp
+
+### 下次预防
+
+- [ ] 状态文件格式统一后，新代码不要再添加旧格式兼容逻辑
+- [ ] 硬链接文件修改时验证 inode 一致即可，不需要手动同步
+- [ ] 清理类 PR 重点测试核心路径（stop hook 退出码、会话匹配）而非被删除的旧路径
+
+## PR #850 fix(brain): 网络超时重试延迟调整为 5-10 分钟（2026-03-11）
+
+CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未随代码同批次 push）。
+
+### 根本原因
+
+1. `quarantine.js` 中 `FAILURE_CLASS.NETWORK` 的重试延迟使用 `Math.pow(2, retryCount) * 30 * 1000`，导致重试间隔仅 30s/60s/120s，在网络不稳定时暴力重试消耗 Claude 额度并产生重复 error learning
+2. `dev-failure-classifier.js` 的 `calcNextRunAt` 已经是 5min 起步（`retryCount * 5 * 60 * 1000`），dev 任务的 transient 类重试已合理，只需修 `quarantine.js`
+3. `cecelia-bridge.js` 无重试逻辑（只有超时降级），PRD 描述可能引起误解，实际只需改 quarantine.js
+4. LEARNINGS.md 必须和代码同批次 push 到功能分支，不能先 push 代码再补（Learning Format Gate 是 L1 硬门禁）
+
+### 下次预防
+
+- [ ] 识别网络重试延迟问题时，先找 `quarantine.js` 的 `getRetryStrategy` 函数，这是系统级重试策略的唯一来源
+- [ ] PRD 提到「bridge.js」时，优先搜索 `find . -name "*bridge*"`，确认实际路径（scripts/ vs src/）
+- [ ] LEARNINGS.md 必须随代码同批次 push，先写 Learning 再 push，不能分开
+
+## PR #848 fix(brain): migration 143 — 批量修正虚标 KR status（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate）。
+
+### 根本原因
+
+1. DoD L14 `test -f ... && echo OK` 含 `echo` 被 DevGate 判定为假测试，改用 `ls <file>`
+2. DoD L16 `grep -c 'UPDATE goals SET status'` 因 migration SQL 多行写法（UPDATE goals / SET status 分行）返回 0，改用 `grep -c 'UPDATE goals'` 单独匹配首行
+3. LEARNINGS.md 未在首次 push 前写入，触发 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] DoD 文件存在性测试：直接用 `ls <filepath>`，不加 `&& echo` 后缀
+- [ ] 多行 SQL grep：只匹配 UPDATE 的首个关键词（`UPDATE goals`），不要跨行匹配
+- [ ] LEARNINGS.md 必须在第一次 push **之前**写好并加入同一 commit
+
 ## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
 **失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
