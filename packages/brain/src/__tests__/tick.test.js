@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { routeTask, TASK_TYPE_AGENT_MAP } from '../tick.js';
+import { routeTask, TASK_TYPE_AGENT_MAP, MAX_NEW_DISPATCHES_PER_TICK } from '../tick.js';
 
 describe('routeTask', () => {
   it('should route dev tasks to /dev', () => {
@@ -40,6 +40,12 @@ describe('routeTask', () => {
   it('should default to /dev for unknown task_type', () => {
     const task = { task_type: 'unknown_type' };
     expect(routeTask(task)).toBe('/dev');
+  });
+});
+
+describe('MAX_NEW_DISPATCHES_PER_TICK', () => {
+  it('should be 2 (default burst limiter cap)', () => {
+    expect(MAX_NEW_DISPATCHES_PER_TICK).toBe(2);
   });
 });
 

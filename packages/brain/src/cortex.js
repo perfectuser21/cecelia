@@ -615,6 +615,36 @@ async function analyzeDeep(event, thalamusDecision = null) {
     context.adjustable_params = thalamusDecision.adjustable_params;
   }
 
+  // Build #4: 注入跨任务同类失败模式（来自 learnings 表 category='failure_pattern'）
+  // 让 RCA 能看到系统级别的重复失败模式，不只是当前任务历史
+  try {
+    const crossTaskResult = await pool.query(
+      `SELECT content, created_at FROM learnings
+       WHERE category = 'failure_pattern'
+       ORDER BY created_at DESC LIMIT 10`
+    );
+    if (crossTaskResult.rows.length > 0) {
+      context.cross_task_failure_patterns = {
+        count: crossTaskResult.rows.length,
+        summary: `系统历史同类失败 [${crossTaskResult.rows.length}] 条，最近：`,
+        patterns: crossTaskResult.rows.map((r, i) => ({
+          rank: i + 1,
+          insight: (r.content || '').slice(0, 300),
+          recorded_at: r.created_at
+        }))
+      };
+    } else {
+      context.cross_task_failure_patterns = {
+        count: 0,
+        summary: '暂无历史同类失败记录',
+        patterns: []
+      };
+    }
+  } catch (err) {
+    console.error('[cortex] Failed to fetch cross-task failure patterns:', err.message);
+    // 降级：不影响主流程，cortex_cross_task_query_failed
+  }
+
   const contextJson = JSON.stringify(context, null, 2);
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 

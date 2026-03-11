@@ -58,6 +58,7 @@ const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_I
 const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
 const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
 const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
+const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter：单次 tick 最多新派发 N 个，防队列积压后雪崩
 
 // Tick 自动恢复：Brain 重启时若 tick 已 disabled 超过此时长，自动 enable
 const TICK_AUTO_RECOVER_MINUTES = parseInt(process.env.TICK_AUTO_RECOVER_MINUTES || '30', 10);
@@ -2168,7 +2169,14 @@ async function executeTick() {
   // Predictive resource gate: pre-deduct estimated memory per dispatched agent
   const ESTIMATED_AGENT_MEM_MB = 800;
   let memReservedMb = 0;
+  let newDispatchCount = 0; // burst limiter 计数器
   for (let i = 0; i < rampedDispatchMax; i++) {
+    // Burst limiter：单次 tick 新派发上限，防止队列积压后瞬间雪崩
+    if (newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK) {
+      console.log(`[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=${MAX_NEW_DISPATCHES_PER_TICK}, stopping 7a dispatch`);
+      break;
+    }
+
     // Re-check resources with predicted memory usage
     if (memReservedMb > 0) {
       const predictedResources = checkServerResources(memReservedMb);
@@ -2200,6 +2208,7 @@ async function executeTick() {
       break;
     }
     dispatched++;
+    newDispatchCount++;
     memReservedMb += ESTIMATED_AGENT_MEM_MB;
   }
 
@@ -2209,10 +2218,16 @@ async function executeTick() {
       // Only use ready/in_progress KRs, not all objectives (OKR unification)
       if (readyKrIds.length > 0) {
         for (let i = dispatched; i < rampedDispatchMax; i++) {
+          // Burst limiter：7b 同样受 MAX_NEW_DISPATCHES_PER_TICK 约束
+          if (newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK) {
+            console.log(`[tick] Burst limiter: reached MAX_NEW_DISPATCHES_PER_TICK=${MAX_NEW_DISPATCHES_PER_TICK}, stopping 7b dispatch`);
+            break;
+          }
           const globalDispatch = await dispatchNextTask(readyKrIds);
           actionsTaken.push(...globalDispatch.actions);
           if (!globalDispatch.dispatched) break;
           dispatched++;
+          newDispatchCount++;
         }
       }
     } catch (globalErr) {
@@ -2220,8 +2235,9 @@ async function executeTick() {
     }
   }
 
+  const burstLimited = newDispatchCount >= MAX_NEW_DISPATCHES_PER_TICK;
   if (dispatched > 0) {
-    console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick`);
+    console.log(`[tick-loop] Dispatched ${dispatched} tasks this tick (burst_limited=${burstLimited})`);
   }
 
   // 8. Update tick state
@@ -2385,7 +2401,7 @@ async function executeTick() {
       objective_id: objectiveId,
       objective_title: focus.objective.title
     } : null,
-    dispatch: { dispatched: dispatched, last: lastDispatchResult },
+    dispatch: { dispatched: dispatched, last: lastDispatchResult, burst_limited: burstLimited },
     dept_heartbeats: deptHeartbeatResult,
     daily_review: dailyReviewResult,
     rumination: ruminationResult,
@@ -2725,6 +2741,7 @@ export {
   DISPATCH_TIMEOUT_MINUTES,
   MAX_CONCURRENT_TASKS,
   AUTO_DISPATCH_MAX,
+  MAX_NEW_DISPATCHES_PER_TICK,
   getStartupErrors,
   CLEANUP_INTERVAL_MS,
   ZOMBIE_SWEEP_INTERVAL_MS,
