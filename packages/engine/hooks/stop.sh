@@ -61,3 +61,4 @@ fi
 
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
 exit 0
+# v14.0.0: Unified per-branch format
