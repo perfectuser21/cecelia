@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #858 fix(brain): 修复 cecelia-bridge Math.min 截断——Cortex Opus 超时不再被 120s 上限阻断（2026-03-11）
+
+CI 失败 0 次。
+
+### 根本原因
+
+1. PR #845 修复了 cortex.js 侧的超时（加入 `CECELIA_CORTEX_TIMEOUT_MS` 独立环境变量，默认 300s），但漏掉了 bridge 侧：`cecelia-bridge.js` line 74 的 `Math.min(timeout || BRIDGE_TIMEOUT_MS, BRIDGE_TIMEOUT_MS)` 把所有 per-request 超时截断到 120s
+2. 结果：llm-caller.js 正确传入 `timeout=300000`，但 bridge 用 `Math.min(300000, 120000)=120000` 忽略了这个值，Opus 在 121s 时收到 SIGTERM → exit 143 → Cortex 离线
+3. 修复方向：引入 `CECELIA_BRIDGE_MAX_TIMEOUT_MS`（默认 600s）作为安全上限，替代原来的 `BRIDGE_TIMEOUT_MS` 上限截断
+
+### 下次预防
+
+- [ ] 超时配置涉及两层：「调用方设置目标超时（cortex.js/llm-caller.js）」和「执行方的 kill 超时（cecelia-bridge.js）」，两层必须同时检查和对齐
+- [ ] `Math.min(timeout, BRIDGE_TIMEOUT_MS)` 模式有歧义：BRIDGE_TIMEOUT_MS 原本是"默认值"，不应同时作为"上限"使用——命名 `MAX_` 明确区分
+- [ ] 新增超时环境变量后，检查 bridge 是否有额外的 Math.min 截断（grep `Math.min.*TIMEOUT`）
+
 ## PR #854 feat: Dashboard 添加 Codex 用量展示 — 跨服务代理 API 缓存模式（2026-03-11）
 
 **失败统计**：L1 CI 失败 1 次（DoD 未勾选 + LEARNINGS.md 未更新）
