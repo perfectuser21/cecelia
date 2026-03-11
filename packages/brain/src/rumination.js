@@ -521,3 +521,59 @@ export async function getUndigestedCount(dbPool) {
   );
   return parseInt(rows[0]?.cnt || 0);
 }
+
+/**
+ * 强制反刍（绕过所有限制：isSystemIdle / cooldown / daily_budget）
+ * 一次性消化最多 9 条 digested=false 的 learning，并将结果写入 working_memory
+ * @param {object} [dbPool] - 数据库连接池
+ * @returns {Promise<{processed: number, insights: string[]}>}
+ */
+export async function runRuminationForce(dbPool) {
+  const db = dbPool || pool;
+  const FORCE_LIMIT = 9;
+
+  let learnings;
+  try {
+    const { rows } = await db.query(
+      `SELECT id, title, content, category FROM learnings
+       WHERE digested = false AND (archived = false OR archived IS NULL)
+       ORDER BY created_at ASC
+       LIMIT $1`,
+      [FORCE_LIMIT]
+    );
+    learnings = rows;
+  } catch (err) {
+    console.error('[rumination] force fetch learnings failed:', err.message);
+    return { processed: 0, insights: [] };
+  }
+
+  if (learnings.length === 0) {
+    return { processed: 0, insights: [] };
+  }
+
+  const insights = await digestLearnings(db, learnings);
+
+  // 写入 working_memory 记录本次强制运行结果
+  try {
+    const result = {
+      processed: learnings.length,
+      insights_count: insights.length,
+      learning_ids: learnings.map(l => l.id),
+      ran_at: new Date().toISOString(),
+    };
+    await db.query(
+      `INSERT INTO working_memory (key, value_json, updated_at)
+       VALUES ('rumination_force_result', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value_json = $1, updated_at = NOW()`,
+      [JSON.stringify(result)]
+    );
+    console.log(`[rumination] force: wrote rumination_force_result to working_memory (processed=${learnings.length})`);
+  } catch (err) {
+    console.warn('[rumination] force: working_memory write failed (non-blocking):', err.message);
+  }
+
+  return {
+    processed: learnings.length,
+    insights,
+  };
+}

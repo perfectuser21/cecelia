@@ -55,7 +55,7 @@ vi.mock('../thalamus.js', () => ({
 // ── 导入被测模块 ──────────────────────────────────────────
 
 import {
-  runRumination, runManualRumination, getRuminationStatus,
+  runRumination, runManualRumination, runRuminationForce, getRuminationStatus,
   getUndigestedCount, _resetState, _setDailyCount, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
   buildRuminationPrompt, buildNotebookQuery, getDailyBudget,
 } from '../rumination.js';
@@ -687,6 +687,83 @@ describe('rumination', () => {
 
       // 验证 maxTokens 保持 200（简洁）
       expect(opts?.maxTokens).toBe(200);
+    });
+  });
+
+  // ── runRuminationForce 测试 ──────────────────────────────
+
+  describe('runRuminationForce', () => {
+    it('无未消化知识时返回 {processed: 0, insights: []}', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // 无 learnings
+
+      const result = await runRuminationForce(pool);
+      expect(result).toEqual({ processed: 0, insights: [] });
+    });
+
+    it('绕过 cooldown：反刍后立即再次 force 仍可执行', async () => {
+      // 先消化一次（触发冷却期）
+      setupLearningsOnly(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
+      await runRuminationForce(pool);
+
+      // 立即再次 force — 不受冷却期限制
+      mockQuery.mockResolvedValueOnce({ rows: [] }); // 无 learnings
+      const result = await runRuminationForce(pool);
+      // 不应该返回 skipped: 'cooldown'
+      expect(result.processed).toBe(0);
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('绕过 daily_budget：预算耗尽后 force 仍可执行', async () => {
+      _setDailyCount(DAILY_BUDGET + 10); // 超出预算
+
+      setupLearningsOnly(pool, [{ id: 'l1', title: '知识1', content: '内容1', category: 'tech' }]);
+
+      const result = await runRuminationForce(pool);
+      // 不因预算耗尽跳过
+      expect(result.processed).toBe(1);
+      expect(result).not.toHaveProperty('skipped');
+    });
+
+    it('9 条 learning 全部被 UPDATE digested=true', async () => {
+      const learnings = Array.from({ length: 9 }, (_, i) => ({
+        id: `force-l${i}`, title: `积压知识${i}`, content: `内容${i}`, category: 'user_shared',
+      }));
+
+      setupLearningsOnly(pool, learnings);
+
+      const result = await runRuminationForce(pool);
+      expect(result.processed).toBe(9);
+      expect(result.insights).toHaveLength(1);
+
+      // 验证 9 条全部 UPDATE digested=true
+      for (let i = 0; i < 9; i++) {
+        expect(mockQuery).toHaveBeenCalledWith(
+          'UPDATE learnings SET digested = true WHERE id = $1',
+          [`force-l${i}`]
+        );
+      }
+    });
+
+    it('写入 working_memory key=rumination_force_result', async () => {
+      setupLearningsOnly(pool, [{ id: 'l1', title: '测试知识', content: '内容', category: 'tech' }]);
+
+      await runRuminationForce(pool);
+
+      // 验证 working_memory 被写入
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('rumination_force_result'),
+        expect.anything()
+      );
+    });
+
+    it('返回格式包含 processed 和 insights 字段', async () => {
+      setupLearningsOnly(pool, [{ id: 'l1', title: '知识', content: '内容', category: 'tech' }]);
+
+      const result = await runRuminationForce(pool);
+      expect(result).toHaveProperty('processed');
+      expect(result).toHaveProperty('insights');
+      expect(typeof result.processed).toBe('number');
+      expect(Array.isArray(result.insights)).toBe(true);
     });
   });
 });
