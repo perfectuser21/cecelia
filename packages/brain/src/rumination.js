@@ -19,9 +19,21 @@ import { updateSelfModel } from './self-model.js';
 import { processEvent, EVENT_TYPES } from './thalamus.js';
 
 // ── 配置 ──────────────────────────────────────────────────
-export const DAILY_BUDGET = 20;
+export const DAILY_BUDGET = 20; // 基础预算（向后兼容，内部逻辑请使用 getDailyBudget()）
 export const MAX_PER_TICK = 5;
 export const COOLDOWN_MS = 30 * 60 * 1000; // 30 分钟
+
+/**
+ * 动态每日预算：低峰期（上海时间 00:00-05:59）自动扩容至 2x
+ * - 正常时段：20 条
+ * - 低峰期 00:00-06:00 UTC+8：40 条
+ */
+export function getDailyBudget() {
+  const shanghaiHour = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })
+  ).getHours();
+  return shanghaiHour >= 0 && shanghaiHour < 6 ? DAILY_BUDGET * 2 : DAILY_BUDGET;
+}
 
 // 运行时状态（进程内，午夜通过 hasBudget() 中日期对比自动重置）
 let _dailyCount = 0;
@@ -73,7 +85,7 @@ function hasBudget() {
     _dailyCount = 0;
     _lastResetDate = today;
   }
-  return _dailyCount < DAILY_BUDGET;
+  return _dailyCount < getDailyBudget();
 }
 
 // ── 反刍 Prompt（v2 深度思考）──────────────────────────────
@@ -388,7 +400,7 @@ export async function runRumination(dbPool) {
   }
 
   // 取未消化的知识（FIFO，最多 MAX_PER_TICK 条，批量一次处理）
-  const remaining = DAILY_BUDGET - _dailyCount;
+  const remaining = getDailyBudget() - _dailyCount;
   const limit = Math.max(1, Math.round(Math.min(MAX_PER_TICK, remaining) * busyMultiplier));
 
   let learnings;
@@ -439,7 +451,7 @@ export async function runManualRumination(dbPool, { force = false } = {}) {
     return { skipped: 'cooldown', digested: 0, insights: [] };
   }
 
-  const remaining = force ? MAX_PER_TICK : Math.min(MAX_PER_TICK, DAILY_BUDGET - _dailyCount);
+  const remaining = force ? MAX_PER_TICK : Math.min(MAX_PER_TICK, getDailyBudget() - _dailyCount);
   const limit = remaining;
 
   let learnings;
@@ -491,8 +503,8 @@ export async function getRuminationStatus(dbPool) {
 
   return {
     daily_count: _dailyCount,
-    daily_budget: DAILY_BUDGET,
-    remaining: DAILY_BUDGET - _dailyCount,
+    daily_budget: getDailyBudget(),
+    remaining: getDailyBudget() - _dailyCount,
     cooldown_remaining_ms: cooldownRemaining,
     undigested_count: undigestedCount,
     last_run_at: _lastRunAt > 0 ? new Date(_lastRunAt).toISOString() : null,

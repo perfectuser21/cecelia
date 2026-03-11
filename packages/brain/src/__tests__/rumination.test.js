@@ -5,7 +5,7 @@
  *       手动触发、actionable 洞察→task、状态查询
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock 设置（vi.hoisted 避免 hoisting 问题）──────────────
 
@@ -57,7 +57,7 @@ vi.mock('../thalamus.js', () => ({
 import {
   runRumination, runManualRumination, getRuminationStatus,
   getUndigestedCount, _resetState, _setDailyCount, DAILY_BUDGET, MAX_PER_TICK, COOLDOWN_MS,
-  buildRuminationPrompt, buildNotebookQuery,
+  buildRuminationPrompt, buildNotebookQuery, getDailyBudget,
 } from '../rumination.js';
 
 // ── Mock DB pool ──────────────────────────────────────────
@@ -95,6 +95,50 @@ function setupLearningsOnly(pool, learnings) {
     }
   }
 }
+
+// ── getDailyBudget 单元测试 ───────────────────────────────
+
+describe('getDailyBudget', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('低峰期 00:00 UTC+8 返回 40', () => {
+    // 2026-03-10 00:00:00 上海时间 = UTC 2026-03-09 16:00:00
+    vi.setSystemTime(new Date('2026-03-09T16:00:00.000Z'));
+    expect(getDailyBudget()).toBe(40);
+  });
+
+  it('低峰期 03:30 UTC+8 返回 40', () => {
+    // 2026-03-10 03:30:00 上海时间 = UTC 2026-03-09 19:30:00
+    vi.setSystemTime(new Date('2026-03-09T19:30:00.000Z'));
+    expect(getDailyBudget()).toBe(40);
+  });
+
+  it('低峰期 05:59 UTC+8 返回 40', () => {
+    // 2026-03-10 05:59:00 上海时间 = UTC 2026-03-09 21:59:00
+    vi.setSystemTime(new Date('2026-03-09T21:59:00.000Z'));
+    expect(getDailyBudget()).toBe(40);
+  });
+
+  it('正常时段 06:00 UTC+8 返回 20', () => {
+    // 2026-03-10 06:00:00 上海时间 = UTC 2026-03-09 22:00:00
+    vi.setSystemTime(new Date('2026-03-09T22:00:00.000Z'));
+    expect(getDailyBudget()).toBe(20);
+  });
+
+  it('正常时段 12:00 UTC+8 返回 20', () => {
+    // 2026-03-10 12:00:00 上海时间 = UTC 2026-03-10 04:00:00
+    vi.setSystemTime(new Date('2026-03-10T04:00:00.000Z'));
+    expect(getDailyBudget()).toBe(20);
+  });
+
+  it('正常时段 23:59 UTC+8 返回 20', () => {
+    // 2026-03-10 23:59:00 上海时间 = UTC 2026-03-10 15:59:00
+    vi.setSystemTime(new Date('2026-03-10T15:59:00.000Z'));
+    expect(getDailyBudget()).toBe(20);
+  });
+});
 
 // ── 测试 ──────────────────────────────────────────────────
 
