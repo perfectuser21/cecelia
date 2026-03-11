@@ -308,13 +308,23 @@ describe('Retry Strategy', () => {
     });
   });
 
-  describe('NETWORK short backoff', () => {
-    it('retry 0 → 30s backoff', () => {
+  describe('NETWORK 5min+ backoff', () => {
+    it('retry 0 → 5min backoff', () => {
       const strategy = getRetryStrategy(FAILURE_CLASS.NETWORK, { retryCount: 0 });
       expect(strategy.should_retry).toBe(true);
       const diff = new Date(strategy.next_run_at).getTime() - Date.now();
-      expect(diff).toBeGreaterThan(30000 - 5000);
-      expect(diff).toBeLessThan(30000 + 5000);
+      const expectedMs = 5 * 60 * 1000;
+      expect(diff).toBeGreaterThan(expectedMs - 5000);
+      expect(diff).toBeLessThan(expectedMs + 5000);
+    });
+
+    it('retry 1 → 10min backoff', () => {
+      const strategy = getRetryStrategy(FAILURE_CLASS.NETWORK, { retryCount: 1 });
+      expect(strategy.should_retry).toBe(true);
+      const diff = new Date(strategy.next_run_at).getTime() - Date.now();
+      const expectedMs = 10 * 60 * 1000;
+      expect(diff).toBeGreaterThan(expectedMs - 5000);
+      expect(diff).toBeLessThan(expectedMs + 5000);
     });
 
     it('retry 3 → no more retries', () => {
