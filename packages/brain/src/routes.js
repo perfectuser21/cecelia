@@ -3043,6 +3043,24 @@ router.post('/execution-callback', async (req, res) => {
     if (newStatus === 'completed') {
       await emitEvent('task_completed', 'executor', { task_id, run_id, duration_ms });
       await cbSuccess('cecelia-run');
+
+      // 好奇心评分：research/curiosity 任务完成后异步重新计算（fire-and-forget）
+      Promise.resolve().then(async () => {
+        try {
+          const taskMeta = await pool.query(
+            'SELECT task_type, trigger_source FROM tasks WHERE id = $1',
+            [task_id]
+          );
+          const t = taskMeta.rows[0];
+          if (t && (t.task_type === 'research' || t.trigger_source === 'curiosity')) {
+            const { calculateCuriosityScore } = await import('./curiosity-scorer.js');
+            await calculateCuriosityScore();
+            console.log(`[execution-callback] curiosity score recalculated after task ${task_id}`);
+          }
+        } catch (csErr) {
+          console.warn('[execution-callback] curiosity score update failed (non-blocking):', csErr.message);
+        }
+      }).catch(err => console.error('[routes] silent error:', err));
       notifyTaskCompleted({ task_id, title: `Task ${task_id}`, run_id, duration_ms }).catch(err => console.error('[routes] silent error:', err));
 
       // 主动沟通：对话订阅模式 — 只有 Alex 问过的任务完成才发飞书通知（fire-and-forget）
@@ -4174,13 +4192,27 @@ ${resultStr.substring(0, 2000)}
         // 当进程被 kill/超时导致 result=null 时，从 exit_code/stderr/failure_class 合成诊断信息
         // 避免 extractTaskSummary(null) 返回 "No details available"
         const failureClass = req.body.failure_class || null;
-        const effectiveResult = result ?? (newStatus === 'failed' && (exit_code != null || stderr || failureClass) ? {
+        let effectiveResult = result ?? (newStatus === 'failed' && (exit_code != null || stderr || failureClass) ? {
           error: `Process exited with code ${exit_code ?? 'unknown'}`,
           exit_code,
           stderr_tail: String(stderr || '').slice(-500),
           failure_class: failureClass,
           source: 'synthesized_from_callback',
         } : null);
+        // 第三层兜底：全字段皆空 effectiveResult 仍为 null 时，从 DB error_message 构造最小诊断对象
+        // 场景：5c13 已将 error_message 写入 DB，auto-learning 应能获取到诊断信息
+        if (effectiveResult === null && newStatus === 'failed') {
+          try {
+            const dbRow = await pool.query('SELECT error_message FROM tasks WHERE id = $1', [task_id]);
+            const dbErrMsg = dbRow.rows[0]?.error_message || null;
+            if (dbErrMsg) {
+              effectiveResult = { error: dbErrMsg, source: 'db_fallback' };
+              console.log(`[execution-callback] effectiveResult db_fallback: task=${task_id} error=${dbErrMsg.slice(0, 100)}`);
+            }
+          } catch (dbFallbackErr) {
+            console.error(`[execution-callback] effectiveResult db_fallback error (non-fatal): ${dbFallbackErr.message}`);
+          }
+        }
         const learningResult = await processExecutionAutoLearning(task_id, newStatus, effectiveResult, {
           trigger_source: 'execution_callback',
           retry_count: iterations,
