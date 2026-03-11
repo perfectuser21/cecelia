@@ -18,6 +18,7 @@
 version: "3.35.0"
 updated: "2026-03-11"
 changelog:
+  - "3.36.0: v12.50.0 - 统一 Stop Hook 状态文件格式：删除所有旧格式（.dev-lock/.dev-mode/.dev-sentinel 无后缀）兼容代码；stop.sh v14.0.0 只检测 .dev-lock.<branch>（删除旧格式兜底）；stop-dev.sh v14.0.0 删除旧格式 fallback/泄漏检查/sentinel 孤儿处理（减少 85 行）；03-branch.md 更新 worktree 冲突检测逻辑"
   - "3.35.0: v12.49.0 - 变更行覆盖率硬门禁：新增 check-changed-coverage.cjs（三合一确定性门禁：feat 必须有新测试 + 测试必须 import 源码 + 变更行覆盖率 ≥ 60%）；vitest.config.ts 添加 json reporter；CI L3 新增 Coverage Gate 步骤"
   - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
@@ -212,14 +213,14 @@ platform_features:
   # H7: Stop Hook Loop Controller - 循环控制器
   # --------------------------------------------------------------------------
   - id: H7
-    name: Stop Hook Router (v13.3.0)
+    name: Stop Hook Router (v14.0.0)
     status: Committed
     priority: P0
-    version: "12.43.0"
-    updated: "2026-03-06"
+    version: "12.50.0"
+    updated: "2026-03-11"
     description: |
       Stop Hook 路由器架构，检测 mode 文件分发到对应 handler：
-      - 路由器：stop.sh（~80 lines）检测 .dev-lock/.dev-mode/.architect-lock/.decomp-mode 等，调用对应 handler
+      - 路由器：stop.sh（~63 lines）检测 .dev-lock.<branch>/.architect-lock.*/.decomp-mode，调用对应 handler
       - stop-dev.sh：/dev 工作流完成条件检查（PR 创建 + CI 通过 + PR 合并）
       - stop-architect.sh：/architect 架构设计完成条件检查（Mode 1 scan / Mode 2 design）
       - stop-decomp.sh：/decomp 工作流完成条件检查（output.json + DB 写入）

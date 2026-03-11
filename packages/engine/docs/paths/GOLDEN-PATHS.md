@@ -32,9 +32,9 @@ changelog:
 
 ---
 
-## GP-002: Stop Hook Router (v13.3.0) (H7)
+## GP-002: Stop Hook Router (v14.0.0) (H7)
 
-**Feature**: H7 - Stop Hook Router (v13.3.0)
+**Feature**: H7 - Stop Hook Router (v14.0.0)
 **Priority**: P0
 
 ### Golden Path
