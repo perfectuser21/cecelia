@@ -5098,3 +5098,18 @@ CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
 - [ ] 每次 PR push 前，先写 LEARNINGS → commit → push，再 gh pr create
 - [ ] `vi.setSystemTime()` 需配合 `vi.useFakeTimers()` 使用——但 rumination.js 用 `new Date().toLocaleString()` 而非 `Date.now()`，`vi.useFakeTimers()` 对 `new Date()` 同样生效，可直接用 `vi.setSystemTime()` + `afterEach(() => vi.useRealTimers())`
 - [ ] 时区判断用 `new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })).getHours()` 而非 UTC 偏移，原因：Node.js 支持 IANA 时区名，Intl API 可靠
+
+## PR #827 fix(brain): execution-callback result=null 时补 fallback error_message（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同批次提交，L1 Learning Format Gate 是硬门禁，push 后必须包含本 PR 的 LEARNINGS 新增内容
+2. `routes.js` execution-callback 端点在 `result === null` 时，原代码 `String(result || status)` 只写入 `"failed"` 字符串——当 cecelia-run 崩溃/被信号杀死时，DB 中的 error_message 完全没有诊断信息
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须在 PR push **同批次**提交，不能先 push 代码再补，Learning Format Gate 会直接失败
+- [ ] result=null 的 fallback 模板：`[callback: result=null] task=<id> exit_code=<code> at <ts> | callback received but result was null`，stderr 尾 300 字符追加到末尾
+- [ ] Mac mini Node.js 25 + vitest 会 segfault（Worker exited unexpectedly），这是预存在问题，CI（Ubuntu）有 baseline 容忍机制，本地 segfault 不影响 PR
