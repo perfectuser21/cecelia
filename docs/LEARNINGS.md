@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] DoD 承诺分类 + BEHAVIOR 弱测试检测 — Engine 改动三要素（PR #842）
+
+**失败统计**：L1+L2 CI 失败 1 次（Learning Format Gate + Config Audit + Version Check）
+
+### 根本原因
+
+1. 修改 `packages/engine/skills/` 时 PR title 必须含 `[CONFIG]` tag（Config Audit 规则），未加导致失败
+2. Engine 版本 bump 是**手动**操作（不是 Brain 的 auto-version），修改 engine 代码后必须同步更新 6 个文件
+3. LEARNINGS.md 新增条目必须与功能代码同一 commit（不能在 PR 创建后才补）
+
+### 下次预防
+
+- [ ] 改 `packages/engine/skills/` 或 `packages/engine/hooks/` 时，PR title 必须含 `[CONFIG]` tag
+- [ ] Engine 功能变更同步 bump 6 个文件：package.json + package-lock.json（engine 内）+ 根 package-lock.json（engine 条目）+ VERSION + .hook-core-version + regression-contract.yaml
+- [ ] LEARNINGS.md 必须在第一次 push 前写好并加入 commit，不能后补
+
 ### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
 
 **失败统计**：L1 CI 失败 1 次（Learning Format Gate）
