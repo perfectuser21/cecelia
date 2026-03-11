@@ -1,5 +1,22 @@
 # Cecelia Core Learnings
 
+## PR #851 feat(brain): historical_learnings schema 扩展 — L1/L2 CI 修复要点（2026-03-11）
+
+**失败统计**：CI 失败 1 轮（L1 PRD 格式 + L1 Learning 缺失 + L2 DEFINITION.md schema_version 未同步）
+
+### 根本原因
+
+1. **PRD 成功标准用了三级标题**：`check-prd.sh` 只匹配 `^## 成功标准`（二级），`### 成功标准` 不会被识别，导致 "PRD 缺少成功标准章节" 报错。修复：将 `### 验收标准` 改为独立的 `## 成功标准` 二级标题
+2. **DEFINITION.md schema_version 需同步**：`facts-check.mjs` 对比 `selfcheck.js` 中的 `EXPECTED_SCHEMA_VERSION` 与 `DEFINITION.md` 中两处 schema 版本描述，任意一处不同步即 L2 失败。本次遗漏同步两处（line 386 和 line 676）
+3. **Learning 必须在第一次 push 前写好**：L1 Learning Format Gate 在 PR 创建后立即检查 `docs/LEARNINGS.md` 新增内容，不能等 CI 跑完再补
+
+### 下次预防
+
+- [ ] PRD 成功标准必须用 `## 成功标准` 二级标题（不是三级 `###`，不是粗体 `**成功标准**:`）
+- [ ] 每次更新 `EXPECTED_SCHEMA_VERSION` 后，立即 grep DEFINITION.md 找出所有版本引用并同步（`grep -n "142\|143" DEFINITION.md`）
+- [ ] Learning 必须和代码在同一个 commit 或比代码更早 push，不能事后补
+- [ ] DEFINITION.md 中 schema_version 有两处：line ~386（表格）和 line ~676（selfcheck 描述），改动时必须两处都更新
+
 ## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
 **失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
