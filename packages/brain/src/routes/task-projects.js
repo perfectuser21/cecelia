@@ -93,7 +93,7 @@ router.post('/compare/report', async (req, res) => {
   }
 });
 
-// POST /projects/compare/report/push — 将对比报告推送到 Notion
+// POST /projects/compare/report/push — 将对比报告推送到 Notion（统一接口，支持 destination 参数）
 // 必须在 /:id 之前注册，避免 "compare" 被当作 UUID 拦截
 router.post('/compare/report/push', async (req, res) => {
   try {
@@ -109,6 +109,83 @@ router.post('/compare/report/push', async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     res.status(status).json({ success: false, error: err.message, code: err.code });
+  }
+});
+
+// POST /projects/compare/report/push-notion — 推送对比报告到 Notion（兼容旧接口）
+// 无 NOTION_API_TOKEN 时返回 501
+router.post('/compare/report/push-notion', async (req, res) => {
+  const notionToken = process.env.NOTION_API_TOKEN;
+  if (!notionToken) {
+    return res.status(501).json({ success: false, error: 'Notion 未配置（NOTION_API_TOKEN 未设置）' });
+  }
+
+  try {
+    const { project_ids } = req.body;
+    if (!Array.isArray(project_ids) || project_ids.length < 2) {
+      return res.status(400).json({ success: false, error: 'project_ids must contain at least 2 UUIDs' });
+    }
+
+    const { generateCompareReport } = await import('../project-compare.js');
+    const report = await generateCompareReport({ project_ids, format: 'markdown', include_tasks: false });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const pageTitle = `项目对比报告 ${dateStr}`;
+    const markdownContent = report.markdown || report.summary || '';
+
+    const blocks = markdownContent
+      .split('\n')
+      .filter(line => line.trim())
+      .slice(0, 100)
+      .map(line => {
+        if (line.startsWith('# ')) {
+          return { object: 'block', type: 'heading_1', heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim() } }] } };
+        }
+        if (line.startsWith('## ')) {
+          return { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: line.slice(3).trim() } }] } };
+        }
+        if (line.startsWith('### ')) {
+          return { object: 'block', type: 'heading_3', heading_3: { rich_text: [{ type: 'text', text: { content: line.slice(4).trim() } }] } };
+        }
+        if (line.startsWith('- ') || line.startsWith('* ')) {
+          return { object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim() } }] } };
+        }
+        return { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: line.trim() } }] } };
+      });
+
+    const parentPageId = process.env.NOTION_PAGE_ID;
+    const parent = parentPageId
+      ? { type: 'page_id', page_id: parentPageId }
+      : { type: 'workspace', workspace: true };
+
+    const response = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${notionToken}`,
+        'Content-Type': 'application/json',
+        'Notion-Version': '2022-06-28',
+      },
+      body: JSON.stringify({
+        parent,
+        properties: {
+          title: { title: [{ type: 'text', text: { content: pageTitle } }] },
+        },
+        children: blocks,
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      return res.status(502).json({ success: false, error: errBody.message || `Notion API 返回 ${response.status}` });
+    }
+
+    const page = await response.json();
+    const pageId = page.id;
+    const notionUrl = `https://notion.so/${pageId.replace(/-/g, '')}`;
+
+    res.json({ success: true, notion_url: notionUrl, page_id: pageId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -39,6 +39,21 @@
 - [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
 - [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
 
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+Learning Format Gate 失败（LEARNINGS 未在初始 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 条目未在第一次 git push 之前提交，Learning Format Gate 是 L1 硬门禁，未 push 即报 failure
+2. 提交流程中先走了 git commit/push，再想起 LEARNINGS，导致 CI 已在运行但缺少 Learning
+
+### 下次预防
+
+- [ ] 在 `git add` + `git commit` 之前先写 LEARNINGS.md 条目，和代码一起提交（一次 push 包含 Learning）
+- [ ] LEARNINGS 格式三要素缺一不可：`### 根本原因` + `### 下次预防` + `- [ ]` checklist
+- [ ] 对于 Brain 路由新增端点，注意 POST `/compare/report/push-notion` 必须注册在通配符 `/:id` 之前，否则被当作 UUID 拦截
+- [ ] Notion 无 token 时返回 501（而非 500），前端根据 status 显示不同 toast 文本
 
 ### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
 
@@ -4949,3 +4964,48 @@ CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）
 - [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
 - [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
 - [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
+
+## PR #814 feat(dashboard): ProjectCompare 接入 Brain KR 进度 + 实时刷新（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — PRD 格式错误 + LEARNINGS 未 push）。
+
+### 根本原因
+
+1. PRD 中"成功标准"用了普通粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 只匹配 `##` 标题格式
+2. LEARNINGS.md 未在第一次 push 前提交，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] 创建 PRD 时立即确认成功标准为 `## 成功标准` 二级标题格式，不用粗体
+- [ ] Step 10 Learning 记录必须在合并 PR 前 push（不能 CI 失败后再补），否则 L1 必失败
+- [ ] React 中多个 `setInterval` 需用 `useRef` 保存 timer ID 避免闭包捕获旧值导致重复创建定时器
+
+## PR #819 feat(dashboard): ProjectCompare 补充 KR 达成率 + 周趋势迷你图（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + LEARNINGS 未 push）。
+
+### 根本原因
+
+1. DoD 中"无 recharts 等外部图表库引入"的 Test 用了 `grep -c ... || echo 0`，`echo` 被 check-dod-mapping.cjs 识别为假测试（禁止），应改用 `! grep -q ...` 反向断言
+2. LEARNINGS.md 未在 CI 前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] "验证某物不存在"类 DoD Test 不用 `|| echo 0` 兜底，改用 `! grep -q 'pattern' file`（exit 0 表示未找到 = 成功）
+- [ ] 继承 PR #814 的教训：LEARNINGS 必须在 PR 创建时同步 push，不能等 CI 失败后补
+- [ ] GET Brain API 返回 `{ generated_at, projects, summary }` 包装对象，不是直接数组；前端解析时用 `result.projects` 不是 `result`
+
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同步提交，Learning Format Gate 是 L1 硬门禁，在 CI 中直接 exit 1
+2. Step 10 Learning 应在 PR 创建 **之前** 或 **同批次** push，而非 CI 失败后补
+
+### 下次预防
+
+- [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
+- [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
+- [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
