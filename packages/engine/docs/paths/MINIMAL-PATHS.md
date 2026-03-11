@@ -30,7 +30,7 @@ changelog:
 
 ---
 
-### H7: Stop Hook Router (v13.3.0)
+### H7: Stop Hook Router (v14.0.0)
 
 1. ✅ **无 .dev-mode → exit 0 (普通会话)**
 2. ✅ **有 .dev-mode + PR 未创建 → exit 2 (继续)**
