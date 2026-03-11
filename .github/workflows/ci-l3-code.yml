@@ -568,11 +568,51 @@ jobs:
           done
           if [ "$FAILED" = "true" ]; then exit 1; fi
 
+  # ─── Engine Coverage Gate (feat PRs only) ────────────────────────────
+
+  engine-coverage-gate:
+    name: Engine Changed Coverage Gate
+    needs: changes
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.engine == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/engine/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/engine
+        run: npm ci
+
+      - name: Run vitest with JSON coverage
+        working-directory: packages/engine
+        run: npx vitest run --coverage --coverage.reporter=json
+
+      - name: Check changed line coverage gates
+        working-directory: packages/engine
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+          COVERAGE_JSON: coverage/coverage-final.json
+        run: node scripts/devgate/check-changed-coverage.cjs
+
   # ─── Gate job (always runs) ───────────────────────────────────────────
 
   l3-passed:
     name: L3 Code Gate Passed
-    needs: [changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3]
+    needs: [changes, brain-unit, engine-l3, workspace-l3, quality-l3, workflows-l3, engine-coverage-gate]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -621,6 +661,13 @@ jobs:
           if [ "${{ needs.changes.outputs.workflows }}" = "true" ]; then
             if [ "${{ needs.workflows-l3.result }}" != "success" ] && [ "${{ needs.workflows-l3.result }}" != "skipped" ]; then
               echo "FAIL: Workflows L3 Checks (${{ needs.workflows-l3.result }})"
+              FAILED=true
+            fi
+          fi
+
+          if [ "${{ needs.changes.outputs.engine }}" = "true" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.engine-coverage-gate.result }}" != "success" ] && [ "${{ needs.engine-coverage-gate.result }}" != "skipped" ]; then
+              echo "FAIL: Engine Changed Coverage Gate (${{ needs.engine-coverage-gate.result }})"
               FAILED=true
             fi
           fi

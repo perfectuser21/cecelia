@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.34.0"
+version: "3.35.0"
 updated: "2026-03-11"
 changelog:
+  - "3.35.0: v12.49.0 - feat PR 变更行覆盖率三门禁：新增 check-changed-coverage.cjs（门禁1 feat PR必须有.test.ts/门禁2新测试必须import变更源码/门禁3变更行覆盖率≥60%）；ci-l3-code.yml 新增 engine-coverage-gate job（PR-only）"
   - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
   - "3.32.0: v12.44.3 - stop-dev.sh Session 隔离前置（D6）：mutex 获取前新增 session 预检查，无匹配 .dev-lock 直接 exit 0，避免无关会话阻塞等待队列"
