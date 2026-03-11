@@ -306,20 +306,20 @@ RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
 # 原逻辑：检查 >= 15 后才递增，导致实际第 16 次才失败
 RETRY_COUNT=$((RETRY_COUNT + 1))
 
-if [[ $RETRY_COUNT -gt 15 ]]; then
+if [[ $RETRY_COUNT -gt 30 ]]; then
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 15 次重试上限]" >&2
+    echo "  [Stop Hook: 30 次重试上限]" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "" >&2
-    echo "  已重试 15 次，任务失败" >&2
-    echo "  原因：15 次重试后仍未完成 11 步流程" >&2
+    echo "  已重试 30 次，任务失败" >&2
+    echo "  原因：30 次重试后仍未完成 11 步流程" >&2
     echo "" >&2
 
     # 上报失败
     TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
     if [[ -f "$TRACK_SCRIPT" ]]; then
-        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 15 次后仍未完成" 2>/dev/null || true
+        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 30 次后仍未完成" 2>/dev/null || true
     fi
 
     # 写入失败日志（.dev-failure.log）
@@ -334,6 +334,18 @@ if [[ $RETRY_COUNT -gt 15 ]]; then
         echo "last_block_reason: $LAST_REASON"
         echo "========================"
     } > "$FAILURE_LOG"
+
+    # 通知 Brain 任务失败
+    if [[ -n "$FAIL_BRANCH" ]]; then
+        # 尝试从 .dev-mode 提取 task_id
+        FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+        if [[ -n "$FAIL_TASK_ID" ]]; then
+            curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${FAIL_TASK_ID}" \
+                -H "Content-Type: application/json" \
+                -d "{\"status\":\"failed\",\"error\":\"Stop Hook 重试 30 次后仍未完成（last_block: ${LAST_REASON}）\"}" \
+                --max-time 5 2>/dev/null || true
+        fi
+    fi
 
     # 强制清理 worktree（兜底）
     force_cleanup_worktree "$DEV_MODE_FILE"
