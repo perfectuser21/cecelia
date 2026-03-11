@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #813）
+
+**失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
+
+### 根本原因
+
+1. **vitest isolate:false 是跨文件 Mock 污染根因**：`isolate: false` 允许同一 worker fork 内的多个测试文件共享模块注册表。某个文件 `vi.mock('../notifier.js', () => ({ notifyCircuitOpen }))` 后，后续文件的 `sendFeishu` 引用为 undefined，导致 alerting、circuit-breaker 等约 70 个测试在批量运行时失败，但单独运行时全部通过。
+
+2. **过时断言积累**：migration 142（tasks.error_message）、cortex.js timeout 调整后，相关测试断言未同步，导致 3 个测试文件 4 处断言过时（schema version、SQL 查询、timeout 值）。
+
+3. **isolate:false 的危险性**：单独运行所有测试通过，给人"测试健康"的错觉。只有批量运行才暴露污染问题，且失败数在不同运行顺序下波动（74-86 个）。
+
+### 下次预防
+
+- [ ] 修改 vitest.config.js 时，`isolate: false` 必须有明确的理由和团队共识；否则默认用 `isolate: true`（vitest 默认值）
+- [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
+- [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
+
 ### [2026-03-10] Dashboard 白屏修复（PR #788）
 
 **失败统计**：CI 失败 1 次（Learning 缺失 + DoD D5 用了 `echo` 假测试）
