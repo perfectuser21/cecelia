@@ -5257,3 +5257,21 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
 - [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
 - [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
+
+## PR #847 feat(engine): feat PR 变更行覆盖率三门禁（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate，LEARNINGS 未在 PR 前 push）。
+
+### 根本原因
+
+1. DoD 中两条 Test 命令使用了 `test -f ... && echo 1`，DevGate 将 `test -f` 识别为假测试并拒绝
+2. LEARNINGS.md 未随代码同批次提交，L1 Learning Format Gate 是硬门禁
+3. 正确的文件存在性验证：改用 `node --check <file>` 验证语法（比 `test -f` 更有意义），或 `grep -c 'keyword' <file>` 验证内容
+
+### 下次预防
+
+- [ ] DoD Test 命令禁止 `test -f`，改用 `node --check <file>` 或 `grep -c 'keyword' <file>`
+- [ ] LEARNINGS.md 必须和代码同批次提交，不能先 push 代码再补 Learning
+- [ ] `vitest --coverage --coverage.reporter=json` 生成 `coverage/coverage-final.json`（Istanbul 格式，keys 为绝对路径）
+- [ ] `check-changed-coverage.cjs` 的 `findCoverageKey` 需处理绝对路径与相对路径不一致：优先后缀匹配，再 basename 兜底
+- [ ] feat PR 覆盖门禁三层：新增测试文件 → import 变更源码 → 变更行覆盖率 ≥ 60%
