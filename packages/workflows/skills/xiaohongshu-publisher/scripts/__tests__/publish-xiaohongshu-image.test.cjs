@@ -4,7 +4,7 @@
  *
  * 测试策略：
  * - 不启动真实浏览器，通过 mock CDP + mock fs 测试核心逻辑
- * - 覆盖：escapeForJS / findImages / 错误路径 / 批量发布逻辑
+ * - 覆盖：isLoginError / isPublishSuccess / findImages / 错误路径 / 批量发布逻辑
  *
  * 运行：
  *   node --test packages/workflows/skills/xiaohongshu-publisher/scripts/__tests__/publish-xiaohongshu-image.test.cjs
@@ -17,9 +17,67 @@ const fs = require('fs');
 const os = require('os');
 
 // ============================================================
-// 从 weibo-publisher 复用的 utils（共用 findImages）
+// 从主脚本导入可测试函数
 // ============================================================
-const { findImages } = require('../../../weibo-publisher/scripts/utils.cjs');
+const { isLoginError, isPublishSuccess } = require('../publish-xiaohongshu-image.cjs');
+
+// ============================================================
+// 从本地 utils 导入（不再依赖 weibo-publisher）
+// ============================================================
+const { findImages } = require('../utils.cjs');
+
+// ============================================================
+// isLoginError
+// ============================================================
+describe('isLoginError', () => {
+  test('普通发布页 URL 返回 false', () => {
+    assert.equal(isLoginError('https://creator.xiaohongshu.com/publish/publish'), false);
+  });
+
+  test('含 login 的 URL 返回 true', () => {
+    assert.equal(isLoginError('https://creator.xiaohongshu.com/login?redirect=...'), true);
+  });
+
+  test('含 passport 的 URL 返回 true', () => {
+    assert.equal(isLoginError('https://passport.xiaohongshu.com/login'), true);
+  });
+
+  test('undefined/null 返回 false', () => {
+    assert.equal(isLoginError(undefined), false);
+    assert.equal(isLoginError(null), false);
+    assert.equal(isLoginError(''), false);
+  });
+});
+
+// ============================================================
+// isPublishSuccess
+// ============================================================
+describe('isPublishSuccess', () => {
+  test('URL 跳离发布页时返回 true', () => {
+    assert.equal(isPublishSuccess('https://creator.xiaohongshu.com/creator/note/123', ''), true);
+  });
+
+  test('仍在发布页且无成功关键词返回 false', () => {
+    assert.equal(isPublishSuccess('https://creator.xiaohongshu.com/publish/publish', '请填写标题'), false);
+  });
+
+  test('正文含"发布成功"返回 true', () => {
+    assert.equal(isPublishSuccess('https://creator.xiaohongshu.com/publish/publish', '发布成功！笔记正在审核'), true);
+  });
+
+  test('正文含"笔记已发布"返回 true', () => {
+    assert.equal(isPublishSuccess('https://creator.xiaohongshu.com/publish/publish', '笔记已发布'), true);
+  });
+
+  test('正文含"创作成功"返回 true', () => {
+    assert.equal(isPublishSuccess('https://creator.xiaohongshu.com/publish/publish', '创作成功'), true);
+  });
+
+  test('url 为空时仅依赖 bodyText', () => {
+    assert.equal(isPublishSuccess('', '发布成功'), true);
+    assert.equal(isPublishSuccess('', '请填写内容'), false);
+  });
+});
 
 // ============================================================
 // escapeForJS — 独立测试（内联实现，与主脚本保持一致）
@@ -64,9 +122,9 @@ describe('escapeForJS', () => {
 });
 
 // ============================================================
-// findImages — 复用 weibo-publisher 的 utils
+// findImages — 来自本地 utils.cjs
 // ============================================================
-describe('findImages (来自 weibo-publisher/utils)', () => {
+describe('findImages (来自本地 utils.cjs)', () => {
   let tmpDir;
 
   test('返回所有图片文件（按字母序）', () => {

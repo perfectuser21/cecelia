@@ -4137,7 +4137,17 @@ ${resultStr.substring(0, 2000)}
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
         const { processExecutionAutoLearning } = await import('./auto-learning.js');
-        const learningResult = await processExecutionAutoLearning(task_id, newStatus, result, {
+        // 当进程被 kill/超时导致 result=null 时，从 exit_code/stderr/failure_class 合成诊断信息
+        // 避免 extractTaskSummary(null) 返回 "No details available"
+        const failureClass = req.body.failure_class || null;
+        const effectiveResult = result ?? (newStatus === 'failed' && (exit_code != null || stderr || failureClass) ? {
+          error: `Process exited with code ${exit_code ?? 'unknown'}`,
+          exit_code,
+          stderr_tail: String(stderr || '').slice(-500),
+          failure_class: failureClass,
+          source: 'synthesized_from_callback',
+        } : null);
+        const learningResult = await processExecutionAutoLearning(task_id, newStatus, effectiveResult, {
           trigger_source: 'execution_callback',
           retry_count: iterations,
           iterations: iterations,
@@ -4664,6 +4674,28 @@ router.post('/goal/compare', async (req, res) => {
       error: 'Failed to compare goal progress',
       details: err.message
     });
+  }
+});
+
+/**
+ * GET /api/brain/projects/compare
+ * 跨项目对比指标（含 KR 进度 + 历史趋势）
+ * Query: ids=uuid1,uuid2[,...], format?='json'|'markdown', trend_weeks?=4
+ */
+router.get('/projects/compare', async (req, res) => {
+  try {
+    const { ids, format = 'json', trend_weeks = '4' } = req.query;
+    const project_ids = ids ? ids.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (project_ids.length < 2) {
+      return res.status(400).json({ success: false, error: 'ids must contain at least 2 project UUIDs' });
+    }
+    const weeks = Math.min(Math.max(parseInt(trend_weeks, 10) || 4, 1), 12);
+    const { getCompareMetrics } = await import('./project-compare.js');
+    const result = await getCompareMetrics({ project_ids, format, trend_weeks: weeks });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 

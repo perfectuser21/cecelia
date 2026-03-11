@@ -702,6 +702,112 @@ describe('边界条件', () => {
 });
 
 // ============================================================
+// detectUserSessions PPID 检测（macOS 进程标题覆盖修复）
+// ============================================================
+
+describe('detectUserSessions PPID 检测（macOS 进程标题覆盖修复）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('PPID 检测: 父进程含 CECELIA_HEADLESS=true → 分类为 headless', () => {
+    // 第一次调用: listProcessesWithElapsed — claude 无 -p（macOS 标题覆盖场景）
+    execSync.mockReturnValueOnce('12345 300 claude claude\n');
+    // 第二次调用: listProcessesWithPpid — 父进程含 CECELIA_HEADLESS=true
+    execSync.mockReturnValueOnce(
+      '12345 99999 claude\n' +
+      '99999 1 env CECELIA_HEADLESS=true /Users/administrator/bin/cecelia-run /dev\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(1);
+    expect(result.headless[0].pid).toBe(12345);
+    expect(result.headed).toHaveLength(0);
+    expect(result.total).toBe(1);
+  });
+
+  it('PPID 检测: 父进程不含 CECELIA_HEADLESS → 分类为 headed', () => {
+    execSync.mockReturnValueOnce('12345 300 claude claude\n');
+    execSync.mockReturnValueOnce(
+      '12345 99999 claude\n' +
+      '99999 1 /opt/homebrew/bin/claude --resume session-abc\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headed).toHaveLength(1);
+    expect(result.headed[0].pid).toBe(12345);
+    expect(result.headless).toHaveLength(0);
+  });
+
+  it('PPID 检测: 4 个无头任务不被误判为 headed（积压根因修复）', () => {
+    // 4 个 claude 进程无 -p 标志（macOS 标题覆盖）
+    execSync.mockReturnValueOnce(
+      '1001 300 claude claude\n' +
+      '1002 300 claude claude\n' +
+      '1003 300 claude claude\n' +
+      '1004 300 claude claude\n'
+    );
+    // 父进程（cecelia-run）含 CECELIA_HEADLESS=true
+    execSync.mockReturnValueOnce(
+      '1001 9999 claude\n' +
+      '1002 9999 claude\n' +
+      '1003 9999 claude\n' +
+      '1004 9999 claude\n' +
+      '9999 1 env CECELIA_HEADLESS=true /Users/administrator/bin/cecelia-run /dev\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(4);
+    expect(result.headed).toHaveLength(0);
+    // user.mode 应为 absent（无有头 session）
+    expect(detectUserMode(result)).toBe('absent');
+  });
+
+  it('PPID 检测: 父进程 PID 不在进程列表中时安全降级', () => {
+    // claude 进程 ppid=88888 不在进程列表中 → 安全降级
+    execSync.mockReturnValueOnce('12345 300 claude claude\n');
+    execSync.mockReturnValueOnce('12345 88888 claude\n'); // ppid 88888 不在列表中
+    const result = detectUserSessions();
+    // 无 -p 标志，无 PPID 匹配 → headed
+    expect(result.headed).toHaveLength(1);
+    expect(result.headless).toHaveLength(0);
+  });
+
+  it('PPID 检测失败时（listProcessesWithPpid 异常）降级到 -p 检测', () => {
+    // 第一次: listProcessesWithElapsed 正常返回带 -p 的进程
+    execSync.mockReturnValueOnce('12345 300 claude claude -p "task"\n');
+    // 第二次: listProcessesWithPpid 抛出异常
+    execSync.mockImplementationOnce(() => { throw new Error('ps unavailable'); });
+    // 应降级到 -p 检测，仍正确分类为 headless
+    const result = detectUserSessions();
+    expect(result.headless).toHaveLength(1);
+    expect(result.headed).toHaveLength(0);
+  });
+
+  it('PPID 和 -p 双重检测: 混合场景正确分类', () => {
+    // PID 1001: 无 -p，但父进程有 CECELIA_HEADLESS=true → headless
+    // PID 1002: 有 -p，父进程无 CECELIA_HEADLESS → headless（-p 检测）
+    // PID 1003: 无 -p，父进程无 CECELIA_HEADLESS → headed
+    execSync.mockReturnValueOnce(
+      '1001 300 claude claude\n' +
+      '1002 300 claude claude -p "task"\n' +
+      '1003 300 claude claude\n'
+    );
+    execSync.mockReturnValueOnce(
+      '1001 9001 claude\n' +
+      '1002 9002 claude\n' +
+      '1003 9003 claude\n' +
+      '9001 1 env CECELIA_HEADLESS=true /Users/administrator/bin/cecelia-run\n' +
+      '9002 1 /opt/homebrew/bin/claude\n' +
+      '9003 1 /opt/homebrew/bin/claude\n'
+    );
+    const result = detectUserSessions();
+    expect(result.headless.map(s => s.pid)).toContain(1001); // PPID 检测
+    expect(result.headless.map(s => s.pid)).toContain(1002); // -p 检测
+    expect(result.headed.map(s => s.pid)).toContain(1003);   // headed
+    expect(result.headless).toHaveLength(2);
+    expect(result.headed).toHaveLength(1);
+  });
+});
+
+// ============================================================
 // detectUserSessions 额外边界测试
 // ============================================================
 

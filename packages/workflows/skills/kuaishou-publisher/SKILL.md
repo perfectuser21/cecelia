@@ -1,18 +1,29 @@
 ---
 name: kuaishou-publisher
-description: 快手自动发布工具 - 图文发布（CDP 直连方式）
+description: 快手自动发布工具 - 图文发布（支持 API 方案和 CDP 浏览器方案）
 trigger: 发布快手、kuaishou、快手发布
-version: 1.1.0
+version: 1.3.0
 created: 2026-03-07
-updated: 2026-03-08
+updated: 2026-03-10
 changelog:
   - 1.0.0: 初始版本 - 图文发布，CDP 直连方式
   - 1.1.0: OAuth 会话检查脚本 + 批量发布前置防护
+  - 1.2.0: 新增 API 方案（publish-kuaishou-api.cjs）— CDP 提取 Cookie + HTTP 直接调用
+  - 1.3.0: 批量发布脚本（batch-publish-kuaishou.sh）切换为新 API 方案，旧方案保留作备用
 ---
 
 # Kuaishou Publisher
 
-快手自动发布工具 - 图文内容，Mac mini 直连 CDP 方式
+快手自动发布工具 - 图文内容，支持两种发布方案
+
+## 方案对比
+
+| 方案 | 脚本 | 原理 | 优势 | 劣势 |
+|------|------|------|------|------|
+| CDP 自动化（旧） | `publish-kuaishou-image.cjs` | CDP 控制浏览器 UI | 不需了解 API | 受页面改版影响、需要 Windows 路径 |
+| 新 API 方案 | `publish-kuaishou-api.cjs` | CDP 提取 Cookie → HTTP 直接调用 | 稳定、快速 | 依赖内部 API 格式不变 |
+
+**推荐使用新 API 方案**（publish-kuaishou-api.cjs）。
 
 ## 架构
 
@@ -20,7 +31,7 @@ changelog:
 Mac mini (100.86.57.69 / localhost)
     ↓ CDP WebSocket (Tailscale 内网直连)
 Windows PC (100.97.242.124:19223)
-    ↓ 浏览器自动化
+    ↓ 提取 Cookie（新方案）/ 浏览器 UI 自动化（旧方案）
 快手发布成功
 ```
 
@@ -31,10 +42,11 @@ Windows PC (100.97.242.124:19223)
 
 ## 支持类型
 
-| 类型 | 脚本 | 状态 |
-|------|------|------|
-| 图文 | `scripts/publish-kuaishou-image.cjs` | ✅ |
-| 会话检查 | `scripts/check-kuaishou-session.cjs` | ✅ |
+| 类型 | 脚本 | 状态 | 说明 |
+|------|------|------|------|
+| 图文（新 API） | `scripts/publish-kuaishou-api.cjs` | ✅ 推荐 | Cookie + HTTP API，不依赖页面结构 |
+| 图文（CDP 旧方案） | `scripts/publish-kuaishou-image.cjs` | ✅ 备用 | 浏览器 UI 自动化 |
+| 会话检查 | `scripts/check-kuaishou-session.cjs` | ✅ | 发布前检查 |
 
 ## 使用方式
 
@@ -50,7 +62,15 @@ NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
 - `[SESSION_EXPIRED]` — 需要重新登录（exit 2）
 - `[CDP_ERROR]` — Windows PC 未连接（exit 1）
 
-### 单条发布
+### 新 API 方案（推荐）
+
+```bash
+NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
+  node packages/workflows/skills/kuaishou-publisher/scripts/publish-kuaishou-api.cjs \
+  --content ~/.kuaishou-queue/2026-03-07/image-1/
+```
+
+### 旧 CDP 方案（备用）
 
 ```bash
 NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
@@ -81,8 +101,9 @@ bash packages/workflows/skills/kuaishou-publisher/scripts/batch-publish-kuaishou
 | Windows PC IP | `100.97.242.124` |
 | CDP 端口 | `19223` |
 | 发布页面 | `https://cp.kuaishou.com/article/publish/photo-video` |
-| Windows 图片目录 | `C:\Users\xuxia\kuaishou-media\{date}\images\` |
-| 截图目录（调试） | `/tmp/kuaishou-publish-screenshots/` |
+| 上传 Token API | `https://cp.kuaishou.com/rest/cp/works/upload/photo/token` |
+| 发布 API | `https://cp.kuaishou.com/rest/cp/works/photo/new` |
+| 会话 Cookie | `kuaishou.web.cp.api_st` / `kuaishou.web.cp.api_ph` |
 | NODE_PATH | `/Users/administrator/perfect21/cecelia/node_modules` |
 
 ## 故障排查
@@ -99,8 +120,16 @@ curl http://100.97.242.124:19223/json
 export NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules
 ```
 
+### API 端点返回 404
+
+新 API 方案的端点可能随快手 CP 版本更新而变更。排查方法：
+1. 在 Windows Chrome 打开快手 CP（cp.kuaishou.com）
+2. 打开 DevTools → Network 面板，过滤 XHR/Fetch
+3. 手动发布一次图文，记录上传和发布相关的请求 URL
+4. 更新 `publish-kuaishou-api.cjs` 中的 `KUAISHOU_UPLOAD_TOKEN_URL` 和 `KUAISHOU_PUBLISH_URL`
+
 ---
 
-**版本**: 1.1.0
-**状态**: ✅ 图文发布 + OAuth 会话检查
-**架构**: Mac mini → CDP → Windows PC 浏览器 → 快手
+**版本**: 1.3.0
+**状态**: ✅ 图文发布（新 API 方案 + CDP 旧方案）+ OAuth 会话检查 + 批量发布默认用新方案
+**架构**: Mac mini → CDP → Windows PC 浏览器 Cookie → 快手 API

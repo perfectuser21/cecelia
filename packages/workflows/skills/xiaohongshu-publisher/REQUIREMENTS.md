@@ -1,16 +1,17 @@
 ---
 id: xhs-publisher-requirements
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-08
-updated: 2026-03-08
+updated: 2026-03-10
 changelog:
+  - 1.1.0: 修正脚本名和队列目录引用（xhs → xiaohongshu）
   - 1.0.0: 初始版本
 ---
 
 # 小红书发布器 - 字段规范
 
-**版本**: 1.0.0
-**日期**: 2026-03-08
+**版本**: 1.1.0
+**日期**: 2026-03-10
 
 ---
 
@@ -47,7 +48,7 @@ image-1/
 ## 队列目录
 
 ```
-~/.xhs-queue/
+~/.xiaohongshu-queue/
 └── {date}/                    # 日期目录，格式：YYYY-MM-DD
     ├── image-1/               # 第一条图文
     │   ├── title.txt          # 标题（必需）
@@ -68,9 +69,9 @@ image-1/
 title.txt (必需) + content.txt (可选) + image.jpg
 
 # 批量发布
-bash scripts/batch-publish-xhs.sh YYYY-MM-DD
+bash scripts/batch-publish-xiaohongshu.sh YYYY-MM-DD
 
 # 单条发布
 NODE_PATH=/Users/administrator/perfect21/cecelia/node_modules \
-  node scripts/publish-xhs-image.cjs --content ~/.xhs-queue/2026-03-08/image-1/
+  node scripts/publish-xiaohongshu-image.cjs --content ~/.xiaohongshu-queue/2026-03-08/image-1/
 ```

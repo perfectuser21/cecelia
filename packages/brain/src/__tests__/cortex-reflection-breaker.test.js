@@ -457,3 +457,103 @@ describe('Cortex 反思熔断 - D6: 30 分钟窗口超时后 count 重置', () =
     expect(result.rationale || '').not.toContain('反思熔断');
   }, 30000);
 });
+
+// ── D5: 过期状态不被加载 ────────────────────────────────────────────────────────
+
+describe('Cortex 反思熔断 - D5(过期): DB 中过期条目不被恢复到内存', () => {
+  let _checkReflectionBreaker;
+  let capturedQueries;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    capturedQueries = [];
+
+    // DB 返回一条 lastSeen 超过 30 分钟的过期条目
+    const TWO_HOURS_AGO = Date.now() - 2 * 60 * 60 * 1000;
+    const expiredState = { count: 3, firstSeen: TWO_HOURS_AGO, lastSeen: TWO_HOURS_AGO };
+
+    const mockQueryFn = vi.fn().mockImplementation((sql, params) => {
+      capturedQueries.push({ sql, params });
+      if (typeof sql === 'string' && sql.includes('cortex_reflection:')) {
+        return Promise.resolve({
+          rows: [{
+            key: 'cortex_reflection:expiredHash123',
+            value_json: expiredState,
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    vi.doMock('../db.js', () => ({ default: { query: mockQueryFn } }));
+    vi.doMock('../thalamus.js', () => ({
+      ACTION_WHITELIST: {
+        request_human_review: { dangerous: false, description: 'Request human review' },
+      },
+      validateDecision: vi.fn(),
+      recordLLMError: vi.fn(),
+      recordTokenUsage: vi.fn(),
+    }));
+    vi.doMock('../llm-caller.js', () => ({ callLLM: mockCallLLM }));
+    vi.doMock('../learning.js', () => ({
+      searchRelevantLearnings: vi.fn().mockResolvedValue([]),
+    }));
+    vi.doMock('../cortex-quality.js', () => ({
+      evaluateQualityInitial: vi.fn().mockResolvedValue(null),
+      generateSimilarityHash: vi.fn().mockReturnValue('abc123'),
+      checkShouldCreateRCA: vi.fn().mockResolvedValue({ should_create: true }),
+    }));
+    vi.doMock('../policy-validator.js', () => ({
+      validatePolicyJson: vi.fn().mockReturnValue({ valid: false, errors: ['test'] }),
+    }));
+    vi.doMock('../self-model.js', () => ({
+      getSelfModel: vi.fn().mockResolvedValue('test self model'),
+    }));
+    vi.doMock('../memory-utils.js', () => ({
+      generateL0Summary: vi.fn().mockReturnValue('test summary'),
+    }));
+
+    const mod = await import('../cortex.js');
+    _checkReflectionBreaker = mod._checkReflectionBreaker;
+  });
+
+  it('DB 中过期条目（lastSeen 超过 30 分钟）不被加载：首次调用返回 count=1（fresh start）', async () => {
+    // 调用熔断检查，使用和 DB 中存储的相同 hash
+    // 过期状态不应被加载，应视为全新 count=1（不受 DB 中过期的 count=3 影响）
+    const result = await _checkReflectionBreaker('expiredHash123');
+
+    expect(result.open).toBe(false);
+    expect(result.count).toBe(1);
+  }, 30000);
+
+  it('DB 中过期条目触发 DELETE working_memory 清理', async () => {
+    await _checkReflectionBreaker('expiredHash123');
+
+    // 等待 fire-and-forget 的 DELETE 完成
+    await new Promise(r => setTimeout(r, 50));
+
+    const deleteQueries = capturedQueries.filter(q =>
+      typeof q.sql === 'string' &&
+      q.sql.includes('DELETE') &&
+      q.sql.includes('working_memory')
+    );
+    expect(deleteQueries.length).toBeGreaterThan(0);
+
+    // 确认删除了正确的 key
+    const deletedKeys = deleteQueries[0]?.params?.[0];
+    expect(Array.isArray(deletedKeys)).toBe(true);
+    expect(deletedKeys).toContain('cortex_reflection:expiredHash123');
+  }, 30000);
+
+  it('D7: 清理过期条目时日志包含"过期反思状态"', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await _checkReflectionBreaker('expiredHash123');
+
+    const allLogs = logSpy.mock.calls.flat().join(' ');
+    expect(allLogs).toContain('过期反思状态');
+
+    logSpy.mockRestore();
+  }, 30000);
+});
