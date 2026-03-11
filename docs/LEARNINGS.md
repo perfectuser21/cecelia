@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #829 fix(thalamus): recordLLMError 结构化字段（2026-03-11）
+
+CI 失败 2 次（L1 Learning Format Gate + DoD 未验证项）。
+
+### 根本原因
+
+1. DoD 中 `- [ ]` 未改为 `- [x]` 即 push，check-dod-mapping.cjs 报"此项未验证"
+2. DoD 最后一条 Test 使用了 `npx vitest run ... | grep -c 'passed'`，在 CI 中 vitest 输出不含 word "passed"（或格式不同）导致 grep-c 返回 0；memory 规则明确禁止 vitest 类命令
+3. LEARNINGS.md 未在 PR 创建前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] DoD 验收项本地验证完毕后，立即将 `[ ]` 改为 `[x]`，再提交 git add + commit
+- [ ] `manual:` Test 禁止使用 `npx vitest`；验证单测存在用 `grep -c 'it(' file.test.js`，验证测试用例覆盖用 `grep -c 'expect' file.test.js`
+- [ ] LEARNINGS.md 更新必须与代码同批次 commit + push（PR 创建前），不能 CI 失败后补
+
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
 **失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
