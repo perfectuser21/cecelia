@@ -68,8 +68,14 @@ function classifyLLMError(error) {
  * @param {string} source - 'thalamus' or 'cortex'
  * @param {Error} error
  * @param {Object} context - 额外上下文
+ * @param {Object} [opts] - 结构化字段
+ * @param {number|null} [opts.http_status] - HTTP 状态码（429/500 等）
+ * @param {number|null} [opts.elapsed_ms] - 调用耗时 ms
+ * @param {string|null} [opts.model] - 使用的模型 ID
+ * @param {string|null} [opts.provider] - 使用的 provider
+ * @param {number|null} [opts.fallback_attempt] - fallback 次数（0=无 fallback）
  */
-async function recordLLMError(source, error, context = {}) {
+async function recordLLMError(source, error, context = {}, opts = {}) {
   const errorType = classifyLLMError(error);
 
   try {
@@ -79,6 +85,11 @@ async function recordLLMError(source, error, context = {}) {
     `, [errorType, source, JSON.stringify({
       error_message: error?.message || String(error),
       error_type: errorType,
+      http_status: opts.http_status ?? null,
+      elapsed_ms: opts.elapsed_ms ?? null,
+      model: opts.model ?? null,
+      provider: opts.provider ?? null,
+      fallback_attempt: opts.fallback_attempt ?? null,
       ...context,
       timestamp: new Date().toISOString()
     })]);
@@ -631,8 +642,14 @@ async function analyzeEvent(event) {
 
   } catch (err) {
     console.error('[thalamus] Error analyzing event:', err.message);
-    // 分类错误类型并记录
-    await recordLLMError('thalamus', err, { event_type: event.type });
+    // 分类错误类型并记录（携带结构化字段）
+    await recordLLMError('thalamus', err, { event_type: event.type }, {
+      http_status: err.status ?? null,
+      elapsed_ms: err.elapsed_ms ?? null,
+      model: err.llm_model ?? null,
+      provider: err.llm_provider ?? null,
+      fallback_attempt: err.fallback_attempt ?? null,
+    });
     return createFallbackDecision(event, err.message);
   }
 }

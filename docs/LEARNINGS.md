@@ -16,6 +16,40 @@ CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未在 push 前提交
 - [ ] DoD 验证文件存在时用 `ls ... | wc -l` 而非 `test -f ... && echo 1`
 - [ ] 文件有重复代码块时改用 `cat >>` 追加或提供更多上下文区分 Edit 位置
 
+### [2026-03-11] Brain 重复派发同类任务 — 开发前先查 routes/ 确认功能是否已存在（PR #830）
+
+**失败统计**：L1 CI 失败 1 次（Learning Gate + DoD Gate），实际为任务重复
+
+### 根本原因
+
+1. **Brain 重复派发已实现功能**：PR #824 已通过 `routes/rumination.js` 实现 `POST /api/brain/rumination/run`，但 Brain 又派发了相同功能的任务，导致 PR #830 实现了重复代码（在 inner-life.js 里加了第二个 `/run` 端点）。
+2. **开发前缺少"功能是否已存在"检查**：直接按 PRD 写代码，未先检查 `packages/brain/src/routes/` 下是否已有同名路由文件。
+3. **DoD `test -f ... && echo 1` 被 gate 认为是假测试**：正确写法是 `ls <file>` 直接返回路径（exit 0）或失败（exit 1），不要用 `echo`。
+
+### 下次预防
+
+- [ ] 开发路由端点前，先 `ls packages/brain/src/routes/` 检查是否已有对应路由文件
+- [ ] 若 PRD 功能已实现，关闭 PR 并在 Brain 将任务标为 `quarantined` 并附注原因
+- [ ] DoD Test 文件存在性检查：用 `ls <file>` 而非 `test -f ... && echo 1`（后者被视为假测试）
+
+---
+
+## PR #829 fix(thalamus): recordLLMError 结构化字段（2026-03-11）
+
+CI 失败 2 次（L1 Learning Format Gate + DoD 未验证项）。
+
+### 根本原因
+
+1. DoD 中 `- [ ]` 未改为 `- [x]` 即 push，check-dod-mapping.cjs 报"此项未验证"
+2. DoD 最后一条 Test 使用了 `npx vitest run ... | grep -c 'passed'`，在 CI 中 vitest 输出不含 word "passed"（或格式不同）导致 grep-c 返回 0；memory 规则明确禁止 vitest 类命令
+3. LEARNINGS.md 未在 PR 创建前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] DoD 验收项本地验证完毕后，立即将 `[ ]` 改为 `[x]`，再提交 git add + commit
+- [ ] `manual:` Test 禁止使用 `npx vitest`；验证单测存在用 `grep -c 'it(' file.test.js`，验证测试用例覆盖用 `grep -c 'expect' file.test.js`
+- [ ] LEARNINGS.md 更新必须与代码同批次 commit + push（PR 创建前），不能 CI 失败后补
+
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
 **失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）

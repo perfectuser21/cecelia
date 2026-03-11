@@ -658,7 +658,13 @@ async function analyzeDeep(event, thalamusDecision = null) {
 
   } catch (err) {
     console.error('[cortex] Deep analysis failed:', err.message);
-    await recordLLMError('cortex', err, { event_type: event.type });
+    await recordLLMError('cortex', err, { event_type: event.type }, {
+      http_status: err.status ?? null,
+      elapsed_ms: err.elapsed_ms ?? null,
+      model: err.llm_model ?? null,
+      provider: err.llm_provider ?? null,
+      fallback_attempt: err.fallback_attempt ?? null,
+    });
     // 超时事件计入熔断器（防止无效重试）
     if (err.degraded === true || /timed out/i.test(err.message)) {
       await recordFailure('cortex-llm').catch(() => {});
