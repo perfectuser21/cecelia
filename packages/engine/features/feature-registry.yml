@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.33.0"
-updated: "2026-03-10"
+version: "3.34.0"
+updated: "2026-03-11"
 changelog:
+  - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
   - "3.32.0: v12.44.3 - stop-dev.sh Session 隔离前置（D6）：mutex 获取前新增 session 预检查，无匹配 .dev-lock 直接 exit 0，避免无关会话阻塞等待队列"
   - "3.31.0: v12.44.2 - 分支清理增强：新增 branch-gc.sh 独立脚本（三类清理：已合并 PR/已关闭 PR/无 PR 超时孤儿分支）；cleanup.sh Section 9 委托 branch-gc.sh；支持 --dry-run 和 --stale=N 参数；保护 worktree 关联分支和有 open PR 的分支"
@@ -1206,5 +1207,40 @@ product_features:
     minimal_paths:
       - "code-only 任务: delivery_type 默认值，无额外验证"
       - "behavior-change 任务: 必须有测试文件 + PR body 声明"
+
+    rcis: []
+
+  - id: S7
+    name: PRD Semantic Coverage Audit
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-11"
+    description: |
+      PRD 承诺分类（ARTIFACT/BEHAVIOR/GATE）+ 独立审计员 + BEHAVIOR 弱测试检测
+      解决 AI-first 开发中同一 AI 写 PRD→DoD→Test→Code 的自我验证死循环
+      05-dod.md 新增承诺分类规则；07-verify.md 新增 Step 7.5 独立审计员子代理
+      check-dod-mapping.cjs 新增 validateBehaviorTestStrength() 检测弱测试
+
+    entrypoints:
+      - type: dev-step
+        file: skills/dev/steps/05-dod.md
+        trigger: "Step 5: DoD 定稿时分类 PRD 承诺"
+      - type: dev-step
+        file: skills/dev/steps/07-verify.md
+        trigger: "Step 7.5: 独立审计员语义覆盖审计"
+      - type: script
+        file: scripts/devgate/check-dod-mapping.cjs
+        trigger: "CI L1 DoD 验证 + BEHAVIOR 弱测试检测"
+
+    golden_path: |
+      PRD 写承诺 → DoD 分类 [ARTIFACT]/[BEHAVIOR]/[GATE] →
+      BEHAVIOR 条目 Test 必须用 tests/*.test.ts 或 manual:curl →
+      check-dod-mapping.cjs 拒绝 BEHAVIOR 用 grep/ls 弱测试 →
+      Step 7.5 独立审计员验证 PRD vs 代码实现
+
+    minimal_paths:
+      - "无 [BEHAVIOR] 标签: 向后兼容，不触发弱测试检测"
+      - "有 [BEHAVIOR] 标签: 强制要求强测试（tests/ 或 curl）"
 
     rcis: []

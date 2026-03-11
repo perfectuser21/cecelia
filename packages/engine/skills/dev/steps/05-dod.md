@@ -57,17 +57,84 @@ fi
 
 ---
 
+## 🔍 PRD 承诺分类（CRITICAL — 防止语义降级）
+
+**每条 PRD 成功标准必须标注承诺类型，DoD Test 类型必须匹配。**
+
+这是防止"PRD 承诺行为，DoD 只验文件存在"的核心机制。
+
+### 三种承诺类型
+
+| 类型 | 含义 | 示例 |
+|------|------|------|
+| `[ARTIFACT]` | 产出物存在（文件/配置/端点声明） | "新增 config.json 文件"、"添加 API 路由定义" |
+| `[BEHAVIOR]` | 运行时行为（代码执行产生可观测结果） | "自动生成报告"、"API 返回正确数据"、"点击按钮触发操作" |
+| `[GATE]` | 门禁通过（CI/测试/质量检查） | "npm test 通过"、"CI 全绿" |
+
+### Test 类型强制匹配规则
+
+| PRD 承诺类型 | 允许的 Test | 禁止的 Test |
+|---|---|---|
+| `[ARTIFACT]` | `manual:bash -c "grep -c ..."`, `manual:bash -c "ls ..."` | — |
+| `[BEHAVIOR]` | `tests/*.test.ts`, `manual:curl ... \| jq -e ...`, `manual:chrome:...` | ❌ `grep -c`、`ls`、`test -f`、`wc -l`（太弱，验不了行为） |
+| `[GATE]` | `contract:RCI-ID` | — |
+
+### 判断标准
+
+**如何判断一条承诺是 ARTIFACT 还是 BEHAVIOR？**
+
+问自己：**"不运行代码，只看文件系统，能验证这条承诺吗？"**
+
+- 能 → `[ARTIFACT]`（文件存在、配置正确、字符串匹配）
+- 不能 → `[BEHAVIOR]`（需要启动服务、发请求、触发流程）
+
+**常见的 BEHAVIOR 关键词**（PRD 中出现这些词 → 必须标 BEHAVIOR）：
+- "自动"、"触发"、"生成"（动态生成，非模板）、"返回"、"响应"
+- "执行"、"运行"、"调用"、"派发"、"调度"
+- "能..."、"可以..."、"支持..."（描述运行时能力）
+
+### 示例
+
+```markdown
+## 成功标准
+
+1. [ARTIFACT] 新增 /api/deploy 路由定义
+2. [BEHAVIOR] POST /api/deploy 触发部署脚本并返回 202
+3. [BEHAVIOR] 部署完成后自动通知 Brain
+4. [GATE] CI 全部通过
+```
+
+对应 DoD：
+```markdown
+- [ ] [ARTIFACT] 新增 /api/deploy 路由定义
+  Test: manual:bash -c "grep -c 'router.post.*deploy' packages/brain/src/routes.js"
+- [ ] [BEHAVIOR] POST /api/deploy 触发部署脚本并返回 202
+  Test: manual:curl -s -X POST http://localhost:5221/api/deploy -H "Authorization: Bearer test" | jq -e '.status == "accepted"'
+- [ ] [BEHAVIOR] 部署完成后自动通知 Brain
+  Test: tests/deploy-notification.test.ts
+- [ ] [GATE] CI 全部通过
+  Test: contract:C2-001
+```
+
+### CI 强制检查
+
+`check-dod-mapping.cjs` 会检测：
+- `[BEHAVIOR]` 条目的 Test 如果只是 `grep`/`ls`/`test -f` → **exit 1，阻止合并**
+- 条目没有标注类型 → 按旧规则检查（向后兼容）
+
+---
+
 ## Step 5.1: DoD 草稿
 
-把 PRD 里的"成功标准"变成可勾选的清单：
+把 PRD 里的"成功标准"变成可勾选的清单，**保留承诺类型标签**：
 
 ```
-PRD 成功标准: "用户能登录"
+PRD 成功标准: "[BEHAVIOR] 用户能登录"
     ↓
 DoD 草稿:
-  - [ ] 用户输入正确密码能登录成功
+  - [ ] [BEHAVIOR] 用户输入正确密码能登录成功
         Test: tests/auth.test.ts
-  - [ ] 用户输入错误密码显示错误提示
+  - [ ] [BEHAVIOR] 用户输入错误密码显示错误提示
         Test: tests/auth.test.ts
 ```
 

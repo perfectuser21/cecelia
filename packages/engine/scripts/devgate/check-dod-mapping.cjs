@@ -118,6 +118,10 @@ function parseDodItems(content) {
       const itemText = checkboxMatch[2];
       let testRef = null;
 
+      // 提取承诺类型标签：[ARTIFACT], [BEHAVIOR], [GATE]
+      const claimTypeMatch = itemText.match(/^\[([A-Z]+)\]\s*/);
+      const claimType = claimTypeMatch ? claimTypeMatch[1] : null;
+
       // 检查下一行是否是 Test: 字段
       if (i + 1 < lines.length) {
         const nextLine = lines[i + 1];
@@ -134,6 +138,7 @@ function parseDodItems(content) {
         test: testRef,
         line: i + 1,
         checked,
+        claimType,
       });
     }
   }
@@ -339,6 +344,70 @@ function validateTestRef(testRef, projectRoot) {
 }
 
 /**
+ * 检查 BEHAVIOR 类条目是否使用了弱测试（grep/ls/file-exists 等静态检查）
+ * @param {string} testRef - Test 引用
+ * @param {string} claimType - 承诺类型（ARTIFACT/BEHAVIOR/GATE）
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function validateBehaviorTestStrength(testRef, claimType) {
+  if (claimType !== "BEHAVIOR") {
+    return { valid: true };
+  }
+
+  // BEHAVIOR 必须有 Test 字段
+  if (!testRef) {
+    return {
+      valid: false,
+      reason: `[BEHAVIOR] 条目必须有 Test 字段（BEHAVIOR 承诺需要运行时验证）`
+    };
+  }
+
+  // tests/*.test.ts 是强测试，OK
+  if (testRef.startsWith("tests/")) {
+    return { valid: true };
+  }
+
+  // manual:chrome: 是视觉验证，OK
+  if (testRef.startsWith("manual:chrome:")) {
+    return { valid: true };
+  }
+
+  // manual:curl 是行为验证，OK
+  if (testRef.startsWith("manual:") && /\bcurl\b/.test(testRef)) {
+    return { valid: true };
+  }
+
+  // manual: 中包含真实执行命令（node/npm/psql/python）且不是纯 grep，OK
+  if (testRef.startsWith("manual:")) {
+    const cmd = testRef.substring("manual:".length);
+
+    // 弱测试模式：纯 grep/ls/wc/test -f（不启动任何服务或执行代码）
+    const isWeakOnly = /^\s*bash\s+-c\s+["']?\s*(grep|ls|wc|test\s+-[a-zA-Z]|cat|head|tail|find)\b/.test(cmd) ||
+                       /^\s*(grep|ls|wc|test\s+-[a-zA-Z]|cat|head|tail|find)\b/.test(cmd);
+
+    // 如果命令中同时有 curl/node/npm/psql 等执行命令，不算弱测试
+    const hasStrongCommand = /\b(curl|node|npm|npx|psql|python|pytest|jest|vitest|bash\s.*\.sh)\b/.test(cmd);
+
+    if (isWeakOnly && !hasStrongCommand) {
+      return {
+        valid: false,
+        reason: `[BEHAVIOR] 条目禁止使用弱测试（grep/ls/test -f）。BEHAVIOR 承诺需要运行时验证：tests/*.test.ts 或 manual:curl+断言`
+      };
+    }
+  }
+
+  // contract: 对 BEHAVIOR 不够（合约验证的是回归，不是行为）
+  if (testRef.startsWith("contract:")) {
+    return {
+      valid: false,
+      reason: `[BEHAVIOR] 条目不应只用 contract: 验证。BEHAVIOR 承诺需要 tests/*.test.ts 或 manual:curl+断言`
+    };
+  }
+
+  return { valid: true };
+}
+
+/**
  * 从 DoD 条目文本中提取有意义的关键词（≥2字符，去除助词）
  * @param {string} text - DoD 条目文本
  * @returns {string[]}
@@ -506,16 +575,30 @@ function main() {
   for (const item of items) {
     const validation = validateTestRef(item.test, projectRoot);
 
-    if (validation.valid) {
-      console.log(`  ${GREEN}✅${RESET} L${item.line}: ${item.item}`);
-      console.log(`     → Test: ${item.test}`);
-      passCount++;
-    } else {
+    if (!validation.valid) {
       console.log(`  ${RED}❌${RESET} L${item.line}: ${item.item}`);
       console.log(`     → ${RED}${validation.reason}${RESET}`);
       hasError = true;
       failCount++;
+      continue;
     }
+
+    // Phase: BEHAVIOR 弱测试检查（承诺类型标签存在时）
+    if (item.claimType) {
+      const strengthCheck = validateBehaviorTestStrength(item.test, item.claimType);
+      if (!strengthCheck.valid) {
+        console.log(`  ${RED}❌${RESET} L${item.line}: ${item.item}`);
+        console.log(`     → Test: ${item.test}`);
+        console.log(`     → ${RED}${strengthCheck.reason}${RESET}`);
+        hasError = true;
+        failCount++;
+        continue;
+      }
+    }
+
+    console.log(`  ${GREEN}✅${RESET} L${item.line}: ${item.item}`);
+    console.log(`     → Test: ${item.test}${item.claimType ? ` (${item.claimType})` : ""}`);
+    passCount++;
   }
 
   console.log("");

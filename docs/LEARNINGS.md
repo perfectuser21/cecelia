@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
+
+**失败统计**：L1 CI 失败 1 次（DoD Verification Gate：BEHAVIOR Test 的 printf 命令在 CI 执行失败）
+
+### 根本原因
+
+1. DoD 条目的 `Test: manual:bash -c "..."` 在 CI 环境（GITHUB_ACTIONS=true）下会被 `executeInlineCommand()` 实际执行，不只是格式检查
+2. `printf '- [x] ...'` 的 `-` 开头被 printf 识别为选项参数导致失败
+3. 需要改用 `node -e "fs.writeFileSync(...)"` 创建测试文件，避免 shell 转义问题
+
+### 下次预防
+
+- [ ] DoD 的 BEHAVIOR 条目 Test 命令必须在 CI 环境也能执行通过（GITHUB_ACTIONS=true 时 check-dod-mapping 会实际执行 manual: 命令）
+- [ ] 避免 `printf` 或 `echo` 创建以 `-` 开头的内容，改用 node 的 fs.writeFileSync
+
+## PR #839 feat(brain): 好奇心评分引擎 — 三维评分体系（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate + DoD 假测试）。
+
+### 根本原因
+
+1. `test -f ... && echo 1` 被 DevGate 检测为假测试（含 `echo`/`test -f` 的命令均被拒）
+2. DoD 末尾的"无需更新"条目没有 Test 字段，导致 DoD 映射检查报 2 个失败
+3. LEARNINGS.md 没有在首次 push 时写入，触发 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] 文件存在性测试改用 `grep -c '关键词' 文件路径`（输出数字，无 echo，CI 可正确判断）
+- [ ] DoD 中"不适用"的条目直接删除，不保留没有 Test 字段的 `- [x]` 项
+- [ ] LEARNINGS.md 必须在首次 commit 时就写入并 push，不能事后补充
+
 ### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
 
 **失败统计**：L1 CI 失败 1 次（Learning Format Gate）
@@ -5207,15 +5238,37 @@ CI 失败 1 次（L1 Process Gate — DoD 假测试 + 未标记完成 + LEARNING
 - [ ] 全字段皆空兜底位置选在「串行降级（5c12）之后、Auto-Learning（5d）之前」，标号为 5c13
 - [ ] 测试断言：SQL 字符串本身不含参数值，搜索 no_diagnostic 需查 params 或在 SQL 里加注释标识符（`/* no_diagnostic_fallback */`）
 
+## PR #840 fix(brain): effectiveResult 第三层兜底 — 全字段皆空时从 DB 构造 db_fallback 对象（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 必须和代码同批次提交，Learning Format Gate 是 L1 硬门禁
+2. 全字段皆空场景下 effectiveResult 三层兜底结构：
+   - 第一层：exit_code/stderr/failure_class → `synthesized_from_callback`
+   - 第二层（5c13）：全空时注入 `failure_class=no_diagnostic` 到 DB
+   - 第三层（本 PR）：查 DB error_message → `{ error, source: 'db_fallback' }`
+3. 第三层须在 5c13 写入 DB **之后** 执行（代码顺序保证），才能读到 5c13 写入的值
+4. `const effectiveResult` 改 `let` 后才可二次赋值，否则 ES strict 模式报错
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
+- [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
+- [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
+
 ## PR #843 feat(brain): claude --version 健康探针（2026-03-11）
 
 ### 根本原因
 
 1. DoD 测试命令路径与实际文件位置不符：将 `runClaudeProbe` 提取到 `claude-probe.js` 后，DoD 中仍引用 `tick.js` 的路径（`PROBE_TIMEOUT_MS`）
 2. DoD 内容自描述断言（`grep -c 'dispatch-claude-probe' <file>` 在测试文件自身中查找文件名，文件名不出现在文件内容里）
+3. PR 处于 CONFLICTING 状态时，GitHub 不触发新 CI 运行；需先 merge origin/main 解决冲突
 
 ### 下次预防
 
 - [ ] 将逻辑提取到新模块后，立即更新 DoD 中相关 Test 命令的路径
 - [ ] DoD 自检命令避免在文件内部查找文件名；改用描述测试内容的关键词（如 `'claude probe'`、`'describe('`）
 - [ ] 独立探针模块（claude-probe.js）模式：可被 `vi.mock` 独立 mock，无需修改被测模块函数签名；同时保留 `_probeOverride` DI 参数供单测直接注入
+- [ ] CI 不触发时先检查 PR mergeable 状态（`gh pr view --json mergeable`），CONFLICTING → 先 merge main
