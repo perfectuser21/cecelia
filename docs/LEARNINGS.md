@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
+
+**失败统计**：L1 CI 失败 1 次（DoD 命令含 `echo` 假测试 + Learning 未 push）
+
+### 根本原因
+
+1. **Express 路由先注册先匹配**：`server.js` 将 `taskProjectsRoutes` 挂载在 `/api/brain/projects`（L100），比 `brainRoutes` 的挂载点 `/api/brain`（L123）更早。当请求 `GET /api/brain/projects/compare` 到来时，`taskProjectsRoutes` 的 `GET /:id` 先匹配，将 `compare` 当作 UUID 处理，返回 `invalid UUID` 错误。
+2. **路由拆分后的一致性责任**：将路由从 `routes.js` 拆分为独立文件（`task-projects.js`）时，必须考虑 `server.js` 的挂载顺序，并在目标文件中确保通配参数路由（`/:id`）在具名路由（`/compare`）之后。
+3. **DoD `|| echo N` 是假测试**：用 `grep -c ... || echo 0` 验证"模式不存在"会被 CI 检测为假测试（含 `echo`）。正确做法：`! grep -q 'pattern' file`。
+
+### 下次预防
+
+- [ ] 向 `routes.js` / 路由文件新增路由时，检查 `server.js` 挂载顺序，确认目标文件不存在会优先拦截新路由的通配参数（`/:id`）。
+- [ ] DoD 验证"不存在"场景时，使用 `! grep -q 'pattern' file`，禁止 `grep -c ... || echo N`。
+- [ ] 新路由必须在通配路由（`/:id`、`/*` 等）**之前**注册，防止被提前拦截。
+
+---
+
 ### [2026-03-11] SW 更新白屏根因：缺 controllerchange listener（PR #815）
 
 **失败统计**：0 次 CI 失败
