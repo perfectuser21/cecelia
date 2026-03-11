@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
+
+**失败统计**：L1 CI 失败 1 次（Learning Format Gate）
+
+### 根本原因
+
+`processExecutionAutoLearning` 已从 DB 查询 `error_message` 字段，但未传入 `handleTaskFailedLearning`，导致 `extractTaskSummary(null)` 返回 `"No details available"`，全空 callback 场景的学习记录无实际内容。
+同时 LEARNINGS.md 未与首次 push 同 commit，Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] 凡是 DB 查询已有 `error_message` 字段的函数，检查是否将该字段透传给下游调用
+- [ ] LEARNINGS.md 新增条目必须与功能代码同一 commit push（不能在创建 PR 后补加）
+
 ### [2026-03-11] deploy.yml 废弃 SSH 方案改 webhook — DoD 否定断言不能含 echo（PR #837）
 
 **失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate + Config Audit）
