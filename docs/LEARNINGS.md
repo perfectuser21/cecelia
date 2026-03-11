@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #839 feat(brain): 好奇心评分引擎 — 三维评分体系（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate + DoD 假测试）。
+
+### 根本原因
+
+1. `test -f ... && echo 1` 被 DevGate 检测为假测试（含 `echo`/`test -f` 的命令均被拒）
+2. DoD 末尾的"无需更新"条目没有 Test 字段，导致 DoD 映射检查报 2 个失败
+3. LEARNINGS.md 没有在首次 push 时写入，触发 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] 文件存在性测试改用 `grep -c '关键词' 文件路径`（输出数字，无 echo，CI 可正确判断）
+- [ ] DoD 中"不适用"的条目直接删除，不保留没有 Test 字段的 `- [x]` 项
+- [ ] LEARNINGS.md 必须在首次 commit 时就写入并 push，不能事后补充
+
 ### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
 
 **失败统计**：L1 CI 失败 1 次（Learning Format Gate）
