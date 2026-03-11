@@ -2745,6 +2745,9 @@ router.post('/execution-callback', async (req, res) => {
       newStatus = 'completed';
     } else if (status === 'AI Failed') {
       newStatus = 'failed';
+    } else if (status === 'AI Quota Exhausted') {
+      // quota_exhausted: 配额耗尽，不计入 failure_count，不触发隔离
+      newStatus = 'quota_exhausted';
     } else {
       newStatus = 'in_progress'; // Unknown status, keep in progress
     }
@@ -2812,6 +2815,7 @@ router.post('/execution-callback', async (req, res) => {
       // Extract error info for failure path ($9 errorMessage, $10 blockedDetail)
       // Only populated when task fails; null on success so DB keeps existing values.
       const isFailed = newStatus === 'failed';
+      const isQuotaExhausted = newStatus === 'quota_exhausted';
       let errorMessage = null;
       let blockedDetail = null;
       if (isFailed) {
@@ -2856,12 +2860,13 @@ router.post('/execution-callback', async (req, res) => {
           ) || CASE WHEN $7::text IS NOT NULL THEN jsonb_build_object('findings', $7::text) ELSE '{}'::jsonb END
             || CASE WHEN $8::integer IS NOT NULL THEN jsonb_build_object('metadata', jsonb_build_object('pr_number', $8::integer)) ELSE '{}'::jsonb END,
           completed_at = CASE WHEN $6 THEN NOW() ELSE completed_at END,
+          quota_exhausted_at = CASE WHEN $11 THEN NOW() ELSE quota_exhausted_at END,
           pr_url = COALESCE($5::text, pr_url),
           pr_status = CASE WHEN $5::text IS NOT NULL THEN 'open' ELSE pr_status END,
           error_message = CASE WHEN $9::text IS NOT NULL THEN $9::text ELSE error_message END,
           blocked_detail = CASE WHEN $10::jsonb IS NOT NULL THEN $10::jsonb ELSE blocked_detail END
         WHERE id = $1 AND status = 'in_progress'
-      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail]);
+      `, [task_id, newStatus, JSON.stringify(lastRunResult), status, pr_url || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted]);
 
       // Log the execution result
       await client.query(`
