@@ -4935,3 +4935,18 @@ CI 失败 1 次（L1 Process Gate — DoD 假测试 + LEARNINGS 未 push）。
 - [ ] "验证某物不存在"类 DoD Test 不用 `|| echo 0` 兜底，改用 `! grep -q 'pattern' file`（exit 0 表示未找到 = 成功）
 - [ ] 继承 PR #814 的教训：LEARNINGS 必须在 PR 创建时同步 push，不能等 CI 失败后补
 - [ ] GET Brain API 返回 `{ generated_at, projects, summary }` 包装对象，不是直接数组；前端解析时用 `result.projects` 不是 `result`
+
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同步提交，Learning Format Gate 是 L1 硬门禁，在 CI 中直接 exit 1
+2. Step 10 Learning 应在 PR 创建 **之前** 或 **同批次** push，而非 CI 失败后补
+
+### 下次预防
+
+- [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
+- [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
+- [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
