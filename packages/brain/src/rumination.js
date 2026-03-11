@@ -35,6 +35,11 @@ export function _resetState() {
   _lastResetDate = new Date().toDateString();
 }
 
+/** 仅用于测试：直接设置 _dailyCount */
+export function _setDailyCount(n) {
+  _dailyCount = n;
+}
+
 // ── 条件检查 ──────────────────────────────────────────────
 
 /**
@@ -416,15 +421,17 @@ export async function runRumination(dbPool) {
 }
 
 /**
- * 手动触发反刍（跳过 idle check，保留预算和冷却期）
+ * 手动触发反刍（跳过 idle check，保留冷却期）
  * @param {object} [dbPool] - 数据库连接池
+ * @param {object} [opts] - 选项
+ * @param {boolean} [opts.force=false] - true 时跳过 daily_budget 检查，直接消化最多 MAX_PER_TICK 条
  * @returns {Promise<{skipped?: string, digested: number, insights: string[], manual?: boolean}>}
  */
-export async function runManualRumination(dbPool) {
+export async function runManualRumination(dbPool, { force = false } = {}) {
   const db = dbPool || pool;
   const now = Date.now();
 
-  if (!hasBudget()) {
+  if (!force && !hasBudget()) {
     return { skipped: 'daily_budget_exhausted', digested: 0, insights: [] };
   }
 
@@ -432,8 +439,8 @@ export async function runManualRumination(dbPool) {
     return { skipped: 'cooldown', digested: 0, insights: [] };
   }
 
-  const remaining = DAILY_BUDGET - _dailyCount;
-  const limit = Math.min(MAX_PER_TICK, remaining);
+  const remaining = force ? MAX_PER_TICK : Math.min(MAX_PER_TICK, DAILY_BUDGET - _dailyCount);
+  const limit = remaining;
 
   let learnings;
   try {

@@ -10,15 +10,35 @@
 
 2. **Baseline 是债务标签，修完就该归零**：125 的 baseline 在实际只有 4 个失败时，是对测试系统的虚假容忍。正确做法：修完失败 → 立即归零 baseline，不留余地。
 
-3. **OOM 导致 2 次假失败**：isolate:true + coverage 并发 4 fork，macOS CI runner 1.5GB 堆溢出。修复：maxForks 4→2，execArgv 增加 --max-old-space-size=4096。
+3. **OOM 根因是 NODE_OPTIONS 1536MB 不够**：isolate:true + v8 coverage 下，macOS CI runner 每个 fork 消耗高达 1.5GB+。execArgv 无法覆盖 CI 的 NODE_OPTIONS 环境变量。修复：直接改 ci-l4-runtime.yml，NODE_OPTIONS 1536→3072，单 fork（maxForks=1）避免多进程 OOM。
 
 ### 下次预防
 
 - [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
-- [ ] vitest isolate:true + coverage 并发时，maxForks 不超过 2，防止 CI macOS runner OOM
+- [ ] vitest `execArgv` 无法覆盖 CI 的 `NODE_OPTIONS` 环境变量。要改 CI 内存限制，必须直接修改 workflow yaml
 
 
+
+### [2026-03-11] rumination force 模式 + 路由位置决策（PR #824）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **PRD 路由位置与挂载路径冲突**：PRD 说"在 routes/inner-life.js 新增"，但 inner-life.js 挂载在 `/api/brain/inner-life`，导致实际路径是 `/api/brain/inner-life/rumination/run` 而非 PRD 要求的 `/api/brain/rumination/run`。应优先以成功标准（端点路径）为准，创建独立 routes/rumination.js 并在 server.js 注册。
+
+2. **模块内状态测试需要 _setDailyCount 辅助**：`runManualRumination` force=true 需要在预算耗尽的状态下测试，但 `_dailyCount` 是模块级私有变量。`_resetState()` 重置所有状态无法单独操控计数，因此需要导出 `_setDailyCount()` 测试辅助函数。
+
+3. **Learning 必须和代码一起在第一次 push 前提交**：本次先 push 代码再补 Learning，导致 L1 Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] PRD 中"在某文件新增"和"端点路径"如有冲突，以端点路径为准，创建独立路由文件
+- [ ] 测试模块级私有状态时，提前导出 `_setXxx()` 辅助函数（避免复杂 mock 链）
+- [ ] LEARNINGS.md 和代码在同一个 commit 中提交，不要在 push 后补写
+
+---
 
 ### [2026-03-11] macOS 内存管理模型全面重构 — vm.memory_pressure + used_ratio（PR #820）
 
