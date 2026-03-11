@@ -152,16 +152,16 @@ jobs:
         working-directory: packages/brain
         run: node src/migrate.js
 
-      - name: Run Brain tests — failure detection (no coverage, low memory)
+      - name: Run Brain tests — failure detection (no coverage, no isolate)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=8192"
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           set +e
-          # Phase 1: Run tests WITHOUT coverage to accurately detect failures.
-          # v8 coverage + isolate:true OOM-crashes the fork mid-run, causing false failures.
-          # Separating failure detection from coverage collection fixes this.
-          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-integration-output.txt
+          # Phase 1: Run tests WITHOUT coverage and WITHOUT isolate to detect failures.
+          # isolate:true + 382 files causes OOM even at 8GB (module cache accumulation).
+          # --no-isolate shares module scope — lower memory, sufficient for failure detection.
+          npx vitest run --no-isolate --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-integration-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
 
           # Read baseline for pre-existing test failures (not introduced by this PR)
