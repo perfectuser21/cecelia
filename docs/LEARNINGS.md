@@ -5374,6 +5374,20 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
 - [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
 
+## PR #862 feat(tick): Burst Limiter MAX_NEW_DISPATCHES_PER_TICK 防雪崩（2026-03-11）
+
+### 根本原因
+
+1. tick Step 7 在队列积压后资源恢复时，会在单次 tick 内尝试填满所有可用 slot，多个 agent 同时启动（启动阶段资源消耗 2-3x）导致峰值叠加，触发资源雪崩
+2. rampedDispatchMax 已有渐进加速，但只控制"当前速率允许开多少"，没有控制"单次 tick 内最多新开多少"——两者是不同维度的限制
+3. 测试策略：复杂内部函数（`executeTick` 含大量 DB 调用）用代码路径验证（`readFileSync` 检查关键字符串）比 full mock 更可靠，不容易因依赖变化而脆断
+
+### 下次预防
+
+- [ ] 流量控制要区分维度：ramp（渐进速率）≠ burst（单次上限），两者互补不替代
+- [ ] 代码路径验证模式：新增关键安全机制时，用 `readFileSync + match` 测试代码结构，比 `executeTick` 全链路 mock 更稳定
+- [ ] 常量命名规范：`MAX_*_PER_TICK` 明确约束粒度（per tick），和 `DISPATCH_MAX`（全局上限）区分
+
 ## PR #868 fix(brain): 修复 12 个失败测试（2026-03-11）
 
 ### 根本原因

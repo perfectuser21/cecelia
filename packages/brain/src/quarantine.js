@@ -463,6 +463,11 @@ async function getQuarantineStats() {
  * @returns {{ shouldQuarantine: boolean, reason?: string, details?: Object }}
  */
 function shouldQuarantineOnFailure(task) {
+  // quota_exhausted 不是任务本身失败，不计入失败阈值，不触发隔离
+  if (task.status === 'quota_exhausted') {
+    return { shouldQuarantine: false };
+  }
+
   const failureCount = (task.payload?.failure_count || 0) + 1;
 
   if (failureCount >= FAILURE_THRESHOLD) {
@@ -983,6 +988,11 @@ async function handleTaskFailure(taskId) {
     }
 
     const task = taskResult.rows[0];
+
+    // quota_exhausted 不计入 failure_count，不触发隔离
+    if (task.status === 'quota_exhausted') {
+      return { quarantined: false, skipped: 'quota_exhausted' };
+    }
 
     // 增加失败计数
     const newFailureCount = (task.payload?.failure_count || 0) + 1;
