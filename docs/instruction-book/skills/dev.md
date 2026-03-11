@@ -1,11 +1,12 @@
 ---
 id: instruction-dev
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-10
-updated: 2026-03-10
+updated: 2026-03-11
 authority: USER_FACING
 changelog:
   - 1.0.0: 初始版本
+  - 1.1.0: 补充完整流程子章节说明
 ---
 
 # /dev — 统一开发工作流
@@ -48,6 +49,26 @@ Step 9  CI 监控（自动修复失败）
 Step 10 Learning 记录
 Step 11 清理
 ```
+
+### 分支命名规范
+
+分支名格式：`cp-MMDDHHNN-task-name`
+
+- `MMDD`：月日（如 0311 = 3月11日）
+- `HHNN`：小时分钟（如 1126 = 11:26）
+- `task-name`：任务简短英文名（kebab-case）
+
+示例：`cp-03111126-instruction-book-enhance`
+
+### Stop Hook 循环机制
+
+/dev 通过 Stop Hook 保证全程自动执行：
+1. PR 未创建 → exit 2 → 继续执行
+2. CI 失败 → exit 2 → 自动修复
+3. PR 未合并 → exit 2 → 合并 PR
+4. PR 已合并 → exit 0 → 完成
+
+无需人工介入，遇到问题全部自动修复。
 
 ## Output
 

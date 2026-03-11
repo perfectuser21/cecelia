@@ -11947,14 +11947,33 @@ router.get('/docs/instruction-book', async (req, res) => {
       const raw = rfs(filePath, 'utf-8');
       const lines = raw.split('\n');
 
-      // 提取 frontmatter id/version
+      // 提取 frontmatter id/version/changelog
       let id = '', version = '';
+      const changelog = [];
       let inFrontmatter = false;
+      let frontmatterDone = false;
+      let inChangelogBlock = false;
       for (const line of lines) {
-        if (line.trim() === '---') { inFrontmatter = !inFrontmatter; continue; }
+        if (line.trim() === '---') {
+          if (!frontmatterDone) { inFrontmatter = !inFrontmatter; if (!inFrontmatter) frontmatterDone = true; }
+          continue;
+        }
         if (inFrontmatter) {
-          const m = line.match(/^(id|version):\s*(.+)/);
-          if (m) { if (m[1] === 'id') id = m[2].trim(); else version = m[2].trim(); }
+          if (line.match(/^changelog:\s*$/)) { inChangelogBlock = true; continue; }
+          if (inChangelogBlock) {
+            const item = line.match(/^\s+-\s+(.+)/);
+            if (item) {
+              const verDesc = item[1].match(/^(\d[\d.]+):\s*(.+)/);
+              if (verDesc) changelog.push({ version: verDesc[1], description: verDesc[2].trim() });
+              else changelog.push({ version: '', description: item[1].trim() });
+            } else if (line.match(/^\S/)) {
+              inChangelogBlock = false;
+            }
+          }
+          if (!inChangelogBlock) {
+            const m = line.match(/^(id|version):\s*(.+)/);
+            if (m) { if (m[1] === 'id') id = m[2].trim(); else version = m[2].trim(); }
+          }
         }
       }
 
@@ -11962,10 +11981,13 @@ router.get('/docs/instruction-book', async (req, res) => {
       const titleLine = lines.find(l => l.startsWith('# ') && !l.startsWith('## '));
       const title = titleLine ? titleLine.replace(/^# /, '').trim() : pathMod.default.basename(filePath, '.md');
 
-      // 提取各章节内容
+      // 提取各章节内容（支持 ### 子章节）
       const sections = {};
+      const subSections = {};
       let currentSection = null;
       let sectionLines = [];
+      let currentSubSection = null;
+      let subSectionLines = [];
       const sectionMap = {
         'What it is': 'what',
         'What': 'what',
@@ -11975,19 +11997,40 @@ router.get('/docs/instruction-book', async (req, res) => {
         'Added in': 'addedIn',
       };
 
+      function flushSubSection() {
+        if (currentSection && currentSubSection !== null) {
+          if (!subSections[currentSection]) subSections[currentSection] = [];
+          subSections[currentSection].push({ title: currentSubSection, content: subSectionLines.join('\n').trim() });
+        }
+        currentSubSection = null;
+        subSectionLines = [];
+      }
+
       for (const line of lines) {
         if (line.startsWith('## ')) {
+          flushSubSection();
           if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
           const header = line.replace(/^## /, '').trim();
           currentSection = sectionMap[header] || null;
           sectionLines = [];
+        } else if (line.startsWith('### ') && currentSection) {
+          flushSubSection();
+          currentSubSection = line.replace(/^### /, '').trim();
         } else if (currentSection) {
-          sectionLines.push(line);
+          if (currentSubSection !== null) subSectionLines.push(line);
+          else sectionLines.push(line);
         }
       }
+      flushSubSection();
       if (currentSection) sections[currentSection] = sectionLines.join('\n').trim();
 
-      return { id, version, title, category, sections };
+      // 将子章节合并到 sections
+      const sectionsWithSub = {};
+      for (const [key, content] of Object.entries(sections)) {
+        sectionsWithSub[key] = { content, subsections: subSections[key] || [] };
+      }
+
+      return { id, version, changelog, title, category, sections: sectionsWithSub };
     }
 
     function readCategory(subDir, categoryName) {
