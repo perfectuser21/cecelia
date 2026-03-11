@@ -155,7 +155,7 @@ jobs:
       - name: Run Brain tests with coverage (HARD GATE)
         working-directory: packages/brain
         env:
-          NODE_OPTIONS: "--max-old-space-size=1536"
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: |
           set +e
           npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=verbose --coverage 2>&1 | tee /tmp/brain-integration-output.txt
