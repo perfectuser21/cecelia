@@ -4146,6 +4146,27 @@ ${resultStr.substring(0, 2000)}
       }
     }
 
+    // 5c13. 全字段皆空兜底：当 result/exit_code/stderr/failure_class 全部缺失时注入 no_diagnostic
+    // 场景：cecelia-run 异常退出但未提供任何诊断信息，DB 记录零信息无法追踪
+    if (newStatus === 'failed') {
+      const _failureClassFromBody = req.body.failure_class || null;
+      if (!result && exit_code == null && !stderr && !_failureClassFromBody) {
+        try {
+          const noDiagMsg = `callback received with no diagnostic data (task_id: ${task_id})`;
+          await pool.query(
+            `/* no_diagnostic_fallback */ UPDATE tasks SET
+               error_message = $2,
+               payload = COALESCE(payload, '{}'::jsonb) || $3::jsonb
+             WHERE id = $1`,
+            [task_id, noDiagMsg, JSON.stringify({ failure_class: 'no_diagnostic' })]
+          );
+          console.warn(`[execution-callback] no_diagnostic_fallback: task=${task_id} 全字段皆空，已注入 failure_class=no_diagnostic`);
+        } catch (noDiagErr) {
+          console.error(`[execution-callback] no_diagnostic fallback error (non-fatal): ${noDiagErr.message}`);
+        }
+      }
+    }
+
     // 5d. Auto-Learning: 自动从任务执行结果中学习
     if (newStatus === 'completed' || newStatus === 'failed') {
       try {
@@ -12050,6 +12071,52 @@ router.get('/docs/instruction-book', async (req, res) => {
     res.json({ skills, features });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Deploy Webhook ──────────────────────────────────────────────────────────
+// POST /api/brain/deploy — GitHub Actions 合并后触发本地部署
+router.post('/deploy', async (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const expectedToken = process.env.DEPLOY_TOKEN;
+
+  if (!expectedToken) {
+    return res.status(500).json({ error: 'DEPLOY_TOKEN not configured on server' });
+  }
+  if (!token || token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid or missing deploy token' });
+  }
+
+  const { changed_paths } = req.body || {};
+
+  // 异步执行部署，立即返回 202
+  res.status(202).json({ status: 'accepted', message: 'Deploy triggered' });
+
+  const { execSync } = await import('child_process');
+  const startTime = Date.now();
+
+  try {
+    // 构建 deploy-local.sh 参数
+    const scriptDir = new URL('../../../scripts/deploy-local.sh', import.meta.url).pathname;
+    let cmd = `bash "${scriptDir}" main`;
+
+    if (changed_paths && changed_paths.length > 0) {
+      const escaped = changed_paths.join(' ').replace(/"/g, '\\"');
+      cmd = `bash "${scriptDir}" --changed="${escaped}" main`;
+    }
+
+    console.log(`[deploy-webhook] 开始部署: ${cmd}`);
+    execSync(cmd, {
+      cwd: new URL('../../..', import.meta.url).pathname,
+      timeout: 600_000, // 10 分钟超时
+      stdio: 'inherit',
+    });
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`[deploy-webhook] ✅ 部署成功 (${elapsed}s)`);
+  } catch (err) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`[deploy-webhook] ❌ 部署失败 (${elapsed}s):`, err.message);
   }
 });
 

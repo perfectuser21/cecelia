@@ -11,13 +11,58 @@
 
 2. **Baseline 是债务标签，修完就该归零**：125 的 baseline 在实际只有 4 个失败时，是对测试系统的虚假容忍。正确做法：修完失败 → 立即归零 baseline，不留余地。
 
-3. **OOM 根因是 NODE_OPTIONS 1536MB 不够**：isolate:true + v8 coverage 下，macOS CI runner 每个 fork 消耗高达 1.5GB+。execArgv 无法覆盖 CI 的 NODE_OPTIONS 环境变量。修复：直接改 ci-l4-runtime.yml，NODE_OPTIONS 1536→3072，单 fork（maxForks=1）避免多进程 OOM。
+3. **OOM 根因是 NODE_OPTIONS 1536MB 不够 + grep 误匹配**：isolate:true + v8 coverage 下，macOS CI runner 每个 fork 消耗高达 1.5GB+。分片方案（3 shards × 6GB）解决 OOM；`grep "[0-9]+ failed"` 误匹配 shepherd 日志中的 `failed=1`，需限定 `grep "Test Files"` 才准确。
 
 ### 下次预防
 
 - [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
-- [ ] vitest `execArgv` 无法覆盖 CI 的 `NODE_OPTIONS` 环境变量。要改 CI 内存限制，必须直接修改 workflow yaml
+- [ ] CI grep 失败计数必须限定 vitest 汇总行（`grep "Test Files" | grep "[0-9]+ failed"`），防止测试日志中的 `failed=N` 误触发
+
+### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
+
+**失败统计**：L1 CI 失败 1 次（Learning Format Gate）
+
+### 根本原因
+
+`processExecutionAutoLearning` 已从 DB 查询 `error_message` 字段，但未传入 `handleTaskFailedLearning`，导致 `extractTaskSummary(null)` 返回 `"No details available"`，全空 callback 场景的学习记录无实际内容。
+同时 LEARNINGS.md 未与首次 push 同 commit，Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] 凡是 DB 查询已有 `error_message` 字段的函数，检查是否将该字段透传给下游调用
+- [ ] LEARNINGS.md 新增条目必须与功能代码同一 commit push（不能在创建 PR 后补加）
+
+### [2026-03-11] deploy.yml 废弃 SSH 方案改 webhook — DoD 否定断言不能含 echo（PR #837）
+
+**失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate + Config Audit）
+
+### 根本原因
+
+1. DoD 的 `! grep ... ; test $? -eq 1 && echo 1 || echo 0` 含 `echo`，被 `check-dod-mapping.cjs` 识别为假测试
+2. 改了 `.github/workflows/deploy.yml` 时 PR title 需含 `[CONFIG]` 或 `[INFRA]` 标签
+3. LEARNINGS.md 未在首次 push 中包含
+
+### 下次预防
+
+- [ ] DoD 否定断言用 `! grep -q 'pattern' file`（不含 echo），不用 `grep + test + echo` 组合
+- [ ] 改 CI workflow 文件时 PR title 必须含 `[CONFIG]` 标签
+- [ ] 首次 commit 就包含 LEARNINGS.md 条目
+
+### [2026-03-11] bash 脚本 DoD grep 模式中 shell 变量展开陷阱（PR #836）
+
+**失败统计**：L1 CI 失败 1 次（DoD L11 + Learning Gate）
+
+### 根本原因
+
+DoD 的 `Test: manual:bash -c "grep -c '"'"'"exit_code":$exit_code_val'"'"' ..."` 使用双引号包裹 bash -c，内部 `$exit_code_val` 在 CI shell 中展开为空字符串，导致 grep 找不到匹配，exit 1。
+同时 LEARNINGS.md 未与代码同 commit 导致 Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] DoD 的 `Test: manual:bash -c "..."` 中需要 grep 脚本里的 bash 变量名时，用唯一的字面词代替变量名（如 `exit_code_val}` 而非 `$exit_code_val`），避免 shell 展开
+- [ ] 测试 bash 脚本单元测试时，通过环境变量传递路径（`PAYLOAD_CAPTURE_FILE`），避免 sub-sub-shell 丢失变量
+- [ ] LEARNINGS.md 必须和代码同 commit push，PR push 前先检查是否已写好
 
 ### [2026-03-11] DoD Test 路径必须用相对路径 — CI 在 Ubuntu 上跑（PR #834）
 
@@ -5162,3 +5207,21 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须在 PR push **同批次**提交，不能先 push 代码再补，Learning Format Gate 会直接失败
 - [ ] result=null 的 fallback 模板：`[callback: result=null] task=<id> exit_code=<code> at <ts> | callback received but result was null`，stderr 尾 300 字符追加到末尾
 - [ ] Mac mini Node.js 25 + vitest 会 segfault（Worker exited unexpectedly），这是预存在问题，CI（Ubuntu）有 baseline 容忍机制，本地 segfault 不影响 PR
+
+## PR #835 fix(brain): execution-callback 全字段皆空时注入 failure_class=no_diagnostic（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — DoD 假测试 + 未标记完成 + LEARNINGS 未推送）。
+
+### 根本原因
+
+1. DoD 中使用 `test -f ... && echo OK` 被 DevGate 检测为假测试（任何含 `echo` 的命令均被拒）
+2. DoD 验收项用 `- [ ]` 而非 `- [x]`，DevGate 会同时报 Test 通过但项目未完成
+3. LEARNINGS.md 未随代码一并提交，L1 Learning Format Gate 硬门禁
+
+### 下次预防
+
+- [ ] 文件存在性检查不用 `test -f ... && echo OK`，改用 `wc -l <file>` 或 `grep -c '.' <file>`（无 echo，输出数字，exit 0 表示成功）
+- [ ] DoD 所有已完成验收项必须写 `- [x]`，即使是"已存在/已完成"的条目
+- [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
+- [ ] 全字段皆空兜底位置选在「串行降级（5c12）之后、Auto-Learning（5d）之前」，标号为 5c13
+- [ ] 测试断言：SQL 字符串本身不含参数值，搜索 no_diagnostic 需查 params 或在 SQL 里加注释标识符（`/* no_diagnostic_fallback */`）

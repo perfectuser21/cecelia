@@ -121,6 +121,29 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
         cd "$MAIN_ROOT"
     fi
     echo ""
+
+    # rsync 构建产物到 HK VPS
+    HK_HOST="hk"
+    HK_REMOTE_DIR="/opt/cecelia/frontend"
+    DIST_DIR="$MAIN_ROOT/apps/dashboard/dist"
+
+    if [[ -d "$DIST_DIR" ]]; then
+        echo "🚀 同步 Dashboard 到 HK VPS ($HK_HOST:$HK_REMOTE_DIR)..."
+        if [[ "$DRY_RUN" == true ]]; then
+            echo "  [dry-run] rsync -avz --delete $DIST_DIR/ $HK_HOST:$HK_REMOTE_DIR/dist/"
+        else
+            ssh "$HK_HOST" "mkdir -p $HK_REMOTE_DIR/dist" 2>/dev/null || true
+            rsync -avz --delete "$DIST_DIR/" "$HK_HOST:$HK_REMOTE_DIR/dist/" || {
+                echo "⚠️  rsync 到 HK 失败，Dashboard 仅本地部署"
+            }
+            # 重启 HK 前端容器（如果在运行）
+            ssh "$HK_HOST" "cd $HK_REMOTE_DIR && docker compose restart 2>/dev/null" || true
+            echo "✅ HK VPS 同步完成"
+        fi
+    else
+        echo "⚠️  Dashboard dist/ 不存在，跳过 HK 同步"
+    fi
+    echo ""
 fi
 
 echo "✅ 部署完成"

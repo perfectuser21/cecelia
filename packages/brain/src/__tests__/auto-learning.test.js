@@ -386,6 +386,39 @@ describe('Auto Learning Module', () => {
       expect(content).toContain('Disk full on /dev/sda1');
     });
 
+    it('should use DB error_message as fallback when result is null (dbErrorMessage fallback)', async () => {
+      const { processExecutionAutoLearning } = await import('../auto-learning.js');
+
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{
+            task_type: 'dev',
+            title: 'Null result task',
+            error_message: '[callback: result=null] task=null-task exit_code=N/A | callback received but result was null'
+          }]
+        })
+        .mockResolvedValueOnce({
+          rows: []
+        })
+        .mockResolvedValueOnce({
+          rows: [{ id: 'learning-fallback', title: '任务失败：null-task' }]
+        });
+
+      await processExecutionAutoLearning(
+        'null-task',
+        'failed',
+        null, // effectiveResult=null, 全空 callback 场景
+        { retry_count: 0 }
+      );
+
+      const insertCall = mockPool.query.mock.calls[2];
+      const content = insertCall[1][3];
+
+      // DB error_message 应作为 fallback，不再出现 "No details available"
+      expect(content).not.toContain('No details available');
+      expect(content).toContain('[callback: result=null]');
+    });
+
     it('should handle object error_details by stringifying', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 

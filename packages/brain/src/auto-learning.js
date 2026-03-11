@@ -169,7 +169,7 @@ export async function handleTaskCompletedLearning(task_id, taskType, status, res
 /**
  * 处理任务失败的自动学习
  */
-export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}) {
+export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}, dbErrorMessage = null) {
   // 只处理有价值的任务类型
   if (!VALUABLE_TASK_TYPES.includes(taskType)) {
     console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);
@@ -177,7 +177,10 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
   }
 
   const title = `任务失败：${task_id}`;
-  const errorSummary = extractTaskSummary(result);
+  let errorSummary = extractTaskSummary(result);
+  if (errorSummary === 'No details available' && dbErrorMessage) {
+    errorSummary = dbErrorMessage.slice(0, 500);
+  }
 
   const content = `任务执行失败。重试次数：${retryCount}。错误摘要：${errorSummary}`;
 
@@ -210,7 +213,7 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
       return null;
     }
 
-    const { task_type: taskType, title: taskTitle } = taskRow;
+    const { task_type: taskType, title: taskTitle, error_message: dbErrorMessage } = taskRow;
 
     console.log(`[auto-learning] Processing task ${task_id} (type: ${taskType}, status: ${newStatus})`);
 
@@ -224,7 +227,7 @@ export async function processExecutionAutoLearning(task_id, newStatus, result, o
       return await handleTaskCompletedLearning(task_id, taskType, newStatus, result, metadata);
     } else if (newStatus === 'failed') {
       const retryCount = options.retry_count || options.iterations || 0;
-      return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata);
+      return await handleTaskFailedLearning(task_id, taskType, newStatus, result, retryCount, metadata, dbErrorMessage);
     }
 
     console.log(`[auto-learning] Status ${newStatus} not handled for auto-learning`);
