@@ -5206,3 +5206,16 @@ CI 失败 1 次（L1 Process Gate — DoD 假测试 + 未标记完成 + LEARNING
 - [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
 - [ ] 全字段皆空兜底位置选在「串行降级（5c12）之后、Auto-Learning（5d）之前」，标号为 5c13
 - [ ] 测试断言：SQL 字符串本身不含参数值，搜索 no_diagnostic 需查 params 或在 SQL 里加注释标识符（`/* no_diagnostic_fallback */`）
+
+## PR #843 feat(brain): claude --version 健康探针（2026-03-11）
+
+### 根本原因
+
+1. DoD 测试命令路径与实际文件位置不符：将 `runClaudeProbe` 提取到 `claude-probe.js` 后，DoD 中仍引用 `tick.js` 的路径（`PROBE_TIMEOUT_MS`）
+2. DoD 内容自描述断言（`grep -c 'dispatch-claude-probe' <file>` 在测试文件自身中查找文件名，文件名不出现在文件内容里）
+
+### 下次预防
+
+- [ ] 将逻辑提取到新模块后，立即更新 DoD 中相关 Test 命令的路径
+- [ ] DoD 自检命令避免在文件内部查找文件名；改用描述测试内容的关键词（如 `'claude probe'`、`'describe('`）
+- [ ] 独立探针模块（claude-probe.js）模式：可被 `vi.mock` 独立 mock，无需修改被测模块函数签名；同时保留 `_probeOverride` DI 参数供单测直接注入
