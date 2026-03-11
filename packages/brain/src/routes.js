@@ -4174,13 +4174,27 @@ ${resultStr.substring(0, 2000)}
         // 当进程被 kill/超时导致 result=null 时，从 exit_code/stderr/failure_class 合成诊断信息
         // 避免 extractTaskSummary(null) 返回 "No details available"
         const failureClass = req.body.failure_class || null;
-        const effectiveResult = result ?? (newStatus === 'failed' && (exit_code != null || stderr || failureClass) ? {
+        let effectiveResult = result ?? (newStatus === 'failed' && (exit_code != null || stderr || failureClass) ? {
           error: `Process exited with code ${exit_code ?? 'unknown'}`,
           exit_code,
           stderr_tail: String(stderr || '').slice(-500),
           failure_class: failureClass,
           source: 'synthesized_from_callback',
         } : null);
+        // 第三层兜底：全字段皆空 effectiveResult 仍为 null 时，从 DB error_message 构造最小诊断对象
+        // 场景：5c13 已将 error_message 写入 DB，auto-learning 应能获取到诊断信息
+        if (effectiveResult === null && newStatus === 'failed') {
+          try {
+            const dbRow = await pool.query('SELECT error_message FROM tasks WHERE id = $1', [task_id]);
+            const dbErrMsg = dbRow.rows[0]?.error_message || null;
+            if (dbErrMsg) {
+              effectiveResult = { error: dbErrMsg, source: 'db_fallback' };
+              console.log(`[execution-callback] effectiveResult db_fallback: task=${task_id} error=${dbErrMsg.slice(0, 100)}`);
+            }
+          } catch (dbFallbackErr) {
+            console.error(`[execution-callback] effectiveResult db_fallback error (non-fatal): ${dbFallbackErr.message}`);
+          }
+        }
         const learningResult = await processExecutionAutoLearning(task_id, newStatus, effectiveResult, {
           trigger_source: 'execution_callback',
           retry_count: iterations,
