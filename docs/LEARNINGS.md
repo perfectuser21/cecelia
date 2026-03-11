@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #821 feat(dashboard): ProjectCompare 报告导出 — 下载 MD/JSON + 复制 + Notion 推送（2026-03-11）
+
+Learning Format Gate 失败（LEARNINGS 未在初始 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 条目未在第一次 git push 之前提交，Learning Format Gate 是 L1 硬门禁，未 push 即报 failure
+2. 提交流程中先走了 git commit/push，再想起 LEARNINGS，导致 CI 已在运行但缺少 Learning
+
+### 下次预防
+
+- [ ] 在 `git add` + `git commit` 之前先写 LEARNINGS.md 条目，和代码一起提交（一次 push 包含 Learning）
+- [ ] LEARNINGS 格式三要素缺一不可：`### 根本原因` + `### 下次预防` + `- [ ]` checklist
+- [ ] 对于 Brain 路由新增端点，注意 POST `/compare/report/push-notion` 必须注册在通配符 `/:id` 之前，否则被当作 UUID 拦截
+- [ ] Notion 无 token 时返回 501（而非 500），前端根据 status 显示不同 toast 文本
+
 ### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
 
 **失败统计**：L1 CI 失败 1 次（DoD 命令含 `echo` 假测试 + Learning 未 push）
