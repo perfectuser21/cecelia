@@ -5373,3 +5373,19 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] Cortex/Thalamus/Bridge 各自使用独立超时环境变量，命名规范：`CECELIA_{ORGAN}_TIMEOUT_MS`
 - [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
 - [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
+
+## PR #869 fix(brain): migration 144 + selfcheck 版本（重复任务关闭，2026-03-11）
+
+PR 未合并（重复），已由 #862/#863 完成，main 已在版本 145。
+
+### 根本原因
+
+1. Brain 并行调度同类任务到多个 agent — 同一 migration 144 被多个 agent 同时处理
+2. Worktree 不共享主仓库的 untracked 文件 — 必须手动 `cp` migration 文件从主仓库到 worktree
+3. PR 创建后发现 main 已包含更高版本（145）时，应直接关闭 PR，不要继续尝试合并
+
+### 下次预防
+
+- [ ] /dev 开始前先检查 main 上是否已有同功能 PR 合并（`git show origin/main:文件路径`）
+- [ ] 并行 agent 场景：发现 PR 重复时直接关闭，不浪费 CI 资源
+- [ ] Worktree 中 untracked 文件需手动从主仓库复制（`cp 主仓库路径/文件 worktree路径/文件`）
