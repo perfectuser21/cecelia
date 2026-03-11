@@ -349,3 +349,98 @@ export async function generateCompareReport({ project_ids, format = 'json', incl
 
   return response;
 }
+
+const NOTION_API_BASE = 'https://api.notion.com/v1';
+const NOTION_VERSION = '2022-06-28';
+const MAX_BLOCK_TEXT = 2000;
+const MAX_BLOCKS = 100;
+
+/**
+ * 将 Markdown 文本转换为 Notion blocks 数组
+ */
+function markdownToNotionBlocks(markdown) {
+  return markdown
+    .split('\n')
+    .filter(line => line.trim())
+    .slice(0, MAX_BLOCKS)
+    .map(line => {
+      if (line.startsWith('# ')) {
+        return { object: 'block', type: 'heading_1', heading_1: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim().slice(0, MAX_BLOCK_TEXT) } }] } };
+      }
+      if (line.startsWith('## ')) {
+        return { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: line.slice(3).trim().slice(0, MAX_BLOCK_TEXT) } }] } };
+      }
+      if (line.startsWith('### ')) {
+        return { object: 'block', type: 'heading_3', heading_3: { rich_text: [{ type: 'text', text: { content: line.slice(4).trim().slice(0, MAX_BLOCK_TEXT) } }] } };
+      }
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        return { object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line.slice(2).trim().slice(0, MAX_BLOCK_TEXT) } }] } };
+      }
+      return { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: line.trim().slice(0, MAX_BLOCK_TEXT) } }] } };
+    });
+}
+
+/**
+ * 将对比报告推送到 Notion
+ * @param {string[]} project_ids - 至少 2 个项目 UUID
+ * @param {string} format - 'markdown' | 'json'（内部始终用 markdown 推送）
+ * @param {string} [notion_parent_id] - Notion 父页面 ID，缺省读 NOTION_COMPARE_PARENT_ID
+ */
+export async function pushCompareReportToNotion({ project_ids, format = 'markdown', notion_parent_id }) {
+  if (!Array.isArray(project_ids) || project_ids.length < 2) {
+    throw Object.assign(new Error('project_ids must have at least 2 items'), { status: 400 });
+  }
+
+  const notionApiKey = process.env.NOTION_API_KEY;
+  if (!notionApiKey) {
+    throw Object.assign(
+      new Error('NOTION_API_KEY 未配置'),
+      { status: 400, code: 'NOTION_CONFIG_MISSING' }
+    );
+  }
+
+  const parentId = notion_parent_id || process.env.NOTION_COMPARE_PARENT_ID;
+  if (!parentId) {
+    throw Object.assign(
+      new Error('notion_parent_id 未提供，且 NOTION_COMPARE_PARENT_ID 未配置'),
+      { status: 400, code: 'NOTION_PARENT_MISSING' }
+    );
+  }
+
+  const report = await generateCompareReport({ project_ids, format: 'markdown', include_tasks: false });
+  const markdownContent = report.markdown || report.summary || '';
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const pageTitle = `项目对比报告 ${dateStr}`;
+  const blocks = markdownToNotionBlocks(markdownContent);
+
+  const response = await fetch(`${NOTION_API_BASE}/pages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${notionApiKey}`,
+      'Content-Type': 'application/json',
+      'Notion-Version': NOTION_VERSION,
+    },
+    body: JSON.stringify({
+      parent: { type: 'page_id', page_id: parentId },
+      properties: {
+        title: { title: [{ type: 'text', text: { content: pageTitle } }] },
+      },
+      children: blocks,
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw Object.assign(
+      new Error(errBody.message || `Notion API 返回 ${response.status}`),
+      { status: 502 }
+    );
+  }
+
+  const page = await response.json();
+  const pageId = page.id;
+  const notion_url = `https://notion.so/${pageId.replace(/-/g, '')}`;
+
+  return { success: true, notion_url, page_id: pageId };
+}
