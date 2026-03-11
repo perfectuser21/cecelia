@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] 并行 PR 重复实现 + 开发前检查 main 分支（PR #831 / #826）
+
+**失败统计**：0 次 CI 失败，但产生了一个无效的重复 PR
+
+### 根本原因
+
+1. **worktree 分支基于旧 commit**：本次 worktree 的 base 是 PR #825 之前的 main，缺少 #826（已完成相同 DAILY_BUDGET 功能）。开发完成提交 PR 后才发现 main 已有同功能。
+
+2. **缺少"开发前检查 main 是否已有相同功能"步骤**：`git fetch origin main && git log origin/main --oneline -10` 可以快速发现是否有并行实现。
+
+3. **任务调度侧的根因**：Brain 同时派发了相同功能的两个任务，两个 worktree 并行开发，后完成的那个 PR 变成无效重复。
+
+### 下次预防
+
+- [ ] Step 4 探索阶段开始前，先 `git fetch origin main && git log origin/main --oneline -10` 检查最近 main 提交，确认功能未被并行实现
+- [ ] Brain 任务调度应在派发前检查 main 是否已有相关提交（避免重复派发同类任务）
+- [ ] 若发现 main 已有相同功能，立即关闭当前 PR，不再继续开发
+
+---
+
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
 **失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
