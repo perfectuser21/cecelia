@@ -1,5 +1,20 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（PR #841）
+
+**失败统计**：L1 CI 失败 1 次（DoD Verification Gate：BEHAVIOR Test 的 printf 命令在 CI 执行失败）
+
+### 根本原因
+
+1. DoD 条目的 `Test: manual:bash -c "..."` 在 CI 环境（GITHUB_ACTIONS=true）下会被 `executeInlineCommand()` 实际执行，不只是格式检查
+2. `printf '- [x] ...'` 的 `-` 开头被 printf 识别为选项参数导致失败
+3. 需要改用 `node -e "fs.writeFileSync(...)"` 创建测试文件，避免 shell 转义问题
+
+### 下次预防
+
+- [ ] DoD 的 BEHAVIOR 条目 Test 命令必须在 CI 环境也能执行通过（GITHUB_ACTIONS=true 时 check-dod-mapping 会实际执行 manual: 命令）
+- [ ] 避免 `printf` 或 `echo` 创建以 `-` 开头的内容，改用 node 的 fs.writeFileSync
+
 ### [2026-03-11] auto-learning DB error_message 回填 — LEARNINGS.md 须与首次 commit 同步（PR #838）
 
 **失败统计**：L1 CI 失败 1 次（Learning Format Gate）
