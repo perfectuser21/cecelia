@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #854 feat: Dashboard 添加 Codex 用量展示 — 跨服务代理 API 缓存模式（2026-03-11）
+
+**失败统计**：L1 CI 失败 1 次（DoD 未勾选 + LEARNINGS.md 未更新）
+
+### 根本原因
+
+1. Brain 代理远端服务（codex-bridge）数据时，3 分钟 TTL 缓存 + stale fallback 模式可有效防止远端不可达时前端白屏
+2. 前端新增数据源时，AccountUsagePage 和 LiveMonitorPage 两个页面都需要同步更新，保持风格一致
+3. Codex wham/usage API 返回的字段（primaryUsedPct, secondaryUsedPct, primaryResetSeconds）与 Claude 的不同，需要前端做字段映射
+4. DoD 验收清单在代码完成后必须勾选（`- [ ]` → `- [x]`），否则 CI DoD Verification Gate 会失败
+
+### 下次预防
+
+- [ ] 提交 PR 前检查 DoD 是否全部勾选
+- [ ] 新增代理 API 时确认缓存策略和 fallback 行为
+
 ## PR #852 feat(engine): 统一 stop hook 状态文件格式（2026-03-11）
 
 **失败统计**：CI 失败 0 轮（L1 Learning Format Gate 是预期失败，非代码问题）
