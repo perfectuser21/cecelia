@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #818）
+
+**失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
+
+### 根本原因
+
+1. **vitest isolate:false 是跨文件 Mock 污染根因**：`isolate: false` 允许同一 worker fork 内的多个测试文件共享模块注册表。某个文件 `vi.mock('../notifier.js', () => ({ notifyCircuitOpen }))` 后，后续文件的 `sendFeishu` 引用为 undefined，导致 alerting、circuit-breaker 等约 70 个测试在批量运行时失败，但单独运行时全部通过。
+
+2. **过时断言积累**：migration 142（tasks.error_message）、cortex.js timeout 调整后，相关测试断言未同步，导致 3 个测试文件 4 处断言过时（schema version、SQL 查询、timeout 值）。
+
+3. **isolate:false 的危险性**：单独运行所有测试通过，给人"测试健康"的错觉。只有批量运行才暴露污染问题，且失败数在不同运行顺序下波动（74-86 个）。
+
+### 下次预防
+
+- [ ] 修改 vitest.config.js 时，`isolate: false` 必须有明确的理由和团队共识；否则默认用 `isolate: true`（vitest 默认值）
+- [ ] 源码 SQL/接口/常量改动后，必须同步搜索并更新测试断言（`grep -r 'old_value' src/__tests__/`）
+- [ ] migration 升级 EXPECTED_SCHEMA_VERSION 后，立即用 `grep -r "'旧版本'" src/__tests__/` 查找所有受影响测试
+
+
 ### [2026-03-11] Express 路由顺序陷阱 — taskProjectsRoutes 遮蔽 brainRoutes（PR #816）
 
 **失败统计**：L1 CI 失败 1 次（DoD 命令含 `echo` 假测试 + Learning 未 push）
@@ -54,6 +73,7 @@
 - [ ] 进程检测统一用 `platform-utils.processExists()`，不在各文件自己实现
 - [ ] 平台相关命令（`grep -P`、`pgrep -f`、`stat -c`、`free`、`/proc/` 等）必须走 `platform-utils` 封装，不直接在业务代码里写
 - [ ] Learning 在创建 PR **之前**写好，随第一次 push 一起进分支，避免 L1 Learning Format Gate 失败
+
 
 ### [2026-03-10] Dashboard 白屏修复（PR #788）
 
@@ -4889,33 +4909,3 @@ CI 失败 1 次（Learning Format Gate — 未在 push 前提交 LEARNINGS.md）
 - [ ] 新增 API 函数时，Learning 记录必须在第一次 push 前 git add + commit，L1 Learning Format Gate 是硬门禁
 - [ ] `Promise.all` 适合独立查询并行化，但校验逻辑（missingIds 等）必须等 all 结果就绪后再执行
 - [ ] 历史趋势 SQL 中 `to_char(... 'IYYY-"W"IW')` 格式（ISO week）需要在引号内转义 W：`"W"`，否则 W 被解释为 SQL 字段
-
-## PR #814 feat(dashboard): ProjectCompare 接入 Brain KR 进度 + 实时刷新（2026-03-11）
-
-CI 失败 1 次（L1 Process Gate — PRD 格式错误 + LEARNINGS 未 push）。
-
-### 根本原因
-
-1. PRD 中"成功标准"用了普通粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 只匹配 `##` 标题格式
-2. LEARNINGS.md 未在第一次 push 前提交，Learning Format Gate 是 L1 硬门禁
-
-### 下次预防
-
-- [ ] 创建 PRD 时立即确认成功标准为 `## 成功标准` 二级标题格式，不用粗体
-- [ ] Step 10 Learning 记录必须在合并 PR 前 push（不能 CI 失败后再补），否则 L1 必失败
-- [ ] React 中多个 `setInterval` 需用 `useRef` 保存 timer ID 避免闭包捕获旧值导致重复创建定时器
-
-## PR #819 feat(dashboard): ProjectCompare 补充 KR 达成率 + 周趋势迷你图（2026-03-11）
-
-CI 失败 1 次（L1 Process Gate — DoD 假测试 + LEARNINGS 未 push）。
-
-### 根本原因
-
-1. DoD 中"无 recharts 等外部图表库引入"的 Test 用了 `grep -c ... || echo 0`，`echo` 被 check-dod-mapping.cjs 识别为假测试（禁止），应改用 `! grep -q ...` 反向断言
-2. LEARNINGS.md 未在 CI 前 push，Learning Format Gate 是 L1 硬门禁
-
-### 下次预防
-
-- [ ] "验证某物不存在"类 DoD Test 不用 `|| echo 0` 兜底，改用 `! grep -q 'pattern' file`（exit 0 表示未找到 = 成功）
-- [ ] 继承 PR #814 的教训：LEARNINGS 必须在 PR 创建时同步 push，不能等 CI 失败后补
-- [ ] GET Brain API 返回 `{ generated_at, projects, summary }` 包装对象，不是直接数组；前端解析时用 `result.projects` 不是 `result`
