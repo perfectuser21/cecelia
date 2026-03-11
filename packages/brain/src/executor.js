@@ -42,6 +42,12 @@ import {
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
+// Xian Mac mini Codex Bridge URL (via Tailscale)
+const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+
+// Repo path mapping: US repo path → Xian repo path
+const XIAN_REPO_BASE = '/Users/jinnuoshengyuan/repos';
+
 // ==================== Input Validation ====================
 
 const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
@@ -1592,6 +1598,98 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
 }
 
 /**
+ * Trigger Xian Mac mini Codex Bridge for code_review tasks.
+ * Routes to codex-bridge (100.86.57.69:3458) which selects the best
+ * Codex account via wham/usage API and executes `codex exec review`.
+ *
+ * @param {Object} task - The task object from database
+ * @returns {Object} - { success, taskId, runId?, error? }
+ */
+async function triggerCodexBridge(task) {
+  const runId = generateRunId(task.id);
+  const checkpointId = `cp-${task.id.slice(0, 8)}`;
+
+  try {
+    // Resolve repo path for Xian (translate US path to Xian path)
+    let repoPath = null;
+    if (task.project_id) {
+      try {
+        const usPath = await resolveRepoPath(task.project_id);
+        if (usPath) {
+          // Extract repo name from US path (e.g. /Users/administrator/perfect21/cecelia → cecelia)
+          const repoName = path.basename(usPath);
+          repoPath = `${XIAN_REPO_BASE}/${repoName}`;
+        }
+      } catch { /* ignore */ }
+    }
+    if (!repoPath && task.payload?.repo_path) {
+      const repoName = path.basename(task.payload.repo_path);
+      repoPath = `${XIAN_REPO_BASE}/${repoName}`;
+    }
+    if (!repoPath) {
+      repoPath = `${XIAN_REPO_BASE}/cecelia`; // default
+    }
+
+    const baseBranch = task.payload?.base_branch || 'main';
+
+    console.log(`[executor] Calling Xian codex-bridge for task=${task.id} type=${task.task_type} repo=${repoPath}`);
+
+    await updateTaskRunInfo(task.id, runId, 'triggered');
+
+    const response = await fetch(`${XIAN_CODEX_BRIDGE_URL}/execute-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: task.id,
+        checkpoint_id: checkpointId,
+        work_dir: repoPath,
+        base_branch: baseBranch,
+        timeout_ms: 5 * 60 * 1000,
+      }),
+      signal: AbortSignal.timeout(30000), // 30s for dispatch (execution is async)
+    });
+
+    const result = await response.json();
+
+    if (result.ok) {
+      console.log(`[executor] Xian codex-bridge dispatched task=${task.id} account=${result.account}`);
+      activeProcesses.set(task.id, {
+        pid: null,
+        startedAt: new Date().toISOString(),
+        runId,
+        checkpointId,
+        bridge: true,
+        executor: 'codex-bridge',
+      });
+      return {
+        success: true,
+        runId,
+        taskId: task.id,
+        checkpointId,
+        executor: 'codex-bridge',
+        account: result.account,
+      };
+    } else {
+      console.warn(`[executor] Xian codex-bridge rejected task=${task.id}: ${result.error}`);
+      return {
+        success: false,
+        taskId: task.id,
+        error: result.error,
+        executor: 'codex-bridge',
+      };
+    }
+  } catch (err) {
+    console.error(`[executor] Xian codex-bridge error: ${err.message}`);
+    return {
+      success: false,
+      taskId: task.id,
+      error: err.message,
+      executor: 'codex-bridge',
+    };
+  }
+}
+
+/**
  * Trigger HK MiniMax executor for a task
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, result?, error? }
@@ -1666,8 +1764,12 @@ async function triggerMiniMaxExecutor(task) {
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
 async function triggerCeceliaRun(task) {
-  // Check if task should go to HK MiniMax
+  // Check if task should go to Xian Codex Bridge (code_review)
   const location = getTaskLocation(task.task_type);
+  if (location === 'xian') {
+    return triggerCodexBridge(task);
+  }
+  // Check if task should go to HK MiniMax
   if (location === 'hk') {
     return triggerMiniMaxExecutor(task);
   }
