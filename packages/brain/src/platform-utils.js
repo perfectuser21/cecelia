@@ -551,12 +551,48 @@ export function calculatePhysicalCapacity(totalMemMb, cpuCores, memPerTaskMb = 3
 }
 
 /**
+ * Get macOS memory pressure level from the kernel's own assessment.
+ *
+ * Uses `sysctl vm.memory_pressure` which returns:
+ *   0 = Normal (no pressure)
+ *   1 = Warning (moderate pressure)
+ *   2 = Urgent (high pressure, apps should free memory)
+ *   3 = Critical (system under extreme pressure)
+ *
+ * This is the authoritative macOS memory signal — the kernel knows when inactive
+ * pages can be reclaimed vs when the system is genuinely constrained.
+ *
+ * @returns {number} 0/1/2/3 or -1 on error (fallback to used_ratio)
+ */
+export function getMacOSMemoryPressure() {
+  if (!IS_DARWIN) return -1;
+  try {
+    const output = execSync('sysctl vm.memory_pressure', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    }).trim();
+    // Format: "vm.memory_pressure: 0"
+    const match = output.match(/vm\.memory_pressure:\s*(\d+)/);
+    if (match) {
+      const level = parseInt(match[1], 10);
+      return [0, 1, 2, 3].includes(level) ? level : -1;
+    }
+    return -1;
+  } catch {
+    return -1;
+  }
+}
+
+/**
  * Get available memory in MB — platform-aware.
  *
- * macOS: os.freemem() only counts truly free pages (~66MB), ignoring inactive
- * (file cache) pages that the kernel can reclaim instantly. Using only freemem()
- * gives ~99% pressure on a healthy system. We add inactive pages to get the real
- * available memory (free + inactive, consistent with Activity Monitor's "Available").
+ * macOS: os.freemem() only counts truly free pages (~66MB at rest), ignoring
+ * active process memory as the correct pressure signal. We use
+ * used_ratio = (active + wired) / total to compute "effective available":
+ * memory not committed to active processes or OS kernel wired pages.
+ * This correctly reflects memory capacity — when active spikes to 13GB on a
+ * 16GB system, used_ratio=90% and available=~1.6GB (which correctly limits dispatch).
+ * When active is a normal 7GB, used_ratio=56% and available=~7GB (allowing dispatch).
  *
  * Linux: os.freemem() already returns available memory (MemAvailable from /proc/meminfo).
  *
@@ -570,13 +606,27 @@ export function getAvailableMemoryMB() {
       const pageSizeMatch = output.match(/page size of (\d+) bytes/);
       const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 16384;
 
+      const activeMatch = output.match(/Pages active:\s+(\d+)/);
+      const wiredMatch = output.match(/Pages wired down:\s+(\d+)/);
       const freeMatch = output.match(/Pages free:\s+(\d+)/);
       const inactiveMatch = output.match(/Pages inactive:\s+(\d+)/);
+      const speculativeMatch = output.match(/Pages speculative:\s+(\d+)/);
 
+      const activePages = activeMatch ? parseInt(activeMatch[1], 10) : 0;
+      const wiredPages = wiredMatch ? parseInt(wiredMatch[1], 10) : 0;
       const freePages = freeMatch ? parseInt(freeMatch[1], 10) : 0;
       const inactivePages = inactiveMatch ? parseInt(inactiveMatch[1], 10) : 0;
+      const speculativePages = speculativeMatch ? parseInt(speculativeMatch[1], 10) : 0;
 
-      return Math.round((freePages + inactivePages) * pageSize / 1024 / 1024);
+      const totalPages = activePages + wiredPages + freePages + inactivePages + speculativePages;
+      if (totalPages === 0) return Math.round(os.freemem() / 1024 / 1024);
+
+      // used_ratio = committed memory (active + wired) / total
+      // "available" = everything not committed to active processes or kernel
+      const usedPages = activePages + wiredPages;
+      const used_ratio = usedPages / totalPages;
+      const availableMb = Math.round((1 - used_ratio) * totalPages * pageSize / 1024 / 1024);
+      return availableMb;
     } catch {
       // Fallback to os.freemem() if vm_stat unavailable
       return Math.round(os.freemem() / 1024 / 1024);

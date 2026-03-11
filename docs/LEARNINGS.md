@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] macOS 内存管理模型全面重构 — vm.memory_pressure + used_ratio（PR #820）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **macOS 内存压力信号选错**：PR #812 用 `free+inactive` 修复 `os.freemem()=66MB` 的问题，但 `free+inactive` 本质上和 `(total-active-wired)` 等价——当 active 正常（7GB）时都返回大量可用内存（✅），但当 active 飙升到 13GB 时，`free+inactive` 仍接近 `total-active-wired`，两者行为一致。问题根因是：**测量维度本身正确，但 macOS 不提供单一可靠的"可用内存"数字**。内核自己的 `vm.memory_pressure` 才是最权威的信号。
+
+2. **Planner 僵尸循环根因**：`planInitiativeIfNeeded()` 的 dedup SQL 只排除 `completed/failed/cancelled`，不排除 `quarantined`。当一个任务被隔离后，Planner 认为"没有 active 任务"→ 重建新任务 → 新任务也失败 → 也被隔离 → 循环。昨晚 36 个幽灵任务（3 个独立 Initiative × 12 轮循环）均来自此 bug。
+
+3. **PR #812 的 `free+inactive` 方向正确但不够精确**：实测 `getAvailableMemoryMB()` 现在返回 8266MB（used_ratio 方案），而 `free+inactive` 在 active=7GB 时也应返回类似值。用 `used_ratio` 更清晰、语义更准确：它明确说明了"committed memory"的概念。
+
+### 下次预防
+
+- [ ] macOS 上任何内存相关决策必须用 `getMacOSMemoryPressure()`（vm.memory_pressure）而非 os.freemem()
+- [ ] Planner dedup SQL 改动后必须检查所有 status 枚举值是否覆盖完整（含 quarantined）
+- [ ] 每次 Brain 重构后验证：`curl localhost:5221/api/brain/status/full | jq .memory` 中 `mem_pressure_signal` 字段是否合理（0=正常）
+- [ ] Linux 迁移 Mac 后的兼容性检查清单：os.freemem / pgrep / ps / stat -c / /proc/stat 等全部需要平台分支
+
+---
+
 ### [2026-03-11] Brain 测试失败修复 — isolate:false 是跨文件 Mock 污染根因（PR #818）
 
 **失败统计**：74 个批量运行失败（isolate:false 下 Mock 污染），修复后降至 2 个
