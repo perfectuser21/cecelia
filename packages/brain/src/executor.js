@@ -34,6 +34,7 @@ import {
   getDmesgInfo as platformGetDmesgInfo,
   countClaudeProcesses,
   calculatePhysicalCapacity,
+  getAvailableMemoryMB,
 } from './platform-utils.js';
 
 // HK MiniMax Executor URL (via Tailscale)
@@ -281,7 +282,7 @@ function _resetResourceHistory() {
  */
 function checkServerResources(memReservedMb = 0) {
   const loadAvg1 = os.loadavg()[0];
-  const freeMem = Math.round(os.freemem() / 1024 / 1024) - memReservedMb;
+  const freeMem = getAvailableMemoryMB() - memReservedMb;
   const dynMaxSeats = getEffectiveMaxSeats();
 
   // Read swap usage (platform-aware: Darwin uses sysctl, Linux uses /proc/meminfo)

@@ -550,4 +550,40 @@ export function calculatePhysicalCapacity(totalMemMb, cpuCores, memPerTaskMb = 3
   return Math.min(Math.max(raw, 2), MAX_PHYSICAL_CAP);
 }
 
+/**
+ * Get available memory in MB — platform-aware.
+ *
+ * macOS: os.freemem() only counts truly free pages (~66MB), ignoring inactive
+ * (file cache) pages that the kernel can reclaim instantly. Using only freemem()
+ * gives ~99% pressure on a healthy system. We add inactive pages to get the real
+ * available memory (free + inactive, consistent with Activity Monitor's "Available").
+ *
+ * Linux: os.freemem() already returns available memory (MemAvailable from /proc/meminfo).
+ *
+ * @returns {number} Available memory in MB
+ */
+export function getAvailableMemoryMB() {
+  if (IS_DARWIN) {
+    try {
+      const output = execSync('vm_stat', { encoding: 'utf-8', timeout: 2000 });
+      // vm_stat reports page size on first line: "Mach Virtual Memory Statistics: (page size of N bytes)"
+      const pageSizeMatch = output.match(/page size of (\d+) bytes/);
+      const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1], 10) : 16384;
+
+      const freeMatch = output.match(/Pages free:\s+(\d+)/);
+      const inactiveMatch = output.match(/Pages inactive:\s+(\d+)/);
+
+      const freePages = freeMatch ? parseInt(freeMatch[1], 10) : 0;
+      const inactivePages = inactiveMatch ? parseInt(inactiveMatch[1], 10) : 0;
+
+      return Math.round((freePages + inactivePages) * pageSize / 1024 / 1024);
+    } catch {
+      // Fallback to os.freemem() if vm_stat unavailable
+      return Math.round(os.freemem() / 1024 / 1024);
+    }
+  }
+  // Linux: os.freemem() is accurate (uses MemAvailable)
+  return Math.round(os.freemem() / 1024 / 1024);
+}
+
 export { SYSTEM_RESERVED_MB, MAX_PHYSICAL_CAP };

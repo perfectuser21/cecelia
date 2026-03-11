@@ -51,6 +51,7 @@ import { publishTaskCreated, publishTaskCompleted, publishTaskFailed } from './e
 import { emit as emitEvent } from './event-bus.js';
 import { recordSuccess as cbSuccess, recordFailure as cbFailure } from './circuit-breaker.js';
 import { notifyTaskCompleted } from './notifier.js';
+import { getAvailableMemoryMB } from './platform-utils.js';
 import { raise } from './alerting.js';
 import { getAccountUsage, selectBestAccount } from './account-usage.js';
 import websocketService, { WS_EVENTS } from './websocket.js';
@@ -4347,8 +4348,8 @@ router.get('/cluster/status', async (req, res) => {
     const usCpuLoad = os.loadavg()[0];
     const usCpuCores = os.cpus().length;
     const usMemTotal = Math.round(os.totalmem() / (1024 * 1024 * 1024) * 10) / 10;
-    const usMemFree = Math.round(os.freemem() / (1024 * 1024 * 1024) * 10) / 10;
-    const usMemUsedPct = Math.round((1 - os.freemem() / os.totalmem()) * 100);
+    const usMemFree = Math.round(getAvailableMemoryMB() / 1024 * 10) / 10;
+    const usMemUsedPct = Math.round((1 - getAvailableMemoryMB() / (os.totalmem() / 1024 / 1024)) * 100);
 
     // 动态计算可用席位 (85% 安全阈值)
     const CPU_PER_CLAUDE = 0.5;

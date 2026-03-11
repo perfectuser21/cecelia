@@ -15,9 +15,10 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readdirSync, readFileSync, existsSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
+import { processExists, countClaudeProcesses } from '../platform-utils.js';
 
 const execAsync = promisify(exec);
 
@@ -38,22 +39,10 @@ const RETRYABLE_FAILURE_CLASSES = ['transient'];
 const NON_RETRYABLE_FAILURE_CLASSES = ['auth', 'resource', 'code_error'];
 
 // ============================================================
-// 进程存活检测（跨平台）
+// 进程存活检测（跨平台）— 统一使用 platform-utils.processExists()
 // ============================================================
 
-const IS_DARWIN = process.platform === 'darwin';
-
-/**
- * 检查进程是否存活
- * @param {number} pid
- * @returns {boolean}
- */
-function isProcessAlive(pid) {
-  if (IS_DARWIN) {
-    try { process.kill(pid, 0); return true; } catch { return false; }
-  }
-  return existsSync(`/proc/${pid}`);
-}
+const isProcessAlive = processExists;
 
 /**
  * 读取 slot 目录获取 task_id 到 pid 的映射
@@ -510,8 +499,19 @@ async function executeAction(action) {
 
 async function findOrphanProcesses() {
   try {
-    const { stdout } = await execAsync('pgrep -f "claude.*-p"');
-    const pids = stdout.split('\n').filter(p => p).map(p => parseInt(p, 10));
+    // countClaudeProcesses() 是跨平台封装，但只返回数量。
+    // 此处需要 PID 列表来对比 DB 中活跃的 task_runs，
+    // 仍需 pgrep/ps，但用平台安全方式：
+    //   macOS: ps ax -o pid=,args= | grep 'claude.*-p'
+    //   Linux: pgrep -f "claude.*-p"
+    let pids = [];
+    try {
+      const cmd = process.platform === 'darwin'
+        ? `ps ax -o pid=,args= | grep 'claude.*-p' | grep -v grep | awk '{print $1}'`
+        : `pgrep -f "claude.*-p"`;
+      const { stdout } = await execAsync(cmd);
+      pids = stdout.split('\n').filter(p => p.trim()).map(p => parseInt(p.trim(), 10)).filter(n => !isNaN(n));
+    } catch { /* no processes found */ }
 
     // 检查哪些是孤儿进程（没有对应的 task）
     const client = await pool.connect();
