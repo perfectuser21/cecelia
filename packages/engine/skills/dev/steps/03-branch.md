@@ -49,14 +49,17 @@ fi
 # 只在主仓库（非 worktree）时检查
 if [[ "$IS_WORKTREE" == "false" ]]; then
     PROJECT_ROOT=$(git rev-parse --show-toplevel)
-    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode"
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-    if [[ -f "$DEV_MODE_FILE" ]]; then
-        ACTIVE_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | cut -d' ' -f2 || echo "unknown")
+    # 检查是否有任何 per-branch 状态文件存在
+    _HAS_DEV_LOCK=false
+    for _f in "$PROJECT_ROOT"/.dev-lock.*; do
+        [[ -f "$_f" ]] && _HAS_DEV_LOCK=true && break
+    done
 
+    if [[ "$_HAS_DEV_LOCK" == "true" || "$CURRENT_BRANCH" =~ ^(cp-|feature/) ]]; then
         echo ""
         echo "⚠️  Step 0 未处理 worktree 冲突，兜底自动创建..."
-        echo "   活跃分支: $ACTIVE_BRANCH"
 
         # 自动创建 worktree（与 Step 0 相同逻辑）
         TASK_NAME="<从用户输入提取的简短英文任务名>"
@@ -80,9 +83,9 @@ fi
 
 **逻辑**：
 - 在 worktree 中 → 跳过检查（已隔离）
-- 在主仓库且有 `.dev-mode` → **自动创建 worktree + cd**（兜底）
-- 在主仓库且无 `.dev-mode` 但在 cp-*/feature-* 分支 → **也必须创建 worktree**（v2.1 新增）
-- 在主仓库且无 `.dev-mode` 且在 develop/main → 继续创建分支
+- 在主仓库且有 `.dev-lock.<branch>` → **自动创建 worktree + cd**（兜底）
+- 在主仓库且在 cp-*/feature-* 分支 → **也必须创建 worktree**（v2.1 新增）
+- 在主仓库且在 develop/main → 继续创建分支
 
 ---
 

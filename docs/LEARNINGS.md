@@ -17,6 +17,22 @@
 - [ ] Learning 必须和代码在同一个 commit 或比代码更早 push，不能事后补
 - [ ] DEFINITION.md 中 schema_version 有两处：line ~386（表格）和 line ~676（selfcheck 描述），改动时必须两处都更新
 
+## PR #852 feat(engine): 统一 stop hook 状态文件格式（2026-03-11）
+
+**失败统计**：CI 失败 0 轮（L1 Learning Format Gate 是预期失败，非代码问题）
+
+### 根本原因
+
+1. **双格式共存导致 stop hook 过早退出**：`stop-dev.sh` D6-1 预检只扫描 `.dev-lock.*`（per-branch 格式），旧格式会话（只有 `.dev-mode` 无 `.dev-lock.*`）直接 `exit 0`，导致会话过早退出
+2. **旧格式兼容代码膨胀**：~85 行代码专门处理旧格式 fallback、泄漏检查、sentinel 孤儿恢复，增加维护成本和 bug 面
+3. **hooks/ 硬链接**：根目录 `hooks/` 和 `packages/engine/hooks/` 是硬链接（同 inode），修改一处自动同步，不需要手动 cp
+
+### 下次预防
+
+- [ ] 状态文件格式统一后，新代码不要再添加旧格式兼容逻辑
+- [ ] 硬链接文件修改时验证 inode 一致即可，不需要手动同步
+- [ ] 清理类 PR 重点测试核心路径（stop hook 退出码、会话匹配）而非被删除的旧路径
+
 ## PR #850 fix(brain): 网络超时重试延迟调整为 5-10 分钟（2026-03-11）
 
 CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未随代码同批次 push）。
