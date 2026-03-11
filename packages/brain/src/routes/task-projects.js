@@ -61,6 +61,38 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /projects/compare — 跨项目对比指标（含 KR 进度 + 历史趋势）
+// 必须在 /:id 之前注册，否则 "compare" 会被当作 UUID 拦截
+router.get('/compare', async (req, res) => {
+  try {
+    const { ids, format = 'json', trend_weeks = '4' } = req.query;
+    const project_ids = ids ? ids.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (project_ids.length < 2) {
+      return res.status(400).json({ success: false, error: 'ids must contain at least 2 project UUIDs' });
+    }
+    const weeks = Math.min(Math.max(parseInt(trend_weeks, 10) || 4, 1), 12);
+    const { getCompareMetrics } = await import('../project-compare.js');
+    const result = await getCompareMetrics({ project_ids, format, trend_weeks: weeks });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+// POST /projects/compare/report — 跨项目对比报告生成
+router.post('/compare/report', async (req, res) => {
+  try {
+    const { project_ids, format = 'json', include_tasks = false } = req.body;
+    const { generateCompareReport } = await import('../project-compare.js');
+    const report = await generateCompareReport({ project_ids, format, include_tasks });
+    res.json(report);
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, error: err.message });
+  }
+});
+
 // GET /projects/:id — 获取单个 project
 router.get('/:id', async (req, res) => {
   try {

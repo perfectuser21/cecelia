@@ -8,6 +8,13 @@ import request from 'supertest';
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: mockPool }));
 
+const mockGetCompareMetrics = vi.hoisted(() => vi.fn());
+const mockGenerateCompareReport = vi.hoisted(() => vi.fn());
+vi.mock('../../project-compare.js', () => ({
+  getCompareMetrics: mockGetCompareMetrics,
+  generateCompareReport: mockGenerateCompareReport,
+}));
+
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let router;
 
@@ -84,6 +91,44 @@ describe('task-projects routes', () => {
       const res = await request(app).get('/projects/p1');
       expect(res.status).toBe(200);
       expect(res.body.name).toBe('Project 1');
+    });
+  });
+
+  describe('GET /compare', () => {
+    it('ids 少于 2 个时返回 400', async () => {
+      const res = await request(app).get('/projects/compare?ids=only-one');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/at least 2/);
+    });
+
+    it('有效 ids 时调用 getCompareMetrics 并返回结果', async () => {
+      const mockResult = { projects: [{ id: 'a' }, { id: 'b' }] };
+      mockGetCompareMetrics.mockResolvedValueOnce(mockResult);
+
+      const res = await request(app).get('/projects/compare?ids=a,b');
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(2);
+      expect(mockGetCompareMetrics).toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ['a', 'b'] })
+      );
+    });
+  });
+
+  describe('POST /compare/report', () => {
+    it('调用 generateCompareReport 并返回报告', async () => {
+      const mockReport = { projects: [], summary: 'ok', generated_at: '2026-03-10' };
+      mockGenerateCompareReport.mockResolvedValueOnce(mockReport);
+
+      const res = await request(app)
+        .post('/projects/compare/report')
+        .send({ project_ids: ['a', 'b'] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.summary).toBe('ok');
+      expect(res.body.generated_at).toBeTruthy();
+      expect(mockGenerateCompareReport).toHaveBeenCalledWith(
+        expect.objectContaining({ project_ids: ['a', 'b'] })
+      );
     });
   });
 
