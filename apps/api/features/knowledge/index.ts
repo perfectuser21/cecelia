@@ -3,7 +3,7 @@ import { FeatureManifest } from '../types';
 const manifest: FeatureManifest = {
   id: 'knowledge',
   name: 'Knowledge',
-  version: '2.1.0',
+  version: '2.2.0',
   source: 'core',
   instances: ['core'],
 
@@ -15,6 +15,7 @@ const manifest: FeatureManifest = {
     { path: '/knowledge/content', component: 'ContentStudio' },
     { path: '/knowledge/brain', component: 'SuperBrain' },
     { path: '/knowledge/digestion', component: 'KnowledgeDigestion' },
+    { path: '/knowledge/instruction-book', component: 'InstructionBook' },
     // Legacy redirects
     { path: '/content', redirect: '/knowledge/content' },
     { path: '/super-brain', redirect: '/knowledge/brain' },
@@ -25,6 +26,7 @@ const manifest: FeatureManifest = {
     ContentStudio: () => import('../content/pages/ContentStudio'),
     SuperBrain: () => import('../brain/pages/SuperBrain'),
     KnowledgeDigestion: () => import('./pages/KnowledgeDigestion'),
+    InstructionBook: () => import('./pages/InstructionBook'),
   },
 };
 
