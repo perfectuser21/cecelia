@@ -38,7 +38,6 @@
 ---
 
 ### [2026-03-11] SW 更新白屏根因：缺 controllerchange listener（PR #815）
-### [2026-03-11] cecelia-run 必须在 git 里，运行版本不能是孤岛（PR #817）
 
 **失败统计**：0 次 CI 失败
 
@@ -55,6 +54,15 @@
 - [ ] VitePWA 配置必须验证生成的 `registerSW.js` 包含 `controllerchange` 事件处理（`grep controllerchange dist/registerSW.js`）
 - [ ] 每次 dist 构建后检查：`main.tsx` 的 SW 监听逻辑是否在新 bundle 里出现（`grep controllerchange dist/assets/index-*.js`）
 - [ ] `clearStaleCache()` 改为返回 boolean，调用方根据返回值决定是否挂载 React，避免 reload 后的无效挂载
+
+---
+
+### [2026-03-11] cecelia-run 必须在 git 里，运行版本不能是孤岛（PR #817）
+
+**失败统计**：0 次 CI 失败
+
+### 根本原因
+
 1. **运行版本和 git 源文件长期分叉**：`~/bin/cecelia-run`（620行）包含 75 行 Mac 适配代码（root处理、kill_tree、PATH、失败分类），这些代码从未合并回 `packages/brain/scripts/cecelia-run.sh`（545行）。LaunchDaemon plist 硬编码指向 `~/bin/`，导致对运行版本的任何修改都完全绕过 CI 和代码审查。
 
 2. **直接改 git 外文件的诱惑**：当文件不在 git repo 里，branch-protect hook 无法拦截，导致"直接改就好"的捷径看起来合法，实际上是技术债。
