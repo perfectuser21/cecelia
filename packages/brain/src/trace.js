@@ -28,7 +28,6 @@ export const EXECUTOR_HOSTS = {
   HK_VPS: 'hk-vps',
   HK_N8N: 'hk-n8n',
   MAC_MINI: 'mac-mini',
-  XIAN_MAC_MINI: 'xian-mac-mini',
   NODE_PC: 'node-pc',
 };
 

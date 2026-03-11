@@ -24,7 +24,8 @@ set -euo pipefail
 INCIDENT_FILE=".dev-incident-log.json"
 OUTPUT_FILE=".dev-learnings-extracted.json"
 
-# LEARNINGS.md 搜索路径（优先项目层面，其次 engine 层面）
+# LEARNINGS 搜索路径（优先 per-branch，其次旧格式，最后 engine 层面）
+# per-branch 文件在 find_learnings_file() 中动态扫描 docs/learnings/*.md
 LEARNINGS_CANDIDATES=(
     "docs/LEARNINGS.md"
     "packages/engine/docs/LEARNINGS.md"
@@ -34,8 +35,18 @@ LEARNINGS_CANDIDATES=(
 # 工具函数
 # ============================================================================
 
-# 找到 LEARNINGS.md 文件（优先级：项目层 > engine 层）
+# 找到 LEARNINGS 文件（优先级：per-branch > 项目层旧格式 > engine 层）
 find_learnings_file() {
+    # 优先：docs/learnings/ 目录下最新的 .md 文件（per-branch 模式）
+    if [[ -d "docs/learnings" ]]; then
+        local latest
+        latest=$(ls -t docs/learnings/*.md 2>/dev/null | head -1)
+        if [[ -n "$latest" && -f "$latest" ]]; then
+            echo "$latest"
+            return 0
+        fi
+    fi
+    # 兜底：旧格式候选列表
     for f in "${LEARNINGS_CANDIDATES[@]}"; do
         if [[ -f "$f" ]]; then
             echo "$f"

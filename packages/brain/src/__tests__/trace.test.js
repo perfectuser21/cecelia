@@ -76,7 +76,6 @@ describe('trace.js 单元测试', () => {
         HK_VPS: 'hk-vps',
         HK_N8N: 'hk-n8n',
         MAC_MINI: 'mac-mini',
-        XIAN_MAC_MINI: 'xian-mac-mini',
         NODE_PC: 'node-pc',
       });
     });
@@ -1093,7 +1092,7 @@ describe('trace.js 单元测试', () => {
 
     it('HB#6: EXECUTOR_HOSTS 值全部为小写连字符格式（含数字）', () => {
       for (const host of Object.values(EXECUTOR_HOSTS)) {
-        expect(host).toMatch(/^[a-z]+(-[a-z0-9]+)+$/);
+        expect(host).toMatch(/^[a-z]+-[a-z0-9]+$/);
       }
     });
 

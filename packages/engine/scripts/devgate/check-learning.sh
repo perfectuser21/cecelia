@@ -1,17 +1,19 @@
 #!/bin/bash
 # check-learning.sh — 强制 Learning 格式：根本原因 + 下次预防
-# HARD GATE: 走 /dev 的 PR 必须包含 LEARNINGS.md 新增内容
+# HARD GATE: 走 /dev 的 PR 必须包含 Learning 新增内容
 #
-# A+ 方案：Learning 现在是必需品，不是可选附件。
+# v2.0.0: Per-Branch Learning — 检查 docs/learnings/<branch>.md 文件
+#   优先检查 docs/learnings/ 目录下的 per-branch 文件
+#   向后兼容 docs/LEARNINGS.md（旧 PR 仍可通过）
+#
 # 例外：PR title 含 [SKIP-LEARNING] 时跳过（需在 PR description 中说明原因）
 
 set -e
 
-LEARNINGS_FILE="docs/LEARNINGS.md"
 PR_TITLE="${PR_TITLE:-}"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  DevGate: Learning Format Gate"
+echo "  DevGate: Learning Format Gate (v2 per-branch)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ─────────────────────────────────────────────
@@ -27,15 +29,46 @@ if echo "$PR_TITLE" | grep -q "\[SKIP-LEARNING\]"; then
 fi
 
 # ─────────────────────────────────────────────
-# LEARNINGS.md 必须存在（A+ 方案：不再允许跳过）
+# 查找 Learning 文件（per-branch 优先，旧格式兜底）
 # ─────────────────────────────────────────────
-if [ ! -f "$LEARNINGS_FILE" ]; then
+LEARNING_FILE=""
+ADDED_LINES=""
+
+# 策略1: 检查 docs/learnings/ 目录下是否有新文件（per-branch 模式）
+if [ -d "docs/learnings" ]; then
+  for f in docs/learnings/*.md; do
+    [ -f "$f" ] || continue
+    LINES=$(git diff "origin/main...HEAD" -- "$f" | grep '^+' | grep -v '^+++' || true)
+    if [ -n "$LINES" ]; then
+      LEARNING_FILE="$f"
+      ADDED_LINES="$LINES"
+      echo "📄 找到 per-branch Learning 文件: $f"
+      break
+    fi
+  done
+fi
+
+# 策略2: 向后兼容 — 检查旧的 docs/LEARNINGS.md
+if [ -z "$LEARNING_FILE" ] && [ -f "docs/LEARNINGS.md" ]; then
+  LINES=$(git diff "origin/main...HEAD" -- "docs/LEARNINGS.md" | grep '^+' | grep -v '^+++' || true)
+  if [ -n "$LINES" ]; then
+    LEARNING_FILE="docs/LEARNINGS.md"
+    ADDED_LINES="$LINES"
+    echo "📄 找到旧格式 Learning 文件: docs/LEARNINGS.md"
+  fi
+fi
+
+# ─────────────────────────────────────────────
+# 没找到任何 Learning 文件 → HARD GATE FAILED
+# ─────────────────────────────────────────────
+if [ -z "$LEARNING_FILE" ]; then
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  ❌ HARD GATE FAILED: docs/LEARNINGS.md 不存在"
+  echo "  ❌ HARD GATE FAILED: 未找到 Learning 文件"
   echo ""
-  echo "  走 /dev 工作流的 PR 必须包含 LEARNINGS.md 条目。"
-  echo "  请在 Step 10 完成 Learning 记录。"
+  echo "  走 /dev 工作流的 PR 必须包含 Learning 条目。"
+  echo "  请在 Step 10 将 Learning 写到:"
+  echo "    docs/learnings/<branch-name>.md"
   echo ""
   echo "  如果本次确实无需 Learning（纯文档/配置修复），"
   echo "  请在 PR title 中加 [SKIP-LEARNING] 标签并在"
@@ -44,33 +77,13 @@ if [ ! -f "$LEARNINGS_FILE" ]; then
   exit 1
 fi
 
-# ─────────────────────────────────────────────
-# 本 PR 必须新增 LEARNINGS.md 内容（A+ 方案：不再允许跳过）
-# ─────────────────────────────────────────────
-ADDED_LINES=$(git diff "origin/main...HEAD" -- "$LEARNINGS_FILE" | grep '^+' | grep -v '^+++' || true)
-
-if [ -z "$ADDED_LINES" ]; then
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  ❌ HARD GATE FAILED: 本 PR 未在 LEARNINGS.md 中新增内容"
-  echo ""
-  echo "  走 /dev 工作流的 PR 必须包含 LEARNINGS.md 新增条目。"
-  echo "  请在 Step 10 完成 Learning 记录并 push 到功能分支。"
-  echo ""
-  echo "  如果本次确实无需 Learning（纯文档/配置修复），"
-  echo "  请在 PR title 中加 [SKIP-LEARNING] 标签并在"
-  echo "  PR description 中说明原因。"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  exit 1
-fi
-
-echo "🔍 检测到 LEARNINGS.md 有新增内容，检查格式..."
+echo "🔍 检测到 $LEARNING_FILE 有新增内容，检查格式..."
 echo ""
 
 # ─────────────────────────────────────────────
 # 格式检查：根本原因 + 下次预防 + checklist
 # ─────────────────────────────────────────────
-NEW_CONTENT=$(git diff "origin/main...HEAD" -- "$LEARNINGS_FILE" | grep '^+' | grep -v '^+++' | sed 's/^+//')
+NEW_CONTENT=$(echo "$ADDED_LINES" | sed 's/^+//')
 
 HAS_ROOT_CAUSE=false
 HAS_PREVENTION=false
@@ -135,6 +148,6 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  ✅ Learning Format Gate Passed"
+echo "  ✅ Learning Format Gate Passed ($LEARNING_FILE)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 exit 0
