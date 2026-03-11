@@ -226,7 +226,7 @@ describe('cortex profile-aware model', () => {
   beforeEach(async () => {
     vi.resetModules();
 
-    // callCortexLLM 内部调用 callLLM('cortex', prompt, { timeout: 120000, maxTokens: 4096 })
+    // callCortexLLM 内部调用 callLLM('cortex', prompt, { timeout: 300000, maxTokens: 4096 })
     mockCallLLM = vi.fn();
     vi.doMock('../llm-caller.js', () => ({
       callLLM: mockCallLLM,
@@ -272,7 +272,7 @@ describe('cortex profile-aware model', () => {
     expect(result).toContain('deep analysis result');
 
     // 验证 callLLM 被正确调用
-    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this', { timeout: 120000, maxTokens: 4096 });
+    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this', { timeout: 300000, maxTokens: 4096 });
   });
 
   it('D15b: callCortexLLM 传递不同 prompt 内容', async () => {
@@ -289,6 +289,6 @@ describe('cortex profile-aware model', () => {
     const result = await callCortexLLM('analyze this differently');
     expect(result).toContain('sonnet analysis');
 
-    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this differently', { timeout: 120000, maxTokens: 4096 });
+    expect(mockCallLLM).toHaveBeenCalledWith('cortex', 'analyze this differently', { timeout: 300000, maxTokens: 4096 });
   });
 });
