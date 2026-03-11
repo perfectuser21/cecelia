@@ -1,20 +1,36 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Cpu, Zap, ArrowRight, Wrench } from 'lucide-react';
+import { BookOpen, Cpu, Zap, ArrowRight, Wrench, ChevronDown, ChevronRight, Clock } from 'lucide-react';
 
-interface Section {
-  what?: string;
-  trigger?: string;
-  howToUse?: string;
-  output?: string;
-  addedIn?: string;
+interface ChangelogItem {
+  version: string;
+  description: string;
+}
+
+interface SubSection {
+  title: string;
+  content: string;
+}
+
+interface SectionContent {
+  content: string;
+  subsections: SubSection[];
+}
+
+interface Sections {
+  what?: SectionContent;
+  trigger?: SectionContent;
+  howToUse?: SectionContent;
+  output?: SectionContent;
+  addedIn?: SectionContent;
 }
 
 interface Entry {
   id: string;
   version: string;
+  changelog: ChangelogItem[];
   title: string;
   category: 'skill' | 'feature';
-  sections: Section;
+  sections: Sections;
 }
 
 interface InstructionBookData {
@@ -51,8 +67,43 @@ function CodeBlock({ content }: { content: string }) {
   );
 }
 
-function SectionBlock({ label, content }: { label: string; content?: string }) {
-  if (!content) return null;
+function SubSectionBlock({ sub }: { sub: SubSection }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: '10px', border: '1px solid #222', borderRadius: '6px', overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%',
+          textAlign: 'left',
+          padding: '8px 12px',
+          background: open ? '#1a2233' : '#141414',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          color: open ? '#aac8ff' : '#888',
+          fontSize: '13px',
+          fontWeight: 600,
+        }}
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        {sub.title}
+      </button>
+      {open && (
+        <div style={{ padding: '12px 14px', fontSize: '13px', color: '#ccc', lineHeight: '1.7' }}>
+          <CodeBlock content={sub.content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionBlock({ label, section }: { label: string; section?: SectionContent }) {
+  if (!section) return null;
+  const hasContent = section.content || section.subsections.length > 0;
+  if (!hasContent) return null;
   return (
     <div style={{ marginBottom: '24px' }}>
       <div style={{
@@ -65,9 +116,71 @@ function SectionBlock({ label, content }: { label: string; content?: string }) {
       }}>
         {label}
       </div>
-      <div style={{ fontSize: '14px', color: '#ccc', lineHeight: '1.7' }}>
-        <CodeBlock content={content} />
-      </div>
+      {section.content && (
+        <div style={{ fontSize: '14px', color: '#ccc', lineHeight: '1.7' }}>
+          <CodeBlock content={section.content} />
+        </div>
+      )}
+      {section.subsections.map((sub, i) => (
+        <SubSectionBlock key={i} sub={sub} />
+      ))}
+    </div>
+  );
+}
+
+function ChangelogBlock({ changelog }: { changelog: ChangelogItem[] }) {
+  const [open, setOpen] = useState(false);
+  if (!changelog || changelog.length === 0) return null;
+  return (
+    <div style={{ marginTop: '32px', paddingTop: '16px', borderTop: '1px solid #1f1f1f' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          color: '#555',
+          fontSize: '12px',
+          fontWeight: 600,
+          padding: 0,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+        }}
+      >
+        <Clock size={12} />
+        Changelog ({changelog.length})
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+      </button>
+      {open && (
+        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {[...changelog].reverse().map((item, i) => (
+            <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <div style={{
+                flexShrink: 0,
+                marginTop: '4px',
+                width: '6px', height: '6px',
+                borderRadius: '50%',
+                background: i === 0 ? '#3467D6' : '#333',
+              }} />
+              <div>
+                {item.version && (
+                  <span style={{
+                    fontSize: '11px', fontWeight: 700,
+                    color: i === 0 ? '#3467D6' : '#555',
+                    marginRight: '8px', fontFamily: 'monospace',
+                  }}>
+                    v{item.version}
+                  </span>
+                )}
+                <span style={{ fontSize: '12px', color: '#777' }}>{item.description}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -84,7 +197,7 @@ function EntryDetail({ entry }: { entry: Entry }) {
           {entry.category === 'skill' ? 'Skill' : 'Feature'}
         </span>
         {entry.version && (
-          <span style={{ fontSize: '11px', color: '#555', marginLeft: 'auto' }}>v{entry.version}</span>
+          <span style={{ fontSize: '11px', color: '#555', marginLeft: 'auto', fontFamily: 'monospace' }}>v{entry.version}</span>
         )}
       </div>
 
@@ -92,15 +205,16 @@ function EntryDetail({ entry }: { entry: Entry }) {
         {entry.title}
       </h2>
 
-      <SectionBlock label="是什么" content={entry.sections.what} />
-      <SectionBlock label="触发条件" content={entry.sections.trigger} />
-      <SectionBlock label="怎么用" content={entry.sections.howToUse} />
-      <SectionBlock label="输出" content={entry.sections.output} />
-      {entry.sections.addedIn && (
-        <div style={{ marginTop: '32px', paddingTop: '16px', borderTop: '1px solid #222', fontSize: '12px', color: '#555' }}>
-          {entry.sections.addedIn}
+      <SectionBlock label="是什么" section={entry.sections.what} />
+      <SectionBlock label="触发条件" section={entry.sections.trigger} />
+      <SectionBlock label="怎么用" section={entry.sections.howToUse} />
+      <SectionBlock label="输出" section={entry.sections.output} />
+      {entry.sections.addedIn?.content && (
+        <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #1a1a1a', fontSize: '12px', color: '#555' }}>
+          {entry.sections.addedIn.content}
         </div>
       )}
+      <ChangelogBlock changelog={entry.changelog} />
     </div>
   );
 }
@@ -182,7 +296,12 @@ export default function InstructionBook() {
                 }}
               >
                 {selected?.id === entry.id && <ArrowRight size={12} color="#3467D6" />}
-                {entry.title}
+                <span style={{ flex: 1 }}>{entry.title}</span>
+                {entry.version && (
+                  <span style={{ fontSize: '10px', color: '#444', fontFamily: 'monospace' }}>
+                    v{entry.version}
+                  </span>
+                )}
               </button>
             ))}
           </>
@@ -214,7 +333,7 @@ export default function InstructionBook() {
                 }}
               >
                 {selected?.id === entry.id && <ArrowRight size={12} color="#01C7D2" />}
-                {entry.title}
+                <span style={{ flex: 1 }}>{entry.title}</span>
               </button>
             ))}
           </>
