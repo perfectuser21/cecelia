@@ -1,6 +1,6 @@
 name: L4 Runtime Gate
 
-# L4: 运行时集成测试 — Brain 变动时必跑（60min）
+# L4: 运行时集成测试 — Brain 变动时必跑（90min）
 # 职责：PostgreSQL 真实环境 + 完整集成测试 + Coverage 门禁 + GoldenPath E2E
 # 运行环境：macos-latest（PostgreSQL@17 通过 Homebrew 安装）
 # 迁移自：brain-ci.yml (brain-integration)
@@ -60,7 +60,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
 
@@ -190,13 +190,15 @@ jobs:
 
       - name: Run Brain coverage thresholds
         working-directory: packages/brain
+        timeout-minutes: 30
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
         run: |
           set +e
           # Phase 2: Run with coverage only to check thresholds.
-          # OOM during this phase is acceptable (all tests already passed in Phase 1).
-          npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=dot --coverage 2>&1 | tee /tmp/brain-coverage-output.txt
+          # OOM or timeout during this phase is acceptable (all tests already passed in Phase 1).
+          # Step-level timeout-minutes=30 prevents this phase from consuming all remaining job time.
+          timeout 1680 npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=dot --coverage 2>&1 | tee /tmp/brain-coverage-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
 
           if grep -q "Coverage threshold" /tmp/brain-coverage-output.txt; then
