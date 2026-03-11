@@ -10,7 +10,7 @@ export default defineConfig({
     exclude: ['**/node_modules/**', '**/devgate-fake-test-detection.test.cjs', '**/.claude/worktrees/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json-summary'],
+      reporter: ['text', 'json-summary', 'json'],
       reportsDirectory: './coverage',
       // 覆盖率阈值（暂时设低，后续逐步提高）
       thresholds: {

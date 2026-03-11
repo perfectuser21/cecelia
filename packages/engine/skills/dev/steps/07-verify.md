@@ -277,6 +277,80 @@ Reviewer 3 — 项目规范 & 一致性:
 
 ---
 
+### 7.5 PRD 语义覆盖审计（独立审计员）
+
+> DoD 全部 [x]、代码审查完成后，启动第 4 个独立 subagent——**审计 PRD 承诺 vs 实际实现的语义覆盖**。
+
+**目标**：打破"同一个 AI 写 PRD + 写 DoD + 写代码 + 验证"的自引用循环。这个 subagent 只读不写，独立判断承诺是否兑现。
+
+#### 准备审计上下文
+
+```bash
+# PRD 文件
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+PRD_FILE=$(ls .prd-${BRANCH}.md .prd-task-*.md 2>/dev/null | head -1)
+
+# DoD 文件
+DOD_FILE=$(ls .dod-${BRANCH}.md .dod-task-*.md 2>/dev/null | head -1)
+
+# 代码变更
+git diff main...HEAD --name-only    # 变更文件列表
+git diff main...HEAD                 # 完整 diff
+```
+
+#### 启动审计员（与 7.4 的 3 个 reviewer 串行，在它们之后执行）
+
+```
+Reviewer 4 — PRD 语义覆盖审计:
+  subagent_type: Explore
+  prompt: |
+    你是独立审计员，不是开发者。你的任务是找出 PRD 承诺和实际实现的差距。
+
+    PRD 文件：{prd_file_content}
+    DoD 文件：{dod_file_content}
+    代码变更文件列表：{changed_files}
+
+    **审计流程**：
+    1. 提取 PRD"成功标准"章节的每一条承诺
+    2. 对每条承诺：
+       a. 在代码变更中找对应实现
+       b. 检查 DoD 的 Test 是否能验证这条承诺的语义
+       c. 判断结果
+
+    **判断标准**：
+    - MATCH：代码确实实现了，Test 能验证
+    - DOWNGRADED：代码实现了，但 Test 弱于承诺
+      （例：承诺"自动生成 X"，Test 只检查"X 文件存在"）
+    - MISSING：代码中找不到对应实现
+
+    **常见降级模式**（必须检测）：
+    - 承诺 "自动/触发/生成"（BEHAVIOR） → Test 只用 grep/ls → DOWNGRADED
+    - 承诺 "返回 X" → Test 不发请求，只 grep 源码 → DOWNGRADED
+    - 承诺 "Step N 执行时自动做 Y" → 代码里没有 Y 的逻辑 → MISSING
+
+    **输出格式**：
+    对每条 PRD 承诺：
+    ```
+    承诺: "xxx"
+    判定: MATCH | DOWNGRADED | MISSING
+    依据: （1-2 句说明）
+    ```
+
+    如果全部 MATCH，说"审计通过，所有承诺均已兑现"。
+```
+
+#### 处理审计结果
+
+| 结果 | 动作 |
+|------|------|
+| 全部 MATCH | 继续 Step 8 |
+| 有 DOWNGRADED | **升级 Test**：将弱测试替换为能验证行为的强测试，重跑 7.2 |
+| 有 MISSING | **补实现**：回到 Step 6 补代码，或修改 PRD 删除该承诺 |
+
+**⚠️ 不允许忽略 DOWNGRADED 或 MISSING 直接进入 Step 8。**
+
+---
+
 ## 完成后
 
 **标记步骤完成**：
