@@ -2816,9 +2816,21 @@ router.post('/execution-callback', async (req, res) => {
       let blockedDetail = null;
       if (isFailed) {
         // Build human-readable error message from result payload
-        errorMessage = (result !== null && typeof result === 'object')
-          ? (result.result || result.error || result.stderr || JSON.stringify(result))
-          : String(result || status);
+        if (result === null) {
+          // Fallback: cecelia-run crashed/killed before producing a result object
+          const ts = new Date().toISOString();
+          const exitCodeStr = exit_code != null ? exit_code : 'N/A';
+          let fallback = `[callback: result=null] task=${task_id} exit_code=${exitCodeStr} at ${ts} | callback received but result was null`;
+          const stderrTail = stderr ? String(stderr).slice(-300) : '';
+          if (stderrTail) {
+            fallback += ` | stderr: ${stderrTail}`;
+          }
+          errorMessage = fallback;
+        } else if (typeof result === 'object') {
+          errorMessage = result.result || result.error || result.stderr || JSON.stringify(result);
+        } else {
+          errorMessage = String(result);
+        }
         errorMessage = errorMessage.slice(0, 2000); // cap at 2000 chars
 
         // Build structured blocked_detail: { exit_code, stderr_tail, timestamp }

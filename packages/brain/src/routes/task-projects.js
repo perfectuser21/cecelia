@@ -93,6 +93,29 @@ router.post('/compare/report', async (req, res) => {
   }
 });
 
+// POST /projects/compare/report/push — 推送对比报告到指定目标（当前支持 notion）
+router.post('/compare/report/push', async (req, res) => {
+  try {
+    const { project_ids, destination, format = 'markdown', notion_parent_id } = req.body;
+
+    if (destination !== 'notion') {
+      return res.status(400).json({
+        success: false,
+        error: `不支持的推送目标: ${destination}，当前仅支持 "notion"`,
+      });
+    }
+
+    const { pushCompareReportToNotion } = await import('../project-compare.js');
+    const result = await pushCompareReportToNotion({ project_ids, format, notion_parent_id });
+    res.json(result);
+  } catch (err) {
+    const status = err.status || 500;
+    const body = { success: false, error: err.message };
+    if (err.code) body.code = err.code;
+    res.status(status).json(body);
+  }
+});
+
 // POST /projects/compare/report/push-notion — 推送对比报告到 Notion
 // 无 NOTION_API_TOKEN 时返回 501
 router.post('/compare/report/push-notion', async (req, res) => {

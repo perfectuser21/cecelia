@@ -18,10 +18,55 @@
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
 - [ ] vitest `execArgv` 无法覆盖 CI 的 `NODE_OPTIONS` 环境变量。要改 CI 内存限制，必须直接修改 workflow yaml
 
+## PR #828 feat(brain): POST /api/brain/projects/compare/report/push — Notion 推送端点（2026-03-11）
 
-### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
+CI 失败 1 次（L1 Learning Format Gate — LEARNINGS.md 未在 push 前提交）。
 
+### 根本原因
 
+1. LEARNINGS.md 未与代码同步 push，Learning Format Gate 是 L1 硬门禁
+2. DoD 中用 `test -f ... && echo 1` 被识别为 echo 假测试，需改用 `ls ... | wc -l`
+3. 同一函数末尾代码块在文件中出现两次，Edit 工具 replace_all=false 失败，需用 `cat >>` 追加方式
+
+### 下次预防
+
+- [ ] PR push 前先检查 LEARNINGS.md 是否已更新，若未更新先写再 push
+- [ ] DoD 验证文件存在时用 `ls ... | wc -l` 而非 `test -f ... && echo 1`
+- [ ] 文件有重复代码块时改用 `cat >>` 追加或提供更多上下文区分 Edit 位置
+
+### [2026-03-11] Brain 重复派发同类任务 — 开发前先查 routes/ 确认功能是否已存在（PR #830）
+
+**失败统计**：L1 CI 失败 1 次（Learning Gate + DoD Gate），实际为任务重复
+
+### 根本原因
+
+1. **Brain 重复派发已实现功能**：PR #824 已通过 `routes/rumination.js` 实现 `POST /api/brain/rumination/run`，但 Brain 又派发了相同功能的任务，导致 PR #830 实现了重复代码（在 inner-life.js 里加了第二个 `/run` 端点）。
+2. **开发前缺少"功能是否已存在"检查**：直接按 PRD 写代码，未先检查 `packages/brain/src/routes/` 下是否已有同名路由文件。
+3. **DoD `test -f ... && echo 1` 被 gate 认为是假测试**：正确写法是 `ls <file>` 直接返回路径（exit 0）或失败（exit 1），不要用 `echo`。
+
+### 下次预防
+
+- [ ] 开发路由端点前，先 `ls packages/brain/src/routes/` 检查是否已有对应路由文件
+- [ ] 若 PRD 功能已实现，关闭 PR 并在 Brain 将任务标为 `quarantined` 并附注原因
+- [ ] DoD Test 文件存在性检查：用 `ls <file>` 而非 `test -f ... && echo 1`（后者被视为假测试）
+
+---
+
+## PR #829 fix(thalamus): recordLLMError 结构化字段（2026-03-11）
+
+CI 失败 2 次（L1 Learning Format Gate + DoD 未验证项）。
+
+### 根本原因
+
+1. DoD 中 `- [ ]` 未改为 `- [x]` 即 push，check-dod-mapping.cjs 报"此项未验证"
+2. DoD 最后一条 Test 使用了 `npx vitest run ... | grep -c 'passed'`，在 CI 中 vitest 输出不含 word "passed"（或格式不同）导致 grep-c 返回 0；memory 规则明确禁止 vitest 类命令
+3. LEARNINGS.md 未在 PR 创建前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] DoD 验收项本地验证完毕后，立即将 `[ ]` 改为 `[x]`，再提交 git add + commit
+- [ ] `manual:` Test 禁止使用 `npx vitest`；验证单测存在用 `grep -c 'it(' file.test.js`，验证测试用例覆盖用 `grep -c 'expect' file.test.js`
+- [ ] LEARNINGS.md 更新必须与代码同批次 commit + push（PR 创建前），不能 CI 失败后补
 
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
@@ -5087,3 +5132,18 @@ CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
 - [ ] 每次 PR push 前，先写 LEARNINGS → commit → push，再 gh pr create
 - [ ] `vi.setSystemTime()` 需配合 `vi.useFakeTimers()` 使用——但 rumination.js 用 `new Date().toLocaleString()` 而非 `Date.now()`，`vi.useFakeTimers()` 对 `new Date()` 同样生效，可直接用 `vi.setSystemTime()` + `afterEach(() => vi.useRealTimers())`
 - [ ] 时区判断用 `new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })).getHours()` 而非 UTC 偏移，原因：Node.js 支持 IANA 时区名，Intl API 可靠
+
+## PR #827 fix(brain): execution-callback result=null 时补 fallback error_message（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同批次提交，L1 Learning Format Gate 是硬门禁，push 后必须包含本 PR 的 LEARNINGS 新增内容
+2. `routes.js` execution-callback 端点在 `result === null` 时，原代码 `String(result || status)` 只写入 `"failed"` 字符串——当 cecelia-run 崩溃/被信号杀死时，DB 中的 error_message 完全没有诊断信息
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须在 PR push **同批次**提交，不能先 push 代码再补，Learning Format Gate 会直接失败
+- [ ] result=null 的 fallback 模板：`[callback: result=null] task=<id> exit_code=<code> at <ts> | callback received but result was null`，stderr 尾 300 字符追加到末尾
+- [ ] Mac mini Node.js 25 + vitest 会 segfault（Worker exited unexpectedly），这是预存在问题，CI（Ubuntu）有 baseline 容忍机制，本地 segfault 不影响 PR
