@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.33.0
-created: 2026-03-10
-updated: 2026-03-10
+version: 3.34.0
+created: 2026-03-11
+updated: 2026-03-11
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.33.0: 从 feature-registry.yml 自动生成
+  - 3.34.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -247,6 +247,13 @@ changelog:
 
 ---
 
+### S7: PRD Semantic Coverage Audit
+
+1. ✅ **无 [BEHAVIOR] 标签: 向后兼容，不触发弱测试检测**
+2. ✅ **有 [BEHAVIOR] 标签: 强制要求强测试（tests/ 或 curl）**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -259,5 +266,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.33.0
-**生成时间**: 2026-03-10
+**版本**: 3.34.0
+**生成时间**: 2026-03-11
