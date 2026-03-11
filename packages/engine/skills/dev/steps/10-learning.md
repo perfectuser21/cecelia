@@ -37,21 +37,24 @@ IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
 
 ## 记录位置
 
-### Engine 层面
-工作流本身有什么可以改进的？
-- /dev 流程哪里不顺畅？
-- 缺少什么检查步骤？
-- 脚本有什么 bug？
+### Per-Branch Learning 文件（v2 — 消除并行冲突）
 
-记录到：`zenithjoy-engine/docs/LEARNINGS.md`
+**每个分支写自己的独立 Learning 文件**，路径：
 
-### 项目层面
-目标项目开发中的发现：
-- 踩了什么坑？
-- 学到了什么技术点？
-- 有什么架构优化建议？
+```
+docs/learnings/<branch-name>.md
+```
 
-记录到：项目的 `docs/LEARNINGS.md`
+例如分支 `cp-03111707-per-branch-learning` → 文件 `docs/learnings/cp-03111707-per-branch-learning.md`
+
+**为什么不再写 `docs/LEARNINGS.md`？**
+- 多个 /dev 并行时，所有 PR 都改同一个文件 → 先合并的改了文件 → 后面的 PR 必然冲突
+- Per-branch 文件天然隔离，互不影响
+
+### 内容范围
+- 工作流本身的改进点（/dev 流程、脚本 bug）
+- 项目开发中的发现（踩坑、技术点、架构建议）
+- 统一写到一个 per-branch 文件即可
 
 ### Auto Memory（MEMORY.md）— SSOT 原则
 
@@ -140,29 +143,37 @@ fi
 
 ### 2. 写 Learning（基于问题回答）
 
-2. **追加到对应的 LEARNINGS.md**
+2. **写到 per-branch Learning 文件**
 
-### 3. **提交 Learning（push 到功能分支，PR 自动包含 LEARNINGS）**
+   ```bash
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
+   mkdir -p docs/learnings
+   # 将 Learning 内容写到 $LEARNING_FILE
+   ```
+
+### 3. **提交 Learning（push 到功能分支，PR 自动包含 Learning）**
 
    **⚠️ 注意：此时 PR 尚未合并，仍在功能分支上**
 
    ```bash
    BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
 
    # 直接在功能分支提交（PR 还开着）
-   git add docs/LEARNINGS.md
+   git add "$LEARNING_FILE"
    git commit -m "docs: 记录 <任务简述> 的开发经验
 
    Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
    git push origin HEAD
-   echo "✅ LEARNINGS.md 已推送到功能分支（PR 已自动更新）"
+   echo "✅ Learning 已推送到功能分支（PR 已自动更新）"
    ```
 
    **好处**：
-   - LEARNINGS.md 包含在同一个 PR 中（有完整 CI 历史）
+   - 每个分支独立文件，并行 /dev 不再冲突
+   - Learning 包含在同一个 PR 中（有完整 CI 历史）
    - 不需要另开单独的 docs PR
-   - 合并后 LEARNINGS 直接进入 base branch，无需手动操作
 
 ### 3.5. **触发 LEARNINGS_RECEIVED 事件 → 丘脑分拣**
 

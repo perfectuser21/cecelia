@@ -12,7 +12,8 @@ set -euo pipefail
 
 # ── 配置 ─────────────────────────────────────────────────────────────
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-LEARNINGS_FILE="${LEARNINGS_FILE:-docs/LEARNINGS.md}"
+# Per-branch learning 文件：优先 docs/learnings/<branch>.md，兜底 docs/LEARNINGS.md
+LEARNINGS_FILE="${LEARNINGS_FILE:-}"
 INCIDENT_FILE="${INCIDENT_FILE:-.dev-incident-log.json}"
 
 # 参数解析
@@ -37,6 +38,18 @@ if [[ -z "$BRANCH_NAME" && -f ".dev-mode" ]]; then
 fi
 if [[ -z "$TASK_ID" && -f ".dev-mode" ]]; then
   TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+fi
+
+# ── 自动检测 Learning 文件路径 ─────────────────────────────────────────
+if [[ -z "$LEARNINGS_FILE" ]]; then
+  # 优先 per-branch 文件
+  if [[ -n "$BRANCH_NAME" && -f "docs/learnings/${BRANCH_NAME}.md" ]]; then
+    LEARNINGS_FILE="docs/learnings/${BRANCH_NAME}.md"
+  elif [[ -f "docs/LEARNINGS.md" ]]; then
+    LEARNINGS_FILE="docs/LEARNINGS.md"
+  else
+    LEARNINGS_FILE="docs/LEARNINGS.md"
+  fi
 fi
 
 # ── 提取 issues_found（来自 incident log，已有 bug/失败记录）─────────

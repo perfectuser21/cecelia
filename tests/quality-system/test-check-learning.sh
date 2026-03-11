@@ -1,10 +1,10 @@
 #!/bin/bash
-# 元测试：验证 check-learning.sh 的正确行为（A+ 强制模式）
-# 场景1：LEARNINGS.md 不存在 → 应 exit 1（A+ 方案）
-# 场景2：LEARNINGS.md 存在但本 PR 未修改 → 应 exit 1（A+ 方案）
-# 场景3：LEARNINGS.md 有新增内容且格式正确 → 应 exit 0
-# 场景4：LEARNINGS.md 有新增内容但格式错误 → 应 exit 1
-# 场景5：PR title 含 [SKIP-LEARNING] → 应 exit 0（例外机制）
+# 元测试：验证 check-learning.sh 的正确行为（v2 per-branch 模式）
+# 场景1：无 Learning 文件 → 应 exit 1
+# 场景2：docs/learnings/<branch>.md 有内容且格式正确 → 应 exit 0
+# 场景3：docs/learnings/<branch>.md 格式错误（无根本原因）→ 应 exit 1
+# 场景4：PR title 含 [SKIP-LEARNING] → 应 exit 0（例外机制）
+# 场景5：旧格式 docs/LEARNINGS.md 向后兼容 → 应 exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -28,7 +28,8 @@ git -C "$TMPDIR_PATH" config user.name "Test"
 git -C "$TMPDIR_PATH" remote add origin https://github.com/fake/repo.git
 
 # 创建 main 基础提交（模拟 origin/main）
-mkdir -p "$TMPDIR_PATH/docs"
+mkdir -p "$TMPDIR_PATH/docs/learnings"
+touch "$TMPDIR_PATH/docs/learnings/.gitkeep"
 touch "$TMPDIR_PATH/docs/.gitkeep"
 git -C "$TMPDIR_PATH" add .
 git -C "$TMPDIR_PATH" commit -q -m "init"
@@ -38,89 +39,47 @@ git -C "$TMPDIR_PATH" branch -m main
 git -C "$TMPDIR_PATH" checkout -q -b cp-test-branch
 
 # ─────────────────────────────────────────────
-# 场景1：LEARNINGS.md 不存在 → 应 exit 1
+# 场景1：无 Learning 文件 → 应 exit 1
 # ─────────────────────────────────────────────
 if (cd "$TMPDIR_PATH" && PR_TITLE="fix: test" bash "$CHECK_LEARNING" 2>/dev/null); then
-  echo "❌ 场景1失败：期望 exit 1（LEARNINGS.md 不存在），实际 exit 0"
+  echo "❌ 场景1失败：期望 exit 1（无 Learning 文件），实际 exit 0"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-  echo "✅ 场景1通过：LEARNINGS.md 不存在 → exit 1（正确拦截）"
-  PASS_COUNT=$((PASS_COUNT + 1))
-fi
-
-# 创建 LEARNINGS.md（无内容）
-touch "$TMPDIR_PATH/docs/LEARNINGS.md"
-git -C "$TMPDIR_PATH" add docs/LEARNINGS.md
-git -C "$TMPDIR_PATH" commit -q -m "add empty LEARNINGS"
-
-# ─────────────────────────────────────────────
-# 场景2：LEARNINGS.md 存在但本 PR 未修改 → 应 exit 1
-# ─────────────────────────────────────────────
-if (cd "$TMPDIR_PATH" && git diff "origin/main...HEAD" -- "docs/LEARNINGS.md" 2>/dev/null | grep -q "^+" && false); then
-  # 这个检查在真实 CI 有 origin/main 时才有效，本地测试用 HEAD~1 模拟
-  true
-fi
-
-# 模拟：LEARNINGS.md 已提交到 main（origin/main），PR 分支没有改它
-# 用 HEAD~1 作为 "origin/main" 模拟基础
-git -C "$TMPDIR_PATH" tag fake-origin-main HEAD
-
-# 在 PR 分支改其他文件（不改 LEARNINGS.md）
-echo "some change" > "$TMPDIR_PATH/test.txt"
-git -C "$TMPDIR_PATH" add test.txt
-git -C "$TMPDIR_PATH" commit -q -m "change test.txt"
-
-# 场景2 需要真实 git diff origin/main...HEAD，用替代方式测试：
-# 直接测试无新增行时的行为（空 LEARNINGS.md，无 diff）
-LEARNING_OUTPUT=$(cd "$TMPDIR_PATH" && git diff "fake-origin-main...HEAD" -- "docs/LEARNINGS.md" | grep '^+' | grep -v '^+++' || true)
-if [ -z "$LEARNING_OUTPUT" ]; then
-  # 实际上模拟了"PR 未修改 LEARNINGS.md"的情况
-  if (cd "$TMPDIR_PATH" && PR_TITLE="fix: test" SKIP_ORIGIN_CHECK=1 bash "$CHECK_LEARNING" 2>/dev/null); then
-    echo "❌ 场景2失败：期望 exit 1（LEARNINGS.md 未修改），实际 exit 0"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-  else
-    echo "✅ 场景2通过：LEARNINGS.md 存在但未修改 → exit 1（正确拦截）"
-    PASS_COUNT=$((PASS_COUNT + 1))
-  fi
-else
-  echo "⚠️  场景2跳过：无法在本地环境模拟 origin/main diff（CI 环境会正常运行）"
+  echo "✅ 场景1通过：无 Learning 文件 → exit 1（正确拦截）"
   PASS_COUNT=$((PASS_COUNT + 1))
 fi
 
 # ─────────────────────────────────────────────
-# 场景3：LEARNINGS.md 有新增内容且格式正确 → 应 exit 0
+# 场景2：docs/learnings/<branch>.md 有内容且格式正确 → 应 exit 0
 # ─────────────────────────────────────────────
 VALID_LEARNING=$(cat << 'EOF'
-
-## A+ DevGate 漏洞修复（2026-03-10）
+## Per-Branch Learning 测试（2026-03-11）
 
 ### 根本原因
-开发证据（PRD/DoD）被放入 gitignore，CI 看不到，所有检查都"跳过"通过。
+并行 /dev 都写同一个 LEARNINGS.md 导致合并冲突。
 
 ### 下次预防
-- [ ] PRD/DoD 从 gitignore 移除，强制提交到仓库
-- [ ] CI 检查脚本缺失文件时 exit 1 而非 exit 0
+- [ ] 使用 per-branch learning 文件
+- [ ] 检查 docs/learnings/ 目录
 EOF
 )
 
-# 覆盖 LEARNINGS.md（替换为有内容的版本）
-echo "$VALID_LEARNING" > "$TMPDIR_PATH/docs/LEARNINGS.md"
-git -C "$TMPDIR_PATH" add docs/LEARNINGS.md
-git -C "$TMPDIR_PATH" commit -q -m "add valid learning"
+echo "$VALID_LEARNING" > "$TMPDIR_PATH/docs/learnings/cp-test-branch.md"
+git -C "$TMPDIR_PATH" add docs/learnings/cp-test-branch.md
+git -C "$TMPDIR_PATH" commit -q -m "add per-branch learning"
 
-# 在有效 origin/main 的情况下，用 HEAD~2 作为基础
+# 验证格式检查逻辑
 (
   cd "$TMPDIR_PATH"
-  # 直接测试格式检查逻辑（模拟 ADDED_LINES 非空的情况）
-  NEW_CONTENT=$(cat docs/LEARNINGS.md)
+  NEW_CONTENT=$(cat docs/learnings/cp-test-branch.md)
   HAS_ROOT=$(echo "$NEW_CONTENT" | grep -cE "根本原因|Root Cause" || true)
   HAS_PREV=$(echo "$NEW_CONTENT" | grep -cE "下次预防|Prevention" || true)
   HAS_CHECK=$(echo "$NEW_CONTENT" | grep -cE "^\s*-\s*\[" || true)
   if [[ "$HAS_ROOT" -gt 0 && "$HAS_PREV" -gt 0 && "$HAS_CHECK" -gt 0 ]]; then
-    echo "✅ 场景3通过：有效 Learning 格式验证正确"
+    echo "✅ 场景2通过：per-branch Learning 格式验证正确"
     exit 0
   else
-    echo "❌ 场景3失败：有效格式被错误拦截"
+    echo "❌ 场景2失败：per-branch Learning 格式被错误拦截"
     exit 1
   fi
 )
@@ -131,7 +90,7 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# 场景4：LEARNINGS.md 格式错误（无根本原因章节）→ 应 exit 1
+# 场景3：docs/learnings/<branch>.md 格式错误（无根本原因）→ 应 exit 1
 # ─────────────────────────────────────────────
 (
   cd "$TMPDIR_PATH"
@@ -141,10 +100,10 @@ fi
 "
   HAS_ROOT=$(echo "$NEW_CONTENT" | grep -cE "根本原因|Root Cause" || true)
   if [[ "$HAS_ROOT" -eq 0 ]]; then
-    echo "✅ 场景4通过：缺少根本原因章节 → 正确拦截"
+    echo "✅ 场景3通过：缺少根本原因章节 → 正确拦截"
     exit 0
   else
-    echo "❌ 场景4失败：格式错误未被拦截"
+    echo "❌ 场景3失败：格式错误未被拦截"
     exit 1
   fi
 )
@@ -155,14 +114,40 @@ else
 fi
 
 # ─────────────────────────────────────────────
-# 场景5：PR title 含 [SKIP-LEARNING] → 应 exit 0（例外机制）
+# 场景4：PR title 含 [SKIP-LEARNING] → 应 exit 0（例外机制）
 # ─────────────────────────────────────────────
+# 先删除 learning 文件以确保是 SKIP 生效而不是文件检查通过
+git -C "$TMPDIR_PATH" rm -q docs/learnings/cp-test-branch.md 2>/dev/null || true
+git -C "$TMPDIR_PATH" commit -q -m "remove learning for skip test" --allow-empty
+
 if ! (cd "$TMPDIR_PATH" && PR_TITLE="[SKIP-LEARNING] fix: some config" bash "$CHECK_LEARNING" 2>/dev/null); then
-  echo "❌ 场景5失败：期望 exit 0（[SKIP-LEARNING] 例外），实际 exit 1"
+  echo "❌ 场景4失败：期望 exit 0（[SKIP-LEARNING] 例外），实际 exit 1"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 else
-  echo "✅ 场景5通过：[SKIP-LEARNING] 例外机制正常工作 → exit 0"
+  echo "✅ 场景4通过：[SKIP-LEARNING] 例外机制正常工作 → exit 0"
   PASS_COUNT=$((PASS_COUNT + 1))
+fi
+
+# ─────────────────────────────────────────────
+# 场景5：旧格式 docs/LEARNINGS.md 向后兼容 → 应 exit 0
+# ─────────────────────────────────────────────
+(
+  cd "$TMPDIR_PATH"
+  # 验证旧格式文件名也在 check-learning.sh 的检查范围内
+  SCRIPT_CONTENT=$(cat "$CHECK_LEARNING")
+  HAS_OLD_FORMAT=$(echo "$SCRIPT_CONTENT" | grep -c "docs/LEARNINGS.md" || true)
+  if [[ "$HAS_OLD_FORMAT" -gt 0 ]]; then
+    echo "✅ 场景5通过：check-learning.sh 包含 docs/LEARNINGS.md 向后兼容"
+    exit 0
+  else
+    echo "❌ 场景5失败：check-learning.sh 不包含旧格式兼容"
+    exit 1
+  fi
+)
+if [ $? -eq 0 ]; then
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
 echo ""

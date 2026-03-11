@@ -439,7 +439,7 @@ skills/dev/
 | PRD | .prd-*.md | Hook 检查存在 | 写代码前 |
 | DoD | .dod-*.md | Hook 检查存在，CI 检查映射 | 写代码前 + PR 时 |
 | .dev-mode | .dev-mode | Stop Hook 检查完成条件 | 会话结束时 |
-| Learning | docs/LEARNINGS.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 10 完成时（合并前）|
+| Learning | docs/learnings/\<branch\>.md | CI 通过后 push 到功能分支，合并时一起入库 | Step 10 完成时（合并前）|
 
 ---
 
