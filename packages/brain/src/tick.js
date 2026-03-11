@@ -2790,9 +2790,6 @@ export {
   CLEANUP_INTERVAL_MS,
   ZOMBIE_SWEEP_INTERVAL_MS,
   ZOMBIE_CLEANUP_INTERVAL_MS,
-  // Claude probe
-  _getDispatchPausedState,
-  _resetDispatchPausedState,
   // Test helpers
   _resetLastExecuteTime,
   _resetLastCleanupTime,
