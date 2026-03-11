@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.33.0"
-updated: "2026-03-10"
+version: "3.34.0"
+updated: "2026-03-11"
 changelog:
+  - "3.34.0: v12.48.0 - DoD PRD 承诺分类规则：05-dod.md 新增 [ARTIFACT]/[BEHAVIOR]/[GATE] 三类分类；BEHAVIOR 类禁止 grep/ls 弱测试；07-verify.md 新增 Step 7.5 独立审计员 subagent；check-dod-mapping.cjs 新增 detectBehaviorWeakTest（WARNING 不阻塞 CI）"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
   - "3.32.0: v12.44.3 - stop-dev.sh Session 隔离前置（D6）：mutex 获取前新增 session 预检查，无匹配 .dev-lock 直接 exit 0，避免无关会话阻塞等待队列"
   - "3.31.0: v12.44.2 - 分支清理增强：新增 branch-gc.sh 独立脚本（三类清理：已合并 PR/已关闭 PR/无 PR 超时孤儿分支）；cleanup.sh Section 9 委托 branch-gc.sh；支持 --dry-run 和 --stale=N 参数；保护 worktree 关联分支和有 open PR 的分支"
