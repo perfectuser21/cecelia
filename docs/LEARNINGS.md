@@ -5373,3 +5373,16 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] Cortex/Thalamus/Bridge 各自使用独立超时环境变量，命名规范：`CECELIA_{ORGAN}_TIMEOUT_MS`
 - [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
 - [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
+
+## PR #XXX feat(brain): 新增 POST /api/brain/rumination/force 强制反刍端点（2026-03-11）
+
+无 CI 失败，一次通过。
+
+### 根本原因
+
+N/A - 功能新增，无主要 Bug。
+
+### 下次预防
+
+- [ ] 强制端点（绕过所有限制）比手动端点（`force=true` 仍保留 cooldown）语义更强，命名时用 `/force` 而非在现有端点加参数，避免接口混淆
+- [ ] `setupLearningsOnly` mock 链隐式依赖调用顺序：第一个 `{rows:[]}` 被 notebook_id_working SELECT 消费，第二个被 INSERT memory_stream 消费，后续才是 N×UPDATE；写 Force 相关测试可直接复用此 helper，不用额外计算 mock 数量
