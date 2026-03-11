@@ -1,5 +1,23 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] SW 更新白屏根因：缺 controllerchange listener（PR #815）
+
+**失败统计**：0 次 CI 失败
+
+### 根本原因
+
+1. **`registerSW.js` 没有 `controllerchange` 监听器**：VitePWA 生成的 `registerSW.js` 在本项目配置下只包含最简注册逻辑，没有 SW 更新后自动重载的代码。当新 SW 通过 `skipWaiting()` 激活、`clientsClaim()` 接管控制权时，当前页面不知道需要重载，继续运行旧的（可能已损坏的）bundle，导致白屏持续。
+
+2. **`clearStaleCache()` race condition**：调用 `window.location.reload()` 后函数 `return`，但异步函数的 promise 仍 resolve，`.then()` 依然执行，在页面重载过程中挂载 React。理论上不会造成白屏，但是不安全的行为。
+
+3. **SW 更新链路断裂**：新 bundle 上线后，用户需要 **至少两次** 页面访问才能获取新内容：第一次访问安装新 SW，但无 reload；第二次访问新 SW 才服务新文件。若旧 bundle 有 bug，这两次之间用户一直看到白屏。
+
+### 下次预防
+
+- [ ] VitePWA 配置必须验证生成的 `registerSW.js` 包含 `controllerchange` 事件处理（`grep controllerchange dist/registerSW.js`）
+- [ ] 每次 dist 构建后检查：`main.tsx` 的 SW 监听逻辑是否在新 bundle 里出现（`grep controllerchange dist/assets/index-*.js`）
+- [ ] `clearStaleCache()` 改为返回 boolean，调用方根据返回值决定是否挂载 React，避免 reload 后的无效挂载
+
 ### [2026-03-11] Linux→macOS 全量兼容性修复 — os.freemem() 在 macOS 上永远是 66MB（PR #812）
 
 **失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
