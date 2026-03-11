@@ -1,5 +1,19 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] DoD Test 路径必须用相对路径 — CI 在 Ubuntu 上跑（PR #834）
+
+**失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate）
+
+### 根本原因
+
+DoD 的 `Test: manual:bash -c "grep ... /Users/administrator/..."` 用了本地 Mac mini 绝对路径，CI 在 Ubuntu runner 上执行时路径不存在，所有 DoD 检查全部 exit 2 失败。
+
+### 下次预防
+
+- [ ] DoD Test 命令中一律使用相对路径（如 `packages/brain/src/routes.js`），不使用绝对路径
+- [ ] grep 目标用代码特征词（函数名、变量名）而不是通用词（如 `changelog`），减少误匹配
+- [ ] Learning 必须和代码同 commit 提交，否则 Learning Format Gate 失败
+
 ### [2026-03-11] Brain 重复派发同类任务 — 开发前先查 routes/ 确认功能是否已存在（PR #830）
 
 **失败统计**：L1 CI 失败 1 次（Learning Gate + DoD Gate），实际为任务重复
