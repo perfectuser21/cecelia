@@ -1,20 +1,21 @@
 # Cecelia Core Learnings
 
-## PR #842 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
+## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
 
-**失败统计**：待定
+**失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
 
 ### 根本原因
 
-AI-first 开发的自我验证死循环：同一 AI 写 PRD→DoD→Test→Code，所有验证都是自引用。
-PR #841 的 BEHAVIOR 弱测试检测和 Step 7.5 审计员都是 AI 层面的改进（软检查），
-无法从根本上阻止"写了代码没真测"。确定性工具（覆盖率）是唯一不可绕过的验证手段。
+1. **Gate 2 项目根路径不匹配**：CI 步骤 `working-directory: packages/engine` 使 `process.cwd()` 指向子目录，但 `git diff` 返回 repo root 相对路径，导致 `path.join(cwd, filePath)` 产生双重路径（`packages/engine/packages/engine/...`）。修复：传 `--project-root ${{ github.workspace }}`
+2. **BEHAVIOR DoD 弱测试检测**：PR #841 新增的弱测试检测会拒绝 `grep -c` 命令用于 BEHAVIOR 条目。修复：改用 `node -e "fs.readFileSync(...).includes(...)"` 满足强测试要求
+3. **@vitest/coverage-v8 缺失**：vitest.config.ts 配置了 `provider: 'v8'`，但 devDependencies 未列出该包，CI 无法生成覆盖率报告
 
 ### 下次预防
 
-- [ ] vitest `--coverage` 带 thresholds 时会在覆盖率不达标时 exit 非零，CI 中用 `|| true` 避免阻塞
-- [ ] Istanbul JSON 格式用绝对路径作 key，匹配变更文件时需要 `path.resolve()` 转换
-- [ ] CJS 脚本导出函数供测试时用 `if (require.main === module) { main(); }` 模式
+- [ ] CI 步骤用 `working-directory` 时，涉及 git diff 路径的脚本必须传 `--project-root` 指向 repo root
+- [ ] DoD BEHAVIOR 条目禁止用 grep/ls/cat 等静态命令，改用 `node -e` 或 `npx vitest` 等运行时验证
+- [ ] 新增 vitest coverage reporter 时同步添加 `@vitest/coverage-v8` 到 devDependencies
+- [ ] Engine 版本 bump 共 6 个文件：package.json、package-lock.json（engine 独立）、root package-lock.json、VERSION、.hook-core-version、regression-contract.yaml
 
 ## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
 
