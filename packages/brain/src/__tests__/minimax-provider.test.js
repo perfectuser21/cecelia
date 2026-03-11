@@ -63,6 +63,7 @@ vi.mock('../platform-utils.js', () => ({
   countClaudeProcesses: vi.fn(() => 0),
   calculatePhysicalCapacity: vi.fn(() => 4),
   getAvailableMemoryMB: vi.fn(() => 8192),
+  getMacOSMemoryPressure: vi.fn(() => null),
 }));
 
 // ================================================================

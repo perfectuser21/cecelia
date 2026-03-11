@@ -65,7 +65,7 @@ describe('syncOrphanTasksOnStartup', () => {
     // Verify the UPDATE was called with orphan_detected error
     const updateCall = mockPool.query.mock.calls[1];
     expect(updateCall[0]).toContain("status = 'failed'");
-    const payload = JSON.parse(updateCall[1][1]);
+    const payload = JSON.parse(updateCall[1][2]);
     expect(payload.error_details.type).toBe('orphan_detected');
   });
 
