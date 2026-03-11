@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] rumination force 模式 + 路由位置决策（PR #824）
+
+**失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
+
+### 根本原因
+
+1. **PRD 路由位置与挂载路径冲突**：PRD 说"在 routes/inner-life.js 新增"，但 inner-life.js 挂载在 `/api/brain/inner-life`，导致实际路径是 `/api/brain/inner-life/rumination/run` 而非 PRD 要求的 `/api/brain/rumination/run`。应优先以成功标准（端点路径）为准，创建独立 routes/rumination.js 并在 server.js 注册。
+
+2. **模块内状态测试需要 _setDailyCount 辅助**：`runManualRumination` force=true 需要在预算耗尽的状态下测试，但 `_dailyCount` 是模块级私有变量。`_resetState()` 重置所有状态无法单独操控计数，因此需要导出 `_setDailyCount()` 测试辅助函数。
+
+3. **Learning 必须和代码一起在第一次 push 前提交**：本次先 push 代码再补 Learning，导致 L1 Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] PRD 中"在某文件新增"和"端点路径"如有冲突，以端点路径为准，创建独立路由文件
+- [ ] 测试模块级私有状态时，提前导出 `_setXxx()` 辅助函数（避免复杂 mock 链）
+- [ ] LEARNINGS.md 和代码在同一个 commit 中提交，不要在 push 后补写
+
+---
+
 ### [2026-03-11] macOS 内存管理模型全面重构 — vm.memory_pressure + used_ratio（PR #820）
 
 **失败统计**：L1 CI 失败 1 次（Learning 未在第一次 push 前写入）
