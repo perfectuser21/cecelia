@@ -42,24 +42,22 @@ interface CompareResult {
 }
 
 // Brain KR Compare API 数据结构
-interface KrProgress {
-  total: number;
-  completed: number;
-  in_progress: number;
-  avg_progress: number;
+interface KrInfo {
+  id: string;
+  title: string;
+  progress: number;
 }
 
-interface TaskVelocity {
-  completed_last_7d: number;
-  created_last_7d: number;
+interface TrendPoint {
+  week: string;
+  completed: number;
 }
 
 interface BrainCompareItem {
   id: string;
   name: string;
-  kr_progress: KrProgress;
-  task_velocity: TaskVelocity;
-  trend: Array<{ week: string; completed: number; created: number }>;
+  kr: KrInfo | null;
+  trend: TrendPoint[];
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -102,36 +100,72 @@ function StatRow({ label, value, total }: { label: string; value: number; total?
   );
 }
 
-function KrProgressBlock({ kr, velocity }: { kr: KrProgress; velocity: TaskVelocity }) {
-  const pct = Math.round(kr.avg_progress);
-  const barColor = pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-blue-500' : 'bg-amber-500';
+function KrBlock({ kr }: { kr: KrInfo | null }) {
+  if (!kr) {
+    return (
+      <div className="border-t border-slate-700/50 pt-3">
+        <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">KR 达成率</span>
+        <p className="mt-1.5 text-xs text-slate-600">暂无关联 KR</p>
+      </div>
+    );
+  }
+  const pct = Math.min(100, Math.max(0, Math.round(kr.progress)));
+  const barColor = pct >= 70 ? 'bg-emerald-500' : pct >= 40 ? 'bg-amber-500' : 'bg-red-500';
+  const textColor = pct >= 70 ? 'text-emerald-400' : pct >= 40 ? 'text-amber-400' : 'text-red-400';
   return (
     <div className="flex flex-col gap-1.5 border-t border-slate-700/50 pt-3">
-      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-0.5">KR 进度</span>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-400">KR 总数</span>
-        <span className="text-slate-200 tabular-nums">{kr.total}</span>
+      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-0.5">KR 达成率</span>
+      <p className="text-xs text-slate-300 leading-snug line-clamp-2" title={kr.title}>{kr.title}</p>
+      <div className="flex items-center justify-between text-xs text-slate-400 mt-0.5">
+        <span>进度</span>
+        <span className={`tabular-nums font-semibold ${textColor}`}>{pct}%</span>
       </div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-400">已完成</span>
-        <span className="text-emerald-400 tabular-nums">{kr.completed}</span>
+      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-slate-400">进行中</span>
-        <span className="text-blue-400 tabular-nums">{kr.in_progress}</span>
+    </div>
+  );
+}
+
+function Sparkline({ trend }: { trend: TrendPoint[] }) {
+  if (!trend || trend.length === 0) {
+    return (
+      <div className="border-t border-slate-700/50 pt-3">
+        <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">近 4 周完成趋势</span>
+        <p className="mt-1.5 text-xs text-slate-600">暂无趋势数据</p>
       </div>
-      <div className="mt-1">
-        <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-          <span>平均进度</span>
-          <span className="tabular-nums">{pct}%</span>
-        </div>
-        <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-        </div>
-      </div>
-      <div className="flex items-center justify-between text-sm mt-0.5">
-        <span className="text-slate-400">近 7 天完成</span>
-        <span className="text-slate-200 tabular-nums">{velocity.completed_last_7d} 个</span>
+    );
+  }
+  const values = trend.map(t => t.completed);
+  const max = Math.max(...values, 1);
+  const h = 40;
+  const w = 100; // viewBox 宽度，自适应 100%
+  const n = values.length;
+  const pts = values.map((v, i) => {
+    const x = n > 1 ? (i / (n - 1)) * w : w / 2;
+    const y = h - (v / max) * (h - 4) - 2;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-slate-700/50 pt-3">
+      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">近 4 周完成趋势</span>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: `${h}px` }} preserveAspectRatio="none">
+        <polyline
+          points={pts}
+          fill="none"
+          stroke="rgb(139,92,246)"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {values.map((v, i) => {
+          const x = n > 1 ? (i / (n - 1)) * w : w / 2;
+          const y = h - (v / max) * (h - 4) - 2;
+          return <circle key={i} cx={x} cy={y} r="2" fill="rgb(139,92,246)" />;
+        })}
+      </svg>
+      <div className="flex justify-between text-xs text-slate-600">
+        {trend.map(t => <span key={t.week}>{t.week.replace(/^\d{4}-/, '')}</span>)}
       </div>
     </div>
   );
@@ -180,10 +214,9 @@ function ProjectCard({ report, rank, brainItem }: { report: ProjectReport; rank:
         <StatRow label="队列中" value={report.task_stats.queued} />
       </div>
 
-      {/* KR 进度（来自 Brain Compare API，降级时不显示） */}
-      {brainItem && (
-        <KrProgressBlock kr={brainItem.kr_progress} velocity={brainItem.task_velocity} />
-      )}
+      {/* KR 达成率 + 趋势迷你图（来自 Brain Compare API，降级时不显示） */}
+      {brainItem && <KrBlock kr={brainItem.kr} />}
+      {brainItem && <Sparkline trend={brainItem.trend} />}
 
       {/* 优势 */}
       <div className="border-t border-slate-700/50 pt-3">
@@ -248,12 +281,13 @@ export default function ProjectCompare() {
     if (ids.length < 2) return;
     setRefreshing(true);
     try {
-      const res = await fetch(`/api/brain/projects/compare?ids=${ids.join(',')}`);
+      const res = await fetch(`/api/brain/projects/compare?ids=${ids.join(',')}&trend_weeks=4`);
       if (!res.ok) return; // 降级：不影响原有展示
-      const data: BrainCompareItem[] = await res.json();
-      if (!Array.isArray(data)) return;
+      const result = await res.json();
+      const projects: BrainCompareItem[] = result?.projects;
+      if (!Array.isArray(projects)) return;
       const map: Record<string, BrainCompareItem> = {};
-      data.forEach(item => { map[item.id] = item; });
+      projects.forEach(item => { map[item.id] = item; });
       setBrainData(map);
       setLastRefreshed(new Date());
       setSecondsAgo(0);
@@ -308,22 +342,26 @@ export default function ProjectCompare() {
     setComparing(true);
     setFetchError(null);
     try {
-      const res = await fetch('/api/brain/projects/compare/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_ids: selectedIds, format: 'json' }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: '请求失败' }));
+      // 并行调用 POST report + GET compare（KR 进度 + 趋势）
+      const [reportRes] = await Promise.all([
+        fetch('/api/brain/projects/compare/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project_ids: selectedIds, format: 'json' }),
+        }),
+        fetchBrainCompare(selectedIds),
+      ]);
+      if (!reportRes.ok) {
+        const err = await reportRes.json().catch(() => ({ error: '请求失败' }));
         throw new Error(err.error ?? '请求失败');
       }
-      setResult(await res.json());
+      setResult(await reportRes.json());
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : '未知错误');
     } finally {
       setComparing(false);
     }
-  }, [selectedIds]);
+  }, [selectedIds, fetchBrainCompare]);
 
   const canCompare = selectedIds.length >= 2 && !comparing;
 
