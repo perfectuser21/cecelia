@@ -18,6 +18,22 @@
 
 ---
 
+## PR #829 fix(thalamus): recordLLMError 结构化字段（2026-03-11）
+
+CI 失败 2 次（L1 Learning Format Gate + DoD 未验证项）。
+
+### 根本原因
+
+1. DoD 中 `- [ ]` 未改为 `- [x]` 即 push，check-dod-mapping.cjs 报"此项未验证"
+2. DoD 最后一条 Test 使用了 `npx vitest run ... | grep -c 'passed'`，在 CI 中 vitest 输出不含 word "passed"（或格式不同）导致 grep-c 返回 0；memory 规则明确禁止 vitest 类命令
+3. LEARNINGS.md 未在 PR 创建前 push，Learning Format Gate 是 L1 硬门禁
+
+### 下次预防
+
+- [ ] DoD 验收项本地验证完毕后，立即将 `[ ]` 改为 `[x]`，再提交 git add + commit
+- [ ] `manual:` Test 禁止使用 `npx vitest`；验证单测存在用 `grep -c 'it(' file.test.js`，验证测试用例覆盖用 `grep -c 'expect' file.test.js`
+- [ ] LEARNINGS.md 更新必须与代码同批次 commit + push（PR 创建前），不能 CI 失败后补
+
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
 **失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
@@ -5067,3 +5083,18 @@ CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
 - [ ] 每次 PR push 前，检查 LEARNINGS.md 是否已更新（grep 最近 PR 号），若未更新立即先写 Learning 再 push
 - [ ] ProjectCompare 前端组件位于 `apps/api/features/planning/pages/`（不在 `apps/dashboard/src/pages/`），探索时要从 feature 组件层查找
 - [ ] Brain push-notion 端点无 NOTION_API_TOKEN 返回 501；前端 toast 应区分 501（配置问题）和其他错误（业务问题），给出不同提示文案
+
+## PR #826 feat(brain): 低峰期动态 DAILY_BUDGET（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — LEARNINGS.md 未在 push 前提交）。
+
+### 根本原因
+
+1. LEARNINGS.md 未与代码同批次提交，Learning Format Gate 是 L1 硬门禁，直接 exit 1
+2. 每次 /dev 流程必须在 PR 创建前先写 LEARNINGS，而不是 CI 失败后补
+
+### 下次预防
+
+- [ ] 每次 PR push 前，先写 LEARNINGS → commit → push，再 gh pr create
+- [ ] `vi.setSystemTime()` 需配合 `vi.useFakeTimers()` 使用——但 rumination.js 用 `new Date().toLocaleString()` 而非 `Date.now()`，`vi.useFakeTimers()` 对 `new Date()` 同样生效，可直接用 `vi.setSystemTime()` + `afterEach(() => vi.useRealTimers())`
+- [ ] 时区判断用 `new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })).getHours()` 而非 UTC 偏移，原因：Node.js 支持 IANA 时区名，Intl API 可靠
