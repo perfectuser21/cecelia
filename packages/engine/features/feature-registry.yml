@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.34.0"
+version: "3.35.0"
 updated: "2026-03-11"
 changelog:
+  - "3.35.0: v12.49.0 - 变更行覆盖率硬门禁：新增 check-changed-coverage.cjs（三合一确定性门禁：feat 必须有新测试 + 测试必须 import 源码 + 变更行覆盖率 ≥ 60%）；vitest.config.ts 添加 json reporter；CI L3 新增 Coverage Gate 步骤"
   - "3.34.0: v12.48.0 - PRD 语义覆盖审计：05-dod.md 新增承诺分类（ARTIFACT/BEHAVIOR/GATE）；07-verify.md 新增 Step 7.5 独立审计员；check-dod-mapping.cjs 新增 BEHAVIOR 弱测试检测"
   - "3.33.0: v12.47.1 - branch-protect.sh v24 统一分支命名规范（删除 feature/* 支持，cp-* 为唯一合法格式，与 CI L1 verify-dev-workflow 完全一致）"
   - "3.32.0: v12.44.3 - stop-dev.sh Session 隔离前置（D6）：mutex 获取前新增 session 预检查，无匹配 .dev-lock 直接 exit 0，避免无关会话阻塞等待队列"
@@ -1242,5 +1243,36 @@ product_features:
     minimal_paths:
       - "无 [BEHAVIOR] 标签: 向后兼容，不触发弱测试检测"
       - "有 [BEHAVIOR] 标签: 强制要求强测试（tests/ 或 curl）"
+
+    rcis: []
+
+  - id: S8
+    name: Changed-Line Coverage Gate
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-11"
+    description: |
+      三个确定性 CI 硬门禁（零 LLM 成本）替代 AI 审 AI：
+      门禁 1: feat: PR 必须有新增 .test.ts 文件
+      门禁 2: 新测试必须 import 本 PR 修改的源码
+      门禁 3: 变更行覆盖率 ≥ 60%（Istanbul JSON + git diff 比对）
+
+    entrypoints:
+      - type: script
+        file: scripts/devgate/check-changed-coverage.cjs
+        trigger: "CI L3 Coverage Gate 步骤"
+      - type: config
+        file: vitest.config.ts
+        trigger: "vitest --coverage 生成 json reporter"
+
+    golden_path: |
+      feat: PR → CI L3 Unit Tests → Coverage Gate →
+      check-changed-coverage.cjs 检查三个门禁 →
+      变更行覆盖率 ≥ 60% → 通过
+
+    minimal_paths:
+      - "fix:/docs:/chore: PR: 门禁 1 跳过（不要求新测试），门禁 3 仍检查覆盖率"
+      - "无源码变更: 全部门禁跳过"
 
     rcis: []

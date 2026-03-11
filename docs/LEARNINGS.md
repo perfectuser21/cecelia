@@ -16,6 +16,23 @@ CI 失败 1 次（L1 Process Gate — DoD 假测试 + Learning Format Gate）。
 - [ ] 多行 SQL grep：只匹配 UPDATE 的首个关键词（`UPDATE goals`），不要跨行匹配
 - [ ] LEARNINGS.md 必须在第一次 push **之前**写好并加入同一 commit
 
+## PR #846 feat(engine): 变更行覆盖率硬门禁 — 确定性替代 AI 审 AI（2026-03-11）
+
+**失败统计**：CI 失败 2 轮（L1 DoD 弱测试 + L2 版本未 bump + L3 项目根路径不匹配）
+
+### 根本原因
+
+1. **Gate 2 项目根路径不匹配**：CI 步骤 `working-directory: packages/engine` 使 `process.cwd()` 指向子目录，但 `git diff` 返回 repo root 相对路径，导致 `path.join(cwd, filePath)` 产生双重路径（`packages/engine/packages/engine/...`）。修复：传 `--project-root ${{ github.workspace }}`
+2. **BEHAVIOR DoD 弱测试检测**：PR #841 新增的弱测试检测会拒绝 `grep -c` 命令用于 BEHAVIOR 条目。修复：改用 `node -e "fs.readFileSync(...).includes(...)"` 满足强测试要求
+3. **@vitest/coverage-v8 缺失**：vitest.config.ts 配置了 `provider: 'v8'`，但 devDependencies 未列出该包，CI 无法生成覆盖率报告
+
+### 下次预防
+
+- [ ] CI 步骤用 `working-directory` 时，涉及 git diff 路径的脚本必须传 `--project-root` 指向 repo root
+- [ ] DoD BEHAVIOR 条目禁止用 grep/ls/cat 等静态命令，改用 `node -e` 或 `npx vitest` 等运行时验证
+- [ ] 新增 vitest coverage reporter 时同步添加 `@vitest/coverage-v8` 到 devDependencies
+- [ ] Engine 版本 bump 共 6 个文件：package.json、package-lock.json（engine 独立）、root package-lock.json、VERSION、.hook-core-version、regression-contract.yaml
+
 ## PR #841 feat(engine): PRD 语义覆盖审计 — BEHAVIOR 条目的 DoD Test 不能用 printf '-...' 且 CI 会执行 inline 命令（2026-03-11）
 
 **失败统计**：L1 CI 失败 1 次（DoD Verification Gate：BEHAVIOR Test 的 printf 命令在 CI 执行失败）
@@ -5273,3 +5290,21 @@ CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在
 - [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
 - [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
 - [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
+
+## PR #845 fix(cortex): 实现 CECELIA_CORTEX_TIMEOUT_MS 专属超时（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 必须和代码同批次提交，Learning Format Gate 是 L1 硬门禁，先 push 代码再补 Learning 会导致第一次 CI 失败
+2. `callCortexLLM()` 超时使用 `CECELIA_BRIDGE_TIMEOUT_MS || 120000`（120s），Opus p99=147s 时触发 exit 143（超时被 kill）
+3. `callLLM` 导入路径是 `./llm-caller.js`，不是 `./callLLM.js`；mock 路径写错导致测试无法捕获调用参数
+4. vitest `vi.mock` 被提升（hoist）到文件顶部，factory 中不能引用模块级 `const` 变量（TDZ 错误），必须用 `vi.hoisted()` 定义跨 mock 引用的变量
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
+- [ ] Cortex/Thalamus/Bridge 各自使用独立超时环境变量，命名规范：`CECELIA_{ORGAN}_TIMEOUT_MS`
+- [ ] mock 目标路径从 `grep "^import.*callLLM" src/cortex.js` 确认，不要凭记忆猜
+- [ ] `vi.mock` factory 需要引用模块外变量时，用 `const { foo } = vi.hoisted(() => ({ foo: vi.fn() }))`，不要用裸 const + mock 引用
