@@ -2,6 +2,7 @@
 
 ### [2026-03-11] Brain Integration Baseline 归零 — platform-utils mock 必须同步新增导出（PR #819）
 
+
 **失败统计**：CI L4 剩余 4 个失败（PR #818 修复后），baseline 从 125 降至 0
 
 ### 根本原因
@@ -17,6 +18,20 @@
 - [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
 - [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
 - [ ] vitest `execArgv` 无法覆盖 CI 的 `NODE_OPTIONS` 环境变量。要改 CI 内存限制，必须直接修改 workflow yaml
+
+### [2026-03-11] DoD Test 路径必须用相对路径 — CI 在 Ubuntu 上跑（PR #834）
+
+**失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate）
+
+### 根本原因
+
+DoD 的 `Test: manual:bash -c "grep ... /Users/administrator/..."` 用了本地 Mac mini 绝对路径，CI 在 Ubuntu runner 上执行时路径不存在，所有 DoD 检查全部 exit 2 失败。
+
+### 下次预防
+
+- [ ] DoD Test 命令中一律使用相对路径（如 `packages/brain/src/routes.js`），不使用绝对路径
+- [ ] grep 目标用代码特征词（函数名、变量名）而不是通用词（如 `changelog`），减少误匹配
+- [ ] Learning 必须和代码同 commit 提交，否则 Learning Format Gate 失败
 
 ## PR #828 feat(brain): POST /api/brain/projects/compare/report/push — Notion 推送端点（2026-03-11）
 
