@@ -5206,3 +5206,23 @@ CI 失败 1 次（L1 Process Gate — DoD 假测试 + 未标记完成 + LEARNING
 - [ ] LEARNINGS.md 必须和代码同批次 push，不能先 push 代码再补 Learning
 - [ ] 全字段皆空兜底位置选在「串行降级（5c12）之后、Auto-Learning（5d）之前」，标号为 5c13
 - [ ] 测试断言：SQL 字符串本身不含参数值，搜索 no_diagnostic 需查 params 或在 SQL 里加注释标识符（`/* no_diagnostic_fallback */`）
+
+## PR #840 fix(brain): effectiveResult 第三层兜底 — 全字段皆空时从 DB 构造 db_fallback 对象（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — Learning Format Gate，LEARNINGS.md 未在 PR 前 push）。
+
+### 根本原因
+
+1. LEARNINGS.md 必须和代码同批次提交，Learning Format Gate 是 L1 硬门禁
+2. 全字段皆空场景下 effectiveResult 三层兜底结构：
+   - 第一层：exit_code/stderr/failure_class → `synthesized_from_callback`
+   - 第二层（5c13）：全空时注入 `failure_class=no_diagnostic` 到 DB
+   - 第三层（本 PR）：查 DB error_message → `{ error, source: 'db_fallback' }`
+3. 第三层须在 5c13 写入 DB **之后** 执行（代码顺序保证），才能读到 5c13 写入的值
+4. `const effectiveResult` 改 `let` 后才可二次赋值，否则 ES strict 模式报错
+
+### 下次预防
+
+- [ ] LEARNINGS.md 必须随代码同批次 push，Learning Format Gate 是 L1 硬门禁，不能分开提交
+- [ ] 三层兜底模式：第一层=body字段合成，第二层=DB写入诊断，第三层=DB读取回填 effectiveResult
+- [ ] db_fallback 测试需用 `mockImplementation` 区分 SQL 语句（而非 `mockResolvedValue` 统一返回），因为同一 pool.query 会被多处调用
