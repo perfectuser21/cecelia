@@ -1,10 +1,11 @@
 /**
  * ProjectCompare - 并排对比 2-4 个项目
  * API: GET /api/tasks/projects + POST /api/brain/projects/compare/report
+ *      GET /api/brain/projects/compare  (KR 进度 + 实时刷新)
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { BarChart2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { BarChart2, CheckCircle2, AlertCircle, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 
 interface Project {
   id: string;
@@ -38,6 +39,27 @@ interface CompareResult {
   generated_at: string;
   projects: ProjectReport[];
   summary: string;
+}
+
+// Brain KR Compare API 数据结构
+interface KrProgress {
+  total: number;
+  completed: number;
+  in_progress: number;
+  avg_progress: number;
+}
+
+interface TaskVelocity {
+  completed_last_7d: number;
+  created_last_7d: number;
+}
+
+interface BrainCompareItem {
+  id: string;
+  name: string;
+  kr_progress: KrProgress;
+  task_velocity: TaskVelocity;
+  trend: Array<{ week: string; completed: number; created: number }>;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -80,7 +102,42 @@ function StatRow({ label, value, total }: { label: string; value: number; total?
   );
 }
 
-function ProjectCard({ report, rank }: { report: ProjectReport; rank: number }) {
+function KrProgressBlock({ kr, velocity }: { kr: KrProgress; velocity: TaskVelocity }) {
+  const pct = Math.round(kr.avg_progress);
+  const barColor = pct >= 80 ? 'bg-emerald-500' : pct >= 50 ? 'bg-blue-500' : 'bg-amber-500';
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-slate-700/50 pt-3">
+      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-0.5">KR 进度</span>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-400">KR 总数</span>
+        <span className="text-slate-200 tabular-nums">{kr.total}</span>
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-400">已完成</span>
+        <span className="text-emerald-400 tabular-nums">{kr.completed}</span>
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-400">进行中</span>
+        <span className="text-blue-400 tabular-nums">{kr.in_progress}</span>
+      </div>
+      <div className="mt-1">
+        <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+          <span>平均进度</span>
+          <span className="tabular-nums">{pct}%</span>
+        </div>
+        <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-sm mt-0.5">
+        <span className="text-slate-400">近 7 天完成</span>
+        <span className="text-slate-200 tabular-nums">{velocity.completed_last_7d} 个</span>
+      </div>
+    </div>
+  );
+}
+
+function ProjectCard({ report, rank, brainItem }: { report: ProjectReport; rank: number; brainItem?: BrainCompareItem }) {
   const pct = Math.round(report.task_stats.completion_rate * 100);
   return (
     <div className="flex flex-col bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 gap-4 min-w-0">
@@ -122,6 +179,11 @@ function ProjectCard({ report, rank }: { report: ProjectReport; rank: number }) 
         <StatRow label="进行中" value={report.task_stats.in_progress} />
         <StatRow label="队列中" value={report.task_stats.queued} />
       </div>
+
+      {/* KR 进度（来自 Brain Compare API，降级时不显示） */}
+      {brainItem && (
+        <KrProgressBlock kr={brainItem.kr_progress} velocity={brainItem.task_velocity} />
+      )}
 
       {/* 优势 */}
       <div className="border-t border-slate-700/50 pt-3">
@@ -166,6 +228,13 @@ export default function ProjectCompare() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
 
+  // Brain KR Compare 状态
+  const [brainData, setBrainData] = useState<Record<string, BrainCompareItem>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [secondsAgo, setSecondsAgo] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // 加载项目列表
   useEffect(() => {
     fetch('/api/tasks/projects?limit=500')
@@ -173,6 +242,57 @@ export default function ProjectCompare() {
       .then((data: Project[]) => setAllProjects(data.filter(p => p.type === 'project' || p.type === 'initiative')))
       .catch(() => setAllProjects([]));
   }, []);
+
+  // 从 Brain Compare API 获取 KR 进度（降级：失败时静默忽略）
+  const fetchBrainCompare = useCallback(async (ids: string[]) => {
+    if (ids.length < 2) return;
+    setRefreshing(true);
+    try {
+      const res = await fetch(`/api/brain/projects/compare?ids=${ids.join(',')}`);
+      if (!res.ok) return; // 降级：不影响原有展示
+      const data: BrainCompareItem[] = await res.json();
+      if (!Array.isArray(data)) return;
+      const map: Record<string, BrainCompareItem> = {};
+      data.forEach(item => { map[item.id] = item; });
+      setBrainData(map);
+      setLastRefreshed(new Date());
+      setSecondsAgo(0);
+    } catch {
+      // 降级：Brain API 不可用时静默忽略
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  // 自动刷新：选中 ≥ 2 个项目时每 30s 刷新
+  useEffect(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (selectedIds.length < 2) {
+      setBrainData({});
+      setLastRefreshed(null);
+      return;
+    }
+    fetchBrainCompare(selectedIds);
+    timerRef.current = setInterval(() => fetchBrainCompare(selectedIds), 30_000);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [selectedIds, fetchBrainCompare]);
+
+  // 刷新时间戳 ticker（每秒更新 "XX 秒前"）
+  useEffect(() => {
+    if (!lastRefreshed) return;
+    const interval = setInterval(() => {
+      setSecondsAgo(Math.floor((Date.now() - lastRefreshed.getTime()) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lastRefreshed]);
 
   const toggleProject = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -221,6 +341,18 @@ export default function ProjectCompare() {
         </div>
         <span className="text-xs text-slate-500">选择 2-4 个项目后点击「开始对比」</span>
         <div className="ml-auto flex items-center gap-3">
+          {/* 刷新状态 */}
+          {selectedIds.length >= 2 && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin text-blue-400' : 'text-slate-600'}`} />
+              {refreshing
+                ? <span className="text-blue-400">刷新中…</span>
+                : lastRefreshed
+                  ? <span>上次刷新：{secondsAgo}s 前</span>
+                  : null
+              }
+            </div>
+          )}
           {selectedIds.length > 0 && (
             <button
               onClick={() => { setSelectedIds([]); setResult(null); }}
@@ -300,7 +432,12 @@ export default function ProjectCompare() {
                 style={{ gridTemplateColumns: `repeat(${result.projects.length}, minmax(220px, 1fr))` }}
               >
                 {result.projects.map((p, i) => (
-                  <ProjectCard key={p.id} report={p} rank={i + 1} />
+                  <ProjectCard
+                    key={p.id}
+                    report={p}
+                    rank={i + 1}
+                    brainItem={brainData[p.id]}
+                  />
                 ))}
               </div>
 
