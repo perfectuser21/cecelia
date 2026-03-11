@@ -1,5 +1,21 @@
 # Cecelia Core Learnings
 
+## PR #832 feat(brain): GET /api/brain/cortex/call-history — Cortex 调用历史（2026-03-11）
+
+CI 失败 1 次（L1 Process Gate — PRD 缺 `## 成功标准` 标题 + LEARNINGS.md 未同步）。
+
+### 根本原因
+
+1. `thalamus_calls` 表在代码库中不存在，PRD 描述有误；实际写入 `cortex_call_log`（新建 migration 143）
+2. PRD 用粗体 `**成功标准**:` 而非二级标题 `## 成功标准`，`check-prd.sh` 按标题匹配导致 L1 失败
+3. LEARNINGS.md 未在 PR push 前提交，`check-learning.sh` 报 L1 失败
+
+### 下次预防
+
+- [ ] PRD 成功标准必须是 `## 成功标准`（二级标题），不能用粗体 `**成功标准**:` 格式
+- [ ] LEARNINGS.md 必须与 PR 代码同批 commit push，不能在 CI 失败后补
+- [ ] 探索代码前先验证 PRD 中提到的数据库表是否存在（`grep -rn "thalamus_calls"` 无结果时要主动调整方案）
+
 ### [2026-03-11] DoD grep 命令跨行匹配陷阱 — 用具体字面量替代复合模式（PR #825）
 
 **失败统计**：L1 CI 失败 1 次（DoD Test 命令跨行匹配返回 0）
