@@ -190,6 +190,7 @@ send_webhook() {
   local duration="$4"
   local attempt="$5"
   local failure_class="${6:-}"
+  local exit_code_val="${7:-0}"
 
   if [[ -z "$WEBHOOK_URL" ]]; then
     return 0
@@ -225,6 +226,7 @@ send_webhook() {
       --argjson duration "$duration" \
       --argjson attempt "$attempt" \
       --argjson failure_class "$failure_class_json" \
+      --argjson exit_code_val "$exit_code_val" \
       '{
         task_id: $task_id,
         checkpoint_id: $checkpoint_id,
@@ -234,11 +236,12 @@ send_webhook() {
         stderr: $stderr,
         duration_ms: $duration,
         attempt: $attempt,
+        exit_code: $exit_code_val,
         coding_type: "cecelia",
         timestamp: now | todate
       } + (if $failure_class != null then {failure_class: $failure_class} else {} end)')
   else
-    payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt}"
+    payload="{\"task_id\":\"$TASK_ID\",\"checkpoint_id\":\"$CHECKPOINT_ID\",\"run_id\":\"$CHECKPOINT_ID\",\"status\":\"$status\",\"coding_type\":\"cecelia\",\"duration_ms\":$duration,\"attempt\":$attempt,\"exit_code\":$exit_code_val}"
   fi
 
   if [[ -n "$WEBHOOK_TOKEN" ]]; then
@@ -402,7 +405,7 @@ main() {
     abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_script_missing" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
@@ -426,7 +429,7 @@ main() {
     abort_end=$(python3 -c 'import time; print(int(time.time()*1000))')
     abort_duration=$((abort_end - start_time))
     echo "worktree_creation_failed: $(cat "$wt_stderr_log" 2>/dev/null | head -3 || echo 'unknown error')" > "$err_log"
-    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup"
+    send_webhook "AI Failed" "$out_json" "$err_log" "$abort_duration" "1" "env_setup" "1"
     rm -f "$out_json" "$err_log" 2>/dev/null || true
     exit 1
   fi
@@ -601,7 +604,7 @@ main() {
   fi
 
   # 发送 webhook 回调
-  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt" "$failure_class_val"
+  send_webhook "$status" "$out_json" "$err_log" "$duration" "$attempt" "$failure_class_val" "$exit_code"
 
   # 写入结构化日志
   log_execution "$status" "$exit_code" "$duration" "$SLOT" "$attempt"

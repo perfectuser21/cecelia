@@ -16,6 +16,21 @@
 - [ ] 改 CI workflow 文件时 PR title 必须含 `[CONFIG]` 标签
 - [ ] 首次 commit 就包含 LEARNINGS.md 条目
 
+### [2026-03-11] bash 脚本 DoD grep 模式中 shell 变量展开陷阱（PR #836）
+
+**失败统计**：L1 CI 失败 1 次（DoD L11 + Learning Gate）
+
+### 根本原因
+
+DoD 的 `Test: manual:bash -c "grep -c '"'"'"exit_code":$exit_code_val'"'"' ..."` 使用双引号包裹 bash -c，内部 `$exit_code_val` 在 CI shell 中展开为空字符串，导致 grep 找不到匹配，exit 1。
+同时 LEARNINGS.md 未与代码同 commit 导致 Learning Format Gate 失败。
+
+### 下次预防
+
+- [ ] DoD 的 `Test: manual:bash -c "..."` 中需要 grep 脚本里的 bash 变量名时，用唯一的字面词代替变量名（如 `exit_code_val}` 而非 `$exit_code_val`），避免 shell 展开
+- [ ] 测试 bash 脚本单元测试时，通过环境变量传递路径（`PAYLOAD_CAPTURE_FILE`），避免 sub-sub-shell 丢失变量
+- [ ] LEARNINGS.md 必须和代码同 commit push，PR push 前先检查是否已写好
+
 ### [2026-03-11] DoD Test 路径必须用相对路径 — CI 在 Ubuntu 上跑（PR #834）
 
 **失败统计**：L1 CI 失败 1 次（DoD Gate + Learning Gate）
