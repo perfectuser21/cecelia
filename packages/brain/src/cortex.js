@@ -451,6 +451,50 @@ function parseCortexDecision(response) {
 }
 
 /**
+ * 从 LLM 输出文本中解析 [ACTION: ...] 标签
+ *
+ * 格式：[ACTION: <title> priority=P0 skill=dev]
+ * - title: 必须，空格前缀直到第一个 key=value
+ * - priority: 可选，默认 P1
+ * - skill: 可选，默认 dev
+ *
+ * @param {string} text - LLM 原始输出文本
+ * @returns {Array<{title: string, priority: string, skill: string}>}
+ */
+function parseActionTags(text) {
+  if (!text || typeof text !== 'string') return [];
+
+  const results = [];
+  const regex = /\[ACTION:\s*([^\]]+)\]/g;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const content = match[1].trim();
+    if (!content) continue;
+
+    // 提取所有 key=value 对
+    const kvMap = {};
+    const kvRegex = /\b(\w+)=(\S+)/g;
+    let kvMatch;
+    while ((kvMatch = kvRegex.exec(content)) !== null) {
+      kvMap[kvMatch[1]] = kvMatch[2];
+    }
+
+    // 去掉 key=value 部分，剩余即为 title
+    const title = content.replace(/\s*\b\w+=\S+/g, '').trim();
+    if (!title) continue;
+
+    results.push({
+      title,
+      priority: kvMap.priority || 'P1',
+      skill: kvMap.skill || 'dev',
+    });
+  }
+
+  return results;
+}
+
+/**
  * 验证 Cortex Decision
  * @param {Object} decision
  * @returns {{valid: boolean, errors: string[]}}
@@ -656,6 +700,13 @@ async function analyzeDeep(event, thalamusDecision = null) {
 
   try {
     const response = await callCortexLLM(prompt);
+
+    // 解析 LLM 输出中的 [ACTION:] 标签
+    const parsedActionTags = parseActionTags(response);
+    if (parsedActionTags.length > 0) {
+      console.log(`[cortex] parseActionTags: 发现 ${parsedActionTags.length} 个 ACTION 标签`, JSON.stringify(parsedActionTags));
+    }
+
     const decision = parseCortexDecision(response);
 
     // 验证
@@ -1440,6 +1491,9 @@ export {
   // 验证
   validateCortexDecision,
   createCortexFallback,
+
+  // ACTION 标签解析
+  parseActionTags,
 
   // P2: Absorption Policy
   storeAbsorptionPolicy,
