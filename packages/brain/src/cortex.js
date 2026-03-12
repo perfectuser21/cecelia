@@ -438,6 +438,41 @@ async function callCortexLLM(prompt) {
 // ============================================================
 
 /**
+ * 从 LLM 输出文本中提取 [ACTION: ...] 标签，返回结构化动作列表
+ * @param {string} text - LLM 输出的原始文本
+ * @returns {Array<{title: string, priority: string, skill: string}>}
+ */
+function parseActionTags(text) {
+  if (!text || typeof text !== 'string') return [];
+  const results = [];
+  const regex = /\[ACTION:\s*([^\]]+)\]/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const raw = match[1].trim();
+    if (!raw) continue;
+
+    // 提取 key=value 参数
+    const priorityMatch = raw.match(/\bpriority=(\S+)/);
+    const skillMatch = raw.match(/\bskill=(\S+)/);
+
+    // title = 去掉所有 key=value 后的剩余部分
+    const title = raw
+      .replace(/\b\w+=\S+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!title) continue;
+
+    results.push({
+      title,
+      priority: priorityMatch ? priorityMatch[1] : 'P1',
+      skill: skillMatch ? skillMatch[1] : 'dev',
+    });
+  }
+  return results;
+}
+
+/**
  * 从 Opus 响应中解析 Decision
  * @param {string} response
  * @returns {Object}
@@ -657,6 +692,13 @@ async function analyzeDeep(event, thalamusDecision = null) {
   try {
     const response = await callCortexLLM(prompt);
     const decision = parseCortexDecision(response);
+
+    // 从 LLM 响应文本中提取 [ACTION:] 标签
+    const actionTags = parseActionTags(response);
+    if (actionTags.length > 0) {
+      console.log(`[cortex] 提取到 ${actionTags.length} 个 ACTION 标签:`, actionTags.map(a => `${a.title}(${a.priority})`).join(', '));
+      decision._action_tags = actionTags;
+    }
 
     // 验证
     const validation = validateCortexDecision(decision);
@@ -1436,6 +1478,9 @@ export {
 
   // API (profile-aware)
   callCortexLLM,
+
+  // ACTION 标签解析
+  parseActionTags,
 
   // 验证
   validateCortexDecision,
