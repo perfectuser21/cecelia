@@ -188,10 +188,12 @@ jobs:
             --pattern "$YQ_BINARY" \
             --dir /tmp
 
-          sudo mv "/tmp/${YQ_BINARY}" /usr/local/bin/yq
-          sudo chmod +x /usr/local/bin/yq
+          chmod +x "/tmp/${YQ_BINARY}"
+          mkdir -p "$HOME/bin"
+          cp "/tmp/${YQ_BINARY}" "$HOME/bin/yq"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
           echo "yq ${YQ_VERSION} installed"
-          yq --version
+          "$HOME/bin/yq" --version
 
       - name: Generate path views from registry
         working-directory: packages/engine
