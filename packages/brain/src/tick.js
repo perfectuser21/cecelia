@@ -854,9 +854,18 @@ async function dispatchNextTask(goalIds) {
     };
   }
 
-  // 0a. Billing pause — 已废弃（v1.196.0）
-  // 三阶段降级链（Sonnet→Opus→Haiku→MiniMax）根据实时用量数据自己路由
-  // 不再需要全局 billing_pause 阻塞派发
+  // 0a. Billing pause check — quota_exhausted 全局熔断
+  const billingPause = getBillingPause();
+  if (billingPause.active) {
+    console.log(`[tick] Billing pause active until ${billingPause.resetTime} (${billingPause.reason}), skipping dispatch`);
+    await recordDispatchResult(pool, false, 'billing_pause');
+    return {
+      dispatched: false,
+      reason: 'billing_pause',
+      detail: `Billing pause active until ${billingPause.resetTime}`,
+      actions
+    };
+  }
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
@@ -2095,6 +2104,24 @@ async function executeTick() {
   }
 
   // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
+
+  // 6.5. quota_exhausted requeue — billing pause 未激活时，将 quota_exhausted 任务重新入队
+  // 逻辑：pause 激活期间任务留在 quota_exhausted；pause 过期后下一个 tick 自动 requeue
+  if (!getBillingPause()?.active) {
+    try {
+      const requeueResult = await pool.query(`
+        UPDATE tasks SET status = 'queued', started_at = NULL, quota_exhausted_at = NULL
+        WHERE status = 'quota_exhausted'
+        RETURNING id, title
+      `);
+      if (requeueResult.rowCount > 0) {
+        console.log(`[tick] Requeued ${requeueResult.rowCount} quota_exhausted task(s) after billing pause expiry`);
+        requeueResult.rows.forEach(r => console.log(`[tick]   - ${r.id} ${r.title}`));
+      }
+    } catch (requeueErr) {
+      console.error('[tick] quota_exhausted requeue error (non-fatal):', requeueErr.message);
+    }
+  }
 
   // 7. Dispatch tasks — fill all available slots (scoped to focused objective first, then global)
   publishCognitiveState({ phase: 'dispatching', detail: '派发任务…' });
