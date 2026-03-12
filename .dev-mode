@@ -1,5 +1,5 @@
 dev
-branch: cp-03120808-codex-provider-routing
-prd: .prd-cp-03120808-codex-provider-routing.md
-started: 2026-03-12T08:08:00+08:00
+branch: cp-03121031-fix-quota-exhausted-at
+prd: .prd-fix-quota-exhausted-at.md
+started: 2026-03-12T10:31:00+08:00
 tasks_created: true
