@@ -186,7 +186,8 @@ jobs:
           gh release download "$YQ_VERSION" \
             --repo mikefarah/yq \
             --pattern "$YQ_BINARY" \
-            --dir /tmp
+            --dir /tmp \
+            --clobber
 
           sudo mv "/tmp/${YQ_BINARY}" /usr/local/bin/yq
           sudo chmod +x /usr/local/bin/yq
