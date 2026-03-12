@@ -186,8 +186,8 @@ describe('cleanupStaleLockSlots', () => {
   it('info.json 不存在时：视为孤立 slot，删除', async () => {
     existsSync.mockImplementation(path => {
       if (path === TEST_LOCK_DIR) return true;
+      if (path.includes('info.json')) return false; // check info.json before slot-3 to avoid substring match
       if (path.includes('slot-3')) return true;
-      if (path.includes('info.json')) return false;
       return false;
     });
     readdirSync.mockReturnValue([
