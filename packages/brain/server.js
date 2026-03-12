@@ -101,6 +101,7 @@ app.use('/api/brain/vps-monitor', vpsMonitorRoutes);
 app.use('/api/brain/tasks/projects', taskProjectsRoutes);
 app.use('/api/brain/projects', taskProjectsRoutes); // 供 /decomp SKILL.md Phase 2 引用
 app.use('/api/brain/tasks/goals', taskGoalsRoutes);
+app.use('/api/brain/goals', taskGoalsRoutes); // 别名，供 /api/brain/goals/audit 访问
 app.use('/api/brain/tasks/areas', taskAreasRoutes);
 app.use('/api/brain/tasks/tasks', taskTasksRoutes);
 app.use('/api/brain/inner-life', innerLifeRoutes);

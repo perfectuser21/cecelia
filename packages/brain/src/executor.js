@@ -577,11 +577,22 @@ function setBillingPause(resetTimeISO, reason = 'billing_cap', poolRef = null) {
   recordSessionEnd(reason, poolRef).catch(e => {
     console.warn(`[session] recordSessionEnd 失败: ${e.message}`);
   });
+  const setAt = new Date().toISOString();
   _billingPause = {
     resetTime: resetTimeISO,
-    setAt: new Date().toISOString(),
+    setAt,
     reason,
   };
+  // 持久化到 cecelia_events（fire-and-forget，重启后可恢复）
+  if (poolRef) {
+    const persistPayload = { reset_at: resetTimeISO, reason, set_at: setAt };
+    poolRef.query(
+      `INSERT INTO cecelia_events (event_type, payload, created_at) VALUES ('billing_pause_set', $1, NOW())`,
+      [JSON.stringify(persistPayload)]
+    ).catch(e => {
+      console.warn(`[executor] billing_pause_set 写入 cecelia_events 失败: ${e.message}`);
+    });
+  }
   console.log(`[executor] Billing pause SET: until ${resetTimeISO} (${reason})`);
 }
 
