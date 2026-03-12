@@ -40,12 +40,24 @@ function isSystemTask(task_type, trigger_source) {
  * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
  * @param {string} params.owner_role - Role owning this task (auto-inferred from domain if omitted)
  */
-async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type }) {
+async function createTask({ title, description, priority, project_id, goal_id, tags, task_type, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, learning_id }) {
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !isSystemTask(task_type, trigger_source)) {
     const error = `goal_id is required for task_type="${task_type}" trigger_source="${trigger_source}"`;
     console.error(`[Action] Validation failed: ${error}`);
     throw new Error(error);
+  }
+  // Dedup by learning_id: if provided, check if a task already exists for this insight
+  if (learning_id) {
+    const insightDedup = await pool.query(
+      `SELECT id, status FROM tasks WHERE learning_id = $1 AND status IN ('queued', 'in_progress') LIMIT 1`,
+      [learning_id]
+    );
+    if (insightDedup.rows.length > 0) {
+      const existing = insightDedup.rows[0];
+      console.log(`[Action] Dedup (learning_id): task already exists for insight ${learning_id} (id: ${existing.id})`);
+      return { success: true, task: existing, deduplicated: true };
+    }
   }
   // Dedup: check for existing task with same title + goal_id + project_id
   // Skip if queued/in_progress, or completed within 24h
@@ -76,29 +88,30 @@ async function createTask({ title, description, priority, project_id, goal_id, t
     execution_profile || null,
     payload ? JSON.stringify(payload) : null,
     trigger_source || 'brain_auto',
+    learning_id || null,
   ];
 
   const deliveryType = delivery_type || 'code-only';
 
   let insertSql, insertParams;
   if (domainInput !== undefined) {
-    // 明确传入 domain：包含 owner_role（$12, $13）+ delivery_type（$14）
+    // 明确传入 domain：包含 owner_role（$13, $14）+ delivery_type（$15）
     const domain = domainInput;
     const owner_role = ownerRoleInput ?? getDomainRole(domain);
     insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, owner_role, delivery_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, learning_id, domain, owner_role, delivery_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14, $15)
       ON CONFLICT DO NOTHING
       RETURNING *
     `;
     insertParams = [...commonParams, domain, owner_role, deliveryType];
   } else {
-    // 未传 domain：从 title+description 自动检测，不写 owner_role，写 delivery_type（$13）
+    // 未传 domain：从 title+description 自动检测，不写 owner_role，写 delivery_type（$14）
     const detected = detectDomain(`${title} ${description || context || ''}`);
     const domain = detected.confidence > 0 ? detected.domain : null;
     insertSql = `
-      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, domain, delivery_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13)
+      INSERT INTO tasks (title, description, priority, project_id, goal_id, tags, task_type, status, prd_content, execution_profile, payload, trigger_source, learning_id, domain, delivery_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT DO NOTHING
       RETURNING *
     `;
