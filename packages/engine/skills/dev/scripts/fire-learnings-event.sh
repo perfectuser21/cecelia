@@ -109,18 +109,23 @@ if [[ "$ISSUES_COUNT" -eq 0 && "$STEPS_COUNT" -eq 0 ]]; then
   exit 0
 fi
 
+# 获取当前仓库名称（用于 source tracking）
+REPO_NAME=$(git remote get-url origin 2>/dev/null | sed 's|.*/||' | sed 's/\.git$//' || echo "")
+
 PAYLOAD=$(jq -n \
   --argjson issues "$ISSUES" \
   --argjson steps "$NEXT_STEPS" \
   --arg branch "$BRANCH_NAME" \
   --arg pr "$PR_NUMBER" \
   --arg task_id "$TASK_ID" \
+  --arg repo "$REPO_NAME" \
   '{
     issues_found: $issues,
     next_steps_suggested: $steps,
     branch_name: $branch,
     pr_number: ($pr | if . == "" then null else . end),
-    task_id: ($task_id | if . == "" then null else . end)
+    task_id: ($task_id | if . == "" then null else . end),
+    repo: ($repo | if . == "" then null else . end)
   }')
 
 if [[ "$DRY_RUN" == "true" ]]; then
