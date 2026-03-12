@@ -1,5 +1,12 @@
 # Cecelia Core Learnings
 
+## L4 并行 matrix shard 优化（2026-03-12，PR #878）
+
+同机多 runner 并行跑 PostgreSQL 需要为每个 shard 分配独立端口（5432/5433/5434）和数据目录，否则端口冲突。
+concurrency group 改为 `l4-runtime-mac` 全局互斥，防止不同 PR 的 L4 并发运行导致端口冲突。
+per-shard baseline = `ceil(total_baseline / 3)`，按比例缩减预存失败容忍数。
+删除 Phase 2（coverage double-run），L4 从 60-90min 压缩到 ~20min。
+
 ## QUALITY_SPEC.md Phase 3 完成记录（2026-03-09）
 
 ### 根本原因
