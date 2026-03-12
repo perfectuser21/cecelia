@@ -18,7 +18,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -67,7 +67,7 @@ jobs:
     name: Brain L2 Consistency
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -114,7 +114,7 @@ jobs:
     name: Engine L2 Consistency
     needs: changes
     if: needs.changes.outputs.engine == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -301,7 +301,7 @@ jobs:
 
   evolution-check:
     name: CI Evolution Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -322,7 +322,7 @@ jobs:
     name: L2 Consistency Gate Passed
     needs: [changes, brain-l2, engine-l2, evolution-check]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     steps:
       - name: L2 Consistency Gate
