@@ -261,6 +261,13 @@ changelog:
 
 ---
 
+### S9: fire-learnings-event.sh 来源追踪
+
+1. ✅ **BRANCH_NAME 为空: source_branch = null**
+2. ✅ **PR_NUMBER 为空: source_pr = null**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
