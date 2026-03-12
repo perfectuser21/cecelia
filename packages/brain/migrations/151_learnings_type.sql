@@ -1,5 +1,5 @@
 -- Migration: Add learning_type and source tracking fields to learnings table
--- Version: 150
+-- Version: 151
 -- Date: 2026-03-12
 -- Description: Support /dev-perspective learning classification (5 types) and PR source tracking.
 --   learning_type: trap / architecture_decision / process_improvement / failure_pattern / best_practice
@@ -48,5 +48,5 @@ CREATE INDEX IF NOT EXISTS idx_learnings_source_branch
 
 -- 5. Schema version
 INSERT INTO schema_version (version, description)
-VALUES ('150', 'Add learning_type (5-value enum) and source tracking fields to learnings table')
+VALUES ('151', 'Add learning_type (5-value enum) and source tracking fields to learnings table')
 ON CONFLICT (version) DO NOTHING;
