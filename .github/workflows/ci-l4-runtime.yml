@@ -19,7 +19,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -59,7 +59,7 @@ jobs:
     name: Brain Integration Tests (PostgreSQL + Coverage)
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, us-mac-m4]
     timeout-minutes: 90
     permissions:
       contents: read
@@ -221,7 +221,7 @@ jobs:
     name: L4 Runtime Gate Passed
     needs: [changes, brain-integration]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, hk-vps]
     timeout-minutes: 5
     steps:
       - name: L4 Runtime Gate
