@@ -1585,6 +1585,26 @@ router.post('/quarantine/release-all', async (req, res) => {
   }
 });
 
+// ==================== Billing Pause API ====================
+
+/**
+ * GET /api/brain/billing-pause
+ * 返回当前 billing pause 状态（配额耗尽熔断）
+ */
+router.get('/billing-pause', async (req, res) => {
+  try {
+    const { getBillingPause, clearBillingPause } = await import('./executor.js');
+    const pause = getBillingPause();
+    if (req.query.clear === 'true') {
+      const cleared = clearBillingPause();
+      return res.json({ success: true, cleared: cleared.cleared, previous: cleared.previous });
+    }
+    res.json({ success: true, ...pause });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get billing pause status', details: err.message });
+  }
+});
+
 // ==================== Watchdog API ====================
 
 /**
@@ -2925,6 +2945,21 @@ router.post('/execution-callback', async (req, res) => {
     } catch { /* ignore if executor not available */ }
 
     console.log(`[execution-callback] Task ${task_id} updated to ${newStatus} (atomic)`);
+
+    // quota_exhausted → 设置全局 billing pause（阻止后续派发直到配额恢复）
+    if (newStatus === 'quota_exhausted') {
+      try {
+        const { setBillingPause } = await import('./executor.js');
+        // 尝试从 result 读取 quota_reset_at，否则默认 1 小时后
+        const resetAt = (result && typeof result === 'object' && result.quota_reset_at)
+          ? result.quota_reset_at
+          : new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        setBillingPause(resetAt, 'quota_exhausted', pool);
+        console.log(`[execution-callback] Billing pause SET: quota_exhausted task=${task_id}, reset_at=${resetAt}`);
+      } catch (bpErr) {
+        console.warn(`[execution-callback] setBillingPause failed (non-fatal): ${bpErr.message}`);
+      }
+    }
 
     // ── task_run_metrics: 从 result JSON 解析 LLM 指标并写入 ──
     try {
