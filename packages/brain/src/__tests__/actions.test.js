@@ -260,9 +260,9 @@ describe('actions.js', () => {
       expect(sql).toContain('domain');
       expect(sql).toContain('owner_role');
       expect(sql).toContain('delivery_type');
-      expect(params[11]).toBe('coding');    // domain
-      expect(params[12]).toBe('cto');       // owner_role 自动推断
-      expect(params[13]).toBe('code-only'); // delivery_type default
+      expect(params[12]).toBe('coding');    // domain (index 12, after learning_id at 11)
+      expect(params[13]).toBe('cto');       // owner_role 自动推断
+      expect(params[14]).toBe('code-only'); // delivery_type default
     });
 
     it('同时传 domain 和 owner_role 时使用传入的 owner_role', async () => {
@@ -280,9 +280,9 @@ describe('actions.js', () => {
 
       const insertCall = mockQuery.mock.calls[1];
       const params = insertCall[1];
-      expect(params[11]).toBe('quality');
-      expect(params[12]).toBe('vp_qa');
-      expect(params[13]).toBe('code-only'); // delivery_type default
+      expect(params[12]).toBe('quality');   // domain (index 12, after learning_id at 11)
+      expect(params[13]).toBe('vp_qa');
+      expect(params[14]).toBe('code-only'); // delivery_type default
     });
 
     it('不传 domain 时，无匹配关键词则 domain 为 null，不写 owner_role（12 个参数）', async () => {
@@ -299,10 +299,10 @@ describe('actions.js', () => {
       const insertCall = mockQuery.mock.calls[1];
       const sql = insertCall[0];
       const params = insertCall[1];
-      // 无匹配关键词时 domain=null，owner_role 列不写入（13 个参数：11 common + domain + delivery_type）
-      expect(params.length).toBe(13);
-      expect(params[11]).toBeNull(); // domain is null when undetected
-      expect(params[12]).toBe('code-only'); // delivery_type default
+      // 无匹配关键词时 domain=null，owner_role 列不写入（14 个参数：12 common + domain + delivery_type）
+      expect(params.length).toBe(14);
+      expect(params[12]).toBeNull(); // domain is null when undetected (index 12, after learning_id at 11)
+      expect(params[13]).toBe('code-only'); // delivery_type default
       expect(sql).not.toContain('owner_role'); // no owner_role when auto-detecting
       expect(sql).toContain('delivery_type'); // delivery_type always written
     });

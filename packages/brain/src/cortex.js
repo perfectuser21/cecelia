@@ -31,6 +31,7 @@ import {
 } from './cortex-quality.js';
 import { validatePolicyJson } from './policy-validator.js';
 import { recordFailure } from './circuit-breaker.js';
+import { createTask } from './actions.js';
 
 // ============================================================
 // Cortex Prompt
@@ -749,6 +750,64 @@ async function logCortexDecision(event, decision) {
 /**
  * 记录学习经验到 learnings 表（供 rumination 消化）
  */
+// 代码修复信号关键词（中英双语）
+const CODE_FIX_SIGNALS = [
+  'fix', 'bug', 'error', 'broken', 'incorrect', 'wrong', 'fail',
+  'implement', 'add', 'create', 'update', 'change', 'modify',
+  'refactor', 'optimize', 'test', 'missing',
+  '修复', 'bug', '错误', '实现', '添加', '创建', '更新', '改变', '修改',
+  '重构', '优化', '测试', '缺失', '修改', '改进',
+];
+
+/**
+ * 检测 insight 内容是否包含代码修复信号
+ * @param {string} content - insight 内容
+ * @returns {boolean}
+ */
+function hasCodeFixSignal(content) {
+  const lower = content.toLowerCase();
+  return CODE_FIX_SIGNALS.some(signal => lower.includes(signal.toLowerCase()));
+}
+
+/**
+ * 从 cortex_insight 自动创建 dev task（若内容含代码修复信号）
+ * @param {string} learningId - learnings 表的 UUID
+ * @param {string} title - learning 标题
+ * @param {string} content - learning 内容
+ * @returns {Promise<void>}
+ */
+async function autoCreateTaskFromInsight(learningId, title, content) {
+  if (!hasCodeFixSignal(content)) {
+    return;
+  }
+
+  try {
+    const taskTitle = `[Insight] ${title.replace(/^Cortex Insight:\s*/, '').slice(0, 120)}`;
+    const result = await createTask({
+      title: taskTitle,
+      description: `自动从 Cortex Insight 创建。\n\n原始洞察：\n${content}`,
+      priority: 'P1',
+      task_type: 'dev',
+      trigger_source: 'cortex',
+      learning_id: learningId,
+    });
+
+    if (result.deduplicated) {
+      console.log(`[cortex] Insight task already exists for learning ${learningId}, skipping`);
+      return;
+    }
+
+    // 标记 learning.applied=true
+    await pool.query(
+      'UPDATE learnings SET applied = true, applied_at = NOW() WHERE id = $1',
+      [learningId]
+    );
+    console.log(`[cortex] Created dev task from insight ${learningId}: ${taskTitle}`);
+  } catch (err) {
+    console.error(`[cortex] autoCreateTaskFromInsight failed for ${learningId}: ${err.message}`);
+  }
+}
+
 async function recordLearnings(learnings, event) {
   let recorded = 0;
   for (const learning of learnings) {
@@ -769,9 +828,10 @@ async function recordLearnings(learnings, event) {
       }
 
       const summary = generateL0Summary(`${title} ${content}`);
-      await pool.query(`
+      const insertResult = await pool.query(`
         INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
         VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6)
+        RETURNING id
       `, [
         title,
         triggerEvent,
@@ -781,6 +841,12 @@ async function recordLearnings(learnings, event) {
         summary,
       ]);
       recorded++;
+
+      // 自动从 insight 创建 dev task（若内容含代码修复信号）
+      const newLearningId = insertResult.rows[0]?.id;
+      if (newLearningId) {
+        await autoCreateTaskFromInsight(newLearningId, title, content);
+      }
     } catch (err) {
       console.error('[cortex] Failed to record learning:', err.message);
     }
@@ -1385,4 +1451,8 @@ export {
   // 常量
   CORTEX_ACTION_WHITELIST,
   OUTPUT_DEDUP_THRESHOLD,
+
+  // insight → task 自动闭合（测试用）
+  autoCreateTaskFromInsight,
+  hasCodeFixSignal,
 };
