@@ -2244,25 +2244,23 @@ async function probeTaskLiveness() {
       diagnostic_info: diagnostic_info,
     };
 
-    // Update task status with WebSocket broadcast
-    await updateTaskStatus(task.id, 'failed', {
-      error_message: `[liveness_timeout] reason=${reason} at ${new Date().toISOString()}`,
-      payload: { error_details: errorDetails }
-    });
+    // Requeue instead of fail — liveness DEAD is typically OOM/system preemption, not a code bug
+    const requeueResult = await requeueTask(task.id, 'liveness_dead', errorDetails);
 
     // Fire-and-forget auto-learning（liveness probe 路径无 execution-callback，需在此补充）
     import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>
-      processExecutionAutoLearning(task.id, 'failed', errorDetails, {
+      processExecutionAutoLearning(task.id, requeueResult.quarantined ? 'failed' : 'requeued', errorDetails, {
         trigger_source: 'liveness_probe',
         metadata: { suspect_since: suspect.firstSeen, pid }
       })
     ).catch(() => {/* non-fatal */});
 
     actions.push({
-      action: 'liveness_auto_fail',
+      action: requeueResult.quarantined ? 'liveness_auto_fail' : 'liveness_auto_requeue',
       task_id: task.id,
       title: task.title,
       suspect_since: suspect.firstSeen,
+      requeue_result: requeueResult,
     });
   }
 
