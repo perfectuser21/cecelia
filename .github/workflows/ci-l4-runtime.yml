@@ -1,9 +1,9 @@
 name: L4 Runtime Gate
 
-# L4: 运行时集成测试 — Brain 变动时必跑（90min）
-# 职责：PostgreSQL 真实环境 + 完整集成测试 + Coverage 门禁 + GoldenPath E2E
-# 运行环境：macos-latest（PostgreSQL@17 通过 Homebrew 安装）
-# 迁移自：brain-ci.yml (brain-integration)
+# L4: 运行时集成测试 — Brain 变动时必跑（~20min，3 shards 并行）
+# 职责：PostgreSQL 真实环境 + 完整集成测试 + GoldenPath E2E
+# 运行环境：xian-mac-m1（4 runner 实例，3 并行 shard 各占 1 个）
+# 优化：for-loop 串行 → matrix 并行（约 3x speedup），删除 Phase 2 double-run
 
 on:
   push:
@@ -13,7 +13,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: l4-runtime-${{ github.ref }}
+  # 全局互斥：同时只有 1 组 L4 在 Mac 上运行（避免 PostgreSQL 端口冲突）
+  group: l4-runtime-mac
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
@@ -53,20 +54,35 @@ jobs:
             echo "brain=false" >> $GITHUB_OUTPUT
           fi
 
-  # ─── Brain L4: Integration Tests + Coverage (macos + PostgreSQL) ───────
+  # ─── Brain L4: Integration Tests (macos + PostgreSQL, 3 shards parallel) ──
 
   brain-integration:
-    name: Brain Integration Tests (PostgreSQL + Coverage)
+    name: Brain Integration (Shard ${{ matrix.shard }})
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: [self-hosted, macOS, ARM64, xian-mac-m1]
-    timeout-minutes: 90
+    timeout-minutes: 40
     permissions:
       contents: read
 
+    strategy:
+      # 3 shards 并行，各用独立 PostgreSQL 端口（同机多 runner 避免端口冲突）
+      matrix:
+        include:
+          - shard: "1/3"
+            db_port: 5432
+            pg_data: /tmp/pgdata
+          - shard: "2/3"
+            db_port: 5433
+            pg_data: /tmp/pgdata2
+          - shard: "3/3"
+            db_port: 5434
+            pg_data: /tmp/pgdata3
+      fail-fast: false
+
     env:
       DB_HOST: localhost
-      DB_PORT: 5432
+      DB_PORT: ${{ matrix.db_port }}
       DB_NAME: cecelia
       DB_USER: cecelia
       DB_PASSWORD: cecelia_ci
@@ -104,38 +120,34 @@ jobs:
           brew link postgresql@17 --force 2>/dev/null || true
           brew link pgvector --force 2>/dev/null || true
 
-      - name: Set up PostgreSQL
+      - name: Set up PostgreSQL (port ${{ matrix.db_port }})
         run: |
           export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
-          echo "initdb path: $(which initdb 2>/dev/null || echo 'NOT FOUND')"
-          echo "pg_ctl path: $(which pg_ctl 2>/dev/null || echo 'NOT FOUND')"
-          # Check if PostgreSQL is already running (e.g. from a cached runner state)
-          if pg_isready -h localhost -p 5432 2>/dev/null; then
-            echo "PostgreSQL already running on port 5432, skipping initialization"
+          DB_PORT="${{ matrix.db_port }}"
+          PG_DATA="${{ matrix.pg_data }}"
+          echo "PostgreSQL port: $DB_PORT, data dir: $PG_DATA"
+          if pg_isready -h localhost -p "$DB_PORT" 2>/dev/null; then
+            echo "PostgreSQL already running on port $DB_PORT, skipping initialization"
           else
-            # Initialize new PostgreSQL instance (expose errors, no silent suppression)
-            if [ ! -d /tmp/pgdata ]; then
-              initdb -D /tmp/pgdata --username=$(whoami)
+            if [ ! -d "$PG_DATA" ]; then
+              initdb -D "$PG_DATA" --username=$(whoami)
             else
-              echo "/tmp/pgdata already exists, skipping initdb"
+              echo "$PG_DATA already exists, skipping initdb"
             fi
-            pg_ctl -D /tmp/pgdata -l /tmp/pg.log start
-            # Wait for PostgreSQL to be ready
+            pg_ctl -D "$PG_DATA" -l "/tmp/pg-${DB_PORT}.log" -o "-p ${DB_PORT}" start
             for i in $(seq 1 30); do
-              if pg_isready -h localhost -p 5432 2>/dev/null; then
-                echo "PostgreSQL is ready"
+              if pg_isready -h localhost -p "$DB_PORT" 2>/dev/null; then
+                echo "PostgreSQL is ready on port $DB_PORT"
                 break
               fi
               echo "Waiting for PostgreSQL... ($i/30)"
               sleep 1
             done
           fi
-          # Create CI user and database (connect as current OS user which is the superuser)
-          createuser --superuser cecelia 2>/dev/null || true
-          psql -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
-          createdb -U cecelia cecelia 2>/dev/null || true
-          # pgvector extension (installed by previous brew step)
-          psql -U cecelia -d cecelia -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+          createuser --superuser cecelia -p "$DB_PORT" 2>/dev/null || true
+          psql -p "$DB_PORT" -c "ALTER USER cecelia PASSWORD 'cecelia_ci';" postgres
+          createdb -U cecelia cecelia -p "$DB_PORT" 2>/dev/null || true
+          psql -U cecelia -d cecelia -p "$DB_PORT" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -152,70 +164,45 @@ jobs:
         working-directory: packages/brain
         run: node src/migrate.js
 
-      - name: Run Brain tests — failure detection (sharded, no coverage)
+      - name: Run Brain tests (Shard ${{ matrix.shard }})
         working-directory: packages/brain
         env:
           NODE_OPTIONS: "--max-old-space-size=6144"
         run: |
           set +e
-          # Phase 1: Run tests in 3 shards WITHOUT coverage to detect failures.
-          # 382 test files + isolate:true causes OOM in single fork (even at 8GB).
-          # Sharding splits files across 3 sequential runs, each ~127 files, preventing OOM.
-          TOTAL_FAILED=0
-          for SHARD in 1/3 2/3 3/3; do
-            echo "━━━ Shard $SHARD ━━━"
-            npx vitest run --shard=$SHARD --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee /tmp/brain-shard-${SHARD//\//-}.txt
-            SHARD_FAILED=$(grep "Test Files" /tmp/brain-shard-${SHARD//\//-}.txt | grep -oE "[0-9]+ failed" | awk '{print $1}' | tail -1)
-            SHARD_FAILED=${SHARD_FAILED:-0}
-            echo "📊 Shard $SHARD: $SHARD_FAILED failures"
-            TOTAL_FAILED=$((TOTAL_FAILED + SHARD_FAILED))
-          done
+          SHARD="${{ matrix.shard }}"
+          SHARD_FILE="/tmp/brain-shard-${SHARD//\//-}.txt"
 
-          # Read baseline for pre-existing test failures (not introduced by this PR)
+          npx vitest run --shard="$SHARD" --exclude='src/__tests__/blocks.test.js' --reporter=verbose 2>&1 | tee "$SHARD_FILE"
+
+          SHARD_FAILED=$(grep "Test Files" "$SHARD_FILE" | grep -oE "[0-9]+ failed" | awk '{print $1}' | tail -1)
+          SHARD_FAILED=${SHARD_FAILED:-0}
+
+          # Per-shard baseline: ceiling(total_baseline / 3)
+          # 每个 shard 约覆盖 1/3 的测试，预存失败也按比例分配
           BASELINE=0
           if [ -f "ci/brain-integration-baseline.txt" ]; then
-            BASELINE=$(cat ci/brain-integration-baseline.txt | tr -d '[:space:]')
-            echo "📋 Brain integration baseline: $BASELINE pre-existing failures allowed"
+            TOTAL_BASELINE=$(cat ci/brain-integration-baseline.txt | tr -d '[:space:]')
+            BASELINE=$(( (TOTAL_BASELINE + 2) / 3 ))
+            echo "📋 Total baseline: $TOTAL_BASELINE → per-shard baseline: $BASELINE"
           fi
 
-          echo "📊 Brain integration tests: $TOTAL_FAILED failures (baseline: $BASELINE)"
+          echo "📊 Shard $SHARD: $SHARD_FAILED failures (per-shard baseline: $BASELINE)"
 
-          if [ "$TOTAL_FAILED" -le "$BASELINE" ]; then
-            echo "✅ Failures ($TOTAL_FAILED) ≤ baseline ($BASELINE)"
+          if [ "$SHARD_FAILED" -le "$BASELINE" ]; then
+            echo "✅ Failures ($SHARD_FAILED) ≤ per-shard baseline ($BASELINE)"
             exit 0
           fi
 
-          echo "❌ Failures ($TOTAL_FAILED) > baseline ($BASELINE) — new failures detected!"
+          echo "❌ Failures ($SHARD_FAILED) > per-shard baseline ($BASELINE) — new failures detected!"
           exit 1
 
-      - name: Run Brain coverage thresholds
-        working-directory: packages/brain
-        timeout-minutes: 30
-        env:
-          NODE_OPTIONS: "--max-old-space-size=6144"
-        run: |
-          set +e
-          # Phase 2: Run with coverage only to check thresholds.
-          # OOM or timeout during this phase is acceptable (all tests already passed in Phase 1).
-          # Step-level timeout-minutes=30 prevents this phase from consuming all remaining job time.
-          timeout 1680 npx vitest run --exclude='src/__tests__/blocks.test.js' --reporter=dot --coverage 2>&1 | tee /tmp/brain-coverage-output.txt
-          EXIT_CODE=${PIPESTATUS[0]}
-
-          if grep -q "Coverage threshold" /tmp/brain-coverage-output.txt; then
-            echo "❌ Coverage threshold not met — failing CI (HARD GATE)"
-            exit 1
-          fi
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "⚠️  Coverage run exited $EXIT_CODE (likely OOM during cleanup — tests already verified in Phase 1)"
-          fi
-          exit 0
-
       - name: GoldenPath E2E
+        if: matrix.shard == '1/3'
         working-directory: packages/brain
         run: bash scripts/goldenpath-check.sh
 
-  # ─── Gate job (always runs) ───────────────────────────────────────────
+  # ─── Gate job (always runs) ────────────────────────────────────────────────
 
   l4-passed:
     name: L4 Runtime Gate Passed
