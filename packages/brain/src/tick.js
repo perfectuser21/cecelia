@@ -5,6 +5,7 @@
 
 import crypto from 'crypto';
 import pool from './db.js';
+import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { getDailyFocus } from './focus.js';
 import { updateTask, createTask } from './actions.js';
 import { triggerCeceliaRun, checkCeceliaRunAvailable, getActiveProcessCount, killProcess, checkServerResources, probeTaskLiveness, syncOrphanTasksOnStartup, killProcessTwoStage, requeueTask, MAX_SEATS, INTERACTIVE_RESERVE, getBillingPause } from './executor.js';
@@ -853,6 +854,19 @@ async function dispatchNextTask(goalIds) {
       detail: _draining ? `Drain mode active since ${_drainStartedAt}` : 'Alertness COMA drain mode',
       actions
     };
+  }
+
+  // 0a-pre. Quota cooling check — 全局 quota 冷却期内跳过派发
+  let _qcActive = false;
+  try {
+    _qcActive = isGlobalQuotaCooling();
+  } catch (qcErr) {
+    console.error('[tick] quota_cooling_check_error (non-fatal):', qcErr.message);
+  }
+  if (_qcActive) {
+    const qcState = getQuotaCoolingState();
+    console.log(`[tick] quota cooling until: ${qcState.until}`);
+    return { skipped: true, reason: 'quota_cooling' };
   }
 
   // 0a. Billing pause check — quota_exhausted 全局熔断
