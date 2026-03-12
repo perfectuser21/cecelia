@@ -22,6 +22,7 @@ const mockGetSwapUsedPct = vi.hoisted(() => vi.fn(() => 10));
 const mockGetDmesgInfo = vi.hoisted(() => vi.fn(() => null));
 const mockCountClaudeProcesses = vi.hoisted(() => vi.fn(() => 0));
 const mockCalculatePhysicalCapacity = vi.hoisted(() => vi.fn(() => 4));
+const mockGetAvailableMemoryMB = vi.hoisted(() => vi.fn(() => 8192));
 
 // Mock platform-utils — the cross-platform abstraction layer
 vi.mock('../platform-utils.js', () => ({
@@ -33,6 +34,8 @@ vi.mock('../platform-utils.js', () => ({
   getDmesgInfo: mockGetDmesgInfo,
   countClaudeProcesses: mockCountClaudeProcesses,
   calculatePhysicalCapacity: mockCalculatePhysicalCapacity,
+  getAvailableMemoryMB: mockGetAvailableMemoryMB,
+  getMacOSMemoryPressure: vi.fn(() => 0),
 }));
 
 // Mock fs (executor.js may import readFileSync for other uses)

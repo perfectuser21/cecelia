@@ -1,5 +1,24 @@
 # Cecelia Core Learnings
 
+### [2026-03-11] Brain Integration Baseline 归零 — platform-utils mock 必须同步新增导出（PR #819）
+
+
+**失败统计**：CI L4 剩余 4 个失败（PR #818 修复后），baseline 从 125 降至 0
+
+### 根本原因
+
+1. **源码新增导出函数后，所有相关 mock 必须同步更新**：PR #812 向 `platform-utils.js` 新增了 `getAvailableMemoryMB()`，`executor.js` 开始调用它，但 `cpu-sampler.test.js` 和 `minimax-provider.test.js` 的 mock 没有包含此函数。vitest 的严格 mock 模式抛出 "No getAvailableMemoryMB export is defined on mock"，导致依赖 `checkServerResources()` 的测试全部失败。
+
+2. **Baseline 是债务标签，修完就该归零**：125 的 baseline 在实际只有 4 个失败时，是对测试系统的虚假容忍。正确做法：修完失败 → 立即归零 baseline，不留余地。
+
+3. **OOM 根因是 NODE_OPTIONS 1536MB 不够 + grep 误匹配**：isolate:true + v8 coverage 下，macOS CI runner 每个 fork 消耗高达 1.5GB+。分片方案（3 shards × 6GB）解决 OOM；`grep "[0-9]+ failed"` 误匹配 shepherd 日志中的 `failed=1`，需限定 `grep "Test Files"` 才准确。
+
+### 下次预防
+
+- [ ] 向 `platform-utils.js` 新增导出函数后，立即搜索所有 mock 该模块的测试文件：`grep -rl "platform-utils" src/__tests__/`，逐一补充新函数到 mock
+- [ ] Brain integration baseline 归零后，任何新的 Brain PR 引入测试失败都会被 CI 立即拦截，不再有"躲在 baseline 里"的机会
+- [ ] CI grep 失败计数必须限定 vitest 汇总行（`grep "Test Files" | grep "[0-9]+ failed"`），防止测试日志中的 `failed=N` 误触发
+
 ## PR #858 fix(brain): 修复 cecelia-bridge Math.min 截断——Cortex Opus 超时不再被 120s 上限阻断（2026-03-11）
 
 CI 失败 0 次。
