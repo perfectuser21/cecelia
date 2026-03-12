@@ -20,6 +20,7 @@ INCIDENT_FILE="${INCIDENT_FILE:-.dev-incident-log.json}"
 BRANCH_NAME=""
 PR_NUMBER=""
 TASK_ID=""
+REPO="${REPO:-cecelia}"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --branch) BRANCH_NAME="$2"; shift 2 ;;
     --pr) PR_NUMBER="$2"; shift 2 ;;
     --task-id) TASK_ID="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     *) shift ;;
   esac
@@ -115,12 +117,14 @@ PAYLOAD=$(jq -n \
   --arg branch "$BRANCH_NAME" \
   --arg pr "$PR_NUMBER" \
   --arg task_id "$TASK_ID" \
+  --arg repo "$REPO" \
   '{
     issues_found: $issues,
     next_steps_suggested: $steps,
     branch_name: $branch,
     pr_number: ($pr | if . == "" then null else . end),
-    task_id: ($task_id | if . == "" then null else . end)
+    task_id: ($task_id | if . == "" then null else . end),
+    repo: $repo
   }')
 
 if [[ "$DRY_RUN" == "true" ]]; then

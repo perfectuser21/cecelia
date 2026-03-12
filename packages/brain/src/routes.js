@@ -794,7 +794,45 @@ router.post('/tasks/:task_id/feedback', async (req, res) => {
  * 丘脑分拣：
  *   - issues_found（已知 bug）→ 创建 fix task（任务线）
  *   - next_steps_suggested（经验/预防措施）→ 写 learnings 表（成长线 → 反刍 → NotebookLM）
+ *
+ * 新增（migration 151）：自动填充 source_branch、source_pr、repo、learning_type 字段
+ *   - source_branch: 来自 branch_name
+ *   - source_pr: 来自 pr_number
+ *   - repo: 来自 payload.repo（默认 'cecelia'）
+ *   - learning_type: 异步 Haiku 分类（best-effort，失败不影响插入）
  */
+
+/**
+ * 使用 fact_extractor (Haiku) 对 learning 内容进行分类。
+ * 返回 5 种类型之一，或 null（分类失败时）。
+ * @param {string} content
+ * @returns {Promise<string|null>}
+ */
+async function classifyLearningType(content) {
+  const VALID_TYPES = ['trap', 'architecture_decision', 'process_improvement', 'failure_pattern', 'best_practice'];
+  const prompt = `Classify the following developer learning note into exactly one category.
+
+Categories:
+- trap: A gotcha or pitfall that caused unexpected behavior or wasted time
+- architecture_decision: A design or architectural choice with rationale
+- process_improvement: A better way to run the development process
+- failure_pattern: A recurring failure mode or systemic issue
+- best_practice: A positive practice worth repeating
+
+Learning note:
+${content.slice(0, 600)}
+
+Reply with ONLY one of: ${VALID_TYPES.join(', ')}`;
+
+  try {
+    const { text } = await callLLM('fact_extractor', prompt, { timeout: 6000, max_tokens: 20 });
+    const normalized = (text || '').toLowerCase().trim();
+    return VALID_TYPES.find(t => normalized.includes(t)) || null;
+  } catch {
+    return null;
+  }
+}
+
 router.post('/learnings-received', async (req, res) => {
   try {
     const {
@@ -803,6 +841,7 @@ router.post('/learnings-received', async (req, res) => {
       branch_name,
       pr_number,
       task_id,
+      repo = 'cecelia',
     } = req.body;
 
     const results = { tasks_created: [], learnings_inserted: [] };
@@ -828,23 +867,41 @@ router.post('/learnings-received', async (req, res) => {
     }
 
     // 2. next_steps_suggested → 写 learnings 表（成长线）
+    // 先批量插入（source_branch/source_pr/repo 立即填充），learning_type 异步补填
+    const insertedItems = [];
     for (const step of next_steps_suggested) {
       if (!step || typeof step !== 'string') continue;
       try {
         const title = step.slice(0, 120);
         const { rows } = await pool.query(
           `INSERT INTO learnings
-             (title, category, content, trigger_source, trigger_event, digested)
-           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false)
+             (title, category, content, trigger_source, trigger_event, digested,
+              source_branch, source_pr, repo)
+           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
+                   $3, $4, $5)
            RETURNING id`,
-          [title, step]
+          [title, step, branch_name || null, pr_number ? String(pr_number) : null, repo]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
+          insertedItems.push({ id: rows[0].id, content: step });
         }
       } catch (dbErr) {
         console.warn(`[learnings-received] learnings INSERT failed: ${dbErr.message}`);
       }
+    }
+
+    // 3. 异步分类 learning_type（best-effort，不阻塞响应）
+    if (insertedItems.length > 0) {
+      Promise.all(insertedItems.map(async ({ id, content }) => {
+        const learningType = await classifyLearningType(content);
+        if (learningType) {
+          await pool.query(
+            `UPDATE learnings SET learning_type = $1 WHERE id = $2`,
+            [learningType, id]
+          ).catch(err => console.warn(`[learnings-received] learning_type update failed for ${id}: ${err.message}`));
+        }
+      })).catch(() => {}); // 整体失败静默处理
     }
 
     // 3. 触发丘脑事件（记录、可见性）
