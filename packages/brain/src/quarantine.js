@@ -1016,6 +1016,7 @@ async function handleTaskFailure(taskId) {
     // 临时阻塞：BILLING_CAP → blockTask；RATE_LIMIT → blockTask 5min
     if (classification.class === FAILURE_CLASS.BILLING_CAP) {
       const { blockTask } = await import('./task-updater.js');
+      const { setBillingPause } = await import('./executor.js');
       const errorStr = String(task.payload?.error_details || '');
       const resetTime = parseResetTime(errorStr) || new Date(Date.now() + 2 * 60 * 60 * 1000);
       const r = await blockTask(taskId, {
@@ -1023,7 +1024,8 @@ async function handleTaskFailure(taskId) {
         detail: errorStr.slice(0, 500),
         until: resetTime,
       });
-      console.log(`[quarantine] Task ${taskId} blocked (billing_cap) until ${resetTime.toISOString()}`);
+      setBillingPause(resetTime.toISOString(), 'billing_cap');
+      console.log(`[quarantine] Task ${taskId} blocked + global billing pause SET until ${resetTime.toISOString()}`);
       return { blocked: true, reason: 'billing_cap', blocked_until: resetTime.toISOString(), result: r };
     }
 
