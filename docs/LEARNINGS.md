@@ -1,5 +1,34 @@
 # Cecelia Core Learnings
 
+### [2026-03-12] GitHub Actions 自托管 Runner 并行部署 — bin 目录不能用 symlink（PR #875）
+
+**背景**：HK VPS 原有 1 个 cecelia runner，L1 的 8 个并行 job 全部串行排队（~32min）。需要在 HK VPS 部署 8 个并行 runner，同时节省磁盘（每个 runner 目录约 1.5GB）。
+
+### 根本原因
+
+1. **`bin/` 目录不能用 symlink，否则 Runner.Listener 找错 config**：
+   `config.sh` 会 cd 到自己所在目录，然后执行 `./bin/Runner.Listener`。如果 `bin` 是 symlink，Runner.Listener 二进制文件的实际路径是原始 runner 的 bin 目录，它会在**原始目录**查找 `.runner` 配置文件（已存在），导致报 "Cannot configure the runner because it is already configured"，即使新目录中根本没有 `.runner` 文件。
+   **修复**：`bin/` 使用 **hardlink**（`cp -rl`），每个实例有自己的目录项，但 inode 共享，磁盘只存一份数据。`externals/` 可以安全使用 symlink（纯静态 Node 运行时，不影响配置路径查找）。
+
+2. **僵尸 runner service 持续消耗内存**：旧的 cecelia 子仓库（autopolite/core/engine/quality/workspace）合并进 monorepo 后，HK VPS 上的 runner service 没有清理，仍在运行并消耗 300MB+ 内存。应在仓库合并时立即清理相关 runner service。
+
+3. **注册 token 有效期约 1 小时**：GitHub runner registration token 过期后需重新通过 `POST /repos/{owner}/{repo}/actions/runners/registration-token` 获取。
+
+### CI runner 最终分布
+
+| 层级 | Runner | 决策理由 |
+|------|--------|----------|
+| L1/L2 所有 job | HK VPS `[self-hosted, Linux, hk-vps]` | 免费，8 个并行 runner |
+| L3 brain-unit | GitHub-hosted `ubuntu-latest` | 有 PostgreSQL service container；用 Pro 3000 min 配额 |
+| L3 其余 | HK VPS `[self-hosted, Linux, hk-vps]` | 免费 |
+| L4 brain-integration | Mac Mini US `[self-hosted, macOS, ARM64, us-mac-m4]` | 免费，ARM64 原生，比 GitHub macos 快 |
+
+### 下次预防
+
+- [ ] 新增 runner 实例时，`bin/` 用 `cp -rl`（hardlink），`externals/` 用 `ln -s`（symlink）
+- [ ] 子仓库合并进 monorepo 时，同步清理相关 runner service（`systemctl stop/disable` + `rm service file`）
+- [ ] 查 runner 注册状态用 `curl -H "Authorization: token $TOKEN" https://api.github.com/repos/{owner}/{repo}/actions/runners`，不要依赖 systemctl 状态（service 可能运行但 token 失效）
+
 ### [2026-03-11] Brain Integration Baseline 归零 — platform-utils mock 必须同步新增导出（PR #819）
 
 
