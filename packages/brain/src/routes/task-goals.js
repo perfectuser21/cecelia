@@ -2,7 +2,7 @@
  * Task Goals route
  *
  * GET /              — 列出所有目标（支持 type, status, parent_id, area_id, limit, offset 过滤）
- * GET /audit         — KR 进度诚实化审计：stated_progress vs actual_progress（基于 initiative 完成率）
+ * GET /audit         — KR 进度审计：比较 stated_progress vs initiative 实际完成率
  * GET /:id           — 获取单个 goal
  * PATCH /:id         — 更新 goal 字段（title, status, priority, progress, weight, area_id, custom_props）
  * POST /audit/apply  — 将虚标 KR progress 更正为实际值，写入 memory_stream
@@ -61,125 +61,96 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /goals/audit — KR 进度诚实化审计
-// 返回每个 KR 的 stated_progress（DB 存储值）vs actual_progress（基于 initiative 完成率）
-router.get('/audit', async (req, res) => {
+// GET /goals/audit — KR 进度审计
+router.get('/audit', async (_req, res) => {
   try {
-    const { rows } = await pool.query(`
+    const result = await pool.query(`
       SELECT
         g.id,
         g.title,
         g.type,
         g.status,
         g.progress AS stated_progress,
-        COALESCE(
-          (SELECT COUNT(*)
-           FROM projects p
-           WHERE p.kr_id = g.id AND p.type = 'initiative')
-          +
-          (SELECT COUNT(*)
-           FROM projects p2
-           JOIN projects p ON p.id = p2.parent_id
-           WHERE p.kr_id = g.id AND p2.type = 'initiative'),
-          0
-        ) AS initiative_total,
-        COALESCE(
-          (SELECT COUNT(*)
-           FROM projects p
-           WHERE p.kr_id = g.id AND p.type = 'initiative' AND p.status = 'completed')
-          +
-          (SELECT COUNT(*)
-           FROM projects p2
-           JOIN projects p ON p.id = p2.parent_id
-           WHERE p.kr_id = g.id AND p2.type = 'initiative' AND p2.status = 'completed'),
-          0
-        ) AS initiative_done
+        COUNT(p.id) AS total_initiatives,
+        COUNT(p.id) FILTER (WHERE p.status = 'completed') AS completed_initiatives,
+        CASE
+          WHEN COUNT(p.id) = 0 THEN NULL
+          ELSE ROUND(COUNT(p.id) FILTER (WHERE p.status = 'completed') * 100.0 / COUNT(p.id))
+        END AS actual_progress
       FROM goals g
-      WHERE g.type IN ('area_kr', 'global_kr', 'area_okr')
-      ORDER BY g.progress DESC
+      LEFT JOIN projects p ON p.kr_id = g.id AND p.type = 'initiative'
+      WHERE g.type IN ('area_okr', 'kr')
+      GROUP BY g.id, g.title, g.type, g.status, g.progress
+      ORDER BY g.progress DESC, g.title
     `);
 
-    const result = rows.map(row => {
-      const total = parseInt(row.initiative_total, 10);
-      const done = parseInt(row.initiative_done, 10);
-      const actual_progress = total > 0 ? Math.round((done / total) * 100) : null;
-      const stated = parseInt(row.stated_progress, 10);
-      const gap = actual_progress !== null ? stated - actual_progress : null;
-      return {
-        id: row.id,
-        title: row.title,
-        type: row.type,
-        status: row.status,
-        stated_progress: stated,
-        actual_progress,
-        initiative_total: total,
-        initiative_done: done,
-        gap,
-      };
-    });
+    const rows = result.rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      status: r.status,
+      stated_progress: r.stated_progress,
+      actual_progress: r.actual_progress !== null ? Number(r.actual_progress) : null,
+      total_initiatives: Number(r.total_initiatives),
+      completed_initiatives: Number(r.completed_initiatives),
+      discrepancy: r.actual_progress !== null
+        ? r.stated_progress - Number(r.actual_progress)
+        : null,
+    }));
 
-    res.json(result);
+    const summary = {
+      total_goals: rows.length,
+      overstated: rows.filter(r => r.discrepancy !== null && r.discrepancy > 10).length,
+      no_initiatives: rows.filter(r => r.total_initiatives === 0).length,
+      accurate: rows.filter(r => r.discrepancy !== null && Math.abs(r.discrepancy) <= 10).length,
+    };
+
+    res.json({ summary, goals: rows });
   } catch (err) {
     res.status(500).json({ error: 'Failed to audit goals', details: err.message });
   }
 });
 
 // POST /goals/audit/apply — 将虚标 KR progress 更正为实际值
-// 仅修正 gap > threshold（默认 20）的 KR，写入 memory_stream 记录修正事件
+// 仅修正 discrepancy > threshold（默认 20）的 KR，写入 memory_stream 记录修正事件
 router.post('/audit/apply', async (req, res) => {
   const threshold = parseInt(req.query.threshold || '20', 10);
 
   try {
-    // 1. 获取审计数据（复用同一 SQL 逻辑）
+    // 1. 获取审计数据
     const { rows } = await pool.query(`
       SELECT
         g.id,
         g.title,
         g.progress AS stated_progress,
-        COALESCE(
-          (SELECT COUNT(*)
-           FROM projects p
-           WHERE p.kr_id = g.id AND p.type = 'initiative')
-          +
-          (SELECT COUNT(*)
-           FROM projects p2
-           JOIN projects p ON p.id = p2.parent_id
-           WHERE p.kr_id = g.id AND p2.type = 'initiative'),
-          0
-        ) AS initiative_total,
-        COALESCE(
-          (SELECT COUNT(*)
-           FROM projects p
-           WHERE p.kr_id = g.id AND p.type = 'initiative' AND p.status = 'completed')
-          +
-          (SELECT COUNT(*)
-           FROM projects p2
-           JOIN projects p ON p.id = p2.parent_id
-           WHERE p.kr_id = g.id AND p2.type = 'initiative' AND p2.status = 'completed'),
-          0
-        ) AS initiative_done
+        COUNT(p.id) AS total_initiatives,
+        COUNT(p.id) FILTER (WHERE p.status = 'completed') AS completed_initiatives,
+        CASE
+          WHEN COUNT(p.id) = 0 THEN NULL
+          ELSE ROUND(COUNT(p.id) FILTER (WHERE p.status = 'completed') * 100.0 / COUNT(p.id))
+        END AS actual_progress
       FROM goals g
-      WHERE g.type IN ('area_kr', 'global_kr', 'area_okr')
+      LEFT JOIN projects p ON p.kr_id = g.id AND p.type = 'initiative'
+      WHERE g.type IN ('area_okr', 'kr', 'area_kr', 'global_kr')
+      GROUP BY g.id, g.title, g.progress
     `);
 
-    // 2. 筛选需要修正的 KR（actual_progress 已知 且 gap > threshold）
+    // 2. 筛选需要修正的 KR（actual_progress 已知 且 discrepancy > threshold）
     const corrections = [];
     for (const row of rows) {
-      const total = parseInt(row.initiative_total, 10);
-      const done = parseInt(row.initiative_done, 10);
-      if (total === 0) continue;
-      const actual = Math.round((done / total) * 100);
+      if (row.actual_progress === null) continue;
       const stated = parseInt(row.stated_progress, 10);
-      const gap = stated - actual;
-      if (gap > threshold) {
+      const actual = Number(row.actual_progress);
+      const discrepancy = stated - actual;
+      if (discrepancy > threshold) {
         corrections.push({
           id: row.id,
           title: row.title,
           old_progress: stated,
           new_progress: actual,
-          gap,
-          initiative_total: total,
-          initiative_done: done,
+          gap: discrepancy,
+          initiative_total: Number(row.total_initiatives),
+          initiative_done: Number(row.completed_initiatives),
         });
       }
     }

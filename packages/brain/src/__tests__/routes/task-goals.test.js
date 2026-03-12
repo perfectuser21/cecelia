@@ -121,73 +121,96 @@ describe('task-goals routes', () => {
   });
 
   describe('GET /goals/audit', () => {
-    it('returns audit list with stated vs actual progress', async () => {
+    it('returns audit result with summary and goals', async () => {
       mockPool.query.mockResolvedValueOnce({
         rows: [
           {
-            id: 'kr1',
+            id: 'kr-1',
+            title: '免疫系统 KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            actual_progress: '50',
+            total_initiatives: '16',
+            completed_initiatives: '8',
+          },
+          {
+            id: 'kr-2',
             title: 'self-model KR',
             type: 'area_okr',
             status: 'in_progress',
             stated_progress: 100,
-            initiative_total: '18',
-            initiative_done: '5',
-          },
-          {
-            id: 'kr2',
-            title: 'org KR',
-            type: 'area_okr',
-            status: 'in_progress',
-            stated_progress: 100,
-            initiative_total: '0',
-            initiative_done: '0',
+            actual_progress: '28',
+            total_initiatives: '18',
+            completed_initiatives: '5',
           },
         ],
       });
 
       const res = await request(app).get('/goals/audit');
       expect(res.status).toBe(200);
-      expect(res.body).toHaveLength(2);
-
-      const kr1 = res.body[0];
-      expect(kr1.id).toBe('kr1');
-      expect(kr1.stated_progress).toBe(100);
-      expect(kr1.actual_progress).toBe(28); // Math.round(5/18*100)
-      expect(kr1.gap).toBe(72);
-      expect(kr1.initiative_total).toBe(18);
-      expect(kr1.initiative_done).toBe(5);
-
-      // 无 initiative 的 KR，actual_progress 为 null
-      const kr2 = res.body[1];
-      expect(kr2.actual_progress).toBeNull();
-      expect(kr2.gap).toBeNull();
+      expect(res.body).toHaveProperty('summary');
+      expect(res.body).toHaveProperty('goals');
+      expect(res.body.goals).toHaveLength(2);
+      expect(res.body.goals[0]).toHaveProperty('stated_progress');
+      expect(res.body.goals[0]).toHaveProperty('actual_progress');
+      expect(res.body.goals[0]).toHaveProperty('discrepancy');
+      expect(res.body.goals[0].discrepancy).toBe(50); // 100 - 50
+      expect(res.body.summary.overstated).toBe(2);
     });
 
     it('returns 500 on db error', async () => {
-      mockPool.query.mockRejectedValueOnce(new Error('db error'));
+      mockPool.query.mockRejectedValueOnce(new Error('DB error'));
       const res = await request(app).get('/goals/audit');
       expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('handles goals with no initiatives (actual_progress null)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr-3',
+            title: '组织架构 KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            actual_progress: null,
+            total_initiatives: '0',
+            completed_initiatives: '0',
+          },
+        ],
+      });
+
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(200);
+      const goal = res.body.goals[0];
+      expect(goal.actual_progress).toBeNull();
+      expect(goal.discrepancy).toBeNull();
+      expect(res.body.summary.no_initiatives).toBe(1);
     });
   });
 
   describe('POST /goals/audit/apply', () => {
     it('applies corrections for KRs with gap > threshold and writes memory_stream', async () => {
-      // 第一次 query：获取审计数据
+      // 第一次 query：获取审计数据（JOIN 方式，DB 已计算 actual_progress）
       mockPool.query.mockResolvedValueOnce({
         rows: [
           {
             id: 'kr1',
             title: 'self-model KR',
             stated_progress: 100,
-            initiative_total: '18',
-            initiative_done: '5',
+            actual_progress: '28',
+            total_initiatives: '18',
+            completed_initiatives: '5',
           },
           {
             id: 'kr2',
             title: 'small gap KR',
             stated_progress: 80,
-            initiative_total: '10',
-            initiative_done: '7',
+            actual_progress: '70',
+            total_initiatives: '10',
+            completed_initiatives: '7',
           },
         ],
       });
@@ -206,7 +229,7 @@ describe('task-goals routes', () => {
       // 确认写入 memory_stream
       const memCall = mockPool.query.mock.calls[2];
       expect(memCall[0]).toContain('INSERT INTO memory_stream');
-      expect(memCall[0]).toContain("source_type");
+      expect(memCall[0]).toContain('source_type');
       const payload = JSON.parse(memCall[1][0]);
       expect(payload.event).toBe('kr_progress_correction');
       expect(payload.corrections).toHaveLength(1);
@@ -219,8 +242,9 @@ describe('task-goals routes', () => {
             id: 'kr1',
             title: 'accurate KR',
             stated_progress: 70,
-            initiative_total: '10',
-            initiative_done: '8',
+            actual_progress: '70',
+            total_initiatives: '10',
+            completed_initiatives: '7',
           },
         ],
       });
