@@ -22,6 +22,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from './db.js';
+import { buildLearningContext } from './learning-retriever.js';
 import { getActiveProfile, FALLBACK_PROFILE, getCascadeForTask } from './model-profile.js';
 import { getTaskLocation } from './task-router.js';
 import { updateTaskStatus, updateTaskProgress } from './task-updater.js';
@@ -1604,14 +1605,15 @@ ${task.description || ''}
 
   // 有明确 PRD 内容的任务
   const retryCtx = buildRetryContext(task);
+  const learningCtx = await buildLearningContext(task);
   if (task.prd_content) {
-    return `${skill}\n\n${task.prd_content}${retryCtx}`;
+    return `${skill}\n\n${task.prd_content}${learningCtx}${retryCtx}`;
   }
   if (task.payload?.prd_content) {
-    return `${skill}\n\n${task.payload.prd_content}${retryCtx}`;
+    return `${skill}\n\n${task.payload.prd_content}${learningCtx}${retryCtx}`;
   }
   if (task.payload?.prd_path) {
-    return `${skill} ${task.payload.prd_path}${retryCtx}`;
+    return `${skill} ${task.payload.prd_path}${learningCtx}${retryCtx}`;
   }
 
   // 自动生成 PRD（注入 domain/owner_role 上下文）
@@ -1634,7 +1636,7 @@ ${task.description || task.title}
 - [ ] 任务完成
 `;
 
-  return `${skill}\n\n${prd}${retryCtx}`;
+  return `${skill}\n\n${prd}${learningCtx}${retryCtx}`;
 }
 
 /**
