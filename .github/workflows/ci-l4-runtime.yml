@@ -95,6 +95,7 @@ jobs:
       - name: Cache Homebrew packages
         id: cache-brew
         run: |
+          export PATH="/opt/homebrew/bin:$PATH"
           if brew list postgresql@17 &>/dev/null && brew list pgvector &>/dev/null; then
             echo "cache-hit=true" >> $GITHUB_OUTPUT
           else
@@ -104,18 +105,21 @@ jobs:
       - name: Install Homebrew packages (if not cached)
         if: steps.cache-brew.outputs.cache-hit != 'true'
         run: |
+          export PATH="/opt/homebrew/bin:$PATH"
           brew install postgresql@17
           brew install pgvector
 
       - name: Link Homebrew packages (if cached)
         if: steps.cache-brew.outputs.cache-hit == 'true'
         run: |
+          export PATH="/opt/homebrew/bin:$PATH"
           brew link postgresql@17 --force 2>/dev/null || true
           brew link pgvector --force 2>/dev/null || true
 
       - name: Set up PostgreSQL (port ${{ matrix.db_port }})
         run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          export PATH="/opt/homebrew/bin:$PATH"
+          export PATH="$(/opt/homebrew/bin/brew --prefix postgresql@17)/bin:$PATH"
           DB_PORT="${{ matrix.db_port }}"
           PG_DATA="${{ matrix.pg_data }}"
           echo "PostgreSQL port: $DB_PORT, data dir: $PG_DATA"
