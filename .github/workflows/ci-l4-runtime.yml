@@ -143,9 +143,12 @@ jobs:
           psql -U cecelia -d cecelia -p "$DB_PORT" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+        run: |
+          # Use nvm (preferred) or brew node on self-hosted Mac runner
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          node --version
+          npm --version
 
       - name: Install dependencies
         working-directory: packages/brain
