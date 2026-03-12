@@ -788,12 +788,36 @@ router.post('/tasks/:task_id/feedback', async (req, res) => {
 });
 
 /**
+ * classifyLearningType — 基于关键词自动判断 learning_type
+ *
+ * 分类依据（优先级从高到低）：
+ *   failure_pattern  — 明确的失败模式（"失败模式/反模式/anti-pattern"）
+ *   trap             — 踩坑/陷阱/bug/意外错误
+ *   architecture_decision — 架构/设计决策
+ *   process_improvement  — 流程/工作流改进
+ *   best_practice    — 默认（最佳实践/经验总结）
+ *
+ * @param {string} content
+ * @returns {string} learning_type
+ */
+function classifyLearningType(content) {
+  const lower = content.toLowerCase();
+  if (/失败模式|反模式|anti.?pattern|failure.?pattern/.test(lower)) return 'failure_pattern';
+  if (/陷阱|trap|踩坑|bug|gotcha|意外|mistake|错误判断/.test(lower)) return 'trap';
+  if (/架构|architecture|design|决策|decision|设计|技术选型/.test(lower)) return 'architecture_decision';
+  if (/流程|process|步骤|workflow|工作流|pipeline|ci|hook/.test(lower)) return 'process_improvement';
+  return 'best_practice';
+}
+
+/**
  * POST /api/brain/learnings-received
  *
  * LEARNINGS 路由入口：dev workflow 将 LEARNINGS.md 提取内容发送到此处。
  * 丘脑分拣：
  *   - issues_found（已知 bug）→ 创建 fix task（任务线）
  *   - next_steps_suggested（经验/预防措施）→ 写 learnings 表（成长线 → 反刍 → NotebookLM）
+ *
+ * v2: INSERT 包含 learning_type（自动分类）、source_branch、source_pr、repo
  */
 router.post('/learnings-received', async (req, res) => {
   try {
@@ -803,6 +827,7 @@ router.post('/learnings-received', async (req, res) => {
       branch_name,
       pr_number,
       task_id,
+      repo,
     } = req.body;
 
     const results = { tasks_created: [], learnings_inserted: [] };
@@ -827,17 +852,20 @@ router.post('/learnings-received', async (req, res) => {
       }
     }
 
-    // 2. next_steps_suggested → 写 learnings 表（成长线）
+    // 2. next_steps_suggested → 写 learnings 表（成长线），含 learning_type 自动分类
     for (const step of next_steps_suggested) {
       if (!step || typeof step !== 'string') continue;
       try {
         const title = step.slice(0, 120);
+        const learningType = classifyLearningType(step);
         const { rows } = await pool.query(
           `INSERT INTO learnings
-             (title, category, content, trigger_source, trigger_event, digested)
-           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false)
+             (title, category, content, trigger_source, trigger_event,
+              learning_type, source_branch, source_pr, repo)
+           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received',
+                   $3, $4, $5, $6)
            RETURNING id`,
-          [title, step]
+          [title, step, learningType, branch_name || null, pr_number ? String(pr_number) : null, repo || null]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
