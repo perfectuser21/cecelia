@@ -13,8 +13,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # 全局互斥：同时只有 1 组 L4 在 Mac 上运行（避免 PostgreSQL 端口冲突）
-  group: l4-runtime-mac
+  # main push: 全局互斥（cancel-in-progress=true，同时只有 1 个 main L4）
+  # PR 事件: 每 PR 独立组（不被 main push 取消）
+  group: ${{ github.event_name == 'push' && 'l4-runtime-mac-main' || format('l4-runtime-mac-pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
