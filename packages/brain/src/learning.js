@@ -16,6 +16,7 @@ import { generateEmbedding } from './openai-client.js';
 import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
+import { scoreLearning } from './learning-quality-scorer.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -78,9 +79,10 @@ export async function recordLearning(analysis) {
     }
 
     const summary = generateL0Summary(`${title} ${content}`);
+    const { score: qualityScore, source_type: sourceType } = scoreLearning(content);
     const result = await pool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8)
+      INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary, quality_score)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1, true, $8, $9)
       RETURNING *
     `, [
       title,
@@ -88,9 +90,10 @@ export async function recordLearning(analysis) {
       triggerEvent,
       content,
       JSON.stringify(strategyAdjustments),
-      JSON.stringify({ task_id, confidence: analysis.confidence }),
+      JSON.stringify({ task_id, confidence: analysis.confidence, source_type: sourceType }),
       contentHash,
       summary,
+      qualityScore,
     ]);
 
     const learning = result.rows[0];
@@ -652,9 +655,10 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
     if (existing.rows.length > 0) return;
 
     const summary = generateL0Summary(`${parsed.title} ${parsed.content}`);
+    const { score: qualityScore, source_type: sourceType } = scoreLearning(parsed.content);
     await dbPool.query(`
-      INSERT INTO learnings (title, content, summary, category, trigger_event, content_hash, version, is_latest, digested)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+      INSERT INTO learnings (title, content, summary, category, trigger_event, content_hash, version, is_latest, digested, quality_score)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7)
     `, [
       parsed.title,
       parsed.content,
@@ -662,7 +666,9 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
       parsed.category || 'conversation_insight',
       'conversation',
       contentHash,
+      qualityScore,
     ]);
+    console.log(`[learning] conversation learning quality_score=${qualityScore} source_type=${sourceType}`);
 
     console.log(`[learning] conversation learning extracted: ${parsed.title}`);
   } catch (err) {
