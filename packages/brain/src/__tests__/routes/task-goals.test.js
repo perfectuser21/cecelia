@@ -119,4 +119,121 @@ describe('task-goals routes', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe('GET /goals/audit', () => {
+    it('returns audit list with stated vs actual progress', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr1',
+            title: 'self-model KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            initiative_total: '18',
+            initiative_done: '5',
+          },
+          {
+            id: 'kr2',
+            title: 'org KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            initiative_total: '0',
+            initiative_done: '0',
+          },
+        ],
+      });
+
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(2);
+
+      const kr1 = res.body[0];
+      expect(kr1.id).toBe('kr1');
+      expect(kr1.stated_progress).toBe(100);
+      expect(kr1.actual_progress).toBe(28); // Math.round(5/18*100)
+      expect(kr1.gap).toBe(72);
+      expect(kr1.initiative_total).toBe(18);
+      expect(kr1.initiative_done).toBe(5);
+
+      // 无 initiative 的 KR，actual_progress 为 null
+      const kr2 = res.body[1];
+      expect(kr2.actual_progress).toBeNull();
+      expect(kr2.gap).toBeNull();
+    });
+
+    it('returns 500 on db error', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('db error'));
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /goals/audit/apply', () => {
+    it('applies corrections for KRs with gap > threshold and writes memory_stream', async () => {
+      // 第一次 query：获取审计数据
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr1',
+            title: 'self-model KR',
+            stated_progress: 100,
+            initiative_total: '18',
+            initiative_done: '5',
+          },
+          {
+            id: 'kr2',
+            title: 'small gap KR',
+            stated_progress: 80,
+            initiative_total: '10',
+            initiative_done: '7',
+          },
+        ],
+      });
+      // 第二次 query：UPDATE kr1
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      // 第三次 query：INSERT memory_stream
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app).post('/goals/audit/apply');
+      expect(res.status).toBe(200);
+      expect(res.body.applied).toBe(1); // 只有 kr1 gap=72 > 20
+      expect(res.body.corrections[0].id).toBe('kr1');
+      expect(res.body.corrections[0].old_progress).toBe(100);
+      expect(res.body.corrections[0].new_progress).toBe(28);
+
+      // 确认写入 memory_stream
+      const memCall = mockPool.query.mock.calls[2];
+      expect(memCall[0]).toContain('INSERT INTO memory_stream');
+      expect(memCall[0]).toContain("source_type");
+      const payload = JSON.parse(memCall[1][0]);
+      expect(payload.event).toBe('kr_progress_correction');
+      expect(payload.corrections).toHaveLength(1);
+    });
+
+    it('returns empty result when no corrections needed', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr1',
+            title: 'accurate KR',
+            stated_progress: 70,
+            initiative_total: '10',
+            initiative_done: '8',
+          },
+        ],
+      });
+
+      const res = await request(app).post('/goals/audit/apply');
+      expect(res.status).toBe(200);
+      expect(res.body.applied).toBe(0);
+    });
+
+    it('returns 500 on db error', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('db error'));
+      const res = await request(app).post('/goals/audit/apply');
+      expect(res.status).toBe(500);
+    });
+  });
 });
