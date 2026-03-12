@@ -1,5 +1,39 @@
 # Cecelia Core Learnings
 
+### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #901）
+
+**背景**：PR #822 暴露了两类测试陷阱（mockImplementation 条件顺序 + clearAllMocks 泄漏），需要建立扫描工具摸清存量规模。
+
+### 扫描发现（基线数据，2026-03-12）
+
+| 风险类型 | 风险文件数 | 总条目数 |
+|----------|-----------|---------|
+| mockImplementation + includes（≥2条件） | 35 个 | 93 个 block |
+| 条件顺序陷阱（宽泛条件在具体条件之前） | 1 个 | 待修复 |
+| clearAllMocks-in-beforeEach（泄漏 implementation） | 164 个 | 225 处 |
+| 风险文件总数 | **177** 个 | - |
+
+### 两类核心陷阱
+
+1. **mockImplementation + includes 条件顺序**：同一 block 内多个 `.includes()` 判断，若宽泛条件（如 `'slot'`）在具体条件（如 `'slot-3/info.json'`）之前，短路逻辑导致具体条件永远命中不到。修复：将更具体（更长）的条件放前面。
+
+2. **clearAllMocks vs resetAllMocks**：`vi.clearAllMocks()` 只清 call history，不清 `mockReturnValue`/`mockImplementation`。前一测试的 spy 实现会泄漏到下一测试，导致偶发性测试污染。修复：`beforeEach` 中改用 `vi.resetAllMocks()`。
+
+### 使用脚本
+
+```bash
+# 人类可读摘要
+node packages/brain/scripts/scan-mock-health.mjs
+
+# JSON 格式（供 CI/工具链消费）
+node packages/brain/scripts/scan-mock-health.mjs --json
+
+# 详细输出（含每个条件的行号）
+node packages/brain/scripts/scan-mock-health.mjs --verbose
+```
+
+---
+
 ### [2026-03-12] GitHub Actions 自托管 Runner 并行部署 — bin 目录不能用 symlink（PR #875）
 
 **背景**：HK VPS 原有 1 个 cecelia runner，L1 的 8 个并行 job 全部串行排队（~32min）。需要在 HK VPS 部署 8 个并行 runner，同时节省磁盘（每个 runner 目录约 1.5GB）。
