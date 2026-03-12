@@ -6,6 +6,11 @@
  * - quota cooling: 更通用的冷却窗口，可由其他信号触发
  *
  * 冷却期内 dispatchNextTask() 会立即返回 {skipped: true, reason: 'quota_cooling'}
+ *
+ * 持久化层（migration 152）：
+ * - brain_state 表存储 global_quota_cooldown_until TIMESTAMPTZ
+ * - setGlobalQuotaCooldown(pool, durationMs) 同步写内存 + 异步写 DB
+ * - loadQuotaCoolingFromDb(pool) 在 Brain 启动时从 DB 恢复状态
  */
 
 /** @type {{ until: string, reason: string, setAt: string } | null} */
@@ -66,9 +71,79 @@ function getQuotaCoolingState() {
   return { active: true, ..._quotaCoolingState };
 }
 
+// ============================================================
+// DB 持久化层（migration 152: brain_state singleton）
+// ============================================================
+
+/**
+ * 设置全局 quota 冷却（持久化到 DB + 更新内存）
+ *
+ * @param {import('pg').Pool} pool - PostgreSQL pool
+ * @param {number} durationMs - 冷却时长（毫秒）
+ * @param {string} [reason] - 冷却原因
+ * @returns {Promise<void>}
+ */
+async function setGlobalQuotaCooldown(pool, durationMs, reason = 'quota_cooling') {
+  const until = new Date(Date.now() + durationMs).toISOString();
+
+  // 1. 立即更新内存状态（保持 isGlobalQuotaCooling() 同步可用）
+  setQuotaCooling(until, reason);
+
+  // 2. 异步持久化到 DB
+  try {
+    await pool.query(
+      `UPDATE brain_state
+          SET global_quota_cooldown_until = $1,
+              updated_at = NOW()
+        WHERE id = 'singleton'`,
+      [until],
+    );
+  } catch (err) {
+    console.error(`[quota-cooling] setGlobalQuotaCooldown DB write failed: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * 从 DB 加载 quota 冷却状态（Brain 启动时调用，恢复重启前的冷却窗口）
+ *
+ * @param {import('pg').Pool} pool - PostgreSQL pool
+ * @returns {Promise<void>}
+ */
+async function loadQuotaCoolingFromDb(pool) {
+  try {
+    const result = await pool.query(
+      `SELECT global_quota_cooldown_until
+         FROM brain_state
+        WHERE id = 'singleton'`,
+    );
+    const row = result.rows[0];
+    if (!row) return;
+
+    const until = row.global_quota_cooldown_until;
+    if (!until) return;
+
+    const untilDate = new Date(until);
+    if (untilDate <= new Date()) {
+      // 冷却已过期，无需恢复
+      console.log('[quota-cooling] loadQuotaCoolingFromDb: cooldown expired, skipping restore');
+      return;
+    }
+
+    // 恢复内存状态
+    setQuotaCooling(untilDate.toISOString(), 'quota_cooling_restored');
+    console.log(`[quota-cooling] loadQuotaCoolingFromDb: restored cooldown until ${untilDate.toISOString()}`);
+  } catch (err) {
+    // 非致命：DB 读取失败不阻断启动
+    console.warn(`[quota-cooling] loadQuotaCoolingFromDb failed (non-fatal): ${err.message}`);
+  }
+}
+
 export {
   setQuotaCooling,
   clearQuotaCooling,
   isGlobalQuotaCooling,
   getQuotaCoolingState,
+  setGlobalQuotaCooldown,
+  loadQuotaCoolingFromDb,
 };
