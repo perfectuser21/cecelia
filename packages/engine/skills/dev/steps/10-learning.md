@@ -195,6 +195,14 @@ fi
    **两条路径**：
    - `issues_found`（CI/测试失败记录）→ 创建 **fix task**（任务线，不让 bug 跑掉）
    - `next_steps_suggested`（预防措施/经验）→ 写 **learnings 表**（成长线 → 反刍 → NotebookLM 持久化）
+     - `learning_type`：由 Brain 自动分类（关键词启发式，无需手动填写）
+       - `trap`：陷阱/坑/避免类（匹配"陷阱"、"坑"、"避免"等关键词）
+       - `failure_pattern`：失败模式（匹配"失败"、"崩溃"、"error"等）
+       - `architecture_decision`：架构决策（匹配"架构"、"设计决策"等）
+       - `process_improvement`：流程改进（匹配"流程"、"workflow"、"预防措施"等）
+       - `best_practice`：最佳实践（默认分类）
+     - `source_branch`：来源分支（取自 `branch_name` 参数）
+     - `source_pr`：来源 PR 编号（取自 `pr_number` 参数）
 
    **降级策略**：Brain 不可用时跳过（`|| true`），不阻塞流程。
 

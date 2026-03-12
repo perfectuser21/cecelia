@@ -18,6 +18,7 @@
 version: "3.39.0"
 updated: "2026-03-11"
 changelog:
+  - "3.40.0: v12.54.0 - /dev Step 10 分类写入 learnings DB：10-learning.md 新增 learning_type 自动分类说明（5 种类型：trap/failure_pattern/architecture_decision/process_improvement/best_practice）；Brain routes.js 新增 classifyLearningType() 函数 + learnings-received INSERT 写入 learning_type/source_branch/source_pr/repo 字段（Migration 151 已就绪）"
   - "3.39.0: v12.53.0 - /dev Step 6.5 强制 Simplify 子步骤：06-code.md 在\"完成后\"章节前新增 Step 6.5（内联，不调用外部 skill）；每次写完代码必须扫描 git diff 改动文件，清理 4 类问题：被替代旧代码、重复逻辑、矛盾注释、无用 import；有完成标准检查清单，不做完不能进 Step 7"
   - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"
   - "3.37.0: v12.51.0 - Per-Branch Learning 文件——消除并行冲突：check-learning.sh v2 检查 docs/learnings/<branch>.md（向后兼容旧 docs/LEARNINGS.md）；10-learning.md 指引写 per-branch 文件；fire-learnings-event.sh/extract-learnings.sh 支持 per-branch 路径"

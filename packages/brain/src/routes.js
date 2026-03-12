@@ -98,6 +98,19 @@ import { verifyWebhookSignature, extractPrInfo, handlePrMerged } from './pr-call
 const router = Router();
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
 
+/**
+ * 关键词启发式分类 Learning 类型（无需 LLM 调用）
+ * 5 种类型：trap / architecture_decision / process_improvement / failure_pattern / best_practice
+ */
+function classifyLearningType(text) {
+  const t = (text || '').toLowerCase();
+  if (/(陷阱|坑|避免|trap|gotcha|pitfall|watch.?out|注意.*会|不能.*直接|不要.*用)/.test(t)) return 'trap';
+  if (/(失败|ci.?失败|测试失败|崩溃|报错|error|failure|failed|exception|断线|死循环|regression)/.test(t)) return 'failure_pattern';
+  if (/(架构|设计决策|design.*decision|architecture|为什么.*选|选型|重构|模块.*划分|边界)/.test(t)) return 'architecture_decision';
+  if (/(流程|process|workflow|步骤|step|下次|预防措施|checklist|规范|标准化|自动化|工具链)/.test(t)) return 'process_improvement';
+  return 'best_practice';
+}
+
 // 秋米 /decomp skill 内容（模块启动时加载一次，注入到 autumnrice/chat system prompt）
 // 路径：容器内 volume 挂载路径与宿主机一致
 let _decompSkillContent = '';
@@ -828,16 +841,22 @@ router.post('/learnings-received', async (req, res) => {
     }
 
     // 2. next_steps_suggested → 写 learnings 表（成长线）
+    const sourceBranch = branch_name || null;
+    const sourcePr = pr_number ? String(pr_number) : null;
+    const repo = 'cecelia';
     for (const step of next_steps_suggested) {
       if (!step || typeof step !== 'string') continue;
       try {
         const title = step.slice(0, 120);
+        const learningType = classifyLearningType(step);
         const { rows } = await pool.query(
           `INSERT INTO learnings
-             (title, category, content, trigger_source, trigger_event, digested)
-           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false)
+             (title, category, content, trigger_source, trigger_event, digested,
+              learning_type, source_branch, source_pr, repo)
+           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
+                   $3, $4, $5, $6)
            RETURNING id`,
-          [title, step]
+          [title, step, learningType, sourceBranch, sourcePr, repo]
         );
         if (rows[0]?.id) {
           results.learnings_inserted.push(rows[0].id);
