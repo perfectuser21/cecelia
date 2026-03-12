@@ -286,3 +286,119 @@ describe('POST /api/brain/learnings-received', () => {
     expect(response.body.learnings_inserted).toBe(1);
   });
 });
+
+// ── migration 151: source_branch / source_pr / repo 字段测试 ──────────
+
+describe('learnings-received: migration 151 — 来源追踪字段', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('INSERT 时应包含 source_branch 字段（来自 branch_name）', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'learning-src-1' }] }) // learnings INSERT
+      .mockResolvedValueOnce({ rows: [] }); // cecelia_events
+
+    const app = express();
+    app.use(express.json());
+
+    app.post('/api/brain/learnings-received', async (req, res) => {
+      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
+      const results = { tasks_created: [], learnings_inserted: [] };
+
+      for (const step of next_steps_suggested) {
+        if (!step || typeof step !== 'string') continue;
+        const { rows } = await mockQuery(
+          `INSERT INTO learnings
+             (title, category, content, trigger_source, trigger_event, digested,
+              source_branch, source_pr, repo)
+           VALUES ($1, 'dev_experience', $2, 'dev_workflow', 'learnings_received', false,
+                   $3, $4, $5)
+           RETURNING id`,
+          [step.slice(0, 120), step, branch_name || null, pr_number ? String(pr_number) : null, repo]
+        );
+        if (rows[0]?.id) results.learnings_inserted.push(rows[0].id);
+      }
+      await mockQuery('INSERT INTO cecelia_events...', []);
+      res.json({ success: true, tasks_created: 0, learnings_inserted: results.learnings_inserted.length,
+        task_ids: [], learning_ids: results.learnings_inserted });
+    });
+
+    await request(app)
+      .post('/api/brain/learnings-received')
+      .send({
+        issues_found: [],
+        next_steps_suggested: ['写 migration 前先 fetch main 确认最大号'],
+        branch_name: 'cp-03121915-step10-learning-db',
+        pr_number: '892',
+        repo: 'cecelia',
+      });
+
+    // 验证 INSERT 时传入了 source_branch
+    const insertCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('source_branch'));
+    expect(insertCall).toBeTruthy();
+    const params = insertCall[1];
+    expect(params[2]).toBe('cp-03121915-step10-learning-db'); // source_branch ($3)
+    expect(params[3]).toBe('892');                            // source_pr ($4)
+    expect(params[4]).toBe('cecelia');                       // repo ($5)
+  });
+
+  it('branch_name 为空时 source_branch 为 null', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'learning-src-2' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = express();
+    app.use(express.json());
+
+    app.post('/api/brain/learnings-received', async (req, res) => {
+      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
+      for (const step of next_steps_suggested) {
+        if (!step) continue;
+        await mockQuery(
+          `INSERT INTO learnings (title, category, content, trigger_source, trigger_event, digested, source_branch, source_pr, repo) VALUES ($1,'dev_experience',$2,'dev_workflow','learnings_received',false,$3,$4,$5) RETURNING id`,
+          [step.slice(0, 120), step, branch_name || null, pr_number ? String(pr_number) : null, repo]
+        );
+      }
+      await mockQuery('INSERT INTO cecelia_events...', []);
+      res.json({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: [] });
+    });
+
+    await request(app)
+      .post('/api/brain/learnings-received')
+      .send({ next_steps_suggested: ['测试预防措施'] });
+
+    const insertCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('source_branch'));
+    expect(insertCall).toBeTruthy();
+    expect(insertCall[1][2]).toBeNull(); // source_branch null
+    expect(insertCall[1][3]).toBeNull(); // source_pr null
+  });
+
+  it('repo 字段默认为 cecelia', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'lr-3' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const app = express();
+    app.use(express.json());
+
+    app.post('/api/brain/learnings-received', async (req, res) => {
+      const { next_steps_suggested = [], branch_name, pr_number, repo = 'cecelia' } = req.body;
+      for (const step of next_steps_suggested) {
+        if (!step) continue;
+        await mockQuery('INSERT INTO learnings (...source_branch, source_pr, repo) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+          [step.slice(0, 120), step, branch_name || null, pr_number || null, repo]);
+      }
+      await mockQuery('events', []);
+      res.json({ success: true, tasks_created: 0, learnings_inserted: 1, task_ids: [], learning_ids: [] });
+    });
+
+    await request(app)
+      .post('/api/brain/learnings-received')
+      .send({ next_steps_suggested: ['某项预防措施'], branch_name: 'cp-test' });
+
+    // repo 默认值为 'cecelia'（不传 repo 时）
+    const insertCall = mockQuery.mock.calls[0];
+    expect(insertCall[1][4]).toBe('cecelia');
+  });
+});

@@ -182,16 +182,27 @@ jobs:
         run: |
           YQ_VERSION="v4.44.3"
           YQ_BINARY="yq_linux_amd64"
+          YQ_INSTALL_DIR="${HOME}/.local/bin"
+          mkdir -p "$YQ_INSTALL_DIR"
 
-          gh release download "$YQ_VERSION" \
-            --repo mikefarah/yq \
-            --pattern "$YQ_BINARY" \
-            --dir /tmp
+          # 跳过已安装的正确版本
+          if command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -q "${YQ_VERSION}"; then
+            echo "yq ${YQ_VERSION} already installed, skipping"
+            yq --version
+          else
+            gh release download "$YQ_VERSION" \
+              --repo mikefarah/yq \
+              --pattern "$YQ_BINARY" \
+              --dir /tmp \
+              --clobber
 
-          sudo mv "/tmp/${YQ_BINARY}" /usr/local/bin/yq
-          sudo chmod +x /usr/local/bin/yq
-          echo "yq ${YQ_VERSION} installed"
-          yq --version
+            mv "/tmp/${YQ_BINARY}" "${YQ_INSTALL_DIR}/yq"
+            chmod +x "${YQ_INSTALL_DIR}/yq"
+            export PATH="${YQ_INSTALL_DIR}:$PATH"
+            echo "${YQ_INSTALL_DIR}" >> "$GITHUB_PATH"
+            echo "yq ${YQ_VERSION} installed to ${YQ_INSTALL_DIR}"
+            "${YQ_INSTALL_DIR}/yq" --version
+          fi
 
       - name: Generate path views from registry
         working-directory: packages/engine

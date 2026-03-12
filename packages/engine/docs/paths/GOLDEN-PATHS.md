@@ -406,6 +406,22 @@ check-changed-coverage.cjs 检查三个门禁 →
 
 ---
 
+## GP-026: fire-learnings-event.sh 来源追踪 (S9)
+
+**Feature**: S9 - fire-learnings-event.sh 来源追踪
+**Priority**: P1
+
+### Golden Path
+
+```
+/dev PR 合并 → Step 10 → fire-learnings-event.sh →
+POST /api/brain/learnings-received →
+learnings 表写入 source_branch/source_pr/repo →
+Haiku 异步分类 learning_type
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
