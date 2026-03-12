@@ -39,6 +39,7 @@ import { initNarrativeTimer } from './src/cognitive-core.js';
 import { initWebSocketServer, shutdownWebSocketServer } from './src/websocket.js';
 import { loadActiveProfile } from './src/model-profile.js';
 import { loadSpendingCapsFromDB } from './src/account-usage.js';
+import { loadQuotaCoolingFromDb } from './src/quota-cooling.js';
 import { WebSocketServer } from 'ws';
 import { handleRealtimeWebSocket } from './src/orchestrator-realtime.js';
 import { handleChat } from './src/orchestrator-chat.js';
@@ -195,6 +196,9 @@ try {
 
 // Restore spending cap state from DB (survives Brain restarts)
 await loadSpendingCapsFromDB();
+
+// Restore global quota cooling state from DB (survives Brain restarts)
+await loadQuotaCoolingFromDb(pool);
 
 // Realtime WebSocket server (noServer mode, manually handle upgrade)
 const realtimeWss = new WebSocketServer({ noServer: true });
