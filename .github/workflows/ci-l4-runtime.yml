@@ -13,8 +13,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # 全局互斥：同时只有 1 组 L4 在 Mac 上运行（避免 PostgreSQL 端口冲突）
-  group: l4-runtime-mac
+  # main push: 全局互斥（cancel-in-progress=true，同时只有 1 个 main L4）
+  # PR 事件: 每 PR 独立组（不被 main push 取消）
+  group: ${{ github.event_name == 'push' && 'l4-runtime-mac-main' || format('l4-runtime-mac-pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
@@ -92,30 +93,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Homebrew packages
-        id: cache-brew
+      - name: Find PostgreSQL binaries
         run: |
-          if brew list postgresql@17 &>/dev/null && brew list pgvector &>/dev/null; then
-            echo "cache-hit=true" >> $GITHUB_OUTPUT
-          else
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
+          set +e  # 不因 pg 路径不存在而中止
+          # Source profile to pick up brew/pg paths set by user
+          source ~/.zprofile 2>/dev/null; source ~/.bash_profile 2>/dev/null
+          PG_BIN=""
+          # Check common macOS install locations (brew ARM64, brew Intel, Postgres.app)
+          for candidate in \
+            /opt/homebrew/opt/postgresql@17/bin \
+            /opt/homebrew/opt/postgresql@16/bin \
+            /opt/homebrew/opt/postgresql@15/bin \
+            /usr/local/opt/postgresql@17/bin \
+            /usr/local/opt/postgresql/bin \
+            /Applications/Postgres.app/Contents/Versions/latest/bin \
+            /usr/local/bin \
+            /usr/bin; do
+            if [ -x "$candidate/pg_ctl" ]; then
+              PG_BIN="$candidate"
+              echo "Found PostgreSQL binaries at: $PG_BIN"
+              break
+            fi
+          done
+          if [ -z "$PG_BIN" ]; then
+            # Last resort: search PATH
+            PG_CTL_PATH=$(command -v pg_ctl 2>/dev/null)
+            if [ -n "$PG_CTL_PATH" ]; then
+              PG_BIN=$(dirname "$PG_CTL_PATH")
+              echo "Found pg_ctl in PATH: $PG_BIN"
+            else
+              echo "WARNING: PostgreSQL binaries not found — pg_isready check will determine if PG is running"
+            fi
           fi
-
-      - name: Install Homebrew packages (if not cached)
-        if: steps.cache-brew.outputs.cache-hit != 'true'
-        run: |
-          brew install postgresql@17
-          brew install pgvector
-
-      - name: Link Homebrew packages (if cached)
-        if: steps.cache-brew.outputs.cache-hit == 'true'
-        run: |
-          brew link postgresql@17 --force 2>/dev/null || true
-          brew link pgvector --force 2>/dev/null || true
+          echo "PG_BIN=${PG_BIN}" >> $GITHUB_ENV
+          if [ -n "$PG_BIN" ]; then
+            echo "$PG_BIN" >> $GITHUB_PATH
+          fi
 
       - name: Set up PostgreSQL (port ${{ matrix.db_port }})
         run: |
-          export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+          # PG_BIN was added to GITHUB_PATH in previous step
           DB_PORT="${{ matrix.db_port }}"
           PG_DATA="${{ matrix.pg_data }}"
           echo "PostgreSQL port: $DB_PORT, data dir: $PG_DATA"

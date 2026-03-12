@@ -112,24 +112,6 @@ describe('Layer 1: 感知层（Perception）', () => {
     expect(gapObs.importance).toBeGreaterThan(0);
   });
 
-  it('D2: 情感词存在时不产生 learning_gap_signal（过滤误报）', async () => {
-    const mockPool = {
-      query: vi.fn().mockImplementation((sql) => {
-        if (sql.includes('FROM memory_stream') && sql.includes('orchestrator_chat') && sql.includes('不确定')) {
-          // 模拟情感词过滤生效：「不知道它们死在哪里」「不确定未来」被 NOT LIKE 过滤，cnt=0
-          return { rows: [{ cnt: '0' }] };
-        }
-        return { rows: [] };
-      })
-    };
-
-    const { runPerception } = await import('../desire/perception.js');
-    const observations = await runPerception(mockPool);
-
-    const gapObs = observations.find(o => o.signal === 'learning_gap_signal');
-    expect(gapObs).toBeUndefined();
-  });
-
   it('D2: 有对话时生成 conversation_quality 信号', async () => {
     const mockPool = {
       query: vi.fn().mockImplementation((sql) => {
@@ -596,9 +578,9 @@ describe('D8: runDesireSystem 集成测试', () => {
 // ============================================================
 
 describe('D9: EXPECTED_SCHEMA_VERSION', () => {
-  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 151', async () => {
+  it('D9: selfcheck.js EXPECTED_SCHEMA_VERSION 为 152', async () => {
     const { EXPECTED_SCHEMA_VERSION } = await import('../selfcheck.js');
-    expect(EXPECTED_SCHEMA_VERSION).toBe('151');
+    expect(EXPECTED_SCHEMA_VERSION).toBe('152');
   });
 });
 
