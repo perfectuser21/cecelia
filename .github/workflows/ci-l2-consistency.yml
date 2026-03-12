@@ -105,7 +105,7 @@ jobs:
 
       - name: Check contract drift (module boundary protection)
         run: |
-          npm install --no-save js-yaml
+          npm_config_cache=/tmp/npm-cache-$$ npm install --no-save js-yaml
           node scripts/devgate/check-contract-drift.mjs --base=origin/main
 
   # ─── Engine L2: Version / Contract Drift / Impact ─────────────────────
