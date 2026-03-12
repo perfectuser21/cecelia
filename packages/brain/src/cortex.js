@@ -31,6 +31,7 @@ import {
 } from './cortex-quality.js';
 import { validatePolicyJson } from './policy-validator.js';
 import { recordFailure } from './circuit-breaker.js';
+import { checkAndCreateTask } from './insight-action-bridge.js';
 
 // ============================================================
 // Cortex Prompt
@@ -769,9 +770,10 @@ async function recordLearnings(learnings, event) {
       }
 
       const summary = generateL0Summary(`${title} ${content}`);
-      await pool.query(`
+      const insertResult = await pool.query(`
         INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
         VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6)
+        RETURNING id
       `, [
         title,
         triggerEvent,
@@ -781,6 +783,16 @@ async function recordLearnings(learnings, event) {
         summary,
       ]);
       recorded++;
+
+      // fire-and-forget: 自动检测是否需要创建修复 task
+      const learningId = insertResult.rows[0]?.id;
+      if (learningId) {
+        setImmediate(() => {
+          checkAndCreateTask(learningId, content, title)
+            .then(r => console.log(`[cortex] insight-action-bridge: learning=${learningId} created=${r.created} reason=${r.reason || r.task_id}`))
+            .catch(err => console.warn(`[cortex] insight-action-bridge failed (non-fatal): ${err.message}`));
+        });
+      }
     } catch (err) {
       console.error('[cortex] Failed to record learning:', err.message);
     }
