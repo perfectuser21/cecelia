@@ -8,5 +8,7 @@ ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_location_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_location_check
   CHECK (location = ANY (ARRAY['us'::text, 'hk'::text, 'xian'::text]));
 
--- 更新 schema_migrations 版本记录
-INSERT INTO schema_migrations (version) VALUES (148) ON CONFLICT DO NOTHING;
+-- 记录 migration 版本
+INSERT INTO schema_version (version, description, applied_at)
+VALUES ('148', 'tasks.location CHECK 添加 xian 节点（西安 Codex Bridge）', NOW())
+ON CONFLICT (version) DO NOTHING;
