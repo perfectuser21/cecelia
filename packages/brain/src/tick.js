@@ -57,6 +57,7 @@ const ZOMBIE_CLEANUP_INTERVAL_MS = parseInt(process.env.CECELIA_ZOMBIE_CLEANUP_I
 // 恢复流控：每次 tick 批量释放上限，防止瞬间释放大量任务导致系统过载
 const UNBLOCK_BATCH_LIMIT = 5;      // blocked 任务每 tick 最多释放 5 个
 const QUARANTINE_RELEASE_LIMIT = 2; // quarantine 任务每 tick 最多释放 2 个
+const MAX_REQUEUE_PER_TICK = 2;     // quota_exhausted 任务每 tick 最多梯度 requeue 数量（与 Burst Limiter 协调）
 const RECOVERY_DISPATCH_CAP = 0.5;  // 自愈恢复期间派发速率上限（50%）
 const MAX_NEW_DISPATCHES_PER_TICK = 2; // burst limiter：单次 tick 最多新派发 N 个，防队列积压后雪崩
 
@@ -2105,17 +2106,28 @@ async function executeTick() {
 
   // Note: Auto OKR decomposition now handled by decomposition-checker.js (0.7)
 
-  // 6.5. quota_exhausted requeue — billing pause 未激活时，将 quota_exhausted 任务重新入队
-  // 逻辑：pause 激活期间任务留在 quota_exhausted；pause 过期后下一个 tick 自动 requeue
+  // 6.5. quota_exhausted requeue — billing pause 未激活时，梯度释放 quota_exhausted 任务
+  // 逻辑：pause 激活期间任务留在 quota_exhausted；pause 过期后每 tick 最多释放 MAX_REQUEUE_PER_TICK 个
+  // 排序：P0 优先（priority ASC），同优先级按 created_at ASC（先进先出）
   if (!getBillingPause()?.active) {
     try {
       const requeueResult = await pool.query(`
         UPDATE tasks SET status = 'queued', started_at = NULL, quota_exhausted_at = NULL
-        WHERE status = 'quota_exhausted'
+        WHERE id IN (
+          SELECT id FROM tasks
+          WHERE status = 'quota_exhausted'
+          ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END ASC, created_at ASC
+          LIMIT $1
+        )
         RETURNING id, title
-      `);
+      `, [MAX_REQUEUE_PER_TICK]);
       if (requeueResult.rowCount > 0) {
-        console.log(`[tick] Requeued ${requeueResult.rowCount} quota_exhausted task(s) after billing pause expiry`);
+        // Count remaining quota_exhausted tasks for next tick
+        const remainingResult = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'quota_exhausted'`
+        );
+        const remaining = parseInt(remainingResult.rows[0]?.cnt || '0', 10);
+        console.log(`[tick] Requeued ${requeueResult.rowCount}/${requeueResult.rowCount + remaining} quota_exhausted task(s) (remaining=${remaining})`);
         requeueResult.rows.forEach(r => console.log(`[tick]   - ${r.id} ${r.title}`));
       }
     } catch (requeueErr) {
