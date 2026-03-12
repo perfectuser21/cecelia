@@ -94,26 +94,35 @@ jobs:
 
       - name: Find PostgreSQL binaries
         run: |
-          # Search for pg binaries in common macOS install locations (brew ARM64/Intel, Postgres.app)
-          # Also try sourcing user profile in case brew is configured there
-          source ~/.zprofile 2>/dev/null || source ~/.bash_profile 2>/dev/null || true
+          set +e  # 不因 pg 路径不存在而中止
+          # Source profile to pick up brew/pg paths set by user
+          source ~/.zprofile 2>/dev/null; source ~/.bash_profile 2>/dev/null
           PG_BIN=""
+          # Check common macOS install locations (brew ARM64, brew Intel, Postgres.app)
           for candidate in \
             /opt/homebrew/opt/postgresql@17/bin \
             /opt/homebrew/opt/postgresql@16/bin \
+            /opt/homebrew/opt/postgresql@15/bin \
             /usr/local/opt/postgresql@17/bin \
             /usr/local/opt/postgresql/bin \
-            "$(brew --prefix postgresql@17 2>/dev/null)/bin" \
-            /Applications/Postgres.app/Contents/Versions/latest/bin; do
-            if [ -x "$candidate/pg_ctl" ] 2>/dev/null; then
+            /Applications/Postgres.app/Contents/Versions/latest/bin \
+            /usr/local/bin \
+            /usr/bin; do
+            if [ -x "$candidate/pg_ctl" ]; then
               PG_BIN="$candidate"
-              echo "✅ Found PostgreSQL binaries at: $PG_BIN"
+              echo "Found PostgreSQL binaries at: $PG_BIN"
               break
             fi
           done
           if [ -z "$PG_BIN" ]; then
-            echo "⚠️  PostgreSQL binaries not found via search, will rely on system PATH"
-            PG_BIN=$(dirname "$(which pg_ctl 2>/dev/null)" 2>/dev/null || echo "")
+            # Last resort: search PATH
+            PG_CTL_PATH=$(command -v pg_ctl 2>/dev/null)
+            if [ -n "$PG_CTL_PATH" ]; then
+              PG_BIN=$(dirname "$PG_CTL_PATH")
+              echo "Found pg_ctl in PATH: $PG_BIN"
+            else
+              echo "WARNING: PostgreSQL binaries not found — pg_isready check will determine if PG is running"
+            fi
           fi
           echo "PG_BIN=${PG_BIN}" >> $GITHUB_ENV
           if [ -n "$PG_BIN" ]; then
