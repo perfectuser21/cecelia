@@ -93,7 +93,7 @@ describe('probeTaskLiveness', () => {
     expect(suspectProcesses.has('task-1')).toBe(true);
   });
 
-  it('should auto-fail task on second probe failure (double-confirm)', async () => {
+  it('should requeue task on second probe failure (double-confirm)', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n');
 
@@ -112,13 +112,21 @@ describe('probeTaskLiveness', () => {
           started_at: new Date(Date.now() - 120000).toISOString()
         }]
       })
-      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE tasks SET status = 'failed'
+      // requeueTask: SELECT payload, task_type, project_id, title FROM tasks WHERE id = $1 AND status = 'in_progress'
+      .mockResolvedValueOnce({
+        rows: [{ payload: {}, task_type: 'dev', project_id: null, title: 'Dead Task' }]
+      })
+      // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: SELECT id FROM learnings (content_hash dedup)
+      .mockResolvedValueOnce({ rows: [] });
 
     const actions = await probeTaskLiveness();
     expect(actions).toHaveLength(1);
-    expect(actions[0].action).toBe('liveness_auto_fail');
+    expect(actions[0].action).toBe('liveness_dead_requeue');
     expect(actions[0].task_id).toBe('task-2');
-    expect(suspectProcesses.has('task-2')).toBe(false); // Cleared after fail
+    expect(actions[0].requeue_result).toBeDefined();
+    expect(suspectProcesses.has('task-2')).toBe(false); // Cleared after requeue
   });
 
   it('should clear suspect status when process recovers', async () => {
@@ -184,7 +192,7 @@ describe('probeTaskLiveness', () => {
     expect(suspectProcesses.has('decomp-task-1')).toBe(false);
   });
 
-  it('should still fail decomposition task after 60min grace period expires', async () => {
+  it('should requeue decomposition task after 60min grace period expires', async () => {
     const { execSync } = await import('child_process');
     execSync.mockReturnValue('0\n'); // Process not found in ps
 
@@ -209,11 +217,18 @@ describe('probeTaskLiveness', () => {
           started_at: triggeredAt,
         }]
       })
-      .mockResolvedValueOnce({ rowCount: 1 }); // UPDATE tasks SET status = 'failed'
+      // requeueTask: SELECT payload, task_type, project_id, title WHERE status = 'in_progress'
+      .mockResolvedValueOnce({
+        rows: [{ payload: {}, task_type: 'dev', project_id: null, title: 'Initiative 拆解: 老任务' }]
+      })
+      // requeueTask: UPDATE tasks SET status = 'queued'
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // requeueTask: SELECT id FROM learnings (content_hash dedup)
+      .mockResolvedValueOnce({ rows: [] });
 
     const actions = await probeTaskLiveness();
     expect(actions).toHaveLength(1);
-    expect(actions[0].action).toBe('liveness_auto_fail');
+    expect(actions[0].action).toBe('liveness_dead_requeue');
     expect(actions[0].task_id).toBe('decomp-task-2');
   });
 });
