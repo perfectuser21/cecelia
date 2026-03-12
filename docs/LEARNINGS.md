@@ -1,8 +1,12 @@
 # Cecelia Core Learnings
 
-### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #901）
+### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
 
 **背景**：PR #822 暴露了两类测试陷阱（mockImplementation 条件顺序 + clearAllMocks 泄漏），需要建立扫描工具摸清存量规模。
+
+### 根本原因
+
+PR #822 中发现 `existsSync.mockImplementation` 里，路径条件顺序错误导致宽泛条件（`'slot-3'`）先于具体条件（`'info.json'`）命中，使具体分支永远无法到达。同时 `vi.clearAllMocks()` 只清除 call history 不清除 implementation，导致前一测试的 mock 实现泄漏到后续测试。Brain __tests__/ 目录下存在大量同类风险（35 个文件 93 个 mockImplementation block，164 个文件 225 处 clearAllMocks）。
 
 ### 扫描发现（基线数据，2026-03-12）
 
@@ -12,12 +16,6 @@
 | 条件顺序陷阱（宽泛条件在具体条件之前） | 1 个 | 待修复 |
 | clearAllMocks-in-beforeEach（泄漏 implementation） | 164 个 | 225 处 |
 | 风险文件总数 | **177** 个 | - |
-
-### 两类核心陷阱
-
-1. **mockImplementation + includes 条件顺序**：同一 block 内多个 `.includes()` 判断，若宽泛条件（如 `'slot'`）在具体条件（如 `'slot-3/info.json'`）之前，短路逻辑导致具体条件永远命中不到。修复：将更具体（更长）的条件放前面。
-
-2. **clearAllMocks vs resetAllMocks**：`vi.clearAllMocks()` 只清 call history，不清 `mockReturnValue`/`mockImplementation`。前一测试的 spy 实现会泄漏到下一测试，导致偶发性测试污染。修复：`beforeEach` 中改用 `vi.resetAllMocks()`。
 
 ### 使用脚本
 
@@ -31,6 +29,12 @@ node packages/brain/scripts/scan-mock-health.mjs --json
 # 详细输出（含每个条件的行号）
 node packages/brain/scripts/scan-mock-health.mjs --verbose
 ```
+
+### 下次预防
+
+- [ ] 新增 mockImplementation+includes block 时，用 `scan-mock-health.mjs --verbose` 确认条件顺序（具体/长条件在前）
+- [ ] beforeEach 中统一用 `vi.resetAllMocks()` 而非 `vi.clearAllMocks()`（清除 implementation 和 call history）
+- [ ] 重构现有 164 个 clearAllMocks 文件（可跟进 PR 分批修复）
 
 ---
 
