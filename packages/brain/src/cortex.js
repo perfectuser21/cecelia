@@ -31,6 +31,7 @@ import {
 } from './cortex-quality.js';
 import { validatePolicyJson } from './policy-validator.js';
 import { recordFailure } from './circuit-breaker.js';
+import { triggerInsightTask } from './insight-to-task.js';
 
 // ============================================================
 // Cortex Prompt
@@ -769,9 +770,10 @@ async function recordLearnings(learnings, event) {
       }
 
       const summary = generateL0Summary(`${title} ${content}`);
-      await pool.query(`
+      const insertResult = await pool.query(`
         INSERT INTO learnings (title, category, trigger_event, content, strategy_adjustments, metadata, content_hash, version, is_latest, summary)
         VALUES ($1, 'cortex_insight', $2, $3, '[]', $4, $5, 1, true, $6)
+        RETURNING id
       `, [
         title,
         triggerEvent,
@@ -781,6 +783,14 @@ async function recordLearnings(learnings, event) {
         summary,
       ]);
       recorded++;
+
+      // insight → task 自动闭合（fire-and-forget，不阻断主流程）
+      if (insertResult.rows.length > 0) {
+        const learningId = insertResult.rows[0].id;
+        triggerInsightTask(learningId, title, content).catch(err => {
+          console.warn(`[cortex] triggerInsightTask failed (non-fatal): ${err.message}`);
+        });
+      }
     } catch (err) {
       console.error('[cortex] Failed to record learning:', err.message);
     }
