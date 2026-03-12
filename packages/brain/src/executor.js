@@ -97,6 +97,9 @@ function getAvailableMemoryMB() {
 // HK MiniMax Executor URL (via Tailscale)
 const HK_MINIMAX_URL = process.env.HK_MINIMAX_URL || 'http://100.86.118.99:5226';
 
+// 西安 Mac mini Codex Bridge URL (via Tailscale)
+const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.86.57.69:3458';
+
 // ==================== Input Validation ====================
 
 const SAFE_ID_RE = /^[0-9a-zA-Z_-]+$/;
@@ -1647,6 +1650,66 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
 }
 
 /**
+ * Trigger 西安 Mac mini Codex Bridge for a task.
+ * Routes codex_qa (and any task with provider=codex) to the Xian Codex CLI.
+ * @param {Object} task - The task object from database
+ * @returns {Object} - { success, taskId, runId, error? }
+ */
+async function triggerCodexBridge(task) {
+  const runId = generateRunId(task.id);
+
+  try {
+    console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}`);
+
+    // Build prompt from task description/title
+    const promptContent = task.description || task.title || '请执行此任务';
+
+    const response = await fetch(`${XIAN_CODEX_BRIDGE_URL}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: task.id,
+        checkpoint_id: null,
+        prompt: promptContent,
+        task_type: task.task_type,
+        work_dir: task.payload?.repo_path,
+        timeout_ms: 10 * 60 * 1000, // 10 minutes for Codex
+      }),
+      signal: AbortSignal.timeout(15000), // 15s to accept the job
+    });
+
+    const result = await response.json();
+
+    if (!result.ok) {
+      console.log(`[executor] Codex Bridge rejected: ${result.error}`);
+      return {
+        success: false,
+        taskId: task.id,
+        error: result.error,
+        executor: 'codex-bridge',
+      };
+    }
+
+    console.log(`[executor] Codex Bridge accepted task=${task.id} account=${result.account}`);
+    return {
+      success: true,
+      taskId: task.id,
+      runId,
+      executor: 'codex-bridge',
+      account: result.account,
+    };
+  } catch (err) {
+    console.error(`[executor] Codex Bridge error: ${err.message}`);
+    return {
+      success: false,
+      taskId: task.id,
+      error: err.message,
+      executor: 'codex-bridge',
+    };
+  }
+}
+
+/**
  * Trigger HK MiniMax executor for a task
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, result?, error? }
@@ -1721,8 +1784,12 @@ async function triggerMiniMaxExecutor(task) {
  * @returns {Object} - { success, runId, taskId, error?, reason? }
  */
 async function triggerCeceliaRun(task) {
-  // Check if task should go to HK MiniMax
+  // Check if task should go to 西安 Codex Bridge
   const location = getTaskLocation(task.task_type);
+  if (location === 'xian' || task.provider === 'codex') {
+    return triggerCodexBridge(task);
+  }
+  // Check if task should go to HK MiniMax
   if (location === 'hk') {
     return triggerMiniMaxExecutor(task);
   }
@@ -2316,6 +2383,7 @@ async function recordHeartbeat(taskId, runId) {
 
 export {
   triggerCeceliaRun,
+  triggerCodexBridge,
   triggerMiniMaxExecutor,
   checkCeceliaRunAvailable,
   getTaskExecutionStatus,
@@ -2335,6 +2403,7 @@ export {
   removeActiveProcess,
   // v3 additions
   HK_MINIMAX_URL,
+  XIAN_CODEX_BRIDGE_URL,
   // v4: State drift elimination
   probeTaskLiveness,
   syncOrphanTasksOnStartup,
