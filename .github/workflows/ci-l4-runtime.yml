@@ -92,34 +92,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Homebrew packages
-        id: cache-brew
+      - name: Find PostgreSQL binaries
         run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          if brew list postgresql@17 &>/dev/null && brew list pgvector &>/dev/null; then
-            echo "cache-hit=true" >> $GITHUB_OUTPUT
-          else
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
+          # Search for pg binaries in common macOS install locations (brew ARM64/Intel, Postgres.app)
+          # Also try sourcing user profile in case brew is configured there
+          source ~/.zprofile 2>/dev/null || source ~/.bash_profile 2>/dev/null || true
+          PG_BIN=""
+          for candidate in \
+            /opt/homebrew/opt/postgresql@17/bin \
+            /opt/homebrew/opt/postgresql@16/bin \
+            /usr/local/opt/postgresql@17/bin \
+            /usr/local/opt/postgresql/bin \
+            "$(brew --prefix postgresql@17 2>/dev/null)/bin" \
+            /Applications/Postgres.app/Contents/Versions/latest/bin; do
+            if [ -x "$candidate/pg_ctl" ] 2>/dev/null; then
+              PG_BIN="$candidate"
+              echo "✅ Found PostgreSQL binaries at: $PG_BIN"
+              break
+            fi
+          done
+          if [ -z "$PG_BIN" ]; then
+            echo "⚠️  PostgreSQL binaries not found via search, will rely on system PATH"
+            PG_BIN=$(dirname "$(which pg_ctl 2>/dev/null)" 2>/dev/null || echo "")
           fi
-
-      - name: Install Homebrew packages (if not cached)
-        if: steps.cache-brew.outputs.cache-hit != 'true'
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          brew install postgresql@17
-          brew install pgvector
-
-      - name: Link Homebrew packages (if cached)
-        if: steps.cache-brew.outputs.cache-hit == 'true'
-        run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          brew link postgresql@17 --force 2>/dev/null || true
-          brew link pgvector --force 2>/dev/null || true
+          echo "PG_BIN=${PG_BIN}" >> $GITHUB_ENV
+          if [ -n "$PG_BIN" ]; then
+            echo "$PG_BIN" >> $GITHUB_PATH
+          fi
 
       - name: Set up PostgreSQL (port ${{ matrix.db_port }})
         run: |
-          export PATH="/opt/homebrew/bin:$PATH"
-          export PATH="$(/opt/homebrew/bin/brew --prefix postgresql@17)/bin:$PATH"
+          # PG_BIN was added to GITHUB_PATH in previous step
           DB_PORT="${{ matrix.db_port }}"
           PG_DATA="${{ matrix.pg_data }}"
           echo "PostgreSQL port: $DB_PORT, data dir: $PG_DATA"
