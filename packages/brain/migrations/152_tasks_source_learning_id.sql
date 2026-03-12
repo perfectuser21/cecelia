@@ -9,5 +9,5 @@ CREATE INDEX IF NOT EXISTS idx_tasks_source_learning_id
   WHERE source_learning_id IS NOT NULL;
 
 INSERT INTO schema_version (version, description, applied_at)
-VALUES ('151', 'tasks: add source_learning_id for insight-to-task traceability', NOW())
+VALUES ('152', 'tasks: add source_learning_id for insight-to-task traceability', NOW())
 ON CONFLICT (version) DO NOTHING;
