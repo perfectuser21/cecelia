@@ -279,7 +279,8 @@ export async function runPerception(pool) {
     importance: greetingImportance
   });
 
-  // 11. 知识盲点信号（Cecelia 遇到不理解的概念）
+  // 11. 知识盲点信号（Cecelia 遇到不理解的技术概念）
+  // 注意：仅统计技术性知识盲点，过滤日常情感表达（感觉/担心/未来等）
   try {
     const { rows: gapRows } = await pool.query(`
       SELECT COUNT(*) AS cnt FROM memory_stream
@@ -287,6 +288,17 @@ export async function runPerception(pool) {
         AND created_at > NOW() - INTERVAL '48 hours'
         AND (content LIKE '%不确定%' OR content LIKE '%不清楚%'
              OR content LIKE '%不知道%' OR content LIKE '%不太明白%')
+        AND content NOT LIKE '%感觉%'
+        AND content NOT LIKE '%担心%'
+        AND content NOT LIKE '%担忧%'
+        AND content NOT LIKE '%未来%'
+        AND content NOT LIKE '%将来%'
+        AND content NOT LIKE '%情感%'
+        AND content NOT LIKE '%生活%'
+        AND content NOT LIKE '%朋友%'
+        AND content NOT LIKE '%开心%'
+        AND content NOT LIKE '%难过%'
+        AND content NOT LIKE '%喜欢%'
     `);
     const gapCount = parseInt(gapRows[0]?.cnt || 0);
     if (gapCount > 0) {
