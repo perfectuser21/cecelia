@@ -13,37 +13,27 @@ task: 006e7c15-d3c1-447e-bdfc-461c518187ef
 
 ---
 
-### 陷阱1：Engine Coverage Gate 1 拦截 feat: 提交
+### 陷阱1：Engine Coverage Gate 1 拦截 feat: 提交（2026-03-12）
 
 #### 根本原因
 
-`check-changed-coverage.cjs` 门禁 1：feat PR 必须有**新增**测试文件。我们修改了已有的 `learnings-received.test.js`（MODIFIED），但没有新建测试文件（ADDED），导致门禁误判为"feat PR 无测试"。
-
-#### 修复方式
-
-将提交前缀从 `feat(brain):` 改为 `fix(brain):`，Gate 1 自动跳过。后续新增测试文件时注意用 ADDED（新建）而非仅 MODIFIED（修改），或改用 fix: 前缀。
+`check-changed-coverage.cjs` 门禁 1：feat PR 必须有**新增**（ADDED）测试文件。我们修改了已有的 `learnings-received.test.js`（MODIFIED），但没有新建测试文件，导致门禁误判为"feat PR 无测试"而失败。
 
 #### 下次预防
 
-- 改进已有测试文件时，优先使用 `fix:` 前缀而非 `feat:`
-- 若确实是新 feature，需同时新建一个独立测试文件（哪怕是专门的 integration test）
+- [ ] 改进已有测试文件时，优先使用 `fix:` 前缀而非 `feat:`，避免触发 Coverage Gate 1
+- [ ] 若确实是新 feature，需同时新建一个独立测试文件（ADDED，不是仅 MODIFIED 已有文件）
 
 ---
 
-### 陷阱2：修改 packages/engine/skills/ 必须完整走三要素
+### 陷阱2：修改 packages/engine/skills/ 必须完整走三要素（2026-03-12）
 
 #### 根本原因
 
-修改 `fire-learnings-event.sh`（在 `packages/engine/skills/`）触发了 Engine Config Audit + L2 版本检查。如果 PR title 没有 `[CONFIG]` 且 engine 版本未 bump，L1 和 L2 都会失败。
-
-#### 修复方式
-
-每次修改 `packages/engine/skills/` 或 `packages/engine/scripts/devgate/` 时，必须同时完成三要素：
-1. PR title 含 `[CONFIG]`
-2. Engine 版本 bump（6 个文件：package.json、package-lock.json(engine)、根 package-lock.json(engine条目)、VERSION、.hook-core-version、regression-contract.yaml）
-3. feature-registry.yml 添加 changelog 条目 + 运行 generate-path-views.sh
+修改 `fire-learnings-event.sh`（在 `packages/engine/skills/`）触发了 Engine Config Audit + L2 版本检查。PR title 没有 `[CONFIG]` 且 engine 版本未 bump，L1 和 L2 均失败。三要素：PR title [CONFIG]、版本 bump 6 个文件、feature-registry.yml 新条目。
 
 #### 下次预防
 
-- 凡是改 `packages/engine/` 目录下的任何文件（除文档外），立即打开内存记录确认三要素checklist
-- 尽量将 engine 脚本改动和 Brain 改动分两个 PR，避免混合触发多套 CI 规则
+- [ ] 改 `packages/engine/skills/` 任何文件时，立即确认三要素 checklist：PR title [CONFIG]、版本 bump 6 个文件、feature-registry.yml 新条目 + generate-path-views.sh
+- [ ] 尽量将 engine 脚本改动和 Brain 改动分两个 PR，避免混合触发多套 CI 规则
+- [ ] CI L2 yq install 需要 `--clobber` 防止 runner 缓存冲突（已修复 ci-l2-consistency.yml）
