@@ -492,9 +492,9 @@ describe('getValidTaskTypes', () => {
 // ============================================================
 
 describe('LOCATION_MAP 完整性', () => {
-  it('所有 value 只能是 us 或 hk', () => {
+  it('所有 value 只能是 us、hk 或 xian', () => {
     for (const [type, loc] of Object.entries(LOCATION_MAP)) {
-      expect(['us', 'hk'], `task_type=${type} location 非法`).toContain(loc);
+      expect(['us', 'hk', 'xian'], `task_type=${type} location 非法`).toContain(loc);
     }
   });
 

@@ -101,7 +101,7 @@ const LOCATION_MAP = {
   'review': 'us',     // 代码审查 → US (Sonnet + /review)
   'qa': 'us',         // QA → US (Sonnet)
   'audit': 'us',      // 审计 → US (Sonnet)
-  'codex_qa': 'us',    // Codex 免疫检查 → US (Codex CLI)
+  'codex_qa': 'xian',  // Codex 免疫检查 → 西安 Mac mini (Codex CLI via codex-bridge)
   'code_review': 'us', // 代码审查 → US (Claude + /code-review skill)
   'decomp_review': 'us', // 拆解审查 → US (Vivian, claude-haiku)
   'dept_heartbeat': 'us', // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
@@ -300,7 +300,7 @@ function isValidTaskType(taskType) {
  * @returns {boolean} - Whether location is valid
  */
 function isValidLocation(location) {
-  return ['us', 'hk'].includes(location?.toLowerCase());
+  return ['us', 'hk', 'xian'].includes(location?.toLowerCase());
 }
 
 /**
@@ -338,7 +338,7 @@ function detectRoutingFailure(routing) {
   }
 
   // Check if location is valid
-  if (location && !['us', 'hk'].includes(location.toLowerCase())) {
+  if (location && !['us', 'hk', 'xian'].includes(location.toLowerCase())) {
     return { failed: true, reason: `invalid_location:${location}` };
   }
 

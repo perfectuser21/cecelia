@@ -4,10 +4,10 @@ import { describe, it, expect } from 'vitest';
 // 通过直接引用模块测试
 
 describe('task-router codex_qa', () => {
-  it('D1: LOCATION_MAP 包含 codex_qa → us', async () => {
+  it('D1: LOCATION_MAP 包含 codex_qa → xian（西安 Codex Bridge）', async () => {
     const mod = await import('../task-router.js');
     const location = mod.getTaskLocation('codex_qa');
-    expect(location).toBe('us');
+    expect(location).toBe('xian');
   });
 
   it('D2: isValidTaskType 接受 codex_qa', async () => {
