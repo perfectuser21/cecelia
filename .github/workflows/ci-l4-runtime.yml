@@ -59,7 +59,7 @@ jobs:
     name: Brain Integration Tests (PostgreSQL + Coverage)
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: [self-hosted, macOS, ARM64, us-mac-m4]
+    runs-on: [self-hosted, macOS, ARM64, xian-mac-m1]
     timeout-minutes: 90
     permissions:
       contents: read
