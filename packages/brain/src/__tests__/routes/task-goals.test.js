@@ -119,4 +119,75 @@ describe('task-goals routes', () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe('GET /goals/audit', () => {
+    it('returns audit result with summary and goals', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr-1',
+            title: '免疫系统 KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            actual_progress: '50',
+            total_initiatives: '16',
+            completed_initiatives: '8',
+          },
+          {
+            id: 'kr-2',
+            title: 'self-model KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            actual_progress: '28',
+            total_initiatives: '18',
+            completed_initiatives: '5',
+          },
+        ],
+      });
+
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('summary');
+      expect(res.body).toHaveProperty('goals');
+      expect(res.body.goals).toHaveLength(2);
+      expect(res.body.goals[0]).toHaveProperty('stated_progress');
+      expect(res.body.goals[0]).toHaveProperty('actual_progress');
+      expect(res.body.goals[0]).toHaveProperty('discrepancy');
+      expect(res.body.goals[0].discrepancy).toBe(50); // 100 - 50
+      expect(res.body.summary.overstated).toBe(2);
+    });
+
+    it('returns 500 on db error', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('DB error'));
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty('error');
+    });
+
+    it('handles goals with no initiatives (actual_progress null)', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'kr-3',
+            title: '组织架构 KR',
+            type: 'area_okr',
+            status: 'in_progress',
+            stated_progress: 100,
+            actual_progress: null,
+            total_initiatives: '0',
+            completed_initiatives: '0',
+          },
+        ],
+      });
+
+      const res = await request(app).get('/goals/audit');
+      expect(res.status).toBe(200);
+      const goal = res.body.goals[0];
+      expect(goal.actual_progress).toBeNull();
+      expect(goal.discrepancy).toBeNull();
+      expect(res.body.summary.no_initiatives).toBe(1);
+    });
+  });
 });
