@@ -406,6 +406,7 @@ queued → in_progress → completed
 | explore | HK | 快速调研 (/explore) | - / M2.1 | 固定 minimax |
 | knowledge | US | 知识记录 (/knowledge) | Sonnet / - | 默认 anthropic |
 | codex_qa | US | Codex 免疫检查 | Codex | 固定 openai |
+| codex_dev | 西安 | Codex /dev（runner.sh + devloop-check.sh） | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
 | initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |
@@ -673,7 +674,7 @@ docker compose up -d cecelia-node-brain
 3. **区域匹配** — brain_config.region = ENV_REGION
 4. **核心表存在** — tasks, goals, projects, working_memory, cecelia_events, decision_log, daily_logs, pr_plans, cortex_analyses
 
-5. **Schema 版本** — DB 版本 >= '151'（>= 检查，向前兼容）
+5. **Schema 版本** — DB 版本 >= '152'（>= 检查，向前兼容）
 
 6. **配置指纹** — SHA-256(host:port:db:region) 一致性
 

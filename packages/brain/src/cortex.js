@@ -414,13 +414,54 @@ async function _checkOutputDedup(hash) {
 }
 
 // ============================================================
+// Cortex 超时原因分类器
+// ============================================================
+
+/**
+ * 分类 LLM 调用错误的根本原因
+ * @param {Error} error
+ * @returns {'quota_exhausted'|'prompt_too_long'|'network_timeout'|'unknown'}
+ */
+export function classifyTimeoutReason(error) {
+  const status = error.status ?? error.statusCode ?? null;
+  const message = (error.message || '').toLowerCase();
+
+  // HTTP 429 → quota 耗尽
+  if (status === 429) {
+    return 'quota_exhausted';
+  }
+
+  // HTTP 400 + 含 token/context 关键词 → prompt 超长
+  if (status === 400 && (message.includes('token') || message.includes('context') || message.includes('length'))) {
+    return 'prompt_too_long';
+  }
+
+  // degraded 标记或 timeout 关键词 → 网络超时
+  if (error.degraded === true || message.includes('timed out') || message.includes('timeout')) {
+    return 'network_timeout';
+  }
+
+  return 'unknown';
+}
+
+// ============================================================
 // Cortex LLM 调用（通过统一 callLLM 层）
 // ============================================================
 
 /**
+ * 估算 prompt token 数（字符数 ÷ 4，无需外部 tokenizer）
+ * @param {string} text
+ * @returns {number}
+ */
+export function estimateTokens(text) {
+  return Math.ceil((text || '').length / 4);
+}
+
+/**
  * 调用皮层 LLM 进行深度分析（通过统一 callLLM 层）
+ * 返回文本响应和计时指标
  * @param {string} prompt
- * @returns {Promise<string>}
+ * @returns {Promise<{ text: string, timing: { prompt_tokens_est: number, response_ms: number, timed_out: boolean, error_type: string|null } }>}
  */
 async function callCortexLLM(prompt) {
   const cortexTimeout = parseInt(
@@ -429,8 +470,18 @@ async function callCortexLLM(prompt) {
     '300000', // 5 分钟，允许 Opus 慢响应（p99=147s）
     10
   );
-  const { text } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
-  return text;
+  const prompt_tokens_est = estimateTokens(prompt);
+  const startMs = Date.now();
+  try {
+    const { text } = await callLLM('cortex', prompt, { timeout: cortexTimeout, maxTokens: 4096 });
+    const response_ms = Date.now() - startMs;
+    return { text, timing: { prompt_tokens_est, response_ms, timed_out: false, error_type: null } };
+  } catch (err) {
+    const response_ms = Date.now() - startMs;
+    const timed_out = err.degraded === true || /timed out/i.test(err.message);
+    const error_type = timed_out ? 'timeout' : (err.code || err.constructor?.name || 'unknown');
+    throw Object.assign(err, { _timing: { prompt_tokens_est, response_ms, timed_out, error_type } });
+  }
 }
 
 // ============================================================
@@ -655,7 +706,8 @@ async function analyzeDeep(event, thalamusDecision = null) {
   const prompt = `${CORTEX_PROMPT}\n\n\`\`\`json\n${contextJson}\n\`\`\``;
 
   try {
-    const response = await callCortexLLM(prompt);
+    const { text: response, timing } = await callCortexLLM(prompt);
+    console.log(`[cortex] LLM 响应完成 prompt_tokens_est=${timing.prompt_tokens_est} response_ms=${timing.response_ms}`);
     const decision = parseCortexDecision(response);
 
     // 验证
@@ -673,8 +725,8 @@ async function analyzeDeep(event, thalamusDecision = null) {
       return createCortexFallback(event, `输出去重熔断：相同诊断已输出 ${_outputDedup.count} 次，皮层回声已阻断`);
     }
 
-    // 记录到决策日志
-    await logCortexDecision(event, decision);
+    // 记录到决策日志（含计时 metadata）
+    await logCortexDecision(event, decision, timing);
 
     // 记录 learnings
     if (decision.learnings && decision.learnings.length > 0) {
@@ -698,7 +750,22 @@ async function analyzeDeep(event, thalamusDecision = null) {
     return decision;
 
   } catch (err) {
-    console.error('[cortex] Deep analysis failed:', err.message);
+    const timeout_reason = classifyTimeoutReason(err);
+    console.error(JSON.stringify({
+      level: 'error',
+      source: 'cortex',
+      event: 'deep_analysis_failed',
+      timeout_reason,
+      http_status: err.status ?? null,
+      elapsed_ms: err.elapsed_ms ?? null,
+      message: err.message,
+    }));
+    // 记录失败计时（若 callCortexLLM 已附加 _timing）
+    if (err._timing) {
+      const t = err._timing;
+      console.log(`[cortex] LLM 调用失败 prompt_tokens_est=${t.prompt_tokens_est} response_ms=${t.response_ms} timed_out=${t.timed_out} error_type=${t.error_type}`);
+      logCortexDecision(event, null, t, err.message).catch(() => {});
+    }
     await recordLLMError('cortex', err, { event_type: event.type }, {
       http_status: err.status ?? null,
       elapsed_ms: err.elapsed_ms ?? null,
@@ -714,7 +781,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
         try {
           await pool.query(
             `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`,
-            [`Cortex timeout: ${err.message}`, event.task_id]
+            [`Cortex error [timeout_reason=${timeout_reason}]: ${err.message}`, event.task_id]
           );
         } catch { /* 非关键路径，忽略错误 */ }
       }
@@ -728,19 +795,32 @@ async function analyzeDeep(event, thalamusDecision = null) {
 // ============================================================
 
 /**
- * 记录 Cortex 决策到日志
+ * 记录 Cortex 决策到日志（含 LLM 调用计时 metadata）
+ * @param {Object} event
+ * @param {Object|null} decision - 成功时的决策对象，失败时为 null
+ * @param {Object} [timing] - { prompt_tokens_est, response_ms, timed_out, error_type }
+ * @param {string} [errorMessage] - 失败时的错误信息
  */
-async function logCortexDecision(event, decision) {
+async function logCortexDecision(event, decision, timing = null, errorMessage = null) {
   try {
+    const metadata = timing ? {
+      prompt_tokens_est: timing.prompt_tokens_est,
+      response_ms: timing.response_ms,
+      timed_out: timing.timed_out,
+      error_type: timing.error_type,
+    } : null;
+    const status = errorMessage ? 'failed' : 'pending';
+    const actionResult = decision ? { analysis: decision.analysis } : { error: errorMessage };
     await pool.query(`
-      INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO decision_log (trigger, input_summary, llm_output_json, action_result_json, status, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6)
     `, [
       'cortex',
       `Deep analysis for ${event.type}`,
       decision,
-      { analysis: decision.analysis },
-      'pending'
+      actionResult,
+      status,
+      metadata ? JSON.stringify(metadata) : null,
     ]);
   } catch (err) {
     console.error('[cortex] Failed to log decision:', err.message);

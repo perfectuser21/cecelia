@@ -268,6 +268,13 @@ changelog:
 
 ---
 
+### S10: Provider-Agnostic Engine — devloop-check.sh 单一入口
+
+1. ✅ **devloop-check.sh 未加载: stop-dev.sh fallback 到旧内联逻辑**
+2. ✅ **dry-run 模式: runner.sh 打印命令不执行**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
