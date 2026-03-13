@@ -1,6 +1,26 @@
 # Cecelia Core Learnings
 
-### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
+### [2026-03-12] Learning 聚合去重：upsertFailureLearning 模式（PR #905+）
+
+**背景**：OAuth token 过期时，每次失败任务隔离都写入 1 条 `quarantine_pattern` failure learning，导致 241 条积压中大量是重复噪音，掩盖有价值的 insight。
+
+### 根本原因
+
+`quarantine.js` 在隔离重复失败任务时直接 `INSERT INTO learnings`，不做任何去重检查。每个被隔离的任务产生一条学习记录，批量 OAuth 失败时会生成数十到数百条内容相似的记录。
+
+### 解决方案
+
+1. **Migration 152**：`learnings` 表新增 `occurrence_count INTEGER DEFAULT 1`、`error_type VARCHAR(50)`、`updated_at TIMESTAMP`。
+2. **`upsertFailureLearning()`**（`learning.js`）：写入前检查 24h 内是否存在同 `category + error_type` 的记录，若有则 `occurrence_count +1`，否则新插入。
+3. **Migration 153**：历史聚合——对 `digested=false` 的 `quarantine_pattern/failure_pattern` 按 `(category, day)` 分组，保留最新一条，其他删除。
+
+### 关键设计决策
+
+- 去重窗口选 **24h**：短于批量失败场景的间隔（OAuth 过期会持续数小时），长于正常任务间隔（确保同类失败合并）。
+- 去重 key 用 `category + error_type`（不用 title/content hash）：不同任务 title 不同，但 `error_type=auth` 是批量 OAuth 失败的共同特征。
+- `upsertFailureLearning` 单独导出：quarantine.js 和未来其他写入点都可复用，不侵入 `recordLearning`（RCA learning 走内容 hash 去重，逻辑不同）。
+
+### scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
 
 **背景**：PR #822 暴露了两类测试陷阱（mockImplementation 条件顺序 + clearAllMocks 泄漏），需要建立扫描工具摸清存量规模。
 
