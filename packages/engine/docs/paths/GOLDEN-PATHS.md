@@ -472,6 +472,22 @@ Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
 
 ---
 
+## GP-030: bash-guard.sh gh pr create title 格式验证 (bash-guard-pr-title-check)
+
+**Feature**: bash-guard-pr-title-check - bash-guard.sh gh pr create title 格式验证
+**Priority**: P1
+
+### Golden Path
+
+```
+gh pr create --title "feat: 描述" → 放行 →
+gh pr create --title "random text" → 拦截，exit 2 →
+Engine 改动 + 无 [CONFIG] → 拦截，exit 2 →
+Engine 改动 + [CONFIG] feat: → 放行
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
