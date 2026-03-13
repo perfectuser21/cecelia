@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # zenithjoy-q1-2026.sh
-# 创建 ZenithJoy 2026 Q1 OKR 种子数据
+# 创建 ZenithJoy 2026 Q1 OKR 种子数据（幂等版本）
 # 用途：解除 zenithjoy 部门派发冻结（原因：OKR=0）
-# 执行一次即可，幂等（Brain API create-goal 自身无去重，重复执行会创建重复记录）
+# 幂等保护：执行前先检查同名 Objective 是否已存在，存在则跳过创建
 #
 # 已创建记录（2026-03-13）：
 #   Objective ID: 33a45167-f12e-4972-a33a-9553626363c1
@@ -13,8 +13,28 @@
 set -e
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+OKR_TITLE="ZenithJoy 2026 Q1 - 多平台内容创作自动化"
 
-echo "🎯 创建 ZenithJoy 2026 Q1 OKR..."
+echo "🔍 检查 ZenithJoy Q1 OKR 是否已存在..."
+
+# 幂等检查：从 Brain 查询现有 goals，匹配标题
+EXISTING_OKR=$(curl -s "$BRAIN_URL/api/brain/goals" | \
+  python3 -c "
+import sys, json
+goals = json.load(sys.stdin)
+for g in goals:
+    if g.get('title') == '$OKR_TITLE':
+        print(g['id'])
+        break
+" 2>/dev/null || echo "")
+
+if [ -n "$EXISTING_OKR" ]; then
+  echo "✅ Objective 已存在，跳过创建（ID: $EXISTING_OKR）"
+  echo "   派发冻结已解除，zenithjoy 任务将在下次 tick 中继续派发。"
+  exit 0
+fi
+
+echo "🎯 未找到现有 OKR，开始创建 ZenithJoy 2026 Q1 OKR..."
 
 # Step 1: 创建 Objective
 OKR_RESP=$(curl -s -X POST "$BRAIN_URL/api/brain/action/create-goal" \
