@@ -7,9 +7,16 @@ RETURNS INTEGER AS $$
 DECLARE
   deleted_count INTEGER;
 BEGIN
-  DELETE FROM alertness_metrics
-  WHERE "timestamp" < NOW() - (retain_days || ' days')::INTERVAL;
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'alertness_metrics'
+  ) THEN
+    DELETE FROM alertness_metrics
+    WHERE "timestamp" < NOW() - (retain_days || ' days')::INTERVAL;
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+  ELSE
+    deleted_count := 0;
+  END IF;
   RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;

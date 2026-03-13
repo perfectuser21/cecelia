@@ -56,6 +56,12 @@ services:
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # Overriding with ${OPENAI_API_KEY} causes empty string when host shell has no export
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 512M
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
@@ -81,6 +87,10 @@ services:
     depends_on:
       node-brain:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     restart: unless-stopped
     logging:
       driver: "json-file"
