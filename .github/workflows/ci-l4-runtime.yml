@@ -89,11 +89,13 @@ jobs:
       ENV_REGION: us
       PGPASSWORD: cecelia_ci
 
+    defaults:
+      run:
+        # login shell 自动载入用户 profile（含 brew PATH），解决 self-hosted runner 环境问题
+        shell: bash -l {0}
+
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set Homebrew PATH (ARM64 macOS)
-        run: echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Cache Homebrew packages
         id: cache-brew
