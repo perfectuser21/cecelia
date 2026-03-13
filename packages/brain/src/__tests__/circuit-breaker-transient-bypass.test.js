@@ -265,5 +265,29 @@ describe('circuit-breaker transient API error bypass', () => {
     expect(cbFailureMock).not.toHaveBeenCalled();
   });
 
+  it('should NOT call cbFailure for auth failures (OAuth token expired)', async () => {
+    const result = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-auth-1',
+      run_id: 'run-auth-1',
+      status: 'AI Failed',
+      result: { result: 'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}' },
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(cbFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('should NOT call cbFailure for auth failures (failed to authenticate)', async () => {
+    const result = await mockReqRes('POST', '/execution-callback', {
+      task_id: 'task-auth-2',
+      run_id: 'run-auth-2',
+      status: 'AI Failed',
+      result: { result: 'Failed to authenticate with the API' },
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(cbFailureMock).not.toHaveBeenCalled();
+  });
+
   // AI Done path (cbSuccess) tested via circuit-breaker-success.test.js
 });
