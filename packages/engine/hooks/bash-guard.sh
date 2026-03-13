@@ -150,6 +150,60 @@ if echo "$CMD" | grep -qE '^\s*git\s+commit\b'; then
     # 无 -m 参数（interactive 模式）→ 放行
 fi
 
+# ─── 规则 2c: gh pr create title 格式验证（~2ms）──────────────
+# 拦截不符合 Conventional Commits 规范的 PR title，以及
+# Engine 改动时缺少 [CONFIG] 标签的 PR title
+# 降级原则：提取失败（格式奇怪）→ 放行
+if echo "$CMD" | grep -qE '\bgh\s+pr\s+create\b'; then
+    # 提取 --title "..." 或 --title '...'
+    PR_TITLE=$(echo "$CMD" | sed -nE 's/.*--title[[:space:]]+"([^"]+)".*/\1/p' | head -1 || true)
+    if [[ -z "$PR_TITLE" ]]; then
+        PR_TITLE=$(echo "$CMD" | sed -nE "s/.*--title[[:space:]]+'([^']+)'.*/\1/p" | head -1 || true)
+    fi
+
+    if [[ -n "$PR_TITLE" ]]; then
+        # 检查 Conventional Commits 格式
+        # 允许可选的 [CONFIG] 前缀 + 类型(:) 或 类型(scope): 或 类型!:
+        CC_PATTERN='^\[CONFIG\][[:space:]]*(feat|fix|docs|chore|test|refactor|build|ci|style|perf|revert)(\!|\([^)]+\))?:|^(feat|fix|docs|chore|test|refactor|build|ci|style|perf|revert)(\!|\([^)]+\))?:'
+        if ! echo "$PR_TITLE" | grep -qE "$CC_PATTERN"; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BASH GUARD] PR title 不符合 Conventional Commits 格式" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  当前: $PR_TITLE" >&2
+            echo "" >&2
+            echo "  格式要求（以下之一）：" >&2
+            echo "    feat: 描述" >&2
+            echo "    fix(scope): 描述" >&2
+            echo "    [CONFIG] feat: 描述" >&2
+            echo "    feat!: 破坏性变更描述" >&2
+            echo "" >&2
+            exit 2
+        fi
+
+        # 检查 Engine 改动是否有 [CONFIG] 标签
+        CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || true)
+        if echo "$CHANGED_FILES" | grep -q "packages/engine/"; then
+            if ! echo "$PR_TITLE" | grep -q "\[CONFIG\]"; then
+                echo "" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "  [BASH GUARD] Engine 改动的 PR title 必须包含 [CONFIG]" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "" >&2
+                echo "  当前: $PR_TITLE" >&2
+                echo "" >&2
+                echo "  修改 packages/engine/ 的 PR title 必须以 [CONFIG] 开头：" >&2
+                echo "    [CONFIG] feat(engine): 描述" >&2
+                echo "    [CONFIG] fix(engine): 描述" >&2
+                echo "" >&2
+                exit 2
+            fi
+        fi
+    fi
+    # 提取失败（无 --title 参数或格式奇怪）→ 放行
+fi
+
 # ─── 规则 3: Bash 写代码文件检测（~3ms）──────────────────────
 # 拦截 Bash 工具对代码文件的直接写入（与 branch-protect.sh 的 Write/Edit 保护对称）
 # 放行条件：已在 cp-*/feature/* 分支（/dev 工作流中）或目标是 /tmp/ 路径

@@ -1,12 +1,12 @@
 ---
 id: golden-paths
-version: 3.39.0
-created: 2026-03-11
-updated: 2026-03-11
+version: 3.42.0
+created: 2026-03-13
+updated: 2026-03-13
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.39.0: 从 feature-registry.yml 自动生成
+  - 3.42.0: 从 feature-registry.yml 自动生成
 ---
 
 # Golden Paths - 端到端成功路径
@@ -472,6 +472,22 @@ Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
 
 ---
 
+## GP-030: bash-guard.sh gh pr create title 格式验证 (bash-guard-pr-title-check)
+
+**Feature**: bash-guard-pr-title-check - bash-guard.sh gh pr create title 格式验证
+**Priority**: P1
+
+### Golden Path
+
+```
+gh pr create --title "feat: 描述" → 放行 →
+gh pr create --title "random text" → 拦截，exit 2 →
+Engine 改动 + 无 [CONFIG] → 拦截，exit 2 →
+Engine 改动 + [CONFIG] feat: → 放行
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
@@ -484,5 +500,5 @@ Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.39.0
-**生成时间**: 2026-03-11
+**版本**: 3.42.0
+**生成时间**: 2026-03-13

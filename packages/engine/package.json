@@ -1,13 +1,13 @@
 {
   "name": "zenithjoy-engine",
-  "version": "12.56.1",
+  "version": "12.58.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "NODE_OPTIONS='--max-old-space-size=2048' vitest run",
-    "test:coverage": "NODE_OPTIONS='--max-old-space-size=2048' vitest run --coverage",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "qa": "npm run typecheck && npm run test && npm run build",

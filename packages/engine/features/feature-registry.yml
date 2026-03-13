@@ -15,9 +15,11 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.39.0"
-updated: "2026-03-11"
+version: "3.42.0"
+updated: "2026-03-13"
 changelog:
+  - "3.42.0: v12.57.1 - fix-branch-protect monorepo subdir PRD 保护（v25）：find_prd_dod_dir() 返回根目录时，若文件在 packages/ 子目录则要求根目录必须有 per-branch PRD（.prd-{branch}.md），不接受全局 .prd.md 旧任务残留，新增测试用例覆盖场景"
+  - "3.41.0: v12.57.0 - cleanup.sh 完成后自动触发 worktree-gc：step_11_cleanup: done 标记后，从主仓库后台执行 worktree-gc.sh（cd MAIN_WT && bash worktree-gc.sh &），不再依赖外部触发；GC 脚本不存在或主仓库路径为空时静默跳过"
   - "3.40.0: v12.56.0 - worktree 活跃锁防 GC 误删：worktree-gc.sh 在删除前检查 .dev-session-active，存在则跳过并输出 WARN；stop-dev.sh v15.1.0 在 dev 流程开始时在 worktree 内创建 .dev-session-active，cleanup_done 后删除；.gitignore 新增 .dev-session-active"
   - "3.39.0: v12.53.0 - /dev Step 6.5 强制 Simplify 子步骤：06-code.md 在\"完成后\"章节前新增 Step 6.5（内联，不调用外部 skill）；每次写完代码必须扫描 git diff 改动文件，清理 4 类问题：被替代旧代码、重复逻辑、矛盾注释、无用 import；有完成标准检查清单，不做完不能进 Step 7"
   - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"
@@ -1412,5 +1414,36 @@ product_features:
     minimal_paths:
       - "devloop_check done: 已有 cleanup_done: true，直接 exit 0"
       - "超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0"
+
+    rcis: []
+
+  - id: bash-guard-pr-title-check
+    name: bash-guard.sh gh pr create title 格式验证
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增规则 2c：拦截 gh pr create 命令，检查 --title 参数。
+      规则1：title 必须符合 Conventional Commits 格式（feat/fix/docs/chore/test/
+      refactor/build/ci/style/perf/revert 前缀）。
+      规则2：如果 git diff --name-only HEAD 包含 packages/engine/ 路径，
+      title 必须包含 [CONFIG] 标签。
+      降级原则：提取不到 title（无 --title 参数）→ 放行不拦截。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Claude Code PreToolUse Bash hook 触发"
+
+    golden_path: |
+      gh pr create --title "feat: 描述" → 放行 →
+      gh pr create --title "random text" → 拦截，exit 2 →
+      Engine 改动 + 无 [CONFIG] → 拦截，exit 2 →
+      Engine 改动 + [CONFIG] feat: → 放行
+
+    minimal_paths:
+      - "无 --title 参数: 提取失败，降级放行"
+      - "非 gh pr create 命令: 跳过检查"
 
     rcis: []
