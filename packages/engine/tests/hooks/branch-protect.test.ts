@@ -68,9 +68,10 @@ describe("branch-protect.sh", () => {
   });
 
   it("should exist and be executable", () => {
-    const stat = execSync(`stat -c %a "${HOOK_PATH}"`, { encoding: "utf-8" });
-    const mode = parseInt(stat.trim(), 8);
-    expect(mode & 0o111).toBeGreaterThan(0); // Has execute permission
+    // macOS compatible: use 'test -x' instead of 'stat -c %a' (Linux-only)
+    expect(() => {
+      execSync(`test -x "${HOOK_PATH}"`, { encoding: "utf-8" });
+    }).not.toThrow();
   });
 
   it("should pass syntax check", () => {
@@ -249,6 +250,170 @@ describe("branch-protect.sh", () => {
         }
         expect(exitCode).toBe(2);
       }
+    });
+  });
+
+  // v25: monorepo subdir packages/ 保护测试
+  // 场景：在 packages/ 子目录开发时，根目录不能用旧的全局 .prd.md
+  describe("monorepo subdir PRD protection (v25)", () => {
+    let gitRepoDir: string;
+    let worktreeDir: string;
+    let patchedHookInWorktree: string;
+
+    beforeAll(() => {
+      // 创建一个临时 git 仓库模拟 worktree 环境
+      gitRepoDir = mkdtempSync(join(tmpdir(), "monorepo-main-"));
+      // worktreeDir 由 git worktree add 创建（不能预先 mkdtemp，否则冲突）
+      worktreeDir = join(tmpdir(), `monorepo-worktree-${Date.now()}`);
+
+      // 初始化主仓库
+      execSync(`git init "${gitRepoDir}"`, { stdio: "pipe" });
+      execSync(`git -C "${gitRepoDir}" config user.email "test@test.com"`, { stdio: "pipe" });
+      execSync(`git -C "${gitRepoDir}" config user.name "Test"`, { stdio: "pipe" });
+      // 创建初始提交（使用 Conventional Commits 格式避免 bash-guard 拦截）
+      writeFileSync(join(gitRepoDir, "README.md"), "test repo");
+      execSync(`git -C "${gitRepoDir}" add .`, { stdio: "pipe" });
+      execSync(`GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@test.com GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@test.com git -C "${gitRepoDir}" commit -m "chore: init test repo" --no-verify`, { stdio: "pipe" });
+
+      // 创建 worktree（模拟 cp-* 分支），目录由 git worktree add 自动创建
+      const branch = "cp-03132206-test-subdir";
+      execSync(`git -C "${gitRepoDir}" worktree add "${worktreeDir}" -b "${branch}"`, { stdio: "pipe" });
+
+      // 在 worktree 中放置 hook
+      const hooksInWorktree = join(worktreeDir, "hooks");
+      mkdirSync(hooksInWorktree, { recursive: true });
+      copyDir(join(ENGINE_ROOT, "lib"), join(worktreeDir, "lib"));
+      patchedHookInWorktree = join(hooksInWorktree, "branch-protect.sh");
+      copyFileSync(ORIG_HOOK_PATH, patchedHookInWorktree);
+      patchHookStdin(patchedHookInWorktree);
+
+      // 在 worktree 创建 .dev-mode
+      writeFileSync(join(worktreeDir, ".dev-mode"), `dev\nbranch: ${branch}\ntasks_created: true\n`);
+
+      // 创建 packages/ 子目录
+      mkdirSync(join(worktreeDir, "packages", "workflows", "scripts"), { recursive: true });
+    });
+
+    afterAll(() => {
+      // 先移除 worktree，再删除目录
+      try {
+        execSync(`git -C "${gitRepoDir}" worktree remove "${worktreeDir}" --force`, { stdio: "pipe" });
+      } catch {
+        // ignore
+      }
+      if (gitRepoDir && existsSync(gitRepoDir)) {
+        rmSync(gitRepoDir, { recursive: true, force: true });
+      }
+      if (worktreeDir && existsSync(worktreeDir)) {
+        rmSync(worktreeDir, { recursive: true, force: true });
+      }
+    });
+
+    it("should block when packages/ subdir file and root only has global .prd.md (no per-branch PRD)", () => {
+      // 根目录只有全局 .prd.md（旧任务残留），无 per-branch PRD
+      writeFileSync(join(worktreeDir, ".prd.md"), "## 成功标准\n- 旧任务\n");
+      // 确保没有 per-branch PRD
+      const perBranchPrd = join(worktreeDir, ".prd-cp-03132206-test-subdir.md");
+      if (existsSync(perBranchPrd)) {
+        rmSync(perBranchPrd);
+      }
+
+      const fileInSubdir = join(worktreeDir, "packages", "workflows", "scripts", "test.sh");
+      const input = JSON.stringify({
+        tool_name: "Write",
+        tool_input: { file_path: fileInSubdir },
+      });
+
+      let exitCode = 0;
+      let stderr = "";
+      try {
+        execSync(`bash "${patchedHookInWorktree}"`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, HOOK_INPUT: input },
+          cwd: worktreeDir,
+        });
+      } catch (e: unknown) {
+        const err = e as { status?: number; stderr?: string };
+        exitCode = err.status || 1;
+        stderr = (err as { stderr?: string }).stderr || "";
+      }
+
+      // Should be blocked (exit 2) with helpful error message
+      expect(exitCode).toBe(2);
+      expect(stderr).toContain("per-branch PRD");
+    });
+
+    it("should allow when packages/ subdir file and root has per-branch PRD", () => {
+      // 根目录有 per-branch PRD（至少 3 行且包含关键字段，通过内容有效性检查）
+      writeFileSync(
+        join(worktreeDir, ".prd-cp-03132206-test-subdir.md"),
+        "## 成功标准\n- 本次任务的 PRD\n- 功能描述: 测试\n- 需求来源: 测试场景\n"
+      );
+      // 也需要 DoD（至少 3 行且包含关键字段）
+      writeFileSync(
+        join(worktreeDir, ".dod-cp-03132206-test-subdir.md"),
+        "## 验收标准\n- [ ] 功能完成\n- [ ] 测试通过\n- [ ] 代码审查\n"
+      );
+
+      const fileInSubdir = join(worktreeDir, "packages", "workflows", "scripts", "test.sh");
+      const input = JSON.stringify({
+        tool_name: "Write",
+        tool_input: { file_path: fileInSubdir },
+      });
+
+      let exitCode = -1;
+      try {
+        execSync(`bash "${patchedHookInWorktree}"`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, HOOK_INPUT: input },
+          cwd: worktreeDir,
+        });
+        exitCode = 0;
+      } catch (e: unknown) {
+        const err = e as { status?: number };
+        exitCode = err.status || 1;
+      }
+
+      // Should pass (exit 0)
+      expect(exitCode).toBe(0);
+    });
+
+    it("should not affect root-level development (no packages/ path)", () => {
+      // 根目录直接开发 — 有 per-branch PRD 即可通过（至少 3 行且包含关键字段）
+      writeFileSync(
+        join(worktreeDir, ".prd-cp-03132206-test-subdir.md"),
+        "## 成功标准\n- 根目录开发场景\n- 功能描述: 测试\n- 需求来源: 测试\n"
+      );
+      writeFileSync(
+        join(worktreeDir, ".dod-cp-03132206-test-subdir.md"),
+        "## 验收标准\n- [ ] 功能完成\n- [ ] 测试通过\n- [ ] 代码审查\n"
+      );
+
+      // 根目录直接的文件（不在 packages/ 下）
+      const fileAtRoot = join(worktreeDir, "test-root-file.sh");
+      const input = JSON.stringify({
+        tool_name: "Write",
+        tool_input: { file_path: fileAtRoot },
+      });
+
+      let exitCode = -1;
+      try {
+        execSync(`bash "${patchedHookInWorktree}"`, {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, HOOK_INPUT: input },
+          cwd: worktreeDir,
+        });
+        exitCode = 0;
+      } catch (e: unknown) {
+        const err = e as { status?: number };
+        exitCode = err.status || 1;
+      }
+
+      // Should pass (exit 0)
+      expect(exitCode).toBe(0);
     });
   });
 });

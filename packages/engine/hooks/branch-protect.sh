@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# ZenithJoy Engine - 分支保护 Hook v24
+# ZenithJoy Engine - 分支保护 Hook v25
+# v25: monorepo 子目录保护 — packages/ 子目录开发时不允许复用根目录旧 .prd.md，必须有 per-branch PRD
 # v24: 统一分支命名规范 — 删除 feature/* 支持，cp-* 为唯一合法格式（与 CI L1 一致）
 # v23: 活跃 Worktree 必须有 .dev-mode — 防止新会话绕过 /dev（PR 未合并但无会话管理）
 # v22: 僵尸 Worktree 检测 — 已合并分支阻止写代码（git ls-remote 区分新/已合并）
@@ -353,11 +354,32 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
     # v19: Monorepo 支持 - 从文件所在目录向上查找 PRD/DoD 目录
     # 优先级: 子目录 PRD/DoD > 根目录 PRD/DoD
+    # v25: packages/ 子目录保护 — 若文件在 packages/ 下且只能找到根目录，
+    #      根目录必须有 per-branch PRD（.prd-{branch}.md），不接受全局 .prd.md
     find_prd_dod_dir() {
         local file_path="$1"
         local project_root="$2"
         local branch="$3"
         local current_dir
+        local passed_through_packages=false  # v25: 追踪是否经过 packages/ 目录
+
+        # v25: 规范化 project_root（处理 macOS symlink，git rev-parse 返回 resolved 路径）
+        # 同时规范化 file_path 的存在目录，再加回文件名
+        local norm_file_dir
+        local file_dir
+        file_dir=$(dirname "$file_path")
+        # 找到第一个存在的父目录进行规范化
+        local check_dir="$file_dir"
+        while [[ ! -d "$check_dir" && "$check_dir" != "/" && "$check_dir" != "." ]]; do
+            check_dir=$(dirname "$check_dir")
+        done
+        if [[ -d "$check_dir" ]] && command -v realpath &>/dev/null; then
+            norm_file_dir=$(realpath "$check_dir" 2>/dev/null) || norm_file_dir="$file_dir"
+            # 重建完整路径（在 check_dir 之下的部分）
+            local suffix="${file_path#"$check_dir"}"
+            file_path="${norm_file_dir}${suffix}"
+        fi
+
         current_dir=$(dirname "$file_path")
 
         # 处理文件路径（可能不存在）
@@ -371,14 +393,51 @@ if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
                 echo "$current_dir"
                 return 0
             fi
+            # v25: 检测是否经过 packages/ 目录层
+            # 通过检查 current_dir 的 basename 是否为 "packages" 来判断
+            if [[ "$(basename "$current_dir")" == "packages" ]]; then
+                passed_through_packages=true
+            fi
             current_dir=$(dirname "$current_dir")
         done
 
-        # 没找到则返回项目根目录
+        # 没找到子目录 PRD，回落到项目根目录
+        # v25: packages/ 子目录保护 — 文件在 packages/ 子目录下时，根目录必须有 per-branch PRD
+        # 不接受全局 .prd.md（可能是旧任务残留）
+        if [[ "$passed_through_packages" == true ]]; then
+            if [[ ! -f "$project_root/.prd-${branch}.md" ]]; then
+                # 无 per-branch PRD，输出特殊标记让调用方报错
+                echo "__SUBDIR_NO_PERBRANCH_PRD__"
+                return 1
+            fi
+        fi
+
         echo "$project_root"
     }
 
-    PRD_DOD_DIR=$(find_prd_dod_dir "$FILE_PATH" "$PROJECT_ROOT" "$CURRENT_BRANCH")
+    PRD_DOD_DIR=$(find_prd_dod_dir "$FILE_PATH" "$PROJECT_ROOT" "$CURRENT_BRANCH") || true
+
+    # v25: 处理 packages/ 子目录无 per-branch PRD 的情况
+    if [[ "$PRD_DOD_DIR" == "__SUBDIR_NO_PERBRANCH_PRD__" ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [ERROR] packages/ 子目录开发需要 per-branch PRD" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "当前分支: $CURRENT_BRANCH" >&2
+        echo "文件路径: $FILE_PATH" >&2
+        echo "" >&2
+        echo "问题：在 packages/ 子目录开发时，根目录只有全局 .prd.md（旧任务残留），" >&2
+        echo "      不能用于当前任务的 PRD 验证。" >&2
+        echo "" >&2
+        echo "请在根目录创建本次任务的 per-branch PRD 文件：" >&2
+        echo "  $PROJECT_ROOT/.prd-${CURRENT_BRANCH}.md" >&2
+        echo "" >&2
+        echo "然后重新运行 /dev 工作流" >&2
+        echo "" >&2
+        echo "[SKILL_REQUIRED: dev]" >&2
+        exit 2
+    fi
 
     # ===== 数据库检查（新增 v20）=====
     # 检测是否在 /dev 工作流（有 .dev-mode 文件）
