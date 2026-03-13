@@ -15,7 +15,7 @@
     "cecilia": "tsx src/cecilia/cli.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "NODE_OPTIONS='--max-old-space-size=2048' vitest run",
     "test:watch": "vitest"
   },
   "keywords": [

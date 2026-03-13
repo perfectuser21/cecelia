@@ -5,9 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "vitest run",
+    "test": "NODE_OPTIONS='--max-old-space-size=3072' vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "NODE_OPTIONS='--max-old-space-size=3072' vitest run --coverage",
     "test:coverage:watch": "vitest --coverage",
     "backfill:l1": "node src/scripts/backfill-l1.js"
   },

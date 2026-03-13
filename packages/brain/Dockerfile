@@ -27,4 +27,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:5221/api/brain/tick/status || exit 1
 
 ENTRYPOINT ["tini", "--"]
-CMD ["node", "server.js"]
+CMD ["node", "--max-old-space-size=3072", "server.js"]

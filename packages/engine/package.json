@@ -6,8 +6,8 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test": "NODE_OPTIONS='--max-old-space-size=2048' vitest run",
+    "test:coverage": "NODE_OPTIONS='--max-old-space-size=2048' vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "qa": "npm run typecheck && npm run test && npm run build",
