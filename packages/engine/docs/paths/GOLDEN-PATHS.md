@@ -422,6 +422,23 @@ Haiku 异步分类 learning_type
 
 ---
 
+## GP-027: Hook Gates 5个真锁 (S10)
+
+**Feature**: S10 - Hook Gates 5个真锁
+**Priority**: P0
+
+### Golden Path
+
+```
+git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

@@ -268,6 +268,14 @@ changelog:
 
 ---
 
+### S10: Hook Gates 5个真锁
+
+1. ✅ **local-precheck.sh 不存在: 放行（降级）**
+2. ✅ **git commit 无 -m 参数: 放行（interactive 模式）**
+3. ✅ **check-learning.sh 不存在: 降级为只检查 flag**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
