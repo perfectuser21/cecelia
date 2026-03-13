@@ -414,6 +414,37 @@ async function _checkOutputDedup(hash) {
 }
 
 // ============================================================
+// Cortex 超时原因分类器
+// ============================================================
+
+/**
+ * 分类 LLM 调用错误的根本原因
+ * @param {Error} error
+ * @returns {'quota_exhausted'|'prompt_too_long'|'network_timeout'|'unknown'}
+ */
+export function classifyTimeoutReason(error) {
+  const status = error.status ?? error.statusCode ?? null;
+  const message = (error.message || '').toLowerCase();
+
+  // HTTP 429 → quota 耗尽
+  if (status === 429) {
+    return 'quota_exhausted';
+  }
+
+  // HTTP 400 + 含 token/context 关键词 → prompt 超长
+  if (status === 400 && (message.includes('token') || message.includes('context') || message.includes('length'))) {
+    return 'prompt_too_long';
+  }
+
+  // degraded 标记或 timeout 关键词 → 网络超时
+  if (error.degraded === true || message.includes('timed out') || message.includes('timeout')) {
+    return 'network_timeout';
+  }
+
+  return 'unknown';
+}
+
+// ============================================================
 // Cortex LLM 调用（通过统一 callLLM 层）
 // ============================================================
 
@@ -719,7 +750,16 @@ async function analyzeDeep(event, thalamusDecision = null) {
     return decision;
 
   } catch (err) {
-    console.error('[cortex] Deep analysis failed:', err.message);
+    const timeout_reason = classifyTimeoutReason(err);
+    console.error(JSON.stringify({
+      level: 'error',
+      source: 'cortex',
+      event: 'deep_analysis_failed',
+      timeout_reason,
+      http_status: err.status ?? null,
+      elapsed_ms: err.elapsed_ms ?? null,
+      message: err.message,
+    }));
     // 记录失败计时（若 callCortexLLM 已附加 _timing）
     if (err._timing) {
       const t = err._timing;
@@ -741,7 +781,7 @@ async function analyzeDeep(event, thalamusDecision = null) {
         try {
           await pool.query(
             `UPDATE tasks SET error_message = $1, updated_at = NOW() WHERE id = $2`,
-            [`Cortex timeout: ${err.message}`, event.task_id]
+            [`Cortex error [timeout_reason=${timeout_reason}]: ${err.message}`, event.task_id]
           );
         } catch { /* 非关键路径，忽略错误 */ }
       }
