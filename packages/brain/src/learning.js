@@ -670,6 +670,59 @@ export async function extractConversationLearning(userMessage, reply, dbPool) {
   }
 }
 
+/**
+ * Upsert a failure learning: if a recent (24h) record with same category + error_type exists,
+ * increment its occurrence_count instead of inserting a new record.
+ *
+ * @param {Object} opts
+ * @param {string} opts.title    - Learning title
+ * @param {string} opts.content  - Learning content
+ * @param {string} opts.category - Learning category (e.g. 'quarantine_pattern')
+ * @param {string} [opts.errorType] - FAILURE_CLASS value (auth/network/rate_limit/billing_cap/unknown)
+ * @returns {Promise<{id: string, merged: boolean}>}
+ */
+export async function upsertFailureLearning({ title, content, category, errorType = 'unknown' }) {
+  try {
+    // Check if a recent learning with same category + error_type exists within 24h
+    const existing = await pool.query(
+      `SELECT id, occurrence_count FROM learnings
+       WHERE category = $1 AND error_type = $2
+         AND created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [category, errorType]
+    );
+
+    if (existing.rows.length > 0) {
+      // Merge: increment occurrence_count, update timestamp
+      const newCount = (existing.rows[0].occurrence_count || 1) + 1;
+      await pool.query(
+        `UPDATE learnings
+         SET occurrence_count = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [newCount, existing.rows[0].id]
+      );
+      console.log(`[learning] Merged failure learning: id=${existing.rows[0].id} occurrence_count=${newCount} category=${category} error_type=${errorType}`);
+      return { id: existing.rows[0].id, merged: true };
+    }
+
+    // No recent duplicate: insert new learning
+    const result = await pool.query(
+      `INSERT INTO learnings (title, content, category, digested, error_type, occurrence_count)
+       VALUES ($1, $2, $3, false, $4, 1)
+       RETURNING id`,
+      [title, content, category, errorType]
+    );
+
+    const newId = result.rows[0].id;
+    console.log(`[learning] Inserted new failure learning: id=${newId} category=${category} error_type=${errorType}`);
+    return { id: newId, merged: false };
+  } catch (err) {
+    console.error(`[learning] upsertFailureLearning failed: ${err.message}`);
+    throw err;
+  }
+}
+
 export {
   ADJUSTABLE_PARAMS,
   vectorSearchLearnings as _vectorSearchLearnings,

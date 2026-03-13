@@ -20,6 +20,7 @@
 
 import pool from './db.js';
 import { emit } from './event-bus.js';
+import { upsertFailureLearning } from './learning.js';
 
 // ============================================================
 // 配置
@@ -240,16 +241,13 @@ async function quarantineTask(taskId, reason, details = {}) {
         const analysisResult = await callLLM('rumination', quarantinePrompt, { maxTokens: 150 });
 
         if (analysisResult && analysisResult.text) {
-          // 写入 learnings 表
-          await pool.query(`
-            INSERT INTO learnings (title, content, category, digested)
-            VALUES ($1, $2, $3, $4)
-          `, [
-            `隔离分析：${task.title}`,
-            analysisResult.text.trim(),
-            'quarantine_pattern',
-            false
-          ]);
+          // 写入 learnings 表（带去重：同 error_type + category 24h 内只保留一条）
+          await upsertFailureLearning({
+            title: `隔离分析：${task.title}`,
+            content: analysisResult.text.trim(),
+            category: 'quarantine_pattern',
+            errorType: failureClass || 'unknown',
+          });
 
           console.log(`[quarantine] LLM analysis completed for task ${taskId}`);
         }

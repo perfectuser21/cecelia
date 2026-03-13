@@ -15,7 +15,7 @@
 import crypto from 'crypto';
 
 /** Minimum acceptable migration version (DB must be >= this) */
-export const EXPECTED_SCHEMA_VERSION = '152';
+export const EXPECTED_SCHEMA_VERSION = '155';
 
 const CORE_TABLES = [
   'tasks',
@@ -199,3 +199,5 @@ if (isMain) {
   await pool.end();
   process.exit(ok ? 0 : 1);
 }
+
+// brew PATH fix trigger: 2026-03-13

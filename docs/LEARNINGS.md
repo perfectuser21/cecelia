@@ -1,42 +1,21 @@
 # Cecelia Core Learnings
 
-### [2026-03-13] Provider-Agnostic Engine — devloop-check.sh 单一入口（PR #provider-agnostic-engine）
+### [2026-03-12] Learning 聚合去重：upsertFailureLearning 模式（PR #915）
 
-**背景**：Codex（OpenAI）作为第二个 AI Provider 需要跑 /dev workflow，若直接在 runner.sh 中复制 stop-dev.sh 的完成判断逻辑，则任何修改都要改两处。
+**背景**：OAuth token 过期时，每次失败任务隔离都写入 1 条 `quarantine_pattern` failure learning，导致 241 条积压中大量是重复噪音，掩盖有价值的 insight。
 
-#### 根本原因
+### 根本原因
 
-stop-dev.sh v14.0.0 的完成判断逻辑（PR 创建？CI 通过？PR 合并？Learning 写完？）与 Claude Code JSON 协议输出混在一起，无法复用。
-
-#### 解决方案：单一入口 SSOT
-
-```
-lib/devloop-check.sh   ← 唯一需要改的文件（业务逻辑 SSOT）
-       ↓ source
-stop-dev.sh            ← Claude Code 协议适配器（永不改业务逻辑）
-       ↓ source
-runners/codex/runner.sh ← Codex 协议适配器（永不改业务逻辑）
-```
-
-`devloop_check(branch, dev_mode_file)` 输出标准化 JSON：
-- `{"status":"done"}` → 工作流完成
-- `{"status":"blocked","reason":"...","action":"..."}` → 需要继续
-
-#### 关键设计决策
-
-1. **fallback 机制**：stop-dev.sh v15.0.0 在 devloop-check.sh 未加载时自动使用旧内联逻辑（向后兼容）
-2. **分支命名**：codex_dev 分支加 `-cx` suffix（如 `cp-03131205-xxx-cx`），防止与 Claude Code 分支冲突
-3. **状态文件**：Codex 无 session，用 `CODEX_<task_id>` 作为合成 session_id 写入 .dev-mode
-4. **Brain 路由**：codex_dev → xian → triggerCodexBridge(runner 模式) → runner.sh
+`quarantine.js` 在隔离重复失败任务时直接 `INSERT INTO learnings`，不做任何去重检查。每个被隔离的任务产生一条学习记录，批量 OAuth 失败时会生成数十到数百条内容相似的记录，全部堆在 Cortex 的 top-N 位置。
 
 ### 下次预防
 
-- [ ] 新增 Provider 时只新建 `runners/{provider}/runner.sh`（source devloop-check.sh），不改现有文件
-- [ ] 业务逻辑变更只改 `lib/devloop-check.sh` 一处，两个适配器自动生效
-- [ ] task-router.js 新增 task_type 后必须同步更新 DEFINITION.md（facts-check.mjs L2 会拦截）
-- [ ] task-router.js 修改后必须跑 `node packages/brain/scripts/generate-manifest.mjs` 并提交生成文件
+- [ ] 所有写入 `learnings` 表的地方，**必须先评估是否可能批量重复**，若是则调用 `upsertFailureLearning()` 代替直接 `INSERT`
+- [ ] 新增 failure learning 写入点时，同步更新 `error_type` 字段（传 FAILURE_CLASS 值）
+- [ ] 查 Cortex context 质量问题时，先检查 `occurrence_count` 分布，排查批量 learning 噪音
+- [ ] 历史聚合 Migration 153 在部署时须手动确认执行（`DO $$...$$` 块打印统计信息）
 
-### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
+### scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
 
 **背景**：PR #822 暴露了两类测试陷阱（mockImplementation 条件顺序 + clearAllMocks 泄漏），需要建立扫描工具摸清存量规模。
 
