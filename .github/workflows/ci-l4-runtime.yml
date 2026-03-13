@@ -89,24 +89,11 @@ jobs:
       ENV_REGION: us
       PGPASSWORD: cecelia_ci
 
-    defaults:
-      run:
-        # login shell 自动载入用户 profile（含 brew PATH），解决 self-hosted runner 环境问题
-        shell: bash -l {0}
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Discover and set Homebrew PATH
-        run: |
-          # 发现 brew 实际路径并写入 GITHUB_PATH（login shell 可能仍未加载）
-          for brew_path in /opt/homebrew/bin /usr/local/bin /home/linuxbrew/.linuxbrew/bin; do
-            if [ -x "${brew_path}/brew" ]; then
-              echo "${brew_path}" >> $GITHUB_PATH
-              echo "Found brew at ${brew_path}"
-              break
-            fi
-          done
+      - name: Set Homebrew PATH (ARM64 macOS)
+        run: echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Cache Homebrew packages
         id: cache-brew
@@ -257,4 +244,3 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  ✅ L4 Runtime Gate PASSED"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-# updated: 2026-03-13 (brew PATH fix v2)
