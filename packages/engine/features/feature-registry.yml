@@ -18,7 +18,8 @@
 version: "3.40.0"
 updated: "2026-03-13"
 changelog:
-  - "3.40.0: v12.55.3 - 修复 Codex runner 为单次大调用模式：runner.sh v2.0.0 改为第一次发送完整工作流 prompt（含 task-id、分支、项目路径），重试时发送带当前状态的恢复 prompt；修复 --cwd 不支持（改为 cd）、--sandbox full-access→danger-full-access、新增 CODEX_HOME 环境变量支持"
+  - "3.40.0: v12.56.1 - 修复 Codex runner 为单次大调用模式：runner.sh v2.0.0 改为第一次发送完整工作流 prompt（含 task-id、分支、项目路径），重试时发送带当前状态的恢复 prompt；修复 --cwd 不支持（改为 cd）、--sandbox full-access→danger-full-access、新增 CODEX_HOME 环境变量支持"
+  - "3.40.0: v12.56.0 - worktree 活跃锁防 GC 误删：worktree-gc.sh 在删除前检查 .dev-session-active，存在则跳过并输出 WARN；stop-dev.sh v15.1.0 在 dev 流程开始时在 worktree 内创建 .dev-session-active，cleanup_done 后删除；.gitignore 新增 .dev-session-active"
   - "3.39.0: v12.53.0 - /dev Step 6.5 强制 Simplify 子步骤：06-code.md 在\"完成后\"章节前新增 Step 6.5（内联，不调用外部 skill）；每次写完代码必须扫描 git diff 改动文件，清理 4 类问题：被替代旧代码、重复逻辑、矛盾注释、无用 import；有完成标准检查清单，不做完不能进 Step 7"
   - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"
   - "3.37.0: v12.51.0 - Per-Branch Learning 文件——消除并行冲突：check-learning.sh v2 检查 docs/learnings/<branch>.md（向后兼容旧 docs/LEARNINGS.md）；10-learning.md 指引写 per-branch 文件；fire-learnings-event.sh/extract-learnings.sh 支持 per-branch 路径"
