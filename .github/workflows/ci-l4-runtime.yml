@@ -60,7 +60,7 @@ jobs:
     name: Brain Integration (Shard ${{ matrix.shard }})
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: [self-hosted, macOS, ARM64, xian-mac-m1]
+    runs-on: [self-hosted, macOS, ARM64, xian-mac-m4]
     timeout-minutes: 40
     permissions:
       contents: read
