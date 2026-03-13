@@ -257,3 +257,4 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "  ✅ L4 Runtime Gate PASSED"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# updated: 2026-03-13 (brew PATH fix v2)
