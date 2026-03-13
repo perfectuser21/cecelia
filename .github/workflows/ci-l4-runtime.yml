@@ -92,6 +92,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Homebrew PATH
+        run: |
+          # 确保 Homebrew 在 PATH 中（Intel: /usr/local/bin, Apple Silicon: /opt/homebrew/bin）
+          if [ -f /opt/homebrew/bin/brew ]; then
+            echo "/opt/homebrew/bin" >> $GITHUB_PATH
+            echo "/opt/homebrew/sbin" >> $GITHUB_PATH
+          elif [ -f /usr/local/bin/brew ]; then
+            echo "/usr/local/bin" >> $GITHUB_PATH
+          fi
+
       - name: Cache Homebrew packages
         id: cache-brew
         run: |
