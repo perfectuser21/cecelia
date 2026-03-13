@@ -64,6 +64,29 @@ function runHook(command: string): { exitCode: number; stderr: string } {
   }
 }
 
+/**
+ * 在隔离目录（无 git 仓库）中运行 hook
+ * 用于测试 gh pr create 场景，避免 git diff 受当前仓库 engine 变更影响
+ */
+function runHookIsolated(command: string): { exitCode: number; stderr: string } {
+  const input = JSON.stringify({
+    tool_name: "Bash",
+    tool_input: { command },
+  });
+
+  try {
+    execSync(`bash "${HOOK_PATH}"`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: tmpdir(), // 在 /tmp 中运行，无 git 仓库，git diff 返回空
+      env: { ...process.env, HOOK_INPUT: input },
+    });
+    return { exitCode: 0, stderr: "" };
+  } catch (err: any) {
+    return { exitCode: err.status, stderr: err.stderr || "" };
+  }
+}
+
 describe("bash-guard.sh", () => {
   beforeAll(() => {
     expect(existsSync(ORIG_HOOK_PATH)).toBe(true);
@@ -274,6 +297,59 @@ describe("bash-guard.sh", () => {
 
     it("does not block rsync to non-HK targets", () => {
       const result = runHook("rsync -avz dist/ user@192.168.1.100:/srv/app/");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // ─── gh pr create title 格式验证 ─────────────────────────
+  // 注意：使用 runHookIsolated（在 /tmp 中运行，无 git 仓库）
+  // 避免当前仓库的 engine 变更触发 [CONFIG] 检查，干扰格式验证测试
+  describe("gh pr create title validation", () => {
+    it("allows valid Conventional Commits title (feat:)", () => {
+      const result = runHookIsolated('gh pr create --title "feat: 添加新功能" --body "desc"');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows valid Conventional Commits title with scope (fix(scope):)", () => {
+      const result = runHookIsolated('gh pr create --title "fix(scope): 修复问题" --body "desc"');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows valid title with [CONFIG] prefix", () => {
+      const result = runHookIsolated('gh pr create --title "[CONFIG] feat(engine): 新增功能" --body "desc"');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows breaking change title (feat!:)", () => {
+      const result = runHookIsolated('gh pr create --title "feat!: 破坏性变更" --body "desc"');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("blocks invalid title (no Conventional Commits prefix)", () => {
+      const result = runHookIsolated('gh pr create --title "random text without prefix" --body "desc"');
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("BASH GUARD");
+      expect(result.stderr).toContain("Conventional Commits");
+    });
+
+    it("blocks title starting with uppercase without prefix", () => {
+      const result = runHookIsolated('gh pr create --title "Add new feature" --body "desc"');
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("BASH GUARD");
+    });
+
+    it("allows gh pr create without --title (graceful degradation)", () => {
+      const result = runHookIsolated('gh pr create --body "desc" --fill');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows gh commands other than pr create", () => {
+      const result = runHookIsolated("gh pr list");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("allows gh pr merge", () => {
+      const result = runHookIsolated("gh pr merge --squash");
       expect(result.exitCode).toBe(0);
     });
   });
