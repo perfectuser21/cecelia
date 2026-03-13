@@ -25,6 +25,7 @@ export const FALLBACK_PROFILE = {
     cortex: {
       provider: 'anthropic-api',
       model: 'claude-sonnet-4-6',
+      fallbacks: [{ provider: 'anthropic-api', model: 'claude-sonnet-4-6' }],
     },
     reflection: {
       provider: 'anthropic',
