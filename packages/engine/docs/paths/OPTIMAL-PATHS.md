@@ -268,7 +268,19 @@ Haiku 异步分类 learning_type
 
 ---
 
-### S10: Provider-Agnostic Engine — devloop-check.sh 单一入口
+### S10: Hook Gates 5个真锁
+
+```
+git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+```
+
+---
+
+### S11: Provider-Agnostic Engine — devloop-check.sh 单一入口
 
 ```
 Brain codex_dev 任务 → executor.triggerCodexBridge() →

@@ -598,6 +598,27 @@ else
             jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先完成 Step 10 再合并 PR。" '{"decision": "block", "reason": $reason}'
             exit 2
         fi
+        # ── v14.1.0: Learning 内容验证（flag=done 时额外验证实际内容格式）──────
+        CHECK_LEARNING_SCRIPT=""
+        for _candidate in "$PROJECT_ROOT/packages/engine/scripts/devgate/check-learning.sh" \
+                          "$HOME/.claude/lib/check-learning.sh"; do
+            if [[ -f "$_candidate" ]]; then
+                CHECK_LEARNING_SCRIPT="$_candidate"
+                break
+            fi
+        done
+        if [[ -n "$CHECK_LEARNING_SCRIPT" ]]; then
+            if ! bash "$CHECK_LEARNING_SCRIPT" >/dev/null 2>&1; then
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    sed -i '' "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+                else
+                    sed -i "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+                fi
+                save_block_reason "Step 10 Learning 内容格式不达标（check-learning.sh 失败）"
+                jq -n --arg reason "Step 10 flag=done 但 check-learning.sh 内容格式验证失败。Learning 必须包含：根本原因分析 + 下次预防措施 + 至少 50 字。请重新写 docs/learnings/<branch>.md，然后 git commit + push。" '{"decision": "block", "reason": $reason}'
+                exit 2
+            fi
+        fi
         save_block_reason "PR 未合并 (#$PR_NUMBER)"
         jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Step 10 已完成，执行合并：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
         exit 2

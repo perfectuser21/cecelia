@@ -1310,6 +1310,40 @@ product_features:
     rcis: []
 
   - id: S10
+    name: Hook Gates 5个真锁
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增 git push 前运行 local-precheck.sh 和 git commit message
+      Conventional Commits 格式验证；branch-protect.sh 新增 .prd-*.md 和 .dod-*.md
+      内容内联验证；stop-dev.sh 新增 STEP_10 flag=done 时运行 check-learning.sh 验证实际内容。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Bash 工具调用 git push / git commit -m"
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Write .prd-*.md / .dod-*.md 时"
+      - type: hook
+        file: hooks/stop-dev.sh
+        trigger: "会话结束时，STEP_10 flag=done 后"
+
+    golden_path: |
+      git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+      git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+      Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+      Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+      STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+
+    minimal_paths:
+      - "local-precheck.sh 不存在: 放行（降级）"
+      - "git commit 无 -m 参数: 放行（interactive 模式）"
+      - "check-learning.sh 不存在: 降级为只检查 flag"
+
+  - id: S11
     name: Provider-Agnostic Engine — devloop-check.sh 单一入口
     status: Committed
     priority: P1
