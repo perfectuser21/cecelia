@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.39.0"
-updated: "2026-03-11"
+version: "3.40.0"
+updated: "2026-03-13"
 changelog:
+  - "3.41.0: v12.57.0 - cleanup.sh 完成后自动触发 worktree-gc：step_11_cleanup: done 标记后，从主仓库后台执行 worktree-gc.sh（cd MAIN_WT && bash worktree-gc.sh &），不再依赖外部触发；GC 脚本不存在或主仓库路径为空时静默跳过"
   - "3.40.0: v12.56.0 - worktree 活跃锁防 GC 误删：worktree-gc.sh 在删除前检查 .dev-session-active，存在则跳过并输出 WARN；stop-dev.sh v15.1.0 在 dev 流程开始时在 worktree 内创建 .dev-session-active，cleanup_done 后删除；.gitignore 新增 .dev-session-active"
   - "3.39.0: v12.53.0 - /dev Step 6.5 强制 Simplify 子步骤：06-code.md 在\"完成后\"章节前新增 Step 6.5（内联，不调用外部 skill）；每次写完代码必须扫描 git diff 改动文件，清理 4 类问题：被替代旧代码、重复逻辑、矛盾注释、无用 import；有完成标准检查清单，不做完不能进 Step 7"
   - "3.38.0: v12.52.0 - Stop Hook 重试上限 15→30 + 失败通知 Brain API：stop-dev.sh RETRY_COUNT 上限从 15 改为 30；30 次失败后读取 .dev-mode 中 task_id，调用 PATCH /api/brain/tasks/{id} 标记 failed（curl --max-time 5 || true，不影响主流程）"

@@ -355,9 +355,9 @@ echo "[4.5] Worktree 清理..."
 SCRIPT_DIR_FOR_GC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GC_SCRIPT="$SCRIPT_DIR_FOR_GC/worktree-gc.sh"
 if [[ -f "$GC_SCRIPT" ]]; then
-    # v12.40.1: 不再 fire-and-forget 启动 GC（竞态：GC 可能在 cleanup 还在运行时删除当前 worktree）
-    # GC 应由 stop-dev.sh 在 cleanup 完成后、从主仓库触发，或由用户手动运行
-    echo -e "   ${GREEN}[OK] Worktree GC 将在 cleanup 完成后由 stop hook 触发${NC}"
+    # v12.57.0: GC 在 cleanup 完成后自动执行，详见 Section 10.5
+    # stop hook 触发路径保留，cleanup 完成后 Section 10.5 也会后台触发 GC
+    echo -e "   ${GREEN}[OK] Worktree GC 将在 cleanup 完成后自动触发（stop hook + Section 10.5）${NC}"
 else
     echo -e "   ${YELLOW}[WARN] worktree-gc.sh 不存在，跳过${NC}"
 fi
@@ -619,6 +619,24 @@ if [[ -f "$DEV_MODE_FILE" ]] && [[ "${VALIDATION_PASSED:-true}" == "true" ]]; th
     echo ""
     echo -e "   ${YELLOW}注意: .dev-mode、.dev-lock 和 sentinel 将由 Stop Hook 在工作流完成后自动删除${NC}"
     echo -e "   ${YELLOW}      cleanup.sh 只负责标记 step_11_cleanup: done${NC}"
+fi
+
+# ========================================
+# 10.5 触发 worktree GC（后台，不阻塞）
+# ========================================
+# v12.57.0: cleanup.sh 完成后自动触发 worktree-gc，不再靠别人
+# 必须 cd 到主仓库执行（GC 从主仓库扫描所有 worktree）
+# 后台运行（&），不阻塞 cleanup 流程
+# GC 内部有 flock 并发锁，多次触发安全幂等
+GC_SCRIPT_FOR_AUTO="${SCRIPT_DIR}/worktree-gc.sh"
+GC_MAIN_WT=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}')
+if [[ -f "$GC_SCRIPT_FOR_AUTO" && -n "$GC_MAIN_WT" ]]; then
+    (cd "$GC_MAIN_WT" && bash "$GC_SCRIPT_FOR_AUTO") &
+    echo -e "   ${GREEN}[INFO] worktree GC 已在后台启动（从 $GC_MAIN_WT 执行）${NC}"
+else
+    if [[ -z "$GC_MAIN_WT" ]]; then
+        echo -e "   ${YELLOW}[WARN] 无法获取主仓库路径，跳过 worktree GC${NC}"
+    fi
 fi
 
 # ========================================
