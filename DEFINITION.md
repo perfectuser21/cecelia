@@ -6,7 +6,7 @@
 
 
 
-**Brain 版本**: 1.217.0
+**Brain 版本**: 1.218.0
 
 **状态**: 生产运行中
 
@@ -383,7 +383,7 @@ Global OKR → Area OKR → KR → Project → Initiative → Task
 | **reflections** | 经验/问题/改进（issue/learning/improvement） |
 | **daily_logs** | 每日汇总（summary、highlights、challenges） |
 | **recurring_tasks** | 定时任务模板（cron 表达式, goal_id, project_id, worker_type, recurrence_type） |
-| **schema_version** | 迁移版本追踪 | Schema 版本: 151 |
+| **schema_version** | 迁移版本追踪 | Schema 版本: 152 |
 | **blocks** | 通用 block 存储 |
 
 ### 4.4 任务状态
