@@ -1416,3 +1416,34 @@ product_features:
       - "超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0"
 
     rcis: []
+
+  - id: bash-guard-pr-title-check
+    name: bash-guard.sh gh pr create title 格式验证
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增规则 2c：拦截 gh pr create 命令，检查 --title 参数。
+      规则1：title 必须符合 Conventional Commits 格式（feat/fix/docs/chore/test/
+      refactor/build/ci/style/perf/revert 前缀）。
+      规则2：如果 git diff --name-only HEAD 包含 packages/engine/ 路径，
+      title 必须包含 [CONFIG] 标签。
+      降级原则：提取不到 title（无 --title 参数）→ 放行不拦截。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Claude Code PreToolUse Bash hook 触发"
+
+    golden_path: |
+      gh pr create --title "feat: 描述" → 放行 →
+      gh pr create --title "random text" → 拦截，exit 2 →
+      Engine 改动 + 无 [CONFIG] → 拦截，exit 2 →
+      Engine 改动 + [CONFIG] feat: → 放行
+
+    minimal_paths:
+      - "无 --title 参数: 提取失败，降级放行"
+      - "非 gh pr create 命令: 跳过检查"
+
+    rcis: []
