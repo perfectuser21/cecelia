@@ -199,3 +199,5 @@ if (isMain) {
   await pool.end();
   process.exit(ok ? 0 : 1);
 }
+
+// brew PATH fix trigger: 2026-03-13
