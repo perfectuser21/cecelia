@@ -29,13 +29,12 @@ runners/codex/runner.sh ← Codex 协议适配器（永不改业务逻辑）
 3. **状态文件**：Codex 无 session，用 `CODEX_<task_id>` 作为合成 session_id 写入 .dev-mode
 4. **Brain 路由**：codex_dev → xian → triggerCodexBridge(runner 模式) → runner.sh
 
-#### 下次遇到类似问题
+### 下次预防
 
-添加第三个 Provider（Cursor、Gemini CLI）只需：
-1. 新建 `runners/{provider}/runner.sh`
-2. `source lib/devloop-check.sh`
-3. 根据自己的 Provider API 调用 `devloop_check()`
-4. 在 Brain executor.js 的 LOCATION_MAP + triggerXxxBridge 里注册
+- [ ] 新增 Provider 时只新建 `runners/{provider}/runner.sh`（source devloop-check.sh），不改现有文件
+- [ ] 业务逻辑变更只改 `lib/devloop-check.sh` 一处，两个适配器自动生效
+- [ ] task-router.js 新增 task_type 后必须同步更新 DEFINITION.md（facts-check.mjs L2 会拦截）
+- [ ] task-router.js 修改后必须跑 `node packages/brain/scripts/generate-manifest.mjs` 并提交生成文件
 
 ### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
 
