@@ -62,9 +62,81 @@ async function isDuplicateLearning(contentHash, dbPool = pool) {
 }
 
 /**
+ * 提取 failure_class（error_type）用于聚合去重
+ * 从 result 对象或内容字符串中提取标准化错误类型
+ * @param {*} result - 任务执行结果
+ * @returns {string|null}
+ */
+export function extractErrorType(result) {
+  if (!result) return null;
+
+  // 优先从结构化结果中取 failure_class
+  if (typeof result === 'object') {
+    if (result.failure_class) return result.failure_class.slice(0, 100);
+    if (result.error_type) return result.error_type.slice(0, 100);
+    // 从 stderr 或 error 中匹配常见模式
+    const text = (result.error || result.stderr_tail || result.message || '').toLowerCase();
+    if (text.includes('401') || text.includes('unauthorized') || text.includes('oauth')) return 'OAUTH_401';
+    if (text.includes('403') || text.includes('forbidden')) return 'AUTH_403';
+    if (text.includes('rate limit') || text.includes('429')) return 'RATE_LIMIT';
+    if (text.includes('timeout') || text.includes('timed out')) return 'TIMEOUT';
+    if (text.includes('network') || text.includes('econnrefused') || text.includes('enotfound')) return 'NETWORK_ERROR';
+  }
+
+  if (typeof result === 'string') {
+    const lower = result.toLowerCase();
+    if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('oauth')) return 'OAUTH_401';
+    if (lower.includes('403') || lower.includes('forbidden')) return 'AUTH_403';
+    if (lower.includes('rate limit') || lower.includes('429')) return 'RATE_LIMIT';
+    if (lower.includes('timeout') || lower.includes('timed out')) return 'TIMEOUT';
+    if (lower.includes('network') || lower.includes('econnrefused') || lower.includes('enotfound')) return 'NETWORK_ERROR';
+  }
+
+  return null;
+}
+
+/**
+ * 查找 24h 内同 category + error_type 的 learning 并合并（occurrence_count +1）
+ * 返回合并的记录 ID，若无匹配则返回 null
+ * @param {string} category
+ * @param {string} errorType
+ * @param {import('pg').Pool} dbPool
+ * @returns {Promise<string|null>} - 被合并的记录 ID，或 null
+ */
+export async function findAndMergeRecentFailureLearning(category, errorType, dbPool = pool) {
+  if (!errorType) return null;
+
+  try {
+    const existing = await dbPool.query(
+      `SELECT id FROM learnings
+       WHERE category = $1 AND error_type = $2 AND created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [category, errorType]
+    );
+
+    if (existing.rows.length === 0) return null;
+
+    const existingId = existing.rows[0].id;
+    await dbPool.query(
+      `UPDATE learnings
+       SET occurrence_count = occurrence_count + 1, updated_at = NOW()
+       WHERE id = $1`,
+      [existingId]
+    );
+
+    console.log(`[auto-learning] Merged duplicate: id=${existingId} category=${category} error_type=${errorType}`);
+    return existingId;
+  } catch (err) {
+    console.warn(`[auto-learning] findAndMergeRecentFailureLearning failed (non-fatal): ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * 创建自动学习记录
  */
-async function createAutoLearning({ title, category, content, triggerEvent, metadata }, dbPool = pool) {
+async function createAutoLearning({ title, category, content, triggerEvent, metadata, errorType }, dbPool = pool) {
   // 预算检查
   if (!hasAutoLearningBudget()) {
     console.log(`[auto-learning] Daily budget exhausted (${DAILY_AUTO_LEARNING_BUDGET}), skipping learning creation`);
@@ -81,8 +153,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
 
   try {
     const result = await dbPool.query(`
-      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested)
-      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false)
+      INSERT INTO learnings (title, category, trigger_event, content, metadata, content_hash, version, is_latest, digested, error_type, occurrence_count, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, 1, true, false, $7, 1, NOW())
       RETURNING id, title
     `, [
       title,
@@ -90,7 +162,8 @@ async function createAutoLearning({ title, category, content, triggerEvent, meta
       triggerEvent,
       content,
       JSON.stringify(metadata || {}),
-      contentHash
+      contentHash,
+      errorType || null,
     ]);
 
     // 更新计数器
@@ -169,19 +242,29 @@ export async function handleTaskCompletedLearning(task_id, taskType, status, res
 /**
  * 处理任务失败的自动学习
  */
-export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}, dbErrorMessage = null) {
+export async function handleTaskFailedLearning(task_id, taskType, status, result, retryCount = 0, metadata = {}, dbErrorMessage = null, dbPool = pool) {
   // 只处理有价值的任务类型
   if (!VALUABLE_TASK_TYPES.includes(taskType)) {
     console.log(`[auto-learning] Skipping task_type=${taskType} (not in valuable list)`);
     return null;
   }
 
-  const title = `任务失败：${task_id}`;
   let errorSummary = extractTaskSummary(result);
   if (errorSummary === 'No details available' && dbErrorMessage) {
     errorSummary = dbErrorMessage.slice(0, 500);
   }
 
+  // 提取 error_type 用于聚合去重
+  const errorType = extractErrorType(result) || extractErrorType(dbErrorMessage);
+
+  // 若 24h 内已有同类失败 learning，合并而非新增
+  const mergedId = await findAndMergeRecentFailureLearning('failure_pattern', errorType, dbPool);
+  if (mergedId) {
+    console.log(`[auto-learning] Merged failure learning (task=${task_id}, error_type=${errorType}, merged_into=${mergedId})`);
+    return { id: mergedId, merged: true };
+  }
+
+  const title = `任务失败：${errorType || task_id}`;
   const content = `任务执行失败。重试次数：${retryCount}。错误摘要：${errorSummary}`;
 
   return await createAutoLearning({
@@ -189,6 +272,7 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
     category: 'failure_pattern',
     content,
     triggerEvent: 'task_failed_auto',
+    errorType,
     metadata: {
       task_id,
       task_type: taskType,
@@ -196,7 +280,7 @@ export async function handleTaskFailedLearning(task_id, taskType, status, result
       auto_generated: true,
       created_at: new Date().toISOString()
     }
-  });
+  }, dbPool);
 }
 
 /**
