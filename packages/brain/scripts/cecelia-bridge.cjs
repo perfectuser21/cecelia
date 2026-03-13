@@ -71,7 +71,7 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, BRIDGE_TIMEOUT_MS);
+        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, 600000);
         const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
@@ -340,4 +340,5 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`[bridge] cecelia-bridge listening on port ${PORT}`);
   console.log(`[bridge] Brain URL: ${BRAIN_URL}`);
+  console.log(`[bridge] BRIDGE_TIMEOUT_MS=${BRIDGE_TIMEOUT_MS} (default, max cap=600000ms)`);
 });

@@ -439,6 +439,23 @@ STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允
 
 ---
 
+## GP-028: Provider-Agnostic Engine — devloop-check.sh 单一入口 (S11)
+
+**Feature**: S11 - Provider-Agnostic Engine — devloop-check.sh 单一入口
+**Priority**: P1
+
+### Golden Path
+
+```
+Brain codex_dev 任务 → executor.triggerCodexBridge() →
+codex-bridge POST /run (runner=runner.sh) →
+runner.sh source devloop-check.sh →
+while ! devloop_check done → codex-bin exec action →
+完成 → cleanup
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

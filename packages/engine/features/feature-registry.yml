@@ -1343,4 +1343,36 @@ product_features:
       - "git commit 无 -m 参数: 放行（interactive 模式）"
       - "check-learning.sh 不存在: 降级为只检查 flag"
 
+  - id: S11
+    name: Provider-Agnostic Engine — devloop-check.sh 单一入口
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      将 /dev 工作流完成判断逻辑提取到 lib/devloop-check.sh（SSOT）。
+      stop-dev.sh 改为 Claude Code 协议适配器（source devloop-check.sh）。
+      新增 runners/codex/runner.sh（Codex 协议适配器）。
+      Brain task-router 新增 codex_dev → xian 路由。
+      换 Provider = 只换适配器，业务逻辑只改 devloop-check.sh 一处。
+
+    entrypoints:
+      - type: lib
+        file: lib/devloop-check.sh
+        trigger: "被 stop-dev.sh 和 runners/codex/runner.sh source 调用"
+      - type: runner
+        file: runners/codex/runner.sh
+        trigger: "Brain codex_dev 任务 → triggerCodexBridge(runner 模式)"
+
+    golden_path: |
+      Brain codex_dev 任务 → executor.triggerCodexBridge() →
+      codex-bridge POST /run (runner=runner.sh) →
+      runner.sh source devloop-check.sh →
+      while ! devloop_check done → codex-bin exec action →
+      完成 → cleanup
+
+    minimal_paths:
+      - "devloop-check.sh 未加载: stop-dev.sh fallback 到旧内联逻辑"
+      - "dry-run 模式: runner.sh 打印命令不执行"
+
     rcis: []

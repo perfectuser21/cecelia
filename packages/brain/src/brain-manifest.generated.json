@@ -843,6 +843,7 @@
     "explore": "/explore",
     "knowledge": "/knowledge",
     "codex_qa": "/codex",
+    "codex_dev": "/dev",
     "code_review": "/code-review",
     "decomp_review": "/decomp-check",
     "dept_heartbeat": "/cecelia",
@@ -854,7 +855,7 @@
     "arch_review": "/arch-review review",
     "strategy_session": "/strategy-session"
   },
-  "generatedAt": "2026-03-12T00:25:49.086Z",
+  "generatedAt": "2026-03-13T04:37:10.238Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",
