@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: Claude Code 协议适配器 v15.0.0
+# Stop Hook: Claude Code 协议适配器 v15.1.0
 # ============================================================================
 # 这是 Claude Code Stop Hook 的协议适配器。
 # 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -13,6 +13,7 @@
 #
 # 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
 #
+# v15.1.0: 活跃锁文件 — 在 worktree 内维护 .dev-session-active，防止 GC 误删
 # v15.0.0: 提取完成判断逻辑到 lib/devloop-check.sh（provider-agnostic）
 # v14.0.0: 删除所有旧格式兼容代码，只保留 per-branch 格式
 # ============================================================================
@@ -148,6 +149,9 @@ MAX_RETRIES=30
 
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# v15.1.0: 活跃锁文件路径（在 BRANCH_NAME 确定后填充，此处先声明避免 set -u 报错）
+_WT_ACTIVE_PATH=""
 
 # ===== Helper: 清理状态文件（不删 worktree 目录）=====
 # v12.39.1: worktree 目录删除改由外部 worktree-gc.sh 负责（从主仓库运行）
@@ -298,6 +302,8 @@ if grep -q "cleanup_done: true" "$DEV_MODE_FILE" 2>/dev/null; then
     rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
           "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
           "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
+    # v15.1.0: session 正常结束，删除 worktree 内的活跃锁文件
+    [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
     exit 0
 fi
 
@@ -404,6 +410,33 @@ fi
 # 使用文件中的分支名（如果有），否则使用当前分支
 BRANCH_NAME="${BRANCH_IN_FILE:-$CURRENT_BRANCH}"
 
+# ===== v15.1.0: 活跃锁文件 — 标记 worktree 正在被 session 使用（防 GC 误删）=====
+# 查找 BRANCH_NAME 对应的 worktree 路径（从主仓库 git worktree list 读取）
+_WT_ACTIVE_PATH=""
+_worktree_root_dir=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -n "$_worktree_root_dir" ]]; then
+    _wt_current_path=""
+    _wt_current_branch=""
+    while IFS= read -r _wt_line; do
+        if [[ "$_wt_line" == "worktree "* ]]; then
+            _wt_current_path="${_wt_line#worktree }"
+        elif [[ "$_wt_line" == "branch refs/heads/"* ]]; then
+            _wt_current_branch="${_wt_line#branch refs/heads/}"
+        elif [[ -z "$_wt_line" ]]; then
+            if [[ "$_wt_current_branch" == "$BRANCH_NAME" && -n "$_wt_current_path" ]]; then
+                _WT_ACTIVE_PATH="$_wt_current_path"
+            fi
+            _wt_current_path=""
+            _wt_current_branch=""
+        fi
+    done < <(git -C "$_worktree_root_dir" worktree list --porcelain 2>/dev/null; echo "")
+fi
+
+# 在 worktree 内创建活跃锁文件（告知 GC：此 worktree 正在使用，不要删除）
+if [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]]; then
+    touch "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
+fi
+
 echo "" >&2
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 echo "  [Stop Hook: /dev 完成条件检查]" >&2
@@ -431,6 +464,8 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
         rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
               "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
               "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
+        # v15.1.0: session 正常结束，删除 worktree 内的活跃锁文件
+        [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
         exit 0
     else
@@ -590,6 +625,8 @@ else
             rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
                   "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
                   "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
+            # v15.1.0: session 正常结束，删除 worktree 内的活跃锁文件
+            [[ -n "$_WT_ACTIVE_PATH" && -d "$_WT_ACTIVE_PATH" ]] && rm -f "$_WT_ACTIVE_PATH/.dev-session-active" 2>/dev/null || true
             jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
             exit 0
         else

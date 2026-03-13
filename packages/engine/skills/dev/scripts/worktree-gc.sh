@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Worktree GC（Garbage Collection）— 外部清理者
+# v1.2.0: 活跃锁检查 - 存在 .dev-session-active 时跳过 GC（防止误删活跃 session 的 worktree）
 # v1.1.0: R2 修复 - 路径安全精确匹配、macOS stat 兼容、API 限流检测、并发锁
 # v1.0.0: 从主仓库运行，用 GitHub API 检测已合并 PR，清理残留 worktree
 #
@@ -154,6 +155,14 @@ for i in "${!WT_PATHS[@]}"; do
 
     # 执行清理
     if [[ "$SHOULD_CLEAN" == "true" ]]; then
+        # v1.2.0: 活跃锁检查 — session 正在运行时不删除（防止误删活跃 worktree）
+        # stop-dev.sh 在 dev 流程活跃时创建 .dev-session-active，结束后删除
+        if [[ -f "$WT_PATH/.dev-session-active" ]]; then
+            echo "WARN: $WT_PATH ($WT_BRANCH) 有活跃 session（.dev-session-active 存在），跳过 GC"
+            SKIPPED=$((SKIPPED + 1))
+            continue
+        fi
+
         # v12.41.0 P0-3 修复：删除前检查未提交改动（防止数据丢失）
         if [[ -d "$WT_PATH" ]]; then
             DIRTY=$(git -C "$WT_PATH" status --porcelain 2>/dev/null | grep -v "node_modules" | head -5 || true)
