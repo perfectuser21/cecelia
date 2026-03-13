@@ -125,6 +125,78 @@ if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]] || \
     exit 0
 fi
 
+# ===== PRD 内容验证（Write .prd-*.md 时）=====
+# 只在 Write 操作且文件名匹配 .prd-*.md 时验证
+# 从 tool_input.content 提取将要写入的内容，检查是否包含 ## 成功标准 章节
+if [[ "$TOOL_NAME" == "Write" ]]; then
+    PRD_MATCH=false
+    if echo "$FILE_PATH" | grep -qE '\.prd-[^/]+\.md$'; then
+        PRD_MATCH=true
+    fi
+
+    if [[ "$PRD_MATCH" == "true" ]]; then
+        PRD_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
+        PRD_CONTENT_VALID=false
+        if echo "$PRD_CONTENT" | grep -qiE "^#{1,3}[[:space:]]+(成功标准|success criteria|验收标准|acceptance criteria)"; then
+            PRD_CONTENT_VALID=true
+        fi
+
+        if [[ "$PRD_CONTENT_VALID" == "false" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] PRD 缺少成功标准章节" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  PRD 必须包含以下之一的章节标题：" >&2
+            echo "    ## 成功标准" >&2
+            echo "    ## Success Criteria" >&2
+            echo "    ## 验收标准" >&2
+            echo "" >&2
+            echo "  没有成功标准 = 无法验收 = 不允许写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+        # PRD 内容有效，放行（后续分支/PRD 存在检查仍会运行）
+    fi
+fi
+
+# ===== DoD 内容验证（Write .dod-*.md 时）=====
+# 验证将要写入的 DoD 内容包含 - [ ] checkbox 验收项
+if [[ "$TOOL_NAME" == "Write" ]]; then
+    DOD_MATCH=false
+    if echo "$FILE_PATH" | grep -qE '\.dod-[^/]+\.md$'; then
+        DOD_MATCH=true
+    fi
+
+    if [[ "$DOD_MATCH" == "true" ]]; then
+        DOD_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null || echo "")
+        DOD_CONTENT_VALID=false
+        if echo "$DOD_CONTENT" | grep -qE '^\s*-\s*\[[ xX]\]'; then
+            DOD_CONTENT_VALID=true
+        fi
+
+        if [[ "$DOD_CONTENT_VALID" == "false" ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] DoD 缺少验收清单" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  DoD 必须包含 checkbox 格式的验收项：" >&2
+            echo "    - [ ] 验收条件1" >&2
+            echo "    - [ ] 验收条件2" >&2
+            echo "" >&2
+            echo "  没有验收清单 = 无法验收 = 不允许写入。" >&2
+            echo "" >&2
+            exit 2
+        fi
+        # DoD 内容有效，放行（后续分支/DoD 存在检查仍会运行）
+    fi
+fi
+
 # ===== 判断是否需要保护 =====
 NEEDS_PROTECTION=false
 

@@ -91,6 +91,65 @@ if echo "$CMD" | grep -qF ".credentials/"; then
     fi
 fi
 
+# ─── 规则 2a: git push 前跑 local-precheck.sh（~200ms，仅 Brain 改动时实际执行）──
+# 拦截 `git push` 命令（不含 --delete/--tags 等纯元操作）
+# 失败时阻止 push，防止破坏 Brain 与 DEFINITION.md 的一致性
+if echo "$CMD" | grep -qE '^\s*git\s+push(\s|$)'; then
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    PRECHECK_SCRIPT="$REPO_ROOT/scripts/local-precheck.sh"
+
+    if [[ -f "$PRECHECK_SCRIPT" ]]; then
+        if ! bash "$PRECHECK_SCRIPT" >&2; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BASH GUARD] git push 被阻止：local-precheck 失败" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "请修复上述 precheck 错误后重新 push。" >&2
+            echo "（Brain 未改动时 precheck 自动跳过，不影响速度）" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+    # 脚本不存在时放行（非 cecelia 仓库或路径不同）
+fi
+
+# ─── 规则 2b: git commit message 格式验证（~2ms）──────────────
+# 拦截不符合 Conventional Commits 规范的提交消息
+# 只检查带 -m/--message 的内联消息，interactive 模式不拦截
+VALID_COMMIT_PREFIXES='^(feat|fix|docs|chore|test|refactor|build|ci|style|perf|revert)(\!|\([^)]+\))?:'
+if echo "$CMD" | grep -qE '^\s*git\s+commit\b'; then
+    # 提取 -m "..." 或 -m '...' 中的消息
+    COMMIT_MSG=$(echo "$CMD" | sed -nE 's/.*[[:space:]]-m[[:space:]]+"([^"]+)".*/\1/p' | head -1 || true)
+    if [[ -z "$COMMIT_MSG" ]]; then
+        COMMIT_MSG=$(echo "$CMD" | sed -nE "s/.*[[:space:]]-m[[:space:]]+'([^']+)'.*/\1/p" | head -1 || true)
+    fi
+    if [[ -z "$COMMIT_MSG" ]]; then
+        COMMIT_MSG=$(echo "$CMD" | sed -nE 's/.*--message[[:space:]]+"([^"]+)".*/\1/p' | head -1 || true)
+    fi
+
+    if [[ -n "$COMMIT_MSG" ]]; then
+        if ! echo "$COMMIT_MSG" | grep -qE "$VALID_COMMIT_PREFIXES"; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BASH GUARD] commit message 格式不符合规范" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  消息: $COMMIT_MSG" >&2
+            echo "" >&2
+            echo "  要求 Conventional Commits 格式（以下之一）：" >&2
+            echo "    feat: / fix: / docs: / chore: / test: / refactor:" >&2
+            echo "    build: / ci: / style: / perf: / revert:" >&2
+            echo "    feat!:（破坏性变更）/ feat(scope):（带 scope）" >&2
+            echo "" >&2
+            echo "  示例: git commit -m \"feat: 添加用户登录功能\"" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+    # 无 -m 参数（interactive 模式）→ 放行
+fi
+
 # ─── 规则 3: Bash 写代码文件检测（~3ms）──────────────────────
 # 拦截 Bash 工具对代码文件的直接写入（与 branch-protect.sh 的 Write/Edit 保护对称）
 # 放行条件：已在 cp-*/feature/* 分支（/dev 工作流中）或目标是 /tmp/ 路径

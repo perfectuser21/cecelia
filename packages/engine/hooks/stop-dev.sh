@@ -595,6 +595,38 @@ else
         exit 2
     fi
 
+    # ── v14.1.0: Learning 内容验证（不只看 flag，验证实际内容格式）──────
+    # flag=done 只说明 AI 认为自己完成了，但不保证内容合格
+    # 运行 check-learning.sh 验证实际 git diff 中的 Learning 内容
+    CHECK_LEARNING_SCRIPT=""
+    for _candidate in "$PROJECT_ROOT/packages/engine/scripts/devgate/check-learning.sh" \
+                      "$HOME/.claude/lib/check-learning.sh"; do
+        if [[ -f "$_candidate" ]]; then
+            CHECK_LEARNING_SCRIPT="$_candidate"
+            break
+        fi
+    done
+
+    if [[ -n "$CHECK_LEARNING_SCRIPT" ]]; then
+        echo "  🔍 验证 Learning 内容格式..." >&2
+        if ! bash "$CHECK_LEARNING_SCRIPT" >/dev/null 2>&1; then
+            echo "  ❌ Learning 内容未通过格式检查" >&2
+            echo "" >&2
+            echo "  重置 Step 10 标志，请重新写 Learning..." >&2
+            # 重置 flag，强制重写
+            if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+            else
+                sed -i "s/^step_10_learning: done/step_10_learning: pending/" "$DEV_MODE_FILE" 2>/dev/null || true
+            fi
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            save_block_reason "Step 10 Learning 内容格式不达标（check-learning.sh 失败）"
+            jq -n --arg reason "Step 10 flag=done 但 check-learning.sh 内容格式验证失败。Learning 必须包含：根本原因分析 + 下次预防措施 + 至少 50 字。请重新写 docs/learnings/<branch>.md，然后 git commit + push。" '{"decision": "block", "reason": $reason}'
+            exit 2
+        fi
+        echo "  ✅ Learning 内容格式验证通过" >&2
+    fi
+
     echo "" >&2
     echo "  下一步: 合并 PR（Step 10 已完成）" >&2
     echo "    gh pr merge $PR_NUMBER --squash --delete-branch" >&2
