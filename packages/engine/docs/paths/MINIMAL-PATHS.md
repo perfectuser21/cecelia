@@ -283,6 +283,13 @@ changelog:
 
 ---
 
+### stop-hook-retry-fix: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+
+1. ✅ **devloop_check done: 已有 cleanup_done: true，直接 exit 0**
+2. ✅ **超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

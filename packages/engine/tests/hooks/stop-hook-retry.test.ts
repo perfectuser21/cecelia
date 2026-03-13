@@ -3,10 +3,10 @@
  *
  * 测试 Stop Hook 重试机制：
  * - 删除 stop_hook_active 检查
- * - 实现 15 次计数器（retry_count 字段）
- * - 15 次后上报失败并退出 + 写入 .dev-failure.log
+ * - 实现 30 次计数器（retry_count 字段）
+ * - 30 次后上报失败并退出 + 写入 .dev-failure.log
  * - last_block_reason 追踪每次阻塞原因
- * - v11.25.0: 重试上限从 20 改为 15
+ * - v15.1.0: 修复注释与代码不一致（统一为 MAX_RETRIES=30）
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -97,15 +97,15 @@ retry_count: 5
     expect(finalContent).toContain('retry_count: 2');
   });
 
-  it('应该在 retry_count >= 15 时退出', () => {
-    // 模拟 15 次重试
+  it('应该在 retry_count >= 30 时退出', () => {
+    // 模拟 30 次重试（v15.1.0: MAX_RETRIES 统一为 30）
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-retry_count: 15
+retry_count: 30
 `,
     );
 
@@ -113,7 +113,7 @@ retry_count: 15
     const match = content.match(/^retry_count:\s*(\d+)$/m);
     const retryCount = match ? parseInt(match[1], 10) : 0;
 
-    expect(retryCount).toBeGreaterThanOrEqual(15);
+    expect(retryCount).toBeGreaterThanOrEqual(30);
 
     // 此时 Stop Hook 应该删除 .dev-mode 并退出
     // （这部分由 Stop Hook 脚本处理，这里只验证逻辑）
@@ -128,7 +128,7 @@ retry_count: 15
     // 验证超限后调用 track.sh fail
     expect(hookContent).toContain('track.sh');
     expect(hookContent).toContain('fail');
-    expect(hookContent).toContain('15 次');
+    expect(hookContent).toContain('MAX_RETRIES');
   });
 
   it('应该在超限时写入 .dev-failure.log', () => {
@@ -164,14 +164,14 @@ retry_count: 15
   });
 
   it('应该在 .dev-failure.log 中包含完整失败信息', () => {
-    // 模拟 .dev-mode 中有 last_block_reason
+    // 模拟 .dev-mode 中有 last_block_reason（v15.1.0: MAX_RETRIES=30）
     writeFileSync(
       devModeFile,
       `dev
 branch: cp-test-branch
 prd: .prd.md
 started: 2026-02-01T10:00:00+00:00
-retry_count: 15
+retry_count: 30
 last_block_reason: CI 失败 (failure)
 `,
     );

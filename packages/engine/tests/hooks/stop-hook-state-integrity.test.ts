@@ -142,12 +142,12 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
       expect(existsSync(join(tempDir, ".dev-lock.cp-test"))).toBe(false);
     });
 
-    it("retry_count 超过 15 → exit 0（安全阀，防无限循环）", () => {
+    it("retry_count 超过 30 → exit 0（安全阀，防无限循环，v15.1.0: MAX_RETRIES=30）", () => {
       initGitRepo(tempDir, "cp-test");
       createDevState(
         tempDir,
         "cp-test",
-        `dev\nbranch: cp-test\nsession_id: ${TEST_SESSION_ID}\ntty: not a tty\nretry_count: 15\n`
+        `dev\nbranch: cp-test\nsession_id: ${TEST_SESSION_ID}\ntty: not a tty\nretry_count: 30\n`
       );
       const code = runStopHook(tempDir);
       expect(code).toBe(0);
