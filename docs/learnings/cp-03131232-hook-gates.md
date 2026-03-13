@@ -61,6 +61,6 @@ date: 2026-03-13
 
 ## 下次预防措施
 
-1. **feat PR 必须同步新增测试文件**：在 Step 6（写代码）阶段，当 PR 标题确定为 `feat:` 时，必须同时创建对应的 `.test.ts` 文件
-2. **commit message 验证测试**：可在 bash-guard 测试中增加单引号变体的测试用例
-3. **DoD Test 字段使用 grep -c**：验证新 hook 逻辑时，DoD 的 Test 字段应用 `grep -c 'key-string' hooks/xxx.sh`，而非 vitest 命令（CI 超时风险）
+- [ ] **feat PR 必须同步新增测试文件**：在 Step 6（写代码）阶段，当 PR 标题确定为 `feat:` 时，必须同时创建对应的 `.test.ts` 文件
+- [ ] **commit message 验证测试**：可在 bash-guard 测试中增加单引号变体的测试用例
+- [ ] **DoD Test 字段使用 grep -c**：验证新 hook 逻辑时，DoD 的 Test 字段应用 `grep -c 'key-string' hooks/xxx.sh`，而非 vitest 命令（CI 超时风险）
