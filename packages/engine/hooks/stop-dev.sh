@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stop Hook: 循环控制器（官方 JSON API 实现）v14.0.0
+# Stop Hook: Claude Code 协议适配器 v15.0.0
 # ============================================================================
-# 检测 per-branch 状态文件，根据完成条件决定是否允许会话结束：
+# 这是 Claude Code Stop Hook 的协议适配器。
+# 完成判断逻辑已提取到 lib/devloop-check.sh（Provider-Agnostic SSOT）。
 #
-# 无 .dev-lock.<branch> → exit 0（普通会话，允许结束）
-# 有 .dev-lock.<branch> → 检查完成条件：
-#   - PR 创建？
-#   - CI 通过？
-#   - PR 合并？
-#   全部满足 → 删除状态文件 → exit 0
-#   未满足 → JSON API + exit 2（强制循环，reason 作为 prompt 继续执行）
+# 此文件职责：
+#   1. 读取 .dev-lock.<branch> 状态文件，进行会话隔离
+#   2. 调用 devloop_check() 获取完成状态
+#   3. 将结果转换为 Claude Code JSON API 格式输出
+#   4. 输出 exit 0（允许结束）或 exit 2（强制继续）
 #
-# v14.0.0: 删除所有旧格式（.dev-lock/.dev-mode/.dev-sentinel 无后缀）兼容代码
-#          只保留 per-branch 格式（.dev-lock.<branch> + .dev-mode.<branch> + .dev-sentinel.<branch>）
+# 此文件永远不需要修改业务逻辑——只改 lib/devloop-check.sh。
+#
+# v15.0.0: 提取完成判断逻辑到 lib/devloop-check.sh（provider-agnostic）
+# v14.0.0: 删除所有旧格式兼容代码，只保留 per-branch 格式
 # ============================================================================
 
 set -euo pipefail
@@ -47,10 +48,22 @@ for candidate in "$PROJECT_ROOT_EARLY/lib/ci-status.sh" "$PROJECT_ROOT_EARLY/pac
     fi
 done
 
+# ===== v15.0.0: 加载 devloop-check.sh（Provider-Agnostic SSOT）=====
+# 完成判断逻辑的唯一来源，所有 Provider 适配器共用
+DEVLOOP_CHECK_LIB=""
+for candidate in "$PROJECT_ROOT_EARLY/packages/engine/lib/devloop-check.sh" "$PROJECT_ROOT_EARLY/lib/devloop-check.sh" "$SCRIPT_DIR/../lib/devloop-check.sh" "$HOME/.claude/lib/devloop-check.sh"; do
+    if [[ -f "$candidate" ]]; then
+        DEVLOOP_CHECK_LIB="$candidate"
+        break
+    fi
+done
+
 # shellcheck disable=SC1090
 [[ -n "$LOCK_UTILS" ]] && source "$LOCK_UTILS"
 # shellcheck disable=SC1090
 [[ -n "$CI_STATUS_LIB" ]] && source "$CI_STATUS_LIB"
+# shellcheck disable=SC1090
+[[ -n "$DEVLOOP_CHECK_LIB" ]] && source "$DEVLOOP_CHECK_LIB"
 
 # v12.41.0 P1-3 修复：jq 不存在时提供极简 shim
 # 防止 set -e 下 jq 命令找不到导致整个脚本崩溃（exit 127）
@@ -449,158 +462,144 @@ echo "" >&2
 echo "  分支: $BRANCH_NAME" >&2
 echo "" >&2
 
-# ===== 条件 1: PR 创建？ =====
-PR_NUMBER=""
-PR_STATE=""
+# ===== v15.0.0: 调用 devloop-check.sh（Provider-Agnostic SSOT）=====
+# 完成判断逻辑统一在 lib/devloop-check.sh，此处只做协议转换
+# 此段代码永远不需要修改——只改 lib/devloop-check.sh
 
-if command -v gh &>/dev/null; then
-    # 先检查 open 状态的 PR
-    PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
+    # === 使用 devloop-check.sh 统一判断 ===
+    DEVLOOP_RESULT=$(devloop_check "$BRANCH_NAME" "$DEV_MODE_FILE") || DEVLOOP_RC=$?
+    DEVLOOP_RC="${DEVLOOP_RC:-0}"
+    DEVLOOP_STATUS=$(echo "$DEVLOOP_RESULT" | jq -r '.status // "blocked"' 2>/dev/null || echo "blocked")
 
-    if [[ -n "$PR_NUMBER" ]]; then
-        PR_STATE="open"
-    else
-        # 检查已合并的 PR
-        PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
-        if [[ -n "$PR_NUMBER" ]]; then
-            PR_STATE="merged"
-        fi
-    fi
-fi
+    echo "  devloop_check 状态: $DEVLOOP_STATUS" >&2
 
-if [[ -z "$PR_NUMBER" ]]; then
-    echo "  ❌ 条件 1: PR 未创建" >&2
-    echo "" >&2
-    echo "  下一步: 创建 PR" >&2
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    save_block_reason "PR 未创建"
-    jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'
-    exit 2
-fi
-
-echo "  ✅ 条件 1: PR 已创建 (#$PR_NUMBER)" >&2
-
-# ===== 条件 2: CI 状态？=====
-# v12.40.1: PR 已合并时跳过 CI 检查（合并意味着 CI 必然已通过，
-# 且合并后分支可能被删除导致 CI 查询返回 unknown → 永远卡死）
-if [[ "$PR_STATE" == "merged" ]]; then
-    echo "  ✅ 条件 2: CI 通过（PR 已合并，CI 必然已通过）" >&2
-else
-    CI_STATUS="unknown"
-    CI_CONCLUSION=""
-    CI_RUN_ID=""
-
-    # P0-4: 使用统一 CI 查询库（带重试），fallback 到内联查询
-    if [[ -n "$CI_STATUS_LIB" ]] && type get_ci_status &>/dev/null; then
-        CI_RESULT=$(CI_MAX_RETRIES=2 CI_RETRY_DELAY=3 get_ci_status "$BRANCH_NAME") || true
-        CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status // "unknown"')
-        CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion // ""')
-        CI_RUN_ID=$(echo "$CI_RESULT" | jq -r '.run_id // ""')
-    else
-        # Fallback: 内联查询
-        RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
-        if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
-            CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
-            CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
-            CI_RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
-        fi
-    fi
-
-    case "$CI_STATUS" in
-        "completed")
-            if [[ "$CI_CONCLUSION" == "success" ]]; then
-                echo "  ✅ 条件 2: CI 通过" >&2
-            else
-                echo "  ❌ 条件 2: CI 失败 ($CI_CONCLUSION)" >&2
-                echo "" >&2
-                echo "  下一步: 查看 CI 日志并修复" >&2
-                if [[ -n "$CI_RUN_ID" ]]; then
-                    echo "    gh run view $CI_RUN_ID --log-failed" >&2
-                fi
-                echo "" >&2
-                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-                save_block_reason "CI 失败 ($CI_CONCLUSION)"
-                jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
-                exit 2
-            fi
-            ;;
-        "in_progress"|"queued"|"waiting"|"pending")
-            echo "  ⏳ 条件 2: CI 进行中 ($CI_STATUS)" >&2
-            echo "" >&2
-            echo "  下一步: 等待 CI 完成" >&2
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            save_block_reason "CI 进行中 ($CI_STATUS)"
-            jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
-            exit 2
-            ;;
-        *)
-            echo "  ⚠️  条件 2: CI 状态未知 ($CI_STATUS)" >&2
-            echo "" >&2
-            echo "  下一步: 检查 CI 状态" >&2
-            echo "    gh run list --branch $BRANCH_NAME --limit 1" >&2
-            echo "" >&2
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-            save_block_reason "CI 状态未知 ($CI_STATUS)"
-            jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
-            exit 2
-            ;;
-    esac
-fi
-
-# ===== 条件 3: PR 已合并？（CI 通过后检查） =====
-if [[ "$PR_STATE" == "merged" ]]; then
-    echo "  ✅ 条件 3: PR 已合并" >&2
-
-    # 检查是否完成 Step 11 Cleanup
-    # Bug fix: 使用 awk 提取状态值，避免匹配其他内容
-    STEP_11_STATUS=$(grep "^step_11_cleanup:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-    if [[ "$STEP_11_STATUS" == "done" ]]; then
-        echo "  ✅ Step 11 Cleanup 已完成" >&2
-        echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    if [[ "$DEVLOOP_STATUS" == "done" ]]; then
         echo "  🎉 工作流完成！正在清理..." >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
         force_cleanup_worktree "$DEV_MODE_FILE"
-        # v2.0 P2-28: 同时清理 .dev-failure.log
         rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
               "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
               "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
         jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
-        exit 0  # 允许结束
+        exit 0
     else
-        echo "  ⚠️  Step 11 Cleanup 未完成" >&2
-        echo "" >&2
-        echo "  下一步: 执行 Step 11 Cleanup" >&2
+        # blocked — 将 devloop_check 的 reason+action 转换为 Claude Code JSON 格式
+        DEVLOOP_REASON=$(echo "$DEVLOOP_RESULT" | jq -r '.reason // "未知原因"' 2>/dev/null || echo "未知原因")
+        DEVLOOP_ACTION=$(echo "$DEVLOOP_RESULT" | jq -r '.action // ""' 2>/dev/null || echo "")
+        DEVLOOP_PR=$(echo "$DEVLOOP_RESULT" | jq -r '.pr_number // ""' 2>/dev/null || echo "")
+        DEVLOOP_RUN_ID=$(echo "$DEVLOOP_RESULT" | jq -r '.ci_run_id // ""' 2>/dev/null || echo "")
+
+        COMBINED_REASON="$DEVLOOP_REASON"
+        if [[ -n "$DEVLOOP_ACTION" ]]; then
+            COMBINED_REASON="${DEVLOOP_REASON}。下一步：${DEVLOOP_ACTION}"
+        fi
+
+        echo "  原因: $DEVLOOP_REASON" >&2
+        [[ -n "$DEVLOOP_ACTION" ]] && echo "  行动: $DEVLOOP_ACTION" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        save_block_reason "PR 已合并，Cleanup 未完成"
-        jq -n '{"decision": "block", "reason": "PR 已合并，执行 Step 11 Cleanup"}'
+
+        save_block_reason "$DEVLOOP_REASON"
+        jq -n \
+            --arg reason "$COMBINED_REASON" \
+            --arg pr "${DEVLOOP_PR:-}" \
+            --arg run_id "${DEVLOOP_RUN_ID:-}" \
+            '{"decision": "block", "reason": $reason, "pr_number": $pr, "ci_run_id": $run_id}'
         exit 2
     fi
+
 else
-    # PR 未合并
-    echo "  ❌ 条件 3: PR 未合并" >&2
+    # === Fallback: devloop-check.sh 未加载，使用旧内联逻辑 ===
+    # 保留此 fallback 确保向后兼容（devloop-check.sh 未安装时不崩溃）
+    echo "  ⚠️  devloop-check.sh 未加载，使用 fallback 逻辑" >&2
 
-    # ===== v12.35.8: 合并前检查 Step 10 LEARNINGS =====
-    # 必须先完成 Step 10（写 LEARNINGS → push 到功能分支），再合并 PR
-    # 否则 AI 合并后功能分支被删，LEARNINGS 无处 push，被迫另开 PR
-    STEP_10_STATUS=$(grep "^step_10_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
-    if [[ "$STEP_10_STATUS" != "done" ]]; then
-        echo "  ⚠️  Step 10 LEARNINGS 未完成（不能先合并 PR）" >&2
-        echo "" >&2
-        echo "  下一步: 先执行 Step 10 LEARNINGS" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        save_block_reason "Step 10 LEARNINGS 未完成（合并前必须先写 LEARNINGS）"
-        jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先：1) 读取 skills/dev/steps/10-learning.md 2) 写 docs/LEARNINGS.md 3) git add + commit + push 到功能分支（PR 自动更新）4) 写完后 stop-dev.sh 会自动放行合并。不要跳过 Step 10 直接合并。" '{"decision": "block", "reason": $reason}'
+    # --- 条件 1: PR 创建？---
+    PR_NUMBER=""
+    PR_STATE=""
+
+    if command -v gh &>/dev/null; then
+        PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$PR_NUMBER" ]]; then
+            PR_STATE="open"
+        else
+            PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state merged --json number -q '.[0].number' 2>/dev/null || echo "")
+            [[ -n "$PR_NUMBER" ]] && PR_STATE="merged"
+        fi
+    fi
+
+    if [[ -z "$PR_NUMBER" ]]; then
+        save_block_reason "PR 未创建"
+        jq -n --arg reason "PR 未创建，继续执行 Step 8 创建 PR" '{"decision": "block", "reason": $reason}'
         exit 2
     fi
 
-    echo "" >&2
-    echo "  下一步: 合并 PR（Step 10 已完成）" >&2
-    echo "    gh pr merge $PR_NUMBER --squash --delete-branch" >&2
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    save_block_reason "PR 未合并 (#$PR_NUMBER)"
-    jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Step 10 LEARNINGS 已完成，执行合并操作：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
-    exit 2
+    echo "  ✅ 条件 1: PR 已创建 (#$PR_NUMBER)" >&2
+
+    # --- 条件 2: CI 状态？---
+    if [[ "$PR_STATE" != "merged" ]]; then
+        CI_STATUS="unknown"
+        CI_CONCLUSION=""
+        CI_RUN_ID=""
+
+        if [[ -n "$CI_STATUS_LIB" ]] && type get_ci_status &>/dev/null; then
+            CI_RESULT=$(CI_MAX_RETRIES=2 CI_RETRY_DELAY=3 get_ci_status "$BRANCH_NAME") || true
+            CI_STATUS=$(echo "$CI_RESULT" | jq -r '.status // "unknown"')
+            CI_CONCLUSION=$(echo "$CI_RESULT" | jq -r '.conclusion // ""')
+            CI_RUN_ID=$(echo "$CI_RESULT" | jq -r '.run_id // ""')
+        else
+            RUN_INFO=$(gh run list --branch "$BRANCH_NAME" --limit 1 --json status,conclusion,databaseId 2>/dev/null || echo "[]")
+            if [[ "$RUN_INFO" != "[]" && -n "$RUN_INFO" ]]; then
+                CI_STATUS=$(echo "$RUN_INFO" | jq -r '.[0].status // "unknown"')
+                CI_CONCLUSION=$(echo "$RUN_INFO" | jq -r '.[0].conclusion // ""')
+                CI_RUN_ID=$(echo "$RUN_INFO" | jq -r '.[0].databaseId // ""')
+            fi
+        fi
+
+        case "$CI_STATUS" in
+            "completed")
+                if [[ "$CI_CONCLUSION" != "success" ]]; then
+                    save_block_reason "CI 失败 ($CI_CONCLUSION)"
+                    jq -n --arg reason "CI 失败（$CI_CONCLUSION），查看日志修复问题后重新 push" --arg run_id "${CI_RUN_ID:-unknown}" '{"decision": "block", "reason": $reason, "ci_run_id": $run_id}'
+                    exit 2
+                fi
+                ;;
+            "in_progress"|"queued"|"waiting"|"pending")
+                save_block_reason "CI 进行中 ($CI_STATUS)"
+                jq -n --arg reason "CI 进行中（$CI_STATUS），等待 CI 完成" '{"decision": "block", "reason": $reason}'
+                exit 2
+                ;;
+            *)
+                save_block_reason "CI 状态未知 ($CI_STATUS)"
+                jq -n --arg reason "CI 状态未知（$CI_STATUS），检查 CI 状态" '{"decision": "block", "reason": $reason}'
+                exit 2
+                ;;
+        esac
+    fi
+
+    # --- 条件 3: PR 合并？---
+    if [[ "$PR_STATE" == "merged" ]]; then
+        STEP_11_STATUS=$(grep "^step_11_cleanup:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$STEP_11_STATUS" == "done" ]]; then
+            force_cleanup_worktree "$DEV_MODE_FILE"
+            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+                  "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+                  "$PROJECT_ROOT/.dev-orphan-retry" "$PROJECT_ROOT/.dev-failure.log"
+            jq -n '{"decision": "allow", "reason": "PR 已合并且 Step 11 完成，工作流结束"}'
+            exit 0
+        else
+            save_block_reason "PR 已合并，Cleanup 未完成"
+            jq -n '{"decision": "block", "reason": "PR 已合并，执行 Step 11 Cleanup"}'
+            exit 2
+        fi
+    else
+        STEP_10_STATUS=$(grep "^step_10_learning:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "pending")
+        if [[ "$STEP_10_STATUS" != "done" ]]; then
+            save_block_reason "Step 10 LEARNINGS 未完成"
+            jq -n --arg reason "CI 通过，但 Step 10 LEARNINGS 尚未完成。必须先完成 Step 10 再合并 PR。" '{"decision": "block", "reason": $reason}'
+            exit 2
+        fi
+        save_block_reason "PR 未合并 (#$PR_NUMBER)"
+        jq -n --arg reason "PR #$PR_NUMBER CI 已通过且 Step 10 已完成，执行合并：gh pr merge $PR_NUMBER --squash --delete-branch" --arg pr "$PR_NUMBER" '{"decision": "block", "reason": $reason, "pr_number": $pr}'
+        exit 2
+    fi
 fi

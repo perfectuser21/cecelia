@@ -422,6 +422,23 @@ Haiku 异步分类 learning_type
 
 ---
 
+## GP-027: Provider-Agnostic Engine — devloop-check.sh 单一入口 (S10)
+
+**Feature**: S10 - Provider-Agnostic Engine — devloop-check.sh 单一入口
+**Priority**: P1
+
+### Golden Path
+
+```
+Brain codex_dev 任务 → executor.triggerCodexBridge() →
+codex-bridge POST /run (runner=runner.sh) →
+runner.sh source devloop-check.sh →
+while ! devloop_check done → codex-bin exec action →
+完成 → cleanup
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

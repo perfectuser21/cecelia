@@ -1,5 +1,42 @@
 # Cecelia Core Learnings
 
+### [2026-03-13] Provider-Agnostic Engine — devloop-check.sh 单一入口（PR #provider-agnostic-engine）
+
+**背景**：Codex（OpenAI）作为第二个 AI Provider 需要跑 /dev workflow，若直接在 runner.sh 中复制 stop-dev.sh 的完成判断逻辑，则任何修改都要改两处。
+
+#### 根本原因
+
+stop-dev.sh v14.0.0 的完成判断逻辑（PR 创建？CI 通过？PR 合并？Learning 写完？）与 Claude Code JSON 协议输出混在一起，无法复用。
+
+#### 解决方案：单一入口 SSOT
+
+```
+lib/devloop-check.sh   ← 唯一需要改的文件（业务逻辑 SSOT）
+       ↓ source
+stop-dev.sh            ← Claude Code 协议适配器（永不改业务逻辑）
+       ↓ source
+runners/codex/runner.sh ← Codex 协议适配器（永不改业务逻辑）
+```
+
+`devloop_check(branch, dev_mode_file)` 输出标准化 JSON：
+- `{"status":"done"}` → 工作流完成
+- `{"status":"blocked","reason":"...","action":"..."}` → 需要继续
+
+#### 关键设计决策
+
+1. **fallback 机制**：stop-dev.sh v15.0.0 在 devloop-check.sh 未加载时自动使用旧内联逻辑（向后兼容）
+2. **分支命名**：codex_dev 分支加 `-cx` suffix（如 `cp-03131205-xxx-cx`），防止与 Claude Code 分支冲突
+3. **状态文件**：Codex 无 session，用 `CODEX_<task_id>` 作为合成 session_id 写入 .dev-mode
+4. **Brain 路由**：codex_dev → xian → triggerCodexBridge(runner 模式) → runner.sh
+
+#### 下次遇到类似问题
+
+添加第三个 Provider（Cursor、Gemini CLI）只需：
+1. 新建 `runners/{provider}/runner.sh`
+2. `source lib/devloop-check.sh`
+3. 根据自己的 Provider API 调用 `devloop_check()`
+4. 在 Brain executor.js 的 LOCATION_MAP + triggerXxxBridge 里注册
+
 ### [2026-03-12] scan-mock-health.mjs — Brain 测试 Mock 健康基线（PR #903）
 
 **背景**：PR #822 暴露了两类测试陷阱（mockImplementation 条件顺序 + clearAllMocks 泄漏），需要建立扫描工具摸清存量规模。
