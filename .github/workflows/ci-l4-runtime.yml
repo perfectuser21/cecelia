@@ -2,7 +2,7 @@ name: L4 Runtime Gate
 
 # L4: 运行时集成测试 — Brain 变动时必跑（~20min，3 shards 并行）
 # 职责：PostgreSQL 真实环境 + 完整集成测试 + GoldenPath E2E
-# 运行环境：xian-mac-m1（6 runner 实例，支持 2 个 L4 并发，各占 3 个 shard）
+# 运行环境：xian-mac-m4（有 Homebrew，支持 postgresql@17/pgvector）
 # 优化：动态端口（GITHUB_RUN_ID 派生）消除并发冲突，去掉全局 mutex，允许 2 个 L4 同时运行
 
 on:
@@ -55,7 +55,7 @@ jobs:
     name: Brain Integration (Shard ${{ matrix.shard }})
     needs: changes
     if: needs.changes.outputs.brain == 'true'
-    runs-on: [self-hosted, macOS, ARM64, xian-mac-m1]
+    runs-on: [self-hosted, macOS, ARM64, xian-mac-m4]
     timeout-minutes: 40
     permissions:
       contents: read
