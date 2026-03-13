@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Bash Guard Hook - 凭据泄露 + 代码写入保护 + Skill 文件保护 + HK 部署防护
+#                   + git push 前 local-precheck + git commit message 格式验证
 #
 # 性能模型：
 #   - 99% 的命令：3 次字符串匹配 (~3ms) → 放行
 #   - 命中代码写入时：才跑 git branch 检查 (~50ms)
+#   - 命中 git push 时：跑 local-precheck.sh (~200ms，仅 Brain 改动时耗时)
 #   - 命中 HK 部署时：才跑 git 三连检 (~200ms)
 
 set -euo pipefail
@@ -179,6 +181,58 @@ if [[ "$BASH_WRITES_SKILL" == "true" ]]; then
         echo "[SKILL_REQUIRED: dev]" >&2
         echo "" >&2
         exit 2
+    fi
+fi
+
+# ─── 规则 5: git push 前运行 local-precheck.sh ────────────────
+# 拦截 git push（带或不带参数），在放行前跑 local-precheck.sh
+# 放行条件：local-precheck.sh 退出码 0（或文件不存在）
+if echo "$CMD" | grep -qE '(^|&&|\|\||;)[[:space:]]*git push(\s|$)'; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    PRECHECK="$REPO_ROOT/scripts/local-precheck.sh"
+    if [[ -f "$PRECHECK" ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BASH GUARD] Gate 1: 运行 local-precheck..." >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        if ! bash "$PRECHECK"; then
+            echo "" >&2
+            echo "  ❌ local-precheck 失败，git push 被阻止" >&2
+            echo "  请修复上述问题后再 push" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            exit 2
+        fi
+        echo "  ✅ local-precheck 通过，允许 push" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    fi
+fi
+
+# ─── 规则 6: git commit message 格式验证（conventional commits）──
+# 拦截带 -m 参数的 git commit，验证消息格式
+if echo "$CMD" | grep -qE '(^|&&|\|\||;)[[:space:]]*git commit\b'; then
+    # 提取 -m "message" 或 -m 'message' 参数
+    MSG=$(echo "$CMD" | sed -n 's/.*-m[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    if [[ -z "$MSG" ]]; then
+        MSG=$(echo "$CMD" | sed -n "s/.*-m[[:space:]]*'\\([^']*\\)'.*/\\1/p" | head -1)
+    fi
+    if [[ -n "$MSG" ]]; then
+        # conventional commits 前缀（+ ops: 项目自定义）
+        if ! echo "$MSG" | grep -qE '^(feat|fix|docs|chore|test|refactor|perf|ci|build|style|revert|ops)(\([^)]+\))?!?:[[:space:]]'; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BASH GUARD] Gate 5: commit message 格式不符" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  消息: $MSG" >&2
+            echo "" >&2
+            echo "  必须以 conventional commits 前缀开头：" >&2
+            echo "    feat: / fix: / docs: / chore: / test:" >&2
+            echo "    refactor: / perf: / ci: / build: / style: / revert: / ops:" >&2
+            echo "  也支持 scope：feat(brain): / fix(ui):" >&2
+            echo "  Breaking change：feat!: 或 feat(scope)!:" >&2
+            echo "" >&2
+            exit 2
+        fi
     fi
 fi
 

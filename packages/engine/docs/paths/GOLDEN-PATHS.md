@@ -439,6 +439,24 @@ while ! devloop_check done → codex-bin exec action →
 
 ---
 
+## GP-028: Hook Gates — 7 个真锁实现（bash-guard/stop-dev/branch-protect） (S11)
+
+**Feature**: S11 - Hook Gates — 7 个真锁实现（bash-guard/stop-dev/branch-protect）
+**Priority**: P1
+
+### Golden Path
+
+```
+git push → bash-guard 拦截 → local-precheck.sh → 通过则放行
+写 .prd-*.md → branch-protect 拦截 → 验证 ## 成功标准 → 通过则放行
+写 .dod-*.md → branch-protect 拦截 → check-dod-mapping.cjs → 通过则放行
+git commit → bash-guard 拦截 → 验证 conventional commits 格式
+CI 通过 + step_10 done → devloop_check 验证 Learning 格式
+Brain 代码改动 → devloop_check 验证 DEFINITION.md 同步
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

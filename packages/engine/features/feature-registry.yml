@@ -1342,3 +1342,45 @@ product_features:
       - "dry-run 模式: runner.sh 打印命令不执行"
 
     rcis: []
+
+  - id: S11
+    name: Hook Gates — 7 个真锁实现（bash-guard/stop-dev/branch-protect）
+    status: Committed
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-12"
+    description: |
+      实现 7 个 Hook Gate 真锁，确保质量门禁从源头拦截：
+      Gate 1 (bash-guard): git push 前运行 local-precheck.sh
+      Gate 2 (devloop-check): step_10 done 后验证 Learning 格式
+      Gate 3 (branch-protect): 写 .prd-*.md 时验证 ## 成功标准 章节
+      Gate 4 (branch-protect): 写 .dod-*.md 时运行 check-dod-mapping.cjs
+      Gate 5 (bash-guard): git commit message 必须符合 conventional commits
+      Gate 6 (devloop-check): Brain 代码改动时检查 DEFINITION.md 同步更新
+      Gate 7 (branch-protect): 改动 engine/skills/ 时提醒 Engine 三要素
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "所有 Bash 工具调用（PreToolUse）"
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "所有 Write/Edit 工具调用（PreToolUse）"
+      - type: lib
+        file: lib/devloop-check.sh
+        trigger: "被 stop-dev.sh 和 runners/codex/runner.sh source 调用"
+
+    golden_path: |
+      git push → bash-guard 拦截 → local-precheck.sh → 通过则放行
+      写 .prd-*.md → branch-protect 拦截 → 验证 ## 成功标准 → 通过则放行
+      写 .dod-*.md → branch-protect 拦截 → check-dod-mapping.cjs → 通过则放行
+      git commit → bash-guard 拦截 → 验证 conventional commits 格式
+      CI 通过 + step_10 done → devloop_check 验证 Learning 格式
+      Brain 代码改动 → devloop_check 验证 DEFINITION.md 同步
+
+    minimal_paths:
+      - "local-precheck.sh 不存在: Gate 1 跳过（仅 Brain 改动时触发）"
+      - "check-learning.sh 不存在: Gate 2 跳过"
+      - "check-dod-mapping.cjs 不存在: Gate 4 跳过（不阻止写入）"
+
+    rcis: []
