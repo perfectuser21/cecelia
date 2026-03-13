@@ -42,6 +42,23 @@ describe('quarantine', () => {
       expect(result.class).toBe(FAILURE_CLASS.AUTH);
     });
 
+    it('should classify OAuth token expired as AUTH', () => {
+      const result = classifyFailure('Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}');
+      expect(result.class).toBe(FAILURE_CLASS.AUTH);
+    });
+
+    it('should classify "Failed to authenticate" as AUTH', () => {
+      const result = classifyFailure('Failed to authenticate with the API');
+      expect(result.class).toBe(FAILURE_CLASS.AUTH);
+    });
+
+    it('auth class should have needs_human_review retry strategy', () => {
+      const result = classifyFailure('Failed to authenticate. OAuth token has expired.');
+      expect(result.class).toBe(FAILURE_CLASS.AUTH);
+      expect(result.retry_strategy.should_retry).toBe(false);
+      expect(result.retry_strategy.needs_human_review).toBe(true);
+    });
+
     it('should classify out of memory as RESOURCE', () => {
       const result = classifyFailure('ENOMEM: not enough memory');
       expect(result.class).toBe(FAILURE_CLASS.RESOURCE);

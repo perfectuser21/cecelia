@@ -92,6 +92,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set Homebrew PATH (ARM64 macOS)
+        run: echo "/opt/homebrew/bin" >> $GITHUB_PATH
+
       - name: Cache Homebrew packages
         id: cache-brew
         run: |

@@ -85,9 +85,10 @@ const RATE_LIMIT_PATTERNS = [
 const AUTH_PATTERNS = [
   /permission\s+denied|access\s+denied|unauthorized/i,
   /EACCES|EPERM/i,
-  /authentication\s+failed|auth\s+error/i,
+  /authentication\s+failed|auth\s+error|failed\s+to\s+authenticate/i,
   /invalid.*api.*key/i,
   /forbidden/i,
+  /OAuth.*token.*expired|token.*has.*expired|token.*expired/i,
 ];
 
 const NETWORK_PATTERNS = [
