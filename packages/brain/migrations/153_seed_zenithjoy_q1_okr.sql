@@ -1,4 +1,4 @@
--- Migration 152: 初始化 ZenithJoy 2026 Q1 OKR 种子数据
+-- Migration 153: 初始化 ZenithJoy 2026 Q1 OKR 种子数据
 --
 -- 背景：zenithjoy 部门派发冻结，原因是 goals 表中无 metadata->>'dept' = 'zenithjoy' 的 goal，
 -- 导致 lookupDeptPrimaryGoal() 返回 null，heartbeat 任务 goal_id=null。
