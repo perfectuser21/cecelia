@@ -15,9 +15,11 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.42.0"
+version: "3.43.0"
 updated: "2026-03-13"
 changelog:
+  - "3.43.0: v12.59.0 - Step 6.5 升级为 Cleanup Sub-Agent（真正召唤 Agent 工具）：06-code.md Step 6.5 从内联文字检查清单升级为明确的 subagent_type=general-purpose 调用指令，自动扫描改动文件中4类垃圾代码（被替代旧代码/重复逻辑/矛盾注释/无用import），sub-agent 完成后验证 diff 无误删后继续 Step 7"
+  - "3.42.0: v12.58.1 - 修复 Codex runner 为单次大调用模式：runner.sh v2.0.0 改为第一次发送完整工作流 prompt（含 task-id、分支、项目路径），重试时发送带当前状态的恢复 prompt；修复 --cwd 不支持（改为 cd）、--sandbox full-access→danger-full-access、新增 CODEX_HOME 环境变量支持"
   - "3.42.0: v12.57.1 - fix-branch-protect monorepo subdir PRD 保护（v25）：find_prd_dod_dir() 返回根目录时，若文件在 packages/ 子目录则要求根目录必须有 per-branch PRD（.prd-{branch}.md），不接受全局 .prd.md 旧任务残留，新增测试用例覆盖场景"
   - "3.41.0: v12.57.0 - cleanup.sh 完成后自动触发 worktree-gc：step_11_cleanup: done 标记后，从主仓库后台执行 worktree-gc.sh（cd MAIN_WT && bash worktree-gc.sh &），不再依赖外部触发；GC 脚本不存在或主仓库路径为空时静默跳过"
   - "3.40.0: v12.56.0 - worktree 活跃锁防 GC 误删：worktree-gc.sh 在删除前检查 .dev-session-active，存在则跳过并输出 WARN；stop-dev.sh v15.1.0 在 dev 流程开始时在 worktree 内创建 .dev-session-active，cleanup_done 后删除；.gitignore 新增 .dev-session-active"
