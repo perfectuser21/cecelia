@@ -3320,11 +3320,16 @@ router.post('/execution-callback', async (req, res) => {
         console.log(`[execution-callback] Failure classified: task=${task_id} class=${classification.class} pattern=${classification.pattern}`);
 
         // Store classification in task payload
+        // error_details 供 shouldQuarantineOnFailure 读取为 last_error（修复 Unknown 问题）
+        const errorDetailsValue = classification.class === 'billing_cap'
+          ? 'quota_exhausted'
+          : errorMsg.slice(0, 1000);
         await pool.query(
           `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
           [task_id, JSON.stringify({
             failure_class: classification.class,
             failure_detail: { pattern: classification.pattern, error_excerpt: errorMsg.slice(0, 500) },
+            error_details: errorDetailsValue,
           })]
         );
 
