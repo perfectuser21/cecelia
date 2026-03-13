@@ -46,6 +46,7 @@ Thumbs.db
 .dev-lock.*
 .dev-sentinel
 .dev-sentinel.*
+.dev-session-active
 .dev-runs/
 .dev-failure*
 .gate-*
