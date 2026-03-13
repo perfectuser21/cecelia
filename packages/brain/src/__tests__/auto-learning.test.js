@@ -89,15 +89,15 @@ describe('Auto Learning Module', () => {
     it('should create learning for failed feature task', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
+      // Call sequence: task SELECT, findAndMerge SELECT (new), isDupLearning SELECT, INSERT
       mockPool.query
         .mockResolvedValueOnce({
           rows: [{ task_type: 'feature', title: 'New feature' }]
         })
+        .mockResolvedValueOnce({ rows: [] }) // findAndMerge SELECT → no match
+        .mockResolvedValueOnce({ rows: [] }) // isDuplicateLearning → no dup
         .mockResolvedValueOnce({
-          rows: []
-        })
-        .mockResolvedValueOnce({
-          rows: [{ id: 'learning-failed', title: '任务失败：failed-task' }]
+          rows: [{ id: 'learning-failed', title: '任务失败：TIMEOUT' }]
         });
 
       const result = await processExecutionAutoLearning(
@@ -109,14 +109,14 @@ describe('Auto Learning Module', () => {
 
       expect(result).toEqual({
         id: 'learning-failed',
-        title: '任务失败：failed-task'
+        title: '任务失败：TIMEOUT'
       });
 
       expect(mockPool.query).toHaveBeenNthCalledWith(
-        3,
+        4,
         expect.stringContaining('INSERT INTO learnings'),
         expect.arrayContaining([
-          '任务失败：failed-task',
+          '任务失败：TIMEOUT',
           'failure_pattern',
           'task_failed_auto'
         ])
@@ -337,15 +337,15 @@ describe('Auto Learning Module', () => {
     it('should extract error field when error_details is absent', async () => {
       const { processExecutionAutoLearning } = await import('../auto-learning.js');
 
+      // 'Network timeout after 30s' matches TIMEOUT → 4 DB calls (incl. findAndMerge SELECT)
       mockPool.query
         .mockResolvedValueOnce({
           rows: [{ task_type: 'dev', title: 'Error task' }]
         })
+        .mockResolvedValueOnce({ rows: [] }) // findAndMerge SELECT → no match
+        .mockResolvedValueOnce({ rows: [] }) // isDuplicateLearning → no dup
         .mockResolvedValueOnce({
-          rows: []
-        })
-        .mockResolvedValueOnce({
-          rows: [{ id: 'learning-e2', title: '任務失敗：e2-task' }]
+          rows: [{ id: 'learning-e2', title: '任务失败：TIMEOUT' }]
         });
 
       await processExecutionAutoLearning(
@@ -354,7 +354,7 @@ describe('Auto Learning Module', () => {
         { error: 'Network timeout after 30s' }
       );
 
-      const insertCall = mockPool.query.mock.calls[2];
+      const insertCall = mockPool.query.mock.calls[3]; // 4th call is INSERT
       const content = insertCall[1][3];
 
       expect(content).toContain('Network timeout after 30s');
