@@ -456,6 +456,22 @@ while ! devloop_check done → codex-bin exec action →
 
 ---
 
+## GP-029: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并 (stop-hook-retry-fix)
+
+**Feature**: stop-hook-retry-fix - Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+**Priority**: P1
+
+### Golden Path
+
+```
+Stop Hook → devloop_check() → blocked →
+超时检查（MAX_RETRIES=30）→ 未超时则 exit 2 继续 →
+Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
+下次 Stop Hook → cleanup_done: true → exit 0 完成
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

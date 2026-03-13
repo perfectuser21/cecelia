@@ -141,9 +141,11 @@ fi
 # v2.0 P2-18 修复：加超时防止 stdin 阻塞（1 秒超时）
 HOOK_INPUT=$(timeout 1 cat 2>/dev/null || echo "{}")
 
-# ===== 15 次重试计数器（替代旧的 stop_hook_active 检查）=====
+# ===== 30 次重试计数器（替代旧的 stop_hook_active 检查）=====
 # 此处不再检查 stop_hook_active，改为在 .dev-mode 中维护 retry_count
 # 具体检查逻辑在后面的完成条件中处理
+# v15.1.0: 重试上限统一为常量 MAX_RETRIES（修复注释与代码不一致）
+MAX_RETRIES=30
 
 # ===== 获取项目根目录 =====
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -315,8 +317,9 @@ fi
 #
 # 详见：.prd-cp-02071917-stop-hook-fix.md
 
-# ===== 检查重试次数（15 次上限）=====
+# ===== 读取并递增重试次数（${MAX_RETRIES} 次上限）=====
 # Bug fix: 使用 awk 替代 cut，避免多空格问题
+# v15.1.0: 超时检查移到 devloop_check 之后，先判断完成状态再判断超时
 RETRY_COUNT=$(grep "^retry_count:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "0")
 RETRY_COUNT=${RETRY_COUNT//[^0-9]/}  # 清理非数字字符
 RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
@@ -324,59 +327,6 @@ RETRY_COUNT=${RETRY_COUNT:-0}        # 空值默认为 0
 # Bug fix: 先递增计数器，再检查上限（修复 off-by-one 错误）
 # 原逻辑：检查 >= 15 后才递增，导致实际第 16 次才失败
 RETRY_COUNT=$((RETRY_COUNT + 1))
-
-if [[ $RETRY_COUNT -gt 30 ]]; then
-    echo "" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "  [Stop Hook: 30 次重试上限]" >&2
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    echo "" >&2
-    echo "  已重试 30 次，任务失败" >&2
-    echo "  原因：30 次重试后仍未完成 11 步流程" >&2
-    echo "" >&2
-
-    # 上报失败
-    TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
-    if [[ -f "$TRACK_SCRIPT" ]]; then
-        bash "$TRACK_SCRIPT" fail "Stop Hook 重试 30 次后仍未完成" 2>/dev/null || true
-    fi
-
-    # 写入失败日志（.dev-failure.log）
-    FAILURE_LOG="$PROJECT_ROOT/.dev-failure.log"
-    FAIL_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "unknown")
-    LAST_REASON=$(grep "^last_block_reason:" "$DEV_MODE_FILE" 2>/dev/null | sed 's/^last_block_reason: //' || echo "unknown")
-    {
-        echo "=== Dev Failure Log ==="
-        echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
-        echo "branch: $FAIL_BRANCH"
-        echo "retry_count: $RETRY_COUNT"
-        echo "last_block_reason: $LAST_REASON"
-        echo "========================"
-    } > "$FAILURE_LOG"
-
-    # 通知 Brain 任务失败
-    if [[ -n "$FAIL_BRANCH" ]]; then
-        # 尝试从 .dev-mode 提取 task_id
-        FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-        if [[ -n "$FAIL_TASK_ID" ]]; then
-            curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${FAIL_TASK_ID}" \
-                -H "Content-Type: application/json" \
-                -d "{\"status\":\"failed\",\"error\":\"Stop Hook 重试 30 次后仍未完成（last_block: ${LAST_REASON}）\"}" \
-                --max-time 5 2>/dev/null || true
-        fi
-    fi
-
-    # 强制清理 worktree（兜底）
-    force_cleanup_worktree "$DEV_MODE_FILE"
-
-    # 删除 .dev-mode, .dev-lock, sentinel 文件 + orphan retry 计数器
-    rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
-          "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
-          "$PROJECT_ROOT/.dev-orphan-retry"
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-    exit 0  # 允许会话结束（失败退出）
-fi
 
 # 更新重试次数（Bug fix: 原子更新 + 跨平台 sed 兼容）
 # 注意: RETRY_COUNT 已在上面递增，这里直接写入当前值
@@ -533,6 +483,62 @@ if [[ -n "$DEVLOOP_CHECK_LIB" ]] && type devloop_check &>/dev/null; then
         echo "  原因: $DEVLOOP_REASON" >&2
         [[ -n "$DEVLOOP_ACTION" ]] && echo "  行动: $DEVLOOP_ACTION" >&2
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+
+        # ===== v15.1.0: 超时检查（在 devloop_check 之后）=====
+        # 修复逻辑顺序 bug：先调用 devloop_check 确认未完成，再检查超时
+        # 旧逻辑在 devloop_check 之前检查超时，导致第 MAX_RETRIES+1 次即使完成也走超时失败分支
+        if [[ $RETRY_COUNT -gt $MAX_RETRIES ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [Stop Hook: ${MAX_RETRIES} 次重试上限]" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  已重试 ${MAX_RETRIES} 次，任务失败" >&2
+            echo "  原因：${MAX_RETRIES} 次重试后仍未完成 11 步流程" >&2
+            echo "" >&2
+
+            # 上报失败
+            TRACK_SCRIPT="$PROJECT_ROOT/skills/dev/scripts/track.sh"
+            if [[ -f "$TRACK_SCRIPT" ]]; then
+                bash "$TRACK_SCRIPT" fail "Stop Hook 重试 ${MAX_RETRIES} 次后仍未完成" 2>/dev/null || true
+            fi
+
+            # 写入失败日志（.dev-failure.log）
+            FAILURE_LOG="$PROJECT_ROOT/.dev-failure.log"
+            FAIL_BRANCH=$(grep "^branch:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "unknown")
+            LAST_REASON=$(grep "^last_block_reason:" "$DEV_MODE_FILE" 2>/dev/null | sed 's/^last_block_reason: //' || echo "unknown")
+            {
+                echo "=== Dev Failure Log ==="
+                echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+                echo "branch: $FAIL_BRANCH"
+                echo "retry_count: $RETRY_COUNT"
+                echo "last_block_reason: $LAST_REASON"
+                echo "========================"
+            } > "$FAILURE_LOG"
+
+            # 通知 Brain 任务失败
+            if [[ -n "$FAIL_BRANCH" ]]; then
+                # 尝试从 .dev-mode 提取 task_id
+                FAIL_TASK_ID=$(grep "^task_id:" "$DEV_MODE_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+                if [[ -n "$FAIL_TASK_ID" ]]; then
+                    curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${FAIL_TASK_ID}" \
+                        -H "Content-Type: application/json" \
+                        -d "{\"status\":\"failed\",\"error\":\"Stop Hook 重试 ${MAX_RETRIES} 次后仍未完成（last_block: ${LAST_REASON}）\"}" \
+                        --max-time 5 2>/dev/null || true
+                fi
+            fi
+
+            # 强制清理 worktree（兜底）
+            force_cleanup_worktree "$DEV_MODE_FILE"
+
+            # 删除 .dev-mode, .dev-lock, sentinel 文件 + orphan retry 计数器
+            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE" "$SENTINEL_FILE" \
+                  "$PROJECT_ROOT/.dev-orphan-retry-sentinel" "$PROJECT_ROOT/.dev-orphan-retry-lock" \
+                  "$PROJECT_ROOT/.dev-orphan-retry"
+
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            exit 0  # 允许会话结束（失败退出）
+        fi
 
         save_block_reason "$DEVLOOP_REASON"
         jq -n \
