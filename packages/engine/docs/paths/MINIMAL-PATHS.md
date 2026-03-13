@@ -275,6 +275,14 @@ changelog:
 
 ---
 
+### S11: Hook Gates — 7 个真锁实现（bash-guard/stop-dev/branch-protect）
+
+1. ✅ **local-precheck.sh 不存在: Gate 1 跳过（仅 Brain 改动时触发）**
+2. ✅ **check-learning.sh 不存在: Gate 2 跳过**
+3. ✅ **check-dod-mapping.cjs 不存在: Gate 4 跳过（不阻止写入）**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

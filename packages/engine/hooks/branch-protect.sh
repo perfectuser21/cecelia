@@ -125,6 +125,131 @@ if [[ "$REAL_FILE_PATH" == "$HOME_DIR/.claude/skills/"* ]] || \
     exit 0
 fi
 
+# ===== Gate 3: 写 .prd-*.md 时验证 PRD 内容格式 =====
+FILE_BASENAME=$(basename "$FILE_PATH")
+if [[ "$FILE_BASENAME" =~ ^\.prd-.*\.md$ ]]; then
+    CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // ""' 2>/dev/null || echo "")
+    if [[ -n "$CONTENT" ]]; then
+        # 检查是否有成功标准章节
+        if ! echo "$CONTENT" | grep -qiE "^#{1,3}[[:space:]]+(成功标准|success criteria|验收标准|acceptance criteria)"; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] Gate 3: PRD 缺少 ## 成功标准 章节" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  文件: $FILE_PATH" >&2
+            echo "" >&2
+            echo "  PRD 文件必须包含以下章节之一：" >&2
+            echo "    ## 成功标准" >&2
+            echo "    ## Success Criteria" >&2
+            echo "    ## 验收标准" >&2
+            echo "" >&2
+            echo "  且至少 2 条成功标准条目（- 或 * 开头）" >&2
+            echo "" >&2
+            exit 2
+        fi
+        # 检查成功标准条目数（至少 2 条）
+        CRITERIA_COUNT=$(echo "$CONTENT" | grep -cE "^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+[^[:space:]]" || true)
+        CRITERIA_COUNT=$(echo "$CRITERIA_COUNT" | tr -d '[:space:]')
+        CRITERIA_COUNT=${CRITERIA_COUNT:-0}
+        if [[ "$CRITERIA_COUNT" -lt 2 ]]; then
+            echo "" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "  [BRANCH PROTECT] Gate 3: PRD 成功标准不足 2 条" >&2
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+            echo "" >&2
+            echo "  当前 ${CRITERIA_COUNT} 条，需要至少 2 条" >&2
+            echo "" >&2
+            exit 2
+        fi
+    fi
+    # PRD 文件本身不需要分支保护，放行
+    exit 0
+fi
+
+# ===== Gate 4: 写 .dod-*.md 时运行 check-dod-mapping.cjs 验证 Test 字段 =====
+if [[ "$FILE_BASENAME" =~ ^\.dod-.*\.md$ ]]; then
+    CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // ""' 2>/dev/null || echo "")
+    if [[ -n "$CONTENT" ]]; then
+        # 写到临时文件，用 check-dod-mapping.cjs 验证
+        TMP_DOD="/tmp/dod-check-$$.md"
+        echo "$CONTENT" > "$TMP_DOD"
+        # 找 check-dod-mapping.cjs（从文件路径推断项目根目录）
+        FILE_DIR_TMP=$(dirname "$FILE_PATH")
+        [[ ! -d "$FILE_DIR_TMP" ]] && FILE_DIR_TMP=$(dirname "$FILE_DIR_TMP")
+        PROJECT_ROOT_TMP=$(cd "$FILE_DIR_TMP" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+        DOD_CHECK=""
+        for candidate in \
+            "${PROJECT_ROOT_TMP}/packages/engine/scripts/devgate/check-dod-mapping.cjs" \
+            "${SCRIPT_DIR}/../scripts/devgate/check-dod-mapping.cjs"; do
+            if [[ -f "$candidate" ]]; then
+                DOD_CHECK="$candidate"
+                break
+            fi
+        done
+        if [[ -n "$DOD_CHECK" ]]; then
+            if ! node "$DOD_CHECK" "$TMP_DOD" >&2; then
+                rm -f "$TMP_DOD"
+                echo "" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "  [BRANCH PROTECT] Gate 4: DoD 验证失败" >&2
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+                echo "" >&2
+                echo "  请修复 DoD 中缺少 Test 字段的验收项" >&2
+                echo "" >&2
+                exit 2
+            fi
+        fi
+        rm -f "$TMP_DOD"
+    fi
+    # DoD 文件本身不需要分支保护，放行
+    exit 0
+fi
+
+# ===== Gate 7: 改动 packages/engine/skills/ 时提醒 Engine 三要素 =====
+if [[ "$FILE_PATH" == *"packages/engine/skills/"* ]] || \
+   [[ "$FILE_PATH" == *"packages/engine/scripts/devgate/"* ]]; then
+    # 检查 feature-registry.yml 是否有变动（三要素之一）
+    FILE_DIR_TMP=$(dirname "$FILE_PATH")
+    [[ ! -d "$FILE_DIR_TMP" ]] && FILE_DIR_TMP=$(dirname "$FILE_DIR_TMP")
+    PROJECT_ROOT_TMP=$(cd "$FILE_DIR_TMP" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+    REGISTRY=""
+    [[ -n "$PROJECT_ROOT_TMP" ]] && REGISTRY="${PROJECT_ROOT_TMP}/packages/engine/features/feature-registry.yml"
+    REGISTRY_CHANGED=false
+    if [[ -n "$REGISTRY" && -f "$REGISTRY" ]]; then
+        REGISTRY_DIFF=$(git -C "$PROJECT_ROOT_TMP" diff --name-only 2>/dev/null | grep "feature-registry.yml" || \
+                        git -C "$PROJECT_ROOT_TMP" diff --cached --name-only 2>/dev/null | grep "feature-registry.yml" || echo "")
+        [[ -n "$REGISTRY_DIFF" ]] && REGISTRY_CHANGED=true
+    fi
+    if [[ "$REGISTRY_CHANGED" == false ]]; then
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "  [BRANCH PROTECT] Gate 7: Engine 三要素提醒" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "  改动 engine/skills/ 或 engine/scripts/devgate/ 时" >&2
+        echo "  必须完成以下三件事（Engine 三要素）：" >&2
+        echo "" >&2
+        echo "  1. [CONFIG] PR title 含 [CONFIG] tag" >&2
+        echo "     （CI Config Audit L1 检查）" >&2
+        echo "" >&2
+        echo "  2. Engine 版本 bump（6 个文件）：" >&2
+        echo "     packages/engine/package.json" >&2
+        echo "     packages/engine/package-lock.json" >&2
+        echo "     根 package-lock.json（packages/engine 条目）" >&2
+        echo "     packages/engine/VERSION" >&2
+        echo "     packages/engine/.hook-core-version" >&2
+        echo "     packages/engine/regression-contract.yaml" >&2
+        echo "" >&2
+        echo "  3. feature-registry.yml 新增 changelog 条目" >&2
+        echo "     ⚠️  当前 feature-registry.yml 未检测到变动" >&2
+        echo "" >&2
+        echo "  请先更新 feature-registry.yml 再继续写代码" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        exit 2
+    fi
+fi
+
 # ===== 判断是否需要保护 =====
 NEEDS_PROTECTION=false
 

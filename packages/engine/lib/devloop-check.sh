@@ -168,6 +168,31 @@ devloop_check() {
         fi
     fi
 
+    # ===== Gate 6: CI 通过后检查 Brain 代码改动是否更新了 DEFINITION.md =====
+    # 如果本次 PR 改动了 packages/brain/，则 DEFINITION.md 也必须有改动
+    local repo_root=""
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ -n "$repo_root" ]]; then
+        local merge_base
+        merge_base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+        if [[ -n "$merge_base" ]]; then
+            local brain_changed
+            brain_changed=$(git diff --name-only "$merge_base" HEAD 2>/dev/null | grep '^packages/brain/' | wc -l | tr -d ' ')
+            brain_changed=${brain_changed:-0}
+            if [[ "$brain_changed" -gt 0 ]]; then
+                local def_changed
+                def_changed=$(git diff --name-only "$merge_base" HEAD 2>/dev/null | grep -c 'DEFINITION\.md' || echo "0")
+                def_changed=${def_changed:-0}
+                if [[ "$def_changed" -eq 0 ]]; then
+                    _devloop_jq -n \
+                        --arg brain "$brain_changed" \
+                        '{"status":"blocked","reason":"Gate 6: Brain 代码改动了 \($brain) 个文件，但 DEFINITION.md 未同步更新","action":"更新 DEFINITION.md 以反映 Brain 代码变更（端口/tick间隔/action白名单/schema版本等），git add + commit + push"}'
+                    return 2
+                fi
+            fi
+        fi
+    fi
+
     # ===== 条件 4: CI 通过 + PR 未合并 → 检查 Step 10 LEARNINGS =====
     local step_10_status
     step_10_status=$(grep "^step_10_learning:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
@@ -179,7 +204,31 @@ devloop_check() {
         return 2
     fi
 
-    # Step 10 已完成 → 合并 PR
+    # ===== Gate 2: Step 10 已完成 → 验证 Learning 格式 =====
+    # check-learning.sh 验证格式：根本原因 + 下次预防 + checklist
+    local check_learning_script=""
+    for candidate in \
+        "${repo_root}/packages/engine/scripts/devgate/check-learning.sh" \
+        "$(dirname "${BASH_SOURCE[0]}")/../scripts/devgate/check-learning.sh"; do
+        if [[ -f "$candidate" ]]; then
+            check_learning_script="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$check_learning_script" ]]; then
+        local learning_check_output learning_check_exit
+        learning_check_output=$(PR_TITLE="" bash "$check_learning_script" 2>&1) || learning_check_exit=$?
+        learning_check_exit=${learning_check_exit:-0}
+        if [[ "$learning_check_exit" -ne 0 ]]; then
+            _devloop_jq -n \
+                --arg pr "$pr_number" \
+                --arg detail "$learning_check_output" \
+                '{"status":"blocked","reason":"Gate 2: Learning 格式检查失败（格式不符合要求）","action":"修复 docs/learnings/<branch>.md 格式：必须包含 ### 根本原因 + ### 下次预防 + checklist（- [ ] 条目），然后 git add + commit + push（PR #\($pr) 自动更新）"}'
+            return 2
+        fi
+    fi
+
+    # Step 10 已完成且 Learning 格式验证通过 → 合并 PR
     _devloop_jq -n \
         --arg pr "$pr_number" \
         '{"status":"blocked","reason":"CI 通过且 Step 10 LEARNINGS 已完成，PR 待合并","action":"执行合并：gh pr merge \($pr) --squash --delete-branch"}'
