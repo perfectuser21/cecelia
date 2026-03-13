@@ -140,3 +140,4 @@ echo "✅ Step 6 完成标记已写入 .dev-mode"
 ---
 
 **Step 7：本地验证**
+
