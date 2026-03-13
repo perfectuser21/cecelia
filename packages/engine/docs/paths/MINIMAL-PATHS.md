@@ -290,6 +290,13 @@ changelog:
 
 ---
 
+### bash-guard-pr-title-check: bash-guard.sh gh pr create title 格式验证
+
+1. ✅ **无 --title 参数: 提取失败，降级放行**
+2. ✅ **非 gh pr create 命令: 跳过检查**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
