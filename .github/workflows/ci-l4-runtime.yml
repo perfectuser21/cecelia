@@ -94,12 +94,20 @@ jobs:
 
       - name: Set up Homebrew PATH
         run: |
-          # 确保 Homebrew 在 PATH 中（Intel: /usr/local/bin, Apple Silicon: /opt/homebrew/bin）
-          if [ -f /opt/homebrew/bin/brew ]; then
-            echo "/opt/homebrew/bin" >> $GITHUB_PATH
-            echo "/opt/homebrew/sbin" >> $GITHUB_PATH
-          elif [ -f /usr/local/bin/brew ]; then
-            echo "/usr/local/bin" >> $GITHUB_PATH
+          # 通过 login shell 查找 brew（自动 source ~/.bash_profile / ~/.zprofile）
+          BREW_BIN=$(bash -l -c 'command -v brew 2>/dev/null' || true)
+          if [ -n "$BREW_BIN" ]; then
+            echo "Found brew via login shell: $BREW_BIN"
+            echo "$(dirname "$BREW_BIN")" >> $GITHUB_PATH
+          else
+            # fallback: 检查常见 macOS 路径
+            for dir in /opt/homebrew/bin /usr/local/bin; do
+              if [ -x "$dir/brew" ]; then
+                echo "Found brew at $dir"
+                echo "$dir" >> $GITHUB_PATH
+                break
+              fi
+            done
           fi
 
       - name: Cache Homebrew packages
