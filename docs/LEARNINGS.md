@@ -1,5 +1,26 @@
 # Cecelia Core Learnings
 
+### [2026-03-12] Learning 聚合去重：同类失败归并为单条（PR #feat-learning-dedup）
+
+**背景**：OAuth token 过期时，每次失败任务各写 1 条 failure learning，导致 200+ 条积压全是重复 OAuth 401 记录，占据 Cortex top-N 位置，掩盖真正有价值的 insight。
+
+#### 根本原因
+
+`handleTaskFailedLearning` 的 title 含 `task_id`（`任务失败：${task_id}`），每个任务都产生唯一 hash，现有 `content_hash` 去重机制完全无效。
+
+#### 解决方案：error_type 分组 + 24h 合并窗口
+
+1. **新增 `extractErrorType`**：从 `failure_class`、error 文本中识别 OAUTH_401 / RATE_LIMIT / TIMEOUT 等标准类型
+2. **新增 `findAndMergeRecentFailureLearning`**：24h 内同 `category + error_type` 已存在 → `occurrence_count +1`，不插新行
+3. **新增 `occurrence_count` / `error_type` / `updated_at` 字段**（migration 153）
+4. **历史聚合脚本** `backfill-learning-dedup.mjs`：`--dry-run` 先预估，再正式运行
+
+#### 陷阱
+
+- `console.warn` 只传一个拼接字符串参数，测试不能用 `toHaveBeenCalledWith(str, str)`，改用单参断言
+- `handleTaskFailedLearning` 新增 `dbPool` 参数时注意保留 `= pool` 默认值，否则生产调用报错
+- migration 编号必须连续：152 已占用 → 153
+
 ### [2026-03-13] Provider-Agnostic Engine — devloop-check.sh 单一入口（PR #provider-agnostic-engine）
 
 **背景**：Codex（OpenAI）作为第二个 AI Provider 需要跑 /dev workflow，若直接在 runner.sh 中复制 stop-dev.sh 的完成判断逻辑，则任何修改都要改两处。
