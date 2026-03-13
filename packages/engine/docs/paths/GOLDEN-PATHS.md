@@ -422,9 +422,26 @@ Haiku 异步分类 learning_type
 
 ---
 
-## GP-027: Provider-Agnostic Engine — devloop-check.sh 单一入口 (S10)
+## GP-027: Hook Gates 5个真锁 (S10)
 
-**Feature**: S10 - Provider-Agnostic Engine — devloop-check.sh 单一入口
+**Feature**: S10 - Hook Gates 5个真锁
+**Priority**: P0
+
+### Golden Path
+
+```
+git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+```
+
+---
+
+## GP-028: Provider-Agnostic Engine — devloop-check.sh 单一入口 (S11)
+
+**Feature**: S11 - Provider-Agnostic Engine — devloop-check.sh 单一入口
 **Priority**: P1
 
 ### Golden Path
@@ -435,6 +452,22 @@ codex-bridge POST /run (runner=runner.sh) →
 runner.sh source devloop-check.sh →
 while ! devloop_check done → codex-bin exec action →
 完成 → cleanup
+```
+
+---
+
+## GP-029: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并 (stop-hook-retry-fix)
+
+**Feature**: stop-hook-retry-fix - Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+**Priority**: P1
+
+### Golden Path
+
+```
+Stop Hook → devloop_check() → blocked →
+超时检查（MAX_RETRIES=30）→ 未超时则 exit 2 继续 →
+Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
+下次 Stop Hook → cleanup_done: true → exit 0 完成
 ```
 
 ---

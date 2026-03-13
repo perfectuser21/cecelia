@@ -53,6 +53,35 @@ _devloop_jq() {
 }
 
 # ============================================================================
+# 内部函数: _mark_cleanup_done
+# ============================================================================
+# 向 dev_mode_file 写入 cleanup_done: true，触发唯一的终止路径。
+# 调用方：cleanup.sh（直接写文件）和 devloop_check（step_11_cleanup: done 时调用）
+#
+# 参数:
+#   $1: dev_mode_file — .dev-mode.<branch> 文件路径
+# ============================================================================
+_mark_cleanup_done() {
+    local dev_mode_file="${1:-}"
+    [[ -z "$dev_mode_file" || ! -f "$dev_mode_file" ]] && return 0
+
+    # 原子写入（使用 flock 防止并发冲突，不可用时 fallback）
+    {
+        flock -x 203
+        grep -v "^cleanup_done:" "$dev_mode_file" > "$dev_mode_file.cleanup.tmp" 2>/dev/null || true
+        echo "cleanup_done: true" >> "$dev_mode_file.cleanup.tmp"
+        mv "$dev_mode_file.cleanup.tmp" "$dev_mode_file"
+    } 203>"$dev_mode_file.cleanup.lock" 2>/dev/null || {
+        if [[ "$(uname)" == "Darwin" ]]; then
+            sed -i '' "/^cleanup_done:/d" "$dev_mode_file" 2>/dev/null || true
+        else
+            sed -i "/^cleanup_done:/d" "$dev_mode_file" 2>/dev/null || true
+        fi
+        echo "cleanup_done: true" >> "$dev_mode_file"
+    }
+}
+
+# ============================================================================
 # 主函数: devloop_check
 # ============================================================================
 # 参数:
@@ -159,8 +188,12 @@ devloop_check() {
         step_11_status=$(grep "^step_11_cleanup:" "$dev_mode_file" 2>/dev/null | awk '{print $2}' || echo "pending")
 
         if [[ "$step_11_status" == "done" ]]; then
-            _devloop_jq -n '{"status":"done"}'
-            return 0
+            # v1.1.0: 不再直接返回 done，改为调用 _mark_cleanup_done 写入 cleanup_done: true
+            # 统一通过顶层 cleanup_done: true 检查退出（唯一终止路径），消除双 exit 0 路径
+            _mark_cleanup_done "$dev_mode_file"
+            _devloop_jq -n \
+                '{"status":"blocked","reason":"Step 11 已完成，cleanup_done 已标记，等待下次检查退出","action":"等待 Stop Hook 检测到 cleanup_done: true 并退出"}'
+            return 2
         else
             _devloop_jq -n \
                 '{"status":"blocked","reason":"PR 已合并，Step 11 Cleanup 未完成","action":"执行 Step 11 Cleanup：读取 skills/dev/steps/11-cleanup.md 并执行清理"}'

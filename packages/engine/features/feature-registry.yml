@@ -1310,6 +1310,40 @@ product_features:
     rcis: []
 
   - id: S10
+    name: Hook Gates 5个真锁
+    status: Committed
+    priority: P0
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      bash-guard.sh 新增 git push 前运行 local-precheck.sh 和 git commit message
+      Conventional Commits 格式验证；branch-protect.sh 新增 .prd-*.md 和 .dod-*.md
+      内容内联验证；stop-dev.sh 新增 STEP_10 flag=done 时运行 check-learning.sh 验证实际内容。
+
+    entrypoints:
+      - type: hook
+        file: hooks/bash-guard.sh
+        trigger: "Bash 工具调用 git push / git commit -m"
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Write .prd-*.md / .dod-*.md 时"
+      - type: hook
+        file: hooks/stop-dev.sh
+        trigger: "会话结束时，STEP_10 flag=done 后"
+
+    golden_path: |
+      git push → bash-guard 拦截 → local-precheck.sh 通过 → push 成功
+      git commit -m "random" → bash-guard 拦截 → 报错 → 修改消息 → 通过
+      Write .prd-*.md (无成功标准) → branch-protect 拦截 → 添加成功标准 → 通过
+      Write .dod-*.md (无 checkbox) → branch-protect 拦截 → 添加 - [ ] → 通过
+      STEP_10 flag=done → stop-dev 运行 check-learning.sh → 内容验证 → 允许合并
+
+    minimal_paths:
+      - "local-precheck.sh 不存在: 放行（降级）"
+      - "git commit 无 -m 参数: 放行（interactive 模式）"
+      - "check-learning.sh 不存在: 降级为只检查 flag"
+
+  - id: S11
     name: Provider-Agnostic Engine — devloop-check.sh 单一入口
     status: Committed
     priority: P1
@@ -1340,5 +1374,42 @@ product_features:
     minimal_paths:
       - "devloop-check.sh 未加载: stop-dev.sh fallback 到旧内联逻辑"
       - "dry-run 模式: runner.sh 打印命令不执行"
+
+    rcis: []
+
+  - id: stop-hook-retry-fix
+    name: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-13"
+    description: |
+      v15.1.0 修复两个 bug：
+      1. stop-dev.sh 注释"15次重试上限"与代码 RETRY_COUNT > 30 不一致，
+         统一为 MAX_RETRIES=30 常量，注释与代码对齐。
+      2. 超时检查在 devloop_check 之前，导致第 MAX_RETRIES+1 次即使 PR 已合并
+         也走超时失败分支。修复：超时检查移到 devloop_check 之后。
+      3. devloop-check.sh 有两个 exit 0 路径（cleanup_done: true 和
+         step_11_cleanup: done），统一为唯一终止路径：step_11_cleanup: done
+         时调用 _mark_cleanup_done() 写入 cleanup_done: true，下次循环通过
+         顶层检查退出。
+
+    entrypoints:
+      - type: hook
+        file: hooks/stop-dev.sh
+        trigger: "Claude Code Stop Hook 触发"
+      - type: lib
+        file: lib/devloop-check.sh
+        trigger: "被 stop-dev.sh source 调用"
+
+    golden_path: |
+      Stop Hook → devloop_check() → blocked →
+      超时检查（MAX_RETRIES=30）→ 未超时则 exit 2 继续 →
+      Step 11 完成 → _mark_cleanup_done() 写入 cleanup_done: true →
+      下次 Stop Hook → cleanup_done: true → exit 0 完成
+
+    minimal_paths:
+      - "devloop_check done: 已有 cleanup_done: true，直接 exit 0"
+      - "超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0"
 
     rcis: []

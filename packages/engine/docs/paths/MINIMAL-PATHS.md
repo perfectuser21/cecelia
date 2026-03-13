@@ -268,10 +268,25 @@ changelog:
 
 ---
 
-### S10: Provider-Agnostic Engine — devloop-check.sh 单一入口
+### S10: Hook Gates 5个真锁
+
+1. ✅ **local-precheck.sh 不存在: 放行（降级）**
+2. ✅ **git commit 无 -m 参数: 放行（interactive 模式）**
+3. ✅ **check-learning.sh 不存在: 降级为只检查 flag**
+
+---
+
+### S11: Provider-Agnostic Engine — devloop-check.sh 单一入口
 
 1. ✅ **devloop-check.sh 未加载: stop-dev.sh fallback 到旧内联逻辑**
 2. ✅ **dry-run 模式: runner.sh 打印命令不执行**
+
+---
+
+### stop-hook-retry-fix: Stop Hook 重试上限统一 + 双 exit 0 终止条件合并
+
+1. ✅ **devloop_check done: 已有 cleanup_done: true，直接 exit 0**
+2. ✅ **超时: RETRY_COUNT > MAX_RETRIES → 上报失败 → exit 0**
 
 ---
 
