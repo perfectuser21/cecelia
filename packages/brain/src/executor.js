@@ -1664,7 +1664,11 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
 
 /**
  * Trigger 西安 Mac mini Codex Bridge for a task.
- * Routes codex_qa (and any task with provider=codex) to the Xian Codex CLI.
+ * Routes codex_qa / codex_dev (and any task with provider=codex) to the Xian Codex CLI.
+ *
+ * codex_qa  → prompt 模式：将 task description 作为 prompt 直接传给 codex-bin exec
+ * codex_dev → runner 模式：启动 runners/codex/runner.sh，source devloop-check.sh 驱动完整 /dev 循环
+ *
  * @param {Object} task - The task object from database
  * @returns {Object} - { success, taskId, runId, error? }
  */
@@ -1674,8 +1678,19 @@ async function triggerCodexBridge(task) {
   try {
     console.log(`[executor] Calling Xian Codex Bridge for task=${task.id} type=${task.task_type}`);
 
+    // codex_dev 使用 runner 模式（完整 /dev 循环，via runner.sh + devloop-check.sh）
+    // codex_qa 和其他类型使用 prompt 模式（单次 codex exec）
+    const isCodexDev = task.task_type === 'codex_dev';
+
     // Build prompt from task description/title
     const promptContent = task.description || task.title || '请执行此任务';
+
+    // codex_dev: 生成分支名（加 -cx suffix 区分 Claude Code 分支）
+    const branchSuffix = isCodexDev ? '-cx' : '';
+    const taskBranch = task.payload?.branch ||
+      (isCodexDev
+        ? `cp-${new Date().toISOString().replace(/[-T:]/g, '').slice(2, 12)}-${task.id.slice(0, 8)}${branchSuffix}`
+        : undefined);
 
     const response = await fetch(`${XIAN_CODEX_BRIDGE_URL}/run`, {
       method: 'POST',
@@ -1687,6 +1702,10 @@ async function triggerCodexBridge(task) {
         task_type: task.task_type,
         work_dir: task.payload?.repo_path,
         timeout_ms: 10 * 60 * 1000, // 10 minutes for Codex
+        // runner 模式参数（codex_dev 专用）
+        runner: isCodexDev ? 'packages/engine/runners/codex/runner.sh' : undefined,
+        runner_args: isCodexDev ? ['--branch', taskBranch, '--task-id', task.id] : undefined,
+        branch: taskBranch,
       }),
       signal: AbortSignal.timeout(15000), // 15s to accept the job
     });
