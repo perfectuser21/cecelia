@@ -97,6 +97,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Discover and set Homebrew PATH
+        run: |
+          # 发现 brew 实际路径并写入 GITHUB_PATH（login shell 可能仍未加载）
+          for brew_path in /opt/homebrew/bin /usr/local/bin /home/linuxbrew/.linuxbrew/bin; do
+            if [ -x "${brew_path}/brew" ]; then
+              echo "${brew_path}" >> $GITHUB_PATH
+              echo "Found brew at ${brew_path}"
+              break
+            fi
+          done
+
       - name: Cache Homebrew packages
         id: cache-brew
         run: |
