@@ -6847,6 +6847,50 @@ router.post('/cortex/feedback', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/cortex/stats
+ * 返回最近 24h Cortex LLM 调用统计（超时率、平均耗时等）
+ *
+ * Query params: hours (default: 24, max: 168)
+ */
+router.get('/cortex/stats', async (req, res) => {
+  try {
+    const hours = Math.min(168, Math.max(1, parseInt(req.query.hours || '24', 10)));
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) AS total_calls,
+        COUNT(*) FILTER (WHERE (metadata->>'timed_out')::boolean = true) AS timeout_count,
+        ROUND(
+          COUNT(*) FILTER (WHERE (metadata->>'timed_out')::boolean = true) * 100.0
+          / NULLIF(COUNT(*), 0),
+          2
+        ) AS timeout_rate_pct,
+        ROUND(AVG((metadata->>'response_ms')::numeric) FILTER (WHERE metadata->>'response_ms' IS NOT NULL), 0) AS avg_response_ms,
+        ROUND(MAX((metadata->>'response_ms')::numeric) FILTER (WHERE metadata->>'response_ms' IS NOT NULL), 0) AS max_response_ms,
+        ROUND(AVG((metadata->>'prompt_tokens_est')::numeric) FILTER (WHERE metadata->>'prompt_tokens_est' IS NOT NULL), 0) AS avg_prompt_tokens_est
+      FROM decision_log
+      WHERE trigger = 'cortex'
+        AND metadata IS NOT NULL
+        AND created_at > NOW() - ($1 || ' hours')::interval
+    `, [hours]);
+
+    const row = result.rows[0];
+    res.json({
+      success: true,
+      period_hours: hours,
+      total_calls: parseInt(row.total_calls, 10),
+      timeout_count: parseInt(row.timeout_count, 10),
+      timeout_rate_pct: parseFloat(row.timeout_rate_pct) || 0,
+      avg_response_ms: parseInt(row.avg_response_ms, 10) || null,
+      max_response_ms: parseInt(row.max_response_ms, 10) || null,
+      avg_prompt_tokens_est: parseInt(row.avg_prompt_tokens_est, 10) || null,
+    });
+  } catch (err) {
+    console.error('[API] cortex/stats failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/brain/cortex/generate-report
  * 手动触发 Cortex 生成系统简报
  *
