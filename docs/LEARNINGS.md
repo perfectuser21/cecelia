@@ -1,5 +1,36 @@
 # Cecelia Core Learnings
 
+### [2026-03-14] Codex runner.sh PRD 预注入（PR #codex-runner-prd-inject）
+
+**背景**：Brain 只在 US VPS 运行，Codex 在西安 M4 运行。runner.sh 发送 `/dev --task-id XXX` 给 Codex 后，Codex 在 M4 侧执行 `/dev` skill 的 Step 01，skill 调用 `localhost:5221` 获取 PRD — 但 M4 没有 Brain，导致失败。
+
+#### 根本原因
+
+- `/dev --task-id XXX` 指令要求 Codex 在执行时从 Brain 读取 PRD
+- Codex 在 M4 执行，M4 没有 Brain（`localhost:5221` 不通）
+- Tailscale 到 US VPS 的连接超时，无法通过内网访问 US Brain
+
+#### 解决方案
+
+runner.sh v2.2.0 新增 PRD 预注入机制：
+1. runner.sh 在 US 侧（有 Brain）先调用 `$BRAIN_API_URL/api/brain/tasks/$TASK_ID`
+2. 提取 `title` 和 `description` 字段，存入 `$PRD_TITLE` 和 `$PRD_CONTENT`
+3. `build_comprehensive_prompt()` 接受新参数，将 PRD 内容直接嵌入 prompt 中（`---PRD 开始---` / `---PRD 结束---` 格式）
+4. Codex 收到 prompt 时 PRD 已内联，不需要再调用 `localhost:5221`
+5. 若 PRD 预拉失败，降级到 `--task-id` 模式（要求 Codex 侧有 Brain）
+
+新增 `BRAIN_API_URL` 环境变量（默认 `http://localhost:5221`）：
+- US 侧：保持默认，直接访问本地 Brain
+- 失败回调：从 hardcoded `localhost:5221` 改为 `$BRAIN_API_URL`
+
+#### 下次预防
+
+- [ ] 凡是在非 US 侧（M4、M1 等）运行的 runner，必须设置 `BRAIN_API_URL` 指向 US Brain（通过 Tailscale IP）
+- [ ] Brain 任务的 `description` 字段必须包含完整 PRD（是 fetch-task-prd.sh 负责写入的）
+- [ ] 若 PRD 预拉失败，必须在日志中明确标注"降级模式"，方便调试
+
+---
+
 ### [2026-03-13] Provider-Agnostic Engine — devloop-check.sh 单一入口（PR #provider-agnostic-engine）
 
 **背景**：Codex（OpenAI）作为第二个 AI Provider 需要跑 /dev workflow，若直接在 runner.sh 中复制 stop-dev.sh 的完成判断逻辑，则任何修改都要改两处。

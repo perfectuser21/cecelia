@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.1.0
+# Codex Runner — Codex CLI Provider 适配器 v2.2.0
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
 #
 # 此文件职责：
 #   1. 初始化 .dev-mode.<branch> 状态文件（Codex 无 session，用 task_id 代替）
-#   2. 构建完整的单次执行 prompt（含完整 /dev 工作流指令）
-#   3. 调用 codex-bin exec 执行完整工作流
-#   4. 若 Codex 中途退出：以带上下文的恢复 prompt 重启（最多 MAX_RETRIES 次）
-#   5. 循环调用 devloop_check() 直到完成
+#   2. 从 Brain API（US 侧）预拉 PRD 内容，嵌入 prompt（v2.2.0 新增）
+#   3. 构建完整的单次执行 prompt（含完整 /dev 工作流指令 + PRD 内容）
+#   4. 调用 codex-bin exec 执行完整工作流
+#   5. 若 Codex 中途退出：以带上下文的恢复 prompt 重启（最多 MAX_RETRIES 次）
+#   6. 循环调用 devloop_check() 直到完成
 #
-# 设计原则（v2.0.0 修复）：
+# 设计原则（v2.2.0 修复）：
+#   - PRD 内容在 US 侧预拉，嵌入 prompt（避免 Codex 在 M4 调 localhost:5221）
+#   - BRAIN_API_URL 可配置（US 本地默认 http://localhost:5221，M4 需设置远程地址）
 #   - 每次 codex-bin exec 都携带完整指令（对齐 Claude Code 持久 session 模式）
-#   - 第一次：完整 /dev 工作流 prompt（含 task-id、分支名、项目路径）
-#   - 重试：带当前状态+未完成原因的恢复 prompt
+#   - 第一次：完整 /dev 工作流 prompt（含 PRD 内容、分支名、项目路径）
+#   - 重试：带当前状态+未完成原因的恢复 prompt（含 PRD 内容）
 #   - 修复兼容性：--sandbox danger-full-access（非 full-access）
 #   - 修复兼容性：不用 --cwd（改为 cd 到项目目录后执行）
 #   - 支持 CODEX_HOME 环境变量
@@ -29,8 +32,9 @@
 #   CODEX_API_KEY      — OpenAI API Key（自动从 ~/.credentials/openai.env 加载）
 #   CODEX_MAX_RETRIES  — 最大重试次数（默认 10）
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
+#   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
-# 版本: v2.1.0
+# 版本: v2.2.0
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -64,6 +68,7 @@ fi
 # ===== 配置 =====
 CODEX_BIN="${CODEX_BIN:-/opt/homebrew/bin/codex-bin}"
 CODEX_MAX_RETRIES="${CODEX_MAX_RETRIES:-10}"
+BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:5221}"
 export CECELIA_HEADLESS=true
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 
@@ -88,6 +93,47 @@ if [[ -z "${CODEX_API_KEY:-}" ]]; then
     fi
 else
     echo "✅ 使用已有的 CODEX_API_KEY 环境变量"
+fi
+
+# ===== 预拉 PRD 内容（v2.2.0）=====
+# 在 US 侧（有 Brain）预拉 PRD，避免 Codex 在 M4 侧尝试访问 localhost:5221
+PRD_TITLE=""
+PRD_CONTENT=""
+
+fetch_task_prd() {
+    local task_id="$1"
+    local api_url="$2"
+
+    if [[ -z "$task_id" ]]; then
+        return 0
+    fi
+
+    echo "📋 从 Brain 预拉 PRD（task_id: $task_id）..."
+    local response
+    response=$(curl -s --max-time 10 "${api_url}/api/brain/tasks/${task_id}" 2>/dev/null || echo "")
+
+    if [[ -z "$response" ]]; then
+        echo "  ⚠️  Brain API 无响应（${api_url}），将使用 --task-id 方式（需要 Codex 侧有 Brain）" >&2
+        return 1
+    fi
+
+    local title description
+    title=$(echo "$response" | jq -r '.title // ""' 2>/dev/null || echo "")
+    description=$(echo "$response" | jq -r '.description // ""' 2>/dev/null || echo "")
+
+    if [[ -z "$description" ]]; then
+        echo "  ⚠️  Task ${task_id} 没有 description 字段，无法注入 PRD" >&2
+        return 1
+    fi
+
+    PRD_TITLE="$title"
+    PRD_CONTENT="$description"
+    echo "  ✅ PRD 预拉成功（标题: ${title:-（无）}，内容长度: ${#description} 字符）"
+    return 0
+}
+
+if [[ -n "$TASK_ID" ]]; then
+    fetch_task_prd "$TASK_ID" "$BRAIN_API_URL" || true
 fi
 
 # ===== 查找 Engine 根目录 =====
@@ -148,9 +194,28 @@ build_comprehensive_prompt() {
     local task_id="$2"
     local skill="$3"
     local project_root="$4"
+    local prd_title="${5:-}"
+    local prd_content="${6:-}"
 
+    # 若已预拉 PRD 内容，直接嵌入 prompt（不再传 --task-id，避免 Codex 调 localhost:5221）
+    # 若无 PRD 内容，降级到 --task-id 模式（要求 Codex 侧能访问 Brain）
     local task_arg=""
-    [[ -n "$task_id" ]] && task_arg=" --task-id $task_id"
+    local prd_section=""
+    if [[ -n "$prd_content" ]]; then
+        prd_section="
+任务 PRD（已从 Brain 预拉，直接使用，不要再调用 localhost:5221）:
+标题: ${prd_title:-（无标题）}
+
+---PRD 开始---
+${prd_content}
+---PRD 结束---
+"
+    elif [[ -n "$task_id" ]]; then
+        task_arg=" --task-id $task_id"
+        prd_section="
+注意: PRD 内容无法预拉，Codex 需从 Brain 读取（task_id: $task_id）。
+"
+    fi
 
     cat << PROMPT
 你是 Cecelia 开发代理，请执行完整的 /$skill 工作流，直到 PR 合并为止。
@@ -160,7 +225,7 @@ build_comprehensive_prompt() {
 - 目标分支: $branch
 - 项目根目录: $project_root
 - 工作目录: $project_root
-
+${prd_section}
 执行完整 /$skill 工作流（必须完成所有步骤才能停止）:
 
 /$skill${task_arg}
@@ -170,6 +235,7 @@ build_comprehensive_prompt() {
 2. 遇到任何问题自动修复，不要询问用户
 3. 所有命令在 $project_root 目录下执行
 4. git 操作使用 origin 远端，分支名为 $branch
+5. 若上方已提供 PRD 内容，直接使用，不要尝试访问 localhost:5221
 PROMPT
 }
 
@@ -182,9 +248,23 @@ build_resume_prompt() {
     local current_reason="$5"
     local current_action="$6"
     local retry_num="$7"
+    local prd_title="${8:-}"
+    local prd_content="${9:-}"
 
     local task_arg=""
-    [[ -n "$task_id" ]] && task_arg=" --task-id $task_id"
+    local prd_section=""
+    if [[ -n "$prd_content" ]]; then
+        prd_section="
+任务 PRD（已预拉，直接使用）:
+标题: ${prd_title:-（无标题）}
+
+---PRD 开始---
+${prd_content}
+---PRD 结束---
+"
+    elif [[ -n "$task_id" ]]; then
+        task_arg=" --task-id $task_id"
+    fi
 
     cat << PROMPT
 你是 Cecelia 开发代理，正在恢复上一次中断的 /$skill 工作流（第 $retry_num 次恢复）。
@@ -196,7 +276,7 @@ build_resume_prompt() {
 - Task ID: ${task_id:-N/A}
 - 目标分支: $branch
 - 项目根目录: $project_root
-
+${prd_section}
 请从当前状态继续，直到 PR 合并为止:
 
 /$skill${task_arg}
@@ -207,11 +287,12 @@ build_resume_prompt() {
 3. 遇到问题自动修复，不要询问用户
 4. 所有命令在 $project_root 目录下执行
 5. 当前未完成原因: $current_reason
+6. 若上方已提供 PRD 内容，直接使用，不要尝试访问 localhost:5221
 PROMPT
 }
 
 # ===== 主循环 =====
-echo "🚀 Codex Runner v2.0.0 启动"
+echo "🚀 Codex Runner v2.2.0 启动"
 echo "   分支: $BRANCH"
 echo "   Task: ${TASK_ID:-（无）}"
 echo "   Skill: $SKILL"
@@ -219,6 +300,8 @@ echo "   MaxRetries: $CODEX_MAX_RETRIES"
 echo "   ProjectRoot: $PROJECT_ROOT"
 echo "   CODEX_HOME: $CODEX_HOME"
 echo "   DryRun: $DRY_RUN"
+echo "   BrainAPI: $BRAIN_API_URL"
+echo "   PRD 预拉: $([ -n "$PRD_CONTENT" ] && echo "✅ 成功（${#PRD_CONTENT} 字符）" || echo "❌ 未拉取（将降级到 --task-id）")"
 echo ""
 
 RETRY_COUNT=0
@@ -230,7 +313,7 @@ while true; do
         echo "❌ 超过最大重试次数 ($CODEX_MAX_RETRIES)，任务失败" >&2
 
         if [[ -n "$TASK_ID" ]]; then
-            curl -s -X PATCH "http://localhost:5221/api/brain/tasks/${TASK_ID}" \
+            curl -s -X PATCH "${BRAIN_API_URL}/api/brain/tasks/${TASK_ID}" \
                 -H "Content-Type: application/json" \
                 -d "{\"status\":\"failed\",\"error\":\"Codex runner 超过最大重试次数 $CODEX_MAX_RETRIES\"}" \
                 --max-time 5 2>/dev/null || true
@@ -265,14 +348,15 @@ while true; do
 
     # ===== 构建 prompt =====
     if [[ $RETRY_COUNT -eq 1 ]]; then
-        # 第一次：完整工作流 prompt（包含完整 /dev 指令）
-        CODEX_PROMPT="$(build_comprehensive_prompt "$BRANCH" "$TASK_ID" "$SKILL" "$PROJECT_ROOT")"
-        echo "  [第一次调用：发送完整工作流 prompt]"
+        # 第一次：完整工作流 prompt（含预拉的 PRD 内容）
+        CODEX_PROMPT="$(build_comprehensive_prompt "$BRANCH" "$TASK_ID" "$SKILL" "$PROJECT_ROOT" \
+            "$PRD_TITLE" "$PRD_CONTENT")"
+        echo "  [第一次调用：发送完整工作流 prompt$([ -n "$PRD_CONTENT" ] && echo "（含预拉 PRD）" || echo "（--task-id 降级模式）")]"
     else
-        # 重试：带完整上下文的恢复 prompt
+        # 重试：带完整上下文的恢复 prompt（含预拉的 PRD 内容）
         CODEX_PROMPT="$(build_resume_prompt "$BRANCH" "$TASK_ID" "$SKILL" "$PROJECT_ROOT" \
-            "$DEVLOOP_REASON" "$DEVLOOP_ACTION" "$RETRY_COUNT")"
-        echo "  [第 $RETRY_COUNT 次恢复：发送带上下文的恢复 prompt]"
+            "$DEVLOOP_REASON" "$DEVLOOP_ACTION" "$RETRY_COUNT" "$PRD_TITLE" "$PRD_CONTENT")"
+        echo "  [第 $RETRY_COUNT 次恢复：发送带上下文的恢复 prompt$([ -n "$PRD_CONTENT" ] && echo "（含预拉 PRD）" || echo "")]"
     fi
 
     # ===== 调用 codex-bin =====
