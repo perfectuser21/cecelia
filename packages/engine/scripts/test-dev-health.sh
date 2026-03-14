@@ -64,6 +64,8 @@ section "2. Stop Hook 无锁文件 exit 0 验证"
 TMPDIR_TEST=$(mktemp -d)
 # 创建一个临时 git 仓库（无 .dev-lock 文件）
 git -C "$TMPDIR_TEST" init -q
+git -C "$TMPDIR_TEST" config user.email "test@test.com"
+git -C "$TMPDIR_TEST" config user.name "test"
 git -C "$TMPDIR_TEST" commit --allow-empty -m "init" -q
 
 # 在临时目录运行 stop.sh — 无 .dev-lock.* 文件应该 exit 0
