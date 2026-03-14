@@ -2,11 +2,18 @@
 # check-prd.sh — 验证 PRD 文件有成功标准章节
 
 BRANCH="${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD)}"
-PRD_FILE=".prd-${BRANCH}.md"
 
-# 找 PRD 文件
+# 找 PRD 文件：优先查找 .task-{BRANCH}.md（Task Card 格式），再 fallback 到 .prd-{BRANCH}.md
+if [[ -f ".task-${BRANCH}.md" ]]; then
+  PRD_FILE=".task-${BRANCH}.md"
+elif [[ -f ".prd-${BRANCH}.md" ]]; then
+  PRD_FILE=".prd-${BRANCH}.md"
+else
+  PRD_FILE=".prd-${BRANCH}.md"  # fallback（让后续的"文件不存在"错误正常触发）
+fi
+
+# 若以上均未找到，尝试 task-id 格式
 if [[ ! -f "$PRD_FILE" ]]; then
-  # 尝试 task-id 格式
   PRD_FILE=$(ls .prd-task-*.md 2>/dev/null | head -1 || true)
 fi
 
