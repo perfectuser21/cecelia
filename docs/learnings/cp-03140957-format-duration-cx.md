@@ -15,6 +15,12 @@ changelog:
 - CI 失败 1 次
 - 本地验证失败 1 次
 
+### 根本原因
+
+- `Learning Format Gate` 把 per-branch learning 文件视为 PR 阶段硬门禁，不能等主检查跑完再补
+- `format_duration_ms` 原实现对 `1ms` 到 `99ms` 做整百毫秒截断，导致非零耗时被压成 `0s`
+- `npm run qa -w packages/engine` 命中了仓库当前已有的 hook/cleanup 测试基线问题，不是本次 utility 改动直接引入
+
 ### CI 失败记录
 
 - 失败 #1：`Learning Format Gate` 要求 PR 首轮就包含 branch learning 文件，而不是等主检查全绿后再补
@@ -38,5 +44,8 @@ changelog:
 
 ### 预防措施
 
-- 以后看到 `Learning Format Gate` 时，默认把 per-branch learning 文件视为首轮 PR 必备产物
-- shell 工具函数除了主路径外，要专门补“非零但最小量级”的边界测试，避免被整数截断悄悄吃掉信息
+### 下次预防
+
+- [ ] 以后看到 `Learning Format Gate` 时，默认把 per-branch learning 文件视为首轮 PR 必备产物
+- [ ] shell 工具函数除了主路径外，要专门补“非零但最小量级”的边界测试，避免被整数截断悄悄吃掉信息
+- [ ] 发现仓库级 baseline 失败时，先隔离“本次变更验证”与“既有基线问题”，避免混在同一轮修复里
