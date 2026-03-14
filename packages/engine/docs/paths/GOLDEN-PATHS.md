@@ -548,7 +548,20 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
-## GP-035: branch-protect.sh Task Card 格式支持 (task-card-branch-protect)
+## GP-035: null (S-ci-task-card-support)
+
+**Feature**: S-ci-task-card-support - null
+**Priority**: null
+
+### Golden Path
+
+```
+PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
+```
+
+---
+
+## GP-036: branch-protect.sh Task Card 格式支持 (task-card-branch-protect)
 
 **Feature**: task-card-branch-protect - branch-protect.sh Task Card 格式支持
 **Priority**: P1
@@ -564,7 +577,7 @@ hook 验证通过 →
 
 ---
 
-## GP-036: DevGate 脚本支持 Task Card 格式（.task-{branch}.md） (task-card-format-support)
+## GP-037: DevGate 脚本支持 Task Card 格式（.task-{branch}.md） (task-card-format-support)
 
 **Feature**: task-card-format-support - DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 **Priority**: P1
@@ -580,7 +593,7 @@ check-dod-mapping.cjs 优先读取 .task-*.md →
 
 ---
 
-## GP-037: /dev Skill 文档重组为6步 Task Card 格式 (S12)
+## GP-038: /dev Skill 文档重组为6步 Task Card 格式 (S12)
 
 **Feature**: S12 - /dev Skill 文档重组为6步 Task Card 格式
 **Priority**: P1
