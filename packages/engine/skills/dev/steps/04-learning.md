@@ -160,6 +160,54 @@ fi
    # 将 Learning 内容写到 $LEARNING_FILE
    ```
 
+### 2.5 ⛔ 自检：Learning 格式验证（push 前必须通过）
+
+**在 push 之前，必须执行以下自检命令。任何一项失败 = 禁止 push，先修复。**
+
+```bash
+BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
+ERRORS=0
+
+echo "🔍 Learning 格式自检..."
+
+# 检查1: 文件存在
+if [[ ! -f "$LEARNING_FILE" ]]; then
+    echo "❌ Learning 文件不存在: $LEARNING_FILE"
+    ERRORS=1
+fi
+
+# 检查2: 包含 ### 根本原因
+if ! grep -q "### 根本原因" "$LEARNING_FILE" 2>/dev/null; then
+    echo "❌ 缺少 '### 根本原因' 三级标题（CI check-learning.sh 强制要求）"
+    ERRORS=1
+fi
+
+# 检查3: 包含 ### 下次预防
+if ! grep -q "### 下次预防" "$LEARNING_FILE" 2>/dev/null; then
+    echo "❌ 缺少 '### 下次预防' 三级标题（CI check-learning.sh 强制要求）"
+    ERRORS=1
+fi
+
+# 检查4: 包含 - [ ] checklist
+if ! grep -qE "^- \[ \]" "$LEARNING_FILE" 2>/dev/null; then
+    echo "❌ 缺少 '- [ ]' checklist 条目（下次预防必须有可执行的 checklist）"
+    ERRORS=1
+fi
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo ""
+    echo "⛔ Learning 格式验证失败！修复后才能 push。"
+    echo "   正确格式（三段缺一不可）："
+    echo "   ## 标题 → ### 根本原因 → ### 下次预防 → - [ ] 条目"
+    exit 1
+fi
+
+echo "✅ Learning 格式验证通过"
+```
+
+---
+
 ### 3. **提交 Learning（push 到功能分支，PR 自动包含 Learning）**
 
    **⚠️ 注意：此时 PR 尚未合并，仍在功能分支上**

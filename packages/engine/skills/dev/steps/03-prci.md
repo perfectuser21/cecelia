@@ -80,6 +80,61 @@ bash scripts/squash-evidence.sh
 
 ---
 
+### 8.3.5 ⛔ 自检：Engine 版本文件完整性（commit 前必须通过）
+
+**如果本次改动涉及 `packages/engine/` 下的任何文件，必须检查 7 个版本文件全部同步更新。**
+
+```bash
+CHANGED_ENGINE=$(git diff --name-only origin/main 2>/dev/null | grep "^packages/engine/" | head -1)
+
+if [[ -n "$CHANGED_ENGINE" ]]; then
+    echo "🔍 检测到 Engine 改动，验证版本 7 文件同步..."
+    ERRORS=0
+    CHANGED=$(git diff --name-only origin/main 2>/dev/null)
+
+    check_file() {
+        if ! echo "$CHANGED" | grep -q "^${1}$"; then
+            echo "❌ 未修改: $1"
+            return 1
+        fi
+        echo "✅ $1"
+        return 0
+    }
+
+    check_file "packages/engine/package.json"         || ERRORS=1
+    check_file "packages/engine/package-lock.json"    || ERRORS=1
+    check_file "packages/engine/VERSION"              || ERRORS=1
+    check_file "packages/engine/.hook-core-version"   || ERRORS=1
+    check_file "packages/engine/regression-contract.yaml" || ERRORS=1
+    check_file "packages/engine/ci-tools/VERSION"     || ERRORS=1
+    # 根目录 package-lock.json（engine 条目）
+    check_file "package-lock.json"                    || ERRORS=1
+
+    if [[ $ERRORS -gt 0 ]]; then
+        echo ""
+        echo "⛔ Engine 版本文件不完整！"
+        echo "   必须同时更新 7 个文件（少一个 L2 Consistency Gate 就失败）："
+        echo "   packages/engine/package.json"
+        echo "   packages/engine/package-lock.json"
+        echo "   packages/engine/VERSION"
+        echo "   packages/engine/.hook-core-version"
+        echo "   packages/engine/regression-contract.yaml"
+        echo "   packages/engine/ci-tools/VERSION"
+        echo "   package-lock.json（根目录，engine 条目）"
+        echo ""
+        echo "   还需要在 feature-registry.yml 新增 changelog 条目，并运行："
+        echo "   bash packages/engine/scripts/generate-path-views.sh"
+        exit 1
+    fi
+
+    echo "✅ Engine 版本 7 文件全部已修改"
+else
+    echo "ℹ️  非 Engine 改动，跳过版本文件检查"
+fi
+```
+
+---
+
 ### 8.4 提交
 
 ```bash
