@@ -1,12 +1,12 @@
 ---
 id: minimal-paths
-version: 3.48.0
+version: 3.49.0
 created: 2026-03-14
 updated: 2026-03-14
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.48.0: 从 feature-registry.yml 自动生成
+  - 3.49.0: 从 feature-registry.yml 自动生成
 ---
 
 # Minimal Paths - 最小验收路径
@@ -326,6 +326,15 @@ changelog:
 
 ---
 
+### task-card-branch-protect: branch-protect.sh Task Card 格式支持
+
+1. ✅ **task card: .task-{branch}.md 含成功标准+checkbox → 通过**
+2. ✅ **旧格式: .prd-{branch}.md + .dod-{branch}.md → 仍然有效**
+3. ✅ **缺少成功标准: exit 2 拦截**
+4. ✅ **缺少 checkbox: exit 2 拦截**
+
+---
+
 ### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 
 1. ✅ **新格式: .task-{branch}.md 存在时优先使用**
@@ -352,5 +361,5 @@ changelog:
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.48.0
+**版本**: 3.49.0
 **生成时间**: 2026-03-14
