@@ -1592,4 +1592,33 @@ product_features:
       - "新格式: .task-{branch}.md 被正确识别"
       - "旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容"
 
+  - id: S12
+    name: /dev Skill 文档重组为6步 Task Card 格式
+    status: Committed
+    priority: P1
+    version: "12.68.1"
+    updated: "2026-03-14"
+    description: |
+      把 /dev 工作流文档从12步重组为6步外壳，引入 Task Card 格式。
+      Task Card 合并 .prd + .dod 为 .task 单文件，避免 PRD 和 DoD 漂移。
+      新建 steps/01-taskcard.md，保留所有原有步骤文件向后兼容。
+
+    entrypoints:
+      - type: doc
+        file: skills/dev/SKILL.md
+        trigger: "/dev 工作流入口文档"
+      - type: doc
+        file: skills/dev/steps/01-taskcard.md
+        trigger: "Task Card 格式定义"
+
+    golden_path: |
+      用户运行 /dev →
+      读 SKILL.md 流程图（6步） →
+      Step 1 创建 .task 文件（合并 PRD + DoD） →
+      后续步骤引用 .task 完成开发
+
+    minimal_paths:
+      - "新模式: 使用 01-taskcard.md 创建合并格式 Task Card"
+      - "兼容模式: 旧 01-prd.md + 05-dod.md 仍可用（弃用提示）"
+
     rcis: []
