@@ -22,6 +22,23 @@
 
 ---
 
+### [2026-03-14] cecelia-bridge 自动启动 + 健康检查修复（PR #bridge-minimax-routing）
+
+**背景**：Brain 启动后 cecelia-bridge（port 3457）不自动启动，导致所有 Claude Code 任务无法派发。每次需手动启动 bridge。
+
+### 根本原因
+
+- `server.js` 没有 bridge 启动逻辑，bridge 脚本存在但从未被自动拉起
+- `checkCeceliaRunAvailable()` 使用 `GET /` 检测（返回 404 视为运行），注释错误地说"没有 /health"，实际 bridge 已有 `/health` 端点
+
+### 下次预防
+
+- [ ] 新增子进程组件时，必须同步在 `server.js` 的 `server.listen` 回调中加入 auto-start 逻辑
+- [ ] `checkXxxAvailable()` 函数若注释与实现不符，必须在同次 PR 中更新注释
+- [ ] DoD Test 命令用相对路径（`packages/brain/server.js`），禁止用绝对路径
+
+---
+
 ### [2026-03-14] Codex runner.sh PRD 预注入（PR #codex-runner-prd-inject）
 
 **背景**：Brain 只在 US VPS 运行，Codex 在西安 M4 运行。runner.sh 发送 `/dev --task-id XXX` 给 Codex 后，Codex 在 M4 侧执行 `/dev` skill 的 Step 01，skill 调用 `localhost:5221` 获取 PRD — 但 M4 没有 Brain，导致失败。
