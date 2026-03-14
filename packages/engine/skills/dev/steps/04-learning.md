@@ -1,0 +1,320 @@
+---
+id: dev-step-04-learning
+version: 1.0.0
+created: 2026-03-14
+---
+
+# Step 4: Learning — 记录经验 + 合并 PR
+
+> 原 Step 10，内容完全不变。
+
+> 记录开发经验（必须步骤）
+
+**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "in_progress" })`
+
+---
+
+## 为什么必须记录？
+
+每次开发都是一次学习机会：
+- 遇到的 Bug 可能会再次出现
+- 优化点积累形成最佳实践
+- 影响程度帮助优先级决策
+
+**不记录 = 重复踩坑**
+
+---
+
+## 测试任务的 Learning
+
+```bash
+IS_TEST=$(git config branch."$BRANCH_NAME".is-test 2>/dev/null)
+```
+
+**测试任务的 Learning 是可选的**：
+
+| 情况 | 处理 |
+|------|------|
+| 发现了流程/工具的问题 | 记录到 Engine LEARNINGS |
+| 流程顺畅无问题 | 可以跳过 Learning |
+| 测试代码后续会删除 | 不要记录功能相关的经验 |
+
+**测试任务只记录"流程经验"，不记录"功能经验"**。
+
+---
+
+## 记录位置
+
+### Per-Branch Learning 文件（v2 — 消除并行冲突）
+
+**每个分支写自己的独立 Learning 文件**，路径：
+
+```
+docs/learnings/<branch-name>.md
+```
+
+例如分支 `cp-03111707-per-branch-learning` → 文件 `docs/learnings/cp-03111707-per-branch-learning.md`
+
+**为什么不再写 `docs/LEARNINGS.md`？**
+- 多个 /dev 并行时，所有 PR 都改同一个文件 → 先合并的改了文件 → 后面的 PR 必然冲突
+- Per-branch 文件天然隔离，互不影响
+
+### 内容范围
+- 工作流本身的改进点（/dev 流程、脚本 bug）
+- 项目开发中的发现（踩坑、技术点、架构建议）
+- 统一写到一个 per-branch 文件即可
+
+### Auto Memory（MEMORY.md）— SSOT 原则
+
+**每次 PR 合并后，必须按以下规则更新 `memory/MEMORY.md`：**
+
+| 信息类型 | 处理方式 |
+|---------|---------|
+| 版本号、Schema版本、端口、当前激活配置 | **绝对不写** — 有 SSOT（package.json/selfcheck.js/DB） |
+| 文件路径变更（新增/移动/删除） | 更新"关键文件"section 对应行 |
+| 新的架构设计决策（为什么这样做） | 追加到对应 section |
+| 新的踩坑（非显而易见的 bug/陷阱） | 追加到对应踩坑 section |
+| Schema 新版本 | 追加一行到"Schema 版本历史" |
+| 已有记录的同类知识有更新 | 更新那一行，不追加重复 |
+
+**没有新的架构知识或踩坑 → 不改 MEMORY.md（不要为了"完整"强行追加）**
+
+---
+
+## 记录模板
+
+```markdown
+### [YYYY-MM-DD] <任务简述>
+
+**失败统计**：CI 失败 N 次，本地测试失败 M 次
+
+**CI 失败记录**（有则填，无则省略）：
+- 失败 #1：根本原因 → 修复方式 → 下次如何预防
+- 失败 #2：...
+
+**本地测试失败记录**（有则填，无则省略）：
+- 失败 #1：根本原因 → 修复方式 → 下次如何预防
+
+**错误判断记录**（以为对但错了）：
+- <描述判断错误的地方> → 正确答案是什么
+
+**影响程度**: Low/Medium/High
+**预防措施**（下次开发中应该注意什么）：
+- ...
+```
+
+### 影响程度说明
+
+- **Low**: 体验小问题，不影响功能（CI 0 次失败，流程顺畅）
+- **Medium**: 功能性问题，需要尽快修复（CI 1-2 次失败，有明确根因）
+- **High**: 阻塞性问题，必须立即处理（CI 3+ 次失败，或涉及架构错误判断）
+
+---
+
+## 执行方式
+
+### 0. 读取过程数据（必须先做）
+
+**在写任何 Learning 之前，先读取 `.dev-incident-log.json`**：
+
+```bash
+INCIDENT_FILE=".dev-incident-log.json"
+if [[ -f "$INCIDENT_FILE" ]]; then
+    echo "=== 本次开发 Incident Log ==="
+    jq -r '.[] | "[\(.step)] \(.type): \(.description)\n  错误: \(.error | split("\n")[0])\n  修复: \(.resolution)\n"' "$INCIDENT_FILE"
+    CI_FAILURES=$(jq '[.[] | select(.type == "ci_failure")] | length' "$INCIDENT_FILE")
+    TEST_FAILURES=$(jq '[.[] | select(.type == "test_failure")] | length' "$INCIDENT_FILE")
+    echo "CI 失败次数: $CI_FAILURES"
+    echo "本地测试失败次数: $TEST_FAILURES"
+else
+    echo "无 Incident Log（本次开发无失败记录）"
+    CI_FAILURES=0
+    TEST_FAILURES=0
+fi
+```
+
+### 1. 强制回答以下问题（必答，不允许跳过）
+
+**基于 Incident Log 和本次开发过程，必须回答**：
+
+| # | 问题 | 数据来源 |
+|---|------|---------|
+| Q1 | 本次 CI 失败了几次？每次的根本原因是什么？ | `.dev-incident-log.json` (type=ci_failure) |
+| Q2 | 本次本地验证失败了几次？每次的根本原因是什么？ | `.dev-incident-log.json` (type=test_failure) |
+| Q3 | 有没有哪个判断"以为对但后来发现是错的"？ | 回顾整个开发过程 |
+| Q4 | 这些问题会不会再次出现？如果会，下次怎么更快解决？ | 分析根因 |
+| Q5 | 有没有什么应该加入 MEMORY.md 的新踩坑或架构决策？ | 判断是否有"非显而易见"的知识 |
+
+**答案决定 Learning 内容的深度**：
+- CI 失败 0 次 + 本地失败 0 次 + 无错误判断 → 可简要记录"流程顺畅"
+- 有任何失败或错误判断 → 必须详细记录根因和预防措施
+
+### 2. 写 Learning（基于问题回答）
+
+2. **写到 per-branch Learning 文件**
+
+   ```bash
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
+   mkdir -p docs/learnings
+   # 将 Learning 内容写到 $LEARNING_FILE
+   ```
+
+### 3. **提交 Learning（push 到功能分支，PR 自动包含 Learning）**
+
+   **⚠️ 注意：此时 PR 尚未合并，仍在功能分支上**
+
+   ```bash
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   LEARNING_FILE="docs/learnings/${BRANCH_NAME}.md"
+
+   # 直接在功能分支提交（PR 还开着）
+   git add "$LEARNING_FILE"
+   git commit -m "docs: 记录 <任务简述> 的开发经验
+
+   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+
+   git push origin HEAD
+   echo "✅ Learning 已推送到功能分支（PR 已自动更新）"
+   ```
+
+   **好处**：
+   - 每个分支独立文件，并行 /dev 不再冲突
+   - Learning 包含在同一个 PR 中（有完整 CI 历史）
+   - 不需要另开单独的 docs PR
+
+### 3.5. **触发 LEARNINGS_RECEIVED 事件 → 丘脑分拣**
+
+   **将 LEARNINGS.md 中的知识发送给 Brain，经丘脑分拣走不同路径**：
+
+   ```bash
+   # 从 .dev-mode 读取分支和任务信息
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+   TASK_ID=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+
+   # 触发 LEARNINGS_RECEIVED 事件（丘脑分拣两条路径）
+   bash skills/dev/scripts/fire-learnings-event.sh \
+     --branch "$BRANCH_NAME" \
+     --pr "$PR_NUMBER" \
+     --task-id "$TASK_ID"
+   ```
+
+   **两条路径**：
+   - `issues_found`（CI/测试失败记录）→ 创建 **fix task**（任务线，不让 bug 跑掉）
+   - `next_steps_suggested`（预防措施/经验）→ 写 **learnings 表**（成长线 → 反刍 → NotebookLM 持久化）
+
+   **降级策略**：Brain 不可用时跳过（`|| true`），不阻塞流程。
+
+### 4. **合并 PR（LEARNINGS 已包含在 PR diff 中）**
+
+   ```bash
+   BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+   PR_NUMBER=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[0].number')
+
+   echo "📋 PR #$PR_NUMBER 将包含："
+   echo "  - 代码变更"
+   echo "  - LEARNINGS.md"
+
+   gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+   echo "✅ PR #$PR_NUMBER 已合并（代码 + LEARNINGS 一次入库）"
+   ```
+
+   **合并后标记 Step 3 完成**：
+   ```bash
+   sed -i 's/^step_3_prci: in_progress/step_3_prci: done/' .dev-mode
+   echo "✅ Step 3 完成标记已写入 .dev-mode"
+   ```
+
+---
+
+## 没有特别的 Learning？
+
+即使本次开发很顺利，也至少记录：
+```markdown
+### [YYYY-MM-DD] <任务简述>
+- **Bug**: 无
+- **优化点**: 流程顺畅，无明显优化点
+- **影响程度**: N/A
+```
+
+**记录"没问题"本身也是有价值的信息**，证明这个流程/模式是可靠的。
+
+---
+
+## 生成反馈报告
+
+**生成结构化反馈报告（Brain 集成）**：
+
+```bash
+bash skills/dev/scripts/generate-feedback-report.sh
+```
+
+生成 `.dev-feedback-report.json`，包含：
+- task_id, branch, pr_number
+- summary, issues_found, next_steps_suggested
+- technical_notes, performance_notes
+- code_changes（files, lines 统计）
+- test_coverage
+
+---
+
+## 上传反馈到 Brain
+
+**如果是 Brain Task，上传反馈并更新状态**：
+
+```bash
+# 检测 task_id（从 .dev-mode 文件读取）
+task_id=$(grep "^task_id:" .dev-mode 2>/dev/null | cut -d' ' -f2 || echo "")
+
+if [[ -n "$task_id" ]]; then
+    echo ""
+    echo "📤 上传反馈到 Brain..."
+
+    if bash skills/dev/scripts/upload-feedback.sh "$task_id" 2>/dev/null || true; then
+        echo "✅ 反馈已上传到 Brain"
+    else
+        echo "⚠️  反馈上传失败（Brain 可能不可用，继续执行）"
+    fi
+
+    if bash skills/dev/scripts/update-task-status.sh "$task_id" "completed" 2>/dev/null || true; then
+        echo "✅ Task 已标记为完成"
+    else
+        echo "⚠️  Task 状态更新失败（Brain 可能不可用，继续执行）"
+    fi
+
+    echo ""
+    echo "🔄 检查 Capability stage 更新..."
+    bash skills/dev/scripts/update-capability.sh "$task_id" 2>/dev/null || true
+else
+    echo ""
+    echo "ℹ️  非 Brain Task，跳过反馈上传"
+fi
+```
+
+**降级策略**：
+- Brain API 不可用时不阻塞流程
+- 使用 `2>/dev/null || true` 确保失败时继续
+- 显示警告但不中断工作流
+
+---
+
+## 完成条件
+
+- [ ] 至少有一条 Learning 记录（Engine 或项目层面）
+- [ ] Learning 已提交并推送
+- [ ] 反馈报告已生成（.dev-feedback-report.json）
+
+**标记步骤完成**：
+
+```bash
+sed -i 's/^step_4_learning: pending/step_4_learning: done/' .dev-mode
+echo "✅ Step 4 完成标记已写入 .dev-mode"
+```
+
+**Task Checkpoint**: `TaskUpdate({ taskId: "4", status: "completed" })`
+
+**立即执行下一步**：读取 `skills/dev/steps/05-clean.md` 并继续
+
+**完成后进入 Step 5: Merge+Clean**
