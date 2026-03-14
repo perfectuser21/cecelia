@@ -2,8 +2,8 @@
 # ============================================================================
 # Feature Registry - ZenithJoy Engine
 # ============================================================================
-# 版本: 3.28.0
-# 更新: 2026-03-12
+# 版本: 3.29.0
+# 更新: 2026-03-14
 #
 # 核心原则:
 # - Feature Registry 回答"系统有什么能力"（What）
@@ -1447,5 +1447,33 @@ product_features:
     minimal_paths:
       - "无 --title 参数: 提取失败，降级放行"
       - "非 gh pr create 命令: 跳过检查"
+
+    rcis: []
+
+  - id: worktree-max-limit
+    name: worktree-manage.sh MAX_WORKTREES 数量上限检查
+    status: active
+    priority: P2
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      worktree-manage.sh cmd_create() 在创建新 worktree 之前检查现有数量。
+      当 worktree 数量（不含主仓库）>= MAX_WORKTREES（8）时，
+      拒绝创建并提示运行 worktree-gc.sh 清理已合并的 worktree。
+      防止 Brain 并发派发大量任务时磁盘被撑满。
+
+    entrypoints:
+      - type: script
+        file: skills/dev/scripts/worktree-manage.sh
+        trigger: "cmd_create() 调用时（flock 获取锁之后）"
+
+    golden_path: |
+      worktree 数量 < 8 → 正常创建 →
+      worktree 数量 >= 8 → exit 1 + 错误提示 →
+      运行 worktree-gc.sh 清理 → 重试创建
+
+    minimal_paths:
+      - "数量 < 8: 正常流程"
+      - "数量 >= 8: 拒绝创建，提示 GC"
 
     rcis: []

@@ -115,6 +115,18 @@ cmd_create() {
         exit 1
     fi
 
+    # 数量上限检查（不含主仓库）
+    local MAX_WORKTREES=8
+    local existing_count
+    existing_count=$(git worktree list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+    if [[ $existing_count -ge $MAX_WORKTREES ]]; then
+        echo -e "${RED}ERROR: worktree 数量已达上限（$existing_count/$MAX_WORKTREES）${NC}" >&2
+        echo "  运行以下命令查看现有 worktree：" >&2
+        echo "  git worktree list" >&2
+        echo "  运行 worktree-gc.sh 清理已合并的 worktree 后再重试" >&2
+        exit 1
+    fi
+
     # 生成分支名和 worktree 路径
     local timestamp
     timestamp=$(date +%m%d%H%M)
