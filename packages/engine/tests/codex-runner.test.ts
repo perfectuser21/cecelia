@@ -44,7 +44,7 @@ describe('runner.sh v2.0.0', () => {
         `bash ${RUNNER} --branch cp-test-dry-run-$(date +%s) --task-id test-123 --dry-run`,
         { encoding: 'utf-8', stdio: 'pipe' }
       );
-      expect(result).toContain('Codex Runner v2.2.0');
+      expect(result).toContain('Codex Runner v2.3.0');
       expect(result).toContain('DRY-RUN');
     });
 
@@ -53,7 +53,7 @@ describe('runner.sh v2.0.0', () => {
         `CODEX_HOME=/tmp/test-codex bash ${RUNNER} --branch cp-test-dry-$(date +%s) --dry-run`,
         { encoding: 'utf-8', stdio: 'pipe' }
       );
-      expect(result).toContain('CODEX_HOME: /tmp/test-codex');
+      expect(result).toContain('当前账号: /tmp/test-codex');
     });
   });
 
