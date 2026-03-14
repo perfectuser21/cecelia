@@ -15,6 +15,7 @@
 import { MAX_SEATS, checkServerResources, getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
 import { listProcessesWithElapsed, listProcessesWithPpid } from './platform-utils.js';
+import { calculateBudgetState } from './token-budget-planner.js';
 
 // ============================================================
 // Constants
@@ -252,6 +253,23 @@ async function calculateSlotBudget() {
     // Token pressure fetch failed — continue without throttling
   }
 
+  // Budget state: 7-day token budget planning (USER_RESERVE_PCT 30% + POOL_C_SCALE)
+  // 在 5h 窗口压力之上叠加 7day 周级别预算控制
+  let budgetState = null;
+  try {
+    budgetState = await calculateBudgetState();
+    const scale = budgetState.pool_c_scale;
+    if (scale < 1.0) {
+      const scaled = Math.round(poolCAfterResources * scale);
+      if (scaled < poolCAfterResources) {
+        console.log(`[slot-allocator] budget_state=${budgetState.state} scale=${scale} pool_c: ${poolCAfterResources}→${scaled}`);
+        poolCAfterResources = scaled;
+      }
+    }
+  } catch (err) {
+    console.warn(`[slot-allocator] calculateBudgetState failed: ${err.message}, skipping`);
+  }
+
   // Apply slot change buffer (±2 per tick)
   const poolCBudget = applySlotBuffer(poolCAfterResources);
 
@@ -289,6 +307,11 @@ async function calculateSlotBudget() {
       maxPressure: resources.metrics.max_pressure,
     },
     tokenPressure: tokenInfo,
+    budgetState: budgetState ? {
+      state: budgetState.state,
+      avg_remaining_pct: budgetState.avg_remaining_pct,
+      pool_c_scale: budgetState.pool_c_scale,
+    } : null,
     dispatchAllowed: poolCBudget > autoDispatchUsed,
   };
 }
@@ -330,6 +353,7 @@ async function getSlotStatus() {
       effective_slots: budget.resources.effectiveSlots,
       token: budget.tokenPressure,
     },
+    budget_state: budget.budgetState,
     dispatch_allowed: budget.dispatchAllowed,
     headless_count: sessions.headless.length,
   };
