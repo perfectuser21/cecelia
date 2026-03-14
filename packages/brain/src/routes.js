@@ -3096,6 +3096,21 @@ router.post('/execution-callback', async (req, res) => {
       console.warn(`[execution-callback] task_run_metrics write failed (non-fatal): ${metricsErr.message}`);
     }
 
+    // ── task_execution_metrics: per-task consumption record ──
+    try {
+      const accountId = req.body.account_id || null;
+      const durationMs = typeof duration_ms === 'number' ? duration_ms : null;
+      const estRequests = durationMs ? Math.round((durationMs / 30000) * 10) / 10 : null;
+      await pool.query(
+        `INSERT INTO task_execution_metrics (task_id, account_id, duration_ms, est_requests, status)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [task_id, accountId, durationMs, estRequests, newStatus]
+      );
+      console.log(`[execution-callback] task_execution_metrics recorded task=${task_id} account=${accountId} duration=${durationMs}ms`);
+    } catch (execMetricsErr) {
+      console.warn(`[execution-callback] task_execution_metrics write failed (non-fatal): ${execMetricsErr.message}`);
+    }
+
     // ── watchdog: flush RSS/CPU metrics to DB ──
     try {
       const { cleanupMetrics } = await import('./watchdog.js');
@@ -9235,6 +9250,126 @@ router.post('/codex-usage/refresh', async (_req, res) => {
     res.json({ ok: true, usage: _codexUsageCache });
   } catch (err) {
     res.status(502).json({ ok: false, error: `codex-bridge unreachable: ${err.message}` });
+  }
+});
+
+// ==================== Runner Status API ====================
+
+/**
+ * GET /api/brain/runner-status
+ * 实时返回 slot 状态（3区：user/cecelia/taskPool）
+ * 每个活跃 slot 含 account/model/task_title/started_at
+ */
+router.get('/runner-status', async (_req, res) => {
+  try {
+    const { calculateSlotBudget } = await import('./slot-allocator.js');
+    const budget = await calculateSlotBudget();
+
+    const result = await pool.query(`
+      SELECT id, title, task_type, status, started_at,
+             payload->>'dispatched_account' AS account_id,
+             payload->>'dispatched_model'   AS model,
+             payload->>'decomposition'      AS decomposition,
+             payload->>'requires_cortex'    AS requires_cortex
+      FROM tasks
+      WHERE status = 'in_progress'
+      ORDER BY started_at ASC NULLS LAST
+      LIMIT 20
+    `);
+
+    const now = Date.now();
+    const tasks = result.rows.map(r => ({
+      task_id:     r.id,
+      task_title:  r.title,
+      task_type:   r.task_type,
+      account_id:  r.account_id || null,
+      model:       r.model || null,
+      started_at:  r.started_at,
+      duration_ms: r.started_at ? now - new Date(r.started_at).getTime() : null,
+      zone: (r.decomposition || r.requires_cortex === 'true') ? 'cecelia' : 'taskPool',
+    }));
+
+    const ceceliaTasks  = tasks.filter(t => t.zone === 'cecelia');
+    const taskPoolTasks = tasks.filter(t => t.zone === 'taskPool');
+
+    const buildSlots = (zoneTasks, capacity, zone) =>
+      Array.from({ length: capacity }, (_, i) => {
+        const t = zoneTasks[i];
+        return t ? { slot: i + 1, zone, active: true, ...t } : { slot: i + 1, zone, active: false };
+      });
+
+    const ceceliaSlots  = buildSlots(ceceliaTasks,  budget.cecelia.budget,  'cecelia');
+    const taskPoolSlots = buildSlots(taskPoolTasks,  budget.taskPool.budget, 'taskPool');
+    const userSlots     = Array.from({ length: budget.user.budget }, (_, i) => ({
+      slot: i + 1, zone: 'user', active: i < budget.user.used,
+      task_title: i < budget.user.used ? '用户会话' : null,
+    }));
+
+    res.json({
+      ok: true,
+      total: budget.total,
+      zones: {
+        user:     { budget: budget.user.budget,     used: budget.user.used,     slots: userSlots },
+        cecelia:  { budget: budget.cecelia.budget,  used: budget.cecelia.used,  slots: ceceliaSlots },
+        taskPool: { budget: budget.taskPool.budget, used: budget.taskPool.used, slots: taskPoolSlots },
+      },
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/slot-recommendation
+ * 动态推荐 slot 数：floor(剩余请求 / 预计剩余小时 / 平均请求每任务)
+ */
+router.get('/slot-recommendation', async (_req, res) => {
+  try {
+    const usage = await getAccountUsage();
+    const accounts = Object.values(usage);
+    const now = Date.now();
+
+    const available = accounts.filter(a => (a.five_hour_pct ?? 0) < 90);
+    const totalRemPct = available.reduce((s, a) => s + Math.max(0, 100 - (a.five_hour_pct ?? 0)), 0);
+    const REQUESTS_PER_5H = 80;
+    const remainingRequests = Math.round((totalRemPct / 100) * REQUESTS_PER_5H * Math.max(available.length, 1));
+
+    let remainingHours = 5;
+    const resetsAts = accounts.map(a => a.resets_at).filter(Boolean);
+    if (resetsAts.length > 0) {
+      const soonest = Math.min(...resetsAts.map(r => new Date(r).getTime()));
+      remainingHours = Math.max(0.25, (soonest - now) / 3600000);
+    }
+
+    let avgRequestsPerTask = 6;
+    try {
+      const metricsResult = await pool.query(`
+        SELECT AVG(est_requests) AS avg_req
+        FROM task_execution_metrics
+        WHERE recorded_at > NOW() - INTERVAL '24 hours'
+          AND est_requests IS NOT NULL
+      `);
+      const avg = parseFloat(metricsResult.rows[0]?.avg_req);
+      if (!isNaN(avg) && avg > 0) avgRequestsPerTask = Math.round(avg * 10) / 10;
+    } catch { /* use default */ }
+
+    const recommendedSlots = Math.max(1, Math.floor(remainingRequests / remainingHours / avgRequestsPerTask));
+
+    res.json({
+      ok: true,
+      recommended_slots: recommendedSlots,
+      formula: 'floor(remaining_requests / remaining_hours / avg_requests_per_task)',
+      inputs: {
+        remaining_requests:    remainingRequests,
+        remaining_hours:       Math.round(remainingHours * 10) / 10,
+        avg_requests_per_task: avgRequestsPerTask,
+        available_accounts:    available.length,
+      },
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

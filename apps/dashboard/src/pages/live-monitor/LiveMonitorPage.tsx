@@ -558,12 +558,17 @@ function AccUsageRings() {
             key={id}
             onClick={() => navigate('/account-usage')}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, cursor: 'pointer' }}
-            title="查看账号用量详情"
+            title={`5h: ${pct}% | 7d: ${u?.seven_day_pct ?? 0}%`}
           >
             <Ring pct={pct} color={color} label={label} value={`${pct}%`} />
             {fiveHrResets && (
               <div style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace', marginTop: -2 }}>
                 ↺{fiveHrResets}
+              </div>
+            )}
+            {(u?.seven_day_pct ?? 0) > 0 && (
+              <div style={{ fontSize: 7, color: (u?.seven_day_pct ?? 0) > 80 ? '#f85149' : '#484f58', fontFamily: 'monospace' }}>
+                7d:{u?.seven_day_pct ?? 0}%
               </div>
             )}
           </div>
@@ -687,6 +692,176 @@ function BudgetBadge({ budgetState, codex }: { budgetState?: BudgetState | null;
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Runner Slot Panel ──────────────────────────────────────────────
+
+interface RunnerSlot {
+  slot: number;
+  zone: string;
+  active: boolean;
+  task_id?: string;
+  task_title?: string | null;
+  task_type?: string;
+  account_id?: string | null;
+  model?: string | null;
+  duration_ms?: number | null;
+}
+
+interface RunnerZone {
+  budget: number;
+  used: number;
+  slots: RunnerSlot[];
+}
+
+interface RunnerStatus {
+  ok: boolean;
+  total: number;
+  zones: { user: RunnerZone; cecelia: RunnerZone; taskPool: RunnerZone };
+  updated_at: string;
+}
+
+interface SlotRecommendation {
+  ok: boolean;
+  recommended_slots: number;
+  formula: string;
+  inputs: {
+    remaining_requests: number;
+    remaining_hours: number;
+    avg_requests_per_task: number;
+    available_accounts: number;
+  };
+}
+
+const ZONE_COLORS: Record<string, string> = {
+  user:     '#818cf8',
+  cecelia:  '#c084fc',
+  taskPool: '#10b981',
+};
+const ZONE_LABELS: Record<string, string> = {
+  user: 'USER', cecelia: 'CECELIA', taskPool: 'POOL',
+};
+
+function fmtDuration(ms: number | null | undefined): string {
+  if (!ms) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h${m % 60}m`;
+}
+
+function fmtModel(model: string | null | undefined): string {
+  if (!model) return '?';
+  if (model.includes('sonnet')) return 'SNT';
+  if (model.includes('opus')) return 'OPS';
+  if (model.includes('haiku')) return 'HKU';
+  if (model.includes('minimax') || model.includes('mini')) return 'MNX';
+  if (model.includes('gpt')) return 'GPT';
+  return model.slice(0, 3).toUpperCase();
+}
+
+function SlotCard({ slot }: { slot: RunnerSlot }) {
+  const zoneColor = ZONE_COLORS[slot.zone] ?? '#6e7681';
+  if (!slot.active) {
+    return (
+      <div style={{
+        padding: '5px 7px', borderRadius: 6,
+        border: '1px solid #21262d', background: '#0d1117',
+        display: 'flex', alignItems: 'center', gap: 4, minHeight: 28,
+      }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#21262d', flexShrink: 0 }} />
+        <span style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>空闲</span>
+      </div>
+    );
+  }
+  const acct = slot.account_id ? slot.account_id.replace('account', 'AC') : '?';
+  return (
+    <div style={{
+      padding: '5px 7px', borderRadius: 6,
+      border: `1px solid ${zoneColor}40`, background: `${zoneColor}0d`,
+      display: 'flex', flexDirection: 'column', gap: 2, minHeight: 28,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: zoneColor, flexShrink: 0, boxShadow: `0 0 5px ${zoneColor}80` }} />
+        <span style={{ fontSize: 8, fontFamily: 'monospace', color: zoneColor, fontWeight: 700 }}>{acct}</span>
+        <span style={{ fontSize: 8, fontFamily: 'monospace', color: '#6e7681', marginLeft: 'auto' }}>{fmtModel(slot.model)}</span>
+        {slot.duration_ms && (
+          <span style={{ fontSize: 7, color: '#484f58', fontFamily: 'monospace' }}>{fmtDuration(slot.duration_ms)}</span>
+        )}
+      </div>
+      {slot.task_title && (
+        <div style={{ fontSize: 8, color: '#8b949e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+          {slot.task_title.length > 22 ? slot.task_title.slice(0, 21) + '…' : slot.task_title}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunnerSlotPanel() {
+  const [status, setStatus] = useState<RunnerStatus | null>(null);
+  const [rec, setRec] = useState<SlotRecommendation | null>(null);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [sRes, rRes] = await Promise.all([
+        fetch('/api/brain/runner-status'),
+        fetch('/api/brain/slot-recommendation'),
+      ]);
+      if (sRes.ok) { const d = await sRes.json(); if (d.ok) setStatus(d); }
+      if (rRes.ok) { const d = await rRes.json(); if (d.ok) setRec(d); }
+    } catch { /* 静默 */ }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const t = setInterval(fetchAll, 10000);
+    return () => clearInterval(t);
+  }, [fetchAll]);
+
+  if (!status) return <div style={{ fontSize: 9, color: '#484f58', textAlign: 'center', padding: 8 }}>加载中…</div>;
+
+  const zones: Array<[string, RunnerZone]> = [
+    ['user', status.zones.user],
+    ['cecelia', status.zones.cecelia],
+    ['taskPool', status.zones.taskPool],
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {zones.map(([zoneName, zone]) => (
+        <div key={zoneName}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: ZONE_COLORS[zoneName], letterSpacing: 1, fontFamily: 'monospace' }}>
+              {ZONE_LABELS[zoneName]}
+            </span>
+            <span style={{ fontSize: 8, color: '#484f58', fontFamily: 'monospace' }}>{zone.used}/{zone.budget}</span>
+            <div style={{ flex: 1, height: 1, background: '#21262d' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
+            {zone.slots.map(slot => <SlotCard key={slot.slot} slot={slot} />)}
+          </div>
+        </div>
+      ))}
+      {rec && (
+        <div style={{
+          marginTop: 4, padding: '6px 8px', borderRadius: 6,
+          background: 'rgba(16,185,129,.08)', border: '1px solid rgba(16,185,129,.2)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 8, color: '#6e7681', fontFamily: 'monospace' }}>推荐 SLOT</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#10b981', fontFamily: 'monospace' }}>
+              {rec.recommended_slots}
+            </span>
+            <span style={{ fontSize: 7, color: '#484f58', marginLeft: 'auto', fontFamily: 'monospace' }}>
+              {rec.inputs.remaining_requests}req / {rec.inputs.remaining_hours}h / {rec.inputs.avg_requests_per_task}r/t
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1284,6 +1459,12 @@ export default function LiveMonitorPage() {
                     <div style={{ fontSize: 10, color: '#484f58', textAlign: 'center', paddingTop: 2 }}>空闲</div>
                   )}
                 </div>
+              </div>
+
+              {/* RUNNER — 实时 Slot 面板 */}
+              <div style={cardStyle}>
+                <SectionLabel label="RUNNER" />
+                <RunnerSlotPanel />
               </div>
 
             </div>
