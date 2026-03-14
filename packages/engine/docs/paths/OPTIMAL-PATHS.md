@@ -354,6 +354,14 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
+### S-ci-task-card-support: null
+
+```
+PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
+```
+
+---
+
 ### task-card-branch-protect: branch-protect.sh Task Card 格式支持
 
 ```
