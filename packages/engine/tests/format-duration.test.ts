@@ -32,6 +32,14 @@ describe('format_duration_ms', () => {
     expect(fmt(500)).toBe('0.5s');
   });
 
+  it('50ms → 0.1s', () => {
+    expect(fmt(50)).toBe('0.1s');
+  });
+
+  it('1ms → 0.1s', () => {
+    expect(fmt(1)).toBe('0.1s');
+  });
+
   it('0ms → 0s', () => {
     expect(fmt(0)).toBe('0s');
   });
