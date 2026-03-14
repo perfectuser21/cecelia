@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
+import { spawn } from 'child_process';
+import { createWriteStream } from 'fs';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 import brainRoutes from './src/routes.js';
 import ceceliaRoutes from './src/cecelia-routes.js';
 import traceRoutes from './src/trace-routes.js';
@@ -209,6 +213,47 @@ server.on('upgrade', (req, socket, head) => {
   // /ws path handled by initWebSocketServer's own WSS
 });
 
+/**
+ * Auto-start cecelia-bridge on port 3457 if not already running.
+ * Idempotent: skips if /health returns 200.
+ */
+async function startCeceliaBridge() {
+  const BRIDGE_PORT = process.env.BRIDGE_PORT || 3457;
+  const bridgeUrl = `http://localhost:${BRIDGE_PORT}`;
+  try {
+    const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      console.log('[Server] cecelia-bridge already running on port', BRIDGE_PORT);
+      return;
+    }
+  } catch (_) {
+    // Not running — will start below
+  }
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const bridgeScript = join(__dirname, 'scripts', 'cecelia-bridge.js');
+  const logFile = createWriteStream('/tmp/cecelia-bridge.log', { flags: 'a' });
+
+  const child = spawn(process.execPath, [bridgeScript], {
+    detached: false,
+    stdio: ['ignore', logFile, logFile],
+    env: { ...process.env, BRIDGE_PORT: String(BRIDGE_PORT) },
+  });
+
+  child.on('error', (err) => {
+    console.error('[Server] Failed to start cecelia-bridge:', err.message);
+  });
+
+  child.on('exit', (code, signal) => {
+    if (code !== null) {
+      console.warn(`[Server] cecelia-bridge exited with code ${code}`);
+    }
+  });
+
+  console.log(`[Server] cecelia-bridge started (pid=${child.pid}), log: /tmp/cecelia-bridge.log`);
+}
+
 server.listen(PORT, async () => {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
 
@@ -237,6 +282,9 @@ server.listen(PORT, async () => {
   const { startPromotionJobLoop } = await import('./src/promotion-job.js');
   startPromotionJobLoop();
   console.log('[Server] Promotion Job Loop started (10min interval) - P1: Auto-promote probation→active, auto-disable failed');
+
+  // Auto-start cecelia-bridge if not already running
+  await startCeceliaBridge();
 });
 
 export default app;

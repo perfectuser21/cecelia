@@ -1,5 +1,25 @@
 # Cecelia Core Learnings
 
+### [2026-03-14] cecelia-bridge 自动启动 + 健康检查修复（PR #bridge-minimax-routing）
+
+**背景**：Brain 启动后 cecelia-bridge（port 3457）不自动启动，导致所有 Claude Code 任务无法派发。每次需手动启动 bridge。
+
+#### 根本原因
+
+- `server.js` 没有 bridge 启动逻辑
+- `checkCeceliaRunAvailable()` 使用 `GET /` 检测（返回 404 视为运行），注释错误地说"没有 /health"，实际 bridge 已有 `/health` 端点
+
+#### 修复方案
+
+1. `server.js` 新增 `startCeceliaBridge()`：在 `server.listen` 回调末尾调用，先 `GET /health` 检测（幂等），若不通则 `spawn` 启动桥进程，日志写入 `/tmp/cecelia-bridge.log`
+2. `executor.js` 的 `checkCeceliaRunAvailable()` 改用 `GET /health` 端点，`response.ok`（200）才表示可用，清除旧注释
+
+#### 经验
+
+- **已存在不等于已连接**：bridge 脚本存在但没有 auto-start，导致 Brain 运行正常但任务永远无法执行到 US Claude Code
+- **误导性注释**：旧注释 "doesn't have /health" 残留，导致检测代码与实际不符，review 时容易混淆
+- **幂等检测优先**：auto-start 前先 fetch `/health`，避免重复启动进程
+
 ### [2026-03-14] Codex runner.sh PRD 预注入（PR #codex-runner-prd-inject）
 
 **背景**：Brain 只在 US VPS 运行，Codex 在西安 M4 运行。runner.sh 发送 `/dev --task-id XXX` 给 Codex 后，Codex 在 M4 侧执行 `/dev` skill 的 Step 01，skill 调用 `localhost:5221` 获取 PRD — 但 M4 没有 Brain，导致失败。
