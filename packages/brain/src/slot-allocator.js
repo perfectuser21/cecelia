@@ -27,6 +27,7 @@ const CECELIA_RESERVED = 2;                  // Pool A: 2 slots for internal tas
 const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent (1 slot suffices)
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 4 * 60 * 60;    // 4 hours: orphaned sessions expire (worktree leftovers etc.)
+const MAX_CODEX_CONCURRENT = 3;             // Pool D: Codex 专属并发上限（对应 3 个 Codex 账号）
 
 // ============================================================
 // Process Detection
@@ -166,6 +167,25 @@ async function countAutoDispatchInProgress() {
   }
 }
 
+/**
+ * Count Codex-native tasks currently in_progress.
+ * Includes task_type IN ('codex_qa', 'codex_dev') — tasks always routed to Xian Codex CLI.
+ * Budget-downgraded tasks (provider=codex override) are not counted here since provider
+ * is a runtime in-memory override, not persisted to DB.
+ */
+async function countCodexInProgress() {
+  try {
+    const result = await pool.query(`
+      SELECT COUNT(*) FROM tasks
+      WHERE status = 'in_progress'
+      AND task_type IN ('codex_qa', 'codex_dev')
+    `);
+    return parseInt(result.rows[0].count, 10);
+  } catch {
+    return 0;
+  }
+}
+
 // ============================================================
 // Slot Budget Calculation
 // ============================================================
@@ -276,6 +296,10 @@ async function calculateSlotBudget() {
   // Count actual usage
   const ceceliaUsed = await countCeceliaInProgress();
   const autoDispatchUsed = await countAutoDispatchInProgress();
+  const codexRunning = await countCodexInProgress();
+
+  // Codex Pool D: concurrent limit for Codex-native tasks
+  const codexAvailable = codexRunning < MAX_CODEX_CONCURRENT;
 
   // Capacity info from dual-layer model
   const capInfo = getBudgetCap();
@@ -300,6 +324,11 @@ async function calculateSlotBudget() {
       budget: poolCBudget,
       used: autoDispatchUsed,
       available: Math.max(0, poolCBudget - autoDispatchUsed),
+    },
+    codex: {
+      running: codexRunning,
+      max: MAX_CODEX_CONCURRENT,
+      available: codexAvailable,
     },
     pressure: combinedPressure,
     resources: {
@@ -348,6 +377,7 @@ async function getSlotStatus() {
         available: budget.taskPool.available,
       },
     },
+    codex: budget.codex,
     pressure: {
       max: budget.pressure,
       effective_slots: budget.resources.effectiveSlots,
@@ -369,6 +399,7 @@ export {
   USER_RESERVED_BASE,
   USER_PRIORITY_HEADROOM,
   SESSION_TTL_SECONDS,
+  MAX_CODEX_CONCURRENT,
   SLOT_BUFFER_MAX_DELTA,
   SLOT_BUFFER_DOWN,
   SLOT_BUFFER_UP,
@@ -377,6 +408,7 @@ export {
   hasPendingInternalTasks,
   countCeceliaInProgress,
   countAutoDispatchInProgress,
+  countCodexInProgress,
   calculateSlotBudget,
   getSlotStatus,
   applySlotBuffer,
