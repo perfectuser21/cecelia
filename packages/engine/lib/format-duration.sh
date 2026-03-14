@@ -12,6 +12,7 @@
 #   format_duration_ms 3600000   → "1h 0m 0s"
 #   format_duration_ms 65000     → "1m 5s"
 #   format_duration_ms 500       → "0.5s"
+#   format_duration_ms 50        → "0.1s"
 #   format_duration_ms 0         → "0s"
 format_duration_ms() {
     local ms="${1:-0}"
@@ -30,6 +31,8 @@ format_duration_ms() {
         local tenths=$((rem_ms / 100))
         if [[ $rem_ms -eq 0 ]]; then
             echo "0s"
+        elif [[ $tenths -eq 0 ]]; then
+            echo "0.1s"
         else
             echo "${tenths:+0.}${tenths}s"
         fi
