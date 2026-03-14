@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.48.0"
+version: "3.49.0"
 updated: "2026-03-14"
 changelog:
+  - "3.49.0: v12.68.0 - branch-protect.sh 支持 Task Card 格式：新增 .task-{branch}.md 写入验证（同时检查成功标准+checkbox），PRD/DoD 文件查找优先 task card 格式，向后兼容旧 .prd-/.dod- 格式"
   - "3.48.0: v12.65.1 - 修复 Engine macOS 兼容性（fix-engine-macos-compat）：branch-protect.sh 行 268 $TODAY → ${TODAY} 修复 bash 3.2 多字节字符误解析 unbound variable；runner.sh $task_id → ${task_id} 同类修复；cleanup-prd-dod.test.ts git checkout -b main 兼容 macOS 默认分支；hook-contracts.test.ts git checkout master → 动态检测 main/master；pr-gate-phase1 test 期望值修正为 toBeGreaterThan(0)；branch-protect monorepo 子目录测试 3 个全部通过"
   - "3.47.0: v12.65.0 - 修复 Engine 测试漂移（fix-engine-test-drift）：stop-dev.sh 行 372 $DEV_MODE 改为 ${DEV_MODE} 修复 macOS UTF-8 Unicode 污染 unbound variable（exit 1→2）；ci-timeout.test.ts 更新为引用新 CI 文件（ci-l1/l2/l3/l4-*.yml），移除对已删除 engine-ci.yml 的引用；stop-hook-state-integrity.test.ts 旧格式测试更新为 expect exit 0（v14.0.0 已删除旧格式支持）"
   - "3.46.0: v12.64.0 - /dev 专属健康保护（dynamic-ci-dev-health）：Step 00 新增 .dev-lock 完整性检查（context 压缩恢复后自动重建丢失的 .dev-lock）；新增 test-dev-health.sh 健康检查脚本（Hook 语法/Stop Hook 无锁 exit 0/必填字段/重建逻辑/高风险路径 5 项检查）；ci-l1-process.yml 新增 dev-health-check job（engine 变更时触发）；required-dev-paths.yml 新增 packages/engine/skills/dev/ 高风险路径"
@@ -1591,6 +1592,34 @@ product_features:
     minimal_paths:
       - "新格式: .task-{branch}.md 被正确识别"
       - "旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容"
+  - id: task-card-branch-protect
+    name: branch-protect.sh Task Card 格式支持
+    status: active
+    priority: P1
+    version: "1.0.0"
+    updated: "2026-03-14"
+    description: |
+      branch-protect.sh v19 新增对 .task-{branch}.md 格式的支持。
+      写入 task card 时验证必须包含成功标准章节和 checkbox 验收项。
+      PRD/DoD 文件查找优先使用 task card（单文件），找不到再回退旧格式。
+      向后兼容 .prd-*.md + .dod-*.md 分离格式。
+
+    entrypoints:
+      - type: hook
+        file: hooks/branch-protect.sh
+        trigger: "Write .task-{branch}.md 时触发内容验证"
+
+    golden_path: |
+      写入 .task-cp-xxx.md（含成功标准+checkbox）→
+      hook 验证通过 →
+      代码文件保护阶段用 task card 作为 PRD+DoD →
+      允许写代码
+
+    minimal_paths:
+      - "task card: .task-{branch}.md 含成功标准+checkbox → 通过"
+      - "旧格式: .prd-{branch}.md + .dod-{branch}.md → 仍然有效"
+      - "缺少成功标准: exit 2 拦截"
+      - "缺少 checkbox: exit 2 拦截"
 
   - id: task-card-format-support
     name: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）

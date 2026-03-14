@@ -5664,6 +5664,37 @@ Mac mini M1（16GB / 8核）：每个 L4 run = 3 shard 并行（各 1 PostgreSQL
 
 ---
 
+## PR #948 系列 — branch-protect.sh Task Card 格式支持（2026-03-14）
+
+### 背景
+
+新的 `.task-{branch}.md` 格式将 PRD + DoD 合并为单文件（Task Card），需要 hook 识别并正确处理。
+
+### 三处改动位置
+
+1. **Write 拦截白名单**（第 129 行后新增 Task Card 验证块）：`.task-*.md` 文件写入时，同时验证"成功标准"章节和 `- [ ]` checkbox 存在。与 `.prd-*.md` 验证块并列，各自独立触发。
+2. **PRD 文件查找逻辑**（第 568 行）：三级优先——`.task-{branch}.md` > `.prd-{branch}.md` > `.prd.md`
+3. **DoD 文件查找逻辑**：使用 `USING_TASK_CARD` 变量标记，若用 task card 则 PRD_FILE 和 DOD_FILE 指向同一文件
+
+### 为什么内容验证逻辑不需要修改
+
+- PRD 内容验证（`grep -cE '(功能描述|成功标准|...)'`）：task card 含 "成功标准" 天然命中
+- DoD 内容验证（`grep -cE '^\s*-\s*\[[ xX]\]'`）：task card 含 checkbox 天然命中
+- `.md` 扩展名不在 NEEDS_PROTECTION 列表，通过内容验证后直接 `exit 0`
+
+### 向后兼容设计
+
+旧的 `.prd-*.md` 和 `.dod-*.md` 验证块保持不变，只在 task card 不存在时才回退使用。两套格式完全独立，不互相干扰。
+
+### 根本原因
+
+LEARNINGS.md 条目缺少 CI Learning Format Gate 要求的标准结构：`### 根本原因` 和 `### 下次预防 - [ ]` 章节。CI gate 通过 `check-learning.sh` 脚本检测分支新增的 LEARNINGS 内容，若不含这两个三级标题和至少一条 `- [ ]` 预防措施，则 hard fail。
+
+### 下次预防
+
+- [ ] 写 LEARNINGS 时必须包含完整三段结构：`## 标题（日期）` + `### 根本原因` + `### 下次预防 - [ ] 条目`，缺一不可
+- [ ] push 前用 `grep -c "下次预防" docs/LEARNINGS.md` 验证格式，确保返回值 > 0
+- [ ] Engine 改动 PR 的 LEARNINGS 必须和代码在同一个 commit 里，不能事后补写
 ## /dev PR：check-prd.sh + check-dod-mapping.cjs 支持 Task Card 格式（2026-03-14）
 
 ### 根本原因

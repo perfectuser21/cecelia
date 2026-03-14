@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.48.0
+version: 3.49.0
 created: 2026-03-14
 updated: 2026-03-14
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.48.0: 从 feature-registry.yml 自动生成
+  - 3.49.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -362,6 +362,17 @@ PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
 
 ---
 
+### task-card-branch-protect: branch-protect.sh Task Card 格式支持
+
+```
+写入 .task-cp-xxx.md（含成功标准+checkbox）→
+hook 验证通过 →
+代码文件保护阶段用 task card 作为 PRD+DoD →
+允许写代码
+```
+
+---
+
 ### task-card-format-support: DevGate 脚本支持 Task Card 格式（.task-{branch}.md）
 
 ```
@@ -396,5 +407,5 @@ Step 1 创建 .task 文件（合并 PRD + DoD） →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.48.0
+**版本**: 3.49.0
 **生成时间**: 2026-03-14
