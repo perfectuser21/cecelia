@@ -1,13 +1,24 @@
 ---
 id: learning-cp-03142149-ci-task-format
-version: 1.0.0
+version: 1.1.0
 created: 2026-03-14
 updated: 2026-03-14
 changelog:
+  - 1.1.0: 补充根本原因和下次预防章节
   - 1.0.0: 初始版本
 ---
 
-# Learning: CI 支持 Task Card 格式
+# ci-l1-process.yml 支持 Task Card 格式（2026-03-14）
+
+## 根本原因
+
+ci-l1-process.yml 的 cleanup-check 和 required-paths-check 任务只识别 `.dod-*.md` 和 `.prd-*.md` 格式，不识别新的 `.task-*.md` Task Card 统一格式。导致使用 Task Card 的 PR 在 CI 中报找不到 DoD/PRD 文件。
+
+## 下次预防
+
+- [ ] 每次新增文件格式时，同步检查所有引用该格式的 CI 检查脚本
+- [ ] 向后兼容：新格式优先，旧格式保留，不直接删除旧逻辑
+- [ ] ci-l1-process.yml 中的文件格式检查应集中在一处，避免多处独立维护同步问题
 
 ## 背景
 

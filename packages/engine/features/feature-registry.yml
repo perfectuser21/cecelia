@@ -1568,3 +1568,28 @@ product_features:
       - "自定义: CODEX_MODEL=gpt-5.3-codex 恢复旧行为"
 
     rcis: []
+  - id: "S-ci-task-card-support"
+    title: "CI Task Card 格式支持"
+    status: "active"
+    version: "12.68.0"
+    changelog:
+      - version: "12.68.0"
+        date: "2026-03-14"
+        description: "ci-l1-process.yml 支持 .task-{branch}.md Task Card 格式（向后兼容）"
+    description: |
+      扩展 ci-l1-process.yml 的 cleanup-check 和 required-paths-check 任务，
+      优先查找 .task-{branch}.md，回退到 .dod-{branch}.md / .prd-{branch}.md。
+
+    entrypoints:
+      - type: ci
+        file: .github/workflows/ci-l1-process.yml
+        trigger: "PR 触发 CI 时自动执行"
+
+    golden_path: |
+      PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
+
+    minimal_paths:
+      - "新格式: .task-{branch}.md 被正确识别"
+      - "旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容"
+
+    rcis: []
