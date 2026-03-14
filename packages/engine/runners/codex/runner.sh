@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Codex Runner — Codex CLI Provider 适配器 v2.4.0
+# Codex Runner — Codex CLI Provider 适配器 v2.4.1
 # ============================================================================
 # 这是 Codex（OpenAI）Provider 的协议适配器。
 # 完成判断逻辑来自 lib/devloop-check.sh（Provider-Agnostic SSOT）。
@@ -43,7 +43,7 @@
 #   CECELIA_HEADLESS   — 设为 true 表示无头模式（自动设置）
 #   BRAIN_API_URL      — Brain API 地址（默认 http://localhost:5221，M4 需设置远程）
 #
-# 版本: v2.4.0
+# 版本: v2.4.1
 # 创建: 2026-03-13
 # ============================================================================
 
@@ -333,7 +333,7 @@ switch_to_next_account() {
 }
 
 # ===== 主循环 =====
-echo "🚀 Codex Runner v2.3.0 启动"
+echo "🚀 Codex Runner v2.4.1 启动"
 echo "   分支: $BRANCH"
 echo "   Task: ${TASK_ID:-（无）}"
 echo "   Skill: $SKILL"
@@ -426,25 +426,24 @@ while true; do
     # 输出到 stdout（让日志可见）
     echo "$CODEX_OUTPUT"
 
-    # ===== Quota 检测与账号切换（v2.3.0）=====
+    # ===== Quota 检测与账号切换（v2.3.0 / v2.4.1 退避优化）=====
     if echo "$CODEX_OUTPUT" | grep -qi "Quota exceeded"; then
         echo ""
         echo "  ⚠️  检测到 Quota exceeded（账号 $((CURRENT_ACCOUNT_IDX+1)): $CODEX_HOME）"
         if switch_to_next_account; then
-            echo "  ↩️  本轮不计入重试次数，继续下一轮（使用新账号）"
+            echo "  ↩️  本轮不计入重试次数，等待 30s 后使用新账号（避免 rate limit）"
             RETRY_COUNT=$((RETRY_COUNT - 1))
-            sleep 2
+            sleep 30
             continue
         else
-            # 所有账号耗尽
-            if [[ -n "$TASK_ID" ]]; then
-                curl -s -X PATCH "${BRAIN_API_URL}/api/brain/tasks/${TASK_ID}" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"status\":\"failed\",\"error\":\"所有 ${#CODEX_ACCOUNT_LIST[@]} 个 Codex 账号均 Quota exceeded\"}" \
-                    --max-time 5 2>/dev/null || true
-            fi
-            rm -f "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
-            exit 1
+            # 所有账号耗尽：等待 60s 后重置账号列表重试（v2.4.1）
+            echo "  🔁 所有账号耗尽，等待 60s 后重置账号列表重试（rate limit 窗口恢复）"
+            sleep 60
+            CURRENT_ACCOUNT_IDX=0
+            export CODEX_HOME="${CODEX_ACCOUNT_LIST[0]}"
+            RETRY_COUNT=$((RETRY_COUNT - 1))
+            echo "  🔄 账号已重置为 账号 1/${#CODEX_ACCOUNT_LIST[@]}（$CODEX_HOME）"
+            continue
         fi
     fi
 
