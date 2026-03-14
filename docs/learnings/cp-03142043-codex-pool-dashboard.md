@@ -23,6 +23,8 @@ changelog:
 
 ### DoD grep 模式必须和代码变量名精确匹配
 
+## 根本原因
+
 **问题**：DoD 写 `grep -c 'codexAvailable'`，实际代码用的是 `codexSlots.available`，grep 返回 0，CI L1 DoD Verification Gate 失败。
 
 **根因**：DoD 的 Test 命令在 Step 5 写好后，Step 6 实现时可能选择了不同的变量命名方式。
