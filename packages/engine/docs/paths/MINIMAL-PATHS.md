@@ -297,6 +297,13 @@ changelog:
 
 ---
 
+### branch-date-warn-cleanup-fix: branch-protect 分支日期警告 + cleanup.sh step_* 非阻塞
+
+1. ✅ **日期计算失败（date 命令不可用）: DATE_2_DAYS_AGO 为空，跳过检查**
+2. ✅ **cleanup.sh 无 .dev-mode 文件: 跳过 step_* 验证**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

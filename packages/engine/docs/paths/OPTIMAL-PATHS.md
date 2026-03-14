@@ -314,6 +314,15 @@ Engine 改动 + [CONFIG] feat: → 放行
 
 ---
 
+### branch-date-warn-cleanup-fix: branch-protect 分支日期警告 + cleanup.sh step_* 非阻塞
+
+```
+cp-20260101-xxx 日期超 2 天 → WARN 输出 → 不 exit → 继续保护检查 →
+cleanup.sh step 7.6 步骤不全 → WARN 输出 → VALIDATION_PASSED=true → cleanup 继续执行
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
