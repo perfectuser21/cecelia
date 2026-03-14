@@ -14,6 +14,9 @@ paths:
   # DevGate 核心脚本（改错了质量门禁失效）
   - packages/engine/scripts/devgate/
 
+  # /dev 工作流 Skills（改错了整个自主开发流程崩溃）
+  - packages/engine/skills/dev/
+
   # Brain 核心逻辑（调度/决策/保护）
   - packages/brain/src/tick.js
   - packages/brain/src/executor.js

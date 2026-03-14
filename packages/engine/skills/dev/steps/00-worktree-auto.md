@@ -1,9 +1,10 @@
 ---
 id: dev-step-00-worktree-auto
-version: 2.1.0
+version: 2.2.0
 created: 2026-01-31
-updated: 2026-02-22
+updated: 2026-03-14
 changelog:
+  - 2.2.0: 新增 .dev-lock 完整性检查（context 压缩恢复场景）
   - 2.1.0: 修复主仓库 cp-*/feature-* 分支检测盲区（强制 worktree）
   - 2.0.0: 简化为强制创建 worktree（修复 Bug 1）
   - 1.0.0: 初始版本 - worktree 自动检测与创建
@@ -63,7 +64,29 @@ IS_WORKTREE=false
 
 if [[ "$GIT_DIR" == *"worktrees"* ]]; then
     IS_WORKTREE=true
-    echo "✅ 已在 worktree 中，继续 Step 1"
+    echo "✅ 已在 worktree 中"
+
+    # ─── v2.2.0: .dev-lock 完整性检查（context 压缩恢复场景）───
+    # 问题：context 压缩重载后，.dev-lock.<branch> 可能丢失
+    # 症状：Stop Hook 找不到 .dev-lock → exit 0 → 工作流失去约束
+    # 修复：发现 .dev-mode 存在但 .dev-lock 缺失时，自动重建
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    DEV_MODE_FILE="$PROJECT_ROOT/.dev-mode.${CURRENT_BRANCH}"
+    DEV_LOCK_FILE="$PROJECT_ROOT/.dev-lock.${CURRENT_BRANCH}"
+
+    if [[ -f "$DEV_MODE_FILE" && ! -f "$DEV_LOCK_FILE" ]]; then
+        echo "⚠️  检测到 .dev-lock 丢失（context 恢复场景），自动重建..."
+        cp "$DEV_MODE_FILE" "$DEV_LOCK_FILE"
+        echo "✅ .dev-lock.${CURRENT_BRANCH} 已重建，Stop Hook 约束恢复"
+    elif [[ -f "$DEV_LOCK_FILE" ]]; then
+        echo "✅ .dev-lock.${CURRENT_BRANCH} 存在，Stop Hook 约束正常"
+    else
+        echo "ℹ️  无 .dev-mode 文件（新任务），Step 3 将创建"
+    fi
+    # ─────────────────────────────────────────────────────────────
+
+    echo "继续 Step 1"
     # 跳过创建，直接继续 Step 1
     exit 0
 fi
