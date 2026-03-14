@@ -108,9 +108,8 @@ describe("bash-guard.sh", () => {
   });
 
   it("should exist and be executable", () => {
-    const stat = execSync(`stat -c %a "${ORIG_HOOK_PATH}"`, { encoding: "utf-8" });
-    const mode = parseInt(stat.trim(), 8);
-    expect(mode & 0o111).toBeGreaterThan(0);
+    // Use cross-platform test -x instead of Linux-only stat -c %a
+    expect(() => execSync(`test -x "${ORIG_HOOK_PATH}"`, { encoding: "utf-8" })).not.toThrow();
   });
 
   it("should pass syntax check", () => {

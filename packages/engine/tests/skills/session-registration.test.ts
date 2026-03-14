@@ -140,9 +140,9 @@ fi
 
       writeFileSync(expiredFile, JSON.stringify({ session_id: expiredId }));
 
-      // 修改文件时间为 2 小时前
+      // 修改文件时间为 2 小时前（跨平台：macOS 用 -v-2H，Linux 用 -d）
       execSync(
-        `touch -t $(date -d '2 hours ago' +%Y%m%d%H%M) "${expiredFile}"`
+        `touch -t $(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M) "${expiredFile}"`
       );
 
       // 执行清理（find -mmin +60）

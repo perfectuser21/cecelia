@@ -65,8 +65,8 @@ safe_rm_rf() {
         return 1
     fi
 
-    # 验证 4: 禁止删除根目录或 home 目录
-    if [[ "\$real_path" == "/" || "\$real_path" == "\$HOME" || "\$real_path" == "/home" ]]; then
+    # 验证 4: 禁止删除根目录或 home 目录（macOS 上 /home 可能 realpath 为 /private/home 或 /System/Volumes/Data/home）
+    if [[ "\$real_path" == "/" || "\$real_path" == "\$HOME" || "\$real_path" == "/home" || "\$real_path" == "/private/home" || "\$path" == "/home" ]]; then
         echo -e "\${RED}错误: 禁止删除系统关键目录: \$real_path\${NC}" >&2
         return 1
     fi

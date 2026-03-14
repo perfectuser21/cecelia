@@ -72,27 +72,30 @@ describe("P0-1: stop-dev.sh PR 已合并时跳过 CI 检查", () => {
     expect(content).toContain('PR_STATE" == "merged"');
   });
 
-  it("merged 时输出 CI 已通过消息（不查询 CI）", () => {
-    // 找到 merged CI 跳过的代码块
+  it("merged 时检查 Step 11 完成状态（不查询 CI）", () => {
+    // 找到 merged 条件判断代码块
     const mergedIdx = content.indexOf('PR_STATE" == "merged"');
     expect(mergedIdx).toBeGreaterThan(-1);
-    // merged 分支后应该有 CI 已通过的消息
-    const afterMerged = content.slice(mergedIdx, mergedIdx + 200);
-    expect(afterMerged).toMatch(/CI.*通过|CI.*passed/);
+    // merged 后检查 step_11_cleanup 状态
+    const afterMerged = content.slice(mergedIdx, mergedIdx + 300);
+    expect(afterMerged).toMatch(/step_11_cleanup|Step 11|cleanup/);
   });
 
-  it("CI 查询逻辑在 else 分支中（非 merged 时才执行）", () => {
-    // CI 查询（gh run list 或 get_ci_status）必须在 else 分支内
-    // 验证：从 'PR_STATE == merged' 到 'else' 之间不包含 gh run list
-    const mergedIdx = content.indexOf('PR_STATE" == "merged"');
-    const elseIdx = content.indexOf("else", mergedIdx);
-    const betweenBlock = content.slice(mergedIdx, elseIdx);
-    expect(betweenBlock).not.toContain("gh run list");
-    expect(betweenBlock).not.toContain("get_ci_status");
+  it("CI 查询逻辑在 PR_STATE != merged 分支中（非 merged 时才执行）", () => {
+    // CI 查询（gh run list 或 get_ci_status）在 PR_STATE != merged 块中
+    // 验证：PR_STATE != merged 分支内包含 CI 查询逻辑
+    const notMergedIdx = content.indexOf('PR_STATE" != "merged"');
+    expect(notMergedIdx).toBeGreaterThan(-1);
 
-    // else 之后应包含 CI 查询逻辑
-    const afterElse = content.slice(elseIdx, elseIdx + 500);
-    expect(afterElse).toMatch(/gh run list|get_ci_status/);
+    // PR_STATE != merged 区块内应包含 CI 查询逻辑
+    const notMergedBlock = content.slice(notMergedIdx, notMergedIdx + 600);
+    expect(notMergedBlock).toMatch(/gh run list|get_ci_status/);
+
+    // PR_STATE == merged 区块内不应有 CI 查询
+    const mergedIdx = content.indexOf('PR_STATE" == "merged"');
+    const mergedBlock = content.slice(mergedIdx, mergedIdx + 300);
+    expect(mergedBlock).not.toContain("gh run list");
+    expect(mergedBlock).not.toContain("get_ci_status");
   });
 });
 
@@ -261,11 +264,9 @@ describe("P1-1b: stop-dev.sh sentinel 孤儿重试上限", () => {
   const content = readFileSync(STOP_DEV, "utf-8");
 
   it("sentinel 路径使用 .dev-orphan-retry 追踪重试", () => {
-    const sentinelSection = content.slice(
-      content.indexOf("检查 sentinel（三重保险）"),
-      content.indexOf("没有任何 dev 状态文件")
-    );
-    expect(sentinelSection).toContain(".dev-orphan-retry");
+    // v14.0.0: sentinel 相关部分使用 .dev-orphan-retry-sentinel 追踪
+    // 查找 sentinel 孤儿逻辑（.dev-sentinel 存在但 .dev-lock 不存在）
+    expect(content).toContain(".dev-orphan-retry-sentinel");
   });
 
   it("超过 5 次后清理 sentinel 并 exit 0", () => {
@@ -281,8 +282,9 @@ describe("P1-2b: stop-dev.sh .dev-lock 无 .dev-mode 重试上限", () => {
   const content = readFileSync(STOP_DEV, "utf-8");
 
   it(".dev-lock 无 .dev-mode 路径使用 .dev-orphan-retry 追踪", () => {
+    // v14.0.0: .dev-lock.<branch> 存在但 .dev-mode.<branch> 不存在时追踪重试次数
     const lockSection = content.slice(
-      content.indexOf(".dev-lock 存在，检查 .dev-mode"),
+      content.indexOf(".dev-lock.<branch> 存在，检查 .dev-mode.<branch>"),
       content.indexOf("检查 cleanup 是否已完成")
     );
     expect(lockSection).toContain(".dev-orphan-retry");
@@ -290,7 +292,7 @@ describe("P1-2b: stop-dev.sh .dev-lock 无 .dev-mode 重试上限", () => {
 
   it("超过 5 次后清理 lock 并 exit 0", () => {
     const lockSection = content.slice(
-      content.indexOf(".dev-lock 存在，检查 .dev-mode"),
+      content.indexOf(".dev-lock.<branch> 存在，检查 .dev-mode.<branch>"),
       content.indexOf("检查 cleanup 是否已完成")
     );
     expect(lockSection).toMatch(/_ORPHAN_COUNT.*-gt\s+5/);

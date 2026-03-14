@@ -64,11 +64,11 @@ esac
       execSync('git commit -m "initial"', { cwd: testDir })
 
       // 在 main 分支创建 run
-      execSync('git checkout -b main', { cwd: testDir, stdio: 'pipe' })
-      execSync(`bash ${trackScript} start test-project main .prd.md`, { cwd: testDir, stdio: 'pipe' })
+      execSync('git checkout -b test-main', { cwd: testDir, stdio: 'pipe' })
+      execSync(`bash ${trackScript} start test-project test-main .prd.md`, { cwd: testDir, stdio: 'pipe' })
 
       // 检查分支级别文件
-      expect(fs.existsSync(path.join(testDir, '.cecelia-run-id-main'))).toBe(true)
+      expect(fs.existsSync(path.join(testDir, '.cecelia-run-id-test-main'))).toBe(true)
     })
 
     it('should isolate run_id between branches', () => {

@@ -108,7 +108,7 @@ fetch_task_prd() {
         return 0
     fi
 
-    echo "📋 从 Brain 预拉 PRD（task_id: $task_id）..."
+    echo "📋 从 Brain 预拉 PRD（task_id: ${task_id}）..."
     local response
     response=$(curl -s --max-time 10 "${api_url}/api/brain/tasks/${task_id}" 2>/dev/null || echo "")
 
@@ -213,7 +213,7 @@ ${prd_content}
     elif [[ -n "$task_id" ]]; then
         task_arg=" --task-id $task_id"
         prd_section="
-注意: PRD 内容无法预拉，Codex 需从 Brain 读取（task_id: $task_id）。
+注意: PRD 内容无法预拉，Codex 需从 Brain 读取（task_id: ${task_id}）。
 "
     fi
 

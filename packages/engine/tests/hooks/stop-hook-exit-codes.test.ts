@@ -71,18 +71,19 @@ describe("hooks/stop-dev.sh exit codes", () => {
       // Create initial commit so we can create a branch
       writeFileSync(join(tempDir, "README.md"), "test");
       execSync(`cd "${tempDir}" && git add . && git config user.email "test@test.com" && git config user.name "Test" && git commit -m "init" -q`);
+      execSync(`cd "${tempDir}" && git checkout -b test-branch -q`);
 
-      // Create .dev-lock and .dev-sentinel (双钥匙 + 三重保险)
-      writeFileSync(join(tempDir, ".dev-lock"), "dev_workflow_active\n");
-      writeFileSync(join(tempDir, ".dev-sentinel"), "dev_workflow_active\n");
+      // Create per-branch format .dev-lock and .dev-sentinel (双钥匙 + 三重保险)
+      writeFileSync(join(tempDir, ".dev-lock.test-branch"), "branch: test-branch\nsession_id: test123\n");
+      writeFileSync(join(tempDir, ".dev-sentinel.test-branch"), "dev_workflow_active\n");
       writeFileSync(
-        join(tempDir, ".dev-mode"),
+        join(tempDir, ".dev-mode.test-branch"),
         "dev\nbranch: test-branch\nsession_id: test123\n"
       );
 
       // 模拟 gh pr list 返回空（PR 未创建）
       const result = execSync(
-        `cd "${tempDir}" && git checkout -b test-branch -q && export PATH=/usr/bin:/bin && bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
+        `cd "${tempDir}" && export PATH=/usr/bin:/bin && CLAUDE_SESSION_ID=test123 bash "${STOP_DEV_HOOK}" < /dev/null || echo "exit:$?"`,
         { encoding: "utf-8" }
       );
       expect(result).toContain("exit:2");
