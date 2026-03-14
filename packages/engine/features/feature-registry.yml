@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.45.0"
+version: "3.46.0"
 updated: "2026-03-14"
 changelog:
+  - "3.46.0: v12.64.0 - /dev 专属健康保护（dynamic-ci-dev-health）：Step 00 新增 .dev-lock 完整性检查（context 压缩恢复后自动重建丢失的 .dev-lock）；新增 test-dev-health.sh 健康检查脚本（Hook 语法/Stop Hook 无锁 exit 0/必填字段/重建逻辑/高风险路径 5 项检查）；ci-l1-process.yml 新增 dev-health-check job（engine 变更时触发）；required-dev-paths.yml 新增 packages/engine/skills/dev/ 高风险路径"
   - "3.45.0: v12.63.0 - Codex runner.sh v2.2.0 PRD 预注入（codex-runner-prd-inject）：在 US 侧预拉 Brain PRD 内容并嵌入 prompt，避免 Codex 在 M4 调 localhost:5221；新增 BRAIN_API_URL 环境变量（默认 localhost:5221，支持远程配置）；失败回调从 hardcoded localhost 改为使用 BRAIN_API_URL；无 PRD 时降级到 --task-id 模式"
   - "3.44.0: v12.62.0 - 修复 Codex runner.sh 自动加载 CODEX_API_KEY（fix-codex-api-key）：runner.sh v2.1.0 在配置区新增 API key 加载逻辑，自动从 ~/.credentials/openai.env 读取 OPENAI_API_KEY 并导出为 CODEX_API_KEY（codex-bin v0.114.0 所需），已有环境变量时直接使用，修复 401 Unauthorized"
   - "3.43.0: v12.59.0 - Step 6.5 升级为 Cleanup Sub-Agent（真正召唤 Agent 工具）：06-code.md Step 6.5 从内联文字检查清单升级为明确的 subagent_type=general-purpose 调用指令，自动扫描改动文件中4类垃圾代码（被替代旧代码/重复逻辑/矛盾注释/无用import），sub-agent 完成后验证 diff 无误删后继续 Step 7"
