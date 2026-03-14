@@ -326,6 +326,13 @@ changelog:
 
 ---
 
+### S-ci-task-card-support: null
+
+1. ✅ **新格式: .task-{branch}.md 被正确识别**
+2. ✅ **旧格式: .dod-{branch}.md / .prd-{branch}.md 向后兼容**
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。

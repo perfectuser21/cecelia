@@ -548,6 +548,19 @@ codex-bin exec --model gpt-5.4 执行 →
 
 ---
 
+## GP-035: null (S-ci-task-card-support)
+
+**Feature**: S-ci-task-card-support - null
+**Priority**: null
+
+### Golden Path
+
+```
+PR with .task-{branch}.md → CI 找到 Task Card → DoD/PRD 验证通过
+```
+
+---
+
 ## 更新规则
 
 **本文件自动生成，不要手动编辑**。
