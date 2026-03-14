@@ -255,6 +255,23 @@ fi
 # 示例: cp-03101200-fix-login
 if [[ "$CURRENT_BRANCH" =~ ^cp-[0-9]{8}-[a-z0-9][a-z0-9_-]*$ ]]; then
 
+    # ===== v26: 分支日期范围检查（只警告，不阻塞）=====
+    # 防止 AI 使用过时日期（如 cp-20260101-xxx）创建分支
+    # 允许范围：今天 ~ 今天-2天（考虑跨天长任务）
+    BRANCH_DATE=$(echo "$CURRENT_BRANCH" | grep -oE 'cp-[0-9]{8}-' | grep -oE '[0-9]{8}' || echo "")
+    if [[ -n "$BRANCH_DATE" ]]; then
+        TODAY=$(date +%Y%m%d)
+        # 兼容 macOS（date -v-2d）和 Linux（date -d "2 days ago"）
+        DATE_2_DAYS_AGO=$(date -v-2d +%Y%m%d 2>/dev/null || date -d "2 days ago" +%Y%m%d 2>/dev/null || echo "")
+        if [[ -n "$DATE_2_DAYS_AGO" && "$BRANCH_DATE" < "$DATE_2_DAYS_AGO" ]]; then
+            echo "" >&2
+            echo "  [WARN] 分支日期 $BRANCH_DATE 已超过 2 天（今天 $TODAY，最早允许 $DATE_2_DAYS_AGO）" >&2
+            echo "  [WARN] 请确认此分支是否为过时任务的残留分支" >&2
+            echo "" >&2
+            # 只警告，不 exit —— 长任务可能跨天，不能强制阻塞
+        fi
+    fi
+
     # ===== v21: Worktree 检测（双重保险）=====
     # 必须在独立 worktree 中开发，不能在主仓库的 cp-* 残留分支上写代码
     # 原因：主仓库残留分支通过分支名检查，但代码会污染主仓库状态（monorepo 尤其危险）
