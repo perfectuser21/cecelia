@@ -14,8 +14,3 @@ CREATE TABLE IF NOT EXISTS task_execution_metrics (
 CREATE INDEX IF NOT EXISTS idx_task_exec_metrics_task_id ON task_execution_metrics(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_exec_metrics_account ON task_execution_metrics(account_id);
 CREATE INDEX IF NOT EXISTS idx_task_exec_metrics_recorded ON task_execution_metrics(recorded_at DESC);
-
--- Schema version
-INSERT INTO schema_migrations (version, description)
-VALUES (153, 'task_execution_metrics table')
-ON CONFLICT (version) DO NOTHING;
