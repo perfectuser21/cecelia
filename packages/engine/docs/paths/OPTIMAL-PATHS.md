@@ -1,12 +1,12 @@
 ---
 id: optimal-paths
-version: 3.46.0
+version: 3.47.0
 created: 2026-03-14
 updated: 2026-03-14
 source: features/feature-registry.yml
 generation: auto-generated (scripts/generate-path-views.sh)
 changelog:
-  - 3.46.0: 从 feature-registry.yml 自动生成
+  - 3.47.0: 从 feature-registry.yml 自动生成
 ---
 
 # Optimal Paths - 推荐体验路径
@@ -345,5 +345,5 @@ worktree 数量 >= 8 → exit 1 + 错误提示 →
 ---
 
 **来源**: features/feature-registry.yml
-**版本**: 3.46.0
+**版本**: 3.47.0
 **生成时间**: 2026-03-14

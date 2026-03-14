@@ -166,18 +166,19 @@ describe("Stop Hook 状态完整性 (PR #550)", () => {
   });
 
   describe("旧格式兼容 (fallback)", () => {
-    it("旧格式 .dev-lock + .dev-mode（无 branch 后缀）→ 正常工作", () => {
+    it("旧格式 .dev-lock + .dev-mode（无 branch 后缀）→ exit 0（v14.0.0 已删除旧格式支持）", () => {
       initGitRepo(tempDir, "cp-old-format");
-      // 旧格式不用 session_id 匹配，直接检查 .dev-lock 存在
+      // v14.0.0: "删除所有旧格式兼容代码，只保留 per-branch 格式"
+      // 旧格式 .dev-lock（无后缀）不会被 session 预检查匹配 → exit 0（允许结束）
+      // 此行为是预期的：旧格式工作流应迁移到 per-branch 格式（有 session_id 的 .dev-lock.<branch>）
       writeFileSync(join(tempDir, ".dev-lock"), "dev_workflow_active\n");
       writeFileSync(
         join(tempDir, ".dev-mode"),
         "dev\nbranch: cp-old-format\nretry_count: 0\n"
       );
-      // runStopHook 用 CLAUDE_SESSION_ID 但旧格式不需要
-      // stop-dev.sh 旧格式 fallback 检查 .dev-lock（无后缀）
+      // 旧格式无 per-branch lock（.dev-lock.*），session 预检查找不到匹配 → exit 0
       const code = runStopHook(tempDir);
-      expect(code).toBe(2);
+      expect(code).toBe(0);
     });
   });
 

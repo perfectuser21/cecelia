@@ -15,9 +15,10 @@
 # - product_features:  引擎核心能力（工作流、测试、报告、自动化）
 # ============================================================================
 
-version: "3.46.0"
+version: "3.47.0"
 updated: "2026-03-14"
 changelog:
+  - "3.47.0: v12.65.0 - 修复 Engine 测试漂移（fix-engine-test-drift）：stop-dev.sh 行 372 $DEV_MODE 改为 ${DEV_MODE} 修复 macOS UTF-8 Unicode 污染 unbound variable（exit 1→2）；ci-timeout.test.ts 更新为引用新 CI 文件（ci-l1/l2/l3/l4-*.yml），移除对已删除 engine-ci.yml 的引用；stop-hook-state-integrity.test.ts 旧格式测试更新为 expect exit 0（v14.0.0 已删除旧格式支持）"
   - "3.46.0: v12.64.0 - /dev 专属健康保护（dynamic-ci-dev-health）：Step 00 新增 .dev-lock 完整性检查（context 压缩恢复后自动重建丢失的 .dev-lock）；新增 test-dev-health.sh 健康检查脚本（Hook 语法/Stop Hook 无锁 exit 0/必填字段/重建逻辑/高风险路径 5 项检查）；ci-l1-process.yml 新增 dev-health-check job（engine 变更时触发）；required-dev-paths.yml 新增 packages/engine/skills/dev/ 高风险路径"
   - "3.45.0: v12.63.0 - Codex runner.sh v2.2.0 PRD 预注入（codex-runner-prd-inject）：在 US 侧预拉 Brain PRD 内容并嵌入 prompt，避免 Codex 在 M4 调 localhost:5221；新增 BRAIN_API_URL 环境变量（默认 localhost:5221，支持远程配置）；失败回调从 hardcoded localhost 改为使用 BRAIN_API_URL；无 PRD 时降级到 --task-id 模式"
   - "3.44.0: v12.62.0 - 修复 Codex runner.sh 自动加载 CODEX_API_KEY（fix-codex-api-key）：runner.sh v2.1.0 在配置区新增 API key 加载逻辑，自动从 ~/.credentials/openai.env 读取 OPENAI_API_KEY 并导出为 CODEX_API_KEY（codex-bin v0.114.0 所需），已有环境变量时直接使用，修复 401 Unauthorized"
